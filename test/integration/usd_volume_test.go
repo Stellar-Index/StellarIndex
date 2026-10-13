@@ -2515,6 +2515,34 @@ func TestXLMLegVolume_TradeTimeNeverSpot(t *testing.T) {
 		}
 	}
 	mustSee(t, seen, fresh, anchor, stamped, quoted, sacLeg, late)
+
+	// The ingest resolver refuses the frozen minute on its direct leg: an XLM-base stamp written at the 30-min trade's time prices
+	// at the unfrozen 50-min anchor (0.3), never the frozen 0.4; with the freshness floor inside the freeze it prices nothing.
+	resolver, err := timescale.NewVWAPUSDFXResolver(f.store, timescale.VWAPUSDFXResolverOptions{
+		USDPegs:              []string{usdc.String()},
+		DisableSubstanceGate: true,
+	})
+	if err != nil {
+		t.Fatalf("NewVWAPUSDFXResolver: %v", err)
+	}
+	rate, ok, err := resolver.USDPriceAt(f.ctx, native, f.now.Add(-30*time.Minute))
+	if err != nil {
+		t.Fatalf("USDPriceAt(native) under the freeze: %v", err)
+	}
+	if !ok || !ratEq(t, rate, "0.3") {
+		t.Errorf("USDPriceAt(native) under the freeze = %q (ok=%v), want 0.3: the frozen 30-min minute is refused, the 50-min anchor answers", rate, ok)
+	}
+	bounded, err := timescale.NewVWAPUSDFXResolver(f.store, timescale.VWAPUSDFXResolverOptions{
+		USDPegs:              []string{usdc.String()},
+		Freshness:            10 * time.Minute,
+		DisableSubstanceGate: true,
+	})
+	if err != nil {
+		t.Fatalf("NewVWAPUSDFXResolver(bounded): %v", err)
+	}
+	if rate, ok, err := bounded.USDPriceAt(f.ctx, native, f.now.Add(-30*time.Minute)); err != nil || ok {
+		t.Errorf("USDPriceAt(native) with only the frozen minute inside freshness = %q (ok=%v, err=%v), want no rate", rate, ok, err)
+	}
 }
 
 // mustSee fails when a scan omitted a ledger an assertion depends on, so a missing row cannot pass as "nothing wrong".

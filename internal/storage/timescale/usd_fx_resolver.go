@@ -679,7 +679,11 @@ func (r *VWAPUSDFXResolver) queryDirectLeg(ctx context.Context, asset canonical.
 	if r.freshness > 0 {
 		args = append(args, at.UTC().Add(-r.freshness))
 	}
-	row := r.store.db.QueryRowContext(ctx, directLegQuery(r.freshness > 0), args...)
+	xlm := isXLMAliasForm(asset)
+	if xlm {
+		args = append(args, canonical.NativeSACContractID())
+	}
+	row := r.store.db.QueryRowContext(ctx, directLegQuery(r.freshness > 0, xlm), args...)
 	var (
 		bucket time.Time
 		vwap   string
@@ -693,8 +697,25 @@ func (r *VWAPUSDFXResolver) queryDirectLeg(ctx context.Context, asset canonical.
 	return vwap, bucket, nil
 }
 
+// isXLMAliasForm reports whether asset is any of XLM's three identities; [isXLMAsset] omits `crypto:XLM`, which the alias loop
+// also queries.
+func isXLMAliasForm(asset canonical.Asset) bool {
+	if isXLMAsset(asset) {
+		return true
+	}
+	for _, form := range canonical.AssetAliases(canonical.NativeAsset()) {
+		if form.String() == asset.String() {
+			return true
+		}
+	}
+	return false
+}
+
 // directLegQuery is queryDirectLeg's SQL; bounded adds the `$5` freshness floor. Ties go to the peg form first in $2, never scan order.
-func directLegQuery(bounded bool) string {
+// xlm refuses a minute inside a recorded XLM/USD-proxy freeze ([xlmUSDFreezeOverlap]), the native SAC bound at the last placeholder:
+// the XLM-base anchor and the bridge's XLM leg both price through this read, so a frozen rate never stamps a notional. The pick then
+// falls back to the newest unfrozen minute within the freshness floor, else nothing.
+func directLegQuery(bounded, xlm bool) string {
 	q := fmt.Sprintf(`
 		SELECT bucket, vwap::text
 		  FROM prices_1m
@@ -706,6 +727,14 @@ func directLegQuery(bounded bool) string {
 	if bounded {
 		q += `
 		   AND bucket     >= $5`
+	}
+	if xlm {
+		sac := "$5::text"
+		if bounded {
+			sac = "$6::text"
+		}
+		q += `
+		   AND NOT ` + xlmUSDFreezeOverlap("bucket", "bucket", sac)
 	}
 	return q + `
 		 ORDER BY bucket DESC, array_position($2::text[], quote_asset)

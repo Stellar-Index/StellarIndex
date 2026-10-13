@@ -85,11 +85,13 @@ func TestUSDQuotePicksAreTieBroken(t *testing.T) {
 		t.Errorf("xlmUSDNativeCTEs orders %d XLM/USD picks by form then minute, want 4", n)
 	}
 	for name, q := range map[string]string{
-		"xlmUSDNativeCTEs":        xlmUSDNativeCTEs("$1::text"),
-		"getNativeAssetSQL":       getNativeAssetSQL,
-		"xlmLegQuery":             xlmLegQuery("AND bucket >= $5"),
-		"directLegQuery":          directLegQuery(false),
-		"directLegQuery(bounded)": directLegQuery(true),
+		"xlmUSDNativeCTEs":            xlmUSDNativeCTEs("$1::text"),
+		"getNativeAssetSQL":           getNativeAssetSQL,
+		"xlmLegQuery":                 xlmLegQuery("AND bucket >= $5"),
+		"directLegQuery":              directLegQuery(false, false),
+		"directLegQuery(bounded)":     directLegQuery(true, false),
+		"directLegQuery(xlm)":         directLegQuery(false, true),
+		"directLegQuery(bounded,xlm)": directLegQuery(true, true),
 	} {
 		if loc := untiedBucketPickRE.FindStringIndex(q); loc != nil {
 			t.Errorf("%s picks the newest bucket with no tie-break at byte %d", name, loc[0])

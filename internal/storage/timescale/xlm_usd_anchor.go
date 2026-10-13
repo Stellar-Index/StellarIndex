@@ -38,15 +38,21 @@ func xlmUSDAnchorForms(sac string) string {
 	return "'native', 'crypto:XLM', " + sac
 }
 
-// xlmUSDFreezeOverlap renders "a recorded XLM/USD-proxy freeze (ADR-0019) overlaps [from, bucket + 1 minute)": any XLM form, either
-// stored direction, open or recovered. The anchor population probes the minute itself (from = bucket); a read that judges a stored
-// stamp looks back xlmUSDAnchorMaxAge from it, the oldest minute the ingest resolver may have read when it stamped the row.
+// xlmUSDFreezeTriggerLookback extends a freeze back before frozen_at, the detector's wall clock, written a tick or more after the
+// anomalous minutes closed; the detector's hot window (orchestrator.DefaultWindows) is how far a steady-state trigger trails them.
+// A warm or cold-window trigger, or a catch-up after a stall, trails further: those minutes still anchor, flagged estimated.
+const xlmUSDFreezeTriggerLookback = "5 minutes"
+
+// xlmUSDFreezeOverlap renders "a recorded XLM/USD-proxy freeze (ADR-0019) overlaps [from, bucket + 1 minute +
+// xlmUSDFreezeTriggerLookback)": any XLM form, either stored direction, open or recovered. The anchor population probes the minute
+// itself (from = bucket); a read that judges a stored stamp looks back xlmUSDAnchorMaxAge from it, the oldest minute the ingest
+// resolver may have read when it stamped the row.
 func xlmUSDFreezeOverlap(from, bucket, sac string) string {
 	forms := xlmUSDAnchorForms(sac)
 	return `EXISTS (SELECT 1 FROM freeze_events fe
 		                  WHERE ((fe.asset_id IN (` + forms + `) AND fe.quote_id IN (` + usdProxyQuotes + `))
 		                     OR (fe.quote_id IN (` + forms + `) AND fe.asset_id IN (` + usdProxyQuotes + `)))
-		                    AND fe.frozen_at < ` + bucket + ` + INTERVAL '1 minute'
+		                    AND fe.frozen_at < ` + bucket + ` + INTERVAL '1 minute' + INTERVAL '` + xlmUSDFreezeTriggerLookback + `'
 		                    AND (fe.recovered_at IS NULL OR fe.recovered_at > ` + from + `))`
 }
 

@@ -21,10 +21,11 @@ const mevStampMinute = "date_trunc('minute', s.ts)"
 // anchor-valued leg as estimated. $3 is the native-XLM SAC.
 //
 // A stored usd_volume is set aside when the trade has an XLM leg against a non-USD asset and a recorded XLM/USD-proxy freeze
-// ([xlmUSDFreezeOverlap]) overlaps the xlmUSDAnchorMaxAge before its minute: the ingest stamp reads the newest XLM/USD minute in that
-// window with no freeze check, so it may carry the frozen rate. The leg is then valued like an unstamped one, from the anchor
-// (estimated) or not at all. An XLM/USD-proxy trade keeps its stamp: its USD value is its own proxy leg, not the XLM rate. A stamp on a
-// non-XLM trade priced through the XLM bridge at ingest is not checked here.
+// ([xlmUSDFreezeOverlap]) overlaps the xlmUSDAnchorMaxAge before its minute: the ingest stamp read the newest XLM/USD minute in that
+// window, and a stamp written before the resolver refused frozen minutes ([directLegQuery]), from its cache, or before the freeze row
+// landed may carry the frozen rate. The leg is then valued like an unstamped one, from the anchor (estimated) or not at all. An
+// XLM/USD-proxy trade keeps its stamp: its USD value is its own proxy leg, not the XLM rate. A stamp on a non-XLM trade priced through
+// the XLM bridge at ingest is not set aside here; that leg is the same direct read, refused at ingest the same way.
 //
 //nolint:gosec // G202: fragments are constant SQL (helper output built from literals and $N placeholders); values bind via $N
 var tradesForArbScanQuery = `
