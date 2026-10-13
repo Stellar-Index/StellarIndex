@@ -82,6 +82,7 @@ type MethodologySource struct {
 	DefaultWeight     int    `json:"default_weight"`
 	IncludeInVWAP     bool   `json:"include_in_vwap"`
 	Paid              bool   `json:"paid"`
+	Credit            string `json:"credit,omitempty"`
 	BackfillAvailable bool   `json:"backfill_available"`
 	BackfillSafe      bool   `json:"backfill_safe"`
 	// OnChain mirrors Source.OnChain: the source observes Stellar directly, not an off-chain vendor API.
@@ -137,6 +138,7 @@ func (s *Server) handleMethodology(w http.ResponseWriter, r *http.Request) {
 			DefaultWeight:     md.DefaultWeight,
 			IncludeInVWAP:     md.IncludeInVWAP,
 			Paid:              md.Paid,
+			Credit:            md.Credit,
 			BackfillAvailable: md.BackfillAvailable,
 			BackfillSafe:      md.BackfillSafe(),
 			OnChain:           external.IsOnChain(name),

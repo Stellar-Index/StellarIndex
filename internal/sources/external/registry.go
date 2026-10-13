@@ -77,18 +77,18 @@ var Registry = map[string]Metadata{
 	// the only fallback is the ECB standby, and any new FX provider needs a row here or the
 	// FX-snap class check refuses it. FX pollers stamp 1e6, not the CEX 1e8. OracleResolution is
 	// a trading day because FX holds through the ~48h weekend close.
-	"massive":          {Class: ClassExchange, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: true, Paid: true, BackfillAvailable: true, Backfill: BackfillNoWASM, AmountDecimals: 6},
-	"exchangeratesapi": {Class: ClassExchange, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: true, Paid: true, BackfillAvailable: true, Backfill: BackfillNoWASM, AmountDecimals: 6, OracleResolution: 24 * time.Hour},
+	"massive":          {Class: ClassExchange, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: true, Paid: true, Credit: "Massive", BackfillAvailable: true, Backfill: BackfillNoWASM, AmountDecimals: 6},
+	"exchangeratesapi": {Class: ClassExchange, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: true, Paid: true, Credit: "exchangeratesapi.io", BackfillAvailable: true, Backfill: BackfillNoWASM, AmountDecimals: 6, OracleResolution: 24 * time.Hour},
 
 	// ─── Aggregators (divergence signal; excluded from VWAP) ─────
-	"coingecko":     {Class: ClassAggregator, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillNoWASM, OracleResolution: 5 * time.Minute},
-	"coinmarketcap": {Class: ClassAggregator, DefaultWeight: 100, IncludeInVWAP: false, Paid: true, BackfillAvailable: true, Backfill: BackfillNoWASM, OracleResolution: time.Minute},
-	"cryptocompare": {Class: ClassAggregator, DefaultWeight: 100, IncludeInVWAP: false, Paid: true, BackfillAvailable: true, Backfill: BackfillNoWASM, OracleResolution: time.Minute},
+	"coingecko":     {Class: ClassAggregator, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, Credit: "CoinGecko", BackfillAvailable: true, Backfill: BackfillNoWASM, OracleResolution: 5 * time.Minute},
+	"coinmarketcap": {Class: ClassAggregator, DefaultWeight: 100, IncludeInVWAP: false, Paid: true, Credit: "CoinMarketCap", BackfillAvailable: true, Backfill: BackfillNoWASM, OracleResolution: time.Minute},
+	"cryptocompare": {Class: ClassAggregator, DefaultWeight: 100, IncludeInVWAP: false, Paid: true, Credit: "CCData (CryptoCompare)", BackfillAvailable: true, Backfill: BackfillNoWASM, OracleResolution: time.Minute},
 
 	// ─── Sovereign daily anchors (sanity check only) ─────────────
 	// ECB publishes once per TARGET business day (24 h resolution). SubclassFX because the ECB
 	// standby writes fx_quotes as "ecb"; without it the FX-snap class check refuses every row.
-	"ecb": {Class: ClassAuthoritySanity, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillNoWASM, AmountDecimals: 6, OracleResolution: 24 * time.Hour},
+	"ecb": {Class: ClassAuthoritySanity, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, Credit: "European Central Bank euro foreign exchange reference rates", BackfillAvailable: true, Backfill: BackfillNoWASM, AmountDecimals: 6, OracleResolution: 24 * time.Hour},
 
 	// ─── Off-chain oracles (Chainlink via EVM RPC) ───────────────
 	// Chainlink is read over Ethereum JSON-RPC: a price publisher, so ClassOracle, and NoWASM.
@@ -98,7 +98,7 @@ var Registry = map[string]Metadata{
 
 	// Tiingo publishes funds' daily NAV as `raw:<TICKER>` rows, read only by the RWA reference
 	// surface; never a VWAP input or a pair leg, hence weight 0. One NAV per business day.
-	"tiingo": {Class: ClassOracle, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: false, Backfill: BackfillNoWASM, AmountDecimals: 6, OracleResolution: 24 * time.Hour},
+	"tiingo": {Class: ClassOracle, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, Credit: "Tiingo", BackfillAvailable: false, Backfill: BackfillNoWASM, AmountDecimals: 6, OracleResolution: 24 * time.Hour},
 }
 
 // Lookup returns metadata for a source; unknown names fall back to class=exchange with included_in_vwap=false, so a typo cannot inject unvetted data into aggregation.
@@ -225,3 +225,6 @@ func AggregatorSources() []string {
 	sort.Strings(out)
 	return out
 }
+
+// Credit returns the vendor credit for source, "" when unregistered or on-chain.
+func Credit(source string) string { return Registry[source].Credit }

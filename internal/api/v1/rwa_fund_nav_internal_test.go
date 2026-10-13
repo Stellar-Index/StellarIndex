@@ -68,7 +68,7 @@ func TestRWAFundNAV_ArmOrder(t *testing.T) {
 	if r == nil || r.Provenance != RWAReferenceFundNAV {
 		t.Fatalf("WTTS with a NAV and a listing price: %+v, want the fund_nav arm", r)
 	}
-	if r.PriceUSD != "9.44" || r.Source != tiingo.SourceName || r.Feed != "raw:WTTSX" || r.Quote != "fiat:USD" ||
+	if r.PriceUSD != "9.44" || r.Source != tiingo.SourceName || r.Credit != "Tiingo" || r.Feed != "raw:WTTSX" || r.Quote != "fiat:USD" ||
 		r.DecimalsPublished == nil || *r.DecimalsPublished != 2 || r.Stale || r.NAVDisagreement {
 		t.Errorf("WTTS reference = %+v", r)
 	}

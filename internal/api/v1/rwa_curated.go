@@ -22,6 +22,9 @@ import (
 // rwaCuratorDune is the first and only curator today.
 const rwaCuratorDune = "dune:stellar"
 
+// rwaCuratorCredit names the curated series' publisher, who consented to its reuse.
+const rwaCuratorCredit = "Stellar Development Foundation (curated Stellar RWA series published on Dune)"
+
 // RWAReferenceCuratorPrice is the provenance of a curated row's price (the curator's uploaded price per token), weaker than a listing price because no venues are aggregated behind it.
 const RWAReferenceCuratorPrice = "curator_uploaded_price"
 
@@ -188,6 +191,8 @@ type RWACuratedPublished struct {
 // RWACuratedSummary is the curated arm's own total, shown BESIDE the verified summary and never folded into it.
 type RWACuratedSummary struct {
 	Curator string `json:"curator"`
+	// CuratorCredit credits the organisation publishing the curated series.
+	CuratorCredit string `json:"curator_credit,omitempty"`
 	// Status is "served" (per-asset rows below), "published_totals" (no per-asset row readable; see
 	// Published), "unavailable" (neither answered inside its bound) or "unwired" (no reader).
 	// A failed contract-catalogue read after a good snapshot read is "unavailable": "served" with
@@ -354,8 +359,9 @@ func rwaApplyCuratorReference(a *RWAAsset, e timescale.CuratedRWAEntry, now time
 
 func rwaCuratedSummarise(snap rwaCurated, rows []RWAAsset, degraded bool, verifiedRef *string, now time.Time) *RWACuratedSummary {
 	out := &RWACuratedSummary{
-		Curator: rwaCuratorDune,
-		Basis:   rwaCuratedBasisProse,
+		Curator:       rwaCuratorDune,
+		CuratorCredit: rwaCuratorCredit,
+		Basis:         rwaCuratedBasisProse,
 		Census: RWACuratedCensus{
 			Entries: snap.census.Entries, Contracts: snap.census.Contracts, Classic: snap.census.Classic,
 			Priced: snap.census.Priced, PricedClassic: snap.census.PricedClassic, Stale: snap.census.Stale,

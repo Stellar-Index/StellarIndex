@@ -172,6 +172,8 @@ type OracleReading struct {
 	// aggregated). /v1/oracle/streams omits them unless include_unmapped=true; /v1/oracle/latest
 	// returns one only for its exact `raw:` key.
 	Mapped bool `json:"mapped"`
+	// Credit names the vendor behind Source when it is a licensed off-chain feed; absent for on-chain oracles.
+	Credit string `json:"credit,omitempty"`
 }
 
 // handleOracleLatest serves GET /v1/oracle/latest?asset=&source=&quote=: one OracleReading per (source, quote), so MORE than one per
@@ -361,6 +363,7 @@ func oracleReadingFrom(u canonical.OracleUpdate) OracleReading {
 		Confidence:   u.Confidence,
 		Observer:     u.Observer,
 		Mapped:       u.Asset.IsMapped(),
+		Credit:       external.Credit(u.Source),
 	}
 }
 

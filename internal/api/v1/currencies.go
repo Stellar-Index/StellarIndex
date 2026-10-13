@@ -25,6 +25,8 @@ type FXQuotePoint struct {
 	RateUSDText string
 	// InverseUSDText is inverse_usd: USD per 1 unit of the ticker.
 	InverseUSDText string
+	// Source is the fx_quotes row's vendor label; empty when the reader carries none.
+	Source string
 }
 
 // rateUSDRat is the point's exact USD→fiat rate; ok is false when there

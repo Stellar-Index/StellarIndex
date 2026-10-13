@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
+
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -222,9 +224,11 @@ type DivergencePairV struct {
 // DivergenceRefV is one reference's latest comparison for a pair.
 type DivergenceRefV struct {
 	Reference string `json:"reference"`
-	RefPrice  string `json:"ref_price"`
-	DeltaPct  string `json:"delta_pct"`
-	Status    string `json:"status"`
+	// Credit names the vendor behind Reference when it is a licensed off-chain feed.
+	Credit   string `json:"credit,omitempty"`
+	RefPrice string `json:"ref_price"`
+	DeltaPct string `json:"delta_pct"`
+	Status   string `json:"status"`
 	// ObservedAt is when this reference was last compared: the pair's
 	// observed_at unless the reference missed later ticks, in which case
 	// delta_pct is against our price at this earlier time.
@@ -291,6 +295,7 @@ func (s *Server) groupDivergenceRows(ctx context.Context, rows []timescale.Diver
 		}
 		p.References = append(p.References, DivergenceRefV{
 			Reference:     d.Reference,
+			Credit:        external.Credit(d.Reference),
 			RefPrice:      d.RefPrice,
 			DeltaPct:      d.DeltaPct,
 			Status:        d.Status,

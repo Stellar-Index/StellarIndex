@@ -9502,6 +9502,11 @@ export interface components {
              */
             source: string;
             /**
+             * @description Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles.
+             * @example Tiingo
+             */
+            credit?: string;
+            /**
              * @description The key the price is published under, whose meaning follows
              *     `provenance`: under `oracle_instrument_nav` it is the
              *     canonical asset id of the instrument the oracle priced,
@@ -9800,6 +9805,8 @@ export interface components {
          */
         RWACuratedSummary: {
             curator: string;
+            /** @description The publisher to credit for the curated series (the Stellar Development Foundation, whose curated Stellar RWA series is published on Dune with its consent). */
+            curator_credit?: string;
             /**
              * @description `served` — the curator's per-asset cache answered and the
              *     rows are in `curated_assets`; `published_totals` — no
@@ -10775,6 +10782,8 @@ export interface components {
             price_usd: string;
             /** @description The aggregator that published it. */
             source: string;
+            /** @description Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. */
+            credit?: string;
             /**
              * Format: date-time
              * @description The aggregator's own observation time for the price. A row stamped more than five minutes ahead of the server clock is never used.
@@ -10981,6 +10990,20 @@ export interface components {
              * @enum {string}
              */
             price_basis?: "global_market" | "declared_peg" | "transitive";
+            /**
+             * @description What produced price_usd on a listing row — the same tiers as GlobalAssetView.price_authority. Present on catalogue rows (fiat and reference-only coins on /v1/external/assets) whose price is a published rate rather than a Stellar market observation, so a lone vendor value never travels bare.
+             * @enum {string}
+             */
+            price_authority?: "vwap_native" | "aggregator_avg" | "triangulated" | "reference_rate" | "identity" | "onchain_listing";
+            /** @description Contributor venue / aggregator names behind price_usd on a listing row; one entry when the price is a single vendor rate (e.g. [massive] for a fiat FX rate). */
+            price_sources?: string[];
+            /**
+             * Format: date-time
+             * @description Observation timestamp of the served listing price; omitted under identity and onchain_listing.
+             */
+            price_as_of?: string;
+            /** @description Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. Set when price_sources names exactly one such vendor. */
+            price_credit?: string;
             /**
              * @description Present ONLY when price_usd is null because the price was WITHHELD — the market exists and the server declines to publish it — rather than never observed. `/v1/price` answers the same pair with a `price-withheld` 404, and the values are the `reason` vocabulary of `/v1/price/tip/stream`'s `price_withheld` event: `substance` (trailing market activity below the serve floor), `scam_issuer` (a directory-flagged issuer), `upstream_leg` (a leg beyond the asset's own market is withheld — the stablecoin leg a token's USD price derives through, or the XLM/USD pivot behind a declared peg; the asset's own market below the floor, for a declared peg its own XLM book, reports `substance`, as the listing does), `unattributed` (withheld for a cause the server could not attribute, e.g. the issuer-directory check did not complete). market_cap_usd and fdv_usd are null with it. Absent beside a null price_usd means no price exists, or (listing rows, with flags.stale true) the thin-market gate could not measure the row.
              * @enum {string}
@@ -11358,6 +11381,8 @@ export interface components {
              * @description Observation timestamp of the served price. Null when price_usd is null, and under price_authority onchain_listing.
              */
             price_as_of?: string | null;
+            /** @description Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. Set when price_sources names exactly one such vendor; a composite carries none. */
+            price_credit?: string;
             /** @description Natural-unit amount in circulation. For fiat: M2 (broad money). Empty for crypto/stablecoin (the per-Stellar-asset F2 fields on /v1/assets/{asset_id} are the canonical source). */
             circulating_supply?: string | null;
             /** @description Exponent mapping circulating_supply to display value. 0 for fiat. */
@@ -12434,6 +12459,8 @@ export interface components {
             observer?: string;
             /** @description false when `asset` is a `raw:<symbol>` row — an oracle symbol recorded verbatim because it maps to no canonical asset. Reference-only: orientation-unknown, never compared or aggregated. /v1/oracle/streams omits such rows unless include_unmapped=true; /v1/oracle/latest returns one only for an explicit `asset=raw:<symbol>` query. */
             mapped: boolean;
+            /** @description Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. */
+            credit?: string;
         };
         OracleLatestEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["OracleReading"][];
@@ -12589,6 +12616,8 @@ export interface components {
             include_in_vwap: boolean;
             /** @description Whether this connector requires a paid licence / API key. */
             paid: boolean;
+            /** @description Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. */
+            credit?: string;
             /** @description Whether the source supports historical backfill via its native API. */
             backfill_available: boolean;
             /** @description Whether `stellarindex-ops backfill` will run on this source. On-chain Soroban sources start `false` and only flip `true` after a per-WASM-hash audit (`docs/operations/wasm-audits/`); off-chain CEX/FX sources are always `true`. */
@@ -12646,6 +12675,7 @@ export interface components {
             default_weight: number;
             include_in_vwap: boolean;
             paid: boolean;
+            credit?: string;
             backfill_available: boolean;
             backfill_safe: boolean;
             /** @description Whether the source observes the Stellar network directly rather than reading an off-chain vendor API. */
@@ -17115,6 +17145,8 @@ export interface operations {
                                 references: {
                                     /** @enum {string} */
                                     reference: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band" | "synthetic-usd-cross";
+                                    /** @description Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. */
+                                    credit?: string;
                                     ref_price: string;
                                     delta_pct: string;
                                     /** @enum {string} */

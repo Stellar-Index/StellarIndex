@@ -36,9 +36,11 @@ type AssetGlobalMarket struct {
 	// Asset is the global ticker the catalogue binds to this issuance.
 	Asset string `json:"asset"`
 	// PriceUSD is the aggregator's published price, verbatim (ADR-0003).
-	PriceUSD string   `json:"price_usd"`
-	Source   string   `json:"source"`
-	AsOf     WireTime `json:"as_of"`
+	PriceUSD string `json:"price_usd"`
+	Source   string `json:"source"`
+	// Credit names the aggregator vendor to credit for the value.
+	Credit string   `json:"credit,omitempty"`
+	AsOf   WireTime `json:"as_of"`
 	// StellarDivergencePct is (stellar − global) / global × 100, signed,
 	// two decimals; absent when no Stellar market price is served.
 	StellarDivergencePct *string `json:"stellar_divergence_pct,omitempty"`
@@ -121,7 +123,7 @@ func (s *Server) applyGlobalMarket(row *AssetDetail, refs map[string]rwaReferenc
 		now.Sub(ref.asOf) > globalMarketMaxAge || ref.asOf.After(now.Add(globalMarketMaxSkew)) {
 		return
 	}
-	gm := &AssetGlobalMarket{Asset: g.String(), PriceUSD: ref.wire, Source: ref.source, AsOf: WireTime(ref.asOf)}
+	gm := &AssetGlobalMarket{Asset: g.String(), PriceUSD: ref.wire, Source: ref.source, AsOf: WireTime(ref.asOf), Credit: external.Credit(ref.source)}
 	switch {
 	case row.PriceUSD == nil:
 		p := ref.wire
