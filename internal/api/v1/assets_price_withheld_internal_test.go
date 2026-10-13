@@ -72,11 +72,11 @@ func TestPopulatePriceUSD_WithheldIsNotAbsent(t *testing.T) {
 			wantReason: PriceWithheldScamIssuer,
 		},
 		{
-			name: "no direct market, proxy peg leg withheld",
+			name: "no direct market, own market via the peg withheld",
 			reader: withheldUSDReader{
 				viaPeg: {err: newPriceWithheld(PriceWithheldSubstance)},
 			},
-			wantReason: PriceWithheldUpstreamLeg,
+			wantReason: PriceWithheldSubstance,
 		},
 		{
 			name:   "never traded",
@@ -122,6 +122,22 @@ func TestPopulatePriceUSD_WithheldIsNotAbsent(t *testing.T) {
 				t.Errorf("wire body %s: contains %s = %v", body, wire, got)
 			}
 		})
+	}
+}
+
+// TestPopulatePriceUSD_RefusedXLMLegIsUpstreamLeg: `upstream_leg` names a leg beyond the asset's
+// own market. A declared peg is priced through its XLM book; when that leg is refused the row
+// says so, while the asset's own withheld market reads `substance` (above), as the listing does.
+func TestPopulatePriceUSD_RefusedXLMLegIsUpstreamLeg(t *testing.T) {
+	peg := mustAsset(t, withheldTestPegIssuer)
+	reader := withheldUSDReader{
+		withheldTestPegIssuer + "/" + canonical.NativeAsset().String(): {err: newPriceWithheld(PriceWithheldSubstance)},
+	}
+	s := &Server{Options: Options{Prices: reader, USDPeggedClassics: []canonical.Asset{peg}}}
+	var detail AssetDetail
+	s.populatePriceUSD(context.Background(), &detail, peg)
+	if detail.PriceUSD != nil || detail.PriceWithheldReason != PriceWithheldUpstreamLeg {
+		t.Fatalf("price_usd=%v price_withheld_reason=%q, want nil and %q", detail.PriceUSD, detail.PriceWithheldReason, PriceWithheldUpstreamLeg)
 	}
 }
 

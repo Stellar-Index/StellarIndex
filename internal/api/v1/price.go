@@ -1030,8 +1030,8 @@ func (s *Server) priceFallback(ctx context.Context, asset, quote canonical.Asset
 		return cross
 	}
 	// `withheld` separates "no price" from "one we decline to publish" (price-withheld vs not-found).
-	if withheld {
-		return fallbackResult{withheld: PriceWithheldUnattributed}
+	if withheld != "" {
+		return fallbackResult{withheld: withheld}
 	}
 	return fallbackResult{}
 }
@@ -1290,11 +1290,11 @@ func (s *Server) resolveUSDLeg(
 	if snap, srcs, _, _, ok := s.tryRedisVWAPFallback(ctx, asset, usd); ok {
 		return snap, srcs, canonical.Asset{}, true, true, false
 	}
-	snap, srcs, ok, withheld := s.tryStablecoinFiatProxy(ctx, asset, usd)
+	snap, srcs, ok, proxyWithheld := s.tryStablecoinFiatProxy(ctx, asset, usd)
 	if ok {
 		return snap, srcs, canonical.Asset{}, true, true, false
 	}
-	return PriceSnapshot{}, nil, canonical.Asset{}, false, false, withheld
+	return PriceSnapshot{}, nil, canonical.Asset{}, false, false, proxyWithheld != ""
 }
 
 // primaryFXSource is the forex worker's primary feed, credited for an entry with no Source.
@@ -1339,33 +1339,34 @@ type proxyPairGate interface {
 // ([Server.crossDeclaredPegThroughXLM]) and the declaration answers
 // only when the cross has nothing (a depeg is when they disagree), never via another declared peg. Snapshots are triangulated; sticky
 // `withheld` (ErrPriceWithheld) must not
-// collapse into not-found, and a refused declared-peg cross is withheld, not replaced by a flat 1.0.
-func (s *Server) tryStablecoinFiatProxy(ctx context.Context, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, bool) {
+// collapse into not-found, and a refused declared-peg cross is withheld (`upstream_leg`), not replaced by a flat 1.0.
+func (s *Server) tryStablecoinFiatProxy(ctx context.Context, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, PriceWithheldReason) {
 	// Self-peg: a `crypto:<STABLE>` ticker priced in the fiat it tracks (aggregate.FiatProxy); a
 	// depeg surfaces via divergence, not here. Runs only after the literal read missed, so an
 	// observed bucket still wins over the declaration.
 	if proxy, isStable := aggregate.FiatProxy(asset); isStable && proxy.Equal(quote) {
-		return s.declaredPegSnapshot(asset, quote), nil, true, false
+		return s.declaredPegSnapshot(asset, quote), nil, true, ""
 	}
-	// Returns before the walk carry withheld=false: no peg leg has been read yet.
+	// Returns before the walk carry no withheld reason: no peg leg has been read yet.
 	if quote.Type != canonical.AssetFiat || quote.Code != "USD" {
-		return PriceSnapshot{}, nil, false, false
+		return PriceSnapshot{}, nil, false, ""
 	}
 	if len(s.USDPeggedClassics) == 0 || s.Prices == nil {
-		return PriceSnapshot{}, nil, false, false
+		return PriceSnapshot{}, nil, false, ""
 	}
 	if s.isDeclaredUSDPeg(asset) {
 		snap, srcs, verdict := s.crossDeclaredPegThroughXLM(ctx, asset, quote)
 		switch verdict {
 		case pegXLMLegPriced:
-			return snap, srcs, true, false
+			return snap, srcs, true, ""
 		case pegXLMLegRefused:
-			return PriceSnapshot{}, nil, false, true
+			// The XLM leg, not this asset's own market, was refused.
+			return PriceSnapshot{}, nil, false, PriceWithheldUpstreamLeg
 		case pegXLMLegNoMarket, pegXLMLegReadFailed, pegXLMLegFlagged:
 		}
 		// No market priced this peg and none was refused: publish the declaration with nil sources
 		// (empty is not "single-sourced").
-		return s.declaredPegSnapshot(asset, quote), nil, true, false
+		return s.declaredPegSnapshot(asset, quote), nil, true, ""
 	}
 	snap, srcs, ok, withheld := s.walkUSDPegs(ctx, asset, quote)
 	if ok {
@@ -1389,7 +1390,7 @@ func (s *Server) isDeclaredUSDPeg(asset canonical.Asset) bool {
 // fiat:USD; a declared peg never reaches it.
 func (s *Server) walkUSDPegs(
 	ctx context.Context, asset, quote canonical.Asset,
-) (snapshot PriceSnapshot, sources []string, ok, withheld bool) {
+) (snapshot PriceSnapshot, sources []string, ok bool, withheld PriceWithheldReason) {
 	// Empty-proxy-pair gate. On a VWAP miss LatestPrice falls through to an UNBOUNDED last-trade
 	// scan, which a Soroban token that only trades vs XLM would pay once PER PEG. A probe ERROR falls
 	// through to LatestPrice so a blip never suppresses a real price.
@@ -1403,10 +1404,15 @@ func (s *Server) walkUSDPegs(
 		}
 		snap, srcs, _, err := s.Prices.LatestPrice(ctx, asset, peg)
 		if err != nil {
-			// A WITHHELD verdict is not a miss: record it and keep walking (a later peg may serve);
-			// if none does, the caller reports withheld rather than not-found.
-			if errors.Is(err, ErrPriceWithheld) {
-				withheld = true
+			// A WITHHELD verdict is not a miss. The peg pair is this asset's own market, so a floor
+			// miss there is `substance`, as the listing says; any other cause (a flagged peg issuer, a
+			// refused cross) lies beyond it and is `upstream_leg`. Walk on, a later peg may serve; if
+			// none does, the caller reports the reason, `substance` first, rather than not-found.
+			if errors.Is(err, ErrPriceWithheld) && withheld != PriceWithheldSubstance {
+				withheld = PriceWithheldUpstreamLeg
+				if priceWithheldReason(err) == PriceWithheldSubstance {
+					withheld = PriceWithheldSubstance
+				}
 			}
 			continue
 		}

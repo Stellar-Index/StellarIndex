@@ -448,9 +448,10 @@ func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.
 	if ok && proxy.Price != "" {
 		return usdPriceLookup{price: proxy.Price, sources: len(proxySources)}
 	}
-	if withheld {
-		// The verdict /v1/price and the tip report for a withheld peg leg.
-		return usdPriceLookup{withheld: PriceWithheldUpstreamLeg}
+	if withheld != "" {
+		// The walk's own verdict, so the detail agrees with the listing: this asset's thin market is
+		// `substance`; a refused XLM leg behind a declared peg is `upstream_leg`.
+		return usdPriceLookup{withheld: withheld}
 	}
 	return usdPriceLookup{}
 }
