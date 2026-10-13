@@ -159,6 +159,23 @@ func TestTradesForArbScanQueryShape(t *testing.T) {
 	if strings.Contains(q, mevXLMSAC) || !strings.Contains(q, "IN ('native', $3::text)") {
 		t.Errorf("the XLM-leg fallback must bind the native-XLM SAC at $3, not hard-code it:\n%s", q)
 	}
+	// A stored stamp inside a recorded XLM/USD-proxy freeze is set aside through the anchor's own freeze predicate, only when
+	// the XLM leg is against a non-USD asset; the value and the estimated flag both read the trusted column.
+	flat := strings.Join(strings.Fields(q), " ")
+	for _, want := range []string{
+		strings.Join(strings.Fields(xlmUSDFreezeOverlap("date_trunc('minute', s.ts)", "$3::text")), " "),
+		"s.usd_volume IS NOT NULL AND ((s.base_asset IN ('native', $3::text) AND s.quote_asset NOT IN (" + strings.Join(strings.Fields(usdProxyQuotes), " ") + "))",
+		"THEN NULL ELSE s.usd_volume END AS usd_volume_trusted",
+		"COALESCE((COALESCE( t.usd_volume_trusted, CASE",
+		"t.usd_volume_trusted IS NULL FROM legs t",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("TradesForArbScan SQL must set a frozen-minute stamp aside; missing %q:\n%s", want, q)
+		}
+	}
+	if strings.Count(flat, "FROM freeze_events fe") != 3 {
+		t.Errorf("freeze predicate count = %d, want 3: once per anchor direction and once for the stamp", strings.Count(flat, "FROM freeze_events fe"))
+	}
 }
 
 // TestTradesForArbScan_UnparseableAssetIsAnError — a row whose asset

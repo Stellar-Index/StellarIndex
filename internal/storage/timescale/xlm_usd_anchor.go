@@ -38,6 +38,17 @@ func xlmUSDAnchorForms(sac string) string {
 	return "'native', 'crypto:XLM', " + sac
 }
 
+// xlmUSDFreezeOverlap renders "a recorded XLM/USD-proxy freeze (ADR-0019) covers the minute `bucket`": any XLM form, either stored
+// direction, open or recovered. The anchor population and every read that must not trust a rate from inside a freeze share it.
+func xlmUSDFreezeOverlap(bucket, sac string) string {
+	forms := xlmUSDAnchorForms(sac)
+	return `EXISTS (SELECT 1 FROM freeze_events fe
+		                  WHERE ((fe.asset_id IN (` + forms + `) AND fe.quote_id IN (` + usdProxyQuotes + `))
+		                     OR (fe.quote_id IN (` + forms + `) AND fe.asset_id IN (` + usdProxyQuotes + `)))
+		                    AND fe.frozen_at < ` + bucket + ` + INTERVAL '1 minute'
+		                    AND (fe.recovered_at IS NULL OR fe.recovered_at > ` + bucket + `))`
+}
+
 // xlmUSDAnchorMinutes renders (form_rank, bucket, vwap) for closed minutes in [lo, hi]; lo and hi are timestamptz expressions that must
 // stay sargable.
 func xlmUSDAnchorMinutes(lo, hi, sac string) string {
@@ -46,11 +57,7 @@ func xlmUSDAnchorMinutes(lo, hi, sac string) string {
 		         AND bucket <= ` + hi + `
 		         AND bucket <= now() - INTERVAL '1 minute'
 		         AND vwap > 0 AND volume_usd >= ` + xlmUSDAnchorMinUSD + `
-		         AND NOT EXISTS (SELECT 1 FROM freeze_events fe
-		                          WHERE ((fe.asset_id IN (` + forms + `) AND fe.quote_id IN (` + usdProxyQuotes + `))
-		                             OR (fe.quote_id IN (` + forms + `) AND fe.asset_id IN (` + usdProxyQuotes + `)))
-		                            AND fe.frozen_at < prices_1m.bucket + INTERVAL '1 minute'
-		                            AND (fe.recovered_at IS NULL OR fe.recovered_at > prices_1m.bucket))`
+		         AND NOT ` + xlmUSDFreezeOverlap("prices_1m.bucket", sac)
 	return `(SELECT form_rank, bucket, sum(px * volume_usd) / sum(volume_usd) AS vwap
 		    FROM (
 		      SELECT array_position(ARRAY[` + forms + `], base_asset) AS form_rank,
