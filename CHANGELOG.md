@@ -20,6 +20,36 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.113.0] — 2026-10-13
+
+20 commits since v0.112.0. No migrations. Two new ClickHouse tables (the entry index). No `pkg/*` break (`pkg/client` gains optional credit, price-provenance, vetted-ISIN and `detectors_partial` fields).
+
+### Operator actions
+
+- **ClickHouse:** apply `deploy/clickhouse/entry_index.sql`, then run `ch-entry-index` to build `stellar.account_entry_ledgers` and `stellar.asset_entry_ledgers`; the `entry-index` timer keeps them current and `stellarindex_entry_index_lagging` fires when it falls behind (#3418).
+- **ops:** `verify-usd-volume` runs nightly; `stellarindex_usd_volume_estimated_tier_high` and `stellarindex_verify_usd_volume_stale` are new alerts (#3416).
+- **config:** EURC and PYUSD are declared fiat-pegged legs (EUR, USD) in the host template (#3415).
+- **ansible:** `compute-completeness-sep41` is installed only on hosts that watch SEP-41 contracts (#3405).
+- **ingest:** `backfill-external` replays a vendor daily XLM/USD close CSV into `trades` as `coingecko_daily`; its write gate defaults to dry-run (#3427).
+
+### Added
+
+- **api:** lone-vendor values are credited and fiat listing rows carry FX provenance (#3420); the peg walk's withheld reason is served instead of a bool (#3417); `/v1/mev` flags `detectors_partial` off a detection heartbeat (#3413).
+- **rwa:** a hand-vetted ISIN binding is the fourth classic basis (#3419).
+- **trades:** declared fiat-pegged legs are valued off the fiat rate within a 2% band (#3415).
+
+### Fixed
+
+- **api:** vendor-only price buckets are skipped on the inception anchor and point-in-time VWAP, their volumes are blank on the wire, and non-VWAP sources stay out of the raw trade window (#3428).
+- **mev:** frozen XLM/USD-proxy minutes are excluded from the anchor and refused at ingest, anchor-valued notionals are flagged, and a stored `usd_volume` stamped inside a freeze is set aside (#3411, #3426, 9c4c6ccf8).
+- **freeze:** a lost `freeze_events` row is retried, counted and logged (#3422).
+- **supply:** archived SAC balances stay served; only real removals are tombstoned (#3414).
+
+### Changed
+
+- **deps:** go minor/patch group bumped, 11 updates (#3412).
+- **test:** 29 small test files folded into their package files; style-only AST and prose guard tests deleted (#3406–#3409).
+
 ## [v0.112.0] — 2026-10-12
 
 214 commits since v0.111.0, most of them test-file folds and comment clean-up. One migration (0215). One new ClickHouse table. No `pkg/*` break (`pkg/client` gains optional `stale` and `triangulated` price fields).
