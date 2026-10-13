@@ -74,6 +74,11 @@ type Flags struct {
 	// currency's ticker but its issuer does not (someone issued their own "USDC"); the
 	// `unverified_warning` body points at the verified asset.
 	UnverifiedTickerCollision bool `json:"unverified_ticker_collision,omitempty"`
+	// DetectorsPartial: /v1/mev when the aggregator's MEV worker has not completed a run within the
+	// heartbeat TTL, its last run did not resolve every lake tx-order hash (sandwich and
+	// oracle_sandwich ran on a partial map or not at all), or the heartbeat could not be read. A
+	// quiet feed under this flag is a detection gap, not a quiet network.
+	DetectorsPartial bool `json:"detectors_partial,omitempty"`
 	// FiltersIgnored names the row-narrowing query parameters the response did NOT apply, spelled
 	// as sent; a listing that dropped a filter is otherwise the same 200 as one that matched.
 	FiltersIgnored []string `json:"filters_ignored,omitempty"`

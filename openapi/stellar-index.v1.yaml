@@ -3709,7 +3709,13 @@ paths:
         key encoding is unknown.
 
         200 + empty array when nothing's been detected or the reader
-        isn't wired (feature-gated, like /v1/lending/pools).
+        isn't wired (feature-gated, like /v1/lending/pools). An empty or
+        short page is only "quiet" when `flags.detectors_partial` is
+        absent: it is set when the detection worker has not completed a
+        run within 15 minutes, when its last run could not resolve every
+        intra-ledger tx order from the lake (so `sandwich` and
+        `oracle_sandwich` ran on a partial map or not at all), or when
+        the worker's heartbeat could not be read.
       parameters:
         - { name: kind, in: query, description: "Filter to one pattern (e.g. arbitrage).", schema: { type: string, enum: [arbitrage, sandwich, oracle_sandwich, oracle_deviation, liquidation_cascade, wash_trade] } }
         - { name: limit, in: query, description: "Maximum events to return (1-500, default 50).", schema: { type: integer, minimum: 1, maximum: 500, default: 50 } }
@@ -16287,6 +16293,17 @@ components:
             asset, contract or ledger the response is about. The figures are
             served unchanged; treat them as unconfirmed. The envelope's
             `under_review_reason` says why. Omitted when false.
+        detectors_partial:
+          type: boolean
+          default: false
+          description: >
+            Set on `/v1/mev` when the aggregator's MEV detection worker has not
+            completed a run within 15 minutes, when its last run could not
+            resolve every intra-ledger tx order from the lake (the `sandwich`
+            and `oracle_sandwich` detectors ran on a partial map or not at
+            all), or when the worker's heartbeat could not be read. An empty
+            or short feed under this flag is a detection gap, not a quiet
+            network. Omitted when false.
       required: [stale, reduced_redundancy, triangulated, divergence_warning]
 
     Pagination:

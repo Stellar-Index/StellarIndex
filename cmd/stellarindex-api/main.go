@@ -36,6 +36,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/confidence"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/freeze"
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/mev"
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming/redispub"
 	"github.com/Stellar-Index/StellarIndex/internal/api/streampublish"
@@ -392,6 +393,16 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		}
 		freezeLooker = fl
 		logger.Info("freeze looker wired")
+	}
+
+	// Reads the MEV worker's run heartbeat; without Redis /v1/mev always flags detectors_partial.
+	var mevPulse v1.MEVPulseLooker
+	if rdb != nil {
+		hb, err := mev.NewRedisHeartbeat(mev.HeartbeatOptions{Cache: rdb, Logger: logger})
+		if err != nil {
+			return fmt.Errorf("mev heartbeat: %w", err)
+		}
+		mevPulse = hb
 	}
 
 	// The hub is built unconditionally so /v1/price/stream never 503s; the per-pair publisher
@@ -933,6 +944,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		SourcesStats: cachedSourcesStats,
 		Lending:      store,
 		MEV:          store,
+		MEVPulse:     mevPulse,
 		Anomalies:    store,
 		Divergences:  store,
 		// The same threshold the divergence worker fires on, so charts shade the real alert band.

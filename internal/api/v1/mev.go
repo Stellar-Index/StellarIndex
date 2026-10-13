@@ -26,6 +26,28 @@ type MEVReader interface {
 	ListMEVEvents(ctx context.Context, kind string, limit int) ([]timescale.MEVEventRow, error)
 }
 
+// MEVPulseLooker reads the MEV worker's run heartbeat; mev.RedisHeartbeat implements it.
+type MEVPulseLooker interface {
+	Pulse(ctx context.Context) (full, present bool, err error)
+}
+
+// mevDetectorsPartial is the flags.detectors_partial value: false only on a fresh full beat. An
+// unwired looker or a failed read counts as partial, since "no detector ran" and "cannot tell"
+// must not read as a quiet network.
+func (s *Server) mevDetectorsPartial(r *http.Request) bool {
+	if s.MEV == nil || s.MEVPulse == nil {
+		return true
+	}
+	full, present, err := s.MEVPulse.Pulse(r.Context())
+	if err != nil {
+		if !clientAborted(r, err) {
+			s.logger.Warn("mev: heartbeat read failed", "err", err)
+		}
+		return true
+	}
+	return !(full && present)
+}
+
 // MEVEventView is a /v1/mev entry; detail holds per-kind evidence plus a note on what is claimed, and profit_usd is null because no detector estimates profit.
 type MEVEventView struct {
 	EventID          string          `json:"event_id"`
@@ -43,8 +65,9 @@ type MEVEventView struct {
 // handleMEVEvents serves GET /v1/mev, newest first; ?kind= filters, ?limit= defaults to 50 (max 500).
 // Returns 200 with an empty array when no MEVReader is wired or nothing is detected.
 func (s *Server) handleMEVEvents(w http.ResponseWriter, r *http.Request) {
+	flags := Flags{DetectorsPartial: s.mevDetectorsPartial(r)}
 	if s.MEV == nil {
-		writeJSON(w, []MEVEventView{}, Flags{})
+		writeJSON(w, []MEVEventView{}, flags)
 		return
 	}
 	limit, ok := parseExplorerLimit(w, r, 50, 500)
@@ -109,7 +132,7 @@ func (s *Server) handleMEVEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		out[i] = v
 	}
-	writeJSON(w, out, Flags{})
+	writeJSON(w, out, flags)
 }
 
 // rawOrNull passes a stored jsonb string through, or JSON null when empty or invalid (defensive; the column is NOT NULL).

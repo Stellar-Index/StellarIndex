@@ -1858,7 +1858,13 @@ export interface paths {
          *     key encoding is unknown.
          *
          *     200 + empty array when nothing's been detected or the reader
-         *     isn't wired (feature-gated, like /v1/lending/pools).
+         *     isn't wired (feature-gated, like /v1/lending/pools). An empty or
+         *     short page is only "quiet" when `flags.detectors_partial` is
+         *     absent: it is set when the detection worker has not completed a
+         *     run within 15 minutes, when its last run could not resolve every
+         *     intra-ledger tx order from the lake (so `sandwich` and
+         *     `oracle_sandwich` ran on a partial map or not at all), or when
+         *     the worker's heartbeat could not be read.
          */
         get: operations["listMevEvents"];
         put?: never;
@@ -7902,6 +7908,11 @@ export interface components {
              * @default false
              */
             under_review: boolean;
+            /**
+             * @description Set on `/v1/mev` when the aggregator's MEV detection worker has not completed a run within 15 minutes, when its last run could not resolve every intra-ledger tx order from the lake (the `sandwich` and `oracle_sandwich` detectors ran on a partial map or not at all), or when the worker's heartbeat could not be read. An empty or short feed under this flag is a detection gap, not a quiet network. Omitted when false.
+             * @default false
+             */
+            detectors_partial: boolean;
         };
         /**
          * @description Present on list endpoints when more rows exist beyond the

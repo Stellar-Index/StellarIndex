@@ -109,6 +109,10 @@ type Flags struct {
 	// envelope flag (G22-03). The decoder ignores unknown fields so
 	// adding this is non-breaking for older SDK builds.
 	UnverifiedTickerCollision bool `json:"unverified_ticker_collision,omitempty"`
+	// DetectorsPartial fires on `/v1/mev` when the detection worker has
+	// not completed a full run within its heartbeat TTL, so a quiet feed is
+	// a detection gap rather than a quiet network.
+	DetectorsPartial bool `json:"detectors_partial,omitempty"`
 	// FiltersIgnored names the row-narrowing query parameters the
 	// response did NOT apply, spelled as the caller sent them
 	// ("type", "code", "issuer", "q"). Empty — and omitted — when
