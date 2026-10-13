@@ -144,3 +144,62 @@ groups:
             (usd_volume_populated="thin") for a market that should have cleared the floor.
 
             Plan + measurements: docs/operations/usd-volume-coverage-plan.md
+
+      # The estimated tier is the FX-bridged residual; the coverage alerts
+      # above cannot see a pegged asset sliding into it because its rows
+      # are still PRICED. Measured 2026-10: $0.4-0.9M/day estimated against
+      # $3.5-3.9B exact. Written daily by verify-usd-volume.timer.
+      - alert: stellarindex_usd_volume_estimated_tier_high
+        expr: stellarindex_verify_usd_volume_tier_usd{tier="estimated"} > 10000000
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: usd-volume-coverage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/usd-volume-coverage-plan.md
+          summary: "Estimated-tier usd_volume was {{ $value | printf \"%.0f\" }} USD yesterday"
+          description: |
+            The FX-bridged (estimated) tier summed over $10M for the last checked
+            UTC day; the measured baseline is $0.4-0.9M against $3.5-3.9B exact.
+            A jump means a pegged asset fell out of the exact tiers (peg list or
+            sac_wrappers entry missing, declared fiat peg outside its 200 bps
+            band) or an unpriced market started clearing the substance gate.
+
+            Find the groups:
+              SELECT source, base_asset, quote_asset, sum(usd_volume)
+                FROM trades
+               WHERE ts >= date_trunc('day', now() - interval '1 day')
+                 AND ts <  date_trunc('day', now())
+               GROUP BY 1,2,3 ORDER BY 4 DESC LIMIT 20;
+            and compare against `stellarindex-ops verify-usd-volume -day <date>`,
+            whose tier table names the group. Exact-tier violations and crashes
+            open the generic stellarindex_systemd_unit_failed ticket instead.
+
+            Plan + measurements: docs/operations/usd-volume-coverage-plan.md
+
+      # absent_over_time arm: the plain time() branch is the empty vector
+      # when the textfile was never written, the one case a staleness
+      # rule most needs to see.
+      - alert: stellarindex_verify_usd_volume_stale
+        expr: |
+          (time() - stellarindex_verify_usd_volume_last_run_unix) > 108000
+          or
+          absent_over_time(stellarindex_verify_usd_volume_last_run_unix[30h])
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: usd-volume-coverage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/usd-volume-coverage-plan.md
+          summary: "verify-usd-volume has not completed in 30 hours"
+          description: |
+            No verify-usd-volume run has stamped last_run_unix in 30 hours, so
+            stellarindex_usd_volume_estimated_tier_high is reading a stale day
+            or nothing. Check `systemctl status verify-usd-volume.timer` and the
+            unit's journal; a failed run opens stellarindex_systemd_unit_failed
+            as well. Right after the first deploy this fires until the 05:12 UTC
+            run; `systemctl start verify-usd-volume.service` clears it.
+
+            Plan + measurements: docs/operations/usd-volume-coverage-plan.md

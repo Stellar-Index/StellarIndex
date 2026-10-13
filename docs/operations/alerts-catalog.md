@@ -28,7 +28,7 @@ enforces it); any per-alert detail page follows it.
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 68 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 263 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 265 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -99,6 +99,8 @@ enforces it); any per-alert detail page follows it.
 | `stellarindex_sdf_reserve_list_drift` | `stellarindex_sdf_reserve_list_drift > 0` per `kind` (`missing` = SDF publishes it, we do not exclude it; `extra` = we exclude it, SDF no longer publishes it) | sustained 26 h (two daily runs). The gauge is absent — not zero — when the published source (stellar/dashboard `common/lumens.js`) was unreadable; that is `_persistently_skipped{check="sdf_reserve_list"}` | ticket | [served-value-drift](runbooks/data-freshness.md#stellarindex_sdf_reserve_list_drift) |
 | `stellarindex_cex_usd_volume_coverage_low` | per-source `increase(stellarindex_trade_inserts_total{usd_volume_populated="yes"}[1h])` / total, external venues | < 99.9% sustained 30 min | ticket | [usd-volume-coverage-plan](usd-volume-coverage-plan.md) |
 | `stellarindex_onchain_usd_volume_coverage_low` | same ratio over `[6h]`, aggregated across on-chain venues, denominator excluding `usd_volume_populated=~"unroutable|thin"` (same-issuer classic pairs; markets below the substance floor) | < 99.5% sustained 1 h | ticket | [usd-volume-coverage-plan](usd-volume-coverage-plan.md) |
+| `stellarindex_usd_volume_estimated_tier_high` | `stellarindex_verify_usd_volume_tier_usd{tier="estimated"}`, the FX-bridged tier's USD sum for the last checked day, written daily by `verify-usd-volume.timer` (measured $0.4-0.9M/day against $3.5-3.9B exact) | > $10M sustained 15 min | ticket | [usd-volume-coverage-plan](usd-volume-coverage-plan.md) |
+| `stellarindex_verify_usd_volume_stale` | `time() - stellarindex_verify_usd_volume_last_run_unix`, with an `absent_over_time` arm for a textfile never written | > 30 h sustained 1 h | ticket | [usd-volume-coverage-plan](usd-volume-coverage-plan.md) |
 | `stellarindex_ingestion_ch_live_sink_drops` | `increase(stellarindex_ch_live_sink_ledgers_total{outcome="dropped"}[10m])` | > 0 sustained 10 min | ticket | [ch-live-sink-drops](runbooks/clickhouse.md#stellarindex_ingestion_ch_live_sink_drops) |
 | `stellarindex_ingestion_ch_live_sink_drops_sustained` | `increase(stellarindex_ch_live_sink_ledgers_total{outcome="dropped"}[1h])` | > 0 sustained 1 h | page | [ch-live-sink-drops](runbooks/clickhouse.md#stellarindex_ingestion_ch_live_sink_drops) |
 | `stellarindex_ingestion_ch_live_sink_errors` | `increase(stellarindex_ch_live_sink_ledgers_total{outcome="errored"}[30m])` | > 0 sustained 15 min | ticket | [ch-live-sink-errors](runbooks/clickhouse.md#stellarindex_ingestion_ch_live_sink_errors) |

@@ -1,0 +1,52 @@
+# systemd unit: usd_volume valuation check.
+#
+# Rendered by Ansible. Runs `stellarindex-ops verify-usd-volume` over
+# yesterday's trades: exact tiers (a USD-pegged leg) must match their
+# identity, and the run exits non-zero on any violation. It writes the
+# per-tier USD sums to the node_exporter textfile collector as
+# stellarindex_verify_usd_volume_*, which is what makes the ESTIMATED
+# tier observable: the coverage alerts only count priced-vs-unpriced rows,
+# so a pegged asset silently sliding into the FX-bridged tier moved no
+# metric until this unit existed. A non-zero exit opens the generic
+# stellarindex_systemd_unit_failed ticket on purpose; a wrong served
+# number is a same-day ticket, not a ride-out.
+
+[Unit]
+Description=Stellar Index — usd_volume valuation check (daily)
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/usd-volume-coverage-plan.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/verify-usd-volume
+EnvironmentFile=-/etc/default/stellarindex
+EnvironmentFile=-/etc/default/stellarindex-ops
+
+# Defaults. Operators override via /etc/default/verify-usd-volume.
+Environment=CONFIG=/etc/stellarindex.toml
+Environment=DAYS=1
+Environment=TEXTFILE=/var/lib/node_exporter/textfile_collector/verify_usd_volume.prom
+
+ExecStart=/usr/local/bin/stellarindex-ops verify-usd-volume \
+  -config ${CONFIG} \
+  -days ${DAYS} \
+  -textfile ${TEXTFILE}
+
+User=stellarindex
+Group=stellarindex
+
+ProtectSystem=strict
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/node_exporter/textfile_collector
+
+# One day of grouped trade reads takes seconds; this only stops a hung
+# connection from pinning the timer.
+TimeoutStartSec=20min
+
+[Install]
+WantedBy=multi-user.target
