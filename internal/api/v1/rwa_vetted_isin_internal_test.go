@@ -3,6 +3,7 @@ package v1
 import (
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/rwa"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -54,11 +55,18 @@ func TestAdmitClassicCandidates_VettedISINBindingAdmitsAndCollides(t *testing.T)
 	if other.isinCollision == nil || other.isinCollision.DeclaredByIssuers != 2 {
 		t.Fatalf("impostor collision %+v, want the vetted claim counted", other.isinCollision)
 	}
-	row := rwaVettedISINOf(got.vettedISIN)
+	deadline := got.vettedISIN.ReviewDeadline()
+	row := rwaVettedISINOf(got.vettedISIN, deadline)
 	if row == nil || row.Source != got.vettedISIN.Source || row.VerifiedOn != got.vettedISIN.VerifiedOn || row.Instrument == "" {
 		t.Fatalf("served binding %+v", row)
 	}
-	if rwaVettedISINOf(nil) != nil {
+	if row.ReviewDue {
+		t.Fatalf("review_due at the deadline itself: %+v", row)
+	}
+	if late := rwaVettedISINOf(got.vettedISIN, deadline.Add(time.Nanosecond)); !late.ReviewDue {
+		t.Fatalf("review_due not set past the deadline: %+v", late)
+	}
+	if rwaVettedISINOf(nil, deadline) != nil {
 		t.Fatal("nil binding served")
 	}
 }

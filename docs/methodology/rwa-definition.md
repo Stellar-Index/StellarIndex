@@ -249,7 +249,8 @@ tier does not keep, and declare neither `anchor_asset_type` nor
 case. A maintainer reads the issuer's own SEP-1 and binds the ISIN to
 exactly that `(code, issuer)` in `rwa.VettedISINBindings`, with the page
 it was read from and the date, and the row serves all of it as
-`vetted_isin` with a review date one quarter out. The arm is tried last,
+`vetted_isin` with a review date one quarter out; past that date the
+row carries `review_due: true`, labelled and still served. The arm is tried last,
 so an issuer that later declares `anchor_asset` wins on its own
 declaration; it admits without a class; it keys on the exact pair, so
 the same code under any other issuer gets nothing from it; and R2 and

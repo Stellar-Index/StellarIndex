@@ -18152,6 +18152,12 @@ components:
           format: date
           description: One quarter after `verified_on`; the binding is due for re-reading after this date.
           example: "2027-01-11"
+        review_due:
+          type: boolean
+          default: false
+          description: |
+            `true` once the serving time is past `review_by`. The row is
+            labelled, not withheld, like a stale reference.
 
     RWAISINCollision:
       type: object

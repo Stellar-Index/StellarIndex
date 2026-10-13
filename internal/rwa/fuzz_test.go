@@ -107,6 +107,9 @@ func FuzzQualify(f *testing.F) {
 	f.Add("USDC", issuer, true, "stock", "", "issuer", "scam", false)
 	f.Add("GOLD", issuer, false, "commodity", "", "issuer", "", false)
 	f.Add(" ", issuer, true, "bond", "", "issuer", "", false)
+	// The two pair-keyed arms: a hand-vetted ISIN and a fund-NAV ticker, each under its own issuer.
+	f.Add("BB1", "GD5J6HLF5666X4AZLTFTXLY46J5SW7EXRKBLEYPJP33S33MXZGV6CWFN", true, "", "", "anchor", "issuer", false)
+	f.Add("WTTS", "GBBV5CF7UPA2PYRPA632URLB55BWML7X4H33ZRCDWMTULOXDGPHJR5VI", true, "", "", "issuer", "", false)
 	f.Fuzz(func(t *testing.T, code, iss string, bound bool, anchorType, anchorAsset, tag1, tag2 string, sibling bool) {
 		c := rwa.Candidate{
 			Code: code, Issuer: iss, BoundSep1: bound,
@@ -148,6 +151,11 @@ func FuzzQualify(f *testing.F) {
 		case rwa.BasisSep1ISIN:
 			if class != "" || v.AnchorClass != "" || !rwa.IsISIN(anchorAsset) {
 				t.Fatalf("isin arm on class=%q asset=%q", class, anchorAsset)
+			}
+		case rwa.BasisSep1ISINVetted:
+			_, vetted := rwa.VettedISIN(code, iss)
+			if class != "" || v.AnchorClass != "" || rwa.IsISIN(anchorAsset) || !vetted {
+				t.Fatalf("vetted arm on class=%q asset=%q vetted=%v", class, anchorAsset, vetted)
 			}
 		default:
 			t.Fatalf("unknown basis %q", v.Basis)

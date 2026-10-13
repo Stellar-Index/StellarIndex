@@ -9479,6 +9479,12 @@ export interface components {
              * @example 2027-01-11
              */
             review_by: string;
+            /**
+             * @description `true` once the serving time is past `review_by`. The row is
+             *     labelled, not withheld, like a stale reference.
+             * @default false
+             */
+            review_due: boolean;
         };
         /**
          * @description Present only when the claimed ISIN — `anchor_asset` when that is

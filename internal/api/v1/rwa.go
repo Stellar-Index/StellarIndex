@@ -572,13 +572,18 @@ type RWAVettedISIN struct {
 	Source     string `json:"source"`
 	VerifiedOn string `json:"verified_on"`
 	ReviewBy   string `json:"review_by"`
+	// ReviewDue flips once now passes ReviewBy: labelled, not withheld, like a stale reference.
+	ReviewDue bool `json:"review_due,omitempty"`
 }
 
-func rwaVettedISINOf(b *rwa.VettedISINBinding) *RWAVettedISIN {
+func rwaVettedISINOf(b *rwa.VettedISINBinding, now time.Time) *RWAVettedISIN {
 	if b == nil {
 		return nil
 	}
-	return &RWAVettedISIN{ISIN: b.ISIN, Instrument: b.Instrument, Source: b.Source, VerifiedOn: b.VerifiedOn, ReviewBy: b.ReviewBy}
+	return &RWAVettedISIN{
+		ISIN: b.ISIN, Instrument: b.Instrument, Source: b.Source,
+		VerifiedOn: b.VerifiedOn, ReviewBy: b.ReviewBy, ReviewDue: b.ReviewDue(now),
+	}
 }
 
 // RWAGroupTotal is one row of the per-class breakdown.
@@ -1127,7 +1132,8 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	classicAssets, unobserved := s.rwaAssetRows(m, rows)
+	now := time.Now()
+	classicAssets, unobserved := s.rwaAssetRows(m, rows, now)
 	join.notObserved = unobserved
 
 	// The contract arm fails the response as the classic arm does: degrading to zero rows would
@@ -1161,7 +1167,6 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 	// the `CODE-GISSUER` id first, then the derived SAC address, since the directory publishes an
 	// asset under either form. An unavailable snapshot yields a nil map: adds a reference, never removes.
 	classicListingRefs := s.assetListingSnapshot(r.Context()).byAddress
-	now := time.Now()
 	for i := range view.Assets {
 		rwaApplyReference(&view.Assets[i], refs, listingRefs, classicListingRefs, now)
 	}
@@ -1389,7 +1394,7 @@ func rwaMatchMemberRows(codes []string, rows []timescale.AssetRow) ([]timescale.
 // rwaAssetRows joins the membership evidence to the valued listing rows and returns how many members the join could not place; a member
 // with no listing row
 // is dropped but counted, because "admitted then never served" is otherwise invisible.
-func (s *Server) rwaAssetRows(m rwaMembership, rows map[string]AssetDetail) ([]RWAAsset, int) {
+func (s *Server) rwaAssetRows(m rwaMembership, rows map[string]AssetDetail, now time.Time) ([]RWAAsset, int) {
 	out := make([]RWAAsset, 0, len(m.members))
 	notObserved := 0
 	for _, mem := range m.members {
@@ -1412,7 +1417,7 @@ func (s *Server) rwaAssetRows(m rwaMembership, rows map[string]AssetDetail) ([]R
 			Recognition:         mem.recognition,
 			AnchorAsset:         strings.TrimSpace(mem.anchorAsset),
 			ISINCollision:       mem.isinCollision,
-			VettedISIN:          rwaVettedISINOf(mem.vettedISIN),
+			VettedISIN:          rwaVettedISINOf(mem.vettedISIN, now),
 			Valuation:           rwaValuationOf(d),
 			CirculatingSupply:   d.CirculatingSupply,
 			// The asset's OWN scale: the reference valuation divides by it, and a constant would
