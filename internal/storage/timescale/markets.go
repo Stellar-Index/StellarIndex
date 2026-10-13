@@ -930,7 +930,8 @@ func (s *Store) GetPairsVolumeHistory24hBatch(ctx context.Context, pairs [][2]st
 	return out, nil
 }
 
-// FirstTradeBatch returns each requested pair's first daily bucket in prices_1d (the "since inception" anchor).
+// FirstTradeBatch returns each requested pair's first daily bucket in prices_1d (the "since inception" anchor). A bucket fed
+// only by non-VWAP sources is not a trade and does not anchor.
 func (s *Store) FirstTradeBatch(ctx context.Context, pairs [][2]string) (map[string]time.Time, error) {
 	if len(pairs) == 0 {
 		return map[string]time.Time{}, nil
@@ -944,8 +945,9 @@ func (s *Store) FirstTradeBatch(ctx context.Context, pairs [][2]string) (map[str
           FROM prices_1d
          WHERE (base_asset, quote_asset) IN (
                SELECT UNNEST($1::text[]), UNNEST($2::text[]))
+           AND NOT COALESCE(sources <@ string_to_array($3, ','), false)
          GROUP BY base_asset, quote_asset`
-	rows, err := s.db.QueryContext(ctx, q, bases, quotes)
+	rows, err := s.db.QueryContext(ctx, q, bases, quotes, nonVWAPSourcesArg())
 	if err != nil {
 		return nil, fmt.Errorf("timescale: FirstTradeBatch: %w", err)
 	}

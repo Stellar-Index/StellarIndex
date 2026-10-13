@@ -900,7 +900,8 @@ func (s *Store) ClosedVWAPAtOrBefore(ctx context.Context, p canonical.Pair, ts t
 }
 
 // closedVWAPAtOrBeforeQueryTemplate returns the nearest closed bucket's RAW per-direction rows at-or-before an instant.
-// %[1]s table, %[2]s/%[3]s upper/lower bound literals (not binds), so chunks prune at plan time.
+// %[1]s table, %[2]s/%[3]s upper/lower bound literals (not binds), so chunks prune at plan time. $3 is the non-VWAP source
+// set: a bucket fed only by those sources is neither the latest nor served.
 const closedVWAPAtOrBeforeQueryTemplate = `
     WITH latest AS (
         SELECT max(b) AS b FROM (
@@ -908,11 +909,13 @@ const closedVWAPAtOrBeforeQueryTemplate = `
              WHERE base_asset = $1 AND quote_asset = $2
                AND bucket <= TIMESTAMPTZ '%[2]s'
                AND bucket >= TIMESTAMPTZ '%[3]s'
+               AND NOT COALESCE(sources <@ string_to_array($3, ','), false)
             UNION ALL
             SELECT max(bucket) AS b FROM %[1]s
              WHERE base_asset = $2 AND quote_asset = $1
                AND bucket <= TIMESTAMPTZ '%[2]s'
                AND bucket >= TIMESTAMPTZ '%[3]s'
+               AND NOT COALESCE(sources <@ string_to_array($3, ','), false)
         ) u
     ),
     r AS (
@@ -920,12 +923,14 @@ const closedVWAPAtOrBeforeQueryTemplate = `
           FROM %[1]s
          WHERE bucket = (SELECT b FROM latest)
            AND bucket >= TIMESTAMPTZ '%[3]s'
+           AND NOT COALESCE(sources <@ string_to_array($3, ','), false)
            AND base_asset = $1 AND quote_asset = $2
         UNION ALL
         SELECT base_asset, vwap::text AS vwap, COALESCE(volume_priced, 0)::text AS volume_priced
           FROM %[1]s
          WHERE bucket = (SELECT b FROM latest)
            AND bucket >= TIMESTAMPTZ '%[3]s'
+           AND NOT COALESCE(sources <@ string_to_array($3, ','), false)
            AND base_asset = $2 AND quote_asset = $1
     )
     SELECT (SELECT b FROM latest), base_asset, vwap, volume_priced
@@ -950,11 +955,11 @@ func (s *Store) closedVWAPAtOrBeforeRes(
 	const layout = "2006-01-02 15:04:05-07"
 	table := "prices_" + string(g)
 	// #nosec G201 — only `table` (from the validated enum) and two of our own time.Time bounds in
-	// a fixed layout are interpolated. Pair strings bind as $1/$2.
+	// a fixed layout are interpolated. Pair strings bind as $1/$2, the non-VWAP source set as $3.
 	q := fmt.Sprintf(closedVWAPAtOrBeforeQueryTemplate,
 		table, upper.UTC().Format(layout), lower.UTC().Format(layout))
 
-	rows, err := s.db.QueryContext(ctx, q, p.Base.String(), p.Quote.String())
+	rows, err := s.db.QueryContext(ctx, q, p.Base.String(), p.Quote.String(), nonVWAPSourcesArg())
 	if err != nil {
 		return time.Time{}, "", false, fmt.Errorf("timescale: ClosedVWAPAtOrBefore[%s]: %w", g, err)
 	}

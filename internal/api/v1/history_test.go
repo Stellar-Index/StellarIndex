@@ -1756,3 +1756,49 @@ func TestHistoryCSV(t *testing.T) {
 		t.Errorf("row = %q, want price 2.0000000000, source soroswap, base native", row)
 	}
 }
+
+// A point fed only by a vendor daily close carries its provenance and no volume; a fill-derived point keeps its
+// volume and, being inside the VWAP, names no source.
+func TestHistoryPoints_VendorOnlyPointDropsVolume(t *testing.T) {
+	t0 := time.Unix(1_770_000_000, 0).UTC()
+	vol := "0.5"
+	reader := &stubHistoryReader{
+		points: []v1.HistoryPoint{
+			{Bucket: t0, VWAP: "0.0030", VolumeUSD: &vol, Sources: []string{"coingecko_daily"}},
+			{Bucket: t0.Add(24 * time.Hour), VWAP: "0.124", VolumeUSD: &vol, Sources: []string{"kraken"}},
+		},
+	}
+	ts := httpTestServer(t, v1.New(v1.Options{History: reader}))
+
+	for _, path := range []string{
+		"/v1/history/since-inception?asset=native&quote=fiat:USD",
+		"/v1/chart?asset=native&quote=fiat:USD",
+	} {
+		resp := mustGet(t, ts.URL+path)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s: status = %d", path, resp.StatusCode)
+		}
+		var envelope struct {
+			Data struct {
+				Points []v1.HistoryPointWire `json:"points"`
+			} `json:"data"`
+		}
+		mustDecode(t, resp, &envelope)
+		pts := envelope.Data.Points
+		if len(pts) != 2 {
+			t.Fatalf("%s: got %d points, want 2", path, len(pts))
+		}
+		if pts[0].VUSD != nil {
+			t.Errorf("%s: vendor-only point v_usd = %q, want none", path, *pts[0].VUSD)
+		}
+		if len(pts[0].Sources) != 1 || pts[0].Sources[0] != "coingecko_daily" {
+			t.Errorf("%s: vendor-only point sources = %v, want [coingecko_daily]", path, pts[0].Sources)
+		}
+		if pts[1].VUSD == nil || *pts[1].VUSD != vol {
+			t.Errorf("%s: fill point v_usd = %v, want %q", path, pts[1].VUSD, vol)
+		}
+		if pts[1].Sources != nil {
+			t.Errorf("%s: fill point sources = %v, want none", path, pts[1].Sources)
+		}
+	}
+}

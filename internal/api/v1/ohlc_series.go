@@ -202,6 +202,7 @@ func (s *Server) handleOHLCSeries(
 	}
 
 	bars = capOHLCSeriesNewest(bars, limit)
+	bars = withoutVendorVolumes(bars)
 
 	// dex-nonstandard-decimals forward normalization: K = 10^(baseDec-quoteDec) is constant for the
 	// requested pair, so applying it once to the finished series (not per CAGG row) is exact, also
@@ -253,6 +254,26 @@ func capOHLCSeriesNewest(bars []OHLCSeriesBar, limit int) []OHLCSeriesBar {
 	copy(out, bars[len(bars)-limit:])
 	for i := range out {
 		out[i].Truncated = true
+	}
+	return out
+}
+
+// withoutVendorVolumes blanks v_base, v_quote and n on bars fed only by non-VWAP sources: a vendor daily close is one
+// carrier row per day, not fills, so its amounts are not volume. O/H/L/C and `sources` stay and state the provenance.
+// The input is left untouched; a copy is made only when a bar changes.
+func withoutVendorVolumes(bars []OHLCSeriesBar) []OHLCSeriesBar {
+	var out []OHLCSeriesBar
+	for i := range bars {
+		if !vendorOnlySources(bars[i].Sources) {
+			continue
+		}
+		if out == nil {
+			out = append([]OHLCSeriesBar(nil), bars...)
+		}
+		out[i].VBase, out[i].VQuote, out[i].N = "0", "0", 0
+	}
+	if out == nil {
+		return bars
 	}
 	return out
 }

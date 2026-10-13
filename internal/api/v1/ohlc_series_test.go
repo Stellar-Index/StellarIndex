@@ -1279,3 +1279,37 @@ func TestOHLCSeriesVolumeFormatMatchesAcrossPaths(t *testing.T) {
 		}
 	}
 }
+
+// A bar fed only by a vendor daily close reaches the wire with its OHLC and provenance but no volume: the carrier
+// row's amounts are not fills. A fill-derived bar keeps its volumes.
+func TestOHLCSeries_VendorOnlyBarCarriesNoVolume(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	vendor := mkSeriesBar(t0, "0.0030", "0.0030", "0.0030", "0.0030", "10000000", "30000", 1)
+	vendor.Sources = []string{"coingecko_daily"}
+	fill := mkSeriesBar(t0.Add(time.Hour), "0.165", "0.18", "0.16", "0.175", "1200", "200", 5)
+	fill.Sources = []string{"sdex"}
+	reader := &stubHistoryReader{ohlcBars: []v1.OHLCSeriesBar{vendor, fill}}
+	ts := httpTestServer(t, v1.New(v1.Options{History: reader}))
+
+	resp := mustGet(t, ts.URL+"/v1/ohlc?base=native&quote=crypto:BTC&interval=1h&limit=24")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var body struct {
+		Data v1.OHLCSeriesResponse `json:"data"`
+	}
+	mustDecode(t, resp, &body)
+	if got := len(body.Data.Intervals); got != 2 {
+		t.Fatalf("len(intervals) = %d, want 2", got)
+	}
+	v := body.Data.Intervals[0]
+	if v.O != "0.0030" || v.C != "0.0030" || v.VBase != "0" || v.VQuote != "0" || v.N != 0 {
+		t.Errorf("vendor bar = %+v, want o/c 0.0030, v_base/v_quote 0, n 0", v)
+	}
+	if len(v.Sources) != 1 || v.Sources[0] != "coingecko_daily" {
+		t.Errorf("vendor bar sources = %v, want [coingecko_daily]", v.Sources)
+	}
+	if f := body.Data.Intervals[1]; f.VBase != "1200" || f.VQuote != "200" || f.N != 5 {
+		t.Errorf("fill bar = %+v, want its volumes kept", f)
+	}
+}
