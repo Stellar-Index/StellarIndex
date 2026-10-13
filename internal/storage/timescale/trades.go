@@ -1250,6 +1250,20 @@ func offChainSourcesArg() string {
 	return strings.Join(names, ",")
 }
 
+// nonVWAPSourcesArg is the comma-joined registry names with IncludeInVWAP=false, bound as `string_to_array($n, ',')`. A CAGG
+// bucket whose `sources` all sit in this set holds no fill-derived VWAP (a vendor daily close, a derived series); readers that
+// pick a first or latest bucket skip it. An unregistered source is outside the set, so such a bucket still counts.
+func nonVWAPSourcesArg() string {
+	var names []string
+	for name, md := range external.Registry {
+		if !md.IncludeInVWAP {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return strings.Join(names, ",")
+}
+
 // LatestTradePerSource returns each source's most-recent trade on the market, in either stored direction, oriented as requested; sourceFilter "" means all; unbounded-latest-ok: "last trade seen" has no window that preserves it;
 func (s *Store) LatestTradePerSource(ctx context.Context, p canonical.Pair, sourceFilter string) ([]canonical.Trade, error) {
 	const q = `

@@ -528,9 +528,25 @@ type HistoryPointWire struct {
 	Sources []string `json:"sources,omitempty"`
 }
 
-// historyWirePoint renders a reader point, with provenance only when a non-VWAP venue contributed.
+// historyWirePoint renders a reader point, with provenance only when a non-VWAP venue contributed. A point fed only by
+// non-VWAP venues carries no volume: a vendor daily close is one carrier row, not fills.
 func historyWirePoint(p HistoryPoint) HistoryPointWire {
-	return HistoryPointWire{T: WireTime(p.Bucket), P: p.VWAP, VUSD: p.VolumeUSD, Sources: nonVWAPSources(p.Sources)}
+	w := HistoryPointWire{T: WireTime(p.Bucket), P: p.VWAP, VUSD: p.VolumeUSD, Sources: nonVWAPSources(p.Sources)}
+	if vendorOnlySources(p.Sources) {
+		w.VUSD = nil
+	}
+	return w
+}
+
+// vendorOnlySources reports whether srcs is non-empty and every entry is registered with IncludeInVWAP=false; an
+// unregistered source keeps the bucket counted as fills.
+func vendorOnlySources(srcs []string) bool {
+	for _, s := range srcs {
+		if md, ok := external.Registry[s]; !ok || md.IncludeInVWAP {
+			return false
+		}
+	}
+	return len(srcs) > 0
 }
 
 // nonVWAPSources returns the sorted venues in srcs registered with IncludeInVWAP=false.

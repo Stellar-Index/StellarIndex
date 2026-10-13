@@ -408,6 +408,8 @@ func TestMarketsAndPoolsFoldSACSpelling(t *testing.T) {
 	// only under the SAC spelling.
 	early := now.Add(-72 * time.Hour)
 	seedGrainTrade(t, ctx, db, 805, "soroswap", early, xlmSAC, usdc, "10", "1", "1")
+	// A vendor daily close the day before is not a trade and must not pull the anchor earlier.
+	seedGrainTrade(t, ctx, db, 806, "coingecko_daily", now.Add(-96*time.Hour), xlmSAC, usdc, "10000000", "20000", "0.002")
 	if _, err := db.ExecContext(ctx, `CALL refresh_continuous_aggregate('prices_1d', NULL, NULL)`); err != nil {
 		t.Fatalf("refresh prices_1d: %v", err)
 	}
@@ -1495,5 +1497,61 @@ func TestMarketsSparklineMatchesListingVolume(t *testing.T) {
 			t.Errorf("%s: sparkline sums to %s, listing volume_24h_usd is %s",
 				key, sum.FloatString(7), headline.FloatString(7))
 		}
+	}
+}
+
+// A bucket fed only by a vendor daily close is not a trade: the point-in-time VWAP walks past it on every rung and
+// serves the nearest fill-derived bucket instead, or nothing.
+func TestClosedVWAPAtOrBefore_SkipsVendorOnlyBuckets(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	db := store.DB()
+
+	usdcAsset, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair, err := canonical.NewPair(canonical.NativeAsset(), usdcAsset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refresh := func() {
+		t.Helper()
+		for _, v := range []string{"prices_1m", "prices_15m", "prices_1h", "prices_4h", "prices_1d"} {
+			if _, err := db.ExecContext(ctx, `CALL refresh_continuous_aggregate('`+v+`', NULL, NULL)`); err != nil {
+				t.Fatalf("refresh %s: %v", v, err)
+			}
+		}
+	}
+
+	now := time.Now().UTC().Truncate(time.Minute)
+	asOf := now.Add(-29 * time.Hour)
+	vendorTS := now.Add(-30 * time.Hour)
+	seedGrainTrade(t, ctx, db, 807, "coingecko_daily", vendorTS, pair.Base.String(), pair.Quote.String(), "10000000", "20000", "0.002")
+	refresh()
+	if _, err := store.ClosedVWAPAtOrBefore(ctx, pair, asOf, 2*time.Hour); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("ClosedVWAPAtOrBefore over a vendor-only bucket: err = %v, want sql.ErrNoRows", err)
+	}
+
+	venueTS := now.Add(-33 * time.Hour)
+	seedGrainTrade(t, ctx, db, 808, "sdex", venueTS, pair.Base.String(), pair.Quote.String(), "10", "5", "1")
+	refresh()
+	at, err := store.ClosedVWAPAtOrBefore(ctx, pair, asOf, 6*time.Hour)
+	if err != nil {
+		t.Fatalf("ClosedVWAPAtOrBefore with a fill 4h earlier: %v", err)
+	}
+	if !at.Bucket.Equal(venueTS) {
+		t.Errorf("bucket = %s, want the fill minute %s, not the vendor close at %s", at.Bucket, venueTS, vendorTS)
+	}
+	got := new(big.Rat)
+	if _, ok := got.SetString(at.VWAP); !ok || got.Cmp(big.NewRat(1, 2)) != 0 {
+		t.Errorf("VWAP = %q, want 0.5 from the fill, not the vendor close", at.VWAP)
 	}
 }
