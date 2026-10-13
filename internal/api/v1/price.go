@@ -1005,7 +1005,7 @@ func (s *Server) priceFallback(ctx context.Context, asset, quote canonical.Asset
 	// substance gate: that floor is measured on the alias union, and a triangulated pair has zero
 	// literal rows BY CONSTRUCTION, so it would withhold the whole triangulated long tail.
 	if scamWithheld(ctx, s.Scam, asset, quote, "price_read") {
-		return fallbackResult{withheld: PriceWithheldUnattributed}
+		return fallbackResult{withheld: PriceWithheldScamIssuer}
 	}
 	if snap, srcs, served, triangulated, ok := s.tryRedisVWAPFallback(ctx, asset, quote); ok {
 		return fallbackResult{snap: snap, sources: srcs, served: served, triangulated: triangulated, ok: true, stale: true}
@@ -1362,6 +1362,9 @@ func (s *Server) tryStablecoinFiatProxy(ctx context.Context, asset, quote canoni
 		case pegXLMLegRefused:
 			// The peg's own XLM book names its reason (`substance` below the floor, as the listing
 			// says); a withheld XLM/USD pivot lies beyond that market and reads `upstream_leg`.
+			if withheld == "" {
+				withheld = PriceWithheldUnattributed
+			}
 			return PriceSnapshot{}, nil, false, withheld
 		case pegXLMLegNoMarket, pegXLMLegReadFailed, pegXLMLegFlagged:
 		}

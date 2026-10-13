@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
 // SEP40Price is the SEP-40 passthrough shape (/v1/oracle/lastprice, x_last_price), deliberately minimal to `(price, timestamp)` like on-chain oracles.
@@ -15,6 +16,23 @@ type SEP40Price struct {
 	Asset     string   `json:"asset"`
 	Price     string   `json:"price"`
 	Timestamp WireTime `json:"timestamp"`
+	// Credit names the vendor when every source behind the price is one licensed off-chain feed;
+	// absent for on-chain venues, oracles and mixes.
+	Credit string `json:"credit,omitempty"`
+}
+
+// creditForSources names the one licensed vendor behind every source, or nothing when any source
+// is on-chain or the sources span vendors: a composite is credited to no one.
+func creditForSources(sources []string) string {
+	credit := ""
+	for _, src := range sources {
+		c := external.Credit(src)
+		if c == "" || (credit != "" && c != credit) {
+			return ""
+		}
+		credit = c
+	}
+	return credit
 }
 
 // handleOracleLastPrice serves GET /v1/oracle/lastprice?asset=<id>: SEP-40 `lastprice` passthrough, quote always fiat:USD (other quotes:
@@ -176,6 +194,7 @@ func (s *Server) sep40Serve(ctx context.Context, asset, quote canonical.Asset, r
 		Asset:     asset.String(),
 		Price:     rd.snapshot.Price,
 		Timestamp: rd.snapshot.ObservedAt,
+		Credit:    creditForSources(rd.sources),
 	}
 	frozen := held.outcome == frozenServeHeld
 	flags := Flags{

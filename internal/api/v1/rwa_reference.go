@@ -446,7 +446,7 @@ func rwaApplyReference(
 		rwaApplyContractReference(a, listings[a.ContractID], now)
 		return
 	}
-	if rwa.ConstantNAVISINConflict(a.Code, a.Issuer, a.AnchorAsset) {
+	if rwa.ConstantNAVISINConflict(a.Code, a.Issuer, a.AnchorAsset) || rwa.VettedISINConflict(a.Code, a.Issuer, a.AnchorAsset) {
 		rwaRefuseReference(a, RWAPremiumReferenceISINMismatch)
 		return
 	}

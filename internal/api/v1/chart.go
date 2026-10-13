@@ -38,6 +38,9 @@ type ChartSeries struct {
 	// short of the present. Only reachable for timeframe=all; DataEndsAt marks where it ends.
 	RowCapTruncated bool      `json:"row_cap_truncated,omitempty"`
 	DataEndsAt      *WireTime `json:"data_ends_at,omitempty"`
+	// Credit names the vendor when every point of a fiat series comes from one licensed off-chain
+	// feed; absent for on-chain series and for a cross or mix of feeds.
+	Credit string `json:"credit,omitempty"`
 }
 
 // markDiscontinuity stamps the interior-gap signal onto a series about to be written: `points` has no holes, so a quiet market
@@ -482,6 +485,7 @@ func (s *Server) handleChartFiat(
 		})
 	}
 	series.Points = wire
+	series.Credit = fxSeriesCredit(points)
 
 	// Retention-truncation signal — same shape as the crypto path.
 	if !from.IsZero() && len(wire) > 0 {
@@ -548,6 +552,7 @@ func (s *Server) handleChartFiatCross(
 
 	wire := crossFiatChartPoints(basePts, quotePts)
 	series.Points = wire
+	series.Credit = fxSeriesCredit(append(append([]FXQuotePoint{}, basePts...), quotePts...))
 
 	// Retention-truncation signal — same shape as the direct path.
 	if !from.IsZero() && len(wire) > 0 {
@@ -1707,4 +1712,13 @@ func fiatSupplyWholeUnits(supplyStr string, decimals int) (*big.Rat, bool) {
 		v.Quo(v, new(big.Rat).SetInt(div))
 	}
 	return v, true
+}
+
+// fxSeriesCredit is creditForSources over the feeds behind a set of FX points.
+func fxSeriesCredit(points []FXQuotePoint) string {
+	sources := make([]string, 0, len(points))
+	for _, p := range points {
+		sources = append(sources, p.Source)
+	}
+	return creditForSources(sources)
 }

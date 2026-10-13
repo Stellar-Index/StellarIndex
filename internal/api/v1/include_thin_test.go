@@ -712,7 +712,7 @@ func TestIncludeThinRetriesOnlyWithheld(t *testing.T) {
 		{
 			name: "scam entry", reader: func() *chokepointReader { return proxyReader(nil) },
 			configure: func(o *v1.Options) { withPegs(t, thinPegID)(o); o.Scam = flaggedScamGate(t) },
-			path:      "/v1/price?asset=" + proxyTokenID + "&quote=fiat:USD", title: "Price withheld",
+			path:      "/v1/price?asset=" + proxyTokenID + "&quote=fiat:USD", title: "Price withheld — issuer flagged",
 		},
 		{
 			name: "fx leg", reader: func() *chokepointReader { return proxyReader(nil) },

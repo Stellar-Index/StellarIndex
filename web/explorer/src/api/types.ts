@@ -11983,6 +11983,8 @@ export interface components {
                  */
                 price_type: "vwap" | "twap" | "market_cap";
                 points: components["schemas"]["HistoryPoint"][];
+                /** @description Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. The value is the vendor name, not attribution text; a vendor's required wording (Powered by CoinGecko, Data sourced by Tiingo) still applies wherever the number is displayed. A fiat series carries it only when every point comes from that one feed; a cross or a mix of feeds carries none. */
+                credit?: string;
                 /**
                  * @description True when the requested timeframe extends before
                  *     the earliest available data on this deployment
@@ -12791,6 +12793,8 @@ export interface components {
                 price: string;
                 /** Format: date-time */
                 timestamp: string;
+                /** @description Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. The value is the vendor name, not attribution text; a vendor's required wording (Powered by CoinGecko, Data sourced by Tiingo) still applies wherever the number is displayed. Present on a fiat cross only when every leg comes from that one feed. */
+                credit?: string;
             };
         };
         OraclePricesEnvelope: components["schemas"]["EnvelopeMeta"] & {

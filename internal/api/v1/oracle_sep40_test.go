@@ -138,6 +138,16 @@ func TestOracleLastPrice_StablecoinFiatProxyFallback(t *testing.T) {
 	if env.Data.Asset != "native" {
 		t.Errorf("asset = %q, want \"native\"", env.Data.Asset)
 	}
+	if env.Data.Credit != "" {
+		t.Errorf("credit = %q, want none for an on-chain source", env.Data.Credit)
+	}
+
+	reader.sources["native/"+usdcClassic.String()] = []string{"coingecko"}
+	resp = mustGet(t, ts.URL+"/v1/oracle/lastprice?asset=native")
+	mustDecode(t, resp, &env)
+	if env.Data.Credit != "CoinGecko" {
+		t.Errorf("credit = %q, want the vendor named when it is the only source", env.Data.Credit)
+	}
 }
 
 // TestOracleXLastPrice_StablecoinFiatProxyFallback: the x_last_price?base=native&quote=fiat:USD
