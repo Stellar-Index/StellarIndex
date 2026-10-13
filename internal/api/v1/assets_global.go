@@ -299,11 +299,11 @@ func (s *Server) fiatUSDPriceFor(ctx context.Context, ticker string) (price stri
 	return snap.Price, snap.ObservedAt.Time(), srcs, true
 }
 
-// fxQuoteSourceLabel names the fx_quotes row's vendor so a served FX rate carries its source; "fx_quotes" when the reader
-// carries none.
+// fxQuoteSourceLabel names the fx_quotes row's vendor so a served FX rate carries its source; a row stored before
+// attribution carries none and is the primary feed's, the store's own convention.
 func fxQuoteSourceLabel(source string) string {
 	if source == "" {
-		return "fx_quotes"
+		return primaryFXSource
 	}
 	return source
 }

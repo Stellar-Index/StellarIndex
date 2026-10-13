@@ -221,6 +221,14 @@ func TestScamSuppressionStampsWithheldReason(t *testing.T) {
 	if flagged.PriceUSD != nil || flagged.PriceWithheldReason != PriceWithheldScamIssuer {
 		t.Fatalf("flagged: price_usd=%v reason=%q, want nil and %q", flagged.PriceUSD, flagged.PriceWithheldReason, PriceWithheldScamIssuer)
 	}
+	credited := AssetDetail{
+		PriceUSD: &price, PriceAuthority: "aggregator_avg", PriceSources: []string{"coingecko"},
+		PriceAsOf: new(WireTime), PriceCredit: "CoinGecko", issuerDirectoryUnchecked: true,
+	}
+	suppressScamIssuerPricing(&credited)
+	if credited.PriceWithheldReason != PriceWithheldUnattributed || credited.PriceAuthority != "" || credited.PriceSources != nil || credited.PriceAsOf != nil || credited.PriceCredit != "" {
+		t.Fatalf("withheld row kept its provenance: reason=%q authority=%q sources=%v as_of=%v credit=%q", credited.PriceWithheldReason, credited.PriceAuthority, credited.PriceSources, credited.PriceAsOf, credited.PriceCredit)
+	}
 	unpriced := AssetDetail{IssuerDirectoryTags: []string{"scam"}}
 	suppressScamIssuerPricing(&unpriced)
 	if unpriced.PriceWithheldReason != "" {

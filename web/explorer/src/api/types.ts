@@ -9558,7 +9558,7 @@ export interface components {
              */
             source: string;
             /**
-             * @description Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles.
+             * @description Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. The value is the vendor name, not attribution text; a vendor's required wording (Powered by CoinGecko, Data sourced by Tiingo) still applies wherever the number is displayed.
              * @example Tiingo
              */
             credit?: string;
@@ -9861,7 +9861,7 @@ export interface components {
          */
         RWACuratedSummary: {
             curator: string;
-            /** @description The publisher to credit for the curated series (the Stellar Development Foundation, whose curated Stellar RWA series is published on Dune with its consent). */
+            /** @description The publisher to credit for the curated series (the Stellar Development Foundation, which curates the Stellar RWA series published on Dune). */
             curator_credit?: string;
             /**
              * @description `served` — the curator's per-asset cache answered and the
@@ -10838,7 +10838,7 @@ export interface components {
             price_usd: string;
             /** @description The aggregator that published it. */
             source: string;
-            /** @description Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. */
+            /** @description Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. The value is the vendor name, not attribution text; a vendor's required wording (Powered by CoinGecko, Data sourced by Tiingo) still applies wherever the number is displayed. */
             credit?: string;
             /**
              * Format: date-time
@@ -11058,7 +11058,7 @@ export interface components {
              * @description Observation timestamp of the served listing price; omitted under identity and onchain_listing.
              */
             price_as_of?: string;
-            /** @description Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. Set when price_sources names exactly one such vendor. */
+            /** @description Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. The value is the vendor name, not attribution text; a vendor's required wording (Powered by CoinGecko, Data sourced by Tiingo) still applies wherever the number is displayed. Set when price_sources names exactly one such vendor. */
             price_credit?: string;
             /**
              * @description Present ONLY when price_usd is null because the price was WITHHELD — the market exists and the server declines to publish it — rather than never observed. `/v1/price` answers the same pair with a `price-withheld` 404, and the values are the `reason` vocabulary of `/v1/price/tip/stream`'s `price_withheld` event: `substance` (trailing market activity below the serve floor), `scam_issuer` (a directory-flagged issuer), `upstream_leg` (a leg beyond the asset's own market is withheld — the stablecoin leg a token's USD price derives through, or the XLM/USD pivot behind a declared peg; the asset's own market below the floor, for a declared peg its own XLM book, reports `substance`, as the listing does), `unattributed` (withheld for a cause the server could not attribute, e.g. the issuer-directory check did not complete). market_cap_usd and fdv_usd are null with it. Absent beside a null price_usd means no price exists, or (listing rows, with flags.stale true) the thin-market gate could not measure the row.
@@ -11437,7 +11437,7 @@ export interface components {
              * @description Observation timestamp of the served price. Null when price_usd is null, and under price_authority onchain_listing.
              */
             price_as_of?: string | null;
-            /** @description Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. Set when price_sources names exactly one such vendor; a composite carries none. */
+            /** @description Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. The value is the vendor name, not attribution text; a vendor's required wording (Powered by CoinGecko, Data sourced by Tiingo) still applies wherever the number is displayed. Set when price_sources names exactly one such vendor; a composite carries none. */
             price_credit?: string;
             /** @description Natural-unit amount in circulation. For fiat: M2 (broad money). Empty for crypto/stablecoin (the per-Stellar-asset F2 fields on /v1/assets/{asset_id} are the canonical source). */
             circulating_supply?: string | null;
@@ -12515,7 +12515,7 @@ export interface components {
             observer?: string;
             /** @description false when `asset` is a `raw:<symbol>` row — an oracle symbol recorded verbatim because it maps to no canonical asset. Reference-only: orientation-unknown, never compared or aggregated. /v1/oracle/streams omits such rows unless include_unmapped=true; /v1/oracle/latest returns one only for an explicit `asset=raw:<symbol>` query. */
             mapped: boolean;
-            /** @description Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. */
+            /** @description Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. The value is the vendor name, not attribution text; a vendor's required wording (Powered by CoinGecko, Data sourced by Tiingo) still applies wherever the number is displayed. */
             credit?: string;
         };
         OracleLatestEnvelope: components["schemas"]["EnvelopeMeta"] & {
@@ -12672,7 +12672,7 @@ export interface components {
             include_in_vwap: boolean;
             /** @description Whether this connector requires a paid licence / API key. */
             paid: boolean;
-            /** @description Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. */
+            /** @description Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. The value is the vendor name, not attribution text; a vendor's required wording (Powered by CoinGecko, Data sourced by Tiingo) still applies wherever the number is displayed. */
             credit?: string;
             /** @description Whether the source supports historical backfill via its native API. */
             backfill_available: boolean;
@@ -17201,7 +17201,7 @@ export interface operations {
                                 references: {
                                     /** @enum {string} */
                                     reference: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band" | "synthetic-usd-cross";
-                                    /** @description Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. */
+                                    /** @description Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. The value is the vendor name, not attribution text; a vendor's required wording (Powered by CoinGecko, Data sourced by Tiingo) still applies wherever the number is displayed. */
                                     credit?: string;
                                     ref_price: string;
                                     delta_pct: string;

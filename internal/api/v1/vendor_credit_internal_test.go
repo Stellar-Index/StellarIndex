@@ -70,7 +70,7 @@ func TestCatalogueFiatRow_CarriesPriceProvenance(t *testing.T) {
 
 // TestFXQuoteSourceLabel: a reader that carries no fx_quotes vendor label still names the table, never an empty source.
 func TestFXQuoteSourceLabel(t *testing.T) {
-	if got := fxQuoteSourceLabel(""); got != "fx_quotes" {
+	if got := fxQuoteSourceLabel(""); got != primaryFXSource {
 		t.Errorf("empty source label = %q, want fx_quotes", got)
 	}
 	if got := fxQuoteSourceLabel("massive"); got != "massive" {
