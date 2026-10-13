@@ -92,6 +92,12 @@ func (o *Observer) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer.E
 	if !watched {
 		return nil, fmt.Errorf("%w: contract %s not in wrapper map", ErrNotSACBalance, contractID)
 	}
+	if ctx.Evicted && cd.Durability == xdr.ContractDataDurabilityPersistent {
+		// Archived, not deleted (CAP-62): the holder can restore and spend it and the token's
+		// total_supply still counts it, so the balance stays served; a later Restored change is
+		// an ordinary observation. Only a temporary entry's eviction is a real removal.
+		return nil, nil
+	}
 	holder, err := scval.HolderFromBalanceKey(cd.Key)
 	if err != nil {
 		return nil, err
@@ -130,8 +136,8 @@ func (o *Observer) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer.E
 func (o *Observer) UnknownValShapeDrops() int { return o.unknownValShapeDrops }
 
 // contractDataFromChange returns the ContractDataEntry and is-removal flag for any change variant (Removed rows derive it from the
-// LedgerKey: Contract + Key, no Val). Eviction is not a change variant: the dispatcher turns each evicted key into a Removed change
-// (dispatcher.walkEvictedKeys; empty TxHash, OpIndex -1), so an evicted balance stops counting toward supply; Restored reverses it.
+// LedgerKey: Contract + Key + Durability, no Val). Eviction is not a change variant: the dispatcher turns each evicted key into a
+// Removed change with ctx.Evicted set (dispatcher.walkEvictedKeys; empty TxHash, OpIndex -1) and Decode keeps the persistent ones.
 func contractDataFromChange(change xdr.LedgerEntryChange) (cd *xdr.ContractDataEntry, isRemoval bool, ok bool) {
 	var entry *xdr.LedgerEntry
 	switch change.Type {

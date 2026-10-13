@@ -119,6 +119,40 @@ usd_pegged_classic_assets = [
 Trades quoted in USDx (or its SAC) are then priced `usd_volume = quote_amount /
 10^7`: new ones at insert, historical ones by the `usd-volume-restamp` run above.
 
+## Fiat-pegged classics on the trade path
+
+`[pricing_guard].fiat_pegged_classic_assets` (asset_key to ISO-4217 ticker) is
+the operator's declaration that a classic asset is 1:1-pegged to a fiat
+currency. The API already reads it for the `declared_peg` price fallback; the
+trade path reads the same map, so a DEX trade with a declared leg (classic or
+its SAC) is valued as `amount / 10^7 × fiat→USD rate` at trade time instead of
+through the counterparty-authorable FX bridge.
+
+The tier sits after the XLM anchors and before the estimated FX tier. It
+honours the declaration only while the declared classic asset's own on-chain
+USD price is within 200 bps (`fiatPegToleranceBps` in
+`internal/storage/timescale/trades.go`) of the fiat rate; the classic form is
+priced even when the leg is the SAC, because the resolver links a SAC to its
+markets only through `[supply].sac_wrappers`. A depeg, a missing on-chain
+price or a missing fiat rate declines, and the leg falls through to the FX
+tier, never above it. The value takes the FX tier's leg cross-check and
+single-leg cap, and it stays in the `estimated` reconcile tier, so
+`ClassifyUSDVolumeTier`, the exact restamp lane and `verify` are unchanged.
+The tier needs `usd_pegged_classic_assets`: without a USD peg the resolver
+prices nothing, so `InstallUSDVolumeResolution` refuses fiat pegs on their own.
+
+AUDD and AUDR sit in the same map. The substance gate withholds their
+on-chain prices, so the tier declines them and they stay unvalued on the trade
+path as before; the day the gate admits one, that leg is valued like EURC.
+
+Adding an asset is one line in the `[pricing_guard.fiat_pegged_classic_assets]`
+stanza. The tier is forward-only: no restamp lane reaches it, so stored rows
+keep their FX-tier value. Where the declared leg was the quote, that value is
+within the 2% band of the peg value (the gate requires it); where it was the
+base, the old quote-priced value stands. Restating history needs a lane of its
+own. Rows the FX tier left NULL, including SAC forms outside `sac_wrappers`, stay
+NULL.
+
 ## Pure-Soroban SEP-41 tokens (no USD-pegged quote at all)
 
 The paths above need the QUOTE asset to resolve to a USD-pegged classic. A

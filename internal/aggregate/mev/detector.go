@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
 
 // KindArbitrage is the mev_events.kind value v1 emits.
@@ -46,8 +47,10 @@ type Candidate struct {
 	NotionalUSD      string // summed USD volume across legs ("" when none priced)
 	// NotionalLowerBound: NotionalUSD left out at least one unpriced leg.
 	NotionalLowerBound bool
-	Dedup              string // explicit dedup key; "" → kind:tx:taker
-	Detail             any    // per-kind evidence payload (marshalled to mev_events.detail); nil → arbDetail
+	// NotionalEstimated: a summed leg was valued at its minute's XLM/USD anchor, not its stored usd_volume.
+	NotionalEstimated bool
+	Dedup             string // explicit dedup key; "" → kind:tx:taker
+	Detail            any    // per-kind evidence payload (marshalled to mev_events.detail); nil → arbDetail
 }
 
 // DedupKey is the idempotency key for mev_events.dedup_key: (pattern, tx, actor) unless Candidate.Dedup is set.
@@ -59,7 +62,7 @@ func (c Candidate) DedupKey() string {
 }
 
 // DetectArbitrage returns one Candidate per atomic-arbitrage cycle grouped by (tx_hash, taker); a component is a cycle when its hop graph (distinct (venue, unordered pair) edges) has edges >= nodes, with trades collapsed to hops first since SDEX emits one trade per claim atom. usdVolume is an optional parallel size signal.
-func DetectArbitrage(trades []canonical.Trade, usdVolume []string) []Candidate {
+func DetectArbitrage(trades []canonical.Trade, usdVolume []domain.MEVLegUSD) []Candidate {
 	type group struct {
 		idxs []int
 	}
@@ -96,7 +99,7 @@ func DetectArbitrage(trades []canonical.Trade, usdVolume []string) []Candidate {
 // buildArbCandidate evaluates one (tx, taker) group: splits it into
 // asset-connected components, keeps those that are qualifying cycles,
 // and assembles the Candidate from their legs. ok=false when none is.
-func buildArbCandidate(trades []canonical.Trade, usdVolume []string, idxs []int) (Candidate, bool) {
+func buildArbCandidate(trades []canonical.Trade, usdVolume []domain.MEVLegUSD, idxs []int) (Candidate, bool) {
 	// Judged per component so an unrelated leg cannot lend a cycle its
 	// missing second venue or spare hop.
 	var kept []int
@@ -135,7 +138,7 @@ func buildArbCandidate(trades []canonical.Trade, usdVolume []string, idxs []int)
 	sort.SliceStable(legs, func(a, b int) bool { return legs[a].before(legs[b].OpRef) })
 
 	first := trades[kept[0]]
-	notional, lowerBound := sumUSD(usdVolume, kept)
+	notional, lowerBound, estimated := sumUSD(usdVolume, kept)
 	c := Candidate{
 		Kind:               KindArbitrage,
 		Ledger:             first.Ledger,
@@ -148,6 +151,7 @@ func buildArbCandidate(trades []canonical.Trade, usdVolume []string, idxs []int)
 		Legs:               legs,
 		NotionalUSD:        notional,
 		NotionalLowerBound: lowerBound,
+		NotionalEstimated:  estimated,
 	}
 	return c, true
 }
@@ -232,25 +236,27 @@ func sortedKeys(m map[string]struct{}) []string {
 }
 
 // sumUSD adds the legs' USD volumes with exact decimal arithmetic. It returns "" when no leg was priced
-// (never a misleading 0); lowerBound is true when a non-empty sum left out an unpriced leg.
-func sumUSD(usdVolume []string, idxs []int) (notional string, lowerBound bool) {
+// (never a misleading 0); lowerBound is true when a non-empty sum left out an unpriced leg; estimated is
+// true when a summed leg was valued at the XLM/USD anchor rather than its stored usd_volume.
+func sumUSD(usdVolume []domain.MEVLegUSD, idxs []int) (notional string, lowerBound, estimated bool) {
 	total := new(big.Rat)
 	priced, unpriced := false, false
 	for _, i := range idxs {
-		if i >= len(usdVolume) || usdVolume[i] == "" {
+		if i >= len(usdVolume) || usdVolume[i].Value == "" {
 			unpriced = true
 			continue
 		}
-		v, ok := new(big.Rat).SetString(usdVolume[i])
+		v, ok := new(big.Rat).SetString(usdVolume[i].Value)
 		if !ok {
 			unpriced = true
 			continue
 		}
 		total.Add(total, v)
 		priced = true
+		estimated = estimated || usdVolume[i].Estimated
 	}
 	if !priced {
-		return "", false
+		return "", false, false
 	}
-	return total.FloatString(2), unpriced
+	return total.FloatString(2), unpriced, estimated
 }

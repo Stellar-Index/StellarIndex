@@ -65,8 +65,8 @@ func TestGlobalMarket_FillsAheadOfFixedPeg(t *testing.T) {
 		t.Errorf("price_basis = %q, want %q", rows[0].PriceBasis, priceBasisGlobalMarket)
 	}
 	gm := rows[0].GlobalMarket
-	if gm == nil || gm.Asset != "crypto:USDC" || gm.Source != "coingecko" || gm.StellarDivergencePct != nil {
-		t.Fatalf("global_market = %+v, want crypto:USDC from coingecko with no Stellar divergence", gm)
+	if gm == nil || gm.Asset != "crypto:USDC" || gm.Source != "coingecko" || gm.Credit != "CoinGecko" || gm.StellarDivergencePct != nil {
+		t.Fatalf("global_market = %+v, want crypto:USDC from coingecko, credited, with no Stellar divergence", gm)
 	}
 	if priceSeriesPublishable(&rows[0]) {
 		t.Error("a global-market-filled row must not publish its Stellar price series")

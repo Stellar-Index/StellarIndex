@@ -306,6 +306,7 @@ func TestInstallUSDVolumeResolution_InstallsBothTiers(t *testing.T) {
 		store,
 		[]string{usdcPeg},
 		map[string]string{},
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("InstallUSDVolumeResolution: %v", err)
@@ -322,7 +323,7 @@ func TestInstallUSDVolumeResolution_InstallsBothTiers(t *testing.T) {
 func TestInstallUSDVolumeResolution_EmptyPegsIsNoOp(t *testing.T) {
 	t.Parallel()
 	store := &Store{}
-	if err := InstallUSDVolumeResolution(store, nil, nil); err != nil {
+	if err := InstallUSDVolumeResolution(store, nil, nil, nil); err != nil {
 		t.Fatalf("InstallUSDVolumeResolution(no pegs): %v", err)
 	}
 	if store.usdVolumeQuoteSpec != nil || store.usdVolumeFXResolver != nil {
@@ -332,7 +333,7 @@ func TestInstallUSDVolumeResolution_EmptyPegsIsNoOp(t *testing.T) {
 
 func TestInstallUSDVolumeResolution_NilStore(t *testing.T) {
 	t.Parallel()
-	if err := InstallUSDVolumeResolution(nil, []string{"USDC-G..."}, nil); err == nil {
+	if err := InstallUSDVolumeResolution(nil, []string{"USDC-G..."}, nil, nil); err == nil {
 		t.Fatal("expected error when store is nil")
 	}
 }
@@ -693,5 +694,19 @@ func TestUSDPegForms_NormalisesColonSpelling(t *testing.T) {
 	}
 	if len(forms) != 2 || forms[0] != usdcClassicPeg || forms[1] != usdcSAC {
 		t.Errorf("usdPegForms(%q) = %q, want [%s %s]", colon, forms, usdcClassicPeg, usdcSAC)
+	}
+}
+
+// Fiat pegs without a USD peg are refused: the depeg gate prices the declared leg through the resolver, which
+// prices nothing without a USD peg, so the tier would be silently dead.
+func TestInstallUSDVolumeResolution_FiatPegsNeedUSDPegs(t *testing.T) {
+	t.Parallel()
+	store := &Store{}
+	pegs := map[string]string{"EURC-GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2": "EUR"}
+	if err := InstallUSDVolumeResolution(store, nil, nil, pegs); err == nil {
+		t.Fatal("InstallUSDVolumeResolution(fiat pegs, no usd pegs) = nil, want an error")
+	}
+	if store.usdVolumeQuoteSpec != nil || store.usdVolumeFXResolver != nil {
+		t.Error("a refused install must leave both tiers nil")
 	}
 }

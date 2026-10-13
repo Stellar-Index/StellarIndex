@@ -66,6 +66,8 @@ type RWAReference struct {
 	PriceUSD string `json:"price_usd"`
 	// Source is the registered oracle that published it.
 	Source string `json:"source"`
+	// Credit names the vendor behind Source when it is a licensed off-chain feed; absent for on-chain oracles.
+	Credit string `json:"credit,omitempty"`
 	// Feed is the canonical asset id the oracle priced (`rwa:<CODE>`), so a reader can check the
 	// figure against /v1/oracle/latest.
 	Feed string `json:"feed"`
@@ -507,6 +509,7 @@ func rwaApplyReference(
 	a.Reference = &RWAReference{
 		PriceUSD:   ref.wire,
 		Source:     ref.source,
+		Credit:     external.Credit(ref.source),
 		Feed:       ref.feed,
 		Quote:      "fiat:USD",
 		AsOf:       WireTime(ref.asOf),
@@ -556,6 +559,7 @@ func rwaApplyListingReference(a *RWAAsset, entry timescale.ListingEntry, notFoun
 	a.Reference = &RWAReference{
 		PriceUSD: entry.PriceUSD,
 		Source:   entry.Source,
+		Credit:   external.Credit(entry.Source),
 		// The listing platform's own coin id, not a feed id: the field's meaning follows `provenance`.
 		Feed:       entry.ListingID,
 		Quote:      "fiat:USD",
@@ -671,6 +675,7 @@ func rwaApplyFundNAVReference(a *RWAAsset, snap rwaReferences, now time.Time) bo
 	a.Reference = &RWAReference{
 		PriceUSD:          nav.wire,
 		Source:            nav.source,
+		Credit:            external.Credit(nav.source),
 		Feed:              nav.feed,
 		Quote:             "fiat:USD",
 		AsOf:              WireTime(nav.asOf),

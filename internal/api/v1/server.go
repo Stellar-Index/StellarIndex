@@ -635,6 +635,10 @@ type Options struct {
 	// MEV, when non-nil, backs /v1/mev (the auto-flagged MEV-event feed); nil serves an empty array.
 	MEV MEVReader
 
+	// MEVPulse, when non-nil, reads the MEV worker's run heartbeat for /v1/mev; nil, a missing beat
+	// or a partial one all set flags.detectors_partial.
+	MEVPulse MEVPulseLooker
+
 	// Anomalies, when non-nil, backs /v1/anomalies (the durable freeze-event timeline); nil is empty.
 	Anomalies AnomalyReader
 

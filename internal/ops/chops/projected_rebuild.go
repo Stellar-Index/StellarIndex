@@ -100,6 +100,7 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 		store,
 		cfg.Trades.USDPeggedClassicAssets,
 		cfg.Supply.SACWrappers,
+		cfg.PricingGuard.FiatPeggedClassicAssets,
 	); err != nil {
 		return fmt.Errorf("install usd-volume resolution: %w", err)
 	}

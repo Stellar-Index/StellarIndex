@@ -1,0 +1,24 @@
+# systemd timer: entry index catch-up — every 10 minutes.
+#
+# Rendered by Ansible. Companion to entry-index.service.
+#
+# WHY 10 MINUTES. The index backs per-account and per-asset ledger walks,
+# which otherwise read the recent lake directly; a short cadence keeps that
+# fallback window small. Each run reads only the ledgers above the
+# watermark, so a quiet cycle costs one GROUP BY over a few thousand
+# ledgers. OnUnitInactiveSec measures from the previous run's end, so a
+# long initial build never stacks a second run behind the flock.
+
+[Unit]
+Description=entry index catch-up, every 10 minutes
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/deploy/clickhouse/entry_index.sql
+
+[Timer]
+OnBootSec=45min
+OnUnitInactiveSec=10min
+RandomizedDelaySec=120
+Persistent=true
+Unit=entry-index.service
+
+[Install]
+WantedBy=timers.target

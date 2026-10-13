@@ -109,6 +109,10 @@ type Flags struct {
 	// envelope flag (G22-03). The decoder ignores unknown fields so
 	// adding this is non-breaking for older SDK builds.
 	UnverifiedTickerCollision bool `json:"unverified_ticker_collision,omitempty"`
+	// DetectorsPartial fires on `/v1/mev` when the detection worker has
+	// not completed a full run within its heartbeat TTL, so a quiet feed is
+	// a detection gap rather than a quiet network.
+	DetectorsPartial bool `json:"detectors_partial,omitempty"`
 	// FiltersIgnored names the row-narrowing query parameters the
 	// response did NOT apply, spelled as the caller sent them
 	// ("type", "code", "issuer", "q"). Empty — and omitted — when
@@ -381,6 +385,16 @@ type AssetDetail struct {
 	// pre-existing contract, unchanged). Peg-priced rows carry no
 	// change pills or market-history-derived valuation fields.
 	PriceBasis string `json:"price_basis,omitempty"`
+
+	// Price provenance on a listing row whose price is a published rate
+	// rather than a Stellar market observation: the same tiers as
+	// GlobalAssetView.PriceAuthority, the contributing sources, the
+	// observation time, and the vendor credit when exactly one licensed
+	// off-chain feed produced it.
+	PriceAuthority string     `json:"price_authority,omitempty"`
+	PriceSources   []string   `json:"price_sources,omitempty"`
+	PriceAsOf      *time.Time `json:"price_as_of,omitempty"`
+	PriceCredit    string     `json:"price_credit,omitempty"`
 
 	// PriceWithheldReason is set only when PriceUSD is nil because the
 	// price was withheld rather than never observed, in the reason
@@ -759,6 +773,7 @@ type Source struct {
 	Subclass          string `json:"subclass,omitempty"`
 	IncludeInVWAP     bool   `json:"include_in_vwap"`
 	Paid              bool   `json:"paid"`
+	Credit            string `json:"credit,omitempty"`
 	BackfillAvailable bool   `json:"backfill_available"`
 	BackfillSafe      bool   `json:"backfill_safe"`
 	DefaultWeight     int    `json:"default_weight"`
@@ -805,6 +820,7 @@ type MethodologySource struct {
 	DefaultWeight     int    `json:"default_weight"`
 	IncludeInVWAP     bool   `json:"include_in_vwap"`
 	Paid              bool   `json:"paid"`
+	Credit            string `json:"credit,omitempty"`
 	BackfillAvailable bool   `json:"backfill_available"`
 	BackfillSafe      bool   `json:"backfill_safe"`
 	OnChain           bool   `json:"on_chain"`
@@ -1364,6 +1380,9 @@ type GlobalAssetView struct {
 	PriceAuthority string     `json:"price_authority,omitempty"` // "vwap_native" | "aggregator_avg" | "triangulated" | "reference_rate" | "identity" | "onchain_listing"
 	PriceSources   []string   `json:"price_sources,omitempty"`
 	PriceAsOf      *time.Time `json:"price_as_of,omitempty"`
+	// PriceCredit names the vendor when PriceSources is exactly one
+	// licensed off-chain feed; a composite or on-chain price carries none.
+	PriceCredit string `json:"price_credit,omitempty"`
 
 	// Supply + market cap. Populated for fiat (M2 × FX rate).
 	// Crypto/stablecoin market cap stays on /v1/assets/{asset_id}'s
@@ -1384,6 +1403,7 @@ type AssetGlobalMarket struct {
 	Asset                string    `json:"asset"`
 	PriceUSD             string    `json:"price_usd"`
 	Source               string    `json:"source"`
+	Credit               string    `json:"credit,omitempty"`
 	AsOf                 time.Time `json:"as_of"`
 	StellarDivergencePct *string   `json:"stellar_divergence_pct,omitempty"`
 	DepegWarning         bool      `json:"depeg_warning,omitempty"`
@@ -1746,6 +1766,7 @@ type RWACuratedPublished struct {
 // RWACuratedSummary is the curated arm's headline; Status is "served", "published_totals", "unavailable" or "unwired", and AdditionalValueUSD counts only rows NOT in the verified set so CombinedValueUSD never double counts.
 type RWACuratedSummary struct {
 	Curator            string               `json:"curator"`
+	CuratorCredit      string               `json:"curator_credit,omitempty"`
 	Status             string               `json:"status"`
 	Assets             int                  `json:"assets"`
 	AlsoVerified       int                  `json:"also_verified"`
@@ -1923,6 +1944,8 @@ type RWAReference struct {
 	// own decimal scale.
 	PriceUSD string `json:"price_usd"`
 	Source   string `json:"source"`
+	// Credit names the vendor when Source is a licensed off-chain feed.
+	Credit string `json:"credit,omitempty"`
 	// Feed is the key PriceUSD is published under; its meaning follows
 	// Provenance. Only under "oracle_instrument_nav" is it the canonical
 	// `rwa:<CODE>` id, ready for /oracle/latest — under any other
@@ -1964,6 +1987,18 @@ type RWAISINCollision struct {
 	DeclaredByIssuers int `json:"declared_by_issuers"`
 }
 
+// RWAVettedISIN is the hand-vetted ISIN binding that admitted an asset under
+// the sep1_isin_vetted basis.
+type RWAVettedISIN struct {
+	ISIN       string `json:"isin"`
+	Instrument string `json:"instrument"`
+	Source     string `json:"source"`
+	VerifiedOn string `json:"verified_on"`
+	ReviewBy   string `json:"review_by"`
+	// ReviewDue is true once the review date has passed; the row is labelled, not withheld.
+	ReviewDue bool `json:"review_due,omitempty"`
+}
+
 // RWAAsset is one member of the set with the evidence that admitted it; identity is (Code, Issuer), as Code alone identifies nothing.
 type RWAAsset struct {
 	AssetID string `json:"asset_id"`
@@ -1998,6 +2033,9 @@ type RWAAsset struct {
 	// ISINCollision is set when AnchorAsset is an ISIN more than one
 	// issuer account declares. Informational: it never changes the row.
 	ISINCollision *RWAISINCollision `json:"isin_collision,omitempty"`
+	// VettedISIN is set when the asset was admitted under sep1_isin_vetted: the
+	// hand-vetted binding behind the ISIN. review_due flips once the review date passes.
+	VettedISIN *RWAVettedISIN `json:"vetted_isin,omitempty"`
 	// Valuation is the observed-market-price money, or the reason there
 	// is none; ReferenceValuation is the same float at the reference
 	// price. The two are separate bases and are never summed.

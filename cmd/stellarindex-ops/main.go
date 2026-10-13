@@ -119,6 +119,7 @@ var subcommands = map[string]func(args []string) error{
 	"ch-census-rollup":             chops.Run,
 	"ch-cap67-movements":           chops.Run,
 	"ch-entry-history":             chops.Run,
+	"ch-entry-index":               chops.Run,
 	"ch-holders-rollup":            chops.Run,
 	"ch-creators-rollup":           chops.Run,
 	"ch-sponsors-rollup":           chops.Run,

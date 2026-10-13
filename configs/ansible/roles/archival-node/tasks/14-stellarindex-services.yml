@@ -1131,12 +1131,16 @@
     - creators-rollup.timer
     - sponsors-rollup.service
     - sponsors-rollup.timer
+    - entry-index.service
+    - entry-index.timer
     - cohort-rollup.service
     - cohort-rollup.timer
     - census-rollup.service
     - census-rollup.timer
     - compute-completeness.service
     - compute-completeness.timer
+    - verify-usd-volume.service
+    - verify-usd-volume.timer
     - compute-completeness-sdex.service
     - compute-completeness-sdex.timer
     # compute-completeness-sep41 is installed with supply-verify-rollup below.
@@ -1187,9 +1191,13 @@
     - holders-rollup.timer
     - creators-rollup.timer
     - sponsors-rollup.timer
+    # entry-index.timer is INTENTIONALLY OMITTED: its tables and the
+    # ec-floor flag are operator steps (deploy/clickhouse/entry_index.sql
+    # runbook); enabled by hand as that runbook's last step.
     - cohort-rollup.timer
     - census-rollup.timer
     - compute-completeness.timer
+    - verify-usd-volume.timer
     - compute-completeness-sdex.timer
     - verify-lake.timer
     - verify-network-state.timer

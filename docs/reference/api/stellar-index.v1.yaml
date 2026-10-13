@@ -3709,7 +3709,13 @@ paths:
         key encoding is unknown.
 
         200 + empty array when nothing's been detected or the reader
-        isn't wired (feature-gated, like /v1/lending/pools).
+        isn't wired (feature-gated, like /v1/lending/pools). An empty or
+        short page is only "quiet" when `flags.detectors_partial` is
+        absent: it is set when the detection worker has not completed a
+        run within 15 minutes, when its last run could not resolve every
+        intra-ledger tx order from the lake (so `sandwich` and
+        `oracle_sandwich` ran on a partial map or not at all), or when
+        the worker's heartbeat could not be read.
       parameters:
         - { name: kind, in: query, description: "Filter to one pattern (e.g. arbitrage).", schema: { type: string, enum: [arbitrage, sandwich, oracle_sandwich, oracle_deviation, liquidation_cascade, wash_trade] } }
         - { name: limit, in: query, description: "Maximum events to return (1-500, default 50).", schema: { type: integer, minimum: 1, maximum: 500, default: 50 } }
@@ -3770,7 +3776,7 @@ paths:
                             quote_id:           { type: string, description: "Primary quote paired with asset_id; omitted with it." }
                             tx_hashes:          { type: array, items: { type: string } }
                             accounts:           { type: array, items: { type: string } }
-                            detail:             { type: object, description: "Pattern evidence: every kind carries assets, sources and a note, plus its own legs / roles / oracle refs / fills. `notional_usd` sums the legs' trade-time USD value; `notional_usd_lower_bound: true` means at least one leg had none and was left out, so the notional is a lower bound." }
+                            detail:             { type: object, description: "Pattern evidence: every kind carries assets, sources and a note, plus its own legs / roles / oracle refs / fills. `notional_usd` sums the legs' trade-time USD value; `notional_usd_lower_bound: true` means at least one leg had none and was left out, so the notional is a lower bound; `notional_usd_estimated: true` means at least one summed leg was valued at the newest unfrozen XLM/USD anchor minute within the hour before the trade rather than a stored trade-time USD volume; the key is absent on events detected before it existed, so absence is unknown, not false." }
                             profit_usd:         { type: [string, "null"], description: "Reserved attacker-profit estimate; null for every kind (profit is not estimated, and trade notional is in detail.notional_usd)." }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
@@ -3983,6 +3989,7 @@ paths:
                                     required: [reference, ref_price, delta_pct, status, observed_at, ref_observed_at]
                                     properties:
                                       reference:       { type: string, enum: [chainlink, coingecko, reflector-cex, reflector-fx, reflector-dex, redstone, band, synthetic-usd-cross] }
+                                      credit:          { type: string, description: "Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. The value is the vendor name, not attribution text; a vendor's required wording (Powered by CoinGecko, Data sourced by Tiingo) still applies wherever the number is displayed." }
                                       ref_price:       { type: string }
                                       delta_pct:       { type: string }
                                       status:          { type: string, enum: [clear, firing] }
@@ -7378,9 +7385,12 @@ paths:
            `oracle_rwa_feed` (an independent oracle publishes a
            net-asset-value feed for an instrument of this code, per
            ADR-0028, or for exactly this code and issuer on the
-           hand-vetted fund-NAV list), or `sep1_isin_declaration` (the bound entry's
-           `anchor_asset` is a well-formed ISIN). The oracle arm is
-           keyed on the CODE, so it is admissible only after
+           hand-vetted fund-NAV list), `sep1_isin_declaration` (the bound entry's
+           `anchor_asset` is a well-formed ISIN), or `sep1_isin_vetted`
+           (the entry names its ISIN only in prose, transcribed by hand
+           from the issuer's own SEP-1 for exactly this code and issuer;
+           served with its source and review date in `vetted_isin`). The
+           oracle arm is keyed on the CODE, so it is admissible only after
            requirement 3 has bound the issuer.
 
         TWO VALUATIONS, NEVER FOLDED. A tokenized real-world asset is
@@ -16287,6 +16297,17 @@ components:
             asset, contract or ledger the response is about. The figures are
             served unchanged; treat them as unconfirmed. The envelope's
             `under_review_reason` says why. Omitted when false.
+        detectors_partial:
+          type: boolean
+          default: false
+          description: >
+            Set on `/v1/mev` when the aggregator's MEV detection worker has not
+            completed a run within 15 minutes, when its last run could not
+            resolve every intra-ledger tx order from the lake (the `sandwich`
+            and `oracle_sandwich` detectors ran on a partial map or not at
+            all), or when the worker's heartbeat could not be read. An empty
+            or short feed under this flag is a detection gap, not a quiet
+            network. Omitted when false.
       required: [stale, reduced_redundancy, triangulated, divergence_warning]
 
     Pagination:
@@ -17776,10 +17797,10 @@ components:
         basis:
           type: string
           enum:
-            [sep1_anchor_declaration, sep1_isin_declaration, oracle_rwa_feed,
+            [sep1_anchor_declaration, sep1_isin_declaration, sep1_isin_vetted, oracle_rwa_feed,
              curated_contract_instrument, contract_oracle_rwa_feed, third_party_curated]
           description: |
-            Which final requirement admitted this asset. The first two
+            Which final requirement admitted this asset. The first three
             belong to the classic arm, the last two to the contract arm.
 
             `sep1_anchor_declaration` — the issuer-bound SEP-1 entry
@@ -17796,6 +17817,14 @@ components:
             all that is claimed — this says an identifier was declared,
             never that the declarer is entitled to it, which is what
             requirements 2 and 3 are for.
+            `sep1_isin_vetted` — the same evidence transcribed by hand:
+            the issuer-bound entry names its ISIN only in prose fields
+            the served tier does not keep, so a maintainer read it from
+            the issuer's own SEP-1 and bound it to exactly this code and
+            issuer, with the page it came from and a review date, served
+            in `vetted_isin`. Tried after the live declaration, so an
+            `anchor_asset` ISIN always wins; admits without a class;
+            requirements 2 and 3 still stand in front of it.
             `oracle_rwa_feed` — an independent oracle publishes a
             net-asset-value feed for an instrument of this code
             (ADR-0028); keyed on the code, so admissible only because
@@ -17845,7 +17874,7 @@ components:
           description: |
             Declared class. Present under `sep1_anchor_declaration` and
             `curated_contract_instrument`. Absent under either oracle
-            basis and under `sep1_isin_declaration` — each of those
+            basis and under both ISIN bases — each of those
             names an instrument, not its class, and none is invented.
             `fund` is contract-arm only: SEP-1's declared vocabulary
             (`sep1_anchor_declaration`) never emits it — see
@@ -17854,6 +17883,7 @@ components:
           type: string
           description: The off-chain instrument the issuer declared this token anchors to, verbatim.
         isin_collision: { $ref: "#/components/schemas/RWAISINCollision" }
+        vetted_isin: { $ref: "#/components/schemas/RWAVettedISIN" }
         valuation: { $ref: "#/components/schemas/RWAValuation" }
         reference_valuation: { $ref: "#/components/schemas/RWAReferenceValuation" }
         reference: { $ref: "#/components/schemas/RWAReference" }
@@ -18090,13 +18120,54 @@ components:
           description: Canonical `rwa:<CODE>` id of the oracle feed, ready for `/oracle/latest`.
           example: rwa:USTRY
 
+    RWAVettedISIN:
+      type: object
+      required: [isin, instrument, source, verified_on, review_by]
+      description: |
+        Present only under basis `sep1_isin_vetted`: the ISIN a
+        maintainer transcribed from the issuer's own SEP-1 for exactly
+        this code and issuer, because the entry names it only in prose.
+        Informational, like `isin_collision`: it records the evidence
+        and when it falls due for re-reading, and never carries a price.
+      properties:
+        isin:
+          type: string
+          description: The transcribed ISIN in canonical upper-case form.
+          example: DE000A2TR7Q2
+        instrument:
+          type: string
+          description: The issuer's own name for the instrument.
+          example: Bitbond Finance Tokenized Bond 1
+        source:
+          type: string
+          format: uri
+          description: The issuer-bound SEP-1 the ISIN was read from.
+          example: https://bitbondsto.com/.well-known/stellar.toml
+        verified_on:
+          type: string
+          format: date
+          description: The calendar date the page was read.
+          example: "2026-10-13"
+        review_by:
+          type: string
+          format: date
+          description: One quarter after `verified_on`; the binding is due for re-reading after this date.
+          example: "2027-01-11"
+        review_due:
+          type: boolean
+          default: false
+          description: |
+            `true` once the serving time is past `review_by`. The row is
+            labelled, not withheld, like a stale reference.
+
     RWAISINCollision:
       type: object
       required: [isin, declared_by_issuers]
       description: |
-        Present only when `anchor_asset` is an ISIN that more than one
-        issuer account declares in its issuer-bound SEP-1, counting
-        declarations this surface refused as well as admitted ones.
+        Present only when the claimed ISIN — `anchor_asset` when that is
+        one, else `vetted_isin.isin` — is one that more than one issuer
+        account claims in its issuer-bound SEP-1, counting claims this
+        surface refused as well as admitted ones.
 
         A declared ISIN is the issuer's claim, not proof that it holds
         the security, so this states how many accounts make the same
@@ -18162,6 +18233,10 @@ components:
           type: string
           description: The registered oracle that published it.
           example: redstone
+        credit:
+          type: string
+          description: Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. The value is the vendor name, not attribution text; a vendor's required wording (Powered by CoinGecko, Data sourced by Tiingo) still applies wherever the number is displayed.
+          example: Tiingo
         feed:
           type: string
           description: |
@@ -18493,6 +18568,7 @@ components:
       required: [curator, status, assets, also_verified, assets_valued, census, basis]
       properties:
         curator: { type: string }
+        curator_credit: { type: string, description: "The publisher to credit for the curated series (the Stellar Development Foundation, which curates the Stellar RWA series published on Dune)." }
         status:
           type: string
           enum: [served, published_totals, unavailable, unwired]
@@ -19668,6 +19744,7 @@ components:
         asset:     { type: string, description: "The global ticker's canonical id, e.g. \"crypto:USDC\"." }
         price_usd: { type: string, description: "The aggregator's published USD price, verbatim as a decimal string (ADR-0003)." }
         source:    { type: string, description: "The aggregator that published it." }
+        credit:    { type: string, description: "Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. The value is the vendor name, not attribution text; a vendor's required wording (Powered by CoinGecko, Data sourced by Tiingo) still applies wherever the number is displayed." }
         as_of:     { type: string, format: date-time, description: "The aggregator's own observation time for the price. A row stamped more than five minutes ahead of the server clock is never used." }
         stellar_divergence_pct: { type: string, description: "(Stellar price − global price) / global price × 100 as a signed decimal with two fractional digits (\"+1.27\", \"-0.05\", \"0.00\"). Stellar USD prices are quoted through the deployment's USD-pegged stablecoins, so a global depeg of that proxy moves this figure too. Absent when price_usd is not a Stellar market price (a global_market or declared_peg fill, or no price), and for a declared USD peg itself, whose Stellar USD price is quoted through itself and would measure the global depeg rather than a Stellar break." }
         depeg_warning: { type: boolean, description: "True when the absolute stellar_divergence_pct exceeds the deployment's divergence threshold (divergence.threshold_pct), capped at 1% when the global ticker is a fiat-pegged stablecoin: the Stellar market has broken from the global one. Omitted (false) otherwise." }
@@ -19937,7 +20014,11 @@ components:
         max_supply:         { type: [string, "null"], description: "Raw integer in asset's smallest unit. Null for uncapped issuers without operator override or SEP-1 declaration." }
         price_usd:          { type: [string, "null"], description: "Current per-asset USD price as a fixed-precision decimal string — same value `/v1/price?asset=…&quote=fiat:USD` returns. Inlined so wallet UIs don't need a second round-trip. Null when no USD price can be derived, or when it is withheld — `price_withheld_reason` then says why. When `price_basis` is present the value is NOT a market observation — see that field." }
         price_basis:        { type: string, enum: [global_market, declared_peg, transitive], description: "Present ONLY when price_usd is not a DIRECT market observation. `global_market`: the asset is a classic issuance the verified catalogue binds, on its exact (code, issuer), to a global ticker, no Stellar market price survived the thin-market substance gate, and price_usd is that ticker's fresh cross-venue aggregator price (see `global_market`) — it takes precedence over a declared peg, so a global depeg reaches price_usd instead of being hidden behind a fixed 1:1; like a peg fill it carries no change pills, sparkline claim or market_cap. `declared_peg`: the price was filled from an operator-declared 1:1 fiat peg × the current fiat→USD FX rate (pricing_guard.fiat_pegged_classic_assets) because no market-derived price survived the thin-market substance gate — peg-priced rows deliberately carry no change pills, sparkline claim, or market_cap derived from the peg, because the fill asserts a conversion basis, not a market. `transitive`: the price was derived through ONE intermediate hop (asset→hop, hop→USD) where the asset has no direct USD or XLM market of its own; BOTH legs are independently substance-gated before the value is served, so a thin intermediate cannot reprice everything quoted against it. Note this value is served ONLY here — `/v1/price` answers for direct markets and returns no price for a transitive asset. Absent = direct market-derived (the pre-existing contract, unchanged)." }
-        price_withheld_reason: { type: string, enum: [substance, scam_issuer, upstream_leg, unattributed], description: "Present ONLY when price_usd is null because the price was WITHHELD — the market exists and the server declines to publish it — rather than never observed. `/v1/price` answers the same pair with a `price-withheld` 404, and the values are the `reason` vocabulary of `/v1/price/tip/stream`'s `price_withheld` event: `substance` (trailing market activity below the serve floor), `scam_issuer` (a directory-flagged issuer), `upstream_leg` (the stablecoin-proxy leg the USD price derives from is itself withheld), `unattributed` (withheld for a cause the server could not attribute, e.g. the issuer-directory check did not complete). market_cap_usd and fdv_usd are null with it. Absent beside a null price_usd means no price exists, or (listing rows, with flags.stale true) the thin-market gate could not measure the row." }
+        price_authority:    { type: string, enum: [vwap_native, aggregator_avg, triangulated, reference_rate, identity, onchain_listing], description: "What produced price_usd on a listing row — the same tiers as GlobalAssetView.price_authority. Present on catalogue rows (fiat and reference-only coins on /v1/external/assets) whose price is a published rate rather than a Stellar market observation, so a lone vendor value never travels bare." }
+        price_sources:      { type: array, items: { type: string }, description: "Contributor venue / aggregator names behind price_usd on a listing row; one entry when the price is a single vendor rate (e.g. [massive] for a fiat FX rate)." }
+        price_as_of:        { type: string, format: date-time, description: "Observation timestamp of the served listing price; omitted under identity and onchain_listing." }
+        price_credit:       { type: string, description: "Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. The value is the vendor name, not attribution text; a vendor's required wording (Powered by CoinGecko, Data sourced by Tiingo) still applies wherever the number is displayed. Set when price_sources names exactly one such vendor." }
+        price_withheld_reason: { type: string, enum: [substance, scam_issuer, upstream_leg, unattributed], description: "Present ONLY when price_usd is null because the price was WITHHELD — the market exists and the server declines to publish it — rather than never observed. `/v1/price` answers the same pair with a `price-withheld` 404, and the values are the `reason` vocabulary of `/v1/price/tip/stream`'s `price_withheld` event: `substance` (trailing market activity below the serve floor), `scam_issuer` (a directory-flagged issuer), `upstream_leg` (a leg beyond the asset's own market is withheld — the stablecoin leg a token's USD price derives through, or the XLM/USD pivot behind a declared peg; the asset's own market below the floor, for a declared peg its own XLM book, reports `substance`, as the listing does), `unattributed` (withheld for a cause the server could not attribute, e.g. the issuer-directory check did not complete). market_cap_usd and fdv_usd are null with it. Absent beside a null price_usd means no price exists, or (listing rows, with flags.stale true) the thin-market gate could not measure the row." }
         thin_market:
           type: boolean
           description: >-
@@ -20287,6 +20368,7 @@ components:
               price; no trade-count floor and no `price_as_of`.
         price_sources:    { type: array, items: { type: string }, description: "Contributor venue / aggregator names — for transparency." }
         price_as_of:      { type: [string, "null"], format: date-time, description: "Observation timestamp of the served price. Null when price_usd is null, and under price_authority onchain_listing." }
+        price_credit:     { type: string, description: "Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. The value is the vendor name, not attribution text; a vendor's required wording (Powered by CoinGecko, Data sourced by Tiingo) still applies wherever the number is displayed. Set when price_sources names exactly one such vendor; a composite carries none." }
         circulating_supply: { type: [string, "null"], description: "Natural-unit amount in circulation. For fiat: M2 (broad money). Empty for crypto/stablecoin (the per-Stellar-asset F2 fields on /v1/assets/{asset_id} are the canonical source)." }
         supply_decimals:  { type: integer, description: "Exponent mapping circulating_supply to display value. 0 for fiat." }
         market_cap_usd:   { type: [string, "null"], description: "Decimal string (2 fractional digits). Computed for fiat rows: M2 × current FX rate. Null for crypto/stablecoin (their market cap lives on the per-Stellar-asset F2 fields)." }
@@ -21578,6 +21660,7 @@ components:
         confidence:  { type: number, minimum: 0, maximum: 1, description: "0 means unreported, not zero-confidence." }
         observer:    { type: string, description: "Strkey of the publishing relayer — an account (G…) or, when the relayer is a contract, a C… address; empty when unknown." }
         mapped:      { type: boolean, description: "false when `asset` is a `raw:<symbol>` row — an oracle symbol recorded verbatim because it maps to no canonical asset. Reference-only: orientation-unknown, never compared or aggregated. /v1/oracle/streams omits such rows unless include_unmapped=true; /v1/oracle/latest returns one only for an explicit `asset=raw:<symbol>` query." }
+        credit:      { type: string, description: "Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. The value is the vendor name, not attribution text; a vendor's required wording (Powered by CoinGecko, Data sourced by Tiingo) still applies wherever the number is displayed." }
       required: [source, asset, quote, ts, price, price_raw, decimals, mapped]
 
     OracleLatestEnvelope:
@@ -21769,6 +21852,7 @@ components:
         subclass:           { type: string, enum: [dex, cex, fx], description: "Refines `class=exchange` for UIs that group venues. Empty (omitted) for non-exchange classes, except `ecb` (`authority_sanity`), which is `fx` because the forex worker's ECB standby writes fiat FX rates under that name." }
         include_in_vwap:    { type: boolean, description: "Whether this source's trades contribute to VWAP." }
         paid:               { type: boolean, description: "Whether this connector requires a paid licence / API key." }
+        credit:             { type: string, description: "Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. The value is the vendor name, not attribution text; a vendor's required wording (Powered by CoinGecko, Data sourced by Tiingo) still applies wherever the number is displayed." }
         backfill_available: { type: boolean, description: "Whether the source supports historical backfill via its native API." }
         backfill_safe:      { type: boolean, description: "Whether `stellarindex-ops backfill` will run on this source. On-chain Soroban sources start `false` and only flip `true` after a per-WASM-hash audit (`docs/operations/wasm-audits/`); off-chain CEX/FX sources are always `true`." }
         default_weight:     { type: integer, description: "Default per-source weight for weighted-aggregation paths (when those land)." }
@@ -21810,6 +21894,7 @@ components:
         default_weight:     { type: integer }
         include_in_vwap:    { type: boolean }
         paid:               { type: boolean }
+        credit:             { type: string }
         backfill_available: { type: boolean }
         backfill_safe:      { type: boolean }
         on_chain:           { type: boolean, description: "Whether the source observes the Stellar network directly rather than reading an off-chain vendor API." }

@@ -125,6 +125,7 @@ type Source struct {
 	Subclass          string `json:"subclass,omitempty"`
 	IncludeInVWAP     bool   `json:"include_in_vwap"`
 	Paid              bool   `json:"paid"`
+	Credit            string `json:"credit,omitempty"`
 	BackfillAvailable bool   `json:"backfill_available"`
 	// BackfillSafe gates the `stellarindex-ops backfill` subcommand because Soroban contracts upgrade
 	// in place. On-chain Soroban sources stay false until a per-WASM-hash audit
@@ -276,6 +277,7 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 			Subclass:          string(md.Subclass),
 			IncludeInVWAP:     md.IncludeInVWAP,
 			Paid:              md.Paid,
+			Credit:            md.Credit,
 			BackfillAvailable: md.BackfillAvailable,
 			BackfillSafe:      md.BackfillSafe(),
 			DefaultWeight:     md.DefaultWeight,

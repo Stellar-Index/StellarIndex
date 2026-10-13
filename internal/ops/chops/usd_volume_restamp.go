@@ -119,7 +119,7 @@ func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	// blessed installer, never a hand-tuned resolver (the drift class
 	// InstallUSDVolumeResolution exists to close).
 	if restampTierIsEstimated(*tier) {
-		if err := timescale.InstallUSDVolumeResolution(store, cfg.Trades.USDPeggedClassicAssets, cfg.Supply.SACWrappers); err != nil {
+		if err := timescale.InstallUSDVolumeResolution(store, cfg.Trades.USDPeggedClassicAssets, cfg.Supply.SACWrappers, cfg.PricingGuard.FiatPeggedClassicAssets); err != nil {
 			return fmt.Errorf("usd-volume-restamp: install usd-volume resolution: %w", err)
 		}
 	}

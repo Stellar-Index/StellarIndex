@@ -115,3 +115,113 @@ tests:
         runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/usd-volume-coverage-plan.md
         summary: On-chain usd_volume coverage is below the 99.5% bar
         description: "On-chain sources priced only 50% of their trades\nover the last 6 hours, against a 99.5% bar.\n\nAggregated across venues deliberately: a single thin venue (comet, phoenix)\ncan have a handful of trades in a window, and a per-source ratio there is\nnoise rather than signal.\n\nExpected causes, cheapest first:\n  - The XLM bridge lost its anchor — check XLM/USD exists in prices_1m; if\n    that is missing, tiers 3b and 4b both fail at once and coverage collapses\n    rather than degrades.\n  - A newly active token with no XLM market and no pegged counterparty.\n  - prices_1m materialisation fell behind, so bridge legs are absent within\n    the 24h bridge-freshness window.\n\nFind the offending pairs:\n  SELECT base_asset, quote_asset, count(*) FROM trades\n   WHERE usd_volume IS NULL AND ts > now() - interval '6 hours'\n     AND source IN ('sdex','soroswap','aquarius','phoenix','comet')\n   GROUP BY 1,2 ORDER BY count DESC LIMIT 20;\n\nA residual of obscure tokenised assets (gold/equity wrappers) and pure\nSEP-41/SEP-41 pairs is EXPECTED and is not a regression. Unpriced trades\nwhose two classic legs share one issuer are labelled unroutable, and trades\nwhose only candidate rate came from a market below the substance floor are\nlabelled thin; both are outside this ratio. Watch the thin series\n(usd_volume_populated=\"thin\") for a market that should have cleared the floor.\n\nPlan + measurements: docs/operations/usd-volume-coverage-plan.md\n"
+- interval: 1m
+  name: estimated tier over 10M for a day tickets
+  input_series:
+  - series: stellarindex_verify_usd_volume_tier_usd{job="node_exporter",instance="r1:9100",tier="estimated"}
+    values: 12345678.91x60
+  alert_rule_test:
+  - eval_time: 30m
+    alertname: stellarindex_usd_volume_estimated_tier_high
+    exp_alerts:
+    - exp_labels:
+        job: node_exporter
+        instance: r1:9100
+        tier: estimated
+        severity: ticket
+        team: stellarindex
+        component: usd-volume-coverage
+      exp_annotations:
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/usd-volume-coverage-plan.md
+        summary: Estimated-tier usd_volume was 12345679 USD yesterday
+        description: |
+          The FX-bridged (estimated) tier summed over $10M for the last checked
+          UTC day; the measured baseline is $0.4-0.9M against $3.5-3.9B exact.
+          A jump means a pegged asset fell out of the exact tiers (peg list or
+          sac_wrappers entry missing, declared fiat peg outside its 200 bps
+          band) or an unpriced market started clearing the substance gate.
+
+          Find the groups:
+            SELECT source, base_asset, quote_asset, sum(usd_volume)
+              FROM trades
+             WHERE ts >= date_trunc('day', now() - interval '1 day')
+               AND ts <  date_trunc('day', now())
+             GROUP BY 1,2,3 ORDER BY 4 DESC LIMIT 20;
+          and compare against `stellarindex-ops verify-usd-volume -day <date>`,
+          whose tier table names the group. Exact-tier violations and crashes
+          open the generic stellarindex_systemd_unit_failed ticket instead.
+
+          Plan + measurements: docs/operations/usd-volume-coverage-plan.md
+- interval: 1m
+  name: a normal estimated tier beside a large exact tier is quiet
+  input_series:
+  - series: stellarindex_verify_usd_volume_tier_usd{job="node_exporter",instance="r1:9100",tier="estimated"}
+    values: 812345.67x60
+  - series: stellarindex_verify_usd_volume_tier_usd{job="node_exporter",instance="r1:9100",tier="quote_pegged"}
+    values: 3700000000x60
+  alert_rule_test:
+  - eval_time: 30m
+    alertname: stellarindex_usd_volume_estimated_tier_high
+    exp_alerts: []
+- interval: 1m
+  name: a textfile that was never written still tickets stale
+  input_series: []
+  alert_rule_test:
+  - eval_time: 2h
+    alertname: stellarindex_verify_usd_volume_stale
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        team: stellarindex
+        component: usd-volume-coverage
+      exp_annotations:
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/usd-volume-coverage-plan.md
+        summary: verify-usd-volume has not completed in 30 hours
+        description: |
+          No verify-usd-volume run has stamped last_run_unix in 30 hours, so
+          stellarindex_usd_volume_estimated_tier_high is reading a stale day
+          or nothing. Check `systemctl status verify-usd-volume.timer` and the
+          unit's journal; a failed run opens stellarindex_systemd_unit_failed
+          as well. Right after the first deploy this fires until the 05:12 UTC
+          run; `systemctl start verify-usd-volume.service` clears it.
+
+          Plan + measurements: docs/operations/usd-volume-coverage-plan.md
+- interval: 1m
+  name: a fresh last_run stamp is quiet
+  input_series:
+  - series: stellarindex_verify_usd_volume_last_run_unix{job="node_exporter",instance="r1:9100"}
+    values: 0+60x200
+  alert_rule_test:
+  - eval_time: 150m
+    alertname: stellarindex_verify_usd_volume_stale
+    exp_alerts: []
+- interval: 1m
+  name: a last_run stamp older than 30 hours tickets stale
+  input_series:
+  - series: stellarindex_verify_usd_volume_last_run_unix{job="node_exporter",instance="r1:9100"}
+    values: 0x2000
+  alert_rule_test:
+  - eval_time: 29h
+    alertname: stellarindex_verify_usd_volume_stale
+    exp_alerts: []
+  - eval_time: 32h
+    alertname: stellarindex_verify_usd_volume_stale
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        team: stellarindex
+        component: usd-volume-coverage
+        job: node_exporter
+        instance: r1:9100
+      exp_annotations:
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/usd-volume-coverage-plan.md
+        summary: verify-usd-volume has not completed in 30 hours
+        description: |
+          No verify-usd-volume run has stamped last_run_unix in 30 hours, so
+          stellarindex_usd_volume_estimated_tier_high is reading a stale day
+          or nothing. Check `systemctl status verify-usd-volume.timer` and the
+          unit's journal; a failed run opens stellarindex_systemd_unit_failed
+          as well. Right after the first deploy this fires until the 05:12 UTC
+          run; `systemctl start verify-usd-volume.service` clears it.
+
+          Plan + measurements: docs/operations/usd-volume-coverage-plan.md

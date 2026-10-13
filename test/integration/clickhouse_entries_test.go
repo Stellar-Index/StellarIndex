@@ -1096,14 +1096,13 @@ func TestClaimableSeed_WalkStaysBoundedAfterHighLedgerFixtures(t *testing.T) {
 	t.Logf("seed walk: %d windows in %s (budget %s)", windows, elapsed.Round(time.Millisecond), cbsWalkBudget)
 }
 
-// Both SAC seed readers: a watched Balance entry written at lastWrite whose TTL lapsed at liveUntil must return a
-// tombstone at liveUntil+1 with that ledger's close time, not at lastWrite where the seed's top-of-ledger upsert would
-// overwrite the genuine observation and zero the holder across [lastWrite, archival).
-func TestSACSeed_ArchivedHolderRetractedAtArchivalLedger(t *testing.T) {
+// Both SAC seed readers: a watched Balance entry whose TTL lapsed before the lake tip is an archived (evicted,
+// restorable) entry. It stays served at its last write, the policy the live sac_balances observer applies to evicted
+// keys, so neither reader may turn it into a tombstone.
+func TestSACSeed_ArchivedHolderStaysServed(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	addr := clickhouseAddr(t)
-	raw := dialClickHouse(t, ctx, "stellar")
 
 	const (
 		lastWrite = uint32(31_100_000)
@@ -1111,7 +1110,7 @@ func TestSACSeed_ArchivedHolderRetractedAtArchivalLedger(t *testing.T) {
 		tipLedger = uint32(31_300_000)
 		asset     = "ARCH:GAX5TXB5RYJNLBUR477PEXM4X75APK2PGMTN6KEFQSESGWFXEAKFSXJO"
 	)
-	archivalClose := time.Date(2025, 3, 1, 12, 0, 5, 0, time.UTC)
+	lastWriteClose := time.Date(2024, 11, 1, 0, 0, 0, 0, time.UTC)
 
 	sac, sacContract := fhSyntheticContractAddr(t, 0xE5)
 	holder, holderAddr := fhSyntheticAccountAddr(t, 0xE6)
@@ -1120,7 +1119,7 @@ func TestSACSeed_ArchivedHolderRetractedAtArchivalLedger(t *testing.T) {
 
 	rows := []chstore.LedgerEntryChangeRow{
 		{
-			LedgerSeq: lastWrite, CloseTime: time.Date(2024, 11, 1, 0, 0, 0, 0, time.UTC),
+			LedgerSeq: lastWrite, CloseTime: lastWriteClose,
 			TxHash: "arch-seed-it", OpIndex: 0, ChangeIndex: 0,
 			ChangeType: "created", EntryType: "contract_data", KeyXDR: keyXDR,
 			EntryXDR: fhEntryXDR(t, sacContract, balanceKey, fhI128Val(big.NewInt(5_000_000)), lastWrite),
@@ -1132,23 +1131,9 @@ func TestSACSeed_ArchivedHolderRetractedAtArchivalLedger(t *testing.T) {
 	if _, err := chstore.InsertEntryChanges(ctx, addr, rows, 0); err != nil {
 		t.Fatalf("InsertEntryChanges: %v", err)
 	}
-	lb, err := raw.PrepareBatch(ctx, `INSERT INTO stellar.ledgers (ledger_seq, close_time, ledger_hash, prev_hash, protocol_version)`)
-	if err != nil {
-		t.Fatalf("prepare ledgers: %v", err)
-	}
-	if err := lb.Append(liveUntil+1, archivalClose, fmt.Sprintf("%064d", liveUntil+1), "00", uint32(22)); err != nil {
-		t.Fatalf("append ledger: %v", err)
-	}
-	if err := lb.Send(); err != nil {
-		t.Fatalf("send ledgers: %v", err)
-	}
 
 	watched := map[string]string{sac: asset}
-	readers := map[string]func(context.Context, string, map[string]string, func(chstore.SACBalanceSeed) error) error{
-		"current-state": chstore.StreamSACBalanceSeeds,
-		"full-history":  sacFullHistoryUnverified,
-	}
-	for name, stream := range readers {
+	for name, stream := range sacSeedReaders() {
 		var got []chstore.SACBalanceSeed
 		if err := stream(ctx, addr, watched, func(s chstore.SACBalanceSeed) error {
 			if s.Holder == holder {
@@ -1159,25 +1144,21 @@ func TestSACSeed_ArchivedHolderRetractedAtArchivalLedger(t *testing.T) {
 			t.Fatalf("%s: %v", name, err)
 		}
 		if len(got) != 1 {
-			t.Fatalf("%s: emitted %d seeds for the archived holder, want 1 tombstone: %+v", name, len(got), got)
+			t.Fatalf("%s: emitted %d seeds for the archived holder, want 1 live balance: %+v", name, len(got), got)
 		}
 		s := got[0]
-		if !s.IsRemoval || s.Balance.Sign() != 0 {
-			t.Errorf("%s: emitted %+v, want an IsRemoval zero-balance tombstone", name, s)
+		if s.IsRemoval || s.Balance.Cmp(big.NewInt(5_000_000)) != 0 {
+			t.Errorf("%s: emitted %+v, want the last written balance 5000000 and no tombstone", name, s)
 		}
-		if s.LedgerSeq != liveUntil+1 {
-			t.Errorf("%s: tombstone LedgerSeq = %d, want archival ledger %d (not last write %d)", name, s.LedgerSeq, liveUntil+1, lastWrite)
-		}
-		if !s.CloseTime.Equal(archivalClose) {
-			t.Errorf("%s: tombstone CloseTime = %v, want %v from stellar.ledgers", name, s.CloseTime, archivalClose)
+		if s.LedgerSeq != lastWrite || !s.CloseTime.Equal(lastWriteClose) {
+			t.Errorf("%s: emitted at ledger %d / %v, want the last write %d / %v", name, s.LedgerSeq, s.CloseTime, lastWrite, lastWriteClose)
 		}
 	}
 }
 
-// TestSACSeed_UncoveredTTLRefuses: a watched Balance entry with no
-// stellar.ttl_live_until row (an unbackfilled projection) must fail both
-// readers — never be emitted as a live holder under a clean-looking pass.
-func TestSACSeed_UncoveredTTLRefuses(t *testing.T) {
+// TestSACSeed_UncoveredTTLStillEmits: TTL coverage is not a precondition of the seed. A watched Balance entry with no
+// stellar.ttl_live_until row is emitted as a live holder by both readers, with no coverage error.
+func TestSACSeed_UncoveredTTLStillEmits(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	addr := clickhouseAddr(t)
@@ -1202,24 +1183,28 @@ func TestSACSeed_UncoveredTTLRefuses(t *testing.T) {
 	}
 
 	watched := map[string]string{sac: asset}
-	readers := map[string]func(context.Context, string, map[string]string, func(chstore.SACBalanceSeed) error) error{
-		"current-state": chstore.StreamSACBalanceSeeds,
-		"full-history":  sacFullHistoryUnverified,
-	}
-	for name, stream := range readers {
-		var emitted int
+	for name, stream := range sacSeedReaders() {
+		var got []chstore.SACBalanceSeed
 		err := stream(ctx, addr, watched, func(s chstore.SACBalanceSeed) error {
 			if s.Holder == holder {
-				emitted++
+				got = append(got, s)
 			}
 			return nil
 		})
-		if err == nil || !strings.Contains(err.Error(), "no stellar.ttl_live_until row") {
-			t.Errorf("%s: err = %v, want the TTL-coverage refusal", name, err)
+		if err != nil {
+			t.Errorf("%s: err = %v, want nil (TTL coverage is not a seed precondition)", name, err)
 		}
-		if emitted != 0 {
-			t.Errorf("%s: emitted %d seeds for the uncovered holder, want 0", name, emitted)
+		if len(got) != 1 || got[0].IsRemoval || got[0].Balance.Cmp(big.NewInt(9_000_000)) != 0 {
+			t.Errorf("%s: emitted %+v, want one live 9000000 balance for the uncovered holder", name, got)
 		}
+	}
+}
+
+// sacSeedReaders names both SAC seed readers for the policy tests above.
+func sacSeedReaders() map[string]func(context.Context, string, map[string]string, func(chstore.SACBalanceSeed) error) error {
+	return map[string]func(context.Context, string, map[string]string, func(chstore.SACBalanceSeed) error) error{
+		"current-state": chstore.StreamSACBalanceSeeds,
+		"full-history":  sacFullHistoryUnverified,
 	}
 }
 
@@ -2103,5 +2088,159 @@ func TestBlendPoolReserves_CurrentStateProjectionBoundsTheRead(t *testing.T) {
 	if readerRead*10 > legacyRead {
 		t.Errorf("reader read %d rows vs legacy %d — the reserve lookup must be bounded by the KEY COUNT, not by how often the pool was written to (#504)",
 			readerRead, legacyRead)
+	}
+}
+
+// Drives `ch-entry-index` via chops.Run on the real tier-1 DDL: a dry run writes nothing; -write fills both index tables
+// from one window, including the sponsor row found through the SQL base64-tail predicate, and advances the entry_index
+// watermark.
+func TestChEntryIndex_WriteFillsBothIndexes(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+	conn := dialClickHouse(t, ctx, "stellar")
+
+	// An isolated ledger range nothing else in the suite writes to.
+	const base = uint32(161_100_000)
+	const (
+		alice  = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7"
+		bob    = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H"
+		issuer = "GCEZWKCA5VLDNRLN3RPRJMRZOX3Z6G5CHCGSNFHEYVXM3XOJMDS674JZ"
+		usdc   = "USDC-" + issuer
+	)
+	entryHistorySeedLedgers(t, ctx, addr, []uint32{base, base + 1, base + 2}, 1)
+
+	account := func(id string, balance, seq int64) xdr.LedgerEntry {
+		return xdr.LedgerEntry{Data: xdr.LedgerEntryData{Type: xdr.LedgerEntryTypeAccount, Account: &xdr.AccountEntry{
+			AccountId: xdr.MustAddress(id), Balance: xdr.Int64(balance), SeqNum: xdr.SequenceNumber(seq),
+			Thresholds: xdr.Thresholds{1, 0, 0, 0},
+		}}}
+	}
+	trustline := xdr.LedgerEntry{Data: xdr.LedgerEntryData{Type: xdr.LedgerEntryTypeTrustline, TrustLine: &xdr.TrustLineEntry{
+		AccountId: xdr.MustAddress(bob), Asset: xdr.MustNewCreditAsset("USDC", issuer).ToTrustLineAsset(),
+		Balance: 10, Limit: 1_000_000,
+	}}}
+	claimable := xdr.LedgerEntry{Data: xdr.LedgerEntryData{Type: xdr.LedgerEntryTypeClaimableBalance, ClaimableBalance: &xdr.ClaimableBalanceEntry{
+		BalanceId: xdr.ClaimableBalanceId{Type: xdr.ClaimableBalanceIdTypeClaimableBalanceIdTypeV0, V0: &xdr.Hash{2}},
+		Claimants: []xdr.Claimant{{Type: xdr.ClaimantTypeClaimantTypeV0, V0: &xdr.ClaimantV0{
+			Destination: xdr.MustAddress(alice), Predicate: xdr.ClaimPredicate{Type: xdr.ClaimPredicateTypeClaimPredicateUnconditional},
+		}}},
+		Asset: xdr.MustNewCreditAsset("USDC", issuer), Amount: 70,
+	}}}
+	sponsored := account(bob, 50, 1)
+	sponsored.Ext = xdr.LedgerEntryExt{V: 1, V1: &xdr.LedgerEntryExtensionV1{SponsoringId: xdr.MustAddressPtr(alice)}}
+
+	row := func(ledger uint32, change uint32, changeType, entryType, owner, asset string, e xdr.LedgerEntry) chstore.LedgerEntryChangeRow {
+		t.Helper()
+		k, err := e.LedgerKey()
+		if err != nil {
+			t.Fatalf("ledger key: %v", err)
+		}
+		r := chstore.LedgerEntryChangeRow{
+			LedgerSeq: ledger, CloseTime: time.Date(2027, 2, 10, 0, 0, 0, 0, time.UTC), TxHash: "ei" + strconv.FormatUint(uint64(ledger), 10),
+			OpIndex: 0, ChangeIndex: change, ChangeType: changeType, EntryType: entryType, AccountID: owner, Asset: asset,
+		}
+		if r.KeyXDR, err = xdr.MarshalBase64(k); err != nil {
+			t.Fatalf("marshal key: %v", err)
+		}
+		if r.EntryXDR, err = xdr.MarshalBase64(e); err != nil {
+			t.Fatalf("marshal entry: %v", err)
+		}
+		return r
+	}
+	src := []chstore.LedgerEntryChangeRow{
+		// base: alice's account changes (two changes, one owner row).
+		row(base, 0, "state", "account", alice, "", account(alice, 1000, 7)),
+		row(base, 1, "updated", "account", alice, "", account(alice, 900, 8)),
+		// base+1: bob opens a USDC trustline.
+		row(base+1, 0, "created", "trustline", bob, usdc, trustline),
+		// base+2: a claimable balance for alice, and bob's account sponsored by alice.
+		row(base+2, 0, "created", "claimable_balance", "", "", claimable),
+		row(base+2, 1, "updated", "account", bob, "", sponsored),
+	}
+	if _, err := chstore.InsertEntryChanges(ctx, addr, src, 0); err != nil {
+		t.Fatalf("seed ledger_entry_changes: %v", err)
+	}
+
+	run := func(write bool) {
+		t.Helper()
+		args := []string{
+			"ch-entry-index", "-ch-addr", addr,
+			"-from", strconv.FormatUint(uint64(base), 10), "-to", strconv.FormatUint(uint64(base+2), 10),
+		}
+		if write {
+			args = append(args, "-write")
+		}
+		if err := chops.Run(args); err != nil {
+			t.Fatalf("ch-entry-index (write=%v): %v", write, err)
+		}
+	}
+	count := func(table string) uint64 {
+		t.Helper()
+		var n uint64
+		if err := conn.QueryRow(ctx, `SELECT count() FROM stellar.`+table+` FINAL WHERE ledger BETWEEN ? AND ?`, base, base+2).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		return n
+	}
+
+	run(false)
+	if a, s := count("account_entry_ledgers"), count("asset_entry_ledgers"); a+s != 0 {
+		t.Fatalf("dry run wrote %d account / %d asset rows, want none", a, s)
+	}
+	run(true)
+	run(true) // idempotent: the second window collapses on FINAL
+	if a, s := count("account_entry_ledgers"), count("asset_entry_ledgers"); a != 5 || s != 1 {
+		t.Fatalf("write run left %d account / %d asset rows, want 5 / 1", a, s)
+	}
+	type roleRow struct {
+		Account string
+		Role    string
+		Ledger  uint32
+	}
+	rows, err := conn.Query(ctx, `SELECT account, role, ledger FROM stellar.account_entry_ledgers FINAL WHERE ledger BETWEEN ? AND ? ORDER BY ledger, role, account`, base, base+2)
+	if err != nil {
+		t.Fatalf("read account index: %v", err)
+	}
+	defer rows.Close()
+	var got []roleRow
+	for rows.Next() {
+		var r roleRow
+		if err := rows.Scan(&r.Account, &r.Role, &r.Ledger); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		got = append(got, r)
+	}
+	raw := func(g string) string {
+		t.Helper()
+		b, err := strkey.Decode(strkey.VersionByteAccountID, g)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	want := []roleRow{
+		{raw(alice), "owner", base},
+		{raw(bob), "owner", base + 1},
+		{raw(bob), "owner", base + 2},
+		{raw(alice), "claimant", base + 2},
+		{raw(alice), "sponsor", base + 2},
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("account index rows = %+v, want %+v", got, want)
+	}
+	var created, updated, removed uint32
+	if err := conn.QueryRow(ctx, `SELECT n_created, n_updated, n_removed FROM stellar.asset_entry_ledgers FINAL WHERE asset = ? AND ledger = ?`, usdc, base+1).Scan(&created, &updated, &removed); err != nil {
+		t.Fatalf("read asset index: %v", err)
+	}
+	if created != 1 || updated != 0 || removed != 0 {
+		t.Fatalf("asset counts = %d/%d/%d, want 1/0/0", created, updated, removed)
+	}
+	wm, err := chstore.EntryIndexWatermark(ctx, addr)
+	if err != nil {
+		t.Fatalf("watermark: %v", err)
+	}
+	if wm != base+2 {
+		t.Fatalf("entry_index watermark = %d, want %d", wm, base+2)
 	}
 }

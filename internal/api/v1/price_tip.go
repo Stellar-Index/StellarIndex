@@ -196,10 +196,14 @@ func (s *Server) tipFallback(ctx context.Context, asset, quote canonical.Asset) 
 	// returns. Last, so an observed market still wins.
 	if fxSnap, fxSources, ok, withheld := s.tryUSDAnchoredFiatCross(ctx, asset, quote); ok {
 		return fxSnap, fxSources, true, nil
-	} else if withheld || proxyWithheld {
-		// The USD leg (the proxy's peg walk or this cross's own) is withheld, so the derived price
-		// is too; report it as withheld rather than letting it fall through as "no data".
-		return PriceSnapshot{}, nil, false, newPriceWithheld(PriceWithheldUpstreamLeg)
+	} else if withheld || proxyWithheld != "" {
+		// A withheld USD leg withholds the derived price too. The peg walk carries its own reason
+		// (this asset's thin market is `substance`); the cross's leg is upstream of the pair asked for.
+		reason := proxyWithheld
+		if reason == "" {
+			reason = PriceWithheldUpstreamLeg
+		}
+		return PriceSnapshot{}, nil, false, newPriceWithheld(reason)
 	}
 	return PriceSnapshot{}, nil, false, nil
 }

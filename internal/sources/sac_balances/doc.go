@@ -7,5 +7,7 @@
 // comes from `[supply.sac_wrappers]`. A balance is `Map({amount, authorized, clawback})` or a
 // bare i128; scval.SEP41BalanceAmount takes either, and any other shape is dropped as a decode
 // error in dispatcher Stats. Because the asset comes from config, a Removed entry is decodable,
-// unlike claimable_balances and liquidity_pools: it emits IsRemoval=true with Balance 0.
+// unlike claimable_balances and liquidity_pools: it emits IsRemoval=true with Balance 0. An evicted
+// persistent entry emits nothing: it is archived and restorable, so the balance stays served, the
+// same rule the lake and the storage-derived token-supply path apply.
 package sac_balances

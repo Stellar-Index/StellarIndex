@@ -63,7 +63,7 @@ const VALUATION_REASON: Record<string, string> = {
 
 /**
  * How a valuation was established, in the words the surface uses. Keyed
- * on the server's `basis` enum (six values across the classic and
+ * on the server's `basis` enum (seven values across the classic and
  * contract arms): a basis missing here fell through to a
  * generic "priced by an independent oracle feed" line even for a
  * declaration or a third-party curation, which is not what either is.
@@ -71,6 +71,8 @@ const VALUATION_REASON: Record<string, string> = {
 const BASIS_PROSE: Record<string, string> = {
   oracle_rwa_feed: 'priced by an independent oracle feed',
   sep1_isin_declaration: 'declared by the issuer under a registered ISIN',
+  sep1_isin_vetted:
+    'named by the issuer under a registered ISIN, transcribed and reviewed by hand',
   third_party_curated:
     'listed by a named third-party curator, not an attestation or a feed',
   curated_contract_instrument:

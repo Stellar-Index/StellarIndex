@@ -47,6 +47,8 @@ interface MevDetail {
   sources?: string[];
   legs?: MevLeg[];
   notional_usd?: string;
+  notional_usd_lower_bound?: boolean; // a leg had no USD value and was left out
+  notional_usd_estimated?: boolean; // a leg was valued at the hour's XLM/USD anchor, not stored
   note?: string;
   // sandwich / wash_trade
   pair?: string;
@@ -88,7 +90,7 @@ function eventAssets(e: MevEvent): string[] {
   return [];
 }
 
-const MEV_CSV_COLUMNS = [
+export const MEV_CSV_COLUMNS = [
   'event_id',
   'detected_at',
   'detected_at_ledger',
@@ -96,6 +98,8 @@ const MEV_CSV_COLUMNS = [
   'assets',
   'sources',
   'notional_usd',
+  'notional_usd_lower_bound',
+  'notional_usd_estimated',
   'profit_usd',
   'accounts',
   'tx_hashes',
@@ -111,10 +115,28 @@ export function mevCsvRow(e: MevEvent): Record<string, string | number> {
     assets: eventAssets(e).join(' '),
     sources: (e.detail.sources ?? []).join(' '),
     notional_usd: e.detail.notional_usd ?? '',
+    notional_usd_lower_bound: e.detail.notional_usd_lower_bound ? 'true' : '',
+    notional_usd_estimated: e.detail.notional_usd_estimated ? 'true' : '',
     profit_usd: e.profit_usd ?? '',
     accounts: e.accounts.join(' '),
     tx_hashes: e.tx_hashes.join(' '),
   };
+}
+
+/** A lower bound must never round up: drop the fraction before whole-dollar rounding (notionals are non-negative). */
+function floorDecimal(raw: string): string {
+  return raw.replace(/\.\d*$/, '');
+}
+
+function notionalTitle(d: MevDetail): string {
+  const parts = ['Trade-time USD value of the legs'];
+  if (d.notional_usd_lower_bound)
+    parts.push('lower bound: a leg with no USD value was left out');
+  if (d.notional_usd_estimated)
+    parts.push(
+      "estimated: a leg was valued at the hour's XLM/USD anchor, not a stored volume",
+    );
+  return parts.join('. ');
 }
 
 function evidenceCount(e: MevEvent): string {
@@ -230,8 +252,19 @@ export function MevFeed() {
                     </span>
                   )}
                   {e.detail.notional_usd && (
-                    <span className="text-ink-body font-mono text-xs">
-                      {formatUsdWhole(e.detail.notional_usd)}
+                    <span
+                      className="text-ink-body font-mono text-xs"
+                      title={notionalTitle(e.detail)}
+                    >
+                      {e.detail.notional_usd_lower_bound && '\u2265 '}
+                      {formatUsdWhole(
+                        e.detail.notional_usd_lower_bound
+                          ? floorDecimal(e.detail.notional_usd)
+                          : e.detail.notional_usd,
+                      )}
+                      {e.detail.notional_usd_estimated && (
+                        <span className="text-ink-muted"> est.</span>
+                      )}
                     </span>
                   )}
                   <span className="text-ink-muted ml-auto font-mono text-[11px]">

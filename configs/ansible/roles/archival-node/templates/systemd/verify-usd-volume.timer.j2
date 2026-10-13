@@ -1,0 +1,21 @@
+# systemd timer: daily usd_volume valuation check.
+#
+# Rendered by Ansible. Companion to verify-usd-volume.service.
+#
+# 05:12 UTC checks yesterday after the usd-volume restamp lanes and the
+# 04:42 supply snapshot have settled, and before the 06:20 served-value
+# harness. stellarindex_verify_usd_volume_stale escalates at 30h, so the
+# cadence is load-bearing: a weekly timer would ticket every week.
+
+[Unit]
+Description=Daily usd_volume valuation check
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/usd-volume-coverage-plan.md
+
+[Timer]
+OnCalendar=*-*-* 05:12:00 UTC
+RandomizedDelaySec=600
+Persistent=true
+Unit=verify-usd-volume.service
+
+[Install]
+WantedBy=timers.target

@@ -81,6 +81,8 @@ func historyDeriveVerb(verb string) (func([]string) error, bool) {
 		return chCap67Movements, true
 	case "ch-entry-history":
 		return chEntryHistory, true
+	case "ch-entry-index":
+		return chEntryIndex, true
 	case "classic-movements-backfill":
 		return classicMovementsBackfill, true
 	default:

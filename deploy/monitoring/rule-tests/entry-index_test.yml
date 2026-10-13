@@ -1,0 +1,67 @@
+rule_files:
+  - ../rules/ingestion.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    name: entry index more than 20000 ledgers behind the cursor fires after 30m
+    input_series:
+      - series: 'stellarindex_cursor_last_ledger{job="stellarindex",instance="r1:9102",source="ledgerstream"}'
+        values: '60000000+10x60'
+      - series: 'stellarindex_ops_job_progress_cursor{job="node_exporter",instance="r1:9100",ops_job="ch-entry-index"}'
+        values: '59900000+0x60'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: stellarindex_entry_index_lagging
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#entry-index-lagging
+              summary: "entry index trails the ledgerstream cursor by more than 20000 ledgers"
+              description: |
+                stellar.account_entry_ledgers / asset_entry_ledgers, built by
+                entry-index.timer every 10 min, are more than 20000 ledgers
+                behind the ledgerstream cursor for 30 min, or the builder has
+                never reported. Either the timer is silent, the builder is
+                refusing a window (lake hole, or no account_id below the
+                ec-floor), or the initial build is still catching up.
+
+  - interval: 1m
+    name: a builder that never reported counts as fully behind
+    input_series:
+      - series: 'stellarindex_cursor_last_ledger{job="stellarindex",instance="r1:9102",source="ledgerstream"}'
+        values: '60000000+10x60'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: stellarindex_entry_index_lagging
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#entry-index-lagging
+              summary: "entry index trails the ledgerstream cursor by more than 20000 ledgers"
+              description: |
+                stellar.account_entry_ledgers / asset_entry_ledgers, built by
+                entry-index.timer every 10 min, are more than 20000 ledgers
+                behind the ledgerstream cursor for 30 min, or the builder has
+                never reported. Either the timer is silent, the builder is
+                refusing a window (lake hole, or no account_id below the
+                ec-floor), or the initial build is still catching up.
+
+  - interval: 1m
+    name: an index within 20000 ledgers of the cursor stays quiet
+    input_series:
+      - series: 'stellarindex_cursor_last_ledger{job="stellarindex",instance="r1:9102",source="ledgerstream"}'
+        values: '60000000+10x60'
+      - series: 'stellarindex_ops_job_progress_cursor{job="node_exporter",instance="r1:9100",ops_job="ch-entry-index"}'
+        values: '59990000+10x60'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: stellarindex_entry_index_lagging
+        exp_alerts: []

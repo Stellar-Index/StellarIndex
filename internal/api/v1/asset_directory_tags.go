@@ -141,11 +141,14 @@ func suppressScamIssuerPricing(d *AssetDetail) {
 	if d == nil || !issuerPricingWithheld(d) {
 		return
 	}
-	if d.PriceUSD != nil {
+	flagged := pricingguard.IsDirectoryScamFlagged(d.IssuerDirectoryTags)
+	switch {
+	case flagged && (d.PriceUSD != nil || d.PriceWithheldReason != ""):
+		// The flag is this asset's own cause and overrides what a reader-side walk said: a
+		// fiat-quoted read misses the scam gate and folds the flag into `upstream_leg`.
+		d.PriceWithheldReason = PriceWithheldScamIssuer
+	case d.PriceUSD != nil:
 		d.PriceWithheldReason = PriceWithheldUnattributed
-		if pricingguard.IsDirectoryScamFlagged(d.IssuerDirectoryTags) {
-			d.PriceWithheldReason = PriceWithheldScamIssuer
-		}
 	}
 	d.PriceUSD = nil
 	d.MarketCapUSD = nil
@@ -153,6 +156,11 @@ func suppressScamIssuerPricing(d *AssetDetail) {
 	d.Change1hPct = nil
 	d.Change24hPct = nil
 	d.Change7dPct = nil
+	// Provenance belongs to the price: a withheld row credits no vendor and stamps no time for a number it refuses.
+	d.PriceAuthority = ""
+	d.PriceSources = nil
+	d.PriceAsOf = nil
+	d.PriceCredit = ""
 	// The last bucket of price_history_* IS the withheld price, and an all-time high is a USD
 	// price claim from the same CAGG, so both go with it; otherwise a null price_usd would
 	// sit beside a priced sparkline or an "ath" figure.

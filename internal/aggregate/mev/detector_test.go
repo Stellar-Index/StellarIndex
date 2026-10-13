@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
 
 func mustPair(t *testing.T, base, quote string) canonical.Pair {
@@ -188,7 +189,7 @@ func TestDetectArbitrage_NotionalSum(t *testing.T) {
 		trade(t, "soroswap", 1, "GARB", "native", usdc),
 		trade(t, "phoenix", 2, "GARB", usdc, "native"),
 	}
-	got := DetectArbitrage(trades, []string{"10.50", "9.25"})
+	got := DetectArbitrage(trades, usdLegs("10.50", "9.25"))
 	if len(got) != 1 || got[0].NotionalUSD != "19.75" {
 		t.Fatalf("notional = %q (want 19.75): %+v", got[0].NotionalUSD, got)
 	}
@@ -203,7 +204,7 @@ func TestDetectArbitrage_PartialNotionalIsLowerBound(t *testing.T) {
 		trade(t, "soroswap", 1, "GARB", "native", usdc),
 		trade(t, "phoenix", 2, "GARB", usdc, "native"),
 	}
-	got := DetectArbitrage(trades, []string{"10.50", ""})
+	got := DetectArbitrage(trades, usdLegs("10.50", ""))
 	if len(got) != 1 || got[0].NotionalUSD != "10.50" || !got[0].NotionalLowerBound {
 		t.Fatalf("got %+v, want notional 10.50 flagged as a lower bound", got)
 	}
@@ -257,7 +258,7 @@ func TestDetectArbitrage_UnrelatedLegExcluded(t *testing.T) {
 		trade(t, "phoenix", 2, "GARB", usdc, "native"),
 		trade(t, "soroswap", 3, "GARB", eth, sol),
 	}
-	got := DetectArbitrage(trades, []string{"10.50", "9.25", "1000"})
+	got := DetectArbitrage(trades, usdLegs("10.50", "9.25", "1000"))
 	if len(got) != 1 {
 		t.Fatalf("got %d candidates, want 1: %+v", len(got), got)
 	}
@@ -322,5 +323,64 @@ func TestSDEXOpIndexStrideMatchesSource(t *testing.T) {
 	}
 	if !strings.Contains(string(src), "const opIndexFanoutStride = 1024") || sdexOpIndexStride != 1024 {
 		t.Fatal("sdex op_index stride changed: update sdexOpIndexStride and opRefOf")
+	}
+}
+
+// usdLegs builds stored (non-estimated) leg values; "" is an unpriced leg.
+func usdLegs(vals ...string) []domain.MEVLegUSD {
+	out := make([]domain.MEVLegUSD, len(vals))
+	for i, v := range vals {
+		out[i] = domain.MEVLegUSD{Value: v}
+	}
+	return out
+}
+
+// TestSumUSD_EstimatedAndLowerBound: an anchor-valued leg marks the sum estimated, an unpriced leg marks it
+// a lower bound, an unparseable value counts as unpriced, and legs outside the cycle do not vote.
+func TestSumUSD_EstimatedAndLowerBound(t *testing.T) {
+	anchored := []domain.MEVLegUSD{{Value: "1.5"}, {Value: "2", Estimated: true}}
+	cases := []struct {
+		name       string
+		legs       []domain.MEVLegUSD
+		idxs       []int
+		notional   string
+		lowerBound bool
+		estimated  bool
+	}{
+		{"stored only", usdLegs("1.5", "2"), []int{0, 1}, "3.50", false, false},
+		{"anchor leg", anchored, []int{0, 1}, "3.50", false, true},
+		{"anchor leg outside the cycle", anchored, []int{0}, "1.50", false, false},
+		{"unpriced leg", usdLegs("1.5", ""), []int{0, 1}, "1.50", true, false},
+		{"unparseable is unpriced", usdLegs("1.5", "x"), []int{0, 1}, "1.50", true, false},
+		{"index past the slice is unpriced", usdLegs("1.5"), []int{0, 7}, "1.50", true, false},
+		{"nothing priced", usdLegs(""), []int{0}, "", false, false},
+	}
+	for _, tc := range cases {
+		n, lb, est := sumUSD(tc.legs, tc.idxs)
+		if n != tc.notional || lb != tc.lowerBound || est != tc.estimated {
+			t.Errorf("%s: sumUSD = (%q, %v, %v), want (%q, %v, %v)", tc.name, n, lb, est, tc.notional, tc.lowerBound, tc.estimated)
+		}
+	}
+}
+
+// TestDetectArbitrage_AnchorValuedLegIsEstimated: an anchor-valued leg flags the notional estimated in the
+// stored evidence, and that flag is independent of the lower-bound one.
+func TestDetectArbitrage_AnchorValuedLegIsEstimated(t *testing.T) {
+	trades := []canonical.Trade{
+		trade(t, "soroswap", 1, "GARB", "native", usdc),
+		trade(t, "phoenix", 2, "GARB", usdc, "native"),
+	}
+	legs := usdLegs("10.50", "9.25")
+	legs[1].Estimated = true
+	got := DetectArbitrage(trades, legs)
+	if len(got) != 1 || got[0].NotionalUSD != "19.75" || !got[0].NotionalEstimated || got[0].NotionalLowerBound {
+		t.Fatalf("got %+v, want notional 19.75 flagged estimated and not a lower bound", got)
+	}
+	ev, err := storedFrom(got[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(ev.DetailJSON), `"notional_usd_estimated":true`) {
+		t.Errorf("detail = %s, want notional_usd_estimated:true", ev.DetailJSON)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"sort"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
 
 // KindSandwich is the mev_events.kind for cross-transaction sandwich candidates.
@@ -42,11 +43,12 @@ type sandwichDetail struct {
 	Legs               []OrderedLeg `json:"legs"`
 	NotionalUSD        string       `json:"notional_usd,omitempty"`
 	NotionalLowerBound bool         `json:"notional_usd_lower_bound,omitempty"`
+	NotionalEstimated  bool         `json:"notional_usd_estimated"`
 	Note               string       `json:"note"`
 }
 
 // DetectSandwiches finds, in one ledger and unordered pair, an account trading in two DIFFERENT txs whose tx_index brackets another account's trade; trades missing from txIdx are ignored, so a partial map degrades detection, never fabricates order. usdVolume is as in DetectArbitrage.
-func DetectSandwiches(trades []canonical.Trade, usdVolume []string, txIdx map[string]uint32) []Candidate {
+func DetectSandwiches(trades []canonical.Trade, usdVolume []domain.MEVLegUSD, txIdx map[string]uint32) []Candidate {
 	if len(txIdx) == 0 {
 		return nil
 	}
@@ -75,7 +77,7 @@ func DetectSandwiches(trades []canonical.Trade, usdVolume []string, txIdx map[st
 
 // sandwichesInGroup evaluates one (ledger, pair) trade group,
 // emitting one candidate per bracketing account.
-func sandwichesInGroup(trades []canonical.Trade, usdVolume []string, txIdx map[string]uint32, idxs []int) []Candidate {
+func sandwichesInGroup(trades []canonical.Trade, usdVolume []domain.MEVLegUSD, txIdx map[string]uint32, idxs []int) []Candidate {
 	byTaker := map[string][]int{}
 	takerOrder := []string{}
 	for _, i := range idxs {
@@ -101,7 +103,7 @@ func sandwichesInGroup(trades []canonical.Trade, usdVolume []string, txIdx map[s
 
 // buildSandwichCandidate tests whether `attacker` brackets a victim
 // inside the group and assembles the Candidate.
-func buildSandwichCandidate(trades []canonical.Trade, usdVolume []string, txIdx map[string]uint32,
+func buildSandwichCandidate(trades []canonical.Trade, usdVolume []domain.MEVLegUSD, txIdx map[string]uint32,
 	groupIdxs []int, attacker string, attackerIdxs []int,
 ) (Candidate, bool) {
 	front, back, ok := bracketTrades(trades, txIdx, attackerIdxs)
@@ -146,7 +148,7 @@ func buildSandwichCandidate(trades []canonical.Trade, usdVolume []string, txIdx 
 	t0 := trades[front]
 	pair := unorderedPairKey(t0)
 	assetID, quoteID := pairIDs(t0)
-	notional, lowerBound := sumUSD(usdVolume, involved)
+	notional, lowerBound, estimated := sumUSD(usdVolume, involved)
 	c := Candidate{
 		AssetID:            assetID,
 		QuoteID:            quoteID,
@@ -162,6 +164,7 @@ func buildSandwichCandidate(trades []canonical.Trade, usdVolume []string, txIdx 
 		Sources:            distinctSources(trades, involved),
 		NotionalUSD:        notional,
 		NotionalLowerBound: lowerBound,
+		NotionalEstimated:  estimated,
 		Dedup:              KindSandwich + ":" + t0.TxHash + ":" + attacker + ":" + pair,
 		Detail: sandwichDetail{
 			Pair:               pair,
@@ -169,6 +172,7 @@ func buildSandwichCandidate(trades []canonical.Trade, usdVolume []string, txIdx 
 			Legs:               legs,
 			NotionalUSD:        notional,
 			NotionalLowerBound: lowerBound,
+			NotionalEstimated:  estimated,
 			Note:               sandwichNote,
 		},
 	}

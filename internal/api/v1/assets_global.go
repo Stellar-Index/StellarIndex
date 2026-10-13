@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
+
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
@@ -45,6 +47,8 @@ type GlobalAssetView struct {
 	PriceAuthority aggregate.PriceAuthority `json:"price_authority,omitempty"`
 	PriceSources   []string                 `json:"price_sources,omitempty"`
 	PriceAsOf      *WireTime                `json:"price_as_of,omitempty"`
+	// PriceCredit names the vendor to credit when PriceSources is one licensed off-chain feed.
+	PriceCredit string `json:"price_credit,omitempty"`
 
 	// ─── Supply + market cap (catalogue-sourced) ──────────────────
 	//
@@ -93,14 +97,23 @@ func (s *Server) buildGlobalAssetView(ctx context.Context, vc *currency.Verified
 	// ComputeGlobalPrice, because fiat:fiat rates are not in the prices_1m CAGG. It runs BEFORE
 	// the s.globalPrice nil guard so a deployment with only those readers still prices fiat.
 	if vc.Class == currency.ClassFiat {
-		return s.populateFiatView(ctx, view, vc)
+		return withPriceCredit(s.populateFiatView(ctx, view, vc))
 	}
 
 	// Crypto / stablecoin: try the global CEX/aggregator tier, then fall back to the on-chain
 	// per-asset price for Stellar-only tokens the global tier does not cover, so the headline
 	// agrees with the /v1/assets listing.
 	view = s.populateGlobalCryptoPrice(ctx, view, vc)
-	return s.fillGlobalPriceFromOnChain(ctx, view, vc)
+	return withPriceCredit(s.fillGlobalPriceFromOnChain(ctx, view, vc))
+}
+
+// withPriceCredit names the vendor when the price rests on exactly one licensed off-chain source (E-7: a lone vendor value
+// is served only with its credit); a composite or an on-chain price carries none.
+func withPriceCredit(view GlobalAssetView) GlobalAssetView {
+	if len(view.PriceSources) == 1 {
+		view.PriceCredit = external.Credit(view.PriceSources[0])
+	}
+	return view
 }
 
 // populateGlobalCryptoPrice fills the price block via the three-tier global chain (vwap_native, aggregator_avg, triangulated);
@@ -262,8 +275,7 @@ func (s *Server) fiatUSDPriceFor(ctx context.Context, ticker string) (price stri
 			// oldest→newest; take the latest usable point. Served price is the stored NUMERIC text, never the float.
 			for i := len(points) - 1; i >= 0; i-- {
 				if _, usable := points[i].inverseUSDRat(); usable {
-					// FXQuotePoint has no source label; fx_quotes is Massive-backed.
-					return points[i].InverseUSDText, points[i].Bucket, []string{"fx_quotes"}, true
+					return points[i].InverseUSDText, points[i].Bucket, []string{fxQuoteSourceLabel(points[i].Source)}, true
 				}
 			}
 		}
@@ -285,6 +297,15 @@ func (s *Server) fiatUSDPriceFor(ctx context.Context, ticker string) (price stri
 		return "", time.Time{}, nil, false
 	}
 	return snap.Price, snap.ObservedAt.Time(), srcs, true
+}
+
+// fxQuoteSourceLabel names the fx_quotes row's vendor so a served FX rate carries its source; a row stored before
+// attribution carries none and is the primary feed's, the store's own convention.
+func fxQuoteSourceLabel(source string) string {
+	if source == "" {
+		return primaryFXSource
+	}
+	return source
 }
 
 // fiatMarketCapUSD computes market_cap_usd for a fiat entry: USD is identity (1.00); others use the latest fx_quotes point in a

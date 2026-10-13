@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -28,6 +29,7 @@ func verifyUSDVolume(args []string) error {
 	days := fs.Int("days", 1, "how many consecutive UTC days to check, ending at -day")
 	minRows := fs.Int64("min-rows", 1, "skip (source, base, quote) groups with fewer than this many priced rows; raises signal on dust pairs without hiding them from the totals")
 	maxList := fs.Int("max-list", 20, "max per-group violation lines to print per day")
+	textfile := fs.String("textfile", "", "node_exporter textfile path, e.g. /var/lib/node_exporter/textfile_collector/verify_usd_volume.prom; empty = none")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -60,13 +62,23 @@ func verifyUSDVolume(args []string) error {
 	}
 
 	var violations int
+	var lastRollups map[timescale.USDVolumeTier]*usdVolumeTierRollup
 	for i := *days - 1; i >= 0; i-- {
 		day := end.AddDate(0, 0, -i)
-		n, derr := verifyUSDVolumeDay(ctx, store, spec, day, *minRows, *maxList)
+		n, rollups, derr := verifyUSDVolumeDay(ctx, store, spec, day, *minRows, *maxList)
 		if derr != nil {
 			return derr
 		}
 		violations += n
+		lastRollups = rollups
+	}
+
+	// Stamped before the violation exit so a failing run still publishes its tiers.
+	if *textfile != "" {
+		body := renderVerifyUSDVolumeProm(end, lastRollups, violations, time.Now())
+		if werr := writeAtomic(*textfile, body); werr != nil {
+			return fmt.Errorf("verify-usd-volume: write textfile: %w", werr)
+		}
 	}
 
 	printUSDVolumeFooter(violations)
@@ -301,10 +313,10 @@ func verifyUSDVolumeDay(
 	day time.Time,
 	minRows int64,
 	maxList int,
-) (int, error) {
+) (int, map[timescale.USDVolumeTier]*usdVolumeTierRollup, error) {
 	groups, err := store.TradeValuationByDay(ctx, day)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 
 	fmt.Printf("\n=== verify-usd-volume: %s (UTC) — %d (source, base, quote) group(s) ===\n",
@@ -314,7 +326,7 @@ func verifyUSDVolumeDay(
 
 	nb, err := verifyXLMBounds(ctx, store, groups, spec, day, minRows, maxList)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	violations = usdVolumeTotalViolations(violations, nb, parseErrs)
 
@@ -324,7 +336,79 @@ func verifyUSDVolumeDay(
 		fmt.Printf("  %d group(s) could not be classified or parsed — listed on stderr above\n", parseErrs)
 	}
 	fmt.Printf("%s: %d violation(s)\n", day.Format(time.DateOnly), violations)
-	return violations, nil
+	return violations, rollups, nil
+}
+
+// knownUSDVolumeTiers are always emitted, 0 when a day had none, so the
+// estimated-tier alert has a series to read even on a quiet day.
+var knownUSDVolumeTiers = []timescale.USDVolumeTier{
+	timescale.TierQuotePegged, timescale.TierBasePegged, timescale.TierEstimated, timescale.TierUnvaluable,
+}
+
+// renderVerifyUSDVolumeProm renders the LAST checked day's tier rollups and
+// the run's violation count as node_exporter textfile exposition.
+func renderVerifyUSDVolumeProm(
+	day time.Time,
+	rollups map[timescale.USDVolumeTier]*usdVolumeTierRollup,
+	violations int,
+	now time.Time,
+) string {
+	tiers := append([]timescale.USDVolumeTier(nil), knownUSDVolumeTiers...)
+	for t := range rollups {
+		known := false
+		for _, k := range knownUSDVolumeTiers {
+			if k == t {
+				known = true
+				break
+			}
+		}
+		if !known {
+			tiers = append(tiers, t)
+		}
+	}
+	sort.SliceStable(tiers[len(knownUSDVolumeTiers):], func(i, j int) bool {
+		return tiers[len(knownUSDVolumeTiers)+i] < tiers[len(knownUSDVolumeTiers)+j]
+	})
+
+	var b strings.Builder
+	b.WriteString("# HELP stellarindex_verify_usd_volume_tier_usd Sum of usd_volume on the last checked UTC day, per reconcile tier.\n")
+	b.WriteString("# TYPE stellarindex_verify_usd_volume_tier_usd gauge\n")
+	for _, t := range tiers {
+		sum := "0"
+		if r := rollups[t]; r != nil {
+			sum = r.sumUSD.FloatString(2)
+		}
+		fmt.Fprintf(&b, "stellarindex_verify_usd_volume_tier_usd{tier=%q} %s\n", string(t), sum)
+	}
+	b.WriteString("# HELP stellarindex_verify_usd_volume_tier_groups (source, base, quote) groups on the last checked UTC day, per reconcile tier.\n")
+	b.WriteString("# TYPE stellarindex_verify_usd_volume_tier_groups gauge\n")
+	for _, t := range tiers {
+		var groups int
+		if r := rollups[t]; r != nil {
+			groups = r.groups
+		}
+		fmt.Fprintf(&b, "stellarindex_verify_usd_volume_tier_groups{tier=%q} %d\n", string(t), groups)
+	}
+	b.WriteString("# HELP stellarindex_verify_usd_volume_tier_rows Trade rows on the last checked UTC day, per reconcile tier and whether usd_volume is set.\n")
+	b.WriteString("# TYPE stellarindex_verify_usd_volume_tier_rows gauge\n")
+	for _, t := range tiers {
+		var priced, unpriced int64
+		if r := rollups[t]; r != nil {
+			priced, unpriced = r.pricedRows, r.unpricedRows
+		}
+		fmt.Fprintf(&b, "stellarindex_verify_usd_volume_tier_rows{tier=%q,priced=\"yes\"} %d\n", string(t), priced)
+		fmt.Fprintf(&b, "stellarindex_verify_usd_volume_tier_rows{tier=%q,priced=\"no\"} %d\n", string(t), unpriced)
+	}
+	b.WriteString("# HELP stellarindex_verify_usd_volume_violations Exact-tier valuation violations found by the last run, summed over its days.\n")
+	b.WriteString("# TYPE stellarindex_verify_usd_volume_violations gauge\n")
+	fmt.Fprintf(&b, "stellarindex_verify_usd_volume_violations %d\n", violations)
+	b.WriteString("# HELP stellarindex_verify_usd_volume_day_unix Start of the last checked UTC day.\n")
+	b.WriteString("# TYPE stellarindex_verify_usd_volume_day_unix gauge\n")
+	fmt.Fprintf(&b, "stellarindex_verify_usd_volume_day_unix %d\n", day.UTC().Truncate(24*time.Hour).Unix())
+	b.WriteString("# HELP stellarindex_verify_usd_volume_last_run_unix When verify-usd-volume last completed its checks.\n")
+	b.WriteString("# TYPE stellarindex_verify_usd_volume_last_run_unix gauge\n")
+	fmt.Fprintf(&b, "stellarindex_verify_usd_volume_last_run_unix %d\n", now.Unix())
+	return b.String()
 }
 
 // verifyXLMBounds runs the XLM-base and XLM-quote bounds for day against its

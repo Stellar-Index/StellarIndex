@@ -73,6 +73,9 @@ type Metadata struct {
 	IncludeInVWAP bool
 	// Paid indicates the source needs a commercial license or API key (shown in /v1/sources).
 	Paid bool
+	// Credit names the vendor to credit wherever this source's value is served on its own (a
+	// composite with provenance is allowed, a raw vendor proxy is not). Empty for on-chain sources.
+	Credit string
 	// BackfillAvailable reports whether the source implements Backfiller with useful depth.
 	BackfillAvailable bool
 	// Backfill is the replay policy for historical ranges. Soroban contracts upgrade in place,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -759,5 +760,198 @@ func TestResolveUSDVolume_ErrorByGeneration(t *testing.T) {
 	}
 	if v != nil {
 		t.Errorf("gen>0: value %q returned alongside the error", *v)
+	}
+}
+
+// TestSorobanVolume24hUSDQueryShape guards the XLM-anchored per-asset USD-volume query: bounded 24h window,
+// per-trade valuation, the XLM leg at its own minute's anchor (never a current scalar), and the excluded-
+// trade count.
+func TestSorobanVolume24hUSDQueryShape(t *testing.T) {
+	q := strings.Join(strings.Fields(sorobanVolume24hUSDQuery), " ")
+	for _, pin := range []struct{ sub, why string }{
+		{"FROM trades WHERE (base_asset = $1 OR quote_asset = $1) AND ts >= now() - INTERVAL '24 hours'", "asset as base OR quote, index-usable 24h ts bound"},
+		{"WHERE t.bucket >= now() - INTERVAL '24 hours' AND t.bucket <= now() - INTERVAL '1 minute'", "closed 1-minute buckets of the last 24h"},
+		{"COALESCE(t.usd_volume, CASE", "per-trade valuation: usd_volume, else the XLM leg"},
+		{"WHEN t.base_asset IN ('native', $2::text) THEN (t.base_amount / 1e7::numeric) * xa.vwap", "XLM-base leg (native + SAC) at the trade's anchor"},
+		{"WHEN t.quote_asset IN ('native', $2::text) THEN (t.quote_amount / 1e7::numeric) * xa.vwap", "XLM-quote leg (native + SAC) at the trade's anchor"},
+		{"LEFT JOIN xlm_usd_grid xa ON xa.minute = t.bucket", "anchor joined at the trade's own minute"},
+		{"count(*) FILTER (WHERE usd IS NULL)", "excluded trades counted for the lower-bound flag"},
+		{"COALESCE(sum(usd), 0)", "empty asset returns 0, not NULL"},
+	} {
+		if !strings.Contains(q, pin.sub) {
+			t.Errorf("query lost %s: missing %q", pin.why, pin.sub)
+		}
+	}
+	if strings.Contains(q, "percentile_disc") {
+		t.Error("query values XLM legs with a current-window scalar")
+	}
+}
+
+const (
+	eurcIssuer = "GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2"
+	eurcKey    = "EURC-" + eurcIssuer
+	pyusdKey   = "PYUSD-GDQE7IXJ4HUHV6RQHIUPRJSEZE4DRS5WY577O2FY6YQ5LVWZ7JZTU2V5"
+)
+
+// fiatPegSpec is circleSpec plus EURC declared EUR-pegged and PYUSD declared USD-pegged.
+func fiatPegSpec(t *testing.T) *USDVolumeQuoteSpec {
+	t.Helper()
+	spec := circleSpec(t, nil)
+	if err := spec.DeclareFiatPegs(map[string]string{eurcKey: "EUR", pyusdKey: "USD"}); err != nil {
+		t.Fatalf("DeclareFiatPegs: %v", err)
+	}
+	return spec
+}
+
+func TestTradeUSDVolume_FiatPeg(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	spec := fiatPegSpec(t)
+	eurc := mustAsset(t, eurcKey)
+	eurcSAC, err := eurc.SacContractID()
+	if err != nil {
+		t.Fatalf("SacContractID: %v", err)
+	}
+	aqua := mustAsset(t, aquaID)
+	pyusd := mustAsset(t, pyusdKey)
+	// 10 AQUA for 25 EURC; EUR/USD 1.08 with EURC trading on-chain at 1.075 (inside the 2% band).
+	aquaForEURC := volTrade(t, "sdex", aqua, eurc, 100_000_000, 250_000_000)
+	honoured := stubFXResolver{prices: map[string]string{"fiat:EUR": "1.08", eurcKey: "1.075"}}
+	cases := []struct {
+		name string
+		tr   canonical.Trade
+		fx   USDVolumeFXResolver
+		want string // "" is NULL
+	}{
+		{"EURC quote inside the band", aquaForEURC, honoured, "27.00000000"},
+		{
+			"EURC SAC quote is gated on the classic form's price", volTrade(t, "soroswap", aqua, mustAsset(t, eurcSAC), 100_000_000, 250_000_000),
+			honoured, "27.00000000",
+		},
+		{"EURC base leg", volTrade(t, "sdex", eurc, aqua, 250_000_000, 100_000_000), honoured, "27.00000000"},
+		{"zero EURC base is exactly 0", volTrade(t, "sdex", eurc, aqua, 0, 100_000_000), honoured, "0.00000000"},
+		{"exactly 200 bps below the rate is inside", aquaForEURC, stubFXResolver{prices: map[string]string{"fiat:EUR": "1.08", eurcKey: "1.0584"}}, "27.00000000"},
+		{"exactly 200 bps above the rate is inside", aquaForEURC, stubFXResolver{prices: map[string]string{"fiat:EUR": "1.08", eurcKey: "1.1016"}}, "27.00000000"},
+		{
+			"PYUSD quote at the USD rate", volTrade(t, "sdex", aqua, pyusd, 100_000_000, 250_000_000),
+			stubFXResolver{prices: map[string]string{"fiat:USD": "1", pyusdKey: "1.0019"}},
+			"25.00000000",
+		},
+		{
+			"depegged quote declines, pegged base values the trade", volTrade(t, "sdex", eurc, pyusd, 250_000_000, 270_000_000),
+			stubFXResolver{prices: map[string]string{"fiat:EUR": "1.08", eurcKey: "1.075", "fiat:USD": "1", pyusdKey: "0.95"}},
+			"27.00000000",
+		},
+		{
+			"leg cross-check stores the smaller leg", aquaForEURC,
+			stubFXResolver{prices: map[string]string{"fiat:EUR": "1.08", eurcKey: "1.075", aquaID: "0.1"}},
+			"1.00000000",
+		},
+		{"single-leg cap refuses an uncross-checkable print", volTrade(t, "sdex", aqua, eurc, 100_000_000, 1_000_000_000_000_000), honoured, ""},
+		{"nil resolver stays NULL", aquaForEURC, nil, ""},
+		{"off-chain source ignores the declaration", volTrade(t, "binance", mustAsset(t, "crypto:XLM"), eurc, 100_000_000, 250_000_000), honoured, "2.68750000"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tradeUSDVolume(ctx, tc.tr, spec, tc.fx)
+			switch {
+			case tc.want == "" && got != nil:
+				t.Fatalf("got %q, want NULL", *got)
+			case tc.want != "" && (got == nil || *got != tc.want):
+				t.Fatalf("got %v, want %q", got, tc.want)
+			}
+		})
+	}
+
+	// Every decline must produce exactly what the waterfall yields with no declaration.
+	sacForEURC := volTrade(t, "soroswap", aqua, mustAsset(t, eurcSAC), 100_000_000, 250_000_000)
+	for name, tc := range map[string]struct {
+		tr canonical.Trade
+		fx USDVolumeFXResolver
+	}{
+		"depeg":                            {aquaForEURC, stubFXResolver{prices: map[string]string{"fiat:EUR": "1.08", eurcKey: "0.95", aquaID: "0.0001"}}},
+		"just outside the band below":      {aquaForEURC, stubFXResolver{prices: map[string]string{"fiat:EUR": "1.08", eurcKey: "1.058292"}}},
+		"just outside the band above":      {aquaForEURC, stubFXResolver{prices: map[string]string{"fiat:EUR": "1.08", eurcKey: "1.101708"}}},
+		"missing fiat rate":                {aquaForEURC, stubFXResolver{prices: map[string]string{eurcKey: "1.075", aquaID: "0.0001"}}},
+		"missing on-chain price":           {aquaForEURC, stubFXResolver{prices: map[string]string{"fiat:EUR": "1.08"}}},
+		"SAC priced only under its own id": {sacForEURC, stubFXResolver{prices: map[string]string{"fiat:EUR": "1.08", eurcSAC: "1.075"}}},
+	} {
+		t.Run(name+" falls through", func(t *testing.T) {
+			got := tradeUSDVolume(ctx, tc.tr, spec, tc.fx)
+			want := tradeUSDVolume(ctx, tc.tr, circleSpec(t, nil), tc.fx)
+			if (got == nil) != (want == nil) || (got != nil && *got != *want) {
+				t.Fatalf("got %v, want the undeclared value %v", got, want)
+			}
+			if got != nil && *got == "27.00000000" {
+				t.Fatal("peg value stored despite the gate declining")
+			}
+		})
+	}
+
+	t.Run("USD peg still short-circuits", func(t *testing.T) {
+		got := tradeUSDVolume(ctx, volTrade(t, "sdex", aqua, mustAsset(t, circleKey), 100_000_000, 250_000_000), spec, panicFXResolver{})
+		if got == nil || *got != "25.00000000" {
+			t.Fatalf("got %v, want 25.00000000", got)
+		}
+	})
+	t.Run("resolver error propagates", func(t *testing.T) {
+		boom := errors.New("fx down")
+		if _, err := tradeUSDVolumeChecked(ctx, aquaForEURC, spec, stubFXResolver{err: boom}); !errors.Is(err, boom) {
+			t.Fatalf("err = %v, want %v", err, boom)
+		}
+	})
+}
+
+func TestWithinBps(t *testing.T) {
+	t.Parallel()
+	rate := big.NewRat(108, 100)
+	for _, tc := range []struct {
+		a    string
+		want bool
+	}{{"1.08", true}, {"1.0584", true}, {"1.1016", true}, {"1.058292", false}, {"1.101708", false}} {
+		a, ok := new(big.Rat).SetString(tc.a)
+		if !ok {
+			t.Fatalf("SetString(%q)", tc.a)
+		}
+		if got := withinBps(a, rate, fiatPegToleranceBps); got != tc.want {
+			t.Errorf("withinBps(%s, 1.08, 200) = %t, want %t", tc.a, got, tc.want)
+		}
+	}
+}
+
+// A fiat-peg SAC resolves to its classic asset for the gate without becoming an exact USD-peg quote form.
+func TestFiatPegInfo_SACResolvesWithoutWideningUSDPegs(t *testing.T) {
+	t.Parallel()
+	spec := fiatPegSpec(t)
+	pyusd := mustAsset(t, pyusdKey)
+	pyusdSAC, err := pyusd.SacContractID()
+	if err != nil {
+		t.Fatalf("SacContractID: %v", err)
+	}
+	classic, ticker, ok := spec.FiatPegInfo(mustAsset(t, pyusdSAC))
+	if !ok || ticker != "USD" || classic.String() != pyusd.String() {
+		t.Fatalf("FiatPegInfo(PYUSD SAC) = (%s, %q, %t), want (%s, USD, true)", classic, ticker, ok, pyusd)
+	}
+	if _, ok := spec.QuoteUSDPegInfo(mustAsset(t, pyusdSAC)); ok {
+		t.Error("a fiat peg declared USD must not make its SAC an exact USD-peg quote")
+	}
+}
+
+func TestDeclareFiatPegs_Rejects(t *testing.T) {
+	t.Parallel()
+	for name, pegs := range map[string]map[string]string{
+		"unparseable key": {"not an asset": "EUR"},
+		"native":          {"native": "USD"},
+		"unknown ticker":  {eurcKey: "AUX"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := circleSpec(t, nil).DeclareFiatPegs(pegs); err == nil {
+				t.Fatal("want an error")
+			}
+		})
+	}
+	var nilSpec *USDVolumeQuoteSpec
+	if _, _, ok := nilSpec.FiatPegInfo(mustAsset(t, eurcKey)); ok {
+		t.Error("nil spec must not report a peg")
 	}
 }

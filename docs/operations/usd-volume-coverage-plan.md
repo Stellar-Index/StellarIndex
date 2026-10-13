@@ -98,6 +98,19 @@ dispatcher batch path and all external connectors). Alerts
 `stellarindex_onchain_usd_volume_coverage_low` enforce the two bars
 (`configs/prometheus/rules.r1/usd-volume-coverage.yml`).
 
+Those two alerts count priced against unpriced rows, so a pegged asset that
+slides into the FX-bridged `estimated` tier moves neither: its rows are still
+priced. `verify-usd-volume.timer` (05:12 UTC, `-days 1`) re-checks yesterday's
+exact tiers and writes the per-tier sums to the node_exporter textfile
+collector as `stellarindex_verify_usd_volume_*`.
+`stellarindex_usd_volume_estimated_tier_high` tickets when the estimated tier
+sums over $10M for a day (measured $0.4-0.9M against $3.5-3.9B exact);
+`stellarindex_verify_usd_volume_stale` tickets when no run has stamped
+`last_run_unix` in 30 h. An exact-tier violation or a crash exits non-zero and
+opens the generic `stellarindex_systemd_unit_failed` ticket; the unit has no
+heartbeat and no ride-out on purpose, because a wrong served number is a
+same-day ticket.
+
 `GET /v1/coverage` publishes the ratio as `usd_volume_pricing`: exact
 priced / unpriced / unroutable counts per source over a fixed 24h window,
 `priced_ratio`, `bar`, `meets_bar` (external venues only, since on-chain

@@ -229,6 +229,14 @@ type AssetDetail struct {
 	// claims. Absent means market-derived.
 	PriceBasis string `json:"price_basis,omitempty"`
 
+	// PriceAuthority, PriceSources, PriceAsOf and PriceCredit are the catalogue price's provenance
+	// (the GlobalAssetView triple plus the vendor credit), carried onto listing rows so a fiat or
+	// catalogue row never serves one vendor's value without naming it. Absent on market-derived prices.
+	PriceAuthority aggregate.PriceAuthority `json:"price_authority,omitempty"`
+	PriceSources   []string                 `json:"price_sources,omitempty"`
+	PriceAsOf      *WireTime                `json:"price_as_of,omitempty"`
+	PriceCredit    string                   `json:"price_credit,omitempty"`
+
 	// PriceWithheldReason says price_usd is null because the price was
 	// WITHHELD, not because none exists, in the `price-withheld` 404's
 	// reason vocabulary. Never set beside a price_usd.
@@ -1929,19 +1937,25 @@ func (s *Server) fillCataloguePricesForPage(ctx context.Context, page []AssetDet
 		if !ok {
 			return
 		}
-		price, mcap := s.catalogueRowPricing(priceCtx, vc)
-		page[i].PriceUSD = price
+		view := s.catalogueRowPricing(priceCtx, vc)
+		page[i].PriceUSD = view.PriceUSD
+		page[i].PriceAuthority = view.PriceAuthority
+		page[i].PriceSources = view.PriceSources
+		// The identity tier stamps the request clock; on a cacheable listing that is noise, not provenance.
+		if view.PriceAuthority != aggregate.AuthorityIdentity {
+			page[i].PriceAsOf = view.PriceAsOf
+		}
+		page[i].PriceCredit = view.PriceCredit
 		if page[i].MarketCapUSD == nil {
-			page[i].MarketCapUSD = mcap
+			page[i].MarketCapUSD = view.MarketCapUSD
 		}
 	})
 }
 
-// catalogueRowPricing resolves one entry's headline price and market cap via buildGlobalAssetView, falling back to the on-chain
-// classic listing price (fillGlobalPriceFromOnChain) for Stellar-only tokens the global tier cannot reach.
-func (s *Server) catalogueRowPricing(ctx context.Context, vc *currency.VerifiedCurrency) (priceUSD, marketCapUSD *string) {
-	view := s.buildGlobalAssetView(ctx, vc)
-	return view.PriceUSD, view.MarketCapUSD
+// catalogueRowPricing resolves one entry's headline price, its provenance and market cap via buildGlobalAssetView, falling back
+// to the on-chain classic listing price (fillGlobalPriceFromOnChain) for Stellar-only tokens the global tier cannot reach.
+func (s *Server) catalogueRowPricing(ctx context.Context, vc *currency.VerifiedCurrency) GlobalAssetView {
+	return s.buildGlobalAssetView(ctx, vc)
 }
 
 // onChainListingPriceUSD returns the on-chain USD price the /v1/assets listing shows for assetID, nil when absent. It passes

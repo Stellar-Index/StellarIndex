@@ -1,0 +1,204 @@
+package chops
+
+import (
+	"context"
+	"slices"
+	"testing"
+
+	"github.com/stellar/go-stellar-sdk/strkey"
+	"github.com/stellar/go-stellar-sdk/xdr"
+
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+)
+
+type eiCapture struct {
+	accounts []clickhouse.EntryIndexAccountRow
+	assets   []clickhouse.EntryIndexAssetRow
+	wm       []uint64
+}
+
+// eiStub serves the fixtures through the seams, filtered to each window's range, and captures every write.
+func eiStub(t *testing.T, owners []clickhouse.EntryIndexOwnerRow, decode []clickhouse.EntryIndexDecodeRow, assets []clickhouse.EntryIndexAssetRow) *eiCapture {
+	t.Helper()
+	origO, origA, origD, origI, origS := streamEntryIndexOwners, streamEntryIndexAssets, streamEntryIndexDecodeRows, insertEntryIndex, setEntryIndexWatermark
+	t.Cleanup(func() {
+		streamEntryIndexOwners, streamEntryIndexAssets, streamEntryIndexDecodeRows, insertEntryIndex, setEntryIndexWatermark = origO, origA, origD, origI, origS
+	})
+	streamEntryIndexOwners = func(_ context.Context, _ string, from, to uint32, fn func(clickhouse.EntryIndexOwnerRow) error) error {
+		for _, r := range owners {
+			if r.Ledger >= from && r.Ledger <= to {
+				if err := fn(r); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	streamEntryIndexDecodeRows = func(_ context.Context, _ string, from, to uint32, fn func(clickhouse.EntryIndexDecodeRow) error) error {
+		for _, r := range decode {
+			if r.Ledger >= from && r.Ledger <= to {
+				if err := fn(r); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	streamEntryIndexAssets = func(_ context.Context, _ string, from, to uint32, fn func(clickhouse.EntryIndexAssetRow) error) error {
+		for _, r := range assets {
+			if r.Ledger >= from && r.Ledger <= to {
+				if err := fn(r); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	got := &eiCapture{}
+	insertEntryIndex = func(_ context.Context, _ string, a []clickhouse.EntryIndexAccountRow, s []clickhouse.EntryIndexAssetRow) (int64, error) {
+		got.accounts = append(got.accounts, a...)
+		got.assets = append(got.assets, s...)
+		return int64(len(a) + len(s)), nil
+	}
+	setEntryIndexWatermark = func(_ context.Context, _ string, _, _ uint32, readTxLedgers uint64) error {
+		got.wm = append(got.wm, readTxLedgers)
+		return nil
+	}
+	return got
+}
+
+func eiXDR(t *testing.T, e xdr.LedgerEntry) string {
+	t.Helper()
+	s, err := xdr.MarshalBase64(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func eiRaw(t *testing.T, g string) string {
+	t.Helper()
+	raw, err := strkey.Decode(strkey.VersionByteAccountID, g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+func eiClaimable(claimants ...string) xdr.LedgerEntry {
+	cb := &xdr.ClaimableBalanceEntry{
+		BalanceId: xdr.ClaimableBalanceId{Type: xdr.ClaimableBalanceIdTypeClaimableBalanceIdTypeV0, V0: &xdr.Hash{1}},
+		Asset:     xdr.MustNewCreditAsset("USDC", ehIssuer), Amount: 70,
+	}
+	for _, c := range claimants {
+		cb.Claimants = append(cb.Claimants, xdr.Claimant{Type: xdr.ClaimantTypeClaimantTypeV0, V0: &xdr.ClaimantV0{
+			Destination: xdr.MustAddress(c), Predicate: xdr.ClaimPredicate{Type: xdr.ClaimPredicateTypeClaimPredicateUnconditional},
+		}})
+	}
+	return xdr.LedgerEntry{Data: xdr.LedgerEntryData{Type: xdr.LedgerEntryTypeClaimableBalance, ClaimableBalance: cb}}
+}
+
+func eiFixtures(t *testing.T) ([]clickhouse.EntryIndexOwnerRow, []clickhouse.EntryIndexDecodeRow, []clickhouse.EntryIndexAssetRow) {
+	t.Helper()
+	sponsored := eiXDR(t, ehSponsored(ehAccount(ehBob, 10, 1), ehAlice))
+	owners := []clickhouse.EntryIndexOwnerRow{
+		{AccountID: ehAlice, Ledger: ehLedger}, {AccountID: ehBob, Ledger: ehLedger}, {AccountID: ehAlice, Ledger: ehLedger + 2},
+	}
+	decode := []clickhouse.EntryIndexDecodeRow{
+		{Ledger: ehLedger, EntryType: "claimable_balance", EntryXDR: eiXDR(t, eiClaimable(ehBob, ehAlice))},
+		{Ledger: ehLedger + 1, EntryType: "account", EntryXDR: sponsored},
+		{Ledger: ehLedger + 1, EntryType: "account", EntryXDR: sponsored}, // same sponsor twice in one ledger: one row
+		{Ledger: ehLedger + 2, EntryType: "account", EntryXDR: sponsored}, // a new ledger: a new row
+	}
+	assets := []clickhouse.EntryIndexAssetRow{{Asset: "USDC-" + ehIssuer, EntryType: "trustline", Ledger: ehLedger, Created: 1, Updated: 2}}
+	return owners, decode, assets
+}
+
+func TestRunEntryIndex_WriteCollectsEveryRoleAndProvesCoverage(t *testing.T) {
+	owners, decode, assets := eiFixtures(t)
+	got := eiStub(t, owners, decode, assets)
+	st := &entryIndexStats{}
+	r := &entryIndexRun{chAddr: "unused", window: 10}
+	if err := runEntryIndex(context.Background(), r, ehLedger, ehLedger+2, st); err != nil {
+		t.Fatal(err)
+	}
+	alice, bob := eiRaw(t, ehAlice), eiRaw(t, ehBob)
+	want := []clickhouse.EntryIndexAccountRow{
+		{Account: alice, Role: "owner", Ledger: ehLedger},
+		{Account: bob, Role: "owner", Ledger: ehLedger},
+		{Account: alice, Role: "owner", Ledger: ehLedger + 2},
+		{Account: bob, Role: "claimant", Ledger: ehLedger},
+		{Account: alice, Role: "claimant", Ledger: ehLedger},
+		{Account: alice, Role: "sponsor", Ledger: ehLedger + 1},
+		{Account: alice, Role: "sponsor", Ledger: ehLedger + 2},
+	}
+	if !slices.Equal(got.accounts, want) {
+		t.Fatalf("account rows = %+v, want %+v", got.accounts, want)
+	}
+	if !slices.Equal(got.assets, assets) {
+		t.Fatalf("asset rows = %+v, want %+v", got.assets, assets)
+	}
+	// Owner rows cover ledgers L and L+2 only: that count is what the watermark proof compares with stellar.ledgers.
+	if !slices.Equal(got.wm, []uint64{2}) {
+		t.Fatalf("watermark readTxLedgers = %v, want [2]", got.wm)
+	}
+	if st.accountRows != 7 || st.assetRows != 1 || st.decoded != 4 || st.skipped != 0 {
+		t.Fatalf("stats = %+v", *st)
+	}
+}
+
+func TestRunEntryIndex_WindowsAdvanceTheWatermarkEach(t *testing.T) {
+	owners, decode, assets := eiFixtures(t)
+	got := eiStub(t, owners, decode, assets)
+	r := &entryIndexRun{chAddr: "unused", window: 2}
+	if err := runEntryIndex(context.Background(), r, ehLedger, ehLedger+2, &entryIndexStats{}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.wm, []uint64{1, 1}) {
+		t.Fatalf("watermark readTxLedgers per window = %v, want [1 1]", got.wm)
+	}
+	if len(got.accounts) != 7 {
+		t.Fatalf("account rows across windows = %d, want 7", len(got.accounts))
+	}
+}
+
+func TestRunEntryIndex_DryRunCountsWithoutWriting(t *testing.T) {
+	owners, decode, assets := eiFixtures(t)
+	got := eiStub(t, owners, decode, assets)
+	st := &entryIndexStats{}
+	r := &entryIndexRun{chAddr: "unused", window: 10, dryRun: true}
+	if err := runEntryIndex(context.Background(), r, ehLedger, ehLedger+2, st); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.accounts) != 0 || len(got.assets) != 0 || len(got.wm) != 0 {
+		t.Fatalf("dry run wrote %d account rows, %d asset rows, %d watermarks", len(got.accounts), len(got.assets), len(got.wm))
+	}
+	if st.accountRows != 7 || st.assetRows != 1 {
+		t.Fatalf("dry-run stats = %+v, want 7 account rows and 1 asset row", *st)
+	}
+}
+
+func TestRunEntryIndex_UndecodableEntryIsSkippedAndBudgeted(t *testing.T) {
+	owners, decode, assets := eiFixtures(t)
+	decode = append(decode, clickhouse.EntryIndexDecodeRow{Ledger: ehLedger, EntryType: "claimable_balance", EntryXDR: "AAAA"})
+	got := eiStub(t, owners, decode, assets)
+	st := &entryIndexStats{}
+	if err := runEntryIndex(context.Background(), &entryIndexRun{chAddr: "unused", window: 10}, ehLedger, ehLedger+2, st); err != nil {
+		t.Fatal(err)
+	}
+	if st.skipped != 1 || len(got.accounts) != 7 {
+		t.Fatalf("skipped = %d, account rows = %d; want 1 skipped and the 7 good rows", st.skipped, len(got.accounts))
+	}
+	if err := enforceDecodeBudget("ch-entry-index", st.skipped, 0); err == nil {
+		t.Fatal("a zero decode budget must fail the run after a skip")
+	}
+}
+
+func TestChEntryIndex_RejectsEmptyWindowAndFloor(t *testing.T) {
+	if err := chEntryIndex([]string{"-window", "0"}); err == nil {
+		t.Fatal("-window 0 accepted")
+	}
+	if err := chEntryIndex([]string{"-floor-ledger", "0"}); err == nil {
+		t.Fatal("-floor-ledger 0 accepted")
+	}
+}

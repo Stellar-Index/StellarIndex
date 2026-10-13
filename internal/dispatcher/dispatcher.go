@@ -191,6 +191,12 @@ type LedgerEntryChangeContext struct {
 	// [EntryWalkVersion].
 	IntraLedgerSeq uint32
 
+	// Evicted marks a state-archival eviction (CAP-62): the key appeared only in the ledger's
+	// evicted-keys list, so the Change is a synthetic Removed with no TxHash and OpIndex -1. A
+	// persistent entry evicted this way is archived and restorable, not deleted; decoders read the
+	// flag together with the entry's durability to decide whether the removal is real.
+	Evicted bool
+
 	Change xdr.LedgerEntryChange
 }
 
@@ -244,7 +250,7 @@ type Dispatcher struct {
 	entryMetaUnsupported int
 
 	// evictedKeysUnreadable counts ledgers whose evicted-key list could not be read, so none of
-	// their evictions reached the entry decoders and each evicted balance stays served as live.
+	// their evictions reached the entry decoders: a temporary entry evicted there stays served.
 	evictedKeysUnreadable int
 
 	// ledgerUpgradeEntries counts upgrade entries seen in closed ledgers. No decoder reads them;
@@ -338,8 +344,8 @@ type Stats struct {
 	// EntryMetaUnsupported counts transactions whose apply-phase entry-change walk was skipped for an
 	// unhandled TransactionMeta version; a sustained climb means the supply observers are blind.
 	EntryMetaUnsupported int
-	// EvictedKeysUnreadable counts ledgers whose evicted-key list failed to read; every eviction in
-	// them is missing from the served state.
+	// EvictedKeysUnreadable counts ledgers whose evicted-key list failed to read; a temporary entry
+	// evicted in them is still served (persistent evictions are archived and stay served by policy).
 	EvictedKeysUnreadable int
 	// LedgerUpgradeEntries counts ledger-upgrade entries seen. They are observed, not decoded; a
 	// non-zero delta marks a network-wide parameter change (protocol, base reserve, Soroban config).
@@ -613,7 +619,7 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 // non-V3/V4 meta is COUNTED, not skipped silently.
 func (d *Dispatcher) walkLedgerEntryChanges(lcm xdr.LedgerCloseMeta, txs []ingest.LedgerTransaction, ledgerSeq uint32, closedAt time.Time) []consumer.Event {
 	var seq uint32
-	dispatchFor := func(txHash string) func(int, xdr.LedgerEntryChange) []consumer.Event {
+	dispatchFor := func(txHash string, evicted bool) func(int, xdr.LedgerEntryChange) []consumer.Event {
 		return func(opIdx int, change xdr.LedgerEntryChange) []consumer.Event {
 			ctx := LedgerEntryChangeContext{
 				Ledger:         ledgerSeq,
@@ -621,6 +627,7 @@ func (d *Dispatcher) walkLedgerEntryChanges(lcm xdr.LedgerCloseMeta, txs []inges
 				TxHash:         txHash,
 				OpIndex:        opIdx,
 				IntraLedgerSeq: seq,
+				Evicted:        evicted,
 				Change:         change,
 			}
 			seq++
@@ -636,12 +643,12 @@ func (d *Dispatcher) walkLedgerEntryChanges(lcm xdr.LedgerCloseMeta, txs []inges
 	// ── Phase 1: the fee phase for every tx, in tx-set apply order.
 	// OpIndex is -1 to distinguish from per-op changes.
 	for i := range txs {
-		dispatch := dispatchFor(entryChangeTxHash(&txs[i]))
+		dispatch := dispatchFor(entryChangeTxHash(&txs[i]), false)
 		outputs = append(outputs, walkChangeSet(txs[i].FeeChanges, -1, dispatch)...)
 	}
 	// ── Phase 2: the apply phase for every tx, in the same order.
 	for i := range txs {
-		dispatch := dispatchFor(entryChangeTxHash(&txs[i]))
+		dispatch := dispatchFor(entryChangeTxHash(&txs[i]), false)
 		switch txs[i].UnsafeMeta.V {
 		case 3:
 			v3 := txs[i].UnsafeMeta.MustV3()
@@ -666,13 +673,13 @@ func (d *Dispatcher) walkLedgerEntryChanges(lcm xdr.LedgerCloseMeta, txs []inges
 	// pre-P23 (the SDK populates PostTxApplyFeeChanges only from LCM V2). op_index -1, tx-level like
 	// the fee phase.
 	for i := range txs {
-		dispatch := dispatchFor(entryChangeTxHash(&txs[i]))
+		dispatch := dispatchFor(entryChangeTxHash(&txs[i]), false)
 		outputs = append(outputs, walkChangeSet(txs[i].PostTxApplyFeeChanges, -1, dispatch)...)
 	}
 	// ── Phase 4: the ledger's state-archival evictions. Not transaction-scoped (empty TxHash, OpIndex
 	// -1) and last, because core evicts at ledger close after every transaction has applied.
 	// See [walkEvictedKeys].
-	outputs = append(outputs, d.walkEvictedKeys(lcm, ledgerSeq, dispatchFor(""))...)
+	outputs = append(outputs, d.walkEvictedKeys(lcm, ledgerSeq, dispatchFor("", true))...)
 	return outputs
 }
 
@@ -692,9 +699,9 @@ func (d *Dispatcher) noteLedgerUpgrades(ups []xdr.UpgradeEntryMeta, ledgerSeq ui
 	d.log().Info("dispatcher: ledger carries upgrades", "ledger", ledgerSeq, "types", types)
 }
 
-// walkEvictedKeys dispatches one synthetic Removed change per key core EVICTED at close (CAP-62): an expired entry is in no tx meta, so
-// unwalked an evicted SAC balance would stand and served supply drift ABOVE the truth. Unreadable keys are counted and logged with the
-// ledger, since each needs a replay.
+// walkEvictedKeys dispatches one synthetic Removed change per key core EVICTED at close (CAP-62), flagged Evicted: an expired entry is in
+// no tx meta. A persistent entry is archived and restorable, so its decoder keeps it served; a temporary one is gone and must be retracted.
+// Unreadable keys are counted and logged with the ledger, since each needs a replay.
 func (d *Dispatcher) walkEvictedKeys(lcm evictedKeysSource, ledgerSeq uint32, dispatch func(int, xdr.LedgerEntryChange) []consumer.Event) []consumer.Event {
 	keys, err := lcm.EvictedLedgerKeys()
 	if err != nil {
