@@ -43,6 +43,10 @@ const (
 // oneXLM is every bar's base amount at the registry's 8-decimal off-chain scale.
 var oneXLM = big.NewInt(100_000_000)
 
+// SpanEnd is the exclusive end of the vendor series: the first venue series owns the week and month
+// rollup buckets from here on, and those rollups have no source filter.
+var SpanEnd = time.Date(2017, 1, 1, 0, 0, 0, 0, time.UTC)
+
 // Close is one dated vendor close: Day is the row's midnight UTC date, Close the price at 8 decimals.
 type Close struct {
 	Day   time.Time
@@ -70,6 +74,9 @@ func (b *Backfiller) Backfill(ctx context.Context, pair canonical.Pair, from, to
 	}
 	if !from.Before(to) {
 		return nil, fmt.Errorf("vendorcsv.Backfill: from %s is not before to %s", from.Format(time.RFC3339), to.Format(time.RFC3339))
+	}
+	if to.After(SpanEnd) {
+		return nil, fmt.Errorf("vendorcsv.Backfill: %s only backfills before %s: -to %s lies past it", SourceName, SpanEnd.Format(time.RFC3339), to.Format(time.RFC3339))
 	}
 	if pair.String() != pairSymbol {
 		return nil, fmt.Errorf("vendorcsv.Backfill: only %s is supported, got %s", pairSymbol, pair.String())
@@ -153,7 +160,7 @@ func ParseCloses(r io.Reader) ([]Close, error) {
 		if raw == "" {
 			continue
 		}
-		v, err := scale.DecimalStringToScaledInt(raw, quoteDecimals)
+		v, err := roundedScaledInt(raw, quoteDecimals)
 		if err != nil {
 			return nil, fmt.Errorf("vendorcsv: line %d: close: %w", line, err)
 		}
@@ -166,6 +173,39 @@ func ParseCloses(r io.Reader) ([]Close, error) {
 }
 
 // columnIndexes locates the two columns the export is read by; a BOM on the first header is ignored.
+// roundedScaledInt scales a plain decimal string by 10^decimals, rounding half up: the export carries
+// float artefacts such as 0.002204999999999999 that truncation would land one unit low.
+func roundedScaledInt(s string, decimals int) (*big.Int, error) {
+	dots, digits := 0, 0
+	for i, c := range s {
+		switch {
+		case c == '-' && i == 0:
+			// A negative close is skipped by the caller, not a parse error.
+		case c == '.':
+			dots++
+		case c >= '0' && c <= '9':
+			digits++
+		default:
+			return nil, fmt.Errorf("not a plain decimal: %q", s)
+		}
+	}
+	r, ok := new(big.Rat).SetString(s)
+	if dots > 1 || digits == 0 || !ok {
+		return nil, fmt.Errorf("not a plain decimal: %q", s)
+	}
+	r.Mul(r, new(big.Rat).SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)))
+	neg := r.Sign() < 0
+	r.Abs(r)
+	q, rem := new(big.Int).QuoRem(r.Num(), r.Denom(), new(big.Int))
+	if rem.Lsh(rem, 1).Cmp(r.Denom()) >= 0 {
+		q.Add(q, big.NewInt(1))
+	}
+	if neg {
+		q.Neg(q)
+	}
+	return q, nil
+}
+
 func columnIndexes(header []string) (dateIdx, closeIdx int, err error) {
 	dateIdx, closeIdx = -1, -1
 	for i, h := range header {

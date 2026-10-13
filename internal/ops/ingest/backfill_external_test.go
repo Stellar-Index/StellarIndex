@@ -382,11 +382,14 @@ func TestRefuseMixedBuckets(t *testing.T) {
 		{"kraken into vendor rows", "kraken", []string{"coingecko_daily"}, "already has coingecko_daily rows"},
 		{"kraken over kraken", "kraken", []string{"kraken"}, ""},
 	}
+	// The probe spans every week and month bucket the run touches, not the run itself.
+	wantLo := time.Date(2014, 7, 28, 0, 0, 0, 0, time.UTC)
+	wantHi := time.Date(2017, 2, 1, 0, 0, 0, 0, time.UTC)
 	for _, tc := range cases {
 		probe := &fakeSourceProbe{sources: tc.stored}
 		err := refuseMixedBuckets(ctx, probe, tc.run, pair, from, to)
-		if !probe.from.Equal(from) || !probe.to.Equal(to) {
-			t.Errorf("%s: probe window = [%s, %s)", tc.name, probe.from, probe.to)
+		if !probe.from.Equal(wantLo) || !probe.to.Equal(wantHi) {
+			t.Errorf("%s: probe window = [%s, %s); want [%s, %s)", tc.name, probe.from, probe.to, wantLo, wantHi)
 		}
 		switch {
 		case tc.want == "" && err != nil:
@@ -400,6 +403,69 @@ func TestRefuseMixedBuckets(t *testing.T) {
 	boom := errors.New("boom")
 	if err := refuseMixedBuckets(ctx, &fakeSourceProbe{err: boom}, "kraken", pair, from, to); !errors.Is(err, boom) {
 		t.Errorf("probe error not wrapped: %v", err)
+	}
+}
+
+// TestBucketSpan: the widened window covers the Monday week and the calendar month of both ends.
+func TestBucketSpan(t *testing.T) {
+	d := func(s string) time.Time {
+		t.Helper()
+		v, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	cases := []struct{ from, to, lo, hi string }{
+		// A Friday start; a Wednesday end: week floors on both sides, month floor only on the end.
+		{"2014-08-01T00:00:00Z", "2017-01-18T00:00:00Z", "2014-07-28T00:00:00Z", "2017-02-01T00:00:00Z"},
+		// -to on a month boundary: the last row (2016-12-31T23:59:59Z) is in week [12-26, 01-02) and December.
+		{"2014-08-05T23:59:59Z", "2017-01-01T00:00:00Z", "2014-08-01T00:00:00Z", "2017-01-02T00:00:00Z"},
+		// A Monday start on the 1st, a window inside one week: still the whole month.
+		{"2016-08-01T00:00:00Z", "2016-08-03T00:00:00Z", "2016-08-01T00:00:00Z", "2016-09-01T00:00:00Z"},
+		// A Sunday: week floor is the previous Monday.
+		{"2017-01-15T12:00:00Z", "2017-01-15T13:00:00Z", "2017-01-01T00:00:00Z", "2017-02-01T00:00:00Z"},
+	}
+	for _, tc := range cases {
+		lo, hi := bucketSpan(d(tc.from), d(tc.to))
+		if !lo.Equal(d(tc.lo)) || !hi.Equal(d(tc.hi)) {
+			t.Errorf("bucketSpan(%s, %s) = [%s, %s); want [%s, %s)", tc.from, tc.to, lo.Format(time.RFC3339), hi.Format(time.RFC3339), tc.lo, tc.hi)
+		}
+	}
+}
+
+type fakePreWalkProbe struct {
+	fakeTradeProbe
+	fakeSourceProbe
+}
+
+// TestRefuseStoredRows_AllowOverlapWaivesOnlyTheOverlapCheck: a vendor re-run over Kraken buckets is refused
+// even with -allow-overlap, which exists only so a window this command wrote can be rewritten.
+func TestRefuseStoredRows_AllowOverlapWaivesOnlyTheOverlapCheck(t *testing.T) {
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	usd, _ := canonical.NewFiatAsset("USD")
+	pair, err := canonical.NewPair(xlm, usd)
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	from := time.Date(2014, 8, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2017, 1, 18, 0, 0, 0, 0, time.UTC)
+	ctx := context.Background()
+	vendor := externalvendorcsv.SourceName
+
+	probe := &fakePreWalkProbe{
+		fakeTradeProbe:  fakeTradeProbe{first: from.Add(time.Hour), found: true},
+		fakeSourceProbe: fakeSourceProbe{sources: []string{vendor, "kraken"}},
+	}
+	if err := refuseStoredRows(ctx, probe, vendor, pair, from, to, false); !errors.Is(err, errBackfillOverlap) {
+		t.Errorf("without -allow-overlap: err = %v, want errBackfillOverlap first", err)
+	}
+	if err := refuseStoredRows(ctx, probe, vendor, pair, from, to, true); !errors.Is(err, errBackfillMixedBuckets) {
+		t.Errorf("with -allow-overlap: err = %v, want errBackfillMixedBuckets", err)
+	}
+	probe.fakeSourceProbe.sources = []string{vendor}
+	if err := refuseStoredRows(ctx, probe, vendor, pair, from, to, true); err != nil {
+		t.Errorf("re-run over own rows with -allow-overlap: err = %v, want nil", err)
 	}
 }
 

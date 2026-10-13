@@ -12,7 +12,6 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
 
 const fixture = `event_date,close_price_usd,market_cap_usd,volume_usd
@@ -67,8 +66,8 @@ func TestParseCloses_HeaderDrivenAndScaled(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("got %d closes, want 2", len(got))
 	}
-	if !got[0].Day.Equal(day("2014-08-06")) || got[0].Close.String() != "3098399999999" {
-		t.Errorf("row 0 = %s %s; want 2014-08-06 3098399999999 (over-precision truncated at 8 decimals)", got[0].Day, got[0].Close)
+	if !got[0].Day.Equal(day("2014-08-06")) || got[0].Close.String() != "3098400000000" {
+		t.Errorf("row 0 = %s %s; want 2014-08-06 3098400000000 (over-precision rounded half up at 8 decimals)", got[0].Day, got[0].Close)
 	}
 	if got[1].Close.String() != "251100" {
 		t.Errorf("row 1 close = %s; want 251100", got[1].Close)
@@ -87,6 +86,35 @@ func TestParseCloses_BlankAndNonPositiveClosesAreSkipped(t *testing.T) {
 	}
 	if len(got) != 1 || !got[0].Day.Equal(day("2014-08-09")) {
 		t.Fatalf("got %+v; want only 2014-08-09", got)
+	}
+}
+
+// TestParseCloses_RoundsHalfUpAtEightDecimals: the export carries float artefacts on most rows; truncation would
+// shift a close by one unit, rounding recovers the vendor's value.
+func TestParseCloses_RoundsHalfUpAtEightDecimals(t *testing.T) {
+	cases := map[string]string{
+		"0.002204999999999999": "220500",
+		"0.005090000000000001": "509000",
+		"0.002511":             "251100",
+		"0.000000005":          "1",
+		"0.000000004":          "0",
+		"1":                    "100000000",
+		"-0.000000005":         "-1",
+	}
+	for raw, want := range cases {
+		got, err := roundedScaledInt(raw, quoteDecimals)
+		if err != nil {
+			t.Errorf("%s: %v", raw, err)
+			continue
+		}
+		if got.String() != want {
+			t.Errorf("%s -> %s; want %s", raw, got, want)
+		}
+	}
+	for _, raw := range []string{"", ".", "-", "1e-3", "1/2", "0x10", "1.2.3", "1-2"} {
+		if _, err := roundedScaledInt(raw, quoteDecimals); err == nil {
+			t.Errorf("%q accepted", raw)
+		}
 	}
 }
 
@@ -110,7 +138,7 @@ func TestParseCloses_Rejects(t *testing.T) {
 
 func TestBackfill_StampsHashesAndAmounts(t *testing.T) {
 	b := &Backfiller{Path: writeFixture(t, fixture), Now: func() time.Time { return day("2026-10-01") }}
-	got, err := b.Backfill(context.Background(), xlmUSD(t), day("2014-01-01"), day("2027-01-01"), Day)
+	got, err := b.Backfill(context.Background(), xlmUSD(t), day("2014-01-01"), day("2017-01-01"), Day)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,10 +150,8 @@ func TestBackfill_StampsHashesAndAmounts(t *testing.T) {
 	if !first.Timestamp.Equal(wantTS) {
 		t.Errorf("timestamp = %s; want %s (one second before the snapshot day)", first.Timestamp, wantTS)
 	}
-	wantHash, err := scale.CandleTxHash("XLMUSD", wantTS.Unix(), Day)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Pinned: the identity of a stored row must never move, or a re-run duplicates instead of upserting.
+	const wantHash = "6b623f4941e629ab4d07dfcc1f5d63af88af73140bc88b18a2cf43e72171e67d"
 	if first.TxHash != wantHash {
 		t.Errorf("tx_hash = %s; want %s", first.TxHash, wantHash)
 	}
@@ -139,7 +165,7 @@ func TestBackfill_StampsHashesAndAmounts(t *testing.T) {
 		t.Errorf("Validate: %v", err)
 	}
 	// The same input yields the same identity: a re-run upserts instead of duplicating.
-	again, err := b.Backfill(context.Background(), xlmUSD(t), day("2014-01-01"), day("2027-01-01"), Day)
+	again, err := b.Backfill(context.Background(), xlmUSD(t), day("2014-01-01"), day("2017-01-01"), Day)
 	if err != nil || again[0].TxHash != first.TxHash || !again[0].Timestamp.Equal(first.Timestamp) {
 		t.Errorf("second run = %+v, %v; want the same identity", again[0], err)
 	}
@@ -172,12 +198,23 @@ func TestBackfill_ClipsToWindowAndClosedDays(t *testing.T) {
 	}
 	// A snapshot day after Now is not closed yet.
 	b.Now = func() time.Time { return day("2014-08-06").Add(12 * time.Hour) }
-	got, err = b.Backfill(context.Background(), xlmUSD(t), day("2014-01-01"), day("2027-01-01"), Day)
+	got, err = b.Backfill(context.Background(), xlmUSD(t), day("2014-01-01"), day("2017-01-01"), Day)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != 1 || !got[0].Timestamp.Equal(day("2014-08-06").Add(-time.Second)) {
 		t.Fatalf("got %+v; want only the 2014-08-06 row", got)
+	}
+}
+
+// TestBackfill_RefusesPastSpanEnd: the series ends where the first venue series' rollup buckets begin.
+func TestBackfill_RefusesPastSpanEnd(t *testing.T) {
+	b := &Backfiller{Path: writeFixture(t, fixture), Now: func() time.Time { return day("2026-10-01") }}
+	if _, err := b.Backfill(context.Background(), xlmUSD(t), day("2014-01-01"), SpanEnd.Add(time.Second), Day); err == nil {
+		t.Error("-to one second past SpanEnd accepted")
+	}
+	if _, err := b.Backfill(context.Background(), xlmUSD(t), day("2014-01-01"), SpanEnd, Day); err != nil {
+		t.Errorf("-to at SpanEnd refused: %v", err)
 	}
 }
 

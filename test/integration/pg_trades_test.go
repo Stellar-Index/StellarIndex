@@ -2738,3 +2738,57 @@ func TestZeroLegAdmission(t *testing.T) {
 		}
 	})
 }
+
+// TestTradeSourcesInWindow_ScopedToPairAndWindow: the mixed-bucket refusal in backfill-external reads
+// this set; a row at exactly `to` or one second before `from`, or on another pair, must not appear.
+func TestTradeSourcesInWindow_ScopedToPairAndWindow(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("timescale.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	xlmUSD := earliestPair(t, "crypto:XLM", "fiat:USD")
+	xlmEUR := earliestPair(t, "crypto:XLM", "fiat:EUR")
+	from := time.Date(2016, 12, 26, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2017, 2, 1, 0, 0, 0, 0, time.UTC)
+	seed := []struct {
+		source string
+		pair   c.Pair
+		ts     time.Time
+	}{
+		{"coingecko_daily", xlmUSD, from.Add(-time.Second)}, // before the window
+		{"kraken", xlmUSD, to},                              // `to` is exclusive
+		{"kraken", xlmEUR, from.Add(time.Hour)},             // another pair
+		{"kraken", xlmUSD, from.Add(22 * 24 * time.Hour)},
+		{"bitstamp", xlmUSD, from.Add(23 * 24 * time.Hour)},
+		{"kraken", xlmUSD, from.Add(24 * 24 * time.Hour)}, // a second kraken row collapses
+	}
+	for i, s := range seed {
+		tr := c.Trade{
+			Source: s.source, TxHash: fmt.Sprintf("%064x", i+1), Timestamp: s.ts, Pair: s.pair,
+			BaseAmount: c.NewAmount(big.NewInt(100_000_000)), QuoteAmount: c.NewAmount(big.NewInt(17_000_000)),
+		}
+		if err := store.InsertTrade(ctx, tr); err != nil {
+			t.Fatalf("seed %d InsertTrade: %v", i, err)
+		}
+	}
+	got, err := store.TradeSourcesInWindow(ctx, xlmUSD, from, to)
+	if err != nil {
+		t.Fatalf("TradeSourcesInWindow: %v", err)
+	}
+	if strings.Join(got, ",") != "bitstamp,kraken" {
+		t.Errorf("sources = %v, want [bitstamp kraken]", got)
+	}
+	got, err = store.TradeSourcesInWindow(ctx, xlmUSD, from.Add(-time.Hour), from)
+	if err != nil {
+		t.Fatalf("TradeSourcesInWindow (vendor hour): %v", err)
+	}
+	if strings.Join(got, ",") != "coingecko_daily" {
+		t.Errorf("sources = %v, want [coingecko_daily]", got)
+	}
+}
