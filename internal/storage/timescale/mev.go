@@ -13,9 +13,18 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pgarray"
 )
 
+// mevStampMinute is the scanned trade's own minute, the newest the ingest stamp can have been priced from.
+const mevStampMinute = "date_trunc('minute', s.ts)"
+
 // tradesForArbScanQuery values each leg at stored usd_volume, else its XLM leg at the minute's XLM/USD anchor ([xlmUSDAnchorGridCTE]), so
 // NULL-usd SDEX cycles don't report "$0"; no anchor within xlmUSDAnchorMaxAge leaves it empty. The last column marks an
 // anchor-valued leg as estimated. $3 is the native-XLM SAC.
+//
+// A stored usd_volume is set aside when the trade has an XLM leg against a non-USD asset and a recorded XLM/USD-proxy freeze
+// ([xlmUSDFreezeOverlap]) overlaps the xlmUSDAnchorMaxAge before its minute: the ingest stamp reads the newest XLM/USD minute in that
+// window with no freeze check, so it may carry the frozen rate. The leg is then valued like an unstamped one, from the anchor
+// (estimated) or not at all. An XLM/USD-proxy trade keeps its stamp: its USD value is its own proxy leg, not the XLM rate. A stamp on a
+// non-XLM trade priced through the XLM bridge at ingest is not checked here.
 //
 //nolint:gosec // G202: fragments are constant SQL (helper output built from literals and $N placeholders); values bind via $N
 var tradesForArbScanQuery = `
@@ -30,13 +39,25 @@ var tradesForArbScanQuery = `
              AND taker IS NOT NULL AND taker <> ''
            ORDER BY ledger DESC, tx_hash DESC, op_index DESC
            LIMIT $2
+        ),
+        legs AS (
+          SELECT s.*,
+                 CASE
+                   WHEN s.usd_volume IS NOT NULL
+                    AND ((s.base_asset IN ('native', $3::text) AND s.quote_asset NOT IN (` + usdProxyQuotes + `))
+                      OR (s.quote_asset IN ('native', $3::text) AND s.base_asset NOT IN (` + usdProxyQuotes + `)))
+                    AND ` + xlmUSDFreezeOverlap(mevStampMinute+" - INTERVAL '"+xlmUSDAnchorMaxAge+"'", mevStampMinute, "$3::text") + `
+                     THEN NULL
+                   ELSE s.usd_volume
+                 END AS usd_volume_trusted
+            FROM scan s
         )
         SELECT t.source, t.ledger, t.tx_hash, t.op_index, t.ts,
                t.base_asset, t.quote_asset,
                t.base_amount, t.quote_amount,
                COALESCE(t.maker, ''), COALESCE(t.taker, ''),
                COALESCE((COALESCE(
-                 t.usd_volume,
+                 t.usd_volume_trusted,
                  CASE
                    WHEN t.base_asset IN ('native', $3::text)
                      THEN (t.base_amount / 1e7::numeric) * xa.vwap
@@ -45,8 +66,8 @@ var tradesForArbScanQuery = `
                    ELSE NULL
                  END
                ))::text, ''),
-               t.usd_volume IS NULL
-          FROM scan t
+               t.usd_volume_trusted IS NULL
+          FROM legs t
           ` + xlmUSDGridJoin("xa", "date_trunc('minute', t.ts)") + `
          ORDER BY t.ledger DESC, t.tx_hash DESC, t.op_index DESC
     `

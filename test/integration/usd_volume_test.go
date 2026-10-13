@@ -2418,9 +2418,45 @@ func TestXLMLegVolume_TradeTimeNeverSpot(t *testing.T) {
 		t.Errorf("stale XLM leg notional = %q (present=%v), want \"\": its newest anchor is 70 min before the trade", v, ok)
 	}
 
+	// A stored stamp on an XLM leg against a non-USD asset, inside the freeze recorded below. Until then it is served as stored.
+	f.trade("sdex", 31*time.Minute, native, X, 10*unit, 1*unit, "9")
+	stamped := uint32(50_000_000 + f.nonce)
+	// The same stamp on the quote-side form (X/native) and on the SAC form, and one on a trade 20 min back: that trade is after
+	// the freeze below recovers, but its stamp may have read any minute of the hour before it, so the look-back sets it aside too.
+	f.trade("sdex", 33*time.Minute, X, native, 1*unit, 10*unit, "9")
+	quoted := uint32(50_000_000 + f.nonce)
+	sac, err := c.NewSorobanAsset(c.NativeSACContractID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.trade("sdex", 32*time.Minute, sac, X, 10*unit, 1*unit, "9")
+	sacLeg := uint32(50_000_000 + f.nonce)
+	f.trade("sdex", 20*time.Minute, native, X, 10*unit, 1*unit, "9")
+	late := uint32(50_000_000 + f.nonce)
+	frozenStamps := map[uint32]bool{stamped: true, quoted: true, sacLeg: true, late: true}
+	for l := range frozenStamps {
+		if _, err := db.ExecContext(f.ctx, `UPDATE trades SET usd_volume = 9, taker = 'GTAKER' WHERE ledger = $1`, l); err != nil {
+			t.Fatalf("stamp the XLM/X leg %d: %v", l, err)
+		}
+	}
+	trades, usd, err = f.store.TradesForArbScan(f.ctx, f.now.Add(-4*time.Hour), 0)
+	if err != nil {
+		t.Fatalf("TradesForArbScan with stamped XLM/X legs: %v", err)
+	}
+	seen := map[uint32]bool{}
+	for i, tr := range trades {
+		seen[tr.Ledger] = true
+		if frozenStamps[tr.Ledger] && (!ratEq(t, usd[i].Value, "9") || usd[i].Estimated) {
+			t.Errorf("ledger %d stamped XLM/X leg outside any freeze = %+v, want the stored 9, not estimated", tr.Ledger, usd[i])
+		}
+	}
+	mustSee(t, seen, stamped, quoted, sacLeg, late)
+
 	// A recorded XLM/USD freeze (ADR-0019) spanning the fresh trade's anchor minute leaves that leg unpriced: a frozen
-	// rate never anchors a notional, and the next-newest anchor (3 h) is past xlmUSDAnchorMaxAge. Stored usd_volume
-	// legs do not move.
+	// rate never anchors a notional, and the next-newest anchor (3 h) is past xlmUSDAnchorMaxAge. The stamps on the XLM/X legs
+	// inside the freeze, and on the one within an hour after it, are set aside the same way (the ingest stamp carries no freeze
+	// check), so with no unfrozen anchor within the hour those legs are withheld too. Stored XLM/USD-proxy legs do not move:
+	// their value is their own proxy leg.
 	xlmCrypto, _ := c.NewCryptoAsset("XLM")
 	usdFiat, _ := c.NewFiatAsset("USD")
 	if err := timescale.NewFreezeEventSink(f.store).RecordFreeze(f.ctx, xlmCrypto, usdFiat, "0.4", anomaly.Decision{
@@ -2436,12 +2472,57 @@ func TestXLMLegVolume_TradeTimeNeverSpot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TradesForArbScan under freeze: %v", err)
 	}
+	seen = map[uint32]bool{}
 	for i, tr := range trades {
+		seen[tr.Ledger] = true
 		switch {
 		case tr.Ledger == fresh && (usd[i].Value != "" || usd[i].Estimated):
 			t.Errorf("fresh XLM leg under a freeze = %+v, want unpriced: its anchor minute is frozen", usd[i])
-		case f.usd[int(tr.Ledger)] != "" && usd[i].Value != got[tr.Ledger]:
+		case frozenStamps[tr.Ledger] && (usd[i].Value != "" || usd[i].Estimated):
+			t.Errorf("ledger %d stamped XLM/X leg under the freeze = %+v, want withheld: the stamp is set aside and no unfrozen anchor is within the hour", tr.Ledger, usd[i])
+		case !frozenStamps[tr.Ledger] && f.usd[int(tr.Ledger)] != "" && usd[i].Value != got[tr.Ledger]:
 			t.Errorf("ledger %d stored notional changed under the freeze: %q -> %q", tr.Ledger, got[tr.Ledger], usd[i].Value)
+		}
+	}
+	mustSee(t, seen, fresh, stamped, quoted, sacLeg, late)
+
+	// An unfrozen XLM/USDC minute 50 min back (0.3) re-anchors every set-aside leg: each stamp is replaced by the anchor value
+	// and marked estimated, never served as the stored 9; stored XLM/USD-proxy legs still do not move.
+	f.trade("sdex", 50*time.Minute, native, usdc, 10*unit, 3*unit, "3")
+	anchor := uint32(50_000_000 + f.nonce)
+	if _, err := db.ExecContext(f.ctx, `UPDATE trades SET usd_volume = 3, taker = 'GTAKER' WHERE ledger = $1`, anchor); err != nil {
+		t.Fatalf("stamp the prior anchor trade: %v", err)
+	}
+	if _, err := db.ExecContext(f.ctx, `CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`); err != nil {
+		t.Fatalf("refresh prices_1m: %v", err)
+	}
+	trades, usd, err = f.store.TradesForArbScan(f.ctx, f.now.Add(-4*time.Hour), 0)
+	if err != nil {
+		t.Fatalf("TradesForArbScan under freeze with a prior anchor: %v", err)
+	}
+	seen = map[uint32]bool{}
+	for i, tr := range trades {
+		seen[tr.Ledger] = true
+		switch {
+		case frozenStamps[tr.Ledger] && (!ratEq(t, usd[i].Value, "3") || !usd[i].Estimated):
+			t.Errorf("ledger %d stamped XLM/X leg under the freeze = %+v, want 3 estimated: 10 XLM at the newest unfrozen anchor, not the stored 9", tr.Ledger, usd[i])
+		case tr.Ledger == fresh && (!ratEq(t, usd[i].Value, "3") || !usd[i].Estimated):
+			t.Errorf("fresh XLM leg inside the freeze = %+v, want 3 estimated from the newest unfrozen anchor", usd[i])
+		case tr.Ledger == anchor && (!ratEq(t, usd[i].Value, "3") || usd[i].Estimated):
+			t.Errorf("stored XLM/USDC leg = %+v, want the stored 3, not estimated", usd[i])
+		case !frozenStamps[tr.Ledger] && tr.Ledger != anchor && f.usd[int(tr.Ledger)] != "" && usd[i].Value != got[tr.Ledger]:
+			t.Errorf("ledger %d stored notional changed under the freeze: %q -> %q", tr.Ledger, got[tr.Ledger], usd[i].Value)
+		}
+	}
+	mustSee(t, seen, fresh, anchor, stamped, quoted, sacLeg, late)
+}
+
+// mustSee fails when a scan omitted a ledger an assertion depends on, so a missing row cannot pass as "nothing wrong".
+func mustSee(t *testing.T, seen map[uint32]bool, ledgers ...uint32) {
+	t.Helper()
+	for _, l := range ledgers {
+		if !seen[l] {
+			t.Fatalf("TradesForArbScan omitted ledger %d", l)
 		}
 	}
 }
