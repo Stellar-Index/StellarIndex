@@ -89,9 +89,11 @@ fix was the cfg group, not the preamble.)
    ensure it is on `main` before the next r1 core bump.
 2. **Never restart galexie on r1 more than once for a change.** One restart, then
    wait ~10 min and watch the tip — do not re-restart mid-catchup.
-3. **Defensive option (not yet applied):** add `galexie` to the `stellar` group
-   (or have the role re-assert the cfg group immediately after any apt task) so a
-   stray package operation can't lock galexie out. Weigh against giving galexie
-   broader `stellar`-group read.
+3. **Defensive option — covered by the role's ordering.** In `07-galexie.yml`
+   the apt tasks run before the cfg template task, which re-asserts
+   `stellar:galexie 0640` on `/etc/stellar/captive-core-galexie.cfg`, so a core
+   bump through the role cannot leave galexie locked out; an out-of-role apt run
+   shows up as `ansible-drift` until the next run. `galexie` is not added to the
+   `stellar` group: that would widen its read beyond its own cfg.
 4. A stalled ingest tip is **not** a served-data outage (cache + lake keep
    serving) — diagnose calmly; don't panic-restart.

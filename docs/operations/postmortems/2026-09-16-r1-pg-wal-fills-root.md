@@ -71,8 +71,8 @@ correctly refused to apply that tag's config, which still carried `16GB`.
 
 ## Action items and status
 
-- [ ] **`pg_wal` is on the wrong volume.** The checkpoint problem is real and unfixed; move `pg_wal` onto `data/postgres` (2.8 TB free), which fixes the class.
-- [ ] **Nothing wakes anyone.** `chat-page` is Discord-only; a phone-paging receiver is an open decision (owner: maintainer). Same gap as launch-plan row 1.4.
+- [x] **`pg_wal` is on the wrong volume — moved.** `pg_wal` is its own dataset, `data/postgres/wal`, and the role's WAL headroom guard (`05-postgres.yml`) resolves the symlink and refuses a `max_wal_size` the real filesystem cannot hold.
+- [ ] **Nothing wakes anyone.** `chat-page` is Discord-only; a phone-paging receiver is an open decision (owner: maintainer). Same gap as launch-plan row 1.4 (INV-0841).
 - [x] **Root-disk alerts pointed at the wrong runbook (INV-0995).** They linked `redis-write-blocked-disk-full.md`; since 600cd6b0f they link `node-root-disk.md#stellarindex_node_root_disk_full` / `node-root-disk.md#stellarindex_node_root_disk_warning`.
 - [x] **No signal on rate-limiter fail-closed / Redis refusing writes — shipped 2026-09-27.** `stellarindex_ratelimit_fail_closed_total` counts the transition and
   `stellarindex_ratelimit_fail_closed` (`api.yml`, page) fires on it; `stellarindex_redis_command_errors_total{class}` counts Redis failures by class.
