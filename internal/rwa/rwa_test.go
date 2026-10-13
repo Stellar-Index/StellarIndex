@@ -156,7 +156,7 @@ func TestQualify_OracleBasisNeverAdmitsOnCodeAlone(t *testing.T) {
 // since a narrower pre-filter is a silent membership change. The matrix spans every asset-side input a requirement-4 arm reads:
 // code (oracle arm), anchor type (class arm) and anchor asset (ISIN arm).
 func TestCouldQualify_MatchesQualifyOnTheAssetSideInputs(t *testing.T) {
-	codes := []string{"USTRY", "BENJI", "XAU", "XAUm", "MEME", "USDC", ""}
+	codes := []string{"USTRY", "BENJI", "XAU", "XAUm", "MEME", "USDC", "", "LNGV", "BB1"}
 	types := []string{"bond", "stock", "commodity", "realestate", "fiat", "crypto", "nft", "other", ""}
 	anchors := []string{
 		"LU2900381208", // gBENJI, valid ISIN
@@ -166,17 +166,24 @@ func TestCouldQualify_MatchesQualifyOnTheAssetSideInputs(t *testing.T) {
 		"FOBXX",        // a ticker, not an ISIN
 		"",
 	}
-	for _, code := range codes {
-		for _, typ := range types {
-			for _, anchor := range anchors {
-				admitted := Qualify(Candidate{
-					Code: code, Issuer: "G1", BoundSep1: true,
-					DeclaredAnchorType:  typ,
-					DeclaredAnchorAsset: anchor,
-					DirectoryTags:       []string{"issuer"},
-				}).InSet
-				if admitted && !CouldQualify(code, typ, anchor) {
-					t.Errorf("CouldQualify(%q, %q, %q) = false but Qualify admits it", code, typ, anchor)
+	issuers := []string{
+		"G1",
+		"GAHOGWBAWNIKESGNNW7Y7JU5KL54HIEHJGY6Y5QLY6YR3J7WZIDHLC6D", // LNGV fund-NAV binding
+		"GD5J6HLF5666X4AZLTFTXLY46J5SW7EXRKBLEYPJP33S33MXZGV6CWFN", // BB1 vetted ISIN
+	}
+	for _, issuer := range issuers {
+		for _, code := range codes {
+			for _, typ := range types {
+				for _, anchor := range anchors {
+					admitted := Qualify(Candidate{
+						Code: code, Issuer: issuer, BoundSep1: true,
+						DeclaredAnchorType:  typ,
+						DeclaredAnchorAsset: anchor,
+						DirectoryTags:       []string{"issuer"},
+					}).InSet
+					if admitted && !CouldQualify(code, issuer, typ, anchor) {
+						t.Errorf("CouldQualify(%q, %q, %q, %q) = false but Qualify admits it", code, issuer, typ, anchor)
+					}
 				}
 			}
 		}
@@ -191,14 +198,14 @@ func TestCouldQualify_KeepsAnISINDeclaredEntryWithNoClass(t *testing.T) {
 		{"grBENJI", "LU3258450587"},
 		{"sgBENJI", "SGXZ71843866"},
 	} {
-		if !CouldQualify(c.code, "other", c.isin) {
+		if !CouldQualify(c.code, "G1", "other", c.isin) {
 			t.Errorf("CouldQualify(%q, other, %s) = false: the ISIN arm is unreachable through the pre-filter", c.code, c.isin)
 		}
 	}
-	if CouldQualify("gBENJI", "other", "LU2900381209") {
+	if CouldQualify("gBENJI", "G1", "other", "LU2900381209") {
 		t.Error("a malformed ISIN (bad check digit) must not pass the pre-filter on the ISIN arm")
 	}
-	if CouldQualify("MEME", "other", "") {
+	if CouldQualify("MEME", "G1", "other", "") {
 		t.Error("type other with no anchor asset and no oracle code must still be filtered")
 	}
 }
@@ -299,7 +306,7 @@ func TestConstantNAV_EveryBindingIsEvidencedAndBounded(t *testing.T) {
 		if !strings.Contains(b.Source, b.ISIN) {
 			t.Errorf("%s: source %q does not name the binding's own ISIN %s — it is evidence for a different share class", b.Code, b.Source, b.ISIN)
 		}
-		verified, err := time.Parse(constantNAVDateLayout, b.VerifiedOn)
+		verified, err := time.Parse(reviewDateLayout, b.VerifiedOn)
 		if err != nil {
 			t.Errorf("%s: VerifiedOn %q: %v", b.Code, b.VerifiedOn, err)
 			continue
@@ -739,5 +746,38 @@ func TestFundNAVBindings_AllTwelveResolve(t *testing.T) {
 	tickers := FundNAVTickers()
 	if !slices.IsSorted(tickers) || len(tickers) != len(want) {
 		t.Errorf("FundNAVTickers() = %v; want %d sorted tickers", tickers, len(want))
+	}
+}
+
+// The vetted table admits exactly its pair, without a class, only once R2 and R3 stand, and
+// never ahead of the issuer's own live declaration.
+func TestQualify_VettedISINAdmitsOnlyItsOwnPair(t *testing.T) {
+	c := Candidate{Code: "BB1", Issuer: testBB1Issuer, BoundSep1: true, DirectoryTags: []string{"anchor", "issuer"}}
+	v := Qualify(c)
+	if !v.InSet || v.Basis != BasisSep1ISINVetted || v.AnchorClass != "" || v.Recognition != RecognitionDirectory {
+		t.Fatalf("bound BB1: %+v, want admitted under %s with no class", v, BasisSep1ISINVetted)
+	}
+	if !CouldQualify(c.Code, c.Issuer, "", "") {
+		t.Fatal("the pre-filter drops the vetted pair before Qualify sees it")
+	}
+	c.DeclaredAnchorAsset = "DE000A2TR7Q2"
+	if v := Qualify(c); v.Basis != BasisSep1ISIN {
+		t.Fatalf("declared ISIN beside the vetted one: basis %s, want %s", v.Basis, BasisSep1ISIN)
+	}
+	c.DeclaredAnchorAsset = ""
+	c.Issuer = "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC"
+	if v := Qualify(c); v.InSet || v.Reject != RejectNoInstrumentClaim {
+		t.Fatalf("BB1 under another issuer admitted: %+v", v)
+	}
+	if CouldQualify(c.Code, c.Issuer, "", "") {
+		t.Fatal("BB1 under another issuer passes the pre-filter")
+	}
+	c.Issuer, c.Code = testBB1Issuer, "BB2"
+	if v := Qualify(c); v.InSet {
+		t.Fatalf("another code on the vetted issuer admitted: %+v", v)
+	}
+	c.Code, c.DirectoryTags = "BB1", nil
+	if v := Qualify(c); v.InSet || v.Reject != RejectNoRecognition {
+		t.Fatalf("unrecognised BB1 admitted: %+v", v)
 	}
 }

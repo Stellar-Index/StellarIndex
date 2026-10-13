@@ -67,7 +67,7 @@ func TestAdmitClassicCandidates_ISINCollisionAcrossIssuers(t *testing.T) {
 		rwaKey("gBENJI", franklinIB): {AssetID: "gBENJI-" + franklinIB, Code: "gBENJI"},
 		rwaKey("grBENJI", listed):    {AssetID: "grBENJI-" + listed, Code: "grBENJI"},
 	}
-	served, _ := s.rwaAssetRows(out, rows)
+	served, _ := s.rwaAssetRows(out, rows, time.Now())
 	byCode := map[string]RWAAsset{}
 	for _, a := range served {
 		byCode[a.Code] = a

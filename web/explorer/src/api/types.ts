@@ -3092,9 +3092,12 @@ export interface paths {
          *        `oracle_rwa_feed` (an independent oracle publishes a
          *        net-asset-value feed for an instrument of this code, per
          *        ADR-0028, or for exactly this code and issuer on the
-         *        hand-vetted fund-NAV list), or `sep1_isin_declaration` (the bound entry's
-         *        `anchor_asset` is a well-formed ISIN). The oracle arm is
-         *        keyed on the CODE, so it is admissible only after
+         *        hand-vetted fund-NAV list), `sep1_isin_declaration` (the bound entry's
+         *        `anchor_asset` is a well-formed ISIN), or `sep1_isin_vetted`
+         *        (the entry names its ISIN only in prose, transcribed by hand
+         *        from the issuer's own SEP-1 for exactly this code and issuer;
+         *        served with its source and review date in `vetted_isin`). The
+         *        oracle arm is keyed on the CODE, so it is admissible only after
          *        requirement 3 has bound the issuer.
          *
          *     TWO VALUATIONS, NEVER FOLDED. A tokenized real-world asset is
@@ -9141,7 +9144,7 @@ export interface components {
              */
             issuer_directory_domain?: string;
             /**
-             * @description Which final requirement admitted this asset. The first two
+             * @description Which final requirement admitted this asset. The first three
              *     belong to the classic arm, the last two to the contract arm.
              *
              *     `sep1_anchor_declaration` — the issuer-bound SEP-1 entry
@@ -9158,6 +9161,14 @@ export interface components {
              *     all that is claimed — this says an identifier was declared,
              *     never that the declarer is entitled to it, which is what
              *     requirements 2 and 3 are for.
+             *     `sep1_isin_vetted` — the same evidence transcribed by hand:
+             *     the issuer-bound entry names its ISIN only in prose fields
+             *     the served tier does not keep, so a maintainer read it from
+             *     the issuer's own SEP-1 and bound it to exactly this code and
+             *     issuer, with the page it came from and a review date, served
+             *     in `vetted_isin`. Tried after the live declaration, so an
+             *     `anchor_asset` ISIN always wins; admits without a class;
+             *     requirements 2 and 3 still stand in front of it.
              *     `oracle_rwa_feed` — an independent oracle publishes a
              *     net-asset-value feed for an instrument of this code
              *     (ADR-0028); keyed on the code, so admissible only because
@@ -9172,7 +9183,7 @@ export interface components {
              *     WHETHER the address is vouched for.
              * @enum {string}
              */
-            basis: "sep1_anchor_declaration" | "sep1_isin_declaration" | "oracle_rwa_feed" | "curated_contract_instrument" | "contract_oracle_rwa_feed" | "third_party_curated";
+            basis: "sep1_anchor_declaration" | "sep1_isin_declaration" | "sep1_isin_vetted" | "oracle_rwa_feed" | "curated_contract_instrument" | "contract_oracle_rwa_feed" | "third_party_curated";
             /**
              * @description Which independent party's naming satisfied the recognition
              *     requirement — the contract arm's second, the classic arm's
@@ -9203,7 +9214,7 @@ export interface components {
             /**
              * @description Declared class. Present under `sep1_anchor_declaration` and
              *     `curated_contract_instrument`. Absent under either oracle
-             *     basis and under `sep1_isin_declaration` — each of those
+             *     basis and under both ISIN bases — each of those
              *     names an instrument, not its class, and none is invented.
              *     `fund` is contract-arm only: SEP-1's declared vocabulary
              *     (`sep1_anchor_declaration`) never emits it — see
@@ -9214,6 +9225,7 @@ export interface components {
             /** @description The off-chain instrument the issuer declared this token anchors to, verbatim. */
             anchor_asset?: string;
             isin_collision?: components["schemas"]["RWAISINCollision"];
+            vetted_isin?: components["schemas"]["RWAVettedISIN"];
             valuation: components["schemas"]["RWAValuation"];
             reference_valuation: components["schemas"]["RWAReferenceValuation"];
             reference?: components["schemas"]["RWAReference"];
@@ -9432,9 +9444,53 @@ export interface components {
             feed: string;
         };
         /**
-         * @description Present only when `anchor_asset` is an ISIN that more than one
-         *     issuer account declares in its issuer-bound SEP-1, counting
-         *     declarations this surface refused as well as admitted ones.
+         * @description Present only under basis `sep1_isin_vetted`: the ISIN a
+         *     maintainer transcribed from the issuer's own SEP-1 for exactly
+         *     this code and issuer, because the entry names it only in prose.
+         *     Informational, like `isin_collision`: it records the evidence
+         *     and when it falls due for re-reading, and never carries a price.
+         */
+        RWAVettedISIN: {
+            /**
+             * @description The transcribed ISIN in canonical upper-case form.
+             * @example DE000A2TR7Q2
+             */
+            isin: string;
+            /**
+             * @description The issuer's own name for the instrument.
+             * @example Bitbond Finance Tokenized Bond 1
+             */
+            instrument: string;
+            /**
+             * Format: uri
+             * @description The issuer-bound SEP-1 the ISIN was read from.
+             * @example https://bitbondsto.com/.well-known/stellar.toml
+             */
+            source: string;
+            /**
+             * Format: date
+             * @description The calendar date the page was read.
+             * @example 2026-10-13
+             */
+            verified_on: string;
+            /**
+             * Format: date
+             * @description One quarter after `verified_on`; the binding is due for re-reading after this date.
+             * @example 2027-01-11
+             */
+            review_by: string;
+            /**
+             * @description `true` once the serving time is past `review_by`. The row is
+             *     labelled, not withheld, like a stale reference.
+             * @default false
+             */
+            review_due: boolean;
+        };
+        /**
+         * @description Present only when the claimed ISIN — `anchor_asset` when that is
+         *     one, else `vetted_isin.isin` — is one that more than one issuer
+         *     account claims in its issuer-bound SEP-1, counting claims this
+         *     surface refused as well as admitted ones.
          *
          *     A declared ISIN is the issuer's claim, not proof that it holds
          *     the security, so this states how many accounts make the same

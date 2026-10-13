@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
@@ -149,7 +150,7 @@ func rwaRowFor(t *testing.T, s *Server, d AssetDetail) RWAAsset {
 	t.Helper()
 	mem := rwaMember{code: "CETES", issuer: cetesIssuer, name: "Cetes", basis: "sep1_declaration", anchorClass: "bond"}
 	out, notObserved := s.rwaAssetRows(rwaMembership{members: []rwaMember{mem}},
-		map[string]AssetDetail{rwaKey(mem.code, mem.issuer): d})
+		map[string]AssetDetail{rwaKey(mem.code, mem.issuer): d}, time.Now())
 	if notObserved != 0 || len(out) != 1 {
 		t.Fatalf("projection returned %d rows (%d not observed), want 1", len(out), notObserved)
 	}
