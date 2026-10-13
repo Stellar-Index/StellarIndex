@@ -3902,16 +3902,24 @@ with `frozen_checked=false`. Alerted by
 
 ### `stellarindex_anomaly_freeze_ladder_write_failures_total`
 
-Counter, label `op` (`mark_hold` / `clear`).
+Counter, label `op` (`record_freeze` / `mark_hold` / `clear`).
 
-Durable ADR-0019 ladder writes (migration 0119) that did not land.
+Durable ADR-0019 freeze writes (migration 0119) that did not land:
+the `freeze_events` row itself (`record_freeze`, after one retry) or
+the ladder stored on it (`mark_hold` / `clear`).
 
 The failure was always possible; the **silence** is what this closes.
-Neither `freeze.Writer` nor `timescale.FreezeEventSink` holds a
-logger, so a persistently failing ladder write produced no signal on
-any surface: every freeze looked healthy right up until a Redis flush
-needed the ladder that had never been written, at which point the
-escalated freeze released exactly as it did before 0119.
+`freeze.Writer` now logs every counted failure at error
+(`component=freeze-writer`); before that, a persistently failing
+write produced no signal on any surface: every freeze looked healthy
+right up until a Redis flush needed the ladder that had never been
+written, at which point the escalated freeze released exactly as it
+did before 0119.
+
+`record_freeze` is the worse direction: Redis still freezes the pair,
+but the row is every SQL reader's only record of the freeze, so the
+XLM/USD anchor exclusion and the arb scan treat the minute as
+unfrozen.
 
 The shape that makes this concrete is a partially-failed deploy. The
 pipeline applies migrations **before** swapping the binary, so a new
@@ -3920,11 +3928,11 @@ ladder write match zero rows — uniformly absent durable state, zero
 complaints. The sink reports that as `ErrNotFound` and it is counted
 here.
 
-Any sustained non-zero value means the durable ladder is not being
+Any sustained non-zero value means the durable record is not being
 maintained and the Redis-flush protection is **inert**. `mark_hold`
-failing is the dangerous direction (ladders never recorded); `clear`
-failing only widens the pre-existing recovery-worker window. Both
-label values are pre-seeded — a metric that only appears once it
+failing is the dangerous ladder direction (ladders never recorded);
+`clear` failing only widens the pre-existing recovery-worker window.
+All label values are pre-seeded — a metric that only appears once it
 breaks is indistinguishable from a dead one, which is the exact class
 of gap this counter exists to close.
 

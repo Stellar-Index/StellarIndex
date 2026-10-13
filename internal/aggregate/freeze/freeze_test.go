@@ -137,6 +137,8 @@ func TestLooker_DistinctPairsIsolated(t *testing.T) {
 type recordingSink struct {
 	calls []recordedFreeze
 	err   error
+	// failN fails the first N calls with err; 0 fails every call while err is set.
+	failN int
 }
 
 type recordedFreeze struct {
@@ -153,6 +155,9 @@ func (r *recordingSink) RecordFreeze(_ context.Context, asset, quote canonical.A
 		FrozenValue: frozenValue,
 		Decision:    decision,
 	})
+	if r.failN > 0 && len(r.calls) > r.failN {
+		return nil
+	}
 	return r.err
 }
 

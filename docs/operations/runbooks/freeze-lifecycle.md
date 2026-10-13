@@ -78,9 +78,9 @@ Fix: shared diagnosis; tune per the escalated section. The freeze itself is corr
 
 ## stellarindex_anomaly_freeze_ladder_write_failures
 
-P3 ticket. `increase(stellarindex_anomaly_freeze_ladder_write_failures_total[15m]) > 0`, `for: 0m`. Label `op` = `mark_hold|clear`.
+P3 ticket. `increase(stellarindex_anomaly_freeze_ladder_write_failures_total[15m]) > 0`, `for: 0m`. Label `op` = `record_freeze|mark_hold|clear`.
 
-Means: a durable ladder write (migration 0119) did not land. `mark_hold` failing is the dangerous direction: the ladder was never recorded, so a Redis flush during the freeze rehydrates nothing and an escalated pair silently releases. Causes: Postgres error, or a deploy that swapped the binary before 0119 applied (every write matches zero rows). `clear` failing only widens the recovery-worker window.
+Means: a durable freeze write (migration 0119) did not land, after one retry. `record_freeze` failing means the `freeze_events` row itself is missing: Redis still freezes the pair, but every SQL reader (the XLM/USD anchor exclusion, the arb scan) treats the minute as unfrozen; the aggregator log carries the error under `component=freeze-writer`. `mark_hold` failing is the ladder direction: the ladder was never recorded, so a Redis flush during the freeze rehydrates nothing and an escalated pair silently releases. Causes: Postgres error, or a deploy that swapped the binary before 0119 applied (every write matches zero rows). `clear` failing only widens the recovery-worker window.
 
 Fix: check the aggregator's Postgres connectivity; confirm migration 0119 (`migrations/0119_freeze_events_lifecycle`) is applied in this environment.
 

@@ -288,6 +288,7 @@ func run(cfgPath string, dryRun bool) error {
 		sink := timescale.NewFreezeEventSink(store, sinkOpts...)
 		opts := []freeze.WriterOption{
 			freeze.WithEventSink(sink),
+			freeze.WithLogger(logger.With("component", "freeze-writer")),
 			// Durable ADR-0019 ladder. Without it the extension count and ESCALATED flag live only
 			// in process memory and the Redis marker, and the orchestrator reads a missing marker
 			// as an operator force-unfreeze, so a Redis flush would release every held pair. Same

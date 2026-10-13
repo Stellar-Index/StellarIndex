@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -123,6 +124,19 @@ type Writer struct {
 	// clock is the time every ladder-liveness read and marker stamp is
 	// taken at; nil is the wall clock. See [WithClock].
 	clock func() time.Time
+	// logger receives every durable write that did not land; nil is slog.Default(). See [WithLogger].
+	logger *slog.Logger
+}
+
+// sinkRetryDelay is the pause before the one retry of a failed durable freeze-event write.
+const sinkRetryDelay = 200 * time.Millisecond
+
+// log is the writer's logger: the injected one, else the process default.
+func (w *Writer) log() *slog.Logger {
+	if w.logger != nil {
+		return w.logger
+	}
+	return slog.Default()
 }
 
 // now is the writer's clock: the injected one, else the wall clock.
@@ -164,6 +178,11 @@ func WithEventSink(sink EventSink) WriterOption {
 	return func(w *Writer) {
 		w.sink = sink
 	}
+}
+
+// WithLogger sets where a durable write that did not land is reported; nil keeps slog.Default().
+func WithLogger(logger *slog.Logger) WriterOption {
+	return func(w *Writer) { w.logger = logger }
 }
 
 // DefaultLadderGrace equals [DefaultMarkerGrace]: shorter drops a freeze flushed near its hold end, longer resurrects one from a long-dead aggregator.
@@ -263,13 +282,11 @@ func (w *Writer) markHold(
 		return fmt.Errorf("freeze: cache set %s: %w", key, err)
 	}
 
-	// Durable mirror, best-effort: Redis already succeeded and drives flags.frozen.
+	// Durable mirror, best-effort: Redis already succeeded and drives flags.frozen. A lost row is
+	// still every SQL reader's (anchor exclusion, scans) only record of the freeze, so it is retried
+	// once, then counted and logged rather than failing the mark.
 	if w.sink != nil {
-		if sinkErr := w.sink.RecordFreeze(ctx, asset, quote, frozenValue, decision); sinkErr != nil {
-			// Silent on purpose (no logger here); a broken mirror shows as the gap between
-			// AnomalyFreezeEngagedTotal and freeze_events rows. The ladder half below is counted.
-			_ = sinkErr
-		}
+		w.recordFreeze(ctx, asset, quote, frozenValue, decision)
 	}
 
 	// Durable ladder on EVERY transition (extensions/escalation change later than the fire), after
@@ -284,6 +301,25 @@ func (w *Writer) markHold(
 	return nil
 }
 
+// recordFreeze writes the durable freeze-event row, retrying once after [sinkRetryDelay] unless ctx ends first; a second
+// failure is counted on op=record_freeze and logged at error.
+func (w *Writer) recordFreeze(ctx context.Context, asset, quote canonical.Asset, frozenValue string, decision anomaly.Decision) {
+	err := w.sink.RecordFreeze(ctx, asset, quote, frozenValue, decision)
+	if err == nil {
+		return
+	}
+	select {
+	case <-ctx.Done():
+	case <-time.After(sinkRetryDelay):
+		if err = w.sink.RecordFreeze(ctx, asset, quote, frozenValue, decision); err == nil {
+			return
+		}
+	}
+	obs.AnomalyFreezeLadderWriteFailuresTotal.WithLabelValues("record_freeze").Inc()
+	w.log().Error("freeze: durable freeze-event row did not land",
+		"asset", asset.String(), "quote", quote.String(), "op", "record_freeze", "err", err)
+}
+
 // saveWindowLadder is [Writer.saveLadder] for one window's durable ladder (an inactive state retires it), counted on the same failure
 // counter: a silently missing durable ladder is only found when a Redis loss needs it.
 func (w *Writer) saveWindowLadder(
@@ -295,15 +331,19 @@ func (w *Writer) saveWindowLadder(
 ) {
 	if err := w.windowLadder.SaveWindowLadder(ctx, asset, quote, window, state); err != nil {
 		obs.AnomalyFreezeLadderWriteFailuresTotal.WithLabelValues(op).Inc()
+		w.log().Error("freeze: durable window ladder did not land",
+			"asset", asset.String(), "quote", quote.String(), "window", window.String(), "op", op, "err", err)
 	}
 }
 
-// saveLadder mirrors a state to the durable store: best-effort but counted, since nothing here
-// logs and a missing ladder is found only when a flush needs it (e.g. binary ahead of migration 0119).
+// saveLadder mirrors a state to the durable store: best-effort but counted and logged, since a missing ladder is
+// otherwise found only when a flush needs it (e.g. binary ahead of migration 0119).
 // `op` (mark_hold | clear) tells recording failures from retiring ones.
 func (w *Writer) saveLadder(ctx context.Context, asset, quote canonical.Asset, state State, op string) {
 	if err := w.ladder.SaveLadder(ctx, asset, quote, state); err != nil {
 		obs.AnomalyFreezeLadderWriteFailuresTotal.WithLabelValues(op).Inc()
+		w.log().Error("freeze: durable ladder did not land",
+			"asset", asset.String(), "quote", quote.String(), "op", op, "err", err)
 	}
 }
 
