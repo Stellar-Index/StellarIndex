@@ -90,7 +90,7 @@ function eventAssets(e: MevEvent): string[] {
   return [];
 }
 
-const MEV_CSV_COLUMNS = [
+export const MEV_CSV_COLUMNS = [
   'event_id',
   'detected_at',
   'detected_at_ledger',
@@ -98,6 +98,8 @@ const MEV_CSV_COLUMNS = [
   'assets',
   'sources',
   'notional_usd',
+  'notional_usd_lower_bound',
+  'notional_usd_estimated',
   'profit_usd',
   'accounts',
   'tx_hashes',
@@ -119,6 +121,11 @@ export function mevCsvRow(e: MevEvent): Record<string, string | number> {
     accounts: e.accounts.join(' '),
     tx_hashes: e.tx_hashes.join(' '),
   };
+}
+
+/** A lower bound must never round up: drop the fraction before whole-dollar rounding (notionals are non-negative). */
+function floorDecimal(raw: string): string {
+  return raw.replace(/\.\d*$/, '');
 }
 
 function notionalTitle(d: MevDetail): string {
@@ -250,7 +257,11 @@ export function MevFeed() {
                       title={notionalTitle(e.detail)}
                     >
                       {e.detail.notional_usd_lower_bound && '\u2265 '}
-                      {formatUsdWhole(e.detail.notional_usd)}
+                      {formatUsdWhole(
+                        e.detail.notional_usd_lower_bound
+                          ? floorDecimal(e.detail.notional_usd)
+                          : e.detail.notional_usd,
+                      )}
                       {e.detail.notional_usd_estimated && (
                         <span className="text-ink-muted"> est.</span>
                       )}

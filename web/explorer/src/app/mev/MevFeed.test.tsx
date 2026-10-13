@@ -2,7 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-import { MevFeed, mevCsvRow } from './MevFeed';
+import { MevFeed, MEV_CSV_COLUMNS, mevCsvRow } from './MevFeed';
+import { toCsv } from '@/lib/export';
 
 vi.mock('@/api/client', async () => {
   const actual =
@@ -50,7 +51,7 @@ describe('MevFeed', () => {
           tx_hashes: [],
           accounts: [],
           detail: {
-            notional_usd: '1234',
+            notional_usd: '1234.60',
             notional_usd_lower_bound: true,
             notional_usd_estimated: true,
           },
@@ -97,5 +98,29 @@ describe('mevCsvRow', () => {
       accounts: 'GA',
       tx_hashes: 't1 t2',
     });
+  });
+
+  it('writes the notional flags into the downloaded CSV', () => {
+    const csv = toCsv(MEV_CSV_COLUMNS, [
+      mevCsvRow({
+        event_id: 'e4',
+        detected_at: '2026-09-10T00:00:00Z',
+        detected_at_ledger: 9,
+        kind: 'arbitrage',
+        tx_hashes: ['t9'],
+        accounts: ['GB'],
+        detail: {
+          notional_usd: '1234',
+          notional_usd_lower_bound: true,
+          notional_usd_estimated: true,
+        },
+        profit_usd: null,
+      }),
+    ]);
+    const [header, row] = csv.split('\r\n');
+    expect(header).toBe(
+      'event_id,detected_at,detected_at_ledger,kind,assets,sources,notional_usd,notional_usd_lower_bound,notional_usd_estimated,profit_usd,accounts,tx_hashes',
+    );
+    expect(row).toBe('e4,2026-09-10T00:00:00Z,9,arbitrage,,,1234,true,true,,GB,t9');
   });
 });
