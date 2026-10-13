@@ -45,7 +45,7 @@ func (s *Server) mevDetectorsPartial(r *http.Request) bool {
 		}
 		return true
 	}
-	return !(full && present)
+	return !full || !present
 }
 
 // MEVEventView is a /v1/mev entry; detail holds per-kind evidence plus a note on what is claimed, and profit_usd is null because no detector estimates profit.
