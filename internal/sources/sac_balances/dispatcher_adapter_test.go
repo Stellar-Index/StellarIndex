@@ -455,13 +455,22 @@ func TestObserver_UnwatchedEvictionIsIgnored(t *testing.T) {
 	}
 }
 
-// TestObserver_RestoreAfterEvictionReturnsTheBalance pins the round trip: archival is reversible, so a Restored change must
-// put the balance back, else the eviction fix trades a permanent over-count for an under-count.
+// TestObserver_RestoreAfterEvictionReturnsTheBalance pins the round trip: a persistent eviction emits nothing and the
+// Restored change that follows is an ordinary live observation, so the balance is served throughout.
 func TestObserver_RestoreAfterEvictionReturnsTheBalance(t *testing.T) {
 	const assetKey = "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	o, err := NewObserver(map[string]string{cSAC: assetKey})
 	if err != nil {
 		t.Fatalf("NewObserver: %v", err)
+	}
+	d := dispatcher.New()
+	d.AddEntryDecoder(o)
+	evicted, err := d.ProcessLedger(evictionLedger(63_500_000, []xdr.LedgerKey{evictedBalanceKey(t, cSAC, gHolder)}), evictionPassphrase)
+	if err != nil {
+		t.Fatalf("ProcessLedger(eviction): %v", err)
+	}
+	if len(evicted) != 0 {
+		t.Fatalf("eviction produced %d observations, want 0", len(evicted))
 	}
 	restored := makeContractDataChange(t, cSAC, makeBalanceKey(t, gHolder), makeI128Val(1_000_000))
 	restored.Type = xdr.LedgerEntryChangeTypeLedgerEntryRestored

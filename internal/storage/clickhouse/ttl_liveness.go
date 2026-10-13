@@ -13,8 +13,9 @@ import (
 )
 
 // Soroban archives a contract_data entry once its TTL lapses, but the lake keeps its last
-// value forever, so "newest contract_data row for this key" serves an archived balance
-// indefinitely. The signal is the companion TTL entry's `liveUntilLedgerSeq`, extracted at ingest
+// value forever, so "newest contract_data row for this key" cannot tell a live entry from an
+// archived one; the pool-state readers need that distinction (SAC balances keep archived entries
+// served by policy). The signal is the companion TTL entry's `liveUntilLedgerSeq`, extracted at ingest
 // into the slim `stellar.ttl_live_until` projection (key_hash -> live_until,
 // ReplacingMergeTree(version)); this reader is a bounded primary-key lookup. Scanning
 // ledger_entries_current for ttl rows (wide entry_xdr) OOMs, so there is no fallback: a missing
