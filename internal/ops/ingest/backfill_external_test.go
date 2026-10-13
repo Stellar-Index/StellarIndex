@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	externalkraken "github.com/Stellar-Index/StellarIndex/internal/sources/external/kraken"
 	externalvendorcsv "github.com/Stellar-Index/StellarIndex/internal/sources/external/vendorcsv"
 )
@@ -351,10 +352,11 @@ type fakeSourceProbe struct {
 	sources  []string
 	err      error
 	from, to time.Time
+	asked    []string
 }
 
-func (f *fakeSourceProbe) TradeSourcesInWindow(_ context.Context, _ canonical.Pair, from, to time.Time) ([]string, error) {
-	f.from, f.to = from, to
+func (f *fakeSourceProbe) TradeSourcesInWindow(_ context.Context, _ canonical.Pair, from, to time.Time, sources []string) ([]string, error) {
+	f.from, f.to, f.asked = from, to, sources
 	return f.sources, f.err
 }
 
@@ -390,6 +392,14 @@ func TestRefuseMixedBuckets(t *testing.T) {
 		err := refuseMixedBuckets(ctx, probe, tc.run, pair, from, to)
 		if !probe.from.Equal(wantLo) || !probe.to.Equal(wantHi) {
 			t.Errorf("%s: probe window = [%s, %s); want [%s, %s)", tc.name, probe.from, probe.to, wantLo, wantHi)
+		}
+		// Only the other VWAP kind is looked up, so a busy venue's own rows never widen the probe.
+		asked := strings.Join(probe.asked, ",")
+		if strings.Contains(asked, tc.run) || !strings.Contains(asked, ",") {
+			t.Errorf("%s: probe asked for %q; want the other VWAP kind only", tc.name, asked)
+		}
+		if wantOther := map[bool]string{true: "kraken", false: externalvendorcsv.SourceName}[!external.Lookup(tc.run).IncludeInVWAP]; !strings.Contains(asked, wantOther) {
+			t.Errorf("%s: probe asked for %q; want %s in the list", tc.name, asked, wantOther)
 		}
 		switch {
 		case tc.want == "" && err != nil:

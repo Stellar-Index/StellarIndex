@@ -172,7 +172,6 @@ func ParseCloses(r io.Reader) ([]Close, error) {
 	return out, nil
 }
 
-// columnIndexes locates the two columns the export is read by; a BOM on the first header is ignored.
 // roundedScaledInt scales a plain decimal string by 10^decimals, rounding half up: the export carries
 // float artefacts such as 0.002204999999999999 that truncation would land one unit low.
 func roundedScaledInt(s string, decimals int) (*big.Int, error) {
@@ -206,6 +205,7 @@ func roundedScaledInt(s string, decimals int) (*big.Int, error) {
 	return q, nil
 }
 
+// columnIndexes locates the two columns the export is read by; a BOM on the first header is ignored.
 func columnIndexes(header []string) (dateIdx, closeIdx int, err error) {
 	dateIdx, closeIdx = -1, -1
 	for i, h := range header {

@@ -2740,7 +2740,8 @@ func TestZeroLegAdmission(t *testing.T) {
 }
 
 // TestTradeSourcesInWindow_ScopedToPairAndWindow: the mixed-bucket refusal in backfill-external reads
-// this set; a row at exactly `to` or one second before `from`, or on another pair, must not appear.
+// this set; a row at exactly `to` or one second before `from`, on another pair, or from a source
+// outside the candidate list must not appear.
 func TestTradeSourcesInWindow_ScopedToPairAndWindow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -2777,14 +2778,22 @@ func TestTradeSourcesInWindow_ScopedToPairAndWindow(t *testing.T) {
 			t.Fatalf("seed %d InsertTrade: %v", i, err)
 		}
 	}
-	got, err := store.TradeSourcesInWindow(ctx, xlmUSD, from, to)
+	venues := []string{"bitstamp", "coingecko_daily", "kraken"}
+	got, err := store.TradeSourcesInWindow(ctx, xlmUSD, from, to, venues)
 	if err != nil {
 		t.Fatalf("TradeSourcesInWindow: %v", err)
 	}
 	if strings.Join(got, ",") != "bitstamp,kraken" {
 		t.Errorf("sources = %v, want [bitstamp kraken]", got)
 	}
-	got, err = store.TradeSourcesInWindow(ctx, xlmUSD, from.Add(-time.Hour), from)
+	got, err = store.TradeSourcesInWindow(ctx, xlmUSD, from, to, []string{"kraken"})
+	if err != nil {
+		t.Fatalf("TradeSourcesInWindow (kraken only): %v", err)
+	}
+	if strings.Join(got, ",") != "kraken" {
+		t.Errorf("sources = %v, want [kraken]: the candidate list is not applied", got)
+	}
+	got, err = store.TradeSourcesInWindow(ctx, xlmUSD, from.Add(-time.Hour), from, venues)
 	if err != nil {
 		t.Fatalf("TradeSourcesInWindow (vendor hour): %v", err)
 	}

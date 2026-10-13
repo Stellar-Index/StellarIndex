@@ -260,7 +260,7 @@ var errBackfillMixedBuckets = errors.New("backfill window would mix VWAP and non
 
 // sourceSetProbe is the storage seam refuseMixedBuckets depends on.
 type sourceSetProbe interface {
-	TradeSourcesInWindow(ctx context.Context, pair canonical.Pair, from, to time.Time) ([]string, error)
+	TradeSourcesInWindow(ctx context.Context, pair canonical.Pair, from, to time.Time, sources []string) ([]string, error)
 }
 
 // refuseMixedBuckets keeps a vendor series and a VWAP-eligible series out of one price rollup bucket in
@@ -269,11 +269,11 @@ type sourceSetProbe interface {
 // window itself, because the week and month rollups extend past any run boundary.
 func refuseMixedBuckets(ctx context.Context, probe sourceSetProbe, source string, pair canonical.Pair, from, to time.Time) error {
 	lo, hi := bucketSpan(from, to)
-	stored, err := probe.TradeSourcesInWindow(ctx, pair, lo, hi)
+	runVWAP := external.Lookup(source).IncludeInVWAP
+	stored, err := probe.TradeSourcesInWindow(ctx, pair, lo, hi, sourcesOfVWAPKind(!runVWAP))
 	if err != nil {
 		return fmt.Errorf("backfill-external: %w", err)
 	}
-	runVWAP := external.Lookup(source).IncludeInVWAP
 	for _, other := range stored {
 		if other == source || external.Lookup(other).IncludeInVWAP == runVWAP {
 			continue
@@ -282,6 +282,18 @@ func refuseMixedBuckets(ctx context.Context, probe sourceSetProbe, source string
 			errBackfillMixedBuckets, source, pair.String(), other, lo.Format(time.RFC3339), hi.Format(time.RFC3339))
 	}
 	return nil
+}
+
+// sourcesOfVWAPKind is the sorted registry subset whose IncludeInVWAP equals include.
+func sourcesOfVWAPKind(include bool) []string {
+	var names []string
+	for name, md := range external.Registry {
+		if md.IncludeInVWAP == include {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 // bucketSpan widens [from, to) to the coarsest price rollup buckets it touches: the Monday-aligned
