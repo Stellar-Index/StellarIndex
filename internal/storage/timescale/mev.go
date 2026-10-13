@@ -26,7 +26,7 @@ const mevStampMinute = "date_trunc('minute', s.ts)"
 // is then valued like an unstamped one, from the anchor (estimated) or not at all. The set-aside reaches the minutes a recorded
 // freeze covers (five minutes before frozen_at up to recovery), not a trigger that trailed its minute by longer. An XLM/USD-proxy
 // trade keeps its stamp: its USD value is its own proxy leg, not the XLM rate. A stamp on a non-XLM trade priced through the XLM
-// bridge at ingest is not set aside here; that leg is the same direct read, refused at ingest the same way.
+// bridge at ingest is not set aside here and may carry a triggering or not-yet-recorded minute.
 //
 //nolint:gosec // G202: fragments are constant SQL (helper output built from literals and $N placeholders); values bind via $N
 var tradesForArbScanQuery = `
