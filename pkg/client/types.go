@@ -1193,6 +1193,9 @@ type ChartSeries struct {
 	Discontinuous bool           `json:"discontinuous"`
 	GapStartsAt   *time.Time     `json:"gap_starts_at,omitempty"`
 	GapEndsAt     *time.Time     `json:"gap_ends_at,omitempty"`
+	// Credit names the licensed off-chain feed when every point of a
+	// fiat series comes from it; empty once an on-chain venue feeds it.
+	Credit string `json:"credit,omitempty"`
 	// MarketCapLowLiquidity (price_type=market_cap only) reports that
 	// Points was withheld because the asset's current market cannot
 	// support a valuation, as on Asset.MarketCapLowLiquidity.

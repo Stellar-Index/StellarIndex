@@ -455,31 +455,7 @@ func rwaApplyReference(
 	// instrument cannot be handed that instrument's valuation.
 	feed, bound := rwa.InstrumentFeed(a.Code, a.Issuer)
 	if !bound {
-		// A token coded XAU is not unbound by oversight: the oracle of that name prices a troy
-		// ounce, so report the specific refusal. A fund share's own NAV outranks the listing and
-		// prospectus arms.
-		if rwaApplyFundNAVReference(a, snap, now) {
-			return
-		}
-		notFound := RWAPremiumNotBound
-		if rwa.OffChainReferenceCode(a.Code) {
-			notFound = RWAPremiumNotInstrumentScoped
-		}
-		// The listing row for this exact asset, by the rule /v1/assets uses ([listingEntryIn]): the
-		// `CODE-GISSUER` id, then the derived SAC address, since the directory lists each asset under
-		// one form only. Never the code alone.
-		listing, _, _ := listingEntryIn(classicListings, a.AssetID)
-		// A CNAV class is valued at its prospectus NAV unless the listing price is a valuation the
-		// listing arm would serve; a zero, garbage or expired row must not erase the prospectus figure.
-		if _, refusal := rwaListingPrice(listing, notFound, now); refusal != "" {
-			if cnav, ok := rwa.ConstantNAV(a.Code, a.Issuer); ok {
-				rwaApplyConstantNAVReference(a, cnav, now)
-				return
-			}
-		}
-		// No oracle binds this pair, a statement about one source only; the address-exact listing
-		// directory that prices the contract arm is read for classic rows too.
-		rwaApplyListingReference(a, listing, notFound, now)
+		rwaApplyUnboundReference(a, snap, classicListings, now)
 		return
 	}
 
@@ -538,6 +514,36 @@ func rwaApplyReference(
 		s := pct.FloatString(4)
 		a.Premium = RWAPremium{Status: RWAPremiumPublished, Pct: &s}
 	}
+}
+
+// rwaApplyUnboundReference values a row no oracle feed binds: a fund share's own NAV, else the prospectus NAV of a CNAV class
+// whose listing row is unusable, else the address-exact listing directory; each refusal names why the oracle arm did not answer.
+func rwaApplyUnboundReference(a *RWAAsset, snap rwaReferences, classicListings map[string]timescale.ListingEntry, now time.Time) {
+	// A token coded XAU is not unbound by oversight: the oracle of that name prices a troy
+	// ounce, so report the specific refusal. A fund share's own NAV outranks the listing and
+	// prospectus arms.
+	if rwaApplyFundNAVReference(a, snap, now) {
+		return
+	}
+	notFound := RWAPremiumNotBound
+	if rwa.OffChainReferenceCode(a.Code) {
+		notFound = RWAPremiumNotInstrumentScoped
+	}
+	// The listing row for this exact asset, by the rule /v1/assets uses ([listingEntryIn]): the
+	// `CODE-GISSUER` id, then the derived SAC address, since the directory lists each asset under
+	// one form only. Never the code alone.
+	listing, _, _ := listingEntryIn(classicListings, a.AssetID)
+	// A CNAV class is valued at its prospectus NAV unless the listing price is a valuation the
+	// listing arm would serve; a zero, garbage or expired row must not erase the prospectus figure.
+	if _, refusal := rwaListingPrice(listing, notFound, now); refusal != "" {
+		if cnav, ok := rwa.ConstantNAV(a.Code, a.Issuer); ok {
+			rwaApplyConstantNAVReference(a, cnav, now)
+			return
+		}
+	}
+	// No oracle binds this pair, a statement about one source only; the address-exact listing
+	// directory that prices the contract arm is read for classic rows too.
+	rwaApplyListingReference(a, listing, notFound, now)
 }
 
 // rwaApplyContractReference attaches the listing-priced reference to a contract member, or the reason there is none. Nothing binds a
