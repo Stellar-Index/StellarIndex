@@ -462,8 +462,9 @@ func (n *hotArchiveCounts) failures() uint64 {
 }
 
 type archivedEntry struct {
-	key  string
-	data []byte // the archived entry's LedgerEntryData XDR
+	key          string
+	data         []byte // the archived entry's LedgerEntryData XDR
+	lastModified uint32 // the archive's lastModifiedLedgerSeq stamp
 }
 
 // reconcileHotArchive compares each archived entry with the lake's row for its key, batching lookups per entry type. open builds the
@@ -539,7 +540,7 @@ func toArchivedEntry(e xdr.LedgerEntry) (archivedEntry, string, error) {
 	if err != nil {
 		return archivedEntry{}, "", fmt.Errorf("verify-network-state: marshal archived entry: %w", err)
 	}
-	return archivedEntry{key: keyXDR, data: data}, entryType, nil
+	return archivedEntry{key: keyXDR, data: data, lastModified: uint32(e.LastModifiedLedgerSeq)}, entryType, nil
 }
 
 // classify compares the entry body only: the archive and the lake may stamp
@@ -551,26 +552,29 @@ func (n *hotArchiveCounts) classify(entryType string, a archivedEntry, ours clic
 	case ours.LedgerSeq > n.checkpoint:
 		n.newer++
 	case ours.ChangeType == "removed":
-		n.mismatch(entryType, a.key, "removed in the lake")
+		n.mismatch(entryType, a, ours, "removed in the lake")
 	default:
 		var e xdr.LedgerEntry
 		if err := xdr.SafeUnmarshalBase64(ours.EntryXDR, &e); err != nil {
-			n.mismatch(entryType, a.key, "lake entry undecodable")
+			n.mismatch(entryType, a, ours, "lake entry undecodable")
 			return
 		}
 		data, err := e.Data.MarshalBinary()
 		if err != nil || !bytes.Equal(data, a.data) {
-			n.mismatch(entryType, a.key, fmt.Sprintf("value differs (lake row at ledger %d)", ours.LedgerSeq))
+			n.mismatch(entryType, a, ours, "value differs")
 			return
 		}
 		n.matched++
 	}
 }
 
-func (n *hotArchiveCounts) mismatch(entryType, key, reason string) {
+// mismatch records one and samples it with both sides' ledger stamps, so a
+// stale lake row can be placed against the ingest history without a re-run.
+func (n *hotArchiveCounts) mismatch(entryType string, a archivedEntry, ours clickhouse.CurrentEntry, reason string) {
 	n.mismatches++
 	if len(n.sample) < hotArchiveMismatchSample {
-		n.sample = append(n.sample, fmt.Sprintf("%s %s: %s", entryType, key, reason))
+		n.sample = append(n.sample, fmt.Sprintf("%s %s: %s (lake row at ledger %d, archive last modified %d)",
+			entryType, a.key, reason, ours.LedgerSeq, a.lastModified))
 	}
 }
 
