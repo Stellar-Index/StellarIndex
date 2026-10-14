@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/astguard"
+
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/anomaly"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/customerwebhook"
@@ -203,10 +205,10 @@ func TestDivergenceFiringHook_UnflaggedPairStillDelivers(t *testing.T) {
 	}
 }
 
-// TestWebhookPublishSitesAreGated fails when a customer-webhook Publish in this binary's non-test sources is not
+// ruleWebhookPublishSitesAreGated fails when a customer-webhook Publish in this binary's non-test sources is not
 // preceded, in the same function literal, by the withholding decision, so a new push surface cannot deliver a price
 // the API withholds.
-func TestWebhookPublishSitesAreGated(t *testing.T) {
+func ruleWebhookPublishSitesAreGated(t *testing.T) {
 	fset := token.NewFileSet()
 	pkgs, err := parser.ParseDir(fset, ".", func(fi fs.FileInfo) bool {
 		return !strings.HasSuffix(fi.Name(), "_test.go")
@@ -294,9 +296,9 @@ func passesWebhookEvent(call *ast.CallExpr) bool {
 	return false
 }
 
-// TestWebhookPublishScanCatchesMethodValues pins that a publish is seen
+// ruleWebhookPublishScanCatchesMethodValues pins that a publish is seen
 // however the publisher is spelled, and that the gate is only a call.
-func TestWebhookPublishScanCatchesMethodValues(t *testing.T) {
+func ruleWebhookPublishScanCatchesMethodValues(t *testing.T) {
 	cases := []struct {
 		name                   string
 		src                    string
@@ -310,11 +312,8 @@ func TestWebhookPublishScanCatchesMethodValues(t *testing.T) {
 		{"non-webhook publish", `send := stream.Publish; send(ctx, "channel", p)`, false, false},
 	}
 	for _, c := range cases {
-		f, err := parser.ParseFile(token.NewFileSet(), "planted.go", "package p\nfunc f() {\n"+c.src+"\n}", 0)
-		if err != nil {
-			t.Fatalf("parse %q: %v", c.src, err)
-		}
-		pub, gated := webhookPublishAndGate(f.Decls[0].(*ast.FuncDecl).Body)
+		fn := astguard.Planted(t, "func f() {\n"+c.src+"\n}")
+		pub, gated := webhookPublishAndGate(fn.Body)
 		if pub != c.wantPublish || gated != c.wantGated {
 			t.Errorf("%s: publishes=%v gated=%v, want %v %v", c.name, pub, gated, c.wantPublish, c.wantGated)
 		}

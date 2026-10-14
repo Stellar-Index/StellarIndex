@@ -5,10 +5,11 @@ package main
 
 import (
 	"go/ast"
-	"go/parser"
 	"go/token"
 	"strings"
 	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/astguard"
 )
 
 // Wiring in main.go that no behavioural test can reach (run() needs live
@@ -21,6 +22,13 @@ func TestMainWiringRules(t *testing.T) {
 		{name: "decimals_refresh_is_fatal", check: ruleDecimalsRefreshIsFatal},
 		{name: "supply_constructors_before_dry_run_return", check: ruleSupplyConstructorsBeforeDryRunReturn},
 		{name: "decimals_heartbeat_seeded_before_dial", check: ruleDecimalsHeartbeatSeededBeforeDial},
+		{name: "price_alert_seam_is_gated", check: rulePriceAlertSeamIsGated},
+		{name: "freeze_writer_not_gated_on_phase1_checker", check: ruleFreezeWriterNotGatedOnPhase1Checker},
+		{name: "freeze_writer_guard_catches_every_gate_shape", check: ruleFreezeWriterGuardCatchesEveryGateShape},
+		{name: "lake_readers_are_dialled_with_retry", check: ruleLakeReadersAreDialledWithRetry},
+		{name: "lake_dial_census_sees_every_inline_dial", check: ruleLakeDialCensusSeesEveryInlineDial},
+		{name: "webhook_publish_sites_are_gated", check: ruleWebhookPublishSitesAreGated},
+		{name: "webhook_publish_scan_catches_method_values", check: ruleWebhookPublishScanCatchesMethodValues},
 	} {
 		t.Run(r.name, r.check)
 	}
@@ -31,11 +39,7 @@ func TestMainWiringRules(t *testing.T) {
 // `return err` to Warn looks like resilience; the branch lives in run(), so the wiring is asserted.
 
 func ruleDecimalsRefreshIsFatal(t *testing.T) {
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "main.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse main.go: %v", err)
-	}
+	fset, f := astguard.ParseFile(t, "main.go")
 
 	found := 0
 	ast.Inspect(f, func(n ast.Node) bool {
@@ -95,11 +99,7 @@ func bodyReturns(body *ast.BlockStmt) bool {
 // Asserted on the wiring because the calls live inside run().
 
 func ruleSupplyConstructorsBeforeDryRunReturn(t *testing.T) {
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "main.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse main.go: %v", err)
-	}
+	_, f := astguard.ParseFile(t, "main.go")
 
 	runFn := findRunFuncDecl(f)
 	if runFn == nil || runFn.Body == nil {
@@ -246,10 +246,7 @@ func callName(call *ast.CallExpr) string {
 // lake-less aggregator looks wedged. The seed must be set inside the lake-configured branch
 // and before either of those can block.
 func ruleDecimalsHeartbeatSeededBeforeDial(t *testing.T) {
-	f, err := parser.ParseFile(token.NewFileSet(), "main.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse main.go: %v", err)
-	}
+	_, f := astguard.ParseFile(t, "main.go")
 	var guardBranch *ast.BlockStmt
 	ast.Inspect(f, func(n ast.Node) bool {
 		ifs, ok := n.(*ast.IfStmt)

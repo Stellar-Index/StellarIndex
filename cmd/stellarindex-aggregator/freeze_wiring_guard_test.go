@@ -15,7 +15,7 @@ import (
 	"testing"
 )
 
-func TestFreezeWriterNotGatedOnPhase1Checker(t *testing.T) {
+func ruleFreezeWriterNotGatedOnPhase1Checker(t *testing.T) {
 	src, err := os.ReadFile("main.go")
 	if err != nil {
 		t.Fatalf("read main.go: %v", err)
@@ -31,9 +31,9 @@ func TestFreezeWriterNotGatedOnPhase1Checker(t *testing.T) {
 	}
 }
 
-// TestFreezeWriterGuardCatchesEveryGateShape proves the guard above is not
+// ruleFreezeWriterGuardCatchesEveryGateShape proves the guard above is not
 // vacuous: each gated shape must be reported and each ungated one must not.
-func TestFreezeWriterGuardCatchesEveryGateShape(t *testing.T) {
+func ruleFreezeWriterGuardCatchesEveryGateShape(t *testing.T) {
 	const pre = "package main\nfunc realMain() error {\n" +
 		"\tchecker, err := buildAnomalyChecker(cfg.Anomaly)\n" +
 		"\tif err != nil {\n\t\treturn err\n\t}\n"

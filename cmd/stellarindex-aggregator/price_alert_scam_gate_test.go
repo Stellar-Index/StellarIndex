@@ -3,10 +3,10 @@ package main
 import (
 	"context"
 	"go/ast"
-	"go/parser"
-	"go/token"
 	"strings"
 	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/astguard"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -31,15 +31,11 @@ func (d *alertScamDirectory) DirectoryEntryByAddress(_ context.Context, address 
 
 const alertScamIssuer = "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
 
-// TestPriceAlertSeamIsGated is this binary's half of the seam guard in cmd/stellarindex-api, which parses only the
+// rulePriceAlertSeamIsGated is this binary's half of the seam guard in cmd/stellarindex-api, which parses only the
 // API's main.go. The subject set is derived from the store call, not method names: any price-serving reader here must
 // read a closed bucket.
-func TestPriceAlertSeamIsGated(t *testing.T) {
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "main.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse main.go: %v", err)
-	}
+func rulePriceAlertSeamIsGated(t *testing.T) {
+	_, f := astguard.ParseFile(t, "main.go")
 
 	seams := 0
 	ast.Inspect(f, func(n ast.Node) bool {
@@ -47,7 +43,7 @@ func TestPriceAlertSeamIsGated(t *testing.T) {
 		if !ok || fn.Recv == nil || len(fn.Recv.List) == 0 {
 			return true
 		}
-		if !readsClosedVWAPBucket(fn) {
+		if !astguard.Mentions(fn, func(m string) bool { return strings.Contains(m, "ClosedVWAP") }) {
 			return true
 		}
 		seams++
@@ -65,48 +61,6 @@ func TestPriceAlertSeamIsGated(t *testing.T) {
 	if seams == 0 {
 		t.Fatal("found no closed-VWAP read seams in main.go — the scan is broken, " +
 			"not the code clean")
-	}
-}
-
-// readsClosedVWAPBucket reports whether fn references the closed 1m VWAP store read on any receiver, including a
-// method value or a store alias, which read the same bucket.
-func readsClosedVWAPBucket(fn *ast.FuncDecl) bool {
-	found := false
-	ast.Inspect(fn, func(n ast.Node) bool {
-		sel, ok := n.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		if strings.Contains(sel.Sel.Name, "ClosedVWAP") {
-			found = true
-			return false
-		}
-		return true
-	})
-	return found
-}
-
-// TestClosedVWAPBucketScanCatchesMethodValues pins that the seam scan sees
-// a read however it is spelled, not only as r.store.X(...).
-func TestClosedVWAPBucketScanCatchesMethodValues(t *testing.T) {
-	cases := []struct {
-		name, src string
-		want      bool
-	}{
-		{"direct call", `func (r R) f() { r.store.LatestClosedVWAP1mForPair(ctx, a, b) }`, true},
-		{"method value", `func (r R) f() { g := r.store.LatestClosedVWAP1mForPair; g(ctx, a, b) }`, true},
-		{"method passed as an argument", `func (r R) f() { apply(r.store.RecentClosedVWAP1mForPair) }`, true},
-		{"store alias", `func (r R) f() { st := r.store; st.LatestClosedVWAP1mForPair(ctx, a, b) }`, true},
-		{"unrelated store read", `func (r R) f() { r.store.LatestTrade(ctx, a, b) }`, false},
-	}
-	for _, c := range cases {
-		f, err := parser.ParseFile(token.NewFileSet(), "planted.go", "package p\n"+c.src, 0)
-		if err != nil {
-			t.Fatalf("parse %q: %v", c.src, err)
-		}
-		if got := readsClosedVWAPBucket(f.Decls[0].(*ast.FuncDecl)); got != c.want {
-			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
-		}
 	}
 }
 

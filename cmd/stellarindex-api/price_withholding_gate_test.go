@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/astguard"
+
 	"github.com/Stellar-Index/StellarIndex/cmd/stellarindex-api/internal/wiring"
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -23,10 +25,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestPriceServingSeamsAreGated fails when a reader seam calling a closed-VWAP store read skips wiring.PriceWithheld(),
+// rulePriceServingSeamsAreGated fails when a reader seam calling a closed-VWAP store read skips wiring.PriceWithheld(),
 // so a withheld price cannot leak via e.g. /v1/price/at. The seam set is derived from source; scans main.go and
-// internal/wiring (handlers: [TestV1VWAPCacheSeamsAreGated]).
-func TestPriceServingSeamsAreGated(t *testing.T) {
+// internal/wiring (handlers: [ruleV1VWAPCacheSeamsAreGated]).
+func rulePriceServingSeamsAreGated(t *testing.T) {
 	fset := token.NewFileSet()
 
 	// Methods that legitimately read a closed bucket without consulting the chokepoint, keyed "dir:Type.Method", each with
@@ -49,7 +51,7 @@ func TestPriceServingSeamsAreGated(t *testing.T) {
 			if !ok || fn.Recv == nil || len(fn.Recv.List) == 0 {
 				return true
 			}
-			if !readsClosedVWAP(fn) {
+			if !astguard.Mentions(fn, func(m string) bool { return strings.Contains(m, "ClosedVWAP") }) {
 				return true
 			}
 			seams[sf.dir]++
@@ -80,24 +82,6 @@ func TestPriceServingSeamsAreGated(t *testing.T) {
 			"aggregate). Route it through the chokepoint, or add it to `exempt` "+
 			"with the reason it cannot serve a gated value.", name)
 	}
-}
-
-// readsClosedVWAP reports whether fn references a store read returning a closed 1m VWAP bucket.
-// Matching the store call covers future readers, and a method value counts as a reference.
-func readsClosedVWAP(fn *ast.FuncDecl) bool {
-	found := false
-	ast.Inspect(fn, func(n ast.Node) bool {
-		sel, ok := n.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		if strings.Contains(sel.Sel.Name, "ClosedVWAP") {
-			found = true
-			return false
-		}
-		return true
-	})
-	return found
 }
 
 // receiverTypeName unwraps *T / T to the bare type name.
@@ -157,13 +141,13 @@ func TestPriceWithheldChokepointHonoursBothGates(t *testing.T) {
 	}
 }
 
-// TestWithholdingGatesAreSpelledOnlyAtTheChokepoint pins that a gate half's decision method is
+// ruleWithholdingGatesAreSpelledOnlyAtTheChokepoint pins that a gate half's decision method is
 // named only inside a chokepoint (wiring.PriceWithheld, and the handler's withheldBy and
 // scamWithheld). A seam with two arms passes the coverage test when one arm consults the gates,
 // so a hand-spelled substance check on the last-trade arm would skip the scam gate and publish a
 // flagged issuer's price once disable_substance_gate is set. The scan covers main.go, wiring and
 // every non-test file under internal/api.
-func TestWithholdingGatesAreSpelledOnlyAtTheChokepoint(t *testing.T) {
+func ruleWithholdingGatesAreSpelledOnlyAtTheChokepoint(t *testing.T) {
 	fset := token.NewFileSet()
 	files := readerSeamFiles(t)
 	files = append(files, apiSourceFiles(t, apiTreeDir)...)
@@ -187,10 +171,10 @@ func TestWithholdingGatesAreSpelledOnlyAtTheChokepoint(t *testing.T) {
 	}
 }
 
-// TestGateSpellingGuardCatchesHandlerPackageSites plants the shapes the
+// ruleGateSpellingGuardCatchesHandlerPackageSites plants the shapes the
 // guard exists for, so a narrowed predicate fails here rather than going
 // green over the tree.
-func TestGateSpellingGuardCatchesHandlerPackageSites(t *testing.T) {
+func ruleGateSpellingGuardCatchesHandlerPackageSites(t *testing.T) {
 	shapes := []struct{ name, dir, src string }{
 		{"substance half in a handler", v1ChokepointDir, `func (s *Server) h() bool { return s.substance.Allowed(ctx, a, b, "x") }`},
 		{"scam half in a handler", v1ChokepointDir, `func (s *Server) h() bool { return s.scam.WithheldPair(ctx, a, b, "x") }`},
@@ -227,23 +211,8 @@ func TestGateSpellingGuardCatchesHandlerPackageSites(t *testing.T) {
 // TestStoreReadScansCatchMethodValues pins that both store-read scans see a
 // method value, not only a call: f := r.S.LatestClosedVWAP1mForPair; f(...)
 // serves the same bucket, and a call-only match let it through ungated.
-func TestStoreReadScansCatchMethodValues(t *testing.T) {
-	cases := []struct {
-		name, src string
-		want      bool
-	}{
-		{"direct call", `func (r R) f() { r.S.LatestClosedVWAP1mForPair(ctx, a, b) }`, true},
-		{"method value", `func (r R) f() { g := r.S.LatestClosedVWAP1mForPair; g(ctx, a, b) }`, true},
-		{"method passed as an argument", `func (r R) f() { apply(r.s.ClosedVWAPAtOrBefore) }`, true},
-		{"store alias", `func (r R) f() { st := r.S; st.LatestClosedVWAP1mForPair(ctx, a, b) }`, true},
-		{"unrelated store read", `func (r R) f() { r.S.LatestTrade(ctx, a, b) }`, false},
-	}
-	for _, c := range cases {
-		if got := readsClosedVWAP(plantedFunc(t, c.src)); got != c.want {
-			t.Errorf("readsClosedVWAP %s: got %v, want %v", c.name, got, c.want)
-		}
-	}
-
+// The cache-read census sees a read however it is spelled; a package function sharing the name is not the cache.
+func ruleEarliestReadSeesEverySpelling(t *testing.T) {
 	sc := &v1Scan{reads: map[string]bool{"Lookup": true}}
 	for _, src := range []string{
 		`func (s *Server) h() { s.triangulated.Lookup(a, b) }`,
@@ -252,12 +221,12 @@ func TestStoreReadScansCatchMethodValues(t *testing.T) {
 		`func (s *Server) h() { var c = s.triangulated; f := c.Lookup; f(a, b) }`,
 		`func (s *Server) h(l TriangulatedPriceLooker) { l.Lookup(a, b) }`,
 	} {
-		if sc.earliestRead(&v1Func{decl: plantedFunc(t, src)}) == token.NoPos {
+		if sc.earliestRead(&v1Func{decl: astguard.Planted(t, src)}) == token.NoPos {
 			t.Errorf("earliestRead missed the cache read in %q", src)
 		}
 	}
 	// A package function that shares the method's name is not the cache.
-	if sc.earliestRead(&v1Func{decl: plantedFunc(t, `func (s *Server) h() { dns.Lookup(a, b) }`)}) != token.NoPos {
+	if sc.earliestRead(&v1Func{decl: astguard.Planted(t, `func (s *Server) h() { dns.Lookup(a, b) }`)}) != token.NoPos {
 		t.Error("earliestRead counted a package-qualified call as a cache read")
 	}
 }
@@ -278,15 +247,6 @@ func mustClassic(t *testing.T, code, issuer string) canonical.Asset {
 		t.Fatalf("classic asset: %v", err)
 	}
 	return a
-}
-
-func plantedFunc(t *testing.T, src string) *ast.FuncDecl {
-	t.Helper()
-	f, err := parser.ParseFile(token.NewFileSet(), "planted.go", "package p\n"+src, 0)
-	if err != nil {
-		t.Fatalf("parse %q: %v", src, err)
-	}
-	return f.Decls[0].(*ast.FuncDecl)
 }
 
 // apiTreeDir is every handler package the API binary serves from.
@@ -522,7 +482,7 @@ const v1LookerInterface = "TriangulatedPriceLooker"
 // Every VWAP-cache read in internal/api/v1 needs a withholding consultation before it, as the cache passes no reader
 // gate. Handlers consult it themselves; helpers may inherit it. Structural check only; the fallback chain is pinned by
 // TestPriceFallbackWithholdsScamFlaggedBase and TestCachedVWAPSurfacesWithholdScamFlaggedMarket.
-func TestV1VWAPCacheSeamsAreGated(t *testing.T) {
+func ruleV1VWAPCacheSeamsAreGated(t *testing.T) {
 	sc := loadV1Scan(t)
 	seams := sc.cacheSeams()
 	// A guard whose subject set is empty passes forever.

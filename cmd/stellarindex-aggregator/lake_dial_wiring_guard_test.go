@@ -15,7 +15,7 @@ import (
 // Source-level tripwire: the retrying lake dial only helps if the wiring uses it. run() needs a config, Postgres and
 // Redis, so the wiring is asserted by scanning every non-test file for any clickhouse constructor taking a context
 // (derived from the clickhouse package source), so a new New*Reader or aliased import cannot slip past.
-func TestLakeReadersAreDialledWithRetry(t *testing.T) {
+func ruleLakeReadersAreDialledWithRetry(t *testing.T) {
 	c := censusLakeDials(t, ".", lakeDialConstructors(t, clickhouseSourceDir))
 
 	if c.viaDecimals != 1 {
@@ -50,7 +50,7 @@ func TestLakeReadersAreDialledWithRetry(t *testing.T) {
 // The census is an instrument, so it is checked against a known case: a
 // fixture package that dials the lake inline through an aliased import in
 // a second file, via NewExplorerReaderAuth and NewTxIndexReader.
-func TestLakeDialCensusSeesEveryInlineDial(t *testing.T) {
+func ruleLakeDialCensusSeesEveryInlineDial(t *testing.T) {
 	ctors := lakeDialConstructors(t, clickhouseSourceDir)
 	for _, name := range []string{"NewExplorerReader", "NewExplorerReaderAuth", "NewTxIndexReader", "NewSupplyReader"} {
 		if !ctors[name] {

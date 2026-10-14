@@ -51,7 +51,7 @@ var thinAdmissionSites = map[string]map[string]bool{
 // thinAdmissionHome is the record's own file, where every symbol is free.
 var thinAdmissionHome = filepath.Join(v1ChokepointDir, "thin_admission.go")
 
-func TestThinAdmissionIsReadOnlyAtTheChokepoint(t *testing.T) {
+func ruleThinAdmissionIsReadOnlyAtTheChokepoint(t *testing.T) {
 	fset := token.NewFileSet()
 	files := readerSeamFiles(t)
 	files = append(files, apiSourceFiles(t, apiTreeDir)...)
@@ -88,7 +88,7 @@ func TestThinAdmissionIsReadOnlyAtTheChokepoint(t *testing.T) {
 	}
 }
 
-func TestThinAdmissionGuardCatchesPlantedSites(t *testing.T) {
+func ruleThinAdmissionGuardCatchesPlantedSites(t *testing.T) {
 	shapes := []struct{ name, dir, src string }{
 		{"record read in a handler", v1ChokepointDir, `func (s *Server) h() { _ = ThinAdmissionFrom(ctx) }`},
 		{"record installed in another handler", v1ChokepointDir, `func (s *Server) h() { _, _ = WithThinAdmission(ctx, a, q, true) }`},

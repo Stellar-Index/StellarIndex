@@ -9,6 +9,8 @@ import (
 	"go/token"
 	"strings"
 	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/astguard"
 )
 
 // Wiring in main.go that no behavioural test can reach (run() needs live
@@ -23,6 +25,9 @@ func TestMainWiringRules(t *testing.T) {
 		{name: "run_gates_phase4_on_cagg_coverage", check: ruleRunGatesPhase4OnCAGGCoverage},
 		{name: "shutdown_select_never_returns_before_drain", check: ruleShutdownSelectNeverReturnsBeforeTheDrain},
 		{name: "indexer_acts_on_sink_shutdown_loss", check: ruleIndexerActsOnSinkShutdownLoss},
+		{name: "no_return_between_shutdown_select_and_drain", check: ruleNoReturnBetweenShutdownSelectAndDrain},
+		{name: "shutdown_cancels_root_before_draining", check: ruleShutdownCancelsRootBeforeDraining},
+		{name: "metrics_server_shuts_down_after_the_drain_not_before_it", check: ruleMetricsServerShutsDownAfterTheDrainNotBeforeIt},
 	} {
 		t.Run(r.name, r.check)
 	}
@@ -32,11 +37,7 @@ func TestMainWiringRules(t *testing.T) {
 // in realMain, since one failure (ClickHouse still loading after a reboot) would be fatal. The dial goes through
 // startCHLiveSink, which retries in its own goroutine.
 func ruleCHLiveSinkDialNonFatalAndRetried(t *testing.T) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "main.go", nil, parser.ParseComments)
-	if err != nil {
-		t.Fatalf("parse main.go: %v", err)
-	}
+	fset, file := astguard.ParseFile(t, "main.go")
 
 	var directDials, viaHelper int
 	ast.Inspect(file, func(n ast.Node) bool {
@@ -257,11 +258,7 @@ func isReturn(s ast.Stmt) bool {
 // channel buffer and are already counted against the cursor, so a `return` inside the shutdown select discards them
 // silently. Real, since ProcessLedger turns a decoder panic into a ledger error on that channel; asserted structurally.
 func ruleShutdownSelectNeverReturnsBeforeTheDrain(t *testing.T) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "main.go", nil, parser.ParseComments)
-	if err != nil {
-		t.Fatalf("parse main.go: %v", err)
-	}
+	fset, file := astguard.ParseFile(t, "main.go")
 
 	var checked int
 	ast.Inspect(file, func(n ast.Node) bool {
@@ -299,11 +296,7 @@ func ruleShutdownSelectNeverReturnsBeforeTheDrain(t *testing.T) {
 // TestIndexerActsOnSinkShutdownLoss pins that PersistEvents' ShutdownLoss is kept and handed to the rewind once the sink
 // is done; discarding it leaves an abandoned trade behind an already-advanced cursor.
 func ruleIndexerActsOnSinkShutdownLoss(t *testing.T) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "main.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse main.go: %v", err)
-	}
+	_, file := astguard.ParseFile(t, "main.go")
 	isCall := func(e ast.Expr, name string) bool {
 		call, ok := e.(*ast.CallExpr)
 		if !ok {
