@@ -8,9 +8,6 @@ status: ratified
 
 Binds every incident responder. Ratified 2026-04-22.
 
-SLA this satisfies: SEV-1 detect <= 15 min / respond <= 30 min / hourly updates; SEV-2 detect <= 30 min /
-respond <= 60 min / triage <= 240 min / daily updates.
-
 ---
 
 ## 1. Severity definitions
@@ -45,19 +42,16 @@ respond <= 60 min / triage <= 240 min / daily updates.
 | SEV-3    | <= 60 min | next business day | within 1 business day | weekly via tickets |
 | SEV-4    | <= 24 h   | next weekly review | -                | weekly digest         |
 
-Detect = monitoring catches it. Respond = responder acknowledges the page. Triage = root cause known plus an
-action plan. Update = public status page plus user notifications.
+Detect = monitoring catches it. Respond = responder acknowledges. Triage = root cause known plus an action plan.
 
 ---
 
 ## 3. Detection channels
 
-> **Discord fanout is wired; PagerDuty is not.** `chat-page` (`severity=page`) and
-> `chat-default`/`chat-informational` route through real `discord_configs` in
+> **Discord fanout is wired; PagerDuty is not.** Pages route through `discord_configs` in
 > [`configs/alertmanager/alertmanager.r1.yml`](../../configs/alertmanager/alertmanager.r1.yml)
-> (see [runbooks/wire-paging.md](runbooks/wire-paging.md)). That file has no `pagerduty_configs` for any
-> severity, so there is no 5-min ack timer, no secondary escalation and no maintainer fallback: a page is a
-> Discord message someone has to be watching. §4 and §7 describe this Discord-only flow.
+> ([runbooks/wire-paging.md](runbooks/wire-paging.md)): no ack timer, no secondary escalation, no maintainer
+> fallback. A page is a Discord message someone has to be watching.
 
 | Channel | What it catches | Fires |
 | ------- | --------------- | ----- |
@@ -67,35 +61,29 @@ action plan. Update = public status page plus user notifications.
 | User report (email, Discord) | Whatever we missed | Variable |
 | On-call rotation dashboard | Passive; reviewed every 15 min during oncall | - |
 
-Every SEV-1 needs at least two independent detection channels (our alert plus a probe, or plus Cloudflare health).
-If only one fires, assume false positive after a 30 s re-probe.
+Every SEV-1 needs at least two independent detection channels. If only one fires, assume false positive after a
+30 s re-probe.
 
 ---
 
 ## 4. Response flow
 
 1. Alert lands in Discord **#stellarindex-pages**. Re-probe after 30 s or check a second detector; if real, continue.
-2. Acknowledge (no timer), open `#incident-<id>`, declare severity, post the initial status update.
+2. Acknowledge (no timer; whoever is on the nightly rotation, §7, must be watching), open `#incident-<id>`,
+   declare severity, post the initial status update. Acknowledging means "seen and on it", not resolved.
 3. Follow the runbook; mitigate (fix or fail over); post "contained" at triage-complete.
 4. Root-cause, resolve, post final "all clear", schedule the postmortem (§6).
 
-**If personal data may be involved**, at any severity (including an exposure found in code review rather than
-paged), the IC also starts the [§6.6 breach-notification assessment](#66-personal-data-breach-notification-assessment)
-at declaration. Its regulator deadline runs from when we became aware, not from resolution or the postmortem.
+**If personal data may be involved**, at any severity (including an exposure found in code review), the IC also
+starts the [§6.6 breach-notification assessment](#66-personal-data-breach-notification-assessment) at
+declaration. Its regulator deadline runs from when we became aware, not from resolution.
 
-### 4.1 Acknowledgement (SEV-1/2)
+### 4.1 Incident channel
 
-No PagerDuty leg (§3): the page is a Discord message with no ack timer and no automatic backup escalation.
-Whoever is on the nightly rotation (§7) must be watching the channel. Acknowledging means "I've seen it and I'm
-on it", not resolved.
+Every SEV-1/SEV-2 gets `#incident-<YYYYMMDD>-<short-slug>` under the incidents category, created by the on-call
+responder. Topic: severity + declared-at timestamp, IC, latest action + ETA.
 
-### 4.2 Incident channel
-
-Every SEV-1/SEV-2 gets `#incident-<YYYYMMDD>-<short-slug>` (e.g. `#incident-20260515-timescale-primary-down`)
-under the incidents category, created by the on-call responder. Topic carries severity + declared-at timestamp,
-commander (IC), latest action + ETA.
-
-### 4.3 Roles
+### 4.2 Roles
 
 - **Incident Commander (IC):** first responder until a manager takes over.
 - **Communications lead:** status-page updates and user Discord messages.
@@ -103,12 +91,7 @@ commander (IC), latest action + ETA.
 
 Only the tech lead commits changes to production during an incident.
 
-### 4.4 Mitigation vs resolution
-
-Mitigate first, understand later. A SEV-1 mitigated in 15 min and root-caused an hour later is a good outcome.
-Per-runbook files hold the concrete tactics.
-
-### 4.5 Fixing vs reverting
+### 4.3 Fixing vs reverting
 
 Triggered by a recent deploy: revert first, investigate after. Latent bug weeks old: forward-fix only.
 
@@ -122,66 +105,39 @@ Triggered by a recent deploy: revert first, investigate after. Latent bug weeks 
 
 ### 5.1 Status page
 
-`https://status.stellarindex.io`, a static export of [`web/status/`](../../web/status/) on its own Cloudflare
-Pages project, deployed by `status-page.yml`. It makes no API call and does not share the explorer's build, so it
-publishes during an API outage: post there first. `https://stellarindex.io/status` (explorer route) adds live
-component health but rebuilds with the explorer, which an API outage can block.
+`https://status.stellarindex.io` is a static export of [`web/status/`](../../web/status/) on its own Cloudflare Pages project (`status-page.yml`); it makes no API call, so it publishes during an API outage: post there first. Source of truth is `internal/incidents/data/<slug>.md` (also rendered by `/v1/incidents`): push to `main`, then `gh workflow run status-page.yml --ref main`. How to post: [`runbooks/sev-status-page-update.md`](runbooks/sev-status-page-update.md), binding for every SEV-1/SEV-2 update.
 
-**Source of truth:** `internal/incidents/data/<slug>.md`. Both pages and `/v1/incidents` (embedded in the API
-binary) render that corpus. Push the file to `main`, then `gh workflow run status-page.yml --ref main`.
-
-**How to post:** [`runbooks/sev-status-page-update.md`](runbooks/sev-status-page-update.md), the binding
-runbook for every SEV-1/SEV-2 update (cadence, safe-to-publish detail, workstation-down fallback).
-
-**Webhook fan-out** (F-1249): dashboard hooks `incident.sev1` and `incident.resolved`. The corpus is embedded at
-build time, so fan-out is operator-triggered:
+**Webhook fan-out** (`incident.sev1`, `incident.resolved`) is operator-triggered, after deploying the binary that embeds the new `.md`:
 
 ```sh
-# After deploying the binary that includes the new .md:
-stellarindex-ops emit-incident \
-  -config /etc/stellarindex.toml \
-  -slug 2026-05-12-redis-blip \
-  -event sev1 \
-  -write
-
-# Later, after deploying the .md update with status=resolved:
-stellarindex-ops emit-incident \
-  -config /etc/stellarindex.toml \
-  -slug 2026-05-12-redis-blip \
-  -event resolved \
-  -write
+stellarindex-ops emit-incident -config /etc/stellarindex.toml \
+  -slug 2026-05-12-redis-blip -event sev1 -write
+# later, after deploying the .md with status=resolved:
+stellarindex-ops emit-incident -config /etc/stellarindex.toml \
+  -slug 2026-05-12-redis-blip -event resolved -write
 ```
 
-It refuses impossible combinations (sev1 on a resolved incident, resolved on an investigating one, sev1 on a
-non-SEV-1 entry) before any network I/O. Zero subscribers is a successful no-op with a stderr line.
+It refuses impossible combinations before any network I/O.
 
-Shipped behaviour (decisions:
-[`ha-plan.md` §7.4](../architecture/ha-plan.md#74-status-page)):
-
-- **Severity to state:** `severity:` sets the card: SEV-1 major, SEV-2 minor, SEV-3 maintenance. No PagerDuty or vendor webhook.
-- **Subscribers:** no email list (zero PII). Atom feed `GET /v1/incidents.atom`; dashboard webhooks for push.
-- **Retention:** the git corpus is the permanent record.
-- **Maintenance:** before a deploy that silences alerts, post a `severity: maintenance` notice
-  (`POST /v1/admin/status-notices`) and resolve it when the window closes.
-- **Page unavailable or unpublishable:** post in the public Discord (§7 step 1).
+- **Subscribers:** no email list; Atom feed `GET /v1/incidents.atom`; dashboard webhooks. SEV-1 maps to major, SEV-2 minor, SEV-3 maintenance ([`ha-plan.md` §7.4](../architecture/ha-plan.md#74-status-page)).
+- **Maintenance:** before a deploy that silences alerts, post a `severity: maintenance` notice (`POST /v1/admin/status-notices`) and resolve it afterwards.
+- **Page unpublishable:** post in the public Discord (§7 step 1).
 
 ### 5.2 Update templates
 
-Longer customer email and status-page body: [`deploy/comms/incident-update.md`](../../deploy/comms/incident-update.md).
+Longer: [`deploy/comms/incident-update.md`](../../deploy/comms/incident-update.md).
 
 **Initial (SEV-1):** We're investigating an incident affecting the Stellar Index API. Requests may fail or
 return stale data. We acknowledged this at {time} and will post an update within the hour.
 
-**Investigating:** Update: we've identified that {subsystem} is affected. {mitigation being attempted}.
-Current impact: {scope}. Next update by {time}.
+**Investigating:** Update: {subsystem} is affected. {mitigation}. Current impact: {scope}. Next update by {time}.
 
-**Resolved:** The incident is resolved as of {time}. Service is fully restored. Root cause: {one-line summary}.
-We'll post a full postmortem within {SEV-1: 72 h, SEV-2: 5 business days}.
+**Resolved:** Resolved as of {time}; service fully restored. Root cause: {one line}. Full postmortem within
+{SEV-1: 72 h, SEV-2: 5 business days}.
 
 ### 5.3 User Discord
 
-`#stellarindex-ops` (internal) is primary. Major users have a direct channel for real-time updates. Cadence
-matches the status page.
+`#stellarindex-ops` (internal) is primary; major users have a direct channel. Cadence matches the status page.
 
 ### 5.4 What we do NOT say
 
@@ -196,104 +152,66 @@ matches the status page.
 
 ### 6.1 Postmortem
 
-Required for every SEV-1 and SEV-2. One file per incident: `docs/operations/postmortems/<date>-<slug>.md`.
+Required for every SEV-1 and SEV-2: `docs/operations/postmortems/<date>-<slug>.md`.
 
 - SEV-1: draft within 72 h, ratified within 1 week.
 - SEV-2: draft within 5 business days, ratified within 2 weeks.
 
-Mandatory sections: Summary (3-5 sentences); Timeline (ISO-8601); Impact (measured: requests failed, users
-affected, data loss); Root cause(s); Contributing factors; What went well; What went poorly; Action items (§6.2).
+Sections: Summary; Timeline (ISO-8601); Impact (measured); Root cause(s); Contributing factors; What went well; What went poorly; Action items (§6.2).
 
 ### 6.2 Action items
 
-Each is a GitHub issue labelled `postmortem-action` with owner and due date; the weekly Monday ops review triages
-the open ones. A postmortem is not complete until every item has an owner and due date. "No action needed" is
-valid only if stated explicitly.
+Each is a GitHub issue labelled `postmortem-action` with owner and due date, triaged at the weekly Monday ops review. A postmortem is incomplete until every item has both; "no action needed" must be explicit.
 
 ### 6.3 Retired postmortems
 
 `docs/operations/postmortems/` holds one file per open incident; it is not an archive. Once a postmortem is
-`status: resolved` and every action item is done or names a tracking issue, delete the file and append a line
-below (date retired, slug, one-line cause, permalink to the last version at the SHA it was removed). An item
-with no issue number keeps the postmortem open.
-
-**Retired:**
+`status: resolved` and every action item is done or names a tracking issue, delete the file and append a row
+(date retired, slug, one-line cause, permalink to the last version at the removal SHA).
 
 | Retired | Slug | Cause | Last version |
 | ------- | ---- | ----- | ------------ |
-| - | - | - | (none yet; both current postmortems still have open, unfiled action items) |
+| - | - | - | (none yet) |
 
 ### 6.4 Blameless policy
 
-Postmortems cover system failures, not individuals: ask why the system let the bad deploy through CI, not who
-pushed it. No section names an individual; action items are system changes.
+Postmortems cover system failures, not individuals; no section names one.
 
 ### 6.5 Credential/PII exposure incidents
 
-A redaction-class fix (one that stops a credential or PII value reaching the log store, e.g. `7843f129`:
-customer emails and `X-API-Key` in Caddy access logs) is not complete when the leak closes. Three follow-ups are
-mandatory in the SAME release cycle:
+A redaction-class fix (one that stops a credential or PII value reaching the log store) is not complete when the
+leak closes. In the SAME release cycle:
 
-1. **File the incident record** under `internal/incidents/data/` (§5.1 template) even if nothing paged. "Nothing
-   paged" and "nothing was exposed" are different claims.
-2. **Run the key-rotation / notification runbook:**
-   [`runbooks/credential-exposure-redaction-fix.md`](runbooks/credential-exposure-redaction-fix.md). A clean
-   retention-window scan proves only that the LOG STORE no longer holds the value, not that nobody with log access
-   read it. Any exposed credential (API key, session token) gets targeted rotation offered to its owner; PII
-   exposure gets an affected-customer notification.
+1. **File the incident record** under `internal/incidents/data/` (§5.1) even if nothing paged.
+2. **Run** [`runbooks/credential-exposure-redaction-fix.md`](runbooks/credential-exposure-redaction-fix.md): a
+   clean log scan proves only that the store no longer holds the value, so offer exposed credentials' owners
+   rotation and notify customers of PII exposure.
 3. **Run the [§6.6 breach-notification assessment](#66-personal-data-breach-notification-assessment)** for any PII
-   exposure. Its 72-hour clock started when the exposure was found, not when the fix shipped; an
-   affected-customer notice does not settle whether a regulator must be told.
+   exposure; its 72-hour clock started when the exposure was found.
 
 ### 6.6 Personal-data breach notification assessment
 
-A personal-data breach is any security incident leading to personal data we hold being accessed, disclosed,
-altered, lost or made unavailable without authorisation (GDPR Art. 4(12)). Staff reading data they had no need to
-see counts (the 2026-09-02 log-store exposure,
-`internal/incidents/data/2026-09-02-log-store-credential-pii-exposure.md`), as does losing a table we cannot
-restore.
+A personal-data breach is any security incident leading to personal data we hold being accessed, disclosed, altered, lost or made unavailable without authorisation (GDPR Art. 4(12)); staff reading data they had no need to see counts. We hold billing and user emails, names, session IPs, API-key use, audit and usage events, SHA-256 credential hashes (`migrations/0027_platform_v1_schema.up.sql`); logs can hold whatever a request carried (§6.5).
 
-**What we hold** (`migrations/0027_platform_v1_schema.up.sql`): account billing and user emails, display names,
-IP addresses of sessions, magic-link requests, API-key use, audit-log entries and API usage events, and
-credentials stored only as SHA-256 hashes (`api_keys.key_hash`, `magic_link_tokens.token_hash`, MFA recovery
-codes). Logs can hold whatever a request carried (§6.5).
+**Jurisdiction and clock.** Assess against both **UK GDPR** (ICO) and **EU GDPR** (each affected member state's authority; no EU establishment, so no lead authority) and apply the stricter outcome; list other places affected people live (e.g. US states) and take legal advice before hour 72. Notify the regulator without undue delay and within **72 hours** of becoming aware (Art. 33(1)): reasonably certain personal data was affected, not that the fix is finished. Record that timestamp at declaration; a processor's report starts the clock. Notify with partial facts rather than miss the deadline (Art. 33(4)).
 
-**Jurisdiction.** Terms are governed by England and Wales law (`/terms` §9); the privacy policy names the ICO as
-lead authority. Data is processed on Hetzner in Germany and sign-up is worldwide, so assess every breach against
-both **UK GDPR** (ICO) and **EU GDPR** (the supervisory authority of each member state where affected people live;
-we have no EU establishment, so no lead authority) and apply the stricter outcome. List other places affected
-people live (e.g. US states, each with its own triggers and deadlines) in the assessment and take legal advice
-before the 72-hour mark; meeting GDPR does not mean meeting their laws.
+**Assessment.** The IC completes it within 24 hours of awareness:
 
-**The clock.** Notify the regulator without undue delay and within **72 hours** of becoming aware (Art. 33(1)).
-"Aware" means reasonably certain personal data was affected, not that investigation or the fix is finished. Record
-that timestamp at declaration. If a processor (hosting, email delivery) reports a breach to us, the clock starts at
-their report. Without every fact by the deadline, notify with what we know and send the rest later (Art. 33(4));
-if the deadline is missed, the notification must say why.
-
-**Assessment.** The IC owns it and completes it within 24 hours of awareness:
-
-1. **Scope.** Data categories affected (list above), roughly how many people, where they live (billing country,
-   IP geolocation as fallback), exposure window, who could have read it (staff with access, staff without, the
-   public, unknown third party).
-2. **Risk to people.** Identity theft, phishing aimed at a known customer email, account takeover from a usable
-   credential. A hash with no plaintext exposed is lower risk; data readable only by staff already authorised is
-   lower risk; an email tied to a paying account is not.
+1. **Scope.** Data categories, roughly how many people and where they live, exposure window, who could have read it.
+2. **Risk to people.** Identity theft, phishing, account takeover. A hash with no plaintext, or data readable only
+   by already-authorised staff, is lower risk; an email tied to a paying account is not.
 3. **Decide:**
    - **Unlikely to result in a risk:** no regulator notification; record the reasoning (step 4).
-   - **Risk:** notify the ICO and each affected EU authority under Art. 33: nature of the breach, categories and
-     approximate numbers of people and records, contact point, likely consequences, what we have done.
-   - **High risk:** also tell affected people without undue delay, in plain language (Art. 34), via the
-     incident-comms path in §5.3 and the customer steps in
-     [`runbooks/credential-exposure-redaction-fix.md`](runbooks/credential-exposure-redaction-fix.md).
-     Art. 34(3) exemptions apply only when the data was unintelligible to whoever got it, our later measures
-     removed the high risk, or individual notices would take disproportionate effort (then a public announcement).
-   - **Undecided 48 hours after awareness:** notify. The default fails closed; a missed notification breaches
-     Art. 33 in its own right.
-4. **Record every breach, notified or not** (Art. 33(5)), under a `Breach assessment` heading in the incident's
-   postmortem (§6.1), which we write for any breach even below SEV-2: awareness timestamp, facts, effects,
-   remediation, decision and reasoning, what was sent to whom and when. The customer-facing record under
-   `internal/incidents/data/` holds only what §5.4 allows.
+   - **Risk:** notify the ICO and each affected EU authority (Art. 33): nature, categories and approximate
+     numbers, contact point, likely consequences, measures taken.
+   - **High risk:** also tell affected people in plain language (Art. 34), via §5.3 and
+     [`runbooks/credential-exposure-redaction-fix.md`](runbooks/credential-exposure-redaction-fix.md). Exempt only
+     if the data was unintelligible, later measures removed the high risk, or notices would be disproportionate
+     (then a public announcement).
+   - **Undecided 48 hours after awareness:** notify.
+4. **Record every breach, notified or not** (Art. 33(5)), under a `Breach assessment` heading in the postmortem
+   (§6.1; write one even below SEV-2): awareness timestamp, facts, effects, remediation, decision and reasoning,
+   what was sent to whom. The customer-facing record holds only what §5.4 allows.
 
 ---
 
@@ -305,10 +223,9 @@ No PagerDuty rotation (§3); oncall coverage is tracked manually. Nightly covera
 If all oncall are unreachable for > 30 min during a SEV-1:
 
 1. Declare the incident in the public Discord anyway.
-2. There is **no sealed break-glass credential** and no two-operator unseal procedure. Production secrets live
-   only in the ansible-vault encrypted inventory ([credential-rotation.md](credential-rotation.md)); acting on
-   them needs an operator's local copy of that untracked file plus the vault password. Until a break-glass
-   mechanism is built, step 1 is the whole fallback.
+2. There is **no sealed break-glass credential**. Production secrets live only in the ansible-vault encrypted
+   inventory ([credential-rotation.md](credential-rotation.md)); acting on them needs an operator's local copy
+   plus the vault password. Until a break-glass mechanism exists, step 1 is the whole fallback.
 
 ---
 
@@ -320,15 +237,14 @@ If all oncall are unreachable for > 30 min during a SEV-1:
 - **Annual DR exercise** (4 h window): simulated total-primary failure, flip to cloud DR, serve 1 h, flip back.
   Procedure: [`runbooks/dr-activation.md`](runbooks/dr-activation.md).
 
-Log a row (date, tier, scenario, outcome, open action items) in [`drills/README.md`](drills/README.md), with
-postmortem-style action-item discipline.
+Log a row (date, tier, scenario, outcome, open action items) in [`drills/README.md`](drills/README.md).
 
 ---
 
 ## 9. References
 
 - [alerts-catalog.md](alerts-catalog.md), [runbooks/](runbooks/)
-- GitHub Actions spending cap: when every workflow run fails with "The job was not started because an Actions budget is preventing further use", raise the limit at <https://github.com/organizations/Stellar-Index/settings/billing/spending_limit> (GitHub Actions, new monthly limit); usage otherwise resets on the org billing date. Deploys and explorer/docs ships queue behind it.
+- GitHub Actions spending cap: when every run fails with "The job was not started because an Actions budget is preventing further use", raise the limit at <https://github.com/organizations/Stellar-Index/settings/billing/spending_limit>.
 - [HA plan](../architecture/ha-plan.md); [ADR-0006](../adr/0006-timescaledb-for-price-time-series.md); [ADR-0007](../adr/0007-redis-cache-schema.md)
 
 ---

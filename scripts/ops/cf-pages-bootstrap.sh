@@ -4,7 +4,7 @@
 # NOT idempotent against a live zone, despite reading like it: the DNS upserts
 # repoint the apex at the pre-rename "stellarindex-showcase" project,
 # detaching the live explorer (see the safety interlock below). Calling it
-# "idempotent" is what made docs/operations/cf-pages-setup.md describe it as
+# "idempotent" is what made docs/operations/explorer-deployment.md describe it as
 # safe to run from CI.
 #
 # Creates/updates three Pages projects (showcase, dashboard, status), binds
@@ -62,7 +62,7 @@ live, re-run with:
     CF_BOOTSTRAP_I_UNDERSTAND=1 CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=... \
         ./cf-pages-bootstrap.sh
 
-See docs/operations/cf-pages-setup.md.
+See docs/operations/explorer-deployment.md.
 REFUSAL
   exit 1
 fi

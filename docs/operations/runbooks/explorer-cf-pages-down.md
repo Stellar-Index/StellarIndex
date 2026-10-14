@@ -42,7 +42,7 @@ curl -sI https://stellarindex.io/og/<some-asset-slug>
 open "https://dash.cloudflare.com/<account-id>/pages/view/stellarindex-explorer"
 ```
 
-Project per network (`stellarindex-explorer` / `-testnet` / `-futurenet`): `docs/operations/cf-pages-setup.md`. Publishing is either dashboard git integration or `workflow_dispatch` direct-upload (`.github/workflows/explorer-deploy.yml`); check the project's Settings, Builds & deployments tab rather than assuming (the two docs disagree).
+Project per network (`stellarindex-explorer` / `-testnet` / `-futurenet`): `docs/operations/explorer-deployment.md`. Publishing is either dashboard git integration or `workflow_dispatch` direct-upload (`.github/workflows/explorer-deploy.yml`); check the project's Settings, Builds & deployments tab rather than assuming (the two docs disagree).
 
 ## Fix
 
@@ -78,5 +78,5 @@ If customer-visible per [`sev-playbook.md`](../sev-playbook.md), post a status-p
 
 ## Related
 
-- [`docs/operations/cf-pages-setup.md`](../cf-pages-setup.md), [`docs/operations/explorer-deployment.md`](../explorer-deployment.md), [`docs/adr/0044-explorer-edge-rendering.md`](../../adr/0044-explorer-edge-rendering.md)
+- [`docs/operations/explorer-deployment.md`](../explorer-deployment.md), [`docs/adr/0044-explorer-edge-rendering.md`](../../adr/0044-explorer-edge-rendering.md)
 - [`scripts/ci/site-crawl-check.sh`](../../../scripts/ci/site-crawl-check.sh) / `.github/workflows/site-crawl.yml`: weekly detection

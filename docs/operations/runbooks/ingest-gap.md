@@ -45,7 +45,7 @@ Fix:
      --from <gap.start> --to <gap.end> --source soroban-events
    ```
 
-2. Wedged writer, growing gap: pause heavy walks (`pkill -INT -f 'stellarindex-ops backfill'`; `verify-archive-tier-a.service`) per `docs/operations/backfill-with-live-ingest.md`, check Redis (`redis-cli info persistence`, `rdb_last_bgsave_status: ok`?) and Postgres (`SELECT count(*) FROM pg_stat_activity;`), then `systemctl restart stellarindex-indexer` and watch `/v1/diagnostics/cursors`. Backfill afterwards.
+2. Wedged writer, growing gap: pause heavy walks (`pkill -INT -f 'stellarindex-ops backfill'`; `verify-archive-tier-a.service`) per `docs/operations/backfill-procedure.md`, check Redis (`redis-cli info persistence`, `rdb_last_bgsave_status: ok`?) and Postgres (`SELECT count(*) FROM pg_stat_activity;`), then `systemctl restart stellarindex-indexer` and watch `/v1/diagnostics/cursors`. Backfill afterwards.
 3. After a projector replay, lake outage or SDEX history backfill, trades older than the live sweepers' 30-minute lookback lack derived tags. Each command is a dry run until `-write`, first-wins, safe to re-run, uncompressed chunks only. Run `tag-routed-via` (Soroswap `trades.routed_via`) only after the router record (`ch-rebuild -contract-calls`) is complete:
 
    ```sh
@@ -80,7 +80,7 @@ Likely causes:
 
 - Aggregator inactive or crash-looping (`journalctl -u stellarindex-aggregator -n 200`).
 - Postgres unreachable: the per-target scan timeout (15 min Go-side / 13 min SQL `statement_timeout`) fires every cycle.
-- Pool saturated (`active` near `max_connections`), typically concurrent fill walks; see `docs/operations/backfill-with-live-ingest.md`.
+- Pool saturated (`active` near `max_connections`), typically concurrent fill walks; see `docs/operations/backfill-procedure.md`.
 
 Fix:
 
@@ -93,7 +93,7 @@ Fix:
 
    Light targets scan within seconds and clear within ~15 min. Heavy `sdex`/`soroban-events` targets (6h cadence) are scanned on restart only if 6h elapsed since their `gap-detector-scan` cursor; otherwise the previous stamp is re-emitted and the alert clears at the next due scan. To scan a heavy target NOW (also widens it to the `GapDetectorFirstScanCap` window) delete its cursor before restarting: `DELETE FROM ingestion_cursors WHERE source = 'gap-detector-scan' AND sub_source = 'soroban-events/soroban_events'`.
 2. Postgres degraded: wait for `pg_isready`; the detector recovers on its own cycle.
-3. Pool saturation: stop the running fill (a manual invocation, not a unit: find its PID and `kill -INT` it per "Stop a running fill walk" in `backfill-with-live-ingest.md`), wait for connections to drop, resume at `-parallel 4` instead of `-parallel 12`.
+3. Pool saturation: stop the running fill (a manual invocation, not a unit: find its PID and `kill -INT` it per "Stop a running fill walk" in `backfill-procedure.md`), wait for connections to drop, resume at `-parallel 4` instead of `-parallel 12`.
 
 Staleness never reads higher after a restart than before, and heavy targets sawtooth to ~6.2h, under the 8h threshold; only a genuinely missed cycle fires. Rule tests: `deploy/monitoring/rule-tests/ingestion_test.yml`.
 
@@ -157,5 +157,5 @@ No per-source `*-backfill` subcommand exists (ADR-0032 Phase 5): Soroban sources
 ## Related
 
 - [projector.md#stellarindex_projector_replay_stalled](projector.md#stellarindex_projector_replay_stalled): per-source projection repair by cursor rewind.
-- `docs/operations/backfill-with-live-ingest.md`, `aggregator.md#stellarindex_aggregator_silent`.
+- `docs/operations/backfill-procedure.md`, `aggregator.md#stellarindex_aggregator_silent`.
 - ADR-0030 (per-source coverage invariant), ADR-0033 (completeness verdict).

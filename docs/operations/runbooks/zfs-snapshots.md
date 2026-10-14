@@ -114,7 +114,7 @@ Any `EXCHANGE`/`DROP` in step 5 is itself destructive: follow `docs/operations/c
 
 ### Option B - roll the whole dataset back (last resort)
 
-Destructive: every change since the snapshot is gone and every newer snapshot is destroyed (`-r`). ClickHouse then needs re-catch-up from Galexie ([backfill-with-live-ingest](../backfill-with-live-ingest.md)). For Postgres use it only when pgBackRest PITR is unavailable or slower than the loss is worth. Take a `--keep` snapshot of the broken state first if a postmortem needs it.
+Destructive: every change since the snapshot is gone and every newer snapshot is destroyed (`-r`). ClickHouse then needs re-catch-up from Galexie ([backfill-procedure](../backfill-procedure.md#running-alongside-live-ingest)). For Postgres use it only when pgBackRest PITR is unavailable or slower than the loss is worth. Take a `--keep` snapshot of the broken state first if a postmortem needs it.
 
 ```sh
 systemctl stop stellarindex-indexer stellarindex-aggregator   # writers first
