@@ -182,7 +182,7 @@ func TestReconcileHotArchive_CAP76AmendmentFailsOnAmendedKeys(t *testing.T) {
 	const evicted = 59_000_000
 	lake := fakeLake{}
 	amendedA := lake.put(t, persistentData("amended_a", 1, evicted), evicted, "updated")
-	amendedB := lake.put(t, persistentData("amended_b", 2, evicted), evicted, "updated")
+	amendedB := lake.put(t, persistentData("amended_b", 2, evicted-9), evicted-9, "updated")
 	// Same body under a different lastModified stamp is the same state.
 	lake.put(t, persistentData("untouched", 3, evicted-7), evicted, "updated")
 	lake.put(t, contractCode("wasm", evicted), evicted, "created")
@@ -225,6 +225,10 @@ func TestReconcileHotArchive_CAP76AmendmentFailsOnAmendedKeys(t *testing.T) {
 	slices.Sort(wantKeys)
 	if !slices.Equal(keys, wantKeys) {
 		t.Fatalf("mismatched keys = %v, want the amended keys %v", keys, wantKeys)
+	}
+	wantStamp := fmt.Sprintf("%s: value differs (lake row at ledger %d, archive last modified %d)", amendedB, evicted-9, evicted)
+	if !slices.ContainsFunc(n.sample, func(s string) bool { return strings.HasSuffix(s, wantStamp) }) {
+		t.Fatalf("sample lacks both ledger stamps for the amended key:\n%s\nwant suffix %q", strings.Join(n.sample, "\n"), wantStamp)
 	}
 	if n.failures() != 2 {
 		t.Fatalf("failures() = %d, want 2", n.failures())
