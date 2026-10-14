@@ -190,7 +190,7 @@ describe('LiveAssetPrice', () => {
     );
     shows(/thin market · low confidence · in no total/i);
     hides(/1-min VWAP/i);
-    expect(screen.getByText('⚠').getAttribute('title')).toMatch(
+    expect(screen.getByTitle(/^Low confidence/).getAttribute('title')).toMatch(
       /traded \$12\.5.*floor \$1(\.0)?K.*2 active price buckets \(floor 6\)/,
     );
     shows(/Over the last 24 hours it traded/);
@@ -208,7 +208,8 @@ describe('LiveAssetPrice', () => {
     await fetchSettled();
     await screen.findByText(/\$0\.655/);
     shows(PEG_CAPTION);
-    hides(/\$0\.42/, '⚠');
+    hides(/\$0\.42/);
+    expect(screen.queryByTitle(/^Low confidence/)).not.toBeInTheDocument();
   });
 });
 

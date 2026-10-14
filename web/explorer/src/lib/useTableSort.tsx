@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { ArrowDown, ArrowUp, ChevronsUpDown } from 'lucide-react';
 
 /**
  * Shared client-side table sorting for the explorer listings (`/markets`,
@@ -151,7 +152,7 @@ export function SortableTh<K extends string>({
       : align === 'center'
         ? 'text-center'
         : 'text-left';
-  const base = `whitespace-nowrap px-4 py-2.5 font-medium ${alignCls} ${className}`;
+  const base = `h-10 whitespace-nowrap px-4 font-medium ${alignCls} ${className}`;
 
   if (!sortKey || !onSort || !sort || !ariaSort) {
     return (
@@ -174,14 +175,23 @@ export function SortableTh<K extends string>({
       <button
         type="button"
         onClick={() => onSort(sortKey)}
-        className={`inline-flex w-full items-center gap-1 ${justify} hover:text-brand-600 ${
-          active ? 'text-brand-600' : ''
+        className={`group inline-flex w-full items-center gap-1 ${justify} hover:text-ink ${
+          active ? 'text-ink' : ''
         }`}
       >
         {label}
-        <span aria-hidden className="text-[10px]">
-          {active ? (sort.dir === 'asc' ? '↑' : '↓') : '↕'}
-        </span>
+        {active ? (
+          sort.dir === 'asc' ? (
+            <ArrowUp className="h-3 w-3" aria-hidden="true" />
+          ) : (
+            <ArrowDown className="h-3 w-3" aria-hidden="true" />
+          )
+        ) : (
+          <ChevronsUpDown
+            className="h-3 w-3 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100"
+            aria-hidden="true"
+          />
+        )}
       </button>
     </th>
   );

@@ -1,8 +1,7 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
 import { Suspense } from 'react';
 
-import { Container, PageHeader, Skeleton } from '@/components/ui';
+import { ButtonLink, Container, PageHeader, Skeleton } from '@/components/ui';
 import { AssetsTable } from './AssetsTable';
 import { VerifiedStrip } from './VerifiedStrip';
 import { fetchVerifiedCurrencies } from './verified-currencies';
@@ -34,16 +33,13 @@ export default async function AssetsPage() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Assets' }]}
         title="Assets"
+        meta="Every classic and Soroban asset observed on Stellar, with its independent price, 24h volume and supply."
+        actions={
+          <ButtonLink href="/external/assets" variant="secondary">
+            External assets
+          </ButtonLink>
+        }
       />
-      <p className="text-ink-muted text-sm">
-        Looking for fiat &amp; reference prices?{' '}
-        <Link
-          href="/external/assets"
-          className="text-brand-600 hover:text-brand-700 font-medium"
-        >
-          External assets →
-        </Link>
-      </p>
       <VerifiedStrip items={verified} />
       <Suspense fallback={<Skeleton className="h-96 w-full" />}>
         <AssetsTable verifiedSlugs={verifiedSlugs} />
