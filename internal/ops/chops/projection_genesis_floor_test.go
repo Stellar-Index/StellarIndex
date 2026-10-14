@@ -74,35 +74,3 @@ func TestSourceProjectionFloor_ReverifiesNarrowPriorFromGenesis(t *testing.T) {
 		t.Errorf("outside -pass the operator's -from must stand, got %d", got)
 	}
 }
-
-// Every catalogue source claims its served tier from genesis unless it is on
-// this reviewed list. Adding a source here is a decision that the served tier
-// deliberately omits part of its lake history.
-func TestCatalogue_ServedWindowExemptionsReviewed(t *testing.T) {
-	reviewed := map[string]bool{"sdex": true}
-
-	cfg := testConfigWithAllSources()
-	cfg.Supply.WatchedSEP41Contracts = testWatchedSEP41
-	cat, _, err := buildReconciliationCatalogue(cfg)
-	if err != nil {
-		t.Fatalf("buildReconciliationCatalogue: %v", err)
-	}
-	seen := map[string]bool{}
-	for _, src := range cat {
-		seen[src.name] = true
-		switch {
-		case src.servedWindowReason != "" && !reviewed[src.name]:
-			t.Errorf("%s floors its projection at the served MIN (%q) without review — an unprojected prefix would read complete", src.name, src.servedWindowReason)
-		case src.servedWindowReason == "" && reviewed[src.name]:
-			t.Errorf("%s is on the reviewed window list but carries no servedWindowReason", src.name)
-		}
-	}
-	for name := range reviewed {
-		if !seen[name] {
-			t.Errorf("reviewed window source %s is not in the catalogue", name)
-		}
-	}
-	if !seen["band"] {
-		t.Fatal("band missing from the catalogue fixture")
-	}
-}

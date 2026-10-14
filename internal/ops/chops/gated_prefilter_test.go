@@ -6,22 +6,18 @@ package chops
 import (
 	"context"
 	"reflect"
-	"slices"
 	"sort"
 	"strings"
 	"testing"
 
-	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/completeness"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/contractid"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/phoenix"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorocredit"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 )
 
 // Mock identity-gated decoder mirroring the aquarius/phoenix gate: a "biz" event counts only from a registered contract,
@@ -283,61 +279,6 @@ func TestGatedContractSet_realDecoders(t *testing.T) {
 	}
 }
 
-// Pins the exact prefilter opt-in set: aquarius, phoenix, soroswap and sushiswap_v3; defindex must not (its decode
-// correlates events across contracts in a tx), nor any census, oracle or ContractCall source. sushiswap_v3 qualifies:
-// self-contained decode, mint/burn are 33%/12% of pubnet events.
-func TestCatalogue_GatedPrefilterOptIn(t *testing.T) {
-	cat, _, err := buildReconciliationCatalogue(config.Config{})
-	if err != nil {
-		t.Fatalf("buildReconciliationCatalogue: %v", err)
-	}
-	optedIn := map[string]bool{}
-	for _, src := range cat {
-		if src.newGatedDec != nil {
-			optedIn[src.name] = true
-		}
-	}
-	for _, name := range []string{"aquarius", "phoenix", "soroswap", "sushiswap_v3", "blend", "sorocredit"} {
-		if !optedIn[name] {
-			t.Errorf("source %q must opt into the -ch gated prefilter (it streams the whole lake otherwise)", name)
-		}
-	}
-	if optedIn["defindex"] {
-		t.Errorf("defindex must NOT opt into the gated prefilter — its decode correlates events across contracts in the same tx, which a contract-id prefilter would break")
-	}
-	// Sanity: the opt-in stays narrow — exactly the identity-gated
-	// factory-child sources (sorocredit decodes each event on its own).
-	if len(optedIn) != 6 {
-		t.Errorf("gated-prefilter opt-in set = %v, want exactly {aquarius, phoenix, soroswap, sushiswap_v3, blend, sorocredit}", optedIn)
-	}
-}
-
-// blend is identity-gated (deploy only from a factory, everything else only from a registered pool), so its prefilter is
-// factories plus pools. The catalogue must carry both factories and the deploy topic so gatedPrefilter's walk finds
-// pools deployed after any static snapshot.
-func TestCatalogue_BlendReDeriveIsContractScoped(t *testing.T) {
-	cat, _, err := buildReconciliationCatalogue(config.Config{})
-	if err != nil {
-		t.Fatalf("buildReconciliationCatalogue: %v", err)
-	}
-	src := catalogueSource(t, cat, "blend")
-	if src.newGatedDec == nil {
-		t.Fatal("blend has no newGatedDec: its re-derive streams the whole lake")
-	}
-	if len(src.contractIDs) != 0 {
-		t.Errorf("blend carries a static contractIDs %v: it would miss pools deployed after the snapshot", src.contractIDs)
-	}
-	pf, _, err := gatedPrefilter(context.Background(), countingEventStreamer{}, src, src.genesis+10)
-	if err != nil {
-		t.Fatalf("gatedPrefilter: %v", err)
-	}
-	for _, f := range blend.MainnetPoolFactories {
-		if !slices.Contains(pf, f) {
-			t.Errorf("blend prefilter omits factory %s", f)
-		}
-	}
-}
-
 // A gated set too large to inline as a contract_id IN list falls back to an
 // unscoped read rather than a query ClickHouse rejects for max_query_size.
 func TestGatedPrefilter_OversizedSetIsUnscoped(t *testing.T) {
@@ -389,48 +330,5 @@ func TestGatedPrefilter_PanicIsBlindNotCrash(t *testing.T) {
 	}
 	if blind.UndecodableMatched != 1 || len(blind.Ledgers) != 1 || blind.Ledgers[0] != badLedger {
 		t.Errorf("blind = %+v, want 1 undecodable on ledger %d", blind, badLedger)
-	}
-}
-
-// TestCatalogue_SoroswapReDeriveIsContractScoped pins that the soroswap re-derive, which a failing
-// prior verdict re-floors at genesis, scopes the lake read to its gate (every factory plus every
-// pair the decoder holds) and excludes a look-alike emitting the same topics.
-func TestCatalogue_SoroswapReDeriveIsContractScoped(t *testing.T) {
-	cat, soroswapDec, err := buildReconciliationCatalogue(config.Config{})
-	if err != nil {
-		t.Fatalf("buildReconciliationCatalogue: %v", err)
-	}
-	src := catalogueSource(t, cat, "soroswap")
-	if !slices.Equal(src.factories, soroswap.MainnetFactories) || src.creationSym != soroswap.PrefixFactory {
-		t.Fatalf("soroswap factories=%v creationSym=%q, want every verified factory and %q",
-			src.factories, src.creationSym, soroswap.PrefixFactory)
-	}
-	if src.newGatedDec == nil {
-		t.Fatal("soroswap has no newGatedDec: its -ch re-derive streams the whole lake unfiltered")
-	}
-
-	const pairContract = "CSOROSWAPSEEDEDPAIRAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-	const foreignContract = "CFOREIGNSWAPLOOKALIKEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-	// The pass seeds this same decoder from the factory before the loop.
-	soroswapDec.SeedPair(pairContract, canonical.Asset{}, canonical.Asset{})
-
-	swap := func(c string) events.Event {
-		return events.Event{Ledger: src.genesis + 1, ContractID: c, Topic: []string{soroswap.TopicPrefixPair, soroswap.TopicSymbolSwap}}
-	}
-	lake := countingEventStreamer{evs: []events.Event{swap(pairContract), swap(foreignContract)}}
-	pf, blind, err := gatedPrefilter(context.Background(), lake, src, src.genesis+10)
-	if err != nil {
-		t.Fatalf("gatedPrefilter: %v", err)
-	}
-	if blind.Any() {
-		t.Fatalf("unexpected blind spots: %v", blind)
-	}
-	want := append(slices.Clone(soroswap.MainnetFactories), pairContract)
-	slices.Sort(want)
-	if !slices.Equal(pf, want) {
-		t.Errorf("soroswap prefilter = %v, want factories ∪ {seeded pair} = %v", pf, want)
-	}
-	if slices.Contains(pf, foreignContract) {
-		t.Errorf("soroswap prefilter admits the look-alike %s", foreignContract)
 	}
 }

@@ -14,8 +14,6 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/completeness"
-	"github.com/Stellar-Index/StellarIndex/internal/config"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -222,39 +220,6 @@ func TestPass_HeavyReproofIsNotForcedAndRunsLate(t *testing.T) {
 	}
 	if want := []string{"defindex", "sep41_transfers", "sdex"}; !slices.Equal(names, want) {
 		t.Errorf("order = %v, want %v", names, want)
-	}
-}
-
-// defindex's lake read must be contract-scoped, and the scope must cover
-// everything its decoder can accept, or the expected side undercounts.
-func TestCatalogue_DefindexReDeriveIsContractScoped(t *testing.T) {
-	cat, _, err := buildReconciliationCatalogue(config.Config{})
-	if err != nil {
-		t.Fatalf("buildReconciliationCatalogue: %v", err)
-	}
-	src := catalogueSource(t, cat, "defindex")
-	if len(src.contractIDs) == 0 {
-		t.Fatal("defindex has no contractIDs: its re-derive streams the whole lake")
-	}
-	for _, c := range append(append([]string{}, defindex.MainnetVaults...), defindex.MainnetStrategies...) {
-		if !slices.Contains(src.contractIDs, c) {
-			t.Errorf("defindex prefilter omits gated contract %s", c)
-		}
-	}
-	if src.outlastsPass() {
-		t.Error("defindex is contract-scoped now; it must stay in the pass's evidence re-proof")
-	}
-	if s := catalogueSource(t, cat, "sdex"); !s.outlastsPass() {
-		t.Error("sdex census must stay out of the pass's forced re-proof")
-	}
-	var cfg config.Config
-	cfg.Supply.WatchedSEP41Contracts = []string{defindex.MainnetVaults[0]}
-	sep, err := buildSEP41ReconSources(cfg)
-	if err != nil {
-		t.Fatalf("buildSEP41ReconSources: %v", err)
-	}
-	if s := catalogueSource(t, sep, "sep41_transfers"); !s.outlastsPass() {
-		t.Error("sep41_transfers must stay out of the pass's forced re-proof")
 	}
 }
 

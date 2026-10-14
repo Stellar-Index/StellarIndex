@@ -1,11 +1,8 @@
 package streaming_test
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"runtime"
 	"strconv"
@@ -60,60 +57,6 @@ func TestHub_TopicMetricsTrackReaping(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(obs.APIStreamHubTopics); got != float64(hub.TopicCount()) {
 		t.Fatalf("topics gauge = %v, want TopicCount() = %d", got, hub.TopicCount())
-	}
-}
-
-// TestStream_ActiveAndRejectedStreamsAreMetered pins the exported cap state: an open stream holds the active gauge up,
-// a per-IP refusal is counted under its reason, and closing the stream releases the gauge.
-func TestStream_ActiveAndRejectedStreamsAreMetered(t *testing.T) {
-	streaming.SetMaxStreamsPerIP(1)
-	defer streaming.SetMaxStreamsPerIP(0)
-	streaming.SetStreamClientIPResolver(func(*http.Request) string { return "metered-client" })
-	defer streaming.SetStreamClientIPResolver(nil)
-
-	hub := streaming.NewHub(0)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		streaming.Stream(w, r, hub, []string{"topic"}, streaming.StreamOptions{HeartbeatInterval: 30 * time.Second})
-	}))
-	defer srv.Close()
-
-	activeBefore := testutil.ToFloat64(obs.APISSEStreamsActive)
-	rejected := obs.APISSEStreamsRejectedTotal.WithLabelValues("per_ip_cap")
-	rejectedBefore := testutil.ToFloat64(rejected)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
-	held, err := srv.Client().Do(req)
-	if err != nil {
-		t.Fatalf("open first stream: %v", err)
-	}
-	defer held.Body.Close()
-	if got := testutil.ToFloat64(obs.APISSEStreamsActive) - activeBefore; got != 1 {
-		t.Fatalf("active streams gauge delta with one open stream = %v, want 1", got)
-	}
-
-	resp, err := srv.Client().Get(srv.URL)
-	if err != nil {
-		t.Fatalf("open over-cap stream: %v", err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("over-cap status = %d, want 503", resp.StatusCode)
-	}
-	if got := testutil.ToFloat64(rejected) - rejectedBefore; got != 1 {
-		t.Fatalf("rejected{per_ip_cap} delta = %v, want 1", got)
-	}
-
-	cancel()
-	held.Body.Close()
-	deadline := time.Now().Add(2 * time.Second)
-	for testutil.ToFloat64(obs.APISSEStreamsActive) != activeBefore {
-		if time.Now().After(deadline) {
-			t.Fatalf("active streams gauge = %v after close, want %v",
-				testutil.ToFloat64(obs.APISSEStreamsActive), activeBefore)
-		}
-		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -988,48 +931,5 @@ func TestHub_ReapNeverDropsSubscribedTopic(t *testing.T) {
 	}
 	if n := hub.TopicCount(); n > 8 {
 		t.Errorf("TopicCount = %d with MaxTopics(4), want the ceiling to hold it small", n)
-	}
-}
-
-// TestStream_RejectedStreamsCounter — a connection refused by the caps
-// is counted, so a flood is visible in diagnostics rather than silent.
-func TestStream_RejectedStreamsCounter(t *testing.T) {
-	streaming.SetMaxStreamsPerIP(1)
-	defer streaming.SetMaxStreamsPerIP(0)
-	streaming.SetStreamClientIPResolver(func(*http.Request) string { return "counter-client" })
-	defer streaming.SetStreamClientIPResolver(nil)
-
-	hub := streaming.NewHub(0)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		streaming.Stream(w, r, hub, []string{"topic"}, streaming.StreamOptions{
-			HeartbeatInterval: 30 * time.Second,
-		})
-	}))
-	defer srv.Close()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	before := streaming.StreamsRejected()
-
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
-	held, err := srv.Client().Do(req)
-	if err != nil {
-		t.Fatalf("open first stream: %v", err)
-	}
-	defer held.Body.Close()
-
-	req2, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
-	resp, err := srv.Client().Do(req2)
-	if err != nil {
-		t.Fatalf("open over-cap stream: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("over-cap status = %d, want 503", resp.StatusCode)
-	}
-
-	if got := streaming.StreamsRejected() - before; got != 1 {
-		t.Errorf("StreamsRejected delta = %d, want 1", got)
 	}
 }

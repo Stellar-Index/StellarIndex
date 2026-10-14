@@ -4,18 +4,28 @@
 package chops
 
 import (
+	"context"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
+	blend_backstop "github.com/Stellar-Index/StellarIndex/internal/sources/blend_backstop"
 	blend_emitter "github.com/Stellar-Index/StellarIndex/internal/sources/blend_emitter"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/phoenix"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/rozo"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/spectra"
 	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
@@ -489,5 +499,297 @@ func TestCatalogue_DeclaredKindsMatchDecoderOutput(t *testing.T) {
 			}
 			t.Errorf("kind %q (emitted by %T) is not reconciled by reconTarget %q (kinds=%v) — a persisted-but-unreconciled KIND (the defindex.strategy.harvest class)", e.kind, e.ev, e.table, kinds)
 		}
+	}
+}
+
+// defindex's lake read must be contract-scoped, and the scope must cover
+// everything its decoder can accept, or the expected side undercounts.
+func TestCatalogue_DefindexReDeriveIsContractScoped(t *testing.T) {
+	cat, _, err := buildReconciliationCatalogue(config.Config{})
+	if err != nil {
+		t.Fatalf("buildReconciliationCatalogue: %v", err)
+	}
+	src := catalogueSource(t, cat, "defindex")
+	if len(src.contractIDs) == 0 {
+		t.Fatal("defindex has no contractIDs: its re-derive streams the whole lake")
+	}
+	for _, c := range append(append([]string{}, defindex.MainnetVaults...), defindex.MainnetStrategies...) {
+		if !slices.Contains(src.contractIDs, c) {
+			t.Errorf("defindex prefilter omits gated contract %s", c)
+		}
+	}
+	if src.outlastsPass() {
+		t.Error("defindex is contract-scoped now; it must stay in the pass's evidence re-proof")
+	}
+	if s := catalogueSource(t, cat, "sdex"); !s.outlastsPass() {
+		t.Error("sdex census must stay out of the pass's forced re-proof")
+	}
+	var cfg config.Config
+	cfg.Supply.WatchedSEP41Contracts = []string{defindex.MainnetVaults[0]}
+	sep, err := buildSEP41ReconSources(cfg)
+	if err != nil {
+		t.Fatalf("buildSEP41ReconSources: %v", err)
+	}
+	if s := catalogueSource(t, sep, "sep41_transfers"); !s.outlastsPass() {
+		t.Error("sep41_transfers must stay out of the pass's forced re-proof")
+	}
+}
+
+// Pins the exact prefilter opt-in set: aquarius, phoenix, soroswap and sushiswap_v3; defindex must not (its decode
+// correlates events across contracts in a tx), nor any census, oracle or ContractCall source. sushiswap_v3 qualifies:
+// self-contained decode, mint/burn are 33%/12% of pubnet events.
+func TestCatalogue_GatedPrefilterOptIn(t *testing.T) {
+	cat, _, err := buildReconciliationCatalogue(config.Config{})
+	if err != nil {
+		t.Fatalf("buildReconciliationCatalogue: %v", err)
+	}
+	optedIn := map[string]bool{}
+	for _, src := range cat {
+		if src.newGatedDec != nil {
+			optedIn[src.name] = true
+		}
+	}
+	for _, name := range []string{"aquarius", "phoenix", "soroswap", "sushiswap_v3", "blend", "sorocredit"} {
+		if !optedIn[name] {
+			t.Errorf("source %q must opt into the -ch gated prefilter (it streams the whole lake otherwise)", name)
+		}
+	}
+	if optedIn["defindex"] {
+		t.Errorf("defindex must NOT opt into the gated prefilter — its decode correlates events across contracts in the same tx, which a contract-id prefilter would break")
+	}
+	// Sanity: the opt-in stays narrow — exactly the identity-gated
+	// factory-child sources (sorocredit decodes each event on its own).
+	if len(optedIn) != 6 {
+		t.Errorf("gated-prefilter opt-in set = %v, want exactly {aquarius, phoenix, soroswap, sushiswap_v3, blend, sorocredit}", optedIn)
+	}
+}
+
+// blend is identity-gated (deploy only from a factory, everything else only from a registered pool), so its prefilter is
+// factories plus pools. The catalogue must carry both factories and the deploy topic so gatedPrefilter's walk finds
+// pools deployed after any static snapshot.
+func TestCatalogue_BlendReDeriveIsContractScoped(t *testing.T) {
+	cat, _, err := buildReconciliationCatalogue(config.Config{})
+	if err != nil {
+		t.Fatalf("buildReconciliationCatalogue: %v", err)
+	}
+	src := catalogueSource(t, cat, "blend")
+	if src.newGatedDec == nil {
+		t.Fatal("blend has no newGatedDec: its re-derive streams the whole lake")
+	}
+	if len(src.contractIDs) != 0 {
+		t.Errorf("blend carries a static contractIDs %v: it would miss pools deployed after the snapshot", src.contractIDs)
+	}
+	pf, _, err := gatedPrefilter(context.Background(), countingEventStreamer{}, src, src.genesis+10)
+	if err != nil {
+		t.Fatalf("gatedPrefilter: %v", err)
+	}
+	for _, f := range blend.MainnetPoolFactories {
+		if !slices.Contains(pf, f) {
+			t.Errorf("blend prefilter omits factory %s", f)
+		}
+	}
+}
+
+// TestCatalogue_SoroswapReDeriveIsContractScoped pins that the soroswap re-derive, which a failing
+// prior verdict re-floors at genesis, scopes the lake read to its gate (every factory plus every
+// pair the decoder holds) and excludes a look-alike emitting the same topics.
+func TestCatalogue_SoroswapReDeriveIsContractScoped(t *testing.T) {
+	cat, soroswapDec, err := buildReconciliationCatalogue(config.Config{})
+	if err != nil {
+		t.Fatalf("buildReconciliationCatalogue: %v", err)
+	}
+	src := catalogueSource(t, cat, "soroswap")
+	if !slices.Equal(src.factories, soroswap.MainnetFactories) || src.creationSym != soroswap.PrefixFactory {
+		t.Fatalf("soroswap factories=%v creationSym=%q, want every verified factory and %q",
+			src.factories, src.creationSym, soroswap.PrefixFactory)
+	}
+	if src.newGatedDec == nil {
+		t.Fatal("soroswap has no newGatedDec: its -ch re-derive streams the whole lake unfiltered")
+	}
+
+	const pairContract = "CSOROSWAPSEEDEDPAIRAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	const foreignContract = "CFOREIGNSWAPLOOKALIKEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	// The pass seeds this same decoder from the factory before the loop.
+	soroswapDec.SeedPair(pairContract, canonical.Asset{}, canonical.Asset{})
+
+	swap := func(c string) events.Event {
+		return events.Event{Ledger: src.genesis + 1, ContractID: c, Topic: []string{soroswap.TopicPrefixPair, soroswap.TopicSymbolSwap}}
+	}
+	lake := countingEventStreamer{evs: []events.Event{swap(pairContract), swap(foreignContract)}}
+	pf, blind, err := gatedPrefilter(context.Background(), lake, src, src.genesis+10)
+	if err != nil {
+		t.Fatalf("gatedPrefilter: %v", err)
+	}
+	if blind.Any() {
+		t.Fatalf("unexpected blind spots: %v", blind)
+	}
+	want := append(slices.Clone(soroswap.MainnetFactories), pairContract)
+	slices.Sort(want)
+	if !slices.Equal(pf, want) {
+		t.Errorf("soroswap prefilter = %v, want factories ∪ {seeded pair} = %v", pf, want)
+	}
+	if slices.Contains(pf, foreignContract) {
+		t.Errorf("soroswap prefilter admits the look-alike %s", foreignContract)
+	}
+}
+
+// Every catalogue source claims its served tier from genesis unless it is on
+// this reviewed list. Adding a source here is a decision that the served tier
+// deliberately omits part of its lake history.
+func TestCatalogue_ServedWindowExemptionsReviewed(t *testing.T) {
+	reviewed := map[string]bool{"sdex": true}
+
+	cfg := testConfigWithAllSources()
+	cfg.Supply.WatchedSEP41Contracts = testWatchedSEP41
+	cat, _, err := buildReconciliationCatalogue(cfg)
+	if err != nil {
+		t.Fatalf("buildReconciliationCatalogue: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, src := range cat {
+		seen[src.name] = true
+		switch {
+		case src.servedWindowReason != "" && !reviewed[src.name]:
+			t.Errorf("%s floors its projection at the served MIN (%q) without review — an unprojected prefix would read complete", src.name, src.servedWindowReason)
+		case src.servedWindowReason == "" && reviewed[src.name]:
+			t.Errorf("%s is on the reviewed window list but carries no servedWindowReason", src.name)
+		}
+	}
+	for name := range reviewed {
+		if !seen[name] {
+			t.Errorf("reviewed window source %s is not in the catalogue", name)
+		}
+	}
+	if !seen["band"] {
+		t.Fatal("band missing from the catalogue fixture")
+	}
+}
+
+// Keeps recognition pins in step with each decoder's identity gate; contractIDs is also a hard per-event filter for ch-
+// rebuild/ch-reproject and the re-derive prefilter. A pin naming an unclaimed contract misattributes gaps; a missing
+// claimed contract silently drops its rows from a rebuild.
+func TestCatalogue_RecognitionPinsMatchDecoderIdentity(t *testing.T) {
+	ownerOf, cat := staticOwners(t)
+
+	rozoSrc := catalogueSource(t, cat, "rozo")
+	for _, c := range rozoSrc.contractIDs {
+		if !rozo.IsRozoContract(c) {
+			t.Errorf("rozo pins %s, which the rozo decoder does not claim", c)
+		}
+	}
+	for _, c := range rozo.MainnetPaymentContracts {
+		if !reflect.DeepEqual(ownerOf[c], []string{"rozo"}) {
+			t.Errorf("rozo decoder claims %s but the catalogue attributes it to %q", c, ownerOf[c])
+		}
+	}
+	if len(rozoSrc.contractIDs) != len(rozo.MainnetPaymentContracts) {
+		t.Errorf("rozo pins %d contracts, decoder claims %d", len(rozoSrc.contractIDs), len(rozo.MainnetPaymentContracts))
+	}
+
+	bbSrc := catalogueSource(t, cat, blend_backstop.SourceName)
+	for _, c := range bbSrc.contractIDs {
+		if !blend_backstop.IsBackstopContract(c) {
+			t.Errorf("blend_backstop pins %s, which the backstop decoder does not claim", c)
+		}
+	}
+	for _, c := range []string{blend_backstop.MainnetBackstopV2, blend_backstop.MainnetBackstopV1} {
+		if !reflect.DeepEqual(ownerOf[c], []string{blend_backstop.SourceName}) {
+			t.Errorf("backstop decoder claims %s but the catalogue attributes it to %q", c, ownerOf[c])
+		}
+	}
+
+	// No OTHER source may pin one of these contracts: a second pin would
+	// charge that source with every rozo / backstop recognition gap.
+	pinned := map[string]string{}
+	for _, c := range rozoSrc.contractIDs {
+		pinned[c] = "rozo"
+	}
+	for _, c := range bbSrc.contractIDs {
+		pinned[c] = blend_backstop.SourceName
+	}
+	for _, src := range cat {
+		for _, c := range src.contractIDs {
+			if owner, ok := pinned[c]; ok && owner != src.name {
+				t.Errorf("%s also pins %s, which belongs to %s — it would share that source's recognition gaps", src.name, c, owner)
+			}
+		}
+	}
+
+	// The catalogue must hold a copy, never the package's own slice.
+	if len(rozoSrc.contractIDs) > 0 && &rozoSrc.contractIDs[0] == &rozo.MainnetPaymentContracts[0] {
+		t.Error("rozo contractIDs aliases rozo.MainnetPaymentContracts — a catalogue-side append/sort would mutate the decoder's trust root")
+	}
+}
+
+// Only redstone consumes events.Event.OpArgs, so only it may read the wide op_args_xdr column.
+// The sep41 pair streaming the CAP-67 firehose must keep needsOpArgs false, or the lake read regrows the OOM profile.
+func TestCatalogue_OpArgsOnlyForRedstone(t *testing.T) {
+	cfg := testConfigWithAllSources()
+	cfg.Supply.WatchedSEP41Contracts = testWatchedSEP41
+
+	cat, _, err := buildReconciliationCatalogue(cfg)
+	if err != nil {
+		t.Fatalf("buildReconciliationCatalogue: %v", err)
+	}
+	sawSEP41 := map[string]bool{"sep41_transfers": false, "sep41_supply": false}
+	sawRedstone := false
+	for _, src := range cat {
+		if _, ok := sawSEP41[src.name]; ok {
+			sawSEP41[src.name] = true
+		}
+		if src.name == "redstone" {
+			sawRedstone = true
+			if !src.needsOpArgs {
+				t.Error("redstone must set needsOpArgs (its decoder zips feed_ids from op args)")
+			}
+			continue
+		}
+		if src.needsOpArgs {
+			t.Errorf("%s: needsOpArgs set but its decoder never reads events.Event.OpArgs — this re-widens the reconcile's lake read", src.name)
+		}
+	}
+	if !sawRedstone {
+		t.Fatal("catalogue missing redstone (test config sets its adapter contract)")
+	}
+	for name, seen := range sawSEP41 {
+		if !seen {
+			t.Fatalf("catalogue missing %s (test config sets a watched set — promotion should have included it)", name)
+		}
+	}
+}
+
+// TestCatalogue_SymbolTopic0SourcesRejectStringTopic proves the symbol-only
+// lake read counts what the full read counts: a flagged source's decoder must
+// reject every ScvString topic[0] the dropped arm could have streamed.
+func TestCatalogue_SymbolTopic0SourcesRejectStringTopic(t *testing.T) {
+	cfg := testConfigWithAllSources()
+	cfg.Supply.WatchedSEP41Contracts = testWatchedSEP41
+	cat, _, err := buildReconciliationCatalogue(cfg)
+	if err != nil {
+		t.Fatalf("buildReconciliationCatalogue: %v", err)
+	}
+	flagged := map[string]bool{}
+	for _, src := range cat {
+		if !src.symbolTopic0 {
+			continue
+		}
+		flagged[src.name] = true
+		if len(src.factories) > 0 || len(src.topic0Syms) == 0 || len(src.contractIDs) == 0 {
+			t.Errorf("%s: symbolTopic0 needs a contract-scoped topic prefilter and no factory walk", src.name)
+			continue
+		}
+		for _, sym := range src.topic0Syms {
+			ev := events.Event{Type: "contract", ContractID: src.contractIDs[0], Topic: []string{scval.MustEncodeSymbol(sym)}}
+			if !src.dec.Matches(ev) {
+				t.Errorf("%s: decoder rejects Symbol topic[0] %q, so this check proves nothing", src.name, sym)
+			}
+			ev.Topic = []string{scval.MustEncodeString(sym)}
+			if src.dec.Matches(ev) {
+				t.Errorf("%s: decoder accepts String topic[0] %q; the symbol-only read would undercount it", src.name, sym)
+			}
+		}
+	}
+	if !flagged["sep41_supply"] {
+		t.Error("sep41_supply must read the lake symbol-only: the String arm reads topics_xdr across every KALE granule")
 	}
 }

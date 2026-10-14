@@ -1,6 +1,14 @@
 package v1
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+
+	"gopkg.in/yaml.v3"
+)
 
 // TestSpec_RequiredFieldsDocumented pins the `required` half of spec drift: these schemas serve every listed
 // property unconditionally (non-pointer, no omitempty), so without `required` generated clients type them optional.
@@ -84,6 +92,59 @@ func TestSpec_NullablePropertiesMatchGo(t *testing.T) {
 			t.Errorf("%s.%s: type %v documents null, but the Go field is a non-pointer omitempty — it is only ever omitted, never null", c.schema, c.prop, v)
 		default:
 			t.Errorf("%s.%s: unexpected type field %T", c.schema, c.prop, v)
+		}
+	}
+}
+
+// TestSpec_LastEventIDDeclaredOnlyWhereAHandlerResumes: declaring Last-Event-ID on a stream whose handler never
+// reads it makes spec-generated clients silently lose events missed while disconnected. A declaration needs an
+// entry above, and that handler must call streaming.LastEventIDFrom.
+func TestSpec_LastEventIDDeclaredOnlyWhereAHandlerResumes(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join(repoRoot(t), "openapi", "stellar-index.v1.yaml")) //nolint:gosec // repo-relative path
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Paths map[string]map[string]yaml.Node `yaml:"paths"`
+	}
+	if err := yaml.Unmarshal(body, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var declared []string
+	for path, methods := range doc.Paths {
+		for _, node := range methods {
+			var op struct {
+				Parameters []struct {
+					Name string `yaml:"name"`
+					In   string `yaml:"in"`
+				} `yaml:"parameters"`
+			}
+			if node.Kind != yaml.MappingNode || node.Decode(&op) != nil {
+				continue
+			}
+			for _, p := range op.Parameters {
+				if strings.EqualFold(p.Name, "Last-Event-ID") {
+					declared = append(declared, path)
+				}
+			}
+		}
+	}
+	sort.Strings(declared)
+	if len(declared) == 0 {
+		t.Fatal("no operation declares Last-Event-ID; the spec parse found nothing to check")
+	}
+	for _, path := range declared {
+		src, ok := streamResumeHandlers[path]
+		if !ok {
+			t.Errorf("%s declares Last-Event-ID but no handler is registered as resuming it", path)
+			continue
+		}
+		code, err := os.ReadFile(src) //nolint:gosec // package-relative fixture path
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(code), "streaming.LastEventIDFrom(r)") {
+			t.Errorf("%s declares Last-Event-ID but %s never calls streaming.LastEventIDFrom", path, src)
 		}
 	}
 }

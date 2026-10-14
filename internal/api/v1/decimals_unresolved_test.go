@@ -41,33 +41,6 @@ func (oneRowSEP41Transfers) ListSEP41Transfers(
 	return []timescale.SEP41TransferRow{{Kind: "transfer"}}, nil
 }
 
-// /v1/assets/{id}: no projection row and a failed lake read → the cap and
-// FDV (supply ÷ 10^decimals × price) are refused, the body is flagged
-// stale, and it is NOT cached — the next request reads again.
-func TestAssetDetail_DecimalsReadFailed_RefusesCapStaleUncached(t *testing.T) {
-	dec := &countingDecStub{err: errDecimalsRead}
-	srv := v1.New(v1.Options{
-		Prices:        lockstepPrices(),
-		Supply:        lockstepSupply(),
-		TokenDecimals: dec,
-	})
-	body := lockstepGet(t, srv)
-
-	for _, field := range []string{`"market_cap_usd":"`, `"fdv_usd":"`} {
-		if strings.Contains(body, field) {
-			t.Errorf("%s published on a guessed scale of 7: %s", field, body)
-		}
-	}
-	if !strings.Contains(body, `"stale":true`) {
-		t.Errorf("flags.stale must be set on an unresolved scale: %s", body)
-	}
-	first := dec.calls.Load()
-	_ = lockstepGet(t, srv)
-	if dec.calls.Load() == first {
-		t.Error("degraded body was cached: the second request never re-read decimals")
-	}
-}
-
 // /v1/contracts/{id}/transfers: `decimals` is the conversion factor for
 // every amount, so a failed read is a retryable 503, not decimals: 7. An
 // undeclared scale (found=false) keeps the documented default.

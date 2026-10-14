@@ -4,14 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
-	"sort"
-	"strings"
 	"sync/atomic"
 	"testing"
-
-	"gopkg.in/yaml.v3"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
@@ -116,57 +110,4 @@ func TestStreamRevalidate_NilWithoutGates(t *testing.T) {
 var streamResumeHandlers = map[string]string{
 	"/price/stream":     "price_stream.go",
 	"/price/tip/stream": "price_tip_stream.go",
-}
-
-// TestSpec_LastEventIDDeclaredOnlyWhereAHandlerResumes: declaring Last-Event-ID on a stream whose handler never
-// reads it makes spec-generated clients silently lose events missed while disconnected. A declaration needs an
-// entry above, and that handler must call streaming.LastEventIDFrom.
-func TestSpec_LastEventIDDeclaredOnlyWhereAHandlerResumes(t *testing.T) {
-	body, err := os.ReadFile(filepath.Join(repoRoot(t), "openapi", "stellar-index.v1.yaml")) //nolint:gosec // repo-relative path
-	if err != nil {
-		t.Fatal(err)
-	}
-	var doc struct {
-		Paths map[string]map[string]yaml.Node `yaml:"paths"`
-	}
-	if err := yaml.Unmarshal(body, &doc); err != nil {
-		t.Fatal(err)
-	}
-	var declared []string
-	for path, methods := range doc.Paths {
-		for _, node := range methods {
-			var op struct {
-				Parameters []struct {
-					Name string `yaml:"name"`
-					In   string `yaml:"in"`
-				} `yaml:"parameters"`
-			}
-			if node.Kind != yaml.MappingNode || node.Decode(&op) != nil {
-				continue
-			}
-			for _, p := range op.Parameters {
-				if strings.EqualFold(p.Name, "Last-Event-ID") {
-					declared = append(declared, path)
-				}
-			}
-		}
-	}
-	sort.Strings(declared)
-	if len(declared) == 0 {
-		t.Fatal("no operation declares Last-Event-ID; the spec parse found nothing to check")
-	}
-	for _, path := range declared {
-		src, ok := streamResumeHandlers[path]
-		if !ok {
-			t.Errorf("%s declares Last-Event-ID but no handler is registered as resuming it", path)
-			continue
-		}
-		code, err := os.ReadFile(src) //nolint:gosec // package-relative fixture path
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(string(code), "streaming.LastEventIDFrom(r)") {
-			t.Errorf("%s declares Last-Event-ID but %s never calls streaming.LastEventIDFrom", path, src)
-		}
-	}
 }
