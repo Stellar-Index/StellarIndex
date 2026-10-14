@@ -55,7 +55,7 @@ function sourceFiles(): Array<[string, string]> {
 function openingTags(body: string): Array<[number, string, string]> {
   const text = blankComments(body);
   const out: Array<[number, string, string]> = [];
-  for (const m of text.matchAll(/<([a-z][a-zA-Z0-9]*)\b/g)) {
+  for (const m of text.matchAll(/<([a-zA-Z][a-zA-Z0-9]*)\b/g)) {
     let i = m.index + m[0].length;
     let depth = 0;
     while (i < text.length) {
@@ -71,18 +71,33 @@ function openingTags(body: string): Array<[number, string, string]> {
   return out;
 }
 
-/** The markup from an opening `<tr ...>` to the row's closing `</tr>`. */
+/**
+ * The markup from an opening `<tr ...>` to the row's closing tag. `TR` is
+ * the ui primitive that renders a native `<tr>`, so it is a row too.
+ */
 function rowBody(body: string, from: number): string {
-  const end = body.indexOf('</tr>', from);
-  return body.slice(from, end === -1 ? body.length : end);
+  const ends = [
+    body.indexOf('</tr>', from),
+    body.indexOf('</TR>', from),
+  ].filter((i) => i !== -1);
+  const end = ends.length === 0 ? body.length : Math.min(...ends);
+  return body.slice(from, end);
 }
 
-/** `<button …>…</button>` elements inside a slice of markup. */
+/**
+ * `<button …>…</button>` elements inside a slice of markup, counting the ui
+ * `Button` primitive, which renders a native `<button>` with its own name
+ * and focus ring.
+ */
 function buttonsIn(markup: string): string[] {
   const out: string[] = [];
-  for (const m of markup.matchAll(/<button[\s>]/g)) {
-    const end = markup.indexOf('</button>', m.index);
-    out.push(markup.slice(m.index, end === -1 ? markup.length : end));
+  for (const m of markup.matchAll(/<[bB]utton[\s>]/g)) {
+    const ends = [
+      markup.indexOf('</button>', m.index),
+      markup.indexOf('</Button>', m.index),
+    ].filter((i) => i !== -1);
+    const end = ends.length === 0 ? markup.length : Math.min(...ends);
+    out.push(markup.slice(m.index, end));
   }
   return out;
 }
@@ -99,7 +114,10 @@ describe('every clickable table row carries a real control', () => {
   const rows = sourceFiles().flatMap(([path, body]) => {
     const text = blankComments(body);
     return openingTags(body)
-      .filter(([, tag, src]) => tag === 'tr' && /\bonClick\b/.test(src))
+      .filter(
+        ([, tag, src]) =>
+          (tag === 'tr' || tag === 'TR') && /\bonClick\b/.test(src),
+      )
       .map(([line, , src]) => ({
         where: `${path}:${line}`,
         markup: rowBody(text, text.indexOf(src)),
@@ -108,7 +126,7 @@ describe('every clickable table row carries a real control', () => {
 
   it('finds the clickable rows to check', () => {
     // Vacuous-pass guard. Three today: the divergence board and the two
-    // pool-depth expanders. If a refactor drops this to zero the guard has
+    // pool-depth expanders (one on the ui `TR` primitive). If a refactor drops this to zero the guard has
     // stopped guarding, and that should be loud rather than green.
     expect(rows.length).toBeGreaterThanOrEqual(3);
   });
@@ -117,7 +135,7 @@ describe('every clickable table row carries a real control', () => {
     // `<tr onClick>` alone is inoperable by keyboard and invisible to a
     // screen reader: no tab stop, no role, no Enter/Space activation.
     const offenders = rows
-      .filter((r) => !/<button[\s>]/.test(r.markup))
+      .filter((r) => !/<[bB]utton[\s>]/.test(r.markup))
       .map((r) => r.where);
     expect(offenders).toEqual([]);
   });
@@ -137,8 +155,13 @@ describe('every clickable table row carries a real control', () => {
       .map((r) => r.where);
     expect(unnamed).toEqual([]);
 
+    // The ui Button carries its focus ring itself (components/ui/Button).
     const unfocusable = rows
-      .filter((r) => !/focus-visible:|focus:/.test(r.markup))
+      .filter(
+        (r) =>
+          !/focus-visible:|focus:/.test(r.markup) &&
+          !/<Button[\s>]/.test(r.markup),
+      )
       .map((r) => r.where);
     expect(unfocusable).toEqual([]);
   });

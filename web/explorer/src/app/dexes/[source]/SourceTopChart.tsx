@@ -84,7 +84,7 @@ export function SourceTopChart({
           href={`/markets/${encodeURIComponent(slug)}`}
           className="text-brand-600 hover:underline"
         >
-          Full market detail →
+          Full market detail
         </Link>
       </div>
     </Panel>

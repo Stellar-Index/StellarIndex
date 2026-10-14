@@ -5,6 +5,7 @@ import { hrefFor } from '@/lib/hrefFor';
 import { ReferencePriceAggregators } from './ReferencePriceAggregators';
 import { RoutedVolumePanel } from './RoutedVolumePanel';
 
+import { ExternalRef } from '@/components/ExternalRef';
 import { Panel } from '@/components/reveal';
 import { Container, PageHeader } from '@/components/ui';
 import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
@@ -167,20 +168,6 @@ function EntryCard({ entry }: { entry: Entry }) {
         {entry.contractsRepo && <ExternalRef href={entry.contractsRepo} />}
       </div>
     </Panel>
-  );
-}
-
-/** Shows the destination itself as the link text, so an off-site hop is never a surprise. */
-function ExternalRef({ href }: { href: string }) {
-  return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      className="text-ink-muted hover:text-brand-600 hover:underline"
-    >
-      {href.replace(/^https?:\/\/(www\.)?/, '')}
-    </a>
   );
 }
 

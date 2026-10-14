@@ -3,6 +3,8 @@
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
+import { Stat, StatCell, StatGrid } from '@/components/ui';
+import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 import { apiGet, asExample } from '@/api/client';
 import {
   compareDecimalStrings,
@@ -28,14 +30,10 @@ interface SourceStats {
 }
 
 /**
- * SourceStatsPanel — client-side rendering of the per-source 24h
- * activity strip on /dexes/[source]. Was server-side at build
- * time, but `/v1/sources?include=stats,sparkline` can take 10-25s
- * under cold-cache conditions and the Next build's per-page 60s
- * budget exhausted itself trying to render 5 source pages
- * concurrently. Moving the fetch to the client means the build
- * is free of API dependence; users see "Loading…" briefly on
- * first paint, then the real numbers fill in.
+ * SourceStatsPanel — the per-source 24h activity strip, shared by the
+ * DEX, exchange and source detail pages. Client-side: the
+ * `include=stats,sparkline` read can take 10-25s cold, which exhausted
+ * the static export's per-page budget when it ran at build time.
  */
 export function SourceStatsPanel({
   source,
@@ -47,9 +45,8 @@ export function SourceStatsPanel({
   const { data, isError, isPending } = useQuery<SourceStats | null>({
     queryKey: ['/v1/sources', 'stats+sparkline7d', source],
     queryFn: async () => {
-      // 7d (`sparkline7d`) is now cheap: it reads the source_volume_1h
-      // continuous aggregate (migration 0068) rather than scanning raw
-      // trades, so the chart's 24h/7d toggle is live.
+      // 7d (`sparkline7d`) reads the source_volume_1h continuous
+      // aggregate rather than raw trades, so the 24h/7d toggle is live.
       const env = await apiGet<{ data: SourceStats[] }>('/v1/sources', {
         include: 'stats,sparkline,sparkline7d',
       });
@@ -69,60 +66,77 @@ export function SourceStatsPanel({
     : '—';
   const markets = data?.markets_count_24h;
 
-  // TVL comes from the /v1/protocols snapshot (background-refreshed
-  // server-side). Absent for sources without an absolute reserve
-  // source — the stat is only shown when a snapshot exists, never a
-  // fabricated zero. A snapshot with unpriced pools is a lower bound
-  // ("≥" prefix; provenance in the hover title).
+  // TVL comes from the /v1/protocols snapshot. Only DEX protocols with an
+  // absolute reserve source have one, so the stat disappears entirely
+  // (never a dash or a fabricated zero) for CEX venues and reserve-less
+  // DEXes. A snapshot with unpriced pools is a lower bound.
   const tvl = useProtocolTvls().data?.byProtocol[source];
-  // Only DEX protocols with an absolute reserve source have a
-  // snapshot — the stat disappears entirely (not a dash) for CEX
-  // venues and reserve-less DEXes, since this panel is reused on
-  // /exchanges/{name} and /sources/{name} too.
   const showTvl = tvl != null && compareDecimalStrings(tvl.tvl_usd, '0') === 1;
+  const tvlLowerBound = showTvl && tvl.unpriced_pools > 0;
 
   return (
     <Panel
       headingLevel={2}
       title="24h activity"
-      hint={`Live from /v1/sources?include=stats,sparkline,sparkline7d (source=${source})`}
+      hint="Trailing 24 hours · refreshes every minute"
       source={asExample('/v1/sources', {
         include: 'stats,sparkline,sparkline7d',
       })}
     >
-      <div
-        className={`grid grid-cols-2 gap-3 ${showTvl ? 'sm:grid-cols-4' : 'sm:grid-cols-3'}`}
-      >
-        <Stat
-          label="24h volume"
-          value={volume !== '—' ? `$${volume}` : placeholder}
-        />
-        <Stat
-          label="24h trades"
-          value={trades != null ? formatCompact(trades) : placeholder}
-        />
-        <Stat
-          label={`24h ${unitsLabel}`}
-          value={
-            markets != null ? markets.toLocaleString('en-US') : placeholder
-          }
-        />
-        {showTvl && tvl && (
+      <StatGrid cols={showTvl ? 4 : 3}>
+        <StatCell>
           <Stat
-            label="TVL"
-            value={`${tvl.unpriced_pools > 0 ? '≥ ' : ''}$${formatCompactUnits(tvl.tvl_usd)}`}
-            title={tvl.basis}
+            label="24h volume"
+            value={volume !== '—' ? `$${volume}` : placeholder}
           />
+        </StatCell>
+        <StatCell>
+          <Stat
+            label="24h trades"
+            value={trades != null ? formatCompact(trades) : placeholder}
+          />
+        </StatCell>
+        <StatCell>
+          <Stat
+            label={`24h ${unitsLabel}`}
+            value={
+              markets != null ? markets.toLocaleString('en-US') : placeholder
+            }
+          />
+        </StatCell>
+        {showTvl && (
+          <StatCell>
+            <Stat
+              label={<span title={tvl.basis}>TVL</span>}
+              value={
+                <>
+                  {tvlLowerBound && (
+                    <span className="text-ink-muted font-sans" aria-hidden>
+                      ≥{' '}
+                    </span>
+                  )}
+                  ${formatCompactUnits(tvl.tvl_usd)}
+                </>
+              }
+              sub={
+                tvlLowerBound
+                  ? `Lower bound · ${tvl.unpriced_pools} unpriced pools`
+                  : undefined
+              }
+            />
+          </StatCell>
         )}
-      </div>
+      </StatGrid>
       {failed && (
         <p role="alert" className="text-ink-muted mt-3 text-sm">
           24h activity unavailable right now.
         </p>
       )}
       {data?.volume_history_24h && data.volume_history_24h.length > 0 && (
-        <div className="border-line mt-4 border-t pt-3">
-          <div className="text-ink-muted flex items-baseline justify-between text-[10px] tracking-wider uppercase">
+        <div className="mt-4">
+          <div
+            className={`${PANEL_LABEL_CLASS} flex items-baseline justify-between`}
+          >
             <span>Trades / hour</span>
             <span className="text-ink-faint">USD volume / hour (bars)</span>
           </div>
@@ -136,24 +150,5 @@ export function SourceStatsPanel({
         </div>
       )}
     </Panel>
-  );
-}
-
-function Stat({
-  label,
-  value,
-  title,
-}: {
-  label: string;
-  value: string;
-  title?: string;
-}) {
-  return (
-    <div title={title}>
-      <div className="text-ink-muted text-[10px] tracking-wider uppercase">
-        {label}
-      </div>
-      <div className="mt-1 text-2xl font-semibold tabular-nums">{value}</div>
-    </div>
   );
 }

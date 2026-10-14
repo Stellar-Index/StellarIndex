@@ -1,10 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { apiGet, asExample } from '@/api/client';
 import { Panel } from '@/components/reveal';
+import { Select, Skeleton } from '@/components/ui';
 import { shortAssetText } from '@/lib/asset-label';
 import { MarketChart } from '@/components/charts/MarketChart';
 // /v1/markets row from the generated OpenAPI contract, via the shared
@@ -14,7 +15,7 @@ import type { Market } from '@/api/hooks';
 /**
  * VenueChart — the price chart for a CEX venue. Fetches the venue's
  * pair list (by 24h volume), default-selects the top pair, and renders
- * the shared MarketChart (real OHLC + volume from /v1/ohlc). A dropdown
+ * the shared MarketChart (real OHLC + volume from /v1/ohlc). A select
  * switches between the venue's pairs.
  */
 export function VenueChart({ venue }: { venue: string }) {
@@ -58,7 +59,7 @@ export function VenueChart({ venue }: { venue: string }) {
         hint="Loading pairs…"
         source={asExample('/v1/markets', { source: venue })}
       >
-        <div className="h-[380px]" />
+        <Skeleton className="h-[380px]" />
       </Panel>
     );
   }
@@ -142,25 +143,27 @@ function PairPicker({
   value: { base: string; quote: string } | null;
   onChange: (p: { base: string; quote: string }) => void;
 }) {
+  const id = useId();
   return (
-    <label className="border-line bg-surface inline-flex items-center gap-1.5 rounded-md border px-2 py-1">
-      <span className="text-ink-muted text-[10px] font-medium tracking-wider uppercase">
+    <div className="flex items-center gap-2">
+      <label htmlFor={id} className="text-ink-muted text-xs font-medium">
         Pair
-      </span>
-      <select
+      </label>
+      <Select
+        id={id}
         value={value ? `${value.base}|${value.quote}` : ''}
         onChange={(e) => {
           const [base, quote] = e.target.value.split('|');
           onChange({ base, quote });
         }}
-        className="text-ink-body bg-transparent font-mono text-xs tracking-wider uppercase focus:outline-hidden"
+        className="h-8 w-auto text-xs"
       >
         {pairs.map((p) => (
           <option key={`${p.base}|${p.quote}`} value={`${p.base}|${p.quote}`}>
             {labelOf(p.base)}/{labelOf(p.quote)}
           </option>
         ))}
-      </select>
-    </label>
+      </Select>
+    </div>
   );
 }

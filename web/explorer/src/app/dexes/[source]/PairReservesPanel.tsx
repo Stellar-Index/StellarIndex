@@ -6,6 +6,16 @@ import { useLedgerFollow } from '@/lib/live/hooks';
 import Link from 'next/link';
 
 import { Panel } from '@/components/reveal';
+import {
+  Button,
+  Skeleton,
+  TBody,
+  TR,
+  Table,
+  Td,
+  Th,
+  THead,
+} from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 
 interface ReserveToken {
@@ -62,7 +72,9 @@ function displayUnits(baseUnits: string, decimals: number): string {
   );
 }
 
+// The XLM Stellar Asset Contract self-reports its symbol as "native".
 function tokenLabel(t: ReserveToken): string {
+  if (t.symbol === 'native') return 'XLM';
   return t.symbol || `${t.contract.slice(0, 4)}…${t.contract.slice(-4)}`;
 }
 
@@ -109,13 +121,12 @@ export function PairReservesPanel() {
   return (
     <Panel
       headingLevel={2}
-      title="Pool reserves & depth (current)"
-      hint="Live reserves · depth is a constant-product estimate (0.3% fee), not an order book · Soroswap only"
+      title="Pool reserves & depth"
+      hint="Current reserves · depth is a constant-product estimate, not an order book"
       source={asExample('/v1/pools/reserves')}
+      bodyClassName={rows.length > 0 ? '-mx-4 -mb-4' : undefined}
     >
-      {q.isLoading && (
-        <p className="text-ink-muted text-sm">Loading reserves…</p>
-      )}
+      {q.isLoading && <Skeleton className="h-24" />}
       {q.isError && (
         <p className="text-ink-muted text-sm">
           Reserves unavailable right now.
@@ -126,32 +137,30 @@ export function PairReservesPanel() {
       )}
       {rows.length > 0 && (
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-line text-ink-muted border-b text-left text-xs tracking-wider uppercase">
-                <th className="py-2 pr-3 font-medium">Pool</th>
-                <th className="py-2 pr-3 text-right font-medium">Reserve 0</th>
-                <th className="py-2 pr-3 text-right font-medium">Reserve 1</th>
-                <th className="py-2 pr-3 text-right font-medium">Mid price</th>
-                <th className="py-2 pr-3 text-right font-medium">
-                  As of ledger
-                </th>
-                <th className="py-2 font-medium" aria-hidden />
+          <Table>
+            <THead>
+              <tr>
+                <Th>Pool</Th>
+                <Th align="right">Token 0 reserve</Th>
+                <Th align="right">Token 1 reserve</Th>
+                <Th align="right">Mid price</Th>
+                <Th align="right">As of ledger</Th>
+                <Th aria-hidden />
               </tr>
-            </thead>
-            <tbody>
+            </THead>
+            <TBody>
               {rows.map((row) => {
                 const open = expanded === row.pool;
                 const t0 = tokenLabel(row.token0);
                 const t1 = tokenLabel(row.token1);
                 return (
                   <Fragment key={row.pool}>
-                    <tr
-                      className="border-line/60 hover:bg-surface-subtle cursor-pointer border-b"
+                    <TR
+                      className="cursor-pointer"
                       onClick={() => setExpanded(open ? null : row.pool)}
                     >
-                      <td className="py-2 pr-3">
-                        <span className="font-medium">
+                      <Td>
+                        <span className="text-ink font-medium">
                           {t0} / {t1}
                         </span>{' '}
                         <Link
@@ -161,49 +170,49 @@ export function PairReservesPanel() {
                         >
                           {row.pool.slice(0, 4)}…{row.pool.slice(-4)}
                         </Link>
-                      </td>
-                      <td className="py-2 pr-3 text-right tabular-nums">
+                      </Td>
+                      <Td align="right" className="font-mono">
                         {displayUnits(row.token0.reserve, row.token0.decimals)}{' '}
                         {t0}
-                      </td>
-                      <td className="py-2 pr-3 text-right tabular-nums">
+                      </Td>
+                      <Td align="right" className="font-mono">
                         {displayUnits(row.token1.reserve, row.token1.decimals)}{' '}
                         {t1}
-                      </td>
-                      <td className="py-2 pr-3 text-right tabular-nums">
+                      </Td>
+                      <Td align="right" className="font-mono">
                         {row.mid_price_0_in_1
                           ? `${midPriceLabel(row.mid_price_0_in_1)} ${t1}/${t0}`
                           : '—'}
-                      </td>
-                      <td className="text-ink-muted py-2 pr-3 text-right tabular-nums">
+                      </Td>
+                      <Td align="right" className="text-ink-muted font-mono">
                         {row.as_of_ledger.toLocaleString('en-US')}
-                      </td>
+                      </Td>
                       {/* The keyboard/AT path to the depth detail. The
                           row's onClick stays a mouse convenience; this
                           native <button> puts the expander in the tab
                           order and states its expanded/collapsed status
                           (WCAG 2.1.1 / 4.1.2). */}
-                      <td className="py-2 text-right text-xs">
-                        <button
-                          type="button"
+                      <Td align="right" className="py-1.5">
+                        <Button
+                          variant="ghost"
+                          size="sm"
                           aria-expanded={open}
                           aria-controls={`pair-depth-${row.pool}`}
                           onClick={(e) => {
                             e.stopPropagation();
                             setExpanded(open ? null : row.pool);
                           }}
-                          className="text-ink-muted hover:text-brand-600 focus-visible:ring-brand-500/60 rounded-sm px-1 py-0.5 transition-colors focus-visible:ring-2 focus-visible:outline-hidden"
                         >
-                          {open ? 'Hide depth ▴' : 'Depth ▾'}
-                        </button>
-                      </td>
-                    </tr>
+                          {open ? 'Hide depth' : 'Depth'}
+                        </Button>
+                      </Td>
+                    </TR>
                     {open && (
-                      <tr className="border-line/60 bg-surface-subtle/50 border-b">
+                      <tr className="bg-surface-subtle/50">
                         <td
                           colSpan={6}
                           id={`pair-depth-${row.pool}`}
-                          className="px-3 py-3"
+                          className="px-4 py-3"
                         >
                           {row.depth.length === 0 ? (
                             <p className="text-ink-muted text-xs">
@@ -212,30 +221,30 @@ export function PairReservesPanel() {
                             </p>
                           ) : (
                             <div className="space-y-2">
-                              <table className="w-full max-w-2xl text-xs">
-                                <thead>
-                                  <tr className="text-ink-muted text-left">
-                                    <th className="py-1 pr-3 font-medium">
+                              <Table className="max-w-2xl text-xs">
+                                <THead>
+                                  <tr>
+                                    <Th className="h-8 px-3">
                                       Within slippage
-                                    </th>
-                                    <th className="py-1 pr-3 text-right font-medium">
+                                    </Th>
+                                    <Th align="right" className="h-8 px-3">
                                       Sell {t0} → get {t1}
-                                    </th>
-                                    <th className="py-1 text-right font-medium">
+                                    </Th>
+                                    <Th align="right" className="h-8 px-3">
                                       Sell {t1} → get {t0}
-                                    </th>
+                                    </Th>
                                   </tr>
-                                </thead>
-                                <tbody>
+                                </THead>
+                                <TBody>
                                   {row.depth.map((lvl) => (
-                                    <tr
-                                      key={lvl.slippage_pct}
-                                      className="border-line/40 border-t"
-                                    >
-                                      <td className="py-1 pr-3">
+                                    <TR key={lvl.slippage_pct}>
+                                      <Td className="px-3 py-1.5">
                                         {lvl.slippage_pct}%
-                                      </td>
-                                      <td className="py-1 pr-3 text-right tabular-nums">
+                                      </Td>
+                                      <Td
+                                        align="right"
+                                        className="px-3 py-1.5 font-mono"
+                                      >
                                         {displayUnits(
                                           lvl.token0_in.max_input,
                                           row.token0.decimals,
@@ -246,8 +255,11 @@ export function PairReservesPanel() {
                                           row.token1.decimals,
                                         )}{' '}
                                         {t1}
-                                      </td>
-                                      <td className="py-1 text-right tabular-nums">
+                                      </Td>
+                                      <Td
+                                        align="right"
+                                        className="px-3 py-1.5 font-mono"
+                                      >
                                         {displayUnits(
                                           lvl.token1_in.max_input,
                                           row.token1.decimals,
@@ -258,12 +270,12 @@ export function PairReservesPanel() {
                                           row.token0.decimals,
                                         )}{' '}
                                         {t0}
-                                      </td>
-                                    </tr>
+                                      </Td>
+                                    </TR>
                                   ))}
-                                </tbody>
-                              </table>
-                              <p className="text-ink-muted text-[11px] leading-relaxed">
+                                </TBody>
+                              </Table>
+                              <p className="text-ink-muted text-xs leading-relaxed">
                                 Largest trade whose average execution price
                                 stays within the tier of the mid price, under
                                 the constant-product model ({row.fee_bps} bps
@@ -280,8 +292,8 @@ export function PairReservesPanel() {
                   </Fragment>
                 );
               })}
-            </tbody>
-          </table>
+            </TBody>
+          </Table>
         </div>
       )}
     </Panel>

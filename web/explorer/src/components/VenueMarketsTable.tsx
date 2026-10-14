@@ -8,6 +8,17 @@ import { useLedgerFollow } from '@/lib/live/hooks';
 import { LastPriceCell } from '@/components/LastPriceCell';
 import { Panel } from '@/components/reveal';
 import { AssetLabel } from '@/components/AssetLabel';
+import {
+  Button,
+  Segmented,
+  Skeleton,
+  TBody,
+  TR,
+  Table,
+  Td,
+  Th,
+  THead,
+} from '@/components/ui';
 import { type Envelope, apiGet, asExample } from '@/api/client';
 import {
   compareDecimalStrings,
@@ -20,11 +31,15 @@ import {
 // type wins: if /v1/markets changes, this build breaks loudly.
 import type { Market } from '@/api/hooks';
 import { useCursorPager } from '@/lib/useCursorPager';
-import { SortPill } from '@/components/SortPill';
 
 type Order = 'volume_24h_usd_desc' | 'pair';
 
 const PAGE_LIMIT = 100;
+
+const ORDER_OPTIONS: { label: string; value: Order }[] = [
+  { label: '24h volume', value: 'volume_24h_usd_desc' },
+  { label: 'Pair, A to Z', value: 'pair' },
+];
 
 /**
  * VenueMarketsTable — every (base, quote) pair a venue observed in the
@@ -104,101 +119,86 @@ export function VenueMarketsTable({
         order_by: order,
         limit: PAGE_LIMIT,
       })}
-      bodyClassName="-mx-4"
+      bodyClassName="-mx-4 -mb-4"
     >
-      <div className="px-4 pt-1 pb-3">
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <span className="text-ink-muted">Sort:</span>
-          <SortPill
-            active={order === 'volume_24h_usd_desc'}
-            onClick={() => changeOrder('volume_24h_usd_desc')}
-          >
-            24h volume ↓
-          </SortPill>
-          <SortPill
-            active={order === 'pair'}
-            onClick={() => changeOrder('pair')}
-          >
-            Pair (A→Z)
-          </SortPill>
-          <span className="text-ink-muted ml-auto font-mono text-[11px]">
-            {markets ? `${markets.length} on this page` : '— on this page'}
-            {q.isFetching && ' · refreshing…'}
-          </span>
-        </div>
+      <div className="mx-4 mb-4 flex flex-wrap items-center gap-3">
+        <Segmented
+          ariaLabel="Sort"
+          options={ORDER_OPTIONS}
+          value={order}
+          onChange={(v) => changeOrder(v as Order)}
+        />
+        <span className="text-ink-muted tnum ml-auto text-xs">
+          {markets ? `${markets.length} on this page` : '— on this page'}
+          {q.isFetching && ' · refreshing…'}
+        </span>
       </div>
 
       <div className="overflow-x-auto">
-        <table className="divide-line min-w-full divide-y text-sm">
-          <thead>
-            <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
-              <Th>#</Th>
+        <Table>
+          <THead>
+            <tr>
+              <Th className="w-10">#</Th>
               <Th>Base</Th>
               <Th>Quote</Th>
               <Th align="right">Last price</Th>
               <Th align="right">24h volume</Th>
               <Th align="right">24h trades</Th>
-              <Th align="right">Last trade</Th>
+              <Th align="right" className="hidden sm:table-cell">
+                Last trade
+              </Th>
             </tr>
-          </thead>
-          <tbody className="divide-line-subtle divide-y">
+          </THead>
+          <TBody>
             {q.isLoading && !q.data && (
-              <tr>
-                <td
-                  colSpan={7}
-                  className="text-ink-muted px-4 py-8 text-center text-sm"
-                >
-                  Loading {rowNoun}…
-                </td>
-              </tr>
+              <TR>
+                <Td colSpan={7}>
+                  <Skeleton className="h-5 w-64" />
+                </Td>
+              </TR>
             )}
             {!q.isLoading && !markets && (
-              <tr>
-                <td
-                  colSpan={7}
-                  className="text-ink-muted px-4 py-8 text-center text-sm"
-                >
+              <TR>
+                <Td colSpan={7} className="text-ink-muted">
                   {rowNoun === 'pools' ? 'Pool' : 'Pair'} list unavailable right
-                  now — the markets query didn&apos;t return. Retry shortly.
-                </td>
-              </tr>
+                  now — the markets query didn&apos;t return.
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="ml-3"
+                    onClick={() => q.refetch()}
+                  >
+                    Retry
+                  </Button>
+                </Td>
+              </TR>
             )}
             {!q.isLoading && markets && markets.length === 0 && (
-              <tr>
-                <td
-                  colSpan={7}
-                  className="text-ink-muted px-4 py-8 text-center text-sm"
-                >
+              <TR>
+                <Td colSpan={7} className="text-ink-muted">
                   No {rowNoun} found in the last 14 days.
-                </td>
-              </tr>
+                </Td>
+              </TR>
             )}
             {rows.map((m, i) => {
               const slug = `${m.base}~${m.quote}`;
+              const href = `/markets/${encodeURIComponent(slug)}`;
               const offset = pager.depth * PAGE_LIMIT + i + 1;
               const vol = m.volume_24h_usd;
               return (
-                <tr
-                  key={`${m.base}|${m.quote}`}
-                  className="hover:bg-surface-muted"
-                >
-                  <Td>
-                    <span className="text-ink-faint font-mono text-[11px]">
-                      {offset}
-                    </span>
+                <TR key={`${m.base}|${m.quote}`}>
+                  <Td className="text-ink-faint font-mono tabular-nums">
+                    {offset}
                   </Td>
                   <Td>
-                    <Link
-                      href={`/markets/${encodeURIComponent(slug)}`}
-                      className="hover:text-brand-600"
-                    >
+                    <Link href={href} className="text-ink hover:text-brand-600">
                       <AssetLabel canonical={m.base} />
                     </Link>
                   </Td>
                   <Td>
                     <Link
-                      href={`/markets/${encodeURIComponent(slug)}`}
-                      className="hover:text-brand-600"
+                      href={href}
+                      className="text-ink-muted hover:text-brand-600"
                     >
                       <AssetLabel canonical={m.quote} />
                     </Link>
@@ -206,88 +206,55 @@ export function VenueMarketsTable({
                   <Td align="right">
                     <LastPriceCell raw={m.last_price} />
                   </Td>
-                  <Td align="right">
+                  <Td align="right" className="font-mono tabular-nums">
                     {vol && compareDecimalStrings(vol, '0') === 1 ? (
-                      <span className="font-mono tabular-nums">
-                        ${formatCompactUnits(vol)}
-                      </span>
+                      `$${formatCompactUnits(vol)}`
                     ) : (
                       <span className="text-ink-faint">—</span>
                     )}
                   </Td>
-                  <Td align="right">
-                    <span className="text-ink-body font-mono tabular-nums">
-                      {m.trade_count_24h > 0
-                        ? formatCompact(m.trade_count_24h)
-                        : '0'}
-                    </span>
+                  <Td align="right" className="font-mono tabular-nums">
+                    {m.trade_count_24h > 0
+                      ? formatCompact(m.trade_count_24h)
+                      : '0'}
                   </Td>
-                  <Td align="right">
-                    <span className="text-ink-muted font-mono text-xs tabular-nums">
-                      {formatRelative(m.last_trade_at)}
-                    </span>
+                  <Td
+                    align="right"
+                    className="text-ink-muted hidden font-mono text-xs tabular-nums sm:table-cell"
+                    title={m.last_trade_at}
+                  >
+                    {formatRelative(m.last_trade_at)}
                   </Td>
-                </tr>
+                </TR>
               );
             })}
-          </tbody>
-        </table>
+          </TBody>
+        </Table>
       </div>
 
-      <div className="border-line flex items-center justify-between border-t px-4 py-2 text-xs">
-        <button
-          type="button"
-          onClick={prevPage}
-          disabled={!hasPrev}
-          className="border-line text-ink-body hover:border-brand-500 hover:text-brand-600 rounded-md border px-3 py-1 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          ← Previous
-        </button>
-        <span className="text-ink-faint font-mono text-[11px]">
-          page {pager.page}
-        </span>
-        <button
-          type="button"
-          onClick={nextPage}
-          disabled={!hasNext}
-          className="border-line text-ink-body hover:border-brand-500 hover:text-brand-600 rounded-md border px-3 py-1 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          Next →
-        </button>
-      </div>
+      {(hasPrev || hasNext) && (
+        <div className="border-line flex items-center justify-between border-t px-4 py-3">
+          <span className="text-ink-muted tnum text-xs">Page {pager.page}</span>
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={prevPage}
+              disabled={!hasPrev}
+            >
+              Previous
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={nextPage}
+              disabled={!hasNext}
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+      )}
     </Panel>
-  );
-}
-
-function Th({
-  children,
-  align,
-}: {
-  children: React.ReactNode;
-  align?: 'left' | 'right';
-}) {
-  return (
-    <th
-      scope="col"
-      className={`px-4 py-2 ${align === 'right' ? 'text-right' : 'text-left'}`}
-    >
-      {children}
-    </th>
-  );
-}
-
-function Td({
-  children,
-  align,
-}: {
-  children: React.ReactNode;
-  align?: 'left' | 'right';
-}) {
-  return (
-    <td
-      className={`px-4 py-2 ${align === 'right' ? 'text-right' : 'text-left'}`}
-    >
-      {children}
-    </td>
   );
 }

@@ -2,9 +2,9 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { hrefFor } from '@/lib/hrefFor';
 import { notFound } from 'next/navigation';
-import { ExternalLink } from 'lucide-react';
 
 import { SourceStatsPanel } from '@/app/dexes/[source]/SourceStatsPanel';
+import { ExternalRef } from '@/components/ExternalRef';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES } from '@/lib/seo';
 import { PairsTable } from './PairsTable';
 import { VenueChart } from './VenueChart';
@@ -63,23 +63,21 @@ export default async function ExchangeDetailPage({
     <Container className="space-y-6 py-8">
       {/* The visible trail and its BreadcrumbList JSON-LD render from the SAME
           Crumb[] (via PageHeader → Breadcrumbs). */}
-      <header className="border-line space-y-2 border-b pb-4">
-        <PageHeader
-          breadcrumbs={[
-            { label: 'Home', href: '/' },
-            { label: 'Exchanges', href: '/exchanges' },
-            { label: info.name },
-          ]}
-          meta={info.type}
-          title={info.name}
-        />
-        <Badge
-          tone="warn"
-          title={`Only the pairs that triangulate to XLM, not the full venue book. Source: internal/sources/external/cex/${name}/.`}
-        >
-          Curated feed
-        </Badge>
-      </header>
+      <PageHeader
+        breadcrumbs={[
+          { label: 'Home', href: '/' },
+          { label: 'Exchanges', href: '/exchanges' },
+          { label: info.name },
+        ]}
+        title={info.name}
+        meta={info.type}
+        actions={<Badge>Curated feed</Badge>}
+      />
+
+      <p className="text-ink-muted text-sm">
+        Curated feed: only the pairs that triangulate to XLM, not the full venue
+        book.
+      </p>
 
       <SourceStatsPanel source={name} unitsLabel="pairs" />
 
@@ -87,31 +85,15 @@ export default async function ExchangeDetailPage({
 
       <PairsTable source={name} exchangeName={info.name} />
 
-      <div className="flex flex-wrap gap-3 text-xs">
+      <div className="border-line flex flex-wrap gap-x-4 gap-y-1 border-t pt-4 text-xs">
         <Link
           href={hrefFor.source(name)}
-          className="text-ink-muted hover:text-brand-600 inline-flex items-center gap-1"
+          className="text-brand-600 font-medium hover:underline"
         >
-          Source registry detail →
+          Source registry detail
         </Link>
-        <a
-          href={info.homepage}
-          target="_blank"
-          rel="noreferrer noopener"
-          className="text-ink-muted inline-flex items-center gap-1 hover:underline"
-        >
-          {info.name} homepage
-          <ExternalLink className="h-3 w-3" />
-        </a>
-        <a
-          href={info.docsUrl}
-          target="_blank"
-          rel="noreferrer noopener"
-          className="text-ink-muted inline-flex items-center gap-1 hover:underline"
-        >
-          API docs
-          <ExternalLink className="h-3 w-3" />
-        </a>
+        <ExternalRef href={info.homepage} />
+        <ExternalRef href={info.docsUrl} />
       </div>
     </Container>
   );
