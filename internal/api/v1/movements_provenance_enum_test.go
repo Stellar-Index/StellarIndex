@@ -4,15 +4,13 @@
 package v1
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/astguard"
 
 	"gopkg.in/yaml.v3"
 
@@ -76,37 +74,7 @@ func specAccountMovementProvenanceEnum(t *testing.T) []string {
 func goClassicMovementProvenances(t *testing.T) []string {
 	t.Helper()
 	file := filepath.Join(repoRoot(t), "internal", "sources", "classicmovements", "events.go")
-	parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)
-	if err != nil {
-		t.Fatalf("parse %s: %v", file, err)
-	}
-	var out []string
-	for _, decl := range parsed.Decls {
-		gd, ok := decl.(*ast.GenDecl)
-		if !ok || gd.Tok != token.CONST {
-			continue
-		}
-		for _, spec := range gd.Specs {
-			vs, ok := spec.(*ast.ValueSpec)
-			if !ok {
-				continue
-			}
-			if id, ok := vs.Type.(*ast.Ident); !ok || id.Name != "Provenance" {
-				continue
-			}
-			for _, v := range vs.Values {
-				lit, ok := v.(*ast.BasicLit)
-				if !ok || lit.Kind != token.STRING {
-					t.Fatalf("%s: Provenance const %v is not a string literal", file, vs.Names)
-				}
-				s, err := strconv.Unquote(lit.Value)
-				if err != nil {
-					t.Fatalf("%s: unquote %s: %v", file, lit.Value, err)
-				}
-				out = append(out, s)
-			}
-		}
-	}
+	out := astguard.Values(astguard.Typed(t, astguard.FileConsts(t, file), "Provenance"))
 	if len(out) == 0 {
 		t.Fatalf("%s: found no Provenance consts — the walk is broken, and an empty subject set passes forever", file)
 	}

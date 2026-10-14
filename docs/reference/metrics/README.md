@@ -3043,7 +3043,7 @@ emitted by BOTH the api and aggregator binaries — see the "API layer
 (api binary)" section header above for the three aggregator-only
 surfaces — so a query without a `job` selector sums across processes.
 The table is pinned to
-the call sites by `TestPriceServeSurfaceLabelsAreDocumented`
+the call sites by `TestSubstanceWithheldLabelsAreDocumented`
 (`internal/pricingguard`).
 
 | Surface | Gates | Serving path |

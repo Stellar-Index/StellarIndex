@@ -24,7 +24,7 @@ var bothDirectionUnionQueries = map[string]string{
 	"recentClosedVWAP1mCombinedQuery": recentClosedVWAP1mCombinedTemplate,
 }
 
-func TestBothDirectionReadersUseUnionNotOr(t *testing.T) {
+func checkBothDirectionReadersUseUnionNotOr(t *testing.T) {
 	for name, q := range bothDirectionUnionQueries {
 		t.Run(name, func(t *testing.T) {
 			// The disjunction is the defect. Its absence is the guard.
@@ -157,10 +157,10 @@ func pairDeclFiles(t *testing.T) []string {
 	return out
 }
 
-// TestCAGGSeriesReadsFoldDirectionsWithUnion is the list-free half of TestBothDirectionReadersUseUnionNotOr:
+// checkCAGGSeriesReadsFoldDirectionsWithUnion is the list-free half of checkBothDirectionReadersUseUnionNotOr:
 // every bucket-ordered both-directions read must split orientations into two index-drivable UNION ALL
 // branches. Subjects are chosen by shape, so swapped operands or a multi-line OR cannot hide one.
-func TestCAGGSeriesReadsFoldDirectionsWithUnion(t *testing.T) {
+func checkCAGGSeriesReadsFoldDirectionsWithUnion(t *testing.T) {
 	subjects := 0
 	for _, file := range pairDeclFiles(t) {
 		for name, q := range declSQL(t, file) {

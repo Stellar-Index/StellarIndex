@@ -68,19 +68,22 @@ SELECT asset, entry_type, ledger_seq,
  GROUP BY asset, entry_type, ledger_seq
  ORDER BY ledger_seq`
 
+// sponsoredEntryPredicate selects a claimable balance (always sponsored since protocol 14) or an entry carrying a sponsor.
 // A sponsored LedgerEntry ends in a fixed 48-byte tail: ext v1, sponsor present, ed25519 key type, 32 key bytes, v1 ext v0.
 // Base64 groups are 4-aligned from the right, so the last 68 characters decode to at least the last 48 bytes. The predicate
 // over-approximates (a data entry whose value ends that way also matches); Go re-checks SponsoringID on every decoded row.
+const sponsoredEntryPredicate = `(entry_type = 'claimable_balance'
+        OR (entry_type IN ('account', 'trustline', 'offer', 'data', 'liquidity_pool')
+            AND substring(right(tryBase64Decode(right(entry_xdr, 68)), 48), 1, 12) = unhex('000000010000000100000000')
+            AND substring(right(tryBase64Decode(right(entry_xdr, 68)), 48), 45, 4) = unhex('00000000')))`
+
 const entryIndexDecodeQuery = `
 SELECT ledger_seq, entry_type, entry_xdr
   FROM stellar.ledger_entry_changes
  WHERE ledger_seq BETWEEN ? AND ?
    AND tx_hash != ''
    AND entry_xdr != ''
-   AND (entry_type = 'claimable_balance'
-        OR (entry_type IN ('account', 'trustline', 'offer', 'data', 'liquidity_pool')
-            AND substring(right(tryBase64Decode(right(entry_xdr, 68)), 48), 1, 12) = unhex('000000010000000100000000')
-            AND substring(right(tryBase64Decode(right(entry_xdr, 68)), 48), 45, 4) = unhex('00000000')))
+   AND ` + sponsoredEntryPredicate + `
  ORDER BY ledger_seq`
 
 func streamEntryIndex(ctx context.Context, addr, label, query string, from, to uint32, scan func(driver.Rows) error) error {
@@ -204,9 +207,12 @@ func EntryIndexWatermark(ctx context.Context, addr string) (uint32, error) {
 	return entryWatermarkOn(ctx, conn, entryIndexWatermarkName)
 }
 
-// SetEntryIndexWatermark records completion through `thru` under the same proofs as SetEntryHistoryWatermark; a window at or below the watermark records nothing.
+// SetEntryIndexWatermark records completion through `thru` only for a contiguous window whose tx-bearing ledgers the
+// build all read (readTxLedgers); a window at or below the watermark records nothing.
 func SetEntryIndexWatermark(ctx context.Context, addr string, from, thru uint32, readTxLedgers uint64) error {
-	return advanceEntryWatermark(ctx, addr, entryIndexWatermarkName, from, thru, readTxLedgers)
+	return advanceEntryWatermark(ctx, addr, entryIndexWatermarkName, from, thru, func(ctx context.Context, conn driver.Conn) error {
+		return entryHistoryWindowCovered(ctx, conn, entryIndexWatermarkName, from, thru, readTxLedgers)
+	})
 }
 
 const entryIndexWatermarkName = "entry_index"

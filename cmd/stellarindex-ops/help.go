@@ -46,12 +46,12 @@ Subcommands:
                           events failed to decode than -max-decode-errors
                           (default 0); -follow logs them per window.
   ch-entry-history -ch-addr ADDR [-from N] [-to N] [-window N] [-floor-ledger N] [-max-decode-errors N] [-write]
-                          One decode pass of stellar.ledger_entry_changes
-                          (classic entries) into the account-keyed
-                          stellar.account_entry_changes and asset-keyed
-                          stellar.asset_entry_changes. Resumes from
-                          stellar.entry_history_watermark. Without -write it
-                          reports rows and field bytes per entry type.
+                          Derive the sponsorship lifecycle
+                          (stellar.sponsorship_events) from the paired pre/post
+                          images of the classic entry changes that can carry a
+                          transition. Resumes from its sponsorship_events
+                          watermark and never writes past the entry_index
+                          watermark. Without -write it counts events.
   ch-entry-index -ch-addr ADDR [-from N] [-to N] [-window N] [-floor-ledger N] [-lock-file PATH] [-heartbeat PATH] [-max-decode-errors N] [-write]
                           Build the ledger index of classic-entry activity:
                           stellar.account_entry_ledgers (account, role,

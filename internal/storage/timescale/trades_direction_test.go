@@ -116,7 +116,7 @@ func wantAQUAUSDCTrade(t *testing.T, got canonical.Trade, who string) {
 }
 
 // pairBoundArm matches `base_asset = $a AND quote_asset = $b`, the same
-// shape TestCAGGPairReadsFoldBothDirections looks for.
+// shape TestSourceShapeRules/cagg_pair_reads_fold_both_directions looks for.
 func pairBoundArm(a, b int) *regexp.Regexp {
 	return regexp.MustCompile(
 		`base_asset\s*=\s*\$` + strconv.Itoa(a) + `\s+AND\s+quote_asset\s*=\s*\$` + strconv.Itoa(b))

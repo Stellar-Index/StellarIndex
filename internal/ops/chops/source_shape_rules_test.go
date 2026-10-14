@@ -21,6 +21,8 @@ func TestSourceShapeRules(t *testing.T) {
 		{"soroswap seed error is returned by both commands", ruleSoroswapSeedErrorIsReturned},
 		{"projected rebuild resets the SEP-41 rollup after the run", ruleProjectedRebuildResetsSEP41RollupAfterRun},
 		{"ch-rebuild tradeOf covers every projected trade source", ruleChRebuildTradeOfCoversProjectedTradeSources},
+		{"every persisted event type is routed or waived", checkCatalogueEveryPersistedEventTypeIsRoutedOrWaived},
+		{"decoder calls run inside a completeness guard", checkChopsDecoderCallsAreGuarded},
 	}
 	for _, r := range rules {
 		t.Run(r.name, r.run)

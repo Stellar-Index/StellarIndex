@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/astguard"
 )
 
 // The RWA surface reuses the /v1/assets post-query pipeline as a hand-copied call sequence in rwaListingRows, so a gate added
@@ -30,14 +32,14 @@ var listingOnlyPipelineCalls = map[string]string{
 	"applyListingValuations": "the RWA surface publishes this claim already, through its own reference block (rwa_reference.go); it is additive, never a gate",
 }
 
-func TestRWAListingPipelineMatchesTheAssetsListing(t *testing.T) {
+func checkRWAListingPipelineMatchesTheAssetsListing(t *testing.T) {
 	assertRWAPipelineMatchesListing(t, "rwa.go", "rwaListingRows")
 }
 
-// TestRWAContractPipelineMatchesTheAssetsListing holds the contract arm, a second hand-copied call sequence, to the same
+// checkRWAContractPipelineMatchesTheAssetsListing holds the contract arm, a second hand-copied call sequence, to the same
 // pipeline as the classic arm. Steps that are no-ops on a contract row must still be CALLED, so the arms cannot drift on
 // which gates apply.
-func TestRWAContractPipelineMatchesTheAssetsListing(t *testing.T) {
+func checkRWAContractPipelineMatchesTheAssetsListing(t *testing.T) {
 	assertRWAPipelineMatchesListing(t, "rwa_contracts.go", "rwaContractListingRows")
 }
 
@@ -84,10 +86,10 @@ func assertRWAPipelineMatchesListing(t *testing.T, file, fn string) {
 	}
 }
 
-// TestDirectoryTagsPrecedeTheListingValuationArm: applyListingValuations reads IssuerDirectoryTags, which only
+// checkDirectoryTagsPrecedeTheListingValuationArm: applyListingValuations reads IssuerDirectoryTags, which only
 // fillIssuerDirectoryTags fills, so the scam refusal works only if the directory call runs FIRST. Source-level because
 // the defect is an order; checked over every function making both calls so new phases inherit it.
-func TestDirectoryTagsPrecedeTheListingValuationArm(t *testing.T) {
+func checkDirectoryTagsPrecedeTheListingValuationArm(t *testing.T) {
 	const (
 		tags      = "fillIssuerDirectoryTags"
 		valuation = "applyListingValuations"
@@ -145,10 +147,7 @@ func packageGoFiles(t *testing.T) []string {
 // package-wide order guards quadratic under -race.
 func parseGoFile(t *testing.T, file string) *ast.File {
 	t.Helper()
-	parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)
-	if err != nil {
-		t.Fatalf("parse %s: %v", file, err)
-	}
+	_, parsed := astguard.ParseFile(t, file)
 	return parsed
 }
 
@@ -300,9 +299,9 @@ func receiverIsServer(recv *ast.FieldList) bool {
 	return ok && id.Name == "Server"
 }
 
-// TestServerStepScanCatchesMethodValues pins that a pipeline step is seen
+// checkServerStepScanCatchesMethodValues pins that a pipeline step is seen
 // however s is spelled, and that a field read is not a step.
-func TestServerStepScanCatchesMethodValues(t *testing.T) {
+func checkServerStepScanCatchesMethodValues(t *testing.T) {
 	const arm = "applyListingValuations"
 	cases := []struct {
 		name, src string
@@ -314,11 +313,7 @@ func TestServerStepScanCatchesMethodValues(t *testing.T) {
 		{"field reads", `func (s *Server) f() { s.logger.Warn("x"); use(s.logger) }`, nil},
 	}
 	for _, c := range cases {
-		parsed, err := parser.ParseFile(token.NewFileSet(), "planted.go", "package v1\n"+c.src, 0)
-		if err != nil {
-			t.Fatalf("parse %q: %v", c.src, err)
-		}
-		if got := serverStepsInFile(parsed, "f"); !slices.Equal(got, c.want) {
+		if got := serverStepsInFile(astguard.PlantedFile(t, c.src), "f"); !slices.Equal(got, c.want) {
 			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
 		}
 	}

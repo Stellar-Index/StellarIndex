@@ -2,15 +2,15 @@ package v1
 
 import (
 	"go/ast"
-	"go/parser"
-	"go/token"
 	"path/filepath"
 	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/astguard"
 )
 
 // sloLakeBackedFields are the Server fields TestSLORoutesNeverTouchTheLake forbids in an SLO'd handler: every
 // ClickHouse-backed field plus the explorer sub-handler (built from the whole Options, so not derivable).
-// Add cross-region-proxy or S3-fallback client fields by hand; TestSLOLakeFieldsCoverLakeWiring enforces lake fields.
+// Add cross-region-proxy or S3-fallback client fields by hand; checkSLOLakeFieldsCoverLakeWiring enforces lake fields.
 var sloLakeBackedFields = map[string]bool{
 	"Explorer":              true,
 	"explorerHandler":       true,
@@ -28,10 +28,10 @@ var sloLakeBackedFields = map[string]bool{
 	"SDEXOrderBook":    true,
 }
 
-// TestSLOLakeFieldsCoverLakeWiring derives from the production wiring every Server field a
+// checkSLOLakeFieldsCoverLakeWiring derives from the production wiring every Server field a
 // ClickHouse reader reaches and requires sloLakeBackedFields to name it. The hand-kept list
 // alone is opt-in: a lake reader in a new field would stay invisible to the SLO guard.
-func TestSLOLakeFieldsCoverLakeWiring(t *testing.T) {
+func checkSLOLakeFieldsCoverLakeWiring(t *testing.T) {
 	mainGo := filepath.Join("..", "..", "..", "cmd", "stellarindex-api", "main.go")
 	lakeOptions := lakeWiredOptionKeys(t, mainGo)
 	optToField := optionToServerFields(t, "server.go")
@@ -68,10 +68,7 @@ func TestSLOLakeFieldsCoverLakeWiring(t *testing.T) {
 // through plain assignments, from the first result of a clickhouse.* call.
 func lakeWiredOptionKeys(t *testing.T, path string) map[string]bool {
 	t.Helper()
-	f, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
-	if err != nil {
-		t.Fatalf("parse %s: %v", path, err)
-	}
+	_, f := astguard.ParseFile(t, path)
 	tainted := map[string]bool{}
 	// A variable declared as a clickhouse reader is one whatever fills it,
 	// including a helper that dials inside closures.
@@ -150,10 +147,7 @@ func taintsLHS(as *ast.AssignStmt, i int, tainted map[string]bool) bool {
 // `s.<field> = …` statement.
 func optionToServerFields(t *testing.T, path string) map[string][]string {
 	t.Helper()
-	f, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
-	if err != nil {
-		t.Fatalf("parse %s: %v", path, err)
-	}
+	_, f := astguard.ParseFile(t, path)
 	out := map[string][]string{}
 	record := func(field string, value ast.Expr) {
 		ast.Inspect(value, func(n ast.Node) bool {

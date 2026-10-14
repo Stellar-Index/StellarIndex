@@ -10,9 +10,9 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// Entry-change history: one decode pass of stellar.ledger_entry_changes (`ch-entry-history`)
-// writes two projections, account_entry_changes keyed by account and asset_entry_changes keyed
-// by asset. The raw table is ORDER BY ledger, so neither read shape can use it directly.
+// Entry-change history. `ch-entry-history` pairs the pre- and post-images of the stellar.ledger_entry_changes rows that
+// can carry a sponsorship transition and writes stellar.sponsorship_events from them. The account- and asset-keyed
+// row types below are the decode-on-read shape served over the entry index; nothing writes them to the lake.
 
 // EntryHistorySourceRow is one stellar.ledger_entry_changes row as the entry-history derive reads it.
 type EntryHistorySourceRow struct {
@@ -77,35 +77,71 @@ type SponsorshipEvent struct {
 	Event          string
 }
 
-// entryHistorySourceQuery streams the window in the source's sort-key order, putting each 'state' pre-image directly before its change. No
-// FINAL: an unmerged duplicate re-derives a byte-identical target row, and both targets are ReplacingMergeTrees on the same identity.
-const entryHistorySourceQuery = `
+// sponsorshipOps can change a signer's sponsor on an account that is not itself sponsored, so no image in the group
+// carries the sponsored tail: a signer added inside a sponsorship sandwich, a signer sponsorship revoked or
+// transferred, and a merge ending every signer's sponsorship.
+const sponsorshipOps = `('OperationTypeSetOptions', 'OperationTypeRevokeSponsorship', 'OperationTypeAccountMerge')`
+
+// sponsorshipCandidateQuery streams, in the source's sort-key order (each 'state' pre-image directly before its change),
+// every classic entry change of an operation that can hold a sponsorship transition: a group with a sponsored image, or
+// one of sponsorshipOps. That is a few percent of the window's rows. No FINAL: an unmerged duplicate re-derives a
+// byte-identical event row, and the target is a ReplacingMergeTree on the same identity.
+const sponsorshipCandidateQuery = `
 	SELECT ledger_seq, close_time, tx_hash, op_index, change_index, intra_ledger_seq,
 	       change_type, entry_type, key_xdr, entry_xdr
 	FROM stellar.ledger_entry_changes
 	WHERE ledger_seq BETWEEN ? AND ?
+	  AND tx_hash != ''
 	  AND entry_type IN ('account', 'trustline', 'offer', 'data', 'claimable_balance', 'liquidity_pool')
+	  AND (tx_hash, op_index) IN (
+	        SELECT tx_hash, op_index FROM stellar.ledger_entry_changes
+	         WHERE ledger_seq BETWEEN ? AND ? AND tx_hash != '' AND entry_xdr != '' AND ` + sponsoredEntryPredicate + `
+	        UNION ALL
+	        SELECT tx_hash, toInt32(op_index) FROM stellar.operations
+	         WHERE ledger_seq BETWEEN ? AND ? AND op_type IN ` + sponsorshipOps + `)
 	ORDER BY ledger_seq, tx_hash, op_index, change_index
 `
 
-// StreamEntryHistorySource calls fn for every classic entry change in [from, to], in (ledger_seq, tx_hash, op_index, change_index) order.
-func StreamEntryHistorySource(ctx context.Context, addr string, from, to uint32, fn func(EntryHistorySourceRow) error) error {
+// ErrSponsorshipOperationsShortfall reports a refused derive over a window whose stellar.operations rows cover fewer
+// ledgers than stellar.ledgers declares tx-bearing: the candidate read would silently miss signer transitions.
+var ErrSponsorshipOperationsShortfall = errors.New("clickhouse: sponsorship window lacks stellar.operations coverage")
+
+// sponsorshipOperationsCovered proves the operations side of the candidate read: every transaction holds at least one
+// operation and the sink writes failed transactions' operations too, so each tx-bearing ledger must appear.
+func sponsorshipOperationsCovered(ctx context.Context, conn driver.Conn, from, thru uint32) error {
+	const q = `SELECT (SELECT uniqExact(ledger_seq) FROM stellar.ledgers WHERE ledger_seq BETWEEN ? AND ? AND tx_count > 0),
+	                  (SELECT uniqExact(ledger_seq) FROM stellar.operations WHERE ledger_seq BETWEEN ? AND ?)`
+	var txLedgers, opLedgers uint64
+	if err := conn.QueryRow(ctx, q, from, thru, from, thru).Scan(&txLedgers, &opLedgers); err != nil {
+		return fmt.Errorf("clickhouse: sponsorship window [%d,%d] operations coverage: %w", from, thru, err)
+	}
+	if opLedgers < txLedgers {
+		return fmt.Errorf("%w: [%d,%d] holds operations for %d of %d tx-bearing ledgers", ErrSponsorshipOperationsShortfall, from, thru, opLedgers, txLedgers)
+	}
+	return nil
+}
+
+// StreamSponsorshipCandidates calls fn for every candidate entry change in [from, to], in (ledger_seq, tx_hash,
+// op_index, change_index) order, after proving the window's operations coverage.
+func StreamSponsorshipCandidates(ctx context.Context, addr string, from, to uint32, fn func(EntryHistorySourceRow) error) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = conn.Close() }()
-
-	rows, err := conn.Query(ctx, entryHistorySourceQuery, from, to)
+	if err := sponsorshipOperationsCovered(ctx, conn, from, to); err != nil {
+		return err
+	}
+	rows, err := conn.Query(ctx, sponsorshipCandidateQuery, from, to, from, to, from, to)
 	if err != nil {
-		return fmt.Errorf("clickhouse: query entry-history source [%d,%d]: %w", from, to, err)
+		return fmt.Errorf("clickhouse: query sponsorship candidates [%d,%d]: %w", from, to, err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var r EntryHistorySourceRow
 		if err := rows.Scan(&r.Ledger, &r.CloseTime, &r.TxHash, &r.OpIndex, &r.ChangeIndex, &r.IntraLedgerSeq,
 			&r.ChangeType, &r.EntryType, &r.KeyXDR, &r.EntryXDR); err != nil {
-			return fmt.Errorf("clickhouse: scan entry-history source: %w", err)
+			return fmt.Errorf("clickhouse: scan sponsorship candidate: %w", err)
 		}
 		r.CloseTime = r.CloseTime.UTC()
 		if err := fn(r); err != nil {
@@ -118,9 +154,9 @@ func StreamEntryHistorySource(ctx context.Context, addr string, from, to uint32,
 // entryHistoryInsertChunk bounds one native INSERT batch.
 const entryHistoryInsertChunk = 20_000
 
-// InsertEntryHistory writes one batch of both projections; retry-safe since both ReplacingMergeTree tables collapse a re-sent batch on merge.
-func InsertEntryHistory(ctx context.Context, addr string, accounts []AccountEntryChange, assets []AssetEntryChange, sponsorships []SponsorshipEvent) (int64, error) {
-	if len(accounts) == 0 && len(assets) == 0 && len(sponsorships) == 0 {
+// InsertSponsorshipEvents writes one batch; retry-safe since the ReplacingMergeTree collapses a re-sent batch on merge.
+func InsertSponsorshipEvents(ctx context.Context, addr string, rows []SponsorshipEvent) (int64, error) {
+	if len(rows) == 0 {
 		return 0, nil
 	}
 	conn, err := openAccountMovementsWrite(ctx, addr)
@@ -130,23 +166,9 @@ func InsertEntryHistory(ctx context.Context, addr string, accounts []AccountEntr
 	defer func() { _ = conn.Close() }()
 
 	var written int64
-	for i := 0; i < len(accounts); i += entryHistoryInsertChunk {
-		end := min(i+entryHistoryInsertChunk, len(accounts))
-		if err := insertAccountEntryChanges(ctx, conn, accounts[i:end]); err != nil {
-			return written, err
-		}
-		written += int64(end - i)
-	}
-	for i := 0; i < len(assets); i += entryHistoryInsertChunk {
-		end := min(i+entryHistoryInsertChunk, len(assets))
-		if err := insertAssetEntryChanges(ctx, conn, assets[i:end]); err != nil {
-			return written, err
-		}
-		written += int64(end - i)
-	}
-	for i := 0; i < len(sponsorships); i += entryHistoryInsertChunk {
-		end := min(i+entryHistoryInsertChunk, len(sponsorships))
-		if err := insertSponsorshipEvents(ctx, conn, sponsorships[i:end]); err != nil {
+	for i := 0; i < len(rows); i += entryHistoryInsertChunk {
+		end := min(i+entryHistoryInsertChunk, len(rows))
+		if err := insertSponsorshipEvents(ctx, conn, rows[i:end]); err != nil {
 			return written, err
 		}
 		written += int64(end - i)
@@ -167,52 +189,6 @@ func insertSponsorshipEvents(ctx context.Context, conn driver.Conn, rows []Spons
 		}
 	}
 	return wrapSend(batch.Send(), "sponsorship_events")
-}
-
-func insertAccountEntryChanges(ctx context.Context, conn driver.Conn, rows []AccountEntryChange) error {
-	batch, err := conn.PrepareBatch(ctx, `INSERT INTO stellar.account_entry_changes
-		(account, ledger, close_time, tx_hash, op_index, change_index, role, intra_ledger_seq,
-		 entry_type, change_type, changed, asset, balance, fields)`)
-	if err != nil {
-		return fmt.Errorf("prepare account_entry_changes batch: %w", err)
-	}
-	for _, r := range rows {
-		if err := batch.Append(r.Account, r.Ledger, r.CloseTime, r.TxHash, r.OpIndex, r.ChangeIndex, r.Role,
-			r.IntraLedgerSeq, r.EntryType, r.ChangeType, nonNilStrings(r.Changed), r.Asset, nonNilAmount(r.Balance), r.Fields); err != nil {
-			return fmt.Errorf("append account_entry_changes %s/%d/%s/%d/%d: %w", r.Account, r.Ledger, r.TxHash, r.OpIndex, r.ChangeIndex, err)
-		}
-	}
-	return wrapSend(batch.Send(), "account_entry_changes")
-}
-
-func insertAssetEntryChanges(ctx context.Context, conn driver.Conn, rows []AssetEntryChange) error {
-	batch, err := conn.PrepareBatch(ctx, `INSERT INTO stellar.asset_entry_changes
-		(asset, ledger, close_time, tx_hash, op_index, change_index, role, intra_ledger_seq,
-		 entry_type, change_type, changed, account, balance, fields)`)
-	if err != nil {
-		return fmt.Errorf("prepare asset_entry_changes batch: %w", err)
-	}
-	for _, r := range rows {
-		if err := batch.Append(r.Asset, r.Ledger, r.CloseTime, r.TxHash, r.OpIndex, r.ChangeIndex, r.Role,
-			r.IntraLedgerSeq, r.EntryType, r.ChangeType, nonNilStrings(r.Changed), r.Account, nonNilAmount(r.Balance), r.Fields); err != nil {
-			return fmt.Errorf("append asset_entry_changes %s/%d/%s/%d/%d: %w", r.Asset, r.Ledger, r.TxHash, r.OpIndex, r.ChangeIndex, err)
-		}
-	}
-	return wrapSend(batch.Send(), "asset_entry_changes")
-}
-
-func nonNilStrings(s []string) []string {
-	if s == nil {
-		return []string{}
-	}
-	return s
-}
-
-func nonNilAmount(a *big.Int) *big.Int {
-	if a == nil {
-		return big.NewInt(0)
-	}
-	return a
 }
 
 // ErrEntryHistoryHole reports a refused watermark advance over a window the lake does not hold in full; a delay, not a failure.
@@ -240,21 +216,23 @@ func entryHistoryWindowCovered(ctx context.Context, conn driver.Conn, name strin
 	return nil
 }
 
-// EntryHistoryWatermark returns the highest ledger ch-entry-history has derived through (0 = never run, or watermark table not provisioned).
-func EntryHistoryWatermark(ctx context.Context, addr string) (uint32, error) {
+// SponsorshipWatermark returns the highest ledger ch-entry-history has derived sponsorship events through (0 = never
+// run, or watermark table not provisioned).
+func SponsorshipWatermark(ctx context.Context, addr string) (uint32, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
 		return 0, err
 	}
 	defer func() { _ = conn.Close() }()
-	return entryHistoryWatermarkOn(ctx, conn)
+	return entryWatermarkOn(ctx, conn, sponsorshipWatermarkName)
 }
 
-func entryHistoryWatermarkOn(ctx context.Context, conn driver.Conn) (uint32, error) {
-	return entryWatermarkOn(ctx, conn, entryHistoryWatermarkName)
-}
+// Its own name: a host whose entry_history row came from the retired payload derive must not skip those ledgers.
+const sponsorshipWatermarkName = "sponsorship_events"
 
-const entryHistoryWatermarkName = "entry_history"
+// ErrSponsorshipAheadOfEntryIndex reports a refused advance past the entry_index watermark: the account route proves
+// in-force sponsorships against the index, so the events never cover a ledger the index does not.
+var ErrSponsorshipAheadOfEntryIndex = errors.New("clickhouse: sponsorship window runs ahead of the entry_index watermark")
 
 // entryWatermarkOn reads one named row of stellar.entry_history_watermark; max() collapses unmerged duplicates since a watermark only ever advances.
 func entryWatermarkOn(ctx context.Context, conn driver.Conn, name string) (uint32, error) {
@@ -269,12 +247,23 @@ func entryWatermarkOn(ctx context.Context, conn driver.Conn, name string) (uint3
 	return wm, nil
 }
 
-// SetEntryHistoryWatermark records completion through `thru` only for a proven, contiguous window (an unproven advance would lose history for good); a window at or below the watermark records nothing.
-func SetEntryHistoryWatermark(ctx context.Context, addr string, from, thru uint32, readTxLedgers uint64) error {
-	return advanceEntryWatermark(ctx, addr, entryHistoryWatermarkName, from, thru, readTxLedgers)
+// SetSponsorshipWatermark records completion through `thru` only for a contiguous window the entry index already
+// covers (an unproven advance would lose history for good); a window at or below the watermark is a no-op.
+func SetSponsorshipWatermark(ctx context.Context, addr string, from, thru uint32) error {
+	return advanceEntryWatermark(ctx, addr, sponsorshipWatermarkName, from, thru, func(ctx context.Context, conn driver.Conn) error {
+		idx, err := entryWatermarkOn(ctx, conn, entryIndexWatermarkName)
+		if err != nil {
+			return err
+		}
+		if idx < thru {
+			return fmt.Errorf("%w: [%d,%d] but the index stops at %d", ErrSponsorshipAheadOfEntryIndex, from, thru, idx)
+		}
+		return nil
+	})
 }
 
-func advanceEntryWatermark(ctx context.Context, addr, name string, from, thru uint32, readTxLedgers uint64) error {
+// advanceEntryWatermark is the shared advance: range sanity, no skipped prefix, lake contiguity, then the caller's proof.
+func advanceEntryWatermark(ctx context.Context, addr, name string, from, thru uint32, proof func(context.Context, driver.Conn) error) error {
 	if from == 0 || thru < from {
 		return fmt.Errorf("clickhouse: %s watermark window [%d,%d] is not a ledger range (genesis is ledger 1)", name, from, thru)
 	}
@@ -300,7 +289,7 @@ func advanceEntryWatermark(ctx context.Context, addr, name string, from, thru ui
 	if want := uint64(thru-from) + 1; present != want {
 		return fmt.Errorf("%w: %s [%d,%d] holds %d of %d ledgers", ErrEntryHistoryHole, name, from, thru, present, want)
 	}
-	if err := entryHistoryWindowCovered(ctx, conn, name, from, thru, readTxLedgers); err != nil {
+	if err := proof(ctx, conn); err != nil {
 		return err
 	}
 	const q = `INSERT INTO stellar.entry_history_watermark (name, thru_ledger) VALUES (?, ?)`

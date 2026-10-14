@@ -43,7 +43,7 @@ var mustExclude = []string{
 	"web/explorer/node_modules/react/index.js",
 	"web/explorer/.next/cache/x.js",
 	".discovery-repos/some-repo/main.go",
-	"notes/BACKLOG.md",
+	"notes/BACKLOG.txt",
 	"bin/stellarindex-api",
 	"cmd/stellarindex-api/.env",
 	"internal/api/v1/.env.local",

@@ -6,8 +6,8 @@
 -- identically; scripts/ci/lint-ch-apply-scope.sh pins that.
 --
 -- Sponsorship lifecycle: one row per transition of one arrangement, derived by
--- `stellarindex-ops ch-entry-history` from the paired pre/post images it already
--- walks, as a third output under the entry_history watermark.
+-- `stellarindex-ops ch-entry-history` from the paired pre/post images of the
+-- entry changes that can carry one, under its own `sponsorship_events` watermark.
 --
 --   started  a sponsor began paying reserves for the entry or signer
 --   revoked  the entry lives on, unsponsored or under another sponsor
@@ -19,10 +19,14 @@
 -- Runbook (operator, on the host; CREATE IF NOT EXISTS is idempotent):
 --   1. clickhouse-client --multiquery < deploy/clickhouse/sponsorship_events.sql
 --   2. deploy the release that writes it; new windows fill from the watermark.
---   3. fill history with `stellarindex-ops ch-entry-history -from <l> -to <l> -write`
---      per window below the watermark (ReplacingMergeTree collapses re-derived
---      account and asset rows). Start no earlier than ledger 32747293, the first
---      protocol-14 ledger on pubnet: no entry before it can carry a sponsor.
+--   3. fill history with `stellarindex-ops ch-entry-history -write` (resumable;
+--      -from/-to bound a window; ReplacingMergeTree collapses re-derived rows).
+--      It never advances past the entry_index watermark, which the account
+--      route proves in-force arrangements against, and refuses a window whose
+--      stellar.operations rows cover fewer ledgers than stellar.ledgers declares
+--      tx-bearing (a changes-only backfill range): fill operations first.
+--      Start no earlier than ledger 32747293, the first protocol-14 ledger on
+--      pubnet: no entry before it can carry a sponsor.
 
 CREATE TABLE IF NOT EXISTS stellar.sponsorship_events
 (
