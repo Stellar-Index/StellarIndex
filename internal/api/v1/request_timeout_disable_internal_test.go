@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -223,20 +222,8 @@ func routePatternsFromTree(t *testing.T) (wildcard []mountedRoute, streams []str
 func muxSpecsIn(f *ast.File) []mountedRoute {
 	var out []mountedRoute
 	ast.Inspect(f, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok || len(call.Args) == 0 {
-			return true
-		}
-		lit, ok := call.Args[0].(*ast.BasicLit)
-		if !ok || lit.Kind != token.STRING {
-			return true
-		}
-		spec, err := strconv.Unquote(lit.Value)
-		if err != nil {
-			return true
-		}
-		if m := muxRoute.FindStringSubmatch(spec); m != nil {
-			out = append(out, mountedRoute{m[1], m[2]})
+		if route, _, ok := muxSpecCall(n); ok {
+			out = append(out, route)
 		}
 		return true
 	})

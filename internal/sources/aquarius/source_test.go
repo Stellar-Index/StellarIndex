@@ -3,20 +3,14 @@ package aquarius
 import (
 	"encoding/base64"
 	"errors"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"math/big"
-	"path/filepath"
 	"regexp"
-	"runtime"
-	"strconv"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 
+	"github.com/Stellar-Index/StellarIndex/internal/astguard"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
@@ -92,50 +86,10 @@ var eventsExcludedFromClassify = map[string]bool{
 // future Event* constant is picked up automatically.
 func packageEventConstants(t *testing.T) map[string]string {
 	t.Helper()
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller(0) failed")
-	}
-	dir := filepath.Dir(thisFile)
-	paths, err := filepath.Glob(filepath.Join(dir, "*.go"))
-	if err != nil {
-		t.Fatalf("glob %s: %v", dir, err)
-	}
-	fset := token.NewFileSet()
 	out := map[string]string{}
-	for _, path := range paths {
-		if strings.HasSuffix(path, "_test.go") {
-			continue
-		}
-		f, err := parser.ParseFile(fset, path, nil, 0)
-		if err != nil {
-			t.Fatalf("parse %s: %v", path, err)
-		}
-		for _, decl := range f.Decls {
-			gd, ok := decl.(*ast.GenDecl)
-			if !ok || gd.Tok != token.CONST {
-				continue
-			}
-			for _, spec := range gd.Specs {
-				vs, ok := spec.(*ast.ValueSpec)
-				if !ok {
-					continue
-				}
-				for i, name := range vs.Names {
-					if !eventConstNamePattern.MatchString(name.Name) || i >= len(vs.Values) {
-						continue
-					}
-					lit, ok := vs.Values[i].(*ast.BasicLit)
-					if !ok || lit.Kind != token.STRING {
-						continue
-					}
-					val, err := strconv.Unquote(lit.Value)
-					if err != nil {
-						t.Fatalf("unquote %s: %v", name.Name, err)
-					}
-					out[name.Name] = val
-				}
-			}
+	for _, c := range astguard.PackageConsts(t, ".") {
+		if c.IsString && eventConstNamePattern.MatchString(c.Name) {
+			out[c.Name] = c.Value
 		}
 	}
 	return out

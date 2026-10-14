@@ -52,7 +52,6 @@ go-ast internal/pipeline/sink_test.go
 go-ast internal/platform/postgresstore/apikey_store_test.go
 go-ast internal/pricingguard/gate_guard_test.go
 go-ast internal/pricingguard/surface_labels_test.go
-go-ast internal/sources/aquarius/source_test.go
 go-ast internal/storage/timescale/pair_direction_guard_test.go
 go-ast internal/storage/timescale/prices_1m_direction_union_test.go
 go-ast internal/storage/timescale/retention_policy_test.go
