@@ -60,6 +60,23 @@ type AssetEntryChange struct {
 	Balance *big.Int
 }
 
+// SponsorshipEvent is one stellar.sponsorship_events row: an arrangement starting, being revoked (its entry lives on,
+// unsponsored or under another sponsor) or ending with its entry or signer. Sponsored is empty for a claimable balance.
+type SponsorshipEvent struct {
+	Ledger         uint32
+	CloseTime      time.Time
+	TxHash         string
+	OpIndex        int32
+	ChangeIndex    uint32
+	IntraLedgerSeq uint32
+	Sponsor        string
+	Sponsored      string
+	Kind           string
+	KeyID          string
+	Reserves       uint8
+	Event          string
+}
+
 // entryHistorySourceQuery streams the window in the source's sort-key order, putting each 'state' pre-image directly before its change. No
 // FINAL: an unmerged duplicate re-derives a byte-identical target row, and both targets are ReplacingMergeTrees on the same identity.
 const entryHistorySourceQuery = `
@@ -102,8 +119,8 @@ func StreamEntryHistorySource(ctx context.Context, addr string, from, to uint32,
 const entryHistoryInsertChunk = 20_000
 
 // InsertEntryHistory writes one batch of both projections; retry-safe since both ReplacingMergeTree tables collapse a re-sent batch on merge.
-func InsertEntryHistory(ctx context.Context, addr string, accounts []AccountEntryChange, assets []AssetEntryChange) (int64, error) {
-	if len(accounts) == 0 && len(assets) == 0 {
+func InsertEntryHistory(ctx context.Context, addr string, accounts []AccountEntryChange, assets []AssetEntryChange, sponsorships []SponsorshipEvent) (int64, error) {
+	if len(accounts) == 0 && len(assets) == 0 && len(sponsorships) == 0 {
 		return 0, nil
 	}
 	conn, err := openAccountMovementsWrite(ctx, addr)
@@ -127,7 +144,29 @@ func InsertEntryHistory(ctx context.Context, addr string, accounts []AccountEntr
 		}
 		written += int64(end - i)
 	}
+	for i := 0; i < len(sponsorships); i += entryHistoryInsertChunk {
+		end := min(i+entryHistoryInsertChunk, len(sponsorships))
+		if err := insertSponsorshipEvents(ctx, conn, sponsorships[i:end]); err != nil {
+			return written, err
+		}
+		written += int64(end - i)
+	}
 	return written, nil
+}
+
+func insertSponsorshipEvents(ctx context.Context, conn driver.Conn, rows []SponsorshipEvent) error {
+	batch, err := conn.PrepareBatch(ctx, `INSERT INTO stellar.sponsorship_events
+		(sponsor, sponsored, kind, key_id, ledger, close_time, tx_hash, op_index, change_index, intra_ledger_seq, reserves, event)`)
+	if err != nil {
+		return fmt.Errorf("prepare sponsorship_events batch: %w", err)
+	}
+	for _, r := range rows {
+		if err := batch.Append(r.Sponsor, r.Sponsored, r.Kind, r.KeyID, r.Ledger, r.CloseTime, r.TxHash, r.OpIndex,
+			r.ChangeIndex, r.IntraLedgerSeq, r.Reserves, r.Event); err != nil {
+			return fmt.Errorf("append sponsorship_events %s/%d/%s/%d/%d: %w", r.Sponsor, r.Ledger, r.TxHash, r.OpIndex, r.ChangeIndex, err)
+		}
+	}
+	return wrapSend(batch.Send(), "sponsorship_events")
 }
 
 func insertAccountEntryChanges(ctx context.Context, conn driver.Conn, rows []AccountEntryChange) error {

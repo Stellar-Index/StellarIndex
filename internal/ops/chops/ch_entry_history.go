@@ -97,6 +97,7 @@ func deriveEntryHistoryWindow(ctx context.Context, addr string, lo, hi uint32, d
 	var (
 		accounts     []clickhouse.AccountEntryChange
 		assets       []clickhouse.AssetEntryChange
+		sponsorships []clickhouse.SponsorshipEvent
 		written      int64
 		skipped      uint64
 		txLedgers    uint64
@@ -104,12 +105,12 @@ func deriveEntryHistoryWindow(ctx context.Context, addr string, lo, hi uint32, d
 	)
 	flush := func() error {
 		if !dryRun {
-			if _, err := insertEntryHistory(ctx, addr, accounts, assets); err != nil {
+			if _, err := insertEntryHistory(ctx, addr, accounts, assets, sponsorships); err != nil {
 				return err
 			}
 		}
-		written += int64(len(accounts) + len(assets))
-		accounts, assets = accounts[:0], assets[:0]
+		written += int64(len(accounts) + len(assets) + len(sponsorships))
+		accounts, assets, sponsorships = accounts[:0], assets[:0], sponsorships[:0]
 		return nil
 	}
 	err := streamEntryHistorySource(ctx, addr, lo, hi, func(r clickhouse.EntryHistorySourceRow) error {
@@ -118,7 +119,7 @@ func deriveEntryHistoryWindow(ctx context.Context, addr string, lo, hi uint32, d
 			txLedgers++
 			lastTxLedger = r.Ledger
 		}
-		acc, ast, err := p.Project(r)
+		pr, err := p.ProjectAll(r)
 		if err != nil {
 			skipped++
 			if skipped <= 3 {
@@ -126,10 +127,11 @@ func deriveEntryHistoryWindow(ctx context.Context, addr string, lo, hi uint32, d
 			}
 			return nil
 		}
-		st.record(acc, ast)
-		accounts = append(accounts, acc...)
-		assets = append(assets, ast...)
-		if len(accounts)+len(assets) >= entryHistoryFlushRowCount {
+		st.record(pr)
+		accounts = append(accounts, pr.Accounts...)
+		assets = append(assets, pr.Assets...)
+		sponsorships = append(sponsorships, pr.Sponsorships...)
+		if len(accounts)+len(assets)+len(sponsorships) >= entryHistoryFlushRowCount {
 			return flush()
 		}
 		return nil
@@ -140,6 +142,7 @@ func deriveEntryHistoryWindow(ctx context.Context, addr string, lo, hi uint32, d
 	if err := flush(); err != nil {
 		return written, txLedgers, err
 	}
+	st.preImageMissing += p.PreImageMissing
 	if skipped > 0 {
 		fmt.Fprintf(os.Stderr, "ch-entry-history: window [%d,%d]: %d changes skipped (decode)\n", lo, hi, skipped)
 	}
@@ -155,15 +158,20 @@ var feeSeqFields = map[string]bool{"balance": true, "seq_num": true, "seq_ledger
 // fee/sequence-only account updates (the candidate to leave out of the backfill).
 type entryHistoryStats struct {
 	accountRows, assetRows, fieldBytes map[string]int64
+	sponsorships                       map[string]int64
 	feeSeqOnly                         int64
-	skipped                            uint64
+	skipped, preImageMissing           uint64
 }
 
 func newEntryHistoryStats() *entryHistoryStats {
-	return &entryHistoryStats{accountRows: map[string]int64{}, assetRows: map[string]int64{}, fieldBytes: map[string]int64{}}
+	return &entryHistoryStats{accountRows: map[string]int64{}, assetRows: map[string]int64{}, fieldBytes: map[string]int64{}, sponsorships: map[string]int64{}}
 }
 
-func (s *entryHistoryStats) record(acc []clickhouse.AccountEntryChange, ast []clickhouse.AssetEntryChange) {
+func (s *entryHistoryStats) record(pr entryhistory.Projection) {
+	acc, ast := pr.Accounts, pr.Assets
+	for _, e := range pr.Sponsorships {
+		s.sponsorships[e.Event]++
+	}
 	for _, a := range acc {
 		s.accountRows[a.EntryType]++
 		s.fieldBytes[a.EntryType] += int64(len(a.Fields))
@@ -213,6 +221,8 @@ func (s *entryHistoryStats) report(from, to uint32) {
 	fmt.Fprintf(os.Stderr, "  total account_rows=%d asset_rows=%d fields_bytes=%d\n", totalAcc, totalAst, totalBytes)
 	fmt.Fprintf(os.Stderr, "  fee/seq-only account rows (tx-level, only balance/seq_* changed)=%d of %d account-entry rows\n",
 		s.feeSeqOnly, s.accountRows["account"])
+	fmt.Fprintf(os.Stderr, "  sponsorship events started=%d revoked=%d ended=%d; removals without a pre-image=%d\n",
+		s.sponsorships["started"], s.sponsorships["revoked"], s.sponsorships["ended"], s.preImageMissing)
 	if s.skipped > 0 {
 		fmt.Fprintf(os.Stderr, "  skipped (undecodable)=%d\n", s.skipped)
 	}

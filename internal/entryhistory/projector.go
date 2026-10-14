@@ -23,13 +23,29 @@ type Projector struct {
 	tx     string
 	op     int32
 	pre    map[string]xdr.LedgerEntry
+	// PreImageMissing counts removals the lake holds no pre-image for: their sponsorship end is unknowable.
+	PreImageMissing uint64
 }
 
 func NewProjector() *Projector {
 	return &Projector{pre: map[string]xdr.LedgerEntry{}}
 }
 
+// Projection is everything one source row derives.
+type Projection struct {
+	Accounts     []clickhouse.AccountEntryChange
+	Assets       []clickhouse.AssetEntryChange
+	Sponsorships []clickhouse.SponsorshipEvent
+}
+
+// Project derives the account and asset rows of one source row; ProjectAll adds the sponsorship events.
 func (p *Projector) Project(r clickhouse.EntryHistorySourceRow) ([]clickhouse.AccountEntryChange, []clickhouse.AssetEntryChange, error) {
+	pr, err := p.ProjectAll(r)
+	return pr.Accounts, pr.Assets, err
+}
+
+// ProjectAll derives every history row of one source row.
+func (p *Projector) ProjectAll(r clickhouse.EntryHistorySourceRow) (Projection, error) {
 	if r.Ledger != p.ledger || r.TxHash != p.tx || r.OpIndex != p.op {
 		p.ledger, p.tx, p.op = r.Ledger, r.TxHash, r.OpIndex
 		clear(p.pre)
@@ -38,7 +54,7 @@ func (p *Projector) Project(r clickhouse.EntryHistorySourceRow) ([]clickhouse.Ac
 	if r.EntryXDR != "" {
 		var e xdr.LedgerEntry
 		if err := xdr.SafeUnmarshalBase64(r.EntryXDR, &e); err != nil {
-			return nil, nil, fmt.Errorf("decode entry: %w", err)
+			return Projection{}, fmt.Errorf("decode entry: %w", err)
 		}
 		post = &e
 	}
@@ -46,13 +62,13 @@ func (p *Projector) Project(r clickhouse.EntryHistorySourceRow) ([]clickhouse.Ac
 		// A pre-image is never itself a change. It stays in the map (not
 		// consumed) so an unmerged duplicate of the change sees it too.
 		if post == nil {
-			return nil, nil, fmt.Errorf("state row without an entry")
+			return Projection{}, fmt.Errorf("state row without an entry")
 		}
 		p.pre[r.KeyXDR] = *post
-		return nil, nil, nil
+		return Projection{}, nil
 	}
 	if post == nil && r.ChangeType != "removed" {
-		return nil, nil, fmt.Errorf("%s row without an entry", r.ChangeType)
+		return Projection{}, fmt.Errorf("%s row without an entry", r.ChangeType)
 	}
 	var prev *xdr.LedgerEntry
 	if e, ok := p.pre[r.KeyXDR]; ok {
@@ -61,11 +77,11 @@ func (p *Projector) Project(r clickhouse.EntryHistorySourceRow) ([]clickhouse.Ac
 
 	postFields, err := entryFields(post)
 	if err != nil {
-		return nil, nil, err
+		return Projection{}, err
 	}
 	prevFields, err := entryFields(prev)
 	if err != nil {
-		return nil, nil, err
+		return Projection{}, err
 	}
 	shown := postFields
 	if post == nil {
@@ -76,7 +92,7 @@ func (p *Projector) Project(r clickhouse.EntryHistorySourceRow) ([]clickhouse.Ac
 	}
 	fieldsJSON, err := json.Marshal(shown)
 	if err != nil {
-		return nil, nil, fmt.Errorf("marshal fields: %w", err)
+		return Projection{}, fmt.Errorf("marshal fields: %w", err)
 	}
 	ref := clickhouse.EntryChangeRef{
 		Ledger: r.Ledger, CloseTime: r.CloseTime, TxHash: r.TxHash, OpIndex: r.OpIndex,
@@ -88,13 +104,18 @@ func (p *Projector) Project(r clickhouse.EntryHistorySourceRow) ([]clickhouse.Ac
 
 	var key *xdr.LedgerKey
 	if post == nil && prev == nil {
+		p.PreImageMissing++
 		var k xdr.LedgerKey
 		if err := xdr.SafeUnmarshalBase64(r.KeyXDR, &k); err != nil {
-			return nil, nil, fmt.Errorf("decode key: %w", err)
+			return Projection{}, fmt.Errorf("decode key: %w", err)
 		}
 		key = &k
 	}
-	return accountRows(ref, prev, post, key), assetRows(ref, prev, post, key), nil
+	return Projection{
+		Accounts:     accountRows(ref, prev, post, key),
+		Assets:       assetRows(ref, prev, post, key),
+		Sponsorships: sponsorshipEvents(ref, prev, post),
+	}, nil
 }
 
 func entryFields(e *xdr.LedgerEntry) (map[string]any, error) {

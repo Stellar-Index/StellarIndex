@@ -189,6 +189,110 @@ func TestChEntryHistory_OneDecodePassWritesBothProjections(t *testing.T) {
 	}
 }
 
+// The derive writes the sponsorship lifecycle as a third output of the same pass: a sponsored trustline's
+// creation, its transfer to another sponsor and its removal become started, revoked+started and ended rows.
+func TestChEntryHistory_WritesSponsorshipEvents(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+	conn := dialClickHouse(t, ctx, "stellar")
+
+	const base = uint32(160_910_000)
+	const (
+		alice  = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7"
+		bob    = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H"
+		carol  = "GCEZWKCA5VLDNRLN3RPRJMRZOX3Z6G5CHCGSNFHEYVXM3XOJMDS674JZ"
+		issuer = "GDUKMGUGDZQK6YHYA5Z6AY2G4XDSZPSZ3SW5UN3ARVMO6QSRDWP5YLEX"
+	)
+	if err := conn.Exec(ctx, `TRUNCATE TABLE stellar.entry_history_watermark`); err != nil {
+		t.Fatalf("truncate watermark: %v", err)
+	}
+	entryHistorySeedLedgers(t, ctx, addr, []uint32{base, base + 1, base + 2}, 1)
+
+	trustline := func(sponsor string) xdr.LedgerEntry {
+		e := xdr.LedgerEntry{Data: xdr.LedgerEntryData{Type: xdr.LedgerEntryTypeTrustline, TrustLine: &xdr.TrustLineEntry{
+			AccountId: xdr.MustAddress(bob), Asset: xdr.MustNewCreditAsset("EURC", issuer).ToTrustLineAsset(), Balance: 5, Limit: 1_000_000,
+		}}}
+		if sponsor != "" {
+			e.Ext = xdr.LedgerEntryExt{V: 1, V1: &xdr.LedgerEntryExtensionV1{SponsoringId: xdr.MustAddressPtr(sponsor)}}
+		}
+		return e
+	}
+	row := func(ledger uint32, change uint32, changeType string, e xdr.LedgerEntry, withEntry bool) chstore.LedgerEntryChangeRow {
+		t.Helper()
+		k, err := e.LedgerKey()
+		if err != nil {
+			t.Fatalf("ledger key: %v", err)
+		}
+		r := chstore.LedgerEntryChangeRow{
+			LedgerSeq: ledger, CloseTime: time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC), TxHash: "ab" + strconv.FormatUint(uint64(ledger), 10),
+			OpIndex: 0, ChangeIndex: change, ChangeType: changeType, EntryType: "trustline",
+		}
+		if r.KeyXDR, err = xdr.MarshalBase64(k); err != nil {
+			t.Fatalf("marshal key: %v", err)
+		}
+		if withEntry {
+			if r.EntryXDR, err = xdr.MarshalBase64(e); err != nil {
+				t.Fatalf("marshal entry: %v", err)
+			}
+		}
+		return r
+	}
+	src := []chstore.LedgerEntryChangeRow{
+		row(base, 0, "created", trustline(alice), true),
+		row(base+1, 0, "state", trustline(alice), true),
+		row(base+1, 1, "updated", trustline(carol), true),
+		row(base+2, 0, "state", trustline(carol), true),
+		row(base+2, 1, "removed", trustline(carol), false),
+	}
+	if _, err := chstore.InsertEntryChanges(ctx, addr, src, 0); err != nil {
+		t.Fatalf("seed ledger_entry_changes: %v", err)
+	}
+	args := []string{
+		"ch-entry-history", "-ch-addr", addr, "-write",
+		"-from", strconv.FormatUint(uint64(base), 10), "-to", strconv.FormatUint(uint64(base+2), 10),
+	}
+	if err := chops.Run(args); err != nil {
+		t.Fatalf("ch-entry-history: %v", err)
+	}
+
+	type spRow struct {
+		ledger                          uint32
+		sponsor, sponsored, kind, keyID string
+		reserves                        uint8
+		event                           string
+	}
+	rows, err := conn.Query(ctx, `
+		SELECT ledger, sponsor, sponsored, kind, key_id, reserves, event
+		FROM stellar.sponsorship_events FINAL
+		WHERE ledger BETWEEN ? AND ? ORDER BY ledger, change_index, event`, base, base+2)
+	if err != nil {
+		t.Fatalf("query sponsorship_events: %v", err)
+	}
+	var got []spRow
+	for rows.Next() {
+		var r spRow
+		if err := rows.Scan(&r.ledger, &r.sponsor, &r.sponsored, &r.kind, &r.keyID, &r.reserves, &r.event); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		got = append(got, r)
+	}
+	_ = rows.Close()
+	eurc := "EURC-" + issuer
+	want := []spRow{
+		{base, alice, bob, "trustline", eurc, 1, "started"},
+		{base + 1, alice, bob, "trustline", eurc, 1, "revoked"},
+		{base + 1, carol, bob, "trustline", eurc, 1, "started"},
+		{base + 2, carol, bob, "trustline", eurc, 1, "ended"},
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("sponsorship_events = %+v, want %+v", got, want)
+	}
+	if wm, err := chstore.EntryHistoryWatermark(ctx, addr); err != nil || wm != base+2 {
+		t.Fatalf("watermark = %d (%v), want %d", wm, err, base+2)
+	}
+}
+
 // entryHistorySeedLedgers writes stellar.ledgers rows declaring txCount
 // transactions each, so the watermark's entry-change coverage gate applies.
 func entryHistorySeedLedgers(t *testing.T, ctx context.Context, addr string, seqs []uint32, txCount uint32) {

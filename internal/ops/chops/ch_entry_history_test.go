@@ -121,7 +121,7 @@ func TestEntryHistoryProjector_FeeChargeIsAChangeWithItsFieldDiff(t *testing.T) 
 	}
 
 	st := newEntryHistoryStats()
-	st.record(acc, ast)
+	st.record(entryhistory.Projection{Accounts: acc, Assets: ast})
 	if st.feeSeqOnly != 1 || st.accountRows["account"] != 1 {
 		t.Fatalf("stats feeSeqOnly=%d accountRows=%d, want 1/1", st.feeSeqOnly, st.accountRows["account"])
 	}
@@ -320,7 +320,7 @@ func TestRunEntryHistory_WatermarkProofCountsLedgersTheDeriveRead(t *testing.T) 
 		}
 		return nil
 	}
-	insertEntryHistory = func(context.Context, string, []clickhouse.AccountEntryChange, []clickhouse.AssetEntryChange) (int64, error) {
+	insertEntryHistory = func(context.Context, string, []clickhouse.AccountEntryChange, []clickhouse.AssetEntryChange, []clickhouse.SponsorshipEvent) (int64, error) {
 		return 0, nil
 	}
 	var gotRead uint64
