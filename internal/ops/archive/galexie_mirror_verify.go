@@ -381,28 +381,7 @@ func normalisedBatchBytes(compressed []byte) ([]byte, error) {
 // upgrade, which core does not fix. Everything else, other diagnostic events included, is left to the byte comparison.
 func normaliseLedgerBatch(b *xdr.LedgerCloseMetaBatch) error {
 	for i := range b.LedgerCloseMetas {
-		lcm := &b.LedgerCloseMetas[i]
-		var (
-			metas    []*xdr.TransactionMeta
-			upgrades []xdr.UpgradeEntryMeta
-		)
-		switch {
-		case lcm.V0 != nil:
-			for j := range lcm.V0.TxProcessing {
-				metas = append(metas, &lcm.V0.TxProcessing[j].TxApplyProcessing)
-			}
-			upgrades = lcm.V0.UpgradesProcessing
-		case lcm.V1 != nil:
-			for j := range lcm.V1.TxProcessing {
-				metas = append(metas, &lcm.V1.TxProcessing[j].TxApplyProcessing)
-			}
-			upgrades = lcm.V1.UpgradesProcessing
-		case lcm.V2 != nil:
-			for j := range lcm.V2.TxProcessing {
-				metas = append(metas, &lcm.V2.TxProcessing[j].TxApplyProcessing)
-			}
-			upgrades = lcm.V2.UpgradesProcessing
-		}
+		metas, upgrades := ledgerCloseMetaParts(&b.LedgerCloseMetas[i])
 		for _, m := range metas {
 			if err := normaliseTxMeta(m); err != nil {
 				return err
@@ -415,6 +394,28 @@ func normaliseLedgerBatch(b *xdr.LedgerCloseMetaBatch) error {
 		}
 	}
 	return nil
+}
+
+// ledgerCloseMetaParts returns the transaction metas and the upgrade metas of one ledger, whichever LedgerCloseMeta version holds them.
+func ledgerCloseMetaParts(lcm *xdr.LedgerCloseMeta) (metas []*xdr.TransactionMeta, upgrades []xdr.UpgradeEntryMeta) {
+	switch {
+	case lcm.V0 != nil:
+		for j := range lcm.V0.TxProcessing {
+			metas = append(metas, &lcm.V0.TxProcessing[j].TxApplyProcessing)
+		}
+		upgrades = lcm.V0.UpgradesProcessing
+	case lcm.V1 != nil:
+		for j := range lcm.V1.TxProcessing {
+			metas = append(metas, &lcm.V1.TxProcessing[j].TxApplyProcessing)
+		}
+		upgrades = lcm.V1.UpgradesProcessing
+	case lcm.V2 != nil:
+		for j := range lcm.V2.TxProcessing {
+			metas = append(metas, &lcm.V2.TxProcessing[j].TxApplyProcessing)
+		}
+		upgrades = lcm.V2.UpgradesProcessing
+	}
+	return metas, upgrades
 }
 
 func normaliseTxMeta(m *xdr.TransactionMeta) error {
