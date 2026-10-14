@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/api/client', async () => {
@@ -179,9 +179,39 @@ describe('AccountView state charts', () => {
       screen.getByRole('img', { name: '25% of limit used' }),
     ).toBeInTheDocument();
     expect(screen.getByText('50%')).toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: /Weight/ })).toBeNull();
+    const signers = screen
+      .getByRole('columnheader', { name: 'Weight' })
+      .closest('table');
+    if (!signers) throw new Error('signers table did not render');
     expect(
-      screen.getByRole('img', { name: 'Weight 10 of 255' }),
+      within(signers).getByRole('cell', { name: '10' }),
     ).toBeInTheDocument();
+  });
+});
+
+describe('AccountView home domain', () => {
+  const state = (home_domain: string) => ({
+    [`/v1/accounts/${G}`]: {
+      account_id: G,
+      exists: true,
+      balance: '1',
+      home_domain,
+    },
+  });
+
+  it('links a plain hostname', async () => {
+    mockApi(state('circle.com'));
+    renderWithClient(<AccountView id={G} />);
+    const link = await screen.findByRole('link', { name: 'circle.com' });
+    expect(link).toHaveAttribute('href', 'https://circle.com');
+  });
+
+  it('renders a domain that is not a plain hostname as text, never a link', async () => {
+    mockApi(state('circle.com@evil.example/login'));
+    renderWithClient(<AccountView id={G} />);
+    const domain = await screen.findByText('circle.com@evil.example/login');
+    expect(domain.closest('a')).toBeNull();
   });
 });
 

@@ -2,38 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
 import { AccountDefiProtocolMix } from './AccountDefiProtocolMix';
-import { AccountsTopBars } from './AccountsTopBars';
 import { IssuerAssetMix } from '../issuers/[g_strkey]/IssuerAssetMix';
-
-const G1 = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
-const G2 = 'GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA';
-
-describe('AccountsTopBars', () => {
-  it('ranks accounts with exact shares of the listed total above 2^53', () => {
-    render(
-      <AccountsTopBars
-        isNative={false}
-        rows={[
-          { account_id: G1, value: '9007199254740993' },
-          { account_id: G2, value: '9007199254740993' },
-        ]}
-      />,
-    );
-    expect(screen.getByText(/Top 2 of 2 listed accounts/)).toBeInTheDocument();
-    expect(
-      screen.getByLabelText(/Top 2 of 2 listed accounts by USD value/),
-    ).toBeInTheDocument();
-    expect(screen.getAllByText('$9007.2T')).toHaveLength(2);
-    expect(screen.getAllByText('50.0%')).toHaveLength(2);
-  });
-
-  it('labels native rankings in XLM', () => {
-    render(
-      <AccountsTopBars isNative rows={[{ account_id: G1, value: '1500.5' }]} />,
-    );
-    expect(screen.getByText('1.5K XLM')).toBeInTheDocument();
-  });
-});
 
 describe('AccountDefiProtocolMix', () => {
   it('shows position counts per protocol with an Other bucket', () => {

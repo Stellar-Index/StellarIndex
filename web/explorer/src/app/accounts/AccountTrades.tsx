@@ -10,6 +10,7 @@ import { Panel } from '@/components/reveal';
 import { AssetLink } from '@/components/AssetLink';
 import {
   Badge,
+  Button,
   Table,
   TableWrap,
   TBody,
@@ -239,24 +240,24 @@ export function AccountTradesPanel({ id }: { id: string }) {
         </TableWrap>
       )}
 
-      <div className="flex items-center gap-2 text-xs">
-        {cursor && (
-          <button
-            onClick={() => setCursor('')}
-            className="border-line text-ink-body hover:border-brand-500 rounded-md border px-2.5 py-1"
-          >
-            ← Newest
-          </button>
-        )}
-        {data.next_cursor && (
-          <button
-            onClick={() => setCursor(data.next_cursor ?? '')}
-            className="border-line text-ink-body hover:border-brand-500 ml-auto rounded-md border px-2.5 py-1"
-          >
-            Load older →
-          </button>
-        )}
-      </div>
+      {(cursor || data.next_cursor) && (
+        <div className="flex justify-end gap-2">
+          {cursor && (
+            <Button variant="secondary" size="sm" onClick={() => setCursor('')}>
+              Newest
+            </Button>
+          )}
+          {data.next_cursor && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setCursor(data.next_cursor ?? '')}
+            >
+              Load older
+            </Button>
+          )}
+        </div>
+      )}
 
       {/* Attribution-scope honesty note — always present on the API. */}
       {data.note && <NoteBadge>{data.note}</NoteBadge>}
@@ -292,12 +293,9 @@ function TradeRow({ t }: { t: AccountTrade }) {
       <Td>
         <span className="text-ink-body text-xs">{t.source}</span>
         {t.routed_via && (
-          <span
-            className="bg-surface-muted text-ink-muted ml-1 rounded-sm px-1 py-0.5 text-[9px] tracking-wider uppercase"
-            title={`Routed via ${t.routed_via}`}
-          >
+          <Badge className="ml-1.5" title={`Routed via ${t.routed_via}`}>
             routed
-          </span>
+          </Badge>
         )}
       </Td>
       <Td>

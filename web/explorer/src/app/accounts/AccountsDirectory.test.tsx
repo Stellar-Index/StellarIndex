@@ -94,4 +94,24 @@ describe('AccountsDirectory wealth column', () => {
       await screen.findByText('9,007,199,254,740,993 XLM'),
     ).toBeInTheDocument();
   });
+
+  it('shares the listed total exactly above 2^53', async () => {
+    vi.mocked(apiGet).mockImplementation((path: string) => {
+      if (path === '/v1/accounts') {
+        return Promise.resolve({
+          data: {
+            priced_assets: 12,
+            ranked_by: 'usd',
+            accounts: [
+              { account_id: G, value: '9007199254740993' },
+              { account_id: G.replace(/.$/, 'A'), value: '9007199254740993' },
+            ],
+          },
+        });
+      }
+      return new Promise(() => {});
+    });
+    renderDirectory();
+    expect(await screen.findAllByText('50.0%')).toHaveLength(2);
+  });
 });

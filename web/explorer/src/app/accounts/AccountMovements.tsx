@@ -8,6 +8,7 @@ import { Panel } from '@/components/reveal';
 import { AssetLink } from '@/components/AssetLink';
 import {
   Badge,
+  Button,
   Select,
   Table,
   TableWrap,
@@ -300,11 +301,7 @@ export function AccountMovementsPanel({ id }: { id: string }) {
 
   if (isError) {
     return (
-      <Panel
-        title="Activity (movements)"
-        source={source}
-        bodyClassName="space-y-3"
-      >
+      <Panel title="Movements" source={source} bodyClassName="space-y-3">
         {filters}
         <p className="text-ink-body text-sm">
           The movements lookup failed — reload to retry
@@ -316,11 +313,7 @@ export function AccountMovementsPanel({ id }: { id: string }) {
 
   if (isLoading || !data) {
     return (
-      <Panel
-        title="Activity (movements)"
-        source={source}
-        bodyClassName="space-y-3"
-      >
+      <Panel title="Movements" source={source} bodyClassName="space-y-3">
         {filters}
         <p className="text-ink-muted text-sm">Loading…</p>
       </Panel>
@@ -332,7 +325,7 @@ export function AccountMovementsPanel({ id }: { id: string }) {
 
   return (
     <Panel
-      title={`Activity (movements) (${movements.length})`}
+      title={`Movements (${movements.length})`}
       source={source}
       bodyClassName="space-y-3"
     >
@@ -352,6 +345,8 @@ export function AccountMovementsPanel({ id }: { id: string }) {
             buckets={flow}
             posLabel="Received"
             negLabel="Sent"
+            posColor="var(--color-brand-500)"
+            negColor="var(--color-ink-muted)"
             height={110}
             ariaLabel={`Daily in/out movement counts across the ${movements.length} loaded movements.`}
           />
@@ -390,27 +385,37 @@ export function AccountMovementsPanel({ id }: { id: string }) {
         </TableWrap>
       )}
 
-      <div className="flex items-center gap-2 pt-1 text-xs">
-        {cursor && (
-          <button
-            type="button"
-            onClick={() => setCursor(undefined)}
-            className="border-line text-ink-body hover:border-brand-500 rounded-md border px-2.5 py-1"
-          >
-            ← Newest
-          </button>
-        )}
-        {data.next_cursor && (
-          <button
-            type="button"
-            onClick={() => setCursor(data.next_cursor)}
-            className="border-line text-ink-body hover:border-brand-500 ml-auto rounded-md border px-2.5 py-1"
-          >
-            Load older →
-          </button>
-        )}
-        {isFetching && <span className="text-ink-faint">Loading…</span>}
-      </div>
+      {(cursor || data.next_cursor) && (
+        <div className="border-line -mx-4 -mb-4 flex items-center justify-between gap-2 border-t px-4 py-3">
+          <span className="text-ink-muted text-xs">
+            {isFetching
+              ? 'Loading…'
+              : cursor
+                ? 'Older history'
+                : 'Newest first'}
+          </span>
+          <div className="flex gap-2">
+            {cursor && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setCursor(undefined)}
+              >
+                Newest
+              </Button>
+            )}
+            {data.next_cursor && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setCursor(data.next_cursor)}
+              >
+                Load older
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
     </Panel>
   );
 }
@@ -429,7 +434,7 @@ function MovementRow({ m }: { m: AccountMovement }) {
           href={`/ledgers/${m.ledger}/`}
           className="text-ink-faint hover:text-brand-600 ml-2 font-mono text-[11px]"
         >
-          #{m.ledger.toLocaleString('en-US')}
+          #{m.ledger}
         </Link>
       </Td>
       <Td>
@@ -473,10 +478,15 @@ function DirectionBadge({ direction }: { direction: string }) {
   // sent/received/self get a visually distinct tone — not just a text
   // label — so a viewer scanning the column can tell flow direction at a
   // glance (green in, red/amber out, neutral for a same-account leg).
-  if (direction === 'sent') return <Badge tone="down">Sent</Badge>;
-  if (direction === 'received') return <Badge tone="up">Received</Badge>;
-  if (direction === 'self') return <Badge tone="neutral">Self</Badge>;
-  return <Badge tone="neutral">{direction || '—'}</Badge>;
+  const label =
+    direction === 'sent'
+      ? 'Sent'
+      : direction === 'received'
+        ? 'Received'
+        : direction === 'self'
+          ? 'Self'
+          : direction || '—';
+  return <span className="text-ink-body">{label}</span>;
 }
 
 function CounterpartyCell({ counterparty }: { counterparty?: string }) {
