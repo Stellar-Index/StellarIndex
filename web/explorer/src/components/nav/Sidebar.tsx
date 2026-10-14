@@ -175,8 +175,8 @@ function Row({ item, onNavigate }: { item: NavItem; onNavigate?: () => void }) {
   const cls = cn(
     'group flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm font-medium transition-colors',
     active
-      ? 'bg-surface text-ink  ring-1 ring-line'
-      : 'text-ink-body hover:bg-surface-subtle hover:text-ink',
+      ? 'bg-black text-ink ring-1 ring-line'
+      : 'text-ink-body hover:bg-black hover:text-ink',
   );
   const inner = (
     <>
@@ -266,7 +266,7 @@ export function SidebarNav({
     : ACCOUNT_GROUP;
   const groups = navForNetwork(signedIn ? [...NAV, accountGroup] : NAV);
   return (
-    <div className="bg-surface-muted flex h-full flex-col">
+    <div className="bg-surface-canvas flex h-full flex-col">
       {/* Logo row — the Stellar mark + wordmark on the left, and the odometer
           (a single hoverable control: network name + chevron over THIS network's
           live ledger; click anywhere on it to open the network switcher) floated
@@ -439,7 +439,7 @@ function AccountMenu({ email }: { email?: string }) {
           <Link
             href="/dashboard"
             onClick={() => setOpen(false)}
-            className="hover:bg-surface-subtle flex items-center gap-2 rounded-md px-3 py-2 text-sm"
+            className="flex items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-black"
           >
             <User className="text-ink-faint h-3.5 w-3.5" />
             Your account
@@ -447,7 +447,7 @@ function AccountMenu({ email }: { email?: string }) {
           <button
             type="button"
             onClick={signOut}
-            className="text-ink-body hover:bg-surface-subtle flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm"
+            className="text-ink-body flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-black"
           >
             <LogOut className="text-ink-faint h-3.5 w-3.5" />
             Sign out
