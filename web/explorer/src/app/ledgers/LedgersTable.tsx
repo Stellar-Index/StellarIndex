@@ -175,7 +175,7 @@ export function LedgersTable() {
       title={`${ledgers.length} ledgers`}
       hint={
         newest != null && oldest != null
-          ? `#${oldest.toLocaleString('en-US')} → #${newest.toLocaleString('en-US')}${following ? ' · live' : ''}`
+          ? `#${oldest} → #${newest}${following ? ' · live' : ''}`
           : undefined
       }
       source={source}

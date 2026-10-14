@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { DataTrustTabs } from '@/components/nav/DataTrustTabs';
 import { Container, PageHeader } from '@/components/ui/Page';
+import { Section, TableOfContents, DefList, Aside } from '../policy-shared';
 
 export const metadata: Metadata = {
   title: 'Service level — Stellar Index API targets and error budget',
@@ -20,7 +21,7 @@ export default function SLAPage() {
 
       <DataTrustTabs active="/sla" />
 
-      <TableOfContents />
+      <TableOfContents toc={TOC} />
 
       <Section
         id="targets"
@@ -289,78 +290,3 @@ const TOC = [
   { id: 'exclusions', label: 'What this does not cover' },
   { id: 'status', label: 'Live status' },
 ];
-
-function TableOfContents() {
-  return (
-    <nav className="border-line bg-surface rounded-card border p-4">
-      <h2 className="text-h3 text-ink mb-2 font-semibold">Contents</h2>
-      <ol className="space-y-1 text-sm">
-        {TOC.map((t, i) => (
-          <li key={t.id}>
-            <a href={`#${t.id}`} className="text-ink-body hover:text-brand-600">
-              {i + 1}. {t.label}
-            </a>
-          </li>
-        ))}
-      </ol>
-    </nav>
-  );
-}
-
-function Section({
-  id,
-  title,
-  subtitle,
-  children,
-}: {
-  id: string;
-  title: string;
-  subtitle?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section id={id} className="scroll-mt-24 space-y-4">
-      <header className="space-y-1">
-        <h2 className="text-h3 text-ink font-semibold">
-          <a
-            href={`#${id}`}
-            className="hover:text-brand-600"
-            aria-label={`Anchor to ${title}`}
-          >
-            {title}
-          </a>
-        </h2>
-        {subtitle && <p className="text-ink-muted text-sm">{subtitle}</p>}
-      </header>
-      <div className="text-ink-body space-y-3 text-sm leading-6">
-        {children}
-      </div>
-    </section>
-  );
-}
-
-function DefList({ rows }: { rows: { term: string; def: string }[] }) {
-  return (
-    <dl className="space-y-3">
-      {rows.map((r) => (
-        <div
-          key={r.term}
-          className="grid grid-cols-1 gap-1 sm:grid-cols-[10rem_1fr] sm:gap-3"
-        >
-          <dt className="text-brand-600 font-mono text-xs font-semibold">
-            {r.term}
-          </dt>
-          <dd>{r.def}</dd>
-        </div>
-      ))}
-    </dl>
-  );
-}
-
-function Aside({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="border-line bg-surface-subtle text-ink-body rounded-md border px-3 py-2 text-xs">
-      {children}
-    </p>
-  );
-}
