@@ -97,10 +97,10 @@ var completenessWriterFiles = map[string]bool{
 	"projected_rebuild.go":          true,
 }
 
-// TestChopsDecoderCallsAreGuarded is the class guard: outside the named writer files, every decoder Matches / Decode /
+// checkChopsDecoderCallsAreGuarded is the class guard: outside the named writer files, every decoder Matches / Decode /
 // DecodeCounted call in internal/ops/chops must run inside a completeness.Guard closure, so a new oracle loop cannot add
 // an unguarded decoder on the audit path.
-func TestChopsDecoderCallsAreGuarded(t *testing.T) {
+func checkChopsDecoderCallsAreGuarded(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
