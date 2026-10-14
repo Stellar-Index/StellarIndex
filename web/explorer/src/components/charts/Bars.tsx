@@ -161,7 +161,7 @@ export function PairedBars({
   aLabel,
   bLabel,
   aColor = 'var(--color-brand-500)',
-  bColor = 'var(--color-up)',
+  bColor = 'var(--color-chart-4)',
   formatValue = (n) => n.toLocaleString('en-US'),
   ariaLabel,
   className,

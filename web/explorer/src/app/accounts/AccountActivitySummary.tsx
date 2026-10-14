@@ -214,8 +214,6 @@ export function AccountActivitySummaryPanel({ id }: { id: string }) {
             ariaLabel={`Bridge transfers: Rozo in ${bridge.rozo_inbound_payments}, out ${bridge.rozo_outbound_payments}; CCTP mints ${bridge.cctp_inbound_mints}, burns ${bridge.cctp_outbound_burns}`}
             aLabel="Inbound"
             bLabel="Outbound"
-            aColor="var(--color-up)"
-            bColor="var(--color-down)"
             rows={[
               {
                 label: 'Rozo',
