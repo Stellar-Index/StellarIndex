@@ -6,6 +6,7 @@ import { SourceTopChart } from '@/app/dexes/[source]/SourceTopChart';
 import { useSources } from '@/api/hooks';
 import { useLastPathSegment } from '@/lib/useLastPathSegment';
 
+import { sourceLabel, sourceUnitsLabel } from '../sourceLabel';
 import { SourceHealthPanel } from './SourceHealthPanel';
 
 /**
@@ -19,8 +20,9 @@ export function SourcePathView() {
   const sources = useSources();
   // The top-pair chart selects by source, which the API refuses for data
   // vendors; wait for the registry's `selectable` flag rather than guess.
-  const selectable =
-    sources.data?.find((s) => s.name === name)?.selectable === true;
+  const row = sources.data?.find((s) => s.name === name);
+  const selectable = row?.selectable === true;
+  const label = name ? sourceLabel(name) : '';
 
   return (
     <div className="space-y-6">
@@ -28,15 +30,23 @@ export function SourcePathView() {
         breadcrumbs={[
           { label: 'Home', href: '/' },
           { label: 'Sources', href: '/sources' },
-          { label: name || 'Source' },
+          { label: label || 'Source' },
         ]}
-        title={<span className="break-all">{name || 'Loading…'}</span>}
+        title={<span className="break-all">{label || 'Loading…'}</span>}
+        meta={
+          label !== name ? <span className="font-mono">{name}</span> : undefined
+        }
       />
       {name && (
         <>
           <SourceHealthPanel source={name} />
-          <SourceStatsPanel source={name} />
-          {selectable && <SourceTopChart source={name} sourceName={name} />}
+          <SourceStatsPanel
+            source={name}
+            unitsLabel={
+              row ? sourceUnitsLabel(row.class, row.subclass) : 'markets'
+            }
+          />
+          {selectable && <SourceTopChart source={name} sourceName={label} />}
         </>
       )}
     </div>

@@ -38,6 +38,8 @@ export type ChartTheme = {
   volUp: string;
   volDown: string;
   brand: string;
+  brandFill: string;
+  volNeutral: string;
 };
 
 /** Read the current (dark) chart theme from the design tokens. */
@@ -59,6 +61,8 @@ export function readChartTheme(): ChartTheme {
     volUp: withAlpha(up, 0.4),
     volDown: withAlpha(down, 0.4),
     brand,
+    brandFill: withAlpha(brand, 0.14),
+    volNeutral: withAlpha(ink, 0.35),
   };
 }
 

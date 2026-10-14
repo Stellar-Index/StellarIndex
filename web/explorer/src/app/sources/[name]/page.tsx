@@ -3,7 +3,20 @@ import Link from 'next/link';
 import { Suspense } from 'react';
 
 import { EntityNotFoundShell } from '@/components/EntityNotFoundShell';
-import { Container, PageHeader } from '@/components/ui';
+import { Panel } from '@/components/reveal';
+import {
+  Badge,
+  Container,
+  PageHeader,
+  TBody,
+  TR,
+  Table,
+  Td,
+  Th,
+  THead,
+} from '@/components/ui';
+import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
+import { sourceLabel, sourceUnitsLabel } from '../sourceLabel';
 import { SourceHealthPanel } from './SourceHealthPanel';
 import { SourcePathView } from './SourcePathView';
 import { SourcePeerBars } from './SourcePeerBars';
@@ -15,8 +28,10 @@ import {
   formatCompactUnits,
   formatPairPrice,
 } from '@/lib/format';
+import { asExample } from '@/api/client';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES, shellMetadata } from '@/lib/seo';
 import { shortAssetText } from '@/lib/asset-label';
+import { cn } from '@/lib/cn';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
 // Sources that also have a dedicated DEX or CEX detail page — used to
@@ -90,7 +105,8 @@ export async function generateMetadata({
     );
   }
   const canonical = `${CURRENT_NETWORK.explorerUrl}/sources/${encodeURIComponent(name)}`;
-  const title = `${name} — source detail`;
+  const label = sourceLabel(name);
+  const title = `${label} — source detail`;
   const description = `Per-venue source metadata, ingest cursor, and contribution profile for ${name}.`;
   return {
     title,
@@ -212,6 +228,7 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
   // blended); the API says which sources it accepts via `selectable`.
   const selectable = source.selectable === true;
   const topMarkets = selectable ? await fetchSourceMarkets(name) : null;
+  const label = sourceLabel(name);
 
   // BreadcrumbList JSON-LD derives from the visible Crumb[] inside Breadcrumbs below.
   return (
@@ -220,60 +237,65 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
         breadcrumbs={[
           { label: 'Home', href: '/' },
           { label: 'Sources', href: '/sources' },
-          { label: name },
+          { label },
         ]}
-        title={name}
+        title={label}
+        meta={
+          label !== name ? <span className="font-mono">{name}</span> : undefined
+        }
         actions={
           <>
-            <ClassBadge cls={source.class} />
-            {source.subclass && (
-              <span className="bg-surface-subtle text-ink-body rounded-sm px-2 py-0.5 font-mono text-xs tracking-wider uppercase">
-                {source.subclass}
-              </span>
-            )}
-            {source.paid && (
-              <span className="bg-warn-50 text-warn-700 rounded-sm px-2 py-0.5 text-[11px] tracking-wider uppercase">
-                paid
-              </span>
-            )}
+            <Badge>{source.class}</Badge>
+            {source.subclass && <Badge>{source.subclass}</Badge>}
+            {source.paid && <Badge>Paid</Badge>}
           </>
         }
       />
       {/* Cross-link to the richer category view when one exists. */}
-      <div className="flex flex-wrap gap-3 text-xs">
-        {(DEX_PAGES.has(name) || source.subclass === 'dex') && (
-          <Link
-            href={`/dexes/${encodeURIComponent(name)}`}
-            className="text-brand-600 hover:underline"
-          >
-            View as DEX — pools &amp; chart →
-          </Link>
-        )}
-        {EXCHANGE_PAGES.has(name) && (
-          <Link
-            href={`/exchanges/${encodeURIComponent(name)}`}
-            className="text-brand-600 hover:underline"
-          >
-            View exchange page →
-          </Link>
-        )}
-        {source.class === 'oracle' && (
-          <Link href="/oracles" className="text-brand-600 hover:underline">
-            View in oracles →
-          </Link>
-        )}
-      </div>
+      {(DEX_PAGES.has(name) ||
+        source.subclass === 'dex' ||
+        EXCHANGE_PAGES.has(name) ||
+        source.class === 'oracle') && (
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+          {(DEX_PAGES.has(name) || source.subclass === 'dex') && (
+            <Link
+              href={`/dexes/${encodeURIComponent(name)}`}
+              className={LINK_CLASS}
+            >
+              View as DEX
+            </Link>
+          )}
+          {EXCHANGE_PAGES.has(name) && (
+            <Link
+              href={`/exchanges/${encodeURIComponent(name)}`}
+              className={LINK_CLASS}
+            >
+              View exchange page
+            </Link>
+          )}
+          {source.class === 'oracle' && (
+            <Link href="/oracles" className={LINK_CLASS}>
+              View in oracles
+            </Link>
+          )}
+        </div>
+      )}
 
-      <Panel title="Registry profile">
-        <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-          <Stat label="Class" value={source.class} mono />
-          <Stat label="Subclass" value={source.subclass ?? '—'} mono />
-          <Stat
+      <Panel
+        headingLevel={2}
+        title="Registry profile"
+        hint="Static configuration from the source registry"
+        source={asExample('/v1/sources')}
+      >
+        <dl className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-4">
+          <Fact label="Class" value={source.class} />
+          <Fact label="Subclass" value={source.subclass ?? '—'} />
+          <Fact
             label="Contributes to VWAP"
             value={source.include_in_vwap ? 'yes' : 'no'}
             tone={source.include_in_vwap ? 'ok' : undefined}
           />
-          <Stat
+          <Fact
             label="Default weight"
             value={
               source.default_weight != null
@@ -282,20 +304,16 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
             }
             mono
           />
-          <Stat
+          <Fact
             label="Backfill available"
             value={source.backfill_available ? 'yes' : 'no'}
           />
-          <Stat
+          <Fact
             label="Backfill safe (audited)"
             value={source.backfill_safe ? 'yes' : 'no'}
             tone={source.backfill_safe ? 'ok' : 'warn'}
           />
-          <Stat
-            label="Paid tier"
-            value={source.paid ? 'yes' : 'no'}
-            tone={source.paid ? 'warn' : undefined}
-          />
+          <Fact label="Paid tier" value={source.paid ? 'yes' : 'no'} />
         </dl>
       </Panel>
 
@@ -309,151 +327,135 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
           under cold-cache and was eating the static-export budget. */}
       <SourceStatsPanel
         source={name}
-        unitsLabel={
-          source.class === 'exchange' && source.subclass !== 'dex'
-            ? 'pairs'
-            : 'pools'
-        }
+        unitsLabel={sourceUnitsLabel(source.class, source.subclass)}
       />
 
       <SourcePeerBars source={name} />
 
-      {selectable && <SourceTopChart source={name} sourceName={name} />}
+      {selectable && <SourceTopChart source={name} sourceName={label} />}
 
       <Panel
+        headingLevel={2}
         title="Ingest cursors"
-        subtitle={`${cursors.length} entries from /v1/diagnostics/cursors`}
-        bodyClassName="-mx-4"
+        hint={`${cursors.length} entries · live ingest position per sub-source`}
+        source={asExample('/v1/diagnostics/cursors')}
+        bodyClassName={cursors.length === 0 ? undefined : '-mx-4 -mb-4'}
       >
         {cursors.length === 0 ? (
-          <p className="text-ink-muted px-4 py-3 text-sm">
+          <p className="text-ink-muted text-sm">
             No cursor recorded for this source.
           </p>
         ) : (
           // WCAG 1.4.10 Reflow: wide mono columns scroll inside the panel
           // instead of pushing the whole page sideways at 320px.
           <div className="overflow-x-auto">
-            <table className="divide-line min-w-full divide-y text-sm">
-              <thead>
-                <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
-                  <th className="px-4 py-2 font-medium">Sub-source</th>
-                  <th className="px-4 py-2 text-right font-medium">
-                    Last ledger
-                  </th>
-                  <th className="px-4 py-2 text-right font-medium">Updated</th>
-                  <th className="px-4 py-2 text-right font-medium">Lag</th>
+            <Table>
+              <THead>
+                <tr>
+                  <Th>Sub-source</Th>
+                  <Th align="right">Last ledger</Th>
+                  <Th align="right">Updated</Th>
+                  <Th align="right">Lag</Th>
                 </tr>
-              </thead>
-              <tbody className="divide-line-subtle divide-y">
+              </THead>
+              <TBody>
                 {cursors.map((c, i) => (
-                  <tr
-                    key={`${c.sub_source ?? ''}|${i}`}
-                    className="hover:bg-surface-muted"
-                  >
-                    <td className="px-4 py-2 font-mono text-xs">
-                      {c.sub_source || '—'}
-                    </td>
-                    <td className="px-4 py-2 text-right font-mono tabular-nums">
-                      #{c.last_ledger.toLocaleString('en-US')}
-                    </td>
-                    <td className="text-ink-muted px-4 py-2 text-right font-mono text-xs">
+                  <TR key={`${c.sub_source ?? ''}|${i}`}>
+                    <Td className="font-mono text-xs">{c.sub_source || '—'}</Td>
+                    <Td align="right" className="font-mono">
+                      #{c.last_ledger}
+                    </Td>
+                    <Td
+                      align="right"
+                      className="text-ink-muted font-mono text-xs"
+                    >
                       {c.last_updated.replace('T', ' ').slice(0, 19)} UTC
-                    </td>
-                    <td className="px-4 py-2 text-right">
+                    </Td>
+                    <Td align="right">
                       <LagBadge seconds={c.lag_seconds} />
-                    </td>
-                  </tr>
+                    </Td>
+                  </TR>
                 ))}
-              </tbody>
-            </table>
+              </TBody>
+            </Table>
           </div>
         )}
       </Panel>
 
       {selectable && (
         <Panel
+          headingLevel={2}
           title="Top markets via this source"
-          subtitle={`${topMarkets ? topMarkets.length : '—'} pairs · ranked by 24h USD volume · /v1/markets?source=${name}`}
-          bodyClassName="-mx-4"
+          hint={`${topMarkets ? topMarkets.length : '—'} pairs · ranked by 24h USD volume`}
+          source={asExample('/v1/markets', {
+            source: name,
+            order_by: 'volume_24h_usd_desc',
+            limit: 25,
+          })}
+          bodyClassName={
+            topMarkets && topMarkets.length > 0 ? '-mx-4 -mb-4' : undefined
+          }
         >
           {!topMarkets ? (
-            <p className="text-ink-muted px-4 py-3 text-sm">
+            <p className="text-ink-muted text-sm">
               Market list unavailable for this build.
             </p>
           ) : topMarkets.length === 0 ? (
-            <p className="text-ink-muted px-4 py-3 text-sm">
+            <p className="text-ink-muted text-sm">
               No markets observed for this source in the trailing 14 days.
             </p>
           ) : (
             // WCAG 1.4.10 Reflow: wide mono columns scroll inside the panel
             // instead of pushing the whole page sideways at 320px.
             <div className="overflow-x-auto">
-              <table className="divide-line min-w-full divide-y text-sm">
-                <thead>
-                  <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
-                    <th className="px-4 py-2 font-medium">Base</th>
-                    <th className="px-4 py-2 font-medium">Quote</th>
-                    <th className="px-4 py-2 text-right font-medium">
-                      Last price
-                    </th>
-                    <th className="px-4 py-2 text-right font-medium">
-                      24h volume
-                    </th>
-                    <th className="px-4 py-2 text-right font-medium">
-                      24h trades
-                    </th>
+              <Table>
+                <THead>
+                  <tr>
+                    <Th>Base</Th>
+                    <Th>Quote</Th>
+                    <Th align="right">Last price</Th>
+                    <Th align="right">24h volume</Th>
+                    <Th align="right">24h trades</Th>
                   </tr>
-                </thead>
-                <tbody className="divide-line-subtle divide-y">
+                </THead>
+                <TBody>
                   {topMarkets.map((m) => {
-                    const slug = encodeURIComponent(`${m.base}~${m.quote}`);
+                    const slug = `${m.base}~${m.quote}`;
+                    const href = `/markets/${encodeURIComponent(slug)}`;
                     return (
-                      <tr
-                        key={`${m.base}|${m.quote}`}
-                        className="hover:bg-surface-muted"
-                      >
-                        <td className="px-4 py-2">
+                      <TR key={slug}>
+                        <Td>
                           <Link
-                            href={`/markets/${slug}`}
-                            className="hover:text-brand-600 font-mono text-xs"
+                            href={href}
+                            className="text-ink hover:text-brand-600"
                           >
                             {shortAssetText(m.base)}
                           </Link>
-                        </td>
-                        <td className="px-4 py-2">
+                        </Td>
+                        <Td>
                           <Link
-                            href={`/markets/${slug}`}
-                            className="hover:text-brand-600 font-mono text-xs"
+                            href={href}
+                            className="text-ink-muted hover:text-brand-600"
                           >
                             {shortAssetText(m.quote)}
                           </Link>
-                        </td>
-                        <td className="px-4 py-2 text-right">
-                          {m.last_price ? (
-                            <span className="text-ink-body font-mono tabular-nums">
-                              {formatLastPrice(m.last_price)}
-                            </span>
-                          ) : (
-                            <span className="text-ink-faint">—</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-2 text-right">
-                          {m.volume_24h_usd ? (
-                            <span className="font-mono tabular-nums">
-                              ${formatCompactUnits(m.volume_24h_usd)}
-                            </span>
-                          ) : (
-                            <span className="text-ink-faint">—</span>
-                          )}
-                        </td>
-                        <td className="text-ink-muted px-4 py-2 text-right font-mono tabular-nums">
+                        </Td>
+                        <Td align="right" className="font-mono">
+                          {formatLastPrice(m.last_price)}
+                        </Td>
+                        <Td align="right" className="font-mono">
+                          {m.volume_24h_usd
+                            ? `$${formatCompactUnits(m.volume_24h_usd)}`
+                            : '—'}
+                        </Td>
+                        <Td align="right" className="font-mono">
                           {formatCompact(m.trade_count_24h)}
-                        </td>
-                      </tr>
+                        </Td>
+                      </TR>
                     );
                   })}
-                </tbody>
-              </table>
+                </TBody>
+              </Table>
             </div>
           )}
         </Panel>
@@ -462,52 +464,34 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
   );
 }
 
-function formatLastPrice(raw: string): string {
+const LINK_CLASS = 'text-brand-600 font-medium hover:underline';
+
+function formatLastPrice(raw: string | null | undefined): string {
+  if (!raw) return '—';
   return formatPairPrice(raw);
 }
 
-function Panel({
-  title,
-  subtitle,
-  bodyClassName,
-  children,
-}: {
-  title: string;
-  subtitle?: string;
-  bodyClassName?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="border-line bg-surface rounded-lg border p-4">
-      <header className="mb-3 flex items-baseline justify-between">
-        <h2 className="text-h3 text-ink font-semibold">{title}</h2>
-        {subtitle && <span className="text-ink-faint text-xs">{subtitle}</span>}
-      </header>
-      <div className={bodyClassName ?? ''}>{children}</div>
-    </section>
-  );
-}
-
-function Stat({
+function Fact({
   label,
   value,
-  tone,
   mono,
+  tone,
 }: {
   label: string;
   value: string;
-  tone?: 'ok' | 'warn';
   mono?: boolean;
+  tone?: 'ok' | 'warn';
 }) {
-  const valueClass =
-    tone === 'ok' ? 'text-up' : tone === 'warn' ? 'text-warn-700' : '';
   return (
     <div>
-      <dt className="text-ink-muted text-[10px] tracking-wider uppercase">
-        {label}
-      </dt>
+      <dt className={PANEL_LABEL_CLASS}>{label}</dt>
       <dd
-        className={`mt-1 ${mono ? 'font-mono' : 'font-medium'} text-sm tabular-nums ${valueClass}`}
+        className={cn(
+          'text-ink mt-1 text-sm',
+          mono && 'font-mono',
+          tone === 'ok' && 'text-ok-700',
+          tone === 'warn' && 'text-warn-700',
+        )}
       >
         {value}
       </dd>
@@ -515,42 +499,18 @@ function Stat({
   );
 }
 
-function ClassBadge({ cls }: { cls: Source['class'] }) {
-  const tone =
-    cls === 'exchange'
-      ? 'bg-up-subtle text-up-strong'
-      : cls === 'oracle'
-        ? 'bg-brand-50 text-brand-700'
-        : cls === 'aggregator'
-          ? 'bg-warn-50 text-warn-700'
-          : 'bg-surface-subtle text-ink-body';
-  return (
-    <span
-      className={`rounded-sm px-2 py-0.5 font-mono text-xs tracking-wider uppercase ${tone}`}
-    >
-      {cls}
-    </span>
-  );
-}
-
 function LagBadge({ seconds }: { seconds: number }) {
-  const tone =
-    seconds <= 60
-      ? 'bg-up-subtle text-up'
-      : seconds <= 600
-        ? 'bg-warn-50 text-warn-700'
-        : 'bg-down-subtle text-down';
+  const s = Math.max(0, seconds);
+  const tone = s <= 60 ? 'ok' : s <= 600 ? 'warn' : 'bad';
   const label =
-    seconds < 60
-      ? `${seconds.toFixed(0)}s`
-      : seconds < 3600
-        ? `${(seconds / 60).toFixed(1)}m`
-        : `${(seconds / 3600).toFixed(1)}h`;
+    s < 60
+      ? `${s.toFixed(0)}s`
+      : s < 3600
+        ? `${(s / 60).toFixed(1)}m`
+        : `${(s / 3600).toFixed(1)}h`;
   return (
-    <span
-      className={`inline-flex items-center rounded-sm px-2 py-0.5 font-mono text-xs tabular-nums ${tone}`}
-    >
+    <Badge tone={tone} className="tnum">
       {label}
-    </span>
+    </Badge>
   );
 }

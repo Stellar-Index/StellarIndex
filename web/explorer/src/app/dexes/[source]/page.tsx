@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { hrefFor } from '@/lib/hrefFor';
 import { notFound } from 'next/navigation';
-import { ExternalLink } from 'lucide-react';
 
+import { ExternalRef } from '@/components/ExternalRef';
 import { Container, PageHeader } from '@/components/ui';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES } from '@/lib/seo';
 import { DexAnalyticsSection } from './DexAnalyticsSection';
@@ -57,6 +57,8 @@ export async function generateMetadata({
   };
 }
 
+const LINK_CLASS = 'text-brand-600 font-medium hover:underline';
+
 export default async function SourceDetailPage({ params }: { params: Params }) {
   const { source } = await params;
   const info = DEX_INFO[source];
@@ -72,11 +74,7 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
           { label: info.name },
         ]}
         title={info.name}
-        actions={
-          <span className="bg-surface-subtle text-ink-body rounded-sm px-1.5 py-0.5 text-[10px] tracking-wider uppercase">
-            {info.type}
-          </span>
-        }
+        meta={info.type}
       />
 
       <SourceStatsPanel
@@ -99,31 +97,28 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
       <PoolsTable source={source} sourceName={info.name} />
 
       {source === 'sdex' && (
-        <p className="text-ink-muted text-xs">
-          Live order-book depth for any SDEX pair is on its market page (e.g.{' '}
-          <Link href="/markets" className="text-brand-600 hover:underline">
-            pick a market
-          </Link>{' '}
-          → the SDEX order book panel) or directly via{' '}
+        <p className="text-ink-muted text-sm">
+          Live order-book depth for any SDEX pair is on its{' '}
+          <Link href="/markets" className={LINK_CLASS}>
+            market page
+          </Link>
+          , in the SDEX order book panel, or directly from{' '}
           <code className="font-mono">/v1/sdex/orderbook</code>.
         </p>
       )}
       {source === 'soroswap' && <PairReservesPanel />}
       {source === 'aquarius' && (
-        <p className="text-ink-muted text-xs">
+        <p className="text-ink-muted text-sm">
           Aquarius per-pool reserve snapshots (latest post-state depth per pool)
           are on its{' '}
-          <Link
-            href="/protocols/aquarius"
-            className="text-brand-600 hover:underline"
-          >
+          <Link href="/protocols/aquarius" className={LINK_CLASS}>
             protocol analytics page
           </Link>
           ; the TVL stat above is derived from the same snapshots.
         </p>
       )}
       {source === 'sushiswap_v3' && (
-        <p className="text-ink-muted text-xs">
+        <p className="text-ink-muted text-sm">
           <span title="A concentrated-liquidity pool spreads depth across tick ranges, so its token balances are not a two-sided reserve.">
             No reserve or TVL by design (concentrated liquidity)
           </span>
@@ -131,19 +126,13 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
         </p>
       )}
       {(source === 'phoenix' || source === 'comet') && (
-        <p className="text-ink-muted text-xs">
+        <p className="text-ink-muted text-sm">
           Per-pool reserve and depth views are currently served for{' '}
-          <Link
-            href="/dexes/soroswap"
-            className="text-brand-600 hover:underline"
-          >
+          <Link href="/dexes/soroswap" className={LINK_CLASS}>
             Soroswap
           </Link>{' '}
           and{' '}
-          <Link
-            href="/protocols/aquarius"
-            className="text-brand-600 hover:underline"
-          >
+          <Link href="/protocols/aquarius" className={LINK_CLASS}>
             Aquarius
           </Link>{' '}
           only. {info.name} has no verified reserve source yet, so no TVL is
@@ -151,30 +140,14 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
         </p>
       )}
 
-      <div className="flex flex-wrap gap-3 text-xs">
-        <Link
-          href={hrefFor.protocol(source)}
-          className="text-ink-muted hover:text-brand-600 inline-flex items-center gap-1"
-        >
-          Protocol analytics →
+      <div className="border-line flex flex-wrap gap-x-4 gap-y-1 border-t pt-4 text-xs">
+        <Link href={hrefFor.protocol(source)} className={LINK_CLASS}>
+          Protocol analytics
         </Link>
-        <Link
-          href={hrefFor.source(source)}
-          className="text-ink-muted hover:text-brand-600 inline-flex items-center gap-1"
-        >
-          Source registry detail →
+        <Link href={hrefFor.source(source)} className={LINK_CLASS}>
+          Source registry detail
         </Link>
-        {info.contractsUrl && (
-          <a
-            href={info.contractsUrl}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="text-ink-muted inline-flex items-center gap-1 hover:underline"
-          >
-            Contracts source
-            <ExternalLink className="h-3 w-3" />
-          </a>
-        )}
+        {info.contractsUrl && <ExternalRef href={info.contractsUrl} />}
       </div>
     </Container>
   );

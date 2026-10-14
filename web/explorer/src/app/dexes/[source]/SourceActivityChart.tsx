@@ -66,6 +66,9 @@ export function SourceActivityChart({
       <LineChart
         data={data}
         height={height}
+        tone="brand"
+        area={false}
+        priceFormat={{ type: 'volume' }}
         timeVisible
         legend={{
           valueLabel: 'Trades',
