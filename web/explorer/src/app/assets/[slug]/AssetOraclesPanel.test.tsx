@@ -9,7 +9,12 @@ vi.mock('@/api/client', async () => {
 });
 
 import { apiGet } from '@/api/client';
-import { AssetOraclesPanel, spreadQuote } from './AssetOraclesPanel';
+import {
+  AssetOraclesPanel,
+  fractionDigits,
+  padFraction,
+  spreadQuote,
+} from './AssetOraclesPanel';
 
 const USDC = 'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
 const FAKE_USDC =
@@ -243,5 +248,21 @@ describe('spreadQuote', () => {
       /Oracle spread vs USD, 2 oracles, spread/,
     );
     expect(strip.querySelector('[title^="band: "]')).not.toBeNull();
+  });
+});
+
+describe('padFraction', () => {
+  const FIG = '\u2007';
+  it('pads with figure spaces, never zeros, to the table-wide fraction length', () => {
+    const digits = fractionDigits(['1.5', '0.000123', '42']);
+    expect(digits).toBe(6);
+    expect(padFraction('1.5000', digits)).toBe(`1.5000${FIG.repeat(2)}`);
+    expect(padFraction('42.0000', digits)).toBe(`42.0000${FIG.repeat(2)}`);
+    expect(padFraction('0.000123', digits)).toBe('0.000123');
+  });
+  it('reserves a place for the missing point and leaves blanks alone', () => {
+    expect(padFraction('0', 4)).toBe(`0${FIG.repeat(5)}`);
+    expect(padFraction('', 4)).toBe('');
+    expect(padFraction('1.2', 0)).toBe('1.2');
   });
 });

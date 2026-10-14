@@ -38,7 +38,9 @@ vi.mock('@/lib/live/hooks', async () => {
 function sideOf(counterparty: string | RegExp): string {
   const row = screen.getByText(counterparty).closest('tr');
   if (!row) throw new Error(`no row for ${String(counterparty)}`);
-  return within(row).getAllByRole('cell')[0].textContent ?? '';
+  // The side sits after the pair link, in the pair cell's trailing span.
+  const pair = within(row).getAllByRole('cell')[0];
+  return pair.querySelector(':scope > span:last-child')?.textContent ?? '';
 }
 
 describe('MarketsTabPanel side label', () => {

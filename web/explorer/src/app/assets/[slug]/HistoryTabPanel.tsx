@@ -4,6 +4,18 @@ import Link from 'next/link';
 import { hrefFor } from '@/lib/hrefFor';
 
 import { Panel } from '@/components/reveal';
+import {
+  Badge,
+  Callout,
+  Skeleton,
+  Table,
+  THead,
+  TBody,
+  TR,
+  Th,
+  Td,
+} from '@/components/ui';
+import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 import { asExample } from '@/api/client';
 import { useHistory, type TradeRow } from '@/api/hooks';
 import { useObservationsFollow } from '@/lib/live/hooks';
@@ -52,9 +64,8 @@ export function HistoryTabPanel({
           quote: DEFAULT_QUOTE,
           limit: HISTORY_LIMIT,
         })}
-        bodyClassName="text-sm text-down-strong"
       >
-        Failed to load history.
+        <Callout tone="bad">Failed to load history.</Callout>
       </Panel>
     );
   }
@@ -69,9 +80,13 @@ export function HistoryTabPanel({
           quote: DEFAULT_QUOTE,
           limit: HISTORY_LIMIT,
         })}
-        bodyClassName="text-sm text-ink-muted"
       >
-        Loading…
+        <div className="space-y-3" aria-busy="true">
+          <span className="sr-only">Loading trades</span>
+          <Skeleton className="h-4 w-3/5" aria-hidden />
+          <Skeleton className="h-4 w-full" aria-hidden />
+          <Skeleton className="h-4 w-4/5" aria-hidden />
+        </div>
       </Panel>
     );
   }
@@ -104,74 +119,75 @@ export function HistoryTabPanel({
         quote: DEFAULT_QUOTE,
         limit: HISTORY_LIMIT,
       })}
-      bodyClassName="overflow-x-auto"
+      bodyClassName="-mx-4"
     >
-      <TradeScatter
-        trades={rows.map((r) => ({
-          ...r,
-          base_decimals: r.base_decimals ?? decimals,
-        }))}
-      />
-      <TradeVenueBars rows={rows} />
-      <table className="w-full min-w-[640px] text-sm">
-        <thead className="text-ink-muted text-left text-xs tracking-wider uppercase">
-          <tr className="border-line border-b">
-            <th className="py-2 pr-3 font-medium">When</th>
-            <th className="py-2 pr-3 font-medium">Source</th>
-            <th className="py-2 pr-3 font-medium">Ledger</th>
-            <th className="py-2 pr-3 text-right font-medium">Base amount</th>
-            <th className="py-2 pr-3 text-right font-medium">Quote amount</th>
-            <th className="py-2 pr-3 text-right font-medium">Price</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr
-              key={`${r.tx_hash}-${r.op_index}`}
-              className="border-line-subtle border-b last:border-0"
-            >
-              <td className="text-ink-body py-2 pr-3 font-mono text-xs">
-                {r.tx_hash ? (
-                  <Link
-                    href={`/transactions/${r.tx_hash}/`}
-                    className="hover:text-brand-600 hover:underline"
-                    title={`View transaction ${r.tx_hash}`}
-                  >
-                    {formatRelative(r.ts)}
-                  </Link>
-                ) : (
-                  formatRelative(r.ts)
-                )}
-              </td>
-              <td className="py-2 pr-3">
-                <Link
-                  href={hrefFor.source(r.source)}
-                  className="bg-surface-subtle text-ink-body hover:text-brand-600 rounded-sm px-1.5 py-0.5 font-mono text-[11px]"
-                >
-                  {r.source}
-                </Link>
-              </td>
-              <td className="text-ink-muted py-2 pr-3 font-mono text-xs">
-                {r.ledger}
-              </td>
-              <td className="py-2 pr-3 text-right font-mono text-xs">
-                {formatUnitsReadable(
-                  r.base_amount,
-                  r.base_decimals ?? decimals,
-                )}
-              </td>
-              <td className="py-2 pr-3 text-right font-mono text-xs">
-                {/* quote leg is always DEFAULT_QUOTE ('native' XLM, fixed 7
-                    decimals) — never the base asset's own `decimals` prop. */}
-                {formatUnitsReadable(r.quote_amount, r.quote_decimals ?? 7)}
-              </td>
-              <td className="py-2 pr-3 text-right font-mono text-xs">
-                {r.price ?? '—'}
-              </td>
+      <div className="px-4">
+        <TradeScatter
+          trades={rows.map((r) => ({
+            ...r,
+            base_decimals: r.base_decimals ?? decimals,
+          }))}
+        />
+        <TradeVenueBars rows={rows} />
+      </div>
+      <div className="overflow-x-auto">
+        <Table className="min-w-[640px]">
+          <THead>
+            <tr>
+              <Th>When</Th>
+              <Th>Source</Th>
+              <Th>Ledger</Th>
+              <Th align="right">Base amount</Th>
+              <Th align="right">Quote amount</Th>
+              <Th align="right">Price</Th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </THead>
+          <TBody>
+            {rows.map((r) => (
+              <TR key={`${r.tx_hash}-${r.op_index}`}>
+                <Td className="font-mono text-xs whitespace-nowrap">
+                  {r.tx_hash ? (
+                    <Link
+                      href={`/transactions/${r.tx_hash}/`}
+                      className="hover:text-brand-600 hover:underline"
+                      title={`View transaction ${r.tx_hash}`}
+                    >
+                      {formatRelative(r.ts)}
+                    </Link>
+                  ) : (
+                    formatRelative(r.ts)
+                  )}
+                </Td>
+                <Td>
+                  <Link
+                    href={hrefFor.source(r.source)}
+                    className="hover:underline"
+                  >
+                    <Badge tone="neutral" className="font-mono">
+                      {r.source}
+                    </Badge>
+                  </Link>
+                </Td>
+                <Td className="text-ink-muted font-mono text-xs">{r.ledger}</Td>
+                <Td align="right" className="font-mono text-xs">
+                  {formatUnitsReadable(
+                    r.base_amount,
+                    r.base_decimals ?? decimals,
+                  )}
+                </Td>
+                <Td align="right" className="font-mono text-xs">
+                  {/* quote leg is always DEFAULT_QUOTE ('native' XLM, fixed 7
+                    decimals) — never the base asset's own `decimals` prop. */}
+                  {formatUnitsReadable(r.quote_amount, r.quote_decimals ?? 7)}
+                </Td>
+                <Td align="right" className="font-mono text-xs">
+                  {r.price ?? '—'}
+                </Td>
+              </TR>
+            ))}
+          </TBody>
+        </Table>
+      </div>
     </Panel>
   );
 }
@@ -196,9 +212,7 @@ function TradeVenueBars({ rows }: { rows: TradeRow[] }) {
   if (items.length < 2) return null;
   return (
     <div className="pb-3">
-      <h3 className="text-ink-muted mb-2 text-[11px] font-semibold tracking-wider uppercase">
-        Trades by venue
-      </h3>
+      <h3 className={`${PANEL_LABEL_CLASS} mb-2`}>Trades by venue</h3>
       <HBarList items={items} ariaLabel="Trade count by venue" />
     </div>
   );

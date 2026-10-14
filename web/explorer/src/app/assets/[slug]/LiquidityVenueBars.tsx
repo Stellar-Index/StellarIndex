@@ -1,5 +1,6 @@
 import { HBarList, type HBarItem } from '@/components/charts/Bars';
 import { formatReadable, sumDecimalStrings } from '@/lib/format';
+import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 
 type PoolVolume = {
   source: string;
@@ -43,9 +44,7 @@ export function LiquidityVenueBars({ pools }: { pools: PoolVolume[] }) {
   if (items.length < 2) return null;
   return (
     <div className="px-4 pb-3">
-      <h3 className="text-ink-muted mb-2 text-[11px] font-semibold tracking-wider uppercase">
-        24h volume by venue
-      </h3>
+      <h3 className={`${PANEL_LABEL_CLASS} mb-2`}>24h volume by venue</h3>
       <HBarList items={items} ariaLabel="24h USD volume by venue" />
     </div>
   );
