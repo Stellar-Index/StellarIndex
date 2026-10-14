@@ -426,8 +426,8 @@ func TestStream_PerIPConcurrentCap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open over-cap stream: %v", err)
 	}
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("over-cap stream status = %d, want 503 (per-IP cap)", resp.StatusCode)
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("over-cap stream status = %d, want 429 (per-IP cap)", resp.StatusCode)
 	}
 	_ = resp.Body.Close()
 
@@ -507,8 +507,8 @@ func TestStream_PerIPCapAggregatesIPv6Slash64(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open over-cap stream: %v", err)
 	}
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("over-cap stream (different address, same /64) status = %d, want 503", resp.StatusCode)
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("over-cap stream (different address, same /64) status = %d, want 429", resp.StatusCode)
 	}
 	_ = resp.Body.Close()
 

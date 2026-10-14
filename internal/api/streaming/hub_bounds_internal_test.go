@@ -171,8 +171,8 @@ func TestStream_TopicCapRefusedWith503(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/?pair=NEW/USD", nil)
 	Stream(rec, req, hub, []string{"closed:NEW/USD"}, StreamOptions{HeartbeatInterval: 30 * time.Second})
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("stream status = %d, want 503", rec.Code)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("stream status = %d, want 429", rec.Code)
 	}
 	if ct := rec.Header().Get("Content-Type"); ct == "text/event-stream" {
 		t.Fatal("refused stream sent SSE headers")
@@ -221,8 +221,8 @@ func TestStream_CapRejectsBeforeTopicCreation(t *testing.T) {
 		t.Fatalf("open over-cap stream: %v", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("over-cap stream status = %d, want 503", resp.StatusCode)
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("over-cap stream status = %d, want 429", resp.StatusCode)
 	}
 
 	hub.mu.RLock()

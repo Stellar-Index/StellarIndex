@@ -98,8 +98,8 @@ func TestStream_ActiveAndRejectedStreamsAreMetered(t *testing.T) {
 		t.Fatalf("open over-cap stream: %v", err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("over-cap status = %d, want 503", resp.StatusCode)
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("over-cap status = %d, want 429", resp.StatusCode)
 	}
 	if got := testutil.ToFloat64(rejected) - rejectedBefore; got != 1 {
 		t.Fatalf("rejected{per_ip_cap} delta = %v, want 1", got)
@@ -1025,8 +1025,8 @@ func TestStream_RejectedStreamsCounter(t *testing.T) {
 		t.Fatalf("open over-cap stream: %v", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("over-cap status = %d, want 503", resp.StatusCode)
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("over-cap status = %d, want 429", resp.StatusCode)
 	}
 
 	if got := streaming.StreamsRejected() - before; got != 1 {

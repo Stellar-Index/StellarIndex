@@ -44,7 +44,7 @@ func TryAcquireStreamSlot(w http.ResponseWriter, r *http.Request) (release func(
 	return admitStream(w, r)
 }
 
-// admitStream reserves one slot against the global and per-IP caps, writing the 503 itself on refusal. It runs BEFORE [Hub.Subscribe]
+// admitStream reserves one slot against the global and per-IP caps, writing the refusal itself (503 on the global cap, 429 on the per-address cap). It runs BEFORE [Hub.Subscribe]
 // (client-supplied topic key)
 // so the caps bound Hub memory, not just sockets: a refused connection must never mint a topic. The returned release is idempotent.
 func admitStream(w http.ResponseWriter, r *http.Request) (release func(), ok bool) {
@@ -61,7 +61,7 @@ func admitStream(w http.ResponseWriter, r *http.Request) (release func(), ok boo
 		releaseGlobal()
 		atomic.AddInt64(&rejectedStreams, 1)
 		obs.APISSEStreamsRejectedTotal.WithLabelValues("per_ip_cap").Inc()
-		http.Error(w, "too many concurrent streams from your address", http.StatusServiceUnavailable)
+		http.Error(w, "too many concurrent streams from your address", http.StatusTooManyRequests)
 		return nil, false
 	}
 	return func() {
@@ -141,7 +141,7 @@ func Stream(w http.ResponseWriter, r *http.Request, hub *Hub, topics []string, o
 func WriteSubscribeRefused(w http.ResponseWriter) {
 	atomic.AddInt64(&rejectedStreams, 1)
 	obs.APISSEStreamsRejectedTotal.WithLabelValues("topic_cap").Inc()
-	http.Error(w, "too many concurrent stream topics", http.StatusServiceUnavailable)
+	http.Error(w, "too many concurrent stream topics", http.StatusTooManyRequests)
 }
 
 // StreamFromChannel is the lower-level SSE writer for any receive-only event channel (events computed per connection); it returns when the request context cancels or the caller closes ch.
