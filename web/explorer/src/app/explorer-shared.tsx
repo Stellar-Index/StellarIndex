@@ -11,7 +11,13 @@
 // unknown params).
 
 import type { components, paths } from '@/api/types';
-import { CopyButton } from '@/components/ui';
+import Link from 'next/link';
+import { Fragment } from 'react';
+import { AssetLink } from '@/components/AssetLink';
+
+import { CopyButton, Fact, FactList } from '@/components/ui';
+import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
+import { cn } from '@/lib/cn';
 import { formatUnitsReadable } from '@/lib/format';
 
 // ---------------------------------------------------------------------------
@@ -176,6 +182,7 @@ const CLASSIC_AMOUNT_FIELDS = new Set([
 // else JSON.
 export function renderOpFieldValue(key: string, v: unknown): string {
   if (v == null) return '—';
+  if (key === 'price' && isPriceFraction(v)) return priceText(v);
   if (
     CLASSIC_AMOUNT_FIELDS.has(key) &&
     (typeof v === 'string' || typeof v === 'number')
@@ -194,6 +201,48 @@ export function renderOpFieldValue(key: string, v: unknown): string {
   } catch {
     return String(v);
   }
+}
+
+type PriceFraction = { n: number | string; d: number | string };
+
+export function isPriceFraction(v: unknown): v is PriceFraction {
+  if (typeof v !== 'object' || v === null) return false;
+  const { n, d } = v as Record<string, unknown>;
+  const ok = (x: unknown) =>
+    (typeof x === 'number' && Number.isInteger(x)) ||
+    (typeof x === 'string' && /^-?\d+$/.test(x));
+  return ok(n) && ok(d);
+}
+
+// A Stellar price is the rational n/d. Shown to 7 decimals (one stroop),
+// truncated by exact BigInt division; the fraction itself stays available
+// via priceFractionText for a title.
+export function priceText(p: PriceFraction): string {
+  const n = BigInt(p.n);
+  const d = BigInt(p.d);
+  if (d === 0n) return priceFractionText(p);
+  const neg = n < 0n !== d < 0n;
+  const abs = (x: bigint) => (x < 0n ? -x : x);
+  const scaled = (abs(n) * 10_000_000n) / abs(d);
+  const digits = scaled.toString().padStart(8, '0');
+  const frac = digits.slice(-7).replace(/0+$/, '');
+  return `${neg ? '-' : ''}${digits.slice(0, -7)}${frac ? `.${frac}` : ''}`;
+}
+
+export function priceFractionText(p: PriceFraction): string {
+  return `${p.n} / ${p.d}`;
+}
+
+// XDR OperationResultCode 0 is opINNER: an inner result is present, not
+// success. The inner code names the outcome and its success variant ends
+// in `_success`. Undefined when the API carried no result code.
+export function opSucceeded(
+  op: Pick<TxOperation, 'result_code' | 'inner_result'>,
+): boolean | undefined {
+  if (op.result_code == null) return undefined;
+  if (op.result_code !== 0) return false;
+  if (op.inner_result == null) return true;
+  return op.inner_result.endsWith('_success');
 }
 
 // scaledUnits scales an exact base-unit integer STRING by 10^decimals
@@ -218,10 +267,14 @@ export function scaledUnits(baseUnits: string, decimals: number): number {
   return neg ? -n : n;
 }
 
-function shortHash(h: string | undefined | null, head = 8, tail = 8): string {
+export function shortHash(
+  h: string | undefined | null,
+  head = 8,
+  tail = 8,
+): string {
   if (!h) return '—';
   if (h.length <= head + tail + 1) return h;
-  return `${h.slice(0, head)}…${h.slice(-tail)}`;
+  return `${h.slice(0, head)}…${tail > 0 ? h.slice(-tail) : ''}`;
 }
 
 export function formatTimestamp(iso: string | undefined | null): string {
@@ -268,4 +321,191 @@ export function CopyHash({
 export function CopyValue({ value }: { value: string }) {
   // Canonical CopyButton: 24×24 hit area (WCAG 2.5.8) plus a "Copied" live region.
   return <CopyButton value={value} title="Copy to clipboard" />;
+}
+
+/**
+ * HashLink — a truncated identifier that links to its entity. The full value
+ * sits in the title and, with `copy`, behind the copy button.
+ */
+export function HashLink({
+  href,
+  value,
+  head = 8,
+  tail = 8,
+  copy = false,
+  className,
+}: {
+  href: string;
+  value: string | undefined | null;
+  head?: number;
+  tail?: number;
+  copy?: boolean;
+  className?: string;
+}) {
+  if (!value) return <span className="text-ink-faint">—</span>;
+  return (
+    <span className={cn('inline-flex items-center gap-1.5', className)}>
+      <Link
+        href={href}
+        className="text-ink hover:text-brand-600 font-mono text-[13px] break-all"
+        title={value}
+      >
+        {shortHash(value, head, tail)}
+      </Link>
+      {copy && <CopyButton value={value} />}
+    </span>
+  );
+}
+
+export type AuthInvocation = {
+  kind: string;
+  contract_id?: string;
+  function_name?: string;
+  args?: string[];
+  sub_invocations?: AuthInvocation[];
+};
+
+function InvocationTree({
+  nodes,
+  depth = 0,
+}: {
+  nodes: AuthInvocation[];
+  depth?: number;
+}) {
+  return (
+    <ul
+      className={
+        depth === 0 ? 'space-y-1' : 'border-line mt-1 space-y-1 border-l pl-3'
+      }
+    >
+      {nodes.map((n, i) => (
+        <li key={i}>
+          <div className="flex flex-wrap items-baseline gap-1.5 font-mono text-xs">
+            {n.kind === 'invoke_contract' ? (
+              <>
+                {n.contract_id && (
+                  <span className="text-ink-muted" title={n.contract_id}>
+                    {shortHash(n.contract_id, 6, 4)}
+                  </span>
+                )}
+                <span className="text-brand-700 font-medium">
+                  {n.function_name}
+                </span>
+                {n.args && n.args.length > 0 && (
+                  <span className="text-ink-faint break-all">
+                    ({n.args.join(', ')})
+                  </span>
+                )}
+              </>
+            ) : (
+              <span className="text-ink-muted">create_contract</span>
+            )}
+          </div>
+          {n.sub_invocations && n.sub_invocations.length > 0 && (
+            <InvocationTree nodes={n.sub_invocations} depth={depth + 1} />
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * OpBody — the decoded body of one operation: every field but the raw XDR
+ * as facts, Soroban authorizations as a call tree, the XDR behind a
+ * disclosure. Shared by the transaction and operation pages.
+ */
+// Decoded fields whose value is a canonical asset id ("native", CODE-ISSUER
+// or a contract address); `path` is a list of them.
+const ASSET_FIELDS = new Set([
+  'asset',
+  'asset_a',
+  'asset_b',
+  'buying',
+  'selling',
+  'dest_asset',
+  'send_asset',
+]);
+
+function OpFieldValue({ k, v }: { k: string; v: unknown }) {
+  if (ASSET_FIELDS.has(k) && typeof v === 'string')
+    return <AssetLink canonical={v} />;
+  if (
+    k === 'path' &&
+    Array.isArray(v) &&
+    v.every((x) => typeof x === 'string')
+  ) {
+    if (v.length === 0)
+      return <span className="text-ink-muted">none, direct</span>;
+    return (
+      <span className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1">
+        {(v as string[]).map((a, i) => (
+          <Fragment key={`${i}-${a}`}>
+            {i > 0 && (
+              <span className="text-ink-faint" aria-hidden>
+                →
+              </span>
+            )}
+            <AssetLink canonical={a} />
+          </Fragment>
+        ))}
+      </span>
+    );
+  }
+  return <>{renderOpFieldValue(k, v)}</>;
+}
+
+export function OpBody({ op }: { op: TxOperation }) {
+  const fields = op.fields ?? {};
+  const keys = Object.keys(fields).filter((k) => k !== 'authorizations');
+  const auth = Array.isArray(fields.authorizations)
+    ? (fields.authorizations as AuthInvocation[])
+    : null;
+  return (
+    <div className="space-y-4">
+      {keys.length > 0 ? (
+        <FactList columns={3}>
+          {keys.map((k) => (
+            <Fact
+              key={k}
+              label={k.replace(/_/g, ' ')}
+              mono={!(ASSET_FIELDS.has(k) || k === 'path')}
+              title={
+                k === 'price' && isPriceFraction(fields[k])
+                  ? priceFractionText(fields[k])
+                  : undefined
+              }
+            >
+              <OpFieldValue k={k} v={fields[k]} />
+            </Fact>
+          ))}
+        </FactList>
+      ) : (
+        <p className="text-ink-muted text-sm">
+          No decoded fields for this operation type.
+        </p>
+      )}
+      {auth && auth.length > 0 && (
+        <div>
+          <div
+            className={cn(PANEL_LABEL_CLASS, 'mb-1.5 cursor-help')}
+            title="The nested contract calls this operation authorized (from the op's SorobanAuthorizationEntries). Not the full execution trace."
+          >
+            Authorized invocations
+          </div>
+          <InvocationTree nodes={auth} />
+        </div>
+      )}
+      {op.raw_xdr && (
+        <details>
+          <summary className="text-ink-muted hover:text-ink cursor-pointer text-xs font-medium">
+            Raw XDR
+          </summary>
+          <pre className="border-line bg-surface-muted text-ink-body mt-2 overflow-x-auto rounded-md border p-3 font-mono text-xs leading-relaxed break-all whitespace-pre-wrap">
+            {op.raw_xdr}
+          </pre>
+        </details>
+      )}
+    </div>
+  );
 }

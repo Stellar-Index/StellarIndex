@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
   CountSparkline,
-  FeeHeadroomBar,
   OpsPerTxBars,
   OpTypeStrip,
   ResultDonut,
@@ -61,11 +60,6 @@ describe('ChainCharts', () => {
       headroom: '9007199254740993',
     });
     expect(feeUsage('1', '0')).toBeNull();
-  });
-
-  it('renders fee headroom', () => {
-    render(<FeeHeadroomBar charged="100" max="400" format={(s) => s} />);
-    expect(screen.getByText(/25.0% of max fee used · 300 XLM/)).toBeTruthy();
   });
 
   it('counts repeated op types', () => {

@@ -1,15 +1,21 @@
 'use client';
 
+import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import {
+  Button,
+  ButtonLink,
   Container,
+  EmptyState,
+  Fact,
+  FactList,
   PageHeader,
+  Skeleton,
   Table,
-  TableWrap,
   TBody,
   Td,
   Th,
@@ -18,25 +24,24 @@ import {
   TxStatusBadge,
 } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
+import { titleCase } from '@/lib/account-format';
 import {
   type Envelope,
   type TxSummary,
-  type TxOperation,
   type TxEvent,
-  CopyHash,
-  CopyValue,
+  HashLink,
+  OpBody,
   formatTimestamp,
-  renderOpFieldValue,
+  opSucceeded,
+  shortHash,
 } from '../explorer-shared';
 
 const HASH_RE = /^[0-9a-fA-F]{64}$/;
 
 /**
- * Client view for /operation?tx=H&i=N. Fetches the containing
- * transaction (/v1/tx/{hash}) and isolates the single operation at
- * index N plus the contract events that operation emitted, so an
- * individual op gets a first-class detail page rather than only ever
- * being a row inside the tx view.
+ * Client view for /operation?tx=H&i=N. Fetches the containing transaction
+ * (/v1/tx/{hash}) and isolates the operation at index N plus the contract
+ * events it emitted, so one operation gets a first-class detail page.
  */
 export function OperationView() {
   const params = useSearchParams();
@@ -45,7 +50,7 @@ export function OperationView() {
   const idx = Number.parseInt(idxRaw, 10);
   const looksValid = HASH_RE.test(hash) && Number.isInteger(idx) && idx >= 0;
 
-  const { data, isLoading, isError, error } = useQuery<TxSummary>({
+  const q = useQuery<TxSummary>({
     queryKey: ['/v1/tx/{hash}', hash],
     enabled: looksValid,
     retry: false,
@@ -61,20 +66,22 @@ export function OperationView() {
   if (hash.length === 0 || idxRaw === '') {
     return (
       <Shell hash={null} idx={null}>
-        <Panel
+        <EmptyState
           title="No operation selected"
-          bodyClassName="text-sm text-ink-body"
-        >
-          <p>
-            This page needs a <code className="font-mono">?tx=</code> (64-char
-            transaction hash) and <code className="font-mono">?i=</code>{' '}
-            (operation index) query parameter. Open an operation from the{' '}
-            <Link href="/operations" className="text-brand-600 hover:underline">
-              operations feed
-            </Link>
-            .
-          </p>
-        </Panel>
+          description={
+            <>
+              This page needs a <code className="font-mono">?tx=</code>{' '}
+              (64-character transaction hash) and{' '}
+              <code className="font-mono">?i=</code> (operation index) query
+              parameter. Open an operation from the operations feed.
+            </>
+          }
+          action={
+            <ButtonLink href="/operations" variant="secondary" size="sm">
+              Operations feed
+            </ButtonLink>
+          }
+        />
       </Shell>
     );
   }
@@ -82,248 +89,227 @@ export function OperationView() {
   if (!looksValid) {
     return (
       <Shell hash={hash} idx={idx}>
-        <Panel
+        <EmptyState
           title="Invalid operation reference"
-          bodyClassName="text-sm text-ink-body"
-        >
-          <p>
-            An operation is addressed by a 64-hex transaction hash and a
-            non-negative index.{' '}
-            <span className="font-mono break-all">{hash}</span> /{' '}
-            <span className="font-mono">{idxRaw}</span> doesn&apos;t parse.
-          </p>
-        </Panel>
+          description={
+            <>
+              An operation is addressed by a 64-hex transaction hash and a
+              non-negative index.{' '}
+              <span className="font-mono break-all">{hash}</span> /{' '}
+              <span className="font-mono">{idxRaw}</span> doesn&apos;t parse.
+            </>
+          }
+        />
       </Shell>
     );
   }
 
-  if (isError) {
-    const status = errorStatus(error);
+  if (q.isError) {
+    const status = errorStatus(q.error);
     return (
       <Shell hash={hash} idx={idx}>
-        <Panel
+        <EmptyState
           title={status === 404 ? 'Transaction not found' : 'Lookup failed'}
-          source={asExample(`/v1/tx/${hash}`)}
-          bodyClassName="text-sm text-ink-body"
-        >
-          <p>
-            {status === 404
+          description={
+            status === 404
               ? 'No transaction with that hash in the served tier.'
-              : `Lookup failed: ${error instanceof Error ? error.message : 'unknown error'}.`}
-          </p>
-        </Panel>
+              : `Lookup failed: ${q.error instanceof Error ? q.error.message : 'unknown error'}.`
+          }
+          action={
+            status === 404 ? undefined : (
+              <Button variant="secondary" size="sm" onClick={() => q.refetch()}>
+                Retry
+              </Button>
+            )
+          }
+        />
       </Shell>
     );
   }
 
-  if (isLoading || !data) {
+  const tx = q.data;
+  if (!tx) {
     return (
       <Shell hash={hash} idx={idx}>
         <Panel
-          title="Operation"
+          headingLevel={2}
+          title="Summary"
           source={asExample(`/v1/tx/${hash}`)}
-          bodyClassName="text-sm text-ink-muted"
         >
-          Loading…
+          <div className="space-y-3">
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-2/3" />
+            <Skeleton className="h-4 w-1/2" />
+          </div>
         </Panel>
       </Shell>
     );
   }
 
-  const tx = data;
-  const op = (tx.operations ?? []).find((o) => o.op_index === idx);
+  const ops = tx.operations ?? [];
+  const op = ops.find((o) => o.op_index === idx);
   const opEvents = (tx.events ?? []).filter((e) => e.op_index === idx);
 
   if (!op) {
     return (
       <Shell hash={tx.hash ?? null} idx={idx}>
-        <Panel
+        <EmptyState
           title="Operation not found"
-          source={asExample(`/v1/tx/${tx.hash}`)}
-          bodyClassName="text-sm text-ink-body"
-        >
-          <p>
-            Transaction{' '}
-            <span className="font-mono">{(tx.hash ?? '').slice(0, 12)}…</span>{' '}
-            has {(tx.operations ?? []).length} operation(s); index {idx} is out
-            of range.{' '}
-            <Link
+          description={
+            <>
+              Transaction{' '}
+              <span className="font-mono">{shortHash(tx.hash, 12, 0)}</span> has{' '}
+              {ops.length} operation{ops.length === 1 ? '' : 's'}; index {idx}{' '}
+              is out of range.
+            </>
+          }
+          action={
+            <ButtonLink
               href={`/transactions/${tx.hash}/`}
-              className="text-brand-600 hover:underline"
+              variant="secondary"
+              size="sm"
             >
-              View the transaction →
-            </Link>
-          </p>
-        </Panel>
+              View the transaction
+            </ButtonLink>
+          }
+        />
       </Shell>
     );
   }
 
+  const source = asExample(`/v1/tx/${tx.hash}`);
   return (
-    <Shell hash={tx.hash ?? null} idx={idx} type={op.type}>
-      <Panel
-        title={op.type}
-        hint={formatTimestamp(tx.close_time)}
-        source={asExample(`/v1/tx/${tx.hash}`)}
-      >
-        <dl className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3 lg:grid-cols-4">
-          <Field label="Operation index" mono value={`#${op.op_index}`} />
-          <Field label="Transaction result">
-            {/* Parent-tx outcome — a failed parent means nothing this op names
-                actually moved. Prefer the op-carried signal, fall back to the
-                authoritative tx summary we fetched. */}
+    <Shell hash={tx.hash ?? null} idx={idx} type={op.type} tx={tx}>
+      <Panel headingLevel={2} title="Summary" source={source}>
+        <FactList>
+          <Fact label="Operation">
+            #{op.op_index} of {ops.length}
+          </Fact>
+          <Fact label="Type">{op.type}</Fact>
+          <Fact label="Operation result" mono={false}>
+            {op.result_code == null ? (
+              <span className="text-ink-faint">—</span>
+            ) : (
+              <TxStatusBadge
+                successful={opSucceeded(op)}
+                result={op.inner_result ?? op.result}
+                code={op.result_code}
+              />
+            )}
+          </Fact>
+          <Fact
+            label="Transaction result"
+            mono={false}
+            title="A failed parent transaction means nothing this operation names actually moved."
+          >
             <TxStatusBadge
               successful={op.transaction_successful ?? tx.successful}
               result={op.transaction_result ?? tx.result}
               code={tx.result_code}
             />
-          </Field>
-          <Field label="Operation result">
-            <OpResultBadge code={op.result_code} result={op.result} />
-          </Field>
-          <Field label="Ledger">
+          </Fact>
+          <Fact label="Transaction">
+            <HashLink
+              href={`/transactions/${tx.hash}/`}
+              value={tx.hash}
+              head={16}
+              tail={16}
+              copy
+            />
+          </Fact>
+          <Fact label="Ledger">
             <Link
               href={`/ledgers/${tx.ledger}/`}
-              className="text-brand-600 font-mono text-xs hover:underline"
+              className="text-ink hover:text-brand-600"
             >
-              #{(tx.ledger ?? 0).toLocaleString('en-US')}
+              #{tx.ledger}
             </Link>
-          </Field>
-          <Field label="Close time" value={formatTimestamp(tx.close_time)} />
-          <FieldWide label="Transaction">
-            <span className="inline-flex items-center gap-2">
-              <Link
-                href={`/transactions/${tx.hash}/`}
-                className="text-brand-600 font-mono text-xs hover:underline"
-                title={tx.hash}
-              >
-                {(tx.hash ?? '').slice(0, 16)}…{(tx.hash ?? '').slice(-16)}
-              </Link>
-              <CopyValue value={tx.hash ?? ''} />
-            </span>
-          </FieldWide>
-          <FieldWide label="Source account">
+          </Fact>
+          <Fact label="Close time">{formatTimestamp(tx.close_time)}</Fact>
+          <Fact label="Source account">
             {op.source_account ? (
-              <span className="inline-flex items-center gap-2">
-                <Link
-                  href={`/accounts/${encodeURIComponent(op.source_account)}/`}
-                  className="text-brand-600 font-mono text-xs hover:underline"
-                  title={op.source_account}
-                >
-                  {op.source_account.slice(0, 12)}…{op.source_account.slice(-8)}
-                </Link>
-                <CopyValue value={op.source_account} />
-              </span>
+              <HashLink
+                href={`/accounts/${encodeURIComponent(op.source_account)}/`}
+                value={op.source_account}
+                head={12}
+                tail={8}
+                copy
+              />
             ) : (
-              <span className="text-ink-muted inline-flex items-center gap-2 text-sm">
-                <span className="font-mono text-xs">inherits tx source</span>
-                <Link
+              <span className="inline-flex flex-wrap items-center gap-2">
+                <span className="text-ink-muted">inherits tx source</span>
+                <HashLink
                   href={`/accounts/${encodeURIComponent(tx.source_account ?? '')}/`}
-                  className="text-brand-600 hover:underline"
-                >
-                  <CopyHash value={tx.source_account} head={6} tail={4} />
-                </Link>
+                  value={tx.source_account}
+                  head={12}
+                  tail={8}
+                  copy
+                />
               </span>
             )}
-          </FieldWide>
-        </dl>
+          </Fact>
+        </FactList>
       </Panel>
 
-      <DecodedFields op={op} />
+      <Panel headingLevel={2} title="Decoded body" source={source}>
+        <OpBody op={op} />
+      </Panel>
+
       <OpEventsPanel hash={tx.hash ?? ''} events={opEvents} />
     </Shell>
   );
 }
 
-function DecodedFields({ op }: { op: TxOperation }) {
-  const fields = op.fields ?? {};
-  const keys = Object.keys(fields);
-  return (
-    <Panel
-      title="Decoded body"
-      bodyClassName={keys.length > 0 ? 'space-y-3' : 'text-sm text-ink-muted'}
-    >
-      {keys.length === 0 ? (
-        'No decoded fields for this operation type.'
-      ) : (
-        <dl className="grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-2">
-          {keys.map((k) => (
-            <div key={k} className="flex items-baseline gap-2">
-              <dt className="text-ink-muted shrink-0 text-[11px] tracking-wider uppercase">
-                {k}
-              </dt>
-              <dd className="text-ink-body font-mono text-xs break-all">
-                {renderOpFieldValue(k, fields[k])}
-              </dd>
-            </div>
-          ))}
-        </dl>
-      )}
-      {op.raw_xdr && (
-        <details className="border-line mt-2 rounded-sm border">
-          <summary className="text-ink-muted hover:text-brand-600 cursor-pointer px-2 py-1 text-[11px] font-medium">
-            Raw XDR
-          </summary>
-          <pre className="border-line text-ink-body overflow-x-auto border-t px-2 py-2 font-mono text-[10px] leading-relaxed break-all whitespace-pre-wrap">
-            {op.raw_xdr}
-          </pre>
-        </details>
-      )}
-    </Panel>
-  );
-}
-
 function OpEventsPanel({ hash, events }: { hash: string; events: TxEvent[] }) {
+  const source = asExample(`/v1/tx/${hash}`);
   if (events.length === 0) {
     return (
-      <Panel
-        title="Events"
-        source={asExample(`/v1/tx/${hash}`)}
-        bodyClassName="text-sm text-ink-muted"
-      >
-        This operation emitted no Soroban contract events.
+      <Panel headingLevel={2} title="Events" source={source}>
+        <p className="text-ink-muted text-sm">
+          This operation emitted no Soroban contract events.
+        </p>
       </Panel>
     );
   }
   return (
     <Panel
-      title={`Events (${events.length})`}
-      source={asExample(`/v1/tx/${hash}`)}
+      headingLevel={2}
+      title="Events"
+      hint={`${events.length} Soroban contract events`}
+      source={source}
       bodyClassName="-mx-4 -mb-4"
     >
-      <TableWrap className="rounded-none border-0">
+      <div className="overflow-x-auto">
         <Table>
           <THead>
-            <TR className="hover:bg-transparent">
+            <tr>
               <Th>Contract</Th>
               <Th>Event type</Th>
               <Th>Topic 0</Th>
-            </TR>
+            </tr>
           </THead>
           <TBody>
             {events.map((ev, i) => (
               <TR key={`${ev.event_index ?? i}`}>
                 <Td>
-                  <Link
+                  <HashLink
                     href={`/contracts/${ev.contract_id}/`}
-                    className="text-brand-600 font-mono text-xs hover:underline"
-                    title={ev.contract_id}
-                  >
-                    {(ev.contract_id ?? '').slice(0, 8)}…
-                    {(ev.contract_id ?? '').slice(-6)}
-                  </Link>
+                    value={ev.contract_id}
+                    head={8}
+                    tail={6}
+                  />
                 </Td>
-                <Td className="text-ink-body font-mono text-xs">
+                <Td className="font-mono text-[13px]">
                   {ev.event_type || '—'}
                 </Td>
-                <Td className="text-ink-muted font-mono text-xs">
+                <Td className="text-ink-muted font-mono text-[13px]">
                   {ev.topic_0 || '—'}
                 </Td>
               </TR>
             ))}
           </TBody>
         </Table>
-      </TableWrap>
+      </div>
     </Panel>
   );
 }
@@ -332,15 +318,17 @@ function Shell({
   hash,
   idx,
   type,
+  tx,
   children,
 }: {
   hash: string | null;
   idx: number | null;
   type?: string;
-  children: React.ReactNode;
+  tx?: TxSummary;
+  children: ReactNode;
 }) {
   const last =
-    hash && idx != null ? `${hash.slice(0, 8)}…#${idx}` : 'operation';
+    hash && idx != null ? `${shortHash(hash, 8, 0)} #${idx}` : 'Operation';
   return (
     <Container className="space-y-6 py-8">
       <PageHeader
@@ -352,66 +340,24 @@ function Shell({
             : []),
           { label: last },
         ]}
-        title={type ? type : 'Operation'}
+        title={type ? titleCase(type.replace(/_/g, ' ')) : 'Operation'}
+        meta={
+          type ? (
+            <>
+              <span className="font-mono">{type}</span>
+              {idx != null && <> · operation #{idx}</>}
+              {tx && <> · closed {formatTimestamp(tx.close_time)}</>}
+            </>
+          ) : undefined
+        }
       />
       {children}
     </Container>
   );
 }
 
-function OpResultBadge({ code, result }: { code?: number; result?: string }) {
-  // result_code is a numeric XDR code: 0 = opSUCCESS. An absent code in the
-  // per-tx view is the honest-degrade case (coverage_note) — a dash, never a
-  // "success" or "0". A present code drives the shared tri-state badge, which
-  // shows the human `result` slug on failure.
-  if (code == null) {
-    return <span className="text-ink-muted text-sm">—</span>;
-  }
-  return <TxStatusBadge successful={code === 0} result={result} code={code} />;
-}
-
 function errorStatus(err: unknown): number | null {
   if (!(err instanceof Error)) return null;
   const m = err.message.match(/^(\d{3})\b/);
   return m ? Number(m[1]) : null;
-}
-
-function Field({
-  label,
-  value,
-  mono,
-  children,
-}: {
-  label: string;
-  value?: string;
-  mono?: boolean;
-  children?: React.ReactNode;
-}) {
-  return (
-    <div>
-      <dt className="text-ink-muted text-[11px] tracking-wider uppercase">
-        {label}
-      </dt>
-      <dd className={mono ? 'mt-0.5 font-mono text-xs break-all' : 'mt-0.5'}>
-        {children ?? value ?? '—'}
-      </dd>
-    </div>
-  );
-}
-
-function FieldWide({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="col-span-2 sm:col-span-3 lg:col-span-4">
-      <dt className="text-ink-muted text-[11px] tracking-wider uppercase">
-        {label}
-      </dt>
-      <dd className="mt-0.5">{children}</dd>
-    </div>
-  );
 }

@@ -74,15 +74,15 @@ describe('AccountView operations history — failed-tx transparency', () => {
     renderWithClient(<AccountView id={G} />);
 
     const failed = await screen.findByText('tx_failed');
-    expect(failed).toHaveClass('bg-down-subtle');
-    expect(failed).toHaveClass('text-down-strong');
+    expect(failed).toHaveClass('bg-bad-50');
+    expect(failed).toHaveClass('text-bad-700');
 
     const unknown = screen.getByText('unknown');
     expect(unknown).toHaveClass('text-ink-muted');
     expect(unknown).toHaveAttribute('title', 'transaction outcome unavailable');
-    expect(unknown).not.toHaveClass('bg-up-subtle');
+    expect(unknown).not.toHaveClass('bg-ok-50');
 
-    expect(screen.getByText('success')).toHaveClass('bg-up-subtle');
+    expect(screen.getByText('success')).toHaveClass('bg-ok-50');
 
     expect(screen.getByRole('alert')).toHaveTextContent(
       'DEGRADED: parent-transaction outcome read failed',

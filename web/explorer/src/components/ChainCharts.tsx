@@ -19,8 +19,8 @@ export function ResultDonut({ ok, failed }: { ok: number; failed: number }) {
       centerLabel={(ok + failed).toLocaleString('en-US')}
       centerSub="txs"
       data={[
-        { label: 'Successful', value: ok, color: 'var(--color-up)' },
-        { label: 'Failed', value: failed, color: 'var(--color-down)' },
+        { label: 'Successful', value: ok, color: 'var(--color-ok-500)' },
+        { label: 'Failed', value: failed, color: 'var(--color-bad-500)' },
       ]}
     />
   );
@@ -83,7 +83,7 @@ export function closeIntervals(
 
 const isInt = (s: string | undefined): s is string => !!s && /^\d+$/.test(s);
 
-/** Fee charged as a share of the bid; exact BigInt maths, bar is geometry. */
+/** Fee charged as a share of the bid; exact BigInt maths. */
 export function feeUsage(
   charged: string | undefined,
   max: string | undefined,
@@ -99,41 +99,6 @@ export function feeUsage(
   };
 }
 
-export function FeeHeadroomBar({
-  charged,
-  max,
-  format,
-}: {
-  charged?: string;
-  max?: string;
-  format: (stroops: string) => string;
-}) {
-  const u = feeUsage(charged, max);
-  if (!u) return null;
-  const pct = (u.pctTenths / 10).toFixed(1);
-  return (
-    <div className="space-y-1">
-      <div
-        role="img"
-        aria-label={`Fee charged is ${pct}% of the max fee bid`}
-        title={`${pct}% of max fee used`}
-        className="bg-surface-subtle h-2 w-full overflow-hidden rounded-xs"
-      >
-        <div
-          className="h-full"
-          style={{
-            width: `${u.pctTenths / 10}%`,
-            backgroundColor: 'var(--color-brand-500)',
-          }}
-        />
-      </div>
-      <p className="text-ink-muted text-xs">
-        {pct}% of max fee used · {format(u.headroom)} XLM headroom
-      </p>
-    </div>
-  );
-}
-
 /** Operation types of one transaction as counted badges. */
 export function OpTypeStrip({ types }: { types: string[] }) {
   const counts = new Map<string, number>();
@@ -143,7 +108,7 @@ export function OpTypeStrip({ types }: { types: string[] }) {
     <ul aria-label="Operation types" className="flex flex-wrap gap-1.5">
       {[...counts].map(([t, n]) => (
         <li key={t}>
-          <Badge tone="brand">{n > 1 ? `${t} ×${n}` : t}</Badge>
+          <Badge tone="neutral">{n > 1 ? `${t} ×${n}` : t}</Badge>
         </li>
       ))}
     </ul>
