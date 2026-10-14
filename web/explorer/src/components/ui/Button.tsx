@@ -8,7 +8,7 @@ export type ButtonVariant =
 export type ButtonSize = 'sm' | 'md' | 'lg';
 
 const base =
-  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg font-medium transition-colors  disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-600/60 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-canvas';
+  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg font-medium transition-colors  disabled:pointer-events-none disabled:opacity-50';
 
 const variants: Record<ButtonVariant, string> = {
   // White-on-fill contrast (WCAG 1.4.3): brand-fill 6.38:1, hover 9.57:1,

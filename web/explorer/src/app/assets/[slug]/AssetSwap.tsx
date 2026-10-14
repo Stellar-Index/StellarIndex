@@ -397,7 +397,7 @@ export function AssetSwap({
           type="button"
           aria-label="Swap the two assets"
           onClick={swap}
-          className="group border-surface bg-surface-canvas text-ink-muted hover:bg-brand-50 hover:text-brand-600 focus-visible:ring-brand-500 absolute top-1/2 left-1/2 z-10 -translate-x-1/2 -translate-y-1/2 rounded-sm border-4 p-2 transition-colors focus:outline-hidden focus-visible:ring-2"
+          className="group border-surface bg-surface-canvas text-ink-muted hover:bg-brand-50 hover:text-brand-600 absolute top-1/2 left-1/2 z-10 -translate-x-1/2 -translate-y-1/2 rounded-sm border-4 p-2 transition-colors focus:outline-hidden"
         >
           <ArrowDownUp className="h-4 w-4 transition-transform group-hover:rotate-180 group-active:scale-90" />
         </button>
@@ -448,11 +448,10 @@ function SwapRow({
     <div
       className={cn(
         'bg-surface-canvas rounded-lg border px-3.5 py-4 transition-colors',
-        // The active field is signalled by a lighter border, not a focus ring
-        // on the input itself. That border delta alone is 1.22:1 — invisible —
-        // so focus ALSO raises a ring on the wrapper (brand-500 on canvas =
-        // 5.33:1), which is what WCAG 2.4.7 / 2.4.11 actually require.
-        'focus-within:ring-brand-500/60 focus-within:ring-2',
+        // The active field's lighter border alone is 1.22:1 — invisible — so
+        // focus also turns the wrapper border brand (5.33:1 on canvas), which
+        // is what WCAG 2.4.7 / 2.4.11 require.
+        'focus-within:border-brand-500',
         active ? 'border-line-strong' : 'border-line',
       )}
     >
@@ -465,7 +464,7 @@ function SwapRow({
           onFocus={onFocus}
           placeholder="0"
           aria-label={`Amount in ${token.symbol}`}
-          className="text-ink placeholder:text-ink-faint w-full min-w-0 bg-transparent font-mono text-2xl tabular-nums focus:outline-none"
+          className="text-ink placeholder:text-ink-faint w-full min-w-0 bg-transparent font-mono text-2xl tabular-nums focus:outline-hidden"
         />
         <button
           type="button"
@@ -674,7 +673,7 @@ function TokenPicker({
     >
       {/* The search field is exactly a SwapRow's height (66px) so, on open, it
           fills the input box it replaced — same footprint, no jump. */}
-      <div className="border-line flex h-[66px] shrink-0 items-center gap-2 border-b px-3.5">
+      <div className="border-line focus-within:border-brand-500 flex h-[66px] shrink-0 items-center gap-2 border-b px-3.5">
         <Search className="text-ink-faint h-4 w-4 shrink-0" />
         <input
           value={query}

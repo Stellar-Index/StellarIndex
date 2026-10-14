@@ -279,7 +279,7 @@ function SortableTh({
       <button
         type="button"
         onClick={onClick}
-        className="focus-visible:ring-brand-500/60 hover:text-ink rounded-sm focus-visible:ring-2 focus-visible:outline-hidden"
+        className="hover:text-ink rounded-sm"
       >
         {label}
         <span aria-hidden="true" className="ml-1">

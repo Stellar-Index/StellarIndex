@@ -541,7 +541,7 @@ function EventBreakdown({
           type="button"
           onClick={() => setExpanded((v) => !v)}
           aria-expanded={expanded}
-          className="text-brand-600 focus-visible:ring-brand-500/60 rounded-sm text-xs font-medium hover:underline focus-visible:ring-2 focus-visible:outline-hidden"
+          className="text-brand-600 rounded-sm text-xs font-medium hover:underline"
         >
           {expanded
             ? 'Show fewer'
@@ -582,7 +582,7 @@ function SortHeader({
       <button
         type="button"
         onClick={() => setSortKey(keyName)}
-        className={`focus-visible:ring-brand-500/60 ml-auto flex items-center gap-1 rounded-sm tracking-wider uppercase focus-visible:ring-2 focus-visible:outline-hidden ${active ? 'text-brand-600' : 'hover:text-ink-body'}`}
+        className={`ml-auto flex items-center gap-1 rounded-sm tracking-wider uppercase ${active ? 'text-brand-600' : 'hover:text-ink-body'}`}
       >
         {label}
         <span aria-hidden className="text-[8px]">
@@ -766,7 +766,7 @@ function ContractRoster({
             type="button"
             onClick={() => setExpanded((v) => !v)}
             aria-expanded={expanded}
-            className="text-brand-600 focus-visible:ring-brand-500/60 rounded-sm text-xs font-medium hover:underline focus-visible:ring-2 focus-visible:outline-hidden"
+            className="text-brand-600 rounded-sm text-xs font-medium hover:underline"
           >
             {expanded
               ? 'Show fewer'

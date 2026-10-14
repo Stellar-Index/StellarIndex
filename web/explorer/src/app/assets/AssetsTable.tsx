@@ -500,7 +500,7 @@ function FilterBar({
             value={q}
             onChange={(e) => onQChange(e.target.value)}
             placeholder="Search by code, slug, or name…"
-            className="border-line bg-surface placeholder:text-ink-faint focus:border-brand-500 focus:ring-brand-500 w-72 rounded-md border py-1.5 pr-3 pl-8 text-sm focus:ring-1 focus:outline-hidden"
+            className="border-line bg-surface placeholder:text-ink-faint focus:border-brand-500 w-72 rounded-md border py-1.5 pr-3 pl-8 text-sm focus:outline-hidden"
           />
         </div>
         <label className="text-ink-muted flex items-center gap-2 text-xs">
@@ -508,7 +508,7 @@ function FilterBar({
           <select
             value={limit}
             onChange={(e) => onLimitChange(parseInt(e.target.value, 10))}
-            className="border-line bg-surface focus:border-brand-500 focus:ring-brand-500 rounded-md border px-2 py-1 text-xs focus:ring-1 focus:outline-hidden"
+            className="border-line bg-surface focus:border-brand-500 rounded-md border px-2 py-1 text-xs focus:outline-hidden"
           >
             <option value={50}>50</option>
             <option value={100}>100</option>

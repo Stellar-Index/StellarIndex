@@ -95,7 +95,7 @@ export function Segmented({
           onClick={() => onChange(o.value)}
           aria-pressed={value === o.value}
           className={cn(
-            'focus-visible:ring-brand-500/60 rounded-md px-2.5 py-1 text-[13px] font-medium transition-colors focus-visible:ring-2 focus-visible:outline-hidden',
+            'rounded-md px-2.5 py-1 text-[13px] font-medium transition-colors',
             value === o.value
               ? 'bg-surface text-ink'
               : 'text-ink-muted hover:text-ink',

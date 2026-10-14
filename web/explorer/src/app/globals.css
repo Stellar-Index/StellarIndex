@@ -232,9 +232,10 @@
     @apply bg-brand-500/25 text-ink;
   }
 
-  /* Accessible focus ring. */
+  /* Focus is one hairline over the control's own edge; components add no rings. */
   :focus-visible {
-    @apply ring-brand-500/70 ring-offset-surface-canvas ring-2 ring-offset-2 outline-hidden;
+    outline: 1px solid var(--color-brand-500);
+    outline-offset: -1px;
   }
 
   /* Hairline default border so `border` alone reads as a hairline. */

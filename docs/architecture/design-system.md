@@ -30,7 +30,10 @@ rationale: `docs/frontend/dark-redesign-direction.md`. Restructuring companion:
    tabular data. Let the data read like a readout; cut chrome.
 3. **Functional colour.** Blue (`brand`) = identity/action (links, focus,
    active, primary); green/red (`up`/`down`) = price direction + freshness;
-   amber (`warn`/time-pin) = severity/time. Never decoration.
+   amber (`warn`/time-pin) = severity/time. Never decoration. Focus is one
+   hairline brand outline over the control's own edge (`:focus-visible` in
+   `globals.css`); bordered fields turn their border brand instead, and
+   components never add rings.
 4. **Serif ⟷ mono is the signature.** **Fraunces** (serif) carries the display/
    identity voice — page titles (`h1`), hero figures (`.font-display`). **Inter**
    is body/UI. **JetBrains Mono** carries *all data* — prices, volumes, ledger

@@ -477,7 +477,7 @@ export function SearchModal({ shortcut = true }: { shortcut?: boolean }) {
               aria-modal="true"
               aria-label="Site search"
             >
-              <div className="border-line flex items-center gap-2 border-b px-3 py-3">
+              <div className="border-line focus-within:border-brand-500 flex items-center gap-2 border-b px-3 py-3">
                 <Search className="text-ink-faint h-4 w-4" aria-hidden="true" />
                 <input
                   autoFocus

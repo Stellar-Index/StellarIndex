@@ -269,7 +269,7 @@ function ProtocolCardView({
           ? '/sdex'
           : `/protocols/${encodeURIComponent(card.name)}`
       }
-      className="group rounded-card border-line bg-surface hover:border-line-strong focus-visible:ring-brand-600/60 focus-visible:ring-offset-surface-canvas flex flex-col border p-5 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-hidden"
+      className="group rounded-card border-line bg-surface hover:border-line-strong flex flex-col border p-5"
     >
       <div className="flex items-start justify-between gap-2">
         <h2 className="text-h3 text-ink group-hover:text-brand-600 font-semibold">
@@ -349,7 +349,7 @@ function FilterChip({
     <button
       type="button"
       onClick={onClick}
-      className={`focus-visible:ring-brand-500 rounded-sm px-2 py-0.5 font-mono text-[10px] tracking-wider uppercase focus-visible:ring-2 focus-visible:outline-hidden ${
+      className={`rounded-sm px-2 py-0.5 font-mono text-[10px] tracking-wider uppercase ${
         active
           ? 'bg-brand-fill text-white'
           : 'bg-surface-subtle text-ink-body hover:bg-line'

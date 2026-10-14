@@ -124,7 +124,7 @@ describe('every clickable table row carries a real control', () => {
 
   it('gives each of those controls an accessible name and a focus style', () => {
     // A button reachable by Tab but unlabelled, or focusable with no visible
-    // focus ring, trades one barrier for another (WCAG 4.1.2 / 2.4.7).
+    // focus style, trades one barrier for another (WCAG 4.1.2 / 2.4.7).
     //
     // Either source of a name counts. `aria-label` is right for the
     // divergence board, whose control reads "Plot" and needs to say WHICH
@@ -137,8 +137,10 @@ describe('every clickable table row carries a real control', () => {
       .map((r) => r.where);
     expect(unnamed).toEqual([]);
 
+    // Focus is drawn by the global `:focus-visible` hairline, so a control
+    // only fails here by opting out of it.
     const unfocusable = rows
-      .filter((r) => !/focus-visible:|focus:/.test(r.markup))
+      .filter((r) => /outline-hidden|outline-none/.test(r.markup))
       .map((r) => r.where);
     expect(unfocusable).toEqual([]);
   });
