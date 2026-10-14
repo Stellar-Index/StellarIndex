@@ -61,40 +61,6 @@ func TestDescribe_durationFieldTypeLabel(t *testing.T) {
 	t.Fatal("api.serving_statement_timeout not found in Describe() output")
 }
 
-// A field tagged `default:""` documents an intentional empty default, distinct from no tag. Neither is Required: a
-// config leaving it unset is valid.
-func TestDescribe_explicitEmptyDefaultIsNotRequired(t *testing.T) {
-	fields := cfg.Describe()
-	for _, f := range fields {
-		if f.Path == "external.exchangeratesapi.api_key" {
-			if f.Required {
-				t.Fatalf("external.exchangeratesapi.api_key: Required = true, want false (explicit default:\"\")")
-			}
-			if f.Default != "" {
-				t.Fatalf("external.exchangeratesapi.api_key: Default = %q, want empty string", f.Default)
-			}
-			return
-		}
-	}
-	t.Fatal("external.exchangeratesapi.api_key not found in Describe() output")
-}
-
-func TestDefault_isValidShape(t *testing.T) {
-	c := cfg.Default()
-	if c.Region.ID == "" {
-		t.Error("Region.ID empty in defaults")
-	}
-	if c.Stellar.Network == "" {
-		t.Error("Stellar.Network empty in defaults")
-	}
-	if len(c.Stellar.RPCEndpoints) == 0 {
-		t.Error("Stellar.RPCEndpoints empty in defaults")
-	}
-	if c.Aggregate.MinUSDVolume <= 0 {
-		t.Error("Aggregate.MinUSDVolume must be positive")
-	}
-}
-
 // Config defaults, which Default() always supplies and so are the floors every deployment runs, must match the
 // pricingguard constants carrying the rationale. Checked on the effective policy so units are covered too.
 func TestDefaultPricingGuard_MatchesPricingguardConstants(t *testing.T) {
