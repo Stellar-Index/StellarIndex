@@ -3,9 +3,9 @@ import { render } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactElement } from 'react';
 
-import { AssetSidebar, type SidebarCoin } from './AssetSidebar';
+import { AssetIdentityCard, type SidebarCoin } from './AssetSidebar';
 
-// AssetSidebar embeds ChangeSummaryStrip (a TanStack Query consumer),
+// AssetIdentityCard embeds ChangeSummaryStrip (a TanStack Query consumer),
 // so renders need a QueryClient. Retries off — a test must not poll.
 function renderWithQuery(ui: ReactElement) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -26,12 +26,11 @@ const coin: SidebarCoin = {
   price_usd: '0.9998',
 };
 
-describe('AssetSidebar price provenance caption', () => {
+describe('AssetIdentityCard price provenance caption', () => {
   it('labels a live closed-bucket price as 1-min VWAP', () => {
     const { container } = renderWithQuery(
-      <AssetSidebar
+      <AssetIdentityCard
         coin={coin}
-        detail={null}
         priceUSD="0.9998"
         priceProvenance="vwap1m"
       />,
@@ -41,9 +40,8 @@ describe('AssetSidebar price provenance caption', () => {
 
   it('labels a triangulated price as such', () => {
     const { container } = renderWithQuery(
-      <AssetSidebar
+      <AssetIdentityCard
         coin={coin}
-        detail={null}
         priceUSD="0.9998"
         priceProvenance="triangulated"
       />,
@@ -53,9 +51,8 @@ describe('AssetSidebar price provenance caption', () => {
 
   it('labels the build-time listing fallback as not-live', () => {
     const { container } = renderWithQuery(
-      <AssetSidebar
+      <AssetIdentityCard
         coin={coin}
-        detail={null}
         priceUSD="0.9998"
         priceProvenance="listing"
       />,
@@ -66,9 +63,8 @@ describe('AssetSidebar price provenance caption', () => {
 
   it('marks a stale price', () => {
     const { container } = renderWithQuery(
-      <AssetSidebar
+      <AssetIdentityCard
         coin={coin}
-        detail={null}
         priceUSD="0.9998"
         priceProvenance="vwap1m"
         priceStale
@@ -79,12 +75,7 @@ describe('AssetSidebar price provenance caption', () => {
 
   it('renders no caption when there is no price', () => {
     const { container } = renderWithQuery(
-      <AssetSidebar
-        coin={coin}
-        detail={null}
-        priceUSD={null}
-        priceProvenance={null}
-      />,
+      <AssetIdentityCard coin={coin} priceUSD={null} priceProvenance={null} />,
     );
     expect(container.textContent).not.toContain('VWAP');
     expect(container.textContent).not.toContain('listing snapshot');

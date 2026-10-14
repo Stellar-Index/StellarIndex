@@ -1,8 +1,22 @@
 'use client';
 
+import { useState } from 'react';
+
 import Link from 'next/link';
 
 import { Panel } from '@/components/reveal';
+import {
+  Badge,
+  Callout,
+  Skeleton,
+  Table,
+  TBody,
+  Td,
+  Th,
+  THead,
+  TR,
+} from '@/components/ui';
+import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 import { asExample } from '@/api/client';
 import { useIssuer, type Issuer } from '@/api/hooks';
 import { assetHref } from '@/lib/fiat-slugs';
@@ -42,9 +56,12 @@ export function IssuerPanel({ gStrkey }: { gStrkey: string }) {
         headingLevel={2}
         title="Issuer"
         source={asExample(`/v1/issuers/${gStrkey}`)}
-        bodyClassName="text-sm text-ink-muted"
+        bodyClassName="space-y-3"
       >
-        Loading…
+        <span className="sr-only">Loading issuer</span>
+        <Skeleton className="h-4 w-40" aria-hidden />
+        <Skeleton className="h-4 w-64" aria-hidden />
+        <Skeleton className="h-4 w-52" aria-hidden />
       </Panel>
     );
   }
@@ -52,39 +69,14 @@ export function IssuerPanel({ gStrkey }: { gStrkey: string }) {
   return (
     <div className="space-y-4">
       {data.scam_reason && (
-        // Warning consolidation: the full scam reason + guidance
-        // live in ONE primary banner in the page header (same stellar.expert
-        // finding). This is the slim, table-scoped restatement — it adds the
-        // one fact the header can't (every asset in the table below shares
-        // this flagged issuer) and stays SELF-SUFFICIENT: a standalone alert,
-        // not a pointer to the header, because the two warnings are sourced
-        // from different endpoints (/v1/issuers here vs the asset-detail
-        // payload) and must not degrade to a dangling "see above" if they
-        // ever diverge.
-        <div
-          role="alert"
-          className="border-bad-300 bg-bad-50 text-bad-700 flex items-center gap-2 rounded-md border px-3 py-2 text-xs"
-        >
-          <span aria-hidden>⚠</span>
-          <span>
-            <strong className="font-semibold">Scam issuer.</strong> Every asset
-            below was minted by this flagged account — do not establish
-            trustlines or trust its prices.
-          </span>
-        </div>
+        <Callout tone="bad" title="Scam issuer.">
+          Every asset below was minted by this flagged account — do not
+          establish trustlines or trust its prices.
+        </Callout>
       )}
       <Panel
         headingLevel={2}
         title="Issuer identity"
-        // org_name is only an authoritative organisation identity
-        // when SEP-1 verified (bidirectional). Unverified it is self-declared
-        // metadata a scam issuer can spoof, so it must not headline the panel
-        // as the issuer's identity — fall back to the real on-chain home_domain.
-        hint={
-          (data.org_verified ? data.org_name : undefined) ??
-          data.home_domain ??
-          '—'
-        }
         source={asExample(`/v1/issuers/${gStrkey}`)}
       >
         <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
@@ -106,10 +98,10 @@ export function IssuerPanel({ gStrkey }: { gStrkey: string }) {
             />
           )}
           {data.sep1_resolved_at && (
-            <Stat label="SEP-1 resolved" value={data.sep1_resolved_at} />
+            <Stat label="SEP-1 resolved" mono value={data.sep1_resolved_at} />
           )}
         </dl>
-        <div className="mt-4 flex flex-wrap gap-1">
+        <div className="mt-4 flex flex-wrap gap-1.5">
           <FlagPill
             on={data.auth_required ?? undefined}
             label="auth_required"
@@ -198,7 +190,10 @@ function SpanBar({
   );
 }
 
+const PREVIEW_ROWS = 12;
+
 function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
+  const [expanded, setExpanded] = useState(false);
   // `assets` is soft-failed to nil server-side when the per-asset
   // fan-out errors or blows its 8s deadline (internal/api/v1/issuers.go)
   // — absent is "we couldn't read the list", not "nothing issued".
@@ -230,6 +225,7 @@ function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
   }
 
   const axis = ledgerAxis(assets);
+  const shown = expanded ? assets : assets.slice(0, PREVIEW_ROWS);
 
   return (
     <Panel
@@ -237,23 +233,22 @@ function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
       title="Issued assets"
       hint={`${assets.length} asset${assets.length === 1 ? '' : 's'}`}
       source={asExample(`/v1/issuers/${issuer.g_strkey}`)}
-      bodyClassName="-mx-4"
+      bodyClassName="-mx-4 -mb-4"
     >
       <div className="overflow-x-auto">
-        <table className="divide-line min-w-full divide-y text-sm">
-          <thead>
-            <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
+        <Table>
+          <THead>
+            <tr>
               <Th>Code</Th>
-              <Th>Slug</Th>
               <Th align="right">Observations</Th>
               {axis && <Th>Active span</Th>}
               <Th align="right">First seen</Th>
               <Th align="right">Last seen</Th>
             </tr>
-          </thead>
-          <tbody className="divide-line-subtle divide-y">
-            {assets.map((a) => (
-              <tr key={a.asset_id} className="hover:bg-surface-muted">
+          </THead>
+          <TBody>
+            {shown.map((a) => (
+              <TR key={a.asset_id}>
                 <Td>
                   <Link
                     href={assetHref(a.slug ?? a.asset_id ?? a.code ?? '')}
@@ -261,11 +256,6 @@ function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
                   >
                     {a.code}
                   </Link>
-                </Td>
-                <Td>
-                  <span className="text-ink-muted font-mono text-xs">
-                    {a.slug}
-                  </span>
                 </Td>
                 <Td align="right">
                   <span className="font-mono tabular-nums">
@@ -293,30 +283,34 @@ function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
                       : '—'}
                   </span>
                 </Td>
-              </tr>
+              </TR>
             ))}
-          </tbody>
-        </table>
+          </TBody>
+        </Table>
       </div>
+      {assets.length > PREVIEW_ROWS && (
+        <div className="border-line border-t px-4 py-2">
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="text-brand-600 text-xs font-medium hover:underline"
+          >
+            {expanded
+              ? `Show first ${PREVIEW_ROWS}`
+              : `Show all ${assets.length} assets`}
+          </button>
+        </div>
+      )}
     </Panel>
   );
 }
 
 function FlagPill({ on, label }: { on?: boolean; label: string }) {
-  if (on === undefined) {
-    return (
-      <span className="bg-surface-subtle text-ink-muted inline-block rounded-sm px-1.5 py-0.5 text-[10px] tracking-wider uppercase">
-        {label}: unknown
-      </span>
-    );
-  }
-  const cls = on ? 'bg-warn-50 text-warn-700' : 'bg-up-subtle text-up-strong';
+  const tone = on === undefined ? 'neutral' : on ? 'warn' : 'ok';
   return (
-    <span
-      className={`inline-block rounded-sm px-1.5 py-0.5 text-[10px] tracking-wider uppercase ${cls}`}
-    >
-      {label}: {on ? 'on' : 'off'}
-    </span>
+    <Badge tone={tone} className="font-mono">
+      {label}: {on === undefined ? 'unknown' : on ? 'on' : 'off'}
+    </Badge>
   );
 }
 
@@ -331,46 +325,17 @@ function Stat({
 }) {
   return (
     <div>
-      <dt className="text-ink-muted text-[11px] tracking-wider uppercase">
-        {label}
-      </dt>
-      <dd className={mono ? 'font-mono text-xs break-all' : 'tabular-nums'}>
+      <dt className={PANEL_LABEL_CLASS}>{label}</dt>
+      <dd
+        className={
+          mono
+            ? 'text-ink font-mono text-xs break-all'
+            : 'text-ink tabular-nums'
+        }
+      >
         {value}
       </dd>
     </div>
-  );
-}
-
-function Th({
-  children,
-  align,
-}: {
-  children: React.ReactNode;
-  align?: 'left' | 'right';
-}) {
-  return (
-    <th
-      className={`px-4 py-2 ${align === 'right' ? 'text-right' : 'text-left'}`}
-      scope="col"
-    >
-      {children}
-    </th>
-  );
-}
-
-function Td({
-  children,
-  align,
-}: {
-  children: React.ReactNode;
-  align?: 'left' | 'right';
-}) {
-  return (
-    <td
-      className={`px-4 py-3 ${align === 'right' ? 'text-right' : 'text-left'}`}
-    >
-      {children}
-    </td>
   );
 }
 

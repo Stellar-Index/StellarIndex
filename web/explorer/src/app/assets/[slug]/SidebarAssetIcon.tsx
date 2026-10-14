@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { iconProxySrc, isSafePublicImageUrl } from '@/lib/safe-domain';
 
@@ -20,6 +20,12 @@ export function SidebarAssetIcon({
   code: string;
 }) {
   const [broken, setBroken] = useState(false);
+  const ref = useRef<HTMLImageElement>(null);
+  // An image that failed before hydration never replays its error event.
+  useEffect(() => {
+    const el = ref.current;
+    if (el?.complete && el.naturalWidth === 0) setBroken(true);
+  }, []);
   // Host-validated, not just scheme-validated — see
   // lib/safe-domain.ts (isSafePublicImageUrl) for the threat this closes.
   const safe = isSafePublicImageUrl(image) && !broken;
@@ -27,6 +33,7 @@ export function SidebarAssetIcon({
     return (
       // eslint-disable-next-line @next/next/no-img-element -- remote SEP-1 icons; next/image needs a domain allowlist we can't enumerate under static export
       <img
+        ref={ref}
         src={iconProxySrc(image!)}
         alt=""
         width={36}

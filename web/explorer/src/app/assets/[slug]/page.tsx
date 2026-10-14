@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Suspense } from 'react';
+import { BadgeCheck } from 'lucide-react';
 
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
@@ -28,11 +29,11 @@ import {
 } from '@/lib/seo';
 import { assetHref } from '@/lib/fiat-slugs';
 import { CURRENT_NETWORK } from '@/lib/networks';
-import { Badge, Container, PageHeader } from '@/components/ui';
+import { Badge, Callout, Container, PageHeader } from '@/components/ui';
 import { AssetScamCallout } from './AssetScamCallout';
 import { AssetClientFallback } from './AssetClientFallback';
 import { AssetPathView } from './AssetPathView';
-import { AssetSidebar } from './AssetSidebar';
+import { AssetIdentityCard, AssetSidebar } from './AssetSidebar';
 import { AssetTrustFacts } from './AssetTrustFacts';
 import { headlinePriceProvenance } from './priceProvenance';
 import { SourceBreakdown } from '../../markets/[pair]/SourceBreakdown';
@@ -55,6 +56,20 @@ import {
   type GlobalAssetView,
 } from '../catalogue';
 import { CrossReference } from '@/components/CrossReference';
+
+// 'native' is deliberately absent: XLM is "Stellar Lumens" in the UI, never "native".
+const ASSET_TYPE_LABEL: Record<string, string> = {
+  classic: 'Classic asset',
+  soroban: 'Soroban contract',
+  fiat: 'Fiat currency',
+  global: 'Global ticker',
+  external: 'External listing',
+};
+
+const ASSET_CLASS_LABEL: Record<string, string> = {
+  fiat: 'Fiat currency',
+  crypto: 'Crypto asset',
+};
 
 /**
  * /assets/[slug] — single asset detail page.
@@ -891,6 +906,8 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
     assetIDParts.length === 2 && assetIDParts[1].startsWith('G')
       ? assetIDParts[1]
       : null;
+  const headlinePrice =
+    positiveDecimal(price?.price) ?? positiveDecimal(coin.price_usd);
   return (
     <Container className="space-y-6 py-8">
       <script
@@ -928,23 +945,15 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
                       : 'Verified currency'
                   }
                 >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 20 20"
-                    fill="currentColor"
-                    className="h-3 w-3"
-                    aria-hidden="true"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
+                  <BadgeCheck className="h-3 w-3" aria-hidden />
                   Verified
                 </Badge>
               )}
-              {detail?.type && <Badge title="Asset type">{detail.type}</Badge>}
+              {detail?.type && ASSET_TYPE_LABEL[detail.type] && (
+                <Badge title="Asset type">
+                  {ASSET_TYPE_LABEL[detail.type]}
+                </Badge>
+              )}
             </>
           }
         />
@@ -977,56 +986,47 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
             there, with a broken link to the non-existent "verified" asset.
             Suppress the warning on no-pricing nets. (API-side gate is queued.) */}
         {CURRENT_NETWORK.pricing && detail?.unverified_warning && (
-          <div
-            role="alert"
-            className="border-warn-300 bg-warn-50 text-warn-700 rounded-md border p-3 text-sm"
-          >
-            <div className="mb-1 flex items-center gap-2">
-              <strong className="font-semibold">
+          <Callout
+            tone="warn"
+            title={
+              <span className="flex flex-wrap items-center gap-2">
                 Unverified {assetSymbol(coin)}
-              </strong>
-              <Badge tone="warn">Ticker collision</Badge>
-            </div>
-            <p>
-              {detail.unverified_warning.note} The verified asset is available
-              at{' '}
-              <Link
-                href={assetHref(detail.unverified_warning.verified_slug)}
-                className="hover:text-warn-700 font-medium underline"
-              >
-                {detail.unverified_warning.verified_name}
-              </Link>
-              {detail.unverified_warning.verified_issuer && (
-                <span>
-                  {' '}
-                  — issued by{' '}
-                  <span className="font-medium">
-                    {detail.unverified_warning.verified_issuer}
-                  </span>
+                <Badge tone="warn">Ticker collision</Badge>
+              </span>
+            }
+          >
+            {detail.unverified_warning.note} The verified asset is available at{' '}
+            <Link
+              href={assetHref(detail.unverified_warning.verified_slug)}
+              className="font-medium underline"
+            >
+              {detail.unverified_warning.verified_name}
+            </Link>
+            {detail.unverified_warning.verified_issuer && (
+              <>
+                {' '}
+                — issued by{' '}
+                <span className="font-medium">
+                  {detail.unverified_warning.verified_issuer}
                 </span>
-              )}
-              .
-            </p>
-          </div>
+              </>
+            )}
+            .
+          </Callout>
         )}
       </header>
 
-      <div className="grid gap-6 lg:grid-cols-[336px_minmax(0,1fr)]">
-        <aside className="space-y-4 lg:sticky lg:top-20 lg:self-start">
-          <AssetSidebar
+      <div className="grid gap-6 lg:grid-cols-[336px_minmax(0,1fr)] lg:grid-rows-[auto_1fr]">
+        <div className="lg:col-start-1 lg:row-start-1">
+          <AssetIdentityCard
             coin={coin}
-            detail={detail}
-            priceUSD={
-              positiveDecimal(price?.price) ?? positiveDecimal(coin.price_usd)
-            }
+            priceUSD={headlinePrice}
             priceProvenance={headlinePriceProvenance(price, coin)}
             priceStale={Boolean(price?.flags?.stale)}
             name={globalView?.name}
-            homeDomain={detail?.home_domain}
           />
-        </aside>
-
-        <div className="min-w-0 space-y-4">
+        </div>
+        <div className="min-w-0 space-y-4 lg:col-start-2 lg:row-span-2 lg:row-start-1">
           {issuerStrkey ? (
             <Suspense fallback={null}>
               <IssuerPanel gStrkey={issuerStrkey} />
@@ -1099,6 +1099,17 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
             />
           </Suspense>
         </div>
+
+        {/* Last in DOM so phones read identity, issuer and tabs, then the rail;
+            lg places it under the identity card. */}
+        <aside className="space-y-4 lg:sticky lg:top-20 lg:col-start-1 lg:row-start-2 lg:self-start">
+          <AssetSidebar
+            coin={coin}
+            detail={detail}
+            priceUSD={headlinePrice}
+            homeDomain={detail?.home_domain}
+          />
+        </aside>
       </div>
     </Container>
   );
@@ -1624,8 +1635,13 @@ function VerifiedCurrencyView({
   slug: string;
   view: GlobalAssetView;
 }) {
-  const isFiat =
-    (view as GlobalAssetView & { class?: string }).class === 'fiat';
+  const assetClass = (view as GlobalAssetView & { class?: string }).class;
+  const isFiat = assetClass === 'fiat';
+  const classLabel =
+    (assetClass && ASSET_CLASS_LABEL[assetClass]) ??
+    (assetClass
+      ? assetClass.charAt(0).toUpperCase() + assetClass.slice(1)
+      : 'Verified');
   // For fiat tickers the canonical chart asset_id is `fiat:<ISO>`.
   // For crypto verified slugs we don't have a slug-level chart.
   const chartAssetID = isFiat ? `fiat:${view.ticker}` : null;
@@ -1638,18 +1654,9 @@ function VerifiedCurrencyView({
             { label: 'Assets', href: '/assets' },
             { label: view.ticker },
           ]}
-          title={
-            <span className="flex flex-wrap items-baseline gap-3">
-              <span>{view.name}</span>
-              <span className="text-ink-muted font-mono text-base">
-                {view.ticker}
-              </span>
-              <Badge>
-                {(view as GlobalAssetView & { class?: string }).class ??
-                  'verified'}
-              </Badge>
-            </span>
-          }
+          title={view.name}
+          meta={view.ticker}
+          actions={<Badge title="Asset class">{classLabel}</Badge>}
         />
         {priceNum != null && Number.isFinite(priceNum) && (
           <div className="tnum text-ink font-mono text-2xl">
@@ -1658,7 +1665,7 @@ function VerifiedCurrencyView({
           </div>
         )}
         {view.description && (
-          <p className="text-ink-muted max-w-prose text-[15px] leading-relaxed">
+          <p className="text-ink-body max-w-prose text-sm">
             {view.description}
           </p>
         )}
