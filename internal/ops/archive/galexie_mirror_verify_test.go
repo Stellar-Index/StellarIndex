@@ -419,6 +419,34 @@ func TestNormaliseLedgerBatch(t *testing.T) {
 	}
 }
 
+// A ledger upgrade's entry changes come in the order the core run happened to produce, as an operation's do.
+func TestNormaliseLedgerBatch_UpgradeChangeGroupOrder(t *testing.T) {
+	withUpgrade := func(reorder bool) []byte {
+		b := testBatch(false, 123)
+		ver := xdr.Uint32(23)
+		b.LedgerCloseMetas[0].V2.UpgradesProcessing = []xdr.UpgradeEntryMeta{{
+			Upgrade: xdr.LedgerUpgrade{Type: xdr.LedgerUpgradeTypeLedgerUpgradeVersion, NewLedgerVersion: &ver},
+			Changes: testBatch(reorder, 0).LedgerCloseMetas[0].V2.TxProcessing[0].TxApplyProcessing.V4.Operations[0].Changes,
+		}}
+		return encodeBatch(t, b)
+	}
+	raw, reordered := withUpgrade(false), withUpgrade(true)
+	if bytes.Equal(raw, reordered) {
+		t.Fatal("test batches must differ before normalisation")
+	}
+	base, err := normalisedBatchBytes(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := normalisedBatchBytes(reordered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(base, got) {
+		t.Fatal("upgrade change-group order still differs after normalisation")
+	}
+}
+
 func TestSortChangeGroups_KeepsStateWithItsUpdate(t *testing.T) {
 	c := testBatch(true, 0).LedgerCloseMetas[0].V2.TxProcessing[0].TxApplyProcessing.V4.Operations[0].Changes
 	if err := sortChangeGroups(c); err != nil {

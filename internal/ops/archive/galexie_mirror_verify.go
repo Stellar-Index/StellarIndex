@@ -377,33 +377,45 @@ func normalisedBatchBytes(compressed []byte) ([]byte, error) {
 }
 
 // normaliseLedgerBatch removes what differs between two stellar-core runs over the same ledgers: core_metrics invoke_time_nsecs
-// diagnostic events (wall-clock timings) and the order of each operation's ledger-entry-change groups, which core does not fix.
-// Everything else, other diagnostic events included, is left to the byte comparison.
+// diagnostic events (wall-clock timings) and the order of the ledger-entry-change groups of each operation and each ledger
+// upgrade, which core does not fix. Everything else, other diagnostic events included, is left to the byte comparison.
 func normaliseLedgerBatch(b *xdr.LedgerCloseMetaBatch) error {
 	for i := range b.LedgerCloseMetas {
-		lcm := &b.LedgerCloseMetas[i]
-		var metas []*xdr.TransactionMeta
-		switch {
-		case lcm.V0 != nil:
-			for j := range lcm.V0.TxProcessing {
-				metas = append(metas, &lcm.V0.TxProcessing[j].TxApplyProcessing)
-			}
-		case lcm.V1 != nil:
-			for j := range lcm.V1.TxProcessing {
-				metas = append(metas, &lcm.V1.TxProcessing[j].TxApplyProcessing)
-			}
-		case lcm.V2 != nil:
-			for j := range lcm.V2.TxProcessing {
-				metas = append(metas, &lcm.V2.TxProcessing[j].TxApplyProcessing)
-			}
-		}
+		metas, upgrades := ledgerCloseMetaParts(&b.LedgerCloseMetas[i])
 		for _, m := range metas {
 			if err := normaliseTxMeta(m); err != nil {
 				return err
 			}
 		}
+		for k := range upgrades {
+			if err := sortChangeGroups(upgrades[k].Changes); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
+}
+
+// ledgerCloseMetaParts returns the transaction metas and the upgrade metas of one ledger, whichever LedgerCloseMeta version holds them.
+func ledgerCloseMetaParts(lcm *xdr.LedgerCloseMeta) (metas []*xdr.TransactionMeta, upgrades []xdr.UpgradeEntryMeta) {
+	switch {
+	case lcm.V0 != nil:
+		for j := range lcm.V0.TxProcessing {
+			metas = append(metas, &lcm.V0.TxProcessing[j].TxApplyProcessing)
+		}
+		upgrades = lcm.V0.UpgradesProcessing
+	case lcm.V1 != nil:
+		for j := range lcm.V1.TxProcessing {
+			metas = append(metas, &lcm.V1.TxProcessing[j].TxApplyProcessing)
+		}
+		upgrades = lcm.V1.UpgradesProcessing
+	case lcm.V2 != nil:
+		for j := range lcm.V2.TxProcessing {
+			metas = append(metas, &lcm.V2.TxProcessing[j].TxApplyProcessing)
+		}
+		upgrades = lcm.V2.UpgradesProcessing
+	}
+	return metas, upgrades
 }
 
 func normaliseTxMeta(m *xdr.TransactionMeta) error {
