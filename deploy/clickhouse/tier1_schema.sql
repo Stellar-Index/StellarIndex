@@ -1447,6 +1447,32 @@ ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY intDiv(ledger, 1000000)
 ORDER BY (asset, ledger, tx_hash, op_index, change_index, role);
 
+-- Sponsorship lifecycle, one row per transition of one arrangement: the entry
+-- (or signer) a sponsor pays reserves for started, was revoked (entry lives on)
+-- or ended (entry gone). Written by ch-entry-history beside the two tables above
+-- under the same watermark. `sponsored` is empty for a claimable balance; the
+-- bloom filter serves the sponsored side, the key the sponsor side.
+CREATE TABLE IF NOT EXISTS stellar.sponsorship_events
+(
+    sponsor          String,
+    sponsored        String DEFAULT '',
+    kind             LowCardinality(String),
+    key_id           String DEFAULT '',
+    ledger           UInt32,
+    close_time       DateTime('UTC'),
+    tx_hash          String,
+    op_index         Int32,
+    change_index     UInt32,
+    intra_ledger_seq UInt32,
+    reserves         UInt8,
+    event            LowCardinality(String),
+    ingested_at      DateTime DEFAULT now(),
+    INDEX sponsored_bf sponsored TYPE bloom_filter GRANULARITY 4
+)
+ENGINE = ReplacingMergeTree(ingested_at)
+PARTITION BY intDiv(ledger, 1000000)
+ORDER BY (sponsor, sponsored, kind, key_id, ledger, tx_hash, op_index, change_index);
+
 CREATE TABLE IF NOT EXISTS stellar.entry_history_watermark
 (
     name        String,

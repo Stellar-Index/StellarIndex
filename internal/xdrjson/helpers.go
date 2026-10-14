@@ -60,6 +60,11 @@ func assetCode(raw []byte) (string, bool) {
 // AssetID is the canonical asset id ("native" / "CODE-ISSUER") the API and explorer use, so lake rows can carry an API-consistent asset key.
 func AssetID(a xdr.Asset) string { return assetID(a) }
 
+// ClaimableBalanceIDHex renders a balance id the way the served entry fields do.
+func ClaimableBalanceIDHex(id xdr.ClaimableBalanceId) (string, bool) {
+	return claimableBalanceIDHex(id)
+}
+
 // TrustLineAssetID renders a trustline's asset as "CODE-ISSUER", "native", or "pool:<hex pool id>" (a distinct namespace so pool shares never collide with credit assets).
 func TrustLineAssetID(t xdr.TrustLineAsset) string {
 	switch t.Type {
