@@ -338,7 +338,7 @@ Nothing else here re-derives the lake. By what survived:
    `ch-live-catchup` (hours): [ch-lake-backup § Restore](runbooks/ch-lake-backup.md#restore).
 2. **No chain survives.** Recreate tables from the daily schema snapshot, then re-derive from
    `galexie-archive` with `ch-full-backfill.sh` (~1–2 weeks):
-   [ch-schema-restore](runbooks/ch-schema-restore.md#restore-path-snapshot--create).
+   [ch-schema-restore](runbooks/ch-schema-restore.md#restore-path-snapshot-to-create).
    Historical `ch-backfill` reads need `-bucket galexie-archive` (it defaults to the live,
    trimmed bucket).
 

@@ -5,38 +5,26 @@ status: draft
 ---
 # Runbook — Redis cache
 
-Rules: `configs/prometheus/rules.r1/cache.yml` (what r1 loads) and `deploy/monitoring/rules/cache.yml` (multi-host twin), group `stellarindex.cache`, `component: cache`. The two trees are identical except where a section says otherwise.
+Rules: `configs/prometheus/rules.r1/cache.yml` (r1) and `deploy/monitoring/rules/cache.yml` (multi-host twin), group `stellarindex.cache`.
 
-**r1 posture.** ONE Debian-packaged `redis-server` on the archival host: no Sentinel, no replicas, no `cache-01..03`. The `redis-sentinel` ansible role is NOT applied to archival nodes (comment in `configs/ansible/roles/archival-node/tasks/15-log-discipline.yml`). Everything labelled "multi-host" below is the future ADR-0024 / `docs/architecture/ha-plan.md` §3.4 shape (1 primary + 2 replicas on `cache-01..03`, `redis-server.service` + `redis-sentinel.service`).
-
-r1 first look:
+**r1 posture.** ONE Debian `redis-server` on the archival host: no Sentinel, no replicas. Multi-host sections below are the future ADR-0024 shape ([ha-plan](../../architecture/ha-plan.md) section 3.4: 1 primary + 2 replicas on `cache-01..03`).
 
 ```sh
 ssh root@136.243.90.96 "systemctl status redis-server --no-pager | head -15"
 ssh root@136.243.90.96 "journalctl -u redis-server -n 100 --no-pager"
 ```
 
-Redis loss costs cache warmth, not data: `/v1/price` entries re-derive from Timescale; rate-limit counters (~1 min TTL) reset; API keys and SEP-10 sessions are backed by Timescale (`internal/auth/`, `internal/platform/`). Related: `cache.md#stellarindex_redis_writes_blocked` (`stellarindex_redis_writes_blocked`, MISCONF bgsave failure), `api.md#stellarindex_api_latency_p95_high`, `docs/adr/0007-redis-cache-schema.md`.
+Redis loss costs cache warmth, not data: `/v1/price` re-derives from Timescale, rate-limit counters reset, API keys and sessions live in Timescale. Related: `api.md#stellarindex_api_latency_p95_high`, `docs/adr/0007-redis-cache-schema.md`.
 
 ## At a glance
 
-- [`stellarindex_redis_master_down`](#stellarindex_redis_master_down)
-- [`stellarindex_redis_memory_saturated`](#stellarindex_redis_memory_saturated)
-- [`stellarindex_redis_evictions_high`](#stellarindex_redis_evictions_high)
-- [`stellarindex_redis_write_rejected_oom`](#stellarindex_redis_write_rejected_oom)
-- [`stellarindex_redis_replication_broken`](#stellarindex_redis_replication_broken)
-- [`stellarindex_redis_sentinel_textfile_stale`](#stellarindex_redis_sentinel_textfile_stale)
-- [`stellarindex_redis_writes_blocked`](#stellarindex_redis_writes_blocked)
+Redis master, memory, replication and sentinel alerts; the page alerts are P1/P2 per section, see [sev-playbook](../sev-playbook.md).
 
 ## stellarindex_redis_master_down
 
-- **Trips:** `redis_up == 0`, `for: 30s`, `severity: page` (SEV-1). `redis_exporter` emits no `role` label, so the rule watches bare `redis_up` (exporter could/couldn't reach the server).
-- **Impact:** hot-path cache for `/v1/price` gone; rate limiter fails open (no throttling, abuse window); clients served via Timescale with `stale=true` and higher latency. Degraded SLA, not an outage. MTTR 1–15 min (Sentinel failover < 1 min; manual longer).
-- **Signals:** API latency up; `stellarindex_ratelimit_fail_open_total` jumps (the deliberate Redis-outage signal, fail-open by design per HA plan §3.4); API logs "connection refused" / "pool exhausted".
+**Symptom.** `redis_up == 0`, `for: 30s`, page (SEV-1). Price cache gone, rate limiter fails open (`stellarindex_ratelimit_fail_open_total` jumps), clients served from Timescale with `stale=true`.
 
-**Diagnose (r1):** the two commands in the preamble; restart with `ssh root@136.243.90.96 systemctl restart redis-server`. Check `redis_exporter` health first: if only the exporter died, this pages on a phantom outage.
-
-**Diagnose (multi-host):**
+**Check.** The two commands above; check `redis_exporter` first (if only the exporter died this is a phantom). Multi-host:
 
 ```sh
 for h in cache-01 cache-02 cache-03; do
@@ -49,31 +37,28 @@ ssh root@cache-01 "journalctl -u redis-server -n 100 --no-pager"
 ssh root@cache-01 "systemctl status redis-sentinel --no-pager | head -10"
 ```
 
-Root causes:
+**Likely causes.**
 
-1. Sentinel mid-failover (`for: 30s` can page as it resolves). Wait a poll; `SENTINEL masters` shows the new master and the alert clears.
-2. OOM-kill of Redis on the host (host memory pressure; `maxmemory` is independent of the kernel's view). `dmesg | grep -i oom`.
-3. Persistence stall: AOF rewrite / RDB save blocks `fork()`. `redis-cli info persistence` shows `rdb_last_bgsave_status:err` or an `aof_rewrite` running > 60 s.
-4. Partition between API and master (Prometheus in the same partitioned zone sees `redis_up` 0; Sentinel fails over if it sees the master).
+- Sentinel mid-failover (`for: 30s` can page as it resolves).
+- OOM-kill of Redis (`dmesg | grep -i oom`).
+- Persistence stall: `redis-cli info persistence` shows `rdb_last_bgsave_status:err` or an `aof_rewrite` over 60 s.
+- Partition between API and master.
 
-**Fix (multi-host).** Sentinel failover is the default: `down-after-milliseconds=5000` + `failover-timeout=60000`, so 15–30 s with no operator action; `go-redis/v9` `FailoverClient` rediscovers the primary, no app restart.
+**Fix.**
 
-1. Hold while failover is in progress. Current primary: `redis-cli -h cache-01 -p 26379 -a "$REDIS_PASSWORD" SENTINEL get-master-addr-by-name stellarindex-r1-cache`. `stellarindex_redis_sentinel_primary` (multi-host only, absent on r1) sums to 1 across hosts in steady state.
-2. Check clients reconnected: API/aggregator log `redis configured` with `mode=sentinel` at startup; no "connection refused" after failover; `ratelimit_fail_open_total` rate returns to 0 (watch the rate; it is cumulative).
-3. Manual failover ONLY if automatic failover has not completed within 60 s OR `SENTINEL ckquorum` reports < 2 alive sentinels. Confirm: `redis-cli -p 26379 -a "$REDIS_PASSWORD" SENTINEL ckquorum stellarindex-r1-cache` and `SENTINEL master stellarindex-r1-cache` (`last-ok-ping-reply` > 10000 ms or `flags` containing `s_down,o_down`). Force: `redis-cli -p 26379 -a "$REDIS_PASSWORD" SENTINEL failover stellarindex-r1-cache`. Forcing on a transient blip can split-brain if Sentinels rejoin and disagree.
-4. If the primary host is gone, Sentinel already promoted; restore it as a fresh replica via the host-bringup runbook: `ansible-playbook --tags redis --limit cache-X`.
-5. Verify the new primary: `redis-cli info replication` shows every follower `lag` 0–1; `redis_up == 1` on every instance.
+1. r1: `ssh root@136.243.90.96 systemctl restart redis-server`.
+2. Multi-host: hold during failover (15-30 s, no operator action). Current primary: `redis-cli -h cache-01 -p 26379 -a "$REDIS_PASSWORD" SENTINEL get-master-addr-by-name stellarindex-r1-cache`.
+3. Force only if failover has not completed in 60 s or `redis-cli -p 26379 -a "$REDIS_PASSWORD" SENTINEL ckquorum stellarindex-r1-cache` reports fewer than 2 sentinels: `redis-cli -p 26379 -a "$REDIS_PASSWORD" SENTINEL failover stellarindex-r1-cache` (forcing on a blip can split-brain).
+4. Dead primary host: restore it as a replica with `ansible-playbook --tags redis --limit cache-X`.
+5. Verify `redis-cli info replication` followers `lag` 0-1 and `redis_up == 1`; `ratelimit_fail_open_total` rate returns to 0.
 
-RCA: Sentinel log order `+sdown`, `+odown`, `+new-epoch`, `+switch-master`; Redis logs of old and new master; host OOM/load/network; whether a rolling restart respected Sentinel quorum.
-
-False positives: rolling restart of the current primary (apt upgrade via the `redis-sentinel` role with `--limit`; one host at a time, per the role README) trips this ~30 s; muting for planned maintenance is fine.
+**Escalate:** SEV-1 per [sev-playbook](../sev-playbook.md); silence for a planned rolling restart.
 
 ## stellarindex_redis_memory_saturated
 
-- **Trips:** `(redis_memory_used_bytes / redis_memory_max_bytes) * 100 > 90`, `for: 5m`, `severity: ticket` (P2). Same expr in both trees. MTTR 30 min (scale-up) to hours (cleanup / policy).
-- **Impact depends on `maxmemory-policy`.** r1's archival-node role pins `maxmemory-policy` to `noeviction` (`redis_maxmemory_policy`, `15-log-discipline.yml`; protects the TTL-less `apikey:` credential records, GH #1317): at the cap, writes fail (cache writes, rate-limit INCRs) instead of evicting. The multi-host `redis-sentinel` role default is `volatile-lru`: only TTL-bearing keys evicted (`apikey:` never), hot keys can be knocked out, hit rate drops, API falls back to Timescale (higher p95/p99), rate-limit counters evicted early give fresh quotas.
+**Symptom.** `(redis_memory_used_bytes / redis_memory_max_bytes) * 100 > 90`, `for: 5m`, ticket (P2). r1 pins `maxmemory-policy noeviction` (`redis_maxmemory_policy`, `configs/ansible/roles/archival-node/tasks/15-log-discipline.yml`; protects TTL-less `apikey:` records): at the cap writes fail. Multi-host default `volatile-lru` evicts TTL keys, so hit rate drops and p95 rises.
 
-**Diagnose (r1; single instance, no redis-0/1/2 shards):**
+**Check.**
 
 ```sh
 ssh root@136.243.90.96 'redis-cli config get maxmemory-policy'
@@ -83,39 +68,44 @@ ssh root@136.243.90.96 'redis-cli info stats | grep -E "evicted_keys|keyspace_mi
 ssh root@136.243.90.96 'redis-cli --memkeys'    # redis-cli 6.0+; one big key or many small?
 ```
 
-Root causes:
+**Likely causes.**
 
-1. **Legitimate growth** (steady climb over days/weeks; evictions grow with it). Scale up `maxmemory` (host headroom) or scale out (shard). Raise the cap: r1's is `maxmemory {{ redis_maxmemory | default('1gb') }}` written to `/etc/redis/redis.conf` by `configs/ansible/roles/archival-node/tasks/15-log-discipline.yml` (tag `redis`). Live: `CONFIG SET maxmemory <new>` (zero-downtime with host headroom), then persist by bumping `redis_maxmemory` in the inventory and re-applying the archival-node role's `redis` tag; a hand-only change WILL page on the weekly drift check. The `redis-sentinel` role's `redis.conf.j2` is unapplied on r1; editing it changes nothing there.
-2. **Key explosion** (a handler writes per-request keys without TTL or with long TTLs). `info keyspace` shows a `dbN:keys=...` count far above distinct assets × 2 (price per pair + sep1 resolver per issuer + rate-limit counter per API key). Find the writer (recent PR), add TTL + cap, deploy. Do NOT `FLUSHDB` first: the bug refills it.
-3. **Redis used as queue/list.** `--memkeys`/`--bigkeys` shows one stream/list dominating. Cap with `MAXLEN ~`, truncate, or move the workload. Delete a single big key with `UNLINK <key>` (non-blocking; `DEL` blocks).
-4. **Bloated rate-limit counters.** The shipped limiter is a fixed-window INCR+EXPIRE counter (`internal/ratelimit/`; one small integer per subject per window; not a token bucket or sliding log). Keys of ~KB under the rate-limit prefix mean someone replaced it: revert to fixed-window INCR+EXPIRE.
+- Legitimate growth over days or weeks.
+- Key explosion: `info keyspace` count far above assets x 2; a handler writes keys without TTL.
+- One list or stream dominating `--memkeys`.
+- Rate-limit keys of ~KB: the limiter is a fixed-window INCR+EXPIRE counter (`internal/ratelimit/`), so someone replaced it.
 
-Verify: memory under 80 %, eviction rate back to baseline (~0 for a right-sized cache). RCA: 30-day keyspace growth curve; which prefix grew (`SCAN 0 MATCH <prefix>:*` per namespace; `--bigkeys` is a snapshot); git blame on the writer; is 90 % still the right threshold or is the box underprovisioned.
+**Fix.**
 
-False positives: post-deploy spike when a new cache namespace warms (should not outlast `for: 5m`); a `SCAN + DEL` cleanup sweep causes a brief bounded spike.
+1. Growth: raise the cap. r1's is `maxmemory {{ redis_maxmemory | default('1gb') }}` in `/etc/redis/redis.conf` (archival-node role, tag `redis`). Live `CONFIG SET maxmemory <new>`, then bump `redis_maxmemory` in inventory and re-apply the `redis` tag (a hand-only change pages on the weekly drift check).
+2. Key explosion: find the writer (recent PR), add TTL and cap, deploy. Do NOT `FLUSHDB` first: the bug refills it.
+3. Big key: `UNLINK <key>` (non-blocking; `DEL` blocks); cap lists with `MAXLEN ~`.
+4. Revert any non-fixed-window limiter.
+5. Verify memory under 80 % and evictions back to ~0.
+
+**Escalate:** none (ticket).
 
 ## stellarindex_redis_evictions_high
 
-- **Trips:** `rate(redis_evicted_keys_total[5m]) > 100`, `for: 5m`, `severity: ticket` (P2). Both trees.
-- **Means:** LRU pressure sustained; API hit rate drops, Timescale fallback load rises; latency alerts may follow if a popular asset's keys are evicted. Under r1's `noeviction` this alert cannot fire; see `stellarindex_redis_write_rejected_oom`.
-- **Diagnose / fix:** same commands, root causes and verification as `stellarindex_redis_memory_saturated`.
+**Symptom.** `rate(redis_evicted_keys_total[5m]) > 100`, `for: 5m`, ticket (P2). Hit rate drops, Timescale load rises. Cannot fire under r1's `noeviction`; see [write_rejected_oom](#stellarindex_redis_write_rejected_oom). Check, causes and fix: as [memory_saturated](#stellarindex_redis_memory_saturated).
 
 ## stellarindex_redis_write_rejected_oom
 
-- **Trips:** `rate(redis_errors_total{err=~"OOM|READONLY|NOREPLICAS"}[5m]) > 0`, `for: 2m`, `severity: page`. `redis_errors_total{err=...}` is the prometheus-redis-exporter counter fed by INFO ERRORSTATS. Both trees (comments differ; expr identical).
-- **Means:** Redis refuses writes outright (not degraded); application writes are failing now. This is the loud counterpart to evictions under `noeviction`.
-  - `OOM`: at `maxmemory`, nothing left to evict (`noeviction`, or on volatile-lru only TTL-less keys remain) or cannot evict fast enough. Go to `stellarindex_redis_memory_saturated` diagnosis and causes 1–4.
-  - `READONLY`: instance stopped accepting writes. Single-node r1: config drift (`replica-read-only`) or a script/transaction against a stale role. Multi-host: stale primary handoff; `redis-cli info replication` for `role:` and confirm Sentinel agrees.
-  - `NOREPLICAS`: `min-replicas-to-write` refusing because too few replicas are connected (ADR-0024 1-primary-2-replica). Check `redis_connected_slaves`; if low, this is the `stellarindex_redis_replication_broken` event seen from the write side.
-- Deliberately NOT widened to `MISCONF` (`stellarindex_redis_writes_blocked`, `cache.md#stellarindex_redis_writes_blocked`, already pages it; a second rule would double-page) nor `EXECABORT` (client-side MULTI queueing error, not a server refusing writes).
+**Symptom.** `rate(redis_errors_total{err=~"OOM|READONLY|NOREPLICAS"}[5m]) > 0`, `for: 2m`, page. Redis refuses writes now. `MISCONF` is deliberately excluded ([writes_blocked](#stellarindex_redis_writes_blocked) pages it).
+
+**Likely causes.**
+
+- `OOM`: at `maxmemory` with nothing evictable; follow [memory_saturated](#stellarindex_redis_memory_saturated).
+- `READONLY`: r1 config drift (`replica-read-only`); multi-host stale primary handoff (`redis-cli info replication`, confirm Sentinel agrees).
+- `NOREPLICAS`: `min-replicas-to-write` with too few replicas (`redis_connected_slaves`); see [replication_broken](#stellarindex_redis_replication_broken).
+
+**Escalate:** page; SEV per [sev-playbook](../sev-playbook.md).
 
 ## stellarindex_redis_replication_broken
 
-- **Trips (the trees DIFFER by design):** `deploy/monitoring/rules/cache.yml`: `redis_connected_slaves < 2`, `for: 2m`, `severity: ticket` (P2), against the ADR-0024 1-primary-2-replica topology. `configs/prometheus/rules.r1/cache.yml`: `redis_connected_slaves < on(instance) redis_expected_slaves`, `for: 2m`, `severity: ticket`. `redis_expected_slaves` has no producer anywhere (F-1329), so the r1 form never fires: **the alert is INERT on r1** (single node, no replicas; `redis_expected_slaves` is tracked in the `KNOWN_INERT` list in `scripts/ci/lint-metric-refs.sh`). Drop the r1 form when r1 grows replicas. Everything below is the multi-host shape.
-- **Impact:** none immediate (reads/writes continue on the master), but Sentinel needs a healthy replica to promote; without one a master failure becomes a full cache outage (`stellarindex_redis_master_down`). MTTR 15–45 min.
-- **Signals:** `connected_slaves:` below configured in `redis-cli info replication` on the master; Sentinel logs `+sdown slave ...`.
+**Symptom.** Multi-host: `redis_connected_slaves < 2`, `for: 2m`, ticket. The r1 rule compares against `redis_expected_slaves`, which has no producer, so it is INERT on r1 (`KNOWN_INERT` in `scripts/ci/lint-metric-refs.sh`). Without a healthy replica a master failure becomes a full cache outage ([master_down](#stellarindex_redis_master_down)).
 
-Diagnose (cache-01..03; run on the master and each replica host):
+**Check** (master and each replica).
 
 ```sh
 redis-cli -h <master> info replication
@@ -124,21 +114,26 @@ redis-cli -h <replica> info replication | grep -E 'master_sync_in_progress|maste
 redis-cli -h cache-01 -p 26379 sentinel replicas stellarindex-r1-cache
 ```
 
-Causes and fixes:
+**Likely causes.**
 
-1. Replica process died (hardware/OOM/crash): `ssh root@cache-NN "systemctl restart redis-server"`; Sentinel re-adds it on its next discovery cycle.
-2. Replica behind the repl-backlog, doing a full sync (counted connected but `master_link_status:down` can flap; `master_sync_in_progress:1`). Wait; ETA = `master_sync_left_bytes` / network bandwidth. If it never completes, bump both `repl-backlog-size` and `client-output-buffer-limit replica`.
-3. Network flapping: master log shows repeated `Connecting to MASTER ... / Partial resynchronization not possible`. Diagnose MTU, packet loss, firewall between zones.
-4. Auth drift after secret rotation (replica log `NOAUTH Authentication required`; `requirepass` / `masterauth` not updated): restart the replica with the correct secret.
+- Replica process died.
+- Full sync in progress (`master_sync_in_progress:1`); if it never completes raise `repl-backlog-size` and `client-output-buffer-limit replica`.
+- Network flapping (`Partial resynchronization not possible` in the master log).
+- Auth drift after rotation (`NOAUTH`; `requirepass` / `masterauth`).
 
-Verify: master `connected_slaves` back to the expected count; Sentinel's replica list all healthy. RCA: master, replica and Sentinel logs (sdown/odown) across the window; any network/firewall change.
+**Fix.**
 
-False positives: rolling `systemctl restart redis-server` across cache hosts (one at a time via the `redis-sentinel` role with `--limit`) can trip `for: 2m` on a slow rollout; adding a third replica gives `connected_slaves` one short during initial sync.
+1. `ssh root@cache-NN "systemctl restart redis-server"`; Sentinel re-adds it.
+2. Auth drift: restart the replica with the correct secret.
+3. Verify `connected_slaves` is back to the expected count.
+
+**Escalate:** none (ticket).
 
 ## stellarindex_redis_sentinel_textfile_stale
 
-- **Trips:** `time() - node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/redis_sentinel.prom"} > 600`, `for: 5m`, `severity: ticket` (P3). Both trees. 10 m tolerates ~20 missed 30 s runs. Multi-host only (the producer belongs to the `redis-sentinel` role). MTTR 5–15 min.
-- **Means:** `redis-sentinel-textfile-scraper.timer` (`OnUnitActiveSec=30s`, `configs/ansible/roles/redis-sentinel/tasks/07-monitoring.yml`; runs `/usr/local/bin/redis-sentinel-textfile-scraper`) stopped rewriting `redis_sentinel.prom`. node_exporter re-serves a textfile's last values regardless, so `stellarindex_redis_sentinel_primary` alone can never detect the scraper's death; it is frozen, and a primary re-election during the outage is invisible. Same mechanism as `stellarindex_config_assertions_stale` ([config-assertion-failed](config-assertion-failed.md)).
+**Symptom.** `time() - node_textfile_mtime_seconds{file="/var/lib/node_exporter/textfile_collector/redis_sentinel.prom"} > 600`, `for: 5m`, ticket (P3), multi-host only. `redis-sentinel-textfile-scraper.timer` (30 s, `configs/ansible/roles/redis-sentinel/tasks/07-monitoring.yml`) stopped rewriting the file; `stellarindex_redis_sentinel_primary` is frozen, so a re-election is invisible (same mechanism as `stellarindex_config_assertions_stale`, [config-assertion-failed](config-assertion-failed.md)).
+
+**Check.**
 
 ```sh
 systemctl status redis-sentinel-textfile-scraper.timer
@@ -147,63 +142,15 @@ journalctl -u redis-sentinel-textfile-scraper.service -n 50
 /usr/local/bin/redis-sentinel-textfile-scraper   # run by hand, inspect the error
 ```
 
-Common causes: `REDIS_PASSWORD` missing from `/etc/default/redis_exporter` (`EnvironmentFile=-`, so the unit starts but the scraper fails auth), or `redis-cli SENTINEL get-master-addr-by-name` failing because Sentinel itself is down.
+**Likely causes.** `REDIS_PASSWORD` missing from `/etc/default/redis_exporter` (the unit starts, the scraper fails auth); Sentinel itself down.
+
+**Fix.** Restore the password or Sentinel, run the scraper once by hand, confirm the mtime advances. **Escalate:** none.
 
 ## stellarindex_redis_writes_blocked
 
-**Redis writes blocked — disk full → MISCONF stop-writes**
+**Symptom.** `redis_rdb_last_bgsave_status == 0`, `for: 60s`, page (P1; `configs/prometheus/rules.r1/storage.yml`). Root FS full, so RDB saves fail and `stop-writes-on-bgsave-error yes` refuses every write (`MISCONF`). VWAP cache writes fail and `/v1/price` on rewritten or proxy-served pairs 404s `price-not-found` (pairs served from `prices_1m` still work; `flags.stale` does not fire). Corroborated by `stellarindex_aggregator_cache_write_errors`; if Redis stays unreachable past the 30 s dwell the limiter fails closed and the whole API 503s ([`api.md#stellarindex_ratelimit_fail_closed`](api.md#stellarindex_ratelimit_fail_closed)). Post-mortem: `internal/incidents/data/2026-05-10-redis-writes-blocked-disk-full.md`.
 
-_Source page `cache.md#stellarindex_redis_writes_blocked`: status living procedure, severity P1, last verified 2026-08-29._
-
-
-### At a glance
-
-| Field | Value |
-| ----- | ----- |
-| Alert | `stellarindex_redis_writes_blocked` (P1, `severity: page`) — the primary detector; fires on Redis's own bgsave status regardless of whether the aggregator is actively writing. `stellarindex_aggregator_cache_write_errors` (page) corroborates when the aggregator is refreshing but CANNOT fire on its own while the aggregator is idle — no attempted write, no counted error. `stellarindex_ratelimit_fail_closed` (page, `api.yml`) is the escalation: once the rate limiter's own Redis calls have failed past the fail-open dwell time, it fails CLOSED and the WHOLE API starts 503ing, not only `/v1/price`. |
-| Severity | P1 |
-| Detected by | `configs/prometheus/rules.r1/storage.yml` (group `stellarindex.storage`, `stellarindex_redis_writes_blocked`: `redis_rdb_last_bgsave_status == 0`, `for: 60s`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/storage.yml`. Corroborating: `aggregator.yml`'s `sum(rate(stellarindex_aggregator_vwap_cache_write_errors_total[5m])) > 0`, `for: 2m`; and `api.yml`'s `stellarindex_ratelimit_fail_closed` once the rate limiter itself starts failing closed. |
-| Typical MTTR | 5–10 min once root cause is confirmed (free disk space → Redis re-enables writes automatically) |
-| Impact | VWAP cache writes fail → `/v1/price` on rewritten or proxy-served pairs starts 404'ing because the cache key was never written — customer-visible from the first write refusal. **If Redis stays unreachable past the rate limiter's fail-open dwell time (30s), the limiter fails CLOSED and the impact widens to the WHOLE API 503ing** on every rate-limited path, not only `/v1/price` — see `api.md#stellarindex_ratelimit_fail_closed`. |
-
-Companion to [`postgres.md#stellarindex_timescale_disk_full`](postgres.md#stellarindex_timescale_disk_full). Different
-mechanism, same root cause: when `/` fills up, Redis can't write
-RDB snapshots; with the default `stop-writes-on-bgsave-error yes`
-it then refuses every subsequent write. The aggregator's VWAP
-cache writes all fail, and `/v1/price` on rewritten or
-proxy-served pairs starts 404'ing because the cache key was
-never written.
-
-This runbook captures the 2026-05-10 incident on r1 and the
-recovery sequence, so the same shape recovers in 5 minutes
-next time instead of taking diagnosis.
-
-### Signal
-
-Aggregator log filling with WARN at every refresh tick:
-
-```
-{"level":"WARN","msg":"refresh failed",
- "pair":"native/fiat:USD","window":300000000000,
- "err":"redis set vwap:native:fiat:USD:300: MISCONF Redis is
- configured to save RDB snapshots, but it's currently unable to
- persist to disk. Commands that may modify the data set are
- disabled, because this instance is configured to report errors
- during writes if RDB snapshotting fails (stop-writes-on-bgsave-error
- option). Please check the Redis logs for details about the RDB
- error."}
-```
-
-User-facing symptoms:
-
-- `/v1/price?asset=X&quote=Y` 404s `price-not-found` for any pair
-  whose VWAP is served from the Redis cache (rewritten /
-  triangulated / stablecoin-proxy paths).
-- Pairs that fall through to `prices_1m` directly still serve.
-- `flags.stale` does NOT fire (this isn't an aggregator-down
-  state; the aggregator is running, it just can't write).
-
-### Triage (1 min)
+**Check.**
 
 ```sh
 # 1. Confirm Redis writes are blocked
@@ -217,170 +164,67 @@ ssh root@136.243.90.96 'tail -20 /var/log/redis/redis-server.log'
 # Expect: "Write error saving DB on disk(rdbSaveRio): No space left on device"
 ```
 
-Once all three confirm, you're in this incident shape.
+**Likely causes.** Stale logs, syslog archives or WASM-audit stderr captures filling `/`. Postgres-side: [`postgres.md#stellarindex_timescale_disk_full`](postgres.md#stellarindex_timescale_disk_full).
 
-### Recovery (5 min)
+**Fix.**
 
-The fix is two steps in order: (a) free disk, (b) trigger a
-successful BGSAVE so Redis clears the `stop-writes-on-bgsave-error`
-flag.
+1. Free disk on `/` (on r1, lowest risk first; target under 80 % used):
 
-#### 1. Free disk on `/`
+   ```sh
+   # All commands in this step run ON r1 (ssh root@136.243.90.96).
 
-The 2026-05-10 incident on r1 found 35 GB of stale logs on a
-49 GB root filesystem. The lowest-risk reductions, in order:
+   # Vacuum systemd journal — keep recent 200 MB
+   journalctl --vacuum-size=200M
 
-```sh
-# All commands in this step run ON r1 (ssh root@136.243.90.96).
+   # Truncate rotated syslog archives
+   truncate -s 0 /var/log/syslog.1
+   # (also syslog.2.gz, .3.gz etc if present)
 
-# Vacuum systemd journal — keep recent 200 MB
-journalctl --vacuum-size=200M
+   # Remove WASM-audit stderr captures (multi-GB per walk). The walk JSON and
+   # checkpoint JSONL are small and may not be committed yet, so they stay.
+   # -f is required: the kernel comm is truncated to 15 chars, so a bare
+   # `pgrep stellarindex-ops` never matches. Empty output = no walk running.
+   pgrep -af 'stellarindex-ops wasm-history'
+   rm -f /var/log/wasm-audit/*.stderr /var/log/wasm-history-*.stderr
 
-# Truncate rotated syslog archives
-truncate -s 0 /var/log/syslog.1
-# (also syslog.2.gz, .3.gz etc if present)
+   # Postgres logs — only truncate if confirmed safe (not actively in use)
+   # Prefer `logrotate -f /etc/logrotate.d/postgresql-common` first
+   ls -la /var/log/postgresql/
 
-# Remove WASM-audit stderr captures (multi-GB per walk). The walk JSON and
-# checkpoint JSONL are small and may not be committed yet, so they stay.
-# -f is required: the kernel comm is truncated to 15 chars, so a bare
-# `pgrep stellarindex-ops` never matches. Empty output = no walk running.
-pgrep -af 'stellarindex-ops wasm-history'
-rm -f /var/log/wasm-audit/*.stderr /var/log/wasm-history-*.stderr
+   # Confirm space is back
+   df -h /
+   ```
+2. Unblock writes (a successful BGSAVE clears the flag):
 
-# Postgres logs — only truncate if confirmed safe (not actively in use)
-# Prefer `logrotate -f /etc/logrotate.d/postgresql-common` first
-ls -la /var/log/postgresql/
+   ```sh
+   # Trigger a manual BGSAVE; on success it clears the
+   # stop-writes-on-bgsave-error flag automatically
+   ssh root@136.243.90.96 'redis-cli BGSAVE'
+   # → Background saving started
 
-# Confirm space is back
-df -h /
-```
+   # Confirm it succeeded (LASTSAVE timestamp moves to ~now)
+   ssh root@136.243.90.96 'redis-cli LASTSAVE'
 
-Target: get `/` to <80% used (10 GB+ free).
+   # Probe write
+   ssh root@136.243.90.96 'redis-cli SET test:probe ok && redis-cli GET test:probe && redis-cli DEL test:probe'
+   # → OK / ok / 1
+   ```
+3. Confirm the aggregator recovered:
 
-#### 2. Unblock Redis writes
+   ```sh
+   # Aggregator log: WARN cadence should drop to ~0 within 30s
+   ssh root@136.243.90.96 'journalctl -u stellarindex-aggregator --since "30 seconds ago" -o cat \
+     | grep -c "refresh failed"'
+   # Expect: 0 (was firing 15+ per 30s pre-fix)
 
-Once disk has space:
+   # Probe a previously-broken price endpoint via the public API
+   curl -sS "https://api.stellarindex.io/v1/price?asset=native&quote=<USDC-classic-asset_id>"
+   # Expect: 200 with a fresh observed_at within the last few minutes
+   ```
+4. `stop-writes-on-bgsave-error no` is one `CONFIG SET` away if disk-full incidents repeat; the default is kept so the block is loud.
 
-```sh
-# Trigger a manual BGSAVE; on success it clears the
-# stop-writes-on-bgsave-error flag automatically
-ssh root@136.243.90.96 'redis-cli BGSAVE'
-# → Background saving started
-
-# Confirm it succeeded (LASTSAVE timestamp moves to ~now)
-ssh root@136.243.90.96 'redis-cli LASTSAVE'
-
-# Probe write
-ssh root@136.243.90.96 'redis-cli SET test:probe ok && redis-cli GET test:probe && redis-cli DEL test:probe'
-# → OK / ok / 1
-```
-
-#### 3. Confirm aggregator recovered
-
-```sh
-# Aggregator log: WARN cadence should drop to ~0 within 30s
-ssh root@136.243.90.96 'journalctl -u stellarindex-aggregator --since "30 seconds ago" -o cat \
-  | grep -c "refresh failed"'
-# Expect: 0 (was firing 15+ per 30s pre-fix)
-
-# Probe a previously-broken price endpoint via the public API
-curl -sS "https://api.stellarindex.io/v1/price?asset=native&quote=<USDC-classic-asset_id>"
-# Expect: 200 with a fresh observed_at within the last few minutes
-```
-
-Once both pass, the customer-visible side is restored. The
-underlying disk-full state may still need addressing — see
-`postgres.md#stellarindex_timescale_disk_full` for postgres-side considerations and
-follow-up rotation policy.
-
-### Why this happens
-
-Redis defaults to `stop-writes-on-bgsave-error yes`. This is the
-right choice for a primary data store (you don't want to silently
-accept writes that will be lost on restart), but Stellar Index uses
-Redis as a CACHE — every value in it is reproducible from the
-trades hypertable on demand. The conservative default still
-applies: a long sustained block protects the operator from
-issuing reads against a Redis whose dataset has fallen out of
-sync with what aggregator computed.
-
-The trade-off the operator can make:
-
-- Keep `stop-writes-on-bgsave-error yes` (default) — block writes
-  on disk-full, surfacing the incident loudly.
-- Set `stop-writes-on-bgsave-error no` — accept writes regardless
-  of snapshot state. Cache loses durability across restarts but
-  the aggregator stays able to serve. Reasonable for our
-  Cache-only role.
-
-We've kept the default for now. If repeated disk-full incidents
-happen the change is one `CONFIG SET` away.
-
-### Prevention
-
-- ~~Disk-usage alert at 85% on `/`~~ — **CLOSED**: root-FS alerts
-  now exist in BOTH trees (`storage.yml`):
-  `stellarindex_node_root_disk_warning` (< 20 % avail),
-  `stellarindex_node_root_disk_full` (< 10 % avail), and
-  `stellarindex_node_root_disk_filling_fast` (predict_linear) —
-  the runway signal this item asked for.
-- ~~Logrotate retention pass~~ — **CLOSED**: codified in
-  `configs/ansible/roles/archival-node/tasks/15-log-discipline.yml`
-  (lines 11–95): rsyslog logrotate drop-in caps the live syslog at
-  `maxsize 100M` with 7 gzip-compressed rotations, plus a journald
-  `SystemMaxUse=500M` cap. The 8.6 GB syslog.1 class (rotate-14,
-  no compress) can't recur on an ansible-applied host.
-- ~~Dedicated dir for WASM-audit captures~~ — **CLOSED**: the
-  wasm-audit procedure
-  ([`../wasm-audits/README.md`](../wasm-audits/README.md) §2, "Where
-  walk output goes") writes every walk's JSON, stderr and checkpoint
-  JSONL under `/var/log/wasm-audit/` and deletes them once the audit
-  log records the timeline, so the free-disk step above targets that
-  dir's stderr captures (plus any legacy loose
-  `/var/log/wasm-history-*.stderr`).
-
-### Changelog
-
-- 2026-09-30 — closed the wasm-audit log-dir Prevention item: the
-  procedure now writes walk captures under `/var/log/wasm-audit/`;
-  the free-disk step removes that dir's stderr captures after a
-  `pgrep -af` running-walk check.
-- 2026-09-27 — corrected "Detected by" / Alert: led with
-  `stellarindex_redis_writes_blocked` (fires on Redis's own bgsave
-  status) rather than `stellarindex_aggregator_cache_write_errors`
-  (cannot fire while the aggregator is idle — no attempted write, no
-  counted error); widened Impact to note the whole-API 503 escalation
-  via `stellarindex_ratelimit_fail_closed` once Redis stays
-  unreachable past the rate limiter's dwell time.
-- 2026-08-29 — re-verified against HEAD (Wave I). Detected-by
-  made dual-tree with the r1 overlay primary and the real expr
-  quoted with its `sum()` (`for: 2m`, `severity: page`); commands
-  moved to r1 ssh shapes; Prevention updated — the logrotate item
-  is CLOSED (15-log-discipline.yml caps syslog at 100M/7 gzip
-  rotations + journald 500M) and the root-FS alert item is CLOSED
-  (`stellarindex_node_root_disk_{warning,full,filling_fast}` in
-  both storage.yml trees); wasm-audit log-dir item remains open.
-  Added `severity: P1` frontmatter and the embedded post-mortem
-  cross-link.
+**Escalate:** page; SEV per [sev-playbook](../sev-playbook.md). Prevention already codified: `stellarindex_node_root_disk_{warning,full,filling_fast}` in `storage.yml`; logrotate and journald caps in `15-log-discipline.yml`; WASM-audit captures under `/var/log/wasm-audit/` ([`../wasm-audits/README.md`](../wasm-audits/README.md)).
 
 ## Related
 
 - [Alerts catalogue](../alerts-catalog.md)
-
-**`stellarindex_redis_writes_blocked`**
-
-- [`postgres.md#stellarindex_timescale_disk_full`](postgres.md#stellarindex_timescale_disk_full) — postgres-side disk pressure.
-- [`cache.md`](cache.md#stellarindex_redis_master_down) — different shape:
-  Redis process exited rather than rejecting writes.
-- [`cache.md`](cache.md#stellarindex_redis_memory_saturated) — memory pressure (eviction
-  policies + maxmemory); `stellarindex_redis_write_rejected_oom` is
-  that runbook's write-refusal alert (OOM/READONLY/NOREPLICAS) — a
-  different mechanism from this one's MISCONF/disk-full, not a
-  duplicate.
-- [`api.md#stellarindex_ratelimit_fail_closed`](api.md#stellarindex_ratelimit_fail_closed) — where this
-  incident escalates to if Redis stays unreachable past the rate
-  limiter's own dwell time: `stellarindex_ratelimit_fail_closed`,
-  whole-API 503s.
-- `internal/incidents/data/2026-05-10-redis-writes-blocked-disk-full.md`
-  — the customer-facing post-mortem for the founding incident
-  (embedded in the binary; served via `/v1/incidents`).

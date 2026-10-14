@@ -7,32 +7,22 @@ severity: P1
 
 # Runbook — stellar-core / stellar-rpc node alerts
 
-> **Deployment posture (2026-04-30).** Neither stellar-core nor stellar-rpc is running on r1; both daemons were removed 2026-04-23 ([r1-deployment-state.md §Services](../r1-deployment-state.md)). The metrics below have no producer, so all three alerts are *inert* on r1: there are no series to evaluate. Galexie's embedded captive-core is intentionally not exposed to the prometheus exporter (the exporter scraped the standalone daemon's `/info`; it connects out for ledger replay but exposes no `/peers` endpoint).
->
-> Production ingest reads Galexie's MinIO output directly via `go-stellar-sdk/ingest.ApplyLedgerMetadata` ([architecture/ingest-pipeline.md](../../architecture/ingest-pipeline.md)), i.e. Galexie -> MinIO -> `internal/ledgerstream`. stellar-rpc is preserved only for the `rpc-probe` operator diagnostic and for fixture capture in `scripts/dev/`.
->
-> The alerts remain in BOTH rule trees (`configs/prometheus/rules.r1/stellar.yml`, group `stellarindex.stellar`, the file r1 loads, and the multi-host twin `deploy/monitoring/rules/stellar.yml`) for the Phase-3 Tier-1 validator rollout (ADR-0004) and any future RPC facade (none on the roadmap today); their metrics are allowlisted as `KNOWN_INERT` in `scripts/ci/lint-metric-refs.sh`. Operators bringing a validator online reactivate the core signals by re-enabling `run_stellar_core` in the ansible role and exposing `stellar-core-prometheus-exporter`. Until then, an alert from these rules reaching you on r1 is a misconfiguration (for rpc_lag, a Prometheus misconfiguration, not an upstream lag), not a real signal. These sections are *future-tense*: kept discoverable rather than deleted.
+Neither stellar-core nor stellar-rpc runs standalone on r1 ([r1-deployment-state.md](../r1-deployment-state.md)); the three node alerts below have no producer and are inert there (`KNOWN_INERT` in `scripts/ci/lint-metric-refs.sh`). Production ingest is Galexie -> MinIO -> `internal/ledgerstream` ([ingest-pipeline.md](../../architecture/ingest-pipeline.md)); stellar-rpc survives only for `rpc-probe` and fixture capture. The rules stay in `configs/prometheus/rules.r1/stellar.yml` and `deploy/monitoring/rules/stellar.yml` for the Phase-3 validator rollout (ADR-0004). One of these alerts reaching you on r1 is a misconfiguration, not a real signal. `stellar-stack-version-lag` is live.
 
 ## At a glance
 
-| Alert | Severity | Rule | Metric (no producer on r1) |
-| ----- | -------- | ---- | -------------------------- |
-| [`stellarindex_stellar_core_ledger_age`](#stellarindex_stellar_core_ledger_age) | P1 (page, SEV-1) | `severity: page`, `for: 2m` | `stellarindex_stellar_core_last_ledger_time_unix` |
-| [`stellarindex_stellar_core_peers_low`](#stellarindex_stellar_core_peers_low) | P2 (ticket) | `severity: ticket`, `for: 5m` | `stellarindex_stellar_core_peer_count` |
-| [`stellarindex_stellar_rpc_lag`](#stellarindex_stellar_rpc_lag) | P2 (`severity: ticket`) | `severity: ticket`, `for: 5m` | `stellarindex_stellar_rpc_latest_ledger_age_seconds` |
-| [`stellar-stack-version-lag`](#stellar-stack-version-lag) | see section | stellar-core / stellar-rpc version lag and autoupgrade alerts | n/a |
+| Alert | Severity | Metric |
+| ----- | -------- | ------ |
+| [`stellarindex_stellar_core_ledger_age`](#stellarindex_stellar_core_ledger_age) | P1 (page), `for: 2m` | `stellarindex_stellar_core_last_ledger_time_unix` |
+| [`stellarindex_stellar_core_peers_low`](#stellarindex_stellar_core_peers_low) | P2 (ticket), `for: 5m` | `stellarindex_stellar_core_peer_count` |
+| [`stellarindex_stellar_rpc_lag`](#stellarindex_stellar_rpc_lag) | P2 (ticket), `for: 5m` | `stellarindex_stellar_rpc_latest_ledger_age_seconds` |
+| [`stellar-stack-version-lag`](#stellar-stack-version-lag) | P3 -> P1 | version-probe textfile |
 
 ## stellarindex_stellar_core_ledger_age
 
-Typical MTTR 10 min - 2 h. stellar-core (the Phase-3 validator) hasn't applied a ledger in > 60 s. **Ingest is unaffected**: Galexie's captive-core is an independent process and production ingest is Galexie -> MinIO -> `internal/ledgerstream`, not RPC. This alert concerns validator/quorum health and history-archive publishing.
+`time() - stellarindex_stellar_core_last_ledger_time_unix > 60` for 2 min: the validator has applied no ledger. Ingest is unaffected (Galexie's captive-core is independent).
 
-Symptoms:
-
-- `time() - stellarindex_stellar_core_last_ledger_time_unix > 60` for >= 2 min.
-- `stellar-core-dbinfo` / `info` endpoint shows an old `current_ledger` timestamp.
-- The rpc_lag alert (also inert today) fires downstream shortly after.
-
-Quick diagnosis (<= 5 min):
+**Check**
 
 ```sh
 # Core's own view — the admin HTTP port (11626) is localhost-only,
@@ -49,39 +39,27 @@ ssh root@<val-host> "journalctl -u stellar-core -n 200 --no-pager" \
   | grep -iE 'panic|fatal|deadlock|corrupt'
 ```
 
-Typical root causes:
+**Likely causes**
 
-1. **Stellar network itself is having issues.** Rare but has happened. Check SDF's status page / #stellar-core on Keybase / stellar.expert/explorer; if the whole network is halted, you wait. (F-1292, 2026-05-13: per ADR-0001, prefer stellar.expert or a public stellar-rpc endpoint for the cross-check; Horizon is not in our architecture.)
-2. **We lost quorum**: too many of our configured quorum-set members are unreachable. Core refuses to close ledgers without quorum. Signal: `info` shows `quorum` section with `disagree` count high; status stuck at "Syncing".
-3. **captive-core catchup stalled** (for stellar-rpc). Out of RAM, out of disk, or hit a bug mid-replay.
-4. **Corruption of the core DB.** Rare but possible after an unclean shutdown. `core new-db` + catchup is the recovery path.
+- Network-wide halt: cross-check stellar.expert/explorer or `curl -s https://mainnet.sorobanrpc.com -d '{"jsonrpc":"2.0","id":1,"method":"getLatestLedger"}'` (never Horizon, ADR-0001). A network halt is not ours to fix.
+- Lost quorum: `info` shows a high `disagree` count, status stuck at "Syncing".
+- Catchup stalled (RAM, disk) or a deliberate post-restart catchup.
+- Core DB corruption after an unclean shutdown.
 
-Mitigation:
+**Fix**
 
-- [ ] Step 1: network-wide or us? Cross-check via stellar.expert/explorer OR a public stellar-rpc endpoint (e.g. `curl -s https://mainnet.sorobanrpc.com -d '{"jsonrpc":"2.0","id":1,"method":"getLatestLedger"}'`). If the network is down, this is a P0 for Stellar, not for us. (F-1292, codex audit-2026-05-13: the earlier prose named SDF's Horizon, which ADR-0001 bans from our operational surfaces; replaced with the stellar.expert/stellar-rpc pair we already use elsewhere in this runbook tree.)
-- [ ] Step 2: if quorum: verify our quorum set members are reachable. Update the quorum-set if a chosen validator is permanently offline.
-- [ ] Step 3: if catchup stalled: check disk space + memory + logs. Restart as a last resort (losing a few minutes of progress).
-- [ ] Step 4: if corruption: run `stellar-core new-db` + catchup per the upstream stellar-core operator docs (not captured in a local runbook).
-- [ ] Verification: `info` status returns to "Synced"; ledger age drops below 30 s; the rpc_lag alert (if it fired; also inert today) clears on its next evaluation.
+1. Quorum: verify quorum-set members are reachable; update the quorum set if one is permanently offline.
+2. Catchup stalled: check disk, memory and logs; restart as a last resort.
+3. Corruption: `stellar-core new-db` plus catchup per the upstream operator docs.
+4. Verify `info` returns to "Synced" and ledger age is under 30 s.
 
-Root cause: the full `stellar-core` log for the incident window; the quorum-set config at time of incident (did someone change it recently?); network status from external sources (SDF status page, stellar.expert's ledger-age panel); hardware (was the host OOM / IOwait-pegged?).
-
-False positives:
-
-- **Deliberate "catch up" mode after a restart**: stellar-core intentionally lags while it replays. The alert's `for: 2m` can absorb a quick boot, but a long catchup will trip it.
-- **Network genuinely slow at times**: 5-6 s ledger close times during heavy traffic can tip the alert if you set the threshold too aggressively. Current threshold is 60 s which is well past any normal variation.
+**Escalate** Capture the core log for the window and the quorum-set config.
 
 ## stellarindex_stellar_core_peers_low
 
-Typical MTTR 15-60 min. stellar-core connected to < 5 peers. It may still be tracking the ledger fine, but its view of quorum is fragile: any further partition and we lose sync. Pre-emptive ticket, not an outage.
+`stellarindex_stellar_core_peer_count < 5` for 5 min. Pre-emptive ticket: tracking may be fine, but quorum view is fragile. Core runs as `stellar-core.service` (archival-node role, ADR-0008); no Kubernetes.
 
-Symptoms:
-
-- `stellarindex_stellar_core_peer_count < 5` for >= 5 min.
-- `stellar-core/peers` endpoint shows < 5 connected peers.
-- Dashboard: *Stellar -> peer count* sitting well below steady state (usually 20+).
-
-Quick diagnosis (<= 5 min). When this alert un-inerts (Phase-3 Tier-1 validator rollout), stellar-core will run as the `stellar-core.service` systemd unit on each validator host (per the `archival-node` ansible role's `templates/systemd/stellar-core.service.j2` and ADR-0008). The procedure below assumes that bare-metal shape; there is no Kubernetes deployment for stellar-core anywhere in this architecture.
+**Check**
 
 ```sh
 # Per-validator host — stellar-core's HTTP admin port is 11626 by
@@ -105,37 +83,27 @@ ssh root@val-01 "journalctl -u stellar-core -n 200 --no-pager \
   | grep -iE 'connect|refused|timed out'"
 ```
 
-Typical root causes:
+**Likely causes**
 
-1. **Firewall / egress change**: a new iptables / ufw rule on the validator host or the colo perimeter dropped our outbound 11625.
-2. **Known-peer list drift.** The SDF / LOBSTR / Satoshipay peers we explicitly trust changed IPs or retired them. Mitigation: update `KNOWN_PEERS` in the `archival-node` role's `stellar-core.cfg.j2` template + re-apply.
-3. **Large-scale network partition.** We can reach a few peers but not most. Usually correlates with BGP / upstream issues.
-4. **Our own peer has been flagged for misbehaviour** by the wider network (too many invalid ledger submissions etc.) and peers are dropping us. Rare but has happened historically in the network.
+- Firewall or egress change dropping outbound 11625.
+- Stale `KNOWN_PEERS` (peers changed IPs or retired).
+- Upstream network partition.
+- Our peer flagged for misbehaviour (rare).
 
-Mitigation:
+**Fix**
 
-- [ ] Step 1: identify whether we can *reach* the wider network (`nc -zv <known-peer> 11625` from the validator host).
-- [ ] Step 2: if firewall: unblock. Check the host's local rules (`iptables -L -n`, `ufw status`) and the colo perimeter egress policy.
-- [ ] Step 3: if the `KNOWN_PEERS` list is stale: update the template in the `archival-node` ansible role + apply with `--limit val-XX` rolling across hosts so quorum stays up.
-- [ ] Step 4: if we're the one getting dropped: check our own core logs for invalid-ledger or misbehaviour warnings, then reach out to the quorum-set operators.
-- [ ] Verification: peer count climbs back to >= 10 sustained.
+1. Confirm reachability (`nc -zv <known-peer> 11625`). Firewall: check `iptables -L -n`, `ufw status` and the colo egress policy.
+2. Stale peers: update `KNOWN_PEERS` in the role's `stellar-core.cfg.j2` and apply with `--limit val-XX`, rolling, so quorum stays up.
+3. Being dropped: look for invalid-ledger warnings in our core log, then contact quorum-set operators.
+4. Verify peer count sustains >= 10. A cold boot or rolling restart briefly lowers it.
 
-False positives:
-
-- **Cold boot**: stellar-core needs a few minutes to authenticate all peers. The `for: 5m` threshold covers normal boot; a long catchup can tip it.
-- **Rolling restart of our own validators**: we run three (ADR-0004); if you're restarting them in sequence, briefly each instance has fewer peers.
+**Escalate** If the host is down, see `infra.md#stellarindex_host_down`.
 
 ## stellarindex_stellar_rpc_lag
 
-Typical MTTR 5-30 min. Historical/future-tense: in an RPC-facade deployment, consumers of that facade would lag as its `latestLedger` fell behind wall-clock. Production ingest (Galexie -> MinIO -> `internal/ledgerstream`) does not read from stellar-rpc at all and is unaffected.
+`stellarindex_stellar_rpc_latest_ledger_age_seconds > 300` for 5 min. Only meaningful for an RPC facade; production ingest does not read stellar-rpc.
 
-Symptoms:
-
-- `stellarindex_stellar_rpc_latest_ledger_age_seconds > 300` sustained 5 min.
-- Upstream: all per-source lag signals climb together (historically the `source_lag_ledgers` gauge, deleted 2026-07-02; today: data-freshness ages across sources), the hallmark of a shared-upstream issue (vs single-source).
-- API `/v1/readyz` may still return 200 (we only probe Timescale + Redis there, not the RPC).
-
-Quick diagnosis (<= 5 min):
+**Check**
 
 ```sh
 # Direct probe — version + latestLedger + event retention
@@ -152,89 +120,31 @@ curl -s -XPOST http://stellar-rpc:8000 \
 ssh root@<host> "journalctl -u stellar-rpc -n 50 --no-pager"
 ```
 
-Key signals:
+**Likely causes**
 
-- `rpc-probe` reports `health: ⚠ latency ... is too high (>30s)`: RPC's captive-core is catching up. Wait or investigate captive-core logs.
-- `rpc-probe` reports connection refused / times out: RPC process is dead. Check the orchestrator / restart.
-- `rpc-probe` returns `latestLedger` that equals the tip on stellar.expert: RPC is fine, something else is wrong. Go back to `ingestion.md#stellarindex_ingestion_source_stopped`.
-- `rpc-probe` returns lagging `latestLedger` but health=OK: possible clock skew on the RPC host. Compare with `date` on the host.
+- `rpc-probe` health `latency ... is too high (>30s)`: captive-core catching up after a restart (10-30 min).
+- Connection refused or timeout: RPC process dead.
+- `latestLedger` lagging with health OK: clock skew on the RPC host (compare `date`).
+- `latestLedger` equal to the tip: RPC is fine; go to `ingestion.md#stellarindex_ingestion_source_stopped`.
 
-Typical root causes:
+**Fix**
 
-1. **captive-core catching up after a restart.** Usually resolves on its own within 10-30 min. Stellar-core replays from the last ledger header it has; fresh boots or volume loss force a full catchup.
-2. **Network partition between RPC host and peer validators.** captive-core can't advance ledgers it hasn't heard about.
-3. **Host resource exhaustion.** captive-core is CPU-bound on replay + memory-bound at steady state. OOM or CPU throttle stalls it.
-4. **Our own dep is behind.** The upstream stellar-rpc project ships breaking changes quarterly. Version drift shows up first as subtle lag, then total failure. `rpc-probe` prints the version; compare to the upstream's current mainline.
-
-Mitigation:
-
-- [ ] Step 1: identify the root cause via the probes above.
-- [ ] Step 2: if captive-core catching up: wait. Inform stakeholders the API's price-freshness SLA is in a degraded window.
-- [ ] Step 3: if host resource issue: scale the RPC node or restart. Keep in mind a restart triggers another catchup window.
-- [ ] Step 4: if network partition: check peer connectivity, firewall rules, and core-peers metric if you have one.
-- [ ] Verification: `stellarindex_stellar_rpc_latest_ledger_age_seconds` drops back under 300 s; source-stopped alerts that tracked this clear on their own within the next poll cycle.
+1. Catching up: wait.
+2. Resource exhaustion (CPU/RAM): scale or restart (a restart triggers another catchup).
+3. Partition: check peer connectivity and firewall.
+4. Verify the age drops under 300 s. Version drift against upstream shows in the `rpc-probe` version.
 
 ## stellar-stack-version-lag
 
-**Runbook — `stellarindex_stellar_stack_lagging` / `stellarindex_stellar_stack_protocol_lag`**
+Alerts, rules in `deploy/monitoring/rules/stellar-stack-version.yml` (and `configs/prometheus/rules.r1/`):
 
-_Source page `stellar-node.md#stellar-stack-version-lag`: status living, severity P3 | P1, last verified 2026-07-09._
+- `stellarindex_stellar_stack_lagging` (P3, ticket): lag >= 1 for 2 d.
+- `stellarindex_stellar_stack_protocol_lag` (P1, page): lag >= 2 for 6 h. A full protocol major behind: the next protocol activation vote will freeze or crash-loop the lagging component.
+- `stellarindex_stellar_stack_probe_degraded` (P3, ticket): the probe itself cannot answer.
 
+Metric source: `/var/lib/node_exporter/textfile_collector/stellar_stack_version.prom`, written daily by `stellar-stack-version-probe.timer` -> `/usr/local/sbin/stellar-stack-version-probe.sh`. Components via the `component` label: `core` (stellar-core), `galexie` (stellar-galexie), `archivist` (stellar-archivist). Clearing it means the coordinated-upgrade checklist below, a deliberate maintenance-window operation.
 
-### At a glance
-
-| Field | Value |
-| ----- | ----- |
-| Alerts | `stellarindex_stellar_stack_lagging` (P3, ticket, any lag ≥ 1 sustained 2d) · `stellarindex_stellar_stack_protocol_lag` (P1, page, lag ≥ 2 sustained 6h) · `stellarindex_stellar_stack_probe_degraded` (P3, ticket, the probe itself unable to answer) |
-| Severity | P3 → P1 escalation, same metric family |
-| Detected by | `deploy/monitoring/rules/stellar-stack-version.yml` (and `configs/prometheus/rules.r1/stellar-stack-version.yml`) |
-| Metric source | `node_exporter` textfile_collector reads `/var/lib/node_exporter/textfile_collector/stellar_stack_version.prom`, refreshed daily by `stellar-stack-version-probe.timer` → `/usr/local/sbin/stellar-stack-version-probe.sh` |
-| Components | `core` (stellar-core), `galexie` (stellar-galexie), `archivist` (stellar-archivist) — via the `component` label |
-| Typical MTTR | Not a "restart and it clears" alert — clearing it means completing the coordinated-upgrade checklist below, which is a deliberate maintenance-window operation, not an emergency reflex. |
-| Impact | None while only `stellarindex_stellar_stack_lagging` is firing (lag=1, same protocol). At lag=2 (`stellarindex_stellar_stack_protocol_lag`), impact is a countdown to a real outage: the next network protocol-activation vote will freeze/crash-loop the lagging component exactly as it did on 2026-07-08/09. |
-
-### Why this exists
-
-Two incidents in one week, both the same root cause: nothing watched
-whether the installed Stellar toolchain lagged upstream.
-
-- **2026-07-08** — mainnet Protocol 27 activated. r1's stellar-core
-  was on 26.0.1, which had no Protocol 27 support. Ingest froze for
-  2.5 hours until an operator upgraded core by hand.
-- **2026-07-09** — the very next day, the hand-installed galexie
-  binary (an April build) crash-looped on the first ledger carrying
-  CAP-0071 XDR (the new envelope shape Protocol 27 introduced).
-  `galexie-v27.0.0` had been published upstream on **2026-06-10** —
-  a full month before the incident — and nobody noticed. 5+ hours of
-  on-chain ingest loss.
-
-Both incidents share the same shape: a new Stellar protocol version
-activates on the network's own schedule (a validator vote, not ours),
-and every component in the ingest path that decodes ledger data has
-to be upgraded to match BEFORE that activation, not after. There was
-no automated signal that any of `stellar-core` / `stellar-galexie` /
-`stellar-archivist` had fallen behind upstream. This probe closes
-that gap.
-
-### Symptoms
-
-- `stellarindex_stellar_stack_lagging{stack_component="..."}` firing: the
-  probe found `component` behind the latest available upstream
-  version, sustained across 2+ consecutive daily runs. Not urgent by
-  itself if `stellarindex_stellar_stack_protocol_lag` is NOT also
-  firing for the same component — it means a patch/point release is
-  available within the SAME protocol major.
-- `stellarindex_stellar_stack_protocol_lag{stack_component="..."}` firing:
-  `component` is a full protocol-major version behind upstream. This
-  is the exact precondition for both founding incidents.
-- `stellarindex_stellar_stack_probe_success == 0`: the probe itself
-  degraded this run (see [Known false-positive
-  patterns](#known-false-positive-patterns)) — not the same signal as
-  an actual lag; check this before assuming the lag value is current.
-  Since 2026-09-05 this raises `stellarindex_stellar_stack_probe_degraded`
-  rather than waiting to be noticed.
-
-### Quick diagnosis (≤ 5 min)
+**Check**
 
 ```sh
 # 1. See exactly which component(s) are lagging + by how much, and
@@ -255,226 +165,71 @@ curl -s https://api.github.com/repos/stellar/stellar-galexie/releases/latest | j
 /usr/local/bin/galexie version                                   # (run ON r1)
 ```
 
-### Decision tree
+| What fired | Action |
+| ---------- | ------ |
+| `stellarindex_stellar_stack_lagging` only, lag=1 | Same-protocol patch release: upgrade in ordinary maintenance. |
+| `stellarindex_stellar_stack_protocol_lag`, lag=2 | New protocol major: P1. Find the announced activation date (stellar.org, SDF announcements) and schedule the upgrade window now, well before it. |
+| `stellarindex_stellar_stack_probe_success == 0`, no lag change | Probe degraded: `ssh r1 'sudo systemctl start stellar-stack-version-probe.service'`, re-check the textfile. |
 
-| What fired | Meaning | Action |
-| ---------- | ------- | ------ |
-| `stellarindex_stellar_stack_lagging` only, lag=1 | A same-protocol patch/point release is available | Schedule the upgrade during ordinary maintenance; no rush |
-| `stellarindex_stellar_stack_protocol_lag`, lag=2 | A NEW PROTOCOL MAJOR is available and we're not on it | Treat as P1: schedule the coordinated-upgrade maintenance window below **now**, well before any activation vote — check https://stellar.org (or the SDF Discord/dashboard) for the announced activation date and work backward from it |
-| `stellarindex_stellar_stack_probe_success == 0` with no lag change | The probe degraded (GitHub API, apt state) — not evidence either way | Re-run manually: `ssh r1 'sudo systemctl start stellar-stack-version-probe.service'`, then re-check the textfile |
+**Upgrade checklist.** Do all applicable components in ONE window; upgrading only one just moves the incident.
 
-### Remediation — the coordinated-upgrade checklist
+1. Confirm the target protocol version and its activation date.
+2. stellar-core (apt). `stellar-core-auto-upgrade.timer` normally does this within 6 h and records `stellarindex_stellar_core_autoupgrade_result`; run by hand only when that alert fired, the host is pinned, or the stop file is set.
+   ```sh
+   ssh r1
+   sudo apt-get update
+   apt-cache policy stellar-core   # confirm the candidate is the target version
+   sudo systemctl stop galexie     # captive-core will restart cleanly once core is upgraded
+   sudo apt-get install --only-upgrade stellar-core
+   sudo systemctl start galexie
+   ```
+   Then update any `stellar-core` version reference in `configs/ansible/roles/archival-node/tasks/06-stellar-core.yml` comments and `VERSIONS.md` in the same PR.
+3. stellar-galexie (build from tag; no apt package; see `configs/ansible/roles/archival-node/tasks/07-galexie.yml`):
+   ```sh
+   # On r1, or any build host with the same Go toolchain:
+   git clone https://github.com/stellar/stellar-galexie.git
+   cd stellar-galexie
+   git checkout galexie-vNN.N.N        # the target tag
+   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+     go build -trimpath -o galexie .
+   # Verify before installing:
+   ./galexie version
 
-**Do all applicable components in ONE maintenance window.** A
-protocol upgrade is a coordinated cutover across the whole ingest
-path — upgrading only `stellar-core` and leaving `galexie` behind (or
-vice versa) just moves the incident from one component to the other,
-which is exactly what happened across 2026-07-08 → 2026-07-09.
+   # Install with a rollback backup:
+   sudo cp /usr/local/bin/galexie /usr/local/bin/galexie.prev
+   sudo systemctl stop galexie
+   sudo install -o root -g root -m 0755 galexie /usr/local/bin/galexie
+   sudo systemctl start galexie
+   sudo systemctl status galexie      # confirm it's running + past initial catchup
+   /usr/local/bin/galexie version     # record the new pseudo-version string
+   ```
+   Codify in the SAME PR: in `configs/ansible/roles/archival-node/defaults/main.yml` bump `galexie_version` AND `galexie_expected_version_string` (the exact `galexie version` output; the drift-guard assert and this probe compare it); update the `stellar/stellar-galexie` row in `VERSIONS.md`; then `ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml --tags galexie --check --diff` must show zero diff.
+4. stellar-archivist (apt; no daemon, invoked on demand by `stellarindex-ops verify-archive -tier archivist`):
+   ```sh
+   ssh r1
+   sudo apt-get update
+   sudo apt-get install --only-upgrade stellar-archivist
+   ```
+5. go-stellar-sdk: if the upgrade changed XDR shapes our decoders touch, bump `github.com/stellar/go-stellar-sdk` in `go.mod` through a normal PR (land it BEFORE the operator-side upgrades if the new shapes are unparseable without it), run `go build ./...` and the unit suite, and audit `internal/scval`.
+6. Verify: `sudo systemctl start stellar-stack-version-probe.service` on r1; every upgraded component's `stellarindex_stellar_stack_version_lag` reads 0 (briefly absent if GitHub rate-limits the re-check). Watch `stellarindex_source_decode_errors_total` and the completeness verdict (`data-freshness.md#stellarindex_completeness_incomplete`) for an hour.
 
-- [ ] **Confirm the target protocol version** and its network
-      activation date (SDF announcements / stellar-protocol repo
-      CAP status) before starting — this sets how much runway you
-      have, not how fast you need to move today.
-- [ ] **stellar-core** (apt):
-      `stellar-core-auto-upgrade.timer` normally does this within 6 h of
-      the apt publish and records the outcome in
-      `stellarindex_stellar_core_autoupgrade_result`. Run the steps
-      below by hand only when that alert fired, the host is pinned, or
-      the stop file is set.
-      ```sh
-      ssh r1
-      sudo apt-get update
-      apt-cache policy stellar-core   # confirm the candidate is the target version
-      sudo systemctl stop galexie     # captive-core will restart cleanly once core is upgraded
-      sudo apt-get install --only-upgrade stellar-core
-      sudo systemctl start galexie
-      ```
-      Then codify: bump any `stellar-core` version reference in
-      `configs/ansible/roles/archival-node/tasks/06-stellar-core.yml`
-      comments / `VERSIONS.md` in the same PR (the apt package itself
-      tracks the repo's candidate, so there's no version pin to bump
-      in ansible for core the way there is for galexie — but
-      VERSIONS.md's pinned-snapshots table is documentation of record
-      and goes stale otherwise).
-- [ ] **stellar-galexie** (build from tag — no apt package upstream,
-      see `configs/ansible/roles/archival-node/tasks/07-galexie.yml`).
-      Exact build recipe (matches what `07-galexie.yml`'s `go install`
-      task does, spelled out for a manual/emergency upgrade or for
-      verifying the ansible apply did the right thing):
-      ```sh
-      # On r1, or any build host with the same Go toolchain:
-      git clone https://github.com/stellar/stellar-galexie.git
-      cd stellar-galexie
-      git checkout galexie-vNN.N.N        # the target tag
-      CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-        go build -trimpath -o galexie .
-      # Verify before installing:
-      ./galexie version
+The galexie comparison is date-based: `galexie version` reports a Go pseudo-version, never the release tag, so the probe compares the embedded commit date with the release's target-commit date. Logic is commented in `stellar-stack-version-probe.sh`.
 
-      # Install with a rollback backup:
-      sudo cp /usr/local/bin/galexie /usr/local/bin/galexie.prev
-      sudo systemctl stop galexie
-      sudo install -o root -g root -m 0755 galexie /usr/local/bin/galexie
-      sudo systemctl start galexie
-      sudo systemctl status galexie      # confirm it's running + past initial catchup
-      /usr/local/bin/galexie version     # record the new pseudo-version string
-      ```
-      Then codify in the SAME PR (this is the step that was skipped
-      on both 2026-07-08 and 2026-07-09, which is why this alert
-      exists):
-      - `configs/ansible/roles/archival-node/defaults/main.yml`:
-        bump both `galexie_version` (the go-install tag) AND
-        `galexie_expected_version_string` (the exact `galexie
-        version` output stamped above — this is what
-        `07-galexie.yml`'s drift-guard assert compares against, and
-        what this probe's lag classification treats as "installed").
-      - `VERSIONS.md`: update the `stellar/stellar-galexie` pinned-
-        snapshot row (SHA + tag + date).
-      - Run `ansible-playbook -i inventory/r1.yml
-        playbooks/archival-node.yml --tags galexie --check --diff`
-        to confirm the codified state now matches reality (zero
-        diff expected).
-- [ ] **stellar-archivist** (apt):
-      ```sh
-      ssh r1
-      sudo apt-get update
-      sudo apt-get install --only-upgrade stellar-archivist
-      ```
-      No running service to restart — `stellar-archivist` is invoked
-      on-demand by `stellarindex-ops verify-archive -tier archivist`
-      and by ad-hoc operator scans, not a daemon. Update the pinned
-      SHA in `VERSIONS.md`'s `stellar/rs-stellar-archivist` row if a
-      new commit/tag is available upstream.
-- [ ] **go-stellar-sdk** (go.mod — separate code change, not part of
-      this ops runbook). If the protocol upgrade changed any XDR
-      shape our decoders touch (CAP-0071 is exactly this class of
-      change), bump `github.com/stellar/go-stellar-sdk` in `go.mod`,
-      run `go build ./...` + the full unit suite, and audit
-      `internal/scval` + any decoder that hand-parses XDR structures
-      the CAP changed. This is a normal PR through CI, not an
-      r1-side operator step — land and deploy it BEFORE the
-      operator-side upgrades above if the SDK bump is what makes the
-      new XDR shapes parseable at all (check the CAP's XDR diff
-      against what's currently vendored).
-- [ ] **Verify the probe clears**: `sudo systemctl start
-      stellar-stack-version-probe.service` on r1, then re-check the
-      textfile — every upgraded component's `stellarindex_stellar_stack_version_lag`
-      should read 0 (or the metric may be briefly absent for one run
-      if GitHub rate-limits the immediate re-check; that's expected
-      and self-heals on the next daily run).
-- [ ] **Watch ingest** for the hour after cutover — a protocol
-      upgrade is exactly the class of change most likely to surface
-      a new decode-error class; check
-      `stellarindex_source_decode_errors_total` and the completeness
-      verdict (`docs/operations/runbooks/data-freshness.md#stellarindex_completeness_incomplete`)
-      aren't regressing.
+**`stellarindex_stellar_stack_probe_degraded`** is not a lag: the two lag alerts are evaluating over absent or frozen series and cannot fire. Arms:
 
-### Why the galexie comparison is date-based, not version-based
+- `stellarindex_stellar_stack_probe_success` 0: degraded run (GitHub releases API unreachable or rate-limited, `jq` missing, or apt with no candidate). One day is usually transient.
+- `node_textfile_mtime_seconds` for `stellar_stack_version.prom` older than 48 h: probe or timer not running.
+- `probe_success` absent > 3 d: the textfile was never written on this host.
 
-`/usr/local/bin/galexie version` always reports a Go pseudo-version
-(`v0.0.0-<14-digit-date>-<short-sha>`), never the release tag —
-galexie's `galexie-vX.Y.Z` tags aren't a Go-modules-recognised semver
-tag for this module path, so `go install
-github.com/stellar/stellar-galexie@galexie-vX.Y.Z` always resolves to
-that tag's commit and reports it as a pseudo-version (this is also
-why `07-galexie.yml`'s idempotency check compares against a separate
-`.galexie.tag` stamp file rather than the binary's own version
-output). The probe therefore compares the pseudo-version's embedded
-commit DATE against the GitHub release's target-commit date, and
-infers a protocol-major gap (lag=2 vs lag=1) by checking whether the
-release immediately before the latest one shares its major version
-number — see the inline comments in
-`stellar-stack-version-probe.sh` (installed via
-`configs/ansible/roles/archival-node/tasks/10-observability.yml`) for
-the exact logic. This is a deliberate design choice: reading the
-`.galexie.tag` stamp file instead would have made the probe blind to
-exactly the failure mode it exists to catch (a hand-installed binary
-swap that bypassed ansible never updates that stamp).
+Run the Check block, then re-run the probe by hand.
 
-### When `stellarindex_stellar_stack_probe_degraded` fires
+**Likely causes (false positives)**
 
-Not a lag. This says the probe could not answer, so the two alerts
-above are evaluating over series that are absent or frozen and cannot
-fire. Silence from them means nothing while this is firing.
-
-The probe has published `stellarindex_stellar_stack_probe_success`
-since it was written, and until 2026-09-05 no rule read it. That is the
-same blindness as no canary at all: the lag metric is deliberately
-ABSENT (not zero) for any component a run could not classify, and `>= 1`
-/ `>= 2` over an absent series are empty. A GitHub API that stays
-rate-limited, or an apt source that stops offering a candidate, blinds
-`stellarindex_stellar_stack_protocol_lag` — a page guarding the
-precondition for the 2026-07-08 and 2026-07-09 outages — while every
-dashboard reads healthy.
-
-| Arm | Reading | What it means |
-| --- | ------- | ------------- |
-| `stellarindex_stellar_stack_probe_success` | 0 | A degraded run: the GitHub releases API unreachable or rate-limited, `jq` missing, or apt with no candidate for an installed package. See [Known false-positive patterns](#known-false-positive-patterns) — a single day is usually transient. |
-| `node_textfile_mtime_seconds` for `stellar_stack_version.prom` | older than 48 h | The probe or its timer is not running. This probe writes no run stamp of its own, so the file's mtime — which the textfile collector already exports — is what ages; `node_exporter` keeps serving the last file it saw, leaving `probe_success` frozen at 1. |
-| `stellarindex_stellar_stack_probe_success` | absent > 3 d | The textfile was never written on this host at all. |
-
-Follow the §Quick diagnosis block above, which already covers the timer,
-the service and the file's mtime, then re-run the probe by hand.
-
-### Known false-positive patterns
-
-- **`stellarindex_stellar_stack_probe_success == 0` with stale lag
-  values**: the GitHub API is unauthenticated in this probe (no
-  token) and subject to a low unauthenticated rate limit (60
-  requests/hour per source IP) — up to 3 calls per run for galexie.
-  A shared egress IP hitting other GitHub API consumers around the
-  same time can transiently exhaust it. Self-heals on the next daily
-  run; only escalate if `probe_success` stays 0 across multiple
-  consecutive days.
-- **`core` or `archivist` lag metric absent entirely**: `apt-cache
-  policy` found no Candidate for a dpkg-installed package. This
-  usually means the `apt.stellar.org` repo isn't in
-  `/etc/apt/sources.list.d/` on this host — check whether
-  `06-stellar-core.yml` actually ran here (it's gated behind
-  `run_stellar_core`, which is `false` on r1; the `stellar-core`
-  package r1 actually runs as galexie's captive-core dependency may
-  therefore not be tracked by the SAME apt source the ansible role
-  expects — this is a known gap, not a probe bug; see
-  `docs/operations/r1-ansible-drift-2026-07-03.md`).
-- **`galexie` lag flips 1→2 or 2→1 across consecutive days without an
-  actual upgrade**: the "is the latest release a new major relative
-  to the one before it" heuristic looks at the two MOST RECENT
-  releases upstream. If upstream ships an unusual release cadence
-  (two point releases back-to-back, then a major), the classification
-  can shift as the "previous release" reference point moves. Treat
-  the underlying DATE gap (visible via
-  `stellarindex_stellar_stack_installed_info`'s version string,
-  cross-referenced against the GitHub releases page) as ground truth
-  over the derived 1-vs-2 classification if they ever seem to
-  disagree.
-
-### Changelog
-
-- 2026-07-09 — initial draft alongside the stellar-stack-version-probe,
-  in direct response to the P27 core-freeze (2026-07-08) and galexie
-  CAP-0071 crash-loop (2026-07-09) incidents.
+- `probe_success == 0` with stale lag: the probe's unauthenticated GitHub API limit (60 requests/hour per source IP) was hit; self-heals the next day. Escalate only if it stays 0 for several days.
+- `core` or `archivist` lag absent: `apt-cache policy` found no candidate, usually because `apt.stellar.org` is not configured (`06-stellar-core.yml` is gated behind `run_stellar_core`, false on r1; known gap, see [r1-ansible-drift-2026-07-03.md](../r1-ansible-drift-2026-07-03.md)).
+- `galexie` lag flipping 1<->2 without an upgrade: the major-gap heuristic looks at the two most recent upstream releases; trust the date gap (`stellarindex_stellar_stack_installed_info` vs the releases page).
 
 ## Related
 
-- [core_peers_low](#stellarindex_stellar_core_peers_low) and [core_ledger_age](#stellarindex_stellar_core_ledger_age): losing peers escalates to losing sync.
-- `ingestion.md#stellarindex_ingestion_source_stopped`: downstream effect when the RPC is completely unavailable vs just lagging.
-- `ingestion.md#stellarindex_ingestion_all_sources_stopped`: its "RPC failure takes ALL sources down" branch is historical; production ingest no longer flows through stellar-rpc.
-- `archive.md#stellarindex_stellar_archive_publish_fail`: a core_ledger_age stall can cascade into it.
-- `infra.md#stellarindex_host_down`: if the host hosting stellar-core is down, peers-low is redundant (the bigger problem).
-- ADR-0004 (three-validator aspiration). stellar-rpc docs: `https://developers.stellar.org/docs/data/rpc/` for operator-side recovery guidance.
-
-**`stellar-stack-version-lag`**
-
-- [galexie-archive](archive.md#stellarindex_galexie_catchup_refused) — the
-  2026-07-05 captive-core wedge; a different failure mode in the same
-  subsystem (galexie/captive-core health, not version currency).
-- `configs/ansible/roles/archival-node/tasks/07-galexie.yml` — the
-  galexie install/build task, including the `galexie_expected_version_string`
-  drift-guard assert this probe's design mirrors.
-- `configs/ansible/roles/archival-node/defaults/main.yml` —
-  `galexie_version`, `galexie_expected_version_string`,
-  `galexie_expected_binary_sha256` (optional).
-- `VERSIONS.md` — the pinned-snapshots table of record for every
-  upstream Stellar binary/repo this project depends on.
-- [docs/operations/r1-ansible-drift-2026-07-03.md](../r1-ansible-drift-2026-07-03.md)
-  — background on r1 configuration drift generally.
+- `ingestion.md#stellarindex_ingestion_source_stopped`, `archive.md#stellarindex_stellar_archive_publish_fail`, `infra.md#stellarindex_host_down`, [galexie catchup refused](archive.md#stellarindex_galexie_catchup_refused).
+- `configs/ansible/roles/archival-node/tasks/07-galexie.yml`, `configs/ansible/roles/archival-node/defaults/main.yml`, `VERSIONS.md`.

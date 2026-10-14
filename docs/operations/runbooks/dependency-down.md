@@ -7,54 +7,24 @@ severity: P1
 
 # Runbook — `stellarindex_dependency_down`
 
-The API's own `/v1/readyz` check for one of its dependencies has been
-failing for 2+ minutes. The check already ran on every readiness round;
-what is new (#371) is that its result is published as
-`stellarindex_dependency_up{dependency="…"}`, so it can be alerted on.
-
-**Which dependency fired matters a lot, because they are not equally
-well covered.**
+`stellarindex_dependency_up{dependency="..."} == 0` for 2m (P1, page): the API's own `/v1/readyz` check for one dependency is failing. Rule: `configs/prometheus/rules.r1/storage.yml` and `deploy/monitoring/rules/storage.yml` (group `stellarindex.storage`).
 
 | dependency | other coverage | treat this alert as |
 |---|---|---|
-| `clickhouse` | **none — no exporter on r1** | the primary signal |
+| `clickhouse` | none (no exporter on r1) | the primary signal |
 | `postgres` | `postgres_exporter` (`pg_up`) | corroboration |
 | `redis` | `redis_exporter` | corroboration |
-| `schema` | none | the primary signal |
-| `nonstandard_decimals` | none | the primary signal |
-| `closed_buckets` | none | the primary signal |
+| `schema`, `nonstandard_decimals`, `closed_buckets` | none | the primary signal |
 
 ## At a glance
 
-| Field | Value |
-| ----- | ----- |
-| Alert | `stellarindex_dependency_down` — `configs/prometheus/rules.r1/storage.yml` and `deploy/monitoring/rules/storage.yml` (group `stellarindex.storage`, `severity: page`, `for: 2m`) |
-| Severity | **P1** |
-| Detected by | `stellarindex_dependency_up{dependency="…"} == 0` — the API's own `/v1/readyz` check, published as a gauge (#371 F2). For `clickhouse` this is the ONLY signal; postgres and redis also have exporter-backed alerts that fire alongside. |
-| Typical MTTR | Minutes when the dependency just needs restarting; longer if it is disk pressure or a partial migration. |
-| Impact | Depends entirely on which dependency. `clickhouse`: ingest writes and projector reads stop, but the served API keeps working from the Postgres served tier — so customers may see nothing while the archive silently stops advancing. `postgres`: writes halt. `redis`: hot-path cache degrades to Timescale. `schema`: the binary and database disagree about migration state. |
+P1 page, `for: 2m`. MTTR minutes when a restart fixes it; longer for disk pressure or a partial migration. Impact depends on the dependency (table above).
 
 ## If `dependency="clickhouse"` — read this first
 
-ClickHouse is the **raw lake** (ADR-0034). It is the substrate the
-ADR-0033 completeness claim rests on: every ledger and event lands there
-first, the projector reads forward events from `contract_events`, and
-`stellarindex-ops` re-derives from it. It is also the one dependency on
-r1 with **no Prometheus exporter of its own**, which is why this alert
-exists — before it, ClickHouse disappearing had no single symptom, just
-endpoints failing one at a time.
+ClickHouse is the raw lake (ADR-0034). Ingest writes and projector reads stop, but the served API keeps working from Postgres, so customers see nothing while the archive silently stops advancing.
 
-What is and is not affected:
-
-- **Ingest writes stop.** The dual-sink indexer cannot write the lake.
-- **Projector reads stop** (`storage.clickhouse_projector_source`
-  defaults true).
-- **The served API mostly keeps working.** Postgres is the served tier;
-  `/v1/price`, `/v1/assets` and the rest read from it. So customers may
-  see nothing wrong while the archive silently stops advancing — which
-  is precisely the failure worth paging on.
-
-### Triage
+**Check.**
 
 ```sh
 # 1. Is the service up at all?
@@ -71,118 +41,55 @@ zfs list -o name,used,avail 2>/dev/null | head
 journalctl -u clickhouse-server --since "30 min ago" --no-pager | tail -40
 ```
 
-### Common causes, in the order they actually happen here
+**Likely causes.**
 
-1. **Disk pressure.** The lake is the largest thing on the box. Check
-   `df -h /var/lib/clickhouse` first; ClickHouse refuses writes well
-   before the filesystem is full.
-2. **A heavy job took it down.** Any one-shot must run under
-   `/usr/local/sbin/run-heavy-job.sh` (MemoryMax=20G) — see
-   [maintainer-workflow.md](../maintainer-workflow.md). An unwrapped
-   re-derive is the 2026-07-05 class.
-3. **OOM.** `journalctl -k | grep -i oom` — the host sets strict
-   overcommit, so allocation failures usually surface as ENOMEM in the
-   process log rather than a kernel OOM kill.
+- Disk pressure (ClickHouse refuses writes well before the filesystem is full).
+- A heavy job took it down; one-shots must run under `/usr/local/sbin/run-heavy-job.sh` (MemoryMax=20G), see [maintainer-workflow.md](../maintainer-workflow.md).
+- OOM: `journalctl -k | grep -i oom` (strict overcommit usually surfaces as ENOMEM in the process log).
 
-### Recovery
+**Fix.**
 
-```sh
-systemctl restart clickhouse-server
-# then confirm the API agrees, not just systemd:
-curl -s localhost:3000/v1/readyz | python3 -m json.tool | grep -A2 clickhouse
-```
+1. Restart and confirm the API agrees, not just systemd:
 
-If ClickHouse answers `SELECT 1` but readyz still reports it down with
-"boot retry window" in the error, ClickHouse did not answer the API's
-last boot attempt (about six seconds after start), so the API never wired
-its lake readers. Restart the API: `systemctl restart stellarindex-api`.
+   ```sh
+   systemctl restart clickhouse-server
+   curl -s localhost:3000/v1/readyz | python3 -m json.tool | grep -A2 clickhouse
+   ```
+2. `SELECT 1` works but readyz says down with "boot retry window": the API never wired its lake readers. `systemctl restart stellarindex-api`.
+3. Ingest resumes from its cursor. For a longer gap verify with the gap detector and catch up projected sources with `projector-replay` (not `backfill`, which writes nothing on gated sources and exits 0); see [adr-0033-data-recovery.md](../adr-0033-data-recovery.md).
 
-Ingest resumes from its cursor — no manual backfill is needed for a
-restart-length outage. If the gap is long enough to matter, verify with
-the gap detector rather than assuming, and catch up projected sources
-with `projector-replay` (**not** `backfill` — on gated sources that
-writes nothing and exits 0; see
-[adr-0033-data-recovery.md](../adr-0033-data-recovery.md)).
+**Escalate:** page per [sev-playbook](../sev-playbook.md).
 
 ## If `dependency="postgres"` or `"redis"`
 
-The dedicated exporter alerts (`stellarindex_timescale_primary_down`,
-the redis rules) fire alongside this one and carry more detail. Follow
-those runbooks; this alert firing *without* them suggests the problem is
-between the API and the dependency (credentials, connection pool, a
-network path) rather than the dependency itself.
+The exporter alerts (`stellarindex_timescale_primary_down`, the redis rules) fire alongside and carry more detail: follow those runbooks. This alert alone suggests a problem between the API and the dependency (credentials, pool, network path).
 
 ## If `dependency="schema"`
 
-The schema check compares the migration state the binary expects against
-what the database has. It fires after a deploy that shipped a binary
-without its migration, or after a partial `stellarindex-migrate` run.
-Check the deployed version against `schema_migrations` before restarting
-anything — a restart does not fix a missing migration.
+The binary's expected migration state differs from the database (binary deployed without its migration, or a partial `stellarindex-migrate`). Compare the deployed version with `schema_migrations` before restarting anything; a restart does not fix a missing migration.
 
 ## If `dependency="nonstandard_decimals"`
 
-The API's in-process copy of `nonstandard_decimals_assets` has never
-loaded since the process started: the synchronous startup load failed and
-no 60 s periodic refresh has succeeded since. Until one does, every
-confirmed non-7-decimal asset serves its raw, power-of-ten-skewed price
-(see [`dex.md#dex-nonstandard-decimals`](dex.md#dex-nonstandard-decimals)). Look
-for `nonstandard-decimals cache initial refresh failed` in the API log and
-`stellarindex_nonstandard_decimals_cache_refresh_failures_total` rising.
-A refresh failure after a successful load keeps the last-good snapshot
-and does not turn this check red.
+The API's `nonstandard_decimals_assets` cache has never loaded since process start (startup load failed, no 60 s refresh has succeeded). Until then every confirmed non-7-decimal asset serves its raw, power-of-ten-skewed price (see [`dex.md#dex-nonstandard-decimals`](dex.md#dex-nonstandard-decimals)). Look for `nonstandard-decimals cache initial refresh failed` in the API log and `stellarindex_nonstandard_decimals_cache_refresh_failures_total` rising. A failure after a successful load keeps the last-good snapshot and does not turn this red.
 
 ## If `dependency="closed_buckets"`
 
-A continuous aggregate outside the real-time allowlist
-(`source_volume_1h`, `pools_per_source_1h`) has
-`timescaledb.materialized_only = false`, so it serves its in-progress
-bucket. Most readers of the price / TWAP / oracle views (catalogue
-snapshot, `/v1/markets`, DEX pages, FX resolution, RWA history) have no
-closed-bucket predicate of their own, so they now serve a partial bucket
-while the guarded `/v1/price` serves the previous one. The readyz body
-names the views. Migration 0172 pins the property, so this means an
-out-of-band `ALTER`: restore each named view with
+A continuous aggregate outside the real-time allowlist (`source_volume_1h`, `pools_per_source_1h`) has `timescaledb.materialized_only = false`, so readers without their own closed-bucket predicate serve a partial bucket. The readyz body names the views. Migration 0172 pins the property, so this means an out-of-band `ALTER`: restore each named view with
 `ALTER MATERIALIZED VIEW <view> SET (timescaledb.materialized_only = true);`
 (rewrites the view definition only; nothing re-materializes).
 
-## False-positive shapes
+## False positives and self-check
 
-- **During a deploy.** The API restarts and the check briefly fails. The
-  `for: 2m` window is set to ride that out; a firing alert during a
-  deploy window that clears itself needs no action.
-- **Never on a renamed check.** The alert is `== 0`, not `absent()`,
-  precisely so renaming or removing a check cannot look like an outage.
-
-## Verifying the alert itself
+- During a deploy the check briefly fails; `for: 2m` rides it out.
+- The alert is `== 0`, not `absent()`, so a renamed check cannot look like an outage.
 
 ```sh
 curl -s localhost:3000/metrics | grep stellarindex_dependency_up
 ```
 
-Every configured check should appear, healthy ones at `1`. A dependency
-missing from that output entirely is a bug in the publisher, not a
-healthy dependency — the metric is written for failing checks too, and
-`internal/api/v1/dependency_up_test.go` pins exactly that.
+Every configured check should appear, healthy at `1`. A dependency missing entirely is a publisher bug (`internal/api/v1/dependency_up_test.go`).
 
 ## Related
 
-- [`postgres.md#stellarindex_timescale_primary_down`](postgres.md#stellarindex_timescale_primary_down) — fires alongside
-  this alert when `dependency="postgres"`, and carries the exporter detail.
-- [`../maintainer-workflow.md`](../maintainer-workflow.md) — the heavy-job
-  wrapper, whose absence is a recurring cause of ClickHouse pressure.
-- [`../adr-0033-data-recovery.md`](../adr-0033-data-recovery.md) — catch-up
-  after a long outage. Note the gated-source trap: `backfill` writes nothing
-  and exits 0; use `projector-replay`.
-- [`../alerts-catalog.md`](../alerts-catalog.md) — the full alert inventory.
-- ADR-0034 (tiered ClickHouse architecture) — why the lake going away is
-  invisible from the served surface.
-
-## Changelog
-
-- 2026-09-01 — created alongside `stellarindex_dependency_up` (#371 F2).
-  Before this, ClickHouse had no health signal in either rule tree.
-- 2026-09-24 — added the critical `nonstandard_decimals` check: red until
-  the API's nonstandard-decimals cache has loaded once.
-- 2026-09-24 — added the critical `closed_buckets` check: red while any
-  CAGG outside the real-time allowlist serves its open bucket.
+- [`postgres.md#stellarindex_timescale_primary_down`](postgres.md#stellarindex_timescale_primary_down)
+- [`../maintainer-workflow.md`](../maintainer-workflow.md), [`../adr-0033-data-recovery.md`](../adr-0033-data-recovery.md), [`../alerts-catalog.md`](../alerts-catalog.md)
