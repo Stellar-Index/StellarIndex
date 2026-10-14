@@ -672,6 +672,10 @@ stellarindex-ops supply seed-sep41-genesis -config /etc/stellarindex.toml -write
 
 Code: `internal/ops/supply/supply_verify_rollup.go`; units `configs/ansible/roles/archival-node/templates/systemd/supply-verify-rollup.{service,timer}.j2`. A failed run is never promoted to clean.
 
+## CS-102: quiet is not stale
+
+The stale-supply anchor for a quiet asset must be the observer watermark, not the asset's own last activity. A quiet asset has an old last-activity ledger and is still fresh. Regression tests for both storage paths were run with a full red/green proof on 2026-07-29: with the defect re-introduced they fail with `quiet asset anchor = 1000, want 5000 (the observer watermark)`, and they pass with the fix. PHO's +157% divergence is a separate cause (archived SAC entries seeded as live; see `docs/architecture/domain-traps.md`).
+
 ## Related
 
 - [ADR-0011](../../adr/0011-supply-algorithm.md), [`supply-pipeline.md`](../../architecture/supply-pipeline.md), [`xlm-circulating-supply.md`](../../methodology/xlm-circulating-supply.md), [`entry-walk-renumbering.md`](entry-walk-renumbering.md) (skipped repair after an `EntryWalkVersion` bump widens `supply_divergence_high`).

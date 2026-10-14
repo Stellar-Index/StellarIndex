@@ -135,6 +135,10 @@ sudo -u postgres pgbackrest --stanza=stellarindex info
 
 **Fix** Apply the matching fix and re-run (`sudo systemctl start restore-drill.service`, or `restore-drill-offsite.service` for repo2). Confirm the `.prom` carries `stellarindex_restore_drill_failures 0` and a fresh `last_success_unix`.
 
+## Why the scheduled drill never ran until 2026-09
+
+Three blockers stacked, each hidden by the one before. `PrivateTmp=true` hid the `/var/tmp` drill dataset inside the service namespace (`226/NAMESPACE`, before `ExecStart`). `NoNewPrivileges=true` then blocked `sudo` dropping privilege to postgres. Then pgbackrest-as-postgres could not traverse `/var/lib/stellarindex`. The dataset moved to the postgres-owned `/srv/restore-drill` and the drill runs on its own unit. Every passing record before that came from manual runs, which have no namespace. A unit test that runs the script outside systemd cannot see any of the three.
+
 ## Related
 
 [dr-activation](dr-activation.md), [backup-offsite-stale](backup-offsite.md#stellarindex_backup_offsite_stale), `infra.md#stellarindex_timescale_backup_none_24h`, `infra.md#stellarindex_zfs_pool_low_space`, `ch-schema-restore.md`, `docs/adr/0043-backup-and-restore-strategy.md`.
