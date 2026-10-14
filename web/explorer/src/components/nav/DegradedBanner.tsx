@@ -1,9 +1,9 @@
 'use client';
 
 import Link from 'next/link';
-import { AlertTriangle, XCircle } from 'lucide-react';
 
 import { useStatus } from '@/api/hooks';
+import { Container } from '@/components/ui';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
 /**
@@ -66,41 +66,31 @@ export function DegradedBanner() {
   if (!unreachable && (overall === 'ok' || overall === 'unknown')) return null;
 
   const isDown = overall === 'down' || pageCount > 0;
-  const tone = unreachable
-    ? {
-        bg: 'bg-bad-50',
-        border: 'border-bad-500/30',
-        fg: 'text-bad-700',
-        Icon: XCircle,
-        label: 'Status feed unreachable — the API may be down',
-      }
+  const label = unreachable
+    ? 'Status feed unreachable — the API may be down'
     : isDown
-      ? {
-          bg: 'bg-bad-50',
-          border: 'border-bad-500/30',
-          fg: 'text-bad-700',
-          Icon: XCircle,
-          label: 'Major incident in progress',
-        }
-      : {
-          bg: 'bg-warn-50',
-          border: 'border-warn-500/30',
-          fg: 'text-warn-700',
-          Icon: AlertTriangle,
-          label: 'Degraded performance',
-        };
-  const Icon = tone.Icon;
+      ? 'Major incident in progress'
+      : 'Degraded performance';
+  // The dot carries the only colour: red for an incident or a dead feed,
+  // amber for degraded. Its glow is the one shadow the design keeps.
+  const dot =
+    unreachable || isDown
+      ? 'bg-bad-500 shadow-[0_0_6px_1px_var(--color-bad-500)]'
+      : 'bg-warn-500 shadow-[0_0_6px_1px_var(--color-warn-500)]';
   return (
     <div
       role="status"
       aria-live="polite"
-      className={`border-y px-4 py-2 text-sm ${tone.bg} ${tone.border} ${tone.fg}`}
+      className="border-line text-ink border-y bg-black py-2 text-sm"
     >
-      <div className="mx-auto flex max-w-7xl items-center gap-3">
-        <Icon className="h-4 w-4 shrink-0" />
-        <span className="font-medium">{tone.label}.</span>
+      <Container className="flex items-center gap-3">
+        <span
+          aria-hidden="true"
+          className={`h-2 w-2 shrink-0 rounded-full ${dot}`}
+        />
+        <span className="font-medium">{label}.</span>
         {!unreachable && (
-          <span className="hidden text-xs opacity-90 sm:inline">
+          <span className="text-ink-muted hidden text-xs sm:inline">
             {incidentsStatus === 'unknown' ? (
               // The alerting query failed — do NOT claim "0 active
               // alerts" (a false all-clear). Surface the blind spot.
@@ -112,7 +102,7 @@ export function DegradedBanner() {
                   <>
                     {' '}
                     · top:{' '}
-                    <code className="bg-surface/40 rounded-sm px-1 py-0.5 text-[11px]">
+                    <code className="bg-surface-subtle rounded-sm px-1 py-0.5 text-[11px]">
                       {topAlert}
                     </code>
                   </>
@@ -121,7 +111,7 @@ export function DegradedBanner() {
             )}
           </span>
         )}
-        <span className="ml-auto text-xs">
+        <span className="text-ink-muted hover:text-ink ml-auto text-xs">
           <Link
             href="/status"
             target="_blank"
@@ -131,7 +121,7 @@ export function DegradedBanner() {
             View status
           </Link>
         </span>
-      </div>
+      </Container>
     </div>
   );
 }
