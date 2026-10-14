@@ -5,14 +5,14 @@ import (
 	"fmt"
 )
 
-// EntryIndexWatermark is the ledger ch-entry-index has built the account and asset entry indexes through (0 = never
-// built, or the watermark table not provisioned); the entry-changes routes answer 503 below it.
-// EntryHistoryWatermark is the ledger ch-entry-history has derived the entry history and sponsorship
-// lifecycles through (0 = never derived, or the watermark table is absent).
+// EntryHistoryWatermark is the ledger ch-entry-history has derived the sponsorship lifecycle through (0 = never
+// derived, or the watermark table is absent).
 func (r *ExplorerReader) EntryHistoryWatermark(ctx context.Context) (uint32, error) {
-	return entryHistoryWatermarkOn(ctx, r.conn)
+	return entryWatermarkOn(ctx, r.conn, sponsorshipWatermarkName)
 }
 
+// EntryIndexWatermark is the ledger ch-entry-index has built the account and asset entry indexes through (0 = never
+// built, or the watermark table not provisioned); the entry-changes routes answer 503 below it.
 func (r *ExplorerReader) EntryIndexWatermark(ctx context.Context) (uint32, error) {
 	return entryWatermarkOn(ctx, r.conn, entryIndexWatermarkName)
 }

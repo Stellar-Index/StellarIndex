@@ -1449,8 +1449,8 @@ ORDER BY (asset, ledger, tx_hash, op_index, change_index, role);
 
 -- Sponsorship lifecycle, one row per transition of one arrangement: the entry
 -- (or signer) a sponsor pays reserves for started, was revoked (entry lives on)
--- or ended (entry gone). Written by ch-entry-history beside the two tables above
--- under the same watermark. `sponsored` is empty for a claimable balance; the
+-- or ended (entry gone). Written by ch-entry-history under its own watermark,
+-- never past entry_index. `sponsored` is empty for a claimable balance; the
 -- bloom filter serves the sponsored side, the key the sponsor side.
 CREATE TABLE IF NOT EXISTS stellar.sponsorship_events
 (

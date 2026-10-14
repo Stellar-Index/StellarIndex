@@ -119,12 +119,6 @@ func TestEntryHistoryProjector_FeeChargeIsAChangeWithItsFieldDiff(t *testing.T) 
 	if fields["balance"] != "900" || fields["seq_num"] != "8" {
 		t.Fatalf("fields balance/seq_num = %v/%v, want stroop strings 900/8", fields["balance"], fields["seq_num"])
 	}
-
-	st := newEntryHistoryStats()
-	st.record(entryhistory.Projection{Accounts: acc, Assets: ast})
-	if st.feeSeqOnly != 1 || st.accountRows["account"] != 1 {
-		t.Fatalf("stats feeSeqOnly=%d accountRows=%d, want 1/1", st.feeSeqOnly, st.accountRows["account"])
-	}
 }
 
 func TestEntryHistoryProjector_UnmergedDuplicatesReDeriveIdenticalRows(t *testing.T) {
@@ -277,42 +271,20 @@ func TestEntryHistoryProjector_ClaimableBalanceReachesClaimantsAndSponsor(t *tes
 	}
 }
 
-func TestEntryHistoryProjector_FeeSeqOnlyDetection(t *testing.T) {
-	for _, tc := range []struct {
-		changed []string
-		want    bool
-	}{
-		{[]string{"balance"}, true},
-		{[]string{"balance", "seq_ledger", "seq_num", "seq_time"}, true},
-		{[]string{"balance", "signers"}, false},
-		{nil, false},
-	} {
-		if got := isFeeSeqOnly(tc.changed); got != tc.want {
-			t.Errorf("isFeeSeqOnly(%v) = %v, want %v", tc.changed, got, tc.want)
-		}
-	}
-}
-
-// TestRunEntryHistory_WatermarkProofCountsLedgersTheDeriveRead pins the
-// coverage proof to the stream itself: snapshot seed rows (empty tx_hash) and
-// further rows of an already-counted ledger add nothing.
-func TestRunEntryHistory_WatermarkProofCountsLedgersTheDeriveRead(t *testing.T) {
+// TestRunEntryHistory_WritesOnlySponsorshipEvents pins the derive's write set: a window's paired images yield
+// sponsorship rows alone, and the watermark advances to the window's end.
+func TestRunEntryHistory_WritesOnlySponsorshipEvents(t *testing.T) {
+	tl := ehSponsored(ehTrustline(ehBob, 5), ehAlice)
 	acct := ehAccount(ehAlice, 100, 1)
-	at := func(ledger uint32, tx string, change uint32) clickhouse.EntryHistorySourceRow {
-		r := ehRow(t, ehFeeOpIx, change, "updated", acct, &acct)
-		r.Ledger, r.TxHash = ledger, tx
-		return r
-	}
 	src := []clickhouse.EntryHistorySourceRow{
-		at(ehLedger, "", 7), at(ehLedger, "aa", 0), at(ehLedger, "bb", 0),
-		at(ehLedger+1, "", 9),
-		at(ehLedger+2, "cc", 0), at(ehLedger+2, "cc", 1),
+		ehRow(t, 0, 0, "created", tl, &tl),     // a sponsored trustline appears: started
+		ehRow(t, 0, 1, "updated", acct, &acct), // an unsponsored account change: nothing
 	}
-	origStream, origInsert, origSet := streamEntryHistorySource, insertEntryHistory, setEntryHistoryWatermark
+	origStream, origInsert, origSet := streamSponsorshipCandidates, insertSponsorshipEvents, setSponsorshipWatermark
 	t.Cleanup(func() {
-		streamEntryHistorySource, insertEntryHistory, setEntryHistoryWatermark = origStream, origInsert, origSet
+		streamSponsorshipCandidates, insertSponsorshipEvents, setSponsorshipWatermark = origStream, origInsert, origSet
 	})
-	streamEntryHistorySource = func(_ context.Context, _ string, _, _ uint32, fn func(clickhouse.EntryHistorySourceRow) error) error {
+	streamSponsorshipCandidates = func(_ context.Context, _ string, _, _ uint32, fn func(clickhouse.EntryHistorySourceRow) error) error {
 		for _, r := range src {
 			if err := fn(r); err != nil {
 				return err
@@ -320,18 +292,25 @@ func TestRunEntryHistory_WatermarkProofCountsLedgersTheDeriveRead(t *testing.T) 
 		}
 		return nil
 	}
-	insertEntryHistory = func(context.Context, string, []clickhouse.AccountEntryChange, []clickhouse.AssetEntryChange, []clickhouse.SponsorshipEvent) (int64, error) {
-		return 0, nil
+	var inserted []clickhouse.SponsorshipEvent
+	insertSponsorshipEvents = func(_ context.Context, _ string, rows []clickhouse.SponsorshipEvent) (int64, error) {
+		inserted = append(inserted, rows...)
+		return int64(len(rows)), nil
 	}
-	var gotRead uint64
-	setEntryHistoryWatermark = func(_ context.Context, _ string, _, _ uint32, readTxLedgers uint64) error {
-		gotRead = readTxLedgers
+	var wm [2]uint32
+	setSponsorshipWatermark = func(_ context.Context, _ string, from, thru uint32) error {
+		wm = [2]uint32{from, thru}
 		return nil
 	}
-	if err := runEntryHistory(context.Background(), "unused", ehLedger, ehLedger+2, 10, false, newEntryHistoryStats()); err != nil {
+	st := newEntryHistoryStats()
+	if err := runEntryHistory(context.Background(), "unused", ehLedger, ehLedger+2, 10, false, st); err != nil {
 		t.Fatalf("runEntryHistory: %v", err)
 	}
-	if gotRead != 2 {
-		t.Fatalf("watermark proof = %d tx-bearing ledgers read, want 2 (ledger %d holds only a snapshot row)", gotRead, ehLedger+1)
+	if len(inserted) != 1 || inserted[0].Sponsor != ehAlice || inserted[0].Sponsored != ehBob ||
+		inserted[0].Kind != "trustline" || inserted[0].KeyID != ehUSDCID || inserted[0].Event != entryhistory.SponsorshipStarted {
+		t.Fatalf("inserted = %+v, want one started trustline sponsorship of %s by %s", inserted, ehBob, ehAlice)
+	}
+	if wm != [2]uint32{ehLedger, ehLedger + 2} || st.events[entryhistory.SponsorshipStarted] != 1 {
+		t.Fatalf("watermark window = %v, started = %d; want [%d %d] and 1", wm, st.events[entryhistory.SponsorshipStarted], ehLedger, ehLedger+2)
 	}
 }
