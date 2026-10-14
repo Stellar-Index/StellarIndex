@@ -78,3 +78,11 @@ export function shortAssetText(canonical: string | undefined | null): string {
       : canonical;
   return canonical.slice(0, i);
 }
+
+/** The code a listing row shows; a code-less Soroban asset shows its shortened contract id. */
+export function assetLabel(coin: {
+  code?: string | null;
+  asset_id?: string | null;
+}): string {
+  return coin.code || shortAssetText(coin.asset_id);
+}

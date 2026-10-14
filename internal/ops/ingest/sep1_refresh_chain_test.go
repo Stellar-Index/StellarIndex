@@ -62,10 +62,10 @@ func TestSep1RefreshRebindsToTheChainsDomainBeforeFetching(t *testing.T) {
 		issuer: {HomeDomain: current, Source: clickhouse.AuthFlagsSourceLive, AsOfLedger: 64228661},
 	}}
 
-	ok, failed, _ := sep1RefreshLoop(context.Background(), log, chain, sep1TestResolver(storedSrv),
+	stats, failed, _ := sep1RefreshLoop(context.Background(), log, chain, sep1TestResolver(storedSrv),
 		[]timescale.IssuerSep1Candidate{{GStrkey: issuer, HomeDomain: stored}}, false)
-	if ok != 1 || len(failed) != 0 {
-		t.Fatalf("sep1RefreshLoop = (%d, %v); want (1, [])", ok, failed)
+	if stats.stored != 1 || len(failed) != 0 {
+		t.Fatalf("sep1RefreshLoop = (%d, %v); want (1, [])", stats.stored, failed)
 	}
 	want := "[rebind " + issuer + " " + current + " mark " + issuer + " fetch current write " + issuer + "]"
 	if got := fmt.Sprint(log.steps()); got != want {
@@ -82,10 +82,10 @@ func TestSep1RefreshClearsADomainTheChainNoLongerDeclares(t *testing.T) {
 		issuer: {Source: clickhouse.AuthFlagsSourceLive, AsOfLedger: 64228661},
 	}}
 
-	ok, failed, _ := sep1RefreshLoop(context.Background(), log, chain, sep1TestResolver(srv),
+	stats, failed, _ := sep1RefreshLoop(context.Background(), log, chain, sep1TestResolver(srv),
 		[]timescale.IssuerSep1Candidate{{GStrkey: issuer, HomeDomain: stored}}, false)
-	if ok != 1 || len(failed) != 0 {
-		t.Fatalf("sep1RefreshLoop = (%d, %v); want (1, [])", ok, failed)
+	if stats.stored != 1 || len(failed) != 0 {
+		t.Fatalf("sep1RefreshLoop = (%d, %v); want (1, [])", stats.stored, failed)
 	}
 	if got := fmt.Sprint(log.steps()); got != "[clear "+issuer+"]" {
 		t.Errorf("call order = %s; want [clear %s]", got, issuer)
@@ -106,10 +106,10 @@ func TestSep1RefreshDoesNotFetchAnUnconfirmedDomain(t *testing.T) {
 			log := &sep1CallLog{}
 			srv, stored := sep1TestDomain(t, log, "stored", tomlListing("Stored Domain Org", issuer))
 
-			ok, failed, ourFault := sep1RefreshLoop(context.Background(), log, tc.chain, sep1TestResolver(srv),
+			stats, failed, ourFault := sep1RefreshLoop(context.Background(), log, tc.chain, sep1TestResolver(srv),
 				[]timescale.IssuerSep1Candidate{{GStrkey: issuer, HomeDomain: stored}}, false)
-			if ok != 0 || len(failed) != 1 || failed[0] != issuer {
-				t.Fatalf("sep1RefreshLoop = (%d, %v); want (0, [%s])", ok, failed, issuer)
+			if stats.stored != 0 || len(failed) != 1 || failed[0] != issuer {
+				t.Fatalf("sep1RefreshLoop = (%d, %v); want (0, [%s])", stats.stored, failed, issuer)
 			}
 			if got := len(ourFault) == 1; got != tc.ourSide {
 				t.Errorf("our-fault keys = %v; want our-side=%v — only a lake failure is ours to unwind", ourFault, tc.ourSide)
@@ -131,10 +131,10 @@ func TestSep1RefreshDryRunRebindsNothing(t *testing.T) {
 		issuer: {HomeDomain: current, Source: clickhouse.AuthFlagsSourceLive, AsOfLedger: 64228661},
 	}}
 
-	ok, failed, _ := sep1RefreshLoop(context.Background(), log, chain, sep1TestResolver(srv),
+	stats, failed, _ := sep1RefreshLoop(context.Background(), log, chain, sep1TestResolver(srv),
 		[]timescale.IssuerSep1Candidate{{GStrkey: issuer, HomeDomain: stored}}, true)
-	if ok != 1 || len(failed) != 0 {
-		t.Fatalf("sep1RefreshLoop = (%d, %v); want (1, [])", ok, failed)
+	if stats.stored != 1 || len(failed) != 0 {
+		t.Fatalf("sep1RefreshLoop = (%d, %v); want (1, [])", stats.stored, failed)
 	}
 	if got := fmt.Sprint(log.steps()); got != "[fetch current]" {
 		t.Errorf("dry run call log = %s; want [fetch current]", got)
@@ -156,9 +156,9 @@ func TestSep1RefreshClassifiesAFailedWrite(t *testing.T) {
 			srv, stored := sep1TestDomain(t, log, "stored", tomlListing("Stored Domain Org", issuer))
 			cands := []timescale.IssuerSep1Candidate{{GStrkey: issuer, HomeDomain: stored}}
 
-			ok, failed, ourFault := sep1RefreshLoop(context.Background(), log, sep1ChainFor(cands...), sep1TestResolver(srv), cands, false)
-			if ok != 0 || len(failed) != 1 || failed[0] != issuer {
-				t.Fatalf("sep1RefreshLoop = (%d, %v); want (0, [%s])", ok, failed, issuer)
+			stats, failed, ourFault := sep1RefreshLoop(context.Background(), log, sep1ChainFor(cands...), sep1TestResolver(srv), cands, false)
+			if stats.stored != 0 || len(failed) != 1 || failed[0] != issuer {
+				t.Fatalf("sep1RefreshLoop = (%d, %v); want (0, [%s])", stats.stored, failed, issuer)
 			}
 			if got := len(ourFault) == 1; got != tc.ourSide {
 				t.Errorf("our-fault keys = %v; want our-side=%v", ourFault, tc.ourSide)
@@ -179,23 +179,28 @@ func TestSep1FetchDomain(t *testing.T) {
 
 // sep1Run builds an attempted batch: reachedOK/reachedFailed rows that had
 // served a payload before, and neverOK/neverFailed rows that never had.
-func sep1Run(reachedOK, reachedFailed, neverOK, neverFailed int) ([]timescale.IssuerSep1Candidate, []string) {
+func sep1Run(reachedOK, reachedFailed, neverOK, neverFailed int) ([]timescale.IssuerSep1Candidate, []string, sep1RunStats) {
 	var cands []timescale.IssuerSep1Candidate
 	var failed []string
+	var stats sep1RunStats
 	add := func(n int, reached, fail bool) {
 		for range n {
 			key := fmt.Sprintf("G%06d", len(cands))
-			cands = append(cands, timescale.IssuerSep1Candidate{GStrkey: key, HomeDomain: "example.org", Reached: reached})
+			c := timescale.IssuerSep1Candidate{GStrkey: key, HomeDomain: "example.org", Reached: reached}
+			cands = append(cands, c)
+			outcome := sep1Stored
 			if fail {
 				failed = append(failed, key)
+				outcome = sep1Failed
 			}
+			stats.record(c, outcome, "other")
 		}
 	}
 	add(reachedOK, true, false)
 	add(reachedFailed, true, true)
 	add(neverOK, false, false)
 	add(neverFailed, false, true)
-	return cands, failed
+	return cands, failed, stats
 }
 
 // TestSep1RunVerdict pins the systemic-outage guard: it trips on domains that served a stellar.toml before and now fail, never on never-answered ones.
@@ -260,8 +265,8 @@ func TestSep1RunVerdict(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cands, failed := sep1Run(tc.reachedOK, tc.reachedFailed, tc.neverOK, tc.neverFail)
-			if got := sep1RunVerdict(cands, failed, tc.rate); got != tc.want {
+			_, _, stats := sep1Run(tc.reachedOK, tc.reachedFailed, tc.neverOK, tc.neverFail)
+			if got := sep1RunVerdict(stats, tc.rate); got != tc.want {
 				t.Errorf("sep1RunVerdict(reached ok=%d failed=%d, never ok=%d failed=%d, rate=%v) = %v, want %v",
 					tc.reachedOK, tc.reachedFailed, tc.neverOK, tc.neverFail, tc.rate, got, tc.want)
 			}
@@ -271,14 +276,14 @@ func TestSep1RunVerdict(t *testing.T) {
 
 // TestSep1RunVerdictTestnetShape guards the fixture: the testnet batch is 97% failures, so only the reached-domain population keeps the verdict green.
 func TestSep1RunVerdictTestnetShape(t *testing.T) {
-	cands, failed := sep1Run(19, 0, 0, 731)
+	cands, failed, stats := sep1Run(19, 0, 0, 731)
 	if len(cands) != 750 || len(failed) != 731 {
 		t.Fatalf("fixture = %d attempts / %d failed; want 750 / 731", len(cands), len(failed))
 	}
 	if raw := float64(len(failed)) / float64(len(cands)); raw < defaultSystemicFailureRate {
 		t.Fatalf("raw failure rate %.3f is below %.2f; fixture no longer reproduces the testnet run", raw, defaultSystemicFailureRate)
 	}
-	if sep1RunVerdict(cands, failed, defaultSystemicFailureRate) {
+	if sep1RunVerdict(stats, defaultSystemicFailureRate) {
 		t.Error("testnet healthy run judged SYSTEMIC; never-reached domains must not count as regressions")
 	}
 }
@@ -409,13 +414,13 @@ func TestSep1RefreshLoopSurvivesAHostileTOML(t *testing.T) {
 	var before, after runtime.MemStats
 	runtime.GC()
 	runtime.ReadMemStats(&before)
-	ok, failed, _ := sep1RefreshLoop(ctx, log, sep1ChainFor(candidates...), resolver, candidates, false)
+	stats, failed, _ := sep1RefreshLoop(ctx, log, sep1ChainFor(candidates...), resolver, candidates, false)
 	runtime.ReadMemStats(&after)
 
 	// 1. The run completed and the issuer BEHIND the poison one was served.
-	if ok != 1 || len(failed) != 1 || failed[0] != poison {
-		t.Fatalf("sep1RefreshLoop = (%d ok, %v failed); want (1, [%s]) — "+
-			"one hostile document must not cost the issuers behind it", ok, failed, poison)
+	if stats.stored != 1 || len(failed) != 1 || failed[0] != poison {
+		t.Fatalf("sep1RefreshLoop = (%d stats.stored, %v failed); want (1, [%s]) — "+
+			"one hostile document must not cost the issuers behind it", stats.stored, failed, poison)
 	}
 
 	// 2. Marked, marked before the fetch, and the healthy issuer reached.
@@ -446,9 +451,9 @@ func TestSep1RefreshLoopMarksBeforeASuccessToo(t *testing.T) {
 	log := &sep1CallLog{}
 	srv, domain := sep1TestDomain(t, log, "GBEHIND", healthyTOML)
 	cands := []timescale.IssuerSep1Candidate{{GStrkey: "GBEHIND", HomeDomain: domain}}
-	ok, failed, _ := sep1RefreshLoop(context.Background(), log, sep1ChainFor(cands...), sep1TestResolver(srv), cands, false)
-	if ok != 1 || len(failed) != 0 {
-		t.Fatalf("sep1RefreshLoop = (%d, %v); want (1, [])", ok, failed)
+	stats, failed, _ := sep1RefreshLoop(context.Background(), log, sep1ChainFor(cands...), sep1TestResolver(srv), cands, false)
+	if stats.stored != 1 || len(failed) != 0 {
+		t.Fatalf("sep1RefreshLoop = (%d, %v); want (1, [])", stats.stored, failed)
 	}
 	want := "[mark GBEHIND fetch GBEHIND write GBEHIND]"
 	if got := fmt.Sprint(log.steps()); got != want {
@@ -461,9 +466,9 @@ func TestSep1RefreshLoopMovedDomainIsNotAFailure(t *testing.T) {
 	log := &sep1CallLog{moved: map[string]bool{"GBEHIND": true}}
 	srv, domain := sep1TestDomain(t, log, "GBEHIND", healthyTOML)
 	cands := []timescale.IssuerSep1Candidate{{GStrkey: "GBEHIND", HomeDomain: domain}}
-	ok, failed, _ := sep1RefreshLoop(context.Background(), log, sep1ChainFor(cands...), sep1TestResolver(srv), cands, false)
-	if ok != 1 || len(failed) != 0 {
-		t.Fatalf("sep1RefreshLoop = (%d, %v); want (1, [])", ok, failed)
+	stats, failed, _ := sep1RefreshLoop(context.Background(), log, sep1ChainFor(cands...), sep1TestResolver(srv), cands, false)
+	if stats.stored != 1 || len(failed) != 0 {
+		t.Fatalf("sep1RefreshLoop = (%d, %v); want (1, [])", stats.stored, failed)
 	}
 }
 
@@ -472,9 +477,9 @@ func TestSep1RefreshLoopDryRunWritesNothing(t *testing.T) {
 	log := &sep1CallLog{}
 	srv, domain := sep1TestDomain(t, log, "GBEHIND", healthyTOML)
 	cands := []timescale.IssuerSep1Candidate{{GStrkey: "GBEHIND", HomeDomain: domain}}
-	ok, failed, _ := sep1RefreshLoop(context.Background(), log, sep1ChainFor(cands...), sep1TestResolver(srv), cands, true)
-	if ok != 1 || len(failed) != 0 {
-		t.Fatalf("sep1RefreshLoop(dryRun) = (%d, %v); want (1, [])", ok, failed)
+	stats, failed, _ := sep1RefreshLoop(context.Background(), log, sep1ChainFor(cands...), sep1TestResolver(srv), cands, true)
+	if stats.stored != 1 || len(failed) != 0 {
+		t.Fatalf("sep1RefreshLoop(dryRun) = (%d, %v); want (1, [])", stats.stored, failed)
 	}
 	if got := fmt.Sprint(log.steps()); got != "[fetch GBEHIND]" {
 		t.Errorf("dry run call log = %s; want [fetch GBEHIND] — no row may be written", got)

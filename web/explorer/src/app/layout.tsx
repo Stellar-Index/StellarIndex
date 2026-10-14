@@ -1,32 +1,24 @@
 import type { Metadata, Viewport } from 'next';
-import { Inter, JetBrains_Mono, Fraunces } from 'next/font/google';
+import { Geist_Mono, Onest } from 'next/font/google';
 import './globals.css';
 import { ConsoleShell } from '@/components/nav/ConsoleShell';
 import { QueryProvider } from './QueryProvider';
 import { serializeJsonLd } from '@/lib/seo';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
-// Inter (UI) + JetBrains Mono (numeric / addresses / code). next/font
-// self-hosts both at build time — no runtime Google dependency, no layout
-// shift — and exposes them as the --font-sans / --font-mono CSS variables
-// the Tailwind theme reads.
-const inter = Inter({
+// Onest (UI + display) and Geist Mono (ids, hashes, figures). next/font
+// self-hosts both at build time and exposes them as the --font-sans /
+// --font-mono variables the Tailwind theme reads.
+const onest = Onest({
   subsets: ['latin'],
   display: 'swap',
   variable: '--font-sans',
 });
-const jetbrainsMono = JetBrains_Mono({
+
+const geistMono = Geist_Mono({
   subsets: ['latin'],
   display: 'swap',
   variable: '--font-mono',
-});
-// Fraunces (serif) carries the display/identity voice — page titles + hero
-// figures — against Inter body and JetBrains Mono data. Self-hosted via
-// next/font; exposed as --font-serif for the Tailwind theme + `font-display`.
-const fraunces = Fraunces({
-  subsets: ['latin'],
-  display: 'swap',
-  variable: '--font-serif',
 });
 
 // Metadata is per-network: each explorer build (mainnet/testnet/futurenet) has
@@ -46,9 +38,9 @@ const SITE_DESCRIPTION = IS_MAINNET
   ? 'The protocol explorer and API for the Stellar network. Every contract, every event, every trade — complete, verified, per-protocol on-chain data, plus history, supply, anomaly detection, and independent VWAP prices across on-chain DEXes, classic SDEX, and major exchanges.'
   : `The Stellar ${CURRENT_NETWORK.label} explorer and API. Every ledger, transaction, account, asset, and Soroban contract on Stellar ${CURRENT_NETWORK.label} — complete, verified, per-protocol on-chain data through a public REST API.`;
 
-// Mobile address-bar / PWA theme tint — the primary brand blue (brand-600).
+// Mobile address-bar / PWA tint: the canvas token (surface-canvas).
 export const viewport: Viewport = {
-  themeColor: '#0a0b0d',
+  themeColor: '#0b0c0f',
 };
 
 export const metadata: Metadata = {
@@ -131,10 +123,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html
-      lang="en"
-      className={`${inter.variable} ${jetbrainsMono.variable} ${fraunces.variable}`}
-    >
+    <html lang="en" className={`${onest.variable} ${geistMono.variable}`}>
       <head>
         {/* Build identifier — same SHA + time as the footer badge,
             in machine-readable form. `curl -s stellarindex.io | grep

@@ -9,224 +9,62 @@ severity: P3
 
 ## At a glance
 
-| Field | Value |
-| ----- | ----- |
-| Alerts | `stellarindex_ops_job_heartbeat_stale` (P3 / ticket) — the process is GONE.<br>`stellarindex_ops_job_no_progress` (P3 / ticket) — the process is ALIVE and HUNG.<br>`stellarindex_ops_job_run_failed` (P3 / ticket) — the last run FINISHED with a non-zero exit. |
-| Detected by | Prometheus rules in `deploy/monitoring/rules/ingestion.yml` and the R1 overlay `configs/prometheus/rules.r1/ingestion.yml`. |
-| Source | node_exporter textfile written by `internal/ops/opsutil.JobHeartbeat`, at `/var/lib/node_exporter/textfile_collector/ops_job_<job>.prom`. |
-| Typical MTTR | Minutes to decide; the re-run itself is as long as the window. |
-| Impact | A backfill/re-derive window is NOT complete. Nothing is corrupt — the writes are idempotent — but the lake or served tier has a hole until the window is re-run, and the completeness verdict will eventually find it. |
+| Alert | Severity | Meaning |
+| ----- | -------- | ------- |
+| `stellarindex_ops_job_heartbeat_stale` | P3 ticket | the process is GONE |
+| `stellarindex_ops_job_no_progress` | P3 ticket | the process is ALIVE and HUNG |
+| `stellarindex_ops_job_run_failed` | P3 ticket | the last run FINISHED with a non-zero exit |
+
+Rules: `deploy/monitoring/rules/ingestion.yml` and `configs/prometheus/rules.r1/ingestion.yml`. Source: node_exporter textfile written by `internal/ops/opsutil.JobHeartbeat` at `/var/lib/node_exporter/textfile_collector/ops_job_<job>.prom`. Impact: a backfill/re-derive window is NOT complete. Writes are idempotent so nothing is corrupt, but the lake or served tier has a hole until the window is re-run.
 
 ## What these fire on
 
-Before C6-020 (audit-2026-07-23) there was **no** backfill-progress alert
-in either rule tree. Long backfills are the dominant ops activity (Phase A
-recompress, movement backfills, `ch-full-backfill.sh` windows); they run
-for days; and a wedged one looked exactly like a working one unless
-somebody was tailing the journal.
-
-`JobHeartbeat` publishes liveness and progress *separately* so the two genuinely
-different failures stay separable:
-
 | Series | Meaning |
 | ------ | ------- |
-| `stellarindex_ops_job_running{ops_job}` | 1 while the process is alive; 0 after a clean exit. |
-| `stellarindex_ops_job_heartbeat_unix{ops_job}` | Rewritten every 60 s by a background ticker, **independent of whether work is happening**. |
-| `stellarindex_ops_job_progress_total{ops_job}` | Units (ledgers) completed this run. |
-| `stellarindex_ops_job_progress_cursor{ops_job}` | Highest ledger reached (a running max — the parallel walkers cover disjoint chunks). |
-| `stellarindex_ops_job_progress_bytes_total{ops_job}` | Bytes of storage the job has **observed move** during a phase that completes no units. 0 for a job with no such phase. |
-| `stellarindex_ops_job_last_exit_ok{ops_job}` | Only present after a run ends: 1 clean, 0 errored. |
+| `stellarindex_ops_job_running{ops_job}` | 1 while the process is alive; 0 after a clean exit |
+| `stellarindex_ops_job_heartbeat_unix{ops_job}` | rewritten every 60 s by a ticker, independent of work |
+| `stellarindex_ops_job_progress_total{ops_job}` | units (ledgers) completed this run |
+| `stellarindex_ops_job_progress_cursor{ops_job}` | highest ledger reached (running max) |
+| `stellarindex_ops_job_progress_bytes_total{ops_job}` | bytes of storage observed moving during a phase that completes no units |
+| `stellarindex_ops_job_last_exit_ok{ops_job}` | only after a run ends: 1 clean, 0 errored |
 
-Hence:
+- `heartbeat_stale`: `running==1` but the ticker stopped; the process died without cleanup (OOM-kill, SIGKILL, reboot, owning SSH session closed).
+- `no_progress`: `running==1`, ticker fine, BOTH progress counters flat for 30 min.
+- `run_failed`: `last_exit_ok==0`. No `running==1` guard, so it watches the FINISHED state.
 
-- **`heartbeat_stale`** = `running==1` but the ticker stopped → the
-  process died without cleanup: OOM-kill, SIGKILL, host reboot, the SSH
-  session that owned it closed.
-- **`no_progress`** = `running==1`, ticker fine, **both** counters flat for
-  30 min → the process is up and **hung**.
-- **`run_failed`** = `last_exit_ok==0` → the process **exited cleanly on
-  its own, but with an error**. Unlike its two siblings this alert carries
-  no `running==1` guard: a clean exit sets `running=0`, which is exactly
-  what would silence the other two, so this is the only one of the three
-  that watches the FINISHED state rather than a live process. T578
-  (audit-2026-09-18): `last_exit_ok` had been emitted since C6-020 but no
-  rule in either tree ever selected it, so a job that ran to completion
-  and failed — a permanent backfill error, a `verify-contiguity` gap it
-  could not close — alerted nobody.
-
-`no_progress` needs both because for some jobs the completed-unit count is
-structurally zero for whole phases of a healthy run. `usd-volume-restamp
--chunks` has to decompress a Timescale chunk before it can restamp one row
-in it, and on r1 (2026-09-09) that decompress ran 49+ minutes on a 17.3 GB
-chunk and about 1.5 hours on the 159.7 GB outlier at [2026-06-06,
-2026-07-06) — so the alert ticketed on every healthy chunked run until the
-job started reporting the chunk's on-disk size as it climbed. That phase is
-**not** muted: a decompress that is wedged (`decompress_chunk` waiting on a
-lock the ledgerstream replay holds, a read that never returns) extends no
-files, so the byte counter goes flat too and the alert still fires.
-
-Measured on the deployed pair (TimescaleDB 2.26.4 / PG 15.17), one chunk,
-one observer session polling `chunks_detailed_size`: through
-`decompress_chunk` every sample moved (98.9 MB → 522 MB); through
-`compress_chunk` the figure is flat for the whole statement and steps once
-at commit, because TimescaleDB builds the compressed chunk as a new
-relation inside the compressing transaction and the polling session's
-catalog snapshot cannot see it. The re-compress is therefore NOT covered by a moving
-signal, and on the one outlier chunk it can outlast the alert: it measured
-0.52x the decompress (23.0 s against 44.1 s on the same chunk), so the
-159.7 GB chunk's ~90 min decompress implies a ~47 min re-compress against
-a 45 min fire threshold (a 30 min flat window plus a 15 min `for`). Both
-counters are flat through that phase. This is accepted because it fails
-safe — an extra ticket on one chunk, not a silence. A `no_progress` ticket
-raised while the job log's last line is `re-compressing` is therefore
-expected on that chunk, and is the one case to check by hand before
-treating it as a hang — confirm with
-`SELECT state, wait_event_type, wait_event FROM pg_stat_activity WHERE
-query LIKE '%compress_chunk%'`; `Lock` there is a real wedge, anything else
-is work in progress.
-
-Both exprs are guarded by `running == 1`. That guard is what stops a
-*cleanly finished* job — whose heartbeat and counter are frozen forever by
-definition — from alerting eternally. Do not remove it.
+The other two exprs ARE guarded by `running == 1` so a cleanly finished job (frozen counters) does not alert forever; do not remove it. Bytes count too because some phases complete no units (`usd-volume-restamp -chunks` decompressing a chunk). A wedged decompress extends no files, so the alert still fires. The re-compress phase (`compress_chunk`) shows no moving signal and can outlast the 45 min threshold on the largest chunk; a `no_progress` ticket while the job log's last line is `re-compressing` is expected there. Confirm by hand: `SELECT state, wait_event_type, wait_event FROM pg_stat_activity WHERE query LIKE '%compress_chunk%'`; `Lock` is a real wedge, anything else is work in progress.
 
 ## Quick diagnosis (≤ 5 min)
 
-1. **Which job?** the `ops_job` label is the subcommand name
-   (`ch-backfill`, `backfill`). It is deliberately **not** `job`: that name
-   is reserved by Prometheus and would be overwritten with the scrape's own
-   `job="node_exporter"` (the real value demoted to `exported_job`),
-   which merged every ops job on a host into one alert group. Both alerts
-   therefore join `on (ops_job, instance, pid)`.
-   A `pid` label appears only on the second of two CONCURRENT runs of the
-   same subcommand — the first holds the flock on the primary `.prom`, the
-   second writes a `.pid<N>.prom` sibling so neither silences the other.
-   `pid` is the third join key for the same reason `ops_job` is the first:
-   without it the primary and its sibling cross-match, and a primary that
-   finished cleanly gets rescued by the still-running sibling into a
-   permanent false ticket. Dead siblings are reaped on the next contention
-   (`kill(pid,0)`); one may linger if no further contention ever happens,
-   which is harmless — its terminal `running=0` is a true statement about a
-   run that really ended.
-2. **Is the process actually there?**
-   `ps aux | grep stellarindex-ops`, and
-   `systemctl status ch-full-backfill` if it was launched by a unit.
-3. **`heartbeat_stale` + no process** → it died. Check
-   `journalctl -u <unit> --since -6h | tail -100` and
-   `dmesg -T | grep -i 'killed process'` for the OOM killer. Note the
-   last `progress_cursor` value — that is roughly how far it got.
-4. **`no_progress` + process present** → it is hung (both counters flat —
-   check `progress_bytes_total` too before concluding, and see the
-   re-compress note above). Before killing it,
-   capture the stack: `kill -QUIT <pid>` writes a goroutine dump to the
-   journal. A hang here has recurred (the 2026-07-05 galexie/captive-core
-   wedge) and the dump is the only evidence of which read blocked.
-   Then check the usual suspects: MinIO/S3 reachable
-   (`mc ls <alias>`), ClickHouse accepting queries
-   (`clickhouse-client -q 'SELECT 1'`), and the ZFS pool not full
-   (`stellarindex_zfs_pool_low_space`).
-5. **`run_failed`** → no process to find; the job already exited. Go
-   straight to its log (`journalctl -u <unit> --since -6h | tail -200`,
-   or the terminal output if it was run by hand) for the error it printed
-   before returning non-zero, then treat it as a normal remediation
-   below — the last `progress_cursor` value is how far it got.
+1. Which job: the `ops_job` label is the subcommand name (`ch-backfill`, `backfill`). Not `job`, which Prometheus overwrites. Rules join `on (ops_job, instance, pid)`; a `pid` label appears only on the second of two CONCURRENT runs of the same subcommand (it writes a `.pid<N>.prom` sibling). Lingering dead siblings are harmless.
+2. Is the process there: `ps aux | grep stellarindex-ops`, and `systemctl status ch-full-backfill` if launched by a unit.
+3. `heartbeat_stale` and no process: it died. `journalctl -u <unit> --since -6h | tail -100` and `dmesg -T | grep -i 'killed process'` for the OOM killer. The last `progress_cursor` is roughly how far it got.
+4. `no_progress` with a process: hung. Check `progress_bytes_total` and the re-compress note first. Before killing, capture the stack: `kill -QUIT <pid>` writes a goroutine dump to the journal. Then check MinIO/S3 (`mc ls <alias>`), ClickHouse (`clickhouse-client -q 'SELECT 1'`), and `stellarindex_zfs_pool_low_space`.
+5. `run_failed`: no process; read the log (`journalctl -u <unit> --since -6h | tail -200`, or terminal output) for the error before the non-zero exit.
 
 ## Remediation
 
-1. Kill the hung process if it has one: `kill -QUIT` first for the
-   goroutine dump, then stop it — **by scope** when it runs under the
-   heavy-job wrapper, see [Stopping a wrapped job](#stopping-a-wrapped-job).
-2. **Re-run the same window.** Every backfill in this system is
-   idempotent — ClickHouse writes land under `ReplacingMergeTree`, served
-   writes use `ON CONFLICT` — so re-running an already-covered range is
-   free, and leaving the hole is not. `ch-backfill` and `backfill` fail
-   closed on a short walk (`backfillCoverage`), so a partial re-run will
-   tell you rather than claim success.
-3. If the driver was `scripts/ops/ch-full-backfill.sh`, check its resume
-   state file: it appends a window only on exit 0, so an interrupted
-   window is still pending and will be retried.
-4. Confirm with `stellarindex-ops verify-contiguity` / `compute-completeness`
-   over the affected range once the re-run finishes.
+1. Kill a hung process: `kill -QUIT` first, then stop it, BY SCOPE under the heavy-job wrapper ([Stopping a wrapped job](#stopping-a-wrapped-job)).
+2. Re-run the same window. Backfills are idempotent (`ReplacingMergeTree`, `ON CONFLICT`); `ch-backfill` and `backfill` fail closed on a short walk (`backfillCoverage`).
+3. If the driver was `scripts/ops/ch-full-backfill.sh`, its resume state file appends a window only on exit 0, so an interrupted window is retried.
+4. Confirm with `stellarindex-ops verify-contiguity` / `compute-completeness` over the range.
 
 ## Stopping a wrapped job
 
-Every heavy one-shot on r1 runs under `/usr/local/sbin/run-heavy-job.sh`,
-which for a root caller puts the payload in a transient scope named
-`heavy-<job name>-<wrapper pid>.scope`. Stop it by scope:
+Heavy one-shots on r1 run under `/usr/local/sbin/run-heavy-job.sh`, which puts the payload in a transient scope `heavy-<job name>-<wrapper pid>.scope`. Stop it by scope, not by `pkill -f` pattern (the wrapper's command line carries the same tokens, so a pattern can kill the wrapper and leave the binary and its Postgres backend running):
 
 ```sh
 systemctl list-units 'heavy-*.scope' --no-pager   # find the unit
 systemctl stop heavy-<name>-<pid>.scope           # blocks until the scope is gone
 ```
 
-Not by pattern: the wrapper's own command line carries the same tokens
-as the payload's, so a `pkill -f` on the subcommand can take the wrapper
-and leave the binary — and its Postgres backend — running. The
-2026-09-03 restamp was stopped by scope for that reason.
+`stop` SIGTERMs the whole scope, then SIGKILLs at the scope's `TimeoutStopSec`, which the wrapper sets from `HEAVY_JOB_STOP_TIMEOUT` (default `5min`, replacing systemd's 90 s). `usd-volume-restamp -chunks` re-compresses the chunk it has open (the largest `trades` chunk is 160 GB), so it names its own bound on its launch line (`HEAVY_JOB_STOP_TIMEOUT=2h`; see [../usd-volume-rederive-2026-08.md](../usd-volume-rederive-2026-08.md) "Chunk mode"). A bare integer is SECONDS under `systemd.time`; the wrapper accepts a bare integer, `Ns`, `Nmin`, `Nh` and `infinity`, refuses other spellings and anything below a 90 s floor (exit 2 before the payload starts), and prints the bound on every run.
 
-`stop` SIGTERMs every process in the scope at once, then SIGKILLs when
-the scope's `TimeoutStopSec` expires. The wrapper sets that from
-`HEAVY_JOB_STOP_TIMEOUT`, **default `5min`**, in place of systemd's 90 s
-default. The default is short on purpose: almost every payload this
-wrapper starts installs no signal handler at all and is gone the instant
-SIGTERM lands, and the few that handle it run their cleanup on an
-already-cancelled context and finish in seconds. One payload is not like
-that — `usd-volume-restamp -chunks` (#372) re-compresses the chunk it
-has open, on a context that survives cancellation, and the largest
-`trades` chunk in that window is 160 GB uncompressed — so **that job
-names its own bound on its launch line**
-(`HEAVY_JOB_STOP_TIMEOUT=2h`, in
-[../usd-volume-rederive-2026-08.md](../usd-volume-rederive-2026-08.md)
-"Chunk mode") rather than every other job inheriting a multi-hour stop it will
-never use. The 2 h there is a budget, not a measurement: 160 GB at
-~22 MB/s, and no `compress_chunk` rate has been measured on r1. SIGTERM
-is still immediate — a job that exits on it promptly is not slowed, and
-the bound only decides how long a job still cleaning up may take.
-
-The value is validated before the scope exists. **A bare integer is
-SECONDS** under `systemd.time`, so `HEAVY_JOB_STOP_TIMEOUT=2` meaning
-two hours would be a two-second grace — systemd accepts it, and the job
-is then killed harder than with no setting at all. The wrapper takes a
-bare integer, `Ns`, `Nmin`, `Nh` and `infinity`, and refuses every other
-spelling and anything below a **90 s floor** (the systemd default the
-bound replaces), exiting 2 before the payload starts. It also prints the
-bound it will use to stderr on every run, so the job log says what a
-stop of that job will do.
-
-### What the bound disarms while it is in force
-
-None of this is visible from outside the wrapper, so it is stated here:
-
-- **The disk watchdog's own low-space stop now waits up to the bound
-  before SIGKILL.** `stop_job` is the same `systemctl stop` an operator
-  runs; a root-FS or data-pool trip therefore reaches SIGKILL 2 h later
-  on a restamp run, not 90 s later.
-- **The `|| systemctl kill` fallback in `stop_job` cannot fire inside
-  that wait.** `systemctl stop` blocks synchronously until the scope is
-  gone and then returns success, so the fallback runs only if the `stop`
-  itself fails — never as a shorter escalation path. There is no second
-  timer behind the bound.
-- **This is affordable only because of what the long window is spent
-  on.** The restamp's cleanup is a `compress_chunk`: it writes the
-  compressed copy — ~1/15 of the chunk at this window's ratio (379 GB
-  uncompressed / 25 GB compressed across the 90 chunks) — beside the
-  heap and then truncates the heap, so it peaks well inside the 300 GiB
-  the pool guard preserves and **ends by freeing space**. A payload
-  whose SIGTERM cleanup instead consumed space or pool connections for
-  hours must not be given a long bound; the wrapper's own default stays
-  at `5min` for exactly that reason.
+While a long bound is in force: the disk watchdog's low-space stop (`stop_job`, the same `systemctl stop`) waits up to the bound before SIGKILL, and the `|| systemctl kill` fallback cannot fire inside that wait. Do not give a long bound to a payload whose SIGTERM cleanup consumes space or pool connections.
 
 ### A ClickHouse merge outlives its client
 
-`scripts/ops/recompress-lec.sh`, `scripts/ops/recompress-others.sh` and
-the retired phase-a-capacity-relief runbook (git history)
-Step 3 issue `OPTIMIZE TABLE … PARTITION … FINAL` from a client (`curl`
-on `:8123`, `clickhouse-client`). The merge runs inside the ClickHouse
-server, so stopping the scope kills the client and returns while the
-partition rewrite — and its transient, up to one partition (≤ 424 GiB
-on `ledger_entry_changes`), above the 300 GiB the pool guard preserves
-— carries on. No value of `TimeoutStopSec` changes that: the process
-being timed is not the one holding the space. After the scope stop,
-cancel the merge itself (substitute the table the stopped job was on):
+`scripts/ops/recompress-lec.sh` and `scripts/ops/recompress-others.sh` issue `OPTIMIZE TABLE ... PARTITION ... FINAL` from a client. The merge runs in the server, so stopping the scope kills only the client and the partition rewrite (up to one partition, <= 424 GiB on `ledger_entry_changes`, above the 300 GiB the pool guard preserves) carries on. After the scope stop, cancel the merge itself (substitute the table):
 
 ```sh
 clickhouse-client --port 9300 -q "SELECT partition_id, elapsed, progress FROM system.merges WHERE database='stellar' AND table='ledger_entry_changes'"
@@ -235,18 +73,9 @@ clickhouse-client --port 9300 -q "SYSTEM STOP MERGES stellar.ledger_entry_change
 clickhouse-client --port 9300 -q "SYSTEM START MERGES stellar.ledger_entry_changes"
 ```
 
-`KILL QUERY` on the `OPTIMIZE` is not a substitute — the merge is not
-reliably bound to the query's cancellation. **Never leave merges stopped:**
-the table takes live inserts, and with merges off its part count climbs
-until ClickHouse rejects inserts (`TOO_MANY_PARTS`). A cancelled merge
-discards its temporary parts and keeps the originals, so re-running the
-script redoes that partition from scratch.
+`KILL QUERY` is not a substitute. Never leave merges stopped: part count climbs until inserts fail with `TOO_MANY_PARTS`. A cancelled merge keeps the originals, so the script redoes that partition from scratch.
 
-### Before applying it: prove systemd takes the property
-
-`TimeoutStopSec` on a transient scope is a systemd-version question, and
-a scope that fails to start takes the job with it. Run this on the host
-first — it costs nothing and needs no job:
+### Before applying the long bound: prove systemd takes the property
 
 ```sh
 systemd-run --scope -p TimeoutStopSec=2h --quiet /bin/true; echo "rc=$?"
@@ -255,67 +84,32 @@ systemd-run --scope -p MemoryMax=20G -p MemorySwapMax=0 \
 grep -c TimeoutStopSec /usr/local/sbin/run-heavy-job.sh
 ```
 
-Both `rc=0` means the running systemd accepts the property, alone and in
-the wrapper's full property set (verified on r1, systemd 255,
-2026-09-04). The `grep` is the applied/unapplied answer: `0` — r1's
-reading on 2026-09-04 — means the host is still on systemd's 90 s
-default and every warning below about the long bound does not yet
-describe it; `1` means the wrapper carries it.
+Both `rc=0` means systemd accepts it. The `grep` answers applied (`1`) or not (`0`, still the 90 s default). A running scope keeps the properties it was created with.
 
-**If a stop outlives the bound** — the scope is still listed after it,
-or `systemctl status heavy-<name>-<pid>.scope` reports `result: timeout`
-— systemd has already sent SIGKILL and the SIGTERM cleanup did not
-finish. Check, in order:
+If a stop outlives the bound (scope still listed, or `systemctl status heavy-<name>-<pid>.scope` shows `result: timeout`), systemd already sent SIGKILL. Check in order:
 
-1. **A surviving backend.** A Postgres backend outlives its killed
-   client until it notices the closed socket:
-   `sudo -u postgres psql -d stellarindex -c "SELECT pid, state, now() - xact_start AS age, left(query, 80) FROM pg_stat_activity WHERE state <> 'idle' ORDER BY xact_start;"`.
-   `pg_terminate_backend(pid)` it. A terminated `compress_chunk` rolls
-   back and leaves its chunk decompressed — the next check.
-2. **Chunks left decompressed:**
+1. A surviving Postgres backend, then `pg_terminate_backend(pid)` (a terminated `compress_chunk` rolls back and leaves its chunk decompressed):
+   `sudo -u postgres psql -d stellarindex -c "SELECT pid, state, now() - xact_start AS age, left(query, 80) FROM pg_stat_activity WHERE state <> 'idle' ORDER BY xact_start;"`
+2. Chunks left decompressed:
    `sudo -u postgres psql -d stellarindex -c "SELECT chunk_schema, chunk_name, range_start, range_end FROM timescaledb_information.chunks WHERE hypertable_name = 'trades' AND NOT is_compressed AND range_end < now() - interval '15 days';"`
-3. **A policy left paused** — a job that paused compression for its run
-   is killed before it re-enables it:
+3. A compression policy left paused (`scheduled` must be `true`):
    `sudo -u postgres psql -d stellarindex -c "SELECT job_id, scheduled FROM timescaledb_information.jobs WHERE proc_name = 'trades_compression_policy';"`
-   `scheduled` must be `true`. `usd-volume-restamp -chunks` prints the
-   exact repair (the `compress_chunk` and the `alter_job(…, scheduled =>
-   true)`) to stderr **before** each statement that can outlive it — run
-   what the job log shows.
-4. **The singleton lock** `/run/lock/stellarindex-heavy-<name>.lock`, and
-   the host-wide `/run/lock/stellarindex-heavy.lock`, are released with
-   the cgroup, so a relaunch is not blocked by the dead run.
-5. **Whether the bound was wrong for that job.** A job launched without
-   `HEAVY_JOB_STOP_TIMEOUT` took the `5min` default; one whose measured
-   cleanup exceeds what it was launched with needs a larger value on the
-   next launch line — and the measurement written down beside it, not
-   left as an estimate.
+   `usd-volume-restamp -chunks` prints the exact repair (`compress_chunk` and `alter_job(..., scheduled => true)`) to stderr before each statement that can outlive it; run what the job log shows.
+4. The locks `/run/lock/stellarindex-heavy-<name>.lock` and `/run/lock/stellarindex-heavy.lock` are released with the cgroup; a relaunch is not blocked.
+5. If the job's cleanup exceeded its bound, raise `HEAVY_JOB_STOP_TIMEOUT` on the next launch line and write the measurement down.
 
-The bound reaches r1 only when the wrapper is re-rendered — it is
-codified in
-`configs/ansible/roles/archival-node/tasks/14-stellarindex-services.yml`
-under the `heavy-job-wrapper` tag (from `configs/ansible/`), and the
-pre-apply smoke check above is what proves the host's systemd will take
-it:
+The bound reaches r1 only when the wrapper is re-rendered (`configs/ansible/roles/archival-node/tasks/14-stellarindex-services.yml`, tag `heavy-job-wrapper`, from `configs/ansible/`):
 
 ```sh
 ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml --tags heavy-job-wrapper --check --diff
 ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml --tags heavy-job-wrapper
 ```
 
-Re-run `grep -c TimeoutStopSec /usr/local/sbin/run-heavy-job.sh`
-afterwards — `1`, or the host is still on the 90 s default. A scope
-keeps the properties it was created with, so a job already running at
-apply time stays on 90 s until it is relaunched.
+Re-run `grep -c TimeoutStopSec /usr/local/sbin/run-heavy-job.sh` afterwards; expect `1`.
 
 ## Applying pending service restarts (maintenance step)
 
-Unattended security upgrades install patches but do not restart anything:
-needrestart is list-only (`/etc/needrestart/conf.d/50-stellarindex-list-only.conf`,
-`12-hardening.yml`). Under Ubuntu's default it restarted every daemon on an
-outdated library after the morning `apt-daily-upgrade` run, so a libc6 fix
-bounced Postgres around 06:24 and killed the heavy jobs using it. A patched
-library is not in effect until its daemon restarts, so apply restarts in a
-maintenance window:
+Unattended upgrades install patches but restart nothing: needrestart is list-only (`/etc/needrestart/conf.d/50-stellarindex-list-only.conf`, `12-hardening.yml`), because restarting every daemon after `apt-daily-upgrade` bounced Postgres and killed heavy jobs. A patched library is not in effect until its daemon restarts, so apply restarts in a maintenance window:
 
 ```sh
 needrestart -b -r l                             # NEEDRESTART-SVC lines = pending restarts; KSTA 2/3 = reboot pending
@@ -323,90 +117,31 @@ systemctl list-units 'heavy-*.scope' --no-pager # must be empty: wait, or stop b
 systemctl restart <unit> ...                    # the listed units; or `needrestart -r a` for all of them
 ```
 
-A pending kernel (`NEEDRESTART-KSTA` 2 or 3) needs a reboot in the same
-window; `Automatic-Reboot` is off.
+A pending kernel (`NEEDRESTART-KSTA` 2 or 3) needs a reboot in the same window; `Automatic-Reboot` is off.
 
 ## Clearing the alert
 
-The textfile persists after the process dies — deliberately, so a job
-that died does not become invisible simply because nothing is running.
-The next run of the same job overwrites it. To clear without a re-run
-(e.g. you have decided to abandon the window), delete
-`/var/lib/node_exporter/textfile_collector/ops_job_<job>.prom` — and
-record why, because the range is then knowingly un-backfilled.
+The textfile persists after the process dies, deliberately. The next run overwrites it. To clear without a re-run (abandoning the window), delete `/var/lib/node_exporter/textfile_collector/ops_job_<job>.prom` and record why, since the range is then knowingly un-backfilled.
 
 ## Do NOT
 
-- Do not treat `no_progress` as "it's just slow" without checking the
-  cursor. A genuinely slow window still advances
-  `progress_cursor` between scrapes; a hang does not.
-- Do not "simplify" either expr's `on (ops_job, instance, pid)` join.
-  Dropping `ops_job` merges every ops job on the host; dropping `instance`
-  lets a healthy namesake on another host mask a dead job here; dropping
-  `pid` lets a concurrent-run sibling rescue a finished primary. All three
-  directions are covered by `deploy/monitoring/rule-tests/ops-job_test.yml`
-  (probes a, b1/b2, d).
-- Do not delete the textfile to silence `heartbeat_stale` while the
-  window is still meant to be backfilled — that converts a visible hole
-  into an invisible one, which is the state this alert exists to end.
+- Treat `no_progress` as "just slow" without checking the cursor: a slow window still advances `progress_cursor` between scrapes.
+- Simplify the `on (ops_job, instance, pid)` join: dropping `ops_job` merges jobs, `instance` lets a namesake on another host mask a dead job, `pid` lets a sibling rescue a finished primary (`deploy/monitoring/rule-tests/ops-job_test.yml`).
+- Delete the textfile to silence `heartbeat_stale` while the window should still be backfilled.
 
 ## Entry index lagging
 
-`stellarindex_entry_index_lagging` fires when the ledger `ch-entry-index`
-has built through (its heartbeat's `progress_cursor`) trails the
-ledgerstream cursor by more than 20,000 ledgers for 30 minutes, or when
-the job has never reported at all. The index backs per-account and
-per-asset ledger walks, so a stall hides recent activity there while the
-lake stays complete.
+`stellarindex_entry_index_lagging` fires when the ledger `ch-entry-index` has built through (its heartbeat's `progress_cursor`) trails the ledgerstream cursor by more than 20,000 ledgers for 30 minutes, or the job never reported. The index backs per-account and per-asset ledger walks; a stall hides recent activity there while the lake stays complete.
 
-1. Is the timer alive? `systemctl list-timers entry-index.timer` and
-   `journalctl -u entry-index.service -n 50`. A deploy installs the units
-   but never enables the timer; `systemctl enable --now entry-index.timer`
-   is the last step of the runbook in `deploy/clickhouse/entry_index.sql`,
-   after the tables exist and `/etc/default/entry-index` carries the
-   ec-floor.
-2. A refused window names its reason: `is not contiguous` (lake hole;
-   wait for `ch-backfill`), `skips ledgers below it` (a manual `-from`
-   above the watermark; re-run without `-from`), or `lacks
-   ledger_entry_changes coverage` (rows below the ec-floor carry no
-   `account_id`; set `-floor-ledger <ec-floor>` through `EXTRA_FLAGS` in
-   `/etc/default/entry-index`).
-3. The initial build fires this alert until it catches up. That is
-   progress, not a stall, as long as `progress_cursor` keeps rising
-   between runs.
-4. Re-derive one window by hand after a lake repair:
+Check and fix:
+
+1. Timer alive: `systemctl list-timers entry-index.timer` and `journalctl -u entry-index.service -n 50`. A deploy installs the units but never enables the timer; `systemctl enable --now entry-index.timer` is the last step of the runbook in `deploy/clickhouse/entry_index.sql`, after the tables exist and `/etc/default/entry-index` carries the ec-floor.
+2. A refused window names its reason: `is not contiguous` (lake hole; wait for `ch-backfill`), `skips ledgers below it` (manual `-from` above the watermark; re-run without `-from`), or `lacks ledger_entry_changes coverage` (set `-floor-ledger <ec-floor>` through `EXTRA_FLAGS` in `/etc/default/entry-index`).
+3. The initial build fires this alert until it catches up; that is progress while `progress_cursor` keeps rising.
+4. Re-derive one window by hand after a lake repair (rows collapse on merge; the watermark never moves down):
    `stellarindex-ops ch-entry-index -ch-addr 127.0.0.1:9300 -from <l> -to <l> -write`.
-   Rows collapse on merge; the watermark never moves down.
 
 ## Related
 
-- [ingest-gap-detector-silent](ingest-gap.md#stellarindex_ingest_gap_detector_silent) — the
-  detector that eventually finds the hole a stalled backfill left.
-- [zfs-pool-full](infra.md#stellarindex_zfs_pool_low_space) — a full pool is a common cause of a
-  hung write.
-- [ch-schema-restore](ch-schema-restore.md) — ADR-0043's lake-protection
-  story, which the re-derive path depends on.
-- [../usd-volume-rederive-2026-08.md](../usd-volume-rederive-2026-08.md)
-  "Chunk mode" — the job whose SIGTERM cleanup sized the stop
-  bound, and the state to repair when a run is killed through it.
-
-## Changelog
-
-- 2026-10-06 — added "Applying pending service restarts": needrestart
-  is list-only, so library-fix restarts are a maintenance step.
-- 2026-09-30 — resolved the two follow-ups: added "A ClickHouse merge
-  outlives its client" (cancel an `OPTIMIZE … FINAL` with `SYSTEM STOP
-  MERGES` after the scope stop), and corrected the `verify-archive`
-  comment that claimed a SIGTERM handler the job does not install.
-- 2026-09-22 (T578) — added `stellarindex_ops_job_run_failed`: the
-  `last_exit_ok` gauge had been emitted since C6-020 with no rule
-  selecting it in either tree, so a job that ran to completion and
-  failed alerted nobody. Updated the at-a-glance table, "What these fire
-  on", and quick diagnosis.
-- 2026-09-04 — added "Stopping a wrapped job": stop by scope not by
-  pattern, the wrapper's `TimeoutStopSec` bound (default `5min`,
-  override `HEAVY_JOB_STOP_TIMEOUT`, validated with a 90 s floor) and
-  what it disarms in the disk watchdog, the pre-apply `systemd-run
-  --scope` smoke check, what to check when a stop outlives the bound,
-  and the `heavy-job-wrapper` apply that puts it on r1. Recorded two
-  measured follow-ups under "Follow-ups".
+- [ingest-gap-detector-silent](ingest-gap.md#stellarindex_ingest_gap_detector_silent), [zfs-pool-full](infra.md#stellarindex_zfs_pool_low_space), [ch-schema-restore](ch-schema-restore.md).
+- [../usd-volume-rederive-2026-08.md](../usd-volume-rederive-2026-08.md) "Chunk mode": the job whose cleanup sized the stop bound.

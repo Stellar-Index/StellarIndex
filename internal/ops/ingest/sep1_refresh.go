@@ -34,6 +34,8 @@ func sep1RefreshCmd(args []string) error {
 	timeout := fs.Duration("timeout", 5*time.Minute, "Wall-clock timeout for the whole run")
 	gate := opsutil.RegisterWriteGate(fs)
 	issuer := fs.String("issuer", "", "Refresh ONLY this issuer G-strkey, bypassing the staleness queue")
+	textfile := fs.String("textfile", "",
+		"node_exporter textfile to write the run's counters to (optional; a targeted -issuer run never writes it)")
 	systemicRate := fs.Float64("systemic-failure-rate", defaultSystemicFailureRate,
 		"Failure fraction, over domains that have served a stellar.toml before, at or above which a run is judged a fault on OUR side: "+
 			"the retry backoff it applied is unwound and the run exits non-zero. "+
@@ -60,9 +62,17 @@ func sep1RefreshCmd(args []string) error {
 	}
 	defer func() { _ = store.Close() }()
 
+	textfilePath := *textfile
+	if *issuer != "" {
+		textfilePath = ""
+	}
 	candidates, err := sep1Candidates(ctx, store, *issuer, *olderThan, *limit)
-	if err != nil || len(candidates) == 0 {
+	if err != nil {
 		return err
+	}
+	if len(candidates) == 0 {
+		stampSep1RefreshTextfile(textfilePath, sep1RunStats{}, false, time.Now())
+		return nil
 	}
 
 	chain, err := clickhouse.NewExplorerReader(ctx, *chAddr)
@@ -72,16 +82,15 @@ func sep1RefreshCmd(args []string) error {
 	defer func() { _ = chain.Close() }()
 
 	resolver := metadata.NewResolver(metadata.Options{Timeout: 10 * time.Second})
-	ok, failedKeys, ourFaultKeys := sep1RefreshLoop(ctx, store, chain, resolver, candidates, dryRun)
-	failed := len(failedKeys)
-	fmt.Printf("\n%d succeeded, %d failed\n", ok, failed)
+	stats, failedKeys, ourFaultKeys := sep1RefreshLoop(ctx, store, chain, resolver, candidates, dryRun)
+	fmt.Printf("\n%d succeeded, %d failed\n", stats.stored, len(failedKeys))
 	if dryRun {
 		fmt.Println("(dry-run; no rows written)")
 	}
-	// The loop is sequential, so the attempted rows are a prefix even when the
-	// deadline cut the batch short.
-	if sep1RunVerdict(candidates[:ok+failed], failedKeys, *systemicRate) {
-		return reportSep1Systemic(store, ok+failed, failedKeys, dryRun)
+	systemic := sep1RunVerdict(stats, *systemicRate)
+	stampSep1RefreshTextfile(textfilePath, stats, systemic, time.Now())
+	if systemic {
+		return reportSep1Systemic(store, stats.attempted, failedKeys, dryRun)
 	}
 	// A systemic run has unwound every failed key above, these included.
 	unwindSep1Backoff(store, ourFaultKeys, dryRun)
@@ -112,21 +121,23 @@ type sep1Resolver interface {
 // sep1PerIssuerBudget bounds one issuer's fetch and parse; the 10s per-request timeout does not see slow steady answers or long decodes.
 const sep1PerIssuerBudget = 30 * time.Second
 
-// sep1RefreshLoop resolves each candidate in turn, returning the success count, the keys of failed attempts and the subset that failed on our side.
+// sep1RefreshLoop resolves each candidate in turn, returning the run's counters, the keys of failed attempts and the subset that failed on our side.
 // Sequential on purpose (parser cost is superlinear on hostile input under a 2G ceiling).
 func sep1RefreshLoop(
 	ctx context.Context, store sep1Store, chain sep1ChainReader, resolver sep1Resolver,
 	candidates []timescale.IssuerSep1Candidate, dryRun bool,
-) (ok int, failedKeys, ourFaultKeys []string) {
+) (stats sep1RunStats, failedKeys, ourFaultKeys []string) {
 	failedKeys = make([]string, 0, len(candidates))
 	for _, c := range candidates {
 		if err := ctx.Err(); err != nil {
-			fmt.Printf("\nAborted at %d/%d (deadline): %v\n", ok+len(failedKeys), len(candidates), err)
+			fmt.Printf("\nAborted at %d/%d (deadline): %v\n", stats.attempted, len(candidates), err)
+			stats.aborted = true
 			break
 		}
-		switch refreshOneSep1Issuer(ctx, store, chain, resolver, c, dryRun) {
+		outcome, reason := refreshOneSep1Issuer(ctx, store, chain, resolver, c, dryRun)
+		stats.record(c, outcome, reason)
+		switch outcome {
 		case sep1Stored:
-			ok++
 		case sep1OurFault:
 			ourFaultKeys = append(ourFaultKeys, c.GStrkey)
 			failedKeys = append(failedKeys, c.GStrkey)
@@ -134,7 +145,7 @@ func sep1RefreshLoop(
 			failedKeys = append(failedKeys, c.GStrkey)
 		}
 	}
-	return ok, failedKeys, ourFaultKeys
+	return stats, failedKeys, ourFaultKeys
 }
 
 // sep1Outcome is one issuer's attempt, split by whose fault a failure was.
@@ -150,23 +161,23 @@ const (
 	sep1OurFault
 )
 
-// refreshOneSep1Issuer fetches, parses and stores one issuer's stellar.toml, reporting whether a payload was written and whose fault a
-// failure was. The attempt is marked FIRST: a hostile document can get the worker SIGKILLed before any on-failure mark, leaving the row
+// refreshOneSep1Issuer fetches, parses and stores one issuer's stellar.toml, reporting whether a payload was written, whose fault a
+// failure was and the failure's reason label (empty when stored). The attempt is marked FIRST: a hostile document can get the worker SIGKILLed before any on-failure mark, leaving the row
 // at the queue head forever.
 func refreshOneSep1Issuer(
 	ctx context.Context, store sep1Store, chain sep1ChainReader, resolver sep1Resolver,
 	c timescale.IssuerSep1Candidate, dryRun bool,
-) sep1Outcome {
-	c, binding := confirmSep1Domain(ctx, store, chain, c, dryRun)
+) (sep1Outcome, string) {
+	c, binding, reason := confirmSep1Domain(ctx, store, chain, c, dryRun)
 	if binding == sep1DomainCleared {
-		return sep1Stored
+		return sep1Stored, ""
 	}
 	markSep1Attempted(ctx, store, c.GStrkey, dryRun)
 	switch binding {
 	case sep1DomainUnconfirmed:
-		return sep1Failed
+		return sep1Failed, "domain"
 	case sep1DomainUnchecked:
-		return sep1OurFault
+		return sep1OurFault, reason
 	case sep1DomainConfirmed, sep1DomainCleared:
 	}
 
@@ -178,7 +189,7 @@ func refreshOneSep1Issuer(
 	sep, err := resolver.Resolve(fetchCtx, sep1FetchDomain(c.GStrkey, c.HomeDomain))
 	if err != nil {
 		fmt.Printf("FAIL  %s  %s  %v\n", c.GStrkey, c.HomeDomain, err)
-		return sep1Failed
+		return sep1Failed, sep1FailureReason(err)
 	}
 	// Bidirectional SEP-1 verification: the org is verified only if the toml's [[CURRENCIES]] lists THIS issuer back; otherwise anyone could claim a reputable home_domain and inherit its ORG_NAME.
 	orgVerified := tomlListsIssuer(sep.Currencies, c.GStrkey)
@@ -188,27 +199,27 @@ func refreshOneSep1Issuer(
 		// string field marshals to an escape Postgres jsonb rejects. The
 		// pre-mark has already taken this row off the head of the queue.
 		fmt.Printf("FAIL  %s  marshal: %v\n", c.GStrkey, jerr)
-		return sep1Failed
+		return sep1Failed, "payload"
 	}
 	if !dryRun {
 		stored, err := store.SetIssuerSep1Payload(ctx, c.GStrkey, c.HomeDomain, payload)
 		if err != nil {
 			fmt.Printf("FAIL  %s  write: %v\n", c.GStrkey, err)
 			if errors.Is(err, timescale.ErrSep1PayloadRejected) {
-				return sep1Failed
+				return sep1Failed, "payload"
 			}
-			return sep1OurFault
+			return sep1OurFault, "write"
 		}
 		if !stored {
 			// home_domain changed mid-fetch. Not a failed attempt: the change
 			// already reset this row's ladder, so the systemic unwind must not
 			// take a step back from it.
 			fmt.Printf("MOVED %s  %s  home_domain changed during the fetch; payload discarded\n", c.GStrkey, c.HomeDomain)
-			return sep1Stored
+			return sep1Stored, ""
 		}
 	}
 	fmt.Printf("OK    %s  %s  org=%q verified=%v\n", c.GStrkey, c.HomeDomain, sep.OrgName, orgVerified)
-	return sep1Stored
+	return sep1Stored, ""
 }
 
 // sep1DomainBinding is what the chain says about a candidate's stored
@@ -231,19 +242,19 @@ const (
 func confirmSep1Domain(
 	ctx context.Context, store sep1Store, chain sep1ChainReader,
 	c timescale.IssuerSep1Candidate, dryRun bool,
-) (timescale.IssuerSep1Candidate, sep1DomainBinding) {
+) (timescale.IssuerSep1Candidate, sep1DomainBinding, string) {
 	live, err := chain.BulkAccountAuthFlags(ctx, []string{c.GStrkey})
 	if err != nil {
 		fmt.Printf("FAIL  %s  %s  chain read: %v\n", c.GStrkey, c.HomeDomain, err)
-		return c, sep1DomainUnchecked
+		return c, sep1DomainUnchecked, "lake"
 	}
 	f, ok := live[c.GStrkey]
 	if !ok || f.Source != clickhouse.AuthFlagsSourceLive {
 		fmt.Printf("FAIL  %s  %s  no live account entry to confirm the domain against\n", c.GStrkey, c.HomeDomain)
-		return c, sep1DomainUnconfirmed
+		return c, sep1DomainUnconfirmed, ""
 	}
 	if f.HomeDomain == c.HomeDomain {
-		return c, sep1DomainConfirmed
+		return c, sep1DomainConfirmed, ""
 	}
 	if !dryRun {
 		if f.HomeDomain == "" {
@@ -253,15 +264,15 @@ func confirmSep1Domain(
 		}
 		if err != nil {
 			fmt.Printf("FAIL  %s  %s  re-bind to %q: %v\n", c.GStrkey, c.HomeDomain, f.HomeDomain, err)
-			return c, sep1DomainUnchecked
+			return c, sep1DomainUnchecked, "write"
 		}
 	}
 	fmt.Printf("MOVED %s  %s -> %q  re-bound to the on-chain home_domain\n", c.GStrkey, c.HomeDomain, f.HomeDomain)
 	if f.HomeDomain == "" {
-		return c, sep1DomainCleared
+		return c, sep1DomainCleared, ""
 	}
 	c.HomeDomain = f.HomeDomain
-	return c, sep1DomainConfirmed
+	return c, sep1DomainConfirmed, ""
 }
 
 // sep1Candidates picks one named issuer or the head of the staleness queue; empty with nil error means nothing to do.
@@ -298,28 +309,11 @@ const (
 
 // sep1RunVerdict reports whether a run's failures read as our fault rather than the issuers': the failure fraction over previously
 // reached candidates. Pure.
-func sep1RunVerdict(attempted []timescale.IssuerSep1Candidate, failedKeys []string, rate float64) bool {
-	if rate > 1 {
+func sep1RunVerdict(s sep1RunStats, rate float64) bool {
+	if rate > 1 || s.reached < systemicMinAttempts {
 		return false
 	}
-	failed := make(map[string]struct{}, len(failedKeys))
-	for _, k := range failedKeys {
-		failed[k] = struct{}{}
-	}
-	var reached, regressed int
-	for _, c := range attempted {
-		if !c.Reached {
-			continue
-		}
-		reached++
-		if _, ok := failed[c.GStrkey]; ok {
-			regressed++
-		}
-	}
-	if reached < systemicMinAttempts {
-		return false
-	}
-	return float64(regressed)/float64(reached) >= rate
+	return float64(s.regressed)/float64(s.reached) >= rate
 }
 
 // reportSep1Systemic applies the systemic verdict: unwind, then fail.

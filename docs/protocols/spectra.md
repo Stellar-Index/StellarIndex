@@ -155,7 +155,7 @@ in the same transaction. Not decided; slice 8.
 Not integrated. Planned PRs, smallest first:
 
 1. This page, done.
-2. WASM audit doc and `decoder-wasm-matrix.md` rows, done: 8 hashes, no
+2. WASM audit doc and `protocol-epochs.md` rows, done: 8 hashes, no
    upgrade seen.
 3. Lake fixtures, done: `capture-spectra-fixtures.sh` has a lake mode
    (`LAKE_SSH`), one fixture per (hash, kind) observed on chain. Expiry kinds

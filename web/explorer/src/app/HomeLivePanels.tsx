@@ -28,11 +28,11 @@ export function NetworkLivePanel() {
   const stats = useNetworkStats();
   const cursors = useCursors();
 
-  const assetsCount = stats.data?.assets_indexed ?? null;
+  const assetsCount = stats.data?.data.assets_indexed ?? null;
   // Prefer the network/stats snapshot's `latest_ledger`; fall
   // back to the live cursor table if stats hasn't returned yet.
   const tipLedger =
-    stats.data?.latest_ledger ??
+    stats.data?.data.latest_ledger ??
     (cursors.data ? maxLiveLedger(cursors.data) : null);
 
   return (
@@ -52,7 +52,7 @@ export function NetworkLivePanel() {
 
         <div>
           <div className="font-mono text-sm tabular-nums">
-            {tipLedger !== null ? `#${tipLedger.toLocaleString('en-US')}` : '—'}
+            {tipLedger !== null ? `#${tipLedger}` : '—'}
           </div>
           <div className="text-ink-muted text-[11px]">current ingest tip</div>
         </div>

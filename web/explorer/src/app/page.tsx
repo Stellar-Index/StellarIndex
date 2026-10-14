@@ -5,6 +5,7 @@ import { Badge, ButtonLink, Container } from '@/components/ui';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import { HomeBlogStrip } from './HomeBlogStrip';
 import { HomeCurrencies } from './HomeCurrencies';
+import { HomeFinder } from './HomeFinder';
 import { HomeHeroChart } from './HomeHeroChart';
 import {
   IngestLagLivePanel,
@@ -33,47 +34,35 @@ export default function HomePage() {
   // gate it on pricing; the contracts/ledgers/accounts surfaces stay on both.)
   const hasAssets = CURRENT_NETWORK.hasAssets;
   return (
-    <Container className="space-y-12 py-10 sm:py-14">
-      <header className="max-w-3xl space-y-5">
-        <p className="border-line bg-surface text-ink-muted inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium">
-          <span className="bg-up h-1.5 w-1.5 rounded-full" />
-          Independent · open · public-tier free
-        </p>
-        <h1 className="text-display-sm text-ink md:text-display font-semibold">
+    <Container className="max-w-[1200px] space-y-14 pt-14 pb-10 sm:pt-20 sm:pb-14">
+      <header className="mx-auto flex max-w-[860px] flex-col items-center gap-5 text-center">
+        <h1 className="text-display-sm sm:text-display text-ink font-semibold">
           {pricing
             ? 'The protocol explorer for the Stellar network.'
             : `The Stellar ${CURRENT_NETWORK.label} Explorer`}
         </h1>
-        <p className="text-ink-muted max-w-2xl text-lg">
+        <p className="text-ink-muted max-w-2xl text-base sm:text-lg">
           {pricing
             ? 'Every contract, event and trade on Stellar, as verified data and one VWAP price.'
             : `Every ledger, transaction, account, asset and contract on Stellar ${CURRENT_NETWORK.label}.`}
         </p>
-        <div className="flex flex-wrap items-center gap-3 pt-1">
-          <ButtonLink href="/assets" size="lg">
-            Browse assets
-            <ArrowRight className="h-4 w-4" />
-          </ButtonLink>
-          <ButtonLink href="/pricing" variant="secondary" size="lg">
-            Pricing
-          </ButtonLink>
-          <ButtonLink
-            href="https://docs.stellarindex.io"
-            variant="secondary"
-            size="lg"
-          >
-            API docs
-          </ButtonLink>
+        <div className="w-full pt-2">
+          <HomeFinder />
+        </div>
+        <p className="text-ink-faint text-[13px]">
+          Independent · open · public-tier free ·{' '}
           <Link
             href="/methodology"
-            className="text-ink-muted hover:text-brand-600 px-2 text-sm font-medium transition-colors"
+            className="text-ink-muted decoration-line-input hover:text-ink underline underline-offset-4 transition-colors"
           >
-            How it works →
+            How it works
           </Link>
-        </div>
+        </p>
       </header>
 
       <HomeNetworkStrip />
+
+      {hasAssets && <HomeTopAssets />}
 
       {pricing && <HomeHeroChart />}
 
@@ -82,8 +71,6 @@ export default function HomePage() {
         <SystemHealthLivePanel />
         <IngestLagLivePanel />
       </section>
-
-      {hasAssets && <HomeTopAssets />}
 
       {pricing && <HomeCurrencies />}
 
@@ -97,17 +84,15 @@ export default function HomePage() {
 
       <HomeBlogStrip />
 
-      {/* The flagship API product, presented as a product —
-          plans, keys, and where to start. */}
-      <section className="rounded-card border-line bg-surface shadow-card border p-6 sm:p-8">
+      <section className="rounded-card border-line bg-surface border p-6 sm:p-8">
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-2 lg:items-center">
           <div className="space-y-4">
-            <p className="text-brand-600 text-xs font-medium tracking-wider uppercase">
-              Stellar Index API
-            </p>
             <h2 className="text-h3 text-ink font-semibold">
               One verified price for every Stellar pair.
             </h2>
+            <p className="text-ink-muted text-sm">
+              The Stellar Index API behind every panel on this site.
+            </p>
             <p
               data-testid="api-pitch"
               className="flex flex-wrap items-center gap-2"
@@ -126,7 +111,7 @@ export default function HomePage() {
                 <ArrowRight className="h-4 w-4" />
               </ButtonLink>
               <ButtonLink href="/pricing" variant="secondary">
-                Plans &amp; rate limits
+                Rate limits
               </ButtonLink>
               <Link
                 href="/docs"

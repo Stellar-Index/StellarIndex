@@ -7,11 +7,11 @@ severity: P2
 
 # Runbook — SLA probe alerts
 
-Six alerts, group `stellarindex.sla_probe`, rule file `configs/prometheus/rules.r1/sla-probe.yml` (the one r1 loads; multi-host twin `deploy/monitoring/rules/sla-probe.yml`, same expr/for/labels). Five are `severity: page` (P2); `stellarindex_sla_probe_unit_failed_alert` is `severity: ticket` (P3). All `component: api`. All `for: 30m` except `_stale` (`for: 5m`).
+Six alerts, group `stellarindex.sla_probe`, rules `configs/prometheus/rules.r1/sla-probe.yml` (multi-host twin `deploy/monitoring/rules/sla-probe.yml`). Five are `severity: page` (P2); `stellarindex_sla_probe_unit_failed_alert` is `ticket` (P3). All `for: 30m` except `_stale` (`5m`).
 
-The probe (`cmd/stellarindex-sla-probe`) runs from the 15-minute timer `stellarindex-sla-probe.timer` through the wrapper `configs/healthchecks/sla-probe.sh`. It writes metrics to `/var/lib/node_exporter/textfile_collector/sla_probe.prom` (scraped via node_exporter's textfile collector) and POSTs the JSON report to Healthchecks.io. The JSON NEVER reaches journald, so `journalctl | jq` finds nothing. Read the last verdict from the textfile, the Healthchecks.io check's last ping body, or a one-off run.
+The probe (`cmd/stellarindex-sla-probe`) runs from `stellarindex-sla-probe.timer` (15 min) via `configs/healthchecks/sla-probe.sh`, writes `/var/lib/node_exporter/textfile_collector/sla_probe.prom` and POSTs the JSON report to Healthchecks.io. The JSON never reaches journald: read the textfile, the check's last ping body, or run it once.
 
-Shared commands (on r1, `ssh root@136.243.90.96`; Prometheus listens on localhost):
+Shared commands (on r1, `ssh root@136.243.90.96`):
 
 ```sh
 # Last run's verdict
@@ -23,36 +23,19 @@ export STELLARINDEX_PROBE_API_KEY=<key>   # or pass -api-key
   -pair native,fiat:USD -duration 30s -concurrency 1 -report-format json | jq .failed_reasons
 ```
 
-Probe gotchas that fake a breach:
-
-- Keep `-concurrency 1`. At 2 the probe self-saturates the API (F-1305: ~2.5k req/s, p95 to 3.8 s) and measures its own load.
-- Authenticate. A keyless run hits the anonymous 60/min limit and 429-fake-fails (F-1311, the 2026-08-24 GO-stack retirement shape). That reads as an AVAILABILITY fail, not a latency signal.
-- A deploy restart inside a run or a cold cache after a deploy can trip one run; the 30 m `for` absorbs it.
-- Probe host pinned at 100% CPU during another job: confirm on the host's own metrics.
+Probe gotchas that fake a breach: keep `-concurrency 1` (at 2 it self-saturates, F-1305); authenticate (a keyless run hits the anonymous 60/min limit and 429s read as an availability failure, F-1311); a deploy restart or cold cache can trip one run (the 30 m `for` absorbs it); probe host CPU contention.
 
 Published targets (`/sla`): p95 <= 200 ms, p99 <= 500 ms, availability >= 99.9 % (2xx share), freshness 30 s (150 s for `/v1/price`).
 
 ## At a glance
 
-- [`stellarindex_sla_probe_p95_breach`](#stellarindex_sla_probe_p95_breach) - p95 > 200 ms, page, MTTR 15-60 min
-- [`stellarindex_sla_probe_p99_breach`](#stellarindex_sla_probe_p99_breach) - p99 > 500 ms, page, MTTR 15-60 min
-- [`stellarindex_sla_probe_availability_breach`](#stellarindex_sla_probe_availability_breach) - 2xx share < 99.9 %, page, MTTR 15-60 min
-- [`stellarindex_sla_probe_freshness_breach`](#stellarindex_sla_probe_freshness_breach) - observed_at over bound, page, MTTR 30-90 min
-- [`stellarindex_sla_probe_unit_failed_alert`](#stellarindex_sla_probe_unit_failed_alert) - umbrella verdict, ticket
-- [`stellarindex_sla_probe_stale`](#stellarindex_sla_probe_stale) - no passing run in 90 min, page, MTTR 15 min
-- [`api-smoke`](#api-smoke)
+Six probe alerts (P2 page, `_unit_failed_alert` P3 ticket) plus two api-smoke ticket alerts; probe runs every 15 min on r1.
 
 ## stellarindex_sla_probe_p95_breach
 
-Page. Direct SLA breach: detail-page consumers see degraded responsiveness on the named endpoint.
+**Symptom.** `stellarindex_sla_probe_latency_ms{endpoint=...,quantile="0.95"} > 200` for 30 min (page); `failed_reasons` carries `<endpoint>: p95=<N>ms > target 200.0ms`. `stellarindex_api_latency_p95_high` (real traffic) may also fire.
 
-Symptoms:
-
-- `stellarindex_sla_probe_latency_ms{endpoint=...,quantile="0.95"} > 200` for >= 30 min (2 timer firings).
-- The probe's latest report carries `failed_reasons: ["<endpoint>: p95=<N>ms > target 200.0ms"]`.
-- `stellarindex_api_latency_p95_high` may also fire; complementary signals (probe = synthetic, histogram = real traffic).
-
-Quick diagnosis (<= 5 min):
+**Check.**
 
 ```sh
 # 1. Verdict: see shared commands above.
@@ -70,29 +53,26 @@ stellarindex-sla-probe -base-url https://api.stellarindex.io/v1 \
   -duration 10s -concurrency 1 -report-format text
 ```
 
-Root causes: same backend as `api.md#stellarindex_api_latency_p95_high` (see its "Typical root causes"), plus:
+**Likely causes.**
 
-1. Probe-host network path issue. Probe slow but histogram fine: the problem is between the probe runner and the API edge. Confirm by running from a different network.
-2. Endpoint-specific slowness. `/v1/price` fine but `/v1/oracle/latest` breaching points at that endpoint's path (e.g. SEP-40 contract read latency).
+- Same backend causes as `api.md#stellarindex_api_latency_p95_high`.
+- Probe-host network path: probe slow, histogram fine.
+- One endpoint slow (e.g. `/v1/oracle/latest` SEP-40 read).
+- Cold buffers after a deploy.
 
-Mitigation:
+**Fix.**
 
-- [ ] Confirm the breach is real (histogram agrees), not probe-host-only.
-- [ ] Probe-only: investigate the probe host's network path; not a real-impact alert.
-- [ ] Real: route to `api.md#stellarindex_api_latency_p95_high` for the full latency-triage flow.
-- [ ] Verification: probe p95 under 200 ms for 30 min (2 consecutive passes).
+1. Histogram agrees: route to `api.md#stellarindex_api_latency_p95_high`.
+2. Probe-only: investigate the probe host's network; not a real-impact alert.
+3. Verify probe p95 under 200 ms for 30 min (2 passes).
 
-False positives: first scrape after a deploy (cold Redis + Timescale buffers; absorbed by `for`), probe host CPU contention.
+**Escalate:** page per [sev-playbook](../sev-playbook.md).
 
 ## stellarindex_sla_probe_p99_breach
 
-Page. Published tail-latency target (p99 <= 500 ms) breached on the named endpoint. Otherwise the p95 twin: same diagnostics and mitigation as [p95](#stellarindex_sla_probe_p95_breach) with the 0.99 quantile.
+**Symptom.** `stellarindex_sla_probe_latency_ms{endpoint=...,quantile="0.99"} > 500` for 30 min (page). The p95 twin: with p95 healthy the tail is usually one slow path or heavy pair. `stellarindex_api_latency_p99_high` (> 2 s) is a fleet backstop, not the SLA line.
 
-- `stellarindex_sla_probe_latency_ms{endpoint=...,quantile="0.99"} > 500` for >= 30 min of consecutive runs.
-- With p95 healthy, the tail is usually one slow code path or one heavy pair on the endpoint, not a saturated backend.
-- `stellarindex_api_latency_p99_high` (real traffic, > 2 s, ticket) may or may not follow: it is a fleet-wide backstop, not the SLA line.
-
-Step 2 of the p95 diagnosis with the 0.99 quantile:
+**Check.** As [p95](#stellarindex_sla_probe_p95_breach) step 2 with the 0.99 quantile:
 
 ```sh
 curl -s http://localhost:9090/api/v1/query --data-urlencode \
@@ -100,24 +80,13 @@ curl -s http://localhost:9090/api/v1/query --data-urlencode \
   jq -r '.data.result[] | "\(.metric.route): \(.value[1])s"' | sort -k2 -rn | head
 ```
 
-Mitigation (<= 15 min):
-
-- [ ] Confirm real-traffic p99 on the same route agrees, not a probe-host artefact.
-- [ ] Route to `api.md#stellarindex_api_latency_p95_high` for latency triage.
-- [ ] Verification: probe p99 back under 500 ms for 30 min.
-
-False positives: cold caches after a deploy (the 30 m `for` absorbs one run), probe host CPU contention.
+**Fix.** Confirm real-traffic p99 agrees; route to `api.md#stellarindex_api_latency_p95_high`; verify probe p99 under 500 ms for 30 min. **Escalate:** as p95.
 
 ## stellarindex_sla_probe_availability_breach
 
-Page. Published availability target (>= 99.9 % of probe requests answered 2xx) breached on the named endpoint.
+**Symptom.** `stellarindex_sla_probe_availability_pct{endpoint=...} < 99.9` for 30 min (page). A run holds ~150 samples per endpoint, so one non-2xx dips below 99.9 %; the probe counts every 429, 5xx and client timeout. `stellarindex_sla_probe_unit_failed_alert` follows as the umbrella.
 
-- `stellarindex_sla_probe_availability_pct{endpoint=...} < 99.9` for >= 30 min of consecutive runs.
-- A run holds roughly 150 samples per endpoint, so a single non-2xx answer puts the run below 99.9 %. The `for` separates a sustained breach from one unlucky request.
-- Latency and freshness may be healthy while this fires: the probe counts every 429, 5xx and client timeout as unavailable.
-- `stellarindex_sla_probe_unit_failed_alert` follows on the same window; it is the umbrella, this alert names the endpoint.
-
-Quick diagnosis (<= 5 min): verdict and one-off run per shared commands, then does real traffic agree?
+**Check.** Verdict and one-off run per shared commands, then:
 
 ```sh
 curl -s http://localhost:9090/api/v1/query --data-urlencode \
@@ -125,20 +94,20 @@ curl -s http://localhost:9090/api/v1/query --data-urlencode \
   jq -r '.data.result[] | "\(.metric.status): \(.value[1])"'
 ```
 
-Mitigation (<= 15 min):
+**Likely causes.** Probe-side 429s (missing, revoked or under-quota key; API healthy); real 5xx; timeouts; a deploy restart inside one run.
 
-- [ ] Split the failures by status. 429 on the probe only: the probe's key is missing, revoked or under-quota; fix the key, not the API.
-- [ ] 5xx: route to `api.md#stellarindex_api_error_rate_critical`.
-- [ ] Timeouts: route to `api.md#stellarindex_api_latency_p95_high`.
-- [ ] Verification: two consecutive probe runs at >= 99.9 % on the endpoint (the alert clears on the same 30 m `for`).
+**Fix.**
 
-False positives: probe-side 429s (F-1311; API healthy, measurement not), a deploy restart inside a run (a handful of connection refusals; one run only).
+1. 429 on the probe only: fix the key, not the API.
+2. 5xx: `api.md#stellarindex_api_error_rate_critical`.
+3. Timeouts: `api.md#stellarindex_api_latency_p95_high`.
+4. Verify two consecutive runs at >= 99.9 %.
+
+**Escalate:** page per [sev-playbook](../sev-playbook.md).
 
 ## stellarindex_sla_probe_freshness_breach
 
-Page. Detail-page consumers see stale prices. The 30 s SLA is the DEFAULT for every freshness-bearing endpoint. `/v1/price` is the one exemption: it serves the last CLOSED bucket (ADR-0015), so its `observed_at` is structurally 30-150 s old by design. The probe holds it to a 150 s verdict bound (`defaultClosedBucketFreshTarget`, `cmd/stellarindex-sla-probe/main.go`), `/sla` publishes that bound, and the alert pages at 150 s. A sustained breach means the surface is out of date beyond even those allowances.
-
-Expression, sustained `for: 30m`:
+**Symptom.** Page, `for: 30m`:
 
 ```promql
 stellarindex_sla_probe_freshness_sec{endpoint="price"} > 150
@@ -146,11 +115,9 @@ or
 stellarindex_sla_probe_freshness_sec{endpoint!="price"} > 30
 ```
 
-- Read the alert's `summary` for the value; the description covers both bounds and cannot tell you which one tripped.
-- The probe report shows `observed_at` on `/v1/price` (or `/v1/price/tip`) beyond its bound. Only `price` and `price-tip` publish freshness today; the third endpoint, `oracle-latest` (label on the wire, not `oracle_latest`), emits no `observed_at`. If it ever grows one it is held to 30 s, not `/v1/price`'s exemption.
-- `flags.stale: true` is set on responses for the affected pair. Clients gating on it likely back off; many do not and surface the stale value as-is.
+Read the alert `summary` for the value. `/v1/price` serves the last CLOSED bucket (ADR-0015), so its `observed_at` is 30-150 s old by design (`defaultClosedBucketFreshTarget`, `cmd/stellarindex-sla-probe/main.go`); `price-tip` is held to 30 s. `oracle-latest` emits no `observed_at`. Affected pairs get `flags.stale: true`.
 
-Quick diagnosis (<= 5 min). The freshness chain has three stages; bisect by which one lags:
+**Check.** Bisect the three-stage chain:
 
 ```sh
 # 1. Probe's view of price (one-off run), and last run's exported freshness
@@ -174,55 +141,41 @@ ssh root@136.243.90.96 'runuser -u postgres -- psql -d stellarindex -c "
   ORDER BY bucket DESC LIMIT 5;"'
 ```
 
-Postgres fresh but Redis stale: aggregator is not writing the cache. Postgres also stale: ingestion side. Both fresh but API stale: API is reading the wrong key.
+Postgres fresh but Redis stale: aggregator is not writing the cache. Postgres stale too: ingestion. Both fresh but API stale: wrong key.
 
-Root causes (roughly in frequency order):
+**Likely causes.**
 
-1. Aggregator orchestrator down or wedged. Nobody writes the `vwap:<base>:<quote>:<window>` keys, so `/v1/price` falls back to the slower Postgres path and freshness lags as the tick gap grows.
-   - Signal: `rate(stellarindex_aggregator_ticks_total[5m]) == 0`; [aggregator-silent](aggregator.md#stellarindex_aggregator_silent) fires on `stellarindex_aggregator_vwap_writes_total`.
-   - Mitigation: restart the aggregator binary; investigate why it stopped.
-2. Indexer lag. The dispatcher is behind on LCM consumption, so no closed buckets form.
-   - Signal: [source-stopped](ingestion.md#stellarindex_ingestion_source_stopped) (`stellarindex_ingestion_source_stopped`) fires when `sum by (source) (rate(stellarindex_source_events_total[30m])) == 0` for 15m, gated on `stellarindex_source_enabled == 1` and the rule's continuous-source allowlist (binance, bitstamp, coinbase, kraken, sdex, aquarius, reflector-dex/cex/fx, redstone, coingecko). Sporadic sources (band, blend, comet, ecb, phoenix, ...) are excluded and will not page.
-   - Mitigation: see `stellar-node.md#stellarindex_stellar_core_ledger_age`.
-3. CAGG refresh policy paused or lagging. `prices_1m` is not materializing recent buckets although raw trades exist.
-   - Signal: `stellarindex_timescale_cagg_stale` fires too. Mitigation: see `timescale.md#stellarindex_timescale_cagg_stale`.
-4. No trades for the pair in the tip's escalation window. Most common cause on `price-tip`, and in-contract. `computeTip` tries the caller's window (5 s), escalates to 30 s, then falls back to `PriceReader.LatestPrice` (the CLOSED bucket). A pair with no trade for 30+ s serves a 60-120 s `observed_at` on the tip surface exactly as ADR-0018 describes, and the probe correctly records it over the 30 s SLA. The tell: `price` and `price-tip` report the SAME freshness to three decimals (both serve one closed bucket). Seen on r1 2026-09-05 07:19 UTC: both read `109.156` because XLM/`fiat:USD` had a 67 s CEX trade gap (07:18:31 to 07:19:38) covering two thirds of the 30 s run.
-   - Signal: bounded trade query over the run window:
+- Aggregator wedged: `rate(stellarindex_aggregator_ticks_total[5m]) == 0` ([aggregator-silent](aggregator.md#stellarindex_aggregator_silent)). Restart it.
+- Indexer lag: [source-stopped](ingestion.md#stellarindex_ingestion_source_stopped); `stellar-node.md#stellarindex_stellar_core_ledger_age`.
+- CAGG refresh paused: `timescale.md#stellarindex_timescale_cagg_stale`.
+- No trades for the pair in the tip window (common on `price-tip`): `computeTip` escalates 5 s to 30 s then falls back to the closed bucket (ADR-0018); the tell is `price` and `price-tip` reporting identical freshness. Check the trade gap:
 
-     ```sh
-     ssh root@136.243.90.96 "cd /tmp && runuser -u postgres -- psql -d stellarindex -X -c \"
-       SELECT ts, source, quote_asset FROM trades
-       WHERE ts >= now() - interval '5 minutes'
-         AND base_asset IN ('native','crypto:XLM')
-         AND quote_asset = 'fiat:USD'
-       ORDER BY ts;\""
-     ```
+  ```sh
+  ssh root@136.243.90.96 "cd /tmp && runuser -u postgres -- psql -d stellarindex -X -c \"
+    SELECT ts, source, quote_asset FROM trades
+    WHERE ts >= now() - interval '5 minutes'
+      AND base_asset IN ('native','crypto:XLM')
+      AND quote_asset = 'fiat:USD'
+    ORDER BY ts;\""
+  ```
 
-   - Mitigation: none on the serving side; the closed bucket IS the honest answer. A chronically quiet pair needs source coverage, not a looser threshold. Ack, and do not widen the 30 s bound: it is the published SLA.
-5. No trades for the asset at all. Legitimate market quiet; the stale flag is correct.
-   - Signal: trade-count panel for the pair shows zero recent rows. Ack if the asset is known-thin.
+  A quiet pair needs source coverage, not a looser bound: ack, do not widen 30 s.
+- A binary predating the 2026-09-05 fix measures freshness at end of run; subtract `run_duration_seconds / 2` from the reading.
 
-Mitigation:
+**Fix.**
 
-- [ ] Bisect via quick diagnosis to the lagging stage.
-- [ ] Route to the stage-specific runbook (aggregator / indexer / CAGG).
-- [ ] "No trades in window" is honest staleness: confirm the pair is quiet and ack.
-- [ ] Verification: probe `freshness_sec` under the per-endpoint bound (150 s `price`, 30 s everything else) for >= 30 min.
+1. Bisect to the lagging stage and follow that runbook.
+2. Honest "no trades" staleness: confirm the pair is quiet and ack.
+3. Pre-silence planned indexer/aggregator pauses.
+4. Verify `freshness_sec` under its bound (150 s `price`, 30 s others) for 30 min.
 
-False positives:
-
-- Run-duration measurement bias (fixed 2026-09-05; check the binary version first). The probe used to compute freshness as `time.Since(observed_at)` once AFTER the whole run, so every sample was charged the distance to the end of the run: median bias of `SLA_PROBE_DURATION / 2`. On r1 at the 30 s default the tip read ~15 s against a sub-second truth; at the 120 s duration `sla-probe.sh` recommends for memory-pressured hosts it would read ~60 s and page permanently. Freshness is now anchored to each sample's own receipt instant (`probeSample.receivedAt`). If the deployed binary predates the fix, subtract `run_duration_seconds / 2` from the reading.
-- Newly-listed asset with low volume. Consider a "thin-pair allowlist" if it persists.
-- Maintenance windows with the indexer or aggregator intentionally paused. Pre-silence the alert.
+**Escalate:** page per [sev-playbook](../sev-playbook.md).
 
 ## stellarindex_sla_probe_unit_failed_alert
 
-Ticket (P3), `stellarindex_sla_probe_unit_failed > 0` for >= 30 min. Umbrella signal: at least one SLA is breached. The per-breach alerts ([p95](#stellarindex_sla_probe_p95_breach), [p99](#stellarindex_sla_probe_p99_breach), [availability](#stellarindex_sla_probe_availability_breach), [freshness](#stellarindex_sla_probe_freshness_breach)) are the "fix THIS thing" pages on the same 30 m `for`; this is the "one of them is firing somewhere" ticket. MTTR depends on the underlying breach.
+**Symptom.** `stellarindex_sla_probe_unit_failed > 0` for 30 min (ticket, P3). Umbrella: `failed_reasons` is non-empty, usually beside a per-breach alert ([p95](#stellarindex_sla_probe_p95_breach), [p99](#stellarindex_sla_probe_p99_breach), [availability](#stellarindex_sla_probe_availability_breach), [freshness](#stellarindex_sla_probe_freshness_breach)). With no companion, a threshold lacks its own rule: add one.
 
-- The latest report carries a non-empty `failed_reasons` array.
-- Often (not always) accompanied by a per-breach alert.
-
-Quick diagnosis (<= 5 min): reproduce the verdict locally on r1 (the wrapper's env supplies the defaults):
+**Check.** Reproduce the verdict on r1:
 
 ```sh
 ssh root@136.243.90.96
@@ -232,7 +185,7 @@ set -a; source /etc/default/stellarindex-healthchecks; set +a
   -report-format json | jq -r '.failed_reasons[]'
 ```
 
-Or read the Healthchecks.io check's last ping body. Output is one of:
+Output is one of:
 
 ```
 price: p95=215.3ms > target 200.0ms
@@ -242,23 +195,13 @@ price-tip: freshness=42.1s > target 30.0s
 price: freshness=163.2s > target 150.0s
 ```
 
-The 30 s freshness target applies to `price-tip`; `price` is measured against the 150 s closed-bucket target, so a `price: ... > target 30.0s` line cannot occur.
+**Fix.** Route by breach kind to p95/p99, freshness or availability above; verify `unit_failed` at 0 for 30 min. A firing with no real breach is a bug in `cmd/stellarindex-sla-probe/main.go::computeVerdict`.
 
-Mitigation:
-
-- [ ] Read `failed_reasons` to identify the breach kind.
-- [ ] Route: p95 / p99 to [p95](#stellarindex_sla_probe_p95_breach); freshness to [freshness](#stellarindex_sla_probe_freshness_breach); availability to [availability](#stellarindex_sla_probe_availability_breach) (the probe's availability is the 2xx-success rate, the same signal as `api.md#stellarindex_api_error_rate_critical`).
-- [ ] Verification: `unit_failed` at 0 for >= 30 min.
-
-Why it exists alongside the per-breach alerts: it catches a new endpoint or pair-specific threshold not yet wired into a per-breach rule. If it fires without a per-breach companion, add the per-breach rule. (p99 and availability now have their own rules.)
-
-False positives: none expected; the verdict is deterministic from measured values. A firing with no real breach is a bug in `cmd/stellarindex-sla-probe/main.go::computeVerdict`.
+**Escalate:** none (ticket).
 
 ## stellarindex_sla_probe_stale
 
-Page (P2), `for: 5m`. The SLA-evidence trail is lost; the API itself may be fine, we just cannot prove it. MTTR 15 min.
-
-Expression, TWO branches:
+**Symptom.** Page (P2), `for: 5m`; the SLA-evidence trail is lost (the API itself may be fine):
 
 ```promql
 (time() - stellarindex_sla_probe_last_pass_timestamp) > (90 * 60)
@@ -266,12 +209,9 @@ or
 absent_over_time(stellarindex_sla_probe_last_pass_timestamp[90m])
 ```
 
-- 90 min = 6 missed passes of the 15-min cadence.
-- OBS-2: the probe writes `last_pass_timestamp` only on a pass and rewrites the whole textfile each run, so a failing run drops the series. Every-run-failed makes the series ABSENT, not old; the `absent_over_time` branch is what catches it.
-- Either the timer is not running, or every recent run failed (which also fires `_unit_failed_alert`).
-- Do not confuse the live `stellarindex-sla-probe.timer` with the retired duplicate GO-stack `sla-probe.timer`; ansible actively removes the latter.
+The probe writes `last_pass_timestamp` only on a pass and rewrites the whole file each run, so all-runs-failing makes the series ABSENT, not old (also fires `_unit_failed_alert`). The live timer is `stellarindex-sla-probe.timer`; the retired GO-stack `sla-probe.timer` is removed by ansible.
 
-Quick diagnosis (<= 5 min):
+**Check.**
 
 ```sh
 ssh root@136.243.90.96
@@ -293,44 +233,30 @@ cat /var/lib/node_exporter/textfile_collector/sla_probe.prom
   -pair native,fiat:USD -duration 30s -concurrency 1 -report-format json | jq .
 ```
 
-Root causes:
+**Likely causes.**
 
-1. Timer disabled. An operator stopped it for maintenance and forgot; `systemctl status` shows `inactive`. Fix: `sudo systemctl enable --now stellarindex-sla-probe.timer`.
-2. Service unit failing every run; shows in journald. Check the entries and handle as [unit_failed](#stellarindex_sla_probe_unit_failed_alert).
-3. node_exporter not scraping the textfile_collector dir. Under OBS-2 the signal is ambiguous; disambiguate with `grep last_pass /var/lib/node_exporter/textfile_collector/sla_probe.prom`:
-   - Line present in the file but series absent in Prometheus: node_exporter / textfile-collector problem; confirm `--collector.textfile.directory` points at the right path.
-   - Line absent from a FRESH file: the probe fails every run (check `stellarindex_sla_probe_unit_failed=1` in the same file); go to [unit_failed](#stellarindex_sla_probe_unit_failed_alert).
-4. `SLA_PROBE_TEXTFILE_OUTPUT` explicitly blanked. The wrapper DEFAULTS the path (`configs/healthchecks/sla-probe.sh:60`), so an absent var still writes; only an emptied `SLA_PROBE_TEXTFILE_OUTPUT=` in `/etc/default/stellarindex-healthchecks` disables it. (`TEXTFILE_OUTPUT` belongs to the supply-snapshot unit.) The other file-missing cause is the `ReadWritePaths`/EROFS class the unit documents: the service cannot write outside its allowed paths.
-   - Signal: the file does not exist at all. Fix: un-blank the var (or fix `ReadWritePaths`); reload the service.
+- Timer disabled: `sudo systemctl enable --now stellarindex-sla-probe.timer`.
+- Unit failing every run: handle as [unit_failed](#stellarindex_sla_probe_unit_failed_alert).
+- node_exporter not scraping the textfile dir: `grep last_pass /var/lib/node_exporter/textfile_collector/sla_probe.prom`; line present but series absent means check `--collector.textfile.directory`; line absent from a fresh file means every run fails.
+- `SLA_PROBE_TEXTFILE_OUTPUT=` blanked in `/etc/default/stellarindex-healthchecks` (the wrapper defaults the path, `configs/healthchecks/sla-probe.sh:60`), or `ReadWritePaths`/EROFS on the unit.
 
-Mitigation:
+**Fix.**
 
-- [ ] Walk the diagnostics; find the silent stage.
-- [ ] Apply the matching root-cause fix.
-- [ ] Force a run (`systemctl start stellarindex-sla-probe.service`) and confirm `last_pass_timestamp` updates.
-- [ ] Verification: alert clears within 5 min of a passing run reaching node_exporter.
+1. Apply the matching fix above.
+2. `systemctl start stellarindex-sla-probe.service`; confirm `last_pass_timestamp` updates.
+3. The alert clears within 5 min of a passing run reaching node_exporter. After a fresh probe deploy it fires until the first passing run: force a run, do not silence.
 
-False positive: fresh deploy of the probe. The series is absent (an absent series is an empty vector, so the first branch cannot fire); the `absent_over_time` branch fires until the first PASSING run lands, plus `for: 5m`. Force a run rather than silencing.
+**Escalate:** page per [sev-playbook](../sev-playbook.md).
 
 ## api-smoke
 
-**API smoke alerts**
-
-_Source page `sla-probe.md#api-smoke`: status draft, last verified 2026-10-05._
-
-Alerts from `configs/prometheus/rules.r1/api-smoke.yml` (group `stellarindex.api_smoke`, `severity: ticket`; multi-host twin `deploy/monitoring/rules/api-smoke.yml`). The smoke (`scripts/dev/r1-smoke.sh`, wrapper `configs/healthchecks/smoke.sh`, unit `stellarindex-smoke.service`) is the only check that reads response bodies; it runs every 5 min and writes `/var/lib/node_exporter/textfile_collector/api_smoke.prom`. `_failing` means it ran and found a problem; `_stale` means it did not report. Work them separately.
-
-### At a glance
-
-- [`stellarindex_api_smoke_failing`](#stellarindex_api_smoke_failing)
-- [`stellarindex_api_smoke_stale`](#stellarindex_api_smoke_stale)
+Alerts from `configs/prometheus/rules.r1/api-smoke.yml` (group `stellarindex.api_smoke`, ticket; multi-host twin `deploy/monitoring/rules/api-smoke.yml`). The smoke (`scripts/dev/r1-smoke.sh`, wrapper `configs/healthchecks/smoke.sh`, unit `stellarindex-smoke.service`) reads response bodies every 5 min and writes `/var/lib/node_exporter/textfile_collector/api_smoke.prom`. `_failing` means it ran and found a problem; `_stale` means it did not report.
 
 ### stellarindex_api_smoke_failing
 
-**Severity** P3. MTTR 30 min. Impact: a launch-critical endpoint answers with the wrong shape or status.
-**Trigger** `stellarindex_api_smoke_failures > 0` for 30m (six consecutive failing runs). The gauge is the smoke's exit code = failed-check count (34 checks), rewritten each run, so it clears within one cadence of a clean run. The 30m `for` is deliberate: some checks are data-dependent (`/v1/ohlc`, `/v1/oracle/prices` accept a documented 404 on an empty window; cold-cache responses can approach the 10 s per-request budget).
+**Symptom.** `stellarindex_api_smoke_failures > 0` for 30m (P3): the gauge is the failed-check count (34 checks), rewritten each run. A launch-critical endpoint answers with the wrong shape or status. The 30m `for` absorbs data-dependent checks (`/v1/ohlc`, `/v1/oracle/prices` accept a documented 404 on an empty window; cold-cache responses near the 10 s budget).
 
-**Diagnose** (5 min)
+**Check.**
 
 ```sh
 ssh root@136.243.90.96
@@ -349,28 +275,26 @@ API_BASE_URL=http://localhost:3000 \
 API_BASE_URL=https://api.stellarindex.io bash scripts/dev/r1-smoke.sh
 ```
 
-**Root causes**
+**Likely causes.**
 
-1. Handler changed shape (serialiser field renamed/dropped; jq assertion fails on a healthy 200). The failing check names the endpoint. Fix forward, or roll the API binary back per `docs/operations/deploy-config-apply.md`; prefer rollback during the window.
-2. A documented 4xx regressed to 200 (the `expect_status` pins). Treat as an API contract break, not a smoke bug.
-3. Deploy landed the binary without its config (ansible-rendered config missing; endpoint answers pre-feature shape). Check `config-apply-gate` on the deploy run and whether the archival-node role was applied.
-4. Deployed `r1-smoke.sh` differs from the repo. The archival-node role copies it (`17-stellarindex-healthchecks.yml`); `diff scripts/dev/r1-smoke.sh` against `/opt/stellarindex/healthchecks/r1-smoke.sh`.
-5. Dependency down (Postgres, Redis, ClickHouse): many checks fail at once. Work `api-5xx` / `api-down` first; this alert is downstream.
+- Handler changed shape, or a documented 4xx regressed to 200 (an API contract break).
+- Binary deployed without its rendered config: check `config-apply-gate` on the deploy run.
+- Deployed `r1-smoke.sh` differs from the repo: `diff scripts/dev/r1-smoke.sh /opt/stellarindex/healthchecks/r1-smoke.sh`.
+- Dependency down (many checks fail at once): work `api-5xx` / `api-down` first.
 
-**False positives** A single slow cold-cache run (`/v1/markets?limit=5` has taken 6-8 s vs 10 s budget); checks accepting `200|404` tolerate a quiet pair, but a 404 outside that set is a real break; a run during a deploy (API restarts mid-run, check the deploy timeline).
+**Fix.**
 
-**Verify** Re-run manually to confirm the failure is current; after the fix `stellarindex_api_smoke_failures` returns to 0 at the next timer firing (5 min).
+1. Fix forward, or roll back per `docs/operations/deploy-config-apply.md` (prefer rollback during the window).
+2. Ignore one slow cold-cache run (`/v1/markets?limit=5` takes 6-8 s) or a run during a deploy.
+3. Re-run manually; verify `stellarindex_api_smoke_failures` returns to 0 at the next firing.
 
-Related: `sla-probe.md#stellarindex_sla_probe_unit_failed_alert` (latency/freshness counterpart), `meta.md#stellarindex_healthcheck_ping_undelivered` (read before trusting a Healthchecks.io "down" email for this check).
+**Escalate:** none; see `sla-probe.md#stellarindex_sla_probe_unit_failed_alert`, and `meta.md#stellarindex_healthcheck_ping_undelivered` before trusting a Healthchecks.io "down" email.
 
 ### stellarindex_api_smoke_stale
 
-**Severity** P3. MTTR 15 min. Impact: nothing asserts the public API's shapes; the API may be healthy, we cannot tell.
-**Trigger** for 5m:
-`(time() - stellarindex_api_smoke_last_run_unix) > 30*60 or absent_over_time(stellarindex_api_smoke_last_run_unix[30m])`
-30 min = six missed firings. The first branch covers a frozen `api_smoke.prom` still re-served by node_exporter (stamp present but old). The `absent_over_time` branch covers never-scheduled cases (timer stopped, unit failing before it writes, textfile dir not writable, host never deployed): the series is absent, not old, so the first branch cannot fire.
+**Symptom.** P3, for 5m: `(time() - stellarindex_api_smoke_last_run_unix) > 30*60 or absent_over_time(stellarindex_api_smoke_last_run_unix[30m])`. Nothing asserts the public API's shapes. Present-but-old stamp means a frozen file; absent series means never scheduled or written.
 
-**Diagnose** (5 min)
+**Check.**
 
 ```sh
 ssh root@136.243.90.96
@@ -391,31 +315,22 @@ systemctl start stellarindex-smoke.service
 cat /var/lib/node_exporter/textfile_collector/api_smoke.prom
 ```
 
-Present-but-old timestamp = frozen file (unit not completing, or directory went read-only after the last write). Absent series = nothing is being scraped.
+**Likely causes.**
 
-**Root causes**
+- Timer disabled: `sudo systemctl enable --now stellarindex-smoke.timer`.
+- `ReadWritePaths` missing: `ProtectSystem=strict` makes the textfile write fail (EROFS; journal `smoke: WARN … not writable`). The unit must ship `ReadWritePaths=/var/lib/node_exporter/textfile_collector` and `SupplementaryGroups=stellarindex` (`configs/healthchecks/stellarindex-smoke.service`).
+- Collector directory missing (archival-node role `10-observability.yml`), or node_exporter not reading it (`--collector.textfile.directory`).
+- Bad `ExecStart` path after a partial deploy.
 
-1. Timer disabled (`systemctl status` shows `inactive`): `sudo systemctl enable --now stellarindex-smoke.timer`.
-2. `ReadWritePaths` missing from the unit: `ProtectSystem=strict` makes `/var` read-only so the textfile write fails (EROFS) while the smoke runs fine. The unit should ship `ReadWritePaths=/var/lib/node_exporter/textfile_collector` and `SupplementaryGroups=stellarindex` (`configs/healthchecks/stellarindex-smoke.service`). Journal shows `smoke: WARN … not writable`. Re-apply the role: `ansible-playbook … archival-node.yml --tags healthchecks`.
-3. Collector directory missing (provisioned by archival-node role `10-observability.yml`; fresh host without the role).
-4. node_exporter not reading the directory (file present and fresh, series absent). Check `--collector.textfile.directory`; sibling alerts (restore-drill, pgbackrest, sla-probe) would also go quiet.
-5. Unit fails before the wrapper runs (bad `ExecStart` path after a partial deploy); journal shows the failure, no textfile written.
+**Fix.**
 
-**Fix** Identify the branch (frozen vs absent), apply the matching fix, `systemctl start stellarindex-smoke.service` and confirm `last_run_unix` advances. Alert clears ~5 min after the first scrape with a fresh stamp.
+1. Re-apply the role if needed: `ansible-playbook … archival-node.yml --tags healthchecks`.
+2. `systemctl start stellarindex-smoke.service`; confirm `last_run_unix` advances. Clears ~5 min after a fresh scrape; after a fresh deploy force a run, do not silence.
 
-**False positives** Fresh deploy: series absent until the first run lands (plus `for: 5m`); force a run, do not silence. One skipped firing (`RandomizedDelaySec=30s`) does not trip the six-miss threshold.
-
-Related: `sla-probe.md#stellarindex_sla_probe_stale`, `data-freshness.md#stellarindex_data_freshness_watchdog_silent` (frozen-textfile pattern), `meta.md#stellarindex_healthcheck_ping_undelivered` (the other reason Healthchecks.io goes quiet).
+**Escalate:** none; see `sla-probe.md#stellarindex_sla_probe_stale`, `data-freshness.md#stellarindex_data_freshness_watchdog_silent`.
 
 ## Related
 
-- `api.md#stellarindex_api_latency_p95_high` - underlying latency triage.
-- `api.md#stellarindex_api_error_rate_critical` - server-error triage.
-- `slo.md#stellarindex_slo_availability_burn_fast` - real-traffic availability burn.
-- `timescale.md#stellarindex_timescale_cagg_stale`, `stellar-node.md#stellarindex_stellar_core_ledger_age`, `aggregator.md#stellarindex_aggregator_silent` - freshness chain stages.
-- ADR-0015 - closed-bucket-only serving that makes `/v1/price` structurally 30-150 s old.
-- The service freshness SLA - the 30 s spec (tip-of-chain surface).
-
-**`api-smoke`**
-
-- [api](api.md): API-side alerts.
+- `api.md#stellarindex_api_latency_p95_high`, `api.md#stellarindex_api_error_rate_critical`, `slo.md#stellarindex_slo_availability_burn_fast`.
+- `timescale.md#stellarindex_timescale_cagg_stale`, `stellar-node.md#stellarindex_stellar_core_ledger_age`, `aggregator.md#stellarindex_aggregator_silent`: freshness chain.
+- ADR-0015: closed-bucket-only serving.

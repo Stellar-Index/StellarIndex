@@ -9,72 +9,37 @@ severity: P3
 
 ## At a glance
 
-| Field | Value |
-| ----- | ----- |
-| Alert | `stellarindex_wasm_drift`, `stellarindex_wasm_drift_stale` |
-| Severity | P3 (`severity: ticket`) |
-| Detected by | `configs/prometheus/rules.r1/storage.yml`; multi-host twin in `deploy/monitoring/rules/storage.yml`. |
-| Typical MTTR | 30 min per new hash (fetch bytes, string-check, record) |
-| Impact | None visible yet. A gated contract upgraded in place to bytes nobody has read: its events may decode wrong or not at all, and a replay over its ledgers is not backed by an audit. |
+WASM hash drift.
 
-`stellarindex-ops wasm-drift -config PATH [-source NAME] [-textfile PATH]`
-reads ClickHouse only. For every gated source (`pipeline.GatedSourceNames()`)
-that has entries in `internal/wasmaudit/audited_wasm.json`, it builds the
-contract set — curated set ∪ factories ∪ every child the factories announced,
-walked from the lake's creation events — resolves each contract's **current**
-WASM hash (`stellar.contract_instance_changes`, falling back to
-`ledger_entries_current` — the same hop `GET /v1/contracts/{id}/wasm` uses),
-and compares it with the manifest.
+P3 (`severity: ticket`). Rules: `configs/prometheus/rules.r1/storage.yml` (twin `deploy/monitoring/rules/storage.yml`). Impact: a gated contract upgraded in place to bytes nobody has read; its events may decode wrong and a replay over its ledgers is not backed by an audit. ~30 min per new hash.
 
-| Verdict | Meaning | Metric |
-| --- | --- | --- |
-| drift | hash is not in the manifest for this source | `stellarindex_wasm_drift{source,contract,wasm_hash} 1` |
-| sac / unresolved | a Stellar Asset Contract, or no instance entry in the lake — nothing to compare | `stellarindex_wasm_drift_contracts_unverifiable{source,reason}` |
-| unaudited source | the source has no audit log in the manifest; its contracts are not checked | `stellarindex_wasm_drift_source_unaudited{source} 1` |
+`stellarindex-ops wasm-drift -config PATH [-source NAME] [-textfile PATH]` reads ClickHouse only. For each gated source (`pipeline.GatedSourceNames()`) with entries in `internal/wasmaudit/audited_wasm.json` it resolves every contract's current WASM hash (`stellar.contract_instance_changes`, falling back to `ledger_entries_current`; same hop as `GET /v1/contracts/{id}/wasm`) across curated set, factories and announced children, and compares with the manifest. Exit code = drifting contracts (capped at 255). An erroring run (lake down, factory walk finds no children) writes no textfile.
 
-Exit code = drifting contracts (capped at 255). A run that errors (lake down,
-a factory walk that finds no children or cannot decode a creation event)
-writes no textfile, so `stellarindex_wasm_drift_stale` covers it.
+| Verdict | Metric |
+| --- | --- |
+| hash not in the manifest | `stellarindex_wasm_drift{source,contract,wasm_hash} 1` |
+| SAC or no instance entry in the lake | `stellarindex_wasm_drift_contracts_unverifiable{source,reason}` |
+| source has no audit log (not checked) | `stellarindex_wasm_drift_source_unaudited{source} 1` |
 
 ## `stellarindex_wasm_drift` — a contract runs an unaudited hash
 
-1. Take `wasm_hash` from the alert (or the run's `DRIFT` lines). Fetch the
-   bytes from the lake: `GET /v1/contracts/{contract}/wasm`, or
-   `stellar.ledger_entries_current` with `entry_type = 'contract_code'`
-   keyed on the hash.
-2. String-check them against the decoder's literals per
-   [decoder-wasm-matrix.md §Method](../wasm-audits/decoder-wasm-matrix.md#method):
-   byte-search every topic and field name
-   `internal/sources/<source>/{events,decode}.go` watches, for the
-   contract's role.
-3. Record the verdict in `docs/operations/wasm-audits/<source>.md` — the
-   hash in full, or as its first 8 hex chars + `…`.
-4. Only if the check passed: add the full hash to `audited_wasm.json`
-   (`source`, `role`, `audited` date, `doc`).
-   `TestAuditedWasmManifestMatchesAuditLogs` fails if the doc does not name it.
-5. If literals are missing, the decoder is not safe on this contract: open an
-   issue, and do not run a replay over the contract's ledgers until the
-   decoder handles the new bytes. A contract that is not the protocol's at
-   all belongs out of the curated set, not in the manifest.
+1. Take `wasm_hash` from the alert (or the `DRIFT` lines). Fetch the bytes: `GET /v1/contracts/{contract}/wasm`, or `stellar.ledger_entries_current` with `entry_type = 'contract_code'` keyed on the hash.
+2. String-check them against the decoder's literals ([protocol-epochs.md §Method](../wasm-audits/protocol-epochs.md#method)): byte-search every topic and field name `internal/sources/<source>/{events,decode}.go` watches for the contract's role.
+3. Record the verdict in `docs/operations/wasm-audits/<source>.md` (full hash, or first 8 hex chars + `…`).
+4. Only if the check passed, add the full hash to `audited_wasm.json` (`source`, `role`, `audited` date, `doc`); `TestAuditedWasmManifestMatchesAuditLogs` fails if the doc does not name it.
+5. Literals missing: the decoder is unsafe on this contract; open an issue and run no replay over its ledgers. A contract that is not the protocol's belongs out of the curated set.
 
 ## `stellarindex_wasm_drift_stale` — no completed run in 2 days
 
-Only fires once a run has written the textfile. Check the scheduling unit's
-journal for the `wasm-drift:` error line; the usual causes are ClickHouse
-being unreachable or a factory walk returning zero children.
+Fires only after a run has written the textfile. Read the scheduling unit's journal for the `wasm-drift:` error line (ClickHouse unreachable, or a factory walk returning zero children).
 
 ## Promoting an unaudited source
 
-A gated source with no manifest entry (`stellarindex_wasm_drift_source_unaudited`)
-is not checked at all. To bring it under the check: write its audit log in
-`docs/operations/wasm-audits/<source>.md` following the
-[procedure](../wasm-audits/README.md), string-check every hash its contracts
-currently run, then seed those hashes into `audited_wasm.json`. The next run
-checks it.
+For `stellarindex_wasm_drift_source_unaudited`: write its audit log in `docs/operations/wasm-audits/<source>.md` per the [procedure](../wasm-audits/README.md), string-check every hash its contracts run, then seed them into `audited_wasm.json`.
 
 ## Discover what a contract really emits
 
-Before writing or auditing a decoder, dump the on-chain events of a bounded ledger range as JSON (topics and body field types). Read-only; it is the in-infra analogue of `hubble-soroban-events`.
+Read-only dump of a bounded range's on-chain events (topics, body field types):
 
 ```sh
 stellarindex-ops scan-soroban-events -config /etc/stellarindex.toml -from <ledger> -to <ledger> -contract <C...> -limit 50
@@ -82,7 +47,4 @@ stellarindex-ops scan-soroban-events -config /etc/stellarindex.toml -from <ledge
 
 ## Related
 
-- `internal/ops/chops/wasm_drift.go` — the check; `internal/pipeline/gated_registry.go` — the gated sources it walks.
-- [wasm-audits](../wasm-audits/README.md) — the audit logs the manifest is checked against.
-- [decoder-wasm-matrix](../wasm-audits/decoder-wasm-matrix.md) — the string-check method.
-- [alerts-catalog](../alerts-catalog.md)
+`internal/ops/chops/wasm_drift.go`, `internal/pipeline/gated_registry.go`, [wasm-audits](../wasm-audits/README.md), [protocol-epochs](../wasm-audits/protocol-epochs.md#decoder-wasm-matrix), [alerts-catalog](../alerts-catalog.md)

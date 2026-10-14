@@ -22,37 +22,32 @@ Non-projected sources use `backfill` / `ch-rebuild`.
 - Writes one `trades` row per decoded event.
 - Tracks its own cursor (`source="backfill"`, `sub_source="<from>-<to>:<sources>"`);
   the indexer's cursor is untouched. Exits at `-to`; never tails live.
-- Refuses sources with `BackfillSafe=false`. Soroban sources need a per-WASM-hash
-  audit ([`wasm-audits/README.md`](wasm-audits/README.md)) before the flag flips;
-  SDEX and off-chain are unconditionally safe.
+- Refuses sources with `BackfillSafe=false`; Soroban sources need a per-WASM-hash audit ([`wasm-audits/README.md`](wasm-audits/README.md)) first. SDEX and off-chain are always safe.
 - After each chunk's inserts it refreshes every CAGG built on them: the twelve
-  `timescale.TradesCAGGs` (`prices_1m` ... `prices_1mo`, `twap_1h`, `twap_1d`,
-  `dex_volume_by_pair_1d`, `source_volume_1h`, `pools_per_source_1h`) over the
-  chunk's trade timestamps, and the seven `oracle_prices_*` rungs
-  (`timescale.OracleCAGGs`) over its `oracle_updates` range. The refresh policies
-  only roll forward, so a historical range is never materialised without this.
-  Disable with `-refresh-caggs=false` only to debug a refresh failure.
-  `prices_1m` is refreshed first and forced over every window the twaps read.
-  While `prices_1m`'s retention policy (migration 0156) is armed the twap refresh
-  is refused and the chunk fails: disarm it as the migration states, then `-resume`.
-- Each refresh CALL runs under its own `statement_timeout`: 5 min per hour of
-  window, floor 10 min, ceiling 4 h. A wedged refresh fails its chunk (view,
-  window and bound logged); `-resume` re-walks it.
+  `timescale.TradesCAGGs` over the chunk's trade timestamps and the seven
+  `oracle_prices_*` rungs (`timescale.OracleCAGGs`) over its `oracle_updates`
+  range; refresh policies only roll forward, so history is never materialised
+  without this. Disable with `-refresh-caggs=false` only to debug a refresh failure.
+  `prices_1m` is refreshed first. While `prices_1m`'s retention policy (migration
+  0156) is armed the twap refresh is refused and the chunk fails: disarm it as the
+  migration states, then `-resume`.
+- Each refresh CALL runs under its own `statement_timeout` (5 min per hour of
+  window, floor 10 min, ceiling 4 h). A wedged refresh fails its chunk; `-resume` re-walks it.
 
 ## Prerequisites
 
 - [ ] Config validates: `stellarindex-ops -config /etc/stellarindex.toml dry-run`.
 - [ ] Every source to replay is `BackfillSafe=true`.
 - [ ] The Galexie bucket reaches the range. r1's `galexie-archive` is TRIMMED to a
-  hot floor (ADR-0027; `stellarindex_archive_hot_floor`, role default 2 = none;
-  r1 boundary 49,984,000, `inventory/r1.example.yml`): below it no objects exist.
-  Check: `ssh r1 'grep ARCHIVE_HOT_FLOOR /etc/default/galexie-archive-fill'`.
+  hot floor (ADR-0027; `stellarindex_archive_hot_floor`, r1 boundary 49,984,000):
+  below it no objects exist. Check:
+  `ssh r1 'grep ARCHIVE_HOT_FLOOR /etc/default/galexie-archive-fill'`.
   r2 reads `aws-public-blockchain` (any range); r3 pulls from Vultr Object Storage.
   Below the floor use a region that holds the range, or rehydrate first
   ([lcm-cache-tiering.md](lcm-cache-tiering.md)).
 - [ ] Disk and DB IO headroom for the CAGG materialisation.
-- [ ] Running beside live ingest is fine (shared hypertable, primary-key dedupe);
-  expect a brief CPU spike.
+- [ ] Running beside live ingest is fine (primary-key dedupe); see
+  [Running alongside live ingest](#running-alongside-live-ingest).
 
 ## Steps
 
@@ -72,8 +67,8 @@ granular, so the run aligns to `floor(from / 64) * 64`.
 stellarindex-ops backfill -config /etc/stellarindex.toml -from 50000000 -to 50100000 -dry-run
 ```
 
-Prints range, sources and bucket. The bucket is `galexie-archive` below the live
-seam and `galexie-live` above; override with `-bucket` if the range straddles.
+Prints range, sources and bucket (`galexie-archive` below the live seam,
+`galexie-live` above; override with `-bucket` if the range straddles).
 
 ### 3. Run, under the heavy-job wrapper on r1
 
@@ -84,21 +79,16 @@ seam and `galexie-live` above; override with `-bucket` if the range straddles.
 ```
 
 The wrapper is mandatory for every ops one-shot on r1
-([maintainer-workflow.md](maintainer-workflow.md) §Heavy one-shot jobs): systemd
-scope, `MemoryMax=20G`, `MemorySwapMax=0`, batch CPU/IO weights, per-job singleton
-lock, disk watchdog, ClickHouse `ops_batch` identity. Use the SAME job name every
-attempt; a run that finds the lock held is refused with exit 75 (`fuser -v` on
-the lock file names the holder). Append `2>&1 | tee backfill-50000000-50100000.log`
-to the inner command to keep a log.
-
-Throughput: ~50-150 ledgers/s per source (Galexie fetch + decode); ~100k ledgers
-takes ~10-30 min.
+([maintainer-workflow.md](maintainer-workflow.md) §Heavy one-shot jobs). Use the
+SAME job name every attempt; a held lock is refused with exit 75 (`fuser -v` on the
+lock file names the holder). Append `2>&1 | tee <name>.log` to the inner command to
+keep a log. Throughput ~50-150 ledgers/s per source; ~100k ledgers takes ~10-30 min.
 
 ### 4. Resume after a crash
 
 Re-run step 3 with `-resume`. It reads the cursor and skips processed ledgers; the
-cursor upserts every ~256 ledgers, and replays are idempotent (primary-key dedupe).
-Never edit the cursor table by hand.
+cursor upserts every ~256 ledgers, and replays are idempotent. Never edit the cursor
+table by hand.
 
 ### 5. Narrow the source set (optional)
 
@@ -130,12 +120,10 @@ CALL refresh_continuous_aggregate('twap_1d',    '2026-04-15'::timestamptz, '2026
 ```
 
 Each window must span at least 2 buckets of its own grain or the call fails with
-`SQLSTATE 22023: refresh window too small` (hence the wider last three).
-`PadRefreshWindow` (`internal/storage/timescale/diagnostics.go`) applies the same
-padding per chunk; per-grain minimums are the `MinWindow` values in `TradesCAGGs`
-and `OracleCAGGs`. The policies cover only `prices_1m`'s 5-minute `start_offset` up
-to `prices_1mo`'s 3 months (migration 0002); older buckets are never materialised
-on their own.
+`SQLSTATE 22023: refresh window too small` (hence the wider last three; per-grain
+minimums are the `MinWindow` values in `TradesCAGGs` / `OracleCAGGs`). Policies
+cover only `prices_1m`'s 5-minute `start_offset` up to `prices_1mo`'s 3 months, so
+older buckets are never materialised on their own.
 
 ## Failure modes
 
@@ -143,8 +131,7 @@ on their own.
   before historical replay`**: audit per `wasm-audits/README.md`, flip
   `BackfillSafe: true` in `internal/sources/external/registry.go`, re-run.
 - **Cursor collision**: the cursor key is `(from, to, sources)`; identical runs
-  share progress, and any change of range (even one ledger) or source set gives a
-  fresh cursor.
+  share progress, and any change of range or source set gives a fresh cursor.
 - **`ledgerstream: 404 fetching FC<...>.xdr.zst`**: the bucket lacks the range.
   Check `ssh r1 "ls /var/lib/galexie/galexie-archive/<partition>/" | head`; if it
   is genuinely missing see [archival-node-bringup.md](archival-node-bringup.md)
@@ -152,24 +139,19 @@ on their own.
 
 ## One-year retention catch-up (F-1265)
 
-Target is historical retention >= 1 year (ideally from inception). Run once before
-public flip and whenever the data window shrinks below 1 year (e.g. restore from a
-recent snapshot). ~6.3M ledgers at 5 s/ledger; budget 6-12 h wall-clock on one r1
-at `-parallel 4`.
+Target is historical retention >= 1 year. Run once before public flip and whenever
+the data window shrinks below 1 year. ~6.3M ledgers; budget 6-12 h on one r1 at `-parallel 4`.
 
 1. **Resolve the start ledger**: first ledger of the earliest in-scope archive
    partition, rounded DOWN to a multiple of 64:
    `ssh r1 'ls -1 /var/lib/galexie/galexie-archive/2025-05-* | head -1'`.
-2. **Check the archive has no gaps** (catch-up reads only the immutable archive
-   bucket; `-from` / `-to` are ledgers, not dates):
+2. **Check the archive has no gaps** (`-from` / `-to` are ledgers, not dates):
    ```sh
    stellarindex-ops verify-archive -config /etc/stellarindex.toml \
      -from <year-ago-ledger> -to <tip-ledger> -bucket galexie-archive
    ```
-3. **Size it**: ~50-200 GB of trade rows plus ~10-20 GB of CAGG data (compressed
-   ~5x) across the audited Soroban set (each DEX source ~50-500 trades/day).
-4. **Run in 1-week chunks** (~120k ledgers); a whole-year run makes a crash a
-   12 h resume and holds the cursor row throughout. Stop if a chunk fails.
+3. **Size it**: ~50-200 GB of trade rows plus ~10-20 GB of CAGG data.
+4. **Run in 1-week chunks** (~120k ledgers), so a crash is not a 12 h resume. Stop if a chunk fails.
    ```sh
    for week_from in $(seq -w 50000000 120000 56000000); do
      week_to=$((week_from + 120000))
@@ -177,18 +159,16 @@ at `-parallel 4`.
        -from "$week_from" -to "$week_to" -resume -parallel 4 2>&1 | tee "backfill-${week_from}.log"
    done
    ```
-5. **CAGGs refresh automatically** per chunk (all seven price grains). Only on a
-   binary lacking `-refresh-caggs` run the nine calls from step 6 above after the
-   chunk, with `<T_LO>` / `<T_HI>` = THIS chunk's timestamps, `prices_1m` first,
-   windows widened for coarse rungs (`prices_1mo` needs two calendar months).
-   A binary from 2026-05-13 to 2026-09-04 refreshed only `prices_1h` and coarser:
-   see the repair section.
+5. **CAGGs refresh automatically** per chunk. Only on a binary lacking
+   `-refresh-caggs` run the nine calls from step 6 after the chunk, with
+   `<T_LO>` / `<T_HI>` = THIS chunk's timestamps, `prices_1m` first, windows
+   widened for coarse rungs (`prices_1mo` needs two calendar months). A binary
+   that refreshed only `prices_1h` and coarser needs the repair section below.
 
-   > **`NULL, NULL` is the WHOLE view**, back to 2015: order-of-10M `prices_1m`
-   > rows per 30 days of history in one uninterruptible `CALL`, nine times.
-   > Acceptable only on a small or freshly-seeded deployment. Otherwise walk
-   > `[T_LO, T_HI]` in weekly or monthly slices under a heavy-job scope, off the
-   > 14:00-22:00 UTC peak ([cagg-broad-recompute.md](cagg-broad-recompute.md)).
+   > **`NULL, NULL` is the WHOLE view**: order-of-10M `prices_1m` rows per 30 days
+   > in one uninterruptible `CALL`, nine times. Only for a small or freshly-seeded
+   > deployment. Otherwise walk `[T_LO, T_HI]` in weekly or monthly slices under a
+   > heavy-job scope, off the 14:00-22:00 UTC peak ([cagg-broad-recompute.md](cagg-broad-recompute.md)).
 
 6. **Verify at 1m grain, not only the default**:
    ```sh
@@ -200,27 +180,15 @@ at `-parallel 4`.
    curl -s '<host>/v1/ohlc?base=native&quote=fiat:USD&interval=1m&from=<T_LO>&to=<T_HI>&limit=1000' \
      | jq '.data.intervals | length'
    ```
-   Every 2xx is an `Envelope` (`{data, as_of, flags, ...}`): bars are
-   `.data.intervals` and chart points `.data.points`. `.data | length` on
-   `/v1/ohlc` counts the six `OHLCSeriesResponse` keys and prints `6` regardless.
-   (b) is mandatory: `timeframe=1y` defaults to `granularity=1d` (ADR-0020), reads
-   `prices_1d`, and passed through the whole 1m/15m hole.
+   Bars are `.data.intervals`, chart points `.data.points` (`.data | length` on
+   `/v1/ohlc` prints `6` regardless). (b) is mandatory: `timeframe=1y` defaults to
+   `granularity=1d` (ADR-0020), reads `prices_1d`, and passes through a 1m/15m hole.
 
-### Repairing a range backfilled after 2026-08-22
+### Repairing a range whose CAGGs were left stale
 
-A binary older than the per-chunk `TradesCAGGs` / `OracleCAGGs` refresh left
-`twap_1h`, `twap_1d`, `dex_volume_by_pair_1d`, `source_volume_1h`,
-`pools_per_source_1h` and every `oracle_prices_*` rung stale. For the `trades`
-rollups: `stellarindex-ops trades-cagg-refresh -config PATH -from <ledger> -to <ledger> -write`
-refreshes all twelve in the safe order. For the oracle rungs run migration 0040's
-`refresh_continuous_aggregate` calls over the range.
+A binary older than the per-chunk refresh left `twap_1h`, `twap_1d`, `dex_volume_by_pair_1d`, `source_volume_1h`, `pools_per_source_1h` and every `oracle_prices_*` rung stale. For the `trades` rollups: `stellarindex-ops trades-cagg-refresh -config PATH -from <ledger> -to <ledger> -write` refreshes all twelve in order; for the oracle rungs run migration 0040's `refresh_continuous_aggregate` calls over the range.
 
-A range backfilled before 2026-09-04 also lacks `prices_1m` / `prices_15m` buckets
-and the `twap_1h` / `twap_1d` bars over them. `trades` rows are intact (migration
-0031 removed their retention), so this is a pure re-derive with no archive read.
-Migration 0147 already re-materialised both minute grains over all history before
-2026-08-22: run `SELECT min(bucket) FROM prices_1m;` first, and skip a range 0147
-already swept.
+An older range may also lack `prices_1m` / `prices_15m` buckets and the `twap` bars over them (`trades` rows are intact, so no archive read). Migration 0147 already re-materialised both grains over older history: run `SELECT min(bucket) FROM prices_1m;` first and skip what it covered.
 
 ```sql
 -- [T_LO, T_HI] = the backfilled range's timestamps. prices_1m FIRST.
@@ -230,59 +198,112 @@ CALL refresh_continuous_aggregate('twap_1h',    '<T_LO>', '<T_HI>');
 CALL refresh_continuous_aggregate('twap_1d',    '<T_LO>', '<T_HI>');
 ```
 
-Walk it in weekly or monthly slices (r1 accrues ~390k `prices_1m` rows/day, so a
-30-day slice is order-of-10M buckets), under a heavy-job scope, off the
-14:00-22:00 UTC peak; abort/monitor steps are in
-[cagg-broad-recompute.md](cagg-broad-recompute.md). `55P03` just means the policy
-job is running: retry.
+Walk it in weekly or monthly slices under a heavy-job scope, off the 14:00-22:00 UTC
+peak; abort/monitor steps are in [cagg-broad-recompute.md](cagg-broad-recompute.md).
+`55P03` just means the policy job is running: retry.
 
 > **Don't run slices while a backfill is running.** Timescale rejects the losing
 > concurrent refresh with `55P03`, and the backfill's retry budget is five attempts
-> over ~3.0 s (`RefreshContinuousAggregate`). A manual month-long `prices_1m` slice
-> outlives it, so the backfill chunk fails without checkpointing and must be
-> re-walked under `-resume`. Finish or stop the backfill first, or avoid its ranges.
+> over ~3.0 s, so its chunk fails without checkpointing and must be re-walked under
+> `-resume`. Finish or stop the backfill first, or avoid its ranges.
 
-Confirm from the served side:
-
-```sh
-curl -s '<host>/v1/ohlc?base=native&quote=fiat:USD&interval=1m&from=<T_LO>&to=<T_HI>&limit=1000' | jq '.data.intervals | length'
-```
+Confirm with the `/v1/ohlc` call from step 6(b).
 
 ### Retiring a shard's cursor row
 
-`ingestion_cursors` keeps one permanent row per `(source, sub_source)`, so
-finished or abandoned one-shot shards pile up (4,703 of 4,815 rows were idle over a
-week in September 2026) and dominate `list-cursors`, `/diagnostics` and
-`/v1/diagnostics/cursors`.
+Finished one-shot shards leave permanent `ingestion_cursors` rows that bury `list-cursors` and `/v1/diagnostics/cursors`.
 
-1. **Confirm the work is over.** One-shot rows older than 7 days publish as
-   `state: abandoned`:
+1. **Confirm the work is over.** One-shot rows older than 7 days publish as `state: abandoned`:
    ```sh
    curl -s 'https://api.stellarindex.io/v1/diagnostics/cursors?status=abandoned' | jq '.data | length'
    stellarindex-ops resume-stalled -config /etc/stellarindex.toml -dry-run
    ```
-   `resume-stalled` prints each cursor's remaining range and skips ranges sibling
-   coverage closed. A shard with real remaining work is resumed, not reaped.
-2. **Reap.** Previews by default:
+   A shard with real remaining work is resumed, not reaped.
+2. **Reap** (previews by default):
    ```sh
    stellarindex-ops reap-cursors -config /etc/stellarindex.toml
    stellarindex-ops reap-cursors -config /etc/stellarindex.toml -write
    ```
-   `-older-than` (default `168h`, floor `24h`) sets the cutoff; `-source` narrows
-   to one job. `ledgerstream` and `projector` are never reaped: an old row there
-   is [cursor-stuck](runbooks/ledger-ingest.md#stellarindex_ingestion_cursor_stuck). Reaping deletes the resume record,
-   never data.
+   `-older-than` (default `168h`, floor `24h`), `-source` narrows. `ledgerstream` and `projector` are never reaped: an old row there is [cursor-stuck](runbooks/ledger-ingest.md#stellarindex_ingestion_cursor_stuck). Reaping deletes the resume record, never data.
 
 ## When NOT to use this
 
-- Live tail: the indexer's job.
-- Re-deriving the prices CAGGs from existing trades: call
-  `refresh_continuous_aggregate(...)` directly; backfill re-decodes XDR and is far
-  heavier.
-- A source with `BackfillSafe=false`: audit first (Soroban contracts upgrade in
-  place; AGENTS.md).
+Live tail (the indexer's job); re-deriving the prices CAGGs from existing trades (call `refresh_continuous_aggregate(...)` directly); a `BackfillSafe=false` source (audit first).
 
-## Cross-references
+## Running alongside live ingest
 
-- [`internal/ops/ingest/reap_cursors.go`](../../internal/ops/ingest/reap_cursors.go): `reap-cursors`.
-- [`migrations/0002_create_price_aggregates.up.sql`](../../migrations/0002_create_price_aggregates.up.sql): CAGG definitions.
+A 12-way parallel `soroban-events` fill walk plus a 12-chunk verify-archive bootstrap exhausted Postgres connections and froze live trade ingest for 7 h: back-pressure blocks the fill producer, and a live indexer sharing that Postgres blocks too. The live indexer must have priority.
+
+### Posture
+
+The live indexer has Postgres to itself; write-heavy walks run in maintenance
+windows where the live cursor may lag.
+
+- **Live indexer** always running at full priority; its cursor advances every ledger.
+- **Fill walks (`stellarindex-ops backfill`)**: `-parallel 4` or lower while live
+  ingest writes. `-parallel 12` only when live ingest is paused or on a fresh box.
+- **verify-archive**: `verify-archive-tier-a.timer` fires daily at 03:23 UTC under
+  `run-heavy-job.sh`. An ad-hoc run should `systemctl stop stellarindex-indexer`
+  first OR use `-workers 4` or lower.
+- **Galexie + ledgerstream-fill** read MinIO, not Postgres; they do not contribute.
+
+### Alerts that page on recurrence
+
+| Signal | Alert | Severity |
+| --- | --- | --- |
+| Live cursor stalls | `stellarindex_ingestion_source_insert_stale` | ticket |
+| Live indexer keeps inserting duplicates only | `stellarindex_ingestion_duplicate_flood` | ticket |
+| Aggregator output stops | `stellarindex_aggregator_silent` | **page** |
+| Per-asset staleness > 120 s | `stellarindex_api_price_stale` | ticket |
+| Postgres connections > 80 % of `max_connections` | `stellarindex_timescale_connections_saturated` | ticket |
+
+`page` → Discord #stellarindex-pages, `ticket` → #stellarindex-alerts; rules in
+`configs/prometheus/rules.r1/`. Duplicate-flood runbook:
+[ingestion-duplicate-flood](runbooks/ingestion-sink.md#stellarindex_ingestion_duplicate_flood).
+If any fires while a fill walk or verify-archive runs, assume back-pressure and
+stop the heavy walker first.
+
+### Operator commands
+
+#### Stop a running fill walk
+
+```sh
+# On r1. The fill is a manual invocation (`stellarindex-ops backfill -source
+# soroban-events`, normally under run-heavy-job.sh), NOT a systemd unit.
+ps -eo pid,args | grep '[s]tellarindex-ops backfill'
+# Graceful: drains in-flight rows then exits. Kill by EXPLICIT PID; a
+# `pkill -f 'backfill'` self-matches your own ssh shell.
+kill -INT <pid>
+```
+
+SIGINT lets the in-flight batch finish, preserving cursor coherence. SIGKILL
+loses that batch's rows; use it only if the process has not exited within 60 s.
+
+#### Stop a running verify-archive
+
+```sh
+systemctl stop verify-archive-tier-a.service
+```
+
+The timer stays armed; the next scheduled fire still happens.
+
+#### Resume the live indexer after a freeze
+
+The symptom is "cursor not advancing", not "process not running":
+
+```sh
+systemctl status stellarindex-indexer
+curl -sS http://localhost:3000/v1/diagnostics/cursors \
+  | jq '.data[] | select(.source=="ledgerstream") | .lag_seconds'   # under 30 s in steady state
+```
+
+If lag stays high after the heavy walker is stopped:
+
+```sh
+systemctl restart stellarindex-indexer
+journalctl -u stellarindex-indexer -f
+```
+
+### Unshipped hardening
+
+The cheapest next step is reserving N Postgres connections for the live indexer via per-binary pool sizes; per-sink prioritisation in AsyncSink and a fill-walk replica are costlier.

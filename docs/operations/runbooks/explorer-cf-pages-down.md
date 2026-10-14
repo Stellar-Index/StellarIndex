@@ -7,169 +7,76 @@ severity: P2
 
 # Runbook — Explorer / Cloudflare Pages outage
 
+No Prometheus rule watches the explorer's edge. Detection: the weekly `site-crawl` workflow (`scripts/ci/site-crawl-check.sh`, Mondays 06:20 UTC, or `gh workflow run site-crawl.yml`) opens a `site-crawl-drift` issue; a Cloudflare dashboard/email alert; a customer report. Impact: `stellarindex.io` / `www.` / `testnet.` / `futurenet.` serve errors or a stale build. `api.stellarindex.io` is a separate surface (`docs/operations/cdn-setup.md`) and is unaffected; see `api.md#stellarindex_api_down` if the API is down.
+
 ## At a glance
 
-| Field | Value |
-| ----- | ----- |
-| Alert | None dedicated — no Prometheus rule watches the explorer's edge. The weekly `site-crawl` workflow opens (or comments on) a GitHub issue labelled `site-crawl-drift` when any crawl check fails, including the stale-deploy check, and closes it once the crawl is clean. |
-| Detected by | The weekly `site-crawl` workflow (`scripts/ci/site-crawl-check.sh`, Mondays 06:20 UTC, or `gh workflow run site-crawl.yml`); a Cloudflare dashboard/email alert on the project; a customer report; or a manual `curl -sI https://stellarindex.io`. |
-| Typical MTTR | 5–20 min (rollback is a dashboard click; a stuck deploy needs a re-publish). |
-| Impact | `stellarindex.io` / `www.` / `testnet.` / `futurenet.` serve errors or a stale build. `api.stellarindex.io` is a **separate** Cloudflare Pages/Caddy surface (`docs/operations/cdn-setup.md`) and is unaffected — this is a presentation-layer outage, not a data outage. See `api.md#stellarindex_api_down` if the API itself is down. |
+P2, no dedicated alert. MTTR 5-20 min (rollback is a dashboard click). Presentation-layer outage, not a data outage.
 
 ## Symptoms
 
-- `stellarindex.io` (or a network-specific host) returns a Cloudflare
-  edge error (522/523/530) or a 5xx instead of the site.
-- The weekly `site-crawl` run (`.github/workflows/site-crawl.yml`)
-  fails — sitemap sample, canonical, or asset-census checks in
-  `scripts/ci/site-crawl-check.sh` start erroring across the board
-  rather than on one page family (a full-site failure points at the
-  edge, not at content).
-- **Edge-function failure** (narrower than a full outage): the root
-  page loads but long-tail entity routes 500 or serve the static
-  shell forever without hydrating. These paths are served by the CF
-  Pages Functions under `web/explorer/functions/*/[[path]].js`
-  (transactions, accounts, contracts, markets, issuers, insights,
-  `og/[[path]].js` for OG images) — see
-  `web/explorer/functions/transactions/[[path]].js` for the shared
-  shape (try the static asset via `env.ASSETS.fetch`, else serve the
-  shell). A Function erroring only breaks the family it owns; static
-  top-level pages keep serving.
-- **Silent stale deploy** (no error at all): the site serves fine but
-  is frozen on an old build. Cloudflare Pages hard-caps a deployment
-  at 20,000 files (`docs/adr/0044-explorer-edge-rendering.md` —
-  this happened for 9 days in production, S-024); `pnpm build`'s
-  `postbuild` chain runs `scripts/ci/explorer-file-budget.sh` to catch
-  this before publish, but a deploy that bypasses that chain (a
-  hand-run `wrangler pages deploy` of a stale `out/`, for instance)
-  will not. Check for it directly: compare the live build identifier
-  against `main`:
+- Cloudflare edge error (522/523/530) or 5xx instead of the site; `site-crawl` failing across the board (a full-site failure points at the edge).
+- Edge-function failure: root loads but entity routes 500 or never hydrate. These are CF Pages Functions under `web/explorer/functions/*/[[path]].js` (transactions, accounts, contracts, markets, issuers, insights, `og/[[path]].js`); a Function only breaks the family it owns.
+- Silent stale deploy: site serves fine on an old build. Pages hard-caps a deployment at 20,000 files (`docs/adr/0044-explorer-edge-rendering.md`); `scripts/ci/explorer-file-budget.sh` (in `pnpm build`'s `postbuild`) guards it, but a hand-run `wrangler pages deploy` of a stale `out/` bypasses it. Compare the live build to `main`:
+
   ```sh
   curl -s https://stellarindex.io | grep -o 'name="re-build-sha" content="[^"]*"'
   git -C <repo> rev-parse HEAD   # on main
   ```
-  (`web/explorer/src/app/layout.tsx` emits `re-build-sha` /
-  `re-build-time` from `NEXT_PUBLIC_BUILD_SHA` /
-  `NEXT_PUBLIC_BUILD_TIME` for exactly this comparison.) A mismatch
-  beyond the last intended deploy window is the stale-deploy
-  incident. The weekly `site-crawl` workflow automates this as check
-  "9. deployed build freshness" in `scripts/ci/site-crawl-check.sh`: it
-  reads the footer's `title="Built <time> from commit <sha>"` badge on
-  `https://stellarindex.io/` and fails when that commit is more than
-  `STALE_COMMIT_BUDGET` (default 200) commits behind `main` per GitHub's
-  compare API, or the build is older than `STALE_HOURS_BUDGET` (default
-  72) hours. A failure lands in the `site-crawl-drift` issue; between
-  weekly runs, run the comparison above by hand.
 
-## Quick diagnosis (≤ 10 min)
+  `site-crawl` check 9 ("deployed build freshness") automates this: it fails when the footer commit is more than `STALE_COMMIT_BUDGET` (200) commits or `STALE_HOURS_BUDGET` (72) hours behind `main`. Between weekly runs, compare by hand.
+
+## Quick diagnosis (<= 10 min)
 
 ```sh
-# 1. Is it the edge, or the whole zone? api.stellarindex.io is a
-#    different CF setup (see cdn-setup.md) — if it's fine, the fault
-#    is scoped to the explorer's Pages project.
+# 1. Edge or whole zone? If api is fine, the fault is scoped to the explorer's Pages project.
 curl -sI https://stellarindex.io/
 curl -sI https://api.stellarindex.io/v1/healthz
 curl -sI https://status.stellarindex.io/   # standalone incident page, same account
 
-# 2. Full outage vs edge-function failure: root is a static asset,
-#    long-tail entity routes go through a Pages Function.
+# 2. Full outage vs edge-function failure.
 curl -sI https://stellarindex.io/transactions/<any-64-char-hash>
 curl -sI https://stellarindex.io/og/<some-asset-slug>
 
-# 3. Deployment state — open the dashboard and check the latest
-#    deployment's status and commit SHA against `main`:
+# 3. Deployment state: latest deployment status and commit SHA against `main`.
 open "https://dash.cloudflare.com/<account-id>/pages/view/stellarindex-explorer"
 ```
 
-Which Pages project depends on the affected network — see the table
-in `docs/operations/cf-pages-setup.md` (`stellarindex-explorer` /
-`-testnet` / `-futurenet`). Publishing happens either via Cloudflare's
-dashboard git integration or via `workflow_dispatch` direct-upload
-(`.github/workflows/explorer-deploy.yml`) depending on how the target
-project is currently wired — check the project's **Settings → Builds
-& deployments** tab in the dashboard rather than assuming; both
-`docs/operations/explorer-deployment.md` and
-`docs/operations/cf-pages-setup.md` describe one or the other and have
-drifted against each other on which is current.
+Project per network (`stellarindex-explorer` / `-testnet` / `-futurenet`): `docs/operations/explorer-deployment.md`. Publishing is either dashboard git integration or `workflow_dispatch` direct-upload (`.github/workflows/explorer-deploy.yml`); check the project's Settings, Builds & deployments tab rather than assuming (the two docs disagree).
 
 ## Fix
 
-### Full outage or bad deploy — roll back
+### Full outage or bad deploy: roll back
 
-Cloudflare Pages keeps deployment history independent of how a
-deployment was published. Dashboard → project → **Deployments** →
-find the last deployment that was good → **Rollback to this
-deployment**. This is the fastest recovery path and does not require
-a rebuild.
-
-If the dashboard rollback is unavailable, re-publish the last known
-good commit directly:
+Dashboard, project, **Deployments**, last good deployment, **Rollback to this deployment** (no rebuild). If unavailable, re-publish the last good commit (needs the production deploy-approval gate satisfied by a reviewer):
 
 ```sh
 gh workflow run explorer-deploy.yml --ref <last-good-sha> \
   -f network=mainnet -f environment=production
 ```
 
-This requires the production deploy-approval gate
-(`explorer-deploy.yml`'s `Assert the production approval gate is
-configured` step) to be satisfied by a reviewer.
-
 ### Edge-function failure (one route family down)
 
-Check the Function's own logs in the dashboard (**project →
-Functions → Real-time Logs**) for the affected route
-(`web/explorer/functions/<family>/[[path]].js`). These handlers defer
-to the static asset first and only run their own logic on a 404 from
-`env.ASSETS.fetch` — an error here is almost always in the shell
-fallback or (for `og/[[path]].js`) the `satori`/`resvg-wasm` render
-path, not in the static export. A full redeploy (above) also
-redeploys the Functions, so if the cause isn't obvious, roll back
-first and diagnose the Function offline.
+Read the Function logs (project, Functions, Real-time Logs) for `web/explorer/functions/<family>/[[path]].js`. Handlers try `env.ASSETS.fetch` first, so errors are in the shell fallback or, for `og/[[path]].js`, the `satori`/`resvg-wasm` render path. A full redeploy also redeploys Functions; if the cause is not obvious, roll back first and diagnose offline.
 
-**`og/[[path]].js` returning 503 for every request**: before treating
-this as a Function outage, check the `OG_DISABLED` CF Pages
-environment variable on the project (dashboard → **Settings →
-Environment variables**). It is a dashboard-only kill-switch (no
-redeploy needed either direction) for taking OG image generation
-offline under abusive load; `OG_DISABLED=1` makes every request short
--circuit to a 503 with the body `OG image generation is temporarily
-disabled.` before any upstream fetch or render runs. If it's set and
-the incident that required it has passed, unset it (or set it to
-anything other than `1`) to restore image generation — no deploy
-required.
+- `og/[[path]].js` 503 on every request: check the dashboard-only `OG_DISABLED` environment variable (Settings, Environment variables). `OG_DISABLED=1` short-circuits to 503 `OG image generation is temporarily disabled.`; unset it (or set anything but `1`) once the incident has passed. No deploy needed.
+- `og/[[path]].js` 302 to `/og.png`: per-entity render failed and the static card was served (`no-store`). The log line `og render failed` names the cause, usually the font fetch from `fonts.googleapis.com` exceeding its 3 s bound, else a satori/resvg error.
 
-**`og/[[path]].js` returning `302` to `/og.png`**: the per-entity card
-failed to render and the Function fell back to the static site card
-(`cache-control: no-store`, so it clears as soon as rendering works
-again). The Function logs `og render failed` with the cause — most often
-the card font fetch from `fonts.googleapis.com` failing or exceeding its
-3 s bound, otherwise a satori/resvg error.
+### Silent stale deploy
 
-### Silent stale deploy (file-ceiling or a bypassed publish)
+1. Confirm with the `re-build-sha` comparison.
+2. If the last deployment failed or was never attempted (paused git integration), publish fresh; the file-budget guard fails loudly instead of shipping a partial build:
 
-1. Confirm with the `re-build-sha` comparison under Symptoms.
-2. If the dashboard shows the last deployment failed or was never
-   attempted (e.g. a paused git integration), trigger a fresh publish
-   — `gh workflow run explorer-deploy.yml --ref main -f network=mainnet
-   -f environment=production` — which runs the file-budget guard
-   (`scripts/ci/explorer-file-budget.sh`) as part of `pnpm build`'s
-   `postbuild` chain and will fail loudly instead of shipping a
-   partial build.
-3. If the guard itself fails (export exceeds 20,000 files), that is a
-   capacity regression, not an outage to work around — see
-   `docs/adr/0044-explorer-edge-rendering.md` for the long-term fix
-   (edge SSR) and prune before forcing a publish.
+   ```sh
+   gh workflow run explorer-deploy.yml --ref main -f network=mainnet -f environment=production
+   ```
+3. If the guard fails (export over 20,000 files), that is a capacity regression: see `docs/adr/0044-explorer-edge-rendering.md` and prune before forcing a publish.
 
 ## Post-incident
 
-If this met the customer-visible threshold in
-[`sev-playbook.md`](../sev-playbook.md), post a status-page update per
-[`sev-status-page-update.md`](sev-status-page-update.md).
+If customer-visible per [`sev-playbook.md`](../sev-playbook.md), post a status-page update per [`sev-status-page-update.md`](sev-status-page-update.md).
 
 ## Related
 
-- [`docs/operations/cf-pages-setup.md`](../cf-pages-setup.md) — project/domain layout, publish paths
-- [`docs/operations/explorer-deployment.md`](../explorer-deployment.md) — build + local-preview steps
-- [`docs/adr/0044-explorer-edge-rendering.md`](../../adr/0044-explorer-edge-rendering.md) — the 20k-file ceiling, bake-time poisoning, staleness drivers
-- [`scripts/ci/site-crawl-check.sh`](../../../scripts/ci/site-crawl-check.sh) / `.github/workflows/site-crawl.yml` — weekly detection
-- `scripts/ci/site-crawl-check.sh` check 9 (fixtures in `scripts/ci/site-crawl-check-test.sh`) — the automated deployed-build-vs-`main` staleness check; budgets `STALE_COMMIT_BUDGET` (200 commits) and `STALE_HOURS_BUDGET` (72 h), reported through the `site-crawl-drift` issue
+- [`docs/operations/explorer-deployment.md`](../explorer-deployment.md), [`docs/adr/0044-explorer-edge-rendering.md`](../../adr/0044-explorer-edge-rendering.md)
+- [`scripts/ci/site-crawl-check.sh`](../../../scripts/ci/site-crawl-check.sh) / `.github/workflows/site-crawl.yml`: weekly detection

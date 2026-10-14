@@ -8,6 +8,13 @@ vi.mock('@/api/client', async () => {
   return { ...actual, apiGet: vi.fn(() => new Promise(() => {})) };
 });
 
+// HomeFinder routes with the app router, which jsdom does not mount.
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), prefetch: vi.fn() }),
+  usePathname: () => '/',
+  useSearchParams: () => new URLSearchParams(),
+}));
+
 import HomePage from './page';
 
 // The landing page's API pitch sold two things the deployment
