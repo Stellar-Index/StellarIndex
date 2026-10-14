@@ -1,8 +1,7 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
 import { Suspense } from 'react';
 
-import { Container, PageHeader, Skeleton } from '@/components/ui';
+import { ButtonLink, Container, PageHeader, Skeleton } from '@/components/ui';
 import { AssetsTable } from '../../assets/AssetsTable';
 
 export const metadata: Metadata = {
@@ -32,15 +31,13 @@ export default function ExternalAssetsPage() {
           { label: 'External' },
         ]}
         title="External assets"
+        meta="Fiat currencies and reference coins priced off-chain, used for cross-checks and local-currency quotes."
+        actions={
+          <ButtonLink href="/assets" variant="secondary">
+            Stellar assets
+          </ButtonLink>
+        }
       />
-      <p className="text-ink-muted text-sm">
-        <Link
-          href="/assets"
-          className="text-brand-600 hover:text-brand-700 font-medium"
-        >
-          ← Stellar assets
-        </Link>
-      </p>
       <Suspense fallback={<Skeleton className="h-96 w-full" />}>
         <AssetsTable
           endpoint="/v1/external/assets"

@@ -1,3 +1,5 @@
+import { TriangleAlert } from 'lucide-react';
+
 import { Badge } from '@/components/ui';
 import { scamFlagTags } from '@/lib/directory-tags';
 
@@ -24,7 +26,8 @@ export function ScamBadge({
         ', ',
       )} (third-party attribution — display-only, not a StellarIndex verification signal)`}
     >
-      ⚠ Flagged
+      <TriangleAlert className="h-3 w-3" aria-hidden="true" />
+      Flagged
     </Badge>
   );
 }

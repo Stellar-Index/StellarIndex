@@ -73,7 +73,7 @@ describe('home /v1/assets panels and directory-flagged issuers', () => {
     await waitFor(() => {
       expect(screen.getAllByText('GOOD').length).toBeGreaterThan(0);
     });
-    const badges = screen.getAllByText('⚠ Flagged');
+    const badges = screen.getAllByText(/Flagged/);
     expect(badges).toHaveLength(1);
     expect(badges[0].closest('tr')?.textContent).toContain('SCAM');
   });
@@ -109,7 +109,7 @@ describe('home /v1/assets panels and directory-flagged issuers', () => {
       expect(gainerCodes().length).toBe(4);
     });
     expect(gainerCodes()).toEqual(['A', 'B', 'C', 'SCAM']);
-    expect(screen.getAllByText('⚠ Flagged')).toHaveLength(1);
+    expect(screen.getAllByText(/Flagged/)).toHaveLength(1);
   });
 
   it('HomeTopMovers drops a flagged gainer from a full top five', async () => {

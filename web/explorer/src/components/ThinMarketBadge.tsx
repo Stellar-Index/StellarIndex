@@ -1,3 +1,5 @@
+import { TriangleAlert } from 'lucide-react';
+
 import type { components } from '@/api/types';
 import { Badge } from '@/components/ui';
 import { formatCompactUnits } from '@/lib/format';
@@ -34,8 +36,14 @@ export function ThinMarketBadge({
 }) {
   const note = thinMarketNote(substance);
   return (
-    <Badge tone="warn" className={className} title={note} aria-label={note}>
-      ⚠
+    <Badge
+      tone="warn"
+      role="img"
+      className={className}
+      title={note}
+      aria-label={note}
+    >
+      <TriangleAlert className="h-3 w-3" aria-hidden="true" />
     </Badge>
   );
 }

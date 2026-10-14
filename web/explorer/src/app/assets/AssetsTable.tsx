@@ -3,7 +3,9 @@
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
+import { BadgeCheck, ChevronLeft, ChevronRight, Search } from 'lucide-react';
+
+import { asExample } from '@/api/client';
 
 import {
   useAssets,
@@ -21,6 +23,7 @@ import {
 } from '@/lib/format';
 import { demoteFlaggedLast } from '@/lib/directory-tags';
 import { FreshnessMarker } from '@/components/primitives';
+import { RequestReveal } from '@/components/reveal/RequestReveal';
 import { ScamBadge } from '@/components/ScamBadge';
 import { ThinMarketBadge } from '@/components/ThinMarketBadge';
 import {
@@ -28,8 +31,11 @@ import {
   Button,
   Callout,
   EmptyState,
+  Input,
   Mono,
   Segmented,
+  Select,
+  Skeleton,
   TBody,
   TR,
   Table,
@@ -39,6 +45,7 @@ import {
   THead,
 } from '@/components/ui';
 import { useDebouncedValue } from '@/lib/useDebouncedValue';
+import { cn } from '@/lib/cn';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
 /**
@@ -165,6 +172,14 @@ export function AssetsTable({
   // rows (fiat + reference coins) are outside its scope, so the footer names
   // it only where it is the cause.
   const stellarListing = endpoint === '/v1/assets';
+  const example = asExample(endpoint, {
+    asset_class: assetClass,
+    limit,
+    cursor: cursor || undefined,
+    q: queryParam || undefined,
+    include: pricing ? 'sparkline7d' : undefined,
+    include_thin: pricing && stellarListing ? 'true' : undefined,
+  });
   const { data, isLoading, isError, error } = useAssets(
     assetClass,
     limit,
@@ -278,9 +293,9 @@ export function AssetsTable({
             cursor: '',
           })
         }
+        freshness={<FreshnessMarker flags={data?.flags} />}
+        reveal={<RequestReveal example={example} position="inline" />}
       />
-
-      <FreshnessMarker flags={data?.flags} className="block" />
       {data?.flags?.filters_ignored?.length ? (
         <Callout tone="warn" title="Some filters were not applied">
           This listing serves its whole class and ignored{' '}
@@ -293,13 +308,27 @@ export function AssetsTable({
           icon={<Search className="h-5 w-5" />}
           title="No assets match this filter"
           description="Try a different asset code, slug, issuer, or class."
+          action={
+            queryParam || assetClass !== 'all' ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setQ('');
+                  setQuery({ q: '', asset_class: '', cursor: '' });
+                }}
+              >
+                Clear filters
+              </Button>
+            ) : undefined
+          }
         />
       ) : (
         <TableWrap>
           <Table>
             <THead>
               <tr>
-                <Th>#</Th>
+                <Th className={cn('w-10', COL.sm)}>#</Th>
                 <SortableTh
                   label="Asset"
                   sortKey="asset"
@@ -313,6 +342,7 @@ export function AssetsTable({
                   sort={sort}
                   onSort={toggle}
                   ariaSort={ariaSort}
+                  className={COL.md}
                 />
                 {pricing && (
                   <>
@@ -321,7 +351,7 @@ export function AssetsTable({
                         <span
                           title={`Verified catalogue rows first, then long-tail rows by 24h volume. ${
                             stellarListing
-                              ? 'Rows with no price we can stand behind (no market deep enough to clear the substance floor) rank below priced ones. A thin market’s price is still shown, marked ⚠ low confidence.'
+                              ? 'Rows with no price we can stand behind (no market deep enough to clear the substance floor) rank below priced ones. A thin market’s price is still shown, marked low confidence.'
                               : 'Rows the API served no price for rank below priced ones.'
                           }`}
                         >
@@ -341,6 +371,7 @@ export function AssetsTable({
                       onSort={toggle}
                       ariaSort={ariaSort}
                       align="right"
+                      className={COL.md}
                     />
                     <SortableTh
                       label="24h %"
@@ -349,6 +380,7 @@ export function AssetsTable({
                       onSort={toggle}
                       ariaSort={ariaSort}
                       align="right"
+                      className={COL.sm}
                     />
                     <SortableTh
                       label="7d %"
@@ -357,6 +389,7 @@ export function AssetsTable({
                       onSort={toggle}
                       ariaSort={ariaSort}
                       align="right"
+                      className={COL.md}
                     />
                     <SortableTh
                       label="Market cap"
@@ -365,6 +398,7 @@ export function AssetsTable({
                       onSort={toggle}
                       ariaSort={ariaSort}
                       align="right"
+                      className={COL.md}
                     />
                     <SortableTh
                       label="Volume 24h"
@@ -373,6 +407,7 @@ export function AssetsTable({
                       onSort={toggle}
                       ariaSort={ariaSort}
                       align="right"
+                      className={COL.sm}
                     />
                   </>
                 )}
@@ -383,21 +418,20 @@ export function AssetsTable({
                   onSort={toggle}
                   ariaSort={ariaSort}
                   align="right"
+                  className={COL.md}
                 />
-                {pricing && <Th align="right">7d chart</Th>}
+                {pricing && (
+                  <Th align="right" className={COL.xl2}>
+                    7d chart
+                  </Th>
+                )}
               </tr>
             </THead>
-            <TBody>
-              {isLoading && (
-                <tr>
-                  <td
-                    colSpan={pricing ? 11 : 4}
-                    className="text-ink-muted py-12 text-center text-sm"
-                  >
-                    Loading…
-                  </td>
-                </tr>
-              )}
+            <TBody aria-busy={isLoading || undefined}>
+              {isLoading &&
+                Array.from({ length: 12 }, (_, i) => (
+                  <SkeletonRow key={i} pricing={pricing} />
+                ))}
               {!isLoading &&
                 rankedAssets.map((coin, idx) => (
                   <AssetRow
@@ -442,17 +476,20 @@ export function AssetsTable({
         </TableWrap>
       )}
 
-      <Pagination
-        cursor={cursor}
-        nextCursor={data?.next_cursor ?? ''}
-        // history.back() walks off-site when a cursor URL is
-        // opened directly; keyset cursors can't step backwards, so
-        // "previous" honestly means "back to the top".
-        onPrev={() => setQuery({ cursor: '' })}
-        onNext={() =>
-          data?.next_cursor && setQuery({ cursor: data.next_cursor })
-        }
-      />
+      {(isLoading || assets.length > 0 || cursor) && (
+        <Pagination
+          count={isLoading ? null : rankedAssets.length}
+          cursor={cursor}
+          nextCursor={data?.next_cursor ?? ''}
+          // history.back() walks off-site when a cursor URL is
+          // opened directly; keyset cursors can't step backwards, so
+          // "previous" honestly means "back to the top".
+          onPrev={() => setQuery({ cursor: '' })}
+          onNext={() =>
+            data?.next_cursor && setQuery({ cursor: data.next_cursor })
+          }
+        />
+      )}
     </div>
   );
 }
@@ -465,6 +502,8 @@ function FilterBar({
   assetClass,
   classOptions,
   onAssetClassChange,
+  freshness,
+  reveal,
 }: {
   q: string;
   onQChange: (v: string) => void;
@@ -473,12 +512,27 @@ function FilterBar({
   assetClass: AssetClassFilter;
   classOptions?: { value: AssetClassFilter; label: string }[];
   onAssetClassChange: (v: AssetClassFilter) => void;
+  freshness?: React.ReactNode;
+  reveal?: React.ReactNode;
 }) {
   return (
-    <div className="space-y-3">
-      {classOptions && (
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <span className="text-ink-muted">Asset type:</span>
+    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative w-full sm:w-80">
+          <Search
+            aria-hidden="true"
+            className="text-ink-faint pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2"
+          />
+          <Input
+            type="search"
+            aria-label="Search assets by code, slug, or name"
+            value={q}
+            onChange={(e) => onQChange(e.target.value)}
+            placeholder="Search by code, slug, or name…"
+            className="pl-9"
+          />
+        </div>
+        {classOptions && (
           <Segmented
             ariaLabel="Asset type"
             options={classOptions.map((opt) => ({
@@ -488,36 +542,67 @@ function FilterBar({
             value={assetClass}
             onChange={(v) => onAssetClassChange(v as AssetClassFilter)}
           />
-        </div>
-      )}
-
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="relative">
-          <Search className="text-ink-faint absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2" />
-          <input
-            type="search"
-            aria-label="Search assets by code, slug, or name"
-            value={q}
-            onChange={(e) => onQChange(e.target.value)}
-            placeholder="Search by code, slug, or name…"
-            className="border-line bg-surface placeholder:text-ink-faint focus:border-brand-500 focus:ring-brand-500 w-72 rounded-md border py-1.5 pr-3 pl-8 text-sm focus:ring-1 focus:outline-hidden"
-          />
-        </div>
+        )}
+      </div>
+      <div className="flex flex-wrap items-center gap-3">
+        {freshness}
         <label className="text-ink-muted flex items-center gap-2 text-xs">
           <span>Per page</span>
-          <select
-            value={limit}
-            onChange={(e) => onLimitChange(parseInt(e.target.value, 10))}
-            className="border-line bg-surface focus:border-brand-500 focus:ring-brand-500 rounded-md border px-2 py-1 text-xs focus:ring-1 focus:outline-hidden"
-          >
-            <option value={50}>50</option>
-            <option value={100}>100</option>
-            <option value={200}>200</option>
-            <option value={500}>500</option>
-          </select>
+          <span className="w-24 shrink-0">
+            <Select
+              value={limit}
+              onChange={(e) => onLimitChange(parseInt(e.target.value, 10))}
+              className="text-xs"
+            >
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+              <option value={200}>200</option>
+              <option value={500}>500</option>
+            </Select>
+          </span>
         </label>
+        {reveal}
       </div>
     </div>
+  );
+}
+
+// Column priority: the identity, price and 24h move always show; the rest
+// return at md, and the 7d chart only where eleven columns fit (2xl).
+const COL = {
+  sm: 'hidden sm:table-cell',
+  md: 'hidden md:table-cell',
+  lg: 'hidden lg:table-cell',
+  xl2: 'hidden 2xl:table-cell',
+};
+
+function SkeletonRow({ pricing }: { pricing: boolean }) {
+  const num = <Skeleton className="ml-auto h-3 w-16" />;
+  return (
+    <TR aria-hidden="true">
+      <Td className={COL.sm}>
+        <Skeleton className="h-3 w-4" />
+      </Td>
+      <Td>
+        <Skeleton className="h-3 w-28" />
+        <Skeleton className="mt-1.5 h-3 w-16" />
+      </Td>
+      <Td className={COL.md}>
+        <Skeleton className="h-5 w-16 rounded-full" />
+      </Td>
+      {pricing && <Td align="right">{num}</Td>}
+      {pricing && <Td className={COL.md}>{num}</Td>}
+      {pricing && <Td className={COL.sm}>{num}</Td>}
+      {pricing && <Td className={COL.md}>{num}</Td>}
+      {pricing && <Td className={COL.md}>{num}</Td>}
+      {pricing && <Td className={COL.sm}>{num}</Td>}
+      <Td className={COL.md}>{num}</Td>
+      {pricing && (
+        <Td className={COL.xl2}>
+          <Skeleton className="ml-auto h-3 w-20" />
+        </Td>
+      )}
+    </TR>
   );
 }
 
@@ -559,15 +644,15 @@ function AssetRow({
     coin.code && slug.toLowerCase() !== coin.code.toLowerCase() ? slug : null;
   return (
     <TR>
-      <Td>
+      <Td className={COL.sm}>
         <span className="text-ink-faint tnum">{rank ?? ''}</span>
       </Td>
       <Td>
         <Link
           href={`${basePath}/${slug}`}
-          className="group flex items-baseline gap-2"
+          className="group flex min-w-0 items-baseline gap-2"
         >
-          <span className="text-ink group-hover:text-brand-600 font-medium">
+          <span className="text-ink group-hover:text-brand-600 shrink-0 font-medium">
             {/* An uncatalogued Soroban asset has NO code at all — the
                 listing serves code=NULL and slug=<contract id>. Label the
                 row with the middle-truncated contract id rather than an
@@ -585,23 +670,16 @@ function AssetRow({
               className="inline-flex items-center"
               aria-label="Verified currency"
             >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 20 20"
-                fill="currentColor"
-                className="text-up h-3.5 w-3.5"
-                aria-hidden="true"
-              >
-                <path
-                  fillRule="evenodd"
-                  d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-                  clipRule="evenodd"
-                />
-              </svg>
+              <BadgeCheck className="text-up h-3.5 w-3.5" aria-hidden="true" />
             </span>
           )}
           {coin.name && (
-            <span className="text-ink-muted text-[11px]">{coin.name}</span>
+            <span
+              className="text-ink-muted max-w-[16ch] truncate text-xs"
+              title={coin.name}
+            >
+              {coin.name}
+            </span>
           )}
         </Link>
         {/* The raw identifier, middle-truncated. Classic ids are
@@ -615,20 +693,19 @@ function AssetRow({
           <Mono
             value={rawAssetId}
             truncate={{ head: 8, tail: 6 }}
-            className="text-ink-muted text-[11px]"
+            className="text-ink-muted text-xs"
           />
         )}
         <ScamBadge tags={coin.issuer_directory_tags} className="mt-1" />
       </Td>
-      <Td>
+      <Td className={COL.md}>
         <ClassBadge cls={coin.class} />
       </Td>
       {pricing && (
         <Td align="right">
           {price != null ? (
-            <span className="text-ink font-mono tabular-nums">
-              ${formatPriceSmall(price)}
-              {coin.thin_market && <ThinMarketBadge className="ml-1" />}
+            <span className="flex flex-wrap items-center justify-end gap-x-1.5">
+              {coin.thin_market && <ThinMarketBadge />}
               {/* Declared-peg provenance (price_basis=declared_peg): the
                 server filled this price from an operator-declared 1:1
                 fiat peg × the current FX rate because no market price
@@ -636,7 +713,7 @@ function AssetRow({
                 figure is never presented as a market observation. */}
               {coin.price_basis === 'declared_peg' && (
                 <span
-                  className="text-ink-muted ml-1 font-sans text-[10px] tracking-wider uppercase"
+                  className="text-ink-muted text-[11px]"
                   title="Declared 1:1 fiat peg × current FX rate — not a market-observed price"
                 >
                   pegged
@@ -644,35 +721,41 @@ function AssetRow({
               )}
               {coin.price_basis === 'global_market' && (
                 <span
-                  className="text-ink-muted ml-1 font-sans text-[10px] tracking-wider uppercase"
+                  className="text-ink-muted text-[11px]"
                   title="Global cross-venue price of this vetted token — not a Stellar market price"
                 >
                   global
                 </span>
               )}
+              <span className="text-ink font-mono tabular-nums">
+                ${formatPriceSmall(price)}
+              </span>
             </span>
           ) : (
             <Dash />
           )}
+          <span className="mt-0.5 block text-xs sm:hidden">
+            <ChangePct raw={coin.change_24h_pct} />
+          </span>
         </Td>
       )}
       {pricing && (
-        <Td align="right">
+        <Td align="right" className={COL.md}>
           <ChangePct raw={coin.change_1h_pct} />
         </Td>
       )}
       {pricing && (
-        <Td align="right">
+        <Td align="right" className={COL.sm}>
           <ChangePct raw={coin.change_24h_pct} />
         </Td>
       )}
       {pricing && (
-        <Td align="right">
+        <Td align="right" className={COL.md}>
           <ChangePct raw={coin.change_7d_pct} />
         </Td>
       )}
       {pricing && (
-        <Td align="right">
+        <Td align="right" className={COL.md}>
           {marketCap != null ? (
             <span className="text-ink-body font-mono tabular-nums">
               ${formatCompactUnits(coin.market_cap_usd)}
@@ -687,7 +770,7 @@ function AssetRow({
         </Td>
       )}
       {pricing && (
-        <Td align="right">
+        <Td align="right" className={COL.sm}>
           {volume != null && parseDec(volume) != null ? (
             <span className="text-ink-body font-mono tabular-nums">
               ${formatCompactUnits(volume)}
@@ -697,7 +780,7 @@ function AssetRow({
           )}
         </Td>
       )}
-      <Td align="right">
+      <Td align="right" className={COL.md}>
         {supply !== '—' ? (
           <span className="text-ink-body font-mono tabular-nums">{supply}</span>
         ) : (
@@ -705,7 +788,7 @@ function AssetRow({
         )}
       </Td>
       {pricing && (
-        <Td align="right">
+        <Td align="right" className={COL.xl2}>
           <RowSparkline points={coin.price_history_7d} />
         </Td>
       )}
@@ -717,11 +800,9 @@ function ClassBadge({ cls }: { cls?: string }) {
   if (!cls) {
     return <span className="text-ink-faint text-xs">—</span>;
   }
-  const tone: 'warn' | 'ok' | 'brand' =
-    cls === 'fiat' ? 'warn' : cls === 'stablecoin' ? 'ok' : 'brand';
   const label =
     cls === 'fiat' ? 'Fiat' : cls === 'stablecoin' ? 'Stablecoin' : 'Crypto';
-  return <Badge tone={tone}>{label}</Badge>;
+  return <Badge tone="neutral">{label}</Badge>;
 }
 
 function RowSparkline({
@@ -756,6 +837,7 @@ function RowSparkline({
       width={W}
       height={H}
       viewBox={`0 0 ${W} ${H}`}
+      aria-hidden="true"
       className={`inline-block ${positive ? 'text-up' : 'text-down'}`}
     >
       <path
@@ -771,11 +853,13 @@ function RowSparkline({
 }
 
 function Pagination({
+  count,
   cursor,
   nextCursor,
   onPrev,
   onNext,
 }: {
+  count: number | null;
   cursor: string;
   nextCursor: string;
   onPrev: () => void;
@@ -784,18 +868,20 @@ function Pagination({
   const hasPrev = cursor !== '';
   const hasNext = nextCursor !== '';
   return (
-    <div className="flex items-center justify-between gap-2 px-1">
+    <div className="flex items-center justify-between gap-2">
       <Button
         variant="secondary"
         size="sm"
         disabled={!hasPrev}
         onClick={onPrev}
       >
-        <ChevronLeft className="h-3.5 w-3.5" />
-        Back to top
+        <ChevronLeft className="h-3.5 w-3.5" aria-hidden="true" />
+        First page
       </Button>
-      <span className="text-ink-faint text-xs">
-        {hasPrev || hasNext ? 'Cursor-paginated' : ' '}
+      <span className="text-ink-faint tnum text-xs">
+        {count != null && count > 0
+          ? `${count} ${count === 1 ? 'asset' : 'assets'} on this page`
+          : ''}
       </span>
       <Button
         variant="secondary"
@@ -804,7 +890,7 @@ function Pagination({
         onClick={onNext}
       >
         Next
-        <ChevronRight className="h-3.5 w-3.5" />
+        <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
       </Button>
     </div>
   );
