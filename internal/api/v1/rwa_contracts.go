@@ -311,7 +311,7 @@ func (s *Server) rwaUnreachedEntities(ctx context.Context, tags []string) []rwaU
 
 // rwaContractListingRows reads the admitted contracts through the /v1/assets post-query pipeline, in the listing's order so the surface
 // cannot drift from /v1/assets
-// (TestRWAContractPipelineMatchesTheAssetsListing); the substance gate covers canonical.AssetSoroban, so a thin-market price is withheld
+// (TestSourceShapeRules/rwa_contract_pipeline_matches_assets_listing); the substance gate covers canonical.AssetSoroban, so a thin-market price is withheld
 // here. It then fills what the pipeline cannot:
 // 1. supply and market cap: only the precise supply map reaches a contract row; fillContractMarketCaps has the last word (drops the
 // generic cap, and every cap on a row whose scale was not read).

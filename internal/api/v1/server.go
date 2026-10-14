@@ -352,7 +352,7 @@ const defaultRequestTimeout = 15 * time.Second
 
 // maxHandlerBudget caps a per-handler context.WithTimeout: at or above the global deadline it never fires, making the handler's 503
 // branch unreachable.
-// Pinned by TestHandlerBudgets_StayInsideTheRequestTimeout and TestMaxHandlerBudgetMatchesConfigBound.
+// Pinned by TestSourceShapeRules/handler_budgets_stay_inside_request_timeout and TestMaxHandlerBudgetMatchesConfigBound.
 const maxHandlerBudget = defaultRequestTimeout - 3*time.Second
 
 // DashboardAuthMounter is satisfied by main.go's dashboardauth.Handlers, defined here so this package does not import dashboardauth.

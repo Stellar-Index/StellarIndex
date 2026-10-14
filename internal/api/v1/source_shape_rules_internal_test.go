@@ -30,6 +30,19 @@ func TestSourceShapeRules(t *testing.T) {
 		{"scam_verdict_written_with_scam_reason", checkScamVerdictIsWrittenWithTheScamReason},
 		{"stream_call_sites_pass_server_drain", checkEveryStreamCallSitePassesTheServerDrain},
 		{"sse_producer_goroutines_recover", checkSSEProducerGoroutinesRecover},
+		{"catalogue_prices_paid_before_twin_merge", checkCataloguePricesArePaidBeforeTheTwinMerge},
+		{"catalogue_price_fill_order_counts_calls_only", checkCataloguePriceFillOrderCountsCallsOnly},
+		{"catalogue_rank_follows_the_fill", checkCatalogueRankFollowsTheFill},
+		{"rwa_listing_pipeline_matches_assets_listing", checkRWAListingPipelineMatchesTheAssetsListing},
+		{"rwa_contract_pipeline_matches_assets_listing", checkRWAContractPipelineMatchesTheAssetsListing},
+		{"directory_tags_precede_listing_valuation_arm", checkDirectoryTagsPrecedeTheListingValuationArm},
+		{"server_step_scan_catches_method_values", checkServerStepScanCatchesMethodValues},
+		{"lake_field_reads_catch_options_form", checkLakeFieldReadsCatchesOptionsForm},
+		{"slo_lake_fields_cover_lake_wiring", checkSLOLakeFieldsCoverLakeWiring},
+		{"handler_budgets_stay_inside_request_timeout", checkHandlerBudgetsStayInsideTheRequestTimeout},
+		{"price_at_and_price_changes_have_request_budgets", checkPriceAtAndPriceChangesHaveRequestBudgets},
+		{"detached_contexts_leave_request_goroutine", checkDetachedContextsLeaveTheRequestGoroutine},
+		{"long_budgets_are_detached", checkLongBudgetsAreDetached},
 	}
 	for _, r := range rules {
 		t.Run(r.name, r.check)

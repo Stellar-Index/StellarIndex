@@ -12,10 +12,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/astguard"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
-// TestHandlerBudgets_StayInsideTheRequestTimeout is the structural guard
+// checkHandlerBudgetsStayInsideTheRequestTimeout is the structural guard
 // behind the bodyless-200 class.
 //
 // A per-handler context.WithTimeout(r.Context(), d) earns its keep by surfacing a SPECIFIC 503
@@ -34,7 +35,7 @@ import (
 //
 // A budget the walker cannot EVALUATE fails too, naming the site: a silent skip is
 // indistinguishable from a pass.
-func TestHandlerBudgets_StayInsideTheRequestTimeout(t *testing.T) {
+func checkHandlerBudgetsStayInsideTheRequestTimeout(t *testing.T) {
 	dirs := map[string][]string{}
 	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -105,15 +106,11 @@ func TestHandlerBudgets_StayInsideTheRequestTimeout(t *testing.T) {
 	}
 }
 
-// TestPriceAtAndPriceChangesHaveRequestBudgets pins budgets in price_at.go and price_changes.go directly, since the general
+// checkPriceAtAndPriceChangesHaveRequestBudgets pins budgets in price_at.go and price_changes.go directly, since the general
 // walker only validates budgets that exist; without one a slow run holds its pool connection until the client gives up.
-func TestPriceAtAndPriceChangesHaveRequestBudgets(t *testing.T) {
+func checkPriceAtAndPriceChangesHaveRequestBudgets(t *testing.T) {
 	for _, file := range []string{"price_at.go", "price_changes.go"} {
-		fset := token.NewFileSet()
-		f, err := parser.ParseFile(fset, file, nil, 0)
-		if err != nil {
-			t.Fatalf("parse %s: %v", file, err)
-		}
+		_, f := astguard.ParseFile(t, file)
 		found := false
 		ast.Inspect(f, func(n ast.Node) bool {
 			if call, ok := n.(*ast.CallExpr); ok && isRequestWithTimeout(call) {
@@ -423,9 +420,9 @@ var inlineDetachments = map[string]string{
 		"ctx via the select, and the fill by usdPriceMapFillTimeout (60s)",
 }
 
-// TestDetachedContextsLeaveTheRequestGoroutine: WithTimeout(WithoutCancel(ctx), d) escapes the budget walker, yet on a request
+// checkDetachedContextsLeaveTheRequestGoroutine: WithTimeout(WithoutCancel(ctx), d) escapes the budget walker, yet on a request
 // goroutine d adds to time already spent. Every WithoutCancel must sit inside a `go` statement or be named in inlineDetachments.
-func TestDetachedContextsLeaveTheRequestGoroutine(t *testing.T) {
+func checkDetachedContextsLeaveTheRequestGoroutine(t *testing.T) {
 	fset := token.NewFileSet()
 	seen, used := 0, map[string]bool{}
 	funcDecls(t, fset, func(src apiSource, fd *ast.FuncDecl) {
@@ -484,10 +481,10 @@ var longBudgets = map[string]string{
 	"sdex_orderbook.go#loadWithin": "the order-book load, reached only through MaintainTick",
 }
 
-// TestLongBudgetsAreDetached: the budget walker misses budgets on a ctx parameter fed r.Context(). A budget above
+// checkLongBudgetsAreDetached: the budget walker misses budgets on a ctx parameter fed r.Context(). A budget above
 // maxHandlerBudget must hang off Background/TODO/WithoutCancel, or be named in longBudgets with the reason no request goroutine
 // runs it.
-func TestLongBudgetsAreDetached(t *testing.T) {
+func checkLongBudgetsAreDetached(t *testing.T) {
 	fset := token.NewFileSet()
 	used := map[string]bool{}
 	funcDecls(t, fset, func(src apiSource, fd *ast.FuncDecl) {
