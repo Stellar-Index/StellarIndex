@@ -195,3 +195,19 @@ func TestAssetDetailFromAssetRow_CarriesContractID(t *testing.T) {
 		t.Errorf("unparseable id: contract_id = %s, want none", *got)
 	}
 }
+
+// A listing or /v1/contracts row whose rollup counted unpriced trades must
+// serve its volume as a lower bound; one with none must not.
+func TestAssetDetailFromAssetRow_CarriesVolumeLowerBound(t *testing.T) {
+	t.Parallel()
+	flagged := assetDetailFromAssetRow(timescale.AssetRow{
+		AssetID: "native", Volume24hUSD: strp("100"), VolumeLowerBound: true,
+	})
+	if !flagged.VolumeLowerBound {
+		t.Error("row with unpriced trades: volume_lower_bound = false, want true")
+	}
+	clean := assetDetailFromAssetRow(timescale.AssetRow{AssetID: "native", Volume24hUSD: strp("100")})
+	if clean.VolumeLowerBound {
+		t.Error("fully priced row: volume_lower_bound = true, want false")
+	}
+}

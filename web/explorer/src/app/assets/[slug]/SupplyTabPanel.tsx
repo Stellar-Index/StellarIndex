@@ -4,7 +4,8 @@ import dynamic from 'next/dynamic';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
-import { Badge } from '@/components/ui';
+import { Badge, Callout, Skeleton } from '@/components/ui';
+import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 import { apiGet, asExample } from '@/api/client';
 import { useAsset, useAssetSupply, type AssetSupply } from '@/api/hooks';
 import { FreshnessMarker } from '@/components/primitives';
@@ -44,9 +45,8 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
         headingLevel={2}
         title="Supply"
         source={asExample('/v1/assets/{asset_id}', { asset_id: assetID })}
-        bodyClassName="text-sm text-down-strong"
       >
-        Failed to load supply data.
+        <Callout tone="bad">Failed to load supply data.</Callout>
       </Panel>
     );
   }
@@ -57,9 +57,13 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
         headingLevel={2}
         title="Supply"
         source={asExample('/v1/assets/{asset_id}', { asset_id: assetID })}
-        bodyClassName="text-sm text-ink-muted"
       >
-        Loading…
+        <div className="space-y-3" aria-busy="true">
+          <span className="sr-only">Loading supply</span>
+          <Skeleton className="h-4 w-3/5" aria-hidden />
+          <Skeleton className="h-4 w-full" aria-hidden />
+          <Skeleton className="h-4 w-4/5" aria-hidden />
+        </div>
       </Panel>
     );
   }
@@ -104,7 +108,8 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
         </p>
       ) : (
         <>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <h3 className={`${PANEL_LABEL_CLASS} mb-3`}>Supply snapshot</h3>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <Metric
               label="Circulating"
               value={formatCompactUnits(a.circulating_supply, decimals)}
@@ -169,9 +174,9 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
           )}
 
           {(a.fixed_number || a.max_number || a.is_unlimited != null) && (
-            <div className="border-line bg-surface-muted rounded-lg border p-3 text-xs">
+            <div className="border-line border-t pt-3 text-xs">
               <h3
-                className="text-ink-muted mb-1 font-semibold tracking-wider uppercase"
+                className={PANEL_LABEL_CLASS}
                 title="What the issuer pledged in their stellar.toml, distinct from the live-ledger numbers above."
               >
                 SEP-1 issuance declarations
@@ -222,11 +227,14 @@ function MarketCapChart({ assetID }: { assetID: string }) {
   }));
 
   return (
-    <div className="border-line bg-surface rounded-lg border p-4">
-      <h3 className="text-ink-muted mb-2 text-[11px] font-semibold tracking-wider uppercase">
-        Market-cap timeline
-      </h3>
-      {q.isLoading && <div className="h-[260px]" />}
+    <div className="border-line border-t pt-4">
+      <h3 className={`${PANEL_LABEL_CLASS} mb-2`}>Market-cap timeline</h3>
+      {q.isLoading && (
+        <div className="h-[260px]" aria-busy="true">
+          <span className="sr-only">Loading market-cap timeline</span>
+          <Skeleton className="h-full w-full" aria-hidden />
+        </div>
+      )}
       {/* A failed /v1/chart must not fall into the empty state
           and assert "no market-cap history for this asset". Absent is
           not empty. */}
@@ -296,12 +304,14 @@ function OnChainSupply({
   const floor = data.circulating_supply_lower_bound === true;
   const total = formatSupply(data.total_supply, decimals);
   return (
-    <div className="border-up/30 bg-up-subtle/50 rounded-lg border p-3">
-      <h3 className="text-up mb-2 flex flex-wrap items-center gap-2 text-[11px] font-semibold tracking-wider uppercase">
+    <div className="border-line border-b pb-4">
+      <h3
+        className={`${PANEL_LABEL_CLASS} mb-3 flex flex-wrap items-center gap-2`}
+      >
         On-chain supply (live)
         <FreshnessMarker flags={env.flags} />
       </h3>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3">
         <Metric
           label={
             native ? 'Ledger total_coins' : floor ? 'Total (at least)' : 'Total'
@@ -309,22 +319,6 @@ function OnChainSupply({
           value={total !== '—' && floor ? `≥ ${total}` : total}
           sublabel={supplySublabel(data, decimals)}
         />
-        {!native && !storage && decimals != null && (
-          <>
-            <Metric
-              label="Minted"
-              value={formatSupply(data.mint_total, decimals)}
-            />
-            <Metric
-              label="Burned"
-              value={formatSupply(data.burn_total, decimals)}
-            />
-            <Metric
-              label="Clawed back"
-              value={formatSupply(data.clawback_total, decimals)}
-            />
-          </>
-        )}
         {storage && data.archived_balance_entries != null && (
           <Metric
             label="Archived"
@@ -352,7 +346,7 @@ function OnChainSupply({
           </Badge>
         </p>
       )}
-      <details className="text-up/80 mt-2 text-[11px]">
+      <details className="text-ink-muted mt-3 text-xs">
         <summary className="cursor-pointer">
           {data.as_of_ledger != null
             ? `Fresh to ledger ${data.as_of_ledger.toLocaleString('en-US')}`
@@ -393,15 +387,13 @@ function Metric({
   sublabel?: string;
 }) {
   return (
-    <div className="border-line bg-surface rounded-lg border p-3">
-      <div className="text-ink-muted text-xs tracking-wider uppercase">
-        {label}
-      </div>
-      <div className="text-ink mt-1 font-mono text-xl font-semibold">
+    <div className="min-w-0">
+      <div className={PANEL_LABEL_CLASS}>{label}</div>
+      <div className="text-ink mt-1.5 font-mono text-xl font-semibold tracking-tight">
         {value}
       </div>
       {sublabel && (
-        <div className="text-ink-muted mt-1 truncate font-mono text-[11px]">
+        <div className="text-ink-muted mt-1 font-mono text-xs break-all">
           {sublabel}
         </div>
       )}

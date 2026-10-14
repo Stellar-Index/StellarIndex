@@ -2,6 +2,16 @@ import Link from 'next/link';
 import { hrefFor } from '@/lib/hrefFor';
 
 import { Panel } from '@/components/reveal';
+import {
+  Badge,
+  Callout,
+  Table,
+  THead,
+  TBody,
+  TR,
+  Th,
+  Td,
+} from '@/components/ui';
 import { asExample, API_BASE_URL } from '@/api/client';
 import {
   compareDecimalDesc,
@@ -89,10 +99,14 @@ export async function LiquidityTabPanel({
       bodyClassName="-mx-4"
     >
       {rows == null ? (
-        <p className="text-ink-muted px-4 py-3 text-sm">
-          Pool list unavailable: {code}&apos;s DEX pools are unknown, not
-          absent.
-        </p>
+        <div className="px-4">
+          <Callout tone="warn">
+            <p>
+              Pool list unavailable: {code}&apos;s DEX pools are unknown, not
+              absent.
+            </p>
+          </Callout>
+        </div>
       ) : merged.length === 0 ? (
         <p className="text-ink-muted px-4 py-3 text-sm">
           No DEX pools touching {code} in the trailing 14 days.
@@ -100,19 +114,19 @@ export async function LiquidityTabPanel({
       ) : (
         <div className="overflow-x-auto">
           <LiquidityVenueBars pools={merged} />
-          <table className="divide-line min-w-full divide-y text-sm">
-            <thead>
-              <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
-                <th className="px-4 py-2 font-medium">Venue</th>
-                <th className="px-4 py-2 font-medium">Pair</th>
-                <th className="px-4 py-2 font-medium">Side</th>
-                <th className="px-4 py-2 text-right font-medium">Last price</th>
-                <th className="px-4 py-2 text-right font-medium">24h volume</th>
-                <th className="px-4 py-2 text-right font-medium">24h trades</th>
-                <th className="px-4 py-2 text-right font-medium">Avg trade</th>
+          <Table>
+            <THead>
+              <tr>
+                <Th>Venue</Th>
+                <Th>Pair</Th>
+                <Th align="right">Last price</Th>
+                <Th align="right">24h volume</Th>
+                <Th align="right">24h trades</Th>
+                <Th align="right">Avg trade</Th>
+                <Th>Side</Th>
               </tr>
-            </thead>
-            <tbody className="divide-line-subtle divide-y">
+            </THead>
+            <TBody>
               {merged.map((p) => {
                 const slug = encodeURIComponent(`${p.base}~${p.quote}`);
                 const avgTrade = divideDecimalString(
@@ -123,68 +137,63 @@ export async function LiquidityTabPanel({
                   ? formatPairPrice(p.last_price)
                   : null;
                 return (
-                  <tr
-                    key={`${p.source}|${p.base}|${p.quote}|${p.side}`}
-                    className="hover:bg-surface-muted"
-                  >
-                    <td className="px-4 py-2">
+                  <TR key={`${p.source}|${p.base}|${p.quote}|${p.side}`}>
+                    <Td>
                       <Link
                         href={hrefFor.source(p.source)}
-                        className="text-ink-body hover:text-brand-600 font-mono text-xs tracking-wider uppercase"
+                        className="hover:underline"
                       >
-                        {p.source}
+                        <Badge tone="neutral" className="font-mono">
+                          {p.source}
+                        </Badge>
                       </Link>
-                    </td>
-                    <td className="px-4 py-2">
+                    </Td>
+                    <Td className="whitespace-nowrap">
                       <Link
                         href={`/markets/${slug}`}
-                        className="hover:text-brand-600 font-mono text-xs"
+                        className="text-ink hover:text-brand-600 font-mono text-xs"
                       >
                         {shortAssetText(p.base)} / {shortAssetText(p.quote)}
                       </Link>
-                    </td>
-                    <td className="px-4 py-2">
-                      <span className="bg-surface-subtle text-ink-body rounded-sm px-1.5 py-0.5 text-[10px] tracking-wider uppercase">
-                        {p.side}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2 text-right">
+                    </Td>
+                    <Td align="right">
                       {lpFixed ? (
-                        <span className="text-ink-body font-mono tabular-nums">
-                          {lpFixed}
-                        </span>
+                        <span className="font-mono">{lpFixed}</span>
                       ) : (
                         <span className="text-ink-faint">—</span>
                       )}
-                    </td>
-                    <td className="px-4 py-2 text-right">
+                    </Td>
+                    <Td align="right">
                       {p.volume_24h_usd ? (
-                        <span className="font-mono tabular-nums">
+                        <span className="font-mono">
                           ${formatCompactUnits(p.volume_24h_usd)}
                         </span>
                       ) : (
                         <span className="text-ink-faint">—</span>
                       )}
-                    </td>
-                    <td className="px-4 py-2 text-right">
-                      <span className="text-ink-muted font-mono tabular-nums">
+                    </Td>
+                    <Td align="right">
+                      <span className="text-ink-muted font-mono">
                         {formatCompact(p.trade_count_24h)}
                       </span>
-                    </td>
-                    <td className="px-4 py-2 text-right">
+                    </Td>
+                    <Td align="right">
                       {avgTrade ? (
-                        <span className="text-ink-muted font-mono tabular-nums">
+                        <span className="text-ink-muted font-mono">
                           ${formatCompactUnits(avgTrade)}
                         </span>
                       ) : (
                         <span className="text-ink-faint">—</span>
                       )}
-                    </td>
-                  </tr>
+                    </Td>
+                    <Td>
+                      <Badge tone="neutral">{p.side}</Badge>
+                    </Td>
+                  </TR>
                 );
               })}
-            </tbody>
-          </table>
+            </TBody>
+          </Table>
         </div>
       )}
     </Panel>

@@ -330,3 +330,199 @@ func TestCHRebuild_RunbookWriteCommandsNameTheirSources(t *testing.T) {
 		t.Fatalf("found %d ch-rebuild -write command blocks, want at least 3 — this test is asserting nothing", blocks)
 	}
 }
+
+func TestCHRebuild_PreflightWithoutWriteIsRefused(t *testing.T) {
+	t.Parallel()
+	err := chRebuild(chRebuildArgs(t, "-preflight", "-sources", "aquarius"))
+	if err == nil || !strings.Contains(err.Error(), "-preflight") {
+		t.Fatalf("a bare -preflight runs none of the -write guards and must not answer ok; got: %v", err)
+	}
+}
+
+func TestCHRebuild_PreflightRunsTheNamedSourceGate(t *testing.T) {
+	t.Parallel()
+	err := chRebuild(chRebuildArgs(t, "-write", "-preflight", "-sources", "aquarius,upshift"))
+	if err == nil || !strings.Contains(err.Error(), "not BackfillSafe") {
+		t.Fatalf("-write -preflight over an unaudited source was not refused by the BackfillSafe gate: %v", err)
+	}
+}
+
+// chRebuild needs Postgres and ClickHouse past config load, so, like the BackfillSafe legs, the preflight's position is
+// pinned at the source: after the last refusal and before the first lake read. It is executed for real in
+// test/integration/lake_test.go.
+func TestCHRebuild_PreflightReturnsAfterEveryGuardAndBeforeTheLake(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile("ch_rebuild.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := funcBodyFrom(string(b), "chRebuild")
+	exit := strings.Index(body, "return reportCHRebuildPreflight(")
+	leg2 := strings.Index(body, "checkCHRebuildBackfillSafe(reDerivedSourcesInRun(")
+	overlap := strings.Index(body, "checkCHRebuildLiveOverlap(")
+	rangeGuard := strings.Index(body, "> maxBufferedRange")
+	lake := strings.Index(body, "clickhouse.Stream")
+	if exit < 0 || leg2 < 0 || overlap < 0 || rangeGuard < 0 || lake < 0 {
+		t.Fatalf("anchors not found (exit %d, leg2 %d, overlap %d, range %d, lake %d) — this test is asserting nothing",
+			exit, leg2, overlap, rangeGuard, lake)
+	}
+	for name, pos := range map[string]int{"BackfillSafe leg 2": leg2, "live-cursor guard": overlap, "buffered-range guard": rangeGuard} {
+		if exit < pos {
+			t.Errorf("-preflight returns BEFORE the %s — it would answer ok to a run the guard refuses", name)
+		}
+	}
+	if exit > lake {
+		t.Error("-preflight returns AFTER the first lake read — it is no longer a preflight")
+	}
+}
+
+// TestCHRebuild_ModeFlagsFollowTheSharedWriteGate pins ch-rebuild to the shared -write/-dry-run convention. The named-
+// source BackfillSafe refusal is armed only in write mode, so it tells the modes apart before any datastore; a dry run
+// falls through to the absent config.
+func TestCHRebuild_ModeFlagsFollowTheSharedWriteGate(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		mode      []string
+		wantWrite bool
+	}{
+		{nil, false},
+		{[]string{"-dry-run"}, false},
+		{[]string{"-write"}, true},
+		{[]string{"-dry-run", "-write"}, true},
+	} {
+		args := append(append([]string{}, tc.mode...), "-sources", upshift.SourceName)
+		err := chRebuild(chRebuildArgs(t, args...))
+		if err == nil {
+			t.Fatalf("%v: chRebuild succeeded against a config that does not exist", tc.mode)
+		}
+		if got := strings.Contains(err.Error(), "not BackfillSafe"); got != tc.wantWrite {
+			t.Errorf("%v: write-mode refusal = %v, want %v (err: %v)", tc.mode, got, tc.wantWrite, err)
+		}
+		if !tc.wantWrite && !strings.Contains(err.Error(), "absent.toml") {
+			t.Errorf("%v: a dry run should reach the config load, got: %v", tc.mode, err)
+		}
+	}
+}
+
+// The predicate is only a guard if chRebuild consults it at the range check.
+func TestCHRebuild_RangeGuardUsesThePassSelection(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile("ch_rebuild.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := funcBodyFrom(string(b), "chRebuild")
+	if !strings.Contains(body, "chRebuildBuffers(cat, sep41Cat, passes, enabled) && *to-*from > maxBufferedRange") {
+		t.Fatal("chRebuild's maxBufferedRange guard no longer keys on chRebuildBuffers(cat, sep41Cat, passes, enabled)")
+	}
+}
+
+// TestCHRebuild_ValidatesSourcesAgainstTheCatalogue pins the call site of the gate above.
+// chRebuild needs Postgres and ClickHouse past the catalogue build, so no test reaches the
+// refusal through the entry point; without this, deleting the call leaves every unit test green.
+func TestCHRebuild_ValidatesSourcesAgainstTheCatalogue(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile("ch_rebuild.go")
+	if err != nil {
+		t.Fatalf("read ch_rebuild.go: %v", err)
+	}
+	body := funcBodyFrom(string(b), "chRebuild")
+	if body == "" {
+		t.Fatal("chRebuild not found — this test is asserting nothing")
+	}
+	call := strings.Index(body, "checkCHRebuildSources(cat, parseCSVList(*only))")
+	catalogue := strings.Index(body, "buildReconciliationCatalogue(cfg)")
+	warm := strings.Index(body, "warmCatalogueGates(")
+	writer := strings.Index(body, "drainAndWrite(")
+	if catalogue < 0 || warm < 0 || writer < 0 {
+		t.Fatalf("anchors not found (catalogue %d, warm %d, writer %d) — this test is asserting nothing", catalogue, warm, writer)
+	}
+	switch {
+	case call < 0:
+		t.Error("chRebuild never validates -sources against the catalogue (K015): an unrecognised name makes " +
+			"enabled() false for every real source, so the run decodes nothing, reports a clean count and exits 0")
+	case call < catalogue:
+		t.Error("the -sources check runs BEFORE the catalogue is built — it cannot know which names exist")
+	case call > warm:
+		t.Error("the -sources check runs AFTER the gate warm-up — a typo pays for the registry reads before being refused")
+	case call > writer:
+		t.Error("the -sources check runs AFTER the writer")
+	}
+}
+
+// A -write run rewrites served rows below the completeness watermark. Before writing it must file the same obligation
+// projector-replay and projected-rebuild file, one per re-derived source, or the next verdict keeps its clean claim over
+// the rewritten range.
+func TestCHRebuild_WriteRecordsDirtyWindowBeforeWriting(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile("ch_rebuild.go")
+	if err != nil {
+		t.Fatalf("read ch_rebuild.go: %v", err)
+	}
+	body := funcBodyFrom(string(b), "chRebuild")
+	if body == "" {
+		t.Fatal("chRebuild not found — this test is asserting nothing")
+	}
+	record := strings.Index(body, "recordCHRebuildDirtyWindows(ctx, store, os.Stderr, lo, hi, rederived, timescale.CHRebuildWriteReason)")
+	preflight := strings.Index(body, "return reportCHRebuildPreflight(")
+	writer := strings.Index(body, "drainAndWrite(")
+	if preflight < 0 || writer < 0 {
+		t.Fatalf("anchors not found (preflight %d, writer %d) — this test is asserting nothing", preflight, writer)
+	}
+	switch {
+	case record < 0:
+		t.Fatal("chRebuild -write records no projection dirty window: the next completeness verdict carries its prior clean claim over the rewritten range")
+	case record < preflight:
+		t.Error("the record precedes the -preflight stop: a preflight, which writes nothing, would file an obligation")
+	case record > writer:
+		t.Error("the record follows the writer: a run that fails partway leaves rewritten rows certified by stale evidence")
+	}
+	if !strings.Contains(body[record-300:record], "if write {") {
+		t.Error("the record is not gated on -write: a dry run would file an obligation")
+	}
+	if !strings.Contains(body[record:record+300], "return ") {
+		t.Error("a failed record does not stop the run: it would write without the obligation filed")
+	}
+}
+
+// The documented invocation must clear every refusal that runs before the config load (flag conflicts, BackfillSafe leg 1).
+func TestCHRebuild_TradesByAccountInvocationPassesEarlyRefusals(t *testing.T) {
+	err := chRebuild(chRebuildArgs(t, "-write", "-sdex", "-trades-by-account"))
+	if err == nil || strings.Contains(err.Error(), "refusing") || strings.Contains(err.Error(), "-trades-by-account") {
+		t.Fatalf("err = %v, want only the absent-config failure", err)
+	}
+}
+
+// Pins the ch-rebuild call site at the source (chRebuild needs ClickHouse and Postgres): the warm runs on the fresh
+// catalogue and precedes both the preseed (which seeds INTO the warmed decoders) and the writer.
+func TestCHRebuild_WarmsTheCatalogueGatesBeforeAnythingReadsThem(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile("ch_rebuild.go")
+	if err != nil {
+		t.Fatalf("read ch_rebuild.go: %v", err)
+	}
+	body := funcBodyFrom(string(b), "chRebuild")
+	if body == "" {
+		t.Fatal("chRebuild not found — this test is asserting nothing")
+	}
+	catalogue := strings.Index(body, "buildReconciliationCatalogue(cfg)")
+	preseed := strings.Index(body, "preseedFactoryChildren(")
+	writer := strings.Index(body, "drainAndWrite(")
+	if catalogue < 0 || preseed < 0 || writer < 0 {
+		t.Fatalf("anchors not found (catalogue %d, preseed %d, writer %d) — this test is asserting nothing",
+			catalogue, preseed, writer)
+	}
+	warm := strings.Index(body, "warmCatalogueGates(ctx, store, logger, cat)")
+	switch {
+	case warm < 0:
+		t.Error("chRebuild never warms the catalogue's gated decoders from protocol_contracts: " +
+			"`ch-rebuild -write` re-derives on the bare in-code seed and rebuilds a table without " +
+			"the contracts an operator admitted (RLT-430)")
+	case warm < catalogue:
+		t.Error("the gate warm runs BEFORE the catalogue is built")
+	case warm > preseed:
+		t.Error("the gate warm runs AFTER preseedFactoryChildren — it rebuilds the decoders and discards what the preseed registered")
+	case warm > writer:
+		t.Error("the gate warm runs AFTER the writer")
+	}
+}

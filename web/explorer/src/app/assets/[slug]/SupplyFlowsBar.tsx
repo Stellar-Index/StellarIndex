@@ -1,12 +1,13 @@
 'use client';
 
 import { formatCompact, scaleBaseUnits } from '@/lib/format';
+import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 
 export type SupplyFlowRow = {
   label: string;
   /** Whole-asset-unit value (already scaled by 10^decimals), or null when unserved. */
   value: number | null;
-  /** Bar direction: additions grow supply (up tone), removals shrink it (down tone). */
+  /** Bar direction: additions grow supply, removals shrink it. */
   direction: 'add' | 'remove';
 };
 
@@ -44,9 +45,9 @@ export function buildSupplyFlowRows(
  * supply_flows lake totals (GET /v1/assets/{id}/supply). Linear scale on
  * the largest flow: a burn that's a sliver of the mint bar IS the honest
  * picture, so every row carries its value label rather than inflating
- * small bars. Additions render in the up tone, removals in the down
- * tone, with the direction also written in the row label (never colour
- * alone).
+ * small bars. Additions render in the brand tone and removals in a
+ * neutral one: up/down stay reserved for price direction, and the sign
+ * in the row label carries the direction regardless.
  */
 export function SupplyFlowsBar({ rows }: { rows: SupplyFlowRow[] }) {
   const max = Math.max(...rows.map((r) => (r.value != null ? r.value : 0)));
@@ -60,7 +61,7 @@ export function SupplyFlowsBar({ rows }: { rows: SupplyFlowRow[] }) {
             : 0;
         return (
           <div key={r.label} className="flex items-center gap-2 text-xs">
-            <span className="text-ink-muted w-24 shrink-0 text-[11px] tracking-wider uppercase">
+            <span className={`${PANEL_LABEL_CLASS} w-28 shrink-0`}>
               {r.label}
               <span className="text-ink-faint ml-1" aria-hidden>
                 {r.direction === 'add' ? '+' : '−'}
@@ -69,7 +70,7 @@ export function SupplyFlowsBar({ rows }: { rows: SupplyFlowRow[] }) {
             <div className="bg-surface-subtle h-2.5 flex-1 overflow-hidden rounded-sm">
               {r.value != null && r.value > 0 && (
                 <div
-                  className={`h-full ${r.direction === 'add' ? 'bg-up/70' : 'bg-down/70'}`}
+                  className={`h-full ${r.direction === 'add' ? 'bg-brand-500' : 'bg-ink-faint/60'}`}
                   style={{ width: `${pct}%` }}
                 />
               )}

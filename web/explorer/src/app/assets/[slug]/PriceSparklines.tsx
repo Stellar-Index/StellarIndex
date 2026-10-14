@@ -2,6 +2,9 @@
 
 import { useState } from 'react';
 
+import { Segmented } from '@/components/ui';
+import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
+
 interface Point {
   t: string;
   p?: string | null;
@@ -28,31 +31,21 @@ export function PriceSparklines({
 
   return (
     <div className="border-line border-t pt-3">
-      <div className="mb-1 flex items-center gap-2 text-[10px] tracking-wider uppercase">
-        <button
-          type="button"
-          onClick={() => has24 && setPref('24h')}
-          disabled={!has24}
-          className={`rounded px-1.5 py-0.5 ${
-            active === '24h'
-              ? 'bg-brand-fill text-white'
-              : 'text-ink-muted hover:text-brand-600 disabled:opacity-40'
-          }`}
-        >
-          24h
-        </button>
-        <button
-          type="button"
-          onClick={() => has7 && setPref('7d')}
-          disabled={!has7}
-          className={`rounded px-1.5 py-0.5 ${
-            active === '7d'
-              ? 'bg-brand-fill text-white'
-              : 'text-ink-muted hover:text-brand-600 disabled:opacity-40'
-          }`}
-        >
-          7d
-        </button>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className={PANEL_LABEL_CLASS}>Price</span>
+        {has24 && has7 ? (
+          <Segmented
+            ariaLabel="Sparkline window"
+            options={[
+              { label: '24h', value: '24h' },
+              { label: '7d', value: '7d' },
+            ]}
+            value={active}
+            onChange={(v) => setPref(v as '24h' | '7d')}
+          />
+        ) : (
+          <span className={PANEL_LABEL_CLASS}>{active}</span>
+        )}
       </div>
       <Sparkline points={points} ariaLabel={`${active} price sparkline`} />
     </div>
@@ -103,8 +96,8 @@ function Sparkline({
   const last = finite[finite.length - 1];
   const first = finite[0];
   const positive = last >= first;
-  const tone = positive ? 'stroke-emerald-500' : 'stroke-rose-500';
-  const fill = positive ? 'fill-emerald-500/15' : 'fill-rose-500/15';
+  const tone = positive ? 'stroke-up' : 'stroke-down';
+  const fill = positive ? 'fill-up/15' : 'fill-down/15';
   // Area path: emit one closed sub-region per contiguous run.
   const areaSegs: string[] = [];
   for (const run of runs) {

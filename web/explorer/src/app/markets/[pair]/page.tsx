@@ -23,9 +23,22 @@ import {
   ogImageFor,
   shellMetadata,
 } from '@/lib/seo';
-import { Container, PageHeader } from '@/components/ui';
+import {
+  Badge,
+  Container,
+  EmptyState,
+  PageHeader,
+  TBody,
+  TR,
+  Table,
+  Td,
+  Th,
+  THead,
+} from '@/components/ui';
+import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
+import { Panel } from '@/components/reveal';
+import { asExample } from '@/api/client';
 import { EntityNotFoundShell } from '@/components/EntityNotFoundShell';
-import { Sparkline } from '@/components/primitives';
 import { Suspense } from 'react';
 
 import { LivePairPrice } from './LivePairPrice';
@@ -286,14 +299,13 @@ export default async function PairPage({ params }: { params: Params }) {
   }
   const { base, quote } = decoded;
 
-  const [price, chart, ohlc, history, sourceBreakdown] =
-    await Promise.all([
-      buildFetchPairPrice(base, quote),
-      fetchChart(base, quote),
-      fetchOhlc(base, quote),
-      fetchHistory(base, quote),
-      fetchSourceBreakdown(base, quote),
-    ]);
+  const [price, chart, ohlc, history, sourceBreakdown] = await Promise.all([
+    buildFetchPairPrice(base, quote),
+    fetchChart(base, quote),
+    fetchOhlc(base, quote),
+    fetchHistory(base, quote),
+    fetchSourceBreakdown(base, quote),
+  ]);
 
   const baseLabel = shortAssetText(base);
   const quoteLabel = shortAssetText(quote);
@@ -316,13 +328,6 @@ export default async function PairPage({ params }: { params: Params }) {
   const change24hNum = change24hPct != null ? Number(change24hPct) : null;
   const change24h =
     change24hNum != null && Number.isFinite(change24hNum) ? change24hNum : null;
-  // Render the rest of the fetched /v1/chart series instead of
-  // discarding it (visuals survey bug #7): the hourly VWAP trend as a
-  // build-time SVG sparkline, and the summed 24h USD volume across
-  // the hourly buckets.
-  const trend24h = points
-    .map((pt) => Number(pt.p))
-    .filter((n) => Number.isFinite(n));
   const volume24hUsd = formatUsd(
     sumDecimalStrings(points.map((pt) => pt.v_usd)),
   );
@@ -363,19 +368,22 @@ export default async function PairPage({ params }: { params: Params }) {
             <AssetBadge canonical={base} /> / <AssetBadge canonical={quote} />
           </>
         }
+        meta={`${quoteLabel} per ${baseLabel}, aggregated across every venue indexed`}
         actions={
           price?.price_type && (
-            <span className="bg-surface-subtle text-ink-body rounded-sm px-2 py-0.5 font-mono text-xs tracking-wider uppercase">
-              {price.price_type}
-            </span>
+            <Badge tone="neutral">
+              <span className="font-mono">{price.price_type}</span>
+            </Badge>
           )
         }
       />
 
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Panel
+          headingLevel={2}
           title="Price"
-          subtitle={`${baseLabel} → ${quoteLabel}`}
+          hint="Live, volume-weighted across every venue indexed"
+          source={asExample('/v1/price', { asset: base, quote })}
           className="lg:col-span-2"
         >
           <div className="flex flex-wrap items-baseline gap-4">
@@ -402,16 +410,15 @@ export default async function PairPage({ params }: { params: Params }) {
         <SourceBreakdown headingLevel={2} base={base} quote={quote} />
 
         <Panel
+          headingLevel={2}
           title="Recent activity"
-          subtitle={`last ${history.length} trades`}
+          hint={`last ${history.length} trades`}
+          source={asExample('/v1/history', { base, quote, limit: 50 })}
         >
-          <dl className="grid grid-cols-2 gap-2 text-sm">
-            <Stat
-              label="Trades in sample"
-              value={history.length.toLocaleString('en-US')}
-            />
-            <Stat label="Sources in sample" value={perSource.size.toString()} />
-            {points[points.length - 1]?.v_usd && (
+          <dl className="grid grid-cols-2 gap-4">
+            <Stat label="Trades in sample" value={String(history.length)} />
+            <Stat label="Sources in sample" value={String(perSource.size)} />
+            {points.length > 0 && (
               <Stat
                 label="Last hour USD vol"
                 value={formatUsd(points[points.length - 1].v_usd)}
@@ -421,193 +428,206 @@ export default async function PairPage({ params }: { params: Params }) {
               <Stat label="24h USD vol" value={volume24hUsd} />
             )}
           </dl>
-          {trend24h.length >= 2 && (
-            <div className="border-line-subtle mt-3 border-t pt-3">
-              <div className="text-ink-muted mb-1 text-[11px] tracking-wider uppercase">
-                24h hourly VWAP
-              </div>
-              <Sparkline values={trend24h} width={220} height={36} />
-            </div>
-          )}
         </Panel>
+
+        {ohlc && (
+          <Panel
+            headingLevel={2}
+            title="OHLC, last hour"
+            hint={`${ohlc.from.slice(0, 16).replace('T', ' ')} to ${ohlc.to.slice(11, 16)} UTC`}
+            source={asExample('/v1/ohlc', { base, quote })}
+            className="lg:col-span-2"
+          >
+            <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+              <Stat label="Open" value={ohlc.open} />
+              <Stat label="High" value={ohlc.high} />
+              <Stat label="Low" value={ohlc.low} />
+              <Stat label="Close" value={ohlc.close} />
+              <Stat
+                label={`Quote vol (${shortAssetText(quote)})`}
+                value={formatScaledAmount(
+                  ohlc.quote_volume,
+                  ohlc.quote_volume_decimals,
+                  quote,
+                )}
+              />
+              <Stat
+                label="Trades"
+                value={ohlc.trade_count.toLocaleString('en-US')}
+              />
+            </dl>
+          </Panel>
+        )}
       </section>
 
-      {ohlc && (
-        <Panel
-          title="OHLC — last 1h"
-          subtitle={`${ohlc.from.slice(0, 16).replace('T', ' ')}Z → ${ohlc.to.slice(0, 16).replace('T', ' ')}Z`}
-        >
-          <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-6">
-            <Stat label="Open" value={ohlc.open} />
-            <Stat label="High" value={ohlc.high} />
-            <Stat label="Low" value={ohlc.low} />
-            <Stat label="Close" value={ohlc.close} />
-            {/* F096: quote_volume is a raw smallest-unit integer whose
-                scale is the trading VENUES', not a fixed stroop — 7
-                on-chain, 8 on a CEX. This read /1e7 unconditionally and
-                printed every Coinbase-quoted pair (crypto:XLM/fiat:USD
-                among them) at ten times the market's volume. Take the
-                scale from the bar. */}
-            <Stat
-              label={`Quote vol (${shortAssetText(quote)})`}
-              value={formatScaledAmount(
-                ohlc.quote_volume,
-                ohlc.quote_volume_decimals,
-                quote,
-              )}
-            />
-            <Stat
-              label="Trades"
-              value={ohlc.trade_count.toLocaleString('en-US')}
-            />
-          </dl>
-        </Panel>
-      )}
-
       {sourceBreakdown.length > 0 && (
-        <SourceBreakdownPanel rows={sourceBreakdown} />
+        <SourceBreakdownPanel
+          rows={sourceBreakdown}
+          base={base}
+          quote={quote}
+        />
       )}
 
-      {/* SDEX order-book depth — renders only for classic pairs
-          (the panel self-hides for Soroban assets, which have no
-          central order book). Client-side: the book is live data
-          advanced ~60s server-side, not build-time content. */}
       <OrderBookPanel base={base} quote={quote} />
 
-      {history.length > 0 ? (
-        <Panel
-          title="Recent trades"
-          subtitle={`${history.length} most recent across all sources`}
-        >
-          <TradeScatter trades={history} />
-          <div className="overflow-x-auto">
-            <table className="divide-line min-w-full divide-y text-sm">
-              <thead>
-                <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
-                  <th className="px-3 py-2 font-medium">Time</th>
-                  <th className="px-3 py-2 font-medium">Source</th>
-                  <th className="px-3 py-2 text-right font-medium">Price</th>
-                  <th className="px-3 py-2 text-right font-medium">
-                    Base amount
-                  </th>
-                  <th className="px-3 py-2 text-right font-medium">
-                    Quote amount
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-line-subtle divide-y font-mono text-xs">
-                {history.map((t, i) => (
-                  <tr
-                    key={`${t.tx_hash ?? ''}|${t.op_index ?? i}|${t.ts}`}
-                    className="hover:bg-surface-muted"
-                  >
-                    <td className="text-ink-muted px-3 py-2 tabular-nums">
-                      {t.tx_hash ? (
-                        <Link
-                          href={`/transactions/${t.tx_hash}/`}
-                          className="hover:text-brand-600 hover:underline"
-                          title={`View transaction ${t.tx_hash}`}
-                        >
-                          {formatTimestamp(t.ts)}
-                        </Link>
-                      ) : (
-                        formatTimestamp(t.ts)
-                      )}
-                    </td>
-                    <td className="px-3 py-2 tracking-wider uppercase">
-                      <Link
-                        href={hrefFor.source(t.source)}
-                        className="hover:text-brand-600 hover:underline"
-                      >
-                        {t.source}
-                      </Link>
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums">
-                      {t.price ?? '—'}
-                    </td>
-                    {/* Amounts arrive as smallest-unit scaled
-                        integers; render in asset units using the per-side
-                        decimals /v1/history resolves (the token
-                        contract's declared decimals() for Soroban tokens),
-                        falling back to 7 for native/classic/fiat where the
-                        field is omitted. formatUnitsReadable divides via BigInt
-                        first (ADR-0003) so an i128-scale trade amount
-                        doesn't round through a Number()-then-divide. */}
-                    <td className="text-ink-muted px-3 py-2 text-right tabular-nums">
-                      {formatUnitsReadable(t.base_amount, t.base_decimals ?? 7)}
-                    </td>
-                    <td className="text-ink-muted px-3 py-2 text-right tabular-nums">
-                      {formatUnitsReadable(
-                        t.quote_amount,
-                        t.quote_decimals ?? 7,
-                      )}
-                    </td>
+      <Panel
+        headingLevel={2}
+        title="Recent trades"
+        hint={
+          history.length > 0
+            ? `${history.length} most recent across all sources`
+            : undefined
+        }
+        source={asExample('/v1/history', { base, quote, limit: 50 })}
+      >
+        {history.length > 0 ? (
+          <>
+            <TradeScatter trades={history} />
+            <div className="border-line -mx-4 mt-4 -mb-4 max-h-[32rem] overflow-auto border-t">
+              <Table>
+                <THead className="sticky top-0 z-10">
+                  <tr>
+                    <Th>Time</Th>
+                    <Th>Source</Th>
+                    <Th align="right">Price</Th>
+                    <Th align="right">Base amount</Th>
+                    <Th align="right">Quote amount</Th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Panel>
-      ) : (
-        <Panel title="Recent trades">
-          <p className="text-ink-muted text-sm">
-            No trades returned for this pair in the last sample.
-          </p>
-        </Panel>
-      )}
+                </THead>
+                <TBody>
+                  {history.map((t, i) => (
+                    <TR key={`${t.tx_hash ?? ''}|${t.op_index ?? i}|${t.ts}`}>
+                      <Td className="text-ink-muted font-mono text-xs whitespace-nowrap">
+                        {t.tx_hash ? (
+                          <Link
+                            href={`/transactions/${t.tx_hash}/`}
+                            className="hover:text-brand-600"
+                          >
+                            <TradeTime iso={t.ts} />
+                          </Link>
+                        ) : (
+                          <TradeTime iso={t.ts} />
+                        )}
+                      </Td>
+                      <Td>
+                        <Link
+                          href={hrefFor.source(t.source)}
+                          className="hover:text-brand-600 font-mono text-xs"
+                        >
+                          {t.source}
+                        </Link>
+                      </Td>
+                      <Td align="right" className="font-mono">
+                        {t.price ?? '—'}
+                      </Td>
+                      <Td align="right" className="font-mono">
+                        {formatUnitsReadable(
+                          t.base_amount,
+                          t.base_decimals ?? 7,
+                        )}
+                      </Td>
+                      <Td align="right" className="font-mono">
+                        {formatUnitsReadable(
+                          t.quote_amount,
+                          t.quote_decimals ?? 7,
+                        )}
+                      </Td>
+                    </TR>
+                  ))}
+                </TBody>
+              </Table>
+            </div>
+          </>
+        ) : (
+          <EmptyState
+            title="No recent trades"
+            description="No trades returned for this pair in the last sample."
+          />
+        )}
+      </Panel>
     </Container>
   );
 }
 
-function SourceBreakdownPanel({ rows }: { rows: PoolRow[] }) {
-  // Total 24h USD volume across all sources contributing to this
-  // pair. The `volume_24h_usd` field is null on sources that
-  // contributed trades but the aggregator hasn't priced (Phase 1
-  // USD-pegged-quote rule). Those rows show "—" and don't count
-  // toward the bar denominator.
+function SourceBreakdownPanel({
+  rows,
+  base,
+  quote,
+}: {
+  rows: PoolRow[];
+  base: string;
+  quote: string;
+}) {
+  // `volume_24h_usd` is null on sources that traded but the aggregator has
+  // not priced; those rows show "—" and stay out of the share denominator.
   const totalUSD = sumDecimalStrings(rows.map((r) => r.volume_24h_usd));
   return (
     <Panel
+      headingLevel={2}
       title="Sources contributing"
-      subtitle={`${rows.length} venue${rows.length === 1 ? '' : 's'} · ranked by 24h USD volume · /v1/pools?base=&quote=`}
+      hint={`${rows.length} venue${rows.length === 1 ? '' : 's'}, ranked by 24h USD volume`}
+      source={asExample('/v1/pools', { base, quote, limit: 50 })}
     >
       <SourcePriceSpread rows={rows} />
-      <ul className="space-y-2">
-        {rows.map((r) => {
-          const pct = ratioPct(r.volume_24h_usd, totalUSD, 1);
-          const lpFixed = r.last_price ? formatPairPrice(r.last_price) : null;
-          return (
-            <li key={r.source} className="flex items-center gap-3 text-sm">
-              <Link
-                href={hrefFor.source(r.source)}
-                className="text-ink-body hover:text-brand-600 w-32 font-mono text-xs tracking-wider uppercase"
-              >
-                {r.source}
-              </Link>
-              <div className="flex-1">
-                <div className="bg-surface-subtle h-2 overflow-hidden rounded-sm">
-                  <div
-                    className="bg-brand-500 h-full"
-                    style={{ width: `${pct ?? 0}%` }}
-                  />
-                </div>
-              </div>
-              <span className="text-ink-muted w-24 text-right font-mono text-xs tabular-nums">
-                {lpFixed ?? '—'}
-              </span>
-              <span className="text-ink-body w-28 text-right font-mono text-xs tabular-nums">
-                {r.volume_24h_usd &&
-                compareDecimalStrings(r.volume_24h_usd, '0') === 1
-                  ? `$${formatCompactUnits(r.volume_24h_usd)}`
-                  : '—'}
-              </span>
-              <span className="text-ink-muted w-12 text-right font-mono text-xs tabular-nums">
-                {pct != null ? `${pct.toFixed(0)}%` : '—'}
-              </span>
-            </li>
-          );
-        })}
-      </ul>
+      <div className="border-line -mx-4 mt-4 -mb-4 overflow-x-auto border-t">
+        <Table>
+          <THead>
+            <tr>
+              <Th>Source</Th>
+              <Th align="right">Last price</Th>
+              <Th align="right">24h volume</Th>
+              <Th align="right" className="w-48">
+                Share
+              </Th>
+            </tr>
+          </THead>
+          <TBody>
+            {rows.map((r) => {
+              const pct = ratioPct(r.volume_24h_usd, totalUSD, 1);
+              const lpFixed = r.last_price
+                ? formatPairPrice(r.last_price)
+                : null;
+              const priced =
+                r.volume_24h_usd != null &&
+                compareDecimalStrings(r.volume_24h_usd, '0') === 1;
+              return (
+                <TR key={r.source}>
+                  <Td>
+                    <Link
+                      href={hrefFor.source(r.source)}
+                      className="hover:text-brand-600 font-mono text-xs"
+                    >
+                      {r.source}
+                    </Link>
+                  </Td>
+                  <Td align="right" className="text-ink-muted font-mono">
+                    {lpFixed ?? '—'}
+                  </Td>
+                  <Td align="right" className="font-mono">
+                    {priced ? `$${formatCompactUnits(r.volume_24h_usd!)}` : '—'}
+                  </Td>
+                  <Td align="right">
+                    <span className="inline-flex w-full items-center justify-end gap-3">
+                      <span
+                        aria-hidden="true"
+                        className="bg-surface-subtle h-1.5 w-24 overflow-hidden rounded-sm"
+                      >
+                        <span
+                          className="bg-brand-500 block h-full"
+                          style={{ width: `${pct ?? 0}%` }}
+                        />
+                      </span>
+                      <span className="text-ink-muted w-10 font-mono text-xs">
+                        {pct != null ? `${pct.toFixed(0)}%` : '—'}
+                      </span>
+                    </span>
+                  </Td>
+                </TR>
+              );
+            })}
+          </TBody>
+        </Table>
+      </div>
     </Panel>
   );
 }
@@ -628,37 +648,22 @@ function PairNotFound() {
   );
 }
 
-function Panel({
-  title,
-  subtitle,
-  className,
-  children,
-}: {
-  title: string;
-  subtitle?: string;
-  className?: string;
-  children: React.ReactNode;
-}) {
+// Phones get the clock; the full stamp returns from sm and stays in the title.
+function TradeTime({ iso }: { iso: string }) {
+  const full = formatTimestamp(iso);
   return (
-    <section
-      className={`border-line bg-surface rounded-lg border p-4 ${className ?? ''}`}
-    >
-      <header className="mb-3 flex items-baseline justify-between">
-        <h2 className="text-h3 text-ink font-semibold">{title}</h2>
-        {subtitle && <span className="text-ink-faint text-xs">{subtitle}</span>}
-      </header>
-      {children}
-    </section>
+    <span title={full}>
+      <span className="sm:hidden">{full.slice(11, 19)}</span>
+      <span className="hidden sm:inline">{full}</span>
+    </span>
   );
 }
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <dt className="text-ink-muted text-[11px] tracking-wider uppercase">
-        {label}
-      </dt>
-      <dd className="mt-1 font-mono text-sm tabular-nums">{value}</dd>
+      <dt className={PANEL_LABEL_CLASS}>{label}</dt>
+      <dd className="text-ink mt-1 font-mono text-sm tabular-nums">{value}</dd>
     </div>
   );
 }

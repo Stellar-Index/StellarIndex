@@ -1,8 +1,12 @@
 import Link from 'next/link';
 
+import { asExample } from '@/api/client';
+import { Panel } from '@/components/reveal';
+import { RequestReveal } from '@/components/reveal/RequestReveal';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import { formatCompact, formatPriceSmall, positiveDecimal } from '@/lib/format';
 import { isSafeHomeDomain } from '@/lib/safe-domain';
+import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 import { AssetSwap } from './AssetSwap';
 import { ChangeSummaryStrip } from './ChangeSummaryStrip';
 import { LiveAssetPrice, type PriceProvenance } from './LiveAssetPrice';
@@ -50,22 +54,18 @@ export interface SidebarDetail {
 }
 
 /**
- * AssetSidebar — the dense left-column stats rail (stellarchain-grade):
- * identity + live price, market/supply stats with a circulating-supply
- * progress bar, the issuer/links block, a USD converter, and a 24h
- * price-performance range. Mirrors the reference USDC layout (Image #5).
+ * AssetIdentityCard — icon, code, name, the live headline price and the
+ * change strip. The page's first grid cell, so phones read it before the
+ * issuer panel and tabs while the stats rail follows them.
  */
-export function AssetSidebar({
+export function AssetIdentityCard({
   coin,
-  detail,
   priceUSD,
   priceProvenance,
   priceStale,
   name,
-  homeDomain,
 }: {
   coin: SidebarCoin;
-  detail: SidebarDetail | null;
   /** Wire decimal string. */
   priceUSD: string | null;
   /**
@@ -88,9 +88,59 @@ export function AssetSidebar({
   priceProvenance?: PriceProvenance;
   priceStale?: boolean;
   name?: string | null;
+}) {
+  // Native (and a few sparse rows) can arrive without a `code` — fall
+  // back to the slug so the avatar glyph + labels never crash on slice.
+  const code = coin.code || coin.slug || '—';
+  return (
+    <div className="rounded-card border-line bg-surface border p-4">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <SidebarAssetIcon image={coin.image} code={code} />
+          <div className="flex min-w-0 items-baseline gap-1.5">
+            <span className="text-ink text-lg font-semibold">{code}</span>
+            {name && name !== code && (
+              <span className="text-ink-muted truncate text-xs">{name}</span>
+            )}
+          </div>
+        </div>
+        <RequestReveal
+          example={asExample('/v1/price', { asset: coin.asset_id })}
+          position="inline"
+        />
+      </div>
+      {/* The baked value paints first, then the browser re-fetches /v1/price
+          on mount + every 60s: a static export must never present a
+          build-frozen number as the current price. */}
+      <LiveAssetPrice
+        assetID={coin.asset_id}
+        initialPrice={priceUSD}
+        initialProvenance={priceProvenance ?? null}
+        initialStale={priceStale}
+        initialChangePct={num(coin.change_24h_pct)}
+      />
+      <ChangeSummaryStrip assetID={coin.asset_id} className="mt-3" />
+    </div>
+  );
+}
+
+/**
+ * AssetSidebar — the stats rail: market and supply figures with the
+ * circulating-supply bar, the issuer/links/activity rows, a USD converter
+ * and the 24h price range. Every panel reveals the /v1/assets call behind it.
+ */
+export function AssetSidebar({
+  coin,
+  detail,
+  priceUSD,
+  homeDomain,
+}: {
+  coin: SidebarCoin;
+  detail: SidebarDetail | null;
+  /** Wire decimal string; the converter and range bar compute in floats. */
+  priceUSD: string | null;
   homeDomain?: string | null;
 }) {
-  // The converter and range bar compute in floats; the headline keeps the string.
   const seed = positiveDecimal(priceUSD);
   const priceNum = seed != null ? Number(seed) : null;
   // market_cap / volume / fdv arrive already server-pre-scaled (USD) —
@@ -108,15 +158,12 @@ export function AssetSidebar({
   const max = supplyNum(detail?.max_supply, decimals);
   const volMktCap =
     vol != null && marketCap != null && marketCap > 0 ? vol / marketCap : null;
-  const change = num(coin.change_24h_pct);
-  // Native (and a few sparse rows) can arrive without a `code` — fall
-  // back to the slug so the avatar glyph + labels never crash on slice.
   const code = coin.code || coin.slug || '—';
+  const source = asExample(`/v1/assets/${coin.asset_id}`);
 
-  // Circulating-supply progress: against max if known, else total.
+  // Circulating-supply progress: against max if known, else total. When
+  // neither is known, asserting 100% would be fabricated certainty.
   const denom = max ?? total ?? null;
-  // When neither max nor total is known, asserting 100% would be
-  // fabricated certainty. Unknown renders as no bar.
   const circPct =
     circulating != null && denom != null && denom > 0
       ? Math.min(100, (circulating / denom) * 100)
@@ -124,41 +171,12 @@ export function AssetSidebar({
 
   return (
     <div className="space-y-4">
-      {/* Identity + live price */}
-      <div className="rounded-card border-line bg-surface border p-4">
-        <div className="flex items-center gap-2.5">
-          <SidebarAssetIcon image={coin.image} code={code} />
-          <div className="min-w-0">
-            <div className="flex items-baseline gap-1.5">
-              <span className="text-ink text-lg font-semibold">{code}</span>
-              {name && name !== code && (
-                <span className="text-ink-muted truncate text-xs">{name}</span>
-              )}
-            </div>
-          </div>
-        </div>
-        {/* Live headline price + provenance caption (LiveAssetPrice):
-            the baked value paints first, then the browser re-fetches
-            /v1/price on mount + every 60s — a static export must never
-            present a build-frozen number as the current price
-            (2026-08-05: a 12-day-old bake showed XLM at $0.186 against
-            a live $0.17 chart). Series naming matches /v1/price's
-            contract (last CLOSED 1-minute VWAP, ADR-0015). */}
-        <LiveAssetPrice
-          assetID={coin.asset_id}
-          initialPrice={priceUSD}
-          initialProvenance={priceProvenance ?? null}
-          initialStale={priceStale}
-          initialChangePct={change}
-        />
-        {/* Live 1h/24h/7d/30d strip + streak + low-water from the
-            change-summary worker; renders nothing when the worker has
-            no row for this asset. */}
-        <ChangeSummaryStrip assetID={coin.asset_id} className="mt-3" />
-      </div>
-
-      {/* Market + supply stats */}
-      <div className="rounded-card border-line bg-surface border">
+      <Panel
+        title="Market"
+        source={source}
+        headingLevel={2}
+        bodyClassName="divide-line -mx-4 -mb-4 divide-y"
+      >
         <StatRow label="Market cap" value={usd(marketCap)} />
         <StatRow label="Volume (24h)" value={usd(vol)} />
         <StatRow
@@ -171,33 +189,35 @@ export function AssetSidebar({
           label="Max supply"
           value={max != null ? supply(max, code) : '—'}
         />
-        <div className="px-4 py-3">
-          <div className="flex items-baseline justify-between">
-            <span className="text-ink-muted text-[11px] tracking-wider uppercase">
-              Circulating supply
-            </span>
-            <span className="text-ink-body font-mono text-xs tabular-nums">
-              {circPct != null
-                ? `${circPct.toFixed(circPct >= 99.95 ? 0 : 1)}%`
-                : '—'}
+        <div className="px-4 py-2.5">
+          <div className="flex items-center justify-between gap-3">
+            <span className={PANEL_LABEL_CLASS}>Circulating supply</span>
+            <span className="text-ink min-w-0 text-right font-mono text-sm tabular-nums">
+              {supply(circulating, code)}
             </span>
           </div>
           {circPct != null && (
-            <div className="bg-surface-muted mt-1.5 h-1.5 overflow-hidden rounded-full">
-              <div
-                className="bg-brand-500 h-full rounded-full"
-                style={{ width: `${circPct}%` }}
-              />
+            <div className="mt-2 flex items-center gap-3">
+              <div className="bg-surface-muted h-1.5 flex-1 overflow-hidden rounded-full">
+                <div
+                  className="bg-brand-500 h-full rounded-full"
+                  style={{ width: `${circPct}%` }}
+                />
+              </div>
+              <span className="text-ink-muted font-mono text-xs tabular-nums">
+                {`${circPct.toFixed(circPct >= 99.95 ? 0 : 1)}%`}
+              </span>
             </div>
           )}
-          <div className="text-ink mt-1.5 font-mono text-sm tabular-nums">
-            {supply(circulating, code)}
-          </div>
         </div>
-      </div>
+      </Panel>
 
-      {/* Links / issuer / activity */}
-      <div className="rounded-card border-line bg-surface border">
+      <Panel
+        title={coin.issuer || homeDomain ? 'Issuer & activity' : 'Activity'}
+        source={source}
+        headingLevel={2}
+        bodyClassName="divide-line -mx-4 -mb-4 divide-y"
+      >
         {/* home_domain is attacker-controlled on-chain data; only
             render it as a clickable link when it passes isSafeHomeDomain
             (the guard the issuer pages already use). Otherwise show plain
@@ -211,12 +231,12 @@ export function AssetSidebar({
                   href={`https://${homeDomain}`}
                   target="_blank"
                   rel="noreferrer noopener nofollow"
-                  className="text-brand-600 font-mono text-xs hover:underline"
+                  className="text-brand-600 font-mono text-sm hover:underline"
                 >
                   {homeDomain}
                 </a>
               ) : (
-                <span className="text-ink-muted font-mono text-xs">
+                <span className="text-ink-muted font-mono text-sm">
                   {homeDomain}
                 </span>
               )
@@ -229,7 +249,7 @@ export function AssetSidebar({
             value={
               <Link
                 href={`/issuers/${coin.issuer}`}
-                className="text-brand-600 font-mono text-xs hover:underline"
+                className="text-brand-600 font-mono text-sm hover:underline"
                 title={coin.issuer}
               >
                 {coin.issuer.slice(0, 4)}…{coin.issuer.slice(-4)}
@@ -257,7 +277,7 @@ export function AssetSidebar({
               : '—'
           }
         />
-      </div>
+      </Panel>
 
       {/* Converter + 24h USD performance range — pricing-only; hidden on the
           lean test nets (no aggregator), where they'd be empty/inert. */}
@@ -272,6 +292,7 @@ export function AssetSidebar({
           <PerformanceRange
             points={coin.price_history_24h ?? []}
             current={priceNum}
+            source={source}
           />
         </>
       )}
@@ -281,11 +302,11 @@ export function AssetSidebar({
 
 function StatRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="border-line flex items-center justify-between border-b px-4 py-2.5 last:border-0">
-      <span className="text-ink-muted text-[11px] tracking-wider uppercase">
-        {label}
+    <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+      <span className={PANEL_LABEL_CLASS}>{label}</span>
+      <span className="text-ink min-w-0 text-right font-mono text-sm tabular-nums">
+        {value}
       </span>
-      <span className="text-ink font-mono text-sm tabular-nums">{value}</span>
     </div>
   );
 }
@@ -293,9 +314,11 @@ function StatRow({ label, value }: { label: string; value: React.ReactNode }) {
 function PerformanceRange({
   points,
   current,
+  source,
 }: {
   points: { t: string; p?: string | null }[];
   current: number | null;
+  source: ReturnType<typeof asExample>;
 }) {
   const vals = points
     .map((pt) => (pt.p != null ? Number(pt.p) : null))
@@ -309,23 +332,20 @@ function PerformanceRange({
       ? Math.max(0, Math.min(100, ((cur - low) / (high - low)) * 100))
       : 50;
   return (
-    <div className="rounded-card border-line bg-surface border p-4">
-      <div className="flex items-baseline justify-between">
-        <span className="text-ink-muted text-[11px] tracking-wider uppercase">
-          Price performance
-        </span>
-        <span className="text-ink-faint text-[10px] tracking-wider uppercase">
-          24h
-        </span>
-      </div>
-      <div className="text-ink-muted mt-2 flex items-center justify-between text-[11px]">
+    <Panel
+      headingLevel={2}
+      title="Price range"
+      hint="24h · USD"
+      source={source}
+    >
+      <div className="text-ink-muted flex items-center justify-between text-[11px]">
         <span>Low</span>
         <span>High</span>
       </div>
-      <div className="from-down via-warn-500 to-up relative mt-1 h-1.5 rounded-full bg-linear-to-r">
+      <div className="bg-surface-muted relative mt-1 h-1.5 rounded-full">
         <div
-          className="bg-ink absolute top-1/2 h-3 w-1 -translate-y-1/2 rounded-full shadow-sm"
-          style={{ left: `calc(${pct}% - 2px)` }}
+          className="bg-ink absolute top-1/2 h-3 w-0.5 -translate-y-1/2 rounded-full"
+          style={{ left: `calc(${pct}% - 1px)` }}
           aria-hidden
         />
       </div>
@@ -333,7 +353,7 @@ function PerformanceRange({
         <span>${formatPriceSmall(low)}</span>
         <span>${formatPriceSmall(high)}</span>
       </div>
-    </div>
+    </Panel>
   );
 }
 

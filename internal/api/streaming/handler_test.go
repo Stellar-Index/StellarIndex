@@ -12,7 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // readSSEFrames blocks until `want` complete frames have been read, or `timeout` elapses. A frame
@@ -380,7 +383,7 @@ func TestStream_MaxLifetimeEndsStreamAndResumes(t *testing.T) {
 }
 
 // TestStream_PerIPConcurrentCap pins that one client IP holds at most MaxStreamsPerIP concurrent SSE connections and
-// the (N+1)th gets 503; without the cap it would open with 200.
+// the (N+1)th gets 429; without the cap it would open with 200.
 func TestStream_PerIPConcurrentCap(t *testing.T) {
 	const capN = 3
 
@@ -552,5 +555,102 @@ func TestStream_PerIPCapDisabled(t *testing.T) {
 			t.Fatalf("stream %d with per-IP cap disabled: status = %d, want 200", i, resp.StatusCode)
 		}
 		defer resp.Body.Close() //nolint:revive // held open until test teardown
+	}
+}
+
+// TestStream_ActiveAndRejectedStreamsAreMetered pins the exported cap state: an open stream holds the active gauge up,
+// a per-IP refusal is counted under its reason, and closing the stream releases the gauge.
+func TestStream_ActiveAndRejectedStreamsAreMetered(t *testing.T) {
+	streaming.SetMaxStreamsPerIP(1)
+	defer streaming.SetMaxStreamsPerIP(0)
+	streaming.SetStreamClientIPResolver(func(*http.Request) string { return "metered-client" })
+	defer streaming.SetStreamClientIPResolver(nil)
+
+	hub := streaming.NewHub(0)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		streaming.Stream(w, r, hub, []string{"topic"}, streaming.StreamOptions{HeartbeatInterval: 30 * time.Second})
+	}))
+	defer srv.Close()
+
+	activeBefore := testutil.ToFloat64(obs.APISSEStreamsActive)
+	rejected := obs.APISSEStreamsRejectedTotal.WithLabelValues("per_ip_cap")
+	rejectedBefore := testutil.ToFloat64(rejected)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
+	held, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("open first stream: %v", err)
+	}
+	defer held.Body.Close()
+	if got := testutil.ToFloat64(obs.APISSEStreamsActive) - activeBefore; got != 1 {
+		t.Fatalf("active streams gauge delta with one open stream = %v, want 1", got)
+	}
+
+	resp, err := srv.Client().Get(srv.URL)
+	if err != nil {
+		t.Fatalf("open over-cap stream: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("over-cap status = %d, want 429", resp.StatusCode)
+	}
+	if got := testutil.ToFloat64(rejected) - rejectedBefore; got != 1 {
+		t.Fatalf("rejected{per_ip_cap} delta = %v, want 1", got)
+	}
+
+	cancel()
+	held.Body.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for testutil.ToFloat64(obs.APISSEStreamsActive) != activeBefore {
+		if time.Now().After(deadline) {
+			t.Fatalf("active streams gauge = %v after close, want %v",
+				testutil.ToFloat64(obs.APISSEStreamsActive), activeBefore)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// TestStream_RejectedStreamsCounter — a connection refused by the caps
+// is counted, so a flood is visible in diagnostics rather than silent.
+func TestStream_RejectedStreamsCounter(t *testing.T) {
+	streaming.SetMaxStreamsPerIP(1)
+	defer streaming.SetMaxStreamsPerIP(0)
+	streaming.SetStreamClientIPResolver(func(*http.Request) string { return "counter-client" })
+	defer streaming.SetStreamClientIPResolver(nil)
+
+	hub := streaming.NewHub(0)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		streaming.Stream(w, r, hub, []string{"topic"}, streaming.StreamOptions{
+			HeartbeatInterval: 30 * time.Second,
+		})
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	before := streaming.StreamsRejected()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
+	held, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("open first stream: %v", err)
+	}
+	defer held.Body.Close()
+
+	req2, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
+	resp, err := srv.Client().Do(req2)
+	if err != nil {
+		t.Fatalf("open over-cap stream: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("over-cap status = %d, want 429", resp.StatusCode)
+	}
+
+	if got := streaming.StreamsRejected() - before; got != 1 {
+		t.Errorf("StreamsRejected delta = %d, want 1", got)
 	}
 }

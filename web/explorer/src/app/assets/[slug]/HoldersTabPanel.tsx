@@ -4,6 +4,17 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
+import {
+  Callout,
+  Skeleton,
+  Table,
+  THead,
+  TBody,
+  TR,
+  Th,
+  Td,
+} from '@/components/ui';
+import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 import { apiGet, asExample } from '@/api/client';
 import {
   DonutChart,
@@ -81,9 +92,16 @@ export function HoldersTabPanel({
       bodyClassName="-mx-4"
     >
       {isLoading ? (
-        <p className="text-ink-muted px-4 text-sm">Loading holders…</p>
+        <div className="space-y-3 px-4" aria-busy="true">
+          <span className="sr-only">Loading holders</span>
+          <Skeleton className="h-4 w-3/5" aria-hidden />
+          <Skeleton className="h-4 w-full" aria-hidden />
+          <Skeleton className="h-4 w-4/5" aria-hidden />
+        </div>
       ) : isError ? (
-        <p className="text-down-strong px-4 text-sm">Failed to load holders.</p>
+        <div className="px-4">
+          <Callout tone="bad">Failed to load holders.</Callout>
+        </div>
       ) : holders.length === 0 ? (
         <p className="text-ink-muted px-4 text-sm">
           {isNativeAssetID(assetID)
@@ -97,34 +115,25 @@ export function HoldersTabPanel({
       ) : (
         <div className="overflow-x-auto">
           <HoldersConcentration holders={holders} decimals={decimals} />
-          <table className="divide-line min-w-full divide-y text-sm">
-            <thead>
-              <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
-                <th scope="col" className="px-4 py-2">
-                  #
-                </th>
-                <th scope="col" className="px-4 py-2">
-                  Account
-                </th>
-                <th scope="col" className="px-4 py-2 text-right">
-                  Balance
-                </th>
-                <th
-                  scope="col"
-                  className="px-4 py-2 text-right"
+          <Table>
+            <THead>
+              <tr>
+                <Th>#</Th>
+                <Th>Account</Th>
+                <Th align="right">Balance</Th>
+                <Th
+                  align="right"
                   title="Share of the balance held by the served top rows, not of total supply."
                 >
                   Share
-                </th>
+                </Th>
               </tr>
-            </thead>
-            <tbody className="divide-line-subtle divide-y">
+            </THead>
+            <TBody>
               {holders.map((h, i) => (
-                <tr key={h.account_id} className="hover:bg-surface-muted">
-                  <td className="text-ink-faint px-4 py-3 font-mono text-xs">
-                    {i + 1}
-                  </td>
-                  <td className="px-4 py-3">
+                <TR key={h.account_id}>
+                  <Td className="text-ink-faint font-mono text-xs">{i + 1}</Td>
+                  <Td className="whitespace-nowrap">
                     <Link
                       href={`/accounts/${encodeURIComponent(h.account_id ?? '')}/`}
                       className="text-brand-600 font-mono text-xs hover:underline"
@@ -133,20 +142,20 @@ export function HoldersTabPanel({
                       {(h.account_id ?? '').slice(0, 8)}…
                       {(h.account_id ?? '').slice(-6)}
                     </Link>
-                  </td>
-                  <td className="text-ink-body px-4 py-3 text-right font-mono tabular-nums">
+                  </Td>
+                  <Td align="right" className="font-mono">
                     {/* Balances are smallest-unit integer strings that can
                         exceed 2^53 (ADR-0003) — BigInt-divide first, never
                         Number(); an absent balance renders "—", not NaN. */}
                     {formatUnitsReadable(h.balance, decimals)}
-                  </td>
-                  <td className="px-4 py-3">
+                  </Td>
+                  <Td>
                     <ShareBar pct={shares[i]} max={maxShare} />
-                  </td>
-                </tr>
+                  </Td>
+                </TR>
               ))}
-            </tbody>
-          </table>
+            </TBody>
+          </Table>
         </div>
       )}
     </Panel>
@@ -222,7 +231,7 @@ function HoldersConcentration({
   );
   return (
     <div className="border-line-subtle border-b px-4 pb-4">
-      <h3 className="text-ink-muted mb-2 text-[11px] font-semibold tracking-wider uppercase">
+      <h3 className={`${PANEL_LABEL_CLASS} mb-2`}>
         Concentration — within the served top {holders.length}
       </h3>
       <DonutChart
@@ -245,7 +254,7 @@ function HoldersConcentration({
         formatValue={(n) => formatCompact(n)}
       />
       <p
-        className="text-ink-faint mt-2 text-[11px]"
+        className="text-ink-faint mt-2 text-xs"
         title="Share of the balance held by the served top rows only, not of total supply (the full holder set isn’t served here)."
       >
         Share of the top-{holders.length} served rows only, not of supply.

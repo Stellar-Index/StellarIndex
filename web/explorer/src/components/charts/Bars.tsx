@@ -45,6 +45,16 @@ export const HATCH_BG =
   'repeating-linear-gradient(135deg, currentColor 0, currentColor 2px, transparent 2px, transparent 5px)';
 
 /**
+ * barWidth — the bar's share of its track, with room for the figure next
+ * to it. The reserve is 30% of the track on wide viewports and never under
+ * 7rem, so every row's bar keeps the same scale and the figure never wraps
+ * or spills on a phone.
+ */
+function barWidth(frac: number): string {
+  return `calc((100% - max(7rem, 30%)) * ${Math.max(frac, 0.0075)})`;
+}
+
+/**
  * HBarList — labeled horizontal bars on a shared linear scale (max of the
  * set). For magnitude comparisons across a small set of entities
  * (ops-by-type, auctions per pool, TVL per protocol). Not for
@@ -79,7 +89,7 @@ export function HBarList({
       {finite.map((it) => (
         <li
           key={it.id ?? it.label}
-          className="grid grid-cols-[minmax(7rem,14rem)_1fr] items-center gap-3 text-xs"
+          className="grid grid-cols-[minmax(6rem,min(14rem,40%))_minmax(0,1fr)] items-center gap-3 text-xs"
           title={it.title}
         >
           <span className="text-ink-body truncate" title={it.label}>
@@ -88,9 +98,7 @@ export function HBarList({
           <span className="flex min-w-0 items-center gap-2">
             <span
               className="relative h-2.5 min-w-[2px] shrink-0 rounded-xs"
-              style={{
-                width: `${Math.max((it.value / max) * 100, 0.75) * 0.7}%`,
-              }}
+              style={{ width: barWidth(it.value / max) }}
             >
               <span
                 aria-hidden
@@ -107,11 +115,11 @@ export function HBarList({
                 />
               )}
             </span>
-            <span className="text-ink font-mono whitespace-nowrap tabular-nums">
+            <span className="text-ink shrink-0 font-mono whitespace-nowrap tabular-nums">
               {it.display ?? formatValue(it.value)}
             </span>
             {it.annotation && (
-              <span className="text-ink-muted truncate whitespace-nowrap">
+              <span className="text-ink-muted whitespace-nowrap">
                 {it.annotation}
               </span>
             )}
@@ -199,7 +207,7 @@ export function PairedBars({
         {finite.map((r) => (
           <li
             key={r.id ?? r.label}
-            className="grid grid-cols-[minmax(7rem,14rem)_1fr] items-center gap-3 text-xs"
+            className="grid grid-cols-[minmax(6rem,min(14rem,40%))_minmax(0,1fr)] items-center gap-3 text-xs"
             title={r.title}
           >
             <span className="text-ink-body truncate" title={r.label}>
@@ -218,7 +226,7 @@ export function PairedBars({
                       aria-hidden
                       className="h-1.5 min-w-[2px] shrink-0 rounded-xs"
                       style={{
-                        width: `${Math.max((half.v / max) * 100, 0.75) * 0.7}%`,
+                        width: barWidth(half.v / max),
                         backgroundColor: half.c,
                       }}
                     />

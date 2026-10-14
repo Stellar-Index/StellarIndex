@@ -8,6 +8,8 @@
 # PROVEN-RED (scrape-history gate): delete the `and on() (…)` guard and
 # re-run — "a fresh Prometheus does not fire on a series it has not had
 # time to miss" reports 1 firing alert at 1h.
+# PROVEN-RED (subquery): put the raw `up[30h]) > 1700` count back and
+# re-run — "a fast scrape does not open the absent gate" fires at 7h30m.
 
 rule_files:
   - ../rules/curated-rwa-sync.yml
@@ -89,6 +91,17 @@ tests:
         values: '1x70'
     alert_rule_test:
       - eval_time: 1h
+        alertname: stellarindex_curated_rwa_sync_stale
+        exp_alerts: []
+
+  # ── a 15s scrape: 7.5h of samples is not 30h of observed absence ──
+  - interval: 15s
+    name: a fast scrape does not open the absent gate before 30h have been watched
+    input_series:
+      - series: 'up{job="node_exporter",instance="localhost:9100"}'
+        values: '1x1800'
+    alert_rule_test:
+      - eval_time: 7h30m
         alertname: stellarindex_curated_rwa_sync_stale
         exp_alerts: []
 

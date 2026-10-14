@@ -281,7 +281,7 @@ func TestLatestTradesForPair_ServesAMarketRecordedTheOtherWayRound(t *testing.T)
 	}
 }
 
-// TestLatestTradesForPair_ClampsLimit: $3 is both arms' LIMIT and
+// TestLatestTradesForPair_ClampsLimit: $3 is both arms' FETCH FIRST and
 // the outer LIMIT, so it alone sizes each time-unbounded walk.
 func TestLatestTradesForPair_ClampsLimit(t *testing.T) {
 	pair := dirAQUAUSDCPair(t)
@@ -938,6 +938,32 @@ func TestReDeriveNullVolumeGuard_ACRIT1(t *testing.T) {
 				t.Fatalf("want the write allowed, got refusal: %v", err)
 			}
 		})
+	}
+}
+
+// The raw trade window behind /v1/vwap, /v1/twap and the single-bar /v1/ohlc binds the non-VWAP set as $6 in both
+// direction arms; otherwise a vendor-only month answers a window VWAP with carrier amounts as volume.
+func TestTradesInRange_BindsNonVWAPSources(t *testing.T) {
+	pair := testXLMUSDCPair(t)
+	to := time.Now().UTC().Truncate(time.Second)
+	store, conn := newScriptedStore(t, scriptedResult{
+		cols: []string{"source", "ledger", "tx_hash", "op_index", "ts", "base_asset", "quote_asset", "base_amount", "quote_amount", "maker", "taker", "routed_via"},
+	})
+	defer func() { _ = store.db.Close() }()
+
+	if _, err := store.TradesInRange(context.Background(), pair, to.Add(-time.Hour), to, 100); err != nil {
+		t.Fatalf("TradesInRange: %v", err)
+	}
+	if len(conn.stmts) != 1 {
+		t.Fatalf("issued %d statements, want 1", len(conn.stmts))
+	}
+	stmt := conn.stmts[0]
+	const pred = "NOT (source = ANY(string_to_array($6, ',')))"
+	if n := strings.Count(stmt.sql, pred); n != 2 {
+		t.Errorf("predicate appears %d times, want 2 (both direction arms)\nSQL: %s", n, stmt.sql)
+	}
+	if got := stmt.arg(t, 6); got != nonVWAPSourcesArg() {
+		t.Errorf("$6 = %v, want the non-VWAP source set", got)
 	}
 }
 

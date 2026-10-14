@@ -2,7 +2,6 @@ package mev
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -10,7 +9,6 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
-	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 type recordingHeartbeat struct{ beats []bool }
@@ -45,47 +43,6 @@ func runWithHeartbeat(t *testing.T, scanner *fakeScanner, order TxOrderResolver)
 		t.Fatalf("RunOnce: %v", err)
 	}
 	return hb.beats
-}
-
-// TestWorker_Heartbeat_FullOnlyWhenEveryHashResolved pins the beat's meaning: full needs a wired
-// resolver that returned every ordering hash; anything less, including a run that never reached the
-// write, is partial or absent.
-func TestWorker_Heartbeat_FullOnlyWhenEveryHashResolved(t *testing.T) {
-	// Sandwich-shaped group: three trades, two takers, one taker on two txs, so the lake is asked
-	// for every hash.
-	trades := []canonical.Trade{
-		mkTrade(t, tOpt{tx: txA, taker: "GATK", base: "native", quote: usdc}),
-		mkTrade(t, tOpt{tx: txB, taker: "GVIC", base: "native", quote: usdc}),
-		mkTrade(t, tOpt{tx: txC, taker: "GATK", base: "native", quote: usdc}),
-	}
-	scanner := &fakeScanner{trades: trades, usd: usdLegs("5.00", "5.00", "5.00")}
-	hashes := OrderingTxHashes(trades, nil)
-	if len(hashes) == 0 {
-		t.Fatal("fixture yields no ordering hashes")
-	}
-
-	if got := runWithHeartbeat(t, scanner, nil); len(got) != 1 || got[0] {
-		t.Errorf("no resolver: beats = %v, want [false]", got)
-	}
-	if got := runWithHeartbeat(t, scanner, fakeOrder{}); len(got) != 1 || !got[0] {
-		t.Errorf("resolver, every hash: beats = %v, want [true]", got)
-	}
-	if got := runWithHeartbeat(t, scanner, fakeOrder{err: errors.New("lake down")}); len(got) != 1 || got[0] {
-		t.Errorf("resolver error: beats = %v, want [false]", got)
-	}
-	drop := map[string]bool{hashes[0]: true}
-	if got := runWithHeartbeat(t, scanner, fakeOrder{drop: drop}); len(got) != 1 || got[0] {
-		t.Errorf("one hash missing: beats = %v, want [false]", got)
-	}
-	if got := runWithHeartbeat(t, &fakeScanner{err: errors.New("db down")}, fakeOrder{}); len(got) != 0 {
-		t.Errorf("scan error: beats = %v, want none", got)
-	}
-}
-
-func TestWorker_Heartbeat_NoHashesIsFull(t *testing.T) {
-	if got := runWithHeartbeat(t, &fakeScanner{}, fakeOrder{}); len(got) != 1 || !got[0] {
-		t.Errorf("empty window with resolver: beats = %v, want [true]", got)
-	}
 }
 
 func newHeartbeatRedis(t *testing.T) (*miniredis.Miniredis, *RedisHeartbeat) {

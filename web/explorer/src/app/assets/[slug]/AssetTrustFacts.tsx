@@ -7,6 +7,7 @@ import { apiGet, asExample } from '@/api/client';
 import { useIssuer } from '@/api/hooks';
 import { scamFlagTags } from '@/lib/directory-tags';
 import type { paths } from '@/api/types';
+import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 
 type HoldersResp = NonNullable<
   paths['/assets/{asset_id}/holders']['get']['responses'][200]['content']['application/json']['data']
@@ -71,6 +72,9 @@ function flagList(i: {
  * as_of. Facts with no reader yet are listed as not captured rather than
  * omitted, so absence is never read as "fine".
  */
+/** A bare figure (counts, percentages) sets in mono; prose stays in Onest. */
+const NUMERIC_VALUE = /^[\d,.\s%]+$/;
+
 export function AssetTrustFacts({
   assetID,
   issuer,
@@ -218,11 +222,17 @@ export function AssetTrustFacts({
       <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {facts.map((f) => (
           <div key={f.label}>
-            <dt className="text-ink-muted text-[11px] tracking-wider uppercase">
-              {f.label}
-            </dt>
-            <dd>{f.value}</dd>
-            <dd className="text-ink-faint font-mono text-[11px] break-all">
+            <dt className={PANEL_LABEL_CLASS}>{f.label}</dt>
+            <dd
+              className={
+                typeof f.value === 'string' && NUMERIC_VALUE.test(f.value)
+                  ? 'text-ink font-mono tabular-nums'
+                  : 'text-ink'
+              }
+            >
+              {f.value}
+            </dd>
+            <dd className="text-ink-faint font-mono text-[11px] break-words">
               source {f.source} · as of {f.asOf}
             </dd>
           </div>

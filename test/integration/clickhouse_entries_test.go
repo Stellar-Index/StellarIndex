@@ -30,6 +30,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/chops"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	chstore "github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // The derive writes the sponsorship lifecycle as a third output of the same pass: a sponsored trustline's
@@ -2272,5 +2273,191 @@ func TestChEntryIndex_WriteFillsBothIndexes(t *testing.T) {
 	}
 	if wm != base+2 {
 		t.Fatalf("entry_index watermark = %d, want %d", wm, base+2)
+	}
+}
+
+// Both axes of the fix: update-then-update in one ledger must serve the final b_rate, and update-then-remove must drop the
+// key (the removal participates and is dropped via HAVING on the winning change_type, instead of the earlier update being
+// resurrected). The reader gets both from ledger_entries_current FINAL;
+func TestBlendPoolReserves_SameLedgerLastChangeWins(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+
+	// A very high ledger so the fixture sits at the lake's tip, but it must NOT outlive the test: max(ledger_seq) bounds every
+	// whole-lake walker, so a surviving row costs each walk ~16,000 empty windows and breaches the 5-minute deadline under
+	// load. purgeLakeFixtureLedgers removes it synchronously.
+	const ledger = uint32(4_000_000_000)
+	purgeLakeFixtureLedgers(t, addr, ledger, ledger)
+	closeTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	const poolSeed, assetValSeed, assetGoneSeed = byte(0xB1), byte(0xB2), byte(0xB3)
+	pool := contractIDFromSeed(poolSeed)
+	assetVal := contractIDFromSeed(assetValSeed)
+	assetGone := contractIDFromSeed(assetGoneSeed)
+	poolStr := mustContractStrkey(t, poolSeed)
+	assetValStr := mustContractStrkey(t, assetValSeed)
+	assetGoneStr := mustContractStrkey(t, assetGoneSeed)
+
+	const (
+		staleBRate = uint64(1_000_000_000_000) // 1.0 at 12 decimals — a mid-ledger rate
+		finalBRate = uint64(2_000_000_000_000) // 2.0 — the last change in the ledger
+	)
+
+	rows := []chstore.LedgerEntryChangeRow{
+		// reserveVal: LATER update (op 1, intra 9) — the final b_rate. Written
+		// first (adversarial); sorts last.
+		{
+			LedgerSeq: ledger, CloseTime: closeTime, TxHash: "blendval", OpIndex: 1, ChangeIndex: 0,
+			IntraLedgerSeq: 9, ChangeType: "updated", EntryType: "contract_data",
+			KeyXDR: resDataKeyB64(t, pool, assetVal), EntryXDR: resDataEntryB64(t, pool, assetVal, ledger, finalBRate),
+		},
+		// reserveVal: EARLIER update (op 0, intra 8) — a stale b_rate. Sorts
+		// first, so a ledger_seq-only argMax keeps it.
+		{
+			LedgerSeq: ledger, CloseTime: closeTime, TxHash: "blendval", OpIndex: 0, ChangeIndex: 0,
+			IntraLedgerSeq: 8, ChangeType: "updated", EntryType: "contract_data",
+			KeyXDR: resDataKeyB64(t, pool, assetVal), EntryXDR: resDataEntryB64(t, pool, assetVal, ledger, staleBRate),
+		},
+		// reserveGone: the removal (op 1, intra 9) — the LAST change; the key must
+		// drop out.
+		{
+			LedgerSeq: ledger, CloseTime: closeTime, TxHash: "blendgone", OpIndex: 1, ChangeIndex: 0,
+			IntraLedgerSeq: 9, ChangeType: "removed", EntryType: "contract_data",
+			KeyXDR: resDataKeyB64(t, pool, assetGone), EntryXDR: "",
+		},
+		// reserveGone: the earlier update (op 0, intra 8) — a live entry the
+		// naive `entry_xdr != ''` filter would resurrect.
+		{
+			LedgerSeq: ledger, CloseTime: closeTime, TxHash: "blendgone", OpIndex: 0, ChangeIndex: 0,
+			IntraLedgerSeq: 8, ChangeType: "updated", EntryType: "contract_data",
+			KeyXDR: resDataKeyB64(t, pool, assetGone), EntryXDR: resDataEntryB64(t, pool, assetGone, ledger, staleBRate),
+		},
+	}
+	if _, err := chstore.InsertEntryChanges(ctx, addr, rows, 0); err != nil {
+		t.Fatalf("InsertEntryChanges: %v", err)
+	}
+
+	reader, err := chstore.NewExplorerReader(ctx, addr)
+	if err != nil {
+		t.Fatalf("NewExplorerReader: %v", err)
+	}
+	states, err := reader.BlendPoolReserves(ctx, poolStr, blend.PoolV2, []string{assetValStr, assetGoneStr}, nil)
+	if err != nil {
+		t.Fatalf("BlendPoolReserves: %v", err)
+	}
+
+	byAsset := make(map[string]chstore.BlendReserveState, len(states))
+	for _, s := range states {
+		byAsset[s.Asset] = s
+	}
+
+	got, ok := byAsset[assetValStr]
+	if !ok {
+		t.Fatalf("reserveVal absent from result; want present with the final b_rate")
+	}
+	if want := new(big.Int).SetUint64(finalBRate); got.Data.BRate == nil || got.Data.BRate.Cmp(want) != 0 {
+		t.Errorf("reserveVal b_rate = %v, want %d (same-ledger tie resolved to a stale mid-ledger reserve state)", got.Data.BRate, finalBRate)
+	}
+	if _, present := byAsset[assetGoneStr]; present {
+		t.Errorf("reserveGone present in result; want ABSENT (its last same-ledger change was a removal — the pre-fix query resurrected it)")
+	}
+}
+
+// End-to-end: a claimable balance seeded live, then claimed while the observer wasn't recording, must stop counting
+// toward classic supply after a re-seed. A seed that only added rows would sum it forever.
+func TestClaimableSeed_RetractsServedClaim(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	claimed, kept := cbsID(t, 0x61), cbsID(t, 0x62)
+	created := time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC)
+	claimedAt := time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// The served tier as an earlier (add-only) seed left it: both live.
+	for _, id := range [][32]byte{claimed, kept} {
+		if err := store.InsertClaimableObservation(ctx, timescale.ClaimableObservation{
+			ClaimableID: cbsHex(id), AssetKey: cbsAssetKey, Ledger: 34_000_000, ObservedAt: created,
+			Balance: big.NewInt(999), IntraLedgerSeq: timescale.SeedIntraLedgerSeq,
+		}); err != nil {
+			t.Fatalf("InsertClaimableObservation: %v", err)
+		}
+	}
+	// A removed row for an id nobody serves as live must not be listed.
+	if err := store.InsertClaimableObservation(ctx, timescale.ClaimableObservation{
+		ClaimableID: cbsHex(cbsID(t, 0x63)), AssetKey: cbsAssetKey, Ledger: 35_000_000, ObservedAt: created,
+		Balance: big.NewInt(0), IsRemoval: true,
+	}); err != nil {
+		t.Fatalf("InsertClaimableObservation (removal): %v", err)
+	}
+
+	served, err := store.LiveClaimableObservations(ctx)
+	if err != nil {
+		t.Fatalf("LiveClaimableObservations: %v", err)
+	}
+	if len(served) != 2 || served[cbsHex(claimed)] != (timescale.LiveClaimable{AssetKey: cbsAssetKey, Ledger: 34_000_000}) {
+		t.Fatalf("served live set = %+v, want exactly the two live balances at 34000000", served)
+	}
+
+	if _, err := chstore.InsertEntryChanges(ctx, addr, []chstore.LedgerEntryChangeRow{
+		{
+			LedgerSeq: 34_000_000, CloseTime: created, TxHash: "cbr61a", IntraLedgerSeq: 1,
+			ChangeType: "created", EntryType: "claimable_balance", KeyXDR: cbsKeyXDR(t, claimed),
+			EntryXDR: cbsEntryXDR(t, claimed, cbsAsset(t, "AQUA"), 999, 34_000_000),
+		},
+		{
+			LedgerSeq: 48_000_000, CloseTime: claimedAt, TxHash: "cbr61b", IntraLedgerSeq: 1,
+			ChangeType: "removed", EntryType: "claimable_balance", KeyXDR: cbsKeyXDR(t, claimed),
+		},
+		{
+			LedgerSeq: 34_000_000, CloseTime: created, TxHash: "cbr62a", IntraLedgerSeq: 1,
+			ChangeType: "created", EntryType: "claimable_balance", KeyXDR: cbsKeyXDR(t, kept),
+			EntryXDR: cbsEntryXDR(t, kept, cbsAsset(t, "AQUA"), 999, 34_000_000),
+		},
+	}, 0); err != nil {
+		t.Fatalf("InsertEntryChanges: %v", err)
+	}
+
+	servedKeys := map[string]string{}
+	for id, row := range served {
+		servedKeys[id] = row.AssetKey
+	}
+	var rows []timescale.ClaimableObservation
+	if _, err := chstore.StreamClaimableBalanceSeeds(ctx, addr, nil, servedKeys, chstore.SeedWalk{}, func(s chstore.ClaimableBalanceSeed) error {
+		if _, ours := served[s.ClaimableID]; ours {
+			rows = append(rows, timescale.ClaimableObservation{
+				ClaimableID: s.ClaimableID, AssetKey: s.AssetKey, Ledger: s.LedgerSeq, ObservedAt: s.CloseTime,
+				Balance: s.Balance, IsRemoval: s.IsRemoval, IntraLedgerSeq: timescale.SeedIntraLedgerSeq,
+			})
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("StreamClaimableBalanceSeeds: %v", err)
+	}
+	if err := store.InsertClaimableObservationBatch(ctx, rows); err != nil {
+		t.Fatalf("InsertClaimableObservationBatch: %v", err)
+	}
+
+	sum, err := store.SumClaimableBalancesAtOrBefore(ctx, cbsAssetKey, 50_000_000)
+	if err != nil {
+		t.Fatalf("SumClaimableBalancesAtOrBefore: %v", err)
+	}
+	if sum.Cmp(big.NewInt(999)) != 0 {
+		t.Errorf("served claimable sum after re-seed = %s, want 999 (the claimed balance retracted, the live one kept)", sum)
+	}
+	after, err := store.LiveClaimableObservations(ctx)
+	if err != nil {
+		t.Fatalf("LiveClaimableObservations (after): %v", err)
+	}
+	if _, still := after[cbsHex(claimed)]; still || len(after) != 1 {
+		t.Errorf("served live set after re-seed = %+v, want only the unclaimed balance", after)
 	}
 }

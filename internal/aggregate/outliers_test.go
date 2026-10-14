@@ -218,3 +218,60 @@ func TestFilterOutliers_MADCleanWindowUnaffected(t *testing.T) {
 		t.Fatalf("MAD filter stripped %d trades from a clean spread", len(trades)-len(got))
 	}
 }
+
+// TestFilterOutliers_DownAndUpOutliersBothDropped pins that a crash print and its mirror-image pump are both rejected, leaving the clean window's VWAP.
+func TestFilterOutliers_DownAndUpOutliersBothDropped(t *testing.T) {
+	// Base window: a genuinely dispersed pair (~1.25× step between
+	// prints, relative MAD 25 %). Base amount 1 ⇒ price = quote.
+	base := []int64{64, 80, 100, 125, 156}
+	const cleanVWAPNum = 64 + 80 + 100 + 125 + 156 // over 5 base units
+
+	cases := []struct {
+		name    string
+		outlier int64
+	}{
+		{"crash_print_below", 1},
+		{"pump_print_above", 10_000},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			trades := make([]canonical.Trade, 0, len(base)+1)
+			for _, p := range base {
+				trades = append(trades, mkTrade(1, p))
+			}
+			trades = append(trades, mkTrade(1, tc.outlier))
+
+			got := aggregate.FilterOutliers(trades, 4.0)
+			if len(got) != len(base) {
+				t.Fatalf("kept %d/%d trades, want %d — the %d print is as outlying as its mirror image",
+					len(got), len(trades), len(base), tc.outlier)
+			}
+			for _, tr := range got {
+				if tr.QuoteAmount.BigInt().Int64() == tc.outlier {
+					t.Fatalf("outlier %d survived the filter", tc.outlier)
+				}
+			}
+			vwap, err := aggregate.VWAPOf(got)
+			if err != nil {
+				t.Fatalf("VWAP: %v", err)
+			}
+			want := big.NewRat(cleanVWAPNum, int64(len(base)))
+			if vwap.Cmp(want) != 0 {
+				t.Errorf("served VWAP = %s, want %s — the %d print must not reach VWAP",
+					vwap.RatString(), want.RatString(), tc.outlier)
+			}
+		})
+	}
+}
+
+// TestFilterOutliers_SymmetricWindowFullyKept pins that a merely dispersed, uncontaminated window keeps every print.
+func TestFilterOutliers_SymmetricWindowFullyKept(t *testing.T) {
+	trades := []canonical.Trade{
+		mkTrade(1, 64), mkTrade(1, 80), mkTrade(1, 100),
+		mkTrade(1, 125), mkTrade(1, 156),
+	}
+	got := aggregate.FilterOutliers(trades, 4.0)
+	if len(got) != len(trades) {
+		t.Fatalf("kept %d/%d — an honest dispersed window must survive intact", len(got), len(trades))
+	}
+}

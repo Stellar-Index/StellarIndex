@@ -1,6 +1,5 @@
 'use client';
 
-import { HBarList } from '@/components/charts/Bars';
 import {
   CATEGORICAL_PALETTE,
   DonutChart,
@@ -82,25 +81,18 @@ export function VolumeShare({
   }
 
   return (
-    <div className="space-y-2" data-testid="volume-share">
-      <div className="grid items-center gap-6 md:grid-cols-[1fr_auto]">
-        <HBarList
-          ariaLabel={`Top ${top.length} ${noun} by 24h USD volume`}
-          items={slices.slice(0, top.length).map((s) => ({
-            id: s.id,
-            label: s.label,
-            value: s.value,
-            display: `$${formatCompactUnits(s.decimal)}`,
-            color: s.color,
-          }))}
-        />
-        <DonutChart
-          data={slices}
-          centerLabel={`$${formatCompactUnits(total)}`}
-          centerSub={`${pricedCount} ${noun}`}
-          formatValue={(n) => `$${formatCompact(n)}`}
-        />
-      </div>
+    <div
+      className="space-y-3"
+      data-testid="volume-share"
+      role="group"
+      aria-label={`Top ${top.length} ${noun} by 24h USD volume`}
+    >
+      <DonutChart
+        data={slices}
+        centerLabel={`$${formatCompactUnits(total)}`}
+        centerSub={`${pricedCount} ${noun}`}
+        formatValue={(n) => `$${formatCompact(n)}`}
+      />
       <p className="text-ink-muted text-xs">
         Top {top.length} of {pricedCount} {noun} with priced 24h volume
         {other != null ? `; the other ${otherCount} are one slice` : ''}.

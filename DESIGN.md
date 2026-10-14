@@ -225,7 +225,7 @@ Cool near-black neutrals with a single blue accent and a semantic set for direct
 - **Inks**, brightest to quietest: `ink-strong` (selection, emphasis), `ink` (headings, values), `ink-body` (running text, cells), `ink-muted` (labels, sub-lines), `ink-faint` (stamps, placeholders, group labels).
 
 ### Semantic
-- **Up / Down** (`up`, `down` with `-strong` inks and `-subtle` tints): price direction only. Always paired with a sign or arrow; never colour alone.
+- **Up / Down** (`up`, `down` with `-strong` inks and `-subtle` tints): price direction only. Always paired with a sign or arrow; never colour alone. The one other use is the order book's sides, bids `up` and asks `down`, always under a "Bids" / "Asks" label.
 - **Warn / Bad / Ok** (`-50` tint backgrounds, `-700` inks): severity badges, stale markers, the degraded banner. `warn-500` marks "stale" inline.
 - Category chips (venue, protocol, type) use the violet, teal, indigo, purple and yellow `-subtle`/`-strong` pairs in `globals.css`, routed through `src/lib/pillTone.ts`.
 

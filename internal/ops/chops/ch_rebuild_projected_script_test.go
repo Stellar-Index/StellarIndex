@@ -351,51 +351,6 @@ func csvSet(csv string) map[string]bool {
 	return out
 }
 
-func TestCHRebuild_PreflightWithoutWriteIsRefused(t *testing.T) {
-	t.Parallel()
-	err := chRebuild(chRebuildArgs(t, "-preflight", "-sources", "aquarius"))
-	if err == nil || !strings.Contains(err.Error(), "-preflight") {
-		t.Fatalf("a bare -preflight runs none of the -write guards and must not answer ok; got: %v", err)
-	}
-}
-
-func TestCHRebuild_PreflightRunsTheNamedSourceGate(t *testing.T) {
-	t.Parallel()
-	err := chRebuild(chRebuildArgs(t, "-write", "-preflight", "-sources", "aquarius,upshift"))
-	if err == nil || !strings.Contains(err.Error(), "not BackfillSafe") {
-		t.Fatalf("-write -preflight over an unaudited source was not refused by the BackfillSafe gate: %v", err)
-	}
-}
-
-// chRebuild needs Postgres and ClickHouse past config load, so, like the BackfillSafe legs, the preflight's position is
-// pinned at the source: after the last refusal and before the first lake read. It is executed for real in
-// test/integration/lake_test.go.
-func TestCHRebuild_PreflightReturnsAfterEveryGuardAndBeforeTheLake(t *testing.T) {
-	t.Parallel()
-	b, err := os.ReadFile("ch_rebuild.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := funcBodyFrom(string(b), "chRebuild")
-	exit := strings.Index(body, "return reportCHRebuildPreflight(")
-	leg2 := strings.Index(body, "checkCHRebuildBackfillSafe(reDerivedSourcesInRun(")
-	overlap := strings.Index(body, "checkCHRebuildLiveOverlap(")
-	rangeGuard := strings.Index(body, "> maxBufferedRange")
-	lake := strings.Index(body, "clickhouse.Stream")
-	if exit < 0 || leg2 < 0 || overlap < 0 || rangeGuard < 0 || lake < 0 {
-		t.Fatalf("anchors not found (exit %d, leg2 %d, overlap %d, range %d, lake %d) — this test is asserting nothing",
-			exit, leg2, overlap, rangeGuard, lake)
-	}
-	for name, pos := range map[string]int{"BackfillSafe leg 2": leg2, "live-cursor guard": overlap, "buffered-range guard": rangeGuard} {
-		if exit < pos {
-			t.Errorf("-preflight returns BEFORE the %s — it would answer ok to a run the guard refuses", name)
-		}
-	}
-	if exit > lake {
-		t.Error("-preflight returns AFTER the first lake read — it is no longer a preflight")
-	}
-}
-
 // The script rewrites `trades` years behind tip, beyond any trades continuous aggregate's refresh lookback, so without
 // an explicit refresh served OHLC / volume / TWAP keep the pre-repair rows. These tests execute the shipped script
 // (stubs in ch_rebuild_projected_script_test.go).

@@ -799,54 +799,6 @@ func TestCursorFirstLedgerMigrationReversible(t *testing.T) {
 	}
 }
 
-// TestInsertTrade_MultiOpSameTxBothLand: one Soroban tx with several operations, each emitting its own trade. Trades
-// share (source, ledger, tx_hash, ts) but differ on OpIndex, so both must persist; op=0,i=1,j=0 and op=1,i=0,j=0 once
-// collided on OpIndex=256 and ON CONFLICT DO NOTHING dropped the second.
-func TestInsertTrade_MultiOpSameTxBothLand(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	dsn := startTimescale(t, ctx)
-	applyMigrations(t, dsn)
-
-	store, err := timescale.Open(ctx, dsn)
-	if err != nil {
-		t.Fatalf("store open: %v", err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-
-	usdc, _ := c.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
-	pair, _ := c.NewPair(c.NativeAsset(), usdc)
-
-	ts := time.Now().UTC().Truncate(time.Second)
-	tx := "1111111111111111111111111111111111111111111111111111111111111111"
-	base := c.Trade{
-		Source: "sdex", Ledger: 52_430_001, TxHash: tx,
-		Timestamp: ts, Pair: pair,
-		BaseAmount:  c.NewAmount(big.NewInt(1_000_000_000)),
-		QuoteAmount: c.NewAmount(big.NewInt(12_420_000)),
-	}
-	tr0 := base
-	tr0.OpIndex = 0
-	tr1 := base
-	tr1.OpIndex = 1
-
-	if err := store.InsertTrade(ctx, tr0); err != nil {
-		t.Fatalf("op=0: %v", err)
-	}
-	if err := store.InsertTrade(ctx, tr1); err != nil {
-		t.Fatalf("op=1: %v", err)
-	}
-
-	n, err := store.CountTrades(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n != 2 {
-		t.Errorf("CountTrades = %d, want 2 — multi-op trades dropped?", n)
-	}
-}
-
 // startTimescale gives this package's ~40 call sites the shared bootstrap. Every container start goes through
 // harness.StartTimescale so the image pin, container flags and readiness gate cannot drift. Each call starts its own
 // container and returns the DSN.

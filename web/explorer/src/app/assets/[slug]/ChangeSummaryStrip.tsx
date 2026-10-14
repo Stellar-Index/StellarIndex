@@ -1,9 +1,20 @@
 'use client';
 
-import { TrendingDown, TrendingUp } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronsDown,
+  ChevronsUp,
+  ChevronUp,
+  MoveRight,
+  TrendingDown,
+  TrendingUp,
+  type LucideIcon,
+} from 'lucide-react';
 
 import { useChangeSummary, type ChangeSummary } from '@/api/hooks';
 import { DirectionPill, FreshnessMarker } from '@/components/primitives';
+import { Badge } from '@/components/ui';
+import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 import { compareDecimalStrings, formatPriceSmall } from '@/lib/format';
 
 type DeltaWindow = {
@@ -14,13 +25,14 @@ type DeltaWindow = {
 
 type Acceleration = 'increasing' | 'flat' | 'decreasing';
 
-const ACCELERATION: Record<string, { glyph: string; label: string }> = {
-  'up:increasing': { glyph: '↗↗', label: 'accelerating up' },
-  'up:flat': { glyph: '↗→', label: 'steady up' },
-  'up:decreasing': { glyph: '↗↘', label: 'decelerating up' },
-  'down:increasing': { glyph: '↘↘', label: 'accelerating down' },
-  'down:flat': { glyph: '↘→', label: 'steady down' },
-  'down:decreasing': { glyph: '↘↗', label: 'recovering' },
+// The chevron points where momentum is heading, not where price is.
+const ACCELERATION: Record<string, { label: string; icon: LucideIcon }> = {
+  'up:increasing': { label: 'accelerating up', icon: ChevronsUp },
+  'up:flat': { label: 'steady up', icon: MoveRight },
+  'up:decreasing': { label: 'decelerating up', icon: ChevronDown },
+  'down:increasing': { label: 'accelerating down', icon: ChevronsDown },
+  'down:flat': { label: 'steady down', icon: MoveRight },
+  'down:decreasing': { label: 'recovering', icon: ChevronUp },
 };
 
 /**
@@ -96,12 +108,12 @@ export function ChangeSummaryStrip({
     >
       <FreshnessMarker flags={q.data?.flags} />
       {hasAny && (
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs">
+        <div className="grid w-full grid-cols-4 gap-2">
           {windows.map((w) => (
-            <span key={w.label} className="inline-flex items-center gap-1">
-              <span className="text-ink-muted">{w.label}:</span>
+            <div key={w.label} className="flex flex-col items-start gap-1">
+              <span className={PANEL_LABEL_CLASS}>{w.label}</span>
               <DirectionPill deltaPct={w.deltaPct} compact />
-            </span>
+            </div>
           ))}
         </div>
       )}
@@ -118,15 +130,15 @@ export function ChangeSummaryStrip({
         />
       )}
       {atl != null && (
-        <span
-          className="bg-surface-subtle text-ink-muted inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-xs tabular-nums"
+        <Badge
+          tone="neutral"
           title={`Lowest USD value observed since this asset entered the index${summary.atl_at ? ` (${summary.atl_at.slice(0, 10)})` : ''} — not an all-time low over full market history.`}
         >
-          <span className="text-[10px] tracking-wider uppercase">
-            low since indexed
+          low since indexed
+          <span className="font-mono tabular-nums">
+            ${formatPriceSmall(atl)}
           </span>
-          ${formatPriceSmall(atl)}
-        </span>
+        </Badge>
       )}
     </div>
   );
@@ -140,21 +152,15 @@ export function StreakChip({
   days: number;
 }) {
   const Icon = direction === 'up' ? TrendingUp : TrendingDown;
-  const tone =
-    direction === 'up'
-      ? 'bg-up-subtle/50 text-up-strong'
-      : 'bg-down-subtle/50 text-down-strong';
   return (
-    <span
-      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${tone}`}
-    >
+    <Badge tone={direction}>
       <Icon className="h-3 w-3" aria-hidden />
       {days} {days === 1 ? 'day' : 'days'} {direction}
-    </span>
+    </Badge>
   );
 }
 
-/** First derivative (direction) × second (acceleration) as one glyph. */
+/** First derivative (direction) × second (acceleration): one icon and its name. */
 export function AccelerationArrow({
   direction,
   acceleration,
@@ -162,15 +168,17 @@ export function AccelerationArrow({
   direction: 'up' | 'down';
   acceleration: Acceleration;
 }) {
-  const a = ACCELERATION[`${direction}:${acceleration}`];
-  const tone = direction === 'up' ? 'text-up-strong' : 'text-down-strong';
+  const mark = ACCELERATION[`${direction}:${acceleration}`];
+  if (!mark) return null;
+  const Icon = mark.icon;
+  // Momentum is not price direction, so it never borrows the up/down colours.
   return (
     <span
-      className={`text-xs font-bold tabular-nums ${tone}`}
-      aria-label={a.label}
-      title={a.label}
+      className="text-ink-muted inline-flex items-center gap-1 text-xs"
+      title="Momentum over the streak"
     >
-      {a.glyph}
+      <Icon className="h-3 w-3" aria-hidden />
+      {mark.label}
     </span>
   );
 }

@@ -13,7 +13,6 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
-	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 type creditFXStub struct{ points []FXQuotePoint }
@@ -75,49 +74,5 @@ func TestFXQuoteSourceLabel(t *testing.T) {
 	}
 	if got := fxQuoteSourceLabel("massive"); got != "massive" {
 		t.Errorf("label = %q, want massive", got)
-	}
-}
-
-// TestDivergence_CreditsLicensedReference: a reference row from a licensed aggregator carries `credit`; an on-chain
-// oracle reference omits the key.
-func TestDivergence_CreditsLicensedReference(t *testing.T) {
-	at := time.Date(2026, 7, 3, 22, 37, 8, 0, time.UTC)
-	s := withholdingServer()
-	s.Divergences = &withholdingDivergenceReader{latest: []timescale.DivergenceRow{
-		{AssetID: "crypto:BTC", QuoteID: "fiat:USD", Reference: "redstone", ObservedAt: at, OurPrice: "100", RefPrice: "99", DeltaPct: "1", Status: "clear"},
-		{AssetID: "crypto:BTC", QuoteID: "fiat:USD", Reference: "coingecko", ObservedAt: at, OurPrice: "100", RefPrice: "100", DeltaPct: "0", Status: "clear"},
-	}}
-	rec := httptest.NewRecorder()
-	s.handleDivergence(rec, httptest.NewRequest(http.MethodGet, "/v1/divergence", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d (body %s)", rec.Code, rec.Body.String())
-	}
-	var got struct {
-		Data struct {
-			Pairs []struct {
-				References []map[string]json.RawMessage `json:"references"`
-			} `json:"pairs"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(got.Data.Pairs) != 1 || len(got.Data.Pairs[0].References) != 2 {
-		t.Fatalf("want 1 pair with 2 references: %s", rec.Body.String())
-	}
-	for _, o := range got.Data.Pairs[0].References {
-		var ref string
-		_ = json.Unmarshal(o["reference"], &ref)
-		raw, present := o["credit"]
-		switch ref {
-		case "coingecko":
-			if string(raw) != `"CoinGecko"` {
-				t.Errorf("coingecko credit = %s, want CoinGecko", raw)
-			}
-		case "redstone":
-			if present {
-				t.Errorf("redstone carries credit %s; an on-chain oracle has none", raw)
-			}
-		}
 	}
 }

@@ -10,6 +10,7 @@ import {
   useTipStream,
 } from '@/lib/live/hooks';
 import { ThinMarketBadge, thinMarketNote } from '@/components/ThinMarketBadge';
+import { DirectionPill } from '@/components/primitives';
 import { cn } from '@/lib/cn';
 import { formatPriceSmall, positiveDecimal } from '@/lib/format';
 
@@ -184,33 +185,20 @@ export function LiveAssetPrice({
           <ThinMarketBadge substance={poll.substance} className="self-center" />
         )}
         {changePct != null && (
-          <span
-            className={`font-mono text-sm tabular-nums ${
-              changePct > 0
-                ? 'text-up'
-                : changePct < 0
-                  ? 'text-down'
-                  : 'text-ink-muted'
-            }`}
-          >
-            {changePct > 0 ? '▲' : changePct < 0 ? '▼' : ''}{' '}
-            {changePct > 0 ? '+' : ''}
-            {changePct.toFixed(2)}%{' '}
-            <span className="text-ink-faint">(24h)</span>
+          <span className="flex items-center gap-1.5 self-center">
+            <DirectionPill deltaPct={changePct} />
+            <span className="text-ink-faint text-xs">24h</span>
           </span>
         )}
         {tipActive && (
           <span
-            className="relative flex h-2 w-2"
+            className="bg-up inline-block h-2 w-2 self-center rounded-full"
             aria-label="live"
             role="status"
-          >
-            <span className="bg-up absolute inline-flex h-full w-full animate-ping rounded-full opacity-60" />
-            <span className="bg-up relative inline-flex h-2 w-2 rounded-full" />
-          </span>
+          />
         )}
       </div>
-      <p className="text-ink-muted mt-1 text-[11px] tracking-wider uppercase">
+      <p className="text-ink-muted mt-1 text-xs">
         {withheld &&
           (poll.withheldDetail ?? poll.withheldTitle ?? 'price withheld')}
         {!withheld && tipActive && 'live tip price · USD · streaming'}
@@ -248,7 +236,9 @@ export function LiveAssetPrice({
           shown != null &&
           provenance === 'transitive' &&
           'derived · two-hop DEX route · both legs substance-gated'}
-        {!withheld && !tipActive && shown != null && stale && ' · stale'}
+        {!withheld && !tipActive && shown != null && stale && (
+          <span className="text-warn-500"> · stale</span>
+        )}
         {/* 'transitive' joins listing/declared_peg here: those captions
             describe a price that never came from the /v1/price poll, so
             "as baked at deploy" would be a lie about its freshness. The

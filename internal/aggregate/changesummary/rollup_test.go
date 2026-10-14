@@ -1,10 +1,12 @@
 package changesummary
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -436,5 +438,27 @@ func TestRefresh_PublishesPassOutcomeAndHeartbeat(t *testing.T) {
 	run(goodEnt)
 	if got := counter("ok") - beforeOK; got != 1 {
 		t.Fatalf("ok passes +%v, want +1", got)
+	}
+}
+
+// TestRefresh_ReportsFailuresOncePerPassAtWarn: a per-entity Debug line hid
+// a quarter of the working set failing every pass on r1.
+func TestRefresh_ReportsFailuresOncePerPassAtWarn(t *testing.T) {
+	now := time.Date(2026, 9, 23, 12, 0, 30, 0, time.UTC)
+	var buf bytes.Buffer
+	ents := []Entity{{Type: "coin", ID: "a"}, {Type: "pair", ID: "a/b"}}
+	w, err := New(fixedSource(nil), &recordingSink{}, ents,
+		slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})),
+		Options{Clock: func() time.Time { return now }})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	w.refresh(context.Background())
+	out := buf.String()
+	if n := strings.Count(out, "change-summary pass had failures"); n != 1 {
+		t.Fatalf("got %d Warn lines, want 1: %s", n, out)
+	}
+	if !strings.Contains(out, "failed=2") || !strings.Contains(out, "total=2") {
+		t.Errorf("Warn line lacks the failure count: %s", out)
 	}
 }
