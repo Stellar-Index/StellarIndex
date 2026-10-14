@@ -110,7 +110,10 @@ export function DonutChart({
       frac,
       dash: frac * c,
       offset: -cumulativeBefore[i] * c,
-      pct: exactTotal != null ? (ratioPct(s.decimal, exactTotal) ?? frac * 100) : frac * 100,
+      pct:
+        exactTotal != null
+          ? (ratioPct(s.decimal, exactTotal) ?? frac * 100)
+          : frac * 100,
     };
   });
 
@@ -179,7 +182,7 @@ export function DonutChart({
         )}
       </svg>
 
-      <ul className="min-w-0 flex-1 space-y-1.5 text-sm">
+      <ul className="min-w-0 grow basis-56 space-y-1.5 text-sm">
         {segs.map((s) => {
           const row = (
             <span className="flex items-center gap-2">

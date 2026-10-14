@@ -2,6 +2,8 @@
 
 import { useMemo, useRef, useState } from 'react';
 
+import { Callout } from '@/components/ui';
+import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 import { cn } from '@/lib/cn';
 import { formatSubunitPrice } from '@/lib/format';
 
@@ -188,7 +190,7 @@ export function DepthChart({
 
   return (
     <div className={className}>
-      <div className="mb-1 flex items-baseline justify-between font-mono text-[10px] tracking-wider uppercase">
+      <div className="text-ink-muted mb-1 flex items-baseline justify-between text-xs">
         <span className="text-up">Bids</span>
         <span className="text-ink-faint">cumulative {baseLabel} depth</span>
         <span className="text-down">Asks</span>
@@ -239,7 +241,7 @@ export function DepthChart({
               style={{ left: `${hover.frac * 100}%` }}
             />
             <div
-              className="border-line bg-surface/95 text-ink-body shadow-card pointer-events-none absolute top-2 z-10 rounded-sm border px-2 py-1 font-mono text-[11px]"
+              className="border-line bg-surface text-ink-body pointer-events-none absolute top-2 z-10 rounded-sm border px-2 py-1 font-mono text-xs"
               style={
                 hover.frac > 0.55
                   ? { right: `${(1 - hover.frac) * 100}%`, marginRight: 8 }
@@ -267,7 +269,7 @@ export function DepthChart({
           </>
         )}
       </div>
-      <div className="text-ink-muted mt-1 flex justify-between font-mono text-[10px] tabular-nums">
+      <div className="text-ink-muted mt-1 flex justify-between font-mono text-xs tabular-nums">
         <span>{formatDepthPrice(min)}</span>
         <span className="text-ink-faint">
           price ({quoteLabel} per {baseLabel})
@@ -322,11 +324,11 @@ export function OrderBookStatStrip({
         />
       </dl>
       {stats.crossed && (
-        <p className="bg-warn-50 text-warn-700 mt-2 rounded-sm px-2 py-1 text-xs">
+        <Callout tone="warn" className="mt-3">
           The served snapshot is crossed (best bid ≥ best ask), so mid and
-          spread aren&rsquo;t meaningful market facts for it — both sides are
+          spread aren&rsquo;t meaningful market facts for it; both sides are
           drawn as served.
-        </p>
+        </Callout>
       )}
     </div>
   );
@@ -343,12 +345,10 @@ function StatCell({
 }) {
   return (
     <div>
-      <dt className="text-ink-muted text-[11px] tracking-wider uppercase">
-        {label}
-      </dt>
+      <dt className={PANEL_LABEL_CLASS}>{label}</dt>
       <dd
         className={cn(
-          'mt-0.5 font-mono text-sm tabular-nums',
+          'mt-1 font-mono text-sm tabular-nums',
           tone === 'up' && 'text-up',
           tone === 'down' && 'text-down',
         )}

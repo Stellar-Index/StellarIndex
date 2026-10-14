@@ -8,10 +8,9 @@ import { MarketsTable } from './MarketsTable';
 
 export const metadata: Metadata = {
   alternates: { canonical: '/markets' },
-  // Thousands of pairs trade on Stellar in any 14-day
-  // window (see the Panel's own "top N by volume" label below) — this
-  // page only ever renders the top 100 by 24h USD volume, so the title
-  // and description must say that, not "every".
+  // Thousands of pairs trade on Stellar in any 14-day window; this page
+  // only ever renders the top 100 by 24h USD volume, so the title and
+  // description must say that, not "every".
   title: 'Markets — top pairs by 24h volume',
   description:
     'The top 100 (base, quote) pairs by 24h USD volume that traded on Stellar in the last 14 days. Sortable, with last-trade-relative timestamps.',
@@ -42,7 +41,11 @@ export default function MarketsPage() {
   }
   return (
     <Container className="space-y-6 py-8">
-      <PageHeader breadcrumbs={MARKETS_CRUMBS} title="Markets" />
+      <PageHeader
+        breadcrumbs={MARKETS_CRUMBS}
+        title="Markets"
+        meta="The top 100 pairs by 24h USD volume among those traded in the last 14 days, across every venue indexed."
+      />
 
       <Suspense fallback={<Skeleton className="h-96 w-full" />}>
         <MarketsTable />

@@ -358,7 +358,7 @@ export function MarketChart({
             failed={!!overlaySource && overlayTrades.isError}
           />
         )}
-        <span className="text-ink-faint ml-auto font-mono tracking-wider uppercase">
+        <span className="text-ink-faint ml-auto font-mono">
           {baseLabel} / {quoteLabel}
         </span>
         {!error && raw && raw.length > 0 && (
@@ -420,9 +420,7 @@ export function MarketChart({
             ariaLabel={`${baseLabel}/${quoteLabel} OHLC candlestick chart with volume, ${activeGrain} candles${activeBand ? `, ${activeBand.key} high/low band` : ''}${overlaySource ? `, ${overlaySource} trades overlaid` : ''}`}
           />
           {coverageNote && (
-            <p className="text-ink-faint font-mono text-[11px]">
-              {coverageNote}
-            </p>
+            <p className="text-ink-faint text-xs">{coverageNote}</p>
           )}
         </>
       )}

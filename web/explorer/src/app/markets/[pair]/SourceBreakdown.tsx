@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { DonutChart } from '@/components/charts/DonutChart';
+import { Skeleton } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import {
   formatCompact,
@@ -90,11 +91,11 @@ export function SourceBreakdown({
   return (
     <Panel
       headingLevel={headingLevel}
-      title="Volume by source — 24h"
+      title="Volume by source"
       hint="Each venue's share of the trailing-24h USD volume on this market."
       source={asExample('/v1/markets/sources', params)}
     >
-      {isLoading && <div className="h-40" />}
+      {isLoading && <Skeleton className="h-40 w-full" />}
       {isError && (
         <p className="text-ink-muted text-sm">
           Source breakdown is unavailable right now.

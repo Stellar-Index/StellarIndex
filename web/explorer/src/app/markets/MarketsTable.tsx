@@ -4,14 +4,17 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
+import { Search } from 'lucide-react';
 
 import { Panel } from '@/components/reveal';
+import { RequestReveal } from '@/components/reveal/RequestReveal';
 import { asExample } from '@/api/client';
 import { AssetLabel } from '@/components/AssetLabel';
 import { SourceSparkline } from '@/components/SourceSparkline';
-import { VolumeShare } from '@/components/charts/VolumeShare';
+import { VolumeShare, topWithOther } from '@/components/charts/VolumeShare';
 import { shortAssetText } from '@/lib/asset-label';
 import { useMarkets } from '@/api/hooks';
+import { cn } from '@/lib/cn';
 import {
   formatCompact,
   formatCompactUnits,
@@ -20,7 +23,51 @@ import {
 import { useLedgerStream } from '@/lib/live/hooks';
 import { LastPriceCell } from '@/components/LastPriceCell';
 import { FreshnessMarker } from '@/components/primitives';
-import { Input, TBody, TR, Table, Td, Th, THead } from '@/components/ui';
+import { SortableTh, type SortState } from '@/lib/useTableSort';
+import {
+  ButtonLink,
+  Callout,
+  EmptyState,
+  Input,
+  Segmented,
+  Skeleton,
+  TBody,
+  TR,
+  Table,
+  TableWrap,
+  Td,
+  Th,
+  THead,
+} from '@/components/ui';
+
+type Order = 'volume_24h_usd_desc' | 'pair';
+type SortKey = 'pair' | 'volume';
+type Venue = 'stellar' | 'reference' | 'all';
+
+const VENUE_OPTIONS: { value: Venue; label: string }[] = [
+  { value: 'stellar', label: 'On Stellar' },
+  { value: 'reference', label: 'Reference feeds' },
+  { value: 'all', label: 'All' },
+];
+
+// Column priority: pair, price and volume always show; the rest return as
+// the viewport widens.
+const COL = {
+  sm: 'hidden sm:table-cell',
+  md: 'hidden md:table-cell',
+  lg: 'hidden lg:table-cell',
+};
+
+/** On-Stellar when the asset is native, classic CODE-G…/CODE:G… or a
+ * C-address; crypto:/fiat: forms are off-chain reference feeds. */
+function isStellarAsset(a: string): boolean {
+  return (
+    a === 'native' ||
+    /^C[A-Z2-7]{55}$/.test(a) ||
+    /[:-]G[A-Z2-7]{55}$/.test(a) ||
+    /^\d+$/.test(a)
+  );
+}
 
 /** Minimum gap between live refetches of /v1/markets. Ledgers close
  * every ~5s but the markets directory is a heavier read than a tip
@@ -78,23 +125,12 @@ export function MarketsTable() {
     void queryClient.invalidateQueries({ queryKey: ['/v1/markets'] });
   }, [streamLatest, queryClient]);
   const [filter, setFilter] = useState('');
-  // The volume sort puts pure CEX reference pairs (crypto:*/
-  // fiat:*) first — a visitor asking "what trades on Stellar" got
-  // Binance's tape. A pair is on-Stellar when either side is a
-  // Stellar-network asset (native, classic CODE-G…/CODE:G…, or a
-  // C-address); crypto:/fiat:-prefixed forms are off-chain reference
-  // feeds. Default view: Stellar.
-  const [venue, setVenue] = useState<'stellar' | 'reference' | 'all'>(
-    'stellar',
-  );
+  // The volume sort puts pure CEX reference pairs first: a visitor asking
+  // "what trades on Stellar" got Binance's tape. Default view: Stellar.
+  const [venue, setVenue] = useState<Venue>('stellar');
 
   const sorted = useMemo(() => {
     let rows = data?.markets ?? [];
-    const isStellarAsset = (a: string) =>
-      a === 'native' ||
-      /^C[A-Z2-7]{55}$/.test(a) ||
-      /[:-]G[A-Z2-7]{55}$/.test(a) ||
-      /^\d+$/.test(a);
     const isStellarPair = (m: { base?: string; quote?: string }) =>
       isStellarAsset(m.base ?? '') || isStellarAsset(m.quote ?? '');
     if (!assetParam && venue !== 'all') {
@@ -109,294 +145,285 @@ export function MarketsTable() {
     );
   }, [data, filter, venue, assetParam]);
 
-  function setOrder(next: 'volume_24h_usd_desc' | 'pair') {
+  function setOrder(next: Order) {
     const sp = new URLSearchParams(params.toString());
     if (next === 'volume_24h_usd_desc') sp.delete('order');
     else sp.set('order', next);
     router.replace(`/markets${sp.toString() ? `?${sp.toString()}` : ''}`);
   }
+  // Server-side sort expressed in the shared header's terms, so the markers
+  // match every other table.
+  const sort: SortState<SortKey> =
+    orderBy === 'pair'
+      ? { key: 'pair', dir: 'asc' }
+      : { key: 'volume', dir: 'desc' };
+  const onSort = (key: SortKey) =>
+    setOrder(
+      key === 'pair' && orderBy !== 'pair' ? 'pair' : 'volume_24h_usd_desc',
+    );
+  const ariaSort = (key: SortKey) =>
+    sort.key !== key ? 'none' : sort.dir === 'asc' ? 'ascending' : 'descending';
+
+  const source = asExample('/v1/markets', {
+    limit: 100,
+    order_by: orderBy,
+    include: 'sparkline',
+  });
 
   if (isError) {
     return (
-      <Panel
-        title="Markets"
-        source={asExample('/v1/markets', {
-          limit: 100,
-          order_by: orderBy,
-          include: 'sparkline',
-        })}
-        bodyClassName="text-sm text-down-strong"
-      >
-        Failed to load markets:{' '}
+      <Callout tone="bad" title="Markets failed to load">
         {error instanceof Error ? error.message : 'unknown error'}
-      </Panel>
-    );
-  }
-  if (isLoading || !data) {
-    return (
-      <Panel
-        title="Markets"
-        source={asExample('/v1/markets', {
-          limit: 100,
-          order_by: orderBy,
-          include: 'sparkline',
-        })}
-        bodyClassName="text-sm text-ink-muted"
-      >
-        Loading…
-      </Panel>
-    );
-  }
-  if (data.markets.length === 0) {
-    return (
-      <Panel
-        title="Markets"
-        source={asExample('/v1/markets', {
-          limit: 100,
-          order_by: orderBy,
-          include: 'sparkline',
-        })}
-        bodyClassName="text-sm text-ink-muted"
-      >
-        {assetParam ? (
-          <>
-            No active markets for{' '}
-            <code className="font-mono">{assetParam}</code> in the last 14 days.{' '}
-            <Link href="/markets" className="text-brand-600 hover:underline">
-              View all markets →
-            </Link>
-          </>
-        ) : (
-          'No active markets in the last 14 days.'
-        )}
-      </Panel>
+      </Callout>
     );
   }
 
+  const loading = isLoading || !data;
+  const total = data?.markets.length ?? 0;
+  const shareRows = sorted.map((m) => ({
+    id: `${m.base}|${m.quote}`,
+    label: `${shortAssetText(m.base)}/${shortAssetText(m.quote)}`,
+    volume: m.volume_24h_usd,
+  }));
+  const hasShare = topWithOther(shareRows, 1).top.length > 0;
+
   return (
-    <Panel
-      title={`${sorted.length} ${venue === 'stellar' ? 'Stellar markets' : venue === 'reference' ? 'reference feeds' : 'markets'} (top ${data.markets.length} by volume)`}
-      hint="Pairs traded in the last 14 days, by 24h USD volume · reference feeds are off-chain CEX pairs"
-      source={asExample('/v1/markets', {
-        limit: 100,
-        order_by: orderBy,
-        include: 'sparkline',
-      })}
-      bodyClassName="-mx-4"
-    >
-      <FreshnessMarker flags={data.flags} className="mx-4 mb-3 block" />
-      {!assetParam && (
-        <div className="mx-4 mb-3 flex gap-1">
-          {(
-            [
-              ['stellar', 'On Stellar'],
-              ['reference', 'Reference feeds'],
-              ['all', 'All'],
-            ] as const
-          ).map(([key, label]) => (
-            <button
-              key={key}
-              onClick={() => setVenue(key)}
-              className={`rounded-md px-2.5 py-1 text-xs ${
-                venue === key
-                  ? 'bg-brand-fill text-white'
-                  : 'border-line text-ink-body hover:border-brand-500 border'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
+    <div className="space-y-4">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative w-full sm:w-80">
+            <Search
+              aria-hidden="true"
+              className="text-ink-faint pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2"
+            />
+            <Input
+              type="search"
+              aria-label={`Filter the ${total} markets shown by base or quote asset (does not search beyond the top ${total} by volume)`}
+              // Filters the fetched top-N page only, never every active pair
+              // on Stellar; the copy says so.
+              placeholder={
+                loading
+                  ? 'Filter pairs by base or quote…'
+                  : `Filter these ${total} pairs by base or quote…`
+              }
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              disabled={loading}
+              className="pl-9"
+            />
+          </div>
+          {!assetParam && (
+            <Segmented
+              ariaLabel="Venue"
+              options={VENUE_OPTIONS}
+              value={venue}
+              onChange={(v) => setVenue(v as Venue)}
+            />
+          )}
         </div>
-      )}
+        <div className="text-ink-muted flex flex-wrap items-center gap-3 text-xs">
+          {data && <FreshnessMarker flags={data.flags} />}
+          {data && (
+            <span className="tnum">
+              {sorted.length === total
+                ? `${total} pairs`
+                : `${sorted.length} of ${total} pairs`}
+              {filter && (
+                <button
+                  type="button"
+                  onClick={() => setFilter('')}
+                  className="text-brand-600 ml-2 hover:underline"
+                >
+                  clear
+                </button>
+              )}
+            </span>
+          )}
+          <RequestReveal example={source} position="inline" />
+        </div>
+      </div>
+
       {assetParam && (
-        <div className="rounded-card border-brand-200 bg-brand-50 mx-4 mb-3 flex flex-wrap items-center gap-2 border px-3 py-2 text-xs">
-          <span className="text-ink-body">
-            Showing markets for{' '}
-            <code className="text-brand-700 font-mono">{assetParam}</code> —
-            pairs where it&apos;s the base or quote.
-          </span>
-          <Link
-            href="/markets"
-            className="text-brand-600 ml-auto hover:underline"
-          >
-            Clear filter →
+        <Callout tone="info">
+          Showing markets for <code className="font-mono">{assetParam}</code>:
+          pairs where it is the base or the quote.{' '}
+          <Link href="/markets" className="font-medium hover:underline">
+            Clear filter
           </Link>
-        </div>
+        </Callout>
       )}
-      <div className="px-4 pb-3">
-        <VolumeShare
-          noun="pairs"
-          rows={sorted.map((m) => ({
-            id: `${m.base}|${m.quote}`,
-            label: `${shortAssetText(m.base)}/${shortAssetText(m.quote)}`,
-            volume: m.volume_24h_usd,
-          }))}
-          scopeNote={`Only the top ${data.markets.length} pairs by volume are fetched; thousands more traded in the last 14 days.`}
+
+      {!loading && total === 0 ? (
+        <EmptyState
+          headingLevel={2}
+          title="No active markets"
+          description={
+            assetParam
+              ? `No pair involving ${assetParam} traded in the last 14 days.`
+              : 'No pair traded in the last 14 days.'
+          }
+          action={
+            assetParam ? (
+              <ButtonLink href="/markets" variant="secondary" size="sm">
+                View all markets
+              </ButtonLink>
+            ) : undefined
+          }
         />
-      </div>
-      <div className="px-4 pt-1 pb-3">
-        <div className="flex flex-wrap items-center gap-3 text-xs">
-          <Input
-            type="search"
-            aria-label={`Filter the ${data.markets.length} markets shown by base or quote asset (does not search beyond the top ${data.markets.length} by volume)`}
-            // This only filters the fetched top-N page, not
-            // every active pair on Stellar — say so, rather than reading
-            // like a full-network search that silently comes up empty for
-            // a real pair outside the top N.
-            placeholder={`Filter these ${data.markets.length} pairs by base or quote…`}
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            className="w-72 font-mono text-[11px]"
-          />
-          <span className="text-ink-muted font-mono text-[11px]">
-            {sorted.length} of {data.markets.length} rows
-            {filter && (
-              <button
-                type="button"
-                onClick={() => setFilter('')}
-                className="text-brand-600 ml-2 hover:underline"
-              >
-                clear
-              </button>
-            )}
-          </span>
-        </div>
-      </div>
-      <div className="overflow-x-auto">
-        <Table>
-          <THead>
-            <tr>
-              <Th>#</Th>
-              <Th>
-                <SortHeader
-                  active={orderBy === 'pair'}
-                  label="Base"
-                  hint={
-                    orderBy === 'pair'
-                      ? 'Sorted alphabetically. Click to sort by 24h volume.'
-                      : 'Sort alphabetically by base asset.'
-                  }
-                  onClick={() =>
-                    setOrder(
-                      orderBy === 'pair' ? 'volume_24h_usd_desc' : 'pair',
-                    )
-                  }
-                />
-              </Th>
-              <Th>Quote</Th>
-              <Th align="right">Last price</Th>
-              <Th align="right">
-                <SortHeader
-                  active={orderBy === 'volume_24h_usd_desc'}
-                  label="24h volume"
-                  hint={
-                    orderBy === 'volume_24h_usd_desc'
-                      ? 'Sorted by 24h USD volume (desc). Click to sort alphabetically.'
-                      : 'Sort by 24h USD volume (desc).'
-                  }
-                  onClick={() => setOrder('volume_24h_usd_desc')}
-                />
-              </Th>
-              <Th align="right">24h trades</Th>
-              <Th>24h chart</Th>
-              <Th align="right">Last trade</Th>
-            </tr>
-          </THead>
-          <TBody>
-            {sorted.map((m, i) => {
-              const slug = `${m.base}~${m.quote}`;
-              return (
-                <TR key={`${m.base}|${m.quote}`}>
-                  <Td>
-                    <Link
-                      href={`/markets/${encodeURIComponent(slug)}`}
-                      className="text-ink-faint hover:text-brand-600"
+      ) : (
+        <>
+          {hasShare && (
+            <Panel
+              headingLevel={2}
+              title="Volume share"
+              hint="How the listed pairs split the trailing-24h USD volume"
+              source={source}
+            >
+              <VolumeShare
+                noun="pairs"
+                rows={shareRows}
+                scopeNote={`Only the top ${total} pairs by volume are fetched; thousands more traded in the last 14 days.`}
+              />
+            </Panel>
+          )}
+          <TableWrap>
+            <Table>
+              <THead>
+                <tr>
+                  <Th className={COL.sm}>#</Th>
+                  <SortableTh
+                    label="Base"
+                    sortKey="pair"
+                    sort={sort}
+                    onSort={onSort}
+                    ariaSort={ariaSort}
+                  />
+                  <Th>Quote</Th>
+                  <Th align="right" className={COL.sm}>
+                    Last price
+                  </Th>
+                  <SortableTh
+                    label="24h volume"
+                    sortKey="volume"
+                    align="right"
+                    sort={sort}
+                    onSort={onSort}
+                    ariaSort={ariaSort}
+                  />
+                  <Th align="right" className={COL.md}>
+                    24h trades
+                  </Th>
+                  <Th className={COL.lg}>Hourly volume</Th>
+                  <Th align="right" className={COL.md}>
+                    Last trade
+                  </Th>
+                </tr>
+              </THead>
+              <TBody>
+                {loading ? (
+                  Array.from({ length: 12 }, (_, i) => <SkeletonRow key={i} />)
+                ) : sorted.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={8}
+                      className="text-ink-muted px-4 py-10 text-center text-sm"
                     >
-                      {i + 1}
-                    </Link>
-                  </Td>
-                  <Td>
-                    <Link
-                      href={`/markets/${encodeURIComponent(slug)}`}
-                      className="hover:text-brand-600"
-                    >
-                      <AssetLabel canonical={m.base} />
-                    </Link>
-                  </Td>
-                  <Td>
-                    <Link
-                      href={`/markets/${encodeURIComponent(slug)}`}
-                      className="hover:text-brand-600"
-                    >
-                      <AssetLabel canonical={m.quote} />
-                    </Link>
-                  </Td>
-                  <Td align="right">
-                    <LastPriceCell raw={m.last_price} />
-                  </Td>
-                  <Td align="right">
-                    {m.volume_24h_usd ? (
-                      <span className="font-mono tabular-nums">
-                        ${formatCompactUnits(m.volume_24h_usd)}
-                      </span>
-                    ) : (
-                      <span className="text-ink-faint">—</span>
-                    )}
-                  </Td>
-                  <Td align="right">
-                    <span className="text-ink-body font-mono tabular-nums">
-                      {formatCompact(m.trade_count_24h)}
-                    </span>
-                  </Td>
-                  <Td>
-                    <SourceSparkline buckets={m.volume_history_24h} />
-                  </Td>
-                  <Td align="right">
-                    <span className="text-ink-muted font-mono text-xs tabular-nums">
-                      {formatRelative(m.last_trade_at)}
-                    </span>
-                  </Td>
-                </TR>
-              );
-            })}
-          </TBody>
-        </Table>
-      </div>
-    </Panel>
+                      No listed pair matches &ldquo;{filter}&rdquo;.
+                    </td>
+                  </tr>
+                ) : (
+                  sorted.map((m, i) => {
+                    const href = `/markets/${encodeURIComponent(`${m.base}~${m.quote}`)}`;
+                    return (
+                      <TR key={`${m.base}|${m.quote}`}>
+                        <Td className={cn('text-ink-faint tnum', COL.sm)}>
+                          {i + 1}
+                        </Td>
+                        <Td>
+                          <Link
+                            href={href}
+                            className="hover:text-brand-600 block"
+                          >
+                            <AssetLabel canonical={m.base} />
+                          </Link>
+                        </Td>
+                        <Td>
+                          <Link
+                            href={href}
+                            className="hover:text-brand-600 block"
+                          >
+                            <AssetLabel canonical={m.quote} />
+                          </Link>
+                        </Td>
+                        <Td align="right" className={COL.sm}>
+                          <LastPriceCell raw={m.last_price} />
+                        </Td>
+                        <Td align="right">
+                          {m.volume_24h_usd ? (
+                            <span className="text-ink font-mono">
+                              ${formatCompactUnits(m.volume_24h_usd)}
+                            </span>
+                          ) : (
+                            <span className="text-ink-faint">—</span>
+                          )}
+                        </Td>
+                        <Td align="right" className={COL.md}>
+                          <span className="font-mono">
+                            {formatCompact(m.trade_count_24h)}
+                          </span>
+                        </Td>
+                        <Td className={COL.lg}>
+                          <SourceSparkline buckets={m.volume_history_24h} />
+                        </Td>
+                        <Td
+                          align="right"
+                          className={cn(
+                            'text-ink-muted font-mono text-xs',
+                            COL.md,
+                          )}
+                        >
+                          {formatRelative(m.last_trade_at)}
+                        </Td>
+                      </TR>
+                    );
+                  })
+                )}
+              </TBody>
+            </Table>
+          </TableWrap>
+        </>
+      )}
+    </div>
   );
 }
 
-// SortHeader is a clickable th-content with a small marker that
-// animates on/off when the column is the active sort. Two columns
-// here are sortable (Base alphabetically and 24h volume desc); the
-// rest are fixed because the API doesn't support sorting on them.
-function SortHeader({
-  active,
-  label,
-  hint,
-  onClick,
-}: {
-  active: boolean;
-  label: string;
-  hint: string;
-  onClick: () => void;
-}) {
+function SkeletonRow() {
+  const num = <Skeleton className="ml-auto h-3 w-16" />;
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={hint}
-      className={`hover:text-brand-600 inline-flex items-center gap-1 ${
-        active ? 'text-brand-600' : ''
-      }`}
-    >
-      {label}
-      <span aria-hidden className="text-[10px]">
-        {active ? '↓' : '↕'}
-      </span>
-    </button>
+    <TR aria-hidden="true">
+      <Td className={COL.sm}>
+        <Skeleton className="h-3 w-4" />
+      </Td>
+      <Td>
+        <Skeleton className="h-3 w-20" />
+        <Skeleton className="mt-1.5 h-3 w-14" />
+      </Td>
+      <Td>
+        <Skeleton className="h-3 w-16" />
+      </Td>
+      <Td align="right" className={COL.sm}>
+        {num}
+      </Td>
+      <Td align="right">{num}</Td>
+      <Td align="right" className={COL.md}>
+        {num}
+      </Td>
+      <Td className={COL.lg}>
+        <Skeleton className="h-6 w-20" />
+      </Td>
+      <Td align="right" className={COL.md}>
+        {num}
+      </Td>
+    </TR>
   );
 }
-
-// LastPriceCell lives in @/components/LastPriceCell so the tables share one
-// copy instead of drifting hand-copied locals.
