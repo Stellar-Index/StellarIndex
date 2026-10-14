@@ -86,7 +86,7 @@ func excluded(t *testing.T, pm *patternmatcher.PatternMatcher, rel string) bool 
 	return ok
 }
 
-func TestT524_DockerContextExcludesSecrets(t *testing.T) {
+func TestDockerContext_ExcludesSecrets(t *testing.T) {
 	t.Parallel()
 	pm := loadDockerignore(t, repoRoot(t))
 	for _, p := range mustExclude {
@@ -202,7 +202,7 @@ func expandCopySources(t *testing.T, root string, srcs []string) []string {
 	return files
 }
 
-func TestT524_DockerContextKeepsBuildInputs(t *testing.T) {
+func TestDockerContext_KeepsBuildInputs(t *testing.T) {
 	t.Parallel()
 	root := repoRoot(t)
 	pm := loadDockerignore(t, root)
@@ -229,7 +229,7 @@ var (
 	dockerfileFromRe = regexp.MustCompile(`(?m)^FROM golang:(\d+)\.(\d+)`)
 )
 
-func TestT521_DockerfileGoVersionMatchesGoMod(t *testing.T) {
+func TestDockerfile_GoVersionMatchesGoMod(t *testing.T) {
 	t.Parallel()
 	root := repoRoot(t)
 

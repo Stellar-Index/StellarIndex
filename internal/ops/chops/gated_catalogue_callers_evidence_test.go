@@ -11,7 +11,7 @@ import (
 // Class guard: every catalogue consumer must warm the gates (warmCatalogueGates: curated set plus protocol_contracts).
 // Unwarmed, a protocol_contracts contract decodes live but not in re-derive, so served rows read as phantoms on
 // /v1/coverage.
-func TestRLT430_EveryCatalogueConsumerWarmsTheGates(t *testing.T) {
+func TestCatalogueConsumers_WarmTheGates(t *testing.T) {
 	t.Parallel()
 	files, err := filepath.Glob("*.go")
 	if err != nil {
