@@ -38,9 +38,9 @@ export function HomeBlogStrip() {
           <Link
             key={p.slug}
             href={`/blog/${p.slug}`}
-            className="group border-line bg-surface hover:border-brand-500 flex flex-col rounded-xl border p-4 transition-colors"
+            className="group border-line bg-surface hover:border-line-strong rounded-card flex flex-col border p-4 transition-colors"
           >
-            <span className="text-ink-muted font-mono text-[10px] tracking-wider uppercase">
+            <span className="text-ink-muted font-mono text-[11px] tracking-wider uppercase">
               {p.date}
             </span>
             <h3 className="group-hover:text-brand-600 mt-1 text-base leading-snug font-semibold tracking-tight">

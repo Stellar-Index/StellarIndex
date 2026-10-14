@@ -29,7 +29,7 @@ export default function OperationsIndexPage() {
           <Link
             key={d.slug}
             href={`/research/operations/${d.slug}`}
-            className="group border-line bg-surface hover:border-brand-300 flex flex-col gap-2 rounded-xl border p-4 transition hover:shadow-sm"
+            className="group border-line bg-surface hover:border-line-strong rounded-card flex flex-col gap-2 border p-4 transition-colors"
           >
             <div className="flex items-center gap-2">
               <Wrench className="text-ink-faint group-hover:text-brand-500 h-3.5 w-3.5" />
@@ -38,7 +38,7 @@ export default function OperationsIndexPage() {
               </span>
             </div>
             <p className="text-ink-body text-xs">{d.description}</p>
-            <span className="text-ink-faint text-[10px] tracking-wider uppercase">
+            <span className="text-ink-faint text-[11px] tracking-wider uppercase">
               Verified {d.last_verified}
             </span>
           </Link>

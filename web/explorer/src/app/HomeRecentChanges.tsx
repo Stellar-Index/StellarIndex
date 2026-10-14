@@ -1,4 +1,6 @@
 import Link from 'next/link';
+import type { ComponentProps } from 'react';
+import { Badge } from '@/components/ui';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Inline } from '@/lib/markdown';
@@ -49,7 +51,7 @@ export function HomeRecentChanges() {
             Subscribe (Atom) ↗
           </a>
           <Link href="/changelog" className="text-brand-600 hover:underline">
-            Full changelog →
+            Full changelog
           </Link>
         </div>
       </div>
@@ -57,14 +59,8 @@ export function HomeRecentChanges() {
         {items.map((it, i) => (
           <li key={i} className="border-line bg-surface rounded-md border p-3">
             <div className="mb-1 flex items-baseline gap-2">
-              <span
-                className={`rounded px-1.5 py-0.5 font-mono text-[10px] tracking-wider uppercase ${kindTone(
-                  it.kind,
-                )}`}
-              >
-                {it.kind}
-              </span>
-              <span className="text-ink-faint font-mono text-[10px]">
+              <Badge tone={kindTone(it.kind)}>{it.kind}</Badge>
+              <span className="text-ink-faint font-mono text-[11px]">
                 {it.release}
                 {it.date && ` · ${it.date}`}
               </span>
@@ -147,13 +143,11 @@ function readRecentItems(n: number): ChangeItem[] {
   return out.slice(0, n);
 }
 
-function kindTone(kind: string): string {
-  if (kind === 'Added') return 'bg-up-subtle text-up-strong';
-  if (kind === 'Fixed') return 'bg-brand-50 text-brand-700';
-  if (kind === 'Changed') return 'bg-warn-50 text-warn-700';
-  if (kind === 'Removed' || kind === 'Deprecated')
-    return 'bg-down-subtle text-down-strong';
-  return 'bg-surface-subtle text-ink-body';
+// Removals and deprecations are the entries an integrator must act on.
+function kindTone(kind: string): ComponentProps<typeof Badge>['tone'] {
+  if (kind === 'Added') return 'brand';
+  if (kind === 'Removed' || kind === 'Deprecated') return 'warn';
+  return 'neutral';
 }
 
 // ChangelogPreview renders just the FIRST paragraph of a CHANGELOG

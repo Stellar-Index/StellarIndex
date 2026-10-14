@@ -816,7 +816,7 @@ function RowSparkline({
     .map((pt) => (pt.p ? Number(pt.p) : null))
     .filter((v): v is number => v != null && Number.isFinite(v));
   if (values.length < 2) {
-    return <span className="text-ink-faint font-mono text-[10px]">—</span>;
+    return <span className="text-ink-faint font-mono text-[11px]">—</span>;
   }
   const W = 80;
   const H = 24;

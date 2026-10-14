@@ -157,7 +157,7 @@ function BuildBadge() {
       target="_blank"
       rel="noopener noreferrer"
       title={`Built ${time} from commit ${sha}`}
-      className="text-ink-faint hover:text-ink-body font-mono text-[10px] tracking-tight"
+      className="text-ink-faint hover:text-ink-body font-mono text-[11px] tracking-tight"
     >
       build {short}
       {date && <span className="hidden md:inline"> · {date}</span>}

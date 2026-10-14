@@ -55,7 +55,7 @@ export default function SignupPage() {
         title="Create your account"
       />
 
-      <section className="border-line bg-surface mb-12 rounded-xl border p-6 shadow-sm sm:p-8">
+      <section className="border-line bg-surface rounded-card mb-12 border p-6 sm:p-8">
         <SignInForm mode="signup" />
         <p className="text-ink-muted mt-4 text-xs">
           Already have an account?{' '}
@@ -82,7 +82,7 @@ export default function SignupPage() {
         {/* overflow-x-auto, not -hidden: WCAG 1.4.10 Reflow — the nowrap
             tier headers were CLIPPED at 320px with no way to reach them.
             The radius still clips. */}
-        <div className="border-line overflow-x-auto rounded-xl border">
+        <div className="border-line rounded-card overflow-x-auto border">
           {/* table-wave:allowlist prose — marketing tier table; stays a
               hand-rolled <table>, not the Table primitives. */}
           <table className="divide-line min-w-full divide-y">
@@ -151,7 +151,7 @@ export default function SignupPage() {
         </ul>
       </section>
 
-      <section className="border-warn-300 bg-warn-50 text-warn-700 rounded-xl border p-5 text-sm">
+      <section className="border-warn-300 bg-warn-50 text-warn-700 rounded-card border p-5 text-sm">
         <strong>Anonymous reads work without an account.</strong> If
         you&rsquo;re prototyping, just hit{' '}
         <a href="https://docs.stellarindex.io" className="underline">

@@ -1,18 +1,14 @@
+import type { ComponentProps } from 'react';
+import { Badge } from '@/components/ui';
 import type { ADRStatus } from '@/lib/adr';
 
-const STYLES: Record<ADRStatus, string> = {
-  Accepted: 'bg-up-subtle text-up',
-  Proposed: 'bg-warn-50 text-warn-700',
-  Superseded: 'bg-surface-subtle text-ink-body',
-  Rejected: 'bg-down-subtle text-down',
+const TONES: Record<ADRStatus, ComponentProps<typeof Badge>['tone']> = {
+  Accepted: 'ok',
+  Proposed: 'warn',
+  Superseded: 'neutral',
+  Rejected: 'bad',
 };
 
 export function StatusBadge({ status }: { status: ADRStatus }) {
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium tracking-wider uppercase ${STYLES[status] ?? STYLES.Proposed}`}
-    >
-      {status}
-    </span>
-  );
+  return <Badge tone={TONES[status] ?? 'warn'}>{status}</Badge>;
 }

@@ -210,7 +210,7 @@ function WebhooksBody() {
 
         {rotated && (
           <SecretReveal
-            eyebrow={`Secret rotated for ${rotated.name}`}
+            title={`Secret rotated for ${rotated.name}`}
             secret={rotated.resp.secret}
             onDismiss={() => setRotated(null)}
           >
@@ -290,7 +290,7 @@ function NewWebhookReveal({
 }) {
   return (
     <SecretReveal
-      eyebrow="New webhook created"
+      title="New webhook created"
       secret={created.secret}
       onDismiss={onDismiss}
     >
@@ -303,12 +303,12 @@ function NewWebhookReveal({
 }
 
 function SecretReveal({
-  eyebrow,
+  title,
   secret,
   onDismiss,
   children,
 }: {
-  eyebrow: string;
+  title: string;
   secret: string;
   onDismiss: () => void;
   children: React.ReactNode;
@@ -317,9 +317,8 @@ function SecretReveal({
     <Card className="border-brand-200 bg-brand-50/60">
       <CardHeader
         className="border-brand-100"
-        eyebrow={eyebrow}
-        title="Save this signing secret now — you won't see it again"
-        description="Use it to verify the X-StellarIndex-Signature header on inbound deliveries."
+        title={title}
+        description="Save this signing secret now: you won't see it again. Use it to verify the X-StellarIndex-Signature header on inbound deliveries."
       />
       <CardBody className="space-y-3">
         <div className="border-line bg-surface flex items-center gap-2 rounded-lg border px-3 py-2.5">

@@ -216,10 +216,10 @@ function LagPill({ seconds }: { seconds: number }) {
   const tier = lagTier(seconds);
   const tone =
     tier === 'ok'
-      ? 'bg-up-subtle text-up-strong'
+      ? 'bg-ok-50 text-ok-700'
       : tier === 'slow'
         ? 'bg-warn-50 text-warn-700'
-        : 'bg-down-subtle text-down-strong';
+        : 'bg-bad-50 text-bad-700';
   return (
     <span
       className={`inline-block rounded-sm px-1.5 py-0.5 font-mono text-[11px] tabular-nums ${tone}`}

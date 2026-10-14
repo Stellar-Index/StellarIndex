@@ -103,7 +103,7 @@ function ReleaseCard({ release }: { release: Release }) {
   return (
     <article
       id={id}
-      className="border-line bg-surface scroll-mt-20 rounded-lg border p-6 shadow-sm"
+      className="border-line bg-surface scroll-mt-20 rounded-lg border p-6"
     >
       <header className="border-line-subtle mb-4 flex flex-wrap items-baseline justify-between gap-2 border-b pb-3">
         <h2 className="text-h3 text-ink font-semibold">
@@ -128,7 +128,7 @@ function ReleaseCard({ release }: { release: Release }) {
               href={`https://github.com/Stellar-Index/StellarIndex/releases/tag/${release.version}`}
               target="_blank"
               rel="noreferrer noopener"
-              className="border-line hover:border-brand-500 hover:text-brand-600 rounded-sm border px-2 py-0.5 font-mono text-xs"
+              className="border-line hover:border-line-strong hover:text-brand-600 rounded-sm border px-2 py-0.5 font-mono text-xs"
             >
               GitHub ↗
             </a>

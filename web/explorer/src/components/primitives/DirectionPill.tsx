@@ -64,7 +64,7 @@ export function DirectionPill({
     <span
       className={twMerge(
         'inline-flex items-center gap-0.5 rounded-full font-medium tabular-nums',
-        compact ? 'px-1.5 py-0 text-[10px]' : 'px-2 py-0.5 text-xs',
+        compact ? 'px-1.5 py-0 text-[11px]' : 'px-2 py-0.5 text-xs',
         bg,
         className,
       )}

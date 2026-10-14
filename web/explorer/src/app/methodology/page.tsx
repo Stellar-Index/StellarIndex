@@ -414,7 +414,7 @@ const TOC = [
 
 function TableOfContents() {
   return (
-    <nav className="border-line bg-surface rounded-xl border p-4">
+    <nav className="border-line bg-surface rounded-card border p-4">
       <h2 className="text-h3 text-ink mb-2 font-semibold">Contents</h2>
       <ol className="space-y-1 text-sm">
         {TOC.map((t, i) => (
@@ -489,7 +489,7 @@ function Formula({ children }: { children: React.ReactNode }) {
 
 function Aside({ children }: { children: React.ReactNode }) {
   return (
-    <p className="border-brand-500 bg-brand-50 text-ink-body rounded-md border-l-2 px-3 py-2 text-xs">
+    <p className="border-line bg-surface-subtle text-ink-body rounded-md border px-3 py-2 text-xs">
       {children}
     </p>
   );

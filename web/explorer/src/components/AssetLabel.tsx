@@ -56,11 +56,11 @@ function renderCodeIssuer(
   // classic-branch comment below for why org_name alone is spoofable.
   const subtitle =
     known?.org_verified && known.org_name ? (
-      <div className="text-ink-muted text-[10px]" title={issuer}>
+      <div className="text-ink-muted text-[11px]" title={issuer}>
         by {known.org_name}
       </div>
     ) : (
-      <div className="text-ink-muted font-mono text-[10px]" title={issuer}>
+      <div className="text-ink-muted font-mono text-[11px]" title={issuer}>
         {issuer.length > 12 ? truncateMiddle(issuer, 6, 4) : issuer}
       </div>
     );
@@ -69,7 +69,7 @@ function renderCodeIssuer(
       <div className="font-medium">{code}</div>
       {subtitle}
       {badge && (
-        <div className="text-ink-muted text-[10px] tracking-wide uppercase">
+        <div className="text-ink-muted text-[11px] tracking-wide uppercase">
           {badge}
         </div>
       )}
@@ -143,7 +143,7 @@ export function AssetLabel({
       return (
         <div>
           <div className="font-medium">XLM</div>
-          <div className="text-ink-muted text-[10px] tracking-wide uppercase">
+          <div className="text-ink-muted text-[11px] tracking-wide uppercase">
             SAC
           </div>
         </div>
@@ -154,7 +154,7 @@ export function AssetLabel({
       return (
         <div>
           <div className="font-medium">XLM</div>
-          <div className="text-ink-muted text-[10px] tracking-wide uppercase">
+          <div className="text-ink-muted text-[11px] tracking-wide uppercase">
             SAC
           </div>
         </div>
@@ -173,7 +173,7 @@ export function AssetLabel({
         return (
           <div>
             <div className="font-medium">{resolved}</div>
-            <div className="text-ink-muted text-[10px] tracking-wide uppercase">
+            <div className="text-ink-muted text-[11px] tracking-wide uppercase">
               SAC
             </div>
           </div>

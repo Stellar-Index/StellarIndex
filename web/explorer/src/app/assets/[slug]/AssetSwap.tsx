@@ -721,7 +721,7 @@ function TokenPicker({
               {t.usdPrice != null ? fmtUsd(t.usdPrice) : '—'}
               {t.basis === 'peg' && (
                 <span
-                  className="ml-1 text-[10px] tracking-wider uppercase"
+                  className="ml-1 text-[11px] tracking-wider uppercase"
                   title="Declared 1:1 peg — not an observed market price"
                 >
                   peg

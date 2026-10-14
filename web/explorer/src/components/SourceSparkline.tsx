@@ -22,17 +22,17 @@ export function SourceSparkline({
   height?: number;
 }) {
   if (!buckets || buckets.length === 0) {
-    return <span className="text-ink-faint font-mono text-[10px]">—</span>;
+    return <span className="text-ink-faint font-mono text-[11px]">—</span>;
   }
   // An absent or unparsable hour draws no bar — a gap, not a zero hour.
   const values = buckets.map((b) => decimalOrNull(b.volume_usd));
   const known = values.filter((v): v is number => v !== null);
   if (known.length === 0) {
-    return <span className="text-ink-faint font-mono text-[10px]">—</span>;
+    return <span className="text-ink-faint font-mono text-[11px]">—</span>;
   }
   const max = Math.max(...known);
   if (max === 0) {
-    return <span className="text-ink-faint font-mono text-[10px]">no vol</span>;
+    return <span className="text-ink-faint font-mono text-[11px]">no vol</span>;
   }
   const barWidth = width / buckets.length;
   return (

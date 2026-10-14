@@ -458,7 +458,7 @@ export function SearchModal({ shortcut = true }: { shortcut?: boolean }) {
       >
         <Search className="h-4 w-4 shrink-0" />
         <span>Search</span>
-        <kbd className="border-line bg-surface-muted text-ink-faint ml-auto rounded-sm border px-1.5 py-0.5 text-[10px] font-medium">
+        <kbd className="border-line bg-surface-muted text-ink-faint ml-auto rounded-sm border px-1.5 py-0.5 text-[11px] font-medium">
           ⌘K
         </kbd>
       </button>
@@ -511,7 +511,7 @@ export function SearchModal({ shortcut = true }: { shortcut?: boolean }) {
                   before showing the top-assets starter list below. */}
               {q.trim() === '' && (
                 <div className="border-line-subtle border-b px-3 py-3">
-                  <p className="text-ink-faint mb-2 text-[10px] tracking-wider uppercase">
+                  <p className="text-ink-faint mb-2 text-[11px] tracking-wider uppercase">
                     Search by
                   </p>
                   <div className="flex flex-wrap gap-1.5">
@@ -521,12 +521,12 @@ export function SearchModal({ shortcut = true }: { shortcut?: boolean }) {
                           key={s.label}
                           type="button"
                           onClick={() => setQ(s.prefill as string)}
-                          className="border-line bg-surface-subtle text-ink-muted hover:border-brand-500 hover:text-ink-body inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors"
+                          className="border-line bg-surface-subtle text-ink-muted hover:border-line-strong hover:text-ink-body inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors"
                         >
                           <span className="text-ink-body font-medium">
                             {s.label}
                           </span>
-                          <span className="text-ink-faint font-mono text-[10px]">
+                          <span className="text-ink-faint font-mono text-[11px]">
                             {s.example}
                           </span>
                         </button>
@@ -538,7 +538,7 @@ export function SearchModal({ shortcut = true }: { shortcut?: boolean }) {
                           <span className="text-ink-body font-medium">
                             {s.label}
                           </span>
-                          <span className="text-ink-faint font-mono text-[10px]">
+                          <span className="text-ink-faint font-mono text-[11px]">
                             {s.example}
                           </span>
                         </span>
@@ -549,7 +549,7 @@ export function SearchModal({ shortcut = true }: { shortcut?: boolean }) {
               )}
               <ul className="max-h-96 overflow-y-auto p-2 text-sm">
                 {q.trim() === '' && results.length > 0 && (
-                  <li className="text-ink-faint px-3 pt-1 pb-1 text-[10px] tracking-wider uppercase">
+                  <li className="text-ink-faint px-3 pt-1 pb-1 text-[11px] tracking-wider uppercase">
                     Top assets
                   </li>
                 )}
@@ -569,7 +569,7 @@ export function SearchModal({ shortcut = true }: { shortcut?: boolean }) {
                           name; without it the flex row refuses to shrink and
                           56-char strkeys blow the modal open sideways. */}
                       <span className="flex min-w-0 items-center gap-2">
-                        <span className="bg-surface-subtle text-ink-muted shrink-0 rounded-sm px-1.5 py-0.5 text-[10px] tracking-wider uppercase">
+                        <span className="bg-surface-subtle text-ink-muted shrink-0 rounded-sm px-1.5 py-0.5 text-[11px] tracking-wider uppercase">
                           {r.type}
                         </span>
                         <span className="min-w-0 truncate font-medium">
@@ -613,7 +613,7 @@ export function SearchModal({ shortcut = true }: { shortcut?: boolean }) {
                   </li>
                 ))}
               </ul>
-              <div className="border-line-subtle text-ink-muted border-t px-3 py-1.5 text-[10px]">
+              <div className="border-line-subtle text-ink-muted border-t px-3 py-1.5 text-[11px]">
                 <kbd>tab</kbd> navigate · <kbd>↵</kbd> open · <kbd>esc</kbd>{' '}
                 close
               </div>
