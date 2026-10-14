@@ -1,10 +1,9 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
 import { Suspense } from 'react';
+import { ArrowUpRight } from 'lucide-react';
 
-import { Container, PageHeader, Skeleton } from '@/components/ui';
+import { ButtonLink, Container, PageHeader, Skeleton } from '@/components/ui';
 import { AssetsTable } from './AssetsTable';
-import { VerifiedStrip } from './VerifiedStrip';
 import { fetchVerifiedCurrencies } from './verified-currencies';
 
 export const metadata: Metadata = {
@@ -22,10 +21,7 @@ export const metadata: Metadata = {
  * client reads `?cursor=` / `?limit=` / `?issuer=` from the URL.
  */
 export default async function AssetsPage() {
-  // Single server-side fetch of the verified-currency catalogue
-  // shared between the strip (renders each entry as a chip) and the
-  // table (marks each row whose slug is in the catalogue with a
-  // green check). One round-trip, no double fetch.
+  // The table marks each row whose slug is in the verified catalogue.
   const verified = await fetchVerifiedCurrencies();
   const verifiedSlugs = verified.map((v) => v.slug);
 
@@ -34,17 +30,13 @@ export default async function AssetsPage() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Assets' }]}
         title="Assets"
+        actions={
+          <ButtonLink href="/external/assets" variant="secondary" size="sm">
+            External assets
+            <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
+          </ButtonLink>
+        }
       />
-      <p className="text-ink-muted text-sm">
-        Looking for fiat &amp; reference prices?{' '}
-        <Link
-          href="/external/assets"
-          className="text-brand-600 hover:text-brand-700 font-medium"
-        >
-          External assets →
-        </Link>
-      </p>
-      <VerifiedStrip items={verified} />
       <Suspense fallback={<Skeleton className="h-96 w-full" />}>
         <AssetsTable verifiedSlugs={verifiedSlugs} />
       </Suspense>
