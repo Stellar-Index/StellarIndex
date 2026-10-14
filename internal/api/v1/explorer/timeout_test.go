@@ -506,3 +506,13 @@ func TestDirectoryLookup_ReadDeadlineIs503NotInternal500(t *testing.T) {
 			"guess is `immediately` (headers %v)", rec.Header())
 	}
 }
+
+func (r *capReader) AccountSponsorships(ctx context.Context, _, _ string, _ bool, _ clickhouse.SponsorshipKey, _ uint32, _ int) ([]clickhouse.SponsorshipArrangement, error) {
+	r.probe.record(ctx)
+	return nil, nil
+}
+
+func (r *capReader) SponsorshipTotals(ctx context.Context, _, _ string, _ uint32) (clickhouse.SponsorshipTotals, error) {
+	r.probe.record(ctx)
+	return clickhouse.SponsorshipTotals{}, nil
+}
