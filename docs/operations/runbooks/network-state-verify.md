@@ -90,6 +90,10 @@ cat /var/lib/node_exporter/textfile_collector/network_state_verify.prom
       `stellarindex-ops verify-network-state -config /etc/stellarindex.toml -checks livestate`.
       It prints every class twice, archive beside lake as of the same
       checkpoint; the class whose `diff` is non-zero carries the residual.
+      Add `-livestate-dump <path>` to also write every live entry (entry
+      type, ledger key, holder, stroops, last-modified ledger; TSV, ~2 GB)
+      and join it on `key_xdr` against a `ledger_entries_current` export to
+      name the rows that differ.
 - [ ] Verification: `systemctl start verify-network-state.service`; every
       `stellarindex_network_state_verify_failures` series reads 0 and both
       alerts clear within one scrape.

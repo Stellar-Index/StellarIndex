@@ -361,7 +361,8 @@ func liveAccount(balance int64) xdr.LedgerEntry {
 
 func liveCB(asset xdr.Asset, amount int64) xdr.LedgerEntry {
 	return xdr.LedgerEntry{Data: xdr.LedgerEntryData{Type: xdr.LedgerEntryTypeClaimableBalance, ClaimableBalance: &xdr.ClaimableBalanceEntry{
-		Asset: asset, Amount: xdr.Int64(amount),
+		BalanceId: xdr.ClaimableBalanceId{Type: xdr.ClaimableBalanceIdTypeClaimableBalanceIdTypeV0, V0: &xdr.Hash{byte(amount)}},
+		Asset:     asset, Amount: xdr.Int64(amount),
 	}}}
 }
 
@@ -418,7 +419,8 @@ func TestTallyLiveState_SumsPerClassAndSurfacesStreamErrors(t *testing.T) {
 		persistentData("other", 1, 10), contractCode("wasm", 10),
 	}
 	tally := clickhouse.NewLumenTally(64, 0, 0)
-	n, err := tallyLiveState(context.Background(), liveStream(entries, nil), tally, sac)
+	var dump bytes.Buffer
+	n, err := tallyLiveState(context.Background(), liveStream(entries, nil), tally, sac, &dump)
 	if err != nil || n != uint64(len(entries)) {
 		t.Fatalf("tallyLiveState = (%d, %v), want (%d, nil)", n, err, len(entries))
 	}
@@ -436,8 +438,18 @@ func TestTallyLiveState_SumsPerClassAndSurfacesStreamErrors(t *testing.T) {
 			t.Errorf("%s = %s, want %d", c.name, c.got, c.want)
 		}
 	}
+	rows := strings.Split(strings.TrimSuffix(dump.String(), "\n"), "\n")
+	if len(rows) != len(entries) {
+		t.Fatalf("dump rows = %d, want %d", len(rows), len(entries))
+	}
+	if f := strings.Split(rows[0], "\t"); len(f) != 5 || f[0] != "account" || f[2] != "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H" || f[3] != "600" {
+		t.Errorf("dump row 0 = %q", rows[0])
+	}
+	if f := strings.Split(rows[3], "\t"); f[0] != "claimable_balance" || f[3] != "0" {
+		t.Errorf("non-native claimable balance row = %q", rows[3])
+	}
 	boom := errors.New("bucket download failed")
-	n, err = tallyLiveState(context.Background(), liveStream(entries[:3], boom), clickhouse.NewLumenTally(64, 0, 0), sac)
+	n, err = tallyLiveState(context.Background(), liveStream(entries[:3], boom), clickhouse.NewLumenTally(64, 0, 0), sac, nil)
 	if !errors.Is(err, boom) || n != 3 {
 		t.Fatalf("stream error: got (%d, %v), want (3, %v)", n, err, boom)
 	}

@@ -4,8 +4,11 @@
 package chops
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -50,6 +53,7 @@ func verifyNetworkState(args []string) error {
 	checkpoint := fs.Uint64("checkpoint", 0, "hot-archive checkpoint ledger; 0 = newest checkpoint at or below both the lake tip and the archive's latest")
 	checksFlag := fs.String("checks", networkCheckHotArchive+","+networkCheckLumens, "comma-separated subset of checks: hotarchive | lumens | livestate (streams the whole live bucket list; opt-in)")
 	textfile := fs.String("textfile", "", "node_exporter textfile path, e.g. /var/lib/node_exporter/textfile_collector/network_state_verify.prom; empty = none")
+	liveDump := fs.String("livestate-dump", "", "livestate: also write every streamed live entry as entry_type, ledger key, holder, stroops, last-modified ledger (TSV) to this path")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -76,7 +80,7 @@ func verifyNetworkState(args []string) error {
 	}
 	defer func() { _ = reader.Close() }()
 
-	res, err := runNetworkChecks(ctx, reader, checks, networkCheckInputs{addr: addr, url: url, passphrase: passphrase, checkpoint: *checkpoint})
+	res, err := runNetworkChecks(ctx, reader, checks, networkCheckInputs{addr: addr, url: url, passphrase: passphrase, checkpoint: *checkpoint, liveDump: *liveDump})
 	if err != nil {
 		return err
 	}
@@ -97,6 +101,7 @@ func verifyNetworkState(args []string) error {
 type networkCheckInputs struct {
 	addr, url, passphrase string
 	checkpoint            uint64
+	liveDump              string
 }
 
 // runNetworkChecks runs the requested checks in a fixed order and stops at the first that cannot complete.
@@ -122,7 +127,7 @@ func runNetworkChecks(ctx context.Context, reader *clickhouse.NetworkStateReader
 		}
 	}
 	if checks[networkCheckLiveState] {
-		if res.live, err = runLiveStateCheck(ctx, reader, in.addr, in.url, in.passphrase, in.checkpoint, sacID); err != nil {
+		if res.live, err = runLiveStateCheck(ctx, reader, in.addr, in.url, in.passphrase, in.checkpoint, sacID, in.liveDump); err != nil {
 			return res, err
 		}
 	}
@@ -188,7 +193,7 @@ func openArchiveCheckpoint(ctx context.Context, addr, url, passphrase string, wa
 
 // runLiveStateCheck streams the checkpoint's whole live bucket list, sums native XLM per class and sets it against the lake's
 // tally as of the same ledger, so a non-zero lumen residual is pinned to the class that carries it.
-func runLiveStateCheck(ctx context.Context, reader *clickhouse.NetworkStateReader, addr, url, passphrase string, want uint64, sacID string) (*liveStateCounts, error) {
+func runLiveStateCheck(ctx context.Context, reader *clickhouse.NetworkStateReader, addr, url, passphrase string, want uint64, sacID, dumpPath string) (*liveStateCounts, error) {
 	arch, seq, lakeTip, err := openArchiveCheckpoint(ctx, addr, url, passphrase, want)
 	if err != nil {
 		return nil, err
@@ -207,11 +212,19 @@ func runLiveStateCheck(ctx context.Context, reader *clickhouse.NetworkStateReade
 		return nil, fmt.Errorf("verify-network-state: live state: lake tally: %w", err)
 	}
 	archive := clickhouse.NewLumenTally(seq, int64(hdr.Header.TotalCoins), int64(hdr.Header.FeePool))
-	n, err := tallyLiveState(ctx, func(ictx context.Context) iter.Seq2[xdr.LedgerEntry, error] {
-		return liveEntries(ictx, arch, seq, sac)
-	}, archive, sac)
+	dump, closeDump, err := openLiveDump(dumpPath)
 	if err != nil {
 		return nil, err
+	}
+	n, err := tallyLiveState(ctx, func(ictx context.Context) iter.Seq2[xdr.LedgerEntry, error] {
+		return liveEntries(ictx, arch, seq, sac)
+	}, archive, sac, dump)
+	if err != nil {
+		_ = closeDump()
+		return nil, err
+	}
+	if err := closeDump(); err != nil {
+		return nil, fmt.Errorf("verify-network-state: livestate dump: %w", err)
 	}
 	return &liveStateCounts{checkpoint: seq, entries: n, archive: archive, lake: lake}, nil
 }
@@ -276,8 +289,8 @@ func liveStateFilters(sac xdr.ContractId) (func(xdr.LedgerEntry) bool, func(xdr.
 	return entry, key
 }
 
-// tallyLiveState folds every streamed entry into t and returns how many it read.
-func tallyLiveState(ctx context.Context, open func(context.Context) iter.Seq2[xdr.LedgerEntry, error], t *clickhouse.LumenTally, sac xdr.ContractId) (uint64, error) {
+// tallyLiveState folds every streamed entry into t, writes each to dump when one is given, and returns how many it read.
+func tallyLiveState(ctx context.Context, open func(context.Context) iter.Seq2[xdr.LedgerEntry, error], t *clickhouse.LumenTally, sac xdr.ContractId, dump io.Writer) (uint64, error) {
 	ictx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var n uint64
@@ -290,12 +303,76 @@ func tallyLiveState(ctx context.Context, open func(context.Context) iter.Seq2[xd
 			cancel()
 			return n, err
 		}
+		if dump != nil {
+			if err := writeLiveRow(dump, e, sac); err != nil {
+				cancel()
+				return n, err
+			}
+		}
 		n++
 		if n%5_000_000 == 0 {
 			fmt.Fprintf(os.Stderr, "  ... %d live entries\n", n)
 		}
 	}
 	return n, nil
+}
+
+// openLiveDump opens the per-entry dump, or returns a nil writer and a no-op close when no path was given.
+func openLiveDump(path string) (io.Writer, func() error, error) {
+	if path == "" {
+		return nil, func() error { return nil }, nil
+	}
+	f, err := os.Create(path) //nolint:gosec // operator-supplied output path
+	if err != nil {
+		return nil, nil, fmt.Errorf("verify-network-state: livestate dump: %w", err)
+	}
+	w := bufio.NewWriterSize(f, 1<<20)
+	return w, func() error { return errors.Join(w.Flush(), f.Close()) }, nil
+}
+
+// writeLiveRow appends one entry as entry_type, base64 ledger key, holder, native stroops and last-modified ledger, so the
+// dump joins a ledger_entries_current export on key_xdr and names the rows whose balance or ledger differs.
+func writeLiveRow(w io.Writer, e xdr.LedgerEntry, sac xdr.ContractId) error {
+	key, err := e.LedgerKey()
+	if err != nil {
+		return fmt.Errorf("verify-network-state: livestate dump: ledger key: %w", err)
+	}
+	raw, err := key.MarshalBinary()
+	if err != nil {
+		return fmt.Errorf("verify-network-state: livestate dump: ledger key: %w", err)
+	}
+	class, amount, err := clickhouse.EntryLumens(e, sac)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\n", class, base64.StdEncoding.EncodeToString(raw), liveHolder(e), amount, uint32(e.LastModifiedLedgerSeq))
+	return err
+}
+
+// liveHolder names the entry's owner the way the explorer does: account and SAC holder as strkeys, balance and pool ids as hex.
+func liveHolder(e xdr.LedgerEntry) string {
+	switch e.Data.Type {
+	case xdr.LedgerEntryTypeAccount:
+		return e.Data.MustAccount().AccountId.Address()
+	case xdr.LedgerEntryTypeClaimableBalance:
+		if id := e.Data.MustClaimableBalance().BalanceId; id.V0 != nil {
+			return hex.EncodeToString(id.V0[:])
+		}
+		return ""
+	case xdr.LedgerEntryTypeLiquidityPool:
+		id := e.Data.MustLiquidityPool().LiquidityPoolId
+		return hex.EncodeToString(id[:])
+	case xdr.LedgerEntryTypeContractData:
+		if vec, ok := e.Data.MustContractData().Key.GetVec(); ok && vec != nil && len(*vec) == 2 {
+			if a, ok := (*vec)[1].GetAddress(); ok {
+				s, _ := a.String()
+				return s
+			}
+		}
+		return ""
+	default:
+		return ""
+	}
 }
 
 // liveStateCounts holds both sides' tallies at one checkpoint.
