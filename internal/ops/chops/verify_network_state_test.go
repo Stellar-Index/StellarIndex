@@ -480,3 +480,37 @@ func TestLiveStateCounts_FailuresPerDifferingClass(t *testing.T) {
 		t.Fatalf("an empty stream must fail: failures()=%d report=%s", f, res.report())
 	}
 }
+
+// The live-state filters admit accounts, claimable balances, liquidity pools
+// and the native SAC's contract data; the same rule answers for keys.
+func TestLiveStateFilters_AdmitOnlyNativeHolders(t *testing.T) {
+	sac := xdr.ContractId{0x5a, 0xc0}
+	entryWanted, keyWanted := liveStateFilters(sac)
+	native := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
+	trustline := xdr.LedgerEntry{Data: xdr.LedgerEntryData{Type: xdr.LedgerEntryTypeTrustline, TrustLine: &xdr.TrustLineEntry{}}}
+	for _, c := range []struct {
+		name string
+		e    xdr.LedgerEntry
+		want bool
+	}{
+		{"account", liveAccount(1), true},
+		{"claimable balance", liveCB(native, 1), true},
+		{"liquidity pool", liveLP(native, native, 1, 1), true},
+		{"native SAC balance", liveSACBalance(sac, 1), true},
+		{"other contract's data", liveSACBalance(xdr.ContractId{0x5a, 0xc1}, 1), false},
+		{"persistent data", persistentData("x", 1, 1), false},
+		{"contract code", contractCode("wasm", 1), false},
+		{"trustline", trustline, false},
+	} {
+		if got := entryWanted(c.e); got != c.want {
+			t.Errorf("entry filter(%s) = %v, want %v", c.name, got, c.want)
+		}
+		key, err := c.e.LedgerKey()
+		if err != nil {
+			t.Fatalf("%s: LedgerKey: %v", c.name, err)
+		}
+		if got := keyWanted(key); got != c.want {
+			t.Errorf("key filter(%s) = %v, want %v", c.name, got, c.want)
+		}
+	}
+}

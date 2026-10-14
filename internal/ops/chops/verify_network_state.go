@@ -208,7 +208,7 @@ func runLiveStateCheck(ctx context.Context, reader *clickhouse.NetworkStateReade
 	}
 	archive := clickhouse.NewLumenTally(seq, int64(hdr.Header.TotalCoins), int64(hdr.Header.FeePool))
 	n, err := tallyLiveState(ctx, func(ictx context.Context) iter.Seq2[xdr.LedgerEntry, error] {
-		return liveEntries(ictx, arch, seq)
+		return liveEntries(ictx, arch, seq, sac)
 	}, archive, sac)
 	if err != nil {
 		return nil, err
@@ -216,10 +216,11 @@ func runLiveStateCheck(ctx context.Context, reader *clickhouse.NetworkStateReade
 	return &liveStateCounts{checkpoint: seq, entries: n, archive: archive, lake: lake}, nil
 }
 
-// liveEntries yields every live entry of the checkpoint's bucket list.
-func liveEntries(ctx context.Context, arch historyarchive.ArchiveInterface, seq uint32) iter.Seq2[xdr.LedgerEntry, error] {
+// liveEntries yields the checkpoint bucket list.s live entries that can hold native XLM.
+func liveEntries(ctx context.Context, arch historyarchive.ArchiveInterface, seq uint32, sac xdr.ContractId) iter.Seq2[xdr.LedgerEntry, error] {
 	return func(yield func(xdr.LedgerEntry, error) bool) {
-		r, err := ingest.NewCheckpointChangeReader(ctx, arch, seq)
+		entryWanted, keyWanted := liveStateFilters(sac)
+		r, err := ingest.NewCheckpointChangeReader(ctx, arch, seq, ingest.WithFilter(entryWanted, keyWanted))
 		if err != nil {
 			yield(xdr.LedgerEntry{}, err)
 			return
@@ -242,6 +243,37 @@ func liveEntries(ctx context.Context, arch historyarchive.ArchiveInterface, seq 
 			}
 		}
 	}
+}
+
+// liveStateFilters admit the entry types that can hold native XLM and, of contract data, only the native SAC.s rows, so the
+// reader skips most of the bucket list and its seen-key set stays small. Both filters apply one rule, which keeps shadowing
+// consistent between live and dead entries.
+func liveStateFilters(sac xdr.ContractId) (func(xdr.LedgerEntry) bool, func(xdr.LedgerKey) bool) {
+	wanted := func(t xdr.LedgerEntryType, contract *xdr.ScAddress) bool {
+		switch t {
+		case xdr.LedgerEntryTypeAccount, xdr.LedgerEntryTypeClaimableBalance, xdr.LedgerEntryTypeLiquidityPool:
+			return true
+		case xdr.LedgerEntryTypeContractData:
+			return contract != nil && contract.Type == xdr.ScAddressTypeScAddressTypeContract &&
+				contract.ContractId != nil && *contract.ContractId == sac
+		}
+		return false
+	}
+	entry := func(e xdr.LedgerEntry) bool {
+		var c *xdr.ScAddress
+		if e.Data.Type == xdr.LedgerEntryTypeContractData && e.Data.ContractData != nil {
+			c = &e.Data.ContractData.Contract
+		}
+		return wanted(e.Data.Type, c)
+	}
+	key := func(k xdr.LedgerKey) bool {
+		var c *xdr.ScAddress
+		if k.Type == xdr.LedgerEntryTypeContractData && k.ContractData != nil {
+			c = &k.ContractData.Contract
+		}
+		return wanted(k.Type, c)
+	}
+	return entry, key
 }
 
 // tallyLiveState folds every streamed entry into t and returns how many it read.
