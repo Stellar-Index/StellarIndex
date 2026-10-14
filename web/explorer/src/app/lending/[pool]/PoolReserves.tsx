@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useLedgerFollow } from '@/lib/live/hooks';
 
 import { Panel } from '@/components/reveal';
+import { Button, TBody, TR, Table, Td, Th, THead } from '@/components/ui';
 import { AssetLink } from '@/components/AssetLink';
 import { DonutChart } from '@/components/charts/DonutChart';
 import { HBarList, PairedBars } from '@/components/charts/Bars';
@@ -147,11 +148,10 @@ export function PoolReserves({ pool }: { pool: string }) {
             formatValue={(n) => usdFmt.format(n)}
           />
         )}
-      {/* ── Real per-reserve bars (replaces the old 16px in-cell strips) ── */}
       {priced.length > 0 && (
-        <div className="border-line/60 space-y-4 border-y py-4">
+        <div className="space-y-6 py-2">
           <div className="space-y-1.5">
-            <h3 className="text-ink-muted text-[11px] font-semibold tracking-wider uppercase">
+            <h3 className="text-ink text-sm font-medium">
               Supplied vs borrowed — USD, priced reserves
             </h3>
             <PairedBars
@@ -179,7 +179,7 @@ export function PoolReserves({ pool }: { pool: string }) {
           </div>
 
           <div className="space-y-1.5">
-            <h3 className="text-ink-muted text-[11px] font-semibold tracking-wider uppercase">
+            <h3 className="text-ink text-sm font-medium">
               Utilization — borrowed / supplied, fixed 0–100% scale
             </h3>
             <HBarList
@@ -209,7 +209,7 @@ export function PoolReserves({ pool }: { pool: string }) {
             (rv) => rv.supply_apr != null || rv.borrow_apr != null,
           ) && (
             <div className="space-y-1.5">
-              <h3 className="text-ink-muted text-[11px] font-semibold tracking-wider uppercase">
+              <h3 className="text-ink text-sm font-medium">
                 Interest rates — supply vs borrow APR
               </h3>
               <PairedBars
@@ -251,6 +251,14 @@ export function PoolReserves({ pool }: { pool: string }) {
         <p className="text-ink-muted text-sm">
           Reserve state is unavailable right now (the contract-storage capture
           is still filling, or this isn&apos;t a reserve-bearing pool).
+          <Button
+            variant="secondary"
+            size="sm"
+            className="ml-3"
+            onClick={() => void q.refetch()}
+          >
+            Retry
+          </Button>
         </p>
       )}
       {q.data && reserves.length === 0 && !q.isLoading && (
@@ -261,32 +269,30 @@ export function PoolReserves({ pool }: { pool: string }) {
       )}
       {reserves.length > 0 && (
         <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead>
-              <tr className="border-line text-ink-muted border-b text-left text-[11px] tracking-wider uppercase">
-                <th className="py-1.5 pr-4 font-normal">Asset</th>
-                <th className="py-1.5 pr-4 text-right font-normal">Supplied</th>
-                <th className="py-1.5 pr-4 text-right font-normal">Borrowed</th>
-                <th className="py-1.5 pr-4 text-right font-normal">Util</th>
-                <th className="py-1.5 pr-4 text-right font-normal">
+          <Table>
+            <THead>
+              <tr>
+                <Th>Asset</Th>
+                <Th align="right">Supplied</Th>
+                <Th align="right" className="hidden sm:table-cell">
+                  Borrowed
+                </Th>
+                <Th align="right">Util</Th>
+                <Th align="right" className="hidden sm:table-cell">
                   Supply APR
-                </th>
-                <th className="py-1.5 text-right font-normal">Borrow APR</th>
+                </Th>
+                <Th align="right" className="hidden sm:table-cell">
+                  Borrow APR
+                </Th>
               </tr>
-            </thead>
-            <tbody>
+            </THead>
+            <TBody>
               {reserves.map((rv) => (
-                <tr
-                  key={rv.asset}
-                  className="border-line/60 hover:bg-surface-muted border-b last:border-0"
-                >
-                  <td
-                    className="py-1.5 pr-4 font-mono text-[11px]"
-                    title={rv.asset}
-                  >
+                <TR key={rv.asset}>
+                  <Td className="whitespace-nowrap" title={rv.asset}>
                     <AssetLink canonical={rv.asset} />
-                  </td>
-                  <td className="py-1.5 pr-4 text-right font-mono tabular-nums">
+                  </Td>
+                  <Td align="right" className="font-mono tabular-nums">
                     {rv.supplied_usd ? (
                       <span
                         title={`${tokenAmount(rv.supplied, rv.decimals)} tokens`}
@@ -296,30 +302,37 @@ export function PoolReserves({ pool }: { pool: string }) {
                     ) : (
                       tokenAmount(rv.supplied, rv.decimals)
                     )}
-                  </td>
-                  <td className="py-1.5 pr-4 text-right font-mono tabular-nums">
+                  </Td>
+                  <Td
+                    align="right"
+                    className="hidden font-mono tabular-nums sm:table-cell"
+                  >
                     {rv.borrowed_usd
                       ? formatUsdWhole(rv.borrowed_usd)
                       : tokenAmount(rv.borrowed, rv.decimals)}
-                  </td>
-                  {/* The old 16px in-cell strip is superseded by the real
-                      0–100%-scaled utilization bars above the table. */}
-                  <td className="py-1.5 pr-4 text-right font-mono tabular-nums">
+                  </Td>
+                  <Td align="right" className="font-mono tabular-nums">
                     {rv.utilization_pct.toFixed(1)}%
-                  </td>
-                  <td className="py-1.5 pr-4 text-right font-mono tabular-nums">
+                  </Td>
+                  <Td
+                    align="right"
+                    className="hidden font-mono tabular-nums sm:table-cell"
+                  >
                     {pct(rv.supply_apr)}
-                  </td>
-                  <td className="py-1.5 text-right font-mono tabular-nums">
+                  </Td>
+                  <Td
+                    align="right"
+                    className="hidden font-mono tabular-nums sm:table-cell"
+                  >
                     {pct(rv.borrow_apr)}
-                  </td>
-                </tr>
+                  </Td>
+                </TR>
               ))}
-            </tbody>
-          </table>
+            </TBody>
+          </Table>
         </div>
       )}
-      <p className="text-ink-muted text-[11px]">
+      <p className="text-ink-muted text-xs">
         Exact current state from on-chain b_rate/d_rate. APR shows{' '}
         <span className="font-mono">—</span> when the rate config is outside the
         captured storage window.

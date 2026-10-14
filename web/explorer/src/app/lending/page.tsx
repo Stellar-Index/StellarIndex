@@ -3,9 +3,10 @@ import Link from 'next/link';
 import { ExternalLink } from 'lucide-react';
 
 import { NoteBadge } from '@/components/NoteBadge';
+import { Panel } from '@/components/reveal';
 import { LendingPoolsTable } from './LendingPoolsTable';
-
 import { Badge, Container, PageHeader } from '@/components/ui';
+
 export const metadata: Metadata = {
   alternates: { canonical: '/lending' },
   title: 'Lending — collateralised lending on Stellar',
@@ -19,12 +20,18 @@ export default function LendingPage() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Lending' }]}
         title="Lending"
+        meta="Collateralised lending on Stellar"
       />
-
-      <div className="border-line bg-surface rounded-xl border p-5 shadow-sm">
+      <Panel
+        headingLevel={2}
+        title="Blend"
+        hint="Isolated pools, priced by Reflector, liquidated through a Comet backstop"
+        bodyClassName="space-y-3"
+      >
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-h3 text-ink font-semibold">Blend</h2>
-          <Badge tone="up">Live</Badge>
+          <Badge tone="ok" dot>
+            Live
+          </Badge>
           <Badge>Isolated pools</Badge>
           <Badge title="Each pool reads the SEP-40 Reflector oracle for collateral valuation.">
             Reflector-priced
@@ -32,17 +39,14 @@ export default function LendingPage() {
           <Badge title="Liquidations execute against a Comet-style auction backstop.">
             Comet backstop
           </Badge>
-          <a
-            href="https://github.com/blend-capital/blend-contracts"
-            className="text-ink-muted ml-auto inline-flex items-center gap-1 text-xs hover:underline"
-            target="_blank"
-            rel="noreferrer"
+          <Link
+            href="/protocols/blend"
+            className="text-brand-600 ml-auto text-xs hover:underline"
           >
-            Contracts source
-            <ExternalLink className="h-3 w-3" />
-          </a>
+            Protocol page
+          </Link>
         </div>
-        <details className="text-ink-muted mt-3 text-xs">
+        <details className="text-ink-muted text-xs">
           <summary className="cursor-pointer">About Blend</summary>
           <ul className="mt-2 space-y-1">
             <li>
@@ -74,10 +78,17 @@ export default function LendingPage() {
             </li>
           </ul>
         </details>
-      </div>
-
+        <a
+          href="https://github.com/blend-capital/blend-contracts"
+          className="text-ink-muted inline-flex items-center gap-1 text-xs hover:underline"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Contracts source
+          <ExternalLink className="h-3 w-3" aria-hidden="true" />
+        </a>
+      </Panel>
       <LendingPoolsTable />
-
       <NoteBadge label="partial: pools with auctions only">
         Only pools that have had an auction are listed.
       </NoteBadge>

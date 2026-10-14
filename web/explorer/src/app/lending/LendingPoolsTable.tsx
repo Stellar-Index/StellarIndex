@@ -4,7 +4,17 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
-import { CopyButton } from '@/components/ui';
+import {
+  Button,
+  CopyButton,
+  Skeleton,
+  TBody,
+  TR,
+  Table,
+  Td,
+  Th,
+  THead,
+} from '@/components/ui';
 import { HBarList } from '@/components/charts/Bars';
 import { apiGet, asExample } from '@/api/client';
 import { formatRelative } from '@/lib/format';
@@ -16,76 +26,57 @@ type LendingPool = NonNullable<
   paths['/lending/pools']['get']['responses'][200]['content']['application/json']['data']
 >[number];
 
-// Compact display of a token base-units magnitude (string big-int).
-// Display-only; precision loss past 2^53 is fine for an at-a-glance
-// column (the API ships the exact decimal string).
 // Curated metadata for every Blend mainnet contract we know of.
 // Sourced from docs/operations/wasm-audits/blend.md (Phase 4 walk).
-// Reserve-asset breakdown per pool
-// needs a Blend-pool-storage reader that doesn't exist yet (task #84);
-// until then this table at least gives users deploy timestamps +
-// initiator addresses so pools are distinguishable.
 interface PoolMeta {
   label: string;
   deployedAt?: string;
-  initiator?: string;
 }
 
 const BLEND_POOL_META: Record<string, PoolMeta> = {
   CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7: {
     label: 'Backstop V2',
     deployedAt: '2025-04-14',
-    initiator: 'GAX2VVWVHU5YQY5J3NJBXKHI3FFKZN54BE6GRJCWSIKSBZTQWJJNJMPC',
   },
   CDSYOAVXFY7SM5S64IZPPPYB4GVGGLMQVFREPSQQEZVIWXX5R23G4QSU: {
     label: 'Pool Factory V2',
     deployedAt: '2025-04-14',
-    initiator: 'GAX2VVWVHU5YQY5J3NJBXKHI3FFKZN54BE6GRJCWSIKSBZTQWJJNJMPC',
   },
   CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD: {
     label: 'Pool #1 (genesis)',
     deployedAt: '2025-04-14',
-    initiator: 'GAX2VVWVHU5YQY5J3NJBXKHI3FFKZN54BE6GRJCWSIKSBZTQWJJNJMPC',
   },
   CBNR7PYFY775UG7W37B4OJG2OBBUKLFW6VIBHFDKKLR2HECPRMRZMDK3: {
     label: 'Pool #2',
     deployedAt: '2025-04-15',
-    initiator: 'GBCAS7XIGDRZY4BMABJMGGW7J3YTITRRV5BTEMFQE5ZZSSVWHHX2ZSS4',
   },
   CCCCIQSDILITHMM7PBSLVDT5MISSY7R26MNZXCX4H7J5JQ5FPIYOGYFS: {
     label: 'Pool #3',
     deployedAt: '2025-04-17',
-    initiator: 'GBCAS7XIGDRZY4BMABJMGGW7J3YTITRRV5BTEMFQE5ZZSSVWHHX2ZSS4',
   },
   CB4OFHAY2TAEYUVPOJS36S657C6NYMSIFUNCCA5AHYT46Y5XUID3O2ED: {
     label: 'Pool #4',
     deployedAt: '2025-05-01',
-    initiator: 'GBIWJGAOSFC4KUPHXM573TKTWHMI7VW7D4GCHYZYH243Q6HVBV7ORBIT',
   },
   CAE7QVOMBLZ53CDRGK3UNRRHG5EZ5NQA7HHTFASEMYBWHG6MDFZTYHXC: {
     label: 'Pool #5',
     deployedAt: '2025-05-01',
-    initiator: 'GBIWJGAOSFC4KUPHXM573TKTWHMI7VW7D4GCHYZYH243Q6HVBV7ORBIT',
   },
   CBYOBT7ZCCLQCBUYYIABZLSEGDPEUWXCUXQTZYOG3YBDR7U357D5ZIRF: {
     label: 'Pool #6',
     deployedAt: '2025-07-13',
-    initiator: 'GCCI7K6QU6FVVIXWSLKRPTBKJCFBLEJKPTZMP27A2KL37N4ZL3OCM3GI',
   },
   CALRF5I2OCJCU577R6MZBCY5IIXNMAAG6PNMN7GUKEYIXBJCJN2FJRVI: {
     label: 'Pool #7',
     deployedAt: '2025-11-22',
-    initiator: 'GDH3FRHOOWXYXEASH43N2VOVFOPJSVJF3EQFSLBLJYFPHOUAF4N4AETH',
   },
   CADR6Q2UOCDJAGXMAB2E6SRT35STLZ2IGLZUCXJQG7TC2LNKCU5RTQVY: {
     label: 'Pool #8',
     deployedAt: '2025-11-25',
-    initiator: 'GDH3FRHOOWXYXEASH43N2VOVFOPJSVJF3EQFSLBLJYFPHOUAF4N4AETH',
   },
   CDMAVJPFXPADND3YRL4BSM3AKZWCTFMX27GLLXCML3PD62HEQS5FPVAI: {
     label: 'Pool #9',
     deployedAt: '2025-11-25',
-    initiator: 'GDH3FRHOOWXYXEASH43N2VOVFOPJSVJF3EQFSLBLJYFPHOUAF4N4AETH',
   },
 };
 
@@ -205,48 +196,38 @@ function PoolRealStats({ pool }: { pool: string }) {
       : n >= 1e6
         ? `$${(n / 1e6).toFixed(2)}M`
         : `$${Math.round(n).toLocaleString('en-US')}`;
+  const cell = (v: number | null, fmt: (n: number) => string) =>
+    q.isLoading ? '…' : v != null ? fmt(v) : '—';
+  const pctFmt = (n: number) => `${(n * 100).toFixed(2)}%`;
   return (
     <>
-      <Td align="right">
-        <span className="text-ink-body font-mono tabular-nums">
-          {q.isLoading ? '…' : tvl != null ? fmtUsd(tvl) : '—'}
-        </span>
+      <Td align="right" className="font-mono tabular-nums">
+        {cell(tvl, fmtUsd)}
       </Td>
-      <Td align="right">
-        <span
-          className="text-ink-body font-mono tabular-nums"
-          title={
-            util != null
-              ? basisNote(Math.min(supplied.count, borrowed.count))
-              : undefined
-          }
-        >
-          {q.isLoading ? '…' : util != null ? `${util.toFixed(1)}%` : '—'}
-        </span>
+      <Td
+        align="right"
+        className="hidden font-mono tabular-nums sm:table-cell"
+        title={
+          util != null
+            ? basisNote(Math.min(supplied.count, borrowed.count))
+            : undefined
+        }
+      >
+        {cell(util, (n) => `${n.toFixed(1)}%`)}
       </Td>
-      <Td align="right">
-        <span
-          className="text-up-strong font-mono tabular-nums"
-          title={wSupplyAPR != null ? basisNote(supplied.count) : undefined}
-        >
-          {q.isLoading
-            ? '…'
-            : wSupplyAPR != null
-              ? `${(wSupplyAPR * 100).toFixed(2)}%`
-              : '—'}
-        </span>
+      <Td
+        align="right"
+        className="hidden font-mono tabular-nums sm:table-cell"
+        title={wSupplyAPR != null ? basisNote(supplied.count) : undefined}
+      >
+        {cell(wSupplyAPR, pctFmt)}
       </Td>
-      <Td align="right">
-        <span
-          className="text-ink-body font-mono tabular-nums"
-          title={wBorrowAPR != null ? basisNote(borrowed.count) : undefined}
-        >
-          {q.isLoading
-            ? '…'
-            : wBorrowAPR != null
-              ? `${(wBorrowAPR * 100).toFixed(2)}%`
-              : '—'}
-        </span>
+      <Td
+        align="right"
+        className="hidden font-mono tabular-nums sm:table-cell"
+        title={wBorrowAPR != null ? basisNote(borrowed.count) : undefined}
+      >
+        {cell(wBorrowAPR, pctFmt)}
       </Td>
     </>
   );
@@ -305,177 +286,127 @@ export function LendingPoolsTable() {
 
       <Panel
         title={`Pools${rows.length > 0 ? ` (${rows.length})` : ''}`}
-        hint="One row per Blend pool. TVL + utilization read live from pool storage (per-reserve USD); auctions and users from the indexed event stream."
+        hint="TVL and utilization read live from pool storage; auctions and users from the indexed event stream"
         source={asExample('/v1/lending/pools', {})}
-        bodyClassName="-mx-4"
+        bodyClassName="-mx-4 -mb-4"
       >
         <div className="overflow-x-auto">
-          <table className="divide-line min-w-full divide-y text-sm">
-            <thead>
-              <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
-                <Th>Protocol</Th>
+          <Table>
+            <THead>
+              <tr>
                 <Th>Pool</Th>
-                <Th>Deployed</Th>
-                <Th align="right">24h auctions</Th>
-                <Th align="right">All-time auctions</Th>
+                <Th className="hidden xl:table-cell">Deployed</Th>
+                <Th align="right" className="hidden xl:table-cell">
+                  Auctions 24h
+                </Th>
+                <Th align="right">Auctions</Th>
                 <Th align="right">TVL</Th>
-                <Th align="right">Utilization</Th>
-                <Th align="right">Supply APR</Th>
-                <Th align="right">Borrow APR</Th>
-                <Th align="right">Users (30d)</Th>
-                <Th align="right">Last activity</Th>
+                <Th align="right" className="hidden sm:table-cell">
+                  Utilization
+                </Th>
+                <Th align="right" className="hidden sm:table-cell">
+                  Supply APR
+                </Th>
+                <Th align="right" className="hidden sm:table-cell">
+                  Borrow APR
+                </Th>
+                <Th align="right" className="hidden xl:table-cell">
+                  Users (30d)
+                </Th>
+                <Th align="right" className="hidden xl:table-cell">
+                  Last activity
+                </Th>
               </tr>
-            </thead>
-            <tbody className="divide-line-subtle divide-y">
+            </THead>
+            <TBody>
               {q.isLoading && (
-                <tr>
-                  <td
-                    colSpan={11}
-                    className="text-ink-muted px-4 py-6 text-center text-sm"
-                  >
-                    Loading pools…
-                  </td>
-                </tr>
+                <TR className="hover:bg-transparent">
+                  <Td colSpan={COLS}>
+                    <Skeleton className="h-4 w-64" />
+                  </Td>
+                </TR>
               )}
               {/* A failed fetch is an availability problem, not an empty
                 chain state — the two must never share one message. */}
               {!q.isLoading && q.isError && (
-                <tr>
-                  <td
-                    colSpan={11}
-                    className="text-ink-muted px-4 py-6 text-center text-sm"
-                  >
-                    The pools list is unavailable right now — retry shortly.
-                  </td>
-                </tr>
+                <TR className="hover:bg-transparent">
+                  <Td colSpan={COLS} className="text-ink-muted py-4">
+                    The pools list is unavailable right now.
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="ml-3"
+                      onClick={() => void q.refetch()}
+                    >
+                      Retry
+                    </Button>
+                  </Td>
+                </TR>
               )}
               {!q.isLoading && !q.isError && rows.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={11}
-                    className="text-ink-muted px-4 py-6 text-center text-sm"
-                  >
+                <TR className="hover:bg-transparent">
+                  <Td colSpan={COLS} className="text-ink-muted py-4">
                     No Blend pools have emitted auction events yet.
-                  </td>
-                </tr>
+                  </Td>
+                </TR>
               )}
               {rows.map((p) => {
                 const poolId = p.pool ?? '';
                 const meta = BLEND_POOL_META[poolId];
                 return (
-                  <tr key={poolId} className="hover:bg-surface-muted">
+                  <TR key={poolId}>
                     <Td>
-                      <span className="bg-up-subtle text-up-strong inline-block rounded-sm px-1.5 py-0.5 text-[11px] font-medium tracking-wider uppercase">
-                        {p.protocol}
-                      </span>
-                    </Td>
-                    <Td>
-                      <div className="space-y-0.5">
-                        {/* The full pool id was hover-only (`title=`), so
-                          touch + keyboard users could not recover it. The
-                          copy button is the reachable path; it sits BESIDE
-                          the link, never inside it (no nested
-                          interactives). */}
-                        <div className="flex items-center gap-1">
-                          <Link
-                            href={`/lending/${poolId}`}
-                            className="hover:text-brand-600 block font-mono text-[11px]"
-                            title={poolId}
-                          >
-                            {poolId.slice(0, 6)}…{poolId.slice(-6)}
-                          </Link>
-                          <CopyButton value={poolId} />
-                        </div>
-                        {/* Curated label where we have one; else a generic
-                          "Blend pool" tag so newer/unmapped pools are still
-                          identified rather than shown as a bare hash (audit
-                          2026-06-19). We don't invent pool names. */}
-                        <div className="text-ink-muted text-[9px] tracking-wide uppercase">
-                          {meta?.label ?? 'Blend pool'}
-                        </div>
+                      <div className="flex items-center gap-1">
+                        <Link
+                          href={`/lending/${poolId}`}
+                          className="text-brand-600 font-mono text-xs whitespace-nowrap hover:underline"
+                          title={poolId}
+                        >
+                          {poolId.slice(0, 6)}…{poolId.slice(-6)}
+                        </Link>
+                        <CopyButton value={poolId} />
+                      </div>
+                      {/* Curated label where we have one; we don't invent pool names. */}
+                      <div className="text-ink-muted text-xs whitespace-nowrap">
+                        {meta?.label ?? 'Blend pool'}
                       </div>
                     </Td>
-                    <Td>
-                      {meta?.deployedAt ? (
-                        <div className="space-y-0.5">
-                          <div className="text-ink-body font-mono text-[11px]">
-                            {meta.deployedAt}
-                          </div>
-                          {meta.initiator && (
-                            <div
-                              className="text-ink-muted font-mono text-[9px]"
-                              title={meta.initiator}
-                            >
-                              by {meta.initiator.slice(0, 4)}…
-                              {meta.initiator.slice(-4)}
-                            </div>
-                          )}
-                        </div>
-                      ) : (
+                    <Td className="hidden font-mono text-xs whitespace-nowrap xl:table-cell">
+                      {meta?.deployedAt ?? (
                         <span className="text-ink-faint">—</span>
                       )}
                     </Td>
-                    <Td align="right">
-                      <span className="text-ink-body font-mono tabular-nums">
-                        {(p.auctions_24h ?? 0).toLocaleString('en-US')}
-                      </span>
+                    <Td
+                      align="right"
+                      className="hidden font-mono tabular-nums xl:table-cell"
+                    >
+                      {(p.auctions_24h ?? 0).toLocaleString('en-US')}
                     </Td>
-                    <Td align="right">
-                      <span className="text-ink-body font-mono tabular-nums">
-                        {(p.auctions_total ?? 0).toLocaleString('en-US')}
-                      </span>
+                    <Td align="right" className="font-mono tabular-nums">
+                      {(p.auctions_total ?? 0).toLocaleString('en-US')}
                     </Td>
-                    <PoolRealStats pool={p.pool ?? ''} />
-                    <Td align="right">
-                      <span className="text-ink-body font-mono tabular-nums">
-                        {(p.unique_users_30d ?? 0).toLocaleString('en-US')}
-                      </span>
+                    <PoolRealStats pool={poolId} />
+                    <Td
+                      align="right"
+                      className="hidden font-mono tabular-nums xl:table-cell"
+                    >
+                      {(p.unique_users_30d ?? 0).toLocaleString('en-US')}
                     </Td>
-                    <Td align="right">
-                      <span className="text-ink-muted font-mono text-xs">
-                        {formatRelative(p.last_seen)}
-                      </span>
+                    <Td
+                      align="right"
+                      className="text-ink-muted hidden text-xs whitespace-nowrap xl:table-cell"
+                    >
+                      {formatRelative(p.last_seen)}
                     </Td>
-                  </tr>
+                  </TR>
                 );
               })}
-            </tbody>
-          </table>
+            </TBody>
+          </Table>
         </div>
       </Panel>
     </>
   );
 }
 
-function Th({
-  children,
-  align,
-}: {
-  children: React.ReactNode;
-  align?: 'left' | 'right';
-}) {
-  return (
-    <th
-      scope="col"
-      className={`px-4 py-2 ${align === 'right' ? 'text-right' : 'text-left'}`}
-    >
-      {children}
-    </th>
-  );
-}
-
-function Td({
-  children,
-  align,
-}: {
-  children: React.ReactNode;
-  align?: 'left' | 'right';
-}) {
-  return (
-    <td
-      className={`px-4 py-2 ${align === 'right' ? 'text-right' : 'text-left'}`}
-    >
-      {children}
-    </td>
-  );
-}
+const COLS = 10;
