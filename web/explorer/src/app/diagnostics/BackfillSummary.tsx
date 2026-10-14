@@ -142,7 +142,7 @@ function Cell({
           : '';
   return (
     <div className="border-line bg-surface rounded-md border p-3">
-      <div className="text-ink-muted text-[10px] tracking-wider uppercase">
+      <div className="text-ink-muted text-[11px] tracking-wider uppercase">
         {label}
       </div>
       <div

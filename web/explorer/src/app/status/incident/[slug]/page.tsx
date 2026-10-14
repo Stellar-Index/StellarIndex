@@ -100,12 +100,9 @@ export default async function IncidentPage({
           </Badge>
           <Badge tone={statusTone}>{inc.status}</Badge>
           {inc.affected_components.map((c) => (
-            <span
-              key={c}
-              className="bg-surface-subtle text-ink-muted ring-line inline-flex items-center rounded-full px-2 py-0.5 font-mono text-[10px] ring-1 ring-inset"
-            >
+            <Badge key={c} className="font-mono">
               {c}
-            </span>
+            </Badge>
           ))}
           <span className="text-ink-faint ml-auto font-mono text-xs">
             {inc.date}
@@ -211,7 +208,7 @@ function Timeline({
 function Cell({ label, value }: { label: string; value: string }) {
   return (
     <Card flat className="px-3 py-2">
-      <div className="text-ink-faint text-[10px] font-semibold tracking-wider uppercase">
+      <div className="text-ink-faint text-[11px] font-semibold tracking-wider uppercase">
         {label}
       </div>
       <div className="text-ink mt-0.5 font-mono text-xs">{value}</div>

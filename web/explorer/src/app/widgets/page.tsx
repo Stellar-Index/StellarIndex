@@ -147,7 +147,7 @@ export default function WidgetsPage() {
         </div>
       </section>
 
-      <section className="border-line bg-surface rounded-xl border p-5 text-sm">
+      <section className="rounded-card border-line bg-surface border p-4 text-sm">
         <h2 className="text-h3 text-ink font-semibold">Notes</h2>
         <ul className="text-ink-body mt-3 space-y-2">
           <li>
@@ -196,8 +196,8 @@ function WidgetCard({
   snippet: string;
 }) {
   return (
-    <div className="border-line bg-surface overflow-hidden rounded-xl border shadow-sm">
-      <div className="border-line bg-surface-muted text-ink-muted border-b px-4 py-2 text-xs tracking-wider uppercase">
+    <div className="rounded-card border-line bg-surface overflow-hidden border">
+      <div className="border-line text-ink border-b px-4 py-3 text-sm font-medium">
         {label}
       </div>
       <div className="bg-surface-muted flex h-[210px] items-center justify-center p-4">

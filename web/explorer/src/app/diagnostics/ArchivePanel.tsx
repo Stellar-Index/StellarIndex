@@ -125,7 +125,7 @@ export function ArchivePanel() {
 function ArchiveStat({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <dt className="text-ink-muted text-[10px] tracking-wider uppercase">
+      <dt className="text-ink-muted text-[11px] tracking-wider uppercase">
         {label}
       </dt>
       <dd className="mt-1 font-mono text-sm tabular-nums">{value}</dd>

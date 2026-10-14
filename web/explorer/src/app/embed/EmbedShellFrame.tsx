@@ -25,7 +25,7 @@ export function EmbedShellFrame({
           <span className="text-base font-semibold tracking-tight">
             {label}
           </span>
-          <span className="text-ink-muted font-mono text-[10px]">
+          <span className="text-ink-muted font-mono text-[11px]">
             {sublabel}
           </span>
         </div>
@@ -33,7 +33,7 @@ export function EmbedShellFrame({
           href={`${CURRENT_NETWORK.explorerUrl}${href}`}
           target="_blank"
           rel="noreferrer noopener"
-          className="text-ink-faint hover:text-brand-600 text-[10px]"
+          className="text-ink-faint hover:text-brand-600 text-[11px]"
         >
           stellarindex.io ↗
         </a>
@@ -41,7 +41,7 @@ export function EmbedShellFrame({
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
         {children}
       </div>
-      <div className="text-ink-faint mt-auto text-[10px]">
+      <div className="text-ink-faint mt-auto text-[11px]">
         Powered by Stellar Index
       </div>
     </div>

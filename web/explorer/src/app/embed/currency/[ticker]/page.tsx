@@ -204,7 +204,7 @@ export default async function EmbedCurrencyPage({
           <span className="text-base font-semibold tracking-tight">
             {upper}
           </span>
-          <span className="text-ink-muted font-mono text-[10px]">
+          <span className="text-ink-muted font-mono text-[11px]">
             {cur.name}
           </span>
         </div>
@@ -212,7 +212,7 @@ export default async function EmbedCurrencyPage({
           href={`${CURRENT_NETWORK.explorerUrl}${assetHrefFor(upper)}`}
           target="_blank"
           rel="noreferrer noopener"
-          className="text-ink-faint hover:text-brand-600 text-[10px]"
+          className="text-ink-faint hover:text-brand-600 text-[11px]"
         >
           stellarindex.io ↗
         </a>
@@ -232,7 +232,7 @@ export default async function EmbedCurrencyPage({
           positive={(change7d ?? 0) >= 0}
         />
       )}
-      <div className="text-ink-faint mt-auto flex items-center justify-between text-[10px]">
+      <div className="text-ink-faint mt-auto flex items-center justify-between text-[11px]">
         <span>Powered by Stellar Index</span>
         {cur.rate_usd > 0 && (
           <span className="font-mono tabular-nums">
