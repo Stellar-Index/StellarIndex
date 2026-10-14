@@ -84,7 +84,7 @@ type LumenTally struct {
 	Preimages int
 }
 
-func newLumenTally(ledger uint32, totalCoins, feePool int64) *LumenTally {
+func NewLumenTally(ledger uint32, totalCoins, feePool int64) *LumenTally {
 	return &LumenTally{
 		Ledger: ledger, TotalCoins: totalCoins, FeePool: feePool,
 		Accounts: new(big.Int), ClaimableBalances: new(big.Int),
@@ -110,20 +110,28 @@ var lumenEntryTypes = []string{"account", "claimable_balance", "liquidity_pool",
 
 // LumenConservation tallies native XLM held in ledger_entries_current as of the newest committed ledger, rolling back keys newer than it so concurrent ingest cannot tear the sum; nativeSAC is the native SAC contract id.
 func (r *NetworkStateReader) LumenConservation(ctx context.Context, nativeSAC string) (*LumenTally, error) {
+	return r.LumenConservationAt(ctx, nativeSAC, 0)
+}
+
+// LumenConservationAt tallies holdings as of ledger (0 = the lake tip), whose header must be in stellar.ledgers; rows the lake
+// changed after it are resolved from their first later change.
+func (r *NetworkStateReader) LumenConservationAt(ctx context.Context, nativeSAC string, ledger uint32) (*LumenTally, error) {
 	sac, prefix, err := nativeSACKey(nativeSAC)
 	if err != nil {
 		return nil, err
 	}
-	var (
-		ledger              uint32
-		totalCoins, feePool int64
-	)
-	if err := r.conn.QueryRow(ctx, `SELECT ledger_seq, total_coins, fee_pool FROM stellar.ledgers FINAL
-		WHERE ledger_seq = (SELECT max(ledger_seq) FROM stellar.ledgers)`).
-		Scan(&ledger, &totalCoins, &feePool); err != nil {
-		return nil, fmt.Errorf("clickhouse: lumen conservation: tip header: %w", err)
+	q := `SELECT ledger_seq, total_coins, fee_pool FROM stellar.ledgers FINAL
+		WHERE ledger_seq = (SELECT max(ledger_seq) FROM stellar.ledgers)`
+	var args []any
+	if ledger > 0 {
+		q = `SELECT ledger_seq, total_coins, fee_pool FROM stellar.ledgers FINAL WHERE ledger_seq = ?`
+		args = []any{ledger}
 	}
-	t := newLumenTally(ledger, totalCoins, feePool)
+	var totalCoins, feePool int64
+	if err := r.conn.QueryRow(ctx, q, args...).Scan(&ledger, &totalCoins, &feePool); err != nil {
+		return nil, fmt.Errorf("clickhouse: lumen conservation: header at %d: %w", ledger, err)
+	}
+	t := NewLumenTally(ledger, totalCoins, feePool)
 	pending, err := r.foldCurrentLumens(ctx, t, sac, prefix)
 	if err != nil {
 		return nil, err
@@ -244,7 +252,7 @@ func (r *NetworkStateReader) foldPreimageLumens(ctx context.Context, t *LumenTal
 	return nil
 }
 
-// foldNativeHolding adds one live entry's native XLM to its domain's sum.
+// foldNativeHolding adds one lake row's native XLM to its domain's sum.
 // Account rows carry it in the balance column; the rest are decoded.
 func foldNativeHolding(t *LumenTally, entryType string, balance int64, entryXDR string, sac xdr.ContractId) error {
 	if entryType == "account" {
@@ -255,46 +263,85 @@ func foldNativeHolding(t *LumenTally, entryType string, balance int64, entryXDR 
 	if err := xdr.SafeUnmarshalBase64(entryXDR, &e); err != nil {
 		return fmt.Errorf("clickhouse: lumen conservation: decode %s entry: %w", entryType, err)
 	}
+	return t.AddEntry(e, sac)
+}
+
+// AddEntry adds one decoded live entry's native XLM to its domain's sum; an entry that can hold none adds nothing.
+func (t *LumenTally) AddEntry(e xdr.LedgerEntry, sac xdr.ContractId) error {
+	_, amount, err := EntryLumens(e, sac)
+	if err != nil {
+		return err
+	}
 	switch e.Data.Type {
+	case xdr.LedgerEntryTypeAccount:
+		t.Accounts.Add(t.Accounts, amount)
 	case xdr.LedgerEntryTypeClaimableBalance:
-		cb := e.Data.MustClaimableBalance()
-		if cb.Asset.Type == xdr.AssetTypeAssetTypeNative {
-			t.ClaimableBalances.Add(t.ClaimableBalances, big.NewInt(int64(cb.Amount)))
-		}
+		t.ClaimableBalances.Add(t.ClaimableBalances, amount)
 	case xdr.LedgerEntryTypeLiquidityPool:
-		cp, ok := e.Data.MustLiquidityPool().Body.GetConstantProduct()
-		if !ok {
-			return errors.New("clickhouse: lumen conservation: liquidity pool with no constant-product body")
-		}
-		if cp.Params.AssetA.Type == xdr.AssetTypeAssetTypeNative {
-			t.LiquidityPools.Add(t.LiquidityPools, big.NewInt(int64(cp.ReserveA)))
-		}
-		if cp.Params.AssetB.Type == xdr.AssetTypeAssetTypeNative {
-			t.LiquidityPools.Add(t.LiquidityPools, big.NewInt(int64(cp.ReserveB)))
-		}
+		t.LiquidityPools.Add(t.LiquidityPools, amount)
 	case xdr.LedgerEntryTypeContractData:
-		return foldSACBalance(t, e.Data.MustContractData(), sac)
+		t.ContractBalances.Add(t.ContractBalances, amount)
+	default:
 	}
 	return nil
 }
 
-// foldSACBalance adds a native-SAC Balance(Address) entry's amount. The key
+// EntryLumens is the native XLM one live entry holds, with its lake entry_type name: zero for an entry that can hold none (a
+// non-native claimable balance, a contract-data row that is not a native SAC balance), an error for one that cannot be read.
+func EntryLumens(e xdr.LedgerEntry, sac xdr.ContractId) (string, *big.Int, error) {
+	class := entryTypeName(e.Data.Type)
+	switch e.Data.Type {
+	case xdr.LedgerEntryTypeAccount:
+		return class, big.NewInt(int64(e.Data.MustAccount().Balance)), nil
+	case xdr.LedgerEntryTypeClaimableBalance:
+		cb := e.Data.MustClaimableBalance()
+		if cb.Asset.Type != xdr.AssetTypeAssetTypeNative {
+			return class, new(big.Int), nil
+		}
+		return class, big.NewInt(int64(cb.Amount)), nil
+	case xdr.LedgerEntryTypeLiquidityPool:
+		cp, ok := e.Data.MustLiquidityPool().Body.GetConstantProduct()
+		if !ok {
+			return class, nil, errors.New("clickhouse: lumen conservation: liquidity pool with no constant-product body")
+		}
+		sum := new(big.Int)
+		if cp.Params.AssetA.Type == xdr.AssetTypeAssetTypeNative {
+			sum.Add(sum, big.NewInt(int64(cp.ReserveA)))
+		}
+		if cp.Params.AssetB.Type == xdr.AssetTypeAssetTypeNative {
+			sum.Add(sum, big.NewInt(int64(cp.ReserveB)))
+		}
+		return class, sum, nil
+	case xdr.LedgerEntryTypeContractData:
+		amount, err := sacBalanceLumens(e.Data.MustContractData(), sac)
+		return class, amount, err
+	default:
+		return class, new(big.Int), nil
+	}
+}
+
+// sacBalanceLumens reads a native-SAC Balance(Address) entry's amount. The key
 // prefix spans 31 of the contract id's 32 bytes, so the id is re-checked here.
-func foldSACBalance(t *LumenTally, cd xdr.ContractDataEntry, sac xdr.ContractId) error {
+func sacBalanceLumens(cd xdr.ContractDataEntry, sac xdr.ContractId) (*big.Int, error) {
 	if !isNativeSACBalance(cd.Contract, cd.Key, sac) {
-		return nil
+		return new(big.Int), nil
 	}
 	amount, ok := balanceAmount(cd.Val)
 	if !ok {
-		return errors.New("clickhouse: lumen conservation: native SAC balance entry with no readable amount")
+		return nil, errors.New("clickhouse: lumen conservation: native SAC balance entry with no readable amount")
 	}
-	t.ContractBalances.Add(t.ContractBalances, amount)
-	return nil
+	return amount, nil
 }
 
 func isNativeSACBalance(contract xdr.ScAddress, key xdr.ScVal, sac xdr.ContractId) bool {
 	return contract.Type == xdr.ScAddressTypeScAddressTypeContract && contract.ContractId != nil &&
 		bytes.Equal(contract.ContractId[:], sac[:]) && balanceKeyHolder(key)
+}
+
+// NativeSACID decodes the native SAC's contract id from its strkey.
+func NativeSACID(contractID string) (xdr.ContractId, error) {
+	id, _, err := nativeSACKey(contractID)
+	return id, err
 }
 
 // nativeSACKey decodes the native SAC id and its contract-data key prefix.

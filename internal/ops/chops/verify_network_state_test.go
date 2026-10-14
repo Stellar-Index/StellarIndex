@@ -321,9 +321,9 @@ func TestPickHotArchiveCheckpoint(t *testing.T) {
 }
 
 func TestParseNetworkChecks(t *testing.T) {
-	got, err := parseNetworkChecks(" lumens , hotarchive ")
-	if err != nil || !got[networkCheckLumens] || !got[networkCheckHotArchive] {
-		t.Fatalf("both checks: got %v, %v", got, err)
+	got, err := parseNetworkChecks(" lumens , hotarchive ,livestate")
+	if err != nil || !got[networkCheckLumens] || !got[networkCheckHotArchive] || !got[networkCheckLiveState] {
+		t.Fatalf("all three checks: got %v, %v", got, err)
 	}
 	for _, bad := range []string{"", " , ", "hotarchive,bogus"} {
 		if _, err := parseNetworkChecks(bad); err == nil {
@@ -350,5 +350,179 @@ func TestNetworkStateResult_LumenResidualFails(t *testing.T) {
 	tally.Accounts = big.NewInt(990)
 	if res.failures() != 0 {
 		t.Fatalf("failures() = %d with zero residual", res.failures())
+	}
+}
+
+func liveAccount(balance int64) xdr.LedgerEntry {
+	return xdr.LedgerEntry{Data: xdr.LedgerEntryData{Type: xdr.LedgerEntryTypeAccount, Account: &xdr.AccountEntry{
+		AccountId: xdr.MustAddress("GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H"), Balance: xdr.Int64(balance),
+	}}}
+}
+
+func liveCB(asset xdr.Asset, amount int64) xdr.LedgerEntry {
+	return xdr.LedgerEntry{Data: xdr.LedgerEntryData{Type: xdr.LedgerEntryTypeClaimableBalance, ClaimableBalance: &xdr.ClaimableBalanceEntry{
+		BalanceId: xdr.ClaimableBalanceId{Type: xdr.ClaimableBalanceIdTypeClaimableBalanceIdTypeV0, V0: &xdr.Hash{byte(amount)}},
+		Asset:     asset, Amount: xdr.Int64(amount),
+	}}}
+}
+
+func liveLP(a, b xdr.Asset, reserveA, reserveB int64) xdr.LedgerEntry {
+	return xdr.LedgerEntry{Data: xdr.LedgerEntryData{Type: xdr.LedgerEntryTypeLiquidityPool, LiquidityPool: &xdr.LiquidityPoolEntry{
+		Body: xdr.LiquidityPoolEntryBody{Type: xdr.LiquidityPoolTypeLiquidityPoolConstantProduct, ConstantProduct: &xdr.LiquidityPoolEntryConstantProduct{
+			Params: xdr.LiquidityPoolConstantProductParameters{AssetA: a, AssetB: b}, ReserveA: xdr.Int64(reserveA), ReserveB: xdr.Int64(reserveB),
+		}},
+	}}}
+}
+
+func liveSACBalance(contract xdr.ContractId, amount uint64) xdr.LedgerEntry {
+	sym := xdr.ScSymbol("Balance")
+	holder := xdr.MustAddress("GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H")
+	vec := xdr.ScVec{
+		{Type: xdr.ScValTypeScvSymbol, Sym: &sym},
+		{Type: xdr.ScValTypeScvAddress, Address: &xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeAccount, AccountId: &holder}},
+	}
+	pv := &vec
+	return xdr.LedgerEntry{Data: xdr.LedgerEntryData{Type: xdr.LedgerEntryTypeContractData, ContractData: &xdr.ContractDataEntry{
+		Contract:   xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &contract},
+		Key:        xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &pv},
+		Durability: xdr.ContractDataDurabilityPersistent,
+		Val:        xdr.ScVal{Type: xdr.ScValTypeScvI128, I128: &xdr.Int128Parts{Lo: xdr.Uint64(amount)}},
+	}}}
+}
+
+func liveStream(entries []xdr.LedgerEntry, fail error) func(context.Context) iter.Seq2[xdr.LedgerEntry, error] {
+	return func(context.Context) iter.Seq2[xdr.LedgerEntry, error] {
+		return func(yield func(xdr.LedgerEntry, error) bool) {
+			for _, e := range entries {
+				if !yield(e, nil) {
+					return
+				}
+			}
+			if fail != nil {
+				yield(xdr.LedgerEntry{}, fail)
+			}
+		}
+	}
+}
+
+// The live-state tally sums only native XLM per class and counts every entry
+// it read; a stream error surfaces with the count so far.
+func TestTallyLiveState_SumsPerClassAndSurfacesStreamErrors(t *testing.T) {
+	sac := xdr.ContractId{0x5a, 0xc0}
+	native := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
+	credit := xdr.MustNewCreditAsset("USDC", "GC3C4AKRBQLHOJ45U4XG35ESVWRDECWO5XLDGYADO6DPR3L7KIDVUMML")
+	entries := []xdr.LedgerEntry{
+		liveAccount(600), liveAccount(7),
+		liveCB(native, 100), liveCB(credit, 5_000),
+		liveLP(native, credit, 30, 40), liveLP(credit, native, 1, 2),
+		liveSACBalance(sac, 50), liveSACBalance(xdr.ContractId{0x5a, 0xc1}, 9_999),
+		persistentData("other", 1, 10), contractCode("wasm", 10),
+	}
+	tally := clickhouse.NewLumenTally(64, 0, 0)
+	var dump bytes.Buffer
+	n, err := tallyLiveState(context.Background(), liveStream(entries, nil), tally, sac, &dump)
+	if err != nil || n != uint64(len(entries)) {
+		t.Fatalf("tallyLiveState = (%d, %v), want (%d, nil)", n, err, len(entries))
+	}
+	for _, c := range []struct {
+		name string
+		got  *big.Int
+		want int64
+	}{
+		{"accounts", tally.Accounts, 607},
+		{"claimable_balances", tally.ClaimableBalances, 100},
+		{"liquidity_pools", tally.LiquidityPools, 32},
+		{"contract_balances", tally.ContractBalances, 50},
+	} {
+		if c.got.Cmp(big.NewInt(c.want)) != 0 {
+			t.Errorf("%s = %s, want %d", c.name, c.got, c.want)
+		}
+	}
+	rows := strings.Split(strings.TrimSuffix(dump.String(), "\n"), "\n")
+	if len(rows) != len(entries) {
+		t.Fatalf("dump rows = %d, want %d", len(rows), len(entries))
+	}
+	if f := strings.Split(rows[0], "\t"); len(f) != 5 || f[0] != "account" || f[2] != "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H" || f[3] != "600" {
+		t.Errorf("dump row 0 = %q", rows[0])
+	}
+	if f := strings.Split(rows[3], "\t"); f[0] != "claimable_balance" || f[3] != "0" {
+		t.Errorf("non-native claimable balance row = %q", rows[3])
+	}
+	boom := errors.New("bucket download failed")
+	n, err = tallyLiveState(context.Background(), liveStream(entries[:3], boom), clickhouse.NewLumenTally(64, 0, 0), sac, nil)
+	if !errors.Is(err, boom) || n != 3 {
+		t.Fatalf("stream error: got (%d, %v), want (3, %v)", n, err, boom)
+	}
+}
+
+// A class whose two sides differ is one failure; a run that read nothing is a
+// failure on its own; the report and prom carry the per-class delta.
+func TestLiveStateCounts_FailuresPerDifferingClass(t *testing.T) {
+	archive := clickhouse.NewLumenTally(64, 1_000, 10)
+	lake := clickhouse.NewLumenTally(64, 1_000, 10)
+	archive.Accounts.SetInt64(900)
+	lake.Accounts.SetInt64(900)
+	archive.ContractBalances.SetInt64(90)
+	lake.ContractBalances.SetInt64(95)
+	counts := &liveStateCounts{checkpoint: 64, entries: 4, archive: archive, lake: lake}
+	if f := counts.failures(); f != 1 {
+		t.Fatalf("failures() = %d, want 1 (contract_balances)", f)
+	}
+	res := networkStateResult{live: counts}
+	report := res.report()
+	if !strings.Contains(report, "contract_balances archive=90 lake=95 diff=5") || !strings.Contains(report, "FAILED") {
+		t.Fatalf("report must name the differing class:\n%s", report)
+	}
+	prom := res.renderProm(time.Unix(1_700_000_000, 0))
+	for _, want := range []string{
+		`stellarindex_network_state_verify_failures{check="live_state"} 1`,
+		`stellarindex_network_state_verify_live_state_diff_stroops{class="contract_balances"} 5`,
+		`stellarindex_network_state_verify_live_state_diff_stroops{class="accounts"} 0`,
+	} {
+		if !strings.Contains(prom, want) {
+			t.Errorf("prom lacks %s:\n%s", want, prom)
+		}
+	}
+	lake.ContractBalances.SetInt64(90)
+	if f := counts.failures(); f != 0 {
+		t.Fatalf("failures() = %d with equal sides", f)
+	}
+	counts.entries = 0
+	if f := counts.failures(); f != 1 || !strings.Contains(res.report(), "yielded no entries") {
+		t.Fatalf("an empty stream must fail: failures()=%d report=%s", f, res.report())
+	}
+}
+
+// The live-state filters admit accounts, claimable balances, liquidity pools
+// and the native SAC's contract data; the same rule answers for keys.
+func TestLiveStateFilters_AdmitOnlyNativeHolders(t *testing.T) {
+	sac := xdr.ContractId{0x5a, 0xc0}
+	entryWanted, keyWanted := liveStateFilters(sac)
+	native := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
+	trustline := xdr.LedgerEntry{Data: xdr.LedgerEntryData{Type: xdr.LedgerEntryTypeTrustline, TrustLine: &xdr.TrustLineEntry{}}}
+	for _, c := range []struct {
+		name string
+		e    xdr.LedgerEntry
+		want bool
+	}{
+		{"account", liveAccount(1), true},
+		{"claimable balance", liveCB(native, 1), true},
+		{"liquidity pool", liveLP(native, native, 1, 1), true},
+		{"native SAC balance", liveSACBalance(sac, 1), true},
+		{"other contract's data", liveSACBalance(xdr.ContractId{0x5a, 0xc1}, 1), false},
+		{"persistent data", persistentData("x", 1, 1), false},
+		{"contract code", contractCode("wasm", 1), false},
+		{"trustline", trustline, false},
+	} {
+		if got := entryWanted(c.e); got != c.want {
+			t.Errorf("entry filter(%s) = %v, want %v", c.name, got, c.want)
+		}
+		key, err := c.e.LedgerKey()
+		if err != nil {
+			t.Fatalf("%s: LedgerKey: %v", c.name, err)
+		}
+		if got := keyWanted(key); got != c.want {
+			t.Errorf("key filter(%s) = %v, want %v", c.name, got, c.want)
+		}
 	}
 }

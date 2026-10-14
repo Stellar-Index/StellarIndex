@@ -90,7 +90,7 @@ func TestFoldNativeHolding_SumsOnlyNativeExactly(t *testing.T) {
 	other := xdr.ContractId{0x5a, 0x01}
 	meta := xdr.ScSymbol("METADATA")
 
-	tally := newLumenTally(100, 0, 0)
+	tally := NewLumenTally(100, 0, 0)
 	rows := []struct {
 		entryType string
 		balance   int64
@@ -136,7 +136,7 @@ func TestFoldNativeHolding_SumsOnlyNativeExactly(t *testing.T) {
 
 func TestFoldNativeHolding_UnreadableEntriesError(t *testing.T) {
 	sac := xdr.ContractId{0x5a}
-	tally := newLumenTally(1, 0, 0)
+	tally := NewLumenTally(1, 0, 0)
 	if err := foldNativeHolding(tally, "claimable_balance", 0, "not-xdr", sac); err == nil {
 		t.Error("undecodable entry folded silently")
 	}
@@ -259,7 +259,7 @@ func TestFoldPreimageLumens_SkipsSnapshotSeedRow(t *testing.T) {
 		{key: key, entryType: "account", changeType: "state", balance: 100, txHash: "ab", opIndex: 0},
 		{key: key, entryType: "account", changeType: "updated", balance: 200, txHash: "ab", opIndex: 0},
 	}}}
-	tally := newLumenTally(10, 0, 0)
+	tally := NewLumenTally(10, 0, 0)
 	if err := r.foldPreimageLumens(context.Background(), tally, xdr.ContractId{}, []string{key}); err != nil {
 		t.Fatalf("foldPreimageLumens: %v", err)
 	}
@@ -277,7 +277,7 @@ func TestFoldPreimageLumens_HonoursEvictionRow(t *testing.T) {
 		{key: key, entryType: "claimable_balance", changeType: "removed", opIndex: -1},
 		{key: key, entryType: "claimable_balance", changeType: "created", txHash: "cd", opIndex: 0},
 	}}}
-	err := r.foldPreimageLumens(context.Background(), newLumenTally(10, 0, 0), xdr.ContractId{}, []string{key})
+	err := r.foldPreimageLumens(context.Background(), NewLumenTally(10, 0, 0), xdr.ContractId{}, []string{key})
 	if err == nil || !strings.Contains(err.Error(), `as "removed"`) {
 		t.Fatalf("foldPreimageLumens err = %v, want the eviction read as a `removed` first change", err)
 	}

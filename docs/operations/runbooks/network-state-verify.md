@@ -1,6 +1,6 @@
 ---
 title: Runbook — network-state-verify
-last_verified: 2026-10-03
+last_verified: 2026-10-14
 status: draft
 severity: P3
 ---
@@ -44,7 +44,8 @@ cat /var/lib/node_exporter/textfile_collector/network_state_verify.prom
 1. Date a `hot_archive` change by running at checkpoints either side of the suspect ledger: `stellarindex-ops verify-network-state -config /etc/stellarindex.toml -checks hotarchive -checkpoint 59501247` and `-checkpoint 59501311`. Clean before and failing after = a network rewrite. There is no repair verb (`ledger_entries_current` has one writer, the `ledger_entry_changes` view): record the keys and open an issue; the correction is code.
 2. Lake behind (`verify-lake` also reports `entry_changes`): `stellarindex-ops ch-backfill -config PATH -from LO -to HI -bucket galexie-archive -write`, then re-run.
 3. `lumens`: run `reconcile-balances` on a sample of accounts to find the short domain.
-4. Verify: `systemctl start verify-network-state.service`; every `stellarindex_network_state_verify_failures` series reads 0.
+4. `lumens` positive or drifting: run the opt-in live-state check once by hand, in a lane gap (it streams the whole live bucket list from the archive, tens of GB, an hour or more): `stellarindex-ops verify-network-state -config /etc/stellarindex.toml -checks livestate`. It prints every class twice, archive beside lake as of the same checkpoint; the class whose `diff` is non-zero carries the residual. Add `-livestate-dump <path>` to also write every live entry (entry type, ledger key, holder, stroops, last-modified ledger; TSV, ~2 GB) and join it on `key_xdr` against a `ledger_entries_current` export to name the rows that differ.
+5. Verify: `systemctl start verify-network-state.service`; every `stellarindex_network_state_verify_failures` series reads 0.
 
 ## Seed entry state from a history-archive checkpoint
 
