@@ -49,40 +49,54 @@ func FileConsts(t testing.TB, path string) []Const {
 	}
 	var out []Const
 	for _, decl := range parsed.Decls {
-		gd, ok := decl.(*ast.GenDecl)
-		if !ok || gd.Tok != token.CONST {
-			continue
-		}
-		var (
-			carriedType   string
-			carriedValues []ast.Expr
-		)
-		for _, spec := range gd.Specs {
-			vs, ok := spec.(*ast.ValueSpec)
-			if !ok {
-				continue
-			}
-			if len(vs.Values) > 0 {
-				carriedType = ""
-				if id, ok := vs.Type.(*ast.Ident); ok {
-					carriedType = id.Name
-				}
-				carriedValues = vs.Values
-			}
-			for i, name := range vs.Names {
-				c := Const{Name: name.Name, Type: carriedType, File: path}
-				if i < len(carriedValues) {
-					if lit, ok := carriedValues[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
-						if s, err := strconv.Unquote(lit.Value); err == nil {
-							c.Value, c.IsString = s, true
-						}
-					}
-				}
-				out = append(out, c)
-			}
+		if gd, ok := decl.(*ast.GenDecl); ok && gd.Tok == token.CONST {
+			out = append(out, groupConsts(gd, path)...)
 		}
 	}
 	return out
+}
+
+// groupConsts reads one const block, carrying the type and values into the specs that omit them.
+func groupConsts(gd *ast.GenDecl, path string) []Const {
+	var (
+		out           []Const
+		carriedType   string
+		carriedValues []ast.Expr
+	)
+	for _, spec := range gd.Specs {
+		vs, ok := spec.(*ast.ValueSpec)
+		if !ok {
+			continue
+		}
+		if len(vs.Values) > 0 {
+			carriedType = ""
+			if id, ok := vs.Type.(*ast.Ident); ok {
+				carriedType = id.Name
+			}
+			carriedValues = vs.Values
+		}
+		for i, name := range vs.Names {
+			c := Const{Name: name.Name, Type: carriedType, File: path}
+			if i < len(carriedValues) {
+				c.Value, c.IsString = stringLiteral(carriedValues[i])
+			}
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// stringLiteral unquotes e when it is a string literal.
+func stringLiteral(e ast.Expr) (string, bool) {
+	lit, ok := e.(*ast.BasicLit)
+	if !ok || lit.Kind != token.STRING {
+		return "", false
+	}
+	s, err := strconv.Unquote(lit.Value)
+	if err != nil {
+		return "", false
+	}
+	return s, true
 }
 
 // Keep returns the constants keep selects, failing t on one that is not a string literal: a guard reading a
