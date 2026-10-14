@@ -6,33 +6,49 @@ import { useSearchParams } from 'next/navigation';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
-import { Badge, Container, PageHeader } from '@/components/ui';
+import {
+  Badge,
+  Button,
+  Callout,
+  Container,
+  EmptyState,
+  Fact,
+  FactList,
+  Mono,
+  PageHeader,
+  Skeleton,
+  TBody,
+  TR,
+  Table,
+  Td,
+  Th,
+  THead,
+} from '@/components/ui';
+import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 import { DirectoryLabel } from '@/components/DirectoryLabel';
+import { CrossReference } from '@/components/CrossReference';
 import {
   ContractDailyBars,
   CounterpartyBars,
   EventMixDonut,
   ExportChips,
 } from '@/components/ContractCharts';
-import { apiGet, asExample, API_BASE_URL } from '@/api/client';
+import { apiGet, asExample } from '@/api/client';
 import { useSACWrappers } from '@/api/hooks';
 import { isNativeXlmSac } from '@/lib/asset-label';
+import { titleCase } from '@/lib/account-format';
+import { baseUnitsDecimal, formatReadable } from '@/lib/format';
+import type { paths } from '@/api/types';
 import {
   type Envelope,
   type ContractResp,
-  CopyHash,
+  HashLink,
   formatTimestamp,
   relativeAge,
 } from '../explorer-shared';
-import { baseUnitsDecimal, formatReadable } from '@/lib/format';
-import type { paths } from '@/api/types';
 import { SacAssetPanel } from './SacAssetPanel';
 import { CodeTimeline, TokenFlowSummary } from './ContractInsights';
-import { CrossReference } from '@/components/CrossReference';
 
-// GetJSON extracts the application/json body of a GET 200 response for
-// the per-contract sub-resources (wasm / code-history / interactions)
-// from the generated OpenAPI contract (src/api/types.ts).
 type GetJSON<P extends keyof paths> = paths[P] extends {
   get: {
     responses: { 200: { content: { 'application/json': infer B } } };
@@ -41,24 +57,10 @@ type GetJSON<P extends keyof paths> = paths[P] extends {
   ? B
   : never;
 
-// Stellar contract IDs are 56 chars: 'C' + 55 base32 alphanumerics.
 const CONTRACT_RE = /^C[A-Z2-7]{55}$/;
-
+const ACCOUNT_RE = /^G[A-Z2-7]{55}$/;
 const PAGE_SIZE = 50;
 
-/**
- * Client view for /contract?id=C…. Fetches /v1/contracts/{id} (the
- * contract's recent events) with "Load older" walking the opaque
- * next_cursor backwards. The cursor is the composite
- * (ledger, op_index, event_index) keyset — a ledger-only cursor would
- * drop the rest of a ledger that a busy contract straddles across a page.
- */
-/**
- * useContractWasm — single wasm fetch shared by the header, WasmPanel and
- * CodeHistoryPanel so they agree on whether the contract is a SAC. The SAC
- * verdict comes from the problem `type`; the wrapped asset itself is
- * resolved from /v1/assets/{contract} by SacAssetPanel.
- */
 function useContractWasm(id: string) {
   const query = useQuery<ContractWasmResp>({
     queryKey: ['/v1/contracts/{id}/wasm', id],
@@ -78,12 +80,9 @@ function useContractWasm(id: string) {
 }
 
 export function ContractView({ id: idProp }: { id?: string } = {}) {
-  // Path route /contracts/[id] passes `id` as a prop; legacy /contract?id= reads
-  // it from the query string (kept for redirect compatibility). Prop wins.
   const params = useSearchParams();
   const id = (idProp ?? params.get('id') ?? '').trim();
   const looksValid = CONTRACT_RE.test(id);
-
   const [cursor, setCursor] = useState<string | undefined>(undefined);
 
   const { data, isLoading, isError, error, isFetching } =
@@ -108,20 +107,19 @@ export function ContractView({ id: idProp }: { id?: string } = {}) {
   if (id.length === 0) {
     return (
       <Shell id={null}>
-        <Panel
+        <EmptyState
           title="No contract selected"
-          bodyClassName="text-sm text-ink-body"
-        >
-          <p>
-            This page needs an <code className="font-mono">?id=</code> query
-            parameter — a 56-character Soroban contract ID (starts with{' '}
-            <code className="font-mono">C</code>). Use the search box (
-            <kbd className="border-line-strong rounded-sm border px-1 text-[10px]">
-              ⌘K
-            </kbd>
-            ) to look one up.
-          </p>
-        </Panel>
+          description={
+            <>
+              Add <code className="font-mono">?id=</code> with a 56-character
+              Soroban contract ID to the URL, or search for one with{' '}
+              <kbd className="border-line-strong rounded-sm border px-1 font-mono text-xs">
+                ⌘K
+              </kbd>
+              .
+            </>
+          }
+        />
       </Shell>
     );
   }
@@ -129,16 +127,11 @@ export function ContractView({ id: idProp }: { id?: string } = {}) {
   if (!looksValid) {
     return (
       <Shell id={id}>
-        <Panel
-          title="Invalid contract ID"
-          bodyClassName="text-sm text-ink-body"
-        >
-          <p>
-            <span className="font-mono break-all">{id}</span> isn&apos;t a valid
-            Soroban contract ID. Contract IDs are 56 characters, starting with{' '}
-            <code className="font-mono">C</code>.
-          </p>
-        </Panel>
+        <Callout tone="bad" title="Not a contract ID">
+          <span className="font-mono break-all">{id}</span> is not a valid
+          Soroban contract ID. Contract IDs are 56 characters and start with{' '}
+          <code className="font-mono">C</code>.
+        </Callout>
       </Shell>
     );
   }
@@ -151,16 +144,11 @@ export function ContractView({ id: idProp }: { id?: string } = {}) {
   if (isError) {
     return (
       <Shell id={id}>
-        <Panel
-          title="Contract not found"
-          source={source}
-          bodyClassName="text-sm text-ink-body"
-        >
-          <p>
-            No events for that contract in the served tier, or the lookup
-            failed: {error instanceof Error ? error.message : 'unknown error'}.
-          </p>
-        </Panel>
+        <Callout tone="warn" title="Contract not found">
+          No events for this contract in the served tier, or the lookup failed:{' '}
+          {error instanceof Error ? error.message : 'unknown error'}. Check the
+          ID, or retry in a minute if the API was unavailable.
+        </Callout>
       </Shell>
     );
   }
@@ -168,114 +156,24 @@ export function ContractView({ id: idProp }: { id?: string } = {}) {
   if (isLoading || !data) {
     return (
       <Shell id={id}>
-        <Panel
-          title="Contract"
-          source={source}
-          bodyClassName="text-sm text-ink-muted"
-        >
-          Loading…
+        <Panel title="Overview" source={source} bodyClassName="space-y-3">
+          <Skeleton className="h-16" />
+          <Skeleton className="h-10 w-2/3" />
         </Panel>
       </Shell>
     );
   }
 
+  const cid = data.contract_id || id;
   return (
-    <Shell id={data.contract_id || id}>
-      <Panel
-        title="Contract"
-        source={asExample(`/v1/contracts/${id}`)}
-        bodyClassName="space-y-3"
-      >
-        <SacIdentity id={data.contract_id || id} />
-        {data.protocol && (
-          <div>
-            <Link
-              href={`/protocols/${encodeURIComponent(data.protocol)}`}
-              className="bg-brand-50 text-brand-700 hover:bg-brand-100 inline-flex items-center rounded-sm px-1.5 py-0.5 font-mono text-[10px] tracking-wider uppercase"
-              title={`Registered ${data.protocol} contract — protocol verification page`}
-            >
-              {data.protocol}
-            </Link>
-          </div>
-        )}
-        <div>
-          <div className="text-ink-muted text-[11px] tracking-wider uppercase">
-            Contract ID
-          </div>
-          <div className="mt-0.5">
-            <CopyHash value={data.contract_id || id} head={16} tail={16} />
-          </div>
-          <ContractLiveness exists={data.exists} ttl={data.ttl} />
-          {data.directory && (
-            <div className="mt-2">
-              <DirectoryLabel info={data.directory} />
-            </div>
-          )}
-          {data.activity && (
-            <div className="mt-3 flex flex-wrap items-end gap-x-8 gap-y-2">
-              <div>
-                <div className="text-ink-muted text-[11px] tracking-wider uppercase">
-                  First seen
-                </div>
-                <div className="mt-0.5 font-mono text-sm">
-                  {data.activity.first_seen?.slice(0, 10)}
-                </div>
-              </div>
-              <div>
-                <div className="text-ink-muted text-[11px] tracking-wider uppercase">
-                  Last active
-                </div>
-                <div className="mt-0.5 font-mono text-sm">
-                  {data.activity.last_seen?.slice(0, 10)}
-                </div>
-              </div>
-              <div>
-                <div className="text-ink-muted text-[11px] tracking-wider uppercase">
-                  Active ledgers
-                </div>
-                <div className="mt-0.5 font-mono text-sm">
-                  {(data.activity.active_ledgers_total ?? 0).toLocaleString(
-                    'en-US',
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-          {(data.activity?.daily?.length ?? 0) >= 2 && (
-            <div
-              className="mt-3"
-              title="Ledgers with activity per day, last 30 days"
-            >
-              <ContractDailyBars daily={data.activity?.daily ?? []} />
-            </div>
-          )}
-        </div>
-        <ul className="text-ink-body flex flex-wrap gap-x-6 gap-y-1 text-xs">
-          <li>
-            <a
-              href={`${API_BASE_URL}/v1/contracts/${encodeURIComponent(data.contract_id || id)}/transfers`}
-              target="_blank"
-              rel="noreferrer noopener"
-              className="hover:text-brand-600 hover:underline"
-              title="SEP-41 transfer/mint/burn flows for this contract"
-            >
-              Transfers (API) ↗
-            </a>
-          </li>
-        </ul>
-        <CrossReference kind="contract" id={data.contract_id || id} />
-      </Panel>
-
-      <WasmPanel id={data.contract_id || id} />
-
-      <CodeHistoryPanel id={data.contract_id || id} />
-
-      <TransfersPanel id={data.contract_id || id} />
-
-      <InteractionsPanel id={data.contract_id || id} />
-
+    <Shell id={cid}>
+      <OverviewPanel data={data} id={cid} />
+      <SacIdentity id={cid} />
+      <WasmPanel id={cid} />
+      <CodeHistoryPanel id={cid} />
+      <TransfersPanel id={cid} />
+      <InteractionsPanel id={cid} />
       <EventsPanel
-        id={id}
         events={data.events}
         nextCursor={data.next_cursor}
         cursor={cursor}
@@ -286,13 +184,100 @@ export function ContractView({ id: idProp }: { id?: string } = {}) {
         }}
         source={source}
       />
+      <CrossReference kind="contract" id={cid} />
     </Shell>
   );
 }
 
-// ── On-chain WASM ("see the code") ──────────────────────────────────────
-// ContractLiveness — the instance entry's state-archival verdict at the lake
-// watermark; an archived contract cannot be invoked until restored.
+function OverviewPanel({ data, id }: { data: ContractResp; id: string }) {
+  const act = data.activity;
+  const daily = act?.daily ?? [];
+  return (
+    <Panel
+      title="Overview"
+      source={asExample(`/v1/contracts/${id}`)}
+      bodyClassName="space-y-4"
+    >
+      <FactList columns={3}>
+        <Fact label="Status" mono={false}>
+          {data.ttl || data.exists === false ? (
+            <ContractLiveness exists={data.exists} ttl={data.ttl} />
+          ) : (
+            <span
+              className="text-ink-faint"
+              title="No instance TTL row captured for this contract"
+            >
+              —
+            </span>
+          )}
+        </Fact>
+        <Fact label="Protocol" mono={false}>
+          {data.protocol ? (
+            <Link
+              href={`/protocols/${encodeURIComponent(data.protocol)}`}
+              className="text-brand-600 hover:underline"
+              title="Registered contract: opens the protocol page"
+            >
+              {titleCase(data.protocol)}
+            </Link>
+          ) : (
+            <span
+              className="text-ink-faint"
+              title="Not in the protocol registry; its events are still captured"
+            >
+              Not registered
+            </span>
+          )}
+        </Fact>
+        {data.directory && (
+          <Fact label="Directory" mono={false}>
+            <DirectoryLabel info={data.directory} />
+          </Fact>
+        )}
+        <Fact
+          label="First seen"
+          title={act?.first_seen ? formatTimestamp(act.first_seen) : undefined}
+        >
+          <When ts={act?.first_seen} />
+        </Fact>
+        <Fact
+          label="Last active"
+          title={act?.last_seen ? formatTimestamp(act.last_seen) : undefined}
+        >
+          <When ts={act?.last_seen} />
+        </Fact>
+        <Fact label="Active ledgers">
+          {act?.active_ledgers_total != null
+            ? act.active_ledgers_total.toLocaleString('en-US')
+            : '—'}
+        </Fact>
+      </FactList>
+      {daily.length >= 2 && (
+        <div>
+          <div className={PANEL_LABEL_CLASS}>
+            Ledgers with activity per day · last 30 days
+          </div>
+          <div className="mt-2">
+            <ContractDailyBars daily={daily} />
+          </div>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function When({ ts }: { ts?: string }) {
+  if (!ts) return <span className="text-ink-faint">—</span>;
+  return (
+    <>
+      {ts.slice(0, 10)}
+      <span className="text-ink-muted ml-2 font-sans text-xs">
+        {relativeAge(ts)}
+      </span>
+    </>
+  );
+}
+
 export function ContractLiveness({
   exists,
   ttl,
@@ -300,50 +285,46 @@ export function ContractLiveness({
   if (ttl) {
     const left = ttl.live_until - ttl.as_of_ledger;
     return (
-      <div className="mt-2 flex items-center gap-2 text-xs">
+      <span className="inline-flex flex-wrap items-center gap-2">
         {ttl.state === 'archived' ? (
           <Badge
             tone="bad"
-            title={`Instance TTL lapsed at ledger ${ttl.live_until.toLocaleString('en-US')}; restore it to invoke the contract.`}
+            title={`Instance TTL lapsed at ledger ${ttl.live_until}; restore it to invoke the contract.`}
           >
             Archived
           </Badge>
         ) : (
           <Badge
             tone="ok"
-            title={`Instance entry live until ledger ${ttl.live_until.toLocaleString('en-US')}; it archives unless its TTL is extended first.`}
+            title={`Instance entry live until ledger ${ttl.live_until}; it archives unless its TTL is extended first.`}
           >
             Live
           </Badge>
         )}
         {left > 0 && (
-          <span className="text-ink-muted font-mono">
-            {left.toLocaleString('en-US')} ledgers to expiry (as of ledger{' '}
-            {ttl.as_of_ledger.toLocaleString('en-US')})
+          <span
+            className="text-ink-muted text-xs whitespace-nowrap"
+            title={`As of ledger ${ttl.as_of_ledger}`}
+          >
+            {left.toLocaleString('en-US')} ledgers to expiry
           </span>
         )}
-      </div>
+      </span>
     );
   }
   if (exists === false) {
     return (
-      <div className="mt-2">
-        <Badge
-          tone="neutral"
-          title="The lake holds no evidence this contract was deployed: no events, activity, instance entry or TTL row."
-        >
-          Not captured
-        </Badge>
-      </div>
+      <Badge
+        tone="neutral"
+        title="The lake holds no evidence this contract was deployed: no events, activity, instance entry or TTL row."
+      >
+        Not captured
+      </Badge>
     );
   }
   return null;
 }
 
-// Mirrors api/v1.ContractWasmView (GET /v1/contracts/{id}/wasm): the
-// contract's resolved wasm hash + size, its exported function table (always
-// present — parsed natively), and best-effort WAT + wasm-decompile pseudocode
-// (present once the wabt toolchain is installed server-side).
 type ContractWasmResp = NonNullable<
   GetJSON<'/contracts/{contract_id}/wasm'>['data']
 >;
@@ -361,69 +342,60 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(2)} MiB`;
 }
 
-// Renders nothing for regular wasm contracts; shares WasmPanel's cached query.
 function SacIdentity({ id }: { id: string }) {
   const { isSac } = useContractWasm(id);
   return isSac ? <SacAssetPanel contractId={id} /> : null;
 }
 
-/**
- * WasmPanel — the contract's on-chain code, read on demand from the certified
- * lake. Exports always render; WAT + decompiled pseudocode are collapsible and
- * only shown when the server produced them (wabt present). A clean 404 (the
- * contract's instance/code entry isn't in the captured ledger window) degrades
- * to a short, non-alarming note rather than an error card.
- */
 function WasmPanel({ id }: { id: string }) {
-  const {
-    data,
-    isLoading,
-    isError,
-    error,
-    isSac: hookSac,
-  } = useContractWasm(id);
-
+  const { data, isLoading, isError, error, isSac, refetch } =
+    useContractWasm(id);
   const source = asExample(`/v1/contracts/${id}/wasm`);
 
   if (isLoading) {
     return (
-      <Panel
-        title="Code (WASM)"
-        source={source}
-        bodyClassName="text-sm text-ink-muted"
-      >
-        Loading code…
+      <Panel title="Code (WASM)" source={source}>
+        <Skeleton className="h-16" />
       </Panel>
     );
   }
 
   if (isError || !data) {
     const msg = error instanceof Error ? error.message : '';
-    const isSac = hookSac;
-    const notCaptured = !isSac && msg.includes('404');
     let body: ReactNode;
     if (isSac) {
-      body =
-        'Stellar Asset Contract: built-in host logic, not an uploaded WASM module, so there’s no bytecode to show.';
-    } else if (notCaptured) {
       body = (
-        <Badge
-          tone="warn"
-          title="This contract’s on-chain WASM isn’t in the captured ledger window yet: its deploy-time code/instance entry predates live capture. It resolves once a Phase-C backfill lands."
-        >
-          No code
-        </Badge>
+        <p className="text-ink-body text-sm">
+          Stellar Asset Contract: built-in host logic rather than an uploaded
+          WASM module, so there is no bytecode to show.
+        </p>
+      );
+    } else if (msg.includes('404')) {
+      body = (
+        <Callout tone="warn" title="Code not captured">
+          This contract’s WASM is not in the captured ledger window yet: its
+          deploy-time code entry predates live capture. Exports and bytecode
+          appear once that ledger is backfilled.
+        </Callout>
       );
     } else {
-      body = `Couldn’t load this contract’s WASM: ${msg || 'unknown error'}.`;
+      body = (
+        <Callout tone="bad" title="Code unavailable">
+          Couldn’t load this contract’s WASM{msg ? `: ${msg}` : ''}.
+          <Button
+            variant="secondary"
+            size="sm"
+            className="ml-3"
+            onClick={() => refetch()}
+          >
+            Retry
+          </Button>
+        </Callout>
+      );
     }
     return (
-      <Panel
-        title="Code (WASM)"
-        source={source}
-        bodyClassName="text-sm text-ink-body"
-      >
-        <p>{body}</p>
+      <Panel title="Code (WASM)" source={source}>
+        {body}
       </Panel>
     );
   }
@@ -435,64 +407,59 @@ function WasmPanel({ id }: { id: string }) {
       source={source}
       bodyClassName="space-y-4"
     >
-      <div className="flex flex-wrap gap-x-8 gap-y-2 text-xs">
-        <div>
-          <div className="text-ink-muted text-[11px] tracking-wider uppercase">
-            WASM hash
-          </div>
-          <div className="mt-0.5">
-            <CopyHash value={data.wasm_hash} head={12} tail={10} />
-          </div>
-        </div>
-        <div>
-          <div className="text-ink-muted text-[11px] tracking-wider uppercase">
-            Size
-          </div>
-          <div className="text-ink-body mt-0.5 font-mono tabular-nums">
-            {formatBytes(data.size_bytes)}
-          </div>
+      <FactList columns={3}>
+        <Fact label="WASM hash">
+          <Mono value={data.wasm_hash} truncate={{ head: 12, tail: 10 }} />
+        </Fact>
+        <Fact label="Size">{formatBytes(data.size_bytes)}</Fact>
+        <Fact label="Exports">
+          {data.exports.length.toLocaleString('en-US')}
+        </Fact>
+      </FactList>
+      <div>
+        <div className={PANEL_LABEL_CLASS}>Exported functions</div>
+        <div className="mt-2">
+          <ExportChips exports={data.exports} />
         </div>
       </div>
-
-      {/* Exported entry points: the contract's real API surface. */}
-      <ExportChips exports={data.exports} />
       {data.exports.length > 0 && (
-        <details className="text-ink-muted text-xs">
-          <summary className="cursor-pointer">ABI signatures</summary>
-          <div className="mt-2 overflow-x-auto">
-            <table className="divide-line min-w-full divide-y text-sm">
-              <tbody className="divide-line-subtle divide-y">
+        <details className="group border-line rounded-lg border">
+          <summary className="text-ink-body marker:text-ink-faint hover:text-brand-600 cursor-pointer px-3 py-2 text-xs font-medium select-none">
+            ABI signatures
+          </summary>
+          <div className="border-line overflow-x-auto border-t">
+            <Table>
+              <THead>
+                <tr>
+                  <Th>Function</Th>
+                  <Th>Signature</Th>
+                </tr>
+              </THead>
+              <TBody>
                 {data.exports.map((e) => (
-                  <tr key={e.name}>
-                    <td className="text-brand-700 py-1.5 pr-4 font-mono">
-                      {e.name}
-                    </td>
-                    <td className="text-ink-muted py-1.5 font-mono text-xs">
+                  <TR key={e.name}>
+                    <Td className="font-mono text-xs">{e.name}</Td>
+                    <Td className="text-ink-muted font-mono text-xs">
                       {exportSignature(e)}
-                    </td>
-                  </tr>
+                    </Td>
+                  </TR>
                 ))}
-              </tbody>
-            </table>
+              </TBody>
+            </Table>
           </div>
         </details>
       )}
-
       {data.wat && <CodeDisclosure label="WAT disassembly" code={data.wat} />}
       {data.decompiled && (
         <CodeDisclosure label="Decompiled pseudocode" code={data.decompiled} />
       )}
-
-      <details className="text-ink-muted text-xs">
-        <summary className="cursor-pointer">Source</summary>
-        {data.source_note}
-      </details>
+      {data.source_note && (
+        <p className="text-ink-muted text-xs">{data.source_note}</p>
+      )}
     </Panel>
   );
 }
 
-// CodeDisclosure — a collapsed <details> block of monospace source, scrollable
-// and height-capped so a large module doesn't dominate the page.
 function CodeDisclosure({ label, code }: { label: string; code: string }) {
   return (
     <details className="group border-line rounded-lg border">
@@ -509,15 +476,11 @@ function CodeDisclosure({ label, code }: { label: string; code: string }) {
   );
 }
 
-// ── Code history (change over time) ─────────────────────────────────────
-// Mirrors api/v1.ContractCodeHistoryView (GET /v1/contracts/{id}/code-history):
-// the contract's WASM-hash timeline — each in-place upgrade as a new version.
 type CodeHistoryResp = NonNullable<
   GetJSON<'/contracts/{contract_id}/code-history'>['data']
 >;
 
 function CodeHistoryPanel({ id }: { id: string }) {
-  // A SAC has no code and never will; skip the panel.
   const { isSac } = useContractWasm(id);
   const { data, isLoading, isError } = useQuery<CodeHistoryResp>({
     queryKey: ['/v1/contracts/{id}/code-history', id],
@@ -531,129 +494,99 @@ function CodeHistoryPanel({ id }: { id: string }) {
       return env.data;
     },
   });
-
   if (isSac) return null;
-
   const source = asExample(`/v1/contracts/${id}/code-history`);
   const versions = data?.versions ?? [];
 
   if (isLoading) {
     return (
-      <Panel
-        title="Code history"
-        source={source}
-        bodyClassName="text-sm text-ink-muted"
-      >
-        Loading upgrade history…
+      <Panel title="Code history" source={source}>
+        <Skeleton className="h-10" />
       </Panel>
     );
   }
   if (isError) {
     return (
-      <Panel
-        title="Code history"
-        source={source}
-        bodyClassName="text-sm text-ink-muted"
-      >
-        The code-history lookup failed — reload to retry.
+      <Panel title="Code history" source={source}>
+        <p className="text-ink-muted text-sm">
+          The code-history lookup failed. Reload the page to retry.
+        </p>
       </Panel>
     );
   }
   if (versions.length === 0) {
     return (
-      <Panel
-        title="Code history"
-        source={source}
-        bodyClassName="text-sm text-ink-muted"
-      >
-        No code changes in the captured ledger window — the contract has not
-        been upgraded since capture began.
+      <Panel title="Code history" source={source}>
+        <p className="text-ink-muted text-sm">
+          No code changes in the captured ledger window: the contract has not
+          been upgraded since capture began.
+        </p>
       </Panel>
     );
   }
+
   return (
     <Panel
       title={`Code history (${versions.length} version${versions.length === 1 ? '' : 's'})`}
       hint={
         versions.length > 1
-          ? 'in-place upgrades over time'
-          : 'deployed executable'
+          ? 'In-place upgrades over time'
+          : 'The deployed executable'
       }
       source={source}
-      bodyClassName="-mx-4"
+      bodyClassName="-mx-4 -mb-4"
     >
-      <CodeTimeline versions={versions} />
+      <div className="px-4">
+        <CodeTimeline versions={versions} />
+      </div>
       <div className="overflow-x-auto">
-        <table className="divide-line min-w-full divide-y text-sm">
-          <thead>
-            <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
-              <th scope="col" className="px-4 py-2">
-                #
-              </th>
-              <th scope="col" className="px-4 py-2">
-                From ledger
-              </th>
-              <th scope="col" className="px-4 py-2">
-                When
-              </th>
-              <th scope="col" className="px-4 py-2">
-                WASM hash
-              </th>
+        <Table>
+          <THead>
+            <tr>
+              <Th className="w-10">#</Th>
+              <Th>From ledger</Th>
+              <Th>When</Th>
+              <Th>WASM hash</Th>
             </tr>
-          </thead>
-          <tbody className="divide-line-subtle divide-y">
+          </THead>
+          <TBody>
             {versions.map((v, i) => (
-              <tr
-                key={`${v.ledger}-${v.wasm_hash}`}
-                className="hover:bg-surface-muted"
-              >
-                <td className="text-ink-faint px-4 py-3 font-mono text-xs">
-                  {i + 1}
-                </td>
-                <td className="px-4 py-3">
+              <TR key={`${v.ledger}-${v.wasm_hash}`}>
+                <Td className="text-ink-faint font-mono text-xs">{i + 1}</Td>
+                <Td>
                   <Link
                     href={`/ledgers/${v.ledger}/`}
                     className="text-brand-600 font-mono text-xs hover:underline"
                   >
-                    #{(v.ledger ?? 0).toLocaleString('en-US')}
+                    #{v.ledger}
                   </Link>
-                </td>
-                <td
-                  className="text-ink-muted px-4 py-3 text-xs"
+                </Td>
+                <Td
+                  className="text-ink-muted text-xs"
                   title={formatTimestamp(v.close_time)}
                 >
                   {relativeAge(v.close_time)}
-                </td>
-                <td
-                  className="text-ink-body px-4 py-3 font-mono text-xs"
-                  title={v.wasm_hash}
-                >
-                  {(v.wasm_hash ?? '').slice(0, 12)}…
-                  {(v.wasm_hash ?? '').slice(-8)}
-                </td>
-              </tr>
+                </Td>
+                <Td>
+                  <Mono
+                    value={v.wasm_hash ?? ''}
+                    truncate={{ head: 12, tail: 8 }}
+                    className="text-xs"
+                  />
+                </Td>
+              </TR>
             ))}
-          </tbody>
-        </table>
+          </TBody>
+        </Table>
       </div>
     </Panel>
   );
 }
 
-// ── Interaction map ─────────────────────────────────────────────────────
-// Mirrors api/v1.ContractInteractionsView (GET /v1/contracts/{id}/interactions):
-// the contracts that emitted events in the same transactions as this one — a
-// proxy for cross-contract calls (Soroban sub-invocations nest within one tx).
 type InteractionsResp = NonNullable<
   GetJSON<'/contracts/{contract_id}/interactions'>['data']
 >;
 
-/**
- * InteractionsPanel — the contract's cross-contract interaction map: other
- * contracts that co-occur in its transactions, ranked by shared-tx count and
- * tagged with their protocol where known. The 90-day window keeps it scoped to
- * current behaviour.
- */
 interface TransferRow {
   ledger?: number;
   ledger_close_time?: string;
@@ -664,17 +597,25 @@ interface TransferRow {
   amount?: string;
 }
 
-// transferAmount scales a raw i128 amount by 10^decimals in BigInt before
-// rounding for display (ADR-0003); the raw string is the fallback.
 function transferAmount(amount: string, decimals: number): string {
   return formatReadable(baseUnitsDecimal(amount, decimals)) ?? amount;
 }
 
-/**
- * TransfersPanel — decoded token flows from /v1/contracts/{id}/transfers.
- * Renders only when the endpoint returns rows — non-token contracts
- * simply don't show the panel.
- */
+function Party({ id }: { id?: string }) {
+  if (!id) return <span className="text-ink-faint">—</span>;
+  if (ACCOUNT_RE.test(id)) {
+    return <HashLink href={`/accounts/${id}/`} value={id} head={6} tail={4} />;
+  }
+  if (CONTRACT_RE.test(id)) {
+    return <HashLink href={`/contracts/${id}/`} value={id} head={6} tail={4} />;
+  }
+  return (
+    <span className="font-mono text-xs" title={id}>
+      {id.slice(0, 6)}…{id.slice(-4)}
+    </span>
+  );
+}
+
 function TransfersPanel({ id }: { id: string }) {
   const { data } = useQuery<{ transfers?: TransferRow[]; decimals?: number }>({
     queryKey: ['/v1/contracts/{id}/transfers', id],
@@ -689,81 +630,74 @@ function TransfersPanel({ id }: { id: string }) {
       ).data,
   });
   const rows = data?.transfers ?? [];
-  // Real per-token scale from the endpoint (the contract's on-chain
-  // decimals()). Fallback 7 when the API couldn't derive it — matches
-  // Stellar stroops / the SAC default, so SACs and classic tokens are
-  // exact even on the fallback.
   const decimals = data?.decimals ?? 7;
   if (rows.length === 0) return null;
-  const gLink = (g?: string) =>
-    g && /^G[A-Z2-7]{55}$/.test(g) ? (
-      <Link
-        href={`/accounts/${g}/`}
-        className="text-brand-600 font-mono text-xs hover:underline"
-        title={g}
-      >
-        {g.slice(0, 6)}…{g.slice(-4)}
-      </Link>
-    ) : g ? (
-      <span className="font-mono text-xs" title={g}>
-        {g.slice(0, 6)}…{g.slice(-4)}
-      </span>
-    ) : (
-      <span className="text-ink-faint">—</span>
-    );
+
   return (
     <Panel
       title={`Token flows (last ${rows.length})`}
+      hint="SEP-41 transfer, mint and burn events on this contract"
       source={asExample(`/v1/contracts/${id}/transfers`, { limit: 25 })}
-      bodyClassName="-mx-4"
+      bodyClassName="-mx-4 -mb-4"
     >
-      <TokenFlowSummary
-        rows={rows}
-        decimals={decimals}
-        formatAmount={(raw) => transferAmount(raw, decimals)}
-      />
+      <div className="px-4">
+        <TokenFlowSummary
+          rows={rows}
+          decimals={decimals}
+          formatAmount={(raw) => transferAmount(raw, decimals)}
+        />
+      </div>
       <div className="overflow-x-auto">
-        <table className="divide-line min-w-full divide-y text-sm">
-          <thead>
-            <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
-              <th className="px-4 py-2">Time</th>
-              <th className="px-4 py-2">Kind</th>
-              <th className="px-4 py-2">From</th>
-              <th className="px-4 py-2">To</th>
-              <th className="px-4 py-2 text-right">Amount</th>
-              <th className="px-4 py-2">Tx</th>
+        <Table>
+          <THead>
+            <tr>
+              <Th>When</Th>
+              <Th>Kind</Th>
+              <Th>From</Th>
+              <Th>To</Th>
+              <Th align="right">Amount</Th>
+              <Th>Tx</Th>
             </tr>
-          </thead>
-          <tbody className="divide-line-subtle divide-y">
+          </THead>
+          <TBody>
             {rows.map((t, i) => (
-              <tr key={`${t.tx_hash}-${i}`} className="hover:bg-surface-muted">
-                <td className="text-ink-muted px-4 py-2 text-xs whitespace-nowrap">
+              <TR key={`${t.tx_hash}-${i}`}>
+                <Td
+                  className="text-ink-muted text-xs whitespace-nowrap"
+                  title={
+                    t.ledger_close_time
+                      ? formatTimestamp(t.ledger_close_time)
+                      : undefined
+                  }
+                >
                   {t.ledger_close_time ? relativeAge(t.ledger_close_time) : '—'}
-                </td>
-                <td className="px-4 py-2">
-                  <code className="text-xs">{t.event_kind ?? '—'}</code>
-                </td>
-                <td className="px-4 py-2">{gLink(t.from)}</td>
-                <td className="px-4 py-2">{gLink(t.to)}</td>
-                <td className="px-4 py-2 text-right font-mono tabular-nums">
+                </Td>
+                <Td className="font-mono text-xs">{t.event_kind ?? '—'}</Td>
+                <Td>
+                  <Party id={t.from} />
+                </Td>
+                <Td>
+                  <Party id={t.to} />
+                </Td>
+                <Td align="right" className="font-mono tabular-nums">
                   {t.amount ? transferAmount(t.amount, decimals) : '—'}
-                </td>
-                <td className="px-4 py-2">
+                </Td>
+                <Td>
                   {t.tx_hash ? (
-                    <Link
+                    <HashLink
                       href={`/transactions/${t.tx_hash}/`}
-                      className="text-brand-600 font-mono text-xs hover:underline"
-                    >
-                      {t.tx_hash.slice(0, 8)}…
-                    </Link>
+                      value={t.tx_hash}
+                      head={8}
+                      tail={6}
+                    />
                   ) : (
-                    '—'
+                    <span className="text-ink-faint">—</span>
                   )}
-                </td>
-              </tr>
+                </Td>
+              </TR>
             ))}
-          </tbody>
-        </table>
+          </TBody>
+        </Table>
       </div>
     </Panel>
   );
@@ -784,44 +718,43 @@ function InteractionsPanel({ id }: { id: string }) {
       return env.data;
     },
   });
-
   const source = asExample(`/v1/contracts/${id}/interactions`, {
     days: 90,
     limit: 50,
   });
   const edges = data?.interactions ?? [];
 
+  // A SAC counterparty reads better by the asset it wraps than by its C-address.
+  const sacLabel = (cid?: string): string | undefined => {
+    if (!cid) return undefined;
+    const wrapped = isNativeXlmSac(cid) ? 'native' : sacMap?.[cid];
+    if (!wrapped) return undefined;
+    return `${wrapped === 'native' ? 'XLM' : wrapped.split(/[:-]/)[0]} SAC`;
+  };
+
   if (isLoading) {
     return (
-      <Panel
-        title="Interaction map"
-        source={source}
-        bodyClassName="text-sm text-ink-muted"
-      >
-        Loading interactions…
+      <Panel title="Interaction map" source={source}>
+        <Skeleton className="h-16" />
       </Panel>
     );
   }
   if (isError) {
     return (
-      <Panel
-        title="Interaction map"
-        source={source}
-        bodyClassName="text-sm text-ink-muted"
-      >
-        The interaction-map scan failed or timed out — reload to retry.
+      <Panel title="Interaction map" source={source}>
+        <p className="text-ink-muted text-sm">
+          The interaction scan failed or timed out. Reload the page to retry.
+        </p>
       </Panel>
     );
   }
   if (edges.length === 0) {
     return (
-      <Panel
-        title="Interaction map"
-        source={source}
-        bodyClassName="text-sm text-ink-muted"
-      >
-        No cross-contract interactions observed in the last 90 days — this
-        contract didn’t share transactions with other contracts in the window.
+      <Panel title="Interaction map" source={source}>
+        <p className="text-ink-muted text-sm">
+          No cross-contract interactions in the last 90 days: this contract did
+          not share a transaction with another contract in the window.
+        </p>
       </Panel>
     );
   }
@@ -829,102 +762,94 @@ function InteractionsPanel({ id }: { id: string }) {
   return (
     <Panel
       title={`Interaction map (${edges.length})`}
-      hint="contracts sharing transactions · last 90d"
+      hint="Contracts sharing transactions with this one · last 90 days"
       source={source}
-      bodyClassName="-mx-4"
+      bodyClassName="-mx-4 -mb-4"
     >
-      <CounterpartyBars
-        edges={edges}
-        nameFor={(cid) => {
-          const w = isNativeXlmSac(cid) ? 'native' : sacMap?.[cid];
-          if (!w) return undefined;
-          return `${w === 'native' ? 'XLM' : w.split(/[:-]/)[0]} SAC`;
-        }}
-      />
+      <div className="px-4">
+        <CounterpartyBars edges={edges} nameFor={sacLabel} />
+      </div>
       <div className="overflow-x-auto">
-        <table className="divide-line min-w-full divide-y text-sm">
-          <thead>
-            <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
-              <th scope="col" className="px-4 py-2">
-                Contract
-              </th>
-              <th scope="col" className="px-4 py-2">
-                Protocol
-              </th>
-              <th scope="col" className="px-4 py-2 text-right">
-                Shared txs
-              </th>
+        <Table>
+          <THead>
+            <tr>
+              <Th>Contract</Th>
+              <Th>Protocol</Th>
+              <Th align="right">Shared txs</Th>
             </tr>
-          </thead>
-          <tbody className="divide-line-subtle divide-y">
-            {edges.map((e) => (
-              <tr key={e.contract_id} className="hover:bg-surface-muted">
-                <td className="px-4 py-3">
-                  <Link
-                    href={`/contracts/${encodeURIComponent(e.contract_id ?? '')}/`}
-                    className="text-brand-600 font-mono text-xs hover:underline"
-                    title={e.contract_id}
-                  >
-                    {(e.contract_id ?? '').slice(0, 8)}…
-                    {(e.contract_id ?? '').slice(-6)}
-                  </Link>
-                  {(() => {
-                    const wrapped = isNativeXlmSac(e.contract_id)
-                      ? 'native'
-                      : sacMap?.[e.contract_id ?? ''];
-                    if (!wrapped) return null;
-                    const code =
-                      wrapped === 'native' ? 'XLM' : wrapped.split(/[:-]/)[0];
-                    return (
-                      <span className="bg-surface-muted text-ink-muted ml-2 rounded-sm px-1.5 py-0.5 text-[9px] font-medium tracking-wider uppercase">
-                        {code} SAC
+          </THead>
+          <TBody>
+            {edges.map((e) => {
+              const cid = e.contract_id ?? '';
+              const label = sacLabel(cid);
+              return (
+                <TR key={cid}>
+                  <Td>
+                    <HashLink
+                      href={`/contracts/${encodeURIComponent(cid)}/`}
+                      value={cid}
+                      head={8}
+                      tail={6}
+                    />
+                    {label && (
+                      <span className="text-ink-muted ml-2 text-xs">
+                        {label}
                       </span>
-                    );
-                  })()}
-                </td>
-                <td className="px-4 py-3">
-                  {e.protocol ? (
-                    <Link
-                      href={`/protocols/${encodeURIComponent(e.protocol)}`}
-                      className="bg-brand-50 text-brand-700 hover:bg-brand-100 inline-flex items-center rounded-sm px-1.5 py-0.5 font-mono text-[10px] tracking-wider uppercase"
-                    >
-                      {e.protocol}
-                    </Link>
-                  ) : (
-                    <span className="text-ink-faint">—</span>
-                  )}
-                </td>
-                <td className="text-ink-body px-4 py-3 text-right font-mono tabular-nums">
-                  {(e.shared_txs ?? 0).toLocaleString('en-US')}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                    )}
+                  </Td>
+                  <Td>
+                    {e.protocol ? (
+                      <Link
+                        href={`/protocols/${encodeURIComponent(e.protocol)}`}
+                        className="text-brand-600 hover:underline"
+                      >
+                        {titleCase(e.protocol)}
+                      </Link>
+                    ) : (
+                      <span className="text-ink-faint">—</span>
+                    )}
+                  </Td>
+                  <Td align="right" className="font-mono tabular-nums">
+                    {(e.shared_txs ?? 0).toLocaleString('en-US')}
+                  </Td>
+                </TR>
+              );
+            })}
+          </TBody>
+        </Table>
       </div>
     </Panel>
   );
 }
 
-function Shell({
-  id,
-  children,
-}: {
-  id: string | null;
-  children: React.ReactNode;
-}) {
+function Shell({ id, children }: { id: string | null; children: ReactNode }) {
   return (
     <Container className="space-y-6 py-8">
       <PageHeader
         breadcrumbs={[
           { label: 'Home', href: '/' },
           { label: 'Contracts', href: '/contracts' },
-          { label: id ? `${id.slice(0, 8)}…${id.slice(-6)}` : 'contract' },
+          { label: id ? `${id.slice(0, 8)}…${id.slice(-6)}` : 'Contract' },
         ]}
         title="Contract"
+        meta={id ? <Mono value={id} className="break-all" /> : undefined}
       />
       {children}
     </Container>
+  );
+}
+
+function TopicLink({ topic }: { topic: string }) {
+  const href = ACCOUNT_RE.test(topic)
+    ? `/accounts/${topic}/`
+    : CONTRACT_RE.test(topic)
+      ? `/contracts/${topic}/`
+      : null;
+  if (!href) return <span>{topic} </span>;
+  return (
+    <Link href={href} className="text-brand-600 hover:underline" title={topic}>
+      {topic.slice(0, 4)}…{topic.slice(-4)}{' '}
+    </Link>
   );
 }
 
@@ -937,7 +862,6 @@ function EventsPanel({
   onOlder,
   source,
 }: {
-  id: string;
   events: ContractResp['events'];
   nextCursor?: string;
   cursor?: string;
@@ -948,152 +872,113 @@ function EventsPanel({
 }) {
   if (events.length === 0) {
     return (
-      <Panel
-        title="Recent events"
-        source={source}
-        bodyClassName="text-sm text-ink-muted"
-      >
-        No events observed for this contract.
+      <Panel title="Recent events" source={source}>
+        <p className="text-ink-muted text-sm">
+          No events observed for this contract.
+        </p>
       </Panel>
     );
   }
   return (
     <Panel
       title={`Recent events (${events.length})`}
+      hint={`Newest first · ${PAGE_SIZE} per page`}
       source={source}
-      bodyClassName="-mx-4"
+      bodyClassName="-mx-4 -mb-4"
     >
       <div className="px-4 pb-4">
         <EventMixDonut events={events} />
       </div>
       <div className="overflow-x-auto">
-        <table className="divide-line min-w-full divide-y text-sm">
-          <thead>
-            <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
+        <Table>
+          <THead>
+            <tr>
               <Th>Ledger</Th>
-              <Th>Close time</Th>
+              <Th>When</Th>
               <Th>Tx</Th>
-              <Th>Event type</Th>
+              <Th>Type</Th>
               <Th>Event</Th>
               <Th>Detail</Th>
             </tr>
-          </thead>
-          <tbody className="divide-line-subtle divide-y">
+          </THead>
+          <TBody>
             {events.map((ev, i) => (
-              <tr
-                key={`${ev.tx_hash}-${ev.op_index}-${ev.event_index ?? i}`}
-                className="hover:bg-surface-muted"
-              >
+              <TR key={`${ev.tx_hash}-${ev.op_index}-${ev.event_index ?? i}`}>
                 <Td>
                   <Link
                     href={`/ledgers/${ev.ledger}/`}
                     className="text-brand-600 font-mono text-xs hover:underline"
                   >
-                    #{(ev.ledger ?? 0).toLocaleString('en-US')}
+                    #{ev.ledger}
                   </Link>
                 </Td>
+                <Td
+                  className="text-ink-muted text-xs whitespace-nowrap"
+                  title={formatTimestamp(ev.close_time)}
+                >
+                  {relativeAge(ev.close_time)}
+                </Td>
+                <Td>
+                  {ev.tx_hash ? (
+                    <HashLink
+                      href={`/transactions/${ev.tx_hash}/`}
+                      value={ev.tx_hash}
+                      head={8}
+                      tail={6}
+                    />
+                  ) : (
+                    <span className="text-ink-faint">—</span>
+                  )}
+                </Td>
+                <Td className="font-mono text-xs">{ev.event_type || '—'}</Td>
+                <Td className="font-mono text-xs">{ev.topic_0 || '—'}</Td>
                 <Td>
                   <span
-                    className="text-ink-muted font-mono text-xs"
-                    title={formatTimestamp(ev.close_time)}
-                  >
-                    {relativeAge(ev.close_time)}
-                  </span>
-                </Td>
-                <Td>
-                  <Link
-                    href={`/transactions/${ev.tx_hash}/`}
-                    className="text-brand-600 font-mono text-xs hover:underline"
-                    title={ev.tx_hash}
-                  >
-                    {(ev.tx_hash ?? '').slice(0, 8)}…
-                    {(ev.tx_hash ?? '').slice(-6)}
-                  </Link>
-                </Td>
-                <Td>
-                  <span className="text-ink-body font-mono text-xs">
-                    {ev.event_type || '—'}
-                  </span>
-                </Td>
-                <Td>
-                  <span className="text-ink-muted font-mono text-xs">
-                    {ev.topic_0 || '—'}
-                  </span>
-                </Td>
-                <Td>
-                  {/* Decoded topics + payload: accounts as links, amounts as
-                      numbers. */}
-                  <span
-                    className="text-ink-muted block max-w-md truncate font-mono text-[11px]"
+                    className="text-ink-muted block max-w-md truncate font-mono text-xs"
                     title={[...(ev.topics ?? []), ev.data ?? '']
                       .filter(Boolean)
                       .join(' · ')}
                   >
-                    {(ev.topics ?? []).map((t: string, ti: number) =>
-                      /^G[A-Z2-7]{55}$/.test(t) ? (
-                        <Link
-                          key={ti}
-                          href={`/accounts/${t}/`}
-                          className="text-brand-600 hover:underline"
-                        >
-                          {t.slice(0, 4)}…{t.slice(-4)}{' '}
-                        </Link>
-                      ) : /^C[A-Z2-7]{55}$/.test(t) ? (
-                        <Link
-                          key={ti}
-                          href={`/contracts/${t}/`}
-                          className="text-brand-600 hover:underline"
-                        >
-                          {t.slice(0, 4)}…{t.slice(-4)}{' '}
-                        </Link>
-                      ) : (
-                        <span key={ti}>{t} </span>
-                      ),
-                    )}
+                    {(ev.topics ?? []).map((t: string, ti: number) => (
+                      <TopicLink key={ti} topic={t} />
+                    ))}
                     {ev.data ? (
                       <span className="text-ink-faint">{ev.data}</span>
                     ) : null}
                   </span>
                 </Td>
-              </tr>
+              </TR>
             ))}
-          </tbody>
-        </table>
+          </TBody>
+        </Table>
       </div>
-
-      <div className="flex items-center justify-between px-4 pt-4 pb-1 text-xs">
-        <button
-          type="button"
-          onClick={onNewest}
-          disabled={cursor === undefined || isFetching}
-          className="border-line text-ink-body hover:border-brand-500 hover:text-brand-600 rounded-md border px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          ← Newest
-        </button>
-        <span className="text-ink-faint font-mono text-[11px]">
-          {isFetching ? 'Loading…' : ''}
+      <div className="border-line flex items-center justify-between border-t px-4 py-3">
+        <span className="text-ink-muted text-xs">
+          {isFetching
+            ? 'Loading…'
+            : cursor === undefined
+              ? 'Newest page'
+              : 'Older page'}
         </span>
-        <button
-          type="button"
-          onClick={onOlder}
-          disabled={nextCursor == null || isFetching}
-          className="border-line text-ink-body hover:border-brand-500 hover:text-brand-600 rounded-md border px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          Load older →
-        </button>
+        <div className="flex gap-2">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onNewest}
+            disabled={cursor === undefined || isFetching}
+          >
+            Newest
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onOlder}
+            disabled={nextCursor == null || isFetching}
+          >
+            Older
+          </Button>
+        </div>
       </div>
     </Panel>
   );
-}
-
-function Th({ children }: { children: React.ReactNode }) {
-  return (
-    <th className="px-4 py-2 text-left" scope="col">
-      {children}
-    </th>
-  );
-}
-
-function Td({ children }: { children: React.ReactNode }) {
-  return <td className="px-4 py-3 text-left">{children}</td>;
 }
