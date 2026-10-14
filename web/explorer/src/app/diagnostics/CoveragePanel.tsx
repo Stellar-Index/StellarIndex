@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { Badge } from '@/components/ui';
 
 import {
   useCoverage,
@@ -93,7 +94,7 @@ export function CoveragePanel() {
         <span className="text-ink-faint text-xs">
           /v1/coverage ·{' '}
           <Link href="/status" className="text-brand-600 hover:underline">
-            status →
+            status
           </Link>
         </span>
       </header>
@@ -107,7 +108,7 @@ export function CoveragePanel() {
       <div className="-mx-4 overflow-x-auto">
         <table className="divide-line min-w-full divide-y text-sm">
           <thead>
-            <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
+            <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
               <th className="px-4 py-2 font-medium">Source</th>
               <th
                 className="px-4 py-2 font-medium"
@@ -299,13 +300,11 @@ function VerdictRow({ v }: { v: CoverageVerdict }) {
 
 function Claim({ label, ok }: { label: string; ok: boolean }) {
   return (
-    <span
-      className={`rounded-sm px-1.5 py-0.5 text-[10px] tracking-wider uppercase ${
-        ok ? 'bg-surface-subtle text-ink-muted' : 'bg-down-subtle text-down'
-      }`}
+    <Badge
+      tone={ok ? 'neutral' : 'bad'}
       title={`${label} ${ok ? 'verified' : 'FAILED'}`}
     >
       {label}
-    </span>
+    </Badge>
   );
 }

@@ -327,13 +327,13 @@ export default async function EmbedAssetPage({ params }: { params: Params }) {
       <div className="flex items-baseline justify-between gap-2">
         <div className="flex items-baseline gap-2">
           <span className="text-base font-semibold tracking-tight">{code}</span>
-          <span className="text-ink-muted font-mono text-[10px]">Stellar</span>
+          <span className="text-ink-muted font-mono text-[11px]">Stellar</span>
         </div>
         <a
           href={`${CURRENT_NETWORK.explorerUrl}/assets/${slug}`}
           target="_blank"
           rel="noreferrer noopener"
-          className="text-ink-faint hover:text-brand-600 text-[10px]"
+          className="text-ink-faint hover:text-brand-600 text-[11px]"
         >
           stellarindex.io ↗
         </a>
@@ -363,7 +363,7 @@ export default async function EmbedAssetPage({ params }: { params: Params }) {
         />
       </div>
       {points.length > 0 && <Sparkline points={points} />}
-      <div className="text-ink-faint mt-auto flex items-center justify-between text-[10px]">
+      <div className="text-ink-faint mt-auto flex items-center justify-between text-[11px]">
         <span>Powered by Stellar Index</span>
         {showVolume && (
           <span className="font-mono tabular-nums">${volumeText} 24h vol</span>

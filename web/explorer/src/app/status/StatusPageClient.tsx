@@ -1622,21 +1622,21 @@ export function probeEndpoint(
 function EndpointBadge({ probe }: { probe?: EndpointProbeResult }) {
   if (!probe) {
     return (
-      <Badge tone="neutral" className="font-mono text-[10px]">
+      <Badge tone="neutral" className="font-mono">
         —
       </Badge>
     );
   }
   if (probe.kind === 'static') {
     return (
-      <Badge tone="neutral" className="text-[10px]">
+      <Badge tone="neutral">
         {probe.label === 'requires-auth' ? "auth req'd" : 'stream'}
       </Badge>
     );
   }
   if (probe.kind === 'fast') {
     return (
-      <Badge tone="ok" className="text-[10px]">
+      <Badge tone="ok">
         <CheckCircle2 className="h-3 w-3" />
         <span className="tnum">{Math.round(probe.latencyMs)}ms</span>
       </Badge>
@@ -1644,7 +1644,7 @@ function EndpointBadge({ probe }: { probe?: EndpointProbeResult }) {
   }
   if (probe.kind === 'slow') {
     return (
-      <Badge tone="warn" className="text-[10px]">
+      <Badge tone="warn">
         <AlertTriangle className="h-3 w-3" />
         <span className="tnum">{Math.round(probe.latencyMs)}ms</span>
       </Badge>
@@ -1652,7 +1652,7 @@ function EndpointBadge({ probe }: { probe?: EndpointProbeResult }) {
   }
   if (probe.kind === 'degraded') {
     return (
-      <Badge tone="warn" className="text-[10px]">
+      <Badge tone="warn">
         <AlertTriangle className="h-3 w-3" />
         degraded
       </Badge>
@@ -1660,14 +1660,14 @@ function EndpointBadge({ probe }: { probe?: EndpointProbeResult }) {
   }
   if (probe.kind === 'down') {
     return (
-      <Badge tone="bad" className="text-[10px]">
+      <Badge tone="bad">
         <XCircle className="h-3 w-3" />
         <span className="tnum">{probe.status}</span>
       </Badge>
     );
   }
   return (
-    <Badge tone="bad" className="text-[10px]">
+    <Badge tone="bad">
       <XCircle className="h-3 w-3" />
       err
     </Badge>
@@ -2034,13 +2034,13 @@ function RegionHeader({
         </span>
         <span className="text-ink-muted text-xs">· {region.label}</span>
         {stale && (
-          <span
-            className="bg-warn-50 text-warn-700 rounded-sm px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase"
+          <Badge
+            tone="warn"
             title="The API flagged this snapshot stale (flags.stale): a critical reader failed during the build, or this is a preserved last-known-good snapshot. Zero-valued fields are absent measurements, not readings."
           >
-            stale · server degraded
+            Stale, server degraded
             {asOf ? ` · as of ${formatRelative(asOf)}` : ''}
-          </span>
+          </Badge>
         )}
       </div>
       <div
@@ -2051,9 +2051,9 @@ function RegionHeader({
         <span className="text-ink-muted">
           @ {commitShort}
           {dirty && (
-            <span className="bg-warn-50 text-warn-700 ml-1 rounded-sm px-1 text-[10px]">
+            <Badge tone="warn" className="ml-1">
               dirty
-            </span>
+            </Badge>
           )}
         </span>
       </div>
@@ -2111,10 +2111,9 @@ function LedgerCard({
       title="Live ledger"
       accessory={
         live ? (
-          <span className="text-ok-700 flex items-center gap-1 text-[10px] font-medium">
-            <span className="bg-ok-700 h-1.5 w-1.5 animate-pulse rounded-full" />
-            live
-          </span>
+          <Badge tone="ok" dot>
+            Live
+          </Badge>
         ) : null
       }
     >
@@ -2274,10 +2273,10 @@ function BackfillCoverageTable({
     <div>
       <div className="mb-2 flex items-baseline justify-between">
         <h3 className="text-ink-muted text-[11px] font-semibold tracking-wider uppercase">
-          Ingest coverage — genesis → tip
+          Ingest coverage, genesis to tip
         </h3>
         <span
-          className="text-ink-faint text-[10px]"
+          className="text-ink-faint text-xs"
           title="Oldest per-source gap-detector scan in the table (30 min to 6 h cadence per source)."
         >
           {oldestDataAt && (
@@ -2405,11 +2404,7 @@ function BackfillCoverageTable({
                             : undefined
                         }
                       >
-                        {age.verdictStale && (
-                          <span className="bg-line text-warn-700 rounded-sm px-1 py-0.5 text-[10px] tracking-wide uppercase">
-                            stale
-                          </span>
-                        )}
+                        {age.verdictStale && <Badge tone="warn">stale</Badge>}
                         <div className="bg-surface-subtle h-1.5 w-16 overflow-hidden rounded-full">
                           <div
                             className={`h-full ${colors[tone].bar}`}
@@ -2429,9 +2424,9 @@ function BackfillCoverageTable({
                             : 'Captured, not yet verified. The completeness watermark has been computed but NEITHER axis is complete: the archive is not yet proven genesis-complete (lake_complete=false) and the served tier has not reconciled. Genuine history may still be missing.'
                         }
                       >
-                        <span className="bg-line text-warn-700 rounded-sm px-1 py-0.5 text-[10px] tracking-wide uppercase">
+                        <Badge tone="warn">
                           {lakeComplete ? 'archive complete' : 'reconciling'}
-                        </span>
+                        </Badge>
                         {/* pct is the archive watermark, not a served figure;
                             there is no served percentage to show. */}
                         <span className="tnum">
@@ -2445,9 +2440,7 @@ function BackfillCoverageTable({
                         className="text-ink-muted inline-flex items-center justify-end gap-1.5"
                         title="Completeness not yet verified. The figure is a gap-free liveness signal — no large gap detected — which can read ~100% for sparse or only-partially-indexed sources. Verified completeness is pending the data-recovery backfills."
                       >
-                        <span className="bg-line rounded-sm px-1 py-0.5 text-[10px] tracking-wide uppercase">
-                          unverified
-                        </span>
+                        <Badge>unverified</Badge>
                         <span className="tnum">{pct.toFixed(1)}% gap-free</span>
                       </span>
                     )}
@@ -2471,10 +2464,7 @@ function BackfillCoverageTable({
             {offChain.map((r) => (
               <tr key={r.source} className="text-ink-muted">
                 <td className="px-3 py-2 font-mono">{r.source}</td>
-                <td
-                  className="px-3 py-2 text-right text-[10px] italic"
-                  colSpan={5}
-                >
+                <td className="px-3 py-2 text-right text-xs" colSpan={5}>
                   off-chain — no Stellar ledger context
                 </td>
                 <td className="tnum px-3 py-2 text-right">

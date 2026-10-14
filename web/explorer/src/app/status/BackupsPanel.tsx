@@ -366,11 +366,9 @@ function VerdictRow({
         <dt className="text-ink-muted text-xs">{label}</dt>
         <dd className="flex items-center gap-2">
           {resultLabel && resultTone && (
-            <Badge tone={resultTone} className="text-[10px]">
-              {resultLabel}
-            </Badge>
+            <Badge tone={resultTone}>{resultLabel}</Badge>
           )}
-          <Badge tone={tone} className="text-[10px]" dot>
+          <Badge tone={tone} dot>
             {verdictLabel(verdict)}
           </Badge>
           <span className={`tnum text-sm ${ageClass}`}>{ageText(verdict)}</span>

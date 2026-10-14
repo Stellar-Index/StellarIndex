@@ -22,7 +22,6 @@ type Params = Promise<{ pair: string }>;
 
 type Market = components['schemas']['MarketRow'];
 
-
 type ChartResp = {
   points: components['schemas']['HistoryPoint'][];
 };
@@ -158,13 +157,13 @@ export default async function EmbedPairPage({ params }: { params: Params }) {
           <span className="text-base font-semibold tracking-tight">
             {baseLabel} / {quoteLabel}
           </span>
-          <span className="text-ink-muted font-mono text-[10px]">Stellar</span>
+          <span className="text-ink-muted font-mono text-[11px]">Stellar</span>
         </div>
         <a
           href={`${CURRENT_NETWORK.explorerUrl}/markets/${linkSlug}`}
           target="_blank"
           rel="noreferrer noopener"
-          className="text-ink-faint hover:text-brand-600 text-[10px]"
+          className="text-ink-faint hover:text-brand-600 text-[11px]"
         >
           stellarindex.io ↗
         </a>
@@ -190,7 +189,7 @@ export default async function EmbedPairPage({ params }: { params: Params }) {
       {points.length > 0 && (
         <Sparkline points={points} positive={(change24h ?? 0) >= 0} />
       )}
-      <div className="text-ink-faint mt-auto text-[10px]">
+      <div className="text-ink-faint mt-auto text-[11px]">
         Powered by Stellar Index
       </div>
     </div>
