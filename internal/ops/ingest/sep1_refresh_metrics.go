@@ -19,7 +19,7 @@ import (
 // sep1FailureReasons is the closed label set of stellarindex_sep1_refresh_failures. Every
 // reason is emitted on every run, so a rate over one of them never starts from a missing series.
 var sep1FailureReasons = []string{
-	"timeout", "dns", "connect", "tls", "http", "parse", "too_large", "too_deep", "ssrf",
+	"timeout", "dns", "connect", "tls", "http", "redirect", "parse", "too_large", "too_deep", "ssrf",
 	"invalid_domain", "payload", "domain", "lake", "write", "other",
 }
 
@@ -84,6 +84,8 @@ func sep1FailureReason(err error) string {
 		return "ssrf"
 	case errors.Is(err, metadata.ErrHTTPStatus):
 		return "http"
+	case errors.Is(err, metadata.ErrRedirectRefused):
+		return "redirect"
 	case errors.Is(err, metadata.ErrTOMLParse):
 		return "parse"
 	case errors.Is(err, metadata.ErrTOMLTooLarge):
@@ -93,7 +95,7 @@ func sep1FailureReason(err error) string {
 	case errors.Is(err, metadata.ErrInvalidDomain):
 		return "invalid_domain"
 	case errors.As(err, &certErr), errors.As(err, &unknownCA), errors.As(err, &hostErr),
-		errors.As(err, &certInvalid), errors.As(err, &recordErr):
+		errors.As(err, &certInvalid), errors.As(err, &recordErr), sep1TLSAlert(err):
 		return "tls"
 	case errors.As(err, &netErr) && netErr.Timeout():
 		return "timeout"
@@ -101,6 +103,16 @@ func sep1FailureReason(err error) string {
 		return "connect"
 	}
 	return "other"
+}
+
+// sep1TLSAlert reports a TLS alert, which crypto/tls delivers as a net.OpError whose Op is
+// "remote error" or "local error" rather than as a typed certificate error.
+func sep1TLSAlert(err error) bool {
+	var opErr *net.OpError
+	if !errors.As(err, &opErr) {
+		return false
+	}
+	return opErr.Op == "remote error" || opErr.Op == "local error"
 }
 
 // stampSep1RefreshTextfile publishes the run's counters for node_exporter; a write failure is

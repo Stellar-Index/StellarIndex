@@ -132,7 +132,7 @@ stellarindex-ops sep1-refresh -config /etc/stellarindex.toml \
 into `/var/lib/node_exporter/textfile_collector/sep1_refresh.prom`: issuers by
 outcome, the `reached` denominator (domains that had served a toml before), the
 `regressed` count and a `failures{reason,reached}` split (timeout, dns,
-connect, tls, http, parse, too_large, too_deep, ssrf, invalid_domain, payload,
+connect, tls, http, redirect, parse, too_large, too_deep, ssrf, invalid_domain, payload,
 domain, lake, write, other). Three ticket alerts read it, each held for three
 hourly runs: `stellarindex_sep1_refresh_timeouts_high` and
 `stellarindex_sep1_refresh_failing` at 30% of reached, and

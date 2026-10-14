@@ -55,7 +55,7 @@ The last command lists only the non-zero series: `failures{reason=…,reached=�
 1. Read the reason split: `grep failures /var/lib/node_exporter/textfile_collector/sep1_refresh.prom | grep -v ' 0$'`.
 2. `timeout` or `dns` dominant: follow [timeouts_high](#stellarindex_sep1_refresh_timeouts_high).
 3. `tls` dominant: check the host clock (`timedatectl`) and the CA bundle (`ls -la /etc/ssl/certs/ca-certificates.crt`); an expired bundle fails every HTTPS domain at once.
-4. `http` dominant: a CDN or hosting provider blocking the resolver's user agent fails many issuers together; the journal's `FAIL … HTTP 403` lines name the domains.
+4. `http` or `redirect` dominant: a CDN or hosting provider blocking the resolver's user agent fails many issuers together; the journal's `FAIL … HTTP 403` lines name the domains; `redirect` is a domain the resolver refused to follow (cross-host, downgrade or over five hops), which an apex domain sending everyone to `www.` produces for every run.
 5. `lake` or `write` dominant: the ClickHouse auth-flags read or the Postgres write is failing; these are `our_fault` outcomes and the ladder step was already unwound for them. Check the stores first.
 6. `parse`, `too_large`, `too_deep`, `payload`: the domains' documents are hostile or broken; expected in small numbers, never 30% of reached.
 

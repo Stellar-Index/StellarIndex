@@ -35,6 +35,12 @@ func TestSep1FailureReasonClassifiesRealResolverErrors(t *testing.T) {
 	untrusted, untrustedDomain := sep1FailingServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(healthyTOML))
 	})
+	elsewhere, elsewhereDomain := sep1FailingServer(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://other.invalid"+r.URL.Path, http.StatusFound)
+	})
+	closedPort := sep1ClosedPort(t)
+	production := metadata.NewResolver(metadata.Options{Timeout: 5 * time.Second})
+	productionLoopback := metadata.NewResolver(metadata.Options{Timeout: 5 * time.Second, AllowPrivateIPs: true})
 	untrustingResolver := metadata.WithClient(
 		metadata.NewResolver(metadata.Options{Timeout: 10 * time.Second, AllowPrivateIPs: true}), &http.Client{})
 	resolve := func(r *metadata.Resolver, domain string) error {
@@ -48,18 +54,22 @@ func TestSep1FailureReasonClassifiesRealResolverErrors(t *testing.T) {
 		err  error
 		want string
 	}{
-		"http status":    {resolve(sep1TestResolver(notFound), notFoundDomain), "http"},
-		"toml parse":     {resolve(sep1TestResolver(garbage), garbageDomain), "parse"},
-		"untrusted cert": {resolve(untrustingResolver, untrustedDomain), "tls"},
-		"url as domain":  {resolve(sep1TestResolver(untrusted), "https://example.org"), "invalid_domain"},
-		"run deadline":   {fmt.Errorf("sep1: example.org: %w", context.DeadlineExceeded), "timeout"},
-		"dns timeout":    {fmt.Errorf("sep1 dialer: %w", &net.DNSError{Err: "i/o timeout", IsTimeout: true}), "timeout"},
-		"dns no host":    {fmt.Errorf("sep1 dialer: %w", &net.DNSError{Err: "no such host", IsNotFound: true}), "dns"},
-		"dial refused":   {&net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}, "connect"},
-		"ssrf":           {fmt.Errorf("sep1 dialer: %w", metadata.ErrSSRFBlocked), "ssrf"},
-		"too large":      {metadata.ErrTOMLTooLarge, "too_large"},
-		"too deep":       {metadata.ErrTOMLTooDeep, "too_deep"},
-		"unclassifiable": {errors.New("sep1: something new"), "other"},
+		"http status":           {resolve(sep1TestResolver(notFound), notFoundDomain), "http"},
+		"toml parse":            {resolve(sep1TestResolver(garbage), garbageDomain), "parse"},
+		"untrusted cert":        {resolve(untrustingResolver, untrustedDomain), "tls"},
+		"cross-host redirect":   {resolve(sep1TestResolver(elsewhere), elsewhereDomain), "redirect"},
+		"tls alert":             {&net.OpError{Op: "remote error", Net: "tcp", Err: errors.New("tls: handshake failure")}, "tls"},
+		"ssrf via transport":    {resolve(production, "127.0.0.1"), "ssrf"},
+		"refused via transport": {resolve(productionLoopback, closedPort), "connect"},
+		"url as domain":         {resolve(sep1TestResolver(untrusted), "https://example.org"), "invalid_domain"},
+		"run deadline":          {fmt.Errorf("sep1: example.org: %w", context.DeadlineExceeded), "timeout"},
+		"dns timeout":           {fmt.Errorf("sep1 dialer: %w", &net.DNSError{Err: "i/o timeout", IsTimeout: true}), "timeout"},
+		"dns no host":           {fmt.Errorf("sep1 dialer: %w", &net.DNSError{Err: "no such host", IsNotFound: true}), "dns"},
+		"dial refused":          {&net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}, "connect"},
+		"ssrf":                  {fmt.Errorf("sep1 dialer: %w", metadata.ErrSSRFBlocked), "ssrf"},
+		"too large":             {metadata.ErrTOMLTooLarge, "too_large"},
+		"too deep":              {metadata.ErrTOMLTooDeep, "too_deep"},
+		"unclassifiable":        {errors.New("sep1: something new"), "other"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := sep1FailureReason(tc.err); got != tc.want {
@@ -71,6 +81,18 @@ func TestSep1FailureReasonClassifiesRealResolverErrors(t *testing.T) {
 
 // TestSep1RefreshLoopCountsReachedAndRegressed: the run's counters follow the per-issuer outcomes, with the regression
 // denominator limited to domains that had served a toml before.
+// sep1ClosedPort returns a loopback host:port nothing listens on.
+func sep1ClosedPort(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	_ = l.Close()
+	return addr
+}
+
 func TestSep1RefreshLoopCountsReachedAndRegressed(t *testing.T) {
 	log := &sep1CallLog{}
 	srv, live := sep1TestDomain(t, log, "live", tomlListing("Live Org", "GLIVE"))

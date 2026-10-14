@@ -151,14 +151,14 @@ func NewResolver(opts Options) *Resolver {
 // would bypass the 443-only rule [isValidDomainOrHostPort] applies.
 func checkRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) >= 5 {
-		return errors.New("sep1: stopped after 5 redirects")
+		return fmt.Errorf("%w: stopped after 5 hops", ErrRedirectRefused)
 	}
 	if req.URL.Scheme != "https" {
-		return fmt.Errorf("sep1: refusing redirect to %s:// (downgrade)", req.URL.Scheme)
+		return fmt.Errorf("%w: downgrade to %s://", ErrRedirectRefused, req.URL.Scheme)
 	}
 	orig, next := redirectOrigin(via[0].URL), redirectOrigin(req.URL)
 	if orig != next {
-		return fmt.Errorf("sep1: refusing cross-host redirect %q → %q", orig, next)
+		return fmt.Errorf("%w: cross-host %q → %q", ErrRedirectRefused, orig, next)
 	}
 	return nil
 }
@@ -191,6 +191,9 @@ var ErrInvalidDomain = errors.New("sep1: invalid domain")
 
 // ErrHTTPStatus wraps a response whose status is not 200.
 var ErrHTTPStatus = errors.New("sep1: unexpected HTTP status")
+
+// ErrRedirectRefused wraps a redirect the SEP-1 policy would not follow.
+var ErrRedirectRefused = errors.New("sep1: redirect refused")
 
 // ErrTOMLParse wraps a body that neither the TOML decoder nor section recovery could read.
 var ErrTOMLParse = errors.New("sep1: parse TOML")
