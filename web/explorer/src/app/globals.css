@@ -42,10 +42,11 @@
      every segmented control in the app.
      EVERY white-text fill belongs here — reaching for a brand-N step is the
      bug this family exists to prevent (src/app/color-contrast.a11y.test.ts
-     fails the day one does). White-on contrast: fill 6.38:1, hover 9.57:1
-     (WCAG 1.4.3 AA). */
-  --color-brand-fill: #3358bf;
-  --color-brand-fill-hover: #21408f;
+     fails the day one does). The rest fill is the muted step so a filled
+     control does not glare on the near-black canvas; hover lightens.
+     White-on contrast: fill 10.65:1, hover 6.39:1 (WCAG 1.4.3 AA). */
+  --color-brand-fill: #1e3a80;
+  --color-brand-fill-hover: #3358bf;
 
   /* Surfaces — neutral near-black; the data carries the contrast. */
   --color-surface: #0b0b0c;

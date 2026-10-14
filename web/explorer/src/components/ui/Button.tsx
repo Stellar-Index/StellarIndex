@@ -11,11 +11,11 @@ const base =
   'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg font-medium transition-colors  disabled:pointer-events-none disabled:opacity-50';
 
 const variants: Record<ButtonVariant, string> = {
-  // White-on-fill contrast (WCAG 1.4.3): brand-fill 6.38:1, hover 9.57:1,
-  // active 10.65:1. Was brand-600 (4.37:1 — fail) hovering to brand-700
-  // (2.30:1 — worse), so hover now DARKENS rather than lightens.
+  // White-on-fill contrast (WCAG 1.4.3): brand-fill 10.65:1, hover 6.39:1,
+  // active 13.95:1. The rest fill is the muted step so a primary button does
+  // not glare on the near-black canvas; hover lightens.
   primary:
-    'bg-brand-fill text-white  hover:bg-brand-fill-hover active:bg-brand-200',
+    'bg-brand-fill text-white hover:bg-brand-fill-hover active:bg-brand-100',
   secondary:
     'bg-surface text-ink border border-line-strong  hover:bg-surface-muted',
   ghost: 'text-ink-body hover:bg-surface-subtle hover:text-ink',
