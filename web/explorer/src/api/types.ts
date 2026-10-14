@@ -5528,6 +5528,56 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/accounts/{g_strkey}/sponsorships": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The reserve sponsorships an account pays for or benefits from, each with its lifecycle, beside a proof against the account's own counters.
+         * @description Stellar lets one account (the sponsor) pay the base reserve of an
+         *     entry or signer belonging to another (the sponsored). This route
+         *     lists those arrangements from `stellar.sponsorship_events`, derived
+         *     by `ch-entry-history` from the lake's ledger-entry changes:
+         *     `direction=sponsoring` (default) lists what the account pays for,
+         *     `direction=sponsored` what others pay for it. Each arrangement names
+         *     the `kind` of entry (`account`, `trustline`, `offer`, `data`,
+         *     `claimable_balance`, `signer`), its `key_id`, the `reserves` it
+         *     counts for, and its `episodes`: every stretch it was in force, with
+         *     the `started` event and the `ended` event (`end_event` is `ended`
+         *     when the entry was removed or `revoked` when the sponsorship was
+         *     handed back or transferred). `state=in_force` (default) keeps the
+         *     arrangements whose last event is a start; `state=all` includes ended
+         *     ones.
+         *
+         *     PROOF: `totals` counts both sides through `through_ledger`, and
+         *     `proof` sets the account entry's own `num_sponsoring` and
+         *     `num_sponsored` counters against the in-force reserves derived here.
+         *     `match` is true when both agree, false when the derivation and the
+         *     ledger disagree (never hidden), and null when they are not
+         *     comparable: the entry was modified after `through_ledger` or does
+         *     not exist.
+         *
+         *     ORDER AND PAGING: arrangements in key order `(sponsor, sponsored,
+         *     kind, key_id)`, keyset-paged with `?cursor=` (echo back
+         *     `next_cursor`). An arrangement that began below the derivation
+         *     floor carries an episode with a null `started`.
+         *
+         *     CEILING: `through_ledger` is the entry-history watermark. Until the
+         *     lifecycle is derived on the deployment the route answers 503
+         *     (`sponsorships-not-built`).
+         */
+        get: operations["getAccountSponsorships"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/accounts/{g_strkey}/movements": {
         parameters: {
             query?: never;
@@ -13142,6 +13192,45 @@ export interface components {
             expires_at: string;
             /** @description G-strkey of the authenticated account; convenience for clients that don't decode the JWT. */
             account: string;
+        };
+        /** @description Where in the ledger a sponsorship lifecycle transition was applied; null for a start below the derivation floor or an end that has not happened. */
+        SponsorshipEvent: {
+            /** Format: int64 */
+            ledger: number;
+            /** Format: date-time */
+            ledger_close_time: string;
+            /**
+             * Format: int64
+             * @description Position of the change within its ledger's apply order.
+             */
+            intra_ledger_seq: number;
+            tx_hash: string;
+            /**
+             * Format: int32
+             * @description -1 for a transaction-level change.
+             */
+            op_index: number;
+            /** Format: int64 */
+            change_index: number;
+        } | null;
+        /** @description One side of an account's sponsorship arrangements counted through the watermark. */
+        SponsorshipTotals: {
+            /**
+             * Format: int64
+             * @description Arrangements whose last event is a start.
+             */
+            in_force: number;
+            /**
+             * Format: int64
+             * @description Base reserves those arrangements count for; the number the account entry's counter must equal.
+             */
+            in_force_reserve_count: number;
+            /** Format: int64 */
+            started: number;
+            /** Format: int64 */
+            revoked: number;
+            /** Format: int64 */
+            ended: number;
         };
         /**
          * @description RFC 9457 problem details. Custom extension fields are snake_case.
@@ -26301,6 +26390,183 @@ export interface operations {
                             through_ledger: number;
                             /** @description True when the page stopped short of the account's older history; follow next_cursor. */
                             lower_bound: boolean;
+                            coverage_note: string;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getAccountSponsorships: {
+        parameters: {
+            query?: {
+                /** @description sponsoring (default) lists the arrangements the account pays for; sponsored the ones paid for it. Other values return 400. */
+                direction?: "sponsoring" | "sponsored";
+                /** @description in_force (default) keeps arrangements whose last event is a start; all includes ended ones. Other values return 400. */
+                state?: "in_force" | "all";
+                /** @description Maximum arrangements to return (1-200, default 25). Out-of-range values return 400. */
+                limit?: number;
+                /** @description Opaque keyset cursor from a prior response's next_cursor. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description Account id, a 56-character G-strkey (SEP-23); an M-address
+                 *     reads as its base account. Malformed strkeys return 400.
+                 */
+                g_strkey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The account's sponsorship arrangements with their lifecycles and the counter proof. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "account": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *         "direction": "sponsoring",
+                     *         "state": "in_force",
+                     *         "arrangements": [
+                     *           {
+                     *             "sponsor": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *             "sponsored": "GBXGQJWVLWOYHFLVTKWV5FGHA3LNYY2JQKM7OAJAUEQFU6LPCSEFVXON",
+                     *             "kind": "trustline",
+                     *             "key_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *             "reserve_count": 1,
+                     *             "in_force": true,
+                     *             "episodes": [
+                     *               {
+                     *                 "started": {
+                     *                   "ledger": 64802900,
+                     *                   "ledger_close_time": "2026-10-06T14:02:29Z",
+                     *                   "intra_ledger_seq": 17,
+                     *                   "tx_hash": "be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36",
+                     *                   "op_index": 0,
+                     *                   "change_index": 1
+                     *                 },
+                     *                 "ended": null
+                     *               }
+                     *             ]
+                     *           }
+                     *         ],
+                     *         "next_cursor": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN.GBXGQJWVLWOYHFLVTKWV5FGHA3LNYY2JQKM7OAJAUEQFU6LPCSEFVXON.trustline.USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *         "totals": {
+                     *           "sponsoring": {
+                     *             "in_force": 12,
+                     *             "in_force_reserve_count": 12,
+                     *             "started": 15,
+                     *             "revoked": 2,
+                     *             "ended": 1
+                     *           },
+                     *           "sponsored": {
+                     *             "in_force": 0,
+                     *             "in_force_reserve_count": 0,
+                     *             "started": 0,
+                     *             "revoked": 0,
+                     *             "ended": 0
+                     *           }
+                     *         },
+                     *         "proof": {
+                     *           "account_ledger": 64802900,
+                     *           "num_sponsoring": 12,
+                     *           "num_sponsored": 0,
+                     *           "derived_sponsoring": 12,
+                     *           "derived_sponsored": 0,
+                     *           "match": true
+                     *         },
+                     *         "through_ledger": 64802921,
+                     *         "coverage_note": "sponsorship arrangements derived from the lake's ledger-entry changes through ledger 64802921; an arrangement that began below the derivation floor is listed without a start; the account entry's counters agree with the derived in-force reserves"
+                     *       },
+                     *       "as_of": "2026-10-06T14:03:31Z",
+                     *       "flags": {
+                     *         "divergence_warning": false,
+                     *         "triangulated": false,
+                     *         "reduced_redundancy": false,
+                     *         "stale": false,
+                     *         "degraded": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data?: {
+                            account: string;
+                            /** @enum {string} */
+                            direction: "sponsoring" | "sponsored";
+                            /** @enum {string} */
+                            state: "in_force" | "all";
+                            arrangements: {
+                                sponsor: string;
+                                /** @description The account whose entry or signer is sponsored; omitted for a claimable balance, which has no owner. */
+                                sponsored?: string;
+                                /** @enum {string} */
+                                kind: "account" | "trustline" | "offer" | "data" | "claimable_balance" | "signer";
+                                /** @description The entry within the sponsored account: CODE-ISSUER for a trustline, the offer id, the data name, the balance id, or the signer key; omitted for the account entry itself. */
+                                key_id?: string;
+                                /**
+                                 * Format: int32
+                                 * @description Base reserves the arrangement counts for in num_sponsoring and num_sponsored.
+                                 */
+                                reserve_count: number;
+                                in_force: boolean;
+                                episodes: {
+                                    started: components["schemas"]["SponsorshipEvent"];
+                                    ended: components["schemas"]["SponsorshipEvent"];
+                                    /**
+                                     * @description Omitted while the episode is in force.
+                                     * @enum {string}
+                                     */
+                                    end_event?: "ended" | "revoked";
+                                }[];
+                            }[];
+                            next_cursor?: string;
+                            totals: {
+                                sponsoring: components["schemas"]["SponsorshipTotals"];
+                                sponsored: components["schemas"]["SponsorshipTotals"];
+                            };
+                            proof: {
+                                /**
+                                 * Format: int64
+                                 * @description Ledger the account entry was last modified in.
+                                 */
+                                account_ledger: number;
+                                /**
+                                 * Format: int64
+                                 * @description The account entry's own counter.
+                                 */
+                                num_sponsoring: number;
+                                /**
+                                 * Format: int64
+                                 * @description The account entry's own counter.
+                                 */
+                                num_sponsored: number;
+                                /**
+                                 * Format: int64
+                                 * @description In-force reserves derived here with the account as sponsor.
+                                 */
+                                derived_sponsoring: number;
+                                /**
+                                 * Format: int64
+                                 * @description In-force reserves derived here with the account as sponsored.
+                                 */
+                                derived_sponsored: number;
+                                /** @description Null when the entry changed after through_ledger or does not exist. */
+                                match: boolean | null;
+                            };
+                            /**
+                             * Format: int64
+                             * @description Newest ledger the derivation covers (the entry-history watermark).
+                             */
+                            through_ledger: number;
                             coverage_note: string;
                         };
                     };

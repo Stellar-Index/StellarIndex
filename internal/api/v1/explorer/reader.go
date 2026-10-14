@@ -188,8 +188,15 @@ type ExplorerReader interface {
 	AssetMovementsBackfilledThru(ctx context.Context) (uint32, error)
 	// EntryIndexWatermark is the ledger ch-entry-index has built the entry indexes through (0 = not built).
 	EntryIndexWatermark(ctx context.Context) (uint32, error)
+	// EntryHistoryWatermark is the ledger ch-entry-history has derived the sponsorship lifecycles through (0 = never derived).
+	EntryHistoryWatermark(ctx context.Context) (uint32, error)
 	// AccountEntryLedgers lists, newest first, the indexed ledgers at or below maxLedger for the raw account key.
 	AccountEntryLedgers(ctx context.Context, account string, roles []string, maxLedger uint32, limit int) ([]uint32, error)
+	// AccountSponsorships pages the sponsorship arrangements in which the account is the side's party (sponsor or
+	// sponsored), each with its events through maxLedger; inForceOnly keeps the ones whose last event is a start.
+	AccountSponsorships(ctx context.Context, account, side string, inForceOnly bool, after clickhouse.SponsorshipKey, maxLedger uint32, limit int) ([]clickhouse.SponsorshipArrangement, error)
+	// SponsorshipTotals counts one side of the account's arrangements through maxLedger.
+	SponsorshipTotals(ctx context.Context, account, side string, maxLedger uint32) (clickhouse.SponsorshipTotals, error)
 	// AssetEntryLedgers lists, newest first, the indexed ledgers at or below maxLedger for the asset.
 	AssetEntryLedgers(ctx context.Context, asset string, entryTypes []string, maxLedger uint32, limit int) ([]uint32, error)
 	// StreamEntryChangesForLedgers streams the listed ledgers' entry-change source rows in the projector's order.

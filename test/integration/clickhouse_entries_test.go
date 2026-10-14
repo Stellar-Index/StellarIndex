@@ -291,6 +291,41 @@ func TestChEntryHistory_WritesSponsorshipEvents(t *testing.T) {
 	if wm, err := chstore.EntryHistoryWatermark(ctx, addr); err != nil || wm != base+2 {
 		t.Fatalf("watermark = %d (%v), want %d", wm, err, base+2)
 	}
+
+	rd, err := chstore.NewExplorerReader(ctx, addr)
+	if err != nil {
+		t.Fatalf("explorer reader: %v", err)
+	}
+	defer func() { _ = rd.Close() }()
+	sponsored := chstore.SponsorshipSideSponsored
+	page, err := rd.AccountSponsorships(ctx, bob, sponsored, false, chstore.SponsorshipKey{}, base+2, 10)
+	if err != nil {
+		t.Fatalf("account sponsorships: %v", err)
+	}
+	if len(page) != 2 || page[0].Sponsor != alice || page[1].Sponsor != carol || len(page[0].Events) != 2 ||
+		len(page[1].Events) != 2 || page[1].Events[1].Event != "ended" || page[0].Reserves != 1 {
+		t.Fatalf("sponsorships of bob = %+v, want alice then carol with two events each", page)
+	}
+	inForce, err := rd.AccountSponsorships(ctx, bob, sponsored, true, chstore.SponsorshipKey{}, base+1, 10)
+	if err != nil || len(inForce) != 1 || inForce[0].Sponsor != carol || len(inForce[0].Events) != 1 {
+		t.Fatalf("in force at %d = %+v (%v), want carol alone with its start", base+1, inForce, err)
+	}
+	after := chstore.SponsorshipKey{Sponsor: alice, Sponsored: bob, Kind: "trustline", KeyID: eurc}
+	rest, err := rd.AccountSponsorships(ctx, bob, sponsored, false, after, base+2, 10)
+	if err != nil || len(rest) != 1 || rest[0].Sponsor != carol {
+		t.Fatalf("page after alice = %+v (%v), want carol", rest, err)
+	}
+	tot, err := rd.SponsorshipTotals(ctx, carol, chstore.SponsorshipSideSponsor, base+1)
+	if err != nil || tot != (chstore.SponsorshipTotals{InForce: 1, InForceReserves: 1, Started: 1}) {
+		t.Fatalf("carol totals at %d = %+v (%v)", base+1, tot, err)
+	}
+	tot, err = rd.SponsorshipTotals(ctx, bob, sponsored, base+2)
+	if err != nil || tot != (chstore.SponsorshipTotals{Started: 2, Revoked: 1, Ended: 1}) {
+		t.Fatalf("bob totals = %+v (%v)", tot, err)
+	}
+	if err := chops.Run([]string{"ch-entry-history", "-ch-addr", addr, "-proof", bob + "," + alice}); err != nil {
+		t.Fatalf("ch-entry-history -proof: %v", err)
+	}
 }
 
 // entryHistorySeedLedgers writes stellar.ledgers rows declaring txCount

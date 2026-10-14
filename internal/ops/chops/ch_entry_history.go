@@ -4,8 +4,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/entryhistory"
@@ -23,6 +25,7 @@ func chEntryHistory(args []string) error {
 	window := fs.Uint("window", 10_000, "ledgers per derive window")
 	floorLedger := fs.Uint("floor-ledger", 1, "first-run start when no watermark exists; clamped up to the lake's first ledger")
 	maxDecodeErrs := registerDecodeBudget(fs)
+	proof := fs.String("proof", "", "comma-separated accounts: print each one's sponsorship counters against the derived in-force reserves and exit (reads only)")
 	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -32,6 +35,11 @@ func chEntryHistory(args []string) error {
 	}
 	if *floorLedger == 0 {
 		return fmt.Errorf("-floor-ledger must be > 0 (the genesis ledger is 1)")
+	}
+	if *proof != "" {
+		ctx, cancel := opsutil.SignalContext()
+		defer cancel()
+		return runSponsorshipProof(ctx, *chAddr, strings.Split(*proof, ","), os.Stdout)
 	}
 	gate.Banner()
 	dryRun := gate.DryRun()
@@ -226,4 +234,53 @@ func (s *entryHistoryStats) report(from, to uint32) {
 	if s.skipped > 0 {
 		fmt.Fprintf(os.Stderr, "  skipped (undecodable)=%d\n", s.skipped)
 	}
+}
+
+// runSponsorshipProof prints, per account, the entry's own sponsorship counters beside the in-force reserves
+// derived through the watermark, and whether they agree.
+func runSponsorshipProof(ctx context.Context, chAddr string, accounts []string, out io.Writer) error {
+	rd, err := clickhouse.NewExplorerReader(ctx, chAddr)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rd.Close() }()
+	wm, err := rd.EntryHistoryWatermark(ctx)
+	if err != nil {
+		return err
+	}
+	for _, g := range accounts {
+		g = strings.TrimSpace(g)
+		if g == "" {
+			continue
+		}
+		p, err := sponsorshipProofFor(ctx, rd, g, wm)
+		if err != nil {
+			return fmt.Errorf("%s: %w", g, err)
+		}
+		verdict := "not comparable"
+		if p.Match != nil {
+			verdict = map[bool]string{true: "match", false: "MISMATCH"}[*p.Match]
+		}
+		if _, err := fmt.Fprintf(out, "%s: entry@%d sponsoring=%d sponsored=%d derived@%d sponsoring=%d sponsored=%d %s\n",
+			g, p.LastModifiedLedger, p.NumSponsoring, p.NumSponsored, wm, p.DerivedSponsoring, p.DerivedSponsored, verdict); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func sponsorshipProofFor(ctx context.Context, rd *clickhouse.ExplorerReader, g string, wm uint32) (entryhistory.SponsorshipProof, error) {
+	st, err := rd.AccountState(ctx, g)
+	if err != nil {
+		return entryhistory.SponsorshipProof{}, err
+	}
+	sponsoring, err := rd.SponsorshipTotals(ctx, g, clickhouse.SponsorshipSideSponsor, wm)
+	if err != nil {
+		return entryhistory.SponsorshipProof{}, err
+	}
+	sponsored, err := rd.SponsorshipTotals(ctx, g, clickhouse.SponsorshipSideSponsored, wm)
+	if err != nil {
+		return entryhistory.SponsorshipProof{}, err
+	}
+	return entryhistory.ProveSponsorships(st, wm, sponsoring, sponsored), nil
 }
