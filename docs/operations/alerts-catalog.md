@@ -28,7 +28,7 @@ enforces it); any per-alert detail page follows it.
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 68 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 266 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 269 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -509,6 +509,9 @@ coingecko rot 11 days and sep1 metadata never populate, both unnoticed.
 | `stellarindex_sep41_supply_freshness_absent` | `group by (instance) (stellarindex_data_freshness_stale) unless on (instance) stellarindex_data_freshness_stale{domain="sep41_supply"}` | for > 1h — the file is publishing but the ClickHouse-probed sep41_supply pair is missing, the per-series case watchdog_silent's family-wide absent_over_time cannot see | ticket | [data-freshness-watchdog-silent](runbooks/data-freshness.md#stellarindex_sep41_supply_freshness_absent) |
 | `stellarindex_serving_insert_frozen` | `time() - max(stellarindex_source_last_insert_unix)` | > 1800 s (no insert from ANY source) for 10 min | ticket | [data-source-stale](runbooks/data-freshness.md#stellarindex_serving_insert_frozen) |
 | `stellarindex_serving_insert_absent` | `absent(stellarindex_source_last_insert_unix)` | series missing for 15 min | ticket | [data-source-stale](runbooks/data-freshness.md#stellarindex_serving_insert_absent) |
+| `stellarindex_sep1_refresh_timeouts_high` | `stellarindex_sep1_refresh_failures{reason="timeout",reached="true"} / stellarindex_sep1_refresh_reached` | > 0.3 with >= 20 reached, for 2h30m (three hourly runs) | ticket | [sep1-refresh](runbooks/sep1-refresh.md#stellarindex_sep1_refresh_timeouts_high) |
+| `stellarindex_sep1_refresh_failing` | `stellarindex_sep1_refresh_regressed / stellarindex_sep1_refresh_reached` | > 0.3 with >= 20 reached, for 2h30m, unless the run flagged itself systemic | ticket | [sep1-refresh](runbooks/sep1-refresh.md#stellarindex_sep1_refresh_failing) |
+| `stellarindex_sep1_refresh_stale` | `time() - stellarindex_sep1_refresh_last_run_unix` | > 3 h, or absent 6 h on a scraped host, for 10m | ticket | [sep1-refresh](runbooks/sep1-refresh.md#stellarindex_sep1_refresh_stale) |
 
 ## Ledgerstream tier alerts
 
