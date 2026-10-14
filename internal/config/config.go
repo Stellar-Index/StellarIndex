@@ -843,7 +843,7 @@ type StreamingConfig struct {
 	// MaxStreamsPerIP caps concurrently-held SSE connections per client IP across every stream endpoint;
 	// without it one non-reading client can exhaust file descriptors/goroutines, since the global cap
 	// alone lets one IP take the whole budget. Over the cap a new connection gets 503. 0 disables it.
-	MaxStreamsPerIP int `toml:"max_streams_per_ip" doc:"Maximum concurrently-held SSE stream connections per client IP across all stream endpoints (/v1/price/stream, /v1/price/tip/stream, /v1/observations/stream, /v1/ledger/stream). Guards against a single client exhausting file descriptors / goroutines by holding many stalled streams (C3-8 / CS-013). Over the cap a new stream is rejected with 503. 0 disables the per-IP cap; a separate global cap still bounds total concurrent streams." default:"20"`
+	MaxStreamsPerIP int `toml:"max_streams_per_ip" doc:"Maximum concurrently-held SSE stream connections per client IP across all stream endpoints (/v1/price/stream, /v1/price/tip/stream, /v1/observations/stream, /v1/ledger/stream). Guards against a single client exhausting file descriptors / goroutines by holding many stalled streams (C3-8 / CS-013). Over the cap a new stream is rejected with 429. 0 disables the per-IP cap; a separate global cap still bounds total concurrent streams." default:"20"`
 
 	// MaxConcurrentStreams caps simultaneous SSE connections GLOBALLY, the backstop against many DISTINCT
 	// client IPs (a botnet) that MaxStreamsPerIP cannot stop. Sets streaming.SetMaxConcurrentStreams

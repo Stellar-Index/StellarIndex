@@ -966,3 +966,21 @@ func TestTradesInRange_BindsNonVWAPSources(t *testing.T) {
 		t.Errorf("$6 = %v, want the non-VWAP source set", got)
 	}
 }
+
+// TestLatestTradesForPair_ArmsOrderByTheOuterKey: a FETCH FIRST ... WITH TIES arm under
+// ChunkAppend trips the planner's bounded sort on a busy pair (served as a /v1/price 500), so
+// each arm orders by the outer key and takes a plain LIMIT instead.
+func TestLatestTradesForPair_ArmsOrderByTheOuterKey(t *testing.T) {
+	store, conn := newScriptedStore(t, scriptedResult{cols: latestTradeCols})
+	if _, err := store.LatestTradesForPair(context.Background(), dirAQUAUSDCPair(t), 1); err != nil {
+		t.Fatalf("LatestTradesForPair: %v", err)
+	}
+	sql := conn.only(t).sql
+	if strings.Contains(sql, "WITH TIES") {
+		t.Fatal("an arm still uses FETCH FIRST ... WITH TIES")
+	}
+	const key = "ORDER BY ts DESC, ledger DESC, tx_hash DESC, op_index DESC, source DESC"
+	if n := strings.Count(sql, key); n != 3 {
+		t.Fatalf("full-key ORDER BY appears %d times, want 3 (both arms and the outer sort)", n)
+	}
+}

@@ -383,7 +383,7 @@ func TestStream_MaxLifetimeEndsStreamAndResumes(t *testing.T) {
 }
 
 // TestStream_PerIPConcurrentCap pins that one client IP holds at most MaxStreamsPerIP concurrent SSE connections and
-// the (N+1)th gets 503; without the cap it would open with 200.
+// the (N+1)th gets 429; without the cap it would open with 200.
 func TestStream_PerIPConcurrentCap(t *testing.T) {
 	const capN = 3
 
@@ -429,8 +429,8 @@ func TestStream_PerIPConcurrentCap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open over-cap stream: %v", err)
 	}
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("over-cap stream status = %d, want 503 (per-IP cap)", resp.StatusCode)
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("over-cap stream status = %d, want 429 (per-IP cap)", resp.StatusCode)
 	}
 	_ = resp.Body.Close()
 
@@ -510,8 +510,8 @@ func TestStream_PerIPCapAggregatesIPv6Slash64(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open over-cap stream: %v", err)
 	}
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("over-cap stream (different address, same /64) status = %d, want 503", resp.StatusCode)
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("over-cap stream (different address, same /64) status = %d, want 429", resp.StatusCode)
 	}
 	_ = resp.Body.Close()
 
@@ -593,8 +593,8 @@ func TestStream_ActiveAndRejectedStreamsAreMetered(t *testing.T) {
 		t.Fatalf("open over-cap stream: %v", err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("over-cap status = %d, want 503", resp.StatusCode)
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("over-cap status = %d, want 429", resp.StatusCode)
 	}
 	if got := testutil.ToFloat64(rejected) - rejectedBefore; got != 1 {
 		t.Fatalf("rejected{per_ip_cap} delta = %v, want 1", got)
@@ -646,8 +646,8 @@ func TestStream_RejectedStreamsCounter(t *testing.T) {
 		t.Fatalf("open over-cap stream: %v", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("over-cap status = %d, want 503", resp.StatusCode)
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("over-cap status = %d, want 429", resp.StatusCode)
 	}
 
 	if got := streaming.StreamsRejected() - before; got != 1 {
