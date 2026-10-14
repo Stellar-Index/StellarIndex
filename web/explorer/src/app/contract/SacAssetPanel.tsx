@@ -4,6 +4,18 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
+import {
+  Button,
+  Stat,
+  StatCell,
+  StatGrid,
+  TBody,
+  TR,
+  Table,
+  Td,
+  Th,
+  THead,
+} from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import { useAsset, useAssetSupply, type AssetDetail } from '@/api/hooks';
 import { assetSlug } from '@/components/AssetLink';
@@ -11,9 +23,9 @@ import { assetHref } from '@/lib/fiat-slugs';
 import {
   formatCompact,
   formatCompactUnits,
-  formatPrice,
-  truncateMiddle,
+  formatPriceSmall,
   formatUnitsReadable,
+  truncateMiddle,
 } from '@/lib/format';
 import type { paths } from '@/api/types';
 import { SidebarAssetIcon } from '../assets/[slug]/SidebarAssetIcon';
@@ -28,19 +40,6 @@ type HoldersResp = NonNullable<
 >;
 
 const TOP_HOLDERS = 5;
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="border-line bg-surface rounded-lg border p-3">
-      <div className="text-ink-muted text-[11px] tracking-wider uppercase">
-        {label}
-      </div>
-      <div className="text-ink mt-1 font-mono text-lg font-semibold">
-        {value}
-      </div>
-    </div>
-  );
-}
 
 function usd(raw: string | null | undefined): string | null {
   const v = formatCompactUnits(raw, 0);
@@ -64,28 +63,35 @@ function useTopHolders(assetID: string | undefined) {
 }
 
 /**
- * SacAssetPanel — the classic asset a Stellar Asset Contract wraps, with
- * its supply, top holders and mint/burn movement. /v1/assets/{id} resolves
- * the SAC address to the asset; the three panels load independently.
+ * SacAssetPanel — the wrapped-asset view for a Stellar Asset Contract:
+ * identity and market stats from /v1/assets, then supply flows and the
+ * top holders. The asset page remains the full record.
  */
 export function SacAssetPanel({ contractId }: { contractId: string }) {
   const asset = useAsset(contractId);
   const a = asset.data?.data;
-
   return (
-    <div className="space-y-4" data-testid="sac-asset-panel">
+    <div className="space-y-6" data-testid="sac-asset-panel">
       <Panel
         title="Wrapped asset"
         hint="Stellar Asset Contract"
         source={asExample('/v1/assets/{asset_id}', { asset_id: contractId })}
-        bodyClassName="space-y-3"
+        bodyClassName="space-y-4"
       >
         {asset.isLoading ? (
           <p className="text-ink-muted text-sm">Loading asset…</p>
         ) : !a ? (
           <p className="text-ink-muted text-sm">
-            This is a Stellar Asset Contract; the wrapped asset could not be
-            resolved right now.
+            This is a Stellar Asset Contract, but the asset lookup did not
+            return.
+            <Button
+              variant="secondary"
+              size="sm"
+              className="ml-3"
+              onClick={() => asset.refetch()}
+            >
+              Retry
+            </Button>
           </p>
         ) : (
           <AssetIdentity a={a} />
@@ -100,27 +106,37 @@ function AssetIdentity({ a }: { a: AssetDetail }) {
   const decimals = a.decimals ?? 7;
   const code = a.code || (a.type === 'native' ? 'XLM' : a.asset_id);
   const slug = assetSlug(a.asset_id);
-  const stats: { label: string; value: string | null }[] = [
-    {
-      label: 'Circulating supply',
-      value:
-        a.circulating_supply != null
-          ? formatCompactUnits(a.circulating_supply, decimals)
-          : null,
-    },
-    {
-      label: 'Total supply',
-      value:
-        a.total_supply != null
-          ? formatCompactUnits(a.total_supply, decimals)
-          : null,
-    },
-    {
-      label: 'Price',
-      value: a.price_usd ? `$${formatPrice(a.price_usd)}` : null,
-    },
-    { label: 'Market cap', value: usd(a.market_cap_usd) },
-  ];
+  const name = a.name ?? (a.type === 'native' ? 'Stellar Lumens' : undefined);
+  const holders = useTopHolders(a.asset_id);
+  const holderCount = holders.data?.holder_count;
+  const stats = (
+    [
+      {
+        label: 'Price',
+        value: a.price_usd ? `$${formatPriceSmall(a.price_usd)}` : null,
+      },
+      { label: 'Market cap', value: usd(a.market_cap_usd) },
+      {
+        label: 'Circulating',
+        value:
+          a.circulating_supply != null
+            ? formatCompactUnits(a.circulating_supply, decimals)
+            : null,
+      },
+      {
+        label: 'Total supply',
+        value:
+          a.total_supply != null
+            ? formatCompactUnits(a.total_supply, decimals)
+            : null,
+      },
+      {
+        label: 'Holders',
+        value: holderCount != null ? formatCompact(holderCount) : null,
+      },
+    ] as { label: string; value: string | null }[]
+  ).filter((s): s is { label: string; value: string } => s.value != null);
+  const cols = stats.length >= 5 ? 5 : stats.length === 4 ? 4 : 3;
   return (
     <>
       <div className="flex items-center gap-3">
@@ -137,8 +153,8 @@ function AssetIdentity({ a }: { a: AssetDetail }) {
             ) : (
               <span className="text-lg font-semibold">{code}</span>
             )}
-            {a.name && a.name !== code && (
-              <span className="text-ink-muted truncate text-sm">{a.name}</span>
+            {name && name !== code && (
+              <span className="text-ink-muted truncate text-sm">{name}</span>
             )}
           </div>
           <div className="text-ink-muted text-xs">
@@ -159,23 +175,24 @@ function AssetIdentity({ a }: { a: AssetDetail }) {
           </div>
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        {stats
-          .filter((s) => s.value != null)
-          .map((s) => (
-            <Stat key={s.label} label={s.label} value={s.value as string} />
+      {stats.length > 0 && (
+        <StatGrid cols={cols} className="grid-cols-2">
+          {stats.map((s, i) => (
+            <StatCell
+              key={s.label}
+              className={
+                i === stats.length - 1 && stats.length % 2 === 1
+                  ? 'col-span-2 sm:col-span-1'
+                  : undefined
+              }
+            >
+              <Stat label={s.label} value={s.value} />
+            </StatCell>
           ))}
-        <HoldersStat assetID={a.asset_id} />
-      </div>
+        </StatGrid>
+      )}
     </>
   );
-}
-
-function HoldersStat({ assetID }: { assetID: string }) {
-  const holders = useTopHolders(assetID);
-  const n = holders.data?.holder_count;
-  if (n == null) return null;
-  return <Stat label="Holders" value={formatCompact(n)} />;
 }
 
 function SacMovement({
@@ -192,21 +209,32 @@ function SacMovement({
   const supplyDecimals = s ? onChainSupplyDecimals(s, a.decimals) : null;
   const decimals = a.decimals ?? 7;
   const rows = holders.data?.holders ?? [];
-
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
+    <div className="grid gap-6 lg:grid-cols-2">
       <Panel
         title="Supply movement"
-        hint="minted, burned, clawed back"
+        hint="Minted, burned and clawed back"
         source={asExample('/v1/assets/{asset_id}/supply', {
           asset_id: contractId,
         })}
       >
         {supply.isLoading ? (
           <p className="text-ink-muted text-sm">Loading…</p>
+        ) : supply.isError ? (
+          <p className="text-ink-muted text-sm">
+            The supply lookup did not return.
+            <Button
+              variant="secondary"
+              size="sm"
+              className="ml-3"
+              onClick={() => supply.refetch()}
+            >
+              Retry
+            </Button>
+          </p>
         ) : !s || supplyDecimals == null ? (
           <p className="text-ink-muted text-sm">
-            No mint/burn flows recorded for this asset.
+            No mint or burn flows recorded for this asset.
           </p>
         ) : (
           <SupplyFlowsBar rows={buildSupplyFlowRows(s, supplyDecimals)} />
@@ -214,45 +242,60 @@ function SacMovement({
       </Panel>
       <Panel
         title="Top holders"
+        hint={`Largest ${TOP_HOLDERS} balances`}
         source={asExample(`/v1/assets/${a.asset_id}/holders`, {
           limit: TOP_HOLDERS,
         })}
+        bodyClassName="-mx-4 -mb-4"
       >
         {holders.isLoading ? (
-          <p className="text-ink-muted text-sm">Loading…</p>
+          <p className="text-ink-muted px-4 pb-4 text-sm">Loading…</p>
         ) : rows.length === 0 ? (
-          <p className="text-ink-muted text-sm">No holder data yet.</p>
+          <p className="text-ink-muted px-4 pb-4 text-sm">
+            No holder data yet.
+          </p>
         ) : (
-          <ol className="divide-line-subtle divide-y text-sm">
-            {rows.map((h, i) => (
-              <li
-                key={h.account_id}
-                className="flex items-center justify-between gap-3 py-1.5"
-              >
-                <span className="text-ink-faint w-4 font-mono text-xs">
-                  {i + 1}
-                </span>
-                <Link
-                  href={`/accounts/${encodeURIComponent(h.account_id ?? '')}/`}
-                  className="text-brand-600 flex-1 font-mono text-xs hover:underline"
-                  title={h.account_id}
-                >
-                  {truncateMiddle(h.account_id, 8, 6)}
-                </Link>
-                <span className="text-ink-body font-mono tabular-nums">
-                  {formatUnitsReadable(h.balance, decimals)}
-                </span>
-              </li>
-            ))}
-          </ol>
+          <div className="overflow-x-auto">
+            <Table>
+              <THead>
+                <tr>
+                  <Th className="w-10">#</Th>
+                  <Th>Account</Th>
+                  <Th align="right">Balance</Th>
+                </tr>
+              </THead>
+              <TBody>
+                {rows.map((h, i) => (
+                  <TR key={h.account_id}>
+                    <Td className="text-ink-faint font-mono text-xs">
+                      {i + 1}
+                    </Td>
+                    <Td>
+                      <Link
+                        href={`/accounts/${encodeURIComponent(h.account_id ?? '')}/`}
+                        className="text-brand-600 font-mono text-xs hover:underline"
+                      >
+                        {truncateMiddle(h.account_id, 8, 6)}
+                      </Link>
+                    </Td>
+                    <Td align="right" className="font-mono tabular-nums">
+                      {formatUnitsReadable(h.balance, decimals)}
+                    </Td>
+                  </TR>
+                ))}
+              </TBody>
+            </Table>
+          </div>
         )}
         {slug && (
-          <Link
-            href={assetHref(slug)}
-            className="text-brand-600 mt-2 inline-block text-xs hover:underline"
-          >
-            View all on the asset page →
-          </Link>
+          <div className="border-line border-t px-4 py-3">
+            <Link
+              href={assetHref(slug)}
+              className="text-brand-600 text-xs hover:underline"
+            >
+              View all on the asset page
+            </Link>
+          </div>
         )}
       </Panel>
     </div>
