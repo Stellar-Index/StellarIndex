@@ -11,6 +11,7 @@ export { TxStatusBadge } from './TxStatusBadge';
 export type { TxStatusBadgeProps } from './TxStatusBadge';
 export { Stat, StatGrid, StatCell } from './Stat';
 export { TableWrap, Table, THead, TBody, TR, Th, Td } from './Table';
+export { LinkRow } from './LinkRow';
 export {
   Container,
   Section,

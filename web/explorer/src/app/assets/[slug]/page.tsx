@@ -28,7 +28,7 @@ import {
 } from '@/lib/seo';
 import { assetHref } from '@/lib/fiat-slugs';
 import { CURRENT_NETWORK } from '@/lib/networks';
-import { Badge, Container, PageHeader } from '@/components/ui';
+import { LinkRow, Badge, Container, PageHeader } from '@/components/ui';
 import { AssetScamCallout } from './AssetScamCallout';
 import { AssetClientFallback } from './AssetClientFallback';
 import { AssetPathView } from './AssetPathView';
@@ -1296,7 +1296,8 @@ function OverviewBody({
                 {coin.top_markets.map((m) => {
                   const pairURL = topMarketHref(coin.asset_id, m);
                   return (
-                    <tr
+                    <LinkRow
+                      href={pairURL}
                       key={`${m.side}|${m.counterparty}`}
                       className="hover:bg-surface-muted"
                     >
@@ -1329,7 +1330,7 @@ function OverviewBody({
                       <td className="text-ink-muted px-4 py-3 text-right font-mono tabular-nums">
                         {fmtCompact(m.trade_count_24h)}
                       </td>
-                    </tr>
+                    </LinkRow>
                   );
                 })}
               </tbody>

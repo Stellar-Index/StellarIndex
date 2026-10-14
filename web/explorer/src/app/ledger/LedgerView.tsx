@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { CrossReference } from '@/components/CrossReference';
-import { Container, PageHeader } from '@/components/ui';
+import { LinkRow, Container, PageHeader } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
 import { totalCoinsCaption } from '@/lib/xlm-supply';
@@ -366,7 +366,11 @@ function TransactionsPanel({
             </thead>
             <tbody className="divide-line-subtle divide-y">
               {transactions.map((t) => (
-                <tr key={t.hash} className="hover:bg-surface-muted">
+                <LinkRow
+                  href={`/transactions/${t.hash}/`}
+                  key={t.hash}
+                  className="hover:bg-surface-muted"
+                >
                   <Td>
                     <Link
                       href={`/transactions/${t.hash}/`}
@@ -417,7 +421,7 @@ function TransactionsPanel({
                       <span className="text-ink-faint">—</span>
                     )}
                   </Td>
-                </tr>
+                </LinkRow>
               ))}
             </tbody>
           </table>

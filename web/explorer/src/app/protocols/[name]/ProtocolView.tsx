@@ -15,7 +15,7 @@ import { TimeSeriesChart } from './TimeSeriesChart';
 import { AnalyticsStatusNote, BespokeUnavailable } from './AnalyticsStatusNote';
 import { BespokeSection, type Bespoke } from './BespokeSection';
 import type { paths } from '@/api/types';
-import { Container, PageHeader } from '@/components/ui';
+import { LinkRow, Container, PageHeader } from '@/components/ui';
 
 // ─── Wire shapes — derived from the generated OpenAPI contract
 // (src/api/types.ts, `make web-generate-api`); mirror
@@ -702,7 +702,11 @@ function ContractRoster({
           </thead>
           <tbody className="divide-line-subtle divide-y">
             {[...factories, ...visibleInstances].map((c) => (
-              <tr key={c.contract_id} className="hover:bg-surface-muted">
+              <LinkRow
+                href={`/contracts/${encodeURIComponent(c.contract_id)}/`}
+                key={c.contract_id}
+                className="hover:bg-surface-muted"
+              >
                 <td className="px-4 py-2">
                   <RoleChip kind={c.kind} />
                 </td>
@@ -755,7 +759,7 @@ function ContractRoster({
                     <span className="text-ink-faint">—</span>
                   )}
                 </td>
-              </tr>
+              </LinkRow>
             ))}
           </tbody>
         </table>

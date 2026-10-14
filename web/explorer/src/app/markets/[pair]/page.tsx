@@ -23,7 +23,7 @@ import {
   ogImageFor,
   shellMetadata,
 } from '@/lib/seo';
-import { Container, PageHeader } from '@/components/ui';
+import { LinkRow, Container, PageHeader } from '@/components/ui';
 import { EntityNotFoundShell } from '@/components/EntityNotFoundShell';
 import { Sparkline } from '@/components/primitives';
 import { Suspense } from 'react';
@@ -286,14 +286,13 @@ export default async function PairPage({ params }: { params: Params }) {
   }
   const { base, quote } = decoded;
 
-  const [price, chart, ohlc, history, sourceBreakdown] =
-    await Promise.all([
-      buildFetchPairPrice(base, quote),
-      fetchChart(base, quote),
-      fetchOhlc(base, quote),
-      fetchHistory(base, quote),
-      fetchSourceBreakdown(base, quote),
-    ]);
+  const [price, chart, ohlc, history, sourceBreakdown] = await Promise.all([
+    buildFetchPairPrice(base, quote),
+    fetchChart(base, quote),
+    fetchOhlc(base, quote),
+    fetchHistory(base, quote),
+    fetchSourceBreakdown(base, quote),
+  ]);
 
   const baseLabel = shortAssetText(base);
   const quoteLabel = shortAssetText(quote);
@@ -497,7 +496,8 @@ export default async function PairPage({ params }: { params: Params }) {
               </thead>
               <tbody className="divide-line-subtle divide-y font-mono text-xs">
                 {history.map((t, i) => (
-                  <tr
+                  <LinkRow
+                    href={`/transactions/${t.tx_hash}/`}
                     key={`${t.tx_hash ?? ''}|${t.op_index ?? i}|${t.ts}`}
                     className="hover:bg-surface-muted"
                   >
@@ -542,7 +542,7 @@ export default async function PairPage({ params }: { params: Params }) {
                         t.quote_decimals ?? 7,
                       )}
                     </td>
-                  </tr>
+                  </LinkRow>
                 ))}
               </tbody>
             </table>

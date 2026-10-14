@@ -11,6 +11,7 @@ import { formatCompact } from '@/lib/format';
 import { useTableSort, SortableTh, type SortColumn } from '@/lib/useTableSort';
 import { isSafeHomeDomain } from '@/lib/safe-domain';
 import { classifyScamReasonLabel } from '@/lib/directory-tags';
+import { LinkRow } from '@/components/ui';
 
 /**
  * Live issuer directory backed by `/v1/issuers`. Ranked by total
@@ -177,7 +178,11 @@ export function IssuersTable() {
               </tr>
             )}
             {sortedIssuers.map((row, i) => (
-              <tr key={row.g_strkey} className="hover:bg-surface-muted">
+              <LinkRow
+                href={`/issuers/${row.g_strkey}`}
+                key={row.g_strkey}
+                className="hover:bg-surface-muted"
+              >
                 <Td>
                   <span className="text-ink-faint">{i + 1}</span>
                 </Td>
@@ -261,7 +266,7 @@ export function IssuersTable() {
                     </span>
                   </span>
                 </Td>
-              </tr>
+              </LinkRow>
             ))}
           </tbody>
         </table>

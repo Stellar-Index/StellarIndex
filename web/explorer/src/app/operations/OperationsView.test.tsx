@@ -22,6 +22,7 @@ vi.mock('@/api/client', async (importOriginal) => ({
 }));
 vi.mock('next/navigation', () => ({
   useSearchParams: () => search.params,
+  useRouter: () => ({ push: vi.fn() }),
 }));
 vi.mock('@/components/NetworkInsight', () => ({
   OperationMixPanel: () => null,

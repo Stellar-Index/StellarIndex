@@ -9,6 +9,7 @@ import { apiGet, asExample } from '@/api/client';
 import type { components } from '@/api/types';
 import { formatReadable, formatRelative } from '@/lib/format';
 import { RoutedVolumeBars } from './RoutedVolumeBars';
+import { LinkRow } from '@/components/ui';
 
 type AggregatorRow = components['schemas']['AggregatorRow'];
 
@@ -103,7 +104,11 @@ export function RoutedVolumePanel() {
               </tr>
             )}
             {rows.map((r) => (
-              <tr key={r.contract_id} className="hover:bg-surface-muted">
+              <LinkRow
+                href={`/contracts/${encodeURIComponent(r.contract_id)}/`}
+                key={r.contract_id}
+                className="hover:bg-surface-muted"
+              >
                 <Td>
                   <Link
                     href={`/contracts/${encodeURIComponent(r.contract_id)}/`}
@@ -175,7 +180,7 @@ export function RoutedVolumePanel() {
                     </span>
                   </Td>
                 )}
-              </tr>
+              </LinkRow>
             ))}
           </tbody>
         </table>

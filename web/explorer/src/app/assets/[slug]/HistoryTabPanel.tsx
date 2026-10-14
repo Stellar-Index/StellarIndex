@@ -10,6 +10,7 @@ import { useObservationsFollow } from '@/lib/live/hooks';
 import { formatRelative, formatUnitsReadable } from '@/lib/format';
 import { TradeScatter } from '../../markets/[pair]/TradeScatter';
 import { HBarList, type HBarItem } from '@/components/charts/Bars';
+import { LinkRow } from '@/components/ui';
 
 const DEFAULT_QUOTE = 'native';
 const HISTORY_LIMIT = 100;
@@ -126,7 +127,8 @@ export function HistoryTabPanel({
         </thead>
         <tbody>
           {rows.map((r) => (
-            <tr
+            <LinkRow
+              href={`/transactions/${r.tx_hash}/`}
               key={`${r.tx_hash}-${r.op_index}`}
               className="border-line-subtle border-b last:border-0"
             >
@@ -168,7 +170,7 @@ export function HistoryTabPanel({
               <td className="py-2 pr-3 text-right font-mono text-xs">
                 {r.price ?? '—'}
               </td>
-            </tr>
+            </LinkRow>
           ))}
         </tbody>
       </table>

@@ -15,6 +15,7 @@ import {
 } from '@/api/hooks';
 import { formatDurationShort } from '@/lib/format';
 import { CountBar, LagDot } from './SourceListMarks';
+import { LinkRow } from '@/components/ui';
 
 /**
  * Live sources directory backed by `/v1/sources`.
@@ -237,7 +238,11 @@ export function SourcesTable() {
                   );
                   const cursor = latestBySource.get(s.name);
                   return (
-                    <tr key={s.name} className="hover:bg-surface-muted">
+                    <LinkRow
+                      href={`/sources/${encodeURIComponent(s.name)}`}
+                      key={s.name}
+                      className="hover:bg-surface-muted"
+                    >
                       <Td>
                         <Link
                           href={`/sources/${encodeURIComponent(s.name)}`}
@@ -291,7 +296,7 @@ export function SourcesTable() {
                           )}
                         </div>
                       </Td>
-                    </tr>
+                    </LinkRow>
                   );
                 })}
               </tbody>

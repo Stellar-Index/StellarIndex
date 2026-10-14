@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
-import { Th, Td } from '@/components/ui';
+import { LinkRow, Th, Td } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import {
   compareDecimalStrings,
@@ -164,7 +164,11 @@ export function DexProtocolsTable() {
               const vol = r.volume_24h_usd;
               const tone = sourceToneClass(r.name);
               return (
-                <tr key={r.name} className="hover:bg-surface-muted">
+                <LinkRow
+                  href={hrefFor.dex(r.name)}
+                  key={r.name}
+                  className="hover:bg-surface-muted"
+                >
                   <Td>
                     <Link
                       href={hrefFor.dex(r.name)}
@@ -214,7 +218,7 @@ export function DexProtocolsTable() {
                       details →
                     </Link>
                   </Td>
-                </tr>
+                </LinkRow>
               );
             })}
           </tbody>

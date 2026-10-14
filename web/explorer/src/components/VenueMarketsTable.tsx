@@ -21,6 +21,7 @@ import {
 import type { Market } from '@/api/hooks';
 import { useCursorPager } from '@/lib/useCursorPager';
 import { SortPill } from '@/components/SortPill';
+import { LinkRow } from '@/components/ui';
 
 type Order = 'volume_24h_usd_desc' | 'pair';
 
@@ -178,7 +179,8 @@ export function VenueMarketsTable({
               const offset = pager.depth * PAGE_LIMIT + i + 1;
               const vol = m.volume_24h_usd;
               return (
-                <tr
+                <LinkRow
+                  href={`/markets/${encodeURIComponent(slug)}`}
                   key={`${m.base}|${m.quote}`}
                   className="hover:bg-surface-muted"
                 >
@@ -227,7 +229,7 @@ export function VenueMarketsTable({
                       {formatRelative(m.last_trade_at)}
                     </span>
                   </Td>
-                </tr>
+                </LinkRow>
               );
             })}
           </tbody>

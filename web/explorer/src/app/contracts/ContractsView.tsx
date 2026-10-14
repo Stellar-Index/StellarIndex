@@ -17,6 +17,7 @@ import {
   RegistryCharts,
 } from '@/components/ContractCharts';
 import {
+  LinkRow,
   Badge,
   Container,
   PageHeader,
@@ -271,7 +272,11 @@ function MostActivePanel({ sacMap }: { sacMap: SACMap }) {
             </thead>
             <tbody className="divide-line-subtle divide-y">
               {sortedContracts.map((c) => (
-                <tr key={c.contract_id} className="hover:bg-surface-muted">
+                <LinkRow
+                  href={`/contracts/${encodeURIComponent(c.contract_id ?? '')}/`}
+                  key={c.contract_id}
+                  className="hover:bg-surface-muted"
+                >
                   <td className="px-4 py-3">
                     <Link
                       href={`/contracts/${encodeURIComponent(c.contract_id ?? '')}/`}
@@ -312,7 +317,7 @@ function MostActivePanel({ sacMap }: { sacMap: SACMap }) {
                   <td className="text-ink-muted px-4 py-3 text-xs">
                     {formatTimestamp(c.last_seen)}
                   </td>
-                </tr>
+                </LinkRow>
               ))}
             </tbody>
           </table>

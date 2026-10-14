@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
-import { CopyButton } from '@/components/ui';
+import { LinkRow, CopyButton } from '@/components/ui';
 import { HBarList } from '@/components/charts/Bars';
 import { apiGet, asExample } from '@/api/client';
 import { formatRelative } from '@/lib/format';
@@ -363,7 +363,11 @@ export function LendingPoolsTable() {
                 const poolId = p.pool ?? '';
                 const meta = BLEND_POOL_META[poolId];
                 return (
-                  <tr key={poolId} className="hover:bg-surface-muted">
+                  <LinkRow
+                    href={`/lending/${poolId}`}
+                    key={poolId}
+                    className="hover:bg-surface-muted"
+                  >
                     <Td>
                       <span className="bg-up-subtle text-up-strong inline-block rounded-sm px-1.5 py-0.5 text-[11px] font-medium tracking-wider uppercase">
                         {p.protocol}
@@ -436,7 +440,7 @@ export function LendingPoolsTable() {
                         {formatRelative(p.last_seen)}
                       </span>
                     </Td>
-                  </tr>
+                  </LinkRow>
                 );
               })}
             </tbody>

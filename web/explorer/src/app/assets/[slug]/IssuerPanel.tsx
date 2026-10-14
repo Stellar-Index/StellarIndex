@@ -7,6 +7,7 @@ import { asExample } from '@/api/client';
 import { useIssuer, type Issuer } from '@/api/hooks';
 import { assetHref } from '@/lib/fiat-slugs';
 import { formatCompact } from '@/lib/format';
+import { LinkRow } from '@/components/ui';
 
 /**
  * IssuerPanel — backs the "Issuer" tab on /assets/[slug]. Fetches
@@ -253,7 +254,11 @@ function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
           </thead>
           <tbody className="divide-line-subtle divide-y">
             {assets.map((a) => (
-              <tr key={a.asset_id} className="hover:bg-surface-muted">
+              <LinkRow
+                href={assetHref(a.slug ?? a.asset_id ?? a.code ?? '')}
+                key={a.asset_id}
+                className="hover:bg-surface-muted"
+              >
                 <Td>
                   <Link
                     href={assetHref(a.slug ?? a.asset_id ?? a.code ?? '')}
@@ -293,7 +298,7 @@ function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
                       : '—'}
                   </span>
                 </Td>
-              </tr>
+              </LinkRow>
             ))}
           </tbody>
         </table>

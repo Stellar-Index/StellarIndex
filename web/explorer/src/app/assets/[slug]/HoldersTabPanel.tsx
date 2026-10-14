@@ -17,6 +17,7 @@ import {
   formatUnitsReadable,
 } from '@/lib/format';
 import type { paths } from '@/api/types';
+import { LinkRow } from '@/components/ui';
 
 // GET /v1/assets/{id}/holders response body from the generated OpenAPI
 // contract (src/api/types.ts, `make web-generate-api`).
@@ -120,7 +121,11 @@ export function HoldersTabPanel({
             </thead>
             <tbody className="divide-line-subtle divide-y">
               {holders.map((h, i) => (
-                <tr key={h.account_id} className="hover:bg-surface-muted">
+                <LinkRow
+                  href={`/accounts/${encodeURIComponent(h.account_id ?? '')}/`}
+                  key={h.account_id}
+                  className="hover:bg-surface-muted"
+                >
                   <td className="text-ink-faint px-4 py-3 font-mono text-xs">
                     {i + 1}
                   </td>
@@ -143,7 +148,7 @@ export function HoldersTabPanel({
                   <td className="px-4 py-3">
                     <ShareBar pct={shares[i]} max={maxShare} />
                   </td>
-                </tr>
+                </LinkRow>
               ))}
             </tbody>
           </table>

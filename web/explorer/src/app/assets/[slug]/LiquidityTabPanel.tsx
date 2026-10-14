@@ -16,6 +16,7 @@ import type { Pool as PoolRow } from '@/api/hooks';
 import { isCIStub } from '@/lib/buildFetch';
 import { shortAssetText } from '@/lib/asset-label';
 import { LiquidityVenueBars } from './LiquidityVenueBars';
+import { LinkRow } from '@/components/ui';
 
 const BUILD_FETCH_TIMEOUT_MS = 8_000;
 
@@ -123,7 +124,8 @@ export async function LiquidityTabPanel({
                   ? formatPairPrice(p.last_price)
                   : null;
                 return (
-                  <tr
+                  <LinkRow
+                    href={`/markets/${slug}`}
                     key={`${p.source}|${p.base}|${p.quote}|${p.side}`}
                     className="hover:bg-surface-muted"
                   >
@@ -180,7 +182,7 @@ export async function LiquidityTabPanel({
                         <span className="text-ink-faint">—</span>
                       )}
                     </td>
-                  </tr>
+                  </LinkRow>
                 );
               })}
             </tbody>

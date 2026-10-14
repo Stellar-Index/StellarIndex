@@ -18,7 +18,7 @@ import { sourceToneClass } from '@/lib/pillTone';
 import type { Source as SourceRow } from '@/api/hooks';
 import type { components } from '@/api/types';
 
-import { Badge, Container, PageHeader, Th, Td } from '@/components/ui';
+import { LinkRow, Badge, Container, PageHeader, Th, Td } from '@/components/ui';
 type OracleStream = components['schemas']['OracleReading'];
 
 // Oracle capture-totality: /v1/oracle/streams omits `raw:<symbol>` rows
@@ -167,7 +167,11 @@ export function OraclesView() {
                 const perSrc = perSourceCounts[o.name];
                 const tone = sourceToneClass(o.name);
                 return (
-                  <tr key={o.name} className="hover:bg-surface-muted">
+                  <LinkRow
+                    href={hrefFor.source(o.name)}
+                    key={o.name}
+                    className="hover:bg-surface-muted"
+                  >
                     <Td>
                       <Link
                         href={hrefFor.source(o.name)}
@@ -198,7 +202,7 @@ export function OraclesView() {
                         no (policy)
                       </span>
                     </Td>
-                  </tr>
+                  </LinkRow>
                 );
               })}
             </tbody>

@@ -6,7 +6,7 @@ import { IssuerAssetMix } from './IssuerAssetMix';
 import Link from 'next/link';
 
 import { Panel } from '@/components/reveal';
-import { Badge, Container, PageHeader } from '@/components/ui';
+import { LinkRow, Badge, Container, PageHeader } from '@/components/ui';
 import { asExample } from '@/api/client';
 import { buildFetchData, failBuild, requireRows } from '@/lib/buildFetch';
 import { assetHref } from '@/lib/fiat-slugs';
@@ -479,7 +479,11 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
                   {assets.map((a) => {
                     const coin = coinPrices.get(a.asset_id);
                     return (
-                      <tr key={a.asset_id} className="hover:bg-surface-muted">
+                      <LinkRow
+                        href={assetHref(a.slug)}
+                        key={a.asset_id}
+                        className="hover:bg-surface-muted"
+                      >
                         <Td>
                           <Link
                             href={assetHref(a.slug)}
@@ -543,7 +547,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
                             #{a.first_seen_ledger.toLocaleString('en-US')}
                           </span>
                         </Td>
-                      </tr>
+                      </LinkRow>
                     );
                   })}
                 </tbody>

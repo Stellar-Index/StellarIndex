@@ -7,7 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { CrossReference } from '@/components/CrossReference';
 import { FeeHeadroomBar, OpTypeStrip } from '@/components/ChainCharts';
-import { Container, PageHeader, TxStatusBadge } from '@/components/ui';
+import { LinkRow, Container, PageHeader, TxStatusBadge } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import {
   type Envelope,
@@ -501,7 +501,8 @@ function EventsPanel({
           </thead>
           <tbody className="divide-line-subtle divide-y">
             {events.map((ev, i) => (
-              <tr
+              <LinkRow
+                href={`/contracts/${ev.contract_id}/`}
                 key={`${ev.op_index}-${ev.event_index ?? i}`}
                 className="hover:bg-surface-muted"
               >
@@ -530,7 +531,7 @@ function EventsPanel({
                     {ev.topic_0 || '—'}
                   </span>
                 </Td>
-              </tr>
+              </LinkRow>
             ))}
           </tbody>
         </table>

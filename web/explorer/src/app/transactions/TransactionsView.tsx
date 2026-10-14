@@ -16,6 +16,7 @@ import {
   formatTimestamp,
   stroopsToXlm,
 } from '../explorer-shared';
+import { LinkRow } from '@/components/ui';
 
 /**
  * TransactionsView — recent network transactions. Defaults to the latest
@@ -195,7 +196,11 @@ function TxTable({
           </thead>
           <tbody className="divide-line-subtle divide-y">
             {rows.map((t) => (
-              <tr key={t.hash} className="hover:bg-surface-muted">
+              <LinkRow
+                href={`/transactions/${t.hash}/`}
+                key={t.hash}
+                className="hover:bg-surface-muted"
+              >
                 <td className="px-4 py-3">
                   <Link
                     href={`/transactions/${t.hash}/`}
@@ -262,7 +267,7 @@ function TxTable({
                     <span className="text-ink-faint">—</span>
                   )}
                 </td>
-              </tr>
+              </LinkRow>
             ))}
           </tbody>
         </table>

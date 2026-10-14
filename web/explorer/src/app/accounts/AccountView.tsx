@@ -18,7 +18,13 @@ import {
   DirectoryLabel,
   type DirectoryInfo,
 } from '@/components/DirectoryLabel';
-import { Container, PageHeader, Callout, TxStatusBadge } from '@/components/ui';
+import {
+  LinkRow,
+  Container,
+  PageHeader,
+  Callout,
+  TxStatusBadge,
+} from '@/components/ui';
 import { AccountPositions } from './AccountPositions';
 import { AccountMovementsPanel } from './AccountMovements';
 import { AccountDefiPositionsPanel } from './AccountDefiPositions';
@@ -379,7 +385,8 @@ function AccountsDirectory() {
               </thead>
               <tbody>
                 {q.data.accounts.map((a, i) => (
-                  <tr
+                  <LinkRow
+                    href={`/accounts/${encodeURIComponent(a.account_id)}/`}
                     key={a.account_id}
                     className="border-line/60 hover:bg-surface-muted border-b last:border-0"
                   >
@@ -405,7 +412,7 @@ function AccountsDirectory() {
                     <td className="py-1.5 text-right font-mono tabular-nums">
                       {fmtWealth(a)}
                     </td>
-                  </tr>
+                  </LinkRow>
                 ))}
               </tbody>
             </table>
