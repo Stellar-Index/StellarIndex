@@ -109,7 +109,7 @@ export function ExternalAssetDetailView({ view }: { view: GlobalAssetView }) {
             href="/assets"
             className="text-brand-600 hover:text-brand-700 font-medium"
           >
-            Stellar assets →
+            Stellar assets
           </Link>
         </p>
         <details className="text-ink-muted text-xs">

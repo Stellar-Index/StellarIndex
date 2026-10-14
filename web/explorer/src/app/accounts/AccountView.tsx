@@ -181,7 +181,7 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
                 href={`/contracts/${id}/`}
                 className="text-brand-600 hover:underline"
               >
-                Open contract →
+                Open contract
               </Link>
             </p>
           ) : (

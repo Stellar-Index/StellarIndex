@@ -114,7 +114,7 @@ describe('OperationsView type filter', () => {
       type: 'payment',
     });
     expect(
-      screen.getByRole('link', { name: 'Older operations →' }),
+      screen.getByRole('link', { name: 'Older operations' }),
     ).toHaveAttribute('href', '/operations?type=payment&cursor=next');
     expect(screen.getByRole('link', { name: 'Payments' })).toHaveAttribute(
       'aria-current',

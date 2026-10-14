@@ -172,7 +172,7 @@ export function NetworkView() {
               href={l.href}
               className="border-line bg-surface text-ink-body hover:border-brand-500 hover:text-brand-600 rounded-lg border px-3 py-1 text-sm font-medium shadow-xs"
             >
-              {l.label} →
+              {l.label}
             </Link>
           ))}
         </nav>
@@ -792,7 +792,7 @@ function LatestLedgers({
       )}
       <div className="px-4 pt-3 text-xs">
         <Link href="/ledgers" className="text-brand-600 hover:underline">
-          All ledgers →
+          All ledgers
         </Link>
       </div>
     </Panel>
@@ -892,7 +892,7 @@ function TopMarkets() {
       )}
       <div className="px-4 pt-3 text-xs">
         <Link href="/dexes" className="text-brand-600 hover:underline">
-          All DEX pools →
+          All DEX pools
         </Link>
       </div>
     </Panel>
@@ -967,7 +967,7 @@ function ActiveSources() {
       )}
       <div className="px-4 pt-3 text-xs">
         <Link href="/sources" className="text-brand-600 hover:underline">
-          All sources →
+          All sources
         </Link>
       </div>
     </Panel>

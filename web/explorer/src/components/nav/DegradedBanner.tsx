@@ -128,7 +128,7 @@ export function DegradedBanner() {
             rel="noopener noreferrer"
             className="underline-offset-2 hover:underline"
           >
-            View status →
+            View status
           </Link>
         </span>
       </div>
