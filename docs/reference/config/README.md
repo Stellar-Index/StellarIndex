@@ -292,7 +292,7 @@ the `env:` column.
 | `divergence.min_sources_for_warning` | `int` | `2` | — | Minimum successful references before warning_fired can be true. |
 | `divergence.coingecko.enabled` | `bool` | `true` | — | Whether the CoinGecko reference is wired into the divergence service. |
 | `divergence.coingecko.base_url` | `string` | `` | — | CoinGecko API base URL. Empty defaults to https://api.coingecko.com/api/v3, or https://pro-api.coingecko.com/api/v3 when external.coingecko.api_key is set. The reference authenticates with the external.coingecko keys. |
-| `divergence.coingecko.id_map` | `map` | `{}` | — | Maps canonical asset_id → CoinGecko slug. Operator-curated; empty falls back to the built-in default covering XLM + major stables. |
+| `divergence.coingecko.id_map` | `map` | `{}` | — | Maps canonical asset_id → CoinGecko slug. Operator-curated; empty falls back to the built-in default covering XLM, major stables and the served Stellar assets CoinGecko lists. |
 | `divergence.chainlink.enabled` | `bool` | `false` | — | Whether the Chainlink reference is wired into the divergence service. |
 | `divergence.chainlink.rpc_url` | `string` | `` | `CHAINLINK_RPC_URL` | Ethereum JSON-RPC endpoint. Shares the CHAINLINK_RPC_URL env var with the ingest poller (env overrides TOML). Empty defaults to https://cloudflare-eth.com. |
 | `divergence.chainlink.feeds` | `map[string]ChainlinkFeedConfig` | `{}` | — | Maps pair strings to {address, decimals, invert}. Empty disables Chainlink in practice. |

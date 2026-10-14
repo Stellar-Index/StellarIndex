@@ -305,11 +305,11 @@ type DivergenceOracleConfig struct {
 	Enabled bool `toml:"enabled" doc:"Whether this on-chain oracle reference is wired into the divergence service." default:"true"`
 }
 
-// DivergenceCoinGeckoConfig configures the CoinGecko reference; IDMap is overridable and defaults to a small built-in set (XLM plus major stablecoins).
+// DivergenceCoinGeckoConfig configures the CoinGecko reference; IDMap is overridable and defaults to a built-in set (XLM, major stablecoins and the served Stellar assets CoinGecko lists).
 type DivergenceCoinGeckoConfig struct {
 	Enabled bool              `toml:"enabled" doc:"Whether the CoinGecko reference is wired into the divergence service." default:"true"`
 	BaseURL string            `toml:"base_url" doc:"CoinGecko API base URL. Empty defaults to https://api.coingecko.com/api/v3, or https://pro-api.coingecko.com/api/v3 when external.coingecko.api_key is set. The reference authenticates with the external.coingecko keys." default:""`
-	IDMap   map[string]string `toml:"id_map" doc:"Maps canonical asset_id → CoinGecko slug. Operator-curated; empty falls back to the built-in default covering XLM + major stables." default:"{}"`
+	IDMap   map[string]string `toml:"id_map" doc:"Maps canonical asset_id → CoinGecko slug. Operator-curated; empty falls back to the built-in default covering XLM, major stables and the served Stellar assets CoinGecko lists." default:"{}"`
 }
 
 // DivergenceChainlinkConfig configures the Chainlink reference; off by default, opt in by setting RPCURL and a FeedMap of mainnet AggregatorV3 addresses.
