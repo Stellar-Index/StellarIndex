@@ -9,31 +9,11 @@ severity: P3
 
 ## At a glance
 
-| Field | Value |
-| ----- | ----- |
-| Alert | `stellarindex_ch_lake_backup_stale` (no successful lake backup in 96 h, or none inside 96 h on a host that has a lake — including a host with no backup disk configured; or no confirmed full on record for 72 h; or the recorded full older than `FULL_INTERVAL_DAYS` + 4 d; per host, carries `instance`) |
-| Severity | P3 (ticket) |
-| Detected by | `deploy/monitoring/rules/storage.yml` and `configs/prometheus/rules.r1/storage.yml` |
-| Producer | `scripts/ops/ch-lake-backup.sh` via `ch-lake-backup.timer` (daily, 04:10 UTC) |
-| Typical MTTR | 15 min to fix a credential; a first full takes ~2 days |
-| Impact | No immediate customer impact. While it fires, losing the lake means a re-derive from the Galexie archive (~1–2 weeks) instead of a restore (hours). |
+P3. Rules: `deploy/monitoring/rules/storage.yml`, `configs/prometheus/rules.r1/storage.yml`. Producer: `scripts/ops/ch-lake-backup.sh` via `ch-lake-backup.timer` (daily 04:10 UTC). Fires per host when: no successful run in 96 h, no confirmed full for 72 h, or the recorded full is older than `FULL_INTERVAL_DAYS` + 4 d. While it fires, losing the lake means a 1-2 week re-derive from the Galexie archive instead of an hours-long restore. A fresh host fires until its first full (~2 days) completes.
 
-## Symptoms
+`stellarindex_ch_lake_backup_configured{instance="<host>:9100"}` is `0` (no off-site disk; every run fails on purpose with `no BACKUP_DISK configured`) or `1`. Hosts with no off-site target by design set `ch_lake_backup_enabled: false`.
 
-- The ticket names a host. `stellarindex_ch_lake_backup_configured{instance="<host>:9100"}`
-  is `0` (no off-site disk configured) or `1` (configured, but no run has
-  succeeded in 96 h, no full has ever been confirmed, or
-  `stellarindex_ch_lake_backup_last_full_unix` is older than
-  `stellarindex_ch_lake_backup_full_interval_days` + 4 d because every new
-  full fails).
-- `systemctl status ch-lake-backup.service` shows a failed or long-running run.
-  An unconfigured host fails every run on purpose (`no BACKUP_DISK configured`
-  in the journal): a run that copied nothing never reports success.
-  A host with no off-site target by design (the test nets) sets
-  `ch_lake_backup_enabled: false`; the role then removes the timer, units and
-  textfile, and the alert cannot fire for it.
-
-## Quick diagnosis (≤ 5 min)
+## Check
 
 ```bash
 journalctl -u ch-lake-backup.service -n 100 --no-pager
@@ -43,81 +23,34 @@ clickhouse-client --port 9300 -q "SELECT name, status, error, start_time, end_ti
 clickhouse-client --port 9300 -q "SELECT name, type FROM system.disks"   # si_lake_backup present?
 ```
 
-## Mitigation (≤ 15 min)
+An id vanishing from `system.backups` means the server restarted under the run; the `error` column holds the reason.
 
-- **`configured 0`** — no target. Set `ch_lake_backup_s3_endpoint` (bucket
-  and prefix, trailing slash) in the host inventory and
-  `ch_lake_backup_s3_key` / `ch_lake_backup_s3_key_secret` in the vault,
-  then apply with `--tags backup`. ClickHouse picks up the new disk without
-  a restart. `systemctl start ch-lake-backup.service` starts the first full.
-- **`BACKUP_FAILED` with an S3 error** — credential, endpoint or quota.
-  Fix the vars and re-apply; the next run retries.
-- **`BACKUP_NOT_FOUND`** — the base of the current chain is gone from the
-  bucket. The script has already reset its state; the next run is a full.
-- **Already running** — a full of the lake runs ~2 days at the default
-  100 MiB/s cap (`ch_lake_backup_max_bandwidth`). The script refuses to
-  start a second backup beside it; wait for it.
-- **Exit 75** — a deferred run: a heavy job holds the lock, nothing was backed up and the last real success stamp is kept; the stale alert covers a prolonged deferral.
-- **Exit 2** — the backup succeeded but an old chain could not be removed
-  (logged as `PRUNE FAILED`). It stays on record and the next full retries;
-  remove it by hand if the bucket's quota is the issue:
+## Fix
+
+- `configured 0`: set `ch_lake_backup_s3_endpoint` (bucket and prefix, trailing slash) in the host inventory and `ch_lake_backup_s3_key` / `ch_lake_backup_s3_key_secret` in the vault, apply with `--tags backup` (no restart needed), then `systemctl start ch-lake-backup.service`.
+- `BACKUP_FAILED` with an S3 error: credential, endpoint or quota. Fix the vars and re-apply; the next run retries.
+- `BACKUP_NOT_FOUND`: the chain base is gone from the bucket. State is already reset; the next run is a full.
+- Already running: a full takes ~2 days at the 100 MiB/s cap (`ch_lake_backup_max_bandwidth`); wait.
+- Exit 75: deferred, a heavy job holds the lock. Nothing backed up; the stale alert covers prolonged deferral.
+- Exit 2: backup succeeded but cleanup failed. `PRUNE FAILED`: the old chain stays on record and the next full retries; if quota is the issue remove it by hand:
   `clickhouse-disks -C /etc/clickhouse-server/config.xml --disk si_lake_backup --query "remove -r stellar/<chain>"`.
-  Exit 2 with `SWEEP SKIPPED` or `ORPHAN REMOVAL FAILED` is the orphan
-  sweep: a failed full leaves its partial upload under `stellar/<stamp>/`
-  and never reaches the chain record. Each full writes its id to `started`
-  in the state dir before the BACKUP and drops it once it is on record, so
-  after each confirmed full (and on the first success with no `swept` file)
-  the script deletes every older started id not on record. It never lists
-  `stellar/` itself: on the plain-metadata B2 disk that listing is empty.
-  It deletes nothing when the chain just written is not visible, the
-  running-backup check fails, or a backup is in flight; the next successful
-  run retries. Partial uploads from before the `started` record are not
-  swept; find them in the B2 bucket's `r1/` listing.
-  `stellarindex_ch_lake_backup_orphans_removed` counts what a sweep removed.
+  `SWEEP SKIPPED` / `ORPHAN REMOVAL FAILED`: the orphan sweep (partial uploads of failed fulls, tracked via `started` in the state dir) did not run or complete; the next success retries. Find older strays in the B2 bucket's `r1/` listing. `stellarindex_ch_lake_backup_orphans_removed` counts removals.
 
 ## Restore
 
-Each chain is `stellar/<chain>/<stamp>-full` plus `stellar/<chain>/<stamp>-incr`
-links. Restore from the NEWEST link; ClickHouse follows its base backups
-itself, so every earlier link of the chain must still be on the disk.
+Each chain is `stellar/<chain>/<stamp>-full` plus `<stamp>-incr` links. Restore from the NEWEST link; every earlier link must still be on the disk.
 
 ```bash
-# On the restoring host: ClickHouse installed and si-lake-backup.xml
-# rendered (apply the role with the same ch_lake_backup_* vars).
+# ClickHouse installed and si-lake-backup.xml rendered (same ch_lake_backup_* vars).
 clickhouse-disks -C /etc/clickhouse-server/config.xml --disk si_lake_backup --query "list stellar"
 clickhouse-client --port 9300 -q "RESTORE DATABASE stellar FROM Disk('si_lake_backup', 'stellar/<chain>/<newest-link>')"
 ```
 
-Then bring the lake from the backup's point in time to the tip with
-`ch-live-catchup` (its tip extension backfills `[max(ledger_seq)+1, tip]`
-of the restored lake), and check it with `stellarindex-ops verify-lake` /
-`verify-contiguity` before the projector is pointed at it. The re-derive in
-[ch-schema-restore](ch-schema-restore.md) stays the last resort for when
-no chain survives.
+Then run `ch-live-catchup` to extend to the tip, and check with `stellarindex-ops verify-lake` / `verify-contiguity` before pointing the projector at it. If no chain survives, use the re-derive in [ch-schema-restore](ch-schema-restore.md). `scripts/ops/ch-lake-backup-roundtrip-test.sh` exercises full, incremental, DROP, RESTORE.
 
-`scripts/ops/ch-lake-backup-roundtrip-test.sh` runs full → incremental →
-DROP → RESTORE against a real ClickHouse and checks the restored content
-hash.
-
-## Root cause analysis
-
-The run writes the backup server-side (`BACKUP ... ASYNC`) and polls
-`system.backups`. An id that disappears from `system.backups` means the
-server restarted under it. The error column of `system.backups` holds the
-server's reason.
-
-## Known false-positive patterns
-
-- A freshly provisioned host fires until its first full completes.
+Escalate: if no full has been confirmed in 7 days, page the storage owner.
 
 ## Related
 
 - [ADR-0043](../../adr/0043-backup-and-restore-strategy.md) §2.4
 - [Off-site backup plan](../off-site-backup-plan.md) §4
-- [ch-schema-restore](ch-schema-restore.md) — the DDL snapshot and the re-derive path
-
-## Changelog
-
-- 2026-09-23 — created with the backup job.
-- 2026-10-05 — orphan sweep for failed fulls; the alert also watches the full's age.
-- 2026-10-11 — the sweep reads its candidates from the `started` record; the `stellar/` listing is empty on B2.

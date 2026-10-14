@@ -7,47 +7,22 @@ severity: launch-blocking
 
 # Wire paging
 
+Symptom: alerts fire in the Alertmanager UI but nobody is notified; `pre-launch-check.sh` reports 5 FAILs on `HEALTHCHECKS_URL_*`. Every fanout receiver is a no-op stub until webhook URLs are set, so the launch watch is blind (v1 launch plan paging gate, INV-0841). Operator only (accounts and secrets are not in the repo); ~20 min, reversible. Done when `pre-launch-check.sh` reports 0 failures AND `chat-page` shows a real webhook block.
+
 ## At a glance
 
-| | |
-|---|---|
-| **Symptom** | Alerts fire in the Alertmanager UI but nobody is notified. `pre-launch-check.sh` reports 5 FAILs on `HEALTHCHECKS_URL_*`. |
-| **Impact** | The first-24h launch watch is blind. A dead pipeline looks identical to a healthy one. |
-| **Who** | Operator only — needs accounts + secrets deliberately absent from the repo. |
-| **Time** | ~20 min, fully reversible. |
-| **Done when** | `pre-launch-check.sh` reports 0 failures AND `chat-page` shows a real webhook block, not a bare stub. |
+Launch-blocking, operator only, ~20 min, reversible. Done when `pre-launch-check.sh` reports 0 failures.
 
-**Today alerts route to nobody.** Alertmanager evaluates rules correctly
-and accumulates firing alerts in its UI, but every fanout receiver is a
-no-op stub because no webhook URLs are set. The first-24h launch watch
-would be blind. This is the v1 launch plan's paging gate (INV-0841, in its
-"Go-live gate" table).
+## Create
 
-Everything below is operator-only: it needs accounts and secrets that
-are deliberately not in the repo. All of it is reversible.
-
-## What you are creating
-
-| Thing | Count | Purpose |
-|---|---|---|
-| Healthchecks.io check — per binary | 3 | indexer / aggregator / api heartbeats. A MISSING ping is the alarm. |
-| Healthchecks.io check — smoke | 1 | the 13-GET API smoke, every 5 min |
-| Healthchecks.io check — SLA probe | 1 | per-run latency/freshness probe |
-| Healthchecks.io check — deadmansswitch | 1 | Alertmanager itself pings this. Its silence means the alerting pipeline died. |
-| Chat webhook | 1–2 | where `severity=page` and `severity=ticket` land |
-
-Suggested Healthchecks.io schedules (dashboard side): binaries 60 s /
-grace 120 s; smoke 5 min / grace 10 min; SLA probe per-run / grace 1 h.
+- Healthchecks.io checks: indexer, aggregator, api (60 s / grace 120 s); smoke (5 min / grace 10 min); SLA probe (per-run / grace 1 h); deadmansswitch (Alertmanager pings it; its silence means the alerting pipeline died).
+- 1-2 chat webhooks for `severity=page` and `severity=ticket`.
 
 ## Step 1 — per-binary heartbeats
-
-Create the 5 non-deadmansswitch checks above, then on r1:
 
 ```sh
 sudo vi /etc/default/stellarindex-healthchecks
 ```
-
-Fill these (they are already present, empty):
 
 ```
 HEALTHCHECKS_URL_INDEXER=https://hc-ping.com/<uuid>
@@ -57,15 +32,11 @@ HEALTHCHECKS_URL_SMOKE=https://hc-ping.com/<uuid>
 HEALTHCHECKS_URL_SLA_PROBE=https://hc-ping.com/<uuid>
 ```
 
-No restart needed — the timers source this file per run. An empty URL
-skips the ping silently, which is why this failed quietly until now.
+No restart needed (timers source the file per run). An empty URL skips the ping silently.
 
 ## Step 2 — Alertmanager fanout
 
-⚠️ **Use these EXACT variable names.** Until 2026-07-27 this file
-offered `SLACK_WEBHOOK_URL`, which nothing reads — filling that in and
-applying produced silent no-op stubs. Corrected, but if you are on an
-older box, check the names first.
+Use these EXACT names (`SLACK_WEBHOOK_URL` is read by nothing; a typo'd name yields a silent no-op stub):
 
 ```sh
 sudo vi /etc/default/alertmanager-secrets
@@ -77,65 +48,32 @@ DISCORD_WEBHOOK_URL_PAGES=https://discord.com/api/webhooks/<id>/<token>
 DISCORD_WEBHOOK_URL_ALERTS=https://discord.com/api/webhooks/<id>/<token>
 ```
 
-Point both Discord URLs at the same webhook if you only want one
-channel. Then apply — this validates with `amtool`, atomic-installs,
-and reloads:
+Both Discord URLs may be the same webhook. Apply (amtool validation, atomic install, reload):
 
 ```sh
 bash configs/alertmanager/apply.sh
 ```
-
-The script reads the env file itself; you do not need to export
-anything. An empty value still yields a no-op stub, so a typo'd
-variable name fails silently — which is the trap this runbook exists
-to close.
 
 ## Step 3 — verify (do not skip)
 
 ```sh
 # From the repo root. Read-only; exit code = number of FAILs.
 ssh root@136.243.90.96 'bash -s' < scripts/ops/pre-launch-check.sh
-```
 
-Before wiring, this reports **5 FAILs** (the five `HEALTHCHECKS_URL_*`)
-and warns on the deadmansswitch and both Discord URLs. After wiring it
-should report **0 failures**. That transition is the acceptance test.
-
-Then confirm fanout actually reaches you, rather than trusting config:
-
-```sh
 # Does the receiver now carry a real webhook, not a bare stub?
 ssh root@136.243.90.96 'grep -A3 "name: chat-page" /etc/prometheus/alertmanager.yml'
 ```
 
-A wired receiver shows a `discord_configs:`/`webhook_configs:` block
-beneath it. A bare `- name: chat-page` with nothing under it means the
-substitution found an empty value.
+Before wiring: 5 FAILs; after: 0. A wired receiver shows a `discord_configs:`/`webhook_configs:` block; a bare `- name: chat-page` means an empty value was substituted.
 
 ## Step 4 — codify
-
-Put the same values into the Ansible vault so a rebuild does not
-silently land unwired:
 
 ```sh
 cd configs/ansible && ansible-vault edit inventory/r1.secrets.yml
 ```
 
-## Why the deadmansswitch matters most
-
-Every other check alarms when something breaks. The deadmansswitch
-alarms when **the alerting pipeline itself** breaks — Alertmanager
-pings it continuously, and Healthchecks.io alerts you when those pings
-stop. Without it, a dead Alertmanager is indistinguishable from a
-perfectly healthy system. It is one URL and it is the one that catches
-the failure mode nothing else can see.
+Put the same values in the vault so a rebuild does not land unwired.
 
 ## Related
 
-- [meta.md#stellarindex_alertmanager_config_bad](meta.md#stellarindex_alertmanager_config_bad) — when
-  `apply.sh` validation fails or Alertmanager refuses to reload.
-- [../sev-playbook.md](../sev-playbook.md) — what to do once a page
-  actually reaches you.
-- [../v1-launch-plan.md](../v1-launch-plan.md) — the "Go-live gate" table
-  (paging and SEV drill row), which this runbook closes.
-- `configs/alertmanager/README.md` — receiver/severity routing design.
+- [meta.md#stellarindex_alertmanager_config_bad](meta.md#stellarindex_alertmanager_config_bad), [../sev-playbook.md](../sev-playbook.md), [../v1-launch-plan.md](../v1-launch-plan.md), `configs/alertmanager/README.md`

@@ -11,52 +11,25 @@ related:
 
 # SEV status-page update
 
-The customer-facing companion to the on-call escalation flow.
-Every SEV that meets the visibility threshold below MUST be
-posted to `status.stellarindex.io`; this runbook is the binding
-how-to.
+Every SEV that meets the threshold below MUST be posted; this is the binding how-to. Two renderers read the same corpus, `internal/incidents/data/<YYYY-MM-DD>-<slug>.md`, at build time:
 
-**Where the page lives.** Two renderers read the same corpus,
-`internal/incidents/data/<YYYY-MM-DD>-<slug>.md`, at build time:
+- `status.stellarindex.io`: `web/status/`, Cloudflare Pages project `stellarindex-status`, deployed by `.github/workflows/status-page.yml`. Makes no API call, so it still publishes during an outage. Post here first.
+- `stellarindex.io/status`: the explorer (`web/explorer/src/app/status/`), with live component health. It shares one `next build` with every explorer page, so an API outage can block it (see step 4).
 
-- **`status.stellarindex.io`** — `web/status/`, its own Cloudflare Pages
-  project (`stellarindex-status`), deployed by
-  `.github/workflows/status-page.yml`. It makes no API call, so it is the
-  channel that still publishes during an outage. Post here first.
-- **`stellarindex.io/status`** — part of the explorer
-  (`web/explorer/src/app/status/`), with live component health. It shares
-  one `next build` with every explorer page, so an API outage can block it
-  (see "Known risk" below).
+## When to post and cadence
 
-## When to post
-
-Post a status-page update for any incident that:
-
-- a customer might notice from the outside (HTTP 5xx rate spike,
-  latency SLO breach, ingest lag visible on `flags.stale`,
-  prolonged data-freshness gap, etc.), AND
-- has fired a SEV-1 or SEV-2 per [`sev-playbook.md`](../sev-playbook.md).
-
-Operator-internal incidents (e.g. a build failure, a non-
-production drift event, an internal monitoring blip that didn't
-affect serving) MUST NOT post — the page exists to tell
-customers about THEIR experience, not ours.
-
-## Update cadence
-
-Per Freighter F3.5 / F3.6 + the SEV playbook §2:
+Post for an incident that a customer might notice from outside (5xx spike, latency SLO breach, `flags.stale` ingest lag, prolonged freshness gap) AND fired a SEV-1 or SEV-2 per [`sev-playbook.md`](../sev-playbook.md). Never post operator-internal incidents (build failures, non-production drift, internal monitoring blips).
 
 | Severity | First update | Subsequent updates |
 |---|---|---|
-| SEV-1 | At detection (≤ 15 min from SEV start) | Every hour |
-| SEV-2 | At detection (≤ 30 min from SEV start) | Every 24 h |
+| SEV-1 | At detection (<= 15 min from SEV start) | Every hour |
+| SEV-2 | At detection (<= 30 min from SEV start) | Every 24 h |
 
-If a SEV-2 escalates to SEV-1, switch to the hourly cadence at
-the escalation timestamp; don't wait for the next hour boundary.
+A SEV-2 that escalates to SEV-1 switches to hourly at the escalation timestamp.
 
 ## Steps
 
-### 1 — Open a fresh incident file
+### 1. Open a fresh incident file
 
 ```sh
 cd internal/incidents/data
@@ -66,14 +39,11 @@ cp _template.md "${DATE}-${SLUG}.md"
 $EDITOR "${DATE}-${SLUG}.md"
 ```
 
-`<slug>` is what appears in the incident URL
-(`stellarindex.io/status/incident/${DATE}-${SLUG}`) so make it
-informative; the front-matter `title` field is what the customer
-reads on the index page.
+The slug appears in the incident URL (`stellarindex.io/status/incident/${DATE}-${SLUG}`).
 
-### 2 — Fill the YAML frontmatter
+### 2. Fill the YAML frontmatter
 
-Match the `_template.md` shape precisely. Required fields:
+Match `_template.md`:
 
 ```yaml
 title: "[SEV-1] API returning stale prices"
@@ -87,42 +57,16 @@ affected_components:
 postmortem:                                  # leave empty until the postmortem is written
 ```
 
-`affected_components:` values are operator-defined string
-labels (e.g. `api`, `indexer`, `aggregator`, `storage`) — the
-status page renders them as badges on the incident card. Pick
-the same labels you'd use in Discord so customers and operators
-read the same vocabulary.
+`affected_components` are badge labels (`api`, `indexer`, `aggregator`, `storage`); reuse the labels operators use. `severity` is `SEV-1`, `SEV-2` or `SEV-3`. `status` is `investigating`, `identified`, `monitoring` or `resolved`.
 
-`severity` accepts `SEV-1`, `SEV-2`, or `SEV-3` (`incidents.go`
-maps them to display strings).
+### 3. Write the first update body
 
-`status` is one of `investigating`, `identified`, `monitoring`,
-`resolved`. The status page UI renders a colored pill from this
-field.
+Use the template's `## Identification`, `## Impact`, `## Timeline`. The Timeline table is append-only; never edit prior entries. Plain English from the customer's view, no internal component names. The page is public: no internal infrastructure detail, no cause speculation before "Identified", no naming upstream providers early.
 
-### 3 — Write the first update body
+> Bad: "Aggregator is throwing PgError 53300 'too many connections' on the secondary; primary failover initiated."
+> Good: "We're seeing elevated error rates on the pricing API; some requests are returning 5xx. Engineers are investigating; next update in 1 hour."
 
-Use the template's `## Identification` + `## Impact` +
-`## Timeline` shape. The Timeline table is the append-only
-event log customers refresh during the incident — never edit
-prior entries.
-
-Plain English from the customer POV. No jargon, no internal
-component names that aren't already in their integration docs.
-
-> **Bad:** "Aggregator is throwing PgError 53300 'too many
-> connections' on the secondary; primary failover initiated."
->
-> **Good:** "We're seeing elevated error rates on the pricing
-> API; some requests are returning 5xx. Engineers are
-> investigating; next update in 1 hour."
-
-The status page is a **public** surface. Don't leak internal
-infrastructure detail; don't speculate about cause until the
-"Identified" stage; don't blame upstream providers by name in
-the early updates.
-
-### 4 — Commit + push
+### 4. Commit, push, publish
 
 ```sh
 git checkout -b sev-${DATE}-${SLUG}
@@ -133,60 +77,24 @@ gh pr create --title "incident: ${DATE}-${SLUG}" --body ""
 gh pr merge --squash --auto
 ```
 
-Publish to the standalone page as soon as the PR merges; it never
-touches the API:
+After the merge, publish the standalone page (never touches the API):
 
 ```sh
 gh workflow run status-page.yml --ref main
 ```
 
-The **explorer's** Cloudflare Pages git integration auto-deploys on
-the merge into `main` and renders the new incident at
-`stellarindex.io/status` within a minute or two (the loader reads the
-corpus at build time, so a rebuild is what publishes it). Verify the
-incident lands on the index page before stepping away. If the git
-integration is paused, the manual fallback is
-`gh workflow run explorer-deploy.yml --ref main -f network=mainnet -f environment=production`.
+The explorer's Cloudflare Pages git integration rebuilds on the merge into `main` and shows the incident within a minute or two; verify it lands on the index. If the integration is paused: `gh workflow run explorer-deploy.yml --ref main -f network=mainnet -f environment=production`.
 
-**Known risk: a genuine API outage can block the update it's meant to
-announce.** The status page shares ONE `next build` with every other
-explorer route (there is no separate build target for
-`web/explorer/src/app/status/`). `src/lib/buildFetch.ts` documents a
-deliberate fail-hard contract: a real entity page (`/assets/[slug]`,
-`/markets/[pair]`, …) whose build-time fetch fails persistently THROWS
-and aborts the WHOLE `next build` — that's correct for those pages
-(never bake fallback HTML for a real entity) but it means the exact
-SEV this runbook targets (the live API is down) can make the build
-that would publish the NEW incident update fail too, on an unrelated
-page's fetch, not the status page's own code (`web/explorer/src/lib/incidents.ts`
-reads the corpus from disk, not the network). `status.stellarindex.io` is
-the isolated build that avoids this; the explorer copy can lag.
-
-**Interim workaround.** If a status-page-update build fails and the
-failure is `BuildFetchError` (not a status-page or corpus error), the
-API itself is almost certainly the thing down — use the manual
-fallback above with the stub override to force every OTHER page onto
-its networkless fallback content for this one build, so the incident
-update still publishes:
+**Known risk.** A real API outage can fail the explorer build that would publish the update: `src/lib/buildFetch.ts` aborts the whole `next build` when any real entity page's build-time fetch fails persistently, even though the incident corpus (`web/explorer/src/lib/incidents.ts`) is read from disk. `status.stellarindex.io` is the isolated build that avoids this. If the explorer build fails with `BuildFetchError`, force every OTHER page onto networkless fallback content for this one build (break-glass; never for a routine deploy; those pages stay degraded until the next good build):
 
 ```sh
 gh workflow run explorer-deploy.yml --ref main -f network=mainnet \
     -f environment=production -f api_base_url=https://ci-stub.invalid
 ```
 
-This bakes fallback/not-found HTML for asset, market, issuer, etc.
-pages until the next successful build (acceptable — those pages are
-already degraded by the same outage) while the incident corpus, which
-never depended on the network, still renders correctly. Do not use
-this for a routine deploy; it is a break-glass step for exactly this
-scenario.
+### 5. Customer webhook fan-out (optional but expected)
 
-### 5 — Customer webhook fan-out (optional but expected)
-
-After the incident `.md` is merged AND the API binary is
-redeployed (the corpus is `go:embed`-baked into the binary),
-fan out the `incident.sev1` webhook so dashboard subscribers
-get a callback. F-1249 (codex audit-2026-05-12) on R1:
+After the incident file is merged AND the API binary is redeployed (the corpus is `go:embed`-baked), fan out the webhook:
 
 ```sh
 ssh root@136.243.90.96 -- /usr/local/bin/stellarindex-ops emit-incident \
@@ -196,8 +104,7 @@ ssh root@136.243.90.96 -- /usr/local/bin/stellarindex-ops emit-incident \
   -write
 ```
 
-When the SEV closes, after the same merge + deploy cycle
-flips the corpus's `status: resolved`:
+On close, after the merge and deploy that flips `status: resolved`, run the same with `-event resolved`:
 
 ```sh
 ssh root@136.243.90.96 -- /usr/local/bin/stellarindex-ops emit-incident \
@@ -207,90 +114,29 @@ ssh root@136.243.90.96 -- /usr/local/bin/stellarindex-ops emit-incident \
   -write
 ```
 
-The command refuses semantically-impossible combinations
-(sev1 on a non-SEV-1 entry, resolved on an investigating
-entry) before any network I/O, so an operator typo can't
-fire the wrong webhook.
+It refuses impossible combinations (sev1 on a non-SEV-1 entry, resolved on an investigating one) before any network I/O.
 
-## Append updates as the incident progresses
+## Append updates
 
-For each subsequent update (per the cadence table above):
+Per the cadence: edit the file, append a Timeline row, flip `status:` if needed, then:
 
 ```sh
 $EDITOR internal/incidents/data/${DATE}-${SLUG}.md
-# Append a new row to the Timeline table; flip `status:` if appropriate
 git add ... && git commit -m "incident: ${DATE}-${SLUG} update HH:MM" && \
   git push && gh pr merge --squash --auto
 ```
 
-The explorer's Cloudflare Pages deploy re-runs and the new row
-appears on the page on the next refresh.
-
 ## Resolution
 
-When the SEV is closed:
-
-1. Set `status: resolved` and stamp `resolved_at:` in the
-   frontmatter.
-2. Append the final `## Timeline` row marking `**Resolved.**`.
-3. Fill the `## What we did` section.
-4. Commit + push (same flow as above).
-5. After the deploy lands, fire `emit-incident -event resolved -write`
-   so dashboard subscribers get the close-out callback.
-6. Postmortem follow-up: when the postmortem lands at
-   `docs/operations/postmortems/${DATE}-${SLUG}.md`, update
-   the incident's frontmatter `postmortem:` field to point at
-   it. The status page's "Read full postmortem" link on the
-   incident-history row is gated on this field being non-empty
-   (`web/explorer/src/app/status/StatusPageClient.tsx`) — leaving
-   it blank keeps the link hidden even after the incident resolves.
+1. Set `status: resolved` and stamp `resolved_at:`.
+2. Append the final Timeline row `**Resolved.**` and fill `## What we did`.
+3. Commit and push as above; after the deploy lands, run `emit-incident -event resolved -write`.
+4. When the postmortem lands at `docs/operations/postmortems/${DATE}-${SLUG}.md`, set the frontmatter `postmortem:` to it; the "Read full postmortem" link (`web/explorer/src/app/status/StatusPageClient.tsx`) stays hidden while it is empty.
 
 ## Workstation-down fallback
 
-If the operator's workstation is unavailable but they can
-reach R1 via SSH, the incident can be drafted directly on the
-host via the deployed binary's writeable copy of the corpus —
-but this WILL be lost on the next deploy because the embedded
-corpus rebuilds from `git`. The drafted file MUST be committed
-upstream within the same hour. There is no "host-only" path
-that survives a deploy; the corpus is the source of truth in
-git, full stop.
+With R1 reachable by SSH, an incident can be drafted on the host, but it is lost on the next deploy (the corpus rebuilds from git). Commit it upstream within the same hour.
 
 ## Related
 
-- [`sev-playbook.md`](../sev-playbook.md) — the SEV ladder, on-
-  call rotation, severity definitions.
-- [`internal/incidents/data/_template.md`](../../../internal/incidents/data/_template.md)
-  — the canonical incident frontmatter + body shape.
-- [`web/explorer/src/app/status/`](../../../web/explorer/src/app/status/)
-  — the live status page (index + `incident/[slug]`), rendered from
-  [`web/explorer/src/lib/incidents.ts`](../../../web/explorer/src/lib/incidents.ts),
-  which build-time-loads the corpus.
-- [`web/status/`](../../../web/status/) — the redirect-only
-  Cloudflare Pages stub kept alive for `status.stellarindex.io`;
-  not the page customers read.
-- [`internal/incidents/incidents.go`](../../../internal/incidents/incidents.go)
-  — the `go:embed` loader that bakes the corpus into the API
-  binary for `/v1/incidents`.
-
-## Changelog
-
-- 2026-05-13 — rewritten around the `internal/incidents/data/`
-  corpus after F-1211 retired the `deploy/status-page/cstate/…`
-  workflow.
-- 2026-08-29 — re-verified against HEAD (runbook re-verification
-  wave K). The page moved off `web/status/` (now a redirect-only
-  Cloudflare Pages stub whose dispatch-only workflow cannot publish
-  an incident) onto the explorer at `web/explorer/src/app/status/`;
-  every pointer, both deploy sentences and the frontmatter `related:`
-  entry updated, and the same drift fixed in AGENTS.md's tree map.
-  Host shapes → r1's IP.
-- 2026-09-20 — documented an unfixed risk: the status page shares one
-  `next build` with the rest of the explorer, so a genuine API outage
-  can fail the build that would publish the incident update (via
-  `buildFetch.ts`'s fail-hard contract on an unrelated page), even
-  though the status page's own data never touches the network. Added
-  the `api_base_url=https://ci-stub.invalid` break-glass workaround for
-  the manual deploy fallback. Real fix (an isolated build/deploy target
-  for the status page) is not yet scoped — see internal tracking for
-  F103.
+[`sev-playbook.md`](../sev-playbook.md), [`internal/incidents/data/_template.md`](../../../internal/incidents/data/_template.md), [`web/explorer/src/app/status/`](../../../web/explorer/src/app/status/), [`web/explorer/src/lib/incidents.ts`](../../../web/explorer/src/lib/incidents.ts), [`web/status/`](../../../web/status/), [`internal/incidents/incidents.go`](../../../internal/incidents/incidents.go)

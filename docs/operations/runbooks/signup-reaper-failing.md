@@ -9,27 +9,15 @@ severity: P3
 
 ## At a glance
 
-| Field | Value |
-| ----- | ----- |
-| Alert | `stellarindex_signup_reaper_failing` |
-| Severity | P3 (ticket) |
-| Detected by | `deploy/monitoring/rules/signup-reaper.yml` |
-| Typical MTTR | 5–30 min (usually Postgres reachability recovery) |
-| Impact | The API binary's F-1255 speculative-account reaper can't delete orphan `accounts` rows, so lost-signup-race orphans accumulate unbounded in the `accounts` table. This is a slow table leak — NOT customer-facing. The public pricing surface, auth, and the dashboard are all unaffected; only the count of never-recovered `Suspended` orphan rows grows. |
+P3. `stellarindex_signup_reaper_failing`; orphan accounts accumulate, not customer-facing. Typical MTTR 5-30 min.
 
-## Symptoms
+P3 (ticket). Rule: `deploy/monitoring/rules/signup-reaper.yml`. The reaper (`internal/signupreaper`, hourly) cannot delete orphan `accounts` rows left by lost signup races (F-1255), so they accumulate. A slow table leak, not customer-facing. Typical MTTR 5-30 min.
 
-- `rate(stellarindex_signup_reaper_runs_total{outcome="error"}[6h]) > rate(stellarindex_signup_reaper_runs_total{outcome="ok"}[6h])` sustained 30+ min.
-- API log lines repeat `signup-reaper: reap failed` with the underlying error (Postgres unreachable, query timeout, permission denied on `accounts`).
-- A slow climb in `SELECT count(*) FROM accounts WHERE status='suspended' AND suspended_reason LIKE 'signup-race:%'`.
+Symptom: `rate(stellarindex_signup_reaper_runs_total{outcome="error"}[6h]) > rate(stellarindex_signup_reaper_runs_total{outcome="ok"}[6h])` for 30+ min; API log `signup-reaper: reap failed`.
 
-## Background — why this fires
+## What the reaper runs
 
-F-1255: two concurrent `/v1/auth/callback` provisions for the same
-just-verified email can both create an `accounts` row, but only one
-`CreateUser` wins on `users_email_idx`. The loser's account is marked
-`Suspended` with a `signup-race:` reason and never gets a user. The
-reaper (`internal/signupreaper`, default hourly) deletes those orphans:
+An `error` outcome means this DELETE failed; the sweep is a no-op and retries next tick:
 
 ```sql
 DELETE FROM accounts a
@@ -40,21 +28,10 @@ WHERE a.status = 'suspended'
   AND NOT EXISTS (SELECT 1 FROM api_keys k WHERE k.account_id = a.id);
 ```
 
-`error` means that DELETE failed — the whole sweep is a no-op and is
-retried next tick. Common causes:
-
-1. **Postgres unreachable** from the API host (network / restart /
-   failover). Self-recovers once the connection is back.
-2. **`accounts` permission denied (42501)** — the table was created by
-   the `postgres` superuser instead of the `stellarindex` app role
-   (migrations/README rule 7). Fix: `ALTER TABLE accounts OWNER TO
-   stellarindex`.
-3. **Query timeout** under heavy DB load. Usually transient.
-
-## Quick diagnosis (≤ 5 min)
+## Check
 
 ```sh
-# 1) Confirm which outcome dominates (API serves /metrics on :3000).
+# 1) Which outcome dominates (API serves /metrics on :3000).
 curl -fs http://localhost:3000/metrics \
   | grep '^stellarindex_signup_reaper_'
 
@@ -62,61 +39,29 @@ curl -fs http://localhost:3000/metrics \
 journalctl -u stellarindex-api -n 100 \
   | grep 'signup-reaper: reap failed'
 
-# 3) Confirm the table is writable by the app role + see the backlog.
+# 3) Backlog size.
 psql "$STELLARINDEX_POSTGRES_DSN" -c \
   "SELECT count(*) FROM accounts WHERE status='suspended' AND suspended_reason LIKE 'signup-race:%';"
 ```
 
-## Decision tree
+## Likely causes
 
-| Underlying error | Likely cause | Mitigation |
-| ---------------- | ------------ | ---------- |
-| connection refused / timeout | Postgres down / failover | Wait for recovery; check [`postgres.md#stellarindex_postgres_ping_failing`](postgres.md#stellarindex_postgres_ping_failing) |
-| `permission denied for table accounts` | Migration applied as superuser | `ALTER TABLE accounts OWNER TO stellarindex` (migrations/README rule 7) |
-| statement timeout | DB under load | Check DB load; alert auto-resolves once queries complete |
+| Underlying error | Cause | Fix |
+| ---------------- | ----- | --- |
+| connection refused / timeout | Postgres down / failover | Wait for recovery; see [`postgres.md#stellarindex_postgres_ping_failing`](postgres.md#stellarindex_postgres_ping_failing) |
+| `permission denied for table accounts` (42501) | Migration applied as superuser | `ALTER TABLE accounts OWNER TO stellarindex` (migrations/README rule 7) |
+| statement timeout | DB under load | Check DB load; resolves on its own |
 
-## Mitigation (≤ 30 min)
+## Fix
 
-- [ ] **Confirm Postgres reachability** from the API host.
-- [ ] **Fix table ownership** if the error is `42501` (see decision tree).
-- [ ] **Verify** `rate(stellarindex_signup_reaper_runs_total{outcome="ok"}[6h])`
-      recovers above the `error` rate; the alert auto-resolves after 30
-      min sustained.
-- [ ] If the reaper should be off, set `[signup_reaper] enabled = false`
-      and restart the API — the series stops and the alert clears.
-      (Orphans are harmless; they just accumulate.)
-- [ ] Optional one-shot backlog clear once Postgres is healthy — the SQL
-      in "Background" run by hand under `psql` is exactly what the reaper
-      would do.
+1. Confirm Postgres reachability from the API host.
+2. Fix table ownership if the error is `42501`.
+3. Verify the `ok` rate recovers above the `error` rate; the alert clears after 30 min sustained.
+4. To turn the reaper off, set `[signup_reaper] enabled = false` and restart the API (orphans are harmless).
+5. Optional: once Postgres is healthy, run the DELETE above by hand in `psql` to clear the backlog.
 
-## Root cause analysis
-
-Capture for the postmortem: the underlying error class, whether the
-`accounts` table ownership was wrong, the orphan backlog size at
-firing time, and the outage duration (alert FIRING → RESOLVED). A large
-backlog + a healthy `/v1/auth/callback` path also warrants checking
-whether the signup-race is firing abnormally often (a hot inbox being
-hammered), separate from the reaper's own health.
-
-## Known false-positive patterns
-
-- **Cold start**: API boots, first sweep fires before Postgres is
-  ready. The `for: 30m` clause masks this; a single restart blip is not
-  this alert.
-- **Very low volume**: with hourly sweeps and near-zero orphan
-  production, one transient error can briefly tip the 6h ratio. The
-  `for: 30m` + 6h window damp this; a genuine, sustained failure holds
-  across multiple sweeps.
+False positives: a cold-start blip or one transient error at very low volume; `for: 30m` and the 6h window damp both. A large backlog with a healthy `/v1/auth/callback` also warrants checking whether the signup race fires abnormally often.
 
 ## Related
 
-- `internal/signupreaper/` — the reaper package.
-- `internal/api/v1/dashboardauth/` — the `/v1/auth/callback`
-  provisioning path that produces the signup-race orphans (F-1255).
-- Sibling alert: [`postgres.md#stellarindex_postgres_ping_failing`](postgres.md#stellarindex_postgres_ping_failing) (the broader "API can't reach
-  Postgres" signal).
-
-## Changelog
-
-- 2026-07-05 — initial draft alongside the F-1255 speculative-account
-  reaper.
+`internal/signupreaper/`, `internal/api/v1/dashboardauth/` (the `/v1/auth/callback` path that produces the orphans), [`postgres.md#stellarindex_postgres_ping_failing`](postgres.md#stellarindex_postgres_ping_failing).
