@@ -4,24 +4,19 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
-import { Th, Td } from '@/components/ui';
+import { Skeleton, TBody, TR, Table, Td, Th, THead } from '@/components/ui';
+import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 import { apiGet, asExample } from '@/api/client';
 import {
   compareDecimalStrings,
   formatCompact,
   formatCompactUnits,
 } from '@/lib/format';
-import { sourceToneClass } from '@/lib/pillTone';
-import { SourceSparkline } from '@/components/SourceSparkline';
 import { DexTvlHeadline } from '@/app/protocols/ProtocolTvlPanel';
+import { protocolMeta } from '@/app/protocols/registry';
 import { useProtocolTvls, type ProtocolTvl } from './useProtocolTvls';
 import { DexVolumeShare } from './DexVolumeShare';
 import { hrefFor } from '@/lib/hrefFor';
-
-interface VolumeBucket {
-  hour: string;
-  volume_usd: string;
-}
 
 interface SourceRow {
   name: string;
@@ -30,7 +25,6 @@ interface SourceRow {
   trade_count_24h?: number;
   markets_count_24h?: number;
   volume_24h_usd?: string | null;
-  volume_history_24h?: VolumeBucket[];
 }
 
 /**
@@ -40,10 +34,10 @@ interface SourceRow {
  */
 export function DexProtocolsTable() {
   const q = useQuery<SourceRow[]>({
-    queryKey: ['/v1/sources', 'stats,sparkline', 'dex'],
+    queryKey: ['/v1/sources', 'stats', 'dex'],
     queryFn: async () => {
       const env = await apiGet<{ data: SourceRow[] }>('/v1/sources', {
-        include: 'stats,sparkline',
+        include: 'stats',
       });
       const arr = env.data ?? [];
       return arr
@@ -104,124 +98,101 @@ export function DexProtocolsTable() {
       title="DEX protocols"
       hint="Per-protocol 24h activity"
       source={asExample('/v1/sources', { include: 'stats' })}
-      bodyClassName="-mx-4"
+      bodyClassName="-mx-4 -mb-4"
     >
       {headline && (
-        <div className="mx-4 mb-4">
+        <div className="mx-4 mb-5">
           <DexTvlHeadline total={headline} />
         </div>
       )}
       {statsAvailable && (
         <div className="mx-4 mb-4">
+          <div className={`${PANEL_LABEL_CLASS} mb-2`}>24h volume share</div>
           <DexVolumeShare rows={rows} />
         </div>
       )}
       <div className="overflow-x-auto">
-        <table className="divide-line min-w-full divide-y text-sm">
-          <thead>
-            <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
+        <Table>
+          <THead>
+            <tr>
               <Th>Protocol</Th>
               <Th align="right">TVL</Th>
               <Th align="right">24h volume</Th>
-              <Th>24h chart</Th>
               <Th align="right">24h trades</Th>
               <Th align="right">Active pools</Th>
-              <Th align="right">VWAP weight</Th>
             </tr>
-          </thead>
-          <tbody className="divide-line-subtle divide-y">
+          </THead>
+          <TBody>
             {q.isLoading && (
-              <tr>
-                <td
-                  colSpan={7}
-                  className="text-ink-muted px-4 py-6 text-center text-sm"
-                >
-                  Loading protocols…
-                </td>
-              </tr>
+              <TR>
+                <Td colSpan={5}>
+                  <Skeleton className="h-5 w-48" />
+                </Td>
+              </TR>
             )}
             {!q.isLoading && !registryAvailable && (
-              <tr>
-                <td
-                  colSpan={7}
-                  className="text-ink-muted px-4 py-6 text-center text-sm"
-                >
-                  Protocol list unavailable right now — retry shortly.
-                </td>
-              </tr>
+              <TR>
+                <Td colSpan={5} className="text-ink-muted">
+                  Protocol list unavailable right now.{' '}
+                  <Link
+                    href="/status"
+                    className="text-brand-600 hover:underline"
+                  >
+                    Status
+                  </Link>
+                </Td>
+              </TR>
             )}
             {!q.isLoading && registryAvailable && rows.length === 0 && (
-              <tr>
-                <td
-                  colSpan={7}
-                  className="text-ink-muted px-4 py-6 text-center text-sm"
-                >
+              <TR>
+                <Td colSpan={5} className="text-ink-muted">
                   No DEX protocols reporting 24h activity.
-                </td>
-              </tr>
+                </Td>
+              </TR>
             )}
             {rows.map((r) => {
               const vol = r.volume_24h_usd;
-              const tone = sourceToneClass(r.name);
               return (
-                <tr key={r.name} className="hover:bg-surface-muted">
+                <TR key={r.name}>
                   <Td>
                     <Link
                       href={hrefFor.dex(r.name)}
-                      className={`inline-block rounded-sm px-1.5 py-0.5 text-[11px] font-medium tracking-wider uppercase hover:underline ${tone}`}
+                      className="text-ink hover:text-brand-600 font-medium"
                     >
-                      {r.name}
+                      {protocolMeta(r.name)?.label ?? r.name}
                     </Link>
                   </Td>
                   <Td align="right">
                     <TvlCell tvl={tvls[r.name]} />
                   </Td>
-                  <Td align="right">
+                  <Td align="right" className="font-mono tabular-nums">
                     {vol && compareDecimalStrings(vol, '0') === 1 ? (
-                      <span className="font-mono tabular-nums">
-                        ${formatCompactUnits(vol)}
-                      </span>
+                      `$${formatCompactUnits(vol)}`
                     ) : (
                       <span className="text-ink-faint">—</span>
                     )}
                   </Td>
-                  <Td>
-                    <SourceSparkline buckets={r.volume_history_24h} />
+                  <Td align="right" className="font-mono tabular-nums">
+                    {countCell(r.trade_count_24h, statsAvailable)}
                   </Td>
-                  <Td align="right">
-                    <span className="text-ink-body font-mono tabular-nums">
-                      {r.trade_count_24h && r.trade_count_24h > 0
-                        ? formatCompact(r.trade_count_24h)
-                        : statsAvailable
-                          ? '0'
-                          : '—'}
-                    </span>
+                  <Td align="right" className="font-mono tabular-nums">
+                    {countCell(r.markets_count_24h, statsAvailable)}
                   </Td>
-                  <Td align="right">
-                    <span className="text-ink-body font-mono tabular-nums">
-                      {r.markets_count_24h && r.markets_count_24h > 0
-                        ? formatCompact(r.markets_count_24h)
-                        : statsAvailable
-                          ? '0'
-                          : '—'}
-                    </span>
-                  </Td>
-                  <Td align="right">
-                    <Link
-                      href={hrefFor.dex(r.name)}
-                      className="text-brand-600 text-xs hover:underline"
-                    >
-                      details →
-                    </Link>
-                  </Td>
-                </tr>
+                </TR>
               );
             })}
-          </tbody>
-        </table>
+          </TBody>
+        </Table>
       </div>
     </Panel>
   );
+}
+
+// A bare field beside present stats is a real zero; with the stats join
+// missing wholesale it is unknown, never "0".
+function countCell(n: number | undefined, statsAvailable: boolean): string {
+  if (n && n > 0) return formatCompact(n);
+  return statsAvailable ? '0' : '—';
 }
 
 /**
@@ -238,7 +209,12 @@ function TvlCell({ tvl }: { tvl?: ProtocolTvl }) {
   const lowerBound = tvl.unpriced_pools > 0;
   return (
     <span className="font-mono tabular-nums" title={tvl.basis}>
-      {lowerBound ? '≥ ' : ''}${formatCompactUnits(tvl.tvl_usd)}
+      {lowerBound && (
+        <span className="text-ink-muted font-sans" aria-hidden>
+          ≥{' '}
+        </span>
+      )}
+      ${formatCompactUnits(tvl.tvl_usd)}
     </span>
   );
 }

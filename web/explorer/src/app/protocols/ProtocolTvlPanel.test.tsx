@@ -60,7 +60,7 @@ describe('ProtocolTvlPanel', () => {
     expect(screen.getByText('Value locked (USD)')).toBeInTheDocument();
     // Lower-bound prefix + priced/total split on the unpriced protocol…
     expect(screen.getByText('≥ $36.55M')).toBeInTheDocument();
-    expect(screen.getByText('74/224 pools priced')).toBeInTheDocument();
+    expect(screen.getByText('74/224 priced')).toBeInTheDocument();
     // …and a plain figure on the fully-priced one.
     expect(screen.getByText('$3.65M')).toBeInTheDocument();
     expect(screen.getByText('hatched = lower bound')).toBeInTheDocument();

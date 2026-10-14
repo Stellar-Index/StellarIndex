@@ -1,12 +1,13 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { hrefFor } from '@/lib/hrefFor';
-import { ExternalLink } from 'lucide-react';
 
 import { ReferencePriceAggregators } from './ReferencePriceAggregators';
 import { RoutedVolumePanel } from './RoutedVolumePanel';
 
-import { Badge, Container, PageHeader } from '@/components/ui';
+import { Panel } from '@/components/reveal';
+import { Container, PageHeader } from '@/components/ui';
+import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 export const metadata: Metadata = {
   title: 'Aggregators — routers and yield wrappers on Stellar',
   description:
@@ -39,7 +40,7 @@ const ENTRIES: Entry[] = [
       'Multi-hop router over Soroswap pairs; routed trades resolve to the pair-level swap events we already index.',
     notes: [
       'No router-specific decoder needed for trades — the underlying SoroswapPair swap events fire regardless. The router contract is tracked separately for routed-via attribution (what % of pair volume arrived via the router).',
-      'Per the protocol-class contract, routers are in `/v1/sources` with class=aggregator and contribute zero VWAP weight by default. Including them would double-count the underlying pair trade.',
+      'Per the protocol-class contract, routers are listed in /v1/sources with class=aggregator and contribute zero VWAP weight by default. Including them would double-count the underlying pair trade.',
     ],
     contractsRepo: 'https://github.com/soroswap/core',
     protocolSlug: 'soroswap',
@@ -96,108 +97,93 @@ export default function AggregatorsPage() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Aggregators' }]}
         title="Aggregators"
-        meta={
-          <Badge title="Excluded from VWAP to avoid double-counting. A routed swap still emits the underlying pair's swap event, which is the one we VWAP; a vault deposit moves shares but sets no price, and Blend supplies the collateral revaluation.">
-            VWAP weight 0
-          </Badge>
-        }
+        meta="Routers and yield vaults that sit on the DEXes and lending pools. VWAP weight 0: their flows are already counted at the underlying pair."
       />
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-2">
         {ENTRIES.map((e) => (
-          <Card key={e.name} entry={e} />
+          <EntryCard key={e.name} entry={e} />
         ))}
       </div>
 
       <RoutedVolumePanel />
-
       <ReferencePriceAggregators />
     </Container>
   );
 }
 
-function Card({ entry }: { entry: Entry }) {
+const TYPE_LABEL: Record<Entry['type'], string> = {
+  router: 'Router',
+  yield: 'Yield vault',
+};
+
+function EntryCard({ entry }: { entry: Entry }) {
   return (
-    <div className="rounded-card border-line bg-surface shadow-card border p-5">
-      <div className="flex items-baseline justify-between gap-2">
-        <h2 className="text-h3 text-ink font-semibold">{entry.name}</h2>
-        <span
-          className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] tracking-wider uppercase ${
-            entry.type === 'router'
-              ? 'bg-brand-100 text-brand-700'
-              : 'bg-surface-subtle text-ink-body'
-          }`}
-        >
-          {entry.type === 'router' ? 'Router' : 'Yield vault'}
-        </span>
-      </div>
-      <p className="text-ink-body mt-3 text-sm">{entry.blurb}</p>
-      <details className="text-ink-muted mt-3 text-xs">
-        <summary className="cursor-pointer">
-          Notes ({entry.notes.length})
-        </summary>
-        <ul className="mt-1 space-y-1">
-          {entry.notes.map((n, i) => (
-            <li key={i}>{n}</li>
-          ))}
-        </ul>
-      </details>
+    <Panel
+      headingLevel={2}
+      title={entry.name}
+      hint={TYPE_LABEL[entry.type]}
+      className="flex flex-col"
+      bodyClassName="flex flex-1 flex-col gap-4"
+    >
+      <p className="text-ink-body text-sm leading-relaxed">{entry.blurb}</p>
+      <ul className="text-ink-muted space-y-2 text-xs leading-relaxed">
+        {entry.notes.map((n) => (
+          <li key={n}>{n}</li>
+        ))}
+      </ul>
       {entry.contractRefs && entry.contractRefs.length > 0 && (
-        <div className="border-line mt-4 border-t pt-3">
-          <div className="text-ink-muted text-[10px] font-medium tracking-wider uppercase">
-            Mainnet contracts
-          </div>
-          <ul className="mt-1.5 space-y-1 text-xs">
+        <div>
+          <div className={PANEL_LABEL_CLASS}>Mainnet contracts</div>
+          <ul className="divide-line mt-1 divide-y">
             {entry.contractRefs.map((c) => (
               <li
                 key={c.cstrkey}
-                className="flex items-baseline justify-between gap-3"
+                className="flex items-baseline justify-between gap-3 py-1.5 text-xs"
               >
-                <span className="text-ink-body">{c.label}</span>
+                <span className="text-ink-muted">{c.label}</span>
                 <Link
-                  href={`/contracts/${encodeURIComponent(c.cstrkey)}/`}
-                  className="text-brand-600 font-mono text-[11px] hover:underline"
-                  title={`${c.cstrkey} — contract events + code`}
+                  href={`/contracts/${c.cstrkey}/`}
+                  title={c.cstrkey}
+                  className="text-ink hover:text-brand-600 font-mono"
                 >
-                  {c.cstrkey.slice(0, 6)}…{c.cstrkey.slice(-4)}
+                  {shortKey(c.cstrkey)}
                 </Link>
               </li>
             ))}
           </ul>
         </div>
       )}
-      <div className="mt-4 flex flex-wrap gap-3 text-xs">
+      <div className="border-line mt-auto flex flex-wrap gap-x-4 gap-y-1 border-t pt-3 text-xs">
         {entry.protocolSlug && (
           <Link
             href={hrefFor.protocol(entry.protocolSlug)}
-            className="text-brand-600 inline-flex items-center gap-1 font-medium hover:underline"
+            className="text-brand-600 font-medium hover:underline"
           >
-            Protocol analytics →
+            Protocol analytics
           </Link>
         )}
-        {entry.homepage && (
-          <a
-            href={entry.homepage}
-            className="text-brand-600 inline-flex items-center gap-1 hover:underline"
-            target="_blank"
-            rel="noreferrer"
-          >
-            Homepage
-            <ExternalLink className="h-3 w-3" />
-          </a>
-        )}
-        {entry.contractsRepo && (
-          <a
-            href={entry.contractsRepo}
-            className="text-ink-muted inline-flex items-center gap-1 hover:underline"
-            target="_blank"
-            rel="noreferrer"
-          >
-            Contracts source
-            <ExternalLink className="h-3 w-3" />
-          </a>
-        )}
+        {entry.homepage && <ExternalRef href={entry.homepage} />}
+        {entry.contractsRepo && <ExternalRef href={entry.contractsRepo} />}
       </div>
-    </div>
+    </Panel>
   );
+}
+
+/** Shows the destination itself as the link text, so an off-site hop is never a surprise. */
+function ExternalRef({ href }: { href: string }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="text-ink-muted hover:text-brand-600 hover:underline"
+    >
+      {href.replace(/^https?:\/\/(www\.)?/, '')}
+    </a>
+  );
+}
+
+function shortKey(key: string): string {
+  return `${key.slice(0, 6)}…${key.slice(-4)}`;
 }

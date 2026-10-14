@@ -8,6 +8,17 @@ import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
 import type { components } from '@/api/types';
 import { formatReadable, formatRelative } from '@/lib/format';
+import { protocolMeta } from '@/app/protocols/registry';
+import {
+  Badge,
+  Skeleton,
+  TBody,
+  TR,
+  Table,
+  Td,
+  Th,
+  THead,
+} from '@/components/ui';
 import { RoutedVolumeBars } from './RoutedVolumeBars';
 
 type AggregatorRow = components['schemas']['AggregatorRow'];
@@ -50,19 +61,19 @@ export function RoutedVolumePanel() {
     <Panel
       headingLevel={2}
       title="Routed volume (24h)"
-      hint="Trades tagged routed_via — same-tx attribution of router invocations to underlying pair trades; vault entries are listed for completeness (they don't accrue per-tx tags)"
+      hint="Trades tagged routed_via: same-transaction attribution of router invocations to underlying pair trades. Vaults are listed for completeness; they never accrue per-transaction tags."
       source={asExample('/v1/aggregators')}
-      bodyClassName="-mx-4"
+      bodyClassName="-mx-4 -mb-4"
     >
-      {!q.isError && (
+      {!q.isError && rows.length > 0 && (
         <div className="px-4 pb-4">
           <RoutedVolumeBars rows={rows} />
         </div>
       )}
       <div className="overflow-x-auto">
-        <table className="divide-line min-w-full divide-y text-sm">
-          <thead>
-            <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
+        <Table>
+          <THead>
+            <tr>
               <Th>Aggregator</Th>
               <Th>Kind</Th>
               <Th>Protocol</Th>
@@ -70,15 +81,12 @@ export function RoutedVolumePanel() {
               <Th align="right">Routed volume</Th>
               <Th align="right">Last routed</Th>
             </tr>
-          </thead>
-          <tbody className="divide-line-subtle divide-y">
+          </THead>
+          <TBody>
             {q.isLoading && (
               <tr>
-                <td
-                  colSpan={6}
-                  className="text-ink-muted px-4 py-6 text-center text-sm"
-                >
-                  Loading attribution…
+                <td colSpan={6} className="px-4 py-3">
+                  <Skeleton className="h-5 w-full" />
                 </td>
               </tr>
             )}
@@ -88,11 +96,17 @@ export function RoutedVolumePanel() {
                   colSpan={6}
                   className="text-ink-muted px-4 py-6 text-center text-sm"
                 >
-                  Attribution rollup unavailable.
+                  Aggregator registry unavailable right now.{' '}
+                  <Link
+                    href="/status"
+                    className="text-brand-600 hover:underline"
+                  >
+                    Status
+                  </Link>
                 </td>
               </tr>
             )}
-            {!q.isLoading && !q.isError && rows.length === 0 && (
+            {q.data && rows.length === 0 && (
               <tr>
                 <td
                   colSpan={6}
@@ -103,130 +117,84 @@ export function RoutedVolumePanel() {
               </tr>
             )}
             {rows.map((r) => (
-              <tr key={r.contract_id} className="hover:bg-surface-muted">
+              <TR key={r.contract_id}>
                 <Td>
-                  <Link
-                    href={`/contracts/${encodeURIComponent(r.contract_id)}/`}
-                    className="text-ink hover:text-brand-600 font-medium"
-                    title={r.contract_id}
-                  >
-                    {r.name}
-                  </Link>
-                  {r.auto_discovered && (
-                    <span
-                      className="border-line text-ink-muted ml-1.5 rounded border px-1 py-0.5 text-[9px] tracking-wider uppercase"
-                      title="Evidence-observed, not vendor- or WASM-audit-verified"
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Link
+                      href={`/contracts/${r.contract_id}/`}
+                      className="text-ink hover:text-brand-600 font-medium"
                     >
-                      unverified
-                    </span>
-                  )}
+                      {r.name}
+                    </Link>
+                    {r.auto_discovered && (
+                      <Badge
+                        tone="warn"
+                        title="Discovered from on-chain calls; not yet hand-verified"
+                      >
+                        unverified
+                      </Badge>
+                    )}
+                  </div>
                   {r.notes && r.notes.length > 0 && (
-                    <span
-                      className="text-ink-muted ml-1 cursor-help"
-                      title={r.notes.join(' ')}
-                      aria-label="Coverage caveat"
+                    <div
+                      className="text-ink-faint mt-0.5 max-w-xs truncate text-xs"
+                      title={r.notes.join(' · ')}
                     >
-                      *
-                    </span>
+                      {r.notes.join(' · ')}
+                    </div>
                   )}
                 </Td>
-                <Td>
-                  <span className="bg-surface-subtle text-ink-body rounded-sm px-1.5 py-0.5 font-mono text-[10px] tracking-wider uppercase">
-                    {r.kind}
-                  </span>
+                <Td className="text-ink-muted">
+                  {KIND_LABEL[r.kind] ?? r.kind}
                 </Td>
                 <Td>
-                  <Link
-                    href={hrefFor.protocol(r.protocol)}
-                    className="text-brand-600 hover:underline"
-                  >
-                    {r.protocol}
-                  </Link>
+                  {r.protocol ? (
+                    <Link
+                      href={hrefFor.protocol(r.protocol)}
+                      className="text-ink hover:text-brand-600"
+                    >
+                      {protocolMeta(r.protocol)?.label ?? r.protocol}
+                    </Link>
+                  ) : (
+                    <span className="text-ink-faint">—</span>
+                  )}
                 </Td>
                 {r.kind === 'router' ? (
                   <>
-                    <Td align="right">
-                      <span className="font-mono text-xs">
-                        {r.routed_trades_24h.toLocaleString('en-US')}
-                      </span>
+                    <Td align="right" className="font-mono">
+                      {r.routed_trades_24h == null
+                        ? '—'
+                        : r.routed_trades_24h.toLocaleString('en-US')}
                     </Td>
-                    <Td align="right">
-                      <span className="font-mono text-xs">
-                        {fmtVolume(r.routed_volume_24h_usd)}
-                      </span>
+                    <Td align="right" className="font-mono">
+                      {fmtVolume(r.routed_volume_24h_usd)}
                     </Td>
-                    <Td align="right">
-                      <span className="text-ink-muted text-xs">
-                        {r.last_routed_at
-                          ? formatRelative(r.last_routed_at)
-                          : 'never'}
-                      </span>
+                    <Td align="right" className="text-ink-muted">
+                      {r.last_routed_at
+                        ? formatRelative(r.last_routed_at)
+                        : 'never'}
                     </Td>
                   </>
                 ) : (
-                  // Vault kinds don't route per-tx trades — "n/a" is the
-                  // honest cell, not the endpoint's placeholder zeros.
-                  <Td align="right" colSpan={3}>
-                    <span
-                      className="text-ink-faint text-xs"
-                      title="Vault-kind entries hold + deploy capital; they never accrue per-tx routed_via tags. See the protocol page for their capital state."
-                    >
-                      n/a — holds capital, doesn&apos;t route trades
-                    </span>
+                  <Td align="right" colSpan={3} className="text-ink-faint">
+                    n/a — holds capital, does not route trades
                   </Td>
                 )}
-              </tr>
+              </TR>
             ))}
-          </tbody>
-        </table>
+          </TBody>
+        </Table>
       </div>
-      <p className="border-line text-ink-muted border-t px-4 py-2 text-xs">
-        <span title="Each router invocation is joined to the swap trades in the same transaction (first-wins, never re-tagged); a wrapping aggregator gets its own row when registered.">
-          Routed volume, USD
-        </span>
-        ; &ldquo;—&rdquo; means not yet valued, not zero. Rows marked{' '}
-        <span className="border-line rounded border px-1 py-0.5 text-[9px] tracking-wider uppercase">
-          unverified
-        </span>{' '}
-        or with <span title="hover any * for details">*</span> carry coverage
-        caveats — hover for detail.
+      <p className="text-ink-muted border-line border-t px-4 py-3 text-xs">
+        Routed volume is a subset of the pair volume on the DEX pages, not
+        volume in addition to it.
       </p>
     </Panel>
   );
 }
 
-function Th({
-  children,
-  align,
-}: {
-  children: React.ReactNode;
-  align?: 'left' | 'right';
-}) {
-  return (
-    <th
-      scope="col"
-      className={`px-4 py-2 ${align === 'right' ? 'text-right' : 'text-left'}`}
-    >
-      {children}
-    </th>
-  );
-}
-
-function Td({
-  children,
-  align,
-  colSpan,
-}: {
-  children: React.ReactNode;
-  align?: 'left' | 'right';
-  colSpan?: number;
-}) {
-  return (
-    <td
-      colSpan={colSpan}
-      className={`px-4 py-2 ${align === 'right' ? 'text-right' : 'text-left'}`}
-    >
-      {children}
-    </td>
-  );
-}
+const KIND_LABEL: Record<string, string> = {
+  router: 'Router',
+  vault: 'Yield vault',
+  'aggregator-vault': 'Yield vault',
+};

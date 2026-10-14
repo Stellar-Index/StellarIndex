@@ -29,7 +29,7 @@ export function CountBar({ value, max }: { value: number; max: number }) {
     <div
       role="img"
       aria-label={`${value.toLocaleString('en-US')} of ${max.toLocaleString('en-US')} group max`}
-      className="bg-surface-subtle mt-1 ml-auto h-1 w-20 rounded-full"
+      className="bg-surface-subtle h-1 w-16 shrink-0 rounded-full"
     >
       <div
         className="bg-brand-500 h-1 rounded-full"

@@ -104,14 +104,12 @@ describe('DexProtocolsTable TVL column', () => {
       await screen.findByRole('columnheader', { name: 'TVL' }),
     ).toBeInTheDocument();
     // Lower-bound marker + compact formatting + basis as the hover title.
-    expect(await screen.findByText(/≥\s*\$2\.5M/)).toBeInTheDocument();
-    expect(screen.getByText(/≥\s*\$2\.5M/)).toHaveAttribute(
-      'title',
-      'current pair reserves',
-    );
+    const cell = await screen.findByText(/\$2\.5M/);
+    expect(cell.textContent).toMatch(/≥\s*\$2\.5M/);
+    expect(cell).toHaveAttribute('title', 'current pair reserves');
     // No snapshot renders an em-dash, never a fabricated $0.
     const phoenixRow = screen
-      .getByRole('link', { name: 'phoenix' })
+      .getByRole('link', { name: 'Phoenix' })
       .closest('tr');
     expect(phoenixRow?.textContent).toContain('—');
   });
