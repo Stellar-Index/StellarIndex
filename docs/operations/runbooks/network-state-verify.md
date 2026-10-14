@@ -1,6 +1,6 @@
 ---
 title: Runbook — network-state-verify
-last_verified: 2026-10-03
+last_verified: 2026-10-14
 status: draft
 severity: P3
 ---
@@ -84,6 +84,12 @@ cat /var/lib/node_exporter/textfile_collector/network_state_verify.prom
       reach back to genesis means dormant holdings were never captured. Use
       `reconcile-balances` on a sample of accounts to find which domain is
       short.
+- [ ] `lumens`, positive residual or one that drifts: run the opt-in
+      live-state check once by hand, in a lane gap, since it streams the whole
+      live bucket list from the archive (tens of GB, an hour or more):
+      `stellarindex-ops verify-network-state -config /etc/stellarindex.toml -checks livestate`.
+      It prints every class twice, archive beside lake as of the same
+      checkpoint; the class whose `diff` is non-zero carries the residual.
 - [ ] Verification: `systemctl start verify-network-state.service`; every
       `stellarindex_network_state_verify_failures` series reads 0 and both
       alerts clear within one scrape.

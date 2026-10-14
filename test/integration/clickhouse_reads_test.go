@@ -2468,6 +2468,19 @@ func TestNetworkStateReader_LumenConservationAtCommittedTip(t *testing.T) {
 	if r := got.Residual(); r.Cmp(big.NewInt(-5)) != 0 {
 		t.Fatalf("residual = %s, want -5", r)
 	}
+	// As of the ledger before the tip the tally reads that header and still resolves
+	// ledger 101's rows from their pre-images; a ledger with no header fails.
+	got, err = reader.LumenConservationAt(ctx, sacID, tip-1)
+	if err != nil {
+		t.Fatalf("LumenConservationAt(%d): %v", tip-1, err)
+	}
+	if got.Ledger != tip-1 || got.FeePool != 200 || got.Preimages != 3 || got.Accounts.Cmp(big.NewInt(600)) != 0 || got.Residual().Cmp(big.NewInt(-20)) != 0 {
+		t.Fatalf("as of %d: ledger=%d fee_pool=%d preimages=%d accounts=%s residual=%s, want (%d, 200, 3, 600, -20)",
+			tip-1, got.Ledger, got.FeePool, got.Preimages, got.Accounts, got.Residual(), tip-1)
+	}
+	if _, err := reader.LumenConservationAt(ctx, sacID, tip-2); err == nil {
+		t.Fatalf("LumenConservationAt(%d) must fail: no header for that ledger", tip-2)
+	}
 }
 
 func lumenSACAllowance(sac xdr.ContractId, amount int64) xdr.LedgerEntry {

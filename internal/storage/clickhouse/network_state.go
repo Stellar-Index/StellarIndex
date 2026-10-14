@@ -84,7 +84,7 @@ type LumenTally struct {
 	Preimages int
 }
 
-func newLumenTally(ledger uint32, totalCoins, feePool int64) *LumenTally {
+func NewLumenTally(ledger uint32, totalCoins, feePool int64) *LumenTally {
 	return &LumenTally{
 		Ledger: ledger, TotalCoins: totalCoins, FeePool: feePool,
 		Accounts: new(big.Int), ClaimableBalances: new(big.Int),
@@ -110,20 +110,28 @@ var lumenEntryTypes = []string{"account", "claimable_balance", "liquidity_pool",
 
 // LumenConservation tallies native XLM held in ledger_entries_current as of the newest committed ledger, rolling back keys newer than it so concurrent ingest cannot tear the sum; nativeSAC is the native SAC contract id.
 func (r *NetworkStateReader) LumenConservation(ctx context.Context, nativeSAC string) (*LumenTally, error) {
+	return r.LumenConservationAt(ctx, nativeSAC, 0)
+}
+
+// LumenConservationAt tallies holdings as of ledger (0 = the lake tip), whose header must be in stellar.ledgers; rows the lake
+// changed after it are resolved from their first later change.
+func (r *NetworkStateReader) LumenConservationAt(ctx context.Context, nativeSAC string, ledger uint32) (*LumenTally, error) {
 	sac, prefix, err := nativeSACKey(nativeSAC)
 	if err != nil {
 		return nil, err
 	}
-	var (
-		ledger              uint32
-		totalCoins, feePool int64
-	)
-	if err := r.conn.QueryRow(ctx, `SELECT ledger_seq, total_coins, fee_pool FROM stellar.ledgers FINAL
-		WHERE ledger_seq = (SELECT max(ledger_seq) FROM stellar.ledgers)`).
-		Scan(&ledger, &totalCoins, &feePool); err != nil {
-		return nil, fmt.Errorf("clickhouse: lumen conservation: tip header: %w", err)
+	q := `SELECT ledger_seq, total_coins, fee_pool FROM stellar.ledgers FINAL
+		WHERE ledger_seq = (SELECT max(ledger_seq) FROM stellar.ledgers)`
+	var args []any
+	if ledger > 0 {
+		q = `SELECT ledger_seq, total_coins, fee_pool FROM stellar.ledgers FINAL WHERE ledger_seq = ?`
+		args = []any{ledger}
 	}
-	t := newLumenTally(ledger, totalCoins, feePool)
+	var totalCoins, feePool int64
+	if err := r.conn.QueryRow(ctx, q, args...).Scan(&ledger, &totalCoins, &feePool); err != nil {
+		return nil, fmt.Errorf("clickhouse: lumen conservation: header at %d: %w", ledger, err)
+	}
+	t := NewLumenTally(ledger, totalCoins, feePool)
 	pending, err := r.foldCurrentLumens(ctx, t, sac, prefix)
 	if err != nil {
 		return nil, err
@@ -244,7 +252,7 @@ func (r *NetworkStateReader) foldPreimageLumens(ctx context.Context, t *LumenTal
 	return nil
 }
 
-// foldNativeHolding adds one live entry's native XLM to its domain's sum.
+// foldNativeHolding adds one lake row's native XLM to its domain's sum.
 // Account rows carry it in the balance column; the rest are decoded.
 func foldNativeHolding(t *LumenTally, entryType string, balance int64, entryXDR string, sac xdr.ContractId) error {
 	if entryType == "account" {
@@ -255,7 +263,14 @@ func foldNativeHolding(t *LumenTally, entryType string, balance int64, entryXDR 
 	if err := xdr.SafeUnmarshalBase64(entryXDR, &e); err != nil {
 		return fmt.Errorf("clickhouse: lumen conservation: decode %s entry: %w", entryType, err)
 	}
+	return t.AddEntry(e, sac)
+}
+
+// AddEntry adds one decoded live entry's native XLM to its domain's sum; an entry that can hold none adds nothing.
+func (t *LumenTally) AddEntry(e xdr.LedgerEntry, sac xdr.ContractId) error {
 	switch e.Data.Type {
+	case xdr.LedgerEntryTypeAccount:
+		t.Accounts.Add(t.Accounts, big.NewInt(int64(e.Data.MustAccount().Balance)))
 	case xdr.LedgerEntryTypeClaimableBalance:
 		cb := e.Data.MustClaimableBalance()
 		if cb.Asset.Type == xdr.AssetTypeAssetTypeNative {
@@ -295,6 +310,12 @@ func foldSACBalance(t *LumenTally, cd xdr.ContractDataEntry, sac xdr.ContractId)
 func isNativeSACBalance(contract xdr.ScAddress, key xdr.ScVal, sac xdr.ContractId) bool {
 	return contract.Type == xdr.ScAddressTypeScAddressTypeContract && contract.ContractId != nil &&
 		bytes.Equal(contract.ContractId[:], sac[:]) && balanceKeyHolder(key)
+}
+
+// NativeSACID decodes the native SAC's contract id from its strkey.
+func NativeSACID(contractID string) (xdr.ContractId, error) {
+	id, _, err := nativeSACKey(contractID)
+	return id, err
 }
 
 // nativeSACKey decodes the native SAC id and its contract-data key prefix.
