@@ -45,28 +45,6 @@ export default function HomePage() {
             ? 'Structured data you can rely on, built for every team and every user.'
             : `Every ledger, transaction, account, asset and contract on Stellar ${CURRENT_NETWORK.label}.`}
         </p>
-        <div className="flex flex-wrap items-center gap-3 pt-1">
-          <ButtonLink href="/assets" size="lg">
-            Browse assets
-            <ArrowRight className="h-4 w-4" />
-          </ButtonLink>
-          <ButtonLink href="/pricing" variant="secondary" size="lg">
-            Pricing
-          </ButtonLink>
-          <ButtonLink
-            href="https://docs.stellarindex.io"
-            variant="secondary"
-            size="lg"
-          >
-            API docs
-          </ButtonLink>
-          <Link
-            href="/methodology"
-            className="text-ink-muted hover:text-brand-600 px-2 text-sm font-medium transition-colors"
-          >
-            How it works →
-          </Link>
-        </div>
       </header>
 
       <HomeNetworkStrip />
