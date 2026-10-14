@@ -32,7 +32,7 @@ Most gauges come from `data-freshness.sh` (`configs/ansible/roles/archival-node/
 
 ## stellarindex_data_source_stale
 
-Trips: `stellarindex_data_freshness_stale == 1`, `for: 1h`. Age: `stellarindex_data_freshness_age_seconds{domain,source}`. Covers everything except on-chain trade/event gaps (`stellarindex_ingest_gap_detected` owns those). MTTR 10-60 min. The universe is every `{domain,source}` the table has EVER held, aged against its own newest row, so a dead source never leaves the alert and a source retired on purpose alarms forever ([Retiring a source](#retiring-a-source)). A new source with no rows emits no gauge; a domain-level probe (`supply`, `sep1`) with no rows reads stale.
+Trips: `stellarindex_data_freshness_stale == 1`, `for: 1h`. The `trades` domain is suppressed while the source's `stellarindex_projector_lag_ledgers` is under 1000: a projected source whose writer sits at the tip is quiet, not stale. Age: `stellarindex_data_freshness_age_seconds{domain,source}`. Covers everything except on-chain trade/event gaps (`stellarindex_ingest_gap_detected` owns those). MTTR 10-60 min. The universe is every `{domain,source}` the table has EVER held, aged against its own newest row, so a dead source never leaves the alert and a source retired on purpose alarms forever ([Retiring a source](#retiring-a-source)). A new source with no rows emits no gauge; a domain-level probe (`supply`, `sep1`) with no rows reads stale.
 
 Thresholds (from `data-freshness.sh`):
 

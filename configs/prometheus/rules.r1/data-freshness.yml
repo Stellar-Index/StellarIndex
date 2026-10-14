@@ -5,9 +5,17 @@ groups:
       # staler than its expected cadence — the gap that let coingecko rot 11
       # days + sep1 metadata never populate, both unnoticed. Emitted by
       # data-freshness.sh (textfile collector, every 15 min).
+      # A projected source whose writer sits at the tip is quiet, not stale
+      # (comet: no pool event for days, projector lag 1 ledger), so the
+      # trades domain is suppressed while the source's projector lag is under
+      # 1000 ledgers (~1.4 h). The verdict domain and every non-projected
+      # source (no projector series) keep the plain rule.
       - alert: stellarindex_data_source_stale
         expr: |
-          stellarindex_data_freshness_stale == 1
+          (stellarindex_data_freshness_stale{domain!="trades"} == 1)
+          or
+          (stellarindex_data_freshness_stale{domain="trades"} == 1
+            unless on(source) stellarindex_projector_lag_ledgers < 1000)
         for: 1h
         labels:
           severity: ticket
