@@ -217,7 +217,7 @@ function GettingStarted({
             href="/dashboard/keys"
             className="text-brand-700 font-medium hover:underline"
           >
-            Create one →
+            Create one
           </Link>
         </>
       ),

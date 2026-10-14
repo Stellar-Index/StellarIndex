@@ -302,7 +302,7 @@ export function LedgersTable() {
           disabled={data.next_before == null || isFetching}
           className="border-line text-ink-body hover:border-brand-500 hover:text-brand-600 rounded-md border px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          Load older →
+          Load older
         </button>
       </div>
     </Panel>

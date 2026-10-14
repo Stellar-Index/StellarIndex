@@ -1887,7 +1887,7 @@ function IncidentHistory({
                     href={hrefFor.incident(e.slug)}
                     className="text-brand-600 mt-2 inline-block text-xs font-medium hover:underline"
                   >
-                    Read full postmortem →
+                    Read full postmortem
                   </a>
                 )}
               </Card>

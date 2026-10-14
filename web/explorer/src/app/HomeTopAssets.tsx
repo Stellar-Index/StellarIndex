@@ -102,7 +102,7 @@ export function HomeTopAssets() {
             href="/assets"
             className="text-brand-600 text-sm hover:underline"
           >
-            See all →
+            See all
           </Link>
         </div>
       </div>
@@ -112,7 +112,7 @@ export function HomeTopAssets() {
           description="The assets feed is unavailable right now."
           action={
             <Link href="/assets" className="text-brand-600 hover:underline">
-              Browse all assets →
+              Browse all assets
             </Link>
           }
         />

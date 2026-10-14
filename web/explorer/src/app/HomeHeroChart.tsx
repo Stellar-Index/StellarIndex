@@ -99,7 +99,7 @@ export function HomeHeroChart() {
           href="/assets/XLM"
           className="text-brand-600 text-xs hover:underline"
         >
-          Full XLM detail →
+          Full XLM detail
         </Link>
       </div>
       <MarketChart

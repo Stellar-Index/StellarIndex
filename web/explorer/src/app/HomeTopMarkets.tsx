@@ -59,7 +59,7 @@ export function HomeTopMarkets() {
           href="/markets"
           className="text-brand-600 text-xs hover:underline"
         >
-          All markets →
+          All markets
         </Link>
       </div>
       {isError && top.length === 0 ? (
@@ -67,7 +67,7 @@ export function HomeTopMarkets() {
           title="Couldn't load top markets right now."
           action={
             <Link href="/markets" className="text-brand-600 hover:underline">
-              Browse all markets →
+              Browse all markets
             </Link>
           }
         />

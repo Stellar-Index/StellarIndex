@@ -24,7 +24,7 @@ export default function BlogIndexPage() {
             href="/blog.atom"
             className="text-ink-muted hover:text-brand-600 font-mono text-[11px]"
           >
-            atom feed →
+            atom feed
           </Link>
         }
       />

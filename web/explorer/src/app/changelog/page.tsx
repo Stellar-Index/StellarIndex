@@ -68,7 +68,7 @@ export default function ChangelogPage() {
                 rel="noreferrer noopener"
                 className="text-brand-600 hover:underline"
               >
-                Full changelog →
+                Full changelog
               </a>
             </p>
           )}

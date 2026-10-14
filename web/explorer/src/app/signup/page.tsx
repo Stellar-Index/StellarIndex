@@ -131,7 +131,7 @@ export default function SignupPage() {
                         href="/contact"
                         className="text-brand-600 hover:underline"
                       >
-                        {tier.cost} →
+                        {tier.cost}
                       </Link>
                     ) : (
                       tier.cost

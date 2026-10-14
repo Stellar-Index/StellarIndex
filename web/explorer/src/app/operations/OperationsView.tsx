@@ -297,7 +297,7 @@ export function OperationsView() {
             href={opsHref(type, q.data.next_cursor)}
             className="border-line text-ink-body hover:border-brand-500 hover:text-brand-600 rounded-md border px-4 py-2 text-sm"
           >
-            Older operations →
+            Older operations
           </Link>
         </div>
       )}
