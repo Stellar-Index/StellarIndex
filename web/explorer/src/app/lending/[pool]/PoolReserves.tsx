@@ -163,8 +163,6 @@ export function PoolReserves({ pool }: { pool: string }) {
                 .join('; ')}`}
               aLabel="Supplied"
               bLabel="Borrowed"
-              aColor="var(--color-up)"
-              bColor="var(--color-brand-500)"
               rows={priced.map((rv) => ({
                 id: rv.asset,
                 label: shortAssetText(rv.asset),
@@ -199,7 +197,7 @@ export function PoolReserves({ pool }: { pool: string }) {
                 display: `${rv.utilization_pct.toFixed(1)}%`,
                 color:
                   rv.utilization_pct >= 90
-                    ? 'var(--color-down)'
+                    ? 'var(--color-warn-500)'
                     : 'var(--color-brand-500)',
                 annotation: rv.utilization_pct >= 90 ? 'near cap' : undefined,
                 title: rv.asset,
@@ -226,8 +224,6 @@ export function PoolReserves({ pool }: { pool: string }) {
                   .join('; ')}`}
                 aLabel="Supply APR"
                 bLabel="Borrow APR"
-                aColor="var(--color-up)"
-                bColor="var(--color-down)"
                 formatValue={(n) => `${(n * 100).toFixed(2)}%`}
                 rows={reserves
                   .filter(
@@ -311,10 +307,10 @@ export function PoolReserves({ pool }: { pool: string }) {
                   <td className="py-1.5 pr-4 text-right font-mono tabular-nums">
                     {rv.utilization_pct.toFixed(1)}%
                   </td>
-                  <td className="text-up-strong py-1.5 pr-4 text-right font-mono tabular-nums">
+                  <td className="py-1.5 pr-4 text-right font-mono tabular-nums">
                     {pct(rv.supply_apr)}
                   </td>
-                  <td className="text-down-strong py-1.5 text-right font-mono tabular-nums">
+                  <td className="py-1.5 text-right font-mono tabular-nums">
                     {pct(rv.borrow_apr)}
                   </td>
                 </tr>
