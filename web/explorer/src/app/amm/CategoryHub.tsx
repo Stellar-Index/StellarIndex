@@ -55,7 +55,7 @@ export function CategoryHub({
           <Link
             key={p.name}
             href={hrefFor.protocol(p.name)}
-            className="group border-line bg-surface hover:border-brand-300 hover:bg-surface-subtle rounded-xl border p-5 transition-colors"
+            className="group rounded-card border-line bg-surface hover:border-line-strong border p-4 transition-colors"
           >
             <h2 className="text-h3 text-ink group-hover:text-brand-600 font-semibold">
               {p.label}

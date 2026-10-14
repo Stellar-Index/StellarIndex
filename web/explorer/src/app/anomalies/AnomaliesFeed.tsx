@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
+import { Badge, TBody, TR, Table, Td, Th, THead } from '@/components/ui';
 import { AssetText } from '@/components/AssetLink';
 import { apiGet, asExample } from '@/api/client';
 import { formatPairPrice } from '@/lib/format';
@@ -119,43 +120,34 @@ export function AnomaliesFeed() {
               }
             : undefined
         }
-        bodyClassName="space-y-3"
+        bodyClassName="-mx-4 -mb-4"
       >
         {data && (
-          <div className="flex flex-wrap gap-2 text-xs">
-            <span
-              className={`inline-flex items-center gap-1 rounded px-2 py-1 font-medium ${
-                (data.firing_count ?? 0) > 0
-                  ? 'bg-down-subtle text-down-strong'
-                  : 'bg-up-subtle text-up-strong'
-              }`}
-            >
+          <div className="mx-4 mb-4 flex flex-wrap items-center gap-2 text-xs">
+            <Badge tone={(data.firing_count ?? 0) > 0 ? 'bad' : 'ok'} dot>
               {(data.firing_count ?? 0) > 0
                 ? `${data.firing_count} firing now`
                 : 'Nothing firing'}
-            </span>
+            </Badge>
             {(data.reason_tally ?? []).map((t) => (
-              <span
-                key={t.reason}
-                className="bg-surface-muted text-ink-body inline-flex items-center gap-1 rounded-sm px-2 py-1"
-              >
+              <Badge key={t.reason}>
                 <code className="font-mono">{t.reason}</code>
-                <span className="text-ink-muted">×{t.count}</span>
-              </span>
+                <span className="text-ink-muted ml-1">×{t.count}</span>
+              </Badge>
             ))}
-            <span className="text-ink-muted self-center">
-              (reasons: trailing 30d)
-            </span>
+            <span className="text-ink-muted">(reasons: trailing 30d)</span>
           </div>
         )}
-        {q.isLoading && <p className="text-ink-muted text-sm">Loading…</p>}
+        {q.isLoading && (
+          <p className="text-ink-muted px-4 pb-4 text-sm">Loading…</p>
+        )}
         {q.isError && (
-          <p className="text-ink-muted text-sm">
+          <p className="text-ink-muted px-4 pb-4 text-sm">
             The anomalies feed is unavailable right now.
           </p>
         )}
         {data && events.length === 0 && (
-          <p className="text-ink-muted text-sm">
+          <p className="text-ink-muted px-4 pb-4 text-sm">
             No freeze events recorded yet — every served price has cleared the
             anomaly checks.
           </p>
@@ -164,62 +156,40 @@ export function AnomaliesFeed() {
           // WCAG 1.4.10 Reflow: the wide mono columns scroll inside the
           // panel instead of pushing the whole page sideways at 320px.
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-line text-ink-muted border-b text-left text-[11px] tracking-wider uppercase">
-                  <th scope="col" className="py-1.5 pr-4 font-normal">
-                    Pair
-                  </th>
-                  <th scope="col" className="py-1.5 pr-4 font-normal">
-                    Reason
-                  </th>
-                  <th scope="col" className="py-1.5 pr-4 font-normal">
-                    Frozen at
-                  </th>
-                  <th scope="col" className="py-1.5 pr-4 font-normal">
-                    Duration
-                  </th>
-                  <th
-                    scope="col"
-                    className="py-1.5 pr-4 text-right font-normal"
-                  >
-                    Deviation
-                  </th>
-                  <th
-                    scope="col"
-                    className="py-1.5 pr-4 text-right font-normal"
-                  >
-                    Frozen value
-                  </th>
-                  <th scope="col" className="py-1.5 font-normal">
-                    State
-                  </th>
+            <Table>
+              <THead>
+                <tr>
+                  <Th>Pair</Th>
+                  <Th>Reason</Th>
+                  <Th>Frozen at</Th>
+                  <Th>Duration</Th>
+                  <Th align="right">Deviation</Th>
+                  <Th align="right">Frozen value</Th>
+                  <Th>State</Th>
                 </tr>
-              </thead>
-              <tbody>
+              </THead>
+              <TBody>
                 {events.map((e) => {
                   const dev = deviationPct(e);
                   return (
-                    <tr
-                      key={`${e.asset_id}:${e.quote_id}:${e.frozen_at}`}
-                      className="border-line/60 hover:bg-surface-muted border-b last:border-0"
-                    >
-                      <td className="py-1.5 pr-4 font-mono">
+                    <TR key={`${e.asset_id}:${e.quote_id}:${e.frozen_at}`}>
+                      <Td className="font-mono whitespace-nowrap">
                         <AssetText canonical={e.asset_id} />
                         <span className="text-ink-faint">/</span>
                         <AssetText canonical={e.quote_id} />
-                      </td>
-                      <td className="py-1.5 pr-4">
-                        <code className="text-[11px]">{e.reason}</code>
-                      </td>
-                      <td className="text-ink-muted py-1.5 pr-4 font-mono text-[11px]">
+                      </Td>
+                      <Td>
+                        <code className="text-xs">{e.reason}</code>
+                      </Td>
+                      <Td className="text-ink-muted font-mono text-xs whitespace-nowrap">
                         {fmtTs(e.frozen_at ?? '')}
-                      </td>
-                      <td className="text-ink-muted py-1.5 pr-4 font-mono tabular-nums">
+                      </Td>
+                      <Td className="text-ink-muted tnum font-mono">
                         {duration(e.frozen_at ?? '', e.recovered_at ?? null)}
-                      </td>
-                      <td
-                        className="text-ink-muted py-1.5 pr-4 text-right font-mono tabular-nums"
+                      </Td>
+                      <Td
+                        align="right"
+                        className="text-ink-muted font-mono"
                         title={
                           dev != null
                             ? 'detail.deviation_pct at freeze time'
@@ -229,29 +199,26 @@ export function AnomaliesFeed() {
                         {dev != null
                           ? `${dev > 0 ? '+' : ''}${dev.toFixed(2)}%`
                           : '—'}
-                      </td>
-                      <td
-                        className="py-1.5 pr-4 text-right font-mono tabular-nums"
+                      </Td>
+                      <Td
+                        align="right"
+                        className="font-mono"
                         title={e.frozen_value}
                       >
                         {e.frozen_value ? formatPairPrice(e.frozen_value) : '—'}
-                      </td>
-                      <td className="py-1.5">
+                      </Td>
+                      <Td>
                         {e.firing ? (
-                          <span className="bg-down-subtle text-down-strong rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
-                            firing
-                          </span>
+                          <Badge tone="bad">Firing</Badge>
                         ) : (
-                          <span className="bg-up-subtle text-up-strong rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
-                            recovered
-                          </span>
+                          <Badge tone="ok">Recovered</Badge>
                         )}
-                      </td>
-                    </tr>
+                      </Td>
+                    </TR>
                   );
                 })}
-              </tbody>
-            </table>
+              </TBody>
+            </Table>
           </div>
         )}
       </Panel>
