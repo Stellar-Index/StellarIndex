@@ -1176,6 +1176,10 @@ func newRegistryObservation(ledger uint32, ts time.Time) registryObservation {
 
 // maxLatestTradesForPair caps [Store.LatestTradesForPair]: each arm is a
 // time-unbounded walk, so an unclamped limit could materialise the market.
+// Each arm orders by the outer key and takes LIMIT rather than FETCH FIRST ... WITH TIES on
+// (ts, ledger): under ChunkAppend a WITH TIES arm trips the planner bounded sort
+// ("retrieved too many tuples in a bounded sort") on a pair whose newest ledger holds many
+// trades, and the full key keeps the union top-N equal to the union of each arm top-N.
 const maxLatestTradesForPair = 1000
 
 // LatestTradesForPair returns up to `limit` most-recent trades for the market, in either stored direction, oriented as requested; empty slice + nil if none.
@@ -1197,8 +1201,8 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
           WHERE base_asset  = $1
             AND quote_asset = $2
             AND base_amount > 0 AND quote_amount > 0
-          ORDER BY ts DESC, ledger DESC
-          FETCH FIRST $3 ROWS WITH TIES)
+          ORDER BY ts DESC, ledger DESC, tx_hash DESC, op_index DESC, source DESC
+          LIMIT $3)
         UNION ALL
         (SELECT source, ledger, tx_hash, op_index, ts,
                 base_asset, quote_asset,
@@ -1210,8 +1214,8 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
           WHERE base_asset  = $2
             AND quote_asset = $1
             AND base_amount > 0 AND quote_amount > 0
-          ORDER BY ts DESC, ledger DESC
-          FETCH FIRST $3 ROWS WITH TIES)
+          ORDER BY ts DESC, ledger DESC, tx_hash DESC, op_index DESC, source DESC
+          LIMIT $3)
         ORDER BY ts DESC, ledger DESC, tx_hash DESC, op_index DESC, source DESC
         LIMIT $3
     `
