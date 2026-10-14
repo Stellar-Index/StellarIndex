@@ -124,31 +124,6 @@ func TestFetchDirectoryTarball_HTTPErrorIsFatal(t *testing.T) {
 	}
 }
 
-// TestDirectorySync_FailsClosedByDefault pins the write gate: directory-sync previews by default and mutates Postgres only on -write, after a loud stderr banner.
-// The banner precedes config load and any fetch, so a nonexistent config and unresolvable URL still reach it without touching Postgres.
-func TestDirectorySync_FailsClosedByDefault(t *testing.T) {
-	const cfg = "/nonexistent/stellarindex-directory-sync-gate-test.toml"
-	const url = "https://directory.invalid/archive.tar.gz"
-
-	// DEFAULT: no -write → fail-closed dry run.
-	_, stderrDefault := runDirectorySyncCapturingStderr(t, []string{"-config", cfg, "-url", url})
-	if !strings.Contains(stderrDefault, "DRY RUN — no writes; pass -write to apply") {
-		t.Errorf("default run must announce the fail-closed DRY RUN banner on stderr; got:\n%s", stderrDefault)
-	}
-	if strings.Contains(stderrDefault, "WRITING — applying changes") {
-		t.Errorf("default run must NOT announce WRITING — it would mutate Postgres without an explicit opt-in; got:\n%s", stderrDefault)
-	}
-
-	// -write: explicit opt-in → WRITING.
-	_, stderrWrite := runDirectorySyncCapturingStderr(t, []string{"-config", cfg, "-url", url, "-write"})
-	if !strings.Contains(stderrWrite, "WRITING — applying changes") {
-		t.Errorf("-write must announce the WRITING banner on stderr; got:\n%s", stderrWrite)
-	}
-	if strings.Contains(stderrWrite, "DRY RUN") {
-		t.Errorf("-write must NOT report DRY RUN; got:\n%s", stderrWrite)
-	}
-}
-
 // TestDirectorySync_WiresAJobHeartbeat: the shared opsutil.JobHeartbeat gives directory-sync stellarindex_ops_job_run_failed off existing alert rules.
 // Drives it to a failed Postgres ping and asserts the textfile records the failure.
 func TestDirectorySync_WiresAJobHeartbeat(t *testing.T) {
@@ -345,5 +320,38 @@ func TestRenderDirectorySyncTextfile_ExportsUnflagged(t *testing.T) {
 	body, err := os.ReadFile(path)
 	if err != nil || !strings.Contains(string(body), `kind="unflagged"} 3`) {
 		t.Fatalf("stamped textfile = %q (err %v), want unflagged 3", body, err)
+	}
+}
+
+// TestSyncSubcommands_FailClosedByDefault pins the write-gate convention for directory-sync and listing-sync:
+// preview by default, mutate Postgres only on -write, each announced by a stderr banner. The banner precedes
+// config load and any fetch, so a nonexistent config and an unresolvable URL still reach it without touching
+// Postgres.
+func TestSyncSubcommands_FailClosedByDefault(t *testing.T) {
+	cases := []struct {
+		name string
+		run  func(t *testing.T, args []string) string
+		args []string
+	}{
+		{"directory-sync", func(t *testing.T, args []string) string {
+			_, stderr := runDirectorySyncCapturingStderr(t, args)
+			return stderr
+		}, []string{"-config", "/nonexistent/stellarindex-directory-sync-gate-test.toml", "-url", "https://directory.invalid/archive.tar.gz"}},
+		{"listing-sync", func(t *testing.T, args []string) string {
+			_, stderr := runListingSyncCapturingStderr(t, args)
+			return stderr
+		}, []string{"-config", "/nonexistent/stellarindex-listing-sync-gate-test.toml"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stderrDefault := tc.run(t, tc.args)
+			if !strings.Contains(stderrDefault, "DRY RUN — no writes; pass -write to apply") || strings.Contains(stderrDefault, "WRITING — applying changes") {
+				t.Errorf("default run must announce the fail-closed DRY RUN banner and never WRITING; got:\n%s", stderrDefault)
+			}
+			stderrWrite := tc.run(t, append(append([]string{}, tc.args...), "-write"))
+			if !strings.Contains(stderrWrite, "WRITING — applying changes") || strings.Contains(stderrWrite, "DRY RUN") {
+				t.Errorf("-write must announce the WRITING banner and never DRY RUN; got:\n%s", stderrWrite)
+			}
+		})
 	}
 }

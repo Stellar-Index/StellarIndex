@@ -462,27 +462,6 @@ func TestFetchListingPrices_ChunksTheIDList(t *testing.T) {
 	}
 }
 
-// TestListingSync_FailsClosedByDefault pins the write-gate convention: preview by default, mutate Postgres only on -write with a loud stderr banner. The banner precedes config load and any fetch, so a nonexistent config announces the mode then errors without touching Postgres or the network.
-func TestListingSync_FailsClosedByDefault(t *testing.T) {
-	const cfg = "/nonexistent/stellarindex-listing-sync-gate-test.toml"
-
-	_, stderrDefault := runListingSyncCapturingStderr(t, []string{"-config", cfg})
-	if !strings.Contains(stderrDefault, "DRY RUN — no writes; pass -write to apply") {
-		t.Errorf("default run must announce the fail-closed DRY RUN banner on stderr; got:\n%s", stderrDefault)
-	}
-	if strings.Contains(stderrDefault, "WRITING — applying changes") {
-		t.Errorf("default run must NOT announce WRITING; got:\n%s", stderrDefault)
-	}
-
-	_, stderrWrite := runListingSyncCapturingStderr(t, []string{"-config", cfg, "-write"})
-	if !strings.Contains(stderrWrite, "WRITING — applying changes") {
-		t.Errorf("-write must announce the WRITING banner on stderr; got:\n%s", stderrWrite)
-	}
-	if strings.Contains(stderrWrite, "DRY RUN") {
-		t.Errorf("-write must NOT report DRY RUN; got:\n%s", stderrWrite)
-	}
-}
-
 // TestListingSync_RequiresConfigAndHTTPS covers the two flag validations that run first.
 func TestListingSync_RequiresConfigAndHTTPS(t *testing.T) {
 	if err := listingSync(nil); err == nil {
