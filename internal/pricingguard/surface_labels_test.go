@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/astguard"
 )
 
 // metricsReadme is the operator reference whose surface table this test
@@ -112,7 +114,11 @@ func emittedSurfaceLabels(t *testing.T, roots ...string) []string {
 				pkgs[dir] = &surfacePackage{consts: map[string]string{}}
 			}
 			pkgs[dir].files = append(pkgs[dir].files, f)
-			collectStringConsts(f, pkgs[dir].consts)
+			for _, c := range astguard.FileConsts(t, path) {
+				if c.IsString {
+					pkgs[dir].consts[c.Name] = c.Value
+				}
+			}
 			return nil
 		})
 		if err != nil {
@@ -162,28 +168,6 @@ func emittedSurfaceLabels(t *testing.T, roots ...string) []string {
 	}
 	slices.Sort(out)
 	return out
-}
-
-func collectStringConsts(f *ast.File, into map[string]string) {
-	for _, decl := range f.Decls {
-		gd, ok := decl.(*ast.GenDecl)
-		if !ok || gd.Tok != token.CONST {
-			continue
-		}
-		for _, spec := range gd.Specs {
-			vs := spec.(*ast.ValueSpec)
-			for i, name := range vs.Names {
-				if i >= len(vs.Values) {
-					continue
-				}
-				if lit, ok := vs.Values[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
-					if v, err := strconv.Unquote(lit.Value); err == nil {
-						into[name.Name] = v
-					}
-				}
-			}
-		}
-	}
 }
 
 // surfaceParamIndex maps each function or method name whose `surface` parameter reaches the gate metrics to that
