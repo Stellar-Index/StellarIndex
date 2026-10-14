@@ -60,6 +60,7 @@ const ROUTES = [
   { name: 'account-transactions', cls: 'scan', w: 5, url: (d) => `${baseUrl}/accounts/${pick(d.accounts)}/transactions?limit=50` },
   { name: 'account-operations', cls: 'scan', w: 5, url: (d) => `${baseUrl}/accounts/${pick(d.accounts)}/operations?limit=50` },
   { name: 'account-movements', cls: 'scan', w: 5, url: (d) => `${baseUrl}/accounts/${pick(d.accounts)}/movements?limit=50` },
+  { name: 'account-entry-changes', cls: 'scan', w: 2, url: (d) => `${baseUrl}/accounts/${pick(d.accounts)}/entry-changes?limit=25` },
   { name: 'account-positions', cls: 'scan', w: 3, url: (d) => `${baseUrl}/accounts/${pick(d.accounts)}/positions` },
   { name: 'account-trades', cls: 'scan', w: 3, url: (d) => `${baseUrl}/accounts/${pick(d.accounts)}/trades?limit=50` },
   { name: 'account-activity', cls: 'scan', w: 3, url: (d) => `${baseUrl}/accounts/${pick(d.accounts)}/activity` },

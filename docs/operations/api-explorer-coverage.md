@@ -24,10 +24,10 @@ route absent on a test net is correct, not a gap.
 
 | | Count |
 |---|---:|
-| Paths in the OpenAPI contract | **143** |
+| Paths in the OpenAPI contract | **144** |
 | Level 3 — reachable | **112** |
 | Level 2 — consumed but unreachable | **0** |
-| Level 1 — not consumed | **27** |
+| Level 1 — not consumed | **28** |
 | Deliberately excluded (operational) | **4** |
 
 Level 2 is empty and enforced: `src/lib/route-reachability.test.ts` walks the
@@ -209,6 +209,7 @@ call site; `hooks.ts:useX` is a shared hook.
 | `/accounts/{g_strkey}/transactions` | GET | 3 | app/accounts/AccountView.tsx |
 | `/accounts/{g_strkey}/operations` | GET | 3 | app/accounts/AccountView.tsx |
 | `/accounts/{g_strkey}/movements` | GET | 3 | app/accounts/AccountMovements.tsx |
+| `/accounts/{g_strkey}/entry-changes` | GET | 1 | — |
 | `/accounts/{g_strkey}/positions` | GET | 3 | app/accounts/AccountDefiPositions.tsx |
 | `/accounts/{g_strkey}/trades` | GET | 3 | app/accounts/AccountTrades.tsx |
 | `/accounts/{g_strkey}/activity` | GET | 3 | app/accounts/AccountActivitySummary.tsx |
@@ -217,12 +218,12 @@ call site; `hooks.ts:useX` is a shared hook.
 | `/accounts/{g_strkey}/graph/cohort` | GET | 3 | app/insights/AccountRelationCohort.tsx |
 | `/search` | GET | 3 | components/nav/SearchModal.tsx |
 
-## Level 1 — the 25 stranded endpoints
+## Level 1 — the 26 stranded endpoints
 
 All probed live 2026-09-09; none 404s at the route level. Building pages for
 them is a product decision, not made here.
 
-### Public data with no surface (10)
+### Public data with no surface (11)
 
 | Endpoint | What is stranded | Rough cost |
 |---|---|---|
@@ -238,6 +239,7 @@ them is a product decision, not made here.
 | `/assets/{asset_id}/supply/flows` | Daily mint / burn / clawback from the `supply_flows` lake, with `net` and `history_incomplete` (SDK `AssetSupplyFlows`). | Small: chart beside the supply card. |
 | `/assets/{asset_id}/movements` | Per-asset movements read from the ClickHouse lake. | Small: tab on `/assets/[slug]`. |
 | `/assets/{asset_id}/entry-changes` | Per-asset trustline, offer and claimable-balance change history from the ClickHouse lake. | Small: tab on `/assets/[slug]`. |
+| `/accounts/{g_strkey}/entry-changes` | Per-account ledger-entry change history (owner, claimant and sponsor roles), located through the entry index and decoded from the ClickHouse lake. | Small: tab on `/accounts/[g]`. |
 
 ### `/methodology`
 
