@@ -65,7 +65,7 @@ export function StatGrid({
   return (
     <div
       className={cn(
-        'rounded-card border-line bg-line grid grid-cols-1 gap-px overflow-hidden border',
+        'rounded-card border-line bg-surface grid grid-cols-1 gap-px overflow-hidden border',
         colClass,
         className,
       )}
@@ -75,7 +75,7 @@ export function StatGrid({
   );
 }
 
-/** A single cell inside a StatGrid (white background, padded). */
+/** A single cell inside a StatGrid: padded, with its own hairline so a partial last row leaves no gaps. */
 export function StatCell({
   children,
   className,
@@ -83,5 +83,9 @@ export function StatCell({
   children: ReactNode;
   className?: string;
 }) {
-  return <div className={cn('bg-surface p-4', className)}>{children}</div>;
+  return (
+    <div className={cn('bg-surface ring-line p-4 ring-1', className)}>
+      {children}
+    </div>
+  );
 }

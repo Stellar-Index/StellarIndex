@@ -17,6 +17,12 @@ function token(name: string, fallback: string): string {
   return v || fallback;
 }
 
+/** A `var(--x)` colour read from the document for canvas use; anything else passes through. */
+export function resolveCssColor(color: string): string {
+  const m = /^var\((--[\w-]+)\)$/.exec(color.trim());
+  return m ? token(m[1], color) : color;
+}
+
 // Append an alpha to a #rrggbb token → #rrggbbaa (lightweight-charts renders to
 // canvas, which accepts 8-digit hex). Non-hex input is returned unchanged.
 function withAlpha(hex: string, a: number): string {

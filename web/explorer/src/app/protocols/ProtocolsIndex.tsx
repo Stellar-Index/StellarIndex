@@ -27,7 +27,7 @@ import {
   Th,
   THead,
 } from '@/components/ui';
-import { protocolMeta, PROTOCOLS } from './registry';
+import { protocolMeta, PROTOCOLS, categoryLabel } from './registry';
 import {
   ProtocolTvlPanel,
   type DexTvlTotal,
@@ -341,24 +341,6 @@ export function ProtocolsIndex({
         </div>
       </Panel>
     </Container>
-  );
-}
-
-const CATEGORY_LABEL: Record<string, string> = {
-  dex: 'DEX',
-  amm: 'AMM',
-  cex: 'CEX',
-  lending: 'Lending',
-  bridge: 'Bridge',
-  oracle: 'Oracle',
-  yield: 'Yield',
-  aggregator: 'Aggregator',
-};
-
-function categoryLabel(category: string): string {
-  return (
-    CATEGORY_LABEL[category] ??
-    category.charAt(0).toUpperCase() + category.slice(1)
   );
 }
 

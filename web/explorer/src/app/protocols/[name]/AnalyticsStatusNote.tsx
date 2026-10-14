@@ -32,7 +32,7 @@ export function AnalyticsStatusNote({
     return (
       <p
         role="status"
-        className="border-line bg-surface-subtle text-ink-muted rounded-md border px-3 py-2 text-xs"
+        className="border-line bg-surface-subtle text-ink-muted rounded-lg border px-4 py-3 text-sm"
       >
         Analytics temporarily unavailable — blanks and zeros here do not mean
         zero activity.
@@ -42,7 +42,7 @@ export function AnalyticsStatusNote({
   return (
     <p
       role="status"
-      className="border-line bg-surface-subtle text-ink-muted rounded-md border px-3 py-2 text-xs"
+      className="border-line bg-surface-subtle text-ink-muted rounded-lg border px-4 py-3 text-sm"
     >
       Analytics snapshot
       {analytics.as_of
@@ -61,7 +61,7 @@ export function AnalyticsStatusNote({
  */
 export function BespokeUnavailable() {
   return (
-    <p className="border-line text-ink-muted rounded-md border px-3 py-6 text-center text-sm">
+    <p className="border-line text-ink-muted rounded-lg border px-4 py-6 text-center text-sm">
       Analytics temporarily unavailable.
     </p>
   );

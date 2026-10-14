@@ -1,6 +1,5 @@
 import type { Metadata } from 'next';
 
-import { Container } from '@/components/ui';
 import { ProtocolView } from '../protocols/[name]/ProtocolView';
 import { SdexOrderBookSection } from './SdexOrderBookSection';
 import { PoolsTable } from '../dexes/[source]/PoolsTable';
@@ -24,12 +23,9 @@ export const metadata: Metadata = {
 // trades, so this page adds only the order book and the pool table.
 export default function SdexPage() {
   return (
-    <>
-      <ProtocolView name="sdex" label="SDEX" />
-      <Container className="space-y-8 pb-10">
-        <SdexOrderBookSection />
-        <PoolsTable source="sdex" sourceName="SDEX" />
-      </Container>
-    </>
+    <ProtocolView name="sdex" label="SDEX">
+      <SdexOrderBookSection />
+      <PoolsTable source="sdex" sourceName="SDEX" />
+    </ProtocolView>
   );
 }

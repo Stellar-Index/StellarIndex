@@ -3,19 +3,41 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
-import { ExternalLink } from 'lucide-react';
 
 import { Panel } from '@/components/reveal';
-import { apiGet, asExample, API_BASE_URL } from '@/api/client';
+import { apiGet, asExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
 import { dropPartialTrailingDay } from '@/lib/series';
 import { CopyHash, relativeAge, formatTimestamp } from '../../explorer-shared';
-import { categoryTone, PROTOCOLS } from '../registry';
+import {
+  categoryLabel,
+  PROTOCOLS,
+  type ProtocolRegistryEntry,
+} from '../registry';
 import { TimeSeriesChart } from './TimeSeriesChart';
 import { AnalyticsStatusNote, BespokeUnavailable } from './AnalyticsStatusNote';
 import { BespokeSection, type Bespoke } from './BespokeSection';
+import { ExternalRef } from '@/components/ExternalRef';
 import type { paths } from '@/api/types';
-import { Container, PageHeader } from '@/components/ui';
+import {
+  Badge,
+  Button,
+  ButtonLink,
+  Container,
+  PageHeader,
+  Segmented,
+  Skeleton,
+  Stat,
+  StatCell,
+  StatGrid,
+  TBody,
+  TR,
+  Table,
+  Td,
+  Th,
+  THead,
+} from '@/components/ui';
+import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 
 // ─── Wire shapes — derived from the generated OpenAPI contract
 // (src/api/types.ts, `make web-generate-api`); mirror
@@ -32,60 +54,68 @@ type EventTypeCount = NonNullable<
 >[number];
 
 type ProtocolDetail = ProtocolDetailWire & {
-  // spec documents `bespoke` as a described free-form object (board #33); typed precisely here: the bespoke per-category analytics block
-  // (internal/api/v1/protocols.go ProtocolDetailView / ProtocolBespoke,
-  // omitempty — absent when no bespoke reader is wired or the category
-  // has none yet) isn't in the spec's /protocols/{name} schema.
+  // The spec documents `bespoke` as a free-form object; typed precisely
+  // here (internal/api/v1/protocols.go ProtocolBespoke, omitempty — absent
+  // when no bespoke reader is wired or the category has none yet).
   bespoke?: Bespoke;
 };
 
+const LINK_CLASS = 'text-brand-600 font-medium hover:underline';
+
 /**
- * ProtocolView — the per-protocol analytics page. Fetches
- * /v1/protocols/{name} and renders header → KPIs → activity chart →
- * event-type breakdown → contract roster → footer. The lake-analytics
- * fields (breakdown / series / window / total) are omitempty on the
- * wire when the lake reader is down; every section degrades gracefully
- * to "analytics unavailable" while the registry + contract roster still
- * render from the always-served halves.
+ * ProtocolView — the per-protocol analytics page: header → KPI strip →
+ * bespoke analytics → activity → event types → contracts → identity. The
+ * lake-analytics fields are omitempty on the wire when the lake reader is
+ * down; every section degrades to "unavailable" while the registry and the
+ * contract roster still render from the always-served halves.
  */
-export function ProtocolView({ name, label }: { name: string; label: string }) {
-  const { data, isLoading, isError, error } = useQuery<ProtocolDetail>({
-    queryKey: ['/v1/protocols/{name}', name],
-    retry: false,
-    staleTime: 60_000,
-    queryFn: async () => {
-      const env = await apiGet<{ data: ProtocolDetail }>(
-        `/v1/protocols/${encodeURIComponent(name)}`,
-      );
-      return env.data;
+export function ProtocolView({
+  name,
+  label,
+  children,
+}: {
+  name: string;
+  label: string;
+  /** Page-specific sections, rendered above the references footer. */
+  children?: React.ReactNode;
+}) {
+  const { data, isLoading, isError, error, refetch } = useQuery<ProtocolDetail>(
+    {
+      queryKey: ['/v1/protocols/{name}', name],
+      retry: false,
+      staleTime: 60_000,
+      queryFn: async () => {
+        const env = await apiGet<{ data: ProtocolDetail }>(
+          `/v1/protocols/${encodeURIComponent(name)}`,
+        );
+        return env.data;
+      },
     },
-  });
+  );
 
   const source = asExample(`/v1/protocols/${name}`);
+  const registry = PROTOCOLS.find((p) => p.name === name);
 
   if (isError) {
     return (
-      <Shell name={name} label={label}>
+      <Shell name={name} label={label} description={registry?.description}>
         <Panel
-          title="Couldn't load this protocol"
           headingLevel={2}
+          title="Couldn't load this protocol"
           source={source}
-          bodyClassName="text-sm text-ink-body"
         >
-          <p>
+          <p className="text-ink-muted text-sm">
             The protocol directory is unreachable right now:{' '}
-            {error instanceof Error ? error.message : 'unknown error'}. Retry,
-            or check{' '}
-            <a
-              href="/status"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="underline-offset-2 hover:underline"
-            >
-              the status page
-            </a>
-            .
+            {error instanceof Error ? error.message : 'unknown error'}.
           </p>
+          <div className="mt-3 flex gap-2">
+            <Button variant="secondary" size="sm" onClick={() => refetch()}>
+              Retry
+            </Button>
+            <ButtonLink variant="ghost" size="sm" href="/status">
+              Status page
+            </ButtonLink>
+          </div>
         </Panel>
       </Shell>
     );
@@ -93,15 +123,9 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
 
   if (isLoading || !data) {
     return (
-      <Shell name={name} label={label}>
-        <Panel
-          title="On-chain analytics"
-          headingLevel={2}
-          source={source}
-          bodyClassName="text-sm text-ink-muted"
-        >
-          Loading on-chain analytics…
-        </Panel>
+      <Shell name={name} label={label} description={registry?.description}>
+        <Skeleton className="h-24" aria-hidden />
+        <Skeleton className="h-72" aria-hidden />
       </Shell>
     );
   }
@@ -109,110 +133,118 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
   const analyticsAvailable =
     data.activity_window_days != null && data.activity_window_days > 0;
   const windowDays = data.activity_window_days ?? 0;
+  // SDEX is protocol-native: it has no contracts, so a 0 is noise.
+  const hasContracts = data.contract_count > 0 || data.factories.length > 0;
 
   return (
     <Shell
       name={name}
       label={label}
+      description={registry?.description}
       actions={
         <>
-          <CategoryChip category={data.category} />
+          <Badge>{categoryLabel(data.category)}</Badge>
           <CompletenessBadge completeness={data.completeness} />
         </>
       }
-      intro={
-        <>
-          <AtAGlance
-            data={data}
-            analyticsAvailable={analyticsAvailable}
-            windowDays={windowDays}
-          />
-          <ProtocolCrossLinks name={name} category={data.category} />
-        </>
-      }
+      links={<ProtocolCrossLinks name={name} category={data.category} />}
     >
-      {/* ── KPI row ── */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        {data.contract_count > 0 && (
-          <Kpi label="Contracts" value={formatCompact(data.contract_count)} />
+      <StatGrid cols={hasContracts ? 5 : 3}>
+        {hasContracts && (
+          <StatCell>
+            <Stat
+              label="Contracts"
+              value={formatCompact(data.contract_count)}
+            />
+          </StatCell>
         )}
-        <Kpi
-          label={`events · last ${windowDays || '—'}d`}
-          value={
-            analyticsAvailable && data.events_total != null
-              ? formatCompact(data.events_total)
-              : '—'
-          }
-        />
-        <Kpi label="events · 24h" value={formatCompact(data.events_24h)} />
-        <Kpi label="Factories" value={formatCompact(data.factories.length)} />
-        <Kpi
-          label="Genesis ledger"
-          value={`#${data.genesis_ledger.toLocaleString('en-US')}`}
-          mono
-        />
-      </div>
+        <StatCell>
+          <Stat
+            label={analyticsAvailable ? `Events · ${windowDays}d` : 'Events'}
+            value={
+              analyticsAvailable && data.events_total != null
+                ? formatCompact(data.events_total)
+                : '—'
+            }
+            sub={analyticsAvailable ? undefined : 'Lake analytics unavailable'}
+          />
+        </StatCell>
+        <StatCell>
+          <Stat label="Events · 24h" value={formatCompact(data.events_24h)} />
+        </StatCell>
+        {hasContracts && (
+          <StatCell>
+            <Stat
+              label="Factories"
+              value={formatCompact(data.factories.length)}
+            />
+          </StatCell>
+        )}
+        <StatCell>
+          <Stat
+            label="Genesis ledger"
+            value={<span className="font-mono">#{data.genesis_ledger}</span>}
+          />
+        </StatCell>
+      </StatGrid>
 
-      {/* ── Analytics health (explicit server status — never inferred
-             from field absence; absence alone is ambiguous) ── */}
+      {/* Explicit server status — never inferred from field absence. */}
       <AnalyticsStatusNote analytics={data.analytics} />
 
-      {/* ── Bespoke per-category analytics (the headline block).
-             Absent + status "unavailable" ⇒ the build degraded — say so
-             instead of silently rendering nothing; absent under "ok" ⇒
-             the category genuinely has no suite. ── */}
+      {/* Absent + "unavailable" ⇒ the build degraded — say so instead of
+          rendering nothing; absent under "ok" ⇒ the category has no suite. */}
       {data.bespoke ? (
         <BespokeSection bespoke={data.bespoke} source={source} name={name} />
       ) : data.analytics?.status === 'unavailable' ? (
         <BespokeUnavailable />
       ) : null}
 
-      {/* ── Activity chart ── */}
-      <Panel
-        title={`On-chain activity (events/day, last ${windowDays || ''}d)`}
-        source={source}
-      >
-        {!analyticsAvailable ? (
-          <AnalyticsUnavailable />
-        ) : (data.activity_series?.length ?? 0) === 0 ? (
-          <EmptyAnalytics text="No on-chain activity in the window." />
-        ) : (
-          <TimeSeriesChart
-            // Today's accumulating UTC bucket is dropped — a partial day
-            // plotted as a full one ends the series on a phantom cliff.
-            points={dropPartialTrailingDay(data.activity_series ?? []).map(
-              (p) => ({
-                date: p.date ?? '',
-                value: p.events ?? 0,
-              }),
+      {/* Without a lake window the KPI strip already says so; two more
+          panels saying it again would be chrome around nothing. */}
+      {analyticsAvailable && (
+        <>
+          <Panel
+            headingLevel={2}
+            title="On-chain activity"
+            hint={`Events per day · last ${windowDays}d`}
+            source={source}
+          >
+            {(data.activity_series?.length ?? 0) === 0 ? (
+              <Empty text="No on-chain activity in the window." />
+            ) : (
+              <TimeSeriesChart
+                // Today's accumulating UTC bucket is dropped — a partial day
+                // plotted as a full one ends the series on a phantom cliff.
+                points={dropPartialTrailingDay(data.activity_series ?? []).map(
+                  (p) => ({
+                    date: p.date ?? '',
+                    value: p.events ?? 0,
+                  }),
+                )}
+                label="Daily on-chain events"
+                unit="events"
+              />
             )}
-            label="Daily on-chain events"
-            unit="events"
-            tone="emerald"
-            gradientId="protoActivityFill"
-          />
-        )}
-      </Panel>
+          </Panel>
 
-      {/* ── Event-type breakdown ── */}
-      <Panel
-        title="Event-type breakdown"
-        hint={analyticsAvailable ? `Last ${windowDays}d` : undefined}
-        source={source}
-      >
-        {!analyticsAvailable ? (
-          <AnalyticsUnavailable />
-        ) : (data.event_breakdown?.length ?? 0) === 0 ? (
-          <EmptyAnalytics text="No decoded events in the window." />
-        ) : (
-          <EventBreakdown
-            breakdown={data.event_breakdown ?? []}
-            total={data.events_total ?? 0}
-          />
-        )}
-      </Panel>
+          <Panel
+            headingLevel={2}
+            title="Event types"
+            hint={`Share of ${formatCompact(data.events_total ?? 0)} events · last ${windowDays}d`}
+            source={source}
+          >
+            {(data.event_breakdown?.length ?? 0) === 0 ? (
+              <Empty text="No decoded events in the window." />
+            ) : (
+              <EventBreakdown
+                breakdown={data.event_breakdown ?? []}
+                total={data.events_total ?? 0}
+              />
+            )}
+          </Panel>
+        </>
+      )}
 
-      {/* ── Contract roster ── */}
       <ContractRoster
         contracts={data.contracts}
         contractCount={data.contract_count}
@@ -220,13 +252,53 @@ export function ProtocolView({ name, label }: { name: string; label: string }) {
         source={source}
       />
 
-      {/* ── Footer ── */}
-      <Footer data={data} name={name} />
+      <Identity data={data} />
+
+      {children}
+
+      <ProtocolFooter
+        links={registry?.links}
+        verificationPage={data.verification_page}
+      />
     </Shell>
   );
 }
 
-// ─── Cross-links ───────────────────────────────────────────────────────────
+// ─── Shell ───────────────────────────────────────────────────────────────
+
+function Shell({
+  name,
+  label,
+  description,
+  actions,
+  links,
+  children,
+}: {
+  name: string;
+  label: string;
+  description?: string;
+  actions?: React.ReactNode;
+  links?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <Container className="space-y-6 py-8">
+      <PageHeader
+        breadcrumbs={[
+          { label: 'Home', href: '/' },
+          { label: 'Protocols', href: '/protocols' },
+          { label: label || name },
+        ]}
+        title={label}
+        meta={description}
+        actions={actions}
+      />
+      {links}
+      {children}
+    </Container>
+  );
+}
+
 // Sources with a dedicated DEX detail page (/dexes/[source]).
 const DEX_PAGES = new Set(['soroswap', 'phoenix', 'aquarius', 'sdex', 'comet']);
 
@@ -239,80 +311,32 @@ function ProtocolCrossLinks({
 }) {
   const isDex = category === 'dex' || category === 'amm';
   return (
-    <div className="flex flex-wrap gap-3 pt-1 text-xs">
+    <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
       <Link
         href={`/sources/${encodeURIComponent(name)}`}
-        className="text-brand-600 hover:underline"
+        className={LINK_CLASS}
       >
-        Source registry →
+        Source registry detail
       </Link>
       {isDex && DEX_PAGES.has(name) && (
         <Link
           href={`/dexes/${encodeURIComponent(name)}`}
-          className="text-brand-600 hover:underline"
+          className={LINK_CLASS}
         >
-          Pools &amp; chart →
+          Pools and chart
         </Link>
       )}
       {category === 'lending' && (
-        <Link href="/lending" className="text-brand-600 hover:underline">
-          Lending pools →
+        <Link href="/lending" className={LINK_CLASS}>
+          Lending pools
         </Link>
       )}
       {category === 'oracle' && (
-        <Link href="/oracles" className="text-brand-600 hover:underline">
-          Oracle feeds →
+        <Link href="/oracles" className={LINK_CLASS}>
+          Oracle feeds
         </Link>
       )}
     </div>
-  );
-}
-
-// ─── Shell ───────────────────────────────────────────────────────────────
-
-function Shell({
-  name,
-  label,
-  actions,
-  intro,
-  children,
-}: {
-  name: string;
-  label: string;
-  actions?: React.ReactNode;
-  intro?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <Container className="space-y-6 py-8">
-      <header
-        className={intro ? 'border-line space-y-3 border-b pb-5' : undefined}
-      >
-        <PageHeader
-          breadcrumbs={[
-            { label: 'Home', href: '/' },
-            { label: 'Protocols', href: '/protocols' },
-            { label: label || name },
-          ]}
-          title={label}
-          actions={actions}
-        />
-        {intro}
-      </header>
-      {children}
-    </Container>
-  );
-}
-
-// ─── Header chips ──────────────────────────────────────────────────────────
-
-function CategoryChip({ category }: { category: string }) {
-  return (
-    <span
-      className={`rounded-sm px-2 py-0.5 font-mono text-xs tracking-wider uppercase ${categoryTone(category)}`}
-    >
-      {category}
-    </span>
   );
 }
 
@@ -323,165 +347,33 @@ function CompletenessBadge({
 }) {
   if (!completeness) {
     return (
-      <span
-        className="bg-surface-subtle text-ink-muted rounded-sm px-2 py-0.5 text-[11px] tracking-wider uppercase"
-        title="No completeness verdict recorded for this source yet."
-      >
+      <Badge title="No completeness verdict recorded for this source yet.">
         Coverage unknown
-      </span>
+      </Badge>
     );
   }
+  const ledger = `#${completeness.watermark_ledger}`;
   if (completeness.complete) {
     return (
-      <span
-        className="bg-up-subtle text-up-strong rounded-sm px-2 py-0.5 text-[11px] font-medium tracking-wider uppercase"
-        title={`Verified complete to ledger #${completeness.watermark_ledger.toLocaleString('en-US')}: archive hash-chained, every event recognised, served tier reconciled.`}
+      <Badge
+        tone="ok"
+        dot
+        title={`Verified complete to ledger ${ledger}: archive hash-chained, every event recognised, served tier reconciled.`}
       >
-        ✓ Verified complete
-      </span>
+        Verified complete
+      </Badge>
     );
   }
   return (
-    <span
-      className="bg-warn-50 text-warn-700 rounded-sm px-2 py-0.5 text-[11px] font-medium tracking-wider uppercase"
-      title={`Partial coverage to ledger #${completeness.watermark_ledger.toLocaleString('en-US')}.`}
-    >
+    <Badge tone="warn" dot title={`Partial coverage to ledger ${ledger}.`}>
       Partial coverage
-    </span>
+    </Badge>
   );
 }
 
-// ─── KPI card ───────────────────────────────────────────────────────────────
+// ─── Event-type breakdown ────────────────────────────────────────────────────
 
-function Kpi({
-  label,
-  value,
-  mono,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-}) {
-  return (
-    <div className="border-line bg-surface rounded-lg border p-3">
-      <div className="text-ink-muted text-[10px] tracking-wider uppercase">
-        {label}
-      </div>
-      <div
-        className={`mt-1 text-xl tabular-nums ${mono ? 'font-mono text-base' : 'font-semibold'}`}
-      >
-        {value}
-      </div>
-    </div>
-  );
-}
-
-// ─── At-a-glance summary line ────────────────────────────────────────────────
-
-// A compact one-liner above the KPI cards that reads like a sentence — the
-// fastest scannable read of "what is this protocol doing right now."
-function AtAGlance({
-  data,
-  analyticsAvailable,
-  windowDays,
-}: {
-  data: ProtocolDetail;
-  analyticsAvailable: boolean;
-  windowDays: number;
-}) {
-  const topEvent = useMemo(() => {
-    if (!data.event_breakdown || data.event_breakdown.length === 0) return null;
-    return data.event_breakdown.reduce((best, b) =>
-      (b.count ?? 0) > (best.count ?? 0) ? b : best,
-    );
-  }, [data.event_breakdown]);
-
-  const bits: React.ReactNode[] = [];
-  // SDEX is protocol-native: it has no contracts, so a 0 is noise.
-  if (data.contract_count > 0)
-    bits.push(
-      <Glance
-        key="contracts"
-        label={formatCompact(data.contract_count)}
-        unit="contracts"
-      />,
-    );
-  if (data.factories.length > 0) {
-    bits.push(
-      <Glance
-        key="factories"
-        label={String(data.factories.length)}
-        unit={data.factories.length === 1 ? 'factory' : 'factories'}
-      />,
-    );
-  }
-  if (analyticsAvailable && data.events_total != null) {
-    bits.push(
-      <Glance
-        key="events"
-        label={formatCompact(data.events_total)}
-        unit={`events · ${windowDays}d`}
-      />,
-    );
-  }
-  bits.push(
-    <Glance
-      key="e24"
-      label={formatCompact(data.events_24h)}
-      unit="events · 24h"
-    />,
-  );
-  if (topEvent) {
-    bits.push(
-      <Glance
-        key="top"
-        label={topEvent.event_type ?? ''}
-        unit="busiest event"
-        mono
-      />,
-    );
-  }
-
-  return (
-    <p className="text-ink-muted flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-      {bits.map((b, i) => (
-        <span key={i} className="flex items-center gap-x-3">
-          {i > 0 && (
-            <span aria-hidden className="text-ink-faint">
-              ·
-            </span>
-          )}
-          {b}
-        </span>
-      ))}
-    </p>
-  );
-}
-
-function Glance({
-  label,
-  unit,
-  mono,
-}: {
-  label: string;
-  unit: string;
-  mono?: boolean;
-}) {
-  return (
-    <span>
-      <span
-        className={`text-ink-body tabular-nums ${mono ? 'font-mono' : 'font-semibold'}`}
-      >
-        {label}
-      </span>{' '}
-      {unit}
-    </span>
-  );
-}
-
-// ─── Event-type breakdown (centerpiece, top-N + expander) ────────────────────
-
-// How many bars to show before collapsing behind a "+N more" expander.
+// How many bars to show before collapsing behind a "Show N more" control.
 const EVENT_BREAKDOWN_TOP_N = 8;
 
 function EventBreakdown({
@@ -501,7 +393,7 @@ function EventBreakdown({
 
   return (
     <div className="space-y-3">
-      <ul className="space-y-2.5">
+      <ul className="space-y-2">
         {visible.map((b) => {
           const count = b.count ?? 0;
           const pct = total > 0 ? (count / total) * 100 : 0;
@@ -510,26 +402,26 @@ function EventBreakdown({
             <li key={b.event_type}>
               <div className="mb-1 flex items-baseline justify-between gap-3 text-xs">
                 <span
-                  className="text-ink-body truncate font-mono"
+                  className="text-ink truncate font-mono"
                   title={b.event_type}
                 >
                   {b.event_type}
                 </span>
-                <span className="text-ink-muted shrink-0 tabular-nums">
-                  <span className="text-ink-body font-mono">
+                <span className="text-ink-muted tnum shrink-0">
+                  <span className="text-ink font-mono">
                     {formatCompact(count)}
                   </span>{' '}
                   · {pct.toFixed(pct >= 10 ? 0 : 1)}%
                 </span>
               </div>
               <div
-                className="bg-surface-subtle h-2.5 overflow-hidden rounded-full"
+                className="bg-surface-subtle h-1.5 overflow-hidden rounded-sm"
                 role="img"
-                aria-label={`${b.event_type}: ${b.count} events, ${pct.toFixed(1)}% of total`}
+                aria-label={`${b.event_type}: ${count} events, ${pct.toFixed(1)}% of total`}
               >
                 <div
-                  className="bg-brand-500 h-full rounded-full motion-safe:transition-[width]"
-                  style={{ width: `${Math.max(barPct, 1.5)}%` }}
+                  className="bg-brand-500 h-full"
+                  style={{ width: `${Math.max(barPct, 1)}%` }}
                 />
               </div>
             </li>
@@ -537,16 +429,16 @@ function EventBreakdown({
         })}
       </ul>
       {overflow > 0 && (
-        <button
-          type="button"
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={() => setExpanded((v) => !v)}
           aria-expanded={expanded}
-          className="text-brand-600 focus-visible:ring-brand-500/60 rounded-sm text-xs font-medium hover:underline focus-visible:ring-2 focus-visible:outline-hidden"
         >
           {expanded
             ? 'Show fewer'
-            : `+${overflow} more event ${overflow === 1 ? 'type' : 'types'}`}
-        </button>
+            : `Show ${overflow} more event ${overflow === 1 ? 'type' : 'types'}`}
+        </Button>
       )}
     </div>
   );
@@ -556,42 +448,13 @@ function EventBreakdown({
 
 type RosterSortKey = 'events' | 'last_seen';
 
-// Header cell for a sortable column — a real <button> with aria-sort on the
-// <th>, so screen readers announce the active sort + the toggle is operable.
-// Hoisted to module scope (rather than defined inside ContractRoster) so it
-// keeps a stable identity across renders; the active sort key + setter are
-// passed as explicit props.
-function SortHeader({
-  label,
-  keyName,
-  sortKey,
-  setSortKey,
-}: {
-  label: string;
-  keyName: RosterSortKey;
-  sortKey: RosterSortKey;
-  setSortKey: (k: RosterSortKey) => void;
-}) {
-  const active = sortKey === keyName;
-  return (
-    <th
-      scope="col"
-      className="px-4 py-2 text-right"
-      aria-sort={active ? 'descending' : 'none'}
-    >
-      <button
-        type="button"
-        onClick={() => setSortKey(keyName)}
-        className={`focus-visible:ring-brand-500/60 ml-auto flex items-center gap-1 rounded-sm tracking-wider uppercase focus-visible:ring-2 focus-visible:outline-hidden ${active ? 'text-brand-600' : 'hover:text-ink-body'}`}
-      >
-        {label}
-        <span aria-hidden className="text-[8px]">
-          {active ? '▼' : '↕'}
-        </span>
-      </button>
-    </th>
-  );
-}
+const ROSTER_SORT: { label: string; value: RosterSortKey }[] = [
+  { label: 'Most events', value: 'events' },
+  { label: 'Last seen', value: 'last_seen' },
+];
+
+// Instances shown before the "Show N more" control collapses the long tail.
+const ROSTER_TOP_N = 25;
 
 function ContractRoster({
   contracts,
@@ -604,7 +467,7 @@ function ContractRoster({
   analyticsAvailable: boolean;
   source: ReturnType<typeof asExample>;
 }) {
-  const [sortKey, setSortKey] = useState<'events' | 'last_seen'>('events');
+  const [sortKey, setSortKey] = useState<RosterSortKey>('events');
   const [expanded, setExpanded] = useState(false);
 
   // The per-contract analytics (events / last_seen) are a SEPARATE lake
@@ -615,8 +478,7 @@ function ContractRoster({
   // when activity_window_days is set. Rendering '0' for those rows would
   // claim "this contract emitted nothing", which we cannot know. Only
   // when at least one row carries the analytics fields did the fill run —
-  // then a bare `events` is a genuine present-and-zero (omitempty
-  // dropped the zero).
+  // then a bare `events` is a genuine present-and-zero.
   const rosterHasActivity = contracts.some(
     (c) => c.events != null || c.last_seen != null,
   );
@@ -637,8 +499,6 @@ function ContractRoster({
   }, [contracts, sortKey]);
 
   const hasTokens = contracts.some((c) => c.pair || c.token0 || c.token1);
-
-  // Long instance lists collapse to the top slice behind a "+N more" expander.
   // Factories always render (there are few and they anchor the protocol).
   const visibleInstances =
     expanded || instances.length <= ROSTER_TOP_N
@@ -652,89 +512,76 @@ function ContractRoster({
     // cap (sorocredit's per-position child contracts) is counted rather than
     // enumerated, so the count is exact and the list is simply not published.
     return (
-      <Panel
-        title="Contract roster"
-        source={source}
-        bodyClassName="text-sm text-ink-muted"
-      >
+      <p className="text-ink-muted text-sm">
         {contractCount > 0
-          ? `This protocol's ${formatCompact(contractCount)} contracts are counted, not listed — the roster is published only where the instance set is small enough to enumerate. The count is the exact total.`
-          : "This source has no contract registry — it's either a classic-protocol venue (SDEX), an event-less oracle, or a bridge tracked without a factory model."}
-      </Panel>
+          ? `${formatCompact(contractCount)} contracts are counted, not listed: the roster is published only where the instance set is small enough to enumerate. The count is the exact total.`
+          : 'This source has no contract registry. It is a classic-protocol venue, an event-less oracle, or a bridge tracked without a factory model.'}
+      </p>
     );
   }
 
   return (
     <Panel
-      title={`Contract roster (${contracts.length})`}
-      hint={`${factories.length} ${factories.length === 1 ? 'factory' : 'factories'} · ${instances.length} instances`}
+      headingLevel={2}
+      title="Contracts"
+      hint={`${contracts.length} listed · ${factories.length} ${factories.length === 1 ? 'factory' : 'factories'} · ${instances.length} ${instances.length === 1 ? 'instance' : 'instances'}`}
       source={source}
-      bodyClassName="-mx-4"
+      bodyClassName="-mx-4 -mb-4"
     >
+      <div className="mx-4 mb-4">
+        <Segmented
+          ariaLabel="Sort"
+          options={ROSTER_SORT}
+          value={sortKey}
+          onChange={(v) => setSortKey(v as RosterSortKey)}
+        />
+      </div>
       <div className="overflow-x-auto">
-        <table className="divide-line min-w-full divide-y text-sm">
-          <thead>
-            <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
-              <th scope="col" className="px-4 py-2">
-                Role
-              </th>
-              <th scope="col" className="px-4 py-2">
-                Contract
-              </th>
-              {hasTokens && (
-                <th scope="col" className="px-4 py-2">
-                  Pair
-                </th>
-              )}
-              <SortHeader
-                label="Events"
-                keyName="events"
-                sortKey={sortKey}
-                setSortKey={setSortKey}
-              />
-              <SortHeader
-                label="Last seen"
-                keyName="last_seen"
-                sortKey={sortKey}
-                setSortKey={setSortKey}
-              />
+        <Table>
+          <THead>
+            <tr>
+              <Th>Role</Th>
+              <Th>Contract</Th>
+              {hasTokens && <Th>Pair</Th>}
+              <Th align="right">Events</Th>
+              <Th align="right">Last seen</Th>
             </tr>
-          </thead>
-          <tbody className="divide-line-subtle divide-y">
+          </THead>
+          <TBody>
             {[...factories, ...visibleInstances].map((c) => (
-              <tr key={c.contract_id} className="hover:bg-surface-muted">
-                <td className="px-4 py-2">
-                  <RoleChip kind={c.kind} />
-                </td>
-                <td className="px-4 py-2">
+              <TR key={c.contract_id}>
+                <Td>
+                  <RoleBadge kind={c.kind} />
+                </Td>
+                <Td>
                   <Link
                     href={`/contracts/${encodeURIComponent(c.contract_id)}/`}
-                    className="text-brand-600 hover:underline"
+                    className="text-brand-600 font-mono text-xs hover:underline"
                   >
                     <CopyHash value={c.contract_id} head={8} tail={6} />
                   </Link>
-                </td>
+                </Td>
                 {hasTokens && (
-                  <td className="px-4 py-2">
+                  <Td>
                     {c.pair ? (
-                      // Human asset pair ("XLM/USDC") prominent; the raw token
+                      // The human pair ("XLM/USDC") leads; the raw token
                       // contracts hang off the tooltip for the on-chain reader.
                       <span
-                        className="text-ink-body font-medium"
+                        className="text-ink font-medium"
                         title={(c.tokens ?? []).join(' · ')}
                       >
                         {c.pair}
                       </span>
                     ) : c.token0 || c.token1 ? (
-                      <span className="text-ink-muted font-mono text-[11px]">
+                      <span className="text-ink-muted font-mono text-xs">
                         {shortId(c.token0)} / {shortId(c.token1)}
                       </span>
                     ) : (
                       <span className="text-ink-faint">—</span>
                     )}
-                  </td>
+                  </Td>
                 )}
-                <td className="text-ink-body px-4 py-2 text-right font-mono tabular-nums">
+                <Td align="right" className="font-mono">
                   {c.events != null && c.events > 0 ? (
                     formatCompact(c.events)
                   ) : (
@@ -742,94 +589,71 @@ function ContractRoster({
                       {analyticsAvailable && rosterHasActivity ? '0' : '—'}
                     </span>
                   )}
-                </td>
-                <td className="px-4 py-2 text-right">
+                </Td>
+                <Td
+                  align="right"
+                  className="text-ink-muted font-mono text-xs"
+                  title={c.last_seen ? formatTimestamp(c.last_seen) : undefined}
+                >
                   {c.last_seen ? (
-                    <span
-                      className="text-ink-muted font-mono text-xs"
-                      title={formatTimestamp(c.last_seen)}
-                    >
-                      {relativeAge(c.last_seen)}
-                    </span>
+                    relativeAge(c.last_seen)
                   ) : (
                     <span className="text-ink-faint">—</span>
                   )}
-                </td>
-              </tr>
+                </Td>
+              </TR>
             ))}
-          </tbody>
-        </table>
+          </TBody>
+        </Table>
       </div>
-      {(overflow > 0 || expanded) && instances.length > ROSTER_TOP_N && (
-        <div className="px-4 pt-3">
-          <button
-            type="button"
+      {instances.length > ROSTER_TOP_N && (
+        <div className="border-line border-t px-4 py-3">
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => setExpanded((v) => !v)}
             aria-expanded={expanded}
-            className="text-brand-600 focus-visible:ring-brand-500/60 rounded-sm text-xs font-medium hover:underline focus-visible:ring-2 focus-visible:outline-hidden"
           >
             {expanded
               ? 'Show fewer'
-              : `+${overflow} more ${overflow === 1 ? 'instance' : 'instances'}`}
-          </button>
+              : `Show ${overflow} more ${overflow === 1 ? 'instance' : 'instances'}`}
+          </Button>
         </div>
       )}
     </Panel>
   );
 }
 
-// Contract-roster instances shown before the "+N more" expander collapses
-// the long tail.
-const ROSTER_TOP_N = 25;
-
-function RoleChip({ kind }: { kind?: string }) {
-  if (kind === 'factory') {
-    return (
-      <span className="bg-warn-50 text-warn-700 rounded-sm px-1.5 py-0.5 text-[9px] font-medium tracking-wider uppercase">
-        factory
-      </span>
-    );
-  }
+function RoleBadge({ kind }: { kind?: string }) {
+  if (kind === 'factory') return <Badge tone="brand">factory</Badge>;
   if (kind === 'module') {
     return (
-      <span
-        className="bg-brand-50 text-brand-700 rounded-sm px-1.5 py-0.5 text-[9px] font-medium tracking-wider uppercase"
-        title="A sub-module contract that belongs to this protocol but emits on its own address (e.g. the Blend Backstop insurance module)."
-      >
+      <Badge title="A sub-module contract that belongs to this protocol but emits on its own address (e.g. the Blend Backstop insurance module).">
         module
-      </span>
+      </Badge>
     );
   }
-  return (
-    <span className="bg-surface-subtle text-ink-body rounded-sm px-1.5 py-0.5 text-[9px] tracking-wider uppercase">
-      instance
-    </span>
-  );
+  return <span className="text-ink-muted text-xs">instance</span>;
 }
 
-// ─── Footer ──────────────────────────────────────────────────────────────────
+// ─── Identity + footer ───────────────────────────────────────────────────────
 
-const LINK_LABELS = [
-  ['website', 'Website'],
-  ['docs', 'Docs'],
-  ['source', 'Contract source'],
-] as const;
-
-function Footer({ data, name }: { data: ProtocolDetail; name: string }) {
-  const links = PROTOCOLS.find((p) => p.name === name)?.links;
+function Identity({ data }: { data: ProtocolDetail }) {
+  if (data.factories.length === 0 && data.event_kinds.length === 0) return null;
   return (
-    <Panel title="Protocol identity" bodyClassName="space-y-4">
+    <Panel headingLevel={2} title="Protocol identity" bodyClassName="space-y-4">
       {data.factories.length > 0 && (
         <div>
-          <div className="text-ink-muted mb-1.5 text-[10px] tracking-wider uppercase">
-            Verified factories ({data.factories.length})
+          <div className={PANEL_LABEL_CLASS}>
+            Verified factories · {data.factories.length}
           </div>
-          <ul className="flex flex-wrap gap-2">
+          <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
             {data.factories.map((f) => (
               <li key={f}>
                 <Link
                   href={`/contracts/${encodeURIComponent(f)}/`}
-                  className="border-line text-brand-600 hover:border-brand-500 inline-flex items-center rounded-sm border px-2 py-1 font-mono text-[11px] hover:underline"
+                  className="text-brand-600 font-mono text-xs hover:underline"
+                  title={f}
                 >
                   {shortId(f)}
                 </Link>
@@ -838,81 +662,52 @@ function Footer({ data, name }: { data: ProtocolDetail; name: string }) {
           </ul>
         </div>
       )}
-
       {data.event_kinds.length > 0 && (
         <div>
-          <div className="text-ink-muted mb-1.5 text-[10px] tracking-wider uppercase">
-            Decoder event vocabulary
+          <div className={PANEL_LABEL_CLASS}>
+            Decoder event vocabulary · {data.event_kinds.length}
           </div>
-          <ul className="flex flex-wrap gap-1.5">
-            {data.event_kinds.map((k) => (
-              <li
-                key={k}
-                className="bg-surface-subtle text-ink-body rounded-full px-2 py-0.5 font-mono text-[10px]"
-              >
-                {k}
-              </li>
-            ))}
-          </ul>
+          <p className="text-ink-body mt-2 font-mono text-xs leading-relaxed">
+            {data.event_kinds.join(' · ')}
+          </p>
         </div>
       )}
-
-      <div className="border-line flex flex-wrap gap-x-6 gap-y-2 border-t pt-3 text-xs">
-        {LINK_LABELS.map(([key, label]) => {
-          const href = links?.[key];
-          return href ? (
-            <a
-              key={key}
-              href={href}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-brand-600 inline-flex items-center gap-1 hover:underline"
-            >
-              {label}
-              <ExternalLink className="h-3 w-3" aria-hidden />
-            </a>
-          ) : null;
-        })}
-        {data.verification_page && (
-          <a
-            href={`https://github.com/Stellar-Index/StellarIndex/blob/main/${data.verification_page}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-brand-600 inline-flex items-center gap-1 hover:underline"
-          >
-            Verification write-up
-            <ExternalLink className="h-3 w-3" aria-hidden />
-          </a>
-        )}
-        <a
-          href={`${API_BASE_URL}/v1/protocols/${encodeURIComponent(name)}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-ink-muted hover:text-brand-600 inline-flex items-center gap-1"
-        >
-          Raw API (/v1/protocols/{name})
-          <ExternalLink className="h-3 w-3" aria-hidden />
-        </a>
-      </div>
     </Panel>
+  );
+}
+
+function ProtocolFooter({
+  links,
+  verificationPage,
+}: {
+  links?: ProtocolRegistryEntry['links'];
+  verificationPage?: string;
+}) {
+  const refs = [links?.website, links?.docs, links?.source].filter(
+    (h): h is string => !!h,
+  );
+  if (refs.length === 0 && !verificationPage) return null;
+  return (
+    <div className="border-line flex flex-wrap gap-x-4 gap-y-1 border-t pt-4 text-xs">
+      {refs.map((href) => (
+        <ExternalRef key={href} href={href} />
+      ))}
+      {verificationPage && (
+        <ExternalRef
+          href={`https://github.com/Stellar-Index/StellarIndex/blob/main/${verificationPage}`}
+        >
+          Verification write-up
+        </ExternalRef>
+      )}
+    </div>
   );
 }
 
 // ─── Empty / unavailable states ──────────────────────────────────────────────
 
-function AnalyticsUnavailable() {
-  return (
-    <p className="text-ink-muted py-6 text-center text-sm">
-      Lake analytics unavailable.
-    </p>
-  );
-}
-
-function EmptyAnalytics({ text }: { text: string }) {
+function Empty({ text }: { text: string }) {
   return <p className="text-ink-muted py-6 text-center text-sm">{text}</p>;
 }
-
-// ─── helpers ─────────────────────────────────────────────────────────────────
 
 function shortId(id?: string): string {
   if (!id) return '—';
