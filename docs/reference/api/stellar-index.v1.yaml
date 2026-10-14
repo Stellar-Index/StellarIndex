@@ -13247,7 +13247,7 @@ paths:
                             type: array
                             items:
                               type: object
-                              required: [sponsor, kind, reserves, in_force, episodes]
+                              required: [sponsor, kind, reserve_count, in_force, episodes]
                               properties:
                                 sponsor: { type: string }
                                 sponsored: { type: string, description: "The account whose entry or signer is sponsored; omitted for a claimable balance, which has no owner." }

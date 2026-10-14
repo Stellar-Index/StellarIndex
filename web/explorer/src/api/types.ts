@@ -26516,7 +26516,7 @@ export interface operations {
                                  * Format: int32
                                  * @description Base reserves the arrangement counts for in num_sponsoring and num_sponsored.
                                  */
-                                reserve_count?: number;
+                                reserve_count: number;
                                 in_force: boolean;
                                 episodes: {
                                     started: components["schemas"]["SponsorshipEvent"];
