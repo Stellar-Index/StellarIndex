@@ -140,7 +140,6 @@ Vultr Object Storage) — see
 
 - [`r1-deployment-state.md`](r1-deployment-state.md) — sibling
   doc for R1; compare for per-region differences.
-- [`r2-deployment-state.md`](r2-deployment-state.md) — sibling
   doc for R2.
 - [`multi-region-cutover.md`](multi-region-cutover.md) §Stage 2
   — the bringup procedure that fills in this skeleton.

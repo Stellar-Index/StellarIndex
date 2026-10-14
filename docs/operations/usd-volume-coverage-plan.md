@@ -33,93 +33,52 @@ trade-insert path, so assuming 1e7 would be a silent money bug, worse than NULL.
 
 ## Why it matters
 
-`usd_volume` is the denominator of every volume surface (DEX, asset, venue
-rankings, market share, transaction/transfer volumes). A NULL **silently
-deflates every aggregate built on it**.
-
-2026-07-17, one day: **424,825 of 6,018,245 trades (7.06%) had NULL
-`usd_volume`**, mostly not dust:
-
-| source | NULL | of which non-dust |
-|---|---|---|
-| bitstamp | 10,916 | 10,764 (99%) |
-| binance | 35,211 | 34,233 (97%) |
-| aquarius | 6,172 | 5,991 (97%) |
-| kraken | 46,151 | 43,299 (94%) |
-| coinbase | 51,965 | 47,109 (91%) |
-| sdex | 274,175 | 112,841 (41%) |
-
-Unpriced volume valued at held rates: BTC/EUR €513,307,246 (~$585.5M), ETH/EUR
-€220,853,052 (~$251.9M), BTC/GBP £47,871,447 (~$64.0M), ETH/GBP £24,933,618
-(~$33.3M), XLM/EUR €3,438,241 (~$3.9M), XLM/GBP £237,157 (~$0.3M); total
-**~$939M** against **$3.167B counted**, so total volume was understated by
-**~23%**. The gap was uneven (1.4% of binance trades vs 21.9% kraken vs 65.5%
-aquarius), biasing venue comparisons toward USD-quoting venues.
-
-## Root cause
-
-`tradeUSDVolume` (`internal/storage/timescale/trades.go`) had a three-tier
-waterfall: (1) `usdVolumeDecimals`, quote is USD-pegged; (2)
-`tradeUSDVolumeViaFX`, `VWAPUSDFXResolver.USDPriceAt(quote, ts)`; (3)
-`usdVolumeViaXLMBaseAnchor`. Tier 2 queried the wrong table: it looks up
-`<asset>/<peg>` in `prices_1m`, which holds only crypto/fiat pairs (no
-`fiat:EUR/fiat:USD` row, zero rows verified). The rate lives in **`fx_quotes`**
-(`ticker`, `rate_usd`, `inverse_usd`, `observed_at`; refreshed daily; 6,462
-weekday buckets across 132 tickers back to **2001-05-11**), which
-`Store.FXQuoteAtOrBefore` reads but the insert path never consulted for a fiat
-quote. BTC/EUR therefore failed all three tiers.
+`usd_volume` is the denominator of every volume surface; a NULL silently
+deflates every aggregate built on it. Before v0.19.0, 7.06% of a day's trades had
+NULL `usd_volume` (~$939M against $3.167B counted, ~23% understated), unevenly
+by venue (1.4% of binance trades vs 21.9% kraken vs 65.5% aquarius). Cause: the
+fiat-quote tier looked up `<asset>/<peg>` in `prices_1m`, which has no fiat/fiat
+rows; the rate lives in `fx_quotes` (daily, back to 2001-05-11), which the insert
+path (`tradeUSDVolume`, `internal/storage/timescale/trades.go`) never read.
 
 ## Plan (all shipped v0.19.0 unless marked)
 
-- **Tier 2a, fiat quotes via `fx_quotes`:** for a `fiat:*` quote, multiply by
-  `inverse_usd` at-or-before the trade timestamp (`FXQuoteAtOrBefore`). 100% of
-  the 2026-07-17 external-exchange NULLs were fiat-quoted (`fiat:EUR` 121,409 +
-  `fiat:GBP` 22,834), so this alone took all four CEX venues to 100%.
-- **Tier 2b, base-side pegs:** when the BASE is USD-pegged,
-  `usd_volume = base_amount` (43,277 on-chain trades on 2026-07-17).
+- **Tier 2a, fiat quotes via `fx_quotes`:** multiply a `fiat:*` quote by
+  `inverse_usd` at-or-before the trade timestamp (`FXQuoteAtOrBefore`). All of
+  the 2026-07-17 external-exchange NULLs were fiat-quoted, so this alone took
+  the four CEX venues to 100%.
+- **Tier 2b, base-side pegs:** a USD-pegged BASE gives `usd_volume = base_amount`.
 - **Tier 3b/4b, XLM bridge, both legs (path to 99.5%):** value via
-  `TOKEN/XLM × XLM/USD` at trade time; prefer the side with the deeper XLM
-  market; the bridge quote must be non-dust. Quote leg alone reached 87.5% of
-  the remaining unpriced; adding the BASE leg (old XLM-only base anchor widened
-  to any classic asset) reached **99.2%**. The bridge has a 24h freshness
-  window, not the direct market's 1h (69.9% vs 89.5% at 24h): the tokens it
-  prices trade $8-$220 per day, and sub-cent valuations make a stale rate a
-  rounding error while a NULL drops the row.
+  `TOKEN/XLM × XLM/USD` at trade time; prefer the deeper XLM market; the bridge
+  quote must be non-dust. Quote leg reached 87.5% of the remaining unpriced;
+  adding the BASE leg reached **99.2%**. The bridge has a 24h freshness window,
+  not the direct market's 1h: the tokens it prices trade $8-$220 per day, so a
+  stale rate is a rounding error while a NULL drops the row.
 - **Tier 4, direct USD price for either side:** any USD price at that timestamp
   (CEX, oracle, SDEX USD-peg market).
 
 ### Measurement + enforcement
 
 `stellarindex_trade_inserts_total{source,usd_volume_populated}` is emitted in
-`InsertTrade`/`BatchInsertTrades`, the choke point every trade passes exactly
-once (it had been emitted from the sink's `persistTrade`, blind to the
-dispatcher batch path and all external connectors). Alerts
-`stellarindex_cex_usd_volume_coverage_low` and
+`InsertTrade`/`BatchInsertTrades`, the choke point every trade passes once.
+Alerts `stellarindex_cex_usd_volume_coverage_low` and
 `stellarindex_onchain_usd_volume_coverage_low` enforce the two bars
-(`configs/prometheus/rules.r1/usd-volume-coverage.yml`).
-
-Those two alerts count priced against unpriced rows, so a pegged asset that
-slides into the FX-bridged `estimated` tier moves neither: its rows are still
-priced. `verify-usd-volume.timer` (05:12 UTC, `-days 1`) re-checks yesterday's
-exact tiers and writes the per-tier sums to the node_exporter textfile
-collector as `stellarindex_verify_usd_volume_*`.
+(`configs/prometheus/rules.r1/usd-volume-coverage.yml`); they count priced
+against unpriced rows, so a pegged asset sliding into the FX-bridged `estimated`
+tier moves neither. `verify-usd-volume.timer` (05:12 UTC, `-days 1`) re-checks
+yesterday's exact tiers and writes `stellarindex_verify_usd_volume_*` to the
+node_exporter textfile collector.
 `stellarindex_usd_volume_estimated_tier_high` tickets when the estimated tier
-sums over $10M for a day (measured $0.4-0.9M against $3.5-3.9B exact);
+exceeds $10M for a day (measured $0.4-0.9M against $3.5-3.9B exact);
 `stellarindex_verify_usd_volume_stale` tickets when no run has stamped
-`last_run_unix` in 30 h. An exact-tier violation or a crash exits non-zero and
-opens the generic `stellarindex_systemd_unit_failed` ticket; the unit has no
-heartbeat and no ride-out on purpose, because a wrong served number is a
-same-day ticket.
+`last_run_unix` in 30 h. An exact-tier violation or crash exits non-zero and
+opens `stellarindex_systemd_unit_failed`, deliberately without ride-out.
 
-`GET /v1/coverage` publishes the ratio as `usd_volume_pricing`: exact
-priced / unpriced / unroutable counts per source over a fixed 24h window,
-`priced_ratio`, `bar`, `meets_bar` (external venues only, since on-chain
-`unpriced` still includes thin markets) and `lower_bound`. It is an axis beside
-the source verdicts and never changes `complete` or `lake_complete`: ADR-0033
-defines those as capture, with no valuation threshold. Go-live is gated by
-`scripts/ops/pre-launch-check.sh`, the cutover gate: it fails on any external
-venue with `meets_bar: false` and on any firing `usd-volume-coverage` alert,
-which also covers the on-chain bar the API does not yet publish.
+`GET /v1/coverage` publishes `usd_volume_pricing` (per-source priced / unpriced /
+unroutable counts over 24h, `priced_ratio`, `bar`, `meets_bar` for external
+venues only, `lower_bound`); it never changes `complete` or `lake_complete`
+(ADR-0033). `scripts/ops/pre-launch-check.sh` gates go-live on any external venue
+with `meets_bar: false` and any firing `usd-volume-coverage` alert.
 
 ### Backfill
 
@@ -136,3 +95,162 @@ Rows older than the v0.19.0 deploy keep their NULLs until re-derived with
   and records the observed quote amount; keep that.
 - **Bridge quotes must be non-dust** so a 2-stroop crumb can't set a valuation
   rate (see `finding-dust-trades-set-chart-extremes.md`).
+
+## SAC wrappers and fiat-pegged classics
+
+Soroban DEX sources (Soroswap, Phoenix, Aquarius, Comet) emit
+`base_asset`/`quote_asset` as the SAC contract ID. Without an operator-config
+mapping from C-strkey to "CODE-ISSUER", the explorer shows raw C-strkeys,
+`/v1/sac-wrappers` is empty, and `trades.usd_volume` stays NULL because the
+on-chain path can't follow `quote_asset = C…` to a USD-pegged classic. A config
+line fixes new trades; a backfill prices historical rows.
+
+### Adding a single SAC mapping
+
+#### 1. Resolve the SAC's underlying classic
+
+```sh
+curl https://api.stellar.expert/explorer/public/contract/<C-strkey> \
+  | jq -r '.asset'
+```
+
+Returns `CODE-ISSUER-N`; strip the trailing `-N` (stellar.expert's display
+ordinal) and sanity-check the issuer's home_domain.
+
+#### 2. Append to `[supply.sac_wrappers]` on r1
+
+```sh
+ssh root@136.243.90.96 'cat >> /etc/stellarindex.toml' << 'EOF'
+"<C-strkey>" = "<CODE>:<G-strkey>"
+EOF
+```
+
+Separator is a **colon**, not the dash of the canonical `/v1/assets` asset_id.
+
+#### 3. Restart the api + indexer + aggregator
+
+```sh
+ssh root@136.243.90.96 'systemctl restart stellarindex-api stellarindex-indexer stellarindex-aggregator'
+```
+
+Verify:
+
+```sh
+curl -s https://api.stellarindex.io/v1/sac-wrappers | jq '.data | length'
+```
+
+#### 4. Bake into the ansible template
+
+Append the entry to the `[supply.sac_wrappers]` block in
+`configs/ansible/roles/archival-node/templates/stellarindex.toml.j2` in the
+same PR so re-renders don't lose it.
+
+### Backfilling historical USD-volume
+
+New trades populate `trades.usd_volume` once a USD-pegged SAC entry lands;
+earlier trades stay NULL. Price them with `stellarindex-ops usd-volume-restamp`
+`-tier exact -fill-null`. A SAC-quoted trade whose wrapper resolves to a
+USD-pegged classic is exact-tier (`quote_amount / 10^7`); the tool classifies
+from the same `[trades].usd_pegged_classic_assets` and `[supply.sac_wrappers]`
+the insert path reads, so there is no hand-kept `IN (…)` list.
+
+```sh
+# dry run: per-day candidate counts, nothing written
+stellarindex-ops usd-volume-restamp -config /etc/stellarindex.toml \
+  -tier exact -fill-null -sources aquarius,soroswap,phoenix,comet \
+  -from <first-day> -to <last-day>
+# apply on r1 under the heavy wrapper; add -chunks for any window older
+# than the trades compression policy's 15 days
+set -a; . /etc/default/stellarindex; set +a
+/usr/local/sbin/run-heavy-job.sh usd-sac-fill \
+  /usr/local/bin/stellarindex-ops usd-volume-restamp \
+    -config /etc/stellarindex.toml -tier exact -fill-null -chunks \
+    -sources aquarius,soroswap,phoenix,comet \
+    -from <first-day> -to <last-day> -write
+```
+
+Then run the windowed CAGG refreshes the tool prints (it refreshes nothing; every
+served volume surface reads a CAGG). Full procedure: [usd-volume-rederive-2026-08.md, Step
+5](usd-volume-rederive-2026-08.md).
+
+Do NOT backfill with a hand-written `UPDATE trades … WHERE usd_volume IS NULL`.
+`trades` is a compressed hypertable; an UPDATE with no `ts` predicate makes every
+chunk a result relation in one transaction (measured: 260 result relations,
+~270 GB WAL on a 49 GB root fs) and leaves `derive_generation` at 0, so a later
+live re-write reverts it. The tool slices by `ts`, lifts the decompression cap
+with `SET LOCAL` per slice and stamps the run's generation.
+`scripts/ci/lint-migration-commands.sh` fails an ops SQL script that runs DML on
+a compressed hypertable without a time-column predicate.
+
+### Adding a new USD-pegged classic
+
+For a SAC pointing at a NEW USD-pegged stablecoin (not just USDC), also extend
+`[trades].usd_pegged_classic_assets` in `/etc/stellarindex.toml`:
+
+```toml
+[trades]
+usd_pegged_classic_assets = [
+  "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+  "USDx-GAVH5ZWACAY2PHPUG4FL3LHHJIYIHOFPSIUGM2KHK25CJWXHAV6QKDMN",  # NEW
+]
+```
+
+Trades quoted in USDx (or its SAC) are then priced `usd_volume = quote_amount /
+10^7`: new ones at insert, historical ones by the `usd-volume-restamp` run above.
+
+### Fiat-pegged classics on the trade path
+
+`[pricing_guard].fiat_pegged_classic_assets` (asset_key to ISO-4217 ticker) is
+the operator's declaration that a classic asset is 1:1-pegged to a fiat
+currency. The API already reads it for the `declared_peg` price fallback; the
+trade path reads the same map, so a DEX trade with a declared leg (classic or
+its SAC) is valued as `amount / 10^7 × fiat→USD rate` at trade time instead of
+through the counterparty-authorable FX bridge.
+
+The tier sits after the XLM anchors and before the estimated FX tier. It honours
+the declaration only while the declared classic asset's own on-chain USD price is
+within 200 bps (`fiatPegToleranceBps` in `internal/storage/timescale/trades.go`)
+of the fiat rate; the classic form is priced even when the leg is the SAC, since
+the resolver links a SAC to its markets only through `[supply].sac_wrappers`. A
+depeg, a missing on-chain price or a missing fiat rate declines, and the leg
+falls through to the FX tier, never above it. The value takes the FX tier's leg
+cross-check and single-leg cap and stays in the `estimated` reconcile tier, so
+`ClassifyUSDVolumeTier`, the exact restamp lane and `verify` are unchanged. It
+needs `usd_pegged_classic_assets`: `InstallUSDVolumeResolution` refuses fiat
+pegs on their own.
+
+AUDD and AUDR sit in the same map; the substance gate withholds their on-chain
+prices, so the tier declines them. Adding an asset is one line in the
+`[pricing_guard.fiat_pegged_classic_assets]` stanza. The tier is forward-only:
+no restamp lane reaches it, so stored rows keep their FX-tier value (within the
+2% band where the declared leg was the quote; the old quote-priced value where
+it was the base), and rows the FX tier left NULL stay NULL.
+
+### Pure-Soroban SEP-41 tokens (no USD-pegged quote at all)
+
+The paths above need the QUOTE asset to resolve to a USD-pegged classic. A pure
+SEP-41 token routed only against XLM has none, so two further tiers apply, both
+gated on `[trades].usd_pegged_classic_assets` being non-empty (which also wires
+`VWAPUSDFXResolver`, see `cmd/stellarindex-indexer/main.go`):
+
+- **Tier 3**: the quote asset, including plain `native` XLM, has a recent VWAP
+  against a configured USD peg in `prices_1m`. Covers `base=TOKEN, quote=XLM`.
+- **Tier 4**: tier 3 declined AND the BASE is `native` XLM or its SAC. Covers
+  `base=XLM, quote=TOKEN` (decoders don't re-orient trades). Values off the XLM
+  leg, `usd_volume = base_amount/1e7 × XLM/USD`, needing no token decimals.
+
+Both tiers are insert-time only (no retroactive backfill). A SEP-41/SEP-41 pair
+(neither leg XLM nor USD-pegged) stays out of scope on every tier: it needs a
+per-token oracle. `tradeUSDVolume`'s docstring in
+`internal/storage/timescale/trades.go` is authoritative for the four-tier
+order; `Store.SorobanVolume24hUSDForAsset` is the read-side equivalent for
+`/v1/assets/{id}`'s `volume_24h_usd`, which also has a query-time fallback for
+trades that predate tier 3/4.
+
+## Related
+
+- `internal/ops/chops/usd_volume_restamp.go`: the backfill.
+- `internal/storage/timescale/usd_volume_quote_spec.go`: the live USD-volume
+  path; restamp classifies through the same spec.
+- `internal/api/v1/known_issuers.go`: curated org-name fallback; add an entry
+  alongside the SAC for explorer label parity.

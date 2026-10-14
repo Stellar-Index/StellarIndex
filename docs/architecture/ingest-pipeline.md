@@ -303,7 +303,7 @@ movement events). A new factory can run beside the old one for months.
 - Aquarius has an `UPGRADE_DELAY = 259200s` (3 days) governance window
   with an emergency-mode bypass, so an upgrade can land with no notice.
 - Per-connector WASM inventories are the audit logs and
-  [decoder-wasm-matrix.md](../operations/wasm-audits/decoder-wasm-matrix.md);
+  [protocol-epochs.md](../operations/wasm-audits/protocol-epochs.md#decoder-wasm-matrix);
   decoder upgrade notes live in `internal/sources/<venue>/README.md`.
   SDEX is classic and has no WASM.
 

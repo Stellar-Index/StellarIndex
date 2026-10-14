@@ -24,7 +24,7 @@ P3 (`severity: ticket`). Rules: `configs/prometheus/rules.r1/storage.yml` (twin 
 ## `stellarindex_wasm_drift` — a contract runs an unaudited hash
 
 1. Take `wasm_hash` from the alert (or the `DRIFT` lines). Fetch the bytes: `GET /v1/contracts/{contract}/wasm`, or `stellar.ledger_entries_current` with `entry_type = 'contract_code'` keyed on the hash.
-2. String-check them against the decoder's literals ([decoder-wasm-matrix.md §Method](../wasm-audits/decoder-wasm-matrix.md#method)): byte-search every topic and field name `internal/sources/<source>/{events,decode}.go` watches for the contract's role.
+2. String-check them against the decoder's literals ([protocol-epochs.md §Method](../wasm-audits/protocol-epochs.md#method)): byte-search every topic and field name `internal/sources/<source>/{events,decode}.go` watches for the contract's role.
 3. Record the verdict in `docs/operations/wasm-audits/<source>.md` (full hash, or first 8 hex chars + `…`).
 4. Only if the check passed, add the full hash to `audited_wasm.json` (`source`, `role`, `audited` date, `doc`); `TestAuditedWasmManifestMatchesAuditLogs` fails if the doc does not name it.
 5. Literals missing: the decoder is unsafe on this contract; open an issue and run no replay over its ledgers. A contract that is not the protocol's belongs out of the curated set.
@@ -47,4 +47,4 @@ stellarindex-ops scan-soroban-events -config /etc/stellarindex.toml -from <ledge
 
 ## Related
 
-`internal/ops/chops/wasm_drift.go`, `internal/pipeline/gated_registry.go`, [wasm-audits](../wasm-audits/README.md), [decoder-wasm-matrix](../wasm-audits/decoder-wasm-matrix.md), [alerts-catalog](../alerts-catalog.md)
+`internal/ops/chops/wasm_drift.go`, `internal/pipeline/gated_registry.go`, [wasm-audits](../wasm-audits/README.md), [protocol-epochs](../wasm-audits/protocol-epochs.md#decoder-wasm-matrix), [alerts-catalog](../alerts-catalog.md)
