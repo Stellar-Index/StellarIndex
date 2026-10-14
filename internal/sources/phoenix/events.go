@@ -226,6 +226,28 @@ func MainnetGatedSet() []string {
 	return out
 }
 
+// MainnetRetiredPools are curated pools whose contract instance was later replaced by a retirement stub (the WASM audit's
+// `retired-stub` role): their storage no longer holds pool reserves, so the TVL reader cannot decode them and must not
+// count them as pools. They stay in MainnetGatedSet for their historical swaps.
+var MainnetRetiredPools = []string{
+	"CAZ6W4WHVGQBGURYTUOLCUOOHW6VQGAAPSPCD72VEDZMBBPY7H43AYEC", // stub since ledger 63767534
+}
+
+// MainnetTVLPools is the pool set the DEX TVL surface reads current reserves for: every curated pool minus the retired ones.
+func MainnetTVLPools() []string {
+	retired := make(map[string]bool, len(MainnetRetiredPools))
+	for _, p := range MainnetRetiredPools {
+		retired[p] = true
+	}
+	out := make([]string, 0, len(MainnetPools)+len(MainnetMapPools))
+	for _, p := range append(append([]string{}, MainnetPools...), MainnetMapPools...) {
+		if !retired[p] {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // Pre-encoded base64 SCVal::String blobs for topic[0] and topic[1]. Phoenix emits both slots as Strings, not Symbols, because the
 // pool contract publishes `(str_literal, str_literal)` tuples.
 var (

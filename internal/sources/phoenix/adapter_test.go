@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"math/big"
+	"slices"
 	"testing"
 	"time"
 
@@ -1380,5 +1381,29 @@ func TestDecoder_WithdrawRewards_EndToEnd(t *testing.T) {
 func TestDecoder_NameMatchesSourceName(t *testing.T) {
 	if got := newTestDecoder().Name(); got != SourceName {
 		t.Errorf("Name() = %q, want %q", got, SourceName)
+	}
+}
+
+// TestMainnetTVLPools_RetiredPoolStaysGatedButLeavesTVL pins the split a retirement stub forces: the pool keeps decoding
+// its historical swaps (gated set) while the TVL surface stops counting a contract whose storage holds no reserves.
+func TestMainnetTVLPools_RetiredPoolStaysGatedButLeavesTVL(t *testing.T) {
+	const retired = "CAZ6W4WHVGQBGURYTUOLCUOOHW6VQGAAPSPCD72VEDZMBBPY7H43AYEC"
+	if !slices.Contains(MainnetRetiredPools, retired) {
+		t.Fatalf("retired list lost %s", retired)
+	}
+	if !slices.Contains(MainnetGatedSet(), retired) {
+		t.Fatalf("gated set must keep the retired pool for its history")
+	}
+	tvl := MainnetTVLPools()
+	if slices.Contains(tvl, retired) {
+		t.Fatalf("TVL pool set still counts the retired pool")
+	}
+	if want := len(MainnetPools) + len(MainnetMapPools) - len(MainnetRetiredPools); len(tvl) != want {
+		t.Fatalf("TVL pool set has %d pools, want %d", len(tvl), want)
+	}
+	for _, p := range MainnetMapPools {
+		if !slices.Contains(tvl, p) {
+			t.Fatalf("TVL pool set lost map-schema pool %s", p)
+		}
 	}
 }

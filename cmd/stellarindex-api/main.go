@@ -751,7 +751,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		AquariusReserves: store,
 		// Curated pool sets only (ADR-0035). Phoenix stake contracts are excluded because they
 		// hold LP shares and would double-count the underlying.
-		PhoenixPools:    append(append([]string{}, phoenix.MainnetPools...), phoenix.MainnetMapPools...),
+		PhoenixPools:    phoenix.MainnetTVLPools(),
 		PhoenixReserves: phoenixTVLReserves,
 		CometPools:      comet.MainnetGatedSet(),
 		CometReserves:   cometTVLReserves,
