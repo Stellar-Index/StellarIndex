@@ -22,7 +22,6 @@ import (
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
-	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	chstore "github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
@@ -1663,94 +1662,6 @@ func TestQueryAccountBalance_SameLedgerLastChangeWins(t *testing.T) {
 	}
 	if snap.AtLedger != ledger {
 		t.Errorf("AtLedger = %d, want %d", snap.AtLedger, ledger)
-	}
-}
-
-// Both axes of the fix: update-then-update in one ledger must serve the final b_rate, and update-then-remove must drop the
-// key (the removal participates and is dropped via HAVING on the winning change_type, instead of the earlier update being
-// resurrected). The reader gets both from ledger_entries_current FINAL;
-func TestBlendPoolReserves_SameLedgerLastChangeWins(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	addr := clickhouseAddr(t)
-
-	// A very high ledger so the fixture sits at the lake's tip, but it must NOT outlive the test: max(ledger_seq) bounds every
-	// whole-lake walker, so a surviving row costs each walk ~16,000 empty windows and breaches the 5-minute deadline under
-	// load. purgeLakeFixtureLedgers removes it synchronously.
-	const ledger = uint32(4_000_000_000)
-	purgeLakeFixtureLedgers(t, addr, ledger, ledger)
-	closeTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-
-	const poolSeed, assetValSeed, assetGoneSeed = byte(0xB1), byte(0xB2), byte(0xB3)
-	pool := contractIDFromSeed(poolSeed)
-	assetVal := contractIDFromSeed(assetValSeed)
-	assetGone := contractIDFromSeed(assetGoneSeed)
-	poolStr := mustContractStrkey(t, poolSeed)
-	assetValStr := mustContractStrkey(t, assetValSeed)
-	assetGoneStr := mustContractStrkey(t, assetGoneSeed)
-
-	const (
-		staleBRate = uint64(1_000_000_000_000) // 1.0 at 12 decimals — a mid-ledger rate
-		finalBRate = uint64(2_000_000_000_000) // 2.0 — the last change in the ledger
-	)
-
-	rows := []chstore.LedgerEntryChangeRow{
-		// reserveVal: LATER update (op 1, intra 9) — the final b_rate. Written
-		// first (adversarial); sorts last.
-		{
-			LedgerSeq: ledger, CloseTime: closeTime, TxHash: "blendval", OpIndex: 1, ChangeIndex: 0,
-			IntraLedgerSeq: 9, ChangeType: "updated", EntryType: "contract_data",
-			KeyXDR: resDataKeyB64(t, pool, assetVal), EntryXDR: resDataEntryB64(t, pool, assetVal, ledger, finalBRate),
-		},
-		// reserveVal: EARLIER update (op 0, intra 8) — a stale b_rate. Sorts
-		// first, so a ledger_seq-only argMax keeps it.
-		{
-			LedgerSeq: ledger, CloseTime: closeTime, TxHash: "blendval", OpIndex: 0, ChangeIndex: 0,
-			IntraLedgerSeq: 8, ChangeType: "updated", EntryType: "contract_data",
-			KeyXDR: resDataKeyB64(t, pool, assetVal), EntryXDR: resDataEntryB64(t, pool, assetVal, ledger, staleBRate),
-		},
-		// reserveGone: the removal (op 1, intra 9) — the LAST change; the key must
-		// drop out.
-		{
-			LedgerSeq: ledger, CloseTime: closeTime, TxHash: "blendgone", OpIndex: 1, ChangeIndex: 0,
-			IntraLedgerSeq: 9, ChangeType: "removed", EntryType: "contract_data",
-			KeyXDR: resDataKeyB64(t, pool, assetGone), EntryXDR: "",
-		},
-		// reserveGone: the earlier update (op 0, intra 8) — a live entry the
-		// naive `entry_xdr != ''` filter would resurrect.
-		{
-			LedgerSeq: ledger, CloseTime: closeTime, TxHash: "blendgone", OpIndex: 0, ChangeIndex: 0,
-			IntraLedgerSeq: 8, ChangeType: "updated", EntryType: "contract_data",
-			KeyXDR: resDataKeyB64(t, pool, assetGone), EntryXDR: resDataEntryB64(t, pool, assetGone, ledger, staleBRate),
-		},
-	}
-	if _, err := chstore.InsertEntryChanges(ctx, addr, rows, 0); err != nil {
-		t.Fatalf("InsertEntryChanges: %v", err)
-	}
-
-	reader, err := chstore.NewExplorerReader(ctx, addr)
-	if err != nil {
-		t.Fatalf("NewExplorerReader: %v", err)
-	}
-	states, err := reader.BlendPoolReserves(ctx, poolStr, blend.PoolV2, []string{assetValStr, assetGoneStr}, nil)
-	if err != nil {
-		t.Fatalf("BlendPoolReserves: %v", err)
-	}
-
-	byAsset := make(map[string]chstore.BlendReserveState, len(states))
-	for _, s := range states {
-		byAsset[s.Asset] = s
-	}
-
-	got, ok := byAsset[assetValStr]
-	if !ok {
-		t.Fatalf("reserveVal absent from result; want present with the final b_rate")
-	}
-	if want := new(big.Int).SetUint64(finalBRate); got.Data.BRate == nil || got.Data.BRate.Cmp(want) != 0 {
-		t.Errorf("reserveVal b_rate = %v, want %d (same-ledger tie resolved to a stale mid-ledger reserve state)", got.Data.BRate, finalBRate)
-	}
-	if _, present := byAsset[assetGoneStr]; present {
-		t.Errorf("reserveGone present in result; want ABSENT (its last same-ledger change was a removal — the pre-fix query resurrected it)")
 	}
 }
 

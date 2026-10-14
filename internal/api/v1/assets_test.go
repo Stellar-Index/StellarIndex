@@ -1396,3 +1396,138 @@ func currencyAuthorityFixture(t *testing.T, cur timescale.IssuerSep1Currency) st
 	}}
 	return httpTestServer(t, v1.New(v1.Options{Assets: reader, Sep1Cache: sep1})).URL
 }
+
+// /v1/assets/{id}: no projection row and a failed lake read → the cap and
+// FDV (supply ÷ 10^decimals × price) are refused, the body is flagged
+// stale, and it is NOT cached — the next request reads again.
+func TestAssetDetail_DecimalsReadFailed_RefusesCapStaleUncached(t *testing.T) {
+	dec := &countingDecStub{err: errDecimalsRead}
+	srv := v1.New(v1.Options{
+		Prices:        lockstepPrices(),
+		Supply:        lockstepSupply(),
+		TokenDecimals: dec,
+	})
+	body := lockstepGet(t, srv)
+
+	for _, field := range []string{`"market_cap_usd":"`, `"fdv_usd":"`} {
+		if strings.Contains(body, field) {
+			t.Errorf("%s published on a guessed scale of 7: %s", field, body)
+		}
+	}
+	if !strings.Contains(body, `"stale":true`) {
+		t.Errorf("flags.stale must be set on an unresolved scale: %s", body)
+	}
+	first := dec.calls.Load()
+	_ = lockstepGet(t, srv)
+	if dec.calls.Load() == first {
+		t.Error("degraded body was cached: the second request never re-read decimals")
+	}
+}
+
+// TestAssetList_IssuerDirectoryTags_BatchedNoN1 — the listing joins the
+// page's issuer set in ONE batch query (not N+1) and stamps the tags onto
+// the row.
+func TestAssetList_IssuerDirectoryTags_BatchedNoN1(t *testing.T) {
+	aud, err := canonical.NewClassicAsset("AUD", scamAUDIssuer)
+	if err != nil {
+		t.Fatalf("NewClassicAsset: %v", err)
+	}
+	other, err := canonical.NewClassicAsset("USDC", testUSDCIssuer)
+	if err != nil {
+		t.Fatalf("NewClassicAsset: %v", err)
+	}
+	assetsReader := &listStub{
+		stubAssetsReaderExt: &stubAssetsReaderExt{},
+		rows: []timescale.AssetRow{
+			{AssetID: aud.String(), Code: "AUD", IssuerGStrkey: scamAUDIssuer},
+			{AssetID: other.String(), Code: "USDC", IssuerGStrkey: testUSDCIssuer},
+		},
+	}
+	dir := &countingDirectoryReader{entries: scamAUDDirectoryStub().entries}
+	srv := v1.New(v1.Options{Assets: &stubAssetReader{}, AssetsReader: assetsReader, Directory: dir})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/assets")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var env struct {
+		Data []v1.AssetDetail `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	var audRow *v1.AssetDetail
+	for i := range env.Data {
+		if env.Data[i].Code == "AUD" {
+			audRow = &env.Data[i]
+		}
+	}
+	if audRow == nil {
+		t.Fatalf("AUD row missing from listing: %+v", env.Data)
+	}
+	if got := audRow.IssuerDirectoryTags; len(got) != 2 || got[0] != "malicious" {
+		t.Errorf("listing AUD issuer_directory_tags = %v, want [malicious unsafe]", got)
+	}
+	if audRow.IssuerDirectoryDomain != scamAUDDomain {
+		t.Errorf("listing AUD issuer_directory_domain = %q, want %q", audRow.IssuerDirectoryDomain, scamAUDDomain)
+	}
+	if n := atomic.LoadInt64(&dir.batchCalls); n != 1 {
+		t.Errorf("directory batch calls = %d, want exactly 1 (page issuer set resolved in one query)", n)
+	}
+	if n := atomic.LoadInt64(&dir.oneCalls); n != 0 {
+		t.Errorf("directory single-lookup calls = %d, want 0 (must not N+1 per row)", n)
+	}
+}
+
+// TestAssetList_DirectoryReadFailure_WithholdsPrice — listing
+// side. The batch read failing must not skip the stamp+suppress loop for
+// the whole page; every issuer-bearing row must be withheld instead.
+func TestAssetList_DirectoryReadFailure_WithholdsPrice(t *testing.T) {
+	aud, err := canonical.NewClassicAsset("AUD", scamAUDIssuer)
+	if err != nil {
+		t.Fatalf("NewClassicAsset: %v", err)
+	}
+	other, err := canonical.NewClassicAsset("USDC", testUSDCIssuer)
+	if err != nil {
+		t.Fatalf("NewClassicAsset: %v", err)
+	}
+	list := func(t *testing.T, dir *stubDirectoryReader) []v1.AssetDetail {
+		t.Helper()
+		assetsReader := &listStub{
+			stubAssetsReaderExt: &stubAssetsReaderExt{},
+			rows: []timescale.AssetRow{
+				{AssetID: aud.String(), Code: "AUD", IssuerGStrkey: scamAUDIssuer, PriceUSD: sptr("0.65")},
+				{AssetID: other.String(), Code: "USDC", IssuerGStrkey: testUSDCIssuer, PriceUSD: sptr("1.00")},
+			},
+		}
+		srv := v1.New(v1.Options{Assets: &stubAssetReader{}, AssetsReader: assetsReader, Directory: dir})
+		resp := mustGet(t, httpTestServer(t, srv).URL+"/v1/assets")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d", resp.StatusCode)
+		}
+		var env struct {
+			Data []v1.AssetDetail `json:"data"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if len(env.Data) != 2 {
+			t.Fatalf("rows = %d, want 2", len(env.Data))
+		}
+		return env.Data
+	}
+
+	// Instrument check: an answering directory with no entries leaves
+	// both rows priced, so a nil below is the refusal, not the fixture.
+	for _, r := range list(t, &stubDirectoryReader{}) {
+		if r.PriceUSD == nil {
+			t.Fatalf("precondition: %s unpriced with a healthy, empty directory", r.Code)
+		}
+	}
+	for _, r := range list(t, &stubDirectoryReader{err: errors.New("account_directory: connection refused")}) {
+		if r.PriceUSD != nil {
+			t.Errorf("%s price_usd = %q, want withheld — the page's scam check did not run", r.Code, *r.PriceUSD)
+		}
+	}
+}

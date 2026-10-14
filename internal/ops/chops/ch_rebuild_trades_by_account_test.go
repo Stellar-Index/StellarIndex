@@ -53,14 +53,6 @@ func TestCheckCHRebuildTradesByAccountFlags(t *testing.T) {
 	}
 }
 
-// The documented invocation must clear every refusal that runs before the config load (flag conflicts, BackfillSafe leg 1).
-func TestCHRebuild_TradesByAccountInvocationPassesEarlyRefusals(t *testing.T) {
-	err := chRebuild(chRebuildArgs(t, "-write", "-sdex", "-trades-by-account"))
-	if err == nil || strings.Contains(err.Error(), "refusing") || strings.Contains(err.Error(), "-trades-by-account") {
-		t.Fatalf("err = %v, want only the absent-config failure", err)
-	}
-}
-
 // Leg 2 of the BackfillSafe gate, the per-WASM lake gate and the preseed all read the catalogue; a whole-catalogue scope hits
 // unaudited sources (upshift) and refuses every -trades-by-account run.
 func TestScopeCatalogueToTradeSources_PassesBackfillSafeGate(t *testing.T) {

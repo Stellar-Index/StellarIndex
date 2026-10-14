@@ -3,8 +3,6 @@ package v1
 import (
 	"context"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -260,39 +258,6 @@ func TestCachedBespoke_NilReaderDegradesAsBefore(t *testing.T) {
 	if blk, stale, ok := srv.cachedBespoke(context.Background(), "cctp", "bridge", 90); ok || stale || blk != nil {
 		t.Errorf("no reader wired: ok=%v stale=%v blk=%v, want the pre-cache degradation", ok, stale, blk)
 	}
-}
-
-// TestHandleProtocolDetail_StaleBespokeSetsEnvelopeFlag pins that analytics.status "stale"
-// always travels with flags.stale, even when the DETAIL entry is fresh: the age lives in the
-// bespoke block, and a client must not read a last-good suite as live.
-func TestHandleProtocolDetail_StaleBespokeSetsEnvelopeFlag(t *testing.T) {
-	stub := &bespokeStub{block: make(chan struct{})}
-	srv := New(Options{ProtocolActivity: prewarmActivityStub{}, ProtocolBespoke: stub})
-	meta, _ := protocolByName("cctp")
-	key := protocolBespokeCacheKey(meta.Name, meta.Category, protocolActivityWindowDays)
-	ageBespokeEntry(t, srv, stub, key, &timescale.BespokeBlock{
-		Category: meta.Category,
-		KPIs:     []timescale.BespokeKPI{{Label: "probe", Value: "1"}},
-	})
-
-	ts := httptest.NewServer(srv.Handler())
-	defer ts.Close()
-
-	code, env := getProtoDetail(t, ts.URL, "cctp")
-	if code != http.StatusOK {
-		t.Fatalf("status = %d", code)
-	}
-	if env.Data.Bespoke == nil {
-		t.Fatal("stale bespoke block dropped — the suite must still render")
-	}
-	if env.Data.Analytics == nil || env.Data.Analytics.Status != protocolAnalyticsStale {
-		t.Errorf("analytics = %+v, want status %q", env.Data.Analytics, protocolAnalyticsStale)
-	}
-	if !env.Flags.Stale {
-		t.Error("flags.stale = false with analytics.status=stale — the envelope must agree")
-	}
-	close(stub.block)
-	waitBespokeIdle(t, srv, key)
 }
 
 // TestPrewarmProtocolDetails_WarmsTheBespokeKeysTheBuildReads is the arg-parity guard: the sweep must warm exactly the

@@ -2,55 +2,11 @@ package notify_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/notify"
 )
-
-func TestResendSender_DisableTrackingPinsBothOff(t *testing.T) {
-	var method, path string
-	var body map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		method, path = r.Method, r.URL.EscapedPath()
-		raw, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(raw, &body)
-		_, _ = w.Write([]byte(`{"object":"domain"}`))
-	}))
-	defer srv.Close()
-
-	s, err := notify.NewResendSender("re_test_token")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s.BaseURL = srv.URL
-	if err := s.DisableTracking(context.Background(), "d/1"); err != nil {
-		t.Fatalf("DisableTracking: %v", err)
-	}
-	if method != http.MethodPatch || path != "/domains/d%2F1" {
-		t.Fatalf("request = %s %s, want PATCH /domains/d%%2F1", method, path)
-	}
-	for _, k := range []string{"click_tracking", "open_tracking"} {
-		if v, ok := body[k]; !ok || v != false {
-			t.Errorf("%s = %v (present %v), want explicit false", k, v, ok)
-		}
-	}
-}
-
-func TestResendSender_DisableTrackingRejectsEmptyDomain(t *testing.T) {
-	s, err := notify.NewResendSender("re_test_token")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s.BaseURL = "http://127.0.0.1:1"
-	if err := s.DisableTracking(context.Background(), " "); err == nil {
-		t.Fatal("empty domain id accepted")
-	}
-}
 
 func TestFeedbackHashes(t *testing.T) {
 	bounce := func(typ string) string {

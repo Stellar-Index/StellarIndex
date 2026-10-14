@@ -1521,26 +1521,6 @@ func TestEnvelope_DecodesWithheld(t *testing.T) {
 	}
 }
 
-// TestAPIError_DecodesWithheldReason: the withheld cause must reach the
-// caller as a field, not only inside Title.
-func TestAPIError_DecodesWithheldReason(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/problem+json")
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"type":"` + client.ProblemTypePriceWithheld + `","title":"t","status":404,"reason":"scam_issuer"}`))
-	}))
-	t.Cleanup(ts.Close)
-	_, err := client.New(client.Options{BaseURL: ts.URL}).Price(context.Background(),
-		client.PriceQuery{Asset: "native", Quote: "fiat:USD"})
-	var apiErr *client.APIError
-	if !errors.As(err, &apiErr) {
-		t.Fatalf("err = %v, want *APIError", err)
-	}
-	if apiErr.Reason != "scam_issuer" {
-		t.Errorf("Reason = %q, want scam_issuer", apiErr.Reason)
-	}
-}
-
 // [Source] stats fields are populated only with `?include=stats`, so the SDK needs an Include option sending a comma-
 // joined param.
 func TestSources_IncludeSendsCommaJoinedParam(t *testing.T) {

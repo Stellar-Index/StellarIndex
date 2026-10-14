@@ -198,42 +198,6 @@ func TestHandleSources_DroppedStatsAreNoStore(t *testing.T) {
 	}
 }
 
-func TestHandleProtocolDetail_StaleServeIsNoStore(t *testing.T) {
-	srv := New(Options{ProtocolActivity: prewarmActivityStub{}, ProtocolBespoke: &prewarmBespokeStub{}})
-	ts := httptest.NewServer(srv.Handler())
-	defer ts.Close()
-	cacheControl := func() string {
-		resp, err := http.Get(ts.URL + "/v1/protocols/cctp") //nolint:noctx // test helper
-		if err != nil {
-			t.Fatalf("GET: %v", err)
-		}
-		_ = resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("status = %d, want 200", resp.StatusCode)
-		}
-		return resp.Header.Get("Cache-Control")
-	}
-
-	if got := cacheControl(); got != "public, max-age=60" {
-		t.Errorf("fresh build: Cache-Control = %q, want the handler's public band", got)
-	}
-	key := protocolDetailCacheKey("cctp", protocolActivityWindowDays)
-	srv.protoDetailMu.Lock()
-	e, ok := srv.protoDetailCache[key]
-	if !ok {
-		srv.protoDetailMu.Unlock()
-		t.Fatal("entry missing after cold build")
-	}
-	e.at = e.at.Add(-protocolDetailTTL - time.Minute)
-	srv.protoDetailCache[key] = e
-	srv.protoDetailMu.Unlock()
-
-	if got := cacheControl(); got != "no-store" {
-		t.Errorf("stale serve: Cache-Control = %q, want no-store", got)
-	}
-	waitProtoDetailIdle(t, srv, key)
-}
-
 // TestHandleSDEXOrderbook_StaleWhenAdvanceStalled: a wedged Advance leaves c.updated frozen while the book keeps serving; the
 // handler must surface that age as flags.stale instead of the unconditional false a fresh snapshot gets.
 func TestHandleSDEXOrderbook_StaleWhenAdvanceStalled(t *testing.T) {

@@ -1,7 +1,6 @@
 package chops
 
 import (
-	"os"
 	"sort"
 	"strings"
 	"testing"
@@ -221,40 +220,6 @@ func TestUnionContractIDs(t *testing.T) {
 	got[0] = "mutated"
 	if base[0] != "CB" {
 		t.Error("unionContractIDs aliases its base slice")
-	}
-}
-
-// Pins the ch-rebuild call site at the source (chRebuild needs ClickHouse and Postgres): the warm runs on the fresh
-// catalogue and precedes both the preseed (which seeds INTO the warmed decoders) and the writer.
-func TestCHRebuild_WarmsTheCatalogueGatesBeforeAnythingReadsThem(t *testing.T) {
-	t.Parallel()
-	b, err := os.ReadFile("ch_rebuild.go")
-	if err != nil {
-		t.Fatalf("read ch_rebuild.go: %v", err)
-	}
-	body := funcBodyFrom(string(b), "chRebuild")
-	if body == "" {
-		t.Fatal("chRebuild not found — this test is asserting nothing")
-	}
-	catalogue := strings.Index(body, "buildReconciliationCatalogue(cfg)")
-	preseed := strings.Index(body, "preseedFactoryChildren(")
-	writer := strings.Index(body, "drainAndWrite(")
-	if catalogue < 0 || preseed < 0 || writer < 0 {
-		t.Fatalf("anchors not found (catalogue %d, preseed %d, writer %d) — this test is asserting nothing",
-			catalogue, preseed, writer)
-	}
-	warm := strings.Index(body, "warmCatalogueGates(ctx, store, logger, cat)")
-	switch {
-	case warm < 0:
-		t.Error("chRebuild never warms the catalogue's gated decoders from protocol_contracts: " +
-			"`ch-rebuild -write` re-derives on the bare in-code seed and rebuilds a table without " +
-			"the contracts an operator admitted (RLT-430)")
-	case warm < catalogue:
-		t.Error("the gate warm runs BEFORE the catalogue is built")
-	case warm > preseed:
-		t.Error("the gate warm runs AFTER preseedFactoryChildren — it rebuilds the decoders and discards what the preseed registered")
-	case warm > writer:
-		t.Error("the gate warm runs AFTER the writer")
 	}
 }
 

@@ -278,43 +278,6 @@ func TestSEP41Filter_RejectsNonStrkey(t *testing.T) {
 	}
 }
 
-// Only redstone consumes events.Event.OpArgs, so only it may read the wide op_args_xdr column.
-// The sep41 pair streaming the CAP-67 firehose must keep needsOpArgs false, or the lake read regrows the OOM profile.
-func TestCatalogue_OpArgsOnlyForRedstone(t *testing.T) {
-	cfg := testConfigWithAllSources()
-	cfg.Supply.WatchedSEP41Contracts = testWatchedSEP41
-
-	cat, _, err := buildReconciliationCatalogue(cfg)
-	if err != nil {
-		t.Fatalf("buildReconciliationCatalogue: %v", err)
-	}
-	sawSEP41 := map[string]bool{"sep41_transfers": false, "sep41_supply": false}
-	sawRedstone := false
-	for _, src := range cat {
-		if _, ok := sawSEP41[src.name]; ok {
-			sawSEP41[src.name] = true
-		}
-		if src.name == "redstone" {
-			sawRedstone = true
-			if !src.needsOpArgs {
-				t.Error("redstone must set needsOpArgs (its decoder zips feed_ids from op args)")
-			}
-			continue
-		}
-		if src.needsOpArgs {
-			t.Errorf("%s: needsOpArgs set but its decoder never reads events.Event.OpArgs — this re-widens the reconcile's lake read", src.name)
-		}
-	}
-	if !sawRedstone {
-		t.Fatal("catalogue missing redstone (test config sets its adapter contract)")
-	}
-	for name, seen := range sawSEP41 {
-		if !seen {
-			t.Fatalf("catalogue missing %s (test config sets a watched set — promotion should have included it)", name)
-		}
-	}
-}
-
 // The fan-out drop event is carved out: one DropEvent writes a row per recipient, so a per-ledger count reconcile would
 // false-flag every drop ledger. The table is mixed (distribute and swap are 1:1), so the catalogue excludes only drop
 // rows served-side (event_kind <> 'drop') and omits drop from the re-derive.

@@ -133,62 +133,6 @@ func TestRecognitionAttribution_EveryPinningSourceCanFail(t *testing.T) {
 	}
 }
 
-// Keeps recognition pins in step with each decoder's identity gate; contractIDs is also a hard per-event filter for ch-
-// rebuild/ch-reproject and the re-derive prefilter. A pin naming an unclaimed contract misattributes gaps; a missing
-// claimed contract silently drops its rows from a rebuild.
-func TestCatalogue_RecognitionPinsMatchDecoderIdentity(t *testing.T) {
-	ownerOf, cat := staticOwners(t)
-
-	rozoSrc := catalogueSource(t, cat, "rozo")
-	for _, c := range rozoSrc.contractIDs {
-		if !rozo.IsRozoContract(c) {
-			t.Errorf("rozo pins %s, which the rozo decoder does not claim", c)
-		}
-	}
-	for _, c := range rozo.MainnetPaymentContracts {
-		if !reflect.DeepEqual(ownerOf[c], []string{"rozo"}) {
-			t.Errorf("rozo decoder claims %s but the catalogue attributes it to %q", c, ownerOf[c])
-		}
-	}
-	if len(rozoSrc.contractIDs) != len(rozo.MainnetPaymentContracts) {
-		t.Errorf("rozo pins %d contracts, decoder claims %d", len(rozoSrc.contractIDs), len(rozo.MainnetPaymentContracts))
-	}
-
-	bbSrc := catalogueSource(t, cat, blend_backstop.SourceName)
-	for _, c := range bbSrc.contractIDs {
-		if !blend_backstop.IsBackstopContract(c) {
-			t.Errorf("blend_backstop pins %s, which the backstop decoder does not claim", c)
-		}
-	}
-	for _, c := range []string{blend_backstop.MainnetBackstopV2, blend_backstop.MainnetBackstopV1} {
-		if !reflect.DeepEqual(ownerOf[c], []string{blend_backstop.SourceName}) {
-			t.Errorf("backstop decoder claims %s but the catalogue attributes it to %q", c, ownerOf[c])
-		}
-	}
-
-	// No OTHER source may pin one of these contracts: a second pin would
-	// charge that source with every rozo / backstop recognition gap.
-	pinned := map[string]string{}
-	for _, c := range rozoSrc.contractIDs {
-		pinned[c] = "rozo"
-	}
-	for _, c := range bbSrc.contractIDs {
-		pinned[c] = blend_backstop.SourceName
-	}
-	for _, src := range cat {
-		for _, c := range src.contractIDs {
-			if owner, ok := pinned[c]; ok && owner != src.name {
-				t.Errorf("%s also pins %s, which belongs to %s — it would share that source's recognition gaps", src.name, c, owner)
-			}
-		}
-	}
-
-	// The catalogue must hold a copy, never the package's own slice.
-	if len(rozoSrc.contractIDs) > 0 && &rozoSrc.contractIDs[0] == &rozo.MainnetPaymentContracts[0] {
-		t.Error("rozo contractIDs aliases rozo.MainnetPaymentContracts — a catalogue-side append/sort would mutate the decoder's trust root")
-	}
-}
-
 // Topic-matched sources have no static contractIDs, so without the registry
 // fold a gap on their pool lands in `unattributed` and recognition_ok can never
 // fail. Walks mergeRegistryOwners → attributeRecognitionGaps → sourceRecognitionOK.

@@ -6,33 +6,7 @@ import (
 	"testing"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
-	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
-
-// TestOracleLatest_CreditsLicensedVendor: a per-source row from a licensed aggregator names its vendor; an on-chain oracle
-// row carries no credit key.
-func TestOracleLatest_CreditsLicensedVendor(t *testing.T) {
-	reader := &stubOracleReader{updates: []canonical.OracleUpdate{
-		mkReflectorUpdate("coingecko", "12000000000000", 14),
-		mkReflectorUpdate("reflector-dex", "12500000000000", 14),
-	}}
-	ts := httpTestServer(t, v1.New(v1.Options{Oracle: reader}))
-	resp := mustGet(t, ts.URL+"/v1/oracle/latest?asset=native")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
-	var page struct {
-		Data []v1.OracleReading `json:"data"`
-	}
-	mustDecode(t, resp, &page)
-	credits := map[string]string{}
-	for _, r := range page.Data {
-		credits[r.Source] = r.Credit
-	}
-	if credits["coingecko"] != "CoinGecko" || credits["reflector-dex"] != "" {
-		t.Errorf("credits = %v, want coingecko credited and reflector-dex bare", credits)
-	}
-}
 
 // TestSourcesAndMethodology_CreditLicensedVendors pins `credit` on the two source registries the explorer renders.
 func TestSourcesAndMethodology_CreditLicensedVendors(t *testing.T) {

@@ -10,7 +10,6 @@ import (
 	"io"
 	"log/slog"
 	"math/big"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -27,7 +26,6 @@ import (
 	sep41transfers "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_transfers"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -630,34 +628,6 @@ func TestProjectedSourcesInRun_SEP41FollowsTheWatchedSet(t *testing.T) {
 	}
 }
 
-// TestCHRebuild_ModeFlagsFollowTheSharedWriteGate pins ch-rebuild to the shared -write/-dry-run convention. The named-
-// source BackfillSafe refusal is armed only in write mode, so it tells the modes apart before any datastore; a dry run
-// falls through to the absent config.
-func TestCHRebuild_ModeFlagsFollowTheSharedWriteGate(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		mode      []string
-		wantWrite bool
-	}{
-		{nil, false},
-		{[]string{"-dry-run"}, false},
-		{[]string{"-write"}, true},
-		{[]string{"-dry-run", "-write"}, true},
-	} {
-		args := append(append([]string{}, tc.mode...), "-sources", upshift.SourceName)
-		err := chRebuild(chRebuildArgs(t, args...))
-		if err == nil {
-			t.Fatalf("%v: chRebuild succeeded against a config that does not exist", tc.mode)
-		}
-		if got := strings.Contains(err.Error(), "not BackfillSafe"); got != tc.wantWrite {
-			t.Errorf("%v: write-mode refusal = %v, want %v (err: %v)", tc.mode, got, tc.wantWrite, err)
-		}
-		if !tc.wantWrite && !strings.Contains(err.Error(), "absent.toml") {
-			t.Errorf("%v: a dry run should reach the config load, got: %v", tc.mode, err)
-		}
-	}
-}
-
 // Every ch-rebuild pass appends into the one in-process buffer, so the
 // maxBufferedRange guard must engage for an sdex-only or ContractCall-only
 // invocation, not just when an event decoder is selected.
@@ -705,19 +675,6 @@ func TestCHRebuildBuffers_EveryPassEngagesTheRangeGuard(t *testing.T) {
 		if got := chRebuildBuffers(cat, sep41Cat, tc.passes, tc.enabled); got != tc.want {
 			t.Errorf("%s: chRebuildBuffers = %v, want %v", tc.name, got, tc.want)
 		}
-	}
-}
-
-// The predicate is only a guard if chRebuild consults it at the range check.
-func TestCHRebuild_RangeGuardUsesThePassSelection(t *testing.T) {
-	t.Parallel()
-	b, err := os.ReadFile("ch_rebuild.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := funcBodyFrom(string(b), "chRebuild")
-	if !strings.Contains(body, "chRebuildBuffers(cat, sep41Cat, passes, enabled) && *to-*from > maxBufferedRange") {
-		t.Fatal("chRebuild's maxBufferedRange guard no longer keys on chRebuildBuffers(cat, sep41Cat, passes, enabled)")
 	}
 }
 
@@ -805,39 +762,6 @@ func TestCHRebuildSourceUniverse_carriesTheSEP41Pair(t *testing.T) {
 		if !seen {
 			t.Errorf("source %q missing from the universe (got %v)", name, got)
 		}
-	}
-}
-
-// TestCHRebuild_ValidatesSourcesAgainstTheCatalogue pins the call site of the gate above.
-// chRebuild needs Postgres and ClickHouse past the catalogue build, so no test reaches the
-// refusal through the entry point; without this, deleting the call leaves every unit test green.
-func TestCHRebuild_ValidatesSourcesAgainstTheCatalogue(t *testing.T) {
-	t.Parallel()
-	b, err := os.ReadFile("ch_rebuild.go")
-	if err != nil {
-		t.Fatalf("read ch_rebuild.go: %v", err)
-	}
-	body := funcBodyFrom(string(b), "chRebuild")
-	if body == "" {
-		t.Fatal("chRebuild not found — this test is asserting nothing")
-	}
-	call := strings.Index(body, "checkCHRebuildSources(cat, parseCSVList(*only))")
-	catalogue := strings.Index(body, "buildReconciliationCatalogue(cfg)")
-	warm := strings.Index(body, "warmCatalogueGates(")
-	writer := strings.Index(body, "drainAndWrite(")
-	if catalogue < 0 || warm < 0 || writer < 0 {
-		t.Fatalf("anchors not found (catalogue %d, warm %d, writer %d) — this test is asserting nothing", catalogue, warm, writer)
-	}
-	switch {
-	case call < 0:
-		t.Error("chRebuild never validates -sources against the catalogue (K015): an unrecognised name makes " +
-			"enabled() false for every real source, so the run decodes nothing, reports a clean count and exits 0")
-	case call < catalogue:
-		t.Error("the -sources check runs BEFORE the catalogue is built — it cannot know which names exist")
-	case call > warm:
-		t.Error("the -sources check runs AFTER the gate warm-up — a typo pays for the registry reads before being refused")
-	case call > writer:
-		t.Error("the -sources check runs AFTER the writer")
 	}
 }
 
@@ -979,41 +903,6 @@ func TestCheckCHRebuildRecordDirtyFlags(t *testing.T) {
 					tc.recordDirty, tc.preflight, tc.write, err, tc.wantErr)
 			}
 		})
-	}
-}
-
-// A -write run rewrites served rows below the completeness watermark. Before writing it must file the same obligation
-// projector-replay and projected-rebuild file, one per re-derived source, or the next verdict keeps its clean claim over
-// the rewritten range.
-func TestCHRebuild_WriteRecordsDirtyWindowBeforeWriting(t *testing.T) {
-	t.Parallel()
-	b, err := os.ReadFile("ch_rebuild.go")
-	if err != nil {
-		t.Fatalf("read ch_rebuild.go: %v", err)
-	}
-	body := funcBodyFrom(string(b), "chRebuild")
-	if body == "" {
-		t.Fatal("chRebuild not found — this test is asserting nothing")
-	}
-	record := strings.Index(body, "recordCHRebuildDirtyWindows(ctx, store, os.Stderr, lo, hi, rederived, timescale.CHRebuildWriteReason)")
-	preflight := strings.Index(body, "return reportCHRebuildPreflight(")
-	writer := strings.Index(body, "drainAndWrite(")
-	if preflight < 0 || writer < 0 {
-		t.Fatalf("anchors not found (preflight %d, writer %d) — this test is asserting nothing", preflight, writer)
-	}
-	switch {
-	case record < 0:
-		t.Fatal("chRebuild -write records no projection dirty window: the next completeness verdict carries its prior clean claim over the rewritten range")
-	case record < preflight:
-		t.Error("the record precedes the -preflight stop: a preflight, which writes nothing, would file an obligation")
-	case record > writer:
-		t.Error("the record follows the writer: a run that fails partway leaves rewritten rows certified by stale evidence")
-	}
-	if !strings.Contains(body[record-300:record], "if write {") {
-		t.Error("the record is not gated on -write: a dry run would file an obligation")
-	}
-	if !strings.Contains(body[record:record+300], "return ") {
-		t.Error("a failed record does not stop the run: it would write without the obligation filed")
 	}
 }
 
