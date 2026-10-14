@@ -96,7 +96,9 @@ groups:
         # because every candidate rate came from a market below the
         # substance floor) is a refused valuation, not a missing one, and is
         # excluded the same way; its volume stays visible as the `thin`
-        # series of the same counter.
+        # series of the same counter. "refused" (priceable, but over the
+        # asset's credibility budget: a token/token print's USD would exceed
+        # twice its anchor-market turnover) is likewise a refusal, not a gap.
         expr: |
           (
             (
@@ -104,7 +106,7 @@ groups:
               or vector(0)
             )
             /
-            sum (increase(stellarindex_trade_inserts_total{source=~"sdex|soroswap|aquarius|phoenix|comet",usd_volume_populated!~"unroutable|thin"}[6h]))
+            sum (increase(stellarindex_trade_inserts_total{source=~"sdex|soroswap|aquarius|phoenix|comet",usd_volume_populated!~"unroutable|thin|refused"}[6h]))
           ) < 0.995
         for: 1h
         labels:

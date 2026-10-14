@@ -113,26 +113,31 @@ func TestUsdPopulatedLabel(t *testing.T) {
 		name      string
 		pair      canonical.Pair
 		populated bool
+		refused   bool
 		thin      bool
 		want      string
 	}{
-		{"priced same-issuer pair stays yes", canonical.Pair{Base: classic("AAA", issuerA), Quote: classic("BBB", issuerA)}, true, false, "yes"},
-		{"priced cross-issuer pair", canonical.Pair{Base: classic("AAA", issuerA), Quote: classic("USDC", issuerB)}, true, false, "yes"},
-		{"unpriced same-issuer pair is unroutable", canonical.Pair{Base: classic("AAA", issuerA), Quote: classic("BBB", issuerA)}, false, false, "unroutable"},
-		{"unpriced cross-issuer pair is a gap", canonical.Pair{Base: classic("AAA", issuerA), Quote: classic("BBB", issuerB)}, false, false, "no"},
-		{"unpriced native leg is a gap", canonical.Pair{Base: classic("AAA", issuerA), Quote: canonical.NativeAsset()}, false, false, "no"},
+		{"priced same-issuer pair stays yes", canonical.Pair{Base: classic("AAA", issuerA), Quote: classic("BBB", issuerA)}, true, false, false, "yes"},
+		{"priced cross-issuer pair", canonical.Pair{Base: classic("AAA", issuerA), Quote: classic("USDC", issuerB)}, true, false, false, "yes"},
+		{"unpriced same-issuer pair is unroutable", canonical.Pair{Base: classic("AAA", issuerA), Quote: classic("BBB", issuerA)}, false, false, false, "unroutable"},
+		{"unpriced cross-issuer pair is a gap", canonical.Pair{Base: classic("AAA", issuerA), Quote: classic("BBB", issuerB)}, false, false, false, "no"},
+		{"unpriced native leg is a gap", canonical.Pair{Base: classic("AAA", issuerA), Quote: canonical.NativeAsset()}, false, false, false, "no"},
 		{"unpriced soroban legs are a gap", canonical.Pair{
 			Base:  canonical.Asset{Type: canonical.AssetSoroban, ContractID: sac},
 			Quote: canonical.Asset{Type: canonical.AssetSoroban, ContractID: sac},
-		}, false, false, "no"},
-		{"thin refusal on a cross-issuer pair", canonical.Pair{Base: classic("AAA", issuerA), Quote: classic("BBB", issuerB)}, false, true, "thin"},
-		{"unroutable wins over thin", canonical.Pair{Base: classic("AAA", issuerA), Quote: classic("BBB", issuerA)}, false, true, "unroutable"},
-		{"populated wins over thin", canonical.Pair{Base: classic("AAA", issuerA), Quote: classic("BBB", issuerB)}, true, true, "yes"},
-		{"empty issuers never match", canonical.Pair{Base: classic("AAA", ""), Quote: classic("BBB", "")}, false, false, "no"},
+		}, false, false, false, "no"},
+		{"thin refusal on a cross-issuer pair", canonical.Pair{Base: classic("AAA", issuerA), Quote: classic("BBB", issuerB)}, false, false, true, "thin"},
+		{"unroutable wins over thin", canonical.Pair{Base: classic("AAA", issuerA), Quote: classic("BBB", issuerA)}, false, false, true, "unroutable"},
+		{"populated wins over thin", canonical.Pair{Base: classic("AAA", issuerA), Quote: classic("BBB", issuerB)}, true, false, true, "yes"},
+		{"empty issuers never match", canonical.Pair{Base: classic("AAA", ""), Quote: classic("BBB", "")}, false, false, false, "no"},
+		{"refused on a cross-issuer pair", canonical.Pair{Base: classic("AAA", issuerA), Quote: classic("BBB", issuerB)}, false, true, false, "refused"},
+		{"refused wins over thin", canonical.Pair{Base: classic("AAA", issuerA), Quote: classic("BBB", issuerB)}, false, true, true, "refused"},
+		{"refused wins over unroutable", canonical.Pair{Base: classic("AAA", issuerA), Quote: classic("BBB", issuerA)}, false, true, false, "refused"},
+		{"populated wins over refused", canonical.Pair{Base: classic("AAA", issuerA), Quote: classic("BBB", issuerB)}, true, true, false, "yes"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := usdPopulatedLabel(tc.pair, tc.populated, tc.thin); got != tc.want {
+			if got := usdPopulatedLabel(tc.pair, tc.populated, tc.refused, tc.thin); got != tc.want {
 				t.Errorf("usdPopulatedLabel = %q, want %q", got, tc.want)
 			}
 		})

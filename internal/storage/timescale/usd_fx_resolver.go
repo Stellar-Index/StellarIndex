@@ -380,6 +380,47 @@ func (r *VWAPUSDFXResolver) substanceAllows(
 	return ok, nil
 }
 
+// anchorForms is the anchor-market quote set the credibility budget measures against: every USD-peg form and every XLM form.
+func (r *VWAPUSDFXResolver) anchorForms() []canonical.Asset {
+	out := make([]canonical.Asset, 0, len(r.pegAssets)+len(r.xlmForms))
+	out = append(out, r.pegAssets...)
+	return append(out, r.xlmForms...)
+}
+
+// anchorFormNames is [anchorForms] as the asset-id strings trades stores.
+func (r *VWAPUSDFXResolver) anchorFormNames() []string {
+	forms := r.anchorForms()
+	names := make([]string, 0, len(forms))
+	for _, f := range forms {
+		names = append(names, f.String())
+	}
+	return names
+}
+
+// AnchorBackingAt is the asset's anchor-market turnover over the trailing closed-hour window ending at the hour holding `at`, the series
+// the substance gate reads ([Store.PairMarketSubstanceAt]); ok=false when nothing traded. Cached per (asset, hour) like the substance
+// verdict.
+func (r *VWAPUSDFXResolver) AnchorBackingAt(ctx context.Context, asset canonical.Asset, at time.Time) (*big.Rat, bool, error) {
+	asOf := at.UTC().Truncate(time.Hour)
+	key := fxCacheKey{asset: "backing:" + asset.String(), bucketMs: asOf.UnixMilli()}
+	text, ok := r.lookupCache(key)
+	if !ok {
+		grain := valuationSubstanceGrain(r.clock().Sub(asOf))
+		sub, err := r.store.PairMarketSubstanceAt(
+			ctx, canonical.AssetAliases(asset), r.anchorForms(), asOf, valuationSubstanceWindow, grain)
+		if err != nil {
+			return nil, false, err
+		}
+		text = sub.VolumeUSD
+		r.storeCache(key, fxCacheEntry{rate: text, cachedAt: r.clock()})
+	}
+	v, ok := new(big.Rat).SetString(text)
+	if !ok || v.Sign() <= 0 {
+		return nil, false, nil
+	}
+	return v, true, nil
+}
+
 // fiatUSDRateScale renders fiat->USD rates (~1.34 GBP to ~3.8e-5 VND) from exact *big.Rat; 18 places keeps 13+ significant digits for
 // the weakest.
 const fiatUSDRateScale = 18
@@ -777,5 +818,6 @@ func InstallUSDVolumeResolution(store *Store, classicUSDPegs []string, sacWrappe
 		return fmt.Errorf("usd-volume fx resolver: %w", err)
 	}
 	store.SetUSDVolumeFXResolver(fxResolver)
+	store.creditBudget = newUSDCreditBudget(store.servedTokenTokenUSD(fxResolver.anchorFormNames()))
 	return nil
 }

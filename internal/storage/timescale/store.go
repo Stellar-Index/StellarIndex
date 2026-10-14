@@ -35,6 +35,9 @@ type Store struct {
 	// anchor). See [tradeUSDVolumeViaFX] and [usdVolumeViaXLMBaseAnchor].
 	usdVolumeFXResolver USDVolumeFXResolver
 
+	// creditBudget, when non-nil, bounds what token/token prints add to served USD volume per asset ([usdCreditBudget]).
+	creditBudget *usdCreditBudget
+
 	// deriveGeneration is stamped into `derive_generation` by the derived-value writers. They
 	// DO UPDATE on conflict, guarded by `derive_generation <= EXCLUDED.derive_generation`, so a
 	// corrected re-derive lands without DELETE + re-backfill. 0 is live ingest; a re-derive sets a
@@ -99,22 +102,22 @@ func (s *Store) reDeriveNullVolumeGuard(t canonical.Trade, computed *string) err
 	return nil
 }
 
-// resolveUSDVolume is the one place a trade write computes usd_volume. A resolver read error stores NULL live (repairable by re-derive) but
-// fails a re-derive write, where the NULL would win the generation guard over a correct value.
-func (s *Store) resolveUSDVolume(ctx context.Context, t canonical.Trade) (*string, error) {
-	v, err := tradeUSDVolumeChecked(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver)
+// resolveUSDVolume is the one place a trade write computes usd_volume, so it is the one place the credibility budget is charged. A resolver
+// read error stores NULL live (repairable by re-derive) but fails a re-derive write, where the NULL would win the generation guard.
+func (s *Store) resolveUSDVolume(ctx context.Context, t canonical.Trade) (v *string, refused bool, err error) {
+	v, refused, err = tradeUSDVolumeCredited(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver, s.creditBudget, true)
 	if err != nil {
 		if s.deriveGeneration > 0 {
-			return nil, fmt.Errorf("timescale: refusing to write trade %s/%s (source=%s ledger=%d) "+
+			return nil, false, fmt.Errorf("timescale: refusing to write trade %s/%s (source=%s ledger=%d) "+
 				"in re-derive mode (generation=%d): USD-volume resolver read failed: %w",
 				t.Pair.Base, t.Pair.Quote, t.Source, t.Ledger, s.deriveGeneration, err)
 		}
-		return nil, nil
+		return nil, false, nil
 	}
 	if err := s.reDeriveNullVolumeGuard(t, v); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return v, nil
+	return v, refused, nil
 }
 
 // Pool-tuning constants, exported so store_test.go can assert configurePool set them.
