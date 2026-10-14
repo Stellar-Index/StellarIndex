@@ -1038,12 +1038,12 @@ func TestCoinGecko_AssetNotInIDMap(t *testing.T) {
 	ref := divergence.NewCoinGeckoReference(divergence.CoinGeckoOptions{
 		IDMap: map[string]string{}, // empty — relies on built-in default
 	})
-	// Build a pair whose base ISN'T in the default IDMap. A classic
-	// SEP-1 asset (long-tail issuer) is parseable but not curated;
-	// the lookup should return ErrAssetUnsupported.
-	base, err := canonical.ParseAsset("AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA")
+	// Build a pair whose base ISN'T in the default IDMap: a bridged classic
+	// asset CoinGecko lists under no stellar platform address is parseable
+	// but not curated; the lookup should return ErrAssetUnsupported.
+	base, err := canonical.ParseAsset("XRP-GBXRPL45NPHCVMFFAYZVUVFFVKSIZ362ZXFP7I2ETNQ3QKZMFLPRDTD5")
 	if err != nil {
-		t.Fatalf("ParseAsset(AQUA-...): %v", err)
+		t.Fatalf("ParseAsset(XRP-...): %v", err)
 	}
 	usd, err := canonical.ParseAsset("fiat:USD")
 	if err != nil {

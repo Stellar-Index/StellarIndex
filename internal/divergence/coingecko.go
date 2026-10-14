@@ -158,6 +158,7 @@ func NewCoinGeckoReference(opts CoinGeckoOptions) *CoinGeckoReference {
 }
 
 // defaultCoinGeckoIDMap covers the aggregator's default asset_id forms (XLM in every alias form, BTC, ETH, major USD stablecoins per ADR-0026).
+// The served Stellar assets CoinGecko lists under a platform address join under every alias form.
 // It mirrors the poller's `tickerToID` map but keys on canonical asset_id strings (`crypto:XLM`, `native`), not bare tickers; slugs verified against /coins/list.
 func defaultCoinGeckoIDMap() map[string]string {
 	m := map[string]string{
@@ -178,7 +179,33 @@ func defaultCoinGeckoIDMap() map[string]string {
 	for _, form := range canonical.AssetAliasStrings(canonical.NativeAsset()) {
 		m[form] = "stellar"
 	}
+	for id, slug := range servedStellarCoinGeckoSlugs {
+		m[id] = slug
+		if asset, err := canonical.ParseAsset(id); err == nil {
+			for _, form := range canonical.AssetAliasStrings(asset) {
+				m[form] = slug
+			}
+		}
+	}
 	return m
+}
+
+// servedStellarCoinGeckoSlugs keys the served Stellar assets CoinGecko lists under a stellar platform address on that
+// address (the canonical asset_id form the aggregator's pairs use); the values are CoinGecko's own coin ids.
+var servedStellarCoinGeckoSlugs = map[string]string{
+	"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN":  "usd-coin",
+	"CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75":       "usd-coin",
+	"EURC-GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2":  "euro-coin",
+	"AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA":  "aquarius",
+	"SHX-GDSTRSHXHGJ7ZIVRBXEYE5Q74XUVCUSEKEBR7UCHEUUEK72N7I7KJ6JH":   "stronghold-token",
+	"VELO-GDM4RQUQQUVSKQA7S6EM7XBZP3FCGH4Q7CL6TABQ7B2BEJ5ERARM2M5M":  "velo",
+	"yUSDC-GDGTVWSM4MGS4T7Z6W4RPWOCHE2I6RDFCIFZGS3DOA63LWQTRNZNTTFF": "stellar-yusdc",
+	"AFR-GBX6YI45VU7WNAAKA3RBFDR3I3UKNFHTJPQ5F6KOOKSGYIAM4TRQN54W":   "afreum",
+	"SSLX-GBHFGY3ZNEJWLNO4LBUKLYOCEK4V7ENEBJGPRHHX7JU47GWHBREH37UR":  "starslax",
+	"SCOP-GC6OYQJIZF3HFXCYPFCBXYXNGIBQ4TNSFUBUXQJOZWIP6F3YZK4QH3VQ":  "scopuly-token",
+	"LSP-GAB7STHVD5BDH3EEYXPI3OM7PCS4V443PYB5FNT6CFGJVPDLMKDM24WK":   "lumenswap",
+	"FRED-GCA73U2PZFWAXJSNVMEVPNPPJCZGETWPWZC6E4DJAIWP3ZW3BAGYZLV6":  "fredenergy",
+	"TFT-GBOVQKJYHXRR3DX6NOX2RRYFRCUMSADGDESTDNBDS6CDVLGVESRTAC47":   "threefold-token",
 }
 
 // Name implements [Reference].
