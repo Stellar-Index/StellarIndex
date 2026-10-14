@@ -496,7 +496,7 @@ function kpiDisplay(kpi: BespokeKpi): { value: string; unit?: string } {
 function BespokeKpiCard({ kpi }: { kpi: BespokeKpi }) {
   const shown = kpiDisplay(kpi);
   return (
-    <div className="border-brand-200/70 bg-surface/80 rounded-lg border p-3 shadow-sm">
+    <div className="border-brand-200/70 bg-surface/80 rounded-lg border p-3">
       <div
         className="text-ink-muted flex items-center gap-1 text-[10px] tracking-wider uppercase"
         title={kpi.hint || undefined}

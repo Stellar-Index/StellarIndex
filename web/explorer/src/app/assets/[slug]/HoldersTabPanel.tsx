@@ -182,7 +182,7 @@ function ShareBar({ pct, max }: { pct: number | null; max: number }) {
     >
       <div className="bg-surface-muted h-1.5 w-24 rounded-full">
         <div
-          className="bg-brand-500 h-1.5 rounded-full"
+          className="bg-brand-500 h-1.5 rounded-sm"
           style={{ width: `${width}%` }}
         />
       </div>

@@ -134,7 +134,7 @@ export default function DivergencesPage() {
         {REFERENCES.map((r) => (
           <div
             key={r.name}
-            className="border-line bg-surface rounded-xl border p-5 shadow-sm"
+            className="border-line bg-surface rounded-xl border p-5"
           >
             <div className="flex items-center gap-2">
               <h2

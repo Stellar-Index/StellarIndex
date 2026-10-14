@@ -523,12 +523,12 @@ function EventBreakdown({
                 </span>
               </div>
               <div
-                className="bg-surface-subtle h-2.5 overflow-hidden rounded-full"
+                className="bg-surface-subtle h-2.5 overflow-hidden rounded-sm"
                 role="img"
                 aria-label={`${b.event_type}: ${b.count} events, ${pct.toFixed(1)}% of total`}
               >
                 <div
-                  className="bg-brand-500 h-full rounded-full motion-safe:transition-[width]"
+                  className="bg-brand-500 h-full rounded-sm motion-safe:transition-[width]"
                   style={{ width: `${Math.max(barPct, 1.5)}%` }}
                 />
               </div>
@@ -848,7 +848,7 @@ function Footer({ data, name }: { data: ProtocolDetail; name: string }) {
             {data.event_kinds.map((k) => (
               <li
                 key={k}
-                className="bg-surface-subtle text-ink-body rounded-full px-2 py-0.5 font-mono text-[10px]"
+                className="bg-surface-subtle text-ink-body rounded-sm px-2 py-0.5 font-mono text-[10px]"
               >
                 {k}
               </li>

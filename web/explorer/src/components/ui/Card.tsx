@@ -3,19 +3,16 @@ import type { ComponentProps, ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 
 type CardProps = ComponentProps<'div'> & {
-  /** `flat` drops the shadow (for nested cards / dense grids). */
-  flat?: boolean;
   /** `interactive` adds a hover lift — use for clickable cards. */
   interactive?: boolean;
 };
 
 /**
- * Card is the base surface primitive — a white panel on the canvas with a
- * hairline border and a soft shadow. The whole design leans on these +
- * whitespace rather than heavy chrome. Compose with CardHeader / CardBody.
+ * Card is the base surface primitive — a panel on the canvas with a hairline
+ * border. The whole design leans on borders and whitespace rather than
+ * chrome. Compose with CardHeader / CardBody.
  */
 export function Card({
-  flat,
   interactive,
   className,
   children,
@@ -25,9 +22,7 @@ export function Card({
     <div
       className={cn(
         'rounded-card border-line bg-surface border',
-        flat ? 'shadow-none' : 'shadow-card',
-        interactive &&
-          'hover:border-line-strong hover:shadow-elevated transition-shadow duration-150',
+        interactive && 'hover:border-line-strong',
         className,
       )}
       {...props}

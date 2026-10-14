@@ -29,7 +29,7 @@ export default function ArchitectureIndexPage() {
           <Link
             key={d.slug}
             href={`/research/architecture/${d.slug}`}
-            className="group border-line bg-surface hover:border-brand-300 flex flex-col gap-2 rounded-xl border p-4 transition hover:shadow-sm"
+            className="group border-line bg-surface hover:border-brand-300 flex flex-col gap-2 rounded-xl border p-4 transition"
           >
             <div className="flex items-center gap-2">
               <BookOpen className="text-ink-faint group-hover:text-brand-500 h-3.5 w-3.5" />

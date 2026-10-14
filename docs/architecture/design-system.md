@@ -44,14 +44,14 @@ rationale: `docs/frontend/dark-redesign-direction.md`. Restructuring companion:
 | Group | Tokens | Use |
 |---|---|---|
 | **brand** | `brand-50…950` (accent `brand-500/600`, bright text `700/900`, dark tints `50/100`) | Actions, links, focus, active, selection |
-| **surface** | `surface-canvas` (`#0a0b0d` page bg), `surface` (card), `surface-muted` (raised/hover), `surface-subtle` (well) | Layering: canvas → card → raised |
+| **surface** | `surface-canvas` (`#050506` page bg), `surface` (card), `surface-muted` (raised/hover), `surface-subtle` (well) | Layering: canvas → card → raised |
 | **line** | `line-subtle`, `line`, `line-strong` | Hairline borders (default `border` colour is `line`) |
 | **ink** | `ink` (headings), `ink-body`, `ink-muted`, `ink-faint` | Text hierarchy (light on dark) |
 | **up / down** | `up`, `down` (+ `subtle`/`strong`) | Price direction, deltas, freshness |
 | **warn / bad / ok** | `*-50/300/500/700` (`-50` = **dark tint bg**, `-700/900` = **bright text**) | Severity (banners, status, validation) |
 | **type** | `text-display`, `display-sm`, `h1`, `h2`, `h3`; fonts `font-serif` / `font-sans` / `font-mono` | Display serif, body sans, data mono |
-| **radius** | `rounded-card` (**6px**), `rounded-lg` (6px), `rounded-md` (4px), `rounded-full` | Crisp, not childish; `full` only for dots/avatars |
-| **shadow** | `shadow-elevated` (overlays only), `shadow-focus` | On dark, depth = borders + layering; shadows for menus/overlays only |
+| **radius** | every `rounded-*` step is **2px**; `rounded-full` | One radius; `full` only for status dots and asset icons |
+| **shadow** | none (`--shadow-*` is unset) | Depth is borders + layering only |
 | **width** | `max-w-page` (1728px), `max-w-prose` | Page frame / reading measure |
 
 Charts (lightweight-charts) theme from these same tokens via

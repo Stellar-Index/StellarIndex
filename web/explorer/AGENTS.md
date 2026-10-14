@@ -24,7 +24,7 @@ TanStack Query. Customer dashboard at `/dashboard/*`. ~80 routes (82
    **no `tailwind.config.ts`**). Restyle by editing tokens. Compose class
    strings with `cn()` (`@/lib/cn`, last-wins merge) — never concatenate.
 3. **Dark only.** The semantic tokens are defined dark (neutral near-black
-   canvas `#0a0b0d`); there is one mode — don't add `dark:` variants or a
+   canvas `#050506`); there is one mode — don't add `dark:` variants or a
    light/dark toggle. Depth comes from surface layering + hairline borders, not
    shadows. Type: **Fraunces serif** for display/titles (`h1`, `.font-display`),
    **Inter** body, **JetBrains Mono** for all data/numerics/eyebrows. Charts
@@ -58,3 +58,13 @@ doesn't fight the test. See the `*.test.tsx` beside the primitives and
 - **Structure & redesign playbook →** `docs/frontend/redesign-readiness.md` —
   per-page decomposition status, ranked extract-first list, and how to
   restyle / reorder / restructure safely.
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+## This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

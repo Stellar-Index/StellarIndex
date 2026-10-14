@@ -77,7 +77,7 @@ export default function InsightsPage() {
             <Link
               key={s.href}
               href={s.href}
-              className="group border-line bg-surface hover:border-brand-500 rounded-xl border p-5 shadow-sm transition-colors"
+              className="group border-line bg-surface hover:border-brand-500 rounded-xl border p-5 transition-colors"
             >
               <div className="flex items-center gap-2.5">
                 <Icon className="text-brand-600 h-5 w-5" />

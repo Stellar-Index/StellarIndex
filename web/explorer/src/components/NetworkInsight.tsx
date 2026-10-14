@@ -117,9 +117,9 @@ export function OperationMixPanel({
                 <span className="text-ink-faint ml-1">{pct.toFixed(1)}%</span>
               </span>
             </div>
-            <div className="bg-surface-muted h-1.5 overflow-hidden rounded-full">
+            <div className="bg-surface-muted h-1.5 overflow-hidden rounded-sm">
               <div
-                className="bg-brand-500 group-hover:bg-brand-600 h-full rounded-full transition-all"
+                className="bg-brand-500 group-hover:bg-brand-600 h-full rounded-sm transition-colors"
                 style={{ width: `${(count / max) * 100}%` }}
               />
             </div>

@@ -166,7 +166,7 @@ export function HomeTryAPI() {
   }
 
   return (
-    <div className="border-line bg-surface rounded-xl border p-4 shadow-sm">
+    <div className="border-line bg-surface rounded-xl border p-4">
       <div className="mb-3 flex flex-wrap gap-1">
         {EXAMPLES.map((ex, i) => (
           <button

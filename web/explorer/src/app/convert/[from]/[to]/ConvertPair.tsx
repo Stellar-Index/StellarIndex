@@ -54,7 +54,7 @@ export function ConvertPair({
   const toLabel = direction === 'forward' ? to : from;
 
   return (
-    <section className="border-line bg-surface rounded-xl border p-5 shadow-sm">
+    <section className="border-line bg-surface rounded-xl border p-5">
       <h2 className="text-h3 text-ink mb-4 font-semibold">
         Convert {fromLabel} → {toLabel}
       </h2>

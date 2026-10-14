@@ -118,7 +118,7 @@ export default function AggregatorsPage() {
 
 function Card({ entry }: { entry: Entry }) {
   return (
-    <div className="rounded-card border-line bg-surface shadow-card border p-5">
+    <div className="rounded-card border-line bg-surface border p-5">
       <div className="flex items-baseline justify-between gap-2">
         <h2 className="text-h3 text-ink font-semibold">{entry.name}</h2>
         <span

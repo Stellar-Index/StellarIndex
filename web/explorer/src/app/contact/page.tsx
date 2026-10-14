@@ -112,7 +112,7 @@ export default function ContactPage() {
           {FAQS.map((f) => (
             <details
               key={f.q}
-              className="group border-line bg-surface rounded-xl border p-4 open:shadow-sm"
+              className="group border-line bg-surface rounded-xl border p-4"
             >
               <summary className="flex cursor-pointer items-center justify-between text-sm font-medium">
                 {f.q}
@@ -148,7 +148,7 @@ function ChannelCard({ channel }: { channel: Channel }) {
   const Icon = channel.icon;
   const isInternal = !channel.external;
   const inner = (
-    <div className="border-line bg-surface hover:border-brand-300 flex items-start gap-4 rounded-xl border p-5 transition hover:shadow-sm">
+    <div className="border-line bg-surface hover:border-brand-300 flex items-start gap-4 rounded-xl border p-5 transition">
       <div className="bg-surface-subtle text-brand-600 rounded-lg p-2">
         <Icon className="h-4 w-4" />
       </div>

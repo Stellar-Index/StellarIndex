@@ -21,7 +21,7 @@ export default function LendingPage() {
         title="Lending"
       />
 
-      <div className="border-line bg-surface rounded-xl border p-5 shadow-sm">
+      <div className="border-line bg-surface rounded-xl border p-5">
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-h3 text-ink font-semibold">Blend</h2>
           <Badge tone="up">Live</Badge>

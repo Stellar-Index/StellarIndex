@@ -47,16 +47,16 @@
   --color-brand-fill: #3358bf;
   --color-brand-fill-hover: #21408f;
 
-  /* Surfaces — neutral near-black, a whisper of cool. */
-  --color-surface: #101216;
-  --color-surface-canvas: #0a0b0d;
-  --color-surface-muted: #171b22;
-  --color-surface-subtle: #0d0f13;
+  /* Surfaces — neutral near-black; the data carries the contrast. */
+  --color-surface: #0b0b0c;
+  --color-surface-canvas: #050506;
+  --color-surface-muted: #121214;
+  --color-surface-subtle: #080809;
 
   /* Lines — hairline borders (the ledger grid). */
-  --color-line-subtle: #17191f;
-  --color-line: #23272f;
-  --color-line-strong: #30353f;
+  --color-line-subtle: #131315;
+  --color-line: #1d1d20;
+  --color-line-strong: #2a2a2e;
   /* Form-control boundary. line-strong is 1.52:1 on surface — decorative
      hairlines may be that quiet, but the EDGE OF AN INPUT is a UI component
      boundary and WCAG 1.4.11 wants 3:1. Held against every surface an input
@@ -148,35 +148,35 @@
 
   --tracking-tightest: -0.03em;
 
-  /* Radius — crisp, not childish (was 14px). */
-  --radius-sm: 0.1875rem;
-  --radius-md: 0.25rem;
-  --radius-lg: 0.375rem;
-  --radius-xl: 0.5rem;
-  --radius-card: 0.375rem;
-  --radius-4xl: 1rem;
+  /* Radius — 2px everywhere; rounded-full stays only for dots and asset icons. */
+  --radius: 2px;
+  --radius-xs: 2px;
+  --radius-sm: 2px;
+  --radius-md: 2px;
+  --radius-lg: 2px;
+  --radius-xl: 2px;
+  --radius-2xl: 2px;
+  --radius-3xl: 2px;
+  --radius-4xl: 2px;
+  --radius-card: 2px;
 
-  /* Elevation — on dark, depth is borders + layering, not soft shadows.
-     Only overlays/menus get a real shadow. */
-  --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.4);
-  --shadow-card: 0 1px 0 0 rgb(0 0 0 / 0.3);
-  --shadow-elevated:
-    0 12px 32px -8px rgb(0 0 0 / 0.7), 0 4px 12px -4px rgb(0 0 0 / 0.5);
-  --shadow-focus: 0 0 0 3px rgb(76 125 255 / 0.35);
+  /* No shadows: depth is borders and layering only. */
+  --shadow-*: initial;
+
+  /* Motion — fast and flat; nothing moves further than it must. */
+  --default-transition-duration: 100ms;
 
   --container-page: 108rem;
   --container-prose: 46rem;
 
-  --animate-fade-in: fade-in 0.3s ease-out both;
+  --animate-fade-in: fade-in 0.12s linear both;
 
   @keyframes fade-in {
     from {
       opacity: 0;
-      transform: translateY(4px);
     }
     to {
       opacity: 1;
-      transform: translateY(0);
     }
   }
 }
@@ -201,7 +201,6 @@
 @layer base {
   html {
     -webkit-text-size-adjust: 100%;
-    scroll-behavior: smooth;
     color-scheme: dark;
     /* Inter: contextual alternates + stylistic set for crisp UI text. */
     font-feature-settings: 'cv11', 'ss01';
@@ -244,6 +243,11 @@
   ::after {
     border-color: var(--color-line);
   }
+
+  /* Icons are hairline strokes (lucide ships 2). */
+  svg.lucide {
+    stroke-width: 1.25;
+  }
 }
 
 /* Serif display utility for hero figures/titles that aren't an <h1>. */
@@ -256,20 +260,18 @@
 /* Live-tick program (RT-2): micro-animations for real-time frames.
    `.live-tick` nudges a value that just updated (key the element on the
    value so React remounts it per tick); `.flash-up` / `.flash-down`
-   tint a price for ~0.9s after a tick in that direction (drive from
+   tint a price briefly after a tick in that direction (drive from
    usePriceFlash). All are suppressed by prefers-reduced-motion via the
    global override below. */
 .live-tick {
-  animation: live-tick 0.45s ease-out both;
+  animation: live-tick 0.15s linear both;
 }
 @keyframes live-tick {
   from {
     opacity: 0.35;
-    transform: translateY(-2px);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
   }
 }
 /* Odometer rollover for live counters (RollingNumber): a changed
@@ -299,11 +301,8 @@
   /* Rest on the NEW digit: translate up by an absolute -1lh (exactly one
      line), so the settled / reduced-motion state shows the new value. */
   transform: translateY(-1lh);
-  /* 0.65s (was 0.35s): at the ledger's ~5s cadence a 0.35s roll of one
-     11px digit read as an instant swap — measured correct in DevTools,
-     invisible to the eye (operator report 2026-08-24). The longer travel
-     with a pronounced settle makes the wheel legible. */
-  animation: digit-rollover 0.65s cubic-bezier(0.22, 0.9, 0.28, 1) both;
+  /* Below ~0.3s the roll of one 11px digit reads as an instant swap. */
+  animation: digit-rollover 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 .digit-strip > span {
   display: block;
@@ -325,29 +324,25 @@
   }
 }
 .flash-up {
-  animation: flash-up 0.9s ease-out both;
+  animation: flash-up 0.35s linear both;
 }
 .flash-down {
-  animation: flash-down 0.9s ease-out both;
+  animation: flash-down 0.35s linear both;
 }
 @keyframes flash-up {
   0% {
     color: var(--color-up-strong);
-    text-shadow: 0 0 12px rgb(49 196 141 / 0.35);
   }
   100% {
     color: inherit;
-    text-shadow: none;
   }
 }
 @keyframes flash-down {
   0% {
     color: var(--color-down-strong);
-    text-shadow: 0 0 12px rgb(246 70 93 / 0.35);
   }
   100% {
     color: inherit;
-    text-shadow: none;
   }
 }
 
@@ -361,9 +356,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  html {
-    scroll-behavior: auto;
-  }
   *,
   ::before,
   ::after {

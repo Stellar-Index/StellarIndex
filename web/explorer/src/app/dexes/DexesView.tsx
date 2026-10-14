@@ -381,7 +381,7 @@ function SourceChip({
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-full px-2 py-0.5 font-mono text-[10px] tracking-wider uppercase ${
+      className={`rounded-sm px-2 py-0.5 font-mono text-[10px] tracking-wider uppercase ${
         active
           ? 'bg-brand-fill text-white'
           : 'bg-surface-subtle text-ink-body hover:bg-line'

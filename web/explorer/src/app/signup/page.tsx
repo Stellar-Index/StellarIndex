@@ -55,7 +55,7 @@ export default function SignupPage() {
         title="Create your account"
       />
 
-      <section className="border-line bg-surface mb-12 rounded-xl border p-6 shadow-sm sm:p-8">
+      <section className="border-line bg-surface mb-12 rounded-xl border p-6 sm:p-8">
         <SignInForm mode="signup" />
         <p className="text-ink-muted mt-4 text-xs">
           Already have an account?{' '}
@@ -117,7 +117,7 @@ export default function SignupPage() {
                   <td className="text-ink px-4 py-3 text-sm font-semibold whitespace-nowrap">
                     {tier.name}
                     {tier.highlight && (
-                      <span className="bg-brand-fill ml-2 inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium text-white">
+                      <span className="bg-brand-fill ml-2 inline-flex items-center rounded-sm px-2 py-0.5 text-xs font-medium text-white">
                         you are here
                       </span>
                     )}

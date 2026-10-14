@@ -33,7 +33,7 @@ export function DirectionPill({
     return (
       <span
         className={twMerge(
-          'bg-surface-subtle text-ink-muted inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs',
+          'bg-surface-subtle text-ink-muted inline-flex items-center gap-1 rounded-sm px-2 py-0.5 text-xs',
           className,
         )}
         aria-label="no data"
@@ -63,7 +63,7 @@ export function DirectionPill({
   return (
     <span
       className={twMerge(
-        'inline-flex items-center gap-0.5 rounded-full font-medium tabular-nums',
+        'inline-flex items-center gap-0.5 rounded-sm font-medium tabular-nums',
         compact ? 'px-1.5 py-0 text-[10px]' : 'px-2 py-0.5 text-xs',
         bg,
         className,

@@ -78,7 +78,7 @@ describe('ConvertSnippets', () => {
     );
 
     // First paint: the 100-USD row + caption at the baked rate
-    // (exact match so baked 850.0000 for the 1000-row can't shadow it).
+    // (exact match so baked 850.0000 for the 1000-row can't  it).
     expect(
       screen.getByText('85.0000 EUR', { exact: true }),
     ).toBeInTheDocument();

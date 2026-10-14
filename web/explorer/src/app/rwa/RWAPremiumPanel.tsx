@@ -186,7 +186,7 @@ function Legend({ lines }: { lines: NamedLineSeries[] }) {
         <li key={l.label} className="flex items-center gap-1.5">
           <span
             aria-hidden
-            className="h-0.5 w-3 rounded-full"
+            className="h-0.5 w-3 rounded-sm"
             style={{ backgroundColor: l.color }}
           />
           <span className="text-ink-body text-xs">{l.label}</span>

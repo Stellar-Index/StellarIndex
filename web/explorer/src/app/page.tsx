@@ -35,7 +35,7 @@ export default function HomePage() {
   return (
     <Container className="space-y-12 py-10 sm:py-14">
       <header className="max-w-3xl space-y-5">
-        <p className="border-line bg-surface text-ink-muted inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium">
+        <p className="border-line bg-surface text-ink-muted inline-flex items-center gap-2 rounded-sm border px-3 py-1 text-xs font-medium">
           <span className="bg-up h-1.5 w-1.5 rounded-full" />
           Independent · open · public-tier free
         </p>
@@ -99,7 +99,7 @@ export default function HomePage() {
 
       {/* The flagship API product, presented as a product —
           plans, keys, and where to start. */}
-      <section className="rounded-card border-line bg-surface shadow-card border p-6 sm:p-8">
+      <section className="rounded-card border-line bg-surface border p-6 sm:p-8">
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-2 lg:items-center">
           <div className="space-y-4">
             <p className="text-brand-600 text-xs font-medium tracking-wider uppercase">

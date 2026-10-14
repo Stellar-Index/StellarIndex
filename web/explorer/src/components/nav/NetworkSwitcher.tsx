@@ -54,7 +54,6 @@ function LiveDot({ tone }: { tone: DotTone }) {
   if (tone === 'live') {
     return (
       <span className="relative flex h-1.5 w-1.5 shrink-0" aria-hidden>
-        <span className="bg-up absolute inline-flex h-full w-full animate-ping rounded-full opacity-60" />
         <span className="bg-up relative inline-flex h-1.5 w-1.5 rounded-full" />
       </span>
     );
@@ -148,7 +147,7 @@ export function NetworkSwitcher({ onNavigate }: { onNavigate?: () => void }) {
           id="network-switcher-menu"
           ref={panelRef}
           tabIndex={-1}
-          className="border-line bg-surface shadow-elevated absolute top-full right-0 z-50 mt-1 w-60 rounded-lg border p-1.5 outline-hidden"
+          className="border-line bg-surface absolute top-full right-0 z-50 mt-1 w-60 rounded-lg border p-1.5 outline-hidden"
         >
           <p className="text-ink-faint px-2 py-1 text-[10px] font-medium tracking-wide uppercase">
             Networks

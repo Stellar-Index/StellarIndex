@@ -43,7 +43,7 @@ export function TabNav({
             {typeof t.count === 'number' && (
               <span
                 className={cn(
-                  'tnum ml-1.5 rounded-full px-1.5 py-0.5 text-[11px]',
+                  'tnum ml-1.5 rounded-sm px-1.5 py-0.5 text-[11px]',
                   active
                     ? 'bg-brand-50 text-brand-700'
                     : 'bg-surface-subtle text-ink-muted',
@@ -62,7 +62,7 @@ export function TabNav({
 /**
  * SegmentedControl — THE pill-style toggle group for compact in-card
  * window/metric switches; SortPill is the one sibling.
- * Quiet `bg-surface shadow-xs` active style; role="group" + a required
+ * Quiet `bg-surface ` active style; role="group" + a required
  * aria-label + a focus-visible ring on every segment.
  */
 export function Segmented({
@@ -97,7 +97,7 @@ export function Segmented({
           className={cn(
             'focus-visible:ring-brand-500/60 rounded-md px-2.5 py-1 text-[13px] font-medium transition-colors focus-visible:ring-2 focus-visible:outline-hidden',
             value === o.value
-              ? 'bg-surface text-ink shadow-xs'
+              ? 'bg-surface text-ink'
               : 'text-ink-muted hover:text-ink',
           )}
         >

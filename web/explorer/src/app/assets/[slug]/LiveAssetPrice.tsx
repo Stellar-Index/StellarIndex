@@ -205,7 +205,6 @@ export function LiveAssetPrice({
             aria-label="live"
             role="status"
           >
-            <span className="bg-up absolute inline-flex h-full w-full animate-ping rounded-full opacity-60" />
             <span className="bg-up relative inline-flex h-2 w-2 rounded-full" />
           </span>
         )}

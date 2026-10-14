@@ -119,7 +119,7 @@ export function ChangeSummaryStrip({
       )}
       {atl != null && (
         <span
-          className="bg-surface-subtle text-ink-muted inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-xs tabular-nums"
+          className="bg-surface-subtle text-ink-muted inline-flex items-center gap-1 rounded-sm px-2 py-0.5 font-mono text-xs tabular-nums"
           title={`Lowest USD value observed since this asset entered the index${summary.atl_at ? ` (${summary.atl_at.slice(0, 10)})` : ''} — not an all-time low over full market history.`}
         >
           <span className="text-[10px] tracking-wider uppercase">
@@ -146,7 +146,7 @@ export function StreakChip({
       : 'bg-down-subtle/50 text-down-strong';
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${tone}`}
+      className={`inline-flex items-center gap-1 rounded-sm px-2 py-0.5 text-xs font-medium ${tone}`}
     >
       <Icon className="h-3 w-3" aria-hidden />
       {days} {days === 1 ? 'day' : 'days'} {direction}

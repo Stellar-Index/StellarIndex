@@ -196,7 +196,7 @@ function WidgetCard({
   snippet: string;
 }) {
   return (
-    <div className="border-line bg-surface overflow-hidden rounded-xl border shadow-sm">
+    <div className="border-line bg-surface overflow-hidden rounded-xl border">
       <div className="border-line bg-surface-muted text-ink-muted border-b px-4 py-2 text-xs tracking-wider uppercase">
         {label}
       </div>

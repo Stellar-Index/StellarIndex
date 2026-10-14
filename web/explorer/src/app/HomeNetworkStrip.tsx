@@ -246,11 +246,11 @@ function Cell({
     return (
       <Link
         href={href}
-        className={`${baseClass} shadow-card hover:border-line-strong hover:shadow-elevated transition-all`}
+        className={`${baseClass} hover:border-line-strong transition-colors`}
       >
         {inner}
       </Link>
     );
   }
-  return <div className={`${baseClass} shadow-card`}>{inner}</div>;
+  return <div className={`${baseClass} `}>{inner}</div>;
 }

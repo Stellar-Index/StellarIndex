@@ -239,7 +239,7 @@ export function DepthChart({
               style={{ left: `${hover.frac * 100}%` }}
             />
             <div
-              className="border-line bg-surface/95 text-ink-body shadow-card pointer-events-none absolute top-2 z-10 rounded-sm border px-2 py-1 font-mono text-[11px]"
+              className="border-line bg-surface/95 text-ink-body pointer-events-none absolute top-2 z-10 rounded-sm border px-2 py-1 font-mono text-[11px]"
               style={
                 hover.frac > 0.55
                   ? { right: `${(1 - hover.frac) * 100}%`, marginRight: 8 }

@@ -32,7 +32,7 @@ export function CountBar({ value, max }: { value: number; max: number }) {
       className="bg-surface-subtle mt-1 ml-auto h-1 w-20 rounded-full"
     >
       <div
-        className="bg-brand-500 h-1 rounded-full"
+        className="bg-brand-500 h-1 rounded-sm"
         style={{ width: `${pct}%` }}
       />
     </div>

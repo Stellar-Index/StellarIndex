@@ -170,7 +170,7 @@ export function NetworkView() {
             <Link
               key={l.href}
               href={l.href}
-              className="border-line bg-surface text-ink-body hover:border-brand-500 hover:text-brand-600 rounded-lg border px-3 py-1 text-sm font-medium shadow-xs"
+              className="border-line bg-surface text-ink-body hover:border-brand-500 hover:text-brand-600 rounded-lg border px-3 py-1 text-sm font-medium"
             >
               {l.label} →
             </Link>

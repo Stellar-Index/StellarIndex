@@ -164,7 +164,7 @@ export default function CompanyPage() {
         </p>
       </section>
 
-      <section className="border-line bg-surface rounded-xl border p-6 shadow-sm">
+      <section className="border-line bg-surface rounded-xl border p-6">
         <h2 className="text-h3 text-ink font-semibold">Get in touch</h2>
         <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Link

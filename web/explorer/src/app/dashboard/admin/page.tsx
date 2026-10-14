@@ -71,7 +71,7 @@ function AdminBody({ me }: { me: MeResponse }) {
         <CustomerLookup />
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Card flat>
+          <Card>
             <CardBody className="space-y-3">
               <span className="bg-surface-subtle text-ink-muted flex h-9 w-9 items-center justify-center rounded-lg">
                 <Sliders className="h-[18px] w-[18px]" />
@@ -94,7 +94,7 @@ function AdminBody({ me }: { me: MeResponse }) {
               <Badge tone="neutral">API only</Badge>
             </CardBody>
           </Card>
-          <Card flat>
+          <Card>
             <CardBody className="space-y-3">
               <span className="bg-surface-subtle text-ink-muted flex h-9 w-9 items-center justify-center rounded-lg">
                 <AlertTriangle className="h-[18px] w-[18px]" />

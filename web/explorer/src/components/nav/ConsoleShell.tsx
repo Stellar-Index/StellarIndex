@@ -101,7 +101,7 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
             role="dialog"
             aria-modal="true"
             aria-label="Navigation"
-            className="border-line bg-surface shadow-elevated absolute top-0 left-0 h-full w-72 max-w-[85vw] border-r outline-hidden"
+            className="border-line bg-surface absolute top-0 left-0 h-full w-72 max-w-[85vw] border-r outline-hidden"
           >
             <button
               type="button"

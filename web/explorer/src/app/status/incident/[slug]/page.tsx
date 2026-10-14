@@ -102,7 +102,7 @@ export default async function IncidentPage({
           {inc.affected_components.map((c) => (
             <span
               key={c}
-              className="bg-surface-subtle text-ink-muted ring-line inline-flex items-center rounded-full px-2 py-0.5 font-mono text-[10px] ring-1 ring-inset"
+              className="bg-surface-subtle text-ink-muted ring-line inline-flex items-center rounded-sm px-2 py-0.5 font-mono text-[10px] ring-1 ring-inset"
             >
               {c}
             </span>
@@ -210,7 +210,7 @@ function Timeline({
 
 function Cell({ label, value }: { label: string; value: string }) {
   return (
-    <Card flat className="px-3 py-2">
+    <Card className="px-3 py-2">
       <div className="text-ink-faint text-[10px] font-semibold tracking-wider uppercase">
         {label}
       </div>

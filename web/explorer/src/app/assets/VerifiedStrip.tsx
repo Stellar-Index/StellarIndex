@@ -19,7 +19,7 @@ export function VerifiedStrip({ items }: { items: VerifiedItem[] }) {
               ? `${v.name} — verified by ${v.verified_issuer}`
               : v.name
           }
-          className="border-line text-ink hover:bg-surface-muted inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium"
+          className="border-line text-ink hover:bg-surface-muted inline-flex items-center gap-1 rounded-sm border px-2.5 py-0.5 text-xs font-medium"
         >
           <span aria-hidden className="text-up">
             ✓

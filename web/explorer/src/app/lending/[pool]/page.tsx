@@ -338,7 +338,7 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
 // em-dash; a real 0 still renders "0".
 function Stat({ label, value }: { label: string; value: number | null }) {
   return (
-    <div className="border-line bg-surface rounded-xl border p-4 shadow-sm">
+    <div className="border-line bg-surface rounded-xl border p-4">
       <div className="text-ink-muted text-[10px] tracking-wider uppercase">
         {label}
       </div>

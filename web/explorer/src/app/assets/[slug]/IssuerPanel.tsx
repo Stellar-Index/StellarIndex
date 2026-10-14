@@ -191,7 +191,7 @@ function SpanBar({
       aria-label={`Seen from ledger ${a.first_seen_ledger} to ${a.last_seen_ledger}`}
     >
       <div
-        className="bg-brand-500 absolute top-0 h-1.5 rounded-full"
+        className="bg-brand-500 absolute top-0 h-1.5 rounded-sm"
         style={{ left: `${left}%`, width: `${Math.min(width, 100 - left)}%` }}
       />
     </div>

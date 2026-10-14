@@ -183,9 +183,9 @@ export function AssetSidebar({
             </span>
           </div>
           {circPct != null && (
-            <div className="bg-surface-muted mt-1.5 h-1.5 overflow-hidden rounded-full">
+            <div className="bg-surface-muted mt-1.5 h-1.5 overflow-hidden rounded-sm">
               <div
-                className="bg-brand-500 h-full rounded-full"
+                className="bg-brand-500 h-full rounded-sm"
                 style={{ width: `${circPct}%` }}
               />
             </div>
@@ -322,9 +322,9 @@ function PerformanceRange({
         <span>Low</span>
         <span>High</span>
       </div>
-      <div className="from-down via-warn-500 to-up relative mt-1 h-1.5 rounded-full bg-linear-to-r">
+      <div className="from-down via-warn-500 to-up relative mt-1 h-1.5 rounded-sm bg-linear-to-r">
         <div
-          className="bg-ink absolute top-1/2 h-3 w-1 -translate-y-1/2 rounded-full shadow-sm"
+          className="bg-ink absolute top-1/2 h-3 w-1 -translate-y-1/2 rounded-full"
           style={{ left: `calc(${pct}% - 2px)` }}
           aria-hidden
         />

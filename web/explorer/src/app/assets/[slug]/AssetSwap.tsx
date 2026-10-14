@@ -304,8 +304,18 @@ export function AssetSwap({
   // What the legs' USD prices actually are, for the legs whose price
   // came with a declared basis and an observation time.
   const basisNote = swapBasisNote([
-    { ...fromToken, usdPrice: pFrom, basis: fromRate.basis, observedAt: fromRate.observedAt },
-    { ...toToken, usdPrice: pTo, basis: toRate.basis, observedAt: toRate.observedAt },
+    {
+      ...fromToken,
+      usdPrice: pFrom,
+      basis: fromRate.basis,
+      observedAt: fromRate.observedAt,
+    },
+    {
+      ...toToken,
+      usdPrice: pTo,
+      basis: toRate.basis,
+      observedAt: toRate.observedAt,
+    },
   ]);
 
   const numeric = Number(amount.replace(/,/g, ''));
@@ -387,9 +397,9 @@ export function AssetSwap({
           type="button"
           aria-label="Swap the two assets"
           onClick={swap}
-          className="group border-surface bg-surface-canvas text-ink-muted shadow-card hover:bg-brand-50 hover:text-brand-600 focus-visible:ring-brand-500 absolute top-1/2 left-1/2 z-10 -translate-x-1/2 -translate-y-1/2 rounded-full border-4 p-2 transition-all focus:outline-hidden focus-visible:ring-2"
+          className="group border-surface bg-surface-canvas text-ink-muted hover:bg-brand-50 hover:text-brand-600 focus-visible:ring-brand-500 absolute top-1/2 left-1/2 z-10 -translate-x-1/2 -translate-y-1/2 rounded-sm border-4 p-2 transition-colors focus:outline-hidden focus-visible:ring-2"
         >
-          <ArrowDownUp className="h-4 w-4 transition-transform duration-200 group-hover:rotate-180 group-active:scale-90" />
+          <ArrowDownUp className="h-4 w-4 transition-transform group-hover:rotate-180 group-active:scale-90" />
         </button>
 
         {/* Full-width token picker, overlaying the field stack. */}
@@ -460,7 +470,7 @@ function SwapRow({
         <button
           type="button"
           onClick={onPick}
-          className="border-line bg-surface text-ink shadow-card hover:border-brand-500 hover:text-brand-600 inline-flex shrink-0 items-center gap-1.5 rounded-full border py-1 pr-2 pl-1 text-sm font-medium transition-colors"
+          className="border-line bg-surface text-ink hover:border-brand-500 hover:text-brand-600 inline-flex shrink-0 items-center gap-1.5 rounded-sm border py-1 pr-2 pl-1 text-sm font-medium transition-colors"
         >
           <TokenIcon token={token} />
           <span className="max-w-[6rem] truncate">{token.symbol}</span>
@@ -658,7 +668,7 @@ function TokenPicker({
       }
       tabIndex={-1}
       className={cn(
-        'border-line-strong bg-surface shadow-elevated absolute right-0 left-0 z-20 flex flex-col rounded-lg border',
+        'border-line-strong bg-surface absolute right-0 left-0 z-20 flex flex-col rounded-lg border',
         side === 'from' ? 'top-0' : 'top-[72px]',
       )}
     >
@@ -742,7 +752,11 @@ function useLegRate(
   token: SwapToken,
   pageKey: string,
   pagePriceUSD: number | null,
-): { price: number | null; basis: PriceType | null; observedAt: string | null } {
+): {
+  price: number | null;
+  basis: PriceType | null;
+  observedAt: string | null;
+} {
   const isPageLeg = token.key === pageKey;
   const isUsd = token.key === USD_TOKEN.key;
   const fetchable = !isPageLeg && !isUsd && isPriceableAssetId(token.key);
@@ -770,7 +784,11 @@ function useLegRate(
     // snapshot for a full `staleTime` window.
     initialData:
       token.usdPrice != null
-        ? { price: token.usdPrice, basis: token.basis ?? null, observedAt: null }
+        ? {
+            price: token.usdPrice,
+            basis: token.basis ?? null,
+            observedAt: null,
+          }
         : undefined,
     initialDataUpdatedAt: 0,
     refetchInterval: 60_000,

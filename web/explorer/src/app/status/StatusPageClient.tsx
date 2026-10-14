@@ -1240,7 +1240,7 @@ function LatencyCell({
             target {target}
           </span>
         </div>
-        <div className="bg-surface-subtle mt-2 h-1.5 overflow-hidden rounded-full" />
+        <div className="bg-surface-subtle mt-2 h-1.5 overflow-hidden rounded-sm" />
       </Card>
     );
   }
@@ -1268,7 +1268,7 @@ function LatencyCell({
         <span className="text-ink-muted text-xs">ms</span>
         <span className="text-ink-faint ml-auto text-xs">target {target}</span>
       </div>
-      <div className="bg-surface-subtle mt-2 h-1.5 overflow-hidden rounded-full">
+      <div className="bg-surface-subtle mt-2 h-1.5 overflow-hidden rounded-sm">
         <div className={`h-full ${bar}`} style={{ width: `${pct}%` }} />
       </div>
     </Card>
@@ -1323,7 +1323,7 @@ function FreshnessRow({
               {measured ? `/ ${totalSources}` : 'not measured'}
             </span>
           </div>
-          <div className="bg-surface-subtle mt-2 h-1.5 overflow-hidden rounded-full">
+          <div className="bg-surface-subtle mt-2 h-1.5 overflow-hidden rounded-sm">
             <div
               className="bg-brand-500 h-full"
               style={{ width: `${sourcePct}%` }}
@@ -1437,7 +1437,7 @@ function EndpointMatrix({
             <h3 className="text-ink-muted mb-2 text-[11px] font-semibold tracking-wider uppercase">
               {group}
             </h3>
-            <Card flat className="overflow-x-auto">
+            <Card className="overflow-x-auto">
               <table className="w-full text-sm">
                 <tbody className="divide-line divide-y">
                   {eps.map((ep) => {

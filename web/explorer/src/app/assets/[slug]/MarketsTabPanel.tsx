@@ -213,7 +213,7 @@ function Row({
             className="bg-surface-muted mt-1 ml-auto block h-1 w-24 overflow-hidden rounded-full"
           >
             <span
-              className="bg-brand-500 block h-full rounded-full"
+              className="bg-brand-500 block h-full rounded-sm"
               style={{ width: `${Math.max(barPct, 2)}%`, marginLeft: 'auto' }}
             />
           </span>

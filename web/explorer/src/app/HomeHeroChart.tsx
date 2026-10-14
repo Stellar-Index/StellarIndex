@@ -47,7 +47,7 @@ export function HomeHeroChart() {
   const flash = usePriceFlash(tipActive ? tipStr : undefined);
 
   return (
-    <section className="rounded-card border-line bg-surface shadow-card border p-5">
+    <section className="rounded-card border-line bg-surface border p-5">
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-3">
         <div className="flex flex-wrap items-baseline gap-2.5">
           <Link

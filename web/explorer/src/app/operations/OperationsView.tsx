@@ -148,7 +148,7 @@ export function OperationsView() {
             href={opsHref(c.type)}
             aria-current={c.type === type ? 'page' : undefined}
             className={cn(
-              'rounded-full border px-2.5 py-0.5 text-xs font-medium',
+              'rounded-sm border px-2.5 py-0.5 text-xs font-medium',
               c.type === type
                 ? 'border-brand-500 text-brand-600'
                 : 'border-line text-ink-body hover:bg-surface-muted',

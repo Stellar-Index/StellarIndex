@@ -49,7 +49,7 @@ export function SourcePriceSpread({
       <div
         role="img"
         aria-label={`${label}, ${sorted.length} ${noun}, spread ${spread?.toFixed(2) ?? 'n/a'}%`}
-        className="bg-surface-subtle relative h-3 rounded-full"
+        className="bg-surface-subtle relative h-3 rounded-sm"
       >
         {sorted.map((r) => (
           <span

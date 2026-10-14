@@ -204,7 +204,7 @@ export default function RootLayout({
             hidden until focused. */}
         <a
           href="#main"
-          className="focus:bg-surface focus:text-brand-700 focus:shadow-elevated sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-100 focus:rounded-md focus:px-3 focus:py-2 focus:text-sm focus:font-medium"
+          className="focus:bg-surface focus:text-brand-700 sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-100 focus:rounded-md focus:px-3 focus:py-2 focus:text-sm focus:font-medium"
         >
           Skip to main content
         </a>

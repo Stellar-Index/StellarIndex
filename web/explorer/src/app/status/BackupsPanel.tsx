@@ -383,10 +383,10 @@ function VerdictRow({
           aria-valuenow={Math.round(share * 100)}
           aria-valuemin={0}
           aria-valuemax={100}
-          className="bg-line mt-1 h-1 overflow-hidden rounded-full"
+          className="bg-line mt-1 h-1 overflow-hidden rounded-sm"
         >
           <div
-            className={`h-full rounded-full ${share > 1 ? 'bg-bad-500' : share > 0.8 ? 'bg-warn-500' : 'bg-ok-500'}`}
+            className={`h-full rounded-sm ${share > 1 ? 'bg-bad-500' : share > 0.8 ? 'bg-warn-500' : 'bg-ok-500'}`}
             style={{ width: `${Math.min(share, 1) * 100}%` }}
           />
         </div>

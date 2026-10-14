@@ -175,7 +175,7 @@ function Row({ item, onNavigate }: { item: NavItem; onNavigate?: () => void }) {
   const cls = cn(
     'group flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm font-medium transition-colors',
     active
-      ? 'bg-surface text-ink shadow-xs ring-1 ring-line'
+      ? 'bg-surface text-ink  ring-1 ring-line'
       : 'text-ink-body hover:bg-surface-subtle hover:text-ink',
   );
   const inner = (
@@ -348,7 +348,7 @@ function AccountCard({ onNavigate }: { onNavigate?: () => void }) {
           <Link
             href="/signin"
             onClick={onNavigate}
-            className="border-line bg-surface text-ink-body hover:bg-surface-subtle rounded-lg border px-3 py-1.5 text-center text-sm font-medium shadow-xs"
+            className="border-line bg-surface text-ink-body hover:bg-surface-subtle rounded-lg border px-3 py-1.5 text-center text-sm font-medium"
           >
             Sign in
           </Link>
@@ -409,9 +409,9 @@ function AccountMenu({ email }: { email?: string }) {
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-controls="sidebar-account-menu"
-        className="border-line bg-surface hover:bg-surface-subtle flex w-full items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left shadow-xs"
+        className="border-line bg-surface hover:bg-surface-subtle flex w-full items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left"
       >
-        <span className="bg-brand-fill flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white">
+        <span className="bg-brand-fill flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-xs font-semibold text-white">
           {initials}
         </span>
         <span className="min-w-0 flex-1">
@@ -434,7 +434,7 @@ function AccountMenu({ email }: { email?: string }) {
           id="sidebar-account-menu"
           ref={panelRef}
           tabIndex={-1}
-          className="border-line bg-surface shadow-elevated absolute bottom-full left-0 z-50 mb-1 w-full rounded-lg border p-2 outline-hidden"
+          className="border-line bg-surface absolute bottom-full left-0 z-50 mb-1 w-full rounded-lg border p-2 outline-hidden"
         >
           <Link
             href="/dashboard"
