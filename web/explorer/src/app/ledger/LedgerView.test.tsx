@@ -101,23 +101,20 @@ describe('LedgerView count basis captions', () => {
   it('labels which counts include failed transactions', async () => {
     routeApi();
     renderView();
-    const cellFor = async (label: string) => {
-      const dts = await screen.findAllByText(label);
-      const dt = dts.find((el) => el.tagName === 'DT');
-      return dt!.parentElement!.querySelector('dd')!;
+    // The stat label, not the "Transactions" panel title that shares its text.
+    const basisFor = async (label: string) => {
+      const els = await screen.findAllByText(label);
+      const stat = els
+        .filter((el) => el.tagName === 'SPAN')
+        .map((el) => el.closest('div.min-w-0'))
+        .find((el) => el != null)!;
+      return stat.lastElementChild!.textContent;
     };
-    expect(await cellFor('Transactions')).toHaveAttribute(
-      'title',
-      'tx set · incl. failed',
-    );
-    expect(await cellFor('Operations')).toHaveAttribute(
-      'title',
+    expect(await basisFor('Transactions')).toBe('tx set · incl. failed');
+    expect(await basisFor('Operations')).toBe(
       'tx set · incl. ops of failed txs',
     );
-    expect(await cellFor('Soroban events')).toHaveAttribute(
-      'title',
-      'successful txs only',
-    );
+    expect(await basisFor('Soroban events')).toBe('successful txs only');
   });
 });
 
@@ -145,11 +142,12 @@ describe('LedgerView prev navigation', () => {
   it('disables Prev at genesis and never links to ledger 0', async () => {
     const { container } = renderSeq(1);
     await screen.findByText('#1', { selector: 'dd' });
-    const prev = screen.getByText('← Prev ledger');
+    const prev = screen.getByRole('button', { name: 'Previous ledger' });
     expect(prev.closest('a')).toBeNull();
+    expect(prev).toBeDisabled();
     expect(prev).toHaveAttribute('aria-disabled', 'true');
     expect(container.querySelector('a[href^="/ledgers/0"]')).toBeNull();
-    expect(screen.getByRole('link', { name: 'Next ledger →' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Next ledger' })).toHaveAttribute(
       'href',
       '/ledgers/2/',
     );
@@ -158,10 +156,9 @@ describe('LedgerView prev navigation', () => {
   it('links Prev to the preceding ledger after genesis', async () => {
     renderSeq(2);
     await screen.findByText('#2', { selector: 'dd' });
-    expect(screen.getByRole('link', { name: '← Prev ledger' })).toHaveAttribute(
-      'href',
-      '/ledgers/1/',
-    );
+    expect(
+      screen.getByRole('link', { name: 'Previous ledger' }),
+    ).toHaveAttribute('href', '/ledgers/1/');
   });
 });
 

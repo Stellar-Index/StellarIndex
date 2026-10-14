@@ -21,6 +21,7 @@ export {
 export type { Crumb } from './Page';
 export { Input, Textarea, Select, Field } from './Input';
 export { EmptyState, Skeleton, Callout } from './Feedback';
+export { FactList, Fact } from './Facts';
 export { TabNav, Segmented } from './Tabs';
 export type { TabItem } from './Tabs';
 export { Mono, CopyButton, truncateMiddle, useCopyToClipboard } from './Mono';

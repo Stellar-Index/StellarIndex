@@ -1,29 +1,52 @@
 'use client';
 
-import Link from 'next/link';
+import type { ReactNode } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, type UseQueryResult } from '@tanstack/react-query';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 import { Panel } from '@/components/reveal';
 import { CrossReference } from '@/components/CrossReference';
-import { Container, PageHeader } from '@/components/ui';
+import { OpsPerTxBars, ResultDonut } from '@/components/ChainCharts';
+import {
+  Button,
+  ButtonLink,
+  Callout,
+  Container,
+  EmptyState,
+  Fact,
+  FactList,
+  Mono,
+  PageHeader,
+  Skeleton,
+  Stat,
+  StatCell,
+  StatGrid,
+  Table,
+  TBody,
+  Td,
+  Th,
+  THead,
+  TR,
+  TxStatusBadge,
+} from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
 import { totalCoinsCaption } from '@/lib/xlm-supply';
-import { OpsPerTxBars, ResultDonut } from '@/components/ChainCharts';
 import {
   type Envelope,
   type Ledger,
   type LedgerTransactionsResp,
-  CopyHash,
+  HashLink,
   formatTimestamp,
   stroopsToXlm,
+  stroopsToXlmFixed,
   xlmReadable,
 } from '../explorer-shared';
 
 /**
- * Client view for /ledger?seq=N. Fetches the ledger header and its
- * transactions in parallel and renders them as cards + a table.
+ * Client view for /ledgers/[seq] (and the legacy /ledger?seq=). Fetches the
+ * ledger header and its transactions in parallel.
  */
 export function LedgerView({ seq: seqProp }: { seq?: string } = {}) {
   // Path route /ledgers/[seq] passes `seq` as a prop; legacy /ledger?seq= reads
@@ -42,7 +65,6 @@ export function LedgerView({ seq: seqProp }: { seq?: string } = {}) {
     staleTime: 60_000,
     retry: false,
   });
-
   const txQ = useQuery<LedgerTransactionsResp>({
     queryKey: ['/v1/ledgers/{seq}/transactions', seq],
     enabled: seq != null,
@@ -59,16 +81,15 @@ export function LedgerView({ seq: seqProp }: { seq?: string } = {}) {
   if (seq == null) {
     return (
       <Shell seq={null}>
-        <Panel title="No ledger selected" bodyClassName="text-sm text-ink-body">
-          <p>
-            This page needs a <code className="font-mono">?seq=</code> query
-            parameter — e.g.{' '}
-            <Link href="/ledgers" className="text-brand-600 hover:underline">
-              browse recent ledgers
-            </Link>{' '}
-            and click one.
-          </p>
-        </Panel>
+        <EmptyState
+          title="No ledger selected"
+          description="This page needs a ?seq= query parameter: a ledger sequence number. Browse recent ledgers and open one."
+          action={
+            <ButtonLink href="/ledgers" variant="secondary" size="sm">
+              Browse ledgers
+            </ButtonLink>
+          }
+        />
       </Shell>
     );
   }
@@ -76,154 +97,149 @@ export function LedgerView({ seq: seqProp }: { seq?: string } = {}) {
   if (ledgerQ.isError) {
     return (
       <Shell seq={seq}>
-        <Panel
+        <EmptyState
           title="Ledger not found"
-          source={asExample(`/v1/ledgers/${seq}`)}
-          bodyClassName="text-sm text-ink-body"
-        >
-          <p>
-            No ledger{' '}
-            <span className="font-mono">#{seq.toLocaleString('en-US')}</span> in
-            the served tier, or the lookup failed:{' '}
-            {ledgerQ.error instanceof Error
-              ? ledgerQ.error.message
-              : 'unknown error'}
-            .
-          </p>
-        </Panel>
+          description={`No ledger #${seq} in the served tier, or the lookup failed: ${errorMessage(ledgerQ.error)}.`}
+          action={
+            <div className="flex flex-wrap justify-center gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => ledgerQ.refetch()}
+              >
+                Retry
+              </Button>
+              <ButtonLink href="/ledgers" variant="ghost" size="sm">
+                Browse ledgers
+              </ButtonLink>
+            </div>
+          }
+        />
       </Shell>
     );
   }
 
-  if (ledgerQ.isLoading || !ledgerQ.data) {
+  const ledger = ledgerQ.data;
+  if (!ledger) {
     return (
       <Shell seq={seq}>
+        <StatGrid cols={3}>
+          {[0, 1, 2].map((i) => (
+            <StatCell key={i}>
+              <Skeleton className="h-3 w-24" />
+              <Skeleton className="mt-3 h-7 w-16" />
+            </StatCell>
+          ))}
+        </StatGrid>
         <Panel
-          title={`Ledger #${seq.toLocaleString('en-US')}`}
+          headingLevel={2}
+          title="Ledger header"
           source={asExample(`/v1/ledgers/${seq}`)}
-          bodyClassName="text-sm text-ink-muted"
         >
-          Loading…
+          <Skeleton className="h-40" />
         </Panel>
       </Shell>
     );
   }
 
-  const l = ledgerQ.data;
-  // The generated contract marks every Ledger field optional; a served
-  // row always carries the header fields, so default the ones we format.
-  const sequence = l.sequence ?? seq;
-
   return (
-    <Shell seq={seq}>
-      <Panel
-        title={`Ledger #${sequence.toLocaleString('en-US')}`}
-        hint={formatTimestamp(l.close_time)}
-        source={asExample(`/v1/ledgers/${seq}`)}
-      >
-        <dl className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3 lg:grid-cols-4">
-          <Field
-            label="Sequence"
-            mono
-            value={`#${sequence.toLocaleString('en-US')}`}
-          />
-          <Field label="Close time" value={formatTimestamp(l.close_time)} />
-          <Field
-            label="Protocol"
-            mono
-            value={String(l.protocol_version)}
-            sub="Stellar protocol version in force when this ledger closed"
-          />
-          {/* Two bases: the tx/op counts are the whole tx set (failed txs
-              included), events exist only for applied txs. Say which. */}
-          <Field
+    <Shell seq={seq} ledger={ledger}>
+      <StatGrid cols={3}>
+        <StatCell>
+          <Stat
             label="Transactions"
-            value={(l.tx_count ?? 0).toLocaleString('en-US')}
+            value={count(ledger.tx_count)}
             sub="tx set · incl. failed"
           />
-          <Field
+        </StatCell>
+        <StatCell>
+          <Stat
             label="Operations"
-            value={(l.op_count ?? 0).toLocaleString('en-US')}
+            value={count(ledger.op_count)}
             sub="tx set · incl. ops of failed txs"
           />
-          <Field
+        </StatCell>
+        <StatCell>
+          <Stat
             label="Soroban events"
             value={
-              (l.soroban_event_count ?? 0) > 0
-                ? formatCompact(l.soroban_event_count ?? 0)
-                : '0'
+              ledger.soroban_event_count != null
+                ? formatCompact(ledger.soroban_event_count)
+                : '—'
             }
             sub="successful txs only"
           />
-          <Field
-            label="Total coins"
-            mono
-            value={l.total_coins ? `${xlmReadable(l.total_coins)} XLM` : '—'}
-            sub={l.total_coins ? totalCoinsCaption() : undefined}
-          />
-          <Field
-            label="Fee pool"
-            mono
-            value={l.fee_pool ? `${xlmReadable(l.fee_pool)} XLM` : '—'}
-            sub="All fees collected network-wide; not redistributed since inflation ended"
-          />
-          <Field
+        </StatCell>
+      </StatGrid>
+
+      <Panel
+        headingLevel={2}
+        title="Ledger header"
+        hint="Network-wide parameters in force when this ledger closed"
+        source={asExample(`/v1/ledgers/${seq}`)}
+      >
+        <FactList columns={4}>
+          <Fact label="Sequence">#{ledger.sequence}</Fact>
+          <Fact label="Close time">{formatTimestamp(ledger.close_time)}</Fact>
+          <Fact
+            label="Protocol"
+            title="Stellar protocol version in force when this ledger closed"
+          >
+            {ledger.protocol_version ?? '—'}
+          </Fact>
+          <Fact
             label="Base fee"
-            mono
-            value={l.base_fee != null ? `${l.base_fee} stroops` : '—'}
-            sub="Minimum fee per operation (1 XLM = 10,000,000 stroops); txs bid above it under surge pricing"
-          />
-          <Field
+            title="Minimum fee per operation (1 XLM = 10,000,000 stroops); txs bid above it under surge pricing"
+          >
+            {ledger.base_fee ?? '—'} stroops
+          </Fact>
+          <Fact
             label="Base reserve"
-            mono
-            value={
-              l.base_reserve != null
-                ? `${stroopsToXlm(l.base_reserve)} XLM`
-                : '—'
-            }
-            sub="Minimum balance unit: an account holds 2 base reserves plus 1 per subentry"
-          />
-          <FieldWide label="Hash">
-            <CopyHash value={l.hash} head={12} tail={12} />
-          </FieldWide>
-          <FieldWide label="Previous hash">
-            {l.prev_hash ? (
-              <span className="inline-flex items-center gap-2">
-                {sequence > 1 && (
-                  <Link
-                    href={`/ledgers/${sequence - 1}/`}
-                    className="text-brand-600 font-mono text-xs hover:underline"
-                    title={`Ledger #${(sequence - 1).toLocaleString('en-US')}`}
-                  >
-                    ← #{(sequence - 1).toLocaleString('en-US')}
-                  </Link>
-                )}
-                <CopyHash value={l.prev_hash} head={12} tail={12} />
-              </span>
-            ) : (
-              <span className="text-ink-faint">—</span>
-            )}
-          </FieldWide>
-        </dl>
+            title="Minimum balance unit: an account holds 2 base reserves plus 1 per subentry"
+          >
+            {ledger.base_reserve != null
+              ? `${stroopsToXlm(ledger.base_reserve)} XLM`
+              : '—'}
+          </Fact>
+          <Fact label="Total coins" title={totalCoinsCaption()}>
+            {xlmReadable(ledger.total_coins)} XLM
+          </Fact>
+          <Fact
+            label="Fee pool"
+            title="All fees collected network-wide; not redistributed since inflation ended"
+          >
+            {xlmReadable(ledger.fee_pool)} XLM
+          </Fact>
+          <Fact label="Hash" className="sm:col-span-2 lg:col-span-4">
+            {ledger.hash ? <Mono value={ledger.hash} /> : '—'}
+          </Fact>
+          <Fact label="Previous hash" className="sm:col-span-2 lg:col-span-4">
+            {ledger.prev_hash ? <Mono value={ledger.prev_hash} /> : '—'}
+          </Fact>
+        </FactList>
       </Panel>
 
-      <TransactionsPanel
-        seq={seq}
-        isLoading={txQ.isLoading}
-        isError={txQ.isError}
-        error={txQ.error}
-        data={txQ.data}
-      />
+      <TransactionsPanel seq={seq} q={txQ} />
     </Shell>
   );
 }
 
+function count(n: number | undefined): string {
+  return n != null ? n.toLocaleString('en-US') : '—';
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : 'unknown error';
+}
+
 function Shell({
   seq,
+  ledger,
   children,
 }: {
   seq: number | null;
-  children: React.ReactNode;
+  ledger?: Ledger;
+  children: ReactNode;
 }) {
   return (
     <Container className="space-y-6 py-8">
@@ -231,39 +247,15 @@ function Shell({
         breadcrumbs={[
           { label: 'Home', href: '/' },
           { label: 'Ledgers', href: '/ledgers' },
-          { label: seq != null ? `#${seq.toLocaleString('en-US')}` : '—' },
+          { label: seq != null ? `#${seq}` : 'Ledger' },
         ]}
-        title={
-          seq != null ? `Ledger #${seq.toLocaleString('en-US')}` : 'Ledger'
+        title={seq != null ? `Ledger #${seq}` : 'Ledger'}
+        meta={
+          ledger
+            ? `Closed ${formatTimestamp(ledger.close_time)} · protocol ${ledger.protocol_version ?? '—'}`
+            : undefined
         }
-        actions={
-          seq != null && (
-            <div className="flex items-center gap-3 text-xs">
-              {/* Ledger 1 is genesis; there is no ledger 0 to navigate to. */}
-              {seq > 1 ? (
-                <Link
-                  href={`/ledgers/${seq - 1}/`}
-                  className="border-line text-ink-body hover:border-brand-500 hover:text-brand-600 rounded-md border px-2.5 py-1"
-                >
-                  ← Prev ledger
-                </Link>
-              ) : (
-                <span
-                  aria-disabled="true"
-                  className="border-line text-ink-faint cursor-not-allowed rounded-md border px-2.5 py-1"
-                >
-                  ← Prev ledger
-                </span>
-              )}
-              <Link
-                href={`/ledgers/${seq + 1}/`}
-                className="border-line text-ink-body hover:border-brand-500 hover:text-brand-600 rounded-md border px-2.5 py-1"
-              >
-                Next ledger →
-              </Link>
-            </div>
-          )
-        }
+        actions={seq != null ? <LedgerNav seq={seq} /> : undefined}
       />
       {children}
       {seq != null && <CrossReference kind="ledger" id={String(seq)} />}
@@ -271,52 +263,80 @@ function Shell({
   );
 }
 
+function LedgerNav({ seq }: { seq: number }) {
+  return (
+    <>
+      {seq > 1 ? (
+        <ButtonLink href={`/ledgers/${seq - 1}/`} variant="secondary" size="sm">
+          <ChevronLeft className="size-3.5" aria-hidden />
+          Previous ledger
+        </ButtonLink>
+      ) : (
+        <Button variant="secondary" size="sm" disabled aria-disabled="true">
+          <ChevronLeft className="size-3.5" aria-hidden />
+          Previous ledger
+        </Button>
+      )}
+      <ButtonLink href={`/ledgers/${seq + 1}/`} variant="secondary" size="sm">
+        Next ledger
+        <ChevronRight className="size-3.5" aria-hidden />
+      </ButtonLink>
+    </>
+  );
+}
+
+const TX_CSV_COLUMNS = [
+  'hash',
+  'source_account',
+  'operation_count',
+  'successful',
+  'result_code',
+  'fee_charged',
+  'memo_type',
+  'memo',
+];
+
 function TransactionsPanel({
   seq,
-  isLoading,
-  isError,
-  error,
-  data,
+  q,
 }: {
   seq: number;
-  isLoading: boolean;
-  isError: boolean;
-  error: unknown;
-  data: LedgerTransactionsResp | undefined;
+  q: UseQueryResult<LedgerTransactionsResp>;
 }) {
   const source = asExample(`/v1/ledgers/${seq}/transactions`);
-  if (isError) {
+  if (q.isError) {
     return (
-      <Panel
-        title="Transactions"
-        source={source}
-        bodyClassName="text-sm text-down-strong"
-      >
-        Failed to load transactions:{' '}
-        {error instanceof Error ? error.message : 'unknown error'}
+      <Callout tone="bad" title="Transactions didn't load">
+        <span>Failed to load transactions: {errorMessage(q.error)}.</span>
+        <Button
+          variant="secondary"
+          size="sm"
+          className="ml-3"
+          onClick={() => q.refetch()}
+        >
+          Retry
+        </Button>
+      </Callout>
+    );
+  }
+  if (!q.data) {
+    return (
+      <Panel headingLevel={2} title="Transactions" source={source}>
+        <div className="space-y-2">
+          <Skeleton className="h-5 w-full" />
+          <Skeleton className="h-5 w-11/12" />
+          <Skeleton className="h-5 w-4/5" />
+        </div>
       </Panel>
     );
   }
-  if (isLoading || !data) {
-    return (
-      <Panel
-        title="Transactions"
-        source={source}
-        bodyClassName="text-sm text-ink-muted"
-      >
-        Loading…
-      </Panel>
-    );
-  }
-  const transactions = data.transactions ?? [];
+  const transactions = q.data.transactions ?? [];
   if (transactions.length === 0) {
     return (
-      <Panel
-        title="Transactions"
-        source={source}
-        bodyClassName="text-sm text-ink-muted"
-      >
-        This ledger closed no transactions.
+      <Panel headingLevel={2} title="Transactions" source={source}>
+        <p className="text-ink-muted text-sm">
+          This ledger closed no transactions.
+        </p>
       </Panel>
     );
   }
@@ -324,17 +344,22 @@ function TransactionsPanel({
   return (
     <>
       <Panel
+        headingLevel={2}
         title="Transaction mix"
+        hint="Outcome and operations per transaction across the tx set"
         source={source}
-        bodyClassName="grid gap-6 sm:grid-cols-2"
       >
-        <ResultDonut ok={okCount} failed={transactions.length - okCount} />
-        <OpsPerTxBars
-          opCounts={transactions.map((t) => t.operation_count ?? 0)}
-        />
+        <div className="grid gap-6 sm:grid-cols-2">
+          <ResultDonut ok={okCount} failed={transactions.length - okCount} />
+          <OpsPerTxBars
+            opCounts={transactions.map((t) => t.operation_count ?? 0)}
+          />
+        </div>
       </Panel>
       <Panel
-        title={`Transactions (${transactions.length})`}
+        headingLevel={2}
+        title="Transactions"
+        hint={`${transactions.length} in the tx set, failed included`}
         source={source}
         download={{
           name: `ledger-${seq}-transactions`,
@@ -350,191 +375,68 @@ function TransactionsPanel({
             memo: t.memo,
           })),
         }}
-        bodyClassName="-mx-4"
+        bodyClassName="-mx-4 -mb-4"
       >
         <div className="overflow-x-auto">
-          <table className="divide-line min-w-full divide-y text-sm">
-            <thead>
-              <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
+          <Table>
+            <THead>
+              <tr>
                 <Th>Hash</Th>
                 <Th>Source</Th>
                 <Th align="right">Ops</Th>
                 <Th>Result</Th>
-                <Th align="right">Fee</Th>
+                <Th align="right">Fee (XLM)</Th>
                 <Th>Memo</Th>
               </tr>
-            </thead>
-            <tbody className="divide-line-subtle divide-y">
+            </THead>
+            <TBody>
               {transactions.map((t) => (
-                <tr key={t.hash} className="hover:bg-surface-muted">
+                <TR key={t.hash}>
                   <Td>
-                    <Link
+                    <HashLink
                       href={`/transactions/${t.hash}/`}
-                      className="text-brand-600 font-mono text-xs hover:underline"
-                      title={t.hash}
-                    >
-                      {(t.hash ?? '').slice(0, 10)}…{(t.hash ?? '').slice(-6)}
-                    </Link>
+                      value={t.hash}
+                      head={10}
+                      tail={6}
+                    />
                   </Td>
                   <Td>
-                    <Link
+                    <HashLink
                       href={`/accounts/${encodeURIComponent(t.source_account ?? '')}/`}
-                      className="text-ink-body hover:text-brand-600 font-mono text-xs"
-                      title={t.source_account}
-                    >
-                      {(t.source_account ?? '').slice(0, 6)}…
-                      {(t.source_account ?? '').slice(-4)}
-                    </Link>
+                      value={t.source_account}
+                      head={6}
+                      tail={4}
+                      className="text-ink-muted"
+                    />
                   </Td>
-                  <Td align="right">
-                    <span className="text-ink-body font-mono tabular-nums">
-                      {t.operation_count}
-                    </span>
-                  </Td>
+                  <Td align="right">{t.operation_count}</Td>
                   <Td>
-                    <SuccessBadge
-                      ok={t.successful ?? false}
+                    <TxStatusBadge
+                      successful={t.successful}
+                      result={t.result}
                       code={t.result_code}
                     />
                   </Td>
-                  <Td align="right">
-                    <span className="text-ink-muted font-mono text-xs tabular-nums">
-                      {t.fee_charged != null
-                        ? stroopsToXlm(t.fee_charged)
-                        : '—'}
-                    </span>
+                  <Td align="right" className="text-ink-muted">
+                    {t.fee_charged != null
+                      ? stroopsToXlmFixed(String(t.fee_charged))
+                      : '—'}
                   </Td>
-                  <Td>
-                    {t.memo_type && t.memo_type !== 'none' ? (
-                      <span
-                        className="text-ink-muted font-mono text-[11px]"
-                        title={t.memo ?? ''}
-                      >
-                        {t.memo_type}
-                        {t.memo ? `: ${truncate(t.memo, 18)}` : ''}
+                  <Td className="text-ink-muted max-w-56 truncate text-xs">
+                    {t.memo ? (
+                      <span title={t.memo}>
+                        {t.memo_type} · {t.memo}
                       </span>
                     ) : (
-                      <span className="text-ink-faint">—</span>
+                      '—'
                     )}
                   </Td>
-                </tr>
+                </TR>
               ))}
-            </tbody>
-          </table>
+            </TBody>
+          </Table>
         </div>
       </Panel>
     </>
-  );
-}
-
-// SuccessBadge renders a transaction's result. Success comes from the
-// `successful` bool (the authoritative tx-level signal); the numeric
-// XDR `code` (int32, 0 = txSUCCESS) is shown as detail on failure.
-function SuccessBadge({ ok, code }: { ok: boolean; code?: number }) {
-  const codeLabel = code != null ? `code ${code}` : undefined;
-  return (
-    <span
-      className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium tracking-wider uppercase ${
-        ok ? 'bg-up-subtle text-up' : 'bg-down-subtle text-down'
-      }`}
-      title={codeLabel ?? (ok ? 'success' : 'failed')}
-    >
-      {ok ? 'success' : (codeLabel ?? 'failed')}
-    </span>
-  );
-}
-
-function truncate(s: string, n: number): string {
-  return s.length > n ? `${s.slice(0, n)}…` : s;
-}
-
-const TX_CSV_COLUMNS = [
-  'hash',
-  'source_account',
-  'operation_count',
-  'successful',
-  'result_code',
-  'fee_charged',
-  'memo_type',
-  'memo',
-] as const;
-
-function Field({
-  label,
-  value,
-  mono,
-  sub,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-  /** Tooltip saying what the figure IS. */
-  sub?: string;
-}) {
-  return (
-    <div>
-      <dt className="text-ink-muted text-[11px] tracking-wider uppercase">
-        {label}
-      </dt>
-      <dd
-        title={sub}
-        className={
-          (mono ? 'mt-0.5 font-mono text-xs' : 'mt-0.5 tabular-nums') +
-          (sub ? ' cursor-help' : '')
-        }
-      >
-        {value}
-      </dd>
-    </div>
-  );
-}
-
-function FieldWide({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="col-span-2 sm:col-span-3 lg:col-span-4">
-      <dt className="text-ink-muted text-[11px] tracking-wider uppercase">
-        {label}
-      </dt>
-      <dd className="mt-0.5">{children}</dd>
-    </div>
-  );
-}
-
-function Th({
-  children,
-  align,
-}: {
-  children: React.ReactNode;
-  align?: 'left' | 'right';
-}) {
-  return (
-    <th
-      className={`px-4 py-2 ${align === 'right' ? 'text-right' : 'text-left'}`}
-      scope="col"
-    >
-      {children}
-    </th>
-  );
-}
-
-function Td({
-  children,
-  align,
-}: {
-  children: React.ReactNode;
-  align?: 'left' | 'right';
-}) {
-  return (
-    <td
-      className={`px-4 py-3 ${align === 'right' ? 'text-right' : 'text-left'}`}
-    >
-      {children}
-    </td>
   );
 }

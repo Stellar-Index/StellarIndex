@@ -2,6 +2,7 @@
 // entity page, never mid-content. Each target is network-aware; a target with
 // no explorer (or no verified route) for this entity on this network is
 // omitted rather than linked wrongly.
+import { cn } from '@/lib/cn';
 import {
   stellarChainEntityUrl,
   stellarExpertUrl,
@@ -37,20 +38,23 @@ export function CrossReference({
   ].filter((l): l is { label: string; href: string } => l.href != null);
 
   return (
-    <p className={className ?? 'text-ink-faint mt-4 text-[11px]'}>
-      External references:{' '}
-      {links.map((l, i) => (
-        <span key={l.label}>
-          {i > 0 && ' · '}
-          <a
-            href={l.href}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="hover:text-brand-600 underline"
-          >
-            {l.label}
-          </a>
-        </span>
+    <p
+      className={cn(
+        'border-line text-ink-faint flex flex-wrap gap-x-4 gap-y-1 border-t pt-4 text-xs',
+        className,
+      )}
+    >
+      <span>External references</span>
+      {links.map((l) => (
+        <a
+          key={l.label}
+          href={l.href}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="text-ink-muted hover:text-brand-600 hover:underline"
+        >
+          {l.label}
+        </a>
       ))}
     </p>
   );

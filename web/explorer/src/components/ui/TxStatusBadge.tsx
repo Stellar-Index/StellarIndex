@@ -24,7 +24,8 @@ export type TxStatusBadgeProps = {
  * and operation outcomes (D-PART-FAILEDTX). A failed outcome stays VISIBLE and
  * reads as its reason slug in red, never hidden and never masquerading as a
  * real interaction; an absent outcome is the MUTED "unknown" degraded state,
- * NOT success. Built on the Badge primitive (up / down / neutral tones).
+ * NOT success. Built on the Badge primitive: ok / bad are severity, never the
+ * price-direction tones.
  */
 export function TxStatusBadge({
   successful,
@@ -47,7 +48,7 @@ export function TxStatusBadge({
   }
   if (successful) {
     return (
-      <Badge tone="up" className={className} title="success">
+      <Badge tone="ok" className={className} title="success">
         success
       </Badge>
     );
@@ -61,7 +62,7 @@ export function TxStatusBadge({
       ? `${result} (code ${code})`
       : (result ?? codeLabel ?? 'failed');
   return (
-    <Badge tone="down" className={className} title={title}>
+    <Badge tone="bad" className={className} title={title}>
       {label}
     </Badge>
   );

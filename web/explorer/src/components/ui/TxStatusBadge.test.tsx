@@ -7,8 +7,8 @@ describe('TxStatusBadge', () => {
   it('renders a green "success" pill when the outcome applied', () => {
     render(<TxStatusBadge successful={true} result="tx_success" code={0} />);
     const badge = screen.getByText('success');
-    expect(badge).toHaveClass('bg-up-subtle');
-    expect(badge).toHaveClass('text-up-strong');
+    expect(badge).toHaveClass('bg-ok-50');
+    expect(badge).toHaveClass('text-ok-700');
     expect(badge).toHaveAttribute('title', 'success');
   });
 
@@ -23,8 +23,8 @@ describe('TxStatusBadge', () => {
     // The reason slug is the visible label — a failed tx reads as its reason,
     // never as "success" and never as a bare number.
     const badge = screen.getByText('tx_insufficient_fee');
-    expect(badge).toHaveClass('bg-down-subtle');
-    expect(badge).toHaveClass('text-down-strong');
+    expect(badge).toHaveClass('bg-bad-50');
+    expect(badge).toHaveClass('text-bad-700');
     // Full slug + numeric code preserved in the title.
     expect(badge).toHaveAttribute('title', 'tx_insufficient_fee (code -6)');
   });
@@ -32,7 +32,7 @@ describe('TxStatusBadge', () => {
   it('falls back to "code N" on failure when no slug is present', () => {
     render(<TxStatusBadge successful={false} code={-1} />);
     const badge = screen.getByText('code -1');
-    expect(badge).toHaveClass('bg-down-subtle');
+    expect(badge).toHaveClass('bg-bad-50');
     expect(badge).toHaveAttribute('title', 'code -1');
   });
 
@@ -43,8 +43,8 @@ describe('TxStatusBadge', () => {
     expect(badge).toHaveClass('text-ink-muted');
     expect(badge).toHaveAttribute('title', 'transaction outcome unavailable');
     // … and explicitly NOT the success (green) treatment.
-    expect(badge).not.toHaveClass('bg-up-subtle');
-    expect(badge).not.toHaveClass('text-up-strong');
+    expect(badge).not.toHaveClass('bg-ok-50');
+    expect(badge).not.toHaveClass('text-ok-700');
     expect(screen.queryByText('success')).not.toBeInTheDocument();
   });
 });
