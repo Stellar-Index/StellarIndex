@@ -3,7 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
-import { Badge, Stat } from '@/components/ui';
+import { Stat, StatCell, StatGrid } from '@/components/ui';
 import { HBarList, type HBarItem } from '@/components/charts/Bars';
 import { AssetLink } from '@/components/AssetLink';
 import { apiGet, asExample } from '@/api/client';
@@ -48,6 +48,12 @@ function wealthBucketLabel(bucket: number): string {
  * All from one precomputed rollup snapshot (30-min cycle) — the panel's
  * data cost is a handful of keyed reads.
  */
+function asOf(iso: string): string {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return `as of ${iso}`;
+  return `as of ${new Date(t).toISOString().slice(11, 19)} UTC`;
+}
+
 export function AccountsAnalytics() {
   const q = useQuery<AccountsStatsResp>({
     queryKey: ['/v1/accounts/stats'],
@@ -93,7 +99,10 @@ export function AccountsAnalytics() {
     title: `${b.accounts.toLocaleString('en-US')} accounts`,
   }));
   const trustlineItems: HBarItem[] = s.trustline_histogram.map((b) => ({
-    label: b.bucket === '0' ? 'no trustlines' : `${b.bucket} trustlines`,
+    label:
+      b.bucket === '0'
+        ? 'no trustlines'
+        : `${b.bucket} trustline${b.bucket === '1' ? '' : 's'}`,
     value: b.accounts,
     display: formatCompact(b.accounts),
   }));
@@ -111,32 +120,50 @@ export function AccountsAnalytics() {
         source={asExample('/v1/accounts/stats')}
         bodyClassName="space-y-5"
       >
-        <dl className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3 lg:grid-cols-6">
-          <Stat
-            label="Funded accounts"
-            value={formatCompact(s.totals.accounts)}
-          />
-          <Stat label="Trustlines" value={formatCompact(s.totals.trustlines)} />
-          <Stat
-            label="XLM held by accounts"
-            value={`${formatCompactUnits(s.totals.xlm_held_stroops, 7)} XLM`}
-          />
-          <Stat
-            label="Median balance"
-            value={`${xlmReadable(s.balances.median_stroops)} XLM`}
-          />
-          <Stat
-            label="p99 balance"
-            value={`${xlmReadable(s.balances.p99_stroops)} XLM`}
-          />
-          <Stat
-            label="Top-100 hold"
-            value={`${s.concentration.top100_share_pct.toFixed(2)}%`}
-          />
-        </dl>
-        <Badge title="Snapshot recomputed every 30 minutes from the captured ledger state. Balance statistics cover funded accounts' XLM.">
-          computed {s.computed_at}
-        </Badge>
+        <StatGrid cols={3} className="grid-cols-2">
+          <StatCell>
+            <Stat
+              label="Funded accounts"
+              value={formatCompact(s.totals.accounts)}
+            />
+          </StatCell>
+          <StatCell>
+            <Stat
+              label="Trustlines"
+              value={formatCompact(s.totals.trustlines)}
+            />
+          </StatCell>
+          <StatCell>
+            <Stat
+              label="XLM held"
+              value={`${formatCompactUnits(s.totals.xlm_held_stroops, 7)} XLM`}
+            />
+          </StatCell>
+          <StatCell>
+            <Stat
+              label="Median balance"
+              value={`${xlmReadable(s.balances.median_stroops)} XLM`}
+            />
+          </StatCell>
+          <StatCell>
+            <Stat
+              label="p99 balance"
+              value={`${xlmReadable(s.balances.p99_stroops)} XLM`}
+            />
+          </StatCell>
+          <StatCell>
+            <Stat
+              label="Top-100 hold"
+              value={`${s.concentration.top100_share_pct.toFixed(2)}%`}
+            />
+          </StatCell>
+        </StatGrid>
+        <p
+          className="text-ink-faint tnum text-xs"
+          title="Snapshot recomputed every 30 minutes from the captured ledger state. Balance statistics cover funded accounts' XLM."
+        >
+          {asOf(s.computed_at)}
+        </p>
       </Panel>
 
       <div className="grid gap-6 lg:grid-cols-2">

@@ -7,7 +7,11 @@ import { useQuery, keepPreviousData } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import {
+  Button,
   Segmented,
+  Stat,
+  StatCell,
+  StatGrid,
   Table,
   TableWrap,
   TBody,
@@ -211,26 +215,34 @@ export function AccountGraphPanel({ id }: { id: string }) {
         />
       </div>
 
-      <dl className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-4">
-        <GraphStat
-          label="Accounts created"
-          value={numFmt.format(created.accounts)}
-        />
-        <GraphStat
-          label="XLM funded"
-          value={
-            created.accounts > 0 ? xlmReadable(created.funded_stroops) : '—'
-          }
-        />
-        <GraphStat
-          label="Accounts sponsored"
-          value={numFmt.format(sponsored.accounts)}
-        />
-        <GraphStat
-          label="Revocations issued"
-          value={numFmt.format(sponsored.revocations_issued)}
-        />
-      </dl>
+      <StatGrid cols={4} className="grid-cols-2">
+        <StatCell>
+          <Stat
+            label="Accounts created"
+            value={numFmt.format(created.accounts)}
+          />
+        </StatCell>
+        <StatCell>
+          <Stat
+            label="XLM funded"
+            value={
+              created.accounts > 0 ? xlmReadable(created.funded_stroops) : '—'
+            }
+          />
+        </StatCell>
+        <StatCell>
+          <Stat
+            label="Accounts sponsored"
+            value={numFmt.format(sponsored.accounts)}
+          />
+        </StatCell>
+        <StatCell>
+          <Stat
+            label="Revocations issued"
+            value={numFmt.format(sponsored.revocations_issued)}
+          />
+        </StatCell>
+      </StatGrid>
 
       {options.length > 1 && (
         <Segmented
@@ -288,22 +300,26 @@ export function AccountGraphPanel({ id }: { id: string }) {
               Showing {numFmt.format(data.edges.length)} of{' '}
               {numFmt.format(shown)}.
             </span>
-            {cursor && (
-              <button
-                onClick={() => setCursor('')}
-                className="border-line text-ink-body hover:border-brand-500 rounded-md border px-2.5 py-1"
-              >
-                ← First
-              </button>
-            )}
-            {data.next_cursor && (
-              <button
-                onClick={() => setCursor(data.next_cursor ?? '')}
-                className="border-line text-ink-body hover:border-brand-500 ml-auto rounded-md border px-2.5 py-1"
-              >
-                More →
-              </button>
-            )}
+            <span className="ml-auto flex gap-2">
+              {cursor && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setCursor('')}
+                >
+                  First
+                </Button>
+              )}
+              {data.next_cursor && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setCursor(data.next_cursor ?? '')}
+                >
+                  More
+                </Button>
+              )}
+            </span>
           </div>
         </div>
       )}
@@ -313,23 +329,12 @@ export function AccountGraphPanel({ id }: { id: string }) {
       <NoteBadge>
         <p>{data.note}</p>
         <p title="The sponsorship floor is where sponsorship began to exist on the network, not a gap.">
-          Creation ledgers {numFmt.format(data.coverage.creation.from_ledger)}–
-          {numFmt.format(data.coverage.creation.thru_ledger)} · sponsorship
-          ledgers {numFmt.format(data.coverage.sponsorship.from_ledger)}–
-          {numFmt.format(data.coverage.sponsorship.thru_ledger)}
+          Creation ledgers #{data.coverage.creation.from_ledger}–#
+          {data.coverage.creation.thru_ledger} · sponsorship ledgers #
+          {data.coverage.sponsorship.from_ledger}–#
+          {data.coverage.sponsorship.thru_ledger}
         </p>
       </NoteBadge>
     </Panel>
-  );
-}
-
-function GraphStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <dt className="text-ink-muted text-[11px] tracking-wider uppercase">
-        {label}
-      </dt>
-      <dd className="mt-0.5 font-mono text-sm tabular-nums">{value}</dd>
-    </div>
   );
 }

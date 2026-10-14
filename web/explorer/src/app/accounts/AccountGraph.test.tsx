@@ -185,7 +185,8 @@ describe('AccountGraphPanel', () => {
 
     expect(await screen.findByText('Revocations issued')).toBeInTheDocument();
     expect(
-      screen.getByText('Revocations issued').nextElementSibling?.textContent,
+      screen.getByText('Revocations issued').closest('div')?.nextElementSibling
+        ?.textContent,
     ).toBe('3');
     expect(screen.getByText(/History, not live state/)).toBeInTheDocument();
     expect(screen.queryByText(/currently sponsoring/i)).not.toBeInTheDocument();
@@ -207,7 +208,7 @@ describe('AccountGraphPanel', () => {
       screen.queryByRole('group', { name: 'Outbound graph direction' }),
     ).not.toBeInTheDocument();
     // Coverage still qualifies the emptiness.
-    expect(screen.getByText(/32,747,295/)).toBeInTheDocument();
+    expect(screen.getByText(/32747295/)).toBeInTheDocument();
   });
 
   it('says when the inbound cap bites instead of letting a short list read as complete', async () => {

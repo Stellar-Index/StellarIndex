@@ -6,6 +6,7 @@ import { Panel } from '@/components/reveal';
 import { AssetLink, assetSlug, shortAssetText } from '@/components/AssetLink';
 import { DonutChart } from '@/components/charts/DonutChart';
 import {
+  Badge,
   Stat,
   StatGrid,
   StatCell,
@@ -316,7 +317,7 @@ export function AccountPositions({ id }: { id: string }) {
       source={asExample(`/v1/accounts/${id}`)}
       bodyClassName="space-y-4"
     >
-      <StatGrid cols={3}>
+      <StatGrid cols={3} className="grid-cols-2">
         <StatCell>
           <Stat
             label="Portfolio value"
@@ -337,7 +338,7 @@ export function AccountPositions({ id }: { id: string }) {
             sub={`${pricedCount} priced`}
           />
         </StatCell>
-        <StatCell>
+        <StatCell className="col-span-2 sm:col-span-1">
           <Stat
             label="Top holding"
             value={slices[0] ? slices[0].label : '—'}
@@ -402,22 +403,19 @@ export function AccountPositions({ id }: { id: string }) {
                   {h.priceUSD != null ? (
                     `$${formatPriceSmall(h.priceUSD)}`
                   ) : h.withheld ? (
-                    <span
-                      className="text-ink-muted text-[10px] tracking-wider uppercase"
-                      title="Price withheld by the pricing API's serving gate (thin market or flagged issuer) — observed, not merely unpriced"
-                    >
+                    <Badge title="Price withheld by the pricing API's serving gate (thin market or flagged issuer) — observed, not merely unpriced">
                       withheld
-                    </span>
+                    </Badge>
                   ) : (
                     '—'
                   )}
                   {h.priceType === 'peg' && (
-                    <span
-                      className="text-ink-muted ml-1.5 text-[10px] tracking-wider uppercase"
+                    <Badge
+                      className="ml-1.5"
                       title="Declared 1:1 peg — not an observed market price"
                     >
                       peg
-                    </span>
+                    </Badge>
                   )}
                 </Td>
                 <Td align="right" className="font-mono">

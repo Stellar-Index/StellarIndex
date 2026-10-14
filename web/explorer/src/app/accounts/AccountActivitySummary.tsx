@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
-import { Badge } from '@/components/ui';
+import { Badge, Stat, StatCell, StatGrid } from '@/components/ui';
 import { HBarList, PairedBars } from '@/components/charts/Bars';
 import { apiGet, asExample } from '@/api/client';
 import type { components } from '@/api/types';
@@ -25,6 +25,15 @@ const PROTOCOL_LABEL: Record<string, string> = {
 };
 
 const numFmt = new Intl.NumberFormat('en-US');
+
+/** The API names some types by their XDR enum (`OperationTypePayment`); show the snake_case name used everywhere else. */
+function opTypeLabel(opType: string): string {
+  if (!opType.startsWith('OperationType')) return opType;
+  return opType
+    .slice('OperationType'.length)
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .toLowerCase();
+}
 
 /**
  * AccountActivitySummaryPanel — the segmented "what has this address
@@ -55,7 +64,7 @@ export function AccountActivitySummaryPanel({ id }: { id: string }) {
   if (isError) {
     return (
       <Panel
-        title="Activity"
+        title="Activity summary"
         source={source}
         bodyClassName="text-sm text-ink-body"
       >
@@ -68,7 +77,7 @@ export function AccountActivitySummaryPanel({ id }: { id: string }) {
   if (isLoading || !data) {
     return (
       <Panel
-        title="Activity"
+        title="Activity summary"
         source={source}
         bodyClassName="text-sm text-ink-muted"
       >
@@ -95,37 +104,45 @@ export function AccountActivitySummaryPanel({ id }: { id: string }) {
   }
 
   return (
-    <Panel title="Activity" source={source} bodyClassName="space-y-4">
+    <Panel title="Activity summary" source={source} bodyClassName="space-y-4">
       {data.coverage_note && <NoteBadge>{data.coverage_note}</NoteBadge>}
 
-      <dl className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3 lg:grid-cols-4">
-        <ActivityStat
-          label="Operations (all time)"
-          value={
-            data.ops_by_type != null
-              ? numFmt.format(ops.reduce((n, c) => n + c.count, 0))
-              : '—'
-          }
-        />
-        <ActivityStat
-          label="Attributed trades"
-          value={
-            data.trades_total != null ? numFmt.format(data.trades_total) : '—'
-          }
-        />
-        <ActivityStat
-          label="DeFi actions"
-          value={
-            data.defi_actions != null
-              ? numFmt.format(defi.reduce((n, c) => n + c.count, 0))
-              : '—'
-          }
-        />
-        <ActivityStat
-          label="Bridge transfers"
-          value={bridge ? numFmt.format(bridgeTotal) : '—'}
-        />
-      </dl>
+      <StatGrid cols={4} className="grid-cols-2">
+        <StatCell>
+          <Stat
+            label="Operations (all time)"
+            value={
+              data.ops_by_type != null
+                ? numFmt.format(ops.reduce((n, c) => n + c.count, 0))
+                : '—'
+            }
+          />
+        </StatCell>
+        <StatCell>
+          <Stat
+            label="Attributed trades"
+            value={
+              data.trades_total != null ? numFmt.format(data.trades_total) : '—'
+            }
+          />
+        </StatCell>
+        <StatCell>
+          <Stat
+            label="DeFi actions"
+            value={
+              data.defi_actions != null
+                ? numFmt.format(defi.reduce((n, c) => n + c.count, 0))
+                : '—'
+            }
+          />
+        </StatCell>
+        <StatCell>
+          <Stat
+            label="Bridge transfers"
+            value={bridge ? numFmt.format(bridgeTotal) : '—'}
+          />
+        </StatCell>
+      </StatGrid>
 
       {ops.length > 0 && (
         <div>
@@ -138,12 +155,12 @@ export function AccountActivitySummaryPanel({ id }: { id: string }) {
               scale, largest first. */}
           <HBarList
             ariaLabel={`Operations by type: ${ops
-              .map((c) => `${c.op_type} ${numFmt.format(c.count)}`)
+              .map((c) => `${opTypeLabel(c.op_type)} ${numFmt.format(c.count)}`)
               .join(', ')}`}
             items={[...ops]
               .sort((x, y) => y.count - x.count)
               .map((c) => ({
-                label: c.op_type,
+                label: opTypeLabel(c.op_type),
                 value: c.count,
                 display: numFmt.format(c.count),
               }))}
@@ -220,16 +237,5 @@ export function AccountActivitySummaryPanel({ id }: { id: string }) {
         </div>
       )}
     </Panel>
-  );
-}
-
-function ActivityStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <dt className="text-ink-muted text-[11px] tracking-wider uppercase">
-        {label}
-      </dt>
-      <dd className="mt-0.5 font-mono text-sm tabular-nums">{value}</dd>
-    </div>
   );
 }

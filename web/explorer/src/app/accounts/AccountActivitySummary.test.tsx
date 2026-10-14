@@ -55,7 +55,8 @@ describe('AccountActivitySummaryPanel', () => {
     // The failed segment renders the coverage note and a dash, not zero.
     expect(screen.getByText(/INCOMPLETE: trades_total/)).toBeInTheDocument();
     expect(
-      screen.getByText('Attributed trades').nextElementSibling?.textContent,
+      screen.getByText('Attributed trades').closest('div')?.nextElementSibling
+        ?.textContent,
     ).toBe('—');
 
     // DeFi + bridge segments render their real counts.

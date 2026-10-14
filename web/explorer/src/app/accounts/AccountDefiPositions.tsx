@@ -291,7 +291,7 @@ function PositionRow({ p }: { p: AccountPosition }) {
           {formatTimestamp(p.last_activity.time)}
         </div>
         <div className="text-ink-faint text-[11px]">
-          #{p.last_activity.ledger.toLocaleString('en-US')}
+          #{p.last_activity.ledger}
         </div>
       </Td>
     </TR>

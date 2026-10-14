@@ -119,7 +119,7 @@ export function HBarList({
               {it.display ?? formatValue(it.value)}
             </span>
             {it.annotation && (
-              <span className="text-ink-muted whitespace-nowrap">
+              <span className="text-ink-muted min-w-0 truncate">
                 {it.annotation}
               </span>
             )}
@@ -272,6 +272,8 @@ export function DivergingColumns({
   height = 120,
   ariaLabel,
   className,
+  posColor = 'var(--color-up)',
+  negColor = 'var(--color-down)',
 }: {
   buckets: DivergingBucket[];
   posLabel: string;
@@ -280,6 +282,9 @@ export function DivergingColumns({
   height?: number;
   ariaLabel: string;
   className?: string;
+  /** Series colours; the up/down defaults are for price direction only. */
+  posColor?: string;
+  negColor?: string;
 }) {
   const finite = buckets.filter(
     (b) => Number.isFinite(b.pos) && Number.isFinite(b.neg),
@@ -288,8 +293,13 @@ export function DivergingColumns({
   const max = Math.max(...finite.flatMap((b) => [b.pos, b.neg]), 0);
   if (max <= 0) return null;
 
-  const half = (height - 16) / 2; // 16px reserved for x labels
-  const mid = half;
+  // A side with no data collapses so the other side gets the full height.
+  const hasPos = finite.some((b) => b.pos > 0);
+  const hasNeg = finite.some((b) => b.neg > 0);
+  const plot = height - 16; // 16px reserved for x labels
+  const posSpan = hasPos ? (hasNeg ? plot / 2 : plot) : 0;
+  const negSpan = hasNeg ? (hasPos ? plot / 2 : plot) : 0;
+  const mid = posSpan;
   const colW = 100 / finite.length;
 
   return (
@@ -298,14 +308,16 @@ export function DivergingColumns({
         <li className="flex items-center gap-1.5">
           <span
             aria-hidden
-            className="bg-up inline-block h-2 w-2 rounded-full"
+            className="inline-block h-2 w-2 rounded-full"
+            style={{ backgroundColor: posColor }}
           />
           {posLabel}
         </li>
         <li className="flex items-center gap-1.5">
           <span
             aria-hidden
-            className="bg-down inline-block h-2 w-2 rounded-full"
+            className="inline-block h-2 w-2 rounded-full"
+            style={{ backgroundColor: negColor }}
           />
           {negLabel}
         </li>
@@ -331,8 +343,8 @@ export function DivergingColumns({
         {finite.map((b, i) => {
           const x = i * colW + colW * 0.18;
           const w = colW * 0.64;
-          const posH = (b.pos / max) * (half - 2);
-          const negH = (b.neg / max) * (half - 2);
+          const posH = (b.pos / max) * Math.max(posSpan - 2, 0);
+          const negH = (b.neg / max) * Math.max(negSpan - 2, 0);
           return (
             <g key={b.id ?? b.label}>
               {b.pos > 0 && (
@@ -341,19 +353,13 @@ export function DivergingColumns({
                   y={mid - posH}
                   width={w}
                   height={posH}
-                  fill="var(--color-up)"
+                  fill={posColor}
                 >
                   <title>{`${b.label} — ${posLabel}: ${b.display ?? formatValue(b.pos)}`}</title>
                 </rect>
               )}
               {b.neg > 0 && (
-                <rect
-                  x={x}
-                  y={mid}
-                  width={w}
-                  height={negH}
-                  fill="var(--color-down)"
-                >
+                <rect x={x} y={mid} width={w} height={negH} fill={negColor}>
                   <title>{`${b.label} — ${negLabel}: ${b.display ?? formatValue(b.neg)}`}</title>
                 </rect>
               )}
