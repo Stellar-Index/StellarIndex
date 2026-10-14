@@ -290,9 +290,9 @@ func (r *capReader) AssetMovementsBackfilledThru(ctx context.Context) (uint32, e
 	return 0, nil
 }
 
-func (r *capReader) EntryHistoryCoverage(ctx context.Context) (uint32, uint32, error) {
+func (r *capReader) EntryHistoryWatermark(ctx context.Context) (uint32, error) {
 	r.probe.record(ctx)
-	return 1, 0, nil
+	return 1, nil
 }
 
 func (r *capReader) EntryIndexWatermark(ctx context.Context) (uint32, error) {
@@ -500,4 +500,14 @@ func TestDirectoryLookup_ReadDeadlineIs503NotInternal500(t *testing.T) {
 		t.Errorf("no Retry-After on the retryable 503; every client is left to guess, and the "+
 			"guess is `immediately` (headers %v)", rec.Header())
 	}
+}
+
+func (r *capReader) AccountSponsorships(ctx context.Context, _, _ string, _ bool, _ clickhouse.SponsorshipKey, _ uint32, _ int) ([]clickhouse.SponsorshipArrangement, error) {
+	r.probe.record(ctx)
+	return nil, nil
+}
+
+func (r *capReader) SponsorshipTotals(ctx context.Context, _, _ string, _ uint32) (clickhouse.SponsorshipTotals, error) {
+	r.probe.record(ctx)
+	return clickhouse.SponsorshipTotals{}, nil
 }

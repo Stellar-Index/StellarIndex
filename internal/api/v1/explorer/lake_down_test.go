@@ -177,8 +177,8 @@ func (downReader) AssetMovementsBackfilledThru(context.Context) (uint32, error) 
 	return 0, errLakeDown
 }
 
-func (downReader) EntryHistoryCoverage(context.Context) (uint32, uint32, error) {
-	return 0, 0, errLakeDown
+func (downReader) EntryHistoryWatermark(context.Context) (uint32, error) {
+	return 0, errLakeDown
 }
 
 func (downReader) EntryIndexWatermark(context.Context) (uint32, error) {
@@ -293,6 +293,7 @@ func lakeDownCases() []lakeDownCase {
 		{"AccountOperations", "/v1/accounts/" + validTestAccount + "/operations", acct, (*Handler).AccountOperations},
 		{"AccountMovements", "/v1/accounts/" + validTestAccount + "/movements", acct, (*Handler).AccountMovements},
 		{"AccountEntryChanges", "/v1/accounts/" + validTestAccount + "/entry-changes", acct, (*Handler).AccountEntryChanges},
+		{"AccountSponsorships", "/v1/accounts/" + validTestAccount + "/sponsorships", acct, (*Handler).AccountSponsorships},
 		{"AccountActivity", "/v1/accounts/" + validTestAccount + "/activity", acct, (*Handler).AccountActivity},
 		{"AccountCreators", "/v1/accounts/" + validTestAccount + "/creators", acct, (*Handler).AccountCreators},
 		{"AccountSponsors", "/v1/accounts/" + validTestAccount + "/sponsors", acct, (*Handler).AccountSponsors},
@@ -391,6 +392,7 @@ func TestExplorerReads_BoundedByReadTimeout(t *testing.T) {
 		{"AccountOperations", "/v1/accounts/" + validTestAccount + "/operations", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountOperations},
 		{"AccountMovements", "/v1/accounts/" + validTestAccount + "/movements", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountMovements},
 		{"AccountEntryChanges", "/v1/accounts/" + validTestAccount + "/entry-changes", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountEntryChanges},
+		{"AccountSponsorships", "/v1/accounts/" + validTestAccount + "/sponsorships", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountSponsorships},
 		{"AccountState", "/v1/accounts/" + validTestAccount, map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountState},
 		{"AssetHolders", "/v1/assets/native/holders", map[string]string{"asset_id": "native"}, (*Handler).AssetHolders},
 		{"AssetEntryChanges", "/v1/assets/native/entry-changes", map[string]string{"asset_id": "native"}, (*Handler).AssetEntryChanges},
@@ -628,4 +630,12 @@ func TestExplorerReads_DeadlineMapsTo503(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (downReader) AccountSponsorships(context.Context, string, string, bool, clickhouse.SponsorshipKey, uint32, int) ([]clickhouse.SponsorshipArrangement, error) {
+	return nil, errLakeDown
+}
+
+func (downReader) SponsorshipTotals(context.Context, string, string, uint32) (clickhouse.SponsorshipTotals, error) {
+	return clickhouse.SponsorshipTotals{}, errLakeDown
 }

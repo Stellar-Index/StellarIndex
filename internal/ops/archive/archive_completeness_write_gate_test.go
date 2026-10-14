@@ -19,44 +19,6 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
-// TestArchiveCompletenessFix_DryRunByDefault pins that without -write `fix` reports the residual-missing exit and touches nothing (empty root, no HTTP fetch).
-func TestArchiveCompletenessFix_DryRunByDefault(t *testing.T) {
-	root := t.TempDir()
-
-	err := Run([]string{
-		"archive-completeness", "fix",
-		"-archive-root", root,
-		"-from", "2", "-to", "63", // exactly one checkpoint position (seq=63)
-	})
-	if !errors.Is(err, opsutil.ErrExitSilently) {
-		t.Fatalf("err = %v, want opsutil.ErrExitSilently (1 residual missing checkpoint)", err)
-	}
-
-	entries := treeEntries(t, root)
-	if len(entries) != 0 {
-		t.Errorf("archive root gained %d entries in dry-run mode (no -write): %v — the fill must not run without -write", len(entries), entries)
-	}
-}
-
-// TestArchiveCompletenessVerify_DryRunByDefault is fix's sibling assertion for the mode the timer runs.
-func TestArchiveCompletenessVerify_DryRunByDefault(t *testing.T) {
-	root := t.TempDir()
-
-	err := Run([]string{
-		"archive-completeness", "verify",
-		"-archive-root", root,
-		"-from", "2", "-to", "63",
-	})
-	if !errors.Is(err, opsutil.ErrExitSilently) {
-		t.Fatalf("err = %v, want opsutil.ErrExitSilently (1 residual missing checkpoint)", err)
-	}
-
-	entries := treeEntries(t, root)
-	if len(entries) != 0 {
-		t.Errorf("archive root gained %d entries in dry-run mode (no -write): %v — the fill must not run without -write", len(entries), entries)
-	}
-}
-
 // TestArchiveCompletenessFix_NothingMissingIgnoresWriteGate: a complete range returns cleanly regardless of -write.
 func TestArchiveCompletenessFix_NothingMissingIgnoresWriteGate(t *testing.T) {
 	root := t.TempDir()
@@ -214,6 +176,27 @@ func TestArchiveCompletenessUnits_ExecStartParses(t *testing.T) {
 			}
 			if opts.network != "pubnet" {
 				t.Errorf("%s: -network = %q, want pubnet (the cross-anchor fill refuses without a pubnet value)", rel, opts.network)
+			}
+		})
+	}
+}
+
+// TestArchiveCompleteness_DryRunByDefault pins that without -write both fix and verify (the mode the
+// timer runs) report the residual-missing exit and touch nothing.
+func TestArchiveCompleteness_DryRunByDefault(t *testing.T) {
+	for _, mode := range []string{"fix", "verify"} {
+		t.Run(mode, func(t *testing.T) {
+			root := t.TempDir()
+			err := Run([]string{
+				"archive-completeness", mode,
+				"-archive-root", root,
+				"-from", "2", "-to", "63", // exactly one checkpoint position (seq=63)
+			})
+			if !errors.Is(err, opsutil.ErrExitSilently) {
+				t.Fatalf("err = %v, want opsutil.ErrExitSilently (1 residual missing checkpoint)", err)
+			}
+			if entries := treeEntries(t, root); len(entries) != 0 {
+				t.Errorf("archive root gained %d entries without -write: %v", len(entries), entries)
 			}
 		})
 	}

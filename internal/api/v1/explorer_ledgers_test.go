@@ -348,8 +348,8 @@ func (s *stubExplorerReader) AssetMovementsBackfilledThru(context.Context) (uint
 	return 0, s.err
 }
 
-func (s *stubExplorerReader) EntryHistoryCoverage(context.Context) (uint32, uint32, error) {
-	return 0, 0, s.err
+func (s *stubExplorerReader) EntryHistoryWatermark(context.Context) (uint32, error) {
+	return 0, s.err
 }
 
 func (s *stubExplorerReader) EntryIndexWatermark(context.Context) (uint32, error) {
@@ -805,4 +805,12 @@ func TestExplorer_Unavailable503(t *testing.T) {
 			t.Errorf("%s: status = %d, want 503", path, resp.StatusCode)
 		}
 	}
+}
+
+func (s *stubExplorerReader) AccountSponsorships(context.Context, string, string, bool, clickhouse.SponsorshipKey, uint32, int) ([]clickhouse.SponsorshipArrangement, error) {
+	return nil, s.err
+}
+
+func (s *stubExplorerReader) SponsorshipTotals(context.Context, string, string, uint32) (clickhouse.SponsorshipTotals, error) {
+	return clickhouse.SponsorshipTotals{}, s.err
 }

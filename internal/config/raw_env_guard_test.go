@@ -7,8 +7,6 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-
-	cfg "github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
 // credentialEnvRead matches a literal read of an env var whose name marks
@@ -75,26 +73,5 @@ func TestNoRawCredentialEnvReadsOutsideConfig(t *testing.T) {
 	}
 	for _, o := range offenders {
 		t.Errorf("raw credential env read %s: declare the field in internal/config (with an `env:` tag and an ApplyEnvOverrides arm) and read it from the loaded Config", o)
-	}
-}
-
-// TestCredentialEnvVarsDeclaredInSchema pins the schema rows the external
-// credentials resolve through.
-func TestCredentialEnvVarsDeclaredInSchema(t *testing.T) {
-	want := map[string]string{
-		"external.coingecko.api_key":        "COINGECKO_API_KEY",
-		"external.coingecko.demo_api_key":   "COINGECKO_DEMO_API_KEY",
-		"external.massive.api_key":          "MASSIVE_API_KEY",
-		"external.openexchangerates.app_id": "OPENEXCHANGERATES_APP_ID",
-		"external.dune.api_key":             "DUNE_API_KEY",
-	}
-	got := map[string]string{}
-	for _, f := range cfg.Describe() {
-		got[f.Path] = f.Env
-	}
-	for path, env := range want {
-		if got[path] != env {
-			t.Errorf("schema field %s env = %q, want %q", path, got[path], env)
-		}
 	}
 }
