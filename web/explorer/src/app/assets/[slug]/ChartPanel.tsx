@@ -1,6 +1,7 @@
 'use client';
 
 import { Panel } from '@/components/reveal';
+import { Skeleton } from '@/components/ui';
 import { asExample } from '@/api/client';
 import { MarketChart } from '@/components/charts/MarketChart';
 import { LineChart } from '@/components/charts/LineChart';
@@ -124,10 +125,17 @@ function FiatUsdChartPanel({ assetID }: { assetID: string }) {
           ariaLabel={`${shortAssetText(assetID)} USD price, trailing week`}
         />
       ) : (
-        <div className="text-ink-muted flex h-[340px] items-center justify-center text-sm">
-          {isLoading
-            ? 'Loading…'
-            : 'No recent USD price series for this currency.'}
+        <div className="h-[340px]" aria-busy={isLoading || undefined}>
+          {isLoading ? (
+            <>
+              <span className="sr-only">Loading price chart</span>
+              <Skeleton className="h-full w-full" aria-hidden />
+            </>
+          ) : (
+            <div className="text-ink-muted flex h-full items-center justify-center text-sm">
+              No recent USD price series for this currency.
+            </div>
+          )}
         </div>
       )}
     </Panel>

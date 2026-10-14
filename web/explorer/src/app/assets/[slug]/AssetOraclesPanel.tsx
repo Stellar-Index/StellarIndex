@@ -9,11 +9,21 @@ import { apiGet, asExample } from '@/api/client';
 import { useSources } from '@/api/hooks';
 import { AssetLink } from '@/components/AssetLink';
 import { Panel } from '@/components/reveal';
-import { Mono } from '@/components/ui';
+import {
+  Badge,
+  Callout,
+  Mono,
+  Skeleton,
+  Table,
+  THead,
+  TBody,
+  TR,
+  Th,
+  Td,
+} from '@/components/ui';
 import { isRawOracleAsset, rawOracleSymbol } from '@/lib/asset-label';
 import { assetHref } from '@/lib/fiat-slugs';
 import { formatOraclePrice, formatRelative } from '@/lib/format';
-import { sourceToneClass } from '@/lib/pillTone';
 import { SourcePriceSpread } from '../../markets/[pair]/SourcePriceSpread';
 
 import type { RequestExample } from '@/api/client';
@@ -217,26 +227,23 @@ export function AssetOraclesPanel({
   // network — the frontend-honesty rule this file's siblings follow.
   if (latest.isError || registry.isError) {
     return (
-      <Panel
-        headingLevel={headingLevel}
-        title="Oracle feeds"
-        source={example}
-        bodyClassName="text-sm text-ink-muted"
-      >
-        Oracle feeds unavailable right now — retry shortly.
+      <Panel headingLevel={headingLevel} title="Oracle feeds" source={example}>
+        <Callout tone="bad">
+          Oracle feeds unavailable right now — retry shortly.
+        </Callout>
       </Panel>
     );
   }
 
   if (latest.isLoading || registry.isLoading) {
     return (
-      <Panel
-        headingLevel={headingLevel}
-        title="Oracle feeds"
-        source={example}
-        bodyClassName="text-sm text-ink-muted"
-      >
-        Loading…
+      <Panel headingLevel={headingLevel} title="Oracle feeds" source={example}>
+        <div className="space-y-3" aria-busy="true">
+          <span className="sr-only">Loading oracle feeds</span>
+          <Skeleton className="h-4 w-3/5" aria-hidden />
+          <Skeleton className="h-4 w-full" aria-hidden />
+          <Skeleton className="h-4 w-4/5" aria-hidden />
+        </div>
       </Panel>
     );
   }
@@ -250,13 +257,10 @@ export function AssetOraclesPanel({
   // would misstate a registry outage as a coverage fact.
   if (registry.data?.length === 0) {
     return (
-      <Panel
-        headingLevel={headingLevel}
-        title="Oracle feeds"
-        source={example}
-        bodyClassName="text-sm text-ink-muted"
-      >
-        Oracle feeds unavailable right now — retry shortly.
+      <Panel headingLevel={headingLevel} title="Oracle feeds" source={example}>
+        <Callout tone="bad">
+          Oracle feeds unavailable right now — retry shortly.
+        </Callout>
       </Panel>
     );
   }
@@ -281,6 +285,8 @@ export function AssetOraclesPanel({
     );
   }
 
+  const priceDigits = fractionDigits(rows.map((r) => r.price));
+
   return (
     <div className="space-y-4">
       <Panel
@@ -303,9 +309,9 @@ export function AssetOraclesPanel({
           </div>
         )}
         <div className="overflow-x-auto">
-          <table className="divide-line min-w-full divide-y text-sm">
-            <thead>
-              <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
+          <Table>
+            <THead>
+              <tr>
                 <Th>Oracle</Th>
                 <Th>Contract</Th>
                 <Th>Quote</Th>
@@ -313,13 +319,17 @@ export function AssetOraclesPanel({
                 <Th align="right">Decimals</Th>
                 <Th align="right">Updated</Th>
               </tr>
-            </thead>
-            <tbody className="divide-line-subtle divide-y">
+            </THead>
+            <TBody>
               {rows.map((r) => (
-                <ReadingRow key={`${r.source}|${r.asset}|${r.quote}`} r={r} />
+                <ReadingRow
+                  key={`${r.source}|${r.asset}|${r.quote}`}
+                  r={r}
+                  digits={priceDigits}
+                />
               ))}
-            </tbody>
-          </table>
+            </TBody>
+          </Table>
         </div>
         <p className="text-ink-muted px-4 pt-3 text-xs">
           Oracle-class publishers only — aggregator and exchange prices for{' '}
@@ -455,6 +465,7 @@ function SymbolMatchedRawFeeds({
   headingLevel: 2 | 3 | 4;
 }) {
   if (rows.length === 0) return null;
+  const priceDigits = fractionDigits(rows.map((r) => r.price));
   return (
     <Panel
       headingLevel={headingLevel}
@@ -464,22 +475,19 @@ function SymbolMatchedRawFeeds({
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="divide-line min-w-full divide-y text-sm">
-          <thead>
-            <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
+        <Table>
+          <THead>
+            <tr>
               <Th>Oracle</Th>
               <Th>Raw symbol</Th>
               <Th>Quote (assumed)</Th>
               <Th align="right">Latest price</Th>
               <Th align="right">Updated</Th>
             </tr>
-          </thead>
-          <tbody className="divide-line-subtle divide-y">
+          </THead>
+          <TBody>
             {rows.map((r) => (
-              <tr
-                key={`${r.source}|${r.asset}|${r.quote}`}
-                className="hover:bg-surface-muted"
-              >
+              <TR key={`${r.source}|${r.asset}|${r.quote}`}>
                 <Td>
                   <SourcePill source={r.source} />
                 </Td>
@@ -503,27 +511,27 @@ function SymbolMatchedRawFeeds({
                   </span>
                 </Td>
                 <Td align="right">
-                  <PriceCell r={r} />
+                  <PriceCell r={r} digits={priceDigits} />
                 </Td>
                 <Td align="right">
                   <Updated ts={r.ts} />
                 </Td>
-              </tr>
+              </TR>
             ))}
-          </tbody>
-        </table>
+          </TBody>
+        </Table>
       </div>
     </Panel>
   );
 }
 
-function ReadingRow({ r }: { r: OracleReading }) {
+function ReadingRow({ r, digits }: { r: OracleReading; digits: number }) {
   return (
-    <tr className="hover:bg-surface-muted">
+    <TR>
       <Td>
         <SourcePill source={r.source} />
       </Td>
-      <Td>
+      <Td className="whitespace-nowrap">
         {r.contract_id ? (
           <Mono value={r.contract_id} truncate={{ head: 4, tail: 4 }} />
         ) : (
@@ -539,11 +547,11 @@ function ReadingRow({ r }: { r: OracleReading }) {
         <AssetLink canonical={r.quote} />
       </Td>
       <Td align="right">
-        <PriceCell r={r} />
+        <PriceCell r={r} digits={digits} />
       </Td>
       <Td align="right">
         <span
-          className="text-ink-muted font-mono text-xs tabular-nums"
+          className="text-ink-muted font-mono text-xs"
           title="Source-declared scale for price_raw; the raw integer is kept as published"
         >
           {r.decimals}
@@ -552,28 +560,52 @@ function ReadingRow({ r }: { r: OracleReading }) {
       <Td align="right">
         <Updated ts={r.ts} />
       </Td>
-    </tr>
+    </TR>
   );
 }
 
 function SourcePill({ source }: { source: string }) {
   return (
-    <Link
-      href={hrefFor.source(source)}
-      className={`inline-block rounded-sm px-1.5 py-0.5 text-[10px] font-medium tracking-wider uppercase hover:underline ${sourceToneClass(source)}`}
-    >
-      {source}
+    <Link href={hrefFor.source(source)} className="hover:underline">
+      <Badge tone="neutral" className="font-mono">
+        {source}
+      </Badge>
     </Link>
   );
 }
 
-function PriceCell({ r }: { r: OracleReading }) {
+/** Fraction length of the longest formatted price, so one table shares a decimal column. */
+export function fractionDigits(prices: readonly string[]): number {
+  return Math.max(
+    0,
+    ...prices.map((p) => fractionLength(formatOraclePrice(p))),
+  );
+}
+
+function fractionLength(s: string): number {
+  const dot = s.lastIndexOf('.');
+  return dot === -1 ? 0 : s.length - dot - 1;
+}
+
+/**
+ * padFraction — trailing figure spaces (U+2007, digit-width in every font)
+ * up to `digits` fraction places. Spaces, not zeros: a padded zero would
+ * claim precision the oracle never published.
+ */
+export function padFraction(s: string, digits: number): string {
+  if (digits === 0 || !s.trim()) return s;
+  const have = fractionLength(s);
+  const need = digits - have + (s.includes('.') ? 0 : 1);
+  return need > 0 ? s + '\u2007'.repeat(need) : s;
+}
+
+function PriceCell({ r, digits }: { r: OracleReading; digits: number }) {
   return (
     <span
-      className="text-ink-body font-mono tabular-nums"
+      className="font-mono"
       title={`${r.price_raw} at ${r.decimals} decimals`}
     >
-      {formatOraclePrice(r.price)}
+      {padFraction(formatOraclePrice(r.price), digits)}
     </span>
   );
 }
@@ -583,38 +615,5 @@ function Updated({ ts }: { ts: string }) {
     <time dateTime={ts} className="text-ink-muted font-mono text-xs" title={ts}>
       {formatRelative(ts)}
     </time>
-  );
-}
-
-function Th({
-  children,
-  align,
-}: {
-  children: React.ReactNode;
-  align?: 'left' | 'right';
-}) {
-  return (
-    <th
-      scope="col"
-      className={`px-4 py-2 ${align === 'right' ? 'text-right' : 'text-left'}`}
-    >
-      {children}
-    </th>
-  );
-}
-
-function Td({
-  children,
-  align,
-}: {
-  children: React.ReactNode;
-  align?: 'left' | 'right';
-}) {
-  return (
-    <td
-      className={`px-4 py-2 ${align === 'right' ? 'text-right' : 'text-left'}`}
-    >
-      {children}
-    </td>
   );
 }

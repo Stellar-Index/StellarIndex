@@ -29,7 +29,19 @@ import {
 } from '@/lib/seo';
 import { assetHref } from '@/lib/fiat-slugs';
 import { CURRENT_NETWORK } from '@/lib/networks';
-import { Badge, Callout, Container, PageHeader } from '@/components/ui';
+import {
+  Badge,
+  Callout,
+  Container,
+  PageHeader,
+  Table,
+  TBody,
+  Td,
+  Th,
+  THead,
+  TR,
+} from '@/components/ui';
+import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 import { AssetScamCallout } from './AssetScamCallout';
 import { AssetClientFallback } from './AssetClientFallback';
 import { AssetPathView } from './AssetPathView';
@@ -1290,33 +1302,24 @@ function OverviewBody({
           bodyClassName="-mx-4"
         >
           <div className="overflow-x-auto">
-            <table className="divide-line min-w-full divide-y text-sm">
-              <thead>
-                <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
-                  <th className="px-4 py-2 font-medium">Side</th>
-                  <th className="px-4 py-2 font-medium">vs</th>
-                  <th className="px-4 py-2 text-right font-medium">
-                    24h volume
-                  </th>
-                  <th className="px-4 py-2 text-right font-medium">
-                    24h trades
-                  </th>
+            <Table>
+              <THead>
+                <tr>
+                  <Th>Side</Th>
+                  <Th>vs</Th>
+                  <Th align="right">24h volume</Th>
+                  <Th align="right">24h trades</Th>
                 </tr>
-              </thead>
-              <tbody className="divide-line-subtle divide-y">
+              </THead>
+              <TBody>
                 {coin.top_markets.map((m) => {
                   const pairURL = topMarketHref(coin.asset_id, m);
                   return (
-                    <tr
-                      key={`${m.side}|${m.counterparty}`}
-                      className="hover:bg-surface-muted"
-                    >
-                      <td className="px-4 py-3">
-                        <span className="bg-surface-subtle text-ink-body rounded-sm px-1.5 py-0.5 text-[10px] tracking-wider uppercase">
-                          {m.side}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 font-mono text-xs">
+                    <TR key={`${m.side}|${m.counterparty}`}>
+                      <Td>
+                        <Badge tone="neutral">{m.side}</Badge>
+                      </Td>
+                      <Td className="font-mono text-xs">
                         {pairURL ? (
                           <Link
                             href={pairURL}
@@ -1327,24 +1330,24 @@ function OverviewBody({
                         ) : (
                           shortCounterparty(m.counterparty)
                         )}
-                      </td>
-                      <td className="px-4 py-3 text-right">
+                      </Td>
+                      <Td align="right">
                         {m.volume_24h_usd ? (
-                          <span className="font-mono tabular-nums">
+                          <span className="font-mono">
                             ${formatCompactUnits(m.volume_24h_usd)}
                           </span>
                         ) : (
                           <span className="text-ink-faint">—</span>
                         )}
-                      </td>
-                      <td className="text-ink-muted px-4 py-3 text-right font-mono tabular-nums">
+                      </Td>
+                      <Td align="right" className="text-ink-muted font-mono">
                         {fmtCompact(m.trade_count_24h)}
-                      </td>
-                    </tr>
+                      </Td>
+                    </TR>
                   );
                 })}
-              </tbody>
-            </table>
+              </TBody>
+            </Table>
           </div>
         </Panel>
       )}
@@ -1502,10 +1505,10 @@ export function pegBadgeCurrency(
 
 function PeggedBadge({ currency }: { currency: string }) {
   return (
-    <span className="bg-brand-50 text-brand-700 inline-flex items-center gap-1 rounded-sm px-2 py-0.5 font-mono text-xs tracking-wider uppercase">
-      <span className="text-[10px] opacity-70">PEG</span>
+    <Badge tone="brand" className="font-mono uppercase">
+      <span className="opacity-70">PEG</span>
       {currency}
-    </span>
+    </Badge>
   );
 }
 
@@ -1519,23 +1522,14 @@ function ChangePctLabel({
   if (raw == null) return null;
   const n = Number(raw);
   if (!Number.isFinite(n)) return null;
-  const tone =
-    n > 0
-      ? 'bg-up-subtle text-up'
-      : n < 0
-        ? 'bg-down-subtle text-down'
-        : 'bg-surface-subtle text-ink-body';
+  const tone = n > 0 ? 'up' : n < 0 ? 'down' : 'neutral';
   const sign = n > 0 ? '+' : '';
   return (
-    <span
-      className={`rounded-sm px-2 py-0.5 font-mono text-xs tabular-nums ${tone}`}
-    >
+    <Badge tone={tone} className="font-mono tabular-nums">
       {sign}
       {n.toFixed(2)}%
-      <span className="ml-1 text-[10px] tracking-wider uppercase opacity-70">
-        {window}
-      </span>
-    </span>
+      <span className="tracking-wider uppercase opacity-70">{window}</span>
+    </Badge>
   );
 }
 
@@ -1601,9 +1595,7 @@ function Stat({
           : 'text-ink-muted';
   return (
     <div>
-      <dt className="text-ink-muted text-[11px] tracking-wider uppercase">
-        {label}
-      </dt>
+      <dt className={PANEL_LABEL_CLASS}>{label}</dt>
       <dd className={mono ? 'font-mono text-xs' : 'tabular-nums'}>
         {value}
         {accent && (

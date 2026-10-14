@@ -5,6 +5,16 @@ import Link from 'next/link';
 import { useMemo } from 'react';
 
 import { Panel } from '@/components/reveal';
+import {
+  Callout,
+  Skeleton,
+  Table,
+  THead,
+  TBody,
+  TR,
+  Th,
+  Td,
+} from '@/components/ui';
 import { asExample } from '@/api/client';
 import { SourceSparkline } from '@/components/SourceSparkline';
 import { useMarkets, type Market } from '@/api/hooks';
@@ -66,9 +76,8 @@ export function MarketsTabPanel({ assetID }: { assetID: string }) {
         headingLevel={2}
         title="Markets"
         source={asExample('/v1/markets', { limit: 100 })}
-        bodyClassName="text-sm text-down-strong"
       >
-        Failed to load markets.
+        <Callout tone="bad">Failed to load markets.</Callout>
       </Panel>
     );
   }
@@ -78,9 +87,13 @@ export function MarketsTabPanel({ assetID }: { assetID: string }) {
         headingLevel={2}
         title="Markets"
         source={asExample('/v1/markets', { limit: 100 })}
-        bodyClassName="text-sm text-ink-muted"
       >
-        Loading…
+        <div className="space-y-3" aria-busy="true">
+          <span className="sr-only">Loading markets</span>
+          <Skeleton className="h-4 w-3/5" aria-hidden />
+          <Skeleton className="h-4 w-full" aria-hidden />
+          <Skeleton className="h-4 w-4/5" aria-hidden />
+        </div>
       </Panel>
     );
   }
@@ -116,10 +129,9 @@ export function MarketsTabPanel({ assetID }: { assetID: string }) {
       bodyClassName="-mx-4"
     >
       <div className="overflow-x-auto">
-        <table className="divide-line min-w-full divide-y text-sm">
-          <thead>
-            <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
-              <Th>Side</Th>
+        <Table>
+          <THead>
+            <tr>
               <Th>Pair</Th>
               <Th align="right">24h volume</Th>
               <Th align="right">24h trades</Th>
@@ -127,8 +139,8 @@ export function MarketsTabPanel({ assetID }: { assetID: string }) {
               <Th>24h chart</Th>
               <Th align="right">Last trade</Th>
             </tr>
-          </thead>
-          <tbody className="divide-line-subtle divide-y">
+          </THead>
+          <TBody>
             {matched.map((m) => (
               <Row
                 key={`${m.base}|${m.quote}`}
@@ -137,8 +149,8 @@ export function MarketsTabPanel({ assetID }: { assetID: string }) {
                 barMax={barMax}
               />
             ))}
-          </tbody>
-        </table>
+          </TBody>
+        </Table>
       </div>
     </Panel>
   );
@@ -185,13 +197,8 @@ function Row({
   const pairSlug = `${m.base}~${m.quote}`;
   const avgTrade = divideDecimalString(m.volume_24h_usd, m.trade_count_24h);
   return (
-    <tr className="hover:bg-surface-muted">
-      <Td>
-        <span className="bg-surface-subtle text-ink-body rounded-sm px-1.5 py-0.5 text-[10px] tracking-wider uppercase">
-          {isBase ? 'base' : 'quote'}
-        </span>
-      </Td>
-      <Td>
+    <TR>
+      <Td className="whitespace-nowrap">
         {/* Rows link their pair page. */}
         <Link
           href={`/markets/${encodeURIComponent(pairSlug)}/`}
@@ -202,9 +209,12 @@ function Row({
             {shortAsset(counterparty ?? '')}
           </span>
         </Link>
+        <span className="text-ink-faint ml-2 text-xs">
+          {isBase ? 'base' : 'quote'}
+        </span>
       </Td>
       <Td align="right">
-        <span className="font-mono text-xs tabular-nums">
+        <span className="font-mono text-xs">
           {m.volume_24h_usd ? `$${formatCompactUnits(m.volume_24h_usd)}` : '—'}
         </span>
         {barPct > 0 && (
@@ -220,12 +230,10 @@ function Row({
         )}
       </Td>
       <Td align="right">
-        <span className="font-mono tabular-nums">
-          {formatCompact(m.trade_count_24h)}
-        </span>
+        <span className="font-mono">{formatCompact(m.trade_count_24h)}</span>
       </Td>
       <Td align="right">
-        <span className="font-mono text-xs tabular-nums">
+        <span className="font-mono text-xs">
           {avgTrade ? `$${formatCompactUnits(avgTrade)}` : '—'}
         </span>
       </Td>
@@ -233,11 +241,11 @@ function Row({
         <SourceSparkline buckets={m.volume_history_24h} />
       </Td>
       <Td align="right">
-        <span className="text-ink-muted font-mono text-xs tabular-nums">
+        <span className="text-ink-muted font-mono text-xs">
           {formatRelative(m.last_trade_at)}
         </span>
       </Td>
-    </tr>
+    </TR>
   );
 }
 
@@ -259,37 +267,4 @@ function shortAsset(canonical: string): string {
   const code = canonical.slice(0, dashIx);
   const issuer = canonical.slice(dashIx + 1);
   return `${code} (${issuer.slice(0, 6)}…${issuer.slice(-4)})`;
-}
-
-function Th({
-  children,
-  align,
-}: {
-  children: React.ReactNode;
-  align?: 'left' | 'right';
-}) {
-  return (
-    <th
-      className={`px-4 py-2 ${align === 'right' ? 'text-right' : 'text-left'}`}
-      scope="col"
-    >
-      {children}
-    </th>
-  );
-}
-
-function Td({
-  children,
-  align,
-}: {
-  children: React.ReactNode;
-  align?: 'left' | 'right';
-}) {
-  return (
-    <td
-      className={`px-4 py-3 ${align === 'right' ? 'text-right' : 'text-left'}`}
-    >
-      {children}
-    </td>
-  );
 }

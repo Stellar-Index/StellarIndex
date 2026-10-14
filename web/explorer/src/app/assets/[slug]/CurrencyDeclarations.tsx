@@ -1,4 +1,5 @@
 import { type AssetDetail } from '@/api/hooks';
+import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 
 /**
  * CurrencyDeclarations — the issuer's own SEP-1 statements about the
@@ -44,8 +45,8 @@ export function CurrencyDeclarations({ asset }: { asset: AssetDetail }) {
   if (rows.length === 0) return null;
 
   return (
-    <div className="border-line bg-surface-muted rounded-lg border p-3 text-xs">
-      <h3 className="text-ink-muted mb-1 text-[11px] font-semibold tracking-wider uppercase">
+    <div className="border-line border-t pt-3 text-xs">
+      <h3 className={`${PANEL_LABEL_CLASS} mb-1`}>
         SEP-1 currency declarations
       </h3>
       <p className="text-ink-body">
