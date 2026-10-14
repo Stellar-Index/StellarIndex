@@ -29,14 +29,15 @@ groups:
         # 30h of scrapes: absent_over_time is true from the first
         # evaluation on a fresh rule load, and a series that has not
         # existed for 10 minutes is not one that has been missing for
-        # 30 hours. ~1,700 node_exporter samples at 60s is 28h+ of
-        # observed absence.
+        # 30 hours. The subquery samples `up` every 5m whatever the
+        # scrape interval, so 350 of the 360 points is 29h+ of observed
+        # presence; a raw sample count opens at about 7h on a 15s scrape.
         expr: |
           (time() - stellarindex_curated_rwa_sync_last_run_unix) > (30 * 3600)
           or
           (
             absent_over_time(stellarindex_curated_rwa_sync_last_run_unix[30h])
-            and on() (count_over_time(up{job="node_exporter"}[30h]) > 1700)
+            and on() (count_over_time(up{job="node_exporter"}[30h:5m]) >= 350)
           )
         for: 10m
         labels:
