@@ -1,6 +1,8 @@
 'use client';
 
-import { HATCH_BG, HBarList } from '@/components/charts/Bars';
+import { asExample } from '@/api/client';
+import { HBarList } from '@/components/charts/Bars';
+import { Panel } from '@/components/reveal';
 import {
   compareDecimalStrings,
   formatCompactUnits,
@@ -8,6 +10,7 @@ import {
   formatRelative,
 } from '@/lib/format';
 import { Badge } from '@/components/ui';
+import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 import { protocolMeta } from './registry';
 
 // Mirrors internal/api/v1/dex_tvl_cache.go ProtocolTVLView — served on
@@ -88,11 +91,12 @@ export function ProtocolTvlPanel({
       : null;
 
   return (
-    <div className="rounded-card border-line bg-surface border p-5">
-      <h2 className="text-h3 text-ink font-semibold">Value locked (USD)</h2>
-      <p className="text-ink-muted mt-1 mb-3 text-xs">
-        Pool reserves at served USD prices, per protocol
-      </p>
+    <Panel
+      headingLevel={2}
+      title="Value locked (USD)"
+      hint="Pool reserves at served USD prices, per protocol"
+      source={asExample('/v1/protocols')}
+    >
       {headline && <DexTvlHeadline total={headline} />}
       <HBarList
         ariaLabel={`Value locked per protocol: ${withTvl
@@ -104,7 +108,7 @@ export function ProtocolTvlPanel({
           display: `${r.tvl.unpriced_pools > 0 ? '≥ ' : ''}$${formatCompactUnits(r.tvl.tvl_usd)}`,
           annotation:
             r.tvl.unpriced_pools > 0
-              ? `${r.tvl.pools_priced}/${r.tvl.pools_total} pools priced`
+              ? `${r.tvl.pools_priced}/${r.tvl.pools_total} priced`
               : `${r.tvl.pools_total} pool${r.tvl.pools_total === 1 ? '' : 's'}`,
           hatchTail: r.tvl.unpriced_pools > 0,
           title: r.tvl.basis,
@@ -119,7 +123,7 @@ export function ProtocolTvlPanel({
           hatched = lower bound
         </Badge>
       )}
-    </div>
+    </Panel>
   );
 }
 
@@ -159,29 +163,20 @@ export function DexTvlHeadline({ total }: { total: DexTvlTotal }) {
   if (figure == null) return null;
 
   return (
-    <div className="rounded-card border-line bg-surface-subtle mb-4 border p-4">
-      <div className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
-        Total value locked
-      </div>
+    <div className="mb-5">
+      <div className={PANEL_LABEL_CLASS}>Total value locked</div>
       <div className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-1">
         <span
           className="tnum text-ink font-mono text-3xl font-semibold tracking-tight"
           title={total.tvl_usd}
         >
           {total.lower_bound && (
-            <span className="text-ink-muted" aria-hidden>
+            <span className="text-ink-muted font-sans leading-none" aria-hidden>
               ≥{' '}
             </span>
           )}
           {figure}
         </span>
-        {total.lower_bound && (
-          <span
-            aria-hidden
-            className="text-ink-faint inline-block h-3 w-6 self-center rounded-xs opacity-70"
-            style={{ backgroundImage: HATCH_BG }}
-          />
-        )}
         <span className="text-ink-muted tnum text-xs">
           {total.as_of_ledger != null && total.as_of_ledger > 0 && (
             <>ledger {total.as_of_ledger.toLocaleString('en-US')} · </>
@@ -200,7 +195,7 @@ export function DexTvlHeadline({ total }: { total: DexTvlTotal }) {
         </p>
       )}
       {(total.excluded.length > 0 || total.basis) && (
-        <details className="group border-line mt-2 rounded-lg border">
+        <details className="group border-line mt-3 rounded-md border">
           <summary className="text-ink-body marker:text-ink-faint hover:text-brand-600 cursor-pointer px-3 py-1.5 text-xs font-medium select-none">
             {total.excluded.length > 0 ? (
               <>

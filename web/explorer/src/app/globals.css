@@ -59,6 +59,18 @@
   --color-down: #f6465d;
   --color-down-strong: #ff6b7a;
 
+  /* Categorical chart series, in draw order; `tail` is the "other" bucket. */
+  --color-chart-1: #4c7dff;
+  --color-chart-2: #31c48d;
+  --color-chart-3: #e0a63c;
+  --color-chart-4: #a78bfa;
+  --color-chart-5: #22d3ee;
+  --color-chart-6: #f472b6;
+  --color-chart-7: #fb923c;
+  --color-chart-8: #818cf8;
+  --color-chart-9: #2dd4bf;
+  --color-chart-tail: #5b6472;
+
   /* Severity — dark tint bg (-50) + bright text (-700/900). */
   --color-bad-50: #2a1216;
   --color-bad-300: #f6465d;

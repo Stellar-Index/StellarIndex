@@ -5,8 +5,6 @@ import Link from 'next/link';
 
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
-import { SourceSparkline } from '@/components/SourceSparkline';
-import { DonutChart } from '@/components/charts/DonutChart';
 import {
   useSources,
   useCursors,
@@ -14,6 +12,7 @@ import {
   type Source,
 } from '@/api/hooks';
 import { formatDurationShort } from '@/lib/format';
+import { Badge, Input, TBody, TR, Table, Td, Th, THead } from '@/components/ui';
 import { CountBar, LagDot } from './SourceListMarks';
 
 /**
@@ -24,7 +23,7 @@ import { CountBar, LagDot } from './SourceListMarks';
  * rest are reported alongside but excluded so we don't double-count
  * upstream markets or import their methodology. Per-source flags
  * (`include_in_vwap`, `paid`, `backfill_available`, `backfill_safe`)
- * surface as small pills next to the source name.
+ * surface as badges in the last column.
  */
 const SOURCE_CSV_COLUMNS = [
   'name',
@@ -38,9 +37,7 @@ export function SourcesTable() {
   // table can show the most-active venues at the top of each
   // class group. The opt-in matches the public docs so any caller
   // using /v1/sources directly sees the same shape.
-  const { data, isLoading, isError, error } = useSources(undefined, true, {
-    sparkline: true,
-  });
+  const { data, isLoading, isError, error } = useSources(undefined, true);
   const cursors = useCursors();
   const [filter, setFilter] = useState('');
 
@@ -60,15 +57,6 @@ export function SourcesTable() {
   }, [stellar, filter]);
 
   const grouped = useMemo(() => groupByClass(filteredData), [filteredData]);
-
-  const classMix = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const s of stellar) m.set(s.class, (m.get(s.class) ?? 0) + 1);
-    return Array.from(m, ([label, value]) => ({
-      label: titleCase(label),
-      value,
-    }));
-  }, [stellar]);
 
   // Aggregate the cursors slice by VENUE — one venue can have many
   // cursors (live + per-range backfills). The cursor's `source` field
@@ -117,7 +105,7 @@ export function SourcesTable() {
         headingLevel={2}
         title="Sources"
         source={asExample('/v1/sources')}
-        bodyClassName="text-sm text-down-strong"
+        bodyClassName="text-sm text-bad-700"
       >
         Failed to load sources:{' '}
         {error instanceof Error ? error.message : 'unknown error'}
@@ -151,16 +139,16 @@ export function SourcesTable() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3 text-xs">
-        <input
+      <div className="flex flex-wrap items-center gap-3">
+        <Input
           type="search"
           aria-label="Filter sources by name, class, or subclass"
-          placeholder="Filter by source name, class, or subclass…"
+          placeholder="Filter by name, class or subclass…"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          className="border-line bg-surface placeholder:text-ink-faint focus:border-brand-500 focus:ring-brand-500 w-72 rounded-md border px-2.5 py-1 text-xs focus:ring-1 focus:outline-hidden"
+          className="w-72"
         />
-        <span className="text-ink-muted font-mono text-[11px]">
+        <span className="text-ink-muted tnum text-xs">
           {filteredData.length} of {stellar.length} sources
           {filter && (
             <button
@@ -173,20 +161,6 @@ export function SourcesTable() {
           )}
         </span>
       </div>
-      {!filter && classMix.length > 1 && (
-        <Panel
-          headingLevel={2}
-          title="By class"
-          hint="Stellar on-chain source composition — only exchange-class (DEX) contributes to VWAP"
-          source={asExample('/v1/sources')}
-        >
-          <DonutChart
-            data={classMix}
-            centerLabel={String(stellar.length)}
-            centerSub="sources"
-          />
-        </Panel>
-      )}
       {filter && grouped.length === 0 && (
         <Panel
           headingLevel={2}
@@ -197,108 +171,101 @@ export function SourcesTable() {
           No sources match &quot;{filter}&quot;.
         </Panel>
       )}
-      {grouped.map(({ klass, rows }) => (
-        <Panel
-          headingLevel={2}
-          key={klass}
-          title={titleCase(klass)}
-          hint={classHint(klass)}
-          source={asExample('/v1/sources', { class: klass })}
-          download={{
-            name: `sources-${klass}`,
-            columns: SOURCE_CSV_COLUMNS,
-            rows: rows.map((s) => ({
-              name: s.name,
-              subclass: s.subclass,
-              default_weight: s.default_weight,
-              trade_count_24h: s.trade_count_24h,
-            })),
-          }}
-          bodyClassName="-mx-4"
-        >
-          <div className="overflow-x-auto">
-            <table className="divide-line min-w-full divide-y text-sm">
-              <thead>
-                <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
-                  <Th>Source</Th>
-                  <Th>Subclass</Th>
-                  <Th align="right">Default weight</Th>
-                  <Th align="right">24h trades</Th>
-                  <Th>24h chart</Th>
-                  <Th align="right">Last ingest</Th>
-                  <Th align="right">Flags</Th>
-                </tr>
-              </thead>
-              <tbody className="divide-line-subtle divide-y">
-                {rows.map((s) => {
-                  const maxTrades = rows.reduce(
-                    (m, r) => Math.max(m, r.trade_count_24h ?? 0),
-                    0,
-                  );
-                  const cursor = latestBySource.get(s.name);
-                  return (
-                    <tr key={s.name} className="hover:bg-surface-muted">
+      {grouped.map(({ klass, rows }) => {
+        const maxTrades = rows.reduce(
+          (m, r) => Math.max(m, r.trade_count_24h ?? 0),
+          0,
+        );
+        return (
+          <Panel
+            headingLevel={2}
+            key={klass}
+            title={titleCase(klass)}
+            hint={`${rows.length} ${rows.length === 1 ? 'source' : 'sources'} · ${classHint(klass)}`}
+            source={asExample('/v1/sources', { class: klass })}
+            download={{
+              name: `sources-${klass}`,
+              columns: SOURCE_CSV_COLUMNS,
+              rows: rows.map((s) => ({
+                name: s.name,
+                subclass: s.subclass,
+                default_weight: s.default_weight,
+                trade_count_24h: s.trade_count_24h,
+              })),
+            }}
+            bodyClassName="-mx-4 -mb-4"
+          >
+            <div className="overflow-x-auto">
+              <Table>
+                <THead>
+                  <tr>
+                    <Th>Source</Th>
+                    <Th className="hidden sm:table-cell">Subclass</Th>
+                    <Th align="right">Weight</Th>
+                    <Th align="right">24h trades</Th>
+                    <Th align="right">Last ingest</Th>
+                    <Th align="right">Flags</Th>
+                  </tr>
+                </THead>
+                <TBody>
+                  {rows.map((s) => (
+                    <TR key={s.name}>
                       <Td>
                         <Link
                           href={`/sources/${encodeURIComponent(s.name)}`}
-                          className="hover:text-brand-600 font-mono hover:underline"
+                          className="text-ink hover:text-brand-600 font-mono text-xs"
                         >
                           {s.name}
                         </Link>
                       </Td>
-                      <Td>
-                        <span className="text-ink-muted text-xs">
-                          {s.subclass ?? '—'}
-                        </span>
+                      <Td className="text-ink-muted hidden sm:table-cell">
+                        {s.subclass ?? '—'}
                       </Td>
-                      <Td align="right">
-                        <span className="font-mono tabular-nums">
-                          {s.default_weight}
-                        </span>
+                      <Td align="right" className="font-mono">
+                        {s.default_weight}
                       </Td>
-                      <Td align="right">
-                        {typeof s.trade_count_24h === 'number' &&
-                        s.trade_count_24h > 0 ? (
-                          <span className="text-ink-body font-mono tabular-nums">
-                            {s.trade_count_24h.toLocaleString('en-US')}
-                          </span>
-                        ) : (
-                          <span className="text-ink-faint text-[11px]">—</span>
-                        )}
-                        <CountBar
-                          value={s.trade_count_24h ?? 0}
-                          max={maxTrades}
-                        />
-                      </Td>
-                      <Td>
-                        <SourceSparkline buckets={s.volume_history_24h} />
-                      </Td>
-                      <Td align="right">
-                        <CursorAgo cursor={cursor} />
-                      </Td>
-                      <Td align="right">
-                        <div className="flex flex-wrap justify-end gap-1">
-                          {s.include_in_vwap && <Pill tone="up">in VWAP</Pill>}
-                          {s.paid && <Pill tone="amber">paid</Pill>}
-                          {s.backfill_available && !s.backfill_safe && (
-                            <Pill tone="amber">backfill unaudited</Pill>
-                          )}
-                          {s.backfill_safe && (
-                            <Pill tone="up">backfill safe</Pill>
-                          )}
-                          {!s.backfill_available && (
-                            <Pill tone="slate">live-only</Pill>
+                      <Td align="right" className="font-mono">
+                        <div className="flex items-center justify-end gap-2">
+                          <CountBar
+                            value={s.trade_count_24h ?? 0}
+                            max={maxTrades}
+                          />
+                          {typeof s.trade_count_24h === 'number' &&
+                          s.trade_count_24h > 0 ? (
+                            <span>
+                              {s.trade_count_24h.toLocaleString('en-US')}
+                            </span>
+                          ) : (
+                            <span className="text-ink-faint">—</span>
                           )}
                         </div>
                       </Td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </Panel>
-      ))}
+                      <Td align="right">
+                        <CursorAgo cursor={latestBySource.get(s.name)} />
+                      </Td>
+                      <Td align="right">
+                        <div className="flex flex-wrap justify-end gap-1">
+                          {s.include_in_vwap && (
+                            <Badge tone="brand">in VWAP</Badge>
+                          )}
+                          {s.paid && <Badge>paid</Badge>}
+                          {s.backfill_available && !s.backfill_safe && (
+                            <Badge tone="warn">backfill unaudited</Badge>
+                          )}
+                          {s.backfill_safe && (
+                            <Badge tone="ok">backfill safe</Badge>
+                          )}
+                          {!s.backfill_available && <Badge>live-only</Badge>}
+                        </div>
+                      </Td>
+                    </TR>
+                  ))}
+                </TBody>
+              </Table>
+            </div>
+          </Panel>
+        );
+      })}
     </div>
   );
 }
@@ -311,95 +278,30 @@ function CursorAgo({
     | undefined;
 }) {
   if (!cursor) {
-    return <span className="text-ink-faint text-[11px]">—</span>;
+    return <span className="text-ink-faint">—</span>;
   }
   // Tone bucket: <60s green, <10min amber, else red. Matches the
   // home System health panel's threshold so the two views agree
   // on what "live" means.
   const tone =
     cursor.lag_seconds < 60
-      ? 'text-up'
+      ? 'text-ok-700'
       : cursor.lag_seconds < 600
         ? 'text-warn-700'
-        : 'text-down';
+        : 'text-bad-700';
   return (
     <div className="text-right">
-      <div className={`font-mono text-[11px] ${tone}`}>
+      <div className={`font-mono text-xs ${tone}`}>
         <LagDot lagSeconds={cursor.lag_seconds} />
         {formatDurationShort(cursor.lag_seconds)} ago
       </div>
-      <div className="text-ink-faint font-mono text-[10px]">
+      <div className="text-ink-faint font-mono text-[11px]">
         #{cursor.last_ledger.toLocaleString('en-US')}
       </div>
     </div>
   );
 }
 
-function Pill({
-  tone,
-  children,
-}: {
-  tone: 'up' | 'amber' | 'slate';
-  children: React.ReactNode;
-}) {
-  const cls =
-    tone === 'up'
-      ? 'bg-up-subtle text-up-strong'
-      : tone === 'amber'
-        ? 'bg-warn-50 text-warn-700'
-        : 'bg-surface-subtle text-ink-body';
-  return (
-    <span
-      className={`inline-block rounded-sm px-1.5 py-0.5 text-[10px] tracking-wider uppercase ${cls}`}
-    >
-      {children}
-    </span>
-  );
-}
-
-function Th({
-  children,
-  align,
-}: {
-  children: React.ReactNode;
-  align?: 'left' | 'right';
-}) {
-  return (
-    <th
-      className={`px-4 py-2 ${align === 'right' ? 'text-right' : 'text-left'}`}
-      scope="col"
-    >
-      {children}
-    </th>
-  );
-}
-
-function Td({
-  children,
-  align,
-}: {
-  children: React.ReactNode;
-  align?: 'left' | 'right';
-}) {
-  return (
-    <td
-      className={`px-4 py-3 ${align === 'right' ? 'text-right' : 'text-left'}`}
-    >
-      {children}
-    </td>
-  );
-}
-
-// cursorVenue extracts the venue name from a /v1/diagnostics/cursors
-// row. The row's `source` is the cursor TYPE (backfill / projector /
-// ledgerstream); the venue lives in `sub_source` — projector rows carry
-// it bare ("soroswap"), backfill rows prefix a ledger range
-// ("<from-to>:sdex"), so strip everything up to the last ':'.
-// isOneShotCursor identifies cursors that track FINISHED historical work
-// rather than live ingest. `source` on a cursor row is the cursor TYPE,
-// not the venue. These rows legitimately sit months behind the tip — they
-// recorded where a one-off job stopped — so they must never be read as a
-// venue's ingest freshness.
 const ONE_SHOT_CURSOR_TYPES = new Set([
   'backfill',
   'backfill-router',

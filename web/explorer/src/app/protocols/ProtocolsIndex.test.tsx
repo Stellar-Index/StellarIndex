@@ -160,7 +160,7 @@ function statValue(label: string): string {
 }
 
 function cardCount(): number {
-  return document.querySelectorAll('[data-source] > a').length;
+  return document.querySelectorAll('[data-source] tbody tr').length;
 }
 
 describe('ProtocolsIndex headline stats under a locked category', () => {

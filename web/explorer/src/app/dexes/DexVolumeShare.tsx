@@ -1,5 +1,6 @@
 'use client';
 
+import { protocolMeta } from '@/app/protocols/registry';
 import { VolumeShare, topWithOther } from '@/components/charts/VolumeShare';
 
 export interface DexVolumeRow {
@@ -15,7 +16,7 @@ export interface DexVolumeRow {
 export function DexVolumeShare({ rows }: { rows: readonly DexVolumeRow[] }) {
   const shareRows = rows.map((r) => ({
     id: r.name,
-    label: r.name,
+    label: protocolMeta(r.name)?.label ?? r.name,
     volume: r.volume_24h_usd,
   }));
   const { pricedCount } = topWithOther(shareRows, rows.length);

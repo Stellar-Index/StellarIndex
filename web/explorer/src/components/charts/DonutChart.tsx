@@ -35,16 +35,16 @@ export type DonutSlice = {
 // one hue across a donut + line pairing; the final slot is the neutral
 // tail for "Others"/unknown buckets.
 export const CATEGORICAL_PALETTE = [
-  '#4c7dff', // brand blue
-  '#31c48d', // green (up)
-  '#e0a63c', // amber
-  '#a78bfa', // violet
-  '#22d3ee', // cyan
-  '#f472b6', // pink
-  '#fb923c', // orange
-  '#818cf8', // indigo
-  '#2dd4bf', // teal
-  '#5b6472', // ink-faint (tail / "other")
+  'var(--color-chart-1)',
+  'var(--color-chart-2)',
+  'var(--color-chart-3)',
+  'var(--color-chart-4)',
+  'var(--color-chart-5)',
+  'var(--color-chart-6)',
+  'var(--color-chart-7)',
+  'var(--color-chart-8)',
+  'var(--color-chart-9)',
+  'var(--color-chart-tail)',
 ];
 
 /**

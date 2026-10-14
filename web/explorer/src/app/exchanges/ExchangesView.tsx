@@ -15,12 +15,12 @@ import {
   ratioPct,
   sumDecimalStrings,
 } from '@/lib/format';
-import { sourceToneClass } from '@/lib/pillTone';
-import { SourceSparkline } from '@/components/SourceSparkline';
 import { VolumeShare } from '@/components/charts/VolumeShare';
+import { shortAssetText } from '@/lib/asset-label';
 import {
   Container,
   PageHeader,
+  Skeleton,
   Stat,
   StatCell,
   StatGrid,
@@ -41,6 +41,7 @@ const LABEL: Record<string, string> = {
   coinbase: 'Coinbase',
   kraken: 'Kraken',
   bitstamp: 'Bitstamp',
+  poloniex_via_btc: 'Poloniex (via BTC)',
 };
 
 export function ExchangesView() {
@@ -83,8 +84,8 @@ export function ExchangesView() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Exchanges' }]}
         title="Exchanges"
+        meta="Centralised venues feeding the reference price. Volume and trades cover the last 24 hours; pairs are what each venue reported in the last 14 days."
       />
-
       {rows.length > 0 && (
         <StatGrid cols={3}>
           <StatCell>
@@ -109,7 +110,6 @@ export function ExchangesView() {
           </StatCell>
         </StatGrid>
       )}
-
       <Panel
         headingLevel={2}
         title={
@@ -118,17 +118,17 @@ export function ExchangesView() {
             : 'Centralised exchanges'
         }
         hint={
-          rows.length > 0 && statsAvailable
+          statsAvailable
             ? `Total 24h: $${formatCompactUnits(totalVol)} across ${formatCompact(totalTrades)} trades on ${totalMarkets} pairs`
-            : rows.length > 0
+            : registryAvailable
               ? '24h stats unavailable — refreshing'
-              : 'Source: /v1/sources?include=stats'
+              : 'Venue registry'
         }
         source={asExample('/v1/sources', { include: 'stats' })}
-        bodyClassName="-mx-4"
+        bodyClassName="-mx-4 -mb-4"
       >
-        {statsAvailable && (
-          <div className="px-4 pb-4">
+        {statsAvailable && rows.length > 1 && (
+          <div className="mx-4 mb-4">
             <VolumeShare
               noun="exchanges"
               topN={8}
@@ -145,104 +145,94 @@ export function ExchangesView() {
           <Table>
             <THead>
               <tr>
-                <Th>#</Th>
+                <Th className="w-10">#</Th>
                 <Th>Exchange</Th>
                 <Th align="right">24h volume</Th>
-                <Th>24h chart</Th>
                 <Th align="right">24h trades</Th>
                 <Th align="right">Pairs</Th>
-                <Th align="right">Share of CEX vol</Th>
+                <Th align="right">Share</Th>
               </tr>
             </THead>
             <TBody>
               {q.isLoading && (
-                <tr>
-                  <td
-                    colSpan={7}
-                    className="text-ink-muted px-4 py-6 text-center text-sm"
-                  >
-                    Loading exchanges…
-                  </td>
-                </tr>
+                <TR>
+                  <Td colSpan={6}>
+                    <Skeleton className="h-5 w-48" />
+                  </Td>
+                </TR>
               )}
               {!q.isLoading && !registryAvailable && (
-                <tr>
-                  <td
-                    colSpan={7}
-                    className="text-ink-muted px-4 py-6 text-center text-sm"
-                  >
-                    Exchange registry unavailable right now — retry shortly.
-                  </td>
-                </tr>
+                <TR>
+                  <Td colSpan={6} className="text-ink-muted">
+                    Exchange registry unavailable right now.{' '}
+                    <Link
+                      href="/status"
+                      className="text-brand-600 hover:underline"
+                    >
+                      Status
+                    </Link>
+                  </Td>
+                </TR>
               )}
               {!q.isLoading && registryAvailable && rows.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={7}
-                    className="text-ink-muted px-4 py-6 text-center text-sm"
-                  >
+                <TR>
+                  <Td colSpan={6} className="text-ink-muted">
                     No CEX sources reporting.
-                  </td>
-                </tr>
+                  </Td>
+                </TR>
               )}
               {rows.map((r, i) => {
-                const tone = sourceToneClass(r.name);
-                const label = LABEL[r.name] ?? r.name;
                 const share = ratioPct(r.volume_24h_usd, totalVol) ?? 0;
+                const vol = r.volume_24h_usd;
                 return (
                   <TR key={r.name}>
-                    <Td>
-                      <span className="text-ink-faint font-mono text-[11px]">
-                        {i + 1}
-                      </span>
+                    <Td className="text-ink-faint font-mono tabular-nums">
+                      {i + 1}
                     </Td>
                     <Td>
                       <Link
                         href={hrefFor.exchange(r.name)}
-                        className={`inline-block rounded-sm px-1.5 py-0.5 text-[11px] font-medium tracking-wider uppercase hover:underline ${tone}`}
+                        className="text-ink hover:text-brand-600 font-medium"
                       >
-                        {label}
+                        {LABEL[r.name] ?? r.name}
                       </Link>
                     </Td>
-                    <Td align="right">
-                      {r.volume_24h_usd &&
-                      compareDecimalStrings(r.volume_24h_usd, '0') === 1 ? (
-                        <span className="font-mono tabular-nums">
-                          ${formatCompactUnits(r.volume_24h_usd)}
-                        </span>
+                    <Td align="right" className="font-mono tabular-nums">
+                      {vol && compareDecimalStrings(vol, '0') === 1 ? (
+                        `$${formatCompactUnits(vol)}`
                       ) : (
                         <span className="text-ink-faint">—</span>
                       )}
                     </Td>
-                    <Td>
-                      <SourceSparkline buckets={r.volume_history_24h} />
+                    <Td align="right" className="font-mono tabular-nums">
+                      {r.trade_count_24h && r.trade_count_24h > 0
+                        ? formatCompact(r.trade_count_24h)
+                        : statsAvailable
+                          ? '0'
+                          : '—'}
+                    </Td>
+                    <Td align="right" className="font-mono tabular-nums">
+                      {statsAvailable ? (r.markets_count_24h ?? 0) : '—'}
                     </Td>
                     <Td align="right">
-                      <span className="text-ink-body font-mono tabular-nums">
-                        {r.trade_count_24h && r.trade_count_24h > 0
-                          ? formatCompact(r.trade_count_24h)
-                          : statsAvailable
-                            ? '0'
-                            : '—'}
-                      </span>
-                    </Td>
-                    <Td align="right">
-                      <span className="text-ink-body font-mono tabular-nums">
-                        {statsAvailable ? (r.markets_count_24h ?? 0) : '—'}
-                      </span>
-                    </Td>
-                    <Td align="right">
-                      <div className="inline-flex items-center gap-2">
-                        <div className="bg-line h-1.5 w-16 overflow-hidden rounded-full">
-                          <div
-                            className="bg-brand-500 h-full"
-                            style={{ width: `${Math.min(100, share)}%` }}
-                          />
-                        </div>
-                        <span className="text-ink-muted font-mono text-xs tabular-nums">
-                          {share.toFixed(1)}%
+                      {statsAvailable ? (
+                        <span className="inline-flex items-center justify-end gap-2">
+                          <span
+                            aria-hidden
+                            className="bg-line block h-1.5 w-16 overflow-hidden rounded-full"
+                          >
+                            <span
+                              className="bg-brand-500 block h-full"
+                              style={{ width: `${Math.min(100, share)}%` }}
+                            />
+                          </span>
+                          <span className="font-mono tabular-nums">
+                            {share.toFixed(1)}%
+                          </span>
                         </span>
-                      </div>
+                      ) : (
+                        <span className="text-ink-faint">—</span>
+                      )}
                     </Td>
                   </TR>
                 );
@@ -251,18 +241,10 @@ export function ExchangesView() {
           </Table>
         </div>
       </Panel>
-
       <AllCEXMarkets
         venues={registryAvailable ? rows.map((r) => r.name) : undefined}
         registryLoading={q.isLoading}
       />
-
-      <p
-        className="text-ink-muted text-xs"
-        title="Venues come from the static registry; 24h activity is aggregated from trades in TimescaleDB. Each venue subscribes to a curated set of pairs (top-liquidity XLM markets and the crypto anchors that triangulate into them); the per-venue page lists them."
-      >
-        Curated pairs per venue · open a venue for its full list
-      </p>
     </Container>
   );
 }
@@ -326,15 +308,15 @@ function AllCEXMarkets({
           ? `${markets.length} CEX pairs · sorted by 24h volume`
           : 'CEX pairs · sorted by 24h volume'
       }
-      hint="One row per (venue, base, quote) tuple — every pair we observed across all registered CEXes in the last 14 days"
+      hint="One row per (venue, base, quote) tuple — every pair observed across all registered CEXes in the last 14 days"
       source={asExample('/v1/markets', { source: 'binance', limit: 200 })}
-      bodyClassName="-mx-4"
+      bodyClassName="-mx-4 -mb-4"
     >
       <div className="overflow-x-auto">
         <Table>
           <THead>
             <tr>
-              <Th>#</Th>
+              <Th className="w-10">#</Th>
               <Th>Venue</Th>
               <Th>Pair</Th>
               <Th align="right">Last price</Th>
@@ -344,89 +326,82 @@ function AllCEXMarkets({
           </THead>
           <TBody>
             {loading && (
-              <tr>
-                <td
-                  colSpan={6}
-                  className="text-ink-muted px-4 py-6 text-center text-sm"
-                >
-                  Loading pairs…
-                </td>
-              </tr>
+              <TR>
+                <Td colSpan={6}>
+                  <Skeleton className="h-5 w-64" />
+                </Td>
+              </TR>
             )}
             {!loading && !marketsAvailable && (
-              <tr>
-                <td
-                  colSpan={6}
-                  className="text-ink-muted px-4 py-6 text-center text-sm"
-                >
-                  Pair list unavailable right now — the venue registry or at
-                  least one venue query didn&apos;t return. Retry shortly.
-                </td>
-              </tr>
+              <TR>
+                <Td colSpan={6} className="text-ink-muted">
+                  Pair list unavailable right now. The venue registry or one of
+                  the venue fetches failed.{' '}
+                  <Link
+                    href="/status"
+                    className="text-brand-600 hover:underline"
+                  >
+                    Status
+                  </Link>
+                </Td>
+              </TR>
             )}
             {!loading && marketsAvailable && markets.length === 0 && (
-              <tr>
-                <td
-                  colSpan={6}
-                  className="text-ink-muted px-4 py-6 text-center text-sm"
-                >
+              <TR>
+                <Td colSpan={6} className="text-ink-muted">
                   No CEX pairs reporting.
-                </td>
-              </tr>
+                </Td>
+              </TR>
             )}
             {markets.map((m, i) => {
               const slug = `${m.base}~${m.quote}`;
-              const tone = sourceToneClass(m.source ?? '');
+              const vol = m.volume_24h_usd;
               return (
-                <TR key={`${m.source}|${m.base}|${m.quote}`}>
-                  <Td>
-                    <span className="text-ink-faint font-mono text-[11px]">
-                      {i + 1}
-                    </span>
+                <TR key={`${m.source}:${slug}`}>
+                  <Td className="text-ink-faint font-mono tabular-nums">
+                    {i + 1}
                   </Td>
                   <Td>
-                    <Link
-                      href={hrefFor.exchange(m.source ?? '')}
-                      className={`inline-block rounded-sm px-1.5 py-0.5 text-[10px] font-medium tracking-wider uppercase hover:underline ${tone}`}
-                    >
-                      {LABEL[m.source ?? ''] ?? m.source}
-                    </Link>
+                    {m.source ? (
+                      <Link
+                        href={hrefFor.exchange(m.source)}
+                        className="text-ink-muted hover:text-brand-600"
+                      >
+                        {LABEL[m.source] ?? m.source}
+                      </Link>
+                    ) : (
+                      <span className="text-ink-faint">—</span>
+                    )}
                   </Td>
                   <Td>
                     <Link
                       href={`/markets/${encodeURIComponent(slug)}`}
-                      className="hover:text-brand-600 font-mono text-xs"
+                      className="text-ink hover:text-brand-600 font-medium"
                     >
-                      {m.base.replace('crypto:', '')} /{' '}
-                      {m.quote.replace('crypto:', '').replace('fiat:', '')}
+                      {shortAssetText(m.base)}
+                      <span className="text-ink-faint">/</span>
+                      {shortAssetText(m.quote)}
                     </Link>
                   </Td>
-                  <Td align="right">
+                  <Td align="right" className="font-mono tabular-nums">
                     {m.last_price &&
                     compareDecimalStrings(m.last_price, '0') != null ? (
-                      <span className="text-ink-body font-mono tabular-nums">
-                        {formatPairPrice(m.last_price)}
-                      </span>
+                      formatPairPrice(m.last_price)
                     ) : (
                       <span className="text-ink-faint">—</span>
                     )}
                   </Td>
-                  <Td align="right">
-                    {m.volume_24h_usd &&
-                    compareDecimalStrings(m.volume_24h_usd, '0') === 1 ? (
-                      <span className="font-mono tabular-nums">
-                        ${formatCompactUnits(m.volume_24h_usd)}
-                      </span>
+                  <Td align="right" className="font-mono tabular-nums">
+                    {vol && compareDecimalStrings(vol, '0') === 1 ? (
+                      `$${formatCompactUnits(vol)}`
                     ) : (
                       <span className="text-ink-faint">—</span>
                     )}
                   </Td>
-                  <Td align="right">
-                    <span className="text-ink-body font-mono tabular-nums">
-                      {m.trade_count_24h > 0
-                        ? formatCompact(m.trade_count_24h)
-                        : '0'}
-                    </span>
+                  <Td align="right" className="font-mono tabular-nums">
+                    {m.trade_count_24h && m.trade_count_24h > 0
+                      ? formatCompact(m.trade_count_24h)
+                      : '—'}
                   </Td>
                 </TR>
               );
@@ -434,6 +409,9 @@ function AllCEXMarkets({
           </TBody>
         </Table>
       </div>
+      <p className="text-ink-faint border-line border-t px-4 py-3 text-xs">
+        Curated pairs per venue · open a venue for its full list
+      </p>
     </Panel>
   );
 }

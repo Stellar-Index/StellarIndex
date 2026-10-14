@@ -13,13 +13,14 @@ import {
   formatCompactUnits,
   formatRelative,
 } from '@/lib/format';
-import { sourceToneClass } from '@/lib/pillTone';
 import { LastPriceCell } from '@/components/LastPriceCell';
 import { useLedgerFollow } from '@/lib/live/hooks';
 import {
   Button,
   Container,
   PageHeader,
+  Segmented,
+  Skeleton,
   TBody,
   TR,
   Table,
@@ -27,10 +28,9 @@ import {
   Th,
   THead,
 } from '@/components/ui';
-
+import { protocolMeta } from '@/app/protocols/registry';
 import { DexProtocolsTable } from './DexProtocolsTable';
 import { useCursorPager } from '@/lib/useCursorPager';
-import { SortPill } from '@/components/SortPill';
 import { hrefFor } from '@/lib/hrefFor';
 
 interface Pool {
@@ -49,12 +49,12 @@ const PAGE_LIMIT = 100;
 
 // Hard-coded to mirror internal/sources/external/registry.go's
 // Subclass=DEX entries. Frontend doesn't have an /v1/sources?role=
-// filter yet, so the pill row is static — keeps the chips visible
-// before the first /v1/pools response lands.
+// filter yet, so the venue control is static — it renders before the
+// first /v1/pools response lands.
 //
 // scripts/ci/lint-protocol-registry-sync.sh §2 fails on any drift
 // between this list, DEX_INFO in dexes/registry.ts and the Go
-// registry, so a new DEX cannot ship with no chip and no page.
+// registry, so a new DEX cannot ship with no filter entry and no page.
 const ALL_DEXES = [
   'aquarius',
   'comet',
@@ -64,7 +64,7 @@ const ALL_DEXES = [
   'sushiswap_v3',
 ];
 
-// Source-name annotations that appear next to the source chip.
+// Source-name annotations that appear next to the venue name.
 // Comet's only mainnet deployment is Blend's backstop pool —
 // every Comet trade on Stellar is part of a liquidation auction,
 // not retail price discovery. Surface that context inline so the
@@ -77,8 +77,8 @@ const SOURCE_NOTE: Record<string, string> = {
 /**
  * DexesView — the all-pools explorer table. Same UX as /assets
  * (sortable header, paginated, drillable) but listing every
- * (source, base, quote) tuple in the trades store. Source filter
- * chips at the top let visitors scope the table to one venue.
+ * (source, base, quote) tuple in the trades store. A venue control
+ * at the top scopes the table to one DEX.
  */
 export function DexesView() {
   const [order, setOrder] = useState<Order>('volume_24h_usd_desc');
@@ -126,163 +126,139 @@ export function DexesView() {
   const hasNext = !!q.data?.nextCursor;
   const hasPrev = pager.hasPrev;
 
+  const venueOptions = [
+    { label: 'All venues', value: '' },
+    ...ALL_DEXES.map((d) => ({ label: protocolMeta(d)?.label ?? d, value: d })),
+  ];
+  const orderOptions: { label: string; value: Order }[] = [
+    { label: '24h volume', value: 'volume_24h_usd_desc' },
+    { label: 'Pair, A to Z', value: 'pair' },
+  ];
+
   return (
     <Container className="space-y-6 py-8">
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'DEXes' }]}
         title="DEXes"
+        meta="Every on-chain venue we index, then every pool across them. Volumes and counts cover the last 24 hours."
       />
-
       <DexProtocolsTable />
-
       <Panel
         headingLevel={2}
-        title={`${pools.length} pools on this page${sourceFilter ? ` (${sourceFilter} only)` : ''}`}
-        hint="Source: /v1/pools"
+        title="Pools"
+        hint={
+          q.isLoading
+            ? 'Loading pools'
+            : `${pools.length} pools on this page · ${PAGE_LIMIT} per page`
+        }
         source={asExample('/v1/pools', {
-          limit: PAGE_LIMIT,
           order_by: order,
+          limit: PAGE_LIMIT,
           ...(sourceFilter ? { source: sourceFilter } : {}),
         })}
-        bodyClassName="-mx-4"
+        bodyClassName="-mx-4 -mb-4"
       >
-        <div className="space-y-3 px-4 pt-1 pb-3">
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="text-ink-muted">Venue:</span>
-            <SourceChip
-              active={sourceFilter === ''}
-              onClick={() => changeSource('')}
-              label="All DEXes"
-            />
-            {ALL_DEXES.map((s) => (
-              <SourceChip
-                key={s}
-                active={sourceFilter === s}
-                onClick={() => changeSource(s)}
-                label={s}
-              />
-            ))}
-          </div>
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="text-ink-muted">Sort:</span>
-            <SortPill
-              active={order === 'volume_24h_usd_desc'}
-              onClick={() => changeOrder('volume_24h_usd_desc')}
-            >
-              24h volume ↓
-            </SortPill>
-            <SortPill
-              active={order === 'pair'}
-              onClick={() => changeOrder('pair')}
-            >
-              Source / pair (A→Z)
-            </SortPill>
-          </div>
+        <div className="mx-4 mb-4 flex flex-wrap items-center gap-3">
+          <Segmented
+            ariaLabel="Venue"
+            className="flex-wrap"
+            options={venueOptions}
+            value={sourceFilter}
+            onChange={changeSource}
+          />
+          <Segmented
+            ariaLabel="Sort"
+            options={orderOptions}
+            value={order}
+            onChange={(v) => changeOrder(v as Order)}
+          />
         </div>
-
         <div className="overflow-x-auto">
           <Table>
             <THead>
               <tr>
-                <Th>#</Th>
+                <Th className="w-10">#</Th>
                 <Th>Venue</Th>
                 <Th>Base</Th>
                 <Th>Quote</Th>
                 <Th align="right">Last price</Th>
                 <Th align="right">24h volume</Th>
                 <Th align="right">24h trades</Th>
-                <Th align="right">Last trade</Th>
+                <Th align="right" className="hidden sm:table-cell">
+                  Last trade
+                </Th>
               </tr>
             </THead>
             <TBody>
-              {q.isLoading && !q.data && (
-                <tr>
-                  <td
-                    colSpan={8}
-                    className="text-ink-muted px-4 py-8 text-center text-sm"
-                  >
-                    Loading pools…
-                  </td>
-                </tr>
+              {q.isLoading && (
+                <TR>
+                  <Td colSpan={8}>
+                    <Skeleton className="h-5 w-64" />
+                  </Td>
+                </TR>
               )}
-              {/* Distinguish "API failed" from "API returned 0 rows".
-                  A 503 from /v1/pools must not render as "No pools matched." */}
-              {!q.isLoading && q.isError && (
-                <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-sm">
-                    <div className="text-bad-700">
-                      Couldn&apos;t load pools right now.
-                    </div>
-                    <div className="text-ink-muted mt-1 text-xs">
-                      The pools query is timing out (likely a hot
-                      trades-hypertable scan). Retry or check{' '}
-                      <a
-                        href="/status"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="underline-offset-2 hover:underline"
-                      >
-                        the status page
-                      </a>
-                      .
-                    </div>
-                    <button
-                      type="button"
+              {q.isError && (
+                <TR>
+                  <Td colSpan={8} className="text-ink-muted">
+                    Pool list unavailable right now.{' '}
+                    <Link
+                      href="/status"
+                      className="text-brand-600 hover:underline"
+                    >
+                      Status
+                    </Link>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="ml-3"
                       onClick={() => q.refetch()}
-                      className="border-bad-500/40 text-bad-700 hover:bg-bad-50 mt-2 rounded-md border px-3 py-1 text-xs"
                     >
                       Retry
-                    </button>
-                  </td>
-                </tr>
+                    </Button>
+                  </Td>
+                </TR>
               )}
               {!q.isLoading && !q.isError && pools.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={8}
-                    className="text-ink-muted px-4 py-8 text-center text-sm"
-                  >
-                    No pools matched.
-                  </td>
-                </tr>
+                <TR>
+                  <Td colSpan={8} className="text-ink-muted">
+                    No pools match this filter.
+                  </Td>
+                </TR>
               )}
               {pools.map((p, i) => {
                 const slug = `${p.base}~${p.quote}`;
-                const offset = pager.depth * PAGE_LIMIT + i + 1;
+                const href = `/markets/${encodeURIComponent(slug)}`;
                 const vol = p.volume_24h_usd;
-                const tone = sourceToneClass(p.source);
                 return (
-                  <TR key={`${p.source}|${p.base}|${p.quote}`}>
-                    <Td>
-                      <span className="text-ink-faint font-mono text-[11px]">
-                        {offset}
-                      </span>
+                  <TR key={`${p.source}:${slug}`}>
+                    <Td className="text-ink-faint font-mono tabular-nums">
+                      {pager.depth * PAGE_LIMIT + i + 1}
                     </Td>
                     <Td>
                       <Link
                         href={hrefFor.dex(p.source)}
-                        className={`inline-block rounded-sm px-1.5 py-0.5 text-[10px] font-medium tracking-wider uppercase hover:underline ${tone}`}
+                        className="text-ink-muted hover:text-brand-600"
                       >
-                        {p.source}
+                        {protocolMeta(p.source)?.label ?? p.source}
                       </Link>
                       {SOURCE_NOTE[p.source] && (
-                        <div className="text-ink-muted mt-0.5 text-[9px] tracking-wide uppercase">
+                        <span className="text-ink-faint ml-1.5 text-xs">
                           {SOURCE_NOTE[p.source]}
-                        </div>
+                        </span>
                       )}
                     </Td>
                     <Td>
                       <Link
-                        href={`/markets/${encodeURIComponent(slug)}`}
-                        className="hover:text-brand-600"
+                        href={href}
+                        className="text-ink hover:text-brand-600"
                       >
                         <AssetLabel canonical={p.base} />
                       </Link>
                     </Td>
                     <Td>
                       <Link
-                        href={`/markets/${encodeURIComponent(slug)}`}
-                        className="hover:text-brand-600"
+                        href={href}
+                        className="text-ink-muted hover:text-brand-600"
                       >
                         <AssetLabel canonical={p.quote} />
                       </Link>
@@ -290,26 +266,22 @@ export function DexesView() {
                     <Td align="right">
                       <LastPriceCell raw={p.last_price} />
                     </Td>
-                    <Td align="right">
+                    <Td align="right" className="font-mono tabular-nums">
                       {vol && compareDecimalStrings(vol, '0') === 1 ? (
-                        <span className="font-mono tabular-nums">
-                          ${formatCompactUnits(vol)}
-                        </span>
+                        `$${formatCompactUnits(vol)}`
                       ) : (
                         <span className="text-ink-faint">—</span>
                       )}
                     </Td>
-                    <Td align="right">
-                      <span className="text-ink-body font-mono tabular-nums">
-                        {p.trade_count_24h > 0
-                          ? formatCompact(p.trade_count_24h)
-                          : '0'}
-                      </span>
+                    <Td align="right" className="font-mono tabular-nums">
+                      {formatCompact(p.trade_count_24h)}
                     </Td>
-                    <Td align="right">
-                      <span className="text-ink-muted font-mono text-xs tabular-nums">
-                        {formatRelative(p.last_trade_at)}
-                      </span>
+                    <Td
+                      align="right"
+                      className="text-ink-muted hidden font-mono text-xs tabular-nums sm:table-cell"
+                      title={p.last_trade_at}
+                    >
+                      {formatRelative(p.last_trade_at)}
                     </Td>
                   </TR>
                 );
@@ -317,80 +289,43 @@ export function DexesView() {
             </TBody>
           </Table>
         </div>
-
-        <div className="border-line flex items-center justify-between border-t px-4 py-3 text-xs">
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={prevPage}
-            disabled={!hasPrev}
-          >
-            ← Previous
-          </Button>
-          <span className="text-ink-faint font-mono text-[11px]">
-            page {pager.page}
-          </span>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={nextPage}
-            disabled={!hasNext}
-          >
-            Next →
-          </Button>
+        <div className="border-line flex items-center justify-between border-t px-4 py-3">
+          <span className="text-ink-muted tnum text-xs">Page {pager.page}</span>
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={prevPage}
+              disabled={!hasPrev}
+            >
+              Previous
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={nextPage}
+              disabled={!hasNext}
+            >
+              Next
+            </Button>
+          </div>
         </div>
       </Panel>
-
-      <p className="text-ink-muted text-xs">
-        Drill into a single DEX&apos;s pools at{' '}
-        <Link href="/sdex" className="text-brand-600 hover:underline">
-          /sdex
-        </Link>
-        ,{' '}
-        <Link href="/dexes/soroswap" className="text-brand-600 hover:underline">
-          /dexes/soroswap
-        </Link>
-        ,{' '}
-        <Link href="/dexes/phoenix" className="text-brand-600 hover:underline">
-          /dexes/phoenix
-        </Link>
-        ,{' '}
-        <Link href="/dexes/aquarius" className="text-brand-600 hover:underline">
-          /dexes/aquarius
-        </Link>
-        ,{' '}
-        <Link href="/dexes/comet" className="text-brand-600 hover:underline">
-          /dexes/comet
-        </Link>
+      <p className="text-ink-muted text-sm">
+        Each venue has its own page:{' '}
+        {ALL_DEXES.map((d, i) => (
+          <span key={d}>
+            {i > 0 && ' · '}
+            <Link
+              href={hrefFor.dex(d)}
+              className="text-brand-600 hover:underline"
+            >
+              {protocolMeta(d)?.label ?? d}
+            </Link>
+          </span>
+        ))}
         .
       </p>
     </Container>
   );
 }
-
-function SourceChip({
-  active,
-  onClick,
-  label,
-}: {
-  active: boolean;
-  onClick: () => void;
-  label: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`rounded-full px-2 py-0.5 font-mono text-[10px] tracking-wider uppercase ${
-        active
-          ? 'bg-brand-fill text-white'
-          : 'bg-surface-subtle text-ink-body hover:bg-line'
-      }`}
-    >
-      {label}
-    </button>
-  );
-}
-
-// LastPriceCell lives in @/components/LastPriceCell so every table shares
-// the flash-on-change; the useLedgerFollow above makes this board tick.
