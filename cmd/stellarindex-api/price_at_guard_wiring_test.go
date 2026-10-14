@@ -10,17 +10,14 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/astguard"
 )
 
-func TestPriceAtAppliesServedVWAPGuard(t *testing.T) {
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "main.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse main.go: %v", err)
-	}
+func rulePriceAtAppliesServedVWAPGuard(t *testing.T) {
+	_, f := astguard.ParseFile(t, "main.go")
 
 	fn := findMethod(f, "storePriceAtReader", "PriceAt")
 	if fn == nil {
@@ -63,10 +60,10 @@ var guardEntryPoints = []string{
 	"GuardServedVWAP1mConfidence", "GuardServedVWAP1mAt", "GuardServedVWAP1mSeries",
 }
 
-// TestRawPrices1mReadersPassTheGuard: every function under cmd/ that calls a raw prices_1m store
+// ruleRawPrices1mReadersPassTheGuard: every function under cmd/ that calls a raw prices_1m store
 // read must call a pricingguard entry point in the same body and be named in pricingguard's
 // package-doc enumeration, so a new raw-bucket reader cannot reach a response unguarded.
-func TestRawPrices1mReadersPassTheGuard(t *testing.T) {
+func ruleRawPrices1mReadersPassTheGuard(t *testing.T) {
 	doc, err := os.ReadFile(filepath.Join("..", "..", "internal", "pricingguard", "guard.go"))
 	if err != nil {
 		t.Fatalf("read pricingguard doc: %v", err)
@@ -92,7 +89,7 @@ func TestRawPrices1mReadersPassTheGuard(t *testing.T) {
 		}
 		for _, d := range f.Decls {
 			fn, ok := d.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || !bodyReferencesAnyMethod(fn.Body, rawPrices1mReads) {
+			if !ok || fn.Body == nil || !astguard.MentionsAny(fn.Body, rawPrices1mReads...) {
 				continue
 			}
 			readers++
@@ -112,39 +109,6 @@ func TestRawPrices1mReadersPassTheGuard(t *testing.T) {
 	}
 	if readers == 0 {
 		t.Fatal("found no raw prices_1m reader under cmd/ — the scan is not reading the sources")
-	}
-}
-
-// bodyReferencesAnyMethod reports whether body references x.m for any m in names, on any receiver; a method value (f :=
-// r.s.ClosedVWAPAtOrBefore) or store alias (st := r.s) reads the same raw bucket as a direct call.
-func bodyReferencesAnyMethod(body *ast.BlockStmt, names []string) bool {
-	found := false
-	ast.Inspect(body, func(n ast.Node) bool {
-		if sel, ok := n.(*ast.SelectorExpr); ok && slices.Contains(names, sel.Sel.Name) {
-			found = true
-		}
-		return !found
-	})
-	return found
-}
-
-// TestRawPrices1mReadScanCatchesMethodValues pins that a raw prices_1m
-// read is seen however it is spelled, not only as a direct call.
-func TestRawPrices1mReadScanCatchesMethodValues(t *testing.T) {
-	cases := []struct {
-		name, src string
-		want      bool
-	}{
-		{"direct call", `func (r R) f() { r.s.ClosedVWAPAtOrBefore(ctx, a, b, at) }`, true},
-		{"method value", `func (r R) f() { g := r.s.ClosedVWAPAtOrBefore; g(ctx, a, b, at) }`, true},
-		{"method passed as an argument", `func (r R) f() { apply(r.S.RecentClosedVWAP1mForPair) }`, true},
-		{"store alias", `func (r R) f() { st := r.s; st.LatestClosedVWAP1mForPair(ctx, a, b) }`, true},
-		{"unrelated store read", `func (r R) f() { r.s.LatestTrade(ctx, a, b) }`, false},
-	}
-	for _, c := range cases {
-		if got := bodyReferencesAnyMethod(plantedFunc(t, c.src).Body, rawPrices1mReads); got != c.want {
-			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
-		}
 	}
 }
 

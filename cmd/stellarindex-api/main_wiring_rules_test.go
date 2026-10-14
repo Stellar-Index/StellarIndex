@@ -9,6 +9,8 @@ import (
 	"go/token"
 	"path/filepath"
 	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/astguard"
 )
 
 // run() needs live Postgres/Redis/ClickHouse to execute, so wiring that
@@ -82,11 +84,7 @@ func (m mainFile) serverLiteralField(name string) string {
 }
 
 func TestMainWiringRules(t *testing.T) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "main.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse main.go: %v", err)
-	}
+	fset, file := astguard.ParseFile(t, "main.go")
 	m := mainFile{fset: fset, file: file}
 
 	rules := []struct {
@@ -220,6 +218,15 @@ func TestMainWiringRules(t *testing.T) {
 		{name: "lake_reader_dials_use_boot_retry", check: ruleLakeReaderDialsUseBootRetry},
 		{name: "change24h_never_returns_raw_bucket", check: ruleChange24hNeverReturnsRawBucket},
 		{name: "change24h_wired_with_decimals_table", check: ruleChange24hWiredWithDecimalsTable},
+		{name: "price_at_applies_served_vwap_guard", check: rulePriceAtAppliesServedVWAPGuard},
+		{name: "raw_prices1m_readers_pass_the_guard", check: ruleRawPrices1mReadersPassTheGuard},
+		{name: "price_serving_seams_are_gated", check: rulePriceServingSeamsAreGated},
+		{name: "withholding_gates_are_spelled_only_at_the_chokepoint", check: ruleWithholdingGatesAreSpelledOnlyAtTheChokepoint},
+		{name: "gate_spelling_guard_catches_handler_package_sites", check: ruleGateSpellingGuardCatchesHandlerPackageSites},
+		{name: "earliest_read_sees_every_spelling", check: ruleEarliestReadSeesEverySpelling},
+		{name: "v1_vwap_cache_seams_are_gated", check: ruleV1VWAPCacheSeamsAreGated},
+		{name: "thin_admission_is_read_only_at_the_chokepoint", check: ruleThinAdmissionIsReadOnlyAtTheChokepoint},
+		{name: "thin_admission_guard_catches_planted_sites", check: ruleThinAdmissionGuardCatchesPlantedSites},
 	}
 	for _, r := range rules {
 		t.Run(r.name, r.check)
@@ -331,11 +338,7 @@ func isClickhouseChecksAppend(n ast.Node) bool {
 // blip causes a systemd restart loop.
 
 func ruleNonstandardDecimalsRefreshNotFatal(t *testing.T) {
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "main.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse main.go: %v", err)
-	}
+	fset, f := astguard.ParseFile(t, "main.go")
 	var run *ast.FuncDecl
 	for _, d := range f.Decls {
 		if fd, ok := d.(*ast.FuncDecl); ok && fd.Recv == nil && fd.Name.Name == "run" {
@@ -399,11 +402,7 @@ func blockReturns(body *ast.BlockStmt) bool {
 // /v1/register (ADR-0049) uses, present whenever Postgres is reachable; dashboardBundle.accounts is zero without a
 // dashboard, so registrations would never be reaped.
 func ruleSignupReaperBindsToPostgresStore(t *testing.T) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "main.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse main.go: %v", err)
-	}
+	_, file := astguard.ParseFile(t, "main.go")
 
 	var assertedOn string
 	ast.Inspect(file, func(n ast.Node) bool {
@@ -442,11 +441,7 @@ func ruleSignupReaperBindsToPostgresStore(t *testing.T) {
 // literal is never nil and would make v1's nil-Gate arm unreachable here. An AST guard, as the wiring sits in main()'s
 // server construction, which needs live Postgres.
 func ruleDEXTVLGateViaNilAbleBuilder(t *testing.T) {
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "main.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse main.go: %v", err)
-	}
+	fset, f := astguard.ParseFile(t, "main.go")
 
 	found := false
 	ast.Inspect(f, func(n ast.Node) bool {
@@ -493,11 +488,7 @@ func ruleDEXTVLGateViaNilAbleBuilder(t *testing.T) {
 // the returned check in the readiness set before the server is built, and do so before any consumer of the cache is
 // wired.
 func ruleNonstandardDecimalsPrimedBeforeServing(t *testing.T) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "main.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse main.go: %v", err)
-	}
+	fset, file := astguard.ParseFile(t, "main.go")
 	runBody := findFuncBody(file, "run")
 	if runBody == nil {
 		t.Fatal("run() not found in main.go")
@@ -593,10 +584,7 @@ func primeAppendedToChecks(a *ast.AssignStmt) token.Pos {
 // Every lake reader dial in main.go must go through the boot retry:
 // a bare one-shot dial is the cold-boot race that latches the checker down.
 func ruleLakeReaderDialsUseBootRetry(t *testing.T) {
-	file, err := parser.ParseFile(token.NewFileSet(), "main.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse main.go: %v", err)
-	}
+	_, file := astguard.ParseFile(t, "main.go")
 	var retryRanges [][2]token.Pos
 	var dials []*ast.CallExpr
 	ast.Inspect(file, func(n ast.Node) bool {
@@ -637,11 +625,7 @@ func ruleLakeReaderDialsUseBootRetry(t *testing.T) {
 // Every bucket USDPrice24hAgo hands back must have gone through the
 // normaliser: a `return row.VWAP, nil` is the defect.
 func ruleChange24hNeverReturnsRawBucket(t *testing.T) {
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "main.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse main.go: %v", err)
-	}
+	fset, f := astguard.ParseFile(t, "main.go")
 	fn := findMethod(f, "storeChange24hReader", "USDPrice24hAgo")
 	if fn == nil {
 		t.Fatal("could not locate storeChange24hReader.USDPrice24hAgo in main.go — " +
@@ -682,11 +666,7 @@ func ruleChange24hNeverReturnsRawBucket(t *testing.T) {
 // A normaliser handed a nil table is a byte-identical no-op, so the
 // wiring is what makes the fix live: main() must pass the cache.
 func ruleChange24hWiredWithDecimalsTable(t *testing.T) {
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "main.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse main.go: %v", err)
-	}
+	fset, f := astguard.ParseFile(t, "main.go")
 	literals := 0
 	ast.Inspect(f, func(n ast.Node) bool {
 		lit, ok := n.(*ast.CompositeLit)
