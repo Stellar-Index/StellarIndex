@@ -32,163 +32,6 @@ import (
 	chstore "github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// Drives `ch-entry-history` via chops.Run on the real tier-1 DDL: a dry run writes nothing, -write fills the account- and
-// asset-keyed tables from one decode pass and advances the watermark, and an unmerged source duplicate collapses to one
-// row.
-func TestChEntryHistory_OneDecodePassWritesBothProjections(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
-	addr := clickhouseAddr(t)
-	conn := dialClickHouse(t, ctx, "stellar")
-
-	// An isolated ledger range nothing else in the suite writes to.
-	const base = uint32(160_900_000)
-	const (
-		alice  = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7"
-		bob    = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H"
-		issuer = "GCEZWKCA5VLDNRLN3RPRJMRZOX3Z6G5CHCGSNFHEYVXM3XOJMDS674JZ"
-		usdc   = "USDC-" + issuer
-	)
-	if err := conn.Exec(ctx, `TRUNCATE TABLE stellar.entry_history_watermark`); err != nil {
-		t.Fatalf("truncate watermark: %v", err)
-	}
-	entryHistorySeedLedgers(t, ctx, addr, []uint32{base, base + 1, base + 2}, 1)
-
-	account := func(balance, seq int64) xdr.LedgerEntry {
-		return xdr.LedgerEntry{Data: xdr.LedgerEntryData{Type: xdr.LedgerEntryTypeAccount, Account: &xdr.AccountEntry{
-			AccountId: xdr.MustAddress(alice), Balance: xdr.Int64(balance), SeqNum: xdr.SequenceNumber(seq),
-			Thresholds: xdr.Thresholds{1, 0, 0, 0},
-		}}}
-	}
-	trustline := func(balance int64) xdr.LedgerEntry {
-		return xdr.LedgerEntry{Data: xdr.LedgerEntryData{Type: xdr.LedgerEntryTypeTrustline, TrustLine: &xdr.TrustLineEntry{
-			AccountId: xdr.MustAddress(bob), Asset: xdr.MustNewCreditAsset("USDC", issuer).ToTrustLineAsset(),
-			Balance: xdr.Int64(balance), Limit: 1_000_000,
-		}}}
-	}
-	closeTime := time.Date(2027, 2, 10, 0, 0, 0, 0, time.UTC)
-	row := func(ledger uint32, op int32, change uint32, changeType, entryType string, key xdr.LedgerEntry, withEntry bool) chstore.LedgerEntryChangeRow {
-		t.Helper()
-		k, err := key.LedgerKey()
-		if err != nil {
-			t.Fatalf("ledger key: %v", err)
-		}
-		r := chstore.LedgerEntryChangeRow{
-			LedgerSeq: ledger, CloseTime: closeTime, TxHash: "ee" + strconv.FormatUint(uint64(ledger), 10),
-			OpIndex: op, ChangeIndex: change, ChangeType: changeType, EntryType: entryType,
-		}
-		if r.KeyXDR, err = xdr.MarshalBase64(k); err != nil {
-			t.Fatalf("marshal key: %v", err)
-		}
-		if withEntry {
-			if r.EntryXDR, err = xdr.MarshalBase64(key); err != nil {
-				t.Fatalf("marshal entry: %v", err)
-			}
-		}
-		return r
-	}
-	feePre, feePost := account(1000, 7), account(900, 8)
-	tlFunded, tlEmpty := trustline(10), trustline(0)
-	src := []chstore.LedgerEntryChangeRow{
-		// base: a tx-level fee charge.
-		row(base, -1, 0, "state", "account", feePre, true),
-		row(base, -1, 1, "updated", "account", feePost, true),
-		// base+1: bob opens a funded USDC trustline.
-		row(base+1, 0, 0, "created", "trustline", tlFunded, true),
-		// base+2: bob empties and removes it.
-		row(base+2, 0, 0, "state", "trustline", tlEmpty, true),
-		row(base+2, 0, 1, "removed", "trustline", tlEmpty, false),
-	}
-	// The fee charge goes in twice, as separate inserts: an unmerged duplicate
-	// (one batch would have its change_index collision-resolved instead).
-	for _, batch := range [][]chstore.LedgerEntryChangeRow{src, src[:2]} {
-		if _, err := chstore.InsertEntryChanges(ctx, addr, batch, 0); err != nil {
-			t.Fatalf("seed ledger_entry_changes: %v", err)
-		}
-	}
-
-	run := func(write bool) {
-		t.Helper()
-		args := []string{
-			"ch-entry-history", "-ch-addr", addr,
-			"-from", strconv.FormatUint(uint64(base), 10), "-to", strconv.FormatUint(uint64(base+2), 10),
-		}
-		if write {
-			args = append(args, "-write")
-		}
-		if err := chops.Run(args); err != nil {
-			t.Fatalf("ch-entry-history (write=%v): %v", write, err)
-		}
-	}
-	count := func(table string) uint64 {
-		t.Helper()
-		var n uint64
-		if err := conn.QueryRow(ctx, `SELECT count() FROM stellar.`+table+` FINAL WHERE ledger BETWEEN ? AND ?`, base, base+2).Scan(&n); err != nil {
-			t.Fatalf("count %s: %v", table, err)
-		}
-		return n
-	}
-
-	run(false)
-	if a, s := count("account_entry_changes"), count("asset_entry_changes"); a+s != 0 {
-		t.Fatalf("dry run wrote %d account / %d asset rows, want none", a, s)
-	}
-
-	run(true)
-	if wm, err := chstore.EntryHistoryWatermark(ctx, addr); err != nil || wm != base+2 {
-		t.Fatalf("watermark = %d (%v), want %d", wm, err, base+2)
-	}
-
-	type accRow struct {
-		account, role, changeType, asset, balance string
-		changed                                   []string
-	}
-	rows, err := conn.Query(ctx, `
-		SELECT account, role, change_type, asset, toString(balance), changed
-		FROM stellar.account_entry_changes FINAL
-		WHERE ledger BETWEEN ? AND ? ORDER BY ledger, change_index`, base, base+2)
-	if err != nil {
-		t.Fatalf("query account_entry_changes: %v", err)
-	}
-	var got []accRow
-	for rows.Next() {
-		var r accRow
-		if err := rows.Scan(&r.account, &r.role, &r.changeType, &r.asset, &r.balance, &r.changed); err != nil {
-			t.Fatalf("scan: %v", err)
-		}
-		got = append(got, r)
-	}
-	_ = rows.Close()
-	want := []accRow{
-		{alice, "owner", "updated", "native", "900", []string{"balance", "seq_num"}},
-		{bob, "owner", "created", usdc, "10", []string{}},
-		{bob, "owner", "removed", usdc, "0", []string{}},
-	}
-	if len(got) != len(want) {
-		t.Fatalf("account_entry_changes = %+v, want %+v (the duplicate fee charge must collapse)", got, want)
-	}
-	for i := range want {
-		g, w := got[i], want[i]
-		if g.account != w.account || g.role != w.role || g.changeType != w.changeType || g.asset != w.asset ||
-			g.balance != w.balance || !slices.Equal(g.changed, w.changed) {
-			t.Fatalf("account_entry_changes[%d] = %+v, want %+v", i, g, w)
-		}
-	}
-
-	var holderRows uint64
-	var lastBalance string
-	if err := conn.QueryRow(ctx, `
-		SELECT count(), toString(argMax(balance, ledger))
-		FROM stellar.asset_entry_changes FINAL
-		WHERE asset = ? AND role = 'holder' AND account = ? AND ledger BETWEEN ? AND ?`,
-		usdc, bob, base, base+2).Scan(&holderRows, &lastBalance); err != nil {
-		t.Fatalf("query asset_entry_changes: %v", err)
-	}
-	if holderRows != 2 || lastBalance != "0" {
-		t.Fatalf("asset_entry_changes %s holder rows for %s = %d (latest balance %s), want 2 ending at 0", usdc, bob, holderRows, lastBalance)
-	}
-}
-
 // The derive writes the sponsorship lifecycle as a third output of the same pass: a sponsored trustline's
 // creation, its transfer to another sponsor and its removal become started, revoked+started and ended rows.
 func TestChEntryHistory_WritesSponsorshipEvents(t *testing.T) {
@@ -198,16 +41,21 @@ func TestChEntryHistory_WritesSponsorshipEvents(t *testing.T) {
 	conn := dialClickHouse(t, ctx, "stellar")
 
 	const base = uint32(160_910_000)
-	const (
-		alice  = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7"
-		bob    = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H"
-		carol  = "GCEZWKCA5VLDNRLN3RPRJMRZOX3Z6G5CHCGSNFHEYVXM3XOJMDS674JZ"
+	// Accounts of this test alone: the lake is shared with the entry-changes read tests, whose per-account feeds
+	// would otherwise pick up these rows through the index.
+	account := func(fill byte) string {
+		return strkey.MustEncode(strkey.VersionByteAccountID, []byte(strings.Repeat(string(fill), 32)))
+	}
+	var (
+		alice  = account(0x5a)
+		bob    = account(0x5b)
+		carol  = account(0x5c)
 		issuer = "GDUKMGUGDZQK6YHYA5Z6AY2G4XDSZPSZ3SW5UN3ARVMO6QSRDWP5YLEX"
 	)
 	if err := conn.Exec(ctx, `TRUNCATE TABLE stellar.entry_history_watermark`); err != nil {
 		t.Fatalf("truncate watermark: %v", err)
 	}
-	entryHistorySeedLedgers(t, ctx, addr, []uint32{base, base + 1, base + 2}, 1)
+	entryHistorySeedLedgers(t, ctx, addr, []uint32{base, base + 1, base + 2}, 1, true)
 
 	trustline := func(sponsor string) xdr.LedgerEntry {
 		e := xdr.LedgerEntry{Data: xdr.LedgerEntryData{Type: xdr.LedgerEntryTypeTrustline, TrustLine: &xdr.TrustLineEntry{
@@ -226,7 +74,7 @@ func TestChEntryHistory_WritesSponsorshipEvents(t *testing.T) {
 		}
 		r := chstore.LedgerEntryChangeRow{
 			LedgerSeq: ledger, CloseTime: time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC), TxHash: "ab" + strconv.FormatUint(uint64(ledger), 10),
-			OpIndex: 0, ChangeIndex: change, ChangeType: changeType, EntryType: "trustline",
+			OpIndex: 0, ChangeIndex: change, ChangeType: changeType, EntryType: "trustline", AccountID: bob, Asset: "EURC:" + issuer,
 		}
 		if r.KeyXDR, err = xdr.MarshalBase64(k); err != nil {
 			t.Fatalf("marshal key: %v", err)
@@ -252,6 +100,7 @@ func TestChEntryHistory_WritesSponsorshipEvents(t *testing.T) {
 		"ch-entry-history", "-ch-addr", addr, "-write",
 		"-from", strconv.FormatUint(uint64(base), 10), "-to", strconv.FormatUint(uint64(base+2), 10),
 	}
+	runEntryIndexWrite(t, addr, base, base+2)
 	if err := chops.Run(args); err != nil {
 		t.Fatalf("ch-entry-history: %v", err)
 	}
@@ -288,14 +137,15 @@ func TestChEntryHistory_WritesSponsorshipEvents(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Fatalf("sponsorship_events = %+v, want %+v", got, want)
 	}
-	if wm, err := chstore.EntryHistoryWatermark(ctx, addr); err != nil || wm != base+2 {
+	if wm, err := chstore.SponsorshipWatermark(ctx, addr); err != nil || wm != base+2 {
 		t.Fatalf("watermark = %d (%v), want %d", wm, err, base+2)
 	}
 }
 
-// entryHistorySeedLedgers writes stellar.ledgers rows declaring txCount
-// transactions each, so the watermark's entry-change coverage gate applies.
-func entryHistorySeedLedgers(t *testing.T, ctx context.Context, addr string, seqs []uint32, txCount uint32) {
+// entryHistorySeedLedgers writes stellar.ledgers rows declaring txCount transactions each, so the watermark's
+// entry-change coverage gate applies, and (withOps) one stellar.operations row per tx-bearing ledger under the
+// "ab<ledger>" transaction the entry-change seeds use, so the sponsorship derive's operations-coverage gate passes.
+func entryHistorySeedLedgers(t *testing.T, ctx context.Context, addr string, seqs []uint32, txCount uint32, withOps bool) {
 	t.Helper()
 	sink, err := chstore.Open(ctx, addr, 1000)
 	if err != nil {
@@ -303,11 +153,18 @@ func entryHistorySeedLedgers(t *testing.T, ctx context.Context, addr string, seq
 	}
 	t.Cleanup(func() { _ = sink.Close(ctx) })
 	for _, seq := range seqs {
+		closeTime := time.Date(2027, 2, 10, 0, 0, 0, 0, time.UTC)
 		ext := chstore.LedgerExtract{Ledger: chstore.LedgerRow{
-			LedgerSeq: seq, CloseTime: time.Date(2027, 2, 10, 0, 0, 0, 0, time.UTC),
+			LedgerSeq: seq, CloseTime: closeTime,
 			LedgerHash: "aa04", PrevHash: "bb04", ProtocolVersion: 23, BucketListHash: "cc04",
 			TxCount: txCount, TotalCoins: 1, FeePool: 1, BaseFee: 100, BaseReserve: 5_000_000,
 		}}
+		if withOps && txCount > 0 {
+			ext.Ops = []chstore.OperationRow{{
+				LedgerSeq: seq, CloseTime: closeTime, TxHash: "ab" + strconv.FormatUint(uint64(seq), 10),
+				OpType: "OperationTypePayment", SourceAccount: "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7",
+			}}
+		}
 		if err := sink.Add(ctx, ext); err != nil {
 			t.Fatalf("sink add ledger %d: %v", seq, err)
 		}
@@ -324,49 +181,63 @@ func runEntryHistoryWrite(addr string, from, to uint32) error {
 	})
 }
 
-// -write must never advance the watermark over tx-bearing ledgers that ledger_entry_changes does not cover (none, or only
-// a snapshot seed row with empty tx_hash); the run stops and resumes once entry changes are backfilled.
-func TestChEntryHistory_WatermarkRefusesUncoveredWindow(t *testing.T) {
+// runEntryIndexWrite builds the entry index over [from, to]: the ceiling every sponsorship -write is clamped to.
+func runEntryIndexWrite(t *testing.T, addr string, from, to uint32) {
+	t.Helper()
+	err := chops.Run([]string{
+		"ch-entry-index", "-ch-addr", addr, "-write", "-lock-file", filepath.Join(t.TempDir(), "entry-index.lock"),
+		"-from", strconv.FormatUint(uint64(from), 10), "-to", strconv.FormatUint(uint64(to), 10),
+	})
+	if err != nil {
+		t.Fatalf("ch-entry-index -write [%d,%d]: %v", from, to, err)
+	}
+}
+
+// -write never carries sponsorship events past the entry index the account route proves them against: the run clamps
+// its range to the entry_index watermark, and the watermark advance itself refuses a window the index does not cover.
+func TestChEntryHistory_RefusesAheadOfEntryIndex(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	addr := clickhouseAddr(t)
 	conn := dialClickHouse(t, ctx, "stellar")
 
-	const base = uint32(160_910_000)
+	const base = uint32(160_930_000)
 	if err := conn.Exec(ctx, `TRUNCATE TABLE stellar.entry_history_watermark`); err != nil {
 		t.Fatalf("truncate watermark: %v", err)
 	}
-	entryHistorySeedLedgers(t, ctx, addr, []uint32{base, base + 1, base + 2}, 3)
+	entryHistorySeedLedgers(t, ctx, addr, []uint32{base, base + 1, base + 2}, 0, true)
 
-	seedEntry := xdr.LedgerEntry{Data: xdr.LedgerEntryData{Type: xdr.LedgerEntryTypeAccount, Account: &xdr.AccountEntry{
-		AccountId: xdr.MustAddress("GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7"), Balance: 1, Thresholds: xdr.Thresholds{1, 0, 0, 0},
-	}}}
-	key, err := seedEntry.LedgerKey()
-	if err != nil {
-		t.Fatalf("ledger key: %v", err)
+	if err := runEntryHistoryWrite(addr, base, base+2); err != nil {
+		t.Fatalf("ch-entry-history -write with no entry index: %v, want a no-op", err)
 	}
-	snap := chstore.LedgerEntryChangeRow{
-		LedgerSeq: base + 1, CloseTime: time.Date(2027, 2, 10, 0, 0, 0, 0, time.UTC),
-		OpIndex: -1, ChangeType: "state", EntryType: "account",
+	if wm, err := chstore.SponsorshipWatermark(ctx, addr); err != nil || wm != 0 {
+		t.Fatalf("watermark = %d (%v) with no entry index, want 0", wm, err)
 	}
-	if snap.KeyXDR, err = xdr.MarshalBase64(key); err != nil {
-		t.Fatalf("marshal key: %v", err)
+	err := chstore.SetSponsorshipWatermark(ctx, addr, base, base+2)
+	if !errors.Is(err, chstore.ErrSponsorshipAheadOfEntryIndex) {
+		t.Fatalf("SetSponsorshipWatermark [%d,%d] with no entry index: err = %v, want ErrSponsorshipAheadOfEntryIndex", base, base+2, err)
 	}
-	if snap.EntryXDR, err = xdr.MarshalBase64(seedEntry); err != nil {
-		t.Fatalf("marshal entry: %v", err)
+	if wm, err := chstore.SponsorshipWatermark(ctx, addr); err != nil || wm != 0 {
+		t.Fatalf("watermark = %d (%v) after a refused advance, want 0", wm, err)
 	}
-	if _, err := chstore.InsertEntryChanges(ctx, addr, []chstore.LedgerEntryChangeRow{snap}, 0); err != nil {
-		t.Fatalf("seed snapshot row: %v", err)
-	}
+}
 
-	for _, w := range [][2]uint32{{base, base + 2}, {base + 1, base + 1}} {
-		err := runEntryHistoryWrite(addr, w[0], w[1])
-		if !errors.Is(err, chstore.ErrEntryHistoryEntryChangeShortfall) {
-			t.Fatalf("ch-entry-history -write [%d,%d] over uncovered ledgers: err = %v, want ErrEntryHistoryEntryChangeShortfall", w[0], w[1], err)
-		}
-		if wm, err := chstore.EntryHistoryWatermark(ctx, addr); err != nil || wm != 0 {
-			t.Fatalf("watermark = %d (%v) after a refused advance over [%d,%d], want 0", wm, err, w[0], w[1])
-		}
+// A window whose stellar.operations rows cover fewer ledgers than stellar.ledgers declares tx-bearing (a changes-only
+// backfill range) is refused before any row is read: the candidate read would silently miss signer transitions.
+func TestChEntryHistory_RefusesOperationsShortfall(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+
+	const base = uint32(160_940_000)
+	entryHistorySeedLedgers(t, ctx, addr, []uint32{base, base + 1, base + 2}, 1, false)
+
+	err := chops.Run([]string{
+		"ch-entry-history", "-ch-addr", addr,
+		"-from", strconv.FormatUint(uint64(base), 10), "-to", strconv.FormatUint(uint64(base+2), 10),
+	})
+	if !errors.Is(err, chstore.ErrSponsorshipOperationsShortfall) {
+		t.Fatalf("ch-entry-history over tx-bearing ledgers without operations rows: err = %v, want ErrSponsorshipOperationsShortfall", err)
 	}
 }
 
@@ -384,12 +255,13 @@ func TestChEntryHistory_WatermarkRefusesSkippedPrefix(t *testing.T) {
 		t.Fatalf("truncate watermark: %v", err)
 	}
 	// tx_count 0: no entry changes are owed, so only the prefix rule can refuse.
-	entryHistorySeedLedgers(t, ctx, addr, []uint32{base, base + 1, base + 2}, 0)
+	entryHistorySeedLedgers(t, ctx, addr, []uint32{base, base + 1, base + 2}, 0, true)
+	runEntryIndexWrite(t, addr, base, base+2)
 
 	if err := runEntryHistoryWrite(addr, base, base); err != nil {
 		t.Fatalf("ch-entry-history -write [%d,%d]: %v", base, base, err)
 	}
-	if wm, err := chstore.EntryHistoryWatermark(ctx, addr); err != nil || wm != base {
+	if wm, err := chstore.SponsorshipWatermark(ctx, addr); err != nil || wm != base {
 		t.Fatalf("watermark = %d (%v), want %d", wm, err, base)
 	}
 
@@ -397,7 +269,7 @@ func TestChEntryHistory_WatermarkRefusesSkippedPrefix(t *testing.T) {
 	if !errors.Is(err, chstore.ErrEntryHistorySkippedPrefix) {
 		t.Fatalf("ch-entry-history -write skipping %d: err = %v, want ErrEntryHistorySkippedPrefix", base+1, err)
 	}
-	if wm, err := chstore.EntryHistoryWatermark(ctx, addr); err != nil || wm != base {
+	if wm, err := chstore.SponsorshipWatermark(ctx, addr); err != nil || wm != base {
 		t.Fatalf("watermark = %d (%v) after a refused advance, want %d", wm, err, base)
 	}
 }
@@ -702,7 +574,7 @@ func TestClickHouseAssetEntryChanges(t *testing.T) {
 		}
 		resetWatermark()
 	})
-	entryHistorySeedLedgers(t, ctx, addr, []uint32{base, base + 1, base + 2}, 1)
+	entryHistorySeedLedgers(t, ctx, addr, []uint32{base, base + 1, base + 2}, 1, true)
 
 	trustline := func(balance int64) xdr.LedgerEntry {
 		return xdr.LedgerEntry{Data: xdr.LedgerEntryData{Type: xdr.LedgerEntryTypeTrustline, TrustLine: &xdr.TrustLineEntry{
@@ -2231,7 +2103,7 @@ func TestChEntryIndex_WriteFillsBothIndexes(t *testing.T) {
 		issuer = "GCEZWKCA5VLDNRLN3RPRJMRZOX3Z6G5CHCGSNFHEYVXM3XOJMDS674JZ"
 		usdc   = "USDC-" + issuer
 	)
-	entryHistorySeedLedgers(t, ctx, addr, []uint32{base, base + 1, base + 2}, 1)
+	entryHistorySeedLedgers(t, ctx, addr, []uint32{base, base + 1, base + 2}, 1, true)
 
 	account := func(id string, balance, seq int64) xdr.LedgerEntry {
 		return xdr.LedgerEntry{Data: xdr.LedgerEntryData{Type: xdr.LedgerEntryTypeAccount, Account: &xdr.AccountEntry{

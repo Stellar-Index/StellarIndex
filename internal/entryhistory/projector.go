@@ -1,5 +1,5 @@
-// Package entryhistory turns ledger-entry-change source rows into account and asset history rows;
-// the ch-entry-history derive and the entry-changes read path share one projector.
+// Package entryhistory turns ledger-entry-change source rows into account and asset history rows and sponsorship
+// events; the entry-changes read path and the ch-entry-history derive share one projector.
 package entryhistory
 
 import (
@@ -44,17 +44,29 @@ func (p *Projector) Project(r clickhouse.EntryHistorySourceRow) ([]clickhouse.Ac
 	return pr.Accounts, pr.Assets, err
 }
 
-// ProjectAll derives every history row of one source row.
-func (p *Projector) ProjectAll(r clickhouse.EntryHistorySourceRow) (Projection, error) {
+// ProjectSponsorships derives only the sponsorship transitions of one source row: the image pairing without the
+// decoded-field work ProjectAll does.
+func (p *Projector) ProjectSponsorships(r clickhouse.EntryHistorySourceRow) ([]clickhouse.SponsorshipEvent, error) {
+	prev, post, ok, err := p.pair(r)
+	if err != nil || !ok {
+		return nil, err
+	}
+	if post == nil && prev == nil {
+		p.PreImageMissing++
+	}
+	return sponsorshipEvents(changeRef(r), prev, post), nil
+}
+
+// pair resolves one source row to its images; ok is false for a 'state' pre-image, which is only recorded.
+func (p *Projector) pair(r clickhouse.EntryHistorySourceRow) (prev, post *xdr.LedgerEntry, ok bool, err error) {
 	if r.Ledger != p.ledger || r.TxHash != p.tx || r.OpIndex != p.op {
 		p.ledger, p.tx, p.op = r.Ledger, r.TxHash, r.OpIndex
 		clear(p.pre)
 	}
-	var post *xdr.LedgerEntry
 	if r.EntryXDR != "" {
 		var e xdr.LedgerEntry
 		if err := xdr.SafeUnmarshalBase64(r.EntryXDR, &e); err != nil {
-			return Projection{}, fmt.Errorf("decode entry: %w", err)
+			return nil, nil, false, fmt.Errorf("decode entry: %w", err)
 		}
 		post = &e
 	}
@@ -62,19 +74,34 @@ func (p *Projector) ProjectAll(r clickhouse.EntryHistorySourceRow) (Projection, 
 		// A pre-image is never itself a change. It stays in the map (not
 		// consumed) so an unmerged duplicate of the change sees it too.
 		if post == nil {
-			return Projection{}, fmt.Errorf("state row without an entry")
+			return nil, nil, false, fmt.Errorf("state row without an entry")
 		}
 		p.pre[r.KeyXDR] = *post
-		return Projection{}, nil
+		return nil, nil, false, nil
 	}
 	if post == nil && r.ChangeType != "removed" {
-		return Projection{}, fmt.Errorf("%s row without an entry", r.ChangeType)
+		return nil, nil, false, fmt.Errorf("%s row without an entry", r.ChangeType)
 	}
-	var prev *xdr.LedgerEntry
 	if e, ok := p.pre[r.KeyXDR]; ok {
 		prev = &e
 	}
+	return prev, post, true, nil
+}
 
+func changeRef(r clickhouse.EntryHistorySourceRow) clickhouse.EntryChangeRef {
+	return clickhouse.EntryChangeRef{
+		Ledger: r.Ledger, CloseTime: r.CloseTime, TxHash: r.TxHash, OpIndex: r.OpIndex,
+		ChangeIndex: r.ChangeIndex, IntraLedgerSeq: r.IntraLedgerSeq,
+		EntryType: r.EntryType, ChangeType: r.ChangeType,
+	}
+}
+
+// ProjectAll derives every history row of one source row.
+func (p *Projector) ProjectAll(r clickhouse.EntryHistorySourceRow) (Projection, error) {
+	prev, post, ok, err := p.pair(r)
+	if err != nil || !ok {
+		return Projection{}, err
+	}
 	postFields, err := entryFields(post)
 	if err != nil {
 		return Projection{}, err
@@ -94,13 +121,9 @@ func (p *Projector) ProjectAll(r clickhouse.EntryHistorySourceRow) (Projection, 
 	if err != nil {
 		return Projection{}, fmt.Errorf("marshal fields: %w", err)
 	}
-	ref := clickhouse.EntryChangeRef{
-		Ledger: r.Ledger, CloseTime: r.CloseTime, TxHash: r.TxHash, OpIndex: r.OpIndex,
-		ChangeIndex: r.ChangeIndex, IntraLedgerSeq: r.IntraLedgerSeq,
-		EntryType: r.EntryType, ChangeType: r.ChangeType,
-		Changed: changedFields(r.ChangeType, prevFields, postFields),
-		Fields:  string(fieldsJSON),
-	}
+	ref := changeRef(r)
+	ref.Changed = changedFields(r.ChangeType, prevFields, postFields)
+	ref.Fields = string(fieldsJSON)
 
 	var key *xdr.LedgerKey
 	if post == nil && prev == nil {
