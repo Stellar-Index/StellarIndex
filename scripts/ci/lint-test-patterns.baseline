@@ -73,14 +73,12 @@ md-read internal/customerwebhook/retry_window_internal_test.go
 md-read internal/incidents/incidents_test.go
 md-read internal/ops/archive/verify_archive_tier_e_test.go
 md-read internal/ops/chops/ch_rebuild_backfillsafe_test.go
-md-read internal/ops/ingest/directory_sync_test.go
 md-read internal/pricingguard/surface_labels_test.go
 md-read internal/sources/aquarius/router_gate_test.go
 md-read internal/sources/redstone/decode_test.go
 md-read internal/sources/reflector/decode_test.go
 md-read internal/storage/timescale/retention_policy_test.go
 md-read migrations/readme_test.go
-md-read test/controlwiring/dockerignore_test.go
 md-read test/controlwiring/engineering_standards_forbidden_patterns_test.go
 md-read test/controlwiring/integration_pkgs_trigger_evidence_test.go
 md-read test/controlwiring/verify_archive_fail_on_missed_test.go

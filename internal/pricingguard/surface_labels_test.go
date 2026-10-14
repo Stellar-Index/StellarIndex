@@ -22,37 +22,38 @@ const metricsReadme = "../../docs/reference/metrics/README.md"
 // surface table the four price-serve gate counters share.
 const substanceWithheldHeading = "### `stellarindex_price_serve_substance_withheld_total`"
 
-// TestPriceServeSurfaceLabelsAreDocumented pins the README `surface` table to the labels the code emits, in both
-// directions. Emitted labels are string constants passed as `surface` to non-test functions under internal/ and
-// cmd/; a forwarded parameter is followed at its callers, and any other non-constant argument fails.
-func TestPriceServeSurfaceLabelsAreDocumented(t *testing.T) {
-	emitted := emittedSurfaceLabels(t, "../../internal", "../../cmd")
-	if len(emitted) < 10 {
-		t.Fatalf("found only %d surface labels (%v) — the scan is broken, and a guard over an empty set passes forever",
-			len(emitted), emitted)
-	}
-	t.Logf("emitted surface labels: %v", emitted)
-	documented := documentedSurfaceLabels(t)
-	for _, s := range emitted {
-		if !slices.Contains(documented, s) {
-			t.Errorf("surface %q is emitted but not in the %s table in %s", s, substanceWithheldHeading, metricsReadme)
-		}
-	}
-	for _, s := range documented {
-		if !slices.Contains(emitted, s) {
-			t.Errorf("surface %q is documented in %s but no call site emits it", s, metricsReadme)
-		}
-	}
-}
-
-// TestSubstanceFloorLabelsAreDocumented pins every `floor` label value.
-func TestSubstanceFloorLabelsAreDocumented(t *testing.T) {
+// TestSubstanceWithheldLabelsAreDocumented pins the README section for the four price-serve gate counters to the code,
+// in both directions. `surface` labels are string constants passed as `surface` to non-test functions under internal/
+// and cmd/ (a forwarded parameter is followed at its callers, any other non-constant argument fails); `floor` labels
+// are the SubstanceFloor values.
+func TestSubstanceWithheldLabelsAreDocumented(t *testing.T) {
 	section := readmeSection(t)
-	for _, f := range []SubstanceFloor{FloorBuckets, FloorSpan, FloorVolume, FloorVolumeUnvalued} {
-		if !strings.Contains(section, "`"+string(f)+"`") {
-			t.Errorf("floor %q is emitted but not documented under %s", f, substanceWithheldHeading)
+	t.Run("surface", func(t *testing.T) {
+		emitted := emittedSurfaceLabels(t, "../../internal", "../../cmd")
+		if len(emitted) < 10 {
+			t.Fatalf("found only %d surface labels (%v) — the scan is broken, and a guard over an empty set passes forever",
+				len(emitted), emitted)
 		}
-	}
+		t.Logf("emitted surface labels: %v", emitted)
+		documented := documentedSurfaceLabels(t, section)
+		for _, s := range emitted {
+			if !slices.Contains(documented, s) {
+				t.Errorf("surface %q is emitted but not in the %s table in %s", s, substanceWithheldHeading, metricsReadme)
+			}
+		}
+		for _, s := range documented {
+			if !slices.Contains(emitted, s) {
+				t.Errorf("surface %q is documented in %s but no call site emits it", s, metricsReadme)
+			}
+		}
+	})
+	t.Run("floor", func(t *testing.T) {
+		for _, f := range []SubstanceFloor{FloorBuckets, FloorSpan, FloorVolume, FloorVolumeUnvalued} {
+			if !strings.Contains(section, "`"+string(f)+"`") {
+				t.Errorf("floor %q is emitted but not documented under %s", f, substanceWithheldHeading)
+			}
+		}
+	})
 }
 
 func readmeSection(t *testing.T) string {
@@ -75,10 +76,10 @@ func readmeSection(t *testing.T) string {
 
 var surfaceRow = regexp.MustCompile("(?m)^\\| `([a-z_]+)` \\|")
 
-func documentedSurfaceLabels(t *testing.T) []string {
+func documentedSurfaceLabels(t *testing.T, section string) []string {
 	t.Helper()
 	var out []string
-	for _, m := range surfaceRow.FindAllStringSubmatch(readmeSection(t), -1) {
+	for _, m := range surfaceRow.FindAllStringSubmatch(section, -1) {
 		out = append(out, m[1])
 	}
 	if len(out) == 0 {
