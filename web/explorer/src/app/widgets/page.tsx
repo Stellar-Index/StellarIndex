@@ -203,12 +203,12 @@ function WidgetCard({
       <div className="bg-surface-muted flex h-[210px] items-center justify-center p-4">
         <iframe
           src={src}
-          width="100%"
+          width="320"
           height="180"
           frameBorder="0"
           loading="lazy"
           title={label}
-          className="border-line rounded-sm border"
+          className="border-line max-w-full rounded-sm border"
         />
       </div>
       <div className="border-line border-t">

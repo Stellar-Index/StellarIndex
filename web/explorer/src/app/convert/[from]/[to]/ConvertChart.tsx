@@ -119,10 +119,10 @@ export function ConvertChart({ from, to }: { from: string; to: string }) {
       )}
       {!loading && !error && range && (
         <div className="flex flex-wrap items-center gap-2 text-xs">
-          <Badge tone="up" title={`Highest rate in the ${spec.label} window`}>
+          <Badge title={`Highest rate in the ${spec.label} window`}>
             High {formatPrice(range.hi)}
           </Badge>
-          <Badge tone="down" title={`Lowest rate in the ${spec.label} window`}>
+          <Badge title={`Lowest rate in the ${spec.label} window`}>
             Low {formatPrice(range.lo)}
           </Badge>
           {range.change != null && (
