@@ -42,7 +42,7 @@ type SponsorshipArrangementView struct {
 	Sponsored string                   `json:"sponsored,omitempty"`
 	Kind      string                   `json:"kind"`
 	KeyID     string                   `json:"key_id,omitempty"`
-	Reserves  uint8                    `json:"reserves"`
+	Reserves  uint8                    `json:"reserve_count"`
 	InForce   bool                     `json:"in_force"`
 	Episodes  []SponsorshipEpisodeView `json:"episodes"`
 }
@@ -50,7 +50,7 @@ type SponsorshipArrangementView struct {
 // SponsorshipTotalsView counts one side of the account's arrangements through the watermark.
 type SponsorshipTotalsView struct {
 	InForce         uint64 `json:"in_force"`
-	InForceReserves uint64 `json:"in_force_reserves"`
+	InForceReserves uint64 `json:"in_force_reserve_count"`
 	Started         uint64 `json:"started"`
 	Revoked         uint64 `json:"revoked"`
 	Ended           uint64 `json:"ended"`

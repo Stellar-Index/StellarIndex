@@ -13206,15 +13206,15 @@ paths:
                     sponsored: GBXGQJWVLWOYHFLVTKWV5FGHA3LNYY2JQKM7OAJAUEQFU6LPCSEFVXON
                     kind: trustline
                     key_id: USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
-                    reserves: 1
+                    reserve_count: 1
                     in_force: true
                     episodes:
                     - started: { ledger: 64802900, ledger_close_time: '2026-10-06T14:02:29Z', intra_ledger_seq: 17, tx_hash: be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36, op_index: 0, change_index: 1 }
                       ended: null
                   next_cursor: GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN.GBXGQJWVLWOYHFLVTKWV5FGHA3LNYY2JQKM7OAJAUEQFU6LPCSEFVXON.trustline.USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
                   totals:
-                    sponsoring: { in_force: 12, in_force_reserves: 12, started: 15, revoked: 2, ended: 1 }
-                    sponsored: { in_force: 0, in_force_reserves: 0, started: 0, revoked: 0, ended: 0 }
+                    sponsoring: { in_force: 12, in_force_reserve_count: 12, started: 15, revoked: 2, ended: 1 }
+                    sponsored: { in_force: 0, in_force_reserve_count: 0, started: 0, revoked: 0, ended: 0 }
                   proof:
                     account_ledger: 64802900
                     num_sponsoring: 12
@@ -13253,7 +13253,7 @@ paths:
                                 sponsored: { type: string, description: "The account whose entry or signer is sponsored; omitted for a claimable balance, which has no owner." }
                                 kind: { type: string, enum: [account, trustline, offer, data, claimable_balance, signer] }
                                 key_id: { type: string, description: "The entry within the sponsored account: CODE-ISSUER for a trustline, the offer id, the data name, the balance id, or the signer key; omitted for the account entry itself." }
-                                reserves: { type: integer, format: int32, description: "Base reserves the arrangement counts for in num_sponsoring and num_sponsored." }
+                                reserve_count: { type: integer, format: int32, description: "Base reserves the arrangement counts for in num_sponsoring and num_sponsored." }
                                 in_force: { type: boolean }
                                 episodes:
                                   type: array
@@ -22660,10 +22660,10 @@ components:
     SponsorshipTotals:
       type: object
       description: One side of an account's sponsorship arrangements counted through the watermark.
-      required: [in_force, in_force_reserves, started, revoked, ended]
+      required: [in_force, in_force_reserve_count, started, revoked, ended]
       properties:
         in_force: { type: integer, format: int64, description: "Arrangements whose last event is a start." }
-        in_force_reserves: { type: integer, format: int64, description: "Base reserves those arrangements count for; the number the account entry's counter must equal." }
+        in_force_reserve_count: { type: integer, format: int64, description: "Base reserves those arrangements count for; the number the account entry's counter must equal." }
         started: { type: integer, format: int64 }
         revoked: { type: integer, format: int64 }
         ended: { type: integer, format: int64 }

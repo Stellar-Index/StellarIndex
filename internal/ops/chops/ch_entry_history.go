@@ -261,8 +261,10 @@ func runSponsorshipProof(ctx context.Context, chAddr string, accounts []string, 
 		if p.Match != nil {
 			verdict = map[bool]string{true: "match", false: "MISMATCH"}[*p.Match]
 		}
-		fmt.Fprintf(out, "%s: entry@%d sponsoring=%d sponsored=%d derived@%d sponsoring=%d sponsored=%d %s\n",
-			g, p.LastModifiedLedger, p.NumSponsoring, p.NumSponsored, wm, p.DerivedSponsoring, p.DerivedSponsored, verdict)
+		if _, err := fmt.Fprintf(out, "%s: entry@%d sponsoring=%d sponsored=%d derived@%d sponsoring=%d sponsored=%d %s\n",
+			g, p.LastModifiedLedger, p.NumSponsoring, p.NumSponsored, wm, p.DerivedSponsoring, p.DerivedSponsored, verdict); err != nil {
+			return err
+		}
 	}
 	return nil
 }

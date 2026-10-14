@@ -13224,7 +13224,7 @@ export interface components {
              * Format: int64
              * @description Base reserves those arrangements count for; the number the account entry's counter must equal.
              */
-            in_force_reserves: number;
+            in_force_reserve_count: number;
             /** Format: int64 */
             started: number;
             /** Format: int64 */
@@ -26442,7 +26442,7 @@ export interface operations {
                      *             "sponsored": "GBXGQJWVLWOYHFLVTKWV5FGHA3LNYY2JQKM7OAJAUEQFU6LPCSEFVXON",
                      *             "kind": "trustline",
                      *             "key_id": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-                     *             "reserves": 1,
+                     *             "reserve_count": 1,
                      *             "in_force": true,
                      *             "episodes": [
                      *               {
@@ -26463,14 +26463,14 @@ export interface operations {
                      *         "totals": {
                      *           "sponsoring": {
                      *             "in_force": 12,
-                     *             "in_force_reserves": 12,
+                     *             "in_force_reserve_count": 12,
                      *             "started": 15,
                      *             "revoked": 2,
                      *             "ended": 1
                      *           },
                      *           "sponsored": {
                      *             "in_force": 0,
-                     *             "in_force_reserves": 0,
+                     *             "in_force_reserve_count": 0,
                      *             "started": 0,
                      *             "revoked": 0,
                      *             "ended": 0
@@ -26516,7 +26516,7 @@ export interface operations {
                                  * Format: int32
                                  * @description Base reserves the arrangement counts for in num_sponsoring and num_sponsored.
                                  */
-                                reserves: number;
+                                reserve_count?: number;
                                 in_force: boolean;
                                 episodes: {
                                     started: components["schemas"]["SponsorshipEvent"];
