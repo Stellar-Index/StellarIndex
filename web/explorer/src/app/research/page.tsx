@@ -77,15 +77,15 @@ export default function ResearchPage() {
             <Link
               key={d.slug}
               href={`/research/architecture/${d.slug}`}
-              className="group border-line bg-surface hover:border-brand-300 flex flex-col gap-2 rounded-xl border p-4 transition hover:shadow-sm"
+              className="group border-line bg-surface hover:border-line-strong rounded-card flex flex-col gap-2 border p-4 transition-colors"
             >
               <div className="flex items-center gap-2">
                 <BookOpen className="text-ink-faint group-hover:text-brand-500 h-3.5 w-3.5" />
-                <span className="text-ink-muted text-[10px] font-medium tracking-wider uppercase">
+                <span className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
                   Architecture
                 </span>
                 {d.last_verified && (
-                  <span className="text-ink-faint ml-auto text-[10px]">
+                  <span className="text-ink-faint ml-auto text-[11px]">
                     Verified {d.last_verified}
                   </span>
                 )}
@@ -129,15 +129,15 @@ export default function ResearchPage() {
             <Link
               key={d.slug}
               href={`/research/operations/${d.slug}`}
-              className="group border-line bg-surface hover:border-brand-300 flex flex-col gap-2 rounded-xl border p-4 transition hover:shadow-sm"
+              className="group border-line bg-surface hover:border-line-strong rounded-card flex flex-col gap-2 border p-4 transition-colors"
             >
               <div className="flex items-center gap-2">
                 <Wrench className="text-ink-faint group-hover:text-brand-500 h-3.5 w-3.5" />
-                <span className="text-ink-muted text-[10px] font-medium tracking-wider uppercase">
+                <span className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
                   Operations
                 </span>
                 {d.last_verified && (
-                  <span className="text-ink-faint ml-auto text-[10px]">
+                  <span className="text-ink-faint ml-auto text-[11px]">
                     Verified {d.last_verified}
                   </span>
                 )}
@@ -193,15 +193,15 @@ export default function ResearchPage() {
                     <Link
                       key={adr.id}
                       href={`/research/adr/${adr.id}`}
-                      className="group border-line bg-surface hover:border-brand-300 flex flex-col gap-2 rounded-xl border p-4 transition hover:shadow-sm"
+                      className="group border-line bg-surface hover:border-line-strong rounded-card flex flex-col gap-2 border p-4 transition-colors"
                     >
                       <div className="flex items-center gap-2">
                         <FileText className="text-ink-faint group-hover:text-brand-500 h-3.5 w-3.5" />
-                        <span className="text-ink-muted text-[10px] font-medium tracking-wider uppercase">
+                        <span className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
                           ADR-{adr.id}
                         </span>
                         <StatusBadge status={adr.status} />
-                        <span className="text-ink-faint ml-auto text-[10px]">
+                        <span className="text-ink-faint ml-auto text-[11px]">
                           {adr.date}
                         </span>
                       </div>
@@ -227,7 +227,7 @@ export default function ResearchPage() {
                   href={t.href}
                   target="_blank"
                   rel="noreferrer noopener"
-                  className="border-line bg-surface hover:border-brand-300 flex flex-col gap-1 rounded-xl border p-4 transition"
+                  className="border-line bg-surface hover:border-line-strong rounded-card flex flex-col gap-1 border p-4 transition-colors"
                 >
                   <h3 className="text-sm font-semibold">{t.name}</h3>
                   <p className="text-ink-body text-xs">{t.description}</p>
@@ -235,7 +235,7 @@ export default function ResearchPage() {
               ) : (
                 <div
                   key={t.name}
-                  className="border-line bg-surface flex flex-col gap-1 rounded-xl border p-4"
+                  className="border-line bg-surface rounded-card flex flex-col gap-1 border p-4"
                 >
                   <h3 className="text-sm font-semibold">{t.name}</h3>
                   <p className="text-ink-body text-xs">{t.description}</p>
@@ -246,7 +246,7 @@ export default function ResearchPage() {
         </section>
       )}
 
-      <section className="border-line bg-surface rounded-xl border p-5 text-sm">
+      <section className="border-line bg-surface rounded-card border p-5 text-sm">
         <h2 className="text-h3 text-ink font-semibold">
           Why we publish all of this
         </h2>

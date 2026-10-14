@@ -227,7 +227,7 @@ function Health({
           aria-label={status}
         />
       </div>
-      {subtext && <div className="text-ink-muted text-[10px]">{subtext}</div>}
+      {subtext && <div className="text-ink-muted text-[11px]">{subtext}</div>}
     </div>
   );
 }

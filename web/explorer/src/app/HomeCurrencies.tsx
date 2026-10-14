@@ -170,11 +170,11 @@ export function HomeCurrencies() {
             <Link
               key={t}
               href={assetHrefFor(t)}
-              className="border-line bg-surface hover:border-brand-500 rounded-xl border p-3 transition-colors"
+              className="border-line bg-surface hover:border-line-strong rounded-card border p-3 transition-colors"
             >
               <div className="flex items-center justify-between">
                 <span className="font-mono text-sm font-medium">{t}</span>
-                <span className="text-ink-muted text-[10px] tracking-wider uppercase">
+                <span className="text-ink-muted text-[11px] tracking-wider uppercase">
                   vs USD
                 </span>
               </div>
@@ -186,7 +186,7 @@ export function HomeCurrencies() {
                   letting it read as an FX quote. */}
               {row?.price_type === 'peg' && (
                 <div
-                  className="text-ink-muted text-[10px] tracking-wider uppercase"
+                  className="text-ink-muted text-[11px] tracking-wider uppercase"
                   title="Declared 1:1 peg — not an observed market rate"
                 >
                   declared peg

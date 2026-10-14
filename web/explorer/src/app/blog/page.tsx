@@ -30,7 +30,7 @@ export default function BlogIndexPage() {
       />
 
       {posts.length === 0 ? (
-        <div className="border-line bg-surface rounded-xl border p-6">
+        <div className="border-line bg-surface rounded-card border p-6">
           <p className="text-ink-body text-sm">
             No posts match this view. For per-release notes meanwhile, see{' '}
             <Link href="/changelog" className="text-brand-600 hover:underline">
@@ -55,7 +55,7 @@ export default function BlogIndexPage() {
           {posts.map((p) => (
             <li
               key={p.slug}
-              className="border-line bg-surface hover:border-brand-500 rounded-xl border p-5 transition-colors"
+              className="border-line bg-surface hover:border-line-strong rounded-card border p-5 transition-colors"
             >
               <Link href={`/blog/${p.slug}`} className="group block space-y-2">
                 <div className="flex items-baseline justify-between gap-2">

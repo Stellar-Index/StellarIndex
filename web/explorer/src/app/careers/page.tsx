@@ -65,7 +65,7 @@ export default function CareersPage() {
         title="Work on real data infrastructure."
       />
 
-      <section className="border-line bg-surface rounded-xl border p-6 shadow-sm">
+      <section className="border-line bg-surface rounded-card border p-6">
         <h2 className="text-h3 text-ink font-semibold">Open roles</h2>
         <p className="text-ink-body mt-3 text-sm">
           No open roles listed today. We&apos;re focused on shipping v1 and the
@@ -87,7 +87,7 @@ export default function CareersPage() {
           {VALUES.map((v) => (
             <div
               key={v.title}
-              className="border-line bg-surface rounded-xl border p-5"
+              className="border-line bg-surface rounded-card border p-5"
             >
               <h3 className="text-ink text-sm font-semibold">{v.title}</h3>
               <p className="text-ink-body mt-2 text-sm">{v.body}</p>
@@ -112,7 +112,7 @@ export default function CareersPage() {
               href={p.href}
               target="_blank"
               rel="noreferrer noopener"
-              className="border-line bg-surface hover:border-brand-500 block rounded-lg border p-4 transition-colors"
+              className="border-line bg-surface hover:border-line-strong block rounded-lg border p-4 transition-colors"
             >
               <div className="flex items-start justify-between gap-2">
                 <h3 className="text-ink text-sm font-semibold">{p.label}</h3>
@@ -124,12 +124,12 @@ export default function CareersPage() {
         </div>
       </section>
 
-      <section className="border-line bg-surface rounded-xl border p-6 shadow-sm">
+      <section className="border-line bg-surface rounded-card border p-6">
         <h2 className="text-h3 text-ink font-semibold">Get in touch</h2>
         <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Link
             href="/contact"
-            className="border-line hover:border-brand-500 hover:text-brand-600 inline-flex items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm"
+            className="border-line hover:border-line-strong hover:text-brand-600 inline-flex items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm"
           >
             <Mail className="h-4 w-4" />
             Contact
@@ -138,7 +138,7 @@ export default function CareersPage() {
             href="https://github.com/Stellar-Index/StellarIndex"
             target="_blank"
             rel="noreferrer noopener"
-            className="border-line hover:border-brand-500 hover:text-brand-600 inline-flex items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm"
+            className="border-line hover:border-line-strong hover:text-brand-600 inline-flex items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm"
           >
             <GithubIcon className="h-4 w-4" />
             GitHub

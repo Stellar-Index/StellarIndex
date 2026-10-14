@@ -227,9 +227,8 @@ function NewKeyReveal({
     <Card className="border-brand-200 bg-brand-50/60">
       <CardHeader
         className="border-brand-100"
-        eyebrow="New key created"
-        title="Save this key now — you won't see it again"
-        description="We store only a hash. If you lose the plaintext, revoke this key and mint a new one."
+        title="New key created"
+        description="Save it now: you won't see it again. We store only a hash, so if you lose the plaintext, revoke this key and mint a new one."
       />
       <CardBody className="space-y-3">
         <div className="border-line bg-surface flex items-center gap-2 rounded-lg border px-3 py-2.5">

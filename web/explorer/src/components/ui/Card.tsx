@@ -41,8 +41,6 @@ type CardHeaderProps = {
   title?: ReactNode;
   description?: ReactNode;
   actions?: ReactNode;
-  /** An eyebrow/kicker label above the title. */
-  eyebrow?: ReactNode;
   /**
    * Heading rank for `title`. Defaults to 3, which is right for a card
    * nested under a SectionHeader (`ui/Page`'s `<h2>`). A card that IS a
@@ -58,7 +56,6 @@ export function CardHeader({
   title,
   description,
   actions,
-  eyebrow,
   headingLevel = 3,
   className,
 }: CardHeaderProps) {
@@ -71,11 +68,6 @@ export function CardHeader({
       )}
     >
       <div className="min-w-0">
-        {eyebrow && (
-          <div className="text-ink-faint mb-1 text-[11px] font-medium tracking-wider uppercase">
-            {eyebrow}
-          </div>
-        )}
         {title && (
           <H className="text-ink truncate text-sm font-semibold">{title}</H>
         )}

@@ -162,7 +162,7 @@ export default function SDKPage() {
             </code>{' '}
             repo path.
           </p>
-          <div className="border-line overflow-hidden rounded-xl border">
+          <div className="border-line rounded-card overflow-hidden border">
             <CopyableSnippet snippet={INSTALL} />
           </div>
         </section>
@@ -174,7 +174,7 @@ export default function SDKPage() {
             rate-limit; pass <code className="font-mono text-xs">APIKey</code>{' '}
             to bump to your tier&apos;s budget.
           </p>
-          <div className="border-line overflow-hidden rounded-xl border">
+          <div className="border-line rounded-card overflow-hidden border">
             <CopyableSnippet snippet={QUICKSTART} />
           </div>
         </section>
@@ -187,7 +187,7 @@ export default function SDKPage() {
                 <h3 className="text-base font-semibold">{p.title}</h3>
                 <p className="text-ink-body mt-1 text-sm">{p.blurb}</p>
               </div>
-              <div className="border-line overflow-hidden rounded-xl border">
+              <div className="border-line rounded-card overflow-hidden border">
                 <CopyableSnippet snippet={p.code} />
               </div>
             </div>
@@ -241,7 +241,7 @@ export default function SDKPage() {
           </dl>
         </section>
 
-        <section className="border-line bg-surface rounded-xl border p-5 text-sm">
+        <section className="border-line bg-surface rounded-card border p-5 text-sm">
           <h2 className="text-h3 text-ink font-semibold">Reference</h2>
           <ul className="text-ink-body mt-3 space-y-2">
             {/* pkg.go.dev 404s for this module. It IS
@@ -289,7 +289,7 @@ export default function SDKPage() {
 
 function Mode({ term, def }: { term: string; def: React.ReactNode }) {
   return (
-    <div className="border-line bg-surface rounded-xl border p-3">
+    <div className="border-line bg-surface rounded-card border p-3">
       <dt className="text-brand-600 text-xs font-semibold tracking-wider uppercase">
         {term}
       </dt>

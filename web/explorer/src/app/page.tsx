@@ -117,7 +117,7 @@ export default function HomePage() {
                 href="/docs"
                 className="text-ink-muted hover:text-brand-600 px-2 text-sm font-medium transition-colors"
               >
-                Quickstart →
+                Quickstart
               </Link>
             </div>
           </div>

@@ -41,7 +41,7 @@ export function RequestReveal({
       type="button"
       onClick={() => setOpen(true)}
       className={twMerge(
-        'border-line bg-surface text-ink-muted hover:border-brand-500 hover:text-brand-600 inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium',
+        'border-line bg-surface text-ink-muted hover:border-line-strong hover:text-brand-600 inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] font-medium',
         position === 'top-right' && 'absolute top-2 right-2',
         className,
       )}
@@ -101,7 +101,7 @@ export function RequestReveal({
                     href={example.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="border-line text-ink-body hover:border-brand-500 hover:text-brand-600 inline-flex items-center gap-1 rounded-sm border px-2 py-1 text-xs"
+                    className="border-line text-ink-body hover:border-line-strong hover:text-brand-600 inline-flex items-center gap-1 rounded-sm border px-2 py-1 text-xs"
                   >
                     <ExternalLink className="h-3 w-3" />
                     Open
@@ -144,7 +144,7 @@ function CopyButton({ text }: { text: string }) {
     <button
       type="button"
       onClick={copy}
-      className="border-line text-ink-body hover:border-brand-500 hover:text-brand-600 mt-2 inline-flex items-center gap-1 rounded-sm border px-2 py-1 text-xs"
+      className="border-line text-ink-body hover:border-line-strong hover:text-brand-600 mt-2 inline-flex items-center gap-1 rounded-sm border px-2 py-1 text-xs"
     >
       {copied ? (
         <>

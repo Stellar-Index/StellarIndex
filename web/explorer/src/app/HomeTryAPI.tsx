@@ -4,7 +4,7 @@ import { Play } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import { API_BASE_URL } from '@/api/client';
-import { CopyButton } from '@/components/ui';
+import { CopyButton, Segmented } from '@/components/ui';
 
 type Lang = 'curl' | 'js' | 'python' | 'go';
 
@@ -166,7 +166,7 @@ export function HomeTryAPI() {
   }
 
   return (
-    <div className="border-line bg-surface rounded-xl border p-4 shadow-sm">
+    <div className="border-line bg-surface rounded-card border p-4">
       <div className="mb-3 flex flex-wrap gap-1">
         {EXAMPLES.map((ex, i) => (
           <button
@@ -183,22 +183,13 @@ export function HomeTryAPI() {
           </button>
         ))}
       </div>
-      <div className="border-line mb-2 flex items-center gap-1 border-b pb-2">
-        {LANGS.map((l) => (
-          <button
-            key={l.key}
-            type="button"
-            onClick={() => setLang(l.key)}
-            className={`rounded px-2 py-0.5 font-mono text-[10px] tracking-wider uppercase ${
-              lang === l.key
-                ? 'bg-line text-ink'
-                : 'text-ink-muted hover:text-ink'
-            }`}
-          >
-            {l.label}
-          </button>
-        ))}
-      </div>
+      <Segmented
+        className="mb-2"
+        ariaLabel="Snippet language"
+        options={LANGS.map((l) => ({ label: l.label, value: l.key }))}
+        value={lang}
+        onChange={(v) => setLang(v as Lang)}
+      />
       <div className="border-line bg-surface-subtle text-ink-body relative rounded-lg border px-3 py-2.5 font-mono text-[11px]">
         <pre className="overflow-x-auto pr-20 break-all whitespace-pre-wrap">
           <code>
@@ -212,7 +203,7 @@ export function HomeTryAPI() {
             aria-label="Run live"
             onClick={runLive}
             disabled={running}
-            className="text-ink-faint hover:bg-surface-muted hover:text-up rounded-sm p-1 disabled:opacity-50"
+            className="text-ink-faint hover:bg-surface-muted hover:text-ink rounded-sm p-1 disabled:opacity-50"
           >
             <Play className="h-3.5 w-3.5" />
           </button>
@@ -222,10 +213,10 @@ export function HomeTryAPI() {
       {response != null && (
         <div className="border-line bg-surface-muted mt-2 overflow-hidden rounded-lg border">
           <div
-            className={`flex items-center justify-between px-3 py-1 text-[10px] tracking-wider uppercase ${
+            className={`flex items-center justify-between px-3 py-1 text-[11px] tracking-wider uppercase ${
               responseTone === 'ok'
-                ? 'bg-up-subtle/40 text-up'
-                : 'bg-down-subtle/40 text-down'
+                ? 'bg-ok-50 text-ok-700'
+                : 'bg-bad-50 text-bad-700'
             }`}
           >
             <span>response</span>
@@ -241,8 +232,8 @@ export function HomeTryAPI() {
       )}
       <p className="text-ink-muted mt-2 text-[11px]">
         No auth needed for the public tier — every endpoint here responds in
-        milliseconds. Hit ▶ to run live; click any example tab above to see the
-        curl.
+        milliseconds. Use Run live to call it; click any example tab above to
+        see the curl.
         {lang === 'go' && (
           <>
             {' '}

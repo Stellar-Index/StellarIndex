@@ -153,7 +153,7 @@ export function NetworkSwitcher({ onNavigate }: { onNavigate?: () => void }) {
           tabIndex={-1}
           className="border-line bg-surface shadow-elevated absolute top-full right-0 z-50 mt-1 w-60 rounded-lg border p-1.5 outline-hidden"
         >
-          <p className="text-ink-faint px-2 py-1 text-[10px] font-medium tracking-wide uppercase">
+          <p className="text-ink-faint px-2 py-1 text-[11px] font-medium tracking-wide uppercase">
             Networks
           </p>
           {NETWORKS.map((n) => (
@@ -236,7 +236,7 @@ function NetworkRow({
           />
         </>
       ) : (
-        <span className="text-ink-faint text-[10px] tracking-wide uppercase">
+        <span className="text-ink-faint text-[11px] tracking-wide uppercase">
           Soon
         </span>
       )}
