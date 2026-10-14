@@ -25,6 +25,18 @@ func sep1FailingServer(t *testing.T, handler http.HandlerFunc) (*httptest.Server
 	return srv, strings.TrimPrefix(srv.URL, "https://")
 }
 
+// sep1ClosedPort returns a loopback host:port nothing listens on.
+func sep1ClosedPort(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	_ = l.Close()
+	return addr
+}
+
 func TestSep1FailureReasonClassifiesRealResolverErrors(t *testing.T) {
 	notFound, notFoundDomain := sep1FailingServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
@@ -81,18 +93,6 @@ func TestSep1FailureReasonClassifiesRealResolverErrors(t *testing.T) {
 
 // TestSep1RefreshLoopCountsReachedAndRegressed: the run's counters follow the per-issuer outcomes, with the regression
 // denominator limited to domains that had served a toml before.
-// sep1ClosedPort returns a loopback host:port nothing listens on.
-func sep1ClosedPort(t *testing.T) string {
-	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := l.Addr().String()
-	_ = l.Close()
-	return addr
-}
-
 func TestSep1RefreshLoopCountsReachedAndRegressed(t *testing.T) {
 	log := &sep1CallLog{}
 	srv, live := sep1TestDomain(t, log, "live", tomlListing("Live Org", "GLIVE"))

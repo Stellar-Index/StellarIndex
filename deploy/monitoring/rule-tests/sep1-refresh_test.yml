@@ -9,6 +9,9 @@
 # "a systemic run is left to the unit-failed alert" reports 1 firing alert.
 # PROVEN-RED (scrape-history gate): drop the `and on() (…)` guard and re-run —
 # "a fresh Prometheus does not fire on a series it never had" reports 1 alert.
+# PROVEN-RED (scrape-interval independence): replace the `[6h:5m] >= 70`
+# subquery with `count_over_time(up[6h]) > 340` and re-run — "a 15 s scrape
+# does not shorten the six-hour wait" reports 1 firing alert at 3h.
 
 rule_files:
   - ../rules/sep1-refresh.yml
@@ -184,5 +187,16 @@ tests:
         values: '1x100'
     alert_rule_test:
       - eval_time: 1h40m
+        alertname: stellarindex_sep1_refresh_stale
+        exp_alerts: []
+
+  # ── stale: a 15 s scrape must not shorten the six-hour wait ──
+  - interval: 15s
+    name: a 15 s scrape does not shorten the six-hour wait
+    input_series:
+      - series: 'up{job="node_exporter",instance="localhost:9100"}'
+        values: '1x720'
+    alert_rule_test:
+      - eval_time: 3h
         alertname: stellarindex_sep1_refresh_stale
         exp_alerts: []
