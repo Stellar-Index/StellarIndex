@@ -11,11 +11,12 @@ import (
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
+	"github.com/Stellar-Index/StellarIndex/internal/astguard"
 )
 
 // TestSLORoutesNeverTouchTheLake (ADR-0050): no SLO'd route may depend on the ClickHouse lake, since the p95<=200ms/p99<=500ms
 // SLO holds BECAUSE pricing is local Redis+Timescale. A direct-body AST tripwire checks handlers for [sloLakeBackedFields] (not
-// the transitive graph; add helpers if threaded), and TestSLOLakeFieldsCoverLakeWiring fails if main.go wires an unlisted one.
+// the transitive graph; add helpers if threaded), and checkSLOLakeFieldsCoverLakeWiring fails if main.go wires an unlisted one.
 func TestSLORoutesNeverTouchTheLake(t *testing.T) {
 	// The exact route→handler set the Prometheus SLO burn-rate rules cover.
 	sloHandlers := map[string]bool{
@@ -128,15 +129,11 @@ func lakeFieldReads(body ast.Node, recv string, forbidden map[string]bool) []*as
 	return out
 }
 
-func TestLakeFieldReadsCatchesOptionsForm(t *testing.T) {
-	const src = `package v1
-func (s *Server) direct()  { _ = s.Explorer }
+func checkLakeFieldReadsCatchesOptionsForm(t *testing.T) {
+	const src = `func (s *Server) direct()  { _ = s.Explorer }
 func (s *Server) viaOpts() { _ = s.Options.Explorer }
 func (s *Server) other()   { _ = s.Options.Logger; _ = s.Logger }`
-	f, err := parser.ParseFile(token.NewFileSet(), "x.go", src, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	f := astguard.PlantedFile(t, src)
 	want := map[string]int{"direct": 1, "viaOpts": 1, "other": 0}
 	for _, d := range f.Decls {
 		fn := d.(*ast.FuncDecl)

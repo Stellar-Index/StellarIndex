@@ -5,18 +5,17 @@ package v1
 
 import (
 	"go/ast"
-	"go/parser"
-	"go/token"
 	"slices"
 	"testing"
 
+	"github.com/Stellar-Index/StellarIndex/internal/astguard"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 )
 
-// TestCataloguePricesArePaidBeforeTheTwinMerge: a source-level guard on ORDER. fillCataloguePricesForPage must run before the
+// checkCataloguePricesArePaidBeforeTheTwinMerge: a source-level guard on ORDER. fillCataloguePricesForPage must run before the
 // mergeTwinStats inside fillCatalogueStatsForPage, or the price fill would republish a figure the scam tag just withheld,
 // invisibly to behavioural tests.
-func TestCataloguePricesArePaidBeforeTheTwinMerge(t *testing.T) {
+func checkCataloguePricesArePaidBeforeTheTwinMerge(t *testing.T) {
 	checked := 0
 	for _, file := range packageGoFiles(t) {
 		parsed := parseGoFile(t, file)
@@ -36,7 +35,7 @@ func TestCataloguePricesArePaidBeforeTheTwinMerge(t *testing.T) {
 		}
 	}
 	// Both serving paths (writeCataloguePage and serveCatalogueUnifiedPage) make both calls
-	// through fillAndRankCatalogueRows, which TestCatalogueRankFollowsTheFill pins them to.
+	// through fillAndRankCatalogueRows, which checkCatalogueRankFollowsTheFill pins them to.
 	// A guard that matched nothing would pass over an empty set forever.
 	if checked < 1 {
 		t.Fatalf("the guard examined %d function(s) that make both calls; "+
@@ -61,9 +60,9 @@ func cataloguePriceFillOrder(steps []serverStep) (priceAt, statsAt int, ok bool)
 	return slices.Index(steps, serverStep{name: cataloguePriceFill, call: true}), slices.Index(names, catalogueStatsFill), true
 }
 
-// TestCataloguePriceFillOrderCountsCallsOnly: an early method value of the
+// checkCataloguePriceFillOrderCountsCallsOnly: an early method value of the
 // price fill must not stand in for the call that runs after the merge.
-func TestCataloguePriceFillOrderCountsCallsOnly(t *testing.T) {
+func checkCataloguePriceFillOrderCountsCallsOnly(t *testing.T) {
 	cases := []struct {
 		name, src string
 		wantOK    bool
@@ -73,11 +72,7 @@ func TestCataloguePriceFillOrderCountsCallsOnly(t *testing.T) {
 		{"method value only, called after merge", `func (s *Server) f() { p := s.fillCataloguePricesForPage; s.fillCatalogueStatsForPage(ctx); p(ctx) }`, false},
 	}
 	for _, c := range cases {
-		parsed, err := parser.ParseFile(token.NewFileSet(), "planted.go", "package v1\n"+c.src, 0)
-		if err != nil {
-			t.Fatalf("parse %q: %v", c.src, err)
-		}
-		priceAt, statsAt, ok := cataloguePriceFillOrder(serverStepsInFile(parsed, "f"))
+		priceAt, statsAt, ok := cataloguePriceFillOrder(serverStepsInFile(astguard.PlantedFile(t, c.src), "f"))
 		if !ok {
 			t.Fatalf("%s: the scan did not see both steps", c.name)
 		}
@@ -87,10 +82,10 @@ func TestCataloguePriceFillOrderCountsCallsOnly(t *testing.T) {
 	}
 }
 
-// TestCatalogueRankFollowsTheFill: the market-cap rank is only meaningful over written caps; ranking before the price fill and
+// checkCatalogueRankFollowsTheFill: the market-cap rank is only meaningful over written caps; ranking before the price fill and
 // twin merge orders Stellar-issued rows on nil, and slicing first makes late-seeded assets unreachable. fillAndRankCatalogueRows
 // is the one place ranking may run, so each page writer must go through it.
-func TestCatalogueRankFollowsTheFill(t *testing.T) {
+func checkCatalogueRankFollowsTheFill(t *testing.T) {
 	const (
 		chokepoint = "fillAndRankCatalogueRows"
 		sortFn     = "sortAssetDetailsByMarketCapDesc"

@@ -21,14 +21,20 @@ func ParseFile(t testing.TB, path string) (*token.FileSet, *ast.File) {
 	return fset, f
 }
 
-// Planted parses one function declared in src (an anti-vacuity case; "package p" is prepended) and returns it.
-func Planted(t testing.TB, src string) *ast.FuncDecl {
+// PlantedFile parses src as the body of a file (an anti-vacuity case; "package p" is prepended).
+func PlantedFile(t testing.TB, src string) *ast.File {
 	t.Helper()
 	f, err := parser.ParseFile(token.NewFileSet(), "planted.go", "package p\n"+src, 0)
 	if err != nil {
 		t.Fatalf("parse %q: %v", src, err)
 	}
-	for _, d := range f.Decls {
+	return f
+}
+
+// Planted is PlantedFile returning the first function src declares.
+func Planted(t testing.TB, src string) *ast.FuncDecl {
+	t.Helper()
+	for _, d := range PlantedFile(t, src).Decls {
 		if fn, ok := d.(*ast.FuncDecl); ok {
 			return fn
 		}
