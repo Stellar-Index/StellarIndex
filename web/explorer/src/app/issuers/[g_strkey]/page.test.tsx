@@ -25,6 +25,11 @@ function mockIssuer(detail: Record<string, unknown>) {
 async function renderPage() {
   render(await IssuerDetailPage({ params: Promise.resolve({ g_strkey: G }) }));
 }
+/** The value under a Stat label (label span → label row → value div). */
+function stat(label: string) {
+  return screen.getByText(label, { selector: 'span' }).closest('div')
+    ?.nextElementSibling?.textContent;
+}
 
 // Frontend-honesty sweep: /v1/issuers/{g} soft-fails its per-asset
 // fan-out on error OR deadline (internal/api/v1/issuers.go), so `assets`
@@ -36,12 +41,9 @@ describe('IssuerDetailPage issued-asset tiles', () => {
     mockIssuer({ g_strkey: G, home_domain: 'circle.com' });
     await renderPage();
 
-    expect(screen.getByText('Assets').nextElementSibling?.textContent).toBe(
-      '—',
-    );
-    expect(
-      screen.getByText('Total observations').nextElementSibling?.textContent,
-    ).toBe('—');
+    expect(stat('Assets issued')).toBe('—');
+    expect(stat('Observations')).toBe('—');
+    expect(screen.getByText('Not read yet')).toBeInTheDocument();
     // Panel heading carries no fabricated count, and the body abstains.
     expect(screen.getByText('Issued assets')).toBeInTheDocument();
     expect(
@@ -56,12 +58,8 @@ describe('IssuerDetailPage issued-asset tiles', () => {
     mockIssuer({ g_strkey: G, home_domain: 'circle.com', assets: [] });
     await renderPage();
 
-    expect(screen.getByText('Assets').nextElementSibling?.textContent).toBe(
-      '0',
-    );
-    expect(
-      screen.getByText('Total observations').nextElementSibling?.textContent,
-    ).toBe('0');
+    expect(stat('Assets issued')).toBe('0');
+    expect(stat('Observations')).toBe('0');
     expect(screen.getByText('Issued assets (0)')).toBeInTheDocument();
     expect(screen.getByText(/No issued assets observed/)).toBeInTheDocument();
     expect(
@@ -94,12 +92,8 @@ describe('IssuerDetailPage issued-asset tiles', () => {
     });
     await renderPage();
 
-    expect(screen.getByText('Assets').nextElementSibling?.textContent).toBe(
-      '2',
-    );
-    expect(
-      screen.getByText('Total observations').nextElementSibling?.textContent,
-    ).toBe('42');
+    expect(stat('Assets issued')).toBe('2');
+    expect(stat('Observations')).toBe('42');
     expect(screen.getByText('Issued assets (2)')).toBeInTheDocument();
   });
 });
@@ -131,10 +125,7 @@ describe('IssuerDetailPage 24h volume tile', () => {
   it.runIf(CURRENT_NETWORK.pricing)('sums volumes exactly', async () => {
     mockWithVolumes(['999.994999999999998', '0.000000000000001']);
     await renderPage();
-    expect(
-      screen.getByText('24h volume', { selector: 'dt' }).nextElementSibling
-        ?.textContent,
-    ).toBe('$999.99');
+    expect(stat('24h volume')).toBe('$999.99');
   });
 
   it.runIf(CURRENT_NETWORK.pricing).each([
@@ -143,10 +134,7 @@ describe('IssuerDetailPage 24h volume tile', () => {
   ])('abstains when one row is %s', async (_, bad) => {
     mockWithVolumes(['5000', bad]);
     await renderPage();
-    expect(
-      screen.getByText('24h volume', { selector: 'dt' }).nextElementSibling
-        ?.textContent,
-    ).toBe('—');
+    expect(stat('24h volume')).toBe('—');
   });
 });
 
@@ -157,6 +145,42 @@ describe('IssuerDetailPage 24h volume tile', () => {
 // long-tail issuer page declares to a crawler — it must be a generic
 // noindex shell, never the real per-issuer metadata built from the
 // literal string 'shell'.
+// The organisation block is issuer-authored: only a plain https URL to a
+// public host and a bare handle are ever linked.
+describe('IssuerDetailPage organisation panel', () => {
+  const sep1 = (doc: Record<string, string>) => ({
+    g_strkey: G,
+    org_name: 'Centre',
+    assets: [],
+    sep1_payload: { Documentation: doc },
+  });
+
+  it('links a plain https website and a bare GitHub handle', async () => {
+    mockIssuer(
+      sep1({ ORG_URL: 'https://www.centre.io', ORG_GITHUB: 'centrehq' }),
+    );
+    await renderPage();
+    expect(
+      screen.getByText('https://www.centre.io').closest('a'),
+    ).toHaveAttribute('href', 'https://www.centre.io/');
+    expect(screen.getByText('centrehq').closest('a')).toHaveAttribute(
+      'href',
+      'https://github.com/centrehq',
+    );
+  });
+
+  it.each([
+    ['http', 'http://www.centre.io'],
+    ['javascript', 'javascript:alert(1)'],
+    ['credentials', 'https://user:pw@www.centre.io'],
+  ])('renders a %s website as text, never a link', async (_, url) => {
+    mockIssuer(sep1({ ORG_URL: url, ORG_GITHUB: 'centre/hq' }));
+    await renderPage();
+    expect(screen.getByText(url).closest('a')).toBeNull();
+    expect(screen.getByText('centre/hq').closest('a')).toBeNull();
+  });
+});
+
 describe('IssuerDetailPage generateMetadata', () => {
   it('builds real canonical/og:url metadata for a real issuer, indexable', async () => {
     const meta = await generateMetadata({
@@ -188,5 +212,53 @@ describe('IssuerDetailPage generateMetadata', () => {
     // An omitted openGraph key would inherit the homepage og:title.
     expect(meta.openGraph?.title).toContain('Issuer');
     expect(meta.twitter?.title).toContain('Issuer');
+  });
+});
+
+describe('IssuerDetailPage issued-asset rows', () => {
+  const asset = (code: string, observation_count: number) => ({
+    asset_id: `${code}:${G}`,
+    code,
+    observation_count,
+  });
+
+  it('leads with the traded assets and folds the never-traded tail away', async () => {
+    mockIssuer({
+      g_strkey: G,
+      auth_revocable: true,
+      auth_required: false,
+      auth_immutable: false,
+      auth_clawback: false,
+      assets: [asset('AAA', 0), asset('USDC', 41_000_000), asset('ZZZ', 0)],
+    });
+    await renderPage();
+    expect(screen.getByText('Issued assets (3)')).toBeInTheDocument();
+    const summary = screen.getByText(/2 more with no trade or trustline/);
+    const details = summary.closest('details') as HTMLDetailsElement;
+    expect(details).not.toBeNull();
+    expect(details.querySelectorAll('tbody tr')).toHaveLength(2);
+    // USDC sits in the open table, not behind the fold.
+    const usdc = screen.getByText('USDC').closest('tbody') as HTMLElement;
+    expect(details.contains(usdc)).toBe(false);
+    // Only the set flag is a chip; the rest read as one faint line.
+    expect(screen.getByText('Revocable')).toBeInTheDocument();
+    expect(
+      screen.getByText('Unset: auth required, immutable, clawback'),
+    ).toBeInTheDocument();
+  });
+
+  it('shows the whole list when nothing has traded', async () => {
+    mockIssuer({
+      g_strkey: G,
+      auth_required: false,
+      auth_revocable: false,
+      auth_immutable: false,
+      auth_clawback: false,
+      assets: [asset('AAA', 0), asset('BBB', 0)],
+    });
+    await renderPage();
+    expect(screen.queryByText(/more with no trade/)).not.toBeInTheDocument();
+    expect(screen.getAllByRole('row')).toHaveLength(3); // header + 2
+    expect(screen.getByText('None set')).toBeInTheDocument();
   });
 });
