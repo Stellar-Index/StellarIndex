@@ -35,18 +35,14 @@ export default function HomePage() {
   return (
     <Container className="space-y-12 py-10 sm:py-14">
       <header className="max-w-3xl space-y-5">
-        <p className="border-line bg-surface text-ink-muted inline-flex items-center gap-2 rounded-sm border px-3 py-1 text-xs font-medium">
-          <span className="bg-up h-1.5 w-1.5 rounded-full" />
-          Independent · open · public-tier free
-        </p>
         <h1 className="text-display-sm text-ink md:text-display font-semibold">
           {pricing
-            ? 'The protocol explorer for the Stellar network.'
+            ? 'Everything Stellar.'
             : `The Stellar ${CURRENT_NETWORK.label} Explorer`}
         </h1>
         <p className="text-ink-muted max-w-2xl text-lg">
           {pricing
-            ? 'Every contract, event and trade on Stellar, as verified data and one VWAP price.'
+            ? 'Structured data you can rely on, built for every team and every user.'
             : `Every ledger, transaction, account, asset and contract on Stellar ${CURRENT_NETWORK.label}.`}
         </p>
         <div className="flex flex-wrap items-center gap-3 pt-1">
