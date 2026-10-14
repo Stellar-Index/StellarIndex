@@ -4,13 +4,9 @@
 package platform
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"os"
-	"strconv"
-	"strings"
 	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/astguard"
 )
 
 // TestWebhookEventTypesListsEveryConstant requires every WebhookEventType constant to appear in WebhookEventTypes(), as Go has no exhaustiveness check over string constants.
@@ -53,52 +49,5 @@ func TestIsWebhookEventType(t *testing.T) {
 // const spec in this package whose declared type is WebhookEventType.
 func declaredWebhookEventTypes(t *testing.T) map[string]string {
 	t.Helper()
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatalf("read package dir: %v", err)
-	}
-	fset := token.NewFileSet()
-	out := map[string]string{}
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		f, perr := parser.ParseFile(fset, name, nil, 0)
-		if perr != nil {
-			t.Fatalf("parse %s: %v", name, perr)
-		}
-		collectEventTypeConsts(t, f, out)
-	}
-	return out
-}
-
-func collectEventTypeConsts(t *testing.T, f *ast.File, out map[string]string) {
-	t.Helper()
-	for _, decl := range f.Decls {
-		gd, ok := decl.(*ast.GenDecl)
-		if !ok || gd.Tok != token.CONST {
-			continue
-		}
-		for _, spec := range gd.Specs {
-			vs, ok := spec.(*ast.ValueSpec)
-			if !ok {
-				continue
-			}
-			if id, ok := vs.Type.(*ast.Ident); !ok || id.Name != "WebhookEventType" {
-				continue
-			}
-			for i, name := range vs.Names {
-				lit, ok := vs.Values[i].(*ast.BasicLit)
-				if !ok {
-					t.Fatalf("constant %s is not a string literal; extend the guard", name.Name)
-				}
-				v, err := strconv.Unquote(lit.Value)
-				if err != nil {
-					t.Fatalf("unquote %s: %v", name.Name, err)
-				}
-				out[name.Name] = v
-			}
-		}
-	}
+	return astguard.ByName(astguard.Typed(t, astguard.PackageConsts(t, "."), "WebhookEventType"))
 }

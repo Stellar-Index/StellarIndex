@@ -4,14 +4,12 @@
 package v1
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/astguard"
 
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 
@@ -98,7 +96,7 @@ func specPropertyEnum(t *testing.T, schema, prop string) []string {
 func goSupplyBases(t *testing.T) []string {
 	t.Helper()
 	dir := filepath.Join(repoRoot(t), "internal", "supply")
-	out := packageStringConsts(t, dir, isBasisTyped)
+	out := astguard.Values(astguard.Typed(t, astguard.PackageConsts(t, dir), "Basis"))
 	// The walk must have seen the real block, or every assertion above
 	// holds vacuously against an empty list.
 	if len(out) == 0 {
@@ -116,24 +114,12 @@ func goSupplyBases(t *testing.T) []string {
 	return out
 }
 
-func isBasisTyped(_ string, vs *ast.ValueSpec) bool {
-	id, ok := vs.Type.(*ast.Ident)
-	return ok && id.Name == "Basis"
-}
-
 // goFileStringConsts reads the string constants of type typeName in one file, in declaration order. Unlike
 // packageStringConsts (a whole directory glob), it is scoped to a file, which
 // TestPriceAuthority_SpecEnumIsTheGoVocabulary compares positionally.
 func goFileStringConsts(t *testing.T, file, typeName string) []string {
 	t.Helper()
-	parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)
-	if err != nil {
-		t.Fatalf("parse %s: %v", file, err)
-	}
-	out := fileStringConsts(t, file, parsed, func(_ string, vs *ast.ValueSpec) bool {
-		id, ok := vs.Type.(*ast.Ident)
-		return ok && id.Name == typeName
-	})
+	out := astguard.Values(astguard.Typed(t, astguard.FileConsts(t, file), typeName))
 	if len(out) == 0 {
 		t.Fatalf("%s: no typed %s constants found — this guard needs re-aiming", file, typeName)
 	}
@@ -145,9 +131,9 @@ func goFileStringConsts(t *testing.T, file, typeName string) []string {
 // values are this package's ListingSupplyBasis* constants, stamped verbatim by the handler.
 func TestSupplyBasis_ListingValuationSpecEnumIsTheGoVocabulary(t *testing.T) {
 	got := specSupplyBasisEnum(t, "AssetListingValuation")
-	want := packageStringConsts(t, ".", func(name string, _ *ast.ValueSpec) bool {
-		return strings.HasPrefix(name, "ListingSupplyBasis")
-	})
+	want := astguard.Values(astguard.Keep(t, astguard.PackageConsts(t, "."), func(c astguard.Const) bool {
+		return strings.HasPrefix(c.Name, "ListingSupplyBasis")
+	}))
 	if len(want) == 0 {
 		t.Fatal("no ListingSupplyBasis* constants found in package v1 — this guard needs re-aiming")
 	}
@@ -156,87 +142,6 @@ func TestSupplyBasis_ListingValuationSpecEnumIsTheGoVocabulary(t *testing.T) {
 			"edit both (and regenerate docs/reference/api, examples/postman and "+
 			"web/explorer/src/api/types.ts from the spec)", got, want)
 	}
-}
-
-// TestPackageStringConsts_WalksEveryFileOfThePackage: the walk sees a constant in any non-test file of the
-// package, and never one from a _test.go file, which no handler can stamp.
-func TestPackageStringConsts_WalksEveryFileOfThePackage(t *testing.T) {
-	dir := t.TempDir()
-	files := map[string]string{
-		"overlay.go":      "package supply\n\nconst BasisLater Basis = \"later\"\n",
-		"supply.go":       "package supply\n\ntype Basis string\n\nconst (\n\tBasisA Basis = \"a\"\n\tOther = \"x\"\n)\n",
-		"supply_test.go":  "package supply\n\nconst BasisTestOnly Basis = \"test_only\"\n",
-		"zz_generated.go": "package supply\n\nconst BasisZ Basis = \"z\"\n",
-	}
-	for name, body := range files {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	got := packageStringConsts(t, dir, isBasisTyped)
-	if want := "later,a,z"; strings.Join(got, ",") != want {
-		t.Errorf("walk = %v, want [%s] (every non-test file, file-name then declaration order)", got, want)
-	}
-}
-
-// packageStringConsts returns the value of every string constant keep
-// selects across the non-test .go files in dir: files in name order,
-// constants in declaration order within a file.
-func packageStringConsts(t *testing.T, dir string, keep func(name string, vs *ast.ValueSpec) bool) []string {
-	t.Helper()
-	files, err := filepath.Glob(filepath.Join(dir, "*.go"))
-	if err != nil {
-		t.Fatalf("glob %s: %v", dir, err)
-	}
-	fset := token.NewFileSet()
-	var out []string
-	for _, file := range files {
-		if strings.HasSuffix(file, "_test.go") {
-			continue
-		}
-		parsed, err := parser.ParseFile(fset, file, nil, 0)
-		if err != nil {
-			t.Fatalf("parse %s: %v", file, err)
-		}
-		out = append(out, fileStringConsts(t, file, parsed, keep)...)
-	}
-	return out
-}
-
-// fileStringConsts is packageStringConsts for one parsed file.
-func fileStringConsts(t *testing.T, file string, parsed *ast.File, keep func(name string, vs *ast.ValueSpec) bool) []string {
-	t.Helper()
-	var out []string
-	for _, decl := range parsed.Decls {
-		gd, ok := decl.(*ast.GenDecl)
-		if !ok || gd.Tok != token.CONST {
-			continue
-		}
-		for _, spec := range gd.Specs {
-			vs, ok := spec.(*ast.ValueSpec)
-			if !ok {
-				continue
-			}
-			for i, name := range vs.Names {
-				if !keep(name.Name, vs) {
-					continue
-				}
-				if i >= len(vs.Values) {
-					t.Fatalf("%s: const %s has no value of its own", file, name.Name)
-				}
-				lit, ok := vs.Values[i].(*ast.BasicLit)
-				if !ok || lit.Kind != token.STRING {
-					t.Fatalf("%s: const %s is not a string literal", file, name.Name)
-				}
-				s, err := strconv.Unquote(lit.Value)
-				if err != nil {
-					t.Fatalf("%s: unquote %s: %v", file, lit.Value, err)
-				}
-				out = append(out, s)
-			}
-		}
-	}
-	return out
 }
 
 // unexcludedListingBases are the bases classicSupplyReading (and the SEP-41

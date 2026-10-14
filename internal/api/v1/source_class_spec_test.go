@@ -2,16 +2,14 @@ package v1
 
 import (
 	"encoding/json"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/astguard"
 )
 
 // TestSourceClassSurfacesAgree pins every surface naming a source class to the external.Class constants: registry,
@@ -85,42 +83,8 @@ func servedMethodologyClassNames(t *testing.T) []string {
 // package directory.
 func goStringConsts(t *testing.T, relDir, typeName string) []string {
 	t.Helper()
-	files, err := filepath.Glob(filepath.Join(repoRoot(t), relDir, "*.go"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var out []string
-	fset := token.NewFileSet()
-	for _, path := range files {
-		if strings.HasSuffix(path, "_test.go") {
-			continue
-		}
-		f, err := parser.ParseFile(fset, path, nil, 0)
-		if err != nil {
-			t.Fatalf("parse %s: %v", path, err)
-		}
-		ast.Inspect(f, func(n ast.Node) bool {
-			spec, ok := n.(*ast.ValueSpec)
-			if !ok {
-				return true
-			}
-			if ident, ok := spec.Type.(*ast.Ident); !ok || ident.Name != typeName {
-				return false
-			}
-			for _, v := range spec.Values {
-				lit, ok := v.(*ast.BasicLit)
-				if !ok || lit.Kind != token.STRING {
-					t.Fatalf("%s: %s constant is not a string literal", path, typeName)
-				}
-				s, err := strconv.Unquote(lit.Value)
-				if err != nil {
-					t.Fatal(err)
-				}
-				out = append(out, s)
-			}
-			return false
-		})
-	}
+	dir := filepath.Join(repoRoot(t), relDir)
+	out := astguard.Values(astguard.Typed(t, astguard.PackageConsts(t, dir), typeName))
 	sort.Strings(out)
 	return out
 }
