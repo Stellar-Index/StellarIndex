@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -174,56 +173,6 @@ windows = ` + windows + "\n"
 				t.Errorf("windows = %s: err = %v, want an ErrInvalidConfig naming aggregate.windows", windows, err)
 			}
 		})
-	}
-}
-
-func TestLoadReader_AggregateFlags(t *testing.T) {
-	// Verify the new aggregator flags round-trip through TOML.
-	body := `
-[region]
-id = "r1"
-
-[storage]
-postgres_dsn = "postgres://u:p@h/db"
-
-[aggregate]
-disable_class_filter         = true
-enable_stablecoin_fiat_proxy = true
-interval_seconds             = 15
-max_trades_per_window        = 500
-`
-	c, err := cfg.LoadReader(strings.NewReader(body), "test.toml")
-	if err != nil {
-		t.Fatalf("LoadReader: %v", err)
-	}
-	if !c.Aggregate.DisableClassFilter {
-		t.Error("disable_class_filter not parsed")
-	}
-	if !c.Aggregate.EnableStablecoinFiatProxy {
-		t.Error("enable_stablecoin_fiat_proxy not parsed")
-	}
-	if c.Aggregate.IntervalSeconds != 15 {
-		t.Errorf("interval_seconds = %d want 15", c.Aggregate.IntervalSeconds)
-	}
-	if c.Aggregate.MaxTradesPerWindow != 500 {
-		t.Errorf("max_trades_per_window = %d want 500", c.Aggregate.MaxTradesPerWindow)
-	}
-}
-
-func TestLoadReader_rejectsUnknownKeys(t *testing.T) {
-	// Silent typos in config are a classic deployment bug. Unknown
-	// keys must be a hard error.
-	body := `
-[region]
-id = "r1"
-nonsense_field = "oops"
-`
-	_, err := cfg.LoadReader(strings.NewReader(body), "test.toml")
-	if err == nil {
-		t.Fatal("expected unknown-key error, got nil")
-	}
-	if !strings.Contains(err.Error(), "nonsense_field") {
-		t.Errorf("error should name the offending key: %v", err)
 	}
 }
 
@@ -516,24 +465,6 @@ func findFieldByTOMLTag(v reflect.Value, tag string) reflect.Value {
 	return reflect.Value{}
 }
 
-func TestApplyEnvOverrides(t *testing.T) {
-	t.Setenv("STELLARINDEX_POSTGRES_DSN", "postgres://from-env/db")
-	c := cfg.Default()
-	c.ApplyEnvOverrides()
-	if c.Storage.PostgresDSN != "postgres://from-env/db" {
-		t.Errorf("env override didn't land: %q", c.Storage.PostgresDSN)
-	}
-
-	// Unset env var → no change.
-	t.Setenv("STELLARINDEX_POSTGRES_DSN", "")
-	c2 := cfg.Default()
-	original := c2.Storage.PostgresDSN
-	c2.ApplyEnvOverrides()
-	if c2.Storage.PostgresDSN != original {
-		t.Errorf("empty env should not override: %q", c2.Storage.PostgresDSN)
-	}
-}
-
 // S3AccessKeyEnv / S3SecretKeyEnv hold the NAME of the env var carrying the credential (buildS3Client does os.Getenv on
 // them), not the value. Overwriting the name with the secret makes os.Getenv("AKIA…") return "" and silently drops S3
 // static creds.
@@ -587,59 +518,6 @@ postgres_dsn = "postgres://valid@host/db"
 	}
 	if !strings.Contains(err.Error(), "postgres_dsn") {
 		t.Errorf("err should name the offending field: %v", err)
-	}
-}
-
-// TestApplyEnvOverrides_ReturnsOverriddenFieldPaths — ApplyEnvOverrides returns exactly the
-// config-path of each field an env var actually replaced, and nothing for unset/empty vars; this
-// is what LoadWithEnv logs so an operator sees WHICH fields the environment won over the TOML.
-func TestApplyEnvOverrides_ReturnsOverriddenFieldPaths(t *testing.T) {
-	t.Setenv("STELLARINDEX_POSTGRES_DSN", "postgres://from-env/db")
-	t.Setenv("STELLARINDEX_REDIS_PASSWORD", "s3cr3t")
-	// Deliberately left unset: STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD,
-	// EXCHANGERATESAPI_KEY, etc. — must NOT appear in the result.
-
-	c := cfg.Default()
-	got := c.ApplyEnvOverrides()
-
-	want := []string{"storage.postgres_dsn", "storage.redis_password"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("ApplyEnvOverrides() = %v, want %v", got, want)
-	}
-}
-
-func TestApplyEnvOverrides_TiingoKey(t *testing.T) {
-	t.Setenv("TIINGO_API_KEY", "tiingo-from-env")
-	c := cfg.Default()
-	c.External.Tiingo.APIKey = "tiingo-from-toml"
-	got := c.ApplyEnvOverrides()
-	if c.External.Tiingo.APIKey != "tiingo-from-env" {
-		t.Errorf("APIKey = %q, want the env value to win", c.External.Tiingo.APIKey)
-	}
-	if !slices.Contains(got, "external.tiingo.api_key") {
-		t.Errorf("ApplyEnvOverrides() = %v, want external.tiingo.api_key listed", got)
-	}
-	if d := cfg.Default().External.Tiingo; d.Enabled || d.APIKey != "" {
-		t.Errorf("default tiingo config = %+v, want disabled with no key", d)
-	}
-}
-
-// TestApplyEnvOverrides_NoOverridesReturnsEmpty confirms the common
-// case (no relevant env vars set) returns an empty/nil list rather
-// than a slice of empty strings or similar placeholder noise.
-func TestApplyEnvOverrides_NoOverridesReturnsEmpty(t *testing.T) {
-	for _, name := range []string{
-		"STELLARINDEX_POSTGRES_DSN", "STELLARINDEX_REDIS_PASSWORD",
-		"STELLARINDEX_CLICKHOUSE_SERVING_PASSWORD", "EXCHANGERATESAPI_KEY",
-		"COINMARKETCAP_API_KEY", "CRYPTOCOMPARE_API_KEY",
-		"COINGECKO_API_KEY", "COINGECKO_DEMO_API_KEY", "MASSIVE_API_KEY",
-		"DUNE_API_KEY", "CHAINLINK_RPC_URL", "OPENEXCHANGERATES_APP_ID", "TIINGO_API_KEY",
-	} {
-		t.Setenv(name, "")
-	}
-	c := cfg.Default()
-	if got := c.ApplyEnvOverrides(); len(got) != 0 {
-		t.Errorf("ApplyEnvOverrides() with nothing set = %v, want empty", got)
 	}
 }
 

@@ -144,23 +144,6 @@ func TestBackfillCoverage_FullWalkPasses(t *testing.T) {
 	}
 }
 
-// ch-backfill must not write by default: a run naming neither -write nor -dry-run refuses before loading config.
-// Otherwise a write-by-default caller (ch-live-catchup.sh timer) would preview and exit 0 silently.
-func TestCHBackfill_RefusesWithoutAStatedMode(t *testing.T) {
-	cfgPath := filepath.Join(t.TempDir(), "absent.toml")
-	base := []string{"-config", cfgPath, "-from", "2", "-to", "3"}
-
-	if err := chBackfill(base); !errors.Is(err, opsutil.ErrWriteModeUnstated) {
-		t.Fatalf("no mode flag: err = %v, want opsutil.ErrWriteModeUnstated", err)
-	}
-	for _, mode := range []string{"-write", "-dry-run"} {
-		err := chBackfill(append(append([]string{}, base...), mode))
-		if err == nil || errors.Is(err, opsutil.ErrWriteModeUnstated) || !strings.Contains(err.Error(), "absent.toml") {
-			t.Errorf("%s: err = %v, want the mode accepted and the run to reach config load", mode, err)
-		}
-	}
-}
-
 // TestChangesOnlyExtract_KeepsCommitMarkerAndChangesOnly fills every slice
 // field of LedgerExtract by reflection, so a table added later is covered:
 // -changes-only must write it nowhere.
@@ -192,24 +175,6 @@ func TestChangesOnlyExtract_KeepsCommitMarkerAndChangesOnly(t *testing.T) {
 	}
 	if len(in.Txs) != 1 {
 		t.Error("changesOnlyExtract mutated its input")
-	}
-}
-
-// TestCHBackfill_ChangesOnlyFollowsTheModeGate — -changes-only is a filter,
-// not a mode: alone it must still refuse, and with -write or -dry-run it must
-// parse and reach config load like the default path.
-func TestCHBackfill_ChangesOnlyFollowsTheModeGate(t *testing.T) {
-	cfgPath := filepath.Join(t.TempDir(), "absent.toml")
-	base := []string{"-config", cfgPath, "-from", "2", "-to", "3", "-changes-only"}
-
-	if err := chBackfill(base); !errors.Is(err, opsutil.ErrWriteModeUnstated) {
-		t.Fatalf("-changes-only with no mode flag: err = %v, want opsutil.ErrWriteModeUnstated", err)
-	}
-	for _, mode := range []string{"-write", "-dry-run"} {
-		err := chBackfill(append(append([]string{}, base...), mode))
-		if err == nil || errors.Is(err, opsutil.ErrWriteModeUnstated) || !strings.Contains(err.Error(), "absent.toml") {
-			t.Errorf("-changes-only %s: err = %v, want the run to reach config load", mode, err)
-		}
 	}
 }
 
@@ -265,5 +230,36 @@ func TestChParticipantBackfill_FailureIsNotReportedDone(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "FAILED") {
 		t.Errorf("failed run must say it FAILED:\n%s", out)
+	}
+}
+
+// TestChops_RequireAStatedMode: a run naming neither -write nor -dry-run refuses before loading config,
+// otherwise a write-by-default caller (the ch-live-catchup.sh timer, a completeness timer) would preview
+// and exit 0 silently. Either mode must parse and reach config load.
+func TestChops_RequireAStatedMode(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "absent.toml")
+	cases := []struct {
+		name string
+		run  func(args []string) error
+		base []string
+		past string // substring the post-gate error carries once the mode is accepted
+	}{
+		{"ch-backfill", chBackfill, []string{"-config", cfgPath, "-from", "2", "-to", "3"}, "absent.toml"},
+		// -changes-only is not a mode: alone it must still refuse
+		{"ch-backfill -changes-only", chBackfill, []string{"-config", cfgPath, "-from", "2", "-to", "3", "-changes-only"}, "absent.toml"},
+		{"compute-completeness", computeCompleteness, []string{"-config", cfgPath, "-ch", "-pass"}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.run(tc.base); !errors.Is(err, opsutil.ErrWriteModeUnstated) {
+				t.Fatalf("no mode flag: err = %v, want opsutil.ErrWriteModeUnstated", err)
+			}
+			for _, mode := range []string{"-write", "-dry-run"} {
+				err := tc.run(append(append([]string{}, tc.base...), mode))
+				if err == nil || errors.Is(err, opsutil.ErrWriteModeUnstated) || !strings.Contains(err.Error(), tc.past) {
+					t.Errorf("%s: err = %v, want the mode accepted and the run to reach config load", mode, err)
+				}
+			}
+		})
 	}
 }
