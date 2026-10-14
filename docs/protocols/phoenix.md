@@ -69,7 +69,7 @@ activity in our window.
 
 | Pool | Lake activity |
 |---|---|
-| `CAZ6W4WHVGQBGURYTUOLCUOOHW6VQGAAPSPCD72VEDZMBBPY7H43AYEC` | **active** — 23,672 swap (+ provide/withdraw_liquidity, initialize); factory-created @51,572,101, swap activity ended ~54.5M. Added 2026-08-18 (completeness-gap; snapshot missed it). |
+| `CAZ6W4WHVGQBGURYTUOLCUOOHW6VQGAAPSPCD72VEDZMBBPY7H43AYEC` | **retired** — 23,672 swap (+ provide/withdraw_liquidity, initialize); factory-created @51,572,101, swap activity ended ~54.5M; instance replaced by a retirement stub at 63,767,534 (storage now carries a stake-config shape), so it is excluded from TVL via `MainnetRetiredPools` and kept in the gated decode set for its history. Added 2026-08-18 (completeness-gap; snapshot missed it). |
 | `CBHCRSVX3ZZ7EGTSYMKPEFGZNWRVCSESQR3UABET4MIW52N4EVU6BIZX` | **active** — 43,918 swap (+ provide/withdraw_liquidity) |
 | `CBCZGGNOEUZG4CAAE7TGTQQHETZMKUT4OIPFHHPKEUX46U4KXBBZ3GLH` | **active** — 4,233 swap (+ provide/withdraw_liquidity) |
 | `CD5XNKK3B6BEF2N7ULNHHGAMOKZ7P6456BFNIHRF4WNTEDKBRWAE7IAA` | **active** — 2,872 swap |
