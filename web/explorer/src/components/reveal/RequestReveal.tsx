@@ -66,7 +66,7 @@ export function RequestReveal({
             role="dialog"
             aria-modal="true"
             aria-labelledby="request-reveal-title"
-            className="bg-surface w-full max-w-2xl rounded-lg p-6 shadow-2xl outline-hidden"
+            className="bg-surface shadow-elevated w-full max-w-2xl rounded-lg p-6 outline-hidden"
             onClick={(e) => e.stopPropagation()}
           >
             <header className="mb-4 flex items-center justify-between">

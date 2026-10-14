@@ -7,7 +7,7 @@ import { hrefFor } from '@/lib/hrefFor';
 
 import { useMarkets } from '@/api/hooks';
 import { useLedgerFollow } from '@/lib/live/hooks';
-import { apiGet } from '@/api/client';
+import { apiGetData } from '@/api/client';
 import {
   EmptyState,
   Table,
@@ -82,13 +82,19 @@ export function HomeRecentTrades() {
     placeholderData: keepPreviousData,
     queryFn: async () => {
       const fanouts = await Promise.all(
-        pairs.map((p) =>
-          apiGet<Trade[]>('/v1/history', {
+        pairs.map(async (p) => {
+          const rows = await apiGetData<Trade[]>('/v1/history', {
             base: p.base,
             quote: p.quote,
             limit: PER_PAIR_LIMIT,
-          }),
-        ),
+          });
+          // A row does not echo its pair; the request knows it.
+          return rows.map((t) => ({
+            ...t,
+            base_asset: t.base_asset ?? p.base,
+            quote_asset: t.quote_asset ?? p.quote,
+          }));
+        }),
       );
       return mergeRecentTrades(fanouts, DISPLAY_LIMIT);
     },
@@ -107,13 +113,10 @@ export function HomeRecentTrades() {
           <h2 className="text-h3 text-ink flex items-center gap-2 font-semibold">
             Recent trades
             <span
-              className="relative inline-flex h-2 w-2"
+              className="bg-up inline-flex h-2 w-2 rounded-full"
               aria-label="live feed"
               title="live feed"
-            >
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="bg-up relative inline-flex h-2 w-2 rounded-full"></span>
-            </span>
+            />
           </h2>
           <p className="text-ink-body text-sm">
             Live feed merging the latest trades across the top {TOP_PAIRS} pairs

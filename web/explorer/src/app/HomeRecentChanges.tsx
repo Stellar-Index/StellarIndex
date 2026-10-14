@@ -83,6 +83,16 @@ export function HomeRecentChanges() {
 // recent non-Unreleased release in CHANGELOG.md. Failures (file
 // missing, no parseable releases) return [] so the home page
 // silently omits the widget rather than blowing up the build.
+// Operator-actions blocks are run-book steps, not shipped changes.
+const SHIPPED_KINDS = new Set([
+  'Added',
+  'Changed',
+  'Fixed',
+  'Removed',
+  'Deprecated',
+  'Security',
+]);
+
 function readRecentItems(n: number): ChangeItem[] {
   let text = '';
   try {
@@ -126,7 +136,7 @@ function readRecentItems(n: number): ChangeItem[] {
       continue;
     }
     if (out.length >= n) continue;
-    if (/^- /.test(line)) {
+    if (/^- /.test(line) && SHIPPED_KINDS.has(kind)) {
       flushBuf();
       buf = line.replace(/^- /, '');
     } else if (buf) {

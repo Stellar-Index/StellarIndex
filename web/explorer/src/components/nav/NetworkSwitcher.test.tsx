@@ -72,7 +72,7 @@ describe('NetworkSwitcher', () => {
 
     // The sibling tip probes resolve into their rows.
     await waitFor(() =>
-      expect(screen.getAllByText('987,654').length).toBeGreaterThan(0),
+      expect(screen.getAllByText('987654').length).toBeGreaterThan(0),
     );
     expect(fetch).toHaveBeenCalledWith(
       'https://api.testnet.stellarindex.io/v1/ledger/tip',

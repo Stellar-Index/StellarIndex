@@ -35,13 +35,13 @@ export function Stat({
       </div>
       <div
         className={cn(
-          'tnum text-ink mt-1 font-semibold tracking-tight',
+          'tnum text-ink mt-2 font-semibold tracking-tight',
           size === 'lg' ? 'text-3xl' : 'text-2xl',
         )}
       >
         {value}
       </div>
-      {sub && <div className="text-ink-muted tnum mt-0.5 text-sm">{sub}</div>}
+      {sub && <div className="text-ink-muted tnum mt-1.5 text-xs">{sub}</div>}
     </div>
   );
 }
@@ -83,5 +83,5 @@ export function StatCell({
   children: ReactNode;
   className?: string;
 }) {
-  return <div className={cn('bg-surface p-5', className)}>{children}</div>;
+  return <div className={cn('bg-surface p-4', className)}>{children}</div>;
 }

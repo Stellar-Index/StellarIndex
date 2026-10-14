@@ -453,7 +453,7 @@ export function SearchModal({ shortcut = true }: { shortcut?: boolean }) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="border-line bg-surface text-ink-muted hover:border-line-strong hover:text-ink-body flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-sm shadow-xs transition-colors"
+        className="border-line bg-surface text-ink-muted hover:border-line-strong hover:text-ink-body flex h-9 w-full items-center gap-2 rounded-md border px-3 text-[13px] transition-colors"
         aria-label="Open search"
       >
         <Search className="h-4 w-4 shrink-0" />
@@ -470,7 +470,7 @@ export function SearchModal({ shortcut = true }: { shortcut?: boolean }) {
           >
             <div
               ref={dialogRef}
-              className="bg-surface w-full max-w-xl overflow-hidden rounded-lg shadow-2xl"
+              className="bg-surface shadow-elevated w-full max-w-xl overflow-hidden rounded-lg"
               onClick={(e) => e.stopPropagation()}
               role="dialog"
               tabIndex={-1}

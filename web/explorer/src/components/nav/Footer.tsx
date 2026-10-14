@@ -25,7 +25,7 @@ export function Footer() {
   const pathname = usePathname();
   if (pathname?.startsWith('/embed/')) return null;
   return (
-    <footer className="border-line bg-surface mt-16 border-t py-8">
+    <footer className="border-line mt-16 border-t py-8">
       <div className="text-ink-muted mx-auto max-w-7xl px-6 text-xs">
         <div className="grid grid-cols-2 gap-8 sm:grid-cols-3 lg:grid-cols-5">
           <FooterColumn

@@ -51,7 +51,7 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Mobile-only header — the desktop layout has no top bar. */}
-        <div className="border-line bg-surface flex h-14 items-center justify-between border-b px-4 lg:hidden">
+        <div className="border-line bg-surface-subtle flex h-14 items-center justify-between border-b px-4 lg:hidden">
           <Link
             href="/"
             className="text-ink flex items-center gap-2 text-sm font-semibold tracking-tight"
@@ -101,7 +101,7 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
             role="dialog"
             aria-modal="true"
             aria-label="Navigation"
-            className="border-line bg-surface shadow-elevated absolute top-0 left-0 h-full w-72 max-w-[85vw] border-r outline-hidden"
+            className="border-line bg-surface-subtle shadow-elevated absolute top-0 left-0 h-full w-72 max-w-[85vw] border-r outline-hidden"
           >
             <button
               type="button"

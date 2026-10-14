@@ -173,10 +173,10 @@ function Row({ item, onNavigate }: { item: NavItem; onNavigate?: () => void }) {
     (item.exact ? pathname === item.href : isActive(pathname, item.href));
   const Icon = item.icon;
   const cls = cn(
-    'group flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm font-medium transition-colors',
+    'group flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[13px] font-medium transition-colors',
     active
-      ? 'bg-surface text-ink shadow-xs ring-1 ring-line'
-      : 'text-ink-body hover:bg-surface-subtle hover:text-ink',
+      ? 'bg-surface-muted text-ink'
+      : 'text-ink-body hover:bg-surface hover:text-ink',
   );
   const inner = (
     <>
@@ -266,16 +266,16 @@ export function SidebarNav({
     : ACCOUNT_GROUP;
   const groups = navForNetwork(signedIn ? [...NAV, accountGroup] : NAV);
   return (
-    <div className="bg-surface-muted flex h-full flex-col">
+    <div className="bg-surface-subtle flex h-full flex-col">
       {/* Logo row — the Stellar mark + wordmark on the left, and the odometer
           (a single hoverable control: network name + chevron over THIS network's
           live ledger; click anywhere on it to open the network switcher) floated
           to the right, next to the wordmark. */}
-      <div className="flex h-14 shrink-0 items-center gap-2 px-4">
+      <div className="flex h-14 shrink-0 items-center gap-2 px-3">
         <Link
           href="/"
           onClick={onNavigate}
-          className="text-ink flex min-w-0 items-center gap-2 font-sans text-base font-semibold tracking-tight"
+          className="text-ink flex min-w-0 items-center gap-2 font-sans text-[15px] font-semibold tracking-tight"
         >
           <StellarMark className="text-ink h-5 w-5 shrink-0" />
           {/* Wordmark weight contrast: "Stellar" carries the
@@ -300,7 +300,7 @@ export function SidebarNav({
         {groups.map((group, gi) => (
           <div key={group.title ?? `g${gi}`} className="space-y-0.5">
             {group.title && (
-              <div className="text-ink-faint px-2.5 pb-1 text-[11px] font-semibold tracking-wider uppercase">
+              <div className="text-ink-faint px-2.5 pb-1.5 text-[11px] font-medium tracking-wider uppercase">
                 {group.title}
               </div>
             )}
@@ -322,7 +322,7 @@ export function SidebarNav({
 /** The persistent desktop left rail (hidden on mobile; drawer handles small screens). */
 export function Sidebar() {
   return (
-    <aside className="border-line sticky top-0 hidden h-screen w-64 shrink-0 border-r lg:block">
+    <aside className="border-line sticky top-0 hidden h-screen w-60 shrink-0 border-r lg:block">
       <SidebarNav />
     </aside>
   );
@@ -348,14 +348,14 @@ function AccountCard({ onNavigate }: { onNavigate?: () => void }) {
           <Link
             href="/signin"
             onClick={onNavigate}
-            className="border-line bg-surface text-ink-body hover:bg-surface-subtle rounded-lg border px-3 py-1.5 text-center text-sm font-medium shadow-xs"
+            className="border-line bg-surface text-ink-body hover:bg-surface-muted rounded-md border px-3 py-1.5 text-center text-sm font-medium"
           >
             Sign in
           </Link>
           <Link
             href="/signup"
             onClick={onNavigate}
-            className="bg-brand-fill hover:bg-brand-fill-hover rounded-lg px-3 py-1.5 text-center text-sm font-medium text-white"
+            className="border-line-strong bg-surface text-ink hover:bg-surface-muted rounded-md border px-3 py-1.5 text-center text-sm font-medium"
           >
             Sign up
           </Link>
@@ -409,7 +409,7 @@ function AccountMenu({ email }: { email?: string }) {
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-controls="sidebar-account-menu"
-        className="border-line bg-surface hover:bg-surface-subtle flex w-full items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left shadow-xs"
+        className="border-line bg-surface hover:bg-surface-muted flex w-full items-center gap-2.5 rounded-md border px-2.5 py-2 text-left"
       >
         <span className="bg-brand-fill flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-white">
           {initials}
@@ -434,7 +434,7 @@ function AccountMenu({ email }: { email?: string }) {
           id="sidebar-account-menu"
           ref={panelRef}
           tabIndex={-1}
-          className="border-line bg-surface shadow-elevated absolute bottom-full left-0 z-50 mb-1 w-full rounded-lg border p-2 outline-hidden"
+          className="border-line bg-surface shadow-elevated absolute bottom-full left-0 z-50 mb-1 w-full rounded-md border p-2 outline-hidden"
         >
           <Link
             href="/dashboard"

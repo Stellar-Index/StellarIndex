@@ -53,8 +53,8 @@ describe('HomeLivePanels', () => {
     useCursors.mockReturnValue({ data: cursors, isLoading: false });
     render(<NetworkLivePanel />);
 
-    expect(screen.getByText('#62,000,000')).toBeTruthy();
-    expect(screen.queryByText('#69,000,000')).toBeNull();
+    expect(screen.getByText('#62000000')).toBeTruthy();
+    expect(screen.queryByText('#69000000')).toBeNull();
   });
 
   it('rates the indexer on live cursors only', () => {
