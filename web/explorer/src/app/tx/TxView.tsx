@@ -256,7 +256,11 @@ export function TxView({ hash: hashProp }: { hash?: string } = {}) {
         )}
       </Panel>
 
-      <OperationsPanel hash={tx.hash ?? ''} operations={ops} />
+      <OperationsPanel
+        hash={tx.hash ?? ''}
+        operations={ops}
+        txFailed={tx.successful === false}
+      />
       <EventsPanel
         hash={tx.hash ?? ''}
         events={tx.events ?? []}
@@ -318,9 +322,11 @@ function Shell({
 function OperationsPanel({
   hash,
   operations,
+  txFailed,
 }: {
   hash: string;
   operations: TxOperation[];
+  txFailed: boolean;
 }) {
   const source = asExample(`/v1/tx/${hash}`);
   if (operations.length === 0) {
@@ -354,13 +360,21 @@ function OperationsPanel({
               >
                 {op.type}
               </Link>
-              {op.result_code != null && (
-                <TxStatusBadge
-                  successful={opSucceeded(op)}
-                  result={op.inner_result ?? op.result}
-                  code={op.result_code}
-                />
-              )}
+              {op.result_code != null &&
+                (txFailed && opSucceeded(op) ? (
+                  <Badge
+                    tone="neutral"
+                    title="The operation itself succeeded, but the transaction failed, so nothing it did was applied."
+                  >
+                    rolled back
+                  </Badge>
+                ) : (
+                  <TxStatusBadge
+                    successful={opSucceeded(op)}
+                    result={op.inner_result ?? op.result}
+                    code={op.result_code}
+                  />
+                ))}
               {op.source_account && (
                 <span
                   className="text-ink-muted font-mono text-xs"

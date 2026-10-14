@@ -93,6 +93,35 @@ describe('TxView variants', () => {
     expect(screen.queryByText('success')).toBeNull();
   });
 
+  it('marks a succeeded op inside a failed tx as rolled back, not success', async () => {
+    renderTx({
+      ...base,
+      successful: false,
+      result: 'tx_failed',
+      result_code: -1,
+      operations: [
+        {
+          op_index: 0,
+          type: 'payment',
+          result_code: 0,
+          result: 'op_inner',
+          inner_result: 'payment_success',
+        },
+        {
+          op_index: 1,
+          type: 'path_payment_strict_receive',
+          result_code: 0,
+          result: 'op_inner',
+          inner_result: 'path_payment_strict_receive_over_sendmax',
+        },
+      ],
+      events: [],
+    });
+    expect(await screen.findByText('rolled back')).toBeInTheDocument();
+    expect(screen.queryByText('success')).toBeNull();
+    expect(screen.getByRole('alert')).toHaveTextContent('Failed at op #1');
+  });
+
   it('shows the fee payer and inner max fee on a fee bump', async () => {
     renderTx({
       ...base,

@@ -141,7 +141,7 @@ export function xlmReadable(stroops: string | null | undefined): string {
 // with thousands separators + up to 7 fractional digits (trailing
 // zeros trimmed). No float involved, so arbitrarily large supplies
 // stay faithful to the wire string.
-function bigStroopsToXlm(stroops: bigint): string {
+function bigStroopsToXlm(stroops: bigint, fixed = false): string {
   const neg = stroops < 0n;
   const abs = neg ? -stroops : stroops;
   const whole = abs / STROOPS_PER_XLM;
@@ -149,12 +149,18 @@ function bigStroopsToXlm(stroops: bigint): string {
 
   const wholeStr = whole.toLocaleString('en-US');
   let out = wholeStr;
-  if (frac > 0n) {
-    // Pad to 7 digits, then trim trailing zeros.
-    const fracStr = frac.toString().padStart(7, '0').replace(/0+$/, '');
-    out = `${wholeStr}.${fracStr}`;
-  }
+  const padded = frac.toString().padStart(7, '0');
+  if (fixed) out = `${wholeStr}.${padded}`;
+  else if (frac > 0n) out = `${wholeStr}.${padded.replace(/0+$/, '')}`;
   return neg ? `-${out}` : out;
+}
+
+// stroopsToXlmFixed keeps all 7 fractional digits so a right-aligned column
+// of fees lines up by place. Non-integer input falls back to stroopsToXlm.
+export function stroopsToXlmFixed(raw: string | null | undefined): string {
+  if (raw != null && /^-?\d+$/.test(raw.trim()))
+    return bigStroopsToXlm(BigInt(raw.trim()), true);
+  return stroopsToXlm(raw);
 }
 
 // Classic (Stellar CAP) operation-amount fields arrive from the API as
@@ -343,14 +349,18 @@ export function HashLink({
   className?: string;
 }) {
   if (!value) return <span className="text-ink-faint">—</span>;
+  const short = shortHash(value, head, tail);
   return (
     <span className={cn('inline-flex items-center gap-1.5', className)}>
       <Link
         href={href}
-        className="text-ink hover:text-brand-600 font-mono text-[13px] break-all"
+        className={cn(
+          'text-ink hover:text-brand-600 font-mono text-[13px]',
+          short === value ? 'break-all' : 'whitespace-nowrap',
+        )}
         title={value}
       >
-        {shortHash(value, head, tail)}
+        {short}
       </Link>
       {copy && <CopyButton value={value} />}
     </span>
@@ -427,9 +437,60 @@ const ASSET_FIELDS = new Set([
   'send_asset',
 ]);
 
+// Reading order for decoded fields: what is traded, then how much, then
+// the route and terms. Anything unlisted follows, alphabetically.
+const FIELD_ORDER = [
+  'destination',
+  'selling',
+  'buying',
+  'asset',
+  'asset_a',
+  'asset_b',
+  'amount',
+  'buy_amount',
+  'send_asset',
+  'send_amount',
+  'send_max',
+  'dest_asset',
+  'dest_amount',
+  'dest_min',
+  'path',
+  'price',
+  'offer_id',
+];
+const FIELD_RANK = new Map(FIELD_ORDER.map((k, i) => [k, i]));
+function fieldOrder(a: string, b: string): number {
+  const ra = FIELD_RANK.get(a) ?? FIELD_ORDER.length;
+  const rb = FIELD_RANK.get(b) ?? FIELD_ORDER.length;
+  return ra - rb || a.localeCompare(b);
+}
+
+const ACCOUNT_RE = /^[GM][A-Z2-7]{55,68}$/;
+const CONTRACT_RE = /^C[A-Z2-7]{55}$/;
+
 function OpFieldValue({ k, v }: { k: string; v: unknown }) {
   if (ASSET_FIELDS.has(k) && typeof v === 'string')
     return <AssetLink canonical={v} />;
+  if (typeof v === 'string' && ACCOUNT_RE.test(v))
+    return (
+      <HashLink
+        href={`/accounts/${encodeURIComponent(v)}/`}
+        value={v}
+        head={8}
+        tail={6}
+        copy
+      />
+    );
+  if (typeof v === 'string' && CONTRACT_RE.test(v))
+    return (
+      <HashLink
+        href={`/contracts/${encodeURIComponent(v)}/`}
+        value={v}
+        head={8}
+        tail={6}
+        copy
+      />
+    );
   if (
     k === 'path' &&
     Array.isArray(v) &&
@@ -457,7 +518,9 @@ function OpFieldValue({ k, v }: { k: string; v: unknown }) {
 
 export function OpBody({ op }: { op: TxOperation }) {
   const fields = op.fields ?? {};
-  const keys = Object.keys(fields).filter((k) => k !== 'authorizations');
+  const keys = Object.keys(fields)
+    .filter((k) => k !== 'authorizations')
+    .sort(fieldOrder);
   const auth = Array.isArray(fields.authorizations)
     ? (fields.authorizations as AuthInvocation[])
     : null;

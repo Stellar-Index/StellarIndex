@@ -40,6 +40,7 @@ import {
   HashLink,
   formatTimestamp,
   stroopsToXlm,
+  stroopsToXlmFixed,
   xlmReadable,
 } from '../explorer-shared';
 
@@ -384,7 +385,7 @@ function TransactionsPanel({
                 <Th>Source</Th>
                 <Th align="right">Ops</Th>
                 <Th>Result</Th>
-                <Th align="right">Fee</Th>
+                <Th align="right">Fee (XLM)</Th>
                 <Th>Memo</Th>
               </tr>
             </THead>
@@ -418,7 +419,7 @@ function TransactionsPanel({
                   </Td>
                   <Td align="right" className="text-ink-muted">
                     {t.fee_charged != null
-                      ? `${stroopsToXlm(t.fee_charged)} XLM`
+                      ? stroopsToXlmFixed(String(t.fee_charged))
                       : '—'}
                   </Td>
                   <Td className="text-ink-muted max-w-56 truncate text-xs">
