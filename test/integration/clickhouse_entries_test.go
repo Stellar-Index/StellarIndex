@@ -708,139 +708,158 @@ func convergeDiff(t *testing.T, step string, want, got map[string]string) {
 	}
 }
 
-// Asset entry-history read: a re-derived row collapses to its newest version before RMT merges, keyset pages never repeat
-// or skip, nothing above the derive watermark is served, and an Int128 balance above 2^64 reaches the wire exact.
+// Serves the asset entry-change feed end to end: lake rows seeded for one asset, the index built by ch-entry-index,
+// then GET /v1/assets/{asset_id}/entry-changes walked through its cursor, and the holder's own account feed from the
+// same rows. A claimable balance that changes in a ledger where a trustline of the asset also changed is served too.
 func TestClickHouseAssetEntryChanges(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
+	addr := clickhouseAddr(t)
 	raw := dialClickHouse(t, ctx, "stellar")
 
+	// An isolated ledger range nothing else in the suite writes to.
+	const base = uint32(161_200_000)
 	const (
-		issuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
-		asset  = "AECTEST-" + issuer
-		base   = uint32(170_000_000)
-		wm     = base + 10
+		holder = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H"
+		other  = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7"
+		issuer = "GCEZWKCA5VLDNRLN3RPRJMRZOX3Z6G5CHCGSNFHEYVXM3XOJMDS674JZ"
+		asset  = "AECT-" + issuer
 	)
+	// The entry-index watermark must start empty: the builder refuses a window that starts above watermark+1, and the
+	// index test later in this file asserts the watermark it leaves.
+	resetWatermark := func() { _ = raw.Exec(context.Background(), `TRUNCATE TABLE stellar.entry_history_watermark`) }
+	resetWatermark()
 	t.Cleanup(func() {
 		bg := context.Background()
-		_ = raw.Exec(bg, `DELETE FROM stellar.asset_entry_changes WHERE asset = ? SETTINGS mutations_sync = 2`, asset)
-		_ = raw.Exec(bg, `DELETE FROM stellar.entry_history_watermark WHERE name IN ('entry_history', ?) SETTINGS mutations_sync = 2`,
-			chstore.EntryHistoryBackfillMarker)
+		_ = raw.Exec(bg, `DELETE FROM stellar.ledger_entry_changes WHERE ledger_seq BETWEEN ? AND ? SETTINGS mutations_sync = 2`, base, base+2)
+		for _, table := range []string{"account_entry_ledgers", "asset_entry_ledgers"} {
+			_ = raw.Exec(bg, `DELETE FROM stellar.`+table+` WHERE ledger BETWEEN ? AND ? SETTINGS mutations_sync = 2`, base, base+2)
+		}
+		resetWatermark()
 	})
-	if err := raw.Exec(ctx, `SYSTEM STOP MERGES stellar.asset_entry_changes`); err != nil {
-		t.Fatalf("stop merges: %v", err)
-	}
-	t.Cleanup(func() { _ = raw.Exec(context.Background(), `SYSTEM START MERGES stellar.asset_entry_changes`) })
+	entryHistorySeedLedgers(t, ctx, addr, []uint32{base, base + 1, base + 2}, 1)
 
-	big128 := new(big.Int).Lsh(big.NewInt(1), 100)
-	at := time.Date(2026, 9, 1, 9, 0, 0, 0, time.UTC)
-	old, newer := at, at.Add(time.Hour)
-	insert := func(rows ...[]any) {
+	trustline := func(balance int64) xdr.LedgerEntry {
+		return xdr.LedgerEntry{Data: xdr.LedgerEntryData{Type: xdr.LedgerEntryTypeTrustline, TrustLine: &xdr.TrustLineEntry{
+			AccountId: xdr.MustAddress(holder), Asset: xdr.MustNewCreditAsset("AECT", issuer).ToTrustLineAsset(),
+			Balance: xdr.Int64(balance), Limit: 1_000_000,
+		}}}
+	}
+	claimable := xdr.LedgerEntry{Data: xdr.LedgerEntryData{Type: xdr.LedgerEntryTypeClaimableBalance, ClaimableBalance: &xdr.ClaimableBalanceEntry{
+		BalanceId: xdr.ClaimableBalanceId{Type: xdr.ClaimableBalanceIdTypeClaimableBalanceIdTypeV0, V0: &xdr.Hash{3}},
+		Claimants: []xdr.Claimant{{Type: xdr.ClaimantTypeClaimantTypeV0, V0: &xdr.ClaimantV0{
+			Destination: xdr.MustAddress(other), Predicate: xdr.ClaimPredicate{Type: xdr.ClaimPredicateTypeClaimPredicateUnconditional},
+		}}},
+		Asset: xdr.MustNewCreditAsset("AECT", issuer), Amount: 70,
+	}}}
+	row := func(ledger, seq uint32, changeType, entryType, owner, assetID string, e xdr.LedgerEntry) chstore.LedgerEntryChangeRow {
 		t.Helper()
-		b, err := raw.PrepareBatch(ctx, `INSERT INTO stellar.asset_entry_changes
-			(asset, ledger, close_time, tx_hash, op_index, change_index, role, intra_ledger_seq,
-			 entry_type, change_type, changed, account, balance, fields, ingested_at)`)
+		k, err := e.LedgerKey()
 		if err != nil {
-			t.Fatalf("prepare: %v", err)
+			t.Fatalf("ledger key: %v", err)
 		}
-		for _, r := range rows {
-			if err := b.Append(r...); err != nil {
-				t.Fatalf("append: %v", err)
-			}
+		r := chstore.LedgerEntryChangeRow{
+			LedgerSeq: ledger, CloseTime: time.Date(2027, 2, 10, 0, 0, 0, 0, time.UTC), TxHash: "ae" + strconv.FormatUint(uint64(ledger), 10),
+			OpIndex: 0, ChangeIndex: seq, IntraLedgerSeq: seq, ChangeType: changeType, EntryType: entryType, AccountID: owner, Asset: assetID,
 		}
-		if err := b.Send(); err != nil {
-			t.Fatalf("send: %v", err)
+		if r.KeyXDR, err = xdr.MarshalBase64(k); err != nil {
+			t.Fatalf("marshal key: %v", err)
 		}
+		if r.EntryXDR, err = xdr.MarshalBase64(e); err != nil {
+			t.Fatalf("marshal entry: %v", err)
+		}
+		return r
 	}
-	row := func(ledger uint32, op int32, role, entryType string, bal *big.Int, fields string, ing time.Time) []any {
-		return []any{
-			asset, ledger, at, "aec-tx", op, uint32(0), role, uint32(0),
-			entryType, "updated",
-			[]string{"balance"},
-			"GHOLDER", bal, fields, ing,
-		}
+	// The watermark proof wants a change in every tx-bearing ledger of the window; base+2 carries only an unrelated account.
+	account := xdr.LedgerEntry{Data: xdr.LedgerEntryData{Type: xdr.LedgerEntryTypeAccount, Account: &xdr.AccountEntry{
+		AccountId: xdr.MustAddress(other), Balance: 500, SeqNum: 9, Thresholds: xdr.Thresholds{1, 0, 0, 0},
+	}}}
+	src := []chstore.LedgerEntryChangeRow{
+		row(base, 0, "created", "trustline", holder, asset, trustline(10)),
+		row(base+1, 3, "updated", "trustline", holder, asset, trustline(25)),
+		row(base+1, 4, "created", "claimable_balance", "", "", claimable),
+		row(base+2, 0, "updated", "account", other, "", account),
 	}
-	insert(
-		row(base+1, -1, "holder", "trustline", big128, `{"balance":"big"}`, old),
-		row(base+2, 0, "claimable", "claimable_balance", big.NewInt(7), `{"v":"old"}`, old),
-		row(base+3, 1, "selling", "offer", big.NewInt(9), `{}`, old),
-		row(base+20, 0, "holder", "trustline", big.NewInt(1), `{}`, old),
-	)
-	// Later derives of the claimable row, in their own part so they are not yet merged.
-	// Enough stale copies that no window proves its page, forcing the floored exact read.
-	rederives := [][]any{row(base+2, 0, "claimable", "claimable_balance", big.NewInt(8), `{"v":"new"}`, newer)}
-	for i := 0; i < 12; i++ {
-		rederives = append(rederives, row(base+2, 0, "claimable", "claimable_balance", big.NewInt(7), `{"v":"old"}`, old.Add(time.Duration(i)*time.Second)))
+	if _, err := chstore.InsertEntryChanges(ctx, addr, src, 0); err != nil {
+		t.Fatalf("seed ledger_entry_changes: %v", err)
 	}
-	insert(rederives...)
+	if err := chops.Run([]string{
+		"ch-entry-index", "-ch-addr", addr,
+		"-from", strconv.FormatUint(uint64(base), 10), "-to", strconv.FormatUint(uint64(base+2), 10), "-write",
+	}); err != nil {
+		t.Fatalf("ch-entry-index: %v", err)
+	}
 
 	er, err := chstore.NewExplorerReader(ctx, clickhouseAddr(t))
 	if err != nil {
-		t.Fatalf("NewExplorerReader: %v", err)
+		t.Fatalf("explorer reader: %v", err)
 	}
 	t.Cleanup(func() { _ = er.Close() })
-
-	var seen []uint32
-	var cur chstore.AssetEntryChangeCursor
-	for page := 0; page < 5; page++ {
-		got, err := er.AssetEntryChanges(ctx, asset, 1, cur, wm)
-		if err != nil {
-			t.Fatalf("page %d: %v", page, err)
-		}
-		if len(got) == 0 {
-			break
-		}
-		r := got[0]
-		if r.Ledger == base+2 && (r.Balance.Int64() != 8 || r.Fields != `{"v":"new"}`) {
-			t.Fatalf("claimable row = %+v, want the newest derive", r)
-		}
-		if r.Ledger == base+1 && r.Balance.Cmp(big128) != 0 {
-			t.Fatalf("holder balance = %s, want 2^100", r.Balance)
-		}
-		seen = append(seen, r.Ledger)
-		cur = chstore.AssetEntryChangeCursor{Ledger: r.Ledger, TxHash: r.TxHash, OpIndex: r.OpIndex, ChangeIndex: r.ChangeIndex, Role: r.Role}
-	}
-	if len(seen) != 3 || seen[0] != base+3 || seen[1] != base+2 || seen[2] != base+1 {
-		t.Fatalf("paged ledgers = %v, want [%d %d %d] (deduped, ceilinged at %d)", seen, base+3, base+2, base+1, wm)
-	}
-
-	if err := raw.Exec(ctx, `INSERT INTO stellar.entry_history_watermark (name, thru_ledger) VALUES ('entry_history', ?), (?, ?)`,
-		wm, chstore.EntryHistoryBackfillMarker, wm); err != nil {
-		t.Fatalf("watermark insert: %v", err)
-	}
-	if got, thru, err := er.EntryHistoryCoverage(ctx); err != nil || got < wm || thru < wm {
-		t.Fatalf("coverage = %d, %d, %v; want both at least %d", got, thru, err, wm)
-	}
-
 	ts := httptest.NewServer(v1.New(v1.Options{Explorer: er}).Handler())
 	t.Cleanup(ts.Close)
-	resp, err := http.Get(ts.URL + "/v1/assets/AECTEST:" + issuer + "/entry-changes?limit=5")
-	if err != nil {
-		t.Fatalf("GET: %v", err)
+
+	type change struct {
+		Ledger         uint32 `json:"ledger"`
+		IntraLedgerSeq uint32 `json:"intra_ledger_seq"`
+		Role           string `json:"role"`
+		EntryType      string `json:"entry_type"`
+		ChangeType     string `json:"change_type"`
+		Account        string `json:"account"`
+		Amount         string `json:"amount"`
 	}
-	defer func() { _ = resp.Body.Close() }()
-	var body struct {
+	type page struct {
 		Data struct {
-			Asset         string `json:"asset"`
-			ThroughLedger uint32 `json:"through_ledger"`
-			LowerBound    bool   `json:"lower_bound"`
-			Changes       []struct {
-				Ledger  uint32          `json:"ledger"`
-				OpIndex int32           `json:"op_index"`
-				Amount  string          `json:"amount"`
-				Entry   json.RawMessage `json:"entry"`
-			} `json:"changes"`
+			Asset         string   `json:"asset"`
+			Changes       []change `json:"changes"`
+			NextCursor    string   `json:"next_cursor"`
+			ThroughLedger uint32   `json:"through_ledger"`
+			LowerBound    bool     `json:"lower_bound"`
+			CoverageNote  string   `json:"coverage_note"`
 		} `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil || resp.StatusCode != http.StatusOK {
-		t.Fatalf("status %d decode %v", resp.StatusCode, err)
+	get := func(url string) page {
+		t.Helper()
+		resp, err := http.Get(ts.URL + url)
+		if err != nil {
+			t.Fatalf("GET %s: %v", url, err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		var out page
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET %s: status %d decode %v", url, resp.StatusCode, err)
+		}
+		return out
 	}
-	d := body.Data
-	if d.Asset != asset || d.LowerBound || d.ThroughLedger < wm || len(d.Changes) != 3 {
-		t.Fatalf("HTTP view = %+v, want 3 changes of %s through %d, not a lower bound", d, asset, wm)
+
+	// Walk the asset feed two changes at a time; the cursor must cross the ledger boundary and end cleanly.
+	first := get("/v1/assets/AECT:" + issuer + "/entry-changes?limit=2")
+	d := first.Data
+	if d.Asset != asset || !d.LowerBound || d.ThroughLedger != base+2 || !strings.Contains(d.CoverageNote, "offers are not served") {
+		t.Fatalf("asset page = %+v, want %s through %d as a lower bound", d, asset, base+2)
 	}
-	if last := d.Changes[2]; last.Amount != big128.String() || last.OpIndex != -1 || string(last.Entry) != `{"balance":"big"}` {
-		t.Fatalf("oldest change = %+v, want the exact 2^100 tx-level holder row", last)
+	all := append([]change(nil), d.Changes...)
+	for cursor, hops := d.NextCursor, 0; cursor != ""; hops++ {
+		if hops > 3 {
+			t.Fatalf("cursor walk did not end: %d hops", hops)
+		}
+		next := get("/v1/assets/AECT:" + issuer + "/entry-changes?limit=2&cursor=" + cursor)
+		all = append(all, next.Data.Changes...)
+		cursor = next.Data.NextCursor
+	}
+	want := []change{
+		{Ledger: base + 1, IntraLedgerSeq: 4, Role: "claimable", EntryType: "claimable_balance", ChangeType: "created", Amount: "70"},
+		{Ledger: base + 1, IntraLedgerSeq: 3, Role: "holder", EntryType: "trustline", ChangeType: "updated", Account: holder, Amount: "25"},
+		{Ledger: base, IntraLedgerSeq: 0, Role: "holder", EntryType: "trustline", ChangeType: "created", Account: holder, Amount: "10"},
+	}
+	if !slices.Equal(all, want) {
+		t.Fatalf("asset feed = %+v, want %+v", all, want)
+	}
+
+	// The holder's own feed is located through the account index built from the same rows.
+	acct := get("/v1/accounts/" + holder + "/entry-changes?limit=10")
+	if n := len(acct.Data.Changes); n != 2 || acct.Data.Changes[0].Ledger != base+1 || acct.Data.Changes[1].Ledger != base ||
+		acct.Data.Changes[0].Role != "owner" || acct.Data.Changes[0].EntryType != "trustline" {
+		t.Fatalf("account feed = %+v, want the two trustline changes of %s as owner, newest first", acct.Data.Changes, holder)
 	}
 }
 

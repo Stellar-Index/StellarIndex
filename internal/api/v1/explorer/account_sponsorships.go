@@ -115,7 +115,7 @@ func (h *Handler) AccountSponsorships(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
-	wm, _, err := h.Reader.EntryHistoryCoverage(ctx)
+	wm, err := h.Reader.EntryHistoryWatermark(ctx)
 	if err != nil {
 		h.accountSponsorshipsError(w, r, ctx, err, account)
 		return

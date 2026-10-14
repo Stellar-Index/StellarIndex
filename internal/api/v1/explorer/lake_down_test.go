@@ -177,12 +177,8 @@ func (downReader) AssetMovementsBackfilledThru(context.Context) (uint32, error) 
 	return 0, errLakeDown
 }
 
-func (downReader) AssetEntryChanges(context.Context, string, int, clickhouse.AssetEntryChangeCursor, uint32) ([]clickhouse.AssetEntryChange, error) {
-	return nil, errLakeDown
-}
-
-func (downReader) EntryHistoryCoverage(context.Context) (uint32, uint32, error) {
-	return 0, 0, errLakeDown
+func (downReader) EntryHistoryWatermark(context.Context) (uint32, error) {
+	return 0, errLakeDown
 }
 
 func (downReader) EntryIndexWatermark(context.Context) (uint32, error) {

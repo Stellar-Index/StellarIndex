@@ -25,8 +25,8 @@ type sponsorshipsReader struct {
 	lastLimit    int
 }
 
-func (r *sponsorshipsReader) EntryHistoryCoverage(context.Context) (uint32, uint32, error) {
-	return r.wm, 0, nil
+func (r *sponsorshipsReader) EntryHistoryWatermark(context.Context) (uint32, error) {
+	return r.wm, nil
 }
 
 func (r *sponsorshipsReader) AccountSponsorships(_ context.Context, _, side string, inForce bool,

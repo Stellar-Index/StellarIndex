@@ -186,12 +186,10 @@ type ExplorerReader interface {
 	// AssetMovementsBackfilledThru is the ledger movements_by_asset's history
 	// copy is verified through; 0 = only rows since its MV was created.
 	AssetMovementsBackfilledThru(ctx context.Context) (uint32, error)
-	AssetEntryChanges(ctx context.Context, asset string, limit int, cur clickhouse.AssetEntryChangeCursor, maxLedger uint32) ([]clickhouse.AssetEntryChange, error)
-	// EntryHistoryCoverage is the ch-entry-history derive watermark and the
-	// from-genesis backfill marker (0 = not derived / not verified).
-	EntryHistoryCoverage(ctx context.Context) (watermark, backfilledThru uint32, err error)
 	// EntryIndexWatermark is the ledger ch-entry-index has built the entry indexes through (0 = not built).
 	EntryIndexWatermark(ctx context.Context) (uint32, error)
+	// EntryHistoryWatermark is the ledger ch-entry-history has derived the sponsorship lifecycles through (0 = never derived).
+	EntryHistoryWatermark(ctx context.Context) (uint32, error)
 	// AccountEntryLedgers lists, newest first, the indexed ledgers at or below maxLedger for the raw account key.
 	AccountEntryLedgers(ctx context.Context, account string, roles []string, maxLedger uint32, limit int) ([]uint32, error)
 	// AccountSponsorships pages the sponsorship arrangements in which the account is the side's party (sponsor or

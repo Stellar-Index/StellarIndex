@@ -1,7 +1,6 @@
 package explorer
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,20 +11,7 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/strkey"
 
-	"github.com/Stellar-Index/StellarIndex/internal/entryhistory"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
-)
-
-const (
-	// entryLedgerBatch is how many indexed ledgers one pass streams through the projector; entryLedgerPasses caps
-	// the passes so a sparse role filter cannot walk the whole index inside one request.
-	entryLedgerBatch  = 32
-	entryLedgerPasses = 8
-	// Lake partitions 39-53 were derived before intra_ledger_seq took its current meaning; every page names the range.
-	entryChangesOldNumberingFrom = 39_000_000
-	entryChangesOldNumberingThru = 53_999_999
-	// entryCursorBelowLedger is the tx hash of a cursor that resumes strictly below its ledger.
-	entryCursorBelowLedger = "-"
 )
 
 var entryChangeRoles = []string{clickhouse.EntryIndexRoleOwner, clickhouse.EntryIndexRoleClaimant, clickhouse.EntryIndexRoleSponsor}
@@ -154,138 +140,39 @@ type entryChangesPage struct {
 	lowerBound bool
 }
 
-// accountEntryPage walks the account's indexed ledgers newest first, a batch at a time, until the page is full, the
-// index is exhausted or the pass cap is hit.
+// accountEntryPage walks the account's indexed ledgers and keeps the projector's rows for the account in the
+// wanted roles.
 func (h *Handler) accountEntryPage(ctx context.Context, key, account string, roles []string, limit int,
 	cur clickhouse.AssetEntryChangeCursor, wm uint32,
 ) (entryChangesPage, error) {
-	ceiling := wm
-	if cur.IsSet() {
-		c := cur.Ledger
-		if cur.TxHash == entryCursorBelowLedger {
-			c--
-		}
-		ceiling = min(ceiling, c)
-	}
-	var (
-		rows []clickhouse.AccountEntryChange
-		more bool
-		last uint32
-	)
-	for pass := 0; pass < entryLedgerPasses; pass++ {
-		ledgers, err := h.Reader.AccountEntryLedgers(ctx, key, roles, ceiling, entryLedgerBatch)
-		if err != nil {
-			return entryChangesPage{}, err
-		}
-		if len(ledgers) == 0 {
-			more = false
-			break
-		}
-		got, err := h.projectAccountRows(ctx, ledgers, account, roles, cur)
-		if err != nil {
-			return entryChangesPage{}, err
-		}
-		rows = append(rows, got...)
-		last = ledgers[len(ledgers)-1]
-		more = len(ledgers) == entryLedgerBatch
-		if len(rows) >= limit || !more {
-			break
-		}
-		ceiling = last - 1
-	}
-	return finishEntryChangesPage(rows, limit, more, last)
-}
-
-// finishEntryChangesPage orders the rows newest first and cuts the page; a full page continues from its last row, a
-// short page that stopped at the pass cap continues strictly below the last ledger walked.
-func finishEntryChangesPage(rows []clickhouse.AccountEntryChange, limit int, more bool, last uint32) (entryChangesPage, error) {
-	slices.SortFunc(rows, func(a, b clickhouse.AccountEntryChange) int { return compareEntryChange(b, a) })
-	var page entryChangesPage
-	if len(rows) >= limit {
-		rows = rows[:limit]
-		r := rows[limit-1]
-		page.next = fmt.Sprintf("%d.%s.%d.%d.%s", r.Ledger, r.TxHash, r.OpIndex, r.ChangeIndex, r.Role)
-	} else if more {
-		page.next = fmt.Sprintf("%d.%s.-1.0.%s", last, entryCursorBelowLedger, entryCursorBelowLedger)
-		page.lowerBound = true
-	}
-	page.rows = make([]AccountEntryChangeEntry, 0, len(rows))
-	for _, r := range rows {
-		e, err := accountEntryChangeEntry(r)
-		if err != nil {
-			return entryChangesPage{}, err
-		}
-		page.rows = append(page.rows, e)
-	}
-	return page, nil
-}
-
-// projectAccountRows streams the listed ledgers through the projector and keeps the account's rows in the wanted
-// roles that lie after the cursor. Unmerged ReplacingMergeTree duplicates are adjacent in sort-key order.
-func (h *Handler) projectAccountRows(ctx context.Context, ledgers []uint32, account string, roles []string,
-	cur clickhouse.AssetEntryChangeCursor,
-) ([]clickhouse.AccountEntryChange, error) {
-	p := entryhistory.NewProjector()
-	var (
-		out      []clickhouse.AccountEntryChange
-		prev     clickhouse.EntryHistorySourceRow
-		curSeq   uint32
-		curFound bool
-	)
-	err := h.Reader.StreamEntryChangesForLedgers(ctx, ledgers, func(s clickhouse.EntryHistorySourceRow) error {
-		if sameEntryChange(s, prev) {
-			return nil
-		}
-		prev = s
-		if isEntryCursorRow(s, cur) {
-			curSeq, curFound = s.IntraLedgerSeq, true
-		}
-		acct, _, err := p.Project(s)
-		if err != nil {
-			return fmt.Errorf("ledger %d change %s/%d/%d: %w", s.Ledger, s.TxHash, s.OpIndex, s.ChangeIndex, err)
-		}
-		for _, a := range acct {
-			if a.Account == account && slices.Contains(roles, a.Role) {
-				out = append(out, a)
+	src := entryPageSource[clickhouse.AccountEntryChange]{
+		ledgers: func(ctx context.Context, ceiling uint32) ([]uint32, error) {
+			return h.Reader.AccountEntryLedgers(ctx, key, roles, ceiling, entryLedgerBatch)
+		},
+		stream: h.Reader.StreamEntryChangesForLedgers,
+		keep: func(out, acct []clickhouse.AccountEntryChange, _ []clickhouse.AssetEntryChange) []clickhouse.AccountEntryChange {
+			for _, a := range acct {
+				if a.Account == account && slices.Contains(roles, a.Role) {
+					out = append(out, a)
+				}
 			}
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
+			return out
+		},
+		key: accountEntryKey,
 	}
-	if cur.IsSet() {
-		out = slices.DeleteFunc(out, func(a clickhouse.AccountEntryChange) bool { return !afterEntryCursor(a, cur, curSeq, curFound) })
+	page, err := walkEntryPage(ctx, src, limit, cur, wm)
+	if err != nil {
+		return entryChangesPage{}, err
+	}
+	out := entryChangesPage{rows: make([]AccountEntryChangeEntry, 0, len(page.rows)), next: page.next, lowerBound: page.lowerBound}
+	for _, a := range page.rows {
+		e, err := accountEntryChangeEntry(a)
+		if err != nil {
+			return entryChangesPage{}, err
+		}
+		out.rows = append(out.rows, e)
 	}
 	return out, nil
-}
-
-func sameEntryChange(a, b clickhouse.EntryHistorySourceRow) bool {
-	return a.Ledger == b.Ledger && a.TxHash == b.TxHash && a.OpIndex == b.OpIndex && a.ChangeIndex == b.ChangeIndex
-}
-
-func isEntryCursorRow(s clickhouse.EntryHistorySourceRow, cur clickhouse.AssetEntryChangeCursor) bool {
-	return cur.IsSet() && s.Ledger == cur.Ledger && s.TxHash == cur.TxHash && s.OpIndex == cur.OpIndex && s.ChangeIndex == cur.ChangeIndex
-}
-
-// afterEntryCursor reports whether a lies after the cursor in newest-first order; the cursor row's intra-ledger
-// position is known only when the row itself was seen in the stream.
-func afterEntryCursor(a clickhouse.AccountEntryChange, cur clickhouse.AssetEntryChangeCursor, curSeq uint32, curFound bool) bool {
-	if a.Ledger != cur.Ledger {
-		return a.Ledger < cur.Ledger
-	}
-	if curFound && a.IntraLedgerSeq != curSeq {
-		return a.IntraLedgerSeq < curSeq
-	}
-	return cmp.Or(strings.Compare(a.TxHash, cur.TxHash), cmp.Compare(a.OpIndex, cur.OpIndex),
-		cmp.Compare(a.ChangeIndex, cur.ChangeIndex), strings.Compare(a.Role, cur.Role)) < 0
-}
-
-// compareEntryChange orders rows oldest first: ledger, apply order within the ledger, then the lake sort key.
-func compareEntryChange(a, b clickhouse.AccountEntryChange) int {
-	return cmp.Or(cmp.Compare(a.Ledger, b.Ledger), cmp.Compare(a.IntraLedgerSeq, b.IntraLedgerSeq),
-		strings.Compare(a.TxHash, b.TxHash), cmp.Compare(a.OpIndex, b.OpIndex),
-		cmp.Compare(a.ChangeIndex, b.ChangeIndex), strings.Compare(a.Role, b.Role))
 }
 
 func accountEntryChangeEntry(a clickhouse.AccountEntryChange) (AccountEntryChangeEntry, error) {

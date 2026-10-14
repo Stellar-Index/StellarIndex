@@ -244,7 +244,7 @@ func runSponsorshipProof(ctx context.Context, chAddr string, accounts []string, 
 		return err
 	}
 	defer func() { _ = rd.Close() }()
-	wm, _, err := rd.EntryHistoryCoverage(ctx)
+	wm, err := rd.EntryHistoryWatermark(ctx)
 	if err != nil {
 		return err
 	}
