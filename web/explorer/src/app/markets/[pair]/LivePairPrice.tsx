@@ -9,6 +9,7 @@
 // fresh the headline ticks in real time with a direction flash.
 
 import { useChangeSummary } from '@/api/hooks';
+import { Badge } from '@/components/ui';
 import { cn } from '@/lib/cn';
 import { formatPriceSmall, positiveDecimal } from '@/lib/format';
 import {
@@ -84,7 +85,7 @@ export function LivePairPrice({
     <>
       <span
         className={cn(
-          'font-mono text-3xl tabular-nums',
+          'text-ink font-mono text-3xl tabular-nums',
           flash === 'up' && 'flash-up',
           flash === 'down' && 'flash-down',
         )}
@@ -97,13 +98,10 @@ export function LivePairPrice({
       {tipActive ? (
         <span className="text-ink-muted flex items-center gap-1.5 text-xs">
           <span
-            className="relative flex h-2 w-2"
+            className="bg-up inline-block h-2 w-2 rounded-full"
             aria-label="live"
             role="status"
-          >
-            <span className="bg-up absolute inline-flex h-full w-full animate-ping rounded-full opacity-60" />
-            <span className="bg-up relative inline-flex h-2 w-2 rounded-full" />
-          </span>
+          />
           live · streaming{caveat && ` · ${caveat}`}
         </span>
       ) : poll.withheld ? (
@@ -160,22 +158,17 @@ function unwrapH24DeltaPct(raw: unknown): number | null {
 }
 
 function ChangeBadge({ pct, window }: { pct: number; window: string }) {
-  const tone =
-    pct > 0
-      ? 'bg-up-subtle text-up'
-      : pct < 0
-        ? 'bg-down-subtle text-down'
-        : 'bg-surface-subtle text-ink-body';
+  const tone = pct > 0 ? 'up' : pct < 0 ? 'down' : 'neutral';
   const sign = pct > 0 ? '+' : '';
   return (
-    <span
-      className={`rounded-sm px-2 py-0.5 font-mono text-xs tabular-nums ${tone}`}
-    >
-      {sign}
-      {pct.toFixed(2)}%
-      <span className="ml-1 text-[10px] tracking-wider uppercase opacity-70">
-        {window}
-      </span>
+    <span className="inline-flex items-baseline gap-1.5">
+      <Badge tone={tone}>
+        <span className="tnum">
+          {sign}
+          {pct.toFixed(2)}%
+        </span>
+      </Badge>
+      <span className="text-ink-muted text-xs">{window}</span>
     </span>
   );
 }

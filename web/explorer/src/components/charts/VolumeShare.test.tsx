@@ -19,7 +19,7 @@ describe('VolumeShare', () => {
     expect(r.pricedCount).toBe(3);
   });
 
-  it('renders bars, donut and the top-N-of-M note', () => {
+  it('renders the donut and the top-N-of-M note', () => {
     render(<VolumeShare rows={rows} topN={2} noun="pairs" />);
     expect(screen.getByLabelText('Top 2 pairs by 24h USD volume')).toBeTruthy();
     expect(screen.getByTestId('volume-share').textContent).toContain(

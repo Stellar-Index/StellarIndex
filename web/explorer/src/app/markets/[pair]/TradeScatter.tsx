@@ -1,7 +1,7 @@
 'use client';
 
 import { CATEGORICAL_PALETTE } from '@/components/charts/DonutChart';
-import { baseUnitsDecimal } from '@/lib/format';
+import { baseUnitsDecimal, formatPairPrice } from '@/lib/format';
 
 export type ScatterTrade = {
   ts: string;
@@ -29,6 +29,7 @@ const R_MAX = 9;
 export function scatterDots(trades: readonly ScatterTrade[]): {
   dots: ScatterDot[];
   sources: string[];
+  range: { minT: number; maxT: number; minP: number; maxP: number };
 } | null {
   const pts = trades
     .map((t) => {
@@ -69,7 +70,7 @@ export function scatterDots(trades: readonly ScatterTrade[]): {
     source: p.t.source,
     title: `${p.t.ts} · ${p.t.source} · ${p.t.price}${p.amount ? ` · ${p.amount}` : ''}`,
   }));
-  return { dots, sources };
+  return { dots, sources, range: { minT, maxT, minP, maxP } };
 }
 
 export function TradeScatter({ trades }: { trades: readonly ScatterTrade[] }) {
@@ -82,29 +83,34 @@ export function TradeScatter({ trades }: { trades: readonly ScatterTrade[] }) {
   return (
     <figure className="mb-4 space-y-2">
       <svg
-        viewBox={`0 0 ${W} ${H}`}
-        className="h-40 w-full"
-        preserveAspectRatio="none"
+        height={H}
+        className="border-line-subtle bg-surface-subtle/40 h-40 w-full rounded-sm border"
         role="img"
         aria-label={`Recent trades plotted by time and price, sized by base amount, across ${s.sources.length} source${s.sources.length === 1 ? '' : 's'}`}
       >
         {s.dots.map((d, i) => (
           <circle
             key={i}
-            cx={d.x}
+            cx={`${(d.x / W) * 100}%`}
             cy={d.y}
             r={d.r}
             fill={hue(d.source)}
             fillOpacity={0.6}
-            vectorEffect="non-scaling-stroke"
           >
             <title>{d.title}</title>
           </circle>
         ))}
       </svg>
-      <figcaption className="text-ink-muted flex flex-wrap gap-3 text-[11px]">
+      <div className="text-ink-muted flex justify-between gap-3 font-mono text-xs tabular-nums">
+        <span>{formatClock(s.range.minT, s.range)}</span>
+        <span>
+          {formatPairPrice(s.range.minP)} to {formatPairPrice(s.range.maxP)}
+        </span>
+        <span>{formatClock(s.range.maxT, s.range)}</span>
+      </div>
+      <figcaption className="text-ink-muted flex flex-wrap gap-3 text-xs">
         {s.sources.map((src) => (
-          <span key={src} className="inline-flex items-center gap-1 uppercase">
+          <span key={src} className="inline-flex items-center gap-1.5">
             <span
               className="inline-block h-2 w-2 rounded-full"
               style={{ background: hue(src) }}
@@ -112,8 +118,17 @@ export function TradeScatter({ trades }: { trades: readonly ScatterTrade[] }) {
             {src}
           </span>
         ))}
-        <span>· size ∝ base amount</span>
+        <span>Dot area scales with base amount</span>
       </figcaption>
     </figure>
   );
+}
+
+// Clock only while the sample sits inside one day; the date joins once it
+// spans more.
+function formatClock(ms: number, range: { minT: number; maxT: number }) {
+  const iso = new Date(ms).toISOString();
+  return range.maxT - range.minT > 86_400_000
+    ? `${iso.slice(0, 16).replace('T', ' ')} UTC`
+    : `${iso.slice(11, 19)} UTC`;
 }

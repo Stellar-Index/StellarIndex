@@ -175,7 +175,7 @@ export function SortableTh<K extends string>({
       <button
         type="button"
         onClick={() => onSort(sortKey)}
-        className={`group inline-flex w-full items-center gap-1 ${justify} hover:text-ink ${
+        className={`group inline-flex w-full items-center gap-1 [text-transform:inherit] ${justify} hover:text-ink ${
           active ? 'text-ink' : ''
         }`}
       >

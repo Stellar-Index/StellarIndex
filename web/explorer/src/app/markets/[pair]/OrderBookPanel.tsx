@@ -2,10 +2,25 @@
 
 import { useQuery } from '@tanstack/react-query';
 
-import { apiGet } from '@/api/client';
+import { apiGet, asExample } from '@/api/client';
 import type { components } from '@/api/types';
-import { DepthChart, OrderBookStatStrip, computeBookStats } from './DepthChart';
+import { Panel } from '@/components/reveal';
+import {
+  Callout,
+  EmptyState,
+  Skeleton,
+  TBody,
+  TR,
+  Table,
+  Td,
+  Th,
+  THead,
+} from '@/components/ui';
+import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
+import { cn } from '@/lib/cn';
 import { shortAssetText } from '@/lib/asset-label';
+import { formatReadable } from '@/lib/format';
+import { DepthChart, OrderBookStatStrip, computeBookStats } from './DepthChart';
 
 type OrderBook = components['schemas']['SDEXOrderBook'];
 type Level = components['schemas']['SDEXOrderBookLevel'];
@@ -60,42 +75,44 @@ export function OrderBookPanel({
   const empty = book && book.asks.length === 0 && book.bids.length === 0;
 
   return (
-    <section className="border-line bg-surface rounded-lg border p-4">
-      <header className="mb-3 flex items-baseline justify-between">
-        <h2 className="text-h3 text-ink font-semibold">SDEX order book</h2>
-        {book && (
-          <span className="text-ink-faint text-xs">
-            as of ledger {book.as_of_ledger.toLocaleString('en-US')}
-          </span>
-        )}
-      </header>
-
-      {q.isLoading && (
-        <p className="text-ink-muted text-sm">Loading order book…</p>
-      )}
+    <Panel
+      headingLevel={2}
+      title="SDEX order book"
+      hint={
+        book
+          ? `as of ledger ${book.as_of_ledger.toLocaleString('en-US')}`
+          : 'Live bid and ask depth on the Stellar DEX'
+      }
+      source={asExample('/v1/sdex/orderbook', {
+        selling: base,
+        buying: quote,
+        depth: DEPTH,
+      })}
+    >
+      {q.isLoading && <Skeleton className="h-64 w-full" />}
       {loading503 && (
-        <p className="text-ink-muted text-sm">
-          The order-book snapshot is still loading after a server restart —
-          check back shortly.
-        </p>
+        <Callout tone="warn">
+          The order-book snapshot is still loading after a server restart; check
+          back shortly.
+        </Callout>
       )}
       {q.isError && !loading503 && (
-        <p className="text-ink-muted text-sm">Order book unavailable.</p>
+        <Callout tone="bad">Order book unavailable.</Callout>
       )}
       {empty && (
-        <p className="text-ink-muted text-sm">
-          No live SDEX offers on this pair right now.
-        </p>
+        <EmptyState
+          title="No live SDEX offers"
+          description="Nobody is quoting this pair on the Stellar DEX right now."
+        />
       )}
 
       {book && !empty && (
         <div className="space-y-4">
-          {/* Cumulative depth — the flagship trader visual: how much
-              base-asset size sits between here and N bps of slippage.
-              Levels come straight from the served book's
-              cum_base_amount/cum_quote_amount; the strip's spread/mid
-              are derived from the top-of-book and refuse a crossed
-              snapshot rather than printing a negative spread. */}
+          {/* Cumulative depth: how much base-asset size sits between here
+              and N bps of slippage. Levels come straight from the served
+              book's cum_base_amount/cum_quote_amount; the strip's
+              spread/mid are derived from the top-of-book and refuse a
+              crossed snapshot rather than printing a negative spread. */}
           <OrderBookStatStrip
             stats={computeBookStats(book.bids, book.asks)}
             quoteLabel={shortAssetText(book.buying)}
@@ -122,7 +139,7 @@ export function OrderBookPanel({
           </div>
         </div>
       )}
-    </section>
+    </Panel>
   );
 }
 
@@ -139,13 +156,21 @@ function DepthTable({
 }) {
   const maxCum =
     levels.length > 0 ? Number(levels[levels.length - 1].cum_base_amount) : 0;
-  const barClass = tone === 'up' ? 'bg-up-subtle' : 'bg-warn-50';
+  const barClass = tone === 'up' ? 'bg-up-subtle' : 'bg-down-subtle';
+  const shownOffers = levels.reduce((n, l) => n + l.offers, 0);
   return (
     <div>
-      <div className="text-ink-muted mb-1 flex items-baseline justify-between text-[10px] tracking-wider uppercase">
-        <span>{side}</span>
-        <span className="text-ink-faint">
-          {truncated > levels.reduce((n, l) => n + l.offers, 0)
+      <div className="mb-2 flex items-baseline justify-between">
+        <h3
+          className={cn(
+            PANEL_LABEL_CLASS,
+            tone === 'up' ? 'text-up' : 'text-down',
+          )}
+        >
+          {side}
+        </h3>
+        <span className="text-ink-muted tnum text-xs">
+          {truncated > shownOffers
             ? `top ${levels.length} levels`
             : `${truncated} offers`}
         </span>
@@ -153,46 +178,69 @@ function DepthTable({
       {/* WCAG 1.4.10 Reflow: the mono price/amount columns scroll in
           place instead of pushing the page sideways at 320px. */}
       <div className="overflow-x-auto">
-        <table className="min-w-full text-xs">
-          <thead>
-            <tr className="text-ink-muted text-[10px] tracking-wider uppercase">
-              <th className="py-1 text-left font-medium">Price</th>
-              <th className="py-1 text-right font-medium">Amount</th>
-              <th className="py-1 text-right font-medium">Total</th>
+        <Table className="text-xs">
+          <THead>
+            <tr>
+              <Th align="right" className="h-8 px-2">
+                Price
+              </Th>
+              <Th align="right" className="h-8 px-2">
+                Amount
+              </Th>
+              <Th align="right" className="h-8 px-2">
+                Total
+              </Th>
             </tr>
-          </thead>
-          <tbody>
+          </THead>
+          <TBody>
             {levels.map((l) => {
               const pct =
                 maxCum > 0
                   ? Math.min(100, (Number(l.cum_base_amount) / maxCum) * 100)
                   : 0;
               return (
-                <tr key={`${l.price_r.n}/${l.price_r.d}`} className="relative">
-                  <td className="relative py-0.5 pr-2 font-mono tabular-nums">
+                <TR key={`${l.price_r.n}/${l.price_r.d}`}>
+                  <Td
+                    align="right"
+                    className="relative px-2 py-1 font-mono"
+                    title={l.price}
+                  >
                     <span
                       aria-hidden
-                      className={`absolute inset-y-0 left-0 ${barClass}`}
+                      className={cn('absolute inset-y-0 left-0', barClass)}
                       style={{ width: `${pct}%` }}
                     />
-                    <span className="relative">
-                      {trimTrailingZeros(l.price)}
-                    </span>
-                  </td>
-                  <td className="relative py-0.5 text-right font-mono tabular-nums">
-                    {trimTrailingZeros(l.base_amount)}
-                  </td>
-                  <td className="text-ink-muted relative py-0.5 text-right font-mono tabular-nums">
-                    {trimTrailingZeros(l.cum_base_amount)}
-                  </td>
-                </tr>
+                    <span className="relative">{fixedPlaces(l.price, 7)}</span>
+                  </Td>
+                  <Td
+                    align="right"
+                    className="px-2 py-1 font-mono"
+                    title={l.base_amount}
+                  >
+                    {formatReadable(l.base_amount) ?? l.base_amount}
+                  </Td>
+                  <Td
+                    align="right"
+                    className="text-ink-muted px-2 py-1 font-mono"
+                    title={l.cum_base_amount}
+                  >
+                    {formatReadable(l.cum_base_amount) ?? l.cum_base_amount}
+                  </Td>
+                </TR>
               );
             })}
-          </tbody>
-        </table>
+          </TBody>
+        </Table>
       </div>
     </div>
   );
+}
+
+/** fixedPlaces — pads or cuts a decimal string to `n` places so a column of
+ * prices shares one decimal point; the exact value stays in the title. */
+export function fixedPlaces(s: string, n: number): string {
+  const [whole, frac = ''] = s.split('.');
+  return `${whole}.${(frac + '0'.repeat(n)).slice(0, n)}`;
 }
 
 /** trimTrailingZeros — "10.5000000" → "10.5", "0.5000000" → "0.5". */
