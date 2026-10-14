@@ -21,7 +21,8 @@
 --   2. deploy the release that writes it; new windows fill from the watermark.
 --   3. fill history with `stellarindex-ops ch-entry-history -from <l> -to <l> -write`
 --      per window below the watermark (ReplacingMergeTree collapses re-derived
---      account and asset rows).
+--      account and asset rows). Start no earlier than ledger 32747293, the first
+--      protocol-14 ledger on pubnet: no entry before it can carry a sponsor.
 
 CREATE TABLE IF NOT EXISTS stellar.sponsorship_events
 (
