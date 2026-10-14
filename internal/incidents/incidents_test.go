@@ -2,13 +2,13 @@ package incidents
 
 import (
 	"io/fs"
-	"os"
 	"strings"
 	"testing"
 )
 
-// TestLoad_RealCorpus exercises the embedded markdown files (_template.md skipped). Load silently drops a post that fails to
-// parse, so a `len(got) != 0` check cannot tell all-parsed from all-but-one; cross-check against the real file count on disk.
+// TestLoad_RealCorpus exercises the embedded markdown files (_template.md skipped). Load silently drops a post that fails
+// frontmatter validation, so a `len(got) != 0` check cannot tell all-parsed from all-but-one; cross-check against every
+// non-template *.md the binary embeds, which is what /v1/incidents and the status page serve.
 func TestLoad_RealCorpus(t *testing.T) {
 	got, err := Load(nil)
 	if err != nil {
@@ -18,7 +18,7 @@ func TestLoad_RealCorpus(t *testing.T) {
 		t.Fatalf("Load: returned 0 incidents; expected at least one real entry under data/")
 	}
 
-	entries, err := os.ReadDir("data")
+	entries, err := fs.ReadDir(contentFS, "data")
 	if err != nil {
 		t.Fatalf("ReadDir(data): %v", err)
 	}
@@ -29,8 +29,11 @@ func TestLoad_RealCorpus(t *testing.T) {
 		}
 		wantCount++
 	}
+	if wantCount == 0 {
+		t.Fatalf("no non-template *.md posts embedded under data/; the test would be vacuous")
+	}
 	if len(got) != wantCount {
-		t.Fatalf("Load: parsed %d incident(s), but data/ has %d non-template .md file(s) — a post is being silently dropped (see the Warn log for which)", len(got), wantCount)
+		t.Fatalf("Load: parsed %d incident(s), but data/ embeds %d non-template .md file(s) — a post is being silently dropped (see the Warn log for which)", len(got), wantCount)
 	}
 
 	for i, inc := range got {
@@ -46,35 +49,6 @@ func TestLoad_RealCorpus(t *testing.T) {
 		if strings.HasPrefix(inc.Slug, "_") {
 			t.Errorf("[%d] %s: template prefix '_' should be skipped", i, inc.Slug)
 		}
-	}
-}
-
-// TestLoad_NoSilentDrops guards Load's by-design failure mode: a post failing frontmatter validation is logged and skipped,
-// vanishing from /v1/incidents and the status page. Compare Load's count against every non-template *.md embedded.
-func TestLoad_NoSilentDrops(t *testing.T) {
-	entries, err := fs.ReadDir(contentFS, "data")
-	if err != nil {
-		t.Fatalf("ReadDir(data): %v", err)
-	}
-	want := 0
-	for _, e := range entries {
-		if e.IsDir() || strings.HasPrefix(e.Name(), "_") || !strings.HasSuffix(e.Name(), ".md") {
-			continue
-		}
-		want++
-	}
-	if want == 0 {
-		t.Fatalf("no non-template *.md fixtures found under data/; test would be vacuous")
-	}
-
-	got, err := Load(nil)
-	if err != nil {
-		t.Fatalf("Load: unexpected error: %v", err)
-	}
-	if len(got) != want {
-		t.Fatalf("Load returned %d incident(s) but data/ holds %d non-template post(s); "+
-			"a post is being silently dropped (check Load's warn logs for the malformed file)",
-			len(got), want)
 	}
 }
 

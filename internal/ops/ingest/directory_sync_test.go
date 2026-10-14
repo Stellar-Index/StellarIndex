@@ -52,7 +52,7 @@ const (
 
 func TestFetchDirectoryTarball_ParsesAccountsAndSkipsNoise(t *testing.T) {
 	tarball := buildDirectoryTarball(t, map[string]string{
-		"public-directory-master/README.md": "# not an account",
+		"public-directory-master/LICENSE": "# not an account",
 		"public-directory-master/accounts/" + testDirAddrG + ".json": `{
 			"address": "` + testDirAddrG + `",
 			"name": "SDF Growth 3", "tags": ["sdf", "custodian"],
@@ -100,7 +100,7 @@ func TestFetchDirectoryTarball_ParsesAccountsAndSkipsNoise(t *testing.T) {
 // TestFetchDirectoryTarball_RefusesEmptyParse: a tarball with no account files must error rather than hand ReplaceDirectory an empty set.
 func TestFetchDirectoryTarball_RefusesEmptyParse(t *testing.T) {
 	tarball := buildDirectoryTarball(t, map[string]string{
-		"public-directory-master/README.md": "layout moved",
+		"public-directory-master/LICENSE": "layout moved",
 	})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(tarball)

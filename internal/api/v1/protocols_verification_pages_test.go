@@ -15,7 +15,7 @@ const repoRootFromAPIV1 = "../../.."
 const protocolDocsDir = "docs/protocols"
 
 // nonProtocolDocs are the docs/protocols pages deliberately not a /v1/protocols row: the index, the two supply write-ups,
-// and the Blend Emitter. Any other doc must be linked by a protocol (TestProtocolVerificationPages_EveryDocIsLinked).
+// and the Blend Emitter. Any other doc must be linked by a protocol (TestProtocolVerificationPages/EveryDocIsLinked).
 var nonProtocolDocs = map[string]bool{
 	"README.md":           true,
 	"sep41-supply.md":     true,
@@ -26,60 +26,56 @@ var nonProtocolDocs = map[string]bool{
 	"spectra.md": true,
 }
 
-// TestProtocolVerificationPages_PointAtRealFiles fails on a verification_page link with no file behind it, since the web
-// page renders it as a repo blob URL that would 404.
-func TestProtocolVerificationPages_PointAtRealFiles(t *testing.T) {
-	for _, p := range protocolRegistry {
-		if p.VerificationPage == "" {
-			continue
+// TestProtocolVerificationPages pins the registry to the docs/protocols tree in both directions: every link points at a
+// real file (the web page renders it as a repo blob URL that would 404), a protocol whose page exists links it (or
+// /v1/protocols reports verification_page: null), and every doc belongs to a row or is declared a non-protocol page.
+func TestProtocolVerificationPages(t *testing.T) {
+	t.Run("PointAtRealFiles", func(t *testing.T) {
+		for _, p := range protocolRegistry {
+			if p.VerificationPage == "" {
+				continue
+			}
+			if !strings.HasPrefix(p.VerificationPage, protocolDocsDir+"/") {
+				t.Errorf("%s: verification_page %q is not under %s/", p.Name, p.VerificationPage, protocolDocsDir)
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(repoRootFromAPIV1, p.VerificationPage)); err != nil {
+				t.Errorf("%s: verification_page %q has no file: %v", p.Name, p.VerificationPage, err)
+			}
 		}
-		if !strings.HasPrefix(p.VerificationPage, protocolDocsDir+"/") {
-			t.Errorf("%s: verification_page %q is not under %s/", p.Name, p.VerificationPage, protocolDocsDir)
-			continue
+	})
+	t.Run("ProtocolWithADocLinksIt", func(t *testing.T) {
+		for _, p := range protocolRegistry {
+			doc := filepath.Join(protocolDocsDir, p.Name+".md")
+			if _, err := os.Stat(filepath.Join(repoRootFromAPIV1, doc)); err != nil {
+				continue // documented on another protocol's page, or not yet written
+			}
+			if p.VerificationPage != doc {
+				t.Errorf("%s: verification_page = %q, want %q — the page exists and the API must link it",
+					p.Name, p.VerificationPage, doc)
+			}
 		}
-		if _, err := os.Stat(filepath.Join(repoRootFromAPIV1, p.VerificationPage)); err != nil {
-			t.Errorf("%s: verification_page %q has no file: %v", p.Name, p.VerificationPage, err)
+	})
+	t.Run("EveryDocIsLinked", func(t *testing.T) {
+		linked := map[string]bool{}
+		for _, p := range protocolRegistry {
+			if p.VerificationPage != "" {
+				linked[filepath.Base(p.VerificationPage)] = true
+			}
 		}
-	}
-}
-
-// TestProtocolVerificationPages_ProtocolWithADocLinksIt: a protocol with a page under
-// docs/protocols must have it linked, or /v1/protocols reports verification_page: null
-// despite the doc existing.
-func TestProtocolVerificationPages_ProtocolWithADocLinksIt(t *testing.T) {
-	for _, p := range protocolRegistry {
-		doc := filepath.Join(protocolDocsDir, p.Name+".md")
-		if _, err := os.Stat(filepath.Join(repoRootFromAPIV1, doc)); err != nil {
-			continue // documented on another protocol's page, or not yet written
+		entries, err := os.ReadDir(filepath.Join(repoRootFromAPIV1, protocolDocsDir))
+		if err != nil {
+			t.Fatalf("read %s: %v", protocolDocsDir, err)
 		}
-		if p.VerificationPage != doc {
-			t.Errorf("%s: verification_page = %q, want %q — the page exists and the API must link it",
-				p.Name, p.VerificationPage, doc)
+		for _, e := range entries {
+			name := e.Name()
+			if e.IsDir() || !strings.HasSuffix(name, ".md") || nonProtocolDocs[name] {
+				continue
+			}
+			if !linked[name] {
+				t.Errorf("%s/%s is linked by no protocol — wire it to a registry entry, "+
+					"or add it to nonProtocolDocs if it documents no protocol", protocolDocsDir, name)
+			}
 		}
-	}
-}
-
-// TestProtocolVerificationPages_EveryDocIsLinked: a doc nothing points at is invisible to API consumers, so each new doc
-// must belong to a protocol row or be declared as a non-protocol page.
-func TestProtocolVerificationPages_EveryDocIsLinked(t *testing.T) {
-	linked := map[string]bool{}
-	for _, p := range protocolRegistry {
-		if p.VerificationPage != "" {
-			linked[filepath.Base(p.VerificationPage)] = true
-		}
-	}
-	entries, err := os.ReadDir(filepath.Join(repoRootFromAPIV1, protocolDocsDir))
-	if err != nil {
-		t.Fatalf("read %s: %v", protocolDocsDir, err)
-	}
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".md") || nonProtocolDocs[name] {
-			continue
-		}
-		if !linked[name] {
-			t.Errorf("%s/%s is linked by no protocol — wire it to a registry entry, "+
-				"or add it to nonProtocolDocs if it documents no protocol", protocolDocsDir, name)
-		}
-	}
+	})
 }
