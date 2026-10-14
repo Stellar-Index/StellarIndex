@@ -66,6 +66,7 @@ export function shortAssetText(canonical: string | undefined | null): string {
   if (canonical === 'native' || /^\d+$/.test(canonical)) return 'XLM';
   if (canonical.startsWith('fiat:')) return canonical.slice(5);
   if (canonical.startsWith('crypto:')) return canonical.slice(7);
+  if (canonical.startsWith('rwa:')) return canonical.slice(4);
   // Unmapped oracle symbol — verbatim, never truncated (it IS the evidence).
   if (isRawOracleAsset(canonical)) return rawOracleSymbol(canonical);
   if (/^C[A-Za-z0-9]{55}$/.test(canonical))

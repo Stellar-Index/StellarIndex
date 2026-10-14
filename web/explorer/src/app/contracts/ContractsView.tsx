@@ -1,13 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
 import { useSACWrappers } from '@/api/hooks';
-import { formatCompact } from '@/lib/format';
+import { formatCompact, truncateMiddle } from '@/lib/format';
 import { isNativeXlmSac } from '@/lib/asset-label';
 import { useTableSort, SortableTh, type SortColumn } from '@/lib/useTableSort';
 import { StackedColumns } from '@/components/charts/Bars';
@@ -18,14 +18,22 @@ import {
 } from '@/components/ContractCharts';
 import {
   Badge,
+  Button,
   Container,
   PageHeader,
   Segmented,
+  Skeleton,
   Stat,
   StatCell,
   StatGrid,
+  TBody,
+  TR,
+  Table,
+  Td,
+  Th,
+  THead,
 } from '@/components/ui';
-import { categoryTone, protocolMeta } from '../protocols/registry';
+import { categoryLabel, protocolMeta } from '../protocols/registry';
 import { formatTimestamp } from '../explorer-shared';
 import type { paths } from '@/api/types';
 
@@ -41,8 +49,7 @@ type StatsResp = NonNullable<
 >;
 
 // Mirrors internal/api/v1/protocols.go ProtocolView — the slice the registry
-// tab needs (the /v1/protocols directory carries the contract-attribution
-// registry: which contracts each protocol's factory owns, and how many).
+// view needs: which contracts each protocol's factory owns, and how many.
 interface RegistryProtocol {
   name: string;
   category: string;
@@ -58,15 +65,12 @@ type SACMap = Record<string, string> | undefined;
  * factory-anchored attribution registry, ADR-0035):
  *
  *   - "Most active" — the raw event-ranked directory (GET /v1/contracts).
- *     Answers "what's busy on Soroban right now". Dominated by SACs and
- *     high-traffic system contracts, so its protocol column is mostly "—":
- *     raw activity and protocol attribution are orthogonal.
- *   - "Registry" — the contracts the protocol registry actually attributes
- *     (GET /v1/protocols), grouped by protocol, with each factory contract
- *     linked into its hub. Answers "which contracts does Stellar Index
- *     vouch for as belonging to Blend / Soroswap / …" (CON-1: the protocol
- *     column was empty on every event-ranked row because attribution lives
- *     here, not in the activity leaderboard).
+ *     Dominated by SACs and high-traffic system contracts, so its type
+ *     column is mostly the on-chain kind: raw activity and protocol
+ *     attribution are orthogonal.
+ *   - "Registry" — the contracts the protocol registry attributes
+ *     (GET /v1/protocols), grouped by protocol, each factory linked into
+ *     its hub.
  */
 export function ContractsView() {
   const { data: sacMap } = useSACWrappers();
@@ -77,22 +81,19 @@ export function ContractsView() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Contracts' }]}
         title="Contracts"
+        actions={
+          <Segmented
+            ariaLabel="Contracts view"
+            value={view}
+            onChange={(v) => setView(v as 'active' | 'registry')}
+            options={[
+              { label: 'Most active', value: 'active' },
+              { label: 'Registry', value: 'registry' },
+            ]}
+          />
+        }
       />
-
-      <div className="flex items-center gap-3">
-        <Segmented
-          ariaLabel="Contracts view"
-          value={view}
-          onChange={(v) => setView(v as 'active' | 'registry')}
-          options={[
-            { label: 'Most active', value: 'active' },
-            { label: 'Registry', value: 'registry' },
-          ]}
-        />
-      </div>
-
       <DeploymentStats />
-
       {view === 'active' ? (
         <MostActivePanel sacMap={sacMap} />
       ) : (
@@ -109,8 +110,13 @@ export function contractTypeBadge(c: {
 }) {
   if (c.protocol) {
     return (
-      <Link href={`/protocols/${encodeURIComponent(c.protocol)}`}>
-        <Badge tone="brand">Protocol · {c.protocol}</Badge>
+      <Link
+        href={`/protocols/${encodeURIComponent(c.protocol)}`}
+        className="focus-visible:ring-brand-500 inline-flex rounded-full hover:opacity-80 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-hidden"
+      >
+        <Badge tone="brand">
+          Protocol · {protocolMeta(c.protocol)?.label ?? c.protocol}
+        </Badge>
       </Link>
     );
   }
@@ -130,12 +136,11 @@ export function DeploymentStats() {
     },
   });
   if (!data) return null;
-
   const prefix = data.lower_bound ? '≥ ' : '';
   const n = (v: number) => `${prefix}${formatCompact(v)}`;
   return (
-    <div className="space-y-4">
-      <StatGrid cols={4}>
+    <div className="space-y-6">
+      <StatGrid cols={4} className="grid-cols-2">
         <StatCell>
           <Stat label="Total deployed" value={n(data.total_deployed)} />
         </StatCell>
@@ -154,23 +159,46 @@ export function DeploymentStats() {
           />
         </StatCell>
       </StatGrid>
-      <StackedColumns
-        ariaLabel="Contracts deployed per month"
-        series={[
-          { label: 'SAC', color: 'var(--color-brand-500)' },
-          { label: 'WASM', color: 'var(--color-up)' },
-        ]}
-        buckets={data.deployments.map((d) => ({
-          label: d.month ?? '',
-          values: [d.sac ?? 0, d.wasm ?? 0],
-        }))}
-      />
+      <Panel
+        headingLevel={2}
+        title="Deployments"
+        hint="New contracts per month, SAC and WASM"
+        source={asExample('/v1/contracts/stats')}
+      >
+        <StackedColumns
+          ariaLabel="Contracts deployed per month"
+          series={[
+            { label: 'SAC', color: 'var(--color-brand-500)' },
+            { label: 'WASM', color: 'var(--color-up)' },
+          ]}
+          buckets={data.deployments.map((d) => ({
+            label: d.month ?? '',
+            values: [d.sac ?? 0, d.wasm ?? 0],
+          }))}
+        />
+      </Panel>
     </div>
   );
 }
 
+function NoteRow({
+  colSpan,
+  children,
+}: {
+  colSpan: number;
+  children: ReactNode;
+}) {
+  return (
+    <TR className="hover:bg-transparent">
+      <Td colSpan={colSpan} className="text-ink-muted py-4">
+        {children}
+      </Td>
+    </TR>
+  );
+}
+
 function MostActivePanel({ sacMap }: { sacMap: SACMap }) {
-  const { data, isLoading, isError, error } = useQuery<DirectoryResp>({
+  const { data, isLoading, isError, refetch } = useQuery<DirectoryResp>({
     queryKey: ['/v1/contracts', 30],
     staleTime: 60_000,
     retry: false,
@@ -182,27 +210,19 @@ function MostActivePanel({ sacMap }: { sacMap: SACMap }) {
       return env.data;
     },
   });
-
   const rows = data?.contracts ?? [];
 
-  // Sortable columns; default keeps the API's
-  // events-ranked order until a header is clicked.
+  // Sortable columns; the default keeps the API's events-ranked order
+  // until a header is clicked.
   const contractSortColumns: SortColumn<(typeof rows)[number], string>[] = [
     { key: 'protocol', value: (c) => c.protocol ?? '', initialDir: 'asc' },
     { key: 'events', value: (c) => c.events },
     { key: 'last_seen', value: (c) => c.last_seen ?? '' },
   ];
-  const {
-    sorted: sortedContracts,
-    sort: cSort,
-    toggle: cToggle,
-    ariaSort: cAriaSort,
-  } = useTableSort<(typeof rows)[number], string>(
-    rows,
-    contractSortColumns,
-    null,
-  );
-
+  const { sorted, sort, toggle, ariaSort } = useTableSort<
+    (typeof rows)[number],
+    string
+  >(rows, contractSortColumns, null);
   const maxEvents = Math.max(0, ...rows.map((c) => c.events ?? 0));
 
   return (
@@ -219,118 +239,145 @@ function MostActivePanel({ sacMap }: { sacMap: SACMap }) {
         </span>
       }
       source={asExample('/v1/contracts', { days: 30, limit: 100 })}
-      bodyClassName="-mx-4"
+      bodyClassName="-mx-4 -mb-4"
     >
       {rows.length > 0 && (
         <div className="px-4 pb-4">
-          <ProtocolMixDonut rows={rows} />
+          <ProtocolMixDonut
+            rows={rows.map((c) => ({
+              ...c,
+              protocol: c.protocol
+                ? (protocolMeta(c.protocol)?.label ?? c.protocol)
+                : c.protocol,
+            }))}
+          />
         </div>
       )}
-      {isError ? (
-        <p className="text-down-strong px-4 text-sm">
-          Failed to load contracts:{' '}
-          {error instanceof Error ? error.message : 'unknown error'}
-        </p>
-      ) : isLoading ? (
-        <p className="text-ink-muted px-4 text-sm">Loading…</p>
-      ) : rows.length === 0 ? (
-        <p className="text-ink-muted px-4 text-sm">
-          No contract activity in the window.
-        </p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="divide-line min-w-full divide-y text-sm">
-            <thead>
-              <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
-                <th scope="col" className="px-4 py-2">
-                  Contract
-                </th>
-                <SortableTh
-                  label="Type"
-                  sortKey="protocol"
-                  sort={cSort}
-                  onSort={cToggle}
-                  ariaSort={cAriaSort}
-                />
-                <SortableTh
-                  label="Events (30d)"
-                  sortKey="events"
-                  sort={cSort}
-                  onSort={cToggle}
-                  ariaSort={cAriaSort}
-                  align="right"
-                />
-                <SortableTh
-                  label="Last seen"
-                  sortKey="last_seen"
-                  sort={cSort}
-                  onSort={cToggle}
-                  ariaSort={cAriaSort}
-                />
-              </tr>
-            </thead>
-            <tbody className="divide-line-subtle divide-y">
-              {sortedContracts.map((c) => (
-                <tr key={c.contract_id} className="hover:bg-surface-muted">
-                  <td className="px-4 py-3">
+      <div className="overflow-x-auto">
+        <Table>
+          <THead>
+            <tr>
+              <Th>Contract</Th>
+              <SortableTh
+                label="Type"
+                sortKey="protocol"
+                sort={sort}
+                onSort={toggle}
+                ariaSort={ariaSort}
+                className="hidden sm:table-cell"
+              />
+              <SortableTh
+                label="Events (30d)"
+                sortKey="events"
+                sort={sort}
+                onSort={toggle}
+                ariaSort={ariaSort}
+                align="right"
+              />
+              <SortableTh
+                label="Last seen"
+                sortKey="last_seen"
+                sort={sort}
+                onSort={toggle}
+                ariaSort={ariaSort}
+                align="right"
+                className="hidden sm:table-cell"
+              />
+            </tr>
+          </THead>
+          <TBody>
+            {isError && (
+              <NoteRow colSpan={4}>
+                Contract list unavailable — the directory read did not return.
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="ml-3"
+                  onClick={() => refetch()}
+                >
+                  Retry
+                </Button>
+              </NoteRow>
+            )}
+            {!isError && isLoading && (
+              <TR className="hover:bg-transparent">
+                <Td colSpan={4}>
+                  <Skeleton className="h-4 w-64" />
+                </Td>
+              </TR>
+            )}
+            {!isError && !isLoading && rows.length === 0 && (
+              <NoteRow colSpan={4}>
+                No contract activity in the last 30 days.
+              </NoteRow>
+            )}
+            {sorted.map((c) => {
+              const id = c.contract_id ?? '';
+              const wrapped = isNativeXlmSac(id) ? 'native' : sacMap?.[id];
+              const code =
+                wrapped == null
+                  ? null
+                  : wrapped === 'native'
+                    ? 'XLM'
+                    : wrapped.split(/[:-]/)[0];
+              return (
+                <TR key={id}>
+                  <Td>
                     <Link
-                      href={`/contracts/${encodeURIComponent(c.contract_id ?? '')}/`}
-                      className="text-brand-600 font-mono text-xs hover:underline"
-                      title={c.contract_id}
+                      href={`/contracts/${encodeURIComponent(id)}/`}
+                      className="text-brand-600 font-mono text-xs whitespace-nowrap hover:underline"
+                      title={id}
                     >
-                      {(c.contract_id ?? '').slice(0, 8)}…
-                      {(c.contract_id ?? '').slice(-6)}
+                      {truncateMiddle(id, 8, 6)}
                     </Link>
-                    {/* CON-2: 2 of the top 3 rows are SACs resolvable
-                        from the operator wrapper map already cached
-                        sitewide — name them instead of bare hashes. */}
-                    {(() => {
-                      const wrapped = isNativeXlmSac(c.contract_id)
-                        ? 'native'
-                        : sacMap?.[c.contract_id ?? ''];
-                      if (!wrapped) return null;
-                      const code =
-                        wrapped === 'native' ? 'XLM' : wrapped.split(/[:-]/)[0];
-                      return (
-                        <span className="bg-surface-muted text-ink-muted ml-2 rounded-sm px-1.5 py-0.5 text-[9px] font-medium tracking-wider uppercase">
-                          {code} SAC
-                        </span>
-                      );
-                    })()}
-                  </td>
-                  <td className="px-4 py-3">{contractTypeBadge(c)}</td>
-                  <td className="text-ink-body px-4 py-3 text-right font-mono tabular-nums">
-                    <span className="mr-2">
-                      <InlineBar
-                        value={c.events ?? 0}
-                        max={maxEvents}
-                        label={`${formatCompact(c.events ?? 0)} events`}
-                      />
+                    {code && (
+                      <span className="text-ink-muted ml-2 text-xs whitespace-nowrap">
+                        {code} SAC
+                      </span>
+                    )}
+                  </Td>
+                  <Td className="hidden sm:table-cell">
+                    {contractTypeBadge(c)}
+                  </Td>
+                  <Td align="right" className="font-mono">
+                    <span className="flex items-center justify-end gap-3 whitespace-nowrap">
+                      <span className="hidden sm:contents">
+                        <InlineBar
+                          value={c.events ?? 0}
+                          max={maxEvents}
+                          label={`${formatCompact(c.events ?? 0)} events`}
+                        />
+                      </span>
+                      <span className="inline-block w-14 text-right">
+                        {formatCompact(c.events ?? 0)}
+                      </span>
                     </span>
-                    {formatCompact(c.events ?? 0)}
-                  </td>
-                  <td className="text-ink-muted px-4 py-3 text-xs">
+                  </Td>
+                  <Td
+                    align="right"
+                    className="text-ink-muted hidden font-mono text-xs sm:table-cell"
+                  >
                     {formatTimestamp(c.last_seen)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+                  </Td>
+                </TR>
+              );
+            })}
+          </TBody>
+        </Table>
+      </div>
     </Panel>
   );
 }
 
 /**
- * RegistryPanel — the contract-attribution registry (CON-1). Reads the
- * /v1/protocols directory (which carries each protocol's factory set +
- * registered-contract count) and lists the protocols that actually own
- * registered contracts, factory contracts linked into their hub. The full
- * per-instance roster lives on each /protocols/{name} page.
+ * RegistryPanel — the contract-attribution registry. Reads the
+ * /v1/protocols directory (each protocol's factory set and registered
+ * contract count) and lists the protocols that own registered contracts,
+ * factory contracts linked into their hub. The per-instance roster lives
+ * on each /protocols/{name} page.
  */
 function RegistryPanel() {
-  const { data, isLoading, isError, error } = useQuery<RegistryProtocol[]>({
+  const { data, isLoading, isError, refetch } = useQuery<RegistryProtocol[]>({
     queryKey: ['/v1/protocols', 'registry'],
     staleTime: 60_000,
     retry: false,
@@ -341,10 +388,9 @@ function RegistryPanel() {
       return env.data?.protocols ?? [];
     },
   });
-
-  // Only protocols with an actual registry (a seeded factory or a non-zero
-  // contract count). Sort by roster size so the attribution-heavy protocols
-  // lead. sdex / external oracles carry neither and are (correctly) omitted.
+  // Only protocols with a registry (a seeded factory or a non-zero contract
+  // count), largest roster first. sdex and the external oracles carry
+  // neither and are correctly omitted.
   const rows = (data ?? [])
     .filter((p) => p.contract_count > 0 || (p.factories?.length ?? 0) > 0)
     .sort((a, b) => b.contract_count - a.contract_count);
@@ -363,105 +409,101 @@ function RegistryPanel() {
         </span>
       }
       source={asExample('/v1/protocols')}
-      bodyClassName="-mx-4"
+      bodyClassName="-mx-4 -mb-4"
     >
-      {isError ? (
-        <p className="text-down-strong px-4 text-sm">
-          Failed to load the registry:{' '}
-          {error instanceof Error ? error.message : 'unknown error'}
-        </p>
-      ) : isLoading ? (
-        <p className="text-ink-muted px-4 text-sm">Loading…</p>
-      ) : rows.length === 0 ? (
-        <p className="text-ink-muted px-4 text-sm">
-          No protocol contracts are registered yet.
-        </p>
-      ) : (
-        <div className="overflow-x-auto">
-          <RegistryCharts rows={rows} />
-          <table className="divide-line min-w-full divide-y text-sm">
-            <thead>
-              <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
-                <th scope="col" className="px-4 py-2">
-                  Protocol
-                </th>
-                <th scope="col" className="px-4 py-2">
-                  Category
-                </th>
-                <th scope="col" className="px-4 py-2">
-                  Factory contracts
-                </th>
-                <th scope="col" className="px-4 py-2 text-right">
-                  Registered
-                </th>
-                <th scope="col" className="px-4 py-2 text-right">
-                  Events (24h)
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-line-subtle divide-y">
-              {rows.map((p) => (
-                <tr key={p.name} className="hover:bg-surface-muted">
-                  <td className="px-4 py-3">
+      {rows.length > 0 && <RegistryCharts rows={rows} />}
+      <div className="overflow-x-auto">
+        <Table>
+          <THead>
+            <tr>
+              <Th>Protocol</Th>
+              <Th>Category</Th>
+              <Th>Factory contracts</Th>
+              <Th align="right">Registered</Th>
+              <Th align="right">Events (24h)</Th>
+            </tr>
+          </THead>
+          <TBody>
+            {isError && (
+              <NoteRow colSpan={5}>
+                Registry unavailable — the protocols read did not return.
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="ml-3"
+                  onClick={() => refetch()}
+                >
+                  Retry
+                </Button>
+              </NoteRow>
+            )}
+            {!isError && isLoading && (
+              <TR className="hover:bg-transparent">
+                <Td colSpan={5}>
+                  <Skeleton className="h-4 w-64" />
+                </Td>
+              </TR>
+            )}
+            {!isError && !isLoading && rows.length === 0 && (
+              <NoteRow colSpan={5}>
+                No protocol contracts are registered yet.
+              </NoteRow>
+            )}
+            {rows.map((p) => (
+              <TR key={p.name}>
+                <Td>
+                  <Link
+                    href={`/protocols/${encodeURIComponent(p.name)}`}
+                    className="text-ink hover:text-brand-600 font-medium"
+                  >
+                    {protocolMeta(p.name)?.label ?? p.name}
+                  </Link>
+                </Td>
+                <Td>
+                  {p.category ? (
+                    <Badge tone="neutral">{categoryLabel(p.category)}</Badge>
+                  ) : (
+                    <span className="text-ink-faint">—</span>
+                  )}
+                </Td>
+                <Td>
+                  {(p.factories?.length ?? 0) > 0 ? (
+                    <div className="flex flex-wrap gap-x-3 gap-y-1">
+                      {p.factories.map((f) => (
+                        <Link
+                          key={f}
+                          href={`/contracts/${encodeURIComponent(f)}/`}
+                          className="text-brand-600 font-mono text-xs hover:underline"
+                          title={f}
+                        >
+                          {truncateMiddle(f, 6, 4)}
+                        </Link>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-ink-faint">—</span>
+                  )}
+                </Td>
+                <Td align="right" className="font-mono">
+                  {p.contract_count > 0 ? (
                     <Link
                       href={`/protocols/${encodeURIComponent(p.name)}`}
-                      className="text-brand-600 font-medium hover:underline"
+                      className="text-brand-600 hover:underline"
                     >
-                      {protocolMeta(p.name)?.label ?? p.name}
+                      {formatCompact(p.contract_count)}
                     </Link>
-                  </td>
-                  <td className="px-4 py-3">
-                    {p.category ? (
-                      <span
-                        className={`inline-flex items-center rounded-sm px-1.5 py-0.5 font-mono text-[9px] tracking-wider uppercase ${categoryTone(p.category)}`}
-                      >
-                        {p.category}
-                      </span>
-                    ) : (
-                      <span className="text-ink-faint">—</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    {(p.factories?.length ?? 0) > 0 ? (
-                      <div className="flex flex-wrap gap-1.5">
-                        {p.factories.map((f) => (
-                          <Link
-                            key={f}
-                            href={`/contracts/${encodeURIComponent(f)}/`}
-                            className="text-brand-600 font-mono text-[11px] hover:underline"
-                            title={f}
-                          >
-                            {f.slice(0, 6)}…{f.slice(-4)}
-                          </Link>
-                        ))}
-                      </div>
-                    ) : (
-                      <span className="text-ink-faint">—</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    {p.contract_count > 0 ? (
-                      <Link
-                        href={`/protocols/${encodeURIComponent(p.name)}`}
-                        className="text-brand-600 font-mono tabular-nums hover:underline"
-                      >
-                        {formatCompact(p.contract_count)}
-                      </Link>
-                    ) : (
-                      <span className="text-ink-faint font-mono tabular-nums">
-                        —
-                      </span>
-                    )}
-                  </td>
-                  <td className="text-ink-body px-4 py-3 text-right font-mono tabular-nums">
-                    {formatCompact(p.events_24h ?? 0)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+                  ) : (
+                    <span className="text-ink-faint">—</span>
+                  )}
+                </Td>
+                <Td align="right" className="font-mono">
+                  {formatCompact(p.events_24h ?? 0)}
+                </Td>
+              </TR>
+            ))}
+          </TBody>
+        </Table>
+      </div>
     </Panel>
   );
 }
