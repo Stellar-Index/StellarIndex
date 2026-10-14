@@ -46138,6 +46138,433 @@
               ]
             },
             {
+              "name": "sponsorships",
+              "description": "",
+              "item": [
+                {
+                  "name": "The reserve sponsorships an account pays for or benefits from, each with its lifecycle, beside a proof against the account's own counters.",
+                  "request": {
+                    "name": "The reserve sponsorships an account pays for or benefits from, each with its lifecycle, beside a proof against the account's own counters.",
+                    "description": {
+                      "content": "Stellar lets one account (the sponsor) pay the base reserve of an\nentry or signer belonging to another (the sponsored). This route\nlists those arrangements from `stellar.sponsorship_events`, derived\nby `ch-entry-history` from the lake's ledger-entry changes:\n`direction=sponsoring` (default) lists what the account pays for,\n`direction=sponsored` what others pay for it. Each arrangement names\nthe `kind` of entry (`account`, `trustline`, `offer`, `data`,\n`claimable_balance`, `signer`), its `key_id`, the `reserves` it\ncounts for, and its `episodes`: every stretch it was in force, with\nthe `started` event and the `ended` event (`end_event` is `ended`\nwhen the entry was removed or `revoked` when the sponsorship was\nhanded back or transferred). `state=in_force` (default) keeps the\narrangements whose last event is a start; `state=all` includes ended\nones.\n\nPROOF: `totals` counts both sides through `through_ledger`, and\n`proof` sets the account entry's own `num_sponsoring` and\n`num_sponsored` counters against the in-force reserves derived here.\n`match` is true when both agree, false when the derivation and the\nledger disagree (never hidden), and null when they are not\ncomparable: the entry was modified after `through_ledger` or does\nnot exist.\n\nORDER AND PAGING: arrangements in key order `(sponsor, sponsored,\nkind, key_id)`, keyset-paged with `?cursor=` (echo back\n`next_cursor`). An arrangement that began below the derivation\nfloor carries an episode with a null `started`.\n\nCEILING: `through_ledger` is the entry-history watermark. Until the\nlifecycle is derived on the deployment the route answers 503\n(`sponsorships-not-built`).\n",
+                      "type": "text/plain"
+                    },
+                    "url": {
+                      "path": [
+                        "accounts",
+                        ":g_strkey",
+                        "sponsorships"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "sponsoring (default) lists the arrangements the account pays for; sponsored the ones paid for it. Other values return 400. (This can only be one of sponsoring,sponsored)",
+                            "type": "text/plain"
+                          },
+                          "key": "direction",
+                          "value": "sponsored"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "in_force (default) keeps arrangements whose last event is a start; all includes ended ones. Other values return 400. (This can only be one of in_force,all)",
+                            "type": "text/plain"
+                          },
+                          "key": "state",
+                          "value": "in_force"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Maximum arrangements to return (1-200, default 25). Out-of-range values return 400.",
+                            "type": "text/plain"
+                          },
+                          "key": "limit",
+                          "value": "25"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Opaque keyset cursor from a prior response's next_cursor.",
+                            "type": "text/plain"
+                          },
+                          "key": "cursor",
+                          "value": "<string>"
+                        }
+                      ],
+                      "variable": [
+                        {
+                          "type": "any",
+                          "value": "<string>",
+                          "key": "g_strkey",
+                          "disabled": false,
+                          "description": {
+                            "content": "(Required) Account id, a 56-character G-strkey (SEP-23); an M-address\nreads as its base account. Malformed strkeys return 400.\n",
+                            "type": "text/plain"
+                          }
+                        }
+                      ]
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/json"
+                      }
+                    ],
+                    "method": "GET",
+                    "body": {},
+                    "auth": null
+                  },
+                  "response": [
+                    {
+                      "name": "The account's sponsorship arrangements with their lifecycles and the counter proof.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "accounts",
+                            ":g_strkey",
+                            "sponsorships"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "sponsoring (default) lists the arrangements the account pays for; sponsored the ones paid for it. Other values return 400. (This can only be one of sponsoring,sponsored)",
+                                "type": "text/plain"
+                              },
+                              "key": "direction",
+                              "value": "sponsored"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "in_force (default) keeps arrangements whose last event is a start; all includes ended ones. Other values return 400. (This can only be one of in_force,all)",
+                                "type": "text/plain"
+                              },
+                              "key": "state",
+                              "value": "in_force"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Maximum arrangements to return (1-200, default 25). Out-of-range values return 400.",
+                                "type": "text/plain"
+                              },
+                              "key": "limit",
+                              "value": "25"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Opaque keyset cursor from a prior response's next_cursor.",
+                                "type": "text/plain"
+                              },
+                              "key": "cursor",
+                              "value": "<string>"
+                            }
+                          ],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) Account id, a 56-character G-strkey (SEP-23); an M-address\nreads as its base account. Malformed strkeys return 400.\n",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<string>",
+                              "key": "g_strkey"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/json"
+                          }
+                        ],
+                        "method": "GET",
+                        "body": {}
+                      },
+                      "status": "OK",
+                      "code": 200,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/json"
+                        }
+                      ],
+                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"proxy_deviation\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false,\n    \"under_review\": false,\n    \"detectors_partial\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"under_review_reason\": \"<string>\",\n  \"data\": {\n    \"account\": \"<string>\",\n    \"direction\": \"sponsored\",\n    \"state\": \"all\",\n    \"arrangements\": [\n      {\n        \"sponsor\": \"<string>\",\n        \"kind\": \"offer\",\n        \"reserve_count\": \"<integer>\",\n        \"in_force\": \"<boolean>\",\n        \"episodes\": [\n          {\n            \"started\": {\n              \"ledger\": \"<long>\",\n              \"ledger_close_time\": \"<dateTime>\",\n              \"intra_ledger_seq\": \"<long>\",\n              \"tx_hash\": \"<string>\",\n              \"op_index\": \"<integer>\",\n              \"change_index\": \"<long>\"\n            },\n            \"ended\": {\n              \"ledger\": \"<long>\",\n              \"ledger_close_time\": \"<dateTime>\",\n              \"intra_ledger_seq\": \"<long>\",\n              \"tx_hash\": \"<string>\",\n              \"op_index\": \"<integer>\",\n              \"change_index\": \"<long>\"\n            },\n            \"end_event\": \"revoked\"\n          },\n          {\n            \"started\": {\n              \"ledger\": \"<long>\",\n              \"ledger_close_time\": \"<dateTime>\",\n              \"intra_ledger_seq\": \"<long>\",\n              \"tx_hash\": \"<string>\",\n              \"op_index\": \"<integer>\",\n              \"change_index\": \"<long>\"\n            },\n            \"ended\": {\n              \"ledger\": \"<long>\",\n              \"ledger_close_time\": \"<dateTime>\",\n              \"intra_ledger_seq\": \"<long>\",\n              \"tx_hash\": \"<string>\",\n              \"op_index\": \"<integer>\",\n              \"change_index\": \"<long>\"\n            },\n            \"end_event\": \"ended\"\n          }\n        ],\n        \"sponsored\": \"<string>\",\n        \"key_id\": \"<string>\"\n      },\n      {\n        \"sponsor\": \"<string>\",\n        \"kind\": \"claimable_balance\",\n        \"reserve_count\": \"<integer>\",\n        \"in_force\": \"<boolean>\",\n        \"episodes\": [\n          {\n            \"started\": {\n              \"ledger\": \"<long>\",\n              \"ledger_close_time\": \"<dateTime>\",\n              \"intra_ledger_seq\": \"<long>\",\n              \"tx_hash\": \"<string>\",\n              \"op_index\": \"<integer>\",\n              \"change_index\": \"<long>\"\n            },\n            \"ended\": {\n              \"ledger\": \"<long>\",\n              \"ledger_close_time\": \"<dateTime>\",\n              \"intra_ledger_seq\": \"<long>\",\n              \"tx_hash\": \"<string>\",\n              \"op_index\": \"<integer>\",\n              \"change_index\": \"<long>\"\n            },\n            \"end_event\": \"ended\"\n          },\n          {\n            \"started\": {\n              \"ledger\": \"<long>\",\n              \"ledger_close_time\": \"<dateTime>\",\n              \"intra_ledger_seq\": \"<long>\",\n              \"tx_hash\": \"<string>\",\n              \"op_index\": \"<integer>\",\n              \"change_index\": \"<long>\"\n            },\n            \"ended\": {\n              \"ledger\": \"<long>\",\n              \"ledger_close_time\": \"<dateTime>\",\n              \"intra_ledger_seq\": \"<long>\",\n              \"tx_hash\": \"<string>\",\n              \"op_index\": \"<integer>\",\n              \"change_index\": \"<long>\"\n            },\n            \"end_event\": \"ended\"\n          }\n        ],\n        \"sponsored\": \"<string>\",\n        \"key_id\": \"<string>\"\n      }\n    ],\n    \"totals\": {\n      \"sponsoring\": {\n        \"in_force\": \"<long>\",\n        \"in_force_reserve_count\": \"<long>\",\n        \"started\": \"<long>\",\n        \"revoked\": \"<long>\",\n        \"ended\": \"<long>\"\n      },\n      \"sponsored\": {\n        \"in_force\": \"<long>\",\n        \"in_force_reserve_count\": \"<long>\",\n        \"started\": \"<long>\",\n        \"revoked\": \"<long>\",\n        \"ended\": \"<long>\"\n      }\n    },\n    \"proof\": {\n      \"account_ledger\": \"<long>\",\n      \"num_sponsoring\": \"<long>\",\n      \"num_sponsored\": \"<long>\",\n      \"derived_sponsoring\": \"<long>\",\n      \"derived_sponsored\": \"<long>\",\n      \"match\": \"<boolean>\"\n    },\n    \"through_ledger\": \"<long>\",\n    \"coverage_note\": \"<string>\",\n    \"next_cursor\": \"<string>\"\n  }\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
+                      "name": "Client-supplied parameters didn't validate.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "accounts",
+                            ":g_strkey",
+                            "sponsorships"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "sponsoring (default) lists the arrangements the account pays for; sponsored the ones paid for it. Other values return 400. (This can only be one of sponsoring,sponsored)",
+                                "type": "text/plain"
+                              },
+                              "key": "direction",
+                              "value": "sponsored"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "in_force (default) keeps arrangements whose last event is a start; all includes ended ones. Other values return 400. (This can only be one of in_force,all)",
+                                "type": "text/plain"
+                              },
+                              "key": "state",
+                              "value": "in_force"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Maximum arrangements to return (1-200, default 25). Out-of-range values return 400.",
+                                "type": "text/plain"
+                              },
+                              "key": "limit",
+                              "value": "25"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Opaque keyset cursor from a prior response's next_cursor.",
+                                "type": "text/plain"
+                              },
+                              "key": "cursor",
+                              "value": "<string>"
+                            }
+                          ],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) Account id, a 56-character G-strkey (SEP-23); an M-address\nreads as its base account. Malformed strkeys return 400.\n",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<string>",
+                              "key": "g_strkey"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          }
+                        ],
+                        "method": "GET",
+                        "body": {}
+                      },
+                      "status": "Bad Request",
+                      "code": 400,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\",\n  \"monthly_quota\": \"<long>\",\n  \"month_to_date\": \"<long>\",\n  \"substance\": {\n    \"base\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"window_seconds\": \"<long>\",\n    \"measured_at\": \"<dateTime>\",\n    \"volume_usd\": \"<string>\",\n    \"buckets\": \"<long>\",\n    \"valued_buckets\": \"<long>\",\n    \"span_seconds\": \"<long>\",\n    \"floor\": {\n      \"min_volume_usd\": \"<string>\",\n      \"min_buckets\": \"<long>\",\n      \"min_span_seconds\": \"<long>\"\n    },\n    \"failed\": \"volume_unvalued\",\n    \"window_end\": \"<dateTime>\"\n  },\n  \"reason\": \"upstream_leg\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
+                      "name": "Internal error. Body includes the request_id for correlation.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "accounts",
+                            ":g_strkey",
+                            "sponsorships"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "sponsoring (default) lists the arrangements the account pays for; sponsored the ones paid for it. Other values return 400. (This can only be one of sponsoring,sponsored)",
+                                "type": "text/plain"
+                              },
+                              "key": "direction",
+                              "value": "sponsored"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "in_force (default) keeps arrangements whose last event is a start; all includes ended ones. Other values return 400. (This can only be one of in_force,all)",
+                                "type": "text/plain"
+                              },
+                              "key": "state",
+                              "value": "in_force"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Maximum arrangements to return (1-200, default 25). Out-of-range values return 400.",
+                                "type": "text/plain"
+                              },
+                              "key": "limit",
+                              "value": "25"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Opaque keyset cursor from a prior response's next_cursor.",
+                                "type": "text/plain"
+                              },
+                              "key": "cursor",
+                              "value": "<string>"
+                            }
+                          ],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) Account id, a 56-character G-strkey (SEP-23); an M-address\nreads as its base account. Malformed strkeys return 400.\n",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<string>",
+                              "key": "g_strkey"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          }
+                        ],
+                        "method": "GET",
+                        "body": {}
+                      },
+                      "status": "Internal Server Error",
+                      "code": 500,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\",\n  \"monthly_quota\": \"<long>\",\n  \"month_to_date\": \"<long>\",\n  \"substance\": {\n    \"base\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"window_seconds\": \"<long>\",\n    \"measured_at\": \"<dateTime>\",\n    \"volume_usd\": \"<string>\",\n    \"buckets\": \"<long>\",\n    \"valued_buckets\": \"<long>\",\n    \"span_seconds\": \"<long>\",\n    \"floor\": {\n      \"min_volume_usd\": \"<string>\",\n      \"min_buckets\": \"<long>\",\n      \"min_span_seconds\": \"<long>\"\n    },\n    \"failed\": \"volume_unvalued\",\n    \"window_end\": \"<dateTime>\"\n  },\n  \"reason\": \"upstream_leg\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
+                      "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "accounts",
+                            ":g_strkey",
+                            "sponsorships"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "sponsoring (default) lists the arrangements the account pays for; sponsored the ones paid for it. Other values return 400. (This can only be one of sponsoring,sponsored)",
+                                "type": "text/plain"
+                              },
+                              "key": "direction",
+                              "value": "sponsored"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "in_force (default) keeps arrangements whose last event is a start; all includes ended ones. Other values return 400. (This can only be one of in_force,all)",
+                                "type": "text/plain"
+                              },
+                              "key": "state",
+                              "value": "in_force"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Maximum arrangements to return (1-200, default 25). Out-of-range values return 400.",
+                                "type": "text/plain"
+                              },
+                              "key": "limit",
+                              "value": "25"
+                            },
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "Opaque keyset cursor from a prior response's next_cursor.",
+                                "type": "text/plain"
+                              },
+                              "key": "cursor",
+                              "value": "<string>"
+                            }
+                          ],
+                          "variable": [
+                            {
+                              "disabled": false,
+                              "description": {
+                                "content": "(Required) Account id, a 56-character G-strkey (SEP-23); an M-address\nreads as its base account. Malformed strkeys return 400.\n",
+                                "type": "text/plain"
+                              },
+                              "type": "any",
+                              "value": "<string>",
+                              "key": "g_strkey"
+                            }
+                          ]
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          }
+                        ],
+                        "method": "GET",
+                        "body": {}
+                      },
+                      "status": "Service Unavailable",
+                      "code": 503,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\",\n  \"monthly_quota\": \"<long>\",\n  \"month_to_date\": \"<long>\",\n  \"substance\": {\n    \"base\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"window_seconds\": \"<long>\",\n    \"measured_at\": \"<dateTime>\",\n    \"volume_usd\": \"<string>\",\n    \"buckets\": \"<long>\",\n    \"valued_buckets\": \"<long>\",\n    \"span_seconds\": \"<long>\",\n    \"floor\": {\n      \"min_volume_usd\": \"<string>\",\n      \"min_buckets\": \"<long>\",\n      \"min_span_seconds\": \"<long>\"\n    },\n    \"failed\": \"volume_unvalued\",\n    \"window_end\": \"<dateTime>\"\n  },\n  \"reason\": \"upstream_leg\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    }
+                  ],
+                  "event": [],
+                  "protocolProfileBehavior": {
+                    "disableBodyPruning": true
+                  }
+                }
+              ]
+            },
+            {
               "name": "movements",
               "description": "",
               "item": [
@@ -46193,7 +46620,7 @@
                             "type": "text/plain"
                           },
                           "key": "direction",
-                          "value": "self"
+                          "value": "sent"
                         },
                         {
                           "disabled": false,
@@ -46276,7 +46703,7 @@
                                 "type": "text/plain"
                               },
                               "key": "direction",
-                              "value": "self"
+                              "value": "sent"
                             },
                             {
                               "disabled": false,
@@ -46318,7 +46745,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"proxy_deviation\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false,\n    \"under_review\": false,\n    \"detectors_partial\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"under_review_reason\": \"<string>\",\n  \"data\": {\n    \"account\": \"<string>\",\n    \"movements\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"ledger_close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"leg_index\": \"<integer>\",\n        \"movement_kind\": \"<string>\",\n        \"direction\": \"self\",\n        \"asset\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"provenance\": \"classic_derived\",\n        \"decimals\": \"<integer>\",\n        \"counterparty\": \"<string>\",\n        \"attributes\": {\n          \"key_0\": 7227\n        }\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"ledger_close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"leg_index\": \"<integer>\",\n        \"movement_kind\": \"<string>\",\n        \"direction\": \"self\",\n        \"asset\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"provenance\": \"cap67_event\",\n        \"decimals\": \"<integer>\",\n        \"counterparty\": \"<string>\",\n        \"attributes\": {\n          \"key_0\": \"string\",\n          \"key_1\": 9914\n        }\n      }\n    ],\n    \"coverage\": [\n      {\n        \"kind\": \"fee\",\n        \"status\": \"partial\",\n        \"from_ledger\": \"<long>\",\n        \"through_ledger\": \"<long>\"\n      },\n      {\n        \"kind\": \"fill\",\n        \"status\": \"served\",\n        \"from_ledger\": \"<long>\",\n        \"through_ledger\": \"<long>\"\n      }\n    ],\n    \"next_cursor\": \"<string>\",\n    \"coverage_note\": \"<string>\"\n  }\n}",
+                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"proxy_deviation\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false,\n    \"under_review\": false,\n    \"detectors_partial\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"under_review_reason\": \"<string>\",\n  \"data\": {\n    \"account\": \"<string>\",\n    \"movements\": [\n      {\n        \"ledger\": \"<integer>\",\n        \"ledger_close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"leg_index\": \"<integer>\",\n        \"movement_kind\": \"<string>\",\n        \"direction\": \"sent\",\n        \"asset\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"provenance\": \"cap67_derived\",\n        \"decimals\": \"<integer>\",\n        \"counterparty\": \"<string>\",\n        \"attributes\": {\n          \"key_0\": \"string\",\n          \"key_1\": true\n        }\n      },\n      {\n        \"ledger\": \"<integer>\",\n        \"ledger_close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"op_index\": \"<integer>\",\n        \"leg_index\": \"<integer>\",\n        \"movement_kind\": \"<string>\",\n        \"direction\": \"self\",\n        \"asset\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"provenance\": \"cap67_event\",\n        \"decimals\": \"<integer>\",\n        \"counterparty\": \"<string>\",\n        \"attributes\": {\n          \"key_0\": 5863\n        }\n      }\n    ],\n    \"coverage\": [\n      {\n        \"kind\": \"transfer\",\n        \"status\": \"not_served\",\n        \"from_ledger\": \"<long>\",\n        \"through_ledger\": \"<long>\"\n      },\n      {\n        \"kind\": \"transfer\",\n        \"status\": \"partial\",\n        \"from_ledger\": \"<long>\",\n        \"through_ledger\": \"<long>\"\n      }\n    ],\n    \"next_cursor\": \"<string>\",\n    \"coverage_note\": \"<string>\"\n  }\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },
@@ -46369,7 +46796,7 @@
                                 "type": "text/plain"
                               },
                               "key": "direction",
-                              "value": "self"
+                              "value": "sent"
                             },
                             {
                               "disabled": false,
@@ -46462,7 +46889,7 @@
                                 "type": "text/plain"
                               },
                               "key": "direction",
-                              "value": "self"
+                              "value": "sent"
                             },
                             {
                               "disabled": false,
@@ -46625,7 +47052,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"proxy_deviation\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false,\n    \"under_review\": false,\n    \"detectors_partial\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"under_review_reason\": \"<string>\",\n  \"data\": {\n    \"account\": \"<string>\",\n    \"positions\": [\n      {\n        \"protocol\": \"phoenix\",\n        \"position_kind\": \"backstop_shares\",\n        \"venue\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"amount_semantics\": \"signed_delta_sum_unconfirmed_unit\",\n        \"last_activity\": {\n          \"ledger\": \"<integer>\",\n          \"time\": \"<dateTime>\"\n        },\n        \"basis\": \"stateful\",\n        \"venue_label\": \"<string>\",\n        \"assets\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"decimals\": \"<integer>\"\n      },\n      {\n        \"protocol\": \"phoenix\",\n        \"position_kind\": \"lending_supply\",\n        \"venue\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"amount_semantics\": \"superseded_by_auction\",\n        \"last_activity\": {\n          \"ledger\": \"<integer>\",\n          \"time\": \"<dateTime>\"\n        },\n        \"basis\": \"stateful\",\n        \"venue_label\": \"<string>\",\n        \"assets\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"decimals\": \"<integer>\"\n      }\n    ],\n    \"include_closed\": \"<boolean>\",\n    \"note\": \"<string>\",\n    \"coverage_note\": \"<string>\"\n  }\n}",
+                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"proxy_deviation\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false,\n    \"under_review\": false,\n    \"detectors_partial\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"under_review_reason\": \"<string>\",\n  \"data\": {\n    \"account\": \"<string>\",\n    \"positions\": [\n      {\n        \"protocol\": \"blend\",\n        \"position_kind\": \"lending_borrow\",\n        \"venue\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"amount_semantics\": \"signed_delta_sum_unconfirmed_unit\",\n        \"last_activity\": {\n          \"ledger\": \"<integer>\",\n          \"time\": \"<dateTime>\"\n        },\n        \"basis\": \"event_derived\",\n        \"venue_label\": \"<string>\",\n        \"assets\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"decimals\": \"<integer>\"\n      },\n      {\n        \"protocol\": \"defindex\",\n        \"position_kind\": \"lending_supply\",\n        \"venue\": \"<string>\",\n        \"amount\": \"<string>\",\n        \"amount_semantics\": \"signed_delta_sum_unconfirmed_unit\",\n        \"last_activity\": {\n          \"ledger\": \"<integer>\",\n          \"time\": \"<dateTime>\"\n        },\n        \"basis\": \"stateful\",\n        \"venue_label\": \"<string>\",\n        \"assets\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"decimals\": \"<integer>\"\n      }\n    ],\n    \"include_closed\": \"<boolean>\",\n    \"note\": \"<string>\",\n    \"coverage_note\": \"<string>\"\n  }\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },
@@ -46878,7 +47305,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"proxy_deviation\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false,\n    \"under_review\": false,\n    \"detectors_partial\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"under_review_reason\": \"<string>\",\n  \"data\": {\n    \"account\": \"<string>\",\n    \"trades\": [\n      {\n        \"ts\": \"<dateTime>\",\n        \"source\": \"<string>\",\n        \"base_asset\": \"<string>\",\n        \"quote_asset\": \"<string>\",\n        \"base_amount\": \"<string>\",\n        \"quote_amount\": \"<string>\",\n        \"tx_hash\": \"<string>\",\n        \"ledger\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"role\": \"maker\",\n        \"base_decimals\": \"<integer>\",\n        \"quote_decimals\": \"<integer>\",\n        \"usd_volume\": \"<string>\",\n        \"counterparty\": \"<string>\",\n        \"routed_via\": \"<string>\",\n        \"signer\": \"<string>\"\n      },\n      {\n        \"ts\": \"<dateTime>\",\n        \"source\": \"<string>\",\n        \"base_asset\": \"<string>\",\n        \"quote_asset\": \"<string>\",\n        \"base_amount\": \"<string>\",\n        \"quote_amount\": \"<string>\",\n        \"tx_hash\": \"<string>\",\n        \"ledger\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"role\": \"taker\",\n        \"base_decimals\": \"<integer>\",\n        \"quote_decimals\": \"<integer>\",\n        \"usd_volume\": \"<string>\",\n        \"counterparty\": \"<string>\",\n        \"routed_via\": \"<string>\",\n        \"signer\": \"<string>\"\n      }\n    ],\n    \"note\": \"<string>\",\n    \"lower_bound\": \"<boolean>\",\n    \"next_cursor\": \"<string>\"\n  }\n}",
+                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"proxy_deviation\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false,\n    \"under_review\": false,\n    \"detectors_partial\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"under_review_reason\": \"<string>\",\n  \"data\": {\n    \"account\": \"<string>\",\n    \"trades\": [\n      {\n        \"ts\": \"<dateTime>\",\n        \"source\": \"<string>\",\n        \"base_asset\": \"<string>\",\n        \"quote_asset\": \"<string>\",\n        \"base_amount\": \"<string>\",\n        \"quote_amount\": \"<string>\",\n        \"tx_hash\": \"<string>\",\n        \"ledger\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"role\": \"maker\",\n        \"base_decimals\": \"<integer>\",\n        \"quote_decimals\": \"<integer>\",\n        \"usd_volume\": \"<string>\",\n        \"counterparty\": \"<string>\",\n        \"routed_via\": \"<string>\",\n        \"signer\": \"<string>\"\n      },\n      {\n        \"ts\": \"<dateTime>\",\n        \"source\": \"<string>\",\n        \"base_asset\": \"<string>\",\n        \"quote_asset\": \"<string>\",\n        \"base_amount\": \"<string>\",\n        \"quote_amount\": \"<string>\",\n        \"tx_hash\": \"<string>\",\n        \"ledger\": \"<integer>\",\n        \"op_index\": \"<integer>\",\n        \"role\": \"maker\",\n        \"base_decimals\": \"<integer>\",\n        \"quote_decimals\": \"<integer>\",\n        \"usd_volume\": \"<string>\",\n        \"counterparty\": \"<string>\",\n        \"routed_via\": \"<string>\",\n        \"signer\": \"<string>\"\n      }\n    ],\n    \"note\": \"<string>\",\n    \"lower_bound\": \"<boolean>\",\n    \"next_cursor\": \"<string>\"\n  }\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },
@@ -47167,7 +47594,7 @@
                           "value": "application/json"
                         }
                       ],
-                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"proxy_deviation\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false,\n    \"under_review\": false,\n    \"detectors_partial\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"under_review_reason\": \"<string>\",\n  \"data\": {\n    \"account\": \"<string>\",\n    \"inbound\": {\n      \"created_by\": {\n        \"edges\": [\n          {\n            \"account\": \"<string>\",\n            \"first_ledger\": \"<integer>\",\n            \"last_ledger\": \"<integer>\",\n            \"first_at\": \"<dateTime>\",\n            \"last_at\": \"<dateTime>\",\n            \"creations\": \"<integer>\",\n            \"funded_stroops\": \"<string>\",\n            \"sponsorships_started\": \"<integer>\"\n          },\n          {\n            \"account\": \"<string>\",\n            \"first_ledger\": \"<integer>\",\n            \"last_ledger\": \"<integer>\",\n            \"first_at\": \"<dateTime>\",\n            \"last_at\": \"<dateTime>\",\n            \"creations\": \"<integer>\",\n            \"funded_stroops\": \"<string>\",\n            \"sponsorships_started\": \"<integer>\"\n          }\n        ],\n        \"total\": \"<integer>\",\n        \"truncated\": \"<boolean>\"\n      },\n      \"sponsored_by\": {\n        \"edges\": [\n          {\n            \"account\": \"<string>\",\n            \"first_ledger\": \"<integer>\",\n            \"last_ledger\": \"<integer>\",\n            \"first_at\": \"<dateTime>\",\n            \"last_at\": \"<dateTime>\",\n            \"creations\": \"<integer>\",\n            \"funded_stroops\": \"<string>\",\n            \"sponsorships_started\": \"<integer>\"\n          },\n          {\n            \"account\": \"<string>\",\n            \"first_ledger\": \"<integer>\",\n            \"last_ledger\": \"<integer>\",\n            \"first_at\": \"<dateTime>\",\n            \"last_at\": \"<dateTime>\",\n            \"creations\": \"<integer>\",\n            \"funded_stroops\": \"<string>\",\n            \"sponsorships_started\": \"<integer>\"\n          }\n        ],\n        \"total\": \"<integer>\",\n        \"truncated\": \"<boolean>\"\n      }\n    },\n    \"outbound\": {\n      \"created\": {\n        \"accounts\": \"<integer>\",\n        \"creations\": \"<integer>\",\n        \"funded_stroops\": \"<string>\",\n        \"first_ledger\": \"<integer>\",\n        \"last_ledger\": \"<integer>\",\n        \"first_at\": \"<dateTime>\",\n        \"last_at\": \"<dateTime>\"\n      },\n      \"sponsored\": {\n        \"accounts\": \"<integer>\",\n        \"sponsorships_started\": \"<integer>\",\n        \"revocations_issued\": \"<integer>\",\n        \"first_ledger\": \"<integer>\",\n        \"last_ledger\": \"<integer>\",\n        \"first_at\": \"<dateTime>\",\n        \"last_at\": \"<dateTime>\"\n      }\n    },\n    \"coverage\": {\n      \"creation\": {\n        \"from_ledger\": \"<integer>\",\n        \"thru_ledger\": \"<integer>\",\n        \"from_time\": \"<dateTime>\",\n        \"thru_time\": \"<dateTime>\",\n        \"computed_at\": \"<dateTime>\"\n      },\n      \"sponsorship\": {\n        \"from_ledger\": \"<integer>\",\n        \"thru_ledger\": \"<integer>\",\n        \"from_time\": \"<dateTime>\",\n        \"thru_time\": \"<dateTime>\",\n        \"computed_at\": \"<dateTime>\"\n      }\n    },\n    \"note\": \"<string>\",\n    \"relation\": \"created\",\n    \"edges\": [\n      {\n        \"account\": \"<string>\",\n        \"first_ledger\": \"<integer>\",\n        \"last_ledger\": \"<integer>\",\n        \"first_at\": \"<dateTime>\",\n        \"last_at\": \"<dateTime>\",\n        \"creations\": \"<integer>\",\n        \"funded_stroops\": \"<string>\",\n        \"sponsorships_started\": \"<integer>\"\n      },\n      {\n        \"account\": \"<string>\",\n        \"first_ledger\": \"<integer>\",\n        \"last_ledger\": \"<integer>\",\n        \"first_at\": \"<dateTime>\",\n        \"last_at\": \"<dateTime>\",\n        \"creations\": \"<integer>\",\n        \"funded_stroops\": \"<string>\",\n        \"sponsorships_started\": \"<integer>\"\n      }\n    ],\n    \"next_cursor\": \"<string>\"\n  }\n}",
+                      "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"proxy_deviation\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false,\n    \"under_review\": false,\n    \"detectors_partial\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"under_review_reason\": \"<string>\",\n  \"data\": {\n    \"account\": \"<string>\",\n    \"inbound\": {\n      \"created_by\": {\n        \"edges\": [\n          {\n            \"account\": \"<string>\",\n            \"first_ledger\": \"<integer>\",\n            \"last_ledger\": \"<integer>\",\n            \"first_at\": \"<dateTime>\",\n            \"last_at\": \"<dateTime>\",\n            \"creations\": \"<integer>\",\n            \"funded_stroops\": \"<string>\",\n            \"sponsorships_started\": \"<integer>\"\n          },\n          {\n            \"account\": \"<string>\",\n            \"first_ledger\": \"<integer>\",\n            \"last_ledger\": \"<integer>\",\n            \"first_at\": \"<dateTime>\",\n            \"last_at\": \"<dateTime>\",\n            \"creations\": \"<integer>\",\n            \"funded_stroops\": \"<string>\",\n            \"sponsorships_started\": \"<integer>\"\n          }\n        ],\n        \"total\": \"<integer>\",\n        \"truncated\": \"<boolean>\"\n      },\n      \"sponsored_by\": {\n        \"edges\": [\n          {\n            \"account\": \"<string>\",\n            \"first_ledger\": \"<integer>\",\n            \"last_ledger\": \"<integer>\",\n            \"first_at\": \"<dateTime>\",\n            \"last_at\": \"<dateTime>\",\n            \"creations\": \"<integer>\",\n            \"funded_stroops\": \"<string>\",\n            \"sponsorships_started\": \"<integer>\"\n          },\n          {\n            \"account\": \"<string>\",\n            \"first_ledger\": \"<integer>\",\n            \"last_ledger\": \"<integer>\",\n            \"first_at\": \"<dateTime>\",\n            \"last_at\": \"<dateTime>\",\n            \"creations\": \"<integer>\",\n            \"funded_stroops\": \"<string>\",\n            \"sponsorships_started\": \"<integer>\"\n          }\n        ],\n        \"total\": \"<integer>\",\n        \"truncated\": \"<boolean>\"\n      }\n    },\n    \"outbound\": {\n      \"created\": {\n        \"accounts\": \"<integer>\",\n        \"creations\": \"<integer>\",\n        \"funded_stroops\": \"<string>\",\n        \"first_ledger\": \"<integer>\",\n        \"last_ledger\": \"<integer>\",\n        \"first_at\": \"<dateTime>\",\n        \"last_at\": \"<dateTime>\"\n      },\n      \"sponsored\": {\n        \"accounts\": \"<integer>\",\n        \"sponsorships_started\": \"<integer>\",\n        \"revocations_issued\": \"<integer>\",\n        \"first_ledger\": \"<integer>\",\n        \"last_ledger\": \"<integer>\",\n        \"first_at\": \"<dateTime>\",\n        \"last_at\": \"<dateTime>\"\n      }\n    },\n    \"coverage\": {\n      \"creation\": {\n        \"from_ledger\": \"<integer>\",\n        \"thru_ledger\": \"<integer>\",\n        \"from_time\": \"<dateTime>\",\n        \"thru_time\": \"<dateTime>\",\n        \"computed_at\": \"<dateTime>\"\n      },\n      \"sponsorship\": {\n        \"from_ledger\": \"<integer>\",\n        \"thru_ledger\": \"<integer>\",\n        \"from_time\": \"<dateTime>\",\n        \"thru_time\": \"<dateTime>\",\n        \"computed_at\": \"<dateTime>\"\n      }\n    },\n    \"note\": \"<string>\",\n    \"relation\": \"sponsored\",\n    \"edges\": [\n      {\n        \"account\": \"<string>\",\n        \"first_ledger\": \"<integer>\",\n        \"last_ledger\": \"<integer>\",\n        \"first_at\": \"<dateTime>\",\n        \"last_at\": \"<dateTime>\",\n        \"creations\": \"<integer>\",\n        \"funded_stroops\": \"<string>\",\n        \"sponsorships_started\": \"<integer>\"\n      },\n      {\n        \"account\": \"<string>\",\n        \"first_ledger\": \"<integer>\",\n        \"last_ledger\": \"<integer>\",\n        \"first_at\": \"<dateTime>\",\n        \"last_at\": \"<dateTime>\",\n        \"creations\": \"<integer>\",\n        \"funded_stroops\": \"<string>\",\n        \"sponsorships_started\": \"<integer>\"\n      }\n    ],\n    \"next_cursor\": \"<string>\"\n  }\n}",
                       "cookie": [],
                       "_postman_previewlanguage": "json"
                     },
@@ -47637,7 +48064,7 @@
                               "value": "application/json"
                             }
                           ],
-                          "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"proxy_deviation\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false,\n    \"under_review\": false,\n    \"detectors_partial\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"under_review_reason\": \"<string>\",\n  \"data\": {\n    \"account\": \"<string>\",\n    \"relation\": \"created\",\n    \"covered\": \"<boolean>\",\n    \"holdings\": [\n      {\n        \"asset\": \"<string>\",\n        \"kind\": \"classic\",\n        \"holders\": \"<long>\",\n        \"balance\": \"<string>\",\n        \"price_usd\": \"<string>\",\n        \"value_usd\": \"<string>\"\n      },\n      {\n        \"asset\": \"<string>\",\n        \"kind\": \"contract\",\n        \"holders\": \"<long>\",\n        \"balance\": \"<string>\",\n        \"price_usd\": \"<string>\",\n        \"value_usd\": \"<string>\"\n      }\n    ],\n    \"holdings_truncated\": \"<boolean>\",\n    \"valuation\": {\n      \"priced_holdings\": \"<integer>\",\n      \"unpriced_holdings\": \"<integer>\",\n      \"price_cap\": \"<integer>\",\n      \"unpriced_over_cap\": \"<integer>\",\n      \"basis\": \"live_vwap_current\",\n      \"total_usd\": \"<string>\",\n      \"degraded\": \"<boolean>\"\n    },\n    \"flows\": {\n      \"granularity\": \"1M\",\n      \"assets\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"assets_truncated\": \"<boolean>\",\n      \"points\": [\n        {\n          \"period\": \"<string>\",\n          \"period_start\": \"<dateTime>\",\n          \"movements\": \"<long>\",\n          \"active_accounts\": \"<long>\",\n          \"priced_assets\": \"<long>\",\n          \"by_asset\": [\n            {\n              \"asset\": \"<string>\",\n              \"inflow\": \"<string>\",\n              \"outflow\": \"<string>\",\n              \"scaled\": \"<boolean>\",\n              \"inflow_usd\": \"<string>\",\n              \"outflow_usd\": \"<string>\",\n              \"inflow_usd_then\": \"<string>\",\n              \"outflow_usd_then\": \"<string>\",\n              \"price_usd_then\": \"<string>\"\n            },\n            {\n              \"asset\": \"<string>\",\n              \"inflow\": \"<string>\",\n              \"outflow\": \"<string>\",\n              \"scaled\": \"<boolean>\",\n              \"inflow_usd\": \"<string>\",\n              \"outflow_usd\": \"<string>\",\n              \"inflow_usd_then\": \"<string>\",\n              \"outflow_usd_then\": \"<string>\",\n              \"price_usd_then\": \"<string>\"\n            }\n          ],\n          \"inflow_usd\": \"<string>\",\n          \"outflow_usd\": \"<string>\",\n          \"inflow_usd_then\": \"<string>\",\n          \"outflow_usd_then\": \"<string>\"\n        },\n        {\n          \"period\": \"<string>\",\n          \"period_start\": \"<dateTime>\",\n          \"movements\": \"<long>\",\n          \"active_accounts\": \"<long>\",\n          \"priced_assets\": \"<long>\",\n          \"by_asset\": [\n            {\n              \"asset\": \"<string>\",\n              \"inflow\": \"<string>\",\n              \"outflow\": \"<string>\",\n              \"scaled\": \"<boolean>\",\n              \"inflow_usd\": \"<string>\",\n              \"outflow_usd\": \"<string>\",\n              \"inflow_usd_then\": \"<string>\",\n              \"outflow_usd_then\": \"<string>\",\n              \"price_usd_then\": \"<string>\"\n            },\n            {\n              \"asset\": \"<string>\",\n              \"inflow\": \"<string>\",\n              \"outflow\": \"<string>\",\n              \"scaled\": \"<boolean>\",\n              \"inflow_usd\": \"<string>\",\n              \"outflow_usd\": \"<string>\",\n              \"inflow_usd_then\": \"<string>\",\n              \"outflow_usd_then\": \"<string>\",\n              \"price_usd_then\": \"<string>\"\n            }\n          ],\n          \"inflow_usd\": \"<string>\",\n          \"outflow_usd\": \"<string>\",\n          \"inflow_usd_then\": \"<string>\",\n          \"outflow_usd_then\": \"<string>\"\n        }\n      ]\n    },\n    \"contracts\": [\n      {\n        \"contract_id\": \"<string>\",\n        \"movements\": \"<long>\",\n        \"active_accounts\": \"<long>\",\n        \"first_at\": \"<dateTime>\",\n        \"last_at\": \"<dateTime>\",\n        \"protocol\": \"<string>\",\n        \"label\": \"<string>\"\n      },\n      {\n        \"contract_id\": \"<string>\",\n        \"movements\": \"<long>\",\n        \"active_accounts\": \"<long>\",\n        \"first_at\": \"<dateTime>\",\n        \"last_at\": \"<dateTime>\",\n        \"protocol\": \"<string>\",\n        \"label\": \"<string>\"\n      }\n    ],\n    \"positions\": [\n      {\n        \"protocol\": \"<string>\",\n        \"position_kind\": \"<string>\",\n        \"venue\": \"<string>\",\n        \"holders\": \"<long>\",\n        \"amount\": \"<string>\",\n        \"asset\": \"<string>\",\n        \"asset_label\": \"<string>\"\n      },\n      {\n        \"protocol\": \"<string>\",\n        \"position_kind\": \"<string>\",\n        \"venue\": \"<string>\",\n        \"holders\": \"<long>\",\n        \"amount\": \"<string>\",\n        \"asset\": \"<string>\",\n        \"asset_label\": \"<string>\"\n      }\n    ],\n    \"note\": \"<string>\",\n    \"cohort\": {\n      \"accounts\": \"<long>\",\n      \"live_accounts\": \"<long>\",\n      \"active_30d\": \"<long>\",\n      \"active_90d\": \"<long>\",\n      \"active_365d\": \"<long>\"\n    },\n    \"cycle\": {\n      \"computed_at\": \"<dateTime>\",\n      \"tip_ledger\": \"<long>\"\n    }\n  }\n}",
+                          "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"proxy_deviation\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false,\n    \"under_review\": false,\n    \"detectors_partial\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"under_review_reason\": \"<string>\",\n  \"data\": {\n    \"account\": \"<string>\",\n    \"relation\": \"sponsored\",\n    \"covered\": \"<boolean>\",\n    \"holdings\": [\n      {\n        \"asset\": \"<string>\",\n        \"kind\": \"classic\",\n        \"holders\": \"<long>\",\n        \"balance\": \"<string>\",\n        \"price_usd\": \"<string>\",\n        \"value_usd\": \"<string>\"\n      },\n      {\n        \"asset\": \"<string>\",\n        \"kind\": \"classic\",\n        \"holders\": \"<long>\",\n        \"balance\": \"<string>\",\n        \"price_usd\": \"<string>\",\n        \"value_usd\": \"<string>\"\n      }\n    ],\n    \"holdings_truncated\": \"<boolean>\",\n    \"valuation\": {\n      \"priced_holdings\": \"<integer>\",\n      \"unpriced_holdings\": \"<integer>\",\n      \"price_cap\": \"<integer>\",\n      \"unpriced_over_cap\": \"<integer>\",\n      \"basis\": \"live_vwap_current\",\n      \"total_usd\": \"<string>\",\n      \"degraded\": \"<boolean>\"\n    },\n    \"flows\": {\n      \"granularity\": \"1M\",\n      \"assets\": [\n        \"<string>\",\n        \"<string>\"\n      ],\n      \"assets_truncated\": \"<boolean>\",\n      \"points\": [\n        {\n          \"period\": \"<string>\",\n          \"period_start\": \"<dateTime>\",\n          \"movements\": \"<long>\",\n          \"active_accounts\": \"<long>\",\n          \"priced_assets\": \"<long>\",\n          \"by_asset\": [\n            {\n              \"asset\": \"<string>\",\n              \"inflow\": \"<string>\",\n              \"outflow\": \"<string>\",\n              \"scaled\": \"<boolean>\",\n              \"inflow_usd\": \"<string>\",\n              \"outflow_usd\": \"<string>\",\n              \"inflow_usd_then\": \"<string>\",\n              \"outflow_usd_then\": \"<string>\",\n              \"price_usd_then\": \"<string>\"\n            },\n            {\n              \"asset\": \"<string>\",\n              \"inflow\": \"<string>\",\n              \"outflow\": \"<string>\",\n              \"scaled\": \"<boolean>\",\n              \"inflow_usd\": \"<string>\",\n              \"outflow_usd\": \"<string>\",\n              \"inflow_usd_then\": \"<string>\",\n              \"outflow_usd_then\": \"<string>\",\n              \"price_usd_then\": \"<string>\"\n            }\n          ],\n          \"inflow_usd\": \"<string>\",\n          \"outflow_usd\": \"<string>\",\n          \"inflow_usd_then\": \"<string>\",\n          \"outflow_usd_then\": \"<string>\"\n        },\n        {\n          \"period\": \"<string>\",\n          \"period_start\": \"<dateTime>\",\n          \"movements\": \"<long>\",\n          \"active_accounts\": \"<long>\",\n          \"priced_assets\": \"<long>\",\n          \"by_asset\": [\n            {\n              \"asset\": \"<string>\",\n              \"inflow\": \"<string>\",\n              \"outflow\": \"<string>\",\n              \"scaled\": \"<boolean>\",\n              \"inflow_usd\": \"<string>\",\n              \"outflow_usd\": \"<string>\",\n              \"inflow_usd_then\": \"<string>\",\n              \"outflow_usd_then\": \"<string>\",\n              \"price_usd_then\": \"<string>\"\n            },\n            {\n              \"asset\": \"<string>\",\n              \"inflow\": \"<string>\",\n              \"outflow\": \"<string>\",\n              \"scaled\": \"<boolean>\",\n              \"inflow_usd\": \"<string>\",\n              \"outflow_usd\": \"<string>\",\n              \"inflow_usd_then\": \"<string>\",\n              \"outflow_usd_then\": \"<string>\",\n              \"price_usd_then\": \"<string>\"\n            }\n          ],\n          \"inflow_usd\": \"<string>\",\n          \"outflow_usd\": \"<string>\",\n          \"inflow_usd_then\": \"<string>\",\n          \"outflow_usd_then\": \"<string>\"\n        }\n      ]\n    },\n    \"contracts\": [\n      {\n        \"contract_id\": \"<string>\",\n        \"movements\": \"<long>\",\n        \"active_accounts\": \"<long>\",\n        \"first_at\": \"<dateTime>\",\n        \"last_at\": \"<dateTime>\",\n        \"protocol\": \"<string>\",\n        \"label\": \"<string>\"\n      },\n      {\n        \"contract_id\": \"<string>\",\n        \"movements\": \"<long>\",\n        \"active_accounts\": \"<long>\",\n        \"first_at\": \"<dateTime>\",\n        \"last_at\": \"<dateTime>\",\n        \"protocol\": \"<string>\",\n        \"label\": \"<string>\"\n      }\n    ],\n    \"positions\": [\n      {\n        \"protocol\": \"<string>\",\n        \"position_kind\": \"<string>\",\n        \"venue\": \"<string>\",\n        \"holders\": \"<long>\",\n        \"amount\": \"<string>\",\n        \"asset\": \"<string>\",\n        \"asset_label\": \"<string>\"\n      },\n      {\n        \"protocol\": \"<string>\",\n        \"position_kind\": \"<string>\",\n        \"venue\": \"<string>\",\n        \"holders\": \"<long>\",\n        \"amount\": \"<string>\",\n        \"asset\": \"<string>\",\n        \"asset_label\": \"<string>\"\n      }\n    ],\n    \"note\": \"<string>\",\n    \"cohort\": {\n      \"accounts\": \"<long>\",\n      \"live_accounts\": \"<long>\",\n      \"active_30d\": \"<long>\",\n      \"active_90d\": \"<long>\",\n      \"active_365d\": \"<long>\"\n    },\n    \"cycle\": {\n      \"computed_at\": \"<dateTime>\",\n      \"tip_ledger\": \"<long>\"\n    }\n  }\n}",
                           "cookie": [],
                           "_postman_previewlanguage": "json"
                         },
@@ -48049,7 +48476,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"proxy_deviation\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false,\n    \"under_review\": false,\n    \"detectors_partial\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"under_review_reason\": \"<string>\",\n  \"data\": {\n    \"entries\": {\n      \"key_0\": {\n        \"name\": \"<string>\",\n        \"tags\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"source\": \"<string>\",\n        \"domain\": \"<string>\"\n      },\n      \"key_1\": {\n        \"name\": \"<string>\",\n        \"tags\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"source\": \"<string>\",\n        \"domain\": \"<string>\"\n      }\n    }\n  }\n}",
+              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"proxy_deviation\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false,\n    \"under_review\": false,\n    \"detectors_partial\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"under_review_reason\": \"<string>\",\n  \"data\": {\n    \"entries\": {\n      \"key_0\": {\n        \"name\": \"<string>\",\n        \"tags\": [\n          \"<string>\",\n          \"<string>\"\n        ],\n        \"source\": \"<string>\",\n        \"domain\": \"<string>\"\n      }\n    }\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },
@@ -48232,7 +48659,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"proxy_deviation\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false,\n    \"under_review\": false,\n    \"detectors_partial\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"under_review_reason\": \"<string>\",\n  \"data\": {\n    \"query\": \"<string>\",\n    \"kind\": \"asset\",\n    \"canonical\": \"<string>\",\n    \"href\": \"<string>\",\n    \"supported\": \"<boolean>\",\n    \"note\": \"<string>\"\n  }\n}",
+              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"proxy_deviation\": false,\n    \"unverified_ticker_collision\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false,\n    \"under_review\": false,\n    \"detectors_partial\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"under_review_reason\": \"<string>\",\n  \"data\": {\n    \"query\": \"<string>\",\n    \"kind\": \"ledger\",\n    \"canonical\": \"<string>\",\n    \"href\": \"<string>\",\n    \"supported\": \"<boolean>\",\n    \"note\": \"<string>\"\n  }\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             },

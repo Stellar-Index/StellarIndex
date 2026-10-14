@@ -24,10 +24,10 @@ route absent on a test net is correct, not a gap.
 
 | | Count |
 |---|---:|
-| Paths in the OpenAPI contract | **144** |
+| Paths in the OpenAPI contract | **145** |
 | Level 3 — reachable | **112** |
 | Level 2 — consumed but unreachable | **0** |
-| Level 1 — not consumed | **28** |
+| Level 1 — not consumed | **29** |
 | Deliberately excluded (operational) | **4** |
 
 Level 2 is empty and enforced: `src/lib/route-reachability.test.ts` walks the
@@ -210,6 +210,7 @@ call site; `hooks.ts:useX` is a shared hook.
 | `/accounts/{g_strkey}/operations` | GET | 3 | app/accounts/AccountView.tsx |
 | `/accounts/{g_strkey}/movements` | GET | 3 | app/accounts/AccountMovements.tsx |
 | `/accounts/{g_strkey}/entry-changes` | GET | 1 | — |
+| `/accounts/{g_strkey}/sponsorships` | GET | 1 | — |
 | `/accounts/{g_strkey}/positions` | GET | 3 | app/accounts/AccountDefiPositions.tsx |
 | `/accounts/{g_strkey}/trades` | GET | 3 | app/accounts/AccountTrades.tsx |
 | `/accounts/{g_strkey}/activity` | GET | 3 | app/accounts/AccountActivitySummary.tsx |
@@ -240,6 +241,7 @@ them is a product decision, not made here.
 | `/assets/{asset_id}/movements` | Per-asset movements read from the ClickHouse lake. | Small: tab on `/assets/[slug]`. |
 | `/assets/{asset_id}/entry-changes` | Per-asset trustline, claimable-balance and liquidity-pool change history, located through the entry index and decoded from the ClickHouse lake. | Small: tab on `/assets/[slug]`. |
 | `/accounts/{g_strkey}/entry-changes` | Per-account ledger-entry change history (owner, claimant and sponsor roles), located through the entry index and decoded from the ClickHouse lake. | Small: tab on `/accounts/[g]`. |
+| `/accounts/{g_strkey}/sponsorships` | Per-account sponsorship lifecycle (started, ended, revoked, in force) with a proof against the account's `num_sponsoring` / `num_sponsored` counters. | Small: tab on `/accounts/[g]`. |
 
 ### `/methodology`
 
