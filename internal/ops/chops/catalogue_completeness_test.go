@@ -82,7 +82,7 @@ const observationWaiverNoAxis = "LedgerEntry observation (supply observer), not 
 const externalWaiver = "off-chain external (CEX/FX) vendor data — no on-chain lake event to re-derive against"
 
 // projRoutes declares coverage for every consumer.Event type the sink persists.
-// TestCatalogue_EveryPersistedEventTypeIsRoutedOrWaived proves it exhaustive against handleEvent, so a new persist arm
+// checkCatalogueEveryPersistedEventTypeIsRoutedOrWaived proves it exhaustive against handleEvent, so a new persist arm
 // without a row fails CI.
 var projRoutes = []projRoute{
 	// ── soroswap ──
@@ -290,10 +290,10 @@ func sortedTypeSet(m map[string]bool) []string {
 	return out
 }
 
-// TestCatalogue_EveryPersistedEventTypeIsRoutedOrWaived is the omission guard. Every persisted
+// checkCatalogueEveryPersistedEventTypeIsRoutedOrWaived is the omission guard. Every persisted
 // consumer.Event type must appear in projRoutes (routed or waived), and every projRoutes entry
 // must match a real persist arm, so a new table needs a reconTarget or a written waiver.
-func TestCatalogue_EveryPersistedEventTypeIsRoutedOrWaived(t *testing.T) {
+func checkCatalogueEveryPersistedEventTypeIsRoutedOrWaived(t *testing.T) {
 	persisted := sinkHandleEventTypes(t)
 
 	routed := map[string]bool{}

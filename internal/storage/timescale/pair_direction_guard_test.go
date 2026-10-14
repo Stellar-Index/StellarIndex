@@ -39,7 +39,7 @@ var directionExempt = map[string]string{
 		"resuming two directions independently cuts through a tie group.",
 }
 
-func TestCAGGPairReadsFoldBothDirections(t *testing.T) {
+func checkCAGGPairReadsFoldBothDirections(t *testing.T) {
 	t.Parallel()
 
 	files, err := filepath.Glob("*.go")
@@ -122,7 +122,7 @@ drops every row in which the market traded only the other way.
 Silent: the response looks well-formed, there is just less of it.
 
 Fix it the way its siblings do — read both orientations, one UNION ALL
-arm each (never one OR; see TestPairReadsNeverFoldDirectionsWithOr),
+arm each (never one OR; see checkPairReadsNeverFoldDirectionsWithOr),
 and fold them per ROW, on the row's own base_asset:
 
     WHERE base_asset = $%s AND quote_asset = $%s
@@ -171,9 +171,9 @@ func indent(s string) string {
 var pairKeySetFilter = regexp.MustCompile(
 	`\(\s*(?:\w+\.)?base_asset\s*\|\|\s*'\|'\s*\|\|\s*(?:\w+\.)?quote_asset\s*\)\s*=\s*ANY`)
 
-// TestBatchPairReadsFoldBothDirections is the set-keyed twin of TestCAGGPairReadsFoldBothDirections: an `=
+// checkBatchPairReadsFoldBothDirections is the set-keyed twin of checkCAGGPairReadsFoldBothDirections: an `=
 // ANY($1)` pair-key match misses the reverse orientation, so each pair must match both ways via UNION ALL.
-func TestBatchPairReadsFoldBothDirections(t *testing.T) {
+func checkBatchPairReadsFoldBothDirections(t *testing.T) {
 	t.Parallel()
 
 	files, err := filepath.Glob("*.go")
@@ -203,10 +203,10 @@ var orientationDisjunction = regexp.MustCompile(
 	`(?i)\bOR\s*\(\s*(?:\w+\.)?(?:base_asset\s*=\s*\S+\s+AND\s+(?:\w+\.)?quote_asset|` +
 		`quote_asset\s*=\s*\S+\s+AND\s+(?:\w+\.)?base_asset)\s*=`)
 
-// TestPairReadsNeverFoldDirectionsWithOr is the package-wide half of TestBothDirectionReadersUseUnionNotOr.
+// checkPairReadsNeverFoldDirectionsWithOr is the package-wide half of checkBothDirectionReadersUseUnionNotOr.
 // Composite pair indexes cover one (base, quote) equality, so an OR of two scans slowly (10683 ms vs 3.6
 // ms); fold directions as two single-direction UNION ALL arms.
-func TestPairReadsNeverFoldDirectionsWithOr(t *testing.T) {
+func checkPairReadsNeverFoldDirectionsWithOr(t *testing.T) {
 	t.Parallel()
 
 	files, err := filepath.Glob("*.go")
@@ -244,10 +244,10 @@ func TestPairReadsNeverFoldDirectionsWithOr(t *testing.T) {
 	}
 }
 
-// TestNoFragileIntervalConcat guards the pgx trap where `($N || ' days')::interval` makes Postgres infer $N
+// checkNoFragileIntervalConcat guards the pgx trap where `($N || ' days')::interval` makes Postgres infer $N
 // as text, but pgx v5 cannot encode an int as text, so the endpoint 500s on every request. Use
 // make_interval(days => $N) or make_interval(secs => $N).
-func TestNoFragileIntervalConcat(t *testing.T) {
+func checkNoFragileIntervalConcat(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)

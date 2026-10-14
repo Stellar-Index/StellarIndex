@@ -111,8 +111,8 @@ func TestDrainBudget_FitsShutdownDeadline(t *testing.T) {
 	}
 }
 
-// TestShutdownDeadline_MainUsesConstant pins by AST that the indexer's shutdown context is built from ShutdownDeadline, not a drifting literal.
-func TestShutdownDeadline_MainUsesConstant(t *testing.T) {
+// checkShutdownDeadlineMainUsesConstant pins by AST that the indexer's shutdown context is built from ShutdownDeadline, not a drifting literal.
+func checkShutdownDeadlineMainUsesConstant(t *testing.T) {
 	fset := token.NewFileSet()
 	main := parseFile(t, fset, repoDir("cmd", "stellarindex-indexer", "main.go"))
 
@@ -192,10 +192,10 @@ func unitTimeoutStopSec(t *testing.T, path string) (time.Duration, bool) {
 	return 0, false
 }
 
-// TestShutdownBudgets_MainWiresConstants: the budget sum only bounds the real drains if main passes each budget into
+// checkShutdownBudgetsMainWiresConstants: the budget sum only bounds the real drains if main passes each budget into
 // its sink. A literal, or inheriting the sink default, lets them drift apart (e.g. a 90s sink drain inside a 30s
 // process).
-func TestShutdownBudgets_MainWiresConstants(t *testing.T) {
+func checkShutdownBudgetsMainWiresConstants(t *testing.T) {
 	fset := token.NewFileSet()
 	main := parseFile(t, fset, repoDir("cmd", "stellarindex-indexer", "main.go"))
 	want := map[string]string{
@@ -229,9 +229,9 @@ func TestShutdownBudgets_MainWiresConstants(t *testing.T) {
 	}
 }
 
-// TestSinkDrain_NonTradeWritesAreResilient: drain sites must call persistEventResilient, never `_ = HandleEvent(...)`, which would drop rows while the cursor advanced.
+// checkSinkDrainNonTradeWritesAreResilient: drain sites must call persistEventResilient, never `_ = HandleEvent(...)`, which would drop rows while the cursor advanced.
 // Structural (a whole-package wiring invariant); only the handleEvent binders in sinkEventBinders may call it directly.
-func TestSinkDrain_NonTradeWritesAreResilient(t *testing.T) {
+func checkSinkDrainNonTradeWritesAreResilient(t *testing.T) {
 	resilient := map[string]int{}
 	for _, decl := range packageFuncDecls(t) {
 		name := decl.Name.Name
@@ -563,8 +563,8 @@ func TestRecordOracleMetricIfMapped_SkipsUnmappedRawAsset(t *testing.T) {
 	}
 }
 
-// TestPersistEventsGodocMatchesConcurrencyModel keeps the stale "One goroutine drains" language out of PersistEvents' godoc, which launches PersistWorkers (8) concurrent drains.
-func TestPersistEventsGodocMatchesConcurrencyModel(t *testing.T) {
+// checkPersistEventsGodocMatchesConcurrencyModel keeps the stale "One goroutine drains" language out of PersistEvents' godoc, which launches PersistWorkers (8) concurrent drains.
+func checkPersistEventsGodocMatchesConcurrencyModel(t *testing.T) {
 	src, err := os.ReadFile("sink.go")
 	if err != nil {
 		t.Fatalf("read sink.go: %v", err)
@@ -586,5 +586,22 @@ func TestPersistEventsGodocMatchesConcurrencyModel(t *testing.T) {
 	}
 	if !strings.Contains(text, "launches [PersistWorkers] concurrent drain") {
 		t.Error("sink.go godoc no longer documents PersistEvents as launching PersistWorkers concurrent drain goroutines")
+	}
+}
+
+// TestSourceShapeRules pins the sink's source shapes that no behavioural test can reach: each row parses the
+// package or the indexer main with go/ast and fails on the same defect it did as a standalone test.
+func TestSourceShapeRules(t *testing.T) {
+	rules := []struct {
+		name string
+		run  func(t *testing.T)
+	}{
+		{"shutdown deadline: main uses the constant", checkShutdownDeadlineMainUsesConstant},
+		{"shutdown budgets: main wires the constants", checkShutdownBudgetsMainWiresConstants},
+		{"sink drain: non-trade writes are resilient", checkSinkDrainNonTradeWritesAreResilient},
+		{"PersistEvents godoc matches the concurrency model", checkPersistEventsGodocMatchesConcurrencyModel},
+	}
+	for _, r := range rules {
+		t.Run(r.name, r.run)
 	}
 }

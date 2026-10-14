@@ -25,6 +25,12 @@ func TestSourceShapeRules(t *testing.T) {
 	}{
 		{"pair-bound prices_1m reads admit only closed buckets", rulePairBoundPrices1mReadsAreClosed},
 		{"every issuers.home_domain writer unbinds SEP-1", ruleIssuersHomeDomainWriterUnbindsSep1},
+		{"cagg pair reads fold both directions", checkCAGGPairReadsFoldBothDirections},
+		{"batch pair reads fold both directions", checkBatchPairReadsFoldBothDirections},
+		{"pair reads never fold directions with OR", checkPairReadsNeverFoldDirectionsWithOr},
+		{"no fragile interval concatenation", checkNoFragileIntervalConcat},
+		{"both-direction readers use UNION not OR", checkBothDirectionReadersUseUnionNotOr},
+		{"cagg series reads fold directions with UNION", checkCAGGSeriesReadsFoldDirectionsWithUnion},
 	}
 	for _, r := range rules {
 		t.Run(r.name, r.run)

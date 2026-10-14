@@ -232,7 +232,7 @@ func strPtrOrNil(s *string) any {
 
 // timedVWAPs1mForChangeSummaryQuery reads both stored orientations over closed buckets in [from, to), oldest-first (ADR-0015).
 // A bucket is admitted only once ended by both `to` and the DB clock, so the live minute never ratchets ath/atl; both directions are read
-// ([dirVWAP], TestCAGGPairReadsFoldBothDirections) since the decoder does not normalise orientation. ASC suits [scanCombinedVwap1mRows].
+// ([dirVWAP], TestSourceShapeRules/cagg_pair_reads_fold_both_directions) since the decoder does not normalise orientation. ASC suits [scanCombinedVwap1mRows].
 const timedVWAPs1mForChangeSummaryQuery = `
 		SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
 		       COALESCE(trade_count, 0), sources
