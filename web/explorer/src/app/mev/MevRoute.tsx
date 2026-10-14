@@ -68,7 +68,7 @@ export function MevRoute({ hops }: { hops: RouteHop[] }) {
               className="inline-flex flex-col items-center leading-none"
               title={`${h.source}: ${h.fromAmount} → ${h.toAmount} (smallest units)`}
             >
-              <span className="text-[9px]" style={{ color }}>
+              <span className="text-[11px]" style={{ color }}>
                 {h.source}
               </span>
               <svg width="28" height="8" viewBox="0 0 28 8" aria-hidden>

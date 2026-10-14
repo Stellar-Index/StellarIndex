@@ -5,7 +5,7 @@ import { DivergenceFeed } from './DivergenceFeed';
 
 import { NetworkUnavailable } from '@/components/NetworkUnavailable';
 import { routeAvailable } from '@/lib/network-routes';
-import { Container, PageHeader } from '@/components/ui';
+import { Badge, Container, PageHeader } from '@/components/ui';
 export const metadata: Metadata = {
   alternates: { canonical: '/divergences' },
   title: 'Divergences — cross-reference monitor',
@@ -86,20 +86,14 @@ const REFERENCES: Reference[] = [
   },
 ];
 
-function RefStatusBadge({ status }: { status: RefStatus }) {
-  const cfg = {
-    active: { label: 'Active', cls: 'bg-up-subtle text-up-strong' },
-    configured: { label: 'Configured', cls: 'bg-warn-50 text-warn-700' },
-    planned: { label: 'Planned', cls: 'bg-surface-subtle text-ink-muted' },
-  }[status];
-  return (
-    <span
-      className={`rounded-sm px-1.5 py-0.5 text-[10px] tracking-wider uppercase ${cfg.cls}`}
-    >
-      {cfg.label}
-    </span>
-  );
-}
+const REF_STATUS: Record<
+  RefStatus,
+  { label: string; tone: 'ok' | 'warn' | 'neutral' }
+> = {
+  active: { label: 'Active', tone: 'ok' },
+  configured: { label: 'Configured', tone: 'warn' },
+  planned: { label: 'Planned', tone: 'neutral' },
+};
 
 export default function DivergencesPage() {
   // Aggregator-derived feed — empty by construction on a network
@@ -134,23 +128,20 @@ export default function DivergencesPage() {
         {REFERENCES.map((r) => (
           <div
             key={r.name}
-            className="border-line bg-surface rounded-xl border p-5 shadow-sm"
+            className="rounded-card border-line bg-surface border p-4"
           >
             <div className="flex items-center gap-2">
-              <h2
-                className="text-lg font-semibold tracking-tight"
-                title={r.blurb}
-              >
+              <h2 className="text-h3 text-ink font-semibold" title={r.blurb}>
                 {r.name}
               </h2>
-              <RefStatusBadge status={r.status} />
+              <Badge tone={REF_STATUS[r.status].tone}>
+                {REF_STATUS[r.status].label}
+              </Badge>
             </div>
-            <p className="text-ink-muted mt-1 text-xs tracking-wider uppercase">
-              {r.type}
-            </p>
+            <p className="text-ink-muted mt-1 text-xs">{r.type}</p>
             {r.feeds && r.feeds.length > 0 && (
               <div className="border-line mt-4 border-t pt-3">
-                <div className="text-ink-muted text-[10px] font-medium tracking-wider uppercase">
+                <div className="text-ink-muted text-xs font-medium">
                   Wired feeds
                 </div>
                 <ul className="mt-1.5 space-y-1 text-xs">
@@ -164,7 +155,7 @@ export default function DivergencesPage() {
                         href={`https://etherscan.io/address/${f.address}`}
                         target="_blank"
                         rel="noreferrer noopener"
-                        className="text-brand-600 font-mono text-[11px] hover:underline"
+                        className="text-brand-600 font-mono text-xs hover:underline"
                         title={f.address}
                       >
                         {f.address.slice(0, 8)}…{f.address.slice(-4)}

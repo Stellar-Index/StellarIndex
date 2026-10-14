@@ -5,6 +5,16 @@ import dynamic from 'next/dynamic';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
+import {
+  Badge,
+  Segmented,
+  TBody,
+  TR,
+  Table,
+  Td,
+  Th,
+  THead,
+} from '@/components/ui';
 import { AssetText } from '@/components/AssetLink';
 import { shortAssetText } from '@/lib/asset-label';
 import { apiGet, asExample } from '@/api/client';
@@ -107,16 +117,18 @@ export function DivergenceFeed() {
         title="Divergence board"
         hint="Per pair, our VWAP beside the latest comparison against each external reference over the trailing 7 days, widest gap first. Choose a pair's Plot control to chart its history against every reference above."
         source={asExample('/v1/divergence', { limit: 100, window_days: 7 })}
-        bodyClassName="space-y-3"
+        bodyClassName="-mx-4 -mb-4"
       >
-        {q.isLoading && <p className="text-ink-muted text-sm">Loading…</p>}
+        {q.isLoading && (
+          <p className="text-ink-muted px-4 pb-4 text-sm">Loading…</p>
+        )}
         {q.isError && (
-          <p className="text-ink-muted text-sm">
+          <p className="text-ink-muted px-4 pb-4 text-sm">
             The divergence board is unavailable right now.
           </p>
         )}
         {q.data && pairs.length === 0 && (
-          <p className="text-ink-muted text-sm">
+          <p className="text-ink-muted px-4 pb-4 text-sm">
             No cross-reference comparisons recorded in the last 7 days (the
             divergence worker writes one row per configured (pair, reference)
             per tick).
@@ -126,42 +138,19 @@ export function DivergenceFeed() {
           // WCAG 1.4.10 Reflow: 8 columns of unbreakable mono cells scroll
           // inside the panel, not sideways across the whole page.
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-line text-ink-muted border-b text-left text-[11px] tracking-wider uppercase">
-                  <th scope="col" className="py-1.5 pr-4 font-normal">
-                    Pair
-                  </th>
-                  <th
-                    scope="col"
-                    className="py-1.5 pr-4 text-right font-normal"
-                  >
-                    Our price
-                  </th>
-                  <th scope="col" className="py-1.5 pr-4 font-normal">
-                    Reference
-                  </th>
-                  <th
-                    scope="col"
-                    className="py-1.5 pr-4 text-right font-normal"
-                  >
-                    Reference price
-                  </th>
-                  <th
-                    scope="col"
-                    className="py-1.5 pr-4 text-right font-normal"
-                  >
-                    Δ%
-                  </th>
-                  <th scope="col" className="py-1.5 pr-4 font-normal">
-                    Observed
-                  </th>
-                  <th scope="col" className="py-1.5 pr-4 font-normal">
-                    State
-                  </th>
-                  <th className="py-1.5 font-normal" aria-hidden />
+            <Table>
+              <THead>
+                <tr>
+                  <Th>Pair</Th>
+                  <Th align="right">Our price</Th>
+                  <Th>Reference</Th>
+                  <Th align="right">Reference price</Th>
+                  <Th align="right">Δ%</Th>
+                  <Th className="hidden xl:table-cell">Observed</Th>
+                  <Th>State</Th>
+                  <Th aria-hidden />
                 </tr>
-              </thead>
+              </THead>
               {pairs.map((p) => (
                 <PairRows
                   key={`${p.asset_id}:${p.quote_id}`}
@@ -179,7 +168,7 @@ export function DivergenceFeed() {
                   }
                 />
               ))}
-            </table>
+            </Table>
           </div>
         )}
       </Panel>
@@ -202,61 +191,58 @@ function PairRows({
   const refs = pair.references ?? [];
   const span = Math.max(refs.length, 1);
   return (
-    <tbody
-      className={`border-line/60 hover:bg-surface-muted cursor-pointer border-b last:border-0 ${
+    <TBody
+      className={`border-line hover:bg-surface-muted/70 cursor-pointer border-b last:border-0 ${
         isSel ? 'bg-surface-muted' : ''
       }`}
     >
       {refs.map((r, i) => {
         const firing = r.status === 'firing';
         return (
-          <tr key={r.reference} onClick={onSelect}>
+          <TR
+            key={r.reference}
+            onClick={onSelect}
+            className="hover:bg-transparent"
+          >
             {i === 0 && (
               <>
-                <td rowSpan={span} className="py-1.5 pr-4 align-top font-mono">
+                <Td rowSpan={span} className="align-top font-mono">
                   <AssetText canonical={pair.asset_id} />
                   <span className="text-ink-faint">/</span>
                   <AssetText canonical={pair.quote_id} />
-                </td>
-                <td
+                </Td>
+                <Td
                   rowSpan={span}
-                  className="py-1.5 pr-4 text-right align-top font-mono tabular-nums"
+                  align="right"
+                  className="align-top font-mono"
                   title={pair.our_price}
                 >
                   {formatPriceSmall(pair.our_price)}
-                </td>
+                </Td>
               </>
             )}
-            <td className="py-1.5 pr-4">
-              <code className="text-[11px]">{r.reference}</code>
-            </td>
-            <td
-              className="py-1.5 pr-4 text-right font-mono tabular-nums"
-              title={r.ref_price}
-            >
+            <Td>
+              <code className="text-xs whitespace-nowrap">{r.reference}</code>
+            </Td>
+            <Td align="right" className="font-mono" title={r.ref_price}>
               {formatPriceSmall(r.ref_price)}
-            </td>
-            <td
-              className={`py-1.5 pr-4 text-right font-mono tabular-nums ${
-                firing ? 'text-down-strong' : 'text-ink-body'
-              }`}
+            </Td>
+            <Td
+              align="right"
+              className={`font-mono ${firing ? 'text-bad-700' : ''}`}
             >
               {fmtDelta(r.delta_pct ?? '')}
-            </td>
-            <td className="text-ink-muted py-1.5 pr-4 font-mono text-[11px]">
+            </Td>
+            <Td className="text-ink-muted hidden font-mono text-xs whitespace-nowrap xl:table-cell">
               {fmtTs(r.observed_at ?? pair.observed_at ?? '')}
-            </td>
-            <td className="py-1.5 pr-4">
+            </Td>
+            <Td>
               {firing ? (
-                <span className="bg-down-subtle text-down-strong rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
-                  firing
-                </span>
+                <Badge tone="bad">Firing</Badge>
               ) : (
-                <span className="bg-up-subtle text-up-strong rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
-                  clear
-                </span>
+                <Badge tone="ok">Clear</Badge>
               )}
-            </td>
+            </Td>
             {/* The keyboard/AT path to the chart above. The rows' onClick
               is a mouse convenience only; this native <button> is what puts
               series selection in the tab order and gives Enter/Space
@@ -264,13 +250,13 @@ function PairRows({
               NOT a toggle state: the board is single-select, so
               re-activating the plotted pair leaves it plotted. */}
             {i === 0 && (
-              <td rowSpan={span} className="py-1.5 text-right align-top">
+              <Td rowSpan={span} align="right" className="align-top">
                 <button
                   type="button"
                   aria-current={isSel ? 'true' : 'false'}
                   aria-label={`Plot ${shortAssetText(pair.asset_id)}/${shortAssetText(pair.quote_id)} divergence history`}
                   onClick={onSelect}
-                  className={`focus-visible:ring-brand-500/60 rounded-sm px-1.5 py-0.5 text-[11px] transition-colors focus-visible:ring-2 focus-visible:outline-hidden ${
+                  className={`focus-visible:ring-brand-500/60 rounded-sm px-1.5 py-0.5 text-xs transition-colors focus-visible:ring-2 focus-visible:outline-hidden ${
                     isSel
                       ? 'text-brand-600 font-medium'
                       : 'text-ink-faint hover:text-brand-600'
@@ -278,12 +264,12 @@ function PairRows({
                 >
                   {isSel ? 'Plotted' : 'Plot'}
                 </button>
-              </td>
+              </Td>
             )}
-          </tr>
+          </TR>
         );
       })}
-    </tbody>
+    </TBody>
   );
 }
 
@@ -389,21 +375,15 @@ function DivergenceSeriesPanel({
       }
       bodyClassName="space-y-3"
     >
-      <div className="flex gap-1">
-        {SERIES_WINDOWS.map((d) => (
-          <button
-            key={d}
-            onClick={() => onDays(d)}
-            className={`rounded-md px-2.5 py-1 text-xs ${
-              days === d
-                ? 'bg-line text-ink'
-                : 'border-line text-ink-body hover:border-brand-500 border'
-            }`}
-          >
-            {d}d
-          </button>
-        ))}
-      </div>
+      <Segmented
+        ariaLabel="Window"
+        options={SERIES_WINDOWS.map((d) => ({
+          label: `${d}d`,
+          value: String(d),
+        }))}
+        value={String(days)}
+        onChange={(v) => onDays(Number(v) as (typeof SERIES_WINDOWS)[number])}
+      />
       {sel == null && (
         <p className="text-ink-muted text-sm">
           No pair on the board yet — nothing to plot.
@@ -449,7 +429,7 @@ function DivergenceSeriesPanel({
                 <span className="text-ink-body text-xs">
                   {l.label}
                   {firingRefs.has(l.label) && (
-                    <span className="text-down-strong"> · fired</span>
+                    <span className="text-bad-700"> · fired</span>
                   )}
                 </span>
               </li>

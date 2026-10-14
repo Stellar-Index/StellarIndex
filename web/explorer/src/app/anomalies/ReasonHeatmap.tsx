@@ -141,7 +141,7 @@ export function ReasonHeatmap({
           </tbody>
         </table>
       </div>
-      <div className="text-ink-muted flex items-center gap-1.5 text-[10px]">
+      <div className="text-ink-muted flex items-center gap-1.5 text-xs">
         <span>0</span>
         <span className="bg-surface-muted inline-block h-3 w-3 rounded-xs" />
         {LEVELS.map((l) => (

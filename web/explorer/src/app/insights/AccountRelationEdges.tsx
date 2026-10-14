@@ -230,7 +230,7 @@ export function AccountRelationEdges({
             }}
             className="border-line text-ink-body hover:border-brand-500 ml-auto rounded-md border px-2.5 py-1"
           >
-            More →
+            More
           </button>
         )}
       </div>

@@ -204,10 +204,10 @@ export default async function ConvertPage({ params }: { params: Params }) {
             { label: 'Home', href: '/' },
             { label: 'Assets', href: '/assets' },
             { label: f, href: fromHref },
-            { label: `${f} → ${t}` },
+            { label: `${f} to ${t}` },
           ]}
           title={`${f} to ${t}`}
-          meta={detail?.name ? `${detail.name} → ${t}` : undefined}
+          meta={detail?.name ? `${detail.name} to ${t}` : undefined}
         />
         {/* The baked rate paints first; the client swaps in the live one. */}
         <ConvertLiveRate

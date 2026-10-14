@@ -54,15 +54,13 @@ export function ConvertPair({
   const toLabel = direction === 'forward' ? to : from;
 
   return (
-    <section className="border-line bg-surface rounded-xl border p-5 shadow-sm">
+    <section className="rounded-card border-line bg-surface border p-4">
       <h2 className="text-h3 text-ink mb-4 font-semibold">
-        Convert {fromLabel} → {toLabel}
+        Convert {fromLabel} to {toLabel}
       </h2>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto_1fr]">
         <label className="space-y-1">
-          <span className="text-ink-muted text-xs tracking-wider uppercase">
-            From
-          </span>
+          <span className="text-ink-muted text-xs">From</span>
           <div className="border-line bg-surface flex items-center gap-2 rounded-md border p-2">
             <input
               type="number"
@@ -74,7 +72,7 @@ export function ConvertPair({
               className="w-full bg-transparent font-mono text-2xl tabular-nums focus:outline-hidden"
               aria-label={`Amount in ${fromLabel}`}
             />
-            <span className="bg-surface-subtle text-ink-body rounded-sm px-1.5 py-0.5 font-mono text-xs tracking-wider uppercase">
+            <span className="bg-surface-subtle text-ink-body rounded-sm px-1.5 py-0.5 font-mono text-xs">
               {fromLabel}
             </span>
           </div>
@@ -85,7 +83,7 @@ export function ConvertPair({
           onClick={() =>
             setDirection((d) => (d === 'forward' ? 'reverse' : 'forward'))
           }
-          className="border-line bg-surface text-ink-muted hover:border-brand-500 hover:text-brand-600 self-end rounded-md border p-2"
+          className="border-line bg-surface text-ink-muted hover:border-line-strong hover:text-ink self-end rounded-md border p-2"
           aria-label="Swap direction"
           title="Swap direction"
         >
@@ -93,14 +91,12 @@ export function ConvertPair({
         </button>
 
         <label className="space-y-1">
-          <span className="text-ink-muted text-xs tracking-wider uppercase">
-            To
-          </span>
+          <span className="text-ink-muted text-xs">To</span>
           <div className="border-line bg-surface flex items-center gap-2 rounded-md border p-2">
             <span className="text-ink w-full font-mono text-2xl tabular-nums">
               {result != null ? formatPairPrice(result) : '—'}
             </span>
-            <span className="bg-surface-subtle text-ink-body rounded-sm px-1.5 py-0.5 font-mono text-xs tracking-wider uppercase">
+            <span className="bg-surface-subtle text-ink-body rounded-sm px-1.5 py-0.5 font-mono text-xs">
               {toLabel}
             </span>
           </div>

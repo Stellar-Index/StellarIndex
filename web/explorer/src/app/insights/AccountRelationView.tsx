@@ -105,7 +105,7 @@ export function AccountRelationView({
               href={`${vocabulary.board}/`}
               className="text-brand-600 hover:underline"
             >
-              Back to the {vocabulary.boardLabel.toLowerCase()} board →
+              Back to the {vocabulary.boardLabel.toLowerCase()} board
             </Link>
           </p>
         </Panel>
@@ -150,7 +150,7 @@ export function AccountRelationView({
             href={`/accounts/${encodeURIComponent(account)}/`}
             className="text-brand-600 hover:underline"
           >
-            Full account page →
+            Full account page
           </Link>
           {otherCount > 0 && (
             <Link
@@ -158,7 +158,7 @@ export function AccountRelationView({
               className="text-brand-600 hover:underline"
             >
               Also a {RELATION[otherRelation].actor} of{' '}
-              {numFmt.format(otherCount)} accounts →
+              {numFmt.format(otherCount)} accounts
             </Link>
           )}
         </div>

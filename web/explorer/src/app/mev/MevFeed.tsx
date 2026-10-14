@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
+import { Badge } from '@/components/ui';
 import { AssetText } from '@/components/AssetLink';
 import { apiGet, asExample } from '@/api/client';
 import { formatUsdWhole } from '@/lib/format';
@@ -202,9 +203,7 @@ export function MevFeed() {
             return (
               <li key={e.event_id} className="py-3 text-sm">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <span className="bg-down-subtle text-down-strong inline-block rounded-sm px-1.5 py-0.5 text-[11px] font-medium tracking-wider uppercase">
-                    {KIND_LABELS[e.kind] ?? e.kind}
-                  </span>
+                  <Badge tone="warn">{KIND_LABELS[e.kind] ?? e.kind}</Badge>
                   {e.kind === 'wash_trade' && e.detail.variant && (
                     <span className="text-ink-muted text-[11px]">
                       {e.detail.variant === 'self_trade'
