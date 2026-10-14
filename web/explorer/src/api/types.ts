@@ -599,30 +599,36 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Every trustline, offer and claimable-balance change of one asset, newest first.
-         * @description Ledger-entry history keyed by asset (`stellar.asset_entry_changes`,
-         *     derived from the lake's `ledger_entry_changes`): one entry per change
-         *     per role the asset plays in it. `role` is `holder` (a trustline),
-         *     `selling` or `buying` (an offer), `claimable` (a claimable balance;
-         *     `account` is its sponsor), or `reserve_a` / `reserve_b` (a liquidity
-         *     pool's reserve). `entry` is the decoded entry (its last state for a
-         *     removal) and `changed` names the fields an update altered.
-         *     Keyset-paged with `?cursor=` (echo back `next_cursor`).
+         * Every trustline, claimable-balance and liquidity-pool change of one asset, newest first.
+         * @description Ledger-entry history keyed by asset: the ledgers are located through
+         *     the entry index (`stellar.asset_entry_ledgers`) and each change is
+         *     decoded from the lake's `ledger_entry_changes` on read, one entry per
+         *     role the asset plays in it. `role` is `holder` (a trustline),
+         *     `claimable` (a claimable balance; `account` is its sponsor), `pool`
+         *     (a liquidity pool's own entry) or `reserve_a` / `reserve_b` (one of
+         *     its reserves). Offers are not served here. `entry` is the decoded
+         *     entry (its last state for a removal), `changed` names the fields an
+         *     update altered and `intra_ledger_seq` is the change's apply order
+         *     inside its ledger. Keyset-paged with `?cursor=` (echo back
+         *     `next_cursor`).
          *
          *     `asset_id` is folded like `/assets/{asset_id}/movements`: `XLM`,
          *     `crypto:XLM` and the native SAC read as `native`; `CODE:ISSUER` and a
          *     classic asset's SAC read as `CODE-ISSUER`. A Soroban-only token has
          *     no classic entries, so its page is empty. Off-chain ids return 400.
          *
-         *     CEILING: the feed ends at `through_ledger`, the entry-history
-         *     derive's watermark. With no derive on the deployment it is 0 and the
-         *     page is empty with `lower_bound` true.
+         *     CEILING: the feed ends at `through_ledger`, the entry index's
+         *     watermark. While the index has not been built the route answers 503
+         *     (`entry-index-not-built`).
          *
-         *     LOWER BOUND: until the operator verifies the derive from the lake's
-         *     first ledger, `lower_bound` is true and older pages may end early.
+         *     LOWER BOUND: `lower_bound` is always true today. The index lists
+         *     trustline changes only, so a claimable-balance or liquidity-pool
+         *     change appears only in a ledger where a trustline of the asset also
+         *     changed; a page that stopped at the read's ledger budget before
+         *     filling says so in `coverage_note` and continues from `next_cursor`.
          *     `amount` is the entry's post-change balance of this asset (0 once
-         *     removed) as an integer string of stroops (ADR-0003); it is omitted
-         *     for an offer's `buying` side.
+         *     removed) as an integer string of stroops (ADR-0003); it is omitted on
+         *     a pool's own row.
          */
         get: operations["getAssetEntryChanges"];
         put?: never;
@@ -14816,6 +14822,7 @@ export interface operations {
                      *           {
                      *             "ledger": 64802900,
                      *             "ledger_close_time": "2026-10-06T14:02:29Z",
+                     *             "intra_ledger_seq": 17,
                      *             "tx_hash": "be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36",
                      *             "op_index": 0,
                      *             "change_index": 1,
@@ -14837,7 +14844,7 @@ export interface operations {
                      *         "next_cursor": "64802900.be8ac09cf011950987ae7c17badec336ccf24782a03f5573b1f982cb44c98f36.0.1.holder",
                      *         "through_ledger": 64802921,
                      *         "lower_bound": true,
-                     *         "coverage_note": "entry changes through ledger 64802921; the derive is not yet verified from the lake's first ledger, so older history may be missing"
+                     *         "coverage_note": "trustline, claimable-balance and liquidity-pool changes of this asset, decoded from the ledger-entry-change lake through ledger 64802921; offers are not served here; the entry index lists trustline changes only, so a claimable-balance or liquidity-pool change appears only in a ledger where a trustline of the asset also changed; ledgers 39000000 to 53999999 carry the earlier intra_ledger_seq numbering"
                      *       },
                      *       "as_of": "2026-10-06T14:03:31Z",
                      *       "flags": {
@@ -14857,6 +14864,11 @@ export interface operations {
                                 ledger: number;
                                 /** Format: date-time */
                                 ledger_close_time: string;
+                                /**
+                                 * Format: int64
+                                 * @description The change's apply order inside its ledger; ledgers 39000000 to 53999999 carry an earlier numbering.
+                                 */
+                                intra_ledger_seq: number;
                                 /** @description Empty for a change outside any transaction. */
                                 tx_hash: string;
                                 /**
@@ -14867,13 +14879,13 @@ export interface operations {
                                 /** Format: int64 */
                                 change_index: number;
                                 /** @enum {string} */
-                                role: "holder" | "selling" | "buying" | "claimable" | "reserve_a" | "reserve_b" | "pool";
+                                role: "holder" | "claimable" | "reserve_a" | "reserve_b" | "pool";
                                 entry_type: string;
                                 change_type: string;
                                 changed: string[];
-                                /** @description Holder, seller or sponsor; omitted for a liquidity pool. */
+                                /** @description Holder or sponsor; omitted for a liquidity pool. */
                                 account?: string;
-                                /** @description Post-change balance of this asset in stroops (ADR-0003); omitted for an offer's buying side. */
+                                /** @description Post-change balance of this asset in stroops (ADR-0003); omitted on a pool's own row. */
                                 amount?: string;
                                 /** @description The decoded ledger entry. */
                                 entry: {
@@ -14883,10 +14895,10 @@ export interface operations {
                             next_cursor?: string;
                             /**
                              * Format: int64
-                             * @description Newest ledger this feed may serve (the derive watermark).
+                             * @description Newest ledger this feed may serve (the entry index's watermark).
                              */
                             through_ledger: number;
-                            /** @description True while the derive is unverified from the lake's first ledger: older history may be missing. */
+                            /** @description Always true today: only trustline changes are indexed, so claimable-balance and liquidity-pool changes can be missed; also true on a page cut short by the read's ledger budget. */
                             lower_bound: boolean;
                             coverage_note: string;
                         };
