@@ -178,9 +178,8 @@ export function useConvertRate({
  * rateBasis — the one line that says what the displayed number actually
  * is: when it was observed, how it was derived, and whether it is a live
  * rate at all. Null when the read has told us none of those things, in
- * which case the number is shown with nothing claimed about it. Shared
- * by the header caption and the widget so the two can never disagree
- * about the same number.
+ * which case the number is shown with nothing claimed about it. Printed
+ * once, under the converter, which sits directly below the header rate.
  */
 export function rateBasis(r: ConvertRate): string | null {
   if (r.showingLastPublished)
@@ -230,7 +229,6 @@ export function ConvertLiveRate({
 }) {
   const read = useConvertRate({ from, to, initialRate, initialInverse });
   const { rate, inverse } = read;
-  const basis = rateBasis(read);
   return (
     <>
       {rate != null ? (
@@ -243,11 +241,6 @@ export function ConvertLiveRate({
       {inverse != null && (
         <p className="text-ink-body font-mono text-sm tabular-nums">
           1 {to} = {formatPairPrice(inverse)} {from}
-        </p>
-      )}
-      {basis != null && (
-        <p className="text-ink-muted text-[11px] tracking-wider uppercase">
-          {basis}
         </p>
       )}
     </>
