@@ -1,256 +1,219 @@
 'use client';
 
 import Link from 'next/link';
+import type { ReactNode } from 'react';
 
+import { asExample } from '@/api/client';
 import {
   isOnChainSource,
-  useNativeUsdPrice,
   useNetworkStats,
-  useSources,
+  useSourcesEnvelope,
 } from '@/api/hooks';
-import { CURRENT_NETWORK } from '@/lib/networks';
+import { RollingNumber } from '@/components/primitives/RollingNumber';
+import { RequestReveal } from '@/components/reveal/RequestReveal';
 import { Stat } from '@/components/ui';
+import { CURRENT_NETWORK } from '@/lib/networks';
 import { cn } from '@/lib/cn';
 import {
-  compareDecimalStrings,
-  formatPriceSmall,
   formatCompact,
   formatCompactUnits,
   sumDecimalStrings,
 } from '@/lib/format';
-import {
-  isFrameStale,
-  useLiveClock,
-  usePriceFlash,
-  useTipStream,
-} from '@/lib/live/hooks';
+import { isFrameStale, useLedgerStream, useLiveClock } from '@/lib/live/hooks';
 
 /**
- * HomeNetworkStrip — 5-card network-level stats hero on the home
- * page. Sits above the existing NetworkLivePanel /
- * SystemHealthLivePanel grid, giving the user an immediate
- * scale-of-the-network read at the top of the page:
+ * HomeNetworkStrip — the row of five network tiles under the landing finder.
  *
- *   - Stellar ON-CHAIN 24h USD volume (SDEX + Soroban DEXes),
- *     summed from the DEX-subclass /v1/sources — NOT the all-source
- *     /v1/network/stats total, which the CEX feeds dominate
- *   - Active markets in the trailing 24h
- *   - Asset directory size (classic assets indexed)
- *   - Sources online (Class=exchange contributors to VWAP)
- *   - XLM price (with 24h change pill)
- *
- * Markets / assets / sources / ledger come from /v1/network/stats
- * (server-aggregated across the full corpus). The 24h volume is
- * computed from /v1/sources (DEX-subclass sum) so it's Stellar-only.
- *
- * XLM price comes from /v1/price?asset=native (the canonical VWAP).
- * It must NOT come from /v1/assets / useCoins — native XLM has no
- * classic_assets row, so it isn't in that listing at all; pulling
- * "the first coin" resolved to USDC (~$1.00) mislabelled as XLM.
+ * 24h volume is the DEX-subclass sum of /v1/sources (Stellar on-chain only;
+ * the /v1/network/stats total is dominated by CEX feeds that never touch the
+ * chain). Markets, assets and sources come from /v1/network/stats. The ledger
+ * tip follows the SSE ledger stream while fresh and falls back to the polled
+ * stat. Every tile dates itself from the server's `as_of` (or the frame's
+ * `ingested_at`), never from the client's fetch time, and says so when the
+ * envelope is flagged stale.
  */
 export function HomeNetworkStrip() {
   const stats = useNetworkStats();
-  const sources = useSources(undefined, true);
-  const native = useNativeUsdPrice();
+  const sources = useSourcesEnvelope(undefined, true);
+  const frame = useLedgerStream();
+  const clock = useLiveClock();
 
-  // Stellar ON-CHAIN 24h volume = sum of DEX-subclass sources (SDEX +
-  // the Soroban DEXes). /v1/network/stats.volume_24h_usd is the
-  // ALL-source total — dominated by the CEX feeds (Binance et al.),
-  // which don't trade on Stellar — so it isn't "Stellar volume".
+  const net = stats.data?.data;
+  const statsAt = stats.data?.as_of;
+  const statsStale = stats.data?.flags?.stale === true;
+  const sourceRows = sources.data?.data ?? [];
+  const sourcesAt = sources.data?.as_of;
+  const sourcesStale = sources.data?.flags?.stale === true;
+
+  const dexSources = sourceRows.filter((s) => s.subclass === 'dex');
   const stellarVolume = sumDecimalStrings(
-    (sources.data ?? [])
-      .filter((s) => s.subclass === 'dex')
-      .map((s) => s.volume_24h_usd),
+    dexSources.map((s) => s.volume_24h_usd),
   );
   // Any flagged source makes the sum a lower bound (excluded unpriced trades).
-  const volumeLowerBound = (sources.data ?? []).some(
-    (s) => s.subclass === 'dex' && s.volume_lower_bound,
-  );
+  const volumeLowerBound = dexSources.some((s) => s.volume_lower_bound);
   const volume =
     stellarVolume != null && Number(stellarVolume) > 0 ? stellarVolume : null;
-  const activeMarkets = stats.data?.markets_count_24h ?? null;
-  const assetsIndexed = stats.data?.assets_indexed ?? null;
-  const exchangeSources = stats.data?.exchange_sources ?? null;
-  // The lean test nets run no off-chain (CEX/oracle/aggregator) feeds, so
-  // exchange_sources is a leaked mainnet count ("12 exchange feeds live" on a
-  // net where zero run). Show the real on-chain source count there instead.
-  const onChainSources = (sources.data ?? []).filter(isOnChainSource).length;
-  const tipLedger = stats.data?.latest_ledger ?? null;
+  const activeMarkets = net?.markets_count_24h ?? null;
+  const assetsIndexed = net?.assets_indexed ?? null;
+  const exchangeSources = net?.exchange_sources ?? null;
+  // The lean test nets run no off-chain feeds, so exchange_sources would be a
+  // leaked mainnet count there; show the real on-chain source count instead.
+  const onChainSources = sourceRows.filter(isOnChainSource).length;
 
-  // XLM price from the canonical native VWAP — NOT the coins list
-  // (native has no classic_assets row, so it isn't in /v1/assets).
-  // While the tip stream is fresh it takes over, ticking live with a
-  // direction flash (RT-2); the polled VWAP is the fallback.
-  const tip = useTipStream('native');
-  const clock = useLiveClock();
-  const tipPriceStr =
-    tip != null && !isFrameStale(clock, tip.receivedAt, 30_000)
-      ? tip.data.data?.price
-      : undefined;
-  const tipActive =
-    tipPriceStr != null && (compareDecimalStrings(tipPriceStr, '0') ?? 0) > 0;
-  const flash = usePriceFlash(tipActive ? tipPriceStr : undefined);
-  const xlmPrice = tipActive ? tipPriceStr : native.price;
-  const xlmChange = native.change24hPct;
+  const streamLive =
+    frame != null && !isFrameStale(clock, frame.receivedAt, 30_000);
+  const tipLedger = streamLive
+    ? frame.data.latest_ledger
+    : (net?.latest_ledger ?? null);
+  const tipAt = streamLive ? frame.data.ingested_at : statsAt;
 
-  // On a net with no aggregator both USD tiles are structurally "—"
-  // AND both link to /markets, which is empty there — so the strip sent
-  // the reader from a dash to a blank table. Drop them and narrow the
-  // grid rather than render two dead tiles pointing at a dead page; the
-  // chain-native tiles (assets, on-chain sources, ledger tip) carry the
-  // strip on those networks.
   const pricing = CURRENT_NETWORK.pricing;
   return (
-    <section
-      className={cn(
-        'grid grid-cols-2 gap-3',
-        pricing ? 'md:grid-cols-5' : 'md:grid-cols-3',
-      )}
-    >
-      {pricing && (
+    <section aria-labelledby="home-network-heading" className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h2
+          id="home-network-heading"
+          className="text-h3 text-ink font-semibold"
+        >
+          {CURRENT_NETWORK.label}
+        </h2>
+        <RequestReveal
+          example={asExample('/v1/network/stats')}
+          position="inline"
+        />
+      </div>
+      <div
+        className={cn(
+          'grid grid-cols-2 gap-3 sm:gap-4',
+          pricing ? 'md:grid-cols-3 lg:grid-cols-5' : 'md:grid-cols-3',
+        )}
+      >
+        {pricing && (
+          <Cell
+            label="24h volume"
+            value={
+              volume != null
+                ? `${volumeLowerBound ? '≥ ' : ''}$${formatCompactUnits(volume)}`
+                : '—'
+            }
+            sub={volumeLowerBound ? 'on-chain, lower bound' : 'on-chain'}
+            at={sourcesAt}
+            stale={sourcesStale}
+            href="/markets"
+          />
+        )}
+        {pricing && (
+          <Cell
+            label="Active markets"
+            value={
+              activeMarkets != null
+                ? activeMarkets.toLocaleString('en-US')
+                : '—'
+            }
+            sub="traded in 24h"
+            at={statsAt}
+            stale={statsStale}
+            href="/markets"
+          />
+        )}
         <Cell
-          label="24h volume"
+          label="Assets indexed"
+          value={assetsIndexed != null ? formatCompact(assetsIndexed) : '—'}
+          sub="classic assets"
+          at={statsAt}
+          stale={statsStale}
+          href="/assets"
+        />
+        <Cell
+          label="Sources online"
           value={
-            volume != null
-              ? `${volumeLowerBound ? '≥ ' : ''}$${formatCompactUnits(volume)}`
-              : '—'
+            pricing
+              ? exchangeSources != null
+                ? `${exchangeSources}`
+                : '—'
+              : sources.data
+                ? `${onChainSources}`
+                : '—'
           }
-          sub={
-            volumeLowerBound
-              ? 'Stellar on-chain (SDEX + DEXes), lower bound'
-              : 'Stellar on-chain (SDEX + DEXes)'
-          }
-          href="/markets"
+          sub={pricing ? 'exchange feeds' : 'on-chain sources'}
+          at={pricing ? statsAt : sourcesAt}
+          stale={pricing ? statsStale : sourcesStale}
+          href="/sources"
         />
-      )}
-      {pricing && (
-        <Cell
-          label="Active markets"
-          value={
-            activeMarkets != null ? activeMarkets.toLocaleString('en-US') : '—'
-          }
-          sub="trading in last 24h"
-          href="/markets"
-        />
-      )}
-      <Cell
-        label="Assets indexed"
-        value={assetsIndexed != null ? formatCompact(assetsIndexed) : '—'}
-        sub="classic assets"
-        href="/assets"
-      />
-      <Cell
-        label="Sources online"
-        value={
-          CURRENT_NETWORK.pricing
-            ? exchangeSources != null
-              ? `${exchangeSources}`
-              : '—'
-            : sources.data
-              ? `${onChainSources}`
-              : '—'
-        }
-        sub={
-          CURRENT_NETWORK.pricing ? 'exchange feeds live' : 'on-chain sources'
-        }
-        href="/sources"
-      />
-      {pricing && xlmPrice != null ? (
-        <Cell
-          label="XLM"
-          value={`$${formatPriceSmall(xlmPrice)}`}
-          flash={flash}
-          sub={
-            xlmChange != null && Number.isFinite(xlmChange)
-              ? `${xlmChange > 0 ? '+' : ''}${xlmChange.toFixed(2)}% 24h`
-              : 'no 24h baseline'
-          }
-          tone={
-            xlmChange != null && Number.isFinite(xlmChange)
-              ? xlmChange > 0
-                ? 'up'
-                : xlmChange < 0
-                  ? 'down'
-                  : undefined
-              : undefined
-          }
-          href="/assets/XLM"
-        />
-      ) : (
         <Cell
           label="Ledger tip"
           value={
-            tipLedger != null ? `#${tipLedger.toLocaleString('en-US')}` : '—'
+            tipLedger != null ? (
+              <RollingNumber value={String(tipLedger)} />
+            ) : (
+              '—'
+            )
           }
-          sub="ingest cursor"
-          mono
-          href="/diagnostics"
+          sub={streamLive ? 'live' : 'ingest cursor'}
+          at={tipAt}
+          stale={!streamLive && statsStale}
+          href="/ledgers"
+          className={pricing ? 'col-span-2 md:col-span-1' : undefined}
         />
-      )}
+      </div>
     </section>
   );
+}
+
+function asOf(iso: string | undefined): string | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return null;
+  return `as of ${new Date(t).toISOString().slice(11, 19)} UTC`;
 }
 
 function Cell({
   label,
   value,
   sub,
-  tone,
-  mono,
+  at,
+  stale,
   href,
-  flash,
+  className,
 }: {
   label: string;
-  value: string;
-  sub?: string;
-  tone?: 'up' | 'down';
-  mono?: boolean;
-  href?: string;
-  /** Live-tick direction flash for the value (RT-2). */
-  flash?: 'up' | 'down' | null;
+  value: ReactNode;
+  sub: string;
+  /** Server `as_of` (or frame `ingested_at`) the value was computed at. */
+  at: string | undefined;
+  stale: boolean;
+  href: string;
+  className?: string;
 }) {
-  const subNode = sub ? (
-    <span
-      className={
-        tone === 'up'
-          ? 'text-up'
-          : tone === 'down'
-            ? 'text-down'
-            : 'text-ink-muted'
-      }
+  const stamp = asOf(at);
+  return (
+    <Link
+      href={href}
+      className={cn(
+        'border-line bg-surface hover:border-line-strong rounded-card block border p-4 transition-colors',
+        className,
+      )}
     >
-      {sub}
-    </span>
-  ) : undefined;
-  const inner = (
-    <Stat
-      label={label}
-      value={
-        <span
-          className={cn(
-            'truncate',
-            mono && 'font-mono',
-            flash === 'up' && 'flash-up',
-            flash === 'down' && 'flash-down',
-          )}
-          title={value}
-        >
-          {value}
-        </span>
-      }
-      sub={subNode}
-    />
+      <Stat
+        label={label}
+        value={
+          <span
+            className="block truncate font-mono"
+            title={typeof value === 'string' ? value : undefined}
+          >
+            {value}
+          </span>
+        }
+        sub={
+          <>
+            <span className="block">
+              {sub}
+              {stale && <span className="text-warn-500"> · stale</span>}
+            </span>
+            {stamp && <span className="text-ink-faint block">{stamp}</span>}
+          </>
+        }
+      />
+    </Link>
   );
-  const baseClass = 'block rounded-card border border-line bg-surface p-4';
-  if (href) {
-    return (
-      <Link
-        href={href}
-        className={`${baseClass} shadow-card hover:border-line-strong hover:shadow-elevated transition-all`}
-      >
-        {inner}
-      </Link>
-    );
-  }
-  return <div className={`${baseClass} shadow-card`}>{inner}</div>;
 }

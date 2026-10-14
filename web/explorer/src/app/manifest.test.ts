@@ -3,18 +3,15 @@ import { describe, expect, it } from 'vitest';
 import manifest from './manifest';
 
 /**
- * manifest.ts paired a white background_color (#ffffff) with the
- * dark-only design system's blue theme_color (#1f4ae0). PWA install UIs
- * flash background_color as the splash screen before hydration, so this
- * inverted the dark chrome for every Android/Chrome install.
- * background_color must match the design system's canvas token
- * (globals.css --color-surface-canvas), not white.
+ * PWA install UIs flash background_color as the splash screen before
+ * hydration and paint theme_color on the OS chrome, so both must be the
+ * canvas token (globals.css --color-surface-canvas) of the dark-only system.
  */
 describe('manifest', () => {
-  it('uses the dark design system canvas colour, not white', () => {
+  it('uses the canvas colour for the splash and the chrome', () => {
     const result = manifest();
 
-    expect(result.background_color).toBe('#0a0b0d');
-    expect(result.background_color).not.toBe('#ffffff');
+    expect(result.background_color).toBe('#0b0c0f');
+    expect(result.theme_color).toBe('#0b0c0f');
   });
 });

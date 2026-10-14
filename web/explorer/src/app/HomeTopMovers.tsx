@@ -8,6 +8,7 @@ import { InlineBar } from '@/components/ContractCharts';
 
 import { useCoins, useVerifiedSlugs, coinSlug, type Coin } from '@/api/hooks';
 import { assetHref } from '@/lib/fiat-slugs';
+import { assetLabel } from '@/lib/asset-label';
 import { useLedgerFollow } from '@/lib/live/hooks';
 
 /**
@@ -104,7 +105,7 @@ function MoverColumn({
                 href={assetHref(coinSlug(c))}
                 className="flex items-baseline gap-2 text-sm"
               >
-                <span className="text-ink font-medium">{c.code}</span>
+                <span className="text-ink font-medium">{assetLabel(c)}</span>
                 {verifiedSlugs?.has(coinSlug(c).toLowerCase()) &&
                   !c.unverified_ticker_collision && (
                     <span

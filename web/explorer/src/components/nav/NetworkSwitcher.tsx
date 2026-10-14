@@ -133,7 +133,10 @@ export function NetworkSwitcher({ onNavigate }: { onNavigate?: () => void }) {
         <span className="flex items-center gap-1.5 text-[11px]">
           <LiveDot tone={currentLive ? 'live' : 'muted'} />
           {currentSeq != null ? (
-            <RollingNumber value={currentSeq} className="text-ink font-mono" />
+            <RollingNumber
+              value={String(currentSeq)}
+              className="text-ink font-mono"
+            />
           ) : (
             <span className="text-ink-faint font-mono">—</span>
           )}
@@ -177,7 +180,9 @@ export function NetworkSwitcher({ onNavigate }: { onNavigate?: () => void }) {
 // null = the origin was unreachable ('—').
 function TipNumber({ tip }: { tip: number | null | undefined }) {
   if (typeof tip === 'number')
-    return <RollingNumber value={tip} className="text-ink-muted font-mono" />;
+    return (
+      <RollingNumber value={String(tip)} className="text-ink-muted font-mono" />
+    );
   return (
     <span className="text-ink-faint font-mono">
       {tip === undefined ? '···' : '—'}

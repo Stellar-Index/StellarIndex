@@ -24,12 +24,12 @@ TanStack Query. Customer dashboard at `/dashboard/*`. ~80 routes (82
    **no `tailwind.config.ts`**). Restyle by editing tokens. Compose class
    strings with `cn()` (`@/lib/cn`, last-wins merge) — never concatenate.
 3. **Dark only.** The semantic tokens are defined dark (neutral near-black
-   canvas `#0a0b0d`); there is one mode — don't add `dark:` variants or a
+   canvas `#0b0c0f`); there is one mode — don't add `dark:` variants or a
    light/dark toggle. Depth comes from surface layering + hairline borders, not
-   shadows. Type: **Fraunces serif** for display/titles (`h1`, `.font-display`),
-   **Inter** body, **JetBrains Mono** for all data/numerics/eyebrows. Charts
-   theme from tokens via `components/charts/chartTheme.ts`. See
-   `docs/frontend/dark-redesign-direction.md`.
+   shadows. Type: **Onest** for UI and display (`h1`, `.font-display` is the
+   same face tightened), **Geist Mono** for every id, hash and figure. Charts
+   theme from tokens via `components/charts/chartTheme.ts`. The contract is
+   `DESIGN.md` at the repo root.
 4. **Never hand-edit `src/api/types.ts`.** It's generated from the OpenAPI spec
    (`pnpm generate:api`) and CI drift-gated. Data flows through `api/client.ts`
    (`API_BASE_URL` + `apiGet` — import it, don't re-derive the base), build-time

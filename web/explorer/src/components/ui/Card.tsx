@@ -10,9 +10,9 @@ type CardProps = ComponentProps<'div'> & {
 };
 
 /**
- * Card is the base surface primitive — a white panel on the canvas with a
- * hairline border and a soft shadow. The whole design leans on these +
- * whitespace rather than heavy chrome. Compose with CardHeader / CardBody.
+ * Card is the base surface primitive: a surface panel on the canvas with a
+ * hairline border and no shadow. Depth comes from surface layering and
+ * whitespace, not chrome. Compose with CardHeader / CardBody.
  */
 export function Card({
   flat,
@@ -27,7 +27,7 @@ export function Card({
         'rounded-card border-line bg-surface border',
         flat ? 'shadow-none' : 'shadow-card',
         interactive &&
-          'hover:border-line-strong hover:shadow-elevated transition-shadow duration-150',
+          'hover:border-line-strong transition-colors duration-150',
         className,
       )}
       {...props}
@@ -66,7 +66,7 @@ export function CardHeader({
   return (
     <div
       className={cn(
-        'border-line flex items-start justify-between gap-4 border-b px-5 py-4',
+        'border-line flex items-start justify-between gap-4 border-b px-4 py-3',
         className,
       )}
     >
@@ -77,10 +77,10 @@ export function CardHeader({
           </div>
         )}
         {title && (
-          <H className="text-ink truncate text-[15px] font-semibold">{title}</H>
+          <H className="text-ink truncate text-sm font-semibold">{title}</H>
         )}
         {description && (
-          <p className="text-ink-muted mt-0.5 text-sm">{description}</p>
+          <p className="text-ink-muted mt-0.5 text-[13px]">{description}</p>
         )}
       </div>
       {actions && (
@@ -91,14 +91,14 @@ export function CardHeader({
 }
 
 export function CardBody({ className, ...props }: ComponentProps<'div'>) {
-  return <div className={cn('p-5', className)} {...props} />;
+  return <div className={cn('p-4', className)} {...props} />;
 }
 
 export function CardFooter({ className, ...props }: ComponentProps<'div'>) {
   return (
     <div
       className={cn(
-        'border-line text-ink-muted flex items-center justify-between gap-3 border-t px-5 py-3 text-sm',
+        'border-line text-ink-muted flex items-center justify-between gap-3 border-t px-4 py-3 text-[13px]',
         className,
       )}
       {...props}

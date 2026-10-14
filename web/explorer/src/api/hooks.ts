@@ -360,15 +360,13 @@ export type NetworkStats = GetJSON<'/network/stats'>['data'];
  *
  * Refetched every 60 s — the underlying continuous aggregate the
  * API reads from refreshes once a minute, so polling faster is
- * wasted load.
+ * wasted load. Returns the envelope: `as_of` and `flags.stale` are what
+ * a tile dates itself from.
  */
 export function useNetworkStats() {
-  return useQuery<NetworkStats>({
+  return useQuery<Envelope<NetworkStats>>({
     queryKey: ['/v1/network/stats'],
-    queryFn: async () => {
-      const env = await apiGet<{ data: NetworkStats }>('/v1/network/stats');
-      return env.data;
-    },
+    queryFn: () => apiGet<Envelope<NetworkStats>>('/v1/network/stats'),
     refetchInterval: 60_000,
   });
 }
@@ -421,7 +419,7 @@ export type Source = Omit<Schemas['Source'], 'class'> & {
   class: Schemas['Source']['class'] | 'lending' | 'router' | 'bridge';
 };
 
-type SourcesEnvelope = { data: Source[] };
+type SourcesEnvelope = Envelope<Source[]>;
 
 /**
  * isOnChainSource — true when a source observes the Stellar network
@@ -446,6 +444,23 @@ export function isOnChainSource(s: Source): boolean {
  * static-only callers (e.g. the home page's source list) leave it
  * off.
  */
+function sourcesQuery(
+  classFilter: Source['class'] | undefined,
+  include: string | undefined,
+) {
+  return {
+    queryKey: ['/v1/sources', classFilter ?? 'all', include ?? 'no-stats'],
+    queryFn: async (): Promise<SourcesEnvelope> => {
+      const env = await apiGet<SourcesEnvelope | Source[]>('/v1/sources', {
+        ...(classFilter ? { class: classFilter } : {}),
+        ...(include ? { include } : {}),
+      });
+      return Array.isArray(env) ? { data: env } : env;
+    },
+    staleTime: 5 * 60_000,
+  };
+}
+
 export function useSources(
   classFilter?: Source['class'],
   includeStats?: boolean,
@@ -456,17 +471,20 @@ export function useSources(
     : includeStats
       ? 'stats'
       : undefined;
-  return useQuery<Source[]>({
-    queryKey: ['/v1/sources', classFilter ?? 'all', include ?? 'no-stats'],
-    queryFn: async () => {
-      const env = await apiGet<SourcesEnvelope | Source[]>('/v1/sources', {
-        ...(classFilter ? { class: classFilter } : {}),
-        ...(include ? { include } : {}),
-      });
-      return Array.isArray(env) ? env : env.data;
-    },
-    staleTime: 5 * 60_000,
+  return useQuery<SourcesEnvelope, Error, Source[]>({
+    ...sourcesQuery(classFilter, include),
+    select: (env) => env.data,
   });
+}
+
+/** useSources with the server `as_of` and `flags`; shares its cache entry. */
+export function useSourcesEnvelope(
+  classFilter?: Source['class'],
+  includeStats?: boolean,
+) {
+  return useQuery<SourcesEnvelope>(
+    sourcesQuery(classFilter, includeStats ? 'stats' : undefined),
+  );
 }
 
 /**

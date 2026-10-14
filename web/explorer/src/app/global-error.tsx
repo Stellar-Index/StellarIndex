@@ -24,7 +24,7 @@ export default function GlobalError({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          background: '#0a0b0d',
+          background: '#0b0c0f',
           color: '#f4f6fa',
           fontFamily:
             "system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",

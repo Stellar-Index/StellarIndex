@@ -27,6 +27,7 @@ import {
   formatCompact,
   formatCompactUnits,
   formatPriceSmall,
+  truncateMiddle,
 } from '@/lib/format';
 import { iconProxySrc, isSafePublicImageUrl } from '@/lib/safe-domain';
 import { demoteFlaggedLast } from '@/lib/directory-tags';
@@ -34,6 +35,10 @@ import { ScamBadge } from '@/components/ScamBadge';
 import { ThinMarketBadge } from '@/components/ThinMarketBadge';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import { InlineBar } from '@/components/ContractCharts';
+import { StellarMark } from '@/components/StellarMark';
+import { RequestReveal } from '@/components/reveal/RequestReveal';
+import { asExample } from '@/api/client';
+import { assetLabel } from '@/lib/asset-label';
 
 /**
  * HomeTopAssets — the top 10 assets ranked by trailing-24h trading
@@ -61,9 +66,14 @@ export function HomeTopAssets() {
     undefined,
     undefined,
     pricing ? 'volume_24h_usd_desc' : 'observation_count_desc',
-    { sparkline: pricing, includeThin: pricing },
+    { includeThin: pricing },
   );
-  const { data: nativeCoin } = useNativeCoin({ sparkline: true });
+  const { data: nativeCoin } = useNativeCoin();
+  const listExample = asExample('/v1/assets', {
+    limit: 10,
+    order_by: pricing ? 'volume_24h_usd_desc' : 'observation_count_desc',
+    ...(pricing ? { include_thin: 'true' } : {}),
+  });
   const { data: verifiedSlugs } = useVerifiedSlugs();
   useLedgerFollow(['/v1/assets']);
 
@@ -86,9 +96,15 @@ export function HomeTopAssets() {
               : 'Ranked by observed on-chain trade count, XLM included. This network runs no price aggregator, so the USD columns are omitted rather than served empty.'}
           </p>
         </div>
-        <Link href="/assets" className="text-brand-600 text-sm hover:underline">
-          See all →
-        </Link>
+        <div className="flex items-center gap-3 whitespace-nowrap">
+          <RequestReveal example={listExample} position="inline" />
+          <Link
+            href="/assets"
+            className="text-brand-600 text-sm hover:underline"
+          >
+            See all →
+          </Link>
+        </div>
       </div>
       {isError ? (
         <EmptyState
@@ -110,8 +126,7 @@ export function HomeTopAssets() {
                 {pricing && <Th align="right">Price</Th>}
                 {pricing && <Th align="right">24h %</Th>}
                 {pricing && <Th align="right">24h volume</Th>}
-                {pricing && <Th align="right">24h chart</Th>}
-                <Th align="right">Observations</Th>
+                {!pricing && <Th align="right">Observations</Th>}
               </TR>
             </THead>
             <TBody>
@@ -119,7 +134,7 @@ export function HomeTopAssets() {
                 !data &&
                 Array.from({ length: 8 }).map((_, i) => (
                   <TR key={`sk-${i}`} className="hover:bg-transparent">
-                    <Td colSpan={pricing ? 7 : 3}>
+                    <Td colSpan={pricing ? 5 : 3}>
                       <Skeleton className="h-5 w-full" />
                     </Td>
                   </TR>
@@ -164,6 +179,7 @@ function Row({
 }) {
   const price = parseDec(coin.price_usd);
   const volumeText = formatCompactUnits(coin.volume_24h_usd);
+  const sub = assetSubLabel(coin);
   return (
     <TR>
       <Td className="text-ink-faint">{rank}</Td>
@@ -172,8 +188,12 @@ function Row({
           href={assetHref(coinSlug(coin))}
           className="group flex items-center gap-2"
         >
-          <AssetIcon image={coin.image} code={coin.code} />
-          <span className="text-ink group-hover:text-brand-600 font-medium">
+          <AssetIcon
+            image={coin.image}
+            code={coin.code}
+            native={isNativeRow(coin)}
+          />
+          <span className="text-ink group-hover:text-brand-600 font-medium whitespace-nowrap">
             {assetLabel(coin)}
           </span>
           {verified && (
@@ -197,7 +217,14 @@ function Row({
               </svg>
             </span>
           )}
-          <span className="text-ink-muted text-[11px]">{coinSlug(coin)}</span>
+          {sub && (
+            <span
+              className="text-ink-muted hidden text-xs whitespace-nowrap sm:inline"
+              title={sub.title}
+            >
+              {sub.text}
+            </span>
+          )}
           <ScamBadge tags={coin.issuer_directory_tags} />
         </Link>
       </Td>
@@ -234,20 +261,17 @@ function Row({
           )}
         </Td>
       )}
-      {pricing && (
+      {!pricing && (
         <Td align="right">
-          <RowSparkline points={coin.price_history_24h} />
+          <span className="text-ink-body font-mono">
+            {/* Absent only when the asset has no catalogue row at all —
+                unknown, not zero, so it draws as a dash and not as 0. */}
+            {coin.observation_count != null
+              ? formatCompact(coin.observation_count)
+              : '—'}
+          </span>
         </Td>
       )}
-      <Td align="right">
-        <span className="text-ink-body font-mono">
-          {/* Absent only when the asset has no catalogue row at all —
-              unknown, not zero, so it draws as a dash and not as 0. */}
-          {coin.observation_count != null
-            ? formatCompact(coin.observation_count)
-            : '—'}
-        </span>
-      </Td>
     </TR>
   );
 }
@@ -304,55 +328,6 @@ function Dash() {
   return <span className="text-ink-faint">—</span>;
 }
 
-function RowSparkline({
-  points,
-}: {
-  // The wire's own shape: absent, null, or the samples.
-  points?: Coin['price_history_24h'];
-}) {
-  const values = (points ?? [])
-    .map((pt) => (pt.p ? Number(pt.p) : null))
-    .filter((v): v is number => v != null && Number.isFinite(v));
-  if (values.length < 2) {
-    return <span className="text-ink-faint font-mono text-[10px]">—</span>;
-  }
-  const W = 80;
-  const H = 22;
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-  const stepX = W / (values.length - 1);
-  const path = values
-    .map((v, i) => {
-      const x = i * stepX;
-      const y = H - ((v - min) / range) * H;
-      return `${i === 0 ? 'M' : 'L'}${x.toFixed(2)},${y.toFixed(2)}`;
-    })
-    .join(' ');
-  const positive = values[values.length - 1] >= values[0];
-  // Use the up/down semantic tokens via currentColor so the sparkline
-  // tracks the palette (@theme in globals.css) rather than a frozen hex.
-  return (
-    <svg
-      width={W}
-      height={H}
-      className={`inline-block ${positive ? 'text-up' : 'text-down'}`}
-      viewBox={`0 0 ${W} ${H}`}
-      role="img"
-      aria-label="24h price chart"
-    >
-      <path
-        d={path}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.25}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
 function ChangePct({ raw }: { raw: string | null | undefined }) {
   if (raw == null) return <Dash />;
   const n = Number(raw);
@@ -370,8 +345,8 @@ function ChangePct({ raw }: { raw: string | null | undefined }) {
 // AssetIcon renders the asset's real logo when the API surfaces one
 // (coin.image — the issuer's SEP-1 stellar.toml CURRENCIES[].image,
 // sanitized server-side to http(s) only), and gracefully degrades to
-// the glyph/letter stand-in otherwise: a missing image, a null field,
-// or a broken/blocked URL (onError) all fall back to iconForCode.
+// the letter stand-in otherwise: a missing image, a null field,
+// or a broken/blocked URL (onError) all fall back to the letter avatar.
 //
 // NOTE: today coin.image is populated only on the single-asset detail
 // path (/v1/assets/{id}, applySep1Overlay), NOT on the /v1/assets
@@ -384,9 +359,11 @@ function ChangePct({ raw }: { raw: string | null | undefined }) {
 function AssetIcon({
   image,
   code,
+  native,
 }: {
   image?: string | null;
   code?: string | null;
+  native?: boolean;
 }) {
   const [broken, setBroken] = useState(false);
   // Host-validated, https-only — scheme-only validation let a
@@ -411,57 +388,29 @@ function AssetIcon({
   return (
     <span
       aria-hidden
-      className="bg-surface-subtle flex h-6 w-6 items-center justify-center rounded-full font-mono text-xs"
+      className="bg-surface-subtle text-ink-muted flex h-6 w-6 items-center justify-center rounded-full font-mono text-[11px] font-medium"
     >
-      {iconForCode(code)}
+      {native ? (
+        <StellarMark className="text-ink h-3.5 w-3.5" />
+      ) : (
+        (code ?? 'C').slice(0, 1).toUpperCase()
+      )}
     </span>
   );
 }
 
-// assetLabel is what the row shows when there is no `code`. A Soroban
-// contract asset has none, and rendering `{coin.code}` gave a blank
-// cell — a row with an icon, a price and no identity at all. Fall back
-// to a truncated contract id, which is what the asset detail page and
-// the /assets listing already show for these.
-function assetLabel(coin: {
-  code?: string | null;
-  asset_id?: string | null;
-}): string {
-  if (coin.code) return coin.code;
-  const id = coin.asset_id ?? '';
-  return id.length > 12 ? `${id.slice(0, 4)}…${id.slice(-4)}` : id || '—';
+function isNativeRow(coin: Coin): boolean {
+  return coin.type === 'native' || coin.asset_id === 'native';
 }
 
-// iconForCode returns a single-glyph stand-in for the asset's
-// row icon. Mirrors the unified currencies listing's iconFor so
-// home + listing render the same visual treatment for the same
-// codes.
-function iconForCode(code?: string | null): string {
-  // A Soroban contract asset has NO `code` — the field is null on the
-  // wire. Before the /v1/assets ranking was corrected the home page
-  // showed the top ten by ALL-TIME observation count, which is
-  // classic-only in practice, so every row happened to have a code and
-  // this was never exercised. Ranking by 24h volume (the ranking the
-  // caption always claimed) surfaces Soroban contracts immediately —
-  // four of them in the current top ten — and `undefined.toUpperCase()`
-  // threw inside the root render, so the WHOLE SHELL fell over to
-  // global-error, not just this row.
-  if (!code) return '◎';
-  const c = code.toUpperCase();
-  const map: Record<string, string> = {
-    XLM: '✦',
-    BTC: '₿',
-    ETH: 'Ξ',
-    USDC: '$',
-    USDT: '$',
-    EURC: '€',
-    EUROC: '€',
-    DAI: '◈',
-    LTC: 'Ł',
-    DOGE: 'Ð',
-    AQUA: '🌊',
-    yXLM: '✦',
-    BLND: '🟧',
-  };
-  return map[c] ?? c.slice(0, 1);
+// The identity line beside the code: the SEP-1 name when the issuer
+// published one, else the issuer key, else the slug, so a classic asset
+// without an issuer field is still identified by its asset_id.
+function assetSubLabel(coin: Coin): { text: string; title?: string } | null {
+  if (isNativeRow(coin)) return { text: 'Stellar Lumens' };
+  if (coin.name && coin.name !== coin.code) return { text: coin.name };
+  if (coin.issuer)
+    return { text: truncateMiddle(coin.issuer, 4, 4), title: coin.issuer };
+  if (!coin.code) return null;
+  return { text: coinSlug(coin) };
 }

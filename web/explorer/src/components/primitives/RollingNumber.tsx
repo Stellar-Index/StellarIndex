@@ -43,10 +43,12 @@ export function RollingNumber({
   value,
   className,
 }: {
-  value: number;
+  /** A number is grouped en-US; a string (an id such as a ledger sequence) renders verbatim. */
+  value: number | string;
   className?: string;
 }) {
-  const formatted = value.toLocaleString('en-US');
+  const formatted =
+    typeof value === 'string' ? value : value.toLocaleString('en-US');
   // Previous committed value, tracked with the adjust-state-during-render
   // pattern (same as SearchModal's open-reset): when the value changes we
   // record the outgoing one, and React immediately re-renders with the
