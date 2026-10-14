@@ -66,7 +66,7 @@ describe('DeploymentStats', () => {
 
 describe('contractTypeBadge', () => {
   it.each([
-    [{ protocol: 'blend', type: 'wasm' }, /blend/],
+    [{ protocol: 'blend', type: 'wasm' }, /Protocol · Blend/],
     [{ type: 'sac' }, /^SAC$/],
     [{ type: 'wasm' }, /^Contract$/],
     [{}, /^—$/],

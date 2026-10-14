@@ -1,24 +1,39 @@
 'use client';
 
 import Link from 'next/link';
-import { hrefFor } from '@/lib/hrefFor';
-import { useMemo } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
+import { hrefFor } from '@/lib/hrefFor';
 import { Panel } from '@/components/reveal';
-import { AssetLink } from '@/components/AssetLink';
+import { AssetText } from '@/components/AssetLink';
 import { apiGet, asExample } from '@/api/client';
-import { isRawOracleAsset, rawOracleSymbol } from '@/lib/asset-label';
+import {
+  isRawOracleAsset,
+  rawOracleSymbol,
+  shortAssetText,
+} from '@/lib/asset-label';
 import { formatOraclePrice, formatRelative } from '@/lib/format';
-import { sourceToneClass } from '@/lib/pillTone';
-
 // Wire shapes from the generated OpenAPI contract: /v1/sources rows via
 // the shared hooks alias; /v1/oracle/streams rows are the spec's
 // OracleReading schema.
 import type { Source as SourceRow } from '@/api/hooks';
 import type { components } from '@/api/types';
+import {
+  Badge,
+  Button,
+  Container,
+  PageHeader,
+  Segmented,
+  Skeleton,
+  TBody,
+  TR,
+  Table,
+  Td,
+  Th,
+  THead,
+} from '@/components/ui';
 
-import { Badge, Container, PageHeader, Th, Td } from '@/components/ui';
 type OracleStream = components['schemas']['OracleReading'];
 
 // Oracle capture-totality: /v1/oracle/streams omits `raw:<symbol>` rows
@@ -35,6 +50,43 @@ function isUnmappedStream(s: OracleStream): boolean {
   return s.mapped === false || isRawOracleAsset(s.asset);
 }
 
+function SourceLink({ name }: { name: string }) {
+  return (
+    <Link
+      href={hrefFor.source(name)}
+      className="text-ink hover:text-brand-600 font-medium whitespace-nowrap"
+    >
+      {name}
+    </Link>
+  );
+}
+
+function NoteRow({
+  colSpan,
+  children,
+}: {
+  colSpan: number;
+  children: ReactNode;
+}) {
+  return (
+    <TR className="hover:bg-transparent">
+      <Td colSpan={colSpan} className="text-ink-muted py-4">
+        {children}
+      </Td>
+    </TR>
+  );
+}
+
+function LoadingRow({ colSpan }: { colSpan: number }) {
+  return (
+    <TR className="hover:bg-transparent">
+      <Td colSpan={colSpan}>
+        <Skeleton className="h-4 w-64" />
+      </Td>
+    </TR>
+  );
+}
+
 export function OraclesView() {
   const sources = useQuery<SourceRow[]>({
     queryKey: ['/v1/sources', 'stats', 'oracle'],
@@ -49,7 +101,6 @@ export function OraclesView() {
     },
     refetchInterval: 60_000,
   });
-
   const streams = useQuery<OracleStream[]>({
     queryKey: ['/v1/oracle/streams', STREAMS_PARAMS],
     queryFn: async () => {
@@ -68,11 +119,7 @@ export function OraclesView() {
   // only ours to make when the request actually answered.
   const registryAvailable = sources.data != null;
   const streamsAvailable = streams.data != null;
-  // Memoise the `streams.data ?? []` defaulting so the perSourceCounts
-  // useMemo dep array stays referentially stable across renders. Without
-  // this, `streamRows` is a fresh `[]` literal on every render when
-  // streams.data is undefined, making the downstream useMemo recompute
-  // every tick.
+
   const allStreamRows = useMemo(() => streams.data ?? [], [streams.data]);
   // Mapped rows drive the "Price streams" table and the per-oracle
   // activity counts; unmapped rows are listed separately, below.
@@ -84,22 +131,37 @@ export function OraclesView() {
     () => allStreamRows.filter(isUnmappedStream),
     [allStreamRows],
   );
-
+  // Per-oracle activity counts mapped and unmapped feeds alike: an oracle
+  // publishing only unmapped symbols is live, not silent.
   const perSourceCounts = useMemo(() => {
-    const map: Record<string, { streams: number; latestTs: string }> = {};
-    for (const s of streamRows) {
-      const cur = map[s.source];
-      if (!cur || s.ts > cur.latestTs) {
-        map[s.source] = {
-          streams: (cur?.streams ?? 0) + 1,
-          latestTs: cur ? (s.ts > cur.latestTs ? s.ts : cur.latestTs) : s.ts,
-        };
-      } else {
-        map[s.source].streams++;
-      }
+    const map: Record<
+      string,
+      { mapped: number; unmapped: number; latestTs: string }
+    > = {};
+    for (const s of allStreamRows) {
+      const cur = map[s.source] ?? { mapped: 0, unmapped: 0, latestTs: s.ts };
+      if (isUnmappedStream(s)) cur.unmapped += 1;
+      else cur.mapped += 1;
+      if (s.ts > cur.latestTs) cur.latestTs = s.ts;
+      map[s.source] = cur;
     }
     return map;
+  }, [allStreamRows]);
+  const [sourceFilter, setSourceFilter] = useState('all');
+  const sourceOptions = useMemo(() => {
+    const names = [...new Set(streamRows.map((s) => s.source))].sort();
+    return [
+      { label: 'All', value: 'all' },
+      ...names.map((n) => ({ label: n, value: n })),
+    ];
   }, [streamRows]);
+  const activeFilter = sourceOptions.some((o) => o.value === sourceFilter)
+    ? sourceFilter
+    : 'all';
+  const visibleStreamRows =
+    activeFilter === 'all'
+      ? streamRows
+      : streamRows.filter((s) => s.source === activeFilter);
 
   return (
     <Container className="space-y-6 py-8">
@@ -107,7 +169,10 @@ export function OraclesView() {
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Oracles' }]}
         title="Oracles"
         meta={
-          <Badge title="Oracles are never included in the VWAP: mixing them would import their methodology and double-count the upstream markets they read.">
+          <Badge
+            tone="neutral"
+            title="Oracles are never included in the VWAP: mixing them would import their methodology and double-count the upstream markets they read."
+          >
             VWAP weight 0
           </Badge>
         }
@@ -116,183 +181,162 @@ export function OraclesView() {
       <Panel
         headingLevel={2}
         title="Connected oracles"
-        hint="Per-oracle 24h activity"
+        hint="Reported for reference, never part of the VWAP"
         source={asExample('/v1/sources', { class: 'oracle', include: 'stats' })}
-        bodyClassName="-mx-4"
+        bodyClassName="-mx-4 -mb-4"
       >
         <div className="overflow-x-auto">
-          <table className="divide-line min-w-full divide-y text-sm">
-            <thead>
-              <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
+          <Table>
+            <THead>
+              <tr>
                 <Th>Oracle</Th>
                 <Th align="right">Active streams</Th>
                 <Th align="right">Last update</Th>
-                <Th align="right">In VWAP?</Th>
               </tr>
-            </thead>
-            <tbody className="divide-line-subtle divide-y">
-              {sources.isLoading && (
-                <tr>
-                  <td
-                    colSpan={4}
-                    className="text-ink-muted px-4 py-6 text-center text-sm"
-                  >
-                    Loading oracles…
-                  </td>
-                </tr>
-              )}
+            </THead>
+            <TBody>
+              {sources.isLoading && <LoadingRow colSpan={3} />}
               {!sources.isLoading && !registryAvailable && (
-                <tr>
-                  <td
-                    colSpan={4}
-                    className="text-ink-muted px-4 py-6 text-center text-sm"
+                <NoteRow colSpan={3}>
+                  Oracle registry unavailable right now — the sources read did
+                  not return.
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="ml-3"
+                    onClick={() => sources.refetch()}
                   >
-                    Oracle registry unavailable right now — retry shortly.
-                  </td>
-                </tr>
+                    Retry
+                  </Button>
+                </NoteRow>
               )}
               {!sources.isLoading &&
                 registryAvailable &&
                 oracles.length === 0 && (
-                  <tr>
-                    <td
-                      colSpan={4}
-                      className="text-ink-muted px-4 py-6 text-center text-sm"
-                    >
-                      No oracles registered.
-                    </td>
-                  </tr>
+                  <NoteRow colSpan={3}>No oracles registered.</NoteRow>
                 )}
               {oracles.map((o) => {
                 const perSrc = perSourceCounts[o.name];
-                const tone = sourceToneClass(o.name);
                 return (
-                  <tr key={o.name} className="hover:bg-surface-muted">
+                  <TR key={o.name}>
                     <Td>
-                      <Link
-                        href={hrefFor.source(o.name)}
-                        className={`inline-block rounded-sm px-1.5 py-0.5 text-[11px] font-medium tracking-wider uppercase hover:underline ${tone}`}
-                      >
-                        {o.name}
-                      </Link>
+                      <SourceLink name={o.name} />
                     </Td>
-                    <Td align="right">
-                      <span className="text-ink-body font-mono tabular-nums">
-                        {perSrc ? perSrc.streams : '—'}
-                      </span>
+                    <Td align="right" className="font-mono whitespace-nowrap">
+                      {perSrc && perSrc.mapped > 0 ? (
+                        perSrc.mapped
+                      ) : (
+                        <span className="text-ink-faint">—</span>
+                      )}
+                      {perSrc && perSrc.unmapped > 0 && (
+                        <span className="text-ink-muted ml-1.5 text-xs">
+                          {perSrc.mapped > 0 ? '+' : ''}
+                          {perSrc.unmapped} unmapped
+                        </span>
+                      )}
                     </Td>
-                    <Td align="right">
-                      <span className="text-ink-muted font-mono text-xs">
-                        {perSrc ? formatRelative(perSrc.latestTs) : '—'}
-                      </span>
+                    <Td
+                      align="right"
+                      className="text-ink-muted font-mono text-xs"
+                      title={perSrc?.latestTs}
+                    >
+                      {perSrc ? formatRelative(perSrc.latestTs) : '—'}
                     </Td>
-                    <Td align="right">
-                      <span
-                        className={`inline-block rounded px-1.5 py-0.5 text-[10px] tracking-wider uppercase ${
-                          o.class === 'oracle'
-                            ? 'bg-line text-ink-body'
-                            : 'bg-up-subtle text-up-strong'
-                        }`}
-                        title="Oracle observations are reported but never included in the canonical VWAP — that would import their methodology."
-                      >
-                        no (policy)
-                      </span>
-                    </Td>
-                  </tr>
+                  </TR>
                 );
               })}
-            </tbody>
-          </table>
+            </TBody>
+          </Table>
         </div>
       </Panel>
 
       <Panel
         headingLevel={2}
-        title={`Price streams${streamRows.length > 0 ? ` (${streamRows.length} active)` : ''}`}
-        hint="Latest observation per (oracle, asset, quote) — 7d window"
+        title={`Price streams${
+          streamRows.length === 0
+            ? ''
+            : activeFilter === 'all'
+              ? ` (${streamRows.length} active)`
+              : ` (${visibleStreamRows.length} of ${streamRows.length})`
+        }`}
+        hint="Latest observation per oracle, asset and quote in the last 7 days"
         source={asExample('/v1/oracle/streams', STREAMS_PARAMS)}
-        bodyClassName="-mx-4"
+        bodyClassName="-mx-4 -mb-4"
       >
+        {sourceOptions.length > 2 && (
+          <div className="mx-4 mb-4 overflow-x-auto">
+            <Segmented
+              ariaLabel="Oracle"
+              options={sourceOptions}
+              value={activeFilter}
+              onChange={setSourceFilter}
+            />
+          </div>
+        )}
         <div className="overflow-x-auto">
-          <table className="divide-line min-w-full divide-y text-sm">
-            <thead>
-              <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
+          <Table>
+            <THead>
+              <tr>
                 <Th>Oracle</Th>
                 <Th>Asset</Th>
-                <Th>Quote</Th>
+                <Th className="hidden sm:table-cell">Quote</Th>
                 <Th align="right">Latest price</Th>
-                <Th align="right">Updated</Th>
+                <Th align="right" className="hidden sm:table-cell">
+                  Updated
+                </Th>
               </tr>
-            </thead>
-            <tbody className="divide-line-subtle divide-y">
-              {streams.isLoading && (
-                <tr>
-                  <td
-                    colSpan={5}
-                    className="text-ink-muted px-4 py-6 text-center text-sm"
-                  >
-                    Loading streams…
-                  </td>
-                </tr>
-              )}
+            </THead>
+            <TBody>
+              {streams.isLoading && <LoadingRow colSpan={5} />}
               {!streams.isLoading && !streamsAvailable && (
-                <tr>
-                  <td
-                    colSpan={5}
-                    className="text-ink-muted px-4 py-6 text-center text-sm"
+                <NoteRow colSpan={5}>
+                  Oracle observations unavailable right now — the streams read
+                  did not return.
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="ml-3"
+                    onClick={() => streams.refetch()}
                   >
-                    Oracle observations unavailable right now — retry shortly.
-                  </td>
-                </tr>
+                    Retry
+                  </Button>
+                </NoteRow>
               )}
               {!streams.isLoading &&
                 streamsAvailable &&
                 streamRows.length === 0 && (
-                  <tr>
-                    <td
-                      colSpan={5}
-                      className="text-ink-muted px-4 py-6 text-center text-sm"
-                    >
-                      No oracle observations in the last 7 days.
-                    </td>
-                  </tr>
+                  <NoteRow colSpan={5}>
+                    No oracle observations in the last 7 days.
+                  </NoteRow>
                 )}
-              {streamRows.map((s, i) => {
-                const tone = sourceToneClass(s.source);
-                return (
-                  <tr
-                    key={`${s.source}|${s.asset}|${s.quote}|${i}`}
-                    className="hover:bg-surface-muted"
+              {visibleStreamRows.map((s, i) => (
+                <TR key={`${s.source}|${s.asset}|${s.quote}|${i}`}>
+                  <Td>
+                    <SourceLink name={s.source} />
+                  </Td>
+                  <Td>
+                    <AssetText canonical={s.asset} />
+                  </Td>
+                  <Td className="hidden sm:table-cell">
+                    <AssetText canonical={s.quote} />
+                  </Td>
+                  <Td align="right" className="font-mono whitespace-nowrap">
+                    {formatOraclePrice(s.price)}
+                    <span className="text-ink-muted ml-1 text-xs sm:hidden">
+                      {shortAssetText(s.quote)}
+                    </span>
+                  </Td>
+                  <Td
+                    align="right"
+                    className="text-ink-muted hidden font-mono text-xs sm:table-cell"
+                    title={s.ts}
                   >
-                    <Td>
-                      <Link
-                        href={hrefFor.source(s.source)}
-                        className={`inline-block rounded-sm px-1.5 py-0.5 text-[10px] font-medium tracking-wider uppercase hover:underline ${tone}`}
-                      >
-                        {s.source}
-                      </Link>
-                    </Td>
-                    <Td>
-                      <AssetLink canonical={s.asset} />
-                    </Td>
-                    <Td>
-                      <AssetLink canonical={s.quote} />
-                    </Td>
-                    <Td align="right">
-                      <span className="text-ink-body font-mono tabular-nums">
-                        {formatOraclePrice(s.price)}
-                      </span>
-                    </Td>
-                    <Td align="right">
-                      <span className="text-ink-muted font-mono text-xs">
-                        {formatRelative(s.ts)}
-                      </span>
-                    </Td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                    {formatRelative(s.ts)}
+                  </Td>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
         </div>
       </Panel>
 
@@ -300,91 +344,71 @@ export function OraclesView() {
         <Panel
           headingLevel={2}
           title={`Unmapped feeds${unmappedRows.length > 0 ? ` (${unmappedRows.length})` : ''}`}
-          hint="Symbols published under no canonical asset — recorded verbatim, reference-only"
+          hint="Symbols published under no canonical asset, recorded verbatim for reference only"
           source={asExample('/v1/oracle/streams', STREAMS_PARAMS)}
-          bodyClassName="-mx-4"
+          bodyClassName="-mx-4 -mb-4"
         >
           <div className="overflow-x-auto">
-            <table className="divide-line min-w-full divide-y text-sm">
-              <thead>
-                <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
+            <Table>
+              <THead>
+                <tr>
                   <Th>Oracle</Th>
                   <Th>Raw symbol</Th>
                   <Th>Quote (assumed)</Th>
                   <Th align="right">Latest price</Th>
-                  <Th align="right">Updated</Th>
+                  <Th align="right" className="hidden sm:table-cell">
+                    Updated
+                  </Th>
                 </tr>
-              </thead>
-              <tbody className="divide-line-subtle divide-y">
+              </THead>
+              <TBody>
                 {unmappedRows.length === 0 && (
-                  <tr>
-                    <td
-                      colSpan={5}
-                      className="text-ink-muted px-4 py-6 text-center text-sm"
-                    >
-                      No unmapped feeds in the last 7 days — every published
-                      symbol maps to a canonical asset.
-                    </td>
-                  </tr>
+                  <NoteRow colSpan={5}>
+                    No unmapped feeds in the last 7 days — every published
+                    symbol maps to a canonical asset.
+                  </NoteRow>
                 )}
-                {unmappedRows.map((s, i) => {
-                  const tone = sourceToneClass(s.source);
-                  return (
-                    <tr
-                      key={`${s.source}|${s.asset}|${s.quote}|${i}`}
-                      className="hover:bg-surface-muted"
+                {unmappedRows.map((s, i) => (
+                  <TR key={`${s.source}|${s.asset}|${s.quote}|${i}`}>
+                    <Td>
+                      <SourceLink name={s.source} />
+                    </Td>
+                    <Td>
+                      <span
+                        className="text-ink font-mono text-xs"
+                        title={`${s.asset} — unmapped oracle symbol`}
+                      >
+                        {isRawOracleAsset(s.asset)
+                          ? rawOracleSymbol(s.asset)
+                          : s.asset}
+                      </span>
+                    </Td>
+                    <Td>
+                      {/* Not a link, and labelled "assumed": for an unmapped
+                          row the quote is the decoder's default (fiat:USD for
+                          any symbol without a recognisable fiat suffix), not
+                          an observed denomination. */}
+                      <span
+                        className="text-ink-muted font-mono text-xs"
+                        title={`${s.quote} is the decoder's default for an unmapped symbol, not an observed denomination — this row's true quote is unknown`}
+                      >
+                        {s.quote}
+                      </span>
+                    </Td>
+                    <Td align="right" className="font-mono">
+                      {formatOraclePrice(s.price)}
+                    </Td>
+                    <Td
+                      align="right"
+                      className="text-ink-muted hidden font-mono text-xs sm:table-cell"
+                      title={s.ts}
                     >
-                      <Td>
-                        <Link
-                          href={hrefFor.source(s.source)}
-                          className={`inline-block rounded-sm px-1.5 py-0.5 text-[10px] font-medium tracking-wider uppercase hover:underline ${tone}`}
-                        >
-                          {s.source}
-                        </Link>
-                      </Td>
-                      <Td>
-                        <span
-                          className="text-ink-body font-mono text-xs"
-                          title={`${s.asset} — unmapped oracle symbol`}
-                        >
-                          {isRawOracleAsset(s.asset)
-                            ? rawOracleSymbol(s.asset)
-                            : s.asset}
-                        </span>
-                      </Td>
-                      <Td>
-                        {/* NOT a link, and labelled "assumed", because for an
-                            unmapped row the quote is a DEFAULT rather than an
-                            observation. The decoders fall back to fiat:USD for
-                            any feed whose symbol carries no recognisable fiat
-                            suffix — so a hypothetical wstETH/ETH or a bare
-                            wBTC_FUNDAMENTAL would display "USD" beside a number
-                            that is not dollars. mapped=false
-                            already means the denomination is unknown by design;
-                            rendering the default as though it were a fact is the
-                            one place that contradiction reaches a reader. */}
-                        <span
-                          className="text-ink-muted font-mono text-xs"
-                          title={`${s.quote} is the decoder's DEFAULT for an unmapped symbol, not an observed denomination — this row's true quote is unknown`}
-                        >
-                          {s.quote}
-                        </span>
-                      </Td>
-                      <Td align="right">
-                        <span className="text-ink-body font-mono tabular-nums">
-                          {formatOraclePrice(s.price)}
-                        </span>
-                      </Td>
-                      <Td align="right">
-                        <span className="text-ink-muted font-mono text-xs">
-                          {formatRelative(s.ts)}
-                        </span>
-                      </Td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                      {formatRelative(s.ts)}
+                    </Td>
+                  </TR>
+                ))}
+              </TBody>
+            </Table>
           </div>
         </Panel>
       )}
@@ -395,15 +419,12 @@ export function OraclesView() {
         hint="Drop-in oracle interface: /v1/oracle/lastprice, /prices, /x_last_price"
         source={asExample('/v1/oracle/lastprice', { asset: 'native' })}
       >
-        <details className="text-ink-muted text-xs">
-          <summary className="cursor-pointer">How to use</summary>
-          <p className="mt-1">
-            The three endpoints match the SEP-40 contract trait. Routing your
-            on-chain <code className="font-mono">lastprice()</code> calls
-            through Stellar Index swaps in independent VWAP-backed prices
-            without touching the calling contract.
-          </p>
-        </details>
+        <p className="text-ink-body max-w-prose text-sm">
+          The three endpoints match the SEP-40 contract trait. Routing your
+          on-chain <code className="font-mono">lastprice()</code> calls through
+          Stellar Index swaps in independent VWAP-backed prices without touching
+          the calling contract.
+        </p>
       </Panel>
     </Container>
   );

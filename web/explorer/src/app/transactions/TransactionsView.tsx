@@ -6,8 +6,20 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import { ThroughputPanel } from '@/components/NetworkInsight';
+import {
+  Button,
+  ButtonLink,
+  Skeleton,
+  TBody,
+  TR,
+  Table,
+  Td,
+  Th,
+  THead,
+  TxStatusBadge,
+} from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
-import { formatCompact } from '@/lib/format';
+import { formatCompact, truncateMiddle } from '@/lib/format';
 import {
   type Envelope,
   type LedgersPage,
@@ -19,15 +31,12 @@ import {
 
 /**
  * TransactionsView — recent network transactions. Defaults to the latest
- * ledger's transactions and lets you page backward/forward by ledger
- * (the served tier is ledger-partitioned, so a ledger-scoped scan is
- * cheap and needs no cross-ledger tx index). `?seq=N` pins a ledger.
+ * ledger's transactions and pages by ledger (the served tier is
+ * ledger-partitioned, so a ledger-scoped scan is cheap and needs no
+ * cross-ledger tx index). `?seq=N` pins a ledger.
  *
- * A true global recent-tx feed (cross-ledger cursor) is a follow-up
- * endpoint; this gives a working transactions browser on today's API.
- *
- * The page frame (Container + <h1> + description) lives in page.tsx so
- * the static export carries it; everything below depends on `?seq=`.
+ * The page frame (Container + <h1>) lives in page.tsx so the static export
+ * carries it; everything below depends on `?seq=`.
  */
 export function TransactionsView() {
   const params = useSearchParams();
@@ -36,10 +45,9 @@ export function TransactionsView() {
     ? Number(seqRaw.trim())
     : null;
 
-  // No ?seq → resolve the latest ledger so the page opens on live activity.
+  // The tip ledger: the default view, and the bound that disables "Newer".
   const tipQ = useQuery<LedgersPage>({
     queryKey: ['/v1/ledgers', 'tip-1'],
-    enabled: explicitSeq == null,
     queryFn: async () => {
       const env = await apiGet<Envelope<LedgersPage>>('/v1/ledgers', {
         limit: 1,
@@ -49,8 +57,8 @@ export function TransactionsView() {
     staleTime: 15_000,
     retry: false,
   });
-
-  const seq = explicitSeq ?? tipQ.data?.ledgers?.[0]?.sequence ?? null;
+  const tipSeq = tipQ.data?.ledgers?.[0]?.sequence ?? null;
+  const seq = explicitSeq ?? tipSeq;
 
   const txQ = useQuery<LedgerTransactionsResp>({
     queryKey: ['/v1/ledgers/{seq}/transactions', seq],
@@ -67,190 +75,179 @@ export function TransactionsView() {
 
   return (
     <div className="space-y-6">
-      {seq != null && (
-        <div className="flex items-center gap-3 text-xs">
-          <Link
-            href={`/transactions?seq=${seq + 1}`}
-            className="border-line text-ink-body hover:border-brand-500 hover:text-brand-600 rounded-md border px-2.5 py-1"
-          >
-            ← Newer
-          </Link>
-          <span className="text-ink-body font-mono">
-            Ledger #{seq.toLocaleString('en-US')}
-          </span>
-          <Link
-            href={`/transactions?seq=${seq - 1}`}
-            className="border-line text-ink-body hover:border-brand-500 hover:text-brand-600 rounded-md border px-2.5 py-1"
-          >
-            Older →
-          </Link>
-          <Link
-            href="/ledgers"
-            className="text-brand-600 ml-auto hover:underline"
-          >
-            Browse ledgers
-          </Link>
-        </div>
-      )}
-
-      {/* The daily-throughput series answers "how busy is the network" before
-          the row list. */}
       <ThroughputPanel headingLevel={2} defaultMetric="txs" />
-
       <TxTable
         seq={seq}
         isLoading={txQ.isLoading || (explicitSeq == null && tipQ.isLoading)}
-        isError={txQ.isError || tipQ.isError}
-        error={txQ.error ?? tipQ.error}
+        isError={txQ.isError || (explicitSeq == null && tipQ.isError)}
         rows={txQ.data?.transactions}
+        atTip={tipSeq != null && seq != null && seq >= tipSeq}
+        retry={() => {
+          if (explicitSeq == null && tipQ.isError) void tipQ.refetch();
+          else void txQ.refetch();
+        }}
       />
     </div>
   );
 }
 
+const COLS = 6;
+
 function TxTable({
   seq,
   isLoading,
   isError,
-  error,
   rows,
+  retry,
+  atTip,
 }: {
   seq: number | null;
   isLoading: boolean;
   isError: boolean;
-  error: unknown;
   rows: LedgerTransaction[] | undefined;
+  retry: () => void;
+  atTip: boolean;
 }) {
   const source =
     seq != null ? asExample(`/v1/ledgers/${seq}/transactions`) : undefined;
-  if (isError) {
-    return (
-      <Panel
-        headingLevel={2}
-        title="Transactions"
-        source={source}
-        bodyClassName="text-sm text-down-strong"
-      >
-        Failed to load transactions:{' '}
-        {error instanceof Error ? error.message : 'unknown error'}
-      </Panel>
-    );
-  }
-  if (isLoading || rows == null) {
-    return (
-      <Panel
-        headingLevel={2}
-        title="Transactions"
-        source={source}
-        bodyClassName="text-sm text-ink-muted"
-      >
-        Loading…
-      </Panel>
-    );
-  }
-  if (rows.length === 0) {
-    return (
-      <Panel
-        headingLevel={2}
-        title="Transactions"
-        source={source}
-        bodyClassName="text-sm text-ink-muted"
-      >
-        Ledger #{seq?.toLocaleString('en-US')} closed no transactions. Try an
-        older ledger.
-      </Panel>
-    );
-  }
+  const closed = rows?.[0]?.close_time;
   return (
     <Panel
       headingLevel={2}
-      title={`Transactions (${formatCompact(rows.length)})`}
-      hint={rows[0] ? formatTimestamp(rows[0].close_time) : undefined}
+      title={
+        rows ? `Transactions (${formatCompact(rows.length)})` : 'Transactions'
+      }
+      hint={
+        seq != null
+          ? `ledger #${seq}${closed ? ` · closed ${formatTimestamp(closed)}` : ''}`
+          : 'one ledger at a time'
+      }
       source={source}
-      bodyClassName="-mx-4"
+      bodyClassName="-mx-4 -mb-4"
     >
+      {seq != null && (
+        <div className="mx-4 mb-4 flex flex-wrap items-center gap-2">
+          {atTip ? (
+            <Button variant="secondary" size="sm" disabled>
+              Newer
+            </Button>
+          ) : (
+            <ButtonLink
+              href={`/transactions?seq=${seq + 1}`}
+              variant="secondary"
+              size="sm"
+            >
+              Newer
+            </ButtonLink>
+          )}
+          <ButtonLink
+            href={`/transactions?seq=${seq - 1}`}
+            variant="secondary"
+            size="sm"
+          >
+            Older
+          </ButtonLink>
+          <Link
+            href={`/ledgers/${seq}/`}
+            className="text-brand-600 ml-1 text-xs hover:underline"
+          >
+            Open ledger
+          </Link>
+          <Link
+            href="/ledgers"
+            className="text-brand-600 ml-auto text-xs hover:underline"
+          >
+            Browse ledgers
+          </Link>
+        </div>
+      )}
       <div className="overflow-x-auto">
-        <table className="divide-line min-w-full divide-y text-sm">
-          <thead>
-            <tr className="text-ink-muted text-left text-[11px] tracking-wider uppercase">
-              <th scope="col" className="px-4 py-2">
-                Hash
-              </th>
-              <th scope="col" className="px-4 py-2">
-                Source
-              </th>
-              <th scope="col" className="px-4 py-2 text-right">
-                Ops
-              </th>
-              <th scope="col" className="px-4 py-2">
-                Result
-              </th>
-              <th scope="col" className="px-4 py-2 text-right">
-                Fee
-              </th>
-              <th scope="col" className="px-4 py-2">
-                Memo
-              </th>
+        <Table>
+          <THead>
+            <tr>
+              <Th>Hash</Th>
+              <Th className="hidden sm:table-cell">Source</Th>
+              <Th align="right">Ops</Th>
+              <Th>Result</Th>
+              <Th align="right" className="hidden sm:table-cell">
+                Fee (XLM)
+              </Th>
+              <Th className="hidden md:table-cell">Memo</Th>
             </tr>
-          </thead>
-          <tbody className="divide-line-subtle divide-y">
-            {rows.map((t) => (
-              <tr key={t.hash} className="hover:bg-surface-muted">
-                <td className="px-4 py-3">
+          </THead>
+          <TBody>
+            {isError && (
+              <TR className="hover:bg-transparent">
+                <Td colSpan={COLS} className="text-ink-muted py-4">
+                  Transactions unavailable — the ledger read did not return, so
+                  this ledger&apos;s transactions are unknown rather than empty.
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="ml-3"
+                    onClick={retry}
+                  >
+                    Retry
+                  </Button>
+                </Td>
+              </TR>
+            )}
+            {!isError && (isLoading || rows == null) && (
+              <TR className="hover:bg-transparent">
+                <Td colSpan={COLS}>
+                  <Skeleton className="h-4 w-64" />
+                </Td>
+              </TR>
+            )}
+            {!isError && rows && rows.length === 0 && (
+              <TR className="hover:bg-transparent">
+                <Td colSpan={COLS} className="text-ink-muted py-4">
+                  Ledger #{seq} closed with no transactions. Try an older
+                  ledger.
+                </Td>
+              </TR>
+            )}
+            {rows?.map((t) => (
+              <TR key={t.hash}>
+                <Td>
                   <Link
                     href={`/transactions/${t.hash}/`}
-                    className="text-brand-600 font-mono text-xs hover:underline"
+                    className="text-brand-600 font-mono text-xs whitespace-nowrap hover:underline"
                     title={t.hash}
                   >
-                    {(t.hash ?? '').slice(0, 10)}…{(t.hash ?? '').slice(-6)}
+                    {truncateMiddle(t.hash, 10, 6)}
                   </Link>
-                </td>
-                <td className="px-4 py-3">
+                </Td>
+                <Td className="hidden sm:table-cell">
                   <Link
-                    href={`/accounts/${encodeURIComponent(t.source_account ?? '')}/`}
-                    className="text-ink-body hover:text-brand-600 font-mono text-xs"
+                    href={`/accounts/${encodeURIComponent(t.source_account)}/`}
+                    className="text-ink hover:text-brand-600 font-mono text-xs whitespace-nowrap"
                     title={t.source_account}
                   >
-                    {(t.source_account ?? '').slice(0, 6)}…
-                    {(t.source_account ?? '').slice(-4)}
+                    {truncateMiddle(t.source_account, 6, 4)}
                   </Link>
-                </td>
-                <td className="px-4 py-3 text-right">
-                  <span className="text-ink-body font-mono tabular-nums">
-                    {t.operation_count}
-                  </span>
-                </td>
-                <td className="px-4 py-3">
-                  <span
-                    className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium tracking-wider uppercase ${
-                      t.successful
-                        ? 'bg-up-subtle text-up'
-                        : 'bg-down-subtle text-down'
-                    }`}
-                    title={
-                      t.result_code != null
-                        ? `code ${t.result_code}`
-                        : t.successful
-                          ? 'success'
-                          : 'failed'
-                    }
-                  >
-                    {t.successful
-                      ? 'success'
-                      : t.result_code != null
-                        ? `code ${t.result_code}`
-                        : 'failed'}
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-right">
-                  <span className="text-ink-muted font-mono text-xs tabular-nums">
-                    {t.fee_charged != null ? stroopsToXlm(t.fee_charged) : '—'}
-                  </span>
-                </td>
-                <td className="px-4 py-3">
+                </Td>
+                <Td align="right" className="font-mono">
+                  {t.operation_count}
+                </Td>
+                <Td>
+                  <TxStatusBadge
+                    successful={t.successful}
+                    result={t.result}
+                    code={t.result_code}
+                  />
+                </Td>
+                <Td
+                  align="right"
+                  className="text-ink-muted hidden font-mono text-xs sm:table-cell"
+                  title={`${t.fee_charged} stroops`}
+                >
+                  {stroopsToXlm(t.fee_charged)}
+                </Td>
+                <Td className="hidden md:table-cell">
                   {t.memo_type && t.memo_type !== 'none' ? (
                     <span
-                      className="text-ink-muted font-mono text-[11px]"
+                      className="text-ink-muted font-mono text-xs"
                       title={t.memo ?? ''}
                     >
                       {t.memo_type}
@@ -261,11 +258,11 @@ function TxTable({
                   ) : (
                     <span className="text-ink-faint">—</span>
                   )}
-                </td>
-              </tr>
+                </Td>
+              </TR>
             ))}
-          </tbody>
-        </table>
+          </TBody>
+        </Table>
       </div>
     </Panel>
   );
