@@ -18290,7 +18290,7 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------
-@babel/helpers 7.29.7
+@babel/helpers 7.29.10
 License: MIT
 
 MIT License
@@ -18369,7 +18369,7 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------
-@babel/traverse 7.29.8
+@babel/traverse 7.29.10
 License: MIT
 
 MIT License
@@ -18657,7 +18657,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------
-@next/env 16.3.8
+@next/env 16.4.0
 License: MIT
 
 (no license file shipped in the package)
@@ -18952,7 +18952,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------
-@types/node 26.6.4
+@types/node 26.6.5
 License: MIT
 
 MIT License
@@ -19036,7 +19036,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 ------------------------------------------------------------------------
-baseline-browser-mapping 2.11.27
+baseline-browser-mapping 2.11.28
 License: Apache-2.0
 
 Apache License
@@ -19290,7 +19290,7 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------
-caniuse-lite 1.0.30001814
+caniuse-lite 1.0.30001815
 License: CC-BY-4.0
 
 Attribution 4.0 International
@@ -20109,7 +20109,7 @@ Apache License
    limitations under the License.
 
 ------------------------------------------------------------------------
-electron-to-chromium 1.5.444
+electron-to-chromium 1.5.452
 License: ISC
 
 Copyright 2018 Kilian Valkhof
@@ -20603,7 +20603,7 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ------------------------------------------------------------------------
-lucide-react 1.51.0
+lucide-react 1.55.0
 License: ISC
 
 ISC License
@@ -20677,7 +20677,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------
-nanoid 6.0.1
+nanoid 6.0.2
 License: MIT
 
 The MIT License (MIT)
@@ -20702,7 +20702,7 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------
-next 16.3.8
+next 16.4.0
 License: MIT
 
 The MIT License (MIT)
@@ -20728,7 +20728,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------
-node-releases 2.0.57
+node-releases 2.0.58
 License: MIT
 
 The MIT License
@@ -21774,7 +21774,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------
-update-browserslist-db 1.3.3
+update-browserslist-db 1.3.4
 License: MIT
 
 The MIT License (MIT)
