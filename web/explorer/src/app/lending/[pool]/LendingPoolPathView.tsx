@@ -38,7 +38,7 @@ export function LendingPoolPathView() {
         href="/protocols/blend"
         className="text-brand-600 inline-block text-xs hover:underline"
       >
-        Blend protocol →
+        Blend protocol
       </Link>
       {pool && <PoolReserves pool={pool} />}
     </div>

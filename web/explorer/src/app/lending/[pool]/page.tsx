@@ -4,7 +4,14 @@ import { Suspense } from 'react';
 import { ExternalLink } from 'lucide-react';
 
 import { Panel } from '@/components/reveal';
-import { Container, PageHeader } from '@/components/ui';
+import {
+  Badge,
+  Container,
+  PageHeader,
+  Stat,
+  StatCell,
+  StatGrid,
+} from '@/components/ui';
 import { buildFetchData, failBuild } from '@/lib/buildFetch';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES, shellMetadata } from '@/lib/seo';
 import type { paths } from '@/api/types';
@@ -228,127 +235,106 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
             {pool.slice(0, 8)}…{pool.slice(-8)}
           </span>
         }
-        actions={
-          <>
-            <span className="bg-up-subtle text-up-strong rounded-sm px-1.5 py-0.5 text-[11px] font-medium tracking-wider uppercase">
-              Blend
-            </span>
-            {label && (
-              <span className="bg-brand-50 text-brand-700 rounded-sm px-1.5 py-0.5 text-[11px] font-medium tracking-wider uppercase">
-                {label.name}
-              </span>
-            )}
-            {label?.deployedAt && (
-              <span className="bg-surface-subtle text-ink-body rounded-sm px-1.5 py-0.5 font-mono text-[11px]">
-                deployed {label.deployedAt}
-              </span>
-            )}
-          </>
+        meta={
+          <span className="flex flex-wrap items-center gap-2">
+            <Badge>Blend</Badge>
+            {label && <Badge tone="brand">{label.name}</Badge>}
+            {label?.deployedAt && <span>deployed {label.deployedAt}</span>}
+          </span>
         }
       />
-
-      <div className="space-y-2">
-        <p className="text-ink-muted font-mono text-xs break-all">{pool}</p>
+      <div className="text-ink-muted space-y-2 text-xs">
+        <p className="font-mono break-all">{pool}</p>
         {label?.initiator && (
-          <p className="text-ink-muted font-mono text-[11px]">
+          <p>
             Deployed by{' '}
             <Link
               href={`/accounts/${label.initiator}/`}
-              className="text-brand-600 hover:underline"
+              className="text-brand-600 font-mono hover:underline"
               title={label.initiator}
             >
               {label.initiator.slice(0, 6)}…{label.initiator.slice(-4)}
             </Link>
           </p>
         )}
-        <div className="flex flex-wrap gap-3 pt-1 text-xs">
+        <div className="flex flex-wrap gap-3">
           <Link
             href="/protocols/blend"
             className="text-brand-600 hover:underline"
           >
-            Blend protocol →
+            Blend protocol
           </Link>
           <Link
             href={`/contracts/${encodeURIComponent(pool)}/`}
             className="text-brand-600 hover:underline"
           >
-            Contract events →
+            Contract events
           </Link>
           <a
             href="https://blend.capital"
             target="_blank"
             rel="noreferrer noopener"
-            className="text-ink-muted inline-flex items-center gap-1 hover:underline"
+            className="inline-flex items-center gap-1 hover:underline"
           >
             blend.capital
-            <ExternalLink className="h-3 w-3" />
+            <ExternalLink className="h-3 w-3" aria-hidden="true" />
           </a>
         </div>
       </div>
-
       {label?.note && (
         <Panel headingLevel={2} title="About this contract">
           <p className="text-ink-body text-sm leading-relaxed">{label.note}</p>
         </Panel>
       )}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <Stat
-          label="Auctions (24h)"
-          value={listed ? (data?.auctions_24h ?? 0) : null}
-        />
-        <Stat
-          label="Auctions (total)"
-          value={listed ? (data?.auctions_total ?? 0) : null}
-        />
-        <Stat
-          label="Unique users (30d)"
-          value={listed ? (data?.unique_users_30d ?? 0) : null}
-        />
-      </div>
-
+      <StatGrid cols={4} className="grid-cols-2">
+        <StatCell>
+          <Stat
+            label="Auctions (24h)"
+            value={count(listed ? (data?.auctions_24h ?? 0) : null)}
+          />
+        </StatCell>
+        <StatCell>
+          <Stat
+            label="Auctions (total)"
+            value={count(listed ? (data?.auctions_total ?? 0) : null)}
+          />
+        </StatCell>
+        <StatCell>
+          <Stat
+            label="Unique users (30d)"
+            value={count(listed ? (data?.unique_users_30d ?? 0) : null)}
+          />
+        </StatCell>
+        <StatCell>
+          <Stat
+            label="Last auction"
+            value={
+              <span className="text-base">
+                {data?.last_seen
+                  ? `${data.last_seen.replace('T', ' ').slice(0, 16)} UTC`
+                  : '—'}
+              </span>
+            }
+          />
+        </StatCell>
+      </StatGrid>
       {!listed && (
-        <p
-          role="status"
-          className="border-line bg-surface-subtle text-ink-muted rounded-md border px-3 py-2 text-xs"
-        >
+        <p role="status" className="text-ink-muted text-xs">
           Auction statistics are unavailable for this build.
         </p>
       )}
-
-      {data && (
-        <Panel headingLevel={2} title="Last activity">
-          <div className="space-y-1 text-sm">
-            <div className="text-ink-body">
-              Most recent auction event:{' '}
-              <span className="text-ink font-mono">
-                {data.last_seen ? new Date(data.last_seen).toUTCString() : '—'}
-              </span>
-            </div>
-          </div>
-        </Panel>
-      )}
-
       <PoolReserves pool={pool} />
     </Container>
   );
 }
 
-// `value: null` means UNKNOWN (the listing didn't answer) and renders an
-// em-dash; a real 0 still renders "0".
-function Stat({ label, value }: { label: string; value: number | null }) {
-  return (
-    <div className="border-line bg-surface rounded-xl border p-4 shadow-sm">
-      <div className="text-ink-muted text-[10px] tracking-wider uppercase">
-        {label}
-      </div>
-      <div className="text-ink mt-1 font-mono text-2xl tabular-nums">
-        {value == null ? (
-          <span className="text-ink-faint">—</span>
-        ) : (
-          value.toLocaleString('en-US')
-        )}
-      </div>
-    </div>
+// null means UNKNOWN (the listing didn't answer) and renders a dash; a real
+// 0 still renders "0".
+function count(value: number | null) {
+  return value == null ? (
+    <span className="text-ink-faint">—</span>
+  ) : (
+    value.toLocaleString('en-US')
   );
 }

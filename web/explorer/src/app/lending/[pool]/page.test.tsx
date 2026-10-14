@@ -42,7 +42,7 @@ describe('LendingPoolPage auction stats', () => {
     // All three tiles read as unknown; none of them asserts a count.
     const tiles = ['Auctions (24h)', 'Auctions (total)', 'Unique users (30d)'];
     for (const label of tiles) {
-      const value = screen.getByText(label).nextElementSibling;
+      const value = screen.getByText(label).parentElement?.nextElementSibling;
       expect(value?.textContent).toBe('—');
     }
   });
@@ -63,7 +63,8 @@ describe('LendingPoolPage auction stats', () => {
     expect(
       screen.queryByText(/Auction statistics are unavailable for this build/),
     ).not.toBeInTheDocument();
-    const value = screen.getByText('Auctions (total)').nextElementSibling;
+    const value =
+      screen.getByText('Auctions (total)').parentElement?.nextElementSibling;
     expect(value?.textContent).toBe('0');
   });
 
