@@ -198,7 +198,7 @@ A dark, quiet data console held to the craft level of Dune, Linear and Vercel. N
 
 Dark is the only mode. Every semantic token is defined dark, so a component built on the surface, ink and line tokens needs no variant, and there is no toggle.
 
-**Scope.** The landing `/`, the shared shell (sidebar, mobile header, footer, search modal) and the `src/components/ui` primitives are migrated. Because tokens and fonts live in one `@theme`, the other routes already inherit these values, but their compositions and page-local styling are incumbent until each is rebuilt to this contract, page by page. Where an unmigrated page disagrees with this file, this file wins.
+**Scope.** The landing `/`, the shared shell (sidebar, mobile header, footer, search modal), the `src/components/ui` primitives and the markets, assets, venue, protocol, ledger, transaction, operation, contract, account, issuer, transactions, contracts and oracles pages are built to this contract. Because tokens and fonts live in one `@theme`, the other routes already inherit these values, but their compositions and page-local styling are incumbent until each is rebuilt to this contract, page by page. Where an unmigrated page disagrees with this file, this file wins.
 
 **Key Characteristics:**
 - Tonal layering and 1px lines carry depth; cards cast no shadow.
@@ -225,8 +225,9 @@ Cool near-black neutrals with a single blue accent and a semantic set for direct
 - **Inks**, brightest to quietest: `ink-strong` (selection, emphasis), `ink` (headings, values), `ink-body` (running text, cells), `ink-muted` (labels, sub-lines), `ink-faint` (stamps, placeholders, group labels).
 
 ### Semantic
-- **Up / Down** (`up`, `down` with `-strong` inks and `-subtle` tints): price direction only. Always paired with a sign or arrow; never colour alone. The one other use is the order book's sides, bids `up` and asks `down`, always under a "Bids" / "Asks" label.
-- **Warn / Bad / Ok** (`-50` tint backgrounds, `-700` inks): severity badges, stale markers, the degraded banner. `warn-500` marks "stale" inline.
+- **Up / Down** (`up`, `down` with `-strong` inks and `-subtle` tints): price direction only. Always paired with a sign or arrow; never colour alone. The one other use is the order book's sides, bids `up` and asks `down`, always under a "Bids" / "Asks" label. Series that are not price direction (received and sent, inbound and outbound, supplied and borrowed) take `brand-500`, `ink-muted` or a categorical hue, never `up`/`down`.
+- **Warn / Bad / Ok** (`-50` tint backgrounds, `-700` inks): severity badges, stale markers, the degraded banner. `warn-500` marks "stale" inline. They mean severity only, never direction.
+- **Chart hues** (`chart-1`..`chart-9`, `chart-tail`, exported as `CATEGORICAL_PALETTE`): composition and categorical series. The tail grey is the "Others" / unknown slot. One entity keeps one hue across a donut and its companion chart.
 - Category chips (venue, protocol, type) use the violet, teal, indigo, purple and yellow `-subtle`/`-strong` pairs in `globals.css`, routed through `src/lib/pillTone.ts`.
 
 ### Named Rules
@@ -255,7 +256,9 @@ Cool near-black neutrals with a single blue accent and a semantic set for direct
 ### Named Rules
 **The Two Faces Rule.** Onest for language, Geist Mono for data. No third face, no serif display, no system-font display.
 
-**The Figures Align Rule.** Every number in a column or tile uses tabular figures (`tnum`) and right-aligns in tables. Ids, ledger sequences and hashes are rendered verbatim, never digit-grouped.
+**The Figures Align Rule.** Every number in a column or tile uses tabular figures (`tnum`) and right-aligns in tables. Ids, ledger sequences, hashes and years render as raw digits, never digit-grouped; counts may carry thousands separators (or compact form with the exact value in the title). Snapshot stamps read "as of HH:MM:SS UTC" in `ink-faint`.
+
+**The Name Rule.** XLM is named "Stellar Lumens" in UI text, never "native".
 
 ## Layout
 
@@ -264,6 +267,8 @@ A persistent 240px left sidebar (sticky, full height) and a scrolling content co
 Content sits in `Container` (max 1728px, 16/24/32px side padding). The landing narrows to 1200px: a centred 860px hero, a 720px finder, then full-width sections stacked at 56px. Elsewhere, sections breathe at 24–32px. Grids gap 12–16px. The stat strip runs 2, 3 then 5 columns; panel rows run 1 then 3. Tables span the column and scroll horizontally inside their wrapper rather than reflow.
 
 Every non-embed page opens with breadcrumbs, a headline title and optional meta through `PageHeader`; `/embed/*` renders chrome-free.
+
+A stat strip (`StatGrid` with `StatCell` and `Stat`) forces `className="grid-cols-2"` below `sm`, so tiles never stack to one column on a phone. A table sits in a `Panel` (`src/components/reveal/Panel.tsx`) with `bodyClassName="-mx-4 -mb-4"` so the table runs edge to edge; controls above it take `mx-4 mb-4`. A panel that is a page's top-level section passes `headingLevel={2}`.
 
 ## Elevation & Depth
 
@@ -311,6 +316,37 @@ The landing's metric unit: a linked card holding an 11px uppercase label, a 24px
 ### Tables
 Hairline-ruled, inside an 8px panel wrapper. Header row on rail with 11px uppercase `ink-muted` labels, 40px tall; cells 10×16px in `ink-body`; rows hover to `surface-muted` at 70%. Numbers right-aligned, tabular, in mono.
 
+- **Sorting:** `useTableSort` with `SortableTh`. The header is a button with `aria-sort` on the `th`; the arrow sits on the column's outside edge (left of the label when right-aligned, right of it otherwise). The inactive arrow appears on hover and focus; empty values sort last in either direction.
+- **Phone folding:** secondary columns carry `hidden sm:table-cell` (`md:` for the least important). A denomination or quote hidden with its column moves into the value cell as a muted `text-xs sm:hidden` suffix, so a bare number never loses its unit.
+- **Bar beside a number:** `InlineBar` (80px track, `brand-500` fill, `surface-muted` ground, labelled) is shown from `sm` up, beside a fixed-width (`w-14`), right-aligned figure so the column's digits line up whatever the bar does.
+- **Share column:** a ranked table whose rows are a listed subset heads its share column "Share of listed", in `ink-muted`, because the total is not the whole population.
+- **Secondary count:** a count that qualifies a primary one follows it as a muted suffix ("12 +3 unmapped"); a zero primary shows an `ink-faint` dash, and the suffix then drops its plus.
+- **Note row:** loading, empty and unavailable states are a single full-width row inside the body (`ink-muted`, 16px vertical padding, no hover). Loading is a skeleton; empty states what is absent; unavailable says the read did not return, so the answer is unknown rather than empty, and ends in an inline small secondary Retry button.
+- **Table toolbar:** controls sit above the table in a wrapping row: a `Segmented` filter, or a pager of small secondary Newer and Older buttons (Newer is a disabled `Button` at the tip, not a dead link) followed by quiet `brand-600` `text-xs` links such as "Open ledger". While a filter is active the panel title reads "(n of N)".
+
+### Segmented
+`Segmented` (`components/ui/Tabs.tsx`) is the one compact toggle group for a filter or window: a `surface-subtle` track, 8px radius, `aria-pressed` buttons, the active option on `surface`. It takes a required `ariaLabel`, and is omitted when the filter would have a single real choice.
+
+### Charts
+Pure CSS or SVG marks drawn from tokens; geometry uses JS numbers, while every printed figure is a pre-formatted `display` string. Identity is never colour alone: a legend, label or value sits beside each mark.
+- **HBarList:** labelled bars on one shared linear scale, `brand-500` by default, with the figure beside the bar. A lower bound ends in a hatched tail (`HATCH_BG`) paired with an annotation saying why.
+- **PairedBars:** two thin bars per row on one scale, with a legend naming both series. A missing half draws no bar and shows "—", never a zero-length bar.
+- **DivergingColumns:** a zero baseline with one side per direction, both on one scale; a side with no data collapses. Its defaults, `up` and `down`, are for price direction (premium or discount) only; any other pair passes `posColor` and `negColor` (a count of received against sent uses `brand-500` and `ink-muted`).
+- **StackedColumns:** one column per bucket, one coloured segment per series, with a legend; series colours come from the chart hues.
+- **DonutChart:** composition of a whole, slices largest first from `CATEGORICAL_PALETTE`, a centre total and a clickable legend whose percentages are computed from exact decimal strings.
+
+### Issuer-authored content
+Text and URLs that an issuer publishes (SEP-1 `stellar.toml`) are untrusted. A URL links only through `safeHttpsUrl` (plain https, no credentials, public hostname) with `rel="noreferrer noopener nofollow"`; anything else renders as `ink-muted` text. Handles (GitHub, X) are validated and rebuilt into a canonical URL, never linked raw. The organisation panel states in its hint whether the organisation confirmed the listing (`stellar.toml` lists the account back) or the claim is self-declared. Authorization flags show only the flags that are set, as `warn` dot chips with a title, followed by an `ink-faint` "Unset:" line naming the rest; with none set a neutral "None set" chip appears, and with no read yet a neutral "Not read yet" chip.
+
+### Not found and unavailable
+A read that answers "does not exist" and a read that fails are different states and never share copy. A true not-found is a `warn` `Callout` or an `EmptyState` saying what was not observed, with a route to the nearest page that may exist. A failed read is a `bad` `Callout`, an `EmptyState` or a table note row that says the answer is unknown rather than empty and carries an inline Retry. An absent response is never rendered as zero or as an empty list.
+
+### Folds and notes
+Records that are present but dormant (assets with no activity, raw XDR, coverage detail) sit in a `<details>` below the live rows, with an `ink-muted` summary stating the count and what is missing. `NoteBadge` (`components/NoteBadge.tsx`) is a `warn` "partial" badge that expands the qualifying note, for a partial-coverage figure.
+
+### External references
+`CrossReference` (`components/CrossReference.tsx`) is the only place a link leaves the explorer for another explorer: one `ink-faint` "External references" line under a hairline at the foot of an entity page, never mid-content. A target with no route for the entity or network is omitted.
+
 ### Navigation
 - **Sidebar:** rail fill, `line` right edge. Wordmark "Stellar" semibold + "Index" light beside the Stellar mark. Search trigger with a ⌘K hint, then grouped 32px items (13px medium, 16px lucide icon). Group names are 11px uppercase `ink-faint`.
 - **States:** rest `ink-body` with `ink-faint` icon; hover to panel fill; active on `surface-muted` with `ink` text and a Link Blue icon.
@@ -329,6 +365,8 @@ Live counters (ledger tip) roll changed digits up one line like a mechanical whe
 - **Do** put white text only on `brand-fill` or darker, and run new token pairs through `color-contrast.a11y.test.ts`.
 - **Do** give control edges `line-input` and decorative dividers `line`.
 - **Do** set ids, hashes, endpoints and figures in Geist Mono with tabular figures, and stamp every closed-bucket number with its "as of" time.
+- **Do** fold secondary columns away on phones and keep each value's unit beside it.
+- **Do** keep an unavailable read distinct from an empty one, with Retry on the former.
 - **Do** put a Request Reveal on every data panel and use `SECTION_HEADING_CLASS` / `PANEL_LABEL_CLASS` for headings and in-panel labels.
 
 ### Don't:
@@ -337,4 +375,7 @@ Live counters (ledger tip) roll changed digits up one line like a mechanical whe
 - **Don't** introduce a second accent, gradients, glows or raw palette colours (`emerald-400`, `sky-…`); use tokens and `pillTone`.
 - **Don't** add a third typeface or a serif display face.
 - **Don't** animate for its own sake: no pings, pulses, entrance reveals or parallax. Motion marks a real data change.
+- **Don't** use `up`/`down` for anything but price direction and order-book sides, or `warn`/`bad`/`ok` for anything but severity.
+- **Don't** link an issuer-authored URL without `safeHttpsUrl`, or put an external explorer link anywhere but `CrossReference`.
+- **Don't** digit-group ids, ledger sequences, hashes or years, and don't write "native" for Stellar Lumens.
 - **Don't** set a kicker or eyebrow label above a heading; the trust line sits beneath the finder as a caption.
