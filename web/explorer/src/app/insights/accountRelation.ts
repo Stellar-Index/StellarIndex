@@ -194,11 +194,7 @@ export function cumulativeLine(
  * genuine fault. Collapsing them into one "unavailable" would have told
  * a reader to wait for a release that has to be deployed first.
  */
-export function errorStatus(err: unknown): number | null {
-  if (!(err instanceof Error)) return null;
-  const m = /^(\d{3}) /.exec(err.message);
-  return m === null ? null : Number(m[1]);
-}
+export { errorStatus } from '@/lib/error-status';
 
 export type EdgeSortKey = 'account' | 'events' | 'funded' | 'first' | 'last';
 export type SortDirection = 'asc' | 'desc';

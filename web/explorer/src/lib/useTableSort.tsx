@@ -170,6 +170,20 @@ export function SortableTh<K extends string>({
         ? 'justify-center'
         : 'justify-start';
 
+  // A right-aligned header keeps its label flush with the figures below it,
+  // so the arrow sits on the outside edge.
+  const arrow = active ? (
+    sort.dir === 'asc' ? (
+      <ArrowUp className="h-3 w-3" aria-hidden="true" />
+    ) : (
+      <ArrowDown className="h-3 w-3" aria-hidden="true" />
+    )
+  ) : (
+    <ChevronsUpDown
+      className="h-3 w-3 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100"
+      aria-hidden="true"
+    />
+  );
   return (
     <th className={base} scope="col" aria-sort={ariaSort(sortKey)}>
       <button
@@ -179,19 +193,9 @@ export function SortableTh<K extends string>({
           active ? 'text-ink' : ''
         }`}
       >
+        {align === 'right' && arrow}
         {label}
-        {active ? (
-          sort.dir === 'asc' ? (
-            <ArrowUp className="h-3 w-3" aria-hidden="true" />
-          ) : (
-            <ArrowDown className="h-3 w-3" aria-hidden="true" />
-          )
-        ) : (
-          <ChevronsUpDown
-            className="h-3 w-3 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100"
-            aria-hidden="true"
-          />
-        )}
+        {align !== 'right' && arrow}
       </button>
     </th>
   );

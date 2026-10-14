@@ -7,6 +7,7 @@ import {
   formatCompactUnits,
   sumDecimalStrings,
 } from '@/lib/format';
+import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 
 /**
  * Issued assets by USD market cap. Assets without a served market cap are
@@ -41,7 +42,7 @@ export function IssuerAssetMix({
   const total = sumDecimalStrings(priced.map((p) => p.decimal));
   return (
     <div className="px-4 pb-4">
-      <div className="text-ink-muted mb-2 text-[11px] tracking-wider uppercase">
+      <div className={`${PANEL_LABEL_CLASS} mb-2`}>
         Market cap by asset
         {unpriced > 0 && ` · ${unpriced} without a market cap excluded`}
       </div>
