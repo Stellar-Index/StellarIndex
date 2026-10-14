@@ -74,6 +74,7 @@ export function IssuerPathView() {
           title="Issuer"
         />
         <EmptyState
+          headingLevel={2}
           title="Not an account key"
           description="An issuer is addressed by its account key: 56 characters starting with G."
           action={
@@ -97,6 +98,7 @@ export function IssuerPathView() {
         />
         {notFound ? (
           <EmptyState
+            headingLevel={2}
             title="Issuer not observed"
             description="This account has not issued a classic asset seen in any trade or trustline change the index has captured. Its account page may still exist."
             action={
@@ -111,6 +113,7 @@ export function IssuerPathView() {
           />
         ) : (
           <EmptyState
+            headingLevel={2}
             title="Issuer unavailable"
             description="The issuer read did not return, so whether this account issues assets is unknown right now. Retry, or open its account page."
             action={
