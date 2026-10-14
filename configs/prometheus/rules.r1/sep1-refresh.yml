@@ -1,0 +1,71 @@
+# SEP-1 refresh alerts: read from the textfile the hourly sep1-refresh unit stamps at
+# /var/lib/node_exporter/textfile_collector/sep1_refresh.prom. Every series is a gauge of
+# the most recent run, so each rate here is one run's fraction, held for 2h30m (three
+# consecutive runs) before it pages a ticket. The denominators are issuers whose domain
+# had served a stellar.toml before (`reached`): a never-answering domain is the issuer's
+# problem, not a regression. Runbook: docs/operations/runbooks/sep1-refresh.md.
+groups:
+  - name: stellarindex.sep1_refresh
+    interval: 60s
+    rules:
+      - alert: stellarindex_sep1_refresh_timeouts_high
+        expr: >
+          sum without(reason, reached) (stellarindex_sep1_refresh_failures{reason="timeout",reached="true"})
+            / clamp_min(stellarindex_sep1_refresh_reached, 1) > 0.3
+          and stellarindex_sep1_refresh_reached >= 20
+        for: 2h30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: sep1-refresh
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sep1-refresh.md#stellarindex_sep1_refresh_timeouts_high
+          summary: "More than 30% of previously reached stellar.toml domains timed out for three consecutive runs"
+          description: |
+            {{ $value | humanizePercentage }} of the issuers whose domain had served a stellar.toml before timed out
+            in the most recent sep1-refresh run, and the fraction has held for three runs. A healthy run on the
+            reference host times out on well under 1% of its ~750 reached issuers, so this is egress, DNS or the
+            resolver's budget, not one issuer's outage.
+
+      - alert: stellarindex_sep1_refresh_failing
+        expr: >
+          (
+            stellarindex_sep1_refresh_regressed / clamp_min(stellarindex_sep1_refresh_reached, 1) > 0.3
+            and stellarindex_sep1_refresh_reached >= 20
+          )
+          unless stellarindex_sep1_refresh_systemic == 1
+        for: 2h30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: sep1-refresh
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sep1-refresh.md#stellarindex_sep1_refresh_failing
+          summary: "More than 30% of previously reached stellar.toml domains failed for three consecutive runs"
+          description: |
+            {{ $value | humanizePercentage }} of the issuers whose domain had served a stellar.toml before failed in
+            the most recent sep1-refresh run, for any reason, and the fraction has held for three runs. The run's
+            own systemic guard (90% of reached) did not trip, so the retry ladder is backing these issuers off;
+            the failures textfile series says which reason dominates.
+
+      - alert: stellarindex_sep1_refresh_stale
+        expr: >
+          (time() - stellarindex_sep1_refresh_last_run_unix) > 3 * 3600
+          or (
+            absent_over_time(stellarindex_sep1_refresh_last_run_unix[6h])
+            and on() (count_over_time(up{job="node_exporter"}[6h:5m]) >= 70)
+          )
+        for: 10m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: sep1-refresh
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sep1-refresh.md#stellarindex_sep1_refresh_stale
+          summary: "sep1-refresh has not stamped its textfile for over 3 hours"
+          description: |
+            The hourly sep1-refresh unit stamps stellarindex_sep1_refresh_last_run_unix at the end of every run,
+            an empty queue included. No stamp for three hours means the timer is off, the unit is failing before
+            its loop or the textfile is not reaching node_exporter. The absent arm is gated on node_exporter
+            having been up through the window (counted at five-minute steps, so the scrape interval does
+            not matter), so a freshly provisioned host does not fire it.

@@ -66,6 +66,7 @@ Environment=LIMIT=750
 Environment=OLDER_THAN=24h
 Environment=RUN_TIMEOUT=25m
 Environment=EXTRA_FLAGS=
+Environment=TEXTFILE=/var/lib/node_exporter/textfile_collector/sep1_refresh.prom
 
 ExecStart=/usr/local/bin/stellarindex-ops sep1-refresh \
   -config ${CONFIG_PATH} \
@@ -73,6 +74,7 @@ ExecStart=/usr/local/bin/stellarindex-ops sep1-refresh \
   -limit ${LIMIT} \
   -older-than ${OLDER_THAN} \
   -timeout ${RUN_TIMEOUT} \
+  -textfile ${TEXTFILE} \
   -write \
   $EXTRA_FLAGS
 
@@ -83,6 +85,7 @@ Group=stellarindex
 
 # Read-only filesystem — the refresh only reads config + writes to Postgres.
 ProtectSystem=strict
+ReadWritePaths=/var/lib/node_exporter/textfile_collector
 PrivateTmp=true
 NoNewPrivileges=true
 ProtectKernelTunables=true

@@ -71,6 +71,7 @@ internal/ops/chops/verify_lake.go                                         operat
 internal/ops/chops/verify_served_values.go                                served_values.prom                 internal/ops/chops/verify_served_values_test.go
 internal/ops/chops/verify_usd_volume.go                                  verify_usd_volume.prom             internal/ops/chops/verify_usd_volume_prom_test.go
 internal/ops/chops/wasm_drift.go                                          operator-supplied                  internal/ops/chops/wasm_drift_test.go
+internal/ops/ingest/sep1_refresh_metrics.go                               operator-supplied                  internal/ops/ingest/sep1_refresh_textfile_test.go
 internal/ops/opsutil/job_heartbeat.go                                     operator-supplied                  internal/ops/opsutil/job_heartbeat_test.go
 internal/supply/textfile.go                                               operator-supplied                  internal/supply/textfile_test.go
 internal/ops/ingest/curated_rwa_sync.go                                    operator-supplied                  internal/ops/ingest/curated_rwa_sync_test.go

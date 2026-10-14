@@ -151,14 +151,14 @@ func NewResolver(opts Options) *Resolver {
 // would bypass the 443-only rule [isValidDomainOrHostPort] applies.
 func checkRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) >= 5 {
-		return errors.New("sep1: stopped after 5 redirects")
+		return fmt.Errorf("%w: stopped after 5 hops", ErrRedirectRefused)
 	}
 	if req.URL.Scheme != "https" {
-		return fmt.Errorf("sep1: refusing redirect to %s:// (downgrade)", req.URL.Scheme)
+		return fmt.Errorf("%w: downgrade to %s://", ErrRedirectRefused, req.URL.Scheme)
 	}
 	orig, next := redirectOrigin(via[0].URL), redirectOrigin(req.URL)
 	if orig != next {
-		return fmt.Errorf("sep1: refusing cross-host redirect %q → %q", orig, next)
+		return fmt.Errorf("%w: cross-host %q → %q", ErrRedirectRefused, orig, next)
 	}
 	return nil
 }
@@ -185,6 +185,18 @@ const maxBodyBytes = 100 << 10
 
 // ErrTOMLTooDeep is returned when nesting exceeds [maxTOMLNestingDepth]; checked BEFORE the decoder because [maxBodyBytes] bounds input, not the superlinear decode work (16 KB of nested tables allocate 1.81 GiB against MemoryMax=2G), and an over-deep document fails like any unparseable one.
 var ErrTOMLTooDeep = errors.New("sep1: TOML nests tables deeper than the parse budget allows")
+
+// ErrInvalidDomain wraps the pre-fetch rejections: an empty, URL-shaped or malformed domain.
+var ErrInvalidDomain = errors.New("sep1: invalid domain")
+
+// ErrHTTPStatus wraps a response whose status is not 200.
+var ErrHTTPStatus = errors.New("sep1: unexpected HTTP status")
+
+// ErrRedirectRefused wraps a redirect the SEP-1 policy would not follow.
+var ErrRedirectRefused = errors.New("sep1: redirect refused")
+
+// ErrTOMLParse wraps a body that neither the TOML decoder nor section recovery could read.
+var ErrTOMLParse = errors.New("sep1: parse TOML")
 
 // Nesting bounds enforced by [checkTOMLNesting]. maxTOMLNestingDepth is the real limit (from a string- and comment-aware scan; 32 is far
 // past SEP-1's two levels) and also bounds dotted key paths. maxRawTOMLNestingDepth is a context-free backstop, not a guarantee
@@ -534,15 +546,15 @@ func sep1DocFieldCap(key string) int {
 func (r *Resolver) Resolve(ctx context.Context, domain string) (*SEP1, error) {
 	domain = strings.ToLower(strings.TrimSpace(domain))
 	if domain == "" {
-		return nil, errors.New("sep1: empty domain")
+		return nil, fmt.Errorf("%w: empty domain", ErrInvalidDomain)
 	}
 	// A full URL is a common mistake, so it gets a friendlier error than generic validation.
 	if strings.Contains(domain, "://") || strings.Contains(domain, "/") ||
 		strings.HasPrefix(domain, "http:") || strings.HasPrefix(domain, "https:") {
-		return nil, fmt.Errorf("sep1: %q looks like a URL; pass just the hostname", domain)
+		return nil, fmt.Errorf("%w: %q looks like a URL; pass just the hostname", ErrInvalidDomain, domain)
 	}
 	if !isValidDomainOrHostPort(domain, r.allowPrivateIPs) {
-		return nil, fmt.Errorf("sep1: %q is not a valid hostname (or host:port)", domain)
+		return nil, fmt.Errorf("%w: %q is not a valid hostname (or host:port)", ErrInvalidDomain, domain)
 	}
 
 	rawURL := "https://" + domain + "/.well-known/stellar.toml"
@@ -565,7 +577,7 @@ func (r *Resolver) Resolve(ctx context.Context, domain string) (*SEP1, error) {
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("sep1: %s: HTTP %d", domain, resp.StatusCode)
+		return nil, fmt.Errorf("%w: %s: HTTP %d", ErrHTTPStatus, domain, resp.StatusCode)
 	}
 	if resp.ContentLength > maxBodyBytes {
 		return nil, ErrTOMLTooLarge
@@ -594,7 +606,7 @@ func parseSEP1(body []byte) (*SEP1, error) {
 		var rerr error
 		raw, skipped, rerr = recoverSEP1Sections(body)
 		if rerr != nil {
-			return nil, fmt.Errorf("sep1: parse TOML: %w", err)
+			return nil, fmt.Errorf("%w: %w", ErrTOMLParse, err)
 		}
 	}
 

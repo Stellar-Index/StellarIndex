@@ -1,0 +1,202 @@
+---
+# promtool unit tests for the sep1-refresh alerts.
+#
+#   promtool test rules deploy/monitoring/rule-tests/sep1-refresh_test.yml
+#
+# PROVEN-RED (reached gate): drop the `and … reached >= 20` term and re-run —
+# "a small queue never pages" reports 1 firing alert.
+# PROVEN-RED (systemic suppression): drop the `unless` arm and re-run —
+# "a systemic run is left to the unit-failed alert" reports 1 firing alert.
+# PROVEN-RED (scrape-history gate): drop the `and on() (…)` guard and re-run —
+# "a fresh Prometheus does not fire on a series it never had" reports 1 alert.
+# PROVEN-RED (scrape-interval independence): replace the `[6h:5m] >= 70`
+# subquery with `count_over_time(up[6h]) > 340` and re-run — "a 15 s scrape
+# does not shorten the six-hour wait" reports 1 firing alert at 3h.
+
+rule_files:
+  - ../rules/sep1-refresh.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── timeouts: 10 of 20 reached issuers timed out, three runs running ──
+  - interval: 1m
+    name: a third of reached issuers timing out for three runs pages a ticket
+    input_series:
+      - series: 'stellarindex_sep1_refresh_failures{reason="timeout",reached="true"}'
+        values: '10x200'
+      - series: 'stellarindex_sep1_refresh_failures{reason="timeout",reached="false"}'
+        values: '40x200'
+      - series: 'stellarindex_sep1_refresh_reached'
+        values: '20x200'
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: stellarindex_sep1_refresh_timeouts_high
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: sep1-refresh
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sep1-refresh.md#stellarindex_sep1_refresh_timeouts_high
+              summary: "More than 30% of previously reached stellar.toml domains timed out for three consecutive runs"
+              description: |
+                50% of the issuers whose domain had served a stellar.toml before timed out
+                in the most recent sep1-refresh run, and the fraction has held for three runs. A healthy run on the
+                reference host times out on well under 1% of its ~750 reached issuers, so this is egress, DNS or the
+                resolver's budget, not one issuer's outage.
+      - eval_time: 2h
+        alertname: stellarindex_sep1_refresh_timeouts_high
+        exp_alerts: []
+
+  # ── timeouts: under the 30% line, and never-reached domains do not count ──
+  - interval: 1m
+    name: a quarter of reached issuers timing out stays quiet
+    input_series:
+      - series: 'stellarindex_sep1_refresh_failures{reason="timeout",reached="true"}'
+        values: '5x200'
+      - series: 'stellarindex_sep1_refresh_failures{reason="timeout",reached="false"}'
+        values: '100x200'
+      - series: 'stellarindex_sep1_refresh_reached'
+        values: '20x200'
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: stellarindex_sep1_refresh_timeouts_high
+        exp_alerts: []
+
+  # ── a small queue never pages, whatever its ratio ──
+  - interval: 1m
+    name: a small queue never pages
+    input_series:
+      - series: 'stellarindex_sep1_refresh_failures{reason="timeout",reached="true"}'
+        values: '15x200'
+      - series: 'stellarindex_sep1_refresh_regressed'
+        values: '15x200'
+      - series: 'stellarindex_sep1_refresh_systemic'
+        values: '0x200'
+      - series: 'stellarindex_sep1_refresh_reached'
+        values: '19x200'
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: stellarindex_sep1_refresh_timeouts_high
+        exp_alerts: []
+      - eval_time: 3h
+        alertname: stellarindex_sep1_refresh_failing
+        exp_alerts: []
+
+  # ── failing: 10 of 20 regressed, the run's own systemic guard did not trip ──
+  - interval: 1m
+    name: a third of reached issuers regressing for three runs pages a ticket
+    input_series:
+      - series: 'stellarindex_sep1_refresh_regressed'
+        values: '10x200'
+      - series: 'stellarindex_sep1_refresh_systemic'
+        values: '0x200'
+      - series: 'stellarindex_sep1_refresh_reached'
+        values: '20x200'
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: stellarindex_sep1_refresh_failing
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: sep1-refresh
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sep1-refresh.md#stellarindex_sep1_refresh_failing
+              summary: "More than 30% of previously reached stellar.toml domains failed for three consecutive runs"
+              description: |
+                50% of the issuers whose domain had served a stellar.toml before failed in
+                the most recent sep1-refresh run, for any reason, and the fraction has held for three runs. The run's
+                own systemic guard (90% of reached) did not trip, so the retry ladder is backing these issuers off;
+                the failures textfile series says which reason dominates.
+
+  # ── failing: a systemic run is the unit's own failure, not a ticket here ──
+  - interval: 1m
+    name: a systemic run is left to the unit-failed alert
+    input_series:
+      - series: 'stellarindex_sep1_refresh_regressed'
+        values: '19x200'
+      - series: 'stellarindex_sep1_refresh_systemic'
+        values: '1x200'
+      - series: 'stellarindex_sep1_refresh_reached'
+        values: '20x200'
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: stellarindex_sep1_refresh_failing
+        exp_alerts: []
+
+  # ── stale: the last stamp is more than three hours old ──
+  - interval: 1m
+    name: a stamp older than three hours fires the stale ticket
+    input_series:
+      - series: 'stellarindex_sep1_refresh_last_run_unix'
+        values: '0x300'
+      - series: 'up{job="node_exporter",instance="localhost:9100"}'
+        values: '1x300'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: stellarindex_sep1_refresh_stale
+        exp_alerts: []
+      - eval_time: 3h30m
+        alertname: stellarindex_sep1_refresh_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: sep1-refresh
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sep1-refresh.md#stellarindex_sep1_refresh_stale
+              summary: "sep1-refresh has not stamped its textfile for over 3 hours"
+              description: |
+                The hourly sep1-refresh unit stamps stellarindex_sep1_refresh_last_run_unix at the end of every run,
+                an empty queue included. No stamp for three hours means the timer is off, the unit is failing before
+                its loop or the textfile is not reaching node_exporter. The absent arm is gated on node_exporter
+                having been up through the window (counted at five-minute steps, so the scrape interval does
+                not matter), so a freshly provisioned host does not fire it.
+
+  # ── stale: never stamped on a host node_exporter has been up on all along ──
+  - interval: 1m
+    name: a textfile that never appeared fires off the absent arm
+    input_series:
+      - series: 'up{job="node_exporter",instance="localhost:9100"}'
+        values: '1x500'
+    alert_rule_test:
+      - eval_time: 7h
+        alertname: stellarindex_sep1_refresh_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: sep1-refresh
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sep1-refresh.md#stellarindex_sep1_refresh_stale
+              summary: "sep1-refresh has not stamped its textfile for over 3 hours"
+              description: |
+                The hourly sep1-refresh unit stamps stellarindex_sep1_refresh_last_run_unix at the end of every run,
+                an empty queue included. No stamp for three hours means the timer is off, the unit is failing before
+                its loop or the textfile is not reaching node_exporter. The absent arm is gated on node_exporter
+                having been up through the window (counted at five-minute steps, so the scrape interval does
+                not matter), so a freshly provisioned host does not fire it.
+
+  # ── stale: a fresh Prometheus has not had six hours to miss the series ──
+  - interval: 1m
+    name: a fresh Prometheus does not fire on a series it never had
+    input_series:
+      - series: 'up{job="node_exporter",instance="localhost:9100"}'
+        values: '1x100'
+    alert_rule_test:
+      - eval_time: 1h40m
+        alertname: stellarindex_sep1_refresh_stale
+        exp_alerts: []
+
+  # ── stale: a 15 s scrape must not shorten the six-hour wait ──
+  - interval: 15s
+    name: a 15 s scrape does not shorten the six-hour wait
+    input_series:
+      - series: 'up{job="node_exporter",instance="localhost:9100"}'
+        values: '1x720'
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: stellarindex_sep1_refresh_stale
+        exp_alerts: []

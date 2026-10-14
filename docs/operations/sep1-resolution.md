@@ -128,14 +128,21 @@ stellarindex-ops sep1-refresh -config /etc/stellarindex.toml \
 
 ## Metrics + alerts
 
-`internal/metadata` emits no Prometheus metrics, so no per-issuer resolver
-timeout or error-rate alert ships (INV-1321 tracks adding them).
-`sep1-refresh` logs each per-issuer failure and judges its own run: a failure
-fraction high enough to indicate an outage on our side unwinds the ladder step
-it just applied (see the job's doc comment). The data-freshness watchdog reads
-`max(issuers.sep1_payload_fetched_at)`, stamped only by a successful fetch, so
-a run that fails every domain goes stale. It is an aggregate: one dead domain
-among many live ones does not trip it.
+`sep1-refresh` logs each per-issuer failure and stamps every run's counters
+into `/var/lib/node_exporter/textfile_collector/sep1_refresh.prom`: issuers by
+outcome, the `reached` denominator (domains that had served a toml before), the
+`regressed` count and a `failures{reason,reached}` split (timeout, dns,
+connect, tls, http, redirect, parse, too_large, too_deep, ssrf, invalid_domain, payload,
+domain, lake, write, other). Three ticket alerts read it, each held for three
+hourly runs: `stellarindex_sep1_refresh_timeouts_high` and
+`stellarindex_sep1_refresh_failing` at 30% of reached, and
+`stellarindex_sep1_refresh_stale` when no run has stamped for 3 h
+([runbook](runbooks/sep1-refresh.md)). The run also judges itself: a failure
+fraction high enough to indicate an outage on our side (90% of reached) unwinds
+the ladder step it just applied and fails the unit. The data-freshness watchdog
+reads `max(issuers.sep1_payload_fetched_at)`, stamped only by a successful
+fetch, so a run that fails every domain goes stale. It is an aggregate: one dead
+domain among many live ones does not trip it.
 
 Every successful write diffs the held payload against the new one and appends
 a row to `issuer_identity_history` (migration 0190) for each changed
