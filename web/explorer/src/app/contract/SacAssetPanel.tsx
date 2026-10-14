@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import {
+  Button,
   Stat,
   StatCell,
   StatGrid,
@@ -22,9 +23,9 @@ import { assetHref } from '@/lib/fiat-slugs';
 import {
   formatCompact,
   formatCompactUnits,
-  formatPrice,
-  truncateMiddle,
+  formatPriceSmall,
   formatUnitsReadable,
+  truncateMiddle,
 } from '@/lib/format';
 import type { paths } from '@/api/types';
 import { SidebarAssetIcon } from '../assets/[slug]/SidebarAssetIcon';
@@ -81,8 +82,16 @@ export function SacAssetPanel({ contractId }: { contractId: string }) {
           <p className="text-ink-muted text-sm">Loading asset…</p>
         ) : !a ? (
           <p className="text-ink-muted text-sm">
-            This is a Stellar Asset Contract, but the wrapped asset could not be
-            resolved right now. Reload the page to retry.
+            This is a Stellar Asset Contract, but the asset lookup did not
+            return.
+            <Button
+              variant="secondary"
+              size="sm"
+              className="ml-3"
+              onClick={() => asset.refetch()}
+            >
+              Retry
+            </Button>
           </p>
         ) : (
           <AssetIdentity a={a} />
@@ -103,6 +112,11 @@ function AssetIdentity({ a }: { a: AssetDetail }) {
   const stats = (
     [
       {
+        label: 'Price',
+        value: a.price_usd ? `$${formatPriceSmall(a.price_usd)}` : null,
+      },
+      { label: 'Market cap', value: usd(a.market_cap_usd) },
+      {
         label: 'Circulating',
         value:
           a.circulating_supply != null
@@ -116,11 +130,6 @@ function AssetIdentity({ a }: { a: AssetDetail }) {
             ? formatCompactUnits(a.total_supply, decimals)
             : null,
       },
-      {
-        label: 'Price',
-        value: a.price_usd ? `$${formatPrice(a.price_usd)}` : null,
-      },
-      { label: 'Market cap', value: usd(a.market_cap_usd) },
       {
         label: 'Holders',
         value: holderCount != null ? formatCompact(holderCount) : null,
@@ -167,9 +176,16 @@ function AssetIdentity({ a }: { a: AssetDetail }) {
         </div>
       </div>
       {stats.length > 0 && (
-        <StatGrid cols={cols}>
-          {stats.map((s) => (
-            <StatCell key={s.label}>
+        <StatGrid cols={cols} className="grid-cols-2">
+          {stats.map((s, i) => (
+            <StatCell
+              key={s.label}
+              className={
+                i === stats.length - 1 && stats.length % 2 === 1
+                  ? 'col-span-2 sm:col-span-1'
+                  : undefined
+              }
+            >
               <Stat label={s.label} value={s.value} />
             </StatCell>
           ))}
@@ -204,6 +220,18 @@ function SacMovement({
       >
         {supply.isLoading ? (
           <p className="text-ink-muted text-sm">Loading…</p>
+        ) : supply.isError ? (
+          <p className="text-ink-muted text-sm">
+            The supply lookup did not return.
+            <Button
+              variant="secondary"
+              size="sm"
+              className="ml-3"
+              onClick={() => supply.refetch()}
+            >
+              Retry
+            </Button>
+          </p>
         ) : !s || supplyDecimals == null ? (
           <p className="text-ink-muted text-sm">
             No mint or burn flows recorded for this asset.

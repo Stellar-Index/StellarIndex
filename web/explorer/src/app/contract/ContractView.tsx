@@ -16,6 +16,7 @@ import {
   FactList,
   Mono,
   PageHeader,
+  Segmented,
   Skeleton,
   TBody,
   TR,
@@ -25,18 +26,24 @@ import {
   THead,
 } from '@/components/ui';
 import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
-import { DirectoryLabel } from '@/components/DirectoryLabel';
+import {
+  DirectoryLabel,
+  type DirectoryInfo,
+} from '@/components/DirectoryLabel';
 import { CrossReference } from '@/components/CrossReference';
 import {
   ContractDailyBars,
-  CounterpartyBars,
-  EventMixDonut,
   ExportChips,
+  InlineBar,
 } from '@/components/ContractCharts';
 import { apiGet, asExample } from '@/api/client';
-import { useSACWrappers } from '@/api/hooks';
+import { useAsset, useSACWrappers } from '@/api/hooks';
 import { isNativeXlmSac } from '@/lib/asset-label';
 import { titleCase } from '@/lib/account-format';
+import {
+  DIRECTORY_OPERATOR_OVERRIDE_SOURCE,
+  hasDirectoryScamFlag,
+} from '@/lib/directory-tags';
 import { baseUnitsDecimal, formatReadable } from '@/lib/format';
 import type { paths } from '@/api/types';
 import {
@@ -59,7 +66,10 @@ type GetJSON<P extends keyof paths> = paths[P] extends {
 
 const CONTRACT_RE = /^C[A-Z2-7]{55}$/;
 const ACCOUNT_RE = /^G[A-Z2-7]{55}$/;
+const MUXED_RE = /^M[A-Z2-7]{68}$/;
 const PAGE_SIZE = 50;
+const INTERACTIONS_FOLD = 10;
+const TOKEN_EVENTS = new Set(['transfer', 'mint', 'burn', 'clawback']);
 
 function useContractWasm(id: string) {
   const query = useQuery<ContractWasmResp>({
@@ -79,13 +89,40 @@ function useContractWasm(id: string) {
   return { ...query, isSac };
 }
 
+interface TransferRow {
+  ledger?: number;
+  ledger_close_time?: string;
+  tx_hash?: string;
+  event_kind?: string;
+  from?: string;
+  to?: string;
+  amount?: string;
+}
+
+function useTransfers(id: string) {
+  return useQuery<{ transfers?: TransferRow[]; decimals?: number }>({
+    queryKey: ['/v1/contracts/{id}/transfers', id],
+    enabled: CONTRACT_RE.test(id),
+    retry: false,
+    staleTime: 30_000,
+    queryFn: async () =>
+      (
+        await apiGet<
+          Envelope<{ transfers?: TransferRow[]; decimals?: number }>
+        >(`/v1/contracts/${encodeURIComponent(id)}/transfers`, { limit: 25 })
+      ).data,
+  });
+}
+
 export function ContractView({ id: idProp }: { id?: string } = {}) {
   const params = useSearchParams();
   const id = (idProp ?? params.get('id') ?? '').trim();
   const looksValid = CONTRACT_RE.test(id);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
+  const { isSac } = useContractWasm(id);
+  const sacAsset = useAsset(isSac ? id : undefined).data?.data;
 
-  const { data, isLoading, isError, error, isFetching } =
+  const { data, isLoading, isError, error, isFetching, refetch } =
     useQuery<ContractResp>({
       queryKey: ['/v1/contracts/{id}', id, cursor ?? 'tip'],
       enabled: id.length > 0 && looksValid,
@@ -142,13 +179,28 @@ export function ContractView({ id: idProp }: { id?: string } = {}) {
   });
 
   if (isError) {
+    const msg = error instanceof Error ? error.message : 'unknown error';
     return (
       <Shell id={id}>
-        <Callout tone="warn" title="Contract not found">
-          No events for this contract in the served tier, or the lookup failed:{' '}
-          {error instanceof Error ? error.message : 'unknown error'}. Check the
-          ID, or retry in a minute if the API was unavailable.
-        </Callout>
+        {msg.includes('404') ? (
+          <Callout tone="warn" title="Contract not found">
+            Nothing in the served tier for this contract: no events, instance
+            entry or TTL row. Check the ID; a contract deployed before capture
+            began appears once its ledgers are backfilled.
+          </Callout>
+        ) : (
+          <Callout tone="bad" title="Lookup failed">
+            The contract lookup did not return: {msg}.
+            <Button
+              variant="secondary"
+              size="sm"
+              className="ml-3"
+              onClick={() => refetch()}
+            >
+              Retry
+            </Button>
+          </Callout>
+        )}
       </Shell>
     );
   }
@@ -160,20 +212,36 @@ export function ContractView({ id: idProp }: { id?: string } = {}) {
           <Skeleton className="h-16" />
           <Skeleton className="h-10 w-2/3" />
         </Panel>
+        <Panel title="Recent events" source={source}>
+          <Skeleton className="h-40" />
+        </Panel>
+        <Panel
+          title="Code (WASM)"
+          source={asExample(`/v1/contracts/${id}/wasm`)}
+        >
+          <Skeleton className="h-16" />
+        </Panel>
       </Shell>
     );
   }
 
   const cid = data.contract_id || id;
+  const title = isSac
+    ? [
+        sacAsset?.code || (sacAsset?.type === 'native' ? 'XLM' : ''),
+        'Stellar Asset Contract',
+      ]
+        .filter(Boolean)
+        .join(' ')
+    : (data.directory?.name ??
+      (data.protocol ? `${titleCase(data.protocol)} contract` : 'Contract'));
+
   return (
-    <Shell id={cid}>
-      <OverviewPanel data={data} id={cid} />
-      <SacIdentity id={cid} />
-      <WasmPanel id={cid} />
-      <CodeHistoryPanel id={cid} />
-      <TransfersPanel id={cid} />
-      <InteractionsPanel id={cid} />
+    <Shell id={cid} title={title}>
+      {isSac && <SacAssetPanel contractId={cid} />}
+      <OverviewPanel data={data} id={cid} isSac={isSac} />
       <EventsPanel
+        id={cid}
         events={data.events}
         nextCursor={data.next_cursor}
         cursor={cursor}
@@ -184,12 +252,24 @@ export function ContractView({ id: idProp }: { id?: string } = {}) {
         }}
         source={source}
       />
+      <TransfersPanel id={cid} />
+      <InteractionsPanel id={cid} />
+      <WasmPanel id={cid} />
+      <CodeHistoryPanel id={cid} />
       <CrossReference kind="contract" id={cid} />
     </Shell>
   );
 }
 
-function OverviewPanel({ data, id }: { data: ContractResp; id: string }) {
+function OverviewPanel({
+  data,
+  id,
+  isSac,
+}: {
+  data: ContractResp;
+  id: string;
+  isSac: boolean;
+}) {
   const act = data.activity;
   const daily = act?.daily ?? [];
   return (
@@ -211,27 +291,36 @@ function OverviewPanel({ data, id }: { data: ContractResp; id: string }) {
             </span>
           )}
         </Fact>
-        <Fact label="Protocol" mono={false}>
-          {data.protocol ? (
-            <Link
-              href={`/protocols/${encodeURIComponent(data.protocol)}`}
-              className="text-brand-600 hover:underline"
-              title="Registered contract: opens the protocol page"
-            >
-              {titleCase(data.protocol)}
-            </Link>
-          ) : (
-            <span
-              className="text-ink-faint"
-              title="Not in the protocol registry; its events are still captured"
-            >
-              Not registered
+        {(data.protocol || !isSac) && (
+          <Fact label="Protocol" mono={false}>
+            {data.protocol ? (
+              <Link
+                href={`/protocols/${encodeURIComponent(data.protocol)}`}
+                className="text-brand-600 hover:underline"
+                title="Registered contract: opens the protocol page"
+              >
+                {titleCase(data.protocol)}
+              </Link>
+            ) : (
+              <span
+                className="text-ink-faint"
+                title="Not in the protocol registry; its events are still captured"
+              >
+                Not registered
+              </span>
+            )}
+          </Fact>
+        )}
+        {isSac && (
+          <Fact label="Code" mono={false}>
+            <span title="A Stellar Asset Contract runs built-in host logic; there is no uploaded WASM module.">
+              Built-in host logic
             </span>
-          )}
-        </Fact>
+          </Fact>
+        )}
         {data.directory && (
           <Fact label="Directory" mono={false}>
-            <DirectoryLabel info={data.directory} />
+            <DirectoryFact info={data.directory} />
           </Fact>
         )}
         <Fact
@@ -246,7 +335,10 @@ function OverviewPanel({ data, id }: { data: ContractResp; id: string }) {
         >
           <When ts={act?.last_seen} />
         </Fact>
-        <Fact label="Active ledgers">
+        <Fact
+          label="Active ledgers"
+          title="Ledgers in which this contract emitted at least one event, since first seen"
+        >
           {act?.active_ledgers_total != null
             ? act.active_ledgers_total.toLocaleString('en-US')
             : '—'}
@@ -266,16 +358,45 @@ function OverviewPanel({ data, id }: { data: ContractResp; id: string }) {
   );
 }
 
+// The full attribution line only earns its height when the label carries a
+// warning; otherwise the source is named inline and the disclaimer sits in
+// the tooltip so the fact row keeps its rhythm.
+function DirectoryFact({ info }: { info: DirectoryInfo }) {
+  if (
+    hasDirectoryScamFlag(info.tags) ||
+    info.source === DIRECTORY_OPERATOR_OVERRIDE_SOURCE
+  ) {
+    return <DirectoryLabel info={info} />;
+  }
+  return (
+    <span
+      className="inline-flex flex-wrap items-center gap-2"
+      title="Label from the StellarExpert public directory (community-curated; listing is not endorsement)"
+    >
+      <span className="text-ink font-medium">{info.name}</span>
+      {info.tags.map((t) => (
+        <Badge key={t}>#{t}</Badge>
+      ))}
+      <span className="text-ink-muted text-xs">StellarExpert directory</span>
+    </span>
+  );
+}
+
 function When({ ts }: { ts?: string }) {
   if (!ts) return <span className="text-ink-faint">—</span>;
   return (
     <>
       {ts.slice(0, 10)}
-      <span className="text-ink-muted ml-2 font-sans text-xs">
-        {relativeAge(ts)}
-      </span>
+      <span className="text-ink-muted ml-2 text-xs">{relativeAge(ts)}</span>
     </>
   );
+}
+
+function approxLedgerSpan(ledgers: number): string {
+  const secs = ledgers * 5;
+  if (secs < 3600) return `${Math.max(1, Math.round(secs / 60))} min`;
+  if (secs < 172_800) return `${Math.round(secs / 3600)} h`;
+  return `${Math.round(secs / 86_400)} d`;
 }
 
 export function ContractLiveness({
@@ -304,9 +425,10 @@ export function ContractLiveness({
         {left > 0 && (
           <span
             className="text-ink-muted text-xs whitespace-nowrap"
-            title={`As of ledger ${ttl.as_of_ledger}`}
+            title={`As of ledger ${ttl.as_of_ledger}, assuming about 5 s per ledger`}
           >
-            {left.toLocaleString('en-US')} ledgers to expiry
+            {left.toLocaleString('en-US')} ledgers to expiry · ≈{' '}
+            {approxLedgerSpan(left)}
           </span>
         )}
       </span>
@@ -342,15 +464,19 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(2)} MiB`;
 }
 
-function SacIdentity({ id }: { id: string }) {
-  const { isSac } = useContractWasm(id);
-  return isSac ? <SacAssetPanel contractId={id} /> : null;
+function RetryButton({ onClick }: { onClick: () => void }) {
+  return (
+    <Button variant="secondary" size="sm" className="ml-3" onClick={onClick}>
+      Retry
+    </Button>
+  );
 }
 
 function WasmPanel({ id }: { id: string }) {
   const { data, isLoading, isError, error, isSac, refetch } =
     useContractWasm(id);
   const source = asExample(`/v1/contracts/${id}/wasm`);
+  if (isSac) return null;
 
   if (isLoading) {
     return (
@@ -362,40 +488,20 @@ function WasmPanel({ id }: { id: string }) {
 
   if (isError || !data) {
     const msg = error instanceof Error ? error.message : '';
-    let body: ReactNode;
-    if (isSac) {
-      body = (
-        <p className="text-ink-body text-sm">
-          Stellar Asset Contract: built-in host logic rather than an uploaded
-          WASM module, so there is no bytecode to show.
-        </p>
-      );
-    } else if (msg.includes('404')) {
-      body = (
-        <Callout tone="warn" title="Code not captured">
-          This contract’s WASM is not in the captured ledger window yet: its
-          deploy-time code entry predates live capture. Exports and bytecode
-          appear once that ledger is backfilled.
-        </Callout>
-      );
-    } else {
-      body = (
-        <Callout tone="bad" title="Code unavailable">
-          Couldn’t load this contract’s WASM{msg ? `: ${msg}` : ''}.
-          <Button
-            variant="secondary"
-            size="sm"
-            className="ml-3"
-            onClick={() => refetch()}
-          >
-            Retry
-          </Button>
-        </Callout>
-      );
-    }
     return (
       <Panel title="Code (WASM)" source={source}>
-        {body}
+        {msg.includes('404') ? (
+          <Callout tone="warn" title="Code not captured">
+            This contract’s WASM is not in the captured ledger window yet: its
+            deploy-time code entry predates live capture. Exports and bytecode
+            appear once that ledger is backfilled.
+          </Callout>
+        ) : (
+          <Callout tone="bad" title="Code unavailable">
+            The WASM lookup did not return{msg ? `: ${msg}` : ''}.
+            <RetryButton onClick={() => refetch()} />
+          </Callout>
+        )}
       </Panel>
     );
   }
@@ -482,7 +588,7 @@ type CodeHistoryResp = NonNullable<
 
 function CodeHistoryPanel({ id }: { id: string }) {
   const { isSac } = useContractWasm(id);
-  const { data, isLoading, isError } = useQuery<CodeHistoryResp>({
+  const { data, isLoading, isError, refetch } = useQuery<CodeHistoryResp>({
     queryKey: ['/v1/contracts/{id}/code-history', id],
     enabled: CONTRACT_RE.test(id),
     retry: false,
@@ -509,7 +615,8 @@ function CodeHistoryPanel({ id }: { id: string }) {
     return (
       <Panel title="Code history" source={source}>
         <p className="text-ink-muted text-sm">
-          The code-history lookup failed. Reload the page to retry.
+          The code-history lookup did not return.
+          <RetryButton onClick={() => refetch()} />
         </p>
       </Panel>
     );
@@ -587,16 +694,6 @@ type InteractionsResp = NonNullable<
   GetJSON<'/contracts/{contract_id}/interactions'>['data']
 >;
 
-interface TransferRow {
-  ledger?: number;
-  ledger_close_time?: string;
-  tx_hash?: string;
-  event_kind?: string;
-  from?: string;
-  to?: string;
-  amount?: string;
-}
-
 function transferAmount(amount: string, decimals: number): string {
   return formatReadable(baseUnitsDecimal(amount, decimals)) ?? amount;
 }
@@ -617,27 +714,27 @@ function Party({ id }: { id?: string }) {
 }
 
 function TransfersPanel({ id }: { id: string }) {
-  const { data } = useQuery<{ transfers?: TransferRow[]; decimals?: number }>({
-    queryKey: ['/v1/contracts/{id}/transfers', id],
-    enabled: CONTRACT_RE.test(id),
-    retry: false,
-    staleTime: 30_000,
-    queryFn: async () =>
-      (
-        await apiGet<
-          Envelope<{ transfers?: TransferRow[]; decimals?: number }>
-        >(`/v1/contracts/${encodeURIComponent(id)}/transfers`, { limit: 25 })
-      ).data,
-  });
+  const { data, isError, refetch } = useTransfers(id);
   const rows = data?.transfers ?? [];
   const decimals = data?.decimals ?? 7;
+  const source = asExample(`/v1/contracts/${id}/transfers`, { limit: 25 });
+  if (isError) {
+    return (
+      <Panel title="Token flows" source={source}>
+        <p className="text-ink-muted text-sm">
+          The transfer lookup did not return.
+          <RetryButton onClick={() => refetch()} />
+        </p>
+      </Panel>
+    );
+  }
   if (rows.length === 0) return null;
 
   return (
     <Panel
       title={`Token flows (last ${rows.length})`}
       hint="SEP-41 transfer, mint and burn events on this contract"
-      source={asExample(`/v1/contracts/${id}/transfers`, { limit: 25 })}
+      source={source}
       bodyClassName="-mx-4 -mb-4"
     >
       <div className="px-4">
@@ -651,27 +748,17 @@ function TransfersPanel({ id }: { id: string }) {
         <Table>
           <THead>
             <tr>
-              <Th>When</Th>
               <Th>Kind</Th>
               <Th>From</Th>
               <Th>To</Th>
               <Th align="right">Amount</Th>
+              <Th>When</Th>
               <Th>Tx</Th>
             </tr>
           </THead>
           <TBody>
             {rows.map((t, i) => (
               <TR key={`${t.tx_hash}-${i}`}>
-                <Td
-                  className="text-ink-muted text-xs whitespace-nowrap"
-                  title={
-                    t.ledger_close_time
-                      ? formatTimestamp(t.ledger_close_time)
-                      : undefined
-                  }
-                >
-                  {t.ledger_close_time ? relativeAge(t.ledger_close_time) : '—'}
-                </Td>
                 <Td className="font-mono text-xs">{t.event_kind ?? '—'}</Td>
                 <Td>
                   <Party id={t.from} />
@@ -681,6 +768,16 @@ function TransfersPanel({ id }: { id: string }) {
                 </Td>
                 <Td align="right" className="font-mono tabular-nums">
                   {t.amount ? transferAmount(t.amount, decimals) : '—'}
+                </Td>
+                <Td
+                  className="text-ink-muted text-xs whitespace-nowrap"
+                  title={
+                    t.ledger_close_time
+                      ? formatTimestamp(t.ledger_close_time)
+                      : undefined
+                  }
+                >
+                  {t.ledger_close_time ? relativeAge(t.ledger_close_time) : '—'}
                 </Td>
                 <Td>
                   {t.tx_hash ? (
@@ -705,7 +802,8 @@ function TransfersPanel({ id }: { id: string }) {
 
 function InteractionsPanel({ id }: { id: string }) {
   const { data: sacMap } = useSACWrappers();
-  const { data, isLoading, isError } = useQuery<InteractionsResp>({
+  const [showAll, setShowAll] = useState(false);
+  const { data, isLoading, isError, refetch } = useQuery<InteractionsResp>({
     queryKey: ['/v1/contracts/{id}/interactions', id],
     enabled: CONTRACT_RE.test(id),
     retry: false,
@@ -743,7 +841,8 @@ function InteractionsPanel({ id }: { id: string }) {
     return (
       <Panel title="Interaction map" source={source}>
         <p className="text-ink-muted text-sm">
-          The interaction scan failed or timed out. Reload the page to retry.
+          The interaction scan did not return or timed out.
+          <RetryButton onClick={() => refetch()} />
         </p>
       </Panel>
     );
@@ -759,58 +858,67 @@ function InteractionsPanel({ id }: { id: string }) {
     );
   }
 
+  const visible = showAll ? edges : edges.slice(0, INTERACTIONS_FOLD);
+  const anyProtocol = edges.some((e) => !!e.protocol);
+  const max = Math.max(...edges.map((e) => e.shared_txs ?? 0));
+
   return (
     <Panel
       title={`Interaction map (${edges.length})`}
-      hint="Contracts sharing transactions with this one · last 90 days"
+      hint="Shared transactions · last 90 days · counts are lower bounds"
       source={source}
       bodyClassName="-mx-4 -mb-4"
     >
-      <div className="px-4">
-        <CounterpartyBars edges={edges} nameFor={sacLabel} />
-      </div>
       <div className="overflow-x-auto">
         <Table>
           <THead>
             <tr>
               <Th>Contract</Th>
-              <Th>Protocol</Th>
+              {anyProtocol && <Th>Protocol</Th>}
               <Th align="right">Shared txs</Th>
             </tr>
           </THead>
           <TBody>
-            {edges.map((e) => {
+            {visible.map((e) => {
               const cid = e.contract_id ?? '';
               const label = sacLabel(cid);
+              const n = e.shared_txs ?? 0;
               return (
                 <TR key={cid}>
                   <Td>
+                    {label && (
+                      <span className="text-ink mr-2 text-sm">{label}</span>
+                    )}
                     <HashLink
                       href={`/contracts/${encodeURIComponent(cid)}/`}
                       value={cid}
                       head={8}
                       tail={6}
                     />
-                    {label && (
-                      <span className="text-ink-muted ml-2 text-xs">
-                        {label}
-                      </span>
-                    )}
                   </Td>
-                  <Td>
-                    {e.protocol ? (
-                      <Link
-                        href={`/protocols/${encodeURIComponent(e.protocol)}`}
-                        className="text-brand-600 hover:underline"
-                      >
-                        {titleCase(e.protocol)}
-                      </Link>
-                    ) : (
-                      <span className="text-ink-faint">—</span>
-                    )}
-                  </Td>
-                  <Td align="right" className="font-mono tabular-nums">
-                    {(e.shared_txs ?? 0).toLocaleString('en-US')}
+                  {anyProtocol && (
+                    <Td>
+                      {e.protocol ? (
+                        <Link
+                          href={`/protocols/${encodeURIComponent(e.protocol)}`}
+                          className="text-brand-600 hover:underline"
+                        >
+                          {titleCase(e.protocol)}
+                        </Link>
+                      ) : (
+                        <span className="text-ink-faint">—</span>
+                      )}
+                    </Td>
+                  )}
+                  <Td align="right" className="whitespace-nowrap">
+                    <InlineBar
+                      value={n}
+                      max={max}
+                      label={`${n.toLocaleString('en-US')} shared transactions`}
+                    />
+                    <span className="ml-3 inline-block w-12 text-right font-mono tabular-nums">
+                      {n.toLocaleString('en-US')}
+                    </span>
                   </Td>
                 </TR>
               );
@@ -818,11 +926,32 @@ function InteractionsPanel({ id }: { id: string }) {
           </TBody>
         </Table>
       </div>
+      {edges.length > INTERACTIONS_FOLD && (
+        <div className="border-line border-t px-4 py-3">
+          <Button
+            variant="subtle"
+            size="sm"
+            onClick={() => setShowAll((v) => !v)}
+          >
+            {showAll
+              ? `Show top ${INTERACTIONS_FOLD}`
+              : `Show all ${edges.length}`}
+          </Button>
+        </div>
+      )}
     </Panel>
   );
 }
 
-function Shell({ id, children }: { id: string | null; children: ReactNode }) {
+function Shell({
+  id,
+  title = 'Contract',
+  children,
+}: {
+  id: string | null;
+  title?: string;
+  children: ReactNode;
+}) {
   return (
     <Container className="space-y-6 py-8">
       <PageHeader
@@ -831,7 +960,7 @@ function Shell({ id, children }: { id: string | null; children: ReactNode }) {
           { label: 'Contracts', href: '/contracts' },
           { label: id ? `${id.slice(0, 8)}…${id.slice(-6)}` : 'Contract' },
         ]}
-        title="Contract"
+        title={title}
         meta={id ? <Mono value={id} className="break-all" /> : undefined}
       />
       {children}
@@ -845,15 +974,81 @@ function TopicLink({ topic }: { topic: string }) {
     : CONTRACT_RE.test(topic)
       ? `/contracts/${topic}/`
       : null;
-  if (!href) return <span>{topic} </span>;
+  if (MUXED_RE.test(topic)) {
+    return (
+      <span className="whitespace-nowrap" title={`${topic} (muxed account)`}>
+        {topic.slice(0, 4)}…{topic.slice(-4)}
+      </span>
+    );
+  }
+  if (!href) return <span>{topic === 'native' ? 'XLM' : topic}</span>;
   return (
-    <Link href={href} className="text-brand-600 hover:underline" title={topic}>
-      {topic.slice(0, 4)}…{topic.slice(-4)}{' '}
+    <Link
+      href={href}
+      className="text-brand-600 whitespace-nowrap hover:underline"
+      title={topic}
+    >
+      {topic.slice(0, 4)}…{topic.slice(-4)}
     </Link>
   );
 }
 
+type ContractEvent = NonNullable<ContractResp['events']>[number];
+
+// SEP-41 token events carry the amount in `data` as a bare i128 or as a
+// map with `amount` + `to_muxed_id`; every other event keeps its raw
+// topic/data rendering.
+function tokenAmount(data: string): string | null {
+  if (/^-?\d+$/.test(data)) return data;
+  const m = /^\{\s*amount:\s*(-?\d+)/.exec(data);
+  return m ? m[1] : null;
+}
+
+function EventDetail({
+  ev,
+  decimals,
+}: {
+  ev: ContractEvent;
+  decimals: number;
+}) {
+  const topics = ev.topics ?? [];
+  const data = ev.data ?? '';
+  const amount = TOKEN_EVENTS.has(ev.topic_0 ?? '') ? tokenAmount(data) : null;
+  const parties = topics.filter(
+    (t) => ACCOUNT_RE.test(t) || CONTRACT_RE.test(t) || MUXED_RE.test(t),
+  );
+  if (amount != null && parties.length > 0) {
+    return (
+      <span className="inline-flex items-center gap-x-1.5 font-mono text-xs whitespace-nowrap">
+        {parties.map((p, i) => (
+          <span key={i} className="inline-flex items-center gap-x-1.5">
+            {i > 0 && <span className="text-ink-faint">→</span>}
+            <TopicLink topic={p} />
+          </span>
+        ))}
+        <span className="text-ink tabular-nums">
+          {transferAmount(amount, decimals)}
+        </span>
+      </span>
+    );
+  }
+  return (
+    <span
+      className="inline-flex max-w-md items-center gap-x-1.5 font-mono text-xs whitespace-nowrap"
+      title={[...topics, data].filter(Boolean).join(' · ')}
+    >
+      {topics.map((t, ti) => (
+        <TopicLink key={ti} topic={t} />
+      ))}
+      {data ? (
+        <span className="text-ink-faint min-w-0 truncate">{data}</span>
+      ) : null}
+    </span>
+  );
+}
+
 function EventsPanel({
+  id,
   events = [],
   nextCursor,
   cursor,
@@ -862,6 +1057,7 @@ function EventsPanel({
   onOlder,
   source,
 }: {
+  id: string;
   events: ContractResp['events'];
   nextCursor?: string;
   cursor?: string;
@@ -870,15 +1066,31 @@ function EventsPanel({
   onOlder: () => void;
   source: ReturnType<typeof asExample>;
 }) {
+  const [kind, setKind] = useState<string | null>(null);
+  const decimals = useTransfers(id).data?.decimals ?? 7;
+
   if (events.length === 0) {
     return (
       <Panel title="Recent events" source={source}>
         <p className="text-ink-muted text-sm">
-          No events observed for this contract.
+          No events observed for this contract in the served tier.
         </p>
       </Panel>
     );
   }
+
+  const counts = new Map<string, number>();
+  for (const ev of events) {
+    const k = ev.topic_0 || '—';
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  const kinds = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  const mixedTypes = new Set(events.map((e) => e.event_type)).size > 1;
+  const rows = kind
+    ? events.filter((e) => (e.topic_0 || '—') === kind)
+    : events;
+  const cols = mixedTypes ? 6 : 5;
+
   return (
     <Panel
       title={`Recent events (${events.length})`}
@@ -886,31 +1098,58 @@ function EventsPanel({
       source={source}
       bodyClassName="-mx-4 -mb-4"
     >
-      <div className="px-4 pb-4">
-        <EventMixDonut events={events} />
-      </div>
+      {kinds.length > 1 && (
+        <div className="px-4 pb-4">
+          <Segmented
+            ariaLabel="Filter the loaded events by name"
+            className="flex-wrap font-mono"
+            value={kind ?? 'all'}
+            onChange={(v) => setKind(v === 'all' ? null : v)}
+            options={[
+              { value: 'all', label: `All ${events.length}` },
+              ...kinds.map(([k, n]) => ({
+                value: k,
+                label: (
+                  <>
+                    {k} <span className="text-ink-faint tabular-nums">{n}</span>
+                  </>
+                ),
+              })),
+            ]}
+          />
+        </div>
+      )}
       <div className="overflow-x-auto">
         <Table>
           <THead>
             <tr>
-              <Th>Ledger</Th>
+              <Th>Event</Th>
+              {mixedTypes && <Th>Type</Th>}
+              <Th>Detail</Th>
               <Th>When</Th>
               <Th>Tx</Th>
-              <Th>Type</Th>
-              <Th>Event</Th>
-              <Th>Detail</Th>
+              <Th>Ledger</Th>
             </tr>
           </THead>
           <TBody>
-            {events.map((ev, i) => (
+            {rows.length === 0 && (
+              <TR>
+                <Td colSpan={cols} className="text-ink-muted">
+                  No {kind} events on this page. Clear the filter or load an
+                  older page.
+                </Td>
+              </TR>
+            )}
+            {rows.map((ev, i) => (
               <TR key={`${ev.tx_hash}-${ev.op_index}-${ev.event_index ?? i}`}>
+                <Td className="font-mono text-xs">{ev.topic_0 || '—'}</Td>
+                {mixedTypes && (
+                  <Td className="text-ink-muted font-mono text-xs">
+                    {ev.event_type || '—'}
+                  </Td>
+                )}
                 <Td>
-                  <Link
-                    href={`/ledgers/${ev.ledger}/`}
-                    className="text-brand-600 font-mono text-xs hover:underline"
-                  >
-                    #{ev.ledger}
-                  </Link>
+                  <EventDetail ev={ev} decimals={decimals} />
                 </Td>
                 <Td
                   className="text-ink-muted text-xs whitespace-nowrap"
@@ -930,22 +1169,13 @@ function EventsPanel({
                     <span className="text-ink-faint">—</span>
                   )}
                 </Td>
-                <Td className="font-mono text-xs">{ev.event_type || '—'}</Td>
-                <Td className="font-mono text-xs">{ev.topic_0 || '—'}</Td>
                 <Td>
-                  <span
-                    className="text-ink-muted block max-w-md truncate font-mono text-xs"
-                    title={[...(ev.topics ?? []), ev.data ?? '']
-                      .filter(Boolean)
-                      .join(' · ')}
+                  <Link
+                    href={`/ledgers/${ev.ledger}/`}
+                    className="text-brand-600 font-mono text-xs hover:underline"
                   >
-                    {(ev.topics ?? []).map((t: string, ti: number) => (
-                      <TopicLink key={ti} topic={t} />
-                    ))}
-                    {ev.data ? (
-                      <span className="text-ink-faint">{ev.data}</span>
-                    ) : null}
-                  </span>
+                    #{ev.ledger}
+                  </Link>
                 </Td>
               </TR>
             ))}
