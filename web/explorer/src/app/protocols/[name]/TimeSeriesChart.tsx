@@ -6,17 +6,12 @@ import dynamic from 'next/dynamic';
 import { formatCompact } from '@/lib/format';
 import { isPartialTodayDate, seriesPointTime } from '@/lib/series';
 
-// TimeSeriesChart — the per-protocol time-series card (on-chain activity +
-// every bespoke `series` entry). Now rendered with TradingView Lightweight
-// Charts (via the shared LineChart) instead of a hand-rolled SVG, so every
-// chart on the explorer shares one charting engine, theme, crosshair, and
-// resize behaviour. Keeps the peak / avg / latest summary header.
-//
-// Inputs are (date, value) points where `value` is a JS number used ONLY for
-// chart geometry. The bespoke wire ships values as numeric STRINGS that can
-// exceed 2^53 (ADR-0003); the caller parses them with Number() for the shape
-// and shows the formatCompact figure in the summary — the precision loss is
-// cosmetic (a pixel y-coordinate), never a served amount.
+// TimeSeriesChart — one measured series (on-chain activity, every bespoke
+// `series` entry) on the shared LineChart, with a peak / average / latest
+// summary. `value` is a JS number used ONLY for chart geometry: the bespoke
+// wire ships numeric strings that can exceed 2^53 (ADR-0003), the caller
+// parses them for the shape, and the summary shows formatCompact of that
+// shape — a cosmetic loss in a pixel coordinate, never a served amount.
 
 const LineChart = dynamic(
   () => import('@/components/charts/LineChart').then((m) => m.LineChart),
@@ -28,8 +23,6 @@ export interface ChartPoint {
   value: number;
 }
 
-export type ChartTone = 'emerald' | 'brand' | 'violet' | 'amber' | 'indigo';
-
 export function TimeSeriesChart({
   points,
   label,
@@ -38,22 +31,16 @@ export function TimeSeriesChart({
 }: {
   /** The series to plot; `value` is already a JS number (geometry only). */
   points: ChartPoint[];
-  /** Human label for the aria summary (e.g. "USD volume", "daily events"). */
+  /** Human label for the legend and aria summary (e.g. "USD volume"). */
   label: string;
-  /** Optional unit appended to the peak/avg figures (e.g. "USD", "events"). */
+  /** Optional unit appended to the summary figures (e.g. "USD", "events"). */
   unit?: string;
   /** Show time-of-day on the x-axis (hourly 24h-window series). */
   timeVisible?: boolean;
-  /** Palette key — accepted for call-site compatibility; tone now derives
-   *  from the series trend (up green / down red) like every other chart. */
-  tone?: ChartTone;
-  /** Accepted for call-site compatibility; no longer used (was the SVG
-   *  gradient id). */
-  gradientId?: string;
 }) {
-  // Points with a non-parsable date are dropped before setData — the old
-  // time-0 fallback plotted them at 1970 and two of them fed
-  // lightweight-charts duplicate times (an ascending-order crash).
+  // Points with a non-parsable date are dropped before setData — a time-0
+  // fallback plotted them at 1970 and two of them fed lightweight-charts
+  // duplicate times (an ascending-order crash).
   const linePoints = useMemo(
     () =>
       points.flatMap((p) => {
@@ -83,40 +70,58 @@ export function TimeSeriesChart({
   // guard keeps the headline honest even for a caller that didn't.
   const lastComplete =
     [...points].reverse().find((p) => !isPartialTodayDate(p.date)) ?? null;
+  // A whole-number series (counts) gets a whole-number axis.
+  const integral = points.every((p) => Number.isInteger(p.value));
   const ariaLabel = `${label}: ${points.length} points, peak ${formatCompact(peak.value)}${unitSuffix} on ${peak.date}, average ${formatCompact(Math.round(avg))}${unitSuffix} over the window.`;
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <div className="text-ink-muted flex flex-wrap items-baseline gap-x-6 gap-y-1 text-xs">
-        <span>
-          Peak{' '}
-          <span className="text-ink-body font-mono tabular-nums">
-            {formatCompact(peak.value)}
-            {unitSuffix}
-          </span>{' '}
-          on {peak.date}
-        </span>
-        <span>
-          Avg/point{' '}
-          <span className="text-ink-body font-mono tabular-nums">
-            {formatCompact(Math.round(avg))}
-            {unitSuffix}
-          </span>
-        </span>
-        <span>
-          Latest{' '}
-          <span className="text-ink-body font-mono tabular-nums">
-            {lastComplete != null ? formatCompact(lastComplete.value) : '—'}
-            {lastComplete != null ? unitSuffix : ''}
-          </span>
-        </span>
+        <Figure
+          label="Peak"
+          value={`${formatCompact(peak.value)}${unitSuffix}`}
+          note={`on ${peak.date}`}
+        />
+        <Figure
+          label={timeVisible ? 'Avg per hour' : 'Avg per day'}
+          value={`${formatCompact(Math.round(avg))}${unitSuffix}`}
+        />
+        <Figure
+          label="Latest"
+          value={
+            lastComplete != null
+              ? `${formatCompact(lastComplete.value)}${unitSuffix}`
+              : '—'
+          }
+        />
       </div>
       <LineChart
         data={linePoints}
         height={224}
+        tone="brand"
+        area={false}
+        priceFormat={{ type: 'volume', precision: integral ? 0 : 2 }}
+        legend={{ valueLabel: label, formatValue: formatCompact }}
         ariaLabel={ariaLabel}
         timeVisible={timeVisible}
       />
     </div>
+  );
+}
+
+function Figure({
+  label,
+  value,
+  note,
+}: {
+  label: string;
+  value: string;
+  note?: string;
+}) {
+  return (
+    <span>
+      {label} <span className="text-ink tnum font-mono">{value}</span>
+      {note ? ` ${note}` : ''}
+    </span>
   );
 }

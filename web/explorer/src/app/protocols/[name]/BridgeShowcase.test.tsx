@@ -152,9 +152,11 @@ describe('flowLines', () => {
     expect(flowLines(series).map((l) => l.label)).toEqual(labels);
   });
 
-  it('gives the two directions distinct tones', () => {
+  it('gives the two directions distinct palette hues, never a price tone', () => {
     const [inb, out] = flowLines(cctpBespoke.series!);
-    expect(inb.tone).not.toBe(out.tone);
+    expect(inb.color).toBeDefined();
+    expect(inb.color).not.toBe(out.color);
+    expect([inb.tone, out.tone]).toEqual(['brand', 'brand']);
   });
 
   it('parses hourly timestamps 3600s apart', () => {

@@ -225,3 +225,22 @@ export function protocolMeta(name: string): ProtocolRegistryEntry | undefined {
 // same dark-surface-safe palette. Re-exported here to keep the call sites that
 // import `categoryTone` from the registry working.
 export { categoryToneClass as categoryTone } from '@/lib/pillTone';
+
+const CATEGORY_LABEL: Record<string, string> = {
+  dex: 'DEX',
+  amm: 'AMM',
+  cex: 'CEX',
+  lending: 'Lending',
+  bridge: 'Bridge',
+  oracle: 'Oracle',
+  yield: 'Yield',
+  aggregator: 'Aggregator',
+};
+
+/** Display label for a protocol category. */
+export function categoryLabel(category: string): string {
+  return (
+    CATEGORY_LABEL[category] ??
+    category.charAt(0).toUpperCase() + category.slice(1)
+  );
+}

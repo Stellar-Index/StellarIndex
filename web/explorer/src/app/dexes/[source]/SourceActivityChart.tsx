@@ -68,7 +68,7 @@ export function SourceActivityChart({
         height={height}
         tone="brand"
         area={false}
-        priceFormat={{ type: 'volume' }}
+        priceFormat={{ type: 'volume', precision: 0 }}
         timeVisible
         legend={{
           valueLabel: 'Trades',

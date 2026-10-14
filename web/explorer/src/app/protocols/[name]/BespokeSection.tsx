@@ -17,8 +17,23 @@ import { CATEGORICAL_PALETTE } from '@/components/charts/DonutChart';
 import { dropPartialTrailingDay, seriesPointTime } from '@/lib/series';
 import { CopyHash } from '../../explorer-shared';
 import { AssetText } from '@/components/AssetLink';
-import { TimeSeriesChart, type ChartTone } from './TimeSeriesChart';
-import { Segmented, Skeleton } from '@/components/ui';
+import { TimeSeriesChart } from './TimeSeriesChart';
+import {
+  Button,
+  Segmented,
+  Skeleton,
+  Stat,
+  StatCell,
+  StatGrid,
+  TBody,
+  TR,
+  Table,
+  Td,
+  Th,
+  THead,
+} from '@/components/ui';
+import { PANEL_LABEL_CLASS, SECTION_HEADING_CLASS } from '@/components/ui/Page';
+import { categoryLabel } from '../registry';
 import {
   BridgeShowcase,
   BreakdownDonuts,
@@ -82,31 +97,6 @@ export interface Bespoke {
   breakdowns?: BespokeBreakdown[];
   tables?: BespokeTable[];
   notes?: string[];
-}
-
-// category → headline label + chart palette. Falls through to a neutral
-// "Protocol analytics" so an unknown server-side category still renders.
-const CATEGORY_LABEL: Record<string, string> = {
-  dex: 'DEX analytics',
-  amm: 'AMM analytics',
-  lending: 'Lending analytics',
-  vault: 'Vault analytics',
-  yield: 'Vault analytics',
-  bridge: 'Bridge analytics',
-  oracle: 'Oracle analytics',
-};
-
-// Rotating chart tones so multiple series on one page read distinctly.
-const SERIES_TONES: ChartTone[] = [
-  'emerald',
-  'brand',
-  'violet',
-  'amber',
-  'indigo',
-];
-
-function categoryLabel(category: string): string {
-  return CATEGORY_LABEL[category] ?? 'Protocol analytics';
 }
 
 // ─── Section-level analytics window ──────────────────────────────────────
@@ -221,7 +211,7 @@ function GroupedSeriesPanel({
   return (
     <Panel
       title={group.title}
-      hint={`${unit ? `Units: ${unit} · ` : ''}${grainLabel} · last ${windowLabelFor(days)}`}
+      hint={`${unit ? `${unit} · ` : ''}${grainLabel} · last ${windowLabelFor(days)}`}
       source={source}
     >
       <div className="space-y-3">
@@ -230,6 +220,7 @@ function GroupedSeriesPanel({
           data={[]}
           series={lines}
           height={224}
+          priceFormat={{ type: 'volume', precision: 0 }}
           timeVisible={days === 1}
           legend={{
             valueLabel: lines[0]?.label ?? '',
@@ -243,11 +234,11 @@ function GroupedSeriesPanel({
 }
 
 /**
- * BespokeSection — the category-specific, Dune-surpassing analytics block.
- * Renders ONLY the sub-parts the server populated; the whole section is
- * omitted upstream when `data.bespoke` is absent. Distinct visual treatment
- * (gradient header band + accent KPI cards) so it reads as the protocol's
- * tailored headline rather than the generic activity panels around it.
+ * BespokeSection — the category-specific analytics block. Renders ONLY the
+ * sub-parts the server populated; the whole section is omitted upstream
+ * when `data.bespoke` is absent. A flat section heading with the window
+ * pills, a StatGrid of KPIs, then one Panel per series, table or breakdown:
+ * the same chrome as the activity panels around it.
  *
  * The section OWNS the analytics window: the 24h/7d/30d/90d pills in the
  * header refetch `/v1/protocols/{name}?days=N` and swap the WHOLE block
@@ -279,7 +270,7 @@ export function BespokeSection({
   const [days, setDays] = useState<WindowDays>(DEFAULT_WINDOW_DAYS);
 
   // Non-default windows refetch the protocol detail with ?days=N.
-  const { data, isFetching, isError } = useQuery<Bespoke | null>({
+  const { data, isFetching, isError, refetch } = useQuery<Bespoke | null>({
     queryKey: ['/v1/protocols/{name}', name, 'bespoke-window', days],
     enabled: days !== DEFAULT_WINDOW_DAYS,
     retry: false,
@@ -336,47 +327,46 @@ export function BespokeSection({
   const activeKpis = active?.kpis ?? [];
 
   return (
-    <section
-      aria-labelledby="bespoke-heading"
-      className="border-brand-100 from-brand-50/60 space-y-4 rounded-xl border bg-linear-to-b to-transparent p-4"
-    >
-      {/* ── Category chip + heading + the shared window pills ── */}
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="bg-brand-100 text-brand-700 rounded-sm px-2 py-0.5 font-mono text-[11px] tracking-wider uppercase">
-          {bespoke.category}
-        </span>
-        <h2
-          id="bespoke-heading"
-          className="text-lg font-semibold tracking-tight"
-        >
-          {categoryLabel(bespoke.category)}
-        </h2>
-        <span className="text-ink-muted text-xs">
-          tailored on-chain metrics for this protocol
-        </span>
+    <section aria-labelledby="bespoke-heading" className="space-y-4">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div>
+          <h2 id="bespoke-heading" className={SECTION_HEADING_CLASS}>
+            {categoryLabel(bespoke.category)} analytics
+          </h2>
+          <p className="text-ink-muted mt-0.5 text-sm">
+            Tailored on-chain metrics · the window applies to every panel below
+          </p>
+        </div>
         <div className="ml-auto">
           <WindowPills days={days} onChange={setDays} />
         </div>
       </div>
 
-      {/* ── Bespoke KPI cards (window-reactive with the rest) ── */}
       {loading && hasKpis ? (
         <Skeleton
           aria-hidden
-          className="h-24 w-full rounded-lg"
+          className="h-24 w-full"
           data-testid="bespoke-kpis-loading"
         />
       ) : (
         activeKpis.length > 0 && (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-            {activeKpis.map((k, i) => (
-              <BespokeKpiCard key={`${k.label}-${i}`} kpi={k} />
-            ))}
-          </div>
+          <StatGrid cols={4}>
+            {activeKpis.map((k, i) => {
+              const shown = kpiDisplay(k);
+              return (
+                <StatCell key={`${k.label}-${i}`}>
+                  <Stat
+                    label={<span title={k.hint || undefined}>{k.label}</span>}
+                    value={<span title={k.value}>{shown.value}</span>}
+                    sub={shown.unit}
+                  />
+                </StatCell>
+              );
+            })}
+          </StatGrid>
         )
       )}
 
-      {/* ── Bespoke charts ── */}
       {/* Bridge blocks hand their whole chart suite (flow series, per-chain
           lines, donuts, cumulative net inflow, largest-transfers table) to
           BridgeShowcase, driven by this section's window; every other
@@ -390,12 +380,11 @@ export function BespokeSection({
           days={days}
           isFetching={loading}
           isError={failed}
+          onRetry={() => refetch()}
           source={source}
         />
       ) : failed ? (
-        <p className="text-ink-muted py-6 text-center text-sm">
-          Couldn&apos;t load this window — retry, or pick another window.
-        </p>
+        <WindowFailed onRetry={() => refetch()} />
       ) : loading ? (
         <Skeleton
           aria-hidden
@@ -412,7 +401,7 @@ export function BespokeSection({
             <Panel
               key={`${s.name}-${i}`}
               title={s.name}
-              hint={`${s.unit ? `Units: ${s.unit} · ` : ''}last ${windowLabelFor(days)}`}
+              hint={`${s.unit ? `${s.unit} · ` : ''}${days === 1 ? 'hourly' : 'daily'} · last ${windowLabelFor(days)}`}
               source={source}
             >
               <TimeSeriesChart
@@ -422,8 +411,6 @@ export function BespokeSection({
                 })}
                 label={s.name}
                 unit={s.unit}
-                tone={SERIES_TONES[i % SERIES_TONES.length]}
-                gradientId={`bespokeSeries-${i}`}
                 timeVisible={days === 1}
               />
             </Panel>
@@ -438,8 +425,6 @@ export function BespokeSection({
             />
           ))}
 
-          {/* ── Generic breakdown donuts (categories that adopt the
-                 breakdowns wire field — DEX ships "Volume by pair") ── */}
           {(active.breakdowns?.length ?? 0) > 0 && (
             <BreakdownDonuts
               breakdowns={active.breakdowns!}
@@ -458,22 +443,41 @@ export function BespokeSection({
         </>
       )}
 
-      {/* ── Notes / caveats ── */}
+      {/* Caveats belong to the active window's block and stay visible. */}
       {notes.length > 0 && (
-        <details className="text-ink-muted px-1 text-xs">
-          <summary className="cursor-pointer">Notes ({notes.length})</summary>
-          <ul className="mt-1 space-y-1">
+        <div>
+          <div className={PANEL_LABEL_CLASS}>Notes</div>
+          <ul className="text-ink-muted mt-2 space-y-1 text-xs leading-relaxed">
             {notes.map((n, i) => (
               <li key={i}>{n}</li>
             ))}
           </ul>
-        </details>
+        </div>
       )}
     </section>
   );
 }
 
-// ─── Bespoke KPI card — accent styling, distinct from the generic KPI row ──
+/** The failed-window state, shared with the bridge showcase. */
+export function WindowFailed({ onRetry }: { onRetry?: () => void }) {
+  return (
+    <div className="py-6 text-center">
+      <p className="text-ink-muted text-sm">Couldn&apos;t load this window.</p>
+      {onRetry && (
+        <Button
+          variant="secondary"
+          size="sm"
+          className="mt-3"
+          onClick={onRetry}
+        >
+          Retry
+        </Button>
+      )}
+    </div>
+  );
+}
+
+// ─── KPI display ─────────────────────────────────────────────────────────
 
 // Values arrive as raw decimal strings; group them as strings (ADR-0003) and
 // render USD as a dollar figure. Non-decimal values pass through untouched.
@@ -491,42 +495,6 @@ function kpiDisplay(kpi: BespokeKpi): { value: string; unit?: string } {
     value: formatDecimalAmount(kpi.value, frac) ?? kpi.value,
     unit: kpi.unit,
   };
-}
-
-function BespokeKpiCard({ kpi }: { kpi: BespokeKpi }) {
-  const shown = kpiDisplay(kpi);
-  return (
-    <div className="border-brand-200/70 bg-surface/80 rounded-lg border p-3 shadow-sm">
-      <div
-        className="text-ink-muted flex items-center gap-1 text-[10px] tracking-wider uppercase"
-        title={kpi.hint || undefined}
-      >
-        <span className="truncate">{kpi.label}</span>
-        {kpi.hint && (
-          <span
-            aria-hidden
-            className="text-ink-faint cursor-help"
-            title={kpi.hint}
-          >
-            ⓘ
-          </span>
-        )}
-      </div>
-      <div className="mt-1 flex items-baseline gap-1">
-        <span
-          className="text-brand-700 text-2xl font-semibold tabular-nums"
-          title={kpi.value}
-        >
-          {shown.value}
-        </span>
-        {shown.unit && (
-          <span className="text-ink-muted text-xs font-medium">
-            {shown.unit}
-          </span>
-        )}
-      </div>
-    </div>
-  );
 }
 
 // ─── Bespoke table — scannable, mono+linked contract ids, right-aligned nums ─
@@ -548,55 +516,45 @@ export function BespokeTablePanel({
   );
 
   return (
-    <Panel title={table.title} source={source} bodyClassName="-mx-4">
+    <Panel title={table.title} source={source} bodyClassName="-mx-4 -mb-4">
       <div className="overflow-x-auto">
-        <table className="divide-line min-w-full divide-y text-sm">
-          <thead>
-            <tr className="text-ink-muted text-left text-[10px] tracking-wider uppercase">
+        <Table>
+          <THead>
+            <tr>
               {table.columns.map((c, ci) => (
-                <th
-                  key={ci}
-                  scope="col"
-                  className={`px-4 py-2 ${numericCols[ci] ? 'text-right' : ''}`}
-                >
+                <Th key={ci} align={numericCols[ci] ? 'right' : undefined}>
                   {c}
-                </th>
+                </Th>
               ))}
             </tr>
-          </thead>
-          <tbody className="divide-line-subtle divide-y">
+          </THead>
+          <TBody>
             {table.rows.length === 0 ? (
-              <tr>
-                <td
-                  colSpan={table.columns.length}
-                  className="text-ink-muted px-4 py-6 text-center text-sm"
-                >
+              <TR>
+                <Td colSpan={table.columns.length} className="text-ink-muted">
                   No rows in the window.
-                </td>
-              </tr>
+                </Td>
+              </TR>
             ) : (
               table.rows.map((row, ri) => (
-                <tr key={ri} className="hover:bg-surface-muted">
+                <TR key={ri}>
                   {table.columns.map((_, ci) => (
-                    <td
+                    <Td
                       key={ci}
-                      className={`px-4 py-2 ${
-                        numericCols[ci]
-                          ? 'text-ink-body text-right font-mono tabular-nums'
-                          : ''
-                      }`}
+                      align={numericCols[ci] ? 'right' : undefined}
+                      className={numericCols[ci] ? 'font-mono' : undefined}
                     >
                       <Cell
                         value={row[ci] ?? ''}
                         column={table.columns[ci] ?? ''}
                       />
-                    </td>
+                    </Td>
                   ))}
-                </tr>
+                </TR>
               ))
             )}
-          </tbody>
-        </table>
+          </TBody>
+        </Table>
       </div>
     </Panel>
   );
@@ -640,7 +598,9 @@ function Cell({ value, column }: { value: string; column: string }) {
       </Link>
     );
   }
-  if (CLASSIC_ASSET_ID.test(value)) return <AssetText canonical={value} />;
+  if (value === 'native' || CLASSIC_ASSET_ID.test(value)) {
+    return <AssetText canonical={value} />;
+  }
   const readable = IDENTIFIER_LABEL.test(column)
     ? null
     : formatReadable(value, /usd/i.test(column));

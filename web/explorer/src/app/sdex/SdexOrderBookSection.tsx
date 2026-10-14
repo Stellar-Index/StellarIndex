@@ -5,6 +5,7 @@ import Link from 'next/link';
 
 import { OrderBookPanel } from '../markets/[pair]/OrderBookPanel';
 import { Segmented } from '@/components/ui';
+import { SECTION_HEADING_CLASS } from '@/components/ui/Page';
 
 /**
  * SdexOrderBookSection — the live SDEX book for a handful of headline
@@ -46,14 +47,16 @@ export function SdexOrderBookSection() {
   const pairSlug = `${pair.base}~${pair.quote}`;
 
   return (
-    <section className="space-y-3">
+    <section aria-labelledby="sdex-book-heading" className="space-y-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-h3 text-ink font-semibold">Live order book</h2>
+        <h2 id="sdex-book-heading" className={SECTION_HEADING_CLASS}>
+          Live order book
+        </h2>
         <Link
           href={`/markets/${encodeURIComponent(pairSlug)}/`}
-          className="text-brand-600 text-sm hover:underline"
+          className="text-brand-600 text-sm font-medium hover:underline"
         >
-          Full {pair.label} market page →
+          Full {pair.label} market page
         </Link>
       </div>
       <Segmented

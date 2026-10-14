@@ -12,10 +12,7 @@ import {
   sumDecimalStrings,
 } from '@/lib/format';
 import { dropPartialTrailingDay, seriesPointTime } from '@/lib/series';
-import type {
-  NamedLineSeries,
-  LineSeriesTone,
-} from '@/components/charts/LineChart';
+import type { NamedLineSeries } from '@/components/charts/LineChart';
 import {
   DonutChart,
   CATEGORICAL_PALETTE,
@@ -27,6 +24,7 @@ import {
   toChartNumber,
   toDecimalString,
   BespokeTablePanel,
+  WindowFailed,
   windowLabelFor,
   type Bespoke,
   type BespokeSeries,
@@ -70,15 +68,10 @@ const CUMULATIVE = 'Cumulative net inflow (all-time)';
 /** A plotted line plus the exact window total its legend shows. */
 export type LegendLine = NamedLineSeries & { total: string | null };
 
-function toLine(
-  s: BespokeSeries,
-  label: string,
-  tone: LineSeriesTone,
-  color?: string,
-): LegendLine {
+function toLine(s: BespokeSeries, label: string, color?: string): LegendLine {
   return {
     label,
-    tone,
+    tone: 'brand',
     color,
     total: seriesTotal(s.points),
     // Today's accumulating daily bucket is dropped (phantom-cliff honesty;
@@ -111,12 +104,14 @@ export function flowLines(series: BespokeSeries[]): LegendLine[] {
   const outbound = series.find((s) => s.name === OUTBOUND_TOTAL);
   if (inbound && outbound) {
     return [
-      toLine(inbound, inbound.name, 'up'),
-      toLine(outbound, outbound.name, 'brand'),
+      // Directions are entities, not price moves: two palette hues, never
+      // the up/down pair.
+      toLine(inbound, inbound.name, CATEGORICAL_PALETTE[0]),
+      toLine(outbound, outbound.name, CATEGORICAL_PALETTE[3]),
     ];
   }
   const single = series.find((s) => !isAuxSeries(s));
-  return single ? [toLine(single, single.name, 'brand')] : [];
+  return single ? [toLine(single, single.name)] : [];
 }
 
 // ─── Stable chain → hue assignment ───────────────────────────────────────
@@ -155,7 +150,7 @@ export function perChainLines(
     .filter((s) => s.name.startsWith(prefix))
     .map((s) => {
       const chain = s.name.slice(prefix.length);
-      return toLine(s, chain, 'brand', chainColor(chain));
+      return toLine(s, chain, chainColor(chain));
     });
 }
 
@@ -233,7 +228,9 @@ export function BreakdownDonuts({
 }) {
   if (breakdowns.length === 0) return null;
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
+    <div
+      className={cn('grid gap-4', breakdowns.length > 1 && 'lg:grid-cols-2')}
+    >
       {breakdowns.map((b) => {
         const slices = donutSlices(b);
         return (
@@ -275,12 +272,7 @@ export function LineLegend({ lines }: { lines: LegendLine[] }) {
             aria-hidden
             className={cn(
               'inline-block h-2 w-2 rounded-full',
-              !l.color &&
-                (l.tone === 'up'
-                  ? 'bg-up'
-                  : l.tone === 'down'
-                    ? 'bg-down'
-                    : 'bg-brand-500'),
+              !l.color && 'bg-brand-500',
             )}
             style={l.color ? { backgroundColor: l.color } : undefined}
           />
@@ -302,6 +294,7 @@ export function BridgeShowcase({
   days,
   isFetching,
   isError,
+  onRetry,
   source,
 }: {
   /** The bespoke block from the page's initial (90d) fetch. */
@@ -315,6 +308,7 @@ export function BridgeShowcase({
   days: WindowDays;
   isFetching: boolean;
   isError: boolean;
+  onRetry?: () => void;
   source: RequestExample;
 }) {
   const series = useMemo(() => active?.series ?? [], [active]);
@@ -360,6 +354,9 @@ export function BridgeShowcase({
               return time == null || value == null ? [] : [{ time, value }];
             })}
             height={224}
+            tone="brand"
+            area={false}
+            priceFormat={{ type: 'volume', precision: 0 }}
             legend={{ valueLabel: 'Net inflow', formatValue: formatCompact }}
             ariaLabel={`Cumulative net USDC inflow onto Stellar since the bridge launched${cumulative.unit ? `, in ${cumulative.unit}` : ''}.`}
           />
@@ -369,16 +366,14 @@ export function BridgeShowcase({
       {/* ── Flow totals (driven by the section-level window pills) ── */}
       <Panel
         title={dual ? 'Bridge flows' : (lines[0]?.label ?? 'Bridge flows')}
-        hint={`${unit ? `Units: ${unit} · ` : ''}${grainLabel} buckets · last ${windowLabel}${dual ? ' · window applies to the charts and table below' : ''}`}
+        hint={`${unit ? `${unit} · ` : ''}${grainLabel} · last ${windowLabel}`}
         source={source}
       >
         <div className="space-y-3">
           {hasPoints && <LineLegend lines={lines} />}
 
           {isError ? (
-            <p className="text-ink-muted py-6 text-center text-sm">
-              Couldn&apos;t load this window — retry, or pick another window.
-            </p>
+            <WindowFailed onRetry={onRetry} />
           ) : isFetching ? (
             <Skeleton
               aria-hidden
@@ -393,6 +388,7 @@ export function BridgeShowcase({
             <LineChart
               data={[]}
               series={lines}
+              priceFormat={{ type: 'volume', precision: 0 }}
               height={224}
               timeVisible={days === 1}
               legend={{
@@ -428,6 +424,7 @@ export function BridgeShowcase({
                 <LineChart
                   data={[]}
                   series={inboundChainLines}
+                  priceFormat={{ type: 'volume', precision: 0 }}
                   height={200}
                   timeVisible={days === 1}
                   legend={{
@@ -450,6 +447,7 @@ export function BridgeShowcase({
                 <LineChart
                   data={[]}
                   series={outboundChainLines}
+                  priceFormat={{ type: 'volume', precision: 0 }}
                   height={200}
                   timeVisible={days === 1}
                   legend={{

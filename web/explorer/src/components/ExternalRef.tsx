@@ -1,12 +1,16 @@
+import type { ReactNode } from 'react';
+
 import { cn } from '@/lib/cn';
 
 /** Shows the destination itself as the link text, so an off-site hop is never a surprise. */
 export function ExternalRef({
   href,
   className,
+  children,
 }: {
   href: string;
   className?: string;
+  children?: ReactNode;
 }) {
   return (
     <a
@@ -18,7 +22,7 @@ export function ExternalRef({
         className,
       )}
     >
-      {href.replace(/^https?:\/\/(www\.)?/, '')}
+      {children ?? href.replace(/^https?:\/\/(www\.)?/, '')}
     </a>
   );
 }
