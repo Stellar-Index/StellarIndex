@@ -63,10 +63,11 @@ describe('strip chips', () => {
     ).toBe('5 days down');
   });
 
-  it('AccelerationArrow maps direction × acceleration to glyph and label', () => {
-    const { getByLabelText } = render(
+  it('AccelerationArrow names direction × acceleration with one icon', () => {
+    const { getByText, container } = render(
       <AccelerationArrow direction="down" acceleration="decreasing" />,
     );
-    expect(getByLabelText('recovering').textContent).toBe('↘↗');
+    expect(getByText('recovering')).toBeInTheDocument();
+    expect(container.querySelectorAll('svg')).toHaveLength(1);
   });
 });
