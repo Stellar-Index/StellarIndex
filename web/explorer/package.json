@@ -18,7 +18,7 @@
     "preview:worker": "opennextjs-cloudflare preview -c wrangler.ssr.jsonc",
     "postbuild": "pnpm run postbuild:pages && pnpm run postbuild:prune && pnpm run postbuild:budget && pnpm run postbuild:seo && pnpm run postbuild:openapi && pnpm run postbuild:shell-fallback",
     "postbuild:pages": "HEADING_ORDER_REQUIRE_BUILD=1 NAV_SHELL_REQUIRE_BUILD=1 vitest run --reporter=verbose src/lib/heading-order.built.test.ts src/lib/nav-shell.built.test.ts",
-    "postbuild:prune": "find out -type f -name '__next.*' ! -name '__next._tree.txt' -delete",
+    "postbuild:prune": "find out -type f -name '__next.*' ! -name '__next._tree.txt' ! -name '__next.*__PAGE__.txt' -delete",
     "postbuild:budget": "bash ../../scripts/ci/explorer-file-budget.sh out",
     "postbuild:seo": "bash ../../scripts/ci/explorer-seo-lint.sh out",
     "postbuild:openapi": "bash ../../scripts/ci/explorer-openapi-check.sh out",

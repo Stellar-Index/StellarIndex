@@ -60,7 +60,7 @@ fails the build. It lives there so every publisher (CF Pages,
 - `postbuild:pages`: heading outline on every page (WCAG 1.3.1); every
   nav-linked route exports a real frame.
 - `postbuild:prune`: deletes Next 16 `__next.*` prefetch files, **keeping
-  `__next._tree.txt`**.
+  `__next._tree.txt` and `__next.*__PAGE__.txt`**.
 - `postbuild:budget` (`scripts/ci/explorer-file-budget.sh`): fails at 18,500
   files, below CF Pages' hard 20,000 cap.
 - `postbuild:seo` (`scripts/ci/explorer-seo-lint.sh`): title, meta description
@@ -70,10 +70,11 @@ fails the build. It lives there so every publisher (CF Pages,
 - `postbuild:shell-fallback` (`scripts/ci/explorer-shell-fallback-check.sh`):
   every `functions/**/[[path]].js` shell target exists in `out/`.
 
-Prune runs before the budget count: Next 16 emits ~8 prefetch files per page
-(~36k, past the cap; deploys once failed silently on it for nine days). They are
-prefetch-only (a miss falls back to `index.txt`), except `__next._tree.txt`,
-which the router prefetches; deleting it 404s routes without a shell fallback.
+Prune runs before the budget count: Next 16 emits ~3 prefetch files per page
+beyond the two it keeps (~13k files unpruned, ~10.6k kept, measured 2026-10-15).
+The router prefetches each route's `__next._tree.txt` and its
+`__next.<segments>.__PAGE__.txt`; deleting either logs a 404 on every link hover.
+The rest (`_full`, `_head`, `_index`, layout segments) are never requested.
 `test/controlwiring/explorer_build_guards_test.go` asserts the chain and the keep.
 
 ## Test nets (Testnet / Futurenet)

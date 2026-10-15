@@ -53,19 +53,19 @@ func TestExplorerBuildRunsExportGuards(t *testing.T) {
 	}
 }
 
-// The prune is a DESTRUCTIVE transform, so the interesting assertion is
-// the one where it fires: `__next._tree.txt` is the only segment file the
-// client router prefetches, and the first version of this prune deleted it
-// too — 404s on every <Link> hover across the site
-// (docs/operations/postmortems/2026-08-27-explorer-console-errors.md).
-// Run the wired command against a synthetic export and pin both halves.
+// The prune is destructive: the client router prefetches each route's
+// `_tree` and `__PAGE__` segment files, and deleting either 404s on every
+// <Link> hover.
 func TestExplorerPruneKeepsTreeSegmentFiles(t *testing.T) {
 	t.Parallel()
 	prune := explorerPruneCommand(t)
 	dir := t.TempDir()
 	out := filepath.Join(dir, "out")
-	deleted := []string{"__next.__PAGE__.txt", "__next._full.txt", "__next._head.txt", "assets/__next._index.txt"}
-	kept := []string{"__next._tree.txt", "assets/__next._tree.txt", "index.html", "assets/index.txt"}
+	deleted := []string{"__next._full.txt", "__next._head.txt", "assets/__next._index.txt", "assets/__next.assets.txt"}
+	kept := []string{
+		"__next._tree.txt", "assets/__next._tree.txt", "__next.__PAGE__.txt", "assets/__next.assets.__PAGE__.txt",
+		"assets/XLM/__next.assets.$d$slug.__PAGE__.txt", "index.html", "assets/index.txt",
+	}
 	for _, rel := range append(append([]string{}, deleted...), kept...) {
 		writeExportFile(t, out, rel)
 	}
@@ -77,7 +77,7 @@ func TestExplorerPruneKeepsTreeSegmentFiles(t *testing.T) {
 	}
 	for _, rel := range kept {
 		if _, err := os.Stat(filepath.Join(out, rel)); err != nil {
-			t.Errorf("prune deleted %s — the client router PREFETCHES the _tree segment files; "+
+			t.Errorf("prune deleted %s — the client router prefetches the _tree and __PAGE__ segment files; "+
 				"deleting them 404s every <Link> hover (2026-08-27 postmortem)", rel)
 		}
 	}
