@@ -18,7 +18,7 @@ func TestPublishUSDVolumeRun_WritesBeforeViolationExit(t *testing.T) {
 	end := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
 	now := time.Date(2026, 10, 13, 5, 12, 0, 0, time.UTC)
 
-	if err := publishUSDVolumeRun(path, end, rollups, 2, now); err == nil {
+	if err := publishUSDVolumeRun(path, end, rollups, 2, true, now); err == nil {
 		t.Fatal("two violations must fail the run")
 	}
 	body, err := os.ReadFile(path)
@@ -29,11 +29,11 @@ func TestPublishUSDVolumeRun_WritesBeforeViolationExit(t *testing.T) {
 		t.Errorf("textfile lacks the violation count:\n%s", body)
 	}
 
-	if err := publishUSDVolumeRun(path, end, rollups, 0, now); err != nil {
+	if err := publishUSDVolumeRun(path, end, rollups, 0, true, now); err != nil {
 		t.Fatalf("clean run: %v", err)
 	}
 	none := filepath.Join(dir, "none.prom")
-	if err := publishUSDVolumeRun("", end, rollups, 0, now); err != nil {
+	if err := publishUSDVolumeRun("", end, rollups, 0, true, now); err != nil {
 		t.Fatalf("no textfile: %v", err)
 	}
 	if _, err := os.Stat(none); !os.IsNotExist(err) {

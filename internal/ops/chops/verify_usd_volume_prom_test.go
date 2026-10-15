@@ -24,7 +24,7 @@ func TestRenderVerifyUSDVolumeProm_emitsEveryKnownTier(t *testing.T) {
 
 	day := time.Date(2026, 10, 12, 13, 0, 0, 0, time.UTC)
 	now := time.Date(2026, 10, 13, 5, 14, 0, 0, time.UTC)
-	out := renderVerifyUSDVolumeProm(day, rollups, 2, now)
+	out := renderVerifyUSDVolumeProm(day, rollups, 2, true, now)
 
 	for _, want := range []string{
 		"# TYPE stellarindex_verify_usd_volume_tier_usd gauge\n",
@@ -37,6 +37,7 @@ func TestRenderVerifyUSDVolumeProm_emitsEveryKnownTier(t *testing.T) {
 		`stellarindex_verify_usd_volume_tier_rows{tier="estimated",priced="no"} 3` + "\n",
 		`stellarindex_verify_usd_volume_tier_rows{tier="unvaluable",priced="yes"} 0` + "\n",
 		"stellarindex_verify_usd_volume_violations 2\n",
+		"stellarindex_verify_usd_volume_xlm_bound_judged 1\n",
 		fmt.Sprintf("stellarindex_verify_usd_volume_day_unix %d\n", time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC).Unix()),
 		fmt.Sprintf("stellarindex_verify_usd_volume_last_run_unix %d\n", now.Unix()),
 	} {
@@ -55,14 +56,14 @@ func TestRenderVerifyUSDVolumeProm_unknownTierAfterKnownOnes(t *testing.T) {
 		timescale.USDVolumeTier("zeta"):  newTierRollup(),
 		timescale.USDVolumeTier("alpha"): newTierRollup(),
 	}
-	out := renderVerifyUSDVolumeProm(time.Unix(0, 0).UTC(), rollups, 0, time.Unix(0, 0))
+	out := renderVerifyUSDVolumeProm(time.Unix(0, 0).UTC(), rollups, 0, false, time.Unix(0, 0))
 	unv := strings.Index(out, `tier_usd{tier="unvaluable"}`)
 	alpha := strings.Index(out, `tier_usd{tier="alpha"}`)
 	zeta := strings.Index(out, `tier_usd{tier="zeta"}`)
 	if unv < 0 || alpha < 0 || zeta < 0 || !(unv < alpha && alpha < zeta) {
 		t.Fatalf("tier order wrong (unvaluable=%d alpha=%d zeta=%d):\n%s", unv, alpha, zeta, out)
 	}
-	if n := strings.Count(out, "# TYPE "); n != 6 {
-		t.Fatalf("want 6 TYPE headers, got %d", n)
+	if n := strings.Count(out, "# TYPE "); n != 7 {
+		t.Fatalf("want 7 TYPE headers, got %d", n)
 	}
 }

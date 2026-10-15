@@ -144,17 +144,11 @@ func ExactTierDelta(g TradeValuationGroup, tier USDVolumeTier, decimals int) (de
 	return new(big.Rat).Sub(stored, expected), true
 }
 
-// DayCloseVWAPXLMUSD returns the daily VWAP for crypto:XLM/fiat:USD (the CEX-fed series, not authorable on-chain) from prices_1d; ok=false when the day has no bucket, and callers then skip the XLM-base bound.
+// DayCloseVWAPXLMUSD returns the daily VWAP for crypto:XLM/fiat:USD (the CEX-fed series, not authorable on-chain); ok=false when the day is not fully materialized, and callers then skip the XLM bounds.
 func (s *Store) DayCloseVWAPXLMUSD(ctx context.Context, day time.Time) (string, bool, error) {
 	start := day.UTC().Truncate(24 * time.Hour)
-	const q = `
-		SELECT vwap::text
-		  FROM prices_1d
-		 WHERE base_asset = 'crypto:XLM' AND quote_asset = 'fiat:USD'
-		   AND bucket = $1
-	`
 	var vwap string
-	err := s.db.QueryRowContext(ctx, q, start).Scan(&vwap)
+	err := s.db.QueryRowContext(ctx, dayCloseVWAPXLMUSDQuery, start).Scan(&vwap)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}
@@ -163,3 +157,17 @@ func (s *Store) DayCloseVWAPXLMUSD(ctx context.Context, day time.Time) (string, 
 	}
 	return vwap, true, nil
 }
+
+// dayCloseVWAPXLMUSDQuery rebuilds the day VWAP from prices_1h (equal to prices_1d up to NUMERIC rounding; vwap*volume_priced
+// is the priced quote): prices_1d's 6h end_offset leaves yesterday unmaterialized until after the 05:12 UTC
+// run. HAVING the 23:00 hour keeps a half-refreshed day from passing as a whole one.
+const dayCloseVWAPXLMUSDQuery = `
+		SELECT (sum(vwap * volume_priced) / sum(volume_priced))::text
+		  FROM prices_1h
+		 WHERE base_asset = 'crypto:XLM' AND quote_asset = 'fiat:USD'
+		   AND bucket >= $1::timestamptz
+		   AND bucket <  $1::timestamptz + INTERVAL '1 day'
+		   AND vwap IS NOT NULL
+		   AND volume_priced > 0
+		HAVING max(bucket) = $1::timestamptz + INTERVAL '23 hours'
+	`

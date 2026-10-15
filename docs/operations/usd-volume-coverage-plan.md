@@ -69,7 +69,10 @@ tier moves neither. `verify-usd-volume.timer` (05:12 UTC, `-days 1`) re-checks
 yesterday's exact tiers and writes `stellarindex_verify_usd_volume_*` to the
 node_exporter textfile collector.
 `stellarindex_usd_volume_estimated_tier_high` tickets when the estimated tier
-exceeds $10M for a day (measured $0.4-0.9M against $3.5-3.9B exact);
+exceeds 5% of a day's valued volume (measured 1.3-2.7% over the 11 days to
+2026-10-14; the dollar sum swings $29M-$727M with activity);
+`stellarindex_usd_volume_xlm_bound_skipped` tickets when the run could not build
+the day's XLM/USD rate from `prices_1h` and so left the estimated tier unjudged;
 `stellarindex_verify_usd_volume_stale` tickets when no run has stamped
 `last_run_unix` in 30 h. An exact-tier violation or crash exits non-zero and
 opens `stellarindex_systemd_unit_failed`, deliberately without ride-out.
