@@ -54,6 +54,9 @@ const nextConfig = {
   // Sourcemaps in production help when debugging from issue reports.
   productionBrowserSourceMaps: true,
 
+  // `next dev` otherwise rewrites the committed AGENTS.md with its own block.
+  agentRules: false,
+
   // All API access is client-side from the browser to this network's
   // api.* origin, which is already CDN-cached per cdn-setup.md. No
   // server-side fetches needed — that's the entire point of the
