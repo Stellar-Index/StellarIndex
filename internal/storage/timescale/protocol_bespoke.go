@@ -3,8 +3,11 @@ package timescale
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"strconv"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // BespokeBlock is the served-tier per-category analytics for a protocol page, mapped 1:1 to api/v1.ProtocolBespoke (timescale cannot
@@ -649,13 +652,13 @@ func (s *Store) lendingEmissionKPIs(ctx context.Context, blk *BespokeBlock, wind
 		return nil // no emission activity captured yet
 	}
 	blk.KPIs = append(blk.KPIs,
-		BespokeKPI{Label: fmt.Sprintf("Emissions claimed (%dd)", windowDays), Value: em.ClaimVolume.String(), Unit: "token-units", Hint: "summed blend_emissions claim amount (base units)"},
+		BespokeKPI{Label: fmt.Sprintf("Emissions claimed (%dd)", windowDays), Value: blndUnits(em.ClaimVolume), Unit: "BLND", Hint: "summed blend_emissions claim amount (BLND, 7 decimals)"},
 		BespokeKPI{Label: fmt.Sprintf("Claim events (%dd)", windowDays), Value: strconv.FormatInt(em.Claims, 10)},
 		BespokeKPI{Label: fmt.Sprintf("Emission gulps (%dd)", windowDays), Value: strconv.FormatInt(em.Gulps, 10), Hint: "gulp + gulp_emissions accounting events in the window"},
 		BespokeKPI{Label: fmt.Sprintf("Credit-risk events (%dd)", windowDays), Value: strconv.FormatInt(em.CreditRisk, 10), Hint: "bad_debt + defaulted_debt events — a genuine risk signal (unlike sorocredit's scheduled settlements)"},
 	)
 	blk.Notes = append(blk.Notes,
-		"Emission figures are summed blend_emissions amounts (migration 0045) in token base units, not USD. Credit-risk events count bad_debt + defaulted_debt (a genuine risk signal); emissions claimed is a WINDOW sum, not an all-time total.",
+		"Emission figures are summed blend_emissions amounts (migration 0045) in BLND, not USD. Credit-risk events count bad_debt + defaulted_debt (a genuine risk signal); emissions claimed is a WINDOW sum, not an all-time total.",
 	)
 	return nil
 }
@@ -776,15 +779,20 @@ func (s *Store) lendingBackstopKPIs(ctx context.Context, blk *BespokeBlock, sinc
 	// two token-denominated kinds. The event count stays unfiltered: it is a coherent tally.
 	var backstopVol, backstopCount string
 	if err := s.db.QueryRowContext(ctx, `
-		SELECT COALESCE(sum(amount) FILTER (WHERE event_kind IN ('deposit','withdraw')),0)::text,
+		SELECT (COALESCE(sum(amount) FILTER (WHERE event_kind IN ('deposit','withdraw')),0) / 10000000::numeric)::numeric(38,7)::text,
 		       count(*)::text
 		FROM blend_backstop_events WHERE ledger_close_time > now() - $1::interval`, since).
 		Scan(&backstopVol, &backstopCount); err != nil {
 		return fmt.Errorf("timescale: bespokeLending backstop KPIs: %w", err)
 	}
 	blk.KPIs = append(blk.KPIs,
-		BespokeKPI{Label: fmt.Sprintf("Backstop volume (%dd)", windowDays), Value: backstopVol, Unit: "token-units", Hint: "summed deposit+withdraw token amounts (base units); excludes share/emission kinds"},
+		BespokeKPI{Label: fmt.Sprintf("Backstop volume (%dd)", windowDays), Value: backstopVol, Unit: "BLND:USDC LP", Hint: "summed deposit+withdraw backstop-token (Comet BLND:USDC LP, 7 decimals) amounts; excludes share/emission kinds; not USD"},
 		BespokeKPI{Label: fmt.Sprintf("Backstop events (%dd)", windowDays), Value: backstopCount},
 	)
 	return nil
+}
+
+// blndUnits renders a 7-decimal token base-unit amount (BLND, Comet LP) as an exact decimal string.
+func blndUnits(a canonical.Amount) string {
+	return new(big.Rat).SetFrac(a.BigInt(), big.NewInt(10_000_000)).FloatString(7)
 }
