@@ -181,6 +181,24 @@ expect "openapi/** triggers the web class" 0
 run web "docs/reference/api/README.md"
 expect "docs/reference/api (not web/ or openapi/) does NOT trigger the web class" 1
 
+# Files outside web/ that explorer tests, its build or its postbuild read.
+for f in CHANGELOG.md docs/adr/0001-x.md docs/architecture/overview.md \
+  docs/blog/post.md docs/operations/api-explorer-coverage.md \
+  internal/incidents/data/2026-01-01-x.md internal/storage/timescale/cursors.go \
+  scripts/ci/explorer-file-budget.sh scripts/ci/explorer-seo-lint.sh \
+  scripts/ci/explorer-openapi-check.sh scripts/ci/explorer-shell-fallback-check.sh \
+  scripts/ci/check-redirects-cap.sh .github/workflows/ci.yml; do
+  run web "$f"
+  expect "$f (read by the explorer) triggers the web class" 0
+done
+
+# The docs loaders read top-level files only.
+for f in docs/operations/runbooks/x.md docs/architecture/sub/x.md \
+  scripts/ci/explorer-seo-lint-test.sh internal/storage/timescale/other.go; do
+  run web "$f"
+  expect "$f does NOT trigger the web class" 1
+done
+
 run ansible "configs/ansible/roles/monitoring/tasks/main.yml"
 expect "configs/ansible/** triggers the ansible class" 0
 
@@ -208,7 +226,7 @@ matrix() { # <label> <expected go,integration,web,ansible as 0/1 exit codes> <fi
   run web "$@"; expect "$label: web" "$ew"
   run ansible "$@"; expect "$label: ansible" "$ea"
 }
-matrix "docs-only" 1 1 1 1 docs/architecture/x.md README.md
+matrix "docs-only" 1 1 1 1 docs/contributing/x.md README.md
 matrix "web-only" 1 1 0 1 web/explorer/src/app/page.tsx
 matrix "ansible-only" 1 1 1 0 configs/ansible/roles/a/tasks/main.yml
 matrix "docs + go (mixed) must run go and integration" 0 0 1 1 docs/x.md internal/storage/timescale/h.go

@@ -60,7 +60,13 @@
 #                  plus Makefile, .github/workflows/ci.yml and
 #                  scripts/ci/{check-change-class,prepush-integration-required}.sh
 #                  (the trigger-class guard's inputs; it runs only in `test`)
-#   web         — web/**, openapi/**
+#   web         — web/**, openapi/**, CHANGELOG.md, top-level files of
+#                  docs/{adr,architecture,blog,operations}/,
+#                  internal/incidents/data/**,
+#                  internal/storage/timescale/cursors.go, the explorer
+#                  postbuild scripts, check-redirects-cap.sh and
+#                  .github/workflows/ci.yml (all read by explorer tests,
+#                  its build or the web steps)
 #   ansible      — configs/ansible/**, configs/prometheus/**,
 #                  deploy/monitoring/** (clickhouse-exporter-test.sh reads
 #                  the latter two and only that job runs it)
@@ -92,7 +98,9 @@ class_go() {
 }
 
 class_web() {
-  grep -E '^(web/|openapi/)'
+  # Mirrored in ci.yml's preflight `web` filter; the docs loaders read
+  # top-level files only.
+  grep -E '^(web/|openapi/|internal/incidents/data/)|^CHANGELOG\.md$|^docs/(adr|architecture|blog|operations)/[^/]+$|^internal/storage/timescale/cursors\.go$|^scripts/ci/explorer-(file-budget|seo-lint|openapi-check|shell-fallback-check)\.sh$|^scripts/ci/check-redirects-cap\.sh$|^\.github/workflows/ci\.yml$'
 }
 
 class_ansible() {
