@@ -3108,24 +3108,29 @@ func (s *Server) resolveSAC(ctx context.Context, contractID string) (canonical.A
 	if !found {
 		return canonical.Asset{}, false, nil
 	}
-	var asset canonical.Asset
-	if name == "native" {
-		asset = canonical.NativeAsset()
-	} else {
+	asset, ok := sacNameVerified(name, contractID)
+	return asset, ok, nil
+}
+
+// sacNameVerified parses the lake's wrapped-asset name and keeps it only if its derived SAC address is contractID; metadata
+// that fails either test is a definite "not this SAC", not a read error.
+func sacNameVerified(name, contractID string) (canonical.Asset, bool) {
+	asset := canonical.NativeAsset()
+	if name != "native" {
 		code, issuer, ok := strings.Cut(name, ":")
 		if !ok {
-			return canonical.Asset{}, false, nil
+			return canonical.Asset{}, false
 		}
-		asset, err = canonical.NewClassicAsset(code, issuer)
-		if err != nil {
-			return canonical.Asset{}, false, nil
+		var err error
+		if asset, err = canonical.NewClassicAsset(code, issuer); err != nil {
+			return canonical.Asset{}, false
 		}
 	}
 	derived, err := asset.SacContractID()
 	if err != nil || derived != contractID {
-		return canonical.Asset{}, false, nil
+		return canonical.Asset{}, false
 	}
-	return asset, true, nil
+	return asset, true
 }
 
 // sacSearchAsClassic rewrites a q that is a classic asset's SAC address to that asset's id, so the C-form finds the rows its
