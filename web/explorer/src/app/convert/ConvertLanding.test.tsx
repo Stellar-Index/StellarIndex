@@ -32,14 +32,22 @@ function renderLanding() {
   );
 }
 
+/** Open a field's currency picker and choose a ticker from its list. */
+function pick(label: 'From' | 'To', ticker: string) {
+  fireEvent.click(screen.getByLabelText(label));
+  fireEvent.click(
+    screen.getByRole('option', { name: new RegExp(`^${ticker}\\b`) }),
+  );
+}
+
 describe('ConvertLanding', () => {
   it('opens on XLM → USD with the chart underneath', async () => {
     vi.mocked(apiGet).mockResolvedValue({
       data: [{ asset_id: 'native', price: '0.25' }],
     });
     renderLanding();
-    expect(screen.getByLabelText('From')).toHaveValue('XLM');
-    expect(screen.getByLabelText('To')).toHaveValue('USD');
+    expect(screen.getByLabelText('From')).toHaveTextContent('XLM');
+    expect(screen.getByLabelText('To')).toHaveTextContent('USD');
     expect(screen.getByTestId('chart')).toHaveTextContent('XLM/USD');
     expect((await screen.findAllByText(/0\.250000/)).length).toBeGreaterThan(0);
   });
@@ -50,8 +58,8 @@ describe('ConvertLanding', () => {
     });
     renderLanding();
     fireEvent.click(screen.getByLabelText('Swap currencies'));
-    expect(screen.getByLabelText('From')).toHaveValue('USD');
-    expect(screen.getByLabelText('To')).toHaveValue('XLM');
+    expect(screen.getByLabelText('From')).toHaveTextContent('USD');
+    expect(screen.getByLabelText('To')).toHaveTextContent('XLM');
     expect(screen.getByTestId('chart')).toHaveTextContent('USD/XLM');
     expect((await screen.findAllByText(/4\.0000/)).length).toBeGreaterThan(0);
   });
@@ -60,8 +68,8 @@ describe('ConvertLanding', () => {
     vi.mocked(apiGet).mockResolvedValue({ data: [] });
     window.history.replaceState(null, '', '/convert/?from=EUR&to=XLM');
     renderLanding();
-    expect(screen.getByLabelText('From')).toHaveValue('EUR');
-    expect(screen.getByLabelText('To')).toHaveValue('XLM');
+    expect(screen.getByLabelText('From')).toHaveTextContent('EUR');
+    expect(screen.getByLabelText('To')).toHaveTextContent('XLM');
     expect(
       screen.queryByText("That pair isn't available to convert"),
     ).toBeNull();
@@ -74,8 +82,8 @@ describe('ConvertLanding', () => {
     });
     window.history.replaceState(null, '', '/convert/?from=XLM&to=USDC');
     renderLanding();
-    expect(screen.getByLabelText('From')).toHaveValue('XLM');
-    expect(screen.getByLabelText('To')).toHaveValue('USDC');
+    expect(screen.getByLabelText('From')).toHaveTextContent('XLM');
+    expect(screen.getByLabelText('To')).toHaveTextContent('USDC');
     expect(
       screen.queryByText("That pair isn't available to convert"),
     ).toBeNull();
@@ -90,9 +98,7 @@ describe('ConvertLanding', () => {
   it('links a verified asset → hub page under its upper-cased ticker', () => {
     vi.mocked(apiGet).mockResolvedValue({ data: [] });
     renderLanding();
-    fireEvent.change(screen.getByLabelText('From'), {
-      target: { value: 'USDC' },
-    });
+    pick('From', 'USDC');
     expect(
       screen.getByRole('link', { name: 'USDC → USD page' }),
     ).toHaveAttribute('href', '/convert/USDC/USD');
@@ -102,8 +108,8 @@ describe('ConvertLanding', () => {
     vi.mocked(apiGet).mockResolvedValue({ data: [] });
     window.history.replaceState(null, '', '/convert/?from=XLM&to=SCAM');
     renderLanding();
-    expect(screen.getByLabelText('From')).toHaveValue('XLM');
-    expect(screen.getByLabelText('To')).toHaveValue('USD');
+    expect(screen.getByLabelText('From')).toHaveTextContent('XLM');
+    expect(screen.getByLabelText('To')).toHaveTextContent('USD');
     expect(
       screen.getByText("That pair isn't available to convert"),
     ).toBeInTheDocument();
@@ -113,12 +119,10 @@ describe('ConvertLanding', () => {
   it('swaps a fiat pair and links its page', () => {
     vi.mocked(apiGet).mockResolvedValue({ data: [] });
     renderLanding();
-    fireEvent.change(screen.getByLabelText('From'), {
-      target: { value: 'EUR' },
-    });
+    pick('From', 'EUR');
     fireEvent.click(screen.getByLabelText('Swap currencies'));
-    expect(screen.getByLabelText('From')).toHaveValue('USD');
-    expect(screen.getByLabelText('To')).toHaveValue('EUR');
+    expect(screen.getByLabelText('From')).toHaveTextContent('USD');
+    expect(screen.getByLabelText('To')).toHaveTextContent('EUR');
     expect(screen.getByTestId('chart')).toHaveTextContent('USD/EUR');
     expect(
       screen.getByRole('link', { name: 'USD → EUR page' }),
