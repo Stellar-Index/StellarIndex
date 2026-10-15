@@ -97,7 +97,7 @@ var Registry = map[string]Metadata{
 	// ─── Retired: Chainlink read from Ethereum ───────────────────
 	// Nothing writes "chainlink" any more (chainlink-stellar replaced it); the entry stays so its
 	// historical oracle_updates rows keep their class and off-chain flag when served.
-	"chainlink": {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false},
+	"chainlink": {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Retired: true},
 
 	// Tiingo publishes funds' daily NAV as `raw:<TICKER>` rows, read only by the RWA reference
 	// surface; never a VWAP input or a pair leg, hence weight 0. One NAV per business day.

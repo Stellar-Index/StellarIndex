@@ -71,6 +71,8 @@ type Metadata struct {
 	Subclass      Subclass
 	DefaultWeight int
 	IncludeInVWAP bool
+	// Retired marks a source nothing writes any more; it stays registered so its history keeps its class.
+	Retired bool
 	// Paid indicates the source needs a commercial license or API key (shown in /v1/sources).
 	Paid bool
 	// Credit names the vendor to credit wherever this source's value is served on its own (a
