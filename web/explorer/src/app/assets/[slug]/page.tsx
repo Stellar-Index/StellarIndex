@@ -29,6 +29,7 @@ import {
 } from '@/lib/seo';
 import { assetHref } from '@/lib/fiat-slugs';
 import { CURRENT_NETWORK } from '@/lib/networks';
+import { sacAddress } from '@/lib/strkey';
 import {
   Badge,
   Callout,
@@ -45,7 +46,9 @@ import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 import { AssetScamCallout } from './AssetScamCallout';
 import { AssetClientFallback } from './AssetClientFallback';
 import { AssetPathView } from './AssetPathView';
+import { SacRedirect, sacRedirectHref } from './SacRedirect';
 import { AssetIdentityCard, AssetSidebar } from './AssetSidebar';
+import { AssetIdentityLine } from './AssetIdentityLine';
 import { AssetTrustFacts } from './AssetTrustFacts';
 import { headlinePriceProvenance } from './priceProvenance';
 import { SourceBreakdown } from '../../markets/[pair]/SourceBreakdown';
@@ -846,11 +849,25 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
       </Container>
     );
   }
+  const sacHref = sacRedirectHref(slug, coin.slug);
+  if (sacHref) {
+    return (
+      <Container className="space-y-6 py-8">
+        <SacRedirect href={sacHref} />
+      </Container>
+    );
+  }
 
   const [detail, price] = await Promise.all([
     fetchAssetDetail(coin.asset_id),
     fetchPrice(coin.asset_id),
   ]);
+  const sac =
+    coin.asset_id === 'native'
+      ? await sacAddress('native', null, CURRENT_NETWORK.passphrase)
+      : coin.code && coin.issuer
+        ? await sacAddress(coin.code, coin.issuer, CURRENT_NETWORK.passphrase)
+        : null;
   // Reaching this point means slug had a /v1/coins row but NO
   // catalogue entry — an unverified Stellar asset. There's no
   // cross-chain identity to render, so globalView is null and
@@ -941,11 +958,18 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
             coin.asset_id === 'native' ? 'Stellar Lumens' : assetSymbol(coin)
           }
           meta={
-            coin.asset_id === 'native'
-              ? 'XLM'
-              : globalView?.name && globalView.name !== coin.code
-                ? globalView.name
-                : undefined
+            <div className="space-y-1">
+              {coin.asset_id === 'native' ? (
+                <div>XLM</div>
+              ) : (
+                globalView?.name &&
+                globalView.name !== coin.code && <div>{globalView.name}</div>
+              )}
+              <AssetIdentityLine
+                identity={coin.asset_id === 'native' ? null : coin.asset_id}
+                sac={sac}
+              />
+            </div>
           }
           actions={
             <>

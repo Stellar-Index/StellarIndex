@@ -43,6 +43,8 @@ export interface NetworkInfo {
   steexpUrl: string;
   /** This network's explorer origin (where the switcher link points). */
   explorerUrl: string;
+  /** Network passphrase; contract ids such as an asset's SAC derive from it. */
+  passphrase: string;
   /** This network's API origin (grey/DNS-only) for the live-tip probe. */
   apiBaseUrl: string;
   /**
@@ -104,6 +106,7 @@ export const NETWORKS: NetworkInfo[] = [
     stellarChainUrl: 'https://stellarchain.io',
     steexpUrl: 'https://steexp.com',
     explorerUrl: 'https://stellarindex.io',
+    passphrase: 'Public Global Stellar Network ; September 2015',
     apiBaseUrl: 'https://api.stellarindex.io',
     live: true,
     pricing: true,
@@ -121,6 +124,7 @@ export const NETWORKS: NetworkInfo[] = [
     stellarChainUrl: 'https://testnet.stellarchain.io',
     steexpUrl: 'https://testnet.steexp.com',
     explorerUrl: 'https://testnet.stellarindex.io',
+    passphrase: 'Test SDF Network ; September 2015',
     apiBaseUrl: 'https://api.testnet.stellarindex.io',
     live: true,
     pricing: false,
@@ -138,6 +142,7 @@ export const NETWORKS: NetworkInfo[] = [
     stellarChainUrl: 'https://futurenet.stellarchain.io',
     steexpUrl: 'https://futurenet.steexp.com',
     explorerUrl: 'https://futurenet.stellarindex.io',
+    passphrase: 'Test SDF Future Network ; October 2022',
     apiBaseUrl: 'https://api.futurenet.stellarindex.io',
     live: true,
     pricing: false,

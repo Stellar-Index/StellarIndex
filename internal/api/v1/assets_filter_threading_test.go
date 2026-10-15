@@ -641,3 +641,24 @@ func TestAssetClassAcceptsEveryValueItDispatchesOn(t *testing.T) {
 		})
 	}
 }
+
+// TestAssetsQSACAddressSearchesAsClassic pins that a classic asset's SAC address searches as the classic asset_id.
+func TestAssetsQSACAddressSearchesAsClassic(t *testing.T) {
+	stub := &filterCapturingAssets{}
+	s := &Server{Options: Options{AssetsReader: stub, Explorer: &sacStubReader{name: "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", found: true}}}
+	serveAssets(t, s, "/v1/assets?q=CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75&limit=3")
+	if got, want := listingCall(t, stub, 3).Q, "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"; got != want {
+		t.Errorf("store saw Q = %q, want %q", got, want)
+	}
+}
+
+// TestAssetsQSpoofedSACAddressStaysVerbatim pins that a contract whose metadata claims an asset it does not derive from is searched as typed.
+func TestAssetsQSpoofedSACAddressStaysVerbatim(t *testing.T) {
+	const spoof = "CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN"
+	stub := &filterCapturingAssets{}
+	s := &Server{Options: Options{AssetsReader: stub, Explorer: &sacStubReader{name: "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", found: true}}}
+	serveAssets(t, s, "/v1/assets?q="+spoof+"&limit=3")
+	if got := listingCall(t, stub, 3).Q; got != spoof {
+		t.Errorf("store saw Q = %q, want the address verbatim", got)
+	}
+}
