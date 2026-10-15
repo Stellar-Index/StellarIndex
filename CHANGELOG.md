@@ -20,6 +20,24 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.0] — 2026-10-15
+
+4 commits since v0.115.1. No migrations. No `pkg/*` break.
+
+### Added
+
+- **explorer:** the asset header shows the asset's identity and its SAC address with copy buttons; a classic asset's SAC page redirects to the classic page, and search resolves a SAC address or a bare issuer to its asset (#3514).
+
+### Changed
+
+- **api:** `/v1/assets?asset_class=all` lists a SAC-wrapped asset once, folding the SAC row into its classic row and counting its 24h volume exactly once; volume that cannot be read or confirmed sets `volume_lower_bound` (#3514).
+- **ops:** ch-lake-backup waits up to 20h for the gap between heavy chunks instead of deferring whenever a heavy job holds the lock (#3516).
+
+### Fixed
+
+- **api:** `/v1/oracle/latest` no longer serves the retired Ethereum chainlink feed's last price (#3517).
+- **ansible:** the host keeps a zfs module for every kernel it can boot, so a reboot onto a new kernel finds its pool (#3515).
+
 ## [v0.115.1] — 2026-10-15
 
 1 commit since v0.115.0. No migrations. No `pkg/*` break.
@@ -124,41 +142,3 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 - **deps:** go minor/patch group bumped, 11 updates (#3412).
 - **test:** 29 small test files folded into their package files; style-only AST and prose guard tests deleted (#3406–#3409).
-
-## [v0.112.0] — 2026-10-12
-
-214 commits since v0.111.0, most of them test-file folds and comment clean-up. One migration (0215). One new ClickHouse table. No `pkg/*` break (`pkg/client` gains optional `stale` and `triangulated` price fields).
-
-### Migrations
-
-- **0215:** trigger-maintained current trustline balance for classic supply; the reader seeds lazily, no replay (#3322).
-
-### Operator actions
-
-- **ClickHouse:** apply `deploy/clickhouse/trades_by_account.sql`, then run `ch-rebuild -sdex -trades-by-account` to fill it (#3395).
-- **ops:** `galexie-mirror-verify` reports decode-equivalent mirror objects as a separate `equivalent` result class, apart from real divergence (#3402).
-- **ops:** flags removed because nothing passes them: `detect-gaps -rpc-max-staleness`, `issuer-flags -chain-recheck-limit`, `state-snapshot -throttle-ms` (#3401).
-- **config:** five never-set keys removed, including `redis_closed_bucket_channel` and `background_statement_timeout`; defaults are inlined (#3392).
-
-### Added
-
-- **explorer:** account trades below the Postgres horizon are served from `stellar.trades_by_account` (#3395).
-- **api:** asset listing rows carry `contract_id`; a non-fiat asset in a crypto ticker is priced through its USD legs (#3314, #3312).
-- **notify:** Resend tracking pinned off; suppression derived from bounce and complaint events (#3394).
-- **ops:** daily age-encrypted config and secrets backup timer (#3313); `galexie-mirror-verify` prints each missing-local object (#3298).
-- **status:** `status.stellarindex.io` is a standalone incident page (#3316).
-
-### Fixed
-
-- **explorer:** static-build pages price through `/v1/price/batch` (#3393); build-time API requests are capped per worker (#3317); account movements warn only while served coverage is incomplete (#3390).
-- **archive:** holes inside the trim are accepted, and the weekly upstream check is excluded from the 24h stale alert (#3391).
-- **ops:** `galexie-archive-fill` queues behind a held heavy lock instead of deferring (#3319); `config-backup` pg_dump switches to postgres and logs why it fails (#3318); lake-backup orphans are swept from a started record (#3291); `directory-sync` is pinned to a reviewed commit (#3308).
-
-### Performance
-
-- **completeness:** the recognition shape scan is split by `topic[0]` kind (#3356).
-
-### Changed
-
-- **config:** unreferenced script removed; CLI flags and config keys nothing sets are folded into their defaults (#3389, #3392, #3401).
-- **test:** several hundred small test files folded into their subject files (#3360–#3403).
