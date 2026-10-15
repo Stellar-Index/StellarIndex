@@ -2399,7 +2399,7 @@ jobs:
           ./scripts/ci/gitleaks-allowlist-scope-test.sh
       # ── from the former `fuzz-smoke` job (fuzz smoke (30s per target)) ──
       - name: go mod download (retry on GOPROXY flake)
-        if: needs.preflight.outputs.go == 'true'
+        if: needs.preflight.outputs.go == 'true' && github.event_name == 'pull_request'
         run: |
           for i in 1 2 3; do
             go mod download && exit 0
@@ -2422,13 +2422,38 @@ jobs:
         # the script's header for why, and for its fail-closed behaviour
         # when discovery returns nothing. On a PR only the targets of the
         # packages it changed run (FUZZ_BASE); the per-target time is
-        # derived from a fixed job budget, capped at 30s.
-        if: needs.preflight.outputs.go == 'true'
+        # derived from a fixed job budget, capped at 30s. Full runs smoke
+        # every target in the fuzz-smoke-full matrix instead.
+        if: needs.preflight.outputs.go == 'true' && github.event_name == 'pull_request'
         env:
           FUZZ_BASE: ${{ github.event.pull_request.base.sha }}
         run: bash scripts/ci/fuzz-smoke.sh
 
 
+  fuzz-smoke-full:
+    name: fuzz smoke (full, shard ${{ matrix.shard }}/4)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [preflight]
+    # The full run's generative pass over all targets, split four ways: one
+    # runner took ~30 min at the 8s floor and gated every release.
+    if: github.event_name != 'pull_request' && github.event_name != 'push' && needs.preflight.outputs.go == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Fuzz smoke
+        env:
+          FUZZ_SHARD: ${{ matrix.shard }}/4
+        run: bash scripts/ci/fuzz-smoke.sh
   branch-protection-status:
     name: branch protection status
     runs-on: ubuntu-latest
