@@ -63,24 +63,25 @@ func verifyUSDVolume(args []string) error {
 
 	var violations int
 	var lastRollups map[timescale.USDVolumeTier]*usdVolumeTierRollup
+	var lastXLMJudged bool
 	for i := *days - 1; i >= 0; i-- {
 		day := end.AddDate(0, 0, -i)
-		n, rollups, derr := verifyUSDVolumeDay(ctx, store, spec, day, *minRows, *maxList)
+		n, rollups, xlmJudged, derr := verifyUSDVolumeDay(ctx, store, spec, day, *minRows, *maxList)
 		if derr != nil {
 			return derr
 		}
 		violations += n
-		lastRollups = rollups
+		lastRollups, lastXLMJudged = rollups, xlmJudged
 	}
 
-	return publishUSDVolumeRun(*textfile, end, lastRollups, violations, time.Now())
+	return publishUSDVolumeRun(*textfile, end, lastRollups, violations, lastXLMJudged, time.Now())
 }
 
 // publishUSDVolumeRun stamps the textfile before the violation exit so a failing run still
 // publishes its tiers.
-func publishUSDVolumeRun(textfile string, end time.Time, rollups map[timescale.USDVolumeTier]*usdVolumeTierRollup, violations int, now time.Time) error {
+func publishUSDVolumeRun(textfile string, end time.Time, rollups map[timescale.USDVolumeTier]*usdVolumeTierRollup, violations int, xlmJudged bool, now time.Time) error {
 	if textfile != "" {
-		if werr := writeAtomic(textfile, renderVerifyUSDVolumeProm(end, rollups, violations, now)); werr != nil {
+		if werr := writeAtomic(textfile, renderVerifyUSDVolumeProm(end, rollups, violations, xlmJudged, now)); werr != nil {
 			return fmt.Errorf("verify-usd-volume: write textfile: %w", werr)
 		}
 	}
@@ -310,8 +311,7 @@ func usdVolumeTotalViolations(exactViolations, xlmBoundViolations, parseErrs int
 	return exactViolations + xlmBoundViolations + parseErrs
 }
 
-// verifyUSDVolumeDay checks one UTC day and returns the number of exact-tier
-// violations found.
+// verifyUSDVolumeDay checks one UTC day and returns its violations, tier rollups and whether the XLM bounds judged it.
 func verifyUSDVolumeDay(
 	ctx context.Context,
 	store *timescale.Store,
@@ -319,10 +319,10 @@ func verifyUSDVolumeDay(
 	day time.Time,
 	minRows int64,
 	maxList int,
-) (int, map[timescale.USDVolumeTier]*usdVolumeTierRollup, error) {
+) (int, map[timescale.USDVolumeTier]*usdVolumeTierRollup, bool, error) {
 	groups, err := store.TradeValuationByDay(ctx, day)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, false, err
 	}
 
 	fmt.Printf("\n=== verify-usd-volume: %s (UTC) — %d (source, base, quote) group(s) ===\n",
@@ -330,9 +330,9 @@ func verifyUSDVolumeDay(
 
 	violations, judged, parseErrs, rollups := classifyExactTierGroups(groups, spec, minRows, maxList)
 
-	nb, err := verifyXLMBounds(ctx, store, groups, spec, day, minRows, maxList)
+	nb, xlmJudged, err := verifyXLMBounds(ctx, store, groups, spec, day, minRows, maxList)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, false, err
 	}
 	violations = usdVolumeTotalViolations(violations, nb, parseErrs)
 	if len(groups) == 0 {
@@ -347,7 +347,7 @@ func verifyUSDVolumeDay(
 		fmt.Printf("  %d group(s) could not be classified or parsed — listed on stderr above\n", parseErrs)
 	}
 	fmt.Printf("%s: %d violation(s)\n", day.Format(time.DateOnly), violations)
-	return violations, rollups, nil
+	return violations, rollups, xlmJudged, nil
 }
 
 // knownUSDVolumeTiers are always emitted, 0 when a day had none, so the
@@ -362,6 +362,7 @@ func renderVerifyUSDVolumeProm(
 	day time.Time,
 	rollups map[timescale.USDVolumeTier]*usdVolumeTierRollup,
 	violations int,
+	xlmJudged bool,
 	now time.Time,
 ) string {
 	tiers := append([]timescale.USDVolumeTier(nil), knownUSDVolumeTiers...)
@@ -413,6 +414,13 @@ func renderVerifyUSDVolumeProm(
 	b.WriteString("# HELP stellarindex_verify_usd_volume_violations Exact-tier valuation violations found by the last run, summed over its days.\n")
 	b.WriteString("# TYPE stellarindex_verify_usd_volume_violations gauge\n")
 	fmt.Fprintf(&b, "stellarindex_verify_usd_volume_violations %d\n", violations)
+	judged := 0
+	if xlmJudged {
+		judged = 1
+	}
+	b.WriteString("# HELP stellarindex_verify_usd_volume_xlm_bound_judged 1 when the XLM-base/quote bounds judged the last checked day, 0 when they were skipped.\n")
+	b.WriteString("# TYPE stellarindex_verify_usd_volume_xlm_bound_judged gauge\n")
+	fmt.Fprintf(&b, "stellarindex_verify_usd_volume_xlm_bound_judged %d\n", judged)
 	b.WriteString("# HELP stellarindex_verify_usd_volume_day_unix Start of the last checked UTC day.\n")
 	b.WriteString("# TYPE stellarindex_verify_usd_volume_day_unix gauge\n")
 	fmt.Fprintf(&b, "stellarindex_verify_usd_volume_day_unix %d\n", day.UTC().Truncate(24*time.Hour).Unix())
@@ -422,8 +430,8 @@ func renderVerifyUSDVolumeProm(
 	return b.String()
 }
 
-// verifyXLMBounds runs the XLM-base and XLM-quote bounds for day against its
-// CEX-fed XLM/USD VWAP and returns their combined violation count.
+// verifyXLMBounds runs the XLM-base and XLM-quote bounds for day against its CEX-fed XLM/USD VWAP and
+// returns their combined violation count and whether a usable rate let them run at all.
 func verifyXLMBounds(
 	ctx context.Context,
 	store *timescale.Store,
@@ -432,36 +440,39 @@ func verifyXLMBounds(
 	day time.Time,
 	minRows int64,
 	maxList int,
-) (int, error) {
+) (int, bool, error) {
 	violations := 0
 	// Exact() covers only the pegged tiers, so the XLM bounds are the only judgement of the
 	// estimated tiers, checked against the day's CEX-fed XLM/USD VWAP.
 	rate, rateOK, rerr := store.DayCloseVWAPXLMUSD(ctx, day)
 	if rerr != nil {
-		return 0, rerr
+		return 0, false, rerr
 	}
-	if !rateOK {
-		fmt.Printf("  XLM-BASE BOUND: skipped — prices_1h does not yet hold all of this day for crypto:XLM/fiat:USD\n")
-	} else if rateRat, ok := new(big.Rat).SetString(rate); !ok || rateRat.Sign() <= 0 {
-		fmt.Printf("  XLM-BASE BOUND: skipped — unusable day VWAP %q\n", rate)
-	} else {
-		n := checkXLMBaseBound(groups, spec, rateRat, minRows, maxList)
-		if n > 0 {
-			fmt.Printf("  XLM-BASE BOUND: %d violation(s) at ±%.0f%% vs day VWAP %s\n",
-				n, xlmBaseBoundTolerance*100, rateRat.FloatString(6))
-		}
-		violations += n
+	rateRat, parsed := new(big.Rat).SetString(rate)
+	switch {
+	case !rateOK:
+		fmt.Printf("  XLM BOUNDS: skipped — prices_1h does not yet hold all of this day for crypto:XLM/fiat:USD\n")
+		return 0, false, nil
+	case !parsed || rateRat.Sign() <= 0:
+		fmt.Printf("  XLM BOUNDS: skipped — unusable day VWAP %q\n", rate)
+		return 0, false, nil
+	}
+	n := checkXLMBaseBound(groups, spec, rateRat, minRows, maxList)
+	if n > 0 {
+		fmt.Printf("  XLM-BASE BOUND: %d violation(s) at ±%.0f%% vs day VWAP %s\n",
+			n, xlmBaseBoundTolerance*100, rateRat.FloatString(6))
+	}
+	violations += n
 
-		// Without the quote bound the xlm-quote population would be unjudged, and the
-		// acceptance line would report 0 violations for a tier it never looked at.
-		nq := checkXLMQuoteBound(groups, spec, rateRat, minRows, maxList)
-		if nq > 0 {
-			fmt.Printf("  XLM-QUOTE BOUND: %d violation(s) at ±%.0f%% vs day VWAP %s\n",
-				nq, xlmBaseBoundTolerance*100, rateRat.FloatString(6))
-		}
-		violations += nq
+	// Without the quote bound the xlm-quote population would be unjudged, and the
+	// acceptance line would report 0 violations for a tier it never looked at.
+	nq := checkXLMQuoteBound(groups, spec, rateRat, minRows, maxList)
+	if nq > 0 {
+		fmt.Printf("  XLM-QUOTE BOUND: %d violation(s) at ±%.0f%% vs day VWAP %s\n",
+			nq, xlmBaseBoundTolerance*100, rateRat.FloatString(6))
 	}
-	return violations, nil
+	violations += nq
+	return violations, true, nil
 }
 
 // mustRat parses a NUMERIC render that ExactTierDelta already proved

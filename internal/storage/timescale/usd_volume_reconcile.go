@@ -158,7 +158,7 @@ func (s *Store) DayCloseVWAPXLMUSD(ctx context.Context, day time.Time) (string, 
 	return vwap, true, nil
 }
 
-// dayCloseVWAPXLMUSDQuery rebuilds the day VWAP from prices_1h (the prices_1d identity, vwap*volume_priced
+// dayCloseVWAPXLMUSDQuery rebuilds the day VWAP from prices_1h (equal to prices_1d up to NUMERIC rounding; vwap*volume_priced
 // is the priced quote): prices_1d's 6h end_offset leaves yesterday unmaterialized until after the 05:12 UTC
 // run. HAVING the 23:00 hour keeps a half-refreshed day from passing as a whole one.
 const dayCloseVWAPXLMUSDQuery = `

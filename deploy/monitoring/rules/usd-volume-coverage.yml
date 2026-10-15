@@ -149,10 +149,15 @@ groups:
 
       # The estimated tier is the FX-bridged residual; the coverage alerts
       # above cannot see a pegged asset sliding into it because its rows
-      # are still PRICED. Measured 2026-10: $0.4-0.9M/day estimated against
-      # $3.5-3.9B exact. Written daily by verify-usd-volume.timer.
+      # are still PRICED. Read as a share of all valued volume: the dollar sum
+      # swings 25x with market activity. 30 days on r1 to 2026-10-14: 1.3-2.7%
+      # since 2026-10-04 (5-12.6% before); USDC alone is most of the exact tiers.
       - alert: stellarindex_usd_volume_estimated_tier_high
-        expr: stellarindex_verify_usd_volume_tier_usd{tier="estimated"} > 10000000
+        expr: |
+          stellarindex_verify_usd_volume_tier_usd{tier="estimated"}
+            / ignoring(tier)
+          sum without(tier) (stellarindex_verify_usd_volume_tier_usd{tier=~"quote_pegged|base_pegged|estimated"})
+            > 0.05
         for: 15m
         labels:
           severity: ticket
@@ -160,10 +165,10 @@ groups:
           component: usd-volume-coverage
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/usd-volume-coverage-plan.md
-          summary: "Estimated-tier usd_volume was {{ $value | printf \"%.0f\" }} USD yesterday"
+          summary: "Estimated-tier usd_volume was {{ $value | humanizePercentage }} of valued volume yesterday"
           description: |
-            The FX-bridged (estimated) tier summed over $10M for the last checked
-            UTC day; the measured baseline is $0.4-0.9M against $3.5-3.9B exact.
+            The FX-bridged (estimated) tier was over 5% of the last checked UTC
+            day's valued volume; the measured baseline is 1.3-2.7%.
             A jump means a pegged asset fell out of the exact tiers (peg list or
             sac_wrappers entry missing, declared fiat peg outside its 200 bps
             band) or an unpriced market started clearing the substance gate.
@@ -177,6 +182,28 @@ groups:
             and compare against `stellarindex-ops verify-usd-volume -day <date>`,
             whose tier table names the group. Exact-tier violations and crashes
             open the generic stellarindex_systemd_unit_failed ticket instead.
+
+            Plan + measurements: docs/operations/usd-volume-coverage-plan.md
+
+      # The XLM-base/quote bounds are the only judgement of the estimated
+      # tier; a run that could not build the day's XLM/USD rate skips them
+      # yet still reports 0 violations.
+      - alert: stellarindex_usd_volume_xlm_bound_skipped
+        expr: stellarindex_verify_usd_volume_xlm_bound_judged == 0
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: usd-volume-coverage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/usd-volume-coverage-plan.md
+          summary: verify-usd-volume skipped the XLM bounds for the last checked day
+          description: |
+            The estimated tier went unjudged: prices_1h did not hold all 24
+            hours of crypto:XLM/fiat:USD for the day, or the day VWAP was
+            unusable. Check the CEX XLM/USD feeds and prices_1h for that day,
+            then re-run `stellarindex-ops verify-usd-volume -day <date>`; the
+            unit's journal prints which skip it took.
 
             Plan + measurements: docs/operations/usd-volume-coverage-plan.md
 
