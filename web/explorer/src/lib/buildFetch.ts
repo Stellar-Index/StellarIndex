@@ -184,7 +184,7 @@ export function throttleDelayMs(
   return backoff + Math.floor(Math.random() * 500);
 }
 
-// Max requests in flight per build worker. Uncapped, one export sent ~17 rps of
+// Max requests in flight per build worker (next.config.mjs pins the export to one). Uncapped, one export sent ~17 rps of
 // mostly cold long-tail reads, pushed API p95 to ~3s and paged slo_latency_burn.
 export const MAX_IN_FLIGHT = 4;
 let inFlight = 0;
