@@ -5,6 +5,7 @@ package v1
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -46,7 +47,7 @@ func TestFoldAliasTwins_MergesSACIntoClassic(t *testing.T) {
 		{AssetID: foldUSDCSAC, Code: "USDC", VolumeUSD24h: strp("9000000"), TradeCount24h: i64(3000)},
 	}
 
-	out, _ := s.foldAliasTwins(context.Background(), rows)
+	out, _ := s.foldAliasTwins(context.Background(), rows, false)
 
 	if len(out) != 1 {
 		t.Fatalf("fold returned %d rows, want 1 merged canonical row: %+v", len(out), out)
@@ -73,7 +74,7 @@ func TestFoldAliasTwins_SuppressesLoneSAC(t *testing.T) {
 		{AssetID: "AQUA-" + foldUSDCIssuer, Code: "AQUA", VolumeUSD24h: strp("1234")},
 	}
 
-	out, _ := s.foldAliasTwins(context.Background(), rows)
+	out, _ := s.foldAliasTwins(context.Background(), rows, false)
 
 	if len(out) != 1 {
 		t.Fatalf("fold returned %d rows, want 1 (lone SAC suppressed): %+v", len(out), out)
@@ -94,7 +95,7 @@ func TestFoldAliasTwins_FractionalVolumesSumExactly(t *testing.T) {
 		{AssetID: foldUSDCClassic, VolumeUSD24h: strp("0.1")},
 		{AssetID: foldUSDCSAC, VolumeUSD24h: strp("0.2")},
 	}
-	out, _ := s.foldAliasTwins(context.Background(), rows)
+	out, _ := s.foldAliasTwins(context.Background(), rows, false)
 	if len(out) != 1 || out[0].VolumeUSD24h == nil || *out[0].VolumeUSD24h != "0.3" {
 		t.Fatalf("0.1 + 0.2 folded volume = %v, want exact \"0.3\" (big.Rat, not float)", out[0].VolumeUSD24h)
 	}
@@ -222,7 +223,7 @@ func TestFoldAliasTwins_DerivedSACWithoutRegistryEntry(t *testing.T) {
 		{AssetID: "AQUA-" + foldUSDCIssuer, VolumeUSD24h: strp("90000")},
 		{AssetID: foldSUSDClassic, Code: "sUSD", VolumeUSD24h: strp("80126.5"), TradeCount24h: i64(2)},
 	}
-	out, merged := s.foldAliasTwins(context.Background(), rows)
+	out, merged := s.foldAliasTwins(context.Background(), rows, false)
 	if len(out) != 2 {
 		t.Fatalf("fold returned %d rows, want 2: %+v", len(out), out)
 	}
@@ -258,7 +259,7 @@ func TestFoldAliasTwins_LakeResolvedSACWithClassicOffPage(t *testing.T) {
 	s := &Server{Options: Options{Explorer: reader}}
 	rows := []AssetDetail{{AssetID: foldUSDCSAC, VolumeUSD24h: strp("9000000")}, {AssetID: "AQUA-" + foldUSDCIssuer}}
 	for range 2 {
-		out, _ := s.foldAliasTwins(context.Background(), rows)
+		out, _ := s.foldAliasTwins(context.Background(), rows, false)
 		if len(out) != 1 || out[0].AssetID != "AQUA-"+foldUSDCIssuer {
 			t.Fatalf("fold = %+v, want only AQUA (the SAC's classic row is served on its own page)", out)
 		}
@@ -272,24 +273,87 @@ func TestFoldAliasTwins_LakeResolvedSACWithClassicOffPage(t *testing.T) {
 func TestFoldAliasTwins_UnresolvedContractStays(t *testing.T) {
 	s := &Server{Options: Options{Explorer: &sacStubReader{}}}
 	rows := []AssetDetail{{AssetID: foldUSDCSAC, VolumeUSD24h: strp("5")}}
-	if out, _ := s.foldAliasTwins(context.Background(), rows); len(out) != 1 || out[0].AssetID != foldUSDCSAC {
+	if out, _ := s.foldAliasTwins(context.Background(), rows, false); len(out) != 1 || out[0].AssetID != foldUSDCSAC {
 		t.Fatalf("fold = %+v, want the contract row kept", out)
 	}
 }
 
-// TestMergeDerivedSACVolume_CountsOffPageSACOnce: a classic row takes its SAC's arm volume only when the fold did not merge it.
+// errSACReader fails every lake lookup.
+type errSACReader struct{ ExplorerReader }
+
+func (errSACReader) SACClassicAssetName(context.Context, string) (string, bool, error) {
+	return "", false, errors.New("clickhouse down")
+}
+
+// TestFoldAliasTwins_KeepLoneOnFilteredPage: under a row filter the off-page restore does not run, so a SAC whose classic row
+// the filter excluded is served as itself rather than vanishing.
+func TestFoldAliasTwins_KeepLoneOnFilteredPage(t *testing.T) {
+	installFoldRegistry(t)
+	out, _ := (&Server{}).foldAliasTwins(context.Background(), []AssetDetail{{AssetID: foldUSDCSAC}}, true)
+	if len(out) != 1 || out[0].AssetID != foldUSDCSAC {
+		t.Fatalf("fold = %+v, want the lone SAC kept", out)
+	}
+}
+
+func susdArm(complete bool) contractArm {
+	return contractArm{rows: map[string]AssetDetail{foldSUSDSAC: {AssetID: foldSUSDSAC, VolumeUSD24h: strp("0.2"), TradeCount24h: i64(3)}}, complete: complete}
+}
+
+// TestMergeDerivedSACVolume_CountsOffPageSACOnce: a classic row takes its SAC's arm volume only when the lake confirms the SAC
+// (the test that folds the SAC's own row away) and the fold did not already merge it in-page.
 func TestMergeDerivedSACVolume_CountsOffPageSACOnce(t *testing.T) {
-	arm := map[string]AssetDetail{foldSUSDSAC: {AssetID: foldSUSDSAC, VolumeUSD24h: strp("0.2"), TradeCount24h: i64(3)}}
+	s := &Server{Options: Options{Explorer: &sacStubReader{name: "sUSD:GCHW7CWI7GMIYQYFXMFJNJX5645XGWIINIAEQK3SABQO6CAYL5T7JYIH", found: true}}}
 
 	row := AssetDetail{AssetID: foldSUSDClassic, VolumeUSD24h: strp("0.1"), TradeCount24h: i64(1)}
-	mergeDerivedSACVolume(&row, arm, nil)
-	if *row.VolumeUSD24h != "0.3" || *row.TradeCount24h != 4 {
-		t.Errorf("off-page merge = %s/%d, want 0.3/4", *row.VolumeUSD24h, *row.TradeCount24h)
+	s.mergeDerivedSACVolume(context.Background(), &row, susdArm(true), nil)
+	if *row.VolumeUSD24h != "0.3" || *row.TradeCount24h != 4 || row.VolumeLowerBound {
+		t.Errorf("off-page merge = %s/%d lower_bound=%v, want 0.3/4 exact", *row.VolumeUSD24h, *row.TradeCount24h, row.VolumeLowerBound)
 	}
 
 	row = AssetDetail{AssetID: foldSUSDClassic, VolumeUSD24h: strp("0.1")}
-	mergeDerivedSACVolume(&row, arm, map[string]struct{}{foldSUSDSAC: {}})
+	s.mergeDerivedSACVolume(context.Background(), &row, susdArm(true), map[string]struct{}{foldSUSDSAC: {}})
 	if *row.VolumeUSD24h != "0.1" {
 		t.Errorf("volume after in-page merge = %s, want 0.1 unchanged", *row.VolumeUSD24h)
+	}
+}
+
+// TestMergeDerivedSACVolume_LookupFailureIsALowerBound: when the lake cannot confirm the SAC, its row is served on its own (the
+// fold could not confirm it either), so the classic row must not add it; the figure is flagged instead.
+func TestMergeDerivedSACVolume_LookupFailureIsALowerBound(t *testing.T) {
+	s := &Server{Options: Options{Explorer: errSACReader{}}}
+	row := AssetDetail{AssetID: foldSUSDClassic, VolumeUSD24h: strp("0.1")}
+	s.mergeDerivedSACVolume(context.Background(), &row, susdArm(true), nil)
+	if *row.VolumeUSD24h != "0.1" || !row.VolumeLowerBound {
+		t.Errorf("after failed lookup = %s lower_bound=%v, want 0.1 flagged as a lower bound", *row.VolumeUSD24h, row.VolumeLowerBound)
+	}
+	if out, _ := s.foldAliasTwins(context.Background(), []AssetDetail{{AssetID: foldSUSDSAC}}, false); len(out) != 1 {
+		t.Errorf("fold with failed lookup = %+v, want the SAC served as its own row", out)
+	}
+}
+
+// TestMergeDerivedSACVolume_UnreadArmIsALowerBound: an arm read that failed or hit its cap cannot say the SAC had no volume.
+func TestMergeDerivedSACVolume_UnreadArmIsALowerBound(t *testing.T) {
+	s := &Server{}
+	row := AssetDetail{AssetID: foldSUSDClassic, VolumeUSD24h: strp("0.1")}
+	s.mergeDerivedSACVolume(context.Background(), &row, contractArm{}, nil)
+	if !row.VolumeLowerBound {
+		t.Error("unread arm: want volume_lower_bound")
+	}
+	row = AssetDetail{AssetID: foldSUSDClassic, VolumeUSD24h: strp("0.1")}
+	s.mergeDerivedSACVolume(context.Background(), &row, contractArm{rows: map[string]AssetDetail{}, complete: true}, nil)
+	if row.VolumeLowerBound {
+		t.Error("complete arm without the SAC: want no lower bound")
+	}
+}
+
+// TestMergeDerivedSACVolume_SkipsRegistryAlias: a registry wrapper's volume is added by mergeContractArmVolumeExcept, not twice.
+func TestMergeDerivedSACVolume_SkipsRegistryAlias(t *testing.T) {
+	installFoldRegistry(t)
+	s := &Server{Options: Options{Explorer: &sacStubReader{name: "USDC:" + foldUSDCIssuer, found: true}}}
+	arm := contractArm{rows: map[string]AssetDetail{foldUSDCSAC: {AssetID: foldUSDCSAC, VolumeUSD24h: strp("9")}}, complete: true}
+	row := AssetDetail{AssetID: foldUSDCClassic, VolumeUSD24h: strp("1")}
+	s.mergeDerivedSACVolume(context.Background(), &row, arm, nil)
+	if *row.VolumeUSD24h != "1" {
+		t.Errorf("registry alias volume = %s, want 1 (left to mergeContractArmVolumeExcept)", *row.VolumeUSD24h)
 	}
 }
