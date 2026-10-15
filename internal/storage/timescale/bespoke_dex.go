@@ -8,7 +8,7 @@ package timescale
 //     "since <floor date>", never "all-time".
 //  2. source_volume_1h (real-time): the 24h window.
 //  3. Raw `trades`, the ONLY place taker addresses and per-trade rows live, window-bounded; sdex
-//     is gated OFF beyond 7 days (dexRawWindowOK, ~15-20s at 90d) and the omission is Noted.
+//     is gated OFF beyond 24h (dexRawWindowOK, 45s at 7d) and the omission is Noted.
 //
 // Older soroswap rows carry NULL taker: trader metrics are omitted (with a Note) unless the window
 // has taker-stamped rows. Every USD figure is trade-time trades.usd_volume (or its CAGG sums),
@@ -36,10 +36,10 @@ const (
 	dexTopPairPrefix = "Top pairs · "
 )
 
-// dexRawWindowOK reports whether raw-trades surfaces are servable for source at this window; sdex is too big (5.0M rows/7d), so 24h/7d
-// only.
+// dexRawWindowOK reports whether raw-trades surfaces are servable for source at this window; sdex is too big (10.7M rows/7d, 45s on
+// r1, past the one-minute build budget), so 24h only.
 func dexRawWindowOK(source string, windowDays int) bool {
-	return source != "sdex" || windowDays <= 7
+	return source != "sdex" || windowDays <= 1
 }
 
 // Query builders: every windowed query binds source=$1 and window=$2::interval and bounds its time
@@ -645,7 +645,7 @@ func (s *Store) dexOmissionNotes(blk *BespokeBlock, windowDays int, raw, takersZ
 	}
 	if !raw {
 		blk.Notes = append(blk.Notes,
-			fmt.Sprintf("Unique traders, average trade size and largest trades are omitted on SDEX at the %dd window: they require a raw scan of the trades hypertable (~5M rows per week for SDEX; measured 1.4s at 7d, extrapolating to ~15–20s at 90d). The 24h and 7d windows serve them.", windowDays),
+			fmt.Sprintf("Unique traders, average trade size and largest trades are omitted on SDEX at the %dd window: they require a raw scan of the trades hypertable (~10.7M rows per week for SDEX; measured 45s at 7d). The 24h window serves them.", windowDays),
 		)
 	}
 }
