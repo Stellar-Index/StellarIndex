@@ -39,15 +39,15 @@ func rat(s string) *big.Rat {
 var creditTestTrade int
 
 // mustAdmit admits a fresh trade ID each call.
-func mustAdmit(t *testing.T, b *usdCreditBudget, a canonical.Asset, at time.Time, value, backing string, commit bool) bool {
+func mustAdmit(ctx context.Context, t *testing.T, b *usdCreditBudget, a canonical.Asset, at time.Time, value, backing string, commit bool) bool {
 	t.Helper()
 	creditTestTrade++
-	return mustAdmitID(t, b, fmt.Sprintf("trade-%d", creditTestTrade), a, at, value, backing, commit)
+	return mustAdmitID(ctx, t, b, fmt.Sprintf("trade-%d", creditTestTrade), a, at, value, backing, commit)
 }
 
-func mustAdmitID(t *testing.T, b *usdCreditBudget, id string, a canonical.Asset, at time.Time, value, backing string, commit bool) bool {
+func mustAdmitID(ctx context.Context, t *testing.T, b *usdCreditBudget, id string, a canonical.Asset, at time.Time, value, backing string, commit bool) bool {
 	t.Helper()
-	ok, err := b.admit(t.Context(), id, a, at, rat(value), rat(backing), commit)
+	ok, err := b.admit(ctx, id, a, at, rat(value), rat(backing), commit)
 	if err != nil {
 		t.Fatalf("admit: %v", err)
 	}
@@ -59,13 +59,13 @@ func TestCreditBudget_AdmitsUpToTwiceBackingThenRefuses(t *testing.T) {
 	abc := mustAsset(t, "ABC-"+creditTestIssuer)
 	at := time.Date(2026, 10, 1, 12, 30, 0, 0, time.UTC)
 
-	if !mustAdmit(t, b, abc, at, "1500", "1000", true) {
+	if !mustAdmit(t.Context(), t, b, abc, at, "1500", "1000", true) {
 		t.Fatal("1500 against a 2000 budget refused")
 	}
-	if !mustAdmit(t, b, abc, at.Add(time.Minute), "500", "1000", true) {
+	if !mustAdmit(t.Context(), t, b, abc, at.Add(time.Minute), "500", "1000", true) {
 		t.Fatal("print landing exactly on the budget refused")
 	}
-	if mustAdmit(t, b, abc, at.Add(2*time.Minute), "0.0000001", "1000", true) {
+	if mustAdmit(t.Context(), t, b, abc, at.Add(2*time.Minute), "0.0000001", "1000", true) {
 		t.Fatal("print past the budget admitted")
 	}
 }
@@ -73,7 +73,7 @@ func TestCreditBudget_AdmitsUpToTwiceBackingThenRefuses(t *testing.T) {
 func TestCreditBudget_ZeroBackingRefusesAnyValue(t *testing.T) {
 	b := newUSDCreditBudget(nil)
 	abc := mustAsset(t, "ABC-"+creditTestIssuer)
-	if mustAdmit(t, b, abc, time.Now(), "0.01", "0", true) {
+	if mustAdmit(t.Context(), t, b, abc, time.Now(), "0.01", "0", true) {
 		t.Fatal("an asset with no anchor turnover was credited")
 	}
 }
@@ -83,7 +83,7 @@ func TestCreditBudget_DryRunLeavesWindowUnchanged(t *testing.T) {
 	abc := mustAsset(t, "ABC-"+creditTestIssuer)
 	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	for i := 0; i < 5; i++ {
-		if !mustAdmit(t, b, abc, at, "2000", "1000", false) {
+		if !mustAdmit(t.Context(), t, b, abc, at, "2000", "1000", false) {
 			t.Fatalf("dry run %d refused: an earlier dry run was charged", i)
 		}
 	}
@@ -93,12 +93,12 @@ func TestCreditBudget_ChargesExpireAfterTheWindow(t *testing.T) {
 	b := newUSDCreditBudget(nil)
 	abc := mustAsset(t, "ABC-"+creditTestIssuer)
 	at := time.Date(2026, 10, 1, 0, 30, 0, 0, time.UTC)
-	mustAdmit(t, b, abc, at, "2000", "1000", true)
+	mustAdmit(t.Context(), t, b, abc, at, "2000", "1000", true)
 
-	if mustAdmit(t, b, abc, at.Add(23*time.Hour), "1", "1000", false) {
+	if mustAdmit(t.Context(), t, b, abc, at.Add(23*time.Hour), "1", "1000", false) {
 		t.Fatal("charge dropped while its hour is still one of the 24 in the window")
 	}
-	if !mustAdmit(t, b, abc, at.Add(24*time.Hour), "2000", "1000", false) {
+	if !mustAdmit(t.Context(), t, b, abc, at.Add(24*time.Hour), "2000", "1000", false) {
 		t.Fatal("charge still counted 24 hour buckets later")
 	}
 }
@@ -106,8 +106,8 @@ func TestCreditBudget_ChargesExpireAfterTheWindow(t *testing.T) {
 func TestCreditBudget_XLMFormsShareOneLedger(t *testing.T) {
 	b := newUSDCreditBudget(nil)
 	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
-	mustAdmit(t, b, canonical.NativeAsset(), at, "2000", "1000", true)
-	if mustAdmit(t, b, mustAsset(t, "crypto:XLM"), at, "1", "1000", true) {
+	mustAdmit(t.Context(), t, b, canonical.NativeAsset(), at, "2000", "1000", true)
+	if mustAdmit(t.Context(), t, b, mustAsset(t, "crypto:XLM"), at, "1", "1000", true) {
 		t.Fatal("crypto:XLM escaped the budget native already spent")
 	}
 }
@@ -123,17 +123,17 @@ func TestCreditBudget_SeedChargedOnceAndErrorsPropagate(t *testing.T) {
 		}
 		return map[int64]*big.Rat{creditHour(at.Add(-23 * time.Hour)): rat("1500"), creditHour(at): rat("400")}, nil
 	})
-	if mustAdmit(t, b, abc, at, "101", "1000", true) {
+	if mustAdmit(t.Context(), t, b, abc, at, "101", "1000", true) {
 		t.Fatal("a restarted writer ignored the USD already served")
 	}
-	if !mustAdmit(t, b, abc, at, "100", "1000", true) {
+	if !mustAdmit(t.Context(), t, b, abc, at, "100", "1000", true) {
 		t.Fatal("print within the seeded budget refused")
 	}
 	if calls != 1 {
 		t.Fatalf("seed ran %d times, want once per asset", calls)
 	}
 	// The seed keeps its hourly shape: the 1500 bucket leaves the window an hour later, not a whole window later.
-	if !mustAdmit(t, b, abc, at.Add(time.Hour), "1400", "1000", true) {
+	if !mustAdmit(t.Context(), t, b, abc, at.Add(time.Hour), "1400", "1000", true) {
 		t.Fatal("a seeded hour outlived the window")
 	}
 
@@ -151,11 +151,11 @@ func TestCreditBudget_RetriedTradeChargedOnce(t *testing.T) {
 	abc := mustAsset(t, "ABC-"+creditTestIssuer)
 	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	for i := 0; i < 3; i++ {
-		if !mustAdmitID(t, b, "retried", abc, at, "1500", "1000", true) {
+		if !mustAdmitID(t.Context(), t, b, "retried", abc, at, "1500", "1000", true) {
 			t.Fatalf("attempt %d of the same trade refused: an earlier attempt was charged again", i)
 		}
 	}
-	if !mustAdmit(t, b, abc, at, "500", "1000", true) {
+	if !mustAdmit(t.Context(), t, b, abc, at, "500", "1000", true) {
 		t.Fatal("retries consumed budget a single charge leaves free")
 	}
 }
@@ -165,10 +165,10 @@ func TestCreditBudget_SweepDropsStaleLedgers(t *testing.T) {
 	stale := mustAsset(t, "OLD-"+creditTestIssuer)
 	live := mustAsset(t, "ABC-"+creditTestIssuer)
 	at := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
-	mustAdmit(t, b, stale, at, "1", "1000", true)
+	mustAdmit(t.Context(), t, b, stale, at, "1", "1000", true)
 	later := at.Add(3 * creditBudgetWindow)
 	for i := 0; i < 1024; i++ {
-		mustAdmit(t, b, live, later, "0", "1000", true)
+		mustAdmit(t.Context(), t, b, live, later, "0", "1000", true)
 	}
 	if _, ok := b.served[creditKey(stale)]; ok {
 		t.Fatal("a ledger two windows stale survived the sweep")
@@ -187,16 +187,16 @@ func TestCreditBudget_SweepKeepsAFreshEmptyLedger(t *testing.T) {
 	filler := mustAsset(t, "ABC-"+creditTestIssuer)
 	b.latest = at
 	b.admits = 1022
-	mustAdmit(t, b, filler, at, "0", "1000", true)
+	mustAdmit(t.Context(), t, b, filler, at, "0", "1000", true)
 	fresh := mustAsset(t, "NEW-"+creditTestIssuer)
-	mustAdmit(t, b, fresh, at, "1500", "1000", true) // the 1024th admit sweeps
-	if mustAdmit(t, b, fresh, at, "600", "1000", true) {
+	mustAdmit(t.Context(), t, b, fresh, at, "1500", "1000", true) // the 1024th admit sweeps
+	if mustAdmit(t.Context(), t, b, fresh, at, "600", "1000", true) {
 		t.Fatal("the sweep dropped a ledger created in the same admit, losing its charge")
 	}
 }
 
 func TestCreditBoundUSDVolume(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	abc := mustAsset(t, "ABC-"+creditTestIssuer)
 	def := mustAsset(t, "DEF-"+creditTestIssuer)
 	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
@@ -214,10 +214,10 @@ func TestCreditBoundUSDVolume(t *testing.T) {
 			t.Fatalf("got (%v, %v, %v), want 500 admitted", v, refused, err)
 		}
 		// DEF's budget is 600 with 500 spent; ABC's (200) is untouched.
-		if mustAdmit(t, b, def, at, "101", "300", false) {
+		if mustAdmit(ctx, t, b, def, at, "101", "300", false) {
 			t.Fatal("the charge did not land on DEF")
 		}
-		if !mustAdmit(t, b, abc, at, "200", "100", false) {
+		if !mustAdmit(ctx, t, b, abc, at, "200", "100", false) {
 			t.Fatal("the charge landed on the thinner leg")
 		}
 	})
