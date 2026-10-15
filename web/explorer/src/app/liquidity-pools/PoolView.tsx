@@ -29,7 +29,7 @@ export function PoolView({ id }: { id: string }) {
   const valid = POOL_ID_RE.test(id);
   useLedgerFollow(['/v1/liquidity-pools']);
   const q = useQuery<LiquidityPoolRow | null>({
-    queryKey: ['/v1/liquidity-pools', id],
+    queryKey: ['/v1/liquidity-pools', id, 'one'],
     queryFn: async () => {
       const env = await apiGet<{ data: LiquidityPoolRow[] }>(
         `/v1/liquidity-pools?pool=${encodeURIComponent(id)}`,

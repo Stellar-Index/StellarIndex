@@ -60,7 +60,12 @@ export function DivergenceMultiples({
 }) {
   const qs = useQueries({
     queries: pairs.map((p) => ({
-      queryKey: ['/v1/divergence/series', `${p.asset}~${p.quote}`, 7],
+      queryKey: [
+        '/v1/divergence/series',
+        `${p.asset}~${p.quote}`,
+        7,
+        'multiples',
+      ],
       queryFn: async () =>
         (
           await apiGet<{ data: SeriesResp }>('/v1/divergence/series', {

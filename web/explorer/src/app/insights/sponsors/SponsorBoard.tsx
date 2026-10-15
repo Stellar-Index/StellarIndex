@@ -50,7 +50,7 @@ function repeatRate(row: SponsorRow): string {
  */
 export function SponsorBoard() {
   const q = useQuery<SponsorsResp>({
-    queryKey: ['/v1/accounts/sponsors', BOARD_LIMIT],
+    queryKey: ['/v1/accounts/sponsors', BOARD_LIMIT, 'board'],
     queryFn: async () => {
       const env = await apiGet<Envelope<SponsorsResp>>(
         '/v1/accounts/sponsors',

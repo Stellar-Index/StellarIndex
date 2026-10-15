@@ -649,13 +649,13 @@ export function useAssets(
   return useQuery<AssetsPage>({
     queryKey: [
       endpoint,
-      'unified',
       assetClass,
       limit,
       cursor,
       q ?? '',
       include ?? '',
       options?.includeThin ? 'thin' : '',
+      'unified',
     ],
     queryFn: async () => {
       const env = await apiGet<AssetsListEnvelope>(endpoint, {
@@ -844,7 +844,7 @@ type IssuersListEnvelope = { data: IssuerListEntry[] };
  */
 export function useIssuers(limit = 100) {
   return useQuery<IssuerListEntry[]>({
-    queryKey: ['/v1/issuers', limit],
+    queryKey: ['/v1/issuers', limit, 'list'],
     queryFn: async () => {
       const env = await apiGet<IssuersListEnvelope | IssuerListEntry[]>(
         '/v1/issuers',
@@ -877,7 +877,7 @@ type IssuerEnvelope = { data: Issuer };
  */
 export function useIssuer(gStrkey: string | undefined) {
   return useQuery<Issuer>({
-    queryKey: ['/v1/issuers', gStrkey],
+    queryKey: ['/v1/issuers', gStrkey, 'detail'],
     queryFn: async () => {
       const env = await apiGet<IssuerEnvelope | Issuer>(
         `/v1/issuers/${gStrkey}`,
