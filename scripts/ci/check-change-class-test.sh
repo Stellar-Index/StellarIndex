@@ -144,6 +144,12 @@ expect "a check-change-class.sh-only diff triggers the go class" 0
 run go "scripts/ci/prepush-integration-required.sh"
 expect "a prepush-integration-required.sh-only diff triggers the go class" 0
 
+run go "scripts/dev/third-party-notices.py"
+expect "a third-party-notices.py-only diff triggers the go class" 0
+
+run go "scripts/dev/docs-api.sh"
+expect "another scripts/dev script does NOT trigger the go class" 1
+
 run go "scripts/ci/lint-docs.sh"
 expect "another scripts/ci script does NOT trigger the go class" 1
 

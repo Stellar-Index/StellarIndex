@@ -59,7 +59,9 @@
 #                  walks every //go:embed and fails on an uncovered input),
 #                  plus Makefile, .github/workflows/ci.yml and
 #                  scripts/ci/{check-change-class,prepush-integration-required}.sh
-#                  (the trigger-class guard's inputs; it runs only in `test`)
+#                  (the trigger-class guard's inputs; it runs only in `test`),
+#                  and scripts/dev/third-party-notices.py (its go||web gated
+#                  step in repo-gates)
 #   web         — web/**, openapi/**, CHANGELOG.md, top-level files of
 #                  docs/{adr,architecture,blog,operations}/,
 #                  internal/incidents/data/**,
@@ -93,8 +95,9 @@ class_go() {
   # trigger the go-test job. Mirrored in ci.yml's preflight `go` filter.
   # The five data paths are go:embed inputs and testdata/ is Go's test
   # fixture convention: not *.go files, but each is read by a Go test.
-  # The last four are the trigger-class guard's inputs, read only by it.
-  grep -E '(^|/)[^/]+\.go$|^go\.mod$|^go\.sum$|^openapi/|^internal/sources/external/binance/pairs\.yaml$|^internal/sources/external/forex/circulation_data\.csv$|^internal/currency/data/seed\.yaml$|^internal/wasmaudit/audited_wasm\.json$|^internal/incidents/data/|(^|/)testdata/|^Makefile$|^\.github/workflows/ci\.yml$|^scripts/ci/check-change-class\.sh$|^scripts/ci/prepush-integration-required\.sh$'
+  # The next four are the trigger-class guard's inputs, read only by it;
+  # third-party-notices.py runs in a go||web gated repo-gates step.
+  grep -E '(^|/)[^/]+\.go$|^go\.mod$|^go\.sum$|^openapi/|^internal/sources/external/binance/pairs\.yaml$|^internal/sources/external/forex/circulation_data\.csv$|^internal/currency/data/seed\.yaml$|^internal/wasmaudit/audited_wasm\.json$|^internal/incidents/data/|(^|/)testdata/|^Makefile$|^\.github/workflows/ci\.yml$|^scripts/ci/check-change-class\.sh$|^scripts/ci/prepush-integration-required\.sh$|^scripts/dev/third-party-notices\.py$'
 }
 
 class_web() {
