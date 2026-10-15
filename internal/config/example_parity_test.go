@@ -48,7 +48,7 @@ func TestExampleTOMLDocumentsSchemaFields(t *testing.T) {
 		"clickhouse_serving_password",
 		"max_supply_overrides", "stale_component_ledgers_by_asset",
 		"max_concurrent_streams", "max_streams_per_ip", "max_tip_producers",
-		"max_tip_producers_per_caller", "feed_map", "demo_api_key",
+		"max_tip_producers_per_caller", "demo_api_key",
 		"persist_per_source", "disable_substance_gate", "fx_cross_max_age_hours",
 		"substance_min_buckets", "substance_min_span_minutes",
 		"substance_min_volume_usd", "substance_window_hours",
@@ -242,6 +242,9 @@ func tomlStanza(text, header string) string {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "[") {
 			in = trimmed == header
+		}
+		if strings.HasPrefix(trimmed, "{%") {
+			in = false // a Jinja block tag ends the stanza; it is not TOML
 		}
 		if in {
 			out = append(out, line)

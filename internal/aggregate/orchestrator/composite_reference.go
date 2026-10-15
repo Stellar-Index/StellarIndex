@@ -45,7 +45,7 @@ type CompositeReferenceConfig struct {
 
 	// FXMaxAge is the staleness budget for the FX leg's snap
 	// observation. fx_quotes buckets are DAILY and the feed pauses over
-	// market closes, so this mirrors the Chainlink FX feed budget (76h)
+	// market closes, so this mirrors divergence.DefaultMaxComparableAgeFX (76h)
 	// rather than the 6h poll-liveness alert.
 	FXMaxAge time.Duration
 

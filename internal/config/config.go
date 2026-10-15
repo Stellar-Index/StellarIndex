@@ -27,7 +27,7 @@ type Config struct {
 	Supply       SupplyConfig       `toml:"supply" doc:"Supply pipeline config — SDF reserve list, operator-managed reserve balances (fallback when the LCM AccountEntry observer hasn't yet covered the watched set), watched classic + SEP-41 asset lists, SAC wrappers, and aggregator-refresh cadence. ADR-0011 (XLM) + ADR-0022 (classic) + ADR-0023 (SEP-41)."`
 	Trades       TradesConfig       `toml:"trades" doc:"Trade-insert policy — operator-declared USD-pegged stablecoins so on-chain DEX trades populate trades.usd_volume at insert time (launch-readiness L2.2 phase 1)."`
 	PricingGuard PricingGuardConfig `toml:"pricing_guard" doc:"Serving-side price guards — the thin-market substance gate that withholds aggregated price claims for on-chain pairs whose trailing market activity is below the serve floor (2026-08-04 valuation incident)."`
-	Divergence   DivergenceConfig   `toml:"divergence" doc:"Cross-check references the divergence service consults (CoinGecko + Chainlink HTTP, plus the on-chain Reflector/Redstone/Band oracle feeds read from ingested oracle_updates rows). Empty disables; the divergence_warning envelope flag stays unset."`
+	Divergence   DivergenceConfig   `toml:"divergence" doc:"Cross-check references the divergence service consults (CoinGecko, plus the on-chain Reflector/Redstone/Band/Chainlink oracle feeds read from ingested oracle_updates rows). Empty disables; the divergence_warning envelope flag stays unset."`
 	PriceAlerts  PriceAlertsConfig  `toml:"price_alerts" doc:"Customer price-threshold alert evaluator. Off by default; when enabled the aggregator sweeps price_alerts against the latest closed VWAP every tick and enqueues price.alert webhook deliveries."`
 	SignupReaper SignupReaperConfig `toml:"signup_reaper" doc:"F-1255 speculative-account reaper. Deletes orphan accounts left by a lost signup race (Suspended with a 'signup-race:' reason, no user, no key). Runs in the API binary when the dashboard is wired. On by default — the rows are pure garbage."`
 	HashDB       HashDBConfig       `toml:"hashdb" doc:"Drift detector — on-disk (ledger_seq -> sha256(LCM)) record appended by the indexer's live ingest loop and periodically re-verified against a fresh re-read of the same bucket, catching upstream rewrites of previously-fetched ledger bytes. Off by default (opt-in first deploy)."`
@@ -254,15 +254,13 @@ type DivergenceConfig struct {
 	// auth). Set Enabled=false to skip.
 	CoinGecko DivergenceCoinGeckoConfig `toml:"coingecko" doc:"CoinGecko reference (free tier, no auth required)."`
 
-	// Chainlink reads AggregatorV3 latestAnswer() over public Ethereum RPC. Off by default; needs a FeedMap.
-	Chainlink DivergenceChainlinkConfig `toml:"chainlink" doc:"Chainlink reference (HTTP cross-check only; not a VWAP contributor)."`
-
 	// On-chain oracle references read our OWN ingested oracle_updates rows. On by default: no
 	// external quota, and a per-pair no-op (asset_unsupported) until the feed tables hold data.
 	// Reflector toggles all three variants (dex/cex/fx) together.
-	Reflector DivergenceOracleConfig `toml:"reflector" doc:"Reflector on-chain oracle references (reflector-dex/cex/fx) read from ingested oracle_updates rows."`
-	Redstone  DivergenceOracleConfig `toml:"redstone" doc:"Redstone on-chain oracle reference read from ingested oracle_updates rows."`
-	Band      DivergenceOracleConfig `toml:"band" doc:"Band on-chain oracle reference read from ingested oracle_updates rows (relay/force_relay op-args ingest)."`
+	Reflector        DivergenceOracleConfig `toml:"reflector" doc:"Reflector on-chain oracle references (reflector-dex/cex/fx) read from ingested oracle_updates rows."`
+	Redstone         DivergenceOracleConfig `toml:"redstone" doc:"Redstone on-chain oracle reference read from ingested oracle_updates rows."`
+	Band             DivergenceOracleConfig `toml:"band" doc:"Band on-chain oracle reference read from ingested oracle_updates rows (relay/force_relay op-args ingest)."`
+	ChainlinkStellar DivergenceOracleConfig `toml:"chainlink_stellar" doc:"Chainlink on-Stellar oracle reference read from ingested oracle_updates rows (DataFeedsCache FeedUpdated events)."`
 
 	// Supply cross-check compares OUR served circulating_supply against an external reference,
 	// separate from the price cross-checks. Off by default; the archival-node role renders it from
@@ -312,27 +310,8 @@ type DivergenceCoinGeckoConfig struct {
 	IDMap   map[string]string `toml:"id_map" doc:"Maps canonical asset_id → CoinGecko slug. Operator-curated; empty falls back to the built-in default covering XLM, major stables and the served Stellar assets CoinGecko lists." default:"{}"`
 }
 
-// DivergenceChainlinkConfig configures the Chainlink reference; off by default, opt in by setting RPCURL and a FeedMap of mainnet AggregatorV3 addresses.
-type DivergenceChainlinkConfig struct {
-	Enabled bool   `toml:"enabled" doc:"Whether the Chainlink reference is wired into the divergence service." default:"false"`
-	RPCURL  string `toml:"rpc_url" doc:"Ethereum JSON-RPC endpoint. Shares the CHAINLINK_RPC_URL env var with the ingest poller (env overrides TOML). Empty defaults to https://cloudflare-eth.com." env:"CHAINLINK_RPC_URL" default:""`
-	// FeedMap maps a "<base>/<quote>" pair (e.g. "fiat:EUR/fiat:USD") to a mainnet feed address.
-	// Omitted decimals adopt the feed's on-chain decimals(); a set value is verified against it.
-	FeedMap map[string]ChainlinkFeedConfig `toml:"feeds" doc:"Maps pair strings to {address, decimals, invert}. Empty disables Chainlink in practice." default:"{}"`
-}
-
-// ChainlinkFeedConfig is one entry in the [DivergenceChainlinkConfig.FeedMap].
-type ChainlinkFeedConfig struct {
-	Address  string `toml:"address" doc:"0x-prefixed mainnet feed contract address." default:""`
-	Decimals int    `toml:"decimals" doc:"Power-of-10 divisor for the raw int256. Omit to adopt the feed's on-chain decimals() (8 on every Chainlink USD feed). When set it is verified against decimals() on first use and daily; on disagreement the feed's readings are refused (ERROR log + stellarindex_chainlink_feed_decimals_mismatch_total) until they agree." default:"0"`
-	Invert   bool   `toml:"invert" doc:"Set true when canonical pair is reciprocal of the feed's natural quote." default:"false"`
-	// MaxAgeHours is the staleness ceiling: an older latestRoundData is rejected as
-	// reference-unavailable. 0 = the pair's default budget (see the doc tag).
-	MaxAgeHours int `toml:"max_age_hours" doc:"Staleness ceiling in hours for the feed's latestRoundData updatedAt; rounds older than this are rejected as reference-unavailable (CS-089). 0 = the default: the built-in feed's budget for a built-in pair, 76h for any other fiat/fiat pair (FX feeds pause over market closes), else 3h. Must be >= 0." default:"0"`
-}
-
 // defaultDivergenceConfig returns the Default() divergence settings: CoinGecko on (free, no auth)
-// so divergence_warning works out of the box; Chainlink off until a FeedMap is set.
+// so divergence_warning works out of the box.
 func defaultDivergenceConfig() DivergenceConfig {
 	return DivergenceConfig{
 		Threshold:            5.0,
@@ -341,15 +320,12 @@ func defaultDivergenceConfig() DivergenceConfig {
 			Enabled: true,
 			IDMap:   map[string]string{},
 		},
-		Chainlink: DivergenceChainlinkConfig{
-			Enabled: false,
-			FeedMap: map[string]ChainlinkFeedConfig{},
-		},
 		// On-chain oracle references default ON: they read our own oracle_updates rows (no external
 		// quota) and no-op per pair until the feed tables have data.
-		Reflector: DivergenceOracleConfig{Enabled: true},
-		Redstone:  DivergenceOracleConfig{Enabled: true},
-		Band:      DivergenceOracleConfig{Enabled: true},
+		Reflector:        DivergenceOracleConfig{Enabled: true},
+		Redstone:         DivergenceOracleConfig{Enabled: true},
+		Band:             DivergenceOracleConfig{Enabled: true},
+		ChainlinkStellar: DivergenceOracleConfig{Enabled: true},
 		// Supply cross-check OFF by default (outbound HTTP). Within the block Dashboard is on, so
 		// enabling the parent gives XLM-vs-Dashboard; CoinGecko stays off (free tier 429-throttled).
 		Supply: DivergenceSupplyConfig{
@@ -404,7 +380,6 @@ type ExternalConfig struct {
 	CoinMarketCap     CoinMarketCapVenueConfig    `toml:"coinmarketcap"    doc:"CoinMarketCap /v2 quotes poller. Class=aggregator. Paid API key; Standard tier ($79/mo+) for commercial redistribution."`
 	CryptoCompare     CryptoCompareVenueConfig    `toml:"cryptocompare"    doc:"CryptoCompare /data/pricemultifull poller (rows stamped with upstream LASTUPDATE). Class=aggregator. Paid API key via Authorization header."`
 	ECB               ExternalVenueConfig         `toml:"ecb"              doc:"European Central Bank daily FX reference rates. Class=authority_sanity (daily anchor, not VWAP). Free, no auth."`
-	Chainlink         ChainlinkVenueConfig        `toml:"chainlink"        doc:"Chainlink Data Feeds via EVM JSON-RPC (Alchemy / Infura / public). Class=oracle (no VWAP contribution). Lives parallel to internal/divergence/chainlink.go which is the synchronous cross-check."`
 	Tiingo            TiingoVenueConfig           `toml:"tiingo"           doc:"Tiingo end-of-day poller for the published daily NAV of the bound tokenized funds (tickers come from internal/rwa's fund bindings). Class=oracle, off-chain, no VWAP contribution; read only by the RWA reference surface. Free tier: 50 req/h, 1,000 req/day; hourly polling of 12 tickers is 288/day, 8,928/month."`
 	Massive           MassiveConfig               `toml:"massive"           doc:"massive.com forex rates behind /v1/currencies, fetched every refresh_interval (default hourly) by stellarindex-api."`
 	OpenExchangeRates OpenExchangeRatesConfig     `toml:"openexchangerates" doc:"Open Exchange Rates hourly USD-base board, built by stellarindex-api's forex worker when enabled. Not in the serving chain: the worker holds it but neither fetches nor serves it yet."`
@@ -472,23 +447,6 @@ type CoinMarketCapVenueConfig struct {
 type CryptoCompareVenueConfig struct {
 	Enabled bool   `toml:"enabled" doc:"Whether this connector runs. Off by default." default:"false"`
 	APIKey  string `toml:"api_key" doc:"CryptoCompare API key, passed as 'Authorization: Apikey <KEY>'. Prefer env var." env:"CRYPTOCOMPARE_API_KEY" default:""`
-}
-
-// ChainlinkVenueConfig carries the Chainlink ingest settings; RPCUrl IS the credential (the key sits in the URL path), so treat it as a secret: blank in tracked TOML, set via env.
-type ChainlinkVenueConfig struct {
-	Enabled      bool                            `toml:"enabled"       doc:"Whether the Chainlink ingest poller runs. Off by default."  default:"false"`
-	RPCUrl       string                          `toml:"rpc_url"       doc:"Ethereum mainnet JSON-RPC endpoint (Alchemy / Infura / public). For Alchemy this includes the API key in the URL path (.../v2/<KEY>) — treat the whole value as a secret. Prefer env var." env:"CHAINLINK_RPC_URL" default:""`
-	PollInterval time.Duration                   `toml:"poll_interval" doc:"Override the default 30s poll cadence. Empty/zero uses the package default." default:""`
-	FeedMap      map[string]ChainlinkFeedSetting `toml:"feed_map"      doc:"Maps canonical pair string ('crypto:BTC/fiat:USD' etc.) to the AggregatorV3 contract address + decimals + invert + max_age_hours. Empty falls back to the built-in default covering BTC/ETH/LINK/EUR/GBP/JPY vs USD." default:"{}"`
-}
-
-// ChainlinkFeedSetting is one entry in [ChainlinkVenueConfig.FeedMap], mirroring [DivergenceChainlinkConfig]'s feed as its own type so the schemas can evolve apart.
-type ChainlinkFeedSetting struct {
-	Address  string `toml:"address"  doc:"0x-prefixed AggregatorV3 contract address on Ethereum mainnet."`
-	Decimals uint8  `toml:"decimals" doc:"Power-of-10 divisor for the raw int256 answer. Omit to adopt the feed's on-chain decimals() (8 on every Chainlink USD feed). When set it is verified against decimals() on the first poll and daily; on disagreement the feed is refused (ERROR log + stellarindex_chainlink_feed_decimals_mismatch_total) until they agree." default:"0"`
-	Invert   bool   `toml:"invert"   doc:"If true, the canonical pair is the reciprocal of the feed's natural quote — e.g. operator wants USD/EUR but the feed publishes EUR/USD. price → 1/price after scaling." default:"false"`
-	// MaxAgeHours is the live-poll staleness budget; 0 = the pair's default.
-	MaxAgeHours int `toml:"max_age_hours" doc:"Staleness budget in hours, set from the feed's heartbeat: a latestRoundData round whose updatedAt is older is refused (not written) and counted on stellarindex_chainlink_feed_polls_total{outcome=\"stale\"}. 0 = the default: the built-in feed's budget for a built-in pair (3h for the 1h-heartbeat crypto feeds, 76h for the 24h-heartbeat FX feeds, which pause over market closes), 76h for any other fiat/fiat pair, else 3h. Negative is rejected at startup. Backfill is not subject to it." default:"0"`
 }
 
 // OracleConfig gathers on-chain oracle contract addresses; each provider nests its own sub-struct, e.g. [oracle.reflector].
@@ -1291,6 +1249,8 @@ func defaultAPIConfig() APIConfig {
 
 // RetiredKeys lists dotted config paths removed from the schema; LoadReader warns on them instead of failing boot, so add an entry in the commit that removes a field.
 var RetiredKeys = map[string]string{
+	"external.chainlink":                              "Ethereum Chainlink poller retired — Chainlink is read on Stellar via oracle.chainlink_stellar",
+	"divergence.chainlink":                            "Ethereum Chainlink reference retired — divergence.chainlink_stellar replaces it",
 	"aggregate.vwap_window_seconds":                   "GH-1129: unread — windows come from aggregate.windows via AggregatorWindows()",
 	"aggregate.twap_window_seconds":                   "GH-1129: unread — windows come from aggregate.windows via AggregatorWindows()",
 	"ingestion.cursor_store_scheme":                   "GH-1129: unread — cursors are unconditionally Postgres",
@@ -1447,7 +1407,6 @@ func defaultExternalConfig() ExternalConfig {
 		CoinMarketCap:    CoinMarketCapVenueConfig{Enabled: false},
 		CryptoCompare:    CryptoCompareVenueConfig{Enabled: false},
 		ECB:              ExternalVenueConfig{Enabled: false},
-		Chainlink:        ChainlinkVenueConfig{Enabled: false, FeedMap: map[string]ChainlinkFeedSetting{}},
 		Tiingo:           TiingoVenueConfig{Enabled: false},
 	}
 }

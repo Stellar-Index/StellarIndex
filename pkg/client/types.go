@@ -779,7 +779,7 @@ type Source struct {
 	DefaultWeight     int    `json:"default_weight"`
 	// OnChain is true when the source observes the Stellar network
 	// directly (dispatcher-path ingest) rather than an off-chain
-	// vendor API. False for CEX / FX / aggregators / Chainlink.
+	// vendor API. False for CEX / FX / aggregators.
 	OnChain bool `json:"on_chain"`
 	// Selectable is true when `source=` accepts this name: on-chain
 	// sources and CEX venues. False for data vendors, which 400.

@@ -4,7 +4,7 @@ last_verified: 2026-10-05
 status: draft
 ---
 
-# Runbook — divergence, oracle staleness and Chainlink decimals
+# Runbook — divergence and oracle staleness
 
 ## At a glance
 
@@ -50,7 +50,7 @@ psql -d stellarindex -c \
 
 - Stale source in the aggregate: one source's `max(ts)` far behind and off-market. A stopped source keeps contributing for the aggregation window. See [`ingestion.md#stellarindex_ingestion_source_stopped`](ingestion.md#stellarindex_ingestion_source_stopped).
 - Wrong decimals (ADR-0003 `int64(parts.Lo)` truncation): ratio off by 2^N or ~0 on one source. Data-integrity incident.
-- A broken reference (CoinGecko 429, stale Chainlink, frozen Reflector/Redstone/Band): every asset diverges from that one reference. If all references are dark see [no_reference](#stellarindex_divergence_no_reference).
+- A broken reference (CoinGecko 429, frozen Reflector/Redstone/Band/Chainlink): every asset diverges from that one reference. If all references are dark see [no_reference](#stellarindex_divergence_no_reference).
 - Illiquid market or CEX halt: real divergence, not an incident.
 
 ### Fix
@@ -181,16 +181,12 @@ curl -fs http://localhost:9465/metrics | grep '^stellarindex_divergence_refresh_
 journalctl -u stellarindex-aggregator --no-pager | grep 'divergence refresher wired' | tail -1
 journalctl -u stellarindex-aggregator -n 200 | grep 'divergence refresh failed'
 curl -fs 'https://api.coingecko.com/api/v3/simple/price?ids=stellar&vs_currencies=usd'
-grep CHAINLINK_RPC_URL /etc/default/stellarindex
 ```
-
-The Chainlink URL is a secret (key in the path); curl it with a JSON-RPC `eth_chainId` payload and never paste it.
 
 ### Likely causes
 
 - HTTP 429 from CoinGecko: anonymous tier, one batched call per pass; the price reference has no API-key field.
 - HTTP 5xx from CoinGecko: self-recovers in 5-30 min.
-- Chainlink RPC timeout: check or rotate `CHAINLINK_RPC_URL` in `/etc/default/stellarindex`.
 - Redis cache write failed: [`cache.md#stellarindex_redis_writes_blocked`](cache.md#stellarindex_redis_writes_blocked).
 - All references failed: egress firewall or DNS on the aggregator host.
 
@@ -222,18 +218,16 @@ journalctl -u stellarindex-aggregator | grep 'divergence refresher wired' | tail
 curl -fs 'https://api.coingecko.com/api/v3/simple/price?ids=stellar&vs_currencies=usd'
 ```
 
-For Chainlink, curl the configured `rpc_url` (or `CHAINLINK_RPC_URL`) with an `eth_chainId` payload.
-
 ### Likely causes
 
 - CoinGecko free-tier 429 with no other reference covering the pair (no key-based fix).
-- Chainlink RPC dark.
+- Every on-chain oracle feed for the pair stale (see the staleness sections above).
 - Egress blocked: every reference dark at once.
 - Known-uncovered pair, or a quote older than `divergence.MaxComparableAge` (1 h): not an outage.
 
 ### Fix
 
-1. Restore the failing reference: wait out the 429 or add a non-CoinGecko reference for the pair; point `CHAINLINK_RPC_URL` at a live provider.
+1. Restore the failing reference: wait out the 429 or add a non-CoinGecko reference for the pair.
 2. Restart the aggregator after any config change. Any one responding reference clears the alert.
 3. Verify `rate(stellarindex_divergence_refresh_total{outcome="no_reference"}[5m])` falls below `ok`.
 
@@ -315,42 +309,6 @@ Find the dropped reference with `stellarindex_divergence_reference_total` by `ou
 ### Fix
 
 Remediate as for [reference_failing](#stellarindex_divergence_reference_failing). A pair whose only other coverage is a daily-heartbeat feed sits below quorum between pushes: add a fresher reference.
-
-## stellarindex_chainlink_feed_decimals_mismatch
-
-`for: 5m`, ticket. Expr:
-
-```promql
-sum by (consumer, pair) (increase(stellarindex_chainlink_feed_decimals_mismatch_total[15m])) > 0
-```
-
-The configured `decimals` for a Chainlink feed disagrees with the proxy's on-chain `decimals()`; readings would be scaled by `10^(configured-actual)` (a permanent false divergence or off-scale oracle rows).
-
-### Check
-
-```sh
-curl -fs http://localhost:9465/metrics | grep '^stellarindex_chainlink_feed_decimals_'
-grep -A3 '<pair>' /etc/stellarindex.toml
-curl -s -X POST "$CHAINLINK_RPC_URL" -H 'content-type: application/json' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"eth_call","params":[{"to":"<feed address>","data":"0x313ce567"},"latest"]}'
-```
-
-Configured decimals live in `divergence.chainlink.feeds` / `external.chainlink.feed_map`.
-
-### Fix
-
-1. Set the pair's `decimals` to the on-chain value, or omit the field to adopt `decimals()` automatically.
-2. Restart the affected process; verify the counter's rate returns to zero.
-
-## stellarindex_chainlink_feed_decimals_verify_failed
-
-`for: 30m`, ticket. Expr:
-
-```promql
-sum by (consumer, pair) (rate(stellarindex_chainlink_feed_decimals_verify_failed_total[15m])) > 0
-```
-
-The `decimals()` RPC call fails; the reader fails open at the last known scale, so pricing flows with an unverified scale. Sustained failures mean the RPC endpoint or feed is unhealthy. Check and fix as for [decimals_mismatch](#stellarindex_chainlink_feed_decimals_mismatch) (probe the RPC, repair `CHAINLINK_RPC_URL`).
 
 ## Related
 

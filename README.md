@@ -163,8 +163,8 @@ These are the architectural commitments that bind every PR. See
 - **Aggregation engine** — VWAP/TWAP orchestrator with closed-bucket
   Redis cache, cross-pair triangulation, anomaly response, a
   multi-factor confidence score, and a freeze policy.
-- **Cross-source divergence detection** — CoinGecko on by default,
-  Chainlink HTTP cross-check opt-in.
+- **Cross-source divergence detection** — CoinGecko plus the on-chain
+  Reflector, RedStone, Band and Chainlink oracles.
 - **Three-algorithm supply pipeline** — XLM via LCM AccountEntry
   observer; classic via trustlines + claimable + LP + SAC observers;
   SEP-41 via Soroban event observer.

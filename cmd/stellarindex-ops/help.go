@@ -514,20 +514,6 @@ Subcommands:
                               -from 2024-01-01T00:00:00Z \
                               -to   2024-12-31T00:00:00Z \
                               -granularity 1h
-  backfill-chainlink -config PATH [-from-block N] [-to-block N] [-chunk-blocks N] [-sleep-ms N] [-write]
-                          Walk every configured Chainlink feed's
-                          AnswerUpdated event log across the requested
-                          block range and insert one OracleUpdate row
-                          per historical round into oracle_updates.
-                          Idempotent (deterministic synthesised
-                          tx_hash + ON CONFLICT). ~33k eth_getLogs
-                          calls / 7h wall time for all 516 mainnet
-                          feeds at 5k blocks/chunk on Alchemy free
-                          tier — run overnight. Example:
-                            stellarindex-ops backfill-chainlink \
-                              -config /etc/stellarindex.toml \
-                              -from-block 15537393  # post-Merge marker
-                              -sleep-ms 50          # ~20 req/s polite cap
   hubble-check -config PATH -from N -to N -bigquery-project PROJ [-max-mismatches N] [-dry-run-bytes]
                           Cross-check our SDEX trades against SDF's
                           published hubble-public.crypto_stellar.history_trades

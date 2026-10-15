@@ -355,17 +355,6 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 			"anomaly.phase2.unfreeze_confidence_min",
 		},
 
-		// A negative ceiling is non-zero, so it escapes the default and
-		// rejects every round as stale — the feed reads dead forever.
-		"divergence chainlink negative max age": {
-			func(c *config.Config) {
-				c.Divergence.Chainlink.FeedMap = map[string]config.ChainlinkFeedConfig{
-					"fiat:GBP/fiat:USD": {Address: "0x5c0Ab2d9b5a7ed9f470386e82BB36A3613cDd4b5", MaxAgeHours: -76},
-				}
-			},
-			"divergence.chainlink.feeds",
-		},
-
 		// ADR-0027 cold tier: the *_key_env pair is all-or-nothing because empty means anonymous reads on the public aws-public-
 		// blockchain bucket. A half pair would make NewColdDataStore guess, and guessing anonymous against a private bucket is a
 		// silent downgrade.
@@ -549,7 +538,6 @@ func TestValidate_OutboundURLFieldsNeedSchemeAndHost(t *testing.T) {
 		"divergence.coingecko.base_url":        func(c *config.Config, v string) { c.Divergence.CoinGecko.BaseURL = v },
 		"divergence.supply.dashboard.base_url": func(c *config.Config, v string) { c.Divergence.Supply.Dashboard.BaseURL = v },
 		"divergence.supply.coingecko.base_url": func(c *config.Config, v string) { c.Divergence.Supply.CoinGecko.BaseURL = v },
-		"divergence.chainlink.rpc_url":         func(c *config.Config, v string) { c.Divergence.Chainlink.RPCURL = v },
 	}
 	const marker = "fixture-path-key"
 	for field, set := range fields {

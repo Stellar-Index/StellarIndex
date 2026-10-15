@@ -52,7 +52,7 @@ export function SourcesTable() {
 
   // Stellar-only directory: keep on-chain venues (DEX, on-chain oracles,
   // lending, routers, bridges); drop off-chain reference feeds (CEX /
-  // FX / aggregators / Chainlink) — those are the pricing layer, not
+  // FX / aggregators) — those are the pricing layer, not
   // Stellar network activity, and live on /exchanges + /aggregators.
   const stellar = useMemo(() => (data ?? []).filter(isOnChainSource), [data]);
 

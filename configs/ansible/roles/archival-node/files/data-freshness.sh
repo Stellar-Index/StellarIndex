@@ -87,17 +87,20 @@ trap 'rm -f "$TMP"' EXIT
 # shellcheck disable=SC2129  # the appends below are separate on purpose: each is a distinct query with its own reasoning between them, and a single `{ … } >> $TMP` would bury that
 if ! "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
 WITH f AS (
-  -- Crypto oracles (reflector/redstone/band/chainlink/coingecko) update every
+  -- Crypto oracles (reflector/redstone/band/coingecko) update every
   -- few minutes → 3h threshold. ECB is the exception: a DAILY FX reference
   -- (publishes ~16:00 CET on TARGET business days, none on weekends/holidays),
   -- so it needs a 4-day threshold to tolerate a weekend + a holiday without
   -- false-firing — otherwise it reads stale ~21h of every day. Tiingo is the
   -- same shape: end-of-day fund NAV bars, and a re-poll of a stored bar hits
   -- the primary key without moving ingested_at, so the age only resets when a
-  -- NEW bar lands (none on weekends/holidays).
+  -- NEW bar lands (none on weekends/holidays). chainlink-stellar publishes on
+  -- deviation or a 24h heartbeat, so it gets 26h. 'chainlink' (the Ethereum
+  -- poller) is retired; its historical rows stay and must not read stale.
   SELECT 'oracle'  AS domain, source AS src, extract(epoch FROM now()-max(ingested_at)) AS age,
-         CASE WHEN source IN ('ecb', 'tiingo') THEN 345600 ELSE 10800 END AS thr
-    FROM oracle_updates GROUP BY source
+         CASE WHEN source IN ('ecb', 'tiingo') THEN 345600
+              WHEN source = 'chainlink-stellar' THEN 93600 ELSE 10800 END AS thr
+    FROM oracle_updates WHERE source <> 'chainlink' GROUP BY source
   UNION ALL
   -- FX is daily-grain: observed_at is the data-point time (lags ~a day even
   -- when healthy), so freshness is measured off `bucket` (today's bucket

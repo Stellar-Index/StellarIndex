@@ -18,6 +18,7 @@ var divergenceReferences = map[string]bool{
 	"reflector-dex":               true,
 	"redstone":                    true,
 	"band":                        true,
+	"chainlink-stellar":           true,
 	divergence.SyntheticCrossName: true,
 }
 

@@ -205,14 +205,6 @@ func (c *Config) ApplyEnvOverrides() []string {
 		c.External.Dune.APIKey = v
 		overridden = append(overridden, "external.dune.api_key")
 	}
-	if v := os.Getenv("CHAINLINK_RPC_URL"); v != "" {
-		c.External.Chainlink.RPCUrl = v
-		// The divergence Chainlink reference is a second consumer of this Ethereum JSON-RPC endpoint. An env-less rpc_url
-		// would fall back to a public RPC that answers eth_call with a Cloudflare JS-challenge HTML page (0 chainlink rows),
-		// so point both consumers at the one CHAINLINK_RPC_URL.
-		c.Divergence.Chainlink.RPCURL = v
-		overridden = append(overridden, "external.chainlink.rpc_url", "divergence.chainlink.rpc_url")
-	}
 	return overridden
 }
 

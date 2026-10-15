@@ -27,7 +27,7 @@ const REASONS: { name: string; trigger: string; meaning: string }[] = [
     name: 'divergence',
     trigger: 'Persistent gap vs an external reference',
     meaning:
-      'Our VWAP and an authority reference (CoinGecko, Chainlink HTTP, or a Reflector feed) have been diverging beyond threshold for too long. Almost always means a decoder bug or a stuck source.',
+      'Our VWAP and an authority reference (CoinGecko, or an on-chain oracle such as Reflector or Chainlink) have been diverging beyond threshold for too long. Almost always means a decoder bug or a stuck source.',
   },
   {
     name: 'outlier_storm',

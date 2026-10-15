@@ -9,7 +9,6 @@
 # ci.yml's import-checks job and from verify.sh, and delete its line here.
 
 ansible-archival-datadirs-ownership-test.sh
-ansible-divergence-chainlink-secret-test.sh
 ansible-exporter-service-gating-test.sh
 ansible-fact-cache-path-test.sh
 ansible-galexie-admin-firewall-test.sh

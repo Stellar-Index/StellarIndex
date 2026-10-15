@@ -26,6 +26,9 @@ const (
 	OracleSourceReflectorFX  = "reflector-fx"
 	OracleSourceRedstone     = "redstone"
 	OracleSourceBand         = "band"
+	// OracleSourceChainlinkStellar is Chainlink's DataFeedsCache on Stellar, not the retired
+	// Ethereum reference.
+	OracleSourceChainlinkStellar = "chainlink-stellar"
 )
 
 // Staleness ceilings per oracle family: a frozen feed must read "reference unavailable", never agreement/divergence. Reflector publishes every ~5m (30m = five missed rounds + slack);
@@ -34,6 +37,8 @@ const (
 	DefaultOracleMaxAgeReflector = 30 * time.Minute
 	DefaultOracleMaxAgeRedstone  = 26 * time.Hour
 	DefaultOracleMaxAgeBand      = 26 * time.Hour
+	// Chainlink feeds publish on deviation or a 24h heartbeat.
+	DefaultOracleMaxAgeChainlinkStellar = 26 * time.Hour
 )
 
 // OracleReference is a Reference over our OWN ingested `oracle_updates` rows, one per source label; reflector-dex prices the same SDEX book our VWAP aggregates, so NewService drops it (see CorrelatedWithOurVWAP). Prices scale the RAW integer via big.Rat (ADR-0003), collapsing to float64 only at the Reference boundary.
@@ -93,6 +98,8 @@ func defaultOracleMaxAge(source string) time.Duration {
 		return DefaultOracleMaxAgeRedstone
 	case OracleSourceBand:
 		return DefaultOracleMaxAgeBand
+	case OracleSourceChainlinkStellar:
+		return DefaultOracleMaxAgeChainlinkStellar
 	default:
 		return DefaultOracleMaxAgeReflector
 	}
@@ -121,7 +128,7 @@ func (r *OracleReference) LookupQuote(ctx context.Context, pair canonical.Pair, 
 
 	// Staleness gate. observedAt is the comparison
 	// timestamp Compare passes through; zero falls back to wall time
-	// defensively, mirroring the Chainlink reference.
+	// defensively.
 	asOf := observedAt
 	if asOf.IsZero() {
 		asOf = time.Now().UTC()

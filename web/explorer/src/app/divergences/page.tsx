@@ -10,10 +10,9 @@ export const metadata: Metadata = {
   alternates: { canonical: '/divergences' },
   title: 'Divergences — cross-reference monitor',
   description:
-    'Continuously cross-checks the canonical Stellar Index VWAP against external references (CoinGecko + on-chain Reflector/Redstone/Band active; Chainlink HTTP configured). Persistent gaps flip flags.divergence_warning.',
+    'Continuously cross-checks the canonical Stellar Index VWAP against external references (CoinGecko plus the on-chain Reflector, Redstone, Band and Chainlink oracles). Persistent gaps flip flags.divergence_warning.',
 };
 
-type FeedRef = { pair: string; address: string };
 // status reflects what the divergence WORKER actually cross-checks
 // today — not just feeds we ingest elsewhere:
 //   active     — producing divergence_observations rows now
@@ -30,7 +29,6 @@ type Reference = {
   type: string;
   blurb: string;
   status: RefStatus;
-  feeds?: FeedRef[];
 };
 const REFERENCES: Reference[] = [
   {
@@ -41,27 +39,11 @@ const REFERENCES: Reference[] = [
       "Aggregator-of-aggregators. Useful as a sanity reference because it's not on-chain and pulls from a different upstream set.",
   },
   {
-    name: 'Chainlink HTTP',
-    type: 'HTTP feed (off-chain Chainlink)',
-    status: 'configured',
+    name: 'Chainlink',
+    type: 'On-chain data feeds',
+    status: 'active',
     blurb:
-      'Independent price index via mainnet AggregatorV3 contracts on Ethereum. Queried over public RPC (eth.llamarpc.com). Drives the divergence worker\'s "are we wildly off" alerting threshold.',
-    feeds: [
-      // Operator-config from configs/ansible/.../stellarindex.toml.j2
-      // [divergence.chainlink.feeds].
-      {
-        pair: 'EUR/USD',
-        address: '0xb49f677943BC038e9857d61E7d053CaA2C1734C1',
-      },
-      {
-        pair: 'GBP/USD',
-        address: '0x5c0Ab2d9b5a7ed9f470386e82BB36A3613cDd4b5',
-      },
-      {
-        pair: 'JPY/USD',
-        address: '0xBcE206caE7f0ec07b545EddE332A47C2F75bbeb3',
-      },
-    ],
+      'Chainlink Data Feeds published on Stellar, compared from our ingested oracle_updates rows. Feeds update on a price deviation or a 24-hour heartbeat, so a reading up to 26 hours old still counts.',
   },
   {
     name: 'Reflector (DEX/CEX/FX)',
@@ -139,32 +121,6 @@ export default function DivergencesPage() {
               </Badge>
             </div>
             <p className="text-ink-muted mt-1 text-xs">{r.type}</p>
-            {r.feeds && r.feeds.length > 0 && (
-              <div className="border-line mt-4 border-t pt-3">
-                <div className="text-ink-muted text-xs font-medium">
-                  Wired feeds
-                </div>
-                <ul className="mt-1.5 space-y-1 text-xs">
-                  {r.feeds.map((f) => (
-                    <li
-                      key={f.address}
-                      className="flex items-baseline justify-between gap-3"
-                    >
-                      <span className="text-ink-body font-mono">{f.pair}</span>
-                      <a
-                        href={`https://etherscan.io/address/${f.address}`}
-                        target="_blank"
-                        rel="noreferrer noopener"
-                        className="text-brand-600 font-mono text-xs hover:underline"
-                        title={f.address}
-                      >
-                        {f.address.slice(0, 8)}…{f.address.slice(-4)}
-                      </a>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
           </div>
         ))}
       </div>

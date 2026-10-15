@@ -66,7 +66,6 @@ var subcommands = map[string]func(args []string) error{
 
 	"backfill":                ingest.Run,
 	"backfill-external":       ingest.Run,
-	"backfill-chainlink":      ingest.Run,
 	"detect-gaps":             ingest.Run,
 	"list-cursors":            ingest.Run,
 	"reap-cursors":            ingest.Run,

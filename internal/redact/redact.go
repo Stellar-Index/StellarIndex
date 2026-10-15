@@ -446,3 +446,21 @@ func unterminatedColon(rest string) int {
 	}
 	return c
 }
+
+// Endpoint returns a log-safe RPC endpoint (scheme and host only) and never echoes an unparseable input, which might be the secret.
+func Endpoint(endpoint string) string {
+	u, err := url.Parse(endpoint)
+	if err != nil || u.Host == "" {
+		return "[redacted-endpoint]"
+	}
+	return u.Scheme + "://" + u.Host + "/<redacted>"
+}
+
+// URLError renders a transport error with its URL scrubbed to host-only, since keyed RPC providers embed the API key in the path.
+func URLError(err error, endpoint string) string {
+	var ue *url.Error
+	if !errors.As(err, &ue) {
+		return err.Error()
+	}
+	return ue.Op + " " + strconv.Quote(Endpoint(endpoint)) + ": " + ue.Err.Error()
+}

@@ -13,7 +13,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/Stellar-Index/StellarIndex/internal/redact"
-	externalchainlink "github.com/Stellar-Index/StellarIndex/internal/sources/external/chainlink"
 )
 
 // MaxResponseBytes caps the bytes read per call (64 MiB) to bound memory if an upstream misbehaves; exceeding it is an error, not a silent truncation.
@@ -137,7 +136,7 @@ func endpointFailure(endpoint string) string {
 	if _, err := url.Parse(endpoint); err != nil {
 		return "invalid endpoint: " + redact.ParseFailure(endpoint, err)
 	}
-	return "invalid request to " + externalchainlink.RedactEndpoint(endpoint)
+	return "invalid request to " + redact.Endpoint(endpoint)
 }
 
 // newHTTPStatusError builds the error for a status >= 400. The body is decoded only to recover an
@@ -181,7 +180,7 @@ func (c *Client) call(ctx context.Context, method string, params any, result any
 		// log the *url.Error's full URL, key included. Scrub it with the shared RedactURLError but
 		// keep unwrapping to the real error for retry classification.
 		return &redactedTransportError{
-			msg: fmt.Sprintf("stellarrpc: %s: %s", method, externalchainlink.RedactURLError(err, c.endpoint)),
+			msg: fmt.Sprintf("stellarrpc: %s: %s", method, redact.URLError(err, c.endpoint)),
 			err: err,
 		}
 	}
