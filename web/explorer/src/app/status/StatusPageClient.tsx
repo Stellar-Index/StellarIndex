@@ -768,7 +768,7 @@ export default function StatusPageClient({
   );
 
   return (
-    <Container className="space-y-8 py-10 [&>*]:max-w-5xl">
+    <Container className="space-y-6 py-8">
       <PageHead error={error} asOf={asOf} />
       <DataTrustTabs active="/status" />
       <StatusNotices />

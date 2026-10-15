@@ -13,7 +13,7 @@ export const metadata: Metadata = {
 
 export default function SLAPage() {
   return (
-    <Container className="space-y-10 py-10 [&>*]:max-w-4xl">
+    <Container className="space-y-6 py-8">
       <PageHeader
         title="Service level"
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Service level' }]}
