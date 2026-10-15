@@ -3,7 +3,7 @@ Mid-incident customer-facing update. Append into the body of
 the incident Markdown file at
 `internal/incidents/data/<YYYY-MM-DD>-<slug>.md` under a
 fresh "## Update — <UTC timestamp>" subheading. The
-`web/status/` Cloudflare Pages build picks it up on every push
+`stellarindex-status` Cloudflare Pages build picks it up on every push
 to `main`; `stellarindex-ops emit-incident -slug <slug> -event <sev1|resolved> -write`
 re-fires the customer-webhook fan-out so subscribed customers
 get the new payload too. (F-1211, 2026-05-13: prose corrects

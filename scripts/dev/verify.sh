@@ -96,7 +96,7 @@ fi
 # mtime, not a version probe: one stat per app, catches any drift. `pnpm install`
 # rewrites node_modules/.modules.yaml, so that file older than the lockfile means
 # the lockfile moved and nothing reinstalled.
-for verify_app in explorer status dashboard; do
+for verify_app in explorer dashboard; do
     verify_lock="web/${verify_app}/pnpm-lock.yaml"
     verify_stamp="web/${verify_app}/node_modules/.modules.yaml"
     [ -f "$verify_lock" ] || continue
@@ -105,10 +105,6 @@ for verify_app in explorer status dashboard; do
         gap "web/${verify_app}/node_modules is STALE — pnpm-lock.yaml is newer than the last install; run 'pnpm --dir web/${verify_app} install'"
     fi
 done
-if command -v pnpm >/dev/null 2>&1 && [ -f web/status/pnpm-lock.yaml ]; then
-    [ -x web/status/node_modules/.bin/tsc ] || \
-        gap "web/status/node_modules/.bin/tsc is absent — 'make status-typecheck' needs it"
-fi
 
 # The deferrable set, resolved with the same conditions their sections use.
 command -v promtool >/dev/null 2>&1 || willdefer "Monitoring (promtool is not installed)"
@@ -533,13 +529,6 @@ lane_c() { # web typecheck/lint/test/build. Graceful-skip when pnpm isn't
         echo "=== Dashboard lint ==="      && make dashboard-lint
         echo "=== Dashboard build ==="     && \
             NEXT_PUBLIC_API_BASE_URL=http://api.local-stub.invalid make dashboard-build >/dev/null
-    fi
-    # Status page — same pnpm gate.
-    if command -v pnpm >/dev/null 2>&1 && [ -f web/status/pnpm-lock.yaml ]; then
-        echo "=== Status typecheck ===" && make status-typecheck
-        echo "=== Status lint ==="      && make status-lint
-        echo "=== Status build ==="     && \
-            NEXT_PUBLIC_API_BASE_URL=http://api.local-stub.invalid make status-build >/dev/null
     fi
 }
 

@@ -3,12 +3,11 @@
 # pass scripts/dev/verify.sh in one command, and report EVERY missing item in
 # one pass rather than one per twelve-minute run.
 #
-# Why: verify.sh failed twice, ~10 minutes in, each time on a different
-# missing install in a section unrelated to the change: web/explorer had no
-# node_modules (`openapi-typescript: command not found`), then web/status had
-# none (`tsc: command not found`). verify.sh gates web/status on its TRACKED
-# pnpm-lock.yaml, which is always present; node_modules is not tracked and
-# was not checked. The survey runs to completion before the first install.
+# Why: verify.sh fails ~10 minutes in on a missing install in a section
+# unrelated to the change (web/explorer with no node_modules:
+# `openapi-typescript: command not found`). verify.sh gates a web app on its
+# TRACKED pnpm-lock.yaml, which is always present; node_modules is not
+# tracked. The survey runs to completion before the first install.
 #
 # Usage:
 #   scripts/dev/bootstrap-worktree.sh          survey, then install what it can
@@ -27,7 +26,7 @@
 #   - Missing pinned Go tools via `make deps`, which owns the pins (no
 #     version numbers here).
 #   - Missing node_modules via the `pnpm --dir <app> install --frozen-lockfile`
-#     that prepush.sh runs, for web/explorer and web/status.
+#     that prepush.sh runs, for web/explorer.
 #   - A tool at the WRONG version is reported, never corrected: ~/go/bin is
 #     shared with every checkout on the machine, so a downgrade is the
 #     operator's call; `make deps` makes them all match.
@@ -52,7 +51,7 @@ case "${1:-}" in
 esac
 
 GO_BIN="$(go env GOPATH 2>/dev/null || true)/bin"
-WEB_APPS="web/explorer web/status"
+WEB_APPS="web/explorer"
 
 blocking_missing=()
 clearance_missing=()
@@ -173,7 +172,6 @@ survey_web_app() { # survey_web_app <dir> <bin-name> <gate>
     install_apps="${install_apps} ${app}"
 }
 survey_web_app web/explorer openapi-typescript "make web-generate-api (generated-artifact drift)"
-survey_web_app web/status   tsc                "make status-typecheck"
 
 # ── 5. Verdict on the survey ─────────────────────────────────────────────
 echo ""

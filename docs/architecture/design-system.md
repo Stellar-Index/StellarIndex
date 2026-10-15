@@ -11,9 +11,8 @@ supersedes: v2 (light-mode, 2026-06-17)
 The shared visual language for every Stellar Index web surface — the public
 explorer (`web/explorer`), which also hosts the in-site customer account at
 `/dashboard/*` **and the status page** at `web/explorer/src/app/status/`.
-One system, applied everywhere. `web/status/` is the standalone incident page
-at `status.stellarindex.io`, kept apart so it survives an explorer outage; it
-carries its own `src/app/globals.css` tokens.
+One system, applied everywhere.
+`status.stellarindex.io` is the same build on its own Pages project.
 
 **Tokens:** the `@theme` block in
 `web/explorer/src/app/globals.css` — Tailwind 4 defines the design tokens inline

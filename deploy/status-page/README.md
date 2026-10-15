@@ -1,28 +1,29 @@
 # Public status page — `status.stellarindex.io`
 
 `status.stellarindex.io` (this Cloudflare Pages project,
-`stellarindex-status`) is a standalone static incident page. It is
-hosted apart from the API and explorer so it stays up when they do
+`stellarindex-status`) is the explorer's `/status` page built on its own
+project. It is hosted apart from the API and explorer so it stays up when they do
 not. Live component health is at `stellarindex.io/status` — see
 [`docs/operations/status-page-setup.md`](../../docs/operations/status-page-setup.md).
 
 ## What ships from the codebase
 
-- [`web/status/src/app/page.tsx`](../../web/status/src/app/page.tsx)
+- [`web/explorer/src/app/status/`](../../web/explorer/src/app/status/)
   renders active and recent incidents from `internal/incidents/data`
-  at build time.
-- [`public/_redirects`](../../web/status/public/_redirects) 301s
-  `/incident/*` deep-links to `https://stellarindex.io/status/incident/:splat`.
+  at build time; live panels fetch the API client-side.
+- [`scripts/ci/status-pages-redirects.sh`](../../scripts/ci/status-pages-redirects.sh)
+  rewrites `/` to `/status/` (200) and 301s `/incident/*` to `/status/incident/:splat`.
 
 ## Hosting
 
 Cloudflare Pages project `stellarindex-status` with custom
 domain `status.stellarindex.io`. Bootstrap config managed by
 [`scripts/ops/cf-pages-bootstrap.sh`](../../scripts/ops/cf-pages-bootstrap.sh):
-- Root: `web/status`
-- Build command: `pnpm install --frozen-lockfile && pnpm build`
+- Root: `web/explorer`
+- Build command: `pnpm install --frozen-lockfile && pnpm build && bash ../../scripts/ci/status-pages-redirects.sh out`
 - Output: `out`
-- Env: `NODE_VERSION=20`, `PNPM_VERSION=10`
+- Env: `NODE_VERSION=20`, `PNPM_VERSION=10`, `NEXT_PUBLIC_API_BASE_URL`,
+  `NEXT_PUBLIC_NETWORK=mainnet`, `EXPLORER_BUILD_OFFLINE=1`
 
 ## Why not cstate / Statuspage.io
 

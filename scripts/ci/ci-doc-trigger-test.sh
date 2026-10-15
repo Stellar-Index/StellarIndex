@@ -41,7 +41,7 @@ must_not_be_ignored = [
     "docs/operations/status-page-setup.md",
     "docs/adr/0040-example.md",
     "internal/incidents/data/2026-09-24-example.md",
-    "web/status/README.md",
+    "web/explorer/README.md",
 ]
 
 bad = []

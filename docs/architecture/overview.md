@@ -91,7 +91,7 @@ package's `doc.go`.
 - `openapi/`: the API source of truth.
 - `configs/`: `example.toml`, `ansible/{roles,inventory,playbooks}` and the r1 single-host overlays (prometheus, alertmanager, caddy, loki, healthchecks); `audit/` feeds `wasm-history`.
 - `deploy/`: docker-compose (dev), systemd units, monitoring rules, `clickhouse/` lake DDL, `comms/` templates.
-- `web/explorer/`: the Next.js static-export site (see `web/explorer/AGENTS.md`). The status page ships from `web/explorer/src/app/status/` (stellarindex.io/status). `web/status/` is the standalone incident page at status.stellarindex.io, built from `internal/incidents/data`.
+- `web/explorer/`: the Next.js static-export site (see `web/explorer/AGENTS.md`). The status page ships from `web/explorer/src/app/status/` (stellarindex.io/status). status.stellarindex.io is the same build on its own Pages project, with incident history baked from `internal/incidents/data`.
 - `examples/`: curl scripts + generated Postman collection.
 - `scripts/{dev,ops,ci}`; `test/`: integration (build tag `integration`), fixtures, k6 load, chaos.
 - `docs/`: `adr/` (immutable), `architecture/`, `operations/` (runbooks; every alert links one), `methodology/`, `protocols/` (one page per integrated protocol), `contributing/`, `reference/` (generated), `blog/`, plus `engineering-standards.md`.

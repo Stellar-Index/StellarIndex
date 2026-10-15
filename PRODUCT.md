@@ -57,9 +57,9 @@ What a neighbouring explorer cannot truthfully copy:
 ## Operating Context
 
 - Live: stellarindex.io (explorer and `/status`), api.stellarindex.io,
-  docs.stellarindex.io, status.stellarindex.io (standalone incident page in
-  `web/status/`, builds from `internal/incidents/data` without the API so it
-  survives an outage).
+  docs.stellarindex.io, status.stellarindex.io (the explorer build on its own Pages
+  project, incident history baked from `internal/incidents/data`, no build-time
+  API call so it survives an outage).
 - Web stack: `web/explorer/`, Next 16 app router with `output: 'export'`,
   React 19, Tailwind 4 with tokens in the `@theme` block of `src/app/globals.css`
   (no `tailwind.config`), a hand-rolled component library in `src/components/ui`

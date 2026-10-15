@@ -6,7 +6,7 @@ related:
   - docs/operations/sev-playbook.md
   - internal/incidents/data/_template.md
   - web/explorer/src/app/status/
-  - web/status/
+  - scripts/ci/status-pages-redirects.sh
 ---
 
 # SEV status-page update
@@ -139,4 +139,4 @@ With R1 reachable by SSH, an incident can be drafted on the host, but it is lost
 
 ## Related
 
-[`sev-playbook.md`](../sev-playbook.md), [`internal/incidents/data/_template.md`](../../../internal/incidents/data/_template.md), [`web/explorer/src/app/status/`](../../../web/explorer/src/app/status/), [`web/explorer/src/lib/incidents.ts`](../../../web/explorer/src/lib/incidents.ts), [`web/status/`](../../../web/status/), [`internal/incidents/incidents.go`](../../../internal/incidents/incidents.go)
+[`sev-playbook.md`](../sev-playbook.md), [`internal/incidents/data/_template.md`](../../../internal/incidents/data/_template.md), [`web/explorer/src/app/status/`](../../../web/explorer/src/app/status/), [`web/explorer/src/lib/incidents.ts`](../../../web/explorer/src/lib/incidents.ts), [`internal/incidents/incidents.go`](../../../internal/incidents/incidents.go)
