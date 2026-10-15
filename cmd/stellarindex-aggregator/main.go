@@ -2062,6 +2062,7 @@ func appendSyntheticCrossReference(refs []divergence.Reference, logger *slog.Log
 		divergence.ChainlinkSourceName,
 		divergence.OracleSourceRedstone,
 		divergence.OracleSourceBand,
+		divergence.OracleSourceChainlinkStellar,
 	)
 	fxLegs := pick(
 		divergence.OracleSourceReflectorFX,
@@ -2084,7 +2085,7 @@ func appendSyntheticCrossReference(refs []divergence.Reference, logger *slog.Log
 // buildOracleDivergenceReferences constructs the on-chain oracle reference set (reflector
 // dex/cex/fx, redstone, band) per the `[divergence.*]` gates. Split out to stay under funlen.
 func buildOracleDivergenceReferences(cfg config.DivergenceConfig, oracles divergence.OracleReader, logger *slog.Logger) []divergence.Reference {
-	anyEnabled := cfg.Reflector.Enabled || cfg.Redstone.Enabled || cfg.Band.Enabled
+	anyEnabled := cfg.Reflector.Enabled || cfg.Redstone.Enabled || cfg.Band.Enabled || cfg.ChainlinkStellar.Enabled
 	if oracles == nil {
 		if anyEnabled {
 			logger.Warn("divergence: on-chain oracle references enabled but no oracle_updates reader — skipping")
@@ -2114,6 +2115,7 @@ func buildOracleDivergenceReferences(cfg config.DivergenceConfig, oracles diverg
 	add(divergence.OracleSourceReflectorFX, cfg.Reflector)
 	add(divergence.OracleSourceRedstone, cfg.Redstone)
 	add(divergence.OracleSourceBand, cfg.Band)
+	add(divergence.OracleSourceChainlinkStellar, cfg.ChainlinkStellar)
 	return refs
 }
 

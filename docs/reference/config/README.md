@@ -304,6 +304,7 @@ the `env:` column.
 | `divergence.reflector.enabled` | `bool` | `true` | — | Whether this on-chain oracle reference is wired into the divergence service. |
 | `divergence.redstone.enabled` | `bool` | `true` | — | Whether this on-chain oracle reference is wired into the divergence service. |
 | `divergence.band.enabled` | `bool` | `true` | — | Whether this on-chain oracle reference is wired into the divergence service. |
+| `divergence.chainlink_stellar.enabled` | `bool` | `true` | — | Whether this on-chain oracle reference is wired into the divergence service. |
 | `divergence.supply.enabled` | `bool` | `false` | — | Whether the supply cross-check worker runs. Off by default (makes outbound HTTP calls). The archival-node ansible role renders it from the stellarindex_divergence_supply_enabled inventory variable, itself default false. |
 | `divergence.supply.threshold_pct` | `float64` | `1.0` | — | Relative-divergence percentage above which a supply cross-check reads 'divergent' and the alert fires. Default 1.0 (well above the ~0.03% XLM noise floor). |
 | `divergence.supply.dashboard.enabled` | `bool` | `true` | — | Whether the Stellar Dashboard supply reference is consulted. On by default within [divergence.supply]. |

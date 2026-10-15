@@ -260,9 +260,10 @@ type DivergenceConfig struct {
 	// On-chain oracle references read our OWN ingested oracle_updates rows. On by default: no
 	// external quota, and a per-pair no-op (asset_unsupported) until the feed tables hold data.
 	// Reflector toggles all three variants (dex/cex/fx) together.
-	Reflector DivergenceOracleConfig `toml:"reflector" doc:"Reflector on-chain oracle references (reflector-dex/cex/fx) read from ingested oracle_updates rows."`
-	Redstone  DivergenceOracleConfig `toml:"redstone" doc:"Redstone on-chain oracle reference read from ingested oracle_updates rows."`
-	Band      DivergenceOracleConfig `toml:"band" doc:"Band on-chain oracle reference read from ingested oracle_updates rows (relay/force_relay op-args ingest)."`
+	Reflector        DivergenceOracleConfig `toml:"reflector" doc:"Reflector on-chain oracle references (reflector-dex/cex/fx) read from ingested oracle_updates rows."`
+	Redstone         DivergenceOracleConfig `toml:"redstone" doc:"Redstone on-chain oracle reference read from ingested oracle_updates rows."`
+	Band             DivergenceOracleConfig `toml:"band" doc:"Band on-chain oracle reference read from ingested oracle_updates rows (relay/force_relay op-args ingest)."`
+	ChainlinkStellar DivergenceOracleConfig `toml:"chainlink_stellar" doc:"Chainlink on-Stellar oracle reference read from ingested oracle_updates rows (DataFeedsCache FeedUpdated events)."`
 
 	// Supply cross-check compares OUR served circulating_supply against an external reference,
 	// separate from the price cross-checks. Off by default; the archival-node role renders it from
@@ -347,9 +348,10 @@ func defaultDivergenceConfig() DivergenceConfig {
 		},
 		// On-chain oracle references default ON: they read our own oracle_updates rows (no external
 		// quota) and no-op per pair until the feed tables have data.
-		Reflector: DivergenceOracleConfig{Enabled: true},
-		Redstone:  DivergenceOracleConfig{Enabled: true},
-		Band:      DivergenceOracleConfig{Enabled: true},
+		Reflector:        DivergenceOracleConfig{Enabled: true},
+		Redstone:         DivergenceOracleConfig{Enabled: true},
+		Band:             DivergenceOracleConfig{Enabled: true},
+		ChainlinkStellar: DivergenceOracleConfig{Enabled: true},
 		// Supply cross-check OFF by default (outbound HTTP). Within the block Dashboard is on, so
 		// enabling the parent gives XLM-vs-Dashboard; CoinGecko stays off (free tier 429-throttled).
 		Supply: DivergenceSupplyConfig{

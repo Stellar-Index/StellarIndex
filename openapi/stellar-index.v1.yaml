@@ -4064,7 +4064,7 @@ paths:
                                     type: object
                                     required: [reference, ref_price, delta_pct, status, observed_at, ref_observed_at]
                                     properties:
-                                      reference:       { type: string, enum: [chainlink, coingecko, reflector-cex, reflector-fx, reflector-dex, redstone, band, synthetic-usd-cross] }
+                                      reference:       { type: string, enum: [chainlink, coingecko, reflector-cex, reflector-fx, reflector-dex, redstone, band, chainlink-stellar, synthetic-usd-cross] }
                                       credit:          { type: string, description: "Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. The value is the vendor name, not attribution text; a vendor's required wording (Powered by CoinGecko, Data sourced by Tiingo) still applies wherever the number is displayed." }
                                       ref_price:       { type: string }
                                       delta_pct:       { type: string }
@@ -4183,7 +4183,7 @@ paths:
                                     type: object
                                     required: [reference, ref_price, delta_pct]
                                     properties:
-                                      reference: { type: string, enum: [chainlink, coingecko, reflector-cex, reflector-fx, reflector-dex, redstone, band, synthetic-usd-cross] }
+                                      reference: { type: string, enum: [chainlink, coingecko, reflector-cex, reflector-fx, reflector-dex, redstone, band, chainlink-stellar, synthetic-usd-cross] }
                                       ref_price: { type: string }
                                       delta_pct: { type: string }
                                       firing:

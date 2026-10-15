@@ -753,6 +753,9 @@ enabled = true
 [divergence.band]
 enabled = true
 
+[divergence.chainlink_stellar]
+enabled = true
+
 # Supply cross-check — compares OUR served circulating_supply against an
 # external authoritative reference (the Stellar Network Dashboard for
 # XLM; CoinGecko when a Pro key is set). This automates the manual "is

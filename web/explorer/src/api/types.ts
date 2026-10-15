@@ -17519,7 +17519,7 @@ export interface operations {
                                 observed_at_ledger: number;
                                 references: {
                                     /** @enum {string} */
-                                    reference: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band" | "synthetic-usd-cross";
+                                    reference: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band" | "chainlink-stellar" | "synthetic-usd-cross";
                                     /** @description Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. The value is the vendor name, not attribution text; a vendor's required wording (Powered by CoinGecko, Data sourced by Tiingo) still applies wherever the number is displayed. */
                                     credit?: string;
                                     ref_price: string;
@@ -17635,7 +17635,7 @@ export interface operations {
                                 our_price: string;
                                 references: {
                                     /** @enum {string} */
-                                    reference: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band" | "synthetic-usd-cross";
+                                    reference: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band" | "chainlink-stellar" | "synthetic-usd-cross";
                                     ref_price: string;
                                     delta_pct: string;
                                     /** @description True when ANY of this reference's observations in the bucket breached its threshold at observation time. Omitted when false. */
