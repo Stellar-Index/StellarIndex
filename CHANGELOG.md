@@ -22,7 +22,7 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [v0.114.0] — 2026-10-15
 
-58 commits since v0.113.0. No migrations. One new ClickHouse table (`stellar.sponsorship_events`). No `pkg/*` break (`pkg/client` gains the account entry-change, sponsorship and claimable-balance routes).
+67 commits since v0.113.0. No migrations. One new ClickHouse table (`stellar.sponsorship_events`). No `pkg/*` break (`pkg/client` gains the account entry-change, sponsorship and claimable-balance routes).
 
 ### Operator actions
 
