@@ -88,7 +88,7 @@ groups:
           component: notify
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_notify_send_failure_ratio_high
-          summary: "Transactional email ({{ $labels.template }}) had {{ $value | humanize }} failed send(s) in the last hour"
+          summary: "Transactional email ({{ $labels.template }}) had {{ $value | printf \"%.0f\" }} failed send(s) in the last hour"
           description: |
             At least one {{ $labels.template }} email send failed in the
             last hour. Rare failures stay under the ratio and sustained

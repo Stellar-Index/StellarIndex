@@ -322,7 +322,6 @@ tests:
               component: notify
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_notify_send_failure_ratio_high
-              # promtool 2.x (CI and r1) renders increase() here as exactly 3; 3.x extrapolates to 3.051.
               summary: "Transactional email (magic-link) had 3 failed send(s) in the last hour"
               description: |
                 At least one magic-link email send failed in the
