@@ -106,7 +106,7 @@ run() {
   rm -f "$TMP/disk.calls"
   PATH="$TMP/bin:$PATH" MOCK_LOG="$TMP/queries" MOCK_PRUNE_LOG="$TMP/prunes" \
     MOCK_LS_LOG="$TMP/lists" MOCK_DISK="$TMP/disk" MOCK_FLOCK_LOG="$TMP/flocks" \
-    HEAVY_JOB_LOCK_DIR="$TMP/locks" \
+    HEAVY_JOB_LOCK_DIR="$TMP/locks" HEAVY_LOCK_WAIT_SECONDS="${HEAVY_WAIT-}" \
     STATE_DIR="$TMP/state" TEXTFILE_DIR="$TMP/tf" POLL_SECONDS=0 \
     CH_DISKS_CMD="$TMP/bin/disks" BACKUP_DISK="${DISK-si_lake_backup}" \
     bash "$SCRIPT" 2>"$TMP/stderr"
@@ -329,10 +329,20 @@ echo "12. the host-wide heavy-job lock"
 reset
 run; rc=$?
 expect_rc 0 "a free heavy lock lets the backup run"
-if grep -qx -- "-s -n 8" "$TMP/flocks" && [[ -e "$TMP/locks/stellarindex-heavy.lock" ]]; then ok "the backup takes stellarindex-heavy.lock shared"; else bad "the backup takes stellarindex-heavy.lock shared"; fi
+if grep -qx -- "-s -w 72000 8" "$TMP/flocks" && [[ -e "$TMP/locks/stellarindex-heavy.lock" ]]; then ok "the backup waits up to 20 h for stellarindex-heavy.lock, shared"; else bad "the backup waits up to 20 h for stellarindex-heavy.lock, shared"; fi
+if [[ -n "$REAL_FLOCK" ]]; then
+  reset
+  : >"$TMP/locks/stellarindex-heavy.lock"
+  ( exec 7<"$TMP/locks/stellarindex-heavy.lock"; "$REAL_FLOCK" -x 7; sleep 2 ) &
+  holder=$!
+  sleep 0.5
+  HEAVY_WAIT=10 run; rc=$?
+  wait "$holder"
+  expect_rc 0 "a backup started mid-chunk runs once the heavy job frees the lock"
+fi
 reset
 MOCK_HEAVY_HELD=1 run; rc=$?
-expect_rc 75 "a held heavy lock defers the run with exit 75"
+expect_rc 75 "a heavy lock held past the wait defers the run with exit 75"
 file_empty "$TMP/queries" "a deferred run issues no BACKUP"
 prom_unstamped "a deferred run stamps nothing"
 reset
