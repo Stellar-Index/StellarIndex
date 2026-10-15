@@ -11,6 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sourcenet"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	blend_backstop "github.com/Stellar-Index/StellarIndex/internal/sources/blend_backstop"
+	chainlink_stellar "github.com/Stellar-Index/StellarIndex/internal/sources/chainlink_stellar"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorocredit"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/spectra"
@@ -98,12 +99,13 @@ var crawlsFromLakeFloor = map[string]string{
 // acknowledged lake-floor crawler. A Genesis is a pubnet ledger, so only a pubnet-only source may carry one.
 func TestProjectedSourcesDeclareGenesis(t *testing.T) {
 	wantGenesis := map[string]uint32{
-		upshift.SourceName:        upshift.GenesisLedger,
-		spectra.SourceName:        spectra.GenesisLedger,
-		sushiswap_v3.SourceName:   sushiswap_v3.FactoryGenesisLedger,
-		sorocredit.SourceName:     sorocredit.GenesisLedger,
-		blend.SourceName:          blend.FactoryGenesisLedger,
-		blend_backstop.SourceName: blend_backstop.BackstopGenesisLedger,
+		upshift.SourceName:           upshift.GenesisLedger,
+		spectra.SourceName:           spectra.GenesisLedger,
+		sushiswap_v3.SourceName:      sushiswap_v3.FactoryGenesisLedger,
+		sorocredit.SourceName:        sorocredit.GenesisLedger,
+		blend.SourceName:             blend.FactoryGenesisLedger,
+		blend_backstop.SourceName:    blend_backstop.BackstopGenesisLedger,
+		chainlink_stellar.SourceName: chainlink_stellar.GenesisLedger,
 	}
 	contractID := sorocredit.MainnetContract
 	oracle := config.OracleConfig{}
@@ -111,6 +113,7 @@ func TestProjectedSourcesDeclareGenesis(t *testing.T) {
 	oracle.Reflector.CEXContract = contractID
 	oracle.Reflector.FXContract = contractID
 	oracle.Redstone.AdapterContract = contractID
+	oracle.ChainlinkStellar.CacheContract = contractID
 
 	names := make([]string, 0, len(config.KnownSources))
 	for n := range config.KnownSources {

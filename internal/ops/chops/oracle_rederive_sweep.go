@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/sources/band"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/chainlink_stellar"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/redstone"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/reflector"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -21,7 +22,7 @@ type oracleRederiveSweeper interface {
 // quote): band's op_index is shared by nested relays in one op.
 func oracleRederiveSweepScope(source string) (sweep, assetScoped bool) {
 	switch source {
-	case reflector.SourceDEX, reflector.SourceCEX, reflector.SourceFX, redstone.SourceName:
+	case reflector.SourceDEX, reflector.SourceCEX, reflector.SourceFX, redstone.SourceName, chainlink_stellar.SourceName:
 		return true, false
 	case band.SourceName:
 		return true, true

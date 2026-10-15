@@ -31,6 +31,7 @@ import (
 	blend_backstop "github.com/Stellar-Index/StellarIndex/internal/sources/blend_backstop"
 	blend_emitter "github.com/Stellar-Index/StellarIndex/internal/sources/blend_emitter"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/cctp"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/chainlink_stellar"
 	claimable_balances "github.com/Stellar-Index/StellarIndex/internal/sources/claimable_balances"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
@@ -77,6 +78,7 @@ var goldenProjectedEvents = map[string]consumer.Event{
 	"sushiswap_v3.PositionEvent":    sushiswap_v3.PositionEvent{},
 	"reflector.UpdateEvent":         reflector.UpdateEvent{},
 	"redstone.UpdateEvent":          redstone.UpdateEvent{},
+	"chainlink_stellar.UpdateEvent": chainlink_stellar.UpdateEvent{},
 	"blend.NewAuctionEvent":         blend.NewAuctionEvent{},
 	"blend.FillAuctionEvent":        blend.FillAuctionEvent{},
 	"blend.DeleteAuctionEvent":      blend.DeleteAuctionEvent{},
@@ -120,7 +122,7 @@ var goldenSoleWriterEvents = []string{"rozo.Event", "sep41_supply.Event", "sep41
 
 // goldenProjectorSources is projector.KnownProjectorSources, i.e. buildSource's cases.
 var goldenProjectorSources = []string{
-	"aquarius", "blend", "blend_backstop", "blend_emitter", "cctp", "comet", "defindex",
+	"aquarius", "blend", "blend_backstop", "blend_emitter", "cctp", "chainlink-stellar", "comet", "defindex",
 	"phoenix", "redstone", "reflector-cex", "reflector-dex", "reflector-fx", "rozo",
 	"sep41_supply", "sep41_transfers", "sorocredit", "soroswap", "spectra",
 	"sushiswap_v3", "upshift",
@@ -128,7 +130,7 @@ var goldenProjectorSources = []string{
 
 // goldenDispatcherSources is every name BuildDispatcher accepts.
 var goldenDispatcherSources = []string{
-	"aquarius", "band", "blend", "blend_backstop", "blend_emitter", "cctp", "comet", "defindex",
+	"aquarius", "band", "blend", "blend_backstop", "blend_emitter", "cctp", "chainlink-stellar", "comet", "defindex",
 	"phoenix", "redstone", "reflector-cex", "reflector-dex", "reflector-fx", "rozo", "sdex",
 	"sorocredit", "soroswap", "soroswap-router", "spectra", "sushiswap_v3", "upshift",
 }
@@ -136,7 +138,7 @@ var goldenDispatcherSources = []string{
 // goldenSorobanSourceNames is pipeline.SorobanSourceNames: the dispatcher
 // names minus sdex (classic ops, not soroban_events).
 var goldenSorobanSourceNames = []string{
-	"aquarius", "band", "blend", "blend_backstop", "blend_emitter", "cctp", "comet", "defindex",
+	"aquarius", "band", "blend", "blend_backstop", "blend_emitter", "cctp", "chainlink-stellar", "comet", "defindex",
 	"phoenix", "redstone", "reflector-cex", "reflector-dex", "reflector-fx", "rozo",
 	"sorocredit", "soroswap", "soroswap-router", "spectra", "sushiswap_v3", "upshift",
 }
@@ -159,13 +161,13 @@ var (
 	// (owns only non-drop rows), config-gated oracles sharing oracle_updates, sep41 (watched-set slice), sushiswap_v3
 	// (shared trades, unaudited) and spectra (derived spectra_markets via refreshSpectraMarket).
 	knownScriptOmitsProjected = []string{
-		"blend_emitter", "redstone", "reflector-cex", "reflector-dex",
+		"blend_emitter", "chainlink-stellar", "redstone", "reflector-cex", "reflector-dex",
 		"reflector-fx", "sep41_supply", "sep41_transfers", "spectra", "sushiswap_v3",
 	}
 	// completeness' static audit list omits these (oracles are config-gated
 	// in AuditedSources; sep41 has no entry).
 	knownStaticAuditOmitsProjected = []string{
-		"redstone", "reflector-cex", "reflector-dex", "reflector-fx", "sep41_supply", "sep41_transfers",
+		"chainlink-stellar", "redstone", "reflector-cex", "reflector-dex", "reflector-fx", "sep41_supply", "sep41_transfers",
 	}
 	// sourcenet.PubnetOnlySources and completeness (oracles configured) omit
 	// the sep41 sources; external.Registry also lacks blend_backstop.
@@ -217,6 +219,7 @@ func fullOracle() config.OracleConfig {
 	o.Reflector.FXContract = "CFX"
 	o.Redstone.AdapterContract = "CREDSTONE"
 	o.Band.StandardReferenceContract = "CBAND"
+	o.ChainlinkStellar.CacheContract = "CCHAINLINK"
 	return o
 }
 
@@ -243,8 +246,8 @@ func registryNames(r projector.Registry) []string {
 }
 
 func TestProjectedEventSet_Golden(t *testing.T) {
-	if len(goldenProjectedEvents) != 42 {
-		t.Fatalf("golden projected table has %d entries, want 42", len(goldenProjectedEvents))
+	if len(goldenProjectedEvents) != 43 {
+		t.Fatalf("golden projected table has %d entries, want 43", len(goldenProjectedEvents))
 	}
 	for name, ev := range goldenProjectedEvents {
 		if !pipeline.IsProjectedEvent(ev) {
@@ -306,7 +309,7 @@ func TestProjectorRegistry_Golden(t *testing.T) {
 	requireSame(t, "BuildRegistry(all config sources, no sep41)",
 		registryNames(reg), diff(goldenProjectorSources, goldenSupplyDecoders))
 
-	for _, name := range []string{"reflector-dex", "reflector-cex", "reflector-fx", "redstone"} {
+	for _, name := range []string{"reflector-dex", "reflector-cex", "reflector-fx", "redstone", "chainlink-stellar"} {
 		if _, err := projector.BuildRegistry([]string{name}, config.OracleConfig{}, nil, nil); err == nil {
 			t.Errorf("BuildRegistry(%s) with empty oracle config: want error", name)
 		}
@@ -323,7 +326,7 @@ func TestDispatcherSet_Golden(t *testing.T) {
 	requireSame(t, "names BuildDispatcher accepts", accepted, goldenDispatcherSources)
 	requireSame(t, "pipeline.SorobanSourceNames", pipeline.SorobanSourceNames, goldenSorobanSourceNames)
 
-	for _, name := range []string{"reflector-dex", "reflector-cex", "reflector-fx", "redstone", "band"} {
+	for _, name := range []string{"reflector-dex", "reflector-cex", "reflector-fx", "redstone", "band", "chainlink-stellar"} {
 		if _, err := pipeline.BuildDispatcher([]string{name}, config.OracleConfig{}, nil); err == nil {
 			t.Errorf("BuildDispatcher(%s) with empty oracle config: want error", name)
 		}

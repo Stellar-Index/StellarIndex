@@ -184,6 +184,14 @@
     "audited": "2026-05-19",
     "doc": "docs/operations/wasm-audits/soroswap-router.md"
   },
+  "4d2e0f84bc7a61cbeee446f51ec542585e4c54b3d0a2adcce59afea40191b9eb": {
+    "sources": [
+      "chainlink-stellar"
+    ],
+    "role": "DataFeedsCache (first deploy)",
+    "audited": "2026-10-15",
+    "doc": "docs/operations/wasm-audits/chainlink-stellar.md"
+  },
   "4f080d249700b9a30ca2e1bb828ecb29e47357cd36b122c7744593cef30b7a08": {
     "sources": [
       "aquarius"
@@ -207,6 +215,14 @@
     "role": "factory",
     "audited": "2026-09-30",
     "doc": "docs/operations/wasm-audits/phoenix.md"
+  },
+  "59ccbf5a2ef2abbb6449b73448d5559549b2c20ea3f9d8d665a25d24fdc9bdbf": {
+    "sources": [
+      "chainlink-stellar"
+    ],
+    "role": "DataFeedsCache (upgrade at 64668750)",
+    "audited": "2026-10-15",
+    "doc": "docs/operations/wasm-audits/chainlink-stellar.md"
   },
   "5db738b05d9148128a240b0e2c1cb935c2805192bf98a579421aacda364c8dae": {
     "sources": [

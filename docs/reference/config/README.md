@@ -86,6 +86,7 @@ the `env:` column.
 | `oracle.reflector.cex_decimals` | `uint8` | `0` | — | Price scale (power of 10) of the CEX contract's SEP-40 decimals(). 0 keeps the Reflector default of 14. Not read from the contract: confirm decimals() on-chain before re-pointing cex_contract. |
 | `oracle.reflector.fx_decimals` | `uint8` | `0` | — | Price scale (power of 10) of the FX contract's SEP-40 decimals(). 0 keeps the Reflector default of 14. Not read from the contract: confirm decimals() on-chain before re-pointing fx_contract. |
 | `oracle.redstone.adapter_contract` | `string` | _(required)_ | — | RedStone Adapter contract (C-prefix) on mainnet — CA526Y2NQWGWVVQ7RFFPGAZMU66PSYJ3UC2MTVAV4ZU7OM5BOPHDXUSG. |
+| `oracle.chainlink_stellar.cache_contract` | `string` | _(required)_ | — | Chainlink DataFeedsCache contract (C-prefix) on mainnet — CAAFKBE6AMTERARISMMT4TCC4UGNO35XCKQNC5XVLL5WY5GRWXH6AMIO. |
 | `oracle.band.standard_reference_contract` | `string` | _(required)_ | — | Band Protocol StandardReference contract (C-prefix) on mainnet — CCQXWMZVM3KRTXTUPTN53YHL272QGKF32L7XEDNZ2S6OSUFK3NFBGG5M. |
 | `oracle.soroswap.factory_contract` | `string` | _(required)_ | — | Soroswap factory contract (C-prefix) on mainnet — CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2. |
 | `oracle.soroswap.seed_rpc_endpoint` | `string` | _(required)_ | — | stellar-rpc URL used for the boot-time factory sweep. Any public pubnet endpoint works (e.g. https://mainnet.sorobanrpc.com). Falls back to stellar.rpc_endpoints[0] when empty. |

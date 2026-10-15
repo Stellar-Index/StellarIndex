@@ -24,6 +24,7 @@ import (
 	blend_backstop "github.com/Stellar-Index/StellarIndex/internal/sources/blend_backstop"
 	blend_emitter "github.com/Stellar-Index/StellarIndex/internal/sources/blend_emitter"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/cctp"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/chainlink_stellar"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/claimable_balances"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
@@ -484,6 +485,13 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			needsOpArgs:         true, // reads feed_ids from write_prices op args (Event.OpArgs)
 			needsStateWriteKeys: true, // exact subset attribution from the op's written per-feed contract-data keys
 			targets:             []reconTarget{{"oracle_updates", "source = 'redstone'", []string{"redstone.update"}}},
+		})
+	}
+
+	if a := cfg.Oracle.ChainlinkStellar.CacheContract; a != "" {
+		cat = append(cat, reconSource{
+			name: chainlink_stellar.SourceName, genesis: chainlink_stellar.GenesisLedger, dec: chainlink_stellar.NewDecoder(a), contractIDs: []string{a},
+			targets: []reconTarget{{"oracle_updates", "source = 'chainlink-stellar'", []string{"chainlink_stellar.update"}}},
 		})
 	}
 

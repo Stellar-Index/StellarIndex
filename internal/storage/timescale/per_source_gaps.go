@@ -215,6 +215,7 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// Oracle sources (reflector, band, redstone) share `oracle_updates`, sliced per source by
 	// WhereFilter like the trades targets. Genesis is each oracle's pubnet deploy ledger.
 	{Source: "band", Table: "oracle_updates", LedgerColumn: "ledger", WhereFilter: "source = 'band'", Genesis: 50_842_736, MinGapSizeOverride: 100000},
+	{Source: "chainlink-stellar", Table: "oracle_updates", LedgerColumn: "ledger", WhereFilter: "source = 'chainlink-stellar'", Genesis: 64_442_968, MinGapSizeOverride: 100000},
 	{Source: "redstone", Table: "oracle_updates", LedgerColumn: "ledger", WhereFilter: "source = 'redstone'", Genesis: 58_758_722, MinGapSizeOverride: 100000},
 	{Source: "reflector-dex", Table: "oracle_updates", LedgerColumn: "ledger", WhereFilter: "source = 'reflector-dex'", Genesis: 50_644_229, MinGapSizeOverride: 100000},
 	{Source: "reflector-cex", Table: "oracle_updates", LedgerColumn: "ledger", WhereFilter: "source = 'reflector-cex'", Genesis: 50_644_239, MinGapSizeOverride: 100000},

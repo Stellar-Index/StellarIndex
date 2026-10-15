@@ -86,7 +86,7 @@ func Filter(sources []string, network string) (applicable []string, excluded []N
 
 // PubnetOnlySources lists the sources anchored to pubnet contract identities, which a non-pubnet network must report as not applicable; it lets the API name them without importing the ops catalogue, and a test cross-checks it against config.KnownSources.
 var PubnetOnlySources = []string{
-	"aquarius", "band", "blend", "blend_backstop", "blend_emitter", "cctp", "comet",
+	"aquarius", "band", "blend", "blend_backstop", "blend_emitter", "cctp", "chainlink-stellar", "comet",
 	"defindex", "phoenix", "redstone", "reflector-cex", "reflector-dex", "reflector-fx",
 	"rozo", "sorocredit", "soroswap", "soroswap-router", "sushiswap_v3",
 	"spectra", "upshift",

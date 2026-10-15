@@ -60,6 +60,18 @@ func FromUInt256Parts(hiHi, hiLo, loHi, loLo uint64) Amount {
 	return Amount{value: r}
 }
 
+// FromInt256Parts reconstructs a signed 256-bit integer from its Soroban-XDR 4-word form; hiHi carries the sign.
+func FromInt256Parts(hiHi int64, hiLo, loHi, loLo uint64) Amount {
+	r := big.NewInt(hiHi)
+	r.Lsh(r, 64)
+	r.Add(r, new(big.Int).SetUint64(hiLo))
+	r.Lsh(r, 64)
+	r.Add(r, new(big.Int).SetUint64(loHi))
+	r.Lsh(r, 64)
+	r.Add(r, new(big.Int).SetUint64(loLo))
+	return Amount{value: r}
+}
+
 // MaxAmountStringLen caps the digits accepted by [FromString], [Amount.UnmarshalJSON] and [Amount.Scan] (far past any i128) so an untrusted string cannot force a huge allocation.
 const MaxAmountStringLen = 512
 

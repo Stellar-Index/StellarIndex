@@ -52,6 +52,7 @@ export const PROTOCOL_NAMES = new Set([
   'rozo',
   'soroswap-router',
   'band',
+  'chainlink-stellar',
   'reflector-dex',
   'reflector-cex',
   'reflector-fx',

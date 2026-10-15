@@ -22,27 +22,28 @@ var ErrInvalidConfig = errors.New("config: invalid")
 
 // KnownSources is the set of source names buildSources() recognises so Validate rejects typos at boot; do not import source packages here (cycle), mirror new names instead.
 var KnownSources = map[string]struct{}{
-	"soroswap":        {},
-	"soroswap-router": {},
-	"defindex":        {},
-	"aquarius":        {},
-	"phoenix":         {},
-	"comet":           {},
-	"sdex":            {},
-	"blend":           {},
-	"blend_backstop":  {},
-	"blend_emitter":   {},
-	"reflector-dex":   {},
-	"reflector-cex":   {},
-	"reflector-fx":    {},
-	"redstone":        {},
-	"band":            {},
-	"cctp":            {},
-	"rozo":            {},
-	"sorocredit":      {},
-	"sushiswap_v3":    {},
-	"spectra":         {},
-	"upshift":         {},
+	"soroswap":          {},
+	"soroswap-router":   {},
+	"defindex":          {},
+	"aquarius":          {},
+	"phoenix":           {},
+	"comet":             {},
+	"sdex":              {},
+	"blend":             {},
+	"blend_backstop":    {},
+	"blend_emitter":     {},
+	"reflector-dex":     {},
+	"reflector-cex":     {},
+	"reflector-fx":      {},
+	"redstone":          {},
+	"chainlink-stellar": {},
+	"band":              {},
+	"cctp":              {},
+	"rozo":              {},
+	"sorocredit":        {},
+	"sushiswap_v3":      {},
+	"spectra":           {},
+	"upshift":           {},
 }
 
 // Validate checks the loaded Config so a malformed config fails at startup, returning the first error.
@@ -108,39 +109,20 @@ func (c Config) Validate() error {
 // contract address." Runs after per-section validates so we can
 // assume each section's internal shape is already sound.
 func (c Config) validateCrossSection() error {
+	// Each on-chain oracle source needs its contract address to decode anything.
+	required := map[string]struct{ value, key string }{
+		"reflector-dex":     {c.Oracle.Reflector.DEXContract, "oracle.reflector.dex_contract"},
+		"reflector-cex":     {c.Oracle.Reflector.CEXContract, "oracle.reflector.cex_contract"},
+		"reflector-fx":      {c.Oracle.Reflector.FXContract, "oracle.reflector.fx_contract"},
+		"redstone":          {c.Oracle.Redstone.AdapterContract, "oracle.redstone.adapter_contract"},
+		"chainlink-stellar": {c.Oracle.ChainlinkStellar.CacheContract, "oracle.chainlink_stellar.cache_contract"},
+		"band":              {c.Oracle.Band.StandardReferenceContract, "oracle.band.standard_reference_contract"},
+	}
 	for _, name := range c.Ingestion.EnabledSources {
-		key := strings.ToLower(strings.TrimSpace(name))
-		switch key {
-		case "reflector-dex":
-			if c.Oracle.Reflector.DEXContract == "" {
-				return fmt.Errorf(
-					"%w: ingestion.enabled_sources lists %q but oracle.reflector.dex_contract is empty",
-					ErrInvalidConfig, name)
-			}
-		case "reflector-cex":
-			if c.Oracle.Reflector.CEXContract == "" {
-				return fmt.Errorf(
-					"%w: ingestion.enabled_sources lists %q but oracle.reflector.cex_contract is empty",
-					ErrInvalidConfig, name)
-			}
-		case "reflector-fx":
-			if c.Oracle.Reflector.FXContract == "" {
-				return fmt.Errorf(
-					"%w: ingestion.enabled_sources lists %q but oracle.reflector.fx_contract is empty",
-					ErrInvalidConfig, name)
-			}
-		case "redstone":
-			if c.Oracle.Redstone.AdapterContract == "" {
-				return fmt.Errorf(
-					"%w: ingestion.enabled_sources lists %q but oracle.redstone.adapter_contract is empty",
-					ErrInvalidConfig, name)
-			}
-		case "band":
-			if c.Oracle.Band.StandardReferenceContract == "" {
-				return fmt.Errorf(
-					"%w: ingestion.enabled_sources lists %q but oracle.band.standard_reference_contract is empty",
-					ErrInvalidConfig, name)
-			}
+		req, ok := required[strings.ToLower(strings.TrimSpace(name))]
+		if ok && req.value == "" {
+			return fmt.Errorf("%w: ingestion.enabled_sources lists %q but %s is empty",
+				ErrInvalidConfig, name, req.key)
 		}
 	}
 	return nil
@@ -419,6 +401,7 @@ func (o OracleConfig) validate() error {
 		"oracle.reflector.cex_contract":           o.Reflector.CEXContract,
 		"oracle.reflector.fx_contract":            o.Reflector.FXContract,
 		"oracle.redstone.adapter_contract":        o.Redstone.AdapterContract,
+		"oracle.chainlink_stellar.cache_contract": o.ChainlinkStellar.CacheContract,
 		"oracle.band.standard_reference_contract": o.Band.StandardReferenceContract,
 	} {
 		if addr == "" {
@@ -445,18 +428,19 @@ func (o OracleConfig) validate() error {
 
 // OracleSourceNames is the set of sources publishing oracle_updates that a staleness override may name; mirrored to avoid a cycle, and pipeline's TestOracleSourceNames_MatchRegistry fails on drift.
 var OracleSourceNames = map[string]struct{}{
-	"reflector-dex":    {},
-	"reflector-cex":    {},
-	"reflector-fx":     {},
-	"redstone":         {},
-	"band":             {},
-	"chainlink":        {},
-	"coingecko":        {},
-	"coinmarketcap":    {},
-	"cryptocompare":    {},
-	"ecb":              {},
-	"exchangeratesapi": {},
-	"tiingo":           {},
+	"reflector-dex":     {},
+	"reflector-cex":     {},
+	"reflector-fx":      {},
+	"redstone":          {},
+	"band":              {},
+	"chainlink":         {},
+	"chainlink-stellar": {},
+	"coingecko":         {},
+	"coinmarketcap":     {},
+	"cryptocompare":     {},
+	"ecb":               {},
+	"exchangeratesapi":  {},
+	"tiingo":            {},
 }
 
 // validateStalenessOverrides rejects overrides that would silently do nothing: a row naming a source nothing

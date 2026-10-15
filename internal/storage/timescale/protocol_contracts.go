@@ -125,12 +125,12 @@ func projectionContractColumn(source string) (table, column string, ok bool) {
 // ListSourceContractsFromProjection returns the DISTINCT contract ids a source's projected table holds, the roster fallback for
 // protocols absent from protocol_contracts; nil for sources without a per-contract table, and capped.
 func (s *Store) ListSourceContractsFromProjection(ctx context.Context, source string) ([]string, error) {
-	// Oracle sources (band/reflector-*/redstone) share ONE projected table,
+	// Oracle sources (band/chainlink-stellar/reflector-*/redstone) share ONE projected table,
 	// oracle_updates, so the generic unfiltered DISTINCT below would return
 	// EVERY oracle's contracts for each source. Their pinned contracts emit
 	// into oracle_updates.contract_id — scope by the source column.
 	switch source {
-	case "band", "reflector-cex", "reflector-dex", "reflector-fx", "redstone":
+	case "band", "chainlink-stellar", "reflector-cex", "reflector-dex", "reflector-fx", "redstone":
 		return s.listContractsFilteredBySource(ctx, "oracle_updates", "contract_id", source)
 	}
 	table, column, ok := projectionContractColumn(source)

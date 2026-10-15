@@ -18,6 +18,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/band"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend_backstop"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/cctp"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/chainlink_stellar"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/redstone"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/reflector"
@@ -237,6 +238,8 @@ func ContractSet(ctx context.Context, d Deps, source string, tip uint32) ([]stri
 		add(d.Oracle.Reflector.FXContract)
 	case redstone.SourceName:
 		add(d.Oracle.Redstone.AdapterContract)
+	case chainlink_stellar.SourceName:
+		add(d.Oracle.ChainlinkStellar.CacheContract)
 	case band.SourceName:
 		add(d.Oracle.Band.StandardReferenceContract)
 	default:

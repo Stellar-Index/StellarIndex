@@ -558,7 +558,7 @@ run_stellarindex: true
 # This is the PUBNET default and stays a plain list: lint-source-enablement.sh's
 # read_yaml_list parses it as one and fails closed on anything else (Jinja
 # included), and §7 relies on no pubnet inventory overriding it. The
-# reflector-dex/cex/fx, redstone and band oracle entries are consumed only by the
+# reflector-dex/cex/fx, redstone, chainlink-stellar and band oracle entries are consumed only by the
 # aggregator; stellarindex.toml.j2 derives the rendered [ingestion] enabled_sources
 # from run_aggregator.
 stellarindex_enabled_sources:
@@ -572,6 +572,7 @@ stellarindex_enabled_sources:
   - "reflector-cex"
   - "reflector-fx"
   - "redstone"
+  - "chainlink-stellar"
   - "band"
   - "blend"
   - "blend_backstop"

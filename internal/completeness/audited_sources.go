@@ -26,6 +26,7 @@ func AuditedSources(cfg config.Config) []string {
 		{cfg.Oracle.Reflector.CEXContract, "reflector-cex"},
 		{cfg.Oracle.Reflector.FXContract, "reflector-fx"},
 		{cfg.Oracle.Redstone.AdapterContract, "redstone"},
+		{cfg.Oracle.ChainlinkStellar.CacheContract, "chainlink-stellar"},
 		{cfg.Oracle.Band.StandardReferenceContract, "band"},
 	}
 	for _, g := range gated {
