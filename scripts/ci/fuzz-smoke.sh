@@ -31,6 +31,7 @@
 #   bash scripts/ci/fuzz-smoke.sh                        # every target, budget-derived time
 #   FUZZ_BASE=origin/main bash scripts/ci/fuzz-smoke.sh  # targets in packages changed since main
 #   FUZZTIME=5s bash scripts/ci/fuzz-smoke.sh            # explicit per-target time
+#   FUZZ_SHARD=1/4 bash scripts/ci/fuzz-smoke.sh         # every 4th selected target, from the 2nd
 set -euo pipefail
 
 FUZZ_BUDGET="${FUZZ_BUDGET:-600}" # seconds of generative fuzzing per job
@@ -45,7 +46,7 @@ cd "$(dirname "$0")/../.."
 # Discover (package-dir, target) pairs: targets are `func FuzzName(f *testing.F)`
 # in _test.go files.
 HITS_FILE="$(mktemp)"
-trap 'rm -f "$HITS_FILE"' EXIT
+trap 'rm -f "$HITS_FILE" "${HITS_FILE}.shard"' EXIT
 
 # Driven by `git ls-files`, not a filesystem walk: only TRACKED files are listed,
 # so ignored directories are invisible by construction. Agent tooling keeps full
@@ -95,6 +96,18 @@ if [ -n "${FUZZ_BASE:-}" ]; then
 	SELECTED="${HITS_FILE}.selected"
 	awk -F'\t' 'NR==FNR{d[$1]=1;next} ($1 in d)' "$DIRS_FILE" "$HITS_FILE" >"$SELECTED"
 	rm -f "$DIRS_FILE"
+fi
+# Full runs split the targets across a matrix (FUZZ_SHARD=i/n, 0-based), so
+# 169 targets at the 8s floor are not ~30 serial minutes on one runner.
+if [ -n "${FUZZ_SHARD:-}" ]; then
+	SHARD_I="${FUZZ_SHARD%/*}"
+	SHARD_N="${FUZZ_SHARD#*/}"
+	case "$SHARD_I/$SHARD_N" in
+	*[!0-9/]* | /* | */) echo "::error::FUZZ_SHARD=${FUZZ_SHARD} is not i/n" && exit 1 ;;
+	esac
+	[ "$SHARD_I" -lt "$SHARD_N" ] || { echo "::error::FUZZ_SHARD=${FUZZ_SHARD}: i must be below n" && exit 1; }
+	awk -v i="$SHARD_I" -v n="$SHARD_N" '(NR - 1) % n == i' "$SELECTED" >"${HITS_FILE}.shard"
+	SELECTED="${HITS_FILE}.shard"
 fi
 SEL="$(wc -l <"$SELECTED" | tr -d ' ')"
 if [ "$SEL" -eq 0 ]; then
