@@ -69,6 +69,7 @@ const ROUTES = [
   { name: 'account-graph-history', cls: 'scan', w: 1, url: (d) => `${baseUrl}/accounts/${pick(d.accounts)}/graph/history` },
   { name: 'account-graph-cohort', cls: 'scan', w: 1, url: (d) => `${baseUrl}/accounts/${pick(d.accounts)}/graph/cohort?relation=created` },
   { name: 'asset-holders', cls: 'scan', w: 2, url: () => `${baseUrl}/assets/${SAMPLE_ASSET}/holders?limit=100` },
+  { name: 'asset-trustline-history', cls: 'scan', w: 1, url: () => `${baseUrl}/assets/${SAMPLE_ASSET}/trustline-history` },
   { name: 'network-throughput', cls: 'scan', w: 2, url: () => `${baseUrl}/network/throughput?window_days=7` },
 ];
 

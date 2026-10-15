@@ -57,6 +57,7 @@ import { PriceSparklines } from './PriceSparklines';
 import { IssuerPanel } from './IssuerPanel';
 import { LiquidityTabPanel } from './LiquidityTabPanel';
 import { HoldersTabPanel } from './HoldersTabPanel';
+import { TrustlineHistoryPanel } from './TrustlineHistoryPanel';
 import { MarketsTabPanel } from './MarketsTabPanel';
 import { AssetOrderBookPanel } from './AssetOrderBookPanel';
 import { AssetOraclesPanel } from './AssetOraclesPanel';
@@ -1079,10 +1080,13 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
               }
               supply={<SupplyTabPanel assetID={coin.asset_id} />}
               holders={
-                <HoldersTabPanel
-                  assetID={coin.asset_id}
-                  decimals={detail?.decimals ?? 7}
-                />
+                <div className="space-y-6">
+                  <TrustlineHistoryPanel assetID={coin.asset_id} />
+                  <HoldersTabPanel
+                    assetID={coin.asset_id}
+                    decimals={detail?.decimals ?? 7}
+                  />
+                </div>
               }
               liquidity={
                 <LiquidityTabPanel

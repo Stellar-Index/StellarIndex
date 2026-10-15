@@ -189,6 +189,10 @@ func (downReader) AccountEntryLedgers(context.Context, string, []string, uint32,
 	return nil, errLakeDown
 }
 
+func (downReader) AssetTrustlineDaily(ctx context.Context, _ string, _ uint32) ([]clickhouse.AssetTrustlineDay, error) {
+	return nil, errLakeDown
+}
+
 func (downReader) AssetEntryLedgers(context.Context, string, []string, uint32, int) ([]uint32, error) {
 	return nil, errLakeDown
 }
@@ -302,6 +306,7 @@ func lakeDownCases() []lakeDownCase {
 		{"AccountGraphCohort", "/v1/accounts/" + validTestAccount + "/graph/cohort?relation=created", acct, (*Handler).AccountGraphCohort},
 		{"AssetHolders", "/v1/assets/native/holders", map[string]string{"asset_id": "native"}, (*Handler).AssetHolders},
 		{"AssetEntryChanges", "/v1/assets/native/entry-changes", map[string]string{"asset_id": "native"}, (*Handler).AssetEntryChanges},
+		{"AssetTrustlineHistory", "/v1/assets/native/trustline-history", map[string]string{"asset_id": "native"}, (*Handler).AssetTrustlineHistory},
 		{"AssetMovements", "/v1/assets/native/movements", map[string]string{"asset_id": "native"}, (*Handler).AssetMovements},
 	}
 }
@@ -396,6 +401,7 @@ func TestExplorerReads_BoundedByReadTimeout(t *testing.T) {
 		{"AccountState", "/v1/accounts/" + validTestAccount, map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountState},
 		{"AssetHolders", "/v1/assets/native/holders", map[string]string{"asset_id": "native"}, (*Handler).AssetHolders},
 		{"AssetEntryChanges", "/v1/assets/native/entry-changes", map[string]string{"asset_id": "native"}, (*Handler).AssetEntryChanges},
+		{"AssetTrustlineHistory", "/v1/assets/native/trustline-history", map[string]string{"asset_id": "native"}, (*Handler).AssetTrustlineHistory},
 		{"AccountPositions", "/v1/accounts/" + validTestAccount + "/positions", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountPositions},
 		{"AccountsStats", "/v1/accounts/stats", nil, (*Handler).AccountsStats},
 		{"AccountCreators", "/v1/accounts/creators", nil, (*Handler).AccountCreators},

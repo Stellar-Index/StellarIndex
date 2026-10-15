@@ -199,6 +199,8 @@ type ExplorerReader interface {
 	SponsorshipTotals(ctx context.Context, account, side string, maxLedger uint32) (clickhouse.SponsorshipTotals, error)
 	// AssetEntryLedgers lists, newest first, the indexed ledgers at or below maxLedger for the asset.
 	AssetEntryLedgers(ctx context.Context, asset string, entryTypes []string, maxLedger uint32, limit int) ([]uint32, error)
+	// AssetTrustlineDaily returns, oldest first, the UTC days through maxLedger with trustline creations or removals.
+	AssetTrustlineDaily(ctx context.Context, asset string, maxLedger uint32) ([]clickhouse.AssetTrustlineDay, error)
 	// StreamEntryChangesForLedgers streams the listed ledgers' entry-change source rows in the projector's order.
 	StreamEntryChangesForLedgers(ctx context.Context, ledgers []uint32, fn func(clickhouse.EntryHistorySourceRow) error) error
 	// Cap67MovementsWatermark is the highest ledger the cap67 movement derive has completed
