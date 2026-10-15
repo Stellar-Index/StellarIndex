@@ -20,6 +20,19 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.115.1] — 2026-10-15
+
+1 commit since v0.115.0. No migrations. No `pkg/*` break.
+
+### Added
+
+- **monitoring:** `stellarindex_usd_volume_xlm_bound_skipped` tickets when verify-usd-volume could not judge a day's XLM-base/quote bounds; the run publishes `stellarindex_verify_usd_volume_xlm_bound_judged` (#3512).
+
+### Fixed
+
+- **ops:** verify-usd-volume builds the day's XLM/USD rate from `prices_1h`, so the 05:12 UTC run judges the XLM bounds instead of skipping them while `prices_1d` is still unmaterialized (#3512).
+- **monitoring:** `stellarindex_usd_volume_estimated_tier_high` alerts on the estimated tier's share of valued volume (> 5%) instead of a $10M bar it crossed every day (#3512).
+
 ## [v0.115.0] — 2026-10-15
 
 6 commits since v0.114.0. No migrations. No `pkg/*` break. Removes the `[chainlink]` config section (minor, pre-v1).
@@ -149,32 +162,3 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 - **config:** unreferenced script removed; CLI flags and config keys nothing sets are folded into their defaults (#3389, #3392, #3401).
 - **test:** several hundred small test files folded into their subject files (#3360–#3403).
-
-## [v0.111.0] — 2026-10-10
-
-104 commits since v0.110.0. No migrations, no `pkg/*` break. Removed config keys no deployment sets (#3119, #3120).
-
-### Added
-
-- **api:** account trades carry `base_decimals`/`quote_decimals`; Blend positions carry `decimals` (#3165, #3166).
-- **web:** native liquidity pool pages, external-asset price charts, contract state-archival verdict, ledger page charts with CSV/JSON export (#3136, #3139, #3135, #3132).
-- **web:** CSV/JSON download on panels, the RWA set, the MEV feed and freeze timeline, and `/network` (#3128, #3146, #3145, #3144).
-- **web:** status page 90-day incident strip and backup age-vs-SLO bars; latest-ledgers close gap; `/operations` type filter; verified-currency chips on `/assets` (#3149, #3148, #3147, #3141, #3137).
-- **web:** tx page shows fee bumps, the failing op and memo type; protocol pages link website, docs and source; muxed M- and C-addresses route (#3129, #3131, #3127).
-
-### Fixed
-
-- **api,web:** oracle feeds named by the classic asset their SAC wraps (#3134).
-- **web:** same-code pool sides told apart and linked by issuer (#3140, #3133); duplicate SDEX volume chart dropped (#3142); XLM `total_coins` labelled as a counter (#3138).
-- **ops:** projected-rebuild stays inside the ClickHouse query budget (#3125).
-- **ansible:** the core auto-upgrade apt update is scoped to SDF's list (#3091).
-
-### Changed
-
-- **web:** figures render at a readable precision with the exact value on hover (#3159–#3166); XLM is "Stellar Lumens", never "native" (#3155).
-- **web:** page descriptions, eyebrows and long explainers cut; one style for section headings and panel labels; one "External references" footer (#3150–#3158, #3130, #3126).
-- **ops:** ClickHouse and Postgres ZFS snapshots keep one day (#3167).
-- **config:** unset `[divergence]` tuning keys and worker tuning keys removed; unused service flags hardcoded (#3119, #3120, #3124).
-- **ops:** `backfill-router`, `backfill-index`, `sdex-claim-audit`, the CoinGecko historical-backfill path, unreferenced scripts and 18 Makefile targets deleted (#3115, #3118, #3121–#3123).
-- **test:** split test subjects consolidated, doc-prose pins dropped, go/ast tests frozen by a shrink-only baseline (#3062–#3114).
-
