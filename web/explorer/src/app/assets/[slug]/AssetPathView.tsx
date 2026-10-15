@@ -14,11 +14,13 @@ import type { Envelope } from '@/app/explorer-shared';
 import { AssetScamCallout } from './AssetScamCallout';
 import { AssetTrustFacts } from './AssetTrustFacts';
 import { LiveAssetPrice } from './LiveAssetPrice';
+import { SacRedirect, sacRedirectHref } from './SacRedirect';
 import { type PriceBasis, provenanceFromBasis } from './priceProvenance';
 import { formatCompactUnits } from '@/lib/format';
 
 interface AssetShellDetail {
   asset_id?: string;
+  slug?: string;
   type?: string;
   code?: string;
   issuer?: string | null;
@@ -100,6 +102,8 @@ export function AssetPathView() {
   }
 
   const d = detail.data?.data;
+  const sacHref = slug ? sacRedirectHref(slug, d?.slug) : null;
+  if (sacHref) return <SacRedirect href={sacHref} />;
   if (detail.isError || !d?.asset_id) {
     return (
       <EmptyState

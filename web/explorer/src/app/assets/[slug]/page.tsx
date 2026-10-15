@@ -46,6 +46,7 @@ import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 import { AssetScamCallout } from './AssetScamCallout';
 import { AssetClientFallback } from './AssetClientFallback';
 import { AssetPathView } from './AssetPathView';
+import { SacRedirect, sacRedirectHref } from './SacRedirect';
 import { AssetIdentityCard, AssetSidebar } from './AssetSidebar';
 import { AssetIdentityLine } from './AssetIdentityLine';
 import { AssetTrustFacts } from './AssetTrustFacts';
@@ -845,6 +846,14 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
           title={slug}
         />
         <AssetClientFallback slug={slug} />
+      </Container>
+    );
+  }
+  const sacHref = sacRedirectHref(slug, coin.slug);
+  if (sacHref) {
+    return (
+      <Container className="space-y-6 py-8">
+        <SacRedirect href={sacHref} />
       </Container>
     );
   }
