@@ -20,6 +20,30 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.115.0] — 2026-10-15
+
+6 commits since v0.114.0. No migrations. No `pkg/*` break. Removes the `[chainlink]` config section (minor, pre-v1).
+
+### Operator actions
+
+- **ingest:** after deploy, run `stellarindex-ops projector-replay -source chainlink-stellar -from 64442968` to fill the new source from its first on-chain round (#3507).
+- **config:** the `[chainlink]` Ethereum section and `CHAINLINK_RPC_URL` are no longer read; a leftover key warns at boot instead of failing (#3508).
+
+### Added
+
+- **sources:** `chainlink-stellar` ingests Chainlink Data Feeds published on Stellar, gated on the feed contracts' identity; it is the Chainlink divergence reference (#3507).
+
+### Removed
+
+- **sources:** the Ethereum Chainlink poller, its metrics, alerts and runbook sections (#3508).
+- **explorer:** the blog (#3505).
+
+### Fixed
+
+- **explorer:** a route switch no longer crashes a page with `Cannot read properties of undefined`; one React Query key now holds one response shape (#3504).
+- **explorer:** link hovers no longer log 404s for the `__PAGE__` prefetch files (#3509).
+- **explorer:** status, methodology and service-level pages use the standard page shell; the footer matches the content width; the network switcher stays on screen; the sidebar search box is darker (#3505, #3506).
+
 ## [v0.114.0] — 2026-10-15
 
 67 commits since v0.113.0. No migrations. One new ClickHouse table (`stellar.sponsorship_events`). No `pkg/*` break (`pkg/client` gains the account entry-change, sponsorship and claimable-balance routes).
