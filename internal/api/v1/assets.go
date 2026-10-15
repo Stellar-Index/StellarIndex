@@ -655,6 +655,7 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	filters.q = s.sacSearchAsClassic(r, filters.q)
 
 	// order_by is validated here so an unrecognised value 400s on every path, not only the one
 	// that reads it.
@@ -3116,6 +3117,18 @@ func (s *Server) resolveSACToClassic(ctx context.Context, contractID string) (ca
 		return canonical.Asset{}, false
 	}
 	return asset, true
+}
+
+// sacSearchAsClassic rewrites a q that is a classic asset's SAC address to that asset's id, so the C-form finds the rows its
+// asset_id does; the SAC's own listing row carries no code or issuer to match on.
+func (s *Server) sacSearchAsClassic(r *http.Request, q string) string {
+	if s.Explorer == nil || !canonical.IsContractID(q) {
+		return q
+	}
+	if classic, ok := s.resolveSACToClassic(r.Context(), q); ok && classic.Type == canonical.AssetClassic {
+		return classic.String()
+	}
+	return q
 }
 
 // attachSparklinesIfRequested honours ?include=sparkline24h and ?include=sparkline7d, one batch read each; it runs in every phase, so it must be safe on mixed pages.

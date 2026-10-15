@@ -1,8 +1,10 @@
 // Minimal Stellar strkey codec (SEP-23): just enough to resolve a muxed
-// M-address to its base G-account without pulling in the SDK.
+// M-address to its base G-account and derive an asset's SAC address without
+// pulling in the SDK.
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 const VERSION_G = 6 << 3;
 const VERSION_M = 12 << 3;
+const VERSION_C = 2 << 3;
 
 function crc16xmodem(bytes: Uint8Array): number {
   let crc = 0;
@@ -69,4 +71,55 @@ export function muxedBaseAccount(m: string): string | null {
   const crc = crc16xmodem(raw.subarray(0, 41));
   if (raw[41] !== (crc & 0xff) || raw[42] !== crc >> 8) return null;
   return encodeCheck(VERSION_G, raw.subarray(1, 33));
+}
+
+function int32(n: number): number[] {
+  return [(n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff];
+}
+
+async function sha256(bytes: Uint8Array<ArrayBuffer>): Promise<Uint8Array> {
+  return new Uint8Array(
+    await globalThis.crypto.subtle.digest('SHA-256', bytes),
+  );
+}
+
+/**
+ * The Stellar Asset Contract address of a classic asset (`code` + G-issuer)
+ * or of native XLM (`code` 'native'), or null when the input isn't a valid
+ * asset. sha256(ENVELOPE_TYPE_CONTRACT_ID ‖ networkId ‖ FROM_ASSET ‖ Asset).
+ */
+export async function sacAddress(
+  code: string,
+  issuer: string | null | undefined,
+  passphrase: string,
+): Promise<string | null> {
+  let asset: number[];
+  if (code === 'native' && !issuer) {
+    asset = int32(0);
+  } else {
+    if (!/^[A-Za-z0-9]{1,12}$/.test(code) || !issuer) return null;
+    if (!/^G[A-Z2-7]{55}$/.test(issuer)) return null;
+    const raw = base32Decode(issuer);
+    if (!raw || raw.length !== 35 || raw[0] !== VERSION_G) return null;
+    const crc = crc16xmodem(raw.subarray(0, 33));
+    if (raw[33] !== (crc & 0xff) || raw[34] !== crc >> 8) return null;
+    const width = code.length <= 4 ? 4 : 12;
+    const padded = Array.from({ length: width }, (_, i) =>
+      i < code.length ? code.charCodeAt(i) : 0,
+    );
+    asset = [
+      ...int32(width === 4 ? 1 : 2),
+      ...padded,
+      ...int32(0),
+      ...raw.subarray(1, 33),
+    ];
+  }
+  const networkId = await sha256(new TextEncoder().encode(passphrase));
+  const preimage = Uint8Array.from([
+    ...int32(8),
+    ...networkId,
+    ...int32(1),
+    ...asset,
+  ]);
+  return encodeCheck(VERSION_C, await sha256(preimage));
 }
