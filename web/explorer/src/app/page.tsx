@@ -3,7 +3,6 @@ import { ArrowRight } from 'lucide-react';
 
 import { Badge, ButtonLink, Container } from '@/components/ui';
 import { CURRENT_NETWORK } from '@/lib/networks';
-import { HomeBlogStrip } from './HomeBlogStrip';
 import { HomeCurrencies } from './HomeCurrencies';
 import { HomeFinder } from './HomeFinder';
 import { HomeHeroChart } from './HomeHeroChart';
@@ -72,8 +71,6 @@ export default function HomePage() {
       {pricing && <HomeRecentTrades />}
 
       <HomeRecentChanges />
-
-      <HomeBlogStrip />
 
       <section className="rounded-card border-line bg-surface border p-6 sm:p-8">
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-2 lg:items-center">

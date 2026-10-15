@@ -316,7 +316,6 @@ describe('each handler fetches its own shell path', () => {
 const appDir = path.resolve(functionsDir, '../src/app');
 
 const CLOSED_AT_BUILD = new Map([
-  ['blog/[slug]', 'repo markdown (loadBlogPosts)'],
   ['dexes/[source]', 'frontend DEX_INFO constant'],
   ['exchanges/[name]', 'frontend CEX_INFO constant'],
   ['protocols/[name]', 'frontend PROTOCOLS constant, dynamicParams = false'],

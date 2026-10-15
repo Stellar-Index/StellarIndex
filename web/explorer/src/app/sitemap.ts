@@ -5,7 +5,6 @@ import { loadADRs } from '@/lib/adr';
 import { routeAvailable } from '@/lib/network-routes';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import { loadArchitectureDocs } from '@/lib/architecture';
-import { loadBlogPosts } from '@/lib/blog';
 import { loadOperationsDocs } from '@/lib/operations';
 import { loadIncidents } from '@/lib/incidents';
 import { hrefFor } from '@/lib/hrefFor';
@@ -113,7 +112,6 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     // whole external set was the only part of it a crawler never saw.
     '/external/assets',
     '/pricing',
-    '/blog',
     '/company',
     '/careers',
     '/status',
@@ -165,12 +163,6 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     lastModified: now,
     changeFrequency: 'monthly',
     priority: 0.5,
-  }));
-  const blogPages: MetadataRoute.Sitemap = loadBlogPosts().map((p) => ({
-    url: siteURL(`/blog/${p.slug}`),
-    lastModified: now,
-    changeFrequency: 'monthly',
-    priority: 0.6,
   }));
   // Incident postmortems — one permanent page each under /status.
   const incidentPages: MetadataRoute.Sitemap = loadIncidents().map((inc) => ({
@@ -295,7 +287,6 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   return [
     ...staticPages,
-    ...blogPages,
     ...incidentPages,
     ...adrPages,
     ...archPages,

@@ -1,5 +1,5 @@
-// Shared Atom (RFC-4287) serialisation helpers for /blog.atom and
-// /changelog.atom. Both feeds hand-build XML with template literals;
+// Shared Atom (RFC-4287) serialisation helpers for /changelog.atom,
+// which hand-builds XML with template literals;
 // this module is the one place "what must be escaped where" is decided,
 // so a fix to one feed's escaping can't silently miss the other.
 

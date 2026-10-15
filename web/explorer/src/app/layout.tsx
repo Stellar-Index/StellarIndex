@@ -117,7 +117,6 @@ export const metadata: Metadata = {
     canonical: '/',
     types: {
       'application/atom+xml': [
-        { url: '/blog.atom', title: 'Stellar Index — engineering notes' },
         { url: '/changelog.atom', title: 'Stellar Index — changelog' },
       ],
     },
@@ -130,7 +129,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${onest.variable} ${lora.variable} ${geistMono.variable}`}>
+    <html
+      lang="en"
+      className={`${onest.variable} ${lora.variable} ${geistMono.variable}`}
+    >
       <head>
         {/* Build identifier — same SHA + time as the footer badge,
             in machine-readable form. `curl -s stellarindex.io | grep
