@@ -10,3 +10,20 @@ export function offChainAssetHref(slug: string): string | null {
     return '/assets/native/';
   return `/external/assets/${encodeURIComponent(m[2]!.toLowerCase())}/`;
 }
+
+const CONTRACT = /^C[A-Z2-7]{55}$/;
+
+/**
+ * The page to send a SAC contract URL to: /v1/assets resolves a classic asset's SAC to that
+ * asset, so /assets/{SAC} would be a second page for it. Null when the slug is not a contract or
+ * already is the asset's own slug (a Soroban-native token).
+ */
+export function sacRedirectHref(
+  slug: string,
+  resolvedSlug: string | null | undefined,
+): string | null {
+  if (!CONTRACT.test(slug) || !resolvedSlug || resolvedSlug === slug) {
+    return null;
+  }
+  return `/assets/${encodeURIComponent(resolvedSlug)}/`;
+}

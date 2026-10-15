@@ -27,6 +27,7 @@ import {
   ogImageFor,
   shellMetadata,
 } from '@/lib/seo';
+import { sacRedirectHref } from '@/lib/assetRoute';
 import { assetHref } from '@/lib/fiat-slugs';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import { sacAddress } from '@/lib/strkey';
@@ -46,7 +47,7 @@ import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 import { AssetScamCallout } from './AssetScamCallout';
 import { AssetClientFallback } from './AssetClientFallback';
 import { AssetPathView } from './AssetPathView';
-import { SacRedirect, sacRedirectHref } from './SacRedirect';
+import { SacRedirect } from './SacRedirect';
 import { AssetIdentityCard, AssetSidebar } from './AssetSidebar';
 import { AssetIdentityLine } from './AssetIdentityLine';
 import { AssetTrustFacts } from './AssetTrustFacts';
