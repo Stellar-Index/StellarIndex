@@ -295,12 +295,12 @@ const (
 func (s *Store) resolveRowUSDVolume(
 	ctx context.Context, rows []canonical.Trade, out []sql.NullString, errAt []error, i int,
 ) {
-	v, err := s.resolveUSDVolume(ctx, rows[i])
+	v, refused, err := s.resolveUSDVolume(ctx, rows[i])
 	if err != nil {
 		errAt[i] = err
 		return
 	}
-	obs.TradeInsertsTotal.WithLabelValues(rows[i].Source, s.usdLabel(rows[i], v)).Inc()
+	obs.TradeInsertsTotal.WithLabelValues(rows[i].Source, s.usdLabel(rows[i], v, refused)).Inc()
 	if v != nil {
 		out[i] = sql.NullString{String: *v, Valid: true}
 	}

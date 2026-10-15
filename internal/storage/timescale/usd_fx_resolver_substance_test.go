@@ -240,7 +240,7 @@ func TestUsdLabel_ThinVersusNoMarket(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return v, (&Store{usdVolumeFXResolver: r}).usdLabel(tr, v)
+		return v, (&Store{usdVolumeFXResolver: r}).usdLabel(tr, v, false)
 	}
 
 	v, label := run(

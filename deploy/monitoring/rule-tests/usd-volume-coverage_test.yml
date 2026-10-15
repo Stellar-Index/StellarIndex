@@ -95,6 +95,18 @@ tests:
     exp_alerts: []
 
 - interval: 1m
+  name: an on-chain credibility-budget refusal burst does not ticket
+  input_series:
+  - series: stellarindex_trade_inserts_total{job="stellarindex_indexer",instance="r1:9101",source="sdex",usd_volume_populated="yes"}
+    values: 0+10x600
+  - series: stellarindex_trade_inserts_total{job="stellarindex_indexer",instance="r1:9101",source="sdex",usd_volume_populated="refused"}
+    values: 0+100x600
+  alert_rule_test:
+  - eval_time: 500m
+    alertname: stellarindex_onchain_usd_volume_coverage_low
+    exp_alerts: []
+
+- interval: 1m
   name: a genuine on-chain pricing gap still tickets beside an unroutable burst
   input_series:
   - series: stellarindex_trade_inserts_total{job="stellarindex_indexer",instance="r1:9101",source="sdex",usd_volume_populated="yes"}
