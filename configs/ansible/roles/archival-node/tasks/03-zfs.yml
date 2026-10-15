@@ -34,6 +34,38 @@
       - gdisk
     state: present
 
+# r1 boots its zfs module from zfs-dkms. Without the headers metapackage a kernel update arrives
+# with no headers, DKMS builds nothing, and the kernel boots its in-tree zfs, which cannot import
+# a pool using newer features (raidz_expansion): a poolless host after an ordinary reboot.
+- name: Install the kernel headers metapackage so DKMS builds zfs for every new kernel
+  ansible.builtin.apt:
+    name: linux-headers-generic
+    state: present
+
+- name: Enable zfs pool import + mount at boot
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+  loop: [zfs-import-cache.service, zfs-import.target, zfs-mount.service, zfs.target]
+
+- name: "SAFETY: every installed kernel has a zfs module matching the userspace version"
+  ansible.builtin.shell: |
+    set -euo pipefail
+    want=$(zfs version | head -1 | sed 's/^zfs-//')
+    bad=0
+    for k in $(dpkg-query -W -f='${Package} ${db:Status-Status}\n' 'linux-image-[0-9]*' | awk '$2=="installed"{sub("^linux-image-","",$1); print $1}'); do
+      have=$(modinfo -k "$k" -F version zfs 2>/dev/null || true)
+      if [ "$have" != "$want" ]; then
+        echo "kernel $k has zfs module '${have:-none}', userspace is $want: rebooting into it loses the pool"
+        bad=1
+      fi
+    done
+    exit "$bad"
+  args:
+    executable: /bin/bash
+  changed_when: false
+  check_mode: false
+
 # Read only at module load: a running host needs
 # /sys/module/zfs/parameters/zfs_arc_{max,min} written by hand, or a reboot.
 - name: Cap the ZFS ARC (module options)
