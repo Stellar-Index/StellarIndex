@@ -777,16 +777,17 @@ func (s *Store) lendingBackstopKPIs(ctx context.Context, blk *BespokeBlock, sinc
 	// distribute/gulp_emissions/claim/donate are BLND emissions. Summing across kinds yields a
 	// mixed-unit figure dominated by the most frequent kind, so this token-volume KPI sums only the
 	// two token-denominated kinds. The event count stays unfiltered: it is a coherent tally.
-	var backstopVol, backstopCount string
+	var backstopVol canonical.Amount
+	var backstopCount string
 	if err := s.db.QueryRowContext(ctx, `
-		SELECT (COALESCE(sum(amount) FILTER (WHERE event_kind IN ('deposit','withdraw')),0) / 10000000::numeric)::numeric(38,7)::text,
+		SELECT COALESCE(sum(amount) FILTER (WHERE event_kind IN ('deposit','withdraw')),0),
 		       count(*)::text
 		FROM blend_backstop_events WHERE ledger_close_time > now() - $1::interval`, since).
 		Scan(&backstopVol, &backstopCount); err != nil {
 		return fmt.Errorf("timescale: bespokeLending backstop KPIs: %w", err)
 	}
 	blk.KPIs = append(blk.KPIs,
-		BespokeKPI{Label: fmt.Sprintf("Backstop volume (%dd)", windowDays), Value: backstopVol, Unit: "BLND:USDC LP", Hint: "summed deposit+withdraw backstop-token (Comet BLND:USDC LP, 7 decimals) amounts; excludes share/emission kinds; not USD"},
+		BespokeKPI{Label: fmt.Sprintf("Backstop volume (%dd)", windowDays), Value: blndUnits(backstopVol), Unit: "BLND:USDC LP", Hint: "summed deposit+withdraw backstop-token (Comet BLND:USDC LP, 7 decimals) amounts; excludes share/emission kinds; not USD"},
 		BespokeKPI{Label: fmt.Sprintf("Backstop events (%dd)", windowDays), Value: backstopCount},
 	)
 	return nil
