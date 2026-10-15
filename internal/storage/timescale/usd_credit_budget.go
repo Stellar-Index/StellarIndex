@@ -279,7 +279,7 @@ func (s *Store) servedTokenTokenUSD(anchors []string) creditSeedFunc {
 		if err != nil {
 			return nil, fmt.Errorf("timescale: credibility seed for %s: %w", asset, err)
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 		out := map[int64]*big.Rat{}
 		for rows.Next() {
 			var hour int64

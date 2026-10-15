@@ -47,7 +47,7 @@ func mustAdmit(t *testing.T, b *usdCreditBudget, a canonical.Asset, at time.Time
 
 func mustAdmitID(t *testing.T, b *usdCreditBudget, id string, a canonical.Asset, at time.Time, value, backing string, commit bool) bool {
 	t.Helper()
-	ok, err := b.admit(context.Background(), id, a, at, rat(value), rat(backing), commit)
+	ok, err := b.admit(t.Context(), id, a, at, rat(value), rat(backing), commit)
 	if err != nil {
 		t.Fatalf("admit: %v", err)
 	}
