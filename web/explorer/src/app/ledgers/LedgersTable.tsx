@@ -26,6 +26,7 @@ import {
   formatTimestamp,
   relativeAge,
 } from '../explorer-shared';
+import { LinkRow } from '@/components/ui';
 
 const PAGE_SIZE = 50;
 
@@ -227,7 +228,8 @@ export function LedgersTable() {
           </thead>
           <tbody className="divide-line-subtle divide-y">
             {ledgers.map((l) => (
-              <tr
+              <LinkRow
+                href={`/ledgers/${l.sequence}/`}
                 key={l.sequence}
                 className={cn(
                   'hover:bg-surface-muted',
@@ -276,7 +278,7 @@ export function LedgersTable() {
                       : '—'}
                   </span>
                 </Td>
-              </tr>
+              </LinkRow>
             ))}
           </tbody>
         </table>

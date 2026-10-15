@@ -37,6 +37,7 @@ import {
   Select,
   Skeleton,
   TBody,
+  LinkRow,
   TR,
   Table,
   TableWrap,
@@ -643,7 +644,7 @@ function AssetRow({
   const rawAssetId =
     coin.code && slug.toLowerCase() !== coin.code.toLowerCase() ? slug : null;
   return (
-    <TR>
+    <LinkRow href={`${basePath}/${slug}`}>
       <Td className={COL.sm}>
         <span className="text-ink-faint tnum">{rank ?? ''}</span>
       </Td>
@@ -792,7 +793,7 @@ function AssetRow({
           <RowSparkline points={coin.price_history_7d} />
         </Td>
       )}
-    </TR>
+    </LinkRow>
   );
 }
 

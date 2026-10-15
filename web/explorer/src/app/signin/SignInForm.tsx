@@ -201,7 +201,7 @@ export function SignInForm({
             }
             autoFocus
             placeholder="123456"
-            className="border-line bg-surface placeholder:text-ink-faint focus:border-brand-500 focus:ring-brand-500 w-full rounded-md border px-3 py-2 text-center font-mono text-lg tracking-[0.4em] placeholder:tracking-[0.4em] focus:ring-1 focus:outline-hidden"
+            className="border-line bg-surface placeholder:text-ink-faint focus:border-brand-500 focus:border-brand-500 w-full rounded-md border px-3 py-2 text-center font-mono text-lg tracking-[0.4em] placeholder:tracking-[0.4em] focus:outline-hidden"
           />
         </label>
 
@@ -257,7 +257,7 @@ export function SignInForm({
             required
             autoComplete="email"
             placeholder="you@example.com"
-            className="border-line bg-surface placeholder:text-ink-faint focus:border-brand-500 focus:ring-brand-500 w-full rounded-md border py-2 pr-3 pl-8 text-sm focus:ring-1 focus:outline-hidden"
+            className="border-line bg-surface placeholder:text-ink-faint focus:border-brand-500 focus:border-brand-500 w-full rounded-md border py-2 pr-3 pl-8 text-sm focus:outline-hidden"
           />
         </div>
       </label>

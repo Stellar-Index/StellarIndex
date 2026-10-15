@@ -11,6 +11,7 @@ import {
   Table,
   THead,
   TBody,
+  LinkRow,
   TR,
   Th,
   Td,
@@ -189,7 +190,10 @@ export function SponsorBoard() {
             </THead>
             <TBody>
               {d.sponsors.map((s) => (
-                <TR key={s.account}>
+                <LinkRow
+                  href={`/insights/sponsors/${encodeURIComponent(s.account)}/`}
+                  key={s.account}
+                >
                   <Td align="right">{s.rank}</Td>
                   <Td>
                     {/* Through to the sponsor's own page, not straight to
@@ -218,7 +222,7 @@ export function SponsorBoard() {
                   </Td>
                   <Td align="right">{formatTimestamp(s.first_seen_at)}</Td>
                   <Td align="right">{formatTimestamp(s.last_seen_at)}</Td>
-                </TR>
+                </LinkRow>
               ))}
             </TBody>
           </Table>

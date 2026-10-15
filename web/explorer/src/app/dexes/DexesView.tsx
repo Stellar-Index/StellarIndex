@@ -22,6 +22,7 @@ import {
   Segmented,
   Skeleton,
   TBody,
+  LinkRow,
   TR,
   Table,
   Td,
@@ -230,7 +231,7 @@ export function DexesView() {
                 const href = `/markets/${encodeURIComponent(slug)}`;
                 const vol = p.volume_24h_usd;
                 return (
-                  <TR key={`${p.source}:${slug}`}>
+                  <LinkRow href={href} key={`${p.source}:${slug}`}>
                     <Td className="text-ink-faint font-mono tabular-nums">
                       {pager.depth * PAGE_LIMIT + i + 1}
                     </Td>
@@ -283,7 +284,7 @@ export function DexesView() {
                     >
                       {formatRelative(p.last_trade_at)}
                     </Td>
-                  </TR>
+                  </LinkRow>
                 );
               })}
             </TBody>

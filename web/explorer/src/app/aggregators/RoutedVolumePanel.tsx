@@ -18,6 +18,7 @@ import {
   Td,
   Th,
   THead,
+  LinkRow,
 } from '@/components/ui';
 import { RoutedVolumeBars } from './RoutedVolumeBars';
 
@@ -117,7 +118,10 @@ export function RoutedVolumePanel() {
               </tr>
             )}
             {rows.map((r) => (
-              <TR key={r.contract_id}>
+              <LinkRow
+                href={`/contracts/${encodeURIComponent(r.contract_id)}/`}
+                key={r.contract_id}
+              >
                 <Td>
                   <div className="flex flex-wrap items-center gap-2">
                     <Link
@@ -180,7 +184,7 @@ export function RoutedVolumePanel() {
                     n/a — holds capital, does not route trades
                   </Td>
                 )}
-              </TR>
+              </LinkRow>
             ))}
           </TBody>
         </Table>

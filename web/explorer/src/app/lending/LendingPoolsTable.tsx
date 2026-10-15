@@ -14,6 +14,7 @@ import {
   Td,
   Th,
   THead,
+  LinkRow,
 } from '@/components/ui';
 import { HBarList } from '@/components/charts/Bars';
 import { apiGet, asExample } from '@/api/client';
@@ -354,7 +355,7 @@ export function LendingPoolsTable() {
                 const poolId = p.pool ?? '';
                 const meta = BLEND_POOL_META[poolId];
                 return (
-                  <TR key={poolId}>
+                  <LinkRow href={`/lending/${poolId}`} key={poolId}>
                     <Td>
                       <div className="flex items-center gap-1">
                         <Link
@@ -398,7 +399,7 @@ export function LendingPoolsTable() {
                     >
                       {formatRelative(p.last_seen)}
                     </Td>
-                  </TR>
+                  </LinkRow>
                 );
               })}
             </TBody>

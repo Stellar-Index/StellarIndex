@@ -4,7 +4,16 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
-import { Skeleton, TBody, TR, Table, Td, Th, THead } from '@/components/ui';
+import {
+  LinkRow,
+  Skeleton,
+  TBody,
+  TR,
+  Table,
+  Td,
+  Th,
+  THead,
+} from '@/components/ui';
 import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 import { apiGet, asExample } from '@/api/client';
 import {
@@ -153,7 +162,7 @@ export function DexProtocolsTable() {
             {rows.map((r) => {
               const vol = r.volume_24h_usd;
               return (
-                <TR key={r.name}>
+                <LinkRow href={hrefFor.dex(r.name)} key={r.name}>
                   <Td>
                     <Link
                       href={hrefFor.dex(r.name)}
@@ -178,7 +187,7 @@ export function DexProtocolsTable() {
                   <Td align="right" className="font-mono tabular-nums">
                     {countCell(r.markets_count_24h, statsAvailable)}
                   </Td>
-                </TR>
+                </LinkRow>
               );
             })}
           </TBody>

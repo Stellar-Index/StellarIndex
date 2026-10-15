@@ -5,7 +5,16 @@ import Link from 'next/link';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
-import { Table, TableWrap, TBody, Td, Th, THead, TR } from '@/components/ui';
+import {
+  Table,
+  TableWrap,
+  TBody,
+  Td,
+  Th,
+  THead,
+  TR,
+  LinkRow,
+} from '@/components/ui';
 import { apiGet, asExample, type Envelope } from '@/api/client';
 import { truncateMiddle } from '@/lib/format';
 import type { components } from '@/api/types';
@@ -169,7 +178,10 @@ export function AccountRelationEdges({
           </THead>
           <TBody>
             {rows.map((e) => (
-              <TR key={e.account}>
+              <LinkRow
+                href={`/accounts/${encodeURIComponent(e.account)}/`}
+                key={e.account}
+              >
                 <Td>
                   <Link
                     href={`/accounts/${encodeURIComponent(e.account)}/`}
@@ -191,7 +203,7 @@ export function AccountRelationEdges({
                 )}
                 <Td align="right">{formatTimestamp(e.first_at)}</Td>
                 <Td align="right">{formatTimestamp(e.last_at)}</Td>
-              </TR>
+              </LinkRow>
             ))}
           </TBody>
         </Table>
@@ -279,7 +291,7 @@ function SortableTh({
       <button
         type="button"
         onClick={onClick}
-        className="focus-visible:ring-brand-500/60 hover:text-ink rounded-sm focus-visible:ring-2 focus-visible:outline-hidden"
+        className="hover:text-ink rounded-sm"
       >
         {label}
         <span aria-hidden="true" className="ml-1">

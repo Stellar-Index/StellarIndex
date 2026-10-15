@@ -20,6 +20,7 @@ import {
   Td,
   Th,
   THead,
+  LinkRow,
 } from '@/components/ui';
 import { asExample } from '@/api/client';
 import type { AssetDetail, IssuedAsset, Issuer } from '@/api/hooks';
@@ -492,7 +493,7 @@ function IssuedAssetsTable({
             const coin = coins[a.asset_id];
             const name = names.get(a.code);
             return (
-              <TR key={a.asset_id}>
+              <LinkRow href={assetHref(a.slug)} key={a.asset_id}>
                 <Td>
                   <div className="flex flex-wrap items-baseline gap-x-2">
                     <Link
@@ -554,7 +555,7 @@ function IssuedAssetsTable({
                 <Td align="right" className="text-ink-muted font-mono text-xs">
                   <LedgerRef seq={a.last_seen_ledger} />
                 </Td>
-              </TR>
+              </LinkRow>
             );
           })}
         </TBody>

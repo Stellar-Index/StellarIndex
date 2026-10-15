@@ -16,6 +16,7 @@ import {
   Td,
   Th,
   THead,
+  LinkRow,
   TR,
 } from '@/components/ui';
 import { apiGet, asExample, type Envelope } from '@/api/client';
@@ -304,7 +305,10 @@ export function AccountRelationCohort({
             </THead>
             <TBody>
               {holdings.map((h) => (
-                <TR key={h.asset}>
+                <LinkRow
+                  href={`/liquidity-pools/${h.asset.slice(5)}/`}
+                  key={h.asset}
+                >
                   <Td>
                     {h.kind === 'pool_share' ? (
                       <Link
@@ -334,7 +338,7 @@ export function AccountRelationCohort({
                       <span className="text-ink-faint">unpriced</span>
                     )}
                   </Td>
-                </TR>
+                </LinkRow>
               ))}
               {holdings.length === 0 && (
                 <TR>
@@ -461,7 +465,10 @@ export function AccountRelationCohort({
               </THead>
               <TBody>
                 {data.contracts.map((c) => (
-                  <TR key={c.contract_id}>
+                  <LinkRow
+                    href={`/contracts/${c.contract_id}`}
+                    key={c.contract_id}
+                  >
                     <Td>
                       {c.protocol ??
                         (c.label ? (
@@ -483,7 +490,7 @@ export function AccountRelationCohort({
                     <Td align="right">{numFmt.format(c.movements)}</Td>
                     <Td>{formatTimestamp(c.first_at)}</Td>
                     <Td>{formatTimestamp(c.last_at)}</Td>
-                  </TR>
+                  </LinkRow>
                 ))}
               </TBody>
             </Table>
@@ -523,7 +530,8 @@ export function AccountRelationCohort({
               </THead>
               <TBody>
                 {data.positions.map((p) => (
-                  <TR
+                  <LinkRow
+                    href={`/contracts/${p.venue}`}
                     key={`${p.protocol}:${p.venue}:${p.asset ?? ''}:${p.position_kind}`}
                   >
                     <Td>{p.protocol}</Td>
@@ -547,7 +555,7 @@ export function AccountRelationCohort({
                     </Td>
                     <Td align="right">{numFmt.format(p.holders)}</Td>
                     <Td align="right">{formatCompactUnits(p.amount)}</Td>
-                  </TR>
+                  </LinkRow>
                 ))}
               </TBody>
             </Table>

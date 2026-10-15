@@ -87,7 +87,7 @@ function rowBody(body: string, from: number): string {
 /**
  * `<button …>…</button>` elements inside a slice of markup, counting the ui
  * `Button` primitive, which renders a native `<button>` with its own name
- * and focus ring.
+ * and focus outline.
  */
 function buttonsIn(markup: string): string[] {
   const out: string[] = [];
@@ -158,13 +158,13 @@ describe('every clickable table row carries a real control', () => {
       .map((r) => r.where);
     expect(unnamed).toEqual([]);
 
-    // The ui Button carries its focus ring itself (components/ui/Button).
+    // The visible focus comes from the global :focus-visible outline, so a
+    // row control must not switch it off.
+    expect(readFileSync(join(SRC, 'app/globals.css'), 'utf8')).toMatch(
+      /:focus-visible\s*\{\s*outline:\s*1px solid/,
+    );
     const unfocusable = rows
-      .filter(
-        (r) =>
-          !/focus-visible:|focus:/.test(r.markup) &&
-          !/<Button[\s>]/.test(r.markup),
-      )
+      .filter((r) => /focus(-visible)?:outline-(hidden|none)/.test(r.markup))
       .map((r) => r.where);
     expect(unfocusable).toEqual([]);
   });
@@ -200,7 +200,7 @@ describe('every LinkRow carries the link it opens', () => {
 
   it('puts a Link inside each of them', () => {
     const offenders = linkRows
-      .filter((r) => !/<(Link|a)[\s>]/.test(r.markup))
+      .filter((r) => !/<(Link|a|HashLink|SourceLink)[\s>]/.test(r.markup))
       .map((r) => r.where);
     expect(offenders).toEqual([]);
   });

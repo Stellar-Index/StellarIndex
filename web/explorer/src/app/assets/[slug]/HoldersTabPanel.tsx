@@ -13,6 +13,7 @@ import {
   TR,
   Th,
   Td,
+  LinkRow,
 } from '@/components/ui';
 import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 import { apiGet, asExample } from '@/api/client';
@@ -131,7 +132,10 @@ export function HoldersTabPanel({
             </THead>
             <TBody>
               {holders.map((h, i) => (
-                <TR key={h.account_id}>
+                <LinkRow
+                  href={`/accounts/${encodeURIComponent(h.account_id ?? '')}/`}
+                  key={h.account_id}
+                >
                   <Td className="text-ink-faint font-mono text-xs">{i + 1}</Td>
                   <Td className="whitespace-nowrap">
                     <Link
@@ -152,7 +156,7 @@ export function HoldersTabPanel({
                   <Td>
                     <ShareBar pct={shares[i]} max={maxShare} />
                   </Td>
-                </TR>
+                </LinkRow>
               ))}
             </TBody>
           </Table>

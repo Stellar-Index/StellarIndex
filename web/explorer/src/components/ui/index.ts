@@ -25,3 +25,4 @@ export { FactList, Fact } from './Facts';
 export { TabNav, Segmented } from './Tabs';
 export type { TabItem } from './Tabs';
 export { Mono, CopyButton, truncateMiddle, useCopyToClipboard } from './Mono';
+export { LinkRow } from './LinkRow';

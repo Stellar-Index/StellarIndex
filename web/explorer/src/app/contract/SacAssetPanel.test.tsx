@@ -9,6 +9,7 @@ vi.mock('@/api/client', async () => {
 });
 vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
+  useRouter: () => ({ push: vi.fn() }),
 }));
 
 import { apiGet } from '@/api/client';

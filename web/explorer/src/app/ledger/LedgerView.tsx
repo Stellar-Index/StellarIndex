@@ -29,6 +29,7 @@ import {
   THead,
   TR,
   TxStatusBadge,
+  LinkRow,
 } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
@@ -391,7 +392,7 @@ function TransactionsPanel({
             </THead>
             <TBody>
               {transactions.map((t) => (
-                <TR key={t.hash}>
+                <LinkRow href={`/transactions/${t.hash}/`} key={t.hash}>
                   <Td>
                     <HashLink
                       href={`/transactions/${t.hash}/`}
@@ -431,7 +432,7 @@ function TransactionsPanel({
                       '—'
                     )}
                   </Td>
-                </TR>
+                </LinkRow>
               ))}
             </TBody>
           </Table>

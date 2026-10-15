@@ -460,7 +460,7 @@ function CreateWebhookForm({
                     type="checkbox"
                     checked={events.has(event)}
                     onChange={() => toggleEvent(event)}
-                    className="border-line-strong text-brand-600 focus:ring-brand-500 h-3.5 w-3.5 rounded-sm"
+                    className="border-line-strong text-brand-600 focus:border-brand-500 h-3.5 w-3.5 rounded-sm"
                   />
                   <code className="bg-surface-subtle rounded-sm px-1 py-0.5 font-mono text-[12px]">
                     {event}

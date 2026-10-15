@@ -16,6 +16,7 @@ import {
   Td,
   Th,
   THead,
+  LinkRow,
   TR,
 } from '@/components/ui';
 
@@ -158,7 +159,12 @@ export function HomeRecentTrades() {
                   </>
                 );
                 return (
-                  <TR key={`${t.ts}-${t.source}-${i}`}>
+                  <LinkRow
+                    href={
+                      linkable ? `/markets/${encodeURIComponent(slug)}` : null
+                    }
+                    key={`${t.ts}-${t.source}-${i}`}
+                  >
                     <Td className="text-ink-muted tabular-nums">
                       {t.tx_hash ? (
                         <Link
@@ -195,7 +201,7 @@ export function HomeRecentTrades() {
                     <Td align="right" className="tabular-nums">
                       {t.price ?? '—'}
                     </Td>
-                  </TR>
+                  </LinkRow>
                 );
               })}
             </TBody>

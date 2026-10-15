@@ -15,6 +15,7 @@ import {
   Th,
   THead,
   TR,
+  LinkRow,
 } from '@/components/ui';
 import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 import { asExample } from '@/api/client';
@@ -248,7 +249,10 @@ function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
           </THead>
           <TBody>
             {shown.map((a) => (
-              <TR key={a.asset_id}>
+              <LinkRow
+                href={assetHref(a.slug ?? a.asset_id ?? a.code ?? '')}
+                key={a.asset_id}
+              >
                 <Td>
                   <Link
                     href={assetHref(a.slug ?? a.asset_id ?? a.code ?? '')}
@@ -283,7 +287,7 @@ function IssuedAssetsTable({ issuer }: { issuer: Issuer }) {
                       : '—'}
                   </span>
                 </Td>
-              </TR>
+              </LinkRow>
             ))}
           </TBody>
         </Table>

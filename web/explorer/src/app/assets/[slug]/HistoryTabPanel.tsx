@@ -14,6 +14,7 @@ import {
   TR,
   Th,
   Td,
+  LinkRow,
 } from '@/components/ui';
 import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 import { asExample } from '@/api/client';
@@ -144,7 +145,10 @@ export function HistoryTabPanel({
           </THead>
           <TBody>
             {rows.map((r) => (
-              <TR key={`${r.tx_hash}-${r.op_index}`}>
+              <LinkRow
+                href={`/transactions/${r.tx_hash}/`}
+                key={`${r.tx_hash}-${r.op_index}`}
+              >
                 <Td className="font-mono text-xs whitespace-nowrap">
                   {r.tx_hash ? (
                     <Link
@@ -183,7 +187,7 @@ export function HistoryTabPanel({
                 <Td align="right" className="font-mono text-xs">
                   {r.price ?? '—'}
                 </Td>
-              </TR>
+              </LinkRow>
             ))}
           </TBody>
         </Table>

@@ -36,6 +36,7 @@ import {
   Td,
   Th,
   THead,
+  LinkRow,
 } from '@/components/ui';
 import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 
@@ -549,7 +550,10 @@ function ContractRoster({
           </THead>
           <TBody>
             {[...factories, ...visibleInstances].map((c) => (
-              <TR key={c.contract_id}>
+              <LinkRow
+                href={`/contracts/${encodeURIComponent(c.contract_id)}/`}
+                key={c.contract_id}
+              >
                 <Td>
                   <RoleBadge kind={c.kind} />
                 </Td>
@@ -601,7 +605,7 @@ function ContractRoster({
                     <span className="text-ink-faint">—</span>
                   )}
                 </Td>
-              </TR>
+              </LinkRow>
             ))}
           </TBody>
         </Table>

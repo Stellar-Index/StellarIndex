@@ -17,6 +17,7 @@ import {
   Td,
   Th,
   THead,
+  LinkRow,
   TR,
 } from '@/components/ui';
 import { DonutChart, type DonutSlice } from '@/components/charts/DonutChart';
@@ -276,7 +277,7 @@ function TradeAmount({ raw, decimals }: { raw: string; decimals?: number }) {
 
 function TradeRow({ t }: { t: AccountTrade }) {
   return (
-    <TR>
+    <LinkRow href={`/transactions/${t.tx_hash}/`}>
       <Td>
         {/* The exact instant must not be hover-only (`title=`), i.e.
             mouse-only. <time dateTime> makes it machine-readable and the
@@ -328,6 +329,6 @@ function TradeRow({ t }: { t: AccountTrade }) {
           {t.tx_hash.slice(0, 8)}…{t.tx_hash.slice(-6)}
         </Link>
       </Td>
-    </TR>
+    </LinkRow>
   );
 }

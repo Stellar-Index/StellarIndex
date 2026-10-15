@@ -18,6 +18,7 @@ import {
   Td,
   Th,
   THead,
+  LinkRow,
 } from '@/components/ui';
 import { type Envelope, apiGet, asExample } from '@/api/client';
 import {
@@ -186,7 +187,7 @@ export function VenueMarketsTable({
               const offset = pager.depth * PAGE_LIMIT + i + 1;
               const vol = m.volume_24h_usd;
               return (
-                <TR key={`${m.base}|${m.quote}`}>
+                <LinkRow href={href} key={`${m.base}|${m.quote}`}>
                   <Td className="text-ink-faint font-mono tabular-nums">
                     {offset}
                   </Td>
@@ -225,7 +226,7 @@ export function VenueMarketsTable({
                   >
                     {formatRelative(m.last_trade_at)}
                   </Td>
-                </TR>
+                </LinkRow>
               );
             })}
           </TBody>

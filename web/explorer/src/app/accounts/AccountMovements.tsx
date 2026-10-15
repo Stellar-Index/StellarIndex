@@ -16,6 +16,7 @@ import {
   Td,
   Th,
   THead,
+  LinkRow,
   TR,
 } from '@/components/ui';
 import {
@@ -422,7 +423,7 @@ export function AccountMovementsPanel({ id }: { id: string }) {
 
 function MovementRow({ m }: { m: AccountMovement }) {
   return (
-    <TR>
+    <LinkRow href={`/transactions/${m.tx_hash}/`}>
       <Td>
         <span
           className="text-ink-muted text-xs whitespace-nowrap"
@@ -470,7 +471,7 @@ function MovementRow({ m }: { m: AccountMovement }) {
           {m.tx_hash.slice(0, 8)}…{m.tx_hash.slice(-6)}
         </Link>
       </Td>
-    </TR>
+    </LinkRow>
   );
 }
 

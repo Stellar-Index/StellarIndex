@@ -32,6 +32,7 @@ import {
   Segmented,
   Skeleton,
   TBody,
+  LinkRow,
   TR,
   Table,
   TableWrap,
@@ -335,7 +336,7 @@ export function MarketsTable() {
                   sorted.map((m, i) => {
                     const href = `/markets/${encodeURIComponent(`${m.base}~${m.quote}`)}`;
                     return (
-                      <TR key={`${m.base}|${m.quote}`}>
+                      <LinkRow href={href} key={`${m.base}|${m.quote}`}>
                         <Td className={cn('text-ink-faint tnum', COL.sm)}>
                           {i + 1}
                         </Td>
@@ -384,7 +385,7 @@ export function MarketsTable() {
                         >
                           {formatRelative(m.last_trade_at)}
                         </Td>
-                      </TR>
+                      </LinkRow>
                     );
                   })
                 )}

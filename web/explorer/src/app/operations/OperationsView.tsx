@@ -6,7 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
-import { Callout, TxStatusBadge } from '@/components/ui';
+import { LinkRow, Callout, TxStatusBadge } from '@/components/ui';
 import {
   OperationMixPanel,
   ThroughputPanel,
@@ -223,7 +223,8 @@ export function OperationsView() {
               </thead>
               <tbody className="divide-line-subtle divide-y">
                 {ops.map((op) => (
-                  <tr
+                  <LinkRow
+                    href={`/operation?tx=${op.tx_hash}&i=${op.op_index}`}
                     key={`${op.tx_hash}:${op.op_index}`}
                     className={cn(
                       'hover:bg-surface-muted',
@@ -283,7 +284,7 @@ export function OperationsView() {
                     <td className="text-ink-muted px-4 py-3 font-mono text-[11px]">
                       {formatTimestamp(op.close_time)}
                     </td>
-                  </tr>
+                  </LinkRow>
                 ))}
               </tbody>
             </table>

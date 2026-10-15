@@ -9,6 +9,7 @@ import {
   Container,
   PageHeader,
   TBody,
+  LinkRow,
   TR,
   Table,
   Td,
@@ -423,7 +424,7 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
                     const slug = `${m.base}~${m.quote}`;
                     const href = `/markets/${encodeURIComponent(slug)}`;
                     return (
-                      <TR key={slug}>
+                      <LinkRow href={href} key={slug}>
                         <Td>
                           <Link
                             href={href}
@@ -451,7 +452,7 @@ export default async function SourceDetailPage({ params }: { params: Params }) {
                         <Td align="right" className="font-mono">
                           {formatCompact(m.trade_count_24h)}
                         </Td>
-                      </TR>
+                      </LinkRow>
                     );
                   })}
                 </TBody>

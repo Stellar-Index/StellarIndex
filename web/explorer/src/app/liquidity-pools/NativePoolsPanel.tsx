@@ -195,7 +195,7 @@ export function NativePoolsPanel() {
                             e.stopPropagation();
                             setExpanded(open ? null : row.pool);
                           }}
-                          className="text-ink-muted hover:text-brand-600 focus-visible:ring-brand-500/60 rounded-sm px-1 py-0.5 transition-colors focus-visible:ring-2 focus-visible:outline-hidden"
+                          className="text-ink-muted hover:text-brand-600 rounded-sm px-1 py-0.5 transition-colors"
                         >
                           {open ? 'Hide depth ▴' : 'Depth ▾'}
                         </button>
