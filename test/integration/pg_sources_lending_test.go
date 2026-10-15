@@ -90,7 +90,7 @@ func TestBlendEmissionWindowStatsAndBespoke(t *testing.T) {
 		t.Fatal("BuildProtocolBespoke blend = nil, want a block")
 	}
 	kpis := kpiMap(blk)
-	assertKPI(t, kpis, "Emissions claimed (90d)", "4444444444444.4444444444") // claimHuge in BLND (7 decimals), exact
+	assertKPI(t, kpis, "Emissions claimed (90d)", "4444444444444.4444444") // claimHuge in BLND (7 decimals), exact
 	assertKPI(t, kpis, "Credit-risk events (90d)", "2")
 	// The Blend position KPIs must still be present (emissions ADD, never
 	// replace). Count-first: the old cross-asset
