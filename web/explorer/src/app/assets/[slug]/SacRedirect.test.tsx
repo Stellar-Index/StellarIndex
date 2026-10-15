@@ -6,7 +6,9 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ replace }),
 }));
 
-import { SacRedirect, sacRedirectHref } from './SacRedirect';
+import { sacRedirectHref } from '@/lib/assetRoute';
+
+import { SacRedirect } from './SacRedirect';
 
 const SUSD_SAC = 'CDFZUVS5YNLXU7VENKOUDEOHCJGKQNVUBWD7KMN6E7ZROKPYPFLRUJFG';
 const SUSD = 'sUSD-GCHW7CWI7GMIYQYFXMFJNJX5645XGWIINIAEQK3SABQO6CAYL5T7JYIH';

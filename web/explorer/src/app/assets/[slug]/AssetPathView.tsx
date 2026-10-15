@@ -7,14 +7,14 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
 import { EmptyState, PageHeader, Skeleton } from '@/components/ui';
-import { offChainAssetHref } from '@/lib/assetRoute';
+import { offChainAssetHref, sacRedirectHref } from '@/lib/assetRoute';
 import { useLastPathSegment } from '@/lib/useLastPathSegment';
 import type { Envelope } from '@/app/explorer-shared';
 
 import { AssetScamCallout } from './AssetScamCallout';
 import { AssetTrustFacts } from './AssetTrustFacts';
 import { LiveAssetPrice } from './LiveAssetPrice';
-import { SacRedirect, sacRedirectHref } from './SacRedirect';
+import { SacRedirect } from './SacRedirect';
 import { type PriceBasis, provenanceFromBasis } from './priceProvenance';
 import { formatCompactUnits } from '@/lib/format';
 
