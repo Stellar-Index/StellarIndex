@@ -9,9 +9,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/redact"
+
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
-	externalchainlink "github.com/Stellar-Index/StellarIndex/internal/sources/external/chainlink"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 	"github.com/Stellar-Index/StellarIndex/internal/stellarrpc"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -178,8 +179,8 @@ func (s *soroswapPairSeeder) finish() error {
 }
 
 // logSeedStart announces the sweep target. The RPC endpoint is redacted because a keyed provider carries its API key in the URL path
-// (same shape externalchainlink.RedactEndpoint scrubs).
+// (same shape redact.Endpoint scrubs).
 func logSeedStart(w io.Writer, factory, endpoint string) {
 	_, _ = fmt.Fprintf(w, "seed-soroswap-pairs: factory=%s rpc=%s\n",
-		factory, externalchainlink.RedactEndpoint(endpoint))
+		factory, redact.Endpoint(endpoint))
 }
