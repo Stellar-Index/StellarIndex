@@ -37,7 +37,7 @@ export function NativePoolsPanel() {
   // Live (RT-2): refresh pool reserves + depth on each ledger close.
   useLedgerFollow(['/v1/liquidity-pools']);
   const q = useQuery<LiquidityPoolRow[]>({
-    queryKey: ['/v1/liquidity-pools', lookup],
+    queryKey: ['/v1/liquidity-pools', lookup, 'list'],
     queryFn: async () => {
       const path = lookup
         ? `/v1/liquidity-pools?pool=${encodeURIComponent(lookup)}`

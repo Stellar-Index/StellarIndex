@@ -763,7 +763,7 @@ function useLegRate(
     basis: PriceType | null;
     observedAt: string | null;
   }>({
-    queryKey: ['/v1/price/batch', 'swapLeg', token.key],
+    queryKey: ['/v1/price/batch', token.key, 'swapLeg'],
     enabled: fetchable && CURRENT_NETWORK.pricing,
     queryFn: async () => {
       const { rows } = await fetchPriceBatchChunked([token.key], 'fiat:USD');

@@ -133,7 +133,13 @@ export function AccountGraphPanel({ id }: { id: string }) {
   const [cursor, setCursor] = useState('');
 
   const { data, isLoading, isError, error } = useQuery<AccountGraphResp>({
-    queryKey: ['/v1/accounts/{id}/graph', id, relation, cursor],
+    queryKey: [
+      '/v1/accounts/{id}/graph',
+      id,
+      relation,
+      cursor,
+      'account-graph',
+    ],
     enabled: id.length > 0,
     retry: false,
     placeholderData: keepPreviousData,

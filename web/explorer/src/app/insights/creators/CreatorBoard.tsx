@@ -55,7 +55,7 @@ function survivalPct(row: CreatorRow): string {
  */
 export function CreatorBoard() {
   const q = useQuery<CreatorsResp>({
-    queryKey: ['/v1/accounts/creators', BOARD_LIMIT],
+    queryKey: ['/v1/accounts/creators', BOARD_LIMIT, 'board'],
     queryFn: async () => {
       const env = await apiGet<Envelope<CreatorsResp>>(
         '/v1/accounts/creators',

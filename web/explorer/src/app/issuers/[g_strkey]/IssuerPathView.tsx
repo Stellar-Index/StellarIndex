@@ -49,7 +49,7 @@ export function IssuerPathView() {
         .data,
   });
   const coins = useQuery<CoinPrices>({
-    queryKey: ['/v1/assets', 'issuer', g],
+    queryKey: ['/v1/assets', g, 'by-issuer'],
     enabled: valid && !!CURRENT_NETWORK.pricing,
     retry: false,
     staleTime: 300_000,

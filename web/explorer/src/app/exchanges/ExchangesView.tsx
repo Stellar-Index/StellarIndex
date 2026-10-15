@@ -273,7 +273,7 @@ function AllCEXMarkets({
   registryLoading: boolean;
 }) {
   const queries = useQuery<CEXMarket[]>({
-    queryKey: ['/v1/markets', 'all-cex', venues],
+    queryKey: ['/v1/markets', venues, 'all-cex'],
     enabled: venues != null,
     queryFn: async () => {
       const all = await Promise.all(

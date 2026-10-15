@@ -271,7 +271,7 @@ export function BespokeSection({
 
   // Non-default windows refetch the protocol detail with ?days=N.
   const { data, isFetching, isError, refetch } = useQuery<Bespoke | null>({
-    queryKey: ['/v1/protocols/{name}', name, 'bespoke-window', days],
+    queryKey: ['/v1/protocols/{name}', name, days, 'bespoke-window'],
     enabled: days !== DEFAULT_WINDOW_DAYS,
     retry: false,
     staleTime: 60_000,

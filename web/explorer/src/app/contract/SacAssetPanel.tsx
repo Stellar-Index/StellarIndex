@@ -48,7 +48,7 @@ function usd(raw: string | null | undefined): string | null {
 
 function useTopHolders(assetID: string | undefined) {
   return useQuery<HoldersResp>({
-    queryKey: ['/v1/assets/{id}/holders', assetID, TOP_HOLDERS],
+    queryKey: ['/v1/assets/{id}/holders', assetID, TOP_HOLDERS, 'sac-top'],
     enabled: !!assetID,
     retry: false,
     staleTime: 60_000,
