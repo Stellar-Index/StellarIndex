@@ -437,3 +437,45 @@ func TestAssetsListing_Sparkline7d_WithheldPriceRendersNoChart(t *testing.T) {
 			len(got), row.PriceHistory7d)
 	}
 }
+
+// The stub serves the same series on both windows; the 24h test only needs the right field filled.
+func (s *sparklineStub) GetAssetsPriceHistory24hBatch(ctx context.Context, assetIDs []string) (map[string][]timescale.AssetPricePoint, error) {
+	return s.GetAssetsPriceHistory7dBatch(ctx, assetIDs)
+}
+
+// TestAssetsListing_Sparkline24h_FillsOnlyTheRequestedWindow: ?include=sparkline24h fills price_history_24h through the
+// same gates as the 7d series, and leaves price_history_7d empty.
+func TestAssetsListing_Sparkline24h_FillsOnlyTheRequestedWindow(t *testing.T) {
+	const xrp = "XRP-" + otherRealIssuer
+	stub := &sparklineStub{
+		stubAssetsReaderExt: &stubAssetsReaderExt{},
+		classic: []timescale.AssetRow{
+			{AssetID: xrp, Code: "XRP", Slug: "xrp", IssuerGStrkey: otherRealIssuer, PriceUSD: sptr("1.39")},
+			{AssetID: "NOPRICE-" + otherRealIssuer, Code: "NOPRICE", Slug: "noprice", IssuerGStrkey: otherRealIssuer},
+		},
+		series: map[string][]string{
+			xrp: sparklineSeries("1.51", "1.48", "1.46", "1.44", "1.42", "1.40", "1.39"),
+		},
+	}
+	ts := httpTestServer(t, v1.New(v1.Options{AssetsReader: stub}))
+
+	var page struct {
+		Data []v1.AssetDetail `json:"data"`
+	}
+	mustDecode(t, mustGet(t, ts.URL+"/v1/assets?limit=10&include=sparkline24h"), &page)
+	row := findRowByAssetID(page.Data, xrp)
+	if row == nil {
+		t.Fatalf("XRP row missing: %+v", page.Data)
+	}
+	if got, want := pricedPoints(row.PriceHistory24h), stub.series[xrp]; len(got) != len(want) {
+		t.Fatalf("price_history_24h has %d priced points, want %d (%+v)", len(got), len(want), row.PriceHistory24h)
+	}
+	if len(row.PriceHistory7d) != 0 {
+		t.Errorf("price_history_7d served for ?include=sparkline24h: %+v", row.PriceHistory7d)
+	}
+	for _, id := range stub.requestedIDs() {
+		if id != xrp {
+			t.Errorf("batch read asked for %q; an unpriced row must not be looked up", id)
+		}
+	}
+}

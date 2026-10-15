@@ -22,7 +22,7 @@ var listingOnlyPipelineCalls = map[string]string{
 	"listAssetsExtAt": "the RWA path reads per member issuer, not one keyset page",
 	// The sparkline is an opt-in query parameter on /v1/assets. The RWA
 	// surface takes no query parameters and serves no series.
-	"attachSparkline7dIfRequested": "no include= parameter on this surface, and no price series is served",
+	"attachSparklinesIfRequested": "no include= parameter on this surface, and no price series is served",
 	// The logo overlay writes AssetDetail.Image, which this surface has no field for, so running it is a no-op with a per-
 	// page scan. It is a display fill, never a gate.
 	"fillImagesFromSep1": "this surface serves no image field, so the overlay would write nothing",

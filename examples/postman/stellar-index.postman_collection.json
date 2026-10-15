@@ -683,7 +683,7 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Comma-separated row enrichments. Supported: `sparkline7d` (per-row 7-day price history for chart columns; one batch read per page).",
+                    "content": "Comma-separated row enrichments. Supported: `sparkline24h` (per-row 24-hour price history) and `sparkline7d` (per-row 7-day price history), for chart columns; one batch read per page each.",
                     "type": "text/plain"
                   },
                   "key": "include",
@@ -798,7 +798,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Comma-separated row enrichments. Supported: `sparkline7d` (per-row 7-day price history for chart columns; one batch read per page).",
+                        "content": "Comma-separated row enrichments. Supported: `sparkline24h` (per-row 24-hour price history) and `sparkline7d` (per-row 7-day price history), for chart columns; one batch read per page each.",
                         "type": "text/plain"
                       },
                       "key": "include",
@@ -923,7 +923,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Comma-separated row enrichments. Supported: `sparkline7d` (per-row 7-day price history for chart columns; one batch read per page).",
+                        "content": "Comma-separated row enrichments. Supported: `sparkline24h` (per-row 24-hour price history) and `sparkline7d` (per-row 7-day price history), for chart columns; one batch read per page each.",
                         "type": "text/plain"
                       },
                       "key": "include",
@@ -1048,7 +1048,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Comma-separated row enrichments. Supported: `sparkline7d` (per-row 7-day price history for chart columns; one batch read per page).",
+                        "content": "Comma-separated row enrichments. Supported: `sparkline24h` (per-row 24-hour price history) and `sparkline7d` (per-row 7-day price history), for chart columns; one batch read per page each.",
                         "type": "text/plain"
                       },
                       "key": "include",
@@ -1227,7 +1227,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Comma-separated row enrichments. Supported: `sparkline7d` (per-row 7-day price history for chart columns; one batch read per page).",
+                        "content": "Comma-separated row enrichments. Supported: `sparkline24h` (per-row 24-hour price history) and `sparkline7d` (per-row 7-day price history), for chart columns; one batch read per page each.",
                         "type": "text/plain"
                       },
                       "key": "include",
@@ -1352,7 +1352,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Comma-separated row enrichments. Supported: `sparkline7d` (per-row 7-day price history for chart columns; one batch read per page).",
+                        "content": "Comma-separated row enrichments. Supported: `sparkline24h` (per-row 24-hour price history) and `sparkline7d` (per-row 7-day price history), for chart columns; one batch read per page each.",
                         "type": "text/plain"
                       },
                       "key": "include",
