@@ -357,3 +357,47 @@ func TestMergeDerivedSACVolume_SkipsRegistryAlias(t *testing.T) {
 		t.Errorf("registry alias volume = %s, want 1 (left to mergeContractArmVolumeExcept)", *row.VolumeUSD24h)
 	}
 }
+
+// flakySACReader fails its first lookup and answers the rest, like a ClickHouse read that times out once.
+type flakySACReader struct {
+	ExplorerReader
+	calls int
+}
+
+func (f *flakySACReader) SACClassicAssetName(context.Context, string) (string, bool, error) {
+	f.calls++
+	if f.calls == 1 {
+		return "", false, errors.New("deadline exceeded")
+	}
+	return "sUSD:GCHW7CWI7GMIYQYFXMFJNJX5645XGWIINIAEQK3SABQO6CAYL5T7JYIH", true, nil
+}
+
+// TestMergeDerivedSACVolume_SkipsSACServedOnPage: a SAC still served as its own row keeps its volume there, so a lookup that
+// succeeds after the fold's failed must not add that volume to the classic row too.
+func TestMergeDerivedSACVolume_SkipsSACServedOnPage(t *testing.T) {
+	s := &Server{Options: Options{Explorer: &sacStubReader{name: "sUSD:GCHW7CWI7GMIYQYFXMFJNJX5645XGWIINIAEQK3SABQO6CAYL5T7JYIH", found: true}}}
+	rows := []AssetDetail{{AssetID: foldSUSDClassic, VolumeUSD24h: strp("0.1")}, {AssetID: foldSUSDSAC, VolumeUSD24h: strp("0.2")}}
+	s.mergeDerivedSACVolume(context.Background(), &rows[0], susdArm(true), countedSACs(rows, nil))
+	if *rows[0].VolumeUSD24h != "0.1" {
+		t.Errorf("classic volume = %s, want 0.1: the SAC row already serves its 0.2", *rows[0].VolumeUSD24h)
+	}
+}
+
+// TestSACWrappedAssetID_CachesNotFoundButNotErrors: a definite "not a SAC" is reused; a read error is asked again.
+func TestSACWrappedAssetID_CachesNotFoundButNotErrors(t *testing.T) {
+	notFound := &countingSACReader{}
+	s := &Server{Options: Options{Explorer: notFound}}
+	s.sacWrappedAssetID(context.Background(), foldSUSDSAC)
+	s.sacWrappedAssetID(context.Background(), foldSUSDSAC)
+	if notFound.calls != 1 {
+		t.Errorf("not-found lookups = %d, want 1 (cached)", notFound.calls)
+	}
+	failing := &flakySACReader{}
+	s = &Server{Options: Options{Explorer: failing}}
+	if _, ok := s.sacWrappedAssetID(context.Background(), foldSUSDSAC); ok {
+		t.Fatal("first lookup errored: want not ok")
+	}
+	if got, ok := s.sacWrappedAssetID(context.Background(), foldSUSDSAC); !ok || got != foldSUSDClassic {
+		t.Errorf("after an error = %q,%v, want a fresh lookup resolving %s", got, ok, foldSUSDClassic)
+	}
+}

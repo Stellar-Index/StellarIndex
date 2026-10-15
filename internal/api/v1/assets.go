@@ -3432,8 +3432,11 @@ func (s *Server) sacWrappedAssetID(ctx context.Context, contractID string) (stri
 	if v, ok := s.sacWrapped.Load(contractID); ok {
 		return v.(string), true
 	}
-	if v, ok := s.sacNotWrapped.Load(contractID); ok && time.Now().Before(v.(time.Time)) {
-		return "", false
+	if v, ok := s.sacNotWrapped.Load(contractID); ok {
+		if time.Now().Before(v.(time.Time)) {
+			return "", false
+		}
+		s.sacNotWrapped.Delete(contractID)
 	}
 	asset, ok, err := s.resolveSAC(ctx, contractID)
 	if !ok {
@@ -3455,12 +3458,26 @@ func (s *Server) restoreOffPageContractArms(ctx context.Context, rows []AssetDet
 		return
 	}
 	arm := s.tradedContractArm(ctx)
+	counted := countedSACs(rows, merged)
 	readCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	forEachBounded(s.logger, len(rows), readFanoutConcurrency, func(i int) {
 		s.mergeContractArmVolumeExcept(readCtx, &rows[i], rows[i].AssetID, merged)
-		s.mergeDerivedSACVolume(readCtx, &rows[i], arm, merged)
+		s.mergeDerivedSACVolume(readCtx, &rows[i], arm, counted)
 	})
+}
+
+// countedSACs is merged plus every row still served on the page: a SAC the fold could not confirm in time keeps its own row
+// and volume, so a later lookup that succeeds must not add that volume to the classic row as well.
+func countedSACs(rows []AssetDetail, merged map[string]struct{}) map[string]struct{} {
+	out := make(map[string]struct{}, len(merged)+len(rows))
+	for id := range merged {
+		out[id] = struct{}{}
+	}
+	for i := range rows {
+		out[rows[i].AssetID] = struct{}{}
+	}
+	return out
 }
 
 // contractArm is the listing's contract arm keyed by asset_id; complete is false when the read failed or hit its row cap.
@@ -3615,6 +3632,7 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 	if filters.unfiltered() && len(page) > 0 {
 		arm = s.tradedContractArm(statsCtx)
 	}
+	counted := countedSACs(page, nil)
 	var anyUnmeasured atomic.Bool
 	forEachBounded(s.logger, len(page), readFanoutConcurrency, func(i int) {
 		vc, ok := s.VerifiedCurrencies.LookupBySlug(page[i].Slug)
@@ -3637,7 +3655,7 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 		// dust-liquidity guard weighs the same volume on both paths.
 		if filters.unfiltered() {
 			s.mergeContractArmVolume(statsCtx, &twin[0], entry.AssetID)
-			s.mergeDerivedSACVolume(statsCtx, &twin[0], arm, nil)
+			s.mergeDerivedSACVolume(statsCtx, &twin[0], arm, counted)
 		}
 		// The classic-phase ordering: the twin's price backs the cap and the
 		// pills merged below, so a dust price must be withheld before either.
