@@ -1,16 +1,10 @@
 'use client';
 
 import { useMemo, useState, useSyncExternalStore } from 'react';
-import Link from 'next/link';
-import { ArrowLeftRight } from 'lucide-react';
 
-import { Callout, PageHeader, Select } from '@/components/ui';
-import {
-  buildAssetConvertParams,
-  buildConvertParams,
-  type ConvertAsset,
-} from '@/lib/convert-params';
-import { ConvertPair } from './[from]/[to]/ConvertPair';
+import { ButtonLink, Callout, PageHeader } from '@/components/ui';
+import { type ConvertAsset } from '@/lib/convert-params';
+import { ConvertPair, convertPageHref } from './[from]/[to]/ConvertPair';
 import { ConvertChart } from './[from]/[to]/ConvertChart';
 import {
   ConvertAssetIdsProvider,
@@ -53,14 +47,17 @@ export function ConvertLanding({
   tickers: string[];
   assets?: ConvertAsset[];
 }) {
-  const assetTickers = useMemo(() => assets.map((a) => a.ticker), [assets]);
   const options = useMemo(
-    () => ['XLM', ...assetTickers, ...tickers],
-    [assetTickers, tickers],
+    () => ['XLM', ...assets.map((a) => a.ticker), ...tickers],
+    [assets, tickers],
   );
   const ids = useMemo(
     () => Object.fromEntries(assets.map((a) => [a.ticker, a.assetId])),
     [assets],
+  );
+  const catalogue = useMemo(
+    () => ({ fiat: tickers, assets }),
+    [tickers, assets],
   );
   const search = useSyncExternalStore(
     subscribe,
@@ -78,52 +75,8 @@ export function ConvertLanding({
       to: tickers.includes('USD') ? 'USD' : tickers[0],
     };
   const unavailable = picked == null && requested.unavailable;
-  // The link's href comes from the built page list, never from the select value.
-  const pairPages = useMemo(
-    () =>
-      new Map(
-        [
-          ...buildConvertParams(tickers),
-          ...buildAssetConvertParams(assets, tickers),
-        ].map((p) => [`${p.from}/${p.to}`, p]),
-      ),
-    [tickers, assets],
-  );
-  const pagePair = pairPages.get(`${from.toUpperCase()}/${to.toUpperCase()}`);
-
-  const pickFrom = (next: string) =>
-    setPicked({
-      from: next,
-      to: next === to ? (tickers.find((t) => t !== next) ?? to) : to,
-    });
-  const pickTo = (next: string) =>
-    setPicked({
-      from: next === from ? (tickers.find((t) => t !== next) ?? 'XLM') : from,
-      to: next,
-    });
-  const swap = () => setPicked({ from: to, to: from });
-
-  const optionList = (
-    <>
-      <option value="XLM">XLM</option>
-      {assetTickers.length > 0 && (
-        <optgroup label="Verified Stellar assets">
-          {assetTickers.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
-        </optgroup>
-      )}
-      <optgroup label="Fiat currencies">
-        {tickers.map((t) => (
-          <option key={t} value={t}>
-            {t}
-          </option>
-        ))}
-      </optgroup>
-    </>
-  );
+  // The link's href comes from the built page list, never from the picker value.
+  const pageHref = convertPageHref({ from, to }, catalogue);
 
   return (
     <ConvertAssetIdsProvider ids={ids}>
@@ -131,6 +84,13 @@ export function ConvertLanding({
         <PageHeader
           title="Convert"
           breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Convert' }]}
+          actions={
+            pageHref && (
+              <ButtonLink href={pageHref} variant="secondary" size="sm">
+                {from} → {to} page
+              </ButtonLink>
+            )
+          }
         />
         {unavailable && (
           <Callout tone="info" title="That pair isn't available to convert">
@@ -138,45 +98,6 @@ export function ConvertLanding({
             currencies. Pick a pair below.
           </Callout>
         )}
-        <div className="flex flex-wrap items-end gap-3">
-          <label className="text-ink-muted space-y-1 text-xs tracking-wider uppercase">
-            <span className="block">From</span>
-            <Select
-              aria-label="From"
-              value={from}
-              onChange={(e) => pickFrom(e.target.value)}
-            >
-              {optionList}
-            </Select>
-          </label>
-          <button
-            type="button"
-            onClick={swap}
-            aria-label="Swap currencies"
-            title="Swap"
-            className="border-line text-ink-body hover:border-brand-500 hover:text-brand-600 inline-flex h-9 items-center rounded-md border px-3 disabled:opacity-40"
-          >
-            <ArrowLeftRight className="h-4 w-4" />
-          </button>
-          <label className="text-ink-muted space-y-1 text-xs tracking-wider uppercase">
-            <span className="block">To</span>
-            <Select
-              aria-label="To"
-              value={to}
-              onChange={(e) => pickTo(e.target.value)}
-            >
-              {optionList}
-            </Select>
-          </label>
-          {pagePair && (
-            <Link
-              href={`/convert/${pagePair.from}/${pagePair.to}`}
-              className="text-brand-600 h-9 text-sm leading-9 hover:underline"
-            >
-              {from} → {to} page
-            </Link>
-          )}
-        </div>
         {/* key: a new pair must not paint the previous pair's rate. */}
         <ConvertLiveRate
           key={`${from}/${to}`}
@@ -193,6 +114,8 @@ export function ConvertLanding({
         to={to}
         initialRate={null}
         initialInverse={null}
+        catalogue={catalogue}
+        onPick={setPicked}
       />
       <ConvertChart key={`chart-${from}/${to}`} from={from} to={to} />
       <ConvertSnippets

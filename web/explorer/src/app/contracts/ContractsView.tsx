@@ -32,6 +32,7 @@ import {
   Td,
   Th,
   THead,
+  LinkRow,
 } from '@/components/ui';
 import { categoryLabel, protocolMeta } from '../protocols/registry';
 import { formatTimestamp } from '../explorer-shared';
@@ -112,7 +113,7 @@ export function contractTypeBadge(c: {
     return (
       <Link
         href={`/protocols/${encodeURIComponent(c.protocol)}`}
-        className="focus-visible:ring-brand-500 inline-flex rounded-full hover:opacity-80 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-hidden"
+        className="inline-flex rounded-full hover:opacity-80"
       >
         <Badge tone="brand">
           Protocol · {protocolMeta(c.protocol)?.label ?? c.protocol}
@@ -321,7 +322,10 @@ function MostActivePanel({ sacMap }: { sacMap: SACMap }) {
                     ? 'XLM'
                     : wrapped.split(/[:-]/)[0];
               return (
-                <TR key={id}>
+                <LinkRow
+                  href={`/contracts/${encodeURIComponent(id)}/`}
+                  key={id}
+                >
                   <Td>
                     <Link
                       href={`/contracts/${encodeURIComponent(id)}/`}
@@ -359,7 +363,7 @@ function MostActivePanel({ sacMap }: { sacMap: SACMap }) {
                   >
                     {formatTimestamp(c.last_seen)}
                   </Td>
-                </TR>
+                </LinkRow>
               );
             })}
           </TBody>
@@ -450,7 +454,10 @@ function RegistryPanel() {
               </NoteRow>
             )}
             {rows.map((p) => (
-              <TR key={p.name}>
+              <LinkRow
+                href={`/protocols/${encodeURIComponent(p.name)}`}
+                key={p.name}
+              >
                 <Td>
                   <Link
                     href={`/protocols/${encodeURIComponent(p.name)}`}
@@ -499,7 +506,7 @@ function RegistryPanel() {
                 <Td align="right" className="font-mono">
                   {formatCompact(p.events_24h ?? 0)}
                 </Td>
-              </TR>
+              </LinkRow>
             ))}
           </TBody>
         </Table>

@@ -8,9 +8,9 @@ import {
   Table,
   THead,
   TBody,
-  TR,
   Th,
   Td,
+  LinkRow,
 } from '@/components/ui';
 import { asExample, API_BASE_URL } from '@/api/client';
 import {
@@ -137,7 +137,10 @@ export async function LiquidityTabPanel({
                   ? formatPairPrice(p.last_price)
                   : null;
                 return (
-                  <TR key={`${p.source}|${p.base}|${p.quote}|${p.side}`}>
+                  <LinkRow
+                    href={`/markets/${slug}`}
+                    key={`${p.source}|${p.base}|${p.quote}|${p.side}`}
+                  >
                     <Td>
                       <Link
                         href={hrefFor.source(p.source)}
@@ -189,7 +192,7 @@ export async function LiquidityTabPanel({
                     <Td>
                       <Badge tone="neutral">{p.side}</Badge>
                     </Td>
-                  </TR>
+                  </LinkRow>
                 );
               })}
             </TBody>

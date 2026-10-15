@@ -17,6 +17,7 @@ import {
   Th,
   THead,
   TxStatusBadge,
+  LinkRow,
 } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import { formatCompact, truncateMiddle } from '@/lib/format';
@@ -208,7 +209,7 @@ function TxTable({
               </TR>
             )}
             {rows?.map((t) => (
-              <TR key={t.hash}>
+              <LinkRow href={`/transactions/${t.hash}/`} key={t.hash}>
                 <Td>
                   <Link
                     href={`/transactions/${t.hash}/`}
@@ -259,7 +260,7 @@ function TxTable({
                     <span className="text-ink-faint">—</span>
                   )}
                 </Td>
-              </TR>
+              </LinkRow>
             ))}
           </TBody>
         </Table>

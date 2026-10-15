@@ -29,6 +29,7 @@ import {
   StatCell,
   StatGrid,
   TBody,
+  LinkRow,
   TR,
   Table,
   Td,
@@ -599,7 +600,10 @@ function CuratedPanel({
                 </THead>
                 <TBody>
                   {rows.map((a) => (
-                    <TR key={a.asset_id}>
+                    <LinkRow
+                      href={assetHref(a.slug || a.asset_id)}
+                      key={a.asset_id}
+                    >
                       <Td>
                         <Link
                           href={assetHref(a.slug || a.asset_id)}
@@ -627,7 +631,7 @@ function CuratedPanel({
                           <Badge tone="neutral">No — curator only</Badge>
                         )}
                       </Td>
-                    </TR>
+                    </LinkRow>
                   ))}
                 </TBody>
               </Table>
@@ -1642,7 +1646,7 @@ function AssetRow({ asset }: { asset: RWAAsset }) {
   const reason = VALUATION_REASON[asset.valuation.status];
 
   return (
-    <TR>
+    <LinkRow href={assetHref(asset.slug || asset.asset_id)}>
       <Td>
         <Link
           href={assetHref(asset.slug || asset.asset_id)}
@@ -1710,7 +1714,7 @@ function AssetRow({ asset }: { asset: RWAAsset }) {
           <span className="text-ink-faint">—</span>
         )}
       </Td>
-    </TR>
+    </LinkRow>
   );
 }
 

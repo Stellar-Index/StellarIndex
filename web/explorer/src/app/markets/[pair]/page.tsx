@@ -29,11 +29,11 @@ import {
   EmptyState,
   PageHeader,
   TBody,
-  TR,
   Table,
   Td,
   Th,
   THead,
+  LinkRow,
 } from '@/components/ui';
 import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 import { Panel } from '@/components/reveal';
@@ -496,7 +496,10 @@ export default async function PairPage({ params }: { params: Params }) {
                 </THead>
                 <TBody>
                   {history.map((t, i) => (
-                    <TR key={`${t.tx_hash ?? ''}|${t.op_index ?? i}|${t.ts}`}>
+                    <LinkRow
+                      href={`/transactions/${t.tx_hash}/`}
+                      key={`${t.tx_hash ?? ''}|${t.op_index ?? i}|${t.ts}`}
+                    >
                       <Td className="text-ink-muted font-mono text-xs whitespace-nowrap">
                         {t.tx_hash ? (
                           <Link
@@ -532,7 +535,7 @@ export default async function PairPage({ params }: { params: Params }) {
                           t.quote_decimals ?? 7,
                         )}
                       </Td>
-                    </TR>
+                    </LinkRow>
                   ))}
                 </TBody>
               </Table>
@@ -591,7 +594,7 @@ function SourceBreakdownPanel({
                 r.volume_24h_usd != null &&
                 compareDecimalStrings(r.volume_24h_usd, '0') === 1;
               return (
-                <TR key={r.source}>
+                <LinkRow href={hrefFor.source(r.source)} key={r.source}>
                   <Td>
                     <Link
                       href={hrefFor.source(r.source)}
@@ -622,7 +625,7 @@ function SourceBreakdownPanel({
                       </span>
                     </span>
                   </Td>
-                </TR>
+                </LinkRow>
               );
             })}
           </TBody>

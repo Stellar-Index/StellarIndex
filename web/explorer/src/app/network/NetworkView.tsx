@@ -21,6 +21,7 @@ import {
   Td,
   Th,
   THead,
+  LinkRow,
   TR,
 } from '@/components/ui';
 import { usePools, useSources, isOnChainSource } from '@/api/hooks';
@@ -753,7 +754,7 @@ function LatestLedgers({
             </THead>
             <TBody>
               {rows.map((l, i) => (
-                <TR key={l.sequence}>
+                <LinkRow href={`/ledgers/${l.sequence}/`} key={l.sequence}>
                   <Td>
                     <Link
                       href={`/ledgers/${l.sequence}/`}
@@ -784,7 +785,7 @@ function LatestLedgers({
                   <Td align="right" className="text-ink-muted">
                     {relativeAge(l.close_time)}
                   </Td>
-                </TR>
+                </LinkRow>
               ))}
             </TBody>
           </Table>
@@ -859,7 +860,10 @@ function TopMarkets() {
               {rows.map((m) => {
                 const slug = `${m.base}~${m.quote}`;
                 return (
-                  <TR key={`${m.source}:${slug}`}>
+                  <LinkRow
+                    href={`/markets/${encodeURIComponent(slug)}`}
+                    key={`${m.source}:${slug}`}
+                  >
                     <Td>
                       <Link
                         href={`/markets/${encodeURIComponent(slug)}`}
@@ -883,7 +887,7 @@ function TopMarkets() {
                         ? `$${formatCompactUnits(m.volume_24h_usd)}`
                         : '—'}
                     </Td>
-                  </TR>
+                  </LinkRow>
                 );
               })}
             </TBody>
@@ -944,7 +948,10 @@ function ActiveSources() {
             </THead>
             <TBody>
               {rows.map((src) => (
-                <TR key={src.name}>
+                <LinkRow
+                  href={`/sources/${encodeURIComponent(src.name)}`}
+                  key={src.name}
+                >
                   <Td>
                     <Link
                       href={`/sources/${encodeURIComponent(src.name)}`}
@@ -959,7 +966,7 @@ function ActiveSources() {
                       ? `$${formatCompactUnits(src.volume_24h_usd)}`
                       : '—'}
                   </Td>
-                </TR>
+                </LinkRow>
               ))}
             </TBody>
           </Table>

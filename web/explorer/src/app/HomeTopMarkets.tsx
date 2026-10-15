@@ -13,6 +13,7 @@ import {
   Td,
   Th,
   THead,
+  LinkRow,
   TR,
 } from '@/components/ui';
 import {
@@ -96,7 +97,10 @@ export function HomeTopMarkets() {
               {top.map((m, i) => {
                 const slug = `${m.base}~${m.quote}`;
                 return (
-                  <TR key={`${m.base}|${m.quote}`}>
+                  <LinkRow
+                    href={`/markets/${encodeURIComponent(slug)}`}
+                    key={`${m.base}|${m.quote}`}
+                  >
                     <Td className="text-ink-faint">
                       <Link
                         href={`/markets/${encodeURIComponent(slug)}`}
@@ -135,7 +139,7 @@ export function HomeTopMarkets() {
                     <Td align="right" className="text-ink-body font-mono">
                       {formatCompact(m.trade_count_24h)}
                     </Td>
-                  </TR>
+                  </LinkRow>
                 );
               })}
             </TBody>

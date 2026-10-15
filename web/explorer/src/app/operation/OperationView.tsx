@@ -20,8 +20,8 @@ import {
   Td,
   Th,
   THead,
-  TR,
   TxStatusBadge,
+  LinkRow,
 } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import { titleCase } from '@/lib/account-format';
@@ -290,7 +290,10 @@ function OpEventsPanel({ hash, events }: { hash: string; events: TxEvent[] }) {
           </THead>
           <TBody>
             {events.map((ev, i) => (
-              <TR key={`${ev.event_index ?? i}`}>
+              <LinkRow
+                href={`/contracts/${ev.contract_id}/`}
+                key={`${ev.event_index ?? i}`}
+              >
                 <Td>
                   <HashLink
                     href={`/contracts/${ev.contract_id}/`}
@@ -305,7 +308,7 @@ function OpEventsPanel({ hash, events }: { hash: string; events: TxEvent[] }) {
                 <Td className="text-ink-muted font-mono text-[13px]">
                   {ev.topic_0 || '—'}
                 </Td>
-              </TR>
+              </LinkRow>
             ))}
           </TBody>
         </Table>

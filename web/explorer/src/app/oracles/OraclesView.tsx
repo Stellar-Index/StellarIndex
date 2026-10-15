@@ -32,6 +32,7 @@ import {
   Td,
   Th,
   THead,
+  LinkRow,
 } from '@/components/ui';
 
 type OracleStream = components['schemas']['OracleReading'];
@@ -218,7 +219,7 @@ export function OraclesView() {
               {oracles.map((o) => {
                 const perSrc = perSourceCounts[o.name];
                 return (
-                  <TR key={o.name}>
+                  <LinkRow href={hrefFor.source(o.name)} key={o.name}>
                     <Td>
                       <SourceLink name={o.name} />
                     </Td>
@@ -242,7 +243,7 @@ export function OraclesView() {
                     >
                       {perSrc ? formatRelative(perSrc.latestTs) : '—'}
                     </Td>
-                  </TR>
+                  </LinkRow>
                 );
               })}
             </TBody>

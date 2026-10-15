@@ -25,8 +25,8 @@ import {
   Td,
   Th,
   THead,
-  TR,
   TxStatusBadge,
+  LinkRow,
 } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import {
@@ -433,7 +433,10 @@ function EventsPanel({
           </THead>
           <TBody>
             {events.map((ev, i) => (
-              <TR key={`${ev.op_index}-${ev.event_index ?? i}`}>
+              <LinkRow
+                href={`/contracts/${ev.contract_id}/`}
+                key={`${ev.op_index}-${ev.event_index ?? i}`}
+              >
                 <Td align="right" className="text-ink-muted">
                   {ev.op_index}
                 </Td>
@@ -451,7 +454,7 @@ function EventsPanel({
                 <Td className="text-ink-muted font-mono text-[13px]">
                   {ev.topic_0 || '—'}
                 </Td>
-              </TR>
+              </LinkRow>
             ))}
           </TBody>
         </Table>

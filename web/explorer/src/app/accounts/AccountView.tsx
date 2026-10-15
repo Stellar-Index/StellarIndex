@@ -34,6 +34,7 @@ import {
   THead,
   TR,
   TxStatusBadge,
+  LinkRow,
 } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import { useIssuers } from '@/api/hooks';
@@ -380,7 +381,10 @@ function AccountsDirectory() {
               </THead>
               <TBody>
                 {rows.map((a, i) => (
-                  <TR key={a.account_id}>
+                  <LinkRow
+                    href={`/accounts/${encodeURIComponent(a.account_id)}/`}
+                    key={a.account_id}
+                  >
                     <Td
                       align="right"
                       className="text-ink-faint font-mono tabular-nums"
@@ -413,7 +417,7 @@ function AccountsDirectory() {
                     >
                       {share(a)}
                     </Td>
-                  </TR>
+                  </LinkRow>
                 ))}
               </TBody>
             </Table>
@@ -757,7 +761,7 @@ function AccountEntriesPanels({ state }: { state: AccountStateResp }) {
                   </THead>
                   <TBody>
                     {signers.map((s) => (
-                      <TR key={s.key}>
+                      <LinkRow href={`/accounts/${s.key}/`} key={s.key}>
                         <Td>
                           {ACCOUNT_RE.test(s.key) ? (
                             <Link
@@ -779,7 +783,7 @@ function AccountEntriesPanels({ state }: { state: AccountStateResp }) {
                         <Td align="right" className="font-mono tabular-nums">
                           {s.weight}
                         </Td>
-                      </TR>
+                      </LinkRow>
                     ))}
                   </TBody>
                 </Table>
@@ -1043,7 +1047,7 @@ function TransactionsPanel({
           </THead>
           <TBody>
             {transactions.map((t: LedgerTransaction) => (
-              <TR key={t.hash}>
+              <LinkRow href={`/transactions/${t.hash}/`} key={t.hash}>
                 <Td className="whitespace-nowrap">
                   <Link
                     href={`/transactions/${t.hash}/`}
@@ -1100,7 +1104,7 @@ function TransactionsPanel({
                     <span className="text-ink-faint">—</span>
                   )}
                 </Td>
-              </TR>
+              </LinkRow>
             ))}
           </TBody>
         </Table>

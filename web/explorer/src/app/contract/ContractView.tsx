@@ -19,6 +19,7 @@ import {
   Segmented,
   Skeleton,
   TBody,
+  LinkRow,
   TR,
   Table,
   Td,
@@ -758,7 +759,10 @@ function TransfersPanel({ id }: { id: string }) {
           </THead>
           <TBody>
             {rows.map((t, i) => (
-              <TR key={`${t.tx_hash}-${i}`}>
+              <LinkRow
+                href={`/transactions/${t.tx_hash}/`}
+                key={`${t.tx_hash}-${i}`}
+              >
                 <Td className="font-mono text-xs">{t.event_kind ?? '—'}</Td>
                 <Td>
                   <Party id={t.from} />
@@ -791,7 +795,7 @@ function TransfersPanel({ id }: { id: string }) {
                     <span className="text-ink-faint">—</span>
                   )}
                 </Td>
-              </TR>
+              </LinkRow>
             ))}
           </TBody>
         </Table>
@@ -884,7 +888,10 @@ function InteractionsPanel({ id }: { id: string }) {
               const label = sacLabel(cid);
               const n = e.shared_txs ?? 0;
               return (
-                <TR key={cid}>
+                <LinkRow
+                  href={`/contracts/${encodeURIComponent(cid)}/`}
+                  key={cid}
+                >
                   <Td>
                     {label && (
                       <span className="text-ink mr-2 text-sm">{label}</span>
@@ -920,7 +927,7 @@ function InteractionsPanel({ id }: { id: string }) {
                       {n.toLocaleString('en-US')}
                     </span>
                   </Td>
-                </TR>
+                </LinkRow>
               );
             })}
           </TBody>
@@ -1141,7 +1148,10 @@ function EventsPanel({
               </TR>
             )}
             {rows.map((ev, i) => (
-              <TR key={`${ev.tx_hash}-${ev.op_index}-${ev.event_index ?? i}`}>
+              <LinkRow
+                href={`/transactions/${ev.tx_hash}/`}
+                key={`${ev.tx_hash}-${ev.op_index}-${ev.event_index ?? i}`}
+              >
                 <Td className="font-mono text-xs">{ev.topic_0 || '—'}</Td>
                 {mixedTypes && (
                   <Td className="text-ink-muted font-mono text-xs">
@@ -1177,7 +1187,7 @@ function EventsPanel({
                     #{ev.ledger}
                   </Link>
                 </Td>
-              </TR>
+              </LinkRow>
             ))}
           </TBody>
         </Table>

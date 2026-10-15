@@ -11,6 +11,7 @@ import {
   Table,
   THead,
   TBody,
+  LinkRow,
   TR,
   Th,
   Td,
@@ -189,7 +190,10 @@ export function CreatorBoard() {
             </THead>
             <TBody>
               {d.creators.map((c) => (
-                <TR key={c.account}>
+                <LinkRow
+                  href={`/insights/creators/${encodeURIComponent(c.account)}/`}
+                  key={c.account}
+                >
                   <Td align="right">{c.rank}</Td>
                   <Td>
                     {/* Through to the creator's own page, not straight to
@@ -220,7 +224,7 @@ export function CreatorBoard() {
                     {xlmReadable(c.live_stroops)}
                   </Td>
                   <Td align="right">{formatTimestamp(c.last_created_at)}</Td>
-                </TR>
+                </LinkRow>
               ))}
             </TBody>
           </Table>

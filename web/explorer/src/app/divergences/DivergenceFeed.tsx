@@ -256,7 +256,7 @@ function PairRows({
                   aria-current={isSel ? 'true' : 'false'}
                   aria-label={`Plot ${shortAssetText(pair.asset_id)}/${shortAssetText(pair.quote_id)} divergence history`}
                   onClick={onSelect}
-                  className={`focus-visible:ring-brand-500/60 rounded-sm px-1.5 py-0.5 text-xs transition-colors focus-visible:ring-2 focus-visible:outline-hidden ${
+                  className={`rounded-sm px-1.5 py-0.5 text-xs transition-colors ${
                     isSel
                       ? 'text-brand-600 font-medium'
                       : 'text-ink-faint hover:text-brand-600'

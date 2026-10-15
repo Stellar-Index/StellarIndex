@@ -39,7 +39,7 @@ import {
   Td,
   Th,
   THead,
-  TR,
+  LinkRow,
 } from '@/components/ui';
 import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 import { AssetScamCallout } from './AssetScamCallout';
@@ -1315,7 +1315,7 @@ function OverviewBody({
                 {coin.top_markets.map((m) => {
                   const pairURL = topMarketHref(coin.asset_id, m);
                   return (
-                    <TR key={`${m.side}|${m.counterparty}`}>
+                    <LinkRow href={pairURL} key={`${m.side}|${m.counterparty}`}>
                       <Td>
                         <Badge tone="neutral">{m.side}</Badge>
                       </Td>
@@ -1343,7 +1343,7 @@ function OverviewBody({
                       <Td align="right" className="text-ink-muted font-mono">
                         {fmtCompact(m.trade_count_24h)}
                       </Td>
-                    </TR>
+                    </LinkRow>
                   );
                 })}
               </TBody>

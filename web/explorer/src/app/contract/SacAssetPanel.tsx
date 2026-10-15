@@ -10,11 +10,11 @@ import {
   StatCell,
   StatGrid,
   TBody,
-  TR,
   Table,
   Td,
   Th,
   THead,
+  LinkRow,
 } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import { useAsset, useAssetSupply, type AssetDetail } from '@/api/hooks';
@@ -266,7 +266,10 @@ function SacMovement({
               </THead>
               <TBody>
                 {rows.map((h, i) => (
-                  <TR key={h.account_id}>
+                  <LinkRow
+                    href={`/accounts/${encodeURIComponent(h.account_id ?? '')}/`}
+                    key={h.account_id}
+                  >
                     <Td className="text-ink-faint font-mono text-xs">
                       {i + 1}
                     </Td>
@@ -281,7 +284,7 @@ function SacMovement({
                     <Td align="right" className="font-mono tabular-nums">
                       {formatUnitsReadable(h.balance, decimals)}
                     </Td>
-                  </TR>
+                  </LinkRow>
                 ))}
               </TBody>
             </Table>

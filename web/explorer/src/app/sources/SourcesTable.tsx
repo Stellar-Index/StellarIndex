@@ -12,7 +12,16 @@ import {
   type Source,
 } from '@/api/hooks';
 import { formatDurationShort } from '@/lib/format';
-import { Badge, Input, TBody, TR, Table, Td, Th, THead } from '@/components/ui';
+import {
+  LinkRow,
+  Badge,
+  Input,
+  TBody,
+  Table,
+  Td,
+  Th,
+  THead,
+} from '@/components/ui';
 import { CountBar, LagDot } from './SourceListMarks';
 
 /**
@@ -209,7 +218,10 @@ export function SourcesTable() {
                 </THead>
                 <TBody>
                   {rows.map((s) => (
-                    <TR key={s.name}>
+                    <LinkRow
+                      href={`/sources/${encodeURIComponent(s.name)}`}
+                      key={s.name}
+                    >
                       <Td>
                         <Link
                           href={`/sources/${encodeURIComponent(s.name)}`}
@@ -258,7 +270,7 @@ export function SourcesTable() {
                           {!s.backfill_available && <Badge>live-only</Badge>}
                         </div>
                       </Td>
-                    </TR>
+                    </LinkRow>
                   ))}
                 </TBody>
               </Table>

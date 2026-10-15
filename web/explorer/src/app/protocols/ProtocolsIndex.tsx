@@ -21,6 +21,7 @@ import {
   StatCell,
   StatGrid,
   TBody,
+  LinkRow,
   TR,
   Table,
   Td,
@@ -272,7 +273,7 @@ export function ProtocolsIndex({
                     c.name === 'sdex' ? '/sdex' : hrefFor.protocol(c.name);
                   const pools = poolsBySource.get(c.name) ?? 0;
                   return (
-                    <TR key={c.name}>
+                    <LinkRow href={href} key={c.name}>
                       <Td>
                         <Link
                           href={href}
@@ -317,7 +318,7 @@ export function ProtocolsIndex({
                       <Td>
                         <CoverageBadge completeness={c.completeness} />
                       </Td>
-                    </TR>
+                    </LinkRow>
                   );
                 })}
               </TBody>

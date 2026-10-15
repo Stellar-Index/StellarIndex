@@ -99,14 +99,14 @@ export function CursorsTable() {
             placeholder="Filter sources or sub-sources…"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            className="border-line bg-surface placeholder:text-ink-faint focus:border-brand-500 focus:ring-brand-500 w-64 rounded-md border px-2.5 py-1 font-mono text-[11px] focus:ring-1 focus:outline-hidden"
+            className="border-line bg-surface placeholder:text-ink-faint focus:border-brand-500 focus:border-brand-500 w-64 rounded-md border px-2.5 py-1 font-mono text-[11px] focus:outline-hidden"
           />
           <label className="text-ink-body inline-flex items-center gap-1.5 font-mono text-[11px] select-none">
             <input
               type="checkbox"
               checked={hideStale}
               onChange={(e) => setHideStale(e.target.checked)}
-              className="border-line-strong text-brand-600 focus:ring-brand-500 h-3.5 w-3.5 rounded-sm"
+              className="border-line-strong text-brand-600 focus:border-brand-500 h-3.5 w-3.5 rounded-sm"
             />
             Hide stale (&gt;1h)
           </label>

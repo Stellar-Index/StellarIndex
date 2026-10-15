@@ -21,6 +21,7 @@ import {
   Td,
   Th,
   THead,
+  LinkRow,
   TR,
 } from '@/components/ui';
 import {
@@ -181,7 +182,7 @@ function Row({
   const volumeText = formatCompactUnits(coin.volume_24h_usd);
   const sub = assetSubLabel(coin);
   return (
-    <TR>
+    <LinkRow href={assetHref(coinSlug(coin))}>
       <Td className="text-ink-faint">{rank}</Td>
       <Td>
         <Link
@@ -272,7 +273,7 @@ function Row({
           </span>
         </Td>
       )}
-    </TR>
+    </LinkRow>
   );
 }
 

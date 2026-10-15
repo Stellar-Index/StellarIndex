@@ -11,9 +11,9 @@ import {
   Table,
   THead,
   TBody,
-  TR,
   Th,
   Td,
+  LinkRow,
 } from '@/components/ui';
 import { asExample } from '@/api/client';
 import { SourceSparkline } from '@/components/SourceSparkline';
@@ -197,7 +197,7 @@ function Row({
   const pairSlug = `${m.base}~${m.quote}`;
   const avgTrade = divideDecimalString(m.volume_24h_usd, m.trade_count_24h);
   return (
-    <TR>
+    <LinkRow href={`/markets/${encodeURIComponent(pairSlug)}/`}>
       <Td className="whitespace-nowrap">
         {/* Rows link their pair page. */}
         <Link
@@ -245,7 +245,7 @@ function Row({
           {formatRelative(m.last_trade_at)}
         </span>
       </Td>
-    </TR>
+    </LinkRow>
   );
 }
 

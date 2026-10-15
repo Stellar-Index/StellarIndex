@@ -18,6 +18,7 @@ import {
   Td,
   Th,
   THead,
+  LinkRow,
 } from '@/components/ui';
 import { useIssuers, type IssuerListEntry } from '@/api/hooks';
 import { formatCompact, truncateMiddle } from '@/lib/format';
@@ -192,7 +193,7 @@ function IssuerRow({
   const href = `/issuers/${encodeURIComponent(row.g_strkey)}`;
   const safeDomain = isSafeHomeDomain(row.home_domain);
   return (
-    <TR>
+    <LinkRow href={href}>
       <Td className="text-ink-faint font-mono tabular-nums">{rank}</Td>
       <Td>
         <div className="flex flex-wrap items-center gap-2 whitespace-nowrap">
@@ -267,6 +268,6 @@ function IssuerRow({
           </span>
         </div>
       </Td>
-    </TR>
+    </LinkRow>
   );
 }

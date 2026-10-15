@@ -87,7 +87,7 @@ function rowBody(body: string, from: number): string {
 /**
  * `<button …>…</button>` elements inside a slice of markup, counting the ui
  * `Button` primitive, which renders a native `<button>` with its own name
- * and focus ring.
+ * and focus outline.
  */
 function buttonsIn(markup: string): string[] {
   const out: string[] = [];
@@ -111,7 +111,10 @@ function isNamed(button: string): boolean {
 }
 
 describe('every clickable table row carries a real control', () => {
+  // `LinkRow` is the one `<tr onClick>` whose control is a Link rather than
+  // a button; the describe below holds its uses to that.
   const rows = sourceFiles().flatMap(([path, body]) => {
+    if (path === 'components/ui/LinkRow.tsx') return [];
     const text = blankComments(body);
     return openingTags(body)
       .filter(
@@ -155,13 +158,13 @@ describe('every clickable table row carries a real control', () => {
       .map((r) => r.where);
     expect(unnamed).toEqual([]);
 
-    // The ui Button carries its focus ring itself (components/ui/Button).
+    // The visible focus comes from the global :focus-visible outline, so a
+    // row control must not switch it off.
+    expect(readFileSync(join(SRC, 'app/globals.css'), 'utf8')).toMatch(
+      /:focus-visible\s*\{\s*outline:\s*1px solid/,
+    );
     const unfocusable = rows
-      .filter(
-        (r) =>
-          !/focus-visible:|focus:/.test(r.markup) &&
-          !/<Button[\s>]/.test(r.markup),
-      )
+      .filter((r) => /focus(-visible)?:outline-(hidden|none)/.test(r.markup))
       .map((r) => r.where);
     expect(unfocusable).toEqual([]);
   });
@@ -173,6 +176,33 @@ describe('every clickable table row carries a real control', () => {
       .filter((r) => !/aria-(current|expanded|pressed)[=\s]/.test(r.markup))
       .map((r) => r.where);
     expect(mute).toEqual([]);
+  });
+});
+
+describe('every LinkRow carries the link it opens', () => {
+  // A LinkRow navigates from a click anywhere on the row. That is a mouse
+  // convenience on top of a real control, never instead of one: the Link in
+  // the row is the tab stop, the Enter target and the screen-reader name.
+  const linkRows = sourceFiles().flatMap(([path, body]) => {
+    const text = blankComments(body);
+    return [...text.matchAll(/<LinkRow\b/g)].map((m) => {
+      const end = text.indexOf('</LinkRow>', m.index);
+      return {
+        where: `${path}:${text.slice(0, m.index).split('\n').length}`,
+        markup: text.slice(m.index, end === -1 ? text.length : end),
+      };
+    });
+  });
+
+  it('finds the link rows to check', () => {
+    expect(linkRows.length).toBeGreaterThanOrEqual(10);
+  });
+
+  it('puts a Link inside each of them', () => {
+    const offenders = linkRows
+      .filter((r) => !/<(Link|a|HashLink|SourceLink)[\s>]/.test(r.markup))
+      .map((r) => r.where);
+    expect(offenders).toEqual([]);
   });
 });
 

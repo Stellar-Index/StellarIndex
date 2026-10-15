@@ -194,6 +194,7 @@ export default async function ConvertPage({ params }: { params: Params }) {
     : await fetchDetail(f, t);
   const rate = detail?.cross_rates?.[t] ?? null;
   const inverse = rate != null && rate > 0 ? 1 / rate : null;
+  const catalogue = await fetchConvertCatalogue();
 
   return (
     <ConvertAssetIdsProvider ids={asset ? { [f]: asset.assetId } : {}}>
@@ -222,6 +223,7 @@ export default async function ConvertPage({ params }: { params: Params }) {
           to={t}
           initialRate={rate}
           initialInverse={inverse}
+          catalogue={catalogue}
         />
 
         <ConvertChart from={f} to={t} />

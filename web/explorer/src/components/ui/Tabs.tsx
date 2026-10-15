@@ -19,42 +19,42 @@ export function TabNav({
   className?: string;
 }) {
   return (
-    <div
-      className={cn(
-        'border-line flex items-center gap-1 overflow-x-auto border-b',
-        className,
-      )}
-    >
-      {items.map((t) => {
-        const active = activeHref === t.href;
-        return (
-          <Link
-            key={t.href}
-            href={t.href}
-            aria-current={active ? 'page' : undefined}
-            className={cn(
-              '-mb-px border-b-2 px-3 py-2.5 text-sm font-medium whitespace-nowrap transition-colors',
-              active
-                ? 'border-brand-600 text-brand-700'
-                : 'text-ink-muted hover:border-line-strong hover:text-ink border-transparent',
-            )}
-          >
-            {t.label}
-            {typeof t.count === 'number' && (
-              <span
-                className={cn(
-                  'tnum ml-1.5 rounded-full px-1.5 py-0.5 text-[11px]',
-                  active
-                    ? 'bg-brand-50 text-brand-700'
-                    : 'bg-surface-subtle text-ink-muted',
-                )}
-              >
-                {t.count}
-              </span>
-            )}
-          </Link>
-        );
-      })}
+    // The scroll box sits inside the bordered box: an overflow-x-auto
+    // element also scrolls vertically, so a link pulled onto the border with
+    // -mb-px gave the strip a 1px vertical scrollbar.
+    <div className={cn('border-line border-b', className)}>
+      <div className="-mb-px flex items-center gap-1 overflow-x-auto">
+        {items.map((t) => {
+          const active = activeHref === t.href;
+          return (
+            <Link
+              key={t.href}
+              href={t.href}
+              aria-current={active ? 'page' : undefined}
+              className={cn(
+                'border-b-2 px-3 py-2.5 text-sm font-medium whitespace-nowrap transition-colors',
+                active
+                  ? 'border-brand-600 text-brand-700'
+                  : 'text-ink-muted hover:border-line-strong hover:text-ink border-transparent',
+              )}
+            >
+              {t.label}
+              {typeof t.count === 'number' && (
+                <span
+                  className={cn(
+                    'tnum ml-1.5 rounded-full px-1.5 py-0.5 text-[11px]',
+                    active
+                      ? 'bg-brand-50 text-brand-700'
+                      : 'bg-surface-subtle text-ink-muted',
+                  )}
+                >
+                  {t.count}
+                </span>
+              )}
+            </Link>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -95,7 +95,7 @@ export function Segmented({
           onClick={() => onChange(o.value)}
           aria-pressed={value === o.value}
           className={cn(
-            'focus-visible:ring-brand-500/60 rounded-md px-2.5 py-1 text-[13px] font-medium transition-colors focus-visible:ring-2 focus-visible:outline-hidden',
+            'rounded-md px-2.5 py-1 text-[13px] font-medium transition-colors',
             value === o.value
               ? 'bg-surface text-ink shadow-xs'
               : 'text-ink-muted hover:text-ink',

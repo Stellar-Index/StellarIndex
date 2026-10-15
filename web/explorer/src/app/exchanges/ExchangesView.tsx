@@ -25,6 +25,7 @@ import {
   StatCell,
   StatGrid,
   TBody,
+  LinkRow,
   TR,
   Table,
   Td,
@@ -185,7 +186,7 @@ export function ExchangesView() {
                 const share = ratioPct(r.volume_24h_usd, totalVol) ?? 0;
                 const vol = r.volume_24h_usd;
                 return (
-                  <TR key={r.name}>
+                  <LinkRow href={hrefFor.exchange(r.name)} key={r.name}>
                     <Td className="text-ink-faint font-mono tabular-nums">
                       {i + 1}
                     </Td>
@@ -234,7 +235,7 @@ export function ExchangesView() {
                         <span className="text-ink-faint">—</span>
                       )}
                     </Td>
-                  </TR>
+                  </LinkRow>
                 );
               })}
             </TBody>
@@ -357,7 +358,10 @@ function AllCEXMarkets({
               const slug = `${m.base}~${m.quote}`;
               const vol = m.volume_24h_usd;
               return (
-                <TR key={`${m.source}:${slug}`}>
+                <LinkRow
+                  href={`/markets/${encodeURIComponent(slug)}`}
+                  key={`${m.source}:${slug}`}
+                >
                   <Td className="text-ink-faint font-mono tabular-nums">
                     {i + 1}
                   </Td>
@@ -403,7 +407,7 @@ function AllCEXMarkets({
                       ? formatCompact(m.trade_count_24h)
                       : '—'}
                   </Td>
-                </TR>
+                </LinkRow>
               );
             })}
           </TBody>

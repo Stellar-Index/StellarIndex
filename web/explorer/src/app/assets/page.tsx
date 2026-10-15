@@ -3,7 +3,6 @@ import { Suspense } from 'react';
 
 import { ButtonLink, Container, PageHeader, Skeleton } from '@/components/ui';
 import { AssetsTable } from './AssetsTable';
-import { VerifiedStrip } from './VerifiedStrip';
 import { fetchVerifiedCurrencies } from './verified-currencies';
 
 export const metadata: Metadata = {
@@ -21,10 +20,7 @@ export const metadata: Metadata = {
  * client reads `?cursor=` / `?limit=` / `?issuer=` from the URL.
  */
 export default async function AssetsPage() {
-  // Single server-side fetch of the verified-currency catalogue
-  // shared between the strip (renders each entry as a chip) and the
-  // table (marks each row whose slug is in the catalogue with a
-  // green check). One round-trip, no double fetch.
+  // The table marks each row whose slug is in the verified catalogue.
   const verified = await fetchVerifiedCurrencies();
   const verifiedSlugs = verified.map((v) => v.slug);
 
@@ -40,7 +36,6 @@ export default async function AssetsPage() {
           </ButtonLink>
         }
       />
-      <VerifiedStrip items={verified} />
       <Suspense fallback={<Skeleton className="h-96 w-full" />}>
         <AssetsTable verifiedSlugs={verifiedSlugs} />
       </Suspense>

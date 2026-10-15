@@ -397,7 +397,7 @@ export function AssetSwap({
           type="button"
           aria-label="Swap the two assets"
           onClick={swap}
-          className="group border-surface bg-surface-subtle text-ink-muted hover:bg-surface-muted hover:text-ink focus-visible:ring-brand-500 absolute top-1/2 left-1/2 z-10 -translate-x-1/2 -translate-y-1/2 rounded-full border-4 p-1.5 transition-colors focus:outline-hidden focus-visible:ring-2"
+          className="group border-surface bg-surface-subtle text-ink-muted hover:bg-surface-muted hover:text-ink absolute top-1/2 left-1/2 z-10 -translate-x-1/2 -translate-y-1/2 rounded-full border-4 p-1.5 transition-colors"
         >
           <ArrowDownUp className="h-4 w-4 transition-transform duration-200 group-hover:rotate-180 group-active:scale-90" />
         </button>
@@ -448,11 +448,9 @@ function SwapRow({
     <div
       className={cn(
         'bg-surface-canvas rounded-lg border px-3.5 py-4 transition-colors',
-        // The active field is signalled by a lighter border, not a focus ring
-        // on the input itself. That border delta alone is 1.22:1 — invisible —
-        // so focus ALSO raises a ring on the wrapper (brand-500 on canvas =
-        // 5.33:1), which is what WCAG 2.4.7 / 2.4.11 actually require.
-        'focus-within:border-brand-500 focus-within:ring-brand-500/30 focus-within:ring-2',
+        // Focus turns the wrapper border brand (5.33:1 on canvas, WCAG 2.4.7);
+        // the input itself draws no outline.
+        'focus-within:border-brand-500',
         active ? 'border-line-input' : 'border-line',
       )}
     >

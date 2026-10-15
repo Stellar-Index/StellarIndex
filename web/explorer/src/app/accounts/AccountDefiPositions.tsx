@@ -17,6 +17,7 @@ import {
   Td,
   Th,
   THead,
+  LinkRow,
   TR,
 } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
@@ -257,7 +258,7 @@ function PositionRow({ p }: { p: AccountPosition }) {
   const basisLabel =
     p.basis === 'stateful' ? "protocol's own state" : 'derived from events';
   return (
-    <TR>
+    <LinkRow href={`/protocols/${encodeURIComponent(p.protocol)}`}>
       <Td>
         <Badge tone="brand">
           {POSITION_KIND_LABEL[p.position_kind] ?? p.position_kind}
@@ -294,6 +295,6 @@ function PositionRow({ p }: { p: AccountPosition }) {
           #{p.last_activity.ledger}
         </div>
       </Td>
-    </TR>
+    </LinkRow>
   );
 }
