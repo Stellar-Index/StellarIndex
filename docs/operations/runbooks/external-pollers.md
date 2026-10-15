@@ -15,7 +15,7 @@ Rules: `configs/prometheus/rules.r1/external-pollers.yml` (r1) and `deploy/monit
 
 ## Shared context
 
-- `external.Connector` pollers (CoinGecko, CoinMarketCap, CryptoCompare, ECB, ExchangeRatesAPI, Tiingo, Chainlink) and CEX WebSocket streamers (Binance, Coinbase, Kraken, Bitstamp) run in `stellarindex-indexer`; metrics on `:9464`.
+- `external.Connector` pollers (CoinGecko, CoinMarketCap, CryptoCompare, ECB, ExchangeRatesAPI, Tiingo) and CEX WebSocket streamers (Binance, Coinbase, Kraken, Bitstamp) run in `stellarindex-indexer`; metrics on `:9464`.
 - `massive` (fiat FX, `internal/sources/external/forex` worker) runs in `stellarindex-api`, not the poller framework: no `stellarindex_external_poller_*` series; its alerts are the `fx_*` ones below.
 - A lost poller drops the venue out of its pairs' consensus; `/v1/price` keeps serving from the remaining sources (possibly with `flags.single_source`).
 - Logs (the second line shows `auth_mode=anonymous|demo|pro`):
@@ -145,35 +145,6 @@ curl -sv -H "x-cg-demo-api-key: KEY" \
   "https://api.coingecko.com/api/v3/simple/price?ids=stellar&vs_currencies=usd" 2>&1 | head -20
 journalctl -u stellarindex-indexer -n 500 --no-pager | \
   grep -iE 'coingecko.*(throttled|backing off)' | tail -5
-```
-
-## stellarindex_chainlink_feed_stale
-
-`(time() - stellarindex_chainlink_feed_last_success_unix) > 1800`, `for: 5m`, P3. One feed (`pair` label) wrote no current round to `oracle_updates` for 30+ min while siblings stay green. The gauge advances only when the feed returned a round within its `max_age_hours` and is seeded to 0 at startup.
-
-### Check
-
-Log `chainlink feed poll failed ... pair=<pair> outcome=<outcome>`, then:
-
-```promql
-sum by (outcome) (increase(stellarindex_chainlink_feed_polls_total{pair="<pair>"}[15m]))
-```
-
-### Likely causes
-
-- `stale`: proxy `updatedAt` older than the budget (feed paused/retired, or budget tighter than the heartbeat).
-- `carried_forward`: transient; if persistent treat as `stale`.
-- `error`: RPC, decode, decimals refusal or projection failure (read the WARN `err`).
-- Only `0` samples: no poll ran for the pair; check `stellarindex_external_poller_polls_total{source="chainlink"}`.
-
-### Fix
-
-1. `stale`: check the feed on data.chain.link; if retired remove it from `[external.chainlink].feed_map` or move to the replacement proxy; if the heartbeat changed raise `max_age_hours`.
-2. Decimals refusal: [divergence.md](divergence.md#stellarindex_chainlink_feed_decimals_mismatch). RPC: [`stellarindex_external_poller_stale`](#stellarindex_external_poller_stale).
-3. Clears on the first in-budget round. To backfill past rounds for every configured feed (idempotent, dry run unless `-write`):
-
-```sh
-stellarindex-ops backfill-chainlink -config /etc/stellarindex.toml -from-block <N> -to-block <N> -write
 ```
 
 ## stellarindex_external_fx_feed_stale

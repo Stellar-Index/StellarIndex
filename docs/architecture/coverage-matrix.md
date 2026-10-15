@@ -157,7 +157,7 @@ Status: ✅ verified live, ⚠ shipped with a caveat, ❌ gap (launch blocker), 
 | S2.1 | Reflector (DEX/CEX/FX contracts) | `sources/reflector` | ✅ |
 | S2.2 | Redstone (adapter + per-feed proxies) | `sources/redstone` | ✅ |
 | S2.3 | Band (native Soroban StandardReference) | `sources/band` | ✅ |
-| S2.4 | Chainlink HTTP cross-check (divergence reference, not a VWAP contributor) | `divergence/chainlink.go` | ✅ |
+| S2.4 | Chainlink cross-check (on-chain divergence reference, not a VWAP contributor) | `divergence/oracle.go` | ✅ |
 | S2.5 | DIA oracle ("and others"): deferred, blocked on DIA shipping on Stellar mainnet (testnet only); no mainnet integration exists | `sources/dia` (code only) | ⏳ |
 | S2.6 | SEP-40-compatible output (others consume our prices) | `api/v1/oracle_sep40.go`; `/v1/oracle/*` | ✅ |
 | S3.1 | SDEX trades via ClaimAtom | `sources/sdex` | ✅ |
@@ -189,7 +189,7 @@ Status: ✅ verified live, ⚠ shipped with a caveat, ❌ gap (launch blocker), 
 | S9.1 | ≥ 99.9 % availability (published SLA; 99.99 % was the design target) | ADR-0008 HA plan + sla-probe; needs ≥ 30 days off-host measurement; r1 single-region | ⚠ |
 | S9.2 | p95 ≤ 200 ms, p99 ≤ 500 ms | ADR-0009, Redis, sla-probe; no PROVEN sla-proof report yet (latest, 2026-10-04, is NOT PROVEN) | ⚠ |
 | S9.3 | ≥ 1000 req/min per client | `ratelimit` | ✅ |
-| S9.4 | Defined degradation when prices unavailable | `divergence/{coingecko,chainlink}.go`; `flags.divergence_warning` | ✅ |
+| S9.4 | Defined degradation when prices unavailable | `divergence/{coingecko,oracle}.go`; `flags.divergence_warning` | ✅ |
 | S10.1 | Apache-2.0, fully open | `LICENSE` | 📦 |
 
 #### Asset metadata (V1)

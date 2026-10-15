@@ -128,7 +128,7 @@ func (r *OracleReference) LookupQuote(ctx context.Context, pair canonical.Pair, 
 
 	// Staleness gate. observedAt is the comparison
 	// timestamp Compare passes through; zero falls back to wall time
-	// defensively, mirroring the Chainlink reference.
+	// defensively.
 	asOf := observedAt
 	if asOf.IsZero() {
 		asOf = time.Now().UTC()

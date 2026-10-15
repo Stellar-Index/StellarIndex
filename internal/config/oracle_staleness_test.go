@@ -31,18 +31,18 @@ func TestOracleSourceNames_AreKnownSources(t *testing.T) {
 	}
 }
 
-// An override must be able to reach an externally-polled oracle source such as chainlink. Without it in
-// OracleSourceNames the validator refused it, so no Chainlink feed budget could be tuned.
+// An override must be able to reach an externally-polled oracle source such as ecb. Without it in
+// OracleSourceNames the validator refused it, so no polled feed's budget could be tuned.
 func TestValidateStalenessOverrides_AcceptsPolledOracleSource(t *testing.T) {
 	c := config.Default()
 	c.Oracle.StalenessOverrides = []config.OracleStalenessOverrideConfig{{
-		Source:        "chainlink",
+		Source:        "ecb",
 		Asset:         "fiat:JPY",
 		BudgetSeconds: 345600,
 		Reason:        "FX feed: 24 h heartbeat plus the weekend close",
 	}}
 	if err := c.Validate(); err != nil {
-		t.Fatalf("Validate rejected a chainlink staleness override: %v", err)
+		t.Fatalf("Validate rejected an ecb staleness override: %v", err)
 	}
 }
 

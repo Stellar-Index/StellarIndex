@@ -344,7 +344,7 @@ func run(cfgPath string, dryRun bool) error {
 	}
 
 	// ─── Divergence service ────────────────────────────────────
-	// Builds the CoinGecko + Chainlink HTTP reference clients plus the on-chain oracle references
+	// Builds the CoinGecko reference client plus the on-chain oracle references
 	// (read from our own served oracle_updates rows) from `[divergence]` config; Tick refreshes the
 	// `div:<asset>` cache once per pair per tick. An empty reference list leaves the producer nil,
 	// so the cache stays empty and the API's `flags.divergence_warning` stays false.
@@ -1992,7 +1992,7 @@ func (obsSupplyDivergenceEmitter) Duration(kind divergence.SupplyOutcomeKind, se
 	obs.SupplyDivergenceDurationSeconds.WithLabelValues(string(kind)).Observe(seconds)
 }
 
-// buildDivergenceReferences is the sole reference builder (the API's Service reads a cache with no References): CoinGecko, Chainlink, on-
+// buildDivergenceReferences is the sole reference builder (the API's Service reads a cache with no References): CoinGecko and the on-
 // chain oracles.
 // cgKeys authenticate the CoinGecko price reference; oracles may be nil (no Postgres), skipping on-chain references with a warning.
 func buildDivergenceReferences(cfg config.DivergenceConfig, cgKeys config.CoinGeckoVenueConfig, oracles divergence.OracleReader, logger *slog.Logger) []divergence.Reference {
@@ -2006,27 +2006,6 @@ func buildDivergenceReferences(cfg config.DivergenceConfig, cgKeys config.CoinGe
 			Logger:     logger,
 			IDMap:      cfg.CoinGecko.IDMap,
 		}))
-	}
-
-	if cfg.Chainlink.Enabled {
-		if len(cfg.Chainlink.FeedMap) == 0 {
-			logger.Warn("divergence: chainlink enabled but FeedMap is empty — skipping")
-		} else {
-			feedMap := make(map[string]divergence.ChainlinkFeed, len(cfg.Chainlink.FeedMap))
-			for pair, f := range cfg.Chainlink.FeedMap {
-				feedMap[pair] = divergence.ChainlinkFeed{
-					Address:  f.Address,
-					Decimals: f.Decimals,
-					Invert:   f.Invert,
-					MaxAge:   time.Duration(f.MaxAgeHours) * time.Hour,
-				}
-			}
-			refs = append(refs, divergence.NewChainlinkReference(divergence.ChainlinkOptions{
-				RPCURL:  cfg.Chainlink.RPCURL,
-				Logger:  logger,
-				FeedMap: feedMap,
-			}))
-		}
 	}
 
 	refs = append(refs, buildOracleDivergenceReferences(cfg, oracles, logger)...)
@@ -2052,22 +2031,13 @@ func appendSyntheticCrossReference(refs []divergence.Reference, logger *slog.Log
 		}
 		return out
 	}
-	// Chainlink serves BOTH legs: its FeedMap carries crypto/USD feeds (base leg) and direct
-	// fiat/USD feeds. It routes by pair and answers only what its FeedMap lists, so membership in
-	// both leg sets cannot double-answer one leg. In the FX legs it is the FALLBACK after
-	// reflector-fx (on-chain rows we already index, no extra RPC) and the only proven GBP/USD
-	// source; without it XLM/GBP would stay single-reference.
 	usdLegs := pick(
 		divergence.OracleSourceReflectorCEX,
-		divergence.ChainlinkSourceName,
 		divergence.OracleSourceRedstone,
 		divergence.OracleSourceBand,
 		divergence.OracleSourceChainlinkStellar,
 	)
-	fxLegs := pick(
-		divergence.OracleSourceReflectorFX,
-		divergence.ChainlinkSourceName,
-	)
+	fxLegs := pick(divergence.OracleSourceReflectorFX)
 	syn, err := divergence.NewSyntheticCrossReference(divergence.SyntheticCrossOptions{
 		USDLegs: usdLegs,
 		FXLegs:  fxLegs,

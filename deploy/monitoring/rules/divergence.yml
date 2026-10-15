@@ -161,7 +161,7 @@ groups:
             [[oracle.staleness_overrides]]). May be legitimate (oracle paused)
             or a signal of oracle failure — check the oracle's own status page.
       # Aggregator's divergence-cache refresh loop — `refresh_error`
-      # outcome dominates the success rate. CoinGecko / Chainlink
+      # outcome dominates the success rate. CoinGecko or an oracle
       # unreachable, marshal failure, or Redis cache write failing.
       # Sustained means `flags.divergence_warning` goes stale across
       # the API surface (the cache TTL is >= 5 min — we have a few-tick
@@ -188,7 +188,7 @@ groups:
           summary: "Divergence-cache refresh failing more often than succeeding (P3)"
           description: |
             More refresh_error outcomes than ok over the last 5 min for
-            30+ min sustained. CoinGecko / Chainlink RPC reachability is
+            30+ min sustained. CoinGecko reachability or a stale oracle is
             the usual cause; the API's `flags.divergence_warning` stops
             updating and goes stale once the >= 5-min cache TTL elapses.
             Check the upstream reference's status, then the aggregator's
@@ -219,10 +219,10 @@ groups:
           description: |
             For 30+ min more pairs received zero reference responses than got a
             healthy comparison. Every divergence reference (CoinGecko,
-            Chainlink) is unreachable for those pairs, so
+            the oracles) is unreachable for those pairs, so
             flags.divergence_warning is frozen — a live depeg would go
-            unflagged. Check the CoinGecko Pro key / 429 state and Chainlink
-            RPC reachability; see the runbook.
+            unflagged. Check the CoinGecko Pro key / 429 state and the oracle
+            feeds\' freshness; see the runbook.
 
       # Liveness arm for the two child-vs-child rules above. Both compare
       # a failure child against `ok`, so a pass that yields only no_vwap
@@ -304,53 +304,3 @@ groups:
             and divergence_checked reads false. Check which reference
             dropped out (stellarindex_divergence_reference_total by
             outcome); see the runbook.
-
-      # A Chainlink feed's configured decimals disagrees with the
-      # AggregatorV3 proxy's on-chain decimals() view. The reader REFUSES
-      # the feed until they agree (ErrPriceUnavailable), rather than scale
-      # every reading wrong by 10^(configured-actual) — see
-      # docs/reference/metrics/README.md's entry for the metric. Zero
-      # forever is healthy; a mis-scaled feed increments this on EVERY
-      # refused reading, so 15m is plenty to catch it fast.
-      - alert: stellarindex_chainlink_feed_decimals_mismatch
-        expr: |
-          sum by (consumer, pair) (increase(stellarindex_chainlink_feed_decimals_mismatch_total[15m])) > 0
-        for: 5m
-        labels:
-          severity: ticket
-          team: stellarindex
-          component: divergence
-        annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence.md#stellarindex_chainlink_feed_decimals_mismatch
-          summary: "Chainlink feed {{ $labels.pair }} ({{ $labels.consumer }}) refused — configured decimals disagree with decimals()"
-          description: |
-            {{ $labels.consumer }}'s Chainlink reader has refused
-            {{ $labels.pair }} for 5+ min because the configured
-            `decimals` disagrees with the AggregatorV3 proxy's on-chain
-            decimals(). The feed serves nothing until they agree. Check
-            the operator's `decimals` entry for this pair against the
-            feed's actual decimals() (or omit the field to adopt it).
-
-      # The fail-OPEN sibling — decimals() RPC calls keep
-      # failing, so the reader keeps serving at the last known scale
-      # with no divergence signal of its own. Sustained failures mean
-      # the RPC endpoint (or the feed) is unhealthy even though pricing
-      # keeps flowing; only this counter would otherwise show it.
-      - alert: stellarindex_chainlink_feed_decimals_verify_failed
-        expr: |
-          sum by (consumer, pair) (rate(stellarindex_chainlink_feed_decimals_verify_failed_total[15m])) > 0
-        for: 30m
-        labels:
-          severity: ticket
-          team: stellarindex
-          component: divergence
-        annotations:
-          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence.md#stellarindex_chainlink_feed_decimals_verify_failed
-          summary: "Chainlink feed {{ $labels.pair }} ({{ $labels.consumer }}) decimals() verification failing"
-          description: |
-            {{ $labels.consumer }}'s decimals() RPC call for
-            {{ $labels.pair }} has failed repeatedly for 30+ min and is
-            falling back to the last known decimals value. Pricing is
-            still flowing, but the scale is unverified — check the
-            configured Chainlink RPC endpoint's reachability for this
-            feed.

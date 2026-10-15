@@ -35,7 +35,7 @@ var ErrTooStaleToCompare = errors.New("divergence: reference too stale to compar
 // FX pairs get the FX liveness budget, which already bounds their error since FX quotes pause over closes and move far less than the threshold per day.
 const (
 	DefaultMaxComparableAge   = time.Hour
-	DefaultMaxComparableAgeFX = defaultChainlinkMaxAgeFX
+	DefaultMaxComparableAgeFX = 76 * time.Hour // a 24h FX heartbeat plus a weekend close
 )
 
 // MaxComparableAge is the oldest a reference quote for pair may be, relative to the comparison time, and still vote in Compare.

@@ -68,7 +68,6 @@ func TestDivergenceServiceHasNoReferences(t *testing.T) {
 	forbidden := []string{
 		"buildDivergenceReferences",
 		"divergence.NewCoinGeckoReference",
-		"divergence.NewChainlinkReference",
 		"divergence.NewOracleReference",
 	}
 	for _, sym := range forbidden {

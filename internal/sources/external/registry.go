@@ -94,10 +94,9 @@ var Registry = map[string]Metadata{
 	// standby writes fx_quotes as "ecb"; without it the FX-snap class check refuses every row.
 	"ecb": {Class: ClassAuthoritySanity, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, Credit: "European Central Bank euro foreign exchange reference rates", BackfillAvailable: true, Backfill: BackfillNoWASM, AmountDecimals: 6, OracleResolution: 24 * time.Hour},
 
-	// ─── Off-chain oracles (Chainlink via EVM RPC) ───────────────
-	// Chainlink is read over Ethereum JSON-RPC: a price publisher, so ClassOracle, and NoWASM.
-	// OracleResolution is 24h: Timestamp is the round's updatedAt, and the slowest (FX) feeds
-	// heartbeat daily and pause on weekends.
+	// ─── Retired: Chainlink read from Ethereum ───────────────────
+	// Nothing writes "chainlink" any more (chainlink-stellar replaced it); the entry stays so its
+	// historical oracle_updates rows keep their class and off-chain flag when served.
 	"chainlink": {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Paid: false /* Alchemy free tier covers 516-feed scale */, BackfillAvailable: true, Backfill: BackfillNoWASM, OracleResolution: 24 * time.Hour},
 
 	// Tiingo publishes funds' daily NAV as `raw:<TICKER>` rows, read only by the RWA reference
@@ -211,7 +210,7 @@ func IsOnChain(source string) bool {
 	case ClassAggregator, ClassAuthoritySanity:
 		return false
 	}
-	// Chainlink and Tiingo are off-chain ClassOracle sources; class alone can't separate them.
+	// The retired chainlink poller and Tiingo are off-chain ClassOracle sources; class alone can't separate them.
 	if source == "chainlink" || source == "tiingo" {
 		return false
 	}

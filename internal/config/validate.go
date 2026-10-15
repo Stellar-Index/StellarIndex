@@ -433,7 +433,6 @@ var OracleSourceNames = map[string]struct{}{
 	"reflector-fx":      {},
 	"redstone":          {},
 	"band":              {},
-	"chainlink":         {},
 	"chainlink-stellar": {},
 	"coingecko":         {},
 	"coinmarketcap":     {},
@@ -669,18 +668,9 @@ func (d DivergenceConfig) validate() error {
 		{"divergence.coingecko.base_url", d.CoinGecko.BaseURL},
 		{"divergence.supply.dashboard.base_url", d.Supply.Dashboard.BaseURL},
 		{"divergence.supply.coingecko.base_url", d.Supply.CoinGecko.BaseURL},
-		{"divergence.chainlink.rpc_url", d.Chainlink.RPCURL},
 	} {
 		if err := validateOptionalHTTPURL(u.field, u.value); err != nil {
 			return err
-		}
-	}
-	// Negative is non-zero, so it escapes the per-feed default and marks
-	// every round stale; 0 is the "use the default budget" sentinel.
-	for pair, f := range d.Chainlink.FeedMap {
-		if f.MaxAgeHours < 0 {
-			return fmt.Errorf("%w: divergence.chainlink.feeds.%q.max_age_hours must be >= 0 (got %d)",
-				ErrInvalidConfig, pair, f.MaxAgeHours)
 		}
 	}
 	return nil

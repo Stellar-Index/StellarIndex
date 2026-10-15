@@ -69,10 +69,9 @@ Feb 2020, ~$1M across several incidents).
 
 Layer 5 references, each behind its `[divergence.*]` switch
 (`internal/config/config.go`, `cmd/stellarindex-aggregator/main.go`):
-CoinGecko (`coingecko`, default on), Chainlink-HTTP (`chainlink`, default
-off, needs a feed map), the on-chain oracles read from our ingested
+CoinGecko (`coingecko`, default on), the on-chain oracles read from our ingested
 `oracle_updates` rows — Reflector dex/cex/fx (`reflector`), RedStone
-(`redstone`), Band (`band`), all default on — and a synthetic USD-cross
+(`redstone`), Band (`band`), Chainlink on Stellar (`chainlink-stellar`), all default on — and a synthetic USD-cross
 reference derived from whichever of those are enabled. The CMC poller is
 not wired. Oracles are references only: a compromised oracle cannot move
 our VWAP (Layer 2) but can lower confidence through the cross-oracle

@@ -175,12 +175,12 @@ func TestSyntheticCross_LegOrderFirstAnswerWins(t *testing.T) {
 }
 
 // TestSyntheticCross_LegsFromDifferentPublishers pins that production leg order puts reflector-cex and reflector-fx
-// first; crossing those would be one publisher checking itself, so the FX leg falls through to chainlink.
+// first; crossing those would be one publisher checking itself, so the FX leg falls through to the next publisher.
 func TestSyntheticCross_LegsFromDifferentPublishers(t *testing.T) {
 	reflectorCEX := &pairStub{name: OracleSourceReflectorCEX, prices: map[string]float64{"crypto:XLM/fiat:USD": 0.35}}
-	chainlinkUSD := &pairStub{name: ChainlinkSourceName, prices: map[string]float64{"crypto:XLM/fiat:USD": 0.36}}
+	chainlinkUSD := &pairStub{name: OracleSourceChainlinkStellar, prices: map[string]float64{"crypto:XLM/fiat:USD": 0.36}}
 	reflectorFX := &pairStub{name: OracleSourceReflectorFX, prices: map[string]float64{"fiat:EUR/fiat:USD": 1.20}}
-	chainlinkFX := &pairStub{name: ChainlinkSourceName, prices: map[string]float64{"fiat:EUR/fiat:USD": 1.09}}
+	chainlinkFX := &pairStub{name: OracleSourceChainlinkStellar, prices: map[string]float64{"fiat:EUR/fiat:USD": 1.09}}
 	syn, _ := NewSyntheticCrossReference(SyntheticCrossOptions{
 		USDLegs: []Reference{reflectorCEX, chainlinkUSD},
 		FXLegs:  []Reference{reflectorFX, chainlinkFX},
@@ -204,11 +204,11 @@ func TestSyntheticCross_SamePublisherOnlyIsUnavailable(t *testing.T) {
 	syn, _ := NewSyntheticCrossReference(SyntheticCrossOptions{
 		USDLegs: []Reference{
 			&pairStub{name: OracleSourceReflectorCEX, prices: map[string]float64{"crypto:XLM/fiat:USD": 0.35}},
-			&pairStub{name: ChainlinkSourceName},
+			&pairStub{name: OracleSourceChainlinkStellar},
 		},
 		FXLegs: []Reference{
 			&pairStub{name: OracleSourceReflectorFX, prices: map[string]float64{"fiat:EUR/fiat:USD": 1.09}},
-			&pairStub{name: ChainlinkSourceName},
+			&pairStub{name: OracleSourceChainlinkStellar},
 		},
 	})
 	_, err := priceOf(syn.LookupQuote(context.Background(), synthPair(t, "EUR"), time.Now()))
@@ -221,9 +221,9 @@ func TestSyntheticCross_SamePublisherOnlyIsUnavailable(t *testing.T) {
 // for one base leg is still paired with a later base leg from another
 // publisher, and is looked up only once.
 func TestSyntheticCross_LaterBaseLegPairsWithSkippedFXLeg(t *testing.T) {
-	chainlinkUSD := &pairStub{name: ChainlinkSourceName, prices: map[string]float64{"crypto:XLM/fiat:USD": 0.35}}
+	chainlinkUSD := &pairStub{name: OracleSourceChainlinkStellar, prices: map[string]float64{"crypto:XLM/fiat:USD": 0.35}}
 	redstoneUSD := &pairStub{name: OracleSourceRedstone, prices: map[string]float64{"crypto:XLM/fiat:USD": 0.36}}
-	chainlinkFX := &pairStub{name: ChainlinkSourceName, prices: map[string]float64{"fiat:EUR/fiat:USD": 1.09}}
+	chainlinkFX := &pairStub{name: OracleSourceChainlinkStellar, prices: map[string]float64{"fiat:EUR/fiat:USD": 1.09}}
 	syn, _ := NewSyntheticCrossReference(SyntheticCrossOptions{
 		USDLegs: []Reference{chainlinkUSD, redstoneUSD},
 		FXLegs:  []Reference{chainlinkFX},

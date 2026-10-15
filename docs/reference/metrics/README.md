@@ -871,66 +871,6 @@ stale by N minutes" expressible as `time() - <gauge>` rather than
 multi-window rate math, which simplifies alerting (see
 `stellarindex_external_poller_stale`).
 
-### `stellarindex_chainlink_feed_decimals_mismatch_total`
-
-Counter, labels `consumer` ∈ {divergence, ingest}, `pair`.
-
-Count of Chainlink readings REFUSED because the feed's configured
-`decimals` disagrees with the AggregatorV3 proxy's on-chain
-`decimals()` view. Both Chainlink readers verify the scale before
-reading a price — the `[divergence.chainlink]` cross-check reference
-(`consumer="divergence"`, API + aggregator processes) and the
-`[external.chainlink]` `oracle_updates` poller and its backfill
-(`consumer="ingest"`, indexer + `stellarindex-ops`). An omitted
-`decimals` adopts the on-chain value; a set value that disagrees is
-logged at ERROR with both numbers and the feed is refused until they
-agree (re-checked every 5 min; an agreeing value is re-read daily).
-
-Incremented on EVERY refused reading, not once per detection, so
-`increase(...[15m]) > 0` reads as "this feed is currently dark because
-of a scale disagreement" for as long as it lasts. Zero forever is the
-healthy state. A mis-scaled feed would otherwise be a permanent
-10^(d-8) false divergence (or 10^(d-8)-off oracle rows) with no signal
-at all; failing closed and counting here is the alternative.
-
-### `stellarindex_chainlink_feed_decimals_verify_failed_total`
-
-Counter, labels `consumer` ∈ {divergence, ingest}, `pair`.
-
-Count of on-chain `decimals()` RPC calls that FAILED and fell back to
-the last known decimals value (configured, or a previously verified
-on-chain read) instead of refusing the feed. This is the fail-OPEN
-sibling of `stellarindex_chainlink_feed_decimals_mismatch_total`
-above: readings keep flowing at the last known scale, so a repeatedly
-failing `decimals()` call produces no divergence signal on its own —
-only a WARN log. Zero forever is the healthy state; a sustained rate
-means the RPC endpoint or the feed is unhealthy even though pricing
-keeps working.
-
-### `stellarindex_chainlink_feed_polls_total`
-
-Counter, labels `pair`, `outcome` ∈ {emitted, unchanged, stale,
-carried_forward, error}.
-
-Per-feed outcome of every `[external.chainlink]` ingest poll (indexer).
-`emitted` wrote a new round; `unchanged` saw a fresh round already
-written; `stale` refused a round older than the feed's `max_age_hours`;
-`carried_forward` refused a round whose `answeredInRound < roundId`;
-`error` is an RPC, decode, decimals or projection failure. The poller's
-`stellarindex_external_poller_polls_total{source="chainlink"}` turns
-`error` only when no feed produced an update, so a single dark feed
-among healthy siblings shows here and nowhere else. Series are seeded
-at zero per configured feed.
-
-### `stellarindex_chainlink_feed_last_success_unix`
-
-Gauge, label `pair`.
-
-UNIX seconds of the last ingest poll whose round was within the feed's
-max age (`emitted` or `unchanged`). Seeded to 0 per configured feed, so
-a feed that never succeeds after a restart still has a series. Alerted
-by `stellarindex_chainlink_feed_stale`.
-
 ### `stellarindex_external_fx_last_quote_unix`
 
 Gauge, label `source`.

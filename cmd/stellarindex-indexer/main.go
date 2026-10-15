@@ -56,7 +56,6 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	externalbinance "github.com/Stellar-Index/StellarIndex/internal/sources/external/binance"
 	externalbitstamp "github.com/Stellar-Index/StellarIndex/internal/sources/external/bitstamp"
-	externalchainlink "github.com/Stellar-Index/StellarIndex/internal/sources/external/chainlink"
 	externalcoinbase "github.com/Stellar-Index/StellarIndex/internal/sources/external/coinbase"
 	externalcoingecko "github.com/Stellar-Index/StellarIndex/internal/sources/external/coingecko"
 	externalcoinmarketcap "github.com/Stellar-Index/StellarIndex/internal/sources/external/coinmarketcap"
@@ -1100,42 +1099,6 @@ func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy
 		enabled = append(enabled, externalcryptocompare.SourceName)
 	}
 
-	if cfg.Chainlink.Enabled {
-		feedMap, pairs, err := chainlinkFeedSetFromConfig(cfg.Chainlink.FeedMap)
-		if err != nil {
-			return nil, nil, fmt.Errorf("chainlink: %w", err)
-		}
-		if len(pairs) == 0 {
-			logger.Warn("chainlink ingest enabled but feed_map is empty after parse — skipping",
-				"source", externalchainlink.SourceName)
-		} else {
-			p := externalchainlink.NewPoller(cfg.Chainlink.RPCUrl, feedMap)
-			if cfg.Chainlink.PollInterval > 0 {
-				p.Interval = cfg.Chainlink.PollInterval
-			}
-			p.Logger = logger
-			pollers = append(pollers, external.PollerSpec{
-				Poller: p,
-				Pairs:  pairs,
-			})
-			authMode := "anonymous"
-			switch {
-			case strings.Contains(cfg.Chainlink.RPCUrl, "alchemy"):
-				authMode = "alchemy"
-			case strings.Contains(cfg.Chainlink.RPCUrl, "infura"):
-				authMode = "infura"
-			case strings.Contains(cfg.Chainlink.RPCUrl, "quicknode"):
-				authMode = "quicknode"
-			}
-			logger.Info("external poller enabled",
-				"source", externalchainlink.SourceName,
-				"feeds", len(pairs),
-				"poll_interval", p.PollInterval(),
-				"rpc_provider", authMode)
-			enabled = append(enabled, externalchainlink.SourceName)
-		}
-	}
-
 	if cfg.ECB.Enabled {
 		p := newECBPoller(cfg.ECB)
 		// ECB is fiat-only; its poller filters these fiat/EUR crosses to currencies it has rates for.
@@ -1770,22 +1733,6 @@ func defaultAggregatorPairs() []canonical.Pair {
 // Symbols).
 func defaultFXPairs(base string) []canonical.Pair {
 	return external.DefaultFXPairs(base)
-}
-
-// chainlinkFeedSetFromConfig bridges config.ChainlinkFeedSetting to chainlink's FeedSpec; it lives in cmd because config must not depend
-// on chainlink.
-// Defaults and parsing live in chainlink.BuildFeedSet so the live poll and the ops backfill share one path.
-func chainlinkFeedSetFromConfig(in map[string]config.ChainlinkFeedSetting) (map[string]externalchainlink.FeedSpec, []canonical.Pair, error) {
-	adapted := make(map[string]externalchainlink.FeedSpec, len(in))
-	for k, v := range in {
-		adapted[k] = externalchainlink.FeedSpec{
-			Address:  v.Address,
-			Decimals: v.Decimals,
-			Invert:   v.Invert,
-			MaxAge:   time.Duration(v.MaxAgeHours) * time.Hour,
-		}
-	}
-	return externalchainlink.BuildFeedSet(adapted)
 }
 
 // ─── Dispatcher wiring ──────────────────────────────────────────

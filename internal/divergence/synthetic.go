@@ -24,12 +24,11 @@ type SyntheticCrossReference struct {
 type SyntheticCrossOptions struct {
 	// USDLegs are tried in order for the base-in-USD leg; the first
 	// that answers and has an independent FX leg wins. Typically the on-chain oracle references
-	// (reflector-cex, chainlink, redstone, band).
+	// (reflector-cex, redstone, band, chainlink-stellar).
 	USDLegs []Reference
 	// FXLegs are tried in order for the fiat-in-USD leg, skipping any
 	// from the base leg's publisher. Typically
-	// reflector-fx first (on-chain rows, no extra RPC) with chainlink's
-	// direct fiat/USD feeds as fallback — the proven GBP/USD source.
+	// reflector-fx (on-chain rows, no extra RPC).
 	FXLegs []Reference
 }
 

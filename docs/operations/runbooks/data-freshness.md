@@ -39,7 +39,8 @@ Thresholds (from `data-freshness.sh`):
 | `domain` | measured from | threshold | note |
 | --- | --- | --- | --- |
 | `oracle` (`ecb`, `tiingo`) | `oracle_updates.ingested_at` | **96 h** | daily feeds (ECB ~16:00 CET TARGET days); tolerates a weekend plus a holiday |
-| `oracle` (others) | `oracle_updates.ingested_at` | 3 h | reflector / redstone / band / chainlink / coingecko |
+| `oracle` (`chainlink-stellar`) | `oracle_updates.ingested_at` | **26 h** | deviation or 24 h heartbeat |
+| `oracle` (others) | `oracle_updates.ingested_at` | 3 h | reflector / redstone / band / coingecko; the retired `chainlink` is excluded |
 | `fx` | `fx_quotes.bucket` | **76 h** | daily grain; mirrors `aggregate.composite_reference.fx_max_age_hours` (`scripts/ci/data-freshness-test.sh` pins the two together, change both) |
 | `trades` (`phoenix`, `comet`) | `source_volume_1h.bucket` | **24 h** | sparse AMMs: max gap 8 h 28 m, p99 3 h 12 m |
 | `trades` (others) | `source_volume_1h.bucket` | 4 h | |
@@ -61,7 +62,7 @@ journalctl -u stellarindex-indexer -u stellarindex-api --since '2 hours ago' | g
 
 Fix, by domain:
 
-1. External API (`coingecko`, FX `massive`, `chainlink`): `429`/`401` in the poller logs = key exhausted or expired; restore the key in `/etc/default/stellarindex`, restart the owning binary.
+1. External API (`coingecko`, FX `massive`): `429`/`401` in the poller logs = key exhausted or expired; restore the key in `/etc/default/stellarindex`, restart the owning binary.
 2. `verdict`: `systemctl status compute-completeness.service`.
 3. `sep1`: probe reads `max(sep1_payload_fetched_at)` (success only), so it fires if `sep1-refresh.timer` is not running OR every fetch fails (our DNS/egress). `systemctl status sep1-refresh.service`; `journalctl -u sep1-refresh --since -24h | grep -E 'SYSTEMIC|FAIL'` (the job exits non-zero at a 90% failure rate over 50+ domains, tripping `stellarindex_systemd_unit_failed`).
 4. `trades`: connector/dispatcher stopped, check the indexer. For `phoenix`/`comet` first confirm it is not a quiet market (query the lake for swap events on a known pool).

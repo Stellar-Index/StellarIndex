@@ -53,7 +53,6 @@ func registerAppMetrics() {
 		AMMNonPositiveSwapTotal,
 		ExternalPollerPollsTotal,
 		ExternalPollerLastSuccessUnix,
-		ChainlinkFeedDecimalsMismatchTotal,
 		ExternalFXLastQuoteUnix,
 		ExternalFXRateRejectedTotal,
 		ExternalFXBaselineHealedTotal,
@@ -260,12 +259,6 @@ func registerAppMetricsTail() {
 
 		// Aggregator catalogue/allow-list gap gauge; registered here for the funlen ceiling.
 		AggregatorCatalogueTickersSkipped,
-
-		// Chainlink decimals()-verify fail-open counter, registered here rather than beside
-		// ChainlinkFeedDecimalsMismatchTotal for the funlen ceiling.
-		ChainlinkFeedDecimalsVerifyFailedTotal,
-		ChainlinkFeedPollsTotal,
-		ChainlinkFeedLastSuccessUnix,
 
 		// Dispatcher-level counters; registered here for the funlen ceiling.
 		DispatcherTxReadErrorsTotal,
@@ -1112,42 +1105,6 @@ var ExternalPollerLastSuccessUnix = prometheus.NewGaugeVec(
 		Help: "UNIX seconds of the most recent successful PollOnce, per source. Zero = never succeeded since startup.",
 	},
 	[]string{"source"},
-)
-
-// ChainlinkFeedDecimalsMismatchTotal counts Chainlink readings refused because configured decimals disagree with the proxy's on-chain decimals(); increase() > 0 means dark right now.
-var ChainlinkFeedDecimalsMismatchTotal = prometheus.NewCounterVec(
-	prometheus.CounterOpts{
-		Name: "stellarindex_chainlink_feed_decimals_mismatch_total",
-		Help: "Chainlink readings refused because the configured feed decimals disagree with the aggregator's on-chain decimals(), by consumer (divergence|ingest) and pair.",
-	},
-	[]string{"consumer", "pair"},
-)
-
-// ChainlinkFeedDecimalsVerifyFailedTotal counts failed decimals() calls that fell back to the last known scale; the fail-open sibling of the mismatch counter.
-var ChainlinkFeedDecimalsVerifyFailedTotal = prometheus.NewCounterVec(
-	prometheus.CounterOpts{
-		Name: "stellarindex_chainlink_feed_decimals_verify_failed_total",
-		Help: "Chainlink decimals() RPC calls that failed and fell back to the last known decimals value, by consumer (divergence|ingest) and pair.",
-	},
-	[]string{"consumer", "pair"},
-)
-
-// ChainlinkFeedPollsTotal is the per-feed outcome of each Chainlink poll, so one dark feed among healthy siblings shows here; pair is bounded by the feed map.
-var ChainlinkFeedPollsTotal = prometheus.NewCounterVec(
-	prometheus.CounterOpts{
-		Name: "stellarindex_chainlink_feed_polls_total",
-		Help: "Chainlink ingest feed polls by pair and outcome (emitted|unchanged|stale|carried_forward|error).",
-	},
-	[]string{"pair", "outcome"},
-)
-
-// ChainlinkFeedLastSuccessUnix is the UNIX time of the last poll within the feed's MaxAge, seeded to 0 per feed so a never-succeeding feed still has a series.
-var ChainlinkFeedLastSuccessUnix = prometheus.NewGaugeVec(
-	prometheus.GaugeOpts{
-		Name: "stellarindex_chainlink_feed_last_success_unix",
-		Help: "UNIX seconds of the last Chainlink ingest poll that returned a round within the feed's max age, per pair. Zero = none since startup.",
-	},
-	[]string{"pair"},
 )
 
 // ExternalFXLastQuoteUnix stamps the latest non-empty committed fx_quotes write from the forex worker (not a poller); alert stellarindex_external_fx_feed_stale.

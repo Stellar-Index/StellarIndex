@@ -108,7 +108,7 @@ Intent-keyed: *Need to X → use `package.Symbol`*. Every symbol verified presen
 - Magic-link render → `notify.MagicLinkMessage(...)`
 
 ## Divergence / completeness / supply / incidents
-- Cross-check vs reference → `divergence.Compare`; `NewCoinGeckoReference`, `NewChainlinkReference`; `divergence.NewService(opts)`
+- Cross-check vs reference → `divergence.Compare`; `NewCoinGeckoReference`, `NewOracleReference`; `divergence.NewService(opts)`
 - CoinGecko key auth (Pro host switch + Pro/Demo header) → `coingecko.ResolveEndpoint`, `coingecko.SetAuthHeader` (`internal/sources/external/coingecko`)
 - Completeness verdict (ADR-0033) → `completeness.ComputeWatermark`, `AuditRecognition`, `ReconcileCounts`, `SumKinds` (authoritative = `completeness_snapshots`)
 - Network tip lower bound from a cursor + wall clock (catches a frozen ingest frontier) → `completeness.NetworkTipLowerBound`

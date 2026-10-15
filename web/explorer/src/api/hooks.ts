@@ -423,7 +423,7 @@ type SourcesEnvelope = Envelope<Source[]>;
 
 /**
  * isOnChainSource — true when a source observes the Stellar network
- * directly (vs an off-chain CEX / FX / aggregator / Chainlink feed).
+ * directly (vs an off-chain CEX / FX / aggregator feed).
  * Mirrors the backend `external.IsOnChain`. The explorer's
  * Stellar-network surfaces (/network, /sources) filter on this.
  *

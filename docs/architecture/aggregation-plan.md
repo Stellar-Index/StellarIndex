@@ -300,8 +300,8 @@ set: `silent`, `outlier_storm`, `outlier_trim_fraction`,
 `stellarindex_change_summary_stale`).
 
 Divergence (`internal/aggregate/orchestrator/divergence_refresh.go`): per
-tick, `divergence.Service` checks every enabled reference (CoinGecko, Chainlink-HTTP,
-Reflector, RedStone, Band, synthetic USD-cross; see
+tick, `divergence.Service` checks every enabled reference (CoinGecko,
+Reflector, RedStone, Band, Chainlink on Stellar, synthetic USD-cross; see
 [oracle-manipulation-defense.md](oracle-manipulation-defense.md)), writes
 `div:<pair>` (`internal/cachekeys/keys.go`) with a TTL of
 max(5m, refresh interval + worst pass + 1m) (`internal/divergence/worker.go`), and

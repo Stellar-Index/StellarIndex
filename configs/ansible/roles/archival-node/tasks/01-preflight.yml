@@ -173,7 +173,6 @@
       vault_tiingo_api_key: "{{ vault_tiingo_api_key | default('') }}"
       vault_openexchangerates_app_id: "{{ vault_openexchangerates_app_id | default('') }}"
       vault_exchangeratesapi_key: "{{ vault_exchangeratesapi_key | default('') }}"
-      vault_chainlink_rpc_url: "{{ vault_chainlink_rpc_url | default('') }}"
       vault_resend_api_key: "{{ vault_resend_api_key | default('') }}"
       vault_dashboard_code_secret: "{{ vault_dashboard_code_secret | default('') }}"
       vault_webhook_seal_key: "{{ vault_webhook_seal_key | default('') }}"

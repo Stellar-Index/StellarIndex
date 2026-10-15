@@ -9,9 +9,8 @@ import (
 
 // OracleUpdate is one oracle price observation keyed by (Source, Ledger, TxHash, OpIndex); Price stays the raw source-scaled integer with its [Decimals] (never normalised at ingest) and [Quote] may be a synthetic fiat reference.
 type OracleUpdate struct {
-	// Source is the stable oracle name ("reflector-dex", "redstone", "band", "chainlink", ...) and
-	// part of identity. "chainlink" is the EVM-via-HTTP ingest source, distinct from the in-memory
-	// helper in internal/divergence/chainlink.go, which writes nothing to oracle_updates.
+	// Source is the stable oracle name ("reflector-dex", "redstone", "band", "chainlink-stellar", ...) and
+	// part of identity. "chainlink" names the retired Ethereum poller; its historical rows remain.
 	Source string `json:"source"`
 
 	// ContractID is the originating contract address for on-chain
