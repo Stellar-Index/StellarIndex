@@ -458,8 +458,8 @@ export function SearchModal({ shortcut = true }: { shortcut?: boolean }) {
       >
         <Search className="h-4 w-4 shrink-0" />
         <span>Search</span>
-        <kbd className="border-line bg-surface-muted text-ink-faint ml-auto rounded-sm border px-1.5 py-0.5 text-[11px] font-medium">
-          ⌘K
+        <kbd className="border-line bg-surface-muted text-ink-faint ml-auto inline-flex items-center gap-0.5 rounded-sm border px-1.5 py-0.5 font-sans text-[11px] leading-none font-medium">
+          <span className="font-[system-ui] text-[12px]">⌘</span>K
         </kbd>
       </button>
       {open &&

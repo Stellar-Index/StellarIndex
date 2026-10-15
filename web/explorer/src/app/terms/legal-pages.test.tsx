@@ -1,8 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-import { SidebarNav } from '@/components/nav/Sidebar';
+import { Footer } from '@/components/nav/Footer';
 
 import TermsPage from './page';
 import PrivacyPage from '../privacy/page';
@@ -12,14 +11,14 @@ vi.mock('next/navigation', () => ({
   usePathname: () => '/',
 }));
 
-// Hermetic: SidebarNav polls /v1/status and /v1/me on mount.
+// Hermetic: no page under test may reach the network.
 beforeEach(() => {
   vi.spyOn(globalThis, 'fetch').mockRejectedValue(
     new TypeError('no network in tests'),
   );
 });
 
-// Keeps both pages reachable (sidebar rail, signup consent line) and every
+// Keeps both pages reachable (footer, signup consent line) and every
 // stated figure pinned to the code that enforces it.
 function expectFinal(body: string) {
   expect(body).not.toMatch(/TO BE CONFIRMED|DRAFT|\bdraft\b/i);
@@ -40,13 +39,6 @@ const OFFICE =
 function expectBody(body: string, matches: RegExp[], absent: RegExp[]) {
   for (const re of matches) expect(body).toMatch(re);
   for (const re of absent) expect(body).not.toMatch(re);
-}
-
-function withClient(ui: React.ReactElement) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
 }
 
 function expectLinks(links: [name: string, href: string][]) {
@@ -205,8 +197,8 @@ describe('legal pages', () => {
     );
   });
 
-  it('the mounted sidebar rail links to both legal pages', () => {
-    withClient(<SidebarNav />);
+  it('the mounted footer links to both legal pages', () => {
+    render(<Footer />);
     expectLinks([
       ['Terms of service', '/terms'],
       ['Privacy policy', '/privacy'],

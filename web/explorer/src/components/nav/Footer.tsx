@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
+import { DataSourceDisclosures } from './DataSourceDisclosures';
 import { availableRoutes } from '@/lib/network-routes';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
@@ -116,22 +117,10 @@ export function Footer() {
             <BuildBadge />
           </div>
           <div className="flex flex-wrap items-center gap-4">
-            {/* Attribution is a licence condition of the CoinGecko
-                Analyst plan, which permits commercial use only with
-                visible credit. It is load-bearing, not decorative —
-                do not remove it while any served value can derive
-                from a CoinGecko observation. */}
-            <span>
-              Price data by{' '}
-              <a
-                href="https://www.coingecko.com"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="hover:text-ink-body"
-              >
-                CoinGecko
-              </a>
-            </span>
+            {/* The CoinGecko plan permits commercial use only with visible
+                credit; the disclosures list carries it while any served
+                value can derive from a CoinGecko observation. */}
+            <DataSourceDisclosures />
             <span>Apache-2.0</span>
           </div>
         </div>

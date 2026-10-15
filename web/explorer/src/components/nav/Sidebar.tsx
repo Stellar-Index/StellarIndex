@@ -20,11 +20,9 @@ import {
   Landmark,
   Layers,
   LayoutDashboard,
-  Lock,
   LogOut,
   Radio,
   Receipt,
-  Scale,
   Settings,
   ShieldCheck,
   User,
@@ -100,14 +98,6 @@ const NAV: NavGroup[] = [
       },
       { href: '/sdk', label: 'SDK', icon: Code2 },
       { href: '/status', label: 'Status', icon: Activity, statusDot: true },
-    ],
-  },
-  // Network-agnostic: outside TESTNET_HIDDEN_HREFS.
-  {
-    title: 'Legal',
-    items: [
-      { href: '/terms', label: 'Terms of service', icon: Scale },
-      { href: '/privacy', label: 'Privacy policy', icon: Lock },
     ],
   },
 ];
