@@ -20,6 +20,42 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.114.0] — 2026-10-15
+
+67 commits since v0.113.0. No migrations. One new ClickHouse table (`stellar.sponsorship_events`). No `pkg/*` break (`pkg/client` gains the account entry-change, sponsorship and claimable-balance routes).
+
+### Operator actions
+
+- **ClickHouse:** apply `deploy/clickhouse/sponsorship_events.sql`; `ch-entry-history` then derives only sponsorship events, under its own watermark and never past `entry_index` (#3438, #3446).
+- **ops:** `sep1-refresh` publishes run counters through the node-exporter textfile; `stellarindex_sep1_refresh_*` alerts cover timeouts, failures and staleness (#3448).
+
+### Added
+
+- **api:** `GET /v1/accounts/{g_strkey}/entry-changes` and `GET /v1/assets/{asset_id}/entry-changes` from the entry index (#3435, #3437).
+- **api:** an account's sponsorship lifecycle, with a proof against its counters (#3439).
+- **api:** `GET /v1/accounts/{g_strkey}/claimable-balances`: the account's unclaimed claimable balances; the explorer account page shows them (#3490).
+- **api:** `?include=sparkline24h` fills `price_history_24h` on `/v1/assets` (#3489).
+- **api:** `GET /v1/assets/{asset_id}/trustline-history`: trustlines created and removed per UTC day with the open count; the asset page's Holders tab charts it (#3498).
+- **explorer:** every page rebuilt on the new design system, with clickable table rows, keyboard focus rings, the converter rework and a data-source disclosures overlay (#3459–#3487).
+- **ops:** `verify-network-state` gains a live-state check (#3453).
+- **status:** status.stellarindex.io is built from the explorer, with the same chrome; the standalone `web/status` app is gone (#3493, #3494).
+
+### Fixed
+
+- **lending:** Blend backstop and emission KPIs are shown in tokens, not base units (#3488).
+- **protocols:** the SDEX 7d block builds again; its raw-trade KPIs (unique traders, average size) are served at 24h only (#3499).
+- **dex:** the stubbed Phoenix pool is out of the TVL pool set (#3454).
+- **archive:** `galexie-mirror-verify` normalises upgrade entry-change order (#3450); hot-archive mismatch samples carry both ledgers (#3457).
+- **monitoring:** the availability-burn, quiet-source and curated-rwa-sync absent alerts no longer fire spuriously (#3452, #3461).
+- **monitoring:** the notify failed-send alert shows a whole count (#3497).
+
+### Changed
+
+- **divergence:** served Stellar assets that CoinGecko lists are mapped to their coin ids (#3455).
+- **trades:** token/token USD volume is bounded by a per-asset credibility budget charged to the deeper anchor market; a print over budget stores NULL `usd_volume`, never a capped value (#3495).
+- **release:** `cut-release.sh` starts the full CI run beside prepush, and the full run's fuzz smoke is sharded four ways (#3492, #3496).
+- **deps:** npm and actions minor/patch groups bumped (#3423–#3425).
+
 ## [v0.113.0] — 2026-10-13
 
 25 commits since v0.112.0. No migrations. Two new ClickHouse tables (the entry index). No `pkg/*` break (`pkg/client` gains optional credit, price-provenance, vetted-ISIN and `detectors_partial` fields).
@@ -148,17 +184,3 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 - **web:** every page renders the shared page shell, with a guard test (#3008–#3018, #3033–#3037); dev design-system routes deleted (#3040).
 - **web:** headline prices, supplies and market caps round from wire strings, never doubles (#2976–#2988).
 - **web:** insight and status prose folded into tooltips (#2991, #3059); privacy policy names the off-site backup provider and region (#3001).
-
-## [v0.109.0] — 2026-10-09
-
-12 commits since v0.108.0. No migrations, no `pkg/*` break.
-
-### Added
-
-- **wasmaudit:** the defindex vault, factory and strategy WASM hashes are audited, so the defindex replay gate admits them (#2974).
-- **web:** charts for creators, sponsors, signers, trustline use and issuer activity (#2963); ledger operations as bars (#2964).
-
-### Changed
-
-- **web:** USD volumes, SDEX KPIs, pair and DEX-source volume and TVL, network XLM figures, issuer volume and accounts wealth render from exact decimals, never doubles (#2966, #2967, #2969–#2973, #2975).
-- **web:** prose cut on the RWA and ledger pages (#2964, #2968).
