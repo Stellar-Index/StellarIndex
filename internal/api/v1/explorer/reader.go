@@ -192,6 +192,8 @@ type ExplorerReader interface {
 	EntryHistoryWatermark(ctx context.Context) (uint32, error)
 	// AccountEntryLedgers lists, newest first, the indexed ledgers at or below maxLedger for the raw account key.
 	AccountEntryLedgers(ctx context.Context, account string, roles []string, maxLedger uint32, limit int) ([]uint32, error)
+	// LiveClaimableBalancesInLedgers returns the still-unclaimed balances naming the raw account changed in the ledgers.
+	LiveClaimableBalancesInLedgers(ctx context.Context, account string, ledgers []uint32, maxKeys int) (clickhouse.ClaimableScan, error)
 	// AccountSponsorships pages the sponsorship arrangements in which the account is the side's party (sponsor or
 	// sponsored), each with its events through maxLedger; inForceOnly keeps the ones whose last event is a start.
 	AccountSponsorships(ctx context.Context, account, side string, inForceOnly bool, after clickhouse.SponsorshipKey, maxLedger uint32, limit int) ([]clickhouse.SponsorshipArrangement, error)

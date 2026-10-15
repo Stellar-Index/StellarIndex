@@ -5528,6 +5528,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/accounts/{g_strkey}/claimable-balances": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The unclaimed claimable balances an account can claim, newest first.
+         * @description Claimable balances that name the account as a claimant and are
+         *     still on the ledger, located through the entry index's `claimant`
+         *     role (`stellar.account_entry_ledgers`) and read from the lake's
+         *     current ledger-entry state. A balance the account could claim only
+         *     once a predicate is met is listed with that predicate in
+         *     `entry.claimants`; claimability at a given time is the caller's to
+         *     evaluate. `amount` is an integer string of stroops of `asset`
+         *     (ADR-0003).
+         *
+         *     CEILING: the view runs through `through_ledger`, the entry index's
+         *     watermark. Until the index is built on the deployment the route
+         *     answers 503 (`entry-index-not-built`).
+         *
+         *     LOWER BOUND: one read examines the account's 200 most recent
+         *     claimant ledgers and at most 500 balances. An account past either
+         *     cap (typically a spam target) is served with `lower_bound` true and
+         *     a `coverage_note` saying older unclaimed balances may be missing.
+         *     A balance whose change rows name the account but which has no row
+         *     in the lake's current-state table is left out (its state is
+         *     unknown); the view is then also a lower bound and the note gives
+         *     the count.
+         */
+        get: operations["getAccountClaimableBalances"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/accounts/{g_strkey}/sponsorships": {
         parameters: {
             query?: never;
@@ -26128,7 +26168,7 @@ export interface operations {
                              */
                             as_of_ledger?: number;
                             directory?: components["schemas"]["DirectoryInfo"];
-                            /** @description The holding domains this view serves. Claimable balances and Soroban contract (including SAC) balances are not included, so their absence is not a zero balance. Omitted when exists is false. */
+                            /** @description The holding domains this view serves. Claimable balances (served by /v1/accounts/{g_strkey}/claimable-balances) and Soroban contract (including SAC) balances are not included, so their absence is not a zero balance. Omitted when exists is false. */
                             coverage_note?: string;
                             /** @description True when the directory read failed, so an absent `directory` means the address was NOT checked (a malicious/unsafe label may exist), not that it is unlisted. Omitted on a successful read. */
                             directory_unavailable?: boolean;
@@ -26389,6 +26429,107 @@ export interface operations {
                              */
                             through_ledger: number;
                             /** @description True when the page stopped short of the account's older history; follow next_cursor. */
+                            lower_bound: boolean;
+                            coverage_note: string;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getAccountClaimableBalances: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Account id, a 56-character G-strkey (SEP-23); an M-address
+                 *     reads as its base account. Malformed strkeys return 400.
+                 */
+                g_strkey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The account's unclaimed claimable balances. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "account": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *         "claimable_balances": [
+                     *           {
+                     *             "balance_id": "929b20b72e5890ab51c24f1cc46fa01c4f318d8d33367d24dd614cfdf5491072",
+                     *             "asset": "native",
+                     *             "amount": "100000000",
+                     *             "sponsor": "GDIEKKIQWMIZ4LD3RP3ABPN7X5KEAEWYMR634BRHB7EULIMEVREWLF3G",
+                     *             "last_modified_ledger": 64802900,
+                     *             "last_modified_time": "2026-10-06T14:02:29Z",
+                     *             "entry": {
+                     *               "balance_id": "929b20b72e5890ab51c24f1cc46fa01c4f318d8d33367d24dd614cfdf5491072",
+                     *               "asset": "native",
+                     *               "amount": "100000000",
+                     *               "claimants": [
+                     *                 {
+                     *                   "destination": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *                   "predicate": {
+                     *                     "type": "unconditional"
+                     *                   }
+                     *                 }
+                     *               ],
+                     *               "sponsor": "GDIEKKIQWMIZ4LD3RP3ABPN7X5KEAEWYMR634BRHB7EULIMEVREWLF3G"
+                     *             }
+                     *           }
+                     *         ],
+                     *         "through_ledger": 64802921,
+                     *         "lower_bound": false,
+                     *         "coverage_note": "unclaimed claimable balances naming the account as a claimant, through ledger 64802921"
+                     *       },
+                     *       "as_of": "2026-10-06T14:03:31Z",
+                     *       "flags": {
+                     *         "divergence_warning": false,
+                     *         "triangulated": false,
+                     *         "reduced_redundancy": false,
+                     *         "stale": false,
+                     *         "degraded": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data?: {
+                            account: string;
+                            claimable_balances: {
+                                /** @description The balance id: hex of its 32-byte hash. */
+                                balance_id: string;
+                                /** @description native or CODE-ISSUER. */
+                                asset: string;
+                                /** @description Amount of asset in stroops (ADR-0003). */
+                                amount: string;
+                                /** @description The account paying the balance's reserve; omitted when unsponsored. */
+                                sponsor?: string;
+                                /** Format: int64 */
+                                last_modified_ledger: number;
+                                /** Format: date-time */
+                                last_modified_time: string;
+                                /** @description The decoded entry, including claimants and their predicates. */
+                                entry: {
+                                    [key: string]: unknown;
+                                };
+                            }[];
+                            /**
+                             * Format: int64
+                             * @description Newest ledger this view covers (the entry index watermark).
+                             */
+                            through_ledger: number;
+                            /** @description True when the read's ledger or balance cap was hit, so older unclaimed balances may be missing. */
                             lower_bound: boolean;
                             coverage_note: string;
                         };

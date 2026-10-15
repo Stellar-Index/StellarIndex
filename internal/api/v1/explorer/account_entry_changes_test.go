@@ -60,6 +60,10 @@ func (r *accountEntryChangesReader) AccountEntryLedgers(_ context.Context, _ str
 	return out, nil
 }
 
+func (r *accountEntryChangesReader) LiveClaimableBalancesInLedgers(context.Context, string, []uint32, int) (clickhouse.ClaimableScan, error) {
+	return clickhouse.ClaimableScan{}, nil
+}
+
 func (r *accountEntryChangesReader) StreamEntryChangesForLedgers(_ context.Context, ledgers []uint32, fn func(clickhouse.EntryHistorySourceRow) error) error {
 	for _, s := range r.rows {
 		if slices.Contains(ledgers, s.Ledger) {

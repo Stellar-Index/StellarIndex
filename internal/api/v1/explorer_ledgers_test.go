@@ -360,6 +360,10 @@ func (s *stubExplorerReader) AccountEntryLedgers(context.Context, string, []stri
 	return nil, s.err
 }
 
+func (s *stubExplorerReader) LiveClaimableBalancesInLedgers(context.Context, string, []uint32, int) (clickhouse.ClaimableScan, error) {
+	return clickhouse.ClaimableScan{}, s.err
+}
+
 func (s *stubExplorerReader) AssetEntryLedgers(context.Context, string, []string, uint32, int) ([]uint32, error) {
 	return nil, s.err
 }
