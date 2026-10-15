@@ -3,14 +3,14 @@
 #
 #   promtool test rules deploy/monitoring/rule-tests/storage-textfile-stale-exclusions_test.yml
 #
-# Split out of storage_test.yml: this group evaluates every storage.yml rule
-# each minute out to 841h (~50k steps), so in one file it serialised most of
-# `make monitoring-check`, which runs one promtool process per file in parallel.
+# Split out of storage_test.yml and evaluated every 10m, not 1m: the group runs
+# every storage.yml rule out to 841h, which at 1m took ~2 min of promtool time.
+# Keep every eval_time a multiple of 10m so each assertion lands on a step.
 
 rule_files:
   - ../rules/storage.yml
 
-evaluation_interval: 1m
+evaluation_interval: 10m
 
 tests:
   # ── the textfile_producer_stale catch-all false-fires on producer shapes with

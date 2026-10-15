@@ -344,6 +344,21 @@ jobs:
             web:
               - 'web/**'
               - 'openapi/**'
+              # Read outside web/ by explorer tests, its build or its
+              # postbuild; a diff confined to one must still run them.
+              - 'CHANGELOG.md'
+              - 'docs/adr/*'
+              - 'docs/architecture/*'
+              - 'docs/blog/*'
+              - 'docs/operations/*'
+              - 'internal/incidents/data/**'
+              - 'internal/storage/timescale/cursors.go'
+              - 'scripts/ci/explorer-file-budget.sh'
+              - 'scripts/ci/explorer-seo-lint.sh'
+              - 'scripts/ci/explorer-openapi-check.sh'
+              - 'scripts/ci/explorer-shell-fallback-check.sh'
+              - 'scripts/ci/check-redirects-cap.sh'
+              - '.github/workflows/ci.yml'
             ansible:
               - 'configs/ansible/**'
               # clickhouse-exporter-test.sh (toolchain-gates job) pins the
@@ -371,7 +386,9 @@ jobs:
           FILTER_ANSIBLE: ${{ steps.filter.outputs.ansible }}
         run: |
           set -euo pipefail
-          mapfile -t files < <(git diff --name-only "${BASE_SHA}" HEAD)
+          # dorny lists a rename as delete + add and does not quote paths;
+          # match it, or a moved file makes the two sides disagree.
+          mapfile -t files < <(git -c core.quotePath=false diff --no-renames --name-only "${BASE_SHA}" HEAD)
           mismatch=0
           for class in integration go web ansible; do
             case "$class" in
