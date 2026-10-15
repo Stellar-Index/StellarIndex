@@ -282,3 +282,42 @@ describe('closeGaps', () => {
     ).toEqual([11, 5, null]);
   });
 });
+
+describe('NetworkView shared stats cache', () => {
+  beforeEach(() => {
+    net.id = 'mainnet';
+    vi.mocked(apiGet).mockReset();
+  });
+
+  // The home page fills the same query key through useNetworkStats; arriving
+  // from it must not hand NetworkView a different cached shape.
+  it('renders the latest ledger after the home hook has filled the cache', async () => {
+    routeApi(NATIVE);
+    vi.resetModules();
+    const { NetworkView } = await import('./NetworkView');
+    const { useNetworkStats } = await import('@/api/hooks');
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    function Home() {
+      useNetworkStats();
+      return null;
+    }
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <Home />
+      </QueryClientProvider>,
+    );
+    await waitFor(() =>
+      expect(client.getQueryData(['/v1/network/stats'])).toBeTruthy(),
+    );
+    rerender(
+      <QueryClientProvider client={client}>
+        <NetworkView />
+      </QueryClientProvider>,
+    );
+    expect(
+      await screen.findByText(`#${TIP.sequence.toLocaleString('en-US')}`),
+    ).toBeTruthy();
+  });
+});
