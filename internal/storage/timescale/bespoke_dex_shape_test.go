@@ -85,7 +85,7 @@ func TestDexRawWindowOK(t *testing.T) {
 		want   bool
 	}{
 		{"sdex", 1, true},
-		{"sdex", 7, true},
+		{"sdex", 7, false},
 		{"sdex", 30, false},
 		{"sdex", 90, false},
 		{"soroswap", 90, true},
