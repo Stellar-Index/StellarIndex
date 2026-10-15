@@ -27,7 +27,6 @@ import {
   Td,
   Th,
   THead,
-  TR,
   TxStatusBadge,
   LinkRow,
 } from '@/components/ui';

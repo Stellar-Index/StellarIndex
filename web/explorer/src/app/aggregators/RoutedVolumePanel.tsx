@@ -13,7 +13,6 @@ import {
   Badge,
   Skeleton,
   TBody,
-  TR,
   Table,
   Td,
   Th,

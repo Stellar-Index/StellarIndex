@@ -8,7 +8,6 @@ import {
   Table,
   THead,
   TBody,
-  TR,
   Th,
   Td,
   LinkRow,

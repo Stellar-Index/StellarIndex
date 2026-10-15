@@ -14,7 +14,6 @@ import {
   Td,
   Th,
   THead,
-  TR,
   LinkRow,
 } from '@/components/ui';
 import { PANEL_LABEL_CLASS } from '@/components/ui/Page';

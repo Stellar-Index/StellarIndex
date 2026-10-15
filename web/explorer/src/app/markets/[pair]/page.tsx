@@ -29,7 +29,6 @@ import {
   EmptyState,
   PageHeader,
   TBody,
-  TR,
   Table,
   Td,
   Th,

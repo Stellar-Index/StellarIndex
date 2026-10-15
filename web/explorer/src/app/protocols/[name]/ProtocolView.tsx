@@ -31,7 +31,6 @@ import {
   StatCell,
   StatGrid,
   TBody,
-  TR,
   Table,
   Td,
   Th,
