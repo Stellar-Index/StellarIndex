@@ -1033,7 +1033,10 @@ type rankTierAssetsReader struct {
 }
 
 func (r *rankTierAssetsReader) ListAssetsExt(_ context.Context, opts timescale.ListAssetsOptions) ([]timescale.AssetRow, error) {
-	r.lastCursor = opts.Cursor
+	// The contract-arm read behind the off-page SAC merge is not the page read under test.
+	if opts.Type != "soroban" {
+		r.lastCursor = opts.Cursor
+	}
 	tier := 2
 	sortVol := "62341.98422258"
 	// Two rows so the handler's overfetch-by-one sees a next page at limit=1.

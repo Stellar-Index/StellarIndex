@@ -2251,7 +2251,7 @@ func (s *Server) fetchClassicUnifiedRows(
 	// back empty. Skipping loses nothing: the arm it merges into was filtered out.
 	var mergedAliases map[string]struct{}
 	if filters.typ != "soroban" {
-		out, mergedAliases = s.foldAliasTwins(out)
+		out, mergedAliases = s.foldAliasTwins(r.Context(), out)
 	}
 	out = s.suppressCatalogueTwins(out)
 	// After the catalogue suppression (no read for a row about to be
@@ -3325,33 +3325,104 @@ func (s *Server) suppressCatalogueTwins(rows []AssetDetail) []AssetDetail {
 }
 
 // foldAliasTwins collapses each non-canonical alias row (SAC wrapper, crypto:XLM) into its equivalence class's canonical row, since listing
-// SQL joins literal asset_ids. Only 24h volume and trade count aggregate; price, supply and change stay the canonical form's. Runs before
-// suppressCatalogueTwins; ranking uses unfolded per-arm volume, and [Server.restoreOffPageContractArms] point-reads the rest.
-func (s *Server) foldAliasTwins(rows []AssetDetail) ([]AssetDetail, map[string]struct{}) {
-	// canonical asset_id → index of the surviving primary row in `out`.
-	primaryIdx := make(map[string]int, len(rows))
-	out := make([]AssetDetail, 0, len(rows))
-	var aliases []AssetDetail
-	for _, row := range rows {
-		canonID := canonicalAssetID(row.AssetID)
-		if canonID != row.AssetID {
-			aliases = append(aliases, row)
+// SQL joins literal asset_ids. Only 24h volume and trade count aggregate; price, supply and change stay the canonical form's. The merged
+// row takes the rank of the class's first row; an alias whose canonical row is off-page is dropped and
+// [Server.restoreOffPageContractArms] adds its volume where that row ranks. Runs before suppressCatalogueTwins.
+func (s *Server) foldAliasTwins(ctx context.Context, rows []AssetDetail) ([]AssetDetail, map[string]struct{}) {
+	canon := s.listingCanonicalIDs(ctx, rows)
+	var order []string
+	primary := make(map[string]int, len(rows))
+	aliases := make(map[string][]int)
+	for i, row := range rows {
+		id := canon[i]
+		_, seenPrimary := primary[id]
+		if _, seenAlias := aliases[id]; !seenPrimary && !seenAlias {
+			order = append(order, id)
+		}
+		if id != row.AssetID {
+			aliases[id] = append(aliases[id], i)
+		} else if !seenPrimary {
+			primary[id] = i
+		}
+	}
+	out := make([]AssetDetail, 0, len(order))
+	merged := make(map[string]struct{})
+	for _, id := range order {
+		p, ok := primary[id]
+		if !ok {
 			continue
 		}
-		primaryIdx[canonID] = len(out)
-		out = append(out, row)
-	}
-	merged := make(map[string]struct{}, len(aliases))
-	for _, alias := range aliases {
-		if i, ok := primaryIdx[canonicalAssetID(alias.AssetID)]; ok {
-			mergeAliasVolume(&out[i], alias)
-			merged[alias.AssetID] = struct{}{}
+		row := rows[p]
+		for _, a := range aliases[id] {
+			mergeAliasVolume(&row, rows[a])
+			merged[rows[a].AssetID] = struct{}{}
 		}
+		out = append(out, row)
 	}
 	return out, merged
 }
 
-// restoreOffPageContractArms adds, onto each classic row of an unfiltered page, the 24h volume of SAC wrappers foldAliasTwins
+// listingCanonicalIDs maps each row to its class's canonical asset_id: the alias registry's, else, for a contract row, the asset it
+// is the SAC of (an on-page classic row's derived address first, then the lake lookup). A failed lookup leaves the row as itself.
+func (s *Server) listingCanonicalIDs(ctx context.Context, rows []AssetDetail) []string {
+	ids := make([]string, len(rows))
+	bySAC := make(map[string]string)
+	for i, row := range rows {
+		ids[i] = canonicalAssetID(row.AssetID)
+		if sac, ok := derivedSAC(row.AssetID); ok {
+			bySAC[sac] = row.AssetID
+		}
+	}
+	var lookup []int
+	for i, row := range rows {
+		if ids[i] != row.AssetID || !canonical.IsContractID(row.AssetID) {
+			continue
+		}
+		if classic, ok := bySAC[row.AssetID]; ok {
+			ids[i] = classic
+			continue
+		}
+		lookup = append(lookup, i)
+	}
+	if len(lookup) == 0 || s.Explorer == nil {
+		return ids
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	forEachBounded(s.logger, len(lookup), readFanoutConcurrency, func(j int) {
+		i := lookup[j]
+		if wrapped, ok := s.sacWrappedAssetID(lookupCtx, rows[i].AssetID); ok {
+			ids[i] = wrapped
+		}
+	})
+	return ids
+}
+
+// derivedSAC is a classic asset_id's SAC address.
+func derivedSAC(assetID string) (string, bool) {
+	a, err := canonical.ParseAsset(assetID)
+	if err != nil || a.Type != canonical.AssetClassic {
+		return "", false
+	}
+	sac, err := a.SacContractID()
+	return sac, err == nil
+}
+
+// sacWrappedAssetID is [Server.resolveSACToClassic] as an asset_id, memoised on success: the address fixes the wrapped asset.
+func (s *Server) sacWrappedAssetID(ctx context.Context, contractID string) (string, bool) {
+	if v, ok := s.sacWrapped.Load(contractID); ok {
+		return v.(string), true
+	}
+	asset, ok := s.resolveSACToClassic(ctx, contractID)
+	if !ok {
+		return "", false
+	}
+	id := asset.String()
+	s.sacWrapped.Store(contractID, id)
+	return id, true
+}
+
+// restoreOffPageContractArms adds, onto each classic row of an unfiltered page, the 24h volume of its SAC rows foldAliasTwins
 // did not merge in-page, so the dust guard does not weigh an understated figure. Row filters keep the arm they admitted;
 // ordering stays per-arm volume.
 func (s *Server) restoreOffPageContractArms(ctx context.Context, rows []AssetDetail, merged map[string]struct{}) {
@@ -3360,9 +3431,43 @@ func (s *Server) restoreOffPageContractArms(ctx context.Context, rows []AssetDet
 	}
 	readCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
+	arm := s.tradedContractArm(readCtx)
 	forEachBounded(s.logger, len(rows), readFanoutConcurrency, func(i int) {
 		s.mergeContractArmVolumeExcept(readCtx, &rows[i], rows[i].AssetID, merged)
+		mergeDerivedSACVolume(&rows[i], arm, merged)
 	})
+}
+
+// tradedContractArmLimit bounds the contract-arm read; the arm holds only contracts with a 24h volume row (~60 on pubnet).
+const tradedContractArmLimit = 2000
+
+// tradedContractArm reads the listing's contract arm keyed by asset_id; nil on error, which only leaves volumes classic-only.
+func (s *Server) tradedContractArm(ctx context.Context) map[string]AssetDetail {
+	rows, err := s.AssetsReader.ListAssetsExt(ctx, timescale.ListAssetsOptions{Type: "soroban", Limit: tradedContractArmLimit})
+	if err != nil {
+		s.logger.Warn("contract arm read failed; off-page SAC volume not restored", "err", err)
+		return nil
+	}
+	out := make(map[string]AssetDetail, len(rows))
+	for _, row := range rows {
+		out[row.AssetID] = assetDetailFromAssetRow(row)
+	}
+	return out
+}
+
+// mergeDerivedSACVolume adds the volume of dst's derived SAC from the contract arm, unless merged in-page or already added as a
+// registry alias by mergeContractArmVolumeExcept.
+func mergeDerivedSACVolume(dst *AssetDetail, arm map[string]AssetDetail, merged map[string]struct{}) {
+	sac, ok := derivedSAC(dst.AssetID)
+	if !ok || canonicalAssetID(sac) != sac {
+		return
+	}
+	if _, done := merged[sac]; done {
+		return
+	}
+	if row, ok := arm[sac]; ok {
+		mergeAliasVolume(dst, row)
+	}
 }
 
 // canonicalAssetID resolves an asset_id to its class's canonical id via the AliasRegistry; an unparseable id folds onto itself
@@ -3454,6 +3559,10 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 	}
 	statsCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
+	var arm map[string]AssetDetail
+	if filters.unfiltered() {
+		arm = s.tradedContractArm(statsCtx)
+	}
 	var anyUnmeasured atomic.Bool
 	forEachBounded(s.logger, len(page), readFanoutConcurrency, func(i int) {
 		vc, ok := s.VerifiedCurrencies.LookupBySlug(page[i].Slug)
@@ -3476,6 +3585,7 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 		// dust-liquidity guard weighs the same volume on both paths.
 		if filters.unfiltered() {
 			s.mergeContractArmVolume(statsCtx, &twin[0], entry.AssetID)
+			mergeDerivedSACVolume(&twin[0], arm, nil)
 		}
 		// The classic-phase ordering: the twin's price backs the cap and the
 		// pills merged below, so a dust price must be withheld before either.

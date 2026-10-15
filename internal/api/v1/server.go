@@ -199,6 +199,8 @@ type Server struct {
 	// served-tier `SELECT DISTINCT ... LIMIT 5000` scan on an unauthenticated route, so scanning on
 	// every origin miss would be a DoS surface.
 	protocolRosterCache rosterCache
+	// SAC contract id → the asset_id it wraps; see sacWrappedAssetID.
+	sacWrapped sync.Map
 	// TTL + single-flight cache for the classic circulating-supply map (one ~0.5s ClickHouse
 	// GROUP BY over the trustline slice, see cachedClassicSupply); backs market-cap fill on /v1/assets.
 	classicSupplyMu     sync.Mutex

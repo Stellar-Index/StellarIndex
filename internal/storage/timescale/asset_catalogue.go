@@ -390,10 +390,9 @@ const listAssetsBaseSelect = `
 		  -- rows in the top-200-by-volume listing, including CAUP7 at
 		  -- $71.8k/7d.
 		  --
-		  -- SAC-wrapped tokens are NOT excluded here and do not need to be:
-		  -- v1.Server.foldAliasTwins already collapses each non-canonical
-		  -- alias row onto its canonical twin, so AQUA/SHX/EURC cannot
-		  -- appear twice.
+		  -- SAC-wrapped tokens are NOT excluded here: the asset_class=all
+		  -- listing folds each onto its classic row (v1.Server.foldAliasTwins);
+		  -- the default listing serves them as their own rows.
 		  SELECT asset_id, code, issuer_g_strkey, slug,
 		         first_seen_ledger, last_seen_ledger, observation_count
 		    FROM classic_assets
