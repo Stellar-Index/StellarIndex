@@ -3,6 +3,11 @@ package clickhouse
 import (
 	"context"
 	"fmt"
+	"time"
+
+	"github.com/stellar/go-stellar-sdk/xdr"
+
+	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
 // EntryHistoryWatermark is the ledger ch-entry-history has derived the sponsorship lifecycle through (0 = never
@@ -89,4 +94,70 @@ func (r *ExplorerReader) StreamEntryChangesForLedgers(ctx context.Context, ledge
 		}
 	}
 	return rows.Err()
+}
+
+// LiveClaimableBalance is a claimable balance still on the ledger, with the ledger that last modified it.
+type LiveClaimableBalance struct {
+	Ledger    uint32
+	CloseTime time.Time
+	// Claimants are the claimant destinations' strkeys; Fields is the entry as xdrjson.LedgerEntryFields decodes it.
+	Claimants []string
+	Fields    map[string]any
+}
+
+// One tuple argMax over the RMT version stands in for FINAL (2.6x faster on r1's 1.2B-row claimable set) and keeps
+// all three columns from the winning change. Removals (empty entry_xdr) win it and are dropped in Go, after counting
+// toward maxKeys. The position() prefilter only narrows: the handler re-checks the decoded claimants.
+const liveClaimableBalancesQuery = `SELECT w.1, w.2, w.3 FROM (
+	SELECT key_xdr, argMax((ledger_seq, close_time, entry_xdr), version) AS w
+	FROM stellar.ledger_entries_current
+	WHERE entry_type = 'claimable_balance'
+	  AND key_xdr IN (SELECT key_xdr FROM stellar.ledger_entry_changes
+	                  WHERE ledger_seq IN (?) AND entry_type = 'claimable_balance' AND entry_xdr != ''
+	                    AND position(tryBase64Decode(entry_xdr), ?) > 0
+	                  GROUP BY key_xdr ORDER BY max(ledger_seq) DESC LIMIT ?)
+	GROUP BY key_xdr)
+	ORDER BY w.1 DESC` + explorerScanSettings
+
+// LiveClaimableBalancesInLedgers returns, newest first, up to maxKeys claimable balances naming the raw account that
+// changed in one of the ledgers and are still unclaimed now; keys is how many balances were examined (maxKeys = capped).
+func (r *ExplorerReader) LiveClaimableBalancesInLedgers(ctx context.Context, account string, ledgers []uint32, maxKeys int) (live []LiveClaimableBalance, keys int, err error) {
+	if len(ledgers) == 0 {
+		return nil, 0, nil
+	}
+	rows, err := r.conn.Query(ctx, liveClaimableBalancesQuery, ledgers, account, maxKeys)
+	if err != nil {
+		return nil, 0, fmt.Errorf("clickhouse: live claimable balances for %d ledgers: %w", len(ledgers), err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var (
+			c   LiveClaimableBalance
+			b64 string
+			e   xdr.LedgerEntry
+		)
+		if err := rows.Scan(&c.Ledger, &c.CloseTime, &b64); err != nil {
+			return nil, 0, fmt.Errorf("clickhouse: scan live claimable balance: %w", err)
+		}
+		keys++
+		if b64 == "" {
+			continue
+		}
+		if err := xdr.SafeUnmarshalBase64(b64, &e); err != nil {
+			return nil, 0, fmt.Errorf("clickhouse: decode claimable balance at ledger %d: %w", c.Ledger, err)
+		}
+		cb, ok := e.Data.GetClaimableBalance()
+		if !ok {
+			return nil, 0, fmt.Errorf("clickhouse: claimable_balance row at ledger %d holds a %s entry", c.Ledger, e.Data.Type)
+		}
+		for _, cl := range cb.Claimants {
+			if v0, ok := cl.GetV0(); ok {
+				c.Claimants = append(c.Claimants, v0.Destination.Address())
+			}
+		}
+		c.Fields, _ = xdrjson.LedgerEntryFields(e)
+		c.CloseTime = c.CloseTime.UTC()
+		live = append(live, c)
+	}
+	return live, keys, rows.Err()
 }
