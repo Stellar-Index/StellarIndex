@@ -197,9 +197,9 @@ See also [cdn-setup.md](cdn-setup.md), [launch-day-checklist.md](launch-day-chec
 > domain**. It refuses to run unless `CF_BOOTSTRAP_I_UNDERSTAND=1` is set.
 > Treat this page as the procedure for standing up a NEW zone.
 
-`status.stellarindex.io` (project `stellarindex-status`, `web/status/`) is the
-standalone incident page, built from `internal/incidents/data` with no API call
-so it publishes during an outage. `stellarindex.io/status` is the explorer's
+`status.stellarindex.io` (project `stellarindex-status`) is the
+explorer build with `/` rewritten to `/status/`, incident history baked from
+`internal/incidents/data` (`EXPLORER_BUILD_OFFLINE=1`) so it publishes during an outage. `stellarindex.io/status` is the explorer's
 live-health page; `/incident/*` on the status domain 301s to it.
 
 | Surface | Project | Domain |

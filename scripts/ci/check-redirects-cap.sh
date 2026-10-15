@@ -4,8 +4,7 @@
 # web/explorer/public/_redirects itself documents CF Pages' free-plan
 # ~100-rule limit (see its "fiat de-dup" comments) and asserts
 # it stays under that cap by hand-counting whenever a rule is added.
-# Nothing in CI checked it: `grep -rln _redirects .github/workflows/`
-# only matched an unrelated web/status comment. Past the cap, CF Pages
+# Past the cap, CF Pages
 # silently drops the excess rules — a deploy-time failure with no build
 # error, discovered only by a redirect quietly not firing in production.
 #

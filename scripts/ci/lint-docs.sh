@@ -681,11 +681,10 @@ fi
 #
 # A dev-convenience localhost origin in the Pages CSP `connect-src` leaked to production; the dev server ignores _headers.
 
-for hf in web/explorer/public/_headers web/status/public/_headers; do
-  if [ -f "$hf" ] && grep -qE 'Content-Security-Policy:.*localhost' "$hf"; then
-    err "$hf permits 'localhost' in a Content-Security-Policy header — forbidden in production builds. Remove the localhost permit; dev work uses 'next dev' which doesn't read _headers."
-  fi
-done
+hf=web/explorer/public/_headers
+if [ -f "$hf" ] && grep -qE 'Content-Security-Policy:.*localhost' "$hf"; then
+  err "$hf permits 'localhost' in a Content-Security-Policy header — forbidden in production builds. Remove the localhost permit; dev work uses 'next dev' which doesn't read _headers."
+fi
 
 # ─── 16b. The explorer runbook must describe the _headers that ship ────────
 #
@@ -825,31 +824,6 @@ else
     err "$ANSIBLE_DEFAULTS: per-region comment says '$r1_comment' but r1's live topology is '$r1_pool_type' ($R1_INVENTORY). The role DEFAULT may stay raidz2 for fresh nodes; the comment must not describe r1 wrongly"
   fi
   echo "  r1 pool topology: '$r1_pool_type' (authority $R1_INVENTORY) — checked $r1_files_checked of ${#r1_topology_files[@]} r1-scoped files"
-fi
-
-# ─── 19. Agent-orientation docs: the claims a machine can re-derive ────────
-#
-# (b) The status page lives in the explorer (web/explorer/src/app/status/); web/status/ is a redirect-only stub. The three
-# orientation docs must not locate the shipped page at web/status/. Checked per document; ops docs may name the stub.
-
-echo "Checking agent-orientation doc claims..."
-
-# (a) retired: the two orientation docs merged into one AGENTS.md.
-
-# (b) While web/status/ is a redirect stub, an orientation doc that
-# names it must also say where the status page actually lives.
-STATUS_REDIRECTS="web/status/public/_redirects"
-if [ ! -f "$STATUS_REDIRECTS" ]; then
-  echo "  (skipped §18b — $STATUS_REDIRECTS is gone; web/status/ has been retired, so there is no stub to misdescribe)"
-elif grep -q "https://stellarindex.io/status" "$STATUS_REDIRECTS"; then
-  status_docs=$(grep -l "web/status" README.md AGENTS.md docs/architecture/overview.md 2>/dev/null || true)
-  for doc in $status_docs; do
-    if ! grep -q "web/explorer/src/app/status" "$doc"; then
-      err "$doc names 'web/status' but never says where the status page actually lives — since the move it ships from web/explorer/src/app/status/ (stellarindex.io/status) and web/status/ is a redirect-only stub ($STATUS_REDIRECTS 301s to it; see web/status/README.md). Name the explorer path so an agent reading this file isn't sent to the stub."
-    fi
-  done
-else
-  echo "  (skipped §18b — $STATUS_REDIRECTS no longer 301s to stellarindex.io/status; the page appears to have moved back)"
 fi
 
 # ─── 20. The self-hosting path: what a stranger types in their first hour ──

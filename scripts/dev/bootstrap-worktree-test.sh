@@ -35,7 +35,6 @@ make_app() { # make_app <dir> <bin>
     touch -t 202601020000 "$d/node_modules/.modules.yaml"
 }
 make_app web/explorer openapi-typescript
-make_app web/status tsc
 
 # Stands in for pnpm: records the call and rewrites .modules.yaml as a real
 # install does.
@@ -64,11 +63,6 @@ if grep -q 'MISSING   web/explorer .*STALE' <<<"$stale"; then
     ok "stale web/explorer is reported"
 else
     no "stale web/explorer is reported" "$(grep 'web/explorer' <<<"$stale")"
-fi
-if grep -q 'MISSING   web/status' <<<"$stale"; then
-    no "current web/status is not reported" "$(grep 'web/status' <<<"$stale")"
-else
-    ok "current web/status is not reported"
 fi
 if [ "$(blocking "$stale")" = "$(( $(blocking "$fresh") + 1 ))" ]; then
     ok "stale install counts as one blocking gap"

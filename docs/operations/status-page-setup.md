@@ -11,9 +11,10 @@ The live page is `https://stellarindex.io/status`: an explorer route,
 (`StatusPageClient.tsx` + `incident/[slug]`), published with the rest of
 `stellarindex.io` (Cloudflare git integration on push to `main`;
 `.github/workflows/explorer-deploy.yml` is the `workflow_dispatch` fallback).
-`web/status/` ([README](../../web/status/README.md)) is the standalone incident
-page at `status.stellarindex.io` (Pages project `stellarindex-status`), built from
-`internal/incidents/data` so it stays up when the API and explorer do not.
+`status.stellarindex.io` (Pages project `stellarindex-status`, [README](../../deploy/status-page/README.md))
+is the same explorer build with `/` rewritten to `/status/`; it sets
+`EXPLORER_BUILD_OFFLINE=1`, so incident history is baked from
+`internal/incidents/data` and it still publishes when the API is down.
 The Upptime and cstate predecessors (`deploy/status-page/cstate/`) no longer exist.
 
 ## Architecture (current)
@@ -27,7 +28,6 @@ web/explorer/src/app/status/   ← the live page
   StatusPageClient.tsx           ← polls the live API at runtime
   incident/[slug]/               ← per-incident postmortem pages
   src/lib/incidents.ts           ← build-time loader of the same data/*.md
-web/status/                    ← standalone incident page (status.stellarindex.io)
 ```
 
 The page is **NOT independent of the API.** `StatusPageClient.tsx` fetches
@@ -99,7 +99,5 @@ The page has two incident feeds, and only one is editorial:
 
 `ci.yml`'s `web/explorer` job runs `pnpm typecheck`, `pnpm lint`, `pnpm test` and
 a trivy scan of `pnpm-lock.yaml` on every PR/push touching `web/explorer/`; the
-status route is covered there. The `web/status/` stub has its own `ci.yml` job
-(`pnpm typecheck`, `pnpm lint`, trivy) and manual deploy workflow
-(`.github/workflows/status-page.yml`), used only to redeploy the redirect project
-when the CF git integration needs a hotfix path.
+status route is covered there. `.github/workflows/status-page.yml` builds the explorer for
+`status.stellarindex.io` and deploys the `stellarindex-status` project.

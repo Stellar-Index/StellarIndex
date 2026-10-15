@@ -31,7 +31,6 @@ docker run --rm \
   --mount type=volume,src=stellarindex-verify-go-mod,dst=/go/pkg/mod \
   --mount type=volume,src=stellarindex-verify-pnpm,dst=/pnpm/store \
   --mount type=volume,src=stellarindex-verify-explorer-modules,dst=/workspace/web/explorer/node_modules \
-  --mount type=volume,src=stellarindex-verify-status-modules,dst=/workspace/web/status/node_modules \
   -e GOMODCACHE=/go/pkg/mod \
   -e PNPM_HOME=/pnpm \
   -e npm_config_store_dir=/pnpm/store \

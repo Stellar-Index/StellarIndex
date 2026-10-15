@@ -457,22 +457,6 @@ web-test: ## Run the showcase site's vitest suite
 web-generate-api: ## Regenerate web/explorer/src/api/types.ts from OpenAPI
 	cd $(WEB_EXPLORER_DIR) && pnpm generate:api
 
-##@ Status page (web/status/) — public-facing status.stellarindex.io
-
-WEB_STATUS_DIR := web/status
-
-.PHONY: status-build
-status-build: ## Build the status page for production
-	cd $(WEB_STATUS_DIR) && pnpm build
-
-.PHONY: status-typecheck
-status-typecheck: ## Typecheck the status page
-	cd $(WEB_STATUS_DIR) && pnpm typecheck
-
-.PHONY: status-lint
-status-lint: ## Lint the status page
-	cd $(WEB_STATUS_DIR) && pnpm lint
-
 ##@ Housekeeping
 
 .PHONY: clean

@@ -101,10 +101,9 @@ else
     BASE_SHA="$(git rev-parse HEAD)"
     export BASE_SHA
     export VERIFY_FAIL_ON_SKIP=1
-    for app in web/explorer web/status; do
-      [[ -f "$app/pnpm-lock.yaml" ]] || continue
-      pnpm --dir "$app" install --frozen-lockfile
-    done
+    if [[ -f web/explorer/pnpm-lock.yaml ]]; then
+      pnpm --dir web/explorer install --frozen-lockfile
+    fi
     make verify
     if ! git diff --exit-code --stat; then
       echo "prepush: FAIL: a formatter or generator changed committed HEAD" >&2

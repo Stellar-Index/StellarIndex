@@ -48,8 +48,8 @@ package_json_diff() {
   printf '%s' "$1" > "$TMP/old"
   printf '%s' "$2" > "$TMP/new"
   diff -u "$TMP/old" "$TMP/new" 2>/dev/null | sed \
-    -e "1s#.*#--- a/web/status/package.json#" \
-    -e "2s#.*#+++ b/web/status/package.json#"
+    -e "1s#.*#--- a/web/explorer/package.json#" \
+    -e "2s#.*#+++ b/web/explorer/package.json#"
   return 0
 }
 

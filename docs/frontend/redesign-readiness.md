@@ -14,8 +14,7 @@ language is*; this doc is *how amenable the codebase is to changing it* — wher
 everything lives, which pages are ready to reorder vs. which need a
 decompose-first pass, and the safe playbook for each kind of change.
 
-Scope: `web/explorer` (the public site + in-site account). `web/status` is a
-tiny separate app (one client component) and out of scope here.
+Scope: `web/explorer` (the public site + in-site account).
 
 ## TL;DR — difficulty by change type
 

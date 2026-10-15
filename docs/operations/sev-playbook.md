@@ -105,7 +105,7 @@ Triggered by a recent deploy: revert first, investigate after. Latent bug weeks 
 
 ### 5.1 Status page
 
-`https://status.stellarindex.io` is a static export of [`web/status/`](../../web/status/) on its own Cloudflare Pages project (`status-page.yml`); it makes no API call, so it publishes during an API outage: post there first. Source of truth is `internal/incidents/data/<slug>.md` (also rendered by `/v1/incidents`): push to `main`, then `gh workflow run status-page.yml --ref main`. How to post: [`runbooks/sev-status-page-update.md`](runbooks/sev-status-page-update.md), binding for every SEV-1/SEV-2 update.
+`https://status.stellarindex.io` is the explorer's static export ([`web/explorer/src/app/status/`](../../web/explorer/src/app/status/)) on its own Cloudflare Pages project (`status-page.yml`); it makes no build-time API call (`EXPLORER_BUILD_OFFLINE=1`), so it publishes during an API outage: post there first. Source of truth is `internal/incidents/data/<slug>.md` (also rendered by `/v1/incidents`): push to `main`, then `gh workflow run status-page.yml --ref main`. How to post: [`runbooks/sev-status-page-update.md`](runbooks/sev-status-page-update.md), binding for every SEV-1/SEV-2 update.
 
 **Webhook fan-out** (`incident.sev1`, `incident.resolved`) is operator-triggered, after deploying the binary that embeds the new `.md`:
 

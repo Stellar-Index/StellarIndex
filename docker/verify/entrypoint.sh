@@ -28,10 +28,9 @@ echo "=== Install locked frontend dependencies ==="
 # pnpm 10 ask before purging it, and with no TTY that question aborts the run
 # with ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY. Answer it up front.
 pnpm config set confirm-modules-purge false
-for app in web/explorer web/status; do
-  [[ -f "$app/pnpm-lock.yaml" ]] || continue
-  pnpm --dir "$app" install --frozen-lockfile
-done
+if [[ -f web/explorer/pnpm-lock.yaml ]]; then
+  pnpm --dir web/explorer install --frozen-lockfile
+fi
 
 echo "=== Workflow security ==="
 zizmor --min-confidence medium .github/workflows/

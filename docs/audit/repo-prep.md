@@ -48,11 +48,11 @@ correctness, VWAP/aggregation math, and completeness verdicts are the
   NO dep seeding for Go. Tools live in `$(go env GOPATH)/bin`
   (gofumpt, goimports, golangci-lint, govulncheck all installed); the
   Makefile calls them via `$(GOBIN)/…` so PATH doesn't matter for `make`.
-- **Web (pnpm v10, node 22 — the version CI pins; Next 16.2.12 / React 19 — NOT Next 15 as some docs say):** `web/explorer` and `web/status` each have
+- **Web (pnpm v10, node 22 — the version CI pins; Next 16.2.12 / React 19 — NOT Next 15 as some docs say):** `web/explorer` has
   `node_modules` present in the main checkout. In a worktree, symlink before
   any web gate:
   `ln -s <repo>/stellarindex/web/explorer/node_modules <wt>/web/explorer/node_modules`
-  and the same for `web/status`. (`pnpm install --frozen-lockfile` also works
+  (`pnpm install --frozen-lockfile` also works
   but is slower.)
 
 ## Gate / verify commands
