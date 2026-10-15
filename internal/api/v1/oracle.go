@@ -267,18 +267,23 @@ func (s *Server) handleOracleLatest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	writeEnvelope(w, Envelope{Data: latestOracleReadings(updates, rawQuote != "", quoteFilter), AsOf: vintage.asOf()})
+}
+
+// latestOracleReadings keeps the rows for quote (when filtered) from sources still live: a retired feed's last row would read
+// as a live price frozen in time.
+func latestOracleReadings(updates []canonical.OracleUpdate, filterQuote bool, quote canonical.Asset) []OracleReading {
 	rows := make([]OracleReading, 0, len(updates))
 	for _, u := range updates {
-		if rawQuote != "" && !u.Quote.Equal(quoteFilter) {
+		if filterQuote && !u.Quote.Equal(quote) {
 			continue
 		}
-		// A retired feed's last row would read as a live price frozen in time.
 		if external.Registry[u.Source].Retired {
 			continue
 		}
 		rows = append(rows, oracleReadingFrom(u))
 	}
-	writeEnvelope(w, Envelope{Data: rows, AsOf: vintage.asOf()})
+	return rows
 }
 
 // handleOracleStreams serves GET /v1/oracle/streams[?include_unmapped=true]: the latest observation per (source, asset, quote) over the
