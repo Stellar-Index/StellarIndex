@@ -92,8 +92,13 @@ func (b *usdCreditBudget) admit(ctx context.Context, id string, asset canonical.
 	if _, ok := b.charged[id]; ok {
 		return true, nil
 	}
-	led := b.served[key]
 	b.sweep(at)
+	led := b.served[key]
+	if led == nil {
+		// Swept between ensureLedger and here: its seed rows were all older than the sweep floor.
+		led = &creditLedger{hours: map[int64]*big.Rat{}, last: creditHour(at)}
+		b.served[key] = led
+	}
 	total := led.sum(b.windowStart(at), at)
 	total.Add(total, value)
 	if total.Cmp(new(big.Rat).Mul(backing, b.factor)) > 0 {
@@ -120,7 +125,7 @@ func (b *usdCreditBudget) ensureLedger(ctx context.Context, key string, asset ca
 	if ok {
 		return nil
 	}
-	led := &creditLedger{hours: map[int64]*big.Rat{}}
+	led := &creditLedger{hours: map[int64]*big.Rat{}, last: creditHour(at)}
 	if b.seed != nil {
 		prior, err := b.seed(ctx, asset, b.windowStart(at), at)
 		if err != nil {

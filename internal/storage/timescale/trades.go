@@ -524,7 +524,8 @@ func baseAnchorEligible(a canonical.Asset) bool {
 // scale.
 const stellarClassicDecimals = 7
 
-// WouldPopulateUSDVolume reports whether InsertTrade would stamp a non-null usd_volume under the installed quote spec and FX resolver; an FX-tier hit calls the resolver synchronously, so it must be hot-path cheap.
+// WouldPopulateUSDVolume reports whether InsertTrade would stamp a non-null usd_volume under the installed quote spec, FX resolver and
+// credibility budget (a dry run). An FX-tier hit calls the resolver synchronously, and a first-seen asset runs the budget's seed query.
 func (s *Store) WouldPopulateUSDVolume(ctx context.Context, t canonical.Trade) bool {
 	v, _, err := tradeUSDVolumeCredited(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver, s.creditBudget, false)
 	return err == nil && v != nil

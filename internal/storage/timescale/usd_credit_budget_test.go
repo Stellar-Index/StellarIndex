@@ -181,6 +181,20 @@ func TestCreditBudget_SweepDropsStaleLedgers(t *testing.T) {
 	}
 }
 
+func TestCreditBudget_SweepKeepsAFreshEmptyLedger(t *testing.T) {
+	b := newUSDCreditBudget(nil)
+	at := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	filler := mustAsset(t, "ABC-"+creditTestIssuer)
+	b.latest = at
+	b.admits = 1022
+	mustAdmit(t, b, filler, at, "0", "1000", true)
+	fresh := mustAsset(t, "NEW-"+creditTestIssuer)
+	mustAdmit(t, b, fresh, at, "1500", "1000", true) // the 1024th admit sweeps
+	if mustAdmit(t, b, fresh, at, "600", "1000", true) {
+		t.Fatal("the sweep dropped a ledger created in the same admit, losing its charge")
+	}
+}
+
 func TestCreditBoundUSDVolume(t *testing.T) {
 	ctx := context.Background()
 	abc := mustAsset(t, "ABC-"+creditTestIssuer)
