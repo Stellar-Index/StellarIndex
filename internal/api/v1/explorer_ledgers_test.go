@@ -360,6 +360,10 @@ func (s *stubExplorerReader) AccountEntryLedgers(context.Context, string, []stri
 	return nil, s.err
 }
 
+func (s *stubExplorerReader) AssetTrustlineDaily(ctx context.Context, _ string, _ uint32) ([]clickhouse.AssetTrustlineDay, error) {
+	return nil, nil
+}
+
 func (s *stubExplorerReader) LiveClaimableBalancesInLedgers(context.Context, string, []uint32, int) (clickhouse.ClaimableScan, error) {
 	return clickhouse.ClaimableScan{}, s.err
 }

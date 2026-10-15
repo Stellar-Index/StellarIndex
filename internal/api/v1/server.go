@@ -1358,6 +1358,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/assets/{asset_id}/holders", s.underReview(s.explorerHandler.AssetHolders))
 	s.mux.HandleFunc("GET /v1/assets/{asset_id}/movements", s.underReview(s.explorerHandler.AssetMovements))
 	s.mux.HandleFunc("GET /v1/assets/{asset_id}/entry-changes", s.underReview(s.explorerHandler.AssetEntryChanges))
+	s.mux.HandleFunc("GET /v1/assets/{asset_id}/trustline-history", s.underReview(s.explorerHandler.AssetTrustlineHistory))
 
 	// Current price — last-trade fallback today; VWAP path when
 	// the aggregator ships.

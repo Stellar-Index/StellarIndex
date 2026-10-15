@@ -639,6 +639,39 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/assets/{asset_id}/trustline-history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Trustlines of one asset created and removed per UTC day, with the open count at each day's end.
+         * @description Daily trustline counts summed from the entry index
+         *     (`stellar.asset_entry_ledgers`), oldest day first, from genesis
+         *     through `through_ledger`. `created` and `removed` count trustline
+         *     creations and removals in transactions that day; `live` is the
+         *     running net, the open trustline count at the day's end. Days with
+         *     no creation or removal are omitted.
+         *
+         *     `asset_id` is folded like `/assets/{asset_id}/entry-changes`. Native
+         *     XLM and Soroban-only tokens have no trustlines, so `days` is empty.
+         *     Off-chain ids return 400.
+         *
+         *     CEILING: the history ends at `through_ledger`, the entry index's
+         *     watermark. While the index has not been built the route answers 503
+         *     (`entry-index-not-built`).
+         */
+        get: operations["getAssetTrustlineHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/price": {
         parameters: {
             query?: never;
@@ -15029,6 +15062,102 @@ export interface operations {
                             through_ledger: number;
                             /** @description Always true today: only trustline changes are indexed, so claimable-balance and liquidity-pool changes can be missed; also true on a page cut short by the read's ledger budget. */
                             lower_bound: boolean;
+                            coverage_note: string;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getAssetTrustlineHistory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Canonical asset identifier. One of `native`, `<code>-<issuer>`,
+                 *     `<code>:<issuer>` (alias), or `<contract_id>`. Strkeys
+                 *     validated per SEP-23. The handler is strict — short symbols
+                 *     like `XLM` or `USDC` are NOT accepted here; use `native` or
+                 *     the full `<code>-<G…>` form.
+                 * @example native
+                 */
+                asset_id: components["parameters"]["AssetIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The asset's daily trustline history. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "asset": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *         "days": [
+                     *           {
+                     *             "date": "2026-10-05",
+                     *             "created": 1412,
+                     *             "removed": 655,
+                     *             "live": 2310457
+                     *           },
+                     *           {
+                     *             "date": "2026-10-06",
+                     *             "created": 1298,
+                     *             "removed": 702,
+                     *             "live": 2311053
+                     *           }
+                     *         ],
+                     *         "through_ledger": 64802921,
+                     *         "coverage_note": "trustlines of this asset created and removed per UTC day, from genesis through ledger 64802921; live is the open count at the day's end; days with no change are omitted; native XLM and contract-only tokens have no trustlines"
+                     *       },
+                     *       "as_of": "2026-10-06T14:03:31Z",
+                     *       "flags": {
+                     *         "divergence_warning": false,
+                     *         "triangulated": false,
+                     *         "reduced_redundancy": false,
+                     *         "stale": false,
+                     *         "degraded": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data?: {
+                            asset: string;
+                            days: {
+                                /**
+                                 * Format: date
+                                 * @description UTC day.
+                                 */
+                                date: string;
+                                /**
+                                 * Format: int64
+                                 * @description Trustlines created that day.
+                                 */
+                                created: number;
+                                /**
+                                 * Format: int64
+                                 * @description Trustlines removed that day.
+                                 */
+                                removed: number;
+                                /**
+                                 * Format: int64
+                                 * @description Open trustlines at the day's end.
+                                 */
+                                live: number;
+                            }[];
+                            /**
+                             * Format: int64
+                             * @description Newest ledger counted (the entry index's watermark).
+                             */
+                            through_ledger: number;
                             coverage_note: string;
                         };
                     };

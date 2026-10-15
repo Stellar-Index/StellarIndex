@@ -305,6 +305,11 @@ func (r *capReader) AccountEntryLedgers(ctx context.Context, _ string, _ []strin
 	return nil, nil
 }
 
+func (r *capReader) AssetTrustlineDaily(ctx context.Context, _ string, _ uint32) ([]clickhouse.AssetTrustlineDay, error) {
+	r.probe.record(ctx)
+	return nil, nil
+}
+
 func (r *capReader) LiveClaimableBalancesInLedgers(ctx context.Context, _ string, _ []uint32, _ int) (clickhouse.ClaimableScan, error) {
 	r.probe.record(ctx)
 	return clickhouse.ClaimableScan{}, nil

@@ -1448,6 +1448,74 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
+  /assets/{asset_id}/trustline-history:
+    get:
+      operationId: getAssetTrustlineHistory
+      x-stability: experimental
+      tags: [assets]
+      summary: Trustlines of one asset created and removed per UTC day, with the open count at each day's end.
+      description: |
+        Daily trustline counts summed from the entry index
+        (`stellar.asset_entry_ledgers`), oldest day first, from genesis
+        through `through_ledger`. `created` and `removed` count trustline
+        creations and removals in transactions that day; `live` is the
+        running net, the open trustline count at the day's end. Days with
+        no creation or removal are omitted.
+
+        `asset_id` is folded like `/assets/{asset_id}/entry-changes`. Native
+        XLM and Soroban-only tokens have no trustlines, so `days` is empty.
+        Off-chain ids return 400.
+
+        CEILING: the history ends at `through_ledger`, the entry index's
+        watermark. While the index has not been built the route answers 503
+        (`entry-index-not-built`).
+      parameters:
+        - { $ref: "#/components/parameters/AssetIdPath" }
+      responses:
+        "200":
+          description: The asset's daily trustline history.
+          content:
+            application/json:
+              example:
+                data:
+                  asset: USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+                  days:
+                  - { date: '2026-10-05', created: 1412, removed: 655, live: 2310457 }
+                  - { date: '2026-10-06', created: 1298, removed: 702, live: 2311053 }
+                  through_ledger: 64802921
+                  coverage_note: trustlines of this asset created and removed per UTC day, from genesis through ledger 64802921; live is the open count at the day's end; days with no change are omitted; native XLM and contract-only tokens have no trustlines
+                as_of: '2026-10-06T14:03:31Z'
+                flags:
+                  divergence_warning: false
+                  triangulated: false
+                  reduced_redundancy: false
+                  stale: false
+                  degraded: false
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [asset, days, through_ledger, coverage_note]
+                        properties:
+                          asset: { type: string }
+                          days:
+                            type: array
+                            items:
+                              type: object
+                              required: [date, created, removed, live]
+                              properties:
+                                date: { type: string, format: date, description: "UTC day." }
+                                created: { type: integer, format: int64, description: "Trustlines created that day." }
+                                removed: { type: integer, format: int64, description: "Trustlines removed that day." }
+                                live: { type: integer, format: int64, description: "Open trustlines at the day's end." }
+                          through_ledger: { type: integer, format: int64, description: "Newest ledger counted (the entry index's watermark)." }
+                          coverage_note: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /price:
     get:
       operationId: getPrice

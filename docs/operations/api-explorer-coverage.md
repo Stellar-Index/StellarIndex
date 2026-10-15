@@ -20,8 +20,8 @@ Every path in `openapi/stellar-index.v1.yaml` against what `web/explorer` calls 
 
 | | Count |
 |---|---:|
-| Paths in the OpenAPI contract | **146** |
-| Level 3 — reachable | **113** |
+| Paths in the OpenAPI contract | **147** |
+| Level 3 — reachable | **114** |
 | Level 2 — consumed but unreachable | **0** |
 | Level 1 — not consumed | **29** |
 | Deliberately excluded (operational) | **4** |
@@ -61,6 +61,7 @@ Level `ex` = deliberately excluded. "Consumed in" is the first call site.
 | `/assets/{asset_id}/supply/flows` | GET | 1 | — |
 | `/assets/{asset_id}/movements` | GET | 1 | — |
 | `/assets/{asset_id}/entry-changes` | GET | 1 | — |
+| `/assets/{asset_id}/trustline-history` | GET | 3 | app/assets/[slug]/TrustlineHistoryPanel.tsx |
 | `/assets/{asset_id}/holders` | GET | 3 | app/assets/[slug]/HoldersTabPanel.tsx |
 | `/price` | GET | 3 | ../functions/og/[[path]].js |
 | `/price/at` | GET | 1 | — |

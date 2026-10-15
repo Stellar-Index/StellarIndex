@@ -168,6 +168,7 @@ var uncoveredOperations = map[string]string{
 	"GET /accounts/{g_strkey}/entry-changes":      "account entry-change history — explorer surface",
 	"GET /accounts/{g_strkey}/claimable-balances": "account claimable balances — explorer surface",
 	"GET /assets/{asset_id}/entry-changes":        "asset entry-change history — explorer surface",
+	"GET /assets/{asset_id}/trustline-history":    "asset trustline history — explorer surface",
 	"GET /markets/sources":                        "markets-by-source directory — explorer surface",
 	"GET /protocols":                              "protocol analytics — explorer surface",
 	"GET /protocols/{name}":                       "protocol analytics — explorer surface",

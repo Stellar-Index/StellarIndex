@@ -96,6 +96,47 @@ func (r *ExplorerReader) StreamEntryChangesForLedgers(ctx context.Context, ledge
 	return rows.Err()
 }
 
+// AssetTrustlineDay is one UTC day of an asset's trustline activity from the entry index.
+type AssetTrustlineDay struct {
+	Day     time.Time
+	Created uint64
+	Removed uint64
+}
+
+// assetTrustlineDailyQuery buckets the asset's indexed ledgers into UTC days by ASOF-joining each ledger to its day's
+// first ledger; a hash join on every ledger's close time is about 4x slower on the busiest asset. The index is a
+// ReplacingMergeTree whose duplicates are identical, so any() per ledger collapses them.
+const assetTrustlineDailyQuery = `WITH
+	days AS (SELECT toDate(close_time) AS day, min(ledger_seq) AS first, toUInt8(0) AS k
+		FROM stellar.ledgers WHERE ledger_seq <= ? GROUP BY day),
+	led AS (SELECT ledger, any(n_created) AS c, any(n_removed) AS r, toUInt8(0) AS k
+		FROM stellar.asset_entry_ledgers WHERE asset = ? AND entry_type = 'trustline' AND ledger <= ? GROUP BY ledger)
+	SELECT days.day, toUInt64(sum(led.c)), toUInt64(sum(led.r))
+	FROM led ASOF INNER JOIN days ON led.k = days.k AND led.ledger >= days.first
+	GROUP BY days.day ORDER BY days.day` + explorerScanSettings
+
+// AssetTrustlineDaily returns, oldest first, each UTC day through maxLedger on which the asset's trustlines were
+// created or removed; an absent index table reads as no days.
+func (r *ExplorerReader) AssetTrustlineDaily(ctx context.Context, asset string, maxLedger uint32) ([]AssetTrustlineDay, error) {
+	rows, err := r.conn.Query(ctx, assetTrustlineDailyQuery, maxLedger, asset, maxLedger)
+	if err != nil {
+		if isSchemaAbsent(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("clickhouse: asset trustline daily: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []AssetTrustlineDay
+	for rows.Next() {
+		var d AssetTrustlineDay
+		if err := rows.Scan(&d.Day, &d.Created, &d.Removed); err != nil {
+			return nil, fmt.Errorf("clickhouse: asset trustline daily scan: %w", err)
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
 // LiveClaimableBalance is a claimable balance still on the ledger, with the ledger that last modified it.
 type LiveClaimableBalance struct {
 	Ledger    uint32
