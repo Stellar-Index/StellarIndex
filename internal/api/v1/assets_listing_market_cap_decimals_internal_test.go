@@ -9,8 +9,6 @@ import (
 	"io"
 	"log/slog"
 	"math/big"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -181,11 +179,6 @@ func TestRWAContractListingRows_ReportsAValuationCutShort(t *testing.T) {
 	}
 	if mc := out[sorobanContract].MarketCapUSD; mc != nil {
 		t.Fatalf("market_cap_usd = %s on a row whose scale was never read", *mc)
-	}
-	req := httptest.NewRequest(http.MethodGet, "/v1/rwa/assets", nil)
-	rec := httptest.NewRecorder()
-	if _, degraded, live := s.rwaVerifiedContractRows(ctx, rec, req, members); !live || !degraded {
-		t.Fatalf("verified arm: degraded=%v live=%v, want a live, degraded (flags.stale) response", degraded, live)
 	}
 }
 

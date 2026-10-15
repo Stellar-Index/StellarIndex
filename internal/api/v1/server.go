@@ -244,6 +244,13 @@ type Server struct {
 	rwaRefCache  *rwaReferences
 	rwaRefAt     time.Time
 	rwaRefFlight chan struct{}
+	// Assembled /v1/rwa/assets view: the per-issuer listing reads and valuation behind it take
+	// seconds, so readers get the last build while the next one runs.
+	rwaViewMu      sync.Mutex
+	rwaViewCache   *rwaAssetsBuild
+	rwaViewExpires time.Time
+	rwaViewErr     error
+	rwaViewFlight  chan struct{}
 	// RWA value-over-time assembly (/v1/rwa/history). Cached on the membership cadence: a daily
 	// series cannot move faster than the oracle publishes, and both legs are scans.
 	rwaHistMu     sync.Mutex

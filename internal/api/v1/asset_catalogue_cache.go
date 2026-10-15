@@ -3,11 +3,16 @@ package v1
 import (
 	"context"
 	"log/slog"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // CachedAssetsReader wraps [AssetsReader] with a per-key TTL cache and single-flight for the slow listing and price-history calls; other methods pass through.
@@ -28,6 +33,9 @@ type CachedAssetsReader struct {
 	// swrEntries backs the generic single-value SWR path (swr[T] —
 	// the per-asset single-row methods). Distinct map, SAME mu.
 	swrEntries map[string]*swrEntry
+	// series backs the history batches per (op, asset), so a page whose asset set shifts reads only the assets new to it.
+	series     map[string]*seriesEntry
+	seriesFill singleflight.Group
 }
 
 // assetsCacheMaxEntries bounds the entry map: keys carry client-controlled parts (cursor, free-text q), so without eviction one
@@ -61,9 +69,7 @@ type assetsCacheEntry struct {
 	at     time.Time
 	flight chan struct{}
 
-	// One field per method we cache. Only one is populated per entry.
-	rows           []timescale.AssetRow
-	historyByAsset map[string][]timescale.AssetPricePoint
+	rows []timescale.AssetRow
 
 	// err is set by the leader before close(flight) on a failing upstream call. Waiters hold
 	// the SAME entry they joined, so they can read err even after the leader deletes it from
@@ -79,6 +85,7 @@ func NewCachedAssetsReader(upstream AssetsReader, ttl time.Duration) *CachedAsse
 		ttl:        ttl,
 		entries:    map[string]*assetsCacheEntry{},
 		swrEntries: map[string]*swrEntry{},
+		series:     map[string]*seriesEntry{},
 	}
 }
 
@@ -110,26 +117,20 @@ func (c *CachedAssetsReader) ListAssetsExt(ctx context.Context, opts timescale.L
 	})
 }
 
-// GetAssetsPriceHistory24hBatch is cached on the order-normalised asset-id set, so the same set in any order shares one slot.
+// GetAssetsPriceHistory24hBatch is cached per asset (see [CachedAssetsReader.historyBatch]).
 func (c *CachedAssetsReader) GetAssetsPriceHistory24hBatch(ctx context.Context, assetIDs []string) (map[string][]timescale.AssetPricePoint, error) {
 	if c.ttl <= 0 {
 		return c.upstream.GetAssetsPriceHistory24hBatch(ctx, assetIDs)
 	}
-	key := newCacheKey("Price24hBatch").strSet(assetIDs).build()
-	return c.fetchHistoryMap(ctx, "price_history_24h", key, func(ctx context.Context) (map[string][]timescale.AssetPricePoint, error) {
-		return c.upstream.GetAssetsPriceHistory24hBatch(ctx, assetIDs)
-	})
+	return c.historyBatch(ctx, "price_history_24h", assetIDs, c.upstream.GetAssetsPriceHistory24hBatch)
 }
 
-// GetAssetsPriceHistory7dBatch is cached with the same order-normalised keying as the 24h batch.
+// GetAssetsPriceHistory7dBatch is cached per asset (see [CachedAssetsReader.historyBatch]).
 func (c *CachedAssetsReader) GetAssetsPriceHistory7dBatch(ctx context.Context, assetIDs []string) (map[string][]timescale.AssetPricePoint, error) {
 	if c.ttl <= 0 {
 		return c.upstream.GetAssetsPriceHistory7dBatch(ctx, assetIDs)
 	}
-	key := newCacheKey("Price7dBatch").strSet(assetIDs).build()
-	return c.fetchHistoryMap(ctx, "price_history_7d", key, func(ctx context.Context) (map[string][]timescale.AssetPricePoint, error) {
-		return c.upstream.GetAssetsPriceHistory7dBatch(ctx, assetIDs)
-	})
+	return c.historyBatch(ctx, "price_history_7d", assetIDs, c.upstream.GetAssetsPriceHistory7dBatch)
 }
 
 // GetAssetsATHBatch passes through uncached: no hot-path handler serves it.
@@ -487,87 +488,134 @@ func (c *CachedAssetsReader) settleRows(op, key string, entry *assetsCacheEntry)
 	}
 }
 
-// fetchHistoryMap is [CachedAssetsReader.fetchRows] for the batched price-history maps, with the same branch order; without
-// stale-serve an expired batch would stampede the slow upstream on expiry.
-func (c *CachedAssetsReader) fetchHistoryMap(
-	ctx context.Context,
-	op, key string,
-	upstream func(context.Context) (map[string][]timescale.AssetPricePoint, error),
-) (map[string][]timescale.AssetPricePoint, error) {
-	c.mu.Lock()
-	e, ok := c.entries[key]
+// seriesMaxEntries bounds the per-asset series map; ids come from listing pages, so this sits far above the asset universe.
+const seriesMaxEntries = 16384
 
-	// (A) Fresh hit.
-	if ok && e.flight == nil && time.Since(e.at) < c.ttl {
-		out := e.historyByAsset
-		c.mu.Unlock()
+type seriesEntry struct {
+	at         time.Time
+	pts        []timescale.AssetPricePoint
+	found      bool // the upstream map had the asset; an absent asset is cached as absent
+	refreshing bool
+}
+
+type historyBatchFunc func(context.Context, []string) (map[string][]timescale.AssetPricePoint, error)
+
+// historyBatch serves each asset from its own slot: fresh and stale slots answer at once (stale ones refresh in one detached
+// batch), and only assets with no slot are read before returning, single-flighted on that set. Keying the whole set instead
+// made every change in a volume-ranked page a cold read of all of it.
+func (c *CachedAssetsReader) historyBatch(ctx context.Context, op string, ids []string, upstream historyBatchFunc) (map[string][]timescale.AssetPricePoint, error) {
+	out, missing, stale := c.seriesSlots(op, ids)
+
+	switch {
+	case len(missing) > 0:
+		obs.APICacheOpsTotal.WithLabelValues("coins", op, "miss").Inc()
+	case len(stale) > 0:
+		obs.APICacheOpsTotal.WithLabelValues("coins", op, "stale").Inc()
+	default:
 		obs.APICacheOpsTotal.WithLabelValues("coins", op, "hit").Inc()
+	}
+	if len(stale) > 0 {
+		//nolint:contextcheck // the refresh outlives the request that found the slots stale.
+		go func() {
+			defer worker.Recover(c.logger, "api-assets-series-refresh")
+			_, _ = c.fillSeries(op, stale, upstream)
+		}()
+	}
+	if len(missing) == 0 {
 		return out, nil
 	}
-
-	// (A') Stale-while-revalidate. A prior SUCCESSFUL fetch exists
-	// (e.at non-zero — failed cold fetches delete the entry) but has
-	// expired. Serve the stale map IMMEDIATELY and kick at most one
-	// background refresh. Nobody waits on the upstream call.
-	if ok && !e.at.IsZero() {
-		stale := e.historyByAsset
-		if e.flight == nil {
-			done := make(chan struct{})
-			e.flight = done
-			entry := e
-			c.mu.Unlock()
-			obs.APICacheOpsTotal.WithLabelValues("coins", op, "stale").Inc()
-			//nolint:gosec,contextcheck // G118 / contextcheck:
-			// intentional, same as fetchRows — the SWR refresh MUST
-			// use a fresh context (runDetachedFill), NOT
-			// the request ctx, which is
-			// cancelled the instant the stale response is written.
-			go runDetachedFill(c.logger, "api-assets-catalogue-history-refresh", assetsRefreshBudget, done, upstream, c.settleHistoryMap(op, key, entry))
-			return stale, nil
-		}
-		c.mu.Unlock()
-		obs.APICacheOpsTotal.WithLabelValues("coins", op, "stale").Inc()
-		return stale, nil
-	}
-
-	// (B)/(C) Cold: join or start a detached fill — see fetchRowsAt.
-	entry, leader := c.joinOrStartColdLocked(e, ok, key)
-	if leader {
-		//nolint:gosec,contextcheck // G118 / contextcheck: intentional
-		// detached fill — see runDetachedFill.
-		go runDetachedFill(c.logger, "api-assets-catalogue-history-refresh", assetsRefreshBudget, entry.flight, upstream, c.settleHistoryMap(op, key, entry))
-	}
-	ch := entry.flight
-	c.mu.Unlock()
-	if leader {
-		obs.APICacheOpsTotal.WithLabelValues("coins", op, "miss").Inc()
-	}
+	sort.Strings(missing)
+	//nolint:contextcheck // detached fill: one waiter's abort must not fail the others sharing it.
+	ch := c.seriesFill.DoChan(op+"|"+strings.Join(missing, ","), func() (any, error) {
+		return c.fillSeries(op, missing, upstream)
+	})
 	select {
-	case <-ch:
-		c.mu.Lock()
-		hist, err := entry.historyByAsset, entry.err
-		c.mu.Unlock()
-		if err != nil {
-			if !leader {
-				obs.APICacheOpsTotal.WithLabelValues("coins", op, "miss").Inc()
+	case r := <-ch:
+		if r.Err != nil {
+			return nil, r.Err
+		}
+		got, _ := r.Val.(map[string][]timescale.AssetPricePoint)
+		for _, id := range missing {
+			if pts, ok := got[id]; ok {
+				out[id] = pts
 			}
-			return nil, err
 		}
-		if !leader {
-			obs.APICacheOpsTotal.WithLabelValues("coins", op, "hit").Inc()
-		}
-		return hist, nil
+		return out, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
 }
 
-// settleHistoryMap is [CachedAssetsReader.settleRows] for the history-map
-// entries.
-func (c *CachedAssetsReader) settleHistoryMap(op, key string, entry *assetsCacheEntry) func(map[string][]timescale.AssetPricePoint, error) {
-	return func(hist map[string][]timescale.AssetPricePoint, err error) {
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		c.settleRowsFillLocked(op, key, entry, err, func() { entry.historyByAsset = hist })
+// seriesSlots answers ids from their slots and names the ids with no slot and the stale ones, marking those refreshing.
+func (c *CachedAssetsReader) seriesSlots(op string, ids []string) (out map[string][]timescale.AssetPricePoint, missing, stale []string) {
+	out = make(map[string][]timescale.AssetPricePoint, len(ids))
+	seen := make(map[string]struct{}, len(ids))
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, id := range ids {
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		e, ok := c.series[op+"|"+id]
+		if !ok {
+			missing = append(missing, id)
+			continue
+		}
+		if e.found {
+			out[id] = e.pts
+		}
+		if time.Since(e.at) >= c.ttl && !e.refreshing {
+			e.refreshing = true
+			stale = append(stale, id)
+		}
 	}
+	return out, missing, stale
+}
+
+// fillSeries reads ids under a detached budget and stores one slot per id; on error it keeps any stale slots and clears their
+// refresh mark so the next request retries.
+func (c *CachedAssetsReader) fillSeries(op string, ids []string, upstream historyBatchFunc) (map[string][]timescale.AssetPricePoint, error) {
+	var (
+		got map[string][]timescale.AssetPricePoint
+		err error
+	)
+	runDetachedFill(c.logger, "api-assets-catalogue-history-refresh", assetsRefreshBudget, make(chan struct{}),
+		func(ctx context.Context) (map[string][]timescale.AssetPricePoint, error) { return upstream(ctx, ids) },
+		func(v map[string][]timescale.AssetPricePoint, e error) { got, err = v, e })
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := time.Now()
+	for _, id := range ids {
+		key := op + "|" + id
+		if err != nil {
+			if e, ok := c.series[key]; ok {
+				e.refreshing = false
+			}
+			continue
+		}
+		if _, ok := c.series[key]; !ok {
+			evictOldestSeriesEntry(c.series)
+		}
+		pts, found := got[id]
+		c.series[key] = &seriesEntry{at: now, pts: pts, found: found}
+	}
+	return got, err
+}
+
+// evictOldestSeriesEntry drops the oldest slot at capacity; caller holds the mutex.
+func evictOldestSeriesEntry(m map[string]*seriesEntry) {
+	if len(m) < seriesMaxEntries {
+		return
+	}
+	var (
+		oldestKey string
+		oldestAt  time.Time
+	)
+	for k, e := range m {
+		if oldestKey == "" || e.at.Before(oldestAt) {
+			oldestKey, oldestAt = k, e.at
+		}
+	}
+	delete(m, oldestKey)
 }

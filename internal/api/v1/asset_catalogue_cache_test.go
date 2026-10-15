@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -106,7 +107,7 @@ func TestCachedAssetsReader_ListAssetsExtHitMissCounter(t *testing.T) {
 }
 
 // TestCachedAssetsReader_HistoryBatchHitMissCounter exercises both the 24h and 7d history-batch caches, which share
-// fetchHistoryMap, and catches either branch silently dropping the metric increment.
+// historyBatch, and catches either branch silently dropping the metric increment.
 func TestCachedAssetsReader_HistoryBatchHitMissCounter(t *testing.T) {
 	up := &fakeAssetsUpstream{}
 	c := NewCachedAssetsReader(up, 60*time.Second)
@@ -482,7 +483,7 @@ func TestCachedAssetsReader_SWRKeepsStaleOnError(t *testing.T) {
 // ── HLT-01: the history-batch cache must have the SAME SWR posture
 // as its ListAssetsExt sibling ────────────────────────────────────
 //
-// fetchHistoryMap needs the (A') stale-while-revalidate branch: without it an EXPIRED history
+// historyBatch needs the (A') stale-while-revalidate branch: without it an EXPIRED history
 // batch falls through to the blocking cold-leader path and every caller waits on the slow
 // upstream, the stampede-on-expiry the rows path avoids. Both caches serve the SAME request
 // (/v1/assets?include=sparkline), so a missing branch brings the latency cliff back.
@@ -764,5 +765,67 @@ func TestCachedAssetsReader_GenericSWRKeepsStaleOnError(t *testing.T) {
 	}
 	if !waitFor(2*time.Second, func() bool { return up.calls.Load() >= 3 }) {
 		t.Fatalf("failed refresh was not retried; calls=%d", up.calls.Load())
+	}
+}
+
+// recordingHistoryUpstream answers every asset with one point and records the id sets it was asked for.
+type recordingHistoryUpstream struct {
+	mu    sync.Mutex
+	asked [][]string
+	empty map[string]bool
+}
+
+func (u *recordingHistoryUpstream) batch(_ context.Context, ids []string) (map[string][]timescale.AssetPricePoint, error) {
+	u.mu.Lock()
+	u.asked = append(u.asked, append([]string(nil), ids...))
+	u.mu.Unlock()
+	out := map[string][]timescale.AssetPricePoint{}
+	for _, id := range ids {
+		if !u.empty[id] {
+			out[id] = []timescale.AssetPricePoint{{T: id}}
+		}
+	}
+	return out, nil
+}
+
+// A volume-ranked page whose set shifts by one asset must read only that asset, not the whole page again.
+func TestCachedAssetsReader_HistoryBatchReadsOnlyNewAssets(t *testing.T) {
+	c := NewCachedAssetsReader(nil, time.Minute)
+	up := &recordingHistoryUpstream{}
+	if _, err := c.historyBatch(context.Background(), "h", []string{"a", "b", "c"}, up.batch); err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.historyBatch(context.Background(), "h", []string{"b", "c", "d"}, up.batch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(up.asked) != 2 || strings.Join(up.asked[1], ",") != "d" {
+		t.Fatalf("upstream asked %v, want the second read to ask only [d]", up.asked)
+	}
+	for _, id := range []string{"b", "c", "d"} {
+		if len(got[id]) != 1 || got[id][0].T != id {
+			t.Errorf("%s = %v, want its own point", id, got[id])
+		}
+	}
+	if _, ok := got["a"]; ok {
+		t.Error("an asset not asked for must not be served")
+	}
+}
+
+// An asset with no series is cached as absent: it stays out of the map and is not re-read on every page.
+func TestCachedAssetsReader_HistoryBatchCachesAbsentAssets(t *testing.T) {
+	c := NewCachedAssetsReader(nil, time.Minute)
+	up := &recordingHistoryUpstream{empty: map[string]bool{"x": true}}
+	for range 2 {
+		got, err := c.historyBatch(context.Background(), "h", []string{"x", "y"}, up.batch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := got["x"]; ok {
+			t.Fatal("an absent asset must stay absent from the map")
+		}
+	}
+	if len(up.asked) != 1 {
+		t.Fatalf("upstream calls = %d, want 1", len(up.asked))
 	}
 }
