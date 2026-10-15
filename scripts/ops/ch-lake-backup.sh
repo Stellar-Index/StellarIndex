@@ -33,7 +33,8 @@
 #
 # Exit code: 0 clean; 1 the backup failed or no BACKUP_DISK is configured;
 # 2 the backup succeeded but pruning an old chain or sweeping orphans failed;
-# 75 deferred because a heavy job holds the host-wide heavy-job lock.
+# 75 deferred because a heavy job held the host-wide heavy-job lock for all
+# of HEAVY_LOCK_WAIT_SECONDS.
 set -uo pipefail
 
 CH_HTTP="${CH_HTTP:-http://127.0.0.1:8123/}"
@@ -52,6 +53,9 @@ FULL_INTERVAL_DAYS="${FULL_INTERVAL_DAYS:-28}"
 RETAIN_CHAINS="${RETAIN_CHAINS:-1}"
 MAX_BANDWIDTH="${MAX_BANDWIDTH:-0}"
 POLL_SECONDS="${POLL_SECONDS:-60}"
+# A chunked heavy driver frees the lock for ~60 s between hours-long chunks; a
+# non-blocking take misses that gap every day, so wait for it (under a day).
+HEAVY_LOCK_WAIT_SECONDS="${HEAVY_LOCK_WAIT_SECONDS:-72000}"
 # Word-split on purpose: tests substitute `docker exec <c> clickhouse-disks …`.
 CH_DISKS_CMD="${CH_DISKS_CMD:-clickhouse-disks -C /etc/clickhouse-server/config.xml}"
 
@@ -275,14 +279,14 @@ main() {
   fi
 # Same host-wide lock run-heavy-job.sh's scheduled class takes (shared): an
 # operator heavy job that rewrites lake parts (recompress, ch-backfill -write,
-# ch-rebuild) is refused while this holds it, and a backup defers (exit 75)
-# while one holds it, rather than read parts mid-rewrite. This unit is not
+# ch-rebuild) is refused while this holds it, and a backup waits, then defers
+# (exit 75), while one holds it, rather than read parts mid-rewrite. This unit is not
 # under run-heavy-job.sh, so it takes the lock here.
   local heavy="${HEAVY_JOB_LOCK_DIR:-/run/lock}/stellarindex-heavy.lock"
   [[ -e "$heavy" ]] || (umask 022; : >>"$heavy") 2>/dev/null || true
   if exec 8<"$heavy"; then
-    if ! flock -s -n 8; then
-      note "a heavy job holds $heavy — deferring this run (exit 75)"
+    if ! flock -s -w "$HEAVY_LOCK_WAIT_SECONDS" 8; then
+      note "a heavy job held $heavy for ${HEAVY_LOCK_WAIT_SECONDS}s — deferring this run (exit 75)"
       write_metrics keep_success
       return 75
     fi

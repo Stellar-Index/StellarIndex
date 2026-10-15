@@ -31,7 +31,7 @@ An id vanishing from `system.backups` means the server restarted under the run; 
 - `BACKUP_FAILED` with an S3 error: credential, endpoint or quota. Fix the vars and re-apply; the next run retries.
 - `BACKUP_NOT_FOUND`: the chain base is gone from the bucket. State is already reset; the next run is a full.
 - Already running: a full takes ~2 days at the 100 MiB/s cap (`ch_lake_backup_max_bandwidth`); wait.
-- Exit 75: deferred, a heavy job holds the lock. Nothing backed up; the stale alert covers prolonged deferral.
+- Exit 75: deferred, a heavy job held the lock for all of `HEAVY_LOCK_WAIT_SECONDS` (default 20 h; the run takes the gap between a chunked driver's chunks). Nothing backed up; the stale alert covers prolonged deferral.
 - Exit 2: backup succeeded but cleanup failed. `PRUNE FAILED`: the old chain stays on record and the next full retries; if quota is the issue remove it by hand:
   `clickhouse-disks -C /etc/clickhouse-server/config.xml --disk si_lake_backup --query "remove -r stellar/<chain>"`.
   `SWEEP SKIPPED` / `ORPHAN REMOVAL FAILED`: the orphan sweep (partial uploads of failed fulls, tracked via `started` in the state dir) did not run or complete; the next success retries. Find older strays in the B2 bucket's `r1/` listing. `stellarindex_ch_lake_backup_orphans_removed` counts removals.
