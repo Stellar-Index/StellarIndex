@@ -389,6 +389,29 @@ func TestFromUInt256Parts_zeroIsZero(t *testing.T) {
 	}
 }
 
+// The I256 bounds: the full signed range survives with no narrowing, and -1 is all ones.
+func TestFromInt256Parts_signedRange(t *testing.T) {
+	maxW := ^uint64(0)
+	half := new(big.Int).Lsh(big.NewInt(1), 255)
+	cases := []struct {
+		name             string
+		hiHi             int64
+		hiLo, loHi, loLo uint64
+		want             *big.Int
+	}{
+		{"max", int64(^uint64(0) >> 1), maxW, maxW, maxW, new(big.Int).Sub(half, big.NewInt(1))},
+		{"min", -1 << 63, 0, 0, 0, new(big.Int).Neg(half)},
+		{"minus one", -1, maxW, maxW, maxW, big.NewInt(-1)},
+		{"mainnet ETH/USD answer, 18 decimals", 0, 0, 0xe1, 0xe2c1dc8ba1da8000, func() *big.Int { v, _ := new(big.Int).SetString("4166857000000000000000", 10); return v }()},
+	}
+	for _, c := range cases {
+		got := FromInt256Parts(c.hiHi, c.hiLo, c.loHi, c.loLo)
+		if got.BigInt().Cmp(c.want) != 0 {
+			t.Errorf("%s: FromInt256Parts = %s, want %s", c.name, got.BigInt(), c.want)
+		}
+	}
+}
+
 func TestFromUInt256Parts_max256(t *testing.T) {
 	// All four words at u64-max → 2^256 - 1.
 	got := FromUInt256Parts(^uint64(0), ^uint64(0), ^uint64(0), ^uint64(0))

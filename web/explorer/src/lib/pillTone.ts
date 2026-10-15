@@ -63,6 +63,7 @@ export const SOURCE_PILL_TONE: Record<string, PillTone> = {
   'reflector-cex': 'brand',
   'reflector-fx': 'violet',
   redstone: 'down',
+  'chainlink-stellar': 'brand',
   band: 'warn',
 };
 

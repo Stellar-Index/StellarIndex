@@ -493,10 +493,11 @@ type ChainlinkFeedSetting struct {
 
 // OracleConfig gathers on-chain oracle contract addresses; each provider nests its own sub-struct, e.g. [oracle.reflector].
 type OracleConfig struct {
-	Reflector ReflectorOracleConfig `toml:"reflector" doc:"Reflector oracle contract addresses per variant (DEX / CEX / FX)."`
-	Redstone  RedstoneOracleConfig  `toml:"redstone"  doc:"RedStone Adapter contract address (single adapter owns every feed)."`
-	Band      BandOracleConfig      `toml:"band"      doc:"Band Protocol StandardReference contract address (Soroban-native, emits no events — observed via InvokeContract call args)."`
-	Soroswap  SoroswapConfig        `toml:"soroswap"  doc:"Soroswap factory contract — used at boot to seed the pair→tokens registry via stellar-rpc view calls. Not required for live ingest, but without it the decoder skips swaps from pairs created before the first processed ledger."`
+	Reflector        ReflectorOracleConfig        `toml:"reflector" doc:"Reflector oracle contract addresses per variant (DEX / CEX / FX)."`
+	Redstone         RedstoneOracleConfig         `toml:"redstone"  doc:"RedStone Adapter contract address (single adapter owns every feed)."`
+	ChainlinkStellar ChainlinkStellarOracleConfig `toml:"chainlink_stellar" doc:"Chainlink Data Feeds on Stellar: the DataFeedsCache contract every feed writes through."`
+	Band             BandOracleConfig             `toml:"band"      doc:"Band Protocol StandardReference contract address (Soroban-native, emits no events — observed via InvokeContract call args)."`
+	Soroswap         SoroswapConfig               `toml:"soroswap"  doc:"Soroswap factory contract — used at boot to seed the pair→tokens registry via stellar-rpc view calls. Not required for live ingest, but without it the decoder skips swaps from pairs created before the first processed ledger."`
 
 	StalenessOverrides []OracleStalenessOverrideConfig `toml:"staleness_overrides" doc:"Per-(source, asset) exceptions to the oracle-staleness budget the stellarindex_oracle_stale alert reads. Empty (default) leaves every asset on its source's default budget — 10 × the source's declared resolution. Each row is a written-down claim that ONE asset publishes on a different rhythm than its source's cadence; see OracleStalenessOverrideConfig." default:"[]"`
 }
@@ -522,6 +523,11 @@ type ReflectorOracleConfig struct {
 // RedstoneOracleConfig carries the mainnet RedStone Adapter address; the per-feed contracts are event-less proxies, all activity is on the single Adapter.
 type RedstoneOracleConfig struct {
 	AdapterContract string `toml:"adapter_contract" doc:"RedStone Adapter contract (C-prefix) on mainnet — CA526Y2NQWGWVVQ7RFFPGAZMU66PSYJ3UC2MTVAV4ZU7OM5BOPHDXUSG."`
+}
+
+// ChainlinkStellarOracleConfig carries the mainnet DataFeedsCache address; every feed's FeedUpdated is emitted there.
+type ChainlinkStellarOracleConfig struct {
+	CacheContract string `toml:"cache_contract" doc:"Chainlink DataFeedsCache contract (C-prefix) on mainnet — CAAFKBE6AMTERARISMMT4TCC4UGNO35XCKQNC5XVLL5WY5GRWXH6AMIO."`
 }
 
 // BandOracleConfig carries the mainnet Band StandardReference address; the contract emits no events, so we observe `relay()` / `force_relay()` InvokeContract calls.

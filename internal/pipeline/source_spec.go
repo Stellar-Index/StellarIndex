@@ -19,6 +19,7 @@ import (
 	blend_backstop "github.com/Stellar-Index/StellarIndex/internal/sources/blend_backstop"
 	blend_emitter "github.com/Stellar-Index/StellarIndex/internal/sources/blend_emitter"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/cctp"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/chainlink_stellar"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/phoenix"
@@ -247,6 +248,23 @@ var specs = []SourceSpec{
 			// write_prices stores each accepted feed under a per-feed key; the
 			// decoder attributes freshness-filtered batches from those keys.
 			NeedsStateWriteKeys: true,
+		},
+	},
+	{
+		Name:   chainlink_stellar.SourceName,
+		Events: []consumer.Event{chainlink_stellar.UpdateEvent{}},
+		NewDecoder: func(a BuildArgs) (dispatcher.Decoder, error) {
+			if a.Oracle.ChainlinkStellar.CacheContract == "" {
+				return nil, missingOracle(chainlink_stellar.SourceName, "chainlink_stellar.cache_contract")
+			}
+			return chainlink_stellar.NewDecoder(a.Oracle.ChainlinkStellar.CacheContract), nil
+		},
+		OnDispatch: func() {
+			obs.DeclareOracleHeartbeat(chainlink_stellar.SourceName, chainlink_stellar.DefaultResolutionSeconds)
+		},
+		Projector: &ProjectorSpec{
+			ContractIDs: func(a BuildArgs) []string { return []string{a.Oracle.ChainlinkStellar.CacheContract} },
+			Genesis:     chainlink_stellar.GenesisLedger,
 		},
 	},
 	{

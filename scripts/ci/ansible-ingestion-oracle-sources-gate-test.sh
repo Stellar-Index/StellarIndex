@@ -3,7 +3,7 @@
 # must not render `[ingestion] enabled_sources` unconditionally from
 # stellarindex_enabled_sources while the [oracle.*] blocks a few lines below
 # are gated on `run_aggregator | default(true) | bool`. The pubnet default
-# list includes the oracle sources (reflector-dex/cex/fx, redstone, band),
+# list includes the oracle sources (reflector-dex/cex/fx, redstone, chainlink-stellar, band),
 # so a host that sets run_aggregator: false without ALSO overriding
 # stellarindex_enabled_sources would ship oracle contract addresses to an
 # indexer with no aggregator running to consume them. testnet.yml and
@@ -34,7 +34,7 @@ if [ ! -f "$TEMPLATE" ]; then
 fi
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-ORACLE_SOURCES="reflector-dex reflector-cex reflector-fx redstone band"
+ORACLE_SOURCES="reflector-dex reflector-cex reflector-fx redstone chainlink-stellar band"
 
 render() { # <run_aggregator bool literal> <out file>
   cat > "$TMP/fixture.yml" <<YML

@@ -310,6 +310,18 @@ func AsAmountFromU256(sv xdr.ScVal) (canonical.Amount, error) {
 	), nil
 }
 
+// AsAmountFromI256 decodes a full 256-bit signed value (HiHi most significant, carrying the sign).
+func AsAmountFromI256(sv xdr.ScVal) (canonical.Amount, error) {
+	if sv.Type != xdr.ScValTypeScvI256 {
+		return canonical.Amount{}, fmt.Errorf("%w: want I256, got %s", ErrScValType, sv.Type.String())
+	}
+	p := *sv.I256
+	return canonical.FromInt256Parts(
+		int64(p.HiHi), uint64(p.HiLo),
+		uint64(p.LoHi), uint64(p.LoLo),
+	), nil
+}
+
 // AsAddressStrkey returns the strkey of an ScVal::Address (G/C/M/B/L) with validation delegated to the SDK so a malformed address never reaches the database; it handles all five CAP-67 ScAddress variants, since a narrower decoder silently drops events.
 func AsAddressStrkey(sv xdr.ScVal) (string, error) {
 	if sv.Type != xdr.ScValTypeScvAddress {

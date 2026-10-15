@@ -13,6 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/band"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/chainlink_stellar"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/redstone"
@@ -224,6 +225,11 @@ func oracleSourceFixtures() map[string]oracleSourceFixture {
 			resolutionSeconds:  redstone.DefaultResolutionSeconds,
 			enabledSourceNames: []string{redstone.SourceName},
 		},
+		chainlink_stellar.SourceName: {
+			oracle:             config.OracleConfig{ChainlinkStellar: config.ChainlinkStellarOracleConfig{CacheContract: realisticCStrkey}},
+			resolutionSeconds:  chainlink_stellar.DefaultResolutionSeconds,
+			enabledSourceNames: []string{chainlink_stellar.SourceName},
+		},
 		band.SourceName: {
 			oracle:             config.OracleConfig{Band: config.BandOracleConfig{StandardReferenceContract: realisticCStrkey}},
 			resolutionSeconds:  band.DefaultResolutionSeconds,
@@ -261,7 +267,7 @@ func TestBuildDispatcher_DeclaresBudgetForEveryOracleSource(t *testing.T) {
 					"of its assets", source)
 			}
 			want := obs.OracleStaleBudgetMultiplier * fx.resolutionSeconds
-			if source == redstone.SourceName {
+			if source == redstone.SourceName || source == chainlink_stellar.SourceName {
 				want = fx.resolutionSeconds + obs.OracleHeartbeatGrace
 			}
 			if got != want {

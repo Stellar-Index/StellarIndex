@@ -141,8 +141,8 @@ func TestHandleProtocolsList_Happy(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	d := env.Data
-	if d.TotalProtocols != 18 || len(d.Protocols) != 18 {
-		t.Fatalf("total = %d (len %d), want 18", d.TotalProtocols, len(d.Protocols))
+	if d.TotalProtocols != 19 || len(d.Protocols) != 19 {
+		t.Fatalf("total = %d (len %d), want 19", d.TotalProtocols, len(d.Protocols))
 	}
 
 	blend := protocolRow(t, d.Protocols, "blend")
@@ -399,8 +399,8 @@ func TestHandleProtocols_NilReaderDegradation(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if env.Data.TotalProtocols != 18 {
-		t.Fatalf("total = %d, want 18", env.Data.TotalProtocols)
+	if env.Data.TotalProtocols != 19 {
+		t.Fatalf("total = %d, want 19", env.Data.TotalProtocols)
 	}
 	for _, p := range env.Data.Protocols {
 		// blend carries statically-known Backstop + Emitter module contracts (ExtraContracts);

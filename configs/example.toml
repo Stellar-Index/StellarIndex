@@ -181,6 +181,11 @@ backfill_from_ledger  = 0                # 0 = resume from persisted cursor
 # surface (docs/discovery/oracles/redstone.md).
 # adapter_contract = "CA526Y2NQWGWVVQ7RFFPGAZMU66PSYJ3UC2MTVAV4ZU7OM5BOPHDXUSG"
 
+[oracle.chainlink_stellar]
+# cache_contract — Chainlink's DataFeedsCache; every Stellar feed's
+# FeedUpdated is emitted here (docs/protocols/chainlink-stellar.md).
+# cache_contract = "CAAFKBE6AMTERARISMMT4TCC4UGNO35XCKQNC5XVLL5WY5GRWXH6AMIO"
+
 [oracle.band]
 # standard_reference_contract — Band's StandardReference contract.
 # Emits zero events; observed via relay()/force_relay() call args

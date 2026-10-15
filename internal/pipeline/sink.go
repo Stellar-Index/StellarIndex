@@ -20,6 +20,7 @@ import (
 	blend_backstop "github.com/Stellar-Index/StellarIndex/internal/sources/blend_backstop"
 	blend_emitter "github.com/Stellar-Index/StellarIndex/internal/sources/blend_emitter"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/cctp"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/chainlink_stellar"
 	claimable_balances "github.com/Stellar-Index/StellarIndex/internal/sources/claimable_balances"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
@@ -600,6 +601,8 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 	case reflector.UpdateEvent:
 		return persistOracle(ctx, logger, store, e.Update)
 	case redstone.UpdateEvent:
+		return persistOracle(ctx, logger, store, e.Update)
+	case chainlink_stellar.UpdateEvent:
 		return persistOracle(ctx, logger, store, e.Update)
 	case band.UpdateEvent:
 		return persistOracle(ctx, logger, store, e.Update)

@@ -155,13 +155,14 @@ var sourceGenesisLedger = map[string]int64{
 	// comet and blend share a genesis on purpose: the only mainnet Comet is Blend's backstop
 	// pool, instantiated in the same ledger as Blend's Pool Factory V2. 51_499_545 is the
 	// ContractCode-upload boundary, one before the ContractInstance create.
-	"comet":         51_499_546, // Blend backstop pool instantiation (comet.md:157)
-	"blend":         51_499_546, // Pool Factory V2 deploy, same ledger (blend.md:90)
-	"reflector-dex": 50_644_229, // v2 WASM deploy (reflector.md:186)
-	"reflector-cex": 50_644_239, // v2 WASM deploy, +10 after DEX (reflector.md:186)
-	"reflector-fx":  56_733_481, // deployed fresh on v3, no prior history (reflector.md:195)
-	"band":          50_842_736, // single stable WASM since first deploy (band.md:198)
-	"redstone":      58_758_722, // first-deploy hotfix, replaced +420 ledgers (redstone.md:179)
+	"comet":             51_499_546, // Blend backstop pool instantiation (comet.md:157)
+	"blend":             51_499_546, // Pool Factory V2 deploy, same ledger (blend.md:90)
+	"reflector-dex":     50_644_229, // v2 WASM deploy (reflector.md:186)
+	"reflector-cex":     50_644_239, // v2 WASM deploy, +10 after DEX (reflector.md:186)
+	"reflector-fx":      56_733_481, // deployed fresh on v3, no prior history (reflector.md:195)
+	"band":              50_842_736, // single stable WASM since first deploy (band.md:198)
+	"redstone":          58_758_722, // first-deploy hotfix, replaced +420 ledgers (redstone.md:179)
+	"chainlink-stellar": 64_442_968, // DataFeedsCache first event (chainlink-stellar.md)
 	// defindex: MIN across every contract the source routes, including the earliest of its four
 	// factories, not only the current one.
 	"defindex": int64(defindex.GenesisLedger),

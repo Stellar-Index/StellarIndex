@@ -211,6 +211,18 @@ export const PROTOCOLS: ProtocolRegistryEntry[] = [
     label: 'RedStone',
     description: 'Batched multi-feed price pushes to the RedStone adapter.',
   },
+  {
+    name: 'chainlink-stellar',
+    links: {
+      website: 'https://chain.link',
+      docs: 'https://docs.chain.link/data-feeds/stellar',
+      source: 'https://github.com/smartcontractkit/chainlink-stellar',
+    },
+    category: 'oracle',
+    label: 'Chainlink',
+    description:
+      'Chainlink Data Feeds written to the DataFeedsCache contract on Stellar.',
+  },
 ];
 
 const BY_NAME = new Map(PROTOCOLS.map((p) => [p.name, p]));

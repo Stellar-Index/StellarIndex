@@ -172,6 +172,7 @@ var projRoutes = []projRoute{
 	// ── oracles ──
 	{typeName: "reflector.UpdateEvent", table: "oracle_updates", kind: "reflector.update", disp: reconciledByKind},
 	{typeName: "redstone.UpdateEvent", table: "oracle_updates", kind: "redstone.update", disp: reconciledByKind},
+	{typeName: "chainlink_stellar.UpdateEvent", table: "oracle_updates", kind: "chainlink_stellar.update", disp: reconciledByKind},
 	{typeName: "band.UpdateEvent", table: "oracle_updates", disp: reconciledByCensus},
 
 	// ── census / ContractCall census ──

@@ -229,6 +229,13 @@ var protocolRegistry = withVerificationPages([]ProtocolMeta{
 		GenesisLedger: 58_758_722,
 		EventKinds:    []string{"redstone.update"},
 	},
+	{
+		Name:          "chainlink-stellar",
+		Category:      "oracle",
+		Description:   "Chainlink Data Feeds on Stellar — per-feed answers written to Chainlink's DataFeedsCache contract.",
+		GenesisLedger: 64_442_968,
+		EventKinds:    []string{"chainlink_stellar.update"},
+	},
 })
 
 // verificationPageDocs names protocols whose write-up is not at docs/protocols/<name>.md (the three Reflector feeds share one page; the

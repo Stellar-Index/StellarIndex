@@ -20,6 +20,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/band"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/chainlink_stellar"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/phoenix"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/redstone"
@@ -331,6 +332,12 @@ func buildVerifyDispatcher(oracle config.OracleConfig, protocolContractSeeds map
 	} else {
 		fmt.Fprintln(os.Stderr, "verify-decoders: skip redstone — oracle.redstone.adapter_contract empty")
 	}
+	if oracle.ChainlinkStellar.CacheContract != "" {
+		decoders = append(decoders, chainlink_stellar.NewDecoder(oracle.ChainlinkStellar.CacheContract))
+		registered = append(registered, chainlink_stellar.SourceName)
+	} else {
+		fmt.Fprintln(os.Stderr, "verify-decoders: skip chainlink-stellar — oracle.chainlink_stellar.cache_contract empty")
+	}
 	if oracle.Band.StandardReferenceContract != "" {
 		callDecoders = append(callDecoders, band.NewDecoder(oracle.Band.StandardReferenceContract))
 		registered = append(registered, band.SourceName)
@@ -364,6 +371,8 @@ func summariseEvent(ev consumer.Event, ledger uint32) string {
 	case reflector.UpdateEvent:
 		return fmt.Sprintf("oracle ledger=%d asset=%s", ledger, e.Update.Asset.String())
 	case redstone.UpdateEvent:
+		return fmt.Sprintf("oracle ledger=%d asset=%s", ledger, e.Update.Asset.String())
+	case chainlink_stellar.UpdateEvent:
 		return fmt.Sprintf("oracle ledger=%d asset=%s", ledger, e.Update.Asset.String())
 	case band.UpdateEvent:
 		return fmt.Sprintf("oracle ledger=%d asset=%s", ledger, e.Update.Asset.String())

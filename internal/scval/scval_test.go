@@ -557,6 +557,20 @@ func TestAsAmountFromU256_wrongType(t *testing.T) {
 	}
 }
 
+func TestAsAmountFromI256(t *testing.T) {
+	neg := xdr.Int256Parts{HiHi: -1, HiLo: ^xdr.Uint64(0), LoHi: ^xdr.Uint64(0), LoLo: ^xdr.Uint64(1)}
+	got, err := AsAmountFromI256(xdr.ScVal{Type: xdr.ScValTypeScvI256, I256: &neg})
+	if err != nil {
+		t.Fatalf("AsAmountFromI256: %v", err)
+	}
+	if got.BigInt().Cmp(big.NewInt(-2)) != 0 {
+		t.Errorf("got %s want -2", got.BigInt())
+	}
+	if _, err := AsAmountFromI256(symScVal("nope")); !errors.Is(err, ErrScValType) {
+		t.Errorf("expected ErrScValType, got %v", err)
+	}
+}
+
 // ─── Vec / Map / DecodeAddressOrSymbol ──────────────────────────
 
 func TestAsVec_normalAndNil(t *testing.T) {
