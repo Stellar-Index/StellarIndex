@@ -71,6 +71,8 @@ A failure found mid-release wastes a tag and forces a `.N+1` cut.
    `SLA_PROOF_MAX_AGE_DAYS` (default 45) and not `Verdict: FAIL`; and
    `make prepush` prints `ALL REQUIRED CHECKS PASSED` (~20 min) with `main`
    unmoved. Non-TTY runs must pass `--yes` or `--dry-run` (exit 2 otherwise).
+   Before prepush it dispatches the full `ci.yml` run that `release.yml`
+   requires on the tagged commit, so the two overlap; `--dry-run` skips it.
 
    The tag push triggers `release.yml`, which cross-compiles every `cmd/`
    binary for `linux/amd64`, computes SHA256 sums, signs, attests, and

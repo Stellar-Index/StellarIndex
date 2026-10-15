@@ -21,6 +21,8 @@
 #   5b. Newest docs/operations/sla-proof-YYYY-MM-DD.md exists, is within
 #      SLA_PROOF_MAX_AGE_DAYS (default 45) and did not record `Verdict: FAIL`
 #      (`NOT PROVEN` passes).
+#   5c. Dispatch the full ci.yml run release.yml requires on this commit, so it
+#      runs beside prepush rather than after the tag push (skipped by --dry-run).
 #   6. `make prepush` (the push clearance; container profile with Docker,
 #      native otherwise).
 #   7. Print the plan, then bail (--dry-run) or confirm (unless --yes), then
@@ -204,6 +206,22 @@ if grep -q '^\*\*Verdict: FAIL\.\*\*' "$newest_sla_proof"; then
   exit 1
 fi
 echo "  OK (${newest_sla_proof}, ${sla_proof_age_days}d old)"
+
+# Step 5c — release.yml waits for a full ci.yml run on the tagged commit and
+# starts one if none exists; starting it here overlaps it with prepush. Best
+# effort: on any gh failure release.yml still dispatches its own.
+if [[ "$DRY_RUN" -eq 0 ]]; then
+  full_runs=$(gh api "repos/{owner}/{repo}/actions/runs?head_sha=${local_sha}&per_page=100" \
+    --jq '[.workflow_runs[] | select(.path == ".github/workflows/ci.yml" and (.event == "schedule" or .event == "workflow_dispatch"))] | length' \
+    2>/dev/null || echo 0)
+  if [[ "$full_runs" != 0 ]]; then
+    echo "→ A full ci.yml run already exists on ${local_sha}; release.yml will wait for it."
+  elif gh workflow run ci.yml --ref main >/dev/null 2>&1; then
+    echo "→ Dispatched the full ci.yml run on main (${local_sha}); it runs beside prepush."
+  else
+    echo "WARN: could not dispatch the full ci.yml run; release.yml starts it after the tag push." >&2
+  fi
+fi
 
 # Step 6 — verify gate: `make prepush`, which verifies the committed HEAD in a
 # disposable checkout (pinned Linux container, plus Docker integration shards
