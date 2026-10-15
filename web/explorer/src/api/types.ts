@@ -11314,7 +11314,7 @@ export interface components {
             markets_count?: number | null;
             /** @description Trades the asset participated in over the trailing 24h. */
             trade_count_24h?: number | null;
-            /** @description 24 hourly USD-price samples (oldest first) for sparkline rendering. Null on a `thin_market` row; raw series on /v1/ohlc, /v1/observations. */
+            /** @description 24 hourly USD-price samples (oldest first) for sparkline rendering; also the listing `include=sparkline24h` series. Null on a `thin_market` row; raw series on /v1/ohlc, /v1/observations. */
             price_history_24h?: {
                 /** Format: date-time */
                 t: string;
@@ -13950,7 +13950,7 @@ export interface operations {
                  *     a catalogue slug in this version.
                  */
                 include_thin?: components["parameters"]["IncludeThin"];
-                /** @description Comma-separated row enrichments. Supported: `sparkline7d` (per-row 7-day price history for chart columns; one batch read per page). */
+                /** @description Comma-separated row enrichments. Supported: `sparkline24h` (per-row 24-hour price history) and `sparkline7d` (per-row 7-day price history), for chart columns; one batch read per page each. */
                 include?: string;
                 /**
                  * @description Case-insensitive substring filter over code / asset id /
