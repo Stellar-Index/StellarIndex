@@ -441,7 +441,7 @@ func verifyXLMBounds(
 		return 0, rerr
 	}
 	if !rateOK {
-		fmt.Printf("  XLM-BASE BOUND: skipped — no crypto:XLM/fiat:USD prices_1d bucket for this day\n")
+		fmt.Printf("  XLM-BASE BOUND: skipped — prices_1h does not yet hold all of this day for crypto:XLM/fiat:USD\n")
 	} else if rateRat, ok := new(big.Rat).SetString(rate); !ok || rateRat.Sign() <= 0 {
 		fmt.Printf("  XLM-BASE BOUND: skipped — unusable day VWAP %q\n", rate)
 	} else {
