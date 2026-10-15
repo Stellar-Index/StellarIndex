@@ -35,19 +35,25 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 - **api:** an account's sponsorship lifecycle, with a proof against its counters (#3439).
 - **api:** `GET /v1/accounts/{g_strkey}/claimable-balances`: the account's unclaimed claimable balances; the explorer account page shows them (#3490).
 - **api:** `?include=sparkline24h` fills `price_history_24h` on `/v1/assets` (#3489).
+- **api:** `GET /v1/assets/{asset_id}/trustline-history`: trustlines created and removed per UTC day with the open count; the asset page's Holders tab charts it (#3498).
 - **explorer:** every page rebuilt on the new design system, with clickable table rows, keyboard focus rings, the converter rework and a data-source disclosures overlay (#3459–#3487).
 - **ops:** `verify-network-state` gains a live-state check (#3453).
+- **status:** status.stellarindex.io is built from the explorer, with the same chrome; the standalone `web/status` app is gone (#3493, #3494).
 
 ### Fixed
 
 - **lending:** Blend backstop and emission KPIs are shown in tokens, not base units (#3488).
+- **protocols:** the SDEX 7d block builds again; its raw-trade KPIs (unique traders, average size) are served at 24h only (#3499).
 - **dex:** the stubbed Phoenix pool is out of the TVL pool set (#3454).
 - **archive:** `galexie-mirror-verify` normalises upgrade entry-change order (#3450); hot-archive mismatch samples carry both ledgers (#3457).
 - **monitoring:** the availability-burn, quiet-source and curated-rwa-sync absent alerts no longer fire spuriously (#3452, #3461).
+- **monitoring:** the notify failed-send alert shows a whole count (#3497).
 
 ### Changed
 
 - **divergence:** served Stellar assets that CoinGecko lists are mapped to their coin ids (#3455).
+- **trades:** token/token USD volume is bounded by a per-asset credibility budget charged to the deeper anchor market; a print over budget stores NULL `usd_volume`, never a capped value (#3495).
+- **release:** `cut-release.sh` starts the full CI run beside prepush, and the full run's fuzz smoke is sharded four ways (#3492, #3496).
 - **deps:** npm and actions minor/patch groups bumped (#3423–#3425).
 
 ## [v0.113.0] — 2026-10-13
