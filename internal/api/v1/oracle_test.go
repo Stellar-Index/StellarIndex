@@ -140,6 +140,22 @@ func TestOracleLatest_ReturnsReadings(t *testing.T) {
 	}
 }
 
+// TestOracleLatest_OmitsRetiredSource: the retired Ethereum chainlink feed's last row is not served beside live feeds.
+func TestOracleLatest_OmitsRetiredSource(t *testing.T) {
+	reader := &stubOracleReader{updates: []canonical.OracleUpdate{
+		mkReflectorUpdate("chainlink", "12000000000000", 14),
+		mkReflectorUpdate("chainlink-stellar", "12500000000000", 14),
+	}}
+	ts := httpTestServer(t, v1.New(v1.Options{Oracle: reader}))
+	var page struct {
+		Data []v1.OracleReading `json:"data"`
+	}
+	mustDecode(t, mustGet(t, ts.URL+"/v1/oracle/latest?asset=native"), &page)
+	if len(page.Data) != 1 || page.Data[0].Source != "chainlink-stellar" {
+		t.Fatalf("unfiltered readings = %+v, want only chainlink-stellar", page.Data)
+	}
+}
+
 func TestOracleLatest_SourceFilterThreaded(t *testing.T) {
 	reader := &stubOracleReader{
 		updates: []canonical.OracleUpdate{mkReflectorUpdate("reflector-dex", "12000000000000", 14)},

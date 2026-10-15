@@ -272,6 +272,10 @@ func (s *Server) handleOracleLatest(w http.ResponseWriter, r *http.Request) {
 		if rawQuote != "" && !u.Quote.Equal(quoteFilter) {
 			continue
 		}
+		// A retired feed's last row would read as a live price frozen in time.
+		if external.Registry[u.Source].Retired {
+			continue
+		}
 		rows = append(rows, oracleReadingFrom(u))
 	}
 	writeEnvelope(w, Envelope{Data: rows, AsOf: vintage.asOf()})
