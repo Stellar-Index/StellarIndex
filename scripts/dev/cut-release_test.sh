@@ -363,6 +363,43 @@ test_sla_proof_not_proven_fresh_passes() {
   echo "PASS: cut-release.sh proceeds past a fresh Verdict: NOT PROVEN SLA proof"
 }
 
+# test_full_ci_dispatched_beside_prepush: a real cut starts the full ci.yml run
+# release.yml needs before prepush; --dry-run starts nothing.
+test_full_ci_dispatched_beside_prepush() {
+  local TMP out status today
+  TMP="$(mktemp -d)"
+  TMP="$(cd "$TMP" && pwd -P)"
+  trap 'rm -rf "$TMP"' RETURN
+  _sla_fixture_setup "$TMP"
+  cat > "$TMP/bin/gh" <<EOF
+#!/usr/bin/env bash
+echo "\$*" >> "$TMP/gh.log"
+[[ "\$1 \$2" == "workflow run" ]]
+EOF
+  today="$(_sla_days_ago 0)"
+  printf '# SLA proof report — %s\n\n**Verdict: PASS.**\n' "$today" > "$TMP/repo/docs/operations/sla-proof-${today}.md"
+  git -C "$TMP/repo" add docs/operations
+  git -C "$TMP/repo" commit --quiet -m "proof"
+  git -C "$TMP/repo" push --quiet origin main
+
+  out="$(cd "$TMP/repo" && PATH="$TMP/bin:$PATH" GIT_TERMINAL_PROMPT=0 \
+    bash "$SCRIPT" v0.0.1 --dry-run </dev/null 2>&1)"
+  if grep -q '^workflow run' "$TMP/gh.log" 2>/dev/null; then
+    echo "FAIL: --dry-run dispatched a ci.yml run" >&2
+    return 1
+  fi
+  out="$(cd "$TMP/repo" && PATH="$TMP/bin:$PATH" GIT_TERMINAL_PROMPT=0 \
+    bash "$SCRIPT" v0.0.1 --yes </dev/null 2>&1)"
+  status=$?
+  if [[ "$status" -ne 0 ]] || ! grep -qx 'workflow run ci.yml --ref main' "$TMP/gh.log"; then
+    echo "FAIL: a real cut did not dispatch the full ci.yml run (status=$status)" >&2
+    echo "--- output ---" >&2
+    echo "$out" >&2
+    return 1
+  fi
+  echo "PASS: cut-release.sh dispatches the full ci.yml run beside prepush, not on --dry-run"
+}
+
 overall_fail=0
 test_tags_verified_commit || overall_fail=1
 test_sla_proof_missing_blocks_cut || overall_fail=1
@@ -370,4 +407,5 @@ test_sla_proof_stale_blocks_cut || overall_fail=1
 test_sla_proof_fail_verdict_blocks_cut || overall_fail=1
 test_sla_proof_not_proven_fresh_passes || overall_fail=1
 test_mktemp_template_is_portable || overall_fail=1
+test_full_ci_dispatched_beside_prepush || overall_fail=1
 exit "$overall_fail"

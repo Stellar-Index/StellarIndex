@@ -12960,7 +12960,7 @@ paths:
                           last_modified_ledger: { type: integer, format: int64 }
                           as_of_ledger: { type: integer, format: int64, description: "Lake watermark the served state was fresh to WHEN IT WAS CACHED (ADR-0041) — not a serve-time read and not the account's last_modified_ledger; the cache holds this state for up to 30s. Omitted when the watermark was unreadable at fill time. Pairs with flags.stale." }
                           directory: { $ref: "#/components/schemas/DirectoryInfo" }
-                          coverage_note: { type: string, description: "The holding domains this view serves. Claimable balances and Soroban contract (including SAC) balances are not included, so their absence is not a zero balance. Omitted when exists is false." }
+                          coverage_note: { type: string, description: "The holding domains this view serves. Claimable balances (served by /v1/accounts/{g_strkey}/claimable-balances) and Soroban contract (including SAC) balances are not included, so their absence is not a zero balance. Omitted when exists is false." }
                           directory_unavailable: { type: boolean, description: "True when the directory read failed, so an absent `directory` means the address was NOT checked (a malicious/unsafe label may exist), not that it is unlisted. Omitted on a successful read." }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
@@ -13204,6 +13204,106 @@ paths:
                           next_cursor: { type: string }
                           through_ledger: { type: integer, format: int64, description: "Newest ledger this feed may serve (the entry index watermark)." }
                           lower_bound: { type: boolean, description: "True when the page stopped short of the account's older history; follow next_cursor." }
+                          coverage_note: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /accounts/{g_strkey}/claimable-balances:
+    get:
+      operationId: getAccountClaimableBalances
+      x-stability: experimental
+      tags: [explorer]
+      summary: The unclaimed claimable balances an account can claim, newest first.
+      description: |
+        Claimable balances that name the account as a claimant and are
+        still on the ledger, located through the entry index's `claimant`
+        role (`stellar.account_entry_ledgers`) and read from the lake's
+        current ledger-entry state. A balance the account could claim only
+        once a predicate is met is listed with that predicate in
+        `entry.claimants`; claimability at a given time is the caller's to
+        evaluate. `amount` is an integer string of stroops of `asset`
+        (ADR-0003).
+
+        CEILING: the view runs through `through_ledger`, the entry index's
+        watermark. Until the index is built on the deployment the route
+        answers 503 (`entry-index-not-built`).
+
+        LOWER BOUND: one read examines the account's 200 most recent
+        claimant ledgers and at most 500 balances. An account past either
+        cap (typically a spam target) is served with `lower_bound` true and
+        a `coverage_note` saying older unclaimed balances may be missing.
+        A balance whose change rows name the account but which has no row
+        in the lake's current-state table is left out (its state is
+        unknown); the view is then also a lower bound and the note gives
+        the count.
+      parameters:
+        - name: g_strkey
+          in: path
+          required: true
+          description: |
+            Account id, a 56-character G-strkey (SEP-23); an M-address
+            reads as its base account. Malformed strkeys return 400.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The account's unclaimed claimable balances.
+          content:
+            application/json:
+              example:
+                data:
+                  account: GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+                  claimable_balances:
+                  - balance_id: 929b20b72e5890ab51c24f1cc46fa01c4f318d8d33367d24dd614cfdf5491072
+                    asset: native
+                    amount: '100000000'
+                    sponsor: GDIEKKIQWMIZ4LD3RP3ABPN7X5KEAEWYMR634BRHB7EULIMEVREWLF3G
+                    last_modified_ledger: 64802900
+                    last_modified_time: '2026-10-06T14:02:29Z'
+                    entry:
+                      balance_id: 929b20b72e5890ab51c24f1cc46fa01c4f318d8d33367d24dd614cfdf5491072
+                      asset: native
+                      amount: '100000000'
+                      claimants:
+                      - destination: GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+                        predicate: { type: unconditional }
+                      sponsor: GDIEKKIQWMIZ4LD3RP3ABPN7X5KEAEWYMR634BRHB7EULIMEVREWLF3G
+                  through_ledger: 64802921
+                  lower_bound: false
+                  coverage_note: unclaimed claimable balances naming the account as a claimant, through ledger 64802921
+                as_of: '2026-10-06T14:03:31Z'
+                flags:
+                  divergence_warning: false
+                  triangulated: false
+                  reduced_redundancy: false
+                  stale: false
+                  degraded: false
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [account, claimable_balances, through_ledger, lower_bound, coverage_note]
+                        properties:
+                          account: { type: string }
+                          claimable_balances:
+                            type: array
+                            items:
+                              type: object
+                              required: [balance_id, asset, amount, last_modified_ledger, last_modified_time, entry]
+                              properties:
+                                balance_id: { type: string, description: "The balance id: hex of its 32-byte hash." }
+                                asset: { type: string, description: "native or CODE-ISSUER." }
+                                amount: { type: string, description: "Amount of asset in stroops (ADR-0003)." }
+                                sponsor: { type: string, description: "The account paying the balance's reserve; omitted when unsponsored." }
+                                last_modified_ledger: { type: integer, format: int64 }
+                                last_modified_time: { type: string, format: date-time }
+                                entry: { type: object, additionalProperties: true, description: "The decoded entry, including claimants and their predicates." }
+                          through_ledger: { type: integer, format: int64, description: "Newest ledger this view covers (the entry index watermark)." }
+                          lower_bound: { type: boolean, description: "True when the read's ledger or balance cap was hit, so older unclaimed balances may be missing." }
                           coverage_note: { type: string }
         "400": { $ref: "#/components/responses/BadRequest" }
         "500": { $ref: "#/components/responses/InternalError" }

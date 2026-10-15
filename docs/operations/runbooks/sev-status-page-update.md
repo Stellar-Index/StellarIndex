@@ -13,7 +13,7 @@ related:
 
 Every SEV that meets the threshold below MUST be posted; this is the binding how-to. Two renderers read the same corpus, `internal/incidents/data/<YYYY-MM-DD>-<slug>.md`, at build time:
 
-- `status.stellarindex.io`: `web/status/`, Cloudflare Pages project `stellarindex-status`, deployed by `.github/workflows/status-page.yml`. Makes no API call, so it still publishes during an outage. Post here first.
+- `status.stellarindex.io`: the explorer's own build and chrome on a separate Cloudflare Pages project, `stellarindex-status`, deployed by `.github/workflows/status-page.yml`, with `/` serving the explorer's status page. It builds with `EXPLORER_BUILD_OFFLINE=1`, so it makes no build-time API call and still publishes during an outage. Post here first.
 - `stellarindex.io/status`: the explorer (`web/explorer/src/app/status/`), with live component health. It shares one `next build` with every explorer page, so an API outage can block it (see step 4).
 
 ## When to post and cadence
