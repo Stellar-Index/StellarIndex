@@ -13165,6 +13165,10 @@ paths:
         claimant ledgers and at most 500 balances. An account past either
         cap (typically a spam target) is served with `lower_bound` true and
         a `coverage_note` saying older unclaimed balances may be missing.
+        A balance whose change rows name the account but which has no row
+        in the lake's current-state table is left out (its state is
+        unknown); the view is then also a lower bound and the note gives
+        the count.
       parameters:
         - name: g_strkey
           in: path
