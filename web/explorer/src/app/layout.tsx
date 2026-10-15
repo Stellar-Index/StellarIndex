@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from 'next';
-import { Geist_Mono, Onest } from 'next/font/google';
+import { Geist_Mono, Lora, Onest } from 'next/font/google';
 import './globals.css';
 import { ConsoleShell } from '@/components/nav/ConsoleShell';
 import { QueryProvider } from './QueryProvider';
@@ -13,6 +13,13 @@ const onest = Onest({
   subsets: ['latin'],
   display: 'swap',
   variable: '--font-sans',
+});
+
+// Lora for page titles only, matching stellar.org's display face.
+const lora = Lora({
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-serif',
 });
 
 const geistMono = Geist_Mono({
@@ -123,7 +130,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${onest.variable} ${geistMono.variable}`}>
+    <html lang="en" className={`${onest.variable} ${lora.variable} ${geistMono.variable}`}>
       <head>
         {/* Build identifier — same SHA + time as the footer badge,
             in machine-readable form. `curl -s stellarindex.io | grep
