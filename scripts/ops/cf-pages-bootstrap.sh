@@ -277,10 +277,12 @@ project_create_or_update \
 
 project_create_or_update \
   "stellarindex-status" \
-  "web/status" \
-  "pnpm install --frozen-lockfile && pnpm build" \
+  "web/explorer" \
+  "pnpm install --frozen-lockfile && pnpm build && bash ../../scripts/ci/status-pages-redirects.sh out" \
   "out" \
   "NEXT_PUBLIC_API_BASE_URL=https://api.$APEX_DOMAIN" \
+  "NEXT_PUBLIC_NETWORK=mainnet" \
+  "EXPLORER_BUILD_OFFLINE=1" \
   "NODE_VERSION=20" \
   "PNPM_VERSION=10"
 

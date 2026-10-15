@@ -1,16 +1,13 @@
 ---
-# Manual-trigger Cloudflare Pages deploy for the status.stellarindex.io
-# project — now REDIRECT-ONLY (web/status/public/_redirects 301s to
-# stellarindex.io/status). The live status page moved onto the main
-# explorer at /status; this deploy just keeps the redirect + cert fresh.
+# Manual-trigger Cloudflare Pages deploy for status.stellarindex.io: the
+# explorer's own build (same chrome) on a separate Pages project, so the
+# status page stays up when the explorer project or its deploy breaks.
+# `/` serves the explorer's /status page; the incident history is baked in
+# at build time and the live panels degrade when the API is down.
 #
-# **The recommended publish path is Cloudflare's git integration**
-# — it auto-deploys on every push to main without consuming GitHub
-# Actions minutes. This workflow is the same hotfix / git-paused
-# fallback as docs-deploy.yml + explorer-deploy.yml.
-#
-# Builds the Next.js static-export status page at web/status/
-# and pushes it to the `stellarindex-status` Pages project.
+# The recommended publish path is Cloudflare's git integration (configured
+# by scripts/ops/cf-pages-bootstrap.sh). This workflow is the hotfix /
+# git-paused fallback, as docs-deploy.yml and explorer-deploy.yml are.
 #
 # Required secrets (set once in repo settings):
 #   - CLOUDFLARE_API_TOKEN  — token with Pages:Edit on
@@ -86,7 +83,7 @@ jobs:
         # independently of it.
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413  # v6.1.0
         with:
-          package_json_file: web/status/package.json
+          package_json_file: web/explorer/package.json
           run_install: false
 
       - name: Set up Node
@@ -94,23 +91,26 @@ jobs:
         with:
           node-version: "24"
           cache: pnpm
-          cache-dependency-path: web/status/pnpm-lock.yaml
+          cache-dependency-path: web/explorer/pnpm-lock.yaml
 
       - name: Install dependencies
-        working-directory: web/status
+        working-directory: web/explorer
         run: pnpm install --frozen-lockfile
 
       - name: Build
-        working-directory: web/status
+        working-directory: web/explorer
         env:
+          NEXT_PUBLIC_NETWORK: mainnet
+          EXPLORER_BUILD_OFFLINE: "1"
           NEXT_PUBLIC_API_BASE_URL: ${{ github.event.inputs.api_base_url }}
         run: pnpm build
-
+      - name: Serve the status page at the root
+        run: bash scripts/ci/status-pages-redirects.sh web/explorer/out
       - name: Verify build artefact
-        working-directory: web/status
+        working-directory: web/explorer
         run: |
           test -d out || { echo "out/ missing"; exit 1; }
-          test -f out/index.html || { echo "out/index.html missing"; exit 1; }
+          test -f out/status/index.html || { echo "out/status/index.html missing"; exit 1; }
           ls -la out/ | head
 
       - name: Resolve deploy branch
@@ -128,7 +128,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: web/status
+          workingDirectory: web/explorer
           command: >-
             pages deploy out
             --project-name stellarindex-status

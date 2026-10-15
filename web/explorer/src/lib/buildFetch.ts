@@ -92,9 +92,15 @@ export type BuildFetchEnvelope<T> = {
   triangulated?: string[];
 };
 
-/** True when the build host has no real API (CI placeholder URL). */
+/**
+ * True when the build must not reach the API: a CI placeholder URL, or
+ * EXPLORER_BUILD_OFFLINE=1 (the status-page build, which must publish
+ * during an API outage while still baking the real API URL for the client).
+ */
 export const isCIStub =
-  API_BASE_URL.includes('.invalid') || API_BASE_URL.includes('local-stub');
+  API_BASE_URL.includes('.invalid') ||
+  API_BASE_URL.includes('local-stub') ||
+  process.env.EXPLORER_BUILD_OFFLINE === '1';
 
 export class BuildFetchError extends Error {
   constructor(message: string) {
