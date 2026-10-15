@@ -183,7 +183,7 @@ func usdVolumeViaFXCredited(
 	if md.Subclass == external.SubclassDEX {
 		var refused bool
 		usdAmount, refused, err = creditBoundUSDVolume(ctx, r, budget, creditLegs{
-			rated: t.Pair.Quote, ratedVal: usdAmount, other: t.Pair.Base, otherAmount: t.BaseAmount, decimals: decimals, at: t.Timestamp,
+			rated: t.Pair.Quote, ratedVal: usdAmount, other: t.Pair.Base, otherAmount: t.BaseAmount, decimals: decimals, at: t.Timestamp, id: t.ID(),
 		}, commit)
 		if err != nil || usdAmount == nil {
 			return nil, refused, err
@@ -372,7 +372,7 @@ func usdVolumeViaXLMBaseAnchor(
 	if !isXLMAsset(t.Pair.Base) {
 		var refused bool
 		usdAmount, refused, err = creditBoundUSDVolume(ctx, r, budget, creditLegs{
-			rated: t.Pair.Base, ratedVal: usdAmount, other: t.Pair.Quote, otherAmount: t.QuoteAmount, decimals: stellarClassicDecimals, at: t.Timestamp,
+			rated: t.Pair.Base, ratedVal: usdAmount, other: t.Pair.Quote, otherAmount: t.QuoteAmount, decimals: stellarClassicDecimals, at: t.Timestamp, id: t.ID(),
 		}, commit)
 		if err != nil || usdAmount == nil {
 			return nil, refused, err
@@ -526,7 +526,8 @@ const stellarClassicDecimals = 7
 
 // WouldPopulateUSDVolume reports whether InsertTrade would stamp a non-null usd_volume under the installed quote spec and FX resolver; an FX-tier hit calls the resolver synchronously, so it must be hot-path cheap.
 func (s *Store) WouldPopulateUSDVolume(ctx context.Context, t canonical.Trade) bool {
-	return tradeUSDVolume(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver) != nil
+	v, _, err := tradeUSDVolumeCredited(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver, s.creditBudget, false)
+	return err == nil && v != nil
 }
 
 // usdVolumeDecimals reports whether an asset is USD-pegged and at what scale; side-agnostic (quote tiers 1/2, base tier 2b).

@@ -3,6 +3,7 @@ package timescale
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/big"
 	"testing"
 	"time"
@@ -35,9 +36,18 @@ func rat(s string) *big.Rat {
 	return v
 }
 
+var creditTestTrade int
+
+// mustAdmit admits a fresh trade ID each call.
 func mustAdmit(t *testing.T, b *usdCreditBudget, a canonical.Asset, at time.Time, value, backing string, commit bool) bool {
 	t.Helper()
-	ok, err := b.admit(context.Background(), a, at, rat(value), rat(backing), commit)
+	creditTestTrade++
+	return mustAdmitID(t, b, fmt.Sprintf("trade-%d", creditTestTrade), a, at, value, backing, commit)
+}
+
+func mustAdmitID(t *testing.T, b *usdCreditBudget, id string, a canonical.Asset, at time.Time, value, backing string, commit bool) bool {
+	t.Helper()
+	ok, err := b.admit(context.Background(), id, a, at, rat(value), rat(backing), commit)
 	if err != nil {
 		t.Fatalf("admit: %v", err)
 	}
@@ -85,11 +95,11 @@ func TestCreditBudget_ChargesExpireAfterTheWindow(t *testing.T) {
 	at := time.Date(2026, 10, 1, 0, 30, 0, 0, time.UTC)
 	mustAdmit(t, b, abc, at, "2000", "1000", true)
 
-	if mustAdmit(t, b, abc, at.Add(24*time.Hour), "1", "1000", false) {
-		t.Fatal("charge dropped while its hour is still inside the window")
+	if mustAdmit(t, b, abc, at.Add(23*time.Hour), "1", "1000", false) {
+		t.Fatal("charge dropped while its hour is still one of the 24 in the window")
 	}
-	if !mustAdmit(t, b, abc, at.Add(25*time.Hour), "2000", "1000", false) {
-		t.Fatal("charge still counted a full hour past the window")
+	if !mustAdmit(t, b, abc, at.Add(24*time.Hour), "2000", "1000", false) {
+		t.Fatal("charge still counted 24 hour buckets later")
 	}
 }
 
@@ -106,12 +116,12 @@ func TestCreditBudget_SeedChargedOnceAndErrorsPropagate(t *testing.T) {
 	abc := mustAsset(t, "ABC-"+creditTestIssuer)
 	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	calls := 0
-	b := newUSDCreditBudget(func(_ context.Context, _ canonical.Asset, from, to time.Time) (*big.Rat, error) {
+	b := newUSDCreditBudget(func(_ context.Context, _ canonical.Asset, from, to time.Time) (map[int64]*big.Rat, error) {
 		calls++
-		if !to.Equal(at) || !from.Equal(at.Add(-creditBudgetWindow)) {
-			t.Errorf("seed window [%s, %s), want the trailing 24h ending at the print", from, to)
+		if !to.Equal(at) || !from.Equal(at.Add(-23*time.Hour)) {
+			t.Errorf("seed window [%s, %s), want the 24 hour buckets ending at the print", from, to)
 		}
-		return rat("1900"), nil
+		return map[int64]*big.Rat{creditHour(at.Add(-23 * time.Hour)): rat("1500"), creditHour(at): rat("400")}, nil
 	})
 	if mustAdmit(t, b, abc, at, "101", "1000", true) {
 		t.Fatal("a restarted writer ignored the USD already served")
@@ -122,11 +132,31 @@ func TestCreditBudget_SeedChargedOnceAndErrorsPropagate(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("seed ran %d times, want once per asset", calls)
 	}
+	// The seed keeps its hourly shape: the 1500 bucket leaves the window an hour later, not a whole window later.
+	if !mustAdmit(t, b, abc, at.Add(time.Hour), "1400", "1000", true) {
+		t.Fatal("a seeded hour outlived the window")
+	}
 
 	boom := errors.New("db down")
-	failing := newUSDCreditBudget(func(context.Context, canonical.Asset, time.Time, time.Time) (*big.Rat, error) { return nil, boom })
-	if _, err := failing.admit(context.Background(), abc, at, rat("1"), rat("1000"), true); !errors.Is(err, boom) {
+	failing := newUSDCreditBudget(func(context.Context, canonical.Asset, time.Time, time.Time) (map[int64]*big.Rat, error) {
+		return nil, boom
+	})
+	if _, err := failing.admit(context.Background(), "t", abc, at, rat("1"), rat("1000"), true); !errors.Is(err, boom) {
 		t.Fatalf("seed error = %v, want it propagated, never read as an empty window", err)
+	}
+}
+
+func TestCreditBudget_RetriedTradeChargedOnce(t *testing.T) {
+	b := newUSDCreditBudget(nil)
+	abc := mustAsset(t, "ABC-"+creditTestIssuer)
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < 3; i++ {
+		if !mustAdmitID(t, b, "retried", abc, at, "1500", "1000", true) {
+			t.Fatalf("attempt %d of the same trade refused: an earlier attempt was charged again", i)
+		}
+	}
+	if !mustAdmit(t, b, abc, at, "500", "1000", true) {
+		t.Fatal("retries consumed budget a single charge leaves free")
 	}
 }
 
@@ -145,6 +175,9 @@ func TestCreditBudget_SweepDropsStaleLedgers(t *testing.T) {
 	}
 	if _, ok := b.served[creditKey(live)]; !ok {
 		t.Fatal("sweep dropped a live ledger")
+	}
+	if len(b.charged) != 1024 {
+		t.Fatalf("charged holds %d IDs, want the 1024 live ones (stale dropped)", len(b.charged))
 	}
 }
 
@@ -190,6 +223,16 @@ func TestCreditBoundUSDVolume(t *testing.T) {
 		v, refused, err := creditBoundUSDVolume(ctx, unrated, newUSDCreditBudget(nil), legs, true)
 		if err != nil || !refused || v != nil {
 			t.Fatalf("got (%v, %v, %v), want 800 refused against ABC's 200 budget", v, refused, err)
+		}
+	})
+
+	t.Run("an unrated other leg keeps the single-leg ceiling", func(t *testing.T) {
+		deep := backingFXResolver{stubFXResolver: stubFXResolver{prices: map[string]string{}}, backing: map[string]string{abc.String(): "1000000000"}}
+		huge := legs
+		huge.ratedVal = rat("150000000")
+		v, refused, err := creditBoundUSDVolume(ctx, deep, newUSDCreditBudget(nil), huge, true)
+		if err != nil || refused || v != nil {
+			t.Fatalf("got (%v, %v, %v), want a $150M one-leg print unpriced however deep the budget", v, refused, err)
 		}
 	})
 

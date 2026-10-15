@@ -28,8 +28,9 @@ type anchorBackingReporter interface {
 	AnchorBackingAt(ctx context.Context, asset canonical.Asset, at time.Time) (*big.Rat, bool, error)
 }
 
-// creditSeedFunc returns the token/token USD already served on the asset in [from, to), so a restarted writer does not start from zero.
-type creditSeedFunc func(ctx context.Context, asset canonical.Asset, from, to time.Time) (*big.Rat, error)
+// creditSeedFunc returns the token/token USD already served on the asset in [from, to) per hour bucket (unix seconds of the hour), so a
+// restarted writer neither starts from zero nor holds the past for longer than the window.
+type creditSeedFunc func(ctx context.Context, asset canonical.Asset, from, to time.Time) (map[int64]*big.Rat, error)
 
 // usdCreditBudget is the per-asset sliding window of served token/token USD: one instance per writer (one writer per domain), and
 // replays are sequential, so the window is exact up to batch order.
@@ -40,8 +41,10 @@ type usdCreditBudget struct {
 
 	mu     sync.Mutex
 	served map[string]*creditLedger
-	latest time.Time
-	admits int
+	// charged maps each admitted trade ID to its hour, so a write retried after a failed INSERT is not charged twice.
+	charged map[string]int64
+	latest  time.Time
+	admits  int
 }
 
 // creditLedger holds one asset's served USD per hour bucket (unix seconds of the hour).
@@ -52,10 +55,11 @@ type creditLedger struct {
 
 func newUSDCreditBudget(seed creditSeedFunc) *usdCreditBudget {
 	return &usdCreditBudget{
-		factor: big.NewRat(creditBudgetFactor, 1),
-		window: creditBudgetWindow,
-		seed:   seed,
-		served: map[string]*creditLedger{},
+		factor:  big.NewRat(creditBudgetFactor, 1),
+		window:  creditBudgetWindow,
+		seed:    seed,
+		served:  map[string]*creditLedger{},
+		charged: map[string]int64{},
 	}
 }
 
@@ -76,37 +80,62 @@ func assetFormNames(a canonical.Asset) []string {
 
 func creditHour(at time.Time) int64 { return at.UTC().Truncate(time.Hour).Unix() }
 
-// admit reports whether value may be served charged to asset at `at`: the asset's served window plus value must not exceed
-// factor x backing. commit records the charge; a dry run leaves the window as it was.
-func (b *usdCreditBudget) admit(ctx context.Context, asset canonical.Asset, at time.Time, value, backing *big.Rat, commit bool) (bool, error) {
+// admit reports whether value may be served for trade id charged to asset at `at`: the asset's served window plus value must not exceed
+// factor x backing. commit records the charge; a dry run leaves the window as it was. A trade already charged is admitted again as is.
+func (b *usdCreditBudget) admit(ctx context.Context, id string, asset canonical.Asset, at time.Time, value, backing *big.Rat, commit bool) (bool, error) {
+	key := creditKey(asset)
+	if err := b.ensureLedger(ctx, key, asset, at); err != nil {
+		return false, err
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	key := creditKey(asset)
-	led := b.served[key]
-	if led == nil {
-		led = &creditLedger{hours: map[int64]*big.Rat{}}
-		if b.seed != nil {
-			prior, err := b.seed(ctx, asset, at.Add(-b.window), at)
-			if err != nil {
-				return false, err
-			}
-			if prior != nil && prior.Sign() > 0 {
-				// A seed has no hourly shape, so it is charged to the current hour and stays in force for a whole window: the strict side.
-				led.add(at, prior)
-			}
-		}
-		b.served[key] = led
+	if _, ok := b.charged[id]; ok {
+		return true, nil
 	}
+	led := b.served[key]
 	b.sweep(at)
-	total := led.sum(at.Add(-b.window), at)
+	total := led.sum(b.windowStart(at), at)
 	total.Add(total, value)
 	if total.Cmp(new(big.Rat).Mul(backing, b.factor)) > 0 {
 		return false, nil
 	}
 	if commit {
 		led.add(at, value)
+		b.charged[id] = creditHour(at)
 	}
 	return true, nil
+}
+
+// windowStart is the first hour bucket in the window ending at the hour holding `at`: 24 buckets, the current one included.
+func (b *usdCreditBudget) windowStart(at time.Time) time.Time {
+	return at.UTC().Truncate(time.Hour).Add(time.Hour - b.window)
+}
+
+// ensureLedger creates the asset's ledger, seeded from the trades already written. The seed query runs without the lock so one asset's
+// round trip does not stall every other writer.
+func (b *usdCreditBudget) ensureLedger(ctx context.Context, key string, asset canonical.Asset, at time.Time) error {
+	b.mu.Lock()
+	_, ok := b.served[key]
+	b.mu.Unlock()
+	if ok {
+		return nil
+	}
+	led := &creditLedger{hours: map[int64]*big.Rat{}}
+	if b.seed != nil {
+		prior, err := b.seed(ctx, asset, b.windowStart(at), at)
+		if err != nil {
+			return err
+		}
+		for h, v := range prior {
+			led.add(time.Unix(h, 0), v)
+		}
+	}
+	b.mu.Lock()
+	if _, ok := b.served[key]; !ok {
+		b.served[key] = led
+	}
+	b.mu.Unlock()
+	return nil
 }
 
 func (l *creditLedger) add(at time.Time, v *big.Rat) {
@@ -133,7 +162,7 @@ func (l *creditLedger) sum(from, to time.Time) *big.Rat {
 	return total
 }
 
-// sweep bounds memory: every 1024 admits it drops the hours and ledgers two windows behind the newest print seen.
+// sweep bounds memory: every 1024 admits it drops the hours, ledgers and charged IDs two windows behind the newest print seen.
 func (b *usdCreditBudget) sweep(at time.Time) {
 	if at.After(b.latest) {
 		b.latest = at
@@ -143,6 +172,11 @@ func (b *usdCreditBudget) sweep(at time.Time) {
 		return
 	}
 	floor := creditHour(b.latest.Add(-2 * b.window))
+	for id, h := range b.charged {
+		if h < floor {
+			delete(b.charged, id)
+		}
+	}
 	for key, led := range b.served {
 		if led.last < floor {
 			delete(b.served, key)
@@ -164,6 +198,7 @@ type creditLegs struct {
 	otherAmount canonical.Amount
 	decimals    int
 	at          time.Time
+	id          string
 }
 
 // creditBoundUSDVolume values a token/token print: the smaller of its rated legs (a thin leg cannot borrow a deep leg's backing), charged
@@ -185,11 +220,15 @@ func creditBoundUSDVolume(
 	if otherVal != nil && otherVal.Cmp(value) < 0 {
 		value = otherVal
 	}
+	// One possibly self-authored leg keeps the legacy ceiling whatever the budget allows.
+	if otherVal == nil && value.Cmp(singleLegMaxUSDVolume) > 0 {
+		return nil, false, nil
+	}
 	charged, backing, err := creditChargeLeg(ctx, rep, legs, otherVal != nil)
 	if err != nil {
 		return nil, false, err
 	}
-	admitted, err := budget.admit(ctx, charged, legs.at, value, backing, commit)
+	admitted, err := budget.admit(ctx, legs.id, charged, legs.at, value, backing, commit)
 	if err != nil {
 		return nil, false, err
 	}
@@ -222,22 +261,36 @@ func creditChargeLeg(ctx context.Context, rep anchorBackingReporter, legs credit
 	return legs.rated, backing, nil
 }
 
-// servedTokenTokenUSD seeds a credibility ledger from the trades already written: usd_volume on prints in [from, to) where the asset
-// is a leg and neither leg is an anchor. Prints charged to the other leg count too, which only tightens the window.
+// servedTokenTokenUSD seeds a credibility ledger from the trades already written: usd_volume per hour on prints in [from, to) where the
+// asset is a leg and neither leg is an anchor. Prints charged to the other leg, or valued by an exact tier, count too: the strict side.
 func (s *Store) servedTokenTokenUSD(anchors []string) creditSeedFunc {
-	const q = `SELECT coalesce(sum(usd_volume), 0)::text FROM trades
+	const q = `SELECT extract(epoch FROM date_trunc('hour', ts))::bigint, sum(usd_volume)::text FROM trades
 	            WHERE ts >= $1::timestamptz AND ts < $2::timestamptz AND usd_volume IS NOT NULL
 	              AND (base_asset = ANY($3::text[]) OR quote_asset = ANY($3::text[]))
-	              AND NOT (base_asset = ANY($4::text[])) AND NOT (quote_asset = ANY($4::text[]))`
-	return func(ctx context.Context, asset canonical.Asset, from, to time.Time) (*big.Rat, error) {
-		var text string
-		if err := s.db.QueryRowContext(ctx, q, from, to, assetFormNames(asset), anchors).Scan(&text); err != nil {
+	              AND NOT (base_asset = ANY($4::text[])) AND NOT (quote_asset = ANY($4::text[]))
+	            GROUP BY 1`
+	return func(ctx context.Context, asset canonical.Asset, from, to time.Time) (map[int64]*big.Rat, error) {
+		rows, err := s.db.QueryContext(ctx, q, from, to, assetFormNames(asset), anchors)
+		if err != nil {
 			return nil, fmt.Errorf("timescale: credibility seed for %s: %w", asset, err)
 		}
-		v, ok := new(big.Rat).SetString(text)
-		if !ok {
-			return nil, fmt.Errorf("timescale: credibility seed for %s: unparsable sum %q", asset, text)
+		defer rows.Close()
+		out := map[int64]*big.Rat{}
+		for rows.Next() {
+			var hour int64
+			var text string
+			if err := rows.Scan(&hour, &text); err != nil {
+				return nil, fmt.Errorf("timescale: credibility seed for %s: %w", asset, err)
+			}
+			v, ok := new(big.Rat).SetString(text)
+			if !ok {
+				return nil, fmt.Errorf("timescale: credibility seed for %s: unparsable sum %q", asset, text)
+			}
+			out[hour] = v
 		}
-		return v, nil
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("timescale: credibility seed for %s: %w", asset, err)
+		}
+		return out, nil
 	}
 }
