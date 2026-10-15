@@ -38,26 +38,17 @@ export default function HomePage() {
       <header className="mx-auto flex max-w-[860px] flex-col items-center gap-5 text-center">
         <h1 className="text-display-sm sm:text-display text-ink font-semibold">
           {pricing
-            ? 'The protocol explorer for the Stellar network.'
+            ? 'Everything Stellar.'
             : `The Stellar ${CURRENT_NETWORK.label} Explorer`}
         </h1>
         <p className="text-ink-muted max-w-2xl text-base sm:text-lg">
           {pricing
-            ? 'Every contract, event and trade on Stellar, as verified data and one VWAP price.'
+            ? 'Structured data you can rely on, built for every team and every user.'
             : `Every ledger, transaction, account, asset and contract on Stellar ${CURRENT_NETWORK.label}.`}
         </p>
         <div className="w-full pt-2">
           <HomeFinder />
         </div>
-        <p className="text-ink-faint text-[13px]">
-          Independent · open · public-tier free ·{' '}
-          <Link
-            href="/methodology"
-            className="text-ink-muted decoration-line-input hover:text-ink underline underline-offset-4 transition-colors"
-          >
-            How it works
-          </Link>
-        </p>
       </header>
 
       <HomeNetworkStrip />
