@@ -74,20 +74,20 @@ func (h *Handler) AccountClaimableBalances(w http.ResponseWriter, r *http.Reques
 		h.accountClaimableError(w, r, ctx, err, account)
 		return
 	}
-	live, keys, err := h.Reader.LiveClaimableBalancesInLedgers(ctx, string(raw), ledgers, claimableKeyCap)
+	scan, err := h.Reader.LiveClaimableBalancesInLedgers(ctx, string(raw), ledgers, claimableKeyCap)
 	if err != nil {
 		h.accountClaimableError(w, r, ctx, err, account)
 		return
 	}
-	balances, err := claimableBalancesFor(account, live)
+	balances, err := claimableBalancesFor(account, scan.Live)
 	if err != nil {
 		h.accountClaimableError(w, r, ctx, err, account)
 		return
 	}
-	lowerBound := len(ledgers) >= claimableLedgerCap || keys >= claimableKeyCap
+	capped := len(ledgers) >= claimableLedgerCap || scan.Keys >= claimableKeyCap
 	out := AccountClaimableBalancesView{
-		Account: account, ClaimableBalances: balances, ThroughLedger: wm, LowerBound: lowerBound,
-		CoverageNote: accountClaimableNote(wm, lowerBound),
+		Account: account, ClaimableBalances: balances, ThroughLedger: wm, LowerBound: capped || scan.Unresolved > 0,
+		CoverageNote: accountClaimableNote(wm, capped, scan.Unresolved),
 	}
 	h.writeJSONAt(w, out, h.movementsStale(ctx, wm), false, time.Time{})
 }
@@ -131,9 +131,13 @@ func (h *Handler) accountClaimableError(w http.ResponseWriter, r *http.Request, 
 	h.WriteProblem(w, r, "https://api.stellarindex.io/errors/internal", "Internal error", http.StatusInternalServerError, "")
 }
 
-func accountClaimableNote(wm uint32, lowerBound bool) string {
+func accountClaimableNote(wm uint32, capped bool, unresolved int) string {
 	note := fmt.Sprintf("unclaimed claimable balances naming the account as a claimant, through ledger %d", wm)
-	if lowerBound {
+	if unresolved > 0 {
+		note += fmt.Sprintf("; %d balance(s) naming the account have no current-state row in the lake, so whether they "+
+			"are still unclaimed is unknown and they are left out", unresolved)
+	}
+	if capped {
 		note += fmt.Sprintf("; only the account's %d most recent claimant ledgers (at most %d balances) were examined, "+
 			"so older unclaimed balances may be missing", claimableLedgerCap, claimableKeyCap)
 	}

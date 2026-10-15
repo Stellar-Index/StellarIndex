@@ -15,12 +15,13 @@ import (
 
 type claimableReader struct {
 	downReader
-	wm        uint32
-	ledgers   []uint32
-	live      []clickhouse.LiveClaimableBalance
-	keys      int
-	gotRoles  []string
-	gotLedger []uint32
+	wm         uint32
+	ledgers    []uint32
+	live       []clickhouse.LiveClaimableBalance
+	keys       int
+	unresolved int
+	gotRoles   []string
+	gotLedger  []uint32
 }
 
 func (r *claimableReader) EntryIndexWatermark(context.Context) (uint32, error) { return r.wm, nil }
@@ -30,9 +31,9 @@ func (r *claimableReader) AccountEntryLedgers(_ context.Context, _ string, roles
 	return r.ledgers, nil
 }
 
-func (r *claimableReader) LiveClaimableBalancesInLedgers(_ context.Context, _ string, ledgers []uint32, _ int) ([]clickhouse.LiveClaimableBalance, int, error) {
+func (r *claimableReader) LiveClaimableBalancesInLedgers(_ context.Context, _ string, ledgers []uint32, _ int) (clickhouse.ClaimableScan, error) {
 	r.gotLedger = ledgers
-	return r.live, r.keys, nil
+	return clickhouse.ClaimableScan{Live: r.live, Keys: r.keys, Unresolved: r.unresolved}, nil
 }
 
 func claimable(ledger uint32, id string, amount string, claimants ...string) clickhouse.LiveClaimableBalance {
@@ -93,12 +94,17 @@ func TestAccountClaimableBalances_KeepsOnlyBalancesTheAccountCanClaim(t *testing
 func TestAccountClaimableBalances_CapsServeALowerBound(t *testing.T) {
 	full := make([]uint32, claimableLedgerCap)
 	for _, tc := range []struct {
-		name    string
-		ledgers []uint32
-		keys    int
-	}{{"ledger cap", full, 1}, {"key cap", []uint32{1}, claimableKeyCap}} {
-		_, view := callAccountClaimable(t, &claimableReader{wm: 500, ledgers: tc.ledgers, keys: tc.keys})
-		if !view.LowerBound || !strings.Contains(view.CoverageNote, "may be missing") {
+		name             string
+		ledgers          []uint32
+		keys, unresolved int
+		note             string
+	}{
+		{"ledger cap", full, 1, 0, "may be missing"},
+		{"key cap", []uint32{1}, claimableKeyCap, 0, "may be missing"},
+		{"no current-state row", []uint32{1}, 3, 1, "1 balance(s) naming the account have no current-state row"},
+	} {
+		_, view := callAccountClaimable(t, &claimableReader{wm: 500, ledgers: tc.ledgers, keys: tc.keys, unresolved: tc.unresolved})
+		if !view.LowerBound || !strings.Contains(view.CoverageNote, tc.note) {
 			t.Fatalf("%s: lower_bound/note = %v/%q, want a flagged lower bound", tc.name, view.LowerBound, view.CoverageNote)
 		}
 	}

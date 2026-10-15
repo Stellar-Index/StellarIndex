@@ -43,13 +43,13 @@ func lcbEntryXDR(t *testing.T, id [32]byte, amount int64, claimants ...string) s
 
 // The reader returns only balances still on the ledger: one claimed in a later ledger (state pre-image, then removal)
 // and one claimed in its creation ledger both resolve to the removal, and a balance naming only another account is
-// not prefiltered in.
+// not prefiltered in. A balance with change rows but no current-state row is counted as unresolved, never served.
 func TestLiveClaimableBalancesInLedgers_OnlyUnclaimedForTheAccount(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	addr := clickhouseAddr(t)
 
-	live, claimedLater, claimedSame, foreign := cbsID(t, 0x51), cbsID(t, 0x52), cbsID(t, 0x53), cbsID(t, 0x54)
+	live, claimedLater, claimedSame, foreign, orphan := cbsID(t, 0x51), cbsID(t, 0x52), cbsID(t, 0x53), cbsID(t, 0x54), cbsID(t, 0x55)
 	ct := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	row := func(ledger, seq uint32, tx, change string, id [32]byte, entry string) chstore.LedgerEntryChangeRow {
 		return chstore.LedgerEntryChangeRow{
@@ -67,8 +67,14 @@ func TestLiveClaimableBalancesInLedgers_OnlyUnclaimedForTheAccount(t *testing.T)
 		row(lcbLedger+1, 2, "lcb3", "removed", claimedSame, ""),
 		row(lcbLedger+1, 1, "lcb3", "created", claimedSame, mine(claimedSame, 30)),
 		row(lcbLedger+1, 3, "lcb4", "created", foreign, lcbEntryXDR(t, foreign, 40, lcbOther)),
+		row(lcbLedger, 3, "lcb5", "created", orphan, mine(orphan, 50)),
 	}, 0); err != nil {
 		t.Fatalf("InsertEntryChanges: %v", err)
+	}
+	conn := dialClickHouse(t, ctx, "stellar")
+	if err := conn.Exec(ctx, `ALTER TABLE stellar.ledger_entries_current DELETE
+		WHERE entry_type = 'claimable_balance' AND key_xdr = $1 SETTINGS mutations_sync = 2`, cbsKeyXDR(t, orphan)); err != nil {
+		t.Fatalf("drop the orphan's current-state row: %v", err)
 	}
 
 	er, err := chstore.NewExplorerReader(ctx, addr)
@@ -79,13 +85,14 @@ func TestLiveClaimableBalancesInLedgers_OnlyUnclaimedForTheAccount(t *testing.T)
 	if err != nil {
 		t.Fatalf("decode holder: %v", err)
 	}
-	got, keys, err := er.LiveClaimableBalancesInLedgers(ctx, string(raw), []uint32{lcbLedger, lcbLedger + 1, lcbLedger + 2}, 500)
+	scan, err := er.LiveClaimableBalancesInLedgers(ctx, string(raw), []uint32{lcbLedger, lcbLedger + 1, lcbLedger + 2}, 500)
 	if err != nil {
 		t.Fatalf("LiveClaimableBalancesInLedgers: %v", err)
 	}
-	if keys != 3 {
-		t.Errorf("keys examined = %d, want 3 (the foreign balance must not pass the account prefilter)", keys)
+	if scan.Keys != 4 || scan.Unresolved != 1 {
+		t.Errorf("keys/unresolved = %d/%d, want 4/1 (foreign not prefiltered in; the orphan unresolved)", scan.Keys, scan.Unresolved)
 	}
+	got := scan.Live
 	if len(got) != 1 {
 		t.Fatalf("live balances = %d, want only the unclaimed one (a claimed balance was resurrected)", len(got))
 	}
@@ -95,7 +102,7 @@ func TestLiveClaimableBalancesInLedgers_OnlyUnclaimedForTheAccount(t *testing.T)
 		t.Errorf("live balance = %v claimants %v at %d, want %s amount 10 at %d claimable by the holder", g.Fields, g.Claimants, g.Ledger, wantID, lcbLedger)
 	}
 
-	if _, keys, err := er.LiveClaimableBalancesInLedgers(ctx, string(raw), []uint32{lcbLedger, lcbLedger + 1, lcbLedger + 2}, 2); err != nil || keys != 2 {
-		t.Errorf("with maxKeys 2: keys = %d, err = %v; want the cap reported as 2", keys, err)
+	if s, err := er.LiveClaimableBalancesInLedgers(ctx, string(raw), []uint32{lcbLedger, lcbLedger + 1, lcbLedger + 2}, 2); err != nil || s.Keys != 2 {
+		t.Errorf("with maxKeys 2: keys = %d, err = %v; want the cap reported as 2", s.Keys, err)
 	}
 }

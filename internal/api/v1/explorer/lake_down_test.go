@@ -189,8 +189,8 @@ func (downReader) AccountEntryLedgers(context.Context, string, []string, uint32,
 	return nil, errLakeDown
 }
 
-func (downReader) LiveClaimableBalancesInLedgers(context.Context, string, []uint32, int) ([]clickhouse.LiveClaimableBalance, int, error) {
-	return nil, 0, errLakeDown
+func (downReader) LiveClaimableBalancesInLedgers(context.Context, string, []uint32, int) (clickhouse.ClaimableScan, error) {
+	return clickhouse.ClaimableScan{}, errLakeDown
 }
 
 func (downReader) AssetEntryLedgers(context.Context, string, []string, uint32, int) ([]uint32, error) {
