@@ -66,7 +66,7 @@ URL state parameters (plan; honoured only where a page implements them): `from`/
 - **Network**: `/network`, `/ledgers/[seq]`, `/tx`, `/accounts/[g]`, `/contracts/[id]`.
 - **Coverage**: `GET /v1/coverage` verdicts plus `docs/protocols/` verification pages rendered as product.
 
-Home: omnibox, network pulse strip, confidence-aware price board (XLM, majors, movers), protocol leaderboard, bridge net flow, trust strip (sources verified, coverage %, last audit run), recent blog.
+Home: omnibox, network pulse strip, confidence-aware price board (XLM, majors, movers), protocol leaderboard, bridge net flow, trust strip (sources verified, coverage %, last audit run).
 
 Global patterns: API transparency on every panel; CSV/JSON export on every table and embed on every chart (partial; embeds exist); localStorage watchlist (no account); consistent badges (verified asset, coverage tier, frozen/anomaly state, stale oracle).
 
@@ -143,8 +143,8 @@ Phasing: the PG served tier holds the recent window, the CH lake everything to g
 ### 7.22 Diagnostics (`/diagnostics`)
 Public, no PII. Serves `GET /v1/diagnostics/cursors`, `/ingestion`, `/archive`, `/backups`, `/v1/coverage`, `/v1/status`, `/v1/incidents`. Gaps: per-source `/v1/coverage/{source}` and `/v1/diagnostics/{pulse,archive-completeness,cross-region,wasm-coverage,slo}` (§10); `/decoders` would read `decoder_stats_5m` (§9.4).
 
-### 7.23 Research and blog (`/research`, `/blog`)
-`/research` renders ADRs and architecture/operations docs; `/blog` renders `docs/blog/YYYY-MM-DD-<slug>.md` via `web/explorer/src/lib/blog.ts` and `src/lib/markdown.tsx` (plain Markdown, no MDX pipeline; decision, in-tree and no separate content repo). Publishing = git commit plus CI rebuild.
+### 7.23 Research (`/research`)
+`/research` renders ADRs and architecture/operations docs via `src/lib/markdown.tsx` (plain Markdown, no MDX pipeline; in-tree, no separate content repo). Publishing = git commit plus CI rebuild.
 
 ### 7.24 Customer account (`/dashboard/*`, `/signin`)
 Not part of the public-data surface: keys, usage, settings, price alerts, webhooks, staff admin (`/v1/dashboard/*`, `/v1/account/*`, `/v1/auth/*`). Explorer sign-in is email code plus passkey (`web/explorer/src/lib/webauthn.ts`); there is no wallet sign-in in the explorer. SEP-10 (`/v1/auth/sep10/challenge`, `/token`) is a programmatic API auth path. Freighter/Albedo/Lobstr wallet sign-in is INV-1092 (blocked, post-v1). Usage is a live trailing-30-day count from the Redis-backed `usage.Counter`.

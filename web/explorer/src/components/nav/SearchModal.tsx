@@ -210,7 +210,6 @@ const STATIC_PAGES: Result[] = [
     hint: 'plans, quotas, SLAs',
     href: '/pricing',
   },
-  { type: 'page', label: 'Blog', hint: 'engineering notes', href: '/blog' },
   { type: 'page', label: 'Company', href: '/company' },
   { type: 'page', label: 'Careers', href: '/careers' },
   {
@@ -453,7 +452,7 @@ export function SearchModal({ shortcut = true }: { shortcut?: boolean }) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="border-line bg-surface text-ink-muted hover:border-line-strong hover:text-ink-body flex h-9 w-full items-center gap-2 rounded-md border px-3 text-[13px] transition-colors"
+        className="border-line bg-surface-canvas text-ink-muted hover:border-line-strong hover:text-ink-body flex h-9 w-full items-center gap-2 rounded-md border px-3 text-[13px] transition-colors"
         aria-label="Open search"
       >
         <Search className="h-4 w-4 shrink-0" />

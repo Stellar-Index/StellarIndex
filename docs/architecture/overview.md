@@ -94,7 +94,7 @@ package's `doc.go`.
 - `web/explorer/`: the Next.js static-export site (see `web/explorer/AGENTS.md`). The status page ships from `web/explorer/src/app/status/` (stellarindex.io/status). status.stellarindex.io is the same build on its own Pages project, with incident history baked from `internal/incidents/data`.
 - `examples/`: curl scripts + generated Postman collection.
 - `scripts/{dev,ops,ci}`; `test/`: integration (build tag `integration`), fixtures, k6 load, chaos.
-- `docs/`: `adr/` (immutable), `architecture/`, `operations/` (runbooks; every alert links one), `methodology/`, `protocols/` (one page per integrated protocol), `contributing/`, `reference/` (generated), `blog/`, plus `engineering-standards.md`.
+- `docs/`: `adr/` (immutable), `architecture/`, `operations/` (runbooks; every alert links one), `methodology/`, `protocols/` (one page per integrated protocol), `contributing/`, `reference/` (generated), plus `engineering-standards.md`.
 
 ## Reading order
 

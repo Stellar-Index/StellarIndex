@@ -300,7 +300,7 @@ function renderBlock(b: Block, i: number): React.ReactElement {
       return (
         <div key={i} className="overflow-x-auto">
           {/* table-wave:allowlist prose — the markdown renderer's table renders
-              arbitrary doc/blog markdown, not API data. */}
+              arbitrary doc markdown, not API data. */}
           <table className="text-ink-body w-full border-collapse text-sm leading-6">
             <thead>
               <tr className="border-line-strong border-b text-left">

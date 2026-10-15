@@ -24,7 +24,12 @@ import {
   LinkRow,
   TR,
 } from '@/components/ui';
-import { usePools, useSources, isOnChainSource } from '@/api/hooks';
+import {
+  useNetworkStats,
+  usePools,
+  useSources,
+  isOnChainSource,
+} from '@/api/hooks';
 import type { AssetDetail, NetworkStats } from '@/api/hooks';
 import type { paths } from '@/api/types';
 import { DonutChart } from '@/components/charts/DonutChart';
@@ -87,13 +92,8 @@ export function NetworkView() {
   const [metric, setMetric] = useState<Metric>('ops');
   const [windowDays, setWindowDays] = useState(30);
 
-  const statsQ = useQuery<NetworkStats>({
-    queryKey: ['/v1/network/stats'],
-    queryFn: async () =>
-      (await apiGet<Envelope<NetworkStats>>('/v1/network/stats', {})).data,
-    staleTime: 30_000,
-    refetchInterval: 60_000,
-  });
+  // Shared hook: the same query key also caches the home page's envelope.
+  const statsQ = useNetworkStats();
 
   const ledgersQ = useQuery<LedgersPage>({
     queryKey: ['/v1/ledgers', 'network-strip'],
@@ -146,7 +146,7 @@ export function NetworkView() {
     ];
   });
 
-  const s = statsQ.data;
+  const s = statsQ.data?.data;
   const tip = ledgersQ.data?.ledgers?.[0];
 
   return (

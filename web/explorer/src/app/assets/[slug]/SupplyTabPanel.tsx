@@ -204,7 +204,7 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
 // assets (no on-chain supply) return an empty series → a concise note.
 function MarketCapChart({ assetID }: { assetID: string }) {
   const q = useQuery<{ points: { t: string; p: string }[] }>({
-    queryKey: ['/v1/chart', 'market_cap', assetID],
+    queryKey: ['/v1/chart', assetID, 'market-cap'],
     retry: false,
     queryFn: async () => {
       const env = await apiGet<

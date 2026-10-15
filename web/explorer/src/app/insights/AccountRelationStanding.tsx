@@ -59,7 +59,7 @@ export function AccountRelationStanding({
   const source = asExample(path, { account });
 
   const { data, isLoading, isError } = useQuery<CreatorsResp | SponsorsResp>({
-    queryKey: [path, 'account', account],
+    queryKey: [path, account, 'standing'],
     retry: false,
     staleTime: 10 * 60_000,
     queryFn: async () => {

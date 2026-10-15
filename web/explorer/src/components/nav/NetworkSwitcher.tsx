@@ -147,11 +147,13 @@ export function NetworkSwitcher({ onNavigate }: { onNavigate?: () => void }) {
         // Disclosure, not an APG menu (matches AccountMenu): the trigger's
         // aria-expanded/-controls describe it; rows are plain links, Tab-
         // reachable, Escape-closable (useDialog).
+        // w-54 = the w-60 sidebar minus its px-3 gutters, so the right-anchored
+        // panel stays inside the rail instead of spilling off the window's left edge.
         <div
           id="network-switcher-menu"
           ref={panelRef}
           tabIndex={-1}
-          className="border-line bg-surface shadow-elevated absolute top-full right-0 z-50 mt-1 w-60 rounded-lg border p-1.5 outline-hidden"
+          className="border-line bg-surface shadow-elevated absolute top-full right-0 z-50 mt-1 w-54 rounded-lg border p-1.5 outline-hidden"
         >
           <p className="text-ink-faint px-2 py-1 text-[11px] font-medium tracking-wide uppercase">
             Networks

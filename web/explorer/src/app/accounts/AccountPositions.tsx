@@ -18,7 +18,7 @@ import {
   THead,
   TR,
 } from '@/components/ui';
-import { apiGet, asExample } from '@/api/client';
+import { apiGet, asExample, type Envelope } from '@/api/client';
 import { fetchPriceBatchChunked, isPriceableAssetId } from '@/lib/price-batch';
 import type { components } from '@/api/types';
 import { assetHref } from '@/lib/fiat-slugs';
@@ -142,12 +142,12 @@ export function AccountPositions({ id }: { id: string }) {
     queryKey: ['/v1/accounts/{id}', id],
     enabled: id.length > 0,
     retry: false,
-    queryFn: async () =>
-      (
-        await apiGet<{ data: AccountStateResp }>(
-          `/v1/accounts/${encodeURIComponent(id)}`,
-        )
-      ).data,
+    queryFn: async () => {
+      const env = await apiGet<Envelope<AccountStateResp>>(
+        `/v1/accounts/${encodeURIComponent(id)}`,
+      );
+      return env.data;
+    },
     staleTime: 30_000,
   });
 
@@ -166,7 +166,7 @@ export function AccountPositions({ id }: { id: string }) {
   const priceableIds = assetIds.filter(isPriceableAssetId);
 
   const pricesQ = useQuery<PriceBatch>({
-    queryKey: ['/v1/price/batch', 'positions', priceableIds.join(',')],
+    queryKey: ['/v1/price/batch', priceableIds.join(','), 'positions'],
     // No aggregator on the lean test nets → /v1/price/batch is empty; skip the
     // portfolio valuation there (the USD tiles/columns null-degrade to "—").
     enabled: priceableIds.length > 0 && CURRENT_NETWORK.pricing,

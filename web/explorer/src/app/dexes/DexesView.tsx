@@ -92,7 +92,7 @@ export function DexesView() {
   // this was the one price table left static after the live-data sweep.
   useLedgerFollow(['/v1/pools'], undefined, pager.atTip);
   const q = useQuery<{ pools: Pool[]; nextCursor?: string }>({
-    queryKey: ['/v1/pools', order, cursor, sourceFilter],
+    queryKey: ['/v1/pools', order, cursor, sourceFilter, 'dexes-page'],
     queryFn: async () => {
       const env = await apiGet<Envelope<Pool[]>>('/v1/pools', {
         order_by: order,

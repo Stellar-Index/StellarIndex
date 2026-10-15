@@ -73,7 +73,13 @@ export function AccountRelationEdges({
 
   const { data, isLoading, isError, error, isPlaceholderData } =
     useQuery<AccountGraphResp>({
-      queryKey: ['/v1/accounts/{id}/graph', account, relation, cursor],
+      queryKey: [
+        '/v1/accounts/{id}/graph',
+        account,
+        relation,
+        cursor,
+        'relation-edges',
+      ],
       enabled: account.length > 0,
       retry: false,
       placeholderData: keepPreviousData,

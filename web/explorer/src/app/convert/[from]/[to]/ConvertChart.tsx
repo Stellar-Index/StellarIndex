@@ -56,7 +56,15 @@ export function ConvertChart({ from, to }: { from: string; to: string }) {
 
   const query = useQuery<{ time: number; value: number; raw: string }[], Error>(
     {
-      queryKey: ['/v1/chart', asset, quote, invert, tf, spec.granularity],
+      queryKey: [
+        '/v1/chart',
+        asset,
+        quote,
+        invert,
+        tf,
+        spec.granularity,
+        'convert',
+      ],
       // {from}→fiat:{to} OHLC is empty on the lean test nets (no FX) — gate.
       enabled: CURRENT_NETWORK.pricing,
       queryFn: async ({ signal }) => {

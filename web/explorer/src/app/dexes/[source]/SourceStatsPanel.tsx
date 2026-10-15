@@ -43,7 +43,7 @@ export function SourceStatsPanel({
   unitsLabel?: string;
 }) {
   const { data, isError, isPending } = useQuery<SourceStats | null>({
-    queryKey: ['/v1/sources', 'stats+sparkline7d', source],
+    queryKey: ['/v1/sources', 'stats+sparkline7d', source, 'one-source'],
     queryFn: async () => {
       // 7d (`sparkline7d`) reads the source_volume_1h continuous
       // aggregate rather than raw trades, so the 24h/7d toggle is live.

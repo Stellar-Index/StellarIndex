@@ -74,7 +74,7 @@ export function VenueMarketsTable({
   // Live (RT-2): follow ledger closes so this venue's pairs + prices tick.
   useLedgerFollow(['/v1/markets', source], undefined, pager.atTip);
   const q = useQuery<{ markets: Market[]; nextCursor?: string }>({
-    queryKey: ['/v1/markets', source, order, cursor],
+    queryKey: ['/v1/markets', source, order, cursor, 'venue-page'],
     queryFn: async () => {
       const env = await apiGet<Envelope<Market[]>>('/v1/markets', {
         source,

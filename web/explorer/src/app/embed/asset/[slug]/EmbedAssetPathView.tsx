@@ -24,7 +24,7 @@ export function EmbedAssetPathView() {
   const norm = slug.toLowerCase();
   const id = norm === 'xlm' || norm === 'native' ? 'native' : slug;
   const q = useQuery<Coin>({
-    queryKey: ['/v1/assets', id],
+    queryKey: ['/v1/assets', id, 'embed'],
     queryFn: () => apiGetData<Coin>(`/v1/assets/${encodeURIComponent(id)}`),
     enabled: slug !== '',
     retry: false,

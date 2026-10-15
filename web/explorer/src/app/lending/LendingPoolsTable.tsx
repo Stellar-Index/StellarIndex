@@ -156,7 +156,7 @@ function PoolRealStats({ pool }: { pool: string }) {
     tvl_usd?: string;
     reserves?: PoolReserve[];
   }>({
-    queryKey: ['/v1/lending/pools/{pool}/reserves', pool],
+    queryKey: ['/v1/lending/pools/{pool}/reserves', pool, 'pools-table'],
     staleTime: 300_000,
     retry: false,
     queryFn: async () =>

@@ -172,7 +172,7 @@ export function AssetOraclesPanel({
   const registry = useSources('oracle');
 
   const streams = useQuery<OracleReading[]>({
-    queryKey: ['/v1/oracle/streams', STREAMS_PARAMS],
+    queryKey: ['/v1/oracle/streams', STREAMS_PARAMS, 'asset-panel'],
     queryFn: async () => {
       const env = await apiGet<{ data: OracleReading[] }>(
         '/v1/oracle/streams',
