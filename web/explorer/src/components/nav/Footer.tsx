@@ -27,7 +27,7 @@ export function Footer() {
   if (pathname?.startsWith('/embed/')) return null;
   return (
     <footer className="border-line mt-16 border-t py-8">
-      <div className="text-ink-muted mx-auto max-w-7xl px-6 text-xs">
+      <div className="text-ink-muted max-w-page mx-auto w-full px-4 text-xs sm:px-6 lg:px-8">
         <div className="grid grid-cols-2 gap-8 sm:grid-cols-3 lg:grid-cols-5">
           <FooterColumn
             title="Browse"
@@ -67,7 +67,6 @@ export function Footer() {
             title="About"
             links={[
               { label: 'API pricing', href: '/pricing' },
-              { label: 'Blog', href: '/blog' },
               { label: 'Company', href: '/company' },
               { label: 'Careers', href: '/careers' },
               { label: 'Contact', href: '/contact' },

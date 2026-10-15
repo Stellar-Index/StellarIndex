@@ -210,7 +210,6 @@ const STATIC_PAGES: Result[] = [
     hint: 'plans, quotas, SLAs',
     href: '/pricing',
   },
-  { type: 'page', label: 'Blog', hint: 'engineering notes', href: '/blog' },
   { type: 'page', label: 'Company', href: '/company' },
   { type: 'page', label: 'Careers', href: '/careers' },
   {
