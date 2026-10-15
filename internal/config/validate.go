@@ -109,45 +109,20 @@ func (c Config) Validate() error {
 // contract address." Runs after per-section validates so we can
 // assume each section's internal shape is already sound.
 func (c Config) validateCrossSection() error {
+	// Each on-chain oracle source needs its contract address to decode anything.
+	required := map[string]struct{ value, key string }{
+		"reflector-dex":     {c.Oracle.Reflector.DEXContract, "oracle.reflector.dex_contract"},
+		"reflector-cex":     {c.Oracle.Reflector.CEXContract, "oracle.reflector.cex_contract"},
+		"reflector-fx":      {c.Oracle.Reflector.FXContract, "oracle.reflector.fx_contract"},
+		"redstone":          {c.Oracle.Redstone.AdapterContract, "oracle.redstone.adapter_contract"},
+		"chainlink-stellar": {c.Oracle.ChainlinkStellar.CacheContract, "oracle.chainlink_stellar.cache_contract"},
+		"band":              {c.Oracle.Band.StandardReferenceContract, "oracle.band.standard_reference_contract"},
+	}
 	for _, name := range c.Ingestion.EnabledSources {
-		key := strings.ToLower(strings.TrimSpace(name))
-		switch key {
-		case "reflector-dex":
-			if c.Oracle.Reflector.DEXContract == "" {
-				return fmt.Errorf(
-					"%w: ingestion.enabled_sources lists %q but oracle.reflector.dex_contract is empty",
-					ErrInvalidConfig, name)
-			}
-		case "reflector-cex":
-			if c.Oracle.Reflector.CEXContract == "" {
-				return fmt.Errorf(
-					"%w: ingestion.enabled_sources lists %q but oracle.reflector.cex_contract is empty",
-					ErrInvalidConfig, name)
-			}
-		case "reflector-fx":
-			if c.Oracle.Reflector.FXContract == "" {
-				return fmt.Errorf(
-					"%w: ingestion.enabled_sources lists %q but oracle.reflector.fx_contract is empty",
-					ErrInvalidConfig, name)
-			}
-		case "redstone":
-			if c.Oracle.Redstone.AdapterContract == "" {
-				return fmt.Errorf(
-					"%w: ingestion.enabled_sources lists %q but oracle.redstone.adapter_contract is empty",
-					ErrInvalidConfig, name)
-			}
-		case "chainlink-stellar":
-			if c.Oracle.ChainlinkStellar.CacheContract == "" {
-				return fmt.Errorf(
-					"%w: ingestion.enabled_sources lists %q but oracle.chainlink_stellar.cache_contract is empty",
-					ErrInvalidConfig, name)
-			}
-		case "band":
-			if c.Oracle.Band.StandardReferenceContract == "" {
-				return fmt.Errorf(
-					"%w: ingestion.enabled_sources lists %q but oracle.band.standard_reference_contract is empty",
-					ErrInvalidConfig, name)
-			}
+		req, ok := required[strings.ToLower(strings.TrimSpace(name))]
+		if ok && req.value == "" {
+			return fmt.Errorf("%w: ingestion.enabled_sources lists %q but %s is empty",
+				ErrInvalidConfig, name, req.key)
 		}
 	}
 	return nil
