@@ -24,7 +24,7 @@ func (s *Server) cachedRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error
 	cached, expired := s.rwaViewCache, time.Now().After(s.rwaViewExpires)
 	ch := s.rwaViewFlight
 	if cached == nil || expired {
-		ch = s.startRWAAssetsBuildLocked()
+		ch = s.startRWAAssetsBuildLocked() //nolint:contextcheck // the build outlives the request that found the view stale.
 	}
 	s.rwaViewMu.Unlock()
 	if cached != nil {
@@ -50,7 +50,7 @@ func (s *Server) cachedRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error
 // refreshRWAAssetsView rebuilds the view whatever its age and waits for the build, so the prewarm cadence keeps it from expiring.
 func (s *Server) refreshRWAAssetsView(ctx context.Context) {
 	s.rwaViewMu.Lock()
-	ch := s.startRWAAssetsBuildLocked()
+	ch := s.startRWAAssetsBuildLocked() //nolint:contextcheck // detached so a cancelled prewarm never strands the flight.
 	s.rwaViewMu.Unlock()
 	select {
 	case <-ch:
