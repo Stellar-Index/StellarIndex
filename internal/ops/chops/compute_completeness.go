@@ -10,9 +10,11 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/stellar/go-stellar-sdk/strkey"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/Stellar-Index/StellarIndex/internal/completeness"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
@@ -1417,51 +1419,71 @@ func reconcileTarget(ctx context.Context, store *timescale.Store, src reconSourc
 // trades (served rows upsert, so a colliding op_index overwrites). One-side-zero fills are excluded here and from the served count
 // (countFilter). Read-only.
 func reDeriveSDEXCensusViaDecoder(ctx context.Context, chAddr string, from, to uint32) (map[uint32]int, completeness.BlindSpots, error) {
+	return reDeriveSDEXCensus(ctx, func(ctx context.Context, lo, hi uint32, fn func(clickhouse.SDEXOp) error) error {
+		return clickhouse.StreamSDEXOps(ctx, chAddr, lo, hi, fn)
+	}, from, to)
+}
+
+// sdexCensusWindow bounds the per-window join input; 100k windows ran out of memory.
+const sdexCensusWindow = 25_000
+
+// sdexCensusWorkers windows stream at once: ops_batch caps each query at 2 threads, so one window at a time left the weekly
+// re-proof CH-bound past its 360m budget. 3 x ~4 GiB stays inside the profile's 8 concurrent queries and memory default.
+const sdexCensusWorkers = 3
+
+func reDeriveSDEXCensus(ctx context.Context, stream func(context.Context, uint32, uint32, func(clickhouse.SDEXOp) error) error, from, to uint32) (map[uint32]int, completeness.BlindSpots, error) {
 	out := make(map[uint32]int)
 	blind := completeness.NewBlindTracker()
+	var mu sync.Mutex
 	dec := sdex.NewDecoder()
-	// 25k bounds the per-window join input; 100k windows ran out of memory.
-	const window = 25_000
-	for lo := from; lo <= to; lo += window {
-		hi := lo + window - 1
-		if hi > to {
-			hi = to
-		}
-		seen := sdexServedCensus{}
-		if err := clickhouse.StreamSDEXOps(ctx, chAddr, lo, hi, func(op clickhouse.SDEXOp) error {
-			// SDEX Decode soft-fails per claim, never with an error; DecodeCounted also reports
-			// claim atoms that failed to decode so the ledger is marked BLIND instead of silently
-			// reading as zero trades. Both-zero no-op claims are a symmetric drop, not a failure.
-			var outs []consumer.Event
-			var failed int
-			if perr := completeness.Guard(func() {
-				outs, failed = dec.DecodeCounted(dispatcher.OpContext{
-					Ledger:   op.Ledger,
-					ClosedAt: op.ClosedAt,
-					TxHash:   op.TxHash,
-					TxSource: op.Source,
-					OpIndex:  int(op.OpIndex),
-					Op:       op.Op,
-					OpResult: op.OpResult,
-				})
-			}); perr != nil {
-				// The dispatcher recovers this panic and skips the op; the
-				// census counts it blind instead of crashing the audit.
-				blind.Undecodable(op.Ledger)
-				return nil //nolint:nilerr // intentional: the op is counted blind via blind.Undecodable, not aborted
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(sdexCensusWorkers)
+	for lo := uint64(from); lo <= uint64(to); lo += sdexCensusWindow {
+		wlo, whi := uint32(lo), uint32(min(lo+sdexCensusWindow-1, uint64(to)))
+		g.Go(func() error {
+			seen := sdexServedCensus{}
+			var undecodable []uint32
+			if err := stream(gctx, wlo, whi, func(op clickhouse.SDEXOp) error {
+				// SDEX Decode soft-fails per claim, never with an error; DecodeCounted also reports
+				// claim atoms that failed to decode so the ledger is marked BLIND instead of silently
+				// reading as zero trades. Both-zero no-op claims are a symmetric drop, not a failure.
+				var outs []consumer.Event
+				var failed int
+				if perr := completeness.Guard(func() {
+					outs, failed = dec.DecodeCounted(dispatcher.OpContext{
+						Ledger:   op.Ledger,
+						ClosedAt: op.ClosedAt,
+						TxHash:   op.TxHash,
+						TxSource: op.Source,
+						OpIndex:  int(op.OpIndex),
+						Op:       op.Op,
+						OpResult: op.OpResult,
+					})
+				}); perr != nil {
+					// The dispatcher recovers this panic and skips the op; the
+					// census counts it blind instead of crashing the audit.
+					undecodable = append(undecodable, op.Ledger)
+					return nil //nolint:nilerr // intentional: the op is counted blind via blind.Undecodable, not aborted
+				}
+				for i := 0; i < failed; i++ {
+					undecodable = append(undecodable, op.Ledger)
+				}
+				seen.add(outs)
+				return nil
+			}); err != nil {
+				return err
 			}
-			for i := 0; i < failed; i++ {
-				blind.Undecodable(op.Ledger)
+			mu.Lock()
+			defer mu.Unlock()
+			seen.addTo(out)
+			for _, l := range undecodable {
+				blind.Undecodable(l)
 			}
-			seen.add(outs)
 			return nil
-		}); err != nil {
-			return nil, completeness.BlindSpots{}, err
-		}
-		seen.addTo(out)
-		if hi == to {
-			break
-		}
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, completeness.BlindSpots{}, err
 	}
 	return out, blind.Result(), nil
 }
@@ -1521,7 +1543,7 @@ func reDeriveContractCallCensus(ctx context.Context, chAddr, contractStrkey stri
 // forEachContractCallEvent streams the lake's InvokeContract ops for contractStrkey, runs dec over each op's auth-tree calls (as the live
 // dispatcher does) and calls fn per event. The single decode path shared with the ch-rebuild writer. Windowed to bound the tx IN-set.
 //
-// linear pipeline; splitting hurts the read (mirrors reDeriveSDEXCensusViaDecoder).
+// linear pipeline; splitting hurts the read.
 //
 //nolint:gocognit // windowed stream → per-op call-tree → Matches/Decode is a
 func forEachContractCallEvent(ctx context.Context, chAddr, contractStrkey string, dec dispatcher.ContractCallDecoder, from, to uint32, fn func(ledger uint32, ev consumer.Event) error) (completeness.BlindSpots, error) {
