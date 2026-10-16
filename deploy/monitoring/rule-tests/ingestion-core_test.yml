@@ -182,6 +182,50 @@ tests:
         alertname: stellarindex_ingestion_source_stopped_daily_publisher
         exp_alerts: []
 
+  # ── restarts inside the poll interval: each process re-emits the same
+  #    10 rows, the counter never moves, but the last event is fresh ──
+  - interval: 1m
+    name: a daily publisher restarted before each poll stays silent while its last event is fresh
+    input_series:
+      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="ecb"}'
+        values: '10+0x80'
+      - series: 'stellarindex_source_last_event_unix{job="stellarindex_indexer",instance="r1:9100",source="ecb"}'
+        values: '0+60x80'
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="ecb"}'
+        values: '1+0x80'
+    alert_rule_test:
+      - eval_time: 75m
+        alertname: stellarindex_ingestion_source_stopped_daily_publisher
+        exp_alerts: []
+
+  # ── a last event older than 30h does not mask a silent publisher ──
+  - interval: 5m
+    name: a daily publisher whose last event is 30h+ old still tickets
+    input_series:
+      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="ecb"}'
+        values: '10+0x440'
+      - series: 'stellarindex_source_last_event_unix{job="stellarindex_indexer",instance="r1:9100",source="ecb"}'
+        values: '600+0x440'
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="ecb"}'
+        values: '1+0x440'
+    alert_rule_test:
+      - eval_time: 33h
+        alertname: stellarindex_ingestion_source_stopped_daily_publisher
+        exp_alerts:
+          - exp_labels:
+              source: ecb
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+              alert_family: ingestion_source_stopped
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ingestion_source_stopped
+              summary: "Daily publisher ecb silent 30+ hours"
+              description: |
+                ECB publishes daily. 30h gives a one-day buffer plus
+                ample slack for upstream cadence variation.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ingestion_source_stopped
+
   # ══ stellarindex_ingestion_source_stopped_hourly_publisher ════════
   # band relays hourly: 6h of silence tickets after the 1h for, a missed
   # hour or two does not, and band is no longer judged by the 30h rule.
