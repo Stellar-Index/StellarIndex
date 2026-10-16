@@ -1343,7 +1343,13 @@ func setSourceEnabled(sources []string, enabled bool) {
 		if source == "" {
 			continue
 		}
-		obs.SourceEnabled.WithLabelValues(strings.ToLower(source)).Set(val)
+		name := strings.ToLower(source)
+		obs.SourceEnabled.WithLabelValues(name).Set(val)
+		if enabled {
+			// A counter first seen at its first event hides that event from rate(); the
+			// 6h-30h source_stopped windows outlive the process, so start every enabled source at 0.
+			obs.SourceEventsTotal.WithLabelValues(name).Add(0)
+		}
 	}
 }
 
