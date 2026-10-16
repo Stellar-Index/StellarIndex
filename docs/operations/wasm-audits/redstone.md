@@ -1,7 +1,7 @@
 ---
 title: Redstone WASM-history audit
-last_verified: 2026-09-30
-status: ratified — archived hashes are code-identical and emit no events; the event-emitting successor hash is not yet archived
+last_verified: 2026-10-16
+status: ratified — current hash f0ccdffc… audited (replay-safe from L62,520,450); eight intermediate hashes L58,847,490–L62,520,449 not yet audited
 source: redstone
 backfill_safe: true
 ---
@@ -10,6 +10,37 @@ backfill_safe: true
 
 Audit log for the `redstone` source's `BackfillSafe` flag. See
 `README.md` for the full procedure.
+
+> **2026-10-16 update — current hash `f0ccdffc…` audited; full timeline from the lake.**
+> `stellar.contract_instance_changes` for `CA526Y2N…` gives eleven
+> hashes, not two. In order of first ledger: `b400f7a8…` (L58,758,722),
+> `5e93d22c…` (L58,759,142), `0af2a834…` (L58,847,490), `913fb93a…`
+> (L58,893,404), `681a9995…` (L58,893,649), `41bcf82b…` (L59,072,361),
+> `411c137e…` (L59,194,835), `be1d0121…` (L59,195,899), `9f77e8f3…`
+> (L59,407,575), `0fed8de9…` (L59,604,593), `f0ccdffc…` (L62,520,450,
+> current). This explains the "missed upgrade" caveat below.
+>
+> `f0ccdffc29931abed6d77eef359450b183584103a3665be1f080f5f712b1542e`
+> (25,768 bytes, SHA-256 verified; fetched by `getLedgerEntries` on the
+> ContractCode key) matches the decoder expectations below:
+>
+> - `contractmetav0`: rustc 1.95.0, soroban-sdk 25.3.1, `source_repo`
+>   `redstone-finance/redstone-public-contracts`.
+> - It imports `contract_event` (`x.1`), so it emits events. The event type
+>   is `WritePrices { updated_feeds: Vec<PriceData>, updater: Address }`,
+>   with `PriceData { package_timestamp: u64, price: U256, write_timestamp: u64 }`.
+>   Field names and types match `sdkDecodeBody`.
+> - `write_prices(updater: Address, feed_ids: Vec<String>, payload: Bytes)`
+>   is unchanged, so the positional op-arg reader still applies.
+> - New read-only functions (`read_price_history`, `check_price_data`,
+>   `accept_ownership`, `cancel_ownership_transfer`) emit nothing the
+>   decoder classifies.
+> - Decoder fixtures at L63,624,934, L63,699,567 and L64,486,186 are real
+>   lake events from this hash and decode in `decode_test.go`.
+>
+> A replay or re-derive is safe from L62,520,450. The eight hashes from
+> `0af2a834…` to `0fed8de9…` are unaudited, so the gate still refuses any
+> range that starts before L62,520,450.
 
 > **2026-09-30 update — byte-level comparison of the archived hashes.**
 > Offline disassembly of both archived WASMs (`wasm-objdump -h/-x/-d`,
@@ -209,6 +240,7 @@ chunk before that ledger.
 | --- | --- | --- | --- | --- |
 | `b400f7a8ac121022` | Adapter (first-deploy hotfix) | L58,758,722 → L58,759,141 (420 ledgers, ~35 min) | maintainer@2026-04-29; bytes 2026-09-30 | safe — code-identical to `5e93d22c…`; emits no events |
 | `5e93d22c9e19b254` | Adapter | from L58,759,142; true end unknown, before L59,258,375 (the walk JSONs' L59,336,871 / L59,301,651 end is contradicted by a real REDSTONE event at L59,258,375) | maintainer@2026-04-29; bytes 2026-09-30 | safe — emits no events; NOT the decoder's event source |
+| `f0ccdffc29931abe` | Adapter (current) | from L62,520,450 | maintainer@2026-10-16; bytes 2026-10-16 | safe — emits `WritePrices{updated_feeds, updater}`, matches the decoder |
 
 ### `5e93d22c9e19b254` — second deploy, no events
 
