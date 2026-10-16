@@ -58,9 +58,11 @@ alert rather than by `stellarindex_systemd_unit_failed`:
 | `verify-lake` | `stellarindex_lake_verify_stale` (last run > 48h) |
 | `compute-completeness` | `stellarindex_data_source_stale{domain="verdict"}` (newest `completeness_snapshots.computed_at` > 36h) |
 | `ch-supply` | `stellarindex_data_source_stale{domain="sep41_supply"}` (`supply_flows` > 1h behind; ch-supply is the gap-fill behind the live writer) |
+| `galexie-archive-fill` | `stellarindex_galexie_archive_tip_lag_high` (archive > 64,000 ledgers behind live for 90m) |
 
-A wait that runs out behind another *scheduled* job is still a loud
-failure (exit 1): two timers blocking each other for hours is a fault.
+A wait that runs out behind another *scheduled* job defers the same way:
+the off-site restore drill holds the scheduled lock for hours by design, and
+failing every hourly unit queued behind it paged for planned work.
 Before a long operator job, check that its runtime fits inside these
 bounds, or accept the staleness pages as the true cost of running it.
 
