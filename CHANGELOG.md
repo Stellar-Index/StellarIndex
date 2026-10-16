@@ -20,6 +20,15 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.3] — 2026-10-16
+
+2 commits since v0.116.2. No migrations. No `pkg/*` break.
+
+### Fixed
+
+- **storage:** an unpriced trade where neither leg has any peg or XLM market is labelled `unroutable` instead of `no`, so cross-issuer junk pairs no longer drag the on-chain USD coverage ratio. XLM, the USD pegs and aliased assets are never labelled this way, and neither is anything while XLM/USD is unresolved, so a pricing outage still trips the alert (#3529).
+- **ops:** `ch-holders-rollup` reports progress after each completed step, so a long rollup no longer trips `stellarindex_ops_job_no_progress` (#3528).
+
 ## [v0.116.2] — 2026-10-16
 
 3 commits since v0.116.1. No migrations. No `pkg/*` break.
@@ -77,27 +86,3 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 - **ops:** verify-usd-volume builds the day's XLM/USD rate from `prices_1h`, so the 05:12 UTC run judges the XLM bounds instead of skipping them while `prices_1d` is still unmaterialized (#3512).
 - **monitoring:** `stellarindex_usd_volume_estimated_tier_high` alerts on the estimated tier's share of valued volume (> 5%) instead of a $10M bar it crossed every day (#3512).
-
-## [v0.115.0] — 2026-10-15
-
-6 commits since v0.114.0. No migrations. No `pkg/*` break. Removes the `[chainlink]` config section (minor, pre-v1).
-
-### Operator actions
-
-- **ingest:** after deploy, run `stellarindex-ops projector-replay -source chainlink-stellar -from 64442968` to fill the new source from its first on-chain round (#3507).
-- **config:** the `[chainlink]` Ethereum section and `CHAINLINK_RPC_URL` are no longer read; a leftover key warns at boot instead of failing (#3508).
-
-### Added
-
-- **sources:** `chainlink-stellar` ingests Chainlink Data Feeds published on Stellar, gated on the feed contracts' identity; it is the Chainlink divergence reference (#3507).
-
-### Removed
-
-- **sources:** the Ethereum Chainlink poller, its metrics, alerts and runbook sections (#3508).
-- **explorer:** the blog (#3505).
-
-### Fixed
-
-- **explorer:** a route switch no longer crashes a page with `Cannot read properties of undefined`; one React Query key now holds one response shape (#3504).
-- **explorer:** link hovers no longer log 404s for the `__PAGE__` prefetch files (#3509).
-- **explorer:** status, methodology and service-level pages use the standard page shell; the footer matches the content width; the network switcher stays on screen; the sidebar search box is darker (#3505, #3506).
