@@ -28,7 +28,7 @@ func healthySnapshotCounts() map[string]uint64 {
 // statement.
 func TestRunHoldersRollupSnapshotsTheDayAfterTheSwap(t *testing.T) {
 	conn := &shrinkGuardConn{counts: healthySnapshotCounts()}
-	if err := runHoldersRollupSteps(context.Background(), conn, func(string, ...any) {}); err != nil {
+	if err := runHoldersRollupSteps(context.Background(), conn, func(string, ...any) {}, nil); err != nil {
 		t.Fatalf("runHoldersRollupSteps: %v", err)
 	}
 
@@ -61,7 +61,7 @@ func TestRunHoldersRollupRefusesAShrunkenSnapshot(t *testing.T) {
 	counts["stellar.asset_stats_daily_staging"] = 3
 	conn := &shrinkGuardConn{counts: counts}
 
-	err := runHoldersRollupSteps(context.Background(), conn, func(string, ...any) {})
+	err := runHoldersRollupSteps(context.Background(), conn, func(string, ...any) {}, nil)
 	if err == nil || !strings.Contains(err.Error(), "shrink guard") {
 		t.Fatalf("a snapshot that shrank from 900 to 3 rows was not refused by the shrink guard: %v", err)
 	}

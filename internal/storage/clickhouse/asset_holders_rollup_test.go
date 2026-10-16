@@ -287,7 +287,7 @@ func TestRunHoldersRollupRefusesAShrunkenBoard(t *testing.T) {
 		"stellar.asset_holders_counts":         500,
 	}}
 
-	err := runHoldersRollupSteps(context.Background(), conn, func(string, ...any) {})
+	err := runHoldersRollupSteps(context.Background(), conn, func(string, ...any) {}, nil)
 	if err == nil {
 		t.Fatal("runHoldersRollupSteps swapped a board that shrank from 500,000 to 3 rows instead of refusing")
 	}
@@ -315,7 +315,7 @@ func TestRunHoldersRollupPublishesAHealthyBoard(t *testing.T) {
 		assetStatsDailyLatestDay:               900,
 	}}
 
-	if err := runHoldersRollupSteps(context.Background(), conn, func(string, ...any) {}); err != nil {
+	if err := runHoldersRollupSteps(context.Background(), conn, func(string, ...any) {}, nil); err != nil {
 		t.Fatalf("runHoldersRollupSteps: %v", err)
 	}
 
@@ -404,4 +404,27 @@ func parseSystemdSpan(t *testing.T, span string) time.Duration {
 		d += time.Duration(n) * units[m[2]]
 	}
 	return d
+}
+
+// TestRunHoldersRollupReportsEachStep pins the progress signal the ops heartbeat publishes: one onStep per completed statement,
+// so stellarindex_ops_job_no_progress sees a long cycle advance.
+func TestRunHoldersRollupReportsEachStep(t *testing.T) {
+	conn := &shrinkGuardConn{counts: map[string]uint64{
+		"stellar.asset_holders_rollup_staging": 500_100,
+		"stellar.asset_holders_rollup":         500_000,
+		"stellar.asset_holders_counts_staging": 505,
+		"stellar.asset_holders_counts":         500,
+		"stellar.asset_stats_daily_staging":    905,
+		assetStatsDailyLatestDay:               900,
+	}}
+
+	steps := 0
+	if err := runHoldersRollupSteps(context.Background(), conn, func(string, ...any) {}, func() { steps++ }); err != nil {
+		t.Fatalf("runHoldersRollupSteps: %v", err)
+	}
+	cycleAt := time.Now()
+	want := len(holdersRollupStatements(cycleAt)) + len(assetStatsSnapshotFills(cycleAt)) + 1
+	if steps != want || steps != len(conn.execCalls) {
+		t.Errorf("onStep fired %d times, want %d (one per executed statement, %d executed)", steps, want, len(conn.execCalls))
+	}
 }

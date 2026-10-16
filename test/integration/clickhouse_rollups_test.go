@@ -486,7 +486,7 @@ func TestHoldersRollupFreshness_ExecutesAgainstServer(t *testing.T) {
 	// (avg() over none is NaN, which toInt64 rejects).
 	seedEntry("account", "", "GHOLDERT390L", 72_000_001)
 	seedEntry("trustline", listedAsset, "GHOLDERT390L", 72_000_001)
-	if err := chstore.RunHoldersRollup(ctx, addr, t.Logf); err != nil {
+	if err := chstore.RunHoldersRollup(ctx, addr, t.Logf, nil); err != nil {
 		t.Fatalf("RunHoldersRollup: %v", err)
 	}
 	// Issued after the cycle: absent from the rollup, present in the lake.
@@ -889,7 +889,7 @@ func TestAssetStatsDaily_ExecutesAgainstServer(t *testing.T) {
 	seed("trustline", wideAsset, "GHOLDERA3A2", math.MaxInt64)
 
 	for range 2 {
-		if err := chstore.RunHoldersRollup(ctx, addr, t.Logf); err != nil {
+		if err := chstore.RunHoldersRollup(ctx, addr, t.Logf, nil); err != nil {
 			t.Fatalf("RunHoldersRollup: %v", err)
 		}
 	}

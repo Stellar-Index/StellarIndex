@@ -212,24 +212,30 @@ func shrinkGuardCompare(ctx context.Context, conn holdersRollupConn, staging, li
 	return nil
 }
 
-// RunHoldersRollup executes one full recompute + atomic exchange.
-func RunHoldersRollup(ctx context.Context, addr string, logf func(format string, args ...any)) error {
+// RunHoldersRollup executes one full recompute + atomic exchange; onStep (may be nil) fires after each completed step.
+func RunHoldersRollup(ctx context.Context, addr string, logf func(format string, args ...any), onStep func()) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = conn.Close() }()
-	return runHoldersRollupSteps(ctx, conn, logf)
+	return runHoldersRollupSteps(ctx, conn, logf, onStep)
 }
 
 // runHoldersRollupSteps runs the fills, the shrink guard (after all arms, before the swap, so a broken cycle leaves the previous one
 // live), the swap, then the daily snapshot; split out so tests need no ClickHouse.
-func runHoldersRollupSteps(ctx context.Context, conn holdersRollupConn, logf func(format string, args ...any)) error {
+func runHoldersRollupSteps(ctx context.Context, conn holdersRollupConn, logf func(format string, args ...any), onStep func()) error {
 	cycleAt := time.Now()
-	if err := runHoldersRollupSwap(ctx, conn, cycleAt, logf); err != nil {
+	step := func(format string, args ...any) {
+		logf(format, args...)
+		if onStep != nil {
+			onStep()
+		}
+	}
+	if err := runHoldersRollupSwap(ctx, conn, cycleAt, step); err != nil {
 		return err
 	}
-	return runAssetStatsSnapshot(ctx, conn, cycleAt, logf)
+	return runAssetStatsSnapshot(ctx, conn, cycleAt, step)
 }
 
 func runHoldersRollupSwap(ctx context.Context, conn holdersRollupConn, cycleAt time.Time, logf func(format string, args ...any)) error {
