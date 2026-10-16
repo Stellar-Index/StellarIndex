@@ -169,3 +169,35 @@ func TestReferenceLeg_QuoteSurfaceDisagreementCannotCorroborate(t *testing.T) {
 		}
 	}
 }
+
+// A capped read keeps each source pair's newest N trades, so the own-USD and stablecoin surfaces can start hours apart. Drift across
+// those hours is not a de-peg: the comparison runs only over the span every source pair covers.
+func TestQuoteSurfaces_ComparesOnlyTheCommonSpan(t *testing.T) {
+	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
+	now := time.Now()
+	coveredFrom := now.Add(-5 * time.Hour)
+	older := pivotTrade(xlmUSD, "binance", 100_000_000, 18_000_000, now.Add(-10*time.Hour)) // 0.180, before the USD read starts
+	older.TxHash = strings.Repeat("2", 64)
+	proxyNew := pivotTrade(xlmUSD, "binance", 100_000_000, 18_400_000, now.Add(-time.Hour)) // 0.184
+	proxyNew.TxHash = strings.Repeat("3", 64)
+	own := pivotTrade(xlmUSD, "coinbase", 100_000_000, 18_400_000, now.Add(-2*time.Hour)) // 0.184
+	trades := []canonical.Trade{older, proxyNew, own}
+	proxied := map[string]struct{}{older.ID(): {}, proxyNew.ID(): {}}
+	o := &Orchestrator{}
+
+	share, div, unc := o.quoteSurfaces(xlmUSD, trades, proxied, coveredFrom)
+	if unc || div == nil || div.Sign() != 0 {
+		t.Fatalf("common span: divergence = %v (uncomputable=%v), want 0", div, unc)
+	}
+	if want := 2.0 / 3; share < want-1e-9 || share > want+1e-9 {
+		t.Errorf("share = %v, want %v: the reported proxy share still covers the whole bucket", share, want)
+	}
+	lr := o.newLegRef(xlmUSD, big.NewRat(183, 1000), trades, proxied,
+		cachekeys.WindowCoverage{Truncated: true, CoveredFrom: coveredFrom})
+	if why := lr.quoteSurfaceRefusal(75); why != "" {
+		t.Errorf("truncated bucket: refusal = %q, want none", why)
+	}
+	if why := o.newLegRef(xlmUSD, big.NewRat(183, 1000), trades, proxied, cachekeys.WindowCoverage{}).quoteSurfaceRefusal(75); why == "" {
+		t.Error("untruncated bucket: want the whole-span comparison to refuse the 0.180-vs-0.184 split")
+	}
+}

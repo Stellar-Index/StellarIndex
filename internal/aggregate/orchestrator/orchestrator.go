@@ -844,7 +844,7 @@ func (o *Orchestrator) decideBucket(
 		confOK:   confOK,
 		// Only a published bucket becomes an edge or leg, which keeps a dust pair out of the graph.
 		edge: newEdgeQuote(pair, vwap, conf, confOK, trades),
-		leg:  o.newLegRef(pair, vwap, trades, proxied),
+		leg:  o.newLegRef(pair, vwap, trades, proxied, coverage),
 	}
 	if err := o.publishDirect(ctx, pair, window, pub, bucketEnd, now); err != nil {
 		return nil, err

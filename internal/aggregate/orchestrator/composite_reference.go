@@ -13,6 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
+	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
@@ -160,8 +161,10 @@ func (lr legRef) quoteSurfaceRefusal(maxBps int) string {
 // quoteSurfaces measures how much of a published bucket came through a stablecoin-proxy rewrite (proxied holds those trade IDs) and how
 // far
 // those prints sit from the pair's own-quote prints; both are priced with computeNormalizedVWAP, as the leg VWAP is.
+// The divergence compares only prints at or after coveredFrom (zero: all): a capped read keeps each source pair's newest N trades, so the
+// surfaces otherwise span different hours and intraday drift reads as a de-peg.
 func (o *Orchestrator) quoteSurfaces(
-	pair canonical.Pair, trades []canonical.Trade, proxied map[string]struct{},
+	pair canonical.Pair, trades []canonical.Trade, proxied map[string]struct{}, coveredFrom time.Time,
 ) (share float64, divergence *big.Rat, uncomputable bool) {
 	if len(proxied) == 0 {
 		return 0, nil, false
@@ -171,18 +174,24 @@ func (o *Orchestrator) quoteSurfaces(
 	proxyBase, totalBase := new(big.Int), new(big.Int)
 	for i := range trades {
 		totalBase.Add(totalBase, scaled[i].BaseAmount.BigInt())
-		if _, ok := proxied[trades[i].ID()]; ok {
-			proxy = append(proxy, trades[i])
+		_, isProxy := proxied[trades[i].ID()]
+		if isProxy {
 			proxyBase.Add(proxyBase, scaled[i].BaseAmount.BigInt())
+		}
+		if trades[i].Timestamp.Before(coveredFrom) {
+			continue
+		}
+		if isProxy {
+			proxy = append(proxy, trades[i])
 			continue
 		}
 		own = append(own, trades[i])
 	}
-	if len(proxy) == 0 || totalBase.Sign() <= 0 {
+	if proxyBase.Sign() <= 0 || totalBase.Sign() <= 0 {
 		return 0, nil, false
 	}
 	share, _ = new(big.Rat).SetFrac(proxyBase, totalBase).Float64() // i128:ok a share for reporting, not a served amount
-	if len(own) == 0 {
+	if len(proxy) == 0 || len(own) == 0 {
 		return share, nil, false
 	}
 	proxyVWAP, perr := o.computeNormalizedVWAP(proxy, pair)
@@ -354,14 +363,20 @@ func (o *Orchestrator) chainForTarget(pair canonical.Pair) (TriangulationChain, 
 
 // recordLegRef captures a confidently-published bucket as a CURRENT-tick leg, at the publish point in refreshPairWindow. Rebuilt every Tick; same single-Tick-at-a-time invariant as tickEdgeQuotes.
 func (o *Orchestrator) recordLegRef(pair canonical.Pair, window time.Duration, vwap *big.Rat, trades []canonical.Trade) {
-	o.setTickLegRef(pair, window, o.newLegRef(pair, vwap, trades, nil))
+	o.setTickLegRef(pair, window, o.newLegRef(pair, vwap, trades, nil, cachekeys.WindowCoverage{}))
 }
 
 // newLegRef builds the reference-leg reading for a published bucket; proxied is the set of trade IDs fetchForTarget rewrote from a
-// stablecoin-proxy source pair.
-func (o *Orchestrator) newLegRef(pair canonical.Pair, vwap *big.Rat, trades []canonical.Trade, proxied map[string]struct{}) legRef {
+// stablecoin-proxy source pair; coverage is the bucket's capped-read span.
+func (o *Orchestrator) newLegRef(
+	pair canonical.Pair, vwap *big.Rat, trades []canonical.Trade, proxied map[string]struct{}, coverage cachekeys.WindowCoverage,
+) legRef {
 	dispersion, uncomputable := o.legDispersion(pair, trades, vwap)
-	share, surfaceDiv, surfaceUncomputable := o.quoteSurfaces(pair, trades, proxied)
+	var coveredFrom time.Time
+	if coverage.Truncated {
+		coveredFrom = coverage.CoveredFrom
+	}
+	share, surfaceDiv, surfaceUncomputable := o.quoteSurfaces(pair, trades, proxied, coveredFrom)
 	return legRef{
 		price:                  new(big.Rat).Set(vwap), // defensive copy, as newEdgeQuote
 		sources:                distinctSourceCount(trades),
