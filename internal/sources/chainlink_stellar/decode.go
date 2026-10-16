@@ -22,6 +22,10 @@ func classify(e *events.Event) bool {
 	return len(e.Topic) >= 1 && e.Topic[0] == TopicSymbolFeedUpdated
 }
 
+func isAdminTopic(e *events.Event) bool {
+	return len(e.Topic) >= 1 && adminTopics[e.Topic[0]]
+}
+
 // decodeFeedUpdated turns one FeedUpdated{data_id; round_id, timestamp, answer: I256,
 // ledger_seq, primary} into one OracleUpdate. The cache emits it only for a permitted,
 // non-stale report (data-feeds-cache contract.rs on_report).

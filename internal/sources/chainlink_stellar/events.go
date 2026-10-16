@@ -29,6 +29,20 @@ const EventTopic0 = "FeedUpdated"
 // TopicSymbolFeedUpdated is the base64 ScVal of [EventTopic0].
 var TopicSymbolFeedUpdated = scval.MustEncodeSymbol(EventTopic0)
 
+// adminTopics are the cache's non-price events: refused reports, feed config, admin, ownership
+// and upgrades. They are recognised so the completeness census does not count them as
+// unhandled, and they write nothing.
+var adminTopics = func() map[string]bool {
+	m := map[string]bool{}
+	for _, sym := range []string{
+		"StaleReport", "InvalidUpdatePermission", "FeedConfigSet", "FeedAdminRemoved",
+		"Upgraded", "ownership_transfer", "ownership_transfer_completed",
+	} {
+		m[scval.MustEncodeSymbol(sym)] = true
+	}
+	return m
+}()
+
 var (
 	ErrNotFeedUpdated = errors.New("chainlink_stellar: not a FeedUpdated event")
 

@@ -86,12 +86,38 @@ func TestDecoder_GateRejectsForeignContract(t *testing.T) {
 	}
 }
 
-func TestDecoder_IgnoresOtherTopics(t *testing.T) {
+// The census fails recognition for any topic on the cache that no decoder matches, so every
+// topic the cache emits on mainnet must match; only FeedUpdated writes rows.
+func TestDecoder_RecognisesAdminTopicsAsNoOps(t *testing.T) {
+	d := NewDecoder(MainnetCacheContract)
+	for _, sym := range []string{
+		"StaleReport", "InvalidUpdatePermission", "FeedConfigSet", "FeedAdminRemoved",
+		"Upgraded", "ownership_transfer", "ownership_transfer_completed",
+	} {
+		ev := feedEvent(topicLINKID, valueLINK)
+		ev.Topic[0] = encodeSymbol(t, sym)
+		if !d.Matches(ev) {
+			t.Errorf("Matches = false for %s", sym)
+			continue
+		}
+		out, err := d.Decode(ev)
+		if err != nil || len(out) != 0 {
+			t.Errorf("Decode(%s) = %d events, %v; want none, nil", sym, len(out), err)
+		}
+	}
+}
+
+func TestDecoder_IgnoresUnknownTopics(t *testing.T) {
 	d := NewDecoder(MainnetCacheContract)
 	ev := feedEvent(topicLINKID, valueLINK)
-	ev.Topic[0] = encodeSymbol(t, "FeedConfigSet")
+	ev.Topic[0] = encodeSymbol(t, "SomethingNew")
 	if d.Matches(ev) {
-		t.Fatal("Matches = true for FeedConfigSet")
+		t.Fatal("Matches = true for an unknown topic; the census must still flag it")
+	}
+	ev.Topic[0] = encodeSymbol(t, "StaleReport")
+	ev.ContractID = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+	if d.Matches(ev) {
+		t.Fatal("Matches = true for an admin topic from a foreign contract")
 	}
 }
 
