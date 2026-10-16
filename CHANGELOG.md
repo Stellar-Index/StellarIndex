@@ -20,6 +20,16 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.7] — 2026-10-16
+
+3 commits since v0.116.6. No migrations. No `pkg/*` break.
+
+### Fixed
+
+- **spectra:** the decoder recognises the PT maturity events `yield_claimed` (restates `yield_updated` and the IBT transfer) and `rates_stored_at_expiry` as zero-row kinds, so completeness recognition stops failing spectra from the first maturity at ledger 64,972,231 (#3542).
+- **restore-drill:** the restore runs with its own scratch `--spool-path`; pgbackrest restore wipes its spool's archive dir, which deleted the live cluster's archive-push acknowledgements and stalled WAL archiving for 45 min (#3543).
+- **ops:** a scheduled heavy job whose lock wait runs out behind another scheduled job defers (exit 75) instead of failing its unit (#3541).
+
 ## [v0.116.6] — 2026-10-16
 
 1 commit since v0.116.5. No migrations. No `pkg/*` break.
@@ -55,15 +65,3 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 - **storage:** an unpriced trade where neither leg has any peg or XLM market is labelled `unroutable` instead of `no`, so cross-issuer junk pairs no longer drag the on-chain USD coverage ratio. XLM, the USD pegs and aliased assets are never labelled this way, and neither is anything while XLM/USD is unresolved, so a pricing outage still trips the alert (#3529).
 - **ops:** `ch-holders-rollup` reports progress after each completed step, so a long rollup no longer trips `stellarindex_ops_job_no_progress` (#3528).
 
-## [v0.116.2] — 2026-10-16
-
-3 commits since v0.116.1. No migrations. No `pkg/*` break.
-
-### Changed
-
-- **storage:** the XLM/USD anchor reads its pair's freeze events once per query instead of once per minute row; output is unchanged and the 7-day sparkline query drops from ~210 ms to ~85 ms (#3525).
-- **alerts:** `stellarindex_ingestion_source_insert_stale` judges projected sources on its 24h arm, since their freshness is the projector cursor; dispatcher-written sources keep the 1h budget (#3526).
-
-### Fixed
-
-- **indexer:** the hourly hashdb verify sweep reads with a 256-ledger prefetch buffer instead of the SDK's 10,000, which held ~5 GB and pushed the indexer into swap (#3524).
