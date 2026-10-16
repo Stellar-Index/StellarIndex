@@ -46,3 +46,29 @@ tests:
                 Tiingo's 1h poll interval skipped at least one whole cycle.
                 Either the Tiingo API is down or throttling (4xx/5xx), the
                 API token expired, or the indexer host lost outbound HTTPS.
+
+  # exchangeratesapi dark for 2h20m: only its own rule fires.
+  - interval: 1m
+    input_series:
+      - series: 'stellarindex_external_poller_last_success_unix{source="exchangeratesapi"}'
+        values: '0+0x200'
+    alert_rule_test:
+      - eval_time: 140m
+        alertname: stellarindex_external_poller_stale
+        exp_alerts: []
+      - eval_time: 140m
+        alertname: stellarindex_external_poller_stale_exchangeratesapi
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: external-poller
+              source: exchangeratesapi
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_external_poller_stale_exchangeratesapi
+              summary: "exchangeratesapi poller has not succeeded in 2+ h (>2x poll interval)"
+              description: |
+                exchangeratesapi's 1h poll interval skipped at least one
+                whole cycle. Either the API is down or throttling (4xx/5xx),
+                the access key expired, the monthly quota ran out, or the
+                indexer host lost outbound HTTPS.
