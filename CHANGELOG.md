@@ -20,6 +20,14 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.6] — 2026-10-16
+
+1 commit since v0.116.5. No migrations. No `pkg/*` break.
+
+### Fixed
+
+- **exchangeratesapi:** the poller runs hourly, the plan's refresh, instead of every 60 s, which overran the plan's 10,000-call monthly quota; it gets its own 2 h stale alert, as tiingo has (#3538).
+
 ## [v0.116.5] — 2026-10-16
 
 3 commits since v0.116.4. One migration (0216, additive). No `pkg/*` break.
@@ -59,17 +67,3 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 ### Fixed
 
 - **indexer:** the hourly hashdb verify sweep reads with a 256-ledger prefetch buffer instead of the SDK's 10,000, which held ~5 GB and pushed the indexer into swap (#3524).
-
-## [v0.116.1] — 2026-10-16
-
-4 commits since v0.116.0. No migrations. No `pkg/*` break.
-
-### Changed
-
-- **api:** `/v1/assets` sparklines are cached per asset and `/v1/rwa/assets` caches its assembled view, so a cold listing page no longer recomputes every sparkline (#3520).
-- **explorer:** the static export builds on one worker, bounding its concurrent API load (#3521).
-
-### Fixed
-
-- **explorer:** the asset header's SAC link renders on statically built pages (#3519).
-- **ops:** the restore drill waits up to 6h for the nightly pgbackrest backup to finish before choosing which backup to restore, instead of restoring the previous night's and overrunning the WAL drain (#3522).
