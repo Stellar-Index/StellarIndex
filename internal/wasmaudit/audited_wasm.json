@@ -522,6 +522,14 @@
     "audited": "2026-09-30",
     "doc": "docs/operations/wasm-audits/phoenix.md"
   },
+  "f0ccdffc29931abed6d77eef359450b183584103a3665be1f080f5f712b1542e": {
+    "sources": [
+      "redstone"
+    ],
+    "role": "adapter",
+    "audited": "2026-10-16",
+    "doc": "docs/operations/wasm-audits/redstone.md"
+  },
   "f1077e0b77da5e62d596e13aeae4160104cad99e7ef7f3183a6c9b6ec9e747cd": {
     "sources": [
       "aquarius"
