@@ -40,16 +40,20 @@ func TestXLMUSDAnchor_PopulationIsAliasAndDirectionComplete(t *testing.T) {
 		"sum(px * volume_usd) / sum(volume_usd)",
 		"AND bucket <= now() - INTERVAL '1 minute'",
 		"volume_usd >= " + xlmUSDAnchorMinUSD,
-		"AND NOT EXISTS (SELECT 1 FROM freeze_events fe WHERE ((fe.asset_id IN (" + forms + ") AND fe.quote_id IN (" + usd + ")) OR " +
-			"(fe.quote_id IN (" + forms + ") AND fe.asset_id IN (" + usd + "))) AND fe.frozen_at < prices_1m.bucket + INTERVAL '1 minute' + INTERVAL '5 minutes' " +
-			"AND (fe.recovered_at IS NULL OR fe.recovered_at > prices_1m.bucket))",
+		"WITH fz AS MATERIALIZED (SELECT fe.frozen_at, fe.recovered_at FROM freeze_events fe WHERE ((fe.asset_id IN (" + forms + ") AND fe.quote_id IN (" + usd + ")) OR " +
+			"(fe.quote_id IN (" + forms + ") AND fe.asset_id IN (" + usd + "))))",
+		"AND NOT EXISTS (SELECT 1 FROM fz WHERE fz.frozen_at < prices_1m.bucket + INTERVAL '1 minute' + INTERVAL '5 minutes' " +
+			"AND (fz.recovered_at IS NULL OR fz.recovered_at > prices_1m.bucket))",
 	} {
 		if !strings.Contains(pop, want) {
 			t.Errorf("anchor population lacks %q", want)
 		}
 	}
-	if n := strings.Count(pop, "FROM freeze_events fe"); n != 2 {
+	if n := strings.Count(pop, "NOT EXISTS (SELECT 1 FROM fz WHERE"); n != 2 {
 		t.Errorf("freeze exclusion appears %d times, want once per stored direction", n)
+	}
+	if n := strings.Count(pop, "FROM freeze_events fe"); n != 1 {
+		t.Errorf("freeze_events read %d times, want once into fz", n)
 	}
 	if strings.Contains(pop, "volume_priced") {
 		t.Error("anchor weights by leg sums; CEX (1e8) and on-chain (1e7) legs are not comparable — weight by volume_usd")

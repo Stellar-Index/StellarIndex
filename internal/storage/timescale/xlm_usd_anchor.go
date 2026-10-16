@@ -48,24 +48,35 @@ const xlmUSDFreezeTriggerLookback = "5 minutes"
 // itself (from = bucket); a read that judges a stored stamp looks back xlmUSDAnchorMaxAge from it, the oldest minute the ingest
 // resolver may have read when it stamped the row.
 func xlmUSDFreezeOverlap(from, bucket, sac string) string {
-	forms := xlmUSDAnchorForms(sac)
 	return `EXISTS (SELECT 1 FROM freeze_events fe
-		                  WHERE ((fe.asset_id IN (` + forms + `) AND fe.quote_id IN (` + usdProxyQuotes + `))
-		                     OR (fe.quote_id IN (` + forms + `) AND fe.asset_id IN (` + usdProxyQuotes + `)))
-		                    AND fe.frozen_at < ` + bucket + ` + INTERVAL '1 minute' + INTERVAL '` + xlmUSDFreezeTriggerLookback + `'
-		                    AND (fe.recovered_at IS NULL OR fe.recovered_at > ` + from + `))`
+		                  WHERE ` + xlmUSDFreezePairs(sac) + `
+		                    AND ` + xlmUSDFreezeWindow("fe", from, bucket) + `)`
+}
+
+// xlmUSDFreezePairs renders "fe is a freeze on an XLM form against a USD proxy", either stored direction.
+func xlmUSDFreezePairs(sac string) string {
+	forms := xlmUSDAnchorForms(sac)
+	return `((fe.asset_id IN (` + forms + `) AND fe.quote_id IN (` + usdProxyQuotes + `))
+		                     OR (fe.quote_id IN (` + forms + `) AND fe.asset_id IN (` + usdProxyQuotes + `)))`
+}
+
+// xlmUSDFreezeWindow renders "freeze row rel overlaps [from, bucket + 1 minute + xlmUSDFreezeTriggerLookback)".
+func xlmUSDFreezeWindow(rel, from, bucket string) string {
+	return rel + `.frozen_at < ` + bucket + ` + INTERVAL '1 minute' + INTERVAL '` + xlmUSDFreezeTriggerLookback + `'
+		                    AND (` + rel + `.recovered_at IS NULL OR ` + rel + `.recovered_at > ` + from + `)`
 }
 
 // xlmUSDAnchorMinutes renders (form_rank, bucket, vwap) for closed minutes in [lo, hi]; lo and hi are timestamptz expressions that must
-// stay sargable.
+// stay sargable. The XLM/USD freezes are read once into fz: probing freeze_events per minute row was most of a 7d sparkline's cost.
 func xlmUSDAnchorMinutes(lo, hi, sac string) string {
 	forms := xlmUSDAnchorForms(sac)
 	bounds := `bucket >= ` + lo + `
 		         AND bucket <= ` + hi + `
 		         AND bucket <= now() - INTERVAL '1 minute'
 		         AND vwap > 0 AND volume_usd >= ` + xlmUSDAnchorMinUSD + `
-		         AND NOT ` + xlmUSDFreezeOverlap("prices_1m.bucket", "prices_1m.bucket", sac)
-	return `(SELECT form_rank, bucket, sum(px * volume_usd) / sum(volume_usd) AS vwap
+		         AND NOT EXISTS (SELECT 1 FROM fz WHERE ` + xlmUSDFreezeWindow("fz", "prices_1m.bucket", "prices_1m.bucket") + `)`
+	return `(WITH fz AS MATERIALIZED (SELECT fe.frozen_at, fe.recovered_at FROM freeze_events fe WHERE ` + xlmUSDFreezePairs(sac) + `)
+		  SELECT form_rank, bucket, sum(px * volume_usd) / sum(volume_usd) AS vwap
 		    FROM (
 		      SELECT array_position(ARRAY[` + forms + `], base_asset) AS form_rank,
 		             bucket, vwap AS px, volume_usd
