@@ -63,8 +63,8 @@ export function LivePairPrice({
     poll;
 
   // Open the tip stream only after the poll confirms a servable price: a pair
-  // with no price, or a withheld one, 404s the pre-flight and slow-reopens forever.
-  const tipEnabled = polled && !poll.withheld && !poll.thin;
+  // with no price, or a withheld or stale one, 404s the pre-flight and slow-reopens forever.
+  const tipEnabled = polled && !poll.withheld && !poll.thin && !poll.stale;
   const tip = useTipStream(tipEnabled ? base : null, quote);
   const clock = useLiveClock();
   const tipFresh =

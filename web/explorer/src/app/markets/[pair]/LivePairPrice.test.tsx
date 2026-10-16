@@ -271,4 +271,20 @@ describe('LivePairPrice — tip stream gating', () => {
       expect(useTipStream).toHaveBeenLastCalledWith('crypto:XLM', 'fiat:USD'),
     );
   });
+
+  it('keeps the tip stream closed while the polled price is stale', async () => {
+    useTipStream.mockReturnValue(null);
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: { price: '1.0001' },
+        flags: { stale: true, triangulated: true },
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderPrice(<LivePairPrice {...props} />);
+    expect(await screen.findByText(/1\.0001/)).toBeInTheDocument();
+    expect(useTipStream.mock.calls.every(([base]) => base === null)).toBe(true);
+  });
 });

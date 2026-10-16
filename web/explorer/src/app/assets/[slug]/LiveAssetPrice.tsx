@@ -151,10 +151,16 @@ export function LiveAssetPrice({
   // the poll confirms only produced a load-time 404 on every thin-market page.
   // Fresh direct markets still open immediately (no delay); everything else
   // waits one poll to learn whether the stream is servable.
+  // A stale poll (e.g. a triangulated quote over a thin market) has no live tip
+  // either: the stream withholds it as thin.
   const freshDirectMarket =
     initialProvenance === 'vwap1m' && !initialStale && seed != null;
   const tipEnabled =
-    withheld || poll.thin ? false : poll.polled ? true : freshDirectMarket;
+    withheld || poll.thin
+      ? false
+      : poll.polled
+        ? !poll.stale
+        : freshDirectMarket;
   const tip = useTipStream(tipEnabled ? assetID : null);
   // Slow clock so a wedged stream loses its "live" claim without
   // waiting for the next poll render.
