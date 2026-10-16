@@ -20,6 +20,14 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.4] — 2026-10-16
+
+1 commit since v0.116.3. No migrations. No `pkg/*` break.
+
+### Fixed
+
+- **aggregator:** the composite reference logs its `unavailable` cause at Info whenever it changes per pair and window, so `stellarindex_aggregator_composite_corroboration_unavailable` can be traced without a phase-2 freeze (#3531).
+
 ## [v0.116.3] — 2026-10-16
 
 2 commits since v0.116.2. No migrations. No `pkg/*` break.
@@ -73,16 +81,3 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 - **api:** `/v1/oracle/latest` no longer serves the retired Ethereum chainlink feed's last price (#3517).
 - **ansible:** the host keeps a zfs module for every kernel it can boot, so a reboot onto a new kernel finds its pool (#3515).
-
-## [v0.115.1] — 2026-10-15
-
-1 commit since v0.115.0. No migrations. No `pkg/*` break.
-
-### Added
-
-- **monitoring:** `stellarindex_usd_volume_xlm_bound_skipped` tickets when verify-usd-volume could not judge a day's XLM-base/quote bounds; the run publishes `stellarindex_verify_usd_volume_xlm_bound_judged` (#3512).
-
-### Fixed
-
-- **ops:** verify-usd-volume builds the day's XLM/USD rate from `prices_1h`, so the 05:12 UTC run judges the XLM bounds instead of skipping them while `prices_1d` is still unmaterialized (#3512).
-- **monitoring:** `stellarindex_usd_volume_estimated_tier_high` alerts on the estimated tier's share of valued volume (> 5%) instead of a $10M bar it crossed every day (#3512).
