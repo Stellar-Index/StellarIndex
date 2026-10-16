@@ -20,6 +20,15 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.10] — 2026-10-16
+
+2 commits since v0.116.9. No migrations. No `pkg/*` break.
+
+### Fixed
+
+- **redstone:** `earnUSDC_FUNDAMENTAL/USD` is registered (vault contract in USD) instead of landing as a `raw:` row, and the bare `earnUSDC_FUNDAMENTAL` feed is quoted in USDC, the reserve it is published in (#3552). Existing rows from ledger 64254176 are corrected by a `projector-replay`.
+- **alerts:** the daily-publisher silence rule no longer fires when restarts re-emit the same fix and flatten the events counter (#3551).
+
 ## [v0.116.9] — 2026-10-16
 
 1 commit since v0.116.8. No migrations. No `pkg/*` break.
@@ -53,13 +62,3 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 ### Fixed
 
 - **exchangeratesapi:** the poller runs hourly, the plan's refresh, instead of every 60 s, which overran the plan's 10,000-call monthly quota; it gets its own 2 h stale alert, as tiingo has (#3538).
-
-## [v0.116.5] — 2026-10-16
-
-3 commits since v0.116.4. One migration (0216, additive). No `pkg/*` break.
-
-### Fixed
-
-- **chainlink-stellar:** the decoder recognises the cache contract's admin events (StaleReport, FeedConfigSet, FeedAdminRemoved, Upgraded, ownership transfers) as no-ops, so completeness recognition stops reporting "unhandled topic" from genesis; migration 0216 admits `chainlink-stellar` in `divergence_observations_reference_check`, which rejected every observation with 23514 (#3536).
-- **ansible:** postgres_exporter drops its per-table collectors; the scrape fell from 375k series and 4–11 s to under 1 s (#3534).
-- **test:** the exporter bind postcondition test matches an ARGS bind followed by more flags (#3535).
