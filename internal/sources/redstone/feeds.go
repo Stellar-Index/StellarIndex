@@ -29,13 +29,16 @@ var (
 var (
 	quoteBTC     = mustCrypto("BTC")
 	quoteSolvBTC = mustCrypto("SolvBTC")
+	// quoteUSDC denominates bare earnUSDC_FUNDAMENTAL: its `/USD` sibling divided by it tracks
+	// RedStone's USDC price (0.999828 vs 0.999829 at ledger 64486186).
+	quoteUSDC = mustCrypto("USDC")
 )
 
 // earnUSDCVaultContract is the Gami earnUSDC vault (the contract IS the share token). It aliases
 // upshift's constant so the price and the decoded activity cannot drift onto different asset ids.
 const earnUSDCVaultContract = upshift.MainnetVaultEarnUSDC
 
-// feedRegistry maps each EXACT on-chain feed_id() to its canonical (base, quote): the 32 RedStone Stellar mainnet feeds, no two sharing a
+// feedRegistry maps each EXACT on-chain feed_id() to its canonical (base, quote): the 33 RedStone Stellar mainnet feeds, no two sharing a
 // pair (one batch would interleave two quantities into one series). The quote is per-feed, so a ticker allow-list like
 // canonical.IsKnownCrypto would drop 5 feeds.
 var feedRegistry = map[string]feedEntry{
@@ -54,7 +57,9 @@ var feedRegistry = map[string]feedEntry{
 	//
 	// REPORTED AS PUBLISHED: RedStone's ~0.72 differs from the ~1.01 share price and is their
 	// confirmed figure. Do not "correct" this entry.
-	"earnUSDC_FUNDAMENTAL": {Base: mustSoroban(earnUSDCVaultContract), Quote: quoteUSD},
+	// The bare feed is NAV in the USDC reserve; the `/USD` sibling is the same NAV in dollars.
+	"earnUSDC_FUNDAMENTAL":     {Base: mustSoroban(earnUSDCVaultContract), Quote: quoteUSDC},
+	"earnUSDC_FUNDAMENTAL/USD": {Base: mustSoroban(earnUSDCVaultContract), Quote: quoteUSD},
 	// MXNe is published units-per-USD; Invert reciprocates it to MXNe-in-USD.
 	"MXNe": {Base: mustCrypto("MXNe"), Quote: quoteUSD, Invert: true},
 

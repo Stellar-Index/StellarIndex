@@ -392,12 +392,12 @@ func TestDecode_RWAandQuoteCurrency(t *testing.T) {
 	}
 }
 
-// The registry must hold exactly the 32 known mainnet feeds (19 from ADR-0028,
-// 11 from the ledger-63624934 relayer expansion, USDT0, earnUSDC_FUNDAMENTAL);
+// The registry must hold exactly the 33 known mainnet feeds (19 from ADR-0028,
+// 11 from the ledger-63624934 relayer expansion, USDT0, earnUSDC_FUNDAMENTAL and its /USD sibling);
 // a drift means a feed changed without updating docs and this count.
-func TestFeedRegistry_Has32Feeds(t *testing.T) {
-	if len(feedRegistry) != 32 {
-		t.Errorf("feedRegistry has %d feeds, want 32 — update BOTH this and the doc comment in feeds.go", len(feedRegistry))
+func TestFeedRegistry_Has33Feeds(t *testing.T) {
+	if len(feedRegistry) != 33 {
+		t.Errorf("feedRegistry has %d feeds, want 33 — update BOTH this and the doc comment in feeds.go", len(feedRegistry))
 	}
 	for feedID, entry := range feedRegistry {
 		if err := entry.Base.Validate(); err != nil {
@@ -812,16 +812,6 @@ var navFundamentalInFiat = map[string]string{
 	"savUSD_FUNDAMENTAL": "Avant staked avUSD vault share; reserve is avUSD, a " +
 		"USD-denominated stablecoin, so the vault exchange rate is a dollar figure " +
 		"(live 1.1877, 2026-07-27 — plausible only as USD). No `/USD` sibling feed.",
-	"earnUSDC_FUNDAMENTAL": "Upshift earnUSDC vault share (curated by Gami Labs + " +
-		"Stake Capital); reserve is USDC, a USD stablecoin, so the vault exchange rate " +
-		"is a dollar figure — the same shape as savUSD_FUNDAMENTAL above. Live " +
-		"0.7176 -> 0.7200 across 2026-09-03..08 on r1, monotonically increasing on every " +
-		"one of 14 observations: yield-like, not price-like, which is what rules out a " +
-		"volatile non-fiat reserve. NOTE the published figure sits BELOW the vault's own " +
-		"~1.01 share price; that gap is the vendor's, confirmed as their published number, " +
-		"and we report an oracle as published rather than reconciling it — the decoder was " +
-		"checked against BTC (78,6xx) and EUROC (1.0002) on the same oracle contract, so it " +
-		"is not a scaling fault here. No `/USD` sibling feed.",
 }
 
 // TestFeedRegistry_NAVFeedsQuoteTheirReserveAsset is the class guard for mislabelled NAV feeds: a bare `_FUNDAMENTAL`
@@ -980,6 +970,24 @@ func TestFeedRegistry_EarnUSDCIsItsOwnInstrument(t *testing.T) {
 	}
 	if entry.Invert {
 		t.Error("earnUSDC_FUNDAMENTAL is published token-in-quote; Invert must be false")
+	}
+}
+
+// TestFeedRegistry_EarnUSDCQuotes pins the two earnUSDC feeds. They arrive in the same write_prices
+// batches, and `/USD` divided by the bare value tracks RedStone's USDC price
+// (101287532/101304820 = 0.999829 vs USDC 0.999828 at ledger 64486186), so the bare feed is NAV in
+// USDC. Quoting it fiat:USD would serve a USDC-denominated number as dollars beside the real one.
+func TestFeedRegistry_EarnUSDCQuotes(t *testing.T) {
+	bare, usd := feedRegistry["earnUSDC_FUNDAMENTAL"], feedRegistry["earnUSDC_FUNDAMENTAL/USD"]
+	if got := bare.Quote.String(); got != "crypto:USDC" {
+		t.Errorf("earnUSDC_FUNDAMENTAL quote %s, want crypto:USDC (NAV in the reserve asset)", got)
+	}
+	if got := usd.Quote.String(); got != "fiat:USD" {
+		t.Errorf("earnUSDC_FUNDAMENTAL/USD quote %s, want fiat:USD", got)
+	}
+	if !usd.Base.Equal(bare.Base) {
+		t.Errorf("earnUSDC_FUNDAMENTAL/USD base %s, want the vault contract %s — the dollar NAV is the vault's USD price",
+			usd.Base.String(), bare.Base.String())
 	}
 }
 
