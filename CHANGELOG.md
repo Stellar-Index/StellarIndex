@@ -20,6 +20,14 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.11] — 2026-10-17
+
+1 commit since v0.116.10. No migrations. No `pkg/*` break.
+
+### Changed
+
+- **wasmaudit:** the redstone adapter's current WASM (`f0ccdffc…`, live since ledger 62520450) is audited and in the replay-gate manifest, so redstone replays from that ledger are allowed (#3554).
+
 ## [v0.116.10] — 2026-10-16
 
 2 commits since v0.116.9. No migrations. No `pkg/*` break.
@@ -54,11 +62,3 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 - **spectra:** the decoder recognises the PT maturity events `yield_claimed` (restates `yield_updated` and the IBT transfer) and `rates_stored_at_expiry` as zero-row kinds, so completeness recognition stops failing spectra from the first maturity at ledger 64,972,231 (#3542).
 - **restore-drill:** the restore runs with its own scratch `--spool-path`; pgbackrest restore wipes its spool's archive dir, which deleted the live cluster's archive-push acknowledgements and stalled WAL archiving for 45 min (#3543).
 - **ops:** a scheduled heavy job whose lock wait runs out behind another scheduled job defers (exit 75) instead of failing its unit (#3541).
-
-## [v0.116.6] — 2026-10-16
-
-1 commit since v0.116.5. No migrations. No `pkg/*` break.
-
-### Fixed
-
-- **exchangeratesapi:** the poller runs hourly, the plan's refresh, instead of every 60 s, which overran the plan's 10,000-call monthly quota; it gets its own 2 h stale alert, as tiingo has (#3538).
