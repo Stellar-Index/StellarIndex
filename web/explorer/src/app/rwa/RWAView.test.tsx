@@ -598,12 +598,26 @@ describe('RWAView', () => {
     screen.getAllByTitle(/no circulating-supply reading does/);
   });
 
+  it('names an oracle-feed basis as evidence, never as a price, on an unpriced row', async () => {
+    show(
+      one({
+        basis: 'oracle_rwa_feed',
+        anchor_class: undefined,
+        valuation: { status: 'unpriced' },
+      }),
+    );
+
+    await screen.findByText('USTRY');
+    present(/independent oracle publishes a feed for this code/);
+    absent(/priced by/);
+  });
+
   it('describes a third-party-curated basis as curation, not an oracle feed', async () => {
     show(one({ basis: 'third_party_curated', anchor_class: undefined }));
 
     await screen.findByText('USTRY');
     present(/listed by a named third-party curator/);
-    absent('priced by an independent oracle feed');
+    absent(/independent oracle publishes a feed/);
   });
 });
 
