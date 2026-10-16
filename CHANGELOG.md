@@ -20,6 +20,16 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.5] — 2026-10-16
+
+3 commits since v0.116.4. One migration (0216, additive). No `pkg/*` break.
+
+### Fixed
+
+- **chainlink-stellar:** the decoder recognises the cache contract's admin events (StaleReport, FeedConfigSet, FeedAdminRemoved, Upgraded, ownership transfers) as no-ops, so completeness recognition stops reporting "unhandled topic" from genesis; migration 0216 admits `chainlink-stellar` in `divergence_observations_reference_check`, which rejected every observation with 23514 (#3536).
+- **ansible:** postgres_exporter drops its per-table collectors; the scrape fell from 375k series and 4–11 s to under 1 s (#3534).
+- **test:** the exporter bind postcondition test matches an ARGS bind followed by more flags (#3535).
+
 ## [v0.116.4] — 2026-10-16
 
 1 commit since v0.116.3. No migrations. No `pkg/*` break.
@@ -63,21 +73,3 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 - **explorer:** the asset header's SAC link renders on statically built pages (#3519).
 - **ops:** the restore drill waits up to 6h for the nightly pgbackrest backup to finish before choosing which backup to restore, instead of restoring the previous night's and overrunning the WAL drain (#3522).
-
-## [v0.116.0] — 2026-10-15
-
-4 commits since v0.115.1. No migrations. No `pkg/*` break.
-
-### Added
-
-- **explorer:** the asset header shows the asset's identity and its SAC address with copy buttons; a classic asset's SAC page redirects to the classic page, and search resolves a SAC address or a bare issuer to its asset (#3514).
-
-### Changed
-
-- **api:** `/v1/assets?asset_class=all` lists a SAC-wrapped asset once, folding the SAC row into its classic row and counting its 24h volume exactly once; volume that cannot be read or confirmed sets `volume_lower_bound` (#3514).
-- **ops:** ch-lake-backup waits up to 20h for the gap between heavy chunks instead of deferring whenever a heavy job holds the lock (#3516).
-
-### Fixed
-
-- **api:** `/v1/oracle/latest` no longer serves the retired Ethereum chainlink feed's last price (#3517).
-- **ansible:** the host keeps a zfs module for every kernel it can boot, so a reboot onto a new kernel finds its pool (#3515).
