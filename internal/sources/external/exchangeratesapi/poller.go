@@ -33,9 +33,7 @@ type Poller struct {
 	// [DefaultEndpoint]; tests point at httptest servers.
 	Endpoint string
 
-	// Interval is the poll cadence. Defaults to
-	// [DefaultPollInterval] (60s, matches Professional tier
-	// rate-limit).
+	// Interval is the poll cadence. Defaults to [DefaultPollInterval].
 	Interval time.Duration
 
 	// Symbols is the explicit target currency list; empty means

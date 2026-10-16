@@ -33,9 +33,9 @@ const DefaultEndpoint = "https://api.exchangeratesapi.io/v1"
 // LatestPath is the current-rates endpoint, combined with the query built in poller.go.
 const LatestPath = "/latest"
 
-// DefaultPollInterval matches the Professional tier's 1-minute refresh; polling faster only
-// burns quota.
-const DefaultPollInterval = 60 * time.Second
+// DefaultPollInterval matches the plan's hourly refresh; polling faster returns the same
+// rates and spends a 10,000-call monthly quota that another service also draws on.
+const DefaultPollInterval = time.Hour
 
 // DefaultDecimals is the scale applied to the incoming float64 rates: 6dp covers G10 crosses
 // (~4dp typical) with headroom for EM currencies. It scales the venue's RATE, not the emitted

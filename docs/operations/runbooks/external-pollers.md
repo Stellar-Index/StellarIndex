@@ -86,6 +86,10 @@ Run the shared log grep and decode the latest error:
 
 `(time() - stellarindex_external_poller_last_success_unix{source="tiingo"}) > 7200` (2 h), `for: 10m`, P3. Poll interval is 1 h; one whole cycle was skipped. Causes: Tiingo API down or throttling, token expired, or lost outbound HTTPS. Check and fix as [`stellarindex_external_poller_stale`](#stellarindex_external_poller_stale) with `<source>` = `tiingo`.
 
+## stellarindex_external_poller_stale_exchangeratesapi
+
+`(time() - stellarindex_external_poller_last_success_unix{source="exchangeratesapi"}) > 7200` (2 h), `for: 10m`, P3. Poll interval is 1 h, the plan's refresh; the plan's 10,000 calls a month are shared with another service, so never poll faster. Causes: API down or throttling, access key expired, monthly quota exhausted, or lost outbound HTTPS. Check and fix as [`stellarindex_external_poller_stale`](#stellarindex_external_poller_stale) with `<source>` = `exchangeratesapi`.
+
 ## stellarindex_external_poller_error_rate_high
 
 `for: 15m`, informational (escalation is `stellarindex_external_poller_stale`):

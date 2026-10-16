@@ -256,10 +256,11 @@ func TestPollOnce_RedirectNotFollowed(t *testing.T) {
 	}
 }
 
-func TestPollInterval_DefaultsTo60s(t *testing.T) {
+// The plan refreshes hourly and its monthly quota is shared; a faster default overruns it.
+func TestPollInterval_DefaultsToHourly(t *testing.T) {
 	p, _ := NewPoller("TEST_KEY")
-	if p.PollInterval() != 60*time.Second {
-		t.Errorf("default interval = %v want 60s", p.PollInterval())
+	if p.PollInterval() != time.Hour {
+		t.Errorf("default interval = %v want 1h", p.PollInterval())
 	}
 }
 
