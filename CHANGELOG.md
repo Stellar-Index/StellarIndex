@@ -20,6 +20,20 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.1] — 2026-10-16
+
+4 commits since v0.116.0. No migrations. No `pkg/*` break.
+
+### Changed
+
+- **api:** `/v1/assets` sparklines are cached per asset and `/v1/rwa/assets` caches its assembled view, so a cold listing page no longer recomputes every sparkline (#3520).
+- **explorer:** the static export builds on one worker, bounding its concurrent API load (#3521).
+
+### Fixed
+
+- **explorer:** the asset header's SAC link renders on statically built pages (#3519).
+- **ops:** the restore drill waits up to 6h for the nightly pgbackrest backup to finish before choosing which backup to restore, instead of restoring the previous night's and overrunning the WAL drain (#3522).
+
 ## [v0.116.0] — 2026-10-15
 
 4 commits since v0.115.1. No migrations. No `pkg/*` break.
@@ -110,35 +124,3 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 - **trades:** token/token USD volume is bounded by a per-asset credibility budget charged to the deeper anchor market; a print over budget stores NULL `usd_volume`, never a capped value (#3495).
 - **release:** `cut-release.sh` starts the full CI run beside prepush, and the full run's fuzz smoke is sharded four ways (#3492, #3496).
 - **deps:** npm and actions minor/patch groups bumped (#3423–#3425).
-
-## [v0.113.0] — 2026-10-13
-
-25 commits since v0.112.0. No migrations. Two new ClickHouse tables (the entry index). No `pkg/*` break (`pkg/client` gains optional credit, price-provenance, vetted-ISIN and `detectors_partial` fields).
-
-### Operator actions
-
-- **ClickHouse:** apply `deploy/clickhouse/entry_index.sql`, then run `ch-entry-index` to build `stellar.account_entry_ledgers` and `stellar.asset_entry_ledgers`; the `entry-index` timer keeps them current and `stellarindex_entry_index_lagging` fires when it falls behind (#3418).
-- **ops:** `verify-usd-volume` runs nightly; `stellarindex_usd_volume_estimated_tier_high` and `stellarindex_verify_usd_volume_stale` are new alerts (#3416).
-- **config:** EURC and PYUSD are declared fiat-pegged legs (EUR, USD) in the host template (#3415).
-- **ansible:** `compute-completeness-sep41` is installed only on hosts that watch SEP-41 contracts (#3405).
-- **ingest:** `backfill-external` replays a vendor daily XLM/USD close CSV into `trades` as `coingecko_daily`; its write gate defaults to dry-run (#3427).
-
-### Added
-
-- **api:** lone-vendor values are credited and fiat listing rows carry FX provenance (#3420); the peg walk's withheld reason is served instead of a bool (#3417); `/v1/mev` flags `detectors_partial` off a detection heartbeat (#3413).
-- **rwa:** a hand-vetted ISIN binding is the fourth classic basis (#3419).
-- **api:** fiat-to-fiat chart series and oracle prices fed by one licensed source carry its credit; a declared ISIN that contradicts a hand-vetted binding is refused (#3431).
-- **trades:** declared fiat-pegged legs are valued off the fiat rate within a 2% band (#3415).
-
-### Fixed
-
-- **api:** vendor-only price buckets are skipped on the inception anchor and point-in-time VWAP, their volumes are blank on the wire, and non-VWAP sources stay out of the raw trade window (#3428).
-- **mev:** frozen XLM/USD-proxy minutes are excluded from the anchor and refused at ingest, anchor-valued notionals are flagged, and a stored `usd_volume` stamped inside a freeze is set aside (#3411, #3426, 9c4c6ccf8).
-- **freeze:** a lost `freeze_events` row is retried, counted and logged (#3422).
-- **clickhouse:** the entry-change ledger bounds are read in key order instead of aggregating every part, which was timing out the DEX TVL refresh (#3433).
-- **supply:** archived SAC balances stay served; only real removals are tombstoned (#3414).
-
-### Changed
-
-- **deps:** go minor/patch group bumped, 11 updates (#3412).
-- **test:** 29 small test files folded into their package files; style-only AST and prose guard tests deleted (#3406–#3409).
