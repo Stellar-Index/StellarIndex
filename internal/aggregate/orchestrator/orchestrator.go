@@ -399,6 +399,10 @@ type Orchestrator struct {
 	// Rebuilt every Tick; same lock-free invariant as prevVWAPs.
 	tickCompositeRefs map[string]compositeReference
 
+	// lastCompositeUnavailable is the last logged unavailable cause per `<pair>:<window>`, so the cause is logged at Info when it changes
+	// rather than every tick. Persists across ticks; same lock-free invariant as prevVWAPs.
+	lastCompositeUnavailable map[string]string
+
 	// refreshOrder is cfg.Pairs with composite-reference legs ahead of their targets
 	// (composite_reference.go); identical to cfg.Pairs when that is off. Computed once in New.
 	refreshOrder []canonical.Pair

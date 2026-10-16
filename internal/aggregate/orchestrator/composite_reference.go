@@ -564,6 +564,17 @@ func (o *Orchestrator) emitCompositeReference(pair canonical.Pair, window time.D
 	if ref.unavailable != "" {
 		attrs = append(attrs, "unavailable", ref.unavailable)
 	}
+	key := pair.String() + ":" + window.String()
+	if ref.unavailable != o.lastCompositeUnavailable[key] {
+		if o.lastCompositeUnavailable == nil {
+			o.lastCompositeUnavailable = make(map[string]string)
+		}
+		o.lastCompositeUnavailable[key] = ref.unavailable
+		// The unavailable alert's operator needs the cause, which no metric carries.
+		if ref.unavailable != "" {
+			o.logger.Info("composite reference unavailable", attrs...)
+		}
+	}
 	if ref.verdict == compositeVerdictCorroborated {
 		o.logger.Info("composite reference corroborates the direct print on the current bucket", attrs...)
 		return
