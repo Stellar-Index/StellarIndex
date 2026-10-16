@@ -109,6 +109,12 @@ SH
 # unconditional `exit 0` would leave the lock entirely untested, which is
 # how its refusal path stayed unexercised. FLOCK_RESULT drives it: 0 (the
 # default) is "this run took the lock", 1 is "another drill holds it".
+# The backup-wait probe. inactive (the default) is "no backup running".
+cat > "$shims/systemctl" <<'SH'
+#!/usr/bin/env bash
+echo "${FAKE_BACKUP_STATE:-inactive}"
+[[ "${FAKE_BACKUP_STATE:-inactive}" == active ]]
+SH
 cat > "$shims/flock" <<'SH'
 #!/usr/bin/env bash
 exit "${FLOCK_RESULT:-0}"
@@ -145,7 +151,7 @@ run_drill() {
   PATH="$shims:$PATH" PG_BIN="$pgbin" \
     DRILL_ROOT="$d/root" DRILL_LOCK="${FAKE_DRILL_LOCK:-$d/lock}" RESTORE_DRILL_LOG_DIR="$d/log" TEXTFILE_DIR="$d/textfile" \
     DRILL_POOL_FLOOR_GB="${FAKE_POOL_FLOOR_GB:-0}" \
-    DRILL_CH_WINDOW='' STELLARINDEX_POSTGRES_DSN='' WAL_DRAIN_TIMEOUT=0 \
+    DRILL_CH_WINDOW='' STELLARINDEX_POSTGRES_DSN='' WAL_DRAIN_TIMEOUT=0 BACKUP_WAIT_TIMEOUT=0 \
     bash "$DRILL" >"$d/out" 2>&1
   echo $? > "$d/rc"
 }
@@ -364,6 +370,21 @@ if [[ ! -e "$c/log/restore-drills.md" ]] && [[ -z "$(ls -A "$c/textfile" 2>/dev/
   ok "an unopenable lock file writes neither evidence nor metric"
 else
   bad "an unopenable lock file wrote evidence/metric — refusals must not share the drill's signal"
+fi
+
+# ─── 7b. the nightly backup is still running ────────────────────────
+# Started mid-backup, the drill would restore the previous night's backup and
+# replay a day of WAL past its drain budget. It waits; still running at the
+# deadline is a refusal before the restore.
+c="$work/c7b"; mkdir -p "$c"; seed_stale_pass "$c"
+FAKE_BACKUP_STATE=activating FAKE_DF_AVAIL_G=5000 FAKE_BACKUP_BYTES=$((300 * 1073741824)) FAKE_RESTORE_RC=0 run_drill "$c"
+rc="$(cat "$c/rc")"
+if [[ "$rc" == "2" ]] && grep -q "pgbackrest-backup.service still running" "$c/out" \
+     && [[ -z "$(ls -A "$c/root" 2>/dev/null)" ]] && [[ ! -e "$c/log/restore-drills.md" ]]; then
+  ok "a backup still running at the deadline is a refusal (exit 2) before the restore"
+else
+  bad "a running backup: expected exit 2 + 'still running', nothing restored, got exit $rc:
+$(tail -n 5 "$c/out")"
 fi
 
 # ─── 8. the scratch port, which the lock does not cover ─────────────

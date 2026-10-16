@@ -15,9 +15,10 @@
 # weekday-of-month slot recurs at 28 OR 35 days and would ticket on a
 # healthy host every month that has five of that weekday; a fixed day
 # recurs at 28–31, leaving ≥4 days of slack. Mid-month keeps it ≥ a week
-# from the repo1 drill (first Saturday, 1st–7th) on the same volume, and
-# 04:00 is after the nightly 02:00 backup has written repo2, so the drill
-# restores that night's differential.
+# from the repo1 drill (first Saturday, 1st–7th) on the same volume. The
+# nightly 02:00 backup can still be writing repo2 at 04:00 (2.5 h on
+# 2026-10-15), so restore-drill.sh waits for pgbackrest-backup.service before
+# choosing the backup and restores that night's differential.
 
 [Unit]
 Description=Monthly OFF-SITE pgBackRest restore-drill, repo2/S3 (~47 min RTO, ~$24 egress per run; ADR-0043 / CS-110)
