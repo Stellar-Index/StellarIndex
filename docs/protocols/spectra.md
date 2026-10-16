@@ -100,7 +100,7 @@ observed matches the lake's `topics_xdr` byte for byte. Bodies are Maps.
 
 | Contract | Event: topics, body |
 |---|---|
-| PT | `pt_minted` [sym] `{caller,receiver,shares:i128}`; `redeem` [sym] `{owner,receiver,shares:i128}`; `yield_updated` [sym] `{user,yield_in_ibt:i128}`; `yt_deployed` [sym] `{address}` |
+| PT | `pt_minted` [sym] `{caller,receiver,shares:i128}`; `redeem` [sym] `{owner,receiver,shares:i128}`; `yield_updated` [sym] `{user,yield_in_ibt:i128}`; `yield_claimed` [sym] `{receiver,user,yield_in_ibt:u128}`; `rates_stored_at_expiry` [sym] `{ibt_rate:u128,pt_rate:u128}`; `yt_deployed` [sym] `{address}` |
 | PT, YT | OZ 0.7 token events: `mint` and `burn` [sym, addr] body Map `{amount:i128}`; `transfer` [sym, from, to] body a bare `i128`; `approve` |
 | Factory | `factory_initialized`, `pt_deployed` |
 | Registry | `pt_added{pt}`, `factory_change`, `router_change`, `limit_order_engine_change`, `fee_collector_change`, `pt_wasm_hash_change`, `yt_wasm_hash_change` |
@@ -112,14 +112,15 @@ observed matches the lake's `topics_xdr` byte for byte. Bodies are Maps.
 `pt_minted.shares` equals both the PT and the YT `mint.amount` in the three
 transactions sampled (63,812,811; 64,347,726; and the matching burns at the
 `redeem` 63,812,816), so PT/YT `mint` and `burn` mirror `pt_minted` and
-`redeem`.
+`redeem`. Likewise `yield_claimed.yield_in_ibt` equals the `yield_updated`
+before it and the IBT `transfer` after it (64,972,235), and
+`rates_stored_at_expiry` fires once per PT at maturity (64,972,231, PT
+`CDRK5SWZ…`) and moves nothing; both are recognised as zero-row kinds.
 
 **Not yet seen on chain** (shapes from the public source only): `unwrap`,
-`yield_claimed`, `fee_claimed`, `rates_stored_at_expiry`, `pt_removed`,
-`fee_reduced`, `pt_upgraded`, `execute_completed`, `rewards_proxy_change`,
-`rewards_claimed`. The WASM carries their literals. The first maturity is PT
-`CDRK5SWZ…` on 2026-10-16 (duration 2,592,000 s), so expiry and claim events
-should start appearing from then.
+`fee_claimed`, `pt_removed`, `fee_reduced`, `pt_upgraded`,
+`execute_completed`, `rewards_proxy_change`, `rewards_claimed`. The WASM
+carries their literals.
 
 Gating note (ADR-0035): event names collide across contracts
 (`fee_collector_change` is on both the registry and the order engine;

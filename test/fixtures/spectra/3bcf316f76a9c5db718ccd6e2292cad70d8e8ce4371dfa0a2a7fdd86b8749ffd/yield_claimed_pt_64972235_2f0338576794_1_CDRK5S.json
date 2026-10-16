@@ -1,0 +1,16 @@
+{
+  "contract_id": "CDRK5SWZ7DQJ4BZUAZQABPSP7MZS4NO4PPW7LW6CVD5THZDVE63MVLJJ",
+  "role": "pt",
+  "market_decimals": 18,
+  "wasm_hash": "3bcf316f76a9c5db718ccd6e2292cad70d8e8ce4371dfa0a2a7fdd86b8749ffd",
+  "ledger": 64972235,
+  "tx_hash": "2f03385767948eaf59636c8e67a971e212d37eea69daa3a84ae8bfc32a091a54",
+  "op_index": 0,
+  "event_index": 1,
+  "ledger_closed_at": "2026-10-16T10:35:57Z",
+  "topics": [
+    "AAAADwAAAA15aWVsZF9jbGFpbWVkAAAA"
+  ],
+  "value": "AAAAEQAAAAEAAAADAAAADwAAAAhyZWNlaXZlcgAAABIAAAAAAAAAANP7ZxJLh+31zhardNDCyGADSMXBuQ8Vewe0mrwk02qJAAAADwAAAAR1c2VyAAAAEgAAAAAAAAAA0/tnEkuH7fXOFqt00MLIYANIxcG5DxV7B7SavCTTaokAAAAPAAAADHlpZWxkX2luX2lidAAAAAoAAAAAAAAAHb20pSZTh5J5",
+  "event_name": "yield_claimed"
+}

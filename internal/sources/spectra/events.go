@@ -124,11 +124,15 @@ const (
 )
 
 // Kinds recognised but projected as zero rows (ADR-0033 expected-zero).
-// PT/YT mint and burn restate pt_minted / redeem in the same transaction;
-// approve carries no Spectra state; the rest is governance and set-up.
+// PT/YT mint and burn restate pt_minted / redeem in the same transaction,
+// as yield_claimed restates yield_updated and the IBT transfer;
+// rates_stored_at_expiry moves nothing; approve carries no Spectra state;
+// the rest is governance and set-up.
 const (
 	EventMint                   = "mint"
 	EventBurn                   = "burn"
+	EventYieldClaimed           = "yield_claimed"
+	EventRatesStoredAtExpiry    = "rates_stored_at_expiry"
 	EventApprove                = "approve"
 	EventRoleGranted            = "role_granted"
 	EventRoleRevoked            = "role_revoked"
@@ -169,6 +173,8 @@ var kindRoles = map[string][]Role{
 	EventMint:                   {RolePT, RoleYT},
 	EventBurn:                   {RolePT, RoleYT},
 	EventApprove:                {RolePT, RoleYT, RoleIBT},
+	EventYieldClaimed:           {RolePT},
+	EventRatesStoredAtExpiry:    {RolePT},
 	EventRoleGranted:            governanceRoles,
 	EventRoleRevoked:            governanceRoles,
 	EventAdminTransferInitiated: governanceRoles,

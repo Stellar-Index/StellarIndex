@@ -1,0 +1,16 @@
+{
+  "contract_id": "CDRK5SWZ7DQJ4BZUAZQABPSP7MZS4NO4PPW7LW6CVD5THZDVE63MVLJJ",
+  "role": "pt",
+  "market_decimals": 18,
+  "wasm_hash": "3bcf316f76a9c5db718ccd6e2292cad70d8e8ce4371dfa0a2a7fdd86b8749ffd",
+  "ledger": 64972231,
+  "tx_hash": "a1ee63278e9e1a63807e9ce0331571bb99667159cce37d07e0cdfe492ef02a8b",
+  "op_index": 0,
+  "event_index": 0,
+  "ledger_closed_at": "2026-10-16T10:35:37Z",
+  "topics": [
+    "AAAADwAAABZyYXRlc19zdG9yZWRfYXRfZXhwaXJ5AAA="
+  ],
+  "value": "AAAAEQAAAAEAAAACAAAADwAAAAhpYnRfcmF0ZQAAAAoAAAAAA1wBezTzE7QqAAAAAAAADwAAAAdwdF9yYXRlAAAAAAoAAAAAAzsn3imnhTWVInK1",
+  "event_name": "rates_stored_at_expiry"
+}
