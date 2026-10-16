@@ -284,7 +284,7 @@ func (r *VWAPUSDFXResolver) resolveRate(ctx context.Context, asset canonical.Ass
 		return "", err
 	}
 	if !directFound && !legFound {
-		r.markNoMarket(asset, at)
+		r.markNoMarket(ctx, asset, at)
 	}
 	if rate == "" {
 		return "", nil
@@ -297,9 +297,14 @@ func (r *VWAPUSDFXResolver) resolveRate(ctx context.Context, asset canonical.Ass
 }
 
 // markNoMarket records that asset had neither a direct peg market nor an XLM market at `at`, keyed like USDPriceAt's rate entry so the
-// two expire together. XLM and the pegs are never marked: their missing rate is a pricing outage, which must stay a coverage gap.
-func (r *VWAPUSDFXResolver) markNoMarket(asset canonical.Asset, at time.Time) {
-	if isXLMAliasForm(asset) || slices.Contains(r.pegForms, asset.String()) {
+// two expire together. Anything that can be a pricing outage rather than an absent market stays a coverage gap, so nothing is marked
+// for XLM, a peg, an aliased asset (the XLM leg reads one form only) or while XLM/USD is unresolved (both lookups are windowed, and the
+// XLM leg's volume floor needs XLM/USD).
+func (r *VWAPUSDFXResolver) markNoMarket(ctx context.Context, asset canonical.Asset, at time.Time) {
+	if isXLMAliasForm(asset) || slices.Contains(r.pegForms, asset.String()) || len(canonical.AssetAliases(asset)) > 1 {
+		return
+	}
+	if usd, ok, err := r.USDPriceAt(ctx, canonical.NativeAsset(), at); err != nil || !ok || usd == "" {
 		return
 	}
 	r.storeCache(fxCacheKey{asset: "nomarket:" + asset.String(), bucketMs: at.UTC().Truncate(time.Minute).UnixMilli()},
