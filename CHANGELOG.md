@@ -20,6 +20,15 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.12] — 2026-10-17
+
+2 commits since v0.116.11. No migrations. No `pkg/*` break.
+
+### Fixed
+
+- **explorer:** the asset and pair tip streams open only after the price poll confirms a fresh, non-thin price, so thin or stale markets no longer trigger refused (404) stream requests (#3556, #3557).
+- **explorer:** exchange, aggregator and protocol links render only when the target page exists; the embed widget makes no request without an asset; SDEX no longer shows a false "Lake analytics unavailable"; RWA basis prose no longer says "priced by" for an admission-only oracle feed (#3557).
+
 ## [v0.116.11] — 2026-10-17
 
 1 commit since v0.116.10. No migrations. No `pkg/*` break.
@@ -52,13 +61,3 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 ### Fixed
 
 - **indexer:** every enabled source's event counter starts at 0, so the first event after a restart is counted by `rate()`; a lazily created counter hid it and the 6h–30h `source_stopped`/low-volume windows reported a live source as silent (#3545).
-
-## [v0.116.7] — 2026-10-16
-
-3 commits since v0.116.6. No migrations. No `pkg/*` break.
-
-### Fixed
-
-- **spectra:** the decoder recognises the PT maturity events `yield_claimed` (restates `yield_updated` and the IBT transfer) and `rates_stored_at_expiry` as zero-row kinds, so completeness recognition stops failing spectra from the first maturity at ledger 64,972,231 (#3542).
-- **restore-drill:** the restore runs with its own scratch `--spool-path`; pgbackrest restore wipes its spool's archive dir, which deleted the live cluster's archive-push acknowledgements and stalled WAL archiving for 45 min (#3543).
-- **ops:** a scheduled heavy job whose lock wait runs out behind another scheduled job defers (exit 75) instead of failing its unit (#3541).
