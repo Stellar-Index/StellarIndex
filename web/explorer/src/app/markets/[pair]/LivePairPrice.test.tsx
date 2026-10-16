@@ -232,3 +232,43 @@ describe('LivePairPrice — exact rounding', () => {
     expect(screen.getByText('$2.0001')).toBeInTheDocument();
   });
 });
+
+// A pair the aggregator has no price for 404s the tip pre-flight, and the
+// multiplexer slow-reopens it for as long as the tab is open.
+describe('LivePairPrice — tip stream gating', () => {
+  const props = {
+    base: 'crypto:XLM',
+    quote: 'fiat:USD',
+    initialPrice: '0.17',
+    initialObservedAt: null,
+    quoteIsUsd: true,
+    quoteSuffix: 'USD',
+  };
+
+  it('keeps the tip stream closed while the poll finds no price', async () => {
+    useTipStream.mockReturnValue(null);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: false, status: 404, json: async () => ({}) });
+    vi.stubGlobal('fetch', fetchMock);
+    renderPrice(<LivePairPrice {...props} />);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(useTipStream.mock.calls.every(([base]) => base === null)).toBe(true);
+  });
+
+  it('opens the tip stream once the poll returns a price', async () => {
+    useTipStream.mockReturnValue(null);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ data: { price: '0.18' }, flags: {} }),
+      }),
+    );
+    renderPrice(<LivePairPrice {...props} />);
+    await vi.waitFor(() =>
+      expect(useTipStream).toHaveBeenLastCalledWith('crypto:XLM', 'fiat:USD'),
+    );
+  });
+});
