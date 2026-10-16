@@ -67,7 +67,7 @@
 #   13. HEAVY_JOB_MEMORY_MAX reaches the scope (validated), and no root
 #      wrapper unit sets a MemoryMax= that could only cap the wrapper.
 #
-# Runs the wrapper's non-root exec path (no systemd-run / flock needed:
+# Runs the wrapper's non-root path (no systemd-run / flock needed:
 # flock is stubbed on PATH so this runs on macOS too).
 #
 # Run: bash scripts/ci/run-heavy-job-test.sh
@@ -122,7 +122,7 @@ fi
 exit 1
 SL
 chmod +x "$TMP/bin/sleep"
-# The wrapper branches on `id -u`: non-root execs the payload directly,
+# The wrapper branches on `id -u`: non-root runs the payload without a scope,
 # root wraps it in `systemd-run --scope --unit U -p K=V … CMD`. CI runners
 # and dev machines differ in uid, so a test keyed on the real uid exercised only one
 # branch — and the container verifier, which runs as root, found the second
@@ -246,6 +246,8 @@ else
   run HEAVY_JOB_OPS_ENV="$OPS_ENV" SYSTEMD_RUN_PROPS="$PROPS" HEAVY_JOB_STOP_TIMEOUT=2h
   if grep -qx 'TimeoutStopSec=2h' "$PROPS" && ! grep -qx 'TimeoutStopSec=5min' "$PROPS"; then ok "HEAVY_JOB_STOP_TIMEOUT=2h (the restamp's launch line) overrides the default"; else bad "HEAVY_JOB_STOP_TIMEOUT not honoured (props: $(tr '\n' ' ' < "$PROPS"))"; fi
 
+fi
+
   # ── 5b. the held-since metric exists during the job and only then ──
   # The textfile staleness alert suppresses lock-gated producers on it.
   mkdir -p "$TMP/tf"
@@ -261,6 +263,22 @@ HP
   rm -rf "$TMP/tf2"; mkdir -p "$TMP/tf2"
   run HEAVY_JOB_OPS_ENV="$OPS_ENV" FLOCK_HELD=1 HEAVY_JOB_TEXTFILE_DIR="$TMP/tf2"
   if [ "$rc" -eq 75 ] && [ -z "$(ls -A "$TMP/tf2")" ]; then ok "lock not acquired: no heavy_job_*.prom published"; else bad "lock-not-acquired run left a hold file (rc=$rc, left: $(ls "$TMP/tf2"))"; fi
+
+  # Only a Type=notify unit keeps the bare exec; it cannot publish a hold.
+  if [ "$branch" = "non-root" ]; then
+    rm -rf "$TMP/tf3"; mkdir -p "$TMP/tf3"
+    cat > "$TMP/pid-payload.sh" <<'PP'
+#!/usr/bin/env bash
+echo "PID=$$"
+ls -A "$HEAVY_JOB_TEXTFILE_DIR"
+PP
+    chmod +x "$TMP/pid-payload.sh"
+    NOTIFY_SOCKET=/run/test.sock HEAVY_JOB_TEXTFILE_DIR="$TMP/tf3" HEAVY_JOB_OPS_ENV="$OPS_ENV" env -u INVOCATION_ID "$WRAP" test-job "$TMP/pid-payload.sh" >"$TMP/out" 2>"$TMP/err" & np=$!
+    wait "$np"
+    if out_has "PID=$np" && ! grep -q heavy_job "$TMP/out"; then ok "non-root Type=notify: payload execs as the main pid"; else bad "non-root Type=notify: payload not exec'd as main pid (want PID=$np, out: $(tr '\n' ' ' < "$TMP/out"))"; fi
+  fi
+
+if [ "$branch" != "non-root" ]; then
 
 # ── 6. the bound is validated, not passed through ──────────────────
   # `2` is the one that motivated this: a bare integer is SECONDS under

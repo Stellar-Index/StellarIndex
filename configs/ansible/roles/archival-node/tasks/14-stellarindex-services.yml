@@ -688,13 +688,35 @@
       # Type=notify units must keep the payload as the unit's MAIN pid
       # for sd_notify/WatchdogSec — a systemd-run scope would move it
       # into a child cgroup and silently break NotifyAccess=main. So for
-      # non-root callers, exec the payload directly under the held lock.
+      # non-root callers, run the payload without a scope under the held lock.
       # (Root one-shots fall through to the memory-capped scope below;
       # non-root heavy scripts already self-guard memory — e.g.
       # CHSUPPLY_MEMGUARD / 25k-ledger chunking.)
+      # Publish when this job took the host-wide lock, so the textfile
+      # staleness alert can tell "producer deferred behind a long heavy
+      # job" from "producer dead" (stellarindex_textfile_producer_stale,
+      # capped at 72h of hold). One file per job NAME; removed on exit.
+      HELD_PROM="${HEAVY_JOB_TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}/heavy_job_${NAME//[^A-Za-z0-9_]/_}.prom"
+      publish_hold() {
+        [ -d "$(dirname "$HELD_PROM")" ] || return 0
+        {
+          echo "# HELP stellarindex_heavy_lock_held_since_unix Unix time this job took the host-wide heavy lock; present only while it is held."
+          echo "# TYPE stellarindex_heavy_lock_held_since_unix gauge"
+          echo "stellarindex_heavy_lock_held_since_unix{ops_job=\"${NAME}\"} $(date +%s)"
+        } > "${HELD_PROM}.$$" && mv "${HELD_PROM}.$$" "$HELD_PROM" || rm -f "${HELD_PROM}.$$"
+      }
+
       if [ "$(id -u)" -ne 0 ]; then
         echo "run-heavy-job: WARNING running as non-root — the systemd-run MemoryMax=20G scope cap and the root-FS/DATA-POOL disk watchdog are INACTIVE for this job (only the singleton lock applies). The caller must self-guard memory/disk (e.g. CHSUPPLY_MEMGUARD / chunking)." >&2
-        exec "$@"
+        # Only a Type=notify unit (NOTIFY_SOCKET set) needs the payload as main pid.
+        # The rest run it as a child, so the hold file is published and removed on exit.
+        [ -n "${NOTIFY_SOCKET:-}" ] && exec "$@"
+        publish_hold
+        trap 'rm -f "$HELD_PROM"' EXIT
+        trap 'exit 143' TERM
+        trap 'exit 130' INT
+        "$@"
+        exit $?
       fi
 
       UNIT="heavy-${NAME}-$$"
@@ -763,18 +785,7 @@
         done
       ) 7>&- 8>&- 9>&- &
       WATCHDOG=$!
-      # Publish when this job took the host-wide lock, so the textfile
-      # staleness alert can tell "producer deferred behind a long heavy
-      # job" from "producer dead" (stellarindex_textfile_producer_stale,
-      # capped at 72h of hold). One file per job NAME; removed on exit.
-      HELD_PROM="${HEAVY_JOB_TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}/heavy_job_${NAME//[^A-Za-z0-9_]/_}.prom"
-      if [ -d "$(dirname "$HELD_PROM")" ]; then
-        {
-          echo "# HELP stellarindex_heavy_lock_held_since_unix Unix time this job took the host-wide heavy lock; present only while it is held."
-          echo "# TYPE stellarindex_heavy_lock_held_since_unix gauge"
-          echo "stellarindex_heavy_lock_held_since_unix{ops_job=\"${NAME}\"} $(date +%s)"
-        } > "${HELD_PROM}.$$" && mv "${HELD_PROM}.$$" "$HELD_PROM" || rm -f "${HELD_PROM}.$$"
-      fi
+      publish_hold
       trap 'kill "$WATCHDOG" 2>/dev/null || true; rm -f "$HELD_PROM"' EXIT
 
       # ── Stop bound ──────────────────────────────────────────────
