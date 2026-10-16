@@ -6,16 +6,16 @@ status: current
 
 # RedStone — contract & event verification
 
-> **For the RedStone team:** this is the Adapter contract and the 32-feed
+> **For the RedStone team:** this is the Adapter contract and the 33-feed
 > registry Stellar Index ingests. Please confirm the Adapter address and
 > tell us if new feeds have been added since our 2026-07-24 capture (a
 > feed we don't have in the registry is skipped, not mis-attributed —
 > see Q3).
 >
 > - **Enumeration method:** single Adapter contract (pinned by ID) + an
->   in-code registry of the 32 mainnet `feed_id` strings (19 captured
->   2026-05-22, 11 from the 2026-07-24 relayer expansion, then USDT0
->   and `earnUSDC_FUNDAMENTAL`), each mapped
+>   in-code registry of the 33 mainnet `feed_id` strings (19 captured
+>   2026-05-22, 11 from the 2026-07-24 relayer expansion, then USDT0,
+>   `earnUSDC_FUNDAMENTAL` and its `/USD` sibling), each mapped
 >   to a canonical `(base, quote)` pair.
 > - **Last verified:** 2026-07-27 (source: `internal/sources/redstone`;
 >   feed_ids captured on-chain 2026-05-22 + 2026-07-24; WASM audit
@@ -105,10 +105,10 @@ destructuring.
 
 ## Feed registry (ADR-0028)
 
-`feeds.go` holds all 32 mainnet feeds keyed on the **exact** on-chain
+`feeds.go` holds all 33 mainnet feeds keyed on the **exact** on-chain
 `feed_id()` string (19 captured 2026-05-22, 11 more from the
-2026-07-24 relayer expansion — see below — then USDT0 and
-`earnUSDC_FUNDAMENTAL`). The feed_id is not always
+2026-07-24 relayer expansion — see below — then USDT0,
+`earnUSDC_FUNDAMENTAL` and its `/USD` sibling). The feed_id is not always
 the display name — `EUROC` is `EUROC/EUR`, `BENJI` is
 `BENJI_ETHEREUM_FUNDAMENTAL`, SolvBTC variants carry `_FUNDAMENTAL`
 suffixes. Two correctness consequences:
@@ -157,6 +157,7 @@ magnitude cross-checks:
 | `savUSD_FUNDAMENTAL` | `crypto:savUSD_FUNDAMENTAL` | USD | 1.1877 — Avant staked USD, crypto-native yield vault (same class as sUSDe, NOT rwa) |
 | `SolvBTC_FUNDAMENTAL/USD` | `crypto:SolvBTC_FUNDAMENTAL_USD` | USD | 65,430 — NAV **in USD**; the unsuffixed feed publishes the NAV **ratio** vs BTC (1.0029, confirmed in our stored rows), so the two get distinct codes. Feed_id `/` normalized to `_` (URL-path safety) |
 | `SolvBTC.BBN_FUNDAMENTAL/USD` | `crypto:SolvBTC.BBN_FUNDAMENTAL_USD` | USD | 65,430 — byte-identical to the SolvBTC leg on every capture, which is what identifies SolvBTC (not BTC) as SolvBTC.BBN's reserve |
+| `earnUSDC_FUNDAMENTAL/USD` | earnUSDC vault contract | USD | 1.0175 (2026-10-16) — first seen 2026-09-18 in the same batches as the bare feed. Dividing it by the bare value gives RedStone's USDC price (0.999829 vs 0.999828), so the bare `earnUSDC_FUNDAMENTAL` is NAV in USDC and is quoted `crypto:USDC` |
 | `USDY_FUNDAMENTAL/USD` | `rwa:USDY` | USD | 1.1408 (CG ondo-us-dollar-yield 1.14) — Ondo tokenized-treasury note |
 | `USST_FUNDAMENTAL` | `rwa:USST` | USD | 1.0096 — STBL treasury-backed stablecoin |
 | `XAUm_FUNDAMENTAL/USD` | `rwa:XAUm` | USD | 4,115.67/oz (CG pax-gold 4,088) — Matrixdock tokenized gold |
