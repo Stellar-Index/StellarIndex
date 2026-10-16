@@ -2100,7 +2100,7 @@ func hashDBVerifyPass(
 	// "object missing" here is the deleted-history tamper class hashdb exists to catch, not a
 	// race. With tolerance on, a deleted object silently ended the sweep early with outcome="ok",
 	// a vacuously green detector.
-	lsCfg.TolerateTrailingMissing = false
+	lsCfg = hashDBVerifyStreamConfig(lsCfg)
 
 	start := time.Now()
 	verifier := archivecompleteness.NewHashDBWindowVerifier(verifyDB, from, to)

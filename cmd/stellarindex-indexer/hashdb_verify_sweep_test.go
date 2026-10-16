@@ -188,3 +188,21 @@ func TestVerifyHashDBRangeFlags_Validate(t *testing.T) {
 		})
 	}
 }
+
+// TestHashDBVerifyStreamConfig_BoundsPrefetchAndStaysStrict pins the sweep's read config. Without
+// the Buffered override the SDK prefetches 10,000 ledgers (~5 GB) on every hourly sweep.
+func TestHashDBVerifyStreamConfig_BoundsPrefetchAndStaysStrict(t *testing.T) {
+	got := hashDBVerifyStreamConfig(ledgerstream.Config{TolerateTrailingMissing: true})
+	if got.TolerateTrailingMissing {
+		t.Fatal("TolerateTrailingMissing = true, want false: a missing object is the tamper class the sweep exists to catch")
+	}
+	if got.Buffered == nil {
+		t.Fatal("Buffered = nil, want a bounded override (nil means the SDK's 10,000-ledger default)")
+	}
+	if got.Buffered.BufferSize == 0 || got.Buffered.BufferSize > 1024 {
+		t.Fatalf("BufferSize = %d, want 1..1024", got.Buffered.BufferSize)
+	}
+	if got.Buffered.NumWorkers == 0 || got.Buffered.RetryLimit == 0 || got.Buffered.RetryWait == 0 {
+		t.Fatalf("Buffered = %+v, want non-zero workers, retry limit and retry wait", *got.Buffered)
+	}
+}
