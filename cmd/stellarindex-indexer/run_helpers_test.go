@@ -86,6 +86,23 @@ func TestSetSourceEnabled_FalseSetsZeroNotAbsent(t *testing.T) {
 	}
 }
 
+// TestSetSourceEnabled_PreinitialisesEventCounter: the source_stopped rules take rate() over 6h-30h windows that
+// span restarts, and rate() cannot see the event that creates a series, so an enabled source must start at 0.
+func TestSetSourceEnabled_PreinitialisesEventCounter(t *testing.T) {
+	obs.SourceEventsTotal.Reset()
+	t.Cleanup(obs.SourceEventsTotal.Reset)
+
+	setSourceEnabled([]string{"Comet"}, true)
+	setSourceEnabled([]string{"kraken"}, false)
+
+	if n := testutil.CollectAndCount(obs.SourceEventsTotal); n != 1 {
+		t.Fatalf("source_events_total has %d series, want exactly 1 (comet; a disabled source gets none)", n)
+	}
+	if got := testutil.ToFloat64(obs.SourceEventsTotal.WithLabelValues("comet")); got != 0 {
+		t.Errorf("source_events_total{source=\"comet\"} = %v, want 0", got)
+	}
+}
+
 // ─── startExternalConnectors ─────────────────────────────────────
 
 // TestStartExternalConnectors_NothingEnabledStartsNothing pins that the all-disabled path returns a no-op wait func and
