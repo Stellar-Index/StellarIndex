@@ -82,6 +82,11 @@ TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
 # which PrivateTmp does not shadow and ProtectSystem=full leaves writable; NOT
 # under DRILL_ROOT, so a refusal leaves the drill volume as it found it.
 DRILL_LOCK="${DRILL_LOCK:-/run/lock/restore-drill.lock}"
+# The nightly backup's unit, and how long to wait for it. A drill that starts
+# while it is still writing restores the PREVIOUS night's backup and must then
+# drain a day of WAL, which overran WAL_DRAIN_TIMEOUT on r1 (2026-10-15).
+BACKUP_UNIT="${BACKUP_UNIT:-pgbackrest-backup.service}"
+BACKUP_WAIT_TIMEOUT="${BACKUP_WAIT_TIMEOUT:-21600}"
 
 fail_count=0
 note() { echo "restore-drill: $*" >&2; }
@@ -177,6 +182,20 @@ if [[ -x "$PG_BIN/pg_isready" ]]; then
     done
     exit 2
   fi
+fi
+
+# Wait out a running backup before choosing what to restore. A oneshot reads
+# "activating" while it runs. Still running at the deadline is a refusal.
+if command -v systemctl >/dev/null; then
+  backup_deadline=$(( $(date +%s) + BACKUP_WAIT_TIMEOUT ))
+  while [[ "$(systemctl is-active "$BACKUP_UNIT" 2>/dev/null || true)" =~ ^(active|activating|reloading)$ ]]; do
+    if (( $(date +%s) >= backup_deadline )); then
+      note "$BACKUP_UNIT still running after ${BACKUP_WAIT_TIMEOUT}s — refusing (the drill would restore the previous backup)"
+      exit 2
+    fi
+    note "waiting for $BACKUP_UNIT to finish before choosing the backup"
+    sleep 60
+  done
 fi
 
 backup_bytes=$(sudo -u postgres pgbackrest --stanza="$STANZA" --repo="$DRILL_REPO" --output=json info 2>/dev/null \
