@@ -94,6 +94,7 @@ case "${*: -1}" in
   restore)
     # the drill's real restore populates --pg1-path; mimic a partial copy
     for a in "$@"; do [[ "$a" == --pg1-path=* ]] && echo partial > "${a#--pg1-path=}/PG_VERSION"; done
+    printf '%s\n' "$@" > "${FAKE_RESTORE_ARGS:-/dev/null}"
     echo "pgbackrest: (fake) restore rc=${FAKE_RESTORE_RC:-0}" >&2
     exit "${FAKE_RESTORE_RC:-0}" ;;
   *) echo "fake pgbackrest: unexpected command: $*" >&2; exit 99 ;;
@@ -221,8 +222,13 @@ fi
 
 # ─── 2. pgbackrest restore fails: evidence + metric + partial removed ──
 c="$work/c2"; mkdir -p "$c"; seed_stale_pass "$c"
-FAKE_DF_AVAIL_G=5000 FAKE_BACKUP_BYTES=$((300 * 1073741824)) FAKE_RESTORE_RC=1 run_drill "$c"
+FAKE_RESTORE_ARGS="$c/restore-args" FAKE_DF_AVAIL_G=5000 FAKE_BACKUP_BYTES=$((300 * 1073741824)) FAKE_RESTORE_RC=1 run_drill "$c"
 rc="$(cat "$c/rc")"
+if grep -q "^--spool-path=$c/root/pgdata-.*\\.spool$" "$c/restore-args"; then
+  ok "restore runs with its own --spool-path under DRILL_ROOT, not the live cluster's"
+else
+  bad "restore must pass a scratch --spool-path (restore wipes the live archive-push acks otherwise): $(cat "$c/restore-args" 2>/dev/null)"
+fi
 if [[ "$rc" == "1" ]]; then
   ok "restore failure exits 1 (any failed check)"
 else

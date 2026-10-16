@@ -217,6 +217,9 @@ fi
 note "capacity: ${free_gb}G free under $DRILL_ROOT ≥ ${need_gb}G needed for a ${backup_gb}G backup (+ ${DRILL_POOL_FLOOR_GB}G pool floor)"
 
 DATA_DIR="$DRILL_ROOT/pgdata-$(date +%Y%m%d-%H%M%S)"
+# restore wipes its spool-path's archive dir; the default one holds the live
+# cluster's archive-push acks, and losing them stalls its archiver.
+SPOOL_DIR="$DATA_DIR.spool"
 # 1 while `pgbackrest restore` is writing DATA_DIR. A restore that dies part-way
 # (ENOSPC, repo corruption, kill) leaves a multi-hundred-GB partial copy with NO
 # diagnostic value (the pgbackrest output is the diagnosis) that must not linger
@@ -245,9 +248,9 @@ cleanup() {
   fi
   if [[ "$restore_in_progress" -eq 1 ]]; then
     echo "restore-drill: removing PARTIAL restore $DATA_DIR (pgbackrest restore did not complete; its output above is the diagnostic)" >&2
-    rm -rf "$DATA_DIR"
+    rm -rf "$DATA_DIR" "$SPOOL_DIR"
   elif [[ "$fail_count" -eq 0 ]]; then
-    rm -rf "$DATA_DIR"
+    rm -rf "$DATA_DIR" "$SPOOL_DIR"
   else
     echo "restore-drill: KEEPING $DATA_DIR for diagnosis (failures=$fail_count); delete it manually" >&2
   fi
@@ -469,11 +472,11 @@ abort_drill() {
 # ─── phase 1: restore ───────────────────────────────────────────────
 drill_stage="pg_restore"
 note "restoring stanza=$STANZA repo=$DRILL_REPO into $DATA_DIR …"
-mkdir -p "$DATA_DIR" && chown postgres:postgres "$DATA_DIR" && chmod 700 "$DATA_DIR"
+mkdir -p "$DATA_DIR" "$SPOOL_DIR" && chown postgres:postgres "$DATA_DIR" "$SPOOL_DIR" && chmod 700 "$DATA_DIR" "$SPOOL_DIR"
 restore_started=$(date +%s)
 restore_in_progress=1
 if sudo -u postgres pgbackrest --stanza="$STANZA" --repo="$DRILL_REPO" \
-     --pg1-path="$DATA_DIR" --type=default restore; then
+     --pg1-path="$DATA_DIR" --spool-path="$SPOOL_DIR" --type=default restore; then
   restore_in_progress=0
   restore_secs=$(( $(date +%s) - restore_started ))
   check "pg_restore" 1 "completed in ${restore_secs}s from repo${DRILL_REPO}"
