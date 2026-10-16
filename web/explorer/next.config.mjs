@@ -51,6 +51,11 @@ const nextConfig = {
   // if a page legitimately stalls forever we still notice.
   staticPageGenerationTimeout: 180,
 
+  // One export worker: buildFetch's MAX_IN_FLIGHT cap and URL memo are per worker, so the default
+  // (cpus - 1) workers multiplied the API load and re-fetched shared paths; two mainnet builds
+  // sent ~12k requests in 20 min and paged slo_latency_burn.
+  ...(openNext ? {} : { experimental: { cpus: 1 } }),
+
   // Sourcemaps in production help when debugging from issue reports.
   productionBrowserSourceMaps: true,
 

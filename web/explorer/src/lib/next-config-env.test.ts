@@ -91,3 +91,15 @@ describe('API_BASE_URL resolution (client.ts)', () => {
     expect(API_BASE_URL).toBe('http://api.ci-stub.invalid');
   });
 });
+
+describe('static export worker count', () => {
+  it('exports with one worker so the per-worker fetch cap is the build-wide cap', async () => {
+    vi.resetModules();
+    vi.stubEnv('OPEN_NEXT', '');
+    // @ts-expect-error TS7016 — untyped .mjs module
+    const mod = (await import('../../next.config.mjs')) as {
+      default: { experimental?: { cpus?: number } };
+    };
+    expect(mod.default.experimental?.cpus).toBe(1);
+  });
+});
