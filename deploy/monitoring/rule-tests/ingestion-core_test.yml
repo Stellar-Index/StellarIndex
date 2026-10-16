@@ -1348,28 +1348,32 @@ tests:
         alertname: stellarindex_ingestion_source_insert_stale
         exp_alerts: []
 
-  # ── guard: the sparse-source carve-out (unless-branch) ────────────
-  # phoenix at 2h stale would trip the 1h arm; the `unless` hands it
-  # to the 24h arm, which is not yet breached.
+  # ── guard: a projected source is carved out of the 1h budget ──────
+  # sushiswap_v3 at 2h quiet with its projector at the tip would trip the
+  # 1h arm; the `unless` hands it to the 24h arm, which is not yet breached.
   - interval: 1m
-    name: a 2h-quiet sparse source is carved out of the 1h budget
+    name: a 2h-quiet projected source is carved out of the 1h budget
     input_series:
-      - series: 'stellarindex_source_last_insert_unix{job="stellarindex_indexer",instance="r1:9100",source="phoenix"}'
+      - series: 'stellarindex_source_last_insert_unix{job="stellarindex_indexer",instance="r1:9100",source="sushiswap_v3"}'
         values: '0+0x125'
-      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="phoenix"}'
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="sushiswap_v3"}'
+        values: '1+0x125'
+      - series: 'stellarindex_projector_lag_ledgers{job="stellarindex_indexer",instance="r1:9100",source="sushiswap_v3"}'
         values: '1+0x125'
     alert_rule_test:
       - eval_time: 120m
         alertname: stellarindex_ingestion_source_insert_stale
         exp_alerts: []
 
-  # ── firing, sparse branch: phoenix quiet past its 24h budget ──────
+  # ── firing, projected branch: phoenix quiet past its 24h budget ────
   - interval: 1m
-    name: a sparse source quiet past 24h tickets on the second arm
+    name: a projected source quiet past 24h tickets on the second arm
     input_series:
       - series: 'stellarindex_source_last_insert_unix{job="stellarindex_indexer",instance="r1:9100",source="phoenix"}'
         values: '0+0x1460'
       - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="phoenix"}'
+        values: '1+0x1460'
+      - series: 'stellarindex_projector_lag_ledgers{job="stellarindex_indexer",instance="r1:9100",source="phoenix"}'
         values: '1+0x1460'
     alert_rule_test:
       - eval_time: 1455m

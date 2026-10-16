@@ -755,21 +755,23 @@ groups:
       # the budget while source_enabled=1. Covers low-volume sources (phoenix, comet)
       # whose insert rate never crosses the rate-shape 0.5/s threshold.
       - alert: stellarindex_ingestion_source_insert_stale
-        # 1 h budget for normal sources; 24 h for the sparse Soroban AMMs (comet,
-        # phoenix): comet is ~20-70 trades/day and bursty, phoenix's measured 30-day max
-        # gap is 8h28m, and a lake-verified 12h lull trips a 6 h budget. 24 h still
-        # catches a day-scale stall; the ADR-0033 completeness verdict is the
-        # correctness net. Extend the regex as new sparse sources appear.
+        # 1 h budget for dispatcher-written sources. A projected source (one with a
+        # stellarindex_projector_lag_ledgers series) gets 24 h: its freshness is the
+        # projector cursor, which projector_lag_high watches, and quiet pools go hours
+        # without a swap (sushiswap_v3 2026-10-16, phoenix 8h28m, comet ~20/day). The
+        # 24 h arm catches a decoder that silently drops every row; the ADR-0033
+        # completeness verdict is the correctness net.
         expr: |
           (
             time() - stellarindex_source_last_insert_unix > 3600
             and on (source) stellarindex_source_enabled == 1
-            unless on (source) stellarindex_source_last_insert_unix{source=~"comet|phoenix"}
+            unless on (source) stellarindex_projector_lag_ledgers
           )
           or
           (
-            time() - stellarindex_source_last_insert_unix{source=~"comet|phoenix"} > 86400
+            time() - stellarindex_source_last_insert_unix > 86400
             and on (source) stellarindex_source_enabled == 1
+            and on (source) stellarindex_projector_lag_ledgers
           )
         for: 10m
         labels:
