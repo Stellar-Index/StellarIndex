@@ -255,10 +255,93 @@ func TestUsdLabel_ThinVersusNoMarket(t *testing.T) {
 	v, label = run(
 		scriptedResult{cols: []string{"bucket", "vwap"}},
 		xlmLegMiss(),
+		directHit(at.Add(-time.Minute), "0.25"), // XLM/USD resolves, so the miss is an absent market
+		scriptedResult{cols: []string{"bucket", "vwap"}},
+		xlmLegMiss(),
+	)
+	if v != nil || label != "unroutable" {
+		t.Errorf("no market on either leg: usd_volume=%v label=%q, want nil/unroutable", v, label)
+	}
+
+	// Both lookups are windowed, and the XLM leg's volume floor needs XLM/USD: with XLM/USD unresolved an
+	// empty lookup can be the outage itself, so the trade stays a coverage gap.
+	v, label = run(
+		scriptedResult{cols: []string{"bucket", "vwap"}},
+		xlmLegMiss(),
+		scriptedResult{cols: []string{"bucket", "vwap"}}, scriptedResult{cols: []string{"bucket", "vwap"}}, scriptedResult{cols: []string{"bucket", "vwap"}},
+		scriptedResult{cols: []string{"bucket", "vwap"}},
+		xlmLegMiss(),
+		scriptedResult{cols: []string{"bucket", "vwap"}}, scriptedResult{cols: []string{"bucket", "vwap"}}, scriptedResult{cols: []string{"bucket", "vwap"}},
+	)
+	if v != nil || label != "no" {
+		t.Errorf("no market while XLM/USD is out: usd_volume=%v label=%q, want nil/no", v, label)
+	}
+
+	// The base has an XLM market but XLM/USD is missing: that is a pricing outage, not a missing route.
+	v, label = run(
+		scriptedResult{cols: []string{"bucket", "vwap"}},
+		xlmLegHit(at.Add(-time.Hour), "4"),
+		// XLM direct: no rate on any of its three forms
+		scriptedResult{cols: []string{"bucket", "vwap"}}, scriptedResult{cols: []string{"bucket", "vwap"}}, scriptedResult{cols: []string{"bucket", "vwap"}},
 		scriptedResult{cols: []string{"bucket", "vwap"}},
 		xlmLegMiss(),
 	)
 	if v != nil || label != "no" {
-		t.Errorf("no market: usd_volume=%v label=%q, want nil/no", v, label)
+		t.Errorf("XLM/USD outage: usd_volume=%v label=%q, want nil/no", v, label)
+	}
+}
+
+// TestMarkNoMarket_NeverMarksXLMOrAPeg pins that an anchor's missing rate is never a missing route: XLM-paired and peg-paired trades
+// must stay "no" so a pricing outage keeps tripping the coverage alert.
+func TestMarkNoMarket_NeverMarksXLMOrAPeg(t *testing.T) {
+	at := time.Date(2026, 9, 21, 12, 34, 0, 0, time.UTC)
+	r, _ := substanceTestResolver(t, at, directHit(at.Add(-time.Minute), "0.25"))
+	peg, err := canonical.ParseAsset(usdcClassicPeg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	junk := substanceTestAsset(t, "JUNK")
+	for _, a := range []canonical.Asset{canonical.NativeAsset(), peg, junk} {
+		r.markNoMarket(context.Background(), a, at)
+	}
+	if r.NoMarket(canonical.NativeAsset(), at) || r.NoMarket(peg, at) {
+		t.Error("XLM or a USD peg was marked as having no market")
+	}
+	if !r.NoMarket(junk, at) || !r.NoMarket(junk, at.Add(30*time.Second)) {
+		t.Error("an unanchored asset with no market was not marked for its minute")
+	}
+	if r.NoMarket(junk, at.Add(time.Minute)) {
+		t.Error("the marker leaked into the next minute")
+	}
+}
+
+// An aliased asset is never marked: the XLM leg reads one spelling, so its other spelling's market would read as none.
+func TestMarkNoMarket_NeverMarksAnAliasedAsset(t *testing.T) {
+	const (
+		issuerAccount   = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+		sorobanContract = "CAAVZKRT2BJ5A5Y5SAGQNA3IC5EDAODEWBHO5CYR5ASLFDZYOQN6NEO3"
+	)
+	reg, err := canonical.NewAliasRegistry(canonical.PubnetPassphrase, map[string]string{sorobanContract: "USTRY:" + issuerAccount})
+	if err != nil {
+		t.Fatalf("NewAliasRegistry: %v", err)
+	}
+	canonical.InstallAliasRegistry(reg)
+	t.Cleanup(func() { canonical.InstallAliasRegistry(nil) })
+
+	at := time.Date(2026, 9, 21, 12, 34, 0, 0, time.UTC)
+	r, _ := substanceTestResolver(t, at, directHit(at.Add(-time.Minute), "0.25"))
+	ustry, err := canonical.NewClassicAsset("USTRY", issuerAccount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sac, err := canonical.ParseAsset(sorobanContract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range []canonical.Asset{ustry, sac} {
+		r.markNoMarket(context.Background(), a, at)
+		if r.NoMarket(a, at) {
+			t.Errorf("aliased form %s was marked as having no market", a)
+		}
 	}
 }
