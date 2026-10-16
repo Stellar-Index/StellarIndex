@@ -70,8 +70,14 @@ groups:
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ingestion_source_stopped
 
       - alert: stellarindex_ingestion_source_stopped_daily_publisher
+        # The unless arm: each restart re-emits the current fix on its first poll, so
+        # a counter that restarts at the same count shows no increase while data flows.
         expr: |
-          sum by (source) (rate(stellarindex_source_events_total[30h])) == 0
+          (
+            sum by (source) (rate(stellarindex_source_events_total[30h])) == 0
+            unless on (source)
+            (time() - max by (source) (max_over_time(stellarindex_source_last_event_unix[30h]))) < 30 * 3600
+          )
           and on (source) stellarindex_source_enabled == 1
           and on (source) (
             label_replace(vector(1), "source", "ecb", "", "")
