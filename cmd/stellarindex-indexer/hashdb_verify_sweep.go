@@ -4,10 +4,29 @@ import (
 	"context"
 	"log/slog"
 	"sync/atomic"
+	"time"
+
+	"github.com/stellar/go-stellar-sdk/ingest/ledgerbackend"
 
 	"github.com/Stellar-Index/StellarIndex/internal/hashdb"
 	"github.com/Stellar-Index/StellarIndex/internal/ledgerstream"
 )
+
+// hashDBVerifyBufferLedgers caps the sweep's prefetch. The SDK default for 1-ledger files is 10,000
+// ledgers, which held ~5 GB at the top of every hourly sweep and pushed the indexer past MemoryHigh.
+const hashDBVerifyBufferLedgers = 256
+
+// hashDBVerifyStreamConfig is the sweep's read config: strict on missing objects and with a bounded prefetch.
+func hashDBVerifyStreamConfig(lsCfg ledgerstream.Config) ledgerstream.Config {
+	lsCfg.TolerateTrailingMissing = false
+	lsCfg.Buffered = &ledgerbackend.BufferedStorageBackendConfig{
+		BufferSize: hashDBVerifyBufferLedgers,
+		NumWorkers: 4,
+		RetryLimit: 5,
+		RetryWait:  30 * time.Second,
+	}
+	return lsCfg
+}
 
 // hashDBWindowRecent is the stellarindex_hashdb_verify_runs_total "window" label value.
 const hashDBWindowRecent = "recent"
