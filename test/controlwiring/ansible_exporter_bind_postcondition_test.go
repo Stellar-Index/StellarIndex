@@ -17,7 +17,7 @@ import (
 
 const exportersTasksPath = "configs/ansible/roles/archival-node/tasks/16-prometheus-exporters.yml"
 
-var loopbackArgsPortRE = regexp.MustCompile(`ARGS="--web\.listen-address=127\.0\.0\.1:(\d+)"`)
+var loopbackArgsPortRE = regexp.MustCompile(`ARGS="--web\.listen-address=127\.0\.0\.1:(\d+)[ "]`)
 
 func loadExporterTasks(t *testing.T) (string, []map[string]any) {
 	t.Helper()
