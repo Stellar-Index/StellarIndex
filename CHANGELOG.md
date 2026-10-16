@@ -20,6 +20,19 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.2] — 2026-10-16
+
+3 commits since v0.116.1. No migrations. No `pkg/*` break.
+
+### Changed
+
+- **storage:** the XLM/USD anchor reads its pair's freeze events once per query instead of once per minute row; output is unchanged and the 7-day sparkline query drops from ~210 ms to ~85 ms (#3525).
+- **alerts:** `stellarindex_ingestion_source_insert_stale` judges projected sources on its 24h arm, since their freshness is the projector cursor; dispatcher-written sources keep the 1h budget (#3526).
+
+### Fixed
+
+- **indexer:** the hourly hashdb verify sweep reads with a 256-ledger prefetch buffer instead of the SDK's 10,000, which held ~5 GB and pushed the indexer into swap (#3524).
+
 ## [v0.116.1] — 2026-10-16
 
 4 commits since v0.116.0. No migrations. No `pkg/*` break.
@@ -88,39 +101,3 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 - **explorer:** a route switch no longer crashes a page with `Cannot read properties of undefined`; one React Query key now holds one response shape (#3504).
 - **explorer:** link hovers no longer log 404s for the `__PAGE__` prefetch files (#3509).
 - **explorer:** status, methodology and service-level pages use the standard page shell; the footer matches the content width; the network switcher stays on screen; the sidebar search box is darker (#3505, #3506).
-
-## [v0.114.0] — 2026-10-15
-
-67 commits since v0.113.0. No migrations. One new ClickHouse table (`stellar.sponsorship_events`). No `pkg/*` break (`pkg/client` gains the account entry-change, sponsorship and claimable-balance routes).
-
-### Operator actions
-
-- **ClickHouse:** apply `deploy/clickhouse/sponsorship_events.sql`; `ch-entry-history` then derives only sponsorship events, under its own watermark and never past `entry_index` (#3438, #3446).
-- **ops:** `sep1-refresh` publishes run counters through the node-exporter textfile; `stellarindex_sep1_refresh_*` alerts cover timeouts, failures and staleness (#3448).
-
-### Added
-
-- **api:** `GET /v1/accounts/{g_strkey}/entry-changes` and `GET /v1/assets/{asset_id}/entry-changes` from the entry index (#3435, #3437).
-- **api:** an account's sponsorship lifecycle, with a proof against its counters (#3439).
-- **api:** `GET /v1/accounts/{g_strkey}/claimable-balances`: the account's unclaimed claimable balances; the explorer account page shows them (#3490).
-- **api:** `?include=sparkline24h` fills `price_history_24h` on `/v1/assets` (#3489).
-- **api:** `GET /v1/assets/{asset_id}/trustline-history`: trustlines created and removed per UTC day with the open count; the asset page's Holders tab charts it (#3498).
-- **explorer:** every page rebuilt on the new design system, with clickable table rows, keyboard focus rings, the converter rework and a data-source disclosures overlay (#3459–#3487).
-- **ops:** `verify-network-state` gains a live-state check (#3453).
-- **status:** status.stellarindex.io is built from the explorer, with the same chrome; the standalone `web/status` app is gone (#3493, #3494).
-
-### Fixed
-
-- **lending:** Blend backstop and emission KPIs are shown in tokens, not base units (#3488).
-- **protocols:** the SDEX 7d block builds again; its raw-trade KPIs (unique traders, average size) are served at 24h only (#3499).
-- **dex:** the stubbed Phoenix pool is out of the TVL pool set (#3454).
-- **archive:** `galexie-mirror-verify` normalises upgrade entry-change order (#3450); hot-archive mismatch samples carry both ledgers (#3457).
-- **monitoring:** the availability-burn, quiet-source and curated-rwa-sync absent alerts no longer fire spuriously (#3452, #3461).
-- **monitoring:** the notify failed-send alert shows a whole count (#3497).
-
-### Changed
-
-- **divergence:** served Stellar assets that CoinGecko lists are mapped to their coin ids (#3455).
-- **trades:** token/token USD volume is bounded by a per-asset credibility budget charged to the deeper anchor market; a print over budget stores NULL `usd_volume`, never a capped value (#3495).
-- **release:** `cut-release.sh` starts the full CI run beside prepush, and the full run's fuzz smoke is sharded four ways (#3492, #3496).
-- **deps:** npm and actions minor/patch groups bumped (#3423–#3425).
