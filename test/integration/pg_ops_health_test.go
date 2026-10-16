@@ -21,6 +21,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/divergence"
 	"github.com/Stellar-Index/StellarIndex/internal/domain"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
@@ -234,6 +235,39 @@ func seedSupplyRow(t *testing.T, ctx context.Context, db *sql.DB, assetKey strin
 		at, assetKey,
 	); err != nil {
 		t.Fatalf("seed asset_supply_history %s: %v", assetKey, err)
+	}
+}
+
+// Every reference name the divergence worker can emit must pass divergence_observations'
+// CHECK, or its observations are silently dropped (chainlink-stellar was, until 0216).
+func TestDivergenceObservationsAdmitEveryReference(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	sink := timescale.NewDivergenceSink(store)
+
+	pair, err := canonical.ParsePair("crypto:BTC/fiat:USD")
+	if err != nil {
+		t.Fatalf("ParsePair: %v", err)
+	}
+	at := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+	for _, ref := range []string{
+		divergence.OracleSourceReflectorDEX, divergence.OracleSourceReflectorCEX,
+		divergence.OracleSourceReflectorFX, divergence.OracleSourceRedstone,
+		divergence.OracleSourceBand, divergence.OracleSourceChainlinkStellar,
+		divergence.SyntheticCrossName, (&divergence.CoinGeckoReference{}).Name(),
+	} {
+		rec := domain.DivergenceObservationRecord{Pair: pair, Reference: ref, OurPrice: "100", RefPrice: "100", DeltaPct: "0", ObservedAt: at}
+		if err := sink.RecordObservation(ctx, rec); err != nil {
+			t.Errorf("RecordObservation %s: %v", ref, err)
+		}
 	}
 }
 

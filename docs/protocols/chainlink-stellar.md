@@ -36,7 +36,8 @@ histories never merge in `oracle_updates`.
 - `answer` is stored exactly at 18 decimals (each feed's `FeedConfigSet` declares 18).
 - `timestamp` is seconds; it is clamped to the ledger close time.
 - A report that is not permitted or is stale emits `InvalidUpdatePermission` / `StaleReport`
-  instead, and nothing is written.
+  instead, and nothing is written. Those, `FeedConfigSet`, `FeedAdminRemoved`, `Upgraded` and the
+  `ownership_transfer` pair are matched as no-ops so the completeness census recognises them.
 - `op_index` is `operation_index × 1024 + event_index`, since one report updates several feeds.
 
 ## Feeds

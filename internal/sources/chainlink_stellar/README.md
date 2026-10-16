@@ -17,8 +17,9 @@ The cache emits `FeedUpdated` for each accepted report:
 
 One `on_report` updates several feeds, so `op_index` is `operation_index × 1024 + event_index`.
 The contract emits `FeedUpdated` only for a permitted, non-stale report; refused ones emit
-`InvalidUpdatePermission` or `StaleReport`, which are not decoded. `FeedConfigSet` (decimals and
-description per feed) is the source of `feeds.go`, not decoded at runtime.
+`InvalidUpdatePermission` or `StaleReport`. `FeedConfigSet` (decimals and description per feed) is
+the source of `feeds.go`. These, plus `FeedAdminRemoved`, `Upgraded` and the two `ownership_transfer`
+events, are matched as no-ops so the completeness census recognises them; they write nothing.
 
 | Contract | Address |
 | --- | --- |
