@@ -175,8 +175,8 @@ func TestTradesForArbScanQueryShape(t *testing.T) {
 			t.Errorf("TradesForArbScan SQL must set a frozen-minute stamp aside; missing %q:\n%s", want, q)
 		}
 	}
-	if strings.Count(flat, "FROM freeze_events fe") != 3 {
-		t.Errorf("freeze predicate count = %d, want 3: once per anchor direction and once for the stamp", strings.Count(flat, "FROM freeze_events fe"))
+	if strings.Count(flat, "FROM freeze_events fe") != 2 {
+		t.Errorf("freeze predicate count = %d, want 2: once for the anchor's freeze set and once for the stamp", strings.Count(flat, "FROM freeze_events fe"))
 	}
 }
 
