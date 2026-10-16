@@ -2,6 +2,8 @@
 
 import Link from 'next/link';
 import { hrefFor } from '@/lib/hrefFor';
+
+import { CEX_INFO } from './registry';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
@@ -44,6 +46,12 @@ const LABEL: Record<string, string> = {
   bitstamp: 'Bitstamp',
   poloniex_via_btc: 'Poloniex (via BTC)',
 };
+
+// Only exchanges in CEX_INFO have a built page; a backfill-only source such as
+// poloniex_via_btc would link to a 404.
+function exchangeHref(name: string): string | null {
+  return name in CEX_INFO ? hrefFor.exchange(name) : null;
+}
 
 export function ExchangesView() {
   const q = useQuery<SourceRow[]>({
@@ -185,18 +193,25 @@ export function ExchangesView() {
               {rows.map((r, i) => {
                 const share = ratioPct(r.volume_24h_usd, totalVol) ?? 0;
                 const vol = r.volume_24h_usd;
+                const href = exchangeHref(r.name);
                 return (
-                  <LinkRow href={hrefFor.exchange(r.name)} key={r.name}>
+                  <LinkRow href={href} key={r.name}>
                     <Td className="text-ink-faint font-mono tabular-nums">
                       {i + 1}
                     </Td>
                     <Td>
-                      <Link
-                        href={hrefFor.exchange(r.name)}
-                        className="text-ink hover:text-brand-600 font-medium"
-                      >
-                        {LABEL[r.name] ?? r.name}
-                      </Link>
+                      {href ? (
+                        <Link
+                          href={href}
+                          className="text-ink hover:text-brand-600 font-medium"
+                        >
+                          {LABEL[r.name] ?? r.name}
+                        </Link>
+                      ) : (
+                        <span className="text-ink font-medium">
+                          {LABEL[r.name] ?? r.name}
+                        </span>
+                      )}
                     </Td>
                     <Td align="right" className="font-mono tabular-nums">
                       {vol && compareDecimalStrings(vol, '0') === 1 ? (
@@ -366,13 +381,17 @@ function AllCEXMarkets({
                     {i + 1}
                   </Td>
                   <Td>
-                    {m.source ? (
+                    {m.source && exchangeHref(m.source) ? (
                       <Link
                         href={hrefFor.exchange(m.source)}
                         className="text-ink-muted hover:text-brand-600"
                       >
                         {LABEL[m.source] ?? m.source}
                       </Link>
+                    ) : m.source ? (
+                      <span className="text-ink-muted">
+                        {LABEL[m.source] ?? m.source}
+                      </span>
                     ) : (
                       <span className="text-ink-faint">—</span>
                     )}

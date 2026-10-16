@@ -63,14 +63,14 @@ const VALUATION_REASON: Record<string, string> = {
 };
 
 /**
- * How a valuation was established, in the words the surface uses. Keyed
- * on the server's `basis` enum (seven values across the classic and
- * contract arms): a basis missing here fell through to a
- * generic "priced by an independent oracle feed" line even for a
- * declaration or a third-party curation, which is not what either is.
+ * Why an asset is in the RWA set, in the words the surface uses. A basis
+ * is admission evidence, not a valuation: an oracle feed for the code can
+ * exist while the row stays unpriced (an underlying, or a fund NAV), so the
+ * prose never says "priced by". Keyed on the server's `basis` enum (seven
+ * values across the classic and contract arms).
  */
 const BASIS_PROSE: Record<string, string> = {
-  oracle_rwa_feed: 'priced by an independent oracle feed',
+  oracle_rwa_feed: 'an independent oracle publishes a feed for this code',
   sep1_isin_declaration: 'declared by the issuer under a registered ISIN',
   sep1_isin_vetted:
     'named by the issuer under a registered ISIN, transcribed and reviewed by hand',
@@ -79,9 +79,10 @@ const BASIS_PROSE: Record<string, string> = {
   curated_contract_instrument:
     'bound by a curated in-repo entry to a named real-world instrument',
   contract_oracle_rwa_feed:
-    "priced by an independent oracle feed, keyed on the contract's declared symbol",
+    "an independent oracle publishes a feed for the contract's declared symbol",
 };
-const BASIS_PROSE_FALLBACK = 'priced by an independent oracle feed';
+const BASIS_PROSE_FALLBACK =
+  'an independent oracle publishes a feed for this code';
 
 /**
  * Why a premium or discount is not a number. Same rule as the valuation

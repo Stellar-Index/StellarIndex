@@ -151,13 +151,15 @@ export function RoutedVolumePanel() {
                   {KIND_LABEL[r.kind] ?? r.kind}
                 </Td>
                 <Td>
-                  {r.protocol ? (
+                  {r.protocol && protocolMeta(r.protocol) ? (
                     <Link
                       href={hrefFor.protocol(r.protocol)}
                       className="text-ink hover:text-brand-600"
                     >
                       {protocolMeta(r.protocol)?.label ?? r.protocol}
                     </Link>
+                  ) : r.protocol ? (
+                    <span className="text-ink-muted">{r.protocol}</span>
                   ) : (
                     <span className="text-ink-faint">—</span>
                   )}

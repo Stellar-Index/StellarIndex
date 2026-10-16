@@ -149,7 +149,7 @@ export function ProtocolView({
       }
       links={<ProtocolCrossLinks name={name} category={data.category} />}
     >
-      <StatGrid cols={hasContracts ? 5 : 3}>
+      <StatGrid cols={hasContracts ? 5 : 2}>
         {hasContracts && (
           <StatCell>
             <Stat
@@ -158,17 +158,23 @@ export function ProtocolView({
             />
           </StatCell>
         )}
-        <StatCell>
-          <Stat
-            label={analyticsAvailable ? `Events · ${windowDays}d` : 'Events'}
-            value={
-              analyticsAvailable && data.events_total != null
-                ? formatCompact(data.events_total)
-                : '—'
-            }
-            sub={analyticsAvailable ? undefined : 'Lake analytics unavailable'}
-          />
-        </StatCell>
+        {/* The windowed count is over contract events; a protocol with no
+            contracts (SDEX) has none to count, which is not an outage. */}
+        {hasContracts && (
+          <StatCell>
+            <Stat
+              label={analyticsAvailable ? `Events · ${windowDays}d` : 'Events'}
+              value={
+                analyticsAvailable && data.events_total != null
+                  ? formatCompact(data.events_total)
+                  : '—'
+              }
+              sub={
+                analyticsAvailable ? undefined : 'Lake analytics unavailable'
+              }
+            />
+          </StatCell>
+        )}
         <StatCell>
           <Stat label="Events · 24h" value={formatCompact(data.events_24h)} />
         </StatCell>

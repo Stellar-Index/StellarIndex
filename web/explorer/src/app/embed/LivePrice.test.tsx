@@ -80,3 +80,15 @@ describe('LivePrice rounding', () => {
     expect(await screen.findByText('$2.0001')).toBeInTheDocument();
   });
 });
+
+describe('LivePrice without an asset', () => {
+  it('makes no request and keeps the initial price', () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<LivePrice assetId="" initial="$0.1000" />);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.getByText('$0.1000')).toBeTruthy();
+  });
+});

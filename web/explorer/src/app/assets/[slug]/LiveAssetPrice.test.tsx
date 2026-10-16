@@ -216,6 +216,20 @@ describe('LiveAssetPrice', () => {
 // The 24h pill must follow the live change-summary feed, not the
 // build-time figure, or its arrow can contradict the live price.
 describe('LiveAssetPrice — 24h change pill', () => {
+  it('keeps the tip stream closed while the polled price is stale', async () => {
+    stubFetch(
+      200,
+      {
+        data: { price: '1.0001' },
+        flags: { stale: true, triangulated: true },
+      },
+      '/v1/price',
+    );
+    renderPrice({ assetID: AUDD, initialPrice: null, initialProvenance: null });
+    expect(await screen.findByText(/1\.0001/)).toBeInTheDocument();
+    expect(useTipStream.mock.calls.every(([id]) => id === null)).toBe(true);
+  });
+
   it('overrides a stale baked UP pill with the live DOWN figure', async () => {
     const change = {
       entity_type: 'coin',

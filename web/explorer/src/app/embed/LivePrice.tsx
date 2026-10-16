@@ -33,6 +33,7 @@ export function LivePrice({
   const [withheld, setWithheld] = useState(false);
 
   useEffect(() => {
+    if (!assetId) return;
     let cancelled = false;
     async function tick() {
       try {
