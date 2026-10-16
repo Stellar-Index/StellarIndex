@@ -258,7 +258,44 @@ func TestUsdLabel_ThinVersusNoMarket(t *testing.T) {
 		scriptedResult{cols: []string{"bucket", "vwap"}},
 		xlmLegMiss(),
 	)
+	if v != nil || label != "unroutable" {
+		t.Errorf("no market on either leg: usd_volume=%v label=%q, want nil/unroutable", v, label)
+	}
+
+	// The base has an XLM market but XLM/USD is missing: that is a pricing outage, not a missing route.
+	v, label = run(
+		scriptedResult{cols: []string{"bucket", "vwap"}},
+		xlmLegHit(at.Add(-time.Hour), "4"),
+		// XLM direct: no rate on any of its three forms
+		scriptedResult{cols: []string{"bucket", "vwap"}}, scriptedResult{cols: []string{"bucket", "vwap"}}, scriptedResult{cols: []string{"bucket", "vwap"}},
+		scriptedResult{cols: []string{"bucket", "vwap"}},
+		xlmLegMiss(),
+	)
 	if v != nil || label != "no" {
-		t.Errorf("no market: usd_volume=%v label=%q, want nil/no", v, label)
+		t.Errorf("XLM/USD outage: usd_volume=%v label=%q, want nil/no", v, label)
+	}
+}
+
+// TestMarkNoMarket_NeverMarksXLMOrAPeg pins that an anchor's missing rate is never a missing route: XLM-paired and peg-paired trades
+// must stay "no" so a pricing outage keeps tripping the coverage alert.
+func TestMarkNoMarket_NeverMarksXLMOrAPeg(t *testing.T) {
+	at := time.Date(2026, 9, 21, 12, 34, 0, 0, time.UTC)
+	r, _ := substanceTestResolver(t, at)
+	peg, err := canonical.ParseAsset(usdcClassicPeg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	junk := substanceTestAsset(t, "JUNK")
+	for _, a := range []canonical.Asset{canonical.NativeAsset(), peg, junk} {
+		r.markNoMarket(a, at)
+	}
+	if r.NoMarket(canonical.NativeAsset(), at) || r.NoMarket(peg, at) {
+		t.Error("XLM or a USD peg was marked as having no market")
+	}
+	if !r.NoMarket(junk, at) || !r.NoMarket(junk, at.Add(30*time.Second)) {
+		t.Error("an unanchored asset with no market was not marked for its minute")
+	}
+	if r.NoMarket(junk, at.Add(time.Minute)) {
+		t.Error("the marker leaked into the next minute")
 	}
 }

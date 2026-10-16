@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -257,6 +258,7 @@ func (r *VWAPUSDFXResolver) resolveRate(ctx context.Context, asset canonical.Ass
 	if err != nil {
 		return "", err
 	}
+	directFound := rate != ""
 	if rate != "" && !r.fresh(observedAt, at, r.freshness) {
 		// Direct market exists but its most recent VWAP is too old to
 		// price this trade. Discard it and let the bridge try — a
@@ -277,15 +279,37 @@ func (r *VWAPUSDFXResolver) resolveRate(ctx context.Context, asset canonical.Ass
 	// tokens route their liquidity through XLM rather than a
 	// stablecoin, so try <asset>/XLM x XLM/USD before giving up.
 	// The bridge enforces its own (wider) freshness internally.
-	rate, err = r.bridgeViaXLM(ctx, asset, at)
-	if err != nil || rate == "" {
+	rate, legFound, err := r.bridgeViaXLM(ctx, asset, at)
+	if err != nil {
 		return "", err
+	}
+	if !directFound && !legFound {
+		r.markNoMarket(asset, at)
+	}
+	if rate == "" {
+		return "", nil
 	}
 	ok, err := r.substanceAllows(ctx, asset, r.xlmForms, "xlm", at)
 	if err != nil || !ok {
 		return "", err
 	}
 	return rate, nil
+}
+
+// markNoMarket records that asset had neither a direct peg market nor an XLM market at `at`, keyed like USDPriceAt's rate entry so the
+// two expire together. XLM and the pegs are never marked: their missing rate is a pricing outage, which must stay a coverage gap.
+func (r *VWAPUSDFXResolver) markNoMarket(asset canonical.Asset, at time.Time) {
+	if isXLMAliasForm(asset) || slices.Contains(r.pegForms, asset.String()) {
+		return
+	}
+	r.storeCache(fxCacheKey{asset: "nomarket:" + asset.String(), bucketMs: at.UTC().Truncate(time.Minute).UnixMilli()},
+		fxCacheEntry{rate: "1", cachedAt: r.clock()})
+}
+
+// NoMarket reports whether the last USDPriceAt call for asset at `at` found no market to price it from at all; see [markNoMarket].
+func (r *VWAPUSDFXResolver) NoMarket(asset canonical.Asset, at time.Time) bool {
+	v, ok := r.lookupCache(fxCacheKey{asset: "nomarket:" + asset.String(), bucketMs: at.UTC().Truncate(time.Minute).UnixMilli()})
+	return ok && v != ""
 }
 
 // ThinMarketRefused reports whether asset had a candidate rate at `at` that the substance gate refused and none it allowed, from verdicts cached by the last USDPriceAt call; usd_volume stays NULL either way.
@@ -535,28 +559,28 @@ const bridgeRateMaxScale = 80
 
 // bridgeViaXLM prices `asset` through XLM when no direct market exists: USD per asset = (XLM per asset) x (USD per XLM); "" if no XLM
 // market. The XLM/USD leg goes back through USDPriceAt for its cache and freshness (recursion stops via isXLMAsset); fresh iff both legs
-// are.
-func (r *VWAPUSDFXResolver) bridgeViaXLM(ctx context.Context, asset canonical.Asset, at time.Time) (string, error) {
+// are. legFound reports whether the asset had an XLM market, whatever the XLM/USD leg did.
+func (r *VWAPUSDFXResolver) bridgeViaXLM(ctx context.Context, asset canonical.Asset, at time.Time) (rate string, legFound bool, err error) {
 	if isXLMAsset(asset) {
 		// Base case. XLM resolves directly against a peg or not at
 		// all; bridging it through itself would be circular.
-		return "", nil
+		return "", false, nil
 	}
 	// Freshness for the asset leg is applied as the SQL lower bound in
 	// queryXLMLeg, so a row returned here is fresh by construction.
 	xlmPerAsset, err := r.queryXLMLeg(ctx, asset, at)
 	if err != nil || xlmPerAsset == nil {
-		return "", err
+		return "", false, err
 	}
 	usdPerXLMStr, ok, err := r.USDPriceAt(ctx, canonical.NativeAsset(), at)
 	if err != nil || !ok || usdPerXLMStr == "" {
-		return "", err
+		return "", true, err
 	}
-	rate, ok := bridgeRate(xlmPerAsset, usdPerXLMStr)
+	rate, ok = bridgeRate(xlmPerAsset, usdPerXLMStr)
 	if !ok {
-		return "", nil
+		return "", true, nil
 	}
-	return rate, nil
+	return rate, true, nil
 }
 
 // bridgeRate multiplies the bridge legs into a USD-per-asset string, split out so the money arithmetic is DB-free; ok=false on a bad or

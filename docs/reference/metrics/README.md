@@ -1345,7 +1345,8 @@ Two alerts read it, and only one of them can fire for that series:
 
 Counter, labels `source`, `usd_volume_populated` (`yes` | `no` |
 `unroutable` | `thin`). `unroutable` is an unpriced trade whose two classic
-legs share one issuer; `thin` is an unpriced trade whose only candidate rate
+legs share one issuer, or neither of whose legs had a peg or XLM market at all
+(XLM and the pegs never count as having no market, so an outage stays `no`); `thin` is an unpriced trade whose only candidate rate
 was refused by the substance gate (market below the valuation floor). The
 on-chain coverage alert excludes both from the ratio.
 

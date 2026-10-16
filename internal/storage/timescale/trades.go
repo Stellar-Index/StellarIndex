@@ -646,6 +646,12 @@ type thinMarketReporter interface {
 	ThinMarketRefused(asset canonical.Asset, at time.Time) bool
 }
 
+// noMarketReporter is implemented by a resolver that can say an asset had no market to price it from at all
+// ([VWAPUSDFXResolver.NoMarket]).
+type noMarketReporter interface {
+	NoMarket(asset canonical.Asset, at time.Time) bool
+}
+
 // usdLabel is the trade_inserts_total usd_volume_populated value for t given
 // its resolved usd_volume v.
 func (s *Store) usdLabel(t canonical.Trade, v *string, refused bool) string {
@@ -655,7 +661,13 @@ func (s *Store) usdLabel(t canonical.Trade, v *string, refused bool) string {
 			thin = rep.ThinMarketRefused(t.Pair.Quote, t.Timestamp) || rep.ThinMarketRefused(t.Pair.Base, t.Timestamp)
 		}
 	}
-	return usdPopulatedLabel(t.Pair, v != nil, refused, thin)
+	label := usdPopulatedLabel(t.Pair, v != nil, refused, thin)
+	// Neither leg has any market to price from, so there is no route to USD; XLM and the pegs are never marked, so an outage stays "no".
+	if rep, ok := s.usdVolumeFXResolver.(noMarketReporter); ok && label == "no" &&
+		rep.NoMarket(t.Pair.Base, t.Timestamp) && rep.NoMarket(t.Pair.Quote, t.Timestamp) {
+		return "unroutable"
+	}
+	return label
 }
 
 // InsertTrade validates and writes one trade, returning nil on insert or conflict on (source, ledger, tx_hash, op_index, ts).

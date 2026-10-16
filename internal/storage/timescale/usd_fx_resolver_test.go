@@ -447,7 +447,7 @@ func TestBridgeViaXLM_XLMIsBaseCase(t *testing.T) {
 		"native": canonical.NativeAsset(),
 		"sac":    {Type: canonical.AssetSoroban, ContractID: canonical.XLMSacContractID},
 	} {
-		rate, err := r.bridgeViaXLM(context.Background(), asset, time.Now())
+		rate, _, err := r.bridgeViaXLM(context.Background(), asset, time.Now())
 		if err != nil {
 			t.Errorf("%s: bridgeViaXLM errored instead of declining: %v", name, err)
 		}
