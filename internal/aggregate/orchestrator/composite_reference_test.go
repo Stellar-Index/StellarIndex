@@ -1,7 +1,9 @@
 package orchestrator
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"math/big"
 	"sort"
 	"strings"
@@ -742,5 +744,30 @@ func TestCompositeReference_LegSeriesRetiredWhenLegDropsOnEligibleTarget(t *test
 	}
 	if n := compositeSeriesFor(t, obs.AggregatorCompositeReferenceLegDispersionBps, pairLabel, windowLabelValue); n != 0 {
 		t.Errorf("%d leg-dispersion series survive a tick whose leg did not resolve, want 0", n)
+	}
+}
+
+// The unavailable cause is logged at Info once per change, not every tick, so the alert's operator can read it.
+func TestEmitCompositeReference_LogsUnavailableCauseOnChange(t *testing.T) {
+	var buf bytes.Buffer
+	o := &Orchestrator{logger: slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))}
+	pair := canonical.Pair{Base: canonical.NativeAsset(), Quote: canonical.NativeAsset()}
+	t.Cleanup(func() { o.clearCompositeReference(pair, 24*time.Hour) })
+	unavailable := func(why string) compositeReference {
+		return compositeReference{verdict: compositeVerdictUnavailable, unavailable: why}
+	}
+	for _, ref := range []compositeReference{
+		unavailable("fx_stale"), unavailable("fx_stale"), unavailable("leg_sources=1"),
+		{verdict: compositeVerdictRefuted},
+		unavailable("leg_sources=1"),
+	} {
+		o.emitCompositeReference(pair, 24*time.Hour, ref)
+	}
+	got := strings.Count(buf.String(), "composite reference unavailable")
+	if got != 3 {
+		t.Fatalf("logged %d unavailable lines, want 3 (first cause, changed cause, cause after a resolved tick):\n%s", got, buf.String())
+	}
+	if !strings.Contains(buf.String(), "unavailable=fx_stale") || !strings.Contains(buf.String(), `unavailable="leg_sources=1"`) {
+		t.Errorf("the log must carry each cause:\n%s", buf.String())
 	}
 }
