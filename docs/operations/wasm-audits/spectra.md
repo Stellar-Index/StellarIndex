@@ -111,6 +111,7 @@ Kinds seen per role (every one has a byte-checked topic, see Method):
 | factory | `factory_initialized`, `pt_deployed` (7), governance |
 | order engine | `order_registered` (49), `order_filled` (25), `order_cancelled` (8), `limit_order_engine_initialized` (2 incl. v0), `fee_collector_change`, governance |
 | PT | `pt_minted` (26), `yt_deployed` (7), `yield_updated` (56), `redeem` (3), `mint` (26), `burn` (3), `transfer` (33), `approve` (21), governance |
+| PT, from 64,972,231 (first maturity) | `rates_stored_at_expiry`, `yield_claimed` |
 | YT | `mint` (26), `burn` (3), `transfer` (25), `approve` (15) |
 | Blend wrapper | `deposit` (22), `withdraw` (7), `transfer` (43), `approve` (14), governance |
 | deJTRSY wrapper | `wrap` (34), `dejtrsy_wrapper_initialized`, `transfer` (21), `approve` (33), governance |
