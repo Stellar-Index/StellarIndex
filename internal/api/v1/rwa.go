@@ -1062,7 +1062,7 @@ func (s *Server) endRWAMembershipFlight(done chan struct{}) {
 	close(done)
 }
 
-// PrewarmRWA fills the membership set, then the value and premium history caches built on it, best-effort, so the first visitor does not pay the build.
+// PrewarmRWA fills the membership set, then the /v1/rwa/assets view and the value and premium history caches built on it, best-effort, so the first visitor does not pay the build.
 func (s *Server) PrewarmRWA(ctx context.Context) {
 	// The membership set depends on neither history reader, so it warms on its own terms.
 	if _, flight := s.readRWAMembership(); flight != nil { //nolint:contextcheck // same detachment as the request path; ctx is honoured by the wait below, not by the scan.
@@ -1081,6 +1081,10 @@ func (s *Server) PrewarmRWA(ctx context.Context) {
 	if s.AssetsReader == nil || s.OracleHistory == nil {
 		return
 	}
+	s.refreshRWAAssetsView(ctx)
+	if ctx.Err() != nil {
+		return
+	}
 	s.cachedRWAValueHistory(ctx)
 	if ctx.Err() != nil || s.MarketHistory == nil {
 		return
@@ -1093,15 +1097,8 @@ func (s *Server) PrewarmRWA(ctx context.Context) {
 // handleRWAAssets serves GET /v1/rwa/assets. No query parameters: the set is small and complete by construction, so any filter is better
 // applied by the caller.
 func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
-	view := RWAAssetsView{
-		Definition:        rwaDefinition(),
-		Assets:            []RWAAsset{},
-		ByClass:           []RWAGroupTotal{},
-		ByIssuer:          []RWAIssuerTotal{},
-		Refused:           []RWARefusal{},
-		UnreachedEntities: []RWAUnreachedEntity{},
-	}
 	if s.AssetsReader == nil {
+		view := rwaEmptyView()
 		view.Summary.Basis = rwaBasisUnavailable
 		view.Funnel = rwaFunnelUnavailable()
 		writeEnvelope(w, Envelope{Data: view, Flags: Flags{}})
@@ -1109,47 +1106,51 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 	}
 
 	m := s.cachedRWAMembership(r.Context())
-	view.Refused = rwaRefusalRows(m.refusals)
-	view.UnreachedEntities = rwaUnreachedRows(m.unreached)
-	// Dated BEFORE the unavailable branch: a response publishing no set is where a reader most
-	// needs to know whether one was ever built.
-	view.Membership = rwaMembershipSetOf(m)
-	// Unavailable means NEITHER arm answered. One arm failing beside a reporting one is a partial
-	// measurement, not an absent one; the funnel says which happened.
-	if !m.available && !m.contractCensus.available && len(m.members) == 0 && len(m.contracts) == 0 {
-		view.Summary.Basis = rwaBasisUnavailable
-		view.Funnel = rwaFunnelUnavailable()
-		writeEnvelope(w, Envelope{Data: view, Flags: Flags{Degraded: m.readFailed}})
+	if rwaMembershipUnavailable(m) {
+		writeEnvelope(w, Envelope{Data: rwaUnavailableView(m), Flags: Flags{Degraded: m.readFailed}})
 		return
 	}
-
 	if !middleware.ChargeRateLimit(w, r, rwaAssetsCost(m)) {
 		return
 	}
-	rows, join, readErr := s.rwaListingRows(r.Context(), m)
-	if readErr != nil {
-		if clientAborted(r, readErr) {
+	b, err := s.cachedRWAAssetsView(r.Context())
+	if err != nil {
+		if clientAborted(r, err) {
 			return
 		}
-		s.logger.Error("rwa listing read failed", "err", readErr)
+		s.logger.Error("rwa listing read failed", "err", err)
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
 		return
+	}
+	writeEnvelope(w, Envelope{Data: b.view, Flags: b.flags})
+}
+
+// buildRWAAssetsView assembles the full /v1/rwa/assets view from the cached membership.
+func (s *Server) buildRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error) {
+	m := s.cachedRWAMembership(ctx)
+	if rwaMembershipUnavailable(m) {
+		return rwaAssetsBuild{view: rwaUnavailableView(m), flags: Flags{Degraded: m.readFailed}}, nil
+	}
+	view := rwaMembershipView(m)
+	rows, join, err := s.rwaListingRows(ctx, m)
+	if err != nil {
+		return rwaAssetsBuild{}, err
 	}
 
 	now := time.Now()
 	classicAssets, unobserved := s.rwaAssetRows(m, rows, now)
 	join.notObserved = unobserved
 
-	// The contract arm fails the response as the classic arm does: degrading to zero rows would
+	// The contract arm fails the build as the classic arm does: degrading to zero rows would
 	// drop admitted members from the totals without a lower_bound. Both contract arms share one
 	// valuation budget; a cut (not failed) valuation is served under flags.stale.
-	vctx, cancel := context.WithTimeout(r.Context(), rwaContractValuationBudget)
+	vctx, cancel := context.WithTimeout(ctx, rwaContractValuationBudget)
 	defer cancel()
-	contractRows, degraded, live := s.rwaVerifiedContractRows(vctx, w, r, m.contracts)
-	if !live {
-		return
+	contractRows, _, degraded, err := s.rwaContractListingRows(vctx, m.contracts)
+	if err != nil {
+		return rwaAssetsBuild{}, err
 	}
 	// Attributed per C2 arm: the arms narrow separate populations and each must close its own
 	// arithmetic, which one combined count would prevent.
@@ -1165,14 +1166,14 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 
 	// The reference is attached AFTER the valuation: it reads the gated row (including the
 	// scam-flag suppression) and must not put a figure on a row the gates emptied.
-	refs := s.cachedRWAReferences(r.Context())
+	refs := s.cachedRWAReferences(ctx)
 	// The listing rows that priced the admitted contracts are indexed from the MEMBERSHIP, not a
 	// second read: the row that prices an asset must be the one that recognised it.
 	listingRefs := rwaListingReferencesOf(m.contracts)
 	// Classic listing rows use the same cached read and rule ([listingEntryIn]) as /v1/assets:
 	// the `CODE-GISSUER` id first, then the derived SAC address, since the directory publishes an
 	// asset under either form. An unavailable snapshot yields a nil map: adds a reference, never removes.
-	classicListingRefs := s.assetListingSnapshot(r.Context()).byAddress
+	classicListingRefs := s.assetListingSnapshot(ctx).byAddress
 	for i := range view.Assets {
 		rwaApplyReference(&view.Assets[i], refs, listingRefs, classicListingRefs, now)
 	}
@@ -1183,28 +1184,42 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 	// The curated arm runs LAST, over the finished verified view, so it can say which of its rows
 	// the verified set carries and never feeds a figure back into the totals above.
 	curatedDegraded := s.attachRWACurated(vctx, &view, now)
-	writeEnvelope(w, Envelope{Data: view, Flags: Flags{Stale: degraded || curatedDegraded, Degraded: degraded || curatedDegraded || m.readFailed}})
+	stale := degraded || curatedDegraded
+	return rwaAssetsBuild{view: view, flags: Flags{Stale: stale, Degraded: stale || m.readFailed}}, nil
 }
 
-// rwaVerifiedContractRows values the verified contract arm. A valuation ctx cut short still returns its rows, reported degraded
-// (flags.stale); a failed read fails the response,
-// since a swallowed error would publish admitted-but-unread members as never observed. live is false when nothing further should be
-// written.
-func (s *Server) rwaVerifiedContractRows(
-	ctx context.Context, w http.ResponseWriter, r *http.Request, members []rwaContractMember,
-) (rows map[string]AssetDetail, degraded, live bool) {
-	rows, _, cut, err := s.rwaContractListingRows(ctx, members)
-	if err == nil {
-		return rows, cut, true
+// rwaMembershipUnavailable is true when NEITHER arm answered. One arm failing beside a reporting one is a partial measurement, not an
+// absent one; the funnel says which happened.
+func rwaMembershipUnavailable(m rwaMembership) bool {
+	return !m.available && !m.contractCensus.available && len(m.members) == 0 && len(m.contracts) == 0
+}
+
+func rwaEmptyView() RWAAssetsView {
+	return RWAAssetsView{
+		Definition:        rwaDefinition(),
+		Assets:            []RWAAsset{},
+		ByClass:           []RWAGroupTotal{},
+		ByIssuer:          []RWAIssuerTotal{},
+		Refused:           []RWARefusal{},
+		UnreachedEntities: []RWAUnreachedEntity{},
 	}
-	if clientAborted(r, err) {
-		return nil, false, false
-	}
-	s.logger.Error("rwa contract listing read failed", "err", err)
-	writeProblem(w, r,
-		"https://api.stellarindex.io/errors/internal",
-		"Internal error", http.StatusInternalServerError, "")
-	return nil, false, false
+}
+
+// rwaMembershipView is the empty view plus what the membership alone decides. Membership is dated even on the unavailable view: a
+// response publishing no set is where a reader most needs to know whether one was ever built.
+func rwaMembershipView(m rwaMembership) RWAAssetsView {
+	view := rwaEmptyView()
+	view.Refused = rwaRefusalRows(m.refusals)
+	view.UnreachedEntities = rwaUnreachedRows(m.unreached)
+	view.Membership = rwaMembershipSetOf(m)
+	return view
+}
+
+func rwaUnavailableView(m rwaMembership) RWAAssetsView {
+	view := rwaMembershipView(m)
+	view.Summary.Basis = rwaBasisUnavailable
+	view.Funnel = rwaFunnelUnavailable()
+	return view
 }
 
 // rwaBasisUnavailable is the summary basis when the reads that decide membership are not answering:

@@ -196,14 +196,14 @@ func TestColdFill_AssetsRows_LeaderCancelSparesWaiter(t *testing.T) {
 func TestColdFill_AssetsHistoryMap_LeaderCancelSparesWaiter(t *testing.T) {
 	g := newGatedFill()
 	c := NewCachedAssetsReader(nil, time.Minute)
-	upstream := func(ctx context.Context) (map[string][]timescale.AssetPricePoint, error) {
+	upstream := func(ctx context.Context, _ []string) (map[string][]timescale.AssetPricePoint, error) {
 		if err := g.wait(ctx); err != nil {
 			return nil, err
 		}
 		return map[string][]timescale.AssetPricePoint{"xlm": {{T: "t0"}}}, nil
 	}
 	get := func(ctx context.Context) (map[string][]timescale.AssetPricePoint, error) {
-		return c.fetchHistoryMap(ctx, "history", "k", upstream)
+		return c.historyBatch(ctx, "history", []string{"xlm"}, upstream)
 	}
 	assertLeaderCancelSparesWaiter(t, g, get,
 		func(v map[string][]timescale.AssetPricePoint) bool {

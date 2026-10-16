@@ -116,3 +116,42 @@ func TestRWADeRWA_AdmittedByContractNeverByCode(t *testing.T) {
 		})
 	}
 }
+
+// TestRWAAssets_SecondRequestServedFromTheBuiltView: the per-member valuation reads take seconds on r1, so a repeat request must reuse
+// the built view rather than read the store again.
+func TestRWAAssets_SecondRequestServedFromTheBuiltView(t *testing.T) {
+	rows := map[string]timescale.AssetRow{rwaDeJTRSY: rwaContractRow(rwaDeJTRSY, nil)}
+	catalogue := &stubContractCatalogue{rows: rows}
+	srv := v1.New(v1.Options{
+		Sep1Cache: &stubSep1BoundReader{},
+		Directory: &stubDirectoryReader{entries: map[string]timescale.DirectoryEntry{}},
+		AssetsReader: &rwaListStub{
+			stubAssetsReaderExt: &stubAssetsReaderExt{},
+			byIssuer:            map[string][]timescale.AssetRow{},
+		},
+		RWAContracts:          &stubRWAContractReader{accounts: 18000},
+		RWAListings:           &stubRWAListings{rows: []timescale.ListingEntry{listed(rwaDeJTRSY, "dejtrsy", "dejtrsy", "1.02")}},
+		ContractCatalogue:     catalogue,
+		TokenSymbol:           &stubTokenSymbols{byID: map[string]string{rwaDeJTRSY: "deJTRSY"}},
+		TokenSupply:           &stubTokenSupplies{byID: map[string]string{rwaDeJTRSY: rwaDeJTRSYSupply}},
+		TokenDecimals:         &stubTokenDecimalsRdr{byID: map[string]uint32{rwaDeJTRSY: 18}},
+		NonstandardDecimals:   confirmedNonstandardDecimals(t, map[string]uint32{rwaDeJTRSY: 18}),
+		MinMarketCapVolumeUSD: 1000,
+	})
+
+	first := getRWA(t, srv)
+	if _, ok := assetByContract(first, rwaDeJTRSY); !ok {
+		t.Fatalf("%s not served; refusals: %+v", rwaDeJTRSY, first.Refused)
+	}
+	reads := catalogue.calls
+	if reads == 0 {
+		t.Fatal("the first request never read the contract catalogue; the fixture does not exercise the valuation")
+	}
+	second := getRWA(t, srv)
+	if catalogue.calls != reads {
+		t.Errorf("catalogue reads = %d after the second request, want %d: the built view was not reused", catalogue.calls, reads)
+	}
+	if _, ok := assetByContract(second, rwaDeJTRSY); !ok {
+		t.Errorf("%s missing from the cached view", rwaDeJTRSY)
+	}
+}
