@@ -64,7 +64,9 @@ every `interval_seconds` (default 30):
 4. **VWAP** (`internal/aggregate/vwap.go`): Σquote / Σbase over
    `[bucketEnd − W, bucketEnd)`, `bucketEnd` = last closed 1-minute
    boundary. Eligibility needs `min_usd_volume` (default 10,000 USD);
-   `max_trades_per_window` (default 10,000) bounds the scan.
+   `max_trades_per_window` (default 10,000) bounds the scan. Each source
+   pair keeps its newest N, and a capped bucket keeps only the span every
+   read covers (`coverage.CoveredFrom`), so pairs never mix different hours.
 5. **Freeze / confidence** (ADR-0019) — see
    [oracle-manipulation-defense.md](oracle-manipulation-defense.md#freeze-layer-9).
 6. Result to Redis at `vwap:<base>:<quote>:<window-seconds>`, TTL equal to

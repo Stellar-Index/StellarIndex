@@ -844,7 +844,7 @@ func (o *Orchestrator) decideBucket(
 		confOK:   confOK,
 		// Only a published bucket becomes an edge or leg, which keeps a dust pair out of the graph.
 		edge: newEdgeQuote(pair, vwap, conf, confOK, trades),
-		leg:  o.newLegRef(pair, vwap, trades, proxied, coverage),
+		leg:  o.newLegRef(pair, vwap, trades, proxied),
 	}
 	if err := o.publishDirect(ctx, pair, window, pub, bucketEnd, now); err != nil {
 		return nil, err
@@ -1245,7 +1245,22 @@ func (o *Orchestrator) fetchForTarget(
 	if len(fetchErrs) == len(sources) {
 		return nil, nil, nil, coverage, fmt.Errorf("all %d source pairs failed: %w", len(sources), errors.Join(fetchErrs...))
 	}
-	return merged, tradeUSD, proxied, coverage, nil
+	return clipToCoverage(merged, coverage), tradeUSD, proxied, coverage, nil
+}
+
+// clipToCoverage drops trades before a capped read's start. Each source pair keeps its own newest N, so a sparse pair would otherwise
+// reach back hours past a dense one, and the VWAP (and the quote-surface guard that reads it) would mix prints from different spans.
+func clipToCoverage(trades []canonical.Trade, coverage cachekeys.WindowCoverage) []canonical.Trade {
+	if !coverage.Truncated {
+		return trades
+	}
+	kept := trades[:0]
+	for i := range trades {
+		if !trades[i].Timestamp.Before(coverage.CoveredFrom) {
+			kept = append(kept, trades[i])
+		}
+	}
+	return kept
 }
 
 // usdVolumeForPairPerTrade returns exact USD value per Trade.ID(), keyed before fetchForTarget rewrites Pair; nil when the quote isn't a

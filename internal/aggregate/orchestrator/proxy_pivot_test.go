@@ -170,34 +170,48 @@ func TestReferenceLeg_QuoteSurfaceDisagreementCannotCorroborate(t *testing.T) {
 	}
 }
 
-// A capped read keeps each source pair's newest N trades, so the own-USD and stablecoin surfaces can start hours apart. Drift across
-// those hours is not a de-peg: the comparison runs only over the span every source pair covers.
-func TestQuoteSurfaces_ComparesOnlyTheCommonSpan(t *testing.T) {
+// Each source pair is capped at its own newest N, so a sparse stablecoin pair reaches back hours past a dense own-quote pair. The bucket
+// keeps only the span every read covers; otherwise intraday drift (or an old de-peg) enters the VWAP from one side only.
+func TestFetchForTarget_ClipsBackersToTheCappedSpan(t *testing.T) {
 	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
-	now := time.Now()
-	coveredFrom := now.Add(-5 * time.Hour)
-	older := pivotTrade(xlmUSD, "binance", 100_000_000, 18_000_000, now.Add(-10*time.Hour)) // 0.180, before the USD read starts
-	older.TxHash = strings.Repeat("2", 64)
-	proxyNew := pivotTrade(xlmUSD, "binance", 100_000_000, 18_400_000, now.Add(-time.Hour)) // 0.184
-	proxyNew.TxHash = strings.Repeat("3", 64)
-	own := pivotTrade(xlmUSD, "coinbase", 100_000_000, 18_400_000, now.Add(-2*time.Hour)) // 0.184
-	trades := []canonical.Trade{older, proxyNew, own}
-	proxied := map[string]struct{}{older.ID(): {}, proxyNew.ID(): {}}
-	o := &Orchestrator{}
+	xlmUSDT := mkPair(t, "crypto", "XLM", "crypto", "USDT")
+	now := time.Now().UTC()
+	tr := func(pair canonical.Pair, src string, quote int64, ago time.Duration, n string) canonical.Trade {
+		x := pivotTrade(pair, src, 100_000_000, quote, now.Add(-ago))
+		x.TxHash = strings.Repeat(n, 64)
+		return x
+	}
+	store := &mockStore{perPair: map[string][]canonical.Trade{
+		xlmUSD.String(): {
+			tr(xlmUSD, "coinbase", 18_000_000, 6*time.Hour, "1"),
+			tr(xlmUSD, "coinbase", 18_400_000, 2*time.Hour, "2"),
+			tr(xlmUSD, "coinbase", 18_400_000, time.Hour, "3"),
+		},
+		xlmUSDT.String(): {
+			tr(xlmUSDT, "binance", 17_000_000, 10*time.Hour, "4"), // a de-peg print, older than the USD read reaches
+			tr(xlmUSDT, "binance", 18_400_000, 90*time.Minute, "5"),
+		},
+	}}
+	cache, _ := newTestRedis(t)
+	o := New(store, cache, Config{EnableStablecoinFiatProxy: true, MaxTradesPerWindow: 2})
 
-	share, div, unc := o.quoteSurfaces(xlmUSD, trades, proxied, coveredFrom)
-	if unc || div == nil || div.Sign() != 0 {
-		t.Fatalf("common span: divergence = %v (uncomputable=%v), want 0", div, unc)
+	trades, _, proxied, coverage, err := o.fetchForTarget(context.Background(), xlmUSD, now.Add(-24*time.Hour), now)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if want := 2.0 / 3; share < want-1e-9 || share > want+1e-9 {
-		t.Errorf("share = %v, want %v: the reported proxy share still covers the whole bucket", share, want)
+	if want := now.Add(-2 * time.Hour); !coverage.Truncated || !coverage.CoveredFrom.Equal(want) {
+		t.Fatalf("coverage = %+v, want truncated from %v", coverage, want)
 	}
-	lr := o.newLegRef(xlmUSD, big.NewRat(183, 1000), trades, proxied,
-		cachekeys.WindowCoverage{Truncated: true, CoveredFrom: coveredFrom})
+	if len(trades) != 3 {
+		t.Fatalf("kept %d trades, want 3 (two USD, one USDT inside the span)", len(trades))
+	}
+	for _, x := range trades {
+		if x.Timestamp.Before(coverage.CoveredFrom) {
+			t.Errorf("kept a %s print from %v, before the covered span", x.Source, x.Timestamp)
+		}
+	}
+	lr := o.newLegRef(xlmUSD, big.NewRat(184, 1000), trades, proxied)
 	if why := lr.quoteSurfaceRefusal(75); why != "" {
-		t.Errorf("truncated bucket: refusal = %q, want none", why)
-	}
-	if why := o.newLegRef(xlmUSD, big.NewRat(183, 1000), trades, proxied, cachekeys.WindowCoverage{}).quoteSurfaceRefusal(75); why == "" {
-		t.Error("untruncated bucket: want the whole-span comparison to refuse the 0.180-vs-0.184 split")
+		t.Errorf("surface refusal = %q, want none: inside the span both surfaces print 0.184", why)
 	}
 }
