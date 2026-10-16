@@ -54,8 +54,13 @@ func chHoldersRollup(args []string) error {
 	defer func() { hb.Stop(ok) }()
 
 	start := time.Now()
+	// Completed steps feed progress_total so stellarindex_ops_job_no_progress can tell a long run from a hung one.
+	var steps uint64
 	if err := clickhouse.RunHoldersRollup(ctx, *chAddr, func(format string, a ...any) {
 		fmt.Fprintf(os.Stderr, "ch-holders-rollup: "+format+"\n", a...)
+	}, func() {
+		steps++
+		hb.Progress(steps, 0)
 	}); err != nil {
 		return err
 	}
