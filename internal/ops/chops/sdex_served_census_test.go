@@ -4,9 +4,12 @@
 package chops
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +18,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sdex"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
 func sdexTestAsset(code string, issuerSeed byte) xdr.Asset {
@@ -155,8 +159,8 @@ func TestSDEXProjectionOracles_RouteThroughTheServedProjection(t *testing.T) {
 	}
 
 	cc := mustRead(t, "compute_completeness.go")
-	if body := funcBodyFrom(cc, "reDeriveSDEXCensusViaDecoder"); !strings.Contains(body, "sdexServedCensus{}") {
-		t.Error("reDeriveSDEXCensusViaDecoder does not count through sdexServedCensus")
+	if body := funcBodyFrom(cc, "reDeriveSDEXCensus"); !strings.Contains(body, "sdexServedCensus{}") {
+		t.Error("reDeriveSDEXCensus does not count through sdexServedCensus")
 	}
 	if strings.Count(cc, "clickhouse.StreamSDEXOps(") != 1 {
 		t.Error("compute_completeness.go streams SDEX ops outside reDeriveSDEXCensusViaDecoder")
@@ -183,4 +187,74 @@ func mustRead(t *testing.T, path string) string {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(b)
+}
+
+// The census streams windows concurrently; every window must be read exactly once and its trades and blind ledgers merged.
+func TestReDeriveSDEXCensus_ConcurrentWindowsMerge(t *testing.T) {
+	t.Parallel()
+	mkOp := func(ledger uint32, claim xdr.ClaimAtom) clickhouse.SDEXOp {
+		return clickhouse.SDEXOp{
+			Ledger: ledger, ClosedAt: time.Unix(1_700_000_000, 0).UTC(), TxHash: strings.Repeat("ab", 32),
+			Op: xdr.Operation{Body: xdr.OperationBody{Type: xdr.OperationTypeManageSellOffer}},
+			OpResult: xdr.OperationResult{
+				Code: xdr.OperationResultCodeOpInner,
+				Tr: &xdr.OperationResultTr{
+					Type: xdr.OperationTypeManageSellOffer,
+					ManageSellOfferResult: &xdr.ManageSellOfferResult{
+						Code:    xdr.ManageSellOfferResultCodeManageSellOfferSuccess,
+						Success: &xdr.ManageOfferSuccessResult{OffersClaimed: []xdr.ClaimAtom{claim}},
+					},
+				},
+			},
+		}
+	}
+	bad := xdr.ClaimAtom{Type: xdr.ClaimAtomType(99)}
+	if op := mkOp(1, bad); func() int {
+		_, f := sdex.NewDecoder().DecodeCounted(dispatcher.OpContext{Ledger: 1, ClosedAt: op.ClosedAt, TxHash: op.TxHash, Op: op.Op, OpResult: op.OpResult})
+		return f
+	}() != 1 {
+		t.Fatal("precondition: an unknown claim-atom type must count as one failed decode")
+	}
+
+	const from, to = 1_000, 1_000 + 10*sdexCensusWindow + 7 // 11 windows, the last partial
+	const blindLedger = from + 3*sdexCensusWindow + 1
+	var mu sync.Mutex
+	calls := map[uint32]uint32{}
+	stream := func(_ context.Context, lo, hi uint32, fn func(clickhouse.SDEXOp) error) error {
+		mu.Lock()
+		calls[lo] = hi
+		mu.Unlock()
+		for _, l := range []uint32{lo, hi} {
+			if err := fn(mkOp(l, sdexTestClaim(1, 5_000_000, 7_000_000))); err != nil {
+				return err
+			}
+		}
+		if lo <= blindLedger && blindLedger <= hi {
+			return fn(mkOp(blindLedger, bad))
+		}
+		return nil
+	}
+	got, blind, err := reDeriveSDEXCensus(context.Background(), stream, from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 11 || calls[from] != from+sdexCensusWindow-1 || calls[from+10*sdexCensusWindow] != to {
+		t.Fatalf("windows read: %v", calls)
+	}
+	if len(got) != 22 || got[from] != 1 || got[to] != 1 {
+		t.Fatalf("got %d ledgers (from=%d to=%d), want 22 ledgers of 1 trade", len(got), got[from], got[to])
+	}
+	if blind.UndecodableMatched != 1 || len(blind.Ledgers) != 1 || blind.Ledgers[0] != blindLedger {
+		t.Fatalf("blind = %+v, want one undecodable at %d", blind, blindLedger)
+	}
+
+	boom := errors.New("ch down")
+	if _, _, err := reDeriveSDEXCensus(context.Background(), func(_ context.Context, lo, _ uint32, _ func(clickhouse.SDEXOp) error) error {
+		if lo == from+5*sdexCensusWindow {
+			return boom
+		}
+		return nil
+	}, from, to); !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want the window's error", err)
+	}
 }
