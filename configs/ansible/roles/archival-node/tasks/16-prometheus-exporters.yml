@@ -109,7 +109,10 @@
           # node_exporter and local-prometheus in this role) or it silently
           # falls back to :9187 on all interfaces. Listen on loopback only —
           # same defence-in-depth as redis_exporter.
-          ARGS="--web.listen-address=127.0.0.1:9187"
+          # The per-table collectors emit ~28 series per table, and every
+          # Timescale chunk is a table: 13k chunks made 375k series a scrape,
+          # 4-11 s against the 10 s timeout, and flapped postgres_exporter_down.
+          ARGS="--web.listen-address=127.0.0.1:9187 --no-collector.stat_user_tables --no-collector.statio_user_tables"
       notify: Restart prometheus-postgres-exporter
 
     - name: Enable + start prometheus-postgres-exporter
