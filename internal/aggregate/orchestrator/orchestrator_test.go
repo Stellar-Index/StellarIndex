@@ -1483,7 +1483,7 @@ func TestFlushContributions_SinkFailureIsCounted(t *testing.T) {
 	}
 
 	before := testutil.ToFloat64(obs.AggregatorContributionWriteErrorsTotal)
-	orch.flushContributions(context.Background(), pair, 5*time.Minute, trades, nil)
+	orch.flushContributions(context.Background(), pair, 5*time.Minute, trades, nil, nil)
 
 	if sink.calls != 1 {
 		t.Fatalf("sink.calls = %d, want 1", sink.calls)

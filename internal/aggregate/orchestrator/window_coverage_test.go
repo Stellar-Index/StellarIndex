@@ -1,198 +1,327 @@
-// Copyright (c) 2026 Stellar Index contributors.
-// SPDX-License-Identifier: Apache-2.0
-
 package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"math/big"
+	"sort"
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 
-	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// readCoverage returns the coverage published beside pair's VWAP, failing
-// the test when the key is absent or unreadable.
-func readCoverage(t *testing.T, mr *miniredis.Miniredis, pair canonical.Pair, window time.Duration) cachekeys.WindowCoverage {
+var _ TradeSumsStore = (*timescale.Store)(nil)
+
+// sumsStore serves raw trades and the trade_sums_1m rows derived from them, as migration 0217 defines the view.
+type sumsStore struct {
+	raw       []canonical.Trade // stored direction in each trade's Pair
+	watermark time.Time
+	rawReads  []time.Time // from of every TradesInRange call
+}
+
+func (s *sumsStore) TradesInRange(_ context.Context, p canonical.Pair, from, to time.Time, limit int) ([]canonical.Trade, error) {
+	s.rawReads = append(s.rawReads, from)
+	var out []canonical.Trade
+	for _, t := range s.raw {
+		if t.Timestamp.Before(from) || !t.Timestamp.Before(to) {
+			continue
+		}
+		switch {
+		case t.Pair.Equal(p):
+			out = append(out, t)
+		case t.Pair.Equal(p.Flip()):
+			t.Pair = p
+			t.BaseAmount, t.QuoteAmount = t.QuoteAmount, t.BaseAmount
+			out = append(out, t)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return tradeIsBefore(out[i], out[j]) })
+	if len(out) > limit {
+		out = out[len(out)-limit:]
+	}
+	return out, nil
+}
+
+func tradeIsBefore(a, b canonical.Trade) bool {
+	if !a.Timestamp.Equal(b.Timestamp) {
+		return a.Timestamp.Before(b.Timestamp)
+	}
+	return a.OpIndex < b.OpIndex
+}
+
+func (s *sumsStore) TradeSums1mInRange(_ context.Context, p canonical.Pair, from, to time.Time) ([]timescale.TradeMinuteSum, time.Time, error) {
+	idx := map[string]*timescale.TradeMinuteSum{}
+	var keys []string
+	for _, t := range s.raw {
+		b := t.Timestamp.Truncate(time.Minute)
+		forward := t.Pair.Equal(p)
+		if (!forward && !t.Pair.Equal(p.Flip())) || b.Before(from) || !b.Before(to) || !b.Before(s.watermark) {
+			continue
+		}
+		if t.BaseAmount.Sign() <= 0 || t.QuoteAmount.Sign() <= 0 {
+			continue
+		}
+		key := fmt.Sprintf("%s|%v|%v", t.Source, b, forward)
+		price := new(big.Rat).SetFrac(t.QuoteAmount.BigInt(), t.BaseAmount.BigInt())
+		r, ok := idx[key]
+		if !ok {
+			r = &timescale.TradeMinuteSum{
+				Source: t.Source, Bucket: b, BaseSum: canonical.NewAmount(new(big.Int)), QuoteSum: canonical.NewAmount(new(big.Int)),
+				MinPrice: new(big.Rat).Set(price), MaxPrice: new(big.Rat).Set(price),
+			}
+			idx[key] = r
+			keys = append(keys, key)
+		}
+		r.BaseSum = canonical.NewAmount(new(big.Int).Add(r.BaseSum.BigInt(), t.BaseAmount.BigInt()))
+		r.QuoteSum = canonical.NewAmount(new(big.Int).Add(r.QuoteSum.BigInt(), t.QuoteAmount.BigInt()))
+		r.Count++
+		if price.Cmp(r.MinPrice) < 0 {
+			r.MinPrice.Set(price)
+		}
+		if price.Cmp(r.MaxPrice) > 0 {
+			r.MaxPrice.Set(price)
+		}
+	}
+	out := make([]timescale.TradeMinuteSum, 0, len(keys))
+	for _, k := range keys {
+		r := *idx[k]
+		if !r.Bucket.IsZero() && !keyForward(k) {
+			r.BaseSum, r.QuoteSum = r.QuoteSum, r.BaseSum
+			r.MinPrice, r.MaxPrice = new(big.Rat).Inv(r.MaxPrice), new(big.Rat).Inv(r.MinPrice)
+		}
+		out = append(out, r)
+	}
+	return out, s.watermark, nil
+}
+
+func keyForward(k string) bool { return k[len(k)-4:] == "true" }
+
+// busyWindow builds a 1h window of sdex and binance trades in both stored directions, priced around 0.1 with a slow drift, three
+// prints per source per 20 s on shared timestamps so a row cap cuts inside a timestamp.
+func busyWindow(t *testing.T, pair canonical.Pair, from time.Time) []canonical.Trade {
 	t.Helper()
-	raw, err := mr.Get(cachekeys.VWAPCoverage(pair.Base, pair.Quote, window).String())
+	var out []canonical.Trade
+	op := uint32(0)
+	for sec := 0; sec < 3600; sec += 20 {
+		ts := from.Add(time.Duration(sec) * time.Second)
+		for k := int64(0); k < 3; k++ {
+			op++
+			base := 1_000_0000 + k*7_0000 + int64(sec)
+			quote := base/10 + int64(sec)*3
+			sd := makeTradeOn(t, pair, "sdex", base, quote, ts)
+			sd.OpIndex = op
+			if op%2 == 0 {
+				sd.Pair = pair.Flip()
+				sd.BaseAmount, sd.QuoteAmount = sd.QuoteAmount, sd.BaseAmount
+			}
+			bn := makeTradeOn(t, pair, "binance", base*10, quote*10+int64(k), ts)
+			bn.OpIndex = op + 100000
+			out = append(out, sd, bn)
+		}
+	}
+	return out
+}
+
+func coverageOrch(t *testing.T, s *sumsStore, maxTrades int, sigma float64) *Orchestrator {
+	t.Helper()
+	return New(s, nil, Config{MaxTradesPerWindow: maxTrades, OutlierSigmaThreshold: sigma, Windows: []time.Duration{time.Hour}})
+}
+
+func oriented(trades []canonical.Trade, p canonical.Pair) []canonical.Trade {
+	out := make([]canonical.Trade, 0, len(trades))
+	for _, t := range trades {
+		if t.Pair.Equal(p.Flip()) {
+			t.Pair = p
+			t.BaseAmount, t.QuoteAmount = t.QuoteAmount, t.BaseAmount
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+// A capped leg filled from minute sums yields the VWAP and trade count of the whole raw window, with the cap cutting inside a
+// minute and inside a timestamp.
+func TestFillFromMinuteSums_ReproducesTheWholeWindow(t *testing.T) {
+	pair := mkPair(t, "crypto", "XLM", "fiat", "USD")
+	from := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	to := from.Add(time.Hour)
+	s := &sumsStore{raw: busyWindow(t, pair, from), watermark: to}
+	o := coverageOrch(t, s, 1001, 4) // 1001 = mid-timestamp; 6 rows per timestamp
+
+	got, weights, coveredFrom, err := o.fetchTradesDetectTruncation(context.Background(), pair, pair, from, to)
 	if err != nil {
-		t.Fatalf("coverage key: %v", err)
-	}
-	c, err := cachekeys.ParseVWAPCoverage(raw)
-	if err != nil {
-		t.Fatalf("coverage value %q: %v", raw, err)
-	}
-	return c
-}
-
-// TestDecideBucket_TruncatedWindowStatesCoveredSpan: a 24h window whose trade read hits the row cap in its last 2h must publish, with the value, that it is truncated and the oldest trade reached.
-func TestDecideBucket_TruncatedWindowStatesCoveredSpan(t *testing.T) {
-	const window = 24 * time.Hour
-	tickTime := time.Date(2026, 10, 6, 12, 0, 30, 0, time.UTC)
-	bucketEnd := tickTime.Truncate(time.Minute)
-	at := func(minAgo int) time.Time { return bucketEnd.Add(-time.Duration(minAgo) * time.Minute) }
-	trade := func(ts time.Time) canonical.Trade {
-		return buildTrade(t, big.NewInt(10_000_000_000), big.NewInt(1_758_200_000), ts)
-	}
-
-	t.Run("direct pair over the cap", func(t *testing.T) {
-		pair := xlmUsdtPair(t)
-		// Six trades in the last 2h, cap 4: the read keeps the newest four,
-		// so the oldest included is 80 minutes before the bucket end.
-		store := &mockStore{trades: []canonical.Trade{
-			trade(at(115)), trade(at(100)), trade(at(80)), trade(at(60)), trade(at(40)), trade(at(20)),
-		}}
-		rdb, mr := newTestRedis(t)
-		stream := &recordingStreamPublisher{}
-		o := New(store, rdb, Config{
-			Pairs: []canonical.Pair{pair}, Windows: []time.Duration{window},
-			MaxTradesPerWindow: 4, StreamPublisher: stream,
-		})
-		o.clock = func() time.Time { return tickTime }
-		if err := o.Tick(context.Background()); err != nil {
-			t.Fatalf("Tick: %v", err)
-		}
-
-		want := cachekeys.WindowCoverage{Truncated: true, CoveredFrom: at(80)}
-		if got := readCoverage(t, mr, pair, window); got != want {
-			t.Errorf("coverage = %+v, want %+v", got, want)
-		}
-		if len(stream.calls) != 1 || stream.calls[0].coverage == nil || *stream.calls[0].coverage != want {
-			t.Errorf("streamed coverage = %+v, want %+v on the one event", stream.calls, want)
-		}
-
-		// A replaying tick inside the same bucket republishes the decided
-		// coverage with the value, not a default.
-		mr.Del(cachekeys.VWAPCoverage(pair.Base, pair.Quote, window).String())
-		o.clock = func() time.Time { return tickTime.Add(20 * time.Second) }
-		if err := o.Tick(context.Background()); err != nil {
-			t.Fatalf("replay Tick: %v", err)
-		}
-		if got := readCoverage(t, mr, pair, window); got != want {
-			t.Errorf("replayed coverage = %+v, want %+v", got, want)
-		}
-	})
-
-	t.Run("direct pair under the cap is complete", func(t *testing.T) {
-		pair := xlmUsdtPair(t)
-		store := &mockStore{trades: []canonical.Trade{trade(at(100)), trade(at(20))}}
-		rdb, mr := newTestRedis(t)
-		o := New(store, rdb, Config{
-			Pairs: []canonical.Pair{pair}, Windows: []time.Duration{window}, MaxTradesPerWindow: 4,
-		})
-		o.clock = func() time.Time { return tickTime }
-		if err := o.Tick(context.Background()); err != nil {
-			t.Fatalf("Tick: %v", err)
-		}
-		if got := readCoverage(t, mr, pair, window); got != (cachekeys.WindowCoverage{}) {
-			t.Errorf("coverage = %+v, want complete", got)
-		}
-	})
-
-	t.Run("proxy pairs take the newest truncation point", func(t *testing.T) {
-		xlm, _ := canonical.NewCryptoAsset("XLM")
-		usd, _ := canonical.NewFiatAsset("USD")
-		target, _ := canonical.NewPair(xlm, usd)
-		usdt := func(ts time.Time) canonical.Trade {
-			return backerTrade(t, "USDT", "binance", big.NewInt(100_000_000), big.NewInt(20_000_000), ts)
-		}
-		usdc := func(ts time.Time) canonical.Trade {
-			return backerTrade(t, "USDC", "sdex", big.NewInt(10_000_000), big.NewInt(2_000_000), ts)
-		}
-		// Cap 2: USDT reaches back to 60m, USDC only to 30m, and the DAI
-		// leg is under the cap. Every trade after 30m is in the value;
-		// before it, USDC's are missing.
-		store := &mockStore{perPair: map[string][]canonical.Trade{
-			"crypto:XLM/crypto:USDT": {usdt(at(90)), usdt(at(60)), usdt(at(10))},
-			"crypto:XLM/crypto:USDC": {usdc(at(50)), usdc(at(30)), usdc(at(5))},
-			"crypto:XLM/crypto:DAI":  {backerTrade(t, "DAI", "sdex", big.NewInt(10_000_000), big.NewInt(2_000_000), at(200))},
-		}}
-		rdb, mr := newTestRedis(t)
-		o := New(store, rdb, Config{
-			Pairs: []canonical.Pair{target}, Windows: []time.Duration{window},
-			MaxTradesPerWindow: 2, EnableStablecoinFiatProxy: true,
-		})
-		o.clock = func() time.Time { return tickTime }
-		if err := o.Tick(context.Background()); err != nil {
-			t.Fatalf("Tick: %v", err)
-		}
-		want := cachekeys.WindowCoverage{Truncated: true, CoveredFrom: at(30)}
-		if got := readCoverage(t, mr, target, window); got != want {
-			t.Errorf("coverage = %+v, want %+v", got, want)
-		}
-	})
-}
-
-// TestReseedFrozenVWAP_RestoresHeldCoverage: a reseeded held value
-// carries the coverage it was published with, and a value whose coverage
-// was never recorded gets none (unknown) rather than "complete".
-func TestReseedFrozenVWAP_RestoresHeldCoverage(t *testing.T) {
-	pair := xlmUsdtPair(t)
-	const window = time.Hour
-	end := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
-	held := cachekeys.WindowCoverage{Truncated: true, CoveredFrom: end.Add(-20 * time.Minute)}
-	for _, tc := range []struct {
-		name  string
-		known bool
-	}{{"recorded", true}, {"never recorded", false}} {
-		t.Run(tc.name, func(t *testing.T) {
-			rdb, mr := newTestRedis(t)
-			o := New(nil, rdb, Config{Pairs: []canonical.Pair{pair}, Windows: []time.Duration{window}})
-			stateKey := pair.String() + ":" + window.String()
-			o.setComparator(stateKey, big.NewRat(1, 10), end, end)
-			if tc.known {
-				o.prevVWAPCoverage[stateKey] = held
-			}
-			o.reseedFrozenVWAP(context.Background(), pair, window, stateKey, 30*time.Minute)
-
-			covKey := cachekeys.VWAPCoverage(pair.Base, pair.Quote, window).String()
-			if !tc.known {
-				if mr.Exists(covKey) {
-					t.Error("coverage written for a held value whose coverage was never recorded")
-				}
-				return
-			}
-			if got := readCoverage(t, mr, pair, window); got != held {
-				t.Errorf("reseeded coverage = %+v, want %+v", got, held)
-			}
-		})
-	}
-}
-
-// TestReseedFrozenVWAP_NeverStampsCoverageBesideComposite pins that a composite serving on the key carries no
-// coverage (unknown), so a reseed whose value write no-ops against it must not stamp the held direct window's
-// coverage beside it.
-func TestReseedFrozenVWAP_NeverStampsCoverageBesideComposite(t *testing.T) {
-	pair := xlmUsdtPair(t)
-	const window = time.Hour
-	const composite = "0.123000000000"
-	end := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
-	rdb, mr := newTestRedis(t)
-	ctx := context.Background()
-	key := cachekeys.VWAP(pair.Base, pair.Quote, window).String()
-	if err := rdb.Set(ctx, key, composite, 0).Err(); err != nil {
 		t.Fatal(err)
 	}
-	if err := rdb.Set(ctx, cachekeys.VWAPProvenance(pair.Base, pair.Quote, window).String(),
-		cachekeys.VWAPProvenanceTriangulated, 0).Err(); err != nil {
+	if !coveredFrom.IsZero() || len(weights) == 0 {
+		t.Fatalf("coveredFrom = %v, %d minute rows; want the whole window covered from minute sums", coveredFrom, len(weights))
+	}
+	all := oriented(s.raw, pair)
+	if n := tradeCount(got, weights); n != len(all) {
+		t.Errorf("trade count = %d, want %d", n, len(all))
+	}
+	want, err := o.computeNormalizedVWAP(all, pair)
+	if err != nil {
 		t.Fatal(err)
 	}
-
-	o := New(nil, rdb, Config{Pairs: []canonical.Pair{pair}, Windows: []time.Duration{window}})
-	stateKey := pair.String() + ":" + window.String()
-	o.setComparator(stateKey, big.NewRat(1, 10), end, end)
-	o.prevVWAPCoverage[stateKey] = cachekeys.WindowCoverage{Truncated: true, CoveredFrom: end.Add(-20 * time.Minute)}
-	o.reseedFrozenVWAP(ctx, pair, window, stateKey, 30*time.Minute)
-
-	if covKey := cachekeys.VWAPCoverage(pair.Base, pair.Quote, window).String(); mr.Exists(covKey) {
-		t.Error("held direct coverage stamped beside a serving composite")
+	have, err := o.computeNormalizedVWAP(got, pair)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got, _ := mr.Get(key); got != composite {
-		t.Errorf("served value = %q, want the composite %q untouched", got, composite)
+	if want.Cmp(have) != 0 {
+		t.Errorf("VWAP = %s, want %s", have.FloatString(18), want.FloatString(18))
+	}
+	ids := map[string]bool{}
+	for _, tr := range got {
+		if ids[tr.ID()] {
+			t.Fatalf("duplicate Trade.ID %s", tr.ID())
+		}
+		ids[tr.ID()] = true
+	}
+}
+
+// With the outlier filter on, a regime shift inside the window gets the same verdicts and VWAP from a capped leg plus minute sums
+// as from the uncapped read: summary rows weigh as their trades, so the recent raw rows cannot outvote the older majority.
+func TestFillFromMinuteSums_OutlierFilterMatchesUncappedRead(t *testing.T) {
+	pair := mkPair(t, "crypto", "XLM", "fiat", "USD")
+	from := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	to := from.Add(time.Hour)
+	for _, step := range []int64{103, 110} { // +3% (chains as a regime shift) and +10% (a minority burst)
+		var raw []canonical.Trade
+		op := uint32(0)
+		for sec := 0; sec < 3600; sec += 10 {
+			level := int64(100)
+			if sec >= 3000 {
+				level = step
+			}
+			for k := int64(0); k < 3; k++ {
+				op++
+				base := 1_000_0000 + k*1_000 + int64(sec)
+				tr := makeTradeOn(t, pair, "sdex", base, base*level/1000+k, from.Add(time.Duration(sec)*time.Second))
+				tr.OpIndex = op
+				raw = append(raw, tr)
+			}
+		}
+		s := &sumsStore{raw: raw, watermark: to}
+		o := coverageOrch(t, s, 200, 4) // raw rows cover the last ~11 minutes
+
+		got, weights, coveredFrom, err := o.fetchTradesDetectTruncation(context.Background(), pair, pair, from, to)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !coveredFrom.IsZero() || len(weights) == 0 {
+			t.Fatalf("step %d: coveredFrom = %v, %d minute rows; want full coverage from minute sums", step, coveredFrom, len(weights))
+		}
+		wantKept := aggregate.FilterOutliersLocal(raw, o.outlierOptions(nil))
+		gotKept := aggregate.FilterOutliersLocal(got, o.outlierOptions(weights))
+		if a, b := tradeCount(gotKept, weights), len(wantKept); a != b {
+			t.Fatalf("step %d: filter kept %d trades, uncapped read keeps %d", step, a, b)
+		}
+		if len(wantKept) == 0 {
+			continue
+		}
+		want, err := o.computeNormalizedVWAP(wantKept, pair)
+		if err != nil {
+			t.Fatal(err)
+		}
+		have, err := o.computeNormalizedVWAP(gotKept, pair)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want.Cmp(have) != 0 {
+			t.Errorf("step %d: VWAP = %s, uncapped read gives %s", step, have.FloatString(18), want.FloatString(18))
+		}
+	}
+}
+
+// An off-price print inside honest volume makes its minute too wide to summarise: the minute is re-read raw so the print stays a
+// row of its own for the outlier filter.
+func TestFillFromMinuteSums_WideMinuteIsReadRaw(t *testing.T) {
+	pair := mkPair(t, "crypto", "XLM", "fiat", "USD")
+	from := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	to := from.Add(time.Hour)
+	raw := busyWindow(t, pair, from)
+	evil := makeTradeOn(t, pair, "sdex", 1_0000000, 3_000_000, from.Add(5*time.Minute+7*time.Second))
+	evil.OpIndex = 999999
+	raw = append(raw, evil)
+	s := &sumsStore{raw: raw, watermark: to}
+	o := coverageOrch(t, s, 1000, 4)
+
+	got, _, coveredFrom, err := o.fetchTradesDetectTruncation(context.Background(), pair, pair, from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !coveredFrom.IsZero() {
+		t.Fatalf("coveredFrom = %v, want zero", coveredFrom)
+	}
+	found := false
+	for _, tr := range got {
+		if tr.ID() == evil.ID() {
+			found = true
+		}
+		if tr.Timestamp.Truncate(time.Minute).Equal(from.Add(5*time.Minute)) && tr.TxHash != evil.TxHash {
+			t.Errorf("minute 12:05 carries a summary row %s; want raw rows only", tr.ID())
+		}
+	}
+	if !found {
+		t.Error("the off-price print was folded into a minute row instead of kept as a raw row")
+	}
+}
+
+// More wide minutes than the raw budget: coverage ends after the newest one left unread, and nothing older is served.
+func TestFillFromMinuteSums_BudgetExhaustedEndsCoverage(t *testing.T) {
+	pair := mkPair(t, "crypto", "XLM", "fiat", "USD")
+	from := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	to := from.Add(time.Hour)
+	raw := busyWindow(t, pair, from)
+	for m := 0; m <= minuteRawBudget; m++ {
+		e := makeTradeOn(t, pair, "binance", 1_00000000, 30_000_000, from.Add(time.Duration(m)*time.Minute+time.Second))
+		e.OpIndex = uint32(900000 + m)
+		raw = append(raw, e)
+	}
+	s := &sumsStore{raw: raw, watermark: to}
+	o := coverageOrch(t, s, 100, 4) // raw part covers only the last ~6 minutes
+
+	got, _, coveredFrom, err := o.fetchTradesDetectTruncation(context.Background(), pair, pair, from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := from.Add(time.Minute); !coveredFrom.Equal(want) {
+		t.Fatalf("coveredFrom = %v, want %v (end of the oldest wide minute, the one past the budget)", coveredFrom, want)
+	}
+	for _, tr := range got {
+		if tr.Timestamp.Before(coveredFrom) {
+			t.Errorf("row %s predates coveredFrom", tr.ID())
+		}
+	}
+}
+
+// The sums are not used, and the leg stays truncated at its raw read, when the view is not materialised up to the raw part or the
+// window does not start on a minute.
+func TestFillFromMinuteSums_FallsBackToTruncated(t *testing.T) {
+	pair := mkPair(t, "crypto", "XLM", "fiat", "USD")
+	from := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	to := from.Add(time.Hour)
+	for name, tc := range map[string]struct {
+		from      time.Time
+		watermark time.Time
+	}{
+		"watermark behind the raw part": {from: from, watermark: from.Add(2 * time.Minute)},
+		"window not minute-aligned":     {from: from.Add(30 * time.Second), watermark: to},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := &sumsStore{raw: busyWindow(t, pair, from), watermark: tc.watermark}
+			o := coverageOrch(t, s, 1000, 4)
+			got, weights, coveredFrom, err := o.fetchTradesDetectTruncation(context.Background(), pair, pair, tc.from, to)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if coveredFrom.IsZero() || len(got) != 1000 || weights != nil {
+				t.Errorf("coveredFrom=%v rows=%d weights=%d; want the capped raw read, truncated", coveredFrom, len(got), len(weights))
+			}
+		})
 	}
 }

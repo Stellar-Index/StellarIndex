@@ -30,6 +30,8 @@ type LocalOutlierOptions struct {
 	MinBucket int
 	// Neighbours is the prints per side forming the count-neighbourhood reference for a print in a thin bucket.
 	Neighbours int
+	// Weight is how many trades a row stands for (a per-minute summary row); nil counts every row once.
+	Weight func(t *canonical.Trade) int64
 	// AmountScaleDecimals resolves a source's smallest-unit scale for the volume-majority comparison; nil compares raw amounts (exact only for a single-scale window).
 	AmountScaleDecimals func(source string) int
 }
@@ -49,7 +51,7 @@ func (o LocalOutlierOptions) withDefaults() LocalOutlierOptions {
 
 // FilterOutliersLocal drops prints that disagree with BOTH the whole window and their time-local neighbourhood, preserving input order; edge cases match [FilterOutliers].
 func FilterOutliersLocal(trades []canonical.Trade, opts LocalOutlierOptions) []canonical.Trade {
-	if opts.Sigma <= 0 || len(trades) < 3 {
+	if opts.Sigma <= 0 || (len(trades) < 3 && opts.Weight == nil) {
 		out := make([]canonical.Trade, len(trades))
 		copy(out, trades)
 		return out
@@ -86,15 +88,15 @@ var localScaleRelFloor = big.NewRat(1, 400)
 // cannot admit everything in it; the window reference (exact MAD, no ceiling) still decides genuinely dispersed windows.
 var localScaleRelCeiling = big.NewRat(1, 100)
 
-func newRobustRef(prices []*big.Rat) *robustRef {
-	c, s := robustCentreScale(prices)
+func newRobustRef(prices []*big.Rat, w []int64) *robustRef {
+	c, s := weightedCentreScale(prices, w)
 	return &robustRef{centre: c, scale: s}
 }
 
 // newLocalRef is [newRobustRef] with the scale clamped to
 // [localScaleRelFloor, localScaleRelCeiling]·|centre|.
-func newLocalRef(prices []*big.Rat) *robustRef {
-	r := newRobustRef(prices)
+func newLocalRef(prices []*big.Rat, w []int64) *robustRef {
+	r := newRobustRef(prices, w)
 	floor := new(big.Rat).Mul(localScaleRelFloor, r.centre)
 	floor.Abs(floor)
 	if floor.Cmp(r.scale) > 0 {
@@ -152,6 +154,8 @@ type priceBucket struct {
 type localIndex struct {
 	opts   LocalOutlierOptions
 	prices []*big.Rat
+	// weights[pos] is the trade count of prices[pos]; nil means 1 each.
+	weights []int64
 	// order[k] = position into prices, sorted by trade time (stable,
 	// so equal timestamps keep input order).
 	order []int
@@ -187,8 +191,8 @@ func TradeOrderLess(a, b *canonical.Trade) bool {
 
 // newLocalIndex sorts usable prices by trade time (ties by [TradeOrderLess], so order depends on the trade set, not the caller's merge
 // order) and partitions them into opts.Bucket-wide buckets.
-func newLocalIndex(trades []canonical.Trade, validIdx []int, prices []*big.Rat, opts LocalOutlierOptions) *localIndex {
-	ix := &localIndex{opts: opts, prices: prices, window: newRobustRef(prices)}
+func newLocalIndex(trades []canonical.Trade, validIdx []int, prices []*big.Rat, weights []int64, opts LocalOutlierOptions) *localIndex {
+	ix := &localIndex{opts: opts, prices: prices, weights: weights, window: newRobustRef(prices, weights)}
 	ix.order = make([]int, len(prices))
 	for k := range ix.order {
 		ix.order[k] = k
@@ -251,14 +255,25 @@ func withinTol(a, b, tol *big.Rat) bool {
 func (ix *localIndex) anchorBuckets() {
 	ix.lastAnchored = nil
 	for _, b := range ix.buckets {
-		if len(b.members) < ix.opts.MinBucket {
+		var n int64
+		for _, k := range b.members {
+			n += ix.weight(ix.order[k])
+		}
+		if n < int64(ix.opts.MinBucket) {
 			continue
 		}
 		ps := make([]*big.Rat, len(b.members))
+		var ws []int64
+		if ix.weights != nil {
+			ws = make([]int64, len(b.members))
+		}
 		for j, k := range b.members {
 			ps[j] = ix.prices[ix.order[k]]
+			if ws != nil {
+				ws[j] = ix.weights[ix.order[k]]
+			}
 		}
-		if ref := newLocalRef(ps); ix.anchored(ref.centre) {
+		if ref := newLocalRef(ps, ws); ix.anchored(ref.centre) {
 			b.ref = ref
 		}
 	}
@@ -275,26 +290,47 @@ func (ix *localIndex) bucketRef(bi int) *robustRef {
 	return ix.buckets[bi].ref
 }
 
-// neighbourhoodRef builds the count-neighbourhood reference for order-position k (nearest opts.Neighbours prices each side, excluding k);
-// nil when k has no neighbours or the centre is not anchored. Call in time order: it advances the anchor chain.
+// weight returns the trade count of prices[pos].
+func (ix *localIndex) weight(pos int) int64 {
+	if ix.weights == nil {
+		return 1
+	}
+	return ix.weights[pos]
+}
+
+// neighbourhoodRef builds the count-neighbourhood reference for order-position k (nearest opts.Neighbours trades each side, excluding k;
+// a row of w trades sees the neighbourhood of its middle trade, (w-1)/2 of its other trades on the left); nil when k has no neighbours or
+// the centre is not anchored. Call in time order: it advances the anchor chain.
 func (ix *localIndex) neighbourhoodRef(k int) *robustRef {
-	lo, hi := k-ix.opts.Neighbours, k+ix.opts.Neighbours
-	if lo < 0 {
-		lo = 0
+	per := int64(ix.opts.Neighbours)
+	own := ix.weight(ix.order[k]) - 1
+	ownL, ownR := min(own/2, per), min(own-own/2, per)
+	var neigh []*big.Rat
+	var ws []int64
+	add := func(pos int, n int64) {
+		neigh = append(neigh, ix.prices[pos])
+		ws = append(ws, n)
 	}
-	if hi > len(ix.order)-1 {
-		hi = len(ix.order) - 1
+	if ownL+ownR > 0 {
+		add(ix.order[k], ownL+ownR)
 	}
-	neigh := make([]*big.Rat, 0, hi-lo)
-	for j := lo; j <= hi; j++ {
-		if j != k {
-			neigh = append(neigh, ix.prices[ix.order[j]])
+	for _, side := range [2]struct {
+		step   int
+		budget int64
+	}{{-1, per - ownL}, {1, per - ownR}} {
+		for j := k + side.step; side.budget > 0 && j >= 0 && j < len(ix.order); j += side.step {
+			n := min(ix.weight(ix.order[j]), side.budget)
+			add(ix.order[j], n)
+			side.budget -= n
 		}
 	}
 	if len(neigh) == 0 {
 		return nil
 	}
-	ref := newLocalRef(neigh)
+	if ix.weights == nil {
+		ws = nil
+	}
+	ref := newLocalRef(neigh, ws)
 	if !ix.anchored(ref.centre) {
 		return nil
 	}
@@ -331,6 +367,8 @@ func outlierScores(trades []canonical.Trade, opts LocalOutlierOptions) (validIdx
 
 	prices := make([]*big.Rat, 0, len(trades))
 	validIdx = make([]int, 0, len(trades))
+	var weights []int64
+	var total int64
 	for i := range trades {
 		p, ok := priceRat(&trades[i])
 		if !ok {
@@ -338,12 +376,18 @@ func outlierScores(trades []canonical.Trade, opts LocalOutlierOptions) (validIdx
 		}
 		prices = append(prices, p)
 		validIdx = append(validIdx, i)
+		w := int64(1)
+		if opts.Weight != nil {
+			w = max(opts.Weight(&trades[i]), 1)
+			weights = append(weights, w)
+		}
+		total += w
 	}
-	if len(prices) < 3 {
+	if total < 3 {
 		return validIdx, nil
 	}
 
-	ix := newLocalIndex(trades, validIdx, prices, opts)
+	ix := newLocalIndex(trades, validIdx, prices, weights, opts)
 	z = make([]*big.Rat, len(prices))
 	for k, pos := range ix.order {
 		z[pos] = ix.score(k)

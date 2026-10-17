@@ -134,6 +134,9 @@ func TestRetentionPolicies_AreExactlyTheDeclaredSet(t *testing.T) {
 		// disabled (0169). Appended once per aggregator tick per
 		// (pair, window, source); only the latest bucket is ever read.
 		"price_source_contributions": "0169_price_source_contributions_window.up.sql",
+		// The aggregator's per-(source, pair) minute sums, 7 days, shipped disabled (0217).
+		// Read only for windows of at most 25 hours and recomputable from `trades`.
+		"trade_sums_1m": "0217_trade_sums_1m.up.sql",
 	}
 
 	held := retentionLedger(t)

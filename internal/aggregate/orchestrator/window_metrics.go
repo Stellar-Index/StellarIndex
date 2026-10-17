@@ -35,8 +35,8 @@ func recordWindowStage(pair canonical.Pair, window time.Duration, stage string, 
 }
 
 // recordWindowStageVolume is [recordWindowStage] plus the stage's base volume, in whole units: the stage's common smallest-unit scale is its own maximum, so a trim could shift survivors onto a different scale.
-func recordWindowStageVolume(pair canonical.Pair, window time.Duration, stage string, trades []canonical.Trade) {
-	recordWindowStage(pair, window, stage, len(trades))
+func recordWindowStageVolume(pair canonical.Pair, window time.Duration, stage string, trades []canonical.Trade, weights map[string]int64) {
+	recordWindowStage(pair, window, stage, tradeCount(trades, weights))
 	bySource := make(map[string]*big.Int, 4)
 	for i := range trades {
 		sum, ok := bySource[trades[i].Source]
@@ -73,4 +73,24 @@ func (o *Orchestrator) recordVenueVWAPs(pair canonical.Pair, window time.Duratio
 		f, _ := vwap.Float64() // i128:ok Prometheus per-venue VWAP gauge, not served
 		obs.AggregatorVenueVWAP.WithLabelValues(pairLabel, wLabel, c.Source).Set(f)
 	}
+}
+
+// tradeWeight is the trades one row stands for: a minute-sum row's count ([Orchestrator.fillFromMinuteSums]), else 1.
+func tradeWeight(t *canonical.Trade, weights map[string]int64) int {
+	if w, ok := weights[t.ID()]; ok {
+		return int(w)
+	}
+	return 1
+}
+
+// tradeCount sums [tradeWeight] over trades.
+func tradeCount(trades []canonical.Trade, weights map[string]int64) int {
+	if len(weights) == 0 {
+		return len(trades)
+	}
+	n := 0
+	for i := range trades {
+		n += tradeWeight(&trades[i], weights)
+	}
+	return n
 }
