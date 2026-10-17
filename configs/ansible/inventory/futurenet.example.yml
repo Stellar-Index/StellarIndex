@@ -80,12 +80,12 @@ all:
 
     # "Mostly an explorer": SDEX only; everything bespoke/pricing is cut.
     run_aggregator: false
-    # ch-live-catchup needs a live-era floor (stellarindex_ch_live_era_from),
-    # and only pubnet defines one — r1's value is a pubnet ledger and means
-    # nothing here. The script fail-closes rather than guess a floor, so with
-    # the timer enabled and no floor the unit just fails on every tick. Leave
-    # it off until this network has a floor worth naming.
-    ch_live_catchup_enabled: false
+    # Without the self-healer an indexer restart can leave a permanent
+    # one-ledger hole. Floor: a ledger the lake is verified contiguous up to
+    # (count of distinct ledger_seq from 2 equals tip - 1); re-derive it for
+    # a rebuilt lake.
+    ch_live_catchup_enabled: true
+    stellarindex_ch_live_era_from: 1128000
     stellarindex_enabled_sources:
       - sdex
     stellarindex_sdf_reserve_accounts: []
