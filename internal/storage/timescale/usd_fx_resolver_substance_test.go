@@ -293,6 +293,41 @@ func TestUsdLabel_ThinVersusNoMarket(t *testing.T) {
 
 // TestMarkNoMarket_NeverMarksXLMOrAPeg pins that an anchor's missing rate is never a missing route: XLM-paired and peg-paired trades
 // must stay "no" so a pricing outage keeps tripping the coverage alert.
+// A minute's cached miss outlives the hour verdict it was refused by (both expire cacheTTL after they were stored, and the verdict is
+// stored first), so the thin reason must ride on the miss or a burst of trades in that minute reads as "no market".
+func TestThinMarketRefused_OutlivesTheHourVerdict(t *testing.T) {
+	at := time.Date(2026, 9, 21, 12, 10, 0, 0, time.UTC)
+	now := at
+	store, _ := newScriptedStore(t,
+		directHit(at.Add(-time.Minute), "1.00000000"), measured("4.8", 48, 56400), xlmLegMiss(),
+		directHit(at, "1.00000000"), xlmLegMiss(), // the verdict is reused, so no second measurement
+	)
+	r, err := NewVWAPUSDFXResolver(store, VWAPUSDFXResolverOptions{
+		USDPegs: []string{usdcClassicPeg}, PegSACWrappers: pegSACWrappersFixture, Clock: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokn := substanceTestAsset(t, "TOKN")
+	next := at.Add(time.Minute)
+	for _, step := range []struct {
+		wall  time.Duration
+		trade time.Time
+	}{{0, at}, {4 * time.Minute, next}} {
+		now = at.Add(step.wall)
+		if got, ok, err := r.USDPriceAt(context.Background(), tokn, step.trade); err != nil || ok {
+			t.Fatalf("USDPriceAt(%s) = (%q, %t, %v), want a thin-market miss", step.trade, got, ok, err)
+		}
+	}
+	now = at.Add(6 * time.Minute) // the verdict stored at +0 has expired; the +4 miss has not
+	if _, ok, _ := r.USDPriceAt(context.Background(), tokn, next); ok {
+		t.Fatal("the cached miss should still answer")
+	}
+	if !r.ThinMarketRefused(tokn, next) {
+		t.Error("ThinMarketRefused = false after the hour verdict expired; the cached miss must keep its thin reason")
+	}
+}
+
 func TestMarkNoMarket_NeverMarksXLMOrAPeg(t *testing.T) {
 	at := time.Date(2026, 9, 21, 12, 34, 0, 0, time.UTC)
 	r, _ := substanceTestResolver(t, at, directHit(at.Add(-time.Minute), "0.25"))
