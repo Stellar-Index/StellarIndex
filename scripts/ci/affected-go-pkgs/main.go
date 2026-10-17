@@ -72,6 +72,9 @@ func run(base string, filesMode, worktree bool) error {
 		fmt.Println("./...")
 		return nil
 	}
+	if err := addCitationReaders(base, worktree, dirs); err != nil {
+		return err
+	}
 	if len(dirs) == 0 {
 		return nil
 	}
@@ -152,8 +155,8 @@ func touchedDirs(files []string) (map[string]bool, bool, error) {
 			}
 		}
 		dirs[wiringPkg] = true
-		readers, err := gitLines("grep", "-lF", path.Base(f), "--", "*.go")
-		if err != nil && !isNoMatch(err) {
+		readers, err := gitGrep(path.Base(f), "*.go")
+		if err != nil {
 			return nil, false, err
 		}
 		for _, r := range readers {
@@ -161,6 +164,76 @@ func touchedDirs(files []string) (map[string]bool, bool, error) {
 		}
 	}
 	return dirs, false, nil
+}
+
+// addCitationReaders marks the packages whose tests read a doc that cites a
+// changed Go file by path. Comment-only edits count: they move the lines a
+// path:line citation points at.
+func addCitationReaders(base string, worktree bool, dirs map[string]bool) error {
+	changed, err := changedFiles(base, worktree)
+	if err != nil {
+		return err
+	}
+	readers, err := citationReaders(changed, gitGrep)
+	if err != nil {
+		return err
+	}
+	for _, r := range readers {
+		dirs[path.Dir(r)] = true
+	}
+	return nil
+}
+
+// citationReaders returns the test files that name a markdown doc citing one
+// of the changed Go files; grep returns the files under glob containing a
+// fixed string.
+func citationReaders(changed []string, grep func(fixed, glob string) ([]string, error)) ([]string, error) {
+	docs := map[string]bool{}
+	for _, f := range changed {
+		if !strings.HasSuffix(f, ".go") {
+			continue
+		}
+		citing, err := grep(f, "*.md")
+		if err != nil {
+			return nil, err
+		}
+		for _, d := range citing {
+			docs[d] = true
+		}
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, d := range sortedKeys(docs) {
+		tests, err := grep(path.Base(d), "*_test.go")
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range tests {
+			if !seen[t] {
+				seen[t] = true
+				out = append(out, t)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func gitGrep(fixed, glob string) ([]string, error) {
+	lines, err := gitLines("grep", "-lF", fixed, "--", glob)
+	if err != nil && !isNoMatch(err) {
+		return nil, err
+	}
+	return lines, nil
+}
+
+func sortedKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // markPackageDirs marks dir and every ancestor holding Go files, and

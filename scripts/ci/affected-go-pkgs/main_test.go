@@ -52,3 +52,25 @@ m/d m/x`
 		t.Fatalf("affected = %v, want %v", got, want)
 	}
 }
+
+func TestCitationReaders(t *testing.T) {
+	index := map[string]map[string][]string{
+		"*.md": {
+			"internal/a/a.go": {"docs/plan.md", "docs/other.md"},
+			"internal/b/b.go": {"docs/plan.md"},
+		},
+		"*_test.go": {
+			"plan.md":  {"internal/chops/plan_test.go"},
+			"other.md": {"internal/chops/plan_test.go", "test/controlwiring/other_test.go"},
+		},
+	}
+	grep := func(fixed, glob string) ([]string, error) { return index[glob][fixed], nil }
+	got, err := citationReaders([]string{"internal/a/a.go", "internal/b/b.go", "docs/plan.md", "internal/c/c.go"}, grep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"internal/chops/plan_test.go", "test/controlwiring/other_test.go"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("citationReaders = %v, want %v", got, want)
+	}
+}
