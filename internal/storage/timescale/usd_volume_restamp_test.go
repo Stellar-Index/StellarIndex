@@ -60,6 +60,8 @@ func TestExactTierUSDVolume_TracksTheWaterfall(t *testing.T) {
 		{"dex both legs pegged (quote wins)", "sdex", usdcAsset, usdx, 1_250_000_000, 9_990_000_000, "999.00000000"},
 		// Sub-unit dust: the render must keep all 8 places.
 		{"dex dust", "sdex", canonical.NativeAsset(), usdcAsset, 1, 3, "0.00000030"},
+		// A zero pegged base is exactly $0 on insert; the restamp must agree or it cannot repair the row.
+		{"dex pegged base zero (tier 2b)", "sdex", usdcAsset, canonical.NativeAsset(), 0, 3, "0.00000000"},
 	}
 
 	for _, tc := range cases {
@@ -100,7 +102,7 @@ func TestExactTierUSDVolume_TracksTheWaterfall(t *testing.T) {
 }
 
 // TestExactTierUSDVolume_DeclinesWhatTheWaterfallDeclines: the waterfall returns nil (usd_volume NULL) for a
-// non-positive quote before probing any tier, and tier 2b declines a non-positive base. The restamp must
+// non-positive quote before probing any tier, and tier 2b declines a negative base. The restamp must
 // decline the same rows; "repairing" them to a number would be a new defect.
 func TestExactTierUSDVolume_DeclinesWhatTheWaterfallDeclines(t *testing.T) {
 	cases := []struct {
@@ -110,7 +112,6 @@ func TestExactTierUSDVolume_DeclinesWhatTheWaterfallDeclines(t *testing.T) {
 	}{
 		{"zero quote on quote-pegged", TierQuotePegged, "100", "0"},
 		{"zero quote on base-pegged (waterfall bails first)", TierBasePegged, "100", "0"},
-		{"zero base on base-pegged", TierBasePegged, "0", "100"},
 		{"negative base", TierBasePegged, "-5", "100"},
 		{"garbage amount", TierQuotePegged, "100", "1e5"},
 		{"estimated tier is not restampable", TierEstimated, "100", "100"},
@@ -151,7 +152,9 @@ func TestUSDVolumeRestampDecision(t *testing.T) {
 		{"NULL row, coverage fill off", nil, TierBasePegged, "1250000000", "10000000000", false, "125.00000000", false, true},
 		{"NULL row, coverage fill on", nil, TierBasePegged, "1250000000", "10000000000", true, "125.00000000", true, true},
 		{"corrupt stored render is not rewritten", str("12x"), TierBasePegged, "1250000000", "10000000000", false, "125.00000000", false, false},
-		{"non-restampable row", str("125"), TierBasePegged, "0", "10000000000", false, "", false, false},
+		// The pre-#2890 dust class: zero USDC moved, valued off the other leg.
+		{"zero pegged base restamps to $0", str("0.00000006"), TierBasePegged, "0", "3", false, "0.00000000", true, true},
+		{"non-restampable row", str("125"), TierBasePegged, "-1", "10000000000", false, "", false, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
