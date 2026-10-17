@@ -20,6 +20,12 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.15] - 2026-10-17
+
+### Fixed
+
+- `/v1/ohlc`, `/v1/vwap` and `/v1/twap` no longer return 422 all-filtered when a tight cluster of dust prints shrinks the outlier band below an ordinary hourly move; the band is floored at ±1% of the median, matching the aggregator's local filter (#3563).
+
 ## [v0.116.14] — 2026-10-17
 
 1 commit since v0.116.13. No migrations. No `pkg/*` break.
@@ -53,11 +59,3 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 - **wasmaudit:** the redstone adapter's current WASM (`f0ccdffc…`, live since ledger 62520450) is audited and in the replay-gate manifest, so redstone replays from that ledger are allowed (#3554).
 
-## [v0.116.10] — 2026-10-16
-
-2 commits since v0.116.9. No migrations. No `pkg/*` break.
-
-### Fixed
-
-- **redstone:** `earnUSDC_FUNDAMENTAL/USD` is registered (vault contract in USD) instead of landing as a `raw:` row, and the bare `earnUSDC_FUNDAMENTAL` feed is quoted in USDC, the reserve it is published in (#3552). Existing rows from ledger 64254176 are corrected by a `projector-replay`.
-- **alerts:** the daily-publisher silence rule no longer fires when restarts re-emit the same fix and flatten the events counter (#3551).
