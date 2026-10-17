@@ -52,6 +52,37 @@ func madRat(vals []*big.Rat, centre *big.Rat) *big.Rat {
 	return medianRat(devs)
 }
 
+// weightedMedianRat is [medianRat] of the multiset holding vals[i] w[i] times, so a w[i]-trade summary row weighs as its trades;
+// nil w is medianRat. Every w[i] must be >= 1.
+func weightedMedianRat(vals []*big.Rat, w []int64) *big.Rat {
+	if w == nil {
+		return medianRat(vals)
+	}
+	if len(vals) == 0 {
+		return nil
+	}
+	idx := make([]int, len(vals))
+	var total int64
+	for i := range idx {
+		idx[i] = i
+		total += w[i]
+	}
+	sort.Slice(idx, func(a, b int) bool { return vals[idx[a]].Cmp(vals[idx[b]]) < 0 })
+	at := func(pos int64) *big.Rat {
+		var cum int64
+		for _, i := range idx {
+			cum += w[i]
+			if pos < cum {
+				return vals[i]
+			}
+		}
+		return vals[idx[len(idx)-1]]
+	}
+	lo, hi := at((total-1)/2), at(total/2)
+	sum := new(big.Rat).Add(lo, hi)
+	return sum.Quo(sum, big.NewRat(2, 1))
+}
+
 // zeroScaleRelFloor (1/200 = 0.5% of the centre, a +-2% band at sigma 4) is the scale used when MAD is 0, i.e. a strict majority sit at
 // one price; without it the band collapses to a point and drops every honestly-differing print. Mirrors [robustBand] in served_guard.go.
 var zeroScaleRelFloor = big.NewRat(1, 200)
@@ -59,11 +90,21 @@ var zeroScaleRelFloor = big.NewRat(1, 200)
 // robustCentreScale returns the median and the sigma-equivalent scale (madToStd*MAD) of vals, all exact; empty vals returns nil, nil.
 // When MAD is 0 the scale falls back to [zeroScaleRelFloor]*|centre| (a zero centre keeps the zero scale).
 func robustCentreScale(vals []*big.Rat) (centre, scale *big.Rat) {
+	return weightedCentreScale(vals, nil)
+}
+
+// weightedCentreScale is [robustCentreScale] over vals with vals[i] counted w[i] times; nil w counts each once.
+func weightedCentreScale(vals []*big.Rat, w []int64) (centre, scale *big.Rat) {
 	if len(vals) == 0 {
 		return nil, nil
 	}
-	centre = medianRat(vals)
-	scale = new(big.Rat).Mul(madToStd, madRat(vals, centre))
+	centre = weightedMedianRat(vals, w)
+	devs := make([]*big.Rat, len(vals))
+	for i, v := range vals {
+		d := new(big.Rat).Sub(v, centre)
+		devs[i] = d.Abs(d)
+	}
+	scale = new(big.Rat).Mul(madToStd, weightedMedianRat(devs, w))
 	if scale.Sign() == 0 {
 		floor := new(big.Rat).Mul(zeroScaleRelFloor, centre)
 		floor.Abs(floor)

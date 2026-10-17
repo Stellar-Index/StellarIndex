@@ -46,7 +46,7 @@ func TestNewLocalIndex_OrderIndependentOfInputOrder(t *testing.T) {
 			}
 			prices[i] = p
 		}
-		ix := newLocalIndex(trades, validIdx, prices, LocalOutlierOptions{Sigma: 4}.withDefaults())
+		ix := newLocalIndex(trades, validIdx, prices, nil, LocalOutlierOptions{Sigma: 4}.withDefaults())
 
 		got := make([]string, len(ix.order))
 		for k, pos := range ix.order {
@@ -99,7 +99,7 @@ func localIndexTxOrder(t *testing.T, trades []canonical.Trade) []string {
 		}
 		prices[i] = p
 	}
-	ix := newLocalIndex(trades, validIdx, prices, LocalOutlierOptions{Sigma: 4}.withDefaults())
+	ix := newLocalIndex(trades, validIdx, prices, nil, LocalOutlierOptions{Sigma: 4}.withDefaults())
 	got := make([]string, len(ix.order))
 	for k, pos := range ix.order {
 		got[k] = trades[validIdx[pos]].TxHash

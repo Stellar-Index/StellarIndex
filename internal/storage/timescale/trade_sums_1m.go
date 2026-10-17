@@ -22,7 +22,8 @@ type TradeMinuteSum struct {
 }
 
 // TradeSums1mInRange returns trade_sums_1m's rows for the market with bucket in [from, to) in either stored direction, minus non-VWAP
-// sources, plus the view's materialisation watermark: buckets at or past it are not materialised and read as absent.
+// sources, plus the view's materialisation watermark: buckets at or past it are not materialised and read as absent. The watermark is
+// lowered to the minute of the earliest pending invalidation in [from, watermark), so a late insert never reads as materialised.
 func (s *Store) TradeSums1mInRange(ctx context.Context, p canonical.Pair, from, to time.Time) ([]TradeMinuteSum, time.Time, error) {
 	const wq = `
         SELECT _timescaledb_functions.to_timestamp(_timescaledb_functions.cagg_watermark(mat_hypertable_id))
@@ -31,6 +32,15 @@ func (s *Store) TradeSums1mInRange(ctx context.Context, p canonical.Pair, from, 
 	var watermark time.Time
 	if err := s.db.QueryRowContext(ctx, wq).Scan(&watermark); err != nil {
 		return nil, time.Time{}, fmt.Errorf("timescale: TradeSums1mInRange watermark: %w", err)
+	}
+	if watermark.After(from) {
+		dirty, err := s.CAGGInvalidatedRanges(ctx, "trade_sums_1m", from, watermark)
+		if err != nil {
+			return nil, time.Time{}, fmt.Errorf("timescale: TradeSums1mInRange: %w", err)
+		}
+		if len(dirty) > 0 {
+			watermark = dirty[0][0].Truncate(time.Minute)
+		}
 	}
 	// Literal bounds so the planner excludes chunks at plan time, as LatestTradesForPair does.
 	q := fmt.Sprintf(`

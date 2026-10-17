@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
+
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -178,6 +180,60 @@ func TestFillFromMinuteSums_ReproducesTheWholeWindow(t *testing.T) {
 			t.Fatalf("duplicate Trade.ID %s", tr.ID())
 		}
 		ids[tr.ID()] = true
+	}
+}
+
+// With the outlier filter on, a regime shift inside the window gets the same verdicts and VWAP from a capped leg plus minute sums
+// as from the uncapped read: summary rows weigh as their trades, so the recent raw rows cannot outvote the older majority.
+func TestFillFromMinuteSums_OutlierFilterMatchesUncappedRead(t *testing.T) {
+	pair := mkPair(t, "crypto", "XLM", "fiat", "USD")
+	from := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	to := from.Add(time.Hour)
+	for _, step := range []int64{103, 110} { // +3% (chains as a regime shift) and +10% (a minority burst)
+		var raw []canonical.Trade
+		op := uint32(0)
+		for sec := 0; sec < 3600; sec += 10 {
+			level := int64(100)
+			if sec >= 3000 {
+				level = step
+			}
+			for k := int64(0); k < 3; k++ {
+				op++
+				base := 1_000_0000 + k*1_000 + int64(sec)
+				tr := makeTradeOn(t, pair, "sdex", base, base*level/1000+k, from.Add(time.Duration(sec)*time.Second))
+				tr.OpIndex = op
+				raw = append(raw, tr)
+			}
+		}
+		s := &sumsStore{raw: raw, watermark: to}
+		o := coverageOrch(t, s, 200, 4) // raw rows cover the last ~11 minutes
+
+		got, weights, coveredFrom, err := o.fetchTradesDetectTruncation(context.Background(), pair, pair, from, to)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !coveredFrom.IsZero() || len(weights) == 0 {
+			t.Fatalf("step %d: coveredFrom = %v, %d minute rows; want full coverage from minute sums", step, coveredFrom, len(weights))
+		}
+		wantKept := aggregate.FilterOutliersLocal(raw, o.outlierOptions(nil))
+		gotKept := aggregate.FilterOutliersLocal(got, o.outlierOptions(weights))
+		if a, b := tradeCount(gotKept, weights), len(wantKept); a != b {
+			t.Fatalf("step %d: filter kept %d trades, uncapped read keeps %d", step, a, b)
+		}
+		if len(wantKept) == 0 {
+			continue
+		}
+		want, err := o.computeNormalizedVWAP(wantKept, pair)
+		if err != nil {
+			t.Fatal(err)
+		}
+		have, err := o.computeNormalizedVWAP(gotKept, pair)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want.Cmp(have) != 0 {
+			t.Errorf("step %d: VWAP = %s, uncapped read gives %s", step, have.FloatString(18), want.FloatString(18))
+		}
 	}
 }
 

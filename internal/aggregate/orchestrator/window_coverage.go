@@ -67,8 +67,7 @@ const minuteSumTxPrefix = "sum1m:"
 // fillFromMinuteSums replaces a capped read's older part with one row per (source, minute) from trade_sums_1m. Raw rows are kept from
 // the minute after coveredFrom's, since the cap can cut inside a minute or a timestamp. A minute whose prints spread wider than the
 // outlier band is re-read raw (an off-price print must not hide inside honest volume); one that cannot be resolved ends coverage there.
-// A late insert below the watermark is missing until the next refresh, as it is from a bucket already decided.
-// ok=false leaves the raw read as is: no sums store, a window past the horizon or not minute-aligned, a read error, or an unmaterialised range.
+// ok=false leaves the raw read as is: no sums store, a window past the horizon or not minute-aligned, a read error, or an unmaterialised or invalidated range.
 func (o *Orchestrator) fillFromMinuteSums(
 	ctx context.Context, fetch canonical.Pair, from, to time.Time, raw []canonical.Trade, coveredFrom time.Time,
 ) (trades []canonical.Trade, weights map[string]int64, newCoveredFrom time.Time, ok bool) {

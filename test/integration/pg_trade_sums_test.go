@@ -87,4 +87,35 @@ func TestTradeSums1mInRange_OrientsAndFilters(t *testing.T) {
 	if rev.MinPrice.RatString() != "1/8" || rev.MaxPrice.RatString() != "1/8" {
 		t.Errorf("flipped price bounds %s..%s, want 1/8", rev.MinPrice.RatString(), rev.MaxPrice.RatString())
 	}
+
+	// A late insert below the watermark sits in the invalidation log until the next refresh; its minute must not read as materialised.
+	if err := store.InsertTrade(ctx, mkIntegrationTrade("sdex", 6, m0.Add(50*time.Second), pair, 1_000_000_000, 110_000_000)); err != nil {
+		t.Fatalf("late InsertTrade: %v", err)
+	}
+	if _, watermark, err = store.TradeSums1mInRange(ctx, pair, m0, m0.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if watermark.After(m0) {
+		t.Errorf("watermark %v after a late insert at %v, want <= %v until the next refresh", watermark, m0.Add(50*time.Second), m0)
+	}
+	if _, err := store.DB().ExecContext(ctx,
+		`CALL refresh_continuous_aggregate('trade_sums_1m', $1::timestamptz, $2::timestamptz)`,
+		m0, m0.Add(2*time.Minute)); err != nil {
+		t.Fatalf("second refresh trade_sums_1m: %v", err)
+	}
+	if rows, watermark, err = store.TradeSums1mInRange(ctx, pair, m0, m0.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if watermark.Before(m0.Add(2 * time.Minute)) {
+		t.Errorf("watermark %v after the second refresh, want >= %v", watermark, m0.Add(2*time.Minute))
+	}
+	var forwardCount int64
+	for _, r := range rows {
+		if r.Count != 1 {
+			forwardCount += r.Count
+		}
+	}
+	if forwardCount != 3 {
+		t.Errorf("forward minute count %d after the refresh, want 3 (the late trade included): %+v", forwardCount, rows)
+	}
 }

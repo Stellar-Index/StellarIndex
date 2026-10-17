@@ -731,6 +731,18 @@ func (o *Orchestrator) noteEmptyWindow() {
 	obs.AggregatorEmptyWindowsTotal.Inc()
 }
 
+// outlierOptions configures the local outlier filter; a minute-sum row weighs as the trades it stands for.
+func (o *Orchestrator) outlierOptions(weights map[string]int64) aggregate.LocalOutlierOptions {
+	opts := aggregate.LocalOutlierOptions{
+		Sigma:               o.cfg.OutlierSigmaThreshold,
+		AmountScaleDecimals: amountScaleDecimalsFor,
+	}
+	if len(weights) > 0 {
+		opts.Weight = func(t *canonical.Trade) int64 { return int64(tradeWeight(t, weights)) }
+	}
+	return opts
+}
+
 // decideBucket is the first evaluation of one closed bucket: fetch, filter, VWAP, Phase 1 and 2 freeze steps and, if cleared, the publish. Returns the published bucket, or nil when held (frozen, empty, below the volume floor).
 func (o *Orchestrator) decideBucket(
 	ctx context.Context,
@@ -763,10 +775,7 @@ func (o *Orchestrator) decideBucket(
 		preOutlier := tradeCount(trades, weights)
 		// Time-local trimming: a print is dropped only when it disagrees with the whole window AND its neighbourhood, so a regime shift survives (aggregate.FilterOutliersLocal).
 		// A trim that would leave less base volume than it removes withholds the window, compared at computeNormalizedVWAP's common scale.
-		trades = aggregate.FilterOutliersLocal(trades, aggregate.LocalOutlierOptions{
-			Sigma:               o.cfg.OutlierSigmaThreshold,
-			AmountScaleDecimals: amountScaleDecimalsFor,
-		})
+		trades = aggregate.FilterOutliersLocal(trades, o.outlierOptions(weights))
 		if dropped := preOutlier - tradeCount(trades, weights); dropped > 0 {
 			obs.AggregatorDroppedTradesTotal.WithLabelValues("outlier", pair.String()).Add(float64(dropped))
 		}
