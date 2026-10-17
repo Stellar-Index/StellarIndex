@@ -1344,7 +1344,9 @@ Two alerts read it, and only one of them can fire for that series:
 ### `stellarindex_trade_inserts_total`
 
 Counter, labels `source`, `usd_volume_populated` (`yes` | `no` |
-`unroutable` | `thin`). `unroutable` is an unpriced trade whose two classic
+`refused` | `unroutable` | `thin` | `error`). `error` is a live trade left
+NULL because a USD resolver read failed; it counts against coverage, since a
+re-derive can still price it. `unroutable` is an unpriced trade whose two classic
 legs share one issuer, or neither of whose legs had a peg or XLM market at all
 (XLM and the pegs never count as having no market, so an outage stays `no`); `thin` is an unpriced trade whose only candidate rate
 was refused by the substance gate (market below the valuation floor). The
