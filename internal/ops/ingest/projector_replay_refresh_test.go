@@ -81,6 +81,7 @@ type fakeReplayStore struct {
 	rangeFrom, rangeTo uint32
 	refreshed          []string
 	lastTo             time.Time
+	deadlined          bool
 }
 
 func (f *fakeReplayStore) LedgerRangeToTimeRange(_ context.Context, from, to uint32) (time.Time, time.Time, error) {
@@ -99,7 +100,10 @@ func (f *fakeReplayStore) RefreshContinuousAggregateForced(ctx context.Context, 
 	return f.RefreshContinuousAggregate(ctx, name, from, to)
 }
 
-func (f *fakeReplayStore) RefreshContinuousAggregate(_ context.Context, name string, from, to time.Time) error {
+func (f *fakeReplayStore) RefreshContinuousAggregate(ctx context.Context, name string, from, to time.Time) error {
+	if _, ok := ctx.Deadline(); ok {
+		f.deadlined = true
+	}
 	// RunCAGGRefreshStep cuts a long window into consecutive CALLs; record
 	// them as the one per-view refresh they make up.
 	if n := len(f.refreshed); n == 0 || f.refreshed[n-1] != name || !f.lastTo.Equal(from) {
@@ -124,6 +128,35 @@ func TestRematerializeReplayedRange_RefreshesEveryViewOverTheReplayedRange(t *te
 	}
 	if got, want := len(f.refreshed), len(timescale.TradesCAGGs); got != want {
 		t.Errorf("refreshed %d views %v, want all %d trades CAGGs", got, f.refreshed, want)
+	}
+}
+
+// TestRefreshOnlyRange_RefreshOutlivesTheSetupBudget: the refresh must not inherit the 30s open/cursor deadline, which cancelled every
+// view of a production -refresh-only run before one window refreshed.
+func TestRefreshOnlyRange_RefreshOutlivesTheSetupBudget(t *testing.T) {
+	f := &fakeReplayStore{fakeProjectorCursor: fakeProjectorCursor{ledgers: []uint32{63_500_000}}}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := refreshOnlyRange(ctx, discardLogger(), f, "redstone", 62_000_000, 63_500_000); err != nil {
+		t.Fatalf("refreshOnlyRange: %v", err)
+	}
+	if len(f.refreshed) == 0 {
+		t.Fatal("no view refreshed")
+	}
+	if f.deadlined {
+		t.Error("a refresh CALL ran under the setup context's deadline")
+	}
+}
+
+// TestRefreshOnlyRange_RefusesWhileTheProjectorIsShort: no view is refreshed over rows not yet re-projected.
+func TestRefreshOnlyRange_RefusesWhileTheProjectorIsShort(t *testing.T) {
+	f := &fakeReplayStore{fakeProjectorCursor: fakeProjectorCursor{ledgers: []uint32{63_000_000}}}
+	err := refreshOnlyRange(context.Background(), discardLogger(), f, "redstone", 62_000_000, 63_500_000)
+	if err == nil || !strings.Contains(err.Error(), "refusing to refresh") {
+		t.Fatalf("err = %v, want a refusal", err)
+	}
+	if len(f.refreshed) != 0 {
+		t.Errorf("refreshed %v while the projector was short", f.refreshed)
 	}
 }
 
