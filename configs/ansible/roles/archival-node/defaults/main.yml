@@ -518,6 +518,9 @@ clickhouse_ops_admin_profile_enabled: false
 clickhouse_ops_admin_user: "ops_admin"
 # clickhouse_ops_admin_password ← ansible-vault, vault_clickhouse_ops_admin_password
 clickhouse_ops_admin_password: "{{ vault_clickhouse_ops_admin_password | default('') }}"
+# Locks CH's `default` user behind a random password nobody keeps. Turn on only
+# once system.query_log shows no `default` traffic; needs every named user above.
+clickhouse_default_user_locked: false
 
 # ───── ClickHouse destructive-DDL size guard ───────────────────────────
 # ClickHouse refuses DROP TABLE / TRUNCATE / DROP|REPLACE PARTITION above

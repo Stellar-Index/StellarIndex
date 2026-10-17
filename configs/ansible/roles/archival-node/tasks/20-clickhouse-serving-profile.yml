@@ -988,3 +988,131 @@
            | selectattr('backup_file', 'defined') | map(attribute='backup_file') | list }}
       no_log: true
       diff: false
+
+# Locking `default` ends the passwordless superuser on loopback (INV-0802). Its
+# password is random and kept nowhere: nothing may log in as `default`, and the
+# file is written once (force: false) so re-runs do not rotate it. Undo: delete
+# users.d/zz-default-lock.xml and SYSTEM RELOAD CONFIG.
+- name: Assert every named ClickHouse user is enabled before locking `default`
+  ansible.builtin.assert:
+    that:
+      - clickhouse_ops_batch_profile_enabled | bool
+      - clickhouse_live_daemon_profile_enabled | bool
+      - clickhouse_ops_monitor_profile_enabled | bool
+      - clickhouse_ops_admin_profile_enabled | bool
+      - not (stellarindex_clickhouse_serving_enabled | default(false) | bool) or (clickhouse_serving_profile_enabled | bool)
+    fail_msg: >-
+      clickhouse_default_user_locked needs ops_batch, live_daemon, ops_monitor,
+      ops_admin (and api_serving when serving is on) enabled first: their callers
+      would otherwise fall back to `default`, and this role's own clickhouse-client
+      tasks run as root's ops_admin.
+  when: clickhouse_default_user_locked | bool
+  tags: [clickhouse, clickhouse-default-lock]
+
+- name: Look for an existing `default` lock
+  ansible.builtin.stat:
+    path: /etc/clickhouse-server/users.d/zz-default-lock.xml
+  register: ch_default_lock_file
+  when: clickhouse_default_user_locked | bool
+  tags: [clickhouse, clickhouse-default-lock]
+
+# Flags say what inventory wants; these probes say what the host runs. A
+# lock-only tagged run can precede the ops_admin client config or the daemons'
+# restart onto live_daemon, and locking then strands them. Read-only, so they
+# run under --check too.
+- name: Verify the host no longer depends on `default` before locking it
+  when:
+    - clickhouse_default_user_locked | bool
+    - not ch_default_lock_file.stat.exists
+  check_mode: false
+  tags: [clickhouse, clickhouse-default-lock]
+  block:
+    - name: Verify root's clickhouse-client already authenticates as ops_admin
+      ansible.builtin.command:
+        argv: [timeout, "10", clickhouse-client, --port, "{{ clickhouse_tcp_port | default(9300) }}",
+               -q, "SELECT currentUser()"]
+      register: ch_default_lock_root_user
+      changed_when: false
+      failed_when: (ch_default_lock_root_user.stdout | trim) != clickhouse_ops_admin_user
+
+    - name: Verify system.query_log shows no `default` queries in the last day
+      ansible.builtin.command:
+        argv: [timeout, "30", clickhouse-client, --port, "{{ clickhouse_tcp_port | default(9300) }}",
+               -q, "SELECT count() FROM system.query_log WHERE user = 'default' AND type = 'QueryFinish' AND event_time > now() - INTERVAL 1 DAY"]
+      register: ch_default_lock_traffic
+      changed_when: false
+      failed_when: ch_default_lock_traffic.rc != 0 or (ch_default_lock_traffic.stdout | trim) != '0'
+
+- name: Lock the ClickHouse `default` user and prove root still connects
+  when: clickhouse_default_user_locked | bool
+  tags: [clickhouse, clickhouse-default-lock]
+  block:
+    - name: Lock the ClickHouse `default` user behind a password nobody keeps
+      ansible.builtin.copy:
+        dest: /etc/clickhouse-server/users.d/zz-default-lock.xml
+        owner: clickhouse
+        group: clickhouse
+        mode: "0640"
+        force: false
+        content: |
+          <clickhouse>
+            <users>
+              <default>
+                <password remove="1"/>
+                <password_sha256_hex>{{ lookup('ansible.builtin.password', '/dev/null', chars=['ascii_letters', 'digits'], length=48) | hash('sha256') }}</password_sha256_hex>
+              </default>
+            </users>
+          </clickhouse>
+      register: ch_default_lock
+
+    - name: Reload ClickHouse config so the `default` lock is live (no restart)
+      ansible.builtin.command:
+        argv: [timeout, "10", clickhouse-client, --port, "{{ clickhouse_tcp_port | default(9300) }}",
+               -q, "SYSTEM RELOAD CONFIG"]
+      when:
+        - ch_default_lock is changed
+        - not ansible_check_mode
+      changed_when: true
+
+    - name: Verify `default` refuses a passwordless login and root is ops_admin
+      ansible.builtin.shell: |
+        set -u
+        port={{ clickhouse_tcp_port | default(9300) }}
+        if timeout 10 clickhouse-client --port "$port" \
+             --user default --password '' -q 'SELECT 1' >/dev/null 2>&1; then
+          echo "default still accepts a passwordless login" >&2
+          exit 1
+        fi
+        timeout 10 clickhouse-client --port "$port" -q 'SELECT currentUser()'
+      args:
+        executable: /bin/bash
+      register: ch_default_lock_verify
+      changed_when: false
+      failed_when: ch_default_lock_verify.rc != 0 or (ch_default_lock_verify.stdout | trim) != clickhouse_ops_admin_user
+      retries: 5
+      delay: 2
+      until: ch_default_lock_verify.rc == 0 and (ch_default_lock_verify.stdout | trim) == clickhouse_ops_admin_user
+      when: not ansible_check_mode
+
+  rescue:
+    # Only a lock this run wrote is removed; an older one that now fails verify
+    # is left for an operator, since removing it reopens `default`.
+    - name: Remove the `default` lock this run wrote
+      ansible.builtin.file:
+        path: /etc/clickhouse-server/users.d/zz-default-lock.xml
+        state: absent
+      when: ch_default_lock is changed
+
+    - name: Reload ClickHouse config after removing the lock
+      ansible.builtin.command:
+        argv: [timeout, "10", clickhouse-client, --port, "{{ clickhouse_tcp_port | default(9300) }}",
+               -q, "SYSTEM RELOAD CONFIG"]
+      when: ch_default_lock is changed
+      changed_when: true
+      failed_when: false
+
+    - name: Fail after the `default` lock did not verify
+      ansible.builtin.fail:
+        msg: >-
+          Locking `default` failed verification{{ ' and was rolled back' if ch_default_lock is changed else '' }}:
+          {{ ansible_failed_result.msg | default('see the failed task above') }}
