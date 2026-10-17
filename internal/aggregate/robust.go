@@ -52,24 +52,21 @@ func madRat(vals []*big.Rat, centre *big.Rat) *big.Rat {
 	return medianRat(devs)
 }
 
-// zeroScaleRelFloor (1/200 = 0.5% of the centre, a +-2% band at sigma 4) is the scale used when MAD is 0, i.e. a strict majority sit at
-// one price; without it the band collapses to a point and drops every honestly-differing print. Mirrors [robustBand] in served_guard.go.
+// zeroScaleRelFloor (1/200 = 0.5% of the centre, a +-2% band at sigma 4) is the minimum scale: a MAD at or near 0 (a tight cluster of
+// dust prints) otherwise shrinks the band below an ordinary hourly move and drops the volume that traded off it. Mirrors [robustBand].
 var zeroScaleRelFloor = big.NewRat(1, 200)
 
 // robustCentreScale returns the median and the sigma-equivalent scale (madToStd*MAD) of vals, all exact; empty vals returns nil, nil.
-// When MAD is 0 the scale falls back to [zeroScaleRelFloor]*|centre| (a zero centre keeps the zero scale).
+// The scale is never below [zeroScaleRelFloor]*|centre| (a zero centre keeps the MAD scale).
 func robustCentreScale(vals []*big.Rat) (centre, scale *big.Rat) {
 	if len(vals) == 0 {
 		return nil, nil
 	}
 	centre = medianRat(vals)
 	scale = new(big.Rat).Mul(madToStd, madRat(vals, centre))
-	if scale.Sign() == 0 {
-		floor := new(big.Rat).Mul(zeroScaleRelFloor, centre)
-		floor.Abs(floor)
-		if floor.Sign() > 0 {
-			scale = floor
-		}
+	floor := new(big.Rat).Mul(zeroScaleRelFloor, centre)
+	if floor.Abs(floor).Cmp(scale) > 0 {
+		scale = floor
 	}
 	return centre, scale
 }

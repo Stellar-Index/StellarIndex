@@ -275,3 +275,19 @@ func TestFilterOutliers_SymmetricWindowFullyKept(t *testing.T) {
 		t.Fatalf("kept %d/%d — an honest dispersed window must survive intact", len(got), len(trades))
 	}
 }
+
+// TestFilterOutliers_TightDustClusterKeepsNearbyVolume pins the floor on a small but non-zero MAD: hundreds of dust prints within 0.01%
+// must not turn a 0.3% move carrying the volume into outliers, which the volume-majority rule then turns into an empty window.
+func TestFilterOutliers_TightDustClusterKeepsNearbyVolume(t *testing.T) {
+	var trades []canonical.Trade
+	for i := 0; i < 300; i++ {
+		trades = append(trades, mkTrade(1, 100_000+int64(i%3)-1))
+	}
+	for i := 0; i < 5; i++ {
+		trades = append(trades, mkTrade(1_000, 1_000*100_300))
+	}
+	got := aggregate.FilterOutliers(trades, 4.0)
+	if len(got) != len(trades) {
+		t.Fatalf("kept %d of %d trades; prints 0.3%% off a tight cluster are not outliers", len(got), len(trades))
+	}
+}
