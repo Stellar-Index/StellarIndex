@@ -172,6 +172,38 @@ func TestRefreshDivergenceAll_HappyPath(t *testing.T) {
 	}
 }
 
+// TestRefreshDivergenceAll_NativeReadsTheCryptoXLMKey: native/fiat:USD's market is recorded under crypto:XLM, so the
+// refresh must find the VWAP under that alias or the native pair never refreshes and its served row freezes.
+func TestRefreshDivergenceAll_NativeReadsTheCryptoXLMKey(t *testing.T) {
+	t.Parallel()
+	rdb, _ := newTestRedis(t)
+	pair := pairXLMUSD(t)
+	windows := []time.Duration{5 * time.Minute}
+	xlm, err := canonical.NewCryptoAsset("XLM")
+	if err != nil {
+		t.Fatalf("NewCryptoAsset: %v", err)
+	}
+	if err := rdb.Set(context.Background(), cachekeys.VWAP(xlm, pair.Quote, windows[0]).String(), "0.18", time.Minute).Err(); err != nil {
+		t.Fatalf("seed redis: %v", err)
+	}
+
+	capR := &captureRefresher{}
+	o := New(nil, rdb, Config{
+		Pairs:               []canonical.Pair{pair},
+		Windows:             windows,
+		DivergenceRefresher: capR,
+		Logger:              silentLogger(),
+	})
+	o.refreshDivergenceAll(context.Background(), time.Date(2026, 10, 17, 3, 0, 0, 0, time.UTC))
+
+	if len(capR.calls) != 1 {
+		t.Fatalf("RefreshPair calls: got %d, want 1", len(capR.calls))
+	}
+	if got := capR.calls[0]; !got.Pair.Equal(pair) || got.OurPrice != 0.18 {
+		t.Errorf("call = %v @ %v, want %v @ 0.18", got.Pair, got.OurPrice, pair)
+	}
+}
+
 // TestRefreshDivergenceAll_ReversedWindowsUseShortest: an operator who
 // lists windows longest-first must still get the 5m VWAP as the divergence
 // input, not the lagged 24h one that happens to be listed first.
