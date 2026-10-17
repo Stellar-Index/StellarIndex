@@ -67,13 +67,9 @@ redis_password: ""
 
 # ch-live-catchup: the Tier-1 lake's only self-healer. Defaults TRUE: without it
 # the projector stalls permanently (resolveTip clamps to the ContiguousWatermark),
-# and the job is seconds of work every 10 minutes. Only installed behind
-# run_clickhouse. Set false to opt a host out.
-#
-# r1's copy is installed out-of-band (the posture run_clickhouse: false
-# preserves); no inventory here installs it through ansible (testnet.yml /
-# futurenet.yml set false) and the script REFUSES to run without
-# stellarindex_ch_live_era_from.
+# and the job is seconds of work every 10 minutes. Installed on any host with a
+# ClickHouse server (24-clickhouse-live-catchup.yml), r1 included. Set false to
+# opt a host out; the script REFUSES to run without stellarindex_ch_live_era_from.
 ch_live_catchup_enabled: true
 # stellarindex_ch_live_era_from — the ledger ch-live-catchup starts its gap scan
 # from: one past the ceiling of the certified bulk backfill.

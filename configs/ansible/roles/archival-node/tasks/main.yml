@@ -215,6 +215,11 @@
   when: clickhouse_config_tasks_enabled | default(false) | bool
   tags: [clickhouse, clickhouse-exporter, observability]
 
+- name: "ClickHouse Tier-1 lake self-healer (ch-live-catchup)"
+  ansible.builtin.import_tasks: 24-clickhouse-live-catchup.yml
+  when: clickhouse_config_tasks_enabled | default(false) | bool
+  tags: [clickhouse, ch-live-catchup]
+
 - name: "Local single-host Prometheus (ASH-8 — the /v1/status scrape layer)"
   # LAST on purpose: its scrape list derives from the run_* switches, so every
   # target is already installed (exporters at 10/16/22, units at 14) and the
