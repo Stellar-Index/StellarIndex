@@ -46,8 +46,7 @@ func (o *Orchestrator) refreshDivergenceAll(ctx context.Context, now time.Time) 
 		}
 		// Time the full per-pair attempt (cache lookup, parse, HTTP fan-out), labelled by outcome so `ok` latency is charted apart from fast-fail paths.
 		start := time.Now()
-		key := cachekeys.VWAP(pair.Base, pair.Quote, shortest)
-		raw, err := o.cache.Get(ctx, key.String()).Result()
+		raw, err := o.cachedVWAPAcrossAliases(ctx, pair, shortest)
 		if err != nil {
 			// Cache miss is normal-path on the first tick or after
 			// a freeze; log at debug so an operator looking at INFO
@@ -94,4 +93,22 @@ func (o *Orchestrator) refreshPairDivergence(
 		return o.cfg.DivergenceRefresher.RefreshPinnedPair(ctx, pair, price, now)
 	}
 	return o.cfg.DivergenceRefresher.RefreshPair(ctx, pair, price, now)
+}
+
+// cachedVWAPAcrossAliases reads the pair's cached VWAP under each alias spelling, self first: native/fiat:USD's market is
+// recorded under crypto:XLM, so a literal read never finds it and the pair never refreshes, as the price API already folds.
+func (o *Orchestrator) cachedVWAPAcrossAliases(ctx context.Context, pair canonical.Pair, window time.Duration) (string, error) {
+	var firstErr error
+	for _, base := range canonical.AssetAliases(pair.Base) {
+		for _, quote := range canonical.AssetAliases(pair.Quote) {
+			raw, err := o.cache.Get(ctx, cachekeys.VWAP(base, quote, window).String()).Result()
+			if err == nil {
+				return raw, nil
+			}
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	return "", firstErr
 }

@@ -2009,15 +2009,23 @@ func buildDivergenceReferences(cfg config.DivergenceConfig, cgKeys config.CoinGe
 	}
 
 	refs = append(refs, buildOracleDivergenceReferences(cfg, oracles, logger)...)
-	return appendSyntheticCrossReference(refs, logger)
+	var extraFX []divergence.Reference
+	if oracles != nil {
+		if ref, err := divergence.NewOracleReference(divergence.OracleReferenceOptions{
+			Source: divergence.OracleSourceExchangeRatesAPI,
+			Reader: oracles,
+		}); err == nil {
+			extraFX = append(extraFX, ref)
+		}
+	}
+	return appendSyntheticCrossReference(refs, extraFX, logger)
 }
 
 // appendSyntheticCrossReference derives the USD-cross reference from the ALREADY-GATED set with no gate of its own, so it exists whenever
-// a
-// USD-quoted
-// oracle leg and a fiat leg do. CoinGecko is excluded (it would correlate the synthetic with the source it corroborates); it gives EUR/GBP
-// pairs a second reference.
-func appendSyntheticCrossReference(refs []divergence.Reference, logger *slog.Logger) []divergence.Reference {
+// a USD-quoted oracle leg and a fiat leg do. CoinGecko is excluded (it would correlate the synthetic with the source it corroborates); it
+// gives EUR/GBP pairs a second reference. extraFX are FX legs that are not references themselves: without a non-Reflector FX leg the
+// reflector-cex base leg can never pair, so the cross dies whenever the sparse redstone/chainlink legs go stale.
+func appendSyntheticCrossReference(refs, extraFX []divergence.Reference, logger *slog.Logger) []divergence.Reference {
 	byName := make(map[string]divergence.Reference, len(refs))
 	for _, r := range refs {
 		byName[r.Name()] = r
@@ -2037,7 +2045,7 @@ func appendSyntheticCrossReference(refs []divergence.Reference, logger *slog.Log
 		divergence.OracleSourceBand,
 		divergence.OracleSourceChainlinkStellar,
 	)
-	fxLegs := pick(divergence.OracleSourceReflectorFX)
+	fxLegs := append(pick(divergence.OracleSourceReflectorFX), extraFX...)
 	syn, err := divergence.NewSyntheticCrossReference(divergence.SyntheticCrossOptions{
 		USDLegs: usdLegs,
 		FXLegs:  fxLegs,
