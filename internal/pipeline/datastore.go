@@ -42,6 +42,13 @@ func LedgerstreamConfig(cfg config.Config, bucket string) ledgerstream.Config {
 		out.LiveRetryBudget = liveTailRetryBudget
 	}
 
+	AttachColdTier(cfg, bucket, &out)
+
+	return out
+}
+
+// AttachColdTier wires the ADR-0027 cold fallback into out when tiering is configured and bucket is the archive bucket.
+func AttachColdTier(cfg config.Config, bucket string, out *ledgerstream.Config) {
 	// Attach a ColdDataStore only when cold fields are populated AND reading the archive bucket; the live tail is locally authoritative.
 	if cfg.Storage.ColdTieringEnabled() && bucket == cfg.Storage.S3BucketArchive {
 		out.ColdDataStore = datastore.DataStoreConfig{
@@ -60,6 +67,4 @@ func LedgerstreamConfig(cfg config.Config, bucket string) ledgerstream.Config {
 			return NewColdDataStore(ctx, cfg.Storage)
 		}
 	}
-
-	return out
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/ledgerstream"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
+	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
@@ -59,7 +60,7 @@ func chBackfill(args []string) error {
 	if berr != nil {
 		return fmt.Errorf("ch-backfill: %w", berr)
 	}
-	lsCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, streamBucket, *parallel)
+	lsCfg := backfillStreamConfig(cfg, streamBucket, *parallel)
 	passphrase := cfg.Stellar.Passphrase()
 
 	chunks := opsutil.SplitRange(uint32(*from), uint32(*to), *parallel)
@@ -175,6 +176,14 @@ func (p *backfillProgress) stop() {
 	ok := p.ok
 	p.mu.Unlock()
 	p.hb.Stop(ok)
+}
+
+// backfillStreamConfig is the bounded walk's stream config. Trimmed archive ranges (ADR-0027) read through
+// to the cold tier, so a re-derive needs no rehydrate first.
+func backfillStreamConfig(cfg config.Config, bucket string, parallel int) ledgerstream.Config {
+	lsCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, bucket, parallel)
+	pipeline.AttachColdTier(cfg, bucket, &lsCfg)
+	return lsCfg
 }
 
 // backfillBucket resolves which galexie bucket a bounded walk reads. The seam policy lives in

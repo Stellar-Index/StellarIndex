@@ -263,3 +263,22 @@ func TestChops_RequireAStatedMode(t *testing.T) {
 		})
 	}
 }
+
+// A re-derive over a trimmed archive range must read through to the cold tier; the live tail never does.
+func TestBackfillStreamConfig_ArchiveReadsThroughToCold(t *testing.T) {
+	cfg := testBackfillConfig(0)
+	cfg.Storage.S3ColdEndpoint = "https://s3.us-east-2.amazonaws.com"
+	cfg.Storage.S3ColdRegion = "us-east-2"
+	cfg.Storage.S3ColdBucketArchive = "aws-public-blockchain/v1.1/stellar/ledgers/pubnet"
+
+	archive := backfillStreamConfig(cfg, cfg.Storage.S3BucketArchive, 3)
+	if archive.ColdDataStore.Type == "" || archive.ColdDataStoreFactory == nil {
+		t.Fatalf("archive walk has no cold tier: %+v", archive.ColdDataStore)
+	}
+	if got := archive.ColdDataStore.Params["destination_bucket_path"]; got != cfg.Storage.S3ColdBucketArchive {
+		t.Errorf("cold bucket = %q, want %q", got, cfg.Storage.S3ColdBucketArchive)
+	}
+	if live := backfillStreamConfig(cfg, cfg.Storage.S3BucketLive, 3); live.ColdDataStore.Type != "" {
+		t.Errorf("live walk got a cold tier: %+v", live.ColdDataStore)
+	}
+}
