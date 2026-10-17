@@ -1230,15 +1230,22 @@ func newRegistryObservation(ledger uint32, ts time.Time) registryObservation {
 // trades, and the full key keeps the union top-N equal to the union of each arm top-N.
 const maxLatestTradesForPair = 1000
 
-// LatestTradesForPair returns up to `limit` most-recent trades for the market, in either stored direction, oriented as requested; empty slice + nil if none.
-func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit int) ([]canonical.Trade, error) {
+// LatestTradesForPair returns up to `limit` most-recent trades for the market at or after `since` (zero: unbounded), in either stored
+// direction, oriented as requested; empty slice + nil if none.
+func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit int, since time.Time) ([]canonical.Trade, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 	if limit > maxLatestTradesForPair {
 		limit = maxLatestTradesForPair
 	}
-	const q = `
+	// A LITERAL lower bound, as in latestClosedVWAP1m: TimescaleDB excludes chunks at plan time only for a constant, and planning
+	// every trades chunk is most of an unbounded miss (~325ms vs ~24ms per arm on r1 at a 400-day bound).
+	lower := ""
+	if !since.IsZero() {
+		lower = fmt.Sprintf("AND ts >= TIMESTAMPTZ '%s'", since.UTC().Format("2006-01-02 15:04:05-07"))
+	}
+	q := fmt.Sprintf(`
         (SELECT source, ledger, tx_hash, op_index, ts,
                 base_asset, quote_asset,
                 base_amount, quote_amount,
@@ -1249,6 +1256,7 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
           WHERE base_asset  = $1
             AND quote_asset = $2
             AND base_amount > 0 AND quote_amount > 0
+            %[1]s
           ORDER BY ts DESC, ledger DESC, tx_hash DESC, op_index DESC, source DESC
           LIMIT $3)
         UNION ALL
@@ -1262,11 +1270,12 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
           WHERE base_asset  = $2
             AND quote_asset = $1
             AND base_amount > 0 AND quote_amount > 0
+            %[1]s
           ORDER BY ts DESC, ledger DESC, tx_hash DESC, op_index DESC, source DESC
           LIMIT $3)
         ORDER BY ts DESC, ledger DESC, tx_hash DESC, op_index DESC, source DESC
         LIMIT $3
-    `
+    `, lower) //nolint:gosec // G201: lower is a formatted time.Time, never caller text
 	rows, err := s.db.QueryContext(ctx, q,
 		p.Base.String(), p.Quote.String(), limit,
 	)

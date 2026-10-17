@@ -1407,7 +1407,7 @@ func TestEndToEnd_LedgerstreamToTimescale(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewPair: %v", err)
 		}
-		trades, err := store.LatestTradesForPair(ctx, pair, 10)
+		trades, err := store.LatestTradesForPair(ctx, pair, 10, time.Time{})
 		if err != nil {
 			t.Fatalf("LatestTradesForPair: %v", err)
 		}

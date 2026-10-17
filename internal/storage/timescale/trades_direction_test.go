@@ -265,7 +265,7 @@ func TestLatestTradesForPair_ServesAMarketRecordedTheOtherWayRound(t *testing.T)
 		rows: [][]driver.Value{reverseStoredRow("sdex", 58_000_001, dirTxA, ts)},
 	})
 
-	got, err := store.LatestTradesForPair(context.Background(), pair, 1)
+	got, err := store.LatestTradesForPair(context.Background(), pair, 1, time.Time{})
 	if err != nil {
 		t.Fatalf("LatestTradesForPair: %v", err)
 	}
@@ -297,13 +297,36 @@ func TestLatestTradesForPair_ClampsLimit(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store, conn := newScriptedStore(t, scriptedResult{cols: latestTradeCols})
-			if _, err := store.LatestTradesForPair(context.Background(), pair, tc.limit); err != nil {
+			if _, err := store.LatestTradesForPair(context.Background(), pair, tc.limit, time.Time{}); err != nil {
 				t.Fatalf("LatestTradesForPair: %v", err)
 			}
 			if got := conn.only(t).arg(t, 3); got != tc.want {
 				t.Errorf("limit %d bound $3 = %v (%T), want %d", tc.limit, got, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestLatestTradesForPair_SinceIsAPlanTimeLiteral: the /v1/price miss path is cheap only when both arms carry the bound as a literal
+// TimescaleDB can exclude chunks on while planning; a zero since keeps the unbounded walk.
+func TestLatestTradesForPair_SinceIsAPlanTimeLiteral(t *testing.T) {
+	pair := dirAQUAUSDCPair(t)
+	since := time.Date(2025, 9, 12, 8, 30, 0, 0, time.FixedZone("x", 3600))
+
+	store, conn := newScriptedStore(t, scriptedResult{cols: latestTradeCols})
+	if _, err := store.LatestTradesForPair(context.Background(), pair, 1, since); err != nil {
+		t.Fatalf("LatestTradesForPair: %v", err)
+	}
+	if got := strings.Count(conn.only(t).sql, "AND ts >= TIMESTAMPTZ '2025-09-12 07:30:00+00'"); got != 2 {
+		t.Errorf("bounded read carries the literal on %d arms, want 2:\n%s", got, conn.only(t).sql)
+	}
+
+	store, conn = newScriptedStore(t, scriptedResult{cols: latestTradeCols})
+	if _, err := store.LatestTradesForPair(context.Background(), pair, 1, time.Time{}); err != nil {
+		t.Fatalf("LatestTradesForPair unbounded: %v", err)
+	}
+	if strings.Contains(conn.only(t).sql, "TIMESTAMPTZ") {
+		t.Errorf("zero since must not bound the walk:\n%s", conn.only(t).sql)
 	}
 }
 
@@ -327,7 +350,7 @@ func TestRawTradeReadsSpanBothStoredDirections(t *testing.T) {
 		{
 			name: "LatestTradesForPair",
 			run: func(s *Store) error {
-				_, err := s.LatestTradesForPair(context.Background(), pair, 1)
+				_, err := s.LatestTradesForPair(context.Background(), pair, 1, time.Time{})
 				return err
 			},
 		},
@@ -446,7 +469,7 @@ func TestLatestTradeReadsTakeNoRecencyBound(t *testing.T) {
 			loss: "a market whose last trade predates the window stops having " +
 				"a price at all, rather than having a stale one",
 			run: func(s *Store) error {
-				_, err := s.LatestTradesForPair(context.Background(), pair, 1)
+				_, err := s.LatestTradesForPair(context.Background(), pair, 1, time.Time{})
 				return err
 			},
 		},
@@ -972,7 +995,7 @@ func TestTradesInRange_BindsNonVWAPSources(t *testing.T) {
 // each arm orders by the outer key and takes a plain LIMIT instead.
 func TestLatestTradesForPair_ArmsOrderByTheOuterKey(t *testing.T) {
 	store, conn := newScriptedStore(t, scriptedResult{cols: latestTradeCols})
-	if _, err := store.LatestTradesForPair(context.Background(), dirAQUAUSDCPair(t), 1); err != nil {
+	if _, err := store.LatestTradesForPair(context.Background(), dirAQUAUSDCPair(t), 1, time.Time{}); err != nil {
 		t.Fatalf("LatestTradesForPair: %v", err)
 	}
 	sql := conn.only(t).sql

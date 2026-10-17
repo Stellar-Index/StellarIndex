@@ -484,7 +484,7 @@ func TestStoreRoundTrip(t *testing.T) {
 		t.Fatalf("CountTrades = %d, err=%v — want 1 row after duplicate-insert", n, err)
 	}
 
-	latest, err := store.LatestTradesForPair(ctx, pair, 5)
+	latest, err := store.LatestTradesForPair(ctx, pair, 5, time.Time{})
 	if err != nil {
 		t.Fatalf("LatestTradesForPair: %v", err)
 	}

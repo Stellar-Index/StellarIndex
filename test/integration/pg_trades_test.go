@@ -784,7 +784,7 @@ func TestLatestTradeReadsBreakSameLedgerTiesOnTheFullKey(t *testing.T) {
 		t.Fatalf("instrument check: /v1/history's newest row is %s/%d, want %s/2", newest.TxHash, newest.OpIndex, txC)
 	}
 
-	last, err := store.LatestTradesForPair(ctx, pair, 1)
+	last, err := store.LatestTradesForPair(ctx, pair, 1, time.Time{})
 	if err != nil || len(last) != 1 {
 		t.Fatalf("LatestTradesForPair: %d rows, %v", len(last), err)
 	}
@@ -2725,7 +2725,7 @@ func TestZeroLegAdmission(t *testing.T) {
 	})
 
 	t.Run("LatestTradesForPair skips the zero leg", func(t *testing.T) {
-		got, err := store.LatestTradesForPair(ctx, pair, 1)
+		got, err := store.LatestTradesForPair(ctx, pair, 1, time.Time{})
 		if err != nil {
 			t.Fatalf("LatestTradesForPair: %v", err)
 		}
