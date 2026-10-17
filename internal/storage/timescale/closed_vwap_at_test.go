@@ -189,9 +189,9 @@ func TestRecentClosedVWAP1mExistsQueryShape(t *testing.T) {
 	}
 	// The gate is the freshness horizon and MUST be tighter than the value
 	// walk's window, else it prunes nothing and the empty walk returns.
-	if latestVWAPGateWindow <= 0 || latestVWAPGateWindow >= latestVWAPWindow {
-		t.Errorf("latestVWAPGateWindow (%v) must be positive and < latestVWAPWindow (%v)",
-			latestVWAPGateWindow, latestVWAPWindow)
+	if latestVWAPGateWindow <= 0 || latestVWAPGateWindow >= LatestVWAPWindow {
+		t.Errorf("latestVWAPGateWindow (%v) must be positive and < LatestVWAPWindow (%v)",
+			latestVWAPGateWindow, LatestVWAPWindow)
 	}
 }
 

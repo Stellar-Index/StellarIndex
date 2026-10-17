@@ -385,7 +385,7 @@ func insertAndVerifyTrade(ctx context.Context, t *testing.T, store *timescale.St
 	if err := store.InsertTrade(ctx, trade); err != nil {
 		t.Fatalf("InsertTrade: %v", err)
 	}
-	rows, err := store.LatestTradesForPair(ctx, trade.Pair, 10)
+	rows, err := store.LatestTradesForPair(ctx, trade.Pair, 10, time.Time{})
 	if err != nil {
 		t.Fatalf("LatestTradesForPair: %v", err)
 	}
@@ -667,7 +667,7 @@ func TestExternalFleet_EndToEnd(t *testing.T) {
 	// Spot-check: Binance XLM/USDT trade landed.
 	usdt, _ := canonical.NewCryptoAsset("USDT")
 	binancePair, _ := canonical.NewPair(xlmCrypto, usdt)
-	binanceTrades, err := store.LatestTradesForPair(assertCtx, binancePair, 10)
+	binanceTrades, err := store.LatestTradesForPair(assertCtx, binancePair, 10, time.Time{})
 	if err != nil {
 		t.Fatalf("LatestTradesForPair XLM/USDT: %v", err)
 	}

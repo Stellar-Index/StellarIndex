@@ -114,14 +114,14 @@ func TestNormalizeVwapSources_ShortSlicesUntouched(t *testing.T) {
 }
 
 // TestLatestVWAPGateInsidePrices1mRetention pins what migration 0156's safety argument rests on: the 400-day
-// latestVWAPWindow is only a plan-time pruning bound, and the existence gate must stay inside prices_1m's
+// LatestVWAPWindow is only a plan-time pruning bound, and the existence gate must stay inside prices_1m's
 // 90-day retention or an armed policy could empty the gate's window.
 func TestLatestVWAPGateInsidePrices1mRetention(t *testing.T) {
 	const prices1mRetention = 90 * 24 * time.Hour
 	if latestVWAPGateWindow >= prices1mRetention {
 		t.Errorf("latestVWAPGateWindow = %s, want < prices_1m retention %s", latestVWAPGateWindow, prices1mRetention)
 	}
-	if latestVWAPGateWindow >= latestVWAPWindow {
-		t.Errorf("latestVWAPGateWindow = %s, want < latestVWAPWindow %s", latestVWAPGateWindow, latestVWAPWindow)
+	if latestVWAPGateWindow >= LatestVWAPWindow {
+		t.Errorf("latestVWAPGateWindow = %s, want < LatestVWAPWindow %s", latestVWAPGateWindow, LatestVWAPWindow)
 	}
 }

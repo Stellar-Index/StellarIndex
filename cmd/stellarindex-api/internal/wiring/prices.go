@@ -287,8 +287,10 @@ func (r StorePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 	}
 
 	// Fallback: latest trade, for a pair with no closed 1m bucket yet (a brand-new listing). Always
-	// served stale=true.
-	trades, err := r.S.LatestTradesForPair(ctx, pair, 1)
+	// served stale=true. Bounded by the primary path's 400-day lookback: with the substance gate on
+	// (24h window by default) a pair idle that long is withheld anyway, and the unbounded walk cost
+	// a miss up to 1.6s.
+	trades, err := r.S.LatestTradesForPair(ctx, pair, 1, r.clock().Add(-timescale.LatestVWAPWindow))
 	if err != nil {
 		return v1.PriceSnapshot{}, nil, false, err
 	}

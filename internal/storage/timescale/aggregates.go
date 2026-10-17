@@ -690,7 +690,7 @@ func (s *Store) RecentClosedVWAP1mCombined(ctx context.Context, p canonical.Pair
 	if limit <= 0 {
 		return nil, nil
 	}
-	cutoff := time.Now().UTC().Add(-latestVWAPWindow)
+	cutoff := time.Now().UTC().Add(-LatestVWAPWindow)
 	lower := fmt.Sprintf("AND bucket >= TIMESTAMPTZ '%s'\n", cutoff.Format("2006-01-02 15:04:05-07"))
 	// #nosec G201 — only `lower` is interpolated, built from our own time.Time in a fixed layout;
 	// pair strings + limit bind as $1/$2/$3.
@@ -735,7 +735,7 @@ func (s *Store) ClosedVWAP1mCombinedBefore(ctx context.Context, p canonical.Pair
 	if limit <= 0 {
 		return nil, nil
 	}
-	cutoff := before.UTC().Add(-latestVWAPWindow)
+	cutoff := before.UTC().Add(-LatestVWAPWindow)
 	lower := fmt.Sprintf("AND bucket >= TIMESTAMPTZ '%s'\n", cutoff.Format("2006-01-02 15:04:05-07"))
 	// #nosec G201 — only `lower` is interpolated, built from our own time.Time in a fixed layout;
 	// pair strings, limit and the anchor bind as $1..$4.
@@ -1010,15 +1010,15 @@ func (s *Store) LatestClosedVWAP1mForPair(ctx context.Context, p canonical.Pair)
 	if !exists {
 		return Vwap1mRow{}, sql.ErrNoRows
 	}
-	cutoff := time.Now().UTC().Add(-latestVWAPWindow)
+	cutoff := time.Now().UTC().Add(-LatestVWAPWindow)
 	return s.latestClosedVWAP1m(ctx, p, cutoff)
 }
 
-// latestVWAPWindow bounds [LatestClosedVWAP1mForPair]'s lookback; a LITERAL cutoff prunes chunks at plan time (~6ms vs ~280ms unbounded).
-const latestVWAPWindow = 400 * 24 * time.Hour
+// LatestVWAPWindow bounds [LatestClosedVWAP1mForPair]'s lookback; a LITERAL cutoff prunes chunks at plan time (~6ms vs ~280ms unbounded).
+const LatestVWAPWindow = 400 * 24 * time.Hour
 
 // latestVWAPGateWindow bounds the recent-existence probe before the value walk: no closed 1m bucket in 14 days means "not currently priced"
-// ([sql.ErrNoRows]; /v1/price falls back). Must stay below [latestVWAPWindow] so a gate hit always finds the confirmed bucket.
+// ([sql.ErrNoRows]; /v1/price falls back). Must stay below [LatestVWAPWindow] so a gate hit always finds the confirmed bucket.
 const latestVWAPGateWindow = 14 * 24 * time.Hour
 
 // recentClosedVWAP1mExistsTemplate is the recent-existence gate; `%[1]s` is the literal lower bound. It probes BOTH directions so a
