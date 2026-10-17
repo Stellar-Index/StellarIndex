@@ -20,6 +20,17 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.19] - 2026-10-17
+
+Migrations 0217 and 0218, both additive. No `pkg/*` break.
+
+### Fixed
+
+- **aggregate:** a liquid pair's window VWAP no longer mixes legs that cover different spans. `TradesInRange` caps each leg at its newest 10,000 rows (XLM/USD 24h was 83 bps off). A capped leg now fills the rest of its window from the new `trade_sums_1m` continuous aggregate (migration 0217), and the local outlier filter weighs trades, not rows (#3575).
+- **supply:** classic supply freshness is anchored on a processed-ledger watermark (migration 0218) instead of the oldest of four component tables. A quiet claimable-balance table no longer makes the supply gate reject current classic snapshots as dormant (#3576).
+- **ops:** galexie resumes from the newest partition instead of a full recursive bucket listing, and fails loudly when the listing fails. Job locks created by root are chowned to the service user (#3578).
+- **ops:** `ch-live-catchup` is installed on every ClickHouse host, r1 included, so it no longer runs a stale copy as the `default` user (#3579).
+
 ## [v0.116.18] - 2026-10-17
 
 ### Fixed
@@ -48,12 +59,3 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 ### Fixed
 
 - `/v1/ohlc`, `/v1/vwap` and `/v1/twap` no longer return 422 all-filtered when a tight cluster of dust prints shrinks the outlier band below an ordinary hourly move; the band is floored at ±1% of the median, matching the aggregator's local filter (#3563).
-
-## [v0.116.14] — 2026-10-17
-
-1 commit since v0.116.13. No migrations. No `pkg/*` break.
-
-### Fixed
-
-- **divergence:** the synthetic USD cross gains the exchangeratesapi FX leg, so the reflector-cex base leg pairs with a non-Reflector rate; BTC/EUR and BTC/GBP no longer drop below quorum when the sparse redstone and chainlink legs go stale. The refresh reads the cached VWAP across asset aliases, so the native/fiat:* pairs refresh instead of serving a frozen row (#3561).
-
