@@ -57,11 +57,3 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 - **divergence:** the synthetic USD cross gains the exchangeratesapi FX leg, so the reflector-cex base leg pairs with a non-Reflector rate; BTC/EUR and BTC/GBP no longer drop below quorum when the sparse redstone and chainlink legs go stale. The refresh reads the cached VWAP across asset aliases, so the native/fiat:* pairs refresh instead of serving a frozen row (#3561).
 
-## [v0.116.13] — 2026-10-17
-
-1 commit since v0.116.12. No migrations. No `pkg/*` break.
-
-### Fixed
-
-- **ops:** `projector-replay -refresh-only` refreshes the price CAGGs outside the 30 s setup budget; every view was cancelled 30 s in, before any window refreshed (#3559).
-
