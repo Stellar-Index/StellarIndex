@@ -104,7 +104,7 @@ Four alerts route here, all P2 (`severity: ticket`), MTTR 15-60 min. Each requir
 | Alert | Sources in its allowlist | Fires when | Sustain |
 | ----- | ------------------------ | ---------- | ------- |
 | `..._source_stopped` | `binance`, `bitstamp`, `coinbase`, `kraken`, `sdex`, `aquarius`, `reflector-dex`, `reflector-cex`, `reflector-fx`, `redstone`, `coingecko` | `rate(...[30m]) == 0` | 15 m |
-| `..._source_stopped_low_volume_dex` | `comet`, `phoenix`, `soroswap`, `blend` | `rate(...[24h]) == 0` | 30 m |
+| `..._source_stopped_low_volume_dex` | `phoenix`, `soroswap`, `blend` (comet: dormant pools, watched by projector lag + completeness) | `rate(...[24h]) == 0` | 30 m |
 | `..._source_stopped_daily_publisher` | `ecb` | `rate(...[30h]) == 0` | 1 h |
 | `..._source_stopped_hourly_publisher` | `band` | `rate(...[6h]) == 0` | 1 h |
 

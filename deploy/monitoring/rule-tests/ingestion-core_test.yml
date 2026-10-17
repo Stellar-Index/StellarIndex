@@ -142,6 +142,19 @@ tests:
         alertname: stellarindex_ingestion_source_stopped_low_volume_dex
         exp_alerts: []
 
+  # ── comet is not a member: a dormant comet stays quiet here ──────
+  - interval: 1m
+    name: a silent comet does not ticket the low-volume dex rule
+    input_series:
+      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="comet"}'
+        values: '40+0x50'
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="comet"}'
+        values: '1+0x50'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_ingestion_source_stopped_low_volume_dex
+        exp_alerts: []
+
   # ══ stellarindex_ingestion_source_stopped_daily_publisher ═════════
   # ── firing: ecb silent across the trailing 30h window ───────────
   - interval: 1m

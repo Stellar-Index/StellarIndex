@@ -79,7 +79,7 @@ enforces it); any per-alert detail page follows it.
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_ingestion_source_stopped` | `rate(stellarindex_source_events_total[30m])` per high-volume source | == 0 for > 15 min on an enabled source | ticket | [source-stopped](runbooks/ingestion.md#stellarindex_ingestion_source_stopped) |
-| `stellarindex_ingestion_source_stopped_low_volume_dex` | `rate(stellarindex_source_events_total[6h])` for comet / phoenix / soroswap / blend | == 0 for > 30 min | ticket | [source-stopped](runbooks/ingestion.md#stellarindex_ingestion_source_stopped) |
+| `stellarindex_ingestion_source_stopped_low_volume_dex` | `rate(stellarindex_source_events_total[6h])` for phoenix / soroswap / blend | == 0 for > 30 min | ticket | [source-stopped](runbooks/ingestion.md#stellarindex_ingestion_source_stopped) |
 | `stellarindex_ingestion_source_stopped_daily_publisher` | `rate(stellarindex_source_events_total[30h])` for ecb | == 0 for > 1 h | ticket | [source-stopped](runbooks/ingestion.md#stellarindex_ingestion_source_stopped) |
 | `stellarindex_ingestion_source_stopped_hourly_publisher` | `rate(stellarindex_source_events_total[6h])` for band | == 0 for > 1 h | ticket | [source-stopped](runbooks/ingestion.md#stellarindex_ingestion_source_stopped) |
 | `stellarindex_ingestion_all_sources_stopped` | `sum(rate(stellarindex_source_events_total[5m]))` | == 0 for > 3 min | page | [all-ingestion-down](runbooks/ingestion.md#stellarindex_ingestion_all_sources_stopped) |
