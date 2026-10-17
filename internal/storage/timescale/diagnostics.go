@@ -104,6 +104,7 @@ var TradesCAGGs = []CAGGSpec{
 	{Name: "dex_volume_by_pair_1d", MinWindow: 3 * 24 * time.Hour, Bucket: 24 * time.Hour},
 	{Name: "source_volume_1h", MinWindow: 3 * time.Hour, Bucket: time.Hour},
 	{Name: "pools_per_source_1h", MinWindow: 3 * time.Hour, Bucket: time.Hour},
+	{Name: "trade_sums_1m", MinWindow: 2 * time.Minute, Bucket: time.Minute},
 	// Must trail prices_1m.
 	{Name: "twap_1h", MinWindow: 3 * time.Hour, Bucket: time.Hour},
 	{Name: "twap_1d", MinWindow: 3 * 24 * time.Hour, Bucket: 24 * time.Hour},

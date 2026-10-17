@@ -299,8 +299,8 @@ func (ix *localIndex) weight(pos int) int64 {
 }
 
 // neighbourhoodRef builds the count-neighbourhood reference for order-position k (nearest opts.Neighbours trades each side, excluding k;
-// a weighted row's other trades sit beside it, half each side); nil when k has no neighbours or the centre is not anchored. Call in time
-// order: it advances the anchor chain.
+// a row of w trades sees the neighbourhood of its middle trade, (w-1)/2 of its other trades on the left); nil when k has no neighbours or
+// the centre is not anchored. Call in time order: it advances the anchor chain.
 func (ix *localIndex) neighbourhoodRef(k int) *robustRef {
 	per := int64(ix.opts.Neighbours)
 	own := ix.weight(ix.order[k]) - 1
