@@ -20,6 +20,12 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.16] - 2026-10-17
+
+### Changed
+
+- `stellarindex_trade_inserts_total` labels a live trade left unpriced by a failed USD resolver read `usd_volume_populated="error"` instead of `"no"`; it still counts against on-chain USD-volume coverage (#3565).
+
 ## [v0.116.15] - 2026-10-17
 
 ### Fixed
@@ -50,12 +56,4 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 - **explorer:** the asset and pair tip streams open only after the price poll confirms a fresh, non-thin price, so thin or stale markets no longer trigger refused (404) stream requests (#3556, #3557).
 - **explorer:** exchange, aggregator and protocol links render only when the target page exists; the embed widget makes no request without an asset; SDEX no longer shows a false "Lake analytics unavailable"; RWA basis prose no longer says "priced by" for an admission-only oracle feed (#3557).
-
-## [v0.116.11] — 2026-10-17
-
-1 commit since v0.116.10. No migrations. No `pkg/*` break.
-
-### Changed
-
-- **wasmaudit:** the redstone adapter's current WASM (`f0ccdffc…`, live since ledger 62520450) is audited and in the replay-gate manifest, so redstone replays from that ledger are allowed (#3554).
 
