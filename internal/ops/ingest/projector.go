@@ -219,6 +219,16 @@ func projectorRefreshOnly(w io.Writer, cfgPath, source string, from, to uint32, 
 	}
 	defer func() { _ = store.Close() }()
 
+	if err := refreshOnlyRange(ctx, slog.New(slog.NewTextHandler(w, nil)), store, source, from, to); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(w, "price CAGGs re-materialized over [%d,%d] (no cursor rewind)\n", from, to)
+	return nil
+}
+
+// refreshOnlyRange fails closed if the projector cursor is short of to, then refreshes the CAGGs over [from,to].
+// The refresh drops ctx's deadline: that 30s budget is for opening Postgres and the cursor read, and each refresh CALL carries its own bound.
+func refreshOnlyRange(ctx context.Context, logger *slog.Logger, store replayFinisher, source string, from, to uint32) error {
 	cursor, err := store.GetCursor(ctx, "projector", source)
 	if err != nil {
 		return fmt.Errorf("read projector cursor: %w", err)
@@ -227,12 +237,9 @@ func projectorRefreshOnly(w io.Writer, cfgPath, source string, from, to uint32, 
 		return fmt.Errorf("refusing to refresh [%d,%d]: projector cursor for %q is only at %d, %d ledger(s) short of %d — the range is not fully re-projected yet; wait for the projector to catch up and re-run",
 			from, to, source, cursor.LastLedger, to-cursor.LastLedger, to)
 	}
-
-	logger := slog.New(slog.NewTextHandler(w, nil))
-	if err := refreshCAGGsForChunk(ctx, logger, store, chunkRange{from: from, to: to}); err != nil {
+	if err := refreshCAGGsForChunk(context.WithoutCancel(ctx), logger, store, chunkRange{from: from, to: to}); err != nil {
 		return fmt.Errorf("refresh price CAGGs over ledgers [%d,%d]: %w", from, to, err)
 	}
-	_, _ = fmt.Fprintf(w, "price CAGGs re-materialized over [%d,%d] (no cursor rewind)\n", from, to)
 	return nil
 }
 
