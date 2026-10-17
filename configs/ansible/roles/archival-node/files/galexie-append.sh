@@ -56,19 +56,27 @@ if ! printf '%s\n%s\n' "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" \
   exit 1
 fi
 
-# Filenames look like FC43AFEC--62672915.xdr.zst; the integer after `--` is the ledger.
-last_exported=$(
-  "$MC_BIN" ls --recursive live/galexie-live/ 2>/dev/null \
-    | awk '{
-        n = split($NF, parts, "--")
-        if (n >= 2) {
-          # last segment is "<hex>--<ledger>.xdr.zst"
-          ledger = parts[n]
-          sub(/\.xdr\.zst$/, "", ledger)
-          if (ledger ~ /^[0-9]+$/ && ledger+0 > max) max = ledger+0
-        }
-      } END { if (max > 0) print max }'
+# Partitions look like FC20C9FF--64960000-65023999/ and objects like
+# FC43AFEC--62672915.xdr.zst (or <hex>--<start>-<end>.xdr.zst[d], whose newest
+# ledger is <end>). Only the partition with the highest range end is listed:
+# a recursive listing of the whole bucket took 11.5 min, all of it ledger stall.
+newest_partition=$(
+  "$MC_BIN" ls live/galexie-live/ \
+    | awk '$NF ~ /--[0-9]+-[0-9]+\/$/ {
+        r = $NF; sub(/\/$/, "", r); sub(/^.*--/, "", r); split(r, se, "-")
+        if (se[2] + 0 > max) { max = se[2] + 0; best = $NF }
+      } END { if (best != "") print best }'
 )
+last_exported=""
+if [[ -n "$newest_partition" ]]; then
+  last_exported=$(
+    "$MC_BIN" ls "live/galexie-live/$newest_partition" \
+      | awk '$NF ~ /^[0-9A-Fa-f]+--[0-9]+(-[0-9]+)?\.xdr\.zstd?$/ {
+          ledger = $NF; sub(/^.*--/, "", ledger); sub(/\.xdr\.zstd?$/, "", ledger); sub(/^.*-/, "", ledger)
+          if (ledger + 0 > max) max = ledger + 0
+        } END { if (max > 0) print max }'
+  )
+fi
 
 if [[ -n "$last_exported" && "$last_exported" -gt 1 ]]; then
   start=$(( last_exported + 1 ))

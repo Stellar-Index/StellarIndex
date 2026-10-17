@@ -36,16 +36,24 @@ echo '{"currentLedger":999999}'
 EOF
 chmod +x "$TMP/bin/jq" "$TMP/bin/curl"
 
-# run <mc_alias_rc> <mc_ls_output> — invoke the real wrapper against a
-# stub mc whose `alias set` exits mc_alias_rc and whose `ls` prints
-# mc_ls_output, plus a stub galexie that just records its argv.
+# run <mc_alias_rc> <bucket_ls> [partition_ls] [ls_rc] — invoke the real
+# wrapper against a stub mc whose `alias set` exits mc_alias_rc, whose bucket
+# `ls` prints bucket_ls and whose partition `ls` prints partition_ls (both exit
+# ls_rc), plus a stub galexie that just records its argv.
 run() {
-  local alias_rc="$1" ls_out="$2"
+  local alias_rc="$1" bucket_ls="$2" part_ls="${3:-}" ls_rc="${4:-0}"
+  printf '%b\n' "$bucket_ls" > "$TMP/bucket_ls"
+  printf '%b\n' "$part_ls" > "$TMP/part_ls"
   cat > "$TMP/bin/mc" <<EOF
 #!/usr/bin/env bash
 case "\$1" in
   alias) exit $alias_rc ;;
-  ls) printf '%s\n' '$ls_out' ;;
+  ls)
+    case "\$2" in
+      live/galexie-live/) cat "$TMP/bucket_ls" ;;
+      *) echo "\$2" >> "$TMP/part_args"; cat "$TMP/part_ls" ;;
+    esac
+    exit $ls_rc ;;
 esac
 EOF
   cat > "$TMP/bin/galexie" <<'EOF'
@@ -53,7 +61,7 @@ EOF
 printf '%s\n' "$*" > "$GALEXIE_ARGV_FILE"
 EOF
   chmod +x "$TMP/bin/mc" "$TMP/bin/galexie"
-  rm -f "$TMP/argv"
+  rm -f "$TMP/argv" "$TMP/part_args"
   PATH="$TMP/bin:$PATH" \
     MC_BIN="$TMP/bin/mc" GALEXIE_BIN="$TMP/bin/galexie" \
     GALEXIE_ARGV_FILE="$TMP/argv" \
@@ -83,13 +91,36 @@ else
   bad "alias-set failure: no diagnostic on stderr: $(cat "$TMP/stderr")"
 fi
 
-# 2. mc alias set succeeds, bucket has an object — resumes from
-# last_exported+1 (the healthy path must be unchanged).
-run 0 "live/galexie-live/chunk/FC43AFEC--62672915.xdr.zst"
-if [ "$STATUS" -eq 0 ] && grep -q -- "--start 62672916" "$TMP/argv" 2>/dev/null; then
-  ok "alias-set success + non-empty bucket: resumes at last_exported+1"
+# 2. Healthy restart: only the partition with the highest range end is
+# listed, whatever order mc returns them in, and the resume is its max+1.
+run 0 "[2026-10-16] 0B FC21BDFF--64896000-64959999/\n[2026-10-16] 0B FC20C9FF--64960000-65023999/" \
+  "[2026-10-16] 1KiB FC207B7F--64980096.xdr.zst\n[2026-10-16] 1KiB FC207B7A--64980101.xdr.zst"
+if [ "$STATUS" -eq 0 ] && grep -q -- "--start 64980102" "$TMP/argv" 2>/dev/null; then
+  ok "non-empty bucket: resumes at the newest partition's max+1"
 else
-  bad "alias-set success + non-empty bucket: expected --start 62672916, got: $(cat "$TMP/argv" 2>/dev/null) (status=$STATUS)"
+  bad "non-empty bucket: expected --start 64980102, got: $(cat "$TMP/argv" 2>/dev/null) (status=$STATUS)"
+fi
+if [ "$(cat "$TMP/part_args" 2>/dev/null)" = "live/galexie-live/FC20C9FF--64960000-65023999/" ]; then
+  ok "non-empty bucket: lists only the newest partition"
+else
+  bad "non-empty bucket: listed partitions: $(cat "$TMP/part_args" 2>/dev/null)"
+fi
+
+# 3. ledgers_per_file > 1: a range object name contributes its end ledger.
+run 0 "[2026-10-16] 0B FC20C9FF--64960000-65023999/" \
+  "[2026-10-16] 9KiB FC207B3F--64980160-64980223.xdr.zstd"
+if [ "$STATUS" -eq 0 ] && grep -q -- "--start 64980224" "$TMP/argv" 2>/dev/null; then
+  ok "range object names: resumes at the range end+1"
+else
+  bad "range object names: expected --start 64980224, got: $(cat "$TMP/argv" 2>/dev/null) (status=$STATUS)"
+fi
+
+# 4. A failed bucket listing must be fatal, never the fresh-deploy fallback.
+run 0 "" "" 1
+if [ "$STATUS" -ne 0 ] && [ ! -f "$TMP/argv" ]; then
+  ok "listing failure: wrapper exits non-zero without exec'ing galexie"
+else
+  bad "listing failure: status=$STATUS argv: $(cat "$TMP/argv" 2>/dev/null)"
 fi
 
 echo
