@@ -21,6 +21,27 @@ type TradeMinuteSum struct {
 	MinPrice, MaxPrice *big.Rat
 }
 
+// tradeSums1mRangeTemplate takes literal bounds so the planner excludes chunks at plan time, as LatestTradesForPair does.
+const tradeSums1mRangeTemplate = `
+        SELECT source, bucket, true AS forward,
+               base_sum, quote_sum, trade_count, min_price::text, max_price::text
+          FROM trade_sums_1m
+         WHERE base_asset = $1 AND quote_asset = $2
+           AND bucket >= TIMESTAMPTZ '%[1]s'
+           AND bucket  < TIMESTAMPTZ '%[2]s'
+           AND trade_count > 0
+           AND NOT (source = ANY(string_to_array($3, ',')))
+         UNION ALL
+        SELECT source, bucket, false AS forward,
+               base_sum, quote_sum, trade_count, min_price::text, max_price::text
+          FROM trade_sums_1m
+         WHERE base_asset = $2 AND quote_asset = $1
+           AND bucket >= TIMESTAMPTZ '%[1]s'
+           AND bucket  < TIMESTAMPTZ '%[2]s'
+           AND trade_count > 0
+           AND NOT (source = ANY(string_to_array($3, ',')))
+         ORDER BY bucket, source`
+
 // TradeSums1mInRange returns trade_sums_1m's rows for the market with bucket in [from, to) in either stored direction, minus non-VWAP
 // sources, plus the view's materialisation watermark: buckets at or past it are not materialised and read as absent. The watermark is
 // lowered to the minute of the earliest pending invalidation in [from, watermark), so a late insert never reads as materialised.
@@ -42,26 +63,7 @@ func (s *Store) TradeSums1mInRange(ctx context.Context, p canonical.Pair, from, 
 			watermark = dirty[0][0].Truncate(time.Minute)
 		}
 	}
-	// Literal bounds so the planner excludes chunks at plan time, as LatestTradesForPair does.
-	q := fmt.Sprintf(`
-        SELECT source, bucket, true AS forward,
-               base_sum, quote_sum, trade_count, min_price::text, max_price::text
-          FROM trade_sums_1m
-         WHERE base_asset = $1 AND quote_asset = $2
-           AND bucket >= TIMESTAMPTZ '%[1]s'
-           AND bucket  < TIMESTAMPTZ '%[2]s'
-           AND trade_count > 0
-           AND NOT (source = ANY(string_to_array($3, ',')))
-         UNION ALL
-        SELECT source, bucket, false AS forward,
-               base_sum, quote_sum, trade_count, min_price::text, max_price::text
-          FROM trade_sums_1m
-         WHERE base_asset = $2 AND quote_asset = $1
-           AND bucket >= TIMESTAMPTZ '%[1]s'
-           AND bucket  < TIMESTAMPTZ '%[2]s'
-           AND trade_count > 0
-           AND NOT (source = ANY(string_to_array($3, ',')))
-         ORDER BY bucket, source`, from.UTC().Format(time.RFC3339Nano), to.UTC().Format(time.RFC3339Nano)) //nolint:gosec // formatted time.Time values, not input
+	q := fmt.Sprintf(tradeSums1mRangeTemplate, from.UTC().Format(time.RFC3339Nano), to.UTC().Format(time.RFC3339Nano)) //nolint:gosec // G201: formatted time.Time values, not input
 	rows, err := s.db.QueryContext(ctx, q, p.Base.String(), p.Quote.String(), nonVWAPSourcesArg())
 	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("timescale: TradeSums1mInRange: %w", err)
