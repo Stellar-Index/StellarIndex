@@ -29,6 +29,9 @@ const (
 	// OracleSourceChainlinkStellar is Chainlink's DataFeedsCache on Stellar, not the retired
 	// Ethereum reference.
 	OracleSourceChainlinkStellar = "chainlink-stellar"
+	// OracleSourceExchangeRatesAPI is the off-chain FX connector's oracle_updates label; it serves only as a
+	// synthetic-cross FX leg, giving the reflector-cex base leg a non-Reflector partner.
+	OracleSourceExchangeRatesAPI = "exchangeratesapi"
 )
 
 // Staleness ceilings per oracle family: a frozen feed must read "reference unavailable", never agreement/divergence. Reflector publishes every ~5m (30m = five missed rounds + slack);
@@ -39,6 +42,8 @@ const (
 	DefaultOracleMaxAgeBand      = 26 * time.Hour
 	// Chainlink feeds publish on deviation or a 24h heartbeat.
 	DefaultOracleMaxAgeChainlinkStellar = 26 * time.Hour
+	// The FX connector polls hourly; 3h tolerates two missed polls.
+	DefaultOracleMaxAgeExchangeRatesAPI = 3 * time.Hour
 )
 
 // OracleReference is a Reference over our OWN ingested `oracle_updates` rows, one per source label; reflector-dex prices the same SDEX book our VWAP aggregates, so NewService drops it (see CorrelatedWithOurVWAP). Prices scale the RAW integer via big.Rat (ADR-0003), collapsing to float64 only at the Reference boundary.
@@ -100,6 +105,8 @@ func defaultOracleMaxAge(source string) time.Duration {
 		return DefaultOracleMaxAgeBand
 	case OracleSourceChainlinkStellar:
 		return DefaultOracleMaxAgeChainlinkStellar
+	case OracleSourceExchangeRatesAPI:
+		return DefaultOracleMaxAgeExchangeRatesAPI
 	default:
 		return DefaultOracleMaxAgeReflector
 	}

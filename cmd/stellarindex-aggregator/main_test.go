@@ -548,15 +548,65 @@ func TestBuildDivergenceReferences_AggregatorParity(t *testing.T) {
 		t.Errorf("len(refs) = %d, want 6", len(refs))
 	}
 
-	// FX leg class absent → no synthetic.
-	cfg = config.DivergenceConfig{
-		Redstone: config.DivergenceOracleConfig{Enabled: true},
-		Band:     config.DivergenceOracleConfig{Enabled: true},
-	}
-	for _, r := range buildDivergenceReferences(cfg, config.CoinGeckoVenueConfig{}, nopOracleReaderAgg{}, discardLogger()) {
+	// No oracle reader → no leg of either class → no synthetic.
+	for _, r := range buildDivergenceReferences(cfg, config.CoinGeckoVenueConfig{}, nil, discardLogger()) {
 		if r.Name() == divergence.SyntheticCrossName {
-			t.Fatalf("synthetic cross constructed without an FX leg class")
+			t.Fatalf("synthetic cross constructed without an oracle reader")
 		}
+	}
+}
+
+// legReader serves one fresh row per (source, base) at a fixed scale.
+type legReader struct {
+	at   time.Time
+	rows map[string]int64 // "source|base" -> price at 6dp
+}
+
+func (r legReader) LatestOracleObservation(_ context.Context, source string, baseKeys, _ []string) (*canonical.OracleUpdate, error) {
+	for _, b := range baseKeys {
+		if v, ok := r.rows[source+"|"+b]; ok {
+			asset, err := canonical.ParseAsset(b)
+			if err != nil {
+				return nil, err
+			}
+			usd, _ := canonical.ParseAsset("fiat:USD")
+			return &canonical.OracleUpdate{
+				Source: source, Timestamp: r.at, Price: canonical.NewAmount(big.NewInt(v)), Decimals: 6,
+				Asset: asset, Quote: usd,
+			}, nil
+		}
+	}
+	return nil, nil
+}
+
+// TestSyntheticCross_ReflectorCEXPairsWithTheFXConnector: with redstone and chainlink stale, the only fresh base leg is
+// reflector-cex, which cannot pair with reflector-fx (one publisher); the FX connector's leg must carry the cross.
+func TestSyntheticCross_ReflectorCEXPairsWithTheFXConnector(t *testing.T) {
+	now := time.Now().UTC()
+	reader := legReader{at: now.Add(-5 * time.Minute), rows: map[string]int64{
+		divergence.OracleSourceReflectorCEX + "|crypto:BTC":   100_000_000000,
+		divergence.OracleSourceReflectorFX + "|fiat:EUR":      1_250000,
+		divergence.OracleSourceExchangeRatesAPI + "|fiat:EUR": 1_250000,
+	}}
+	cfg := config.DivergenceConfig{Reflector: config.DivergenceOracleConfig{Enabled: true}}
+	var syn divergence.Reference
+	for _, r := range buildDivergenceReferences(cfg, config.CoinGeckoVenueConfig{}, reader, discardLogger()) {
+		if r.Name() == divergence.SyntheticCrossName {
+			syn = r
+		}
+	}
+	if syn == nil {
+		t.Fatal("synthetic cross not constructed")
+	}
+	btc, _ := canonical.ParseAsset("crypto:BTC")
+	eur, _ := canonical.ParseAsset("fiat:EUR")
+	pair := canonical.Pair{Base: btc, Quote: eur}
+	q, err := syn.LookupQuote(context.Background(), pair, now)
+	if err != nil {
+		t.Fatalf("LookupQuote: %v", err)
+	}
+	if q.Price != 80_000 {
+		t.Errorf("price = %v, want 80000", q.Price)
 	}
 }
 
