@@ -740,15 +740,15 @@ func (o *Orchestrator) decideBucket(
 	now time.Time,
 ) (*publishedBucket, error) {
 	from := bucketEnd.Add(-window)
-	trades, tradeUSD, proxied, coverage, err := o.fetchForTarget(ctx, pair, from, bucketEnd)
+	trades, tradeUSD, proxied, weights, coverage, err := o.fetchForTarget(ctx, pair, from, bucketEnd)
 	if err != nil {
 		return nil, fmt.Errorf("fetch %s %v: %w", pair.String(), window, err)
 	}
 	trades = dropExcludedSources(pair, trades, o.cfg.ExcludedSources)
-	preFilter := len(trades)
+	preFilter := tradeCount(trades, weights)
 	if !o.cfg.DisableClassFilter {
 		trades = filterForVWAP(trades)
-		if dropped := preFilter - len(trades); dropped > 0 {
+		if dropped := preFilter - tradeCount(trades, weights); dropped > 0 {
 			// `pair` is a configured target (bounded cardinality); per-pair drops let outlier_storm
 			// attribute a single-issuer SDEX token farm.
 			obs.AggregatorDroppedTradesTotal.WithLabelValues("class", pair.String()).Add(float64(dropped))
@@ -757,21 +757,21 @@ func (o *Orchestrator) decideBucket(
 	trades = dropUnpriceable(pair, trades)
 	// The outlier_storm alert reads per-venue DISAGREEMENT from this view, not the trim re-count.
 	recordWindowStage(pair, window, "fetched", preFilter)
-	recordWindowStageVolume(pair, window, "class", trades)
+	recordWindowStageVolume(pair, window, "class", trades, weights)
 	o.recordVenueVWAPs(pair, window, trades)
 	if o.cfg.OutlierSigmaThreshold > 0 {
-		preOutlier := len(trades)
+		preOutlier := tradeCount(trades, weights)
 		// Time-local trimming: a print is dropped only when it disagrees with the whole window AND its neighbourhood, so a regime shift survives (aggregate.FilterOutliersLocal).
 		// A trim that would leave less base volume than it removes withholds the window, compared at computeNormalizedVWAP's common scale.
 		trades = aggregate.FilterOutliersLocal(trades, aggregate.LocalOutlierOptions{
 			Sigma:               o.cfg.OutlierSigmaThreshold,
 			AmountScaleDecimals: amountScaleDecimalsFor,
 		})
-		if dropped := preOutlier - len(trades); dropped > 0 {
+		if dropped := preOutlier - tradeCount(trades, weights); dropped > 0 {
 			obs.AggregatorDroppedTradesTotal.WithLabelValues("outlier", pair.String()).Add(float64(dropped))
 		}
 	}
-	recordWindowStageVolume(pair, window, "outlier", trades)
+	recordWindowStageVolume(pair, window, "outlier", trades, weights)
 	if len(trades) == 0 {
 		o.noteEmptyWindow()
 		return o.unpricedBucket(ctx, pair, window, now)
@@ -792,7 +792,7 @@ func (o *Orchestrator) decideBucket(
 		return nil, fmt.Errorf("vwap %s %v: %w", pair.String(), window, err)
 	}
 
-	o.flushContributions(ctx, pair, window, trades, tradeUSD)
+	o.flushContributions(ctx, pair, window, trades, tradeUSD, weights)
 
 	// Phase 1 anomaly evaluation BEFORE the cache write (class deviation + source count). On freeze the previous value stays in cache and a marker is emitted so flags.frozen=true.
 	// evaluateAndMaybeFreeze stands down while THIS window holds an active freeze, leaving the Phase 2 lifecycle the sole release authority.
@@ -1188,24 +1188,25 @@ func distinctSourceCount(trades []canonical.Trade) int {
 }
 
 // fetchForTarget pulls one target pair's window trades: a single TradesInRange, or with the stablecoin proxy each aggregate.ExpandTargetPair backer fetched and rewritten onto the target (a failing backer is skipped).
-// tradeUSD (by Trade.ID()) is valued BEFORE the rewrite blurs the quote scale and feeds [survivorUSDVolume]. proxied lists rewritten trade IDs (nil with proxy off); coverage is truncated if any read hit the row cap.
+// tradeUSD (by Trade.ID()) is valued BEFORE the rewrite blurs the quote scale and feeds [survivorUSDVolume]. proxied lists rewritten trade IDs (nil with proxy off); coverage is truncated if any read stayed capped.
+// weights maps a minute-sum row's ID to the trades it stands for ([tradeCount]).
 func (o *Orchestrator) fetchForTarget(
 	ctx context.Context,
 	target canonical.Pair,
 	from, to time.Time,
-) (trades []canonical.Trade, tradeUSD map[string]*big.Rat, proxied map[string]struct{}, coverage cachekeys.WindowCoverage, err error) {
+) (trades []canonical.Trade, tradeUSD map[string]*big.Rat, proxied map[string]struct{}, weights map[string]int64, coverage cachekeys.WindowCoverage, err error) {
 	if !o.cfg.EnableStablecoinFiatProxy {
-		t, coveredFrom, err := o.fetchTradesDetectTruncation(ctx, target, target, from, to)
+		t, w, coveredFrom, err := o.fetchTradesDetectTruncation(ctx, target, target, from, to)
 		if err != nil {
-			return nil, nil, nil, coverage, err
+			return nil, nil, nil, nil, coverage, err
 		}
 		usd := usdVolumeForPairPerTrade(target, t, o.cfg.USDPeggedClassicAssets, o.cfg.USDPeggedSorobanAssets)
-		return t, usd, nil, widenCoverage(coverage, coveredFrom), nil
+		return t, usd, nil, w, widenCoverage(coverage, coveredFrom), nil
 	}
 
 	sources, err := aggregate.ExpandTargetPairWithClassicPegs(target, o.cfg.USDPeggedClassicAssets)
 	if err != nil {
-		return nil, nil, nil, coverage, fmt.Errorf("expand target %s: %w", target.String(), err)
+		return nil, nil, nil, nil, coverage, fmt.Errorf("expand target %s: %w", target.String(), err)
 	}
 
 	var merged []canonical.Trade
@@ -1213,7 +1214,7 @@ func (o *Orchestrator) fetchForTarget(
 	tradeUSD = map[string]*big.Rat{}
 	proxied = map[string]struct{}{}
 	for _, src := range sources {
-		batch, coveredFrom, ferr := o.fetchTradesDetectTruncation(ctx, target, src, from, to)
+		batch, w, coveredFrom, ferr := o.fetchTradesDetectTruncation(ctx, target, src, from, to)
 		if ferr != nil {
 			o.logger.Warn("stablecoin-expansion fetch failed",
 				"target", target.String(),
@@ -1224,6 +1225,12 @@ func (o *Orchestrator) fetchForTarget(
 			continue
 		}
 		coverage = widenCoverage(coverage, coveredFrom)
+		for id, n := range w {
+			if weights == nil {
+				weights = make(map[string]int64, len(w))
+			}
+			weights[id] = n
+		}
 		// Per-trade USD value against the SOURCE pair's quote-decimal
 		// convention — captured BEFORE the rewrite below blurs the
 		// original 7-vs-8 decimal.
@@ -1243,9 +1250,9 @@ func (o *Orchestrator) fetchForTarget(
 	// One failing leg is tolerated; every leg failing means nothing was
 	// read, and reporting that as an empty window hides a store outage.
 	if len(fetchErrs) == len(sources) {
-		return nil, nil, nil, coverage, fmt.Errorf("all %d source pairs failed: %w", len(sources), errors.Join(fetchErrs...))
+		return nil, nil, nil, nil, coverage, fmt.Errorf("all %d source pairs failed: %w", len(sources), errors.Join(fetchErrs...))
 	}
-	return merged, tradeUSD, proxied, coverage, nil
+	return merged, tradeUSD, proxied, weights, coverage, nil
 }
 
 // usdVolumeForPairPerTrade returns exact USD value per Trade.ID(), keyed before fetchForTarget rewrites Pair; nil when the quote isn't a
@@ -1607,6 +1614,7 @@ func (o *Orchestrator) flushContributions(
 	window time.Duration,
 	trades []canonical.Trade,
 	tradeUSD map[string]*big.Rat,
+	weights map[string]int64,
 ) {
 	if o.cfg.ContributionSink == nil {
 		return
@@ -1614,6 +1622,15 @@ func (o *Orchestrator) flushContributions(
 	contributions := aggregate.SourceContributions(trades)
 	if len(contributions) == 0 {
 		return
+	}
+	if len(weights) > 0 {
+		perSource := make(map[string]int, len(contributions))
+		for i := range trades {
+			perSource[trades[i].Source] += tradeWeight(&trades[i], weights)
+		}
+		for i := range contributions {
+			contributions[i].TradeCount = perSource[contributions[i].Source]
+		}
 	}
 	// Sum per-source USD over the POST-filter trades, matching the VWAP's contribution population; an outlier-dropped trade contributes 0 rather than double-attributing via the pre-filter total.
 	var sourceUSD map[string]*big.Rat
