@@ -622,6 +622,10 @@ func recordDexTradeUnitRatio(t canonical.Trade) {
 	}
 }
 
+// usdLabelResolverError marks a live trade left NULL because a resolver read failed; unlike "thin" or "unroutable" it counts against
+// coverage, since a re-derive can still price it.
+const usdLabelResolverError = "error"
+
 // usdPopulatedLabel maps resolved-or-not to the stable Prometheus labels dashboards filter on; "refused", "unroutable" and "thin" are
 // excluded from the coverage ratio (usd_volume stays NULL).
 func usdPopulatedLabel(p canonical.Pair, populated, refused, thin bool) string {
@@ -729,14 +733,14 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
         SELECT count(*) FILTER (WHERE inserted) FROM ins
     `
 	var usdVolume any // sql NULL when nil; pq accepts the *string form too
-	v, refused, err := s.resolveUSDVolume(ctx, t)
+	v, label, err := s.resolveUSDVolume(ctx, t)
 	if err != nil {
 		return err
 	}
 	if v != nil {
 		usdVolume = *v
 	}
-	obs.TradeInsertsTotal.WithLabelValues(t.Source, s.usdLabel(t, v, refused)).Inc()
+	obs.TradeInsertsTotal.WithLabelValues(t.Source, label).Inc()
 	var rowsInserted int64
 	if err := s.db.QueryRowContext(ctx, q,
 		t.Source, t.Ledger, t.TxHash, t.OpIndex, t.Timestamp.UTC(),
@@ -802,14 +806,14 @@ func (s *Store) tradeBatchValues(ctx context.Context, insertRows []canonical.Tra
 			base, base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9, base+10, base+11, base+12,
 		))
 		var usdVolume any
-		v, refused, err := s.resolveUSDVolume(ctx, t)
+		v, label, err := s.resolveUSDVolume(ctx, t)
 		if err != nil {
 			return nil, nil, err
 		}
 		if v != nil {
 			usdVolume = *v
 		}
-		obs.TradeInsertsTotal.WithLabelValues(t.Source, s.usdLabel(t, v, refused)).Inc()
+		obs.TradeInsertsTotal.WithLabelValues(t.Source, label).Inc()
 		args = append(args,
 			t.Source, t.Ledger, t.TxHash, t.OpIndex, t.Timestamp.UTC(),
 			t.Pair.Base.String(), t.Pair.Quote.String(),

@@ -1837,7 +1837,7 @@ var OracleStreamRowsUnparsedTotal = prometheus.NewCounterVec(
 var TradeInsertsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_trade_inserts_total",
-		Help: "Trade-insert attempts, labelled by source and whether usd_volume was populated (yes|no|unroutable|thin; unroutable = unpriced trade whose two classic legs share one issuer, or neither of whose legs had any peg or XLM market, thin = unpriced because the only candidate rate came from a market below the substance floor; both excluded from the coverage alerts). Counts attempts, not unique-row inserts — on-conflict dedupe AND generation-guarded corrective updates are both invisible to this counter.",
+		Help: "Trade-insert attempts, labelled by source and whether usd_volume was populated (yes|no|refused|unroutable|thin|error; error = left NULL because a USD resolver read failed, counted against coverage; unroutable = unpriced trade whose two classic legs share one issuer, or neither of whose legs had any peg or XLM market, thin = unpriced because the only candidate rate came from a market below the substance floor; both excluded from the coverage alerts). Counts attempts, not unique-row inserts — on-conflict dedupe AND generation-guarded corrective updates are both invisible to this counter.",
 	},
 	[]string{"source", "usd_volume_populated"},
 )
