@@ -1,0 +1,48 @@
+---
+# ─── Tier-1 lake self-healer ──────────────────────────
+#
+# ch-live-catchup (scripts/ops/ch-live-catchup.sh, deploy/systemd/
+# ch-live-catchup.{service,timer}) is the ONLY thing that fills a hole in the
+# Tier-1 lake. Without it, internal/projector's resolveTip clamps to the
+# ContiguousWatermark, so one unhealed gap stalls the CH-fed projector
+# permanently rather than degrading. Gated on the ClickHouse-host fact, not
+# run_clickhouse, so it reaches r1, where run_clickhouse is false by design.
+#
+# Units are copied VERBATIM from deploy/systemd/, not templated: they carry no
+# host-specific values and the checked-in file stays what actually runs (as
+# config-assertions.{service,timer} do in 15-log-discipline.yml).
+
+- name: Install the ClickHouse live-catchup script
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../../scripts/ops/ch-live-catchup.sh"
+    dest: /usr/local/bin/ch-live-catchup.sh
+    owner: root
+    group: root
+    mode: "0755"
+  when: ch_live_catchup_enabled | default(true) | bool
+
+- name: Install the ClickHouse live-catchup systemd units
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../../deploy/systemd/{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - ch-live-catchup.service
+    - ch-live-catchup.timer
+  register: ch_live_catchup_units
+  when: ch_live_catchup_enabled | default(true) | bool
+
+- name: Enable + start the ClickHouse live-catchup timer
+  ansible.builtin.systemd:
+    name: ch-live-catchup.timer
+    enabled: true
+    state: started
+    daemon_reload: "{{ ch_live_catchup_units is changed }}"
+  when:
+    - ch_live_catchup_enabled | default(true) | bool
+    # check-mode guard: --check reports the units changed without writing them,
+    # so daemon_reload would act on files that do not exist. Same as the
+    # ch-schema-snapshot timer above.
+    - not (ansible_check_mode and ch_live_catchup_units is changed)
