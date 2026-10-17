@@ -20,6 +20,14 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.14] — 2026-10-17
+
+1 commit since v0.116.13. No migrations. No `pkg/*` break.
+
+### Fixed
+
+- **divergence:** the synthetic USD cross gains the exchangeratesapi FX leg, so the reflector-cex base leg pairs with a non-Reflector rate; BTC/EUR and BTC/GBP no longer drop below quorum when the sparse redstone and chainlink legs go stale. The refresh reads the cached VWAP across asset aliases, so the native/fiat:* pairs refresh instead of serving a frozen row (#3561).
+
 ## [v0.116.13] — 2026-10-17
 
 1 commit since v0.116.12. No migrations. No `pkg/*` break.
@@ -53,11 +61,3 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 - **redstone:** `earnUSDC_FUNDAMENTAL/USD` is registered (vault contract in USD) instead of landing as a `raw:` row, and the bare `earnUSDC_FUNDAMENTAL` feed is quoted in USDC, the reserve it is published in (#3552). Existing rows from ledger 64254176 are corrected by a `projector-replay`.
 - **alerts:** the daily-publisher silence rule no longer fires when restarts re-emit the same fix and flatten the events counter (#3551).
-
-## [v0.116.9] — 2026-10-16
-
-1 commit since v0.116.8. No migrations. No `pkg/*` break.
-
-### Fixed
-
-- **completeness:** the weekly SDEX census streams three 25k-ledger windows at a time, so a full served-range pass fits inside the unit's 6h timeout instead of being killed and discarded (#3549).
