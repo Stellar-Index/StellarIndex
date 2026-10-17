@@ -20,6 +20,14 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.13] — 2026-10-17
+
+1 commit since v0.116.12. No migrations. No `pkg/*` break.
+
+### Fixed
+
+- **ops:** `projector-replay -refresh-only` refreshes the price CAGGs outside the 30 s setup budget; every view was cancelled 30 s in, before any window refreshed (#3559).
+
 ## [v0.116.12] — 2026-10-17
 
 2 commits since v0.116.11. No migrations. No `pkg/*` break.
@@ -53,11 +61,3 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 ### Fixed
 
 - **completeness:** the weekly SDEX census streams three 25k-ledger windows at a time, so a full served-range pass fits inside the unit's 6h timeout instead of being killed and discarded (#3549).
-
-## [v0.116.8] — 2026-10-16
-
-1 commit since v0.116.7. No migrations. No `pkg/*` break.
-
-### Fixed
-
-- **indexer:** every enabled source's event counter starts at 0, so the first event after a restart is counted by `rate()`; a lazily created counter hid it and the 6h–30h `source_stopped`/low-volume windows reported a live source as silent (#3545).
