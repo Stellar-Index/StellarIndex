@@ -66,7 +66,7 @@
 # verdict reads, so the NEXT run files every $DIRTY line before recovering. Until
 # then /v1/coverage carries its prior clean claim over that range; if the box
 # stays down, file each $DIRTY line by hand:
-#   stellarindex-ops-ch ch-rebuild -config CFG -from LO -to HI \
+#   stellarindex-ops ch-rebuild -config CFG -from LO -to HI \
 #     -sources <the $DIRTY line's sources> -record-dirty-window
 #
 # NOT in scope: sdex (op-derived, correctly keyed), external/band (not
@@ -108,7 +108,7 @@ load_env_file() {
   done < "$1"
 }
 load_env_file /etc/default/stellarindex-ops export
-OPS=${OPS:-/usr/local/bin/stellarindex-ops-ch}
+OPS=${OPS:-/usr/local/bin/stellarindex-ops}
 CFG=${CFG:-/etc/stellarindex.toml}
 DSN="$STELLARINDEX_POSTGRES_DSN"
 SRC=${SRC:-"aquarius,soroswap,phoenix,comet,blend,cctp,rozo,defindex"}

@@ -22,7 +22,7 @@ PAR=${PAR:-8}
 FLUSH=${FLUSH:-200}
 BUCKET=${BUCKET:-galexie-archive}
 CONFIG=${CONFIG:-/etc/stellarindex.toml}
-OPS=${OPS:-/usr/local/bin/stellarindex-ops-ch}
+OPS=${OPS:-/usr/local/bin/stellarindex-ops}
 CHADDR=${CHADDR:-127.0.0.1:9300}
 STATE=${STATE:-/var/lib/ch-backfill/done-windows.txt}
 
