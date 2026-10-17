@@ -42,7 +42,7 @@ if [ -n "${STELLARINDEX_CLICKHOUSE_OPS_USER:-}" ]; then
   export CLICKHOUSE_USER="$STELLARINDEX_CLICKHOUSE_OPS_USER"
   export CLICKHOUSE_PASSWORD="${STELLARINDEX_CLICKHOUSE_OPS_PASSWORD:-}"
 fi
-OPS=${OPS:-/usr/local/bin/stellarindex-ops-ch}
+OPS=${OPS:-/usr/local/bin/stellarindex-ops}
 CFG=${CFG:-/etc/stellarindex.toml}
 CH_PORT=${CH_PORT:-9300}
 FROM=${FROM:-2}
