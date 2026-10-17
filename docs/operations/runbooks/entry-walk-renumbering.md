@@ -47,7 +47,7 @@ START=<lo> BAND_END=<hi+1> BUCKET=<archive bucket> EXTRA_FLAGS=-changes-only \
   run-heavy-job.sh ord-<item>-p<N> /usr/local/sbin/ordinal-rederive-chunks.sh
 ```
 
-Dry-run 1k ledgers first (`stellarindex-ops ch-backfill` without `-write`).
+Dry-run 1k ledgers first (`stellarindex-ops ch-backfill -dry-run`). Ranges trimmed off the archive (ADR-0027; on r1 39.04M-49.98M) read through to the cold tier; cold reads are slower, so time the dry-run before sizing the window.
 
 Re-extract EVERY P23+ partition written before `f4bebbfda` (positions drifted in `c4ab63e45..f4bebbfda`). Every gate read of `ledger_entry_changes` uses `FINAL`; a non-FINAL read, or one before the delete, proves nothing. Table (a), restored rows per 2k slice over `[lo, hi]`; save before (2a) and after (6a), after must be >= before on every slice:
 
