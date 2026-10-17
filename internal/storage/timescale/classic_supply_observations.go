@@ -655,14 +655,41 @@ type classicWatermarkCache struct {
 	fetchedAt time.Time
 }
 
-// classicObserverWatermark returns the lowest watermark across the four classic-supply component tables, memoized per [classicWatermarkTTL]
-// and keyed on asOfLedger so a backfill replaying history is never served a live-tip watermark.
+// UpsertClassicObserverWatermark advances the classic observers' processed-ledger watermark every ledger; a lower-or-equal value is a no-op.
+func (s *Store) UpsertClassicObserverWatermark(ctx context.Context, processedLedger uint32) error {
+	const q = `
+        INSERT INTO classic_observer_watermark (id, processed_ledger, updated_at)
+        VALUES (1, $1, now())
+        ON CONFLICT (id) DO UPDATE SET
+            processed_ledger = EXCLUDED.processed_ledger,
+            updated_at       = EXCLUDED.updated_at
+         WHERE EXCLUDED.processed_ledger > classic_observer_watermark.processed_ledger
+    `
+	if _, err := s.db.ExecContext(ctx, q, int64(processedLedger)); err != nil {
+		return fmt.Errorf("timescale: UpsertClassicObserverWatermark@%d: %w", processedLedger, err)
+	}
+	return nil
+}
+
+// classicObserverWatermark returns how far the classic observers have processed at or before asOfLedger, memoized per
+// [classicWatermarkTTL] and keyed on asOfLedger. Without a watermark row it falls back to the lowest MAX(ledger) across the four
+// component tables, which a quiet table holds down.
 func (s *Store) classicObserverWatermark(ctx context.Context, asOfLedger uint32) (uint32, error) {
 	c := &s.classicWatermark
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.asOf == asOfLedger && !c.fetchedAt.IsZero() && time.Since(c.fetchedAt) < classicWatermarkTTL {
 		return c.ledger, nil
+	}
+
+	var processed int64
+	err := s.db.QueryRowContext(ctx, `SELECT LEAST(processed_ledger, $1) FROM classic_observer_watermark WHERE id = 1`, int64(asOfLedger)).Scan(&processed)
+	switch {
+	case err == nil:
+		c.asOf, c.ledger, c.fetchedAt = asOfLedger, uint32(processed), time.Now() //nolint:gosec // LEAST with a uint32 bounds it
+		return c.ledger, nil
+	case !errors.Is(err, sql.ErrNoRows):
+		return 0, fmt.Errorf("timescale: classicObserverWatermark: %w", err)
 	}
 
 	const q = `

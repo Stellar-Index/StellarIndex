@@ -326,6 +326,7 @@ func run(cfgPath string, dryRun bool) error {
 	// watermark only when it is live: a watermark must NOT advance for an observer that isn't
 	// running.
 	accountObserverActive := len(pipeline.AccountObserverWatchSet(cfg.Supply, cfg.Metadata)) > 0
+	classicObserverActive := len(cfg.Supply.WatchedClassicAssets) > 0 || len(cfg.Supply.SACWrappers) > 0
 
 	// ─── Starting ledger + dry-run exit ────────────────────────
 	// Dry-run exits before ANY background worker starts: the taggers UPDATE trades on their first
@@ -713,7 +714,7 @@ func run(cfgPath string, dryRun bool) error {
 		err = ledgerstream.StreamArchiveThenLive(
 			rootCtx, archiveCfg, liveCfg, from, cfg.Ingestion.LiveSeamLedger, logger,
 			func(lcm sdkxdr.LedgerCloseMeta) error {
-				if perr := processAndPersistCursor(rootCtx, disp, events, store, logger, lcm, cfg.Stellar.Passphrase(), accountObserverActive); perr != nil {
+				if perr := processAndPersistCursor(rootCtx, disp, events, store, logger, lcm, cfg.Stellar.Passphrase(), accountObserverActive, classicObserverActive); perr != nil {
 					return perr
 				}
 				// hashdb append is best-effort and never stalls or fails ingest (see recordHashdb).
@@ -1831,7 +1832,7 @@ func processAndPersistCursor(
 	logger *slog.Logger,
 	lcm sdkxdr.LedgerCloseMeta,
 	networkPassphrase string,
-	accountObserverActive bool,
+	accountObserverActive, classicObserverActive bool,
 ) error {
 	if err := pipeline.ProcessLedger(ctx, disp, events, logger, lcm, networkPassphrase); err != nil {
 		return err
@@ -1862,6 +1863,15 @@ func processAndPersistCursor(
 	if accountObserverActive {
 		if err := store.UpsertAccountObserverWatermark(ctx, lcm.LedgerSequence()); err != nil {
 			logger.Warn("account observer watermark upsert",
+				"ledger", lcm.LedgerSequence(),
+				"err", err,
+			)
+		}
+	}
+	// Same for the classic-supply observers, so a quiet component table cannot freeze the classic supply anchor.
+	if classicObserverActive {
+		if err := store.UpsertClassicObserverWatermark(ctx, lcm.LedgerSequence()); err != nil {
+			logger.Warn("classic observer watermark upsert",
 				"ledger", lcm.LedgerSequence(),
 				"err", err,
 			)

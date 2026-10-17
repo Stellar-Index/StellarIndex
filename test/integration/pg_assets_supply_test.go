@@ -468,7 +468,9 @@ func TestClaimableSameLedgerTieBreak(t *testing.T) {
 
 // TestMinClassicComponentLedgerUsesObserverWatermark: the freshness anchor is the slowest component OBSERVER's
 // watermark, not the asset's last activity in that component. All four observers are current but the quiet asset's last
-// claimable event is ancient, which is healthy for a write-once entry type and must not read as stale.
+// claimable event is ancient, which is healthy for a write-once entry type and must not read as stale. Without a
+// classic_observer_watermark row (migration 0218) it falls back to MIN(MAX(ledger)); with one, a quiet table no longer holds
+// the anchor down and a frozen watermark still trips.
 func TestMinClassicComponentLedgerUsesObserverWatermark(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -535,6 +537,34 @@ func TestMinClassicComponentLedgerUsesObserverWatermark(t *testing.T) {
 	}
 	if got != 0 {
 		t.Errorf("uninstrumented asset anchor = %d, want 0", got)
+	}
+
+	// With the indexer's watermark, the quiet claimable table no longer holds the anchor at 5000. Distinct asOf values
+	// keep each read past the per-asOf memo.
+	if err := store.UpsertClassicObserverWatermark(ctx, 9500); err != nil {
+		t.Fatalf("UpsertClassicObserverWatermark: %v", err)
+	}
+	if err := store.UpsertClassicObserverWatermark(ctx, 9000); err != nil {
+		t.Fatalf("UpsertClassicObserverWatermark (lower): %v", err)
+	}
+	for _, c := range []struct {
+		name  string
+		asset string
+		asOf  uint32
+		want  uint32
+	}{
+		{"watermark replaces the quiet table's MAX", lively, 10_001, 9500},
+		{"bounded by asOf", lively, 9200, 9200},
+		{"frozen watermark trips at a later tip", quiet, 20_000, 9500},
+		{"uninstrumented stays 0", absent, 10_002, 0},
+	} {
+		got, err := store.MinClassicComponentLedger(ctx, c.asset, c.asOf)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if got != c.want {
+			t.Errorf("%s: anchor = %d, want %d", c.name, got, c.want)
+		}
 	}
 }
 

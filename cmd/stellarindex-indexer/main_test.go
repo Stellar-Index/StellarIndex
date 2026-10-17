@@ -50,6 +50,7 @@ func TestProcessAndPersistCursor_ReturnsDispatcherErrorBeforeCursorWrite(t *test
 		invalidLedgerCloseMeta(42),
 		"not-a-real-network-passphrase",
 		false, // accountObserverActive: irrelevant — ProcessLedger errors before any cursor/watermark write
+		false, // classicObserverActive: likewise
 	)
 	if err == nil {
 		t.Fatal("expected dispatcher/build-reader error for invalid ledger meta")
