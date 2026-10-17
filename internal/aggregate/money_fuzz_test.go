@@ -481,8 +481,8 @@ func FuzzRobustStats(f *testing.F) {
 			t.Fatalf("robust centre %s, want %s", centre.RatString(), m.RatString())
 		}
 		wantScale := new(big.Rat).Mul(big.NewRat(7413, 5000), mad)
-		if floor := new(big.Rat).Abs(new(big.Rat).Mul(big.NewRat(1, 200), m)); floor.Cmp(wantScale) > 0 {
-			wantScale = floor
+		if mad.Sign() == 0 {
+			wantScale = new(big.Rat).Mul(big.NewRat(1, 200), m)
 		}
 		if scale.Cmp(wantScale) != 0 {
 			t.Fatalf("scale %s, want %s", scale.RatString(), wantScale.RatString())

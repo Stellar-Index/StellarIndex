@@ -79,7 +79,7 @@ type robustRef struct {
 }
 
 // localScaleRelFloor (1/400 = 0.25%, a +-1% band at sigma 4) is the always-applied lower bound on a local reference's scale: the MAD of
-// 3-5 prints is noisy, so tight honest prints would otherwise reject a near neighbour. The window reference keeps its exact MAD.
+// 3-5 prints is noisy, so tight honest prints would otherwise reject a near neighbour. The window reference keeps its exact MAD; [FilterOutliers] shares the floor.
 var localScaleRelFloor = big.NewRat(1, 400)
 
 // localScaleRelCeiling (1/100 = 1%, a +-4% band at sigma 4) caps a local reference's scale so a bucket of wash prints with a huge MAD
