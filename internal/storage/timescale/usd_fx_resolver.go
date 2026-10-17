@@ -80,6 +80,9 @@ type fxCacheKey struct {
 type fxCacheEntry struct {
 	rate     string // empty when no rate available
 	cachedAt time.Time
+	// thin marks an empty rate the substance gate refused. It rides on the rate entry because the hour verdicts it is read from expire on
+	// their own clock, so a minute's cached miss could outlive them and read as "no market".
+	thin bool
 }
 
 // VWAPUSDFXResolverOptions tunes the resolver.
@@ -241,7 +244,7 @@ func (r *VWAPUSDFXResolver) USDPriceAt(ctx context.Context, asset canonical.Asse
 		return "", false, err
 	}
 	if rate == "" {
-		r.storeCache(key, fxCacheEntry{rate: "", cachedAt: r.clock()})
+		r.storeCache(key, fxCacheEntry{rate: "", thin: r.substanceRefused(asset, at), cachedAt: r.clock()})
 		return "", false, nil
 	}
 	// Postgres NUMERIC::text keeps the column's full scale (`1.085000000000000000000`); trim the
@@ -317,8 +320,16 @@ func (r *VWAPUSDFXResolver) NoMarket(asset canonical.Asset, at time.Time) bool {
 	return ok && v != ""
 }
 
-// ThinMarketRefused reports whether asset had a candidate rate at `at` that the substance gate refused and none it allowed, from verdicts cached by the last USDPriceAt call; usd_volume stays NULL either way.
+// ThinMarketRefused reports whether the last USDPriceAt call for asset at `at` found no rate because the substance gate refused every
+// candidate; usd_volume stays NULL either way.
 func (r *VWAPUSDFXResolver) ThinMarketRefused(asset canonical.Asset, at time.Time) bool {
+	e, ok := r.cacheEntry(fxCacheKey{asset: asset.String(), bucketMs: at.UTC().Truncate(time.Minute).UnixMilli()})
+	return ok && e.rate == "" && e.thin
+}
+
+// substanceRefused reports whether asset had a candidate rate at `at` that the substance gate refused and none it allowed, from the
+// verdicts resolveRate just cached.
+func (r *VWAPUSDFXResolver) substanceRefused(asset canonical.Asset, at time.Time) bool {
 	if !r.substanceGate || isXLMAsset(asset) {
 		return false
 	}
@@ -505,16 +516,18 @@ func (r *VWAPUSDFXResolver) fresh(observedAt, at time.Time, window time.Duration
 
 // lookupCache returns (rate, true) on a fresh entry; an empty rate means "resolved as no rate", which callers treat as ok=false.
 func (r *VWAPUSDFXResolver) lookupCache(key fxCacheKey) (string, bool) {
+	entry, ok := r.cacheEntry(key)
+	return entry.rate, ok
+}
+
+func (r *VWAPUSDFXResolver) cacheEntry(key fxCacheKey) (fxCacheEntry, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	entry, ok := r.cache[key]
-	if !ok {
-		return "", false
+	if !ok || r.clock().Sub(entry.cachedAt) > r.cacheTTL {
+		return fxCacheEntry{}, false
 	}
-	if r.clock().Sub(entry.cachedAt) > r.cacheTTL {
-		return "", false
-	}
-	return entry.rate, true
+	return entry, true
 }
 
 func (r *VWAPUSDFXResolver) storeCache(key fxCacheKey, entry fxCacheEntry) {
