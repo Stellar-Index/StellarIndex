@@ -6,7 +6,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// FilterOutliers drops prices beyond sigma*(1.4826*MAD) of the median in ratio space (ADR-0046 §1), exact big.Rat; sigma <= 0 or fewer than 3 usable prices is a no-op, and a trim dropping the base-volume majority returns an empty slice.
+// FilterOutliers drops prices beyond sigma*max(1.4826*MAD, |median|/400) of the median in ratio space (ADR-0046 §1), exact big.Rat; sigma <= 0 or fewer than 3 usable prices is a no-op, and a trim dropping the base-volume majority returns an empty slice.
 func FilterOutliers(trades []canonical.Trade, sigma float64) []canonical.Trade {
 	if sigma <= 0 || len(trades) < 3 {
 		out := make([]canonical.Trade, len(trades))
@@ -31,6 +31,10 @@ func FilterOutliers(trades []canonical.Trade, sigma float64) []canonical.Trade {
 	}
 
 	centre, scale := robustCentreScale(prices)
+	// A tight dust cluster has a tiny non-zero MAD; without the local filter's floor an ordinary move counts as an outlier.
+	if floor := new(big.Rat).Abs(new(big.Rat).Mul(localScaleRelFloor, centre)); floor.Cmp(scale) > 0 {
+		scale = floor
+	}
 	// threshold = sigma · scale, exact. SetFloat64 is exact for any
 	// finite float64; sigma > 0 here, so it never returns nil — but
 	// guard defensively rather than dereference a nil.

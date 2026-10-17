@@ -661,6 +661,8 @@ func refFilterOutliers(valid []canonical.Trade, sigma float64) []canonical.Trade
 	scale := new(big.Rat).Mul(big.NewRat(14826, 10000), refMedian(devs))
 	if scale.Sign() == 0 {
 		scale = new(big.Rat).Quo(c, big.NewRat(200, 1))
+	} else if floor := new(big.Rat).Quo(c, big.NewRat(400, 1)); scale.Cmp(floor) < 0 {
+		scale = floor
 	}
 	hi := new(big.Rat).Add(c, new(big.Rat).Mul(new(big.Rat).SetFloat64(sigma), scale))
 	lo := new(big.Rat).Quo(new(big.Rat).Mul(c, c), hi)
