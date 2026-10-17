@@ -20,6 +20,12 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.17] - 2026-10-17
+
+### Fixed
+
+- `stellarindex_trade_inserts_total` no longer counts a trade refused by the thin-market gate as `usd_volume_populated="no"` when its rate came from a cached miss that outlived the hourly substance verdict; bursts on thin pairs had pulled the on-chain USD-volume coverage ratio under its alert threshold (#3567).
+
 ## [v0.116.16] - 2026-10-17
 
 ### Changed
@@ -47,13 +53,4 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 ### Fixed
 
 - **ops:** `projector-replay -refresh-only` refreshes the price CAGGs outside the 30 s setup budget; every view was cancelled 30 s in, before any window refreshed (#3559).
-
-## [v0.116.12] — 2026-10-17
-
-2 commits since v0.116.11. No migrations. No `pkg/*` break.
-
-### Fixed
-
-- **explorer:** the asset and pair tip streams open only after the price poll confirms a fresh, non-thin price, so thin or stale markets no longer trigger refused (404) stream requests (#3556, #3557).
-- **explorer:** exchange, aggregator and protocol links render only when the target page exists; the embed widget makes no request without an asset; SDEX no longer shows a false "Lake analytics unavailable"; RWA basis prose no longer says "priced by" for an admission-only oracle feed (#3557).
 
