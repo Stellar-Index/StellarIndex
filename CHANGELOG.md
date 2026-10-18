@@ -73,9 +73,3 @@ Migrations 0217 and 0218, both additive. No `pkg/*` break.
 ### Changed
 
 - `stellarindex_trade_inserts_total` labels a live trade left unpriced by a failed USD resolver read `usd_volume_populated="error"` instead of `"no"`; it still counts against on-chain USD-volume coverage (#3565).
-
-## [v0.116.15] - 2026-10-17
-
-### Fixed
-
-- `/v1/ohlc`, `/v1/vwap` and `/v1/twap` no longer return 422 all-filtered when a tight cluster of dust prints shrinks the outlier band below an ordinary hourly move; the band is floored at ±1% of the median, matching the aggregator's local filter (#3563).
