@@ -14,7 +14,7 @@ type TrustlineHistoryResp = NonNullable<
 >;
 
 /** The asset_id spellings of native XLM, which has no trustlines. */
-function isNativeAssetID(assetID: string): boolean {
+export function isNativeAssetID(assetID: string): boolean {
   return (
     assetID === 'native' ||
     assetID === 'crypto:XLM' ||
