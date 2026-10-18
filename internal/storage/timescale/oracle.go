@@ -227,7 +227,7 @@ func (s *Store) oracleLatestAllTime(ctx context.Context, keys []string, sourceFi
 	e, ok := s.oracleAllTime[key]
 	if ok && !e.refreshing && time.Since(e.at) > oracleLatestAllTimeTTL {
 		e.refreshing = true
-		go s.refreshOracleLatestAllTime(key, keys, sourceFilter)
+		go s.refreshOracleLatestAllTime(context.WithoutCancel(ctx), key, keys, sourceFilter)
 	}
 	s.oracleAllTimeMu.Unlock()
 	if ok {
@@ -241,7 +241,7 @@ func (s *Store) oracleLatestAllTime(ctx context.Context, keys []string, sourceFi
 	return rows, nil
 }
 
-func (s *Store) refreshOracleLatestAllTime(key string, keys []string, sourceFilter string) {
+func (s *Store) refreshOracleLatestAllTime(parent context.Context, key string, keys []string, sourceFilter string) {
 	stored := false
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -255,7 +255,7 @@ func (s *Store) refreshOracleLatestAllTime(key string, keys []string, sourceFilt
 			s.oracleAllTimeMu.Unlock()
 		}
 	}()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
 	rows, err := s.queryOracleLatest(ctx, oracleLatestAllTimeQuery, keys, sourceFilter)
 	if err != nil {
