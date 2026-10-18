@@ -441,6 +441,7 @@
     content: |
       f /run/lock/stellarindex-heavy.lock 0644 root root -
       f /run/lock/stellarindex-heavy-scheduled.lock 0644 root root -
+      d /run/lock/stellarindex-heavy-scheduled.lock.queue 1777 root root -
   tags: [heavy-job-wrapper]
 
 - name: create the heavy-job host-wide lock file now
@@ -463,7 +464,8 @@
   #      with exit 75 while any other heavy job holds it; timer/cron
   #      launchers set HEAVY_JOB_CLASS=scheduled, share it, defer (exit 75)
   #      while an operator job holds it, and run one scheduled job at a
-  #      time among themselves (a second lock, same exit 75 deferral).
+  #      time among themselves (a second lock, same exit 75 deferral),
+  #      queued waiters in arrival order (a ticket per waiter).
   #   2. For root callers, wraps the command in a systemd transient
   #      scope with a hard memory budget + batch-class CPU/IO so a
   #      ballooning job gets killed before it can starve galexie/CH/PG.
@@ -630,9 +632,39 @@
           echo "run-heavy-job: deferring ${NAME} (scheduled): an operator heavy job holds ${GLOBAL_LOCK}${WAITED} — one heavy job at a time. Nothing ran (exit 75); the next fire retries. See what holds it: fuser -v ${GLOBAL_LOCK}" >&2
           exit 75
         fi
+        # flock(2) wakes every waiter on release and the first to run wins, so a daily job queued at
+        # 04:21 lost to later arrivals for six hours. Waiters take a ticket; only the oldest live one contends.
+        sched_queue_lock() {
+          local q="${SCHED_LOCK}.queue" t ticket
+          [ -n "$LOCK_WAIT" ] || { flock -n -x 7; return; }
+          if ! { [ -d "$q" ] || (umask 0; mkdir -m 1777 "$q") 2>/dev/null; } \
+            || ! (umask 022; : >"$q/.new-$$") 2>/dev/null || ! exec 6<"$q/.new-$$"; then
+            echo "run-heavy-job: WARNING ${NAME} (scheduled) cannot queue in ${q} — waiting unordered" >&2
+            flock -w "$(lock_left)" -x 7; return
+          fi
+          flock -n -x 6
+          ticket="$q/$(date +%s)-$(printf '%010d' "$$")"
+          mv "$q/.new-$$" "$ticket"
+          while :; do
+            for t in "$q"/*; do
+              [ "$t" = "$ticket" ] && break
+              [ -e "$t" ] || continue
+              # A ticket nobody holds is a waiter that died: skip it (rm may fail on another user's file).
+              if (exec 5<"$t" && flock -n -s 5) 2>/dev/null; then rm -f "$t" 2>/dev/null; continue; fi
+              t=""; break
+            done
+            if [ "$t" = "$ticket" ] || [ ! -e "$ticket" ]; then
+              flock -w "$(lock_left)" -x 7 && { rm -f "$ticket"; exec 6<&-; return 0; }
+              break
+            fi
+            [ $((LOCK_WAIT - ($(date +%s) - WAIT_START))) -gt 0 ] || break
+            sleep 1
+          done
+          rm -f "$ticket"; exec 6<&-
+          return 1
+        }
         if exec 7<"$SCHED_LOCK"; then
-          [ -n "$LOCK_WAIT" ] && FLOCK_MODE=(-w "$(lock_left)")
-          if ! flock "${FLOCK_MODE[@]}" -x 7; then
+          if ! sched_queue_lock; then
             WAITED=""
             [ -n "$LOCK_WAIT" ] && WAITED=" after waiting ${LOCK_WAIT}s"
             echo "run-heavy-job: deferring ${NAME} (scheduled): another scheduled heavy job holds ${SCHED_LOCK}${WAITED} — one heavy job at a time. Nothing ran (exit 75); the next fire retries. See what holds it: fuser -v ${SCHED_LOCK}" >&2
