@@ -32,6 +32,7 @@ No migrations. No `pkg/*` break.
 ### Fixed
 
 - **aggregator:** the trade-path USD leg is guarded against a single outlier minute. The newest 41 leg minutes go through the same robust check as the served VWAP, and an XLM-leg tie between asset forms resolves in preference order (#3595).
+- **api:** a `/v1/price` miss on an on-chain pair reuses a cached Postgres plan for its last-trade walk: ~5 ms per alias instead of ~50 ms, which kept XLM-leg misses past the 200 ms latency SLO (#3598).
 - **sep1:** a domain counts as reached only when its last attempt succeeded, so long-dead domains no longer trip the systemic-failure verdict (#3594).
 - **ops:** the pgBackRest wrapper republishes its textfile after every repo, so the off-site repo2 run no longer ages the file past 24h (#3593).
 - **ansible:** queued scheduled heavy jobs start in arrival order instead of racing for the lock (#3596).
