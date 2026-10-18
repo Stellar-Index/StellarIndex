@@ -51,6 +51,17 @@ func TestGuardedLegMinute(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("a minute shared by two forms is one vote, the preferred form's", func(t *testing.T) {
+		// The newest minute has a 9.0 spike in the preferred form and 0.32 in a second form. The spike is refused, and
+		// the fallback is the previous minute, never the same minute's less-preferred form.
+		rows := legMinutes(t, newest, "9", "0.32", "0.31", "0.315", "0.31", "0.32", "0.315")
+		rows[1].bucket = rows[0].bucket
+		got, ok := guardedLegMinute(rows)
+		if !ok || got.text != "0.31" {
+			t.Errorf("guardedLegMinute = (%q, %t), want (\"0.31\", true)", got.text, ok)
+		}
+	})
 }
 
 // TestVWAPUSDFXResolver_DirectLegRefusesASpikeMinute pins API parity on the trade path: one 30x newest minute
@@ -124,6 +135,10 @@ func TestLegQueriesTakeTheGuardSample(t *testing.T) {
 	limit := "LIMIT 41"
 	if got := strings.Count(xlmLegQuery(""), limit); got != 3 {
 		t.Errorf("xlmLegQuery has %d %q, want 3 (both arms and the outer pick)", got, limit)
+	}
+	// Each arm returns many rows per minute now, so the outer sort needs the form tiebreak: Postgres top-N is not stable.
+	if !strings.Contains(xlmLegQuery(""), "ORDER BY bucket DESC, inverted, array_position($2::text[], form)") {
+		t.Errorf("xlmLegQuery's outer ORDER BY lacks the form tiebreak:\n%s", xlmLegQuery(""))
 	}
 	for _, q := range []string{directLegQuery(false, false), directLegQuery(true, true)} {
 		if !strings.Contains(q, limit) {

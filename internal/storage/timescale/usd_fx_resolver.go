@@ -718,7 +718,16 @@ type legMinute struct {
 // guardedLegMinute runs the newest of newest-first minutes through the served-price outlier band so a trade is
 // never valued at a one-minute print the API would refuse to serve: a rejected minute yields to the newest
 // in-band one. An empty baseline keeps the candidate; thin markets are the substance gate's call.
-func guardedLegMinute(minutes []legMinute) (legMinute, bool) {
+// Rows sharing a bucket (several peg or XLM forms) collapse to the first, the query's preferred form, so one
+// minute is one vote.
+func guardedLegMinute(rows []legMinute) (legMinute, bool) {
+	minutes := make([]legMinute, 0, len(rows))
+	for _, m := range rows {
+		if n := len(minutes); n > 0 && minutes[n-1].bucket.Equal(m.bucket) {
+			continue
+		}
+		minutes = append(minutes, m)
+	}
 	if len(minutes) == 0 {
 		return legMinute{}, false
 	}
@@ -733,12 +742,12 @@ func guardedLegMinute(minutes []legMinute) (legMinute, bool) {
 }
 
 // xlmLegQuery is queryXLMLeg's SQL, newest [legGuardSample] minutes first. Arms are parenthesised (Postgres rejects bare ORDER BY/LIMIT
-// in a UNION arm); each arm's LIMIT is an index-ordered walk. Ties go to the form first in $2, then the (asset, XLM) arm, never scan order.
+// in a UNION arm); each arm's LIMIT is an index-ordered walk. Ties go to the (asset, XLM) arm, then the form first in $2, never scan order.
 func xlmLegQuery(lowerBound string) string {
 	return fmt.Sprintf(`
 		SELECT bucket, vwap::text, inverted
 		  FROM (
-		        (SELECT bucket, vwap, false AS inverted
+		        (SELECT bucket, vwap, false AS inverted, quote_asset AS form
 		           FROM prices_1m
 		          WHERE base_asset  = $1
 		            AND quote_asset = ANY($2)
@@ -748,7 +757,7 @@ func xlmLegQuery(lowerBound string) string {
 		          ORDER BY bucket DESC, array_position($2::text[], quote_asset)
 		          LIMIT %[2]d)
 		        UNION ALL
-		        (SELECT bucket, vwap, true AS inverted
+		        (SELECT bucket, vwap, true AS inverted, base_asset AS form
 		           FROM prices_1m
 		          WHERE base_asset  = ANY($2)
 		            AND quote_asset = $1
@@ -758,7 +767,7 @@ func xlmLegQuery(lowerBound string) string {
 		          ORDER BY bucket DESC, array_position($2::text[], base_asset)
 		          LIMIT %[2]d)
 		       ) legs
-		 ORDER BY bucket DESC, inverted
+		 ORDER BY bucket DESC, inverted, array_position($2::text[], form)
 		 LIMIT %[2]d
 	`, lowerBound, legGuardSample)
 }
