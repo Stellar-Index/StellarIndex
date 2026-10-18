@@ -62,6 +62,7 @@ import { IssuerPanel } from './IssuerPanel';
 import { LiquidityTabPanel } from './LiquidityTabPanel';
 import { HoldersTabPanel } from './HoldersTabPanel';
 import { TrustlineHistoryPanel } from './TrustlineHistoryPanel';
+import { AssetEntryChangesPanel } from './AssetEntryChangesPanel';
 import { MarketsTabPanel } from './MarketsTabPanel';
 import { AssetOrderBookPanel } from './AssetOrderBookPanel';
 import { AssetOraclesPanel } from './AssetOraclesPanel';
@@ -1111,6 +1112,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
                     assetID={coin.asset_id}
                     decimals={detail?.decimals ?? 7}
                   />
+                  <AssetEntryChangesPanel assetID={coin.asset_id} />
                 </div>
               }
               liquidity={
