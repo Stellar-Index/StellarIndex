@@ -2577,3 +2577,55 @@ func mustSee(t *testing.T, seen map[uint32]bool, ledgers ...uint32) {
 		}
 	}
 }
+
+// TestUSDPriceAt_LegMinutesRunThroughTheServedGuard drives the real leg SQL: a one-minute outlier on the direct <asset>/<peg> leg or
+// on the XLM bridge leg (stored in either orientation) must yield to the newest in-band minute, so a trade is never valued at a print
+// /v1/price would refuse.
+func TestUSDPriceAt_LegMinutesRunThroughTheServedGuard(t *testing.T) {
+	f := newAnchorFixture(t)
+	const unit = 10_000_000
+	usdc, err := c.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	native := c.NativeAsset()
+	direct, bridged := f.contract("direct"), f.contract("bridged")
+	for m := 2; m <= 11; m++ {
+		ago := time.Duration(m) * time.Minute
+		f.trade("sdex", ago, direct, usdc, 1*unit, 1*unit, "")
+		f.trade("sdex", ago, native, usdc, 2*unit, 1*unit, "")
+		if m%2 == 0 {
+			f.trade("sdex", ago, bridged, native, 1*unit, 2*unit, "")
+		} else {
+			f.trade("sdex", ago, native, bridged, 2*unit, 1*unit, "")
+		}
+	}
+	f.trade("sdex", time.Minute, direct, usdc, 1*unit, 10*unit, "")
+	f.trade("sdex", time.Minute, native, usdc, 2*unit, 1*unit, "")
+	f.trade("sdex", time.Minute, bridged, native, 1*unit, 200*unit, "")
+	f.refresh()
+
+	resolver, err := timescale.NewVWAPUSDFXResolver(f.store, timescale.VWAPUSDFXResolverOptions{
+		USDPegs:              []string{usdc.String()},
+		DisableSubstanceGate: true,
+	})
+	if err != nil {
+		t.Fatalf("NewVWAPUSDFXResolver: %v", err)
+	}
+	for _, tc := range []struct {
+		name  string
+		asset c.Asset
+		want  string
+	}{
+		{"direct leg refuses the 10x minute", direct, "1"},
+		{"XLM leg refuses the 100x minute", bridged, "1"},
+	} {
+		rate, ok, err := resolver.USDPriceAt(f.ctx, tc.asset, f.now)
+		if err != nil {
+			t.Fatalf("%s: USDPriceAt: %v", tc.name, err)
+		}
+		if !ok || !ratEq(t, rate, tc.want) {
+			t.Errorf("%s: USDPriceAt = %q (ok=%v), want %s", tc.name, rate, ok, tc.want)
+		}
+	}
+}
