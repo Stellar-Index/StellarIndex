@@ -35,7 +35,8 @@ func ExactTierUSDVolume(tier USDVolumeTier, decimals int, baseAmount, quoteAmoun
 	leg := quote
 	if tier == TierBasePegged {
 		base, bok := new(big.Int).SetString(baseAmount, 10)
-		if !bok || base.Sign() <= 0 {
+		// Zero is valued, not declined: tradeUSDVolumeViaUSDBase stores a zero pegged base as $0.
+		if !bok || base.Sign() < 0 {
 			return "", false
 		}
 		leg = base
