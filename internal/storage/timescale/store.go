@@ -54,6 +54,10 @@ type Store struct {
 	// another DB inherit "already upserted" for rows that DB never received.
 	assetRegistryDedupe sync.Map // key: asset_id (string) → time.Time (last upsert)
 
+	// oracleAllTime caches the all-time half of LatestOracleUpdatesForAssets, keyed by asset set + source.
+	oracleAllTimeMu sync.Mutex
+	oracleAllTime   map[string]*oracleAllTimeEntry
+
 	// assetRegistryMinLedger is the lowest first ledger upserted per asset
 	// (asset_id → uint32); a lower one bypasses the TTL above.
 	assetRegistryMinLedger sync.Map

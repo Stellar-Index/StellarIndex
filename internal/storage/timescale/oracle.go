@@ -1,12 +1,15 @@
 package timescale
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
 	"math/big"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -145,16 +148,30 @@ func (s *Store) LatestOracleUpdatesForAssets(ctx context.Context, assets []canon
 	for i, a := range assets {
 		keys[i] = a.String()
 	}
-	// Aggregate-then-fetch, not DISTINCT ON (which sorts the asset's whole history): max(ts) per
-	// (source, asset, quote), the compress_segmentby key, comes from compressed-batch metadata and
-	// the lateral fetches one stream's newest rows by exact ts. OFFSET 0 keeps the lateral a
-	// parameterised nested loop; flattened, the planner hash-joins a full scan of the open chunk.
-	const q = `
-        WITH latest AS (
+	recent, err := s.queryOracleLatest(ctx, oracleLatestRecentQuery, keys, sourceFilter)
+	if err != nil {
+		return nil, err
+	}
+	allTime, err := s.oracleLatestAllTime(ctx, keys, sourceFilter)
+	if err != nil {
+		return nil, err
+	}
+	return mergeOracleLatest(recent, allTime), nil
+}
+
+// oracleLatestQueryTmpl is aggregate-then-fetch instead of DISTINCT ON over every matching row:
+// max(ts) per (source, asset, quote) — the compress_segmentby key — is answered from
+// compressed-batch metadata, and the lateral fetches one stream's newest rows by exact ts. The
+// DISTINCT ON form sorted the asset's whole history (318,908 rows, 541 ms on r1).
+// OFFSET 0 keeps the lateral a parameterised nested loop; flattened, the planner hash-joins
+// against a full scan of the open chunk. %[1]s names the CTE; %[2]s and %[3]s bound ts on both reads.
+// unbounded-latest-ok: the all-time instance must reach a stream silent for months; its age is served.
+const oracleLatestQueryTmpl = `
+        WITH %[1]s AS (
             SELECT source, asset, quote, max(ts) AS ts
               FROM oracle_updates
              WHERE asset = ANY($1)
-               AND ($2 = '' OR source = $2)
+               AND ($2 = '' OR source = $2) %[2]s
              GROUP BY source, asset, quote
         )
         SELECT DISTINCT ON (o.source, o.quote)
@@ -165,16 +182,111 @@ func (s *Store) LatestOracleUpdatesForAssets(ctx context.Context, assets []canon
                COALESCE(o.confidence, 0),
                COALESCE(o.observer, ''),
                o.published_price
-          FROM latest l
+          FROM %[1]s l
           CROSS JOIN LATERAL (
                 SELECT * FROM oracle_updates u
                  WHERE u.asset = ANY($1)
                    AND u.source = l.source AND u.asset = l.asset
-                   AND u.quote = l.quote AND u.ts = l.ts
+                   AND u.quote = l.quote AND u.ts = l.ts %[3]s
                 OFFSET 0
           ) o
          ORDER BY o.source, o.quote, o.ts DESC, o.ledger DESC
     `
+
+var (
+	// The all-time read plans and scans every chunk (~100 ms on r1's 96); bounding ts lets
+	// TimescaleDB exclude all but the newest few (~15 ms).
+	oracleLatestAllTimeQuery = fmt.Sprintf(oracleLatestQueryTmpl, "latest", "", "")
+	oracleLatestRecentQuery  = fmt.Sprintf(oracleLatestQueryTmpl, "recent",
+		"AND ts > now() - interval '48 hours'", "AND u.ts > now() - interval '48 hours'")
+)
+
+// oracleLatestAllTimeTTL bounds how long a re-derive of a stream silent for 48 h can go unseen:
+// only such streams take their row from the all-time read, and live writes always land in the
+// recent window, so nothing else can change that read's answer.
+const (
+	oracleLatestAllTimeTTL        = time.Minute
+	oracleLatestAllTimeMaxEntries = 4096
+)
+
+type oracleAllTimeEntry struct {
+	rows       []canonical.OracleUpdate
+	at         time.Time
+	refreshing bool
+}
+
+// oracleLatestAllTime serves the all-time read from a per-key cache, refreshing an expired entry
+// in the background so a request pays for the full scan only on a key's first read.
+func (s *Store) oracleLatestAllTime(ctx context.Context, keys []string, sourceFilter string) ([]canonical.OracleUpdate, error) {
+	sorted := slices.Clone(keys)
+	slices.Sort(sorted)
+	key := strings.Join(sorted, "|") + "|" + sourceFilter
+
+	s.oracleAllTimeMu.Lock()
+	e, ok := s.oracleAllTime[key]
+	if ok && !e.refreshing && time.Since(e.at) > oracleLatestAllTimeTTL {
+		e.refreshing = true
+		go s.refreshOracleLatestAllTime(key, keys, sourceFilter)
+	}
+	s.oracleAllTimeMu.Unlock()
+	if ok {
+		return e.rows, nil
+	}
+	rows, err := s.queryOracleLatest(ctx, oracleLatestAllTimeQuery, keys, sourceFilter)
+	if err != nil {
+		return nil, err
+	}
+	s.storeOracleLatestAllTime(key, rows)
+	return rows, nil
+}
+
+func (s *Store) refreshOracleLatestAllTime(key string, keys []string, sourceFilter string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	rows, err := s.queryOracleLatest(ctx, oracleLatestAllTimeQuery, keys, sourceFilter)
+	if err != nil {
+		slog.Warn("timescale: oracle all-time latest refresh failed", "key", key, "err", err)
+		s.oracleAllTimeMu.Lock()
+		if e, ok := s.oracleAllTime[key]; ok {
+			e.refreshing = false
+		}
+		s.oracleAllTimeMu.Unlock()
+		return
+	}
+	s.storeOracleLatestAllTime(key, rows)
+}
+
+func (s *Store) storeOracleLatestAllTime(key string, rows []canonical.OracleUpdate) {
+	s.oracleAllTimeMu.Lock()
+	defer s.oracleAllTimeMu.Unlock()
+	if s.oracleAllTime == nil || len(s.oracleAllTime) >= oracleLatestAllTimeMaxEntries {
+		s.oracleAllTime = map[string]*oracleAllTimeEntry{}
+	}
+	s.oracleAllTime[key] = &oracleAllTimeEntry{rows: rows, at: time.Now()}
+}
+
+// mergeOracleLatest keeps, per (source, quote), the row with the highest (ts, ledger) — the
+// DISTINCT ON pick of the all-time query — ordered by (source, quote) as that query returns them.
+func mergeOracleLatest(recent, allTime []canonical.OracleUpdate) []canonical.OracleUpdate {
+	best := make(map[[2]string]canonical.OracleUpdate, len(allTime))
+	for _, u := range slices.Concat(allTime, recent) {
+		k := [2]string{u.Source, u.Quote.String()}
+		cur, ok := best[k]
+		if !ok || u.Timestamp.After(cur.Timestamp) || (u.Timestamp.Equal(cur.Timestamp) && u.Ledger > cur.Ledger) {
+			best[k] = u
+		}
+	}
+	out := make([]canonical.OracleUpdate, 0, len(best))
+	for _, u := range best {
+		out = append(out, u)
+	}
+	slices.SortFunc(out, func(a, b canonical.OracleUpdate) int {
+		return cmp.Or(strings.Compare(a.Source, b.Source), strings.Compare(a.Quote.String(), b.Quote.String()))
+	})
+	return out
+}
+
+func (s *Store) queryOracleLatest(ctx context.Context, q string, keys []string, sourceFilter string) ([]canonical.OracleUpdate, error) {
 	rows, err := s.db.QueryContext(ctx, q, keys, sourceFilter)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: LatestOracleUpdatesForAssets: %w", err)

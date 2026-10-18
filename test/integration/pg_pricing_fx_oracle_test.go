@@ -889,7 +889,7 @@ func TestLatestOracleUpdatesForAssets_NoFullSort(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LatestOracleUpdatesForAssets: %v", err)
 	}
-	stmt := capturePreparedStatement(t, ctx, db, nil, "FROM oracle_updates", "asset = ANY($1)")
+	stmt := capturePreparedStatement(t, ctx, db, nil, "WITH latest AS", "FROM oracle_updates", "asset = ANY($1)")
 
 	for _, src := range []string{"", "reflector", "dia"} {
 		rows, err := store.LatestOracleUpdatesForAssets(ctx, keys, src)
