@@ -50,7 +50,8 @@
 #      not run, while any other heavy job holds the host-wide lock; a
 #      scheduled launch defers (exit 75, payload not run) beside an
 #      operator job and beside another scheduled job, or queues when it
-#      sets HEAVY_JOB_LOCK_WAIT; a wait that runs out behind any holder
+#      sets HEAVY_JOB_LOCK_WAIT, starting in arrival order (a dead
+#      waiter's ticket never blocks); a wait that runs out behind any holder
 #      defers (exit 75: planned work, the job's output staleness alert
 #      bounds it); a
 #      released lock is free at once; a
@@ -408,6 +409,13 @@ while True:
         time.sleep(0.05)
 FL
 chmod +x "$TMP/lockbin/flock"
+ORDER="$TMP/order.sh"
+cat > "$ORDER" <<'SH'
+#!/usr/bin/env bash
+echo "$2" >> "$1"
+/bin/sleep 0.3
+SH
+chmod +x "$ORDER"
 HOLD="$TMP/hold.sh"
 cat > "$HOLD" <<'SH'
 #!/usr/bin/env bash
@@ -466,6 +474,24 @@ hold_start h4 sched-q scheduled
 lrun sched-w scheduled HEAVY_JOB_LOCK_WAIT=20 INVOCATION_ID=0123456789abcdef
 wait "$HOLDER"; wait
 if [ "$rc" -eq 0 ] && ran; then ok "scheduled job with HEAVY_JOB_LOCK_WAIT queues behind a scheduled holder, then runs"; else bad "queued scheduled job did not run (rc=$rc, err='$(errs)')"; fi
+# Queued scheduled jobs start in arrival order: flock(2) alone lets a late
+# arrival win the release race and starve a job queued hours earlier.
+QDIR="$GLOBAL_LOCK_FILE"; QDIR="${QDIR%/*}/stellarindex-heavy-scheduled.lock.queue"
+qwait() { local i=0; while [ "$(find "$QDIR" -type f ! -name '.*' 2>/dev/null | wc -l)" -lt "$1" ] && [ "$i" -lt 100 ]; do /bin/sleep 0.1; i=$((i + 1)); done; }
+rm -f "$TMP/order"
+hold_start h7 sched-fifo-hold scheduled
+for w in early middle late; do
+  env -u INVOCATION_ID HEAVY_JOB_CLASS=scheduled HEAVY_JOB_LOCK_WAIT=30 HEAVY_JOB_OPS_ENV="$OPS_ENV" \
+    "$WRAP" "sched-fifo-$w" "$ORDER" "$TMP/order" "$w" >/dev/null 2>"$TMP/fifo-$w.err" &
+  case $w in early) qwait 1 ;; middle) qwait 2 ;; late) qwait 3 ;; esac
+done
+: > "$TMP/h7.release"
+wait
+if [ "$(tr '\n' ' ' < "$TMP/order" 2>/dev/null)" = "early middle late " ] && [ -z "$(find "$QDIR" -type f)" ]; then ok "queued scheduled jobs start in arrival order and leave no ticket behind"; else bad "queued scheduled jobs ran out of order: '$(tr '\n' ' ' < "$TMP/order" 2>/dev/null)', tickets left: '$(find "$QDIR" -type f)'"; fi
+: > "$QDIR/0000000001-0000000001"
+lrun sched-stale scheduled HEAVY_JOB_LOCK_WAIT=5 INVOCATION_ID=0123456789abcdef
+if [ "$rc" -eq 0 ] && ran; then ok "a dead waiter's ticket does not block the queue"; else bad "a stale ticket blocked a scheduled job (rc=$rc, err='$(errs)')"; fi
+rm -f "$QDIR/0000000001-0000000001"
 hold_start h5 sched-q2 scheduled
 lrun sched-x scheduled HEAVY_JOB_LOCK_WAIT=1 INVOCATION_ID=0123456789abcdef
 if [ "$rc" -eq 75 ] && ! ran && err_has "deferring sched-x (scheduled): another scheduled heavy job holds" && err_has "after waiting 1s"; then ok "a scheduled job outlasting the wait defers the scheduled job (exit 75, payload not run)"; else bad "expired wait behind a scheduled job did not defer (rc=$rc, err='$(errs)')"; fi
