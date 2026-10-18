@@ -1489,7 +1489,7 @@ ORDER BY name;
 CREATE TABLE IF NOT EXISTS stellar.account_entry_ledgers
 (
     account FixedString(32),
-    role    Enum8('owner' = 1, 'claimant' = 2, 'sponsor' = 3),
+    role    Enum8('owner' = 1, 'claimant' = 2, 'sponsor' = 3, 'signer' = 4),
     ledger  UInt32
 )
 ENGINE = ReplacingMergeTree
