@@ -455,8 +455,8 @@ func TestExplorerReads_BoundedByReadTimeout(t *testing.T) {
 				// Snapshot-served: the year-window scan runs detached on its own refresh budget so it survives the triggering request;
 				// still bounded, just not request-scoped.
 				wantBudget = networkThroughputRefreshTimeout
-			case "AccountPositions":
-				// SWR'd on the shared contract-detail cache: the six-fold fan-out runs DETACHED on
+			case "AccountPositions", "AssetEntryChanges":
+				// SWR'd on the shared contract-detail cache (AssetEntryChanges: its first page): the compute runs DETACHED on
 				// that budget (bounded, not request-scoped), while the handler still caps the cold
 				// wait at explorerReadTimeout.
 				wantBudget = contractDetailRefreshTimeout

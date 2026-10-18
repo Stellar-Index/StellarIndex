@@ -68,7 +68,20 @@ func (h *Handler) AssetEntryChanges(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	wm, err := h.Reader.EntryIndexWatermark(ctx)
+	var (
+		page     entryPage[clickhouse.AssetEntryChange]
+		wm       uint32
+		degraded bool
+		err      error
+	)
+	if cur.IsSet() {
+		wm, err = h.Reader.EntryIndexWatermark(ctx)
+		if err == nil && wm > 0 {
+			page, err = h.assetEntryPage(ctx, asset, limit, cur, wm)
+		}
+	} else {
+		page, wm, degraded, err = h.assetEntryFirstPageCached(ctx, asset, limit)
+	}
 	if err != nil {
 		h.assetEntryChangesError(w, r, ctx, err, asset)
 		return
@@ -76,11 +89,6 @@ func (h *Handler) AssetEntryChanges(w http.ResponseWriter, r *http.Request) {
 	if wm == 0 {
 		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/entry-index-not-built", "Entry changes not yet derived",
 			http.StatusServiceUnavailable, "the entry index has not been built on this deployment yet; retry later")
-		return
-	}
-	page, err := h.assetEntryPage(ctx, asset, limit, cur, wm)
-	if err != nil {
-		h.assetEntryChangesError(w, r, ctx, err, asset)
 		return
 	}
 	changes, err := assetEntryChangeEntries(page.rows)
@@ -93,12 +101,43 @@ func (h *Handler) AssetEntryChanges(w http.ResponseWriter, r *http.Request) {
 		Asset: asset, Changes: changes, NextCursor: page.next, ThroughLedger: wm, LowerBound: true,
 		CoverageNote: assetEntryChangesNote(wm, partial, lookupFailed),
 	}
-	h.writeJSONAt(w, out, h.movementsStale(ctx, wm), lookupFailed, time.Time{})
+	h.writeJSONAt(w, out, degraded || h.movementsStale(ctx, wm), lookupFailed, time.Time{})
+}
+
+// assetEntryFirstWalk is a cached first page: the walk at the max limit and the watermark it was walked through.
+type assetEntryFirstWalk struct {
+	walk entryWalk[clickhouse.AssetEntryChange]
+	wm   uint32
+}
+
+// assetEntryFirstPageCached serves the first page through the contract-detail SWR cache, walked once at the max
+// limit and cut to the request's: a liquid asset's walk outlasts a page view, and the cursor pages stay inline.
+func (h *Handler) assetEntryFirstPageCached(ctx context.Context, asset string, limit int) (entryPage[clickhouse.AssetEntryChange], uint32, bool, error) {
+	v, _, degraded, err := h.contractDetailCached(ctx, "aec:"+asset, func(rctx context.Context) (any, error) {
+		wm, werr := h.Reader.EntryIndexWatermark(rctx)
+		if werr != nil || wm == 0 {
+			return assetEntryFirstWalk{}, werr
+		}
+		walk, werr := walkEntryRows(rctx, h.assetEntrySource(asset), accountMovementsMaxLimit, clickhouse.AssetEntryChangeCursor{}, wm)
+		if werr != nil {
+			return nil, werr
+		}
+		return assetEntryFirstWalk{walk: walk, wm: wm}, nil
+	})
+	if err != nil {
+		return entryPage[clickhouse.AssetEntryChange]{}, 0, false, err
+	}
+	first, _ := v.(assetEntryFirstWalk)
+	return first.walk.page(assetEntryKey, limit), first.wm, degraded, nil
 }
 
 // assetEntryPage walks the asset's indexed ledgers and keeps the projector's asset rows other than an offer's.
 func (h *Handler) assetEntryPage(ctx context.Context, asset string, limit int, cur clickhouse.AssetEntryChangeCursor, wm uint32) (entryPage[clickhouse.AssetEntryChange], error) {
-	src := entryPageSource[clickhouse.AssetEntryChange]{
+	return walkEntryPage(ctx, h.assetEntrySource(asset), limit, cur, wm)
+}
+
+func (h *Handler) assetEntrySource(asset string) entryPageSource[clickhouse.AssetEntryChange] {
+	return entryPageSource[clickhouse.AssetEntryChange]{
 		ledgers: func(ctx context.Context, ceiling uint32) ([]uint32, error) {
 			return h.Reader.AssetEntryLedgers(ctx, asset, assetEntryTypes, ceiling, entryLedgerBatch)
 		},
@@ -113,7 +152,6 @@ func (h *Handler) assetEntryPage(ctx context.Context, asset string, limit int, c
 		},
 		key: assetEntryKey,
 	}
-	return walkEntryPage(ctx, src, limit, cur, wm)
 }
 
 func (h *Handler) assetEntryChangesError(w http.ResponseWriter, r *http.Request, ctx context.Context, err error, asset string) {
