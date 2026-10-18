@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"sync"
 	"time"
 
@@ -188,4 +189,14 @@ func writeCachedAssetList(w http.ResponseWriter, body []byte) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Stellarindex-Cache", "HIT")
 	_, _ = w.Write(body)
+}
+
+// AssetListPrewarmCadence is how often [Server.PrewarmAssetList] runs: one page TTL.
+const AssetListPrewarmCadence = assetListCacheTTL
+
+// PrewarmAssetList serves the default /v1/assets page through the real handler, so a page past its TTL refreshes off the
+// request path; run every assetListCacheTTL it keeps the page inside assetListCacheMaxAge for a client polling minutes apart.
+func (s *Server) PrewarmAssetList(ctx context.Context) {
+	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/v1/assets", nil)
+	s.handleAssetList(httptest.NewRecorder(), req)
 }
