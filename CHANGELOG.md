@@ -20,6 +20,20 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.22] - 2026-10-18
+
+ClickHouse DDL: re-apply `deploy/clickhouse/entry_index.sql` (adds the `signer` value to `entry_index.role`; metadata-only, already applied on r1). No migrations. No `pkg/*` break.
+
+### Added
+
+- **ops:** `ch-entry-index -signers-only -write` backfills the `signer` role alone, from the lake floor up to the `entry_index` watermark, under its own lock and job name, so `/v1/accounts/{g}/signer-on` can be built without re-running the entry index (#3601).
+
+### Fixed
+
+- **api:** `/v1/oracle/latest` reads the last 48 h per request and merges a background-refreshed all-time read for silent streams: ~15 ms instead of 150-480 ms on a cache miss, which burned the 200 ms latency SLO (#3603).
+- **sep1:** failures the domain answered (HTTP error, redirect, parse, too large, too deep) no longer count toward the systemic-failure verdict (#3600).
+- **clickhouse:** `entry_index.role` declares `signer`, so `ch-entry-index` no longer fails inserting signer rows (#3602).
+
 ## [v0.116.21] - 2026-10-18
 
 No migrations. No `pkg/*` break.
@@ -82,9 +96,3 @@ Migrations 0217 and 0218, both additive. No `pkg/*` break.
 ### Changed
 
 - **alerts:** comet is no longer on the low-volume DEX silence rule; its pools can sit dormant for days, and projector lag and completeness already watch it (#3569).
-
-## [v0.116.17] - 2026-10-17
-
-### Fixed
-
-- `stellarindex_trade_inserts_total` no longer counts a trade refused by the thin-market gate as `usd_volume_populated="no"` when its rate came from a cached miss that outlived the hourly substance verdict; bursts on thin pairs had pulled the on-chain USD-volume coverage ratio under its alert threshold (#3567).
