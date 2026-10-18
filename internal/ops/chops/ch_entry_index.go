@@ -202,18 +202,8 @@ func runEntryIndex(ctx context.Context, r *entryIndexRun, start, last uint32, st
 		if err := w.build(ctx, lo, hi); err != nil {
 			return fmt.Errorf("window [%d,%d]: %w — resume with -from %d (or no -from: the watermark holds)", lo, hi, err, lo)
 		}
-		if !r.dryRun && r.signersOnly {
-			if err := setSignerIndexWatermark(ctx, r.chAddr, lo, hi); err != nil {
-				return fmt.Errorf("window [%d,%d] written but signer watermark refused: %w — resume with no -from", lo, hi, err)
-			}
-		} else if !r.dryRun {
-			// The signer watermark goes first: a refused entry watermark re-runs the window, which re-records nothing.
-			if err := setSignerIndexWatermark(ctx, r.chAddr, lo, hi); err != nil && !errors.Is(err, clickhouse.ErrEntryHistorySkippedPrefix) {
-				return fmt.Errorf("window [%d,%d] written but signer watermark refused: %w — re-run it with -from %d -to %d", lo, hi, err, lo, hi)
-			}
-			if err := setEntryIndexWatermark(ctx, r.chAddr, lo, hi, w.txLedgers); err != nil {
-				return fmt.Errorf("window [%d,%d] written but watermark refused: %w — re-run it with -from %d -to %d", lo, hi, err, lo, hi)
-			}
+		if err := r.advanceWatermarks(ctx, lo, hi, w.txLedgers); err != nil {
+			return err
 		}
 		windows++
 		st.accountRows += w.accountRows
@@ -226,6 +216,27 @@ func runEntryIndex(ctx context.Context, r *entryIndexRun, start, last uint32, st
 		}
 		lo = hi + 1
 	}
+}
+
+// advanceWatermarks records a written window: the signer watermark alone under -signers-only, else both.
+func (r *entryIndexRun) advanceWatermarks(ctx context.Context, lo, hi uint32, txLedgers uint64) error {
+	switch {
+	case r.dryRun:
+		return nil
+	case r.signersOnly:
+		if err := setSignerIndexWatermark(ctx, r.chAddr, lo, hi); err != nil {
+			return fmt.Errorf("window [%d,%d] written but signer watermark refused: %w — resume with no -from", lo, hi, err)
+		}
+		return nil
+	}
+	// The signer watermark goes first: a refused entry watermark re-runs the window, which re-records nothing.
+	if err := setSignerIndexWatermark(ctx, r.chAddr, lo, hi); err != nil && !errors.Is(err, clickhouse.ErrEntryHistorySkippedPrefix) {
+		return fmt.Errorf("window [%d,%d] written but signer watermark refused: %w — re-run it with -from %d -to %d", lo, hi, err, lo, hi)
+	}
+	if err := setEntryIndexWatermark(ctx, r.chAddr, lo, hi, txLedgers); err != nil {
+		return fmt.Errorf("window [%d,%d] written but watermark refused: %w — re-run it with -from %d -to %d", lo, hi, err, lo, hi)
+	}
+	return nil
 }
 
 // entryIndexWindow accumulates one window's rows; txLedgers is the distinct ledgers the owner stream covered, the
