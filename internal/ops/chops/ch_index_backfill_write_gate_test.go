@@ -168,7 +168,7 @@ func TestTxIndexBackfillCoversHistory(t *testing.T) {
 	}
 }
 
-func TestRunInstanceBackfill_GenesisWatermark(t *testing.T) {
+func TestRunGenesisBackfill_GenesisWatermark(t *testing.T) {
 	origB, origS, origR, origT := backfillInstanceChanges, setInstanceGenesisMark, readInstanceStart, resolveInstanceTop
 	t.Cleanup(func() {
 		backfillInstanceChanges, setInstanceGenesisMark, readInstanceStart, resolveInstanceTop = origB, origS, origR, origT
@@ -241,7 +241,7 @@ func TestRunInstanceBackfill_GenesisWatermark(t *testing.T) {
 				return nil
 			}
 			confirm := func(uint32) bool { return true }
-			err := runInstanceBackfill(context.Background(), "addr", "contract_instance_changes", tc.from, tc.to, 100, confirm, logf)
+			err := runGenesisBackfill(context.Background(), "addr", "contract_instance_changes", backfillInstanceChanges, tc.from, tc.to, 100, confirm, logf)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
 			}
@@ -249,6 +249,40 @@ func TestRunInstanceBackfill_GenesisWatermark(t *testing.T) {
 				t.Fatalf("marked=%v thru=%d, want marked=%v thru=%d", marked, gotThru, tc.wantMark, tip)
 			}
 		})
+	}
+}
+
+// TestChContractLedgersBackfill_RecordsItsOwnWatermark pins the activity index to its own fill and watermark name, never the instance timeline's.
+func TestChContractLedgersBackfill_RecordsItsOwnWatermark(t *testing.T) {
+	origB, origA, origS, origR, origT := backfillInstanceChanges, backfillActiveLedgers, setInstanceGenesisMark, readInstanceStart, resolveInstanceTop
+	t.Cleanup(func() {
+		backfillInstanceChanges, backfillActiveLedgers, setInstanceGenesisMark, readInstanceStart, resolveInstanceTop = origB, origA, origS, origR, origT
+	})
+	var readTables, markTables []string
+	filled := false
+	readInstanceStart = func(_ context.Context, _, table string) (clickhouse.InstanceBackfillStart, error) {
+		readTables = append(readTables, table)
+		return clickhouse.InstanceBackfillStart{RawMaxLedger: 500, MVExists: true, MVUUID: "u1", MVAge: time.Hour}, nil
+	}
+	resolveInstanceTop = func(context.Context, string, uint32, uint32) (uint32, error) { return 500, nil }
+	backfillInstanceChanges = func(context.Context, string, string, uint32, uint32, uint32, func(string, ...any)) error {
+		t.Fatal("activity-index backfill ran the instance-timeline fill")
+		return nil
+	}
+	backfillActiveLedgers = func(_ context.Context, _ string, from, to, _ uint32, _ func(string, ...any)) error {
+		filled = from == 2 && to == 500
+		return nil
+	}
+	setInstanceGenesisMark = func(_ context.Context, _, table string, _ uint32) error {
+		markTables = append(markTables, table)
+		return nil
+	}
+	if err := chContractLedgersBackfill([]string{"-full", "-write"}); err != nil {
+		t.Fatal(err)
+	}
+	want := clickhouse.ContractActiveLedgersTable
+	if !filled || len(markTables) != 1 || markTables[0] != want || len(readTables) != 2 || readTables[0] != want || readTables[1] != want {
+		t.Fatalf("filled=%v reads=%v marks=%v, want a 2..500 fill and %s throughout", filled, readTables, markTables, want)
 	}
 }
 
