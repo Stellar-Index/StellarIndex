@@ -10,7 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
+	"github.com/Stellar-Index/StellarIndex/internal/robuststat"
+
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -64,7 +65,7 @@ var selectGuardedSeeds = []struct{ cand, rows string }{
 }
 
 // FuzzSelectGuardedVWAP1m pins the selection against an independent reconstruction: the baseline is the strictly
-// older rows, the decision is aggregate.GuardServedVWAP's, rows at or after the candidate never matter, and it is
+// older rows, the decision is robuststat.GuardServedVWAP's, rows at or after the candidate never matter, and it is
 // invariant under exact positive rescaling of prices.
 func FuzzSelectGuardedVWAP1m(f *testing.F) {
 	for _, s := range selectGuardedSeeds {
@@ -102,7 +103,7 @@ func FuzzSelectGuardedVWAP1m(f *testing.F) {
 				trailing = append(trailing, v)
 			}
 		}
-		accept, idx := aggregate.GuardServedVWAP(candRat, trailing)
+		accept, idx := robuststat.GuardServedVWAP(candRat, trailing)
 		if rejected == accept {
 			t.Fatalf("rejected=%v but GuardServedVWAP accept=%v", rejected, accept)
 		}
@@ -123,7 +124,7 @@ func FuzzSelectGuardedVWAP1m(f *testing.F) {
 			if !reflect.DeepEqual(served, candidate) {
 				t.Fatalf("accepted candidate must be served unchanged")
 			}
-			if lowConf != !aggregate.ServedBaselineValidated(trailing) {
+			if lowConf != !robuststat.ServedBaselineValidated(trailing) {
 				t.Fatalf("lowConfidence=%v disagrees with ServedBaselineValidated", lowConf)
 			}
 		}

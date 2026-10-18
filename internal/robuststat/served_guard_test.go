@@ -1,4 +1,4 @@
-package aggregate
+package robuststat
 
 import (
 	"math/big"
@@ -204,17 +204,17 @@ func TestGuardServedVWAP_RejectionAlwaysHasCleanLKG(t *testing.T) {
 
 func TestMedianRat_ExactAndNonMutating(t *testing.T) {
 	in := rats(t, "3", "1", "2") // odd
-	got := medianRat(in)
+	got := Median(in)
 	if got.Cmp(rat(t, "2")) != 0 {
 		t.Fatalf("median(3,1,2) = %s, want 2", got.RatString())
 	}
 	// Input order preserved (no mutation).
 	if in[0].Cmp(rat(t, "3")) != 0 {
-		t.Fatal("medianRat mutated its input slice ordering")
+		t.Fatal("Median mutated its input slice ordering")
 	}
 	// Even count → exact average of the two middle values.
 	even := rats(t, "1", "2", "3", "4")
-	if g := medianRat(even); g.Cmp(rat(t, "5/2")) != 0 {
+	if g := Median(even); g.Cmp(rat(t, "5/2")) != 0 {
 		t.Fatalf("median(1,2,3,4) = %s, want 5/2", g.RatString())
 	}
 }

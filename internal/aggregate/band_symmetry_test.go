@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/robuststat"
+
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
@@ -44,7 +46,7 @@ func TestGuardServedVWAP_CrashPrintRejectedOnVolatileBaseline(t *testing.T) {
 
 	rejected := []string{"0", "0.000001", "20", "33"} // crash prints, below centre/3
 	for _, cand := range rejected {
-		accept, lkg := aggregate.GuardServedVWAP(mustRat(t, cand), trailing)
+		accept, lkg := robuststat.GuardServedVWAP(mustRat(t, cand), trailing)
 		if accept {
 			t.Errorf("crash candidate %s was ACCEPTED — the guard has no lower bound", cand)
 			continue
@@ -59,14 +61,14 @@ func TestGuardServedVWAP_CrashPrintRejectedOnVolatileBaseline(t *testing.T) {
 
 	// The upward half of the band is UNCHANGED: a 2× move on a pair this
 	// volatile is still served, a 4× pump is still rejected.
-	if accept, _ := aggregate.GuardServedVWAP(mustRat(t, "200"), trailing); !accept {
+	if accept, _ := robuststat.GuardServedVWAP(mustRat(t, "200"), trailing); !accept {
 		t.Error("2x move on a volatile baseline must still be served (band over-tightened)")
 	}
-	if accept, _ := aggregate.GuardServedVWAP(mustRat(t, "400"), trailing); accept {
+	if accept, _ := robuststat.GuardServedVWAP(mustRat(t, "400"), trailing); accept {
 		t.Error("4x pump must still be rejected")
 	}
 	// And a real downward move inside the band is still served.
-	if accept, _ := aggregate.GuardServedVWAP(mustRat(t, "50"), trailing); !accept {
+	if accept, _ := robuststat.GuardServedVWAP(mustRat(t, "50"), trailing); !accept {
 		t.Error("a 2x drop on a volatile baseline must still be served (band over-tightened)")
 	}
 }
@@ -77,10 +79,10 @@ func TestGuardServedVWAP_MADArmStillWidensDownward(t *testing.T) {
 	// ratio-symmetric lower edge 100²/433.59 = 23.06 — below the ratio
 	// arm's 100/3, so the MAD arm is the binding lower edge.
 	trailing := ratsFor(t, "130", "130", "130", "115", "100", "100", "100", "85", "70", "70")
-	if accept, _ := aggregate.GuardServedVWAP(mustRat(t, "25"), trailing); !accept {
+	if accept, _ := robuststat.GuardServedVWAP(mustRat(t, "25"), trailing); !accept {
 		t.Error("25 is inside the MAD arm's widened lower edge (23.06) — must be served")
 	}
-	if accept, lkg := aggregate.GuardServedVWAP(mustRat(t, "1"), trailing); accept || lkg < 0 {
+	if accept, lkg := robuststat.GuardServedVWAP(mustRat(t, "1"), trailing); accept || lkg < 0 {
 		t.Errorf("a 100x crash print must be rejected with a last-known-good (accept=%v lkg=%d)", accept, lkg)
 	}
 }

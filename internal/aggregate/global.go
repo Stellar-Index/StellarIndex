@@ -7,6 +7,8 @@ import (
 	"math/big"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/robuststat"
+
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
@@ -286,12 +288,12 @@ func rejectAggregatorOutliers(rows []canonical.OracleUpdate) []canonical.OracleU
 		return rows // too few usable prices to judge a consensus
 	}
 
-	centre, scale := robustCentreScale(vals)
+	centre, scale := robuststat.CentreScale(vals)
 	half := new(big.Rat).Mul(aggregatorMADFactor, scale)
 
 	kept := make([]canonical.OracleUpdate, 0, len(rows))
 	for k, v := range vals {
-		dev := symmetricDev(v, centre)
+		dev := robuststat.SymmetricDev(v, centre)
 		if dev == nil || dev.Cmp(half) > 0 {
 			continue // divergent print — drop
 		}

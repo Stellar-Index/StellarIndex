@@ -8,6 +8,8 @@ import (
 	"math/bits"
 	"sort"
 
+	"github.com/Stellar-Index/StellarIndex/internal/robuststat"
+
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/confidence"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
@@ -250,7 +252,7 @@ func omitOutlierIndices(rates []*big.Rat, permitDivergentPct int) []int {
 	if len(rates) < 3 {
 		return all
 	}
-	med := medianRat(rates)
+	med := robuststat.Median(rates)
 	medAbs := new(big.Rat).Abs(med)
 	if medAbs.Sign() == 0 {
 		return all // no relative baseline
@@ -361,7 +363,7 @@ func nextTierDisagrees(composite *big.Rat, all [][]RouteLeg, shortest int, minCo
 	if len(kept) == 0 {
 		return false, nil
 	}
-	return spreadExceeds([]*big.Rat{composite, medianMemberRat(kept)}, routerDivergenceSpreadPct), nil
+	return spreadExceeds([]*big.Rat{composite, robuststat.MedianMember(kept)}, routerDivergenceSpreadPct), nil
 }
 
 // scoreRoutes computes each route's exact composite and weakest-link
@@ -433,7 +435,7 @@ func highestConfidencePrice(routes []scoredRoute) (*big.Rat, int) {
 	// blending, then serve a value a route ACTUALLY produced (member median,
 	// never an averaged midpoint of two disagreeing routes).
 	top = OmitOutliers(top, routerOutlierPermitPct)
-	return medianMemberRat(top), len(top)
+	return robuststat.MedianMember(top), len(top)
 }
 
 // spreadExceeds reports whether the max−min spread of vals exceeds pct
@@ -443,7 +445,7 @@ func spreadExceeds(vals []*big.Rat, pct int) bool {
 	if len(vals) < 2 {
 		return false
 	}
-	med := medianRat(vals)
+	med := robuststat.Median(vals)
 	medAbs := new(big.Rat).Abs(med)
 	if medAbs.Sign() == 0 {
 		return false

@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/robuststat"
+
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
@@ -24,7 +26,7 @@ func TestWeightedMedianRat_MatchesExpandedMultiset(t *testing.T) {
 				expanded = append(expanded, vals[i])
 			}
 		}
-		if got, want := weightedMedianRat(vals, w), medianRat(expanded); got.Cmp(want) != 0 {
+		if got, want := robuststat.WeightedMedian(vals, w), robuststat.Median(expanded); got.Cmp(want) != 0 {
 			t.Fatalf("trial %d: weighted median %s, expanded median %s", trial, got.RatString(), want.RatString())
 		}
 	}

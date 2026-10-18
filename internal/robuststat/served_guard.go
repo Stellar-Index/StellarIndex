@@ -1,4 +1,4 @@
-package aggregate
+package robuststat
 
 import (
 	"math/big"
@@ -67,7 +67,7 @@ func robustBand(trailing []*big.Rat) (lo, hi *big.Rat, ok bool) {
 	if len(vals) == 0 {
 		return nil, nil, false
 	}
-	centre := medianRat(vals)
+	centre := Median(vals)
 	if centre.Sign() <= 0 {
 		return nil, nil, false
 	}
@@ -86,8 +86,8 @@ func robustBand(trailing []*big.Rat) (lo, hi *big.Rat, ok bool) {
 
 	// MAD band: up to centre + K*scale, down to its ratio-symmetric mirror centre^2/(centre + K*scale) ([symmetricDev]), unioned with the ratio band.
 	// An additive lower edge goes non-positive at relative MAD 1/(K*1.4826) = 6.75%, leaving no downside guard: a crafted bucket down to 0 would be served.
-	scale := new(big.Rat).Mul(madToStd, madRat(vals, centre)) // σ-equivalent
-	half := new(big.Rat).Mul(guardMADFactor, scale)           // K·scale
+	scale := new(big.Rat).Mul(madToStd, MAD(vals, centre)) // σ-equivalent
+	half := new(big.Rat).Mul(guardMADFactor, scale)        // K·scale
 	madHi := new(big.Rat).Add(centre, half)
 	madLo := new(big.Rat).Quo(new(big.Rat).Mul(centre, centre), madHi)
 	if madLo.Cmp(lo) < 0 {
@@ -108,7 +108,5 @@ func withinBand(v, lo, hi *big.Rat) bool {
 	return v.Cmp(lo) >= 0 && v.Cmp(hi) <= 0
 }
 
-// medianRat and madRat (the exact median / MAD primitives) live in
-// robust.go — shared with the published-VWAP outlier filter and
-// the global aggregator-tier filter so all three guards use one
-// exact-rational definition of robust centre and spread.
+// Median and MAD live in robust.go, shared with aggregate's published-VWAP and global
+// outlier filters so every guard uses one exact-rational centre and spread.

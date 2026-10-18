@@ -2,7 +2,6 @@ package timescale
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"math/big"
@@ -11,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/robuststat"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
@@ -672,32 +673,81 @@ func (r *VWAPUSDFXResolver) queryXLMLeg(ctx context.Context, asset canonical.Ass
 		            AND bucket     >= $5`
 		args = append(args, at.UTC().Add(-r.bridgeFreshness))
 	}
-	row := r.store.db.QueryRowContext(ctx, xlmLegQuery(lowerBound), args...)
-	var (
-		bucket   time.Time
-		vwapText string
-		inverted bool
-	)
-	if err := row.Scan(&bucket, &vwapText, &inverted); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
+	rows, err := r.store.db.QueryContext(ctx, xlmLegQuery(lowerBound), args...)
+	if err != nil {
 		return nil, fmt.Errorf("timescale: VWAPUSDFXResolver XLM leg: %w", err)
 	}
-	vwap, ok := xlmLegRate(vwapText, inverted)
+	defer func() { _ = rows.Close() }()
+	var minutes []legMinute
+	for rows.Next() {
+		var (
+			bucket   time.Time
+			vwapText string
+			inverted bool
+		)
+		if err := rows.Scan(&bucket, &vwapText, &inverted); err != nil {
+			return nil, fmt.Errorf("timescale: VWAPUSDFXResolver XLM leg: %w", err)
+		}
+		vwap, ok := xlmLegRate(vwapText, inverted)
+		if !ok {
+			continue
+		}
+		minutes = append(minutes, legMinute{bucket: bucket, rate: vwap})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: VWAPUSDFXResolver XLM leg: %w", err)
+	}
+	m, ok := guardedLegMinute(minutes)
 	if !ok {
 		return nil, nil
 	}
-	return vwap, nil
+	return m.rate, nil
 }
 
-// xlmLegQuery is queryXLMLeg's SQL. Arms are parenthesised (Postgres rejects bare ORDER BY/LIMIT in a UNION arm); per-arm LIMIT 1 is an
-// index-ordered walk. Ties go to the form first in $2, then the (asset, XLM) arm, never scan order.
+// legGuardSample is how many prices_1m minutes a trade-time leg read takes: the candidate plus the
+// 40 trailing minutes the served-price guard uses (pricingguard.SampleFetch, which imports this package).
+const legGuardSample = 41
+
+// legMinute is one prices_1m minute of a trade-time leg; text is the stored vwap where the caller serves it verbatim.
+type legMinute struct {
+	bucket time.Time
+	rate   *big.Rat
+	text   string
+}
+
+// guardedLegMinute runs the newest of newest-first minutes through the served-price outlier band so a trade is
+// never valued at a one-minute print the API would refuse to serve: a rejected minute yields to the newest
+// in-band one. An empty baseline keeps the candidate; thin markets are the substance gate's call.
+// Rows sharing a bucket (several peg or XLM forms) collapse to the first, the query's preferred form, so one
+// minute is one vote.
+func guardedLegMinute(rows []legMinute) (legMinute, bool) {
+	minutes := make([]legMinute, 0, len(rows))
+	for _, m := range rows {
+		if n := len(minutes); n > 0 && minutes[n-1].bucket.Equal(m.bucket) {
+			continue
+		}
+		minutes = append(minutes, m)
+	}
+	if len(minutes) == 0 {
+		return legMinute{}, false
+	}
+	trailing := make([]*big.Rat, len(minutes)-1)
+	for i, m := range minutes[1:] {
+		trailing[i] = m.rate
+	}
+	if accept, lkg := robuststat.GuardServedVWAP(minutes[0].rate, trailing); !accept {
+		return minutes[lkg+1], true
+	}
+	return minutes[0], true
+}
+
+// xlmLegQuery is queryXLMLeg's SQL, newest [legGuardSample] minutes first. Arms are parenthesised (Postgres rejects bare ORDER BY/LIMIT
+// in a UNION arm); each arm's LIMIT is an index-ordered walk. Ties go to the (asset, XLM) arm, then the form first in $2, never scan order.
 func xlmLegQuery(lowerBound string) string {
 	return fmt.Sprintf(`
 		SELECT bucket, vwap::text, inverted
 		  FROM (
-		        (SELECT bucket, vwap, false AS inverted
+		        (SELECT bucket, vwap, false AS inverted, quote_asset AS form
 		           FROM prices_1m
 		          WHERE base_asset  = $1
 		            AND quote_asset = ANY($2)
@@ -705,9 +755,9 @@ func xlmLegQuery(lowerBound string) string {
 		            AND volume_usd >= $4::numeric
 		            AND vwap        > 0%[1]s
 		          ORDER BY bucket DESC, array_position($2::text[], quote_asset)
-		          LIMIT 1)
+		          LIMIT %[2]d)
 		        UNION ALL
-		        (SELECT bucket, vwap, true AS inverted
+		        (SELECT bucket, vwap, true AS inverted, base_asset AS form
 		           FROM prices_1m
 		          WHERE base_asset  = ANY($2)
 		            AND quote_asset = $1
@@ -715,11 +765,11 @@ func xlmLegQuery(lowerBound string) string {
 		            AND volume_usd >= $4::numeric
 		            AND vwap        > 0%[1]s
 		          ORDER BY bucket DESC, array_position($2::text[], base_asset)
-		          LIMIT 1)
+		          LIMIT %[2]d)
 		       ) legs
-		 ORDER BY bucket DESC, inverted
-		 LIMIT 1
-	`, lowerBound)
+		 ORDER BY bucket DESC, inverted, array_position($2::text[], form)
+		 LIMIT %[2]d
+	`, lowerBound, legGuardSample)
 }
 
 // ─── tier 3a: the direct <asset>/<peg> market ────────────────────────
@@ -766,18 +816,31 @@ func (r *VWAPUSDFXResolver) queryDirectLeg(ctx context.Context, asset canonical.
 	if xlm {
 		args = append(args, canonical.NativeSACContractID())
 	}
-	row := r.store.db.QueryRowContext(ctx, directLegQuery(r.freshness > 0, xlm), args...)
-	var (
-		bucket time.Time
-		vwap   string
-	)
-	if err := row.Scan(&bucket, &vwap); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return "", time.Time{}, nil
-		}
+	rows, err := r.store.db.QueryContext(ctx, directLegQuery(r.freshness > 0, xlm), args...)
+	if err != nil {
 		return "", time.Time{}, fmt.Errorf("timescale: VWAPUSDFXResolver query: %w", err)
 	}
-	return vwap, bucket, nil
+	defer func() { _ = rows.Close() }()
+	var minutes []legMinute
+	for rows.Next() {
+		var m legMinute
+		if err := rows.Scan(&m.bucket, &m.text); err != nil {
+			return "", time.Time{}, fmt.Errorf("timescale: VWAPUSDFXResolver query: %w", err)
+		}
+		var ok bool
+		if m.rate, ok = new(big.Rat).SetString(m.text); !ok {
+			continue
+		}
+		minutes = append(minutes, m)
+	}
+	if err := rows.Err(); err != nil {
+		return "", time.Time{}, fmt.Errorf("timescale: VWAPUSDFXResolver query: %w", err)
+	}
+	m, ok := guardedLegMinute(minutes)
+	if !ok {
+		return "", time.Time{}, nil
+	}
+	return m.text, m.bucket, nil
 }
 
 // isXLMAliasForm reports whether asset is any of XLM's three identities; [isXLMAsset] omits `crypto:XLM`, which the alias loop
@@ -794,7 +857,7 @@ func isXLMAliasForm(asset canonical.Asset) bool {
 	return false
 }
 
-// directLegQuery is queryDirectLeg's SQL; bounded adds the `$5` freshness floor. Ties go to the peg form first in $2, never scan order.
+// directLegQuery is queryDirectLeg's SQL, newest [legGuardSample] minutes first; bounded adds the `$5` freshness floor. Ties go to the peg form first in $2, never scan order.
 // xlm refuses a minute inside a recorded XLM/USD-proxy freeze ([xlmUSDFreezeOverlap]), the native SAC bound at the last placeholder:
 // the XLM-base anchor and the bridge's XLM leg both price through this read, so a frozen rate never stamps a notional. The pick then
 // falls back to the newest unfrozen minute within the freshness floor, else nothing.
@@ -821,7 +884,7 @@ func directLegQuery(bounded, xlm bool) string {
 	}
 	return q + `
 		 ORDER BY bucket DESC, array_position($2::text[], quote_asset)
-		 LIMIT 1
+		 LIMIT ` + fmt.Sprint(legGuardSample) + `
 	`
 }
 
