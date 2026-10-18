@@ -295,29 +295,40 @@ func (r *ExplorerReader) AccountsSignedBy(ctx context.Context, key string, ledge
 		var (
 			ledger uint32
 			b64    string
-			e      xdr.LedgerEntry
 		)
 		if err := rows.Scan(&ledger, &b64); err != nil {
 			return scan, fmt.Errorf("clickhouse: scan signer candidate: %w", err)
 		}
-		if b64 == "" {
-			continue
+		signed, ok, err := signedAccountIn(b64, key, ledger)
+		if err != nil {
+			return scan, err
 		}
-		if err := xdr.SafeUnmarshalBase64(b64, &e); err != nil {
-			return scan, fmt.Errorf("clickhouse: decode account entry at ledger %d: %w", ledger, err)
-		}
-		acc, ok := e.Data.GetAccount()
-		if !ok {
-			return scan, fmt.Errorf("clickhouse: account row at ledger %d holds a %s entry", ledger, e.Data.Type)
-		}
-		for _, sg := range acc.Signers {
-			if k, ok := sg.Key.GetEd25519(); ok && string(k[:]) == key {
-				scan.Signed = append(scan.Signed, SignedAccount{Account: acc.AccountId.Address(), Weight: uint32(sg.Weight), Ledger: ledger})
-				break
-			}
+		if ok {
+			scan.Signed = append(scan.Signed, signed)
 		}
 	}
 	return scan, rows.Err()
+}
+
+// signedAccountIn decodes one current account entry and reports the raw ed25519 key's signer weight on it; an empty entry is a merged account.
+func signedAccountIn(b64, key string, ledger uint32) (SignedAccount, bool, error) {
+	if b64 == "" {
+		return SignedAccount{}, false, nil
+	}
+	var e xdr.LedgerEntry
+	if err := xdr.SafeUnmarshalBase64(b64, &e); err != nil {
+		return SignedAccount{}, false, fmt.Errorf("clickhouse: decode account entry at ledger %d: %w", ledger, err)
+	}
+	acc, ok := e.Data.GetAccount()
+	if !ok {
+		return SignedAccount{}, false, fmt.Errorf("clickhouse: account row at ledger %d holds a %s entry", ledger, e.Data.Type)
+	}
+	for _, sg := range acc.Signers {
+		if k, ok := sg.Key.GetEd25519(); ok && string(k[:]) == key {
+			return SignedAccount{Account: acc.AccountId.Address(), Weight: uint32(sg.Weight), Ledger: ledger}, true, nil
+		}
+	}
+	return SignedAccount{}, false, nil
 }
 
 func (r *ExplorerReader) signerCandidates(ctx context.Context, self, key string, ledgers []uint32, maxAccounts int) ([]string, error) {
