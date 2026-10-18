@@ -18,6 +18,9 @@ import (
 // entryIndexLockPath serialises ch-entry-index runs; the unit lists its directory under ReadWritePaths.
 const entryIndexLockPath = "/var/lib/stellarindex/ch-entry-index.lock"
 
+// entryIndexSignersLockPath is -signers-only's own lock: that walk runs for hours beside the timer's windows.
+const entryIndexSignersLockPath = "/var/lib/stellarindex/ch-entry-index-signers.lock"
+
 // entryIndexFlushRowCount bounds the rows held in memory before an INSERT.
 const entryIndexFlushRowCount = 500_000
 
@@ -30,6 +33,9 @@ var (
 	insertEntryIndex           = clickhouse.InsertEntryIndex
 	setEntryIndexWatermark     = clickhouse.SetEntryIndexWatermark
 	setSignerIndexWatermark    = clickhouse.SetSignerIndexWatermark
+	entryIndexWatermark        = clickhouse.EntryIndexWatermark
+	signerIndexWatermark       = clickhouse.SignerIndexWatermark
+	resolveEntryIndexRange     = resolveDeriveRange
 )
 
 // ch-entry-index builds the ledger index of classic-entry activity (stellar.account_entry_ledgers by account and role,
@@ -43,7 +49,8 @@ func chEntryIndex(args []string) error {
 	to := fs.Uint("to", 0, "last ledger (inclusive; 0 = current contiguous lake tip). Always clamped down to the contiguous tip.")
 	window := fs.Uint("window", 10_000, "ledgers per build window (progress is reported once per window)")
 	floorLedger := fs.Uint("floor-ledger", 1, "first-run start when no watermark exists; clamped up to the lake's first ledger")
-	lockFile := fs.String("lock-file", entryIndexLockPath, "flock serialising concurrent -write runs")
+	lockFile := fs.String("lock-file", entryIndexLockPath, "flock serialising concurrent -write runs (-signers-only defaults to "+entryIndexSignersLockPath+")")
+	signersOnly := fs.Bool("signers-only", false, "build only the signer role, from the signer watermark (the lake floor on first run) up to the entry_index watermark; sets only the signer watermark")
 	heartbeat := fs.String("heartbeat", "", "ops-job heartbeat textfile path. Empty = "+opsutil.DefaultTextfileDir+"/ops_job_ch-entry-index.prom when that directory exists")
 	maxDecodeErrs := registerDecodeBudget(fs)
 	gate := opsutil.RegisterWriteGate(fs)
@@ -57,19 +64,26 @@ func chEntryIndex(args []string) error {
 		return fmt.Errorf("-floor-ledger must be > 0 (the genesis ledger is 1)")
 	}
 	gate.Banner()
-	run := &entryIndexRun{chAddr: *chAddr, from: uint32(*from), to: uint32(*to), window: uint32(*window), floor: uint32(*floorLedger), dryRun: gate.DryRun(), maxDecodeErrs: *maxDecodeErrs} //nolint:gosec // ledger sequences fit uint32
+	run := &entryIndexRun{chAddr: *chAddr, from: uint32(*from), to: uint32(*to), window: uint32(*window), floor: uint32(*floorLedger), dryRun: gate.DryRun(), maxDecodeErrs: *maxDecodeErrs, signersOnly: *signersOnly} //nolint:gosec // ledger sequences fit uint32
 	if run.dryRun {
 		return run.exec()
 	}
 	// The lock comes before any network call so a second timer firing exits at once.
-	unlock, err := acquireRollupLock("ch-entry-index", *lockFile)
+	job := "ch-entry-index"
+	if run.signersOnly {
+		job = "ch-entry-index-signers"
+		if *lockFile == entryIndexLockPath {
+			*lockFile = entryIndexSignersLockPath
+		}
+	}
+	unlock, err := acquireRollupLock(job, *lockFile)
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	run.hb = opsutil.NewJobHeartbeat("ch-entry-index", *heartbeat, nil)
+	run.hb = opsutil.NewJobHeartbeat(job, *heartbeat, nil)
 	if run.hb.Enabled() {
-		fmt.Fprintf(os.Stderr, "ch-entry-index: heartbeat -> %s\n", run.hb.Path())
+		fmt.Fprintf(os.Stderr, "%s: heartbeat -> %s\n", job, run.hb.Path())
 	}
 	run.hb.Start()
 	err = run.exec()
@@ -80,7 +94,7 @@ func chEntryIndex(args []string) error {
 type entryIndexRun struct {
 	chAddr                  string
 	from, to, window, floor uint32
-	dryRun                  bool
+	dryRun, signersOnly     bool
 	maxDecodeErrs           uint64
 	hb                      *opsutil.JobHeartbeat // nil in a dry run
 }
@@ -95,8 +109,11 @@ func (r *entryIndexRun) progress(windows uint64, cursor uint32) {
 func (r *entryIndexRun) exec() error {
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
+	if r.signersOnly {
+		return r.execSigners(ctx)
+	}
 
-	start, last, err := resolveDeriveRange(ctx, r.chAddr, "ch-entry-index", r.from, r.to, r.floor, clickhouse.EntryIndexWatermark)
+	start, last, err := resolveEntryIndexRange(ctx, r.chAddr, "ch-entry-index", r.from, r.to, r.floor, clickhouse.EntryIndexWatermark)
 	if err != nil {
 		return err
 	}
@@ -110,6 +127,46 @@ func (r *entryIndexRun) exec() error {
 		return err
 	}
 	st.report(start, last)
+	return enforceDecodeBudget("ch-entry-index", st.skipped, r.maxDecodeErrs)
+}
+
+// execSigners walks the signer role up to the entry_index watermark, re-reading it until the two meet: from there each
+// timer window advances both. An explicit -from or a dry run (which moves no watermark) makes one pass.
+func (r *entryIndexRun) execSigners(ctx context.Context) error {
+	st := &entryIndexStats{}
+	var first, through uint32
+	for {
+		start, last, err := resolveEntryIndexRange(ctx, r.chAddr, "ch-entry-index", r.from, r.to, r.floor, signerIndexWatermark)
+		if err != nil {
+			return err
+		}
+		entryWM, err := entryIndexWatermark(ctx, r.chAddr)
+		if err != nil {
+			return fmt.Errorf("read entry_index watermark: %w", err)
+		}
+		last = min(last, entryWM)
+		if last < start {
+			break
+		}
+		if through != 0 && start <= through {
+			return fmt.Errorf("signer watermark did not advance past %d after a written pass", through)
+		}
+		if first == 0 {
+			first = start
+		}
+		if err := runEntryIndex(ctx, r, start, last, st); err != nil {
+			return err
+		}
+		through = last
+		if r.from != 0 || r.dryRun {
+			break
+		}
+	}
+	if first == 0 {
+		fmt.Fprintln(os.Stderr, "ch-entry-index: signer role already caught up with the entry_index watermark")
+		return nil
+	}
+	st.report(first, through)
 	return enforceDecodeBudget("ch-entry-index", st.skipped, r.maxDecodeErrs)
 }
 
@@ -141,18 +198,12 @@ func runEntryIndex(ctx context.Context, r *entryIndexRun, start, last uint32, st
 			hi = lo + r.window - 1
 		}
 		windowStart := time.Now()
-		w := &entryIndexWindow{chAddr: r.chAddr, dryRun: r.dryRun, st: st}
+		w := &entryIndexWindow{chAddr: r.chAddr, dryRun: r.dryRun, signersOnly: r.signersOnly, st: st}
 		if err := w.build(ctx, lo, hi); err != nil {
 			return fmt.Errorf("window [%d,%d]: %w — resume with -from %d (or no -from: the watermark holds)", lo, hi, err, lo)
 		}
-		if !r.dryRun {
-			// The signer watermark goes first: a refused entry watermark re-runs the window, which re-records nothing.
-			if err := setSignerIndexWatermark(ctx, r.chAddr, lo, hi); err != nil && !errors.Is(err, clickhouse.ErrEntryHistorySkippedPrefix) {
-				return fmt.Errorf("window [%d,%d] written but signer watermark refused: %w — re-run it with -from %d -to %d", lo, hi, err, lo, hi)
-			}
-			if err := setEntryIndexWatermark(ctx, r.chAddr, lo, hi, w.txLedgers); err != nil {
-				return fmt.Errorf("window [%d,%d] written but watermark refused: %w — re-run it with -from %d -to %d", lo, hi, err, lo, hi)
-			}
+		if err := r.advanceWatermarks(ctx, lo, hi, w.txLedgers); err != nil {
+			return err
 		}
 		windows++
 		st.accountRows += w.accountRows
@@ -167,11 +218,32 @@ func runEntryIndex(ctx context.Context, r *entryIndexRun, start, last uint32, st
 	}
 }
 
+// advanceWatermarks records a written window: the signer watermark alone under -signers-only, else both.
+func (r *entryIndexRun) advanceWatermarks(ctx context.Context, lo, hi uint32, txLedgers uint64) error {
+	switch {
+	case r.dryRun:
+		return nil
+	case r.signersOnly:
+		if err := setSignerIndexWatermark(ctx, r.chAddr, lo, hi); err != nil {
+			return fmt.Errorf("window [%d,%d] written but signer watermark refused: %w — resume with no -from", lo, hi, err)
+		}
+		return nil
+	}
+	// The signer watermark goes first: a refused entry watermark re-runs the window, which re-records nothing.
+	if err := setSignerIndexWatermark(ctx, r.chAddr, lo, hi); err != nil && !errors.Is(err, clickhouse.ErrEntryHistorySkippedPrefix) {
+		return fmt.Errorf("window [%d,%d] written but signer watermark refused: %w — re-run it with -from %d -to %d", lo, hi, err, lo, hi)
+	}
+	if err := setEntryIndexWatermark(ctx, r.chAddr, lo, hi, txLedgers); err != nil {
+		return fmt.Errorf("window [%d,%d] written but watermark refused: %w — re-run it with -from %d -to %d", lo, hi, err, lo, hi)
+	}
+	return nil
+}
+
 // entryIndexWindow accumulates one window's rows; txLedgers is the distinct ledgers the owner stream covered, the
 // watermark's coverage proof (every tx-bearing ledger holds a fee-phase account row).
 type entryIndexWindow struct {
 	chAddr                            string
-	dryRun                            bool
+	dryRun, signersOnly               bool
 	st                                *entryIndexStats
 	accounts                          []clickhouse.EntryIndexAccountRow
 	assets                            []clickhouse.EntryIndexAssetRow
@@ -179,6 +251,12 @@ type entryIndexWindow struct {
 }
 
 func (w *entryIndexWindow) build(ctx context.Context, lo, hi uint32) error {
+	if w.signersOnly {
+		if err := w.signers(ctx, lo, hi); err != nil {
+			return err
+		}
+		return w.flush(ctx)
+	}
 	if err := w.owners(ctx, lo, hi); err != nil {
 		return err
 	}

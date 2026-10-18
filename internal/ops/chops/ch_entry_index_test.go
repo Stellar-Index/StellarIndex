@@ -296,3 +296,67 @@ func TestRunEntryIndex_SignerWatermarkWithoutHistoryKeepsTheBuildGoing(t *testin
 		t.Fatal("the entry watermark must not advance past a window whose signer watermark failed")
 	}
 }
+
+// eiSignersOnly stubs the range and both watermark reads for execSigners: the signer watermark is whatever the last
+// set call recorded, and each entry_index read returns the next value of entryWMs (the timer moving on meanwhile).
+func eiSignersOnly(t *testing.T, got *eiCapture, entryWMs ...uint32) {
+	t.Helper()
+	origR, origE, origS := resolveEntryIndexRange, entryIndexWatermark, signerIndexWatermark
+	t.Cleanup(func() { resolveEntryIndexRange, entryIndexWatermark, signerIndexWatermark = origR, origE, origS })
+	signerIndexWatermark = func(context.Context, string) (uint32, error) {
+		if len(got.signerWM) == 0 {
+			return 0, nil
+		}
+		return got.signerWM[len(got.signerWM)-1][1], nil
+	}
+	resolveEntryIndexRange = func(ctx context.Context, addr, _ string, from, _, floor uint32, readWM func(context.Context, string) (uint32, error)) (uint32, uint32, error) {
+		if from != 0 {
+			return from, ehLedger + 100, nil
+		}
+		wm, _ := readWM(ctx, addr)
+		return max(wm+1, floor), ehLedger + 100, nil
+	}
+	entryIndexWatermark = func(context.Context, string) (uint32, error) {
+		v := entryWMs[0]
+		if len(entryWMs) > 1 {
+			entryWMs = entryWMs[1:]
+		}
+		return v, nil
+	}
+}
+
+func TestExecSigners_WalksOnlySignersUntilTheEntryWatermark(t *testing.T) {
+	owners, decode, assets := eiFixtures(t)
+	got := eiStub(t, owners, decode, assets)
+	got.signerOps = []clickhouse.EntryIndexSignerOp{
+		{Ledger: ehLedger, BodyXDR: eiSetOptions(t, eiEd25519Signer(t, ehBob, 1))},
+		{Ledger: ehLedger + 3, BodyXDR: eiSetOptions(t, eiEd25519Signer(t, ehBob, 2))},
+	}
+	// The timer finishes a window while the first pass runs: the walk goes round again to meet it.
+	eiSignersOnly(t, got, ehLedger+1, ehLedger+3, ehLedger+3)
+	r := &entryIndexRun{chAddr: "unused", window: 10, floor: ehLedger, signersOnly: true}
+	if err := r.execSigners(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	bob := eiRaw(t, ehBob)
+	want := []clickhouse.EntryIndexAccountRow{{Account: bob, Role: "signer", Ledger: ehLedger}, {Account: bob, Role: "signer", Ledger: ehLedger + 3}}
+	if !slices.Equal(got.accounts, want) {
+		t.Fatalf("account rows = %+v, want only the signer rows %+v", got.accounts, want)
+	}
+	if len(got.assets) != 0 || len(got.wm) != 0 {
+		t.Fatalf("signers-only wrote %d asset rows and %d entry watermarks; want neither", len(got.assets), len(got.wm))
+	}
+	if want := [][2]uint32{{ehLedger, ehLedger + 1}, {ehLedger + 2, ehLedger + 3}}; !slices.Equal(got.signerWM, want) {
+		t.Fatalf("signer watermark windows = %v, want %v", got.signerWM, want)
+	}
+}
+
+func TestExecSigners_RefusedSignerWatermarkFails(t *testing.T) {
+	got := eiStub(t, nil, nil, nil)
+	got.signerErr = fmt.Errorf("wrapped: %w", clickhouse.ErrEntryHistorySkippedPrefix)
+	eiSignersOnly(t, got, ehLedger+2)
+	r := &entryIndexRun{chAddr: "unused", window: 10, floor: ehLedger, signersOnly: true}
+	if err := r.execSigners(context.Background()); err == nil {
+		t.Fatal("a signers-only walk exists to set the signer watermark; a refusal must fail it")
+	}
+}
