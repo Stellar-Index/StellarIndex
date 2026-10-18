@@ -12,6 +12,8 @@ const (
 	EntryIndexRoleOwner    = "owner"
 	EntryIndexRoleClaimant = "claimant"
 	EntryIndexRoleSponsor  = "sponsor"
+	// EntryIndexRoleSigner ties an ed25519 signer key to a ledger in which a set_options operation added it to some account.
+	EntryIndexRoleSigner = "signer"
 )
 
 // EntryIndexOwnerRow is one (account, ledger) pair from the lake's account_id column: the owner relation of a classic entry.
@@ -35,6 +37,12 @@ type EntryIndexDecodeRow struct {
 	Ledger    uint32
 	EntryType string
 	EntryXDR  string
+}
+
+// EntryIndexSignerOp is one set_options operation body the builder decodes for an added signer.
+type EntryIndexSignerOp struct {
+	Ledger  uint32
+	BodyXDR string
 }
 
 // EntryIndexAccountRow is one row of stellar.account_entry_ledgers; Account holds the raw 32-byte key.
@@ -86,6 +94,14 @@ SELECT ledger_seq, entry_type, entry_xdr
    AND ` + sponsoredEntryPredicate + `
  ORDER BY ledger_seq`
 
+// Failed transactions and duplicate op rows only add candidate ledgers; readers confirm against current account state.
+const entryIndexSignerQuery = `
+SELECT ledger_seq, body_xdr
+  FROM stellar.operations
+ WHERE ledger_seq BETWEEN ? AND ?
+   AND op_type = 'OperationTypeSetOptions'
+ ORDER BY ledger_seq`
+
 func streamEntryIndex(ctx context.Context, addr, label, query string, from, to uint32, scan func(driver.Rows) error) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -134,6 +150,17 @@ func StreamEntryIndexDecodeRows(ctx context.Context, addr string, from, to uint3
 		var r EntryIndexDecodeRow
 		if err := rows.Scan(&r.Ledger, &r.EntryType, &r.EntryXDR); err != nil {
 			return fmt.Errorf("clickhouse: scan entry-index decode row: %w", err)
+		}
+		return fn(r)
+	})
+}
+
+// StreamEntryIndexSignerOps yields the set_options operation bodies of one window, ascending by ledger.
+func StreamEntryIndexSignerOps(ctx context.Context, addr string, from, to uint32, fn func(EntryIndexSignerOp) error) error {
+	return streamEntryIndex(ctx, addr, "signer ops", entryIndexSignerQuery, from, to, func(rows driver.Rows) error {
+		var r EntryIndexSignerOp
+		if err := rows.Scan(&r.Ledger, &r.BodyXDR); err != nil {
+			return fmt.Errorf("clickhouse: scan entry-index signer op: %w", err)
 		}
 		return fn(r)
 	})
@@ -216,3 +243,26 @@ func SetEntryIndexWatermark(ctx context.Context, addr string, from, thru uint32,
 }
 
 const entryIndexWatermarkName = "entry_index"
+
+// signerIndexWatermarkName is the ledger the signer role is complete through from the lake's first ledger; it trails
+// entry_index until a build from the lake floor walks the history recorded before the role existed.
+const signerIndexWatermarkName = "signer_index"
+
+// SetSignerIndexWatermark records the signer role complete through `thru`. Its first value must come from a window
+// starting at the lake floor, so a live-only build never claims history; such a window gets ErrEntryHistorySkippedPrefix.
+func SetSignerIndexWatermark(ctx context.Context, addr string, from, thru uint32) error {
+	return advanceEntryWatermark(ctx, addr, signerIndexWatermarkName, from, thru, func(ctx context.Context, conn driver.Conn) error {
+		wm, err := entryWatermarkOn(ctx, conn, signerIndexWatermarkName)
+		if err != nil || wm > 0 {
+			return err
+		}
+		floor, err := LakeMinLedger(ctx, addr)
+		if err != nil {
+			return err
+		}
+		if from > floor {
+			return fmt.Errorf("%w: %s [%d,%d] has no watermark yet and starts above the lake floor %d", ErrEntryHistorySkippedPrefix, signerIndexWatermarkName, from, thru, floor)
+		}
+		return nil
+	})
+}

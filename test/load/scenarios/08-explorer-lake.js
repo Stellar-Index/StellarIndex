@@ -63,6 +63,7 @@ const ROUTES = [
   { name: 'account-entry-changes', cls: 'scan', w: 2, url: (d) => `${baseUrl}/accounts/${pick(d.accounts)}/entry-changes?limit=25` },
   { name: 'account-sponsorships', cls: 'scan', w: 2, url: (d) => `${baseUrl}/accounts/${pick(d.accounts)}/sponsorships?direction=sponsoring` },
   { name: 'account-claimable-balances', cls: 'scan', w: 2, url: (d) => `${baseUrl}/accounts/${pick(d.accounts)}/claimable-balances` },
+  { name: 'account-signer-on', cls: 'scan', w: 1, url: (d) => `${baseUrl}/accounts/${pick(d.accounts)}/signer-on` },
   { name: 'account-positions', cls: 'scan', w: 3, url: (d) => `${baseUrl}/accounts/${pick(d.accounts)}/positions` },
   { name: 'account-trades', cls: 'scan', w: 3, url: (d) => `${baseUrl}/accounts/${pick(d.accounts)}/trades?limit=50` },
   { name: 'account-activity', cls: 'scan', w: 3, url: (d) => `${baseUrl}/accounts/${pick(d.accounts)}/activity` },

@@ -368,6 +368,14 @@ func (s *stubExplorerReader) LiveClaimableBalancesInLedgers(context.Context, str
 	return clickhouse.ClaimableScan{}, s.err
 }
 
+func (s *stubExplorerReader) SignerIndexWatermark(context.Context) (uint32, error) {
+	return 0, s.err
+}
+
+func (s *stubExplorerReader) AccountsSignedBy(context.Context, string, []uint32, int) (clickhouse.SignerScan, error) {
+	return clickhouse.SignerScan{}, s.err
+}
+
 func (s *stubExplorerReader) AssetEntryLedgers(context.Context, string, []string, uint32, int) ([]uint32, error) {
 	return nil, s.err
 }

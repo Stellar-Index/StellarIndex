@@ -13310,6 +13310,87 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /accounts/{g_strkey}/signer-on:
+    get:
+      operationId: getAccountSignerOn
+      x-stability: experimental
+      tags: [explorer]
+      summary: The other accounts whose current signers include this account's key.
+      description: |
+        Accounts that list the path account's ed25519 key as a signer
+        right now, newest change first. Candidates come from the entry
+        index's `signer` role (`stellar.account_entry_ledgers`), built from
+        every `set_options` operation that added or reweighted the key; each
+        candidate is confirmed against the lake's current account state, so
+        a key since removed, or an account since merged, is not listed. The
+        account's own master key is not listed. Pre-auth-transaction and
+        hash-x signers are not keys of an account and are out of scope.
+
+        CEILING: the view runs through `through_ledger`, the signer role's
+        watermark, which is set only once the role has been built from the
+        lake's first ledger. Until then the route answers 503
+        (`signer-index-not-built`).
+
+        LOWER BOUND: one read examines the key's 200 most recent signer
+        ledgers and at most 500 candidate accounts. Past either cap the
+        view is served with `lower_bound` true and a `coverage_note` saying
+        older arrangements may be missing.
+      parameters:
+        - name: g_strkey
+          in: path
+          required: true
+          description: |
+            Account id, a 56-character G-strkey (SEP-23); an M-address
+            reads as its base account. Malformed strkeys return 400.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The accounts this account's key signs for.
+          content:
+            application/json:
+              example:
+                data:
+                  account: GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+                  signer_on:
+                  - account: GDIEKKIQWMIZ4LD3RP3ABPN7X5KEAEWYMR634BRHB7EULIMEVREWLF3G
+                    weight: 1
+                    last_modified_ledger: 64802900
+                  through_ledger: 64802921
+                  lower_bound: false
+                  coverage_note: accounts whose current signers include this account's key, from set_options operations through ledger 64802921
+                as_of: '2026-10-06T14:03:31Z'
+                flags:
+                  divergence_warning: false
+                  triangulated: false
+                  reduced_redundancy: false
+                  stale: false
+                  degraded: false
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [account, signer_on, through_ledger, lower_bound, coverage_note]
+                        properties:
+                          account: { type: string }
+                          signer_on:
+                            type: array
+                            items:
+                              type: object
+                              required: [account, weight, last_modified_ledger]
+                              properties:
+                                account: { type: string, description: "The account whose signer list holds the key (G-strkey)." }
+                                weight: { type: integer, format: int64, description: "The key's current signer weight on that account (1-255)." }
+                                last_modified_ledger: { type: integer, format: int64, description: "Ledger of that account's current entry." }
+                          through_ledger: { type: integer, format: int64, description: "Newest ledger this view covers (the signer role's watermark)." }
+                          lower_bound: { type: boolean, description: "True when the read's ledger or account cap was hit, so older arrangements may be missing." }
+                          coverage_note: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /accounts/{g_strkey}/sponsorships:
     get:
       operationId: getAccountSponsorships

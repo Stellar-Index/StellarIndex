@@ -20,8 +20,8 @@ Every path in `openapi/stellar-index.v1.yaml` against what `web/explorer` calls 
 
 | | Count |
 |---|---:|
-| Paths in the OpenAPI contract | **147** |
-| Level 3 — reachable | **114** |
+| Paths in the OpenAPI contract | **148** |
+| Level 3 — reachable | **115** |
 | Level 2 — consumed but unreachable | **0** |
 | Level 1 — not consumed | **29** |
 | Deliberately excluded (operational) | **4** |
@@ -184,6 +184,7 @@ Level `ex` = deliberately excluded. "Consumed in" is the first call site.
 | `/accounts/{g_strkey}/movements` | GET | 3 | app/accounts/AccountMovements.tsx |
 | `/accounts/{g_strkey}/entry-changes` | GET | 1 | — |
 | `/accounts/{g_strkey}/claimable-balances` | GET | 3 | app/accounts/AccountClaimable.tsx |
+| `/accounts/{g_strkey}/signer-on` | GET | 3 | app/accounts/AccountSignerOn.tsx |
 | `/accounts/{g_strkey}/sponsorships` | GET | 1 | — |
 | `/accounts/{g_strkey}/positions` | GET | 3 | app/accounts/AccountDefiPositions.tsx |
 | `/accounts/{g_strkey}/trades` | GET | 3 | app/accounts/AccountTrades.tsx |

@@ -3,7 +3,8 @@
 # Rendered by Ansible. Builds the ledger index of classic-entry activity —
 # stellar.account_entry_ledgers (account, role, ledger) and
 # stellar.asset_entry_ledgers (asset, entry_type, ledger, change counts) —
-# from stellar.ledger_entry_changes (deploy/clickhouse/entry_index.sql).
+# from stellar.ledger_entry_changes (deploy/clickhouse/entry_index.sql),
+# plus the signer role from stellar.operations' set_options rows.
 #
 # Each run resumes from the entry_index watermark and walks forward in
 # 100k-ledger windows to the lake's contiguous tip, advancing the
