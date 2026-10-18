@@ -677,7 +677,7 @@ func (r *VWAPUSDFXResolver) queryXLMLeg(ctx context.Context, asset canonical.Ass
 	if err != nil {
 		return nil, fmt.Errorf("timescale: VWAPUSDFXResolver XLM leg: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var minutes []legMinute
 	for rows.Next() {
 		var (
@@ -820,7 +820,7 @@ func (r *VWAPUSDFXResolver) queryDirectLeg(ctx context.Context, asset canonical.
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("timescale: VWAPUSDFXResolver query: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var minutes []legMinute
 	for rows.Next() {
 		var m legMinute
