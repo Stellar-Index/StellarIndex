@@ -24,6 +24,15 @@ const G = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
 // stay pending so it sits in its harmless loading state.
 function mockDirectory(ranked_by: 'usd' | 'native_xlm', value = '123456') {
   vi.mocked(apiGet).mockImplementation((path: string) => {
+    if (path === '/v1/directory') {
+      return Promise.resolve({
+        data: {
+          entries: {
+            [G]: { name: 'SDF Growth 3', tags: ['sdf'], source: 'directory' },
+          },
+        },
+      });
+    }
     if (path === '/v1/accounts') {
       return Promise.resolve({
         data: {
@@ -113,5 +122,15 @@ describe('AccountsDirectory wealth column', () => {
     });
     renderDirectory();
     expect(await screen.findAllByText('50.0%')).toHaveLength(2);
+  });
+});
+
+describe('AccountsDirectory — known names', () => {
+  it('shows the directory name beside a listed address', async () => {
+    mockDirectory('usd');
+    renderDirectory();
+
+    expect(await screen.findByText('SDF Growth 3')).toBeInTheDocument();
+    expect(screen.queryByText('flagged')).not.toBeInTheDocument();
   });
 });

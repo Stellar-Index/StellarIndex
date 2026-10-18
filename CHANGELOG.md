@@ -20,6 +20,26 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.20] - 2026-10-18
+
+No migrations. No `pkg/*` break.
+
+### Added
+
+- **explorer:** the accounts list shows the directory name beside each address and flags scam-tagged entries, from one batched `/v1/directory` request per page (#3587).
+- **ansible:** `clickhouse_default_user_locked` (off by default) gives ClickHouse's `default` user a random password that is never stored (#3580).
+
+### Fixed
+
+- **explorer:** `contract_active_ledgers` records its own genesis watermark. A contract's activity feed trusts a proven-complete index: an empty walk is an empty page and a short page is the whole history, with no lake fallback (#3586). After deploy, run `ch-contract-ledgers-backfill -full -write` once to record the watermark.
+- **timescale:** `ExactTierUSDVolume` values a zero pegged base at exactly $0, matching the served path and the restamp (#3585).
+- **ops:** four ClickHouse ops scripts run the deployed `stellarindex-ops` instead of a stale hand-built copy (#3582).
+- **ansible:** the test nets run the lake self-healer (`ch-live-catchup`) (#3584).
+
+### Changed
+
+- **deps:** Go and explorer minor bumps, regenerated third-party notices, and a refreshed golang base image (#3583, #3502).
+
 ## [v0.116.19] - 2026-10-17
 
 Migrations 0217 and 0218, both additive. No `pkg/*` break.
@@ -53,9 +73,3 @@ Migrations 0217 and 0218, both additive. No `pkg/*` break.
 ### Changed
 
 - `stellarindex_trade_inserts_total` labels a live trade left unpriced by a failed USD resolver read `usd_volume_populated="error"` instead of `"no"`; it still counts against on-chain USD-volume coverage (#3565).
-
-## [v0.116.15] - 2026-10-17
-
-### Fixed
-
-- `/v1/ohlc`, `/v1/vwap` and `/v1/twap` no longer return 422 all-filtered when a tight cluster of dust prints shrinks the outlier band below an ordinary hourly move; the band is floored at ±1% of the median, matching the aggregator's local filter (#3563).

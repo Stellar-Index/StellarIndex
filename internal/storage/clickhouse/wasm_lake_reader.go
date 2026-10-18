@@ -349,8 +349,13 @@ const instanceGenesisWatermarkQuery = `SELECT max(thru_ledger) FROM stellar.entr
 // instanceGenesisWatermark is the genesis-complete thru_ledger
 // ch-instance-backfill recorded, 0 when absent.
 func (r *ExplorerReader) instanceGenesisWatermark(ctx context.Context) (uint32, error) {
+	return r.genesisWatermark(ctx, ContractInstanceChangesTable)
+}
+
+// genesisWatermark is the genesis-complete thru_ledger recorded for table, 0 when absent.
+func (r *ExplorerReader) genesisWatermark(ctx context.Context, table string) (uint32, error) {
 	var wm uint32
-	err := r.conn.QueryRow(ctx, instanceGenesisWatermarkQuery, ContractInstanceChangesTable).Scan(&wm)
+	err := r.conn.QueryRow(ctx, instanceGenesisWatermarkQuery, table).Scan(&wm)
 	return wm, err
 }
 

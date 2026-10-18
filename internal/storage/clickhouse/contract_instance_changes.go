@@ -15,6 +15,11 @@ const (
 	ContractInstanceChangesV2Table = "contract_instance_changes_v2"
 )
 
+// genesisMarkTable reports whether table may carry a genesis watermark: the instance timeline or the contract activity index.
+func genesisMarkTable(table string) bool {
+	return table == ContractInstanceChangesTable || table == ContractInstanceChangesV2Table || table == ContractActiveLedgersTable
+}
+
 // contractInstanceBackfillQuery fills one ledger window of the named table from ledger_entry_changes with the same fixed-offset extraction
 // as contract_instance_changes_mv (deploy/clickhouse/contract_instance_changes.sql; keep the two in lockstep). table is one of the two
 // constants above, never caller text. FINAL on the source read: a corrected re-ingest can leave the stale part beside the fix, and both
@@ -88,9 +93,8 @@ type InstanceBackfillStart struct {
 // ReadInstanceBackfillStart reads InstanceBackfillStart for the table.
 func ReadInstanceBackfillStart(ctx context.Context, addr, table string) (InstanceBackfillStart, error) {
 	var st InstanceBackfillStart
-	if table != ContractInstanceChangesTable && table != ContractInstanceChangesV2Table {
-		return st, fmt.Errorf("clickhouse: instance-changes start state: table %q is not %s or %s",
-			table, ContractInstanceChangesTable, ContractInstanceChangesV2Table)
+	if !genesisMarkTable(table) {
+		return st, fmt.Errorf("clickhouse: backfill start state: table %q carries no genesis watermark", table)
 	}
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -116,9 +120,8 @@ func ReadInstanceBackfillStart(ctx context.Context, addr, table string) (Instanc
 
 // SetContractInstanceChangesGenesisWatermark records the instance-timeline table complete from the first ledger through `thru` (readers then trust per-contract misses), so call only after a proven-complete backfill; a thru at or below the stored mark records nothing.
 func SetContractInstanceChangesGenesisWatermark(ctx context.Context, addr, table string, thru uint32) error {
-	if table != ContractInstanceChangesTable && table != ContractInstanceChangesV2Table {
-		return fmt.Errorf("clickhouse: instance-changes watermark: table %q is not %s or %s",
-			table, ContractInstanceChangesTable, ContractInstanceChangesV2Table)
+	if !genesisMarkTable(table) {
+		return fmt.Errorf("clickhouse: genesis watermark: table %q carries no genesis watermark", table)
 	}
 	if thru == 0 {
 		return fmt.Errorf("clickhouse: instance-changes watermark: thru must be > 0")

@@ -295,6 +295,23 @@ function useAccountsDirectoryQuery() {
   });
 }
 
+// Directory names for the listed rows: one batch read of GET /v1/directory
+// (cap 100 = DIRECTORY_SIZE). A failed read leaves the rows bare.
+function useDirectoryNames(addresses: string[]) {
+  return useQuery<Record<string, DirectoryInfo>>({
+    queryKey: ['/v1/directory', addresses],
+    enabled: addresses.length > 0,
+    retry: false,
+    queryFn: async () => {
+      const env = await apiGet<
+        Envelope<{ entries: Record<string, DirectoryInfo> }>
+      >('/v1/directory', { addresses: addresses.join(',') });
+      return env.data.entries;
+    },
+    staleTime: 10 * 60_000,
+  });
+}
+
 function rankedInNative(data: AccountsListResp | undefined): boolean {
   return data ? data.ranked_by === 'native_xlm' : !CURRENT_NETWORK.pricing;
 }
@@ -327,6 +344,7 @@ function AccountsDirectory() {
     return xlm === '—' ? xlm : `${xlm} XLM`;
   };
   const rows = q.data?.accounts ?? [];
+  const names = useDirectoryNames(rows.map((a) => a.account_id)).data;
   // Shares are of the LISTED accounts' total (the served page), not of the
   // network, and divide in BigInt so balances above 2^53 stay exact.
   const listedTotal = sumDecimalStrings(
@@ -401,6 +419,25 @@ function AccountsDirectory() {
                       >
                         {truncateMiddle(a.account_id, 10, 8)}
                       </Link>
+                      {names?.[a.account_id] && (
+                        <span
+                          className={cn(
+                            'ml-2',
+                            hasDirectoryScamFlag(names[a.account_id].tags)
+                              ? 'text-bad-700 font-medium'
+                              : 'text-ink-muted',
+                          )}
+                          title="Label from the StellarExpert public directory (community-curated; listing is not endorsement)"
+                        >
+                          {names[a.account_id].name}
+                        </span>
+                      )}
+                      {names?.[a.account_id] &&
+                        hasDirectoryScamFlag(names[a.account_id].tags) && (
+                          <Badge className="ml-2" tone="bad">
+                            flagged
+                          </Badge>
+                        )}
                       {a.locked && (
                         <Badge
                           className="ml-2"
