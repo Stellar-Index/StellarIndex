@@ -610,7 +610,8 @@ export interface paths {
          *     entry (its last state for a removal), `changed` names the fields an
          *     update altered and `intra_ledger_seq` is the change's apply order
          *     inside its ledger. Keyset-paged with `?cursor=` (echo back
-         *     `next_cursor`).
+         *     `next_cursor`). The first page (no cursor) is served from a cache
+         *     up to five minutes old; `through_ledger` names the ledger it covers.
          *
          *     `asset_id` is folded like `/assets/{asset_id}/movements`: `XLM`,
          *     `crypto:XLM` and the native SAC read as `native`; `CODE:ISSUER` and a

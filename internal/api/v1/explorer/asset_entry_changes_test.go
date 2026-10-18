@@ -19,8 +19,9 @@ import (
 // assetEntryChangesReader serves the account fake's rows through the asset index and records what was asked.
 type assetEntryChangesReader struct {
 	*accountEntryChangesReader
-	gotAsset string
-	gotTypes []string
+	gotAsset    string
+	gotTypes    []string
+	ledgerCalls int
 }
 
 func newAssetEntryChangesReader(wm uint32, rows []clickhouse.EntryHistorySourceRow) *assetEntryChangesReader {
@@ -29,6 +30,7 @@ func newAssetEntryChangesReader(wm uint32, rows []clickhouse.EntryHistorySourceR
 
 func (r *assetEntryChangesReader) AssetEntryLedgers(_ context.Context, asset string, entryTypes []string, maxLedger uint32, limit int) ([]uint32, error) {
 	r.gotAsset, r.gotTypes = asset, entryTypes
+	r.ledgerCalls++
 	var out []uint32
 	for _, l := range r.ledgers {
 		if l <= maxLedger && len(out) < limit {
@@ -78,8 +80,12 @@ func aecAssetFixture(t *testing.T) []clickhouse.EntryHistorySourceRow {
 
 func callAssetEntryChanges(t *testing.T, reader *assetEntryChangesReader, assetID string, q url.Values, limit int) (int, AssetEntryChangesView) {
 	t.Helper()
+	return serveAssetEntryChanges(t, newProbeHandler(reader, nil), assetID, q, limit)
+}
+
+func serveAssetEntryChanges(t *testing.T, h *Handler, assetID string, q url.Values, limit int) (int, AssetEntryChangesView) {
+	t.Helper()
 	var view AssetEntryChangesView
-	h := newProbeHandler(reader, nil)
 	h.ParseLimit = func(http.ResponseWriter, *http.Request, int, int) (int, bool) { return limit, true }
 	h.WriteJSONAt = func(w http.ResponseWriter, v any, _, _ bool, _ time.Time) {
 		view = v.(AssetEntryChangesView)
@@ -156,6 +162,32 @@ func TestAssetEntryChanges_CursorWalksInsideALedger(t *testing.T) {
 	want := []string{"100/a1/40", "100/b1/25", "100/99/5", "95/cb/70", "90/c1/10"}
 	if !slices.Equal(got, want) {
 		t.Errorf("walk = %v, want %v", got, want)
+	}
+}
+
+func TestAssetEntryChanges_FirstPageCachedAndCutPerLimit(t *testing.T) {
+	reader := newAssetEntryChangesReader(120, aecAssetFixture(t))
+	h := newProbeHandler(reader, nil)
+	code, full := serveAssetEntryChanges(t, h, aecUSD, nil, 25)
+	if code != http.StatusOK || len(full.Changes) != 5 {
+		t.Fatalf("status %d changes %d; want 200 and 5", code, len(full.Changes))
+	}
+	calls := reader.ledgerCalls
+	_, cut := serveAssetEntryChanges(t, h, aecUSD, nil, 2)
+	if reader.ledgerCalls != calls {
+		t.Errorf("second first-page request walked the index again (%d calls, want %d)", reader.ledgerCalls, calls)
+	}
+	_, uncached := callAssetEntryChanges(t, newAssetEntryChangesReader(120, aecAssetFixture(t)), aecUSD, url.Values{"cursor": {cut.NextCursor}}, 25)
+	var got []string
+	for _, c := range append(cut.Changes, uncached.Changes...) {
+		got = append(got, c.TxHash)
+	}
+	var want []string
+	for _, c := range full.Changes {
+		want = append(want, c.TxHash)
+	}
+	if len(cut.Changes) != 2 || !slices.Equal(got, want) {
+		t.Errorf("cut page %d rows then cursor walk = %v, want 2 rows then %v", len(cut.Changes), got, want)
 	}
 }
 

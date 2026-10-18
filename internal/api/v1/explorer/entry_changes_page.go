@@ -60,9 +60,29 @@ type entryPageSource[T any] struct {
 	key     func(T) entryChangeKey
 }
 
+// entryWalk is a walk's rows before the page cut: every pass covers whole ledgers newest first, so cutting it at
+// any limit up to the one walked gives the page a walk at that limit would.
+type entryWalk[T any] struct {
+	rows []T
+	more bool
+	last uint32
+}
+
+func (e entryWalk[T]) page(key func(T) entryChangeKey, limit int) entryPage[T] {
+	return finishEntryPage(slices.Clone(e.rows), key, limit, e.more, e.last)
+}
+
 // walkEntryPage walks the indexed ledgers newest first, a batch at a time, until the page is full, the index is
 // exhausted or the pass cap is hit.
 func walkEntryPage[T any](ctx context.Context, src entryPageSource[T], limit int, cur clickhouse.AssetEntryChangeCursor, wm uint32) (entryPage[T], error) {
+	walk, err := walkEntryRows(ctx, src, limit, cur, wm)
+	if err != nil {
+		return entryPage[T]{}, err
+	}
+	return walk.page(src.key, limit), nil
+}
+
+func walkEntryRows[T any](ctx context.Context, src entryPageSource[T], limit int, cur clickhouse.AssetEntryChangeCursor, wm uint32) (entryWalk[T], error) {
 	ceiling := wm
 	if cur.IsSet() {
 		c := cur.Ledger
@@ -79,7 +99,7 @@ func walkEntryPage[T any](ctx context.Context, src entryPageSource[T], limit int
 	for pass := 0; pass < entryLedgerPasses; pass++ {
 		ledgers, err := src.ledgers(ctx, ceiling)
 		if err != nil {
-			return entryPage[T]{}, err
+			return entryWalk[T]{}, err
 		}
 		if len(ledgers) == 0 {
 			more = false
@@ -87,7 +107,7 @@ func walkEntryPage[T any](ctx context.Context, src entryPageSource[T], limit int
 		}
 		got, err := projectEntryRows(ctx, src, ledgers, cur)
 		if err != nil {
-			return entryPage[T]{}, err
+			return entryWalk[T]{}, err
 		}
 		rows = append(rows, got...)
 		last = ledgers[len(ledgers)-1]
@@ -97,7 +117,7 @@ func walkEntryPage[T any](ctx context.Context, src entryPageSource[T], limit int
 		}
 		ceiling = last - 1
 	}
-	return finishEntryPage(rows, src.key, limit, more, last), nil
+	return entryWalk[T]{rows: rows, more: more, last: last}, nil
 }
 
 // finishEntryPage orders the rows newest first and cuts the page.

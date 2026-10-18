@@ -2728,7 +2728,7 @@ func selfPrewarmAdmitted(authMode string) bool {
 	return false
 }
 
-// selfPrewarmAssetEndpoints GETs /v1/assets/<id> every 60 s for native and each verified currency against our own listener, warming every
+// selfPrewarmAssetEndpoints GETs /v1/assets/<id> (and its entry-changes first page) every 60 s for native and each verified currency against our own listener, warming every
 // cache the real handler touches with byte-identical arguments.
 func selfPrewarmAssetEndpoints(ctx context.Context, logger *slog.Logger, listenAddr string, verifiedAssetIDs []string) {
 	// Guarded here because it runs on a detached goroutine and exercises more code than any other
@@ -2747,8 +2747,9 @@ func selfPrewarmAssetEndpoints(ctx context.Context, logger *slog.Logger, listenA
 	// landing). Then every verified currency.
 	targets := append([]string{"native"}, verifiedAssetIDs...)
 
-	// The explorer opts into include_thin, which is its own cache entry.
-	queries := []string{"", "?include_thin=true"}
+	// The explorer opts into include_thin, which is its own cache entry. The entry-changes first page is
+	// one cache entry at any limit, and a liquid asset's walk outlasts a cold page view.
+	queries := []string{"", "?include_thin=true", "/entry-changes"}
 	warm := func(id, query string) {
 		start := time.Now()
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+id+query, nil)
