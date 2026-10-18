@@ -29,6 +29,8 @@
 #     visible as an ageing timestamp, not a vanished series;
 #   stellarindex_pgbackrest_backup_last_rc
 #   stellarindex_pgbackrest_backup_duration_seconds
+# The file is republished after every repo, carrying a not-yet-run repo's
+# previous lines, so a multi-hour off-site run never leaves it 24h+ old.
 # The metric emit is best-effort: it never fails the backup.
 # No secrets touch argv or this log — the S3 key pair and cipher passes
 # live only in the 0640 pgbackrest.conf that pgbackrest reads itself.
@@ -63,61 +65,6 @@ if [ "$REPO_COUNT" -eq 0 ]; then
   REPOS=(1)
   REPO_COUNT=1
 fi
-
-# rc of the first failing repo — pgbackrest's own exit code, so the unit
-# log still says which error class it was.
-RC=0
-METRIC_LINES=()
-for repo in "${REPOS[@]}"; do
-  if [ "$REPO_COUNT" -eq 1 ]; then
-    CMD=(pgbackrest --stanza="$STANZA" --type="$TYPE" backup)
-  else
-    CMD=(pgbackrest --stanza="$STANZA" --repo="$repo" --type="$TYPE" backup)
-  fi
-  echo "pgbackrest-backup: starting --type=$TYPE backup of $STANZA (repo$repo)"
-  START=$(date +%s)
-  "${CMD[@]}"
-  rc=$?
-  END=$(date +%s)
-  DURATION=$((END - START))
-  if [ "$rc" -eq 0 ]; then
-    echo "pgbackrest-backup: repo$repo --type=$TYPE OK in ${DURATION}s"
-    LAST_SUCCESS=$END
-  else
-    echo "pgbackrest-backup: repo$repo --type=$TYPE FAILED rc=$rc after ${DURATION}s — continuing to the next repo" >&2
-    [ "$RC" -ne 0 ] || RC=$rc
-    # Carry the previous success forward so the series ages instead of
-    # disappearing (an absent series is what alert `absent()` guards
-    # miss; an old timestamp is what a staleness rule sees).
-    #
-    # THE ONE INPUT AN EMPTINESS TEST CANNOT VET. This value comes from
-    # this producer's OWN previous output, so whatever it holds is
-    # re-published on every subsequent failed run until the next
-    # success. A corrupt-but-non-empty carry — a truncated write, a
-    # partially overwritten line, a psql-style command tag from some
-    # future edit — therefore self-perpetuates, and node_exporter does
-    # not skip an unparseable line: it rejects the WHOLE file (r1
-    # 2026-09-10, where one bad value took 127 unrelated series off the
-    # host for ~20 minutes). One bad byte here would take every
-    # pgbackrest gauge down and KEEP them down.
-    #
-    # A unix timestamp is digits. Anything else is dropped and named,
-    # which leaves the series ABSENT for this run — the same state the
-    # `-z` branch below already produces when there is nothing to carry,
-    # and the state stellarindex_timescale_backup_none_24h reads.
-    LAST_SUCCESS=$(grep -E "^stellarindex_pgbackrest_backup_last_success_unix\{repo=\"$repo\"\} " "$METRIC_OUT" 2>/dev/null | awk 'END { print $2 }')
-    case "${LAST_SUCCESS:-}" in
-      '') ;;
-      *[!0-9]*)
-        echo "pgbackrest-backup: WARN previous last_success for repo$repo is not a unix timestamp ('$LAST_SUCCESS') — dropping it rather than re-publishing a value node_exporter would reject the whole file over" >&2
-        LAST_SUCCESS=""
-        ;;
-    esac
-  fi
-  [ -z "${LAST_SUCCESS:-}" ] || METRIC_LINES+=("stellarindex_pgbackrest_backup_last_success_unix{repo=\"$repo\"} $LAST_SUCCESS")
-  METRIC_LINES+=("stellarindex_pgbackrest_backup_last_rc{repo=\"$repo\"} $rc")
-  METRIC_LINES+=("stellarindex_pgbackrest_backup_duration_seconds{repo=\"$repo\"} $DURATION")
-done
 
 # ── Validate the rendered bytes, then publish ─────────────────────────
 #
@@ -188,30 +135,98 @@ publish_metrics() {
   chmod 644 "$metric_src" && mv "$metric_src" "$metric_dst"
 }
 
-# Atomic textfile write (tmp + mv), 0644 so the unprivileged
-# node_exporter can read it (it silently skips unreadable files).
-if mkdir -p "$TEXTFILE_DIR" 2>/dev/null && METRIC_TMP=$(mktemp "$METRIC_OUT.tmp.XXXXXX" 2>/dev/null); then
-  {
-    echo "# HELP stellarindex_pgbackrest_backup_last_success_unix Unix time of the last successful scheduled pgBackRest backup, per repo (carried forward across failed runs)."
-    echo "# TYPE stellarindex_pgbackrest_backup_last_success_unix gauge"
-    printf '%s\n' "${METRIC_LINES[@]}" | grep '^stellarindex_pgbackrest_backup_last_success_unix'
-    echo "# HELP stellarindex_pgbackrest_backup_last_rc Exit code of the most recent scheduled pgBackRest backup, per repo (0 = success)."
-    echo "# TYPE stellarindex_pgbackrest_backup_last_rc gauge"
-    printf '%s\n' "${METRIC_LINES[@]}" | grep '^stellarindex_pgbackrest_backup_last_rc'
-    echo "# HELP stellarindex_pgbackrest_backup_duration_seconds Wall-clock seconds of the most recent scheduled pgBackRest backup, per repo."
-    echo "# TYPE stellarindex_pgbackrest_backup_duration_seconds gauge"
-    printf '%s\n' "${METRIC_LINES[@]}" | grep '^stellarindex_pgbackrest_backup_duration_seconds'
-    # Publication safety, not a backup signal. Emitted on EVERY run so
-    # the healthy value (0) is a series that exists rather than an
-    # absence.
-    echo "# HELP stellarindex_pgbackrest_backup_unparseable_lines Exposition lines this run rendered that are not valid Prometheus samples and were therefore WITHHELD from the published textfile. 0 every healthy run; above 0 means a value this wrapper composed — or carried forward from its own previous output — is not a number, and that one series is absent this tick."
-    echo "# TYPE stellarindex_pgbackrest_backup_unparseable_lines gauge"
-  } > "$METRIC_TMP" && publish_metrics "$METRIC_TMP" "$METRIC_OUT" \
-    || echo "pgbackrest-backup: WARN could not write $METRIC_OUT — per-repo metrics not emitted" >&2
-  rm -f "$METRIC_TMP" "$METRIC_TMP.checked"
-else
-  echo "pgbackrest-backup: WARN $TEXTFILE_DIR not writable — per-repo metrics not emitted" >&2
-fi
+# emit_metrics publishes this run's lines plus, for each repo in PENDING,
+# the previous run's lines verbatim; publish_metrics still vets every one.
+emit_metrics() {
+  local lines=("${METRIC_LINES[@]}") r l
+  for r in ${PENDING[@]+"${PENDING[@]}"}; do
+    while IFS= read -r l; do
+      lines+=("$l")
+    done < <(grep -E "^stellarindex_pgbackrest_backup_[a-z_]+[{]repo=\"$r\"[}] " "$METRIC_OUT" 2>/dev/null)
+  done
+  # Atomic textfile write (tmp + mv), 0644 so the unprivileged
+  # node_exporter can read it (it silently skips unreadable files).
+  if mkdir -p "$TEXTFILE_DIR" 2>/dev/null && METRIC_TMP=$(mktemp "$METRIC_OUT.tmp.XXXXXX" 2>/dev/null); then
+    {
+      echo "# HELP stellarindex_pgbackrest_backup_last_success_unix Unix time of the last successful scheduled pgBackRest backup, per repo (carried forward across failed runs)."
+      echo "# TYPE stellarindex_pgbackrest_backup_last_success_unix gauge"
+      printf '%s\n' "${lines[@]}" | grep '^stellarindex_pgbackrest_backup_last_success_unix'
+      echo "# HELP stellarindex_pgbackrest_backup_last_rc Exit code of the most recent scheduled pgBackRest backup, per repo (0 = success)."
+      echo "# TYPE stellarindex_pgbackrest_backup_last_rc gauge"
+      printf '%s\n' "${lines[@]}" | grep '^stellarindex_pgbackrest_backup_last_rc'
+      echo "# HELP stellarindex_pgbackrest_backup_duration_seconds Wall-clock seconds of the most recent scheduled pgBackRest backup, per repo."
+      echo "# TYPE stellarindex_pgbackrest_backup_duration_seconds gauge"
+      printf '%s\n' "${lines[@]}" | grep '^stellarindex_pgbackrest_backup_duration_seconds'
+      # Publication safety, not a backup signal. Emitted on EVERY run so
+      # the healthy value (0) is a series that exists rather than an
+      # absence.
+      echo "# HELP stellarindex_pgbackrest_backup_unparseable_lines Exposition lines this run rendered that are not valid Prometheus samples and were therefore WITHHELD from the published textfile. 0 every healthy run; above 0 means a value this wrapper composed — or carried forward from its own previous output — is not a number, and that one series is absent this tick."
+      echo "# TYPE stellarindex_pgbackrest_backup_unparseable_lines gauge"
+    } > "$METRIC_TMP" && publish_metrics "$METRIC_TMP" "$METRIC_OUT" \
+      || echo "pgbackrest-backup: WARN could not write $METRIC_OUT — per-repo metrics not emitted" >&2
+    rm -f "$METRIC_TMP" "$METRIC_TMP.checked"
+  else
+    echo "pgbackrest-backup: WARN $TEXTFILE_DIR not writable — per-repo metrics not emitted" >&2
+  fi
+}
+
+# rc of the first failing repo — pgbackrest's own exit code, so the unit
+# log still says which error class it was.
+RC=0
+METRIC_LINES=()
+for i in "${!REPOS[@]}"; do
+  repo=${REPOS[$i]}
+  if [ "$REPO_COUNT" -eq 1 ]; then
+    CMD=(pgbackrest --stanza="$STANZA" --type="$TYPE" backup)
+  else
+    CMD=(pgbackrest --stanza="$STANZA" --repo="$repo" --type="$TYPE" backup)
+  fi
+  echo "pgbackrest-backup: starting --type=$TYPE backup of $STANZA (repo$repo)"
+  START=$(date +%s)
+  "${CMD[@]}"
+  rc=$?
+  END=$(date +%s)
+  DURATION=$((END - START))
+  if [ "$rc" -eq 0 ]; then
+    echo "pgbackrest-backup: repo$repo --type=$TYPE OK in ${DURATION}s"
+    LAST_SUCCESS=$END
+  else
+    echo "pgbackrest-backup: repo$repo --type=$TYPE FAILED rc=$rc after ${DURATION}s — continuing to the next repo" >&2
+    [ "$RC" -ne 0 ] || RC=$rc
+    # Carry the previous success forward so the series ages instead of
+    # disappearing (an absent series is what alert `absent()` guards
+    # miss; an old timestamp is what a staleness rule sees).
+    #
+    # THE ONE INPUT AN EMPTINESS TEST CANNOT VET. This value comes from
+    # this producer's OWN previous output, so whatever it holds is
+    # re-published on every subsequent failed run until the next
+    # success. A corrupt-but-non-empty carry — a truncated write, a
+    # partially overwritten line, a psql-style command tag from some
+    # future edit — therefore self-perpetuates, and node_exporter does
+    # not skip an unparseable line: it rejects the WHOLE file (r1
+    # 2026-09-10, where one bad value took 127 unrelated series off the
+    # host for ~20 minutes). One bad byte here would take every
+    # pgbackrest gauge down and KEEP them down.
+    #
+    # A unix timestamp is digits. Anything else is dropped and named,
+    # which leaves the series ABSENT for this run — the same state the
+    # `-z` branch below already produces when there is nothing to carry,
+    # and the state stellarindex_timescale_backup_none_24h reads.
+    LAST_SUCCESS=$(grep -E "^stellarindex_pgbackrest_backup_last_success_unix\{repo=\"$repo\"\} " "$METRIC_OUT" 2>/dev/null | awk 'END { print $2 }')
+    case "${LAST_SUCCESS:-}" in
+      '') ;;
+      *[!0-9]*)
+        echo "pgbackrest-backup: WARN previous last_success for repo$repo is not a unix timestamp ('$LAST_SUCCESS') — dropping it rather than re-publishing a value node_exporter would reject the whole file over" >&2
+        LAST_SUCCESS=""
+        ;;
+    esac
+  fi
+  [ -z "${LAST_SUCCESS:-}" ] || METRIC_LINES+=("stellarindex_pgbackrest_backup_last_success_unix{repo=\"$repo\"} $LAST_SUCCESS")
+  METRIC_LINES+=("stellarindex_pgbackrest_backup_last_rc{repo=\"$repo\"} $rc")
+  METRIC_LINES+=("stellarindex_pgbackrest_backup_duration_seconds{repo=\"$repo\"} $DURATION")
+  PENDING=("${REPOS[@]:i+1}")
+  emit_metrics
+done
 
 if [ "$RC" -ne 0 ]; then
   echo "pgbackrest-backup: FAILED — at least one repo backup failed (first rc=$RC)" >&2

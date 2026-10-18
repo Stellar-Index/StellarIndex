@@ -62,6 +62,7 @@ for a in "$@"; do
   case "$a" in --repo=*) r="${a#--repo=}";;
   esac
 done
+[[ -n "${PGBR_SNAP_REPO:-}" && "${r:-}" == "$PGBR_SNAP_REPO" ]] && cp "$PGBR_SNAP_SRC" "$PGBR_SNAP_DST"
 [[ "${PGBR_FAIL_ALL:-0}" == 1 ]] && exit 43
 for f in ${PGBR_FAIL_REPOS:-}; do [[ "${r:-}" == "$f" ]] && exit 42; done
 exit 0
@@ -142,6 +143,22 @@ if [[ "$(metric stellarindex_pgbackrest_backup_last_rc 1)" == 42 && "$(metric st
 if [[ -n "$T1" && "$(metric stellarindex_pgbackrest_backup_last_success_unix 1)" == "$T1" ]]; then ok "repo1 last_success carried forward from previous run"; else bad "repo1 last_success $(metric stellarindex_pgbackrest_backup_last_success_unix 1) != $T1"; fi
 if [[ -n "$T2" && "$(metric stellarindex_pgbackrest_backup_last_success_unix 2 || echo 0)" -ge "$T2" ]]; then ok "repo2 last_success refreshed"; else bad "repo2 last_success not refreshed"; fi
 if [[ "$OUT" == *"repo1"*"FAILED"* ]]; then ok "failure named per repo in log"; else bad "log: $OUT"; fi
+
+# ─── 2b. the file is republished before the long repo2 run ─────────
+# The textfile-staleness alert fires at 24h; repo2 (off-site) runs for
+# hours, so publishing only at the end let the file age past it.
+echo "pgbackrest-backup-test: textfile republished after repo1, before repo2"
+PREV2_SUCCESS="$(metric stellarindex_pgbackrest_backup_last_success_unix 2)"
+PREV2_RC="$(metric stellarindex_pgbackrest_backup_last_rc 2)"
+SNAP="$TMP/mid-run.prom"; rm -f "$SNAP"
+sleep 1
+run "$TWO_REPO" 3 PGBR_SNAP_REPO=2 PGBR_SNAP_SRC="$PROM" PGBR_SNAP_DST="$SNAP"
+mid() { grep -E "^$1\{repo=\"$2\"\} " "$SNAP" | awk '{ print $2 }'; }
+NOW="$("$REAL_DATE" +%s)"
+M1="$(mid stellarindex_pgbackrest_backup_last_success_unix 1)"
+if [[ -r "$SNAP" && -n "$M1" && "$M1" -gt "${T1:-0}" && $((NOW - M1)) -lt 60 ]]; then ok "repo1 success published while repo2 still runs"; else bad "mid-run file: $(cat "$SNAP" 2>&1)"; fi
+if [[ -r "$SNAP" && "$(mid stellarindex_pgbackrest_backup_last_success_unix 2)" == "$PREV2_SUCCESS" && "$(mid stellarindex_pgbackrest_backup_last_rc 2)" == "$PREV2_RC" ]]; then ok "repo2 keeps its previous lines until it finishes"; else bad "mid-run repo2: $(cat "$SNAP" 2>&1)"; fi
+if [[ -r "$SNAP" && "$(grep -c '^stellarindex_pgbackrest_backup_unparseable_lines 0$' "$SNAP")" == 1 ]]; then ok "mid-run file passed the publication guard"; else bad "mid-run tally: $(cat "$SNAP" 2>&1)"; fi
 
 # ─── 3. single-repo conf → byte-identical legacy command ────────────
 echo "pgbackrest-backup-test: single-repo conf keeps the legacy command"
