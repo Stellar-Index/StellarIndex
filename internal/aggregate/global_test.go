@@ -891,3 +891,14 @@ func TestRejectAggregatorOutliers_BandEdgeIsInclusive(t *testing.T) {
 		}
 	}
 }
+
+// mkAggRow builds an aggregator-class OracleUpdate whose raw integer
+// price is `priceScaled` at `decimals` fixed-point.
+func mkAggRow(source string, priceScaled int64, decimals uint8) canonical.OracleUpdate {
+	return canonical.OracleUpdate{
+		Source:    source,
+		Timestamp: time.Now().UTC(),
+		Price:     canonical.NewAmount(big.NewInt(priceScaled)),
+		Decimals:  decimals,
+	}
+}

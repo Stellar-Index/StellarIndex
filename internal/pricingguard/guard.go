@@ -11,7 +11,7 @@
 // [GuardServedVWAP1mAt]). TestRawPrices1mReadersPassTheGuard (cmd/stellarindex-api) fails on a raw
 // prices_1m read with no guard entry point or missing from this list.
 //
-// It wraps the pure exact-rational band decision ([aggregate.GuardServedVWAP]) and sits above
+// It wraps the pure exact-rational band decision ([robuststat.GuardServedVWAP]) and sits above
 // storage because timescale imports aggregate; the reverse would cycle.
 package pricingguard
 
@@ -21,7 +21,8 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
+	"github.com/Stellar-Index/StellarIndex/internal/robuststat"
+
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -191,7 +192,7 @@ func SelectGuardedVWAP1m(candidate timescale.Vwap1mRow, rows []timescale.Vwap1mR
 }
 
 // selectGuardedVWAP1m is [SelectGuardedVWAP1m] plus the low-confidence signal, true only when the
-// candidate is ACCEPTED against an empty baseline ([aggregate.ServedBaselineValidated] false:
+// candidate is ACCEPTED against an empty baseline ([robuststat.ServedBaselineValidated] false:
 // nothing within [BaselineMaxAge] before it). Rejected or unparseable candidates are false.
 func selectGuardedVWAP1m(candidate timescale.Vwap1mRow, rows []timescale.Vwap1mRow) (served timescale.Vwap1mRow, rejected, lowConfidence bool) {
 	candRat, ok := new(big.Rat).SetString(candidate.VWAP)
@@ -213,10 +214,10 @@ func selectGuardedVWAP1m(candidate timescale.Vwap1mRow, rows []timescale.Vwap1mR
 			trailing = append(trailing, nil)
 		}
 	}
-	accept, lkgIdx := aggregate.GuardServedVWAP(candRat, trailing)
+	accept, lkgIdx := robuststat.GuardServedVWAP(candRat, trailing)
 	if accept {
 		// Accepting against an empty baseline is an unvalidated fail-open: serve, flag low-confidence.
-		return candidate, false, !aggregate.ServedBaselineValidated(trailing)
+		return candidate, false, !robuststat.ServedBaselineValidated(trailing)
 	}
 	return trailingRows[lkgIdx], true, false
 }

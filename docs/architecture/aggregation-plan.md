@@ -78,8 +78,8 @@ bucket, a bare Σquote/Σbase CAGG (migration 0002) that skips the chain
 above. A pair with no `prices_1m` rows (a synthetic `native/fiat:USD`)
 falls through to Redis; any pair with real rows (`crypto:XLM/fiat:USD` via
 Kraken/Coinbase books, a Soroban token quoted in `USDC-GA5Z…`) is served
-from the CAGG. That read is wrapped in `aggregate.GuardServedVWAP`
-(`internal/aggregate/served_guard.go`, wired in `cmd/stellarindex-api`
+from the CAGG. That read is wrapped in `robuststat.GuardServedVWAP`
+(`internal/robuststat/served_guard.go`, wired in `cmd/stellarindex-api`
 `storePriceReader.guardServedVWAP1m`): it compares the bucket against the
 UNION of a wide ratio band and a MAD band over the pair's recent closed
 buckets and, when grossly off, serves the newest clean trailing bucket.

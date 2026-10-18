@@ -5,6 +5,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/robuststat"
+
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
@@ -89,7 +91,7 @@ var localScaleRelFloor = big.NewRat(1, 400)
 var localScaleRelCeiling = big.NewRat(1, 100)
 
 func newRobustRef(prices []*big.Rat, w []int64) *robustRef {
-	c, s := weightedCentreScale(prices, w)
+	c, s := robuststat.WeightedCentreScale(prices, w)
 	return &robustRef{centre: c, scale: s}
 }
 
@@ -113,7 +115,7 @@ func newLocalRef(prices []*big.Rat, w []int64) *robustRef {
 // score returns the ratio-symmetric deviation of p from centre ([symmetricDev]) over scale. A zero scale scores an exact match 0
 // and anything else ok=false; so does a non-positive price against a positive centre.
 func (r *robustRef) score(p *big.Rat) (*big.Rat, bool) {
-	dev := symmetricDev(p, r.centre)
+	dev := robuststat.SymmetricDev(p, r.centre)
 	if dev == nil {
 		return nil, false
 	}

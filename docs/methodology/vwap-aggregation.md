@@ -91,7 +91,7 @@ there are **two** paths:
    books).
 
 To keep the direct path honest, that read is wrapped in a
-**serving-sanity guard** (`internal/aggregate.GuardServedVWAP`): the
+**serving-sanity guard** (`internal/robuststat.GuardServedVWAP`): the
 candidate bucket's VWAP is checked against a robust bound — the union of a
 wide **ratio band** and a **MAD band** — over the pair's recent trailing
 closed buckets. A candidate that is grossly off (an order-of-magnitude

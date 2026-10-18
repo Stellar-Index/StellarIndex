@@ -1,19 +1,18 @@
-package aggregate
+// Package robuststat holds the exact median / 1.4826-scaled MAD primitives behind every served-price guard; a leaf so storage can use them.
+// MAD rather than mean/sigma, which is masking-vulnerable. Exact *big.Rat (ADR-0003): no float64 on the value path.
+package robuststat
 
 import (
 	"math/big"
 	"sort"
 )
 
-// Shared robust-statistics primitives for the served-price guards (FilterOutliers, rejectAggregatorOutliers, GuardServedVWAP): the median
-// and the 1.4826-scaled MAD, preferred over mean/sigma, which is masking-vulnerable. Exact *big.Rat (ADR-0003): no float64 on the value path.
-
 // madToStd is 1.4826 = 1/Phi^-1(0.75), rescaling a MAD to a sigma-equivalent for normal data, held as the exact rational 7413/5000.
 var madToStd = big.NewRat(7413, 5000)
 
-// medianRat returns the exact median of non-empty vals as a fresh *big.Rat without mutating input; even length gives the mean of the
+// Median returns the exact median of non-empty vals as a fresh *big.Rat without mutating input; even length gives the mean of the
 // middle two. Empty input returns nil rather than panicking on the served-price path.
-func medianRat(vals []*big.Rat) *big.Rat {
+func Median(vals []*big.Rat) *big.Rat {
 	if len(vals) == 0 {
 		return nil
 	}
@@ -28,10 +27,10 @@ func medianRat(vals []*big.Rat) *big.Rat {
 	return sum.Quo(sum, big.NewRat(2, 1))
 }
 
-// medianMemberRat is a median that is ALWAYS one of the inputs: for even counts the LOWER central value (fail-low), never an averaged
-// midpoint of disagreeing routes. Used for the served cross-rate composite ([highestConfidencePrice]); equals medianRat when the
+// MedianMember is a median that is ALWAYS one of the inputs: for even counts the LOWER central value (fail-low), never an averaged
+// midpoint of disagreeing routes. Used for the served cross-rate composite (aggregate's highestConfidencePrice); equals Median when the
 // central values agree. Empty input returns nil.
-func medianMemberRat(vals []*big.Rat) *big.Rat {
+func MedianMember(vals []*big.Rat) *big.Rat {
 	if len(vals) == 0 {
 		return nil
 	}
@@ -41,22 +40,22 @@ func medianMemberRat(vals []*big.Rat) *big.Rat {
 	return new(big.Rat).Set(s[(len(s)-1)/2])
 }
 
-// madRat returns the exact (unscaled) median absolute deviation of
+// MAD returns the exact (unscaled) median absolute deviation of
 // vals about centre.
-func madRat(vals []*big.Rat, centre *big.Rat) *big.Rat {
+func MAD(vals []*big.Rat, centre *big.Rat) *big.Rat {
 	devs := make([]*big.Rat, len(vals))
 	for i, v := range vals {
 		d := new(big.Rat).Sub(v, centre)
 		devs[i] = d.Abs(d)
 	}
-	return medianRat(devs)
+	return Median(devs)
 }
 
-// weightedMedianRat is [medianRat] of the multiset holding vals[i] w[i] times, so a w[i]-trade summary row weighs as its trades;
-// nil w is medianRat. Every w[i] must be >= 1.
-func weightedMedianRat(vals []*big.Rat, w []int64) *big.Rat {
+// WeightedMedian is [Median] of the multiset holding vals[i] w[i] times, so a w[i]-trade summary row weighs as its trades;
+// nil w is Median. Every w[i] must be >= 1.
+func WeightedMedian(vals []*big.Rat, w []int64) *big.Rat {
 	if w == nil {
-		return medianRat(vals)
+		return Median(vals)
 	}
 	if len(vals) == 0 {
 		return nil
@@ -87,24 +86,24 @@ func weightedMedianRat(vals []*big.Rat, w []int64) *big.Rat {
 // one price; without it the band collapses to a point and drops every honestly-differing print. Mirrors [robustBand] in served_guard.go.
 var zeroScaleRelFloor = big.NewRat(1, 200)
 
-// robustCentreScale returns the median and the sigma-equivalent scale (madToStd*MAD) of vals, all exact; empty vals returns nil, nil.
+// CentreScale returns the median and the sigma-equivalent scale (madToStd*MAD) of vals, all exact; empty vals returns nil, nil.
 // When MAD is 0 the scale falls back to [zeroScaleRelFloor]*|centre| (a zero centre keeps the zero scale).
-func robustCentreScale(vals []*big.Rat) (centre, scale *big.Rat) {
-	return weightedCentreScale(vals, nil)
+func CentreScale(vals []*big.Rat) (centre, scale *big.Rat) {
+	return WeightedCentreScale(vals, nil)
 }
 
-// weightedCentreScale is [robustCentreScale] over vals with vals[i] counted w[i] times; nil w counts each once.
-func weightedCentreScale(vals []*big.Rat, w []int64) (centre, scale *big.Rat) {
+// WeightedCentreScale is [CentreScale] over vals with vals[i] counted w[i] times; nil w counts each once.
+func WeightedCentreScale(vals []*big.Rat, w []int64) (centre, scale *big.Rat) {
 	if len(vals) == 0 {
 		return nil, nil
 	}
-	centre = weightedMedianRat(vals, w)
+	centre = WeightedMedian(vals, w)
 	devs := make([]*big.Rat, len(vals))
 	for i, v := range vals {
 		d := new(big.Rat).Sub(v, centre)
 		devs[i] = d.Abs(d)
 	}
-	scale = new(big.Rat).Mul(madToStd, weightedMedianRat(devs, w))
+	scale = new(big.Rat).Mul(madToStd, WeightedMedian(devs, w))
 	if scale.Sign() == 0 {
 		floor := new(big.Rat).Mul(zeroScaleRelFloor, centre)
 		floor.Abs(floor)
@@ -118,7 +117,7 @@ func weightedCentreScale(vals []*big.Rat, w []int64) (centre, scale *big.Rat) {
 // symmetricDev returns p's deviation from centre in RATIO space (ADR-0046 §1): above centre p-centre; below it p is mirrored to centre^2/p first,
 // so the band is [centre^2/(centre+K*scale), centre+K*scale]; an additive band goes blind below once K*scale >= centre. Exact *big.Rat.
 // Returns nil for a non-positive p against a positive centre (callers treat nil as rejected); a non-positive centre gets the additive deviation.
-func symmetricDev(p, centre *big.Rat) *big.Rat {
+func SymmetricDev(p, centre *big.Rat) *big.Rat {
 	if p == nil || centre == nil {
 		return nil
 	}

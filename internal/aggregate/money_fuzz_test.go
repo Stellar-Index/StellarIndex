@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/robuststat"
+
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
@@ -416,7 +418,7 @@ func FuzzRobustStats(f *testing.F) {
 	f.Fuzz(func(t *testing.T, data []byte) {
 		vals := fuzzRats(data)
 		if len(vals) == 0 {
-			if medianRat(nil) != nil || medianMemberRat(nil) != nil {
+			if robuststat.Median(nil) != nil || robuststat.MedianMember(nil) != nil {
 				t.Fatal("median of empty must be nil")
 			}
 			return
@@ -426,7 +428,7 @@ func FuzzRobustStats(f *testing.F) {
 			snap[i] = v.RatString()
 		}
 		n := len(vals)
-		m := medianRat(vals)
+		m := robuststat.Median(vals)
 		below, above := 0, 0
 		for _, v := range vals {
 			switch v.Cmp(m) {
@@ -439,7 +441,7 @@ func FuzzRobustStats(f *testing.F) {
 		if 2*below > n || 2*above > n {
 			t.Fatalf("median %s: %d below, %d above of %d", m.RatString(), below, above, n)
 		}
-		mm := medianMemberRat(vals)
+		mm := robuststat.MedianMember(vals)
 		member := false
 		for _, v := range vals {
 			if v.Cmp(mm) == 0 {
@@ -454,11 +456,11 @@ func FuzzRobustStats(f *testing.F) {
 		for i := range vals {
 			rev[n-1-i] = vals[i]
 		}
-		if medianRat(rev).Cmp(m) != 0 || medianMemberRat(rev).Cmp(mm) != 0 {
+		if robuststat.Median(rev).Cmp(m) != 0 || robuststat.MedianMember(rev).Cmp(mm) != 0 {
 			t.Fatal("median depends on input order")
 		}
 		// MAD: the median of |v − m|, checked the same way.
-		mad := madRat(vals, m)
+		mad := robuststat.MAD(vals, m)
 		if mad.Sign() < 0 {
 			t.Fatalf("negative MAD %s", mad.RatString())
 		}
@@ -476,7 +478,7 @@ func FuzzRobustStats(f *testing.F) {
 		if 2*b2 > n || 2*a2 > n {
 			t.Fatalf("MAD %s is not the median deviation", mad.RatString())
 		}
-		centre, scale := robustCentreScale(vals)
+		centre, scale := robuststat.CentreScale(vals)
 		if centre.Cmp(m) != 0 {
 			t.Fatalf("robust centre %s, want %s", centre.RatString(), m.RatString())
 		}
@@ -493,7 +495,7 @@ func FuzzRobustStats(f *testing.F) {
 		for i, v := range vals {
 			neg[i] = new(big.Rat).Neg(v)
 		}
-		if nc, ns := robustCentreScale(neg); nc.Cmp(new(big.Rat).Neg(m)) != 0 || ns.Cmp(scale) != 0 {
+		if nc, ns := robuststat.CentreScale(neg); nc.Cmp(new(big.Rat).Neg(m)) != 0 || ns.Cmp(scale) != 0 {
 			t.Fatalf("negated input: centre %s scale %s, want %s / %s",
 				nc.RatString(), ns.RatString(), new(big.Rat).Neg(m).RatString(), scale.RatString())
 		}
@@ -505,7 +507,7 @@ func FuzzRobustStats(f *testing.F) {
 
 		// symmetricDev over every value against the median.
 		for _, p := range vals {
-			dev := symmetricDev(p, m)
+			dev := robuststat.SymmetricDev(p, m)
 			add := new(big.Rat).Sub(p, m)
 			add.Abs(add)
 			if dev == nil || dev.Cmp(add) < 0 {
@@ -514,7 +516,7 @@ func FuzzRobustStats(f *testing.F) {
 			// Mirror: dev(p) == dev(m²/p) — a ½× and a 2× are equally outlying.
 			mirror := new(big.Rat).Mul(m, m)
 			mirror.Quo(mirror, p)
-			if md := symmetricDev(mirror, m); md.Cmp(dev) != 0 {
+			if md := robuststat.SymmetricDev(mirror, m); md.Cmp(dev) != 0 {
 				t.Fatalf("symmetricDev not mirror-symmetric: dev(%s)=%s dev(%s)=%s",
 					p.RatString(), dev.RatString(), mirror.RatString(), md.RatString())
 			}
@@ -522,7 +524,7 @@ func FuzzRobustStats(f *testing.F) {
 				t.Fatalf("symmetricDev above centre must be additive: %s vs %s", dev.RatString(), add.RatString())
 			}
 		}
-		if symmetricDev(new(big.Rat), m) != nil || symmetricDev(big.NewRat(-1, 1), m) != nil {
+		if robuststat.SymmetricDev(new(big.Rat), m) != nil || robuststat.SymmetricDev(big.NewRat(-1, 1), m) != nil {
 			t.Fatal("non-positive print against a positive centre must have no finite deviation")
 		}
 		// A non-positive centre has nothing to mirror around: plain |p − c|.
@@ -530,7 +532,7 @@ func FuzzRobustStats(f *testing.F) {
 			for _, p := range []*big.Rat{vals[0], new(big.Rat).Neg(vals[0])} {
 				add := new(big.Rat).Sub(p, c)
 				add.Abs(add)
-				if d := symmetricDev(p, c); d == nil || d.Cmp(add) != 0 {
+				if d := robuststat.SymmetricDev(p, c); d == nil || d.Cmp(add) != 0 {
 					t.Fatalf("symmetricDev(%s, %s) = %v, want additive %s", p.RatString(), c.RatString(), d, add.RatString())
 				}
 			}
@@ -1015,8 +1017,8 @@ func FuzzRejectAggregatorOutliers(f *testing.F) {
 			}
 			return
 		}
-		if len(vals)%2 == 1 && medianRat(vals).Sign() > 0 {
-			m := medianRat(vals)
+		if len(vals)%2 == 1 && robuststat.Median(vals).Sign() > 0 {
+			m := robuststat.Median(vals)
 			kept := false
 			for i := range got {
 				if v, ok := scaledAggregatorRat(&got[i]); ok && v.Cmp(m) == 0 {

@@ -3,6 +3,8 @@ package aggregate
 import (
 	"math/big"
 
+	"github.com/Stellar-Index/StellarIndex/internal/robuststat"
+
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
@@ -30,7 +32,7 @@ func FilterOutliers(trades []canonical.Trade, sigma float64) []canonical.Trade {
 		return keepByIndex(trades, validIdx)
 	}
 
-	centre, scale := robustCentreScale(prices)
+	centre, scale := robuststat.CentreScale(prices)
 	// A tight dust cluster has a tiny non-zero MAD; without the local filter's floor an ordinary move counts as an outlier.
 	if floor := new(big.Rat).Abs(new(big.Rat).Mul(localScaleRelFloor, centre)); floor.Cmp(scale) > 0 {
 		scale = floor
@@ -46,7 +48,7 @@ func FilterOutliers(trades []canonical.Trade, sigma float64) []canonical.Trade {
 
 	kept := make([]int, 0, len(validIdx))
 	for k, p := range prices {
-		dev := symmetricDev(p, centre)
+		dev := robuststat.SymmetricDev(p, centre)
 		if dev == nil || dev.Cmp(threshold) > 0 {
 			continue // outlier — drop
 		}
