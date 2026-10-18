@@ -20,6 +20,26 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.21] - 2026-10-18
+
+No migrations. No `pkg/*` break.
+
+### Added
+
+- **explorer:** the asset holders tab has a paged Entry changes panel (trustline, claimable-balance and pool changes with the balance after). It is hidden for native XLM (#3590).
+- **api:** `GET /v1/accounts/{g_strkey}/signer-on` and a "Signer on" panel list the accounts a key signs for. `ch-entry-index` writes the `signer` role. The route answers 503 `signer-index-not-built` until the `signer_index` watermark exists, so after deploy run `ch-entry-index -from <lake first ledger> -write` once (#3592).
+
+### Fixed
+
+- **aggregator:** the trade-path USD leg is guarded against a single outlier minute. The newest 41 leg minutes go through the same robust check as the served VWAP, and an XLM-leg tie between asset forms resolves in preference order (#3595).
+- **sep1:** a domain counts as reached only when its last attempt succeeded, so long-dead domains no longer trip the systemic-failure verdict (#3594).
+- **ops:** the pgBackRest wrapper republishes its textfile after every repo, so the off-site repo2 run no longer ages the file past 24h (#3593).
+- **ansible:** queued scheduled heavy jobs start in arrival order instead of racing for the lock (#3596).
+
+### Changed
+
+- **explorer:** an asset's entry-changes first page is cached, cut per limit and prewarmed (#3588).
+
 ## [v0.116.20] - 2026-10-18
 
 No migrations. No `pkg/*` break.
@@ -67,9 +87,3 @@ Migrations 0217 and 0218, both additive. No `pkg/*` break.
 ### Fixed
 
 - `stellarindex_trade_inserts_total` no longer counts a trade refused by the thin-market gate as `usd_volume_populated="no"` when its rate came from a cached miss that outlived the hourly substance verdict; bursts on thin pairs had pulled the on-chain USD-volume coverage ratio under its alert threshold (#3567).
-
-## [v0.116.16] - 2026-10-17
-
-### Changed
-
-- `stellarindex_trade_inserts_total` labels a live trade left unpriced by a failed USD resolver read `usd_volume_populated="error"` instead of `"no"`; it still counts against on-chain USD-volume coverage (#3565).
