@@ -7,6 +7,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // StorePriceReader's `now func() time.Time` and `vwapFreshness time.Duration` seams exist only to
@@ -164,5 +165,27 @@ func TestStorePriceReaderGuardedSnapshotFlagsSubstitutionStale(t *testing.T) {
 				t.Errorf("stale = %v, want %v", stale, tc.wantStale)
 			}
 		})
+	}
+}
+
+// TestStorePriceReaderLastTradeSince: the bound must be stable within a UTC day (one statement text, one cached plan) and never
+// narrower than LatestVWAPWindow.
+func TestStorePriceReaderLastTradeSince(t *testing.T) {
+	at := func(ts time.Time) time.Time {
+		return StorePriceReader{Now: func() time.Time { return ts }}.lastTradeSince()
+	}
+	morning := time.Date(2026, 10, 18, 0, 0, 1, 0, time.UTC)
+	evening := time.Date(2026, 10, 18, 23, 59, 59, 0, time.FixedZone("x", -3*3600))
+	want := time.Date(2025, 9, 13, 0, 0, 0, 0, time.UTC)
+	if got := at(morning); !got.Equal(want) {
+		t.Errorf("lastTradeSince(%v) = %v, want %v", morning, got, want)
+	}
+	if got := at(evening.Add(-3 * time.Hour)); !got.Equal(want) {
+		t.Errorf("lastTradeSince later the same UTC day = %v, want %v", got, want)
+	}
+	for _, now := range []time.Time{morning, evening} {
+		if got := at(now); got.After(now.Add(-timescale.LatestVWAPWindow)) {
+			t.Errorf("lastTradeSince(%v) = %v narrows the %v window", now, got, timescale.LatestVWAPWindow)
+		}
 	}
 }

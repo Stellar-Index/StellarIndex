@@ -245,6 +245,12 @@ func (r StorePriceReader) guardedSnapshot(
 	return snap, stale
 }
 
+// lastTradeSince is the last-trade walk's lower bound, floored to a UTC midnight so the statement text
+// holds for a day: Postgres then reuses a cached generic plan (~5ms) instead of planning ~100 trades chunks per miss (~50ms per alias).
+func (r StorePriceReader) lastTradeSince() time.Time {
+	return r.clock().Add(-timescale.LatestVWAPWindow).UTC().Truncate(24 * time.Hour)
+}
+
 func (r StorePriceReader) clock() time.Time {
 	if r.Now != nil {
 		return r.Now()
@@ -290,7 +296,7 @@ func (r StorePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 	// served stale=true. Bounded by the primary path's 400-day lookback: with the substance gate on
 	// (24h window by default) a pair idle that long is withheld anyway, and the unbounded walk cost
 	// a miss up to 1.6s.
-	trades, err := r.S.LatestTradesForPair(ctx, pair, 1, r.clock().Add(-timescale.LatestVWAPWindow))
+	trades, err := r.S.LatestTradesForPair(ctx, pair, 1, r.lastTradeSince())
 	if err != nil {
 		return v1.PriceSnapshot{}, nil, false, err
 	}
