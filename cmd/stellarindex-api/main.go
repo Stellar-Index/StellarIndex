@@ -1099,6 +1099,22 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		}
 	}()
 
+	bgWG.Add(1)
+	go func() {
+		defer bgWG.Done()
+		defer recoverBackgroundWorker(logger, "prewarm-asset-list")
+		t := time.NewTicker(v1.AssetListPrewarmCadence)
+		defer t.Stop()
+		for {
+			apiSrv.PrewarmAssetList(rootCtx)
+			select {
+			case <-rootCtx.Done():
+				return
+			case <-t.C:
+			}
+		}
+	}()
+
 	// Own goroutine: a full sweep is minutes of serial work. On-demand builds die at the request
 	// deadline, so every protocol and window is warmed ahead. The sweep restarts after the
 	// previous one ends (sleep, not a ticker, so sweeps never overlap) and stays inside the

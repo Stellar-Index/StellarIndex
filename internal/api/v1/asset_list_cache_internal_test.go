@@ -273,3 +273,32 @@ func TestAssetDetailResponseCache_EvictionPrefersExpired(t *testing.T) {
 		t.Fatalf("the fresh entry was not retained after evicting expired entries")
 	}
 }
+
+// A client polling the default page minutes apart lands past the max age every time and pays the inline build; the prewarm,
+// run each TTL, keeps the page refreshed so that client is served a HIT.
+func TestPrewarmAssetList_KeepsDefaultPageWarm(t *testing.T) {
+	srv, reader, clock := newCountingListingServer(t, &countingDirectory{})
+
+	srv.PrewarmAssetList(context.Background())
+	if got := getAssetList(t, srv, "/v1/assets"); got.cache != "HIT" {
+		t.Fatalf("after a cold prewarm: cache=%q, want HIT (prewarm key must match the handler's)", got.cache)
+	}
+
+	clock.advance(assetListCacheTTL + time.Second)
+	srv.PrewarmAssetList(context.Background())
+	deadline := time.Now().Add(5 * time.Second)
+	for getAssetList(t, srv, "/v1/assets").stale {
+		if time.Now().After(deadline) {
+			t.Fatal("prewarm past the TTL never refreshed the page")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if n := reader.lists.Load(); n != 2 {
+		t.Errorf("rows read %d times, want 2 (cold prewarm + one refresh)", n)
+	}
+	clock.advance(assetListCacheMaxAge - assetListCacheTTL)
+	if got := getAssetList(t, srv, "/v1/assets"); got.cache != "HIT" {
+		t.Errorf("past the first build's max age: cache=%q, want a HIT on the refreshed page", got.cache)
+	}
+}
