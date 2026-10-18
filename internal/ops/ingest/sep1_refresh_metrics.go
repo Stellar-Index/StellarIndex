@@ -23,6 +23,10 @@ var sep1FailureReasons = []string{
 	"invalid_domain", "payload", "domain", "lake", "write", "other",
 }
 
+// sep1DomainAnswered are the reasons that need an HTTP response from the domain: egress worked, so they
+// never count toward the systemic verdict, however many domains on one host fail them together.
+var sep1DomainAnswered = map[string]bool{"http": true, "redirect": true, "parse": true, "too_large": true, "too_deep": true}
+
 type sep1FailureKey struct {
 	reason  string
 	reached bool
@@ -51,7 +55,7 @@ func (s *sep1RunStats) record(c timescale.IssuerSep1Candidate, outcome sep1Outco
 	if outcome == sep1Stored {
 		return
 	}
-	if c.Reached {
+	if c.Reached && !sep1DomainAnswered[reason] {
 		s.regressed++
 	}
 	if s.failures == nil {
@@ -135,7 +139,7 @@ func sep1RefreshTextfile(s sep1RunStats, systemic bool, now time.Time) string {
 	fmt.Fprintf(&b, "stellarindex_sep1_refresh_issuers{outcome=%q} %d\n", "failed", s.failed)
 	fmt.Fprintf(&b, "stellarindex_sep1_refresh_issuers{outcome=%q} %d\n", "our_fault", s.ourFault)
 	fmt.Fprintf(&b, "# HELP stellarindex_sep1_refresh_reached Attempted issuers whose domain served a stellar.toml at its last attempt: the denominator a regression is judged against.\n# TYPE stellarindex_sep1_refresh_reached gauge\nstellarindex_sep1_refresh_reached %d\n", s.reached)
-	fmt.Fprintf(&b, "# HELP stellarindex_sep1_refresh_regressed Reached issuers that failed in the most recent run.\n# TYPE stellarindex_sep1_refresh_regressed gauge\nstellarindex_sep1_refresh_regressed %d\n", s.regressed)
+	fmt.Fprintf(&b, "# HELP stellarindex_sep1_refresh_regressed Reached issuers that failed in the most recent run without an HTTP answer from their domain.\n# TYPE stellarindex_sep1_refresh_regressed gauge\nstellarindex_sep1_refresh_regressed %d\n", s.regressed)
 	fmt.Fprintf(&b, "# HELP stellarindex_sep1_refresh_failures Failed issuers of the most recent run by reason and by whether the domain had served a stellar.toml before; every reason is listed, 0 when none.\n# TYPE stellarindex_sep1_refresh_failures gauge\n")
 	for _, reason := range sep1FailureReasons {
 		for _, reached := range []bool{true, false} {
