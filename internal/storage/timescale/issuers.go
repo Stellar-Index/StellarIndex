@@ -183,15 +183,15 @@ type IssuerAsset struct {
 type IssuerSep1Candidate struct {
 	GStrkey    string
 	HomeDomain string
-	// Reached: the row holds a payload, so this home_domain has served a
-	// stellar.toml before (a domain change clears the payload).
+	// Reached: this home_domain served a stellar.toml at its last attempt (payload held, no
+	// failure since). A domain already on the retry ladder is not reached: its failure is not news.
 	Reached bool
 }
 
 // IssuerSep1CandidateByStrkey returns the (g_strkey, home_domain) pair for one issuer for `sep1-refresh -issuer <g>`; sql.ErrNoRows for
 // an unknown issuer, and an error when it has no home_domain.
 func (s *Store) IssuerSep1CandidateByStrkey(ctx context.Context, gStrkey string) (IssuerSep1Candidate, error) {
-	const q = `SELECT g_strkey, COALESCE(home_domain, ''), sep1_payload IS NOT NULL FROM issuers WHERE g_strkey = $1`
+	const q = `SELECT g_strkey, COALESCE(home_domain, ''), sep1_payload IS NOT NULL AND COALESCE(sep1_consecutive_failures, 0) = 0 FROM issuers WHERE g_strkey = $1`
 	var c IssuerSep1Candidate
 	if err := s.db.QueryRowContext(ctx, q, gStrkey).Scan(&c.GStrkey, &c.HomeDomain, &c.Reached); err != nil {
 		return IssuerSep1Candidate{}, fmt.Errorf("timescale: IssuerSep1CandidateByStrkey: %w", err)
@@ -217,7 +217,8 @@ func (s *Store) IssuersNeedingSep1Refresh(ctx context.Context, staleness time.Du
 	// `IS NULL OR <= NOW()` rather than COALESCE keeps a plain column predicate the planner can
 	// answer from issuers_sep1_refresh_queue_idx's INCLUDE payload.
 	const q = `
-        SELECT g_strkey, home_domain, sep1_payload IS NOT NULL
+        SELECT g_strkey, home_domain,
+               sep1_payload IS NOT NULL AND COALESCE(sep1_consecutive_failures, 0) = 0
           FROM issuers
          WHERE home_domain IS NOT NULL
            AND home_domain != ''

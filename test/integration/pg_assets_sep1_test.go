@@ -1746,8 +1746,8 @@ func TestSep1RetryBackoff(t *testing.T) {
 	})
 
 	t.Run("candidates report whether the domain has served a payload", func(t *testing.T) {
-		// The systemic verdict counts only reached domains; a never-reached
-		// one reading as reached would re-arm the testnet false alarm.
+		// The systemic verdict counts only reached domains; a never-reached or already-failing
+		// one reading as reached arms a false alarm.
 		ageSep1ResolvedAt(t, ctx, store, healthy, 40*24*time.Hour)
 		ageSep1ResolvedAt(t, ctx, store, recovered, 40*24*time.Hour)
 		got, err := store.IssuersNeedingSep1Refresh(ctx, 24*time.Hour, 100)
@@ -1769,6 +1769,19 @@ func TestSep1RetryBackoff(t *testing.T) {
 			if cerr != nil || c.Reached != want {
 				t.Errorf("IssuerSep1CandidateByStrkey(%s) = (Reached %v, %v), want Reached %v", g, c.Reached, cerr, want)
 			}
+		}
+
+		// A domain already failing keeps its payload but is not reached: on r1 732 of 750 due rows were
+		// dead domains on the ladder, and counting them made one ordinary night read as a systemic outage.
+		if _, ferr := store.MarkIssuerSep1Failed(ctx, recovered); ferr != nil {
+			t.Fatalf("MarkIssuerSep1Failed: %v", ferr)
+		}
+		if c, cerr := store.IssuerSep1CandidateByStrkey(ctx, recovered); cerr != nil || c.Reached {
+			t.Errorf("after a failure IssuerSep1CandidateByStrkey(recovered) = (Reached %v, %v), want false", c.Reached, cerr)
+		}
+		if _, err := store.SetIssuerSep1Payload(ctx, recovered, "litemint.store",
+			[]byte(`{"OrgName":"Litemint","OrgVerified":false}`)); err != nil {
+			t.Fatalf("SetIssuerSep1Payload: %v", err)
 		}
 	})
 

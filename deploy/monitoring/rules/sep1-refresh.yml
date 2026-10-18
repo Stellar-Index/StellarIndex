@@ -2,8 +2,8 @@
 # /var/lib/node_exporter/textfile_collector/sep1_refresh.prom. Every series is a gauge of
 # the most recent run, so each rate here is one run's fraction, held for 2h30m (three
 # consecutive runs) before it pages a ticket. The denominators are issuers whose domain
-# had served a stellar.toml before (`reached`): a never-answering domain is the issuer's
-# problem, not a regression. Runbook: docs/operations/runbooks/sep1-refresh.md.
+# served a stellar.toml at their last attempt (`reached`): a never-answering or already-failing
+# domain is the issuer's problem, not a regression. Runbook: docs/operations/runbooks/sep1-refresh.md.
 groups:
   - name: stellarindex.sep1_refresh
     interval: 60s

@@ -134,7 +134,7 @@ func sep1RefreshTextfile(s sep1RunStats, systemic bool, now time.Time) string {
 	fmt.Fprintf(&b, "stellarindex_sep1_refresh_issuers{outcome=%q} %d\n", "stored", s.stored)
 	fmt.Fprintf(&b, "stellarindex_sep1_refresh_issuers{outcome=%q} %d\n", "failed", s.failed)
 	fmt.Fprintf(&b, "stellarindex_sep1_refresh_issuers{outcome=%q} %d\n", "our_fault", s.ourFault)
-	fmt.Fprintf(&b, "# HELP stellarindex_sep1_refresh_reached Attempted issuers whose domain had served a stellar.toml before: the denominator a regression is judged against.\n# TYPE stellarindex_sep1_refresh_reached gauge\nstellarindex_sep1_refresh_reached %d\n", s.reached)
+	fmt.Fprintf(&b, "# HELP stellarindex_sep1_refresh_reached Attempted issuers whose domain served a stellar.toml at its last attempt: the denominator a regression is judged against.\n# TYPE stellarindex_sep1_refresh_reached gauge\nstellarindex_sep1_refresh_reached %d\n", s.reached)
 	fmt.Fprintf(&b, "# HELP stellarindex_sep1_refresh_regressed Reached issuers that failed in the most recent run.\n# TYPE stellarindex_sep1_refresh_regressed gauge\nstellarindex_sep1_refresh_regressed %d\n", s.regressed)
 	fmt.Fprintf(&b, "# HELP stellarindex_sep1_refresh_failures Failed issuers of the most recent run by reason and by whether the domain had served a stellar.toml before; every reason is listed, 0 when none.\n# TYPE stellarindex_sep1_refresh_failures gauge\n")
 	for _, reason := range sep1FailureReasons {
