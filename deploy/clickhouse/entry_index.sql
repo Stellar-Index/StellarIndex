@@ -12,7 +12,8 @@
 --   account_entry_ledgers — (account, role, ledger). owner rows come from
 --     the lake's account_id column (account/trustline/offer/data entries);
 --     claimant rows from decoding claimable-balance entries; sponsor rows
---     from decoding entries whose XDR tail carries a sponsor. account is the
+--     from decoding entries whose XDR tail carries a sponsor; signer rows
+--     from set_options operations that add or reweight an ed25519 signer. account is the
 --     raw 32-byte ed25519 key, not the G-strkey, so the key is fixed-width.
 --   asset_entry_ledgers — (asset, entry_type, ledger) with that ledger's
 --     created/updated/removed trustline change counts for the asset.
@@ -46,12 +47,17 @@
 CREATE TABLE IF NOT EXISTS stellar.account_entry_ledgers
 (
     account FixedString(32),
-    role    Enum8('owner' = 1, 'claimant' = 2, 'sponsor' = 3),
+    role    Enum8('owner' = 1, 'claimant' = 2, 'sponsor' = 3, 'signer' = 4),
     ledger  UInt32
 )
 ENGINE = ReplacingMergeTree
 PARTITION BY intDiv(ledger, 10000000)
 ORDER BY (account, role, ledger);
+
+-- IF NOT EXISTS keeps an older table's enum; the signer role (set_options) is appended in place, a metadata-only
+-- change ClickHouse allows on a sort-key column.
+ALTER TABLE stellar.account_entry_ledgers
+    MODIFY COLUMN role Enum8('owner' = 1, 'claimant' = 2, 'sponsor' = 3, 'signer' = 4);
 
 CREATE TABLE IF NOT EXISTS stellar.asset_entry_ledgers
 (
