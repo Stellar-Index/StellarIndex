@@ -14,6 +14,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // Freshness convention for this file's Latest* readers: each is a bare "most recent row per key"
@@ -241,19 +242,28 @@ func (s *Store) oracleLatestAllTime(ctx context.Context, keys []string, sourceFi
 }
 
 func (s *Store) refreshOracleLatestAllTime(key string, keys []string, sourceFilter string) {
+	stored := false
+	defer func() {
+		if rec := recover(); rec != nil {
+			worker.Report(nil, "oracle-latest-all-time-refresh", rec)
+		}
+		if !stored {
+			s.oracleAllTimeMu.Lock()
+			if e, ok := s.oracleAllTime[key]; ok {
+				e.refreshing = false
+			}
+			s.oracleAllTimeMu.Unlock()
+		}
+	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	rows, err := s.queryOracleLatest(ctx, oracleLatestAllTimeQuery, keys, sourceFilter)
 	if err != nil {
 		slog.Warn("timescale: oracle all-time latest refresh failed", "key", key, "err", err)
-		s.oracleAllTimeMu.Lock()
-		if e, ok := s.oracleAllTime[key]; ok {
-			e.refreshing = false
-		}
-		s.oracleAllTimeMu.Unlock()
 		return
 	}
 	s.storeOracleLatestAllTime(key, rows)
+	stored = true
 }
 
 func (s *Store) storeOracleLatestAllTime(key string, rows []canonical.OracleUpdate) {
