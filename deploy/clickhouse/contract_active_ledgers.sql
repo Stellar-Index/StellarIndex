@@ -31,17 +31,24 @@
 --
 -- OPERATOR CONTRACT: table-level presence + non-empty gates the fast path
 -- (the reader's requireRows probe refuses an entirely-empty table — MV
--- dropped/TRUNCATEd reads as "index unavailable"). PER-CONTRACT emptiness is
--- deliberately NOT trusted as "no events": ExplorerReader.ContractEventsRecent
--- (internal/storage/clickhouse/explorer_reader.go) treats an empty
--- per-contract walk as "unknown, fall back" and re-reads contract_events
--- directly, because the table-global probe cannot see PARTIAL backfill
--- coverage. Apply this DDL (the MV covers everything ingested from that
--- moment), then run the windowed historical backfill to genesis:
+-- dropped/TRUNCATEd reads as "index unavailable"). PER-CONTRACT emptiness
+-- and a short bounded page are trusted ONLY once the backfill has recorded
+-- its genesis watermark (stellar.entry_history_watermark, name
+-- 'contract_active_ledgers'): ch-contract-ledgers-backfill records it only
+-- for a run from ledger 2 with no -to, reaching the raw lake tip, while the
+-- MV existed (settled 10 min) and was not recreated. Without the watermark
+-- ExplorerReader.ContractEventsRecent
+-- (internal/storage/clickhouse/explorer_reader.go) treats an empty or short
+-- walk as "unknown, fall back" and re-reads contract_events directly,
+-- because the table-global probe cannot see PARTIAL backfill coverage.
+-- Dropping or recreating the MV voids the proof: delete the watermark row in
+-- the same change. Apply this DDL (the MV covers everything ingested from
+-- that moment), wait 10 min, then run the windowed historical backfill to
+-- genesis:
 --
 --   /usr/local/sbin/run-heavy-job.sh contract-ledgers-backfill \
 --     /usr/local/bin/stellarindex-ops ch-contract-ledgers-backfill \
---     -ch-addr 127.0.0.1:9300 -from 2 -window 5000000 -write
+--     -ch-addr 127.0.0.1:9300 -full -window 5000000 -write
 --
 -- Leaving the table applied-but-unbackfilled on a lake with history costs
 -- PERFORMANCE, not correctness: every quiet/cold contract keeps paying the

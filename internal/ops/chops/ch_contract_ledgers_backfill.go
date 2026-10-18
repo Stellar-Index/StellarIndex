@@ -1,6 +1,7 @@
 package chops
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -9,8 +10,8 @@ import (
 )
 
 // chContractLedgersBackfill fills stellar.contract_active_ledgers from stellar.contract_events history in windowed, resumable
-// INSERT...SELECT chunks (the MV covers later rows). MUST run to completion promptly after the DDL: the reader trusts a non-empty index as
-// complete. Cautions as ch-txindex-backfill: serialize under run-heavy-job.sh; a bare invocation is refused (needs -from/-to or -full).
+// INSERT...SELECT chunks (the MV covers later rows). A provable genesis run records the watermark that lets the reader trust a short or
+// empty walk. Cautions as ch-txindex-backfill: serialize under run-heavy-job.sh; a bare invocation is refused (needs -from/-to or -full).
 func chContractLedgersBackfill(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("ch-contract-ledgers-backfill")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
@@ -34,22 +35,20 @@ func chContractLedgersBackfill(args []string) error {
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
 
-	last, err := resolveBackfillTop(ctx, *chAddr, uint32(*from), uint32(*to))
-	if err != nil {
-		return err
+	fill := func(ctx context.Context, addr, _ string, from, last, window uint32, logf func(string, ...any)) error {
+		return backfillActiveLedgers(ctx, addr, from, last, window, logf)
 	}
-	if last < uint32(*from) {
-		return fmt.Errorf("-to (%d) is below -from (%d)", last, *from)
-	}
-
-	if !gate.Banner() {
-		fmt.Fprintf(os.Stderr, "ch-contract-ledgers-backfill: would fill stellar.contract_active_ledgers for ledgers %d..%d (window %d) on %s\n",
-			*from, last, *window, *chAddr)
-		return nil
-	}
-	fmt.Fprintf(os.Stderr, "ch-contract-ledgers-backfill: filling stellar.contract_active_ledgers for ledgers %d..%d (window %d) on %s\n",
-		*from, last, *window, *chAddr)
-	return clickhouse.BackfillContractActiveLedgers(ctx, *chAddr, uint32(*from), last, uint32(*window),
+	return runGenesisBackfill(ctx, *chAddr, clickhouse.ContractActiveLedgersTable, fill, uint32(*from), uint32(*to), uint32(*window),
+		func(last uint32) bool {
+			if !gate.Banner() {
+				fmt.Fprintf(os.Stderr, "ch-contract-ledgers-backfill: would fill stellar.contract_active_ledgers for ledgers %d..%d (window %d) on %s\n",
+					*from, last, *window, *chAddr)
+				return false
+			}
+			fmt.Fprintf(os.Stderr, "ch-contract-ledgers-backfill: filling stellar.contract_active_ledgers for ledgers %d..%d (window %d) on %s\n",
+				*from, last, *window, *chAddr)
+			return true
+		},
 		func(format string, a ...any) {
 			fmt.Fprintf(os.Stderr, "ch-contract-ledgers-backfill: "+format+"\n", a...)
 		})

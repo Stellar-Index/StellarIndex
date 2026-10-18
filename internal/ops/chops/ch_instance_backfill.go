@@ -40,7 +40,7 @@ func chInstanceBackfill(args []string) error {
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
 
-	return runInstanceBackfill(ctx, *chAddr, *table, uint32(*from), uint32(*to), uint32(*window),
+	return runGenesisBackfill(ctx, *chAddr, *table, backfillInstanceChanges, uint32(*from), uint32(*to), uint32(*window),
 		func(last uint32) bool {
 			if !gate.Banner() {
 				fmt.Fprintf(os.Stderr, "ch-instance-backfill: would fill stellar.%s for ledgers %d..%d (window %d) on %s\n",
@@ -67,15 +67,19 @@ const instanceMVSettle = 10 * time.Minute
 // Seams so the watermark decision is testable without a live lake.
 var (
 	backfillInstanceChanges = clickhouse.BackfillContractInstanceChangesInto
+	backfillActiveLedgers   = clickhouse.BackfillContractActiveLedgers
 	setInstanceGenesisMark  = clickhouse.SetContractInstanceChangesGenesisWatermark
 	readInstanceStart       = clickhouse.ReadInstanceBackfillStart
 	resolveInstanceTop      = resolveBackfillTop
 )
 
-// runInstanceBackfill fills [from, last] and records the genesis watermark only when provable (a wrong "no history" is worse than a slow
+// genesisFill fills one table's [from, last] in windows.
+type genesisFill func(ctx context.Context, addr, table string, from, last, window uint32, logf func(string, ...any)) error
+
+// runGenesisBackfill fills [from, last] and records the genesis watermark only when provable (a wrong "no history" is worse than a slow
 // scan): a genesis start, no explicit -to, the same settled view before and after, and a contiguous tip at or above the raw lake tip read
 // first.
-func runInstanceBackfill(ctx context.Context, addr, table string, from, toFlag, window uint32,
+func runGenesisBackfill(ctx context.Context, addr, table string, fill genesisFill, from, toFlag, window uint32,
 	confirm func(last uint32) bool, logf func(string, ...any),
 ) error {
 	start, startErr := readInstanceStart(ctx, addr, table)
@@ -89,7 +93,7 @@ func runInstanceBackfill(ctx context.Context, addr, table string, from, toFlag, 
 	if !confirm(last) {
 		return nil
 	}
-	if err := backfillInstanceChanges(ctx, addr, table, from, last, window, logf); err != nil {
+	if err := fill(ctx, addr, table, from, last, window, logf); err != nil {
 		return err
 	}
 	end, endErr := readInstanceStart(ctx, addr, table)

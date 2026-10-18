@@ -1385,7 +1385,7 @@ func (r *ExplorerReader) txHashIndexCovered(ctx context.Context) bool {
 }
 
 // contractLedgersIndexAvailable reports whether contract_active_ledgers is USABLE (exists, non-empty), not that it covers a contract:
-// treat an empty PER-CONTRACT walk as "unknown, fall back", never "no rows" (see ContractEventsRecent).
+// without the genesis watermark treat an empty PER-CONTRACT walk as "unknown, fall back", never "no rows" (see ContractEventsRecent).
 func (r *ExplorerReader) contractLedgersIndexAvailable(ctx context.Context) bool {
 	return r.probeSchema(ctx, &r.contractLedgersProbe,
 		`SELECT ledger_seq FROM stellar.contract_active_ledgers LIMIT 1`, true)
@@ -1794,21 +1794,28 @@ func (r *ExplorerReader) ContractEventsRecent(ctx context.Context, contractID st
 	fetch := limit + contractEventsDedupHeadroom
 
 	// Active-ledger bound: when the index is usable AND the per-contract walk is NON-EMPTY, prune
-	// to those ledgers (lossless: each holds at least one event). An EMPTY walk is NOT "no events":
-	// the probe is table-global and cannot see PARTIAL backfill. Empty walk or index error falls
-	// through to the unbounded read (the source of truth).
+	// to those ledgers (lossless: each holds at least one event). Without a genesis watermark an
+	// EMPTY walk is NOT "no events": the probe is table-global and cannot see PARTIAL backfill, so an
+	// empty walk or index error falls through to the unbounded read (the source of truth).
 	var ledgers []uint32
+	walked := false
 	if r.contractLedgersIndexAvailable(ctx) {
-		if ls, lerr := r.contractActiveLedgers(ctx, contractID, cur.Ledger, fetch); lerr == nil && len(ls) > 0 {
-			ledgers = ls
+		if ls, lerr := r.contractActiveLedgers(ctx, contractID, cur.Ledger, fetch); lerr == nil {
+			walked = true
+			if len(ls) > 0 {
+				ledgers = ls
+			}
 		}
+	}
+	if walked && ledgers == nil && r.contractLedgersIndexComplete(ctx) {
+		return nil, nil
 	}
 
 	out, raw, err := r.contractEventsScan(ctx, contractEventsRecentQuery(cur.IsSet(), ledgers != nil), contractID, limit, fetch, cur, ledgers)
 	if err != nil {
 		return nil, err
 	}
-	if ledgers != nil && len(out) < limit {
+	if ledgers != nil && len(out) < limit && !r.contractLedgersIndexComplete(ctx) {
 		// A short bounded page cannot be told from a walk truncated by a partial backfill, and a
 		// short page ends pagination, so re-read from contract_events.
 		ledgers = nil
@@ -1823,6 +1830,13 @@ func (r *ExplorerReader) ContractEventsRecent(ctx context.Context, contractID st
 		out, _, err = r.contractEventsScan(ctx, contractEventsRecentDedupQuery(cur.IsSet(), ledgers != nil), contractID, limit, limit, cur, ledgers)
 	}
 	return out, err
+}
+
+// contractLedgersIndexComplete reports whether ch-contract-ledgers-backfill proved contract_active_ledgers complete from genesis (its MV
+// covers later ledgers), so a per-contract walk is exact; absent or unreadable answers false.
+func (r *ExplorerReader) contractLedgersIndexComplete(ctx context.Context) bool {
+	wm, err := r.genesisWatermark(ctx, ContractActiveLedgersTable)
+	return err == nil && wm > 0
 }
 
 // contractEventsScan issues one contract-events page query, collapsing adjacent duplicate row-identities (exact under the full ORDER BY

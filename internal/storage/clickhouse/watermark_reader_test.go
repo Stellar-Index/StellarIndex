@@ -726,14 +726,58 @@ func TestContractEventsRecent_EmptyWalkFallsThrough(t *testing.T) {
 		t.Fatalf("rows = %d, want 1 — the real event served via the unbounded fallthrough, "+
 			"not a confidently-wrong empty page", len(rows))
 	}
-	// Probe + empty walk + unbounded events scan = 3 queries; the events
+	// Probe + empty walk + watermark + unbounded events scan = 4 queries; the events
 	// query must have run (no short-circuit to nil,nil).
-	if len(conn.queries) != 3 {
-		t.Fatalf("issued %d queries, want 3 (probe + walk + unbounded events scan)", len(conn.queries))
+	if len(conn.queries) != 4 {
+		t.Fatalf("issued %d queries, want 4 (probe + walk + watermark + unbounded events scan)", len(conn.queries))
 	}
 	last := conn.queries[len(conn.queries)-1]
 	if !strings.Contains(last, "FROM stellar.contract_events") || strings.Contains(last, "ledger_seq IN") {
 		t.Fatalf("final query = %q, want the UNBOUNDED contract_events scan", last)
+	}
+}
+
+// completeLedgersIndexConn answers the probe, a walk of walk, and a recorded genesis watermark; any events query must carry the ledger bound.
+func completeLedgersIndexConn(t *testing.T, walk [][]any, events [][]any) *stubConn {
+	conn := &stubConn{}
+	conn.respond = func(q string) (driver.Rows, error) {
+		switch {
+		case strings.Contains(q, "entry_history_watermark"):
+			return &stubRows{data: [][]any{{uint32(900)}}}, nil
+		case strings.Contains(q, "contract_active_ledgers") && strings.Contains(q, "WHERE contract_id"):
+			return &stubRows{data: walk}, nil
+		case strings.Contains(q, "contract_active_ledgers"):
+			return &stubRows{data: [][]any{{uint32(1)}}}, nil
+		case !strings.Contains(q, "ledger_seq IN (?)"):
+			t.Fatalf("a proven-complete index must not fall back to the unbounded scan: %s", q)
+		}
+		return &stubRows{data: events}, nil
+	}
+	return conn
+}
+
+// TestContractEventsRecent_CompleteIndexEmptyWalkIsEmpty: with the genesis watermark an empty walk is exact, so no events scan runs.
+func TestContractEventsRecent_CompleteIndexEmptyWalkIsEmpty(t *testing.T) {
+	conn := completeLedgersIndexConn(t, nil, nil)
+	rows, err := (&ExplorerReader{conn: conn}).ContractEventsRecent(context.Background(), "CQUIETCONTRACT", 100, ContractEventsCursor{})
+	if err != nil {
+		t.Fatalf("ContractEventsRecent: %v", err)
+	}
+	if len(rows) != 0 || len(conn.queries) != 3 {
+		t.Fatalf("rows = %d after %d queries, want 0 after 3 (probe + walk + watermark)", len(rows), len(conn.queries))
+	}
+}
+
+// TestContractEventsRecent_CompleteIndexTrustsShortPage: with the genesis watermark a short bounded page is the whole history.
+func TestContractEventsRecent_CompleteIndexTrustsShortPage(t *testing.T) {
+	conn := completeLedgersIndexConn(t, [][]any{{uint32(100)}, {uint32(40)}},
+		[][]any{contractEventRecentRowFor(100, 0, 0), contractEventRecentRowFor(40, 1, 0)})
+	rows, err := (&ExplorerReader{conn: conn}).ContractEventsRecent(context.Background(), "CQUIETCONTRACT", 100, ContractEventsCursor{})
+	if err != nil {
+		t.Fatalf("ContractEventsRecent: %v", err)
+	}
+	if len(rows) != 2 || len(conn.queries) != 4 {
+		t.Fatalf("rows = %d after %d queries, want 2 after 4 (probe + walk + bounded events + watermark)", len(rows), len(conn.queries))
 	}
 }
 
