@@ -274,6 +274,24 @@ func TestSep1RunVerdict(t *testing.T) {
 	}
 }
 
+// TestSep1RunVerdictIgnoresAnsweredFailures: one host's tomls outgrowing the cap failed 60 of 60 reached domains on r1 and tripped
+// the guard every run; a response from the domain proves our egress, so it is not a regression.
+func TestSep1RunVerdictIgnoresAnsweredFailures(t *testing.T) {
+	var stats sep1RunStats
+	for i := range 60 {
+		stats.record(timescale.IssuerSep1Candidate{GStrkey: fmt.Sprintf("G%06d", i), Reached: true}, sep1Failed, "too_large")
+	}
+	if sep1RunVerdict(stats, defaultSystemicFailureRate) {
+		t.Error("60 reached domains answering with an oversized toml judged SYSTEMIC")
+	}
+	for i := range 60 {
+		stats.record(timescale.IssuerSep1Candidate{GStrkey: fmt.Sprintf("H%06d", i), Reached: true}, sep1Failed, "dns")
+	}
+	if !sep1RunVerdict(stats, 0.5) {
+		t.Error("60 of 120 reached domains failing DNS not judged systemic at rate 0.5")
+	}
+}
+
 // TestSep1RunVerdictTestnetShape guards the fixture: the testnet batch is 97% failures, so only the reached-domain population keeps the verdict green.
 func TestSep1RunVerdictTestnetShape(t *testing.T) {
 	cands, failed, stats := sep1Run(19, 0, 0, 731)
