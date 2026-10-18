@@ -2,6 +2,7 @@ package chops
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -25,13 +26,16 @@ var (
 	streamEntryIndexOwners     = clickhouse.StreamEntryIndexOwners
 	streamEntryIndexAssets     = clickhouse.StreamEntryIndexAssets
 	streamEntryIndexDecodeRows = clickhouse.StreamEntryIndexDecodeRows
+	streamEntryIndexSignerOps  = clickhouse.StreamEntryIndexSignerOps
 	insertEntryIndex           = clickhouse.InsertEntryIndex
 	setEntryIndexWatermark     = clickhouse.SetEntryIndexWatermark
+	setSignerIndexWatermark    = clickhouse.SetSignerIndexWatermark
 )
 
 // ch-entry-index builds the ledger index of classic-entry activity (stellar.account_entry_ledgers by account and role,
-// stellar.asset_entry_ledgers by asset) from stellar.ledger_entry_changes, windowed and resumable via the entry_index
-// row of stellar.entry_history_watermark; without -write it only counts.
+// stellar.asset_entry_ledgers by asset) from stellar.ledger_entry_changes, plus the signer role from set_options
+// operations, windowed and resumable via the entry_index row of stellar.entry_history_watermark; without -write it
+// only counts.
 func chEntryIndex(args []string) error {
 	fs := flag.NewFlagSet("ch-entry-index", flag.ContinueOnError)
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
@@ -142,6 +146,10 @@ func runEntryIndex(ctx context.Context, r *entryIndexRun, start, last uint32, st
 			return fmt.Errorf("window [%d,%d]: %w — resume with -from %d (or no -from: the watermark holds)", lo, hi, err, lo)
 		}
 		if !r.dryRun {
+			// The signer watermark goes first: a refused entry watermark re-runs the window, which re-records nothing.
+			if err := setSignerIndexWatermark(ctx, r.chAddr, lo, hi); err != nil && !errors.Is(err, clickhouse.ErrEntryHistorySkippedPrefix) {
+				return fmt.Errorf("window [%d,%d] written but signer watermark refused: %w — re-run it with -from %d -to %d", lo, hi, err, lo, hi)
+			}
 			if err := setEntryIndexWatermark(ctx, r.chAddr, lo, hi, w.txLedgers); err != nil {
 				return fmt.Errorf("window [%d,%d] written but watermark refused: %w — re-run it with -from %d -to %d", lo, hi, err, lo, hi)
 			}
@@ -175,6 +183,9 @@ func (w *entryIndexWindow) build(ctx context.Context, lo, hi uint32) error {
 		return err
 	}
 	if err := w.decodeRoles(ctx, lo, hi); err != nil {
+		return err
+	}
+	if err := w.signers(ctx, lo, hi); err != nil {
 		return err
 	}
 	if err := w.assetCounts(ctx, lo, hi); err != nil {
@@ -267,6 +278,43 @@ func entryIndexRoleRows(e *xdr.LedgerEntry, ledger uint32) []clickhouse.EntryInd
 		}
 	}
 	return rows
+}
+
+// signers adds a signer row for each ed25519 key a set_options operation adds or reweights; a removal (weight 0)
+// adds nothing, since readers only list accounts the key currently signs for.
+func (w *entryIndexWindow) signers(ctx context.Context, lo, hi uint32) error {
+	seen := map[clickhouse.EntryIndexAccountRow]struct{}{}
+	var cur uint32
+	return streamEntryIndexSignerOps(ctx, w.chAddr, lo, hi, func(op clickhouse.EntryIndexSignerOp) error {
+		if op.Ledger != cur {
+			cur = op.Ledger
+			clear(seen)
+		}
+		var body xdr.OperationBody
+		if err := xdr.SafeUnmarshalBase64(op.BodyXDR, &body); err != nil {
+			w.st.skip(op.Ledger, "set_options op", err)
+			return nil
+		}
+		w.st.decoded++
+		row, ok := entryIndexSignerRow(body, op.Ledger)
+		if _, dup := seen[row]; !ok || dup {
+			return nil
+		}
+		seen[row] = struct{}{}
+		return w.add(ctx, row)
+	})
+}
+
+func entryIndexSignerRow(body xdr.OperationBody, ledger uint32) (clickhouse.EntryIndexAccountRow, bool) {
+	so, ok := body.GetSetOptionsOp()
+	if !ok || so.Signer == nil || so.Signer.Weight == 0 {
+		return clickhouse.EntryIndexAccountRow{}, false
+	}
+	key, ok := so.Signer.Key.GetEd25519()
+	if !ok {
+		return clickhouse.EntryIndexAccountRow{}, false
+	}
+	return clickhouse.EntryIndexAccountRow{Account: string(key[:]), Role: clickhouse.EntryIndexRoleSigner, Ledger: ledger}, true
 }
 
 func (w *entryIndexWindow) assetCounts(ctx context.Context, lo, hi uint32) error {

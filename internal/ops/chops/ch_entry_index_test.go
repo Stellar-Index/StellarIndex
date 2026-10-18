@@ -2,6 +2,8 @@ package chops
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"slices"
 	"testing"
 
@@ -15,14 +17,20 @@ type eiCapture struct {
 	accounts []clickhouse.EntryIndexAccountRow
 	assets   []clickhouse.EntryIndexAssetRow
 	wm       []uint64
+	// signerOps feeds the signer stream; signerWM records each signer watermark window and signerErr is its answer.
+	signerOps []clickhouse.EntryIndexSignerOp
+	signerWM  [][2]uint32
+	signerErr error
 }
 
 // eiStub serves the fixtures through the seams, filtered to each window's range, and captures every write.
 func eiStub(t *testing.T, owners []clickhouse.EntryIndexOwnerRow, decode []clickhouse.EntryIndexDecodeRow, assets []clickhouse.EntryIndexAssetRow) *eiCapture {
 	t.Helper()
 	origO, origA, origD, origI, origS := streamEntryIndexOwners, streamEntryIndexAssets, streamEntryIndexDecodeRows, insertEntryIndex, setEntryIndexWatermark
+	origSO, origSW := streamEntryIndexSignerOps, setSignerIndexWatermark
 	t.Cleanup(func() {
 		streamEntryIndexOwners, streamEntryIndexAssets, streamEntryIndexDecodeRows, insertEntryIndex, setEntryIndexWatermark = origO, origA, origD, origI, origS
+		streamEntryIndexSignerOps, setSignerIndexWatermark = origSO, origSW
 	})
 	streamEntryIndexOwners = func(_ context.Context, _ string, from, to uint32, fn func(clickhouse.EntryIndexOwnerRow) error) error {
 		for _, r := range owners {
@@ -55,6 +63,20 @@ func eiStub(t *testing.T, owners []clickhouse.EntryIndexOwnerRow, decode []click
 		return nil
 	}
 	got := &eiCapture{}
+	streamEntryIndexSignerOps = func(_ context.Context, _ string, from, to uint32, fn func(clickhouse.EntryIndexSignerOp) error) error {
+		for _, r := range got.signerOps {
+			if r.Ledger >= from && r.Ledger <= to {
+				if err := fn(r); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	setSignerIndexWatermark = func(_ context.Context, _ string, from, thru uint32) error {
+		got.signerWM = append(got.signerWM, [2]uint32{from, thru})
+		return got.signerErr
+	}
 	insertEntryIndex = func(_ context.Context, _ string, a []clickhouse.EntryIndexAccountRow, s []clickhouse.EntryIndexAssetRow) (int64, error) {
 		got.accounts = append(got.accounts, a...)
 		got.assets = append(got.assets, s...)
@@ -200,5 +222,77 @@ func TestChEntryIndex_RejectsEmptyWindowAndFloor(t *testing.T) {
 	}
 	if err := chEntryIndex([]string{"-floor-ledger", "0"}); err == nil {
 		t.Fatal("-floor-ledger 0 accepted")
+	}
+}
+
+func eiSetOptions(t *testing.T, signer *xdr.Signer) string {
+	t.Helper()
+	s, err := xdr.MarshalBase64(xdr.OperationBody{Type: xdr.OperationTypeSetOptions, SetOptionsOp: &xdr.SetOptionsOp{Signer: signer}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func eiEd25519Signer(t *testing.T, g string, weight uint32) *xdr.Signer {
+	t.Helper()
+	var k xdr.Uint256
+	copy(k[:], eiRaw(t, g))
+	return &xdr.Signer{Key: xdr.SignerKey{Type: xdr.SignerKeyTypeSignerKeyTypeEd25519, Ed25519: &k}, Weight: xdr.Uint32(weight)}
+}
+
+func TestRunEntryIndex_SignerRowsComeFromAddedEd25519Signers(t *testing.T) {
+	got := eiStub(t, nil, nil, nil)
+	addBob := eiSetOptions(t, eiEd25519Signer(t, ehBob, 1))
+	hashX := xdr.Uint256{7}
+	bump, err := xdr.MarshalBase64(xdr.OperationBody{Type: xdr.OperationTypeBumpSequence, BumpSequenceOp: &xdr.BumpSequenceOp{BumpTo: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got.signerOps = []clickhouse.EntryIndexSignerOp{
+		{Ledger: ehLedger, BodyXDR: addBob},
+		{Ledger: ehLedger, BodyXDR: addBob},                                          // same key twice in one ledger: one row
+		{Ledger: ehLedger, BodyXDR: eiSetOptions(t, eiEd25519Signer(t, ehAlice, 0))}, // removal: no row
+		{Ledger: ehLedger, BodyXDR: eiSetOptions(t, &xdr.Signer{Key: xdr.SignerKey{Type: xdr.SignerKeyTypeSignerKeyTypeHashX, HashX: &hashX}, Weight: 1})},
+		{Ledger: ehLedger, BodyXDR: eiSetOptions(t, nil)}, // thresholds-only set_options
+		{Ledger: ehLedger + 1, BodyXDR: bump},
+		{Ledger: ehLedger + 1, BodyXDR: "not-xdr"},
+		{Ledger: ehLedger + 2, BodyXDR: addBob},
+	}
+	st := &entryIndexStats{}
+	r := &entryIndexRun{chAddr: "unused", window: 2}
+	if err := runEntryIndex(context.Background(), r, ehLedger, ehLedger+2, st); err != nil {
+		t.Fatal(err)
+	}
+	bob := eiRaw(t, ehBob)
+	want := []clickhouse.EntryIndexAccountRow{{Account: bob, Role: "signer", Ledger: ehLedger}, {Account: bob, Role: "signer", Ledger: ehLedger + 2}}
+	if !slices.Equal(got.accounts, want) {
+		t.Fatalf("account rows = %+v, want %+v", got.accounts, want)
+	}
+	if want := [][2]uint32{{ehLedger, ehLedger + 1}, {ehLedger + 2, ehLedger + 2}}; !slices.Equal(got.signerWM, want) {
+		t.Fatalf("signer watermark windows = %v, want %v", got.signerWM, want)
+	}
+	if st.skipped != 1 {
+		t.Fatalf("skipped = %d, want 1 (the undecodable body)", st.skipped)
+	}
+}
+
+func TestRunEntryIndex_SignerWatermarkWithoutHistoryKeepsTheBuildGoing(t *testing.T) {
+	got := eiStub(t, nil, nil, nil)
+	got.signerErr = fmt.Errorf("wrapped: %w", clickhouse.ErrEntryHistorySkippedPrefix)
+	r := &entryIndexRun{chAddr: "unused", window: 10}
+	if err := runEntryIndex(context.Background(), r, ehLedger, ehLedger+2, &entryIndexStats{}); err != nil {
+		t.Fatalf("a live-only build must not fail on the signer watermark: %v", err)
+	}
+	if len(got.wm) != 1 {
+		t.Fatalf("entry watermark calls = %d, want 1", len(got.wm))
+	}
+
+	got.signerErr, got.wm = errors.New("clickhouse down"), nil
+	if err := runEntryIndex(context.Background(), r, ehLedger, ehLedger+2, &entryIndexStats{}); err == nil {
+		t.Fatal("a real signer watermark error must fail the window")
+	}
+	if len(got.wm) != 0 {
+		t.Fatal("the entry watermark must not advance past a window whose signer watermark failed")
 	}
 }

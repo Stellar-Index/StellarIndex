@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
@@ -20,6 +21,12 @@ func (r *ExplorerReader) EntryHistoryWatermark(ctx context.Context) (uint32, err
 // built, or the watermark table not provisioned); the entry-changes routes answer 503 below it.
 func (r *ExplorerReader) EntryIndexWatermark(ctx context.Context) (uint32, error) {
 	return entryWatermarkOn(ctx, r.conn, entryIndexWatermarkName)
+}
+
+// SignerIndexWatermark is the ledger the entry index's signer role is complete through (0 = not yet built from the
+// lake floor); the signer-on route answers 503 below it.
+func (r *ExplorerReader) SignerIndexWatermark(ctx context.Context) (uint32, error) {
+	return entryWatermarkOn(ctx, r.conn, signerIndexWatermarkName)
 }
 
 // AccountEntryLedgers lists, newest first, the ledgers at or below maxLedger in which the account (raw 32-byte key)
@@ -235,4 +242,97 @@ func (r *ExplorerReader) claimableKeys(ctx context.Context, account string, ledg
 		keys = append(keys, k)
 	}
 	return keys, rows.Err()
+}
+
+// SignedAccount is one account whose current signer list holds a key.
+type SignedAccount struct {
+	Account string
+	Weight  uint32
+	Ledger  uint32
+}
+
+// SignerScan is one capped read of the accounts a key signs for.
+type SignerScan struct {
+	Signed []SignedAccount
+	// Candidates is how many accounts the change rows named (maxAccounts = capped).
+	Candidates int
+}
+
+const signerCandidatesQuery = `SELECT account_id FROM stellar.ledger_entry_changes
+	WHERE ledger_seq IN (?) AND entry_type = 'account' AND entry_xdr != '' AND account_id != ?
+	  AND position(tryBase64Decode(entry_xdr), ?) > 0
+	GROUP BY account_id ORDER BY max(ledger_seq) DESC LIMIT ?` + explorerScanSettings
+
+const signerCurrentQuery = `SELECT w.1, w.2 FROM (
+	SELECT key_xdr, argMax((ledger_seq, entry_xdr), version) AS w
+	FROM stellar.ledger_entries_current
+	WHERE entry_type = 'account' AND account_id IN (?)
+	GROUP BY key_xdr)
+	ORDER BY w.1 DESC` + explorerScanSettings
+
+// AccountsSignedBy returns, newest change first, the accounts changed in one of the ledgers (at most maxAccounts of
+// them) whose current signer list holds the raw ed25519 key; a merged account has an empty current entry and drops out.
+func (r *ExplorerReader) AccountsSignedBy(ctx context.Context, key string, ledgers []uint32, maxAccounts int) (SignerScan, error) {
+	var scan SignerScan
+	if len(ledgers) == 0 || len(key) != 32 {
+		return scan, nil
+	}
+	self, err := strkey.Encode(strkey.VersionByteAccountID, []byte(key))
+	if err != nil {
+		return scan, fmt.Errorf("clickhouse: encode signer key: %w", err)
+	}
+	candidates, err := r.signerCandidates(ctx, self, key, ledgers, maxAccounts)
+	if err != nil || len(candidates) == 0 {
+		return scan, err
+	}
+	scan.Candidates = len(candidates)
+	rows, err := r.conn.Query(ctx, signerCurrentQuery, candidates)
+	if err != nil {
+		return scan, fmt.Errorf("clickhouse: current state of %d signer candidates: %w", len(candidates), err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var (
+			ledger uint32
+			b64    string
+			e      xdr.LedgerEntry
+		)
+		if err := rows.Scan(&ledger, &b64); err != nil {
+			return scan, fmt.Errorf("clickhouse: scan signer candidate: %w", err)
+		}
+		if b64 == "" {
+			continue
+		}
+		if err := xdr.SafeUnmarshalBase64(b64, &e); err != nil {
+			return scan, fmt.Errorf("clickhouse: decode account entry at ledger %d: %w", ledger, err)
+		}
+		acc, ok := e.Data.GetAccount()
+		if !ok {
+			return scan, fmt.Errorf("clickhouse: account row at ledger %d holds a %s entry", ledger, e.Data.Type)
+		}
+		for _, sg := range acc.Signers {
+			if k, ok := sg.Key.GetEd25519(); ok && string(k[:]) == key {
+				scan.Signed = append(scan.Signed, SignedAccount{Account: acc.AccountId.Address(), Weight: uint32(sg.Weight), Ledger: ledger})
+				break
+			}
+		}
+	}
+	return scan, rows.Err()
+}
+
+func (r *ExplorerReader) signerCandidates(ctx context.Context, self, key string, ledgers []uint32, maxAccounts int) ([]string, error) {
+	rows, err := r.conn.Query(ctx, signerCandidatesQuery, ledgers, self, key, maxAccounts)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: signer candidates in %d ledgers: %w", len(ledgers), err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var a string
+		if err := rows.Scan(&a); err != nil {
+			return nil, fmt.Errorf("clickhouse: scan signer candidate account: %w", err)
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
 }

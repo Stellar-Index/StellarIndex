@@ -5601,6 +5601,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/accounts/{g_strkey}/signer-on": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The other accounts whose current signers include this account's key.
+         * @description Accounts that list the path account's ed25519 key as a signer
+         *     right now, newest change first. Candidates come from the entry
+         *     index's `signer` role (`stellar.account_entry_ledgers`), built from
+         *     every `set_options` operation that added or reweighted the key; each
+         *     candidate is confirmed against the lake's current account state, so
+         *     a key since removed, or an account since merged, is not listed. The
+         *     account's own master key is not listed. Pre-auth-transaction and
+         *     hash-x signers are not keys of an account and are out of scope.
+         *
+         *     CEILING: the view runs through `through_ledger`, the signer role's
+         *     watermark, which is set only once the role has been built from the
+         *     lake's first ledger. Until then the route answers 503
+         *     (`signer-index-not-built`).
+         *
+         *     LOWER BOUND: one read examines the key's 200 most recent signer
+         *     ledgers and at most 500 candidate accounts. Past either cap the
+         *     view is served with `lower_bound` true and a `coverage_note` saying
+         *     older arrangements may be missing.
+         */
+        get: operations["getAccountSignerOn"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/accounts/{g_strkey}/sponsorships": {
         parameters: {
             query?: never;
@@ -26659,6 +26696,86 @@ export interface operations {
                              */
                             through_ledger: number;
                             /** @description True when the read's ledger or balance cap was hit, so older unclaimed balances may be missing. */
+                            lower_bound: boolean;
+                            coverage_note: string;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getAccountSignerOn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Account id, a 56-character G-strkey (SEP-23); an M-address
+                 *     reads as its base account. Malformed strkeys return 400.
+                 */
+                g_strkey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The accounts this account's key signs for. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "account": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+                     *         "signer_on": [
+                     *           {
+                     *             "account": "GDIEKKIQWMIZ4LD3RP3ABPN7X5KEAEWYMR634BRHB7EULIMEVREWLF3G",
+                     *             "weight": 1,
+                     *             "last_modified_ledger": 64802900
+                     *           }
+                     *         ],
+                     *         "through_ledger": 64802921,
+                     *         "lower_bound": false,
+                     *         "coverage_note": "accounts whose current signers include this account's key, from set_options operations through ledger 64802921"
+                     *       },
+                     *       "as_of": "2026-10-06T14:03:31Z",
+                     *       "flags": {
+                     *         "divergence_warning": false,
+                     *         "triangulated": false,
+                     *         "reduced_redundancy": false,
+                     *         "stale": false,
+                     *         "degraded": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data?: {
+                            account: string;
+                            signer_on: {
+                                /** @description The account whose signer list holds the key (G-strkey). */
+                                account: string;
+                                /**
+                                 * Format: int64
+                                 * @description The key's current signer weight on that account (1-255).
+                                 */
+                                weight: number;
+                                /**
+                                 * Format: int64
+                                 * @description Ledger of that account's current entry.
+                                 */
+                                last_modified_ledger: number;
+                            }[];
+                            /**
+                             * Format: int64
+                             * @description Newest ledger this view covers (the signer role's watermark).
+                             */
+                            through_ledger: number;
+                            /** @description True when the read's ledger or account cap was hit, so older arrangements may be missing. */
                             lower_bound: boolean;
                             coverage_note: string;
                         };

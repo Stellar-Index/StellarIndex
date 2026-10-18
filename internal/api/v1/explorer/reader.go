@@ -194,6 +194,10 @@ type ExplorerReader interface {
 	AccountEntryLedgers(ctx context.Context, account string, roles []string, maxLedger uint32, limit int) ([]uint32, error)
 	// LiveClaimableBalancesInLedgers returns the still-unclaimed balances naming the raw account changed in the ledgers.
 	LiveClaimableBalancesInLedgers(ctx context.Context, account string, ledgers []uint32, maxKeys int) (clickhouse.ClaimableScan, error)
+	// SignerIndexWatermark is the ledger the entry index's signer role is complete through (0 = not built).
+	SignerIndexWatermark(ctx context.Context) (uint32, error)
+	// AccountsSignedBy returns the accounts changed in the ledgers whose current signers hold the raw ed25519 key.
+	AccountsSignedBy(ctx context.Context, key string, ledgers []uint32, maxAccounts int) (clickhouse.SignerScan, error)
 	// AccountSponsorships pages the sponsorship arrangements in which the account is the side's party (sponsor or
 	// sponsored), each with its events through maxLedger; inForceOnly keeps the ones whose last event is a start.
 	AccountSponsorships(ctx context.Context, account, side string, inForceOnly bool, after clickhouse.SponsorshipKey, maxLedger uint32, limit int) ([]clickhouse.SponsorshipArrangement, error)

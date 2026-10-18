@@ -37,6 +37,7 @@ import {
   LinkRow,
 } from '@/components/ui';
 import { AccountClaimablePanel } from './AccountClaimable';
+import { AccountSignerOnPanel } from './AccountSignerOn';
 import { apiGet, asExample } from '@/api/client';
 import { useIssuers } from '@/api/hooks';
 import { cn } from '@/lib/cn';
@@ -223,6 +224,7 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
       <AccountPositions id={id} />
       {state?.exists && <AccountEntriesPanels state={state} />}
       {state?.exists && <AccountClaimablePanel id={id} />}
+      <AccountSignerOnPanel id={id} />
       <AccountActivitySummaryPanel id={id} />
       <AccountMovementsPanel id={id} />
       <AccountDefiPositionsPanel id={id} />

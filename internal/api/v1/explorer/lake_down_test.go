@@ -197,6 +197,14 @@ func (downReader) LiveClaimableBalancesInLedgers(context.Context, string, []uint
 	return clickhouse.ClaimableScan{}, errLakeDown
 }
 
+func (downReader) SignerIndexWatermark(context.Context) (uint32, error) {
+	return 0, errLakeDown
+}
+
+func (downReader) AccountsSignedBy(context.Context, string, []uint32, int) (clickhouse.SignerScan, error) {
+	return clickhouse.SignerScan{}, errLakeDown
+}
+
 func (downReader) AssetEntryLedgers(context.Context, string, []string, uint32, int) ([]uint32, error) {
 	return nil, errLakeDown
 }
@@ -302,6 +310,7 @@ func lakeDownCases() []lakeDownCase {
 		{"AccountMovements", "/v1/accounts/" + validTestAccount + "/movements", acct, (*Handler).AccountMovements},
 		{"AccountEntryChanges", "/v1/accounts/" + validTestAccount + "/entry-changes", acct, (*Handler).AccountEntryChanges},
 		{"AccountClaimableBalances", "/v1/accounts/" + validTestAccount + "/claimable-balances", acct, (*Handler).AccountClaimableBalances},
+		{"AccountSignerOn", "/v1/accounts/" + validTestAccount + "/signer-on", acct, (*Handler).AccountSignerOn},
 		{"AccountSponsorships", "/v1/accounts/" + validTestAccount + "/sponsorships", acct, (*Handler).AccountSponsorships},
 		{"AccountActivity", "/v1/accounts/" + validTestAccount + "/activity", acct, (*Handler).AccountActivity},
 		{"AccountCreators", "/v1/accounts/" + validTestAccount + "/creators", acct, (*Handler).AccountCreators},
@@ -403,6 +412,7 @@ func TestExplorerReads_BoundedByReadTimeout(t *testing.T) {
 		{"AccountMovements", "/v1/accounts/" + validTestAccount + "/movements", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountMovements},
 		{"AccountEntryChanges", "/v1/accounts/" + validTestAccount + "/entry-changes", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountEntryChanges},
 		{"AccountClaimableBalances", "/v1/accounts/" + validTestAccount + "/claimable-balances", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountClaimableBalances},
+		{"AccountSignerOn", "/v1/accounts/" + validTestAccount + "/signer-on", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountSignerOn},
 		{"AccountSponsorships", "/v1/accounts/" + validTestAccount + "/sponsorships", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountSponsorships},
 		{"AccountState", "/v1/accounts/" + validTestAccount, map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountState},
 		{"AssetHolders", "/v1/assets/native/holders", map[string]string{"asset_id": "native"}, (*Handler).AssetHolders},
