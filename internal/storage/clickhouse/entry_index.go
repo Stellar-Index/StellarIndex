@@ -248,6 +248,16 @@ const entryIndexWatermarkName = "entry_index"
 // entry_index until a build from the lake floor walks the history recorded before the role existed.
 const signerIndexWatermarkName = "signer_index"
 
+// SignerIndexWatermark returns the ledger the signer role is complete through (0 = not yet built from the lake floor).
+func SignerIndexWatermark(ctx context.Context, addr string) (uint32, error) {
+	conn, err := openRead(ctx, addr)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = conn.Close() }()
+	return entryWatermarkOn(ctx, conn, signerIndexWatermarkName)
+}
+
 // SetSignerIndexWatermark records the signer role complete through `thru`. Its first value must come from a window
 // starting at the lake floor, so a live-only build never claims history; such a window gets ErrEntryHistorySkippedPrefix.
 func SetSignerIndexWatermark(ctx context.Context, addr string, from, thru uint32) error {
