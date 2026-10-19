@@ -18657,7 +18657,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------
-@next/env 16.4.0
+@next/env 16.4.2
 License: MIT
 
 (no license file shipped in the package)
@@ -18900,7 +18900,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 ------------------------------------------------------------------------
-@tanstack/query-core 5.104.2
+@tanstack/query-core 5.104.3
 License: MIT
 
 MIT License
@@ -18926,7 +18926,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------
-@tanstack/react-query 5.104.2
+@tanstack/react-query 5.104.3
 License: MIT
 
 MIT License
@@ -19036,7 +19036,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 ------------------------------------------------------------------------
-baseline-browser-mapping 2.11.28
+baseline-browser-mapping 2.11.29
 License: Apache-2.0
 
 Apache License
@@ -19290,7 +19290,7 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------
-caniuse-lite 1.0.30001815
+caniuse-lite 1.0.30001816
 License: CC-BY-4.0
 
 Attribution 4.0 International
@@ -20109,7 +20109,7 @@ Apache License
    limitations under the License.
 
 ------------------------------------------------------------------------
-electron-to-chromium 1.5.452
+electron-to-chromium 1.5.458
 License: ISC
 
 Copyright 2018 Kilian Valkhof
@@ -20603,7 +20603,7 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ------------------------------------------------------------------------
-lucide-react 1.55.0
+lucide-react 1.58.0
 License: ISC
 
 ISC License
@@ -20702,7 +20702,7 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------
-next 16.4.0
+next 16.4.2
 License: MIT
 
 The MIT License (MIT)
@@ -20728,7 +20728,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------
-node-releases 2.0.58
+node-releases 2.0.59
 License: MIT
 
 The MIT License
@@ -20878,7 +20878,7 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------
-react 19.3.0
+react 19.3.1
 License: MIT
 
 MIT License
@@ -20904,7 +20904,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------
-react-dom 19.3.0
+react-dom 19.3.1
 License: MIT
 
 MIT License
