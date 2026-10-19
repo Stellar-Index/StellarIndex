@@ -8,6 +8,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/sdex"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
@@ -87,6 +88,53 @@ func tradeSourcesKey(cat []reconSource) string {
 		names[i] = src.name
 	}
 	return clickhouse.TradesSourcesKey(names)
+}
+
+// tradesByAccountStep is the sub-window a -trades-by-account run decodes, lands and records at a time: the gate's whole-history factory walk
+// is paid once per invocation, while the buffer and the work lost to a failure stay at one step (~1M trades at mainnet's 2026 density).
+const tradesByAccountStep = 10_000
+
+// runCHRebuildTradesByAccount lands [lo,hi] in tradesByAccountStep windows, each decoded from the lake and recorded only once fully sent.
+func runCHRebuildTradesByAccount(
+	ctx context.Context,
+	w io.Writer,
+	chAddr string,
+	prepare func(context.Context, []canonical.Trade) ([]canonical.Trade, []string, error),
+	cat []reconSource,
+	enabled func(string) bool,
+	lo, hi uint32,
+) error {
+	sdexDec := sdex.NewDecoder()
+	reads := chRebuildLakeReads(chAddr)
+	sourcesKey := tradeSourcesKey(cat)
+	return eachTradesByAccountWindow(lo, hi, tradesByAccountStep, func(wlo, whi uint32) error {
+		buf, err := runCHRebuildEventPass(ctx, reads, wlo, whi, cat, enabled, nil)
+		if err != nil {
+			return err
+		}
+		if err := streamCHRebuildSDEX(ctx, chAddr, sdexDec, wlo, whi, &buf); err != nil {
+			return fmt.Errorf("ch-rebuild: sdex op stream: %w", err)
+		}
+		return writeCHRebuildTradesByAccount(ctx, w, prepare,
+			func(ctx context.Context, rows []clickhouse.TradeByAccountRow) (int64, error) {
+				return clickhouse.InsertTradesByAccount(ctx, chAddr, rows)
+			},
+			func(ctx context.Context, lo, hi uint32, n int64) error {
+				return clickhouse.RecordTradesByAccountWindow(ctx, chAddr, lo, hi, n, sourcesKey)
+			},
+			buf, wlo, whi)
+	})
+}
+
+// eachTradesByAccountWindow calls fn over consecutive step-sized windows covering [lo,hi] in order, stopping at the first error.
+func eachTradesByAccountWindow(lo, hi, step uint32, fn func(wlo, whi uint32) error) error {
+	for wlo := uint64(lo); wlo <= uint64(hi); wlo += uint64(step) {
+		whi := min(wlo+uint64(step)-1, uint64(hi))
+		if err := fn(uint32(wlo), uint32(whi)); err != nil { //nolint:gosec // both bounded by hi, a uint32
+			return err
+		}
+	}
+	return nil
 }
 
 // writeCHRebuildTradesByAccount lands the buffered trades in stellar.trades_by_account and records [lo,hi] only after every row was sent.
