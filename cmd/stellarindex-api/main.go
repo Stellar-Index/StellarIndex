@@ -2436,16 +2436,10 @@ func prewarmHeavy(
 	// its TTL and the next cycle retries.
 	statsCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if _, err := stats.GetSourceStats(statsCtx); err != nil {
-		logger.Debug("prewarm sources stats failed", "err", err)
-	}
-	if _, err := stats.GetSourceVolumeHistory24h(statsCtx); err != nil {
-		logger.Debug("prewarm sources volume history failed", "err", err)
-	}
 	// Every /dexes/<source> page requests sparkline7d; unwarmed, that read
 	// costs ~8.5s on the request path against ~1.1s without it.
-	if _, err := stats.GetSourceVolumeHistory7d(statsCtx); err != nil {
-		logger.Debug("prewarm sources volume history 7d failed", "err", err)
+	if err := stats.Refresh(statsCtx); err != nil {
+		logger.Debug("prewarm sources stats failed", "err", err)
 	}
 }
 

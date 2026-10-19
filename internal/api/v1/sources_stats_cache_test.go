@@ -228,3 +228,31 @@ func TestSourceStatsCacheTestFileHasNoDanglingPRReference(t *testing.T) {
 		t.Errorf("this file cites PR %s, which does not exist and now resolves to unrelated content (RSWP-112)", danglingPRRef)
 	}
 }
+
+// TestCachedSourcesStatsReader_RefreshRefillsFreshSlots: a prewarm served the cached rows would refresh nothing, so a slot would
+// lapse between ticks and a reader would wait on the scan. A failed refresh keeps serving the rows it had.
+func TestCachedSourcesStatsReader_RefreshRefillsFreshSlots(t *testing.T) {
+	up := &fakeUpstream{}
+	c := NewCachedSourcesStatsReader(up, time.Hour)
+	if err := c.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if s, h := up.statsCalls.Load(), up.histCalls.Load(); s != 2 || h != 4 {
+		t.Fatalf("upstream calls stats=%d hist=%d over two refreshes, want 2 and 4", s, h)
+	}
+
+	up.statsErr = errors.New("timescale: query failed")
+	if err := c.Refresh(context.Background()); err == nil {
+		t.Fatal("Refresh swallowed the upstream error")
+	}
+	rows, err := c.GetSourceStats(context.Background())
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("after a failed refresh got rows=%v err=%v, want the previous rows served", rows, err)
+	}
+	if s := up.statsCalls.Load(); s != 3 {
+		t.Errorf("a read after a failed refresh called upstream (stats=%d, want 3)", s)
+	}
+}
