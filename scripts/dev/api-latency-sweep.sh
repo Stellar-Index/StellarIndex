@@ -27,6 +27,11 @@
 #
 # Flags:  --spec-check   list OpenAPI GET paths NOT covered here (anti-rot; run
 #                        from a repo checkout) then exit
+#         --pages        time each explorer PAGE instead: fire its panels' reads
+#                        together, as the browser does, and report the page as
+#                        its slowest panel. With CACHE_BUST=1 this is the cold
+#                        load past the HTTP cache; in-process caches stay warm,
+#                        so a fully cold number needs a fresh API process.
 #
 set -uo pipefail
 
@@ -97,6 +102,18 @@ ENDPOINTS=(
   "network-stats|/v1/network/stats"
 )
 
+# page|space-separated panel reads, with the query params the page's hooks send
+# by default (web/explorer/src/app/<page>). Measure the page, not the endpoint.
+PAGES=(
+  "rwa|/v1/rwa/assets /v1/rwa/history?timeframe=1y&group_by=none /v1/rwa/premium?timeframe=1y /v1/assets?asset_class=stablecoin&limit=100"
+)
+
+# bust_url URL ITER — append a unique query param when CACHE_BUST=1.
+bust_url() {
+  if [ "$CACHE_BUST" != "1" ]; then printf '%s' "$1"; return; fi
+  case "$1" in *\?*) printf '%s&_cb=%s%s' "$1" "$RANDOM" "$2";; *) printf '%s?_cb=%s%s' "$1" "$RANDOM" "$2";; esac
+}
+
 if [ "${1:-}" = "--spec-check" ]; then
   command -v python3 >/dev/null || { echo "python3 required for --spec-check"; exit 2; }
   covered="$(printf '%s\n' "${ENDPOINTS[@]}" | sed 's/^[^|]*|//; s/?.*//')"
@@ -130,6 +147,48 @@ pctl() { sort -n | awk -v p="$1" '
   {a[NR]=$1} END{ if(NR==0){print 0; exit}
   i=int((p/100)*NR + 0.999999); if(i<1)i=1; if(i>NR)i=NR; print a[i] }'; }
 
+if [ "${1:-}" = "--pages" ]; then
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  CRIT=0
+  printf '%s%s pages vs %s — %s loads/page%s%s\n' "$B" "api-latency-sweep" "$API_BASE_URL" "$ITERS" \
+    "$([ "$CACHE_BUST" = 1 ] && echo ' (cache-bust)')" "$O"
+  printf '%s%-12s %7s %7s  %s%s\n' "$D" "page" "p50ms" "p95ms" "slowest panel (p95ms, ok%)" "$O"
+  for pg in "${PAGES[@]}"; do
+    name="${pg%%|*}"; read -r -a panels <<< "${pg#*|}"
+    : > "$tmp/page"
+    for ((k=0;k<${#panels[@]};k++)); do : > "$tmp/p$k"; done
+    for ((i=0;i<ITERS;i++)); do
+      for ((k=0;k<${#panels[@]};k++)); do
+        ( curl -s -o /dev/null --max-time "$TIMEOUT" -w '%{http_code} %{time_total}\n' \
+            "$(bust_url "${API_BASE_URL}${panels[$k]}" "$i$k")" 2>/dev/null || echo "000 $TIMEOUT" ) > "$tmp/r$k" &
+      done
+      wait
+      worst=0
+      for ((k=0;k<${#panels[@]};k++)); do
+        read -r code tt < "$tmp/r$k"
+        ms=$(awk -v t="${tt:-$TIMEOUT}" 'BEGIN{printf "%d", t*1000}')
+        echo "$ms $code" >> "$tmp/p$k"
+        [ "$ms" -gt "$worst" ] && worst=$ms
+      done
+      echo "$worst" >> "$tmp/page"
+    done
+    p50=$(pctl 50 < "$tmp/page"); p95=$(pctl 95 < "$tmp/page")
+    slow=""; slow95=-1; slowok=0
+    for ((k=0;k<${#panels[@]};k++)); do
+      k95=$(cut -d' ' -f1 "$tmp/p$k" | pctl 95)
+      if [ "$k95" -gt "$slow95" ]; then
+        slow95=$k95; slow="${panels[$k]}"
+        slowok=$(awk '$2 ~ /^2/ {o++} END{printf "%d", (NR? o*100/NR:0)}' "$tmp/p$k")
+      fi
+    done
+    if   [ "$p95" -gt "$CRIT_MS" ]; then c="$R"; CRIT=$((CRIT+1))
+    elif [ "$p95" -gt "$WARN_MS" ]; then c="$Y"
+    else c="$G"; fi
+    printf '%s%-12s%s %7s %s%7s%s  %s (%s, %s%%)\n' "$c" "/$name" "$O" "$p50" "$c" "$p95" "$O" "$slow" "$slow95" "$slowok"
+  done
+  exit "$CRIT"
+fi
+
 CRIT=0
 RESULTS=()
 for e in "${ENDPOINTS[@]}"; do
@@ -137,10 +196,7 @@ for e in "${ENDPOINTS[@]}"; do
   times=""; okc=0; n=0
   [ "$WARMUP" = "1" ] && curl -s -o /dev/null --max-time "$TIMEOUT" "${API_BASE_URL}${path}" >/dev/null 2>&1
   for ((i=0;i<ITERS;i++)); do
-    u="${API_BASE_URL}${path}"
-    if [ "$CACHE_BUST" = "1" ]; then
-      case "$path" in *\?*) u="${u}&_cb=$RANDOM$i";; *) u="${u}?_cb=$RANDOM$i";; esac
-    fi
+    u="$(bust_url "${API_BASE_URL}${path}" "$i")"
     read -r code tt < <(curl -s -o /dev/null --max-time "$TIMEOUT" \
       -w '%{http_code} %{time_total}\n' "$u" 2>/dev/null || echo "000 $TIMEOUT")
     ms=$(awk -v t="${tt:-$TIMEOUT}" 'BEGIN{printf "%d", t*1000}')
