@@ -461,7 +461,7 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 			return err
 		}
 		if caughtUp {
-			fmt.Fprintln(os.Stdout, "ch-rebuild -to-horizon: trades_by_account already reaches the compression horizon")
+			fmt.Fprintln(os.Stderr, "ch-rebuild -to-horizon: trades_by_account already reaches the compression horizon")
 			return nil
 		}
 		*from, *to = uint(clo), uint(chi)
