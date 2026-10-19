@@ -41,7 +41,7 @@ type ReadyChecker interface {
 }
 
 // ExpectedSchemaVersion is the migrations/ head this binary was built against; readiness fails when applied < expected (a NEWER schema is safe), and a test fails CI if a migration is added unbumped.
-const ExpectedSchemaVersion uint = 218
+const ExpectedSchemaVersion uint = 219
 
 // nonAtomicMigrationVersions lists migrations whose up.sql commits mid-file. A dirty flag at any other version means a clean rollback
 // (schema intact at version-1).

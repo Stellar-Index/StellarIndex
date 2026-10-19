@@ -150,7 +150,7 @@ func (s *Store) SEP41KindTotalsAtOrBefore(ctx context.Context, contractID string
 		}
 	default:
 		// Checkpoint ≤ asOfLedger: add only the live tail delta above it.
-		delta, derr := s.sep41KindTotalsRange(ctx, contractID, cp.lastLedger, floor, asOfLedger)
+		delta, derr := s.sep41KindTotalsRange(ctx, contractID, cp.lastLedger, cp.lastClosedAt, floor, asOfLedger)
 		if derr != nil {
 			return SEP41KindTotals{}, derr
 		}
@@ -195,6 +195,7 @@ func (s *Store) SEP41GenesisBaselineSeeded(ctx context.Context, contractID strin
 type sep41RollupRow struct {
 	rollup        SEP41KindTotals
 	lastLedger    uint32
+	lastClosedAt  time.Time // close time of lastLedger; zero when unknown
 	genesis       SEP41KindTotals
 	genesisLedger uint32
 	genesisSeeded bool
@@ -206,17 +207,19 @@ func (s *Store) sep41RollupCheckpoint(ctx context.Context, contractID string) (s
 	const q = `
         SELECT mint_total::text, burn_total::text, clawback_total::text, last_ledger,
                genesis_mint_total::text, genesis_burn_total::text, genesis_clawback_total::text,
-               genesis_baseline_ledger
+               genesis_baseline_ledger,
+               CASE WHEN bound_ledger = last_ledger THEN bound_observed_at END
           FROM sep41_supply_rollup
          WHERE contract_id = $1
     `
 	var mintRaw, burnRaw, clawbackRaw string
+	var boundObservedAt sql.NullTime
 	var lastLedger int64
 	var gMintRaw, gBurnRaw, gClawbackRaw string
 	var genesisLedger sql.NullInt64
 	err := s.db.QueryRowContext(ctx, q, contractID).Scan(
 		&mintRaw, &burnRaw, &clawbackRaw, &lastLedger,
-		&gMintRaw, &gBurnRaw, &gClawbackRaw, &genesisLedger,
+		&gMintRaw, &gBurnRaw, &gClawbackRaw, &genesisLedger, &boundObservedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return sep41RollupRow{}, false, nil
@@ -235,6 +238,7 @@ func (s *Store) sep41RollupCheckpoint(ctx context.Context, contractID string) (s
 	row := sep41RollupRow{
 		rollup:        rollup,
 		lastLedger:    uint32(lastLedger),
+		lastClosedAt:  boundObservedAt.Time,
 		genesis:       genesis,
 		genesisSeeded: genesisLedger.Valid,
 	}
@@ -268,6 +272,8 @@ func (s *Store) UpsertSEP41GenesisBaseline(ctx context.Context, contractID strin
                burn_total              = 0,
                clawback_total          = 0,
                last_ledger             = 0,
+               bound_ledger            = NULL,
+               bound_observed_at       = NULL,
                updated_at              = now()
          WHERE contract_id = $1
     `
@@ -331,8 +337,9 @@ func (s *Store) sep41KindTotalsFullSum(ctx context.Context, contractID string, f
 }
 
 // sep41KindTotalsRange sums the delta over (afterLedger, asOfLedger]; `ledger > afterLedger` walks only the index tail, cheap at any
-// history depth.
-func (s *Store) sep41KindTotalsRange(ctx context.Context, contractID string, afterLedger, floorLedger, asOfLedger uint32) (SEP41KindTotals, error) {
+// history depth. afterClosedAt (afterLedger's close time) bounds observed_at so planning prunes chunks instead of visiting all of them;
+// every later ledger closed after it, and the margin only absorbs clock skew between writers.
+func (s *Store) sep41KindTotalsRange(ctx context.Context, contractID string, afterLedger uint32, afterClosedAt time.Time, floorLedger, asOfLedger uint32) (SEP41KindTotals, error) {
 	const q = `
         SELECT
             COALESCE(sum(amount) FILTER (WHERE event_kind = 'mint'),     0)::text AS mint_total,
@@ -343,13 +350,21 @@ func (s *Store) sep41KindTotalsRange(ctx context.Context, contractID string, aft
            AND ledger      >  $2
            AND ledger      >= $3
            AND ledger      <= $4
+           AND observed_at >= $5
     `
+	lower := time.Time{}
+	if !afterClosedAt.IsZero() {
+		lower = afterClosedAt.Add(-sep41BoundMargin)
+	}
 	var mintRaw, burnRaw, clawbackRaw string
-	if err := s.db.QueryRowContext(ctx, q, contractID, int(afterLedger), int(floorLedger), int(asOfLedger)).Scan(&mintRaw, &burnRaw, &clawbackRaw); err != nil {
+	if err := s.db.QueryRowContext(ctx, q, contractID, int(afterLedger), int(floorLedger), int(asOfLedger), lower.UTC()).Scan(&mintRaw, &burnRaw, &clawbackRaw); err != nil {
 		return SEP41KindTotals{}, fmt.Errorf("timescale: sep41 kind-totals delta %s@(%d,%d]: %w", contractID, afterLedger, asOfLedger, err)
 	}
 	return parseSEP41Totals(mintRaw, burnRaw, clawbackRaw)
 }
+
+// sep41BoundMargin widens the delta read's observed_at bound; a day is far below the 7-day chunk interval, so pruning is unaffected.
+const sep41BoundMargin = 24 * time.Hour
 
 // parseSEP41Totals parses the three ::text NUMERIC sums into non-nil
 // *big.Int components (ADR-0003: i128 sums never truncate).
@@ -633,7 +648,7 @@ func foldSEP41RollupLocked(ctx context.Context, tx *sql.Tx, contractID string) (
 	//   settled  - the durable cursor; NULL when the projector never committed a cycle, which the
 	//              delta treats as 0 (fold nothing).
 	//   delta    - the settled tail sum over (from_ledger, settled bound), floored.
-	//   UPDATE   - add the delta and move last_ledger to the max ledger folded.
+	//   UPDATE   - add the delta, move last_ledger to the max ledger folded and record its close time as the read's bound.
 	const q = `
         WITH locked AS MATERIALIZED (
             SELECT last_ledger                          AS from_ledger,
@@ -659,6 +674,7 @@ func foldSEP41RollupLocked(ctx context.Context, tx *sql.Tx, contractID string) (
                 COALESCE(sum(e.amount) FILTER (WHERE e.event_kind = 'burn'),     0) AS d_burn,
                 COALESCE(sum(e.amount) FILTER (WHERE e.event_kind = 'clawback'), 0) AS d_clawback,
                 COALESCE(max(e.ledger), (SELECT from_ledger FROM locked))           AS to_ledger,
+                max(e.observed_at)                                                 AS to_observed_at,
                 (SELECT through IS NULL FROM settled)                              AS cursor_absent
               FROM sep41_supply_events e
              WHERE e.contract_id = $1
@@ -672,6 +688,8 @@ func foldSEP41RollupLocked(ctx context.Context, tx *sql.Tx, contractID string) (
                burn_total     = r.burn_total     + d.d_burn,
                clawback_total = r.clawback_total + d.d_clawback,
                last_ledger    = d.to_ledger,
+               bound_ledger      = CASE WHEN d.to_observed_at IS NULL THEN r.bound_ledger ELSE d.to_ledger END,
+               bound_observed_at = COALESCE(d.to_observed_at, r.bound_observed_at),
                updated_at     = now()
           FROM delta d
          WHERE r.contract_id = $1
@@ -851,7 +869,7 @@ func (s *Store) refoldSEP41RollupRow(ctx context.Context, contractID string) (bo
 	const zero = `
         UPDATE sep41_supply_rollup
            SET mint_total = 0, burn_total = 0, clawback_total = 0,
-               last_ledger = 0, updated_at = now()
+               last_ledger = 0, bound_ledger = NULL, bound_observed_at = NULL, updated_at = now()
          WHERE contract_id = $1
     `
 	res, err := tx.ExecContext(ctx, zero, contractID)
@@ -879,7 +897,7 @@ func zeroSEP41RollupFold(ctx context.Context, db *sql.DB, contractIDs []string) 
 	const q = `
         UPDATE sep41_supply_rollup
            SET mint_total = 0, burn_total = 0, clawback_total = 0,
-               last_ledger = 0, updated_at = now()
+               last_ledger = 0, bound_ledger = NULL, bound_observed_at = NULL, updated_at = now()
          WHERE contract_id = ANY($1)
     `
 	res, err := db.ExecContext(zctx, q, contractIDs)
