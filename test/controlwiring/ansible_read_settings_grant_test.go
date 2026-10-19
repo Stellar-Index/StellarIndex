@@ -1,0 +1,31 @@
+package controlwiring
+
+import (
+	"fmt"
+	"testing"
+)
+
+// The -chunks pre-flights read current_setting('data_directory') as the stellarindex role; only
+// pg_read_all_settings lets a non-superuser do that. The API role must never get a built-in role.
+func TestPostgresTasks_ReadSettingsGrantedToStellarindexRoleOnly(t *testing.T) {
+	var grants []map[string]any
+	for _, n := range walTasks(t) {
+		m := walTaskMap(t, n)
+		if mod, ok := m["community.postgresql.postgresql_membership"].(map[string]any); ok {
+			grants = append(grants, mod)
+		}
+	}
+	if len(grants) != 1 {
+		t.Fatalf("%d postgresql_membership tasks in %s, want exactly 1", len(grants), walPostgresTasks)
+	}
+	g := grants[0]
+	if got := fmt.Sprint(g["groups"]); got != "[pg_read_all_settings]" {
+		t.Errorf("groups = %s, want [pg_read_all_settings]", got)
+	}
+	if got := fmt.Sprint(g["target_roles"]); got != "[{{ postgres_user_stellarindex }}]" {
+		t.Errorf("target_roles = %s, want only the stellarindex role", got)
+	}
+	if g["state"] != "present" {
+		t.Errorf("state = %v, want present (exact would revoke other memberships)", g["state"])
+	}
+}

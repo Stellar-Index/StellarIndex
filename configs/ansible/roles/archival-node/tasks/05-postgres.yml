@@ -246,6 +246,16 @@
   become_user: postgres
   no_log: true
 
+# The -chunks pre-flights (tag-tx-index, usd-volume-restamp) size free space on the trades volume,
+# which needs current_setting('data_directory'); without this they run blind. Never the API role.
+- name: Let the stellarindex role read data_directory (pg_read_all_settings)
+  community.postgresql.postgresql_membership:
+    login_db: postgres
+    groups: [pg_read_all_settings]
+    target_roles: ["{{ postgres_user_stellarindex }}"]
+    state: present
+  become_user: postgres
+
 - name: Create stellarindex_api Postgres role (read-mostly API role, migration 0213)
   when: postgres_pass_stellarindex_api | default('') | length > 0
   community.postgresql.postgresql_user:
