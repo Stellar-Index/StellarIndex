@@ -146,13 +146,13 @@ func (s *Server) handleChangeSummary(w http.ResponseWriter, r *http.Request) {
 	// (code, issuer) pair is ever widened to a ticker.
 	candidates := changeSummaryCoinCandidates(entityType, entityID)
 
-	row, err := firstChangeSummary(candidates, func(id string) (timescale.ChangeSummaryRow, error) {
-		return s.ChangeSummary.GetChangeSummary(r.Context(), entityType, id)
+	row, err := firstChangeSummary(r.Context(), candidates, func(ctx context.Context, id string) (timescale.ChangeSummaryRow, error) {
+		return s.ChangeSummary.GetChangeSummary(ctx, entityType, id)
 	})
 	if errors.Is(err, sql.ErrNoRows) && entityType == "coin" {
 		// The worker covers configured pairs only; a classic asset still has its listing price and short-window changes.
-		row, err = firstChangeSummary(candidates, func(id string) (timescale.ChangeSummaryRow, error) {
-			return s.ChangeSummary.AssetChangeFromSnapshot(r.Context(), id)
+		row, err = firstChangeSummary(r.Context(), candidates, func(ctx context.Context, id string) (timescale.ChangeSummaryRow, error) {
+			return s.ChangeSummary.AssetChangeFromSnapshot(ctx, id)
 		})
 	}
 	if errors.Is(err, sql.ErrNoRows) {
@@ -180,11 +180,11 @@ func (s *Server) handleChangeSummary(w http.ResponseWriter, r *http.Request) {
 }
 
 // firstChangeSummary returns the first candidate's row; sql.ErrNoRows only when every candidate missed, any other error at once.
-func firstChangeSummary(candidates []string, get func(id string) (timescale.ChangeSummaryRow, error)) (timescale.ChangeSummaryRow, error) {
+func firstChangeSummary(ctx context.Context, candidates []string, get func(ctx context.Context, id string) (timescale.ChangeSummaryRow, error)) (timescale.ChangeSummaryRow, error) {
 	err := sql.ErrNoRows
 	for _, id := range candidates {
 		var row timescale.ChangeSummaryRow
-		if row, err = get(id); !errors.Is(err, sql.ErrNoRows) {
+		if row, err = get(ctx, id); !errors.Is(err, sql.ErrNoRows) {
 			return row, err
 		}
 	}
