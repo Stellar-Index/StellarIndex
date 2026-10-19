@@ -1839,6 +1839,12 @@ func TestCEXFiatRestampChunks_RestampsInsideACompressedChunk(t *testing.T) {
 		if fmt.Sprint(got.gen) != gen {
 			t.Errorf("%s: derive_generation = %d, want the run's %s", name, got.gen, gen)
 		}
+		if b := readUSDBasis(t, ctx, f.store.DB(), "binance", ledger[name]); b.String != string(timescale.BasisFXQuote) {
+			t.Errorf("%s: usd_basis = %v, want %s", name, b, timescale.BasisFXQuote)
+		}
+		if logged := readRestampLog(t, ctx, f.store.DB(), "binance", ledger[name]); len(logged) != 1 || logged[0].basis.String != string(timescale.BasisFXQuote) {
+			t.Errorf("%s: restamp log = %+v, want one row with basis %s", name, logged, timescale.BasisFXQuote)
+		}
 	}
 	// Outside the tolerance: still NULL, never extrapolated to the
 	// nine-day-old rate.

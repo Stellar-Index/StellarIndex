@@ -741,13 +741,8 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
                 quote_asset       = EXCLUDED.quote_asset,
                 base_amount       = EXCLUDED.base_amount,
                 quote_amount      = EXCLUDED.quote_amount,
-                -- W1-flowtradeingest-1 (generation-aware NULL preservation):
-                -- at the LIVE / equal generation a transient FX-resolver miss
-                -- must NOT regress a populated usd_volume to NULL (the gen-0
-                -- double-write race between BatchInsertTrades and InsertTrade),
-                -- so preserve the stored value on a NULL incoming. A strictly
-                -- HIGHER-generation re-derive is still allowed to write an
-                -- honest NULL (the tier-3b de-poisoning case; store.go:147-155).
+                -- At an equal generation a transient FX miss must not NULL a stored value
+                -- (the BatchInsertTrades/InsertTrade double write); a higher generation may.
                 usd_volume        = CASE
                                         WHEN EXCLUDED.derive_generation > trades.derive_generation
                                             THEN EXCLUDED.usd_volume
@@ -1016,13 +1011,8 @@ func (s *Store) insertTradeRows(ctx context.Context, insertRows []canonical.Trad
                 quote_asset       = EXCLUDED.quote_asset,
                 base_amount       = EXCLUDED.base_amount,
                 quote_amount      = EXCLUDED.quote_amount,
-                -- W1-flowtradeingest-1 (generation-aware NULL preservation):
-                -- at the LIVE / equal generation a transient FX-resolver miss
-                -- must NOT regress a populated usd_volume to NULL (the gen-0
-                -- double-write race between BatchInsertTrades and InsertTrade),
-                -- so preserve the stored value on a NULL incoming. A strictly
-                -- HIGHER-generation re-derive is still allowed to write an
-                -- honest NULL (the tier-3b de-poisoning case; store.go:147-155).
+                -- At an equal generation a transient FX miss must not NULL a stored value
+                -- (the BatchInsertTrades/InsertTrade double write); a higher generation may.
                 usd_volume        = CASE
                                         WHEN EXCLUDED.derive_generation > trades.derive_generation
                                             THEN EXCLUDED.usd_volume
