@@ -14,6 +14,10 @@ func isOpsBySourceProbe(q string) bool {
 	return strings.Contains(q, "stellar.ops_by_source") && !strings.Contains(q, "WHERE")
 }
 
+func isOpTypesCoverageProbe(q string) bool {
+	return strings.Contains(q, "stellar.account_op_types_coverage")
+}
+
 // withOpsBySourceRows answers the ops_by_source availability probe with one row (a provisioned, populated
 // projection) and hands every other query to next, so account-history SQL-shape tests exercise the history
 // queries, not the refusal.
@@ -64,7 +68,8 @@ func TestAccountHistory_RefusesEmptyOpsBySource(t *testing.T) {
 			t.Errorf("%s over an empty ops_by_source: err = %v, want errOpsBySourceMissing", name, err)
 		}
 	}
-	if n := len(conn.queries) - countQueries(conn.queries, isOpsBySourceProbe); n != 0 {
+	isProbe := func(q string) bool { return isOpsBySourceProbe(q) || isOpTypesCoverageProbe(q) }
+	if n := len(conn.queries) - countQueries(conn.queries, isProbe); n != 0 {
 		t.Errorf("%d history queries ran over an empty ops_by_source, want 0: %q", n, conn.queries)
 	}
 }
@@ -99,5 +104,39 @@ func TestAccountHistory_OpsBySourceTruncatedUnderReader(t *testing.T) {
 		if err != nil {
 			t.Errorf("repopulated: %s: %v", name, err)
 		}
+	}
+}
+
+// TestAccountOperationTypeCounts_MarkerSwitchesToIndexedTable: with the account_op_types coverage marker the counts read the keyed
+// table and need no ops_by_source; without it they take the two-arm join.
+func TestAccountOperationTypeCounts_MarkerSwitchesToIndexedTable(t *testing.T) {
+	marker := true
+	conn := &stubConn{respond: func(q string) (driver.Rows, error) {
+		if isOpTypesCoverageProbe(q) && marker {
+			return &stubRows{data: [][]any{{uint32(1)}}}, nil
+		}
+		return (&opsBySourceLake{rows: true}).respond(q)
+	}}
+	clk := newFakeClock()
+	r := &ExplorerReader{conn: conn, opTypesCoverageProbe: schemaProbe{now: clk.now}}
+	ctx := context.Background()
+
+	if _, err := r.AccountOperationTypeCounts(ctx, "GTESTOPTYPES"); err != nil {
+		t.Fatalf("marked: %v", err)
+	}
+	if last := conn.queries[len(conn.queries)-1]; last != accountOpTypeCountsIndexedQuery {
+		t.Fatalf("marked: ran %q, want accountOpTypeCountsIndexedQuery", last)
+	}
+	if n := countQueries(conn.queries, isOpsBySourceProbe); n != 0 {
+		t.Errorf("marked: probed ops_by_source %d times, want 0", n)
+	}
+
+	marker = false
+	clk.advance(schemaProbeLease + time.Second)
+	if _, err := r.AccountOperationTypeCounts(ctx, "GTESTOPTYPES"); err != nil {
+		t.Fatalf("unmarked: %v", err)
+	}
+	if last := conn.queries[len(conn.queries)-1]; last != accountOpTypeCountsQuery {
+		t.Fatalf("unmarked: ran %q, want accountOpTypeCountsQuery", last)
 	}
 }

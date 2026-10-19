@@ -34,6 +34,8 @@
 #                             projects (mainnet renamed from
 #                             stellarindex-showcase)
 #   - CLOUDFLARE_ACCOUNT_ID — the CF account UUID
+#   - EXPLORER_BUILD_API_KEY — optional mainnet API key for the prerender
+#                               (sent to the mainnet API only)
 
 name: explorer-deploy
 
@@ -143,12 +145,29 @@ jobs:
           if [[ ! "$api" =~ ^https://[A-Za-z0-9.-]+$ ]]; then
             echo "::error::api_base_url '$api' is not a bare https origin"; exit 1
           fi
+          # The build key is a mainnet key: send it only to the mainnet API,
+          # never to a test net (separate key store) or an overridden origin.
+          send_key=false
+          if [ "$NETWORK" = mainnet ] && [ "$api" = "$base" ]; then send_key=true; fi
           {
             echo "network=$NETWORK"
             echo "api_base=$api"
             echo "project=$project"
+            echo "send_key=$send_key"
           } >> "$GITHUB_OUTPUT"
           echo "Resolved: network=$NETWORK api=$api project=$project"
+
+      - name: Resolve deploy branch
+        # Runs before the build, so a refused label fails in seconds instead of
+        # after a full prerender against the live API. The Pages branch label is
+        # the production switch, so it must agree with the ref this job checked
+        # out: production only from main,
+        # preview never as `main`, allowlisted because it reaches wrangler's
+        # command line. Refs pass through the runner's GITHUB_REF /
+        # GITHUB_REF_NAME, never a `${{ }}` interpolated into the shell.
+        env:
+          DEPLOY_ENVIRONMENT: ${{ github.event.inputs.environment }}
+        run: bash scripts/ci/resolve-pages-branch.sh
 
       - name: Set up pnpm
         # package_json_file reads web/explorer/package.json's
@@ -175,6 +194,7 @@ jobs:
         env:
           NEXT_PUBLIC_NETWORK: ${{ steps.net.outputs.network }}
           NEXT_PUBLIC_API_BASE_URL: ${{ steps.net.outputs.api_base }}
+          STELLARINDEX_BUILD_API_KEY: ${{ steps.net.outputs.send_key == 'true' && secrets.EXPLORER_BUILD_API_KEY || '' }}
         run: pnpm build
 
       - name: Verify build artefact
@@ -196,16 +216,6 @@ jobs:
       # docs/operations/explorer-deployment.md (Build-time guards) for what
       # each one defends and why the prune keeps the tree files, and
       # test/controlwiring/explorer_build_guards_test.go for the wiring guard.
-
-      - name: Resolve deploy branch
-        # The Pages branch label is the production switch, so it must agree
-        # with the ref this job checked out: production only from main,
-        # preview never as `main`, allowlisted because it reaches wrangler's
-        # command line. Refs pass through the runner's GITHUB_REF /
-        # GITHUB_REF_NAME, never a `${{ }}` interpolated into the shell.
-        env:
-          DEPLOY_ENVIRONMENT: ${{ github.event.inputs.environment }}
-        run: bash scripts/ci/resolve-pages-branch.sh
 
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0  # v4.1.3

@@ -12,7 +12,7 @@ import {
   Td,
   LinkRow,
 } from '@/components/ui';
-import { asExample, API_BASE_URL } from '@/api/client';
+import { asExample, API_BASE_URL, buildHeaders } from '@/api/client';
 import {
   compareDecimalDesc,
   divideDecimalString,
@@ -44,6 +44,7 @@ async function fetchPoolsForAsset(assetID: string): Promise<PoolRow[] | null> {
   try {
     const url = `${API_BASE_URL}/v1/pools?asset=${encodeURIComponent(assetID)}&limit=100&order_by=volume_24h_usd_desc`;
     const res = await fetch(url, {
+      headers: buildHeaders(),
       signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
     });
     if (!res.ok) return null;

@@ -180,6 +180,10 @@ type ExplorerReader struct {
 	// finishes genesis to tip. Without a row the index is not proof of coverage, so a miss must not be a 404.
 	txCoverageProbe schemaProbe
 
+	// opTypesCoverageProbe probes stellar.account_op_types_coverage, written after the account_op_types backfill is verified
+	// (deploy/clickhouse/account_op_types.sql Step 5). Without a row the table is partial and op-type counts take the join.
+	opTypesCoverageProbe schemaProbe
+
 	// contractLedgersProbe probes stellar.contract_active_ledgers. Present and non-empty
 	// bounds ContractEventsRecent to the contract's active ledgers; absent means the
 	// unbounded reverse walk. requireRows: per-contract emptiness is served as an
@@ -326,6 +330,7 @@ func newExplorerReader(conn driver.Conn) *ExplorerReader {
 		conn:                     conn,
 		txIndexProbe:             schemaProbe{name: "tx_hash_index"},
 		txCoverageProbe:          schemaProbe{name: "tx_hash_index_coverage"},
+		opTypesCoverageProbe:     schemaProbe{name: "account_op_types_coverage"},
 		contractLedgersProbe:     schemaProbe{name: "contract_active_ledgers"},
 		instanceChangesProbe:     schemaProbe{name: "contract_instance_changes"},
 		instanceKeyProbe:         schemaProbe{name: "contract_instance_changes_tx_key"},
@@ -1331,12 +1336,25 @@ const accountOpTypeCountsQuery = `SELECT op_type, toInt64(sum(c)) AS n FROM (
 		  GROUP BY op_type)
 	) GROUP BY op_type ORDER BY n DESC` + explorerScanSettings
 
-// AccountOperationTypeCounts returns all-time per-op-type counts of operations involving an account, by count desc; a whole-history scan, so run it under a detached stale-while-revalidate budget.
+// accountOpTypeCountsIndexedQuery reads the same counts from stellar.account_op_types, keyed on account and holding only visible rows.
+// count() FINAL collapses the RMT on its full key; uniqExact over a whale's rows breaks the 8 GB cap. Partitions are disjoint ledger
+// ranges, so FINAL need not merge across them.
+const accountOpTypeCountsIndexedQuery = `SELECT op_type, toInt64(count()) AS n
+		FROM stellar.account_op_types FINAL
+		WHERE account = ?
+		GROUP BY op_type ORDER BY n DESC` + explorerScanSettings + `, do_not_merge_across_partitions_select_final = 1`
+
+// AccountOperationTypeCounts returns all-time per-op-type counts of operations involving an account, by count desc. Without the
+// account_op_types coverage marker it is a whole-history join, so run it under a detached stale-while-revalidate budget.
 func (r *ExplorerReader) AccountOperationTypeCounts(ctx context.Context, account string) ([]OpTypeCount, error) {
-	if !r.opsBySourceAvailable(ctx) {
-		return nil, errOpsBySourceMissing
+	q, args := accountOpTypeCountsIndexedQuery, []any{account}
+	if !r.accountOpTypesCovered(ctx) {
+		if !r.opsBySourceAvailable(ctx) {
+			return nil, errOpsBySourceMissing
+		}
+		q, args = accountOpTypeCountsQuery, []any{account, account, account, account}
 	}
-	rows, err := r.conn.Query(ctx, accountOpTypeCountsQuery, account, account, account, account)
+	rows, err := r.conn.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: account %s op-type counts: %w", account, err)
 	}
@@ -1382,6 +1400,12 @@ func (r *ExplorerReader) txHashIndexAvailable(ctx context.Context) bool {
 func (r *ExplorerReader) txHashIndexCovered(ctx context.Context) bool {
 	return r.probeSchema(ctx, &r.txCoverageProbe,
 		`SELECT covered_to FROM stellar.tx_hash_index_coverage LIMIT 1`, true)
+}
+
+// accountOpTypesCovered reports whether the account_op_types backfill was verified and marked; until then the table misses history.
+func (r *ExplorerReader) accountOpTypesCovered(ctx context.Context) bool {
+	return r.probeSchema(ctx, &r.opTypesCoverageProbe,
+		`SELECT covered_to FROM stellar.account_op_types_coverage LIMIT 1`, true)
 }
 
 // contractLedgersIndexAvailable reports whether contract_active_ledgers is USABLE (exists, non-empty), not that it covers a contract:

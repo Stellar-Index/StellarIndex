@@ -9,7 +9,7 @@ import { LiveChangeChip } from '../../LiveChangeChip';
 // plus the spec'd since board #33; narrowed-to-required here coin-overlay fields this widget reads:
 // price_history_24h / change_1h_pct / change_7d_pct).
 import type { Coin } from '@/api/hooks';
-import { API_BASE_URL } from '@/api/client';
+import { API_BASE_URL, buildHeaders } from '@/api/client';
 import {
   compareDecimalStrings,
   formatCompactUnits,
@@ -48,6 +48,7 @@ function getAssetIndex(): Promise<AssetIndex> {
     if (isCIStub) return { slugs, byKey };
     try {
       const res = await fetch(`${API_BASE_URL}/v1/assets?limit=500`, {
+        headers: buildHeaders(),
         signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -72,6 +73,7 @@ function getAssetIndex(): Promise<AssetIndex> {
       // canonical asset id where derivable so the sparkline fallback works.
       try {
         const vres = await fetch(`${API_BASE_URL}/v1/assets/verified`, {
+          headers: buildHeaders(),
           signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
         });
         if (vres.ok) {
@@ -166,7 +168,10 @@ function fetchChartSparkline(
     try {
       const res = await fetch(
         `${API_BASE_URL}/v1/chart?asset=${encodeURIComponent(asset)}&quote=fiat:USD&timeframe=24h&granularity=1h`,
-        { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) },
+        {
+          headers: buildHeaders(),
+          signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
+        },
       );
       if (!res.ok) return [];
       const env = (await res.json()) as {
@@ -251,7 +256,10 @@ async function fetchCoin(slug: string): Promise<Coin | null> {
   try {
     const res = await fetch(
       `${API_BASE_URL}/v1/assets/${encodeURIComponent(id)}`,
-      { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) },
+      {
+        headers: buildHeaders(),
+        signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
+      },
     );
     if (!res.ok) return null;
     const env = (await res.json()) as { data: Coin };
