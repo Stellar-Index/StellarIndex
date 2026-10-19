@@ -678,6 +678,41 @@ SELECT source_account, ledger_seq, tx_index, 4294967295 AS op_index
 FROM stellar.transactions
 WHERE source_account != '';
 
+-- ── account_op_types — see deploy/clickhouse/account_op_types.sql ──
+-- (account -> op key, op_type) for every op an account's history shows: ops it
+-- sourced (the MV below) and ops it took part in as a non-source participant whose
+-- tx is visible to it (successful, or sourced by it), written by the CH sink beside
+-- operation_participants. AccountOperationTypeCounts reads it by PK prefix instead
+-- of joining account keys into stellar.operations, and only while
+-- account_op_types_coverage holds a marker (TRUNCATE the marker whenever the table
+-- is rebuilt). Keep in lockstep with deploy/clickhouse/account_op_types.sql.
+CREATE TABLE IF NOT EXISTS stellar.account_op_types
+(
+    account    String,
+    ledger_seq UInt32,
+    tx_index   UInt32,
+    op_index   UInt32,
+    op_type    LowCardinality(String)
+)
+ENGINE = ReplacingMergeTree
+PARTITION BY intDiv(ledger_seq, 1000000)
+ORDER BY (account, ledger_seq, tx_index, op_index);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS stellar.account_op_types_source_mv
+TO stellar.account_op_types AS
+SELECT source_account AS account, ledger_seq, tx_index, op_index, op_type
+FROM stellar.operations
+WHERE source_account != '';
+
+CREATE TABLE IF NOT EXISTS stellar.account_op_types_coverage
+(
+    covered_from UInt32,
+    covered_to   UInt32,
+    completed_at DateTime DEFAULT now()
+)
+ENGINE = MergeTree
+ORDER BY (covered_from, covered_to);
+
 -- ── account_activity — see deploy/clickhouse/account_activity.sql ──
 -- Per-account activity watermark: (account -> the max ledger the account was EVER
 -- named in, across EVERY role the account-history readers serve: op source, tx

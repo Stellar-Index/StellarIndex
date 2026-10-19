@@ -34,6 +34,27 @@ type ChangeSummaryRow struct {
 	StreakDirection string
 	StreakDays      *int
 	Acceleration    string
+
+	// Normalized marks a AssetChangeFromSnapshot row: CurrentValue is already decimals-normalised USD, so readers must not rescale it.
+	Normalized bool
+}
+
+// AssetChangeFromSnapshot reads an asset's headline USD price and 1h/24h/7d change from asset_price_snapshot, for assets the change-summary
+// worker has no row for (it covers configured pairs only). No 30d, ATH/ATL or streak exists there. sql.ErrNoRows when the asset is
+// unpriced or its row is past the listing's age ceiling.
+func (s *Store) AssetChangeFromSnapshot(ctx context.Context, assetID string) (ChangeSummaryRow, error) {
+	const q = `SELECT asset_id, computed_at, price_usd::text, change_1h_pct::float8, change_24h_pct::float8, change_7d_pct::float8
+		  FROM asset_price_snapshot
+		 WHERE asset_id = $1 AND computed_at > now() - INTERVAL '` + assetPriceSnapshotMaxAge + `'`
+	row := ChangeSummaryRow{EntityType: "coin", Normalized: true}
+	var h1, h24, d7 sql.NullFloat64
+	if err := s.db.QueryRowContext(ctx, q, assetID).Scan(&row.EntityID, &row.RefreshedAt, &row.CurrentValue, &h1, &h24, &d7); err != nil {
+		return ChangeSummaryRow{}, err
+	}
+	row.H1DeltaPct = nullFloat(h1)
+	row.H24DeltaPct = nullFloat(h24)
+	row.D7DeltaPct = nullFloat(d7)
+	return row, nil
 }
 
 // UpsertChangeSummary inserts or replaces the row keyed on (entity_type, entity_id).

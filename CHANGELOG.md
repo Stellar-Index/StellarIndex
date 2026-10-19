@@ -20,6 +20,24 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.28] - 2026-10-19
+
+No Postgres migrations. No `pkg/*` break. ClickHouse: apply Step 1 of `deploy/clickhouse/account_op_types.sql` on every host before this binary (the sink refuses to start without it); Steps 3-5 (backfill, verify, coverage marker) follow the deploy.
+
+### Fixed
+
+- **api:** `/v1/pools` prefilters raw rows on the asset arrays before the alias fold, so the base/quote indexes apply (1.7 s to 0.7 s on the reference deployment) (#3640).
+- **api:** `LatestTradesForPair` inlines its LIMIT so Postgres caches one plan instead of re-planning every call (#3639).
+- **api:** a classic asset's change strip is served from its listing snapshot when it has no change-summary row (#3636).
+- **ops:** the `stellarindex` Postgres role gets `pg_read_all_settings` (#3637).
+
+### Added
+
+- **clickhouse:** `account_op_types`, a per-account op-type index (source arm by materialized view, participant arm by the sink); `/v1/accounts/{g}/activity` reads its counts from it once the coverage marker exists (#3633, #3634, #3641).
+- **explorer:** the account page shows the sponsorships in force (#3630); the prerender sends a build API key, never the browser (#3631).
+- **dev:** `api-latency-sweep --pages` times explorer detail pages (#3632).
+- **docs:** the off-site drill's measured multi-hour restore and a 6h run ceiling (#3638).
+
 ## [v0.116.27] - 2026-10-19
 
 No migrations. No `pkg/*` break.
@@ -66,13 +84,3 @@ No migrations. No `pkg/*` break.
 
 - **api:** the asset-detail prewarm re-renders each verified asset instead of being served its own cache hit, so the entry no longer lapses once per TTL and a visitor no longer waits on the inline rebuild (#3609).
 - **api:** the RWA value and premium histories are rebuilt on every prewarm whatever their age, so `/v1/rwa/history` and `/v1/rwa/premium` no longer expire between prewarm ticks and block a visitor on both scan legs (#3610).
-
-## [v0.116.23] - 2026-10-19
-
-No migrations. No `pkg/*` break.
-
-### Fixed
-
-- **api:** the default `/v1/assets` page is refreshed by a background prewarm every TTL, so a client polling minutes apart no longer lands past the cache's max age and waits ~1 s for an inline rebuild (#3605).
-- **api:** `/v1/accounts/{g}/entry-changes` streams only the entry groups that can concern the account, about a tenth of the rows on a busy account, instead of decoding every change in the indexed ledgers; the response is unchanged (#3607).
-

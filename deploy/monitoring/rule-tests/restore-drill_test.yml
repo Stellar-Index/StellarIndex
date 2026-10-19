@@ -202,7 +202,7 @@ tests:
                 `/var/log/restore-drill-offsite.log` + the evidence log under
                 `/var/lib/stellarindex/restore-drills/restore-drills.md`, and
                 force a run with `systemctl start restore-drill-offsite.service`
-                (~47 min, ~269 GB from S3, ~$24 of egress at the 2026-09-03 size).
+                (hours: the restore alone took 1.6-2.7 h on the October runs).
 
   # timer dead, file persists: repo2's last_success is present but old.
   - interval: 1h
@@ -241,7 +241,7 @@ tests:
                 `/var/log/restore-drill-offsite.log` + the evidence log under
                 `/var/lib/stellarindex/restore-drills/restore-drills.md`, and
                 force a run with `systemctl start restore-drill-offsite.service`
-                (~47 min, ~269 GB from S3, ~$24 of egress at the 2026-09-03 size).
+                (hours: the restore alone took 1.6-2.7 h on the October runs).
 
   # healthy: a clean off-site drill re-stamps repo2's last_success.
   - interval: 1h
@@ -294,7 +294,7 @@ tests:
                 `/var/log/restore-drill-offsite.log` + the evidence log under
                 `/var/lib/stellarindex/restore-drills/restore-drills.md`, and
                 force a run with `systemctl start restore-drill-offsite.service`
-                (~47 min, ~269 GB from S3, ~$24 of egress at the 2026-09-03 size).
+                (hours: the restore alone took 1.6-2.7 h on the October runs).
 
   # repo2 fresh, repo1 never drilled: the off-site ticket stays silent, the
   # on-box ticket fires off its absent_over_time branch — which it could

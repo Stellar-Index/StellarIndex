@@ -1171,6 +1171,42 @@ func TestDeleteChangeSummary_ClearsRatchetedExtremes(t *testing.T) {
 	}
 }
 
+// AssetChangeFromSnapshot serves a fresh snapshot row's price and changes, with absent changes left nil, and treats a row past the
+// listing's age ceiling as missing.
+func TestAssetChangeFromSnapshot_FreshRowsOnly(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	const fresh, stale = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", "AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
+	if _, err := store.DB().ExecContext(ctx, `INSERT INTO asset_price_snapshot
+		(asset_id, price_usd, change_1h_pct, change_24h_pct, change_7d_pct, computed_at) VALUES
+		($1, 0.99987654321, NULL, -0.125, 1.5, now()),
+		($2, 0.0007, 1, 2, 3, now() - INTERVAL '1 hour')`, fresh, stale); err != nil {
+		t.Fatalf("seed snapshot: %v", err)
+	}
+
+	got, err := store.AssetChangeFromSnapshot(ctx, fresh)
+	if err != nil {
+		t.Fatalf("fresh: %v", err)
+	}
+	if got.EntityType != "coin" || got.EntityID != fresh || !got.Normalized || got.CurrentValue != "0.99987654321" {
+		t.Errorf("fresh row = %+v, want coin %s normalised at 0.99987654321", got, fresh)
+	}
+	if got.H1DeltaPct != nil || got.H24DeltaPct == nil || *got.H24DeltaPct != -0.125 || got.D7DeltaPct == nil || *got.D7DeltaPct != 1.5 {
+		t.Errorf("deltas h1=%v h24=%v d7=%v, want nil/-0.125/1.5", got.H1DeltaPct, got.H24DeltaPct, got.D7DeltaPct)
+	}
+	if _, err := store.AssetChangeFromSnapshot(ctx, stale); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("stale row: err = %v, want sql.ErrNoRows", err)
+	}
+}
+
 // The point-in-time guard's baseline read must return the buckets immediately BEFORE the anchor (never its own bucket or
 // newer ones), newest-first, with a flipped-only bucket combined into the requested orientation.
 func TestClosedVWAP1mCombinedBefore_AnchorsAtTheInstant(t *testing.T) {

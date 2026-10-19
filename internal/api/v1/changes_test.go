@@ -20,6 +20,9 @@ import (
 type stubChangeSummaryReader struct {
 	row timescale.ChangeSummaryRow
 	err error
+	// snapshot/snapshotErr answer AssetChangeFromSnapshot; GetChangeSummary must return sql.ErrNoRows to reach it.
+	snapshot    *timescale.ChangeSummaryRow
+	snapshotErr error
 
 	lastEntityType, lastEntityID string
 }
@@ -33,12 +36,30 @@ func (r *stubChangeSummaryReader) GetChangeSummary(_ context.Context, entityType
 	return r.row, nil
 }
 
+func (r *stubChangeSummaryReader) AssetChangeFromSnapshot(context.Context, string) (timescale.ChangeSummaryRow, error) {
+	if r.snapshotErr != nil {
+		return timescale.ChangeSummaryRow{}, r.snapshotErr
+	}
+	if r.snapshot != nil {
+		return *r.snapshot, nil
+	}
+	return timescale.ChangeSummaryRow{}, sql.ErrNoRows
+}
+
 // keyedChangeSummaryReader returns a row only for entity_ids present
 // in its map; every other id yields sql.ErrNoRows. Lets a test prove
 // the handler's candidate expansion reaches a specific canonical form.
 type keyedChangeSummaryReader struct {
-	rows map[string]timescale.ChangeSummaryRow
-	seen []string // entity_ids queried, in order
+	rows      map[string]timescale.ChangeSummaryRow
+	snapshots map[string]timescale.ChangeSummaryRow // AssetChangeFromSnapshot rows by asset id
+	seen      []string                              // entity_ids queried, in order
+}
+
+func (r *keyedChangeSummaryReader) AssetChangeFromSnapshot(_ context.Context, assetID string) (timescale.ChangeSummaryRow, error) {
+	if row, ok := r.snapshots[assetID]; ok {
+		return row, nil
+	}
+	return timescale.ChangeSummaryRow{}, sql.ErrNoRows
 }
 
 func (r *keyedChangeSummaryReader) GetChangeSummary(_ context.Context, _, entityID string) (timescale.ChangeSummaryRow, error) {
@@ -660,5 +681,54 @@ func wantMoney(t *testing.T, field string, got *string, want string) {
 	}
 	if *got != want {
 		t.Errorf("%s = %q, want %q", field, *got, want)
+	}
+}
+
+// A coin with no worker row falls back to its asset_price_snapshot row. That price is already decimals-normalised, so a 9-decimals
+// asset must be served verbatim, not rescaled; a worker row, when present, still wins.
+func TestHandleChangeSummary_AssetFallsBackToSnapshot(t *testing.T) {
+	h24 := -0.25
+	snap := timescale.ChangeSummaryRow{
+		EntityType: "coin", EntityID: flaggedAsset, Normalized: true,
+		RefreshedAt: time.Now().UTC(), CurrentValue: "1.15", H24DeltaPct: &h24,
+	}
+	reader := &keyedChangeSummaryReader{snapshots: map[string]timescale.ChangeSummaryRow{flaggedAsset: snap}}
+	srv := v1.New(v1.Options{
+		ChangeSummary:       reader,
+		NonstandardDecimals: nonstandardDecimalsCacheWith(t, flaggedAsset, 9),
+	})
+	got := getChangeSummary(t, srv, "coin", flaggedAsset)
+	if got.CurrentValue != "1.15" {
+		t.Errorf("current_value = %q, want \"1.15\" unscaled", got.CurrentValue)
+	}
+	if got.H24DeltaPct == nil || *got.H24DeltaPct != h24 {
+		t.Errorf("h24_delta_pct = %v, want %v", got.H24DeltaPct, h24)
+	}
+	if got.D30DeltaPct != nil || got.ATHValue != nil || got.StreakDirection != "" {
+		t.Errorf("snapshot fallback served fields it does not hold: %+v", got)
+	}
+
+	reader.rows = map[string]timescale.ChangeSummaryRow{flaggedAsset: rawChangeSummaryRow("coin", flaggedAsset)}
+	if got := getChangeSummary(t, srv, "coin", flaggedAsset); got.CurrentValue != "115" {
+		t.Errorf("with a worker row: current_value = %q, want the worker's scaled \"115\"", got.CurrentValue)
+	}
+}
+
+// A snapshot read error is a 500, never a 404, and the snapshot row passes the same withholding gate as a worker row.
+func TestHandleChangeSummary_SnapshotFallbackErrorAndGate(t *testing.T) {
+	broken := &stubChangeSummaryReader{err: sql.ErrNoRows, snapshotErr: errors.New("storage broke")}
+	if status, body := getChangeSummaryStatus(t, v1.New(v1.Options{ChangeSummary: broken}), "coin", "XLM"); status != http.StatusInternalServerError {
+		t.Errorf("snapshot error: status = %d, want 500 (body=%s)", status, body)
+	}
+
+	flagged := chartFlaggedBase(t).String()
+	snap := timescale.ChangeSummaryRow{EntityType: "coin", EntityID: flagged, Normalized: true, RefreshedAt: time.Now().UTC(), CurrentValue: "1.15"}
+	srv := v1.New(v1.Options{
+		ChangeSummary: &stubChangeSummaryReader{err: sql.ErrNoRows, snapshot: &snap},
+		Scam:          &chartScamGate{withheld: map[string]bool{flagged: true}},
+	})
+	status, body := getChangeSummaryStatus(t, srv, "coin", flagged)
+	if status != http.StatusNotFound || !strings.Contains(body, "errors/price-withheld") || strings.Contains(body, "current_value") {
+		t.Errorf("scam-flagged snapshot row: status = %d body = %s, want the price-withheld 404", status, body)
 	}
 }

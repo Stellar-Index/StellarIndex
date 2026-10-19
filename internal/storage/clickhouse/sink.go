@@ -101,6 +101,10 @@ type OperationParticipantRow struct {
 	TxHash    string
 	TxIndex   uint32
 	OpIndex   uint32
+	// OpType and Visible feed stellar.account_op_types; set by the live extractor only. Visible is the reader's visibleTxPredicate:
+	// the tx succeeded or the participant sourced it.
+	OpType  string
+	Visible bool
 }
 
 // ContractEventRow mirrors stellar.contract_events.
@@ -273,7 +277,7 @@ func openSink(ctx context.Context, opts *clickhouse.Options, flushEvery int) (*S
 
 // sinkTables is every stellar.* table Flush inserts into.
 var sinkTables = []string{
-	"transactions", "operations", "operation_results", "operation_participants",
+	"transactions", "operations", "operation_results", "operation_participants", "account_op_types",
 	"contract_events", "ledger_entry_changes", "supply_flows", "ledgers",
 }
 
@@ -379,6 +383,9 @@ func (s *Sink) Flush(ctx context.Context) error {
 		return err
 	}
 	if err := s.flushParticipants(ctx); err != nil {
+		return err
+	}
+	if err := s.flushAccountOpTypes(ctx); err != nil {
 		return err
 	}
 	if err := s.flushEvents(ctx); err != nil {
@@ -487,6 +494,23 @@ func (s *Sink) flushParticipants(ctx context.Context) error {
 		}
 	}
 	return wrapSend(b.Send(), "operation_participants")
+}
+
+// flushAccountOpTypes writes the participant arm of stellar.account_op_types; the source arm is its MV on stellar.operations.
+func (s *Sink) flushAccountOpTypes(ctx context.Context) error {
+	b, err := s.conn.PrepareBatch(ctx, "INSERT INTO stellar.account_op_types (account, ledger_seq, tx_index, op_index, op_type)")
+	if err != nil {
+		return fmt.Errorf("clickhouse: prepare account_op_types: %w", err)
+	}
+	for _, r := range s.participants {
+		if !r.Visible {
+			continue
+		}
+		if err := b.Append(r.Account, r.LedgerSeq, r.TxIndex, r.OpIndex, r.OpType); err != nil {
+			return fmt.Errorf("clickhouse: append account op type %s/%s/%d: %w", r.Account, r.TxHash, r.OpIndex, err)
+		}
+	}
+	return wrapSend(b.Send(), "account_op_types")
 }
 
 func (s *Sink) flushEvents(ctx context.Context) error {
