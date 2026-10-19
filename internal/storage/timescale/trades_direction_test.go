@@ -6,6 +6,7 @@ package timescale
 import (
 	"context"
 	"database/sql/driver"
+	"fmt"
 	"math/big"
 	"regexp"
 	"strconv"
@@ -275,14 +276,13 @@ func TestLatestTradesForPair_ServesAMarketRecordedTheOtherWayRound(t *testing.T)
 	}
 	wantAQUAUSDCTrade(t, got[0], "LatestTradesForPair")
 
-	stmt := conn.only(t)
-	if stmt.arg(t, 3) != 1 {
-		t.Errorf("bound $3 = %v, want the caller's limit 1", stmt.arg(t, 3))
+	if got := strings.Count(conn.only(t).sql, "LIMIT 1\n"); got != 1 {
+		t.Errorf("outer LIMIT 1 literal appears %d times, want 1:\n%s", got, conn.only(t).sql)
 	}
 }
 
-// TestLatestTradesForPair_ClampsLimit: $3 is both arms' FETCH FIRST and
-// the outer LIMIT, so it alone sizes each time-unbounded walk.
+// TestLatestTradesForPair_ClampsLimit: the limit is both arms' LIMIT and the outer one, inlined as a literal so
+// Postgres caches the generic plan instead of re-planning every trades chunk per call; it alone sizes each walk.
 func TestLatestTradesForPair_ClampsLimit(t *testing.T) {
 	pair := dirAQUAUSDCPair(t)
 	for _, tc := range []struct {
@@ -300,8 +300,12 @@ func TestLatestTradesForPair_ClampsLimit(t *testing.T) {
 			if _, err := store.LatestTradesForPair(context.Background(), pair, tc.limit, time.Time{}); err != nil {
 				t.Fatalf("LatestTradesForPair: %v", err)
 			}
-			if got := conn.only(t).arg(t, 3); got != tc.want {
-				t.Errorf("limit %d bound $3 = %v (%T), want %d", tc.limit, got, got, tc.want)
+			stmt := conn.only(t)
+			if got := strings.Count(stmt.sql, fmt.Sprintf("LIMIT %d", tc.want)); got != 3 {
+				t.Errorf("limit %d: LIMIT %d literal on %d of 3 clauses:\n%s", tc.limit, tc.want, got, stmt.sql)
+			}
+			if strings.Contains(stmt.sql, "$3") || len(stmt.args) != 2 {
+				t.Errorf("limit %d: want only $1/$2 bound, got %d args", tc.limit, len(stmt.args))
 			}
 		})
 	}
