@@ -247,7 +247,7 @@
   no_log: true
 
 # The -chunks pre-flights (tag-tx-index, usd-volume-restamp) size free space on the trades volume,
-# which needs current_setting('data_directory'); without this they run blind. Never the API role.
+# which needs current_setting('data_directory'); without this they run blind. Not granted to stellarindex_api.
 - name: Let the stellarindex role read data_directory (pg_read_all_settings)
   community.postgresql.postgresql_membership:
     login_db: postgres
