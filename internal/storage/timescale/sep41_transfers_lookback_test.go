@@ -70,7 +70,7 @@ func TestListSEP41Transfers_BusyContractReadsOneBoundedWindow(t *testing.T) {
 		rows: sep41LadderRows(now.Add(-time.Minute), 2),
 	})
 
-	got, err := store.listSEP41TransfersAt(context.Background(), sep41LadderContract, "", "", 2, now, SEP41TransferLadderBudget)
+	got, _, err := store.listSEP41TransfersAt(context.Background(), sep41LadderContract, "", "", 2, now, SEP41TransferLadderBudget)
 	if err != nil {
 		t.Fatalf("listSEP41TransfersAt: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestListSEP41Transfers_StopsAtTheFirstFullPage(t *testing.T) {
 		scriptedResult{cols: sep41LadderCols, rows: sep41LadderRows(now.Add(-5*time.Hour), 2)},
 	)
 
-	got, err := store.listSEP41TransfersAt(context.Background(), sep41LadderContract, "", "", 2, now, SEP41TransferLadderBudget)
+	got, _, err := store.listSEP41TransfersAt(context.Background(), sep41LadderContract, "", "", 2, now, SEP41TransferLadderBudget)
 	if err != nil {
 		t.Fatalf("listSEP41TransfersAt: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestListSEP41Transfers_FallsThroughToFullHistory(t *testing.T) {
 	})
 	store, conn := newScriptedStore(t, script...)
 
-	got, err := store.listSEP41TransfersAt(context.Background(), sep41LadderContract, "", "", 2, now, SEP41TransferLadderBudget)
+	got, _, err := store.listSEP41TransfersAt(context.Background(), sep41LadderContract, "", "", 2, now, SEP41TransferLadderBudget)
 	if err != nil {
 		t.Fatalf("listSEP41TransfersAt: %v", err)
 	}
@@ -257,7 +257,7 @@ func TestListSEP41Transfers_BudgetAbandonsAStalledRung(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	got, err := store.listSEP41TransfersAt(ctx, sep41LadderContract, "", "", 2, now, budget)
+	got, _, err := store.listSEP41TransfersAt(ctx, sep41LadderContract, "", "", 2, now, budget)
 	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("listSEP41TransfersAt: %v — a rung stalled past the ladder's budget must fall back, not fail", err)
@@ -303,7 +303,7 @@ func TestListSEP41Transfers_CallerDeadlineIsTheCallersNotTheLadders(t *testing.T
 	defer cancel()
 
 	start := time.Now()
-	_, err := store.listSEP41TransfersAt(ctx, sep41LadderContract, "", "", 2, now, SEP41TransferLadderBudget)
+	_, _, err := store.listSEP41TransfersAt(ctx, sep41LadderContract, "", "", 2, now, SEP41TransferLadderBudget)
 	elapsed := time.Since(start)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v, want the caller's context.DeadlineExceeded to surface", err)
@@ -314,5 +314,53 @@ func TestListSEP41Transfers_CallerDeadlineIsTheCallersNotTheLadders(t *testing.T
 	if len(conn.stmts) != 1 {
 		t.Fatalf("issued %d statements, want only the stalled rung — a fallback on a dead context is a wasted statement:\n%s",
 			len(conn.stmts), strings.Join(conn.statements(), "\n---\n"))
+	}
+}
+
+// TestListSEP41Transfers_FallbackOutOfTimeServesTheWidestRung: a from/to filter whose full-history fallback outlasts the caller's
+// deadline gets the widest completed rung's rows and that rung's floor, not an error — the window is exact even though the page is
+// short.
+func TestListSEP41Transfers_FallbackOutOfTimeServesTheWidestRung(t *testing.T) {
+	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
+	widest := sep41TransferLookbackLadder[len(sep41TransferLookbackLadder)-1]
+	recent := now.Add(-30 * time.Minute)
+	results := make([]scriptedResult, 0, len(sep41TransferLookbackLadder)+1)
+	for range sep41TransferLookbackLadder {
+		results = append(results, scriptedResult{cols: sep41LadderCols, rows: sep41LadderRows(recent, 1)})
+	}
+	store, conn := newScriptedStore(t, append(results, scriptedResult{stall: true})...)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	got, searchedFrom, err := store.listSEP41TransfersAt(ctx, sep41LadderContract, "", "", 2, now, SEP41TransferLadderBudget)
+	if err != nil {
+		t.Fatalf("listSEP41TransfersAt: %v — a completed rung must be served when the fallback runs out of time", err)
+	}
+	if len(got) != 1 || !got[0].ObservedAt.Equal(recent) {
+		t.Fatalf("got %d rows, want the widest rung's single row", len(got))
+	}
+	if want := now.Add(-widest); !searchedFrom.Equal(want) {
+		t.Errorf("searchedFrom = %s, want the widest rung's floor %s", searchedFrom, want)
+	}
+	if len(conn.stmts) != len(sep41TransferLookbackLadder)+1 {
+		t.Fatalf("issued %d statements, want every rung then the fallback:\n%s", len(conn.stmts), strings.Join(conn.statements(), "\n---\n"))
+	}
+}
+
+// TestListSEP41Transfers_ExactPageHasNoFloor: a page the fallback answers is the full history, so searchedFrom stays zero.
+func TestListSEP41Transfers_ExactPageHasNoFloor(t *testing.T) {
+	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
+	results := make([]scriptedResult, 0, len(sep41TransferLookbackLadder)+1)
+	for range sep41TransferLookbackLadder {
+		results = append(results, scriptedResult{cols: sep41LadderCols, rows: sep41LadderRows(now.Add(-time.Minute), 1)})
+	}
+	store, _ := newScriptedStore(t, append(results, scriptedResult{cols: sep41LadderCols, rows: sep41LadderRows(now.Add(-time.Minute), 1)})...)
+
+	_, searchedFrom, err := store.listSEP41TransfersAt(context.Background(), sep41LadderContract, "", "", 2, now, SEP41TransferLadderBudget)
+	if err != nil {
+		t.Fatalf("listSEP41TransfersAt: %v", err)
+	}
+	if !searchedFrom.IsZero() {
+		t.Errorf("searchedFrom = %s, want zero for a full-history answer", searchedFrom)
 	}
 }

@@ -214,16 +214,18 @@ var sep41TransferLookbackLadder = []time.Duration{
 // SEP41TransferLadderBudget bounds the WHOLE lookback ladder so it can never spend the caller's budget on the way to the fallback that has the rows.
 const SEP41TransferLadderBudget = 3 * time.Second
 
-// ListSEP41Transfers returns the most-recent N rows for a contract, optionally filtered by from_addr / to_addr; a page no lookback rung fills falls through to an unbounded read.
-func (s *Store) ListSEP41Transfers(ctx context.Context, contractID, fromAddr, toAddr string, limit int) ([]SEP41TransferRow, error) {
+// ListSEP41Transfers returns the most-recent N rows for a contract, optionally filtered by from_addr / to_addr; a page no lookback rung
+// fills falls through to an unbounded read. A non-zero searchedFrom means that read hit ctx's deadline and the rows are only those
+// at or after it (the widest rung that completed), a lower bound rather than the full page.
+func (s *Store) ListSEP41Transfers(ctx context.Context, contractID, fromAddr, toAddr string, limit int) (rows []SEP41TransferRow, searchedFrom time.Time, err error) {
 	return s.listSEP41TransfersAt(ctx, contractID, fromAddr, toAddr, limit, time.Now(), SEP41TransferLadderBudget)
 }
 
 // listSEP41TransfersAt is [Store.ListSEP41Transfers] with the clock and ladder budget injected so window floors and cost bound are
 // testable.
-func (s *Store) listSEP41TransfersAt(ctx context.Context, contractID, fromAddr, toAddr string, limit int, now time.Time, ladderBudget time.Duration) ([]SEP41TransferRow, error) {
+func (s *Store) listSEP41TransfersAt(ctx context.Context, contractID, fromAddr, toAddr string, limit int, now time.Time, ladderBudget time.Duration) ([]SEP41TransferRow, time.Time, error) {
 	if contractID == "" {
-		return nil, errors.New("timescale: ListSEP41Transfers: empty contractID")
+		return nil, time.Time{}, errors.New("timescale: ListSEP41Transfers: empty contractID")
 	}
 	if limit <= 0 {
 		limit = 100
@@ -232,44 +234,64 @@ func (s *Store) listSEP41TransfersAt(ctx context.Context, contractID, fromAddr, 
 		limit = 500
 	}
 
-	rows, filled, err := s.walkSEP41TransferLadder(ctx, contractID, fromAddr, toAddr, limit, now, ladderBudget)
+	rung, err := s.walkSEP41TransferLadder(ctx, contractID, fromAddr, toAddr, limit, now, ladderBudget)
 	if err != nil {
-		return nil, err
+		return nil, time.Time{}, err
 	}
-	if filled {
-		return rows, nil
+	if rung.filled {
+		return rung.rows, time.Time{}, nil
 	}
 	// Zero `since` = no window bound: the full-history fallback, issued
 	// on the caller's own context — never on the ladder's, whose budget
 	// is spent or beside the point by now.
-	return s.listSEP41TransfersSince(ctx, contractID, fromAddr, toAddr, limit, time.Time{})
+	rows, err := s.listSEP41TransfersSince(ctx, contractID, fromAddr, toAddr, limit, time.Time{})
+	if err == nil {
+		return rows, time.Time{}, nil
+	}
+	// A from/to filter on a large token decompresses its whole compressed history, which can outlast any request budget; the
+	// widest completed rung is still an exact answer for its window.
+	if !rung.floor.IsZero() && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return rung.rows, rung.floor, nil
+	}
+	return nil, time.Time{}, err
 }
 
-// walkSEP41TransferLadder runs the rungs under one budget: (rows, true, nil) for the first rung that fills the page; (nil, false, nil) =
-// fall back to the unbounded read. Errors only for a real storage failure or the CALLER's own deadline or cancellation.
-func (s *Store) walkSEP41TransferLadder(ctx context.Context, contractID, fromAddr, toAddr string, limit int, now time.Time, budget time.Duration) ([]SEP41TransferRow, bool, error) {
+// sep41LadderResult is the ladder's outcome: filled = rows is the full page; otherwise rows and floor are the widest rung that
+// completed (zero floor = none did).
+type sep41LadderResult struct {
+	rows   []SEP41TransferRow
+	floor  time.Time
+	filled bool
+}
+
+// walkSEP41TransferLadder runs the rungs under one budget, stopping at the first rung that fills the page. Errors only for a real
+// storage failure or the CALLER's own deadline or cancellation.
+func (s *Store) walkSEP41TransferLadder(ctx context.Context, contractID, fromAddr, toAddr string, limit int, now time.Time, budget time.Duration) (sep41LadderResult, error) {
 	ladderCtx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 
+	var res sep41LadderResult
 	for _, window := range sep41TransferLookbackLadder {
 		if ladderCtx.Err() != nil {
 			break // spent between rungs: a statement issued now is already dead
 		}
-		rows, err := s.listSEP41TransfersSince(ladderCtx, contractID, fromAddr, toAddr, limit, now.Add(-window))
+		floor := now.Add(-window)
+		rows, err := s.listSEP41TransfersSince(ladderCtx, contractID, fromAddr, toAddr, limit, floor)
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil, false, err // the caller's deadline, not the ladder's
+				return sep41LadderResult{}, err // the caller's deadline, not the ladder's
 			}
 			if ladderCtx.Err() != nil {
 				break // the ladder's budget: fall back on the caller's remaining time
 			}
-			return nil, false, err
+			return sep41LadderResult{}, err
 		}
-		if len(rows) >= limit {
-			return rows, true, nil
+		res = sep41LadderResult{rows: rows, floor: floor, filled: len(rows) >= limit}
+		if res.filled {
+			return res, nil
 		}
 	}
-	return nil, false, nil
+	return res, nil
 }
 
 // sep41TransfersQuery builds one audit-trail read and its args together so placeholder numbering cannot drift from arg order.

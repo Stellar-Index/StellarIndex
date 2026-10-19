@@ -19605,7 +19605,7 @@
                   "request": {
                     "name": "Per-contract SEP-41 transfer audit trail.",
                     "description": {
-                      "content": "Returns the most-recent N (default 100, max 500)\naudit-trail rows for the given SEP-41 token contract,\nordered newest-first. Includes every `transfer` /\n`approve` / `set_admin` / `set_authorized` event the\ndecoder observed; `mint` / `burn` / `clawback` live\nseparately in supply analytics.\n",
+                      "content": "Returns the most-recent N (default 100, max 500)\naudit-trail rows for the given SEP-41 token contract,\nordered newest-first. Includes every `transfer` /\n`approve` / `set_admin` / `set_authorized` event the\ndecoder observed; `mint` / `burn` / `clawback` live\nseparately in supply analytics.\n\nA `from` / `to` filter on a high-volume token may not\nfinish scanning its whole history in time. The response\nis then still a 200, carrying `searched_from` (RFC 3339):\n`transfers` is complete from that instant on, but older\nmatches were not searched. A full-history response omits\nthe field. For one account's complete history use\n`/v1/accounts/{g_strkey}/movements`.\n",
                       "type": "text/plain"
                     },
                     "url": {

@@ -2,12 +2,14 @@ package v1
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -20,9 +22,9 @@ type stubSEP41TransfersReader struct {
 
 func (r *stubSEP41TransfersReader) ListSEP41Transfers(
 	_ context.Context, _, _, _ string, _ int,
-) ([]timescale.SEP41TransferRow, error) {
+) ([]timescale.SEP41TransferRow, time.Time, error) {
 	r.calledN++
-	return nil, nil
+	return nil, time.Time{}, nil
 }
 
 func serverWithSEP41Reader(reader SEP41TransfersReader) *Server {
@@ -197,5 +199,54 @@ func TestSEP41Transfers_UnreachableStorageMapsTo503(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "sep41-transfers-transient") {
 		t.Fatalf("problem type is not the transient-storage one; body: %s", rec.Body.String())
+	}
+}
+
+type partialSEP41Transfers struct{ floor time.Time }
+
+func (r partialSEP41Transfers) ListSEP41Transfers(
+	_ context.Context, _, _, _ string, _ int,
+) ([]timescale.SEP41TransferRow, time.Time, error) {
+	return []timescale.SEP41TransferRow{{Kind: "transfer"}}, r.floor, nil
+}
+
+// TestSEP41Transfers_PartialWindowCarriesSearchedFrom: a read the store could answer only for a recent window is a 200 that names
+// the window's start, so a short page isn't read as the whole history; an exact page omits the field.
+func TestSEP41Transfers_PartialWindowCarriesSearchedFrom(t *testing.T) {
+	floor := time.Date(2026, 10, 12, 9, 30, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name  string
+		floor time.Time
+		want  string
+	}{
+		{"partial", floor, "2026-10-12T09:30:00Z"},
+		{"exact", time.Time{}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			mux.HandleFunc("GET /v1/contracts/{contract_id}/transfers", serverWithSEP41Reader(partialSEP41Transfers{tc.floor}).handleSEP41Transfers)
+			req := httptest.NewRequest(http.MethodGet, "/v1/contracts/"+validContractID+"/transfers?from="+validAccountG, nil)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+			}
+			var body struct {
+				Data map[string]any `json:"data"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			got, present := body.Data["searched_from"]
+			if tc.want == "" {
+				if present {
+					t.Errorf("searched_from = %v on an exact page, want it omitted", got)
+				}
+				return
+			}
+			if got != tc.want {
+				t.Errorf("searched_from = %v, want %q", got, tc.want)
+			}
+		})
 	}
 }
