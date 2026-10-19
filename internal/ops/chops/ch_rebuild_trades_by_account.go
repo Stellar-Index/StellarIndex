@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
@@ -88,6 +89,43 @@ func tradeSourcesKey(cat []reconSource) string {
 		names[i] = src.name
 	}
 	return clickhouse.TradesSourcesKey(names)
+}
+
+// tradesByAccountCatchUp resolves -to-horizon: from one past the newest recorded window to the first ledger at or after the Postgres
+// compression horizon (the archive only has to reach it), capped at maxLedgers; caughtUp means there is nothing to write.
+func tradesByAccountCatchUp(
+	ctx context.Context,
+	tip func(context.Context) (uint32, bool, error),
+	horizon func(context.Context) (time.Time, error),
+	ledgerAt func(context.Context, time.Time) (uint32, bool, error),
+	maxLedgers uint32,
+) (lo, hi uint32, caughtUp bool, err error) {
+	last, ok, err := tip(ctx)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	if !ok {
+		return 0, 0, false, errors.New("ch-rebuild -to-horizon: no trades_by_account window is recorded; run the backfill first (deploy/clickhouse/trades_by_account.sql)")
+	}
+	h, err := horizon(ctx)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	stop, ok, err := ledgerAt(ctx, h)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	if !ok {
+		return 0, 0, false, fmt.Errorf("ch-rebuild -to-horizon: the lake has no ledger at or after the compression horizon %s", h.Format(time.RFC3339))
+	}
+	if last >= stop {
+		return 0, 0, true, nil
+	}
+	lo, hi = last+1, stop
+	if hi-lo >= maxLedgers {
+		hi = lo + maxLedgers - 1
+	}
+	return lo, hi, false, nil
 }
 
 // tradesByAccountStep is the sub-window a -trades-by-account run decodes, lands and records at a time: the gate's whole-history factory walk

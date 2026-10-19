@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
@@ -173,5 +174,56 @@ func TestEachTradesByAccountWindow(t *testing.T) {
 	got, err := collect(1, 50, 10, 21)
 	if err == nil || !slices.Equal(got, []win{{1, 10}, {11, 20}, {21, 30}}) {
 		t.Errorf("stop on error: got %v, %v", got, err)
+	}
+}
+
+func TestCheckCHRebuildRangeFlags(t *testing.T) {
+	for _, tc := range []struct {
+		name                         string
+		from, to                     uint
+		toHorizon, tba, replace, bad bool
+	}{
+		{name: "range", from: 2, to: 10},
+		{name: "no range", bad: true},
+		{name: "inverted range", from: 10, to: 2, bad: true},
+		{name: "to-horizon", toHorizon: true, tba: true},
+		{name: "to-horizon without trades-by-account", toHorizon: true, bad: true},
+		{name: "to-horizon with a range", from: 2, to: 10, toHorizon: true, tba: true, bad: true},
+		{name: "to-horizon with replace", toHorizon: true, tba: true, replace: true, bad: true},
+	} {
+		err := checkCHRebuildRangeFlags("c.toml", tc.from, tc.to, tc.toHorizon, tc.tba, tc.replace)
+		if (err != nil) != tc.bad {
+			t.Errorf("%s: err = %v, want error %v", tc.name, err, tc.bad)
+		}
+	}
+}
+
+func TestTradesByAccountCatchUp(t *testing.T) {
+	horizon := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
+	run := func(tip uint32, recorded bool, stop uint32, inLake bool) (uint32, uint32, bool, error) {
+		return tradesByAccountCatchUp(context.Background(),
+			func(context.Context) (uint32, bool, error) { return tip, recorded, nil },
+			func(context.Context) (time.Time, error) { return horizon, nil },
+			func(_ context.Context, at time.Time) (uint32, bool, error) {
+				if !at.Equal(horizon) {
+					t.Fatalf("ledgerAt(%s), want the horizon", at)
+				}
+				return stop, inLake, nil
+			}, 1000)
+	}
+	if lo, hi, done, err := run(500, true, 800, true); err != nil || done || lo != 501 || hi != 800 {
+		t.Errorf("behind: [%d,%d] done=%v err=%v, want [501,800]", lo, hi, done, err)
+	}
+	if lo, hi, _, _ := run(500, true, 5000, true); lo != 501 || hi != 1500 {
+		t.Errorf("far behind: [%d,%d], want capped at [501,1500]", lo, hi)
+	}
+	if _, _, done, err := run(800, true, 800, true); err != nil || !done {
+		t.Errorf("at the horizon: done=%v err=%v, want caught up", done, err)
+	}
+	if _, _, _, err := run(0, false, 800, true); err == nil {
+		t.Error("no recorded window: want an error, not a run from ledger 1")
+	}
+	if _, _, _, err := run(500, true, 0, false); err == nil {
+		t.Error("lake short of the horizon: want an error")
 	}
 }

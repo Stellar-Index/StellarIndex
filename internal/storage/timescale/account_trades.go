@@ -118,6 +118,26 @@ func (s *Store) tradesUncompressedHorizon(ctx context.Context) time.Time {
 	if time.Since(tradesHorizonAt) < 10*time.Minute && !tradesHorizon.IsZero() {
 		return tradesHorizon
 	}
+	t, stranded, err := s.tradesCompressedFloor(ctx)
+	if err != nil {
+		// Fail CLOSED: a short recent window, not epoch — see doc comment.
+		return time.Now().Add(-tradesHorizonFailClosedWindow)
+	}
+	if stranded {
+		slog.Warn("timescale: tradesUncompressedHorizon: an uncompressed trades chunk predates the newest compressed chunk",
+			"floor", t)
+	}
+	tradesHorizon, tradesHorizonAt = t, time.Now()
+	return t
+}
+
+// TradesCompressedHorizon returns the end of the newest compressed trades chunk, uncached and with the catalog error surfaced.
+func (s *Store) TradesCompressedHorizon(ctx context.Context) (time.Time, error) {
+	t, _, err := s.tradesCompressedFloor(ctx)
+	return t, err
+}
+
+func (s *Store) tradesCompressedFloor(ctx context.Context) (time.Time, bool, error) {
 	const q = `WITH compressed_floor AS (
 	             SELECT coalesce(max(range_end), 'epoch'::timestamptz) AS floor
 	               FROM timescaledb_information.chunks
@@ -135,15 +155,9 @@ func (s *Store) tradesUncompressedHorizon(ctx context.Context) time.Time {
 		stranded bool
 	)
 	if err := s.db.QueryRowContext(ctx, q).Scan(&t, &stranded); err != nil {
-		// Fail CLOSED: a short recent window, not epoch — see doc comment.
-		return time.Now().Add(-tradesHorizonFailClosedWindow)
+		return time.Time{}, false, fmt.Errorf("timescale: trades compressed horizon: %w", err)
 	}
-	if stranded {
-		slog.Warn("timescale: tradesUncompressedHorizon: an uncompressed trades chunk predates the newest compressed chunk",
-			"floor", t)
-	}
-	tradesHorizon, tradesHorizonAt = t, time.Now()
-	return t
+	return t.UTC(), stranded, nil
 }
 
 var (

@@ -236,6 +236,39 @@ func PrepareTradesByAccountWindow(ctx context.Context, addr string, lo, hi uint3
 	return nil
 }
 
+// TradesByAccountTip returns the last ledger of the newest recorded run for sourcesKey; ok is false when nothing is recorded.
+func TradesByAccountTip(ctx context.Context, addr, sourcesKey string) (tip uint32, ok bool, err error) {
+	conn, err := openAccountMovementsWrite(ctx, addr)
+	if err != nil {
+		return 0, false, err
+	}
+	defer func() { _ = conn.Close() }()
+	ws, err := scanTradesByAccountWindows(ctx, conn, `SELECT from_ledger, to_ledger, from_ts, to_ts, sources
+		FROM stellar.trades_by_account_windows FINAL WHERE sources = ?`, sourcesKey)
+	if err != nil {
+		return 0, false, err
+	}
+	runs := MergeTradesByAccountWindows(ws, sourcesKey)
+	if len(runs) == 0 {
+		return 0, false, nil
+	}
+	return runs[len(runs)-1].ToLedger, true, nil
+}
+
+// LedgerAtOrAfter returns the first lake ledger that closed at or after t; ok is false when the lake does not reach t.
+func LedgerAtOrAfter(ctx context.Context, addr string, t time.Time) (seq uint32, ok bool, err error) {
+	conn, err := openRead(ctx, addr)
+	if err != nil {
+		return 0, false, err
+	}
+	defer func() { _ = conn.Close() }()
+	var first uint64
+	if err := conn.QueryRow(ctx, `SELECT toUInt64(ifNull((SELECT min(ledger_seq) FROM stellar.ledgers WHERE close_time >= ?), 0))`, t).Scan(&first); err != nil {
+		return 0, false, fmt.Errorf("clickhouse: first ledger at or after %s: %w", t.Format(time.RFC3339), err)
+	}
+	return uint32(first), first > 0, nil // ledger sequences fit uint32
+}
+
 func scanTradesByAccountWindows(ctx context.Context, conn driver.Conn, q string, args ...any) ([]TradesByAccountRun, error) {
 	rows, err := conn.Query(ctx, q, args...)
 	if err != nil {

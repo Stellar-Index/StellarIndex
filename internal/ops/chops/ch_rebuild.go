@@ -333,6 +333,30 @@ func reportCHRebuildPreflight(w io.Writer, lo, hi uint32, rederive []string) err
 // chRebuild is the write path (ADR-0034): re-derives a range from the ClickHouse lake and writes to Postgres via pipeline.HandleEvent
 // (idempotent ON CONFLICT); -sdex and -contract-calls passes cover what the projector cannot, -sep41 prefilters on contract_id
 // (docs/operations/sep41-mint-recovery.md). Dry-run by default.
+// maxBufferedRange is the per-invocation ledger ceiling: every decode pass buffers a whole invocation in-process.
+const maxBufferedRange = 2_000_000
+
+// checkCHRebuildRangeFlags requires -config and a -from/-to range, or -to-horizon (with -trades-by-account, no range, no -replace) instead.
+func checkCHRebuildRangeFlags(cfgPath string, from, to uint, toHorizon, tradesByAccount, replace bool) error {
+	if toHorizon {
+		switch {
+		case !tradesByAccount:
+			return errors.New("ch-rebuild: -to-horizon applies only to -trades-by-account")
+		case from != 0 || to != 0:
+			return errors.New("ch-rebuild: -to-horizon resolves the range itself; drop -from and -to")
+		case replace:
+			return errors.New("ch-rebuild: -to-horizon only appends past the newest window; it cannot -replace")
+		case cfgPath == "":
+			return errors.New("-config is required")
+		}
+		return nil
+	}
+	if cfgPath == "" || from == 0 || to == 0 || to < from {
+		return errors.New("-config, -from, -to are required; -to must be >= -from")
+	}
+	return nil
+}
+
 func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: seed, event pass, optional op pass, report; splitting hurts clarity.
 	fs, gate := opsutil.NewMutatingFlagSet("ch-rebuild")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
@@ -354,12 +378,13 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	recordDirty := fs.Bool("record-dirty-window", false, "record [from,to] as a pending ADR-0033 projection dirty window for every source named in -sources (each must be a reconciliation-catalogue source; the list is REQUIRED), then exit 0 WITHOUT reading ClickHouse or writing a row. The next compute-completeness re-reconciles that range instead of carrying its prior clean projection claim over it, and clears the obligation only with the verdict that discharges it. This is the RECORD, not a re-derive, so it takes neither -write nor -preflight. It exists for the operator (and scripts/ops/ch-rebuild-projected.sh's TELL THE VERDICT line) after a clean-slate DELETE whose re-derive did not complete: the window is then EMPTY and /v1/coverage must stop certifying it complete (F075). An ordinary -write run records its own rewritten window before it writes; this mode is for a window left EMPTIED.")
 	tradesByAccount := fs.Bool("trades-by-account", false, "with -write -sdex: write the decoded trades to ClickHouse stellar.trades_by_account (one row per taker and per distinct maker, same storability gate and usd_volume as Postgres) and record [from,to] in trades_by_account_windows, INSTEAD of writing Postgres. Needs the full trade set, so it refuses -sources, -contracts, -sdex-gaps, -sdex-reconcile, -sep41, -contract-calls and -bulk-trades. Runbook: deploy/clickhouse/trades_by_account.sql.")
 	replaceWindow := fs.Bool("replace", false, "with -trades-by-account: rewrite a range that overlaps recorded windows, deleting those windows and the range's trades_by_account rows first. Every overlapping window must lie inside [from,to]. Without it an overlapping range is refused.")
+	toHorizon := fs.Bool("to-horizon", false, "with -trades-by-account and no -from/-to: catch up from one past the newest recorded window to the first ledger at or after the Postgres trades compression horizon (at most 2M ledgers per run); exits 0 when already caught up. For the daily timer.")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	write := gate.Enabled()
-	if *cfgPath == "" || *from == 0 || *to == 0 || *to < *from {
-		return fmt.Errorf("-config, -from, -to are required; -to must be >= -from")
+	if err := checkCHRebuildRangeFlags(*cfgPath, *from, *to, *toHorizon, *tradesByAccount, *replaceWindow); err != nil {
+		return err
 	}
 	if err := checkCHRebuildPreflightFlags(*preflight, write); err != nil {
 		return err
@@ -422,6 +447,25 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	// Warn-level logger: HandleEvent debug-logs per event, which would flood at
 	// rebuild volume. Errors + warns still surface.
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	if *toHorizon {
+		clo, chi, caughtUp, err := tradesByAccountCatchUp(ctx,
+			func(ctx context.Context) (uint32, bool, error) {
+				return clickhouse.TradesByAccountTip(ctx, *chAddr, clickhouse.TradesSourcesKey(clickhouse.TradesByAccountSources))
+			},
+			store.TradesCompressedHorizon,
+			func(ctx context.Context, t time.Time) (uint32, bool, error) {
+				return clickhouse.LedgerAtOrAfter(ctx, *chAddr, t)
+			},
+			maxBufferedRange)
+		if err != nil {
+			return err
+		}
+		if caughtUp {
+			fmt.Fprintln(os.Stderr, "ch-rebuild -to-horizon: trades_by_account already reaches the compression horizon")
+			return nil
+		}
+		*from, *to = uint(clo), uint(chi)
+	}
 	lo, hi := uint32(*from), uint32(*to)
 
 	cat, soroswapDec, cerr := buildReconciliationCatalogue(cfg)
@@ -527,7 +571,6 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	// Buffer-pass range guard: every decode pass buffers a whole invocation's decoded events in this
 	// process, and an oversized run is killed silently while starving co-located services of
 	// memory. A docs note is not a guard; 2M ledgers is a comfortable single-window ceiling.
-	const maxBufferedRange = 2_000_000
 	if chRebuildBuffers(cat, sep41Cat, passes, enabled) && *to-*from > maxBufferedRange {
 		return fmt.Errorf("ch-rebuild: range [%d,%d] spans %d ledgers — every decode pass (event, sep41, sdex, contract-call) buffers in-process; window invocations to <=%d ledgers (loop externally, resume per window)",
 			*from, *to, *to-*from, maxBufferedRange)

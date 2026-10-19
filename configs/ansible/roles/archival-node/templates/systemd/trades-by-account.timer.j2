@@ -1,0 +1,19 @@
+# systemd timer: daily trades_by_account catch-up to the Postgres compression horizon.
+#
+# Rendered by Ansible. Companion to trades-by-account.service. The API serves
+# archived account trades only from the run of windows that reaches the
+# horizon, so the archive must advance with it (~1 day per day) or the
+# endpoint drops back to lower_bound=true. Persistent=true: a missed fire
+# resumes from the newest recorded window, 2M ledgers per run at most.
+
+[Unit]
+Description=Daily trades_by_account catch-up to the Postgres compression horizon
+
+[Timer]
+OnCalendar=*-*-* 10:17:00 UTC
+RandomizedDelaySec=300
+Persistent=true
+Unit=trades-by-account.service
+
+[Install]
+WantedBy=timers.target
