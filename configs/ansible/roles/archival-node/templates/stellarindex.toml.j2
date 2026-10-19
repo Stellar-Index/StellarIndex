@@ -396,10 +396,10 @@ prometheus_url = "http://localhost:9090"
 # here means it can never be reported DOWN — only drop one that is
 # genuinely not installed.
 status_services = [{{ '"indexer", "aggregator"' if run_aggregator | default(true) | bool else '"indexer"' }}]
-# Defaults 60 (anon) / 1000 (key). Raised because the explorer's Cloudflare
-# Pages prerender fetches from one IP and 429'd at 60/min, rendering
-# /assets/[slug]/[network] pages as "Not found".
-anon_rate_limit_per_min = 6000
+# Defaults 60 (anon) / 1000 (key). The explorer prerender fetches from one
+# IP with its build key (EXPLORER_BUILD_API_KEY), so the key tier carries
+# the build and anon stays well under it.
+anon_rate_limit_per_min = 600
 key_rate_limit_per_min = 6000
 
 # In-site dashboard (magic-link login). cookie_domain scopes only the
