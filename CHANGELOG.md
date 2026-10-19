@@ -20,6 +20,23 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.29] - 2026-10-19
+
+Postgres migrations 0219-0221 (catalog-only or new tables; no replay). No `pkg/*` break. Apply the ansible role after the deploy: it installs `trades-by-account.timer`.
+
+### Fixed
+
+- **storage:** the SEP-41 supply delta read is bounded by close time so it prunes chunks (#3642).
+- **api:** `/v1/pools` breaks a `last_price` tie on the raw asset spelling (#3649).
+- **completeness:** reconciliation seeds Soroswap pairs from the lake instead of stellar-rpc (11 s vs 4m41s on the reference deployment) (#3653).
+- **decimals-guard:** Soroban DEX pairs are enumerated from `pools_per_source_1h` (#3651).
+
+### Added
+
+- **timescale:** `lp_reserve_current`, a trigger-kept per-pool reserve table for classic supply sums (#3644); `trades.usd_basis` records which valuation route produced each trade's `usd_volume` (#3647).
+- **ops:** a daily `trades_by_account` catch-up to the compression horizon (#3652).
+- **ansible:** r1's anonymous rate limit drops to 600/min now that explorer builds send a key (#3648).
+
 ## [v0.116.28] - 2026-10-19
 
 No Postgres migrations. No `pkg/*` break. ClickHouse: apply Step 1 of `deploy/clickhouse/account_op_types.sql` on every host before this binary (the sink refuses to start without it); Steps 3-5 (backfill, verify, coverage marker) follow the deploy.
@@ -76,11 +93,3 @@ No migrations. No `pkg/*` break.
 - **api:** `/v1/markets/sources` is cached for a minute behind the same stale-while-refresh cache, so a repeat asset or pair answers from memory instead of a ~2 s aggregate (#3614).
 - **ops:** `ch-rebuild -trades-by-account` runs the per-WASM lake gate once per invocation and lands 10k-ledger sub-windows, so a 1M-ledger range no longer pays the gate's whole-history factory walk 100 times (#3617).
 
-## [v0.116.24] - 2026-10-19
-
-No migrations. No `pkg/*` break.
-
-### Fixed
-
-- **api:** the asset-detail prewarm re-renders each verified asset instead of being served its own cache hit, so the entry no longer lapses once per TTL and a visitor no longer waits on the inline rebuild (#3609).
-- **api:** the RWA value and premium histories are rebuilt on every prewarm whatever their age, so `/v1/rwa/history` and `/v1/rwa/premium` no longer expire between prewarm ticks and block a visitor on both scan legs (#3610).
