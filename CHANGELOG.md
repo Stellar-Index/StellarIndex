@@ -20,6 +20,15 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.23] - 2026-10-19
+
+No migrations. No `pkg/*` break.
+
+### Fixed
+
+- **api:** the default `/v1/assets` page is refreshed by a background prewarm every TTL, so a client polling minutes apart no longer lands past the cache's max age and waits ~1 s for an inline rebuild (#3605).
+- **api:** `/v1/accounts/{g}/entry-changes` streams only the entry groups that can concern the account, about a tenth of the rows on a busy account, instead of decoding every change in the indexed ledgers; the response is unchanged (#3607).
+
 ## [v0.116.22] - 2026-10-18
 
 ClickHouse DDL: re-apply `deploy/clickhouse/entry_index.sql` (adds the `signer` value to `entry_index.role`; metadata-only, already applied on r1). No migrations. No `pkg/*` break.
@@ -85,14 +94,3 @@ Migrations 0217 and 0218, both additive. No `pkg/*` break.
 - **supply:** classic supply freshness is anchored on a processed-ledger watermark (migration 0218) instead of the oldest of four component tables. A quiet claimable-balance table no longer makes the supply gate reject current classic snapshots as dormant (#3576).
 - **ops:** galexie resumes from the newest partition instead of a full recursive bucket listing, and fails loudly when the listing fails. Job locks created by root are chowned to the service user (#3578).
 - **ops:** `ch-live-catchup` is installed on every ClickHouse host, r1 included, so it no longer runs a stale copy as the `default` user (#3579).
-
-## [v0.116.18] - 2026-10-17
-
-### Fixed
-
-- `/v1/price` for a pair with no recent 1-minute bucket bounds its last-trade fallback to the 400-day lookback the primary path uses; the unbounded walk planned every `trades` chunk and took 0.5-1.8 s per miss. A pair idle longer than 400 days now answers not-found rather than withheld (#3571).
-- **ops:** `ch-backfill` reads archive ranges trimmed to the cold tier through to it, so a re-derive over them needs no rehydrate first (#3570).
-
-### Changed
-
-- **alerts:** comet is no longer on the low-volume DEX silence rule; its pools can sit dormant for days, and projector lag and completeness already watch it (#3569).
