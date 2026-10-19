@@ -20,6 +20,17 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.25] - 2026-10-19
+
+No migrations. No `pkg/*` break.
+
+### Fixed
+
+- **api:** the heavy prewarm refills the sources-stats slots whatever their age, so `/v1/sources?include=stats` no longer lapses between prewarm ticks (#3612).
+- **api:** `/v1/issuers` serves the last good list (flagged `stale`, `as_of` at its fill time) while one background refresh runs, instead of blocking a visitor on the rebuild (#3613).
+- **api:** `/v1/markets/sources` is cached for a minute behind the same stale-while-refresh cache, so a repeat asset or pair answers from memory instead of a ~2 s aggregate (#3614).
+- **ops:** `ch-rebuild -trades-by-account` runs the per-WASM lake gate once per invocation and lands 10k-ledger sub-windows, so a 1M-ledger range no longer pays the gate's whole-history factory walk 100 times (#3617).
+
 ## [v0.116.24] - 2026-10-19
 
 No migrations. No `pkg/*` break.
@@ -72,23 +83,3 @@ No migrations. No `pkg/*` break.
 ### Changed
 
 - **explorer:** an asset's entry-changes first page is cached, cut per limit and prewarmed (#3588).
-
-## [v0.116.20] - 2026-10-18
-
-No migrations. No `pkg/*` break.
-
-### Added
-
-- **explorer:** the accounts list shows the directory name beside each address and flags scam-tagged entries, from one batched `/v1/directory` request per page (#3587).
-- **ansible:** `clickhouse_default_user_locked` (off by default) gives ClickHouse's `default` user a random password that is never stored (#3580).
-
-### Fixed
-
-- **explorer:** `contract_active_ledgers` records its own genesis watermark. A contract's activity feed trusts a proven-complete index: an empty walk is an empty page and a short page is the whole history, with no lake fallback (#3586). After deploy, run `ch-contract-ledgers-backfill -full -write` once to record the watermark.
-- **timescale:** `ExactTierUSDVolume` values a zero pegged base at exactly $0, matching the served path and the restamp (#3585).
-- **ops:** four ClickHouse ops scripts run the deployed `stellarindex-ops` instead of a stale hand-built copy (#3582).
-- **ansible:** the test nets run the lake self-healer (`ch-live-catchup`) (#3584).
-
-### Changed
-
-- **deps:** Go and explorer minor bumps, regenerated third-party notices, and a refreshed golang base image (#3583, #3502).
