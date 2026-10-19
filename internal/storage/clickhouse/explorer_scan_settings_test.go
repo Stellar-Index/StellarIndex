@@ -30,6 +30,7 @@ func TestExplorerScanQueries_CarryBoundedSettings(t *testing.T) {
 		"recentOperationsQuery(cursor, unbounded fallback)":     recentOperationsQuery(true, false),
 		"opTypeStatsQuery":                                      opTypeStatsQuery,
 		"accountOpTypeCountsQuery":                              accountOpTypeCountsQuery,
+		"accountOpTypeCountsIndexedQuery":                       accountOpTypeCountsIndexedQuery,
 		"sourcedTxKeysExactQuery(first page)":                   sourcedTxKeysExactQuery(false),
 		"sourcedTxKeysExactQuery(cursor)":                       sourcedTxKeysExactQuery(true),
 		"sourcedOpKeysExactQuery(first page)":                   sourcedOpKeysExactQuery(false, false),
