@@ -148,11 +148,11 @@ func TestIssuers_AsOfIsFillTime(t *testing.T) {
 	serveThrough(t, h, target, "")
 
 	at := filledAt()
-	c.mu.Lock()
-	for _, e := range c.entries {
+	c.list.mu.Lock()
+	for _, e := range c.list.entries {
 		e.at = at
 	}
-	c.mu.Unlock()
+	c.list.mu.Unlock()
 	assertAsOf(t, serveThrough(t, h, target, ""), at)
 	assertUnchangedPayloadAnswers304(t, h, target)
 	if n := up.listCalls.Load(); n != 1 {

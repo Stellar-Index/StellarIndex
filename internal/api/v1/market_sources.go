@@ -25,6 +25,13 @@ type MarketSourceReader interface {
 	AssetSourceStats(ctx context.Context, asset []string) ([]timescale.SourceStats, error)
 }
 
+// marketSourcesAtReader is the cached reader's richer read: the served entry's fill time, stamped as as_of, and whether it is
+// past its TTL.
+type marketSourcesAtReader interface {
+	PairSourceStatsAt(ctx context.Context, base, quote []string) ([]timescale.SourceStats, time.Time, bool, error)
+	AssetSourceStatsAt(ctx context.Context, asset []string) ([]timescale.SourceStats, time.Time, bool, error)
+}
+
 // SourceVolume is one source's trailing-24h market contribution; VolumeUSD24h is a decimal string omitted when unpriced, with VolumeLowerBound true when unpriced trades were excluded.
 type SourceVolume struct {
 	Source           string  `json:"source"`
@@ -78,14 +85,27 @@ func (s *Server) handleMarketSources(w http.ResponseWriter, r *http.Request) {
 	defer msCancel()
 
 	var (
-		rows []timescale.SourceStats
-		err  error
+		rows    []timescale.SourceStats
+		vintage dataVintage
+		stale   bool
+		err     error
 	)
-	if asset != "" {
-		rows, err = s.MarketSources.AssetSourceStats(msCtx, sourceStatsAliases(asset))
+	if at, ok := s.MarketSources.(marketSourcesAtReader); ok {
+		var filled time.Time
+		if asset != "" {
+			rows, filled, stale, err = at.AssetSourceStatsAt(msCtx, sourceStatsAliases(asset))
+		} else {
+			rows, filled, stale, err = at.PairSourceStatsAt(msCtx, sourceStatsAliases(base), sourceStatsAliases(quote))
+		}
+		vintage.note(filled)
 	} else {
-		rows, err = s.MarketSources.PairSourceStats(msCtx,
-			sourceStatsAliases(base), sourceStatsAliases(quote))
+		if asset != "" {
+			rows, err = s.MarketSources.AssetSourceStats(msCtx, sourceStatsAliases(asset))
+		} else {
+			rows, err = s.MarketSources.PairSourceStats(msCtx,
+				sourceStatsAliases(base), sourceStatsAliases(quote))
+		}
+		vintage.note(time.Time{})
 	}
 	if err != nil {
 		s.writeMarketSourcesError(w, r, msCtx, err)
@@ -122,7 +142,7 @@ func (s *Server) handleMarketSources(w http.ResponseWriter, r *http.Request) {
 		}
 		out.Sources = append(out.Sources, sv)
 	}
-	writeJSON(w, out, Flags{})
+	writeEnvelope(w, Envelope{Data: out, AsOf: vintage.asOf(), Flags: Flags{Stale: stale}})
 }
 
 // writeMarketSourcesError is silent on client disconnect, a retryable 503 naming the endpoint on the handler's 8s budget, else 500.

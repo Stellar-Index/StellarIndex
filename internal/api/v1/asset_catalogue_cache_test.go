@@ -320,9 +320,9 @@ const upstreamSettleWindow = 100 * time.Millisecond
 // so the next read takes the stale-while-revalidate branch. Sleeping past a tiny ttl is not
 // an option: the entry a refresh WRITES must stay fresh while the test asserts on it.
 func expireSWREntries(c *CachedAssetsReader) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for _, e := range c.swrEntries {
+	c.single.mu.Lock()
+	defer c.single.mu.Unlock()
+	for _, e := range c.single.entries {
 		if !e.at.IsZero() {
 			e.at = e.at.Add(-time.Hour)
 		}
