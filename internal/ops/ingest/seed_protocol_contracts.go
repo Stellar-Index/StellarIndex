@@ -73,7 +73,7 @@ func seedProtocolContracts(args []string) error {
 		sources = []string{strings.ToLower(*source)}
 	}
 
-	verb := writeModeVerb(write, "upserted", "WOULD upsert")
+	verb := opsutil.WriteModeVerb(write, "upserted", "WOULD upsert")
 	var errs []error
 	for _, src := range sources {
 		n, serr := seedOneGatedSource(ctx, seedStore, write, src, hi)

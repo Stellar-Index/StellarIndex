@@ -105,6 +105,14 @@ func (g *WriteGate) DryRunStated() bool { return *g.dryRun }
 // Banner prints the fail-closed mode banner once, after flag checks and before slow or mutating work, and returns Enabled.
 func (g *WriteGate) Banner() bool { return PrintWriteBanner(*g.write) }
 
+// WriteModeVerb renders a count's verb for the run's mode, so a preview's numbers are never read as applied ones.
+func WriteModeVerb(write bool, applied, preview string) string {
+	if write {
+		return applied
+	}
+	return preview
+}
+
 // PrintWriteBanner prints the mode banner for a plain-bool write decision and returns it, so the banner text has one definition.
 func PrintWriteBanner(write bool) bool {
 	if write {

@@ -167,7 +167,7 @@ func censusBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 		return fmt.Errorf("census-backfill stream (last processed %d): %w", lastProcessed, walkErr)
 	}
 	fmt.Fprintf(os.Stderr, "census-backfill: %d ledgers streamed, %d %s, %d skipped, last %d\n",
-		total, persisted, writeModeVerb(write, "persisted", "WOULD be persisted"), skipped, lastProcessed)
+		total, persisted, opsutil.WriteModeVerb(write, "persisted", "WOULD be persisted"), skipped, lastProcessed)
 	// A run that did not persist its whole range must NOT exit 0 — see
 	// censusCoverage.
 	if cerr := censusCoverage(startLedger, uint32(*to), persisted, skipped, streamBucket, ctx.Err() != nil); cerr != nil {

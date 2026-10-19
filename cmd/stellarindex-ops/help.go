@@ -618,7 +618,7 @@ Subcommands:
                           checkpointed per -from/-to pair, and -resume
                           (default true) resumes only a run of the same
                           range.
-  tag-tx-index -config PATH -from RFC3339 -to RFC3339 [-window DUR] [-ch-addr H:P] [-write]
+  tag-tx-index -config PATH -from RFC3339 -to RFC3339 [-window DUR] [-ch-addr H:P] [-chunks] [-write]
                           Back-tag trades.tx_index (intra-ledger apply
                           order, migration 0196) for every on-chain trade
                           in [-from, -to), read from the lake's
@@ -627,8 +627,13 @@ Subcommands:
                           over history the 30-min lookback never saw (e.g.
                           after each SDEX history window). Windowed by ts
                           (default 1h); first-wins, so re-runs are no-ops.
-                          -write refuses a range touching a compressed
-                          trades chunk: tag history before compression.
+                          Without -chunks, -write refuses a range touching
+                          a compressed trades chunk. -chunks (UTC-midnight
+                          -from/-to) walks those chunks like
+                          usd-volume-restamp -chunks: run lock, policy
+                          paused, free-space pre-flight, one decompress and
+                          re-compress per chunk; the dry run lists which
+                          chunks hold untagged trades.
   census-backfill -config PATH -from N -to N [-bucket NAME] [-resume] [-write]
                           Populate ledger_ingest_log (ADR-0033 substrate
                           record) for a historical range. Pure structural

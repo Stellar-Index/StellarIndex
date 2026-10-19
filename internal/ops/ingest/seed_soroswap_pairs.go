@@ -167,7 +167,7 @@ func (s *soroswapPairSeeder) seed(pair, t0, t1 string) {
 func (s *soroswapPairSeeder) finish() error {
 	_, _ = fmt.Fprintf(s.out, "seed-soroswap-pairs: %d new pairs %s; %d already registered; %d conflicting (kept); %d failed\n",
 		s.inserted.Load(),
-		writeModeVerb(s.write, "inserted into soroswap_pairs", "WOULD be inserted into soroswap_pairs (pass -write to apply)"),
+		opsutil.WriteModeVerb(s.write, "inserted into soroswap_pairs", "WOULD be inserted into soroswap_pairs (pass -write to apply)"),
 		s.unchanged.Load(), s.conflicts.Load(), s.failed.Load())
 	if n := s.conflicts.Load(); n > 0 {
 		return fmt.Errorf("%d pairs disagree with the registry and were NOT overwritten — the RPC answer contradicts on-chain new_pair data; check the endpoint", n)

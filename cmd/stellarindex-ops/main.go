@@ -74,7 +74,7 @@ var subcommands = map[string]func(args []string) error{
 	"census-backfill":         ingest.Run,
 	"tag-routed-via":          ingest.Run,
 	"tag-signer":              ingest.Run,
-	"tag-tx-index":            ingest.Run,
+	"tag-tx-index":            chops.Run,
 	"seed-soroswap-pairs":     ingest.Run,
 	"seed-protocol-contracts": ingest.Run,
 	"seed-entry-counts":       ingest.Run,
