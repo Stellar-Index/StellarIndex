@@ -517,8 +517,18 @@ func rwaHistoryExcludedRows(tally map[string]int) []RWAHistoryExcluded {
 // scans). On a failed assembly the last good history is served, else an UNAVAILABLE one:
 // an empty series would say the sector has never been worth anything, a finding a read that did not answer may not make.
 func (s *Server) cachedRWAValueHistory(ctx context.Context) rwaValueHistory {
+	return s.awaitRWAValueHistory(ctx, false)
+}
+
+// refreshRWAValueHistory rebuilds whatever the cache's age: a prewarm served a hit would refresh nothing, and a reader would
+// wait on the build once per TTL.
+func (s *Server) refreshRWAValueHistory(ctx context.Context) {
+	s.awaitRWAValueHistory(ctx, true)
+}
+
+func (s *Server) awaitRWAValueHistory(ctx context.Context, force bool) rwaValueHistory {
 	s.rwaHistMu.Lock()
-	if s.rwaHistCache != nil && time.Since(s.rwaHistAt) < rwaHistoryTTL {
+	if !force && s.rwaHistCache != nil && time.Since(s.rwaHistAt) < rwaHistoryTTL {
 		h := *s.rwaHistCache
 		s.rwaHistMu.Unlock()
 		return h
