@@ -336,9 +336,11 @@ func verifyUSDVolumeDay(
 	}
 	violations = usdVolumeTotalViolations(violations, nb, parseErrs)
 	if len(groups) == 0 {
-		// A day with no trade groups at all judged nothing; a quiet pass here would hide a broken read.
-		fmt.Println("  EMPTY DAY: no trade groups at all — the check judged nothing")
-		violations++
+		ev, err := store.TradeDayLedgerEvidence(ctx, day)
+		if err != nil {
+			return 0, nil, false, err
+		}
+		violations += emptyTradeDayViolations(ev)
 	}
 
 	printUSDVolumeTierTable(rollups)
@@ -348,6 +350,20 @@ func verifyUSDVolumeDay(
 	}
 	fmt.Printf("%s: %d violation(s)\n", day.Format(time.DateOnly), violations)
 	return violations, rollups, xlmJudged, nil
+}
+
+// emptyTradeDayViolations judges a day with no trade groups: a pass only when the ledger log proves the chain itself was
+// tradeless, so a broken read, a stalled writer or an empty database still fails.
+func emptyTradeDayViolations(ev timescale.TradeDayLedgerEvidence) int {
+	if ev.Quiet() {
+		fmt.Printf("  QUIET DAY: ledgers %d..%d all ingested, 0 classic trade effects, 0 trade rows — nothing to judge\n",
+			ev.First, ev.Last)
+		return 0
+	}
+	fmt.Printf("  EMPTY DAY: no trade groups, and the ledger log does not prove a tradeless day "+
+		"(ledgers=%d %d..%d edges_covered=%t classic_trade_effects=%d trade_rows=%t)\n",
+		ev.Ledgers, ev.First, ev.Last, ev.EdgesCovered, ev.ClassicTradeEffects, ev.TradeRowsExist)
+	return 1
 }
 
 // knownUSDVolumeTiers are always emitted, 0 when a day had none, so the

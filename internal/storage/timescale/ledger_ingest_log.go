@@ -229,3 +229,47 @@ func (s *Store) LedgerIngestExtent(ctx context.Context) (minSeq, maxSeq uint32, 
 	}
 	return uint32(lo.Int64), uint32(hi.Int64), true, nil
 }
+
+// TradeDayLedgerEvidence is what ledger_ingest_log and trades say about one UTC day, independent of the valuation read.
+type TradeDayLedgerEvidence struct {
+	Ledgers             int64 // logged ledgers closing inside the day
+	First, Last         uint32
+	ClassicTradeEffects int64 // LCM-derived ClaimAtoms across those ledgers
+	EdgesCovered        bool  // First-1 and Last+1 are logged, so no ledger of the day is missing at either end
+	TradeRowsExist      bool
+}
+
+// Quiet reports a provably tradeless day: every ledger of it was ingested, the chain itself shows no classic trade, and trades holds no row.
+func (e TradeDayLedgerEvidence) Quiet() bool {
+	return e.Ledgers > 0 &&
+		int64(e.Last)-int64(e.First)+1 == e.Ledgers &&
+		e.EdgesCovered &&
+		e.ClassicTradeEffects == 0 &&
+		!e.TradeRowsExist
+}
+
+// TradeDayLedgerEvidence reads the ledger log and trades for the UTC day [day, day+24h).
+func (s *Store) TradeDayLedgerEvidence(ctx context.Context, day time.Time) (TradeDayLedgerEvidence, error) {
+	const q = `
+        WITH d AS (
+            SELECT count(*) AS n, min(ledger_seq) AS lo, max(ledger_seq) AS hi,
+                   COALESCE(sum(classic_trade_effect_count), 0) AS fx
+            FROM ledger_ingest_log
+            WHERE ledger_close_time >= $1 AND ledger_close_time < $2)
+        SELECT d.n, COALESCE(d.lo, 0), COALESCE(d.hi, 0), d.fx,
+               EXISTS (SELECT 1 FROM ledger_ingest_log WHERE ledger_seq = d.lo - 1)
+                 AND EXISTS (SELECT 1 FROM ledger_ingest_log WHERE ledger_seq = d.hi + 1),
+               EXISTS (SELECT 1 FROM trades WHERE ts >= $1 AND ts < $2)
+        FROM d`
+	from := day.UTC()
+	var (
+		e      TradeDayLedgerEvidence
+		lo, hi int64
+	)
+	if err := s.db.QueryRowContext(ctx, q, from, from.Add(24*time.Hour)).Scan(
+		&e.Ledgers, &lo, &hi, &e.ClassicTradeEffects, &e.EdgesCovered, &e.TradeRowsExist); err != nil {
+		return TradeDayLedgerEvidence{}, fmt.Errorf("timescale: TradeDayLedgerEvidence %s: %w", from.Format(time.DateOnly), err)
+	}
+	e.First, e.Last = uint32(lo), uint32(hi)
+	return e, nil
+}
