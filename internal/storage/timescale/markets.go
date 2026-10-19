@@ -191,10 +191,14 @@ func perSourcePoolsCTE(foldIdx int, rawFilter string) string {
             -- sum_base_unpriced is NULL exactly when the bucket held no unpriced trade.
             COALESCE(bool_or(p.sum_base_unpriced IS NOT NULL)
                      FILTER (WHERE p.bucket >= NOW() - INTERVAL '24 hours'), false) AS vol_lower_bound,
-            last(p.bucket_last_price, p.bucket_last_ts)::text AS last_price
+            -- Two spellings folded into one market can close a bucket in the same ledger, so their
+            -- timestamps tie; the raw spelling breaks it, or last() would pick either per query.
+            (array_agg(p.bucket_last_price ORDER BY p.bucket_last_ts DESC,
+                       p.raw_base COLLATE "C", p.raw_quote COLLATE "C"))[1]::text AS last_price
           FROM (
             SELECT r.source, r.bucket, r.bucket_last_ts, r.bucket_last_price,
                    r.trade_count, r.sum_usd_priced, r.sum_base_unpriced,
+                   r.base_asset AS raw_base, r.quote_asset AS raw_quote,
                    COALESCE(bf.canon, r.base_asset)  AS base_asset,
                    COALESCE(qf.canon, r.quote_asset) AS quote_asset
               FROM pools_per_source_1h r
