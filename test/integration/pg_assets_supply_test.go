@@ -1599,3 +1599,67 @@ func TestTrustlineBalanceCurrentMatchesFullScan(t *testing.T) {
 	}
 	assertParity("after truncate")
 }
+
+// TestRecentSorobanDEXTrades_CaggPlusRawTail: pairs come from pools_per_source_1h below its
+// watermark and from raw trades above it, so the answer must not change across a refresh.
+func TestRecentSorobanDEXTrades_CaggPlusRawTail(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	db := store.DB()
+
+	const (
+		usdc    = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+		oldTok  = "CDGUARDOLDTOKENAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1"
+		newTok  = "CDGUARDNEWTOKENAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA2"
+		tailTok = "CDGUARDTAILTOKENAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA3"
+		goneTok = "CDGUARDGONETOKENAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4"
+	)
+	now := time.Now().UTC().Truncate(time.Second)
+	seedGrainTrade(t, ctx, db, 7100, "phoenix", now.Add(-30*24*time.Hour), oldTok, usdc, "10", "1", "1")
+	seedGrainTrade(t, ctx, db, 7101, "soroswap", now.Add(-2*time.Hour), usdc, newTok, "10", "1", "1")
+	seedGrainTrade(t, ctx, db, 7102, "aquarius", now.Add(-2*time.Hour), "native", usdc, "10", "1", "1")
+	seedGrainTrade(t, ctx, db, 7103, "phoenix", now.Add(-100*24*time.Hour), goneTok, usdc, "10", "1", "1")
+
+	want := map[timescale.SorobanDEXTradeRef]bool{
+		{Source: "phoenix", Asset: oldTok}:  true,
+		{Source: "soroswap", Asset: newTok}: true,
+	}
+	check := func(stage string) {
+		t.Helper()
+		refs, err := store.RecentSorobanDEXTrades(ctx, now.Add(-90*24*time.Hour))
+		if err != nil {
+			t.Fatalf("%s: RecentSorobanDEXTrades: %v", stage, err)
+		}
+		got := map[timescale.SorobanDEXTradeRef]bool{}
+		for _, r := range refs {
+			got[r] = true
+		}
+		for r := range want {
+			if !got[r] {
+				t.Errorf("%s: missing %+v in %+v", stage, r, refs)
+			}
+		}
+		for r := range got {
+			if !want[r] {
+				t.Errorf("%s: unexpected %+v", stage, r)
+			}
+		}
+	}
+
+	check("before refresh")
+	if _, err := db.ExecContext(ctx, `CALL refresh_continuous_aggregate('pools_per_source_1h', NULL, NULL)`); err != nil {
+		t.Fatalf("refresh pools_per_source_1h: %v", err)
+	}
+	check("after refresh")
+	seedGrainTrade(t, ctx, db, 7104, "comet", now.Add(-time.Minute), tailTok, usdc, "10", "1", "1")
+	want[timescale.SorobanDEXTradeRef{Source: "comet", Asset: tailTok}] = true
+	check("trade past the watermark")
+}
