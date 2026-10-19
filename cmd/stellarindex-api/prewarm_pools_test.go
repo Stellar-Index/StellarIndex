@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"sync"
 	"testing"
@@ -199,5 +200,13 @@ func TestPoolsAndMarketsPrewarmLimitsAreIndependent(t *testing.T) {
 			t.Errorf("%s %v omits 100 — the OpenAPI default and the value a bare "+
 				"listing request falls back to", set.name, set.limits)
 		}
+	}
+}
+
+// TestMarketsPrewarmCoversTheHomePageRecentTrades: home reads /v1/markets?limit=3 on every first load; unwarmed, the slot lapses
+// whenever traffic is quiet and that visitor pays the cold scan.
+func TestMarketsPrewarmCoversTheHomePageRecentTrades(t *testing.T) {
+	if !slices.Contains(marketsPrewarmLimits, 3) {
+		t.Errorf("marketsPrewarmLimits %v lacks 3, the home recent-trades panel's limit", marketsPrewarmLimits)
 	}
 }
