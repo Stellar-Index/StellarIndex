@@ -2357,9 +2357,13 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// ~700-900ms uncached latency.
 	includeThin := includeThinRequested(r)
 	cacheKey := assetDetailCacheKey(parsed, includeThin)
-	if entry, ok := s.assetDetailCache.get(cacheKey); ok {
-		writeCachedAssetDetail(w, entry)
-		return
+	// The prewarm always re-renders: served a hit, it would refresh nothing and the entry would lapse
+	// for up to a prewarm cadence once per TTL.
+	if !isPrewarmRequest(r) {
+		if entry, ok := s.assetDetailCache.get(cacheKey); ok {
+			writeCachedAssetDetail(w, entry)
+			return
+		}
 	}
 	// Every read below runs under the default record, so a withheld
 	// headline carries its substance evidence into the opt-in pass.

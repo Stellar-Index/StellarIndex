@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // assetDetailEntry holds a fully-rendered /v1/assets/{id} response (post-render JSON bytes, flags already encoded) plus its
@@ -124,4 +127,9 @@ func writeCachedAssetDetail(w http.ResponseWriter, entry *assetDetailEntry) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Stellarindex-Cache", "HIT")
 	_, _ = w.Write(entry.body)
+}
+
+// isPrewarmRequest is the API's own loopback prewarm (selfPrewarmAssetEndpoints), never a client claiming its User-Agent.
+func isPrewarmRequest(r *http.Request) bool {
+	return obs.IsSyntheticRequest(r) && strings.HasPrefix(r.UserAgent(), "stellarindex-prewarm/")
 }
