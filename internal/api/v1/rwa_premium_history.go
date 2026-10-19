@@ -445,8 +445,17 @@ func rwaPremiumExcludedRows(tally map[string]int) []RWAHistoryExcluded {
 // else an UNAVAILABLE one: an empty series would claim no token ever traded away from its NAV, which a read that did not answer may not
 // claim.
 func (s *Server) cachedRWAPremiumHistory(ctx context.Context) rwaPremiumHistory {
+	return s.awaitRWAPremiumHistory(ctx, false)
+}
+
+// refreshRWAPremiumHistory rebuilds whatever the cache's age, so the prewarm cadence keeps it from expiring as [Server.refreshRWAValueHistory].
+func (s *Server) refreshRWAPremiumHistory(ctx context.Context) {
+	s.awaitRWAPremiumHistory(ctx, true)
+}
+
+func (s *Server) awaitRWAPremiumHistory(ctx context.Context, force bool) rwaPremiumHistory {
 	s.rwaPremMu.Lock()
-	if s.rwaPremCache != nil && time.Since(s.rwaPremAt) < rwaPremiumHistoryTTL {
+	if !force && s.rwaPremCache != nil && time.Since(s.rwaPremAt) < rwaPremiumHistoryTTL {
 		h := *s.rwaPremCache
 		s.rwaPremMu.Unlock()
 		return h

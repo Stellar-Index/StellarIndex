@@ -725,3 +725,42 @@ func exclusionDetail(v v1.RWAHistoryView, reason string) string {
 	}
 	return ""
 }
+
+type countingFlowSupply struct {
+	stubFlowSupply
+	reads atomic.Int32
+}
+
+func (s *countingFlowSupply) DailySupplyFlowsForContracts(ctx context.Context, ids []string) ([]clickhouse.SupplyFlowDay, error) {
+	s.reads.Add(1)
+	return s.stubFlowSupply.DailySupplyFlowsForContracts(ctx, ids)
+}
+
+// TestPrewarmRWA_RebuildsFreshHistories: a prewarm served the cached series refreshes nothing, so on a 5-minute cadence under a
+// 10-minute TTL the cache lapses once per TTL and a reader waits on the full build.
+func TestPrewarmRWA_RebuildsFreshHistories(t *testing.T) {
+	bound, dir, rows := oneBoundMember()
+	sac := rwaHistSAC(t, "USTRY", rwaGoodIssuer)
+	supply := &countingFlowSupply{stubFlowSupply: stubFlowSupply{days: []clickhouse.SupplyFlowDay{histFlow(sac, 1, "200000000")}}}
+	market := &stubMarketHistory{}
+	srv := v1.New(v1.Options{
+		Sep1Cache: &stubSep1BoundReader{bound: bound},
+		Directory: &stubDirectoryReader{entries: dir},
+		AssetsReader: &rwaListStub{
+			stubAssetsReaderExt: &stubAssetsReaderExt{},
+			byIssuer:            rows,
+			supply:              rwaSupplyFor(rows),
+		},
+		TokenSupply:   supply,
+		OracleHistory: &stubOracleHistory{rows: []timescale.OracleDayPoint{histOracle("redstone", "USTRY", 1, 107000000)}},
+		MarketHistory: market,
+	})
+	srv.PrewarmRWA(context.Background())
+	srv.PrewarmRWA(context.Background())
+	if n := supply.reads.Load(); n != 2 {
+		t.Errorf("value history built %d times over two prewarms, want 2", n)
+	}
+	if n := len(market.askedFroms); n != 2 {
+		t.Errorf("premium history built %d times over two prewarms, want 2", n)
+	}
+}

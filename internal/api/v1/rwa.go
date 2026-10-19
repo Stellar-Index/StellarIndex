@@ -1085,11 +1085,11 @@ func (s *Server) PrewarmRWA(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
-	s.cachedRWAValueHistory(ctx)
+	s.refreshRWAValueHistory(ctx)
 	if ctx.Err() != nil || s.MarketHistory == nil {
 		return
 	}
-	s.cachedRWAPremiumHistory(ctx)
+	s.refreshRWAPremiumHistory(ctx)
 }
 
 // ─── handler ────────────────────────────────────────────────────────
