@@ -116,7 +116,7 @@ func tagSigner(args []string) error { //nolint:funlen,gocognit,gocyclo // linear
 			}
 			totalTagged += tagged
 			fmt.Fprintf(os.Stderr, "tag-signer: window %d..%d %s %d trades (total %d)\n",
-				lo, hi, writeModeVerb(write, "tagged", "WOULD tag (upper bound)"), tagged, totalTagged)
+				lo, hi, opsutil.WriteModeVerb(write, "tagged", "WOULD tag (upper bound)"), tagged, totalTagged)
 		}
 
 		// A preview must not advance the resume checkpoint: the next run
@@ -133,7 +133,7 @@ func tagSigner(args []string) error { //nolint:funlen,gocognit,gocyclo // linear
 	}
 
 	fmt.Fprintf(os.Stderr, "tag-signer: done. %d trades %s across ledgers %d..%d\n",
-		totalTagged, writeModeVerb(write, "tagged", "WOULD tag (upper bound)"), start, toLedger)
+		totalTagged, opsutil.WriteModeVerb(write, "tagged", "WOULD tag (upper bound)"), start, toLedger)
 	return nil
 }
 
@@ -159,14 +159,6 @@ func resumeRangeStart(ctx context.Context, store rangeCursorReader, src string, 
 		fmt.Fprintf(os.Stderr, "%s: read cursor failed (%v) — starting from -from\n", src, err)
 	}
 	return from, sub
-}
-
-// writeModeVerb renders a count's verb for the run's mode, so a preview's numbers are never read as applied ones.
-func writeModeVerb(write bool, applied, preview string) string {
-	if write {
-		return applied
-	}
-	return preview
 }
 
 // tagSignerWindow applies one window's signer tags, or in the default preview reports how many it WOULD apply.

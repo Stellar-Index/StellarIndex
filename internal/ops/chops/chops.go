@@ -68,6 +68,8 @@ func lakeMutatorVerb(verb string) (func([]string) error, bool) {
 		return projectedRebuild, true
 	case "usd-volume-restamp":
 		return usdVolumeRestamp, true
+	case "tag-tx-index":
+		return tagTxIndex, true
 	default:
 		return nil, false
 	}

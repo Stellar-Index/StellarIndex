@@ -1,4 +1,4 @@
-package ingest
+package chops
 
 import (
 	"context"
@@ -72,7 +72,7 @@ func tagTxIndex(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "tag-tx-index: done. %s: %d\n", writeModeVerb(write, "tagged trades", "WOULD tag txs"), total)
+	fmt.Fprintf(os.Stderr, "tag-tx-index: done. %s: %d\n", opsutil.WriteModeVerb(write, "tagged trades", "WOULD tag txs"), total)
 	return nil
 }
 
@@ -109,7 +109,7 @@ func runTagTxIndex(ctx context.Context, lake pipeline.TxIndexLakeReader, store t
 		}
 		if n > 0 {
 			fmt.Fprintf(os.Stderr, "tag-tx-index: window [%s, %s) %s: %d (total %d)\n",
-				lo.Format(time.RFC3339), hi.Format(time.RFC3339), writeModeVerb(write, "tagged trades", "WOULD tag txs"), n, total)
+				lo.Format(time.RFC3339), hi.Format(time.RFC3339), opsutil.WriteModeVerb(write, "tagged trades", "WOULD tag txs"), n, total)
 		}
 	}
 	return total, nil
