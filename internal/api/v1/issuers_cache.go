@@ -51,34 +51,34 @@ func (c *CachedIssuersReader) ListIssuerAssets(ctx context.Context, gStrkey stri
 
 // ListIssuers is cached as one IssuersListMaxLimit page that every request prefix-slices, so sweeping `?limit=` cannot force one upstream scan per value.
 func (c *CachedIssuersReader) ListIssuers(ctx context.Context, limit int) ([]timescale.IssuerSummary, error) {
-	list, _, err := c.ListIssuersAt(ctx, limit)
+	list, _, _, err := c.ListIssuersAt(ctx, limit)
 	return list, err
 }
 
-// ListIssuersAt is ListIssuers plus the served entry's fill time; zero on an uncached (ttl<=0) read.
-func (c *CachedIssuersReader) ListIssuersAt(ctx context.Context, limit int) ([]timescale.IssuerSummary, time.Time, error) {
+// ListIssuersAt is ListIssuers plus the served entry's fill time (zero on an uncached, ttl<=0, read) and whether it is past its TTL.
+func (c *CachedIssuersReader) ListIssuersAt(ctx context.Context, limit int) ([]timescale.IssuerSummary, time.Time, bool, error) {
 	if c.ttl <= 0 {
 		list, err := c.upstream.ListIssuers(ctx, limit)
-		return list, time.Time{}, err
+		return list, time.Time{}, false, err
 	}
 	key := newCacheKey("ListIssuers").int(IssuersListMaxLimit).build()
-	list, at, err := c.fetchList(ctx, key, func(ctx context.Context) ([]timescale.IssuerSummary, error) {
+	list, at, stale, err := c.fetchList(ctx, key, func(ctx context.Context) ([]timescale.IssuerSummary, error) {
 		return c.upstream.ListIssuers(ctx, IssuersListMaxLimit)
 	})
 	if err != nil || limit <= 0 || limit >= len(list) {
-		return list, at, err
+		return list, at, stale, err
 	}
 	// Cap capacity so a caller's append cannot write into the shared entry.
-	return list[:limit:limit], at, nil
+	return list[:limit:limit], at, stale, nil
 }
 
-// fetchList is the TTL + single-flight loop, mirroring CachedMarketsReader.fetchPairs. No
-// SWR: the query is ~200ms, so an expired entry waits on a fresh fill rather than serving stale.
+// fetchList is the TTL + single-flight + stale-while-revalidate loop, mirroring CachedMarketsReader.fetchPairs. The scan takes 3-4 s
+// on r1, so an expired entry is served (dated by its fill time, flagged stale) while one detached fill replaces it.
 func (c *CachedIssuersReader) fetchList(
 	ctx context.Context,
 	key string,
 	upstream func(context.Context) ([]timescale.IssuerSummary, error),
-) ([]timescale.IssuerSummary, time.Time, error) {
+) ([]timescale.IssuerSummary, time.Time, bool, error) {
 	c.mu.Lock()
 	e, ok := c.entries[key]
 
@@ -87,7 +87,21 @@ func (c *CachedIssuersReader) fetchList(
 		out, at := e.list, e.at
 		c.mu.Unlock()
 		obs.APICacheOpsTotal.WithLabelValues("issuers", "list_issuers", "hit").Inc()
-		return out, at, nil
+		return out, at, false, nil
+	}
+
+	// (A') Stale-while-revalidate: a prior successful fill exists (failed cold fills delete the entry) but has expired. Serve it
+	// and start at most one detached refresh on the same entry; a failed refresh keeps serving it.
+	if ok && !e.at.IsZero() {
+		out, at := e.list, e.at
+		if e.flight == nil {
+			e.flight = make(chan struct{})
+			//nolint:gosec,contextcheck // G118 / contextcheck: intentional detached fill — see runDetachedFill.
+			go runDetachedFill(nil, "api-issuers-fill", cacheFillBudget, e.flight, upstream, c.settleList(key, e))
+		}
+		c.mu.Unlock()
+		obs.APICacheOpsTotal.WithLabelValues("issuers", "list_issuers", "stale").Inc()
+		return out, at, true, nil
 	}
 
 	// (B)/(C) No fresh value: join the running fill, or take the slot and start one. This
@@ -116,14 +130,14 @@ func (c *CachedIssuersReader) fetchList(
 			if !leader {
 				obs.APICacheOpsTotal.WithLabelValues("issuers", "list_issuers", "miss").Inc()
 			}
-			return nil, time.Time{}, err
+			return nil, time.Time{}, false, err
 		}
 		if !leader {
 			obs.APICacheOpsTotal.WithLabelValues("issuers", "list_issuers", "hit").Inc()
 		}
-		return list, at, nil
+		return list, at, false, nil
 	case <-ctx.Done():
-		return nil, time.Time{}, ctx.Err()
+		return nil, time.Time{}, false, ctx.Err()
 	}
 }
 
@@ -134,6 +148,11 @@ func (c *CachedIssuersReader) settleList(key string, entry *issuersCacheEntry) f
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		if err != nil {
+			if !entry.at.IsZero() {
+				entry.flight = nil
+				obs.APICacheOpsTotal.WithLabelValues("issuers", "list_issuers", "refresh_error").Inc()
+				return
+			}
 			entry.err = err
 			if c.entries[key] == entry {
 				delete(c.entries, key)

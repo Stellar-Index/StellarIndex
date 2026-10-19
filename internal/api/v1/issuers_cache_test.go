@@ -85,8 +85,63 @@ func TestCachedIssuersReader_RefetchesAfterTTL(t *testing.T) {
 	if _, err := c.ListIssuers(context.Background(), 100); err != nil {
 		t.Fatal(err)
 	}
-	if got := up.listCalls.Load(); got != 2 {
-		t.Errorf("upstream ListIssuers called %d times; want 2 (one before + one after TTL)", got)
+	if !waitFor(time.Second, func() bool { return up.listCalls.Load() == 2 }) {
+		t.Errorf("upstream ListIssuers called %d times; want 2 (one before + one refresh after TTL)", up.listCalls.Load())
+	}
+}
+
+// An expired entry is served at once with its old fill time and stale=true while one background refresh runs; a failed
+// refresh keeps the entry, so the 3-4 s scan never lands on a visitor once the key has filled.
+func TestCachedIssuersReader_ServesStaleWhileRefreshing(t *testing.T) {
+	c := NewCachedIssuersReader(nil, 20*time.Millisecond)
+	ctx := context.Background()
+	rows := func(g string) func(context.Context) ([]timescale.IssuerSummary, error) {
+		return func(context.Context) ([]timescale.IssuerSummary, error) {
+			return []timescale.IssuerSummary{{GStrkey: g}}, nil
+		}
+	}
+	_, at0, stale, err := c.fetchList(ctx, "k", rows("OLD"))
+	if err != nil || stale {
+		t.Fatalf("cold fill: stale=%v err=%v", stale, err)
+	}
+	time.Sleep(30 * time.Millisecond)
+
+	var calls atomic.Int64
+	release := make(chan struct{})
+	failing := func(context.Context) ([]timescale.IssuerSummary, error) {
+		calls.Add(1)
+		<-release
+		return nil, errors.New("db is down")
+	}
+	for i := range 2 {
+		got, at, stale, err := c.fetchList(ctx, "k", failing)
+		if err != nil || !stale || !at.Equal(at0) || len(got) != 1 || got[0].GStrkey != "OLD" {
+			t.Fatalf("call %d: got=%+v at=%v stale=%v err=%v; want OLD at %v stale", i, got, at, stale, err, at0)
+		}
+	}
+	close(release)
+	flightDone := func() bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		e := c.entries["k"]
+		return e != nil && e.flight == nil
+	}
+	if !waitFor(time.Second, flightDone) {
+		t.Fatal("failed refresh dropped the entry or never settled")
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("refresh upstream called %d times; want 1", n)
+	}
+
+	if got, _, stale, _ := c.fetchList(ctx, "k", rows("NEW")); !stale || got[0].GStrkey != "OLD" {
+		t.Fatalf("after failed refresh: got=%+v stale=%v; want OLD stale", got, stale)
+	}
+	if !waitFor(time.Second, flightDone) {
+		t.Fatal("second refresh never settled")
+	}
+	got, at, stale, err := c.fetchList(ctx, "k", failing)
+	if err != nil || stale || !at.After(at0) || got[0].GStrkey != "NEW" {
+		t.Fatalf("after refresh: got=%+v at=%v stale=%v err=%v; want NEW fresh", got, at, stale, err)
 	}
 }
 
