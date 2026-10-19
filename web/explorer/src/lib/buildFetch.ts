@@ -69,7 +69,7 @@
  * listing, per-asset detail, etc.) is unchanged.
  */
 
-import { API_BASE_URL } from '@/api/client';
+import { API_BASE_URL, buildHeaders } from '@/api/client';
 import { CURRENT_NETWORK_ID } from './networks';
 import type { components } from '@/api/types';
 import {
@@ -285,7 +285,7 @@ async function fetchWithRetry<T>(
       let res: Response;
       try {
         res = await fetch(url, {
-          headers: { Accept: 'application/json' },
+          headers: buildHeaders(),
           signal: AbortSignal.timeout(timeoutMs),
         });
       } finally {
@@ -327,10 +327,10 @@ async function fetchWithRetry<T>(
         continue;
       }
       if (res.status >= 400 && res.status < 500) {
-        // A non-authoritative 4xx (400/401/403/405/…). The API is
-        // unauthenticated, so a 401/403 here can only come from an
-        // intermediary (edge/WAF bot-challenge) — treating it as "does not
-        // exist" would bake a not-found page over a transport failure. A
+        // A non-authoritative 4xx (400/401/403/405/…). A 401/403 is a
+        // rejected STELLARINDEX_BUILD_API_KEY or an intermediary (edge/WAF
+        // bot-challenge) — treating it as "does not exist" would bake a
+        // not-found page over a transport failure. A
         // softFail caller degrades gracefully (see the module header);
         // everything else fails the build so the contract break is visible
         // instead of silently baked in.
@@ -343,7 +343,7 @@ async function fetchWithRetry<T>(
           /* non-JSON body — keep the bare status line */
         }
         throw new BuildFetchError(
-          `GET ${url} got HTTP ${res.status}${extra} — not an authoritative "not found"; refusing to bake a not-found page for a possible edge/WAF response.`,
+          `GET ${url} got HTTP ${res.status}${extra} — not an authoritative "not found"; refusing to bake a not-found page for a possible edge/WAF response or a rejected build API key.`,
         );
       }
       if (!res.ok) {

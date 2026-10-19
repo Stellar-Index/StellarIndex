@@ -5,6 +5,25 @@
 // the env var is set. See docs/adr/0044-explorer-edge-rendering.md.
 const openNext = process.env.OPEN_NEXT === '1';
 
+// A rejected build key gets a 401, never the anonymous fallback, and the raw prerender fetches read a 401 as "no data": check the
+// key once up front so a revoked or wrong-network key fails the build instead of exporting empty pages.
+const buildKey = process.env.STELLARINDEX_BUILD_API_KEY;
+const buildApi = process.env.NEXT_PUBLIC_API_BASE_URL ?? '';
+const offlineBuild =
+  process.env.EXPLORER_BUILD_OFFLINE === '1' ||
+  buildApi.includes('.invalid') ||
+  buildApi.includes('local-stub');
+if (buildKey && buildApi && !offlineBuild) {
+  const res = await fetch(`${buildApi}/v1/sources`, {
+    headers: { Accept: 'application/json', 'X-API-Key': buildKey },
+  });
+  if (res.status === 401 || res.status === 403) {
+    throw new Error(
+      `STELLARINDEX_BUILD_API_KEY was rejected by ${buildApi} (HTTP ${res.status}); mint a key on that network or unset it`,
+    );
+  }
+}
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,

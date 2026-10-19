@@ -3,7 +3,7 @@ import { Suspense } from 'react';
 
 import { assetHrefFor } from '@/lib/fiat-slugs';
 import type { components } from '@/api/types';
-import { API_BASE_URL } from '@/api/client';
+import { API_BASE_URL, buildHeaders } from '@/api/client';
 import {
   changePct,
   compareDecimalStrings,
@@ -61,6 +61,7 @@ async function listedTickers(): Promise<{ ticker: string }[]> {
   // pre-rendered set focused on FX-rate widget consumers.
   try {
     const res = await fetch(`${API_BASE_URL}/v1/assets/verified`, {
+      headers: buildHeaders(),
       signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -108,7 +109,10 @@ async function fetchFxSeries(
   try {
     const res = await fetch(
       `${API_BASE_URL}/v1/chart?asset=fiat:${encodeURIComponent(ticker)}&quote=fiat:USD&timeframe=1w&granularity=1d`,
-      { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) },
+      {
+        headers: buildHeaders(),
+        signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
+      },
     );
     if (!res.ok) return [];
     const env = (await res.json()) as { data?: { points?: ChartPoint[] } };
@@ -135,7 +139,10 @@ async function fetchCurrency(ticker: string): Promise<CurrencyDetail | null> {
   try {
     const res = await fetch(
       `${API_BASE_URL}/v1/external/assets/${encodeURIComponent(ticker.toUpperCase())}`,
-      { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) },
+      {
+        headers: buildHeaders(),
+        signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
+      },
     );
     if (!res.ok) return null;
     const env = (await res.json()) as { data: GlobalAssetView };

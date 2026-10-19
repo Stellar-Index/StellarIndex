@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 
-import { apiGet, asExample, isTimeoutError, timeoutSignal } from './client';
+import {
+  apiGet,
+  asExample,
+  buildHeaders,
+  isTimeoutError,
+  timeoutSignal,
+} from './client';
 
 // [absence: timeouts] every runtime fetch needs an upper bound.
 // timeoutSignal is the shared primitive that provides it while
@@ -106,5 +112,32 @@ describe('apiGet', () => {
     const init = fetchSpy.mock.calls[0]?.[1] as RequestInit | undefined;
     expect(init?.signal).toBeInstanceOf(AbortSignal);
     expect(init?.signal?.aborted).toBe(false);
+  });
+});
+
+describe('buildHeaders', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it('never sends the build key from a browser', () => {
+    vi.stubEnv('STELLARINDEX_BUILD_API_KEY', 'si_test_build');
+    expect(buildHeaders()).toEqual({ Accept: 'application/json' });
+  });
+
+  it('sends the build key when prerendering', () => {
+    vi.stubEnv('STELLARINDEX_BUILD_API_KEY', 'si_test_build');
+    vi.stubGlobal('window', undefined);
+    expect(buildHeaders()).toEqual({
+      Accept: 'application/json',
+      'X-API-Key': 'si_test_build',
+    });
+  });
+
+  it('sends no key when the build has none', () => {
+    vi.stubEnv('STELLARINDEX_BUILD_API_KEY', '');
+    vi.stubGlobal('window', undefined);
+    expect(buildHeaders()).toEqual({ Accept: 'application/json' });
   });
 });

@@ -95,9 +95,9 @@ groups:
       # dies with the pool; repo2 is the backup DR actually restores from,
       # and a by-hand drill is the only other proof that it restores.
       # 35 d = one monthly cycle on a fixed day of month (28–31 d) plus
-      # ≥ 4 d of slack, and under two cycles. A measured run on r1 cost
-      # ~47 min and ~$24 of S3 egress (~269 GB), which is what a
-      # responder is signing up for when they force one.
+      # ≥ 4 d of slack, and under two cycles. A run pulls the latest full +
+      # differential from B2 and takes hours (1.6-2.7 h of restore alone),
+      # which is what a responder is signing up for when they force one.
       - alert: stellarindex_restore_drill_offsite_stale
         expr: |
           (time() - stellarindex_restore_drill_last_success_unix{repo="2"}) > (35 * 24 * 3600)
@@ -127,7 +127,7 @@ groups:
             `/var/log/restore-drill-offsite.log` + the evidence log under
             `/var/lib/stellarindex/restore-drills/restore-drills.md`, and
             force a run with `systemctl start restore-drill-offsite.service`
-            (~47 min, ~269 GB from S3, ~$24 of egress at the 2026-09-03 size).
+            (hours: the restore alone took 1.6-2.7 h on the October runs).
 
       # A run that ran and FOUND a problem. The script rewrites the
       # textfile on every run past the preconditions (including the

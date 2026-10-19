@@ -87,12 +87,17 @@ replay (scales with time since the last differential).
 | 2026-09-03 | repo2 | 2,813 s (47 min) | 17 ledgers | 0 | 2,726,303 = 2,726,303 | — | **0** |
 | 2026-09-05 | repo1 | 607 s | 3 ledgers | 0 | 2,888,781 = 2,888,781 | 100,000 ledgers in 1,893 s (~53 ledgers/s) from `galexie-archive`; 100,000 lake rows in window | **0** |
 | 2026-09-15 | repo2 | 2,925 s (49 min) | 68 ledgers | 0 | 5,225,239 = 5,225,239 | — | **0** |
+| 2026-10-03 | repo2 | 5,677 s (95 min) | 228 ledgers | 0 | 4,284,278 = 4,284,278 | — | **0** |
+| 2026-10-03 | repo1 | 734 s | 1 ledger | 0 | 4,146,207 = 4,146,207 | 100,000 ledgers in 2,189 s from `galexie-archive`; 100,000 lake rows in window | **0** |
+| 2026-10-15 | repo2 | 9,017 s (2.5 h) | 1,583 ledgers | 0 | 4,851,675 = 4,851,675 | — | 1 (WAL drain) |
+| 2026-10-16 | repo2 | 9,586 s (2.7 h) | 3,053 ledgers | 0 | 4,193,776 = 4,193,776 | — | 1 |
 
 - The two failures (08-16, 08-19) had zero chain breaks and exact trades matches; the large tip lag (12.5k and 13.4k ledgers) was WAL not yet archived, not a bad backup.
 - **Local RTO:** ~9-10 min (496-607 s over five scheduled runs; manual 2026-07-03 run 871 s).
-- **Off-site RTO (the site-gone case): ~47-49 min of restore plus WAL replay**, reproducible (2,813 s then 2,925 s). Cause: 269 GB of compressed
-  repository (242.6 GB full + 26.6 GB differential, 788 GB on disk) pulled from S3 `eu-central-1` to Hetzner; ~$24 AWS egress per drill.
-  Never quote the ~15 min repo1 figure for a disaster where the local repository is gone.
+- **Off-site RTO (the site-gone case): 1.6-2.7 h of restore alone (October runs), plus WAL replay, and growing with the backup.**
+  repo2 moved from AWS S3 to B2; the pull is network-bound at ~400 Mbit/s of r1's 1 Gbit uplink. The September figures
+  (47-49 min, 269 GB from S3 `eu-central-1`) predate the move and the growth: never quote them, nor the repo1 figure, for a
+  disaster where the local repository is gone.
 - 2026-09-03 repo2 run was the first off-site restore; manual, under `run-heavy-job.sh` (singleton lock, 20 GB memory cap, deprioritised CPU/IO), non-destructive,
   on a dedicated ZFS dataset (4.9 TB free vs 1,038 GB required).
 
