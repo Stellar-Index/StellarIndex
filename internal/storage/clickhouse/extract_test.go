@@ -246,3 +246,44 @@ func TestExtractLedger_UnreadableTxCountsTowardTxCount(t *testing.T) {
 		t.Fatalf("Ledger.TxCount = %d, want 1 (the unreadable tx must be counted)", ext.Ledger.TxCount)
 	}
 }
+
+// TestExtractOps_ParticipantOpTypeAndVisibility pins the account_op_types participant arm to the reader's visibleTxPredicate: a
+// participant sees an op when its tx succeeded or when the participant sourced the tx.
+func TestExtractOps_ParticipantOpTypeAndVisibility(t *testing.T) {
+	const txSource = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	const other = "GA3GJGKCUKPOPL6NYPMSBK7LMFYNW7SJMAJ7ZGWR3KGSHJWJHQRQZA3L"
+	payment := func(dest string, opSource *xdr.MuxedAccount) xdr.Operation {
+		return xdr.Operation{SourceAccount: opSource, Body: xdr.OperationBody{
+			Type:      xdr.OperationTypePayment,
+			PaymentOp: &xdr.PaymentOp{Destination: xdr.MustMuxedAddress(dest), Asset: claimNative, Amount: 1},
+		}}
+	}
+	otherSource := xdr.MustMuxedAddress(other)
+	cases := []struct {
+		name       string
+		op         xdr.Operation
+		successful bool
+		account    string
+		visible    bool
+	}{
+		{"successful tx", payment(other, nil), true, other, true},
+		{"failed tx, participant did not source it", payment(other, nil), false, other, false},
+		{"failed tx, participant sourced it", payment(txSource, &otherSource), false, txSource, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tx := gateTx(t, gateContractEvent(t), tc.successful)
+			tx.Envelope.V1.Tx.Operations = []xdr.Operation{tc.op}
+			ext := &LedgerExtract{}
+			extractOps(ext, tx, 100, time.Unix(1_700_000_000, 0).UTC(), "h", txSource, 0, tc.successful)
+			if len(ext.Participants) != 1 {
+				t.Fatalf("participants = %d, want 1", len(ext.Participants))
+			}
+			p := ext.Participants[0]
+			if p.Account != tc.account || p.OpType != "OperationTypePayment" || p.Visible != tc.visible {
+				t.Fatalf("participant = {%s %s visible=%v}, want {%s OperationTypePayment visible=%v}",
+					p.Account, p.OpType, p.Visible, tc.account, tc.visible)
+			}
+		})
+	}
+}
