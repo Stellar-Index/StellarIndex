@@ -103,12 +103,26 @@ function buildUrl(
   return url.toString();
 }
 
+/**
+ * buildHeaders — Accept, plus the build's API key when prerendering. The anonymous per-IP limit cannot carry a whole static export
+ * from one build host; a browser never sends a key (the variable is not NEXT_PUBLIC_, so it is never inlined into the bundle).
+ */
+export function buildHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  const key =
+    typeof window === 'undefined'
+      ? process.env.STELLARINDEX_BUILD_API_KEY
+      : undefined;
+  if (key) headers['X-API-Key'] = key;
+  return headers;
+}
+
 export async function apiGet<T>(
   path: string,
   params?: Record<string, string | number | undefined>,
 ): Promise<T> {
   const res = await fetch(buildUrl(path, params), {
-    headers: { Accept: 'application/json' },
+    headers: buildHeaders(),
     next: { revalidate: 60 },
     signal: timeoutSignal(),
   });
