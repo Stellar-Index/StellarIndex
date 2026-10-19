@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"math/big"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -136,5 +138,40 @@ func TestWriteCHRebuildTradesByAccount_RecordsOnlyAfterFullInsert(t *testing.T) 
 				t.Errorf("recorded %d rows, want 2", recRows)
 			}
 		})
+	}
+}
+
+func TestEachTradesByAccountWindow(t *testing.T) {
+	type win struct{ lo, hi uint32 }
+	collect := func(lo, hi, step uint32, failAt uint32) ([]win, error) {
+		var got []win
+		err := eachTradesByAccountWindow(lo, hi, step, func(wlo, whi uint32) error {
+			got = append(got, win{wlo, whi})
+			if wlo == failAt {
+				return errors.New("boom")
+			}
+			return nil
+		})
+		return got, err
+	}
+	for _, tc := range []struct {
+		name         string
+		lo, hi, step uint32
+		want         []win
+	}{
+		{"partial tail", 100, 349, 100, []win{{100, 199}, {200, 299}, {300, 349}}},
+		{"exact fit", 1, 20, 10, []win{{1, 10}, {11, 20}}},
+		{"single ledger", 7, 7, 10, []win{{7, 7}}},
+		{"top of uint32", math.MaxUint32 - 4, math.MaxUint32, 3, []win{{math.MaxUint32 - 4, math.MaxUint32 - 2}, {math.MaxUint32 - 1, math.MaxUint32}}},
+	} {
+		got, err := collect(tc.lo, tc.hi, tc.step, 0)
+		if err != nil || !slices.Equal(got, tc.want) {
+			t.Errorf("%s: got %v, %v; want %v", tc.name, got, err, tc.want)
+		}
+	}
+	// A failed window stops the run: no later window is decoded or recorded.
+	got, err := collect(1, 50, 10, 21)
+	if err == nil || !slices.Equal(got, []win{{1, 10}, {11, 20}, {21, 30}}) {
+		t.Errorf("stop on error: got %v, %v", got, err)
 	}
 }

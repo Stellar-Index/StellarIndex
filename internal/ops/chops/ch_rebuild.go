@@ -586,6 +586,10 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	fmt.Fprintf(os.Stderr, "ch-rebuild: [%d,%d] mode=%s sources=%q sdex=%v contract-calls=%v sep41=%v ch=%s\n",
 		lo, hi, mode, *only, *includeSDEX, *contractCalls, *includeSEP41, *chAddr)
 
+	if *tradesByAccount {
+		return runCHRebuildTradesByAccount(ctx, os.Stdout, *chAddr, store.PrepareTradesForArchive, cat, enabled, lo, hi)
+	}
+
 	// Buffer decoded events during the CH stream and write to Postgres after it closes, since a
 	// FINAL stream held open across slow per-row writes trips the client read timeout. Windows are
 	// partition-aligned (1M) to bound memory.
@@ -688,20 +692,7 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 		sdexDec := sdex.NewDecoder()
 		sStart := time.Now()
 		decodeRange := func(rlo, rhi uint32) error {
-			// SDEX Decode never returns a non-nil error (soft-fails per claim).
-			return clickhouse.StreamSDEXOps(ctx, *chAddr, rlo, rhi, func(op clickhouse.SDEXOp) error {
-				outs, _ := sdexDec.Decode(dispatcher.OpContext{
-					Ledger:   op.Ledger,
-					ClosedAt: op.ClosedAt,
-					TxHash:   op.TxHash,
-					TxSource: op.Source,
-					OpIndex:  int(op.OpIndex),
-					Op:       op.Op,
-					OpResult: op.OpResult,
-				})
-				buf = append(buf, outs...)
-				return nil
-			})
+			return streamCHRebuildSDEX(ctx, *chAddr, sdexDec, rlo, rhi, &buf)
 		}
 		if *sdexGaps {
 			// Re-derive ONLY the served gaps in one pass: each gap is an empty
@@ -823,17 +814,6 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 			fmt.Fprintf(os.Stderr, "ch-rebuild: contract-call %s read done (%d events)\n", src.name, len(buf)-before)
 		}
 		fmt.Fprintf(os.Stderr, "ch-rebuild: contract-call read done in %s\n", time.Since(ccStart).Round(time.Second))
-	}
-
-	if *tradesByAccount {
-		return writeCHRebuildTradesByAccount(ctx, os.Stdout, store.PrepareTradesForArchive,
-			func(ctx context.Context, rows []clickhouse.TradeByAccountRow) (int64, error) {
-				return clickhouse.InsertTradesByAccount(ctx, *chAddr, rows)
-			},
-			func(ctx context.Context, lo, hi uint32, n int64) error {
-				return clickhouse.RecordTradesByAccountWindow(ctx, *chAddr, lo, hi, n, tradeSourcesKey(cat))
-			},
-			buf, lo, hi)
 	}
 
 	// ─── write the buffered events to Postgres ───────────────────────────
@@ -1295,4 +1275,21 @@ func decodeCHRebuildEvents(srcs []reconSource, contractsOverride []string, buf *
 // selection as the BackfillSafe gate, not event decoders alone.
 func chRebuildBuffers(cat, sep41Cat []reconSource, passes chRebuildPasses, enabled func(string) bool) bool {
 	return passes.sep41 || len(reDerivedSourcesInRun(cat, sep41Cat, passes, enabled)) > 0
+}
+
+// streamCHRebuildSDEX decodes the SDEX ops in [lo,hi] onto buf; SDEX Decode soft-fails per claim and never returns an error.
+func streamCHRebuildSDEX(ctx context.Context, chAddr string, dec *sdex.Decoder, lo, hi uint32, buf *[]consumer.Event) error {
+	return clickhouse.StreamSDEXOps(ctx, chAddr, lo, hi, func(op clickhouse.SDEXOp) error {
+		outs, _ := dec.Decode(dispatcher.OpContext{
+			Ledger:   op.Ledger,
+			ClosedAt: op.ClosedAt,
+			TxHash:   op.TxHash,
+			TxSource: op.Source,
+			OpIndex:  int(op.OpIndex),
+			Op:       op.Op,
+			OpResult: op.OpResult,
+		})
+		*buf = append(*buf, outs...)
+		return nil
+	})
 }
