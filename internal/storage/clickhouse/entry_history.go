@@ -42,7 +42,7 @@ type EntryChangeRef struct {
 	Fields         string
 }
 
-// AccountEntryChange is one account_entry_changes row: the change as seen by one account in one role (owner/sponsor/claimant); Balance is post-change (0 once removed).
+// AccountEntryChange is one decoded entry change as seen by one account in one role (owner/sponsor/claimant); Balance is post-change (0 once removed).
 type AccountEntryChange struct {
 	EntryChangeRef
 	Account string
@@ -51,7 +51,7 @@ type AccountEntryChange struct {
 	Balance *big.Int
 }
 
-// AssetEntryChange is one stellar.asset_entry_changes row: the change as seen by one asset in one role; Account is the holder, seller or sponsor, empty for a liquidity pool.
+// AssetEntryChange is one decoded entry change as seen by one asset in one role; Account is the holder, seller or sponsor, empty for a liquidity pool.
 type AssetEntryChange struct {
 	EntryChangeRef
 	Asset   string

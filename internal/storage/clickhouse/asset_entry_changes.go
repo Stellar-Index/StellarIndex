@@ -1,6 +1,6 @@
 package clickhouse
 
-// AssetEntryChangeCursor is the keyset position of one asset_entry_changes row: its sort key after the asset.
+// AssetEntryChangeCursor is the keyset position of one asset entry change: its sort key after the asset.
 type AssetEntryChangeCursor struct {
 	Ledger      uint32
 	TxHash      string

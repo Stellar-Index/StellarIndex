@@ -1401,52 +1401,6 @@ ENGINE = MergeTree
 PARTITION BY day
 ORDER BY (day, contract_id);
 
--- ── account_entry_changes / asset_entry_changes / entry_history_watermark —
---    see deploy/clickhouse/entry_history.sql ──
-CREATE TABLE IF NOT EXISTS stellar.account_entry_changes
-(
-    account          String,
-    ledger           UInt32,
-    close_time       DateTime('UTC'),
-    tx_hash          String,
-    op_index         Int32,
-    change_index     UInt32,
-    role             LowCardinality(String),
-    intra_ledger_seq UInt32,
-    entry_type       LowCardinality(String),
-    change_type      LowCardinality(String),
-    changed          Array(LowCardinality(String)),
-    asset            String DEFAULT '',
-    balance          Int128,
-    fields           String DEFAULT '{}' CODEC(ZSTD(3)),
-    ingested_at      DateTime DEFAULT now()
-)
-ENGINE = ReplacingMergeTree(ingested_at)
-PARTITION BY intDiv(ledger, 1000000)
-ORDER BY (account, ledger, tx_hash, op_index, change_index, role);
-
-CREATE TABLE IF NOT EXISTS stellar.asset_entry_changes
-(
-    asset            String,
-    ledger           UInt32,
-    close_time       DateTime('UTC'),
-    tx_hash          String,
-    op_index         Int32,
-    change_index     UInt32,
-    role             LowCardinality(String),
-    intra_ledger_seq UInt32,
-    entry_type       LowCardinality(String),
-    change_type      LowCardinality(String),
-    changed          Array(LowCardinality(String)),
-    account          String DEFAULT '',
-    balance          Int128,
-    fields           String DEFAULT '{}' CODEC(ZSTD(3)),
-    ingested_at      DateTime DEFAULT now()
-)
-ENGINE = ReplacingMergeTree(ingested_at)
-PARTITION BY intDiv(ledger, 1000000)
-ORDER BY (asset, ledger, tx_hash, op_index, change_index, role);
-
 -- Sponsorship lifecycle, one row per transition of one arrangement: the entry
 -- (or signer) a sponsor pays reserves for started, was revoked (entry lives on)
 -- or ended (entry gone). Written by ch-entry-history under its own watermark,
@@ -1473,6 +1427,7 @@ ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY intDiv(ledger, 1000000)
 ORDER BY (sponsor, sponsored, kind, key_id, ledger, tx_hash, op_index, change_index);
 
+-- ── entry_history_watermark — see deploy/clickhouse/entry_history.sql ──
 CREATE TABLE IF NOT EXISTS stellar.entry_history_watermark
 (
     name        String,
