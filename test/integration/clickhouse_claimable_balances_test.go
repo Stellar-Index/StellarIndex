@@ -119,7 +119,7 @@ func TestStreamAccountEntryChanges_SameProjectionFewerRows(t *testing.T) {
 
 	const ledger = uint32(69_150_000)
 	ct := time.Date(2025, 6, 2, 0, 0, 0, 0, time.UTC)
-	claimed := cbsID(t, 0x61)
+	claimed := cbsID(t, 0x91)
 	acctKey := func(g string) string {
 		b64, err := xdr.MarshalBase64(xdr.LedgerKey{Type: xdr.LedgerEntryTypeAccount, Account: &xdr.LedgerKeyAccount{AccountId: xdr.MustAddress(g)}})
 		if err != nil {
