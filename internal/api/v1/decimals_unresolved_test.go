@@ -67,3 +67,39 @@ func TestSEP41Transfers_DecimalsReadFailed_Returns503(t *testing.T) {
 		})
 	}
 }
+
+// A loopback prewarm re-renders a fresh cached asset instead of being served it, so its cadence keeps the entry inside
+// the TTL; a client inside the TTL is still served the cache.
+func TestAssetDetail_PrewarmRefreshesFreshCacheEntry(t *testing.T) {
+	dec := &countingDecStub{d: 7, found: true}
+	srv := v1.New(v1.Options{Prices: lockstepPrices(), Supply: lockstepSupply(), TokenDecimals: dec})
+	tsrv := startHTTPTest(t, srv.Handler())
+	get := func(ua string) int32 {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodGet, tsrv.URL+"/v1/assets/"+flaggedAsset, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("User-Agent", ua)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d", resp.StatusCode)
+		}
+		return dec.calls.Load()
+	}
+	cold := get("client/1")
+	if get("client/1") != cold {
+		t.Fatal("a second client request inside the TTL re-rendered; the cache is not serving")
+	}
+	warm := get("stellarindex-prewarm/1")
+	if warm == cold {
+		t.Error("the prewarm was served the cached entry; it must re-render to refresh it")
+	}
+	if get("client/1") != warm {
+		t.Error("the client request after a prewarm re-rendered; the refreshed entry is not serving")
+	}
+}
