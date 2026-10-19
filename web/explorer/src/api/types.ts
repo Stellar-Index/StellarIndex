@@ -2239,9 +2239,16 @@ export interface paths {
          *     the asset's plausible backing markets (vs XLM, vs USD, vs a
          *     declared USD peg) clears it.
          *
-         *     Returns 404 when the worker hasn't computed a row yet (fresh
-         *     deployment, newly-added entity, bounded history, or an entity
-         *     outside the aggregator's configured pair set — see `id`).
+         *     A `coin` outside the aggregator's configured pair set (a
+         *     classic `CODE-ISSUER` asset) falls back to its `/v1/assets`
+         *     listing price: `current_value` is that USD price and only
+         *     `h1_delta_pct`, `h24_delta_pct` and `d7_delta_pct` are set;
+         *     the `*_value`, d30, ATH/ATL, streak and acceleration fields
+         *     are absent.
+         *
+         *     Returns 404 when neither the worker nor the listing has a row
+         *     (fresh deployment, newly-added entity, bounded history, or an
+         *     unpriced asset — see `id`).
          *     Returns 503 when this deployment hasn't wired the
          *     change-summary reader.
          */

@@ -18,6 +18,7 @@ import (
 // ChangeSummaryReader is the seam the change-summary handler reads through; timescale.Store satisfies it.
 type ChangeSummaryReader interface {
 	GetChangeSummary(ctx context.Context, entityType, entityID string) (timescale.ChangeSummaryRow, error)
+	AssetChangeFromSnapshot(ctx context.Context, assetID string) (timescale.ChangeSummaryRow, error)
 }
 
 // ChangeSummaryResponse is the GET /v1/changes/{entity_type}/{id} shape; *_value fields are money as exact decimal strings, *_delta_pct are display-grade numbers.
@@ -145,22 +146,16 @@ func (s *Server) handleChangeSummary(w http.ResponseWriter, r *http.Request) {
 	// (code, issuer) pair is ever widened to a ticker.
 	candidates := changeSummaryCoinCandidates(entityType, entityID)
 
-	var (
-		row timescale.ChangeSummaryRow
-		err error
-		hit bool
-	)
-	for _, id := range candidates {
-		row, err = s.ChangeSummary.GetChangeSummary(r.Context(), entityType, id)
-		if err == nil {
-			hit = true
-			break
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			break // real storage error — surface it below
-		}
+	row, err := firstChangeSummary(candidates, func(id string) (timescale.ChangeSummaryRow, error) {
+		return s.ChangeSummary.GetChangeSummary(r.Context(), entityType, id)
+	})
+	if errors.Is(err, sql.ErrNoRows) && entityType == "coin" {
+		// The worker covers configured pairs only; a classic asset still has its listing price and short-window changes.
+		row, err = firstChangeSummary(candidates, func(id string) (timescale.ChangeSummaryRow, error) {
+			return s.ChangeSummary.AssetChangeFromSnapshot(r.Context(), id)
+		})
 	}
-	if !hit && errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/change-summary-not-found",
 			"Change summary not found", http.StatusNotFound,
@@ -182,6 +177,18 @@ func (s *Server) handleChangeSummary(w http.ResponseWriter, r *http.Request) {
 	}
 	stale := time.Since(row.RefreshedAt) > changeSummaryStaleAfter
 	writeJSON(w, s.changeSummaryResponse(row), Flags{Stale: stale})
+}
+
+// firstChangeSummary returns the first candidate's row; sql.ErrNoRows only when every candidate missed, any other error at once.
+func firstChangeSummary(candidates []string, get func(id string) (timescale.ChangeSummaryRow, error)) (timescale.ChangeSummaryRow, error) {
+	err := sql.ErrNoRows
+	for _, id := range candidates {
+		var row timescale.ChangeSummaryRow
+		if row, err = get(id); !errors.Is(err, sql.ErrNoRows) {
+			return row, err
+		}
+	}
+	return timescale.ChangeSummaryRow{}, err
 }
 
 // changeSummaryStaleAfter is the row age past which a summary is flagged stale: 10 minutes against the worker's 5-minute
@@ -248,7 +255,10 @@ func changeSummaryLegs(entityType, entityID string) (base, quote canonical.Asset
 // /v1/price. AT READ TIME because the upsert RATCHETS ath_value/atl_value (GREATEST/LEAST): normalising at write would switch
 // scale mid-life and pin the ratchet to an extreme from the other scale.
 func (s *Server) changeSummaryResponse(row timescale.ChangeSummaryRow) ChangeSummaryResponse {
-	scale := s.changeSummaryValueScale(row.EntityType, row.EntityID)
+	var scale *big.Rat
+	if !row.Normalized {
+		scale = s.changeSummaryValueScale(row.EntityType, row.EntityID)
+	}
 	resp := ChangeSummaryResponse{
 		EntityType:      row.EntityType,
 		EntityID:        row.EntityID,
