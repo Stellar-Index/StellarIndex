@@ -1312,7 +1312,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		serveErr <- nil
 	}()
 
-	// Self-calls /v1/assets/<id> for native and every verified currency each 60 s so every cache
+	// Self-calls /v1/assets/<id> for native and every verified currency, and the explorer's listing reads, each 60 s so every cache
 	// the handler touches stays warm, not just the prewarmCaches slots. It goes through the real
 	// handler, so cache keys byte-match a user request and cannot drift from the prewarm.
 	if selfPrewarmAdmitted(cfg.API.AuthMode) {
@@ -2738,8 +2738,8 @@ func selfPrewarmAdmitted(authMode string) bool {
 	return false
 }
 
-// selfPrewarmAssetEndpoints GETs /v1/assets/<id> (and its entry-changes first page) every 60 s for native and each verified currency against our own listener, warming every
-// cache the real handler touches with byte-identical arguments.
+// selfPrewarmAssetEndpoints GETs every [selfPrewarmPaths] path every 60 s against our own listener, warming every cache the real
+// handler touches with byte-identical arguments.
 func selfPrewarmAssetEndpoints(ctx context.Context, logger *slog.Logger, listenAddr string, verifiedAssetIDs []string) {
 	// Guarded here because it runs on a detached goroutine and exercises more code than any other
 	// warmer.
@@ -2750,21 +2750,15 @@ func selfPrewarmAssetEndpoints(ctx context.Context, logger *slog.Logger, listenA
 		return
 	}
 
-	baseURL := fmt.Sprintf("http://%s/v1/assets/", listenAddr)
+	baseURL := fmt.Sprintf("http://%s", listenAddr)
 	client := &http.Client{Timeout: 30 * time.Second}
+	paths := selfPrewarmPaths(verifiedAssetIDs)
 
-	// native first — biggest cache-miss surface (explorer's default
-	// landing). Then every verified currency.
-	targets := append([]string{"native"}, verifiedAssetIDs...)
-
-	// The explorer opts into include_thin, which is its own cache entry. The entry-changes first page is
-	// one cache entry at any limit, and a liquid asset's walk outlasts a cold page view.
-	queries := []string{"", "?include_thin=true", "/entry-changes"}
-	warm := func(id, query string) {
+	warm := func(path string) {
 		start := time.Now()
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+id+query, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+path, nil)
 		if err != nil {
-			logger.Debug("self-prewarm request build failed", "asset_id", id, "err", err)
+			logger.Debug("self-prewarm request build failed", "path", path, "err", err)
 			return
 		}
 		// Marked synthetic so obs.HTTPMetrics keeps these cold requests out of the customer
@@ -2774,21 +2768,19 @@ func selfPrewarmAssetEndpoints(ctx context.Context, logger *slog.Logger, listenA
 		elapsed := time.Since(start)
 		if err != nil {
 			if ctx.Err() == nil {
-				logger.Debug("self-prewarm GET failed", "asset_id", id, "query", query, "err", err, "elapsed", elapsed.String())
+				logger.Debug("self-prewarm GET failed", "path", path, "err", err, "elapsed", elapsed.String())
 			}
 			return
 		}
 		_ = resp.Body.Close()
-		logger.Debug("self-prewarm /v1/assets", "asset_id", id, "query", query, "status", resp.StatusCode, "elapsed", elapsed.String())
+		logger.Debug("self-prewarm", "path", path, "status", resp.StatusCode, "elapsed", elapsed.String())
 	}
 	runPass := func() {
-		for _, id := range targets {
-			for _, query := range queries {
-				if ctx.Err() != nil {
-					return
-				}
-				warm(id, query)
+		for _, path := range paths {
+			if ctx.Err() != nil {
+				return
 			}
+			warm(path)
 		}
 	}
 
@@ -2804,6 +2796,32 @@ func selfPrewarmAssetEndpoints(ctx context.Context, logger *slog.Logger, listenA
 			runPass()
 		}
 	}
+}
+
+// explorerAssetListingPaths are the /v1/assets listing reads explorer pages fire on first load (home, /assets, /rwa), copied from
+// their hooks' default params. The listing's response cache lapses after 2 minutes idle, and a cold build with sparklines takes
+// seconds, so the first visitor after a quiet spell would pay it.
+var explorerAssetListingPaths = []string{
+	"/v1/assets?asset_class=all&limit=100&include=sparkline7d&include_thin=true",
+	"/v1/assets?limit=10&order_by=volume_24h_usd_desc&include_thin=true",
+	"/v1/assets?limit=50",
+	"/v1/assets?asset_class=stablecoin&limit=100",
+}
+
+// selfPrewarmPaths is one pass of the self-prewarm: /v1/assets/<id> for native (the explorer's default landing, biggest cache-miss
+// surface) and each verified currency, then the explorer's listing reads.
+func selfPrewarmPaths(verifiedAssetIDs []string) []string {
+	// The explorer opts into include_thin, which is its own cache entry. The entry-changes first page is
+	// one cache entry at any limit, and a liquid asset's walk outlasts a cold page view.
+	queries := []string{"", "?include_thin=true", "/entry-changes"}
+	targets := append([]string{"native"}, verifiedAssetIDs...)
+	paths := make([]string, 0, len(targets)*len(queries)+len(explorerAssetListingPaths))
+	for _, id := range targets {
+		for _, query := range queries {
+			paths = append(paths, "/v1/assets/"+id+query)
+		}
+	}
+	return append(paths, explorerAssetListingPaths...)
 }
 
 // storePriceAtReader serves /v1/price/at and /v1/price/changes via ClosedVWAPAtOrBefore (ErrNoRows to the sentinel). It carries the same
