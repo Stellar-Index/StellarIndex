@@ -157,6 +157,18 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Resolved: network=$NETWORK api=$api project=$project"
 
+      - name: Resolve deploy branch
+        # Runs before the build, so a refused label fails in seconds instead of
+        # after a full prerender against the live API. The Pages branch label is
+        # the production switch, so it must agree with the ref this job checked
+        # out: production only from main,
+        # preview never as `main`, allowlisted because it reaches wrangler's
+        # command line. Refs pass through the runner's GITHUB_REF /
+        # GITHUB_REF_NAME, never a `${{ }}` interpolated into the shell.
+        env:
+          DEPLOY_ENVIRONMENT: ${{ github.event.inputs.environment }}
+        run: bash scripts/ci/resolve-pages-branch.sh
+
       - name: Set up pnpm
         # package_json_file reads web/explorer/package.json's
         # `packageManager` pin instead of a version input that floats
@@ -204,16 +216,6 @@ jobs:
       # docs/operations/explorer-deployment.md (Build-time guards) for what
       # each one defends and why the prune keeps the tree files, and
       # test/controlwiring/explorer_build_guards_test.go for the wiring guard.
-
-      - name: Resolve deploy branch
-        # The Pages branch label is the production switch, so it must agree
-        # with the ref this job checked out: production only from main,
-        # preview never as `main`, allowlisted because it reaches wrangler's
-        # command line. Refs pass through the runner's GITHUB_REF /
-        # GITHUB_REF_NAME, never a `${{ }}` interpolated into the shell.
-        env:
-          DEPLOY_ENVIRONMENT: ${{ github.event.inputs.environment }}
-        run: bash scripts/ci/resolve-pages-branch.sh
 
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0  # v4.1.3
