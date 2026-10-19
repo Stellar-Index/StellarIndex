@@ -108,21 +108,25 @@ func (s *Store) reDeriveNullVolumeGuard(t canonical.Trade, computed *string) err
 
 // resolveUSDVolume is the one place a trade write computes usd_volume, so it is the one place the credibility budget is charged. A resolver
 // read error stores NULL live (repairable by re-derive), labelled "error" so a burst names its cause, but fails a re-derive write, where the
-// NULL would win the generation guard. label is the trade_inserts_total usd_volume_populated value.
-func (s *Store) resolveUSDVolume(ctx context.Context, t canonical.Trade) (v *string, label string, err error) {
-	v, refused, err := tradeUSDVolumeCredited(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver, s.creditBudget, true)
+// NULL would win the generation guard. label is the trade_inserts_total usd_volume_populated value; basis is empty exactly when v is nil.
+func (s *Store) resolveUSDVolume(ctx context.Context, t canonical.Trade) (v *string, basis USDBasis, label string, err error) {
+	v, basis, refused, err := tradeUSDVolumeCredited(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver, s.creditBudget, true)
 	if err != nil {
 		if s.deriveGeneration > 0 {
-			return nil, "", fmt.Errorf("timescale: refusing to write trade %s/%s (source=%s ledger=%d) "+
+			return nil, "", "", fmt.Errorf("timescale: refusing to write trade %s/%s (source=%s ledger=%d) "+
 				"in re-derive mode (generation=%d): USD-volume resolver read failed: %w",
 				t.Pair.Base, t.Pair.Quote, t.Source, t.Ledger, s.deriveGeneration, err)
 		}
-		return nil, usdLabelResolverError, nil
+		return nil, "", usdLabelResolverError, nil
+	}
+	if (v == nil) != (basis == "") {
+		return nil, "", "", fmt.Errorf("timescale: trade %s/%s (source=%s ledger=%d): usd_volume and usd_basis disagree on NULL (basis %q)",
+			t.Pair.Base, t.Pair.Quote, t.Source, t.Ledger, basis)
 	}
 	if err := s.reDeriveNullVolumeGuard(t, v); err != nil {
-		return nil, "", err
+		return nil, "", "", err
 	}
-	return v, s.usdLabel(t, v, refused), nil
+	return v, basis, s.usdLabel(t, v, refused), nil
 }
 
 // Pool-tuning constants, exported so store_test.go can assert configurePool set them.

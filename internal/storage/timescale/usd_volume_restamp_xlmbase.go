@@ -75,8 +75,9 @@ type XLMBaseRestampRow struct {
 
 	// Stored is the current column value; nil for SQL NULL.
 	Stored *string
-	// Want is the anchor's value, rendered as the insert path renders it (FloatString(8)).
-	Want string
+	// Want is the anchor's value, rendered as the insert path renders it (FloatString(8)); Basis is the tier's.
+	Want  string
+	Basis USDBasis
 
 	// AbsDelta is |Want - Stored| in USD; equal to Want for a NULL fill.
 	AbsDelta *big.Rat
@@ -217,6 +218,7 @@ func xlmBaseRestampDecide(
 func (s *Store) PlanXLMBaseUSDVolumeRestamp(ctx context.Context, p XLMBaseRestampParams) (*XLMBaseRestampPlan, error) {
 	return s.planRestampTier(ctx, p, restampTierScan{
 		Tier:    "xlm-base",
+		Basis:   BasisXLMBase,
 		Sources: xlmBaseRestampSources(p.Sources),
 		Leg:     restampLegBase,
 		Assets:  xlmAssetForms(),
@@ -332,9 +334,9 @@ const xlmBaseRestampApplyBatch = 2000
 // per row plus 3 fixed); above that pgx refuses the Exec mid-run.
 const xlmBaseRestampMaxBatch = (65535 - 3) / xlmBaseRestampArgsPerRow
 
-// xlmBaseRestampArgsPerRow is the placeholders one row binds: primary key, new value and the
+// xlmBaseRestampArgsPerRow is the placeholders one row binds: primary key, new value and basis, and the
 // plan-read state it must still match.
-const xlmBaseRestampArgsPerRow = 10
+const xlmBaseRestampArgsPerRow = 11
 
 // ApplyXLMBaseUSDVolumeRestamp writes the plan's rows and returns how many the database changed; the write set is the plan the dry run
 // printed, with no second predicate evaluated.
@@ -413,20 +415,20 @@ func (s *Store) applyXLMBaseRestampBatch(ctx context.Context, rows []XLMBaseRest
 		}
 		n := len(args)
 		fmt.Fprintf(&values, "($%d::text, $%d::integer, $%d::bpchar, $%d::integer, $%d::timestamptz, $%d::numeric, "+
-			"$%d::numeric, $%d::numeric, $%d::numeric, $%d::bigint)",
-			n+1, n+2, n+3, n+4, n+5, n+6, n+7, n+8, n+9, n+10)
+			"$%d::numeric, $%d::numeric, $%d::numeric, $%d::bigint, $%d::text)",
+			n+1, n+2, n+3, n+4, n+5, n+6, n+7, n+8, n+9, n+10, n+11)
 		var stored any
 		if r.Stored != nil {
 			stored = *r.Stored
 		}
 		args = append(args, r.Source, int64(r.Ledger), r.TxHash, int64(r.OpIndex), r.TS.UTC(), r.Want,
-			r.BaseAmount, r.QuoteAmount, stored, r.Generation)
+			r.BaseAmount, r.QuoteAmount, stored, r.Generation, string(r.Basis))
 	}
 	// Fragments are code-built; every value travels as a positional placeholder.
 	return s.restampTradesUSDVolume(ctx, usdVolumeRestampWrite{
 		label: "xlm-base restamp",
 		scope: fmt.Sprintf("(%d rows from %s)", len(rows), rows[0].TS.Format(time.RFC3339)),
-		rel:   `(VALUES ` + values.String() + `) AS v(source, ledger, tx_hash, op_index, ts, usd_volume, base_amount, quote_amount, prior_usd_volume, prior_generation)`,
+		rel:   `(VALUES ` + values.String() + `) AS v(source, ledger, tx_hash, op_index, ts, usd_volume, base_amount, quote_amount, prior_usd_volume, prior_generation, usd_basis)`,
 		where: `
 	       WHERE t.ts      >= $2
 	         AND t.ts      <= $3
@@ -441,6 +443,7 @@ func (s *Store) applyXLMBaseRestampBatch(ctx context.Context, rows []XLMBaseRest
 	         AND t.usd_volume IS NOT DISTINCT FROM v.prior_usd_volume
 	         AND t.derive_generation = v.prior_generation`,
 		value: "v.usd_volume",
+		basis: "v.usd_basis",
 		gen:   "$1",
 		args:  args,
 	})

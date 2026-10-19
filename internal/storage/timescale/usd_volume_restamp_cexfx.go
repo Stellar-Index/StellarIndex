@@ -116,6 +116,7 @@ func (s *Store) PlanCEXFiatUSDVolumeRestamp(ctx context.Context, p RestampScanPa
 	gate := newFXAsOfGate(s, maxStaleness)
 	plan, err := s.planRestampTier(ctx, p, restampTierScan{
 		Tier:    "cex-fx",
+		Basis:   BasisFXQuote,
 		Sources: cexFiatRestampSources(p.Sources),
 		Leg:     restampLegQuote,
 		Assets:  cexFiatQuoteAssets(),

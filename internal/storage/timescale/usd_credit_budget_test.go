@@ -213,6 +213,9 @@ func TestCreditBoundUSDVolume(t *testing.T) {
 		if err != nil || refused || v == nil || v.Cmp(rat("500")) != 0 {
 			t.Fatalf("got (%v, %v, %v), want 500 admitted", v, refused, err)
 		}
+		if v == legs.ratedVal {
+			t.Fatal("returned the rated leg's pointer for the other leg's value; keptLegBasis would mislabel it")
+		}
 		// DEF's budget is 600 with 500 spent; ABC's (200) is untouched.
 		if mustAdmit(ctx, t, b, def, at, "101", "300", false) {
 			t.Fatal("the charge did not land on DEF")
@@ -255,6 +258,9 @@ func TestCreditBoundUSDVolume(t *testing.T) {
 		v, refused, err := creditBoundUSDVolume(ctx, r, nil, legs, true)
 		if err != nil || refused || v == nil || v.Cmp(rat("800")) != 0 {
 			t.Fatalf("nil budget: got (%v, %v, %v), want the legacy 800", v, refused, err)
+		}
+		if v != legs.ratedVal {
+			t.Fatal("kept the rated leg by value, not pointer; keptLegBasis would mislabel it")
 		}
 		v, refused, err = creditBoundUSDVolume(ctx, r.stubFXResolver, newUSDCreditBudget(nil), legs, true)
 		if err != nil || refused || v == nil || v.Cmp(rat("800")) != 0 {

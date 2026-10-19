@@ -1511,3 +1511,72 @@ func countTxIndexTagged(t *testing.T, ctx context.Context, db *sql.DB) int {
 	}
 	return n
 }
+
+// TestMigration0221_AddsUSDBasisOverCompressedChunks: the three nullable
+// basis columns land catalog-only (every trades chunk stays compressed), the
+// previous binary's INSERT still works, and the down removes them.
+func TestMigration0221_AddsUSDBasisOverCompressedChunks(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer db.Close()
+
+	applyMigrationsUpTo(t, dsn, 220)
+	requireSchemaVersion(t, ctx, db, 220)
+	quiesceCAGGRefreshPolicies(t, ctx, db)
+
+	t0 := time.Now().UTC().Add(-48 * time.Hour).Truncate(24 * time.Hour).Add(time.Hour)
+	insertTxIndexTrade(t, ctx, db, "sdex", 60_000_001, "a1", t0)
+	insertTxIndexTrade(t, ctx, db, "soroswap", 59_000_001, "b1", t0.Add(-30*24*time.Hour))
+	compressTradesChunks(t, ctx, db, 2)
+
+	applyMigrationsUpTo(t, dsn, 221)
+	requireSchemaVersion(t, ctx, db, 221)
+	requireCompressedTradesChunks(t, ctx, db, 2, "after 0221 up")
+
+	cols := []struct{ table, column string }{
+		{"trades", "usd_basis"},
+		{"usd_volume_restamp_log", "prior_usd_basis"},
+		{"usd_volume_restamp_log", "usd_basis"},
+	}
+	for _, c := range cols {
+		var dataType, nullable string
+		if err := db.QueryRowContext(ctx, `
+			SELECT data_type, is_nullable FROM information_schema.columns
+			 WHERE table_name = $1 AND column_name = $2`, c.table, c.column).Scan(&dataType, &nullable); err != nil {
+			t.Fatalf("read %s.%s: %v", c.table, c.column, err)
+		}
+		if dataType != "text" || nullable != "YES" {
+			t.Errorf("%s.%s is (%s, nullable=%s), want (text, YES)", c.table, c.column, dataType, nullable)
+		}
+	}
+	var stamped int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM trades WHERE usd_basis IS NOT NULL`).Scan(&stamped); err != nil {
+		t.Fatalf("count stamped trades: %v", err)
+	}
+	if stamped != 0 {
+		t.Errorf("rows with a usd_basis right after 0221 = %d, want 0 (no backfill in the migration)", stamped)
+	}
+
+	// The previous binary's INSERT does not name the column (rule 9).
+	insertTxIndexTrade(t, ctx, db, "sdex", 60_000_002, "c1", t0.Add(time.Minute))
+
+	applyMigrationsUpTo(t, dsn, 220)
+	requireSchemaVersion(t, ctx, db, 220)
+	for _, c := range cols {
+		var present bool
+		if err := db.QueryRowContext(ctx, `
+			SELECT EXISTS (SELECT 1 FROM information_schema.columns
+			                WHERE table_name = $1 AND column_name = $2)`, c.table, c.column).Scan(&present); err != nil {
+			t.Fatalf("read %s columns after down: %v", c.table, err)
+		}
+		if present {
+			t.Errorf("%s.%s still present after 0221 down", c.table, c.column)
+		}
+	}
+}

@@ -105,6 +105,8 @@ type restampValuer func(canonical.Trade) (*string, error)
 type restampTierScan struct {
 	// Tier is the operator-facing name, used in errors only.
 	Tier string
+	// Basis is what every row this tier writes rests on.
+	Basis USDBasis
 	// Sources is the resolved source allow-list for the scan.
 	Sources []string
 	// Leg + Assets bound the scan to the tier's own leg.
@@ -174,6 +176,7 @@ func (s *Store) planRestampTier(ctx context.Context, p RestampScanParams, t rest
 		}
 		r.TS = r.TS.UTC()
 		decision, disp, derr := restampDecide(r, s.usdVolumeQuoteSpec, t.Gate, t.Value, p.FillNull, p.MinRelDelta)
+		decision.Basis = t.Basis
 		if derr != nil {
 			return nil, fmt.Errorf("timescale: %s restamp value %s L%d %s: %w",
 				t.Tier, r.Source, r.Ledger, r.TS.Format(time.RFC3339), derr)

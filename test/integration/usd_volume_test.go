@@ -413,6 +413,11 @@ func TestUSDVolumeRestamp_ExactTierRepair(t *testing.T) {
 	if got := restampLogCount(t, ctx, store.DB(), gen); got != n {
 		t.Errorf("run logged %d before-image(s) but rewrote %d row(s)", got, n)
 	}
+	// USDC is the base: tier 2b on insert and on the restamp alike.
+	if b := readUSDBasis(t, ctx, store.DB(), "sdex", ledgers[0]); logged[0].priorBasis.String != "base_pegged" ||
+		logged[0].basis != b || b.String != "base_pegged" {
+		t.Errorf("exact-tier basis: logged %v -> %v, row holds %v; want base_pegged throughout", logged[0].priorBasis, logged[0].basis, b)
+	}
 	if undone := undoRestampRun(t, ctx, store.DB(), gen); undone != 1 {
 		t.Fatalf("undo restored %d row(s), want 1", undone)
 	}
@@ -498,6 +503,8 @@ type restampLogRow struct {
 	priorGen int64
 	written  string
 	gen      int64
+	// priorBasis and basis are the usd_basis before and after (0221).
+	priorBasis, basis sql.NullString
 }
 
 // readRestampLog returns every before-image logged for one trade, oldest
@@ -505,7 +512,8 @@ type restampLogRow struct {
 func readRestampLog(t *testing.T, ctx context.Context, db *sql.DB, source string, ledger uint32) []restampLogRow {
 	t.Helper()
 	rows, err := db.QueryContext(ctx, `
-		SELECT prior_usd_volume::text, prior_derive_generation, usd_volume::text, derive_generation
+		SELECT prior_usd_volume::text, prior_derive_generation, usd_volume::text, derive_generation,
+		       prior_usd_basis, usd_basis
 		  FROM usd_volume_restamp_log
 		 WHERE source = $1 AND ledger = $2
 		 ORDER BY id`, source, int64(ledger))
@@ -519,7 +527,7 @@ func readRestampLog(t *testing.T, ctx context.Context, db *sql.DB, source string
 			r     restampLogRow
 			prior sql.NullString
 		)
-		if err := rows.Scan(&prior, &r.priorGen, &r.written, &r.gen); err != nil {
+		if err := rows.Scan(&prior, &r.priorGen, &r.written, &r.gen, &r.priorBasis, &r.basis); err != nil {
 			t.Fatalf("scan usd_volume_restamp_log: %v", err)
 		}
 		if prior.Valid {
@@ -531,6 +539,16 @@ func readRestampLog(t *testing.T, ctx context.Context, db *sql.DB, source string
 		t.Fatalf("iterate usd_volume_restamp_log: %v", err)
 	}
 	return out
+}
+
+// readUSDBasis returns one trade's usd_basis.
+func readUSDBasis(t *testing.T, ctx context.Context, db *sql.DB, source string, ledger uint32) sql.NullString {
+	t.Helper()
+	var b sql.NullString
+	if err := db.QueryRowContext(ctx, `SELECT usd_basis FROM trades WHERE source = $1 AND ledger = $2`, source, int64(ledger)).Scan(&b); err != nil {
+		t.Fatalf("read usd_basis: %v", err)
+	}
+	return b
 }
 
 // restampLogCount is how many before-images a run's generation logged.
@@ -2119,6 +2137,9 @@ func TestXLMBaseRestamp_RederivesThroughTheLiveAnchor(t *testing.T) {
 		logged[0].written != wantAnchored || logged[0].gen != gen {
 		t.Errorf("before-image of the restamped row = %+v, want prior %v@%d and written %s@%d",
 			logged, prior.usd, prior.gen, wantAnchored, gen)
+	}
+	if b := readUSDBasis(t, ctx, store.DB(), "sdex", ledger["quote-side wrong"]); b.String != "xlm_base" || logged[0].basis != b {
+		t.Errorf("xlm-base restamp basis: row %v, logged %v; want xlm_base in both", b, logged[0].basis)
 	}
 	if got := restampLogCount(t, ctx, store.DB(), gen); got != n {
 		t.Errorf("run logged %d before-image(s) but rewrote %d row(s)", got, n)

@@ -187,7 +187,7 @@ func TestExactTierRestampScope_MirrorsTheDecision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(groupRel, "(VALUES ") || !strings.HasSuffix(groupRel, ") AS g(source, base_asset, quote_asset, leg, denom)") {
+	if !strings.HasPrefix(groupRel, "(VALUES ") || !strings.HasSuffix(groupRel, ") AS g(source, base_asset, quote_asset, leg, denom, basis)") {
 		t.Errorf("group relation = %q", groupRel)
 	}
 	fromWhere := where
@@ -206,9 +206,9 @@ func TestExactTierRestampScope_MirrorsTheDecision(t *testing.T) {
 	if identity != "round((CASE WHEN g.leg = 'base' THEN t.base_amount ELSE t.quote_amount END) / g.denom, 8)" {
 		t.Errorf("identity expression = %q", identity)
 	}
-	// $1..$3 then 5 per group, leg + denominator decided in Go.
-	if len(args) != 3+5*len(groups) {
-		t.Fatalf("args = %d, want %d", len(args), 3+5*len(groups))
+	// $1..$3 then 6 per group, leg + denominator + basis decided in Go.
+	if len(args) != 3+6*len(groups) {
+		t.Fatalf("args = %d, want %d", len(args), 3+6*len(groups))
 	}
 	if args[2] != int64(1_755_000_000) {
 		t.Errorf("generation arg = %v", args[2])
@@ -216,8 +216,11 @@ func TestExactTierRestampScope_MirrorsTheDecision(t *testing.T) {
 	if args[6] != "base" || args[7] != "10000000" {
 		t.Errorf("sdex group bound (leg, denom) = (%v, %v), want (base, 10000000)", args[6], args[7])
 	}
-	if args[11] != "quote" || args[12] != "100000000" {
-		t.Errorf("kraken group bound (leg, denom) = (%v, %v), want (quote, 100000000)", args[11], args[12])
+	if args[8] != string(BasisBasePegged) {
+		t.Errorf("sdex group basis = %v, want %s", args[8], BasisBasePegged)
+	}
+	if args[12] != "quote" || args[13] != "100000000" || args[14] != string(BasisQuotePegged) {
+		t.Errorf("kraken group bound (leg, denom, basis) = (%v, %v, %v), want (quote, 100000000, %s)", args[12], args[13], args[14], BasisQuotePegged)
 	}
 
 	p.FillNull = true

@@ -39,7 +39,7 @@ var tradeBulkColumns = []string{
 	"source", "ledger", "tx_hash", "op_index", "ts",
 	"base_asset", "quote_asset",
 	"base_amount", "quote_amount", "usd_volume",
-	"maker", "taker", "derive_generation",
+	"maker", "taker", "derive_generation", "usd_basis",
 }
 
 // Bulk-writer defaults. Both pools stay well under [PoolMaxOpenConns] so a backfill cannot
@@ -236,12 +236,12 @@ func (s *Store) bulkRangeIsEmpty(ctx context.Context, trades []canonical.Trade) 
 // resolveBulkUSDVolumes computes `usd_volume` per row through the SAME [tradeUSDVolume] waterfall as the row paths, on a bounded worker
 // pool (FX resolver misses dominate historical ranges). Concurrency changes latency only; a [Store.reDeriveNullVolumeGuard] failure is
 // returned for the lowest row index so the error is deterministic.
-func (s *Store) resolveBulkUSDVolumes(ctx context.Context, rows []canonical.Trade, workers int) ([]sql.NullString, error) {
+func (s *Store) resolveBulkUSDVolumes(ctx context.Context, rows []canonical.Trade, workers int) ([]tradeUSDValuation, error) {
 	if workers <= 0 {
 		workers = bulkDefaultResolvers
 	}
 	workers = min(workers, len(rows))
-	out := make([]sql.NullString, len(rows))
+	out := make([]tradeUSDValuation, len(rows))
 	errAt := make([]error, len(rows))
 
 	// Merely swallowing a panic is worse than dying: rows the dead worker never reached keep a
@@ -290,19 +290,26 @@ const (
 	bulkCopyWorkerName     = "timescale-bulk-backfill-copy-partition"
 )
 
-// resolveRowUSDVolume computes row i's `usd_volume` into out[i], or records the re-derive guard's
-// refusal in errAt[i].
+// tradeUSDValuation is one row's resolved usd_volume and usd_basis, NULL together.
+type tradeUSDValuation struct {
+	volume, basis sql.NullString
+}
+
+// resolveRowUSDVolume computes row i's `usd_volume` and basis into out[i], or records the re-derive guard's refusal in errAt[i].
 func (s *Store) resolveRowUSDVolume(
-	ctx context.Context, rows []canonical.Trade, out []sql.NullString, errAt []error, i int,
+	ctx context.Context, rows []canonical.Trade, out []tradeUSDValuation, errAt []error, i int,
 ) {
-	v, label, err := s.resolveUSDVolume(ctx, rows[i])
+	v, basis, label, err := s.resolveUSDVolume(ctx, rows[i])
 	if err != nil {
 		errAt[i] = err
 		return
 	}
 	obs.TradeInsertsTotal.WithLabelValues(rows[i].Source, label).Inc()
 	if v != nil {
-		out[i] = sql.NullString{String: *v, Valid: true}
+		out[i] = tradeUSDValuation{
+			volume: sql.NullString{String: *v, Valid: true},
+			basis:  sql.NullString{String: string(basis), Valid: true},
+		}
 	}
 }
 
@@ -377,7 +384,7 @@ func bulkPartitions(n, writers int) [][2]int {
 
 // copyTradePartitions streams rows into `trades` over parallel binary COPYs and returns the committed ranges even when another partition
 // failed (each is its own transaction), which keeps `source_entry_counts` exact.
-func (s *Store) copyTradePartitions(ctx context.Context, rows []canonical.Trade, usd []sql.NullString, opts BulkBackfillOptions) (landed [][2]int, copied int64, err error) {
+func (s *Store) copyTradePartitions(ctx context.Context, rows []canonical.Trade, usd []tradeUSDValuation, opts BulkBackfillOptions) (landed [][2]int, copied int64, err error) {
 	values := s.bulkTradeValues(rows, usd)
 	parts := bulkPartitions(len(rows), opts.Writers)
 	counts := make([]int64, len(parts))
@@ -464,15 +471,15 @@ func copyTradesOnConn(ctx context.Context, pgxConn *pgx.Conn, values [][]any, de
 
 // bulkTradeValues renders the COPY tuples, mirroring the row paths: absent maker/taker become SQL NULL via [nullStrXfer]; amounts are
 // decimal strings so NUMERIC keeps full precision.
-func (s *Store) bulkTradeValues(rows []canonical.Trade, usd []sql.NullString) [][]any {
+func (s *Store) bulkTradeValues(rows []canonical.Trade, usd []tradeUSDValuation) [][]any {
 	out := make([][]any, len(rows))
 	for i := range rows {
 		t := &rows[i]
 		out[i] = []any{
 			t.Source, int64(t.Ledger), t.TxHash, int64(t.OpIndex), t.Timestamp.UTC(),
 			t.Pair.Base.String(), t.Pair.Quote.String(),
-			t.BaseAmount.String(), t.QuoteAmount.String(), usd[i],
-			nullStrXfer(t.Maker), nullStrXfer(t.Taker), s.deriveGeneration,
+			t.BaseAmount.String(), t.QuoteAmount.String(), usd[i].volume,
+			nullStrXfer(t.Maker), nullStrXfer(t.Taker), s.deriveGeneration, usd[i].basis,
 		}
 	}
 	return out
@@ -561,8 +568,8 @@ func (s *Store) PrepareTradesForArchive(ctx context.Context, trades []canonical.
 	}
 	out := make([]string, len(usd))
 	for i, u := range usd {
-		if u.Valid {
-			out[i] = u.String
+		if u.volume.Valid {
+			out[i] = u.volume.String
 		}
 	}
 	return rows, out, nil
