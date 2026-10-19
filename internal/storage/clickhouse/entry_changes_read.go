@@ -81,10 +81,35 @@ const entryChangesByLedgerQuery = `SELECT ledger_seq, close_time, tx_hash, op_in
 
 // StreamEntryChangesForLedgers streams the entry-history source rows of the listed ledgers in the projector's order.
 func (r *ExplorerReader) StreamEntryChangesForLedgers(ctx context.Context, ledgers []uint32, fn func(EntryHistorySourceRow) error) error {
+	return r.streamEntryChanges(ctx, ledgers, fn, entryChangesByLedgerQuery, ledgers)
+}
+
+// accountEntryChangesByLedgerQuery keeps only the (op, entry key) groups in which some row carries the account's raw
+// key: a row's projected parties come from its key, its entry and its group's state pre-image, so the projection
+// for the account is unchanged while the busiest accounts stream about a tenth of the rows.
+const accountEntryChangesByLedgerQuery = `SELECT ledger_seq, close_time, tx_hash, op_index, change_index, intra_ledger_seq,
+		change_type, entry_type, key_xdr, entry_xdr
+	FROM stellar.ledger_entry_changes
+	WHERE ledger_seq IN (?)
+	  AND entry_type IN ('account', 'trustline', 'offer', 'data', 'claimable_balance', 'liquidity_pool')
+	  AND (ledger_seq, tx_hash, op_index, key_xdr) IN (
+		SELECT ledger_seq, tx_hash, op_index, key_xdr FROM stellar.ledger_entry_changes
+		WHERE ledger_seq IN (?)
+		  AND entry_type IN ('account', 'trustline', 'offer', 'data', 'claimable_balance', 'liquidity_pool')
+		  AND (position(tryBase64Decode(key_xdr), ?) > 0 OR position(tryBase64Decode(entry_xdr), ?) > 0))
+	ORDER BY ledger_seq, tx_hash, op_index, change_index` + explorerScanSettings
+
+// StreamAccountEntryChangesForLedgers streams, in the projector's order, the listed ledgers' source rows that can
+// project to the account (raw 32-byte key).
+func (r *ExplorerReader) StreamAccountEntryChangesForLedgers(ctx context.Context, account string, ledgers []uint32, fn func(EntryHistorySourceRow) error) error {
+	return r.streamEntryChanges(ctx, ledgers, fn, accountEntryChangesByLedgerQuery, ledgers, ledgers, account, account)
+}
+
+func (r *ExplorerReader) streamEntryChanges(ctx context.Context, ledgers []uint32, fn func(EntryHistorySourceRow) error, q string, args ...any) error {
 	if len(ledgers) == 0 {
 		return nil
 	}
-	rows, err := r.conn.Query(ctx, entryChangesByLedgerQuery, ledgers)
+	rows, err := r.conn.Query(ctx, q, args...)
 	if err != nil {
 		return fmt.Errorf("clickhouse: query entry changes for %d ledgers: %w", len(ledgers), err)
 	}

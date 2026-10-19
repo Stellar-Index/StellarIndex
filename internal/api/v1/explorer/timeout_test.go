@@ -330,6 +330,10 @@ func (r *capReader) AssetEntryLedgers(ctx context.Context, _ string, _ []string,
 	return nil, nil
 }
 
+func (r *capReader) StreamAccountEntryChangesForLedgers(ctx context.Context, _ string, ledgers []uint32, fn func(clickhouse.EntryHistorySourceRow) error) error {
+	return r.StreamEntryChangesForLedgers(ctx, ledgers, fn)
+}
+
 func (r *capReader) StreamEntryChangesForLedgers(ctx context.Context, _ []uint32, _ func(clickhouse.EntryHistorySourceRow) error) error {
 	r.probe.record(ctx)
 	return nil

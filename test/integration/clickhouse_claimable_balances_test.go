@@ -4,12 +4,15 @@ package integration_test
 
 import (
 	"context"
+	"fmt"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
+	"github.com/Stellar-Index/StellarIndex/internal/entryhistory"
 	chstore "github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
@@ -104,5 +107,86 @@ func TestLiveClaimableBalancesInLedgers_OnlyUnclaimedForTheAccount(t *testing.T)
 
 	if s, err := er.LiveClaimableBalancesInLedgers(ctx, string(raw), []uint32{lcbLedger, lcbLedger + 1, lcbLedger + 2}, 2); err != nil || s.Keys != 2 {
 		t.Errorf("with maxKeys 2: keys = %d, err = %v; want the cap reported as 2", s.Keys, err)
+	}
+}
+
+// The account-scoped stream drops rows that cannot project to the account yet keeps a claimable-balance removal whose
+// row (empty entry, balance-id key) carries no account bytes: its claimants come from the state pre-image beside it.
+func TestStreamAccountEntryChanges_SameProjectionFewerRows(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+
+	const ledger = uint32(69_150_000)
+	ct := time.Date(2025, 6, 2, 0, 0, 0, 0, time.UTC)
+	claimed := cbsID(t, 0x61)
+	acctKey := func(g string) string {
+		b64, err := xdr.MarshalBase64(xdr.LedgerKey{Type: xdr.LedgerEntryTypeAccount, Account: &xdr.LedgerKeyAccount{AccountId: xdr.MustAddress(g)}})
+		if err != nil {
+			t.Fatalf("marshal account key: %v", err)
+		}
+		return b64
+	}
+	acctEntry := func(g string, bal int64) string {
+		b64, err := xdr.MarshalBase64(xdr.LedgerEntry{Data: xdr.LedgerEntryData{
+			Type:    xdr.LedgerEntryTypeAccount,
+			Account: &xdr.AccountEntry{AccountId: xdr.MustAddress(g), Balance: xdr.Int64(bal)},
+		}})
+		if err != nil {
+			t.Fatalf("marshal account entry: %v", err)
+		}
+		return b64
+	}
+	row := func(tx string, ci uint32, change, entryType, key, entry string) chstore.LedgerEntryChangeRow {
+		return chstore.LedgerEntryChangeRow{
+			LedgerSeq: ledger, CloseTime: ct, TxHash: tx, ChangeIndex: ci, IntraLedgerSeq: ci,
+			ChangeType: change, EntryType: entryType, KeyXDR: key, EntryXDR: entry,
+		}
+	}
+	if _, err := chstore.InsertEntryChanges(ctx, addr, []chstore.LedgerEntryChangeRow{
+		row("sae1", 1, "state", "claimable_balance", cbsKeyXDR(t, claimed), lcbEntryXDR(t, claimed, 20, lcbOther, lcbHolder)),
+		row("sae1", 2, "removed", "claimable_balance", cbsKeyXDR(t, claimed), ""),
+		row("sae1", 3, "state", "account", acctKey(lcbOther), acctEntry(lcbOther, 100)),
+		row("sae1", 4, "updated", "account", acctKey(lcbOther), acctEntry(lcbOther, 120)),
+		row("sae2", 5, "state", "account", acctKey(lcbHolder), acctEntry(lcbHolder, 50)),
+		row("sae2", 6, "updated", "account", acctKey(lcbHolder), acctEntry(lcbHolder, 40)),
+	}, 0); err != nil {
+		t.Fatalf("InsertEntryChanges: %v", err)
+	}
+	er, err := chstore.NewExplorerReader(ctx, addr)
+	if err != nil {
+		t.Fatalf("NewExplorerReader: %v", err)
+	}
+	raw, err := strkey.Decode(strkey.VersionByteAccountID, lcbHolder)
+	if err != nil {
+		t.Fatalf("decode holder: %v", err)
+	}
+	project := func(stream func(func(chstore.EntryHistorySourceRow) error) error) (rows int, got []string) {
+		p := entryhistory.NewProjector()
+		if err := stream(func(s chstore.EntryHistorySourceRow) error {
+			rows++
+			acct, _, err := p.Project(s)
+			for _, a := range acct {
+				if a.Account == lcbHolder {
+					got = append(got, fmt.Sprintf("%s/%d %s %s %s", a.TxHash, a.ChangeIndex, a.ChangeType, a.Role, a.Balance))
+				}
+			}
+			return err
+		}); err != nil {
+			t.Fatalf("stream: %v", err)
+		}
+		return rows, got
+	}
+	allRows, want := project(func(fn func(chstore.EntryHistorySourceRow) error) error {
+		return er.StreamEntryChangesForLedgers(ctx, []uint32{ledger}, fn)
+	})
+	rows, got := project(func(fn func(chstore.EntryHistorySourceRow) error) error {
+		return er.StreamAccountEntryChangesForLedgers(ctx, string(raw), []uint32{ledger}, fn)
+	})
+	if !slices.Equal(got, want) || len(want) != 2 {
+		t.Errorf("account-scoped projection = %v, want %v (the claimant removal and the owner update)", got, want)
+	}
+	if allRows != 6 || rows != 4 {
+		t.Errorf("rows streamed = %d of %d, want 4 of 6 (the other account's group dropped)", rows, allRows)
 	}
 }

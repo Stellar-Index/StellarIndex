@@ -209,6 +209,10 @@ func (downReader) AssetEntryLedgers(context.Context, string, []string, uint32, i
 	return nil, errLakeDown
 }
 
+func (r downReader) StreamAccountEntryChangesForLedgers(ctx context.Context, _ string, ledgers []uint32, fn func(clickhouse.EntryHistorySourceRow) error) error {
+	return r.StreamEntryChangesForLedgers(ctx, ledgers, fn)
+}
+
 func (downReader) StreamEntryChangesForLedgers(context.Context, []uint32, func(clickhouse.EntryHistorySourceRow) error) error {
 	return errLakeDown
 }
