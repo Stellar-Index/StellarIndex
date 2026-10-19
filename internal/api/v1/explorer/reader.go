@@ -209,6 +209,8 @@ type ExplorerReader interface {
 	AssetTrustlineDaily(ctx context.Context, asset string, maxLedger uint32) ([]clickhouse.AssetTrustlineDay, error)
 	// StreamEntryChangesForLedgers streams the listed ledgers' entry-change source rows in the projector's order.
 	StreamEntryChangesForLedgers(ctx context.Context, ledgers []uint32, fn func(clickhouse.EntryHistorySourceRow) error) error
+	// StreamAccountEntryChangesForLedgers streams the subset of those rows that can project to the account (raw key).
+	StreamAccountEntryChangesForLedgers(ctx context.Context, account string, ledgers []uint32, fn func(clickhouse.EntryHistorySourceRow) error) error
 	// Cap67MovementsWatermark is the highest ledger the cap67 movement derive has completed
 	// through (0 when not provisioned). The movements merge floors its Postgres arm at watermark+1
 	// and ceilings the ClickHouse arm at the watermark: gap-free, no double count. Cached (~60s).

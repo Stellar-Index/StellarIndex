@@ -149,7 +149,9 @@ func (h *Handler) accountEntryPage(ctx context.Context, key, account string, rol
 		ledgers: func(ctx context.Context, ceiling uint32) ([]uint32, error) {
 			return h.Reader.AccountEntryLedgers(ctx, key, roles, ceiling, entryLedgerBatch)
 		},
-		stream: h.Reader.StreamEntryChangesForLedgers,
+		stream: func(ctx context.Context, ledgers []uint32, fn func(clickhouse.EntryHistorySourceRow) error) error {
+			return h.Reader.StreamAccountEntryChangesForLedgers(ctx, key, ledgers, fn)
+		},
 		keep: func(out, acct []clickhouse.AccountEntryChange, _ []clickhouse.AssetEntryChange) []clickhouse.AccountEntryChange {
 			for _, a := range acct {
 				if a.Account == account && slices.Contains(roles, a.Role) {

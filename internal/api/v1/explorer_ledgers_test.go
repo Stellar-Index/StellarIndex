@@ -380,6 +380,10 @@ func (s *stubExplorerReader) AssetEntryLedgers(context.Context, string, []string
 	return nil, s.err
 }
 
+func (s *stubExplorerReader) StreamAccountEntryChangesForLedgers(ctx context.Context, _ string, ledgers []uint32, fn func(clickhouse.EntryHistorySourceRow) error) error {
+	return s.StreamEntryChangesForLedgers(ctx, ledgers, fn)
+}
+
 func (s *stubExplorerReader) StreamEntryChangesForLedgers(context.Context, []uint32, func(clickhouse.EntryHistorySourceRow) error) error {
 	return s.err
 }
