@@ -2546,9 +2546,9 @@ func prewarmLight(
 	prewarmNetworkStats(mkCtx, logger, networkStats)
 }
 
-// marketsPrewarmLimits are the ?limit= values warmed for /v1/markets in both orders; limit=3 stays unwarmed because real traffic keeps
-// that slot warm.
-var marketsPrewarmLimits = []int{5, 25, 100, 200}
+// marketsPrewarmLimits are the ?limit= values warmed for /v1/markets in both orders; 3 is the home page's recent-trades panel, which
+// paid a 1.4 s cold read whenever traffic left the slot to lapse.
+var marketsPrewarmLimits = []int{3, 5, 25, 100, 200}
 
 // poolsPrewarmLimits are the ?limit= values warmed for /v1/pools, separate from the markets set
 // because AllPools keys on the limit. Derive the set from what callers send (8 serves the
