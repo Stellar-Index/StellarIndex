@@ -52,9 +52,10 @@ to W6.7 announcement copy (INV-0873, see `v1-launch-plan.md`); no customers at t
       - No fired alerts in Alertmanager.
       - **Counter-presence sanity** (F-0100): "no fired alerts" is a false green
         when a counter went stale and the rule sees no-data. Run on prod
-        Prometheus; the result must be non-empty for every named family:
+        Prometheus; it must return all 12 rows, one per family that
+        [`post-launch-queries.md`](post-launch-queries.md) reads. A missing row is a missing family:
         ```promql
-        count by (__name__) ({__name__=~"stellarindex_.*_total"})
+        count by (__name__) ({__name__=~"http_requests_total|http_request_duration_seconds_bucket|stellarindex_source_events_total|stellarindex_source_decode_errors_total|stellarindex_trade_inserts_total|stellarindex_aggregator_ticks_total|stellarindex_aggregator_vwap_writes_total|stellarindex_aggregator_stream_publish_total|stellarindex_api_stream_subscribe_total|stellarindex_oracle_last_update_unix|stellarindex_oracle_staleness_budget_seconds|stellarindex_ratelimit_fail_open_total"})
         ```
         A missing family means silence-not-success: investigate first. Cascade-fragile
         rules carry `absent_over_time(...)` guards (F-0080, F-0085, F-0104); this
