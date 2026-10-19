@@ -1,6 +1,7 @@
 package timescale
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -125,5 +126,24 @@ func TestBuildPoolsQuery_UnsetSourcesBindsEmptyArray(t *testing.T) {
 				t.Errorf("$4 = %#v, want []string{}: a nil slice binds SQL NULL and PoolsFilter{} returns no rows", got)
 			}
 		})
+	}
+}
+
+// The raw prefilter is exact only if every SAC spelling that folds into an asset is in that asset's alias bind.
+func TestBuildPoolsQuery_RawPrefilterCoversFoldedSpellings(t *testing.T) {
+	t.Parallel()
+	forms, canons := sacAliasFoldBind()
+	if len(forms) == 0 {
+		t.Fatal("no SAC folds registered: the check below would pass vacuously")
+	}
+	for i, f := range forms {
+		if !slices.Contains(assetAliasBind(canons[i]), f) {
+			t.Errorf("%s folds to %s but is missing from assetAliasBind(%s): the prefilter would drop its rows", f, canons[i], canons[i])
+		}
+	}
+	q, _ := buildPoolsQuery(time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC), PoolsFilter{}, "", 100, MarketsOrderPair)
+	pre, post := strings.Index(q, "r.base_asset = ANY($7)"), strings.Index(q, ") p")
+	if pre < 0 || post < 0 || pre > post {
+		t.Errorf("raw prefilter must sit inside the fold subquery (prefilter at %d, subquery end at %d)", pre, post)
 	}
 }

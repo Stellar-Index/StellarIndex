@@ -329,6 +329,10 @@ func extractOps(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, clo
 		// via operationParticipantRows so live and re-derive cannot drift. A decode failure
 		// soft-skips; the raw op still wrote above.
 		if prs, perr := operationParticipantRows(body, opSource, seq, closeTime, txHash, txIndex, uint32(i)); perr == nil {
+			for j := range prs {
+				prs[j].OpType = op.Body.Type.String()
+				prs[j].Visible = successful || prs[j].Account == txSource
+			}
 			ext.Participants = append(ext.Participants, prs...)
 		}
 		if hasResults && i < len(opResults) {

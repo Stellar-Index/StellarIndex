@@ -104,7 +104,9 @@ ENDPOINTS=(
 
 # page|space-separated panel reads, with the query params the page's hooks send
 # by default (web/explorer/src/app/<page>), mainnet. Home's per-pair /v1/history
-# reads depend on the markets response and are left out. Measure the page, not the endpoint.
+# reads, and detail pages' reads that wait on another response, are left out. Detail pages
+# use fixed heavy entities (USDC, its issuer, the Soroswap router, an old ledger) so a run
+# reads cold rows. Measure the page, not the endpoint.
 PAGES=(
   "home|/v1/network/stats /v1/sources?include=stats /v1/assets?limit=10&order_by=volume_24h_usd_desc&include_thin=true /v1/assets/native /v1/assets/verified /v1/assets?limit=50 /v1/price?asset=native&quote=fiat:USD /v1/price/batch?asset_ids=native&quote=fiat:USD /v1/ohlc?base=native&quote=fiat%3AUSD&interval=15m&limit=674 /v1/diagnostics/cursors /v1/coverage /v1/price/batch?asset_ids=fiat%3AEUR%2Cfiat%3AGBP%2Cfiat%3AJPY%2Cfiat%3ACHF%2Cfiat%3ACAD%2Cfiat%3AAUD&quote=fiat:USD /v1/markets?limit=25&order_by=volume_24h_usd_desc /v1/markets?limit=3&order_by=volume_24h_usd_desc"
   "assets|/v1/assets?asset_class=all&limit=100&include=sparkline7d&include_thin=true"
@@ -114,6 +116,11 @@ PAGES=(
   "issuers|/v1/issuers?limit=100"
   "network|/v1/network/stats /v1/ledgers?limit=12 /v1/network/throughput?window_days=30 /v1/assets/native /v1/sources?include=stats /v1/pools?limit=8&order_by=volume_24h_usd_desc"
   "rwa|/v1/rwa/assets /v1/rwa/history?timeframe=1y&group_by=none /v1/rwa/premium?timeframe=1y /v1/assets?asset_class=stablecoin&limit=100"
+  "asset|/v1/price?asset=USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN&quote=fiat:USD&include_thin=true /v1/changes/coin/USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN /v1/ohlc?base=USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN&quote=fiat%3AUSD&interval=15m&limit=674 /v1/assets/USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN/holders?limit=100 /v1/markets/sources?asset=USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN /v1/issuers/GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+  "account|/v1/accounts/GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN /v1/accounts/GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN/transactions?limit=50 /v1/accounts/GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN/operations?limit=50 /v1/issuers?limit=100 /v1/accounts/GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN/signer-on /v1/accounts/GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN/activity /v1/accounts/GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN/movements?limit=25 /v1/accounts/GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN/positions /v1/accounts/GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN/trades?limit=25 /v1/accounts/GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN/graph"
+  "contract|/v1/contracts/CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH/wasm /v1/contracts/CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH?limit=50 /v1/contracts/CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH/transfers?limit=25 /v1/contracts/CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH/code-history /v1/contracts/CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH/interactions?days=90&limit=50 /v1/sac-wrappers"
+  "ledger|/v1/ledgers/60000000 /v1/ledgers/60000000/transactions"
+  "tx|/v1/tx/8de565f6c81ca5d51361774be8b37a396532db5ce9c36a5723aeba5792c0522b"
 )
 
 # bust_url URL ITER — append a unique query param when CACHE_BUST=1.

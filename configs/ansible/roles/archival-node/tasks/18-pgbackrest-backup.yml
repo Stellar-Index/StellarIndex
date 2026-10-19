@@ -700,9 +700,9 @@
 
 # ─── OFF-SITE restore-drill, repo2 ───────────────────────────────────
 # The timer above proves repo1 — the LOCAL repo, on the same disks as the
-# database, which dies with the pool. repo2 (encrypted S3) is the copy DR
-# actually depends on (a full restore from it measured ~47 min RTO,
-# ~269 GB from S3, against ~9 min from repo1). This block schedules it
+# database, which dies with the pool. repo2 (encrypted S3 on B2) is the copy DR
+# actually depends on (a restore from it takes 1.6-2.7 h against ~12 min
+# from repo1; drills/restore-drills.md). This block schedules it
 # monthly on the 15th — never the same day as the repo1 drill, and the
 # script holds a lock so a hand-run cannot land beside either — and
 # stellarindex_restore_drill_offsite_stale tickets when

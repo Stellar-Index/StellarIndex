@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Suspense } from 'react';
 
-import { API_BASE_URL } from '@/api/client';
+import { API_BASE_URL, buildHeaders } from '@/api/client';
 import { ogImageFor, shellMetadata } from '@/lib/seo';
 import { Callout, Container, PageHeader } from '@/components/ui';
 import { type GlobalAssetView } from '../../../assets/catalogue';
@@ -50,6 +50,7 @@ export async function generateStaticParams() {
   if (isCIStub) return fallback;
   try {
     const res = await fetch(`${API_BASE_URL}/v1/external/assets?limit=500`, {
+      headers: buildHeaders(),
       signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS * 2),
     });
     if (!res.ok) return fallback;
@@ -91,7 +92,10 @@ async function fetchExternalAsset(slug: string): Promise<ExternalAssetResult> {
   try {
     const res = await fetch(
       `${API_BASE_URL}/v1/external/assets/${encodeURIComponent(slug)}`,
-      { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) },
+      {
+        headers: buildHeaders(),
+        signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
+      },
     );
     // 4xx is the API answering authoritatively that it doesn't track
     // this slug; anything else (5xx, non-JSON, no `data`) is us failing
