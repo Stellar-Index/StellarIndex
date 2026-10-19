@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -41,7 +42,7 @@ func (c *CachedSourcesStatsReader) GetSourceStats(ctx context.Context) ([]timesc
 
 // GetSourceStatsAt is GetSourceStats plus the served slot's fill time; zero on an uncached (ttl<=0) read.
 func (c *CachedSourcesStatsReader) GetSourceStatsAt(ctx context.Context) ([]timescale.SourceStats, time.Time, error) {
-	return fetchSourcesSlot(ctx, c, &c.stats, "source_stats", c.upstream.GetSourceStats)
+	return fetchSourcesSlot(ctx, c, &c.stats, "source_stats", c.upstream.GetSourceStats, false)
 }
 
 // GetSourceVolumeHistory24h: same shape as GetSourceStats.
@@ -52,7 +53,7 @@ func (c *CachedSourcesStatsReader) GetSourceVolumeHistory24h(ctx context.Context
 
 // GetSourceVolumeHistory24hAt: same shape as GetSourceStatsAt.
 func (c *CachedSourcesStatsReader) GetSourceVolumeHistory24hAt(ctx context.Context) ([]timescale.SourceVolumeBucket, time.Time, error) {
-	return fetchSourcesSlot(ctx, c, &c.hist, "volume_history_24h", c.upstream.GetSourceVolumeHistory24h)
+	return fetchSourcesSlot(ctx, c, &c.hist, "volume_history_24h", c.upstream.GetSourceVolumeHistory24h, false)
 }
 
 // GetSourceVolumeHistory7d uses the same single-flight TTL pattern as the 24h variant, on its own cache slot.
@@ -63,7 +64,16 @@ func (c *CachedSourcesStatsReader) GetSourceVolumeHistory7d(ctx context.Context)
 
 // GetSourceVolumeHistory7dAt: same shape as GetSourceStatsAt.
 func (c *CachedSourcesStatsReader) GetSourceVolumeHistory7dAt(ctx context.Context) ([]timescale.SourceVolumeBucket, time.Time, error) {
-	return fetchSourcesSlot(ctx, c, &c.hist7d, "volume_history_7d", c.upstream.GetSourceVolumeHistory7d)
+	return fetchSourcesSlot(ctx, c, &c.hist7d, "volume_history_7d", c.upstream.GetSourceVolumeHistory7d, false)
+}
+
+// Refresh refills all three slots whatever their age. Readers keep hitting the current rows during the fill, and a failed fill keeps
+// them: a prewarm served a hit would refresh nothing, letting a slot lapse between ticks and a reader wait on the scan.
+func (c *CachedSourcesStatsReader) Refresh(ctx context.Context) error {
+	_, _, errStats := fetchSourcesSlot(ctx, c, &c.stats, "source_stats", c.upstream.GetSourceStats, true)
+	_, _, errHist := fetchSourcesSlot(ctx, c, &c.hist, "volume_history_24h", c.upstream.GetSourceVolumeHistory24h, true)
+	_, _, errHist7d := fetchSourcesSlot(ctx, c, &c.hist7d, "volume_history_7d", c.upstream.GetSourceVolumeHistory7d, true)
+	return errors.Join(errStats, errHist, errHist7d)
 }
 
 // fetchSourcesSlot is the TTL + single-flight loop shared by the three methods. The fill runs detached (runDetachedFill) so one caller's
@@ -75,13 +85,14 @@ func fetchSourcesSlot[T any](
 	slot *sourcesStatsSlot[T],
 	op string,
 	upstream func(context.Context) ([]T, error),
+	force bool,
 ) ([]T, time.Time, error) {
 	if c.ttl <= 0 {
 		rows, err := upstream(ctx)
 		return rows, time.Time{}, err
 	}
 	c.mu.Lock()
-	if time.Since(slot.at) < c.ttl && slot.rows != nil {
+	if !force && time.Since(slot.at) < c.ttl && slot.rows != nil {
 		out, at := slot.rows, slot.at
 		c.mu.Unlock()
 		obs.APICacheOpsTotal.WithLabelValues("sources_stats", op, "hit").Inc()
@@ -98,7 +109,11 @@ func fetchSourcesSlot[T any](
 	}
 	c.mu.Unlock()
 	if leader {
-		obs.APICacheOpsTotal.WithLabelValues("sources_stats", op, "miss").Inc()
+		result := "miss"
+		if force {
+			result = "refresh"
+		}
+		obs.APICacheOpsTotal.WithLabelValues("sources_stats", op, result).Inc()
 	}
 
 	select {
