@@ -1588,3 +1588,53 @@ func TestTradesInRange_SkipsVendorRows(t *testing.T) {
 		t.Fatalf("trades = %+v, want only the sdex fill; a vendor daily close is not a trade", trades)
 	}
 }
+
+// TestPoolsLastPriceTieIsDeterministic: two spellings of one market folded into a single pool can close
+// their buckets in the same ledger, at the same ts. The tie breaks on the higher close whatever order the
+// rows were written in, so the served last_price does not flip between queries.
+func TestPoolsLastPriceTieIsDeterministic(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	db := store.DB()
+
+	const (
+		usdc   = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+		xlmSAC = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
+	)
+	ts := time.Now().UTC().Add(-20 * time.Minute).Truncate(time.Second)
+	// Same ts, both write orders: the native spelling's 0.2 is the higher close, so it wins.
+	seedGrainTrade(t, ctx, db, 900, "aquarius", ts, "native", usdc, "10", "2", "2")
+	seedGrainTrade(t, ctx, db, 901, "aquarius", ts, xlmSAC, usdc, "10", "1", "1")
+	seedGrainTrade(t, ctx, db, 902, "phoenix", ts, xlmSAC, usdc, "10", "1", "1")
+	seedGrainTrade(t, ctx, db, 903, "phoenix", ts, "native", usdc, "10", "2", "2")
+	if _, err := db.ExecContext(ctx, `CALL refresh_continuous_aggregate('pools_per_source_1h', NULL, NULL)`); err != nil {
+		t.Fatalf("refresh pools_per_source_1h: %v", err)
+	}
+
+	pools, _, err := store.AllPools(ctx, timescale.PoolsFilter{}, "", 100, timescale.MarketsOrderPair)
+	if err != nil {
+		t.Fatalf("AllPools: %v", err)
+	}
+	seen := 0
+	for _, p := range pools {
+		if p.Source != "aquarius" && p.Source != "phoenix" {
+			continue
+		}
+		seen++
+		if p.LastPrice == nil || numeric(t, p.LastPrice) != 0.2 {
+			t.Errorf("%s last_price = %v, want 0.2 (the higher tied close)", p.Source, p.LastPrice)
+		}
+	}
+	if seen != 2 {
+		t.Fatalf("saw %d of the 2 folded pools in %d rows", seen, len(pools))
+	}
+}
