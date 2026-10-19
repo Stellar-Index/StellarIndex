@@ -34,6 +34,8 @@
 #                             projects (mainnet renamed from
 #                             stellarindex-showcase)
 #   - CLOUDFLARE_ACCOUNT_ID — the CF account UUID
+#   - EXPLORER_BUILD_API_KEY — optional mainnet API key for the prerender
+#                               (sent to the mainnet API only)
 
 name: explorer-deploy
 
@@ -143,10 +145,15 @@ jobs:
           if [[ ! "$api" =~ ^https://[A-Za-z0-9.-]+$ ]]; then
             echo "::error::api_base_url '$api' is not a bare https origin"; exit 1
           fi
+          # The build key is a mainnet key: send it only to the mainnet API,
+          # never to a test net (separate key store) or an overridden origin.
+          send_key=false
+          if [ "$NETWORK" = mainnet ] && [ "$api" = "$base" ]; then send_key=true; fi
           {
             echo "network=$NETWORK"
             echo "api_base=$api"
             echo "project=$project"
+            echo "send_key=$send_key"
           } >> "$GITHUB_OUTPUT"
           echo "Resolved: network=$NETWORK api=$api project=$project"
 
@@ -175,7 +182,7 @@ jobs:
         env:
           NEXT_PUBLIC_NETWORK: ${{ steps.net.outputs.network }}
           NEXT_PUBLIC_API_BASE_URL: ${{ steps.net.outputs.api_base }}
-          STELLARINDEX_BUILD_API_KEY: ${{ secrets.EXPLORER_BUILD_API_KEY }}
+          STELLARINDEX_BUILD_API_KEY: ${{ steps.net.outputs.send_key == 'true' && secrets.EXPLORER_BUILD_API_KEY || '' }}
         run: pnpm build
 
       - name: Verify build artefact

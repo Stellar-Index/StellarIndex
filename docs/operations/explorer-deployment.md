@@ -44,10 +44,11 @@ Git-integration setup:
    `main`, PR previews on. No compatibility flags.
 3. Env `NEXT_PUBLIC_API_BASE_URL` = `https://api.stellarindex.io` (override per
    preview environment if wanted).
-   Secret `STELLARINDEX_BUILD_API_KEY` = an API key minted for the build
+   Secret `STELLARINDEX_BUILD_API_KEY` (Production environment only, so PR
+   previews never see it) = a key minted on that project's network
    (`stellarindex-ops mint-key`). The prerender sends it server-side only, so the
-   export is held to the key tier, not the anonymous per-IP limit; a build without
-   it falls back to anonymous.
+   export is held to the key tier, not the anonymous per-IP limit. Unset, the build
+   runs anonymous; a rejected key fails the build (`next.config.mjs`).
 4. Custom domain `stellarindex.io` (`www.` as redirect); CF proxies the apex.
 
 PR previews land at `<pr-hash>.stellarindex-explorer.pages.dev`; production
