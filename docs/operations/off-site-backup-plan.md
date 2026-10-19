@@ -29,9 +29,9 @@ Targets: **4 h to serving**, **24 h to full history** (fallback 24 h / 72 h).
 | Tier | Lost | Restores from (today) | Time | Runbook |
 |---|---|---|---|---|
 | 1-2. Service down; bad write | A unit; recent data on one dataset | Restart; ZFS snapshot (Postgres 7 d, ClickHouse 3 d), then repo1 | minutes (estimate); not measured | [`postgres.md`](runbooks/postgres.md#stellarindex_timescale_primary_down) §B, [`zfs-snapshots.md`](runbooks/zfs-snapshots.md) |
-| 3. Postgres data dir lost | Served tier | repo1; repo2 (AWS S3 eu-central-1, moving to B2) if the box is gone | repo1 ~9-10 min; repo2 ~47-49 min, excluding WAL replay (measured, drills 2026-09-03 and 2026-09-15) | [`postgres.md`](runbooks/postgres.md#stellarindex_timescale_primary_down) §D, [`restore-drills.md`](drills/restore-drills.md) |
+| 3. Postgres data dir lost | Served tier | repo1; repo2 (B2) if the box is gone | repo1 ~9-12 min; repo2 1.6-2.7 h, excluding WAL replay (measured, October drills) | [`postgres.md`](runbooks/postgres.md#stellarindex_timescale_primary_down) §D, [`restore-drills.md`](drills/restore-drills.md) |
 | 4. r1 lost, standby survives | Primary box | r2/r3 replica cutover | not measured (standby not deployed) | [`dr-activation.md`](runbooks/dr-activation.md), [`postgres.md`](runbooks/postgres.md#stellarindex_timescale_primary_down) §E |
-| 5. All boxes lost | Postgres and lake | Postgres from repo2; NO off-site lake copy yet, so history falls to tier 6 | Postgres ~47-49 min (measured); B2 lake copy ~4 h @10 Gbps, ~36 h @1 Gbps (estimate) | [`ch-lake-backup.md`](runbooks/ch-lake-backup.md#restore) |
+| 5. All boxes lost | Postgres and lake | Postgres from repo2; NO off-site lake copy yet, so history falls to tier 6 | Postgres 1.6-2.7 h (measured); B2 lake copy ~4 h @10 Gbps, ~36 h @1 Gbps (estimate) | [`ch-lake-backup.md`](runbooks/ch-lake-backup.md#restore) |
 | 6. Every copy lost | Lake and its backups | Re-ingest raw archive from the SDF public bucket | ~1-2 weeks (estimate) | [`galexie-backfill.md`](galexie-backfill.md), [`archive-completeness.md`](archive-completeness.md) |
 
 Only the tier 3 Postgres restore is measured to meet 4 h. Tier 5 history falls to tier 6 (~1-2 weeks), missing 24 h until the off-site lake copy exists and the link is 10 Gbps.
