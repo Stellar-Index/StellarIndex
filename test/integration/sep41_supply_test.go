@@ -1127,6 +1127,103 @@ func TestSEP41SupplyRollup_AdvanceDeltaAndFallback(t *testing.T) {
 	}
 }
 
+// The delta read's observed_at bound applies only while bound_ledger = last_ledger: a binary that predates the bound
+// columns can move last_ledger and leave them stale, and a stale bound must not hide rows above the checkpoint.
+func TestSEP41SupplyRollup_DeltaTimeBoundGuardedByLedger(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	rawdb, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("raw open: %v", err)
+	}
+	t.Cleanup(func() { _ = rawdb.Close() })
+	settleSEP41Cursor(t, ctx, store, sep41SettledTestCursorLedger)
+
+	const contractID = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+	t0 := time.Date(2026, 4, 28, 12, 0, 0, 0, time.UTC)
+	insert := func(ledger uint32, amount int64, at time.Time) {
+		t.Helper()
+		if err := store.InsertSEP41SupplyEvent(ctx, timescale.SEP41SupplyEvent{
+			ContractID: contractID, Ledger: ledger, TxHash: fmt.Sprintf("%064x", ledger), OpIndex: 0,
+			ObservedAt: at, Kind: timescale.SEP41EventMint, Amount: big.NewInt(amount), Counterparty: "GA1",
+		}); err != nil {
+			t.Fatalf("insert @%d: %v", ledger, err)
+		}
+	}
+	bound := func() (sql.NullInt64, sql.NullTime) {
+		t.Helper()
+		var l sql.NullInt64
+		var at sql.NullTime
+		if err := rawdb.QueryRowContext(ctx,
+			`SELECT bound_ledger, bound_observed_at FROM sep41_supply_rollup WHERE contract_id = $1`, contractID,
+		).Scan(&l, &at); err != nil {
+			t.Fatalf("read bound: %v", err)
+		}
+		return l, at
+	}
+	assertMint := func(label string, want int64) {
+		t.Helper()
+		got, err := store.SEP41KindTotalsAtOrBefore(ctx, contractID, 10_000)
+		if err != nil {
+			t.Fatalf("%s: %v", label, err)
+		}
+		if got.Mint.Cmp(big.NewInt(want)) != 0 {
+			t.Errorf("%s: mint = %s; want %d", label, got.Mint, want)
+		}
+	}
+
+	insert(1000, 1, t0)
+	insert(2000, 10, t0.Add(time.Hour))
+	insert(3000, 100, t0.Add(2*time.Hour)) // tip, deferred
+	if adv, err := store.AdvanceSEP41SupplyRollup(ctx, contractID); err != nil || adv.ToLedger != 2000 {
+		t.Fatalf("advance = %+v, %v; want ToLedger 2000", adv, err)
+	}
+	if l, at := bound(); l.Int64 != 2000 || !at.Time.Equal(t0.Add(time.Hour)) {
+		t.Fatalf("bound after fold = (%v, %v); want (2000, %v)", l, at, t0.Add(time.Hour))
+	}
+	insert(2500, 1000, t0.Add(90*time.Minute))
+	assertMint("bounded delta", 1111)
+
+	// A bound past every row proves the bound is applied while bound_ledger matches...
+	if _, err := rawdb.ExecContext(ctx,
+		`UPDATE sep41_supply_rollup SET bound_observed_at = $2 WHERE contract_id = $1`, contractID, t0.Add(100*time.Hour),
+	); err != nil {
+		t.Fatalf("set future bound: %v", err)
+	}
+	assertMint("matching bound applied", 11)
+	// ...and ignored once last_ledger moves without it.
+	if _, err := rawdb.ExecContext(ctx,
+		`UPDATE sep41_supply_rollup SET bound_ledger = 1500 WHERE contract_id = $1`, contractID,
+	); err != nil {
+		t.Fatalf("stale bound_ledger: %v", err)
+	}
+	assertMint("stale bound ignored", 1111)
+
+	if _, err := store.ResetSEP41SupplyRollupFold(ctx, []string{contractID}); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	// The reset refolds, so the stale bound must be replaced by one matching the new last_ledger.
+	var last int64
+	if err := rawdb.QueryRowContext(ctx,
+		`SELECT last_ledger FROM sep41_supply_rollup WHERE contract_id = $1`, contractID,
+	).Scan(&last); err != nil {
+		t.Fatalf("read last_ledger: %v", err)
+	}
+	if l, at := bound(); l.Valid && (l.Int64 != last || !at.Time.Equal(t0.Add(90*time.Minute))) {
+		t.Errorf("bound after reset = (%v, %v); want (%d, %v) or NULL", l, at, last, t0.Add(90*time.Minute))
+	}
+	assertMint("after reset", 1111)
+}
+
 // Genesis baseline through the real store-reader-computer path: a SAC wrapper with pre-Soroban issuance plus a large burn
 // computes a positive lifetime total; a Soroban-only token is unchanged (a zero baseline doesn't double-count); the
 // baseline applies only at asOfLedger >= genesis_baseline_ledger.
