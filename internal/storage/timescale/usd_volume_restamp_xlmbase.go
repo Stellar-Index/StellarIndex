@@ -410,6 +410,10 @@ func (s *Store) applyXLMBaseRestampBatch(ctx context.Context, rows []XLMBaseRest
 	args := []any{generation, lo, hi}
 	var values strings.Builder
 	for i, r := range rows {
+		if r.Basis == "" {
+			// A blank basis would land as '' beside a non-NULL usd_volume.
+			return 0, fmt.Errorf("timescale: xlm-base restamp: %s ledger %d op %d planned without a basis", r.Source, r.Ledger, r.OpIndex)
+		}
 		if i > 0 {
 			values.WriteString(", ")
 		}

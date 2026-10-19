@@ -114,6 +114,10 @@ func exactTierRestampScope(p USDVolumeRestampParams) (groupRel, where, identity 
 		fmt.Fprintf(&values, "($%d::text, $%d::text, $%d::text, $%d::text, $%d::numeric, $%d::text)", n+1, n+2, n+3, n+4, n+5, n+6)
 		args = append(args, g.Source, g.BaseAsset, g.QuoteAsset, leg, scaleDenominator(g.Decimals).String(), string(basis))
 	}
+	if len(args) > 65535 {
+		return "", "", "", nil, fmt.Errorf("timescale: usd-volume restamp: %d groups need %d bind params, over Postgres's 65535; split the groups",
+			len(p.Groups), len(args))
+	}
 	const legExpr = "(CASE WHEN g.leg = 'base' THEN t.base_amount ELSE t.quote_amount END)"
 	identity = "round(" + legExpr + " / g.denom, " + fmt.Sprint(usdVolumeRenderDecimals) + ")"
 	nullClause := ""

@@ -239,6 +239,26 @@ func TestExactTierRestampScope_MirrorsTheDecision(t *testing.T) {
 	if _, _, _, _, err := exactTierRestampScope(USDVolumeRestampParams{Groups: groups, From: from, To: from}); err == nil {
 		t.Error("an empty window was accepted")
 	}
+	// 3 + 6 x 10,922 = 65,535 binds is the most Postgres takes.
+	many := make([]USDVolumeRestampGroup, 10_923)
+	for i := range many {
+		many[i] = groups[0]
+	}
+	if _, _, _, _, err := exactTierRestampScope(USDVolumeRestampParams{Groups: many, From: from, To: from.Add(time.Hour)}); err == nil {
+		t.Error("10,923 groups were accepted; the UPDATE would fail at Exec over the 65535 bind cap")
+	}
+	if _, _, _, _, err := exactTierRestampScope(USDVolumeRestampParams{Groups: many[:10_922], From: from, To: from.Add(time.Hour)}); err != nil {
+		t.Errorf("10,922 groups refused: %v", err)
+	}
+}
+
+// TestApplyXLMBaseRestampBatch_RefusesARowWithoutABasis: a blank basis would be written as an empty string beside a
+// non-NULL usd_volume, so the apply refuses before it reaches the database.
+func TestApplyXLMBaseRestampBatch_RefusesARowWithoutABasis(t *testing.T) {
+	row := XLMBaseRestampRow{Source: "sdex", Ledger: 7, TS: time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC), Want: "1.00000000"}
+	if _, err := (&Store{}).applyXLMBaseRestampBatch(context.Background(), []XLMBaseRestampRow{row}, 1); err == nil {
+		t.Fatal("a row with no basis was applied")
+	}
 }
 
 // ─── The restamp's decompression-cap GUC must not escape ───────────
@@ -482,7 +502,7 @@ func exactRestampLogParams() USDVolumeRestampParams {
 func planRestampLogFixture() *XLMBaseRestampPlan {
 	return &XLMBaseRestampPlan{Rows: []XLMBaseRestampRow{{
 		Source: "sdex", Ledger: 58_000_000, OpIndex: 1, TS: restampLogFixtureDay.Add(time.Minute),
-		TxHash: strings.Repeat("ab", 32), Want: "12.50000000",
+		TxHash: strings.Repeat("ab", 32), Want: "12.50000000", Basis: BasisXLMBase,
 	}}}
 }
 
@@ -598,6 +618,7 @@ func pruneRow(ts time.Time, ledger uint32) XLMBaseRestampRow {
 		OpIndex: 1,
 		TS:      ts,
 		Want:    "12.34000000",
+		Basis:   BasisXLMBase,
 	}
 }
 

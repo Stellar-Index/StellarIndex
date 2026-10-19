@@ -2650,3 +2650,79 @@ func TestUSDPriceAt_LegMinutesRunThroughTheServedGuard(t *testing.T) {
 		}
 	}
 }
+
+// TestXLMQuoteRestamp_StampsItsOwnBasis: the xlm-quote tier labels what it writes xlm_quote, on the
+// planned row, the trade and the log, so a swapped tier constant cannot mislabel every row it rewrites.
+func TestXLMQuoteRestamp_StampsItsOwnBasis(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const usdcID = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	usdc, err := c.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := c.NewSorobanAsset("CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	xlmUSDC, err := c.NewPair(c.NativeAsset(), usdc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokenXLM, err := c.NewPair(token, c.NativeAsset())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := timescale.InstallUSDVolumeResolution(store, []string{usdcID}, nil, nil); err != nil {
+		t.Fatalf("InstallUSDVolumeResolution: %v", err)
+	}
+
+	day := time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)
+	anchorTS := day.Add(10 * time.Hour)
+	if err := store.InsertTrade(ctx, mkIntegrationTrade("sdex", 1, anchorTS, xlmUSDC, 1_000_000_000, 500_000_000)); err != nil {
+		t.Fatalf("InsertTrade anchor: %v", err)
+	}
+	if _, err := store.DB().ExecContext(ctx, `CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`); err != nil {
+		t.Fatalf("refresh prices_1m: %v", err)
+	}
+	// 10 XLM in the quote leg at $0.50, stored with a wrong value.
+	tr := mkIntegrationTrade("sdex", 10, anchorTS.Add(5*time.Minute), tokenXLM, 300, 100_000_000)
+	if err := store.InsertTrade(ctx, tr); err != nil {
+		t.Fatalf("InsertTrade: %v", err)
+	}
+	if _, err := store.DB().ExecContext(ctx,
+		`UPDATE trades SET usd_volume = 0.00372265, usd_basis = 'fx_quote' WHERE source = 'sdex' AND ledger = $1`, tr.Ledger); err != nil {
+		t.Fatal(err)
+	}
+
+	const gen = int64(1_756_400_000)
+	plan, err := store.PlanXLMQuoteUSDVolumeRestamp(ctx, timescale.RestampScanParams{
+		From: day, To: day.AddDate(0, 0, 1), MaxGeneration: gen,
+	})
+	if err != nil {
+		t.Fatalf("PlanXLMQuoteUSDVolumeRestamp: %v", err)
+	}
+	if len(plan.Rows) != 1 || plan.Rows[0].Basis != timescale.BasisXLMQuote {
+		t.Fatalf("planned %+v, want one row with basis %q; stats %+v", plan.Rows, timescale.BasisXLMQuote, plan.Stats)
+	}
+	if n, err := store.ApplyUSDVolumeRestampPlan(ctx, plan, gen, 0); err != nil || n != 1 {
+		t.Fatalf("ApplyUSDVolumeRestampPlan = %d, %v; want 1 row", n, err)
+	}
+	if b := readUSDBasis(t, ctx, store.DB(), "sdex", tr.Ledger); b.String != "xlm_quote" {
+		t.Errorf("trade basis = %v, want xlm_quote", b)
+	}
+	logged := readRestampLog(t, ctx, store.DB(), "sdex", tr.Ledger)
+	if len(logged) != 1 || logged[0].priorBasis.String != "fx_quote" || logged[0].basis.String != "xlm_quote" {
+		t.Errorf("restamp log = %+v, want prior fx_quote, basis xlm_quote", logged)
+	}
+}

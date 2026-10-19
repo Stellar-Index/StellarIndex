@@ -445,7 +445,7 @@ func TestApplyXLMBaseUSDVolumeRestampInChunk_GuardsEveryBatch(t *testing.T) {
 	ts := time.Date(2026, 3, 2, 10, 0, 0, 0, time.UTC)
 	plan := &XLMBaseRestampPlan{}
 	for i := range 3 {
-		plan.Rows = append(plan.Rows, XLMBaseRestampRow{Source: "sdex", Ledger: uint32(i + 1), TxHash: "ab", TS: ts, Want: "5.00000000"}) //nolint:gosec // tiny loop index
+		plan.Rows = append(plan.Rows, XLMBaseRestampRow{Source: "sdex", Ledger: uint32(i + 1), TxHash: "ab", TS: ts, Want: "5.00000000", Basis: BasisXLMBase}) //nolint:gosec // tiny loop index
 	}
 
 	// Happy path: two batches, a guard read ahead of each.
