@@ -7,6 +7,7 @@ import (
 	"net"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -67,6 +68,6 @@ type unreachableTransfersReader struct{ err error }
 
 func (r *unreachableTransfersReader) ListSEP41Transfers(
 	_ context.Context, _, _, _ string, _ int,
-) ([]timescale.SEP41TransferRow, error) {
-	return nil, r.err
+) ([]timescale.SEP41TransferRow, time.Time, error) {
+	return nil, time.Time{}, r.err
 }

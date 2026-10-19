@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -37,8 +38,8 @@ type oneRowSEP41Transfers struct{}
 
 func (oneRowSEP41Transfers) ListSEP41Transfers(
 	_ context.Context, _, _, _ string, _ int,
-) ([]timescale.SEP41TransferRow, error) {
-	return []timescale.SEP41TransferRow{{Kind: "transfer"}}, nil
+) ([]timescale.SEP41TransferRow, time.Time, error) {
+	return []timescale.SEP41TransferRow{{Kind: "transfer"}}, time.Time{}, nil
 }
 
 // /v1/contracts/{id}/transfers: `decimals` is the conversion factor for

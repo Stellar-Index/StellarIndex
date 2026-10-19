@@ -2197,6 +2197,14 @@ export interface paths {
          *     `approve` / `set_admin` / `set_authorized` event the
          *     decoder observed; `mint` / `burn` / `clawback` live
          *     separately in supply analytics.
+         *
+         *     A `from` / `to` filter on a high-volume token may not
+         *     finish scanning its whole history in time. The response
+         *     is then still a 200, carrying `searched_from` (RFC 3339):
+         *     `transfers` is complete from that instant on, but older
+         *     matches were not searched. A full-history response omits
+         *     the field. For one account's complete history use
+         *     `/v1/accounts/{g_strkey}/movements`.
          */
         get: operations["getContractTransfers"];
         put?: never;

@@ -12,7 +12,7 @@ import (
 
 // SEP41TransfersReader is the seam the handler reads through; timescale.Store satisfies it via ListSEP41Transfers.
 type SEP41TransfersReader interface {
-	ListSEP41Transfers(ctx context.Context, contractID, fromAddr, toAddr string, limit int) ([]timescale.SEP41TransferRow, error)
+	ListSEP41Transfers(ctx context.Context, contractID, fromAddr, toAddr string, limit int) (rows []timescale.SEP41TransferRow, searchedFrom time.Time, err error)
 }
 
 // SEP41TransferEntry is one wire row; Amount is a string, not a JSON number, because i128 values exceed IEEE 754 precision above 2^53 (ADR-0003).
@@ -40,8 +40,11 @@ type SEP41TransfersResponse struct {
 	// divisor exponent for every Amount in this response. All rows
 	// share it (the response is scoped to one token contract). 7 when
 	// the declaration isn't derivable (SAC/classic default).
-	Decimals  int                  `json:"decimals"`
-	Transfers []SEP41TransferEntry `json:"transfers"`
+	Decimals int `json:"decimals"`
+	// SearchedFrom, when set, means the full-history read ran out of time and Transfers holds only rows at or after it: complete
+	// for that window, not the whole history.
+	SearchedFrom string               `json:"searched_from,omitempty"`
+	Transfers    []SEP41TransferEntry `json:"transfers"`
 }
 
 // defaultTokenDecimals is the scale assumed when a contract's real decimals() can't be read from the lake: 7, matching classic/native
@@ -131,7 +134,7 @@ func (s *Server) handleSEP41Transfers(w http.ResponseWriter, r *http.Request) {
 	listCtx, listCancel := context.WithTimeout(r.Context(), sep41TransfersReadTimeout)
 	defer listCancel()
 
-	rows, err := s.SEP41Transfers.ListSEP41Transfers(listCtx, contractID, fromAddr, toAddr, limit)
+	rows, searchedFrom, err := s.SEP41Transfers.ListSEP41Transfers(listCtx, contractID, fromAddr, toAddr, limit)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -196,6 +199,9 @@ func (s *Server) handleSEP41Transfers(w http.ResponseWriter, r *http.Request) {
 		To:         toAddr,
 		Decimals:   decimals,
 		Transfers:  entries,
+	}
+	if !searchedFrom.IsZero() {
+		resp.SearchedFrom = searchedFrom.UTC().Format(time.RFC3339)
 	}
 	writeJSON(w, resp, Flags{})
 }
