@@ -142,7 +142,7 @@ func TestTradeBulkColumns_MatchTheRowWriters(t *testing.T) {
 		"source", "ledger", "tx_hash", "op_index", "ts",
 		"base_asset", "quote_asset",
 		"base_amount", "quote_amount", "usd_volume",
-		"maker", "taker", "derive_generation",
+		"maker", "taker", "derive_generation", "usd_basis",
 	}
 	if len(tradeBulkColumns) != len(want) {
 		t.Fatalf("tradeBulkColumns has %d columns, want %d", len(tradeBulkColumns), len(want))
@@ -152,13 +152,11 @@ func TestTradeBulkColumns_MatchTheRowWriters(t *testing.T) {
 			t.Fatalf("tradeBulkColumns[%d] = %q, want %q", i, tradeBulkColumns[i], want[i])
 		}
 	}
-	// The count is also the batch writer's bind-parameter width; if that
-	// constant moves, one of the two paths has grown a column the other
-	// has not.
-	const batchColsPerRow = 13
-	if len(tradeBulkColumns) != batchColsPerRow {
+	// The count is also the batch writer's bind-parameter width; if they
+	// differ, one of the two paths has grown a column the other has not.
+	if len(tradeBulkColumns) != tradeColsPerRow {
 		t.Fatalf("tradeBulkColumns=%d but tradeBatchValues binds %d params/row",
-			len(tradeBulkColumns), batchColsPerRow)
+			len(tradeBulkColumns), tradeColsPerRow)
 	}
 }
 
@@ -185,7 +183,10 @@ func TestBulkTradeValues_MirrorsTheInsertBindings(t *testing.T) {
 
 	got := s.bulkTradeValues(
 		[]canonical.Trade{tr},
-		[]sql.NullString{{String: "12.34", Valid: true}},
+		[]tradeUSDValuation{{
+			volume: sql.NullString{String: "12.34", Valid: true},
+			basis:  sql.NullString{String: string(BasisQuotePegged), Valid: true},
+		}},
 	)
 	if len(got) != 1 {
 		t.Fatalf("bulkTradeValues returned %d tuples, want 1", len(got))
@@ -202,6 +203,7 @@ func TestBulkTradeValues_MirrorsTheInsertBindings(t *testing.T) {
 		sql.NullString{},
 		sql.NullString{String: "GTAKER", Valid: true},
 		int64(4242),
+		sql.NullString{String: string(BasisQuotePegged), Valid: true},
 	}
 	for i := range want {
 		if !reflect.DeepEqual(row[i], want[i]) {
@@ -213,7 +215,7 @@ func TestBulkTradeValues_MirrorsTheInsertBindings(t *testing.T) {
 func TestBulkTradeValues_NullUSDVolume(t *testing.T) {
 	s := &Store{deriveGeneration: 0}
 	tr := bulkTestTrade("sdex", 1, time.Date(2024, 3, 5, 12, 0, 0, 0, time.UTC))
-	row := s.bulkTradeValues([]canonical.Trade{tr}, []sql.NullString{{}})[0]
+	row := s.bulkTradeValues([]canonical.Trade{tr}, []tradeUSDValuation{{}})[0]
 	usd, ok := row[9].(sql.NullString)
 	if !ok || usd.Valid {
 		t.Fatalf("usd_volume = %#v, want an invalid sql.NullString (SQL NULL) — an unpriceable "+
@@ -275,7 +277,7 @@ func TestResolveBulkUSDVolumes_PanickingResolverFailsTheCallNotTheProcess(t *tes
 	rows := bulkPanicTrades(t, 64)
 
 	type outcome struct {
-		out []sql.NullString
+		out []tradeUSDValuation
 		err error
 	}
 	done := make(chan outcome, 1)
@@ -322,7 +324,7 @@ func TestCopyTradePartitions_PanickingPartitionIsNotReportedAsLanded(t *testing.
 
 	s := &Store{} // no *sql.DB — copyTradeRange's s.db.Conn dereferences nil
 	rows := bulkPanicTrades(t, 16)
-	usd := make([]sql.NullString, len(rows))
+	usd := make([]tradeUSDValuation, len(rows))
 
 	landed, copied, err := s.copyTradePartitions(context.Background(), rows, usd, BulkBackfillOptions{})
 
@@ -363,8 +365,8 @@ func TestResolveBulkUSDVolumes_HealthyFanOutUnchanged(t *testing.T) {
 	}
 	// Quote leg is XLM at $0.10: 50_000_000_000 stroops / 1e7 = 5_000 XLM = $500.
 	for i := range out {
-		if !out[i].Valid || out[i].String != "500.00000000" {
-			t.Fatalf("out[%d] = %+v, want {500.00000000 true}", i, out[i])
+		if !out[i].volume.Valid || out[i].volume.String != "500.00000000" || out[i].basis.String != string(BasisXLMQuote) {
+			t.Fatalf("out[%d] = %+v, want 500.00000000 on %s", i, out[i], BasisXLMQuote)
 		}
 	}
 }

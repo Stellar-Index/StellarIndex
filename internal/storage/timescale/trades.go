@@ -39,80 +39,107 @@ func tradeUSDVolume(ctx context.Context, t canonical.Trade, quoteSpec *USDVolume
 // tradeUSDVolumeChecked is [tradeUSDVolume] returning a resolver read error instead of folding it into NULL; no later tier is tried, since
 // an unreadable rate is not a decline and falling through would store a lower tier's estimate.
 func tradeUSDVolumeChecked(ctx context.Context, t canonical.Trade, quoteSpec *USDVolumeQuoteSpec, fxResolver USDVolumeFXResolver) (*string, error) {
-	v, _, err := tradeUSDVolumeCredited(ctx, t, quoteSpec, fxResolver, nil, false)
+	v, _, _, err := tradeUSDVolumeCredited(ctx, t, quoteSpec, fxResolver, nil, false)
 	return v, err
 }
 
-// tradeUSDVolumeCredited is [tradeUSDVolumeChecked] under a credibility budget (nil: none). refused reports a token/token print the
-// charged asset's budget declined: stored NULL, counted "refused". commit records the charge; a dry run leaves the budget alone.
+// USDBasis is the leg and rate a stored usd_volume rests on (trades.usd_basis); empty exactly when the value is NULL.
+type USDBasis string
+
+const (
+	// BasisQuotePegged and BasisBasePegged: that leg is a declared USD peg, valued at face (the exact tiers).
+	BasisQuotePegged = USDBasis(TierQuotePegged)
+	BasisBasePegged  = USDBasis(TierBasePegged)
+	// BasisXLMBase and BasisXLMQuote: that leg is XLM, valued at XLM/USD.
+	BasisXLMBase  USDBasis = "xlm_base"
+	BasisXLMQuote USDBasis = "xlm_quote"
+	// BasisFiatPeg: a leg declared 1:1 to a fiat currency, valued at that currency's USD rate.
+	BasisFiatPeg USDBasis = "fiat_peg"
+	// BasisFXQuote and BasisFXBase: that leg valued at its own USD rate; a vendor feed off-chain, a market on a DEX.
+	BasisFXQuote USDBasis = "fx_quote"
+	BasisFXBase  USDBasis = "fx_base"
+)
+
+// tradeUSDVolumeCredited is [tradeUSDVolumeChecked] under a credibility budget (nil: none), with the value's basis. refused reports a
+// token/token print the charged asset's budget declined: stored NULL, counted "refused". commit records the charge; a dry run leaves the
+// budget alone.
 func tradeUSDVolumeCredited(
 	ctx context.Context, t canonical.Trade, quoteSpec *USDVolumeQuoteSpec, fxResolver USDVolumeFXResolver,
 	budget *usdCreditBudget, commit bool,
-) (*string, bool, error) {
+) (*string, USDBasis, bool, error) {
 	q := t.QuoteAmount.BigInt()
 	if q == nil || q.Sign() <= 0 {
-		return nil, false, nil
+		return nil, "", false, nil
 	}
 	md := external.Lookup(t.Source)
 	if md.Class != external.ClassExchange {
 		// Oracles and aggregators don't emit Trades; stay nil if a misregistered one does.
-		return nil, false, nil
+		return nil, "", false, nil
 	}
 	if decimals, ok := usdVolumeDecimals(t.Pair.Quote, md, quoteSpec); ok {
 		denom := scaleDenominator(decimals)
 		// FloatString(8) is a fixed-precision decimal that NUMERIC (arbitrary-precision) accepts
 		// directly, with no precision loss for any value that fit the big.Int.
 		rendered := new(big.Rat).SetFrac(q, denom).FloatString(8)
-		return &rendered, false, nil
+		return &rendered, BasisQuotePegged, false, nil
 	}
 	// Tier 2b: a USD-pegged BASE is as exact as tiers 1/2 (declared peg, no market lookup), so it
 	// goes ahead of the estimated FX tiers.
 	if v := tradeUSDVolumeViaUSDBase(t, md, quoteSpec); v != nil {
-		return v, false, nil
+		return v, BasisBasePegged, false, nil
 	}
 	// The FX tiers need an operator-wired resolver.
 	if fxResolver == nil {
-		return nil, false, nil
+		return nil, "", false, nil
 	}
-	if v, handled, err := xlmLegUSDVolume(ctx, t, md, fxResolver); handled {
-		return v, false, err
+	if v, basis, handled, err := xlmLegUSDVolume(ctx, t, md, fxResolver); handled {
+		return v, basis, false, err
 	}
-	if v, err := usdVolumeViaFiatPeg(ctx, t, md, quoteSpec, fxResolver); err != nil || v != nil {
-		return v, false, err
+	if v, basis, err := usdVolumeViaFiatPeg(ctx, t, md, quoteSpec, fxResolver); err != nil || v != nil {
+		return v, basis, false, err
 	}
-	if v, refused, err := usdVolumeViaFXCredited(ctx, t, md, fxResolver, budget, commit); err != nil || v != nil || refused {
-		return v, refused, err
+	if v, basis, refused, err := usdVolumeViaFXCredited(ctx, t, md, fxResolver, budget, commit); err != nil || v != nil || refused {
+		return v, basis, refused, err
 	}
 	// Tier 4: quote-side resolution declined, so try the XLM-base anchor.
 	return usdVolumeViaXLMBaseAnchor(ctx, t, md.Subclass, fxResolver, budget, commit)
 }
 
+// keptLegBasis names the leg a two-leg bound stored: [boundUSDVolume] and [creditBoundUSDVolume] return one of their inputs, so
+// identity with the rated leg's value tells which.
+func keptLegBasis(kept, rated *big.Rat, ratedBasis, otherBasis USDBasis) USDBasis {
+	if kept == rated {
+		return ratedBasis
+	}
+	return otherBasis
+}
+
 // xlmLegUSDVolume values a trade off its XLM leg, whichever side the pool stored it on; handled is true when the caller returns
 // (v, err) as is: the anchor answered or failed, or a DEX trade with an XLM leg declined and stays unpriced.
-func xlmLegUSDVolume(ctx context.Context, t canonical.Trade, md external.Metadata, fxResolver USDVolumeFXResolver) (v *string, handled bool, err error) {
+func xlmLegUSDVolume(ctx context.Context, t canonical.Trade, md external.Metadata, fxResolver USDVolumeFXResolver) (v *string, basis USDBasis, handled bool, err error) {
 	xlmBase, xlmQuote := isXLMAsset(t.Pair.Base), isXLMAsset(t.Pair.Quote)
 	// With XLM as the BASE leg, value the trade off that leg BEFORE pricing the quote: tier 3's
 	// token/XLM x XLM/USD bridge from prices_1m is counterparty-authorable, while XLM is a direct
 	// market nobody can author. XLM only: any other base resolves through the same poisonable bridge.
 	if xlmBase {
-		if v, _, err := usdVolumeViaXLMBaseAnchor(ctx, t, md.Subclass, fxResolver, nil, false); err != nil || v != nil {
-			return v, true, err
+		if v, _, _, err := usdVolumeViaXLMBaseAnchor(ctx, t, md.Subclass, fxResolver, nil, false); err != nil || v != nil {
+			return v, BasisXLMBase, true, err
 		}
 	}
 	// Same anchor when the pool stored XLM as the QUOTE leg: orientation is
 	// the pool's token order, so both sides of one economic swap must value alike.
 	if xlmQuote && !xlmBase {
 		if v, err := tradeUSDVolumeViaXLMQuoteAnchorFor(ctx, t, fxResolver); err != nil || v != nil {
-			return v, true, err
+			return v, BasisXLMQuote, true, err
 		}
 	}
 	// A DEX trade with an XLM leg is priced off XLM or not at all: once that anchor declines (frozen or
 	// stale XLM/USD), the tiers below value it through the other asset's own market, which the
 	// counterparty can author, with no XLM cross-check left to bound it. The restamp fills it later.
 	if md.Subclass == external.SubclassDEX && (xlmBase || xlmQuote) {
-		return nil, true, nil
+		return nil, "", true, nil
 	}
-	return nil, false, nil
+	return nil, "", false, nil
 }
 
 // tradeUSDVolumeViaUSDBase is tier 2b: value off a USD-pegged BASE leg (usd = base_amount / 10^decimals); trusted like tiers 1/2, so it wins
@@ -142,7 +169,7 @@ func tradeUSDVolumeViaFX(ctx context.Context, t canonical.Trade, md external.Met
 // usdVolumeViaFX is [tradeUSDVolumeViaFX] with the resolver's read error
 // returned rather than folded into a decline, for the restamp tiers.
 func usdVolumeViaFX(ctx context.Context, t canonical.Trade, md external.Metadata, r USDVolumeFXResolver) (*string, error) {
-	v, _, err := usdVolumeViaFXCredited(ctx, t, md, r, nil, false)
+	v, _, _, err := usdVolumeViaFXCredited(ctx, t, md, r, nil, false)
 	return v, err
 }
 
@@ -150,20 +177,20 @@ func usdVolumeViaFX(ctx context.Context, t canonical.Trade, md external.Metadata
 // bound's decline.
 func usdVolumeViaFXCredited(
 	ctx context.Context, t canonical.Trade, md external.Metadata, r USDVolumeFXResolver, budget *usdCreditBudget, commit bool,
-) (*string, bool, error) {
+) (*string, USDBasis, bool, error) {
 	if r == nil {
-		return nil, false, nil
+		return nil, "", false, nil
 	}
 	usdRateStr, ok, err := r.USDPriceAt(ctx, t.Pair.Quote, t.Timestamp)
 	if err != nil {
-		return nil, false, err
+		return nil, "", false, err
 	}
 	if !ok || usdRateStr == "" {
-		return nil, false, nil
+		return nil, "", false, nil
 	}
 	usdRate, ok := new(big.Rat).SetString(usdRateStr)
 	if !ok || usdRate.Sign() <= 0 {
-		return nil, false, nil
+		return nil, "", false, nil
 	}
 	var decimals int
 	switch md.Subclass {
@@ -173,24 +200,27 @@ func usdVolumeViaFXCredited(
 	case external.SubclassDEX:
 		decimals = stellarClassicDecimals
 	default:
-		return nil, false, nil
+		return nil, "", false, nil
 	}
 	q := new(big.Rat).SetFrac(t.QuoteAmount.BigInt(), scaleDenominator(decimals))
 	usdAmount := new(big.Rat).Mul(q, usdRate)
+	basis := BasisFXQuote
 
 	// DEX-only: CEX/FX quote rates are vendor feeds, not poisonable bridges, and their base legs
 	// are often unresolvable anyway.
 	if md.Subclass == external.SubclassDEX {
+		rated := usdAmount
 		var refused bool
 		usdAmount, refused, err = creditBoundUSDVolume(ctx, r, budget, creditLegs{
-			rated: t.Pair.Quote, ratedVal: usdAmount, other: t.Pair.Base, otherAmount: t.BaseAmount, decimals: decimals, at: t.Timestamp, id: t.ID(),
+			rated: t.Pair.Quote, ratedVal: rated, other: t.Pair.Base, otherAmount: t.BaseAmount, decimals: decimals, at: t.Timestamp, id: t.ID(),
 		}, commit)
 		if err != nil || usdAmount == nil {
-			return nil, refused, err
+			return nil, "", refused, err
 		}
+		basis = keptLegBasis(usdAmount, rated, BasisFXQuote, BasisFXBase)
 	}
 	rendered := usdAmount.FloatString(8)
-	return &rendered, false, nil
+	return &rendered, basis, false, nil
 }
 
 // fiatPegToleranceBps is how far a declared leg's on-chain USD price may sit from the fiat rate before
@@ -205,47 +235,50 @@ const fiatPegToleranceBps = 200
 // not the SAC the leg may carry, because the resolver links a SAC to its markets only through sac_wrappers. A depeg,
 // a missing on-chain price or a missing fiat rate declines, so the leg falls through to the estimated FX tier, never
 // above it. The value takes the FX tier's leg cross-check and single-leg cap ([boundUSDVolume]).
-func usdVolumeViaFiatPeg(ctx context.Context, t canonical.Trade, md external.Metadata, spec *USDVolumeQuoteSpec, r USDVolumeFXResolver) (*string, error) {
+func usdVolumeViaFiatPeg(ctx context.Context, t canonical.Trade, md external.Metadata, spec *USDVolumeQuoteSpec, r USDVolumeFXResolver) (*string, USDBasis, error) {
 	if r == nil || md.Subclass != external.SubclassDEX {
-		return nil, nil
+		return nil, "", nil
 	}
-	quote, base := pegLeg{t.Pair.Quote, t.QuoteAmount}, pegLeg{t.Pair.Base, t.BaseAmount}
+	quote, base := pegLeg{t.Pair.Quote, t.QuoteAmount, BasisFXQuote}, pegLeg{t.Pair.Base, t.BaseAmount, BasisFXBase}
 	for _, pair := range [2][2]pegLeg{{quote, base}, {base, quote}} {
-		usd, err := fiatPegLegValue(ctx, spec, r, pair[0], pair[1], t.Timestamp)
+		usd, basis, err := fiatPegLegValue(ctx, spec, r, pair[0], pair[1], t.Timestamp)
 		if err != nil || usd != nil {
-			return usd, err
+			return usd, basis, err
 		}
 	}
-	return nil, nil
+	return nil, "", nil
 }
 
 // pegLeg is one side of a DEX trade as usdVolumeViaFiatPeg sees it.
 type pegLeg struct {
 	asset  canonical.Asset
 	amount canonical.Amount
+	// fxBasis is this leg's basis when the bound stores it at its own market rate.
+	fxBasis USDBasis
 }
 
 // fiatPegLegValue is one leg of usdVolumeViaFiatPeg: nil when the leg is undeclared or the gate declines.
-func fiatPegLegValue(ctx context.Context, spec *USDVolumeQuoteSpec, r USDVolumeFXResolver, declared, other pegLeg, at time.Time) (*string, error) {
+func fiatPegLegValue(ctx context.Context, spec *USDVolumeQuoteSpec, r USDVolumeFXResolver, declared, other pegLeg, at time.Time) (*string, USDBasis, error) {
 	classic, ticker, ok := spec.FiatPegInfo(declared.asset)
 	amount := declared.amount.BigInt()
 	if !ok || amount == nil || amount.Sign() < 0 {
-		return nil, nil
+		return nil, "", nil
 	}
 	fiatRate, ok, err := resolverRateAt(ctx, r, canonical.Asset{Type: canonical.AssetFiat, Code: ticker}, at)
 	if err != nil || !ok {
-		return nil, err
+		return nil, "", err
 	}
 	onChain, ok, err := resolverRateAt(ctx, r, classic, at)
 	if err != nil || !ok || !withinBps(onChain, fiatRate, fiatPegToleranceBps) {
-		return nil, err
+		return nil, "", err
 	}
-	usd := new(big.Rat).Mul(new(big.Rat).SetFrac(amount, scaleDenominator(stellarClassicDecimals)), fiatRate)
-	if usd, err = boundUSDVolume(ctx, r, usd, other.asset, other.amount, stellarClassicDecimals, at); err != nil || usd == nil {
-		return nil, err
+	pegged := new(big.Rat).Mul(new(big.Rat).SetFrac(amount, scaleDenominator(stellarClassicDecimals)), fiatRate)
+	usd, err := boundUSDVolume(ctx, r, pegged, other.asset, other.amount, stellarClassicDecimals, at)
+	if err != nil || usd == nil {
+		return nil, "", err
 	}
 	rendered := usd.FloatString(8)
-	return &rendered, nil
+	return &rendered, keptLegBasis(usd, pegged, BasisFiatPeg, other.fxBasis), nil
 }
 
 // resolverRateAt parses one USDPriceAt answer into a positive rate; ok=false when the resolver declines or the
@@ -335,17 +368,17 @@ func fxLegValue(ctx context.Context, r USDVolumeFXResolver, asset canonical.Asse
 // XLM, base_amount is stroops whatever the quote decimals: usd = (base_amount / 1e7) x XLM/USD, twin of [sorobanVolume24hUSDQuery].
 func usdVolumeViaXLMBaseAnchor(
 	ctx context.Context, t canonical.Trade, subclass external.Subclass, r USDVolumeFXResolver, budget *usdCreditBudget, commit bool,
-) (*string, bool, error) {
+) (*string, USDBasis, bool, error) {
 	if r == nil || subclass != external.SubclassDEX {
 		// Off-chain sources have no orientation problem; tier 1 covers every USD-pegged quote.
-		return nil, false, nil
+		return nil, "", false, nil
 	}
 	if !baseAnchorEligible(t.Pair.Base) {
-		return nil, false, nil
+		return nil, "", false, nil
 	}
 	base := t.BaseAmount.BigInt()
 	if base == nil || base.Sign() <= 0 {
-		return nil, false, nil
+		return nil, "", false, nil
 	}
 	// Resolve XLM through its canonical `native` form whichever wire form the pool used: prices_1m
 	// stores XLM/USD as `native`, so asking for the SAC contract id would miss. Non-XLM bases
@@ -356,30 +389,33 @@ func usdVolumeViaXLMBaseAnchor(
 	}
 	usdRateStr, ok, err := r.USDPriceAt(ctx, anchor, t.Timestamp)
 	if err != nil {
-		return nil, false, err
+		return nil, "", false, err
 	}
 	if !ok || usdRateStr == "" {
-		return nil, false, nil
+		return nil, "", false, nil
 	}
 	usdRate, ok := new(big.Rat).SetString(usdRateStr)
 	if !ok || usdRate.Sign() <= 0 {
-		return nil, false, nil
+		return nil, "", false, nil
 	}
 	q := new(big.Rat).SetFrac(base, scaleDenominator(stellarClassicDecimals))
 	usdAmount := new(big.Rat).Mul(q, usdRate)
+	basis := BasisXLMBase
 	// A non-XLM base is the one rated leg of a token/token print, so it is charged to the base's credibility budget. XLM is exempt:
 	// its rate is a direct market and base_amount is XLM that moved. Applied here so the restamp tiers inherit it.
 	if !isXLMAsset(t.Pair.Base) {
+		rated := usdAmount
 		var refused bool
 		usdAmount, refused, err = creditBoundUSDVolume(ctx, r, budget, creditLegs{
-			rated: t.Pair.Base, ratedVal: usdAmount, other: t.Pair.Quote, otherAmount: t.QuoteAmount, decimals: stellarClassicDecimals, at: t.Timestamp, id: t.ID(),
+			rated: t.Pair.Base, ratedVal: rated, other: t.Pair.Quote, otherAmount: t.QuoteAmount, decimals: stellarClassicDecimals, at: t.Timestamp, id: t.ID(),
 		}, commit)
 		if err != nil || usdAmount == nil {
-			return nil, refused, err
+			return nil, "", refused, err
 		}
+		basis = keptLegBasis(usdAmount, rated, BasisFXBase, BasisFXQuote)
 	}
 	rendered := usdAmount.FloatString(8)
-	return &rendered, false, nil
+	return &rendered, basis, false, nil
 }
 
 // isXLMAsset reports whether a is XLM in either on-chain form (classic native or its SAC); mirrors [canonOrientSQL]'s SQL-side check.
@@ -479,7 +515,7 @@ func cexSourceNames() []string {
 
 // tradeUSDVolumeViaXLMBaseAnchorFor is [usdVolumeViaXLMBaseAnchor] for a STORED row; a resolver read error is returned so a restamp aborts.
 func tradeUSDVolumeViaXLMBaseAnchorFor(ctx context.Context, t canonical.Trade, r USDVolumeFXResolver) (*string, error) {
-	v, _, err := usdVolumeViaXLMBaseAnchor(ctx, t, external.Lookup(t.Source).Subclass, r, nil, false)
+	v, _, _, err := usdVolumeViaXLMBaseAnchor(ctx, t, external.Lookup(t.Source).Subclass, r, nil, false)
 	return v, err
 }
 
@@ -527,7 +563,7 @@ const stellarClassicDecimals = 7
 // WouldPopulateUSDVolume reports whether InsertTrade would stamp a non-null usd_volume under the installed quote spec, FX resolver and
 // credibility budget (a dry run). An FX-tier hit calls the resolver synchronously, and a first-seen asset runs the budget's seed query.
 func (s *Store) WouldPopulateUSDVolume(ctx context.Context, t canonical.Trade) bool {
-	v, _, err := tradeUSDVolumeCredited(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver, s.creditBudget, false)
+	v, _, _, err := tradeUSDVolumeCredited(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver, s.creditBudget, false)
 	return err == nil && v != nil
 }
 
@@ -693,29 +729,31 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
                 source, ledger, tx_hash, op_index, ts,
                 base_asset, quote_asset,
                 base_amount, quote_amount, usd_volume,
-                maker, taker, derive_generation
+                maker, taker, derive_generation, usd_basis
             ) VALUES (
                 $1, $2, $3, $4, $5,
                 $6, $7,
                 $8, $9, $10,
-                NULLIF($11, ''), NULLIF($12, ''), $13
+                NULLIF($11, ''), NULLIF($12, ''), $13, NULLIF($14, '')
             )
             ON CONFLICT (source, ledger, tx_hash, op_index, ts) DO UPDATE SET
                 base_asset        = EXCLUDED.base_asset,
                 quote_asset       = EXCLUDED.quote_asset,
                 base_amount       = EXCLUDED.base_amount,
                 quote_amount      = EXCLUDED.quote_amount,
-                -- W1-flowtradeingest-1 (generation-aware NULL preservation):
-                -- at the LIVE / equal generation a transient FX-resolver miss
-                -- must NOT regress a populated usd_volume to NULL (the gen-0
-                -- double-write race between BatchInsertTrades and InsertTrade),
-                -- so preserve the stored value on a NULL incoming. A strictly
-                -- HIGHER-generation re-derive is still allowed to write an
-                -- honest NULL (the tier-3b de-poisoning case; store.go:147-155).
+                -- At an equal generation a transient FX miss must not NULL a stored value
+                -- (the BatchInsertTrades/InsertTrade double write); a higher generation may.
                 usd_volume        = CASE
                                         WHEN EXCLUDED.derive_generation > trades.derive_generation
                                             THEN EXCLUDED.usd_volume
                                         ELSE COALESCE(EXCLUDED.usd_volume, trades.usd_volume)
+                                    END,
+                -- usd_basis follows whichever usd_volume the CASE above kept.
+                usd_basis         = CASE
+                                        WHEN EXCLUDED.derive_generation > trades.derive_generation
+                                          OR EXCLUDED.usd_volume IS NOT NULL
+                                            THEN EXCLUDED.usd_basis
+                                        ELSE trades.usd_basis
                                     END,
                 maker             = EXCLUDED.maker,
                 taker             = EXCLUDED.taker,
@@ -733,7 +771,7 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
         SELECT count(*) FILTER (WHERE inserted) FROM ins
     `
 	var usdVolume any // sql NULL when nil; pq accepts the *string form too
-	v, label, err := s.resolveUSDVolume(ctx, t)
+	v, basis, label, err := s.resolveUSDVolume(ctx, t)
 	if err != nil {
 		return err
 	}
@@ -746,7 +784,7 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 		t.Source, t.Ledger, t.TxHash, t.OpIndex, t.Timestamp.UTC(),
 		t.Pair.Base.String(), t.Pair.Quote.String(),
 		t.BaseAmount, t.QuoteAmount, usdVolume,
-		t.Maker, t.Taker, s.deriveGeneration,
+		t.Maker, t.Taker, s.deriveGeneration, string(basis),
 	).Scan(&rowsInserted); err != nil {
 		return fmt.Errorf("timescale: InsertTrade: %w", err)
 	}
@@ -794,19 +832,22 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 	return nil
 }
 
-// tradeBatchValues builds the multi-row INSERT placeholders and flat args for BatchInsertTrades: 13 params per row, in column order.
+// tradeColsPerRow is the column count every trade writer sends per row (row INSERT, batch INSERT, COPY).
+const tradeColsPerRow = 14
+
+// tradeBatchValues builds the multi-row INSERT placeholders and flat args for BatchInsertTrades: tradeColsPerRow params per row, in
+// column order.
 func (s *Store) tradeBatchValues(ctx context.Context, insertRows []canonical.Trade) ([]string, []any, error) {
-	const colsPerRow = 13
-	args := make([]any, 0, len(insertRows)*colsPerRow)
+	args := make([]any, 0, len(insertRows)*tradeColsPerRow)
 	valuesParts := make([]string, 0, len(insertRows))
 	for i, t := range insertRows {
-		base := i*colsPerRow + 1
+		base := i*tradeColsPerRow + 1
 		valuesParts = append(valuesParts, fmt.Sprintf(
-			"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, NULLIF($%d, ''), NULLIF($%d, ''), $%d)",
-			base, base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9, base+10, base+11, base+12,
+			"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, NULLIF($%d, ''), NULLIF($%d, ''), $%d, NULLIF($%d, ''))",
+			base, base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9, base+10, base+11, base+12, base+13,
 		))
 		var usdVolume any
-		v, label, err := s.resolveUSDVolume(ctx, t)
+		v, basis, label, err := s.resolveUSDVolume(ctx, t)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -818,7 +859,7 @@ func (s *Store) tradeBatchValues(ctx context.Context, insertRows []canonical.Tra
 			t.Source, t.Ledger, t.TxHash, t.OpIndex, t.Timestamp.UTC(),
 			t.Pair.Base.String(), t.Pair.Quote.String(),
 			t.BaseAmount, t.QuoteAmount, usdVolume,
-			t.Maker, t.Taker, s.deriveGeneration,
+			t.Maker, t.Taker, s.deriveGeneration, string(basis),
 		)
 	}
 	return valuesParts, args, nil
@@ -922,8 +963,8 @@ func scanBatchTradeRows(ctx context.Context, tx *sql.Tx, query string, args []an
 	return perSourceNew, perSourceUnitRatio, seenAssets, nil
 }
 
-// tradeInsertMaxRows is the largest sub-batch per INSERT: 13 params per row against the 65,535 bind ceiling gives 5,041, rounded down.
-const tradeInsertMaxRows = 5000
+// tradeInsertMaxRows is the largest sub-batch per INSERT that keeps tradeColsPerRow params per row under the 65,535 bind ceiling.
+const tradeInsertMaxRows = 65535 / tradeColsPerRow
 
 // tradeInsertChunkBounds splits n rows into [start, end) sub-batches of at
 // most tradeInsertMaxRows. n <= 0 yields no chunks.
@@ -945,8 +986,7 @@ func (s *Store) insertTradeRows(ctx context.Context, insertRows []canonical.Trad
 	perSourceNew, perSourceUnitRatio map[string]int,
 	seenAssets map[string]registryObservation, err error,
 ) {
-	// Build VALUES placeholders + args slice (13 params/row incl.
-	// derive_generation).
+	// Build VALUES placeholders + args slice (tradeColsPerRow params/row).
 	valuesParts, args, err := s.tradeBatchValues(ctx, insertRows)
 	if err != nil {
 		return nil, nil, nil, err
@@ -964,24 +1004,26 @@ func (s *Store) insertTradeRows(ctx context.Context, insertRows []canonical.Trad
                 source, ledger, tx_hash, op_index, ts,
                 base_asset, quote_asset,
                 base_amount, quote_amount, usd_volume,
-                maker, taker, derive_generation
+                maker, taker, derive_generation, usd_basis
             ) VALUES %s
             ON CONFLICT (source, ledger, tx_hash, op_index, ts) DO UPDATE SET
                 base_asset        = EXCLUDED.base_asset,
                 quote_asset       = EXCLUDED.quote_asset,
                 base_amount       = EXCLUDED.base_amount,
                 quote_amount      = EXCLUDED.quote_amount,
-                -- W1-flowtradeingest-1 (generation-aware NULL preservation):
-                -- at the LIVE / equal generation a transient FX-resolver miss
-                -- must NOT regress a populated usd_volume to NULL (the gen-0
-                -- double-write race between BatchInsertTrades and InsertTrade),
-                -- so preserve the stored value on a NULL incoming. A strictly
-                -- HIGHER-generation re-derive is still allowed to write an
-                -- honest NULL (the tier-3b de-poisoning case; store.go:147-155).
+                -- At an equal generation a transient FX miss must not NULL a stored value
+                -- (the BatchInsertTrades/InsertTrade double write); a higher generation may.
                 usd_volume        = CASE
                                         WHEN EXCLUDED.derive_generation > trades.derive_generation
                                             THEN EXCLUDED.usd_volume
                                         ELSE COALESCE(EXCLUDED.usd_volume, trades.usd_volume)
+                                    END,
+                -- usd_basis follows whichever usd_volume the CASE above kept.
+                usd_basis         = CASE
+                                        WHEN EXCLUDED.derive_generation > trades.derive_generation
+                                          OR EXCLUDED.usd_volume IS NOT NULL
+                                            THEN EXCLUDED.usd_basis
+                                        ELSE trades.usd_basis
                                     END,
                 maker             = EXCLUDED.maker,
                 taker             = EXCLUDED.taker,

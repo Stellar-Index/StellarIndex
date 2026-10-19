@@ -103,16 +103,20 @@ func exactTierRestampScope(p USDVolumeRestampParams) (groupRel, where, identity 
 			return "", "", "", nil, fmt.Errorf("timescale: usd-volume restamp: group %s %s/%s has non-exact tier %q",
 				g.Source, g.BaseAsset, g.QuoteAsset, g.Tier)
 		}
-		leg := "quote"
+		leg, basis := "quote", BasisQuotePegged
 		if g.Tier == TierBasePegged {
-			leg = "base"
+			leg, basis = "base", BasisBasePegged
 		}
 		if i > 0 {
 			values.WriteString(", ")
 		}
 		n := len(args)
-		fmt.Fprintf(&values, "($%d::text, $%d::text, $%d::text, $%d::text, $%d::numeric)", n+1, n+2, n+3, n+4, n+5)
-		args = append(args, g.Source, g.BaseAsset, g.QuoteAsset, leg, scaleDenominator(g.Decimals).String())
+		fmt.Fprintf(&values, "($%d::text, $%d::text, $%d::text, $%d::text, $%d::numeric, $%d::text)", n+1, n+2, n+3, n+4, n+5, n+6)
+		args = append(args, g.Source, g.BaseAsset, g.QuoteAsset, leg, scaleDenominator(g.Decimals).String(), string(basis))
+	}
+	if len(args) > 65535 {
+		return "", "", "", nil, fmt.Errorf("timescale: usd-volume restamp: %d groups need %d bind params, over Postgres's 65535; split the groups",
+			len(p.Groups), len(args))
 	}
 	const legExpr = "(CASE WHEN g.leg = 'base' THEN t.base_amount ELSE t.quote_amount END)"
 	identity = "round(" + legExpr + " / g.denom, " + fmt.Sprint(usdVolumeRenderDecimals) + ")"
@@ -120,7 +124,7 @@ func exactTierRestampScope(p USDVolumeRestampParams) (groupRel, where, identity 
 	if !p.FillNull {
 		nullClause = "\n   AND t.usd_volume IS NOT NULL"
 	}
-	groupRel = "(VALUES " + values.String() + ") AS g(source, base_asset, quote_asset, leg, denom)"
+	groupRel = "(VALUES " + values.String() + ") AS g(source, base_asset, quote_asset, leg, denom, basis)"
 	where = `
  WHERE t.ts >= $1 AND t.ts < $2
    AND t.source = g.source AND t.base_asset = g.base_asset AND t.quote_asset = g.quote_asset
@@ -156,26 +160,29 @@ func (s *Store) RestampExactTierUSDVolume(ctx context.Context, p USDVolumeRestam
 	return s.restampTradesUSDVolume(ctx, usdVolumeRestampWrite{
 		label: "usd-volume restamp",
 		scope: fmt.Sprintf("[%s, %s)", p.From.Format(time.RFC3339), p.To.Format(time.RFC3339)),
-		rel:   groupRel, where: where, value: identity, gen: "$3", args: args,
+		rel:   groupRel, where: where, value: identity, basis: "g.basis", gen: "$3", args: args,
 	})
 }
 
-// usdVolumeRestampWrite is one in-place rewrite of `trades.usd_volume`: `rel` joins `trades t`, `where` selects, `value` is the new
-// expression, `gen` the derive_generation placeholder. Fragments are code-built; values travel in args.
+// usdVolumeRestampWrite is one in-place rewrite of `trades.usd_volume`: `rel` joins `trades t`, `where` selects, `value` and `basis` are
+// the new expressions, `gen` the derive_generation placeholder. Fragments are code-built; values travel in args.
 type usdVolumeRestampWrite struct {
-	label, scope           string
-	rel, where, value, gen string
-	args                   []any
+	label, scope                  string
+	rel, where, value, basis, gen string
+	args                          []any
 }
 
 // statements renders the before-image INSERT and the UPDATE from the SAME rel/where, so the log
 // can only name rows the UPDATE rewrites.
 func (w usdVolumeRestampWrite) statements() (logStmt, updateStmt string) {
 	logStmt = `INSERT INTO usd_volume_restamp_log
-	       (source, ledger, tx_hash, op_index, ts, prior_usd_volume, prior_derive_generation, usd_volume, derive_generation)
-	SELECT t.source, t.ledger, t.tx_hash, t.op_index, t.ts, t.usd_volume, t.derive_generation, ` + w.value + `, ` + w.gen + `
+	       (source, ledger, tx_hash, op_index, ts, prior_usd_volume, prior_derive_generation, usd_volume, derive_generation,
+	        prior_usd_basis, usd_basis)
+	SELECT t.source, t.ledger, t.tx_hash, t.op_index, t.ts, t.usd_volume, t.derive_generation, ` + w.value + `, ` + w.gen + `,
+	       t.usd_basis, ` + w.basis + `
 	  FROM trades t, ` + w.rel + w.where
-	updateStmt = "UPDATE trades t SET usd_volume = " + w.value + ", derive_generation = " + w.gen + " FROM " + w.rel + w.where
+	updateStmt = "UPDATE trades t SET usd_volume = " + w.value + ", usd_basis = " + w.basis + ", derive_generation = " + w.gen +
+		" FROM " + w.rel + w.where
 	return logStmt, updateStmt
 }
 

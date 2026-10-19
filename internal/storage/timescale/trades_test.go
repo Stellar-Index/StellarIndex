@@ -78,8 +78,8 @@ func itoa(u uint32) string {
 // row the sub-batch cap has to sit under 5,041, and every row must land in
 // exactly one sub-batch.
 func TestTradeInsertChunkBounds(t *testing.T) {
-	if tradeInsertMaxRows*13 > 65535 {
-		t.Fatalf("tradeInsertMaxRows=%d × 13 params exceeds the 65,535-parameter ceiling", tradeInsertMaxRows)
+	if tradeInsertMaxRows*tradeColsPerRow > 65535 {
+		t.Fatalf("tradeInsertMaxRows=%d × %d params exceeds the 65,535-parameter ceiling", tradeInsertMaxRows, tradeColsPerRow)
 	}
 	for _, n := range []int{0, 1, tradeInsertMaxRows - 1, tradeInsertMaxRows, tradeInsertMaxRows + 1, 100_000} {
 		bounds := tradeInsertChunkBounds(n)
@@ -94,8 +94,8 @@ func TestTradeInsertChunkBounds(t *testing.T) {
 		if covered != n {
 			t.Errorf("n=%d: chunks cover %d rows", n, covered)
 		}
-		if n == 100_000 && len(bounds) != 20 {
-			t.Errorf("100,000 rows → %d chunks, want 20", len(bounds))
+		if want := (100_000 + tradeInsertMaxRows - 1) / tradeInsertMaxRows; n == 100_000 && len(bounds) != want {
+			t.Errorf("100,000 rows → %d chunks, want %d", len(bounds), want)
 		}
 	}
 }

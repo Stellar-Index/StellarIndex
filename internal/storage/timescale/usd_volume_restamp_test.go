@@ -187,7 +187,7 @@ func TestExactTierRestampScope_MirrorsTheDecision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(groupRel, "(VALUES ") || !strings.HasSuffix(groupRel, ") AS g(source, base_asset, quote_asset, leg, denom)") {
+	if !strings.HasPrefix(groupRel, "(VALUES ") || !strings.HasSuffix(groupRel, ") AS g(source, base_asset, quote_asset, leg, denom, basis)") {
 		t.Errorf("group relation = %q", groupRel)
 	}
 	fromWhere := where
@@ -206,9 +206,9 @@ func TestExactTierRestampScope_MirrorsTheDecision(t *testing.T) {
 	if identity != "round((CASE WHEN g.leg = 'base' THEN t.base_amount ELSE t.quote_amount END) / g.denom, 8)" {
 		t.Errorf("identity expression = %q", identity)
 	}
-	// $1..$3 then 5 per group, leg + denominator decided in Go.
-	if len(args) != 3+5*len(groups) {
-		t.Fatalf("args = %d, want %d", len(args), 3+5*len(groups))
+	// $1..$3 then 6 per group, leg + denominator + basis decided in Go.
+	if len(args) != 3+6*len(groups) {
+		t.Fatalf("args = %d, want %d", len(args), 3+6*len(groups))
 	}
 	if args[2] != int64(1_755_000_000) {
 		t.Errorf("generation arg = %v", args[2])
@@ -216,8 +216,11 @@ func TestExactTierRestampScope_MirrorsTheDecision(t *testing.T) {
 	if args[6] != "base" || args[7] != "10000000" {
 		t.Errorf("sdex group bound (leg, denom) = (%v, %v), want (base, 10000000)", args[6], args[7])
 	}
-	if args[11] != "quote" || args[12] != "100000000" {
-		t.Errorf("kraken group bound (leg, denom) = (%v, %v), want (quote, 100000000)", args[11], args[12])
+	if args[8] != string(BasisBasePegged) {
+		t.Errorf("sdex group basis = %v, want %s", args[8], BasisBasePegged)
+	}
+	if args[12] != "quote" || args[13] != "100000000" || args[14] != string(BasisQuotePegged) {
+		t.Errorf("kraken group bound (leg, denom, basis) = (%v, %v, %v), want (quote, 100000000, %s)", args[12], args[13], args[14], BasisQuotePegged)
 	}
 
 	p.FillNull = true
@@ -235,6 +238,26 @@ func TestExactTierRestampScope_MirrorsTheDecision(t *testing.T) {
 	}
 	if _, _, _, _, err := exactTierRestampScope(USDVolumeRestampParams{Groups: groups, From: from, To: from}); err == nil {
 		t.Error("an empty window was accepted")
+	}
+	// 3 + 6 x 10,922 = 65,535 binds is the most Postgres takes.
+	many := make([]USDVolumeRestampGroup, 10_923)
+	for i := range many {
+		many[i] = groups[0]
+	}
+	if _, _, _, _, err := exactTierRestampScope(USDVolumeRestampParams{Groups: many, From: from, To: from.Add(time.Hour)}); err == nil {
+		t.Error("10,923 groups were accepted; the UPDATE would fail at Exec over the 65535 bind cap")
+	}
+	if _, _, _, _, err := exactTierRestampScope(USDVolumeRestampParams{Groups: many[:10_922], From: from, To: from.Add(time.Hour)}); err != nil {
+		t.Errorf("10,922 groups refused: %v", err)
+	}
+}
+
+// TestApplyXLMBaseRestampBatch_RefusesARowWithoutABasis: a blank basis would be written as an empty string beside a
+// non-NULL usd_volume, so the apply refuses before it reaches the database.
+func TestApplyXLMBaseRestampBatch_RefusesARowWithoutABasis(t *testing.T) {
+	row := XLMBaseRestampRow{Source: "sdex", Ledger: 7, TS: time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC), Want: "1.00000000"}
+	if _, err := (&Store{}).applyXLMBaseRestampBatch(context.Background(), []XLMBaseRestampRow{row}, 1); err == nil {
+		t.Fatal("a row with no basis was applied")
 	}
 }
 
@@ -479,7 +502,7 @@ func exactRestampLogParams() USDVolumeRestampParams {
 func planRestampLogFixture() *XLMBaseRestampPlan {
 	return &XLMBaseRestampPlan{Rows: []XLMBaseRestampRow{{
 		Source: "sdex", Ledger: 58_000_000, OpIndex: 1, TS: restampLogFixtureDay.Add(time.Minute),
-		TxHash: strings.Repeat("ab", 32), Want: "12.50000000",
+		TxHash: strings.Repeat("ab", 32), Want: "12.50000000", Basis: BasisXLMBase,
 	}}}
 }
 
@@ -595,6 +618,7 @@ func pruneRow(ts time.Time, ledger uint32) XLMBaseRestampRow {
 		OpIndex: 1,
 		TS:      ts,
 		Want:    "12.34000000",
+		Basis:   BasisXLMBase,
 	}
 }
 

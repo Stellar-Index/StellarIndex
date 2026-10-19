@@ -787,12 +787,12 @@ func TestResolveUSDVolume_ErrorByGeneration(t *testing.T) {
 	failing := stubFXResolver{err: errResolverRead}
 
 	live := &Store{usdVolumeFXResolver: failing, usdVolumeResolutionInstalled: true}
-	if v, label, err := live.resolveUSDVolume(context.Background(), tr); err != nil || v != nil || label != usdLabelResolverError {
+	if v, _, label, err := live.resolveUSDVolume(context.Background(), tr); err != nil || v != nil || label != usdLabelResolverError {
 		t.Fatalf("gen 0: got (%v, %q, %v), want (nil, %q, nil): live path keeps NULL and names the failure", v, label, err, usdLabelResolverError)
 	}
 
 	rederive := &Store{usdVolumeFXResolver: failing, usdVolumeResolutionInstalled: true, deriveGeneration: 7}
-	v, _, err := rederive.resolveUSDVolume(context.Background(), tr)
+	v, _, _, err := rederive.resolveUSDVolume(context.Background(), tr)
 	if !errors.Is(err, errResolverRead) {
 		t.Fatalf("gen>0: err = %v, want the resolver error (write must fail closed)", err)
 	}

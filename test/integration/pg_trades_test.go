@@ -2319,6 +2319,13 @@ func TestUSDVolumeGenerationAwareNullPreservation(t *testing.T) {
 		}
 		return uv
 	}
+	readBasis := func() sql.NullString {
+		var b sql.NullString
+		if err := store.DB().QueryRowContext(ctx, `SELECT usd_basis FROM trades WHERE source = $1 AND ledger = $2`, source, ledger).Scan(&b); err != nil {
+			t.Fatalf("read usd_basis: %v", err)
+		}
+		return b
+	}
 	isFive := func(uv sql.NullString) bool {
 		return uv.Valid && (uv.String == "5.00000000" || uv.String == "5")
 	}
@@ -2330,6 +2337,9 @@ func TestUSDVolumeGenerationAwareNullPreservation(t *testing.T) {
 	}
 	if uv := readUSD(); !isFive(uv) {
 		t.Fatalf("writer A: usd_volume = %v, want $5.00 populated", uv)
+	}
+	if b := readBasis(); b.String != "fx_quote" {
+		t.Fatalf("writer A: usd_basis = %v, want fx_quote", b)
 	}
 
 	// Writer B, gen 0: same PK, but its resolver hits a transient fault →
@@ -2343,6 +2353,9 @@ func TestUSDVolumeGenerationAwareNullPreservation(t *testing.T) {
 	if uv := readUSD(); !isFive(uv) {
 		t.Fatalf("EQUAL-generation NULL must NOT regress a populated value: "+
 			"usd_volume = %v, want $5.00 preserved (W1-flowtradeingest-1)", uv)
+	}
+	if b := readBasis(); b.String != "fx_quote" {
+		t.Fatalf("the preserved value lost its basis: usd_basis = %v, want fx_quote", b)
 	}
 
 	// Higher-generation honest NULL (tier-3b de-poisoning): a gen-5 re-derive that legitimately computes NULL must CLEAR the
@@ -2364,6 +2377,9 @@ func TestUSDVolumeGenerationAwareNullPreservation(t *testing.T) {
 		t.Fatalf("HIGHER-generation re-derive must be able to write an honest NULL "+
 			"(de-poisoning): usd_volume = %q, want NULL — a blanket COALESCE would "+
 			"wrongly preserve it", uv.String)
+	}
+	if b := readBasis(); b.Valid {
+		t.Fatalf("the cleared value kept its basis: usd_basis = %q, want NULL", b.String)
 	}
 }
 

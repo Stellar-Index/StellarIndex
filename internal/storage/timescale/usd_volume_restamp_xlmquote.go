@@ -30,6 +30,7 @@ import (
 func (s *Store) PlanXLMQuoteUSDVolumeRestamp(ctx context.Context, p RestampScanParams) (*RestampPlan, error) {
 	return s.planRestampTier(ctx, p, restampTierScan{
 		Tier:    "xlm-quote",
+		Basis:   BasisXLMQuote,
 		Sources: xlmBaseRestampSources(p.Sources),
 		Leg:     restampLegQuote,
 		Assets:  xlmAssetForms(),
