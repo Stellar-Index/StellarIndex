@@ -1302,6 +1302,48 @@ func TestClickHouseAccountHistoryHidesFailedParticipantTxs(t *testing.T) {
 		}
 	})
 
+	// account_op_types must answer what the join answers once marked. The source arm is its MV; the participant arm is written
+	// here as the sink writes it (visible participant rows only), since the fixture bypasses the sink.
+	t.Run("op-type counts from account_op_types", func(t *testing.T) {
+		joined := map[string][]chstore.OpTypeCount{}
+		for _, acct := range []string{victim, spammer} {
+			c, err := er.AccountOperationTypeCounts(ctx, acct)
+			if err != nil {
+				t.Fatalf("join counts(%s): %v", acct, err)
+			}
+			joined[acct] = c
+		}
+		raw := dialClickHouse(t, ctx, "stellar")
+		if err := raw.Exec(ctx, `INSERT INTO stellar.account_op_types (account, ledger_seq, tx_index, op_index, op_type)
+			SELECT p.account, p.ledger_seq, p.tx_index, p.op_index, o.op_type
+			FROM stellar.operation_participants AS p
+			JOIN stellar.operations AS o USING (ledger_seq, tx_index, op_index)
+			JOIN stellar.transactions AS t USING (ledger_seq, tx_index)
+			WHERE p.ledger_seq BETWEEN ? AND ? AND (t.successful = 1 OR t.source_account = p.account)`,
+			base, spamFrom+spamN); err != nil {
+			t.Fatalf("write participant arm: %v", err)
+		}
+		if err := raw.Exec(ctx, `INSERT INTO stellar.account_op_types_coverage (covered_from, covered_to) VALUES (2, ?)`, spamFrom+spamN); err != nil {
+			t.Fatalf("write marker: %v", err)
+		}
+		t.Cleanup(func() { _ = raw.Exec(context.Background(), `TRUNCATE TABLE stellar.account_op_types_coverage`) })
+
+		marked, err := chstore.NewExplorerReader(ctx, addr)
+		if err != nil {
+			t.Fatalf("new explorer reader: %v", err)
+		}
+		t.Cleanup(func() { _ = marked.Close() })
+		for _, acct := range []string{victim, spammer} {
+			got, err := marked.AccountOperationTypeCounts(ctx, acct)
+			if err != nil {
+				t.Fatalf("indexed counts(%s): %v", acct, err)
+			}
+			if fmt.Sprint(got) != fmt.Sprint(joined[acct]) {
+				t.Errorf("%s: account_op_types counts %+v, join counts %+v", acct, got, joined[acct])
+			}
+		}
+	})
+
 	// The spammer sourced every spam tx (and the op in base+2); its own
 	// history keeps them all.
 	t.Run("spammer keeps its own failed txs", func(t *testing.T) {
