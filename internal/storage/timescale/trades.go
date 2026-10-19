@@ -1241,6 +1241,8 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
 	}
 	// A LITERAL lower bound, as in latestClosedVWAP1m: TimescaleDB excludes chunks at plan time only for a constant, and planning
 	// every trades chunk is most of an unbounded miss (~325ms vs ~24ms per arm on r1 at a 400-day bound).
+	// The LIMIT is a literal too: a bound LIMIT makes the generic plan cost out worse than a custom one, so
+	// Postgres re-plans every chunk on every call (55-220ms on r1); with a literal it caches the generic plan.
 	lower := ""
 	if !since.IsZero() {
 		lower = fmt.Sprintf("AND ts >= TIMESTAMPTZ '%s'", since.UTC().Format("2006-01-02 15:04:05-07"))
@@ -1258,7 +1260,7 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
             AND base_amount > 0 AND quote_amount > 0
             %[1]s
           ORDER BY ts DESC, ledger DESC, tx_hash DESC, op_index DESC, source DESC
-          LIMIT $3)
+          LIMIT %[2]d)
         UNION ALL
         (SELECT source, ledger, tx_hash, op_index, ts,
                 base_asset, quote_asset,
@@ -1272,13 +1274,11 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
             AND base_amount > 0 AND quote_amount > 0
             %[1]s
           ORDER BY ts DESC, ledger DESC, tx_hash DESC, op_index DESC, source DESC
-          LIMIT $3)
+          LIMIT %[2]d)
         ORDER BY ts DESC, ledger DESC, tx_hash DESC, op_index DESC, source DESC
-        LIMIT $3
-    `, lower) //nolint:gosec // G201: lower is a formatted time.Time, never caller text
-	rows, err := s.db.QueryContext(ctx, q,
-		p.Base.String(), p.Quote.String(), limit,
-	)
+        LIMIT %[2]d
+    `, lower, limit) //nolint:gosec // G201: lower is a formatted time.Time and limit a clamped int, never caller text
+	rows, err := s.db.QueryContext(ctx, q, p.Base.String(), p.Quote.String())
 	if err != nil {
 		return nil, fmt.Errorf("timescale: LatestTradesForPair: %w", err)
 	}
