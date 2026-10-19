@@ -1247,6 +1247,7 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
 	if !since.IsZero() {
 		lower = fmt.Sprintf("AND ts >= TIMESTAMPTZ '%s'", since.UTC().Format("2006-01-02 15:04:05-07"))
 	}
+	//nolint:gosec // G201: lower is a formatted time.Time and limit a clamped int, never caller text
 	q := fmt.Sprintf(`
         (SELECT source, ledger, tx_hash, op_index, ts,
                 base_asset, quote_asset,
@@ -1277,7 +1278,7 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
           LIMIT %[2]d)
         ORDER BY ts DESC, ledger DESC, tx_hash DESC, op_index DESC, source DESC
         LIMIT %[2]d
-    `, lower, limit) //nolint:gosec // G201: lower is a formatted time.Time and limit a clamped int, never caller text
+    `, lower, limit)
 	rows, err := s.db.QueryContext(ctx, q, p.Base.String(), p.Quote.String())
 	if err != nil {
 		return nil, fmt.Errorf("timescale: LatestTradesForPair: %w", err)
