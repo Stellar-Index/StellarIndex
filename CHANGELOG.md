@@ -20,6 +20,24 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.28] - 2026-10-19
+
+No Postgres migrations. No `pkg/*` break. ClickHouse: apply Step 1 of `deploy/clickhouse/account_op_types.sql` on every host before this binary (the sink refuses to start without it); Steps 3-5 (backfill, verify, coverage marker) follow the deploy.
+
+### Fixed
+
+- **api:** `/v1/pools` prefilters raw rows on the asset arrays before the alias fold, so the base/quote indexes apply (1.7 s to 0.7 s on the reference deployment) (#3640).
+- **api:** `LatestTradesForPair` inlines its LIMIT so Postgres caches one plan instead of re-planning every call (#3639).
+- **api:** a classic asset's change strip is served from its listing snapshot when it has no change-summary row (#3636).
+- **ops:** the `stellarindex` Postgres role gets `pg_read_all_settings` (#3637).
+
+### Added
+
+- **clickhouse:** `account_op_types`, a per-account op-type index (source arm by materialized view, participant arm by the sink); `/v1/accounts/{g}/activity` reads its counts from it once the coverage marker exists (#3633, #3634, #3641).
+- **explorer:** the account page shows the sponsorships in force (#3630); the prerender sends a build API key, never the browser (#3631).
+- **dev:** `api-latency-sweep --pages` times explorer detail pages (#3632).
+- **docs:** the off-site drill's measured multi-hour restore and a 6h run ceiling (#3638).
+
 ## [v0.116.27] - 2026-10-19
 
 No migrations. No `pkg/*` break.
