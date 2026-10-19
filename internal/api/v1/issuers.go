@@ -22,9 +22,9 @@ type IssuersReader interface {
 }
 
 // issuersAtReader is what the TTL cache adds to IssuersReader: the list
-// read also returns the served entry's fill time, stamped as as_of.
+// read also returns the served entry's fill time, stamped as as_of, and whether it is past its TTL.
 type issuersAtReader interface {
-	ListIssuersAt(ctx context.Context, limit int) ([]timescale.IssuerSummary, time.Time, error)
+	ListIssuersAt(ctx context.Context, limit int) ([]timescale.IssuerSummary, time.Time, bool, error)
 }
 
 // IssuerListEntry is one /v1/issuers row; OrgName is the SEP-1 ORG_NAME filled by `stellarindex-ops sep1-refresh`, empty when unresolved.
@@ -126,10 +126,11 @@ func (s *Server) handleIssuersList(w http.ResponseWriter, r *http.Request) {
 	defer listCancel()
 	var vintage dataVintage
 	var rows []timescale.IssuerSummary
+	var stale bool
 	var err error
 	if at, ok := s.Issuers.(issuersAtReader); ok {
 		var filled time.Time
-		rows, filled, err = at.ListIssuersAt(listCtx, limit)
+		rows, filled, stale, err = at.ListIssuersAt(listCtx, limit)
 		vintage.note(filled)
 	} else {
 		rows, err = s.Issuers.ListIssuers(listCtx, limit)
@@ -188,7 +189,7 @@ func (s *Server) handleIssuersList(w http.ResponseWriter, r *http.Request) {
 			ScamReason:            reason,
 		}
 	}
-	writeEnvelope(w, Envelope{Data: out, AsOf: vintage.asOf()})
+	writeEnvelope(w, Envelope{Data: out, AsOf: vintage.asOf(), Flags: Flags{Stale: stale}})
 }
 
 // handleIssuer serves GET /v1/issuers/{g_strkey}: 404 (problem+json) when the issuer was never observed; always includes the
