@@ -159,7 +159,7 @@ func (s *Server) handleChangeSummary(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/change-summary-not-found",
 			"Change summary not found", http.StatusNotFound,
-			"The change-summary worker hasn't computed a row for this entity yet.")
+			"No change-summary row and no fresh listing price for this entity.")
 		return
 	}
 	if err != nil {
