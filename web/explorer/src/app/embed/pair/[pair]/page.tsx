@@ -4,7 +4,7 @@ import { Suspense } from 'react';
 // Wire shapes from the generated OpenAPI contract (src/api/types.ts,
 // `make web-generate-api`).
 import type { components } from '@/api/types';
-import { API_BASE_URL } from '@/api/client';
+import { API_BASE_URL, buildHeaders } from '@/api/client';
 import { compareDecimalStrings, formatPriceSmall } from '@/lib/format';
 
 import { LivePrice } from '../../LivePrice';
@@ -51,7 +51,10 @@ export async function generateStaticParams() {
   try {
     const res = await fetch(
       `${API_BASE_URL}/v1/markets?limit=100&order_by=volume_24h_usd_desc`,
-      { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) },
+      {
+        headers: buildHeaders(),
+        signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
+      },
     );
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const env = (await res.json()) as { data: Market[] };
@@ -95,7 +98,10 @@ async function fetchChart(
   try {
     const res = await fetch(
       `${API_BASE_URL}/v1/chart?asset=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}&timeframe=24h&granularity=1h`,
-      { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) },
+      {
+        headers: buildHeaders(),
+        signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
+      },
     );
     if (!res.ok) return null;
     const env = (await res.json()) as { data: ChartResp };

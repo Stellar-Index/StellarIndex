@@ -175,6 +175,7 @@ jobs:
         env:
           NEXT_PUBLIC_NETWORK: ${{ steps.net.outputs.network }}
           NEXT_PUBLIC_API_BASE_URL: ${{ steps.net.outputs.api_base }}
+          STELLARINDEX_BUILD_API_KEY: ${{ secrets.EXPLORER_BUILD_API_KEY }}
         run: pnpm build
 
       - name: Verify build artefact

@@ -69,7 +69,7 @@
  * listing, per-asset detail, etc.) is unchanged.
  */
 
-import { API_BASE_URL } from '@/api/client';
+import { API_BASE_URL, buildHeaders } from '@/api/client';
 import { CURRENT_NETWORK_ID } from './networks';
 import type { components } from '@/api/types';
 import {
@@ -285,7 +285,7 @@ async function fetchWithRetry<T>(
       let res: Response;
       try {
         res = await fetch(url, {
-          headers: { Accept: 'application/json' },
+          headers: buildHeaders(),
           signal: AbortSignal.timeout(timeoutMs),
         });
       } finally {
