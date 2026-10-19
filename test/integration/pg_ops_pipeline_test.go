@@ -2421,3 +2421,58 @@ func TestSourceEntryCounts_UnfoldedSinksReconcile(t *testing.T) {
 		}
 	}
 }
+
+// TradeDayLedgerEvidence on real TimescaleDB: a fully logged tradeless day is Quiet; a classic trade effect or a missing edge ledger is not.
+func TestTradeDayLedgerEvidence(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	// Ledger 5 opens the day, 16 closes it at 22:00, 17 opens the next day.
+	day := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	insert := func(seq uint32, effects int) {
+		t.Helper()
+		if err := store.UpsertLedgerIngestLog(ctx, timescale.LedgerIngestRow{
+			LedgerSeq:               seq,
+			LedgerCloseTime:         day.Add(time.Duration(int(seq)-5) * 2 * time.Hour),
+			LedgerHash:              ledgerHashFor(seq),
+			PrevLedgerHash:          ledgerHashFor(seq - 1),
+			ClassicTradeEffectCount: effects,
+		}); err != nil {
+			t.Fatalf("UpsertLedgerIngestLog(%d): %v", seq, err)
+		}
+	}
+	evidence := func(d time.Time) timescale.TradeDayLedgerEvidence {
+		t.Helper()
+		ev, err := store.TradeDayLedgerEvidence(ctx, d)
+		if err != nil {
+			t.Fatalf("TradeDayLedgerEvidence(%s): %v", d.Format(time.DateOnly), err)
+		}
+		return ev
+	}
+
+	if ev := evidence(day); ev.Quiet() || ev.Ledgers != 0 {
+		t.Fatalf("empty log: got %+v, want not quiet with 0 ledgers", ev)
+	}
+	for seq := uint32(4); seq <= 20; seq++ {
+		insert(seq, 0)
+	}
+	ev := evidence(day)
+	if !ev.Quiet() || ev.Ledgers != 12 || ev.First != 5 || ev.Last != 16 || ev.TradeRowsExist {
+		t.Fatalf("logged tradeless day: got %+v, want quiet over 5..16", ev)
+	}
+	if next := evidence(day.AddDate(0, 0, 1)); next.Quiet() || next.EdgesCovered {
+		t.Fatalf("next day logged only to ledger 20: got %+v, want edge not covered", next)
+	}
+	insert(10, 2)
+	if ev := evidence(day); ev.Quiet() || ev.ClassicTradeEffects != 2 {
+		t.Fatalf("day with a classic trade effect: got %+v, want not quiet with 2 effects", ev)
+	}
+}
