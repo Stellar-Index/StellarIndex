@@ -57,6 +57,24 @@ func (s *Store) UntaggedTxIndexTrades(ctx context.Context, from, to time.Time, a
 	return out, nil
 }
 
+// UntaggedTxIndexTradeExists reports whether [from, to) holds an on-chain trade without a tx_index. EXISTS stops at the first match,
+// so a chunk with work is not read whole to say so.
+func (s *Store) UntaggedTxIndexTradeExists(ctx context.Context, from, to time.Time) (bool, error) {
+	const q = `
+        SELECT EXISTS (
+            SELECT 1 FROM trades
+             WHERE ts >= $1 AND ts < $2
+               AND ledger > 0
+               AND tx_index IS NULL
+        )
+    `
+	var exists bool
+	if err := s.db.QueryRowContext(ctx, q, from.UTC(), to.UTC()).Scan(&exists); err != nil {
+		return false, fmt.Errorf("timescale: UntaggedTxIndexTradeExists: %w", err)
+	}
+	return exists, nil
+}
+
 // TagTradesTxIndex back-fills trades.tx_index for the supplied tags across every on-chain source, FIRST-WINS (tx_index IS NULL); tx_index is absent from the trades upsert so a re-derive preserves it.
 func (s *Store) TagTradesTxIndex(ctx context.Context, from, to time.Time, tags []TxIndexTag) (int64, error) {
 	if len(tags) == 0 {

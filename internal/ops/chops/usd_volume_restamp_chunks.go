@@ -21,7 +21,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// ─── `usd-volume-restamp -chunks`: the chunk-by-chunk walk ─────────────
+// ─── `-chunks`: the chunk-by-chunk walk (usd-volume-restamp, tag-tx-index) ───
 // The TIER-AGNOSTIC driver: it owns the chunks, compression policy, run lock and free-space
 // guard; rows are the tier's business ([chunkRestampTier]).
 //
@@ -118,6 +118,17 @@ type chunkRestampOptions struct {
 	Out io.Writer
 	// Err receives the run header, policy notices and by-hand repair traces. nil = os.Stderr.
 	Err io.Writer
+	// Command names the subcommand in every message. "" = usd-volume-restamp.
+	Command string
+}
+
+const usdVolumeRestampCmd = "usd-volume-restamp"
+
+func (o chunkRestampOptions) cmd() string {
+	if o.Command == "" {
+		return usdVolumeRestampCmd
+	}
+	return o.Command
 }
 
 // chunkFreeSpaceHeadroom is the pre-flight multiplier on a chunk's uncompressed size, a guard not a bound: decompress peaks ~1x, non-HOT
@@ -155,19 +166,20 @@ func runChunkRestamp(ctx context.Context, store chunkRestampStore, cfgPath strin
 		now = time.Now()
 	}
 	windowEnd := to.AddDate(0, 0, 1)
+	cmd := copts.cmd()
 
 	_, _ = fmt.Fprint(errw, tier.header(from, to, copts))
 
 	policy, err := store.TradesCompressionPolicy(ctx)
 	if err != nil {
 		if errors.Is(err, timescale.ErrNoTradesCompressionPolicy) {
-			return fmt.Errorf("usd-volume-restamp: -chunks refuses to start: %w. The mode pauses that policy for the run so it cannot "+
+			return fmt.Errorf("%s: -chunks refuses to start: %w. The mode pauses that policy for the run so it cannot "+
 				"re-compress the open chunk between two batches; with no job to resolve it cannot promise that, and it will not guess. "+
-				"The in-place walk (no -chunks) does not need the policy", err)
+				"The in-place walk (no -chunks) does not need the policy", cmd, err)
 		}
-		return fmt.Errorf("usd-volume-restamp: %w", err)
+		return fmt.Errorf("%s: %w", cmd, err)
 	}
-	adjacent, err := checkRestampLiveAdjacent(to, now, policy.CompressAfter, copts.AllowLiveAdjacent)
+	adjacent, err := checkRestampLiveAdjacent(cmd, to, now, policy.CompressAfter, copts.AllowLiveAdjacent)
 	if err != nil {
 		return err
 	}
@@ -178,12 +190,12 @@ func runChunkRestamp(ctx context.Context, store chunkRestampStore, cfgPath strin
 
 	chunks, err := store.TradesChunksInRange(ctx, from, windowEnd)
 	if err != nil {
-		return fmt.Errorf("usd-volume-restamp: %w", err)
+		return fmt.Errorf("%s: %w", cmd, err)
 	}
 	plan := summarizeTradesChunkPlan(chunks)
 	_, _ = fmt.Fprint(out, renderTradesChunkPlan(from, to, chunks, plan))
 	if len(chunks) == 0 {
-		_, _ = fmt.Fprintf(out, "usd-volume-restamp: no trades chunks intersect [%s, %s] — nothing to do\n",
+		_, _ = fmt.Fprintf(out, "%s: no trades chunks intersect [%s, %s] — nothing to do\n", cmd,
 			from.Format(time.DateOnly), to.Format(time.DateOnly))
 		return nil
 	}
@@ -192,7 +204,7 @@ func runChunkRestamp(ctx context.Context, store chunkRestampStore, cfgPath strin
 	_, _ = fmt.Fprint(out, pf.render())
 	if pf.Err != nil {
 		if tier.write() {
-			return fmt.Errorf("usd-volume-restamp: pre-flight refused -write: %w", pf.Err)
+			return fmt.Errorf("%s: pre-flight refused -write: %w", cmd, pf.Err)
 		}
 		_, _ = fmt.Fprintf(out, "PRE-FLIGHT WOULD REFUSE -write: %v\n", pf.Err)
 	}
@@ -226,7 +238,7 @@ func runChunkRestamp(ctx context.Context, store chunkRestampStore, cfgPath strin
 
 // checkRestampLiveAdjacent refuses a -chunks window reaching the span the policy has not compressed (left uncompressed on purpose for
 // cursor-regression replay upserts); returns whether the window is adjacent so the caller can warn when -allow-live-adjacent overrides.
-func checkRestampLiveAdjacent(to, now time.Time, compressAfter time.Duration, allow bool) (adjacent bool, err error) {
+func checkRestampLiveAdjacent(cmd string, to, now time.Time, compressAfter time.Duration, allow bool) (adjacent bool, err error) {
 	windowEnd := to.AddDate(0, 0, 1)
 	edge := now.UTC().Add(-compressAfter)
 	if !windowEnd.After(edge) {
@@ -235,10 +247,10 @@ func checkRestampLiveAdjacent(to, now time.Time, compressAfter time.Duration, al
 	if allow {
 		return true, nil
 	}
-	return true, fmt.Errorf("usd-volume-restamp: -chunks refuses -to %s: the window's right edge (%s) reaches into the compression policy's lag "+
+	return true, fmt.Errorf("%s: -chunks refuses -to %s: the window's right edge (%s) reaches into the compression policy's lag "+
 		"(now - compress_after %s = %s). Chunks there are deliberately uncompressed — the ledgerstream cursor-regression replay upserts into them — "+
 		"and -chunks has nothing to offer them; restamp that span with the in-place walk (no -chunks), or pass -allow-live-adjacent to walk it "+
-		"anyway (those chunks are restamped in place and stay uncompressed)",
+		"anyway (those chunks are restamped in place and stay uncompressed)", cmd,
 		to.Format(time.DateOnly), windowEnd.Format(time.RFC3339), compressAfter, edge.Format(time.RFC3339))
 }
 
@@ -250,23 +262,23 @@ func policyReenableSQL(p timescale.TradesCompressionPolicy) string {
 // pauseTradesCompressionPolicy pauses the policy for a write run and returns the re-enable, run on a context detached from cancellation
 // (SIGTERM is its likeliest trigger). The by-hand statement prints before the pause so a SIGKILL, which runs no defer, still leaves a
 // trace.
-func pauseTradesCompressionPolicy(ctx context.Context, store chunkRestampStore, p timescale.TradesCompressionPolicy, errw io.Writer) (func(error) error, error) {
+func pauseTradesCompressionPolicy(ctx context.Context, store chunkRestampStore, cmd string, p timescale.TradesCompressionPolicy, errw io.Writer) (func(error) error, error) {
 	reenable := policyReenableSQL(p)
-	_, _ = fmt.Fprintf(errw, "usd-volume-restamp: compression policy job %d on trades (compress_after %s): PAUSING it for this run so it cannot re-compress the open chunk between batches; it is re-enabled on every exit path.\n",
+	_, _ = fmt.Fprintf(errw, "%s: compression policy job %d on trades (compress_after %s): PAUSING it for this run so it cannot re-compress the open chunk between batches; it is re-enabled on every exit path.\n", cmd,
 		p.JobID, p.CompressAfter)
 	if !p.Scheduled {
 		_, _ = fmt.Fprintln(errw, "NOTE: -resume-paused-policy: the policy was already unscheduled when this run started (a previous attempt killed before its re-enable); this run takes it over and re-enables it when it exits.")
 	}
 	_, _ = fmt.Fprintf(errw, "  if this process is KILLED (run-heavy-job.sh escalates SIGTERM to SIGKILL at the scope's TimeoutStopSec — the runbook launches this job with HEAVY_JOB_STOP_TIMEOUT=2h; 5min if it was launched without one, and 90 s on a host still running a pre-2026-09-04 wrapper), the policy stays paused; re-enable it by hand:\n    %s\n", reenable)
 	if err := store.SetJobScheduled(ctx, p.JobID, false); err != nil {
-		return nil, fmt.Errorf("usd-volume-restamp: pause compression policy job %d: %w", p.JobID, err)
+		return nil, fmt.Errorf("%s: pause compression policy job %d: %w", cmd, p.JobID, err)
 	}
 	return func(runErr error) error {
 		if err := store.SetJobScheduled(context.WithoutCancel(ctx), p.JobID, true); err != nil {
-			_, _ = fmt.Fprintf(errw, "usd-volume-restamp: FAILED to re-enable compression policy job %d (%v) — run by hand: %s\n", p.JobID, err, reenable)
-			return errors.Join(runErr, fmt.Errorf("usd-volume-restamp: compression policy job %d is LEFT PAUSED — re-enable it by hand: %s: %w", p.JobID, reenable, err))
+			_, _ = fmt.Fprintf(errw, "%s: FAILED to re-enable compression policy job %d (%v) — run by hand: %s\n", cmd, p.JobID, err, reenable)
+			return errors.Join(runErr, fmt.Errorf("%s: compression policy job %d is LEFT PAUSED — re-enable it by hand: %s: %w", cmd, p.JobID, reenable, err))
 		}
-		_, _ = fmt.Fprintf(errw, "usd-volume-restamp: compression policy job %d re-enabled\n", p.JobID)
+		_, _ = fmt.Fprintf(errw, "%s: compression policy job %d re-enabled\n", cmd, p.JobID)
 		return runErr
 	}, nil
 }
@@ -275,26 +287,26 @@ func pauseTradesCompressionPolicy(ctx context.Context, store chunkRestampStore, 
 // unscheduled one without -resume-paused-policy, pause, wait out an in-flight run, re-list chunks. A failure undoes what was taken (no lock
 // or pause left behind).
 func beginChunkWriteRun(ctx context.Context, store chunkRestampStore, from, windowEnd time.Time, planned []timescale.TradeChunk, copts chunkRestampOptions, out, errw io.Writer) (chunks []timescale.TradeChunk, finish func(error) error, err error) {
-	release, err := takeRestampLock(ctx, store, errw)
+	release, err := takeRestampLock(ctx, store, copts.cmd(), errw)
 	if err != nil {
 		return nil, nil, err
 	}
-	finish = func(runErr error) error { return releaseRestampLock(ctx, release, errw, runErr) }
+	finish = func(runErr error) error { return releaseRestampLock(ctx, copts.cmd(), release, errw, runErr) }
 	// fail routes later refusals through the current finish so the lock (and, after the pause,
 	// the policy) is put back first.
 	fail := func(err error) error { return finish(err) }
 
 	policy, err := store.TradesCompressionPolicy(ctx)
 	if err != nil {
-		return nil, nil, fail(fmt.Errorf("usd-volume-restamp: %w", err))
+		return nil, nil, fail(fmt.Errorf("%s: %w", copts.cmd(), err))
 	}
 	if !policy.Scheduled && !copts.ResumePausedPolicy {
-		return nil, nil, fail(fmt.Errorf("usd-volume-restamp: -write refuses to start: compression policy job %d on trades is ALREADY unscheduled. "+
+		return nil, nil, fail(fmt.Errorf("%s: -write refuses to start: compression policy job %d on trades is ALREADY unscheduled. "+
 			"A previous attempt was killed before its re-enable, or something else paused it on purpose; this run does not take it over silently. "+
-			"Either re-enable it by hand — %s — and rerun, or rerun with -resume-paused-policy to have this run own it and re-enable it at exit",
+			"Either re-enable it by hand — %s — and rerun, or rerun with -resume-paused-policy to have this run own it and re-enable it at exit", copts.cmd(),
 			policy.JobID, policyReenableSQL(policy)))
 	}
-	reenable, err := pauseTradesCompressionPolicy(ctx, store, policy, errw)
+	reenable, err := pauseTradesCompressionPolicy(ctx, store, copts.cmd(), policy, errw)
 	if err != nil {
 		return nil, nil, fail(err)
 	}
@@ -307,7 +319,7 @@ func beginChunkWriteRun(ctx context.Context, store chunkRestampStore, from, wind
 	// compresses trades chunks.
 	chunks, err = store.TradesChunksInRange(ctx, from, windowEnd)
 	if err != nil {
-		return nil, nil, fail(fmt.Errorf("usd-volume-restamp: %w", err))
+		return nil, nil, fail(fmt.Errorf("%s: %w", copts.cmd(), err))
 	}
 	if drift := describeChunkListDrift(planned, chunks); drift != "" {
 		_, _ = fmt.Fprintf(out, "chunk plan re-read after the pause: %s — the walk uses this listing\n", drift)
@@ -323,19 +335,19 @@ const restampLockHolderSQL = `SELECT a.pid, a.application_name, a.backend_start,
 
 // takeRestampLock takes the run lock or refuses, naming the lock and how
 // to find its holder.
-func takeRestampLock(ctx context.Context, store chunkRestampStore, errw io.Writer) (func(context.Context) error, error) {
+func takeRestampLock(ctx context.Context, store chunkRestampStore, cmd string, errw io.Writer) (func(context.Context) error, error) {
 	release, err := store.TryUSDVolumeRestampLock(ctx)
 	if err != nil {
 		if errors.Is(err, timescale.ErrUSDVolumeRestampLockHeld) {
-			return nil, fmt.Errorf("usd-volume-restamp: -write refuses to start: %w. Another usd-volume-restamp -write run is alive. "+
+			return nil, fmt.Errorf("%s: -write refuses to start: %w. Another trades -chunks run (usd-volume-restamp or tag-tx-index) holds it. "+
 				"run-heavy-job.sh's lock is per job NAME and every attempt takes a new name, so the wrapper does not stop a second attempt; this lock does: "+
 				"two runs on one hypertable would each pause and re-enable the compression policy on their own schedule, the second's exit would hand the "+
 				"first's open chunk to the policy's next fire, and the span would end at two generations. Find the holder:\n    %s\nand let it finish "+
-				"(or stop it) before starting another; the lock is released with its connection", err, restampLockHolderSQL)
+				"(or stop it) before starting another; the lock is released with its connection", cmd, err, restampLockHolderSQL)
 		}
-		return nil, fmt.Errorf("usd-volume-restamp: %w", err)
+		return nil, fmt.Errorf("%s: %w", cmd, err)
 	}
-	_, _ = fmt.Fprintf(errw, "usd-volume-restamp: holding session advisory lock hashtext('%s') for this run; released at exit, or by the server when the connection drops\n",
+	_, _ = fmt.Fprintf(errw, "%s: holding session advisory lock hashtext('%s') for this run; released at exit, or by the server when the connection drops\n", cmd,
 		timescale.USDVolumeRestampLockName)
 	return release, nil
 }
@@ -346,21 +358,21 @@ func holdInPlaceRestampLock(ctx context.Context, store chunkRestampStore, write,
 	if !write || chunks {
 		return func(runErr error) error { return runErr }, nil
 	}
-	release, err := takeRestampLock(ctx, store, errw)
+	release, err := takeRestampLock(ctx, store, usdVolumeRestampCmd, errw)
 	if err != nil {
 		return nil, err
 	}
-	return func(runErr error) error { return releaseRestampLock(ctx, release, errw, runErr) }, nil
+	return func(runErr error) error { return releaseRestampLock(ctx, usdVolumeRestampCmd, release, errw, runErr) }, nil
 }
 
 // releaseRestampLock releases the run lock on a context detached from cancellation and folds a
 // failure into the run's error; the lock goes with its connection regardless.
-func releaseRestampLock(ctx context.Context, release func(context.Context) error, errw io.Writer, runErr error) error {
+func releaseRestampLock(ctx context.Context, cmd string, release func(context.Context) error, errw io.Writer, runErr error) error {
 	if err := release(context.WithoutCancel(ctx)); err != nil {
-		_, _ = fmt.Fprintf(errw, "usd-volume-restamp: FAILED to release the run lock (%v); the connection that held it is closed, which releases it\n", err)
-		return errors.Join(runErr, fmt.Errorf("usd-volume-restamp: release run lock: %w", err))
+		_, _ = fmt.Fprintf(errw, "%s: FAILED to release the run lock (%v); the connection that held it is closed, which releases it\n", cmd, err)
+		return errors.Join(runErr, fmt.Errorf("%s: release run lock: %w", cmd, err))
 	}
-	_, _ = fmt.Fprintln(errw, "usd-volume-restamp: run lock released")
+	_, _ = fmt.Fprintf(errw, "%s: run lock released\n", cmd)
 	return runErr
 }
 
@@ -386,17 +398,17 @@ func waitTradesPolicyIdle(ctx context.Context, store chunkRestampStore, p timesc
 	for {
 		running, err := store.JobRunning(ctx, p.JobID)
 		if err != nil {
-			return fmt.Errorf("usd-volume-restamp: %w", err)
+			return fmt.Errorf("%s: %w", copts.cmd(), err)
 		}
 		if !running {
 			return nil
 		}
 		waited := time.Since(start)
 		if waited >= timeout {
-			return fmt.Errorf("usd-volume-restamp: compression policy job %d is still RUNNING %s after it was paused (the pause stops the next fire; a run in flight finishes on its own) — "+
-				"decompressing beside it would race it; let it finish, then rerun", p.JobID, waited.Round(time.Second))
+			return fmt.Errorf("%s: compression policy job %d is still RUNNING %s after it was paused (the pause stops the next fire; a run in flight finishes on its own) — "+
+				"decompressing beside it would race it; let it finish, then rerun", copts.cmd(), p.JobID, waited.Round(time.Second))
 		}
-		_, _ = fmt.Fprintf(errw, "usd-volume-restamp: compression policy job %d is running (a fire that started before the pause); waiting for it to finish before the first decompress — %s of at most %s\n",
+		_, _ = fmt.Fprintf(errw, "%s: compression policy job %d is running (a fire that started before the pause); waiting for it to finish before the first decompress — %s of at most %s\n", copts.cmd(),
 			p.JobID, waited.Round(time.Second), timeout)
 		select {
 		case <-ctx.Done():
@@ -520,7 +532,7 @@ func (w *chunkRestampWalk) chunk(ctx context.Context, idx, n int, c timescale.Tr
 		// Re-measured against THIS chunk right before the decompress: the run is long and the
 		// pool is shared.
 		if pf := chunkRestampPreflight(ctx, w.chunks, c.UncompressedBytes, w.copts); pf.Err != nil {
-			return fmt.Errorf("usd-volume-restamp: %s: pre-flight refused before the decompress (the chunk is untouched): %w", label, pf.Err)
+			return fmt.Errorf("%s: %s: pre-flight refused before the decompress (the chunk is untouched): %w", w.copts.cmd(), label, pf.Err)
 		}
 	}
 	// The decompress completes no rows for up to ~1.5 h, so liveness is carried by the chunk's
@@ -537,12 +549,12 @@ func (w *chunkRestampWalk) chunk(ctx context.Context, idx, n int, c timescale.Tr
 	}, func(step timescale.ChunkRestampStep) { w.trace(label, c, step) })
 	if err != nil {
 		if errors.Is(err, timescale.ErrTradesChunkRecompressed) {
-			return fmt.Errorf("usd-volume-restamp: %s: STOPPED — the chunk was re-compressed underneath the run after %d row(s) were written into it. "+
+			return fmt.Errorf("%s: %s: STOPPED — the chunk was re-compressed underneath the run after %d row(s) were written into it. "+
 				"Nothing was written into it compressed, and the walk does not continue on the per-row path. Check that the compression policy is "+
-				"the one this run paused and that nothing else compresses trades chunks (a by-hand compress_chunk, another run), then rerun: %w",
+				"the one this run paused and that nothing else compresses trades chunks (a by-hand compress_chunk, another run), then rerun: %w", w.copts.cmd(),
 				label, inside.Written, err)
 		}
-		return fmt.Errorf("usd-volume-restamp: %s: %w", label, err)
+		return fmt.Errorf("%s: %s: %w", w.copts.cmd(), label, err)
 	}
 	w.tier.tick(lo)
 	if c.Compressed {

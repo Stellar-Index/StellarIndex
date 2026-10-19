@@ -25,6 +25,10 @@ func tagTxIndex(args []string) error {
 	toStr := fs.String("to", "", "Window end, RFC3339 (exclusive) — required")
 	window := fs.Duration("window", time.Hour, "trades ts span per walk")
 	chAddr := fs.String("ch-addr", "", "ClickHouse native address (default: config clickhouse_addr)")
+	chunks := fs.Bool("chunks", false, "Walk compressed trades chunks: decompress each, tag it, re-compress it (-from/-to at UTC midnight)")
+	minFreeBytes := fs.Int64("min-free-bytes", 0, "-chunks only: OVERRIDE the free-space measurement with this many bytes")
+	allowLiveAdjacent := fs.Bool("allow-live-adjacent", false, "-chunks only: walk a window reaching into the compression policy's lag")
+	resumePausedPolicy := fs.Bool("resume-paused-policy", false, "-chunks only: take over a trades compression policy that is already unscheduled and re-enable it at exit")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -37,6 +41,12 @@ func tagTxIndex(args []string) error {
 	}
 	if *window <= 0 {
 		return errors.New("-window must be > 0")
+	}
+	if *chunks && (!from.Equal(from.Truncate(24*time.Hour)) || !to.Equal(to.Truncate(24*time.Hour))) {
+		return errors.New("-chunks: -from and -to must be UTC midnights")
+	}
+	if *minFreeBytes < 0 {
+		return fmt.Errorf("-min-free-bytes must be >= 0, got %d", *minFreeBytes)
 	}
 	write := gate.Banner()
 
@@ -67,6 +77,17 @@ func tagTxIndex(args []string) error {
 	}
 	defer func() { _ = lake.Close() }()
 
+	if *chunks {
+		hb := opsutil.NewJobHeartbeat("tag-tx-index", "", nil)
+		hb.Start()
+		copts := chunkRestampOptions{
+			MinFreeBytes: *minFreeBytes, AllowLiveAdjacent: *allowLiveAdjacent, ResumePausedPolicy: *resumePausedPolicy,
+			RemoteDBHost: remoteDSNHost(cfg.Storage.PostgresDSN),
+		}
+		err := runTagTxIndexChunks(ctx, lake, store, *cfgPath, write, from, to, *window, hb, copts)
+		hb.Stop(err == nil)
+		return err
+	}
 	fmt.Fprintf(os.Stderr, "tag-tx-index: [%s, %s), window %s\n", from.Format(time.RFC3339), to.Format(time.RFC3339), *window)
 	total, err := runTagTxIndex(ctx, lake, store, write, from, to, *window)
 	if err != nil {
@@ -137,7 +158,7 @@ func refuseCompressedTradesChunks(ctx context.Context, store txIndexTagStore, wr
 		fmt.Fprintf(os.Stderr, "tag-tx-index: WARNING: -write would refuse: %s\n", msg)
 		return nil
 	}
-	return fmt.Errorf("%w: %s; narrow -from/-to to uncompressed chunks", errTxIndexCompressedChunk, msg)
+	return fmt.Errorf("%w: %s; narrow -from/-to to uncompressed chunks, or walk them with -chunks", errTxIndexCompressedChunk, msg)
 }
 
 // errTxIndexCompressedChunk is the -write refusal for a range that touches

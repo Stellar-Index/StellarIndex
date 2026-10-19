@@ -759,11 +759,11 @@ func TestCheckRestampLiveAdjacent(t *testing.T) {
 	const lag = 7 * 24 * time.Hour
 	edge := now.Add(-lag) // 2026-08-28T12:00Z
 	// -to 2026-08-27: the window ends 2026-08-28T00:00Z, before the edge.
-	if adj, err := checkRestampLiveAdjacent(time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC), now, lag, false); adj || err != nil {
+	if adj, err := checkRestampLiveAdjacent(usdVolumeRestampCmd, time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC), now, lag, false); adj || err != nil {
 		t.Errorf("window ending before the edge: adjacent=%v err=%v", adj, err)
 	}
 	// -to 2026-08-28: the window ends 2026-08-29T00:00Z, past the edge.
-	adj, err := checkRestampLiveAdjacent(time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC), now, lag, false)
+	adj, err := checkRestampLiveAdjacent(usdVolumeRestampCmd, time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC), now, lag, false)
 	if !adj || err == nil {
 		t.Fatalf("window ending past the edge: adjacent=%v err=%v", adj, err)
 	}
@@ -772,10 +772,10 @@ func TestCheckRestampLiveAdjacent(t *testing.T) {
 			t.Errorf("err = %v, want containing %q", err, want)
 		}
 	}
-	if adj, err := checkRestampLiveAdjacent(time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC), now, lag, true); !adj || err != nil {
+	if adj, err := checkRestampLiveAdjacent(usdVolumeRestampCmd, time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC), now, lag, true); !adj || err != nil {
 		t.Errorf("override: adjacent=%v err=%v", adj, err)
 	}
-	if adj, err := checkRestampLiveAdjacent(edge.Truncate(24*time.Hour).AddDate(0, 0, -1), edge.Truncate(24*time.Hour).Add(lag), lag, false); adj || err != nil {
+	if adj, err := checkRestampLiveAdjacent(usdVolumeRestampCmd, edge.Truncate(24*time.Hour).AddDate(0, 0, -1), edge.Truncate(24*time.Hour).Add(lag), lag, false); adj || err != nil {
 		t.Errorf("window ending exactly on the edge: adjacent=%v err=%v", adj, err)
 	}
 }
