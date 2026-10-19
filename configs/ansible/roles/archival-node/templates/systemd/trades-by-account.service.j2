@@ -1,0 +1,51 @@
+# systemd unit: trades_by_account catch-up (ClickHouse account-trades archive).
+#
+# Rendered by Ansible. Runs ch-rebuild -sdex -trades-by-account -to-horizon:
+# from one past the newest trades_by_account_windows row to the first ledger at
+# or after the Postgres trades compression horizon. Writes ClickHouse only;
+# exits 0 when already caught up. Runbook: deploy/clickhouse/trades_by_account.sql.
+
+[Unit]
+Description=Stellar Index — trades_by_account catch-up (daily)
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/deploy/clickhouse/trades_by_account.sql
+After=network-online.target postgresql.service clickhouse-server.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/stellarindex
+EnvironmentFile=-/etc/default/stellarindex-ops
+
+Environment=CONFIG_PATH=/etc/stellarindex.toml
+Environment=CH_ADDR=127.0.0.1:9300
+
+# 75 = run-heavy-job.sh skipped this fire (a lock was held): not a failure.
+SuccessExitStatus=75
+# Queue behind another heavy job for up to 12h instead of skipping the fire.
+Environment=HEAVY_JOB_LOCK_WAIT=43200
+Environment=HEAVY_JOB_CLASS=scheduled
+ExecStart=/usr/local/sbin/run-heavy-job.sh trades-by-account \
+  /usr/local/bin/stellarindex-ops ch-rebuild \
+  -config ${CONFIG_PATH} \
+  -ch-addr ${CH_ADDR} \
+  -sdex -trades-by-account -to-horizon -write
+
+User=stellarindex
+Group=stellarindex
+# full, not strict: run-heavy-job.sh takes its locks in /run/lock.
+ProtectSystem=full
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# Batch-class weights: this must never starve galexie's captive core.
+CPUWeight=25
+IOWeight=25
+
+# Wait (12h) + a 2M-ledger worst case (~5h at ~86s per 10k ledgers).
+TimeoutStartSec=64800
+
+[Install]
+WantedBy=multi-user.target

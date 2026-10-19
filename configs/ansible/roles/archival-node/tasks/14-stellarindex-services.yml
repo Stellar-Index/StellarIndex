@@ -1193,6 +1193,8 @@
     - data-freshness.timer
     - ch-supply.service
     - ch-supply.timer
+    - trades-by-account.service
+    - trades-by-account.timer
     - issuer-flags.service
     - issuer-flags.timer
     - asset-registry-backfill.service
@@ -1244,6 +1246,7 @@
     - verify-network-state.timer
     - data-freshness.timer
     - ch-supply.timer
+    - trades-by-account.timer
     - issuer-flags.timer
     - asset-registry-backfill.timer
   when:

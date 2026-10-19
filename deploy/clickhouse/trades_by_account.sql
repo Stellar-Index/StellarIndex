@@ -79,9 +79,10 @@ ALTER TABLE stellar.trades_by_account_windows ADD COLUMN IF NOT EXISTS sources S
 --
 -- Each successful window inserts one trades_by_account_windows row. The API
 -- serves archive rows only from the contiguous run of windows that reaches the
--- Postgres compression horizon, so keep a daily run over [last to_ledger + 1,
--- next STOP] going after the backfill, or the archive falls behind the horizon
--- and the endpoint drops back to its horizon floor (lower_bound=true).
+-- Postgres compression horizon, so it must keep advancing after the backfill
+-- or the endpoint drops back to its horizon floor (lower_bound=true).
+-- trades-by-account.timer does this daily: ch-rebuild -sdex -trades-by-account
+-- -to-horizon -write runs [last to_ledger + 1, STOP] and exits 0 when caught up.
 --
 -- ── Step 3: verify ──────────────────────────────────────────────────────────
 --   SELECT from_ledger, to_ledger, rows FROM stellar.trades_by_account_windows FINAL
