@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -1455,147 +1456,177 @@ func TestSupplyStorageRoundTrip(t *testing.T) {
 	}
 }
 
-// TestTrustlineBalanceCurrentMatchesFullScan pins migration 0215: the trigger-kept
-// trustline_balance_current must sum to what the full history scan returns, through
-// compression, decompression, deletes, rewrites and truncation.
-func TestTrustlineBalanceCurrentMatchesFullScan(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
+// TestCurrentTablesMatchFullScan pins migrations 0215 and 0220: each trigger-kept current table
+// must sum to what the full history scan returns, through compression, decompression, deletes,
+// rewrites and truncation.
+func TestCurrentTablesMatchFullScan(t *testing.T) {
+	type insertFn func(t *testing.T, ctx context.Context, store *timescale.Store, holder, assetKey string, ledger uint32, balance int64, observedAt time.Time, removal bool)
+	for _, c := range []struct {
+		history, seeded, holder string
+		insert                  insertFn
+		sum                     func(*timescale.Store) func(context.Context, string, uint32) (*big.Int, error)
+	}{
+		{
+			"trustline_observations", "trustline_balance_current_seeded", "account_id", insertTrustline,
+			func(s *timescale.Store) func(context.Context, string, uint32) (*big.Int, error) {
+				return s.SumTrustlineBalancesAtOrBefore
+			},
+		},
+		{
+			"lp_reserve_observations", "lp_reserve_current_seeded", "pool_id", insertLPReserve,
+			func(s *timescale.Store) func(context.Context, string, uint32) (*big.Int, error) {
+				return s.SumLPReservesAtOrBefore
+			},
+		},
+	} {
+		t.Run(c.history, func(t *testing.T) {
+			sqlFor := strings.NewReplacer("trustline_observations", c.history,
+				"trustline_balance_current_seeded", c.seeded, "account_id", c.holder).Replace
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
 
-	dsn := startTimescale(t, ctx)
-	applyMigrations(t, dsn)
-	store, err := timescale.Open(ctx, dsn)
-	if err != nil {
-		t.Fatalf("store open: %v", err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	db, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Fatalf("sql open: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
-	const asset = "KALE:GBDVX4VELCDSQ54KQJYTNHXAHFLBCA77ZY2USQBM4CSHTTV7DME7KALE"
-	day := func(d int) time.Time {
-		return time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(d) * 24 * time.Hour)
-	}
-	asOfs := []uint32{50, 100, 150, 250, 350, 1000}
-
-	fullScan := func(asOf uint32) *big.Int {
-		t.Helper()
-		var raw string
-		if err := db.QueryRowContext(ctx, `
-			SELECT COALESCE(sum(balance_stroops), 0)::text FROM (
-				SELECT DISTINCT ON (account_id) balance_stroops, is_removal
-				  FROM trustline_observations
-				 WHERE asset_key = $1 AND ledger <= $2
-				 ORDER BY account_id, ledger DESC, walk_version DESC, intra_ledger_seq DESC, observed_at DESC
-			) l WHERE NOT is_removal`, asset, int(asOf)).Scan(&raw); err != nil {
-			t.Fatalf("full scan: %v", err)
-		}
-		v, _ := new(big.Int).SetString(raw, 10)
-		return v
-	}
-	seeded := func() bool {
-		t.Helper()
-		var ok bool
-		if err := db.QueryRowContext(ctx,
-			`SELECT EXISTS (SELECT 1 FROM trustline_balance_current_seeded WHERE asset_key = $1)`, asset).Scan(&ok); err != nil {
-			t.Fatalf("seeded: %v", err)
-		}
-		return ok
-	}
-	assertParity := func(step string) {
-		t.Helper()
-		for _, asOf := range asOfs {
-			got, err := store.SumTrustlineBalancesAtOrBefore(ctx, asset, asOf)
+			dsn := startTimescale(t, ctx)
+			applyMigrations(t, dsn)
+			store, err := timescale.Open(ctx, dsn)
 			if err != nil {
-				t.Fatalf("%s: Sum@%d: %v", step, asOf, err)
+				t.Fatalf("store open: %v", err)
 			}
-			if want := fullScan(asOf); got.Cmp(want) != 0 {
-				t.Errorf("%s: Sum@%d = %s, full scan = %s", step, asOf, got, want)
+			t.Cleanup(func() { _ = store.Close() })
+			db, err := sql.Open("pgx", dsn)
+			if err != nil {
+				t.Fatalf("sql open: %v", err)
 			}
-		}
-		if !seeded() {
-			t.Errorf("%s: asset not seeded after a read; the fast path never ran", step)
-		}
-	}
-	exec := func(step, q string, args ...any) {
-		t.Helper()
-		if _, err := db.ExecContext(ctx, q, args...); err != nil {
-			t.Fatalf("%s: %v", step, err)
-		}
-	}
+			t.Cleanup(func() { _ = db.Close() })
 
-	// History written before the first read: the read seeds it.
-	insertTrustline(t, ctx, store, "GA", asset, 100, 10, day(0), false)
-	insertTrustline(t, ctx, store, "GB", asset, 100, 20, day(0), false)
-	insertTrustline(t, ctx, store, "GA", asset, 200, 15, day(8), false)
-	insertTrustline(t, ctx, store, "GC", asset, 200, 40, day(8), false)
-	insertTrustline(t, ctx, store, "GB", asset, 300, 0, day(15), true)
-	if seeded() {
-		t.Fatal("asset seeded before any read")
+			const asset = "KALE:GBDVX4VELCDSQ54KQJYTNHXAHFLBCA77ZY2USQBM4CSHTTV7DME7KALE"
+			day := func(d int) time.Time {
+				return time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(d) * 24 * time.Hour)
+			}
+			asOfs := []uint32{50, 100, 150, 250, 350, 1000}
+
+			fullScan := func(asOf uint32) *big.Int {
+				t.Helper()
+				var raw string
+				if err := db.QueryRowContext(ctx, sqlFor(`
+					SELECT COALESCE(sum(balance_stroops), 0)::text FROM (
+						SELECT DISTINCT ON (account_id) balance_stroops, is_removal
+						  FROM trustline_observations
+						 WHERE asset_key = $1 AND ledger <= $2
+						 ORDER BY account_id, ledger DESC, walk_version DESC, intra_ledger_seq DESC, observed_at DESC
+					) l WHERE NOT is_removal`), asset, int(asOf)).Scan(&raw); err != nil {
+					t.Fatalf("full scan: %v", err)
+				}
+				v, _ := new(big.Int).SetString(raw, 10)
+				return v
+			}
+			seeded := func() bool {
+				t.Helper()
+				var ok bool
+				if err := db.QueryRowContext(ctx,
+					sqlFor(`SELECT EXISTS (SELECT 1 FROM trustline_balance_current_seeded WHERE asset_key = $1)`), asset).Scan(&ok); err != nil {
+					t.Fatalf("seeded: %v", err)
+				}
+				return ok
+			}
+			assertParity := func(step string) {
+				t.Helper()
+				for _, asOf := range asOfs {
+					got, err := c.sum(store)(ctx, asset, asOf)
+					if err != nil {
+						t.Fatalf("%s: Sum@%d: %v", step, asOf, err)
+					}
+					if want := fullScan(asOf); got.Cmp(want) != 0 {
+						t.Errorf("%s: Sum@%d = %s, full scan = %s", step, asOf, got, want)
+					}
+				}
+				if !seeded() {
+					t.Errorf("%s: asset not seeded after a read; the fast path never ran", step)
+				}
+			}
+			exec := func(step, q string, args ...any) {
+				t.Helper()
+				if _, err := db.ExecContext(ctx, q, args...); err != nil {
+					t.Fatalf("%s: %v", step, err)
+				}
+			}
+
+			// History written before the first read: the read seeds it.
+			c.insert(t, ctx, store, "GA", asset, 100, 10, day(0), false)
+			c.insert(t, ctx, store, "GB", asset, 100, 20, day(0), false)
+			c.insert(t, ctx, store, "GA", asset, 200, 15, day(8), false)
+			c.insert(t, ctx, store, "GC", asset, 200, 40, day(8), false)
+			c.insert(t, ctx, store, "GB", asset, 300, 0, day(15), true)
+			if seeded() {
+				t.Fatal("asset seeded before any read")
+			}
+			assertParity("seed")
+
+			// Writes after seeding go through the trigger: new holder, re-add after removal,
+			// several rows for one holder, and an equal-key rewrite.
+			c.insert(t, ctx, store, "GD", asset, 320, 7, day(16), false)
+			c.insert(t, ctx, store, "GB", asset, 330, 5, day(16), false)
+			c.insert(t, ctx, store, "GC", asset, 310, 41, day(15), false)
+			c.insert(t, ctx, store, "GC", asset, 340, 42, day(16), false)
+			c.insert(t, ctx, store, "GD", asset, 320, 9, day(16), false)
+			assertParity("trigger")
+
+			var compressed int
+			if err := db.QueryRowContext(ctx, sqlFor(`
+				SELECT count(*) FROM (SELECT compress_chunk(c) FROM show_chunks('trustline_observations') c) s`)).Scan(&compressed); err != nil {
+				t.Fatalf("compress_chunk: %v", err)
+			}
+			if compressed < 2 {
+				t.Fatalf("compressed %d chunks, want >= 2", compressed)
+			}
+			assertParity("after compress")
+			if !seeded() {
+				t.Error("compress_chunk dropped the seeded marker")
+			}
+
+			// A write into a compressed chunk, older than the holder's current row and newer.
+			c.insert(t, ctx, store, "GA", asset, 150, 12, day(1), false)
+			c.insert(t, ctx, store, "GE", asset, 120, 3, day(1), false)
+			assertParity("insert into compressed chunk")
+
+			// A delete in a compressed chunk drops the marker; the next read reseeds.
+			exec("delete compressed", sqlFor(`DELETE FROM trustline_observations WHERE asset_key = $1 AND account_id = 'GC' AND ledger = 340`), asset)
+			if seeded() {
+				t.Error("delete in a compressed chunk left the asset seeded")
+			}
+			assertParity("reseed after compressed delete")
+
+			// A delete on segmentby columns only can drop whole compressed batches.
+			exec("recompress", sqlFor(`SELECT compress_chunk(c, true) FROM show_chunks('trustline_observations') c`))
+			if !seeded() {
+				t.Error("recompress dropped the seeded marker")
+			}
+			exec("delete compressed batch", sqlFor(`DELETE FROM trustline_observations WHERE asset_key = $1 AND account_id = 'GE'`), asset)
+			if seeded() {
+				t.Error("whole-batch delete in a compressed chunk left the asset seeded")
+			}
+			assertParity("reseed after compressed batch delete")
+
+			exec("decompress", sqlFor(`SELECT decompress_chunk(c, true) FROM show_chunks('trustline_observations') c`))
+			assertParity("after decompress")
+
+			exec("delete", sqlFor(`DELETE FROM trustline_observations WHERE asset_key = $1 AND account_id = 'GA' AND ledger = 200`), asset)
+			if seeded() {
+				t.Error("delete left the asset seeded")
+			}
+			assertParity("reseed after delete")
+
+			// A key-lowering update cannot be undone by keep-the-highest; it must invalidate.
+			exec("lower", sqlFor(`UPDATE trustline_observations SET ledger = 90 WHERE asset_key = $1 AND account_id = 'GD' AND ledger = 320`), asset)
+			if seeded() {
+				t.Error("key-lowering update left the asset seeded")
+			}
+			assertParity("reseed after key-lowering update")
+
+			exec("truncate", sqlFor(`TRUNCATE trustline_observations`))
+			if seeded() {
+				t.Error("truncate left the asset seeded")
+			}
+			assertParity("after truncate")
+		})
 	}
-	assertParity("seed")
-
-	// Writes after seeding go through the trigger: new holder, re-add after removal,
-	// several rows for one holder, and an equal-key rewrite.
-	insertTrustline(t, ctx, store, "GD", asset, 320, 7, day(16), false)
-	insertTrustline(t, ctx, store, "GB", asset, 330, 5, day(16), false)
-	insertTrustline(t, ctx, store, "GC", asset, 310, 41, day(15), false)
-	insertTrustline(t, ctx, store, "GC", asset, 340, 42, day(16), false)
-	insertTrustline(t, ctx, store, "GD", asset, 320, 9, day(16), false)
-	assertParity("trigger")
-
-	var compressed int
-	if err := db.QueryRowContext(ctx, `
-		SELECT count(*) FROM (SELECT compress_chunk(c) FROM show_chunks('trustline_observations') c) s`).Scan(&compressed); err != nil {
-		t.Fatalf("compress_chunk: %v", err)
-	}
-	if compressed < 2 {
-		t.Fatalf("compressed %d chunks, want >= 2", compressed)
-	}
-	assertParity("after compress")
-
-	// A write into a compressed chunk, older than the holder's current row and newer.
-	insertTrustline(t, ctx, store, "GA", asset, 150, 12, day(1), false)
-	insertTrustline(t, ctx, store, "GE", asset, 120, 3, day(1), false)
-	assertParity("insert into compressed chunk")
-
-	// A delete in a compressed chunk drops the marker; the next read reseeds.
-	exec("delete compressed", `DELETE FROM trustline_observations WHERE asset_key = $1 AND account_id = 'GC' AND ledger = 340`, asset)
-	if seeded() {
-		t.Error("delete in a compressed chunk left the asset seeded")
-	}
-	assertParity("reseed after compressed delete")
-
-	// A delete on segmentby columns only can drop whole compressed batches.
-	exec("recompress", `SELECT compress_chunk(c, true) FROM show_chunks('trustline_observations') c`)
-	exec("delete compressed batch", `DELETE FROM trustline_observations WHERE asset_key = $1 AND account_id = 'GE'`, asset)
-	if seeded() {
-		t.Error("whole-batch delete in a compressed chunk left the asset seeded")
-	}
-	assertParity("reseed after compressed batch delete")
-
-	exec("decompress", `SELECT decompress_chunk(c, true) FROM show_chunks('trustline_observations') c`)
-	assertParity("after decompress")
-
-	exec("delete", `DELETE FROM trustline_observations WHERE asset_key = $1 AND account_id = 'GA' AND ledger = 200`, asset)
-	if seeded() {
-		t.Error("delete left the asset seeded")
-	}
-	assertParity("reseed after delete")
-
-	// A key-lowering update cannot be undone by keep-the-highest; it must invalidate.
-	exec("lower", `UPDATE trustline_observations SET ledger = 90 WHERE asset_key = $1 AND account_id = 'GD' AND ledger = 320`, asset)
-	if seeded() {
-		t.Error("key-lowering update left the asset seeded")
-	}
-	assertParity("reseed after key-lowering update")
-
-	exec("truncate", `TRUNCATE trustline_observations`)
-	if seeded() {
-		t.Error("truncate left the asset seeded")
-	}
-	assertParity("after truncate")
 }
