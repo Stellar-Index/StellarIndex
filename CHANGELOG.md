@@ -20,6 +20,20 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.26] - 2026-10-19
+
+No migrations. No `pkg/*` break.
+
+### Fixed
+
+- **api:** `/v1/contracts/{id}/transfers?from=…` on a high-volume token answers 200 with `searched_from` set to the widest window it finished, instead of a 503 when the full-history read runs out of time (#3620).
+- **api:** the 60 s self-prewarm also warms the `/v1/assets` listing reads that home, /assets and /rwa fire on first load (#3623), and the home page's `/v1/markets?limit=3` slot (#3624).
+
+### Changed
+
+- **scripts:** `api-latency-sweep.sh --pages` covers the main explorer pages (#3622).
+- **deps:** explorer npm minor bumps (#3616) and zizmor-action (#3615).
+
 ## [v0.116.25] - 2026-10-19
 
 No migrations. No `pkg/*` break.
@@ -62,24 +76,3 @@ ClickHouse DDL: re-apply `deploy/clickhouse/entry_index.sql` (adds the `signer` 
 - **api:** `/v1/oracle/latest` reads the last 48 h per request and merges a background-refreshed all-time read for silent streams: ~15 ms instead of 150-480 ms on a cache miss, which burned the 200 ms latency SLO (#3603).
 - **sep1:** failures the domain answered (HTTP error, redirect, parse, too large, too deep) no longer count toward the systemic-failure verdict (#3600).
 - **clickhouse:** `entry_index.role` declares `signer`, so `ch-entry-index` no longer fails inserting signer rows (#3602).
-
-## [v0.116.21] - 2026-10-18
-
-No migrations. No `pkg/*` break.
-
-### Added
-
-- **explorer:** the asset holders tab has a paged Entry changes panel (trustline, claimable-balance and pool changes with the balance after). It is hidden for native XLM (#3590).
-- **api:** `GET /v1/accounts/{g_strkey}/signer-on` and a "Signer on" panel list the accounts a key signs for. `ch-entry-index` writes the `signer` role. The route answers 503 `signer-index-not-built` until the `signer_index` watermark exists, so after deploy run `ch-entry-index -from <lake first ledger> -write` once (#3592).
-
-### Fixed
-
-- **aggregator:** the trade-path USD leg is guarded against a single outlier minute. The newest 41 leg minutes go through the same robust check as the served VWAP, and an XLM-leg tie between asset forms resolves in preference order (#3595).
-- **api:** a `/v1/price` miss on an on-chain pair reuses a cached Postgres plan for its last-trade walk: ~5 ms per alias instead of ~50 ms, which kept XLM-leg misses past the 200 ms latency SLO (#3598).
-- **sep1:** a domain counts as reached only when its last attempt succeeded, so long-dead domains no longer trip the systemic-failure verdict (#3594).
-- **ops:** the pgBackRest wrapper republishes its textfile after every repo, so the off-site repo2 run no longer ages the file past 24h (#3593).
-- **ansible:** queued scheduled heavy jobs start in arrival order instead of racing for the lock (#3596).
-
-### Changed
-
-- **explorer:** an asset's entry-changes first page is cached, cut per limit and prewarmed (#3588).
