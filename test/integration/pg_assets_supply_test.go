@@ -1579,6 +1579,9 @@ func TestCurrentTablesMatchFullScan(t *testing.T) {
 				t.Fatalf("compressed %d chunks, want >= 2", compressed)
 			}
 			assertParity("after compress")
+			if !seeded() {
+				t.Error("compress_chunk dropped the seeded marker")
+			}
 
 			// A write into a compressed chunk, older than the holder's current row and newer.
 			c.insert(t, ctx, store, "GA", asset, 150, 12, day(1), false)
@@ -1594,6 +1597,9 @@ func TestCurrentTablesMatchFullScan(t *testing.T) {
 
 			// A delete on segmentby columns only can drop whole compressed batches.
 			exec("recompress", sqlFor(`SELECT compress_chunk(c, true) FROM show_chunks('trustline_observations') c`))
+			if !seeded() {
+				t.Error("recompress dropped the seeded marker")
+			}
 			exec("delete compressed batch", sqlFor(`DELETE FROM trustline_observations WHERE asset_key = $1 AND account_id = 'GE'`), asset)
 			if seeded() {
 				t.Error("whole-batch delete in a compressed chunk left the asset seeded")

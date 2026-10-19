@@ -161,6 +161,15 @@ func (s *Store) seedCurrent(ctx context.Context, t currentTable, assetKey string
 		`SELECT pg_advisory_xact_lock(hashtextextended($1 || ':' || $2, 0))`, t.current, assetKey); err != nil {
 		return fmt.Errorf("timescale: seedCurrent %s %s: lock: %w", t.current, assetKey, err)
 	}
+	// A concurrent first read may have seeded while this one waited on the lock.
+	var done bool
+	//nolint:gosec // G202: table and column names are package constants
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM `+t.seeded+` WHERE asset_key = $1)`, assetKey).Scan(&done); err != nil {
+		return fmt.Errorf("timescale: seedCurrent %s %s: recheck: %w", t.current, assetKey, err)
+	}
+	if done {
+		return nil
+	}
 	//nolint:gosec // G202: table and column names are package constants
 	seed := `
         INSERT INTO ` + t.current + ` AS c (
