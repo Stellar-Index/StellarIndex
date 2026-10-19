@@ -2,6 +2,7 @@ package chops
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -10,8 +11,8 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/completeness"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
-	"github.com/Stellar-Index/StellarIndex/internal/stellarrpc"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -70,7 +71,7 @@ func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funle
 		// Fail CLOSED: a failed or partial seed leaves the re-derive
 		// decoder rejecting real pair events, which reads as expected=0
 		// against real served rows — a mismatch that is not in the data.
-		if err := seedSoroswapForRecon(ctx, cfg, soroswapDec); err != nil {
+		if err := seedSoroswapForRecon(ctx, cfg, *chAddr, soroswapDec); err != nil {
 			return fmt.Errorf("verify-reconciliation: soroswap pair seed: %w", err)
 		}
 	}
@@ -164,29 +165,51 @@ func reconciliationIsVacuous(expTotal, actTotal int) bool {
 	return expTotal == 0 && actTotal == 0
 }
 
-// seedSoroswapForRecon seeds the soroswap pair registry from the factory via RPC so the re-derive resolves earlier pairs; empty
-// oracle.soroswap.factory_contract disables it. A missing RPC endpoint or failed sweep is an error the caller must not swallow: unseeded
-// pairs expect 0 rows and would publish projection_ok=false over healthy data.
-func seedSoroswapForRecon(ctx context.Context, cfg config.Config, dec *soroswap.Decoder) error {
-	factory := cfg.Oracle.Soroswap.FactoryContract
-	if factory == "" {
+// seedSoroswapForRecon seeds the soroswap pair registry from the verified factories' new_pair events in the lake, the
+// events and gate the live decoder learns from; empty oracle.soroswap.factory_contract disables it. Fail closed: an
+// unseeded pair expects 0 rows and would publish projection_ok=false over healthy data.
+func seedSoroswapForRecon(ctx context.Context, cfg config.Config, chAddr string, dec *soroswap.Decoder) error {
+	if cfg.Oracle.Soroswap.FactoryContract == "" {
 		fmt.Fprintln(os.Stderr, "soroswap pair seed: disabled (oracle.soroswap.factory_contract empty)")
 		return nil
 	}
-	endpoint := cfg.Oracle.Soroswap.SeedRPCEndpoint
-	if endpoint == "" && len(cfg.Stellar.RPCEndpoints) > 0 {
-		endpoint = cfg.Stellar.RPCEndpoints[0]
-	}
-	if endpoint == "" {
-		return fmt.Errorf("oracle.soroswap.factory_contract is set but no RPC endpoint (set oracle.soroswap.seed_rpc_endpoint or stellar.rpc_endpoints)")
-	}
-	seedCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
-	defer cancel()
-	rpc := stellarrpc.New(endpoint, stellarrpc.WithTimeout(60*time.Second))
-	n, err := dec.SeedFromFactoryRPC(seedCtx, rpc, factory)
+	tip, err := clickhouse.MaxLedger(ctx, chAddr)
 	if err != nil {
-		return fmt.Errorf("after %d pair(s) seeded: %w", n, err)
+		return fmt.Errorf("lake tip: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "soroswap pair seed: seeded %d pairs\n", n)
+	n, err := seedSoroswapPairs(dec, func(fn func(events.Event) error) error {
+		return clickhouse.StreamContractEventsFiltered(ctx, chAddr, 1, tip, soroswap.MainnetFactories, nil, nil, false, false, false, fn)
+	})
+	if err != nil {
+		return fmt.Errorf("after %d new_pair event(s): %w", n, err)
+	}
+	fmt.Fprintf(os.Stderr, "soroswap pair seed: %d new_pair events from the lake\n", n)
 	return nil
+}
+
+// seedSoroswapPairs passes each streamed factory event through dec's own gate and decoder. Zero new_pair events is an
+// error: a configured factory with none in the lake means the read missed them.
+func seedSoroswapPairs(dec *soroswap.Decoder, stream func(func(events.Event) error) error) (int, error) {
+	n := 0
+	err := stream(func(ev events.Event) error {
+		var derr error
+		if perr := completeness.Guard(func() {
+			if dec.Matches(ev) {
+				_, derr = dec.Decode(ev)
+				if derr == nil {
+					n++
+				}
+			}
+		}); perr != nil {
+			derr = perr
+		}
+		if derr != nil {
+			return fmt.Errorf("ledger %d tx %s: %w", ev.Ledger, ev.TxHash, derr)
+		}
+		return nil
+	})
+	if err == nil && n == 0 {
+		err = errors.New("no factory new_pair events in the lake")
+	}
+	return n, err
 }
