@@ -1590,7 +1590,7 @@ func TestTradesInRange_SkipsVendorRows(t *testing.T) {
 }
 
 // TestPoolsLastPriceTieIsDeterministic: two spellings of one market folded into a single pool can close
-// their buckets in the same ledger, at the same ts. The tie breaks on the raw spelling whatever order the
+// their buckets in the same ledger, at the same ts. The tie breaks on the higher close whatever order the
 // rows were written in, so the served last_price does not flip between queries.
 func TestPoolsLastPriceTieIsDeterministic(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -1611,7 +1611,7 @@ func TestPoolsLastPriceTieIsDeterministic(t *testing.T) {
 		xlmSAC = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
 	)
 	ts := time.Now().UTC().Add(-20 * time.Minute).Truncate(time.Second)
-	// Same ts, both write orders: the SAC spelling sorts first in byte order, so its 0.1 wins.
+	// Same ts, both write orders: the native spelling's 0.2 is the higher close, so it wins.
 	seedGrainTrade(t, ctx, db, 900, "aquarius", ts, "native", usdc, "10", "2", "2")
 	seedGrainTrade(t, ctx, db, 901, "aquarius", ts, xlmSAC, usdc, "10", "1", "1")
 	seedGrainTrade(t, ctx, db, 902, "phoenix", ts, xlmSAC, usdc, "10", "1", "1")
@@ -1630,8 +1630,8 @@ func TestPoolsLastPriceTieIsDeterministic(t *testing.T) {
 			continue
 		}
 		seen++
-		if p.LastPrice == nil || numeric(t, p.LastPrice) != 0.1 {
-			t.Errorf("%s last_price = %v, want 0.1 (the SAC spelling's close)", p.Source, p.LastPrice)
+		if p.LastPrice == nil || numeric(t, p.LastPrice) != 0.2 {
+			t.Errorf("%s last_price = %v, want 0.2 (the higher tied close)", p.Source, p.LastPrice)
 		}
 	}
 	if seen != 2 {
