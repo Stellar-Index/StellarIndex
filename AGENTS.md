@@ -30,7 +30,9 @@ make verify-changed    # vet + tests for the Go packages your change reaches, ty
 - ALWAYS re-run all three generators together after editing `openapi/stellar-index.v1.yaml`:
   `make docs-api && make docs-postman && make web-generate-api`. Enforced by
   `scripts/ci/lint-docs.sh` (API reference) and the Postman and TS-types drift jobs in `ci.yml`.
-- Check a live deployment: `bash scripts/dev/r1-smoke.sh` (exit code = failed assertions).
+- Check a live deployment: `API_BASE_URL=https://api.stellarindex.io bash scripts/dev/r1-smoke.sh`
+  (exit code = failed assertions; bare, it targets `localhost:3000`, which is r1's API on the host
+  and the explorer dev server on a laptop).
 
 ## Money — invariant 1 (ADR-0003), the rule we reject PRs over
 

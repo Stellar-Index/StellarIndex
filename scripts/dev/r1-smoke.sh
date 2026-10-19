@@ -6,8 +6,8 @@
 # auth, so it is safe from cron or a healthcheck timer.
 #
 # Usage:
-#   bash scripts/dev/r1-smoke.sh                       # public defaults
-#   API_BASE_URL=http://localhost:3000 bash scripts/dev/r1-smoke.sh
+#   bash scripts/dev/r1-smoke.sh                       # localhost:3000: r1's API when run on the host
+#   API_BASE_URL=https://api.stellarindex.io bash scripts/dev/r1-smoke.sh   # from a laptop
 #   ssh root@136.243.90.96 'bash -s' < scripts/dev/r1-smoke.sh
 #
 # check NAME PATH [-- jq-test] wants HTTP 200; expect_status STATUS NAME PATH [-- jq-test] pins
