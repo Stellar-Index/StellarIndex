@@ -25,6 +25,13 @@ type MarketSourceReader interface {
 	AssetSourceStats(ctx context.Context, asset []string) ([]timescale.SourceStats, error)
 }
 
+// marketSourcesAtReader is the cached reader's richer read: the served entry's fill time, stamped as as_of, and whether it is
+// past its TTL.
+type marketSourcesAtReader interface {
+	PairSourceStatsAt(ctx context.Context, base, quote []string) ([]timescale.SourceStats, time.Time, bool, error)
+	AssetSourceStatsAt(ctx context.Context, asset []string) ([]timescale.SourceStats, time.Time, bool, error)
+}
+
 // SourceVolume is one source's trailing-24h market contribution; VolumeUSD24h is a decimal string omitted when unpriced, with VolumeLowerBound true when unpriced trades were excluded.
 type SourceVolume struct {
 	Source           string  `json:"source"`
@@ -77,16 +84,9 @@ func (s *Server) handleMarketSources(w http.ResponseWriter, r *http.Request) {
 	msCtx, msCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer msCancel()
 
-	var (
-		rows []timescale.SourceStats
-		err  error
-	)
-	if asset != "" {
-		rows, err = s.MarketSources.AssetSourceStats(msCtx, sourceStatsAliases(asset))
-	} else {
-		rows, err = s.MarketSources.PairSourceStats(msCtx,
-			sourceStatsAliases(base), sourceStatsAliases(quote))
-	}
+	rows, filled, stale, err := s.readMarketSources(msCtx, base, quote, asset)
+	var vintage dataVintage
+	vintage.note(filled)
 	if err != nil {
 		s.writeMarketSourcesError(w, r, msCtx, err)
 		return
@@ -122,7 +122,27 @@ func (s *Server) handleMarketSources(w http.ResponseWriter, r *http.Request) {
 		}
 		out.Sources = append(out.Sources, sv)
 	}
-	writeJSON(w, out, Flags{})
+	writeEnvelope(w, Envelope{Data: out, AsOf: vintage.asOf(), Flags: Flags{Stale: stale}})
+}
+
+// readMarketSources reads the per-source rows for an asset or a pair; filled is zero (and stale false) when the reader keeps no cache.
+func (s *Server) readMarketSources(ctx context.Context, base, quote, asset string) ([]timescale.SourceStats, time.Time, bool, error) {
+	if at, ok := s.MarketSources.(marketSourcesAtReader); ok {
+		if asset != "" {
+			return at.AssetSourceStatsAt(ctx, sourceStatsAliases(asset))
+		}
+		return at.PairSourceStatsAt(ctx, sourceStatsAliases(base), sourceStatsAliases(quote))
+	}
+	var (
+		rows []timescale.SourceStats
+		err  error
+	)
+	if asset != "" {
+		rows, err = s.MarketSources.AssetSourceStats(ctx, sourceStatsAliases(asset))
+	} else {
+		rows, err = s.MarketSources.PairSourceStats(ctx, sourceStatsAliases(base), sourceStatsAliases(quote))
+	}
+	return rows, time.Time{}, false, err
 }
 
 // writeMarketSourcesError is silent on client disconnect, a retryable 503 naming the endpoint on the handler's 8s budget, else 500.

@@ -100,7 +100,7 @@ func TestCachedIssuersReader_ServesStaleWhileRefreshing(t *testing.T) {
 			return []timescale.IssuerSummary{{GStrkey: g}}, nil
 		}
 	}
-	_, at0, stale, err := c.fetchList(ctx, "k", rows("OLD"))
+	_, at0, stale, err := c.list.get(ctx, "list_issuers", "k", rows("OLD"))
 	if err != nil || stale {
 		t.Fatalf("cold fill: stale=%v err=%v", stale, err)
 	}
@@ -114,16 +114,16 @@ func TestCachedIssuersReader_ServesStaleWhileRefreshing(t *testing.T) {
 		return nil, errors.New("db is down")
 	}
 	for i := range 2 {
-		got, at, stale, err := c.fetchList(ctx, "k", failing)
+		got, at, stale, err := c.list.get(ctx, "list_issuers", "k", failing)
 		if err != nil || !stale || !at.Equal(at0) || len(got) != 1 || got[0].GStrkey != "OLD" {
 			t.Fatalf("call %d: got=%+v at=%v stale=%v err=%v; want OLD at %v stale", i, got, at, stale, err, at0)
 		}
 	}
 	close(release)
 	flightDone := func() bool {
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		e := c.entries["k"]
+		c.list.mu.Lock()
+		defer c.list.mu.Unlock()
+		e := c.list.entries["k"]
 		return e != nil && e.flight == nil
 	}
 	if !waitFor(time.Second, flightDone) {
@@ -133,13 +133,13 @@ func TestCachedIssuersReader_ServesStaleWhileRefreshing(t *testing.T) {
 		t.Fatalf("refresh upstream called %d times; want 1", n)
 	}
 
-	if got, _, stale, _ := c.fetchList(ctx, "k", rows("NEW")); !stale || got[0].GStrkey != "OLD" {
+	if got, _, stale, _ := c.list.get(ctx, "list_issuers", "k", rows("NEW")); !stale || got[0].GStrkey != "OLD" {
 		t.Fatalf("after failed refresh: got=%+v stale=%v; want OLD stale", got, stale)
 	}
 	if !waitFor(time.Second, flightDone) {
 		t.Fatal("second refresh never settled")
 	}
-	got, at, stale, err := c.fetchList(ctx, "k", failing)
+	got, at, stale, err := c.list.get(ctx, "list_issuers", "k", failing)
 	if err != nil || stale || !at.After(at0) || got[0].GStrkey != "NEW" {
 		t.Fatalf("after refresh: got=%+v at=%v stale=%v err=%v; want NEW fresh", got, at, stale, err)
 	}

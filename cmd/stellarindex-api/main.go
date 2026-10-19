@@ -939,7 +939,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// Direct store read: the scan uses a partial index and the edge cache absorbs fan-out.
 		Aggregators: store,
 		// A single-pair GROUP BY is cheap and needs no markets cache layer.
-		MarketSources: store,
+		MarketSources: v1.NewCachedMarketSourceReader(store, time.Minute),
 		// The 24h per-source aggregation takes seconds, so a 60 s cache fronts it.
 		SourcesStats: cachedSourcesStats,
 		Lending:      store,
