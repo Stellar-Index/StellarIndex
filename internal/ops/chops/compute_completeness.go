@@ -182,7 +182,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	if *only == "" || *only == "soroswap" {
 		// Fail closed: a partial seed would publish a false projection red for soroswap. A disabled
 		// seed (no factory configured) is not a failure; see seedSoroswapForRecon.
-		if serr := seedSoroswapForRecon(ctx, cfg, soroswapDec); serr != nil {
+		if serr := seedSoroswapForRecon(ctx, cfg, *chAddr, soroswapDec); serr != nil {
 			return fmt.Errorf("compute-completeness: soroswap pair seed: %w", serr)
 		}
 	}
