@@ -74,6 +74,7 @@ import { AccountDefiPositionsPanel } from './AccountDefiPositions';
 import { AccountActivitySummaryPanel } from './AccountActivitySummary';
 import { AccountTradesPanel } from './AccountTrades';
 import { AccountGraphPanel } from './AccountGraph';
+import { AccountSponsorshipsPanel } from './AccountSponsorships';
 import { AccountsAnalytics } from './AccountsAnalytics';
 
 const ACCOUNT_RE = /^G[A-Z2-7]{55}$/;
@@ -230,6 +231,7 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
       <AccountDefiPositionsPanel id={id} />
       <AccountTradesPanel id={id} />
       <AccountGraphPanel id={id} />
+      <AccountSponsorshipsPanel id={id} />
       <TransactionsPanel
         id={id}
         isLoading={txQ.isLoading}
