@@ -20,6 +20,18 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.27] - 2026-10-19
+
+No migrations. No `pkg/*` break.
+
+### Fixed
+
+- **ops:** `verify-usd-volume` passes a day with no trades only when `ledger_ingest_log` proves it tradeless (every ledger logged, zero classic trade effects, no trade rows), instead of failing every quiet day on a low-traffic network (#3628).
+
+### Added
+
+- **ops:** `tag-tx-index -chunks` fills `tx_index` on historical trades chunk by chunk (decompress, tag, recompress) under the trades `-chunks` lock, with a per-chunk dry run (#3626).
+
 ## [v0.116.26] - 2026-10-19
 
 No migrations. No `pkg/*` break.
@@ -32,7 +44,8 @@ No migrations. No `pkg/*` break.
 ### Changed
 
 - **scripts:** `api-latency-sweep.sh --pages` covers the main explorer pages (#3622).
-- **deps:** explorer npm minor bumps (#3616) and zizmor-action (#3615).
+- **clickhouse:** the empty `stellar.account_entry_changes` and `stellar.asset_entry_changes` are retired from the schema files and readers (#3625).
+- **deps:** explorer npm minor bumps (#3616), zizmor-action (#3615) and google.golang.org/api (#3606).
 
 ## [v0.116.25] - 2026-10-19
 
@@ -63,16 +76,3 @@ No migrations. No `pkg/*` break.
 - **api:** the default `/v1/assets` page is refreshed by a background prewarm every TTL, so a client polling minutes apart no longer lands past the cache's max age and waits ~1 s for an inline rebuild (#3605).
 - **api:** `/v1/accounts/{g}/entry-changes` streams only the entry groups that can concern the account, about a tenth of the rows on a busy account, instead of decoding every change in the indexed ledgers; the response is unchanged (#3607).
 
-## [v0.116.22] - 2026-10-18
-
-ClickHouse DDL: re-apply `deploy/clickhouse/entry_index.sql` (adds the `signer` value to `entry_index.role`; metadata-only, already applied on r1). No migrations. No `pkg/*` break.
-
-### Added
-
-- **ops:** `ch-entry-index -signers-only -write` backfills the `signer` role alone, from the lake floor up to the `entry_index` watermark, under its own lock and job name, so `/v1/accounts/{g}/signer-on` can be built without re-running the entry index (#3601).
-
-### Fixed
-
-- **api:** `/v1/oracle/latest` reads the last 48 h per request and merges a background-refreshed all-time read for silent streams: ~15 ms instead of 150-480 ms on a cache miss, which burned the 200 ms latency SLO (#3603).
-- **sep1:** failures the domain answered (HTTP error, redirect, parse, too large, too deep) no longer count toward the systemic-failure verdict (#3600).
-- **clickhouse:** `entry_index.role` declares `signer`, so `ch-entry-index` no longer fails inserting signer rows (#3602).
