@@ -16,8 +16,9 @@
 #      deploy via this workflow — older manual installs don't have
 #      sidecar files).
 #   2. Stage new binary as <binary>.new alongside live path.
-#   3. Move current binary to <binary>.prev-<previous-tag>.
-#   4. Atomic rename .new → live.
+#   3. Hard-link current binary to <binary>.prev-<previous-tag>.
+#   4. Atomic rename .new → live; the live path is never absent, so a
+#      timer firing mid-deploy cannot fail with 203/EXEC.
 #   5. Write the new sidecar file.
 #   6. systemctl restart <binary>.
 #   7. Health probe (api: api_health_path; other daemons: /readyz on
@@ -118,11 +119,11 @@
   block:
     - name: "[{{ binary }}] Backup current binary"
       ansible.builtin.command:
-        cmd: "mv {{ install_dir }}/{{ binary }} {{ install_dir }}/{{ binary }}.prev-{{ backup_tag }}"
+        cmd: "ln -f {{ install_dir }}/{{ binary }} {{ install_dir }}/{{ binary }}.prev-{{ backup_tag }}"
       when: current_stat.stat.exists
 
     - name: "[{{ binary }}] Stamp backup mtime to now (backup time, not the binary's original copy time)"
-      # `mv` on one filesystem is a rename and keeps the old binary's mtime, so
+      # A hard link shares the old binary's mtime, so
       # the backup would look old to the prune task below (which sorts by mtime)
       # and a revert-to-older-version run could prune it in the same run. Stamp
       # it so "keep the latest 5" holds.
@@ -133,8 +134,8 @@
 
     - name: "[{{ binary }}] Atomic rename .new → live"
       ansible.builtin.command:
-        cmd: "mv {{ install_dir }}/{{ binary }}.new {{ install_dir }}/{{ binary }}"
-        creates: "{{ install_dir }}/{{ binary }}"
+        cmd: "mv -f {{ install_dir }}/{{ binary }}.new {{ install_dir }}/{{ binary }}"
+        removes: "{{ install_dir }}/{{ binary }}.new"
 
     - name: "[{{ binary }}] Mark the live path as holding this run's build"
       ansible.builtin.set_fact:
