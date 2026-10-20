@@ -216,6 +216,8 @@ P3, `for: 15m`. Expr: on any window, `1 - window_base_volume{stage="outlier"} / 
 
 Check: read `window_base_volume{stage}` (outlier_storm check 2b) beside `window_trades`: many prints but little volume removed is dust; few prints and most volume removed is a large print outside the band, or wash prints outvoting an honest block. Then the trade rate and `topk` as in [outlier_storm](#stellarindex_aggregator_outlier_storm). Fix: withheld windows clear once the contested prints leave the window or the wash source is added to `aggregate.excluded_sources`.
 
+A third shape is honest: a thin single-venue pair (a dozen prints an hour) trending a few percent inside a long window. The early prints sit outside the band set by the later cluster, and their buckets are too thin to vouch for them. List the window's prints in time order (`quote_amount / base_amount` by `ts`): a monotone climb or fall from one source is this case. It clears once the early prints leave the window; do not widen the band for it.
+
 ## stellarindex_aggregator_silent
 
 P1 (page), `for: 5m`. Expr: `sum(rate(stellarindex_aggregator_vwap_writes_total[5m])) == 0 OR absent_over_time(stellarindex_aggregator_vwap_writes_total[10m]) == 1`. Zero VWAP cache writes for 5+ min: `/v1/price` serves staler cached VWAPs (`flags.stale` flips) and rewritten / triangulated pairs 404 as key TTLs lapse. `/v1/vwap` is unaffected (scans raw trades on-query).
