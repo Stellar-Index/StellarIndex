@@ -2,14 +2,12 @@ package dashboardauth
 
 // Single-use enforcement for WebAuthn ceremony challenges.
 //
-// The ceremony cookie (passkey.go) is integrity-bound and time-bound but not single-use: a
-// captured finish-login request could be re-sent for the challenge's whole lifetime, minting a
-// fresh session each time. WebAuthn leaves replay protection to the relying party, so after an
-// assertion verifies, the ceremony digest claims a slot and a second presentation is refused.
-//
-// Same mechanism as the SEP-10 replay guard (internal/auth/sep10/redisreplay.go): Redis SETNX
-// with a TTL, claimed after signature verification so bogus submissions cannot spend slots, and
-// fail closed when the store is unreachable.
+// The ceremony cookie (passkey.go) is integrity- and time-bound but not single-use: a captured
+// finish-login request could be replayed for the challenge's whole lifetime, minting a session
+// each time. After an assertion verifies, the ceremony digest claims a slot and a second
+// presentation is refused: Redis SETNX with a TTL, as in the SEP-10 replay guard
+// (internal/auth/sep10/redisreplay.go), claimed after signature verification so bogus submissions
+// cannot spend slots, and fail closed when the store is unreachable.
 
 import (
 	"context"

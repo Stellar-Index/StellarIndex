@@ -10,11 +10,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// This file extends the stale-while-revalidate layer (hot_reads.go) to
-// GET /v1/network/throughput. The read is a FINAL scan over up to a year of
-// stellar.ledgers, too slow for the inline read timeout, so it must fill detached.
+// This file extends the stale-while-revalidate layer (hot_reads.go) to GET /v1/network/throughput.
+// The read is a FINAL scan over up to a year of stellar.ledgers, too slow for the inline timeout,
+// so it must fill detached.
 //
-//   - ONE cache entry holding the maximum window (365 days); requests slice its tail, since daily
+//   - ONE cache entry holds the maximum window (365 days); requests slice its tail, since daily
 //     buckets are independent aggregates. A single key also stops an unauthenticated caller
 //     walking ?window_days=1..365 to buy 365 year-class scans.
 //   - `partial` is read from the cached bucket, not recomputed at serve time, so a stale entry or

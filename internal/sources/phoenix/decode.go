@@ -287,18 +287,14 @@ func decodeAnnouncedPool(e *events.Event) (string, error) {
 	return pool, nil
 }
 
-// decodeSwap finalises a complete RawSwap into a canonical.Trade.
-// Field mapping (per Q3):
-//   - Trade.Pair.Base    = asset parsed from SellToken event body
-//   - Trade.Pair.Quote   = asset parsed from BuyToken event body
-//   - Trade.BaseAmount   = OfferAmount (base sold by the taker). The pool prices off
-//     offer_amount before the transfer, so return/offer is the executed price even for a
-//     fee-on-transfer sell token; that divergence is surfaced, not stored
-//     (noteReceivedDivergence).
-//   - Trade.QuoteAmount  = ReturnAmount, the buy_token amount the taker receives (net of
-//     commission and referral fee). NOT ActualReceived: the pool emits it as the INPUT it
-//     received of sell_token, so using it made every trade base==quote and corrupted prices (Q3).
-//   - Trade.Taker        = sender address
+// decodeSwap finalises a complete RawSwap into a canonical.Trade. Base and Quote are the assets
+// parsed from the SellToken and BuyToken event bodies; Taker is the sender.
+//   - BaseAmount = OfferAmount (base sold by the taker). The pool prices off offer_amount before
+//     the transfer, so return/offer is the executed price even for a fee-on-transfer sell token;
+//     that divergence is surfaced, not stored (noteReceivedDivergence).
+//   - QuoteAmount = ReturnAmount, what the taker receives (net of commission and referral fee).
+//     NOT ActualReceived: the pool emits that as the INPUT it received of sell_token, so using it
+//     makes every trade base==quote and corrupts prices.
 func decodeSwap(r *RawSwap) (canonical.Trade, error) {
 	// Decodable, not Complete: the guard's job is "can this function
 	// read every slot it touches", and it touches five. Requiring the

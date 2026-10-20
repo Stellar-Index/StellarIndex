@@ -1,21 +1,18 @@
 // Package rwa defines which Stellar assets the RWA surface admits and why.
 //
-// A permissive rule is a phishing amplifier, not a longer dashboard: anyone may issue USTRY,
-// BENJI or XAU, so identity is always (code, issuer). [Qualify] requires all four:
+// A permissive rule is a phishing amplifier: anyone may issue USTRY, BENJI or XAU, so identity is
+// always (code, issuer). [Qualify] requires all four:
 //
-// R1 IDENTITY: a classic asset with an issuer G-address (contract tokens use contract.go's
-// C1-C4 arm, keyed by contract address; the arms never overlap).
-//
-// R2 ISSUER-BOUND SELF-DECLARATION: the SEP-1 fetched from the account's on-chain
-// home_domain has a [[CURRENCIES]] entry for this code naming this account as issuer.
-//
-// R3 INDEPENDENT RECOGNITION: the curated account directory tags the issuer (or an unflagged
-// domain sibling) with a recognition tag and no scam tag. 128 of 130 issuers self-declaring
-// a real-world anchor were tagged malicious, so R2 alone is worthless.
-//
-// R4 REAL-WORLD INSTRUMENT: [BasisSep1Anchor], [BasisOracleFeed], [BasisSep1ISIN] or
-// [BasisSep1ISINVetted], in that order; never load-bearing alone, which keeps the code-keyed
-// oracle basis safe.
+//   - R1 IDENTITY: a classic asset with an issuer G-address (contract tokens use contract.go's
+//     C1-C4 arm, keyed by contract address; the arms never overlap).
+//   - R2 ISSUER-BOUND SELF-DECLARATION: the SEP-1 fetched from the account's on-chain home_domain
+//     has a [[CURRENCIES]] entry for this code naming this account as issuer.
+//   - R3 INDEPENDENT RECOGNITION: the curated account directory tags the issuer (or an unflagged
+//     domain sibling) with a recognition tag and no scam tag. 128 of 130 issuers self-declaring a
+//     real-world anchor were tagged malicious, so R2 alone is worthless.
+//   - R4 REAL-WORLD INSTRUMENT: [BasisSep1Anchor], [BasisOracleFeed], [BasisSep1ISIN] or
+//     [BasisSep1ISINVetted], in that order; never load-bearing alone, which keeps the code-keyed
+//     oracle basis safe.
 //
 // A failing asset is simply absent here; its own asset page still serves it.
 package rwa

@@ -342,14 +342,13 @@ func resolveDeriveRange(ctx context.Context, chAddr, verb string, from, to, floo
 		}
 		start = resolveStart(wm, floorLedger, lakeMin)
 	}
-	// Contiguity gate: the LiveSink drops whole ledgers under buffer pressure, so the lake can have
-	// holes near the tip. Deriving past one would advance the watermark over it and lose that
-	// ledger's movements permanently. Clamp to the contiguous watermark (as projector.resolveTip
-	// does), keyed off stellar.ledgers, the commit marker flushed last; it returns start-1 when
-	// start is a hole, which the caller's `last < start` guard treats as nothing to do.
-	//
-	// The clamp is unconditional: an operator-supplied -to is min()'d against the tip, or `-to N`
-	// would walk past a hole below N and stamp the watermark over it.
+	// Contiguity gate: the LiveSink drops whole ledgers under buffer pressure, so the lake can
+	// have holes near the tip, and deriving past one would advance the watermark over it and lose
+	// that ledger's movements permanently. Clamp to the contiguous watermark (as
+	// projector.resolveTip does), keyed off stellar.ledgers, the commit marker flushed last; it
+	// returns start-1 when start is a hole, which the caller's `last < start` guard treats as
+	// nothing to do. The clamp is unconditional: an operator-supplied -to is min()'d against the
+	// tip, or `-to N` would walk past a hole below N and stamp the watermark over it.
 	tip, err := clickhouse.ContiguousWatermark(ctx, chAddr, start)
 	if err != nil {
 		return 0, 0, fmt.Errorf("resolve contiguous lake tip: %w", err)

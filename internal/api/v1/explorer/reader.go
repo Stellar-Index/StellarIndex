@@ -1,7 +1,5 @@
-// Package explorer holds the network-explorer endpoints (ADR-0038):
-// GET /v1/ledgers, /v1/ledgers/{seq}, /v1/ledgers/{seq}/transactions,
-// /v1/operations, /v1/network/throughput, /v1/tx/{hash}, /v1/search,
-// /v1/contracts*, /v1/accounts*, /v1/assets/{asset_id}/holders.
+// Package explorer holds the network-explorer endpoints (ADR-0038): ledgers, operations, network
+// throughput, tx, search, contracts, accounts and asset holders under /v1.
 //
 // Handlers read the certified ClickHouse lake through ExplorerReader and otherwise depend only on
 // narrow injected seams (Handler below). This package cannot import internal/api/v1, whose

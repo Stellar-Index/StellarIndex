@@ -14,17 +14,17 @@ import (
 
 // This file holds the bounded-TTL + single-flight layer in front of the two UNAUTHENTICATED
 // explorer reads whose cost is set by the size of the lake, not the request: GET
-// /v1/assets/{asset_id}/holders and the GET /v1/contracts directory. A client looping either
-// would otherwise hold every connection of the shared explorer pool.
+// /v1/assets/{asset_id}/holders and GET /v1/contracts. A client looping either would otherwise
+// hold every connection of the shared explorer pool.
 //
-// Entries are keyed on the query's expensive dimension, never on `limit`: one warm entry holds
-// the maximum page and every request size slices from it. Per-key single-flight means a burst
-// of misses launches ONE scan.
+// Entries are keyed on the query's expensive dimension, never on `limit`: one warm entry holds the
+// maximum page and every size slices from it. Per-key single-flight means a burst of misses
+// launches ONE scan.
 //
-// Both scans can outlast the 8s request budget, so they run DETACHED from any request context.
-// A request serves a fresh entry, or a STALE one (200 + flags.stale + the entry's real as_of)
-// while a refresh runs, or on a stone-cold key waits up to its own deadline and then 503s while
-// the compute continues, so the retry lands warm. A failed refresh keeps the previous entry.
+// Both scans can outlast the 8s request budget, so they run DETACHED from any request context. A
+// request serves a fresh entry, or a STALE one (200 + flags.stale + the real as_of) while a
+// refresh runs, or on a stone-cold key waits up to its own deadline and then 503s while the
+// compute continues, so the retry lands warm. A failed refresh keeps the previous entry.
 
 // perKeyFlight collapses concurrent work for one key. Unlike the clickhouse-package helper it copies, it carries the flight's ERROR,
 // so a cold-path waiter serves the compute's real failure (a deadline maps to the 503 contract) instead of a shapeless sentinel.

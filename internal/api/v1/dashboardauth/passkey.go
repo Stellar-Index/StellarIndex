@@ -1,18 +1,15 @@
 package dashboardauth
 
-// Passkey (WebAuthn) sign-in for the customer dashboard.
-//
-//   - begin/finish-register: a signed-in user adds a passkey.
-//   - begin/finish-login: an anonymous visitor signs in with a discoverable credential and gets
-//     the same session cookie as the email-code flow, via mintSession.
-//   - credentials (GET/DELETE): management for the settings page.
+// Passkey (WebAuthn) sign-in for the customer dashboard: begin/finish-register (a signed-in user
+// adds a passkey), begin/finish-login (an anonymous visitor signs in with a discoverable
+// credential and gets the same session cookie as the email-code flow, via mintSession), and
+// credentials (GET/DELETE) management for the settings page.
 //
 // Ceremony state lives in a short-lived HMAC-signed cookie, not server storage. The challenge is
-// not secret but must be integrity-bound so a caller cannot substitute their own.
-//
-// Integrity alone is not enough: the ceremony must also expire server-side (the cookie's MaxAge
-// is a hint an attacker ignores; see [Handlers.webAuthn]) and be single-use
-// (passkey_ceremony_guard.go), else a captured finish-login request is a session-mint oracle.
+// not secret but must be integrity-bound so a caller cannot substitute their own. Integrity alone
+// is not enough: the ceremony must also expire server-side (the cookie's MaxAge is a hint an
+// attacker ignores; see [Handlers.webAuthn]) and be single-use (passkey_ceremony_guard.go), else a
+// captured finish-login request is a session-mint oracle.
 
 import (
 	"bytes"

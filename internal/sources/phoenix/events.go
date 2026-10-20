@@ -41,10 +41,10 @@ const EventActionSwap = "swap"
 //	provide_liquidity (5 events): sender, token_a, token_a-amount, token_b, token_b-amount
 //	withdraw_liquidity (4 events): sender, shares_amount, return_amount_a, return_amount_b
 //
-// withdraw may also emit a 5th ("withdraw_liquidity", "auto unbonded") event with a tuple body;
-// it is classified but not required for the correlation to complete. The stake contract emits 3
-// events per bond / unbond: user, token, amount. Field strings are literal contract source
-// (including the `-amount` hyphens) and all topics are ScVal::String, not Symbol.
+// withdraw may also emit a 5th ("withdraw_liquidity", "auto unbonded") event with a tuple body; it
+// is classified but not required for completion. The stake contract emits 3 events per bond /
+// unbond: user, token, amount. Field strings are literal contract source (including the `-amount`
+// hyphens); all topics are ScVal::String, not Symbol.
 
 const (
 	EventActionProvideLiquidity  = "provide_liquidity"
@@ -109,10 +109,10 @@ const (
 //	withdraw_rewards   (2 events): user, reward_token
 //	distribute_rewards (1 event):  asset
 //
-// Neither event carries an amount; it surfaces on the reward token's SEP-41 `transfer` in the SAME
-// op (event_index+1), a cross-decoder join not done here, so the amount is stored NULL rather
-// than a misleading "0". distribute_rewards has no user field, so it is decoded from its single
-// event, not the buffer.
+// Neither carries an amount; it is on the reward token's SEP-41 `transfer` in the SAME op
+// (event_index+1), a cross-decoder join not done here, so the amount is stored NULL rather than a
+// misleading "0". distribute_rewards has no user field, so it decodes from its single event, not
+// the buffer.
 const (
 	EventActionWithdrawRewards   = "withdraw_rewards"
 	EventActionDistributeRewards = "distribute_rewards"

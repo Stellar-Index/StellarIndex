@@ -3,15 +3,14 @@
 // tag, this gate withholds the AGGREGATED price claim (raw trade surfaces stay visible). It
 // DELIBERATELY overturns the directory's "tags never gate pricing" invariant.
 //
-// Consumers: the price-reader chokepoint (priceWithheld, via [Gate]), alert and webhook paths,
-// /v1/price/tip, the price stream (connect AND every bucket), and the vwap, twap, chart and
-// since-inception handlers. A new price-claim surface must add its own call.
+// A new price-claim surface (price reader, alerts, webhooks, stream, vwap/twap/chart handlers)
+// must add its own call; the chokepoint is priceWithheld via [Gate].
 //
 // BOTH LEGS, always: withholding is a property of the MARKET, else `?base=native&quote=<FLAGGED>`
 // would republish the reciprocal of the refused price ([ScamGate.WithheldPair] folds both legs).
 //
-// Fail-OPEN, like substance.go: a directory-reader error does not withhold
-// (counted in obs.ScamGateLookupFailuresTotal); failing closed blanks every price.
+// Fail-OPEN, like substance.go: a directory-reader error does not withhold (counted in
+// obs.ScamGateLookupFailuresTotal); failing closed blanks every price.
 //
 // OPERATOR OVERRIDE of a false positive: `stellarindex-ops directory-override -clear-scam-flag`
 // drops only the scam-class tags; the gate follows within scamCacheTTL. No allow-list here: it

@@ -12,14 +12,12 @@ import (
 )
 
 // Protocol-analytics reads (ADR-0038): a protocol's footprint aggregated from contract_events,
-// scoped to the registry's contract-id set (never user input, so the IN-list binds directly). All
-// filter event_type='contract' and lean on the contract_id bloom skip-index. Windowed variants take
-// sinceLedger (0 = all-time); bounding by ledger_seq prunes partitions.
-// The raw readers are the FALLBACK; the serving path is contract_events_daily (*Fast), used when
-// that table is empty or a fast read errors. Raw cost is the skip index, not FINAL: a BUSY
-// contract touches nearly every granule, while a QUIET one is pruned by the bloom and FINAL then
-// re-expands it. Do not add explorerScanSettings here (max_threads = 4 was ~2x slower for
-// identical I/O); the bound applied is protocolRawScanRowCeiling.
+// scoped to the registry's contract-id set (never user input, so the IN-list binds directly).
+// Windowed variants take sinceLedger (0 = all-time). The raw readers are the FALLBACK; serving is
+// contract_events_daily (*Fast). Raw cost is the contract_id bloom skip-index, not FINAL: a BUSY
+// contract touches nearly every granule, a QUIET one is pruned and FINAL re-expands it. Do not add
+// explorerScanSettings here (max_threads = 4 was ~2x slower for identical I/O); the bound applied
+// is protocolRawScanRowCeiling.
 
 // protocolRawScanRowCeiling refuses a raw scan the ExplorerReader connection could not finish anyway (30 s at ~18.6 M rows/s fits ~558 M
 // rows); 600 M is a tripwire. read_overflow_mode='throw' REFUSES rather than truncating: callers degrade honestly on error, a LIMIT would

@@ -9,15 +9,15 @@ import (
 )
 
 // This file decodes Blend pool CURRENT STATE from Soroban contract storage (ADR-0039), separate
-// from the event path. Structs and field names mirror the pool contract's `storage.rs`
-// (ReserveData / ReserveConfig / PoolConfig); rate/APY math lives in interest.go.
+// from the event path. Structs mirror the pool contract's `storage.rs` (ReserveData /
+// ReserveConfig / PoolConfig); rate/APY math lives in interest.go.
 //
 // #[contracttype] structs serialize as an ScVal::Map with Symbol keys, so every field is decoded
 // BY NAME (scval.MapField), which survives field reordering across contract upgrades.
 //
 // Scales (V2): d_rate / b_rate are 12-decimal; ir_mod / c_factor / l_factor / util / r_* /
-// reactivity / bstop_rate are 7-decimal; b_supply / d_supply / backstop_credit / supply_cap use the
-// underlying token's decimals. A V1 pool stores d_rate / b_rate / ir_mod with 9 decimals under the
+// reactivity / bstop_rate are 7-decimal; b_supply / d_supply / backstop_credit / supply_cap use
+// the underlying token's decimals. V1 stores d_rate / b_rate / ir_mod with 9 decimals under the
 // same field names, so the scale is keyed on PoolVersion, never on the wire shape.
 
 // PoolVersion is a Blend pool contract's generation, resolved from its deploying factory; it fixes the scale of ReserveData's rates.

@@ -1,14 +1,11 @@
-// Package ledgerstream reads Galexie-exported ledger-meta from an S3-compatible
-// datastore (MinIO in production, Filesystem in tests) and yields one
-// xdr.LedgerCloseMeta per ledger to a caller-supplied callback.
+// Package ledgerstream reads Galexie-exported ledger-meta from an S3-compatible datastore (MinIO
+// in production, Filesystem in tests) and yields one xdr.LedgerCloseMeta per ledger to a
+// caller-supplied callback.
 //
-// It is the only production path into the ingest pipeline: every source decoder
-// receives its events via this package, never via stellar-rpc
-// (scripts/ci/lint-imports.sh rule A/no-rpc-in-ingest enforces it).
-//
-// It is a thin wrapper around the SDK's ingest.ApplyLedgerMetadata, which already implements the
-// buffered, parallel-fetch reader. It exists as one import boundary and test seam (filesystem in
-// tests, MinIO in integration, S3 in prod) and to centralize logger and Prometheus wiring.
+// It is the only production path into the ingest pipeline: every source decoder receives its
+// events via this package, never via stellar-rpc (lint-imports.sh rule A/no-rpc-in-ingest). It
+// wraps the SDK's ingest.ApplyLedgerMetadata as one import boundary and test seam, and centralizes
+// logger and Prometheus wiring.
 package ledgerstream
 
 import (
@@ -41,14 +38,13 @@ type Config struct {
 	// upstream. Writes always target hot. The zero value disables tiering.
 	ColdDataStore datastore.DataStoreConfig
 
-	// ColdDataStoreFactory — optional. When non-nil, [Stream] calls it INSTEAD OF
+	// ColdDataStoreFactory is optional: when non-nil, [Stream] calls it INSTEAD OF
 	// datastore.NewDataStore to open the cold tier; ColdDataStore is still required (its Type is
-	// the tiering opt-in and its passphrase/Schema drive LoadSchema).
-	//
-	// datastore.NewDataStore builds every S3 client from the ambient AWS credential chain, which
-	// carries the hot tier's MinIO keys; presented to real AWS, every cold read fails and the tier
-	// silently degrades to hot-only. This package cannot resolve the cold credential env names
-	// itself, hence the hook (production wires pipeline.NewColdDataStore).
+	// the tiering opt-in and its passphrase/Schema drive LoadSchema). NewDataStore builds every S3
+	// client from the ambient AWS credential chain, which carries the hot tier's MinIO keys;
+	// presented to real AWS, every cold read fails and the tier silently degrades to hot-only.
+	// This package cannot resolve the cold credential env names, hence the hook (production wires
+	// pipeline.NewColdDataStore).
 	ColdDataStoreFactory func(ctx context.Context) (datastore.DataStore, error)
 
 	// Buffered — optional. If nil, Stream derives sensible defaults
@@ -80,27 +76,23 @@ type Config struct {
 	LiveRetryWait time.Duration
 
 	// LiveRetryBudget is how long a live-tail fetch worker keeps retrying a datastore FAULT before
-	// giving up. Unbounded streams only, like LiveRetryWait. Zero leaves the SDK RetryLimit.
-	//
-	// The SDK ledger buffer retries os.ErrNotExist (tip not written yet) forever without consuming
-	// an attempt, but any other failure (refused, 5xx, TLS reset) consumes one and after RetryLimit
-	// Stream returns, exiting the indexer. Both share RetryWait, so shortening it for tip latency
-	// also shortened fault tolerance. Expressing tolerance as a time budget makes
-	// RetryLimit = ceil(budget / RetryWait), so tuning latency cannot silently shrink it.
+	// giving up (unbounded streams only, like LiveRetryWait; zero leaves the SDK RetryLimit). The
+	// SDK retries os.ErrNotExist (tip not written yet) forever, but any other failure (refused,
+	// 5xx, TLS reset) consumes an attempt and after RetryLimit Stream returns, exiting the
+	// indexer. Both share RetryWait, so shortening it for tip latency would also shorten fault
+	// tolerance; a time budget gives RetryLimit = ceil(budget / RetryWait), so tuning latency
+	// cannot silently shrink it.
 	LiveRetryBudget time.Duration
 
 	// TolerateTrailingMissing, when true, converts a bounded Stream failing with the SDK's "ledger
 	// object containing sequence X is missing" error into a clean walk-complete (nil, WARN log) if
-	// X is within TrailingMissingWindow of To. For backfills racing the live tip (Galexie writes
-	// partition files lazily). False keeps strict semantics: any missing file is an error.
-	//
-	// A gap farther below To, or below the DataStore's own latest ledger, still errors; the tip
-	// check refuses a mid-history hole when To is only a chunk boundary. The caller still owns the
-	// coverage check: count delivered ledgers and fail a short walk.
-	//
-	// Delivery caveat (SDK): on a missing file BufferedStorageBackend cancels and drops pre-fetched
-	// ledgers, so the last delivered ledger can be up to BufferSize behind the missing seq.
-	// Full-coverage backfills must clamp -to below the live tip in advance.
+	// X is within TrailingMissingWindow of To, for backfills racing the live tip (Galexie writes
+	// partition files lazily). False keeps strict semantics. A gap farther below To, or below the
+	// DataStore's own latest ledger, still errors. The caller still owns the coverage check: count
+	// delivered ledgers and fail a short walk. SDK caveat: on a missing file
+	// BufferedStorageBackend drops pre-fetched ledgers, so the last delivered ledger can be up to
+	// BufferSize behind the missing seq; full-coverage backfills must clamp -to below the live tip
+	// in advance.
 	TolerateTrailingMissing bool
 
 	// TrailingMissingWindow — how close to To, and to the DataStore's latest ledger, the missing
@@ -207,21 +199,21 @@ func latestLedger(ctx context.Context, dsCfg datastore.DataStoreConfig) (uint32,
 }
 
 // retryLiveStart re-runs a live tail that failed WITHOUT EVER DELIVERING A LEDGER, until
-// Config.LiveRetryBudget is exhausted. It returns the last error, or nil if a re-attempt ran clean.
+// Config.LiveRetryBudget is exhausted. It returns the last error, or nil if a re-attempt ran
+// clean.
 //
 // [applyLiveRetryPolicy] spends the budget inside the SDK's fetch worker, which exists only after
-// the datastore is opened and its schema loaded (LoadSchema lists the bucket), both done once with
-// no retry. Without this, a lake outage at START bypasses the budget and the supervisor, which
-// counts starts not seconds, parks the unit in `failed`.
-//   - It cannot skip a ledger: it re-attempts only while delivered == 0, before the caller's
-//     cursor-writing callback has run.
+// the datastore is opened and its schema loaded, both done once with no retry; without this, a
+// lake outage at START bypasses the budget and the supervisor (which counts starts, not seconds)
+// parks the unit in `failed`.
+//   - It cannot skip a ledger: it re-attempts only while delivered == 0.
 //   - It is bounded by a wall-clock deadline fixed before the first re-attempt; an unbounded
 //     reconnect would turn a visible outage into a silent freeze.
-//   - It is visible via stellarindex_ledgerstream_live_start_retries_total.
+//   - Visible via stellarindex_ledgerstream_live_start_retries_total.
 //
-// Errors are not classified transient vs permanent: on an unbounded tail "could not start" always
-// means "try again shortly". Backoff is exponential from LiveRetryWait, capped at
-// [maxLiveStartRetryWait], no jitter. Callers must gate on the range being unbounded.
+// Errors are not classified: on an unbounded tail "could not start" always means "try again
+// shortly". Backoff is exponential from LiveRetryWait, capped at [maxLiveStartRetryWait], no
+// jitter. Callers must gate on the range being unbounded.
 func retryLiveStart(
 	ctx context.Context,
 	cfg Config,

@@ -11,7 +11,7 @@ import (
 
 // ─── Topic-arity expectations ──────────────────────────────────
 //
-// Per pool/src/events.rs in blend-contracts-v2 (c19abee5b9be4f49e0cda9057e87d343e5dcc095):
+// Per pool/src/events.rs in blend-contracts-v2:
 //
 //	supply / withdraw / supply_collateral / withdraw_collateral /
 //	borrow / repay:                3 topics  [Symbol, asset, from]
@@ -631,17 +631,17 @@ func decodeDeploy(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 // ─── V1 pool-factory decoders ────────────────────────────────
 //
 // The V1 pool-factory (CCZD6ESM…) emits three topics absent from blend-contracts-v2's
-// pool/src/events.rs, verified against real lake bytes (see README.md "Known gap"):
+// pool/src/events.rs, verified against real lake bytes (README.md "Known gap"):
 //
 //	update_emissions:           1 topic  [Symbol]           body i128 (bare)
 //	new_liquidation_auction:    2 topics [Symbol, Address]   body Map{bid,lot,block}
 //	delete_liquidation_auction: 2 topics [Symbol, Address]   body ScvVoid
 //
 // update_emissions lands in blend_emissions (a pool-wide total, unlike V2's per-reserve
-// reserve_emission_update). The two liquidation-auction events land in blend_admin, NOT
+// reserve_emission_update). The liquidation-auction events land in blend_admin, NOT
 // blend_auctions: V1 has no auction_type topic and that column is NOT NULL, so inventing one would
 // put unverified provenance in a verified-data table. bid/lot/block ride in blend_admin's jsonb
-// attributes instead.
+// attributes.
 
 // decodeUpdateEmissions parses V1 `update_emissions`: topics [Symbol], body bare i128 (pool-wide emissions total).
 func decodeUpdateEmissions(e *events.Event, closedAt time.Time) (EmissionEvent, error) {
