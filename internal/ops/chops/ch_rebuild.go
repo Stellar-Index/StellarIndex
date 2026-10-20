@@ -732,7 +732,9 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 		sdexDec := sdex.NewDecoder()
 		sStart := time.Now()
 		decodeRange := func(rlo, rhi uint32) error {
-			return streamCHRebuildSDEX(ctx, *chAddr, sdexDec, rlo, rhi, &buf)
+			return eachTradesByAccountWindow(rlo, rhi, chRebuildSDEXWindow, func(wlo, whi uint32) error {
+				return streamCHRebuildSDEX(ctx, *chAddr, sdexDec, wlo, whi, &buf)
+			})
 		}
 		if *sdexGaps {
 			// Re-derive ONLY the served gaps in one pass: each gap is an empty ledger range, so the decode + write is a pure
@@ -764,12 +766,9 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 				tx string
 				op uint32
 			}
-			// 25k: the sdex reconcile joins OOM'd at 100k even under grace_hash — and a wedged-CH bad_alloc followed the same
-			// heavy sequence. Match compute_completeness's window.
-			const rwin = 25_000
 			var nShort int
-			for wlo := lo; wlo <= hi; wlo += rwin {
-				whi := wlo + rwin - 1
+			for wlo := lo; wlo <= hi; wlo += chRebuildSDEXWindow {
+				whi := wlo + chRebuildSDEXWindow - 1
 				if whi > hi {
 					whi = hi
 				}
@@ -1348,6 +1347,10 @@ func decodeCHRebuildEvents(srcs []reconSource, contractsOverride []string, buf *
 func chRebuildBuffers(cat, sep41Cat []reconSource, passes chRebuildPasses, enabled func(string) bool) bool {
 	return passes.sep41 || len(reDerivedSourcesInRun(cat, sep41Cat, passes, enabled)) > 0
 }
+
+// chRebuildSDEXWindow bounds each SDEX op read: the join ran out of memory at 100k ledgers even under grace_hash, and a
+// one-query 1M-ledger read hit the 10 GiB cap. Matches compute_completeness's window.
+const chRebuildSDEXWindow = 25_000
 
 // streamCHRebuildSDEX decodes the SDEX ops in [lo,hi] onto buf; SDEX Decode soft-fails per claim and never returns an error.
 func streamCHRebuildSDEX(ctx context.Context, chAddr string, dec *sdex.Decoder, lo, hi uint32, buf *[]consumer.Event) error {
