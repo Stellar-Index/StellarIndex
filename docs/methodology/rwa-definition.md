@@ -6,28 +6,23 @@ status: current
 
 # What counts as a tokenized real-world asset
 
-The page at `/rwa` and the endpoint at `GET /v1/rwa/assets` publish a
-set of Stellar assets described as representing real-world value, each
-with a valuation. This document is the definition of that set: what
-qualifies, what does not, and what the evidence behind each requirement
-actually proves.
+The page at `/rwa` and the endpoint `GET /v1/rwa/assets` publish a set of
+Stellar assets that represent real-world value, each with a valuation. This
+document defines that set and what the evidence behind each requirement
+proves.
 
-The definition is the whole product. A permissive rule does not make a
-longer dashboard — it makes a directory of impersonators with dollar
-figures attached.
+The definition is the whole product. A permissive rule makes a directory of
+impersonators with dollar figures attached.
 
 ## The problem the definition exists to solve
 
-Asset codes are not unique on Stellar. Any account can issue a token
-called `USTRY`, `BENJI` or `XAU`, and many do. Identity is therefore
-always the pair `(code, issuer)` — a code alone identifies nothing.
+Asset codes are not unique on Stellar. Any account can issue a token called
+`USTRY`, `BENJI` or `XAU`. Identity is always the pair `(code, issuer)`.
 
-SEP-1 gives an issuer a place to describe its own assets: a
-`stellar.toml` at the `home_domain` the issuer account sets on chain,
-with a `[[CURRENCIES]]` entry per asset carrying, among other fields, an
-`anchor_asset_type`. That field is the obvious basis for an RWA set, and
-on its own it is worthless. Measured on the production deployment
-2026-09-05:
+SEP-1 lets an issuer describe its own assets in a `stellar.toml` at the
+`home_domain` the issuer account sets on chain, with a `[[CURRENCIES]]` entry
+per asset carrying, among other fields, an `anchor_asset_type`. On its own that
+field is worthless. Measured on production 2026-09-05:
 
 | Reading | Count |
 | --- | --- |
@@ -37,20 +32,14 @@ on its own it is worthless. Measured on the production deployment
 | distinct issuers behind those | 130 |
 | **of those 130 issuers, tagged `malicious` by the curated directory** | **128** |
 
-The domains publishing them are the tell: `nasdaq.com.co`,
-`cboe.com.co`, `tase.com.co`, `spglobal.com.co`, `asx.com.co`,
-`six-group.com.co`, `euronext.co.com`, `jpx.co.com`,
-`berkshirehathaway.co`, `blackrock.co.com`. Each serves a valid,
-correctly-bound SEP-1 file declaring hundreds of `stock` tokens. The
-binding proves the file came from a domain the issuer controls; it
-proves nothing whatsoever about whether that domain is the exchange it
-is named after.
-
-The same holds for the instruments an RWA price oracle covers. `BENJI`
-exists under two different issuers, one of them directory-flagged.
-`USDY` exists under `ondo.finance` and under `blackrock.co.com`. `XAU`
-exists under `xau.cl` and under a dozen `swisscustody`-shaped lookalikes,
-`stellarmetals.gold`, `blakrock.claims` and `lobstr.cfd`.
+The publishing domains are lookalikes such as `nasdaq.com.co`,
+`spglobal.com.co` and `blackrock.co.com`. Each serves a valid, correctly-bound
+SEP-1 file declaring hundreds of `stock` tokens. The binding proves the file
+came from a domain the issuer controls, not that the domain is the exchange it
+is named after. The same holds for instruments an RWA price oracle covers:
+`BENJI` exists under two issuers (one directory-flagged), `USDY` under
+`ondo.finance` and `blackrock.co.com`, `XAU` under `xau.cl` and a dozen
+lookalikes.
 
 ## The definition
 
@@ -60,941 +49,609 @@ reports the first one a candidate failed.
 
 > **A candidate has to be in `issuers` before any of this is evaluated.**
 > The membership build's only input is `BoundSep1Currencies`, which reads
-> `issuers WHERE sep1_payload IS NOT NULL`, and until 2026-09-10 an
-> `issuers` row could only be created by the classic-asset registry
-> writer, which only ever ran on a TRADE. So an issuer whose assets are
-> HELD but never traded on the SDEX was not refused by R1–R4 — it was
-> never a candidate, and does not appear in the `refused` counts either.
-> Measured 2026-09-10: 512,496 classic assets have a trustline against
-> 199,793 registry rows, 61% absent, Franklin Templeton's BENJI among
-> them. The registry now has a holdings source
-> (`stellarindex-ops asset-registry-backfill`, migration 0158), so the
-> candidate pool is the held population rather than the traded one — but
-> the chain still runs `registry → issuer-enrich (home_domain) →
-> sep1-refresh (payload) → candidacy`, and a newly-registered issuer
-> enters the set only after those two jobs have reached it. A figure from
-> this endpoint that looks low against a public dashboard is worth
-> checking against that chain before it is read as a definition
-> disagreement: the $3.88M-against-$4.03B gap was diagnosed as one, and
-> was not.
+> `issuers WHERE sep1_payload IS NOT NULL`. An issuer whose assets are held
+> but never traded on the SDEX was never a candidate and does not appear in
+> the `refused` counts (measured 2026-09-10: 512,496 classic assets have a
+> trustline against 199,793 registry rows; Franklin Templeton's BENJI was
+> among the absent). The registry now has a holdings source
+> (`stellarindex-ops asset-registry-backfill`, migration 0158). The chain runs `registry → issuer-enrich
+> (home_domain) → sep1-refresh (payload) → candidacy`, and a new issuer enters
+> the set only after those two jobs reach it. Check that chain before reading
+> a low figure as a definition disagreement.
 
 ### R1 — Identity
 
-A classic Stellar asset with a code **and** an issuer G-address. The
-native asset is not an RWA.
+A classic Stellar asset with a code **and** an issuer G-address. The native
+asset is not an RWA.
 
-A contract-issued token qualifies through the **separate arm** below,
-under requirements C1–C4, on its contract address. The two arms never
-overlap: this one runs over SEP-1 attestations keyed by
-`(code, issuer)`, that one over curated directory entries keyed by
-contract address.
+A contract-issued token qualifies through the **separate arm** below, under
+requirements C1–C4, on its contract address. The arms never overlap: this one
+runs over SEP-1 attestations keyed by `(code, issuer)`, that one over curated
+directory entries keyed by contract address.
 
 ### R2 — Issuer-bound self-declaration
 
-The issuer account serves a SEP-1 `stellar.toml`, fetched over HTTPS
-from the `home_domain` that account set **on chain**, containing a
-`[[CURRENCIES]]` entry whose `code` matches the asset and whose declared
-`issuer` names the account that served the file.
+The issuer account serves a SEP-1 `stellar.toml`, fetched over HTTPS from the
+`home_domain` that account set **on chain**, containing a `[[CURRENCIES]]`
+entry whose `code` matches the asset and whose declared `issuer` names the
+account that served the file.
 
-The comparison is on the **account**, not on the bytes the toml carried:
-surrounding whitespace and the case an issuer typed its own key in do
-not change which account it is, and a strkey is base32, so two spellings
-differing only in case decode to the same 32 bytes. That is a
-canonicalisation and not a relaxation — a value that is not shaped like
-a G-account strkey binds to nothing, and the entry is always carried
-under the canonical spelling rather than the toml's. A declaration with
-no `issuer` field at all is refused: the file was fetched from a domain
-the account *chose*, and many accounts can choose the same domain, so an
-unbound entry would let any of them inherit the claim.
+The comparison is on the **account**, not the toml's bytes: surrounding
+whitespace and key case do not change which account it is, and the entry is
+carried under the canonical spelling. A value not shaped like a G-account
+strkey binds to nothing. A declaration with no `issuer` field is refused: many
+accounts can choose the same domain, so an unbound entry would let any of them
+inherit the claim. The SEP-1 logo overlay enforces the same rule.
 
-This is the same provenance rule the SEP-1 logo overlay enforces, added
-after a token was able to take over another issuer's served logo by
-naming that issuer in its own toml. A toml describes only the account
-that served it.
-
-What R2 proves: the claim came from a domain the issuer controls, bound
-to this exact strkey. Nothing more. That is a low bar, which is what R3
-is for.
+R2 proves the claim came from a domain the issuer controls, bound to this
+exact strkey. Nothing more. That is a low bar, which is what R3 is for.
 
 ### R3 — Independent recognition
 
-The issuer G-address is named in the curated third-party account
-directory (`account_directory`, migration 0136, synced from the
-MIT-licensed stellar-expert public directory) with at least one
-**recognition tag** — `issuer`, `anchor`, `custodian`, `exchange`,
-`defi`, `sdf` — and **no** scam-class tag.
+The issuer G-address is named in the curated third-party account directory
+(`account_directory`, migration 0136, synced from the MIT-licensed
+stellar-expert public directory) with at least one **recognition tag** —
+`issuer`, `anchor`, `custodian`, `exchange`, `defi`, `sdf` — and **no**
+scam-class tag.
 
-The scam-class vocabulary is not restated for this surface. It is read
-from `timescale.DirectoryScamFlagTags`, the single list the
-price-withholding gate and the `/v1/assets` rank expression also read, so
-an issuer whose price the platform withholds can never be admitted here.
+The scam-class vocabulary is `timescale.DirectoryScamFlagTags`, the single
+list the price-withholding gate and the `/v1/assets` rank expression also
+read. An issuer whose price is withheld can never be admitted here.
 
-The recognition set is deliberately narrower than "has any tag":
-`personal`, `wallet`, `memo-required`, `airdrop`, `application` and
-`infra` describe an account without vouching for it as the issuer of a
-real-world instrument.
+The recognition set is narrower than "has any tag": `personal`, `wallet`,
+`memo-required`, `airdrop`, `application` and `infra` do not vouch for an
+account as the issuer of a real-world instrument.
 
-R3 is the requirement that a party **other than the issuer** vouched for
-that specific account. It is why the lookalike-exchange population is
-absent rather than merely ranked low, and it is the requirement that
-fails **closed**: if the directory cannot be read, no set is published.
-Every other read on this surface degrades open, because every other read
-only omits detail.
+R3 requires that a party **other than the issuer** vouched for that specific
+account, which is why the lookalike-exchange population is absent rather than
+ranked low. It fails **closed**: if the directory cannot be read, no set is
+published. Every other read on this surface degrades open.
 
 #### The sibling route, and the assumption it rests on
 
-An issuer account the directory has **not** listed is also recognised
-when the directory lists another account — with a recognition tag and
-no scam flag — that the **same** issuer-bound SEP-1 binds on the same
-home domain. The row says so: `recognition` reads
-`curated_account_directory_via_domain_sibling` instead of
-`curated_account_directory`. The reasoning is that the recognised entity
-named this account itself, from a domain it controls; the stated
-weakness is that the directory never looked at this account. A scam flag
-on the account itself still refuses it, and the route supplies no
-instrument claim — R4 still has to admit the asset on its own
-declaration. The case it exists for is Franklin Templeton's Luxembourg
-and Singapore share classes (gBENJI, grBENJI, sgBENJI), ISIN-declared in
+An issuer account the directory has **not** listed is also recognised when the
+directory lists another account, with a recognition tag and no scam flag, that
+the **same** issuer-bound SEP-1 binds on the same home domain. The row reads
+`recognition` = `curated_account_directory_via_domain_sibling`. A scam flag on the account itself still refuses
+it, and the route supplies no instrument claim: R4 must still admit the asset
+on its own declaration. It exists for Franklin Templeton's Luxembourg and
+Singapore share classes (gBENJI, grBENJI, sgBENJI), ISIN-declared in
 franklintempleton.com's SEP-1 beside the directory-listed BENJI issuer.
 
-The route **assumes one entity per domain**: that every account with
-home domain X that X's `stellar.toml` binds belongs to the entity that
-owns X. That holds for a fund manager publishing its own share classes.
-It does not hold for a hosting domain — an anchor or toml-hosting
-service whose file lists assets from several tenants who each set
-`home_domain` to it. There, one directory-recognised tenant would
-recognise every other tenant the host publishes, and the host rather
-than the directory would decide who passes R3; the R4 gates are the
-tenant's own declarations in that same file, so nothing independent
-would stand in the way. No such domain has a recognised tenant in the
-directory today, which is why the assumption is stated rather than
-enforced. The day the set grows through a shared domain, this is the
-paragraph that says why.
+The route **assumes one entity per domain**. That holds for a fund manager
+publishing its own share classes, not for a hosting domain whose file lists
+several tenants: one recognised tenant would recognise all the others, and the
+host rather than the directory would decide who passes R3. No such domain has a
+recognised tenant today, so the assumption is stated rather than enforced.
 
 ### R4 — Real-world instrument
 
-The asset is a real-world instrument rather than one of the issuer's
-other tokens, by one of four bases. The basis is served on every row so
-a consumer can filter to the strength of evidence it needs. The arms are
-tried in the order below and the first to admit decides: a declared
-class yields the most informative row, so it wins over an oracle feed,
-which wins over an ISIN.
+The asset is a real-world instrument rather than one of the issuer's other
+tokens, by one of four bases. The basis is served on every row. The arms are
+tried in the order below and the first to admit decides: a declared class
+wins over an oracle feed, which wins over an ISIN.
 
-**`sep1_anchor_declaration`** — the R2 entry declares an
-`anchor_asset_type` in the closed vocabulary `stock`, `bond`,
-`commodity`, `realestate`.
+**`sep1_anchor_declaration`** — the R2 entry declares an `anchor_asset_type`
+in the closed vocabulary `stock`, `bond`, `commodity`, `realestate`.
 
-That vocabulary is SEP-1's own enumeration minus the terms that name no
-real-world instrument. `anchor_asset_type` is free text on the wire —
-the production set holds `equity`, `etf`, `metal`, `rwa`, `real_estate`,
-`sovereign` and dozens of other invented spellings — and folding
+That is SEP-1's own enumeration minus the terms that name no real-world
+instrument. The field is free text on the wire (`equity`, `etf`, `metal`,
+`rwa`, `real_estate`, `sovereign` and dozens more appear), and folding
 synonyms in is how a closed set stops being closed. Three exclusions are
 deliberate:
 
-- **`fiat`** — a fiat-anchored token is a stablecoin. Different
-  instrument, different risk story, its own surface. Folding it in would
-  silently multiply the headline figure.
+- **`fiat`** — a fiat-anchored token is a stablecoin, a different instrument
+  and surface. Folding it in would silently multiply the headline figure.
 - **`crypto`** and **`nft`** — neither is a real-world asset.
 - **`other`** — it classifies nothing, and 6,309 bound entries carry it.
 
-**`oracle_rwa_feed`** — the asset's code is an ADR-0028 allow-listed RWA
-code, meaning an independent price oracle publishes a net-asset-value
-feed for an instrument of that name. This admits the real issuers that
-publish a bound `[[CURRENCIES]]` entry without filling in
-`anchor_asset_type`, which several do.
+**`oracle_rwa_feed`** — the asset's code is an ADR-0028 allow-listed RWA code,
+meaning an independent price oracle publishes a net-asset-value feed for an
+instrument of that name. This admits real issuers that publish a bound entry
+without filling in `anchor_asset_type`.
 
-This arm matches on the **code**, which is exactly the identity the rest
-of the definition refuses — so it is admissible only **after** R3 has
-bound the issuer to a recognised, unflagged account. It is never
-load-bearing on its own. A row admitted this way carries **no**
-`anchor_class`: an oracle feed names an instrument, not its class, and
-inventing one would publish a classification nothing declared.
+This arm matches on the **code**, the identity the rest of the definition
+refuses, so it is admissible only **after** R3 has bound the issuer to a
+recognised, unflagged account. A row admitted this way carries **no**
+`anchor_class`: an oracle feed names an instrument, not its class.
 
-**`sep1_isin_declaration`** — the R2 entry's `anchor_asset` is a
-well-formed ISIN: twelve characters, a two-letter prefix, an
-alphanumeric body and a final check digit that is a Luhn sum over the
-rest. Form is all that is validated and form is all that is claimed. A
-typo fails the check; an invention fails it nine times in ten.
+**`sep1_isin_declaration`** — the R2 entry's `anchor_asset` is a well-formed
+ISIN: twelve characters, a two-letter prefix, an alphanumeric body and a final
+Luhn check digit. Form is all that is validated and all that is claimed.
 
-Why an ISIN counts as evidence at all: `anchor_asset_type` is a string
-the issuer picks from a vocabulary it is free to ignore, whereas an ISIN
-is assigned by a national numbering agency to a registered security and
-is externally resolvable. As evidence that a real-world instrument
-stands behind a token it is at least as strong as a self-chosen class
-string. What it is **not** is evidence that *this* issuer is entitled
-to that ISIN. Nothing here checks that and nothing needs to: R2 has
-already required the declaration to come from the issuer's own on-chain
-domain and to name its own account, and R3 has required an independent
-party to recognise that account and not flag it. An impersonator
-reaches this arm only after defeating both, and a test holds that the
-arm cannot be lifted above them.
+An ISIN is assigned by a national numbering agency to a registered security
+and is externally resolvable, so it is at least as strong as a self-chosen
+class string. It is **not** evidence that *this* issuer is entitled to that
+ISIN. Nothing checks that, and nothing needs to: an impersonator reaches this
+arm only after defeating R2 and R3, and a test holds that the arm cannot be
+lifted above them.
 
-Like the oracle arm it admits **without** a class, for the same reason:
-an ISIN names an instrument, not a category. The arm runs last because
-it is the weakest of the three in what it *tells* us — an instrument
-and no class — while being the strongest in identity; it carries only
-the issuer's own declaration, checked for form. The case it exists for
-is Franklin Templeton's Luxembourg and Singapore share classes (gBENJI,
-grBENJI, sgBENJI), which declare `anchor_asset_type: other` beside
-ISINs LU2900381208, LU3258450587 and SGXZ71843866 — refused as
-`no_real_world_instrument_basis` while naming registered securities
-until this arm existed. Prose anchors such as `FOBXX`, `AU` or
-`US Treasury Notes` stay refused. Measured against the live SEP-1 corpus
-when it shipped, the arm admitted exactly those three assets.
+It admits **without** a class. It exists for Franklin Templeton's
+share classes (gBENJI, grBENJI, sgBENJI), which declare
+`anchor_asset_type: other` beside ISINs LU2900381208, LU3258450587 and
+SGXZ71843866. Prose anchors such as `FOBXX`, `AU` or `US Treasury Notes` stay
+refused. The arm admitted exactly those three assets.
 
 **`sep1_isin_vetted`** — the same evidence, transcribed by hand. Some
-issuer-bound entries name their ISIN only in `desc`, which the served
-tier does not keep, and declare neither `anchor_asset_type` nor
-`anchor_asset`; Bitbond's BB1 (ISIN DE000A2TR7Q2, a EUR bond) is the
-case. A maintainer reads the issuer's own SEP-1 and binds the ISIN to
-exactly that `(code, issuer)` in `rwa.VettedISINBindings`, with the page
-it was read from and the date, and the row serves all of it as
-`vetted_isin` with a review date one quarter out; past that date the
-row carries `review_due: true`, labelled and still served. The arm is tried last,
-so an issuer that later declares `anchor_asset` wins on its own
-declaration; it admits without a class; it keys on the exact pair, so
-the same code under any other issuer gets nothing from it; and R2 and
-R3 stand in front of it as they do for every arm. It is membership
-only: a vetted ISIN never prices anything.
+issuer-bound entries name their ISIN only in `desc`, which the served tier
+does not keep, and declare neither `anchor_asset_type` nor `anchor_asset`;
+Bitbond's BB1 (ISIN DE000A2TR7Q2, a EUR bond) is the case. A maintainer reads
+the issuer's own SEP-1 and binds the ISIN to exactly that `(code, issuer)` in
+`rwa.VettedISINBindings`, with the page it was read from and the date. The row
+serves all of it as `vetted_isin` with a review date one quarter out; past that
+date it carries `review_due: true`, labelled and still served. The arm is
+tried last, so an issuer that later declares `anchor_asset` wins on its own
+declaration. It admits without a class, keys on the exact pair, and sits
+behind R2 and R3 like every arm. It is membership only: a vetted ISIN never
+prices anything.
 
-R4 does not care *how* R3 was satisfied. The
-[sibling route](#the-sibling-route-and-the-assumption-it-rests-on)
-supplies recognition and nothing else — no instrument claim comes with
-it — so a sibling-recognised issuer still has to pass one of these
-four arms on its own declaration, and the one-entity-per-domain
-assumption that route rests on is stated there, not here. That is also
-why every R4 arm is a *self-declared* value: the gates are safe to read
-only because R2 and R3 already stand in front of them.
+A sibling-recognised issuer (see the
+[sibling route](#the-sibling-route-and-the-assumption-it-rests-on)) still has
+to pass one of these four arms on its own declaration. Every R4 arm is a
+*self-declared* value, safe only because R2 and R3 stand in front of it.
 
 #### The pre-filter contract
 
-The classic arm's scan does not put every bound `[[CURRENCIES]]` entry
-through R1–R4. Tens of thousands of bound entries declare an NFT, a
-crypto token or nothing at all, and materialising them would be the
-scan's whole cost. So a pre-filter, `rwa.CouldQualify`, drops the
-entries that could not satisfy R4 under any issuer before the full
-evaluation runs; the funnel counts what it dropped, and
+A pre-filter, `rwa.CouldQualify`, drops bound entries that could not satisfy
+R4 under any issuer (tens of thousands declare an NFT, a crypto token or
+nothing) before the full evaluation. The funnel counts what it dropped, and
 `candidate_assets_evaluated` is what got through.
 
-That pre-filter is under a contract. It reads **every** asset-side
-input an R4 arm reads — the declared class, the code and the declared
-anchor asset — and answers true when *any* arm would, independent of
-the issuer. It is a pre-filter and never a decision: R2 and R3 still
-have to hold and the full evaluation still runs on everything it
-passes. A pre-filter narrower than the rule it precedes is a silent
-membership change, and that is not hypothetical: the ISIN arm went
-unreached for two days after it shipped, because the three Franklin
-share classes declare type `other` beside their ISINs and the filter
-read only the type — the entries were counted as filtered before the
-arm ever saw them. A test pins the pre-filter to the arms over all
-three inputs, so adding an arm without widening the filter fails the
-suite rather than the set.
+The pre-filter reads **every** asset-side input an R4 arm reads (the declared
+class, the code and the declared anchor asset) and answers true when *any* arm
+would, independent of the issuer. It is never a decision: R2 and R3 still have
+to hold. A pre-filter narrower than the rule it precedes is a silent
+membership change, so a test pins it to the arms over all three inputs.
 
 ## The contract arm
 
-Everything above describes an asset with an issuer account. The entities
-that actually hold real-world assets on Stellar mostly do not have one.
+Everything above describes an asset with an issuer account. The entities that
+hold real-world assets on Stellar mostly do not have one.
 
-Measured 2026-09-10, of the sixteen entities the public Stellar RWA
-dashboard attributes $4.03B to, the ones we could check issue **nothing**
-in `classic_assets`: Franklin Templeton (both G-addresses), Spiko,
-Mercado Bitcoin, Cometum and fourteen of WisdomTree's eighteen addresses
-all return zero rows. Their Stellar presence is contract-issued.
+Measured 2026-09-10, of the sixteen entities the public Stellar RWA dashboard
+attributes $4.03B to, the ones we could check (Franklin Templeton, Spiko,
+Mercado Bitcoin, Cometum and fourteen of WisdomTree's eighteen addresses)
+issue **nothing** in `classic_assets`. Their Stellar presence is
+contract-issued.
 
-The exclusion ran deeper than R1. The `issuers` table is written only by
-the classic-asset registry — `registerIssuerSeen` when a trade registers
-an asset, and `insertIssuersBatch` when the holdings backfill (migration
-0158, see the note under [The definition](#the-definition)) registers one that is held but
-never traded. Both key on a classic asset's issuer, so an entity issuing
-only contract tokens never gets a row, never gets a SEP-1 fetch, and
-never becomes a candidate. It was not
-refused by R1 so much as never collected. Widening that table is not the
-fix either: its key is a G-account, a contract address is not one, and a
+The `issuers` table is written only by the classic-asset registry, keyed on a
+classic asset's issuer, so an entity issuing only contract tokens never becomes
+a candidate. Widening that table is not the fix: its key is a G-account, and a
 SEP-1 fetch for a bare contract has nothing to bind to.
 
-So the contract arm draws its population from `account_directory`, the
-only table we hold that ties a real-world entity to a Stellar address
-without passing through classic issuance. Its `CHECK` has always
-accepted both strkey forms.
-
-That population is now the **union** of two sets: the contract addresses
-the curated directory recognises, and every address the in-repo curated
-binding set names. The second half exists because drawing candidates
-only from the directory reproduced the same silent-discard one level
-down — an address the directory had never heard of was not refused by
-any requirement, it was never enumerated, and its absence appeared in no
-tally. Enumerating a binding is **not** admitting one: each still has to
-satisfy [C2](#c2--independent-naming-of-that-exact-address), and what
-enumeration buys is that the ones that cannot are now reported under a
-reason.
+So the contract arm draws its population from `account_directory`, the only
+table that ties a real-world entity to a Stellar address without classic
+issuance. Its `CHECK` accepts both strkey forms. The population is the **union** of the contract addresses the curated directory
+recognises and every address the in-repo curated binding set names, so no
+address is dropped without a tally. Enumerating a binding is **not**
+admitting one: each still has to satisfy
+[C2](#c2--independent-naming-of-that-exact-address), and the ones that cannot
+are reported under a reason.
 
 ### C1 — Identity
 
-A contract address, CRC-checked. It is the whole identity — never a
-symbol, never a name. Two contracts declaring `BENJI` are two different
-assets, exactly as two issuers of a classic `BENJI` are.
+A contract address, CRC-checked. It is the whole identity, never a symbol or a
+name. Two contracts declaring `BENJI` are two different assets.
 
 ### C2 — Independent naming of that exact address
 
-An independent party names **that exact contract address**. Not the
-entity. Not a domain. Not a G-account that might have deployed it. The
-address whose supply this surface is about to multiply by a price.
+An independent party names **that exact contract address**. Not the entity,
+not a domain, not a G-account that might have deployed it.
 
-This is what replaces R2, and it is **not** a relaxation — because of
-what R2 was actually worth.
+This replaces R2, and it is **not** a relaxation. R2 costs one domain
+registration: **19 distinct issuers publish a token called `BENJI` in this lake
+and every one is an impersonator** (for example `franklintempleton.co.com` and
+`stellar.dtcc.network`), each with a valid, correctly-bound `stellar.toml`. R2
+admitted all of them; R3 kept them out, and R3 carries this arm.
 
-R2 proves a claim came from a domain the issuer controls, and the cost
-of satisfying it is one domain registration. Measured, **19 distinct
-issuers publish a token called `BENJI` in this lake and every one is an
-impersonator**: `franklintempleton.co.com`,
-`franklintempleton.hqlumens.com`, `benji.qlumen.co`,
-`stellar.dtcc.network`, `treasury.dtcc.company`. Each serves a valid,
-correctly-bound `stellar.toml`. Not one is `franklintempleton.com`. R2
-admitted all of them. R3 is what kept them out, and R3 is what carries
-this arm.
-
-**What an attacker would have to control.** To get a fake contract
-admitted, an attacker needs a curated directory entry naming their own
-C-address with an issuing-class tag and no scam tag — that is, landing a
-reviewed change in a third party's published set under the name of the
-entity being impersonated.
-
-The classic equivalent for R2 is registering a lookalike domain and
-serving a file: no review, no third party, roughly the price of a
-domain, done 19 times over for one ticker. And R3 on the classic arm
-vouches for an **account** — one recognition covers every token that
-account will ever issue, including ones issued afterwards. The contract
-arm has no such carry-over: recognition is per address, and a contract
-address is one token.
-
-The contract arm is therefore **strictly harder to defeat** than the
-classic one. What it gives up is the issuer's own voice, and the
-issuer's own voice is the part an impersonator supplies for ten dollars.
+**What an attacker would have to control.** A fake contract needs a curated
+directory entry naming the attacker's C-address with an issuing-class tag and
+no scam tag: a reviewed change in a third party's published set, under the
+name of the entity being impersonated. The classic equivalent is a lookalike
+domain with no review. Classic R3 vouches for an **account**, covering every
+token it ever issues; contract recognition is per address. The contract arm is **strictly harder to defeat**.
+It gives up only the issuer's own voice, which an impersonator supplies for
+ten dollars.
 
 #### Two ways to satisfy it, and why they are not the same shape
 
-The curated account directory is not the only independent party that
-names Stellar contract addresses, and requiring it to be the only one
-cost this surface a real and defensible set.
-
-Measured 2026-09-15: the curated directory names **387** contract
-addresses. A public listing platform's per-asset platform-to-address map
-names **17** on Stellar. **Four** are in both. Thirteen are named by the
-listing and by nobody in the directory — and among those are the
-tokenized Treasury funds this repository already holds verified
-[curated bindings](#c4--real-world-instrument) for, which therefore
-shipped dormant with no route to recognition at all.
+Measured 2026-09-15: the curated directory names **387** contract addresses. A
+public listing platform's platform-to-address map names **17** on Stellar.
+**Four** are in both. Thirteen are named by the listing and by nobody in the
+directory, among them tokenized Treasury funds for which this repository holds
+verified [curated bindings](#c4--real-world-instrument).
 
 So C2 is satisfiable two ways:
 
-1. **The curated account directory names the address**, with an
-   issuing-class tag. Unchanged, and it still admits **on its own**.
-2. **An independent listing directory names the address _and_ an
-   in-repo curated binding names the same address.** Requires **two**
-   sources that do not read each other, and admits on **neither** alone.
+1. **The curated account directory names the address**, with an issuing-class
+   tag. This admits **on its own**.
+2. **An independent listing directory names the address _and_ an in-repo
+   curated binding names the same address.** This requires **two** sources
+   that do not read each other, and admits on **neither** alone.
 
-The asymmetry is deliberate, and it is about what each source *is*.
+The curated directory is an
+**adversarial identity system**: Stellar-specific, address-level, review-gated,
+and carrying the scam vocabulary. Being named in it **attests**. A listing map
+is a **convenience built for price aggregation**, with no flags and no review
+of Stellar addresses. Being named in it asserts that a market exists. It
+**corroborates**, and may not carry an attesting source's authority. It can
+*agree*: two parties that do not read each other arriving at the same
+56-character address for the same instrument is what C2 asks for. The in-repo
+binding answers C4 (*which* instrument) and never C2 (*who else says so*),
+because this index vouching for itself is not independence. It is the
+**second** source in arm 2 and never the first.
 
-The curated directory is an **adversarial identity system**:
-Stellar-specific, address-level, review-gated, and carrying the scam
-vocabulary whose entire purpose is to say that an address is lying about
-who it is. Being named in it is an assertion about identity that
-somebody reviewed. It **attests**.
-
-A listing map is a **convenience built for price aggregation**. It
-exists so a price page can show which chains an asset trades on. It
-carries no flags and runs no adversarial review of Stellar addresses,
-and would not claim to. Being named in it is an assertion that a market
-exists, from which an identity can be inferred but was never the point.
-It **corroborates**.
-
-A corroborating source may not carry an attesting source's authority, so
-it is not given one. What it can do is *agree* — and two parties that do
-not read each other, arriving independently at the same 56-character
-address for the same instrument, is what C2 asks for. The in-repo
-binding answers C4 (*which* instrument) and is never allowed to answer
-C2 (*who else says so*), because this index vouching for itself is not
-independence at any number of sources. It is the **second** source in
-arm 2 and never the first.
-
-Two consequences follow, and both are published rather than implied:
+Two consequences are published:
 
 - An address the listing names that **no** curated binding names is
-  **refused** — `contract_listed_without_curated_binding`. That is most
-  of the map: it carries stablecoin contracts, wrapped bitcoin and the
-  native asset's own Stellar Asset Contract, every one of them named by
-  an independent party and none of them admitted. The refused set is
-  counted on the funnel as
-  `listing_contracts_without_curated_binding`, which is what makes "a
-  listing admits nothing alone" auditable rather than merely asserted.
-- A curated binding **no** independent party names is refused —
+  **refused** as `contract_listed_without_curated_binding`. That is most of
+  the map: stablecoins, wrapped bitcoin and the native asset's own Stellar
+  Asset Contract. The refused set is counted on the funnel as
+  `listing_contracts_without_curated_binding`, so "a listing admits nothing
+  alone" is auditable.
+- A curated binding **no** independent party names is refused as
   `contract_curated_binding_without_independent_listing`. Its address is
-  verified, its instrument named, its class known and its supply in the
-  lake; the only thing missing is somebody other than this repository
-  saying the address is what this repository says it is.
+  verified and its instrument named; what is missing is somebody other than
+  this repository saying so.
 
 #### Why the listing map is not the curated directory re-published
 
-[C4 below](#c4--real-world-instrument) refuses to treat a block explorer
-as independent, on the grounds that explorers read the same curated
-directories we do, so counting one would double-count a single claim.
-That objection has to be put to the listing map before the map can be
-used, and it does not survive contact with the numbers.
-
-- **The sets disagree in both directions.** A derived set is a subset of
-  its source, possibly filtered, never a superset. The listing names 13
-  contract addresses the directory does not name at all, so it cannot be
-  derived *from* the directory; the directory names 383 the listing does
-  not, so it is not derived from the listing either. Four in common out
-  of 400 distinct — a **1% overlap** — is not two views of one claim.
-- **They disagree about what an address *is*,** not merely about which
-  to carry. `CBI7UCH5…` is in both: the directory tags it `defi`, which
-  this arm's vocabulary reads as infrastructure that issues nothing,
-  while the listing carries it as an asset with a price. A mirror does
-  not contradict its original.
-- **The keys are different.** The directory is keyed by Stellar address
-  and holds only Stellar. The listing is keyed by a chain-independent
-  asset id and holds the same instrument's addresses on every chain it
-  trades on; the Stellar entry is one field of a row whose subject is
-  the instrument. A derivation would have had to invent the id.
-- **The fields are different.** The directory carries the scam
-  vocabulary; the listing carries none. Neither column could be produced
-  from the other.
-
-The block-explorer objection stands for explorers and does not reach
-this map. Both conclusions rest on the same test — does this source
-re-publish the curated directory's claims, or make its own?
+Explorers read the same curated directories we do, so they are not
+independent. The listing map is: it names 13 contract addresses
+the directory does not, and the directory names 383 the listing does not (four
+in common out of 400, a **1% overlap**). They disagree about what an address
+*is* (`CBI7UCH5…` is tagged `defi` in the directory and carried as a priced
+asset in the listing), and they have different keys and fields, so neither
+could be produced from the other.
 
 #### Failing closed
 
-The listing is read from a cache filled by an hourly sync, never
-per-request. If that read does not answer, or its most recent answer is
-older than the 48-hour recognition bound, **arm 2 stops admitting**. It
-does not carry a recognition forward from a snapshot nobody
-re-established: serving a slightly old *price* is a labelled
-approximation, while serving an old *recognition* admits an asset on the
-strength of a fact nobody checked.
+The listing is read from a cache filled by an hourly sync. If that read does
+not answer, or its most recent answer is older than the 48-hour recognition
+bound, **arm 2 stops admitting**: an old *recognition* admits an asset on a
+fact nobody checked.
 
-The set therefore **shrinks**, and the funnel says so — every affected
-binding is dropped under `independent_listing_unavailable`, reported
-apart from the finding that nobody names it, because a read that did not
-answer has not earned a finding. A deployment with no listing reader at
-all is different again: the arm reports itself **not measured** and
-makes no refusals, since nobody looked.
+The set **shrinks**, and every affected binding is dropped under
+`independent_listing_unavailable`, apart from the finding that nobody names it.
+A deployment with no listing reader at all reports the arm as **not measured**
+and makes no refusals. A binding whose curated tags could not be read has not
+had C3 evaluated, and closes under `curated_tag_lookup_unavailable`, never
+under the listing's name: the two reads are unrelated systems.
 
-Arm 2 rests on **two** sources, and each names itself when it fails. The
-listing directory supplies the recognition above; the curated account
-directory supplies the tags C3 reads, and a binding whose tags could not
-be read has not had C3 evaluated either. That closes the arm under
-`curated_tag_lookup_unavailable`, never under the listing's name — the
-two reads are unrelated systems, and the curated directory can be
-unreadable while the listing directory sits there perfectly fresh. A
-refusal reason is an instruction about where to go and look, so one
-reason for both would send an operator to a working sync.
-
-`funnel.listing_directory` publishes the evidence behind whichever
-verdict the arm reached: what the listing directory held, and when this
-index read it. `entries` counts fresh rows only, with `stale` counting
-the rows past the recognition bound beside them — so zero entries with
-zero stale is a directory nobody has ever synced, and zero entries with
-stale rows is a sync that died. `observed_at` is the read's own instant,
-and it is what separates a closed arm from a stopped sync: a listing
-sync that completed *after* it means the set in hand simply predates the
-rows, nothing is broken, and the next rebuild carries them. The counts
-can be re-derived from the table at any time; that instant cannot.
+`funnel.listing_directory` publishes what the listing directory held and when
+this index read it. `entries` counts fresh rows only, and `stale` counts rows
+past the recognition bound: zero of both is a directory nobody has synced, zero
+entries with stale rows is a sync that died. A sync that completed *after*
+`observed_at` means the set in hand predates the rows; nothing is broken.
 
 ### C3 — Recognition, not flagged
 
-The entry carries at least one tag from a vocabulary deliberately
-narrower than the account one: `issuer`, `anchor`, `custodian` — and
-**not** `defi`, `exchange` or `sdf`.
+The entry carries at least one tag from a vocabulary narrower than the account
+one: `issuer`, `anchor`, `custodian`, and **not** `defi`, `exchange` or `sdf`.
+On a contract address those three describe infrastructure that issues nothing:
+the curated set carries the Aquarius AMM pool contracts under them.
 
-On an account those three describe an entity that might issue a
-real-world instrument. On a contract address they describe
-infrastructure that issues nothing: the curated set carries the Aquarius
-AMM pool contracts under exactly those tags, and admitting them would
-put liquidity-pool shares on a page asserting real-world backing.
-
-The scam vocabulary is the same single list every other consumer reads,
-and a scam tag beats every recognition tag on the same address — **on
-both C2 arms**. The check is applied before either arm is consulted, not
-inside the directory one. Left there it would have protected exactly the
-population that did not need it: the listing map carries no flags, so an
-address the curated directory named *only* to flag as malicious could
-have walked in through arm 2. An address admitted on a listing still has
-its curated tags read, and a lookup that cannot answer closes the arm
-rather than assuming the address is unflagged.
+The scam vocabulary is the same single list every other consumer reads, and a
+scam tag beats every recognition tag on the same address, **on both C2 arms**.
+It is applied before either arm is consulted, because the listing map carries
+no flags and an address the curated directory named *only* to flag as malicious
+could otherwise walk in through arm 2. A lookup that cannot answer closes the
+arm rather than assuming the address is unflagged.
 
 ### C4 — Real-world instrument
 
-A directory entry says who an address belongs to. It does not say the
-token is a real-world asset — the curated set names stablecoin
-contracts, pool shares and protocol infrastructure under the same tags,
-and admitting every recognised contract would publish USDC as a
+A directory entry says who an address belongs to, not that the token is a
+real-world asset: admitting every recognised contract would publish USDC as a
 tokenized real-world asset. So C4 keeps R4's job, by one of two bases:
 
-**`curated_contract_instrument`** — an in-repo curated entry binds this
-exact contract address to a named instrument and its class. The
-[ADR-0040](../adr/0040-completing-contract-gating.md) curated-set
-mechanism, the same one the oracle bindings use.
+**`curated_contract_instrument`** — an in-repo curated entry binds this exact
+contract address to a named instrument and its class. This is the
+[ADR-0040](../adr/0040-completing-contract-gating.md) curated-set mechanism,
+the one the oracle bindings use. Addresses must come from a primary source, never a dashboard.
 
-Populating it needs contract addresses from a primary source; an address
-inferred from a dashboard is a fabricated identity for a financial
-instrument. It shipped **empty** until the first such source was in
-hand, which was correct for a set with no verified members.
+The set holds twelve bindings from three issuers, in three classes, each bound
+to its exact mainnet contract address. Nine are Spiko funds. Five are
+tokenized T-Bill money-market funds (EUTBL, USTBL, UKTBL and the two EUR share
+classes), classed `bond`. Four are the share classes of a tokenized overnight
+swap fund (eurSAFO, SAFO, gbpSAFO, chfSAFO), classed `fund`. The tenth is
+Matrixdock Gold (XAUm), one token per troy ounce of vaulted gold, classed
+`commodity`. The last two are Centrifuge's deRWA tokens deJTRSY and deJAAA,
+wrappers of the Janus Henderson Anemoy Treasury and AAA CLO funds, both
+classed `bond`.
 
-It now holds twelve bindings from three issuers, in three classes. Nine
-are Spiko funds. Five are tokenized T-Bill money-market funds — EUTBL,
-USTBL, UKTBL and the two EUR share classes — classed `bond`. Four are the
-share classes of a tokenized overnight swap fund — eurSAFO, SAFO,
-gbpSAFO, chfSAFO — classed `fund`. The tenth is Matrixdock Gold (XAUm),
-one token per troy ounce of vaulted gold, classed `commodity`. The last
-two are Centrifuge's deRWA tokens deJTRSY and deJAAA, wrappers of the
-Janus Henderson Anemoy Treasury and AAA CLO funds, both classed `bond`.
-All twelve are bound to their exact mainnet contract addresses.
-
-The Spiko addresses come from the issuer's own deployment manifest,
-reached only through `spiko.io`:
-the firm's own engineering subdomain publishes its Soroban source, that
-repository names one mainnet address per token, and a companion file
-names the fund each address carries. The ledger corroborates but does
-not source them — every contract's `name()`, `symbol()` and `decimals()`
-byte-match the manifest, which is the one question contract metadata is
-allowed to answer (*which* instrument, never *whether*). An impersonator
-cannot reproduce this: the chain is rooted at a domain the curator
-picked, and the five accounts already issuing classic assets coded
-`EUTBL`/`USTBL` from lookalike domains cannot publish at `spiko.io`.
-
-The XAUm address comes from the issuer's own product page at
-`matrixdock.com`, which names this exact contract as its Stellar
-deployment. Its deployed code is additionally source-verified — the
-on-chain WASM hash reproduces from the issuer's published contract
-repository — which says more than a metadata match does: the code
-executing at the address is built from published source.
-
-The deJTRSY and deJAAA addresses come from the issuer's own SEP-1 file
-at `centrifuge.io`, whose `[[CURRENCIES]]` entries name each exact
-contract. The underlying JTRSY and JAAA contracts the same file names
-are not bound: the deRWA tokens wrap the same funds, and binding both
-before measuring what backs the wrapper risks counting one holding
-twice.
+Every address comes from a primary source: Spiko's own deployment manifest at
+`spiko.io` (each contract's `name()`, `symbol()` and `decimals()` byte-match it;
+metadata may answer *which* instrument, never *whether*), Matrixdock's product
+page at `matrixdock.com` (the on-chain WASM hash reproduces from its published
+repository), and Centrifuge's SEP-1 file at `centrifuge.io`. The underlying
+JTRSY and JAAA contracts that file also names are not bound, because binding
+both risks counting one holding twice.
 
 #### The class follows the instrument, not the issuer
 
-The two Spiko families share an issuer and are not the same instrument,
-and the class says so.
-
-The T-Bill funds are invested in short-dated sovereign debt, which is
-what makes `bond` defensible for them — the same reading the classic arm
-accepts from a sovereign-debt `anchor_asset_type` declaration.
-
-The overnight swap fund is not. On its own published holdings it is 152
-listed equities at 119% of net assets, one cash line, and seven total
-return swaps that hand every penny of that equity return to a bank
-counterparty in exchange for the overnight index rate; the share class's
-reference index is the capitalised overnight rate plus a spread, and its
-regulatory classification is a UCITS rather than a money-market fund.
-`bond` would be false twice over — no bonds in it, and no credit or
-duration exposure. `stock` would be true of what the fund holds and the
-exact opposite of what the token gives you, since the equity return has
-been swapped away in full. So the fund was held **unbound**, worth over
-a billion dollars, until the vocabulary had a word that was true.
+The T-Bill funds hold short-dated sovereign debt, so `bond` is defensible.
+The overnight swap fund is not a bond. It holds 152 listed equities at 119% of
+net assets, one cash line, and seven total return swaps that hand all the
+equity return to a bank counterparty in exchange for the overnight index rate;
+it is a UCITS, not a money-market fund. `bond` would be false twice over, and
+`stock` would be the opposite of what the token gives you. So the fund was held
+**unbound**, worth over a billion dollars, until the vocabulary had a true
+word.
 
 That word is `fund`: a share in a pooled vehicle, whose exposure is the
-vehicle's stated objective rather than any one asset type it happens to
-hold. It is served on `definition.contract_anchor_classes`, which is the
-classic vocabulary plus this term, and the two lists are published side
-by side because they are not the same list and the difference is not an
-oversight. The classic arm READS an issuer's free-text
-`anchor_asset_type`, so it can only accept what SEP-1 defines —
-accepting anything else is accepting an invented spelling, and the
-served population already carries dozens. A binding's class is this
-index's own statement, made in code from a primary source and reviewed
-as a change, so it may use a term SEP-1 lacks. An issuer cannot declare
-its way to `fund`; only a reviewed binding can.
+vehicle's stated objective. It is served on
+`definition.contract_anchor_classes`, the classic vocabulary plus this term;
+the two lists differ on purpose. The classic arm READS an issuer's free-text
+`anchor_asset_type`, so it can only accept what SEP-1 defines. A binding's
+class is this index's own statement, made in code from a primary source and
+reviewed as a change. An issuer cannot declare its way to `fund`; only a
+reviewed binding can. Widening what a binding may SAY does not widen what is
+ADMITTED: C1, C2 and C3 are untouched, and a class is never read until the
+address has been named by two independent parties or by the curated directory.
 
-Widening what a binding may SAY does not widen what is ADMITTED. C1, C2
-and C3 are untouched, and a contract's class is never read until its
-address has already been named by two independent parties or by the
-curated directory.
+XAUm is `commodity`: a bearer claim on a specific quantity of a specific
+metal, redeemable for the metal. It is the first commodity row with an
+independent price; the two classic commodity rows carry supply and no feed.
 
-XAUm is `commodity`, and the reasoning runs the other way. It is not a
-claim on a portfolio anybody manages; it is a bearer claim on a specific
-quantity of a specific metal, redeemable for the metal — the same word
-the classic arm already accepts from an issuer declaring
-`anchor_asset_type = "commodity"`. It is the first commodity row on this
-surface for which an independent price exists; the two classic commodity
-rows carry supply and no feed.
+Spiko's cash-and-carry fund is deliberately **not** bound: a digital-asset
+basis-trade fund holds crypto and futures, which the definition excludes.
 
-Spiko's cash-and-carry fund is still deliberately **not** bound, and the
-reason is different in kind: a digital-asset basis-trade fund holds
-crypto and futures, which the definition excludes from the real-world
-population on purpose. That is an exclusion, not a vocabulary gap.
-
-A binding is **not** an admission. C2 runs first, and a binding is only
-ever the *second* of the two sources
+A binding is **not** an admission. It is only the *second* of the two sources
 [arm 2](#two-ways-to-satisfy-it-and-why-they-are-not-the-same-shape)
-requires — the curated directory names none of these addresses, so each
-one waits on an independent listing naming it too. XAUm clears that bar
-(the listing directory names its address); bindings that do not are
-refused as
-`contract_curated_binding_without_independent_listing`. Every binding,
-admitted or not, is published on `definition.bound_contract_instruments`,
-so a refused one is visible as a verified identity the surface is still
-declining to value. That distinguishes an issuer we
-cannot identify from one we have identified and cannot yet vouch for.
+requires. The curated directory names none of these addresses, so each waits
+on an independent listing naming it too. XAUm clears that bar; bindings that
+do not are refused as `contract_curated_binding_without_independent_listing`.
+Every binding, admitted or not, is published on
+`definition.bound_contract_instruments`, so a refused one is visible as a
+verified identity the surface still declines to value.
 
-**`contract_oracle_rwa_feed`** — the token's on-chain SEP-41 `symbol` is
-an ADR-0028 allow-listed RWA code. The symbol is contract-authored,
-exactly as a classic asset code is issuer-authored, and this arm is
-admissible for exactly the same reason its classic twin is: the
-independent recognition of the address has **already** happened. It
-answers *which* instrument an address someone vouched for holds, never
+**`contract_oracle_rwa_feed`** — the token's on-chain SEP-41 `symbol` is an
+ADR-0028 allow-listed RWA code. It is admissible for the reason its classic
+twin is: the independent recognition of the address has **already** happened.
+It answers *which* instrument an address someone vouched for holds, never
 *whether* the address is vouched for. A row admitted this way carries no
-`anchor_class`, for the same reason the classic oracle arm does not.
+`anchor_class`.
 
 ### What was considered and rejected
 
 - **Contract-instance provenance** — admitting a contract because a
-  recognised G-account deployed it. The right shape, and we hold no
-  deployer edge to read: the `contractid` registry is factory-anchored
-  per ADR-0035 and covers protocol children, not token issuance.
-- **SEP-41 metadata as the admission** — admitting a contract whose
-  `name()` says treasury. That is the token talking about itself at no
-  cost at all, cheaper than a domain, and it would admit every
-  impersonator in the lake.
-- **The issuer's SEP-1 naming the contract** — the current SEP-1 draft
-  carries a `contract` field on `[[CURRENCIES]]`. This is the strongest
-  available strengthener and is worth having: the curator supplies the
-  domain, so an attacker cannot choose who has to corroborate them, and
-  defeating the pair means a directory merge **and** control of the real
-  entity's domain. Not built yet for a measured reason — our parser does
-  not read the field, and 14 of the 16 entities have no fetched payload
-  at all. See the
-  [coverage reconciliation](rwa-coverage-reconciliation.md).
+  recognised G-account deployed it. We hold no deployer edge: the `contractid`
+  registry is factory-anchored per ADR-0035 and covers protocol children, not
+  token issuance.
+- **SEP-41 metadata as the admission** — the token talking about itself at no
+  cost; it would admit every impersonator in the lake.
+- **The issuer's SEP-1 naming the contract** — the current SEP-1 draft carries
+  a `contract` field on `[[CURRENCIES]]`. It is the strongest strengthener, but
+  our parser does not read the field and 14 of the 16 entities have no fetched
+  payload. See the [coverage reconciliation](rwa-coverage-reconciliation.md).
 
 ### Valuing a contract asset
 
-Both existing reads of a Soroban asset — the `/v1/assets` listing spine
-and `GET /v1/assets/{id}` — gate the discovered-contract arm on a 24h
-volume rollup, which admits 60 of ~117k contracts. That gate is right
-for a listing and wrong here: a tokenized fund is held, not traded, and
-can carry a nine-figure supply while never appearing in a volume
-rollup. The RWA surface reads its **membership-bounded** set without it.
+The `/v1/assets` listing spine and `GET /v1/assets/{id}` gate the
+discovered-contract arm on a 24h volume rollup, which admits 60 of ~117k
+contracts. The RWA surface reads its **membership-bounded** set without the gate, since a
+tokenized fund is held, not traded.
 
-Supply is the certified lake's `Σmint − Σburn − Σclawback` — the same
-figure `/v1/assets/{id}/supply` serves, from the same reader. An
-incomplete reading (a negative net, meaning the flows are incompletely
-seeded rather than that supply is negative) is treated as unavailable
-and never clamped to zero, which would read as a fully-burned token.
+Supply is the certified lake's `Σmint − Σburn − Σclawback`, as
+`/v1/assets/{id}/supply` serves. An incomplete reading (a negative net) is
+unavailable and never clamped to zero, which would read as a fully-burned
+token.
 
-Decimals come from the token's own on-chain metadata, not the hardcoded
-7 a catalogue row carries. On this surface that is not a display detail:
-market cap divides supply by 10^decimals, so a 6-decimal token valued at
-7 publishes a tenth of its real capitalisation.
-
-The scale is read from the contract instance's storage on two axes.
-The map is `METADATA` (the soroban-token-sdk convention) or `Config`
-(where some hand-written tokens keep it, under a Rust enum-variant key
-encoding); the field inside it is named `decimal` by the soroban-token-sdk
-and `decimals` by hand-written tokens. Every combination is read. Measured over
-the 17 Soroban addresses the listing platform names on Stellar, seven
-use the first and **ten** use the second — so reading only the SDK
-spelling returned "no usable metadata" for the majority and left every
-one of them on the caller's default of 7. For a fund declaring 5 that is
-one **hundredth** of its capitalisation; for the 18-decimal token in the
-same sample it is eleven orders of magnitude the other way. A contract
-declaring both keys with different values is refused rather than
-resolved by preference, and so is one whose two maps disagree: it has
-not stated its scale, and choosing between two contradictory
-self-declarations would be inventing an exponent for a money figure.
+Decimals come from the token's own on-chain metadata, not the hardcoded 7 a
+catalogue row carries: a 6-decimal token valued at 7 publishes a tenth of its
+real capitalisation. The scale is read from the contract instance's storage.
+The map is `METADATA` (the soroban-token-sdk convention) or `Config` (where
+some hand-written tokens keep it), and the field inside it is `decimal` in the
+SDK and `decimals` in hand-written tokens. Every combination is read; of the
+17 Soroban addresses the listing platform names, seven use the first map and
+**ten** the second. A contract declaring both keys with different values, or
+whose two maps disagree, is refused rather than resolved by preference:
+choosing between contradictory self-declarations would invent an exponent for a
+money figure.
 [Contract-storage supply §6](contract-storage-supply.md#6-decimals-are-read-never-assumed)
 records how the `Config` axis was found.
 
 Everything else is the `/v1/assets` pipeline unchanged, including the
-substance gate — which explicitly covers Soroban assets — and the
-dust-liquidity guard. One gate is newly applied rather than reused: a
-contract asset has never been subject to the directory scam suppression
-on any surface, because the existing fill keys on the issuer G-address
-and skips every row without one. On a page that admits a contract on the
-strength of a directory entry, declining to re-read that entry when it
-turns hostile would be indefensible, so the contract arm re-reads it at
-valuation time.
+substance gate and the dust-liquidity guard. One gate is new: directory scam suppression keys on
+the issuer G-address and never applied to a contract asset, so the contract arm
+re-reads the directory entry at valuation time.
 
 ## What an asset that fails gets
 
-Nothing on this surface. It is absent — not hidden behind a filter, not
-ranked last. The set is a claim about real-world backing, and an asset
-that cannot meet the bar has no partial place in it. Its own
-`/v1/assets/{id}` page continues to serve it under the gates that
-already apply there, including any scam warning.
+Nothing on this surface. It is absent, not hidden behind a filter or ranked
+last. Its own `/v1/assets/{id}` page keeps serving it, including any scam
+warning.
 
-The refusals are counted and published: `refused[]` on the response
-reports how many candidates each requirement turned away, so the served
-set is never mistaken for the whole population of assets that *claim* to
-be real-world assets.
+The refusals are counted and published: `refused[]` on the response reports
+how many candidates each requirement turned away, so the served set is never
+mistaken for the whole population of assets that *claim* to be real-world
+assets.
 
 ## Coverage: where the rest of the population went
 
-`refused[]` alone cannot answer "is that all?". It reports the
-requirements that were **evaluated**, and the stages that remove most of
-the population run before any candidate reaches the definition. Measured
-on production 2026-09-10, the endpoint served 6 assets and a refusal
-tally of 3 — over a table holding 59,303 issuer accounts, 44,376 with a
-`home_domain` and 14,635 with a fetched SEP-1 payload. Nothing in the
-response distinguished a network that holds six real-world assets from a
-pipeline discarding fourteen thousand candidates in silence.
-
-`funnel[]` is the complete accounting. It runs from every issuer account
-that could carry an attestation down to the rows served, with a counted
-reason on every drop:
+`refused[]` reports only the requirements that were **evaluated**, and the
+stages that remove most of the population run before any candidate reaches the
+definition. Measured on production 2026-09-10, the endpoint served 6 assets and
+a refusal tally of 3, over 59,303 issuer accounts, 44,376 with a `home_domain`
+and 14,635 with a fetched SEP-1 payload. `funnel[]` is the complete accounting,
+from every issuer account that could carry an attestation down to the rows
+served, with a counted reason on every drop:
 
 | Stage | Unit | What it counts |
 | --- | --- | --- |
-| `issuers_with_home_domain` | issuer accounts | Every account a SEP-1 attestation could exist for. |
-| `issuers_with_sep1_attestation` | issuer accounts | Those whose `stellar.toml` has been fetched and parsed at least once. |
-| `issuers_declaring_currencies` | issuer accounts | Those whose payload carries at least one `[[CURRENCIES]]` entry. |
-| `sep1_currency_entries` | declarations | Every `[[CURRENCIES]]` entry across those payloads. |
+| `issuers_with_home_domain` | issuer accounts | Accounts a SEP-1 attestation could exist for. |
+| `issuers_with_sep1_attestation` | issuer accounts | Those whose `stellar.toml` has been fetched and parsed. |
+| `issuers_declaring_currencies` | issuer accounts | Those with at least one `[[CURRENCIES]]` entry. |
+| `sep1_currency_entries` | declarations | Every `[[CURRENCIES]]` entry. |
 | `issuer_bound_entries` | declarations | Those naming the account that served the file (R2). |
-| `candidate_assets_evaluated` | assets | The bound declarations put to the full R1→R4 evaluation. |
-| `assets_admitted` | assets | Those the definition admitted. |
+| `candidate_assets_evaluated` | assets | Bound declarations put to the full R1→R4 evaluation. |
+| `assets_admitted` | assets | Those admitted. |
 | `assets_served` | assets | The classic rows in `assets[]`. |
 
-Every stage carries an `arm`. The table above is the `classic` arm; the
-`contract` arm narrows a different population from a different root and
-they meet only at the served set, so the arithmetic reconciles **within**
-an arm and never across the boundary:
+Every stage carries an `arm`. The table above is the `classic` arm. The
+`contract` arm narrows a different population from a different root, so the
+arithmetic reconciles **within** an arm and never across the boundary:
 
 | Stage | Unit | What it counts |
 | --- | --- | --- |
-| `curated_directory_entries` | directory addresses | Every row in the curated third-party directory. |
-| `directory_contract_addresses` | contracts | Those whose address is a contract. An account address names an entity; a contract address names one token. |
-| `directory_recognised_contracts` | contracts | Named with an issuing-class tag and no scam tag — C2 and C3 satisfied. |
+| `curated_directory_entries` | directory addresses | Every row in the curated directory. |
+| `directory_contract_addresses` | contracts | Those whose address is a contract (an account address names an entity; a contract address names one token). |
+| `directory_recognised_contracts` | contracts | Named with an issuing-class tag and no scam tag (C2, C3). |
 | `contract_candidates_evaluated` | assets | Those put to the full C1→C4 evaluation. |
-| `contract_assets_admitted` | assets | Those the definition admitted. |
+| `contract_assets_admitted` | assets | Those admitted. |
 | `contract_assets_served` | assets | The contract rows in `assets[]`. |
 | `directory_recognised_issuing_accounts` | directory addresses | **Terminal census, not part of the narrowing.** |
 
-That last stage is the one that matters most. It counts recognised,
-unflagged issuing entities this index holds **no token for** — and
-`unreached_entities[]` names a bounded sample of them. They are not
-refused by any requirement; there is nothing to refuse, because no token
-of theirs was ever collected. Measured 2026-09-10, Franklin Templeton
-and Spiko are both in this position: in the directory, tagged `issuer`,
-correct domains, and absent from the `issuers` table entirely.
-
-It takes no part in the stage arithmetic, deliberately: it counts rows
-the first stage already dropped, and folding a coverage census into a
-narrowing would make the funnel close by adding a number that measures
-something else.
+The last stage matters most. It counts recognised, unflagged issuing entities
+this index holds **no token for**, and `unreached_entities[]` names a bounded
+sample. No requirement refuses them; no token of theirs was ever collected.
+Franklin Templeton and Spiko are both here (measured 2026-09-10). It takes no
+part in the stage arithmetic, because it counts rows the first stage already
+dropped.
 
 When no curated-directory contract reader is wired, the contract arm is
-**absent** from `stages[]` and `basis` says it was not measured — rather
-than a run of zeros, which would read as a network with no
-contract-issued real-world assets in it.
+**absent** from `stages[]` and `basis` says it was not measured, rather than a
+run of zeros.
 
-Each stage's drops account exactly for the difference to the next stage
-of the same unit, and `funnel.balanced` states whether that
-reconciliation held. When membership cannot be established the funnel is
-**empty and unbalanced** rather than a column of zeros, for the same
-reason `market_cap_usd` is absent rather than `"0.00"`. When it did not
-hold, `funnel.imbalance` names *what* did not close — which check, and
-the numbers that disagreed. It is empty exactly when `balanced` is true,
-so the two can never give different answers.
+Each stage's drops account exactly for the difference to the next stage of the
+same unit, and `funnel.balanced` states whether that held. When membership
+cannot be established the funnel is **empty and unbalanced** rather than a
+column of zeros. `funnel.imbalance` names which check failed; it is empty
+exactly when `balanced` is true.
 
 ### Dating the set
 
 `membership.built_at` is when the rebuild that produced the served set
-finished. It is **not** the envelope's `as_of`, which is the response's
-own instant and moves between requests — a set is *built*, a response is
-*as of*, and reading one for the other says a frozen set is refreshing
-continuously.
+finished. It is **not** the envelope's `as_of`, the response's own instant.
+The set is cached with a ten-minute lifetime and a lapsed copy is served while
+a rebuild runs; `membership.stale` says when. `membership.rebuild_failed_at`
+appears only when the most recent attempt to replace the set **failed**, and it
+is the field to act on.
 
-The set is cached with a ten-minute lifetime and a lapsed copy is served
-while a rebuild runs behind it, because the inputs move on daily
-cadences and making a request wait for an eleven-second rescan buys an
-answer that has not changed. `membership.stale` says when that is
-happening. `membership.rebuild_failed_at` appears only when the most
-recent attempt to replace the set **failed**, and it is the field to act
-on: without it, a set that a rebuild is about to replace and a set that
-nothing is replacing are indistinguishable.
-
-Every drop carries an `actor` naming who can move it — `operator`,
-`issuer`, or `definition` for a drop that is the rule working as
-intended. That distinction is the point. Two numbers that look identical
-as bare counts are opposite findings:
+Every drop carries an `actor` naming who can move it: `operator`, `issuer`, or
+`definition` for a drop that is the rule working as intended. Similar counts can
+be opposite findings:
 
 - `entry_declares_another_issuer` is R2 refusing an impersonator. It is
-  expected to be the largest bucket on the whole surface and it needs no
-  action: a `stellar.toml` describes only the account that served it.
-- `sep1_attestation_never_fetched` is an issuer that publishes a domain
-  and nothing has yet tried to fetch its file. It is not a property of
-  the network at all — it is a refresh cron that has not reached that
-  account — and it is a coverage lever an operator holds.
+  expected to be the largest bucket and needs no action.
+- `sep1_attestation_never_fetched` is an issuer whose domain nothing has yet
+  tried to fetch. It is a refresh cron that has not reached the account, and a
+  coverage lever an operator holds.
 - `domain_served_no_sep1_attestation` is an issuer whose domain **was**
-  reached and served nothing usable. It looks identical to the row above
-  as a bare count and it is the opposite finding: nobody here can fetch
-  a file that is not published.
+  reached and served nothing usable. Nobody here can fetch a file that is not
+  published. Of 40,838 domain-bearing issuers holding no payload, exactly
+  **one** had never been attempted.
 
-Those two were one bucket until 2026-09-12, published entirely under
-the operator's name. They are separated because the drain that emptied
-the first showed how few of them it was: of 40,838 domain-bearing
-issuers holding no payload, exactly **one** had never been attempted.
-The other 40,837 domains had been reached and were dead, parked, or
-serving no SEP-1 document. Calling that an unfetched backlog overstated
-both the coverage within reach and this index's share of the gap.
+No per-attempt outcome is stored, so a 404, a dead name, a TLS failure and an
+undecodable document are one count. The reason says what was observed, not
+whose fault it was.
 
-What the split does *not* claim is why a reached domain came back empty.
-No per-attempt outcome is stored, so a 404, a dead name, a TLS failure
-and an undecodable document are one count, and a transport fault at this
-end would land in it too. The reason says what was observed — the domain
-served no attestation — not whose fault it was.
-
-The second class is where this surface's coverage actually comes from.
-Widening it means moving one of those numbers — fetching the
-attestations nobody has tried, or extending the curated directory so an
-issuer that publishes a correctly-bound real-world declaration can be
-recognised.
-It never means loosening R1–R4 until a bucket empties: a longer
-dashboard bought that way is a directory of impersonators with dollar
-figures attached, which is strictly worse than under-reporting.
+Coverage grows by fetching the attestations nobody has tried, or by extending
+the curated directory so an issuer with a correctly-bound real-world
+declaration can be recognised. It never means loosening R1–R4 until a bucket
+empties.
 
 ## Valuation — the market basis
 
-Every figure in this section comes from the existing `/v1/assets` read
-path, unchanged: the same catalogue query, the same thin-market
-substance gate, the same supply-derived market cap, the same
-dust-liquidity guard, the same scam-issuer payload suppression. This
-surface adds no market-price path of its own, so it cannot publish a
-figure `/v1/assets` would have withheld.
+Every figure here comes from the existing `/v1/assets` read path: the same
+catalogue query, thin-market substance gate, supply-derived market cap,
+dust-liquidity guard and scam-issuer payload suppression. This surface adds no
+market-price path, so it cannot publish a figure `/v1/assets` would have
+withheld.
 
-A second, separately-labelled valuation sits beside it —
-[the reference basis](#the-second-valuation-what-the-backing-is-claimed-to-be-worth),
-which values the same float at an oracle's price for the underlying
-instrument. It is never summed into anything below, and nothing below
-changed when it was added.
-
-Membership is decided **before** valuation, from identity and
-attestation only. No number moves an asset in or out: a withheld price
-cannot silently shrink the set, and a large market cap cannot buy a
+[The reference
+basis](#the-second-valuation-what-the-backing-is-claimed-to-be-worth) values
+the same float at an oracle's price and is never summed into anything below.
+Membership is decided **before** valuation, from identity and attestation only:
+a withheld price cannot shrink the set, and a large market cap cannot buy a
 place in it.
 
-Each row carries a `valuation.status`, and only `published` carries
-money:
+Each row carries a `valuation.status`, and only `published` carries money:
 
 | Status | Meaning |
 | --- | --- |
 | `published` | A price and a supply were both available and no gate withheld them. |
 | `withheld_issuer_flagged` | The issuer acquired a scam-class directory tag after the membership set was built. The row stays; its valuation does not. |
-| `unpriced` | No USD price — the market produced none, or the substance gate withheld it as too thin to aggregate. |
+| `unpriced` | No USD price: the market produced none, or the substance gate withheld it as too thin. |
 | `withheld_low_liquidity` | A price exists but the dust-liquidity guard refused to turn it into a market cap. |
 | `supply_unavailable` | A price exists but no circulating-supply reading does. |
-| `decimals_unavailable` | Contract rows only. A price and a supply both exist but the token's own declared scale could not be read, so there is no exponent to divide the supply by. Refused rather than defaulted to 7, which would be wrong by a power of ten. |
+| `decimals_unavailable` | Contract rows only. The token's declared scale could not be read. Refused rather than defaulted to 7. |
 
-When a price is served but is not a direct market observation — an
+When a price is served but is not a direct market observation (an
 operator-declared fiat peg, or a value derived through one substance-gated
-intermediate hop — the row carries `valuation.price_basis` naming which,
-exactly as `/v1/assets` does. A valuation surface that showed the figure
-and hid how it was derived would be the same claim with the caveat
-removed.
+intermediate hop), the row carries `valuation.price_basis` naming which,
+exactly as `/v1/assets` does.
 
 A withheld or unavailable valuation is **absent**, never zero and never a
-stale figure. `circulating_supply` is served regardless: it is a raw
-chain fact, not a price claim.
+stale figure. `circulating_supply` is served regardless: it is a raw chain
+fact, not a price claim.
 
-`summary.market_cap_usd` is the exact sum of the rows' own published
-market caps — add up what you can see and you land on that number. It is
-**absent**, not `"0.00"`, when no asset in the set publishes one, because
-a zero there reads as a real total of zero dollars. `summary.lower_bound`
-is true whenever any member is unvalued, so the total is less than the
-value of the set. It is also true whenever a rebuild cap bound the set —
-the issuer cap, the contract scan cap, or a member issuer whose classic
-assets fill one listing page — because a member may then be missing
-entirely; `summary.truncated` is set and `summary.basis` names the cap.
+`summary.market_cap_usd` is the exact sum of the rows' own published market
+caps. It is **absent**, not `"0.00"`, when no asset publishes one.
+`summary.lower_bound` is true whenever any member is unvalued. It is also true
+whenever a rebuild cap bound the set (the issuer cap, the contract scan cap, or
+a member issuer whose classic assets fill one listing page), because a member
+may then be missing entirely; `summary.truncated` is set and `summary.basis`
+names the cap.
 
 ## The second valuation: what the backing is claimed to be worth
 
-A real-world asset is bought and held, not traded. Measured on the
-production deployment, four of the six classic members carry an
-independent oracle valuation of their instrument and **two** have ever
-produced a market price this platform will publish. Valuing the set at
-observed market prices alone therefore reports nothing at all for half
-of it — while an oracle prices the underlying instrument daily.
-
-So each row carries a second figure, `reference_valuation`, and the set
-carries its own total in `summary.reference_valuation`:
+A real-world asset is bought and held, not traded: four of the six classic
+members carry an independent oracle valuation of their instrument and **two**
+have ever produced a market price this platform will publish. So each row
+carries a second figure,
+`reference_valuation`, and the set carries its own total in
+`summary.reference_valuation`:
 
 ```
 reference_valuation.value_usd = circulating_supply ÷ 10^decimals × reference.price_usd
 ```
 
-`decimals` is served on the row — 7 for a classic asset, and whatever a
-SEP-41 contract declares for a contract-issued one — so the figure can
-be re-derived by hand from the published supply and the published
-reference price. Exact rational arithmetic throughout, with a single
-rounding to 2 dp at the end (ADR-0003), which is what makes the summary
-total the exact sum of the per-row strings.
+`decimals` is served on the row (7 for a classic asset, the contract's declared
+value otherwise). The arithmetic is exact rational with a single rounding to
+2 dp at the end (ADR-0003), so the summary total is the exact sum of the
+per-row strings.
 
 ### It is a claim, not an observation
 
-This is the distinction the whole section exists to hold, and it is the
-reason the second figure is not called a market cap anywhere:
+The second figure is not called a market cap anywhere:
 
 | | `valuation.market_cap_usd` | `reference_valuation.value_usd` |
 | --- | --- | --- |
 | What the price is | What buyers were observed paying | What an oracle says the instrument is worth |
 | Evidence | A settled trade | A published feed, plus the issuer's declaration that one token is one unit of the instrument |
-| Gates | Thin-market substance gate, dust-liquidity guard, scam-issuer suppression — each can withhold it | None of them apply. There is no market in it for them to measure |
+| Gates | Substance gate, dust-liquidity guard, scam-issuer suppression can withhold it | None apply; there is no market to measure |
 | Adversarial standing | Somebody paid it | Nobody was observed paying it |
 | An asset that never trades | Publishes nothing | Publishes the full figure |
 
-Both are published because neither alone is honest here. A market-cap
-total is silent about assets that plainly exist and are plainly held;
-a reference total is an assertion by the issuer and its oracle that
-nobody has tested by paying it.
-
-**They are never folded together.** `market_cap_usd` means exactly what
-it meant before this figure existed, over exactly the same rows: a
-reference valuation never substitutes for a withheld market cap, never
-enters `summary.market_cap_usd`, and never moves a row from unvalued to
-valued on the market basis. A test asserts this directly, by serving the
-same set twice — once with the oracle stream wired and once with no
-oracle at all — and comparing every market-basis field, and every
-membership funnel stage, across the two.
+**The two are never folded together.** A reference valuation never substitutes for a withheld
+market cap, never enters `summary.market_cap_usd`, and never moves a row from
+unvalued to valued on the market basis. A test serves the same set with and
+without the oracle stream and compares every market-basis field and every
+membership funnel stage.
 
 ### The same discipline, on the new total
 
-- **Absent, never zero.** `summary.reference_valuation.value_usd` is
-  omitted when no member is reference-valued. A `"0.00"` there asserts
-  that the backing behind every tokenized instrument in the set is worth
-  nothing.
+- **Absent, never zero.** `summary.reference_valuation.value_usd` is omitted
+  when no member is reference-valued.
 - **Counted separately.** `assets_valued` and `assets_unvalued` inside
-  `reference_valuation` are that basis's own counts, independent of the
-  market-basis pair beside them, because the two bases admit different
-  rows.
+  `reference_valuation` are that basis's own counts, because the two bases
+  admit different rows.
 - **`lower_bound`** is true whenever any member carries no reference
   valuation, or a rebuild cap bound the set.
-- **No fallback is ever invented.** `XAU` and `AUMTL` are unvalued on
-  this basis and stay unvalued. An oracle does publish a feed called
-  `XAU`, but it prices a troy ounce of spot metal: multiplying a token
-  supply by an ounce price is not a valuation of anything, so no binding
-  may target it and the row says so. Nothing prices an instrument called
-  `AUMTL` at all.
-- **Provenance travels with the figure.** Every reference-valued row
-  carries the `reference` block that produced it — publisher, canonical
-  feed id, denominator and vintage — and
-  `summary.reference_valuation.sources` names the oracles behind the
-  total. A dollar figure that cannot be traced to a publisher is worse
-  than an absent one on this surface: it can be neither checked nor
-  challenged.
+- **No fallback is ever invented.** `XAU` and `AUMTL` are unvalued on this
+  basis. An oracle's `XAU` feed prices a troy ounce of spot metal, which values
+  no token, so no binding may target it. Nothing prices `AUMTL` at all.
+- **Provenance travels with the figure.** Every reference-valued row carries
+  the `reference` block that produced it, and
+  `summary.reference_valuation.sources` names the oracles behind the total.
 
 ### One refusal, two fields
 
-Every rule that refuses a reference refuses both figures that depend on
-it, so `reference_valuation.status` and `premium.status` carry the
-**same string** on those rows. They are assigned together, from one
-constant, at one line — which is what stops them becoming two accounts
-of one event. They differ only where the reasons genuinely do:
+Every rule that refuses a reference refuses both figures that depend on it, so
+`reference_valuation.status` and `premium.status` carry the **same string** on
+those rows, assigned together from one constant. They differ only where the
+reasons genuinely do:
 
 | Situation | `premium.status` | `reference_valuation.status` |
 | --- | --- | --- |
@@ -1003,370 +660,271 @@ of one event. They differ only where the reasons genuinely do:
 | A reference, and no supply reading | `published` or a market refusal | `supply_unavailable` |
 | No reference at all | the rule that refused it | the same string |
 
-`supply_unavailable` is the valuation's own: a premium compares two
-prices and needs no supply. Everything else is documented under
-[the other five rules](#the-other-five-rules) and in the section below.
+`supply_unavailable` is the valuation's own: a premium compares two prices and
+needs no supply. The rest are under [the other five rules](#the-other-five-rules)
+and the section below.
 
 ### Contract-issued members are refused by name
 
-A contract member reaches this surface with everything the arithmetic
-needs — a supply from the certified lake and its own declared decimals —
-and is still **not** reference-valued. Nothing binds a contract
+A contract member has a supply from the certified lake and its own declared
+decimals, and is still **not** reference-valued. Nothing binds a contract
 **address** to an oracle feed.
 
 The available join is refused deliberately. A contract admitted on
-`contract_oracle_rwa_feed` got in because its on-chain SEP-41 symbol is
-an ADR-0028 code — but a symbol is metadata the contract itself authors,
-so pricing a token by it is the code-keyed join
+`contract_oracle_rwa_feed` got in on its self-authored SEP-41 symbol, and
+pricing by it is the code-keyed join
 [this whole section refuses](#the-binding-is-on-the-pair-never-on-the-code),
-with a *weaker* key than the classic one. Recognition of the address
-establishes who deployed it; it does not establish that one of its
-tokens is one unit of the instrument an oracle prices under that name.
-The [curated contract set](#c4--real-world-instrument) records instrument
-and class rather than a feed, so it cannot answer this however many
-entries it holds — a fund's identity is not a price for it, and the
-funds bound there today have no oracle feed to bind to.
+with a *weaker* key. The [curated contract set](#c4--real-world-instrument)
+records instrument and class rather than a feed, and the funds bound there have
+no oracle feed to bind to.
 
-So a row nothing else priced carries `reference_contract_not_bound` —
-its own status, not the `reference_not_bound` that names a
-`(code, issuer)` pair a contract does not have. A silently absent figure
-would make a deliberate refusal indistinguishable from an oversight.
+So a row nothing else priced carries `reference_contract_not_bound`, its own
+status and not the `reference_not_bound` that names a `(code, issuer)` pair a
+contract does not have.
 
 #### The one price a contract row can carry
 
-A contract the independent listing directory **names** is the exception,
-and not because the join above was relaxed. That directory publishes a
-USD price in the same row in which it names the address — price bound to
-address, by a party that did not read our curated directory. No code is
-matched anywhere on that path. A token wearing a bound instrument's
-symbol gets nothing, because it was never in the listing row.
+A contract the independent listing directory **names** is the exception, and
+the join above is not relaxed. That directory publishes a USD price in the same
+row in which it names the address: price bound to address, by a party that did
+not read our curated directory. No code is matched, so a token wearing a bound
+instrument's symbol gets nothing.
 
 This is a **wider** set than the rows
 [C2 arm 2](#two-ways-to-satisfy-it-and-why-they-are-not-the-same-shape)
-admitted, and deliberately so: four addresses are named by both sources,
-and one the curated directory attested on its own is still an address an
-independent listing bound a price to. Gating the price on which
-requirement admitted the row would withhold a figure this surface can
-correctly make, for a reason about membership rather than about
-provenance.
+admitted, deliberately. Whichever arm admitted
+it, a row whose declared **scale** could not be read carries no valuation on
+either basis (`decimals_unavailable`).
 
-Whichever arm admitted it, a row whose own declared **scale** could not
-be read carries no valuation on either basis —
-`decimals_unavailable` — because the exponent is the figure.
-
-It is a **different claim** from an oracle NAV and is published as one.
-Each served reference carries a `provenance`:
+It is a **different claim** from an oracle NAV and is published as one. Each
+served reference carries a `provenance`:
 
 | `provenance` | what it values | what it rests on |
 |---|---|---|
-| `oracle_instrument_nav` | the **instrument** | an oracle's published valuation, plus the issuer's own domain-bound declaration that one token is one unit of it |
-| `fund_nav` | the **fund share** | the fund's own SEC-reported daily NAV per share, relayed by Tiingo, for a token bound on the exact `(code, issuer)` as one share of that fund; taken only when no oracle binding exists for the row, and ahead of any listing price or prospectus NAV |
-| `listing_platform_price` | the **token** | a listing platform's aggregate of what the token changes hands at on the venues it tracks |
-| `prospectus_constant_nav` | the **share class** | the issuer's published NAV for a share class whose fund rules fix it (a constant-NAV money-market fund), bound on the exact `(code, issuer)`; taken only when no oracle binding, fund NAV or usable listing price exists for the row |
-| `curator_uploaded_price` | the **token** | a curator's own uploaded price per token. Curated rows are served apart, in `curated_assets`, and never enter `summary.reference_valuation` |
+| `oracle_instrument_nav` | the **instrument** | an oracle's published valuation, plus the issuer's domain-bound declaration that one token is one unit of it |
+| `fund_nav` | the **fund share** | the fund's own SEC-reported daily NAV per share, relayed by Tiingo, for a token bound on the exact `(code, issuer)`; taken only when no oracle binding exists, and ahead of any listing price or prospectus NAV |
+| `listing_platform_price` | the **token** | a listing platform's aggregate of what the token trades at on the venues it tracks |
+| `prospectus_constant_nav` | the **share class** | the issuer's published NAV for a constant-NAV share class, bound on the exact `(code, issuer)`; taken only when no oracle binding, fund NAV or usable listing price exists |
+| `curator_uploaded_price` | the **token** | a curator's uploaded price per token. Curated rows are served apart, in `curated_assets`, and never enter `summary.reference_valuation` |
 
-The second is weaker in one way — nobody independent has said what
-stands behind the token — and narrower in another: it carries no
-unstated one-for-one assumption, because it makes no claim about the
-backing at all.
+**No premium is published against a listing price.** A listing price
+aggregates the same markets our own price samples, so the gap measures the
+disagreement of two samples of one market. The row carries
+`reference_is_a_listing_price`, a status that refuses the premium while the
+reference valuation beside it is **published**. A prospectus constant NAV and a
+curator's uploaded price are refused the same way, under
+`reference_is_a_prospectus_nav` and `reference_is_a_curator_price`.
 
-**No premium is published against a listing price.** A premium is the
-gap between what the market pays and what the backing is independently
-worth; a listing price is an aggregate of the same markets our own price
-samples, so the gap between the two measures the disagreement of two
-samples of one market. The row carries `reference_is_a_listing_price` —
-a status that refuses the premium while the reference valuation beside
-it is **published**, which is a genuine divergence of reasons rather
-than two accounts of one event. A prospectus constant NAV and a
-curator's uploaded price are refused the same way, each under its own
-status (`reference_is_a_prospectus_nav`, `reference_is_a_curator_price`)
-so the refusal always names the figure it refused.
+**A fund NAV is published to the cent.** The administrator rounds the NAV to
+two decimal places, and the reference says so in `decimals_published: 2`. The
+figure cannot resolve a difference smaller than half a cent, which on a
+one-dollar share is half a percent, so no premium is published against it
+either (`reference_is_a_fund_nav`). `as_of` is the business day the NAV was
+struck, so a Friday NAV is served `stale: true` from the following Monday until
+Monday's NAV lands. A fund NAV older than five calendar days is refused as
+`reference_expired`. When a row carries an oracle NAV and its fund's own NAV is
+also fresh, the oracle figure is served and `nav_disagreement: true` marks a
+gap of more than half a cent; the values are never swapped.
 
-**A fund NAV is published to the cent.** The fund administrator rounds
-the NAV to two decimal places, and the reference says so in
-`decimals_published: 2`: the figure cannot resolve a difference smaller
-than half a cent, which on a one-dollar share is half a percent. For that
-reason no premium is published against it either
-(`reference_is_a_fund_nav`). `as_of` is the business day the NAV was
-struck, not the moment it was read, so a Friday NAV is served `stale:
-true` from the following Monday until Monday's NAV lands. A fund NAV
-older than five calendar days is refused as `reference_expired` rather
-than served. When a row carries an oracle NAV and its fund's own NAV is
-also fresh, the oracle figure is served and `nav_disagreement: true`
-marks a gap of more than half a cent between the two; the values are
-never swapped.
-
-`summary.reference_valuation.provenances` lists the distinct kinds in
-the total, and the basis prose is **derived from the rows that
-contributed**: an all-oracle total does not describe listing prices, and
-a total that gains its first listing-priced row stops claiming an issuer
-declared a one-for-one correspondence. A basis string naming a
-provenance the total does not contain is exactly as wrong as one that
-omits a provenance it does.
+`summary.reference_valuation.provenances` lists the distinct kinds in the
+total, and the basis prose is **derived from the rows that contributed**.
 
 ### Comparing the two totals
 
-The two totals are sums over **different rows**, so subtracting one from
-the other measures nothing. `summary.both_bases` gives both figures
-restricted to the members carrying both, which is the only subset on
-which the comparison means anything; its difference is the aggregate gap
-between what the market pays for that overlap and what the reference
-says it is worth. Per asset, the same gap in percentage terms is
-`premium.pct` — identical to the ratio between the two dollar figures,
-since both are the same float multiplied by the two prices.
+The two totals are sums over **different rows**, so subtracting one from the
+other measures nothing. `summary.both_bases` gives both figures restricted to
+the members carrying both, the only meaningful comparison. Per asset the gap is
+`premium.pct`.
 
 ### Where the uncovered rows are accounted for
 
-The funnel's `valuation` arm continues past the served set and counts
-every row carrying no reference figure under the reason that refused it,
-with the same `actor` vocabulary the membership arms use. Its drop
-reasons are the strings the rows themselves carry, read back off the
-rows rather than recomputed, so the two can never disagree. It admits
-and refuses nothing — membership is decided before either valuation.
+The funnel's `valuation` arm continues past the served set and counts every row
+carrying no reference figure under the reason that refused it, with the same
+`actor` vocabulary as the membership arms. Its reasons are read back off the
+rows, so the two cannot disagree. It admits and refuses nothing.
 
 `operator` is used where somebody here can act: no oracle publishes the
-instrument, the read did not answer or has gone stale, no supply reading
-covers the asset, or the curated contract binding does not exist yet.
-`definition` is used where the rule is working and nobody should act: a
-flagged issuer, an unbound pair, a feed that prices an ounce, a value
-denominated in a reserve asset, a non-positive value. None is the
-`issuer`'s — an issuer cannot make an oracle price its instrument, and
-saying so would send a reader to the one party who cannot fix it.
+instrument, the read did not answer or has gone stale, no supply reading covers
+the asset, or the curated contract binding does not exist yet. `definition` is
+used where the rule is working: a flagged issuer, an unbound pair, a feed that
+prices an ounce, a value denominated in a reserve asset, a non-positive value.
+None is the `issuer`'s, because an issuer cannot make an oracle price its
+instrument.
 
 ## Premium and discount to the instrument's value
 
-A tokenized treasury has two prices: what an independent oracle says the
-instrument is worth, and what the Stellar market will pay for the token.
-The gap between them is the number a holder actually needs, and it is the
-one figure here that neither the chain nor an oracle produces alone.
-
-Each row carries `reference` — an oracle's valuation of the real-world
-instrument, with its publisher, the canonical feed id, its denominator
-and its vintage — and `premium`, the market price measured against it:
+Each row carries `reference`, an oracle's valuation of the instrument with its
+publisher, canonical feed id, denominator and vintage, and `premium`, the
+market price measured against it:
 
 ```
 premium.pct = (market − reference) ÷ reference × 100
 ```
 
 Positive means the token trades **above** the instrument's independent
-valuation, negative **below**. Exact rational arithmetic, served as a
+valuation, negative **below**. Arithmetic is exact rational, served as a
 decimal string.
 
 ### The binding is on the pair, never on the code
 
-This is the same identity rule the definition itself turns on, applied to
-the figure. Asset codes are not unique on Stellar: any account may issue
-a token called `USTRY`, `BENJI` or `XAU`, and the network holds many
-that do. A reference joined on the code alone answers every one of them
-with the real instrument's net asset value, so an unrelated token trading
-at $0.20 is published at an 81% discount to a security it has nothing to
-do with. That is a false financial claim about a real instrument.
+A reference joined on the code alone would answer every token called `USTRY`,
+`BENJI` or `XAU` with the real instrument's net asset value, so an unrelated
+token trading at $0.20 would be published at an 81% discount to a security it
+has nothing to do with.
 
-So the join runs through an explicit, curated table of
-`(code, issuer) → feed` bindings, served in full as
-`definition.bound_instruments`. It is matched **exactly** on both halves —
-a case variant is a different token — and it fails closed: a pair absent
-from the table gets `reference_not_bound` and no figure, whatever the
-token is called.
+So the join runs through an explicit, curated table of `(code, issuer) → feed`
+bindings, served in full as `definition.bound_instruments`. It is matched
+**exactly** on both halves (a case variant is a different token) and fails
+closed: a pair absent from the table gets `reference_not_bound` and no figure.
 
-This is the curated-set mechanism [ADR-0040](../adr/0040-completing-contract-gating.md)
-sanctions for gates whose membership cannot be derived on chain: an
-enumerated allow-list, review-gated by living in code, where an unlisted
-candidate is refused and the refusal is *reported* rather than absorbed.
-Each entry records its evidence in `internal/rwa/oracle_reference.go`,
-and an entry needs all three of:
+This is the curated-set mechanism
+[ADR-0040](../adr/0040-completing-contract-gating.md) sanctions: an allow-list,
+review-gated by living in code, where an unlisted candidate is refused and
+*reported*. Each entry records its evidence in
+`internal/rwa/oracle_reference.go`, and needs all three of:
 
 1. the issuer's domain-bound SEP-1 entry for that exact pair, naming the
    instrument (requirement R2);
-2. the curated directory attributing that account to a named entity.
-   Where ADR-0028 also attributes the feed to an entity the two must
-   *agree* — but ADR-0028 attributes only some feeds that way (USDY,
-   USST, XAUm, deJAAA, deJTRSY) and lists CETES, USTRY, TESOURO, GILTS,
-   KTB and SPXU by ticker alone. For a ticker-only feed this cannot be
-   met by matching attributions and requirement 3 carries the binding;
+2. the curated directory attributing that account to a named entity. Where
+   ADR-0028 also attributes the feed to an entity the two must *agree*. It does
+   so only for USDY, USST, XAUm, deJAAA and deJTRSY, and lists CETES, USTRY,
+   TESOURO, GILTS, KTB and SPXU by ticker alone; for those requirement 3
+   carries the binding;
 3. something tying the feed to that issuer specifically rather than to an
-   instrument of that name. Price agreement between the token's Stellar
-   market price and the feed is the strongest form; a documented
-   product-line correspondence is the weaker one and is marked as such.
+   instrument of that name. Price agreement between the token's Stellar market
+   price and the feed is the strongest form; a documented product-line
+   correspondence is the weaker one and is marked as such.
 
-Entries carrying only the weaker form are the ones to challenge first in
-review.
+Entries carrying only the weaker form are challenged first in review.
 
 ### The other five rules
 
-Each removes a way of publishing a number that means something other than
-what it says. A row failing any of them carries no figure and states
-which rule refused it in `premium.status`.
+A row failing any of these carries no figure and states which rule refused it
+in `premium.status`.
 
 | Rule | Refusal |
 | --- | --- |
-| The oracle value must be **dollars**. A bare `_FUNDAMENTAL` feed publishes net asset value in the token's *reserve* asset, so its value is a ratio, not a price. The denominator is read off the stored row and must be `fiat:USD`; it is never converted here. | `reference_not_usd_denominated` |
-| The feed must price **one token**. `rwa:XAU` is spot gold per troy ounce and `rwa:SPXU` is one share of an exchange-traded fund. Neither is one token of anything, so no binding may target one — a test enforces it — and a token of such a code is refused with that as the stated reason. | `reference_not_instrument_scoped` |
-| The publisher must be an **oracle**. Aggregators write into the same table for divergence comparison; a premium against an aggregator's read of the market compares the market with itself. Their rows are dropped when the snapshot is built, so a bound pair with no oracle row left is reported as having no feed. | `no_reference_feed` |
-| The market price must be **observed**. A price carried on `price_basis` is a declared peg or a transitive derivation, and a premium against either reports the issuer's own claim back as a market finding. | `market_price_not_observed` |
-| The reference must be **positive**. A zero or negative value — from an oracle, a listing or a constant-NAV binding — is bad data, not a valuation of zero: nothing is divided by it for the premium or multiplied by it for the reference valuation, and both carry this status. | `reference_not_positive` |
+| The oracle value must be **dollars**. A bare `_FUNDAMENTAL` feed publishes net asset value in the token's *reserve* asset, a ratio and not a price. The denominator is read off the stored row and must be `fiat:USD`; it is never converted. | `reference_not_usd_denominated` |
+| The feed must price **one token**. `rwa:XAU` is spot gold per troy ounce and `rwa:SPXU` is one share of an exchange-traded fund. No binding may target one (a test enforces it). | `reference_not_instrument_scoped` |
+| The publisher must be an **oracle**. Aggregators write into the same table for divergence comparison, and a premium against one compares the market with itself. Their rows are dropped when the snapshot is built, so a bound pair left with no oracle row has no feed. | `no_reference_feed` |
+| The market price must be **observed**. A price on `price_basis` is a declared peg or a transitive derivation, and a premium against it reports the issuer's own claim back as a market finding. | `market_price_not_observed` |
+| The reference must be **positive**. A zero or negative value, from an oracle, a listing or a constant-NAV binding, is bad data. Both the premium and the reference valuation carry this status. | `reference_not_positive` |
 
 A scam-flagged issuer gets no valuation of any kind, including a third
 party's (`withheld_issuer_flagged`). Handing an impersonator the real
-instrument's net asset value would publish a *larger* claim than the one
-the flag suppressed — a dollar figure on the impersonator, sourced from
-an oracle that never named it.
+instrument's net asset value would publish a *larger* claim than the one the
+flag suppressed.
 
 ### Absence, outage and expiry are three different statements
 
-Each `premium.status` means one thing and only one thing, because a
-reader cannot act on a status that collapses them:
+Each `premium.status` means one thing:
 
-- `reference_not_bound` — the pair is not in the curated table. Usually a
-  code collision.
-- `no_reference_feed` — the pair *is* bound, but no oracle is publishing
-  its feed.
-- `reference_unavailable` — the oracle read did not answer. Nothing is
-  known either way. A failed read has not learned what the oracles carry
-  and is not entitled to report an absence; on the wire it must not look
-  like one.
-- `reference_expired` — the bound feed's most recent observation is older
-  than the seven-day window. Reachable only when a snapshot is carried
-  across a sustained read failure.
+- `reference_not_bound` — the pair is not in the curated table. Usually a code
+  collision.
+- `no_reference_feed` — the pair *is* bound, but no oracle is publishing its
+  feed.
+- `reference_unavailable` — the oracle read did not answer. Nothing is known
+  either way, and on the wire a failed read must not look like an absence.
+- `reference_expired` — the bound feed's most recent observation is older than
+  the seven-day window. Reachable only when a snapshot is carried across a
+  sustained read failure.
 - `reference_isin_mismatch` — the well-formed ISIN the issuer declares in
-  `anchor_asset` contradicts a prospectus constant-NAV binding: the pair
-  is bound to a different share class, or the ISIN is a class bound on
-  another pair. No reference of any provenance is served until the
-  binding is re-verified, because the row would otherwise name one
-  security and be valued as another.
+  `anchor_asset` contradicts a prospectus constant-NAV binding: the pair is
+  bound to a different share class, or the ISIN is a class bound on another
+  pair. No reference of any provenance is served until the binding is
+  re-verified, because the row would otherwise name one security and be valued
+  as another.
 
 ### What the comparison rests on
 
-That one unit of the token is one unit of the named instrument. The
-evidence is the issuer's own domain-bound SEP-1 declaration (R2) plus the
-independent recognition of the issuing account (R3) — the same evidence
-that admitted the asset — and **not** a separate measurement of
-denomination. The surface states this beside the figure rather than
-letting a percentage imply a certainty nobody established.
+That one unit of the token is one unit of the named instrument. The evidence is
+the issuer's own domain-bound SEP-1 declaration (R2) plus the independent
+recognition of the issuing account (R3), and **not** a separate measurement of
+denomination. The surface states this beside the figure.
 
-An unavailable comparison is **absent**, never `0`. Zero would read as
-"trades at par", which is a finding; a comparison that was never made is
-not that finding. A reference older than 72 hours — the longest ordinary
-gap between two strikes of a real-world instrument's value — is labelled
-`stale` rather than withheld, because a value struck last Friday is still
-the last one published.
+An unavailable comparison is **absent**, never `0`, which would read as
+"trades at par". A reference older than 72 hours, the longest ordinary gap
+between two strikes of a real-world instrument's value, is labelled `stale`
+rather than withheld.
 
-The outer bound is absolute and is enforced on the **observation**, not
-on the snapshot: an oracle reading older than seven days is not served,
-however it reached the request. A live read cannot return one — the
-stream query defines an active stream by that window — but a snapshot is
-carried forward across a failed read, and under a sustained outage the
-carried rows would otherwise age past the bound this page claims.
+The outer bound is absolute and enforced on the **observation**, not the
+snapshot: an oracle reading older than seven days is not served, however it
+reached the request. A live read cannot return one, but a snapshot carried
+forward across a failed read would otherwise age past the bound.
 
 ## Coverage
 
-`summary.earliest_first_seen_ledger` is the lowest ledger any member was
-first observed at, read from an index complete since genesis. It is a
-true first appearance, not the start of a sampling window — the same
-distinction that separates a complete index from a query over a
-retention window.
+`summary.earliest_first_seen_ledger` is the lowest ledger any member was first
+observed at, read from an index complete since genesis.
 
-`summary.assets_with_reference` and `summary.assets_compared` state the
-coverage of the instrument comparison: how many members carry an
-independent valuation, and how many of those also have a market price to
-measure it against. Both are served because the difference between them
-is exactly the set of blank premium cells, and a reader who saw only the
-premiums would take the blanks for zeros.
+`summary.assets_with_reference` and `summary.assets_compared` state how many
+members carry an independent valuation, and how many of those also have a
+market price to measure it against. The difference is the set of blank premium
+cells.
 
-`circulating_supply` is served on every row, including rows with no
-served price — it is a chain fact rather than a price claim, and the
-reference basis needs it precisely where the market basis has nothing to
-say. On the classic arm the market-cap fill reads a supply only when it
-is about to multiply it by a price, so this surface fills the remainder
-separately from the same two readers; on the contract arm the lake
-supply is read for every row before any price is consulted. The
-per-asset `decimals` beside it is the scale that turns it into a
-whole-token float.
+`circulating_supply` is served on every row, including rows with no served
+price, because the reference basis needs it where the market basis has nothing
+to say. The per-asset `decimals` beside it turns it into a whole-token float.
 
-The membership set is rebuilt at most once per ten minutes, off the
-request path. Its inputs move on daily cadences (the SEP-1 refresh cron
-and the directory sync), so the window is well inside the rate at which
-the answer can change. On a rebuild failure the previous set is served
-rather than an empty one.
-
-The oracle reference snapshot is cached separately and for 30 seconds
-only. It is a price: reusing a ten-minute-old net asset value against a
-live market price would report a premium neither figure supports. One
-stream read serves the whole set however many members it has, and a read
-that does not answer leaves the previous snapshot in place. Until the
-first successful read there is no snapshot to carry, and rows then say
-`reference_unavailable` — not that no oracle publishes their instrument,
-which is a finding a failed read has not earned.
+The membership set is rebuilt at most once per ten minutes, off the request
+path; on a rebuild failure the previous set is served. The oracle reference
+snapshot is cached separately for 30 seconds only, because reusing a
+ten-minute-old net asset value against a live price would report a premium
+neither figure supports. A read that does not answer leaves the previous
+snapshot in place. Until the first successful read, rows say
+`reference_unavailable`.
 
 ## Known limits
 
-- **The set is small.** Under this definition it is a handful of assets
-  from a handful of issuers. That is the honest answer to "which Stellar
-  assets are real-world assets whose backing an independent party has
-  vouched for, per `(code, issuer)`" — and it is a different question
-  from "which companies say they tokenise real-world assets on Stellar",
-  which a hand-curated company list answers with a bigger number and no
-  per-asset identity.
-- **R3 delegates recognition to one third-party directory.** A real
-  issuer the directory has not yet labelled is refused, and the refusal
-  is counted rather than silently absorbed. A second recognition source
-  would widen the set without weakening the rule; the
-  `account_directory` schema is already scoped by `source` for exactly
-  that. On the CONTRACT arm that second source now exists, under the
-  asymmetric rule
-  [C2 states](#two-ways-to-satisfy-it-and-why-they-are-not-the-same-shape);
-  the classic arm still has one, reached two ways — the issuer listed
-  directly, or through the
-  [sibling route](#the-sibling-route-and-the-assumption-it-rests-on).
-  The sibling route admits more accounts but adds no second party: it
-  still rests on the same directory having listed the entity.
-- **Arm 2 is only as wide as the curated binding set.** It can admit
-  nothing this repository has not already bound to a named instrument at
-  the [three-part evidence bar](#c4--real-world-instrument), so growing
-  it is a reviewed code change and not a sync. Addresses the listing
-  names that no binding covers are counted on the funnel rather than
-  admitted, which is where an operator looks to see what is next.
-- **A listing price is not an oracle valuation,** and rows carrying one
-  are labelled rather than blended. It prices the token, carries no
-  premium, and asserts nothing about the backing.
-- **No historical series.** Market cap over time needs a per-asset daily
-  supply-and-price rollup that does not exist yet. Nothing on this
-  surface is back-projected from current state, and no monthly series is
-  published from a figure that was only ever measured today.
-- **The membership cache and the listing cache decay at different
-  rates.** Membership rebuilds every ten minutes off the request path;
-  the listing snapshot is filled hourly and may be reused for
-  recognition for 48 hours and for pricing for 24. An address the
-  listing platform corrects therefore stays admitted for up to two days.
-- **A frozen membership rebuild has no upper age bound, and that is the
-  one gap in the fail-closed claim.** On a rebuild failure the previous
-  set is served rather than an empty one, and the requirement reads that
-  decide membership all go through the same Postgres — so a sustained
-  outage there freezes the served set indefinitely rather than shrinking
-  it. Arm 2's recognition may not be *carried forward within a rebuild*,
-  and is not; a rebuild that never happens is a different mechanism and
-  this one still has it. A reader can see it happening —
+- **The set is small.** It is a handful of assets from a handful of issuers,
+  the answer to "which Stellar assets are real-world assets whose backing an
+  independent party has vouched for, per `(code, issuer)`". A company list
+  answers a different question with a bigger number and no per-asset identity.
+- **R3 delegates recognition to one third-party directory.** A real issuer the
+  directory has not yet labelled is refused, and the refusal is counted. On the
+  CONTRACT arm a second source exists, under the asymmetric rule
+  [C2 states](#two-ways-to-satisfy-it-and-why-they-are-not-the-same-shape).
+  The classic arm has one source, reached directly or through the
+  [sibling route](#the-sibling-route-and-the-assumption-it-rests-on), which
+  adds no second party.
+- **Arm 2 is only as wide as the curated binding set.** It admits nothing this
+  repository has not already bound to a named instrument at the
+  [three-part evidence bar](#c4--real-world-instrument), so growing it is a
+  reviewed code change and not a sync. Addresses the listing names that no
+  binding covers are counted on the funnel rather than admitted.
+- **A listing price is not an oracle valuation,** and rows carrying one are
+  labelled rather than blended. It prices the token, carries no premium, and
+  asserts nothing about the backing.
+- **No historical series.** Nothing on this surface is back-projected from
+  current state.
+- **The membership cache and the listing cache decay at different rates.**
+  Membership rebuilds every ten minutes; the listing snapshot is filled hourly
+  and may be reused for recognition for 48 hours and for pricing for 24. An
+  address the listing platform corrects therefore stays admitted for up to two
+  days.
+- **A frozen membership rebuild has no upper age bound, the one gap in the
+  fail-closed claim.** On a rebuild failure the previous set is served, and the
+  reads that decide membership all go through the same Postgres, so a sustained
+  outage there freezes the served set indefinitely rather than shrinking it.
+  Arm 2's recognition is not carried forward *within a rebuild*; a rebuild that
+  never happens is a different mechanism.
   [`membership.built_at`, `stale` and `rebuild_failed_at`](#dating-the-set)
-  date the served set — but nothing yet refuses a set past an absolute
-  age. Closing it means an absolute bound on cache reuse, which is a
-  separate change.
+  date the served set, but nothing yet refuses a set past an absolute age.
 
 ## References
 
-- Implementation: `internal/rwa` (the definition and the
-  comparable-instrument classification),
-  `internal/storage/timescale/sep1_bound_currencies.go` (the provenance
-  rule), `internal/api/v1/rwa.go` (the read path and wire shape),
+- Implementation: `internal/rwa` (the definition and the comparable-instrument
+  classification), `internal/storage/timescale/sep1_bound_currencies.go` (the
+  provenance rule), `internal/api/v1/rwa.go` (the read path and wire shape),
   `internal/api/v1/rwa_reference.go` (the oracle reference, the
-  reference-priced valuation and the premium),
-  `internal/api/v1/rwa_funnel.go` (the accounting, including the
-  valuation arm), `internal/api/v1/rwa_listing.go` (C2's second arm and
-  its candidate population),
-  `internal/storage/timescale/asset_listing_directory.go` (the cached
-  listing directory and its two staleness bounds), and
+  reference-priced valuation and the premium), `internal/api/v1/rwa_funnel.go`
+  (the accounting, including the valuation arm),
+  `internal/api/v1/rwa_listing.go` (C2's second arm and its candidate
+  population), `internal/storage/timescale/asset_listing_directory.go` (the
+  cached listing directory and its two staleness bounds), and
   `internal/ops/ingest/listing_sync.go` (the hourly sync that fills it).
 - [ADR-0028](../adr/0028-rwa-asset-representation.md) — the `rwa:`
   reference-asset namespace and the oracle feed allow-list R4 reads.
 - [dex-tvl.md](dex-tvl.md) — the same posture applied to a different
-  aggregate: exclusions named, lower bounds labelled, and silence
-  preferred to a plausible-looking wrong figure.
+  aggregate: exclusions named, lower bounds labelled, and silence preferred to
+  a plausible-looking wrong figure.
