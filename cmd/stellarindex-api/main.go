@@ -701,7 +701,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			logger.Warn("token supply reader unavailable; /v1/assets/{id}/supply will 503", "addr", addr, "err", err)
 		} else {
 			defer func() { _ = sr.Close() }()
-			tokenSupplyReader = sr
+			tokenSupplyReader = v1.NewTokenSupplyCache(sr)
 			logger.Info("token supply reader wired (ClickHouse supply_flows)", "addr", addr)
 		}
 	}
