@@ -137,8 +137,10 @@ func (s *Store) resolveUSDVolume(ctx context.Context, t canonical.Trade) (v *str
 const (
 	// PoolMaxOpenConns caps total conns held by one indexer/api/aggregator binary.
 	PoolMaxOpenConns = 25
-	// PoolMaxIdleConns keeps a small idle floor to avoid a connect storm on a cold cache.
-	PoolMaxIdleConns = 5
+	// PoolMaxIdleConns equals the open cap: a lower floor closes every conn above it on release, so
+	// each burst reconnects and a fresh backend re-plans across every hypertable chunk cold.
+	// PoolConnMaxIdleTime still reaps conns a quiet pool does not need.
+	PoolMaxIdleConns = PoolMaxOpenConns
 	// PoolConnMaxLifetime retires every conn this often regardless of liveness, so dead conns
 	// cannot linger after a postgres crash and recovery. 30 min beats a rolling-restart interval
 	// and bounds the longest cascade-gap to it.
