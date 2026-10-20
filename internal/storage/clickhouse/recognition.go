@@ -21,7 +21,7 @@ type TopicShape struct {
 	// contract, so one recognised exemplar would hide its unrecognised siblings.
 	t0, t1    string
 	tn        uint64
-	Count     uint64
+	Count     uint64 // stored rows, un-merged ReplacingMergeTree duplicates included
 	MinLedger uint32
 	MaxLedger uint32
 	EventType string
@@ -81,9 +81,26 @@ func DistinctTopicShapes(ctx context.Context, addr string, from, to uint32, excl
 	}
 	defer func() { _ = conn.Close() }()
 
+	coveredFrom, covered, err := shapesCoverage(ctx, conn)
+	if err != nil {
+		return nil, err
+	}
+
 	acc := make(map[shapeKey]*TopicShape)
 	scanQs := []string{distinctSymbolShapesWindowQuery(excludeTopic0, watchedContracts), distinctNonSymbolShapesWindowQuery()}
+	// Whole covered partitions come from the shapes rollup in one read; only the
+	// partial edge windows scan contract_events. Covered partitions form a suffix
+	// of the whole ones, so [partLo,partHi] is contiguous.
+	var partLo, partHi uint32
+	haveParts := false
 	err = forEachLedgerWindow(from, to, recognitionScanWindow, func(lo, hi uint32) error {
+		if covered && lo >= coveredFrom && lo%recognitionScanWindow == 0 && hi == lo+recognitionScanWindow-1 {
+			if !haveParts {
+				partLo, haveParts = lo/recognitionScanWindow, true
+			}
+			partHi = lo / recognitionScanWindow
+			return nil
+		}
 		for _, q := range scanQs {
 			if qerr := scanShapeWindow(ctx, conn, q, lo, hi, acc); qerr != nil {
 				return qerr
@@ -94,8 +111,62 @@ func DistinctTopicShapes(ctx context.Context, addr string, from, to uint32, excl
 	if err != nil {
 		return nil, err
 	}
+	if haveParts {
+		if err := scanShapeWindow(ctx, conn, rolledShapesQuery(excludeTopic0, watchedContracts), partLo, partHi, acc); err != nil {
+			return nil, err
+		}
+	}
 
 	return finishShapeScan(ctx, conn, acc)
+}
+
+// shapesCoverage reports the first ledger from which stellar.contract_event_shapes holds every whole partition; covered is false until
+// its backfill wrote the marker (deploy/clickhouse/contract_event_shapes.sql) or on a lake without the table.
+func shapesCoverage(ctx context.Context, conn driver.Conn) (from uint32, covered bool, err error) {
+	var n uint64
+	err = conn.QueryRow(ctx, `SELECT min(covered_from), count() FROM stellar.contract_event_shapes_coverage`).Scan(&from, &n)
+	if isSchemaAbsent(err) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("clickhouse: contract_event_shapes coverage: %w", err)
+	}
+	return from, n > 0, nil
+}
+
+// rolledShapesQuery reads the shapes of partitions [?,?] from the rollup, with the same exclusion as the Symbol scan; non-Symbol shapes
+// are never excluded.
+func rolledShapesQuery(excludeTopic0, watchedContracts []string) string {
+	where := "WHERE part BETWEEN ? AND ?"
+	if f := shapeExcludeFilter(excludeTopic0, watchedContracts); f != "" {
+		where += " AND (topic_0_sym = '' OR " + f + ")"
+	}
+	return fmt.Sprintf(`
+		SELECT
+			contract_id,
+			topic_0_sym,
+			t0,
+			t1,
+			tn,
+			toUInt64(sum(cnt)) AS cnt_sum,
+			min(lo) AS lo_min,
+			max(hi) AS hi_max
+		FROM stellar.contract_event_shapes
+		%s
+		GROUP BY contract_id, topic_0_sym, t0, t1, tn
+		%s`, where, boundedScanSettings)
+}
+
+// shapeExcludeFilter drops excludeTopic0 symbols except on watchedContracts; "" when nothing is excluded.
+func shapeExcludeFilter(excludeTopic0, watchedContracts []string) string {
+	if len(excludeTopic0) == 0 {
+		return ""
+	}
+	filter := "topic_0_sym NOT IN (" + sqlQuoteList(excludeTopic0) + ")"
+	if len(watchedContracts) > 0 {
+		filter = "(" + filter + " OR contract_id IN (" + sqlQuoteEscapedList(watchedContracts) + "))"
+	}
+	return filter
 }
 
 func scanShapeWindow(ctx context.Context, conn driver.Conn, q string, lo, hi uint32, acc map[shapeKey]*TopicShape) error {
@@ -143,12 +214,8 @@ func finishShapeScan(ctx context.Context, conn driver.Conn, acc map[shapeKey]*To
 // op_args_xdr, no argMax exemplar state) under bounded settings. watchedContracts keep their excluded topics in scope.
 func distinctSymbolShapesWindowQuery(excludeTopic0, watchedContracts []string) string {
 	where := "WHERE ledger_seq BETWEEN ? AND ? AND topic_0_sym != ''"
-	if len(excludeTopic0) > 0 {
-		filter := "topic_0_sym NOT IN (" + sqlQuoteList(excludeTopic0) + ")"
-		if len(watchedContracts) > 0 {
-			filter = "(" + filter + " OR contract_id IN (" + sqlQuoteEscapedList(watchedContracts) + "))"
-		}
-		where += " AND " + filter
+	if f := shapeExcludeFilter(excludeTopic0, watchedContracts); f != "" {
+		where += " AND " + f
 	}
 	return fmt.Sprintf(`
 		SELECT
