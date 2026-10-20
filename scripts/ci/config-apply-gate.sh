@@ -424,4 +424,5 @@ if [ "$ACK" = "true" ]; then
 fi
 
 echo "::error::Release ${VERSION} changed $(echo "$CHANGED" | grep -c . ) config surface(s) SUBSTANTIVELY — a binary deploy does NOT apply them, and neither comment-only classification nor an automated verifier cleared them. Apply them per docs/operations/deploy-config-apply.md, VERIFY each landed on the host, then re-run deploy with -f config_acknowledged=true (or pass it now if you have already applied AND verified them). Acknowledging without verifying is what ships a schema change dead: v0.61.1..v0.62.0 looked like the two comment-only ClickHouse diffs before it and was not. Binaries are already deployed; this gate only flags the outstanding config-apply."
+printf '%s\n' "$CHANGED" | sed 's/^/    /'
 exit 1
