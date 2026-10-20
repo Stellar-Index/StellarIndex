@@ -95,6 +95,13 @@ func TestCreditBudget_CountsCommittedRefusalsOnly(t *testing.T) {
 	abc := mustAsset(t, "ABC-"+creditTestIssuer)
 	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	mustAdmit(t.Context(), t, b, abc, at, "2000", "1000", true)
+	mustAdmit(t.Context(), t, b, abc, at, "50", "1000", true)
+	if n, _ := s.CreditRefusals(); n != 0 {
+		t.Fatalf("live path counted %d refusals; only a dry run turns the tally on", n)
+	}
+	b.tally = true
+	b.served, b.charged = map[string]*creditLedger{}, map[string]int64{}
+	mustAdmit(t.Context(), t, b, abc, at, "2000", "1000", true)
 	mustAdmit(t.Context(), t, b, abc, at, "300", "1000", true)
 	mustAdmit(t.Context(), t, b, abc, at, "0.5", "1000", true)
 	mustAdmit(t.Context(), t, b, abc, at, "900", "1000", false)

@@ -377,7 +377,7 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	requireRows := fs.String("require-rows", "", "comma-separated sources that must write at least one row: the run fails when one of them re-derives none. scripts/ops/ch-rebuild-projected.sh passes every source whose window its DELETE found occupied, so an emptied window whose re-derive came back empty (an empty gate registry, a lake gap) exits non-zero and stays dirty instead of being marked done. A source absent here may legitimately be quiet over the range.")
 	recordDirty := fs.Bool("record-dirty-window", false, "record [from,to] as a pending ADR-0033 projection dirty window for every source named in -sources (each must be a reconciliation-catalogue source; the list is REQUIRED), then exit 0 WITHOUT reading ClickHouse or writing a row. The next compute-completeness re-reconciles that range instead of carrying its prior clean projection claim over it, and clears the obligation only with the verdict that discharges it. This is the RECORD, not a re-derive, so it takes neither -write nor -preflight. It exists for the operator (and scripts/ops/ch-rebuild-projected.sh's TELL THE VERDICT line) after a clean-slate DELETE whose re-derive did not complete: the window is then EMPTY and /v1/coverage must stop certifying it complete (F075). An ordinary -write run records its own rewritten window before it writes; this mode is for a window left EMPTIED.")
 	tradesByAccount := fs.Bool("trades-by-account", false, "with -write -sdex: write the decoded trades to ClickHouse stellar.trades_by_account (one row per taker and per distinct maker, same storability gate and usd_volume as Postgres) and record [from,to] in trades_by_account_windows, INSTEAD of writing Postgres. Needs the full trade set, so it refuses -sources, -contracts, -sdex-gaps, -sdex-reconcile, -sep41, -contract-calls and -bulk-trades. Runbook: deploy/clickhouse/trades_by_account.sql.")
-	creditRefusals := fs.Bool("credit-refusals", false, "dry run only: also charge each decoded trade to the USD credibility budget in ledger order, as -write would, and print how many token/token prints it would refuse and their USD total. Costs a USD resolution per trade, so it is opt-in. The first 24 h of each asset is seeded from the stored, pre-rebuild values.")
+	creditRefusals := fs.Bool("credit-refusals", false, "dry run only: also charge each decoded trade to the USD credibility budget in -write's upsert batch order, and print how many token/token prints it would refuse and their USD total. Costs a USD resolution per trade, so it is opt-in. The first 24 h of each asset is seeded from the stored, pre-rebuild values.")
 	replaceWindow := fs.Bool("replace", false, "with -trades-by-account: rewrite a range that overlaps recorded windows, deleting those windows and the range's trades_by_account rows first. Every overlapping window must lie inside [from,to]. Without it an overlapping range is refused.")
 	toHorizon := fs.Bool("to-horizon", false, "with -trades-by-account and no -from/-to: catch up from one past the newest recorded window to the first ledger at or after the Postgres trades compression horizon (at most 2M ledgers per run); exits 0 when already caught up. For the daily timer.")
 	if err := fs.Parse(args); err != nil {
@@ -996,28 +996,45 @@ func writeTradeBatch(ctx context.Context, logger *slog.Logger, w eventWriter, ba
 
 // tallyTrade counts a trade the batch writer accepted: a Validate-passing row (including a one-side-zero SDEX fill) is
 // stored; any other is a decoder bug the store's filter drops, so it must fail the run.
-// reportCreditRefusals charges buf's storable trades to the store's credibility budget in buffer order and prints what it declined.
-func reportCreditRefusals(ctx context.Context, store *timescale.Store, buf []consumer.Event) error {
-	for _, ev := range buf {
-		t, ok := tradeOf(ev)
-		if !ok || t.Validate() != nil {
-			continue
-		}
-		if err := store.ChargeTradeUSDCredit(ctx, t); err != nil {
-			return fmt.Errorf("ch-rebuild: -credit-refusals: trade %s/%s ledger %d: %w", t.Pair.Base, t.Pair.Quote, t.Ledger, err)
-		}
-	}
-	n, usd := store.CreditRefusals()
-	fmt.Printf("ch-rebuild: credit budget would refuse %d token/token print(s), %s USD\n", n, usd.FloatString(2))
-	return nil
-}
-
 func tallyTrade(t canonical.Trade, src string, written, failed map[string]int) {
 	if t.Validate() == nil {
 		written[src]++
 		return
 	}
 	failed[src]++
+}
+
+// reportCreditRefusals charges buf's trades to the store's credibility budget in -write's upsert batches (upsertTradeBatchN, cut on a
+// ledger boundary) and prints what it declined.
+func reportCreditRefusals(ctx context.Context, store *timescale.Store, buf []consumer.Event) error {
+	batch := make([]canonical.Trade, 0, upsertTradeBatchN)
+	charge := func() error {
+		if err := store.ChargeTradesUSDCredit(ctx, batch); err != nil {
+			return fmt.Errorf("ch-rebuild: -credit-refusals: batch ending ledger %d: %w", batch[len(batch)-1].Ledger, err)
+		}
+		batch = batch[:0]
+		return nil
+	}
+	for _, ev := range buf {
+		t, ok := tradeOf(ev)
+		if !ok {
+			continue
+		}
+		if len(batch) >= upsertTradeBatchN && batch[len(batch)-1].Ledger != t.Ledger {
+			if err := charge(); err != nil {
+				return err
+			}
+		}
+		batch = append(batch, t)
+	}
+	if len(batch) > 0 {
+		if err := charge(); err != nil {
+			return err
+		}
+	}
+	n, usd := store.CreditRefusals()
+	fmt.Printf("ch-rebuild: credit budget would refuse %d token/token print(s), %s USD\n", n, usd.FloatString(2))
+	return nil
 }
 
 // drainAndWrite persists buffered events to Postgres, returning per-source written and failed tallies. Batches fall back

@@ -714,8 +714,8 @@ Subcommands:
                           ledgers it only adds a probe and then falls back.
 
                           -credit-refusals (dry run only) charges each trade
-                          to the USD credibility budget in ledger order, as
-                          -write would, and prints how many token/token
+                          to the USD credibility budget in -write's upsert
+                          batch order and prints how many token/token
                           prints it would refuse and their USD total.
   trades-cagg-refresh -config PATH -from N -to N [-force=false] -write | -config PATH -size
                           Refresh every continuous aggregate over trades
