@@ -394,6 +394,13 @@ OUT="$(cat "$SUMMARY_OUT")"
 expect 'the job summary names the drifted task' 1 'Install the Caddyfile'
 expect 'the job summary names the host path it would touch' 1 '/etc/caddy/Caddyfile'
 
+: > "$SUMMARY_OUT"
+DRIFT_HOST=testnet GITHUB_STEP_SUMMARY="$SUMMARY_OUT" ANSIBLE_DRIFT_BASELINE="$TMP/baseline" \
+  bash "$GATE" "$TMP/drift.out" >/dev/null 2>&1
+RC=$?
+OUT="$(cat "$SUMMARY_OUT")"
+expect 'DRIFT_HOST names the target in the summary' 1 'would change on testnet'
+
 echo
 echo "check-ansible-drift-test: ${pass} passed, ${fail} failed"
 [ "$fail" -eq 0 ] || exit 1

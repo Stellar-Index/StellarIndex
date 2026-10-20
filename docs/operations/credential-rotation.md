@@ -149,7 +149,8 @@ tracked in the private inventory.
    `STELLARINDEX_LOAD_API_KEY`.
 9. **GCP service-account key.** Create, swap in, delete the old.
 10. **The vault itself, last.** Rekey, then update the `ANSIBLE_VAULT_PASSWORD` and
-    `ANSIBLE_VAULT_FILE_B64` Actions secrets. Check: ansible-drift decrypts.
+    `ANSIBLE_VAULT_FILE_B64` Actions secrets (test nets: `TESTNETS_ANSIBLE_VAULT_PASSWORD`,
+    `TESTNET_VAULT_FILE_B64`, `FUTURENET_VAULT_FILE_B64`). Check: ansible-drift decrypts.
 
 ## Related
 

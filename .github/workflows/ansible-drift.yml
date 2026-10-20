@@ -16,6 +16,9 @@ name: ansible-drift
 #   - ANSIBLE_VAULT_FILE_B64  (base64 of the encrypted r1.secrets.yml)
 #   - R1_INVENTORY_B64        (base64 of configs/ansible/inventory/r1.yml —
 #                              see immediately below)
+#   - drift-check-testnets: <NET>_SSH_KNOWN_HOSTS, <NET>_INVENTORY_B64,
+#     <NET>_VAULT_FILE_B64 for TESTNET and FUTURENET, and
+#     TESTNETS_ANSIBLE_VAULT_PASSWORD (both test nets share one vault password)
 #
 # R1_INVENTORY_B64. configs/ansible/inventory/r1.yml is not tracked — it
 # carries the production host IP, `allowed_ssh_cidrs`, disk serials and
@@ -370,3 +373,104 @@ jobs:
           # The materialized inventory is operationally sensitive too
           # (host IP, SSH surface, disk serials) — same treatment.
           shred -u configs/ansible/inventory/r1.yml 2>/dev/null || rm -f configs/ansible/inventory/r1.yml
+
+  # The test nets take the same role and drift the same way: deploy.yml
+  # ships binaries only, so a role change reaches them only by a manual
+  # playbook run. Dry-run only; apply by hand from an operator checkout.
+  drift-check-testnets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Dry-run only, so the observe environment's main-only policy is the gate.
+    environment:
+      name: r1-observe
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {net: testnet, prefix: TESTNET}
+          - {net: futurenet, prefix: FUTURENET}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          # Full history and tags: see the drift-check job.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Assert the environment gate is configured
+        # Dry-run only, so the observe gate is the one that applies.
+        env:
+          GH_TOKEN: ${{ secrets.DEPLOY_PROTECTION_TOKEN || secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: bash scripts/ci/assert-deploy-gate.sh --observe r1-observe
+
+      - name: Install ansible
+        # Same pins as the drift-check job.
+        run: |
+          set -euo pipefail
+          ./scripts/ci/install-ansible.sh bundle
+          pipx inject ansible 'passlib==1.7.4'
+          ansible-galaxy collection install -r configs/ansible/requirements.yml
+
+      - name: Credentials
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS_B64: ${{ matrix.net == 'testnet' && secrets.TESTNET_SSH_KNOWN_HOSTS || secrets.FUTURENET_SSH_KNOWN_HOSTS }}
+          INVENTORY_B64: ${{ matrix.net == 'testnet' && secrets.TESTNET_INVENTORY_B64 || secrets.FUTURENET_INVENTORY_B64 }}
+          VAULT_FILE_B64: ${{ matrix.net == 'testnet' && secrets.TESTNET_VAULT_FILE_B64 || secrets.FUTURENET_VAULT_FILE_B64 }}
+          VAULT_PASS: ${{ secrets.TESTNETS_ANSIBLE_VAULT_PASSWORD }}
+          NET: ${{ matrix.net }}
+          PREFIX: ${{ matrix.prefix }}
+        run: |
+          set -euo pipefail
+          for v in SSH_KEY KNOWN_HOSTS_B64 INVENTORY_B64 VAULT_FILE_B64 VAULT_PASS; do
+            if [ -z "${!v:-}" ]; then
+              echo "::error::$v is unset for $NET (secrets ${PREFIX}_SSH_KNOWN_HOSTS, ${PREFIX}_INVENTORY_B64, ${PREFIX}_VAULT_FILE_B64, TESTNETS_ANSIBLE_VAULT_PASSWORD) — a missing-credential failure, NOT a drift signal." >&2
+              exit 1
+            fi
+          done
+          inv=configs/ansible/inventory
+          mkdir -p ~/.ssh ~/.ansible
+          chmod 700 ~/.ssh
+          # The test-net inventories name this key in their ProxyCommand.
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/si_deploy
+          chmod 600 ~/.ssh/si_deploy
+          # Holds the jump host key and the VM key; the inventory reads it from inventory_dir.
+          printf '%s' "$KNOWN_HOSTS_B64" | base64 -d > "$inv/known_hosts"
+          printf '%s' "$INVENTORY_B64" | base64 -d > "$inv/$NET.yml"
+          chmod 600 "$inv/$NET.yml"
+          if ! grep -q 'archival_nodes' "$inv/$NET.yml"; then
+            echo "::error::${PREFIX}_INVENTORY_B64 decoded to something that is not the $NET inventory (no 'archival_nodes' group)." >&2
+            exit 1
+          fi
+          printf '%s' "$VAULT_FILE_B64" | base64 -d > "$inv/$NET.secrets.yml"
+          printf '%s' "$VAULT_PASS" > ~/.ansible/testnet_vault_pass
+          chmod 600 ~/.ansible/testnet_vault_pass
+
+      - name: Dry-run the playbook against the test net
+        id: dryrun
+        working-directory: configs/ansible
+        env:
+          NET: ${{ matrix.net }}
+        run: |
+          set -o pipefail
+          ansible-playbook -i "inventory/$NET.yml" playbooks/archival-node.yml \
+            -e "secrets_file=../inventory/$NET.secrets.yml" \
+            --vault-password-file ~/.ansible/testnet_vault_pass \
+            --check --diff | tee /tmp/drift.out
+
+      - name: Drift verdict
+        if: ${{ !cancelled() && steps.dryrun.outcome != 'skipped' }}
+        env:
+          DRIFT_HOST: ${{ matrix.net }}
+        run: bash scripts/ci/check-ansible-drift.sh /tmp/drift.out
+
+      - name: Shred materialized secrets
+        if: always()
+        env:
+          NET: ${{ matrix.net }}
+        run: |
+          for f in ~/.ansible/testnet_vault_pass ~/.ssh/si_deploy \
+            "configs/ansible/inventory/$NET.secrets.yml" "configs/ansible/inventory/$NET.yml"; do
+            shred -u "$f" 2>/dev/null || rm -f "$f"
+          done
