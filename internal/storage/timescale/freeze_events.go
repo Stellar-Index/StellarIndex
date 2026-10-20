@@ -88,10 +88,9 @@ func (s *FreezeEventSink) RecordFreeze(ctx context.Context, asset, quote canonic
 		frozenValueArg = "0"
 	}
 
-	// Two workers racing on one pair could both pass WHERE NOT EXISTS and leave duplicate open
-	// rows, so check and insert run under pg_advisory_xact_lock keyed on a hash of (asset, quote).
-	// Advisory because the "no row yet" branch has nothing to row-lock, and Timescale forbids a
-	// partial UNIQUE index that omits the partition key.
+	// Two workers racing on one pair could both pass WHERE NOT EXISTS and leave duplicate open rows, so check and insert run
+	// under pg_advisory_xact_lock keyed on a hash of (asset, quote). Advisory because the "no row yet" branch has nothing to
+	// row-lock, and Timescale forbids a partial UNIQUE index that omits the partition key.
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("timescale: RecordFreeze: begin tx: %w", err)
@@ -131,10 +130,8 @@ func (s *FreezeEventSink) RecordFreeze(ctx context.Context, asset, quote canonic
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("timescale: RecordFreeze: commit: %w", err)
 	}
-	// Fire the post-insert hook only when a row was actually appended.
-	// The idempotency check + ON CONFLICT DO NOTHING means
-	// RowsAffected==0 is the "already firing, this is just a TTL
-	// refresh" path; firing the webhook then would spam subscribers.
+	// Fire the post-insert hook only when a row was appended: RowsAffected==0 means the pair is already firing and this is a
+	// TTL refresh, and firing the webhook then would spam subscribers.
 	if s.onFreeze != nil {
 		if affected, err := res.RowsAffected(); err == nil && affected > 0 {
 			// The original value, not frozenValueArg: "0" is this column's
@@ -151,10 +148,9 @@ func (s *FreezeEventSink) SaveLadder(ctx context.Context, asset, quote canonical
 	if !state.HoldUntil.IsZero() {
 		holdUntil = state.HoldUntil.UTC()
 	}
-	// A RETIRE (NULL hold_until) also drops the per-window ladders, so a later freeze on the same
-	// still-open row cannot inherit the ended freeze's windows. An active pair-level write leaves
-	// them alone: its caller names no window. A retire nulls hold_until only; extensions_used /
-	// escalated / corroborated stay as history for the anomalies timeline.
+	// A RETIRE (NULL hold_until) also drops the per-window ladders, so a later freeze on the same still-open row cannot inherit
+	// the ended freeze's windows. An active pair-level write leaves them alone: its caller names no window. A retire nulls
+	// hold_until only; extensions_used / escalated / corroborated stay as history for the anomalies timeline.
 	const q = `
 		UPDATE freeze_events
 		   SET hold_until      = $3::timestamptz,

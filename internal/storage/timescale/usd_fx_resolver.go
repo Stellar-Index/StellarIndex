@@ -264,10 +264,8 @@ func (r *VWAPUSDFXResolver) resolveRate(ctx context.Context, asset canonical.Ass
 	}
 	directFound := rate != ""
 	if rate != "" && !r.fresh(observedAt, at, r.freshness) {
-		// Direct market exists but its most recent VWAP is too old to
-		// price this trade. Discard it and let the bridge try — a
-		// current XLM-routed rate beats a stale direct one, and before
-		// tier 3b existed this simply returned NULL.
+		// Direct market exists but its most recent VWAP is too old to price this trade. Discard it and let the bridge try: a
+		// current XLM-routed rate beats a stale direct one.
 		rate = ""
 	}
 	if rate != "" {
@@ -279,10 +277,8 @@ func (r *VWAPUSDFXResolver) resolveRate(ctx context.Context, asset canonical.Ass
 			return rate, nil
 		}
 	}
-	// Tier 3b — no usable direct <asset>/<peg> rate. Most Stellar
-	// tokens route their liquidity through XLM rather than a
-	// stablecoin, so try <asset>/XLM x XLM/USD before giving up.
-	// The bridge enforces its own (wider) freshness internally.
+	// Tier 3b: no usable direct <asset>/<peg> rate. Most Stellar tokens route liquidity through XLM rather than a stablecoin, so
+	// try <asset>/XLM x XLM/USD before giving up. The bridge enforces its own (wider) freshness internally.
 	rate, legFound, err := r.bridgeViaXLM(ctx, asset, at)
 	if err != nil {
 		return "", err

@@ -84,10 +84,9 @@ func (s *Store) InsertPhoenixLiquidityChange(ctx context.Context, e PhoenixLiqui
 		shares = sql.NullString{String: e.SharesAmount, Valid: true}
 	}
 
-	// Generation-guarded corrective upsert (migration 0110): a
-	// corrected re-derive of the per-leg amounts (amount_a/amount_b/shares)
-	// lands in place when its generation is >= the stored one; a live gen-0
-	// replay can never revert it.
+	// Generation-guarded corrective upsert (migration 0110): a corrected re-derive of the per-leg amounts
+	// (amount_a/amount_b/shares) lands in place when its generation is >= the stored one; a live gen-0 replay can never revert
+	// it.
 	const q = `
         INSERT INTO phoenix_liquidity (
             pool, ledger, ledger_close_time, tx_hash, op_index,

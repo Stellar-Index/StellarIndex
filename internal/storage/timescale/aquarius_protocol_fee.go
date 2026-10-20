@@ -21,10 +21,9 @@ type AquariusProtocolFeeEvent struct {
 	Fee0Old         uint32
 	Fee1New         uint32
 	Fee1Old         uint32
-	// HasOldFee distinguishes the two set_protocol_fee wire shapes: the
-	// Map form carries the per-token old values (true); the Vec form
-	// carries only a single pool-wide new fraction (false), so the
-	// fee_protocol*_old columns land NULL rather than a fabricated 0.
+	// HasOldFee distinguishes the two set_protocol_fee wire shapes: the Map form carries the per-token old values (true); the
+	// Vec form carries only a single pool-wide new fraction (false), so the fee_protocol*_old columns land NULL rather than a
+	// fabricated 0.
 	HasOldFee bool
 	Recipient string
 	Token     string // claimed token C-strkey from topic[1]; "" on set_protocol_fee (migration 0139)

@@ -80,17 +80,13 @@ func (c *statementTimeoutConnector) Connect(ctx context.Context) (driver.Conn, e
 	}
 	execer, ok := conn.(driver.ExecerContext)
 	if !ok {
-		// pgx stdlib's *Conn implements ExecerContext; this guards against
-		// a silent driver swap that would otherwise leave the pool
-		// unbounded. Fail the connection rather than pretend the timeout
-		// is in force.
+		// pgx stdlib's *Conn implements ExecerContext; this guards against a silent driver swap that would otherwise leave the
+		// pool unbounded. Fail the connection rather than pretend the timeout is in force.
 		_ = conn.Close()
 		return nil, fmt.Errorf("timescale: driver conn %T lacks ExecerContext; cannot set statement_timeout", conn)
 	}
-	// SET does not accept bind parameters, so the value is rendered into
-	// the statement directly. It is an int64 (milliseconds) derived from
-	// a config Duration — never request/user input — so there is no
-	// injection surface.
+	// SET does not accept bind parameters, so the value is rendered into the statement directly. It is an int64 (milliseconds)
+	// derived from a config Duration — never request/user input — so there is no injection surface.
 	stmt := fmt.Sprintf("SET statement_timeout = %d", c.timeoutMS)
 	if _, err := execer.ExecContext(ctx, stmt, nil); err != nil {
 		_ = conn.Close()

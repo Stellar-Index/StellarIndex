@@ -16,40 +16,32 @@ type AssetCoverageSignals struct {
 	// AssetID is the trades base or quote asset (canonical asset_id) the signals
 	// are grouped on — the directory row this coverage gap would page for.
 	AssetID string
-	// HasPriceUSD reports whether a servable USD/XLM-proxy price exists for
-	// the asset in the substance window (a non-null prices_1m VWAP against
-	// a USD proxy or native/XLM-SAC quote) or the listing serves one from
-	// asset_price_snapshot. When true the asset is priced, not a coverage gap.
+	// HasPriceUSD reports whether a servable USD/XLM-proxy price exists for the asset in the substance window (a non-null
+	// prices_1m VWAP against a USD proxy or native/XLM-SAC quote) or the listing serves one from asset_price_snapshot. When
+	// true the asset is priced, not a coverage gap.
 	HasPriceUSD bool
-	// Volume7dUSD / Trades7d are the trailing-7d RAW priced volume + trade
-	// count, before any wash discount. The classifier subtracts
-	// TopAccountPairVolUSD / TopAccountPairTrades7d from these before
-	// comparing to the popularity floor — see popularPriceless.
+	// Volume7dUSD / Trades7d are the trailing-7d RAW priced volume + trade count, before any wash discount. The classifier
+	// subtracts TopAccountPairVolUSD / TopAccountPairTrades7d from these before comparing to the popularity floor — see
+	// popularPriceless.
 	Volume7dUSD float64
 	Trades7d    int64
-	// Volume24hUSD is the trailing-24h priced volume, logged beside a
-	// withheld verdict. It is not that verdict: the substance gate
-	// decides on three floors over the alias union, so the tripwire asks
-	// the gate itself.
+	// Volume24hUSD is the trailing-24h priced volume, logged beside a withheld verdict. It is not that verdict: the substance
+	// gate decides on three floors over the alias union, so the tripwire asks the gate itself.
 	Volume24hUSD float64
-	// TopAccountPairVolShare is the fraction of the asset's 7d priced volume in the single busiest
-	// UNORDERED counterparty key; a high share means volume-painting wash, which the classifier
-	// excludes so a wash farm cannot self-select into the alert. The key is the (maker,taker) pair
-	// where both are recorded (SDEX) and the single known account otherwise (Soroban AMMs; see
-	// popularPricelessCandidatesSQL). Volume with no account on either side (CEX feeds) never
-	// enters the numerator, so it dilutes the share; AttributedVolShare says how much volume the
-	// share speaks for.
+	// TopAccountPairVolShare is the fraction of the asset's 7d priced volume in the single busiest UNORDERED counterparty key;
+	// a high share means volume-painting wash, which the classifier excludes so a wash farm cannot self-select into the alert.
+	// The key is the (maker,taker) pair where both are recorded (SDEX), else the single known account (Soroban AMMs; see
+	// popularPricelessCandidatesSQL). Volume with no account (CEX feeds) never enters the numerator, so it dilutes the share;
+	// AttributedVolShare says how much volume the share speaks for.
 	TopAccountPairVolShare float64
-	// AttributedVolShare is the fraction of the asset's 7d priced volume that carried an
-	// identifiable counterparty account, i.e. what TopAccountPairVolShare was measured over. It is
-	// diagnostic: the classifier needs no floor on it because concentration is already expressed
-	// against the FULL volume (TopAccountPairVolShare <= AttributedVolShare by construction), but it
-	// tells an operator whether a low concentration means "broad market" or "venue without accounts".
+	// AttributedVolShare is the fraction of the asset's 7d priced volume that carried an identifiable counterparty account,
+	// i.e. what TopAccountPairVolShare was measured over. Diagnostic only: concentration is already expressed against the FULL
+	// volume (TopAccountPairVolShare <= AttributedVolShare by construction), so the classifier needs no floor on it, but it
+	// tells an operator whether a low concentration means broad market or a venue without accounts.
 	AttributedVolShare float64
-	// TopAccountPairVolUSD / TopAccountPairTrades7d are the SAME top
-	// counterparty key's raw volume and trade count (paired from one row,
-	// never independent MAXes — see top_pair_ranked), subtracted from
-	// Volume7dUSD/Trades7d to get the market-character popularity signal.
+	// TopAccountPairVolUSD / TopAccountPairTrades7d are the SAME top counterparty key's raw volume and trade count (paired from
+	// one row, never independent MAXes — see top_pair_ranked), subtracted from Volume7dUSD/Trades7d to get the market-character
+	// popularity signal.
 	TopAccountPairVolUSD   float64
 	TopAccountPairTrades7d int64
 }
@@ -75,12 +67,13 @@ const pricelessTradeLegs = `(
      AND quote_asset NOT IN (` + coverageQuoteProxies + `)
   ) legs`
 
-// popularPricelessCandidatesSQL extracts per-asset signals for priceless assets above a coarse RAW-volume floor ($1 / 1 trade); the
-// classifier owns the real verdict. The counterparty key is UNORDERED (LEAST/GREATEST). ONE POPULATION: only SDEX records both sides
-// (Soroban AMMs set taker only), so the key DEGENERATES to the one known account when a side is unknown; mixing populations would zero
-// an AMM-only share and never fire the wash exclusion. Unattributed rows (CEX) dilute the share DOWNWARD (errs toward paging);
-// attributed_vol_share reports the basis. leg_keys is the one pass over the 7d legs (~67M rows on r1) that every total and the
-// counterparty split read; three scans took 31 s, one with PopularPricelessCandidates' work_mem takes ~14 s.
+// popularPricelessCandidatesSQL extracts per-asset signals for priceless assets above a coarse RAW-volume floor ($1 / 1 trade);
+// the classifier owns the real verdict. The counterparty key is UNORDERED (LEAST/GREATEST). ONE POPULATION: only SDEX records
+// both sides (Soroban AMMs set taker only), so the key DEGENERATES to the one known account when a side is unknown; mixing
+// populations would zero an AMM-only share and never fire the wash exclusion. Unattributed rows (CEX) dilute the share DOWNWARD
+// (errs toward paging); attributed_vol_share reports the basis. leg_keys is the one pass over the 7d legs (~67M rows on r1)
+// that every total and the counterparty split read; three scans took 31 s, one with PopularPricelessCandidates' work_mem takes
+// ~14 s.
 const popularPricelessCandidatesSQL = `
 WITH leg_keys AS (
   SELECT asset_id,

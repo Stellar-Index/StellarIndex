@@ -88,10 +88,10 @@ var ErrStorageSupplyNoInstance = fmt.Errorf("clickhouse: no contract instance en
 // reading first.
 const maxContractStorageBalanceEntries = 25_000
 
-// balanceKeyMarker / instanceKeyMarker are the fixed base64 windows a Balance(Address) / instance contract-data key carries (the first 40
-// bytes are type, address type, contract id), so the SCVal key lands at a FIXED offset: plain string comparisons, no XDR parse. PRE-FILTER
-// ONLY; survivors are re-checked by balanceKeyHolder. `BalanceCheckpoints` shares the `Balance` text and differs only in the symbol LENGTH
-// bytes.
+// balanceKeyMarker / instanceKeyMarker are the fixed base64 windows a Balance(Address) / instance contract-data key carries
+// (the first 40 bytes are type, address type, contract id), so the SCVal key lands at a FIXED offset: plain string comparisons,
+// no XDR parse. PRE-FILTER ONLY; survivors are re-checked by balanceKeyHolder. `BalanceCheckpoints` shares the `Balance` text
+// and differs only in the symbol LENGTH bytes.
 const (
 	balanceKeyMarker = "ABAAAAABAAAAAgAAAA8AAAAHQmFsYW5jZQAAAAAS"
 	// holderCountKeyMarker matches Vec[Symbol("HolderCount")], a top-level persistent entry: the

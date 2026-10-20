@@ -184,10 +184,9 @@ type ExplorerReader struct {
 	// (deploy/clickhouse/account_op_types.sql Step 5). Without a row the table is partial and op-type counts take the join.
 	opTypesCoverageProbe schemaProbe
 
-	// contractLedgersProbe probes stellar.contract_active_ledgers. Present and non-empty
-	// bounds ContractEventsRecent to the contract's active ledgers; absent means the
-	// unbounded reverse walk. requireRows: per-contract emptiness is served as an
-	// authoritative "no events", so an existing-but-empty index must read as unavailable.
+	// contractLedgersProbe probes stellar.contract_active_ledgers. Present and non-empty bounds ContractEventsRecent to the contract's
+	// active ledgers; absent means the unbounded reverse walk. requireRows: per-contract emptiness is served as an authoritative "no
+	// events", so an existing-but-empty index must read as unavailable.
 	contractLedgersProbe schemaProbe
 
 	// instanceChangesProbe probes stellar.contract_instance_changes. Present and non-empty
@@ -241,10 +240,9 @@ type ExplorerReader struct {
 	// arm would hide the account's own transactions.
 	opsBySourceProbe schemaProbe
 
-	// accountActivityProbe probes stellar.account_activity. Present and non-empty bounds
-	// AccountOperations' reverse primary-key resolve at the account's last-active ledger
-	// (`ledger_seq <= ?`); absent means unbounded. The bound is only a perf hint, and
-	// an available watermark is a safe UPPER bound by construction (too low would HIDE rows).
+	// accountActivityProbe probes stellar.account_activity. Present and non-empty bounds AccountOperations' reverse primary-key resolve at
+	// the account's last-active ledger (`ledger_seq <= ?`); absent means unbounded. The bound is only a perf hint, and an available
+	// watermark is a safe UPPER bound by construction (too low would HIDE rows).
 	accountActivityProbe schemaProbe
 
 	// lecVersionProbe probes whether ledger_entries_current has the `version` column
@@ -905,15 +903,11 @@ type ContractEventsCursor struct {
 // IsSet reports whether the cursor points past the newest row.
 func (c ContractEventsCursor) IsSet() bool { return c.Ledger > 0 }
 
-// Account listings resolve a page keyset from two account-keyed arms, merge it in Go, then hydrate
-// the wide columns once over the surviving keys:
-//   - sourced: stellar.ops_by_source (tx-MV rows carry the sentinel op_index).
-//   - participant: stellar.operation_participants, limited to transactions that succeeded or that
-//     the account itself sourced (participantKeys).
-//
-// Each arm is a primary-key-prefix range, so the wide tables see only point lookups. mergeKeysDesc
-// drops cross-arm duplicates BEFORE cutting to `limit`: a duplicate eating a slot would serve a
-// short page read as end of history.
+// Account listings resolve a page keyset from two account-keyed arms, merge it in Go, then hydrate the wide columns once over the
+// surviving keys. Sourced arm: stellar.ops_by_source (tx-MV rows carry the sentinel op_index). Participant arm:
+// stellar.operation_participants, limited to transactions that succeeded or that the account itself sourced (participantKeys). Each arm
+// is a primary-key-prefix range, so the wide tables see only point lookups. mergeKeysDesc drops cross-arm duplicates BEFORE cutting to
+// `limit`: a duplicate eating a slot would serve a short page read as end of history.
 
 // sourcedTxKeysExactQuery is the sourced tx arm's LIMIT 1 BY form: exact but O(account history), so it runs only when the windowed read
 // cannot prove a full page. The leading `ledger_seq <= ?` is redundant but required: KeyCondition does not prune on a tuple comparison.
@@ -1817,10 +1811,9 @@ func (r *ExplorerReader) ContractEventsRecent(ctx context.Context, contractID st
 	}
 	fetch := limit + contractEventsDedupHeadroom
 
-	// Active-ledger bound: when the index is usable AND the per-contract walk is NON-EMPTY, prune
-	// to those ledgers (lossless: each holds at least one event). Without a genesis watermark an
-	// EMPTY walk is NOT "no events": the probe is table-global and cannot see PARTIAL backfill, so an
-	// empty walk or index error falls through to the unbounded read (the source of truth).
+	// Active-ledger bound: when the index is usable AND the per-contract walk is NON-EMPTY, prune to those ledgers (lossless: each holds at
+	// least one event). Without a genesis watermark an EMPTY walk is NOT "no events": the probe is table-global and cannot see PARTIAL
+	// backfill, so an empty walk or index error falls through to the unbounded read (the source of truth).
 	var ledgers []uint32
 	walked := false
 	if r.contractLedgersIndexAvailable(ctx) {
@@ -1997,9 +1990,8 @@ func (r *ExplorerReader) ContractInteractions(ctx context.Context, contractID st
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	// Anchor the window to the contract's OWN recent activity, not wall-clock days: both halves
-	// scale with ledger SPAN. This narrows what a busy contract reports, consistent with
-	// subjectTxCap truncating to a recent sample; quiet contracts keep the full window. The
+	// Anchor the window to the contract's OWN recent activity, not wall-clock days: both halves scale with ledger SPAN. This narrows what a
+	// busy contract reports, consistent with subjectTxCap truncating to a recent sample; quiet contracts keep the full window. The
 	// effective floor is RETURNED so since_ledger describes the window served.
 	const activeLedgerWindow = 500
 	if r.contractLedgersIndexAvailable(ctx) {
@@ -2014,10 +2006,9 @@ func (r *ExplorerReader) ContractInteractions(ctx context.Context, contractID st
 	// mega-contract builds an enormous IN set and times out. DISTINCT (ledger_seq, tx_hash)
 	// makes the cap count TRANSACTIONS, not event rows (10-20 events/tx would shrink the sample).
 	const subjectTxCap = 50_000
-	// uniqExact(tx_hash), not count(): contract_events is ReplacingMergeTree, so retried
-	// flushes leave duplicates that count() double-counts, and count() would count
-	// co-occurring EVENTS while the column and API say shared_txs. Distinct tx_hash is
-	// duplicate-proof. Served values drop for busy pairs; that is the correction.
+	// uniqExact(tx_hash), not count(): contract_events is ReplacingMergeTree, so retried flushes leave duplicates that count() double-counts,
+	// and count() would count co-occurring EVENTS while the column and API say shared_txs. Distinct tx_hash is duplicate-proof, so served
+	// values drop for busy pairs.
 	rows, err := r.conn.Query(ctx, contractInteractionsQuery, sinceLedger, contractID, contractID, sinceLedger, subjectTxCap, limit)
 	if err != nil {
 		return nil, 0, fmt.Errorf("clickhouse: contract %s interactions: %w", contractID, err)
@@ -2123,10 +2114,9 @@ func (r *ExplorerReader) recentContractsFromCensus(ctx context.Context, limit in
 		return nil, false, nil
 	}
 
-	// Coverage check: the census must reach back to the floor day (a climbing backfill must
-	// not serve a truncated tail) AND its HEAD must be fresh: a min(day)-only check let a
-	// stalled rollup pass and serve a stale ranking stamped as current. today() is read from the
-	// SAME server as the census to avoid app/DB clock skew.
+	// Coverage check: the census must reach back to the floor day (a climbing backfill must not serve a truncated tail) AND its HEAD must
+	// be fresh, or a stalled rollup would serve a stale ranking stamped as current. today() is read from the SAME server as the census to
+	// avoid app/DB clock skew.
 	covRows, err := r.conn.Query(ctx,
 		`SELECT min(day), max(day), today() FROM stellar.contracts_census_daily`)
 	if err != nil {

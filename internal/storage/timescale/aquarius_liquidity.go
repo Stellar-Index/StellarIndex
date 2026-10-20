@@ -191,10 +191,8 @@ type AquariusReserveLeg struct {
 	// TokenIndex is the 0-based position in the pool's canonical token
 	// order.
 	TokenIndex int
-	// Token is the token address resolved for this position, or "" when no
-	// deposit_liquidity / withdraw_liquidity has been observed for the
-	// pool in the window — update_reserves carries no token address, only
-	// the position (migration 0089).
+	// Token is the token address resolved for this position, or "" when no deposit_liquidity / withdraw_liquidity has been
+	// observed for the pool in the window: update_reserves carries no token address, only the position.
 	Token string
 	// Reserve is the POST-STATE reserve for the token at TokenIndex, in the
 	// token's base units (i128 per ADR-0003 — never int64).

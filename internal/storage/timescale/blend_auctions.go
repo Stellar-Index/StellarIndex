@@ -121,10 +121,9 @@ func (s *Store) InsertBlendFillAuction(ctx context.Context, e blend.FillAuctionE
 		return fmt.Errorf("timescale: InsertBlendFillAuction: lot: %w", err)
 	}
 	fillPct := e.FillPercent.String() // i128 → numeric column accepts text
-	// Generation-guarded corrective upsert (migration 0110): a
-	// corrected re-derive of the decoded columns (fill_percent, bid/lot i128
-	// amounts, filler, block) lands in place when its generation is >= the
-	// stored one; a live gen-0 replay can never revert it.
+	// Generation-guarded corrective upsert (migration 0110): a corrected re-derive of the decoded columns (fill_percent, bid/lot
+	// i128 amounts, filler, block) lands in place when its generation is >= the stored one; a live gen-0 replay never reverts
+	// it.
 	const q = `
         INSERT INTO blend_auctions (
             pool, auction_type, user_address,
@@ -169,10 +168,8 @@ func (s *Store) InsertBlendFillAuction(ctx context.Context, e blend.FillAuctionE
 
 // InsertBlendDeleteAuction writes a `delete_auction` row.
 func (s *Store) InsertBlendDeleteAuction(ctx context.Context, e blend.DeleteAuctionEvent) error {
-	// Generation-guarded corrective upsert (migration 0110). A delete
-	// row carries no body amounts, but a corrected re-derive of its decoded
-	// identity columns still lands in place; a live gen-0 replay can never
-	// revert it.
+	// Generation-guarded corrective upsert (migration 0110). A delete row carries no body amounts, but a corrected re-derive of
+	// its decoded identity columns still lands in place; a live gen-0 replay never reverts it.
 	const q = `
         INSERT INTO blend_auctions (
             pool, auction_type, user_address,

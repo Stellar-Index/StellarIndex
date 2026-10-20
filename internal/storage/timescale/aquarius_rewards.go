@@ -88,10 +88,8 @@ func (s *Store) InsertAquariusRewardsEvent(ctx context.Context, e AquariusReward
 		amount = sql.NullString{String: e.Amount.String(), Valid: true}
 	}
 
-	// Generation-guarded corrective upsert (migration 0110): a
-	// corrected re-derive of the reward `amount` (or user_address /
-	// attributes) lands in place when its generation is >= the stored one; a
-	// live gen-0 replay can never revert it.
+	// Generation-guarded corrective upsert (migration 0110): a corrected re-derive of the reward `amount` (or user_address /
+	// attributes) lands in place when its generation is >= the stored one; a live gen-0 replay never reverts it.
 	const q = `
         INSERT INTO aquarius_rewards_events (
             contract_id, ledger, ledger_close_time, tx_hash,

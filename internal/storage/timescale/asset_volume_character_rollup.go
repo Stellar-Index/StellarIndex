@@ -203,12 +203,10 @@ func (s *Store) rollAssetVolumeCharacter(ctx context.Context) (out []assetVolume
 	query := strings.Replace(assetVolumeCharacterRollupSQLTemplate, "{{ALIAS_VALUES}}", aliasValues, 1)
 	query = strings.ReplaceAll(query, "{{WINDOW}}", window)
 
-	// This all-asset roll scans the whole trailing window of trades and shares the primary with the
-	// API, so it runs on a dedicated connection with a bounded footprint:
-	//   - max_parallel_workers_per_gather=2 leaves cores free for the API.
-	//   - statement_timeout=assetVolumeCharacterRollTimeout is a wedge guard: if it can't finish it
-	//     aborts, the last good rollup stands and the worker retries next cycle.
-	// Session settings, not SET LOCAL, so they cover the read that runs outside any transaction.
+	// This all-asset roll scans the whole trailing window of trades and shares the primary with the API, so it runs on a dedicated
+	// connection with a bounded footprint: max_parallel_workers_per_gather=2 leaves cores free for the API, and
+	// statement_timeout=assetVolumeCharacterRollTimeout is a wedge guard (if it can't finish it aborts, the last good rollup stands and
+	// the worker retries next cycle). Session settings, not SET LOCAL, so they cover the read that runs outside any transaction.
 	conn, connErr := s.db.Conn(ctx)
 	if connErr != nil {
 		return nil, fmt.Errorf("timescale: rollAssetVolumeCharacter conn: %w", connErr)

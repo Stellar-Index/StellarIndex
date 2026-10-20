@@ -35,10 +35,9 @@ func (s *Store) InsertSupply(ctx context.Context, snap supply.Supply) error {
 		maxSupply = sql.NullString{Valid: true, String: snap.MaxSupply.String()}
 	}
 
-	// sac_wrapped_stroops is the SACWrapped component, kept so the supply cross-check can run the
-	// escrow-vs-minted leg. nil is SQL NULL, which readers treat as "unchecked", NOT zero. Negative
-	// is rejected upstream (supply.validateClassicComponents) but guarded here too: the column has
-	// no CHECK constraint, and a negative escrow would make the subset bound pass on nonsense.
+	// sac_wrapped_stroops is the SACWrapped component, kept so the supply cross-check can run the escrow-vs-minted leg. nil is SQL NULL,
+	// which readers treat as "unchecked", NOT zero. Negative is rejected upstream (supply.validateClassicComponents) but guarded here
+	// too: the column has no CHECK constraint, and a negative escrow would make the subset bound pass on nonsense.
 	var sacWrapped sql.NullString
 	if snap.SACWrappedStroops != nil {
 		if snap.SACWrappedStroops.Sign() < 0 {
@@ -48,15 +47,13 @@ func (s *Store) InsertSupply(ctx context.Context, snap supply.Supply) error {
 		sacWrapped = sql.NullString{Valid: true, String: snap.SACWrappedStroops.String()}
 	}
 
-	// Named-constraint form: Timescale hypertables in PG 16 + TS 2.16 don't expose unique
-	// constraints to ON CONFLICT's column inference, so `ON CONFLICT (cols)` fails with `no unique
-	// or exclusion constraint matching the ON CONFLICT specification`.
+	// Named-constraint form: Timescale hypertables in PG 16 + TS 2.16 don't expose unique constraints to ON CONFLICT's column inference,
+	// so `ON CONFLICT (cols)` fails with `no unique or exclusion constraint matching the ON CONFLICT specification`.
 	//
 	// Generation guard: DO UPDATE sets the supply value columns plus derive_generation, guarded by
-	// `asset_supply_history.derive_generation <= EXCLUDED.derive_generation`, so a corrected
-	// re-derive lands in place while a lower generation (a live gen-0 replay) can never revert it.
-	// sac_wrapped_stroops is in the DO UPDATE list too, or a `supply seed-sac-balances
-	// -full-history` re-derive would keep the first value written.
+	// `asset_supply_history.derive_generation <= EXCLUDED.derive_generation`, so a corrected re-derive lands in place while a lower
+	// generation (a live gen-0 replay) can never revert it. sac_wrapped_stroops is in the DO UPDATE list too, or a
+	// `supply seed-sac-balances -full-history` re-derive would keep the first value written.
 	const q = `
 		INSERT INTO asset_supply_history
 		    (time, asset_key, total_supply, circulating_supply, max_supply, basis, ledger_sequence, derive_generation, sac_wrapped_stroops)

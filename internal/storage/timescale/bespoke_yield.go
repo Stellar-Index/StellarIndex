@@ -1,23 +1,16 @@
 package timescale
 
-// Each per-category visual suite has its own file so suites can be built
-// in parallel without colliding on one file. Shared types
-// (BespokeBlock/KPI/Series/Table/Breakdown) + the dispatcher + the scan
-// helpers stay in protocol_bespoke.go.
+// Each per-category visual suite has its own file so suites can be built in parallel without colliding. Shared types
+// (BespokeBlock/KPI/Series/Table/Breakdown), the dispatcher and the scan helpers stay in protocol_bespoke.go.
 
-// Yield bespoke analytics (DeFindex), built from defindex_flows, which records both layers of a
-// flow:
-//   - Vault layer (who/when): actor is the end-user, contract_id the vault, amounts in amounts_vec
-//     (one entry per basket asset).
-//   - Strategy layer (how much capital moved): actor is the vault contract, contract_id the
-//     strategy, amount a single-asset scalar.
+// Yield bespoke analytics (DeFindex), built from defindex_flows, which records both layers of a flow. Vault layer (who/when): actor is
+// the end-user, contract_id the vault, amounts in amounts_vec (one entry per basket asset). Strategy layer (how much capital moved):
+// actor is the vault contract, contract_id the strategy, amount a single-asset scalar.
 //
-// Amount honesty (the mixed-asset-sum trap):
-//   1. Per-vault amounts show only for vaults whose every window flow has a single-entry
-//      amounts_vec; any multi-asset or missing vector shows '—' instead of a fabricated sum.
-//   2. Never sum amounts across vaults or strategies into one number-with-a-unit (different
-//      assets). Cross-vault headlines are counts; cross-strategy gross-volume KPIs carry a "summed
-//      base units across strategies" caveat in the Notes.
+// Amount honesty (the mixed-asset-sum trap): per-vault amounts show only for vaults whose every window flow has a single-entry
+// amounts_vec; any multi-asset or missing vector shows '—' instead of a fabricated sum. Never sum amounts across vaults or strategies
+// into one number-with-a-unit (different assets): cross-vault headlines are counts, and cross-strategy gross-volume KPIs carry a
+// "summed base units across strategies" caveat in the Notes.
 
 import (
 	"context"

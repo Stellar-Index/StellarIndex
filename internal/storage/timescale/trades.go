@@ -571,19 +571,15 @@ func (s *Store) WouldPopulateUSDVolume(ctx context.Context, t canonical.Trade) b
 func usdVolumeDecimals(asset canonical.Asset, md external.Metadata, quoteSpec *USDVolumeQuoteSpec) (int, bool) {
 	switch md.Subclass {
 	case external.SubclassCEX, external.SubclassFX:
-		// Off-chain — the SOURCE's registered amount scale (CEXes stamp
-		// 1e8 but the FX pollers stamp 1e6, so a hard-coded 8 is a 100×
-		// error for FX trades), peg via
-		// the crypto-ticker FiatProxy.
+		// Off-chain: the SOURCE's registered amount scale (CEXes stamp 1e8 but the FX pollers stamp 1e6, so a hard-coded 8 is a
+		// 100x error for FX trades), peg via the crypto-ticker FiatProxy.
 		if !quoteIsUSDOrUSDPegged(asset) {
 			return 0, false
 		}
 		return md.AmountScaleDecimals(), true
 	case external.SubclassDEX:
-		// On-chain (Stellar SDEX, Soroswap, Aquarius, Phoenix,
-		// Comet) — peg + decimals come from the operator's
-		// USDVolumeQuoteSpec. Phase 1 covers classic + SAC; pure
-		// SEP-41 stablecoins are phase 2.
+		// On-chain (Stellar SDEX, Soroswap, Aquarius, Phoenix, Comet): peg + decimals come from the operator's USDVolumeQuoteSpec.
+		// Phase 1 covers classic + SAC; pure SEP-41 stablecoins are phase 2.
 		return quoteSpec.QuoteUSDPegInfo(asset)
 	default:
 		return 0, false
@@ -797,10 +793,9 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 	}
 	obs.TradeInsertOutcomeTotal.WithLabelValues(t.Source, outcome).Inc()
 
-	// Skip the registry hook when no row landed (rowsInserted = 0 — the
-	// conflicting row lost the derive_generation guard on the
-	// `ON CONFLICT ... DO UPDATE`), or backfill replays and process
-	// restarts that re-encounter stored trades drift observation_count.
+	// Skip the registry hook when no row landed (rowsInserted = 0: the conflicting row lost the derive_generation guard on the
+	// `ON CONFLICT ... DO UPDATE`), or backfill replays and process restarts that re-encounter stored trades drift
+	// observation_count.
 	if rowsInserted == 0 {
 		return nil
 	}
@@ -809,10 +804,8 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 	// climbing while inserts flat-line means the cursor is replaying duplicates.
 	obs.SourceLastInsertUnix.WithLabelValues(t.Source).Set(float64(time.Now().Unix()))
 
-	// Unit-ratio sentinel — see
-	// isDexUnitRatioTrade's godoc for why this is gated on "landed"
-	// (not every attempt): a replay/backfill re-encountering an
-	// already-stored bad trade must not re-inflate the alert.
+	// Unit-ratio sentinel: see isDexUnitRatioTrade's godoc for why this is gated on "landed" (not every attempt); a
+	// replay/backfill re-encountering an already-stored bad trade must not re-inflate the alert.
 	recordDexTradeUnitRatio(t)
 
 	// Auto-register the classic-asset registry from observed trades. Errors are soft: the trade
@@ -1071,10 +1064,8 @@ func (s *Store) BatchInsertTrades(ctx context.Context, trades []canonical.Trade)
 		return nil
 	}
 
-	// Drop invalid rows BEFORE building the all-or-nothing sub-batch
-	// INSERTs (see the godoc). When the whole batch is unstorable this
-	// returns early — there is nothing to insert, and the skips are already
-	// accounted for inside the filter.
+	// Drop invalid rows BEFORE building the all-or-nothing sub-batch INSERTs (see the godoc). A wholly unstorable batch returns
+	// early; the skips are already accounted for inside the filter.
 	storable := s.filterStorableTrades(trades)
 	if len(storable) == 0 {
 		return nil
@@ -1185,10 +1176,8 @@ func (s *Store) registerBatchLandedAssets(ctx context.Context, seenAssets map[st
 	for assetID, obsv := range seenAssets {
 		asset, perr := canonical.ParseAsset(assetID)
 		if perr != nil {
-			// A stored asset string that won't re-parse is a decoder-side
-			// invariant break, not a batch failure — the trades already
-			// committed. Breadcrumb at debug (same posture as the hook's own
-			// soft-fail) and skip this asset.
+			// A stored asset string that won't re-parse is a decoder-side invariant break, not a batch failure (the trades already
+			// committed). Breadcrumb at debug, as with the hook's own soft-fail, and skip this asset.
 			slog.Default().Debug("timescale: batch registry asset parse failed (soft-skip)",
 				"asset", assetID, "err", perr)
 			continue

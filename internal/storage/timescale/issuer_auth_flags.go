@@ -31,10 +31,8 @@ type IssuerAuthFlags struct {
 	// AuthFlagsSource* constants above, or "" for "do not touch the
 	// persisted provenance" (see [Store.PersistIssuerAuthFlags]).
 	Source string
-	// AsOfLedger is the ledger the reading is true as of. Required when
-	// Source is AuthFlagsSourceLastKnownBeforeRemoval — "these flags are
-	// old" is only actionable with "as of when", and migration 0153's
-	// second CHECK enforces the same thing at the database.
+	// AsOfLedger is the ledger the reading is true as of. Required when Source is AuthFlagsSourceLastKnownBeforeRemoval: "these flags are
+	// old" is only actionable with "as of when", and migration 0153's second CHECK enforces the same thing at the database.
 	AsOfLedger *uint32
 }
 

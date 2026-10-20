@@ -72,10 +72,8 @@ func (s *Store) InsertAquariusAdminEvent(ctx context.Context, e AquariusAdminEve
 		return fmt.Errorf("timescale: InsertAquariusAdminEvent: marshal attributes: %w", err)
 	}
 
-	// Generation-guarded corrective upsert (migration 0110): a
-	// corrected re-derive of the decoded governance columns (admin / target /
-	// attributes) lands in place when its generation is >= the stored one; a
-	// live gen-0 replay can never revert it.
+	// Generation-guarded corrective upsert (migration 0110): a corrected re-derive of the decoded governance columns lands in place when
+	// its generation is >= the stored one; a live gen-0 replay can never revert it.
 	const q = `
         INSERT INTO aquarius_admin (
             contract_id, ledger, ledger_close_time, tx_hash,
@@ -105,9 +103,7 @@ func (s *Store) InsertAquariusAdminEvent(ctx context.Context, e AquariusAdminEve
 }
 
 // ─── Read side: governance analytics for the Aquarius bespoke block ────
-//
-// These reads serve the same consumer as aquarius_rewards.go's matching section
-// (protocol_bespoke.go's aquariusRewardsBlocks).
+// These reads serve the same consumer as aquarius_rewards.go's matching section (protocol_bespoke.go's aquariusRewardsBlocks).
 
 // aquariusAdminAllKinds is the ordered set of the eight governance/upgrade
 // kinds — the migration-0100 census order (busiest kind first).

@@ -16,10 +16,8 @@ func (s *Store) PoolTokens(ctx context.Context, source string) (map[string][]str
 	switch source {
 	case "phoenix":
 		return s.phoenixPoolTokens(ctx)
-	// ORDER BY on the DISTINCT queries below makes the LIMIT
-	// deterministic: without it, which (pool, token) pairs survive a
-	// limit overflow is plan-dependent — a pool could silently lose part
-	// of its token set with no error.
+	// ORDER BY on the DISTINCT queries below makes the LIMIT deterministic: without it, which (pool, token) pairs survive a limit overflow
+	// is plan-dependent, so a pool could silently lose part of its token set with no error.
 	case "comet":
 		return s.groupedPoolTokens(ctx, "comet", `
 			SELECT DISTINCT contract_id, token

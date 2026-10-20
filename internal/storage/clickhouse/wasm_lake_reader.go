@@ -150,10 +150,8 @@ func (r *ExplorerReader) contractWasmHash(ctx context.Context, cid xdr.Hash) (xd
 	if r.instanceChangesIndexAvailable(ctx) {
 		h, ok, err := r.contractWasmHashIndexed(ctx, cid)
 		if (err == nil && ok) || errors.Is(err, ErrContractIsSAC) {
-			// A RESOLVED hash or a SAC verdict is authoritative. An index
-			// Only a positive verdict is authoritative: the availability probe is a table-global
-			// LIMIT-1 check and cannot see partial backfill, so an index miss may only mean "not
-			// reached yet".
+			// Only a positive verdict (a RESOLVED hash or a SAC) is authoritative: the availability probe is a table-global LIMIT-1
+			// check and cannot see partial backfill, so an index miss may only mean "not reached yet".
 			return h, ok, err
 		}
 		// Index miss or error: fall back to the legacy read rather than trust an incomplete index.

@@ -77,10 +77,8 @@ type LumenTally struct {
 	ClaimableBalances *big.Int
 	LiquidityPools    *big.Int
 	ContractBalances  *big.Int
-	// Preimages counts keys whose current row is newer than Ledger and were
-	// resolved from that row's first later change instead. A newer
-	// contract_data key that cannot hold native XLM is not resolved: it adds
-	// zero at every ledger.
+	// Preimages counts keys whose current row is newer than Ledger and were resolved from that row's first later change instead. A newer
+	// contract_data key that cannot hold native XLM is not resolved: it adds zero at every ledger.
 	Preimages int
 }
 

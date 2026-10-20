@@ -198,10 +198,9 @@ func appendSorobanEventsFilter(sb *strings.Builder, args []any, contractIDs, top
 		args = append(args, topic0Args(topic0Syms)...)
 		fmt.Fprintf(sb, " AND topic_0_sym IN (%s)", placeholdersFrom(baseIdx, len(topic0Syms)))
 	}
-	// excludeTopic0Syms: drop the CAP-67 classic-token firehose at the SQL
-	// layer for the no-prefilter DEX/lending sources, so a far-behind source's
-	// wide catch-up window doesn't scan millions of rows it would only discard
-	// via Decoder.Matches (see projector.Source.ExcludeTopic0Syms).
+	// excludeTopic0Syms: drop the CAP-67 classic-token firehose at the SQL layer for the no-prefilter DEX/lending sources, so a
+	// far-behind source's wide catch-up window doesn't scan millions of rows it would only discard via Decoder.Matches (see
+	// projector.Source.ExcludeTopic0Syms).
 	if len(excludeTopic0Syms) > 0 {
 		baseIdx := len(args) + 1
 		args = append(args, topic0Args(excludeTopic0Syms)...)

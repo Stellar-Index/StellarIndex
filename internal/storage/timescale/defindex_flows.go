@@ -86,11 +86,9 @@ func (s *Store) InsertDefindexFlow(ctx context.Context, e DefindexFlow) error {
 			return errors.New("timescale: InsertDefindexFlow: strategy layer requires Amount")
 		}
 	case DefindexLayerVault:
-		// A present-but-empty AmountsVec is legal, not a caller bug: decodeVaultFlow accepts an
-		// empty on-chain `amounts` Vec and leaves its handling downstream
-		// (TestDecodeVaultFlow_emptyAmountsVec). Rejecting it would turn a genuine on-chain event
-		// into an unclassified sink fault. Only a Go-nil AmountsVec (field never set) is the
-		// caller bug this guard catches.
+		// A present-but-empty AmountsVec is legal, not a caller bug: decodeVaultFlow accepts an empty on-chain `amounts` Vec and leaves its
+		// handling downstream (TestDecodeVaultFlow_emptyAmountsVec). Rejecting it would turn a genuine on-chain event into an unclassified
+		// sink fault. Only a Go-nil AmountsVec (field never set) is the caller bug this guard catches.
 		if e.AmountsVec == nil {
 			return errors.New("timescale: InsertDefindexFlow: vault layer requires AmountsVec")
 		}
@@ -99,10 +97,8 @@ func (s *Store) InsertDefindexFlow(ctx context.Context, e DefindexFlow) error {
 		}
 	}
 
-	// Generation-guarded corrective upsert (migration 0110): a
-	// corrected re-derive of the flow amounts (amount / amounts_vec /
-	// df_tokens) or direction / actor lands in place when its generation is
-	// >= the stored one; a live gen-0 replay can never revert it.
+	// Generation-guarded corrective upsert (migration 0110): a corrected re-derive of the flow amounts or direction / actor lands in place
+	// when its generation is >= the stored one; a live gen-0 replay can never revert it.
 	const q = `
         INSERT INTO defindex_flows (
             ledger, ledger_close_time, tx_hash, op_index, event_index,

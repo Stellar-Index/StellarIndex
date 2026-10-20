@@ -151,10 +151,10 @@ func SetCap67MovementsWatermark(ctx context.Context, addr string, from, thru uin
 	return nil
 }
 
-// cap67AdvanceProven reports whether recording [from, thru] keeps the watermark the top of a hole-free, fully-derived prefix, erroring
-// (never skipping) when not: `from` above watermark+1 (a first run, watermark 0, starts at -floor-ledger), a lake hole
-// (cap67WindowContiguous), or missing events (cap67WindowEventsPresent). A window at or below the watermark is an idempotent re-derive
-// (ReplacingMergeTree), neither refused nor written.
+// cap67AdvanceProven reports whether recording [from, thru] keeps the watermark the top of a hole-free, fully-derived prefix,
+// erroring (never skipping) when not: `from` above watermark+1 (a first run, watermark 0, starts at -floor-ledger), a lake hole
+// (cap67WindowContiguous), or missing events (cap67WindowEventsPresent). A window at or below the watermark is an idempotent
+// re-derive (ReplacingMergeTree), neither refused nor written.
 func cap67AdvanceProven(ctx context.Context, conn driver.Conn, from, thru uint32) (bool, error) {
 	wm, err := cap67WatermarkOn(ctx, conn)
 	if err != nil {

@@ -32,11 +32,10 @@ type SoroswapRouterSwap struct {
 	// swaps in one op (aggregator / batch) while deduping auth-tree duplicates.
 	CallSig string
 
-	// CallPath / CallDepth / CallKind record where in the tx's Soroban auth tree the router call
-	// was observed: CallPath is the contract C-strkey chain from the top-level invocation down to
-	// the router (always ends in ContractID), CallDepth = len(CallPath)-1, CallKind is 'top_level'
-	// | 'sub_invocation'. An empty CallKind writes SQL NULLs for all three; set all three or none,
-	// since the table CHECK rejects partial combinations.
+	// CallPath / CallDepth / CallKind record where in the tx's Soroban auth tree the router call was observed: CallPath is the contract
+	// C-strkey chain from the top-level invocation down to the router (always ends in ContractID), CallDepth = len(CallPath)-1, CallKind
+	// is 'top_level' | 'sub_invocation'. An empty CallKind writes SQL NULLs for all three; set all three or none, since the table CHECK
+	// rejects partial combinations.
 	CallPath  []string
 	CallDepth int
 	CallKind  string
@@ -84,10 +83,8 @@ func (s *Store) InsertSoroswapRouterSwap(ctx context.Context, e SoroswapRouterSw
 		}
 	}
 
-	// Generation-guarded corrective upsert (migration 0110): a
-	// corrected re-derive of the swap amounts (amount_in / amount_out) or the
-	// other decoded columns lands in place when its generation is >= the
-	// stored one; a live gen-0 replay can never revert it.
+	// Generation-guarded corrective upsert (migration 0110): a corrected re-derive of the swap amounts or other decoded columns lands in
+	// place when its generation is >= the stored one; a live gen-0 replay can never revert it.
 	const q = `
         INSERT INTO soroswap_router_swaps (
             ledger, ledger_close_time, tx_hash, op_index,
@@ -124,10 +121,9 @@ func (s *Store) InsertSoroswapRouterSwap(ctx context.Context, e SoroswapRouterSw
             derive_generation = EXCLUDED.derive_generation
           WHERE soroswap_router_swaps.derive_generation <= EXCLUDED.derive_generation
     `
-	// deadline_ts is a user-supplied u64 expiry; some calls pass a sentinel that falls outside
-	// timestamptz range [4713 BC, 294276 AD]. The swap is still a real token movement, so an
-	// unrepresentable deadline is NULLed (the column is nullable) rather than dropping the row,
-	// which would silently lose a large share of historical router calls.
+	// deadline_ts is a user-supplied u64 expiry; some calls pass a sentinel outside timestamptz range [4713 BC, 294276 AD]. The swap is
+	// still a real token movement, so an unrepresentable deadline is NULLed (the column is nullable) rather than dropping the row, which
+	// would silently lose a large share of historical router calls.
 	var deadline interface{}
 	if e.DeadlineTS != nil && pgTimestamptzRepresentable(*e.DeadlineTS) {
 		deadline = e.DeadlineTS.UTC()
@@ -168,10 +164,9 @@ func nullableString(s string) interface{} {
 	return s
 }
 
-// Postgres timestamptz spans 4713 BC … 294276 AD. Values outside this range
-// (e.g. a u64 router deadline of ~3e18 seconds, or one that overflows int64 to
-// a BC year) error the whole INSERT with SQLSTATE 22008. We treat such a
-// timestamp as "no representable value" (→ SQL NULL).
+// Postgres timestamptz spans 4713 BC ... 294276 AD. Values outside it (e.g. a u64 router deadline of ~3e18 seconds, or one that
+// overflows int64 to a BC year) error the whole INSERT with SQLSTATE 22008, so such a timestamp is treated as "no representable
+// value" (SQL NULL).
 var (
 	pgTimestamptzMin = time.Date(-4713, 1, 1, 0, 0, 0, 0, time.UTC)
 	pgTimestamptzMax = time.Date(294276, 1, 1, 0, 0, 0, 0, time.UTC)

@@ -69,10 +69,8 @@ type BlendEmitterSwapConfigEvent struct {
 	Kind             BlendEmitterKind // BlendEmitterQSwap or BlendEmitterSwap
 	NewBackstop      string
 	NewBackstopToken string
-	// UnlockTime is the backstop-swap timelock, converted from the
-	// contract's u64 Unix-seconds field. Zero / out-of-postgres-range
-	// values write SQL NULL rather than erroring (same posture as
-	// soroswap_router_swaps.DeadlineTS).
+	// UnlockTime is the backstop-swap timelock, converted from the contract's u64 Unix-seconds field. Zero /
+	// out-of-postgres-range values write SQL NULL rather than erroring (same posture as soroswap_router_swaps.DeadlineTS).
 	UnlockTime time.Time
 }
 

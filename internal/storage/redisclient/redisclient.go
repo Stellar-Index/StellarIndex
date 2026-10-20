@@ -25,10 +25,8 @@ func Build(cfg config.StorageConfig) redis.UniversalClient {
 		c = redis.NewFailoverClient(&redis.FailoverOptions{
 			MasterName:    cfg.RedisMasterName,
 			SentinelAddrs: cfg.RedisSentinelAddrs,
-			// Same secret authenticates both the data plane and
-			// Sentinel — see ADR-0024 §Decision: requirepass +
-			// masterauth + sentinel auth-pass all share the vault
-			// entry.
+			// The same secret authenticates both the data plane and Sentinel (ADR-0024 §Decision: requirepass + masterauth + sentinel
+			// auth-pass share one vault entry).
 			Username:         cfg.RedisUsername,
 			Password:         cfg.RedisPassword,
 			SentinelPassword: cfg.RedisPassword,

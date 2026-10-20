@@ -12,16 +12,13 @@ import (
 type SACBalanceSeedSource string
 
 const (
-	// SACBalanceSeedSourceCurrentState reads stellar.ledger_entries_current
-	// (clickhouse.StreamSACBalanceSeeds). It is fast but has a coverage floor: the materialized
-	// view only reflects ledger_entry_changes inserted after it was created, so a Balance(Address)
-	// entry dormant since before that floor is invisible to it.
+	// SACBalanceSeedSourceCurrentState reads stellar.ledger_entries_current (clickhouse.StreamSACBalanceSeeds). It is fast but has a
+	// coverage floor: the materialized view only reflects ledger_entry_changes inserted after it was created, so a Balance(Address) entry
+	// dormant since before that floor is invisible to it.
 	SACBalanceSeedSourceCurrentState SACBalanceSeedSource = "current_state"
 
-	// SACBalanceSeedSourceFullHistory reads stellar.ledger_entry_changes
-	// directly (clickhouse.StreamSACBalanceSeedsFullHistory) — the
-	// certified append-log, complete to genesis (ADR-0034). Closes the
-	// current-state floor gap; heavier, run-heavy-job.sh only.
+	// SACBalanceSeedSourceFullHistory reads stellar.ledger_entry_changes directly (clickhouse.StreamSACBalanceSeedsFullHistory), the
+	// certified append-log, complete to genesis (ADR-0034). Closes the current-state floor gap; heavier, run-heavy-job.sh only.
 	SACBalanceSeedSourceFullHistory SACBalanceSeedSource = "full_history"
 )
 

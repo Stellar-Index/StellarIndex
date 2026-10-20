@@ -10,10 +10,8 @@ import (
 
 // NetworkStats is the aggregate counts powering the home network strip on stellarindex.io.
 type NetworkStats struct {
-	// Volume24hUSD: SUM of prices_1m.volume_usd across every pair
-	// over the trailing 24h. Decimal string per ADR-0003 (the
-	// volume column is NUMERIC and can exceed int64 in raw cents).
-	// Nil when prices_1m has no recent rows.
+	// Volume24hUSD: SUM of prices_1m.volume_usd across every pair over the trailing 24h. Decimal string per ADR-0003 (the
+	// NUMERIC volume can exceed int64 in raw cents). Nil when prices_1m has no recent rows.
 	Volume24hUSD *string
 	// MarketsCount24h: distinct (base, quote) pairs that recorded any volume_usd in the trailing
 	// 24h. It is an ORDER OF MAGNITUDE SMALLER than AssetsIndexed because it counts only pairs

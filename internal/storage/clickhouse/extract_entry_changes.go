@@ -11,12 +11,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
-// extractLedgerEntryChanges populates ext.Changes with one row per LedgerEntryChange, mirroring dispatcher.walkLedgerEntryChanges. Every tx
-// is walked, failed too (its fee debit is committed), in three ledger-wide phases like ingest.LedgerChangeReader (fees, apply,
-// PostTxApplyFeeChanges), so intra_ledger_seq makes the FINAL-dedup winner the ledger-final balance; upgrade changes are not walked. A
-// fourth phase records EVICTIONS as `removed` rows for temporary entries and TTL keys only; skipped keys keep their walk position. Blocks
-// follow entrywalk.Canonical order. change_index is per-TRANSACTION and stable across re-ingest (idempotent RMT write); an unmarshalable
-// change is skipped, counted, never fatal.
+// extractLedgerEntryChanges populates ext.Changes with one row per LedgerEntryChange, mirroring
+// dispatcher.walkLedgerEntryChanges. Every tx is walked, failed too (its fee debit is committed), in three ledger-wide phases
+// like ingest.LedgerChangeReader (fees, apply, PostTxApplyFeeChanges), so intra_ledger_seq makes the FINAL-dedup winner the
+// ledger-final balance; upgrade changes are not walked. A fourth phase records EVICTIONS as `removed` rows for temporary
+// entries and TTL keys only; skipped keys keep their walk position. Blocks follow entrywalk.Canonical order. change_index is
+// per-TRANSACTION and stable across re-ingest (idempotent RMT write); an unmarshalable change is skipped, counted, never fatal.
 func extractLedgerEntryChanges(ext *LedgerExtract, txs []ingest.LedgerTransaction, evicted []xdr.LedgerKey, seq uint32, closeTime time.Time) {
 	var entryChangeSeq uint32
 	// change_index is per-transaction, so it must survive the gap between the two
@@ -173,10 +173,10 @@ func entryChangeRow(seq uint32, closeTime time.Time, txHash string, opIndex int3
 	return row, true
 }
 
-// ownerAndAsset extracts the owner account (G-strkey) and asset ("CODE-ISSUER" / "native" / "pool:<hex>") from a ledger key; both empty for
-// entry types with no single owner. Asset is empty for all but trustlines because other keys do not name it (claimable balance key is a
-// hash, a pool holds two assets, a SAC Balance names only its contract), so per-asset supply summed off this column is a trustline-only
-// LOWER BOUND; stellar.supply_flows sees all four domains. See ClassicCirculatingSupply.
+// ownerAndAsset extracts the owner account (G-strkey) and asset ("CODE-ISSUER" / "native" / "pool:<hex>") from a ledger key;
+// both empty for entry types with no single owner. Asset is empty for all but trustlines because other keys do not name it
+// (claimable balance key is a hash, a pool holds two assets, a SAC Balance names only its contract), so per-asset supply summed
+// off this column is a trustline-only LOWER BOUND; stellar.supply_flows sees all four domains. See ClassicCirculatingSupply.
 func ownerAndAsset(key xdr.LedgerKey) (accountID, asset string) {
 	switch key.Type {
 	case xdr.LedgerEntryTypeAccount:

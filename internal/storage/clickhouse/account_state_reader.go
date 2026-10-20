@@ -355,10 +355,10 @@ type AccountWealth struct {
 	Locked bool
 }
 
-// balance is stroops (1e7); k = "native" for the account entry, else the trustline asset; only priced rows (has(assets, k)) count. The sum
-// is Decimal256, never Float64, because it is the served figure; stroop-to-unit division happens in Go. Background refresh only
-// (accounts_wealth_cache.go): FINAL is slow, so threads, memory and max_execution_time are pinned in SQL text (the driver drops context
-// settings, see cbLookupCreatesQuery).
+// balance is stroops (1e7); k = "native" for the account entry, else the trustline asset; only priced rows (has(assets, k))
+// count. The sum is Decimal256, never Float64, because it is the served figure; stroop-to-unit division happens in Go.
+// Background refresh only (accounts_wealth_cache.go): FINAL is slow, so threads, memory and max_execution_time are pinned in
+// SQL text (the driver drops context settings, see cbLookupCreatesQuery).
 const accountsByWealthQuery = `WITH arrayMap(p -> toDecimal256(p, 18), ?) AS px,
 		sum(toDecimal256(balance, 0) * arrayElement(px, indexOf(?, k))) AS stroop_value
 		SELECT account_id, toString(stroop_value),
