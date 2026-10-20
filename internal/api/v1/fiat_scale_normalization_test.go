@@ -27,8 +27,8 @@ import (
 //	native/<USDC-classic>   source=sdex    (7dp)  10^10 base / 10^9  quote → 0.10
 //	crypto:XLM/crypto:USDT  source=binance (8dp)  10^11 base / 1.2·10^10 quote → 0.12
 //
-// True equal-volume mean = 0.11. Unnormalised VWAP = 13/110, which the wire renders as
-// 0.1181818181 (ratToDecimal truncates at 10 digits).
+// True equal-volume mean = 0.11. Unnormalised VWAP = 13/110, rendered 0.1181818181 (ratToDecimal
+// truncates at 10 digits).
 
 const (
 	scaleNormWantVWAP   = "0.1100000000" // real-volume-weighted midpoint (fixed)

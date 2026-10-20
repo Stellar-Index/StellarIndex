@@ -17,11 +17,9 @@ import (
 //
 //  1. The amount arrives in TWO on-wire SHAPES, a bare i128 or the CAP-67 map
 //     { amount, to_muxed_id } (amountScVal). They MUST agree, or mints are dropped and
-//     mint_total goes to zero. A differential target proves agreement over the whole i128
-//     domain rather than a handful of fixture amounts.
-//
+//     mint_total goes to zero. A differential target proves agreement over the whole domain.
 //  2. The interesting values are the ones a hand-written fixture never uses: Lo above 2^63,
-//     Hi non-zero, the 2^64 carry boundary. Each is a place an int64 truncation survives an
+//     Hi non-zero, the 2^64 carry boundary, each a place an int64 truncation survives an
 //     amount==int64(1_000_000) test unnoticed.
 //
 // Runs as a plain seed-corpus test under `go test`; the generative run is

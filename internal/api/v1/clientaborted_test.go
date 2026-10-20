@@ -19,13 +19,11 @@ import (
 // response. Any other done-ness is a SERVER-side budget (handler WithTimeout guards or the
 // blanket middleware.RequestTimeout, which wraps r.Context()) and must reach the 503 branch.
 //
-// The cases this test pins:
+// Pinned cases:
 //
-//   - err is context.Canceled, request ctx alive → false
-//     (server-side cancel, e.g. internal context.WithCancel; not
-//     a client abort)
-//   - err is context.DeadlineExceeded, request ctx alive → false
-//     (server-side WithTimeout fired; handler should write 503)
+//   - err is context.Canceled, request ctx alive → false (server-side cancel, not a client abort)
+//   - err is context.DeadlineExceeded, request ctx alive → false (server-side WithTimeout fired;
+//     handler should write 503)
 //   - request ctx CANCELLED (any err)             → true
 //   - request ctx DEADLINE-EXCEEDED (any err)     → false
 //   - none of the above                           → false

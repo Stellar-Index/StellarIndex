@@ -18,8 +18,8 @@ import (
 // stellarindex_projector_lag_high must not ticket it (and must not mask genuine lag).
 //
 // The discriminator is obs.ProjectorReplayWindowActive: 1 while the cursor is still inside the
-// window the replay tool RECORDED, 0 otherwise. The tests assert the gauge's VALUE under each
-// of the four states the alert rules join against, not a mock's call log.
+// window the replay tool RECORDED, 0 otherwise. The tests assert the gauge's VALUE under each of
+// the four states the alert rules join against, not a mock's call log.
 // ---------------------------------------------------------------------------
 
 func replayWindowGauge(t *testing.T, source string) float64 {
@@ -108,15 +108,14 @@ func TestReplayWindow_CursorPastWindowEndClearsFlag(t *testing.T) {
 // ---------------------------------------------------------------------------
 // THE OTHER WRITER. `stellarindex-ops projected-rebuild -write` calls the same
 // RecordProjectionDirtyWindow, and its range is NOT bounded below the live cursor:
-// checkLiveCursorGuard admits liveLastLedger >= to (EQUALITY, and `-to` DEFAULTS to the live
-// cursor), and `-allow-live-overlap` bypasses the guard. So a rebuild window routinely covers
-// the live cursor's own position, or under the override sits wholly above it.
+// checkLiveCursorGuard admits liveLastLedger >= to (`-to` DEFAULTS to the live cursor), and
+// `-allow-live-overlap` bypasses the guard. So a rebuild window routinely covers the live
+// cursor's own position, or under the override sits wholly above it.
 //
-// None of those shapes is an operator REWIND, so none may excuse lag: a source whose projector
-// is HELD at that position (sink-retry hold, poison hold, wedge) would have its lag ticket
-// suppressed indefinitely, the exact failure stellarindex_projector_lag_high exists to catch.
-// The bound is PROVENANCE (timescale.ProjectionDirtyWindow.IsProjectorReplay), not cursor
-// arithmetic alone.
+// None of those is an operator REWIND, so none may excuse lag: a source whose projector is HELD
+// there (sink-retry hold, poison hold, wedge) would have its lag ticket suppressed indefinitely,
+// the failure stellarindex_projector_lag_high exists to catch. The bound is PROVENANCE
+// (timescale.ProjectionDirtyWindow.IsProjectorReplay), not cursor arithmetic alone.
 // ---------------------------------------------------------------------------
 
 // TestReplayWindow_RebuildWindowBelowCursorDoesNotSuppress is the benign

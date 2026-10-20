@@ -38,21 +38,19 @@ func mustDecodeOne(t *testing.T, ev events.Event) Event {
 	return got
 }
 
-// TestGolden_earnUSDCDeposit_ledger62938336 pins the very first
-// earnUSDC deposit.
+// TestGolden_earnUSDCDeposit_ledger62938336 pins the very first earnUSDC deposit.
 //
-//	ledger_seq   62,938,336  (closed 2026-06-08 14:40:29 UTC)
+//	ledger_seq   62,938,336
 //	tx_hash      e86b9a910f5e61db9b98fb60086dd495e6b2f2846cb806b2801a6f6d2d6c16f3
 //	op_index 0, event_index 1
 //	contract_id  CCL3WITW… (earnUSDC)
 //	topics       [Symbol("deposit"), Address(G…), Address(G…), Address(G…)]
 //	data         Map{ assets: i128=2000000, shares: i128=2000000000000 }
 //
-// The two amounts are the load-bearing assertion. They differ by EXACTLY 1,000,000 (the ERC-4626
-// decimals offset of 6), so a decoder that read one field twice, or swapped assets for shares,
-// would still produce a plausible number; only an exact pin catches it.
-// Deposits carry three identical topic addresses; see
-// TestGolden_earnUSDCWithdraw_ledger63812816 for the events that separate them.
+// The amounts differ by EXACTLY 1,000,000 (the ERC-4626 decimals offset of 6), so a decoder that
+// read one field twice, or swapped assets for shares, would still produce a plausible number;
+// only an exact pin catches it. Deposits carry three identical topic addresses; the withdraw
+// fixtures separate them.
 func TestGolden_earnUSDCDeposit_ledger62938336(t *testing.T) {
 	t.Parallel()
 
@@ -105,7 +103,7 @@ func TestGolden_earnUSDCDeposit_ledger62938336(t *testing.T) {
 // addresses differ, the pair that proves the (caller, receiver, owner) ordering.
 // TestGolden_earnXLMWithdraw_ledger63812795 pins the other.
 //
-//	ledger_seq   63,812,816  (closed 2026-08-05 16:04:17 UTC)
+//	ledger_seq   63,812,816
 //	tx_hash      2a008c6241e08a5d4788f173055d5fb98bdc86f2d427c2495947be935d14c7b0
 //	op_index 0, event_index 5
 //	contract_id  CCL3WITW… (earnUSDC)
@@ -114,12 +112,12 @@ func TestGolden_earnUSDCDeposit_ledger62938336(t *testing.T) {
 //
 // The SAME G account earlier transferred its shares to that C contract
 // (TestGolden_earnUSDCShareTransfer_ledger63812811), so at burn time the contract both CALLED
-// and OWNED the shares while the G account received the underlying. Caller == Owner == C and
-// Receiver == G is therefore a real assertion: swapping topics 2 and 3 fails this test.
+// and OWNED the shares while the G account received the underlying. Swapping topics 2 and 3
+// fails this test.
 //
-// The amounts also pin the share price: 9,919,211,002,150 shares redeem 10,000,000 assets,
-// below the 1e6 genesis ratio. A decoder that read `shares` twice would report par and pass
-// every count-based check.
+// The amounts also pin the share price: 9,919,211,002,150 shares redeem 10,000,000 assets, below
+// the 1e6 genesis ratio. A decoder that read `shares` twice would report par and pass every
+// count-based check.
 func TestGolden_earnUSDCWithdraw_ledger63812816(t *testing.T) {
 	t.Parallel()
 
@@ -171,17 +169,16 @@ func TestGolden_earnUSDCWithdraw_ledger63812816(t *testing.T) {
 // TestGolden_earnUSDCShareTransfer_ledger63812811 pins a real share transfer: the SEP-41 event
 // the vault emits for its OWN share token, in the CAP-67 Map body form.
 //
-//	ledger_seq   63,812,811  (closed 2026-08-05 16:03:50 UTC)
+//	ledger_seq   63,812,811
 //	tx_hash      f2b68531502335f15cac27bcc9cb0709cf3fafb080db42a9ea7832ad44d31faf
 //	op_index 0, event_index 0
 //	contract_id  CCL3WITW… (earnUSDC)
 //	topics       [Symbol("transfer"), Address(G…), Address(C…)]
 //	data         Map{ amount: i128=99192108191209, to_muxed_id: Void }
 //
-// The body is the Map form, not a bare i128, and carries a second field (`to_muxed_id`, Void
-// here) the decoder must ignore rather than choke on or mistake for the amount. The amount is
-// ten times the shares the later withdraw burns, a near-miss a positional or first-field read
-// would return.
+// The body carries a second field (`to_muxed_id`, Void) the decoder must ignore rather than
+// choke on or mistake for the amount. The amount is ten times the shares the later withdraw
+// burns, a near-miss a positional or first-field read would return.
 func TestGolden_earnUSDCShareTransfer_ledger63812811(t *testing.T) {
 	t.Parallel()
 
@@ -229,20 +226,19 @@ func TestGolden_earnUSDCShareTransfer_ledger63812811(t *testing.T) {
 	}
 }
 
-// TestGolden_earnUSDCDeployedAssets_ledger63069536 pins a real
-// deployed-capital change.
+// TestGolden_earnUSDCDeployedAssets_ledger63069536 pins a real deployed-capital change.
 //
-//	ledger_seq   63,069,536  (closed 2026-06-17 10:42:46 UTC)
+//	ledger_seq   63,069,536
 //	tx_hash      e096bdd6eb3ab6eb792c548b99bb480b4358057bc1fd6d65f31481f9cc1119e8
 //	op_index 0, event_index 0
 //	contract_id  CCL3WITW… (earnUSDC)
 //	topics       [Symbol("deployed_assets_changed"), Address(G… operator)]
 //	data         Map{ new_amount: i128=57037889700000, old_amount: i128=57000001000000 }
 //
-// The two amounts are close in magnitude, so a decoder that read old into new, or read the map
+// The amounts are close in magnitude, so a decoder that read old into new, or read the map
 // positionally (`new_amount` is FIRST on the wire despite `old` being logically prior), still
-// returns a plausible number. Only pinning both exactly catches it, which makes this fixture
-// the decode-by-name guard for this event.
+// returns a plausible number. Only pinning both exactly catches it: this is the decode-by-name
+// guard for this event.
 func TestGolden_earnUSDCDeployedAssets_ledger63069536(t *testing.T) {
 	t.Parallel()
 
@@ -294,7 +290,7 @@ func TestGolden_earnUSDCDeployedAssets_ledger63069536(t *testing.T) {
 // TestGolden_earnXLMDeposit_ledger62638654 pins the earnXLM vault's first deposit, the fixture
 // that carries the second vault's identity.
 //
-//	ledger_seq   62,638,654  (closed 2026-05-19 11:27:09 UTC)
+//	ledger_seq   62,638,654
 //	tx_hash      c6bcced312e54f601979055a325a7df5b14f742649a9de4a2fbeea33f1b245ce
 //	op_index 0, event_index 1
 //	contract_id  CC6TRAPQ… (earnXLM)
@@ -303,8 +299,7 @@ func TestGolden_earnUSDCDeployedAssets_ledger63069536(t *testing.T) {
 //
 // Event index 0 of the SAME operation is a `transfer` from the native XLM SAC (CAS3J7GY…,
 // topic[3] = String("native")) for an amount byte-equal to this deposit's `assets`. That pins
-// this vault's underlying to XLM, hence its identity as earnXLM (see the package doc), so
-// pinning `assets` here also pins the join to that proof.
+// this vault's underlying to XLM, hence its identity as earnXLM (see the package doc).
 func TestGolden_earnXLMDeposit_ledger62638654(t *testing.T) {
 	t.Parallel()
 
@@ -348,7 +343,7 @@ func TestGolden_earnXLMDeposit_ledger62638654(t *testing.T) {
 
 // TestGolden_earnXLMWithdraw_ledger63045115 pins an earnXLM redemption.
 //
-//	ledger_seq   63,045,115  (closed 2026-06-15 19:15:08 UTC)
+//	ledger_seq   63,045,115
 //	tx_hash      d1829de5c3af1b069b15d28b186d01329a8eee7a68e9a06fb524666f8059280d
 //	op_index 0, event_index 1
 //	contract_id  CC6TRAPQ… (earnXLM)
@@ -399,7 +394,7 @@ func TestGolden_earnXLMWithdraw_ledger63045115(t *testing.T) {
 // addresses, which corroborates the (caller, receiver, owner) reading beyond a single
 // observation.
 //
-//	ledger_seq   63,812,795  (closed 2026-08-05 16:02:17 UTC)
+//	ledger_seq   63,812,795
 //	tx_hash      6dbb49828778058bff42403d5c74d0687ba40750b7c2b7f664db18a075b72d3a
 //	op_index 0, event_index 5
 //	contract_id  CC6TRAPQ… (earnXLM)
@@ -409,8 +404,7 @@ func TestGolden_earnXLMWithdraw_ledger63045115(t *testing.T) {
 // The G account in the middle slot is BYTE-IDENTICAL to the one in the earnUSDC withdraw a few
 // ledgers later, while the outer contract is a DIFFERENT router. One holder redeeming both
 // vaults through two routers separates "the middle slot is the receiver" from "the middle slot
-// is whatever that transaction put there": the constant across the pair is the person, the
-// variable is the caller.
+// is whatever that transaction put there".
 func TestGolden_earnXLMWithdraw_ledger63812795(t *testing.T) {
 	t.Parallel()
 
@@ -460,27 +454,25 @@ func TestGolden_earnXLMWithdraw_ledger63812795(t *testing.T) {
 	}
 }
 
-// TestGolden_foreignDepositIsNotClaimed is the ADR-0035 property, held
-// against a REAL foreign event rather than a synthetic one.
+// TestGolden_foreignDepositIsNotClaimed is the ADR-0035 property, held against a REAL foreign
+// event rather than a synthetic one.
 //
-//	ledger_seq   63,008,857  (closed 2026-06-13 08:43:41 UTC)
+//	ledger_seq   63,008,857
 //	tx_hash      28a7846eccb82470909485fdafe1a37ca89cc67dfd7fb954ddd1c522bd1a1fc4
 //	op_index 0, event_index 3
 //	contract_id  CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7
 //	topics       [Symbol("deposit"), Address(C…), Address(G…)]
 //	data         Vec[ i128=62012497, i128=45073641 ]
 //
-// The collision is real: other contracts emit `deposit` with a byte-identical topic[0] and are
-// a different protocol entirely.
-//
-// Two things are asserted, and the second makes the first meaningful:
+// Other contracts emit `deposit` with a byte-identical topic[0]. Two things are asserted, and
+// the second makes the first meaningful:
 //
 //  1. Matches is FALSE for it, so the row is never attributed here.
 //  2. classify() is NON-EMPTY for it: the topic alone DOES claim it. Without this, assertion 1
 //     could pass for the wrong reason (a topic mismatch) and the gate would be untested.
 //
-// The same fixture replayed with only the contract id changed to a real vault makes Matches
-// flip to true. Contract identity, and nothing else, decides.
+// Replayed with only the contract id changed to a real vault, Matches flips to true: contract
+// identity, and nothing else, decides.
 func TestGolden_foreignDepositIsNotClaimed(t *testing.T) {
 	t.Parallel()
 
@@ -562,8 +554,10 @@ func TestGolden_zeroEventAddressIsNotRegistered(t *testing.T) {
 // the audited WASM 4b3d9f6b…; classify must recognise them or
 // stellarindex_source_recognition_failing fires.
 //
-//	vault_paused    ledger 64,715,361  tx f135613062f48155d9567a8618f9975f6c346163c84d269d4aefc6fca92823cb  op 0 ev 0
-//	vault_unpaused  ledger 64,716,975  tx 6606b0f3ff8eaf2da089d4154aee30eedc46aab3183dfe0665203a7adb00dfe0  op 0 ev 0
+//	vault_paused    ledger 64,715,361  op 0 ev 0
+//	                tx f135613062f48155d9567a8618f9975f6c346163c84d269d4aefc6fca92823cb
+//	vault_unpaused  ledger 64,716,975  op 0 ev 0
+//	                tx 6606b0f3ff8eaf2da089d4154aee30eedc46aab3183dfe0665203a7adb00dfe0
 //	topics          [Symbol(kind), Address(G…)]
 //	data            Map{} (empty)
 func TestGolden_earnUSDCVaultPauseRecognized(t *testing.T) {

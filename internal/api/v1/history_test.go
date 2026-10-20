@@ -124,22 +124,18 @@ func tradesForPair(trades []canonical.Trade, pair canonical.Pair) []canonical.Tr
 	return matched
 }
 
-// TradesInRangeAfter: the stub ignores the cursor (tests construct
-// their own trade slices per-assertion) but records it so cursor
-// tests can verify the handler forwarded it. Every queried pair is
-// appended to tradesPairs so alias tests can pin the read order.
+// TradesInRangeAfter: the stub ignores the cursor but records it so cursor tests can verify the
+// handler forwarded it. Every queried pair is appended to tradesPairs so alias tests can pin the
+// read order.
 //
-// tradesByPair, when non-nil, keys the fixture on the requested pair —
-// the trades twin of pointsByPair, used by the alias regression test
-// where the literal pair is empty and the crypto:XLM spelling carries
-// the rows.
+// tradesByPair, when non-nil, keys the fixture on the requested pair (the trades twin of
+// pointsByPair), used where the literal pair is empty and the crypto:XLM spelling carries the
+// rows.
 //
-// The flat `trades` fixture is filtered by [tradesForPair], the same
-// predicate the TradesInRange sibling applies, because the handler now
-// reads each pair in BOTH stored directions: a row belongs to the ONE
-// orientation it declares, and a pair-blind answer would hand the same
-// fixture back for a market's flip and double every page. Fixtures that
-// leave Pair unset stay unspecified and match any request.
+// The flat `trades` fixture is filtered by [tradesForPair], the same predicate the TradesInRange
+// sibling applies, because the handler reads each pair in BOTH stored directions: a row belongs
+// to the ONE orientation it declares, and a pair-blind answer would hand the same fixture back
+// for a market's flip and double every page. Fixtures that leave Pair unset match any request.
 func (r *stubHistoryReader) TradesInRangeAfter(_ context.Context, pair canonical.Pair, from, to, afterTs time.Time, afterLedger uint32, afterTxHash, afterSource string, afterOpIndex uint32, limit int) ([]canonical.Trade, error) {
 	r.lastCall.from = from
 	r.lastCall.to = to
@@ -950,21 +946,19 @@ func TestHistory_OffChainSourceDecimals(t *testing.T) {
 	}
 }
 
-// TestHistory_OrientationRendering pins, to the value, how a stored row is
-// re-expressed in the requested orientation (AQUA/USDC).
+// TestHistory_OrientationRendering pins, to the value, how a stored row is re-expressed in the
+// requested orientation (AQUA/USDC).
 //
-//   - reverse-stored: the market exists only as USDC/AQUA. The
-//     legs and amounts swap, `price` is the exact reciprocal,
-//     and both directions are read, requested first. The 7:1 row would expose
-//     a float round-trip: 1/(1/7) is not 7 in binary floating point.
+//   - reverse-stored: the market exists only as USDC/AQUA. The legs and amounts swap, `price` is
+//     the exact reciprocal, and both directions are read, requested first. The 7:1 row would
+//     expose a float round-trip: 1/(1/7) is not 7 in binary floating point.
 //   - stored-orientation: a row already held as asked is served untouched.
-//   - zero-leg: a flipped one-side-zero row (SDEX rounding fill) makes the
-//     zero leg the denominator and renders "price": null without dropping or
-//     poisoning the page.
-//   - exact-at-scale: magnitudes where a float, or a reciprocal taken as a
-//     division rather than a swap, drifts. Only the final render rounds: ten
-//     fractional digits, extended only when the first significant digit lies
-//     beyond the tenth place, so a positive price is never an all-zero string.
+//   - zero-leg: a flipped one-side-zero row (SDEX rounding fill) makes the zero leg the
+//     denominator and renders "price": null without dropping or poisoning the page.
+//   - exact-at-scale: magnitudes where a float, or a reciprocal taken as a division rather than
+//     a swap, drifts. Only the final render rounds: ten fractional digits, extended only when
+//     the first significant digit lies beyond the tenth place, so a positive price is never an
+//     all-zero string.
 func TestHistory_OrientationRendering(t *testing.T) {
 	t.Parallel()
 	aqua, usdc := aquaUSDC(t)
@@ -1283,14 +1277,13 @@ func TestHistory_PastGroupCursorPointingBeyondTheWindowTerminates(t *testing.T) 
 	t.Parallel()
 	aqua, usdc := aquaUSDC(t)
 
-	// A complete two-source group at +10s, then one later row at +30s so
-	// the first page ends on the group with rows still behind it.
+	// A complete two-source group at +10s, then one later row at +30s so the first page ends on
+	// the group with rows still behind it.
 	//
-	// The FLIPPED row's source sorts BELOW the stored row's, which is the
-	// arrangement that makes the two orderings disagree: the merge puts
-	// the requested orientation first on a tie, so a last-row cursor
-	// would name `aaa_src` and the database would hand `zzz_src` back on
-	// the next page. Reverse these two and the case tests nothing.
+	// The FLIPPED row's source sorts BELOW the stored row's, which makes the two orderings
+	// disagree: the merge puts the requested orientation first on a tie, so a last-row cursor would
+	// name `aaa_src` and the database would hand `zzz_src` back on the next page. Reverse these two
+	// and the case tests nothing.
 	store := &orientedTradeStore{rows: []canonical.Trade{
 		storedTrade(t, "zzz_src", 10, "c1", aqua, usdc, 1, 61),
 		storedTrade(t, "aaa_src", 10, "c1", usdc, aqua, 62, 1),
@@ -1394,30 +1387,22 @@ func TestHistory_TieGroupLargerThanAnyPageIsServedWhole(t *testing.T) {
 	}
 }
 
-// TestHistory_ExactlyOnceUnderEitherSourceCollation is the property the
-// spec now promises, checked against a model of the store rather than
-// against a shape.
+// TestHistory_ExactlyOnceUnderEitherSourceCollation checks the spec's exactly-once promise
+// against a model of the store rather than against a shape.
 //
-// The merge never compares `source`, because Go's byte order and the
-// database's collation can disagree on it. The way to test that claim is
-// to make the model disagree: run every drain twice, once with the
-// source column ordered ascending and once DESCENDING, and require the
-// same answer both times.
+// The merge never compares `source`, because Go's byte order and the database's collation can
+// disagree on it. To test that, make the model disagree: run every drain twice, once with the
+// source column ordered ascending and once DESCENDING, and require the same answer both times.
 //
-// What the reversed half catches, stated as the mutation that proves
-// it rather than as a claim: order the merge's ties by Go `source` and
-// resume at the last served row. That is exactly-once under the
-// ascending model — Go's order and the database's agree there, so the
-// last row of a group is also the database's last — and it serves rows
-// twice under the reversed one. The ascending half alone passes it. Any
-// design that reaches its resume point through a source comparison has
-// that shape, including the "resume at the group's lowest source"
-// alternative this endpoint deliberately does not use.
+// The reversed half catches this mutation: order the merge's ties by Go `source` and resume at
+// the last served row. That is exactly-once under the ascending model (the last row of a group
+// is also the database's last) and serves rows twice under the reversed one. Any design that
+// reaches its resume point through a source comparison has that shape, including the "resume at
+// the group's lowest source" alternative this endpoint deliberately does not use.
 //
-// It does NOT catch every source comparison. Ordering ties by source
-// while still resuming PAST the group is harmless, because the cursor
-// does not depend on where inside a group the page ended — which is
-// the point of stepping past it.
+// It does NOT catch every source comparison. Ordering ties by source while still resuming PAST
+// the group is harmless, because the cursor does not depend on where inside a group the page
+// ended.
 func TestHistory_ExactlyOnceUnderEitherSourceCollation(t *testing.T) {
 	t.Parallel()
 	aqua, usdc := aquaUSDC(t)

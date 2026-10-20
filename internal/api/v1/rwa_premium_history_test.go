@@ -1,17 +1,15 @@
 package v1_test
 
-// GET /v1/rwa/premium — the token's price against the instrument's net
-// asset value, over time.
+// GET /v1/rwa/premium: the token's price against the instrument's net asset value, over time.
 //
-// The point of the surface is the ratio; the point of these tests is everything the ratio is NOT
-// allowed to do. A premium is built from two sampled observations, so unlike its sibling
-// /v1/rwa/history it may not carry either leg across a day it was not observed on. Because it
-// re-derives a market price rather than reading the served one, it must hold that price to a
-// thin-market floor or it publishes, for a past day, the claim the live surface refuses.
+// The point of these tests is everything the ratio is NOT allowed to do. A premium is built
+// from two sampled observations, so unlike its sibling /v1/rwa/history it may not carry either
+// leg across a day it was not observed on. Because it re-derives a market price rather than
+// reading the served one, it must hold that price to a thin-market floor or it publishes, for a
+// past day, the claim the live surface refuses.
 //
-// Production wiring: v1.New with Options.OracleHistory and Options.MarketHistory (see
-// cmd/stellarindex-api/main.go). The tests use the SAME constructor, substituting only those two
-// readers.
+// The tests use the production constructor (v1.New with Options.OracleHistory and
+// Options.MarketHistory), substituting only those two readers.
 
 import (
 	"context"

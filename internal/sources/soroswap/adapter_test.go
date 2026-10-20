@@ -1075,17 +1075,13 @@ func TestDecode_PanicInTheCriticalSectionReleasesTheLock(t *testing.T) {
 // token0 has BOTH an `in` and an `out` leg, so the direction is ambiguous: no single (in,out)
 // cross-token pair describes the trade. An all-four-only ambiguity guard would let this shape
 // match the `in1 && out0` arm and emit a trade with the GROSS amount_1_in / amount_0_out while
-// silently dropping the amount_0_in leg, fabricating a price. That mis-decode is the stale gen-0
-// `trades` row this ledger still carries (base_amount=2306549617, quote_amount=8079362527).
+// silently dropping the amount_0_in leg, fabricating a price.
 //
 // The test pins the correct behaviour: the completed swap+sync is a recognized no-op
 // (ErrAmbiguousSwapDirection, which wraps ErrNonDirectionalSwap), zero projected rows and nil
 // error, so the ADR-0033 re-derive counts it expected-zero. The served row is a stale phantom to
-// purge by targeted re-projection, not a decoder change and not something to mask in the
-// reconcile.
-//
-// Bytes are verbatim from the r1 ClickHouse lake (stellar.contract_events,
-// tx_hash=a479f1d6…, ledger_seq=56779692).
+// purge by targeted re-projection, not a decoder change. Bytes are verbatim from the r1
+// ClickHouse lake (stellar.contract_events).
 const (
 	ambPair   = "CDJDRGUCHANJDXALZVJ5IZVB76HX4MWCON5SHF4DE5HB64CBBR7W2ZCD"
 	ambTx     = "a479f1d654c653f3c5c98f5e65e8d516cfd8beaeaf3a89fe01c912811cf1e7c6"

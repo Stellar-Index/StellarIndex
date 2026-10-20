@@ -253,12 +253,12 @@ func drainHistory(t *testing.T, ts *testServer, query string) (rows []v1.TradeRo
 // because Go's byte order and the database's collation can disagree on it.
 //
 // A page that both OPENS and would END inside such a group cannot cut at the group's lower edge
-// (index 0; an empty page carrying a cursor stalls the client), so it runs to the upper edge.
-// That is sound only when the group is COMPLETE in both directions. A direction whose read
-// stopped ON the group holds rows the merge never saw; the cursor, minted from the other
-// direction's row, then excludes them under the database's
-// `(ts, ledger, tx_hash, op_index, source) >` predicate and they are never served. So the read
-// completes the group first, re-reading the truncated direction with a raised limit.
+// (an empty page carrying a cursor stalls the client), so it runs to the upper edge. That is
+// sound only when the group is COMPLETE in both directions: a direction whose read stopped ON
+// the group holds rows the merge never saw, and the cursor, minted from the other direction's
+// row, would exclude them under the database's `(ts, ledger, tx_hash, op_index, source) >`
+// predicate so they are never served. So the read completes the group first, re-reading the
+// truncated direction with a raised limit.
 
 // servedIdentity is the trades primary key as served on the wire, the tuple naming ONE stored row; source alone is not enough
 // since fixtures can share a tx_hash suffix across distinct rows.
@@ -317,13 +317,12 @@ func storedTradeAmounts(t *testing.T, source string, sec int64, txSuffix string,
 // ─── The cursor that steps past a complete tie group ──────────────────
 //
 // A cursor naming the last served ROW re-serves the group rows the database orders above it,
-// because the merge puts the requested orientation first on a tie while the database orders
-// the group by `source`. A page ending on a group proved COMPLETE in both directions therefore
+// because the merge puts the requested orientation first on a tie while the database orders the
+// group by `source`. A page ending on a group proved COMPLETE in both directions therefore
 // resumes past the whole group by key (same (ts, ledger, tx_hash), op_index stepped once, no
 // source), which no group row can satisfy and every later row can.
 //
-// Cursor arithmetic can also fail with a resume point that matches nothing, or that wraps;
-// both are covered below.
+// Cursor arithmetic can also fail with a resume point that matches nothing, or that wraps.
 
 // TestHistoryCursor_PastGroupMarkerIsNotASourceName pins the assumption the past-group cursor's
 // wire form rests on: its marker cannot be mistaken for a source. It checks the live registry

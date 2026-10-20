@@ -426,14 +426,13 @@ func TestRateLimitBySubject_AnonymousSameIPDifferentUADoesNotBypass(t *testing.T
 	}
 }
 
-// TestRateLimit_NilKeyFnMasksIPv6To64 pins the default (nil) keyFn of
-// the single-bucket RateLimit middleware to the forge-resistant, /64-masked resolver the
-// production anon path uses. An unmasked /128 default would let a caller rotate addresses within
-// one delegated /64 and bypass the limit.
+// TestRateLimit_NilKeyFnMasksIPv6To64 pins the default (nil) keyFn of RateLimit to the /64-masked
+// resolver the production anon path uses; an unmasked /128 would let a caller rotate addresses
+// inside one delegated /64 and bypass the limit.
 //
-// Two different /128 addresses in the same /64 with a budget of 1 must see a 429 on the second;
-// a different /64 keeps its own budget. A RemoteIPFrom default fails this: no Logger runs here,
-// so the key is empty and every request bypasses the limiter.
+// Two /128s in the same /64 with a budget of 1: the second gets 429; another /64 has its own
+// budget. A RemoteIPFrom default fails this: no Logger runs here, so the key is empty and every
+// request bypasses the limiter.
 func TestRateLimit_NilKeyFnMasksIPv6To64(t *testing.T) {
 	if err := middleware.SetTrustedProxyCIDRs([]string{}); err != nil {
 		t.Fatalf("SetTrustedProxyCIDRs: %v", err)

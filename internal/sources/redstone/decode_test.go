@@ -879,8 +879,8 @@ func TestFeedRegistry_SuffixedFeedNeverSharesQuoteWithItsBareSibling(t *testing.
 	}
 }
 
-// TestDecode_SolvBTCFamily_NAVRatiosQuotedInReserveAsset pins the corrected values
-// end-to-end through the decoder, using four SolvBTC-family feeds as observed live:
+// TestDecode_SolvBTCFamily_NAVRatiosQuotedInReserveAsset pins the quoting end-to-end through the
+// decoder, using four SolvBTC-family feeds as observed live:
 //
 //	crypto:SolvBTC.BBN_FUNDAMENTAL       1.00000000
 //	crypto:SolvBTC.BBN_FUNDAMENTAL_USD  78313.02974310
@@ -891,9 +891,9 @@ func TestFeedRegistry_SuffixedFeedNeverSharesQuoteWithItsBareSibling(t *testing.
 //
 //   - SolvBTC NAV in USD / BTC in USD = 1.00295 ⇒ the bare `SolvBTC_FUNDAMENTAL` ratio is
 //     denominated in BTC.
-//   - SolvBTC.BBN NAV in USD equals SolvBTC NAV in USD while the bare ratio is exactly
-//     1.00000000 ⇒ SolvBTC.BBN is 1:1 with SolvBTC and its ratio is denominated in SolvBTC,
-//     not BTC. Quoting it crypto:BTC would contradict our own `SolvBTC.BBN_FUNDAMENTAL_USD`.
+//   - SolvBTC.BBN NAV in USD equals SolvBTC NAV in USD while the bare ratio is exactly 1 ⇒
+//     SolvBTC.BBN is 1:1 with SolvBTC and its ratio is denominated in SolvBTC, not BTC. Quoting
+//     it crypto:BTC would contradict our own `SolvBTC.BBN_FUNDAMENTAL_USD`.
 func TestDecode_SolvBTCFamily_NAVRatiosQuotedInReserveAsset(t *testing.T) {
 	feedIDs := []string{
 		"SolvBTC.BBN_FUNDAMENTAL",

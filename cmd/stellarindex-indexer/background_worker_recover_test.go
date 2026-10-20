@@ -80,10 +80,8 @@ func TestBackgroundWorkersRecover(t *testing.T) {
 // ledgerstream calls the producer closure synchronously, so a walk panic arrives on this stack.
 // Recovering in place would be the worst outcome: nothing would send on streamErr, main would
 // block until SIGTERM and /metrics and /healthz would answer with the cursor frozen. The
-// recovery only (a) moves stellarindex_worker_panics_total and logs the stack, and (b) hands
-// the fault to main as a fatal error so already-buffered events drain before exit.
-//
-// The site must recover AND still signal on streamErr; this stops a log-and-continue rewrite.
+// recovery only logs and counts the panic and hands it to main as a fatal error so buffered
+// events drain before exit. The site must recover AND still signal on streamErr.
 func TestLedgerstreamProducerPanicStaysFatal(t *testing.T) {
 	sites, err := guardscan.ScanFile("main.go", guardscan.Config{
 		Guards: []string{"worker.Recover", "worker.Report"},

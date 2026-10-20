@@ -16,28 +16,21 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// This file is the SDK↔spec reconciliation gate. The OpenAPI spec,
-// the Go handlers, and this SDK are three hand-maintained
-// representations of one contract; lint-docs.sh already reconciles
+// This file is the SDK↔spec reconciliation gate. The OpenAPI spec, the Go handlers and this SDK
+// are three hand-maintained representations of one contract; lint-docs.sh already reconciles
 // handlers↔spec, and this test closes the remaining edge:
 //
 //  1. Every SDK method's (HTTP method, path) exists in the spec.
-//  2. Every spec operation is either covered by an SDK method or
-//     EXPLICITLY listed in uncoveredOperations with a reason — a new
-//     endpoint fails this test until its author makes the conscious
-//     choice. The allowlist is shrink-preferred: entries for
-//     operations that gain SDK coverage (or leave the spec) fail as
-//     stale.
-//  3. For covered operations, the spec's `data` schema properties
-//     must exactly match the SDK payload struct's JSON tags (both
-//     directions) — a field rename/addition/removal in the spec that
-//     the SDK doesn't mirror is a silent production drift; this
-//     turns it into a test failure.
-//  4. The generic envelope and its Flags object — the members every
-//     operation shares — must match Envelope[T] and Flags the same
-//     way, both directions. The per-operation walk in (3) stops at
-//     `data`, so a new envelope member or flag could ship in the spec
-//     with no SDK field to land in; the walk in (4) covers it.
+//  2. Every spec operation is either covered by an SDK method or EXPLICITLY listed in
+//     uncoveredOperations with a reason, so a new endpoint fails this test until its author
+//     makes the choice. The allowlist is shrink-preferred: entries for operations that gain SDK
+//     coverage (or leave the spec) fail as stale.
+//  3. For covered operations, the spec's `data` schema properties must exactly match the SDK
+//     payload struct's JSON tags (both directions), so a spec field the SDK doesn't mirror is
+//     caught instead of drifting silently.
+//  4. The generic envelope and its Flags object, the members every operation shares, must match
+//     Envelope[T] and Flags the same way, both directions. The walk in (3) stops at `data`, so
+//     a new envelope member or flag could otherwise ship with no SDK field to land in.
 
 // coveredOperation maps one SDK method to the spec operation it calls; payload is the struct `data` decodes into (the
 // ELEMENT type for arrays). A nil payload skips the schema check (non-struct payloads, 204 responses).

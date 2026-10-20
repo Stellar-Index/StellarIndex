@@ -4,11 +4,10 @@ package main
 // and every /v1/price/changes horizon, and the thin-market gate must be asked about the window
 // at the served `ts`, not the trailing 24h ending NOW, when serving a past bucket.
 //
-// storePriceAtReader.s is a concrete *timescale.Store with an unexported db field (see
-// price_at_guard_wiring_test.go), so this package cannot script the price read. It does not
-// need to: the withholding decision is made BEFORE the store is touched, so with a nil store a
-// withheld read returns v1.ErrPriceWithheld, and an allowed read goes on to the store (and
-// panics on it, which the helper reports as "reached the store").
+// storePriceAtReader.s is a concrete *timescale.Store, so this package cannot script the read.
+// It need not: the withholding decision is made BEFORE the store is touched, so with a nil store
+// a withheld read returns v1.ErrPriceWithheld and an allowed read panics on the store, which
+// the helper reports as "reached the store".
 
 import (
 	"context"

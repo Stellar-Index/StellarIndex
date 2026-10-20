@@ -81,9 +81,8 @@ func tvlReconcileExpected() (map[string]*big.Rat, *big.Rat) {
 //
 //  1. each published per-protocol tvl_usd equals its reserves;
 //  2. the published total equals the reserves of every included pool;
-//  3. the published total is byte-identical to the sum of the published parts, the property a
-//     consumer checks, which breaks if the total is computed from unrounded rationals instead of
-//     from what is served.
+//  3. the published total is byte-identical to the sum of the published parts, which breaks if
+//     the total is computed from unrounded rationals instead of from what is served.
 func TestDEXTVLTotal_ReconcilesAgainstPoolReserves(t *testing.T) {
 	c := NewDEXTVLCache(tvlTestSources())
 	if err := c.Refresh(context.Background()); err != nil {

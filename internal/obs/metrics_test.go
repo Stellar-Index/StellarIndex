@@ -749,8 +749,7 @@ func TestOracleStalenessBudget_UndeclaredSourceCannotAlert(t *testing.T) {
 // stellarindex_oracle_stale is a bare vector-to-vector comparison: Prometheus evaluates it only
 // where both sides carry identical labels, so an asset with an age and no budget has no alert
 // while the rule looks healthy. This asserts the invariant across every child either vec holds,
-// which catches a future writer that sets OracleLastUpdateUnix directly instead of going
-// through RecordOracleUpdate.
+// catching a writer that sets OracleLastUpdateUnix directly instead of via RecordOracleUpdate.
 func TestRecordOracleUpdate_EveryAgeHasABudget(t *testing.T) {
 	obs.DeclareOracleResolution("test-pairing", 300)
 	obs.SetOracleStalenessOverrides([]obs.OracleStalenessOverride{

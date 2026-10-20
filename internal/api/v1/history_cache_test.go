@@ -112,11 +112,10 @@ const coldCallerDeadline = 30 * time.Millisecond
 // keeps running on its OWN budget, so the next poll is served from the entry that fill wrote, and
 // the timed-out caller never spawns a second upstream call.
 //
-// Both halves are claims about the ORDER of two events, so the fill is HELD inside the store until
-// the test releases it. The order is then constructed, not raced: the fill has provably not
-// completed and the only edge the caller can wake on is its own expired deadline. Sleeping against
-// a short ctx lets a starved caller see both select arms ready, and wall-time ceilings only
-// measure runner scheduling.
+// Both halves are claims about the ORDER of two events, so the fill is HELD inside the store
+// until the test releases it: the fill has provably not completed and the only edge the caller
+// can wake on is its own expired deadline. Sleeping against a short ctx lets a starved caller
+// see both select arms ready, and wall-time ceilings only measure runner scheduling.
 func TestCachedHistoryReader_DetachedColdFillWarms(t *testing.T) {
 	hold := newUpstreamHold(1) // the cold fill is parked from its first call
 	t.Cleanup(hold.release)
@@ -314,15 +313,16 @@ func TestCachedHistoryReader_FreshContextBypassesCache(t *testing.T) {
 
 // TestCachedHistoryReader_ColdFillPanic_SurfacesErrorAndStaysRetryable pins what happens AFTER
 // the panic is recovered. The detached cold fill's waiter wakes on close(done); a bare
-// recover-and-return leaves entry.err nil and entry.flight set, so the waiter gets an empty result
-// with a NIL error (a 200 with no trades) and every later request re-joins the closed flight.
+// recover-and-return leaves entry.err nil and entry.flight set, so the waiter gets an empty
+// result with a NIL error (a 200 with no trades) and every later request re-joins the closed
+// flight.
 //
-// So it asserts the corrected values:
+// It asserts:
 //
 //  1. the waiter gets errHistoryFillPanicked, not (nil, nil);
 //  2. the next call re-runs the upstream (entry dropped, not poisoned) and returns the row;
-//  3. stellarindex_worker_panics_total{worker="api-history-latest-per-source-fill"} moved, so the
-//     dead refresher pages an operator.
+//  3. stellarindex_worker_panics_total{worker="api-history-latest-per-source-fill"} moved, so
+//     the dead refresher pages an operator.
 func TestCachedHistoryReader_ColdFillPanic_SurfacesErrorAndStaysRetryable(t *testing.T) {
 	const workerName = "api-history-latest-per-source-fill"
 	before := testutil.ToFloat64(obs.WorkerPanicsTotal.WithLabelValues(workerName))

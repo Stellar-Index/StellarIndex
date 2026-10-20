@@ -103,15 +103,15 @@ func runOneFixture(t *testing.T, path string) {
 	// CEX-oracle updates must decode to AssetCrypto (Asset::Other(Symbol), ADR-0014); FX oracle
 	// stays on AssetFiat and DEX on AssetSoroban.
 	//
-	// Oracle capture-totality: a Symbol slot outside the allow-lists is not dropped, it lands
-	// as a raw:<symbol> row (canonical.AssetOracleRaw). The CEX variant accepts EITHER the
-	// mapped type or raw; a raw row must be exactly that (IsMapped()==false) and hold its
-	// vector slot. DEX publishes Addresses only, so raw is never expected.
+	// Oracle capture-totality: a Symbol slot outside the allow-lists is not dropped, it lands as a
+	// raw:<symbol> row (canonical.AssetOracleRaw). The CEX variant accepts EITHER the mapped type
+	// or raw; a raw row must be exactly that (IsMapped()==false) and hold its vector slot. DEX
+	// publishes Addresses only, so raw is never expected.
 	//
-	// Every real FX event also carries VES and XAU. Both are allow-listed (fiat:VES per
-	// ADR-0010; XAU lands as rwa:XAU per ADR-0028), so the FX variant tolerates NO raw row on
-	// these fixtures and its only non-fiat mapped slot is exactly rwa:XAU. Unmapped, they would
-	// page stellarindex_ingestion_oracle_unknown_symbols.
+	// Every real FX event also carries VES and XAU. Both are allow-listed (fiat:VES per ADR-0010;
+	// rwa:XAU per ADR-0028), so the FX variant tolerates NO raw row on these fixtures and its only
+	// non-fiat mapped slot is exactly rwa:XAU. Unmapped, they would page
+	// stellarindex_ingestion_oracle_unknown_symbols.
 	expectedAssetType := map[Variant]canonical.AssetType{
 		VariantDEX: canonical.AssetSoroban,
 		VariantCEX: canonical.AssetCrypto,

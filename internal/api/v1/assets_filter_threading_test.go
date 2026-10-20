@@ -18,16 +18,15 @@ import (
 )
 
 // Regression suite for /v1/assets row filters that must not be parsed, validated, and then
-// dropped on the way to the store, one case per serving path:
+// dropped on the way to the store:
 //
 //   - `q` must reach ListAssetsOptions on the default (no asset_class) path, or
 //     `?q=ZZZZNOSUCH` serves the identical first page every unfiltered request gets.
 //   - `type` / `code` / `issuer` must reach the unified path, or `?asset_class=all&code=AQUA`
 //     serves the unfiltered baseline.
 //
-// A dropped filter is silent: the parameter is accepted, the answer is plausible, and nothing
-// in the 200 reveals the filter was never applied. These tests pin the request→store mapping
-// directly, since each layer works on its own and the defect lives in the join.
+// A dropped filter is silent: the parameter is accepted and the answer is plausible. These tests
+// pin the request→store mapping directly, since the defect lives in the join.
 
 const (
 	aquaCode   = "AQUA"

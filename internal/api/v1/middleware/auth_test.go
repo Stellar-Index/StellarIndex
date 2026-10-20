@@ -461,8 +461,8 @@ func contains(s, sub string) bool {
 	return false
 }
 
-// TestAuth_InfraPathsBypassCredentials pins that operational
-// plumbing must answer WITHOUT credentials whatever auth_mode is set to.
+// TestAuth_InfraPathsBypassCredentials pins that operational plumbing must answer WITHOUT
+// credentials whatever auth_mode is set to.
 //
 // Auth() wraps the whole mux, so the apikey cutover would otherwise 401 health probes, the
 // Prometheus scrape and docs pages at go-live.

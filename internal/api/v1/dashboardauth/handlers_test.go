@@ -789,14 +789,10 @@ func TestTruncateUA_BreaksOutOfTemplateDelimiter(t *testing.T) {
 
 // TestMaskEmail moved to internal/pii with the implementation.
 
-// TestHandleCallback_MailedLinkDoesNotSignInAForeignBrowser is the login-CSRF regression, written
-// against public behaviour only: a magic link mailed to a third party must not sign that party
-// into the requester's account.
-//
-// Attack: the attacker requests a link for their own address and mails it to a victim, whose
-// browser never went through /v1/auth/login. Without the binding the callback mints the attacker's
-// session there (SameSite=Lax permits top-level cross-site GET), so the victim's later actions
-// land in the attacker's dashboard.
+// TestHandleCallback_MailedLinkDoesNotSignInAForeignBrowser is the login-CSRF regression: a magic
+// link requested by an attacker and mailed to a victim, whose browser never went through
+// /v1/auth/login, must not sign the victim into the attacker's account (SameSite=Lax permits the
+// top-level cross-site GET).
 func TestHandleCallback_MailedLinkDoesNotSignInAForeignBrowser(t *testing.T) {
 	r := newTestRig(t)
 

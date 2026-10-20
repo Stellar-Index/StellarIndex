@@ -30,8 +30,7 @@ import (
 //
 // This is a Go test because the two facts that must agree live in one ansible file and one Go
 // file, and neither `ansible --syntax-check` nor `go vet` sees across that seam. The Go half is
-// asserted too, so the pairing cannot rot by deleting the Settings and leaving readonly=2
-// unexplained, or re-tightening readonly=1 because the Settings "looked unused".
+// asserted too, so neither side can be deleted or re-tightened unexplained.
 
 func repoRoot(t *testing.T) string {
 	t.Helper()

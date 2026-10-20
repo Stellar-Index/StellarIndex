@@ -709,13 +709,12 @@ func TestAdminKeysRevoke_Guards(t *testing.T) {
 // scopes straight into the store.
 //
 // The escalation is real: this handler mints `tier: operator` keys WITH an explicit scope list,
-// so a narrowed operator credential exists, and an empty scope list means every capability
-// (checkScopes short-circuits on len(Scopes)==0). A staff key minted as operator/["admin"],
-// able to drive /v1/admin/* but not to read customer data, could POST scopes:[] and mint itself
-// full access.
+// and an empty scope list means every capability (checkScopes short-circuits on len(Scopes)==0).
+// A staff key minted as operator/["admin"], able to drive /v1/admin/* but not read customer
+// data, could POST scopes:[] and mint itself full access.
 //
-// Both directions are asserted on the STORE's received request, not on the status code: a 201
-// that persists the wrong scope set is the bug.
+// Both directions are asserted on the STORE's received request, not the status code: a 201 that
+// persists the wrong scope set is the bug.
 
 // narrowedOperatorSubject is an operator credential confined to the
 // /v1/admin/* family — the shape the admin mint path itself can issue.

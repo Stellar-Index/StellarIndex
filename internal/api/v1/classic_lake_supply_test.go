@@ -397,8 +397,8 @@ func TestHigherClassicSupply(t *testing.T) {
 // detached refresh for classicLakeSupplyBatch of the assets it asked about and serves the
 // trustline sum for the rest. With no consumer traffic the cache never converges, entries expire
 // unread at classicLakeSupplyTTL, and /v1/assets and /v1/rwa/assets fall back to the
-// trustline-only sum, which is blind to claimable-balance, LP-reserve and SAC-held supply and so
-// understates supply badly. Every test here asks whether the cache is filled without any request.
+// trustline-only sum, which is blind to claimable-balance, LP-reserve and SAC-held supply and
+// understates supply badly. Every test here asks whether the cache fills without any request.
 //
 // The CETES shape from classic_lake_supply_test.go supplies the numbers: a trustline sum of
 // 100.0000000 against a true supply of 136.6000000.

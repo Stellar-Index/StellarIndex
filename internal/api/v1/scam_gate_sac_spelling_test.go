@@ -23,7 +23,7 @@ import (
 //
 // These cases drive the REAL pricingguard.ScamGate, since the resolution lives inside it and a
 // stub keyed on the asset id would pass either way. The alias registry is process-global, so
-// none of these run parallel (as TestTVLValuer_GateSeesTheCanonicalIdentity does).
+// none of these run parallel.
 
 // sacScamDirectory is the curated-directory seam pricingguard.ScamGate reads. It flags exactly
 // the listed G-addresses and records which addresses it was asked about, so a test can assert

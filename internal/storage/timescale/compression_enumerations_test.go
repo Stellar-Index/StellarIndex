@@ -9,27 +9,20 @@ import (
 	"testing"
 )
 
-// The compression-policy want-list is written in TWO operator files that must agree with each
-// other and with the schema:
+// The compression-policy want-list lives in two operator files that must agree with each other
+// and with the schema:
 //
-//   - scripts/ops/add-missing-compression-policies.sql — the DO block that ATTACHES a policy
-//     to each compression-eligible hypertable. It runs under `\set ON_ERROR_STOP on`, so a
-//     table that no longer exists aborts the block and every table listed AFTER it silently
-//     never gets its policy.
-//   - scripts/ops/config-assertions.sh — `compression_policies_applied`, which COUNTS
-//     want-list tables with no policy job and pages (via
-//     stellarindex_config_assertion_failed) when non-zero. A dropped table has no job, so it
-//     fails forever.
+//   - scripts/ops/add-missing-compression-policies.sql attaches a policy per hypertable under
+//     `\set ON_ERROR_STOP on`, so a table that no longer exists aborts the block and every
+//     table listed after it silently gets no policy.
+//   - scripts/ops/config-assertions.sh (`compression_policies_applied`) pages when a want-list
+//     table has no policy job. A dropped table has no job, so it fails forever.
 //
-// Neither failure is visible from Go, so this test turns a drop into a red build. It asserts:
+// Neither is visible from Go, so this test turns a drop into a red build: the two lists are
+// identical, every table is CREATEd by a migration, and none is DROPped by a later one.
 //
-//  1. The two lists are IDENTICAL (the same claim written twice).
-//  2. Every table in them is CREATEd by a migration.
-//  3. None of them is DROPped by a LATER migration.
-//
-// Deliberately NOT asserted: that each table is compression-eligible
-// (`ALTER TABLE … SET (timescaledb.compress …)`). Several set it inside a `DO` block or via a
-// helper, and a half-right parse that passes on a table it cannot see is worse than no check.
+// Compression eligibility is deliberately not asserted: several tables set it inside a DO block
+// or helper, and a half-right parse that passes on a table it cannot see is worse than no check.
 
 var (
 	// A quoted table name inside a SQL ARRAY[...] literal.

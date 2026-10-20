@@ -37,8 +37,8 @@ const aquaClassicID = "AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67
 //
 // It enforces the same window contract as the real store (`to` strictly after `from`): a fake
 // that accepted a degenerate range would let a "probe from now to now" handler bug pass here
-// while timescale.Store errored in production and the signal silently vanished. The breach is
-// recorded as well as returned so a test can assert on it directly.
+// while timescale.Store errored in production. The breach is recorded as well as returned so a
+// test can assert on it directly.
 //
 // Two fixture shapes. The flat `floor`/`found`/`err` triple answers every pair alike, for the
 // annotation arithmetic. `byPair`, when set, answers per pair and models the real store's
@@ -466,8 +466,8 @@ var drainedHistoryCursor = base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprin
 // constituents each surface enumerates (/v1/ohlc combines them, /v1/chart walks a proxy list
 // then derives through XLM, /v1/price/at retries the declared pegs), so the floor behind an
 // empty answer must be measured over that same set. A floor on the literal pair alone is wrong
-// both ways: a constituent with earlier buckets makes a quiet window look uncovered, and a
-// literal bucket no constituent read returns makes an uncovered window look quiet.
+// both ways: an earlier constituent bucket makes a quiet window look uncovered, and a literal
+// bucket no constituent returns makes an uncovered window look quiet.
 
 var (
 	pegFloor2021    = time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -559,7 +559,7 @@ func TestPriceAt_FiatQuoteFloorIsThePegSet(t *testing.T) {
 // The raw-trade page walks both legs' alias families and reads each form in both stored
 // directions, folding flipped rows into the requested orientation. So a market recorded only
 // as USDC/AQUA is served under `base=AQUA&quote=USDC`, and the floor over both orientations is
-// a claim about rows the page returns, the same population the CAGG-backed surfaces measure.
+// a claim about rows the page returns.
 //
 // The invariant is that probe and read correspond, not the width: widening the read without
 // the probe under-reports servable history, and the reverse over-promises it.
@@ -573,12 +573,11 @@ func TestPriceAt_FiatQuoteFloorIsThePegSet(t *testing.T) {
 // trade as contract addresses, so a pool sits under `<AQUA SAC>/<USDC SAC>` while the SDEX
 // book sits under `AQUA/USDC-GA5Z…`.
 //
-// Two consequences, both pinned below. The book is never displaced: a thin pool cannot set a
-// served bar's high, low, count or volume, because its spelling is never requested. And an
-// asset whose only USD depth is such a pool serves an empty series with no floor, because the
-// probe is scoped to the spellings the combine requests, not the quote's alias family. A
-// quote-alias fold would name the pool's first bucket as the floor and call the window quiet,
-// hiding the gap.
+// Pinned: the book is never displaced (a thin pool cannot set a served bar's high, low, count
+// or volume), and an asset whose only USD depth is such a pool serves an empty series with no
+// floor, because the probe is scoped to the spellings the combine requests, not the quote's
+// alias family. A quote-alias fold would name the pool's first bucket as the floor and call
+// the window quiet, hiding the gap.
 
 // installUSDCSACRegistry publishes a registry declaring only the USDC SAC wrapper, so the base keeps a single spelling and every
 // second form is on the quote leg. Not parallel: the registry is process-global.

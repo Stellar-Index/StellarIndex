@@ -159,14 +159,12 @@ func gatherGapDetectorRunsTotal(t *testing.T) map[[3]string]float64 {
 }
 
 // TestGapDetectorPreregistersRunsTotalSeries pins the stellarindex_ingest_gap_detector_silent
-// false-fire: a detector that has run zero scans (the seeded schedule deferred them all) must
-// still expose {outcome="ok"} and {outcome="error"} at exactly 0 for every configured target,
-// or absent_over_time(runs_total) reads "no scan due yet" as "detector dead".
+// false-fire: a detector that has run zero scans must still expose {outcome="ok"} and
+// {outcome="error"} at 0 for every target, or absent_over_time(runs_total) reads "no scan due
+// yet" as "detector dead".
 //
-// preregFixtureSeq numbers the fixture targets so each invocation gets fresh label sets. The
-// test requires the series to be ABSENT before preregisterGapDetectorSeries runs, so its
-// presence afterwards is attributable to that call and not to the process-global vec; fixed
-// names would trip that guard on `go test -count=2`. Numbering keeps the guard strict.
+// preregFixtureSeq gives each invocation fresh label sets: the test requires the series to be
+// absent before preregisterGapDetectorSeries runs, and fixed names would trip that on -count=2.
 var preregFixtureSeq atomic.Uint64
 
 func TestGapDetectorPreregistersRunsTotalSeries(t *testing.T) {

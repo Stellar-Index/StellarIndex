@@ -11,13 +11,11 @@ import (
 	explorerpkg "github.com/Stellar-Index/StellarIndex/internal/api/v1/explorer"
 )
 
-// TestHandlerResponseFieldsAreDocumented closes the gap that let
-// `display_decimals` ship invisible.
-//
-// Neither existing gate sees a server-only field: lint-docs.sh compares handlers to the spec
-// at ROUTE granularity, and pkg/client's TestSDKSchemasMatchSpec reconciles two DERIVED
-// artifacts (SDK and spec), which agree on both being wrong. This compares the HANDLER
-// struct, the source of truth, to the spec.
+// TestHandlerResponseFieldsAreDocumented catches a server-only field (the `display_decimals`
+// case) that no other gate sees: lint-docs.sh compares handlers to the spec at ROUTE
+// granularity, and pkg/client's TestSDKSchemasMatchSpec reconciles two DERIVED artifacts (SDK
+// and spec), which agree on both being wrong. This compares the HANDLER struct, the source of
+// truth, to the spec.
 //
 // handlerSpecFieldPairs is every (spec schema, handler struct) pair this guard reconciles.
 // Add a pair here whenever a new top-level response struct is introduced.

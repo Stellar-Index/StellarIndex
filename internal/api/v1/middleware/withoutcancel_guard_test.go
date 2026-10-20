@@ -22,8 +22,7 @@ import (
 // RateLimit's/MonthlyQuota's dwell-clock take from a client abort while re-applying the request's
 // deadline. It is the only entry that may remain.
 //
-// This allowlist may only SHRINK: a new context.WithoutCancel call here fails the test, so the
-// next "detach it and bound it separately" shortcut is caught.
+// The allowlist may only SHRINK: a new context.WithoutCancel call fails the test.
 var withoutCancelAllowlist = map[string]bool{
 	"ratelimit.go:\treturn context.WithDeadline(context.WithoutCancel(r.Context()), deadline)": true,
 }

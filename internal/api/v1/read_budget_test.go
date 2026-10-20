@@ -12,20 +12,17 @@ import (
 
 // ─── read budgets ───────────────────────────────────────────────────
 //
-// WHY THIS FILE EXISTS. A handler can go from ONE reader call to TWENTY-FOUR under an
-// unchanged 8s deadline with every other gate green: fixtures answer in microseconds, so a
-// fan-out costs zero test-milliseconds and no latency assertion can see it, yet it turns a
-// ~1s request into 8s+ cold in production.
+// A handler can go from ONE reader call to TWENTY-FOUR under an unchanged 8s deadline with every
+// other gate green: fixtures answer in microseconds, so no latency assertion sees a fan-out.
+// A read-count assertion is the missing axis.
 //
-// A read-count assertion is the missing axis. The handlers below walk a LIST of source pairs
-// and stop early only when the merge already covers the requested window
-// ([Server.chartStablecoinFallback]), so a request costs the LENGTH of that list whenever the
-// store answers nothing. That is the common case: most large assets are carried entirely by a
-// proxy read, which runs on an empty merge. The walk's own guard is chartWalkBudget, two
-// seconds of WALL CLOCK, which a fixture can never exhaust.
+// The handlers below walk a LIST of source pairs and stop early only when the merge covers the
+// requested window ([Server.chartStablecoinFallback]), so a request costs the LENGTH of that list
+// whenever the store answers nothing, the common case for assets carried by a proxy read. The
+// walk's own guard, chartWalkBudget (2s wall clock), a fixture can never exhaust.
 //
-// The numbers are MEASURED against the code, not chosen, and each states what it counts.
-// Raising one is allowed; raising one silently is what this file refuses.
+// The numbers are MEASURED against the code, not chosen. Raising one is allowed; raising one
+// silently is what this file refuses.
 
 // countingHistoryReader is a decorator, not a mock: it counts calls and delegates to a real fixture reader.
 // Every [v1.HistoryReader] method is overridden so a method that grows a new caller is counted from day one.
@@ -130,23 +127,20 @@ func (c *countingCoverageFloorReader) EarliestBucketLiteralQuote(
 const r1SACWrapperUSDC = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
 
 // productionShapedServer builds the server the way cmd/stellarindex-api does for the surfaces
-// measured here. Other tests in this package use an empty peg list and the XLM-only alias
-// registry, and a budget measured on those counts a fan-out no deployment runs.
+// measured here. Other tests use an empty peg list and the XLM-only alias registry, and a budget
+// measured on those counts a fan-out no deployment runs.
 //
-// Two pieces of operator configuration decide the walk's length, both taken from r1:
+// Two pieces of operator configuration (from r1) decide the walk's length:
 //
-//   - trades.usd_pegged_classic_assets — exactly one entry, Circle's classic USDC, which is
-//     also this package's testUSDCIssuer;
-//   - supply.sac_wrappers — maps that peg's SAC contract back to the classic asset, so
-//     canonical.AssetAliases returns TWO forms of the peg and the walk's held-back pass has
-//     something to read.
+//   - trades.usd_pegged_classic_assets: one entry, Circle's classic USDC (testUSDCIssuer);
+//   - supply.sac_wrappers: maps that peg's SAC back to the classic asset, so
+//     canonical.AssetAliases returns TWO forms and the held-back pass has something to read.
 //
 // Without the registry the same request issues 21 reads instead of 24;
-// TestReadBudget_AliasRegistryWidensTheWalk pins that difference.
+// TestReadBudget_AliasRegistryWidensTheWalk pins that.
 //
-// The reader is wrapped in v1.NewCachedHistoryReader at production's 2m TTL. That wrapper
-// caches LatestTradePerSource ONLY and passes every other method through, so it must not
-// move any count here; the no-cache/cache equality is asserted rather than assumed.
+// The reader is wrapped in v1.NewCachedHistoryReader at production's 2m TTL. It caches
+// LatestTradePerSource ONLY, so it must not move any count; no-cache/cache equality is asserted.
 func productionShapedServer(
 	t *testing.T, reader v1.HistoryReader, floor v1.CoverageFloorReader, cached bool,
 ) *testServer {

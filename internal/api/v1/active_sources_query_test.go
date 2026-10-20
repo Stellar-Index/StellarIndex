@@ -5,21 +5,20 @@ import (
 	"testing"
 )
 
-// The public status page renders "Active sources: N / M" from these two queries; the
-// numerator must never exceed its denominator. Two independent faults are pinned.
+// The public status page renders "Active sources: N / M" from these two queries; the numerator
+// must never exceed its denominator. Two independent faults are pinned.
 //
 // POPULATION. The numerator must intersect with source_enabled. Always-on supply observers
 // (trustlines, sep41_supply, sep41_transfers, sac_balances, liquidity_pools,
-// claimable_balances) emit events but carry no `enabled` flag because they are wired into
-// the indexer rather than configured, so counting ANY emitting source inflates the numerator.
+// claimable_balances) emit events but carry no `enabled` flag because they are wired into the
+// indexer, so counting ANY emitting source inflates the numerator.
 //
 // WINDOW. A short window is far below several enabled sources' publication cadence (rozo,
 // phoenix, ecb, band emit a handful of events per day; band's contract publishes no events and
 // we observe the relay call instead) and would report them inactive, a false claim about our
 // own ingest.
 //
-// The join makes the ratio coherent BY CONSTRUCTION rather than by the two queries happening
-// to agree.
+// The join makes the ratio coherent by construction, not by the two queries happening to agree.
 
 // TestActiveSourcesIsSubsetOfTotal is the load-bearing guard: the
 // numerator must be restricted to the same population the denominator

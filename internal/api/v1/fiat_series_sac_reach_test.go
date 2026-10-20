@@ -22,10 +22,10 @@ import (
 // the peg expansion, which emits classic spellings only, never names it. Such assets would
 // serve `intervals: []` and a `404`.
 //
-// The widening is gated per BUCKET, not per response, and these tests pin both halves: a
-// bucket an established spelling answered never admits a held-back one (so a thin pool cannot
-// set a bar's high, low, count or volume beside book data), and a bucket no established
-// spelling answered is filled from the held-back set rather than reported as quiet.
+// The widening is gated per BUCKET, not per response: a bucket an established spelling answered
+// never admits a held-back one (a thin pool cannot set a bar's high, low, count or volume beside
+// book data), and a bucket none answered is filled from the held-back set rather than reported
+// as quiet.
 
 const (
 	// A measured thin-pool shape for GQX-GD7TC72O…: the SDEX book carried 660 prints with a
@@ -304,9 +304,9 @@ func TestFiatSeries_EstablishedMixedScaleBucketIsWindowInvariant(t *testing.T) {
 
 // ── point == series, over constituents that genuinely differ ───────────
 
-// The three constituents below are stamped at DIFFERENT sources, so the series' per-bar scale
-// lift and the point path's NormalizeAmountScale both actually run. A fixture stamping every
-// trade `sdex` holds the invariant vacuously: one scale means every lift factor is 10^0.
+// The three constituents are stamped at DIFFERENT sources so the series' per-bar scale lift and
+// the point path's NormalizeAmountScale both run. A fixture stamping every trade `sdex` holds
+// the invariant vacuously: one scale means every lift factor is 10^0.
 //
 //	native/<USDC classic>   sdex     (7dp)   7000 base /  1260 quote → 0.18
 //	crypto:XLM/fiat:USD     binance  (8dp)  20000 base /  3800 quote → 0.19

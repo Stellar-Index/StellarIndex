@@ -5,9 +5,9 @@ package chops
 
 // scripts/ops/ch-rebuild-projected.sh is destructive: per window it DELETEs served-tier rows and
 // then asks `ch-rebuild -write` to re-derive them. These tests EXECUTE the shipped script, not a
-// copy, against stubs for `psql` and the ops binary (as scripts/ci/run-heavy-job-test.sh does for
-// the heavy-job wrapper), and assert what it did: which rows it could delete, what it asked the
-// binary to re-derive, in what order, and what it recorded.
+// copy, against stubs for `psql` and the ops binary (as scripts/ci/run-heavy-job-test.sh does),
+// and assert what it did: which rows it could delete, what it asked the binary to re-derive, in
+// what order, and what it recorded.
 //
 // The stub binary speaks the real binary's shapes, including the ugly ones: progress noise on
 // stderr, a refusal as a non-zero exit with nothing on stdout, and the final report on stdout.
@@ -405,9 +405,8 @@ func assertFiledWindow(t *testing.T, run scriptRun, lo, hi, sources string) {
 //   - the ADR-0033 projection dirty window, which the completeness verdict reads. Until the
 //     emptied range is filed there, /v1/coverage keeps its prior clean claim over a hole.
 //
-// These tests EXECUTE the shipped script (the harness in ch_rebuild_projected_script_test.go)
-// and pin both, plus the case that must NOT change: a window that re-derived cleanly files
-// nothing, since filing one per routine window would point the next nightly at a huge
+// These tests pin both, plus the case that must NOT change: a window that re-derived cleanly
+// files nothing, since filing one per routine window would point the next nightly at a huge
 // ledger range across all sources and time every verdict out.
 
 // verdictNoteRE-ish: the note is matched as plain text on purpose — it is

@@ -7,8 +7,8 @@ package dashboardauth
 // hand-built Expires the production path never populates would pass while every expiry guard
 // was dead code.
 //
-// [softAuthenticator] is a P-256 key plus the CBOR/flags the library verifies. The library's real
-// signature verification runs, so reaching "200 + session cookie" proves the whole chain.
+// [softAuthenticator] is a P-256 key plus the CBOR/flags the library verifies, so the library's
+// real signature verification runs and "200 + session cookie" proves the whole chain.
 
 import (
 	"context"

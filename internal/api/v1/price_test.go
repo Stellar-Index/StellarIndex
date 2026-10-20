@@ -1448,11 +1448,10 @@ func TestPrice_DeclaredPegXLMCrossDegenerateClassicPriceNeverReachesTheSACBook(t
 	assertSACPoolUnread(t, reader.pairsAsked(), "although the classic book returned a row — the walk advances on FOUND NOTHING, never on found-something-unusable")
 }
 
-// TestPrice_FlaggedDeclaredPegServesTheDeclarationUnderBothSpellings: the
-// peg route widening the walk would carry a flagged issuer's price to a spelling the gate
-// cannot see; the gate resolving its base closes that. The classic form finds nothing, the
-// walk reaches the SAC pool (2x off the declaration), and both spellings must serve the SAME
-// declaration.
+// TestPrice_FlaggedDeclaredPegServesTheDeclarationUnderBothSpellings: the peg route widening the
+// walk would carry a flagged issuer's price to a spelling the gate cannot see; the gate
+// resolving its base closes that. The classic form finds nothing, the walk reaches the SAC pool
+// (2x off the declaration), and both spellings must serve the SAME declaration.
 //
 // RED without the gate's `base = canonical.CanonicalAsset(base)`, or with the peg match
 // narrowed to `peg.Equal(asset)` (the contract id 404s).
@@ -1684,16 +1683,16 @@ func TestPrice_DeclaredPegDirectUSDObservationWins(t *testing.T) {
 	}
 }
 
-// TestPrice_DeclaredPegXLMLegPrefersAFreshForm pins which of XLM's
-// forms prices the peg leg when more than one holds a row: a fresh answer under any form
-// beats a stale one under an earlier form, and a stale answer still serves when it is the
-// only one (the preference readPriceWithAliases applies on the direct read).
+// TestPrice_DeclaredPegXLMLegPrefersAFreshForm pins which of XLM's forms prices the peg leg when
+// more than one holds a row: a fresh answer under any form beats a stale one under an earlier
+// form, and a stale answer still serves when it is the only one (the preference
+// readPriceWithAliases applies on the direct read).
 //
-// `native` is the first form in alias order. Taking the first form that answers would serve
-// a three-day-old `native`-quoted book at 9.5 (cross 0.95) while a fresh SAC-quoted book
-// prints 10.0 (cross 1.00). flags.stale=true is set on every fallback answer regardless
-// (TestPrice_FallbackChainSetsStaleFlag), so the leg chosen shows in the price and
-// observed_at, not in the flag.
+// `native` is the first form in alias order. Taking the first form that answers would serve a
+// three-day-old `native`-quoted book at 9.5 (cross 0.95) while a fresh SAC-quoted book prints
+// 10.0 (cross 1.00). flags.stale=true is set on every fallback answer regardless
+// (TestPrice_FallbackChainSetsStaleFlag), so the leg chosen shows in the price and observed_at,
+// not in the flag.
 func TestPrice_DeclaredPegXLMLegPrefersAFreshForm(t *testing.T) {
 	usdc, err := canonical.ParseAsset(usdcClassicID)
 	if err != nil {

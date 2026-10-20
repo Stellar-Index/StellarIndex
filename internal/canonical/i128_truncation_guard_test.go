@@ -3,11 +3,10 @@
 
 package canonical
 
-// This file is the REAL i128-truncation guard ADR-0003 relies on (no custom golangci analyzer
-// exists). It walks every non-test Go package with go/types and FAILS on lossy numeric
-// conversions of the hi/lo words of xdr.Int128Parts / UInt128Parts / Int256Parts /
-// UInt256Parts, the bug class where int64(parts.Lo) silently discards the high 64 bits of a
-// Soroban amount.
+// This is the REAL i128-truncation guard ADR-0003 relies on. It walks every non-test Go package
+// with go/types and FAILS on lossy numeric conversions of the hi/lo words of xdr.Int128Parts /
+// UInt128Parts / Int256Parts / UInt256Parts, where int64(parts.Lo) silently discards the high 64
+// bits of a Soroban amount.
 //
 // Violations:
 //
@@ -15,21 +14,16 @@ package canonical
 //     the xdr parts structs) to any numeric type OTHER than the field's own underlying type.
 //     `uint64(p.Lo)` and `int64(p.Hi)` (on Int128Parts) are the correct FromInt128Parts decode
 //     shape; `int64(p.Lo)`, `int(p.Lo)`, `float64(p.Hi)` reinterpret, narrow or lose precision.
-//   - a `MustI128()` / `MustU128()` / `MustI256()` / `MustU256()` result used as the operand
-//     of a numeric conversion.
-//   - either of the above reached through a local (`lo := p.Lo; int64(lo)`), however many plain
-//     assignments sit between (see collectWordTaint).
+//   - a `MustI128()` / `MustU128()` / `MustI256()` / `MustU256()` result used as the operand of
+//     a numeric conversion, directly or through a local (see collectWordTaint).
 //   - an `Int64()` / `Uint64()` / `Float64()` call on a math/big Int, Rat or Float: a 128-bit
 //     amount widened into big.* is narrowed again there, and only the go/types receiver type
-//     sees it (`new(big.Float).SetInt(total).Float64()` has no parts word or Must* call left).
-//     Each deliberate site carries its reason.
+//     sees it. Each deliberate site carries its reason.
 //   - a (*big.Int).Quo / Div whose dividend is a power of ten: the truncating reciprocal of a
 //     scaled price. Invert through scale.InvertScaled, which rounds half-up.
 //
 // Escape hatch: a `//i128:ok <reason>` comment on the same line (or the line above) exempts a
-// site. Reasons are mandatory; stale markers (ones that exempt nothing) fail the test so the
-// allowlist can only shrink. See scripts/ci/lint-i128.sh for the fast grep sibling and
-// scripts/ci/lint-migrations.sh for the SQL-side guard.
+// site. Reasons are mandatory; stale markers fail the test so the allowlist can only shrink.
 
 import (
 	"fmt"

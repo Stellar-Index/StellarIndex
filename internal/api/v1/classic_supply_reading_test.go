@@ -12,15 +12,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// What this file guards: the listing's "precise" supply arm reads the supply_1d roll-up, whose
-// newest bucket is always a COMPLETED PREVIOUS day, so an unbounded read serves a figure hours
-// old while the envelope reports it fresh, and it must not unconditionally outrank the live
-// lake figure.
+// The listing's "precise" supply arm reads the supply_1d roll-up, whose newest bucket is always
+// a COMPLETED PREVIOUS day, so an unbounded read serves a figure hours old while the envelope
+// reports it fresh, and it must not unconditionally outrank the live lake figure.
 //
-// The obvious repair, promoting the lake arm above the observer, is wrong: the lake over-counts
-// some assets because its flow history carries replayed mints whose burns are missing, and its
-// completeness check fires only on the opposite asymmetry (a NEGATIVE net). So the arm order
-// stands and the observation is read live and bounded.
+// Promoting the lake arm above the observer is wrong: the lake over-counts some assets because
+// its flow history carries replayed mints whose burns are missing, and its completeness check
+// fires only on the opposite asymmetry (a NEGATIVE net). So the arm order stands and the
+// observation is read live and bounded.
 //
 // observedSupply builds the observation map the serving path receives, all entries stamped
 // fresh. The store enforces vintage, so "stale" here is an absent entry.

@@ -216,10 +216,9 @@ func textColumnSafe(s string) bool {
 	return utf8.ValidString(s) && !strings.Contains(s, "\x00")
 }
 
-// TestDecoder_Decode_MemoIsBytesNotText: the memo is an ScString whose BYTES the payer
-// chooses. Writing them straight to the rozo_events.memo `text` column is wrong, because a
-// NUL or invalid UTF-8 sequence is refused on every attempt, leaving a permanently
-// un-ingestible event.
+// TestDecoder_Decode_MemoIsBytesNotText: the memo is an ScString whose BYTES the payer chooses.
+// Writing them straight to the rozo_events.memo `text` column is wrong, because a NUL or
+// invalid UTF-8 sequence is refused on every attempt, leaving a permanently un-ingestible event.
 //
 // Pins, through the production Decoder.Decode entry point:
 //   - the emitted Memo is text-column-safe for every hostile shape;
