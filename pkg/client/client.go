@@ -226,21 +226,11 @@ func applyExtraHeaders(req *http.Request, extraHeaders []map[string]string) {
 // purely to keep doJSON's own cognitive complexity under the repo's
 // gocognit threshold — no behaviour change from when this was inline.
 func decodeJSONResponse(resp *http.Response, method, path string, out any) error {
-	// Cap response read so a misbehaving server can't wedge the
-	// caller. 16 MiB is far above any single envelope we serve.
-	//
-	// Read maxResponseBytes+1 and error on `>`, rather than reading
-	// exactly the cap: LimitReader returns (n, nil) AT the limit, so a
-	// truncated body would be indistinguishable from a complete
-	// one and get parsed as JSON — surfacing as a confusing decode error
-	// about the payload rather than the truth, which is that the
-	// response was too large The +1 makes overshoot
-	// detectable; same idiom as internal/stellarrpc.
-	//
-	// The message deliberately offers NO escape hatch. maxResponseBytes
-	// is a function-local const applied to every request regardless of
-	// transport, so no Options.HTTPClient can raise or remove it —
-	// telling the caller otherwise would ship false remediation advice.
+	// Cap the response read so a misbehaving server can't wedge the caller; 16 MiB is far above
+	// any single envelope. Read maxResponseBytes+1 and error on `>`: LimitReader returns (n, nil) at
+	// the limit, so a truncated body would otherwise be parsed as JSON and surface as a confusing
+	// decode error. The message offers no escape hatch because the cap applies to every request
+	// regardless of Options.HTTPClient.
 	const maxResponseBytes = 16 << 20
 	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
