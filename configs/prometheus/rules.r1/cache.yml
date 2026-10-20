@@ -76,7 +76,12 @@ groups:
       # Not MISCONF: stellarindex_redis_writes_blocked already pages it. Not
       # EXECABORT: a client-side MULTI error, not a server refusing writes.
       - alert: stellarindex_redis_write_rejected_oom
-        expr: rate(redis_errors_total{err=~"OOM|READONLY|NOREPLICAS"}[5m]) > 0
+        expr: |
+          rate(redis_errors_total{err=~"OOM|READONLY|NOREPLICAS"}[5m]) > 0
+          or (
+            redis_errors_total{err=~"OOM|READONLY|NOREPLICAS"}
+            unless max_over_time(redis_errors_total{err=~"OOM|READONLY|NOREPLICAS"}[1d] offset 5m)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 86700)
         for: 2m
         labels:
           severity: page

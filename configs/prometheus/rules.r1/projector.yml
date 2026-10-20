@@ -361,7 +361,12 @@ groups:
       # incomplete, and nothing but a code change closes that. One increment is
       # the event, so `for: 0m`.
       - alert: stellarindex_spectra_unlisted_infrastructure
-        expr: increase(stellarindex_spectra_unlisted_infrastructure_total[1h]) > 0
+        expr: |
+          increase(stellarindex_spectra_unlisted_infrastructure_total[1h]) > 0
+          or (
+            stellarindex_spectra_unlisted_infrastructure_total
+            unless max_over_time(stellarindex_spectra_unlisted_infrastructure_total[1d] offset 1h)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 90000)
         for: 0m
         labels:
           severity: page

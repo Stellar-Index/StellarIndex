@@ -22,6 +22,10 @@ groups:
       - alert: stellarindex_api_cors_wildcard_in_prod
         expr: |
           sum(increase(stellarindex_api_cors_decisions_total{outcome="allowed_wildcard"}[15m])) > 0
+          or sum (
+            stellarindex_api_cors_decisions_total{outcome="allowed_wildcard"}
+            unless max_over_time(stellarindex_api_cors_decisions_total{outcome="allowed_wildcard"}[1d] offset 15m)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 87300)
         for: 5m
         labels:
           severity: ticket

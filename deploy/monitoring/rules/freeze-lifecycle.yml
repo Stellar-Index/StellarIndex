@@ -146,6 +146,10 @@ groups:
       - alert: stellarindex_anomaly_freeze_escalated
         expr: |
           increase(stellarindex_anomaly_freeze_escalated_total[15m]) > 0
+          or (
+            stellarindex_anomaly_freeze_escalated_total
+            unless max_over_time(stellarindex_anomaly_freeze_escalated_total[1d] offset 15m)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 87300)
         for: 0m
         labels:
           severity: page
@@ -260,6 +264,10 @@ groups:
       - alert: stellarindex_anomaly_freeze_ladder_write_failures
         expr: |
           increase(stellarindex_anomaly_freeze_ladder_write_failures_total[15m]) > 0
+          or (
+            stellarindex_anomaly_freeze_ladder_write_failures_total
+            unless max_over_time(stellarindex_anomaly_freeze_ladder_write_failures_total[1d] offset 15m)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 87300)
         for: 0m
         labels:
           severity: ticket
@@ -292,6 +300,10 @@ groups:
       - alert: stellarindex_api_freeze_lookup_failing
         expr: |
           increase(stellarindex_api_freeze_lookup_failures_total[10m]) > 0
+          or (
+            stellarindex_api_freeze_lookup_failures_total
+            unless max_over_time(stellarindex_api_freeze_lookup_failures_total[1d] offset 10m)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 87000)
         for: 5m
         labels:
           severity: ticket

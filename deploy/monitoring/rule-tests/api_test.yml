@@ -138,6 +138,42 @@ tests:
         alertname: stellarindex_monthly_quota_fail_closed
         exp_alerts: []
 
+  # ── A counter born at its first failure still pages ─────────
+  # An unseeded series appears at N, so rate() has no prior sample and
+  # reads nothing; the birth arm fires on the series' first appearance.
+  - interval: 1m
+    name: a fail-closed counter born mid-outage still pages
+    input_series:
+      - series: 'stellarindex_monthly_quota_fail_closed_total{job="stellarindex_api",instance="r1:8080"}'
+        values: '_x10 3+0x30'
+      # The arm needs a TSDB older than its lookback, or a restored or
+      # rebuilt Prometheus would page on every stale count.
+      - series: 'prometheus_tsdb_lowest_timestamp_seconds{job="prometheus",instance="localhost:9090"}'
+        values: '-100000x40'
+
+    alert_rule_test:
+      - eval_time: 13m
+        alertname: stellarindex_monthly_quota_fail_closed
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_monthly_quota_fail_closed
+              summary: "Monthly quota is FAILING CLOSED — metered keys are being 429'd"
+              description: |
+                The month-to-date usage counter has been unreadable for longer
+                than the fail-open dwell time, so the monthly-quota gate has
+                flipped to failing CLOSED: every request from a key with a
+                monthly cap now gets a 429 (errors/monthly-quota-unavailable)
+                whether or not the key is anywhere near its cap. Paying
+                customers are denied service until the counter answers
+                without error for the same dwell time.
+      - eval_time: 30m
+        alertname: stellarindex_monthly_quota_fail_closed
+        exp_alerts: []
+
   # ── ONE lost audit row tickets, labelled by surface ──────
   # A single failed append is the whole trigger: the operator has to
   # reconstruct that row from application logs before the journal's

@@ -19,6 +19,10 @@ groups:
       - alert: stellarindex_cross_region_divergence
         expr: |
           sum by (pair, metric) (rate(stellarindex_cross_region_divergences_total[15m])) > 0
+          or sum by (pair, metric) (
+            stellarindex_cross_region_divergences_total
+            unless max_over_time(stellarindex_cross_region_divergences_total[1d] offset 15m)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 87300)
         for: 5m
         labels:
           severity: ticket
@@ -40,6 +44,10 @@ groups:
       - alert: stellarindex_cross_region_fetch_errors
         expr: |
           sum by (region, pair, metric) (rate(stellarindex_cross_region_fetch_errors_total[15m])) > 0
+          or sum by (region, pair, metric) (
+            stellarindex_cross_region_fetch_errors_total
+            unless max_over_time(stellarindex_cross_region_fetch_errors_total[1d] offset 15m)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 87300)
         for: 10m
         labels:
           severity: ticket
