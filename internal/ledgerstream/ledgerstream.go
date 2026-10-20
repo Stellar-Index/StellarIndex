@@ -38,24 +38,18 @@ type Config struct {
 	// upstream. Writes always target hot. The zero value disables tiering.
 	ColdDataStore datastore.DataStoreConfig
 
-	// ColdDataStoreFactory is optional: when non-nil, [Stream] calls it INSTEAD OF
-	// datastore.NewDataStore to open the cold tier; ColdDataStore is still required (its Type is
-	// the tiering opt-in and its passphrase/Schema drive LoadSchema). NewDataStore builds every S3
-	// client from the ambient AWS credential chain, which carries the hot tier's MinIO keys;
-	// presented to real AWS, every cold read fails and the tier silently degrades to hot-only.
-	// This package cannot resolve the cold credential env names, hence the hook (production wires
-	// pipeline.NewColdDataStore).
+	// ColdDataStoreFactory is optional: when non-nil, [Stream] calls it INSTEAD OF datastore.NewDataStore to open the
+	// cold tier; ColdDataStore is still required (its Type is the tiering opt-in and its passphrase/Schema drive
+	// LoadSchema). NewDataStore builds every S3 client from the ambient AWS credential chain, which carries the hot
+	// tier's MinIO keys; presented to real AWS, every cold read fails and the tier silently degrades to hot-only. This
+	// package cannot resolve the cold credential env names, hence the hook (production wires pipeline.NewColdDataStore).
 	ColdDataStoreFactory func(ctx context.Context) (datastore.DataStore, error)
 
-	// Buffered — optional. If nil, Stream derives sensible defaults
-	// from DataStore.Schema.LedgersPerFile via
-	// ingest.DefaultBufferedStorageBackendConfig. Override only when
-	// profiling has shown the defaults are wrong for your workload.
+	// Buffered — optional. If nil, Stream derives defaults from DataStore.Schema.LedgersPerFile via
+	// ingest.DefaultBufferedStorageBackendConfig. Override only when profiling shows them wrong.
 	Buffered *ledgerbackend.BufferedStorageBackendConfig
 
-	// Logger — optional. nil uses the SDK's package logger at info
-	// level. Pass a configured logger to route the SDK's output
-	// through our slog setup.
+	// Logger — optional. nil uses the SDK's package logger at info level; pass one to route SDK output through slog.
 	Logger *sdklog.Entry
 
 	// Registry — optional. When non-nil, the backend registers its Prometheus metrics under
@@ -198,22 +192,20 @@ func latestLedger(ctx context.Context, dsCfg datastore.DataStoreConfig) (uint32,
 	return datastore.FindLatestLedgerSequence(ctx, ds)
 }
 
-// retryLiveStart re-runs a live tail that failed WITHOUT EVER DELIVERING A LEDGER, until
-// Config.LiveRetryBudget is exhausted. It returns the last error, or nil if a re-attempt ran
-// clean.
+// retryLiveStart re-runs a live tail that failed WITHOUT EVER DELIVERING A LEDGER, until Config.LiveRetryBudget is
+// exhausted. It returns the last error, or nil if a re-attempt ran clean.
 //
-// [applyLiveRetryPolicy] spends the budget inside the SDK's fetch worker, which exists only after
-// the datastore is opened and its schema loaded, both done once with no retry; without this, a
-// lake outage at START bypasses the budget and the supervisor (which counts starts, not seconds)
-// parks the unit in `failed`.
+// [applyLiveRetryPolicy] spends the budget inside the SDK's fetch worker, which exists only after the datastore is
+// opened and its schema loaded (both once, no retry); a lake outage at START would bypass the budget and the
+// supervisor (which counts starts, not seconds) would park the unit in `failed`.
 //   - It cannot skip a ledger: it re-attempts only while delivered == 0.
-//   - It is bounded by a wall-clock deadline fixed before the first re-attempt; an unbounded
-//     reconnect would turn a visible outage into a silent freeze.
+//   - The wall-clock deadline is fixed before the first re-attempt; an unbounded reconnect would turn a visible
+//     outage into a silent freeze.
 //   - Visible via stellarindex_ledgerstream_live_start_retries_total.
 //
-// Errors are not classified: on an unbounded tail "could not start" always means "try again
-// shortly". Backoff is exponential from LiveRetryWait, capped at [maxLiveStartRetryWait], no
-// jitter. Callers must gate on the range being unbounded.
+// Errors are not classified: on an unbounded tail "could not start" always means "try again shortly". Backoff is
+// exponential from LiveRetryWait, capped at [maxLiveStartRetryWait], no jitter. Callers must gate on the range
+// being unbounded.
 func retryLiveStart(
 	ctx context.Context,
 	cfg Config,
