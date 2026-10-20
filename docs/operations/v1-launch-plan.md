@@ -51,7 +51,7 @@ Still open, in order.
 
 1. Migrations: run `stellarindex-migrate up` and confirm `schema_migrations.version` equals the highest file under `migrations/` and is not dirty, before tagging and swapping the binary (see "Cut: moved evidence").
 2. `sip_` SLA-probe smoke and outside-internet `make smoke` 13/13 (INV-2707).
-3. Refresh `post-launch-queries.md`, the Grafana launch-watch board and the F-0100 PromQL check (INV-2708).
+3. Refresh `post-launch-queries.md` and the F-0100 PromQL check (INV-2708, done 2026-10-20). The launch watch runs those queries in the Prometheus UI; there is no Grafana.
 4. Cutover on Ash's GO; first-24h watch staffed; every dashboard user re-logs in after migration 0143 (INV-2709, INV-0873).
 
 ---
@@ -90,7 +90,6 @@ One line per item; the INV item is the authority.
 | INV-2705 | `WithMaxDormantComponentLedgers` calibration |
 | INV-2706 | Distinct RedStone registry-stale signal |
 | INV-2707 | Launch sequence step 2: `sip_` SLA-probe smoke and outside-internet `make smoke` 13/13 |
-| INV-2708 | Launch sequence step 3: refresh `post-launch-queries.md`, Grafana launch-watch board, F-0100 PromQL check |
 | INV-2709 | Forced re-login of every dashboard user after cutover (migration 0143) |
 | INV-2710 | L5.8 and L4.15-L4.17 carried to W9 (gated on D2) |
 | INV-1046, INV-1048, INV-0978 | Patroni cluster playbooks and replica-promote decision for single-node r1 |
