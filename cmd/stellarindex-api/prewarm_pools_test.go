@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"slices"
-	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -12,10 +10,6 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
-
-// The /v1/pools prewarm limit set is separate from /v1/markets and must include 8, which the
-// explorer's /network page requests (limit=8&order_by=volume_24h_usd_desc). An unwarmed slot makes
-// the first visitor wait on the full trades scan (about 2 s against about 1 ms warm).
 
 // recordingPoolsReader records the AllPools arguments asked for; other MarketsReader methods are unused stubs, since
 // prewarmPools calls only AllPools and a fake that answered more would pretend to be a database.
@@ -83,52 +77,26 @@ func (r *recordingPoolsReader) seen() []poolsCall {
 	return append([]poolsCall(nil), r.calls...)
 }
 
-func (r *recordingPoolsReader) seenLimits() []int {
-	out := make([]int, 0, len(r.calls))
-	for _, c := range r.seen() {
-		out = append(out, c.limit)
-	}
-	sort.Ints(out)
-	return out
-}
-
-// TestPrewarmPoolsWarmsTheLimitTheExplorerSends is the regression guard that
-// the limit set the explorer sends actually reaches AllPools, not merely that
-// some prewarm happened.
-func TestPrewarmPoolsWarmsTheLimitTheExplorerSends(t *testing.T) {
-	// The limit NetworkView.tsx's TopMarkets passes to usePools. Written out
-	// here rather than read from poolsPrewarmLimits so the test pins the
-	// CALLER's number — reading the set under test would assert nothing.
-	const networkPageTopMarketsLimit = 8
-
+// TestPrewarmPoolsWarmsTheLimitsTheExplorerSends: every limit a caller sends must be a hit after one prewarm. The limits
+// are written out, not derived, so the test pins the callers' numbers: 8 is the /network top-markets panel, 100 the
+// OpenAPI default and the /dexes page.
+func TestPrewarmPoolsWarmsTheLimitsTheExplorerSends(t *testing.T) {
 	rec := &recordingPoolsReader{}
 	cached := v1.NewCachedMarketsReader(rec, 2*time.Minute)
 
 	prewarmPools(context.Background(), discardLogger(), cached)
-
-	got := rec.seenLimits()
-	want := []int{5, 8, 25, 100, 200}
-	if len(got) != len(want) {
-		t.Fatalf("prewarmed pool limits = %v, want %v", got, want)
+	warmed := len(rec.seen())
+	if warmed != 1 {
+		t.Fatalf("prewarmPools made %d AllPools scans, want 1 head-slot scan", warmed)
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("prewarmed pool limits = %v, want %v", got, want)
+	filter := timescale.PoolsFilter{Sources: v1.DexSourceNames()}
+	for _, limit := range []int{5, 8, 25, 100, 200} {
+		if _, _, err := cached.AllPools(context.Background(), filter, "", limit, timescale.MarketsOrderVolume24hDesc); err != nil {
+			t.Fatal(err)
 		}
-	}
-
-	var found bool
-	for _, l := range got {
-		if l == networkPageTopMarketsLimit {
-			found = true
+		if n := len(rec.seen()); n != warmed {
+			t.Fatalf("GET /v1/pools?limit=%d after prewarm reached the database (%d scans); its first visitor pays the cold scan", limit, n)
 		}
-	}
-	if !found {
-		t.Fatalf("prewarmed pool limits %v omit %d — the /network page's Top Stellar "+
-			"markets panel sends GET /v1/pools?limit=%d&order_by=volume_24h_usd_desc, so "+
-			"its first visitor after every boot blocks on the full trades-hypertable scan "+
-			"(measured 2.197s on r1 vs 0.0008-0.0026s on the warmed limits)",
-			got, networkPageTopMarketsLimit, networkPageTopMarketsLimit)
 	}
 }
 
@@ -172,41 +140,5 @@ func TestPrewarmPoolsUsesTheHandlersExactCacheKeyArgs(t *testing.T) {
 					c.limit, c.filter.Sources, wantSources)
 			}
 		}
-	}
-}
-
-// TestPoolsAndMarketsPrewarmLimitsAreIndependent pins the split. Merging the sets would make
-// /v1/markets warm a limit=8 slot nobody requests, or /v1/pools lose limit=8.
-func TestPoolsAndMarketsPrewarmLimitsAreIndependent(t *testing.T) {
-	for _, l := range marketsPrewarmLimits {
-		if l == 8 {
-			t.Errorf("marketsPrewarmLimits %v contains 8 — that is the /v1/POOLS caller's limit; "+
-				"warming it for /v1/markets is a phantom slot", marketsPrewarmLimits)
-		}
-	}
-	// Both keep 100: /v1/markets' MarketsTable and /v1/pools' /dexes
-	// PAGE_LIMIT, plus the OpenAPI default on each route.
-	for _, set := range []struct {
-		name   string
-		limits []int
-	}{{"marketsPrewarmLimits", marketsPrewarmLimits}, {"poolsPrewarmLimits", poolsPrewarmLimits}} {
-		var has100 bool
-		for _, l := range set.limits {
-			if l == 100 {
-				has100 = true
-			}
-		}
-		if !has100 {
-			t.Errorf("%s %v omits 100 — the OpenAPI default and the value a bare "+
-				"listing request falls back to", set.name, set.limits)
-		}
-	}
-}
-
-// TestMarketsPrewarmCoversTheHomePageRecentTrades: home reads /v1/markets?limit=3 on every first load; unwarmed, the slot lapses
-// whenever traffic is quiet and that visitor pays the cold scan.
-func TestMarketsPrewarmCoversTheHomePageRecentTrades(t *testing.T) {
-	if !slices.Contains(marketsPrewarmLimits, 3) {
-		t.Errorf("marketsPrewarmLimits %v lacks 3, the home recent-trades panel's limit", marketsPrewarmLimits)
 	}
 }

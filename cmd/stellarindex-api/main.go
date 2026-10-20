@@ -2504,16 +2504,12 @@ func prewarmLight(
 	// every cold request still runs a 10-30 s scan. Both routes default to
 	// MarketsOrderVolume24hDesc; /v1/markets "pair" is explicit-only but also warmed. The
 	// /v1/pools half lives in prewarmPools.
-	for _, lim := range marketsPrewarmLimits {
-		// Alphabetical order is not the default, but it is the stable-keyset order a
-		// full-catalogue walker passes explicitly.
-		if _, _, err := markets.DistinctPairsExt(mkCtx, "", lim, timescale.MarketsOrderPair); err != nil {
-			logger.Debug("prewarm markets failed", "limit", lim, "order", "pair", "err", err)
-		}
-		// The explorer passes order_by=volume_24h_usd_desc, and the cache key includes the
-		// order, so this variant is a separate slot.
-		if _, _, err := markets.DistinctPairsExt(mkCtx, "", lim, timescale.MarketsOrderVolume24hDesc); err != nil {
-			logger.Debug("prewarm markets failed", "limit", lim, "order", "volume_24h_usd_desc", "err", err)
+	// One call per order fills the head slot every first page up to 200 is sliced from (the home
+	// panel's 3 through the catalogue's 200). Alphabetical order is the stable-keyset order a
+	// full-catalogue walker passes explicitly; the explorer passes order_by=volume_24h_usd_desc.
+	for _, order := range []timescale.MarketsOrder{timescale.MarketsOrderPair, timescale.MarketsOrderVolume24hDesc} {
+		if _, _, err := markets.DistinctPairsExt(mkCtx, "", 200, order); err != nil {
+			logger.Debug("prewarm markets failed", "order", order, "err", err)
 		}
 	}
 	prewarmPools(mkCtx, logger, markets)
@@ -2546,16 +2542,7 @@ func prewarmLight(
 	prewarmNetworkStats(mkCtx, logger, networkStats)
 }
 
-// marketsPrewarmLimits are the ?limit= values warmed for /v1/markets in both orders; 3 is the home page's recent-trades panel, which
-// paid a 1.4 s cold read whenever traffic left the slot to lapse.
-var marketsPrewarmLimits = []int{3, 5, 25, 100, 200}
-
-// poolsPrewarmLimits are the ?limit= values warmed for /v1/pools, separate from the markets set
-// because AllPools keys on the limit. Derive the set from what callers send (8 serves the
-// /network top-markets panel) and keep the argument byte-identical to the handler's.
-var poolsPrewarmLimits = []int{5, 8, 25, 100, 200}
-
-// prewarmPools warms the unfiltered /v1/pools slots. It is split out so a test can assert the
+// prewarmPools warms the unfiltered /v1/pools head slot. It is split out so a test can assert the
 // key without the other readers. The arguments must byte-match handlePools: the registry DEX
 // source set (not nil), an empty cursor and MarketsOrderVolume24hDesc.
 func prewarmPools(ctx context.Context, logger *slog.Logger, markets *v1.CachedMarketsReader) {
@@ -2563,10 +2550,8 @@ func prewarmPools(ctx context.Context, logger *slog.Logger, markets *v1.CachedMa
 		return
 	}
 	filter := timescale.PoolsFilter{Sources: v1.DexSourceNames()}
-	for _, lim := range poolsPrewarmLimits {
-		if _, _, err := markets.AllPools(ctx, filter, "", lim, timescale.MarketsOrderVolume24hDesc); err != nil {
-			logger.Debug("prewarm pools failed", "limit", lim, "err", err)
-		}
+	if _, _, err := markets.AllPools(ctx, filter, "", 200, timescale.MarketsOrderVolume24hDesc); err != nil {
+		logger.Debug("prewarm pools failed", "err", err)
 	}
 }
 
