@@ -1222,6 +1222,20 @@ func TestSEP41SupplyRollup_DeltaTimeBoundGuardedByLedger(t *testing.T) {
 		t.Errorf("bound after reset = (%v, %v); want (%d, %v) or NULL", l, at, last, t0.Add(90*time.Minute))
 	}
 	assertMint("after reset", 1111)
+
+	// A row folded before the bound columns existed: a fold with nothing new to add still fills the bound in.
+	if _, err := rawdb.ExecContext(ctx,
+		`UPDATE sep41_supply_rollup SET bound_ledger = NULL, bound_observed_at = NULL WHERE contract_id = $1`, contractID,
+	); err != nil {
+		t.Fatalf("clear bound: %v", err)
+	}
+	if adv, err := store.AdvanceSEP41SupplyRollup(ctx, contractID); err != nil || adv.ToLedger != uint32(last) {
+		t.Fatalf("eventless advance = %+v, %v; want ToLedger %d", adv, err, last)
+	}
+	if l, at := bound(); l.Int64 != last || !at.Time.Equal(t0.Add(90*time.Minute)) {
+		t.Errorf("bound after eventless fold = (%v, %v); want (%d, %v)", l, at, last, t0.Add(90*time.Minute))
+	}
+	assertMint("after bound fill", 1111)
 }
 
 // Genesis baseline through the real store-reader-computer path: a SAC wrapper with pre-Soroban issuance plus a large burn
@@ -2340,5 +2354,20 @@ func TestMinSEP41ComponentLedgerUsesObserverWatermark(t *testing.T) {
 	if got != 1000 {
 		t.Errorf("anchor at asOf=5000 = %d, want 1000 — the watermark must be "+
 			"clamped to asOfLedger, not read at the live tip", got)
+	}
+
+	// A row inside the recent window is found by the bounded read; an asOf below every recent row falls back to the full
+	// read rather than returning 0, which would skip the gate.
+	if err := store.InsertSEP41SupplyEvent(ctx, timescale.SEP41SupplyEvent{
+		ContractID: lively, Ledger: 9500, TxHash: "2200000000000000000000000000000000000000000000000000000000000003",
+		ObservedAt: time.Now().Add(-time.Hour), Kind: timescale.SEP41EventMint, Amount: big.NewInt(1), Counterparty: "GA1",
+	}); err != nil {
+		t.Fatalf("InsertSEP41SupplyEvent recent: %v", err)
+	}
+	if got, err = store.MinSEP41ComponentLedger(ctx, quiet, 10_001); err != nil || got != 9500 {
+		t.Errorf("anchor at asOf=10001 = %d (err %v), want 9500 from the recent window", got, err)
+	}
+	if got, err = store.MinSEP41ComponentLedger(ctx, quiet, 9_200); err != nil || got != 9000 {
+		t.Errorf("anchor at asOf=9200 = %d (err %v), want 9000 from the full-read fallback", got, err)
 	}
 }

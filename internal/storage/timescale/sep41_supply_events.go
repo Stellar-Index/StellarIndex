@@ -363,6 +363,9 @@ func (s *Store) sep41KindTotalsRange(ctx context.Context, contractID string, aft
 	return parseSEP41Totals(mintRaw, burnRaw, clawbackRaw)
 }
 
+// sep41WatermarkWindow is how far back sep41ObserverWatermark looks before falling back to the full read.
+const sep41WatermarkWindow = 7 * 24 * time.Hour
+
 // sep41BoundMargin widens the delta read's observed_at bound; a day is far below the 7-day chunk interval, so pruning is unaffected.
 const sep41BoundMargin = 24 * time.Hour
 
@@ -409,10 +412,19 @@ func (s *Store) sep41ObserverWatermark(ctx context.Context, asOfLedger uint32) (
 	if c.asOf == asOfLedger && !c.fetchedAt.IsZero() && time.Since(c.fetchedAt) < classicWatermarkTTL {
 		return c.ledger, nil
 	}
-	const q = `SELECT COALESCE(MAX(ledger), 0) FROM sep41_supply_events WHERE ledger <= $1`
+	// observed_at is the ledger close time, so when the recent window holds a row at or before asOfLedger it holds the max;
+	// bounding it prunes to the newest chunks (1.2 s unbounded on r1, 2 ms bounded). A historical asOf or a stalled producer
+	// finds the window empty and pays the full read.
+	const recentQ = `SELECT COALESCE(MAX(ledger), 0) FROM sep41_supply_events WHERE ledger <= $1 AND observed_at >= $2::timestamptz`
+	const fullQ = `SELECT COALESCE(MAX(ledger), 0) FROM sep41_supply_events WHERE ledger <= $1`
 	var watermark uint32
-	if err := s.db.QueryRowContext(ctx, q, int(asOfLedger)).Scan(&watermark); err != nil {
+	if err := s.db.QueryRowContext(ctx, recentQ, int(asOfLedger), time.Now().Add(-sep41WatermarkWindow).UTC()).Scan(&watermark); err != nil {
 		return 0, fmt.Errorf("timescale: sep41ObserverWatermark@%d: %w", asOfLedger, err)
+	}
+	if watermark == 0 {
+		if err := s.db.QueryRowContext(ctx, fullQ, int(asOfLedger)).Scan(&watermark); err != nil {
+			return 0, fmt.Errorf("timescale: sep41ObserverWatermark@%d: %w", asOfLedger, err)
+		}
 	}
 	c.asOf, c.ledger, c.fetchedAt = asOfLedger, watermark, time.Now()
 	return watermark, nil
@@ -649,11 +661,14 @@ func foldSEP41RollupLocked(ctx context.Context, tx *sql.Tx, contractID string) (
 	//   settled  - the durable cursor; NULL if the projector never committed a cycle (delta treats
 	//   as 0).
 	//   delta    - the settled tail sum over (from_ledger, settled bound), floored.
+	//   unbounded - the checkpoint's close time when its bound is missing (a row folded before 0219), so an
+	//              eventless fold still fills it in.
 	//   UPDATE   - add the delta, move last_ledger to the max ledger folded, record its close time.
 	const q = `
         WITH locked AS MATERIALIZED (
             SELECT last_ledger                          AS from_ledger,
-                   COALESCE(genesis_baseline_ledger, 0) AS floor_ledger
+                   COALESCE(genesis_baseline_ledger, 0) AS floor_ledger,
+                   bound_ledger
               FROM sep41_supply_rollup
              WHERE contract_id = $1
                FOR UPDATE
@@ -662,6 +677,14 @@ func foldSEP41RollupLocked(ctx context.Context, tx *sql.Tx, contractID string) (
             SELECT COALESCE(max(ledger), 0) AS mx
               FROM sep41_supply_events
              WHERE contract_id = $1
+        ),
+        unbounded AS (
+            SELECT max(e.observed_at) AS at
+              FROM sep41_supply_events e, locked l
+             WHERE l.from_ledger > 0
+               AND l.bound_ledger IS DISTINCT FROM l.from_ledger
+               AND e.contract_id = $1
+               AND e.ledger = l.from_ledger
         ),
         settled AS (
             SELECT (SELECT last_ledger
@@ -689,10 +712,12 @@ func foldSEP41RollupLocked(ctx context.Context, tx *sql.Tx, contractID string) (
                burn_total     = r.burn_total     + d.d_burn,
                clawback_total = r.clawback_total + d.d_clawback,
                last_ledger    = d.to_ledger,
-               bound_ledger      = CASE WHEN d.to_observed_at IS NULL THEN r.bound_ledger ELSE d.to_ledger END,
-               bound_observed_at = COALESCE(d.to_observed_at, r.bound_observed_at),
+               bound_ledger      = CASE WHEN d.to_observed_at IS NOT NULL THEN d.to_ledger
+                                        WHEN u.at IS NOT NULL THEN d.from_ledger
+                                        ELSE r.bound_ledger END,
+               bound_observed_at = COALESCE(d.to_observed_at, u.at, r.bound_observed_at),
                updated_at     = now()
-          FROM delta d
+          FROM delta d, unbounded u
          WHERE r.contract_id = $1
         RETURNING d.from_ledger, r.last_ledger, d.cursor_absent
     `
