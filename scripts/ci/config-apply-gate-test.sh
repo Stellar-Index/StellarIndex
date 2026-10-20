@@ -338,7 +338,7 @@ elif [[ "$OUT" != *"changed 1 config surface(s)"* ]]; then
   echo "FAIL: mixed release miscounted the outstanding surfaces (want exactly 1)"
   echo "$OUT" | sed -n '1,8s/^/    | /p'
   fail=$((fail + 1))
-elif [[ "$OUT" == *"VERIFIED automatically"*"stellarindex.toml.j2"* ]]; then
+elif [[ "${OUT%%::error::*}" == *"VERIFIED automatically"*"stellarindex.toml.j2"* ]]; then
   echo "FAIL: the auto-applied banner claimed a surface this deploy never applied"
   echo "$OUT" | sed -n '1,8s/^/    | /p'
   fail=$((fail + 1))
@@ -410,6 +410,13 @@ ORDER BY (creator, ledger);
 SQL
 runGate v0.2.0
 expect "DDL introduced under new comments is SUBSTANTIVE and still blocks" 1 "changed 1 config surface(s)"
+# The step summary is not the log an operator reads first: the refusal itself must name the file.
+if [[ "$OUT" == *"    deploy/clickhouse/schema.sql"* ]]; then
+  echo "ok: the substantive refusal names the surface in the log"; pass=$((pass + 1))
+else
+  echo "FAIL: the substantive refusal did not name the surface in the log"
+  echo "$OUT" | sed -n '1,8s/^/    | /p'; fail=$((fail + 1))
+fi
 runGate v0.2.0 true
 expect "the same DDL passes only when the operator acknowledges it" 0 "config-apply acknowledged"
 
