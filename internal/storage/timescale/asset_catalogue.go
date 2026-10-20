@@ -353,14 +353,19 @@ func mustSQLTextArrayLiteral(vals []string) string {
 	return "ARRAY[" + strings.Join(quoted, ", ") + "]::text[]"
 }
 
-// directoryScamFlaggedExpr is TRUE when the ISSUER carries a scam-class directory tag; the SQL twin of pricingguard.IsDirectoryScamFlagged.
-// dir.tags NULL makes EXISTS false, so the row ranks normally (fail-open).
-var directoryScamFlaggedExpr = `EXISTS (SELECT 1 FROM unnest(dir.tags) t ` +
-	`WHERE lower(t) = ANY(` + scamFlagTagsSQLArray + `))`
+// listingFlaggedIssuerJoin joins only scam-flagged directory rows (the SQL twin of pricingguard.IsDirectoryScamFlagged), so the tier
+// tests dir.address rather than unnesting tags on each of ~464k spine rows. Keyed like v1.Server.fillIssuerDirectoryTags, so "demoted"
+// and "shows the Flagged pill" are one set; address is the PRIMARY KEY, so it never fans a row out. NULL tags rank normally (fail-open).
+var listingFlaggedIssuerJoin = `
+		  LEFT JOIN (SELECT fd.address FROM account_directory fd
+		              WHERE EXISTS (SELECT 1 FROM unnest(fd.tags) t WHERE lower(t) = ANY(` + scamFlagTagsSQLArray + `))) dir
+		         ON dir.address = COALESCE(ca.issuer_g_strkey, ca.asset_id)`
 
-// rankTierMarker is replaced with [listingRankTierExpr] for the active order when the base
-// SELECT renders: the SELECT is one const shared by both orders but the tier is not.
-const rankTierMarker = "/*RANK_TIER*/"
+// directoryScamFlaggedExpr is TRUE when the issuer matched [listingFlaggedIssuerJoin].
+const directoryScamFlaggedExpr = `dir.address IS NOT NULL`
+
+// rankedMarker is replaced with the order's ranked CTE body ([listAssetsSQL]); the base SELECT is one const shared by both orders.
+const rankedMarker = "/*RANKED*/"
 
 // listingRankTierExpr is the leading ascending sort key: 0 rankable; 1 unpriced (volume order only); 2 directory-flagged (every order).
 // Emitted as rank_tier so the keyset cursor carries it; keep it in step with assetsOrderBy, assetsCursorPredicate and
@@ -426,7 +431,7 @@ const listAssetsBaseSelect = `
 		   WHERE EXISTS (SELECT 1 FROM asset_volume_24h v WHERE v.asset_id = d.contract_id)
 		     AND NOT EXISTS (SELECT 1 FROM classic_assets c WHERE c.asset_id = d.contract_id)
 		),
-		per_asset_24h_vol AS (
+		per_asset_24h_vol AS NOT MATERIALIZED (
 		  -- e0fbbbc3b (2026-07-06 latency incident): read the trailing-24h
 		  -- per-asset USD volume from the asset_volume_24h rollup
 		  -- (migration 0087) instead of re-summing prices_1m per
@@ -441,7 +446,10 @@ const listAssetsBaseSelect = `
 		  -- cheap regardless of the caller's asset filter.
 		  SELECT asset_id, vol_usd, unpriced_trades
 		    FROM asset_volume_24h
-		)
+		),
+		-- WHERE, ORDER BY and LIMIT run here with only the joins the sort key reads, so the value joins below
+		-- touch LIMIT rows instead of the whole spine.
+		ranked AS (` + rankedMarker + `)
 		SELECT
 		    -- asset_id is the LAST resort here, and it is load-bearing.
 		    --
@@ -499,13 +507,13 @@ const listAssetsBaseSelect = `
 		    aps.source_count                      AS source_count,
 		    avc.character                         AS volume_character,
 		    ` + adjustedVolume24hExpr + ` AS sort_vol_usd,
-		    -- Leading (ascending) sort key — see listingRankTierExpr. The
-		    -- marker is substituted per-order at render time; it is emitted
-		    -- as a column so the keyset cursor can encode the same value
-		    -- the ORDER BY ranks on.
-		    ` + rankTierMarker + ` AS rank_tier,
+		    -- Leading (ascending) sort key, computed in ranked; emitted so the keyset cursor encodes the value the ORDER BY ranks on.
+		    ca.rank_tier                          AS rank_tier,
 		    COALESCE(vol.unpriced_trades, 0) > 0  AS volume_lower_bound
-		  FROM catalogue_assets ca
+		  FROM ranked ca` + listingValueJoins
+
+// listingValueJoins are the rollup joins behind the served value columns; the volume order's ranked CTE also needs them for its key.
+const listingValueJoins = `
 		  LEFT JOIN per_asset_24h_vol vol         ON vol.asset_id        = ca.asset_id
 		  -- Headline price + 1h/24h/7d change + backing source count
 		  -- (migration 0154, #331 F1). Replaces the twelve
@@ -524,29 +532,25 @@ const listAssetsBaseSelect = `
 		  -- reasoning about /v1/price.
 		  LEFT JOIN asset_price_snapshot   aps    ON aps.asset_id        = ca.asset_id
 		                                        AND aps.computed_at > now() - INTERVAL '` + assetPriceSnapshotMaxAge + `'
-		  LEFT JOIN asset_volume_character avc    ON avc.asset_id        = ca.asset_id
-		  -- Curated third-party issuer labels (account_directory, migration
-		  -- 0136). Read ONLY by listingRankTierExpr's scam-flag demotion —
-		  -- the payload's issuer_directory_* fields are still stamped by the
-		  -- API layer's batch lookup, so this join changes ranking, never
-		  -- served data. Keyed exactly like v1.Server.fillIssuerDirectoryTags
-		  -- (the issuer G-address, or a Soroban-native row's own contract
-		  -- address), so "demoted" and "shows the ⚠ Flagged pill" are the
-		  -- same set of rows. account_directory.address is the PRIMARY KEY,
-		  -- so this join can never fan a listing row out into duplicates.
-		  LEFT JOIN account_directory      dir    ON dir.address         = COALESCE(ca.issuer_g_strkey, ca.asset_id)
-`
+		  LEFT JOIN asset_volume_character avc    ON avc.asset_id        = ca.asset_id`
 
-// listAssetsBaseSelectSQL renders [listAssetsBaseSelect] for the order, substituting the /*RANK_TIER*/ marker. No pushdown: the outer
-// WHERE on `ca` narrows.
-func listAssetsBaseSelectSQL(order AssetsOrder) string {
-	// Substitute unconditionally: leaving the marker would ship `/*RANK_TIER*/ AS rank_tier`, a
-	// syntax error. Exactly one occurrence is expected.
-	base := strings.Replace(listAssetsBaseSelect, rankTierMarker, listingRankTierExpr(order), 1)
-	if strings.Contains(base, rankTierMarker) {
-		panic("listAssetsBaseSelectSQL: more than one " + rankTierMarker + " marker in the base SELECT")
+// listAssetsSQL renders [listAssetsBaseSelect] for the order, with where (empty or " WHERE ...") and the LIMIT inside the ranked CTE.
+func listAssetsSQL(order AssetsOrder, where, limitPlaceholder string) string {
+	joins := listingFlaggedIssuerJoin
+	if order == AssetsOrderVolume24hUSDDesc {
+		joins = listingValueJoins + joins
 	}
-	return base
+	ranked := `SELECT ca.*, ` + listingRankTierExpr(order) + ` AS rank_tier FROM catalogue_assets ca` + joins +
+		where + assetsOrderBy(order) + ` LIMIT ` + limitPlaceholder
+	base := strings.Replace(listAssetsBaseSelect, rankedMarker, ranked, 1)
+	if strings.Contains(base, rankedMarker) {
+		panic("listAssetsSQL: more than one " + rankedMarker + " marker in the base SELECT")
+	}
+	// The value joins are 1:1 on asset_id, so re-sorting on ranked's keys returns its order.
+	if order == AssetsOrderVolume24hUSDDesc {
+		return base + " ORDER BY ca.rank_tier ASC, " + adjustedVolume24hExpr + " DESC, ca.asset_id ASC"
+	}
+	return base + " ORDER BY ca.rank_tier ASC, ca.observation_count DESC, ca.asset_id ASC"
 }
 
 // refreshAssetVolumeUpsert recomputes trailing-24h per-asset USD volume (base OR quote) as NUMERIC (ADR-0003); computed_at is the tx
@@ -643,7 +647,7 @@ func buildAssetsQuery(limit int, issuer, code, cursor, q, typ string, order Asse
 	if len(conds) > 0 {
 		where = " WHERE " + strings.Join(conds, " AND ")
 	}
-	return listAssetsBaseSelectSQL(order) + where + assetsOrderBy(order) + " LIMIT " + limitPlaceholder, args, nil
+	return listAssetsSQL(order, where, limitPlaceholder), args, nil
 }
 
 // escapeLikePattern escapes the backslash and the LIKE wildcards `%` and `_` so a caller's `q`
