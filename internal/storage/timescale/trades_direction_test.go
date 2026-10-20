@@ -296,41 +296,81 @@ func TestLatestTradesForPair_ClampsLimit(t *testing.T) {
 		{"above cap", 1 << 30, maxLatestTradesForPair},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			store, conn := newScriptedStore(t, scriptedResult{cols: latestTradeCols})
+			store, conn := newScriptedStore(t, scriptedResult{cols: latestTradeCols}, scriptedResult{cols: latestTradeCols})
 			if _, err := store.LatestTradesForPair(context.Background(), pair, tc.limit, time.Time{}); err != nil {
 				t.Fatalf("LatestTradesForPair: %v", err)
 			}
-			stmt := conn.only(t)
-			if got := strings.Count(stmt.sql, fmt.Sprintf("LIMIT %d", tc.want)); got != 3 {
-				t.Errorf("limit %d: LIMIT %d literal on %d of 3 clauses:\n%s", tc.limit, tc.want, got, stmt.sql)
+			if len(conn.stmts) != 2 {
+				t.Fatalf("an empty recent window issued %d statements, want the recent try + the fallback", len(conn.stmts))
 			}
-			if strings.Contains(stmt.sql, "$3") || len(stmt.args) != 2 {
-				t.Errorf("limit %d: want only $1/$2 bound, got %d args", tc.limit, len(stmt.args))
+			for _, stmt := range conn.stmts {
+				if got := strings.Count(stmt.sql, fmt.Sprintf("LIMIT %d", tc.want)); got != 3 {
+					t.Errorf("limit %d: LIMIT %d literal on %d of 3 clauses:\n%s", tc.limit, tc.want, got, stmt.sql)
+				}
+				if strings.Contains(stmt.sql, "$3") || len(stmt.args) != 2 {
+					t.Errorf("limit %d: want only $1/$2 bound, got %d args", tc.limit, len(stmt.args))
+				}
 			}
 		})
 	}
 }
 
 // TestLatestTradesForPair_SinceIsAPlanTimeLiteral: the /v1/price miss path is cheap only when both arms carry the bound as a literal
-// TimescaleDB can exclude chunks on while planning; a zero since keeps the unbounded walk.
+// TimescaleDB can exclude chunks on while planning; a zero since keeps the unbounded walk as the fallback.
 func TestLatestTradesForPair_SinceIsAPlanTimeLiteral(t *testing.T) {
 	pair := dirAQUAUSDCPair(t)
 	since := time.Date(2025, 9, 12, 8, 30, 0, 0, time.FixedZone("x", 3600))
 
-	store, conn := newScriptedStore(t, scriptedResult{cols: latestTradeCols})
+	store, conn := newScriptedStore(t, scriptedResult{cols: latestTradeCols}, scriptedResult{cols: latestTradeCols})
 	if _, err := store.LatestTradesForPair(context.Background(), pair, 1, since); err != nil {
 		t.Fatalf("LatestTradesForPair: %v", err)
 	}
-	if got := strings.Count(conn.only(t).sql, "AND ts >= TIMESTAMPTZ '2025-09-12 07:30:00+00'"); got != 2 {
-		t.Errorf("bounded read carries the literal on %d arms, want 2:\n%s", got, conn.only(t).sql)
+	if got := strings.Count(conn.stmts[1].sql, "AND ts >= TIMESTAMPTZ '2025-09-12 07:30:00+00'"); got != 2 {
+		t.Errorf("fallback carries the literal on %d arms, want 2:\n%s", got, conn.stmts[1].sql)
 	}
 
-	store, conn = newScriptedStore(t, scriptedResult{cols: latestTradeCols})
+	store, conn = newScriptedStore(t, scriptedResult{cols: latestTradeCols}, scriptedResult{cols: latestTradeCols})
 	if _, err := store.LatestTradesForPair(context.Background(), pair, 1, time.Time{}); err != nil {
 		t.Fatalf("LatestTradesForPair unbounded: %v", err)
 	}
-	if strings.Contains(conn.only(t).sql, "TIMESTAMPTZ") {
-		t.Errorf("zero since must not bound the walk:\n%s", conn.only(t).sql)
+	if strings.Contains(conn.stmts[1].sql, "TIMESTAMPTZ") {
+		t.Errorf("zero since must not bound the fallback walk:\n%s", conn.stmts[1].sql)
+	}
+}
+
+// TestLatestTradesForPair_TriesTheRecentWindowFirst: a wide bound plans every trades chunk it spans (~1s on a fresh connection at 400
+// days), so the read first tries a midnight-floored 7-day literal and stops there once it has `limit` rows. A bound already inside
+// the window is used as given.
+func TestLatestTradesForPair_TriesTheRecentWindowFirst(t *testing.T) {
+	pair := dirAQUAUSDCPair(t)
+	now := time.Now().UTC()
+	row := reverseStoredRow("sdex", 58_000_001, dirTxA, now.Add(-time.Hour))
+
+	store, conn := newScriptedStore(t, scriptedResult{cols: latestTradeCols, rows: [][]driver.Value{row}})
+	got, err := store.LatestTradesForPair(context.Background(), pair, 1, now.AddDate(-1, 0, 0))
+	if err != nil || len(got) != 1 {
+		t.Fatalf("LatestTradesForPair = %d rows, %v; want the recent row", len(got), err)
+	}
+	sql := conn.only(t).sql
+	if strings.Count(sql, "AND ts >= TIMESTAMPTZ '") != 2 {
+		t.Fatalf("recent try is not bounded on both arms:\n%s", sql)
+	}
+	lit := sql[strings.Index(sql, "TIMESTAMPTZ '")+len("TIMESTAMPTZ '"):]
+	bound, err := time.Parse("2006-01-02 15:04:05-07", lit[:strings.Index(lit, "'")])
+	if err != nil {
+		t.Fatalf("recent bound: %v", err)
+	}
+	if !bound.Equal(bound.Truncate(24*time.Hour)) || bound.After(now.Add(-recentTradesWindow)) || bound.Before(now.Add(-recentTradesWindow-24*time.Hour)) {
+		t.Errorf("recent bound %s, want the UTC midnight at or before now-%s", bound, recentTradesWindow)
+	}
+
+	inside := now.Add(-time.Hour)
+	store, conn = newScriptedStore(t, scriptedResult{cols: latestTradeCols})
+	if _, err := store.LatestTradesForPair(context.Background(), pair, 1, inside); err != nil {
+		t.Fatalf("LatestTradesForPair inside the window: %v", err)
+	}
+	if want := "AND ts >= TIMESTAMPTZ '" + inside.Format("2006-01-02 15:04:05-07") + "'"; strings.Count(conn.only(t).sql, want) != 2 {
+		t.Errorf("a bound inside the window must be used as given (%s):\n%s", want, conn.only(t).sql)
 	}
 }
 
@@ -354,7 +394,7 @@ func TestRawTradeReadsSpanBothStoredDirections(t *testing.T) {
 		{
 			name: "LatestTradesForPair",
 			run: func(s *Store) error {
-				_, err := s.LatestTradesForPair(context.Background(), pair, 1, time.Time{})
+				_, err := s.LatestTradesForPair(context.Background(), pair, 1, time.Now().Add(-time.Hour))
 				return err
 			},
 		},
@@ -479,16 +519,18 @@ func TestLatestTradeReadsTakeNoRecencyBound(t *testing.T) {
 		},
 	}
 
+	// LatestTradesForPair first tries a 7-day window (recentTradesWindow) and, finding nothing, falls back to the unbounded
+	// walk: that final probe is the statement checked, and the empty script below forces it.
 	for _, r := range reads {
 		t.Run(r.name, func(t *testing.T) {
 			t.Parallel()
 
-			store, conn := newScriptedStore(t, scriptedResult{cols: latestTradeCols})
+			store, conn := newScriptedStore(t, scriptedResult{cols: latestTradeCols}, scriptedResult{cols: latestTradeCols})
 			defer func() { _ = store.db.Close() }()
 			if err := r.run(store); err != nil {
 				t.Fatalf("%s: %v", r.name, err)
 			}
-			stmt := conn.only(t)
+			stmt := conn.stmts[len(conn.stmts)-1]
 
 			const why = `
 
@@ -999,7 +1041,7 @@ func TestTradesInRange_BindsNonVWAPSources(t *testing.T) {
 // each arm orders by the outer key and takes a plain LIMIT instead.
 func TestLatestTradesForPair_ArmsOrderByTheOuterKey(t *testing.T) {
 	store, conn := newScriptedStore(t, scriptedResult{cols: latestTradeCols})
-	if _, err := store.LatestTradesForPair(context.Background(), dirAQUAUSDCPair(t), 1, time.Time{}); err != nil {
+	if _, err := store.LatestTradesForPair(context.Background(), dirAQUAUSDCPair(t), 1, time.Now().Add(-time.Hour)); err != nil {
 		t.Fatalf("LatestTradesForPair: %v", err)
 	}
 	sql := conn.only(t).sql

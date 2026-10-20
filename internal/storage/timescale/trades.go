@@ -1271,6 +1271,10 @@ func newRegistryObservation(ledger uint32, ts time.Time) registryObservation {
 // trades, and the full key keeps the union top-N equal to the union of each arm top-N.
 const maxLatestTradesForPair = 1000
 
+// recentTradesWindow is LatestTradesForPair's first try: ~2 trades chunks instead of the ~58 per arm a 400-day bound plans, which costs
+// ~1s on each fresh connection and stalled every /v1/price call in a burst that opened several.
+const recentTradesWindow = 7 * 24 * time.Hour
+
 // LatestTradesForPair returns up to `limit` most-recent trades for the market at or after `since` (zero: unbounded), in either stored
 // direction, oriented as requested; empty slice + nil if none.
 func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit int, since time.Time) ([]canonical.Trade, error) {
@@ -1280,6 +1284,19 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
 	if limit > maxLatestTradesForPair {
 		limit = maxLatestTradesForPair
 	}
+	// Floored to a UTC midnight so the statement text, and its cached plan, holds for a day. `limit` rows inside the window are the
+	// newest `limit` overall; fewer means older rows may rank, so the caller's bound decides.
+	recent := time.Now().Add(-recentTradesWindow).UTC().Truncate(24 * time.Hour)
+	if since.Before(recent) {
+		out, err := s.latestTradesForPair(ctx, p, limit, recent)
+		if err != nil || len(out) >= limit {
+			return out, err
+		}
+	}
+	return s.latestTradesForPair(ctx, p, limit, since)
+}
+
+func (s *Store) latestTradesForPair(ctx context.Context, p canonical.Pair, limit int, since time.Time) ([]canonical.Trade, error) {
 	// A LITERAL lower bound, as in latestClosedVWAP1m: TimescaleDB excludes chunks at plan time only for a constant, and planning
 	// every trades chunk is most of an unbounded miss (~325ms vs ~24ms per arm on r1 at a 400-day bound).
 	// The LIMIT is a literal too: a bound LIMIT makes the generic plan cost out worse than a custom one, so
