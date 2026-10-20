@@ -5,16 +5,13 @@ import (
 	"fmt"
 )
 
-// This file is the Postgres read side for GET /v1/accounts/{g_strkey}/activity. Two reads:
+// Postgres read side for GET /v1/accounts/{g_strkey}/activity: DefiActionCountsByUser
+// (per-(protocol, action) counts over the per-account tables positions.go folds, plus
+// blend_auctions) and BridgeActivityByAddress (rozo_events + cctp_events per direction).
 //
-//   - DefiActionCountsByUser: per-(protocol, action) event counts over the per-account served-tier
-//     tables the positions endpoint folds (positions.go), plus blend_auctions.
-//   - BridgeActivityByAddress: rozo_events + cctp_events per-direction counts.
-//
-// Tables deliberately NOT counted carry no per-account column: phoenix_liquidity,
-// aquarius_liquidity/admin and comet_liquidity are pool-level, soroswap_* captures no acting account,
-// and defindex strategy-layer rows have the vault contract as actor, which the actor = $1 predicate
-// excludes naturally since $1 is a G-strkey.
+// Tables with no per-account column are deliberately not counted: phoenix_liquidity,
+// aquarius_liquidity/admin, comet_liquidity (pool-level), soroswap_*, and defindex strategy rows
+// (vault contract is the actor, which `actor = $1` excludes since $1 is a G-strkey).
 
 // DefiActionCount is one (protocol, action) count for an address.
 type DefiActionCount struct {

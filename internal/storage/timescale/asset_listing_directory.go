@@ -15,13 +15,13 @@ import (
 // asset_listing_directory: the cached Stellar slice of an independent price platform's address map,
 // written by `stellarindex-ops listing-sync`.
 //
-// A ROW corroborates that a second party reached the same (address -> instrument) pairing; it is
-// no proof of control. A MISSING ROW means only "not listed". This surface only ADDS
-// corroboration; negative verdicts live in [DirectoryScamFlagTags].
+// A ROW corroborates that a second party reached the same (address -> instrument) pairing; it is no
+// proof of control. A MISSING ROW means only "not listed". Negative verdicts live in
+// [DirectoryScamFlagTags].
 //
-// TWO CLOCKS, TWO BOUNDS: RECOGNITION ages on `synced_at` (ours, [listingRecognitionMaxAge]); the
-// PRICE ages on `priced_at` (the platform's, [listingPriceMaxAge]). Both are spliced into the
-// reader's SQL so a new caller cannot forget them.
+// TWO CLOCKS: recognition ages on `synced_at` (ours, [listingRecognitionMaxAge]); the price ages on
+// `priced_at` (the platform's, [listingPriceMaxAge]). Both are spliced into the reader's SQL so a
+// new caller cannot forget them.
 
 // ListingEntry is one row of the independent listing directory.
 type ListingEntry struct {

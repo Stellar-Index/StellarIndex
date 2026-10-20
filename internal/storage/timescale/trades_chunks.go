@@ -16,13 +16,12 @@ import (
 // ─── `trades` chunk primitives for the chunk-wise usd_volume restamp ───
 //
 // An UPDATE into a compressed chunk decompresses it inside the transaction, and no restamp join
-// clause can become a scan key on a `segmentby` / `orderby` column, so the whole chunk is
-// decompressed per batch (the dry run never shows it).
-//
-// The remedy needs both halves: decompress once, restamp as a plain heap UPDATE, recompress; and
-// bound the statement's own `ts` ([Store.applyXLMBaseRestampBatch]), or every compressed chunk is
-// a result relation anyway. [Store.RestampTradesChunk] owns the order and the rule that a chunk
-// is never left decompressed on a failure.
+// clause can become a scan key on a `segmentby`/`orderby` column, so the whole chunk is
+// decompressed per batch (the dry run never shows it). The remedy needs both halves: decompress
+// once, restamp as a plain heap UPDATE, recompress; and bound the statement's own `ts`
+// ([Store.applyXLMBaseRestampBatch]) or every compressed chunk is a result relation anyway.
+// [Store.RestampTradesChunk] owns the order and the rule that a chunk is never left decompressed on
+// a failure.
 
 // TradeChunk is one `trades` hypertable chunk as the chunk-wise restamp sees it.
 type TradeChunk struct {
@@ -113,20 +112,20 @@ func (s *Store) compressTradesChunk(ctx, live context.Context, c TradeChunk) err
 	return nil
 }
 
-// ─── the lock convoy: why every WAIT is bounded and the WORK is not ──────
+// ─── the lock convoy: why every WAIT is bounded and the WORK is not ───
 //
 // A pending AccessExclusiveLock request queues every later request for the object behind it,
 // however compatible, so a queued decompress_chunk can blind alerting and degrade /v1/status.
 //
-// `SET LOCAL lock_timeout` (5 s, under the API's 15 s request timeout) bounds every lock request
-// in the attempt, including the late AccessExclusiveLock taken after the work. No
-// `statement_timeout`, so a long decompress that holds its locks still runs.
+// `SET LOCAL lock_timeout` (5 s, under the API's 15 s request timeout) bounds every lock request in
+// the attempt, including the late AccessExclusiveLock after the work. No `statement_timeout`, so a
+// long decompress holding its locks still runs.
 //
 // A refused late request throws that work away, so a holder older than [longLockHolderAge] is
 // waited out with no request of ours pending, and each attempt first takes the opening locks with
-// `LOCK TABLE`, where refusal is cheap. The budget charges only waiting, and a retry starts only
-// if the last attempt fits the remaining wall-clock, so a SIGTERM stop window is not overrun. A
-// convoy headed by someone else's exclusive request is not covered (stellarindex_pg_lock_convoy).
+// `LOCK TABLE`, where refusal is cheap. The budget charges only waiting, and a retry starts only if
+// the last attempt fits the remaining wall-clock, so a SIGTERM stop window is not overrun. A convoy
+// headed by someone else's exclusive request is not covered (stellarindex_pg_lock_convoy).
 
 // lockWaitPolicy is how hard a statement may ask for locks: `wait` per request, `drain` of clear
 // air between attempts, `budget` of total waiting.
@@ -622,14 +621,13 @@ func (s *Store) RestampExactTierUSDVolumeInChunk(ctx context.Context, c TradeChu
 	return s.RestampExactTierUSDVolume(ctx, p)
 }
 
-// ─── one run per hypertable: the run lock ────────────────────────────────
+// ─── one run per hypertable: the run lock ───
 //
 // run-heavy-job.sh's flock is per job name, so a second name can have two `-chunks -write` runs
-// alive. The policy pause cannot survive that: the second re-enables the policy at its exit while
-// the first is still walking, exposing the first's open chunk. So the run holds a session-level
-// advisory lock (the run is thousands of transactions) on a dedicated connection (a pooled one
-// could be handed to other statements and the release run on a different one). Postgres drops
-// the lock with the connection, e.g. on SIGKILL.
+// alive; the second would re-enable the policy at its exit while the first is still walking,
+// exposing the first's open chunk. So the run holds a session-level advisory lock on a dedicated
+// connection (a pooled one could be handed to other statements and the release run on a different
+// one). Postgres drops the lock with the connection, e.g. on SIGKILL.
 
 // USDVolumeRestampLockName is the text hashed into the lock key (`hashtext(name)`), so an operator can reproduce the key by name.
 const USDVolumeRestampLockName = "usd-volume-restamp:trades"

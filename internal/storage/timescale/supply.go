@@ -48,17 +48,15 @@ func (s *Store) InsertSupply(ctx context.Context, snap supply.Supply) error {
 		sacWrapped = sql.NullString{Valid: true, String: snap.SACWrappedStroops.String()}
 	}
 
-	// Use the named-constraint form: Timescale hypertables in PG 16 + TS 2.16 don't expose unique
-	// constraints to ON CONFLICT's column inference, so `ON CONFLICT (cols)` fails with `there is
-	// no unique or exclusion constraint matching the ON CONFLICT specification`.
+	// Named-constraint form: Timescale hypertables in PG 16 + TS 2.16 don't expose unique
+	// constraints to ON CONFLICT's column inference, so `ON CONFLICT (cols)` fails with `no unique
+	// or exclusion constraint matching the ON CONFLICT specification`.
 	//
-	// Generation guard: on conflict we DO UPDATE the supply value columns plus derive_generation,
-	// guarded by `asset_supply_history.derive_generation <= EXCLUDED.derive_generation`, so a
-	// corrected re-derive lands in place while a lower generation (a live gen-0 replay) can never
-	// revert a correction.
-	//
-	// sac_wrapped_stroops is in the DO UPDATE list too: leaving it out would freeze the first value
-	// written and defeat a `supply seed-sac-balances -full-history` re-derive.
+	// Generation guard: DO UPDATE sets the supply value columns plus derive_generation, guarded by
+	// `asset_supply_history.derive_generation <= EXCLUDED.derive_generation`, so a corrected
+	// re-derive lands in place while a lower generation (a live gen-0 replay) can never revert it.
+	// sac_wrapped_stroops is in the DO UPDATE list too, or a `supply seed-sac-balances
+	// -full-history` re-derive would keep the first value written.
 	const q = `
 		INSERT INTO asset_supply_history
 		    (time, asset_key, total_supply, circulating_supply, max_supply, basis, ledger_sequence, derive_generation, sac_wrapped_stroops)

@@ -8,22 +8,20 @@ import (
 	"time"
 )
 
-// Read side for GET /v1/accounts/{g_strkey}/trades: per-address historic trades
-// out of the `trades` hypertable.
+// Read side for GET /v1/accounts/{g_strkey}/trades.
+// ACCOUNT ATTRIBUTION: taker is the acting account (tx source for sdex, user/sender for aquarius,
+// phoenix and comet, the SwapEvent `to` for soroswap; older soroswap rows are NULL unless
+// re-derived). maker is the resting-offer account (sdex only). Both are NULL for CEX/FX rows
+// (ledger=0).
 //
-// ACCOUNT ATTRIBUTION: taker is the acting account (tx-level source for sdex, the user/sender for
-// aquarius, phoenix and comet, the SwapEvent `to` recipient for soroswap; older soroswap rows
-// carry NULL unless re-derived). maker is the resting-offer account (sdex only). Both are NULL for
-// off-chain CEX/FX rows (ledger=0).
+// QUERY SHAPE: two UNION'd arms, not `taker = $1 OR maker = $1`: an OR across two columns cannot
+// ride one account-leading index in output order, so the planner would sort the whole history
+// before the LIMIT. Each arm has its own ORDER BY + LIMIT on its partial index (migration 0123).
+// The maker arm excludes rows where the address is also the taker so a self-crossed sdex trade
+// appears once.
 //
-// QUERY SHAPE: two index-friendly arms UNION'd, not `taker = $1 OR maker = $1`: an OR across two
-// columns cannot ride one account-leading index in output order, so the planner would sort the
-// account's whole history before the LIMIT. Each arm has its own ORDER BY + LIMIT on its partial
-// index (migration 0123); the union of two top-N arms contains the union's top N. The maker arm
-// excludes rows where the address is ALSO the taker so a self-crossed sdex trade appears once.
-//
-// KEYSET: (ts DESC, ledger DESC, tx_hash DESC, op_index DESC). (ts, ledger, op_index) collides
-// for two same-account txs in one ledger, so tx_hash rides in the tuple.
+// KEYSET: (ts, ledger, tx_hash, op_index) DESC; (ts, ledger, op_index) alone collides for two
+// same-account txs in one ledger.
 
 // accountTradesMaxLimit clamps one page. Mirrors the sibling explorer
 // listings' 200-row ceiling.

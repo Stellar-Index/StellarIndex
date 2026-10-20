@@ -14,12 +14,11 @@ const Sep1AttestationMaxAge = 30 * 24 * time.Hour
 
 // Issuer-bound SEP-1 [[CURRENCIES]] entries: what an issuer DECLARED about its own assets.
 //
-// Provenance rule, as in [Store.AllSep1Images]: an entry counts only when its declared Issuer
-// names the G-address whose stellar.toml carried it. Otherwise any account could publish an entry
-// naming another issuer's (code, issuer) and have its claim read as that issuer's.
-//
-// Every entry NOT kept is COUNTED in a bucket naming why ([Sep1BoundCensus]), so a scan that
-// found almost nothing is distinguishable from one that only reports survivors.
+// Provenance rule, as in [Store.AllSep1Images]: an entry counts only when its declared Issuer names
+// the G-address whose stellar.toml carried it; otherwise any account could publish an entry naming
+// another issuer's (code, issuer). Every entry NOT kept is COUNTED in a bucket naming why
+// ([Sep1BoundCensus]), so a scan that found almost nothing is distinguishable from one that only
+// reports survivors.
 
 // Sep1BoundCurrency is one [[CURRENCIES]] entry that passed the provenance rule, with the issuer-account context a caller needs to attribute it.
 type Sep1BoundCurrency struct {

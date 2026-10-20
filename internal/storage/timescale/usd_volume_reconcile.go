@@ -14,10 +14,10 @@ import (
 // waterfall it mirrors ([ClassifyUSDVolumeTier]); they must move together, and this file must not
 // import internal/sources/external (storage-below-compute layering).
 //
-// Upper tiers are VWAP/FX estimates with no calibrated tolerance, so they are measured, not
-// judged. Tiers 1/2 (QUOTE leg pegged) and 2b (BASE leg pegged) are exact rescalings, so a
-// failure of usd_volume = pegged_leg_amount / 10^decimals means the wrong scale, leg, peg list or
-// backfill vintage.
+// Upper tiers are VWAP/FX estimates with no calibrated tolerance, so they are measured, not judged.
+// Tiers 1/2 (QUOTE leg pegged) and 2b (BASE leg pegged) are exact rescalings: a failure of
+// usd_volume = pegged_leg_amount / 10^decimals means the wrong scale, leg, peg list or backfill
+// vintage.
 
 // USDVolumeTier names how a trade's `usd_volume` was derived, mirroring the waterfall in [tradeUSDVolume].
 type USDVolumeTier string

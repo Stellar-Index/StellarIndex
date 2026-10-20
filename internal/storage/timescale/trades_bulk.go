@@ -19,14 +19,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// ─── bulk historical backfill writer ─────────────────────────────────────
+// ─── bulk historical backfill writer ───
 //
-// [Store.BulkBackfillTrades] is the backfill-only twin of [Store.BatchInsertTrades], which is the
-// live ingest path.
-//
+// [Store.BulkBackfillTrades] is the backfill-only twin of [Store.BatchInsertTrades] (the live
+// path).
 // Writes into compressed chunks are slow (PK enforced against compressed data) and `usd_volume`
 // resolution costs up to four serial `prices_1m` round trips per row on a cache miss
-// ([VWAPUSDFXResolver]). So resolve through a bounded worker pool, then land rows through
+// ([VWAPUSDFXResolver]), so it resolves through a bounded worker pool, then lands rows through
 // parallel binary COPY streams over disjoint conflict-key partitions.
 //
 // COPY has no conflict handling (a duplicate PK aborts the stream), so it is only safe on a range

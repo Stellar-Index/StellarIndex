@@ -21,25 +21,22 @@ type ProjectionDirtyWindow struct {
 	UpdatedAt time.Time
 }
 
-// Reason is PROVENANCE, not prose. Five tools write this table and they are not interchangeable
-// to every reader:
-//
-//   - `projector-replay` RE-WINDS the live projector cursor, so the lag its window covers is an
-//     INTENDED lag.
+// Reason is PROVENANCE, not prose. Five tools write this table and readers must not treat them
+// alike:
+//   - `projector-replay` RE-WINDS the live projector cursor, so its window's lag is INTENDED.
 //   - `projected-rebuild -write` never touches the live cursor; its range may sit AT it (`-to`
 //     defaults to it) or ABOVE it (`-allow-live-overlap`).
 //   - `ch-rebuild -record-dirty-window` (scripts/ops/ch-rebuild-projected.sh), when a clean-slate
-//     window was DELETEd and its re-derive did not complete: the range is EMPTY until the
-//     recovery run finishes.
+//     window was DELETEd and its re-derive did not complete: the range is EMPTY until recovery
+//     ends.
 //   - `ch-rebuild -write` rewrites the range from the lake, recorded before its first write.
-//   - `backfill -write` rewrites NON-projected served rows (no projector cursor), recorded before
-//     their first write. `backfill -source soroban-events` also stamps the full range on every
-//     PROJECTED source with a cursor: those rows are stale until a projector-replay re-projects
-//     them.
+//   - `backfill -write` rewrites NON-projected served rows, recorded before the first write.
+//     `backfill -source soroban-events` also stamps the full range on every PROJECTED source with a
+//     cursor: those rows are stale until a projector-replay re-projects them.
 //
 // The constructors and the predicate below are the ONE place the format lives. The prefixes must
-// reproduce byte-for-byte what released binaries wrote (pinned by
-// TestProjectionDirtyWindowReasonIsStableAcrossReleases).
+// reproduce byte-for-byte what released binaries wrote
+// (TestProjectionDirtyWindowReasonIsStableAcrossReleases).
 const (
 	reasonProjectorReplayPrefix  = "projector-replay rewind "
 	reasonProjectedRebuildPrefix = "projected-rebuild -write "

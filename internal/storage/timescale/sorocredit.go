@@ -11,17 +11,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// This file is the served-tier writer for the sorocredit source (internal/sources/sorocredit),
-// over four hypertables:
+// Served-tier writer for the sorocredit source (internal/sources/sorocredit), over four
+// hypertables:
 //
 //	credit_positions    <- NewCollateralContract  (one row per opened position)
 //	credit_statements   <- StatementPublished     (periodic per-position statement)
 //	credit_settlements  <- "Liquidation"          (SCHEDULED settlement, NOT distress)
 //	credit_events       <- Withdrawal + config    (event_type-discriminated)
 //
-// All amounts are decimal-i128 strings handed verbatim to NUMERIC columns, never int64. The
-// projector is the sole writer; row types live here, not in the source package, so storage
-// keeps its no-upward-import boundary.
+// Amounts are decimal-i128 strings handed verbatim to NUMERIC columns, never int64. The projector
+// is the sole writer; row types live here so storage keeps its no-upward-import boundary.
 
 // CreditPosition is one credit_positions row — a position opened by a NewCollateralContract event.
 type CreditPosition struct {

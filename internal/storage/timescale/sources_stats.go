@@ -158,14 +158,14 @@ func (s *Store) sourceVolumeHistory(ctx context.Context, window string) ([]Sourc
 // differing only in the WHERE predicate. Volume and unpriced handling match GetSourceStats.
 //
 // Asset filters use `= ANY($n)` against a bound string[] so the handler can pass every canonical
-// FORM of an asset (XLM's three: `native`, `crypto:XLM`, the SAC C-address; see
-// [canonical.AssetAliases]). One form undercounts: SDEX writes `native`, CEXes write
-// `crypto:XLM`, Soroban AMMs write the SAC. `= ANY(array)` stays sargable.
+// FORM of an asset (XLM's three: `native`, `crypto:XLM`, the SAC; see [canonical.AssetAliases]).
+// One form undercounts: SDEX writes `native`, CEXes `crypto:XLM`, Soroban AMMs the SAC. It stays
+// sargable.
 //
 // The pair query reads BOTH stored orientations, one UNION ALL arm each as pairMarketQuery does,
 // since a venue writing base = token_in stores one market as (A,B) and (B,A). The second arm
-// excludes the first's rows, which only overlap when base and quote name the same asset.
-// markets_24h counts marketKeySQL's unordered pair (inlined to keep the strings static).
+// excludes the first's rows (they only overlap when base and quote name the same asset).
+// markets_24h counts marketKeySQL's unordered pair, inlined to keep the strings static.
 const (
 	pairSourceStatsQuery = `
 		WITH per_source AS (

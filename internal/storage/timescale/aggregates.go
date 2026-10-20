@@ -264,19 +264,18 @@ func (s *Store) HistoryPoints(ctx context.Context, p canonical.Pair, granularity
 	// the pair binds via $1/$2.
 	table := "prices_" + string(granularity)
 	interval := granularity.closedBucketInterval()
-	// UNION ALL of single-direction branches, NOT one `(A AND B) OR (B AND A)`: the planner cannot
-	// drive prices_*_pair_bucket_idx from an OR of two (base, quote) equality pairs (see
-	// prices_1m_direction_union_test.go). This read is unauthenticated with no lower time bound.
+	// UNION ALL of single-direction branches, not `(A AND B) OR (B AND A)`: the planner cannot
+	// drive prices_*_pair_bucket_idx from an OR of two (base, quote) pairs
+	// (prices_1m_direction_union_test.go), and this read is unauthenticated with no lower time
+	// bound.
 	//
-	// `LIMIT $3` repeats on each branch: the first `2n+1` merged rows are contained in the union
-	// of each branch's first `2n+1`, and the cap stops a branch materialising in full. The
-	// closed-bucket guard stays sargable: a function on the indexed column forfeits index access
-	// and chunk pruning.
+	// `LIMIT $3` repeats on each branch (the first 2n+1 merged rows lie within each branch's first
+	// 2n+1) so no branch materialises in full. Keep the closed-bucket guard sargable: a function on
+	// the indexed column forfeits index access and chunk pruning.
 	//
 	// `base_asset` is a sort tiebreaker: `bucket ASC` is not a total order once a bucket holds both
-	// directions, and byte-identical cross-region serving must not rest on planner order. With
-	// limit=0 and custom plans the sort streams as Merge Append + Incremental Sort;
-	// history_points_test.go pins it.
+	// directions, and cross-region serving must be byte-identical (history_points_test.go pins the
+	// plan).
 	args := []any{p.Base.String(), p.Quote.String()}
 	limitClause := ""
 	if rowCap := bucketRowCap(limit); rowCap > 0 {
@@ -991,17 +990,13 @@ func (s *Store) LatestClosedVWAP1mForPair(ctx context.Context, p canonical.Pair)
 	// Combine both stored directions: the SDEX decoder records XLM/USDC and USDC/XLM, so one
 	// direction halves the liquidity.
 	//
-	// Both layers are required for speed:
-	//  1. The closed-bucket predicate must be `bucket <= now() - 1min`, not `bucket + 1min <=
-	//     now()`; a function on the indexed column makes max() scan every chunk.
-	//  2. `now()` is only known at run time, so the planner still enumerates every chunk. A literal
-	//     lower bound computed in Go excludes old chunks at plan time.
+	// Speed needs both: the closed-bucket predicate must be `bucket <= now() - 1min` (a function on
+	// the indexed column makes max() scan every chunk), and a literal lower bound computed in Go,
+	// since `now()` is only known at run time and the planner would enumerate every chunk.
 	//
 	// No unbounded fallback: the handler probes the zero-row native/fiat:USD pair on every XLM
-	// query, so a fallback would make every miss an all-chunk scan; ErrNoRows sends it to its
-	// triangulation chain instead. Proving a pair empty touches every chunk in the ~400-day window
-	// (minutes cold), so a cheap existence probe over latestVWAPGateWindow (~2 weeks of hot chunks)
-	// runs first.
+	// query, so a fallback would make every miss an all-chunk scan (minutes cold); ErrNoRows sends
+	// it to its triangulation chain. A cheap existence probe over latestVWAPGateWindow runs first.
 	gateSince := time.Now().UTC().Add(-latestVWAPGateWindow)
 	exists, err := s.recentClosedVWAP1mExists(ctx, p, gateSince)
 	if err != nil {
@@ -1131,17 +1126,14 @@ func (s *Store) TimedVWAPsForPair1m(ctx context.Context, p canonical.Pair, from,
 	if !to.After(from) {
 		return nil, fmt.Errorf("timescale: TimedVWAPsForPair1m: to %v <= from %v", to, from)
 	}
-	// Combine both stored directions into the requested ($1, $2) orientation, as
-	// LatestClosedVWAP1mForPair does: one direction feeds the anomaly baseline half the liquidity
-	// and no rows for minutes that traded only the flipped way. See canonical.Orient.
+	// Combine both stored directions into the requested ($1, $2) orientation (see
+	// canonical.Orient), as LatestClosedVWAP1mForPair does: one direction gives the baseline half
+	// the liquidity and misses minutes that traded only the flipped way.
 	//
 	// The combine is the volume-weighted union, Σ(requested quote leg) / Σ(requested base leg),
-	// with legs re-expressed via Σquote = vwap·volume_priced (the [combineDirVWAP] identity);
-	// trade-count weighting biases every two-sided baseline. The division stays in NUMERIC and
-	// only the final value casts to float8, the contract documented on [Store.VWAPsForPair1m].
-	//
-	// Each minute carries its USD notional (volume_usd, NULL when unpriced) for the refresher's
-	// USD-volume bars; that policy lives there.
+	// with legs re-expressed via Σquote = vwap·volume_priced ([combineDirVWAP]); trade-count
+	// weighting biases every two-sided baseline. Division stays in NUMERIC; only the final value
+	// casts to float8 (see [Store.VWAPsForPair1m]). volume_usd is NULL when unpriced.
 	const q = `
         SELECT (SUM(CASE WHEN base_asset = $1 THEN vwap * COALESCE(volume_priced, 0)
                          ELSE COALESCE(volume_priced, 0) END)
@@ -1360,18 +1352,14 @@ func (s *Store) OHLCSeries(
 	table := "prices_" + string(granularity)
 	interval := granularity.closedBucketInterval()
 	// Combine both stored directions into the requested ($1, $2) orientation as a UNION ALL of two
-	// index-drivable branches, not an OR (see [Store.HistoryPoints]); a window bound does not
-	// rescue the OR since /v1/ohlc's window is caller-chosen and can span all history.
+	// index-drivable branches, not an OR (see [Store.HistoryPoints]); /v1/ohlc's window is
+	// caller-chosen and can span all history, so a window bound does not rescue the OR.
 	//
-	// The `norm` CTE re-expresses each row in the requested orientation: flipped rows invert every
-	// price, which swaps high<->low, and swap base<->quote volume. Per bucket: high = max, low =
-	// min; open/close prefer the requested-direction row and fall back to the inverted flipped row
-	// (intra-bucket ordering across directions is unknowable from the CAGG); volumes + trade_count
-	// sum. See canonical.Orient / canonOrientSQL.
-	//
-	// `sources` is carried through so callers can resolve each bar's scale ([OHLCBar.Sources]).
-	// Each branch admits one (base_asset, quote_asset), so max() over a bucket's single row per
-	// direction is that row; inline keeps one grouping pass, where a joined-back CTE costs more.
+	// The `norm` CTE re-expresses flipped rows: prices invert (high<->low swap), base/quote volumes
+	// swap. Per bucket high = max, low = min; open/close prefer the requested-direction row and
+	// fall back to the inverted flipped row (intra-bucket order across directions is unknowable
+	// from the CAGG); volumes + trade_count sum. Each branch admits one (base, quote), so max()
+	// over a bucket's single row per direction is that row.
 	// #nosec G201 — table + interval come from the validated HistoryGranularity enum.
 	q := fmt.Sprintf(`
 		WITH norm AS (
@@ -1552,14 +1540,11 @@ func (s *Store) OHLCSeriesReBucketed(
 		return nil, fmt.Errorf("timescale: OHLCSeriesReBucketed: fold %s→%q is not declared in OHLCRoutes", sourceGranularity, outInterval)
 	}
 	table := "prices_" + string(sourceGranularity)
-	// Combine both stored directions before re-bucketing: the `norm` CTE collapses each source
-	// bucket's two directions into one bar in the requested ($1, $2) orientation (see OHLCSeries /
-	// canonical.Orient), and the outer query folds those into the coarser out_bucket.
-	//
-	// `sources` needs two folds, and only the first can use OHLCSeries's trick. A source bucket has
-	// at most one row per direction, so norm concatenates them. Across source buckets the fold is a
-	// real N-way union, so it gets its own grouping over the unnested arrays, joined back on
-	// out_bucket; unioning at the pre-fold grain forces the row-level CTE to materialise.
+	// Combine both stored directions before re-bucketing: `norm` collapses each source bucket's two
+	// directions into one bar in the requested ($1, $2) orientation (see OHLCSeries), and the outer
+	// query folds those into the coarser out_bucket. `sources` needs its own N-way union grouping
+	// over the unnested arrays, joined back on out_bucket; unioning at the pre-fold grain forces
+	// the row-level CTE to materialise.
 	// #nosec G201 — table comes from the validated enum, outInterval from the allow-list above.
 	q := ohlcReBucketedQuery(table, outInterval)
 	args := []any{p.Base.String(), p.Quote.String(), from.UTC(), to.UTC()}

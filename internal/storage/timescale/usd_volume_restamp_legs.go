@@ -14,14 +14,14 @@ import (
 )
 
 // The ESTIMATED tiers' shared row-list re-derive. [usd_volume_restamp.go] repairs the EXACT tiers
-// (a SQL identity); an estimated tier's value depends on a RATE at the row's timestamp, so each
-// candidate row is rebuilt into the [canonical.Trade] the decoder produced and handed to the
-// function [Store.InsertTrade] calls. Only these vary per tier:
+// (a SQL identity); an estimated tier depends on a RATE at the row's timestamp, so each candidate
+// row is rebuilt into the [canonical.Trade] the decoder produced and handed to the function
+// [Store.InsertTrade] calls. Only these vary per tier:
 //
-// 	tier       source scope   scanned leg        value function
-// 	xlm-base   DEX            base_asset = XLM   tradeUSDVolumeViaXLMBaseAnchorFor
-// 	xlm-quote  DEX            quote_asset = XLM  tradeUSDVolumeViaXLMQuoteAnchorFor
-// 	cex-fx     CEX            quote_asset = fiat tradeUSDVolumeViaFiatQuoteFor
+//	tier       source scope   scanned leg        value function
+//	xlm-base   DEX            base_asset = XLM   tradeUSDVolumeViaXLMBaseAnchorFor
+//	xlm-quote  DEX            quote_asset = XLM  tradeUSDVolumeViaXLMQuoteAnchorFor
+//	cex-fx     CEX            quote_asset = fiat tradeUSDVolumeViaFiatQuoteFor
 //
 // # The substance gate
 //
@@ -61,14 +61,13 @@ func (l restampLeg) column() string {
 	return "base_asset"
 }
 
-// The candidate scan, in two halves so the two leg variants cannot drift.
-//
-// The SQL filters only on things whose SQL spelling is exactly their Go spelling: the source
-// name, the leg's admissible asset ids, the time window and the generation guard. Anything needing
-// the operator's peg configuration (keyed on code+issuer plus the SAC-wrapper map) is decided in
-// Go by [usdVolumeDecimals] through each tier's gate. `base_asset = ANY(...)` rides
-// `trades_pair_source_ts_idx` / `trades_base_ts_idx` and `quote_asset = ANY(...)` rides
-// `trades_quote_ts_idx`, so the scan is an index walk over one chunk, not a seq-scan.
+// The candidate scan, in two halves so the two leg variants cannot drift. The SQL filters only on
+// things whose SQL spelling is exactly their Go spelling: source name, the leg's admissible asset
+// ids, the time window and the generation guard. Anything needing the operator's peg configuration
+// (keyed on code+issuer plus the SAC-wrapper map) is decided in Go by [usdVolumeDecimals] through
+// each tier's gate. `base_asset = ANY(...)` rides `trades_pair_source_ts_idx`/`trades_base_ts_idx`
+// and `quote_asset = ANY(...)` rides `trades_quote_ts_idx`, so the scan is an index walk over one
+// chunk.
 const (
 	restampScanSelectHead = `
 	SELECT source, ledger, tx_hash, op_index, ts,

@@ -1,19 +1,12 @@
-// This file is the ONLY writer of `classic_assets` and `issuers`
-// (ADR-0031/0032: one writer per domain, coverage derived from the data).
+// This file is the ONLY writer of `classic_assets` and `issuers` (ADR-0031/0032: one writer per
+// domain). Two sources feed it: TRADES from the indexer hot path ([Store.registerClassicAssetSeen];
+// advances trade provenance and `observation_count`) and TRUSTLINE HOLDINGS from the ClickHouse
+// lake ([Store.RegisterClassicAssetsHeld], called by `stellarindex-ops asset-registry-backfill`;
+// advances holding provenance only). The ops job owns no SQL, so the second source is not a second
+// writer.
 //
-// Two observation sources feed it:
-//
-//   - TRADES, from the indexer hot path ([Store.registerClassicAssetSeen]). Advances the trade
-//     provenance columns and `observation_count`.
-//   - TRUSTLINE HOLDINGS, from the ClickHouse lake ([Store.RegisterClassicAssetsHeld], called by
-//     `stellarindex-ops asset-registry-backfill`). Advances the holding provenance columns only.
-//
-// The ops job owns no SQL against either table, so the second source is not a second writer with
-// its own conflict clause and idea of `observation_count`.
-//
-// Both sources are idempotent and MONOTONE: LEAST on the first-seen pair, GREATEST on the
-// last-seen pair, and only the trade source touches the counter, so re-running over covered
-// ground converges instead of inflating.
+// Both are idempotent and MONOTONE: LEAST on first-seen, GREATEST on last-seen, and only trades
+// touch the counter, so re-running over covered ground converges instead of inflating.
 package timescale
 
 import (
@@ -97,16 +90,15 @@ func (s *Store) registerClassicAssetRange(
 		return err
 	}
 
-	// first_seen_* uses LEAST so chunked / parallel backfill that processes ledgers out of order
-	// cannot leave a higher value behind.
+	// first_seen_* uses LEAST so chunked/parallel backfill processing ledgers out of order cannot
+	// leave a higher value behind.
 	//
 	// slug: the fully-qualified asset_id verbatim, since an 8-char issuer prefix is a ~2^32
-	// vanity-grind (address mimicry). It IS the primary key, so it is unique by construction.
-	// ON CONFLICT keeps the existing slug (a public URL never silently changes).
+	// vanity-grind (address mimicry). It is the primary key; ON CONFLICT keeps the existing slug (a
+	// public URL never silently changes).
 	//
-	// first_trade_* / last_trade_* carry the *_seen_* values on THIS path only, because the
-	// *_seen_* pair also moves for a trustline-only observation and a "last traded" surface needs a
-	// column that means exactly that. LEAST/GREATEST ignore NULL operands in Postgres, so an asset
+	// first_trade_* / last_trade_* carry the *_seen_* values on THIS path only, because *_seen_*
+	// also moves for a trustline-only observation. LEAST/GREATEST ignore NULL operands, so an asset
 	// the holdings path registered first still gets its trade columns filled by its first trade.
 	if _, err := s.db.ExecContext(ctx, upsertClassicAssetSQL,
 		assetID, asset.Code, asset.Issuer,

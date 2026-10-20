@@ -1254,15 +1254,14 @@ func newRegistryObservation(ledger uint32, ts time.Time) registryObservation {
 	return registryObservation{minLedger: ledger, maxLedger: ledger, minTs: ts, maxTs: ts}
 }
 
-// A market has NO stored direction: the SDEX decoder sets base = soldAsset, so one market lands
-// as both (A,B) and (B,A) rows, and a read keyed on one direction silently misses the other. The
+// A market has NO stored direction: the SDEX decoder sets base = soldAsset, so one market lands as
+// both (A,B) and (B,A) rows, and a read keyed on one direction silently misses the other. The
 // readers below select both directions and re-express flipped rows per ROW ([orientTradeTo]).
 //
-// TWO LIMITED ARMS, not one OR'd scan, so each keeps its index-ordered scan
-// (trades_pair_ts_idx / trades_pair_source_ts_idx) and early stop, at twice the single-direction
-// cost. Aggregates fold the same way (docs/architecture/aggregation-plan.md "The direction
-// fold"). [Store.TradesInRangeAfter] stays one-directional (its caller merges under a keyset
-// cursor) and is the sole [directionExempt].
+// TWO LIMITED ARMS, not one OR'd scan, so each keeps its index-ordered scan (trades_pair_ts_idx /
+// trades_pair_source_ts_idx) and early stop. Aggregates fold the same way (docs/architecture/
+// aggregation-plan.md "The direction fold"). [Store.TradesInRangeAfter] stays one-directional (its
+// caller merges under a keyset cursor) and is the sole [directionExempt].
 
 // maxLatestTradesForPair caps [Store.LatestTradesForPair]: each arm is a
 // time-unbounded walk, so an unclamped limit could materialise the market.

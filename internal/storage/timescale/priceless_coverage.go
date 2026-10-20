@@ -31,14 +31,13 @@ type AssetCoverageSignals struct {
 	// decides on three floors over the alias union, so the tripwire asks
 	// the gate itself.
 	Volume24hUSD float64
-	// TopAccountPairVolShare is the fraction of the asset's 7d priced volume that trades in the
-	// single busiest UNORDERED counterparty key. A high share means volume-painting wash, which
-	// the classifier excludes so a wash farm cannot self-select into the alert.
-	//
-	// The key is the (maker,taker) account pair where both sides are recorded (SDEX) and the
-	// single known account where only one is (every Soroban AMM; see popularPricelessCandidatesSQL).
-	// Volume with NO account on either side (external CEX feeds) never enters the numerator, so it
-	// dilutes the share downward; AttributedVolShare says how much volume the share speaks for.
+	// TopAccountPairVolShare is the fraction of the asset's 7d priced volume in the single busiest
+	// UNORDERED counterparty key; a high share means volume-painting wash, which the classifier
+	// excludes so a wash farm cannot self-select into the alert. The key is the (maker,taker) pair
+	// where both are recorded (SDEX) and the single known account otherwise (Soroban AMMs; see
+	// popularPricelessCandidatesSQL). Volume with no account on either side (CEX feeds) never
+	// enters the numerator, so it dilutes the share; AttributedVolShare says how much volume the
+	// share speaks for.
 	TopAccountPairVolShare float64
 	// AttributedVolShare is the fraction of the asset's 7d priced volume that carried an
 	// identifiable counterparty account, i.e. what TopAccountPairVolShare was measured over. It is

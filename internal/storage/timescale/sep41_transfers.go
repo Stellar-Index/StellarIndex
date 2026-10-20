@@ -414,15 +414,14 @@ func cursorIndex16(v uint32) int16 {
 }
 
 // ListSEP41TransfersByAddress returns one address's SEP-41 'transfer' history, both sides, newest
-// first, keyset-paged by (ledger, tx_hash, op_index, event_index). It is the Postgres recent tail
-// of GET /v1/accounts/{g}/movements (ADR-0048 D5), merged in explorer/movements.go with
-// ClickHouse's stellar.account_movements; see SEP41MovementsFloorLedger for non-overlap.
+// first, keyset-paged by (ledger, tx_hash, op_index, event_index): the Postgres recent tail of
+// GET /v1/accounts/{g}/movements (ADR-0048 D5), merged with ClickHouse's stellar.account_movements
+// (see SEP41MovementsFloorLedger for non-overlap).
 //
 // Scope: event_kind = 'transfer' and ledger >= SEP41MovementsFloorLedger (below P23 a classic
 // transfer is already in account_movements; a pure Soroban-native one is a documented gap).
-//
-// direction, when non-empty, is "sent"/"received"/"self" relative to `address`. contractID, when
-// non-empty, filters every arm BEFORE the LIMIT so an ?asset= page is filled from matching rows.
+// direction, when set, is "sent"/"received"/"self" relative to `address`. contractID, when set,
+// filters every arm BEFORE the LIMIT so an ?asset= page is filled from matching rows.
 
 // sep41TransfersByAddressQuery assembles the UNION arm set for one
 // direction filter (see ListSEP41TransfersByAddress's shape comment).
@@ -494,18 +493,17 @@ func (s *Store) ListSEP41TransfersByAddress(ctx context.Context, address string,
 		limit = 200
 	}
 
-	// QUERY SHAPE: two index-friendly arms UNION'd, not `from_addr = $2 OR to_addr = $2` (the OR
-	// problem account_trades.go documents). The OR cannot ride either address-leading partial
-	// index in output order, so on COMPRESSED chunks (no btrees) the planner decompress-scans
-	// every chunk and hits the statement timeout. Each arm walks its own partial index
-	// (from_addr/to_addr, ledger DESC) and stops after one page; the outer merge picks the page.
-	// Direction filters collapse to arm selection: sent = from-arm, received = to-arm, self = one
+	// QUERY SHAPE: two UNION'd arms, not `from_addr = $2 OR to_addr = $2` (see account_trades.go).
+	// The OR cannot ride either address-leading partial index in output order, so on COMPRESSED
+	// chunks (no btrees) the planner decompress-scans every chunk and hits the statement timeout.
+	// Each arm walks its own partial index (from_addr/to_addr, ledger DESC) and stops after one
+	// page. Direction filters collapse to arm selection: sent = from-arm, received = to-arm, self =
 	// from-arm with to = from.
 	//
 	// floorLedger is the DYNAMIC lower bound (>=): the cap67 movements watermark + 1 once the
-	// lake-derived archive is following, since the archive serves everything at/below the
-	// watermark for ALL assets. Never below the P23 boundary: the classic_derived archive owns
-	// everything before it.
+	// lake-derived archive is following, since the archive serves everything at/below the watermark
+	// for ALL assets. Never below the P23 boundary: the classic_derived archive owns everything
+	// before it.
 	if fl := MovementsFloor(); floorLedger < fl {
 		floorLedger = fl
 	}

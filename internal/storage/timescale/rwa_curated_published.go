@@ -12,16 +12,14 @@ import (
 )
 
 // curated_rwa_published_series caches the totals a third-party curator PUBLISHES about tokenized
-// real-world assets, for the RWA curated arm (synced by `curated-rwa-sync`). It is separate from
-// rwa_curated_directory because the per-asset list lives in private uploads; only the latest RESULT
-// of the curator's public queries is readable.
+// real-world assets (synced by `curated-rwa-sync`). It is separate from rwa_curated_directory
+// because the per-asset list lives in private uploads; only the latest RESULT of the curator's
+// public queries is readable. A row is the curator's own arithmetic over private inputs, served
+// under its name beside the verified set, never inside it.
 //
-// A row is the curator's own arithmetic over private inputs (no per-asset breakdown, price or
-// market), served under its name beside the verified set, never inside it.
-//
-// TWO CLOCKS. `executed_at` is the CURATOR's, so a figure is only as fresh as that. `observed_at` is
-// OURS; the recognition bound ages on it, spliced into the SQL so no caller can read a stale row as
-// fresh. A sync replaces a curator's rows PER SERIES in one transaction, so a series shares both.
+// TWO CLOCKS: `executed_at` is the CURATOR's; `observed_at` is OURS, and the recognition bound ages
+// on it, spliced into the SQL so no caller can read a stale row as fresh. A sync replaces a
+// curator's rows PER SERIES in one transaction, so a series shares both.
 
 // Series names, shared by the writer and the reader.
 const (

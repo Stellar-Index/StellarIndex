@@ -668,22 +668,19 @@ const distinctPairsActivityCTEs = `
 // buildDistinctPairsQuery composes the per-pair-volume CTE and SELECT. Cursors: MarketsOrderPair is `<base>|<quote>` (strict-greater);
 // MarketsOrderVolume24hDesc is `<vol_or_blank>:<base>|<quote>`, a blank vol sorting as 0 so ":<pair>" resumes into the null-volume tail.
 func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limit int, order MarketsOrder) (string, []any) {
-	// /v1/markets is a directory listing, not a history view: reading prices_1m x 14 days blows
-	// the 8s handler ceiling. So the 14d active-pair set comes from prices_1d and only the 24h
-	// figures read prices_1m (chunk-pruned to the last day, so exact). A rolling 24h window is not
+	// /v1/markets is a directory listing, not a history view: reading prices_1m x 14 days blows the
+	// 8s handler ceiling. So the 14d active-pair set comes from prices_1d and only the 24h figures
+	// read prices_1m (chunk-pruned to the last day, so exact). A rolling 24h window is not
 	// bucket-additive over a coarser CAGG: prices_1h understated 24h volume ~9%.
 	//
-	// d and h are FULL OUTER JOINed because prices_1d (6h end_offset, materialized_only) has no
-	// row yet for a pair whose first trade is today. last_price, last_trade_at and
-	// bucket_close_at prefer h, falling back to d only for pairs idle over 24h (count_24h is then
-	// COALESCE'd to 0).
+	// d and h are FULL OUTER JOINed because prices_1d (6h end_offset, materialized_only) has no row
+	// yet for a pair whose first trade is today. last_price, last_trade_at and bucket_close_at
+	// prefer h and fall back to d only for pairs idle over 24h (count_24h is then COALESCE'd to 0).
 	//
-	// $5 is a text[] of the asset's alias forms: XLM is keyed `native`, `crypto:XLM` or its SAC
-	// depending on venue, so a scalar match omitted markets. canon collapses flipped orientations
-	// (the SDEX decoder records both XLM/USDC and USDC/XLM) into ONE row: volume and count sum
-	// across directions and last_price is the latest trade in the canonical orientation (see
-	// canonical.Orient). `folded` first maps each SAC spelling onto its classic form so a market
-	// on SDEX and a Soroban venue is one row.
+	// $5 is a text[] of the asset's alias forms: XLM is keyed `native`, `crypto:XLM` or its SAC by
+	// venue, so a scalar match omitted markets. canon collapses flipped orientations (see
+	// canonical.Orient) into ONE row, summing volume and count; `folded` first maps each SAC
+	// spelling onto its classic form so a market on SDEX and a Soroban venue is one row.
 	canonBase, canonQuote, flipped := canonOrientSQL(8)
 	ctes := distinctPairsActivityCTEs + `        raw AS (
             SELECT COALESCE(d.base_asset, h.base_asset)   AS base_asset,

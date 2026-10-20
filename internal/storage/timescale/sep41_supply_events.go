@@ -641,14 +641,15 @@ func beginSEP41RollupTx(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
 // Returns the checkpoint ledger before and after, and whether the projector's cursor row was absent (nothing foldable).
 func foldSEP41RollupLocked(ctx context.Context, tx *sql.Tx, contractID string) (fromLedger, toLedger int64, cursorAbsent bool, err error) {
 	// One statement under the caller's lock:
-	//   locked   - the boundary and floor. The row cannot change while locked and the snapshot
-	//              postdates the lock, so boundary and summed events are one consistent view.
-	//              MATERIALIZED evaluates it once.
+	//   locked   - the boundary and floor; cannot change while locked and the snapshot postdates
+	//   the
+	//              lock, so boundary and summed events are one consistent view. MATERIALIZED
+	//              evaluates once.
 	//   bound.mx - the contract's max ledger; folding strictly below defers the mid-write tip.
-	//   settled  - the durable cursor; NULL when the projector never committed a cycle, which the
-	//              delta treats as 0 (fold nothing).
+	//   settled  - the durable cursor; NULL if the projector never committed a cycle (delta treats
+	//   as 0).
 	//   delta    - the settled tail sum over (from_ledger, settled bound), floored.
-	//   UPDATE   - add the delta, move last_ledger to the max ledger folded and record its close time as the read's bound.
+	//   UPDATE   - add the delta, move last_ledger to the max ledger folded, record its close time.
 	const q = `
         WITH locked AS MATERIALIZED (
             SELECT last_ledger                          AS from_ledger,

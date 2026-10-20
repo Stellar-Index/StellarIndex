@@ -16,17 +16,19 @@ import (
 // mevStampMinute is the scanned trade's own minute, the newest the ingest stamp can have been priced from.
 const mevStampMinute = "date_trunc('minute', s.ts)"
 
-// tradesForArbScanQuery values each leg at stored usd_volume, else its XLM leg at the minute's XLM/USD anchor ([xlmUSDAnchorGridCTE]), so
-// NULL-usd SDEX cycles don't report "$0"; no anchor within xlmUSDAnchorMaxAge leaves it empty. The last column marks an
-// anchor-valued leg as estimated. $3 is the native-XLM SAC.
+// tradesForArbScanQuery values each leg at stored usd_volume, else its XLM leg at the minute's
+// XLM/USD anchor ([xlmUSDAnchorGridCTE]), so NULL-usd SDEX cycles don't report "$0"; no anchor
+// within xlmUSDAnchorMaxAge leaves it empty. The last column marks an anchor-valued leg as
+// estimated. $3 is the native-XLM SAC.
 //
-// A stored usd_volume is set aside when the trade has an XLM leg against a non-USD asset and a recorded XLM/USD-proxy freeze
-// ([xlmUSDFreezeOverlap]) overlaps the xlmUSDAnchorMaxAge before its minute: the ingest stamp read the newest XLM/USD minute in that
-// window, and a stamp served from the resolver's cache or written before the freeze row landed may carry the frozen rate. The leg
-// is then valued like an unstamped one, from the anchor (estimated) or not at all. The set-aside reaches the minutes a recorded
-// freeze covers (five minutes before frozen_at up to recovery), not a trigger that trailed its minute by longer. An XLM/USD-proxy
-// trade keeps its stamp: its USD value is its own proxy leg, not the XLM rate. A stamp on a non-XLM trade priced through the XLM
-// bridge at ingest is not set aside here and may carry a triggering or not-yet-recorded minute.
+// A stored usd_volume is set aside when the trade has an XLM leg against a non-USD asset and a
+// recorded XLM/USD-proxy freeze ([xlmUSDFreezeOverlap]) overlaps the xlmUSDAnchorMaxAge before its
+// minute: a stamp served from the resolver's cache or written before the freeze row landed may
+// carry the frozen rate. The leg is then valued like an unstamped one (anchor, estimated, or not at
+// all). The set-aside covers minutes a recorded freeze covers (five minutes before frozen_at to
+// recovery). An XLM/USD-proxy trade keeps its stamp (its USD value is its own proxy leg). A stamp
+// on a non-XLM trade priced through the XLM bridge at ingest is not set aside and may carry a
+// frozen minute.
 //
 //nolint:gosec // G202: fragments are constant SQL (helper output built from literals and $N placeholders); values bind via $N
 var tradesForArbScanQuery = `

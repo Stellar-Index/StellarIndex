@@ -164,10 +164,9 @@ func (s *Store) LatestSupplyObservations(ctx context.Context, maxAge time.Durati
 	// clock would turn skew into a phantom staleness verdict.
 	//
 	// $1 is cast and multiplied by an interval LITERAL: an untyped bind beside INTERVAL fails with
-	// 42883 on every call.
-	//
-	// The bound is the ONLY predicate (no `OR unbounded` escape): a disjunction defeats plan-time
-	// chunk exclusion and the read walks the whole hypertable at ~10x the cost.
+	// 42883 on every call. The bound is the ONLY predicate (no `OR unbounded` escape): a
+	// disjunction defeats plan-time chunk exclusion and the read walks the whole hypertable at ~10x
+	// the cost.
 	const q = `
         SELECT CASE WHEN asset_key = 'XLM' THEN 'native'
                     ELSE replace(asset_key, ':', '-') END AS asset_id,
@@ -767,21 +766,18 @@ type AssetPricePoint struct {
 }
 
 // Rounding scale for catalogue reads that serve a USD price as ROUNDed text from RAW prices_1m
-// ratios: the per-asset price_usd ([getAssetBySlugSQL]) and the price-history series.
+// ratios (per-asset price_usd [getAssetBySlugSQL] and the price-history series).
 //
-// These reads stay RAW because the API corrects a confirmed non-7-decimals token
+// They stay RAW because the API corrects a confirmed non-7-decimals token
 // (v1.Server.normalizeCatalogueUSD); correcting here too would apply the factor twice. Rounding
-// runs before that correction: a flat ROUND(raw, 10) on an 18-decimals token would turn a 1 USD
-// price (raw 1e-11) into zero. Rounding the raw ratio to 10 + k places, where the correction is
-// 10^k, IS rounding the corrected price:
+// runs before that correction, and a flat ROUND(raw, 10) on an 18-decimals token would turn a 1 USD
+// price (raw 1e-11) into zero. With correction 10^k:
 //
 //	ROUND(raw, 10 + k) * 10^k  ==  ROUND(raw * 10^k, 10)
 //
-// k comes from nonstandard_decimals_assets, floored at zero; the API reads it back from the text,
-// as ROUND(x, n)::text has exactly n fraction places.
-//
-// Three spellings of one expression differ only in how the asset is named. MAX because the
-// alias-array form may match more than one spelling.
+// k comes from nonstandard_decimals_assets, floored at zero; ROUND(x, n)::text has exactly n
+// fraction places, so the API reads k back from the text. The three spellings differ only in how
+// the asset is named; MAX because the alias-array form may match more than one spelling.
 const (
 	catalogueRoundPlacesHead = `10 + COALESCE((SELECT MAX(GREATEST(nda.decimals - 7, 0))
 		                          FROM nonstandard_decimals_assets nda
