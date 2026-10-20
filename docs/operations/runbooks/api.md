@@ -370,7 +370,7 @@ A `worker panicked` line names the reaper ([worker-panicked](infra.md#stellarind
 
 ## stellarindex_ch_schema_probe_absent
 
-**Trigger.** `stellarindex_ch_schema_probe_present{probe="..."} == 0` for 30m on one API instance, P3. The explorer reader (`internal/storage/clickhouse/explorer_reader.go`) latches a "no such table/column" answer until restart, so the API stays on a slow fallback (or 503s). `0` = absent or empty; an unanswering lake moves `stellarindex_ch_schema_probe_unanswered_total` instead.
+**Trigger.** `stellarindex_ch_schema_probe_present{probe="..."} == 0` for 30m on one API instance, P3. The explorer reader (`internal/storage/clickhouse/explorer_reader.go`) latches a "no such table/column" answer until restart, so the API stays on a slow fallback (or 503s). `0` = absent or empty; an unanswering lake moves `stellarindex_ch_schema_probe_unanswered_total` instead. A restart clears the series until the probe next answers, so the alert resolving on a deploy is not a fix: re-check step 1 after the first explorer read.
 
 Each `probe` names the lake table `stellar.<probe>` (e.g. `tx_hash_index`, `contract_active_ledgers`, `accounts_stats`, `asset_holders_rollup`, `ops_by_source`, `account_activity`) except: `tx_hash_index_coverage` is a marker (apply `deploy/clickhouse/tx_hash_index_coverage.sql`, then backfill or insert the row); `contract_instance_changes_tx_key` is the `tx_hash` + `intra_ledger_seq` columns on `stellar.contract_instance_changes`; `ledger_entries_current_version` is the `version` column on `stellar.ledger_entries_current`.
 
