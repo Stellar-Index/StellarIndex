@@ -110,11 +110,11 @@ func (r *recordingMarketsReader) GetPairsVolumeHistory24hBatch(context.Context, 
 	return map[string][]timescale.PairVolumePoint{}, nil
 }
 
-// newRecordingMarkets returns a cached reader over a recorder. TTL 0 passes every call through, so the log holds the
-// full call sequence and a MISSING prewarm is visible rather than deduplicated.
+// newRecordingMarkets returns a cached reader over a recorder. The TTL is positive so the log holds the upstream args of
+// each slot filled, which is the slot key (first pages map to the head slot); presence checks lose nothing to dedup.
 func newRecordingMarkets() (*v1.CachedMarketsReader, *callLog) {
 	log := newCallLog()
-	return v1.NewCachedMarketsReader(&recordingMarketsReader{log: log}, 0), log
+	return v1.NewCachedMarketsReader(&recordingMarketsReader{log: log}, time.Minute), log
 }
 
 // ─── the parity assertion ────────────────────────────────────────

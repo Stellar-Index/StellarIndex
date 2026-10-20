@@ -159,16 +159,7 @@ func (s *Store) AllPools(ctx context.Context, filter PoolsFilter, cursor string,
 	nextCursor := ""
 	if hasMore && len(out) > 0 {
 		last := out[len(out)-1]
-		key := last.Source + "|" + last.Pair.Base.String() + "|" + last.Pair.Quote.String()
-		if order == MarketsOrderVolume24hDesc {
-			vol := ""
-			if last.Volume24hUSD != nil {
-				vol = *last.Volume24hUSD
-			}
-			nextCursor = vol + ":" + key
-		} else {
-			nextCursor = key
-		}
+		nextCursor = PageCursor(order, last.Source+"|"+last.Pair.Base.String()+"|"+last.Pair.Quote.String(), last.Volume24hUSD)
 	}
 	return out, nextCursor, nil
 }
@@ -613,15 +604,19 @@ func ValidateMarketsCursor(cursor string, order MarketsOrder) error {
 
 // encodeMarketsCursor formats the last-row cursor: pair-only for MarketsOrderPair, `<vol>:<pair>` for MarketsOrderVolume24hDesc.
 func encodeMarketsCursor(last Market, order MarketsOrder) string {
-	pairKey := last.Pair.Base.String() + "|" + last.Pair.Quote.String()
-	if order == MarketsOrderVolume24hDesc {
-		vol := ""
-		if last.Volume24hUSD != nil {
-			vol = *last.Volume24hUSD
-		}
-		return vol + ":" + pairKey
+	return PageCursor(order, last.Pair.Base.String()+"|"+last.Pair.Quote.String(), last.Volume24hUSD)
+}
+
+// PageCursor formats a listing's next-page cursor from its last row's key (`base|quote`, or `source|base|quote` for pools).
+func PageCursor(order MarketsOrder, key string, vol24hUSD *string) string {
+	if order != MarketsOrderVolume24hDesc {
+		return key
 	}
-	return pairKey
+	vol := ""
+	if vol24hUSD != nil {
+		vol = *vol24hUSD
+	}
+	return vol + ":" + key
 }
 
 // distinctPairsActivityCTEs is the static head of /v1/markets: `d` (14-day active pairs, prices_1d) and `h` (trailing-24h prices_1m scan).

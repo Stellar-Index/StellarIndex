@@ -103,10 +103,15 @@ func (c *CachedMarketsReader) DistinctPairsExtAt(ctx context.Context, cursor str
 		rows, next, err := c.upstream.DistinctPairsExt(ctx, cursor, limit, order)
 		return rows, next, time.Time{}, false, err
 	}
-	key := newCacheKey("DistinctPairsExt").str(cursor).int(limit).order(int(order)).build()
-	return c.fetchPairs(ctx, "distinct_pairs", key, func(ctx context.Context) ([]Market, string, error) {
-		return c.upstream.DistinctPairsExt(ctx, cursor, limit, order)
+	fetch := headLimit(cursor, limit)
+	key := newCacheKey("DistinctPairsExt").str(cursor).int(fetch).order(int(order)).build()
+	rows, next, at, stale, err := c.fetchPairs(ctx, "distinct_pairs", key, func(ctx context.Context) ([]Market, string, error) {
+		return c.upstream.DistinctPairsExt(ctx, cursor, fetch, order)
 	})
+	rows, next = sliceHead(rows, next, limit, func(m Market) string {
+		return timescale.PageCursor(order, m.Base+"|"+m.Quote, m.Volume24hUSD)
+	})
+	return rows, next, at, stale, err
 }
 
 // SourceMarkets — cached. See DistinctPairsExt re: dropped staleness meta.
@@ -157,13 +162,38 @@ func (c *CachedMarketsReader) AllPoolsStale(ctx context.Context, filter timescal
 		rows, next, err := c.upstream.AllPools(ctx, filter, cursor, limit, order)
 		return rows, next, time.Time{}, false, err
 	}
+	fetch := headLimit(cursor, limit)
 	key := newCacheKey("AllPools").
 		strSet(filter.Sources).
 		str(filter.Base).str(filter.Quote).str(filter.Asset).
-		str(cursor).int(limit).order(int(order)).build()
-	return c.fetchPools(ctx, "all_pools", key, func(ctx context.Context) ([]Pool, string, error) {
-		return c.upstream.AllPools(ctx, filter, cursor, limit, order)
+		str(cursor).int(fetch).order(int(order)).build()
+	rows, next, at, stale, err := c.fetchPools(ctx, "all_pools", key, func(ctx context.Context) ([]Pool, string, error) {
+		return c.upstream.AllPools(ctx, filter, cursor, fetch, order)
 	})
+	rows, next = sliceHead(rows, next, limit, func(p Pool) string {
+		return timescale.PageCursor(order, p.Source+"|"+p.Base+"|"+p.Quote, p.Volume24hUSD)
+	})
+	return rows, next, at, stale, err
+}
+
+// marketsHeadLimit is the single first-page slot per listing: every first page up to it is sliced from one scan, since the
+// scan aggregates the whole 14-day window whatever the LIMIT.
+const marketsHeadLimit = 200
+
+// headLimit is the limit to fetch and key on: marketsHeadLimit for a first page within it, else the caller's own.
+func headLimit(cursor string, limit int) int {
+	if cursor == "" && limit >= 1 && limit <= marketsHeadLimit {
+		return marketsHeadLimit
+	}
+	return limit
+}
+
+// sliceHead trims a head-slot page to limit, re-deriving the next cursor from the last row kept.
+func sliceHead[T any](rows []T, next string, limit int, cursorOf func(T) string) ([]T, string) {
+	if limit < 1 || len(rows) <= limit {
+		return rows, next
+	}
+	return rows[:limit], cursorOf(rows[limit-1])
 }
 
 // marketsRefreshBudget bounds the off-request SWR refresh; it must exceed the worst-case contended AllPools/DistinctPairs scan.
