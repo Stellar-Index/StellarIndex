@@ -20,6 +20,21 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.33] - 2026-10-20
+
+No migrations. No `pkg/*` break. No config change. Operator step after the deploy: run the `deploy/clickhouse/contract_event_shapes.sql` runbook (DDL, per-partition backfill, verify, coverage marker); until its marker row exists, recognition keeps the raw scan.
+
+### Fixed
+
+- **api:** `/v1/price` remembers for a minute that a pair has no trades older than the 7-day window, so a burst of native-quoted `/v1/price/batch` misses stops re-planning the 400-day trades pass on every call (165 ms planning per arm on r1) (#3684).
+- **api:** `/v1/assets` ranks a narrow set before the value joins (#3676).
+- **aggregate:** the asset-character roll waits until the stored roll is due (#3677).
+- **timescale:** per-venue pools aggregate on stored columns before the alias fold (#3678); source stats fold orientation over stored-column groups (#3681).
+- **priceless:** the popular-priceless sweep takes one trades pass (#3679).
+- **aquarius:** latest reserves narrow `DISTINCT ON` to each pool's last ledger (#3680).
+- **healthchecks:** binary heartbeats ping every 40 s so jitter stays inside the 60 s period (#3682).
+- **clickhouse:** recognition reads covered partitions from the MV-fed `stellar.contract_event_shapes` rollup instead of a raw scan of `contract_events` (#3683).
+
 ## [v0.116.32] - 2026-10-20
 
 No migrations. No `pkg/*` break. No config change.
@@ -74,21 +89,3 @@ Postgres migrations 0219-0221 (catalog-only or new tables; no replay). No `pkg/*
 - **timescale:** `lp_reserve_current`, a trigger-kept per-pool reserve table for classic supply sums (#3644); `trades.usd_basis` records which valuation route produced each trade's `usd_volume` (#3647).
 - **ops:** a daily `trades_by_account` catch-up to the compression horizon (#3652).
 - **ansible:** r1's anonymous rate limit drops to 600/min now that explorer builds send a key (#3648).
-
-## [v0.116.28] - 2026-10-19
-
-No Postgres migrations. No `pkg/*` break. ClickHouse: apply Step 1 of `deploy/clickhouse/account_op_types.sql` on every host before this binary (the sink refuses to start without it); Steps 3-5 (backfill, verify, coverage marker) follow the deploy.
-
-### Fixed
-
-- **api:** `/v1/pools` prefilters raw rows on the asset arrays before the alias fold, so the base/quote indexes apply (1.7 s to 0.7 s on the reference deployment) (#3640).
-- **api:** `LatestTradesForPair` inlines its LIMIT so Postgres caches one plan instead of re-planning every call (#3639).
-- **api:** a classic asset's change strip is served from its listing snapshot when it has no change-summary row (#3636).
-- **ops:** the `stellarindex` Postgres role gets `pg_read_all_settings` (#3637).
-
-### Added
-
-- **clickhouse:** `account_op_types`, a per-account op-type index (source arm by materialized view, participant arm by the sink); `/v1/accounts/{g}/activity` reads its counts from it once the coverage marker exists (#3633, #3634, #3641).
-- **explorer:** the account page shows the sponsorships in force (#3630); the prerender sends a build API key, never the browser (#3631).
-- **dev:** `api-latency-sweep --pages` times explorer detail pages (#3632).
-- **docs:** the off-site drill's measured multi-hour restore and a 6h run ceiling (#3638).
