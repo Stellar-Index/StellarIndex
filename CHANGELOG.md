@@ -20,6 +20,15 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.38] - 2026-10-20
+
+No migrations. No `pkg/*` break. No config change. After the deploy, watch the latency SLO burn during the next crawler burst.
+
+### Fixed
+
+- **api:** asset detail caches the lake token-supply sum per contract for 5 minutes and serves the last good value on a ClickHouse error; under a crawl, the uncached `supply_flows FINAL` sum dominated ClickHouse serving load (#3721).
+- **alerts:** `dust_dropped_high` fires on the share of a venue's trades dropped as dust, not the absolute rate, so a volume burst no longer pages (#3720).
+
 ## [v0.116.37] - 2026-10-20
 
 No migrations. No `pkg/*` break. No config change.
