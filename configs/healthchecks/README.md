@@ -7,7 +7,7 @@ Closes the gap noted in the launch-readiness backlog:
 
 Two complementary timer flavours:
 
-### 1. Per-binary heartbeats — 60 s cadence
+### 1. Per-binary heartbeats — 40 s cadence (60 s check period)
 
 Three systemd `.timer` instantiations of a single template service
 each ping a Healthchecks.io URL after verifying the corresponding
@@ -133,7 +133,7 @@ That's 3 binary heartbeats (indexer / aggregator / api) +
 Then `systemctl restart stellarindex-heartbeat@*.timer stellarindex-smoke.timer stellarindex-sla-probe.timer`.
 
 Suggested dashboard schedules:
-- per-binary heartbeats: period 60 s, grace 120 s
+- per-binary heartbeats: period 60 s, grace 120 s (the timer pings every 40 s plus up to 15 s jitter, so each ping lands inside the period)
 - API smoke: period 5 min, grace 10 min
 - SLA probe: period 15 min, grace 30 min
 

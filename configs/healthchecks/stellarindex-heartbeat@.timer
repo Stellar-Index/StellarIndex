@@ -3,13 +3,13 @@ Description=Stellar Index Healthchecks.io heartbeat schedule — %i
 Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/configs/healthchecks/README.md
 
 [Timer]
-# 60 s cadence matches Healthchecks.io's free-tier 2-minute grace
-# window (one missed ping is tolerable, two consecutive turn the
-# check red). RandomizedDelaySec spreads the three template
-# instances so they don't all hammer the metrics endpoints at the
-# same instant.
+# The checks expect a ping every 60 s. Randomized delay and accuracy
+# add up to 15 s per run, so a 60 s base put pings 61-75 s apart and
+# left the checks in "grace" between deploys. 40 s keeps the worst
+# case near 55 s. RandomizedDelaySec spreads the three template
+# instances so they don't hit the metrics endpoints at the same instant.
 OnBootSec=30s
-OnUnitActiveSec=60s
+OnUnitActiveSec=40s
 RandomizedDelaySec=10s
 AccuracySec=5s
 Unit=stellarindex-heartbeat@%i.service
