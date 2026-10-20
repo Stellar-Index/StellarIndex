@@ -76,6 +76,10 @@ func sourceStatsQuery() string {
 		-- groups. Identical results, measured 4.7 s — a 3.2x improvement
 		-- that brings this back under the handler's 8 s ceiling, which it
 		-- had been silently blowing on every request (see below).
+		--
+		-- The orientation fold runs over the stored-column groups, not every
+		-- row: grouping on the fold expression misestimates the group count
+		-- and spills to an external sort.
 		SELECT source,
 		       SUM(pair_trades)::bigint AS trades_24h,
 		       SUM(pair_volume)::text   AS volume_usd_24h,
@@ -85,11 +89,18 @@ func sourceStatsQuery() string {
 		    SELECT source,
 		           ` + canonBase + ` AS base_asset,
 		           ` + canonQuote + ` AS quote_asset,
-		           COUNT(*) AS pair_trades,
-		           SUM(usd_volume::numeric) AS pair_volume,
-		           COUNT(*) FILTER (WHERE usd_volume IS NULL) AS pair_unpriced
-		      FROM trades
-		     WHERE ts >= now() - INTERVAL '24 hours'
+		           SUM(raw_trades) AS pair_trades,
+		           SUM(raw_volume) AS pair_volume,
+		           SUM(raw_unpriced) AS pair_unpriced
+		      FROM (
+		        SELECT source, base_asset, quote_asset,
+		               COUNT(*) AS raw_trades,
+		               SUM(usd_volume::numeric) AS raw_volume,
+		               COUNT(*) FILTER (WHERE usd_volume IS NULL) AS raw_unpriced
+		          FROM trades
+		         WHERE ts >= now() - INTERVAL '24 hours'
+		         GROUP BY source, base_asset, quote_asset
+		      ) raw
 		     GROUP BY source, ` + canonBase + `, ` + canonQuote + `
 		  ) per_pair
 		 GROUP BY source

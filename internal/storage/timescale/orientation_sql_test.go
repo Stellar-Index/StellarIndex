@@ -49,16 +49,18 @@ func TestNetworkStatsQueryFoldsOrientation(t *testing.T) {
 	}
 }
 
-// TestSourceStatsQueryFoldsOrientation pins the same fold in GetSourceStats: the per_pair CTE must GROUP BY
-// the canonical (base, quote), not the raw columns, or markets_24h is inflated by each flipped-orientation
-// pair.
+// TestSourceStatsQueryFoldsOrientation pins the same fold in GetSourceStats: the groups per_pair emits must be
+// the canonical (base, quote), or markets_24h is inflated by each flipped-orientation pair. A raw-column
+// pre-aggregate beneath that level is fine.
 func TestSourceStatsQueryFoldsOrientation(t *testing.T) {
 	q := sourceStatsQuery()
-	if strings.Contains(q, "GROUP BY source, base_asset, quote_asset") {
-		t.Errorf("per_pair must not GROUP BY raw base_asset/quote_asset — it double-counts a flipped-orientation market:\n%s", q)
-	}
 	canonBase, canonQuote, _ := canonOrientSQL(1)
-	if !strings.Contains(q, "GROUP BY source, "+canonBase+", "+canonQuote) {
-		t.Errorf("per_pair must GROUP BY canonOrientSQL's folded (base, quote):\n%s", q)
+	canonGroup := "GROUP BY source, " + canonBase + ", " + canonQuote
+	i := strings.Index(q, canonGroup)
+	if i < 0 {
+		t.Fatalf("per_pair must GROUP BY canonOrientSQL's folded (base, quote):\n%s", q)
+	}
+	if rest := strings.TrimSpace(q[i+len(canonGroup):]); !strings.HasPrefix(rest, ") per_pair") {
+		t.Errorf("the folded GROUP BY must be the level that closes per_pair — anything after it can double-count a flipped-orientation market:\n%s", q)
 	}
 }
