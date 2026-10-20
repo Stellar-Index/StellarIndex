@@ -26,6 +26,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // scamFlagTagSet is the lookup form of timescale.DirectoryScamFlagTags (kept beside account_directory because storage cannot import
@@ -332,7 +333,7 @@ func (g *ScamGate) flaggedSACIndex(ctx context.Context) (map[string]struct{}, er
 	if !g.clock().Before(g.sacExpires) && !g.sacRefreshing {
 		g.sacRefreshing = true
 		g.sacRefresh.Add(1)
-		go g.refreshSACIndex()
+		go g.refreshSACIndex(context.WithoutCancel(ctx))
 	}
 	return g.sacIndex, nil
 }
@@ -347,9 +348,18 @@ func (g *ScamGate) WarmSACIndex(ctx context.Context) {
 
 // refreshSACIndex rebuilds the index off the request path. On failure the previous index stays
 // (safer than the fail-open first build) and the next expired read retries.
-func (g *ScamGate) refreshSACIndex() {
+func (g *ScamGate) refreshSACIndex(ctx context.Context) {
 	defer g.sacRefresh.Done()
-	ctx, cancel := context.WithTimeout(context.Background(), sacRefreshTimeout)
+	// A panic must still clear sacRefreshing, or no rebuild would ever start again.
+	defer func() {
+		if r := recover(); r != nil {
+			worker.Report(g.logger, "scam-sac-index-refresh", r)
+			g.sacMu.Lock()
+			g.sacRefreshing = false
+			g.sacMu.Unlock()
+		}
+	}()
+	ctx, cancel := context.WithTimeout(ctx, sacRefreshTimeout)
 	defer cancel()
 	assets, err := g.flaggedAssets.DirectoryScamFlaggedClassicAssets(ctx)
 	g.sacMu.Lock()
