@@ -397,6 +397,13 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      - name: Assert the environment gate is configured
+        # Dry-run only, so the observe gate is the one that applies.
+        env:
+          GH_TOKEN: ${{ secrets.DEPLOY_PROTECTION_TOKEN || secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: bash scripts/ci/assert-deploy-gate.sh --observe r1-observe
+
       - name: Install ansible
         # Same pins as the drift-check job.
         run: |
