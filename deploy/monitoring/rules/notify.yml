@@ -91,7 +91,12 @@ groups:
       # confirmation email. Counter children are pre-seeded, so increase()
       # sees a lone failure.
       - alert: stellarindex_notify_send_failed
-        expr: sum by (template) (increase(stellarindex_notify_sends_total{result="failed"}[1h])) > 0
+        expr: |
+          sum by (template) (increase(stellarindex_notify_sends_total{result="failed"}[1h])) > 0
+          or sum by (template) (
+            stellarindex_notify_sends_total{result="failed"}
+            unless max_over_time(stellarindex_notify_sends_total{result="failed"}[1d] offset 1h)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 90000)
         for: 0m
         labels:
           severity: ticket

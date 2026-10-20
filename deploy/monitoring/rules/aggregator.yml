@@ -308,6 +308,10 @@ groups:
       - alert: stellarindex_aggregator_cache_write_errors
         expr: |
           sum(rate(stellarindex_aggregator_vwap_cache_write_errors_total[5m])) > 0
+          or sum (
+            stellarindex_aggregator_vwap_cache_write_errors_total
+            unless max_over_time(stellarindex_aggregator_vwap_cache_write_errors_total[1d] offset 5m)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 86700)
         for: 2m
         labels:
           severity: page
@@ -540,6 +544,10 @@ groups:
       - alert: stellarindex_customer_webhook_fanout_failing
         expr: |
           sum by (event_type, reason) (increase(stellarindex_customer_webhook_fanout_failures_total[1h])) > 0
+          or sum by (event_type, reason) (
+            stellarindex_customer_webhook_fanout_failures_total
+            unless max_over_time(stellarindex_customer_webhook_fanout_failures_total[1d] offset 1h)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 90000)
         for: 5m
         labels:
           severity: ticket

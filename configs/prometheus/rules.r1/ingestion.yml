@@ -283,7 +283,12 @@ groups:
       # INFORMATIONAL, not ticket: an oracle listing a new token is not our fault and
       # would compete with things that ARE broken. Routes to a low-traffic channel.
       - alert: stellarindex_ingestion_oracle_unknown_symbols
-        expr: sum by (source) (increase(stellarindex_source_unknown_symbols_total[25h])) > 0
+        expr: |
+          sum by (source) (increase(stellarindex_source_unknown_symbols_total[25h])) > 0
+          or sum by (source) (
+            stellarindex_source_unknown_symbols_total
+            unless max_over_time(stellarindex_source_unknown_symbols_total[1d] offset 25h)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 176400)
         for: 30m
         labels:
           severity: informational
@@ -353,7 +358,12 @@ groups:
       # best-effort by design, the description asks for "continued doing so
       # for 10 minutes"
       - alert: stellarindex_ingestion_discovery_drops
-        expr: increase(stellarindex_discovery_dropped_hits_total[10m]) > 0
+        expr: |
+          increase(stellarindex_discovery_dropped_hits_total[10m]) > 0
+          or (
+            stellarindex_discovery_dropped_hits_total
+            unless max_over_time(stellarindex_discovery_dropped_hits_total[1d] offset 10m)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 87000)
         for: 10m
         labels:
           severity: informational
@@ -419,7 +429,12 @@ groups:
       # re-appears on a later event; the description asks for "kept failing
       # for 10 minutes" (see the `for:` note above discovery_drops)
       - alert: stellarindex_ingestion_discovery_record_failures
-        expr: increase(stellarindex_discovery_record_failures_total[10m]) > 0
+        expr: |
+          increase(stellarindex_discovery_record_failures_total[10m]) > 0
+          or (
+            stellarindex_discovery_record_failures_total
+            unless max_over_time(stellarindex_discovery_record_failures_total[1d] offset 10m)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 87000)
         for: 10m
         labels:
           severity: ticket
@@ -444,7 +459,12 @@ groups:
       # tickets only when dropping is continuous (see the `for:` note above
       # discovery_drops)
       - alert: stellarindex_ingestion_ch_live_sink_drops
-        expr: increase(stellarindex_ch_live_sink_ledgers_total{outcome="dropped"}[10m]) > 0
+        expr: |
+          increase(stellarindex_ch_live_sink_ledgers_total{outcome="dropped"}[10m]) > 0
+          or (
+            stellarindex_ch_live_sink_ledgers_total{outcome="dropped"}
+            unless max_over_time(stellarindex_ch_live_sink_ledgers_total{outcome="dropped"}[1d] offset 10m)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 87000)
         for: 10m
         labels:
           severity: ticket
@@ -466,7 +486,12 @@ groups:
       # for an hour" — the heal path losing the race, not one shed ledger,
       # which the ticket above and ch-live-catchup already cover
       - alert: stellarindex_ingestion_ch_live_sink_drops_sustained
-        expr: increase(stellarindex_ch_live_sink_ledgers_total{outcome="dropped"}[1h]) > 0
+        expr: |
+          increase(stellarindex_ch_live_sink_ledgers_total{outcome="dropped"}[1h]) > 0
+          or (
+            stellarindex_ch_live_sink_ledgers_total{outcome="dropped"}
+            unless max_over_time(stellarindex_ch_live_sink_ledgers_total{outcome="dropped"}[1d] offset 1h)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 90000)
         for: 1h
         labels:
           severity: page
@@ -489,7 +514,12 @@ groups:
       # the pending period, or the fault (one meta-version break, then a dead indexer)
       # resolves under itself.
       - alert: stellarindex_ingestion_ch_live_sink_errors
-        expr: increase(stellarindex_ch_live_sink_ledgers_total{outcome="errored"}[30m]) > 0
+        expr: |
+          increase(stellarindex_ch_live_sink_ledgers_total{outcome="errored"}[30m]) > 0
+          or (
+            stellarindex_ch_live_sink_ledgers_total{outcome="errored"}
+            unless max_over_time(stellarindex_ch_live_sink_ledgers_total{outcome="errored"}[1d] offset 30m)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 88200)
         for: 15m
         labels:
           severity: ticket
@@ -516,7 +546,12 @@ groups:
       # that ch-live-catchup (which refills MISSING ledgers) never revisits. The census
       # path skips the ledger_ingest_log row instead. Same [30m] / for: 15m shape.
       - alert: stellarindex_ingestion_ch_live_sink_read_undercount
-        expr: increase(stellarindex_ch_live_sink_read_undercount_total[30m]) > 0
+        expr: |
+          increase(stellarindex_ch_live_sink_read_undercount_total[30m]) > 0
+          or (
+            stellarindex_ch_live_sink_read_undercount_total
+            unless max_over_time(stellarindex_ch_live_sink_read_undercount_total[1d] offset 30m)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 88200)
         for: 15m
         labels:
           severity: ticket
@@ -545,7 +580,12 @@ groups:
       # across the counter reset. Ticket, not page: rows are recoverable (ch-rebuild
       # -sdex-gaps, the source's gap detector) but only if someone acts.
       - alert: stellarindex_ingestion_sink_undrained_rows
-        expr: increase(stellarindex_sink_undrained_rows_total[1h]) > 0
+        expr: |
+          increase(stellarindex_sink_undrained_rows_total[1h]) > 0
+          or (
+            stellarindex_sink_undrained_rows_total
+            unless max_over_time(stellarindex_sink_undrained_rows_total[1d] offset 1h)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 90000)
         for: 0m
         labels:
           severity: ticket

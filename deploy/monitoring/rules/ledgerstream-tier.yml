@@ -41,7 +41,12 @@ groups:
       # (obs.seedLedgerstreamTierSeries), so increase() sees the first miss
       # and no born-inside-the-window arm is needed here.
       - alert: stellarindex_ledgerstream_tier_both_missing
-        expr: increase(stellarindex_ledgerstream_tier_read_total{outcome="both_missing"}[5m]) > 0
+        expr: |
+          increase(stellarindex_ledgerstream_tier_read_total{outcome="both_missing"}[5m]) > 0
+          or (
+            stellarindex_ledgerstream_tier_read_total{outcome="both_missing"}
+            unless max_over_time(stellarindex_ledgerstream_tier_read_total{outcome="both_missing"}[1d] offset 5m)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 86700)
         for: 0m
         labels:
           severity: page

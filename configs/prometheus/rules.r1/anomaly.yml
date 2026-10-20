@@ -35,6 +35,10 @@ groups:
       - alert: stellarindex_anomaly_warn_rate
         expr: |
           sum by (class) (rate(stellarindex_anomaly_warn_total[15m])) > 0
+          or sum by (class) (
+            stellarindex_anomaly_warn_total
+            unless max_over_time(stellarindex_anomaly_warn_total[1d] offset 15m)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 87300)
         for: 15m
         labels:
           severity: ticket
@@ -56,6 +60,10 @@ groups:
       - alert: stellarindex_anomaly_freeze_engaged
         expr: |
           sum by (class) (rate(stellarindex_anomaly_freeze_engaged_total[5m])) > 0
+          or sum by (class) (
+            stellarindex_anomaly_freeze_engaged_total
+            unless max_over_time(stellarindex_anomaly_freeze_engaged_total[1d] offset 5m)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 86700)
         for: 1m
         labels:
           severity: ticket

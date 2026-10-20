@@ -388,6 +388,10 @@ groups:
       - alert: stellarindex_cex_stream_stalled
         expr: |
           sum by (source) (increase(stellarindex_cex_stream_disconnect_total{reason="stall"}[15m])) > 0
+          or sum by (source) (
+            stellarindex_cex_stream_disconnect_total{reason="stall"}
+            unless max_over_time(stellarindex_cex_stream_disconnect_total{reason="stall"}[1d] offset 15m)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 87300)
         for: 5m
         labels:
           severity: ticket

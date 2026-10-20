@@ -32,7 +32,12 @@ groups:
       # max rate is 1/60 = 0.0167/s and `> 0.5` could never fire. Matches the
       # metric docstring in internal/obs/metrics.go.
       - alert: stellarindex_postgres_ping_failing
-        expr: rate(stellarindex_postgres_ping_total{outcome="error"}[5m]) > 0
+        expr: |
+          rate(stellarindex_postgres_ping_total{outcome="error"}[5m]) > 0
+          or (
+            stellarindex_postgres_ping_total{outcome="error"}
+            unless max_over_time(stellarindex_postgres_ping_total{outcome="error"}[1d] offset 5m)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 86700)
         for: 2m
         labels:
           severity: page

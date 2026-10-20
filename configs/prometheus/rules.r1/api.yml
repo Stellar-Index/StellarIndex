@@ -289,6 +289,10 @@ groups:
       - alert: stellarindex_customer_webhook_delivery_exhausted
         expr: |
           sum(rate(stellarindex_customer_webhook_delivery_attempts_total{outcome="exhausted"}[1h])) > 0
+          or sum (
+            stellarindex_customer_webhook_delivery_attempts_total{outcome="exhausted"}
+            unless max_over_time(stellarindex_customer_webhook_delivery_attempts_total{outcome="exhausted"}[1d] offset 1h)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 90000)
         for: 0m
         labels:
           severity: ticket
@@ -316,6 +320,10 @@ groups:
       - alert: stellarindex_customer_webhook_mark_errors
         expr: |
           increase(stellarindex_customer_webhook_delivery_attempts_total{outcome="mark_error"}[30m]) > 0
+          or (
+            stellarindex_customer_webhook_delivery_attempts_total{outcome="mark_error"}
+            unless max_over_time(stellarindex_customer_webhook_delivery_attempts_total{outcome="mark_error"}[1d] offset 30m)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 88200)
         for: 15m
         labels:
           severity: ticket
@@ -423,7 +431,12 @@ groups:
       # `for: 2m`, not 10m — a fail-closed window is an ongoing outage
       # from the first second, not a tolerable blip.
       - alert: stellarindex_ratelimit_fail_closed
-        expr: sum(rate(stellarindex_ratelimit_fail_closed_total[5m])) > 0
+        expr: |
+          sum(rate(stellarindex_ratelimit_fail_closed_total[5m])) > 0
+          or sum (
+            stellarindex_ratelimit_fail_closed_total
+            unless max_over_time(stellarindex_ratelimit_fail_closed_total[1d] offset 5m)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 86700)
         for: 2m
         labels:
           severity: page
@@ -476,7 +489,12 @@ groups:
       # metered keys instead, so the fail-open counter goes flat and only
       # this counter moves for a sustained outage.
       - alert: stellarindex_monthly_quota_fail_closed
-        expr: sum(rate(stellarindex_monthly_quota_fail_closed_total[5m])) > 0
+        expr: |
+          sum(rate(stellarindex_monthly_quota_fail_closed_total[5m])) > 0
+          or sum (
+            stellarindex_monthly_quota_fail_closed_total
+            unless max_over_time(stellarindex_monthly_quota_fail_closed_total[1d] offset 5m)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 86700)
         for: 2m
         labels:
           severity: page
@@ -549,7 +567,12 @@ groups:
       # directory-flagged issuer is priced at 200 on every gated surface.
       # lint-tripwire-window:sustained: a continuing fail-open window is actionable, one failover blip is not
       - alert: stellarindex_scam_gate_fail_open
-        expr: sum by (surface) (rate(stellarindex_scam_gate_lookup_failures_total[5m])) > 0
+        expr: |
+          sum by (surface) (rate(stellarindex_scam_gate_lookup_failures_total[5m])) > 0
+          or sum by (surface) (
+            stellarindex_scam_gate_lookup_failures_total
+            unless max_over_time(stellarindex_scam_gate_lookup_failures_total[1d] offset 5m)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 86700)
         for: 5m
         labels:
           severity: ticket
@@ -600,7 +623,12 @@ groups:
       # before retention closes) is worth a ticket for ONE occurrence.
       # `surface` is preserved so the ticket names the mutation class.
       - alert: stellarindex_admin_audit_write_failing
-        expr: sum by (surface) (increase(stellarindex_admin_audit_write_failures_total[1h])) > 0
+        expr: |
+          sum by (surface) (increase(stellarindex_admin_audit_write_failures_total[1h])) > 0
+          or sum by (surface) (
+            stellarindex_admin_audit_write_failures_total
+            unless max_over_time(stellarindex_admin_audit_write_failures_total[1d] offset 1h)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 90000)
         for: 5m
         labels:
           severity: ticket
@@ -628,7 +656,12 @@ groups:
       # this tickets a human to contact the owner. increase() over 1h with
       # for: 5m, as above.
       - alert: stellarindex_passkey_clone_warning
-        expr: sum(increase(stellarindex_passkey_login_refusals_total{reason="clone_warning"}[1h])) > 0
+        expr: |
+          sum(increase(stellarindex_passkey_login_refusals_total{reason="clone_warning"}[1h])) > 0
+          or sum (
+            stellarindex_passkey_login_refusals_total{reason="clone_warning"}
+            unless max_over_time(stellarindex_passkey_login_refusals_total{reason="clone_warning"}[1d] offset 1h)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 90000)
         for: 5m
         labels:
           severity: ticket

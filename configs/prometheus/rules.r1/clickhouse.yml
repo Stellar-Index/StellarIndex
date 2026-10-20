@@ -121,6 +121,10 @@ groups:
       - alert: stellarindex_clickhouse_inserts_rejected
         expr: |
           increase(ClickHouseProfileEvents_RejectedInserts[1h]) > 0
+          or (
+            ClickHouseProfileEvents_RejectedInserts
+            unless max_over_time(ClickHouseProfileEvents_RejectedInserts[1d] offset 1h)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 90000)
         for: 5m
         labels:
           severity: ticket

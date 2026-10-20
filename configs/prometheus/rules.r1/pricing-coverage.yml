@@ -80,6 +80,10 @@ groups:
       - alert: stellarindex_priceless_coverage_check_errors
         expr: |
           increase(stellarindex_priceless_coverage_check_runs_total{outcome="error"}[15m]) > 0
+          or (
+            stellarindex_priceless_coverage_check_runs_total{outcome="error"}
+            unless max_over_time(stellarindex_priceless_coverage_check_runs_total{outcome="error"}[1d] offset 15m)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 87300)
         for: 15m
         labels:
           severity: ticket
