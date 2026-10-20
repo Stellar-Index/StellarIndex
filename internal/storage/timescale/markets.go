@@ -166,37 +166,54 @@ func (s *Store) AllPools(ctx context.Context, filter PoolsFilter, cursor string,
 
 // perSourcePoolsCTE scans pools_per_source_1h per (source, base, quote), shared by /v1/pools and source-filtered /v1/markets so they
 // agree; pair-wide prices_1m/1d select buckets a venue printed in, not its contribution. $1 is the recency lower bound and
-// sacAliasFoldBind's arrays sit at $foldIdx, $foldIdx+1. Rows are alias-folded BEFORE grouping. vol_24h_usd sums trade-time usd_volume
-// only (vol_lower_bound says so). rawFilter is ANDed onto the raw rows before the fold joins.
-func perSourcePoolsCTE(foldIdx int, rawFilter string) string {
+// sacAliasFoldBind's arrays sit at $foldIdx, $foldIdx+1. vol_24h_usd sums trade-time usd_volume only (vol_lower_bound says so).
+// rawFilter is ANDed onto the raw rows; foldedFilter onto the alias-folded spellings before the last grouping.
+// pools_raw aggregates on the stored columns first: grouping 1.2M hourly rows on the COALESCEd fold made the planner expect a group per
+// row and spill a 218 MB sort, where the raw (source, base, quote) estimate fits a hash aggregate. Every aggregate re-composes exactly;
+// last() with a ROW comparator cannot run as a parallel partial aggregate, so neither stage uses one.
+func perSourcePoolsCTE(foldIdx int, rawFilter, foldedFilter string) string {
 	return `
         WITH ` + aliasFoldCTE(foldIdx) + `,
+        pools_raw AS (
+          SELECT
+            r.source, r.base_asset, r.quote_asset,
+            MAX(r.bucket_last_ts) AS last_trade_at,
+            COALESCE(SUM(r.trade_count)
+                     FILTER (WHERE r.bucket >= NOW() - INTERVAL '24 hours'), 0) AS count_24h,
+            COALESCE(SUM(r.sum_usd_priced)
+                     FILTER (WHERE r.bucket >= NOW() - INTERVAL '24 hours'), 0) AS vol_24h_usd,
+            -- sum_base_unpriced is NULL exactly when the bucket held no unpriced trade.
+            COALESCE(bool_or(r.sum_base_unpriced IS NOT NULL)
+                     FILTER (WHERE r.bucket >= NOW() - INTERVAL '24 hours'), false) AS vol_lower_bound,
+            -- One spelling's hourly buckets close in distinct hours, so bucket_last_ts cannot tie here.
+            last(r.bucket_last_price, r.bucket_last_ts) AS last_price
+            FROM pools_per_source_1h r
+           WHERE r.bucket >= $1` + rawFilter + `
+           GROUP BY r.source, r.base_asset, r.quote_asset
+        ),
         pools AS (
           SELECT
             p.source, p.base_asset, p.quote_asset,
-            MAX(p.bucket_last_ts) AS last_trade_at,
-            COALESCE(SUM(p.trade_count)
-                     FILTER (WHERE p.bucket >= NOW() - INTERVAL '24 hours'), 0) AS count_24h,
-            COALESCE(SUM(p.sum_usd_priced)
-                     FILTER (WHERE p.bucket >= NOW() - INTERVAL '24 hours'), 0)::text AS vol_24h_usd,
-            -- sum_base_unpriced is NULL exactly when the bucket held no unpriced trade.
-            COALESCE(bool_or(p.sum_base_unpriced IS NOT NULL)
-                     FILTER (WHERE p.bucket >= NOW() - INTERVAL '24 hours'), false) AS vol_lower_bound,
+            MAX(p.last_trade_at) AS last_trade_at,
+            SUM(p.count_24h) AS count_24h,
+            SUM(p.vol_24h_usd)::text AS vol_24h_usd,
+            bool_or(p.vol_lower_bound) AS vol_lower_bound,
             -- Two spellings folded into one market can close a bucket in the same ledger, so their
-            -- timestamps tie; the higher close breaks it, or last() would pick either per query.
-            last(p.bucket_last_price, ROW(p.bucket_last_ts, p.bucket_last_price))::text AS last_price
+            -- timestamps tie; the higher close breaks it, or the pick would vary per query.
+            (array_agg(p.last_price ORDER BY p.last_trade_at DESC, p.last_price DESC NULLS LAST))[1]::text AS last_price
           FROM (
-            SELECT r.source, r.bucket, r.bucket_last_ts, r.bucket_last_price,
-                   r.trade_count, r.sum_usd_priced, r.sum_base_unpriced,
+            SELECT r.source, r.last_trade_at, r.count_24h, r.vol_24h_usd, r.vol_lower_bound, r.last_price,
                    COALESCE(bf.canon, r.base_asset)  AS base_asset,
                    COALESCE(qf.canon, r.quote_asset) AS quote_asset
-              FROM pools_per_source_1h r
+              FROM pools_raw r
               LEFT JOIN alias_fold bf ON bf.form = r.base_asset
               LEFT JOIN alias_fold qf ON qf.form = r.quote_asset
              -- A wrap/unwrap (native vs its SAC) folds to a self-pair, which is no market.
-             WHERE COALESCE(bf.canon, r.base_asset) <> COALESCE(qf.canon, r.quote_asset)` + rawFilter + `
+             WHERE COALESCE(bf.canon, r.base_asset) <> COALESCE(qf.canon, r.quote_asset)
           ) p
-         WHERE p.bucket >= $1
+         WHERE TRUE` + foldedFilter + `
+         GROUP BY p.source, p.base_asset, p.quote_asset
+        )
     `
 }
 
@@ -216,10 +233,11 @@ func poolsFilterSQL(canonBase, canonQuote string) string {
            AND (cardinality($7::text[]) = 0 OR p.base_asset = ANY($7) OR p.quote_asset = ANY($7))`
 }
 
-// poolsRawPrefilterSQL narrows the raw rows to those with a leg in each asset array, so the fold joins and sort skip the rest
+// poolsRawPrefilterSQL narrows the raw rows to the $4 sources and those with a leg in each asset array, so the fold joins and sort skip the rest
 // (988k of 1.25M rows for asset=XLM). Exact: an alias family is closed, so a folded leg in an array means its raw spelling is too;
 // poolsFilterSQL still applies the precise predicates.
 const poolsRawPrefilterSQL = `
+               AND (cardinality($4::text[]) = 0 OR r.source = ANY($4))
                AND (cardinality($5::text[]) = 0 OR r.base_asset = ANY($5) OR r.quote_asset = ANY($5))
                AND (cardinality($6::text[]) = 0 OR r.base_asset = ANY($6) OR r.quote_asset = ANY($6))
                AND (cardinality($7::text[]) = 0 OR r.base_asset = ANY($7) OR r.quote_asset = ANY($7))`
@@ -239,12 +257,8 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
 	// (8-30s on 2.7B rows); the `pools` CTE re-aggregates its hourly rows over the window, with
 	// FILTER clauses taking the 24h slice. last_trade_at lags by up to one refresh interval
 	// (5 min), acceptable for a discovery surface. $8/$9 are the alias-fold arrays, after $1..$7.
-	cte := perSourcePoolsCTE(8, poolsRawPrefilterSQL)
 	canonBase, canonQuote, flipped := canonOrientSQL(10)
-	cte += poolsFilterSQL(canonBase, canonQuote) + `
-         GROUP BY p.source, p.base_asset, p.quote_asset
-        )
-    `
+	cte := perSourcePoolsCTE(8, poolsRawPrefilterSQL, poolsFilterSQL(canonBase, canonQuote))
 	// canon collapses flipped orientations of a market within a source (XLM/USDC + USDC/XLM): volume
 	// and count sum across directions, last_price is the latest trade re-expressed canonically,
 	// and either direction's excluded trades make the volume a lower bound. See canonical.Orient.
@@ -409,10 +423,8 @@ func (s *Store) sourceMarketsCommon(ctx context.Context, source, cursor string, 
 func buildSourceMarketsQuery(since time.Time, source, cursor string, limit int, order MarketsOrder) (string, []any) {
 	canonBase, canonQuote, flipped := canonOrientSQL(7)
 	forms, canons := sacAliasFoldBind() // $5, $6
-	ctes := perSourcePoolsCTE(5, "") + `
-           AND p.source = $4
-         GROUP BY p.source, p.base_asset, p.quote_asset
-        ),
+	ctes := perSourcePoolsCTE(5, `
+             AND r.source = $4`, "") + `,
         canon AS (
           SELECT ` + canonBase + ` AS base_asset,
                  ` + canonQuote + ` AS quote_asset,
