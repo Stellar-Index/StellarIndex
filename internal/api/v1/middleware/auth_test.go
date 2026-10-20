@@ -668,7 +668,7 @@ func TestAuth_FailedAuthThrottle(t *testing.T) {
 
 	const budget = 3
 	// nil rdb → in-process fallback (no Redis needed for the test).
-	limiter := ratelimit.New(nil, budget, time.Minute)
+	limiter := ratelimit.New(nil, budget, time.Minute, frozenClock)
 
 	mw := middleware.Auth(middleware.AuthOptions{
 		Mode:              middleware.AuthModeAPIKey,
@@ -770,7 +770,7 @@ func TestAuth_FailedAuthThrottle_PerKeyPrefix(t *testing.T) {
 			h := middleware.Auth(middleware.AuthOptions{
 				Mode:              mode,
 				APIKey:            stubAPIKeyValidator{knownKey: validKey},
-				FailedAuthLimiter: ratelimit.New(nil, budget, time.Minute),
+				FailedAuthLimiter: ratelimit.New(nil, budget, time.Minute, frozenClock),
 			})(okHandler())
 			req := func(ip int, key string) *httptest.ResponseRecorder {
 				r := httptest.NewRequest(http.MethodGet, "/v1/price", nil)
@@ -822,7 +822,7 @@ func TestAuth_FailedAuthTotal_CountsEveryRejection(t *testing.T) {
 	h := middleware.Auth(middleware.AuthOptions{
 		Mode:              middleware.AuthModeAPIKey,
 		APIKey:            stubAPIKeyValidator{knownKey: "good-key"},
-		FailedAuthLimiter: ratelimit.New(nil, 1, time.Minute),
+		FailedAuthLimiter: ratelimit.New(nil, 1, time.Minute, frozenClock),
 	})(okHandler())
 	misconfigured := middleware.Auth(middleware.AuthOptions{Mode: middleware.AuthModeAPIKey})(okHandler())
 	serve := func(handler http.Handler, key string) int {
@@ -868,7 +868,7 @@ func TestAuth_FailedAuthThrottle_SEP10NotPooledByPrefix(t *testing.T) {
 	h := middleware.Auth(middleware.AuthOptions{
 		Mode:              middleware.AuthModeSEP10,
 		SEP10:             stubSEP10Validator{knownJWT: "good"},
-		FailedAuthLimiter: ratelimit.New(nil, budget, time.Minute),
+		FailedAuthLimiter: ratelimit.New(nil, budget, time.Minute, frozenClock),
 	})(okHandler())
 	for i := 1; i <= 3*budget; i++ {
 		r := httptest.NewRequest(http.MethodGet, "/v1/price", nil)

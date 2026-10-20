@@ -20,7 +20,7 @@ var perCallerHeaderNames = []string{
 func perCallerChain(t *testing.T, limit int, inner http.Handler) http.Handler {
 	t.Helper()
 	rdb, _ := newRLRedis(t)
-	limited := middleware.RateLimit(ratelimit.New(rdb, limit, time.Minute), nil, nil, nil)(inner)
+	limited := middleware.RateLimit(ratelimit.New(rdb, limit, time.Minute, frozenClock), nil, nil, nil)(inner)
 	return middleware.RequestID(middleware.CacheControlWithCDN(true)(limited))
 }
 
