@@ -90,7 +90,7 @@ groups:
         # failure is the one case this alert cannot see.
         # vector(0) rather than the `* 0` form because this
         # arm aggregates without `by`, so there is no label set to carry.
-        # "unroutable" (unpriced, both classic legs from one issuer, or neither
+        # "unroutable" (unpriced, both legs credits of one issuer in classic or SAC form, or neither
         # leg with any peg or XLM market) has no independent market to price it, so a wash burst on one issuer's
         # own pairs must not read as a coverage regression. "thin" (unpriced
         # because every candidate rate came from a market below the
