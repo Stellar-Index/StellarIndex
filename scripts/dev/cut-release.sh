@@ -16,7 +16,7 @@
 #      as a set with every failure named (one at a time costs a round trip each).
 #   3. Refuse non-TTY without --yes/--dry-run.
 #   4. Tag exists neither locally nor on origin.
-#   5. CHANGELOG.md has a non-empty `## [vX.Y.Z] — YYYY-MM-DD` section
+#   5. CHANGELOG.md has a non-empty `## [vX.Y.Z] - YYYY-MM-DD` section
 #      (release.yml's auto-notes read it; empty means an empty release page).
 #   5b. Newest docs/operations/sla-proof-YYYY-MM-DD.md exists, is within
 #      SLA_PROOF_MAX_AGE_DAYS (default 45) and did not record `Verdict: FAIL`
@@ -151,10 +151,10 @@ changelog_section=$(awk -v marker="## [$TAG]" '
   capture                { print }
 ' CHANGELOG.md)
 if [[ -z "$(printf '%s' "$changelog_section" | tr -d '[:space:]')" ]]; then
-  echo "ERR: no non-empty '## [$TAG] — YYYY-MM-DD' section in CHANGELOG.md" >&2
+  echo "ERR: no non-empty '## [$TAG] - YYYY-MM-DD' section in CHANGELOG.md" >&2
   echo "" >&2
   echo "Cut a release-prep PR first that:" >&2
-  echo "  1. Replaces '## [Unreleased]' with '## [$TAG] — $(date -u +%Y-%m-%d)'" >&2
+  echo "  1. Replaces '## [Unreleased]' with '## [$TAG] - $(date -u +%Y-%m-%d)'" >&2
   echo "  2. Adds a fresh '## [Unreleased]' block above it" >&2
   echo "" >&2
   echo "See docs/operations/release-process.md §Cut step 2." >&2
