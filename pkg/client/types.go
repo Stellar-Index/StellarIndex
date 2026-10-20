@@ -113,16 +113,12 @@ type Flags struct {
 	// not completed a full run within its heartbeat TTL, so a quiet feed is
 	// a detection gap rather than a quiet network.
 	DetectorsPartial bool `json:"detectors_partial,omitempty"`
-	// FiltersIgnored names the row-narrowing query parameters the
-	// response did NOT apply, spelled as the caller sent them
-	// ("type", "code", "issuer", "q"). Empty — and omitted — when
-	// everything supplied was applied. `/v1/assets` sets it on the
-	// listings whose rows come from a source that cannot narrow: the
-	// class-scoped catalogue listings
-	// (`asset_class=fiat|stablecoin|crypto`) and the lean
-	// asset-catalog fallback. A page that dropped a filter and one
-	// that matched on it are otherwise the same 200 over the same
-	// shape, so a consumer re-filtering the page keys on this.
+	// FiltersIgnored names the row-narrowing query parameters the response did NOT apply, spelled
+	// as the caller sent them ("type", "code", "issuer", "q"). Empty, and omitted, when everything
+	// supplied was applied. `/v1/assets` sets it on listings whose rows come from a source that
+	// cannot narrow: the class-scoped listings (`asset_class=fiat|stablecoin|crypto`) and the lean
+	// asset-catalog fallback. A page that dropped a filter looks otherwise identical to one that
+	// matched, so a consumer re-filtering the page keys on this.
 	FiltersIgnored []string `json:"filters_ignored,omitempty"`
 }
 
@@ -317,16 +313,12 @@ type AssetDetail struct {
 	// (always present on the wire). Stellar classic + native = 7;
 	// SEP-41 contracts publish their own value via `decimals()`.
 	Decimals int `json:"decimals"`
-	// DisplayDecimals is the issuer's SEP-1 `display_decimals` rounding
-	// hint (USDC declares 2) — how many fractional digits to SHOW.
+	// DisplayDecimals is the issuer's SEP-1 `display_decimals` rounding hint (USDC declares 2):
+	// how many fractional digits to show.
 	//
 	// It is NOT a unit scale and must never enter amount math. Divide by
-	// 10^[AssetDetail.Decimals]; round the result for display to this.
-	// The two are separate fields because conflating them is a real
-	// money bug: setting the unit scale from this
-	// issuer-controlled hint inflated market_cap_usd by up to
-	// 10^(7-display_decimals)× on verified classic assets, an
-	// issuer-controlled manipulation vector.
+	// 10^[AssetDetail.Decimals]; round the result for display to this. Deriving the unit scale
+	// from this issuer-controlled hint would inflate market_cap_usd.
 	//
 	// nil when the issuer's SEP-1 overlay declares none.
 	DisplayDecimals *int `json:"display_decimals,omitempty"`
@@ -364,26 +356,18 @@ type AssetDetail struct {
 	TotalSupply       *string `json:"total_supply,omitempty"`
 	MaxSupply         *string `json:"max_supply,omitempty"`
 
-	// PriceUSD is the current per-asset USD price as a fixed-
-	// precision decimal string — same value the dedicated
-	// `/v1/price?asset=…&quote=fiat:USD` endpoint returns. Inlined
-	// here so wallet UIs (Freighter, retail apps) don't pay a
-	// second round-trip on every asset-detail render. Null when
-	// no USD price can be derived (no on-chain trades, prices_1m
-	// has no row, or operator hasn't enabled stablecoin-fiat
-	// proxy).
+	// PriceUSD is the current per-asset USD price as a fixed-precision decimal string, the same
+	// value `/v1/price?asset=…&quote=fiat:USD` returns, inlined to save a round-trip. Null when no
+	// USD price can be derived (no on-chain trades, no prices_1m row, or stablecoin-fiat proxy not
+	// enabled).
 	PriceUSD *string `json:"price_usd,omitempty"`
 
-	// PriceBasis identifies a PriceUSD that is NOT a direct market
-	// observation. "global_market": filled from the vetted global
-	// ticker's cross-venue price (see GlobalMarket). "declared_peg": the price was filled from an
-	// operator-declared 1:1 fiat peg × the current fiat→USD FX rate
-	// because no market-derived price survived the server's substance
-	// gate. "transitive": the price was derived through one
-	// intermediate hop (asset → hop → USD proxy), not observed on a
-	// USD-proxy market directly. Empty means market-derived (the
-	// pre-existing contract, unchanged). Peg-priced rows carry no
-	// change pills or market-history-derived valuation fields.
+	// PriceBasis identifies a PriceUSD that is not a direct market observation. "global_market":
+	// filled from the vetted global ticker's cross-venue price (see GlobalMarket). "declared_peg":
+	// an operator-declared 1:1 fiat peg times the current fiat-to-USD rate, used because no
+	// market-derived price survived the server's substance gate. "transitive": derived through one
+	// intermediate hop (asset, hop, USD proxy). Empty means market-derived. Peg-priced rows carry
+	// no change pills or market-history-derived valuation fields.
 	PriceBasis string `json:"price_basis,omitempty"`
 
 	// Price provenance on a listing row whose price is a published rate
@@ -428,29 +412,23 @@ type AssetDetail struct {
 	// (see MarketCapLowLiquidity and MarketCapDecimalsMismatch).
 	FDVUSD *string `json:"fdv_usd,omitempty"`
 
-	// MarketCapLowLiquidity is true when market_cap_usd or fdv_usd were
-	// deliberately suppressed — served null — by either of two guards:
+	// MarketCapLowLiquidity is true when market_cap_usd or fdv_usd were deliberately suppressed
+	// (served null) by either guard:
 	//
-	//   - the floor: the backing price came from negligible liquidity (a
-	//     single venue AND trailing-24h USD volume below the server's
-	//     valuation-integrity floor), or
-	//   - the ceiling: the figure exceeds the server's maximum multiple of
-	//     the asset's own trailing-24h USD volume. FDV (over max_supply, so
-	//     >= the cap) can breach it alone, leaving market_cap_usd served.
+	//   - the floor: the backing price came from negligible liquidity (a single venue AND low
+	//     trailing-24h USD volume), or
+	//   - the ceiling: the figure exceeds the server's maximum multiple of the asset's own
+	//     trailing-24h USD volume. FDV can breach it alone, leaving market_cap_usd served.
 	//
-	// Distinguishes "suppressed on purpose" from "no supply/price data";
-	// the price_usd itself still serves. Omitted (false) when neither
-	// figure was suppressed.
+	// Distinguishes "suppressed on purpose" from "no supply/price data"; price_usd still serves.
+	// Omitted (false) when neither figure was suppressed.
 	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
 
-	// MarketCapDecimalsMismatch is true when market_cap_usd (and fdv_usd)
-	// were deliberately refused — served null — because the server's two
-	// decimals resolvers disagreed for this Soroban token at request time
-	// (the lake's on-chain decimals(), which Decimals reports, versus the
-	// projection the USD price was normalised through), so supply and price
-	// sat on different scales. Not a liquidity verdict; PriceUSD,
-	// CirculatingSupply and Decimals still serve. Self-clearing once the
-	// aggregator reconciles the projection. Omitted (false) on agreement.
+	// MarketCapDecimalsMismatch is true when market_cap_usd (and fdv_usd) were refused (served
+	// null) because the server's two decimals resolvers disagreed for this Soroban token, so supply
+	// and price sat on different scales. Not a liquidity verdict; PriceUSD, CirculatingSupply and
+	// Decimals still serve. Self-clearing once the server reconciles. Omitted (false) on
+	// agreement.
 	MarketCapDecimalsMismatch bool `json:"market_cap_decimals_mismatch,omitempty"`
 
 	// ListingReference and ListingValuation carry an independent listing
@@ -478,22 +456,14 @@ type AssetDetail struct {
 	SupplyAsOf       *time.Time `json:"supply_as_of,omitempty"`
 	SupplyAsOfLedger *uint32    `json:"supply_as_of_ledger,omitempty"`
 
-	// VolumeUSD24h is the trailing-24h USD-denominated trade volume
-	// across every pair this asset participates in. "0" is a valid
-	// value (asset tracked, no trades in the window); null means
+	// VolumeUSD24h is the trailing-24h USD-denominated trade volume across every pair this asset
+	// participates in. "0" is a valid value (asset tracked, no trades in the window); null means
 	// the volume reader isn't wired or the lookup failed.
 	//
-	// Coverage chain (launch-readiness L2.2):
-	//   - Phase 1 — off-chain CEX/FX trades populate this directly
-	//     (uniform 10^8 scale).
-	//   - Phase 1 — on-chain DEX trades populate it when the quote
-	//     asset is on the operator's `[trades].usd_pegged_classic_assets`
-	//     list (trusted 1:1 peg).
-	//   - Phase 2 — on-chain DEX trades whose quote is NOT
-	//     on the peg list still populate this when the resolver
-	//     finds a recent `<quote>/<USD-peg>` VWAP in prices_1m at
-	//     the trade's timestamp. Wired when `[trades].usd_pegged_classic_assets`
-	//     is non-empty.
+	// Off-chain CEX/FX trades populate it directly (uniform 10^8 scale). On-chain DEX trades
+	// populate it when the quote asset is on the operator's `[trades].usd_pegged_classic_assets`
+	// list (trusted 1:1 peg), or, when the list is non-empty, when a recent `<quote>/<USD-peg>`
+	// VWAP exists in prices_1m at the trade's timestamp.
 	VolumeUSD24h *string `json:"volume_24h_usd,omitempty"`
 	// VolumeLowerBound is true when VolumeUSD24h excludes unpriced trades.
 	VolumeLowerBound bool `json:"volume_lower_bound,omitempty"`
@@ -544,25 +514,18 @@ type AssetDetail struct {
 	// when they did and committed to a bounded supply.
 	IsUnlimited *bool `json:"is_unlimited,omitempty"`
 
-	// UnverifiedWarning points at the verified Stellar-canonical
-	// asset when the requested asset uses a verified currency's
-	// ticker code but is NOT the verified issuer. The classic
-	// "someone issued their own USDC on Stellar" surface. Nil for
-	// the verified asset itself and for any code not claimed by a
-	// verified currency. Pairs with `Flags.UnverifiedTickerCollision`
-	// on the envelope. See
-	// docs/architecture/supply-pipeline.md#asset-identity.
+	// UnverifiedWarning points at the verified Stellar-canonical asset when the requested asset
+	// uses a verified currency's ticker code but is not the verified issuer. Nil for the verified
+	// asset itself and for any code not claimed by a verified currency. Pairs with
+	// `Flags.UnverifiedTickerCollision` on the envelope.
 	UnverifiedWarning *UnverifiedWarning `json:"unverified_warning,omitempty"`
 
-	// UnverifiedTickerCollision is the LISTING-row trust signal on
-	// /v1/assets: true when this row's (code, issuer) uses a verified
-	// currency's Stellar ticker but is NOT the verified issuer — a
-	// look-alike/impersonator. The listing serves COALESCE(slug, code)
-	// AS slug, so a NULL-slug impersonator emits the verified asset's
-	// CODE as its slug; consumers must AND the verified-slug check with
-	// `!UnverifiedTickerCollision`. False (omitted) for the verified
-	// asset and for codes no verified currency claims. The detail path
-	// carries the richer UnverifiedWarning body instead.
+	// UnverifiedTickerCollision is the listing-row trust signal on /v1/assets: true when this
+	// row's (code, issuer) uses a verified currency's ticker but is not the verified issuer (a
+	// look-alike). The listing serves COALESCE(slug, code) AS slug, so a NULL-slug impersonator
+	// emits the verified asset's code as its slug; consumers must AND the verified-slug check with
+	// `!UnverifiedTickerCollision`. False (omitted) for the verified asset and for codes no
+	// verified currency claims. The detail path carries UnverifiedWarning instead.
 	UnverifiedTickerCollision bool `json:"unverified_ticker_collision,omitempty"`
 
 	// FiatCodeAnchor points at the catalogue's fiat denomination when
@@ -667,24 +630,17 @@ type TradeRow struct {
 	BaseAmount  string    `json:"base_amount"`
 	QuoteAmount string    `json:"quote_amount"`
 	Price       *string   `json:"price"`
-	// BaseDecimals / QuoteDecimals are the smallest-unit scale for each
-	// side: divide BaseAmount by 10^BaseDecimals (QuoteAmount by
-	// 10^QuoteDecimals) for whole-asset units.
+	// BaseDecimals / QuoteDecimals are the smallest-unit scale for each side: divide BaseAmount by
+	// 10^BaseDecimals (QuoteAmount by 10^QuoteDecimals) for whole-asset units.
 	//
-	// The scale is a property of the row's SOURCE, not of the asset, and
-	// a single page MIXES BOTH:
+	// The scale is a property of the row's source, not of the asset, and a single page mixes both:
 	//
-	//   - on-chain rows (sdex, soroswap, aquarius, phoenix, comet) carry
-	//     the asset's own scale — 7 for native/classic, the token
-	//     contract's declared decimals() for Soroban tokens;
-	//   - CEX rows (binance, kraken, bitstamp, coinbase) carry 8
-	//     REGARDLESS of the pair — the external normalisation scale, not
-	//     anything about the asset.
+	//   - on-chain rows (sdex, soroswap, aquarius, phoenix, comet) carry the asset's own scale: 7
+	//     for native/classic, the token contract's declared decimals() for Soroban tokens;
+	//   - CEX rows (binance, kraken, bitstamp, coinbase) carry 8 regardless of the pair.
 	//
-	// Never substitute a constant: Price is quote/base and scale-invariant, so
-	// a wrong assumed scale is undetectable from the payload. Read the field.
-	//
-	// Populated by [Client.History]; omitted (zero) on the
+	// Never substitute a constant: Price is quote/base and scale-invariant, so a wrong assumed
+	// scale is undetectable from the payload. Populated by [Client.History]; omitted (zero) on the
 	// /v1/observations rows, which carry no per-side scale.
 	BaseDecimals  int `json:"base_decimals,omitempty"`
 	QuoteDecimals int `json:"quote_decimals,omitempty"`

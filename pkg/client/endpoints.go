@@ -167,14 +167,11 @@ const (
 type HistoryQuery struct {
 	Asset string
 	Quote string // optional
-	// Granularity is 1m / 15m / 1h / 4h / 1d / 1w / 1mo; default 1d.
-	// This endpoint has no window parameter, so the width asked for is
-	// always the width served — and the response is capped at 50,000
-	// buckets taking the OLDEST, so a fine grain over a long-lived pair
-	// ends early with Flags.Stale raised. 1m may additionally be
-	// bounded to the last 90 days on a given deployment. For a bounded
-	// window whose width is fitted to the cap automatically, use
-	// [Client.Chart].
+	// Granularity is 1m / 15m / 1h / 4h / 1d / 1w / 1mo; default 1d. This endpoint has no window
+	// parameter, and the response is capped at 50,000 buckets taking the OLDEST, so a fine grain
+	// over a long-lived pair ends early with Flags.Stale raised. 1m may additionally be bounded to
+	// the last 90 days on a given deployment. For a bounded window fitted to the cap automatically,
+	// use [Client.Chart].
 	Granularity string
 }
 
@@ -436,20 +433,13 @@ const (
 type MarketsOptions struct {
 	Cursor string
 	Limit  int // 0 → server default (typically 100); max 500
-	// OrderBy controls sort + cursor scheme. Empty → the server default,
-	// which is VOLUME-DESC, not alphabetic, because an alphabetical default
-	// surfaces spam tokens (`0-…`, `0TAX-…`) at the top of the listing.
+	// OrderBy controls sort + cursor scheme. Empty means the server default, which is volume-desc,
+	// not alphabetic (an alphabetical default surfaces spam tokens at the top).
 	//
-	// Worth knowing if you walk the full catalogue: volume-desc ranks on a
-	// MUTABLE key, so a pair whose 24h volume changes mid-walk can be
-	// seen twice or missed. For a complete enumeration pass
-	// [MarketsOrderPair] explicitly — its keyset is the immutable
-	// `base|quote` with a strict `>`, so the walk is stable.
-	//
-	// The SDK deliberately does NOT send order_by=pair for you: that
-	// would silently flip every existing caller from top-by-volume to
-	// alphabetically-first spam tokens, and make this SDK disagree with
-	// an equivalent curl and with the OpenAPI default.
+	// Volume-desc ranks on a mutable key, so a pair whose 24h volume changes mid-walk can be seen
+	// twice or missed. For a complete enumeration pass [MarketsOrderPair] explicitly: its keyset is
+	// the immutable `base|quote` with a strict `>`, so the walk is stable. The SDK does not send
+	// order_by=pair for you, so it agrees with an equivalent curl and the OpenAPI default.
 	OrderBy MarketsOrderBy
 	// Include opts into the extra columns [Market] documents as
 	// request-gated: "sparkline" populates VolumeHistory24h,
