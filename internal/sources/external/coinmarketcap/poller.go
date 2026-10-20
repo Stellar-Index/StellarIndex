@@ -66,16 +66,12 @@ type Poller struct {
 	// `currency.Catalogue.CoinMarketCapIDs()`; nil means the symbol-only path.
 	CMCIDs map[string]string
 
-	// AmbiguousSymbolSkips counts response entries dropped because
-	// symbol-mode returned more than one coin for a ticker CMC could
-	// not resolve to a numeric id. Atomic: read from outside the
-	// poll goroutine (metrics/tests) without a lock.
+	// AmbiguousSymbolSkips counts response entries dropped because symbol-mode returned more than one coin for a ticker CMC
+	// could not resolve to a numeric id. Atomic: read from outside the poll goroutine (metrics/tests) without a lock.
 	AmbiguousSymbolSkips uint64
 
-	// IDMismatchSkips counts id-mode response entries dropped
-	// because the coin's own `id` field did not match the numeric
-	// id requested under that response key — a payload integrity
-	// fault, not a normal skip.
+	// IDMismatchSkips counts id-mode response entries dropped because the coin's own `id` field did not match the numeric id
+	// requested under that response key — a payload integrity fault, not a normal skip.
 	IDMismatchSkips uint64
 
 	// Logger receives a Warn per refused response entry. nil → slog.Default.
@@ -355,10 +351,9 @@ func decodeQuotes(ticker string, coin cmcCoin, plan requestPlan) ([]canonical.Or
 	return updates, undated
 }
 
-// PollOnce implements external.Poller. Tickers with a CMC id are fetched
-// in one `id=` request and the rest in a separate `symbol=` request: CMC
-// accepts one selector per call, so mixing them either rejects the whole
-// poll or silently drops the symbol-only tickers.
+// PollOnce implements external.Poller. Tickers with a CMC id are fetched in one `id=` request and the rest in a separate
+// `symbol=` request: CMC accepts one selector per call, so mixing them either rejects the whole poll or silently drops the
+// symbol-only tickers.
 func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canonical.Trade, []canonical.OracleUpdate, error) {
 	plan := p.planRequest(pairs)
 	if len(plan.ids) == 0 && len(plan.symbols) == 0 {

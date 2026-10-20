@@ -133,10 +133,9 @@ func decodeLiquidityPoolWithdraw(ledger uint32, closedAt time.Time, txHash strin
 		if !v.removed {
 			return nil, fmt.Errorf("%w: ledger %d tx %s op %d", ErrEntryChangesUnavailable, ledger, txHash, opIndex)
 		}
-		// Full drain: core erased the LiquidityPoolEntry, leaving 'state' + 'removed' with no
-		// 'updated' row. After-reserves are zero by construction, so this is a complete
-		// observation; calling it unavailable would drop a real withdrawal and raise a false
-		// fidelity alarm.
+		// Full drain: core erased the LiquidityPoolEntry, leaving 'state' + 'removed' with no 'updated' row. After-reserves are
+		// zero by construction, so this is a complete observation; calling it unavailable would drop a real withdrawal and
+		// raise a false fidelity alarm.
 		after = xdr.LiquidityPoolEntryConstantProduct{}
 	}
 	if negativeReserve(before, after) {

@@ -15,10 +15,8 @@ const (
 	// route to Store.InsertSEP41SupplyEvent.
 	EventKind = "sep41_supply.event"
 
-	// Symbol values matching internal/canonical/discovery's
-	// classifySymbol — kept duplicated here so this package can
-	// stand alone (the discovery package's classifySymbol is
-	// unexported by design).
+	// Symbol values matching internal/canonical/discovery's classifySymbol — kept duplicated here so this package can stand
+	// alone (the discovery package's classifySymbol is unexported by design).
 	SymbolMint     = "mint"
 	SymbolBurn     = "burn"
 	SymbolClawback = "clawback"

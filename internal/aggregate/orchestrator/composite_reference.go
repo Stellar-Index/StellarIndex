@@ -43,10 +43,8 @@ type CompositeReferenceConfig struct {
 	// single-venue leg cannot corroborate anything.
 	MinLegSources int
 
-	// FXMaxAge is the staleness budget for the FX leg's snap
-	// observation. fx_quotes buckets are DAILY and the feed pauses over
-	// market closes, so this mirrors divergence.DefaultMaxComparableAgeFX (76h)
-	// rather than the 6h poll-liveness alert.
+	// FXMaxAge is the staleness budget for the FX leg's snap observation. fx_quotes buckets are DAILY and the feed pauses over
+	// market closes, so this mirrors divergence.DefaultMaxComparableAgeFX (76h) rather than the 6h poll-liveness alert.
 	FXMaxAge time.Duration
 
 	// LegDispersionBps is the leg-dispersion guard: each venue's bucket VWAP on a priced leg must be within this many bps of the leg VWAP, else the leg cannot corroborate. 0 = ToleranceBps.
@@ -68,10 +66,9 @@ const (
 	// DefaultCompositeReferenceFXMaxAge is 76h: fx_quotes rows are keyed by DAY, so Monday's read of Friday's bucket is ~72h old and still valid.
 	DefaultCompositeReferenceFXMaxAge = 76 * time.Hour
 
-	// DefaultCompositeReferenceReleaseBandPct — 2 %. A genuine repricing
-	// lands the venue back within low single digits of the composite; a
-	// held venue-specific offset (~5–40 % measured) never does, and
-	// neither does a +4 % offset the shared 5 % band would wave through.
+	// DefaultCompositeReferenceReleaseBandPct is 2 %. A genuine repricing lands the venue within low single digits of the
+	// composite; a held venue-specific offset (~5-40 % measured) never does, nor does a +4 % offset the shared 5 % band would
+	// wave through.
 	DefaultCompositeReferenceReleaseBandPct = 2.0
 )
 
@@ -481,10 +478,8 @@ func (o *Orchestrator) referenceLeg(
 		if lr.sources < cfg.MinLegSources {
 			return nil, lr.sources, fmt.Sprintf("leg_sources=%d", lr.sources)
 		}
-		// Leg-dispersion guard (A1): two venues only count as two when
-		// they AGREE. A dominant venue plus a dust print 3 % off is one
-		// opinion and an artefact, and the artefact can be the attacker's.
-		// A guard that could not run has not been passed (A4).
+		// Leg-dispersion guard: two venues only count as two when they AGREE. A dominant venue plus a dust print 3 % off is one
+		// opinion and an artefact, and the artefact can be the attacker's. A guard that could not run has not been passed.
 		if lr.dispersionUncomputable {
 			return nil, lr.sources, "leg_dispersion=uncomputable"
 		}

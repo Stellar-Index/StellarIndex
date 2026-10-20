@@ -53,10 +53,9 @@ func extractClaimAtoms(op xdr.Operation, result xdr.OperationResult) []xdr.Claim
 		return success.OffersClaimed
 
 	case xdr.OperationTypeCreatePassiveSellOffer:
-		// stellar-core emits passive-offer results under the ManageSellOfferResult arm, so
-		// GetCreatePassiveSellOfferResult returns ok=false on real data and every passive
-		// offer's claim atoms would be silently dropped. Try the passive arm (XDR spec) first,
-		// then the manage-sell arm; both carry the same shape.
+		// stellar-core emits passive-offer results under the ManageSellOfferResult arm, so GetCreatePassiveSellOfferResult
+		// returns ok=false on real data and every passive offer's claim atoms would be silently dropped. Try the passive arm
+		// (XDR spec) first, then the manage-sell arm; both carry the same shape.
 		if r, ok := tr.GetCreatePassiveSellOfferResult(); ok {
 			if r.Code != xdr.ManageSellOfferResultCodeManageSellOfferSuccess {
 				return nil
@@ -136,9 +135,8 @@ func decodeClaimAtom(
 		boughtAmount = lp.AmountBought
 
 	case xdr.ClaimAtomTypeClaimAtomTypeV0:
-		// Legacy pre-CAP-27 shape: the seller is raw ed25519 bytes, not an AccountId. Derive
-		// the G-strkey and surface it as a regular OrderBook trade; returning
-		// ErrUnknownClaimAtomType would make the per-claim skip drop V0 fills silently and
+		// Legacy pre-CAP-27 shape: the seller is raw ed25519 bytes, not an AccountId. Derive the G-strkey and surface it as a
+		// regular OrderBook trade; returning ErrUnknownClaimAtomType would make the per-claim skip drop V0 fills silently and
 		// leave a hole in SDEX history.
 		v0 := atom.MustV0()
 		sellerAccount, _ = strkey.Encode(strkey.VersionByteAccountID, v0.SellerEd25519[:])

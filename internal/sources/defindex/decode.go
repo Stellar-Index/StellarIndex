@@ -166,10 +166,9 @@ func decodeVaultFlow(e *events.Event, kind string) (VaultFlow, error) {
 		ContractID: e.ContractID,
 	}
 
-	// Pick the per-direction field names. The vault layer uses
-	// distinct names per direction (depositor vs withdrawer,
-	// amounts vs amounts_withdrawn, df_tokens_minted vs df_tokens_burned),
-	// unlike the strategy layer which shares names across directions.
+	// Pick the per-direction field names. The vault layer uses distinct names per direction (depositor vs withdrawer, amounts
+	// vs amounts_withdrawn, df_tokens_minted vs df_tokens_burned), unlike the strategy layer which shares names across
+	// directions.
 	var userField, amountsField, tokensField string
 	switch kind {
 	case EventDeposit:

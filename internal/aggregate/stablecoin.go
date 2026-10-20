@@ -41,10 +41,8 @@ func FiatProxy(a canonical.Asset) (canonical.Asset, bool) {
 	// typed ctor so future additions catch mis-spellings at startup.
 	proxy, err := canonical.NewFiatAsset(fiat)
 	if err != nil {
-		// Unreachable unless the allow-list regresses; preserve the
-		// "no proxy available" semantic rather than panic, so a
-		// misconfiguration degrades to "stablecoin stays crypto" at
-		// the aggregator.
+		// Unreachable unless the allow-list regresses; keep the "no proxy available" semantic rather than panic, so a
+		// misconfiguration degrades to "stablecoin stays crypto" at the aggregator.
 		return canonical.Asset{}, false
 	}
 	return proxy, true
@@ -119,10 +117,8 @@ func ExpandTargetPairWithClassicPegs(target canonical.Pair, classicUSDPegs []can
 		}
 		src, err := canonical.NewPair(target.Base, stable)
 		if err != nil {
-			// target.Base happens to equal the stablecoin (e.g.
-			// target is USDC/fiat:USD — base is `crypto:USDC`, and
-			// we'd build `crypto:USDC/crypto:USDC`). Skip the
-			// collision; the direct target entry still stands.
+			// Skip when target.Base equals the stablecoin (target USDC/fiat:USD would build `crypto:USDC/crypto:USDC`); the direct
+			// target entry still stands.
 			continue
 		}
 		out = append(out, src)

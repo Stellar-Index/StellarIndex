@@ -99,10 +99,8 @@ func DefaultPairs() (map[string]canonical.Pair, error) {
 	return out, nil
 }
 
-// DefaultPairList returns the same set as DefaultPairs but as a
-// []canonical.Pair — the shape Streamer.Start expects. Convenience
-// for callers that just want "stream everything the default config
-// covers."
+// DefaultPairList returns the same set as DefaultPairs but as a []canonical.Pair — the shape Streamer.Start expects.
+// Convenience for callers that just want "stream everything the default config covers."
 func DefaultPairList() ([]canonical.Pair, error) {
 	m, err := DefaultPairs()
 	if err != nil {

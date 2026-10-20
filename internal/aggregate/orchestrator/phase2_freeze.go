@@ -46,10 +46,8 @@ func (p Phase2Thresholds) withDefaults() Phase2Thresholds {
 	if p.ZScoreMinFreeze == 0 {
 		p.ZScoreMinFreeze = DefaultPhase2ZScoreMinFreeze
 	}
-	// SourceCountMaxFreeze: zero is a valid threshold ("freeze only
-	// when zero contributing sources") — we can't use the zero
-	// sentinel here. Operators who want to override this MUST set a
-	// non-zero value; the documented default fires below.
+	// SourceCountMaxFreeze: zero is a valid threshold ("freeze only when zero contributing sources"), so the zero value can't
+	// mean unset. Operators overriding the default MUST set a non-zero value.
 	if p.SourceCountMaxFreeze == 0 {
 		p.SourceCountMaxFreeze = DefaultPhase2SourceCountMaxFreeze
 	}
@@ -315,10 +313,8 @@ func (o *Orchestrator) engageFreeze(
 	// derived price.
 	o.markFrozenThisTick(pair, window)
 
-	// A freeze skips the VWAP cache write, so the
-	// prior bucket's value must outlive the marker. Refresh regardless
-	// of whether a FreezeWriter is wired — the LKG keeps serving
-	// either way.
+	// A freeze skips the VWAP cache write, so the prior bucket's value must outlive the marker. Refresh whether or not a
+	// FreezeWriter is wired; the LKG keeps serving either way.
 	o.keepFrozenVWAPAlive(ctx, pair, window, out.MarkerTTL)
 	o.reseedFrozenVWAP(ctx, pair, window, stateKey, out.MarkerTTL)
 
@@ -337,10 +333,8 @@ func (o *Orchestrator) engageFreeze(
 		frozenValue, decision, out.State, out.MarkerTTL); err != nil {
 		o.logger.Warn("freeze marker write failed",
 			"pair", pair.String(), "window", window, "err", err)
-		// Soft-fail: the anomaly was detected, the marker write
-		// failed, the API won't see flags.frozen. Operators alert on
-		// AnomalyFreezeEngagedTotal vs the API-side flag rate; a
-		// sustained gap = the writer is broken. Don't fail the tick.
+		// Soft-fail: the anomaly was detected but the marker write failed, so the API won't see flags.frozen. Operators alert on
+		// AnomalyFreezeEngagedTotal vs the API-side flag rate (a sustained gap = broken writer). Don't fail the tick.
 	}
 }
 

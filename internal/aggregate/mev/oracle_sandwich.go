@@ -116,10 +116,8 @@ func buildOracleSandwichCandidate(trades []canonical.Trade, usdVolume []domain.M
 	if before == -1 || after == -1 {
 		return Candidate{}, false
 	}
-	// Same rule as buildSandwichCandidate: a bracket whose legs run the
-	// same way on the oracle's asset (a market maker quoting it on both
-	// sides of an update) is not a sandwich, and an unknown direction
-	// cannot prove one.
+	// Same rule as buildSandwichCandidate: legs running the same way on the oracle's asset (a market maker quoting both sides of
+	// an update) are not a sandwich, and an unknown direction cannot prove one.
 	if !oppositeOnAsset(trades[before], trades[after], o.Asset) {
 		return Candidate{}, false
 	}

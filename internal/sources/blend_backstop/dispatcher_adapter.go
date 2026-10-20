@@ -39,10 +39,8 @@ func IsBackstopContract(id string) bool {
 // Name implements [dispatcher.Decoder].
 func (*Decoder) Name() string { return SourceName }
 
-// Matches implements [dispatcher.Decoder]. Claims an event when its
-// topic[0] is one of the twelve backstop symbols AND it was emitted by a
-// known backstop contract. The contract gate disambiguates the
-// symbol-overlap with Blend pool events.
+// Matches implements [dispatcher.Decoder]. Claims an event when its topic[0] is one of the twelve backstop symbols AND it was
+// emitted by a known backstop contract. The contract gate disambiguates the symbol-overlap with Blend pool events.
 func (*Decoder) Matches(ev events.Event) bool {
 	return IsBackstopContract(ev.ContractID) && Classify(&ev) != ""
 }

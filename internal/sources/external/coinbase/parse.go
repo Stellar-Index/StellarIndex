@@ -57,10 +57,8 @@ func parseFrame(raw []byte, pairMap map[string]canonical.Pair) (canonical.Trade,
 		}
 		tr, err := buildTrade(m, pairMap)
 		if errors.Is(err, ErrDustTrade) {
-			// Real coinbase trade below our integer-scale precision
-			// floor (e.g. 1e-8 XLM). The canonical validator would
-			// reject it; report as "no trade emitted" so the streamer
-			// silently advances to the next frame.
+			// Real coinbase trade below our integer-scale precision floor (e.g. 1e-8 XLM). The canonical validator would reject
+			// it; report as "no trade emitted" so the streamer silently advances to the next frame.
 			return canonical.Trade{}, false, nil
 		}
 		if err != nil {

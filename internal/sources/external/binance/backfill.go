@@ -17,10 +17,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
 
-// RESTEndpoint is the Binance Spot REST API base for klines +
-// other public market-data calls. Paid clients can use regional
-// mirrors (api1/api2/api3/api4.binance.com) for lower latency; the
-// default hostname auto-balances across them.
+// RESTEndpoint is the Binance Spot REST API base for klines + other public market-data calls. Paid clients can use regional
+// mirrors (api1/api2/api3/api4.binance.com) for lower latency; the default hostname auto-balances across them.
 const RESTEndpoint = "https://api.binance.com"
 
 // klinesPath is the historical candlestick endpoint. Docs:

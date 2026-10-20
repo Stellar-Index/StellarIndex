@@ -5,12 +5,10 @@ import (
 	"sync"
 )
 
-// Oracle staleness budgets: stellarindex_oracle_stale compares each (source, asset)'s age
-// with its own budget gauge, because staleness is per ASSET. A per-source budget made
-// crypto:DAI (published only on moves) breach reflector-cex's 50 min 11.6% of the time,
-// and loosening the resolution would lie about the source and loosen every other asset.
-// State is process-global like the metrics: the oracle sink is reached through free
-// functions that carry no config.
+// Oracle staleness budgets: stellarindex_oracle_stale compares each (source, asset)'s age with its own budget gauge,
+// because staleness is per ASSET. A per-source budget made crypto:DAI (published only on moves) breach reflector-cex's 50 min
+// 11.6% of the time, and loosening it would lie about the source and loosen every other asset. State is process-global like the
+// metrics: the oracle sink is reached through free functions that carry no config.
 
 // OracleStaleBudgetMultiplier is the alert's historical `10 x resolution` threshold; changing it re-thresholds every un-overridden asset, so prefer a per-asset override.
 const OracleStaleBudgetMultiplier = 10

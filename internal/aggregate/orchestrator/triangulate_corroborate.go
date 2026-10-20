@@ -110,10 +110,8 @@ func (o *Orchestrator) triangulationDivergencePct(
 	if compositeF <= 0 || directF <= 0 || math.IsInf(compositeF, 0) || math.IsInf(directF, 0) {
 		return 0, false
 	}
-	// Same orientation as divergence.Compare's DivergencePct: deviation
-	// measured AGAINST the reference, so the two corroboration factors
-	// are fed comparable numbers. The composite is the reference here —
-	// it is the route through the deep markets.
+	// Same orientation as divergence.Compare's DivergencePct (deviation AGAINST the reference), so the two corroboration factors
+	// get comparable numbers; the composite is the reference, being the route through the deep markets.
 	return math.Abs(directF-compositeF) / compositeF * 100.0, true
 }
 

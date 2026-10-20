@@ -407,10 +407,9 @@ type compositeMeta struct {
 	// ServedRouteCount is the size of the highest-confidence tier that produced the served composite, unrelated to PathCount (the survivor count of the full gated set); never read PathCount as how many routes back the value.
 	ServedRouteCount int `json:"served_route_count"`
 	PathCount        int `json:"path_count"`
-	// CorroborationCount is the router's independent, tightly-agreeing
-	// route count behind a PUBLISHED composite (aggregate.CombineRoutes'
-	// corroborationCount); 0 on every refusal. Audit only: it never feeds a
-	// source count (triangulate_corroborate.go).
+	// CorroborationCount is the router's independent, tightly-agreeing route count behind a PUBLISHED composite
+	// (aggregate.CombineRoutes' corroborationCount); 0 on every refusal. Audit only: never feeds a source count
+	// (triangulate_corroborate.go).
 	CorroborationCount int     `json:"corroboration_count"`
 	CombinedConfidence float64 `json:"combined_confidence"`
 	LowConfidence      bool    `json:"low_confidence"`

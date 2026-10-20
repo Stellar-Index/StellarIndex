@@ -67,10 +67,8 @@ type NewAuctionEvent struct {
 	Ledger      uint32
 	TxHash      string
 	OpIndex     uint32
-	// EventIndex is the contract event's index within its operation — the
-	// per-event discriminator in the blend_auctions PK (migration 0058), so
-	// multiple auction events from one op don't collide on ON CONFLICT DO
-	// NOTHING.
+	// EventIndex is the contract event's index within its operation — the per-event discriminator in the blend_auctions PK
+	// (migration 0058), so multiple auction events from one op don't collide on ON CONFLICT DO NOTHING.
 	EventIndex uint32
 	Timestamp  time.Time
 }

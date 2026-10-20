@@ -18,16 +18,13 @@ type Decoder struct {
 	watched map[string]struct{}
 }
 
-// ErrEmptyWatchSet is returned by [NewDecoder] when the input
-// list is empty. A decoder with no contracts to watch is a
-// configuration error — operators that don't want SEP-41 supply
-// observation should simply not register the decoder.
+// ErrEmptyWatchSet is returned by [NewDecoder] when the input list is empty. A decoder with no contracts to watch is a
+// configuration error — operators that don't want SEP-41 supply observation should simply not register the decoder.
 var ErrEmptyWatchSet = errors.New("sep41_supply: cannot construct Decoder with empty watched-contract list")
 
-// NewUngatedDecoder returns a Decoder for lake-derive jobs
-// (ch-cap67-movements) that classify by topic alone across every
-// contract. Its Matches always returns false (empty watched set), so it
-// can never be wired into the dispatcher/projector gated paths.
+// NewUngatedDecoder returns a Decoder for lake-derive jobs (ch-cap67-movements) that classify by topic alone across every
+// contract. Its Matches always returns false (empty watched set), so it can never be wired into the dispatcher/projector gated
+// paths.
 func NewUngatedDecoder() *Decoder {
 	return &Decoder{watched: map[string]struct{}{}}
 }

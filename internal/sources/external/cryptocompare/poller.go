@@ -52,10 +52,8 @@ type Poller struct {
 	Interval time.Duration
 }
 
-// NewPoller constructs a Poller with validated key. CryptoCompare's
-// free tier works without a key in theory, but rate limits are so
-// aggressive that we require one in practice (and all serious use
-// needs a key anyway).
+// NewPoller constructs a Poller with validated key. CryptoCompare's free tier works without a key in theory, but rate limits
+// are so aggressive that we require one in practice (and all serious use needs a key anyway).
 func NewPoller(apiKey string) (*Poller, error) {
 	if apiKey == "" {
 		return nil, ErrAPIKeyRequired

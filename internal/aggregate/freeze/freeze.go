@@ -24,10 +24,8 @@ type Marker struct {
 	AssetID string `json:"asset_id"`
 	QuoteID string `json:"quote_id"`
 
-	// Action is the anomaly Decision Action — always "freeze" by
-	// construction; the field exists so the value type is
-	// future-proof if we ever extend the marker to cover
-	// ActionWarn-style warnings.
+	// Action is the anomaly Decision Action, always "freeze" by construction; kept so the value type survives extending the
+	// marker to ActionWarn-style warnings.
 	Action anomaly.Action `json:"action"`
 
 	// Class is the asset class that drove the threshold lookup
@@ -56,10 +54,9 @@ type Marker struct {
 	// adopt a sibling's escalated ladder and pin a healthy price, and would strand all but one on restart.
 	Ladders map[string]State `json:"ladders,omitempty"`
 
-	// UnownedLadder is a ladder live for the pair with no owning window (a pre-Ladders marker, or
-	// a durable row from before 0163 / a non-window store); windows without an entry fall back to it so
-	// narrowing never drops a running freeze. It retires once [LadderStillLive] fails and may be ADOPTED
-	// only within one grace of [Marker.UnownedSince] (see [Writer.LoadStateForWindow]).
+	// UnownedLadder is a ladder live for the pair with no owning window (a pre-Ladders marker or a non-window store); windows
+	// without an entry fall back to it so narrowing never drops a running freeze. It retires once [LadderStillLive] fails and may be
+	// ADOPTED only within one grace of [Marker.UnownedSince] (see [Writer.LoadStateForWindow]).
 	UnownedLadder State `json:"unowned_ladder,omitempty"`
 
 	// UnownedSince is when [Marker.UnownedLadder] was recorded; zero when there is none.

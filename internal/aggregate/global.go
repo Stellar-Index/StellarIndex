@@ -192,10 +192,8 @@ func tryAggregatorTier(
 		if len(fresh) == 0 {
 			continue
 		}
-		// M8: drop any source grossly divergent from the consensus BEFORE
-		// averaging, so a single bad print can't drag the plain-mean
-		// headline. Both the served price and the reported Sources reflect
-		// only the survivors.
+		// Drop any source grossly divergent from the consensus BEFORE averaging, so a single bad print can't drag the plain-mean
+		// headline. Both the served price and the reported Sources reflect only the survivors.
 		kept := rejectAggregatorOutliers(fresh)
 		avgPrice, latest, ok := averageAggregatorPrices(kept)
 		if !ok {

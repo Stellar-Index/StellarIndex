@@ -98,10 +98,8 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 			break
 		}
 
-		// Kraken silently ignores `since` once it is older than the
-		// venue's serving horizon and returns its most recent window
-		// instead — with err=nil. Only the FIRST page's cursor is the
-		// caller's actual requested start; detect the gap there.
+		// Kraken silently ignores `since` once it is older than the venue's serving horizon and returns its most recent window
+		// instead — with err=nil. Only the FIRST page's cursor is the caller's actual requested start; detect the gap there.
 		var depthErr error
 		if firstPage {
 			depthErr = checkServingHorizon(candles[0], requestedSinceSec, intervalSec)

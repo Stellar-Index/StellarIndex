@@ -110,10 +110,8 @@ func buildSandwichCandidate(trades []canonical.Trade, usdVolume []domain.MEVLegU
 	if !ok {
 		return Candidate{}, false
 	}
-	// A real sandwich front-runs then back-runs the SAME pair in OPPOSITE
-	// directions; the positional bracket alone admits same-direction
-	// ones. Drop same-direction and direction-unknown brackets so no
-	// account is named on impossible evidence.
+	// A real sandwich front-runs then back-runs the SAME pair in OPPOSITE directions; the positional bracket alone admits
+	// same-direction ones. Drop same-direction and direction-unknown brackets so no account is named on impossible evidence.
 	if !oppositeDirection(trades[front], trades[back]) {
 		return Candidate{}, false
 	}

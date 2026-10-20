@@ -217,10 +217,8 @@ func buildTrade(t tradePayload, pairMap map[string]canonical.Pair) (canonical.Tr
 
 // formatTxHash: see binance.formatTxHash. A slash-stripped symbol over 11 bytes would truncate trade_id, so it is refused.
 func formatTxHash(symbol string, tradeID int64) (string, error) {
-	// Normalise symbol — strip slash so the hash matches regardless
-	// of how Kraken formats it. "XLM/USD" and "XLMUSD" yield the
-	// same underlying bytes prefix; safe for dedup across potential
-	// future alias changes.
+	// Normalise symbol — strip slash so the hash matches regardless of how Kraken formats it. "XLM/USD" and "XLMUSD" yield the
+	// same underlying bytes prefix; safe for dedup across potential future alias changes.
 	normalised := strings.ReplaceAll(strings.ToUpper(symbol), "/", "")
 	return scale.StrictSyntheticTxHash(fmt.Sprintf("%s-%020d", normalised, tradeID))
 }

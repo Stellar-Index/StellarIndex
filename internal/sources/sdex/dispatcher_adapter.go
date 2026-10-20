@@ -65,12 +65,11 @@ func (*Decoder) decodeCounted(ctx dispatcher.OpContext) ([]consumer.Event, int) 
 			continue
 		}
 		if err != nil {
-			// Count the failure HERE: the dispatcher only counts a non-nil return from Decode,
-			// and this function swallows per-claim errors, so the decode-errors metric would
-			// never move. The drop is otherwise invisible: sdexclaim.IsRealTrade mirrors the
-			// reject, so the census and the lake's classic_trade_effect_count drop the atom too
-			// and the reconcile nets to zero. Still `continue`, not a returned error: the
-			// other claims in this op are independently valid.
+			// Count the failure HERE: the dispatcher only counts a non-nil return from Decode, and this function swallows
+			// per-claim errors, so the decode-errors metric would never move. The drop is otherwise invisible:
+			// sdexclaim.IsRealTrade mirrors the reject, so the census and the lake's classic_trade_effect_count drop the atom
+			// too and the reconcile nets to zero. Still `continue`, not a returned error: the other claims in this op are
+			// independently valid.
 			obs.SourceDecodeErrorsTotal.WithLabelValues(SourceName).Inc()
 			failed++
 			continue
