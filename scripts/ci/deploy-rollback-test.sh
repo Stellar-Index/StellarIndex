@@ -376,5 +376,23 @@ else
   bad "k. the run claims si-foxtrot was rolled back to a backup that was never created"
 fi
 
+# ── run 5 — a successful swap never leaves the live path absent ─────────
+# A timer that starts a CLI binary mid-deploy fails 203/EXEC if the path is
+# missing for even one task, so a watcher polls it through the whole swap.
+t_exec "printf 'golf-old\n' > '$BIN/si-golf' && chmod 0755 '$BIN/si-golf' \
+  && printf 'v0.0.1' > '$SIDECARS/si-golf' && rm -f /tmp/golf-gone /tmp/golf-stop" >/dev/null
+mk_art si-golf golf-new big
+sed -e 's/loop: \[si-foxtrot\]/loop: [si-golf]/' -e 's/si-foxtrot\]$/si-foxtrot, si-golf]/' \
+  "$CT/fixture-early.yml" > "$CT/fixture-golf.yml"
+docker exec -d "$CNAME" bash -c "while [ ! -e /tmp/golf-stop ]; do [ -e '$BIN/si-golf' ] || echo gone >> /tmp/golf-gone; sleep 0.005; done"
+out="$(cd "$CT" && ANSIBLE_LOCALHOST_WARNING=false ANSIBLE_INVENTORY_UNPARSED_WARNING=false \
+       ansible-playbook -i "$CNAME," -c community.docker.docker fixture-golf.yml 2>&1)"; rc=$?
+t_exec "touch /tmp/golf-stop" >/dev/null
+if [ "$rc" -eq 0 ]; then ok "l. a healthy single-binary deploy succeeds"
+else bad "l. healthy deploy failed (rc=$rc): $out"; fi
+want_head "l. the new build is live" "$BIN/si-golf" "golf-new"
+want_head "l. the backup holds the old build" "$BIN/si-golf.prev-v0.0.1" "golf-old"
+want_exact "l. the live path was never absent during the swap" "/tmp/golf-gone" "<absent>"
+
 echo "deploy-rollback-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
