@@ -20,6 +20,19 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.36] - 2026-10-20
+
+No migrations. No `pkg/*` break. No config change.
+
+### Added
+
+- **ops:** `ch-rebuild -credit-refusals` (dry run only) charges each decoded trade to the USD credibility budget in `-write`'s batch order and prints how many token/token prints it would refuse and their USD total (#3710)
+
+### Fixed
+
+- **timescale:** asset lookup by slug or id spells `COALESCE(slug, code)` out per column, so each arm reads its index instead of a parallel scan of `classic_assets` (62-75 ms to 1-14 ms on r1) (#3707).
+- **timescale:** the sparklines' XLM/USD leg is read once per 30 s and shared across assets, re-read at once when `freeze_events` changes (7d history 107 ms to about 1 ms per cold asset page on r1) (#3708).
+
 ## [v0.116.35] - 2026-10-20
 
 Postgres migration 0222 (new tables and a trigger; no replay). No `pkg/*` break. No config change.
@@ -66,16 +79,3 @@ No migrations. No `pkg/*` break. No config change.
 - **api:** the `/v1/price` last-trade fallback tries a 7-day window before its 400-day bound, so a fresh connection plans ~2 trades chunks per arm instead of ~58 (3 ms vs 205-240 ms on r1) and a burst of new connections no longer stalls price reads (#3674).
 - **deploy:** the binary swap hard-links the backup and renames the new build into place, so the live path is never absent and a timer firing mid-deploy no longer fails with 203/EXEC (#3673).
 
-## [v0.116.31] - 2026-10-20
-
-No migrations. No `pkg/*` break. No config change.
-
-### Fixed
-
-- **api:** the first page of `/v1/markets` and `/v1/pools` at any limit up to 200 is sliced from one cached 200-row head slot, so the prewarm scans each listing once instead of 15 times after a restart (#3669).
-- **sep41:** the observer watermark scans the last 7 days of supply events before falling back to the whole table, and a fold with no new events fills in a missing delta-read time bound, so both reads stop planning all 144 chunks (#3671).
-
-### Changed
-
-- **ci:** the mainnet explorer deploy is dispatched by `deploy.yml` after a stable r1 deploy succeeds, not by `release.yml` at the tag, so its prerender crawl no longer hits r1 while it restarts (#3670).
-- Long comment blocks condensed across `internal/`, `cmd/`, `pkg/client` and the test files (#3662–#3667); actionlint's shellcheck pass is on (#3661).
