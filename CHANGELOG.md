@@ -20,6 +20,20 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.31] - 2026-10-20
+
+No migrations. No `pkg/*` break. No config change.
+
+### Fixed
+
+- **api:** the first page of `/v1/markets` and `/v1/pools` at any limit up to 200 is sliced from one cached 200-row head slot, so the prewarm scans each listing once instead of 15 times after a restart (#3669).
+- **sep41:** the observer watermark scans the last 7 days of supply events before falling back to the whole table, and a fold with no new events fills in a missing delta-read time bound, so both reads stop planning all 144 chunks (#3671).
+
+### Changed
+
+- **ci:** the mainnet explorer deploy is dispatched by `deploy.yml` after a stable r1 deploy succeeds, not by `release.yml` at the tag, so its prerender crawl no longer hits r1 while it restarts (#3670).
+- Long comment blocks condensed across `internal/`, `cmd/`, `pkg/client` and the test files (#3662–#3667); actionlint's shellcheck pass is on (#3661).
+
 ## [v0.116.30] - 2026-10-20
 
 No migrations. No `pkg/*` break. Apply the ansible role after the deploy: it renders `api.dashboard.resend_domain_id`. The deploy applies the alert-rule changes.
@@ -81,18 +95,3 @@ No migrations. No `pkg/*` break.
 ### Added
 
 - **ops:** `tag-tx-index -chunks` fills `tx_index` on historical trades chunk by chunk (decompress, tag, recompress) under the trades `-chunks` lock, with a per-chunk dry run (#3626).
-
-## [v0.116.26] - 2026-10-19
-
-No migrations. No `pkg/*` break.
-
-### Fixed
-
-- **api:** `/v1/contracts/{id}/transfers?from=…` on a high-volume token answers 200 with `searched_from` set to the widest window it finished, instead of a 503 when the full-history read runs out of time (#3620).
-- **api:** the 60 s self-prewarm also warms the `/v1/assets` listing reads that home, /assets and /rwa fire on first load (#3623), and the home page's `/v1/markets?limit=3` slot (#3624).
-
-### Changed
-
-- **scripts:** `api-latency-sweep.sh --pages` covers the main explorer pages (#3622).
-- **clickhouse:** the empty `stellar.account_entry_changes` and `stellar.asset_entry_changes` are retired from the schema files and readers (#3625).
-- **deps:** explorer npm minor bumps (#3616), zizmor-action (#3615) and google.golang.org/api (#3606).
