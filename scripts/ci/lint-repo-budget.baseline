@@ -2,7 +2,6 @@
 # dated-md <path> | go-lines <path> <max-lines>
 dated-md docs/methodology/d7-thin-pool-third-alias-vwap-review-2026-09-04.md
 dated-md docs/operations/open-fixes-inventory-2026-08-08.md
-dated-md docs/operations/r1-ansible-drift-2026-07-03.md
 dated-md docs/operations/wasm-audits/evidence/blend_emitter/shape-verification-2026-07-10.md
 dated-md docs/operations/wasm-audits/r1-walk-2026-05-01.md
 dated-md docs/operations/wasm-audits/walker-investigation-2026-05-01.md

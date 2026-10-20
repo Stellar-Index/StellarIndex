@@ -592,4 +592,4 @@ A ClickHouse restart or a deliberate `vm.max_map_count` change moves the ratio: 
 
 ## Related
 
-- [Alerts catalogue](../alerts-catalog.md); [`cache.md#stellarindex_redis_writes_blocked`](cache.md#stellarindex_redis_writes_blocked); `postgres.md#stellarindex_timescale_disk_full`; ADR-0008 (HA topology + DR posture); `docs/operations/r1-ansible-drift-2026-07-03.md`; `docs/reference/metrics/README.md`.
+- [Alerts catalogue](../alerts-catalog.md); [`cache.md#stellarindex_redis_writes_blocked`](cache.md#stellarindex_redis_writes_blocked); `postgres.md#stellarindex_timescale_disk_full`; ADR-0008 (HA topology + DR posture); `docs/operations/ansible-drift.md`; `docs/reference/metrics/README.md`.

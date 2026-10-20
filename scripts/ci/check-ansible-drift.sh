@@ -40,7 +40,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 BASELINE="${ANSIBLE_DRIFT_BASELINE:-scripts/ci/ansible-drift.baseline}"
-RUNBOOK="docs/operations/r1-ansible-drift-2026-07-03.md"
+RUNBOOK="docs/operations/ansible-drift.md"
 
 # ── The report ───────────────────────────────────────────────────────
 # A weekly check that reliably finds something and is reliably ignored is worse

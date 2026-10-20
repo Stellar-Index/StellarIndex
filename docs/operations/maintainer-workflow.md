@@ -25,7 +25,7 @@ lands in `configs/ansible/` in the same PR** (secrets: the vault file
 Hand fixes without codification WILL page Monday morning. Apply with
 `ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml --tags
 <area>`, always `--check --diff` first. Findings log:
-docs/operations/r1-ansible-drift-2026-07-03.md.
+docs/operations/ansible-drift.md.
 
 ## Heavy one-shot jobs on r1 — ALWAYS use the wrapper
 

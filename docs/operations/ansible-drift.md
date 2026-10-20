@@ -1,14 +1,14 @@
 ---
-title: r1 ↔ ansible drift audit
+title: r1 ↔ ansible drift
 last_verified: 2026-07-06
 status: current
 ---
 
-# r1 ↔ ansible drift audit (2026-07-03)
+# r1 ↔ ansible drift
 
 Why `codified ≠ live` is a failure class here: the 2026-06-11 rsyslog
 suppression rules were codified in ansible but never applied to r1, and r1
-also carried hand fixes a playbook run would have erased. The audit diffed
+also carried hand fixes a playbook run would have erased. A 2026-07-03 audit diffed
 every `dest:` in `configs/ansible/roles/*/tasks` plus the r1 overlays
 (prometheus, alertmanager, caddy, systemd units) against the live host in both
 directions.

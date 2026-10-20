@@ -154,4 +154,4 @@ tracked in the private inventory.
 
 ## Related
 
-[r1-ansible-drift-2026-07-03.md](r1-ansible-drift-2026-07-03.md)
+[ansible-drift.md](ansible-drift.md)
