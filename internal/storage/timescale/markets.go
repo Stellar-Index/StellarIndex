@@ -235,12 +235,20 @@ func poolsFilterSQL(canonBase, canonQuote string) string {
 
 // poolsRawPrefilterSQL narrows the raw rows to the $4 sources and those with a leg in each asset array, so the fold joins and sort skip the rest
 // (988k of 1.25M rows for asset=XLM). Exact: an alias family is closed, so a folded leg in an array means its raw spelling is too;
-// poolsFilterSQL still applies the precise predicates.
-const poolsRawPrefilterSQL = `
-               AND (cardinality($4::text[]) = 0 OR r.source = ANY($4))
-               AND (cardinality($5::text[]) = 0 OR r.base_asset = ANY($5) OR r.quote_asset = ANY($5))
-               AND (cardinality($6::text[]) = 0 OR r.base_asset = ANY($6) OR r.quote_asset = ANY($6))
-               AND (cardinality($7::text[]) = 0 OR r.base_asset = ANY($7) OR r.quote_asset = ANY($7))`
+// poolsFilterSQL still applies the precise predicates. Only set filters are spelled: a `cardinality($n) = 0 OR` guard keeps a cached
+// generic plan off the asset indexes (r1, asset=AQUA: 228 ms filtering 405k rows vs 88 ms on a BitmapOr).
+func poolsRawPrefilterSQL(filter PoolsFilter) string {
+	var b strings.Builder
+	if len(filter.Sources) > 0 {
+		b.WriteString("\n               AND r.source = ANY($4)")
+	}
+	for i, set := range []bool{filter.Base != "", filter.Quote != "", filter.Asset != ""} {
+		if set {
+			fmt.Fprintf(&b, "\n               AND (r.base_asset = ANY($%[1]d) OR r.quote_asset = ANY($%[1]d))", 5+i)
+		}
+	}
+	return b.String()
+}
 
 // poolsFilterArgs binds $4..$7 for poolsFilterSQL.
 func poolsFilterArgs(filter PoolsFilter) []any {
@@ -258,7 +266,7 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
 	// FILTER clauses taking the 24h slice. last_trade_at lags by up to one refresh interval
 	// (5 min), acceptable for a discovery surface. $8/$9 are the alias-fold arrays, after $1..$7.
 	canonBase, canonQuote, flipped := canonOrientSQL(10)
-	cte := perSourcePoolsCTE(8, poolsRawPrefilterSQL, poolsFilterSQL(canonBase, canonQuote))
+	cte := perSourcePoolsCTE(8, poolsRawPrefilterSQL(filter), poolsFilterSQL(canonBase, canonQuote))
 	// canon collapses flipped orientations of a market within a source (XLM/USDC + USDC/XLM): volume
 	// and count sum across directions, last_price is the latest trade re-expressed canonically,
 	// and either direction's excluded trades make the volume a lower bound. See canonical.Orient.
