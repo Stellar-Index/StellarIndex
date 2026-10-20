@@ -243,11 +243,9 @@ func (p *PrometheusStatusBackend) Latency(ctx context.Context) (StatusLatency, e
 }
 
 // activeSourcesQuery and totalSourcesQuery are the "Active sources" numerator and denominator. The numerator MUST join on
-// stellarindex_source_enabled,
-// or the populations differ and the ratio can exceed 1; a feed with no gauge counts on NEITHER side. Both assume one scrape target per
-// source.
-// TestStatusSourceCountQueries_MatchPromtoolFixture holds deploy/monitoring/rule-tests/status-source-counts_test.yml to these exact
-// strings.
+// stellarindex_source_enabled, or the populations differ and the ratio can exceed 1; a feed with no gauge counts on NEITHER side.
+// Both assume one scrape target per source. TestStatusSourceCountQueries_MatchPromtoolFixture holds
+// deploy/monitoring/rule-tests/status-source-counts_test.yml to these exact strings.
 const activeSourcesQuery = `count(
 	(rate(stellarindex_source_events_total[7d]) > 0)
 	and on (source) (stellarindex_source_enabled == 1)

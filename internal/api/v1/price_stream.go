@@ -48,15 +48,15 @@ func parseClosedWindowSeconds(w http.ResponseWriter, r *http.Request) (int, bool
 // distinct so an operator can tell which surface withheld.
 const closedStreamGateSurface = "price_stream"
 
-// closedStreamGateBudget bounds ONE withholding consultation. The budget is mandatory (/stream skips the request-timeout middleware and
-// statement_timeout is 0), and generous
-// because both gates fail OPEN on timeout, so a tight budget would silently re-open the hole the gate closes.
+// closedStreamGateBudget bounds ONE withholding consultation. The budget is mandatory (/stream skips the request-timeout
+// middleware and statement_timeout is 0), and generous because both gates fail OPEN on timeout, so a tight budget would silently
+// re-open the hole the gate closes.
 const closedStreamGateBudget = tipStreamTickTimeout
 
-// closedStreamWithheld reports whether an aggregated closed-bucket price claim for (asset, quote) may be published here. Both gates,
-// never one: substance AND scam through the
-// priceWithheld chokepoint (TestWithholdingGatesAreSpelledOnlyAtTheChokepoint). Scam is asked first, on both legs via [scamWithheld] (a
-// flagged QUOTE issuer gets no inverted price). Nil gates withhold nothing.
+// closedStreamWithheld reports whether an aggregated closed-bucket price claim for (asset, quote) may be published here. Both
+// gates, never one: substance AND scam through the priceWithheld chokepoint (TestWithholdingGatesAreSpelledOnlyAtTheChokepoint).
+// Scam is asked first, on both legs via [scamWithheld] (a flagged QUOTE issuer gets no inverted price). Nil gates withhold
+// nothing.
 func (s *Server) closedStreamWithheld(ctx context.Context, asset, quote canonical.Asset) pricingguard.Withholding {
 	if s.Substance == nil && s.Scam == nil {
 		return pricingguard.NotWithheld
@@ -66,11 +66,10 @@ func (s *Server) closedStreamWithheld(ctx context.Context, asset, quote canonica
 	return withheldBy(ctx, s.Substance, s.Scam, asset, quote, closedStreamGateSurface)
 }
 
-// closedStreamSeries picks ONE alias spelling's series per connection: XLM prices under `native` and `crypto:XLM` (disjoint trade sets),
-// and forwarding both would interleave
-// independent series that look like market moves. A frame is forwarded only when no higher-priority spelling (/v1/price's alias order)
-// produced a bucket within [cachekeys.VWAPMaxAge]
-// of it; time is the frame's bucket end, not wall clock, so replicas forward the same frames. Not goroutine-safe: one forwarder owns it.
+// closedStreamSeries picks ONE alias spelling's series per connection: XLM prices under `native` and `crypto:XLM` (disjoint trade
+// sets), and forwarding both would interleave independent series that look like market moves. A frame is forwarded only when no
+// higher-priority spelling (/v1/price's alias order) produced a bucket within [cachekeys.VWAPMaxAge] of it; time is the frame's
+// bucket end, not wall clock, so replicas forward the same frames. Not goroutine-safe: one forwarder owns it.
 type closedStreamSeries struct {
 	rank     map[string]int    // "asset/quote" -> priority, 0 is preferred
 	lastSeen map[int]time.Time // rank -> newest bucket end seen
@@ -89,9 +88,9 @@ func newClosedStreamSeries(asset, quote canonical.Asset, windowSeconds int) (*cl
 	return c, topics
 }
 
-// admit reports whether a frame may be forwarded: a payload naming none of this connection's spellings passes (selection only chooses
-// between alias series). A price_withheld frame
-// is ranked but never recorded, since its as_of is wall clock and must not steer selection.
+// admit reports whether a frame may be forwarded: a payload naming none of this connection's spellings passes (selection only
+// chooses between alias series). A price_withheld frame is ranked but never recorded, since its as_of is wall clock and must not
+// steer selection.
 func (c *closedStreamSeries) admit(data []byte) bool {
 	key, at, bucket, ok := closedStreamFrameSeries(data)
 	if !ok {

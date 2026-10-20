@@ -24,9 +24,8 @@ const (
 	// tipWindowMaxTrades caps the rows loaded into memory for one tip VWAP. Mirrors /v1/vwap.
 	tipWindowMaxTrades = 10000
 
-	// tipEscalationWindowSeconds is the widened retry window for an empty caller window: falling to the closed bucket (60-113s stale) would
-	// breach the 30s
-	// freshness SLA. It is the SLA bound, hence not configurable.
+	// tipEscalationWindowSeconds is the widened retry window for an empty caller window: falling to the closed bucket (60-113s
+	// stale) would breach the 30s freshness SLA. It is the SLA bound, hence not configurable.
 	tipEscalationWindowSeconds = 30
 )
 
@@ -281,9 +280,9 @@ func (s *Server) tipWindowEscalating(ctx context.Context, asset, quote canonical
 	return PriceSnapshot{}, nil, false
 }
 
-// tipWindowVWAP runs the rolling-window VWAP and returns ok=false when the window is empty or VWAP failed. Errors are swallowed on
-// purpose: the tip contract guarantees
-// a response if the pair has any observation, so a transient hypertable error must not 5xx while the LatestPrice fallback is healthy.
+// tipWindowVWAP runs the rolling-window VWAP and returns ok=false when the window is empty or VWAP failed. Errors are swallowed
+// on purpose: the tip contract guarantees a response if the pair has any observation, so a transient hypertable error must not
+// 5xx while the LatestPrice fallback is healthy.
 func (s *Server) tipWindowVWAP(ctx context.Context, asset, quote canonical.Asset, windowSeconds int, pairs []canonical.Pair) (PriceSnapshot, []string, bool) {
 	if s.History == nil || len(pairs) == 0 {
 		return PriceSnapshot{}, nil, false
@@ -341,11 +340,10 @@ func (s *Server) tipWindowVWAP(ctx context.Context, asset, quote canonical.Asset
 	}, sources, true
 }
 
-// tipMergePairs splits the alias-pair combinations into those the tip window MERGES and those read LAST, after every other read has
-// missed (XLM aliases on both sides).
-// A SAC-wrapped classic's SAC/SAC pool is far thinner than its SDEX book, so merging it unasked would let one tiny-pool trade be the tip:
-// an unnamed
-// SAC-form combination goes in `last`; a caller naming a SAC form keeps the full cross in `merge`. Identity combinations are dropped.
+// tipMergePairs splits the alias-pair combinations into those the tip window MERGES and those read LAST, after every other read
+// has missed (XLM aliases on both sides). A SAC-wrapped classic's SAC/SAC pool is far thinner than its SDEX book, so merging it
+// unasked would let one tiny-pool trade be the tip: an unnamed SAC-form combination goes in `last`; a caller naming a SAC form
+// keeps the full cross in `merge`. Identity combinations are dropped.
 func tipMergePairs(asset, quote canonical.Asset) (merge, last []canonical.Pair) {
 	sacNamed := asset.Type == canonical.AssetSoroban || quote.Type == canonical.AssetSoroban
 	for _, a := range assetAliases(asset) {

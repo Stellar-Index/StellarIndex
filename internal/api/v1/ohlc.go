@@ -77,9 +77,9 @@ func priceRenderScale(r *big.Rat, digits int) int {
 	return priceRenderMaxScale
 }
 
-// handleOHLC serves GET /v1/ohlc in two modes: single-bar (no `interval`: one [OHLCBar] for [from, to) via [aggregate.ComputeOHLC]) and
-// series
-// (`interval` 1m..1w: up to `limit` closed bars from prices_<n>, default 100, max 1000). Single-bar defaults match /v1/history.
+// handleOHLC serves GET /v1/ohlc in two modes: single-bar (no `interval`: one [OHLCBar] for [from, to) via
+// [aggregate.ComputeOHLC]) and series (`interval` 1m..1w: up to `limit` closed bars from prices_<n>, default 100, max 1000).
+// Single-bar defaults match /v1/history.
 func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 	reader := s.History
 	if reader == nil {
@@ -206,9 +206,8 @@ func filterOHLCOutliers(w http.ResponseWriter, r *http.Request, window aggregate
 	return window, true
 }
 
-// computeOHLCSingleBar derives the bar and applies dex-nonstandard-decimals normalization; O/H/L/C share one raw ratio, so one per-pair
-// scalar
-// is exact ([aggregate.AdjustPrice]). ok=false means the failure response is already written.
+// computeOHLCSingleBar derives the bar and applies dex-nonstandard-decimals normalization; O/H/L/C share one raw ratio, so one
+// per-pair scalar is exact ([aggregate.AdjustPrice]). ok=false means the failure response is already written.
 func (s *Server) computeOHLCSingleBar(
 	w http.ResponseWriter, r *http.Request,
 	pair canonical.Pair, from, to time.Time,

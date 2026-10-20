@@ -31,10 +31,9 @@ const bespokeStaleAfter = 45 * time.Minute
 // bespokeRefreshTimeout bounds ONE detached bespoke battery (~2s under load) so a wedged query cannot pin the single-flight.
 const bespokeRefreshTimeout = time.Minute
 
-// bespokeGateLimit bounds concurrent detached bespoke batteries (a cold-start burst could launch one per key, ~80 keys). 8 (class cap 4)
-// is a third of timescale.PoolMaxOpenConns,
-// so the detached tier cannot crowd out request-path reads. SEPARATE from the explorer's lake gate: these hit Postgres, and sharing the
-// ClickHouse bound would couple unrelated pools.
+// bespokeGateLimit bounds concurrent detached bespoke batteries (a cold-start burst could launch one per key, ~80 keys). 8 (class
+// cap 4) is a third of timescale.PoolMaxOpenConns, so the detached tier cannot crowd out request-path reads. SEPARATE from the
+// explorer's lake gate: these hit Postgres, and sharing the ClickHouse bound would couple unrelated pools.
 const bespokeGateLimit = 8
 
 // bespokeGateClass is this cache's refresh class, its own so a burst of bespoke refreshes cannot consume the gate's whole allowance

@@ -144,10 +144,9 @@ func parseOHLCSeriesLimit(w http.ResponseWriter, r *http.Request) (int, bool) {
 	return n, true
 }
 
-// handleOHLCSeries serves the multi-bar branch of /v1/ohlc, closed buckets only (ADR-0015): storage excludes the in-progress bucket and a
-// defaulted `to`
-// snaps to the previous interval boundary so regions answer byte-identically. [Server.handleOHLC] routes here only with a validated
-// interval.
+// handleOHLCSeries serves the multi-bar branch of /v1/ohlc, closed buckets only (ADR-0015): storage excludes the in-progress
+// bucket and a defaulted `to` snaps to the previous interval boundary so regions answer byte-identically. [Server.handleOHLC]
+// routes here only with a validated interval.
 func (s *Server) handleOHLCSeries(
 	w http.ResponseWriter, r *http.Request,
 	pair canonical.Pair,
@@ -278,9 +277,9 @@ func withoutVendorVolumes(bars []OHLCSeriesBar) []OHLCSeriesBar {
 	return out
 }
 
-// pgTimeBucketOrigin is TimescaleDB's default time_bucket origin ([timescale.Store.OHLCSeriesReBucketed]); [time.Time.Truncate] agrees
-// only for widths
-// dividing the origin offset (1h/4h/12h/1d, not 3d or 2w), so a default `to` would miss the folded rows' boundaries.
+// pgTimeBucketOrigin is TimescaleDB's default time_bucket origin ([timescale.Store.OHLCSeriesReBucketed]); [time.Time.Truncate]
+// agrees only for widths dividing the origin offset (1h/4h/12h/1d, not 3d or 2w), so a default `to` would miss the folded rows'
+// boundaries.
 var pgTimeBucketOrigin = time.Date(2000, 1, 3, 0, 0, 0, 0, time.UTC)
 
 // truncateToBucketOrigin rounds t DOWN to a multiple of d from [pgTimeBucketOrigin], reproducing time_bucket's floor; d <= 0 is a no-op.
@@ -295,9 +294,8 @@ func truncateToBucketOrigin(t time.Time, d time.Duration) time.Time {
 	return t.Add(-rem)
 }
 
-// parseOHLCSeriesFromTo parses from/to with interval-aware defaults: `to` snaps DOWN to an interval boundary (ADR-0015), `from` is to -
-// limit*interval,
-// explicit values are verbatim (UTC). ok=false after a problem+json on a parse error or from >= to.
+// parseOHLCSeriesFromTo parses from/to with interval-aware defaults: `to` snaps DOWN to an interval boundary (ADR-0015), `from`
+// is to - limit*interval, explicit values are verbatim (UTC). ok=false after a problem+json on a parse error or from >= to.
 func parseOHLCSeriesFromTo(
 	w http.ResponseWriter, r *http.Request,
 	interval ohlcInterval, limit int,
@@ -375,9 +373,9 @@ func (s *Server) ohlcSeriesWithAliases(
 	return nil, false, nil
 }
 
-// annotateOHLCSeriesBarScale fills VBaseDecimals/VQuoteDecimals from each bar's Sources via [barScaleDecimals]. It must not share a path
-// with
-// [ohlcBucketAcc.finalize]: a combined bucket's scale is its constituents' lift target, not a lookup on the union of their venues.
+// annotateOHLCSeriesBarScale fills VBaseDecimals/VQuoteDecimals from each bar's Sources via [barScaleDecimals]. It must not share
+// a path with [ohlcBucketAcc.finalize]: a combined bucket's scale is its constituents' lift target, not a lookup on the union of
+// their venues.
 func annotateOHLCSeriesBarScale(bars []OHLCSeriesBar) {
 	for i := range bars {
 		d := barScaleDecimals(bars[i].Sources)
@@ -395,9 +393,9 @@ func wireScaleDecimals(scale int) *int {
 	return &scale
 }
 
-// adjustOHLCSeriesBars applies dex-nonstandard-decimals normalization to every bar (see [Server.handleOHLCSeries]); bars are returned
-// UNCHANGED when
-// baseDecimals == quoteDecimals, since reformatting the CAGG's NUMERIC::text via [ratToDecimal] would change bytes for every 7dp pair.
+// adjustOHLCSeriesBars applies dex-nonstandard-decimals normalization to every bar (see [Server.handleOHLCSeries]); bars are
+// returned UNCHANGED when baseDecimals == quoteDecimals, since reformatting the CAGG's NUMERIC::text via [ratToDecimal] would
+// change bytes for every 7dp pair.
 func adjustOHLCSeriesBars(bars []OHLCSeriesBar, baseDecimals, quoteDecimals int) []OHLCSeriesBar {
 	if baseDecimals == quoteDecimals || len(bars) == 0 {
 		return bars

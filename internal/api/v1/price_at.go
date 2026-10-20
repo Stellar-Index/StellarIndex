@@ -127,9 +127,8 @@ func (s *Server) handlePriceAt(w http.ResponseWriter, r *http.Request) {
 		coverageFrom, outside, nil, "")
 }
 
-// resolvePriceAt is the direct alias walk, then the stablecoin fallback (flagged triangulated); withheld is the first withheld-class
-// refusal either stage saw,
-// err a reader failure that ended the walk.
+// resolvePriceAt is the direct alias walk, then the stablecoin fallback (flagged triangulated); withheld is the first
+// withheld-class refusal either stage saw, err a reader failure that ended the walk.
 func (s *Server) resolvePriceAt(
 	ctx context.Context, asset, quote canonical.Asset, ts time.Time,
 ) (PriceSnapshot, Flags, bool, error, error) {
@@ -147,10 +146,9 @@ func (s *Server) resolvePriceAt(
 	return PriceSnapshot{}, Flags{}, false, withheld, nil
 }
 
-// lookupPriceAt walks the alias combinations and returns the first in-lookback bucket. withheld is the first ErrPriceWithheld-class
-// error, so the caller picks
-// the right 404 once all orientations are exhausted; err is a reader failure ([isPriceAtMiss] false) and ends the walk (a later hit would
-// stand in for an unknown answer).
+// lookupPriceAt walks the alias combinations and returns the first in-lookback bucket. withheld is the first
+// ErrPriceWithheld-class error, so the caller picks the right 404 once all orientations are exhausted; err is a reader failure
+// ([isPriceAtMiss] false) and ends the walk (a later hit would stand in for an unknown answer).
 func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset, ts time.Time) (PriceSnapshot, bool, error, error) {
 	var withheld error
 	for _, a := range assetAliases(asset) {
@@ -191,11 +189,10 @@ func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset
 	return PriceSnapshot{}, false, withheld, nil
 }
 
-// lookupPriceAtStablecoinFallback is the CAGG sibling of the raw-trades fallback: buckets key on the REAL stored quote, so a historical
-// X/fiat:USD lookup misses unless
-// something traded in fiat:USD; it retries each USD-pegged classic in priority order. The snapshot echoes the REQUESTED quote (caller
-// sets flags.triangulated);
-// withheld carries across every peg, and a reader failure on any peg ends the walk.
+// lookupPriceAtStablecoinFallback is the CAGG sibling of the raw-trades fallback: buckets key on the REAL stored quote, so a
+// historical X/fiat:USD lookup misses unless something traded in fiat:USD; it retries each USD-pegged classic in priority order.
+// The snapshot echoes the REQUESTED quote (caller sets flags.triangulated); withheld carries across every peg, and a reader
+// failure on any peg ends the walk.
 func (s *Server) lookupPriceAtStablecoinFallback(
 	ctx context.Context, asset, quote canonical.Asset, ts time.Time,
 ) (PriceSnapshot, bool, error, error) {

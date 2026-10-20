@@ -51,10 +51,9 @@ type SEP41TransfersResponse struct {
 // stroops and the SAC default.
 const defaultTokenDecimals = 7
 
-// tokenMetadataReadTimeout bounds EVERY best-effort token-metadata read against the lake (decimals() and the SEP-41 supply overlay):
-// their failure mode is a documented default or null field,
-// so without a sub-budget a slow lake would stall the caller for the FULL request budget. One constant keeps sibling call sites bounded
-// alike.
+// tokenMetadataReadTimeout bounds EVERY best-effort token-metadata read against the lake (decimals() and the SEP-41 supply
+// overlay): their failure mode is a documented default or null field, so without a sub-budget a slow lake would stall the caller
+// for the FULL request budget. One constant keeps sibling call sites bounded alike.
 const tokenMetadataReadTimeout = 2 * time.Second
 
 // sep41TransfersReadTimeout is the whole budget for the per-contract read: the store's lookback ladder plus its full-history fallback.
@@ -62,9 +61,9 @@ const tokenMetadataReadTimeout = 2 * time.Second
 // neither package sees the other's constant, so TestSEP41Transfers_LadderBudgetLeavesTheFallbackAtLeastHalf pins it.
 const sep41TransfersReadTimeout = 8 * time.Second
 
-// resolveTokenDecimals reads a token contract's on-chain decimals(), bounded by tokenMetadataReadTimeout. A nil reader or uncaptured
-// token yields the default 7; a FAILED read returns ok=false,
-// because decimals is the conversion factor for every amount beside it and a guessed 7 on an 18-decimal token overstates each by 10^11.
+// resolveTokenDecimals reads a token contract's on-chain decimals(), bounded by tokenMetadataReadTimeout. A nil reader or
+// uncaptured token yields the default 7; a FAILED read returns ok=false, because decimals is the conversion factor for every
+// amount beside it and a guessed 7 on an 18-decimal token overstates each by 10^11.
 func (s *Server) resolveTokenDecimals(ctx context.Context, contractID string) (decimals int, ok bool) {
 	if s.TokenDecimals == nil {
 		return defaultTokenDecimals, true

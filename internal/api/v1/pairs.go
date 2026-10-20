@@ -88,9 +88,9 @@ func (s *Server) handlePairs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out, Flags{})
 }
 
-// pairMarketWithAliases tries each XLM alias combination of base and quote (like [Server.ohlcSeriesWithAliases]) since a pair lives under
-// whichever id its
-// trades carried; the matched legs are returned so decimals resolve against the pair that produced the row.
+// pairMarketWithAliases tries each XLM alias combination of base and quote (like [Server.ohlcSeriesWithAliases]) since a pair
+// lives under whichever id its trades carried; the matched legs are returned so decimals resolve against the pair that produced
+// the row.
 func (s *Server) pairMarketWithAliases(
 	ctx context.Context, reader MarketsReader, base, quote canonical.Asset,
 ) (Market, canonical.Asset, canonical.Asset, bool, error) {

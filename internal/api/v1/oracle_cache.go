@@ -35,14 +35,13 @@ type oracleCacheEntry struct {
 	err error
 }
 
-// oracleCacheMaxEntries bounds the map: the key is the sorted asset list plus source filter on a public unauthenticated endpoint, and
-// only failures delete
-// entries (empty is a success), so an asset-space walk would grow it to OOM. Oldest-first eviction mirrors historyCacheMaxEntries.
+// oracleCacheMaxEntries bounds the map: the key is the sorted asset list plus source filter on a public unauthenticated endpoint,
+// and only failures delete entries (empty is a success), so an asset-space walk would grow it to OOM. Oldest-first eviction
+// mirrors historyCacheMaxEntries.
 const oracleCacheMaxEntries = 4096
 
-// evictIfFullLocked drops the oldest-filled entry at capacity; caller holds c.mu and calls it only when admitting a NEW key. In-flight
-// entries are never
-// evicted (waiters orphaned), so the map can briefly exceed the cap, bounded by concurrent requests.
+// evictIfFullLocked drops the oldest-filled entry at capacity; caller holds c.mu and calls it only when admitting a NEW key.
+// In-flight entries are never evicted (waiters orphaned), so the map can briefly exceed the cap, bounded by concurrent requests.
 func (c *CachedOracleReader) evictIfFullLocked(op string) {
 	if len(c.entries) < oracleCacheMaxEntries {
 		return
@@ -144,9 +143,8 @@ const oracleFetchBudget = 30 * time.Second
 // CachedHistoryReader.errHistoryFillPanicked.
 var errOracleFillPanicked = errors.New("oracle cache: fill panicked")
 
-// fetch is the TTL + single-flight loop, as in CachedIssuersReader.fetchList, except a fill is DETACHED on oracleFetchBudget: a caller
-// cancelling
-// only stops that caller waiting and must not abort the fetch for others single-flighted onto the key.
+// fetch is the TTL + single-flight loop, as in CachedIssuersReader.fetchList, except a fill is DETACHED on oracleFetchBudget: a
+// caller cancelling only stops that caller waiting and must not abort the fetch for others single-flighted onto the key.
 func (c *CachedOracleReader) fetch(
 	ctx context.Context,
 	op, key string,
@@ -197,9 +195,8 @@ func (c *CachedOracleReader) fetch(
 	}
 }
 
-// fill runs the upstream call on oracleFetchBudget (not the caller's ctx) and settles entry for every waiter. The panic guard is needed
-// because entry
-// starts zero-valued: an unsettled panic would still close(done) and waiters would read an empty success.
+// fill runs the upstream call on oracleFetchBudget (not the caller's ctx) and settles entry for every waiter. The panic guard is
+// needed because entry starts zero-valued: an unsettled panic would still close(done) and waiters would read an empty success.
 func (c *CachedOracleReader) fill(
 	key string,
 	entry *oracleCacheEntry,

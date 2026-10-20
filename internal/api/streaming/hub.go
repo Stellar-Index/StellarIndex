@@ -69,10 +69,9 @@ type Hub struct {
 // the topic alone rather than the whole Hub.
 type topicState struct {
 	mu sync.Mutex
-	// buffer is the replay ring, nil until the topic's first publish: topic keys are client-supplied and /v1/price/stream takes up to 9 alias
-	// topics per connection, so eager
-	// allocation (~20 KiB each) would reserve gigabytes of empty rings. Read via [topicState.replayAfter]/[topicState.bufferEmpty]; only
-	// Hub.Publish allocates it.
+	// buffer is the replay ring, nil until the topic's first publish: topic keys are client-supplied and /v1/price/stream takes
+	// up to 9 alias topics per connection, so eager allocation (~20 KiB each) would reserve gigabytes of empty rings. Read via
+	// [topicState.replayAfter]/[topicState.bufferEmpty]; only Hub.Publish allocates it.
 	buffer *ring
 	subs   map[*subscription]struct{}
 
@@ -346,10 +345,9 @@ func (h *Hub) dropSubscriber(topic string, sub *subscription) bool {
 	return present && sub.close()
 }
 
-// withTopic runs fn under the named topic's lock, creating it on first use and refreshing its idle clock. It retries when the reaper
-// evicted the state between lookup and lock
-// (a push on a detached state is invisible to everyone); each retry costs a goroutine a whole sweep, so it cannot spin. With bounded set
-// it may fail with [ErrTopicCapacity].
+// withTopic runs fn under the named topic's lock, creating it on first use and refreshing its idle clock. It retries when the
+// reaper evicted the state between lookup and lock (a push on a detached state is invisible to everyone); each retry costs a
+// goroutine a whole sweep, so it cannot spin. With bounded set it may fail with [ErrTopicCapacity].
 func (h *Hub) withTopic(name string, bounded bool, fn func(t *topicState)) error {
 	for {
 		t, err := h.getOrCreateTopic(name, bounded)

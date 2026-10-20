@@ -65,13 +65,12 @@ type RegisterResult struct {
 // /v1/signup — name + email + JSON wrapper fits in a fraction of it.
 const registerBodyMaxBytes = 4 * 1024
 
-// handleRegister serves POST /v1/register: public, anonymous-tier agent onboarding (one curl, no body needed) that creates a free-tier
-// accounts row, promotable via
-// PATCH /v1/admin/accounts/{id}, plus a Postgres-backed first API key. Unlike email-keyed /v1/signup (a bare Redis credential).
-// Abuse posture: per-IP volume shares the [SignupIPThrottle] budget with /v1/signup; Content-Type application/json is REQUIRED
-// (requireJSONContentType) because a header-less
-// POST is a CORS simple request no preflight catches (a body-less POST is fine); an account whose key is never used is erased once its
-// validator record expires ([accounterasure.AbandonedRegistrationRetention]).
+// handleRegister serves POST /v1/register: public, anonymous-tier agent onboarding (one curl, no body needed) that creates a
+// free-tier accounts row, promotable via PATCH /v1/admin/accounts/{id}, plus a Postgres-backed first API key. Unlike email-keyed
+// /v1/signup (a bare Redis credential). Abuse posture: per-IP volume shares the [SignupIPThrottle] budget with /v1/signup;
+// Content-Type application/json is REQUIRED (requireJSONContentType) because a header-less POST is a CORS simple request no
+// preflight catches (a body-less POST is fine); an account whose key is never used is erased once its validator record expires
+// ([accounterasure.AbandonedRegistrationRetention]).
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	req, ok := s.parseAndValidateRegister(w, r)
 	if !ok {
@@ -160,9 +159,8 @@ func (s *Server) createRegisteredAccount(
 	return platform.Account{}, false
 }
 
-// mintRegisterKey mints the account's first API key at the free-tier budgets. The monthly quota is persisted EXPLICITLY at the tier
-// ceiling, not the 0 inherit sentinel,
-// so the key is metered from birth (as in clampMonthlyQuotaToAccount).
+// mintRegisterKey mints the account's first API key at the free-tier budgets. The monthly quota is persisted EXPLICITLY at the
+// tier ceiling, not the 0 inherit sentinel, so the key is metered from birth (as in clampMonthlyQuotaToAccount).
 func (s *Server) mintRegisterKey(ctx context.Context, acct platform.Account) (string, platform.APIKey, error) {
 	var buf [32]byte
 	if _, err := rand.Read(buf[:]); err != nil {
@@ -236,11 +234,9 @@ func (s *Server) mintRegisterKey(ctx context.Context, acct platform.Account) (st
 }
 
 // suspendRegisterOrphan quarantines the account left when key minting failed after the account row committed. The `signup-race:`
-// suspended_reason is the exact prefix
-// signupreaper.ReapSuspendedOrphans matches; a register orphan has no child user or api_keys child, so it satisfies the reaper's
-// predicate.
-// Best-effort: it runs on a detached short-deadline context so a request whose deadline the failing write consumed can still quarantine,
-// and a failure never changes the 500.
+// suspended_reason is the exact prefix signupreaper.ReapSuspendedOrphans matches; a register orphan has no child user or api_keys
+// child, so it satisfies the reaper's predicate. Best-effort: it runs on a detached short-deadline context so a request whose
+// deadline the failing write consumed can still quarantine, and a failure never changes the 500.
 func (s *Server) suspendRegisterOrphan(ctx context.Context, accountID uuid.UUID, cause error) {
 	if s.RegisterAccounts == nil {
 		return

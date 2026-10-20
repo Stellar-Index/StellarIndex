@@ -66,9 +66,8 @@ type PriceChanges struct {
 // [priceAtMaxLookback].
 const priceChangesCurrentStaleness = priceAtMaxLookback
 
-// priceChangeHorizons are the trailing windows /v1/price/changes reports, ascending. Staleness tolerance is the horizon itself: a daily
-// bar can answer a multi-week
-// horizon, but a bucket more than one horizon-width stale means "no data that far back".
+// priceChangeHorizons are the trailing windows /v1/price/changes reports, ascending. Staleness tolerance is the horizon itself: a
+// daily bar can answer a multi-week horizon, but a bucket more than one horizon-width stale means "no data that far back".
 var priceChangeHorizons = []struct {
 	label string
 	dur   time.Duration
@@ -243,10 +242,10 @@ type priceAtResult struct {
 	resSec     int
 }
 
-// resolvePriceChangePair finds the (base, quote) orientation with a current price so every horizon is measured against the SAME market,
-// walking XLM aliases and, for fiat:USD,
-// the USD-pegged classics (triangulated=true). found=false means no fresh current bucket; withheld (meaningful then) is the first
-// ErrPriceWithheld-class error for the price-withheld 404. The last return is a reader failure.
+// resolvePriceChangePair finds the (base, quote) orientation with a current price so every horizon is measured against the SAME
+// market, walking XLM aliases and, for fiat:USD, the USD-pegged classics (triangulated=true). found=false means no fresh current
+// bucket; withheld (meaningful then) is the first ErrPriceWithheld-class error for the price-withheld 404. The last return is a
+// reader failure.
 func (s *Server) resolvePriceChangePair(
 	ctx context.Context, asset, quote canonical.Asset, now time.Time,
 ) (canonical.Pair, priceAtResult, bool, bool, error, error) {
@@ -315,10 +314,9 @@ func (s *Server) currentPriceForAliases(
 	return canonical.Pair{}, priceAtResult{}, false, withheld, nil
 }
 
-// priceChangeHorizon computes one horizon's delta for a resolved pair. A miss (no bucket, withheld reference, unparseable ratio) yields
-// an all-null horizon; a reader failure is returned
-// as err, since available=false would falsely claim no history. Gates are asked about `target`, not `now`, so one horizon can be withheld
-// while siblings are not.
+// priceChangeHorizon computes one horizon's delta for a resolved pair. A miss (no bucket, withheld reference, unparseable ratio)
+// yields an all-null horizon; a reader failure is returned as err, since available=false would falsely claim no history. Gates
+// are asked about `target`, not `now`, so one horizon can be withheld while siblings are not.
 func (s *Server) priceChangeHorizon(
 	ctx context.Context, pair canonical.Pair, currentPrice string, target time.Time, tolerance time.Duration,
 ) (PriceChangeHorizon, PriceWithheldReason, error) {

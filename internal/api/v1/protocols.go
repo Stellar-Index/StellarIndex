@@ -14,9 +14,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// protocolDetailTTL is the freshness horizon of a cached /v1/protocols/{name} detail; past it the entry is served STALE (flags.stale +
-// analytics.status="stale")
-// while a detached single-flight rebuild runs, so a built page never blanks back to a cold 503.
+// protocolDetailTTL is the freshness horizon of a cached /v1/protocols/{name} detail; past it the entry is served STALE
+// (flags.stale + analytics.status="stale") while a detached single-flight rebuild runs, so a built page never blanks back to a
+// cold 503.
 const protocolDetailTTL = 20 * time.Minute
 
 // protocolDetailRefreshTimeout bounds one detached rebuild so a wedged query cannot pin the
@@ -503,11 +503,10 @@ type ProtocolDetailView struct {
 	Analytics *ProtocolAnalyticsStatus `json:"analytics,omitempty"`
 }
 
-// handleProtocolsList serves GET /v1/protocols. The static registry always serves; dynamic joins degrade to zeros/absent when their
-// reader is nil or errors.
-// contract_count comes from the roster-count cache, since scanning per miss would be a DoS surface on an unauthenticated route; a source
-// whose read FAILS with
-// no last-good count is OMITTED and named in coverage_note (a failed read is not a zero).
+// handleProtocolsList serves GET /v1/protocols. The static registry always serves; dynamic joins degrade to zeros/absent when
+// their reader is nil or errors. contract_count comes from the roster-count cache, since scanning per miss would be a DoS surface
+// on an unauthenticated route; a source whose read FAILS with no last-good count is OMITTED and named in coverage_note (a failed
+// read is not a zero).
 func (s *Server) handleProtocolsList(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	events, eventsOK := s.protocolEvents24h(ctx)
@@ -548,8 +547,8 @@ func protocolsCoverageNote(omitted []string) string {
 }
 
 // protocolBespokeWindowDays parses the optional ?days= window of the bespoke block. The whitelist is deliberate: each window is a
-// distinct cached scan on an unauthenticated endpoint,
-// so arbitrary values would be an amplification surface. ok=false means a problem+json 400 was written.
+// distinct cached scan on an unauthenticated endpoint, so arbitrary values would be an amplification surface. ok=false means a
+// problem+json 400 was written.
 func protocolBespokeWindowDays(w http.ResponseWriter, r *http.Request) (int, bool) {
 	raw := r.URL.Query().Get("days")
 	switch raw {
@@ -623,10 +622,9 @@ func (s *Server) protocolDetailBuilder(meta ProtocolMeta, windowDays int) func(c
 	}
 }
 
-// buildProtocolDetail assembles the detail view and stamps analytics.status: "ok" only when EVERY component built healthy under a live
-// context; "stale" when the bespoke block
-// is past its horizon; otherwise "unavailable". Count, events and verdict reads fail independently, so a verdict-read error stays
-// distinguishable from "no snapshot".
+// buildProtocolDetail assembles the detail view and stamps analytics.status: "ok" only when EVERY component built healthy under a
+// live context; "stale" when the bespoke block is past its horizon; otherwise "unavailable". Count, events and verdict reads fail
+// independently, so a verdict-read error stays distinguishable from "no snapshot".
 func (s *Server) buildProtocolDetail(ctx context.Context, meta ProtocolMeta, windowDays int) ProtocolDetailView {
 	contracts, rosterOK := s.protocolRoster(ctx, meta)
 	classifyContractKinds(contracts, meta.Factories)
@@ -870,10 +868,9 @@ func protocolContractIDs(contracts []ProtocolContractView, factories []string) [
 	return ids
 }
 
-// fillProtocolSeriesAndBreakdown fills the daily series (+EventsTotal) and the breakdown from the SAME source, fast or raw: the windows
-// differ and
-// sum(EventBreakdown)==EventsTotal assumes one, so EITHER fast query erroring forces BOTH onto raw. The "untyped" bucket covers rows
-// without a plain Symbol topic_0_sym.
+// fillProtocolSeriesAndBreakdown fills the daily series (+EventsTotal) and the breakdown from the SAME source, fast or raw: the
+// windows differ and sum(EventBreakdown)==EventsTotal assumes one, so EITHER fast query erroring forces BOTH onto raw. The
+// "untyped" bucket covers rows without a plain Symbol topic_0_sym.
 func (s *Server) fillProtocolSeriesAndBreakdown(ctx context.Context, name string, ids []string, plan protocolActivityPlan, view *ProtocolDetailView) (seriesOK, breakdownOK bool) {
 	if plan.fast != nil {
 		series, sErr := plan.fast.ProtocolDailyActivityFast(ctx, ids, plan.sinceDay)
@@ -1073,9 +1070,9 @@ func attachProtocolTVL(view *ProtocolView, tvls map[string]ProtocolTVLView) {
 	}
 }
 
-// protocolEvents24h reads per-source trailing-24h event counts, degrading to an empty map when the reader is nil or errors. ok=false only
-// on a read error: a nil reader is the
-// documented "not wired" shape, not a degradation analytics.status should report.
+// protocolEvents24h reads per-source trailing-24h event counts, degrading to an empty map when the reader is nil or errors.
+// ok=false only on a read error: a nil reader is the documented "not wired" shape, not a degradation analytics.status should
+// report.
 func (s *Server) protocolEvents24h(ctx context.Context) (map[string]int64, bool) {
 	if s.ProtocolStats == nil {
 		return nil, true
@@ -1108,9 +1105,9 @@ func (s *Server) protocolVerdicts(ctx context.Context) (verdicts map[string]time
 	return out, true, verdictsStale
 }
 
-// protocolContractsErr returns name's registered instances in the unified wire shape. A nil reader is a genuine empty roster, not an
-// error; a store read ERROR is returned so the caller
-// degrades honestly. protocolContracts wraps this and swallows the error to empty.
+// protocolContractsErr returns name's registered instances in the unified wire shape. A nil reader is a genuine empty roster, not
+// an error; a store read ERROR is returned so the caller degrades honestly. protocolContracts wraps this and swallows the error
+// to empty.
 func (s *Server) protocolContractsErr(ctx context.Context, name string) ([]ProtocolContractView, error) {
 	if name == "soroswap" {
 		return s.soroswapContractsErr(ctx)
@@ -1189,10 +1186,9 @@ func protocolSinceDay(sinceLedger, tip uint32) time.Time {
 	return time.Now().UTC().AddDate(0, 0, -days)
 }
 
-// fastActivity returns the fast reader when the pre-aggregation is available. The probe answer is cached only when DEFINITIVE (table
-// missing, or rows found): a transient
-// ClickHouse blip must not latch the raw multi-billion-row scans for the process lifetime (so not sync.Once); a non-definitive answer
-// degrades THIS call to raw and re-probes.
+// fastActivity returns the fast reader when the pre-aggregation is available. The probe answer is cached only when DEFINITIVE
+// (table missing, or rows found): a transient ClickHouse blip must not latch the raw multi-billion-row scans for the process
+// lifetime (so not sync.Once); a non-definitive answer degrades THIS call to raw and re-probes.
 func (s *Server) fastActivity(ctx context.Context) protocolFastActivityReader {
 	fast, ok := s.ProtocolActivity.(protocolFastActivityReader)
 	if !ok {
@@ -1224,9 +1220,9 @@ func (s *Server) fastActivity(ctx context.Context) protocolFastActivityReader {
 	return fast
 }
 
-// protocolActivityPlan is the ONE shared fast-vs-raw decision and window for a detail build's concurrent fills: independent probes could
-// take different paths and break the
-// sum(EventBreakdown)==EventsTotal reconcile, and a failed tip read (tip==0) would silently serve a 1-day window labeled 90d.
+// protocolActivityPlan is the ONE shared fast-vs-raw decision and window for a detail build's concurrent fills: independent
+// probes could take different paths and break the sum(EventBreakdown)==EventsTotal reconcile, and a failed tip read (tip==0)
+// would silently serve a 1-day window labeled 90d.
 type protocolActivityPlan struct {
 	// sinceLedger is the raw readers' cutoff (tip − window), always set.
 	sinceLedger uint32
