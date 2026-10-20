@@ -106,7 +106,7 @@ type UsdVolumePricingSource struct {
 	// Unpriced has NULL usd_volume on a routable pair; for on-chain sources it
 	// includes thin markets, which are not yet separable.
 	Unpriced int64 `json:"unpriced"`
-	// Unroutable is unpriced with both classic legs from one issuer; excluded
+	// Unroutable is unpriced with both legs credits of one issuer (SAC wrappers folded); excluded
 	// from the ratio.
 	Unroutable int64 `json:"unroutable"`
 	// PricedRatio is priced / (trades - unroutable) as a decimal string;
