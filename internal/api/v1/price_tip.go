@@ -113,17 +113,16 @@ func (s *Server) tipFlags(ctx context.Context, snap PriceSnapshot, asset, quote 
 // Redis VWAP cache for proxy-rewritten pairs.
 // ErrPriceNotFound means no branch produced a snapshot; any other error is surfaced as-is for 500 mapping.
 func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, windowSeconds int) (PriceSnapshot, []string, error) {
-	// Withholding gates run before any read: the tip is still an aggregated price claim from raw
-	// trades, so without them a dust-authored market would serve its attacker-written rate here
-	// after /v1/price withheld it. One gate call covers every branch.
+	// Withholding gates run before any read: the tip is still an aggregated price claim, so a
+	// dust-authored market would otherwise serve its attacker-written rate after /v1/price withheld
+	// it.
 	//
-	// Deliberately no best-effort sub-budget like the divergence lookup
-	// ([tipStreamDivergenceBudget]), which has a safe unknown to degrade to. Timing out a gate
-	// would republish the rate it withholds, so a slow gate correctly costs the emission.
+	// No best-effort sub-budget like the divergence lookup ([tipStreamDivergenceBudget]): timing
+	// out a gate would republish the rate it withholds, so a slow gate correctly costs the
+	// emission.
 	//
-	// [withheldBy] folds both gates, scam first, so a pair both refuse reports as flagged rather
-	// than thin. It asks about BOTH legs via [scamWithheld]: withholding is a property of the
-	// market, and `?asset=native&quote=<FLAGGED>` is the flagged market's own price inverted.
+	// [withheldBy] folds both gates, scam first. It asks about BOTH legs via [scamWithheld]:
+	// `?asset=native&quote=<FLAGGED>` is the flagged market's own price inverted.
 	if w := withheldBy(ctx, s.Substance, s.Scam, asset, quote, "tip"); w != pricingguard.NotWithheld {
 		return PriceSnapshot{}, nil, PriceWithheldError(w)
 	}

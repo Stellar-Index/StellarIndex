@@ -16,13 +16,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// GET /v1/rwa/premium: the token's price against the instrument's net asset value, as a daily
-// series of /v1/rwa/assets' point-in-time `premium.pct`. It needs an observed market price and an
-// oracle NAV on the same clock; a chain query has neither.
+// GET /v1/rwa/premium: the token's price against the instrument's NAV, as a daily series of
+// /v1/rwa/assets' point-in-time `premium.pct`. It needs an observed market price and an oracle NAV
+// on the same clock.
 //
-// Neither leg is carried across a silent day, unlike /v1/rwa/history's supply: carrying the market
-// leg draws a discount nobody traded, and carrying the NAV leg a premium against a value nobody
-// published. A point exists only on a day both legs were observed.
+// Neither leg is carried across a silent day (unlike /v1/rwa/history's supply): carrying the market
+// leg draws a discount nobody traded, the NAV leg a premium against a value nobody published.
 //
 // The market leg is held to a floor of the live thin-market gate's shape
 // ([Server.rwaPremiumDayFloorFor]); a raw daily VWAP would publish, for past days, the
@@ -30,7 +29,7 @@ import (
 // history depends on retention ([timescale.Store.DailyMarketDays]).
 //
 // Only `rwa:` feeds in the curated binding (internal/rwa/oracle_reference.go) that trade against a
-// dollar can carry a premium; `excluded[]` names every member left out.
+// dollar can carry a premium; `excluded[]` names the rest.
 
 // rwaPremiumHistoryTTL bounds reuse of one assembled series; it matches [rwaHistoryTTL] since a
 // daily grain cannot move faster than the day and both legs are scans.

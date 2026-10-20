@@ -8,16 +8,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// This file puts a prewarmed, stale-while-revalidate layer under the contract_count served on
-// GET /v1/protocols.
+// A prewarmed stale-while-revalidate layer under contract_count on GET /v1/protocols.
 //
-// Without it handleProtocolsList would call protocolRoster PER protocol on every origin miss; for
-// a registry-empty source that is a `SELECT DISTINCT ... LIMIT 5000` full served-tier scan, on an
-// UNAUTHENTICATED route where a cache-busting query string skips the edge cache.
-//
-// The count changes slowly, so a per-source last-good count is exact enough and collapses the
-// request path to a map read. One background refresh runs per source per protocolRosterTTL
-// regardless of request rate, and the prewarm sweep keeps entries warm.
+// Without it handleProtocolsList would call protocolRoster per protocol on every origin miss; for a
+// registry-empty source that is a `SELECT DISTINCT ... LIMIT 5000` served-tier scan on an
+// UNAUTHENTICATED route where a cache-busting query string skips the edge cache. The count changes
+// slowly, so a per-source last-good count is exact enough; one refresh runs per source per
+// protocolRosterTTL.
 
 // protocolRosterTTL is the freshness horizon of a cached roster count; past it the entry is served while ONE detached refresh runs. It
 // exceeds the prewarm sweep (~13-16 min)

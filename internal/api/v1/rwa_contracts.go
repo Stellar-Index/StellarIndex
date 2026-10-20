@@ -13,14 +13,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// The contract arm of GET /v1/rwa/assets: membership, valuation and the coverage signal for tokens
-// that have no (code, issuer) pair. The definition is internal/rwa/contract.go; this file is the
-// read path.
+// The contract arm of GET /v1/rwa/assets: membership, valuation and coverage for tokens with no
+// (code, issuer) pair. The definition is internal/rwa/contract.go; this file is the read path.
 //
-// The classic arm walks issuers, so an entity issuing only contract tokens would never become a
-// candidate (a silent discard). This arm draws its population from the one table tying a real-world
-// entity to a Stellar address without classic issuance, and names recognised entities holding no
-// token here, which would otherwise look nonexistent.
+// The classic arm walks issuers, so an entity issuing only contract tokens would be silently
+// discarded. This arm draws from the table tying an entity to a Stellar address without classic
+// issuance, and names recognised entities holding no token here.
 
 // rwaContractScanCap bounds the contracts one rebuild evaluates; the recognised set is small, so it guards a directory sync that suddenly
 // tags thousands. When it binds the funnel says so.
@@ -309,14 +307,17 @@ func (s *Server) rwaUnreachedEntities(ctx context.Context, tags []string) []rwaU
 
 // ─── valuation ──────────────────────────────────────────────────────
 
-// rwaContractListingRows reads the admitted contracts through the /v1/assets post-query pipeline, in the listing's order so the surface
-// cannot drift from /v1/assets
-// (TestSourceShapeRules/rwa_contract_pipeline_matches_assets_listing); the substance gate covers canonical.AssetSoroban, so a thin-market price is withheld
-// here. It then fills what the pipeline cannot:
-// 1. supply and market cap: only the precise supply map reaches a contract row; fillContractMarketCaps has the last word (drops the
-// generic cap, and every cap on a row whose scale was not read).
-// 2. scam suppression: tags are re-read at valuation time, not reused from the membership build. valuationCut reports ctx ended mid-fill:
-// rows lacking a valuation were never read, not refused.
+// rwaContractListingRows reads the admitted contracts through the /v1/assets post-query pipeline,
+// in the listing's order so the surface cannot drift from it
+// (TestSourceShapeRules/rwa_contract_pipeline_matches_assets_listing). The substance gate covers
+// canonical.AssetSoroban, so a thin-market price is withheld here. It then fills:
+//  1. supply and market cap: only the precise supply map reaches a contract row;
+//     fillContractMarketCaps has the last word (drops the generic cap, and every cap on a row whose
+//     scale was not read).
+//  2. scam suppression: tags are re-read at valuation time, not reused from the membership build.
+//     valuationCut reports ctx ended mid-fill: rows lacking a valuation were never read, not
+//
+// refused.
 func (s *Server) rwaContractListingRows(
 	ctx context.Context, members []rwaContractMember,
 ) (byID map[string]AssetDetail, notObserved int, valuationCut bool, err error) {

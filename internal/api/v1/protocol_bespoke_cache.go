@@ -13,19 +13,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// This file puts a LAST-GOOD layer under the per-category bespoke analytics block of
-// /v1/protocols/{name}.
+// A LAST-GOOD layer under the per-category bespoke analytics block of /v1/protocols/{name}.
 //
-// The bespoke block is built LAST in buildProtocolDetail, so it inherits whatever remains of
-// the rebuild's 90-second budget; under load that reaches zero and enrichBespoke drops the
-// block, and on a cold process the bespoke-less view would be cached and stamped fresh,
-// rendering the suite as ABSENT.
+// The block is built last in buildProtocolDetail and inherits what is left of the 90-second
+// budget; under load enrichBespoke drops it, and on a cold process the bespoke-less view would be
+// cached and stamped fresh, rendering the suite as ABSENT.
 //
-// The block therefore has its own TTL-less cache with a detached, single-flighted, GATED
-// refresh. A build serves the previous block instantly; only a TRUE first-ever miss waits,
-// bounded by the build's context (the compute survives that deadline, so the next build lands
-// warm). A failed or starved refresh keeps the last good block. Every build kicks a refresh
-// UNCONDITIONALLY (single flight collapses duplicates); a freshness-gated kick would sawtooth.
+// So the block has its own TTL-less cache with a detached, single-flighted, GATED refresh; only a
+// true first-ever miss waits. A failed refresh keeps the last good block. Every build kicks a
+// refresh UNCONDITIONALLY; a freshness-gated kick would sawtooth.
 
 // bespokeStaleAfter is the age past which a SERVED bespoke block is reported stale (analytics.status drops ok to stale); not a refresh
 // trigger.

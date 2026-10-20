@@ -67,20 +67,17 @@ type HistoryReader interface {
 	// side re-buckets a finer CAGG when the interval has no native one.
 	OHLCSeries(ctx context.Context, pair canonical.Pair, interval string, from, to time.Time, limit int) ([]OHLCSeriesBar, error)
 
-	// LatestTradePerSource returns the most-recent trade from each source that has ever traded
-	// the market `pair` names. Empty slice and nil error when none.
+	// LatestTradePerSource returns the most-recent trade from each source that has ever traded the
+	// market `pair` names; empty slice and nil error when none.
 	//
-	// It matches either stored direction and returns the requested orientation: SDEX records
-	// XLM/USDC and USDC/XLM as separate rows, so a literal bind would miss a market /v1/history
-	// serves. Implementations MUST read both directions and re-express flipped rows by swapping
-	// the legs and the smallest-unit amounts, so a derived price is the exact reciprocal. A source
-	// that traded both ways folds to its later trade.
+	// It matches either stored direction (SDEX stores XLM/USDC and USDC/XLM as separate rows) and
+	// returns the requested orientation. Implementations MUST read both directions and re-express
+	// flipped rows by swapping the legs and smallest-unit amounts, so a derived price is the exact
+	// reciprocal. A source that traded both ways folds to its later trade.
 	//
-	// sourceFilter ("" = none) restricts to one source in SQL. Backs /v1/observations with a
-	// DISTINCT ON (source) scan per direction and no time bound.
-	//
-	// Cost: trades_pair_source_ts_idx gives per-chunk SkipScans (tens to hundreds of ms), well
-	// inside the 8s ceiling, and [CachedHistoryReader] SWR-caches it.
+	// sourceFilter ("" = none) restricts to one source. Backs /v1/observations;
+	// trades_pair_source_ts_idx keeps it inside the 8s ceiling and [CachedHistoryReader] SWR-caches
+	// it.
 	LatestTradePerSource(ctx context.Context, pair canonical.Pair, sourceFilter string) ([]canonical.Trade, error)
 }
 

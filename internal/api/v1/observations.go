@@ -92,15 +92,14 @@ func (s *Server) handleObservations(w http.ResponseWriter, r *http.Request) {
 
 	// Single-source flag: true when exactly one source contributed (informational).
 	//
-	// FRESHNESS CONTRACT: this RAW per-source surface has no single staleness verdict.
-	// flags.stale is always false BY DESIGN and the envelope's as_of is the response time, NOT the
-	// data's age; consumers assess freshness per row from its own trade timestamp.
+	// FRESHNESS CONTRACT: this RAW per-source surface has no single staleness verdict. flags.stale
+	// is always false BY DESIGN and the envelope's as_of is the response time, NOT the data's age;
+	// consumers judge freshness per row from its own trade timestamp.
 	//
-	// divergence_checked is also structurally false and s.Divergence is never consulted: the
-	// cross-reference verdict is cached per base and speaks to an aggregated number, so stamping
-	// it on each venue's last trade would claim a cross-check that never happened. Pinned by
-	// TestObservations_DivergenceCheckedStructurallyFalse; the stream twin
-	// (observationsStreamEvent) mirrors it.
+	// divergence_checked is structurally false and s.Divergence is never consulted: the verdict
+	// speaks to an aggregated number, so stamping it on a venue's last trade would claim a
+	// cross-check that never happened (TestObservations_DivergenceCheckedStructurallyFalse; the
+	// stream twin mirrors it).
 	flags := Flags{SingleSource: len(srcs) == 1}
 
 	// Triangulation hint: an empty array reads as "unpriced" when /v1/price serves the pair via

@@ -13,13 +13,11 @@ import (
 )
 
 // GET /v1/liquidity-pools: CURRENT two-sided reserves plus a constant-product depth approximation
-// for native (CAP-38) liquidity pools, read from the `liquidity_pool` LedgerEntry in the lake's
-// current-state table (read-time decode, like /v1/pools/reserves). Native pools carry both
-// reserves on-chain, unlike Soroban AMMs whose reserves are consumed at trade decode.
+// for native (CAP-38) pools, read-time decoded from the lake's `liquidity_pool` LedgerEntry state.
 //
-// The listing's limit (1-100, default 25) ranks by pool-share trustline count, the only
-// cross-pool-comparable size signal without USD pricing of arbitrary pool assets. Data is current
-// ledger-entry state (per-pool as_of_ledger), not closed-bucket; flags.stale reflects lake freshness.
+// limit (1-100, default 25) ranks by pool-share trustline count, the only cross-pool size signal
+// without USD pricing of arbitrary assets. Data is current ledger-entry state (per-pool
+// as_of_ledger), not closed-bucket; flags.stale reflects lake freshness.
 
 // classicAssetDecimals is the fixed scale of every classic asset (7 = stroops); native-pool
 // reserves need no per-token decimals lookup, unlike Soroban tokens that self-declare.

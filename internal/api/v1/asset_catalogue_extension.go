@@ -117,14 +117,10 @@ func (s *Server) applyAssetRowToDetail(ctx context.Context, detail *AssetDetail,
 	// price so a gated-out row loses them too; the declared-peg fill downstream (nil PriceUSD only)
 	// can still supply the operator-declared basis.
 	priceAllowed := s.Substance == nil || s.listingPriceAllowed(ctx, asset)
-	// Fill PriceUSD from the row ONLY when the canonical price path left it nil: the row's price is
-	// COALESCE(direct_usd, asset_vs_xlm x xlm_usd) and its native-XLM anchor prefers SDEX over CEX,
-	// so it can differ from the canonical VWAP. Yielding keeps /v1/assets/native in agreement with
-	// /v1/price while still pricing the XLM-triangulated long tail.
-	//
-	// The row's price is a RAW prices_1m ratio, so it is decimals-normalised first
-	// (normalizeCatalogueReadUSD); a price that must be withheld leaves PriceUSD nil for the
-	// transitive fill below, which reads at full precision.
+	// Fill PriceUSD from the row only when the canonical price path left it nil, so
+	// /v1/assets/native agrees with /v1/price. The row price is a raw prices_1m ratio, so it is
+	// decimals-normalised first (normalizeCatalogueReadUSD); a withheld price leaves PriceUSD nil
+	// for the transitive fill below.
 	if priceAllowed && row.PriceUSD != nil && detail.PriceUSD == nil {
 		if p, ok := s.normalizeCatalogueReadUSD(*row.PriceUSD, asset); ok {
 			detail.PriceUSD = &p

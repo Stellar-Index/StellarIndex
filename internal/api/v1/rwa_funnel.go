@@ -11,13 +11,12 @@ import (
 // The RWA funnel: the complete accounting from every issuer that could carry a SEP-1 attestation
 // down to the assets served.
 //
-// Without the funnel nothing distinguishes "the network holds few real-world assets" from "the
-// pipeline discarded thousands of candidates silently". The refusal tally reports only
-// requirements that were EVALUATED, while most of the population is discarded by stages before any
-// candidate reaches the definition. The funnel reports the stages, the tally the requirements, and
-// together every unit that entered is accounted for.
+// Without it nothing distinguishes "the network holds few real-world assets" from "the pipeline
+// silently discarded thousands of candidates": the refusal tally covers only EVALUATED
+// requirements, while most candidates are discarded before reaching the definition. Funnel stages
+// plus tally account for every unit that entered.
 //
-// NOT a second membership rule: it admits nothing; widening coverage never loosens it.
+// NOT a second membership rule: it admits nothing.
 
 // Funnel stage units. The unit changes down the funnel and comparing counts of different units is
 // the easiest way to misread it, so every stage carries its own.
@@ -304,15 +303,14 @@ func rwaClassicStages(m rwaMembership, join rwaCatalogueJoin, served int) []RWAF
 	c := m.census
 
 	// Issuers with an on-chain home_domain, less those holding no attestation. The gap is TWO
-	// findings with two owners: an issuer nothing has fetched yet is an operator backlog, while one
-	// whose domain WAS reached and served nothing storable is the issuer's own publication problem
-	// (the larger share, so calling it all backlog would overstate the operator's).
+	// findings with two owners: an issuer nothing has fetched yet is an operator backlog; one whose
+	// domain was reached and served nothing storable is the issuer's own publication problem (the
+	// larger share).
 	//
 	// The split cannot say WHY a reached domain served nothing: no per-attempt outcome is stored, so
-	// 404, dead name, TLS failure and a document without SEP-1 are one count.
-	//
-	// Both counts are clamped (the gap at zero; fetched-but-empty to the gap); neither clamp hides an
-	// inconsistency, since the census Check() bounds the same counts independently.
+	// 404, dead name, TLS failure and a document without SEP-1 are one count. Both counts are
+	// clamped; neither clamp hides an inconsistency, since the census Check() bounds the same
+	// counts.
 	gap := max(c.IssuersWithHomeDomain-c.IssuersWithPayload, 0)
 	servedNothing := min(c.IssuersFetchedWithoutPayload, gap)
 	neverFetched := gap - servedNothing

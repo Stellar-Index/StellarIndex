@@ -430,13 +430,12 @@ func (s *Server) buildIngestionSnapshot(ctx context.Context) IngestionDiagnostic
 	return out
 }
 
-// overlaySourceCoverageV2 fills the authoritative DensityPct, CoveredLedgers, GapFreePct and
-// CoverageSnapshotAt from source_coverage_snapshots.
+// overlaySourceCoverageV2 fills DensityPct, CoveredLedgers, GapFreePct and CoverageSnapshotAt from
+// source_coverage_snapshots.
 //
-// Multi-table sources take the MIN of density, gap_free and covered_ledgers across tables (one
-// empty target means not fully covered); snapshot_at is the OLDEST last_updated. expected_ledgers
-// is the snapshot's trailing-window size so covered/expected stays coherent with density_pct.
-// Soft-fail: a reader error or empty table leaves zeros, which the UI renders as "Pending".
+// Multi-table sources take the MIN of density, gap_free and covered_ledgers (one empty target means
+// not fully covered) and the OLDEST last_updated. Soft-fail: a reader error or empty table leaves
+// zeros, which the UI renders as "Pending".
 //
 //nolint:gocognit // linear pipeline; multi-table aggregation reads better inline than as a separate helper.
 func (s *Server) overlaySourceCoverageV2(ctx context.Context, rows *[]BackfillCoverageRow) {

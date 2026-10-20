@@ -204,14 +204,13 @@ func (c *CachedHistoryReader) fill(
 	upstream func(context.Context) ([]canonical.Trade, error),
 ) {
 	defer close(done)
-	// Registered AFTER close(done), so it runs BEFORE it: waiters read entry.err / entry.trades
-	// once `done` closes, so the entry must be settled before that happens-before edge fires.
+	// Registered AFTER close(done), so it runs BEFORE it: the entry must be settled before waiters
+	// read entry.err / entry.trades.
 	//
-	// Settling on a panic is the point. Otherwise entry.flight stays set and entry.at zero forever,
-	// and every waiter reads nil error and nil trades as an EMPTY 200 OK for the life of the
-	// process. A permanently-empty cache reporting success is worse than the crash, so recover
-	// runs the error path's bookkeeping (see settleFailedFill). The panic source is upstream,
-	// which runs before the lock is taken, so settleFailedFill cannot deadlock on c.mu.
+	// Settling on a panic is the point: otherwise entry.flight stays set and every waiter reads nil
+	// error and nil trades as an EMPTY 200 OK for the life of the process. Recover therefore runs
+	// the error path's bookkeeping (settleFailedFill); the panic source is upstream of the lock, so
+	// it cannot deadlock on c.mu.
 	defer func() {
 		if rec := recover(); rec != nil {
 			worker.Report(c.logger, "api-history-latest-per-source-fill", rec)
