@@ -1,0 +1,50 @@
+---
+# promtool unit tests for the dust-share alert.
+#
+#   promtool test rules deploy/monitoring/rule-tests/external-pollers_dust_test.yml
+#
+# A volume burst with a steady dust share must stay quiet; a venue whose
+# trades are nearly all dust must ticket; one stray drop on an otherwise
+# silent venue must not.
+
+rule_files:
+  - ../rules/external-pollers.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    name: a burst at a low dust share stays quiet, a mis-scaled venue tickets
+    input_series:
+      # coinbase: 2 dust/s against 60 inserts/s (3% share).
+      - series: 'stellarindex_external_dust_dropped_total{source="coinbase"}'
+        values: '0+120x90'
+      - series: 'stellarindex_trade_inserts_total{source="coinbase",usd_volume_populated="yes"}'
+        values: '0+3600x90'
+      # kraken: 10 dust/s against 0.5 inserts/s (95% share).
+      - series: 'stellarindex_external_dust_dropped_total{source="kraken"}'
+        values: '0+600x90'
+      - series: 'stellarindex_trade_inserts_total{source="kraken",usd_volume_populated="yes"}'
+        values: '0+30x90'
+      # bitstamp: one drop every 10 min and no inserts (100% share, below the rate floor).
+      - series: 'stellarindex_external_dust_dropped_total{source="bitstamp"}'
+        values: '0+0.1x90'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_external_dust_dropped_high
+        exp_alerts: []
+      - eval_time: 60m
+        alertname: stellarindex_external_dust_dropped_high
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: external-poller
+              source: kraken
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_external_dust_dropped_high
+              summary: "kraken dropping most of its trades as dust"
+              description: |
+                More than half of kraken's streamed trades have
+                been dropped as sub-$0.001 dust for 30 min. Check whether the
+                venue's amount scaling changed (e.g. a symbol's decimals).
