@@ -13,15 +13,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// Regression suite: the scam-issuer gate must cover the QUOTE leg, not the BASE alone. Otherwise
-// a flagged issuer's withheld price is republished, as its reciprocal, by moving the asset to the
-// quote side: /v1/vwap?base=native&quote=<FLAGGED> would answer 200 while
+// The scam-issuer gate must cover the QUOTE leg, not the BASE alone. Otherwise a flagged
+// issuer's withheld price is republished, as its reciprocal, by moving the asset to the quote
+// side: /v1/vwap?base=native&quote=<FLAGGED> would answer 200 while
 // /v1/vwap?base=<FLAGGED>&quote=native answers 404 price-withheld, though both describe the SAME
 // market and the endpoint is unauthenticated.
 //
 // The gate is exercised through the REAL *pricingguard.ScamGate over a stub directory, not a
-// hand-written fake with a `withheld map[string]bool`: a fake answering only the base-only
-// question would pass without the pair-aware primitive.
+// fake with a `withheld map[string]bool`: a fake answering only the base-only question would
+// pass without the pair-aware primitive.
 
 // scamQuoteLegDirectory flags exactly the listed G-addresses and records
 // every address it was asked about — what the directory is ASKED is the

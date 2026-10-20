@@ -13,17 +13,12 @@ import (
 )
 
 // /v1/chart must withhold the price SERIES for a directory-scam-flagged issuer, as /v1/price,
-// /v1/price/tip, /v1/price/batch, /v1/vwap, /v1/twap, the SEP-40 oracle and the asset headline do.
+// /v1/vwap, /v1/twap, the SEP-40 oracle and the asset headline do. pricingguard's seam gate does
+// not cover endpoints that read raw trades or history directly, and a series is worse than a
+// point: it hands over the trajectory that makes a manufactured market look legitimate.
 //
-// pricingguard/scam.go's "ONE gate at the price-reader seam" does not cover endpoints that
-// compute from raw trades via their own fetch (/v1/vwap, /v1/twap), and /v1/chart reads history
-// directly. A series is worse than a point: an ungated chart hands over the whole trajectory that
-// makes a manufactured market look legitimate.
-//
-// The gate sits in handleChart BEFORE dispatchSpecialisedChart, covering the default path AND
-// every specialised variant (market-cap, fiat-cross, TWAP) in one place; per-variant gating is how
-// a later-added surface misses the check. These tests exercise the variants explicitly, since a
-// gate covering only the default path would still leak three routes.
+// The gate sits in handleChart BEFORE dispatchSpecialisedChart so one check covers the default
+// path and every variant (market-cap, fiat-cross, TWAP); these tests hit each variant explicitly.
 
 // chartScamGate withholds the listed bases and records the surface
 // labels it was consulted with, so a test can assert the gate was

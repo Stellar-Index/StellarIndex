@@ -9,8 +9,8 @@ import (
 	"testing"
 )
 
-// The public edge is the OTHER place this project logs a request, and
-// nothing in the Go build parses its config — so these tests do.
+// The public edge is the OTHER place this project logs a request, and nothing in the Go build
+// parses its config, so these tests do.
 //
 // The API's own loggers refuse to log query parameters (middleware/logger.go) or record only an
 // allow-listed SHAPE (middleware/slow_query_shape.go). Caddy sits in front of both and writes
@@ -19,10 +19,10 @@ import (
 // /v1/account/admin/lookup?email=<customer email> verbatim; X-API-Key must be filtered too; and
 // the trailing-slash 308's Location header carries the query back out on the response side.
 //
-// Four properties are pinned: no query value leaves the edge on the request side, none on the
-// response side, credential-bearing headers are deleted under the exact name net/http gives
-// them (a mismatched case is a SILENT no-op), and the hand-kept Caddyfile copy has not drifted
-// from the ansible template that actually reaches the host.
+// Pinned: no query value leaves the edge on the request side, none on the response side,
+// credential-bearing headers are deleted under the exact name net/http gives them (a mismatched
+// case is a SILENT no-op), and the hand-kept Caddyfile copy has not drifted from the ansible
+// template that reaches the host.
 var caddyfiles = []string{
 	filepath.Join("..", "..", "configs", "caddy", "Caddyfile.api"),
 	filepath.Join("..", "..", "configs", "ansible", "roles", "archival-node", "templates", "Caddyfile.j2"),

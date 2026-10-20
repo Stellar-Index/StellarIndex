@@ -171,15 +171,13 @@ func TestUsageTracker_OutcomeClasses(t *testing.T) {
 	}
 }
 
-// TestUsageTracker_ServerErrorExcludedFromLegacyTotal — a 5xx records
-// under the server-error class but must NOT advance the legacy per-day
-// total.
+// TestUsageTracker_ServerErrorExcludedFromLegacyTotal: a 5xx records under the server-error
+// class but must NOT advance the legacy per-day total.
 //
 // The legacy total is MonthlyQuota's input: counting our own failures would burn the customer's
-// paid quota during an outage and lock them out afterwards. This is the same reasoning as the 429
-// exclusion (TestUsageTracker_ThrottledExcludedFromLegacyTotal).
-//
-// The request stays visible in the DETAIL family under the 5xx class; only the quota input drops it.
+// paid quota during an outage and lock them out afterwards, as with the 429 exclusion
+// (TestUsageTracker_ThrottledExcludedFromLegacyTotal). The request stays visible in the DETAIL
+// family under the 5xx class; only the quota input drops it.
 func TestUsageTracker_ServerErrorExcludedFromLegacyTotal(t *testing.T) {
 	for _, status := range []int{
 		http.StatusInternalServerError,
@@ -324,14 +322,11 @@ func TestUsageTracker_UnmatchedRouteBuckets(t *testing.T) {
 	}
 }
 
-// TestUsageTracker_ResolveRoute_ThrottledBeforeDispatch — a 429 from a
-// gate that rejects BEFORE the mux ever dispatches (RateLimit, in
-// production) must still bucket under the real route pattern, not the
-// bounded "unmatched" fallback. Without middleware.ResolveRoute wired
-// ahead of the gate, obs.CaptureRoute never runs (the mux is never
-// reached) and endpointFamily() had no route information left — every
-// production 429 landed under "unmatched" instead of its real
-// endpoint.
+// TestUsageTracker_ResolveRoute_ThrottledBeforeDispatch: a 429 from a gate that rejects BEFORE
+// the mux dispatches (RateLimit, in production) must still bucket under the real route pattern,
+// not the bounded "unmatched" fallback. Without middleware.ResolveRoute wired ahead of the
+// gate, obs.CaptureRoute never runs and endpointFamily() has no route information, so every
+// production 429 would land under "unmatched".
 func TestUsageTracker_ResolveRoute_ThrottledBeforeDispatch(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -807,12 +802,11 @@ func TestUsageTracker_StreamEndedAtMonthlyQuota(t *testing.T) {
 	}
 }
 
-// TestUsageTracker_StreamNoTicksAfterClose guards meterOpenStream's
-// shutdown: once a stream's handler has returned, no further tick may
-// land, however many meter intervals later something looks again.
+// TestUsageTracker_StreamNoTicksAfterClose guards meterOpenStream's shutdown: once a stream's
+// handler has returned, no further tick may land.
 //
 // A residual select-fairness tie between the ticker's shutdown and a simultaneously-ready tick
-// is not fully eliminable short of a mutex serializing every tick against close, which is
+// is not eliminable short of a mutex serializing every tick against close, which is
 // disproportionate: it needs a tick within nanoseconds of close and is irrelevant at the real
 // 1-minute interval. This test uses a realistic interval, at which it does not flake.
 func TestUsageTracker_StreamNoTicksAfterClose(t *testing.T) {
@@ -918,13 +912,12 @@ func TestUsageTracker_StreamPanicBeforeOpenBillsNothing(t *testing.T) {
 
 // TestUsageTracker_StreamPanicDuringTickBillsNothing pins the race that remains after the defer
 // reorder: close(done) only SIGNALS meterOpenStream to stop. A tick that already passed its done
-// re-check could resume after once.fire(true), read fired()==true and bill rec's default 200 on a
-// request classed as a non-billable 5xx.
+// re-check could resume after once.fire(true), read fired()==true and bill rec's default 200 on
+// a request classed as a non-billable 5xx.
 //
 // SetStreamTickHookForTest pauses the tick at exactly that point, making the race deterministic.
 // The handler then panics and its defers run: close(done), then block on <-exited. once.fire is
-// sequenced after <-exited, so it cannot have run while the hook holds the goroutine. Fails
-// without the exited wait; passes with it.
+// sequenced after <-exited, so it cannot have run while the hook holds the goroutine.
 func TestUsageTracker_StreamPanicDuringTickBillsNothing(t *testing.T) {
 	t.Cleanup(middleware.SetStreamMeterIntervalForTest(5 * time.Millisecond))
 

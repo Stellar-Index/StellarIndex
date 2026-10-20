@@ -20,8 +20,8 @@ import (
 // to the synthetic USD row buildSnapshot always adds. Both mixes are the DEGRADED paths, which
 // exist so an outage costs coverage rather than the whole feed.
 //
-// Every test here goes through [Worker.refreshOnce] with the real ECB provider or the real
-// client, so the case each producer ACTUALLY emits is what gets joined.
+// Every test goes through [Worker.refreshOnce] with the real ECB provider or the real client,
+// so the case each producer ACTUALLY emits is what gets joined.
 
 // TestFetchHistory_JoinsNamesInAnyCase covers the same join's second site: fetchHistory drops
 // every dated bar whose code is not in `names`, so UPPER-keyed (reused) names would silently

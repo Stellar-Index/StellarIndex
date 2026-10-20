@@ -12,20 +12,20 @@ import (
 
 // Every goroutine in the stellarindex-api process recovers.
 //
-// An unrecovered panic in any goroutine kills the whole process. The narrower per-binary and
-// internal/api/v1 walks cover only their own trees, so this one derives its package set from the
-// linker (go list -deps .) and a newly linked package is covered the day it lands.
+// An unrecovered panic in any goroutine kills the process. The per-binary and internal/api/v1
+// walks cover only their own trees, so this one derives its package set from the linker
+// (go list -deps .) and a newly linked package is covered the day it lands.
 //
-// Containment alone is not enough: each recovery must pair with the release it owns. A flight
-// marker ends from a defer, a drain worker keeps close(done) outermost, and a fan-out member
-// records failure in the slot its joiner reads. Each has its own behavioural test next to the code.
+// Containment is not enough: each recovery must pair with the release it owns (a flight marker
+// ends from a defer, a drain worker keeps close(done) outermost, a fan-out member records
+// failure in the slot its joiner reads). Each has its own behavioural test next to the code.
 //
 // Only the shared internal/worker guards are accepted, because they move
 // stellarindex_worker_panics_total, which stellarindex_worker_panicked pages on. A bare recover()
 // would turn a loud crash into a silent dead worker.
 //
-// The HTTP listener is the one exemption, excluded by its content: recovering the accept loop
-// leaves a live process serving nothing. Argue any other fatal site by content, not a name list.
+// The HTTP listener is the one exemption, by content: recovering the accept loop leaves a live
+// process serving nothing. Argue any other fatal site by content, not a name list.
 func TestAPIProcess_EveryGoroutineRecovers(t *testing.T) {
 	// The guards any body in this process may register. A bare recover()
 	// is deliberately not among them: swallowing a panic without moving

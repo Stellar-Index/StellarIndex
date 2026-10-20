@@ -2,15 +2,14 @@ package v1_test
 
 // GET /v1/rwa/history — the RWA set valued over time.
 //
-// /v1/rwa/assets is a snapshot; this surface answers "is it growing". Answering honestly
-// means refusing on most days: a set member is worth something on a day only if BOTH the lake
-// knows its supply that day and an oracle published a value for its instrument that day.
-// These tests pin the refusals, because a chart that quietly fills its gaps is the failure
-// this endpoint is written against.
+// /v1/rwa/assets is a snapshot; this answers "is it growing". Honesty means refusing on most
+// days: a member is worth something on a day only if BOTH the lake knows its supply that day and
+// an oracle published a value for its instrument that day. These tests pin the refusals; a chart
+// that quietly fills its gaps is the failure this endpoint is written against.
 //
 // Production wiring: v1.New with Options.OracleHistory = *timescale.Store and
-// Options.TokenSupply = *clickhouse.SupplyReader. The tests use the SAME constructor (no
-// test-only server builder) and substitute only those two readers.
+// Options.TokenSupply = *clickhouse.SupplyReader. The tests use the SAME constructor and
+// substitute only those two readers.
 
 import (
 	"context"

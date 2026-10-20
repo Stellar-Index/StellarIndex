@@ -50,21 +50,20 @@ func TestClickhouseGoroutinesRecover(t *testing.T) {
 }
 
 // The explorer's ClickHouse-side stale-while-revalidate refreshers run detached goroutines
-// kicked from request paths on attacker-chosen keys. An unrecovered panic in ANY goroutine
-// kills the WHOLE process, so each must recover.
+// kicked from request paths on attacker-chosen keys. An unrecovered panic in ANY goroutine kills
+// the WHOLE process, so each must recover.
 //
-// Recovery alone is not enough: a contained panic that does not ALSO release what the
-// goroutine owned turns a crash into a permanent wedge. So every case asserts about the
-// panicking refresh:
+// Recovery alone is not enough: a contained panic that does not ALSO release what the goroutine
+// owned turns a crash into a permanent wedge. So every case asserts about the panicking refresh:
 //
 //  1. the process survives (a bare `go func` would have taken the test binary down);
-//  2. the waiter is RELEASED with an honest failure, not left blocked and not told
-//     "success, here is an empty answer"; and
-//  3. the cache accepts a NEW flight afterwards, i.e. the single-flight marker was cleared,
-//     so the panic costs one refresh and not the rest of the process's life.
+//  2. the waiter is RELEASED with an honest failure, not left blocked and not told "success,
+//     here is an empty answer"; and
+//  3. the cache accepts a NEW flight afterwards, i.e. the single-flight marker was cleared, so
+//     the panic costs one refresh and not the rest of the process's life.
 //
-// It also pins the panic as VISIBLE: stellarindex_worker_panics_total is the only signal that
-// a background worker died, so a recover that does not move it is a silent dead worker.
+// It also pins the panic as VISIBLE: stellarindex_worker_panics_total is the only signal that a
+// background worker died, so a recover that does not move it is a silent dead worker.
 
 // The account-state and wealth refreshers already release their flight from a defer; these two pin the guard
 // itself and that the release still happens once the panic is contained (a zero-value ExplorerReader has a

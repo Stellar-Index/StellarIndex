@@ -638,9 +638,8 @@ func TestAccountUsage_NoSessionNoSubject_Unauthenticated(t *testing.T) {
 // `MonthlyQuota <= 0` short-circuit leaves it UNMETERED, and a capped customer can mint an
 // uncapped credential.
 //
-// It copies a cap and never invents one: a parent with no cap still mints an uncapped child
-// (pinned below), because the ceiling is opt-in by contract and defaulting it would 429 keys that
-// never had one.
+// It copies a cap and never invents one: a parent with no cap still mints an uncapped child,
+// because the ceiling is opt-in and defaulting it would 429 keys that never had one.
 
 // mintChildKeySubject drives the production rotation chain (handler, RedisAPIKeyStore, RedisAPIKeyValidator) and returns the
 // Subject the auth layer hands the quota middleware for the freshly minted child.

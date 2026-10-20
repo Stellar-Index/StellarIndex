@@ -23,11 +23,10 @@ import (
 // `nonstandard_decimals_assets` projection (NonstandardDecimals, which the USD price is
 // normalised through). The cap must not be computed when they disagree.
 //
-// Fixture throughout: flaggedAsset with 1000 tokens circulating / 2000 max (both at 9 dp), raw
+// Fixture: flaggedAsset with 1000 tokens circulating / 2000 max (both at 9 dp), raw
 // asset/fiat:USD ratio 41.32. With both resolvers at 9 the truth is price 4132, cap 4,132,000.00,
-// FDV 8,264,000.00 (see TestAssetsF2_NonstandardDecimals_NormalizesPriceAndCaps). Without the
-// lockstep check in applyTokenDecimals and the refusal in populateMarketCap, each mismatch case
-// below would serve a NUMBER wrong by a power of ten.
+// FDV 8,264,000.00. Without the lockstep check in applyTokenDecimals and the refusal in
+// populateMarketCap, each mismatch case would serve a NUMBER wrong by a power of ten.
 
 // lockstepDecStub is a TokenDecimalsReader with error injection (decStub
 // has none).

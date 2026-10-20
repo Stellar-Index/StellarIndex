@@ -167,22 +167,18 @@ func assertWithheld(t *testing.T, out, arg string) {
 	}
 }
 
-// A pattern over the URL's TEXT cannot be trusted: one that ends the password at the FIRST
-// `@`, or refuses to cross a space or quote, leaks the tail or prints the DSN untouched for
-// shapes like:
+// A pattern over the URL's TEXT cannot be trusted: one that ends the password at the FIRST `@`,
+// or refuses to cross a space or quote, leaks the tail or prints the DSN untouched for shapes
+// like:
 //
 //	...:HEAD%ZZ@TAIL@host...   (tail leaked after the redaction)
 //	...:HEAD TAIL@host...      (printed whole)
 //	...:HEAD'TAIL%ZZ@host...   (printed whole)
 //	...:HEAD"TAIL%ZZ@host...   (printed whole)
 //
-// Every one of these is an ordinary character in a generated password. Each shape is fed
-// through BOTH routes the DSN arrives by.
-//
-// None is rendered at all: a DSN that does not parse has no structure to report, so the
-// tool names the ROUTE the value came by and the KIND of syntax error, and nothing of the
-// value. The host is withheld too, deliberately: the operator holds the string in the file
-// they just edited, and reading a malformed DSN heuristically printed password fragments.
+// Each is an ordinary character in a generated password, and each shape is fed through BOTH
+// routes the DSN arrives by. None is rendered: a DSN that does not parse has no structure to
+// report, so the tool names the ROUTE and the KIND of syntax error, never the value or host.
 func TestMigrate_PasswordShapesThePatternStoppedShortOn(t *testing.T) {
 	bin, migDir := buildMigrate(t)
 
@@ -222,20 +218,19 @@ func TestMigrate_PasswordShapesThePatternStoppedShortOn(t *testing.T) {
 	}
 }
 
-// Scrubbing the URL out of the library's error is not enough: net/url's REASON quotes the
-// piece it choked on, and for a password holding `/`, `?` or `#` (every base64 secret may
-// hold a `/`) that piece is the password up to that character, presented as a port:
+// Scrubbing the URL out of the library's error is not enough: net/url's REASON quotes the piece
+// it choked on, and for a password holding `/`, `?` or `#` that piece is the password up to that
+// character, presented as a port:
 //
 //	parse "postgres://stellarindex:<redacted>@host…": invalid port ":HEAD" after host
 //
-// With a `#` the echoed URL is truncated BEFORE the `@`, so no pattern keyed on userinfo
-// can even see it:
+// With a `#` the echoed URL is truncated BEFORE the `@`, so no pattern keyed on userinfo can see
+// it:
 //
 //	parse "postgres://stellarindex:HEAD": invalid port ":HEAD" after host
 //
 // No pattern can tell such a fragment from an honest port, so the tool parses the DSN itself
-// first and reports the KIND of failure in its own words; the library's text never reaches
-// the writer.
+// and reports the KIND of failure in its own words; the library's text never reaches the writer.
 func TestMigrate_TheLibrarysReasonNeverRepeatsAPieceOfThePassword(t *testing.T) {
 	bin, migDir := buildMigrate(t)
 
@@ -348,19 +343,19 @@ func TestMigrate_FlagParseErrorsDoNotEchoTheArgument(t *testing.T) {
 	}
 }
 
-// A password can be held in three spellings: userinfo, the `?password=` query parameter and
-// the libpq keyword form. A pattern written for free text ends a value at the first space,
-// quote or `;` (for a query, the first `&`), and a DSN with no `@` has no userinfo to key
-// on, so these leak a TAIL or the whole value:
+// A password can be held in three spellings: userinfo, the `?password=` query parameter and the
+// libpq keyword form. A pattern written for free text ends a value at the first space, quote or
+// `;` (for a query, the first `&`), and a DSN with no `@` has no userinfo to key on, so these
+// leak a TAIL or the whole value:
 //
 //	down "...?password=HEAD TAIL"
 //	down "...?password=HEAD&TAIL&..."
 //	down "password=HEAD\ TAIL"
 //	down "postgres://u:HEAD TAIL#host/db"
 //
-// Each is fed through every slot that echoed a positional. A positional the tool cannot use
-// is reported by its POSITION and kind, never its text. The by-value scrubber is still armed
-// behind that, and these assertions hold whichever of the two stops the leak.
+// Each is fed through every slot that echoed a positional. A positional the tool cannot use is
+// reported by its POSITION and kind, never its text; the by-value scrubber stays armed behind
+// that, and these assertions hold whichever of the two stops the leak.
 func TestMigrate_NoSlotEchoesAConnectionStringItWasHanded(t *testing.T) {
 	bin, migDir := buildMigrate(t)
 	queryDSN := func(pw string) string {

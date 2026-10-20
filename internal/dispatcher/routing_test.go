@@ -42,9 +42,9 @@ func TestEndToEndRouting_withRealFixtures(t *testing.T) {
 	//   aquarius       → one Trade per event.
 	//   phoenix        → 8 events → one Trade on the 8th, nil on 1-7.
 	//   comet          → one Trade per swap event.
-	// Accounting is events seen vs outputs emitted per source. Sources with correlation state
-	// (soroswap, phoenix) emit fewer outputs than events seen, which is the point of the buffer,
-	// so the assertion checks per-source ratios rather than one output per event.
+	// Sources with correlation state (soroswap, phoenix) emit fewer outputs than events seen, which
+	// is the point of the buffer, so the assertion checks per-source ratios rather than one output
+	// per event.
 	eventsSeen := map[string]int{}    // by fixture dir
 	outputsByName := map[string]int{} // by emitted canonical.*.Source
 

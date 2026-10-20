@@ -73,8 +73,8 @@ func fuzzEvent(contract string, topics []string, value string, op, ev uint16) ev
 // Map field order. A body with the OTHER direction's field names is a foreign shape and must be
 // refused, not decoded into the wrong columns.
 //
-// Generative run:
-// go test -run=^$ -fuzz=^FuzzVaultFlowAmountsByName$ -fuzztime=60s -parallel=2 ./internal/sources/defindex/
+//	Run: go test -run=^$ -fuzz=^FuzzVaultFlowAmountsByName$ -fuzztime=60s \
+//		./internal/sources/defindex/
 func FuzzVaultFlowAmountsByName(f *testing.F) {
 	f.Add(uint8(1), int64(0), uint64(10_000_000), int64(0), uint64(0), int64(0), uint64(0), int64(0), uint64(9_990_000), false, uint8(0), uint16(0), uint16(3))
 	f.Add(uint8(2), int64(0), uint64(1)<<63, int64(1), uint64(0), int64(0), uint64(0), int64(0), uint64(1), true, uint8(1), uint16(1), uint16(0))

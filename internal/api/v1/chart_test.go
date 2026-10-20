@@ -508,14 +508,10 @@ func TestChart_StablecoinFallback_CryptoBacker(t *testing.T) {
 	if reader.calls[0] != "native/fiat:USD" {
 		t.Errorf("first call = %q, want native/fiat:USD (literal)", reader.calls[0])
 	}
-	// This does not assert the backer was the LAST call, which would hold only
-	// if the walk stopped at the first source pair holding any
-	// bucket at all. That short-circuit is the defect
-	// [Server.chartBucketMerge] removes — the walk reads every source
-	// so a later one can fill a bucket an earlier one left empty — so the
-	// last call is simply the last enumerated pair and says nothing. What
-	// the test pins is that the backer is READ and that
-	// the served values are ITS values, and both are asserted directly.
+	// This does not assert the backer was the LAST call: the walk reads every source pair so a
+	// later one can fill a bucket an earlier one left empty (see [Server.chartBucketMerge]), so the
+	// last call is just the last enumerated pair. What the test pins is that the backer is READ and
+	// that the served values are ITS values, both asserted directly.
 	read := false
 	for _, c := range reader.calls {
 		if c == "crypto:XLM/crypto:USDT" {

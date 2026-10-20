@@ -71,9 +71,8 @@ func routeLedger(t *testing.T, disp *dispatcher.Dispatcher, ledger uint32, seq *
 	return out
 }
 
-// servedLPAggregate mirrors the SQL contract of
-// Store.SumLPReservesAtOrBefore — the query that feeds
-// ClassicSupplyComponents.LPReserve and therefore total_supply:
+// servedLPAggregate mirrors the SQL contract of Store.SumLPReservesAtOrBefore, the query that
+// feeds ClassicSupplyComponents.LPReserve and therefore total_supply:
 //
 //	SELECT sum(balance_stroops) FROM (
 //	  SELECT DISTINCT ON (pool_id) balance_stroops, is_removal

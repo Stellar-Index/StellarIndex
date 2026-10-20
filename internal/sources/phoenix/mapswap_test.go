@@ -25,9 +25,9 @@ import (
 //	sender                 = GDCRZPZYBZ24RHRO3WBPJGFDL7NDFKUQBS3ZDB6YGBJB3TGKMFYBQ3LD
 //	sell_token             = CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75  (base)
 //	offer_amount           = 55194571
-//	buy_token              = CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA  (XLM SAC, quote)
+//	buy_token              = CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA  (XLM SAC)
 //	return_amount          = 273730773   ← QuoteAmount (output the taker received)
-//	actual_received_amount = 55194571    == offer_amount (INPUT the pool received — must NOT be the quote)
+//	actual_received_amount = 55194571    == offer_amount (INPUT; NOT the quote)
 //	referral_fee_amount    = 0
 //	spread_amount          = 1928293
 const (

@@ -16,10 +16,10 @@ import (
 // apiGoroutineGuards are the recovery markers a detached goroutine in this package tree may
 // register.
 //
-//   - worker.Recover — the plain form, for a body with no cleanup of its own.
-//   - worker.Report  — for a body that must also un-wedge something (clear a single-flight
+//   - worker.Recover: the plain form, for a body with no cleanup of its own.
+//   - worker.Report: for a body that must also un-wedge something (clear a single-flight
 //     marker, end a flight, mark a fold failed); it recovers itself and the counter still moves.
-//   - recoverStreamProducer — the SSE producers' helper, which delegates to worker.Report.
+//   - recoverStreamProducer: the SSE producers' helper, which delegates to worker.Report.
 //
 // A bare recover() is deliberately not accepted: swallowing a panic without moving
 // stellarindex_worker_panics_total turns a loud crash into a silent dead worker. [guardscan]

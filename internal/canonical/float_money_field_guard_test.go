@@ -14,9 +14,8 @@ package canonical
 // map-value/slice-element level, is float32 or float64.
 //
 // Bare Pct/APR/Ratio/Confidence/Score/Weight names are deliberately not matched: dimensionless
-// ratios are correctly float64, and a stem catching them would flag most legitimate floats.
-// Percentage names that still contain a money stem (SupplyAPR, *Rate) rely on the marker
-// below, as the SQL lint does for `rate` (lint-migrations.sh).
+// ratios are correctly float64. Percentage names that still contain a money stem (SupplyAPR,
+// *Rate) rely on the marker below, as the SQL lint does for `rate` (lint-migrations.sh).
 //
 // Escape hatch: a `//floatmoney:ok <reason>` comment on the field's line (or the line above)
 // exempts it, as i128:ok does. Reasons are mandatory, and a marker that exempts nothing fails

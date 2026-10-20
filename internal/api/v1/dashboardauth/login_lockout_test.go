@@ -22,14 +22,13 @@ import (
 
 // Durable per-email code-guess lockout.
 //
-// The per-token attempt cap resets on every new /v1/auth/login mint, and the mint throttle lives in
-// Redis (with an in-process fallback), which a flush, fail-over or restart clears. That leaves
+// The per-token attempt cap resets on every new /v1/auth/login mint, and the mint throttle lives
+// in Redis (with an in-process fallback), which a flush, fail-over or restart clears. That leaves
 // about 25 guesses/hour/email of the 6-digit code with nothing durable counting failures per
 // address.
 //
-// These tests pin the durable counter. The load-bearing one is LockoutSurvivesTokenReMint: mint,
-// guess, mint, guess, then the correct code for a fresh token, which signs the attacker in
-// without the lockout.
+// The load-bearing test is LockoutSurvivesTokenReMint: mint, guess, mint, guess, then the correct
+// code for a fresh token, which signs the attacker in without the lockout.
 
 // lockoutRig is newTestRig with a movable clock, so the 24-hour window
 // and lockout can be crossed without sleeping.

@@ -14,12 +14,11 @@ import (
 // The 7d sparkline column on /assets must not be blank for the catalogue-projected rows (XLM,
 // USDC, ...), and `?include=sparkline7d` must not be a silent no-op on the plain listing. Those
 // rows' wire asset_id is the catalogue SLUG ("xlm", "aqua"), which can never match a prices_1m
-// row, so the batch series reader answered with its all-null 7-bucket skeleton, which reads as
-// "this asset never traded".
+// row, so the batch series reader would answer with an all-null skeleton ("never traded").
 //
-// The mirror-image defect is also pinned: a row whose price we deliberately WITHHOLD
-// (scam-flagged issuer, thin-market substance gate) must not publish the same number as a
-// chart, in the listing or in the details series.
+// Also pinned: a row whose price we deliberately WITHHOLD (scam-flagged issuer, thin-market
+// substance gate) must not publish the same number as a chart, in the listing or the details
+// series.
 
 const (
 	// The Stellar twins of the two catalogue entries used below.

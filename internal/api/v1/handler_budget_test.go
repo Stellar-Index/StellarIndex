@@ -16,8 +16,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
-// checkHandlerBudgetsStayInsideTheRequestTimeout is the structural guard
-// behind the bodyless-200 class.
+// checkHandlerBudgetsStayInsideTheRequestTimeout is the structural guard behind the bodyless-200
+// class.
 //
 // A per-handler context.WithTimeout(r.Context(), d) earns its keep by surfacing a SPECIFIC 503
 // ahead of the blanket middleware.RequestTimeout deadline. A budget >= the global one inverts
@@ -25,9 +25,9 @@ import (
 // unreachable, and the advertised ceiling is fiction (the symptom is a bodyless HTTP 200 just
 // after the global deadline).
 //
-// Scanning the source is what makes the invariant enforceable: budgets are duration literals and
-// package constants inside handler bodies, so no runtime assertion can reach ones a test never
-// exercises. Every request-derived budget across the API packages has to hold.
+// Scanning the source is what makes this enforceable: budgets are duration literals and package
+// constants inside handler bodies, so no runtime assertion can reach ones a test never
+// exercises.
 //
 // The bound is maxHandlerBudget rather than defaultRequestTimeout itself, because a budget in
 // the last few hundred milliseconds before the blanket deadline has no room left to serialise

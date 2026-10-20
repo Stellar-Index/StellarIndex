@@ -8,25 +8,22 @@ import (
 
 // Golden real-lake decode-VALUE tests.
 //
-// CONVENTION (shared with internal/sources/aquarius/golden_realbytes_test.go and mirrored on
-// soroswap_router/real_bytes_test.go): a golden test captures the EXACT on-chain bytes of one real
-// event (topics_xdr + data_xdr, base64 as stored in stellar.contract_events), builds the
-// production events.Event, drives the REAL decoder through its two production seams
+// CONVENTION (shared with aquarius and soroswap_router): a golden test captures the EXACT
+// on-chain bytes of one real event (topics_xdr + data_xdr, base64 as stored in
+// stellar.contract_events), builds the production events.Event, drives the REAL decoder through
+// its two production seams
 //
 //	Decoder.Matches(ev)   // ADR-0035 contract-identity gate
 //	Decoder.Decode(ev)    // classify + body decode + consumer.Event wrap
 //
-// and asserts the EXACT decoded FIELD VALUES. ADR-0033's recognition axis (does Matches claim it?)
-// and projection axis (does the row COUNT match?) both miss wrong values: a decoder can Match and
-// emit the right number of rows with WRONG amounts, addresses or directions. Only a golden value
-// assertion catches that.
+// and asserts the EXACT decoded FIELD VALUES. ADR-0033's recognition axis (does Matches claim
+// it?) and projection axis (does the row COUNT match?) both miss wrong values: a decoder can
+// Match and emit the right number of rows with WRONG amounts, addresses or directions.
 //
 // Rules for a fixture here:
-//   - REAL bytes only. Each fixture cites the ledger_seq, tx_hash, op_index and event_index it
-//     was captured from so it can be re-verified against the lake. No hand-encoded SCVals.
-//   - Drive the production Decoder (NewDecoder()), not decodeFlow/decodeAdminEvent, which
-//     decode_test.go / decode_admin_test.go already cover. The value is proving the WHOLE path
-//     (gate + classify + decode + wrap) agrees with the chain.
+//   - REAL bytes only, citing the ledger_seq, tx_hash, op_index and event_index it came from.
+//   - Drive the production Decoder (NewDecoder()), not decodeFlow/decodeAdminEvent: the value is
+//     proving the WHOLE path.
 //   - Assert exact values (strkeys, amount strings, hex hashes) and prove non-vacuousness:
 //     mutating any pinned constant must fail the test (see the mutation-guard note on each).
 
@@ -34,9 +31,9 @@ import (
 // `harvest` event. Real harvests carry a decodeFlow-compatible body, and dropping them
 // under-counts vault NAV by the full harvested yield.
 //
-// Real bytes captured from r1's ClickHouse lake (stellar.contract_events):
+// Real bytes from r1's ClickHouse lake (stellar.contract_events):
 //
-//	ledger_seq   57,485,721  (closed 2025-06-10 19:26:07 UTC)
+//	ledger_seq   57,485,721
 //	tx_hash      bb84120494620c8145d21bcbf031689bd8cb67f8ccc0924ea386f3add291b9e3
 //	op_index 0, event_index 2
 //	contract_id  CDPWNUW7… (a curated MainnetStrategy → passes the gate)

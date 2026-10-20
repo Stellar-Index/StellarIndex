@@ -43,12 +43,12 @@ func (r *panickingHoldersReader) AssetHolders(
 // the cold waiter blocks to its deadline and every later begin(key) is handed that flight as a
 // non-owner, so the holders board is never computed again for the life of the process.
 //
-// It therefore asserts:
+// It asserts:
 //
 //  1. the cold waiter is released promptly with errRefreshPanicked;
 //  2. the flight was deregistered, so the NEXT request owns a fresh one and gets the real board;
-//  3. stellarindex_worker_panics_total{worker="explorer-asset-holders-refresh"} moved, which pages
-//     an operator about the dead refresher.
+//  3. stellarindex_worker_panics_total{worker="explorer-asset-holders-refresh"} moved, which
+//     pages an operator about the dead refresher.
 func TestAssetHoldersRefreshPanic_EndsFlightAndStaysRetryable(t *testing.T) {
 	const workerName = "explorer-asset-holders-refresh"
 	before := testutil.ToFloat64(obs.WorkerPanicsTotal.WithLabelValues(workerName))

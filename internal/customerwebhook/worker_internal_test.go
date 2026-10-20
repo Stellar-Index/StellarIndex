@@ -165,9 +165,9 @@ func TestSignHMACSHA256_BindsTimestamp(t *testing.T) {
 
 // TestWorker_retryClassification pins retry classification.
 //
-// A 4xx must not be terminal on the first attempt: a 429 from a rate-limiting gateway would
-// drop the event from the pending predicate with no dead-letter, retry or alert (alert rules
-// match only server_error/network_error/exhausted).
+// A 4xx must not be terminal on the first attempt: a 429 from a rate-limiting gateway would drop
+// the event from the pending predicate with no dead-letter, retry or alert (alert rules match
+// only server_error/network_error/exhausted).
 //
 // A 3xx must not be retried as transient: redirects are disabled by the SSRF defence, so it can
 // never succeed and the recorded reason would be false.
@@ -196,11 +196,10 @@ func TestWorker_retryClassification(t *testing.T) {
 	}
 }
 
-// TestNew_DefaultClientWiresSSRFGuardAndRefusesRedirects pins the
-// WIRING of the delivery-time SSRF defence, not just its predicate: ssrf_test.go covers
-// ssrfGuardedDialContext, but only this test fails if the default client stops using it.
-// Webhook URLs are customer-supplied and registration-time validation cannot catch DNS
-// rebinding, which is why the delivery-time guard exists.
+// TestNew_DefaultClientWiresSSRFGuardAndRefusesRedirects pins the WIRING of the delivery-time
+// SSRF defence, not just its predicate: ssrf_test.go covers ssrfGuardedDialContext, but only
+// this test fails if the default client stops using it. Webhook URLs are customer-supplied and
+// registration-time validation cannot catch DNS rebinding.
 //
 // Also pins CheckRedirect: otherwise a 302 from a public host to an internal one is followed,
 // routing around the dialer.

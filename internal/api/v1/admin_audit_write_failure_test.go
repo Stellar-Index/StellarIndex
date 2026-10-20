@@ -22,15 +22,12 @@ import (
 // already committed when the append runs, so a failure is swallowed with a bare
 // `logger.Warn(... "(best-effort)")`. That is right (undoing a committed tier change because the
 // audit DB blipped would be worse), but a tier, API credential or public status notice can then
-// change with NO durable record, and the only trace is one log line.
+// change with NO durable record.
 //
 // These tests pin the signal that closes that hole: each surface increments
-// `stellarindex_admin_audit_write_failures_total` with ITS OWN label when (and only when) its audit
-// append fails. The label matters as much as the count, since an operator reconstructing the
-// missing rows from logs needs to know which mutation class to look for.
-//
-// Asserted per-surface rather than in aggregate: one increment site in a shared helper would
-// satisfy a total-only assertion while leaving five surfaces silent.
+// `stellarindex_admin_audit_write_failures_total` with ITS OWN label when (and only when) its
+// audit append fails. Asserted per surface, not in aggregate: one increment site in a shared
+// helper would satisfy a total-only assertion while leaving five surfaces silent.
 
 func auditFailureCount(t *testing.T, surface string) float64 {
 	t.Helper()

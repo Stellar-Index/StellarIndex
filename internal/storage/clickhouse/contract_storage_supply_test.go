@@ -13,9 +13,9 @@ import (
 // The fixtures are VERBATIM rows from the certified lake (stellar.ledger_entries_current FINAL).
 //
 // contract_storage_caocxwnx.tsv is the COMPLETE storage of one private-credit deal token
-// (CAOCXWNX…), not a curated subset: the decoder has to pick the balances out of the same
-// neighbours it meets in production, including the two shapes that look like balances and are
-// not (see TestContractStorageSupplyIgnoresLookalikeKeys).
+// (CAOCXWNX…), not a curated subset: the decoder must pick balances out of the same neighbours
+// it meets in production, including two shapes that look like balances and are not (see
+// TestContractStorageSupplyIgnoresLookalikeKeys).
 //
 //go:embed testdata/contract_storage_caocxwnx.tsv
 var caocxwnxStorageTSV string

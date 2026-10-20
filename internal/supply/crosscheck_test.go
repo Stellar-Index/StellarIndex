@@ -182,9 +182,9 @@ func TestCrossCheck_ResultIsWrapClassFull(t *testing.T) {
 // Equality of Algorithm 2's classic total and Algorithm 3's SAC-wrapped total only holds for a
 // fully SAC-represented asset, and would false-positive
 // `stellarindex_supply_cross_check_divergence` otherwise. The real invariant is a subset bound:
-// sac_total never exceeds classic_total (SACWrapped is a non-negative addend of Algorithm 2, see
-// ClassicSupplyComponents), so only sac_total > classic_total is a violation; classic_total >
-// sac_total is the normal state for a partially wrapped asset.
+// sac_total never exceeds classic_total (SACWrapped is a non-negative addend of Algorithm 2), so
+// only sac_total > classic_total is a violation; classic_total > sac_total is the normal state
+// for a partially wrapped asset.
 
 // The AQUA case from the crosscheck.go package doc (classic about 86.4B, SAC about 0): an equality compare would false-
 // positive, so the subset bound must report zero divergence.

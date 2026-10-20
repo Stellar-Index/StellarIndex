@@ -13,17 +13,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// Regression suite: /v1/assets must read `order_by`. The storage layer supports
-// AssetsOrderVolume24hUSDDesc (its own ORDER BY branch, keyset cursor, predicate and rank-tier
-// expression), so a missing wire-to-store mapping would:
+// /v1/assets must read `order_by`. The storage layer supports AssetsOrderVolume24hUSDDesc (its
+// own ORDER BY branch, keyset cursor, predicate and rank-tier expression), so a missing
+// wire-to-store mapping would:
 //
 //   - serve the top N by all-time observation count when a caller asked for 24h volume;
 //   - keep a high-volume asset with a modest lifetime count out of the candidate set while a
 //     dormant high-lifetime-count asset holds a slot;
 //   - return 200 for `order_by=TOTAL_GARBAGE`, unlike /v1/markets which 400s.
 //
-// These tests pin the request→store mapping directly: every layer worked in isolation and
-// nothing asserted they were connected.
+// These tests pin the request→store mapping directly.
 
 // orderCapturingAssets records the ListAssetsOptions the handler built.
 type orderCapturingAssets struct {

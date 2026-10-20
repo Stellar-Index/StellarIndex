@@ -23,10 +23,9 @@ import (
 // request serves the withheld price to full precision. Withholding one orientation and
 // publishing the other is not a gate.
 //
-// As in vwap_scam_quote_leg_test.go, these exercise the REAL *pricingguard.ScamGate over a
-// recording stub directory rather than a hand-written fake: a fake that only answers the
-// base-only question would pass against a base-only call site. What the directory is ASKED
-// proves the quote leg reached the gate at all.
+// As in vwap_scam_quote_leg_test.go, these use the REAL *pricingguard.ScamGate over a recording
+// stub directory: a fake that only answers the base-only question would pass against a
+// base-only call site. What the directory is ASKED proves the quote leg reached the gate.
 
 // chartQuoteLegSeries backs both series reads with one real bucket, so an ungated request answers 200 with a price rather than
 // 404-ing for lack of data and passing vacuously. `points` feeds the windowed read; `pointsByPair` the since-inception read.

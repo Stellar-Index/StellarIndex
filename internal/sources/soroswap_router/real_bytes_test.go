@@ -15,14 +15,12 @@ import (
 // Real-bytes golden tests. Both fixtures are UNMODIFIED InvokeHostFunction operation bodies
 // (base64 XDR) captured from the certified ClickHouse lake (stellar.operations.body_xdr):
 //
-//   - router_toplevel_op_ledger62000296.b64: op 0 of ledger 62,000,296. A DIRECT router call
-//     whose own InvokeContract target is the router. Auth tree = router root + one nested
-//     token transfer.
-//
-//   - router_subinvocation_op_ledger62029020.b64: op 0 of ledger 62,029,020. The headline
-//     shape: an AGGREGATOR (`exec` on CD45PQFH…JRZH) wraps an adapter
-//     (`swap_exact_tokens_for_tokens` on CAYP3UWL…TXTO) which wraps the ROUTER two levels
-//     deep. A top-level-only walk never sees this call and undercounts massively.
+//   - router_toplevel_op_ledger62000296.b64: a DIRECT router call whose own InvokeContract
+//     target is the router. Auth tree = router root + one nested token transfer.
+//   - router_subinvocation_op_ledger62029020.b64: the headline shape. An AGGREGATOR (`exec` on
+//     CD45PQFH…JRZH) wraps an adapter (`swap_exact_tokens_for_tokens` on CAYP3UWL…TXTO) which
+//     wraps the ROUTER two levels deep. A top-level-only walk never sees this call and
+//     undercounts massively.
 //
 // The tests drive the production path: ExtractContractCallTree (byte-identical to what
 // ProcessLedger feeds ContractCallDecoders) → Decoder.Matches → Decoder.Decode, then assert

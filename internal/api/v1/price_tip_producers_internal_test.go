@@ -148,10 +148,8 @@ func TestTipProducerRegistry_ReacquireDuringLingerKeepsProducer(t *testing.T) {
 //
 // A lingering producer yields its slot to a new mint, so the abort loop is admitted but can only
 // replace lingering compute loops, never add to them. Refusal (and its count) is for a registry
-// whose every slot is subscribed.
-//
-// Red against a registry with no ceiling: acquire always succeeds, so running() reaches the full
-// attempt count.
+// whose every slot is subscribed. Red against a registry with no ceiling: acquire always
+// succeeds, so running() reaches the full attempt count.
 func TestTipProducerRegistry_CeilingBoundsDetachedProducers(t *testing.T) {
 	const ceiling = 8
 	reg := &tipProducerRegistry{maxProducers: ceiling}

@@ -68,8 +68,7 @@ func decodeOneCCTP(t *testing.T, ev events.Event) Event {
 // also pins EventIndex (the cctp_events PK discriminator) and the identity gate: the same
 // bytes from a non-CCTP contract are never claimed.
 //
-// Generative run:
-// go test -run=^$ -fuzz=^FuzzMoneyColumnsAreExact$ -fuzztime=60s -parallel=2 ./internal/sources/cctp/
+// Run: go test -run=^$ -fuzz=^FuzzMoneyColumnsAreExact$ -fuzztime=60s ./internal/sources/cctp/
 func FuzzMoneyColumnsAreExact(f *testing.F) {
 	// The adapter fixture (12,345,678 / 500), the int64 / uint64 edges and
 	// the i128 extremes.

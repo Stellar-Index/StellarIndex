@@ -15,16 +15,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestP23BoundaryConstantsAgree is ADR-0048 D5's "assert [the CH/PG non-overlap] in code"
-// requirement: the ClickHouse archive's hard clamp (classicmovements.P23StartLedger), the
-// Postgres tail's hard floor (timescale.SEP41MovementsFloorLedger) and the creator board's arm
-// split (clickhouse.P23BoundaryLedger) are three SEPARATE constants (import-direction rules
-// forbid internal/storage importing internal/sources) that MUST hold the same value for
-// explorer.Handler.assertMovementsNonOverlap and the creators cycle's two arms to partition
-// the ledger axis. Only a package that can import all three can pin them together.
+// TestP23BoundaryConstantsAgree asserts the CH/PG non-overlap in code: the ClickHouse archive's
+// hard clamp (classicmovements.P23StartLedger), the Postgres tail's hard floor
+// (timescale.SEP41MovementsFloorLedger) and the creator board's arm split
+// (clickhouse.P23BoundaryLedger) are three SEPARATE constants (import-direction rules forbid
+// internal/storage importing internal/sources) that MUST hold the same value for
+// explorer.Handler.assertMovementsNonOverlap and the creators cycle's two arms to partition the
+// ledger axis. Only a package that can import all three can pin them together.
 //
-// Each surface that reads across the boundary adds its constant here; the creators board
-// belongs because a cycle reading only the pre-P23 representation ranks a truncated population.
+// Each surface that reads across the boundary adds its constant here; the creators board belongs
+// because a cycle reading only the pre-P23 representation ranks a truncated population.
 func TestP23BoundaryConstantsAgree(t *testing.T) {
 	if classicmovements.P23StartLedger != timescale.SEP41MovementsFloorLedger {
 		t.Fatalf("P23 boundary constants drifted: classicmovements.P23StartLedger=%d != timescale.SEP41MovementsFloorLedger=%d",

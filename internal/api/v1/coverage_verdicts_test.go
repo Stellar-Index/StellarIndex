@@ -164,19 +164,16 @@ func TestHandleCoverageVerdicts_LakeCompleteDecouplesFromComplete(t *testing.T) 
 	}
 }
 
-// TestHandleCoverageVerdicts_PublishesProjectionFloor pins the
-// SERVED-tier floor as a typed field.
+// TestHandleCoverageVerdicts_PublishesProjectionFloor pins the SERVED-tier floor as a typed
+// field.
 //
-// sdex on pubnet is the shape that made this necessary: complete=true,
-// coverage_pct=1, genesis_ledger=2 — while the served tier holds
-// nothing below ledger 61,609,957 (2026-03-12). Every typed field on
-// that row says "verified from 2015 to tip"; the ten-year-five-month
-// correction lived only inside the free-text `detail` string, which no
-// machine consumer parses. The floor is published as
+// sdex on pubnet is the shape that made this necessary: complete=true, coverage_pct=1,
+// genesis_ledger=2 while the served tier holds nothing below ledger 61,609,957. Every typed
+// field on that row says "verified from 2015 to tip"; the correction lived only in the
+// free-text `detail` string, which no machine consumer parses. The floor is published as
 // projection_verified_from, on the wire, next to the claim it bounds.
 //
-// Asserted against the raw JSON rather than the decoded struct: the
-// point of the fix is the wire key a consumer reads, not a Go field.
+// Asserted against the raw JSON, not the decoded struct: the wire key is what a consumer reads.
 func TestHandleCoverageVerdicts_PublishesProjectionFloor(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	srv := v1.New(v1.Options{

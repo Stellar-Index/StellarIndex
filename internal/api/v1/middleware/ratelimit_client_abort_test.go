@@ -16,7 +16,7 @@ import (
 // ErrThrottleUnavailable and the middleware fails CLOSED with 503 for EVERY caller sharing it
 // while Redis is healthy.
 //
-// Redis is HEALTHY in both tests below; any 503 they could produce comes from aborted requests.
+// Redis is HEALTHY in both tests, so any 503 they could produce comes from aborted requests.
 
 // abortedRequest is a request whose context is already cancelled — what
 // the middleware sees once the client has gone away.

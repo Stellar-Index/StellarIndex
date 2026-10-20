@@ -1225,10 +1225,10 @@ func TestPriceDivergence_GenuineStoreErrorIsLoggedEvenPastTheBudget(t *testing.T
 // base-only question would publish the flagged issuer's own trades unauthenticated, once per
 // closed bucket for the life of an SSE connection.
 //
-// Driven through the REAL *pricingguard.ScamGate over a stub directory, as in the /v1/vwap
-// quote-leg suite: a fake answering only the base-only question would pass without the
-// pair-aware primitive. The directory records every address it is asked about, so "the QUOTE leg
-// reached the gate" is proved rather than inferred from a status code.
+// Driven through the REAL *pricingguard.ScamGate over a stub directory: a fake answering only
+// the base-only question would pass without the pair-aware primitive. The directory records
+// every address it is asked about, so "the QUOTE leg reached the gate" is proved, not inferred
+// from a status code.
 
 // TestPriceTipWithholdsWhenTheQuoteLegIsScamFlagged pins the request surface. The stub reader
 // holds a snapshot for the inverted orientation, so an ungated handler answers 200 with a price;

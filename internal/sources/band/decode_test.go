@@ -962,14 +962,14 @@ func TestPickObserver(t *testing.T) {
 
 // DefaultResolutionSeconds is published as
 // `stellarindex_oracle_resolution_seconds{source="band"}` and seeds every band asset's default
-// staleness budget at 10× it (obs.DeclareOracleResolution), the number
-// `stellarindex_oracle_stale` compares against. So the constant IS this source's alert
-// threshold for every asset without a per-asset override; a wrong value does not fail a build,
-// it yields an alert that is permanently firing or permanently blind.
+// staleness budget at 10× it (obs.DeclareOracleResolution), the number `stellarindex_oracle_stale`
+// compares against. So the constant IS this source's alert threshold for every asset without a
+// per-asset override; a wrong value does not fail a build, it yields an alert that is
+// permanently firing or permanently blind.
 //
 // It must be Band's relayer publication interval (hourly), not a poll-cadence recommendation.
-// These tests pin that RELATIONSHIP, not the number: asserting `== 3600` would pass just as
-// happily on a future value that is wrong in the same way.
+// These tests pin that RELATIONSHIP, not the number: `== 3600` would pass just as happily on a
+// future value that is wrong in the same way.
 
 // staleAlertMultiplier mirrors obs.OracleStaleBudgetMultiplier (the 10x in the budget gauge the oracle-stale rule
 // reads); TestStaleAlertMultiplierMatchesTheShippedBudget pins the mirror.

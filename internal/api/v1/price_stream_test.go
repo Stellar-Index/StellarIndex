@@ -445,17 +445,16 @@ func TestPriceStream_WindowSeparation(t *testing.T) {
 }
 
 // TestPriceStream_AliasFanOut_MergesDistinctVenuesIntoOneStream is a documented-defect
-// reproduction, not a green regression guard: it records CURRENT behaviour so a fix has a
-// concrete before/after.
+// reproduction, not a green regression guard: it records CURRENT behaviour.
 //
 // cmd/stellarindex-aggregator/main.go's defaultPairs() computes XLM under BOTH `native` and
 // `crypto:XLM` as independent (base, quote) pairs, deliberately, so a future CEX connector
 // populates the abstract side without a config change. price_stream.go's alias fan-out then
 // subscribes one client to every alias topic of its asset, so a `?asset=native` connection
-// receives BOTH pairs' publishes as sequential updates on what looks like one series. This
-// is latent while crypto:XLM has no venue wired (publishToStream in
-// internal/aggregate/orchestrator only fires on a successful VWAP write); the test proves
-// the client-visible merge independent of the aggregator, and the trigger is a config change.
+// receives BOTH pairs' publishes as sequential updates on what looks like one series. This is
+// latent while crypto:XLM has no venue wired (publishToStream in internal/aggregate/orchestrator
+// only fires on a successful VWAP write); the test proves the client-visible merge independent
+// of the aggregator.
 //
 // The fix is NOT implemented here: it needs either one canonical topic per market on the
 // subscribe side, or a producer id/sequence on the wire event

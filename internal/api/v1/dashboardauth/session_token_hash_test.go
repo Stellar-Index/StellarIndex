@@ -16,10 +16,9 @@ import (
 // the auth path looks up by. Pinned three ways:
 //
 //	(1) the freshly-minted cookie resolves to its user (round trip);
-//	(2) the stored value is sha256(cookie) — a hash, not the plaintext;
-//	(3) the session's primary key, replayed as a cookie, does NOT
-//	    resolve — so a leak of the sessions table (which holds only the
-//	    hash + the PK) is not directly replayable.
+//	(2) the stored value is sha256(cookie), a hash, not the plaintext;
+//	(3) the session's primary key, replayed as a cookie, does NOT resolve, so a leak of the
+//	    sessions table (hash + PK) is not directly replayable.
 func TestSessionTokenIsHashedAtRest(t *testing.T) {
 	r := newTestRig(t)
 	acct, err := r.accounts.Create(context.Background(), platform.Account{

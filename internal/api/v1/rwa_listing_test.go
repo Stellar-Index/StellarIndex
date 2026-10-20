@@ -857,8 +857,7 @@ func refusalCount(v v1.RWAAssetsView, reason string) int {
 	return 0
 }
 
-// GET /v1/rwa/assets — the EVIDENCE behind C2's second arm, as opposed
-// to its verdict.
+// GET /v1/rwa/assets: the EVIDENCE behind C2's second arm, as opposed to its verdict.
 //
 // The response must publish the evidence behind a closed arm, not only the verdict, because
 // three unrelated states produce the same "nothing corroborated" verdict:
@@ -868,8 +867,8 @@ func refusalCount(v v1.RWAAssetsView, reason string) int {
 //   - a healthy directory this set simply predates.
 //
 // They call for different responses (run the sync, fix the sync, do nothing), so they must be
-// told apart on the wire. The tests below are one per state plus the two states that publish
-// no evidence at all.
+// told apart on the wire. The tests are one per state plus the two states that publish no
+// evidence at all.
 
 // rwaEvidenceServer wires the listing arm with nothing else able to
 // admit a row, so the funnel under test is arm 2's alone.

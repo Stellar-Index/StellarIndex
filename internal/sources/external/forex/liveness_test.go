@@ -206,7 +206,7 @@ func enabledGauge() float64 {
 //
 // The primary points at a dead endpoint so the immediate refresh fails fast without mocking
 // massive's wire format. The gauge must read 1 regardless: enablement is about being switched
-// on, not about the upstream answering. Shares process-global gauges, so no t.Parallel.
+// on, not the upstream answering. Shares process-global gauges, so no t.Parallel.
 func TestRun_publishesSourceEnabledWhileRunning(t *testing.T) {
 	obs.SourceEnabled.Reset()
 

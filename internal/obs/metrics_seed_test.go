@@ -33,16 +33,15 @@ func childLabelValues(t *testing.T, vec *prometheus.CounterVec, label string) ma
 	return out
 }
 
-// TestDivergenceRefreshOutcomesAreSeeded: both divergence guards —
-// stellarindex_divergence_no_reference and
-// stellarindex_divergence_refresh_error_dominant — compare a FAILURE outcome's rate against
-// the `ok` outcome's rate. A counter child does not exist until its first .Inc(), so a
-// process that never had a successful refresh has no `ok` series, the comparison is the empty
-// vector, and BOTH alerts are silent in the total-outage case they exist for (aggregator
-// restarted mid-outage, flags.divergence_warning frozen, a live depeg unflagged).
+// TestDivergenceRefreshOutcomesAreSeeded: both divergence guards,
+// stellarindex_divergence_no_reference and stellarindex_divergence_refresh_error_dominant,
+// compare a FAILURE outcome's rate against the `ok` outcome's rate. A counter child does not
+// exist until its first .Inc(), so a process that never had a successful refresh has no `ok`
+// series, the comparison is the empty vector, and BOTH alerts are silent in the total-outage
+// case they exist for (flags.divergence_warning frozen, a live depeg unflagged).
 //
-// The subject set is derived from the EMITTER, so a new outcome added to
-// divergence_refresh.go without a matching seed fails immediately.
+// The subject set is derived from the EMITTER, so a new outcome added to divergence_refresh.go
+// without a matching seed fails immediately.
 func TestDivergenceRefreshOutcomesAreSeeded(t *testing.T) {
 	src, err := os.ReadFile("../aggregate/orchestrator/divergence_refresh.go")
 	if err != nil {

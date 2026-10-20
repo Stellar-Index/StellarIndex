@@ -78,9 +78,8 @@ func routeLedger(t *testing.T, disp *dispatcher.Dispatcher, ledger uint32, seq *
 	return out
 }
 
-// servedClaimableAggregate mirrors the SQL contract of
-// Store.SumClaimableBalancesAtOrBefore — the query that feeds
-// ClassicSupplyComponents.Claimable and therefore total_supply:
+// servedClaimableAggregate mirrors the SQL contract of Store.SumClaimableBalancesAtOrBefore,
+// the query that feeds ClassicSupplyComponents.Claimable and therefore total_supply:
 //
 //	SELECT sum(balance_stroops) FROM (
 //	  SELECT DISTINCT ON (claimable_id) balance_stroops, is_removal

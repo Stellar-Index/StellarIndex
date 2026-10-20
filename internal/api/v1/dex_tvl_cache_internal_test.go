@@ -448,10 +448,10 @@ func TestDEXTVLCache_UnpricedTokenIsStillNotAnError(t *testing.T) {
 // the protocol headline with the pool counted fully priced, so even the "≥" lower-bound hatching
 // would hide the gap.
 //
-// The fixture is the same pool shape TestDEXTVLCache_RefreshComputesProtocolTVL asserts on ($10
-// XLM + $10.50 pegged USDC = $20.50, 1/1/0), with the USDC leg withheld. Both halves are
-// pinned: the money (the gated leg's $10.50 leaves tvl_usd) and the honesty (the pool moves
-// from priced to unpriced, so the surface renders a lower bound).
+// The fixture is the pool shape TestDEXTVLCache_RefreshComputesProtocolTVL asserts on ($10 XLM +
+// $10.50 pegged USDC = $20.50, 1/1/0), with the USDC leg withheld. Both halves are pinned: the
+// money (the gated leg's $10.50 leaves tvl_usd) and the honesty (the pool moves from priced to
+// unpriced, so the surface renders a lower bound).
 func TestDEXTVLCache_GatedTokenContributesNoValue(t *testing.T) {
 	gate := &stubTVLGate{withhold: map[string]bool{
 		// The pool's USDC-SAC leg: a token the serving guards refuse.
@@ -840,16 +840,16 @@ func TestDEXTVLCache_EmptyReserveReadIsUnavailableNotZero(t *testing.T) {
 	}
 }
 
-// A USD price read can fail in two ways that mean opposite things. "Nobody prices this token" is a
-// fact about the token: the leg is excluded as no_served_price and the figure is a lower bound.
-// "The price read ERRORED" is a fact about this refresh: the token is as priced as a minute ago and
-// we just could not ask.
+// A USD price read can fail in two ways that mean opposite things. "Nobody prices this token" is
+// a fact about the token: the leg is excluded as no_served_price and the figure is a lower bound.
+// "The price read ERRORED" is a fact about this refresh: the token is as priced as a minute ago
+// and we just could not ask.
 //
-// If rateFor folded both into the first, the error would be memoised as "unpriceable" for the whole
-// refresh, every protocol's refresh would SUCCEED, and Refresh's carry-forward (which only runs
-// when a protocol refresh returns an error) could not fire. One transient Postgres error on the
-// XLM rate would silently drop every XLM leg from the published DEX TVL and admit the shrunken
-// total as fresh.
+// If rateFor folded both into the first, the error would be memoised as "unpriceable" for the
+// whole refresh, every protocol's refresh would SUCCEED, and Refresh's carry-forward (which only
+// runs when a protocol refresh returns an error) could not fire. One transient Postgres error on
+// the XLM rate would silently drop every XLM leg from the published DEX TVL and admit the
+// shrunken total as fresh.
 
 // erroringTVLPricer is stubTVLPricer with a fault that can be armed per
 // asset between refreshes, and a per-asset call count.

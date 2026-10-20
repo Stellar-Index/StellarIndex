@@ -520,12 +520,11 @@ func TestWorker_DeliveryDurationMetricRecorded(t *testing.T) {
 	}
 }
 
-// TestWorker_TransientGetWebhookError_LeavesDeliveryForRetry guards against GetWebhook
-// failing with a TRANSPORT error (connection reset, fail-over, statement timeout) while the
-// webhook row is intact. Treating every GetWebhook error as "row deleted" would call
-// MarkAttemptFailed with a zero next_attempt_at, removing the row from the pending predicate
-// FOREVER, so one postgres blip would permanently drop a customer's notification with no
-// retry or alert.
+// TestWorker_TransientGetWebhookError_LeavesDeliveryForRetry guards against GetWebhook failing
+// with a TRANSPORT error (connection reset, fail-over, statement timeout) while the webhook row
+// is intact. Treating every GetWebhook error as "row deleted" would call MarkAttemptFailed with
+// a zero next_attempt_at, removing the row from the pending predicate FOREVER, so one postgres
+// blip would permanently drop a customer's notification with no retry or alert.
 //
 // Only platform.ErrNotFound is terminal; a transient error leaves the row untouched so the
 // store's claim lease expires and the next poll re-delivers it.
@@ -943,14 +942,13 @@ func TestNew_RefusesAStoreThatCannotAnswerTheKillSwitch(t *testing.T) {
 	_ = customerwebhook.New(storeWithoutAccountGate{}, customerwebhook.Options{})
 }
 
-// TestFanout_SuppressedEnqueueIsNotALostEvent pins that the enqueue gate's refusal is a
-// POLICY decision, not a lost customer event: it must not count as a lost event, be returned
-// as a Publish error, or feed the alertable loss counter, or the kill switch doing its job
-// would page an operator.
+// TestFanout_SuppressedEnqueueIsNotALostEvent pins that the enqueue gate's refusal is a POLICY
+// decision, not a lost customer event: it must not count as lost, be returned as a Publish
+// error, or feed the alertable loss counter, or the kill switch doing its job would page an
+// operator.
 //
 // The positive half (the refusal lands in PublishResult.Suppressed) is asserted against real
-// Postgres in test/integration/pg_auth_webhooks_test.go, which keeps this file compiling
-// against code lacking the fix so it fails on assertions rather than a build error.
+// Postgres in test/integration/pg_auth_webhooks_test.go.
 func TestFanout_SuppressedEnqueueIsNotALostEvent(t *testing.T) {
 	live, gone := subscriber(), subscriber()
 	store := newFanoutStore(live, gone)

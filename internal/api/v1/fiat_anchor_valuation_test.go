@@ -23,8 +23,8 @@ import (
 // `market_cap_usd: null` for an asset that has a price and a supply, and stamp it
 // `unverified_ticker_collision: true`.
 //
-// The control cases are the other half of the pin: the impersonation machinery stays armed for
-// tickers that name an ISSUED asset, which the catalogue's fiat carve-out must not disarm.
+// The control cases are the other half: the impersonation machinery stays armed for tickers
+// that name an ISSUED asset, which the catalogue's fiat carve-out must not disarm.
 func TestFiatCodedAnchorKeepsItsValuation(t *testing.T) {
 	cat, err := currency.LoadEmbedded()
 	if err != nil {

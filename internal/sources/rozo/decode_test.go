@@ -348,9 +348,9 @@ func TestTopicSymbolFlush_StableEncoding(t *testing.T) {
 //
 // payment_event's BODY decode is verified here against real on-chain bytes (elsewhere only the
 // topic SHAPE, topic_count=1, is lake-verified; see the Payment doc comment in events.go).
-// Captured read-only from stellar.contract_events in the raw lake, scoped to the four
-// MainnetPaymentContracts, topic_0_sym = 'payment_event', using the same base64-capture
-// convention as internal/sources/blend_backstop/decode_test.go's goldenFrames.
+// Captured read-only from stellar.contract_events, scoped to the four MainnetPaymentContracts,
+// topic_0_sym = 'payment_event', in the base64-capture convention of
+// internal/sources/blend_backstop/decode_test.go's goldenFrames.
 //
 // The real wire shape is an alphabetical ScMap {amount, destination, from, memo} with all four
 // fields present, an i128 amount, and from/destination as ACCOUNT (G-strkey) addresses; this
