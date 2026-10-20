@@ -45,6 +45,9 @@ type usdCreditBudget struct {
 	charged map[string]int64
 	latest  time.Time
 	admits  int
+	// refused and refusedUSD total the committed declines, for a dry run to report what the budget would refuse.
+	refused    int64
+	refusedUSD *big.Rat
 }
 
 // creditLedger holds one asset's served USD per hour bucket (unix seconds of the hour).
@@ -55,11 +58,12 @@ type creditLedger struct {
 
 func newUSDCreditBudget(seed creditSeedFunc) *usdCreditBudget {
 	return &usdCreditBudget{
-		factor:  big.NewRat(creditBudgetFactor, 1),
-		window:  creditBudgetWindow,
-		seed:    seed,
-		served:  map[string]*creditLedger{},
-		charged: map[string]int64{},
+		factor:     big.NewRat(creditBudgetFactor, 1),
+		window:     creditBudgetWindow,
+		seed:       seed,
+		served:     map[string]*creditLedger{},
+		charged:    map[string]int64{},
+		refusedUSD: new(big.Rat),
 	}
 }
 
@@ -102,6 +106,10 @@ func (b *usdCreditBudget) admit(ctx context.Context, id string, asset canonical.
 	total := led.sum(b.windowStart(at), at)
 	total.Add(total, value)
 	if total.Cmp(new(big.Rat).Mul(backing, b.factor)) > 0 {
+		if commit {
+			b.refused++
+			b.refusedUSD.Add(b.refusedUSD, value)
+		}
 		return false, nil
 	}
 	if commit {
@@ -298,4 +306,22 @@ func (s *Store) servedTokenTokenUSD(anchors []string) creditSeedFunc {
 		}
 		return out, nil
 	}
+}
+
+// ChargeTradeUSDCredit charges the credibility budget for t exactly as a write would, without writing. Only a dry run may call it: on a
+// writing store the charge would consume budget that no stored row accounts for.
+func (s *Store) ChargeTradeUSDCredit(ctx context.Context, t canonical.Trade) error {
+	_, _, _, err := tradeUSDVolumeCredited(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver, s.creditBudget, true)
+	return err
+}
+
+// CreditRefusals returns how many prints the credibility budget declined while charging, and their USD total; zero without a budget.
+func (s *Store) CreditRefusals() (int64, *big.Rat) {
+	b := s.creditBudget
+	if b == nil {
+		return 0, new(big.Rat)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.refused, new(big.Rat).Set(b.refusedUSD)
 }
