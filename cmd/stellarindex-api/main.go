@@ -29,6 +29,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/redact"
 	workerpkg "github.com/Stellar-Index/StellarIndex/internal/worker"
 
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/Stellar-Index/StellarIndex/cmd/stellarindex-api/internal/wiring"
@@ -167,6 +168,8 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		}
 	}()
 	logger.Info("storage connected")
+	// Pool wait time is the signal that one slow route class is starving the latency-SLO routes.
+	obs.Registry.MustRegister(collectors.NewDBStatsCollector(store.DB(), "serving"))
 
 	// Redis is optional here and startup does not block on it; the readiness probe reports its
 	// state. Production uses Sentinel mode (ADR-0024). Both client constructors are lazy, so
