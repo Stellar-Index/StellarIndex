@@ -462,7 +462,7 @@ tests:
                 assertion is a load-bearing incident fix (root-fill loop
                 guards, public-edge firewall, redis cap, CS-010 supply
                 config). See the runbook for the per-assertion restore
-                recipe and docs/operations/r1-ansible-drift-2026-07-03.md
+                recipe and docs/operations/ansible-drift.md
                 for why this class exists.
 
   - interval: 1m

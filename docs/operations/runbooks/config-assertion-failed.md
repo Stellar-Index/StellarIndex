@@ -39,7 +39,7 @@ Then restore per the table above. If the assertion fails because the
 config was *deliberately* changed, update the assertion in
 `scripts/ops/config-assertions.sh` in the same PR as the change.
 
-Ansible does not auto-apply to r1, so codified and live can diverge ([r1-ansible-drift-2026-07-03](../r1-ansible-drift-2026-07-03.md)); this check is the live-state backstop between the Monday [ansible-drift](../../../.github/workflows/ansible-drift.yml) runs.
+Ansible does not auto-apply to r1, so codified and live can diverge ([ansible-drift](../ansible-drift.md)); this check is the live-state backstop between the Monday [ansible-drift](../../../.github/workflows/ansible-drift.yml) runs.
 
 ## Related
 

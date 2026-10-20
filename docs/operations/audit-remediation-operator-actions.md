@@ -11,7 +11,7 @@ account, a secret, a legal call, prod infra or an owner decision. Code-side fixe
 are in the commit log; closed items are dropped from this page.
 
 > **Before any ansible playbook against r1:** read
-> [r1-ansible-drift-2026-07-03](r1-ansible-drift-2026-07-03.md) and always run
+> [ansible-drift](ansible-drift.md) and always run
 > `--check --diff` first. The hourly `config-assertions.timer` alerts on
 > regressions of the load-bearing subset.
 

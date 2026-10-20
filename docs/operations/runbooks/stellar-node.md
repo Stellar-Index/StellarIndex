@@ -226,7 +226,7 @@ Run the Check block, then re-run the probe by hand.
 **Likely causes (false positives)**
 
 - `probe_success == 0` with stale lag: the probe's unauthenticated GitHub API limit (60 requests/hour per source IP) was hit; self-heals the next day. Escalate only if it stays 0 for several days.
-- `core` or `archivist` lag absent: `apt-cache policy` found no candidate, usually because `apt.stellar.org` is not configured (`06-stellar-core.yml` is gated behind `run_stellar_core`, false on r1; known gap, see [r1-ansible-drift-2026-07-03.md](../r1-ansible-drift-2026-07-03.md)).
+- `core` or `archivist` lag absent: `apt-cache policy` found no candidate, usually because `apt.stellar.org` is not configured (`06-stellar-core.yml` is gated behind `run_stellar_core`, false on r1; known gap, see [ansible-drift.md](../ansible-drift.md)).
 - `galexie` lag flipping 1<->2 without an upgrade: the major-gap heuristic looks at the two most recent upstream releases; trust the date gap (`stellarindex_stellar_stack_installed_info` vs the releases page).
 
 ## Related
