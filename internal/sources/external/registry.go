@@ -72,12 +72,11 @@ var Registry = map[string]Metadata{
 
 	// ─── Institutional FX feeds ──────────────────────────────────
 	// `massive` is the active fiat-FX feed; there is deliberately NO `polygon-forex` entry, since
-	// it names the same upstream and would double-count in VWAP. fx_quotes holds one row per
-	// ticker per UTC day: the USD anchor behind usd_volume and fiat pricing.
-	// `exchangeratesapi` (disabled) emits only OracleUpdates, so it is not a forex-snap fallback;
-	// the only fallback is the ECB standby, and any new FX provider needs a row here or the
-	// FX-snap class check refuses it. FX pollers stamp 1e6, not the CEX 1e8. OracleResolution is
-	// a trading day because FX holds through the ~48h weekend close.
+	// it names the same upstream and would double-count in VWAP. `exchangeratesapi` (disabled)
+	// emits only OracleUpdates, so it is not a forex-snap fallback; the only fallback is the ECB
+	// standby, and any new FX provider needs a row here or the FX-snap class check refuses it. FX
+	// pollers stamp 1e6, not the CEX 1e8. OracleResolution is a trading day because FX holds
+	// through the ~48h weekend close.
 	"massive":          {Class: ClassExchange, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: true, Paid: true, Credit: "Massive", BackfillAvailable: true, Backfill: BackfillNoWASM, AmountDecimals: 6},
 	"exchangeratesapi": {Class: ClassExchange, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: true, Paid: true, Credit: "exchangeratesapi.io", BackfillAvailable: true, Backfill: BackfillNoWASM, AmountDecimals: 6, OracleResolution: 24 * time.Hour},
 

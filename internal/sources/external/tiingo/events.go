@@ -4,17 +4,16 @@
 //   - It emits canonical.OracleUpdate, never Trade: a fund NAV is an administrator's statement of
 //     share value, not an executed trade.
 //   - Rows are keyed `raw:<TICKER>` under source `tiingo`. The tickers are on no canonical
-//     allow-list, so Pair.Validate refuses the raw leg: a NAV can never become a pair, a VWAP
-//     input or a supply key. Only the RWA reference surface reads them, via the curated
+//     allow-list, so Pair.Validate refuses the raw leg: a NAV can never become a pair, a VWAP input
+//     or a supply key. Only the RWA reference surface reads them, via the curated
 //     (code, issuer) → ticker binding in internal/rwa.
 //
 // Tiingo publishes the SEC-reported NAV (2 dp) for the business day it was struck, landing that
 // evening, so the newest bar is usually the previous business day's.
 //
-// Wire format, one request per ticker per poll: GET
-// https://api.tiingo.com/tiingo/daily/WTTSX/prices?startDate=YYYY-MM-DD with
-// `Authorization: Token <key>`, returning [{"date":"YYYY-MM-DDT00:00:00.000Z","close":9.44,...}].
-// A fund with no NAV history returns `[]` with 200: no NAV, not an error.
+// Wire format, one request per ticker per poll:
+// GET https://api.tiingo.com/tiingo/daily/WTTSX/prices?startDate=YYYY-MM-DD with
+// `Authorization: Token <key>`. A fund with no NAV history returns `[]` with 200: not an error.
 package tiingo
 
 import (

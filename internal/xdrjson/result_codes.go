@@ -10,15 +10,13 @@ import (
 )
 
 // This file turns the raw XDR result-code integers the lake stores
-// (stellar.transactions.result_code and stellar.operation_results.result_code) into stable
-// slugs, so a failed transaction is self-explaining on the API, never a bare integer.
+// (stellar.transactions.result_code and stellar.operation_results.result_code) into stable slugs,
+// so a failed transaction is self-explaining on the API, never a bare integer.
 //
-// Failed transactions are indexed and served (an on-chain, fee-charged record) and marked clearly.
-// The authoritative "why" is the transaction-level code (successful=false plus e.g. "tx_failed"
-// or "tx_insufficient_fee"). The per-operation code is structural detail: a structurally failed
-// op carries op_bad_auth / op_no_source_account / ..., while one whose outcome is in its
-// op-type-specific result carries op_inner, and OpInnerResultName names that outcome (e.g.
-// payment_underfunded), which tx_failed alone does not say.
+// The authoritative "why" is the transaction-level code (successful=false plus e.g. "tx_failed").
+// The per-operation code is structural detail: a structurally failed op carries op_bad_auth / ...,
+// while one whose outcome is in its op-type-specific result carries op_inner, and OpInnerResultName
+// names that outcome (e.g. payment_underfunded), which tx_failed alone does not say.
 
 // txResultNames maps every transaction result code to its slug. Keyed by the
 // xdr typed constant so the compiler pins each entry to a real enum member;

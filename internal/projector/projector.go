@@ -356,9 +356,8 @@ func (p *Projector) refreshReplayWindows(ctx context.Context) {
 //
 //  1. Provenance: only a `projector-replay` window counts; a `projected-rebuild -write` range can
 //     cover the live cursor without rewinding it and would silence the alert.
-//  2. Upper bound, exclusive: the dirty row lives until compute-completeness re-verifies it, so a
-//     projector wedged exactly at to_ledger stays alertable. The upsert takes the range union; do
-//     not narrow it, compute-completeness relies on it to invalidate carried claims.
+//  2. Upper bound, exclusive: a projector wedged exactly at to_ledger stays alertable. The upsert
+//     takes the range union; do not narrow it, compute-completeness relies on it.
 //  3. Lower bound: projector-replay parks the cursor at from_ledger-1, so a lower cursor has no
 //     recorded excuse.
 func replayWindowCovers(w timescale.ProjectionDirtyWindow, cursor uint32) bool {
@@ -789,15 +788,14 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 		sinkI128Overflows  int
 		sinkQuarantined    int
 	)
-	// process runs the per-event decode + route for either read source. Decode failures soft-fail
-	// (the row is deterministically broken, so the cursor still advances). A SINK failure is
-	// classified ([classifySinkFault]): permanent is counted and skipped; transient or unclassified
-	// holds the cursor below ev.Ledger and counts consecutive failing cycles for this exact row.
+	// process runs decode + route for either read source. Decode failures soft-fail (the row is
+	// deterministically broken, so the cursor advances). A SINK failure is classified
+	// ([classifySinkFault]): permanent is counted and skipped; transient or unclassified holds the
+	// cursor below ev.Ledger.
 	//
 	// Adjacent-duplicate guard: the lake is read WITHOUT FINAL, so re-ingested duplicates arrive
-	// CONSECUTIVELY. Keyed ON CONFLICT sinks absorb that, but BUFFERED decoders (phoenix's
-	// multi-event correlation) do not: a duplicate field-event re-opens a completed group and
-	// cross-assigns fields between legs. rows_scanned still counts raw rows.
+	// CONSECUTIVELY. Keyed sinks absorb that, but BUFFERED decoders (phoenix) do not: a duplicate
+	// field-event re-opens a completed group and cross-assigns fields between legs.
 	var (
 		lastID     rowIdentity
 		haveLastID bool

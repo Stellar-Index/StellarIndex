@@ -9,20 +9,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// decode_admin.go decodes the eight governance/upgrade admin event kinds. The AquaToken source
-// is not public, so wire types, arity and positions are exact (from lake bytes) while
-// business-meaning names are BEST-EFFORT where noted.
+// decode_admin.go decodes the eight governance/upgrade admin event kinds. The AquaToken source is
+// not public, so wire types, arity and positions are exact (from lake bytes) while business-meaning
+// names are BEST-EFFORT where noted.
 //
-// GATING NOTE: SEVEN kinds (all but config_rewards and pool_gauge_switch_token) are emitted by
+// GATING: SEVEN kinds (all but config_rewards and pool_gauge_switch_token) are emitted by
 // REGISTERED Aquarius POOLS as well as the router, so dispatcher_adapter.go gates them on
-// `reg.Has || reg.IsFactory`; a router-only gate would fail-close real pool events into an
-// ADR-0033 recognition gap. config_rewards and pool_gauge_switch_token are router-only.
-//
-// The FLAGGED parallel router CA7RQDMMV6E53P5EDZA5GPWBZ33AMW2ZNO42XLI2RGRIAP4QXIARUOJQ and the
-// neither-pool-nor-router family (docs/protocols/aquarius.md) stay OUTSIDE the trust boundary and
-// fail closed per ADR-0035: a visible recognition gap, never silent mis-attribution.
-// decode_admin_test.go decodes bytes from both registered and flagged contracts, because decode
-// correctness and gate membership are independent concerns.
+// `reg.Has || reg.IsFactory`; a router-only gate would fail-close real pool events into an ADR-0033
+// recognition gap. The FLAGGED parallel router and the neither-pool-nor-router family
+// (docs/protocols/aquarius.md) stay OUTSIDE the trust boundary and fail closed per ADR-0035.
 
 // decodeAdminEvent dispatches on the classified kind; Decode() calls it after Matches() has gated on contract identity.
 func decodeAdminEvent(e *events.Event, kind string, closedAt time.Time) (AdminEvent, error) {

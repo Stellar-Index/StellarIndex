@@ -34,11 +34,9 @@ const tradesRateLimit = 1100 * time.Millisecond
 // rather than synthesised candles. Use it past the OHLC horizon; Backfill (OHLC) is cheaper for
 // recent windows.
 //
-// The venue timestamp is fractional seconds while the cursor is nanoseconds. Fills use the same
-// fixed 10^8 external scale as the streaming path (see externalAmountDecimals) and the streamer's
-// (symbol, trade_id) key, so a backfilled fill and its live row share one PK. On any error the
-// fills from pages already fetched are returned with it, in time order, so the caller decides
-// what a partial walk is worth.
+// Fills use the same fixed 10^8 external scale as the streaming path (see externalAmountDecimals)
+// and the streamer's (symbol, trade_id) key, so a backfilled fill and its live row share one PK. On
+// any error the fills from pages already fetched are returned with it, in time order.
 func (s *Streamer) BackfillTrades(ctx context.Context, pair canonical.Pair, from, to time.Time) ([]canonical.Trade, error) {
 	if !from.Before(to) {
 		return nil, fmt.Errorf("kraken.BackfillTrades: from %v must be before to %v", from, to)

@@ -1,18 +1,15 @@
-// Package upshift decodes events from the Upshift tokenized yield vaults on
-// Stellar (curated by Gami Labs and Stake Capital Group).
+// Package upshift decodes events from the Upshift tokenized yield vaults on Stellar.
 //
 // A vault is ERC-4626-shaped and the vault contract IS the share token (SEP-41). RedStone prices
 // `earnUSDC_FUNDAMENTAL` on that identity ([MainnetVaultEarnUSDC]), not the underlying's: a
-// yield-bearing claim is a different instrument from USDC.
-//
-// Two vaults: earnUSDC (CCL3WITW…) and earnXLM (CC6TRAPQ…). Each underlying is proven by the SAC
+// yield-bearing claim is a different instrument from USDC. Each underlying is proven by the SAC
 // `transfer` one event ahead of a `deposit` for exactly its `assets` amount; ticker names are
 // inferred, CONTRACT IDS are proven.
 //
-// Shapes: `deposit`/`withdraw` carry three Address topics and Map{assets, shares}. `transfer` is
-// a bare i128 OR Map{amount, to_muxed_id} (CAP-67). Shares are not at the underlying's scale.
-// Not decoded (zero rows, counted expected-zero by the ADR-0033 re-derive): custody-side events
-// (they would double-count `deployed_assets_changed`), governance events, `approve`.
+// Shapes: `deposit`/`withdraw` carry three Address topics and Map{assets, shares}. `transfer` is a
+// bare i128 OR Map{amount, to_muxed_id} (CAP-67). Shares are not at the underlying's scale. Not
+// decoded: custody-side events (they would double-count `deployed_assets_changed`), governance
+// events, `approve`.
 //
 // Gating: the symbols are generic, so ADR-0035 contract-identity gating is essential; with no
 // creation event the ADR-0040 curated set applies ([MainnetGatedSet] plus the DB warm).

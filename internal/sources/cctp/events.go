@@ -2,10 +2,8 @@
 // TokenMessengerMinter, MessageTransmitter and CctpForwarder (Mainnet* constants below).
 //
 // An outbound deposit_for_burn emits both a DepositForBurn and a MessageSent in one transaction;
-// inbound pairs MessageReceived with MintAndWithdraw. Correlate by (ledger, tx_hash). The
-// governance/admin event list lives in decode.go and the cctp_events CHECK constraint.
-//
-// Per-event schemas: docs/protocols/cctp.md. Wiring: README.md section Wiring.
+// inbound pairs MessageReceived with MintAndWithdraw. Correlate by (ledger, tx_hash). Per-event
+// schemas: docs/protocols/cctp.md.
 package cctp
 
 import (

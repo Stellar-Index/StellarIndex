@@ -7,14 +7,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Decoder is the dispatcher-facing view of the Blend Emitter. Event ROUTING is by topic bytes,
-// but ATTRIBUTION is gated on contract identity (ADR-0035/0040): the `distribute` topic collides
-// with blend_backstop's own `distribute` (different body, same symbol), so a topic-only match
-// would mis-decode a backstop event as an Emitter one.
+// Decoder is the dispatcher-facing view of the Blend Emitter. Routing is by topic bytes, but
+// ATTRIBUTION is gated on contract identity (ADR-0035/0040): the `distribute` topic collides with
+// blend_backstop's own `distribute` (different body), so a topic-only match would mis-decode a
+// backstop event as an Emitter one.
 //
-// The Emitter has NO factory namespace, so the gate is the curated-set mechanism (ADR-0040 §1
-// mechanism 3, as in comet.Decoder): the in-code MainnetGatedSet is the trust root and caller
-// opts (the protocol_contracts warm) add operator-admitted instances.
+// The Emitter has NO factory namespace, so the gate is the curated set (ADR-0040 §1 mechanism 3, as
+// in comet.Decoder): the in-code MainnetGatedSet is the trust root and caller opts (the
+// protocol_contracts warm) add operator-admitted instances.
 type Decoder struct {
 	reg *contractid.Registry
 }

@@ -1,19 +1,16 @@
-// Package usage provides per-subject request counters backed by Redis, plus the rollup worker
-// that persists them into `usage_daily`. Increments come from middleware.UsageTracker.
+// Package usage provides per-subject request counters backed by Redis, plus the rollup worker that
+// persists them into `usage_daily`. Increments come from middleware.UsageTracker.
 //
 // `subject` is the OWNER-ACCOUNT key from middleware.UsageKeyForSubject ("id:acct:<slug>";
 // "key:<KeyID>" only when the store stamped no owner), so an account's credentials share one
 // counter. Per-credential keying would let a customer multiply the monthly ceiling by minting keys.
 //
-// Two key families per (subject, day):
+// Two key families per (subject, day), with a 35-day TTL:
 //
-//	usage:<sub>:<YYYY-MM-DD>     → INCRBY billable request-unit total (the
-//	                               MonthlyQuota input, see ClassThrottled)
-//	usage:ep:<sub>:<YYYY-MM-DD>  → HASH of per-endpoint counters, fields
-//	                               "<route-pattern>|<class>" (ok, 4xx, 429, 5xx)
+//	usage:<sub>:<YYYY-MM-DD>     → INCRBY billable request-unit total (the MonthlyQuota input)
+//	usage:ep:<sub>:<YYYY-MM-DD>  → HASH of "<route-pattern>|<class>" (ok, 4xx, 429, 5xx) counters
 //
-// Keys have a 35-day TTL; [Rollup] folds the detail into Timescale. Subjects
-// are url-encoded so a `:` in an IPv6 address can't collide or spoof "ep:".
+// Subjects are url-encoded so a `:` in an IPv6 address can't collide or spoof "ep:".
 package usage
 
 import (

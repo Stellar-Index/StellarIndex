@@ -1,17 +1,15 @@
-// Package dispatcher routes ledger-meta values from internal/ledgerstream to the decoders registered
-// by internal/sources/<venue>. It is the single production ingest codepath
-// (docs/architecture/ingest-pipeline.md): every trade and oracle update goes through ProcessLedger.
+// Package dispatcher routes ledger-meta values from internal/ledgerstream to the decoders
+// registered by internal/sources/<venue>. It is the single production ingest codepath
+// (docs/architecture/ingest-pipeline.md); every trade and oracle update goes through ProcessLedger.
 //
-// Decoders carry all protocol logic; the per-ledger walk hits three seams:
-//
-//   - [Decoder]: Soroban contract events; the first decoder whose Matches() is true owns each event.
+// Three seams per ledger:
+//   - [Decoder]: Soroban contract events; the first decoder whose Matches() is true owns each
+//     event.
 //   - [OpDecoder]: classic operations; EVERY matching OpDecoder runs, since one op can be facts in
 //     several domains (a path payment is a trade and a movement).
-//   - [ContractCallDecoder]: event-less Soroban contracts, matched by (contract_id, function_name)
-//     and decoded from the InvokeContract args (Band relay / force_relay).
+//   - [ContractCallDecoder]: event-less contracts, matched by (contract_id, function_name).
 //
-// Decode errors are logged and counted, never fatal. The event and contract-call seams also sniff
-// for discovery (sighting only, never attribution; docs/architecture/oracle-manipulation-defense.md).
+// Decode errors are logged and counted, never fatal. Discovery sniffing is sighting only.
 package dispatcher
 
 import (

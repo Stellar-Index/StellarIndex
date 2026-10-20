@@ -1,17 +1,13 @@
 // Package decimalsguard is the served-price decimals-assumption guard.
 //
-// The served price is Σ(quote_amount)/Σ(base_amount) on RAW smallest-unit integers, so per-asset
-// decimals cancel ONLY when base and quote share a scale. Decoders store faithful native-decimal
-// amounts (ADR-0003), so the first non-7-decimal SEP-41 token to gain liquidity would skew its
-// pairs' served prices by 10^(7-decimals) with no other alarm.
+// The served price is Σ(quote)/Σ(base) on RAW smallest-unit integers, so decimals cancel ONLY when
+// base and quote share a scale. The first non-7-decimal SEP-41 token to gain liquidity would skew
+// its pairs by 10^(7-decimals) with no other alarm.
 //
-// This package is the DETECTION half: a periodic sweep resolves the on-chain decimals() of every
-// recently-DEX-traded Soroban token from the certified lake and raises
-// obs.DEXTradeNonstandardDecimalsTotal when one is != 7. It is the sole writer of
-// nonstandard_decimals_assets; normalization (internal/aggregate.AdjustPrice) only consumes it.
-// Coverage gaps are in docs/operations/runbooks/dex.md.
-//
-// The sweep's 20m window misses dormant tokens; Guard.Backfill covers 90d at startup.
+// This is the DETECTION half: a periodic sweep resolves decimals() of recently DEX-traded Soroban
+// tokens from the lake and raises obs.DEXTradeNonstandardDecimalsTotal when one is != 7. It is the
+// sole writer of nonstandard_decimals_assets; internal/aggregate.AdjustPrice only consumes it. The
+// 20m sweep misses dormant tokens; Guard.Backfill covers 90d at startup.
 package decimalsguard
 
 import (

@@ -1,14 +1,12 @@
 // Package sourcenet answers "does this source exist on this Stellar network?"
 //
 // Every protocol source is anchored to CONTRACT IDENTITY (ADR-0035), and those identities are
-// PUBNET addresses. On testnet or futurenet the decoders correctly match nothing, so a consumer
-// listing them anyway would carry pubnet genesis floors and report incomplete by construction.
+// PUBNET addresses. On testnet or futurenet the decoders correctly match nothing, so listing them
+// anyway would carry pubnet genesis floors and report incomplete by construction.
 //
-// The table is static: it changes in the same commit that adds a contract set to a decoder.
-//
-// A consumer whose names are not config.KnownSources (the gap detector keys per TABLE) maps each
-// onto a canonical name and guards that mapping with [Known], because [Applicable] answers false
-// for anything it does not classify, which silently REMOVES a signal.
+// A consumer whose names are not config.KnownSources maps each onto a canonical name and guards
+// that mapping with [Known], because [Applicable] answers false for anything it does not classify,
+// which silently REMOVES a signal.
 package sourcenet
 
 import (

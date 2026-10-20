@@ -2,11 +2,9 @@
 // endpoint and translates them into canonical.Trade values.
 //
 // It uses `@aggTrade`, which merges consecutive same-price fills in the same millisecond: lossless
-// for VWAP (volume is preserved) at ~5-10x lower throughput than the per-fill `@trade` stream.
-//
-// Each frame is {"stream": "xlmusdt@aggTrade", "data": {...}}; data carries s (symbol), p and q
-// (exact decimal strings), T (trade time, ms) and m (buyer was maker, so the trade was
-// seller-initiated). Symbols have no separator (XLMUSDT) and map through a hardcoded pair map.
+// for VWAP (volume is preserved) at ~5-10x lower throughput than `@trade`. Each frame carries s
+// (symbol), p and q (exact decimal strings), T (trade time, ms) and m (buyer was maker). Symbols
+// have no separator (XLMUSDT) and map through a hardcoded pair map.
 //
 // An XLMUSDT trade emits as canonical.Trade{Pair: XLM/USDT}: the aggregator maps stablecoins to
 // fiat at compute time, never at ingest, so a depeg stays visible in the data.

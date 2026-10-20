@@ -1,15 +1,11 @@
 // Package sorobanevents is the catch-all raw-event landing zone for Soroban contract events
 // (ADR-0029). Every contract event the dispatcher routes is also captured as a raw row in the
-// `soroban_events` hypertable, so decoders shipped AFTER an event was emitted can backfill via SQL
-// instead of MinIO re-walks.
+// `soroban_events` hypertable, so decoders shipped AFTER an event was emitted can backfill via SQL.
 //
-// [RawEventSink] fires AFTER the per-source decoders for every contract event, with no filter.
-// [Capture] converts a [events.Event] into a [Row]; an [AsyncSink] batches Rows into
-// [timescale.Store.InsertSorobanEventsBatch].
-//
-// Topics and body are raw XDR; topic_0_sym is set when topic[0] is a Symbol or String.
-// `contract_id` is the C-strkey for human SQL; `contract_id_hex` the raw 32 bytes for
-// index-efficient byte-equality joins.
+// [RawEventSink] fires AFTER the per-source decoders, with no filter. [Capture] converts a
+// [events.Event] into a [Row]; an [AsyncSink] batches Rows into
+// [timescale.Store.InsertSorobanEventsBatch]. Topics and body are raw XDR; `contract_id` is the
+// C-strkey for SQL, `contract_id_hex` the raw 32 bytes for byte-equality joins.
 package sorobanevents
 
 import (

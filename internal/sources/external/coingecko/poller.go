@@ -5,14 +5,13 @@
 // Wire shape (verified):
 //
 //	GET https://api.coingecko.com/api/v3/simple/price?ids=stellar,bitcoin&vs_currencies=usd,eur&include_last_updated_at=true
-//
 //	{"stellar": {"usd": 0.17582, "eur": 0.16230, "last_updated_at": 1710000000}, ...}
 //
 // Each row is stamped with the id's upstream last_updated_at, never our poll time: the aggregator
 // price tier, price_as_of and the oracle-stale alert read OracleUpdate.Timestamp as "when this
-// price was true", so a poll-time stamp would present a frozen cache as fresh. CoinGecko uses
-// slug IDs ("stellar", "bitcoin"), so an allow-listed ticker-to-id table covers our pair set and
-// unknown tickers skip per-entry.
+// price was true", so a poll-time stamp would present a frozen cache as fresh. CoinGecko uses slug
+// IDs, so an allow-listed ticker-to-id table covers our pair set and unknown tickers skip
+// per-entry.
 package coingecko
 
 import (

@@ -1,13 +1,11 @@
-// Package scval wraps github.com/stellar/go-stellar-sdk/xdr with the narrow set of SCVal
-// primitives the source connectors need: base64 parsing, typed accessors, and a Map-by-field-name
-// lookup that enforces the "decode-by-name-not-position" rule from
-// docs/architecture/ingest-pipeline.md#contract-schema-evolution.
+// Package scval wraps github.com/stellar/go-stellar-sdk/xdr with the SCVal primitives the source
+// connectors need: base64 parsing, typed accessors, and a Map-by-field-name lookup that enforces
+// the "decode-by-name-not-position" rule
+// (docs/architecture/ingest-pipeline.md#contract-schema-evolution).
 //
-// This is the only package allowed to import .../go-stellar-sdk/xdr directly, so an SDK swap
-// changes one package, not twenty.
-//
-// Errors wrap a package-local sentinel: errors.Is against [ErrScValType] separates a wrong XDR
-// shape (bug or malicious input) from [ErrScValDecode] (truncation or corruption).
+// This is the only package allowed to import go-stellar-sdk/xdr directly, so an SDK swap changes
+// one package. errors.Is against [ErrScValType] separates a wrong XDR shape (bug or malicious
+// input) from [ErrScValDecode] (truncation or corruption).
 package scval
 
 import (

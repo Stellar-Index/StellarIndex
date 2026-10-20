@@ -2,17 +2,14 @@ package canonical
 
 // Oracle-published raw symbol helpers; see docs/design/oracle-capture-totality-design.md.
 //
-// AssetOracleRaw holds a symbol an indexed oracle (Reflector / RedStone / Band) published that
-// maps to NO canonical asset. The record layer must be total and only the interpretation layer
-// selective: a symbol dropped at decode time needs a code change AND a lake replay to recover.
-//
-// Wire form `raw:<symbol>`, stored VERBATIM (source scoping comes from oracle_updates.source),
-// with deliberately no allow-list.
+// AssetOracleRaw holds a symbol an indexed oracle (Reflector / RedStone / Band) published that maps
+// to NO canonical asset. A symbol dropped at decode time needs a code change AND a lake replay to
+// recover, so the record layer is total: wire form `raw:<symbol>`, stored VERBATIM, no allow-list.
 //
 // Record-layer ONLY: never a Pair leg (Pair.Validate refuses it), VWAP input or supply key.
-// Consumers scanning oracle_updates without keying by canonical asset must exclude it via
-// [Asset.IsMapped] or `asset NOT LIKE 'raw:%'`. An unmapped feed's orientation is unknown, so
-// a raw row carries no Invert.
+// Consumers scanning oracle_updates must exclude it via [Asset.IsMapped] or
+// `asset NOT LIKE 'raw:%'`. An unmapped feed's orientation is unknown, so a raw row carries no
+// Invert.
 
 // rawSymbolMaxLen caps the verbatim symbol: Reflector/Band symbols are ScSymbol (<= 32 bytes) and
 // RedStone feed_ids stay well under 64. It bounds what a buggy or malicious relayer can persist.

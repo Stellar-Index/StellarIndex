@@ -1,23 +1,10 @@
-// Package retentionreaper bounds the platform tables whose rows reach a
-// terminal state but were never deleted: `sessions` (ended dashboard
-// sign-ins, each carrying IP / user-agent / geo history) and
-// `webhook_deliveries` (finished outbound attempts, each carrying the
-// event payload). The sibling token tables already have dedicated
-// reapers (internal/logincodereaper, internal/magiclinkreaper,
-// internal/signupreaper).
+// Package retentionreaper deletes terminal `sessions` (ended sign-ins carrying IP, user-agent and
+// geo history) and `webhook_deliveries` (finished attempts carrying the event payload) older than
+// Retention, at start and then every Interval, in the API binary.
 //
-// Each Reaper deletes terminal rows older than Retention, immediately and
-// then every Interval, in the API binary. Liveness publishes on the
-// shared auth-reaper gauges so `stellarindex_auth_reaper_stalled`
-// covers these sweeps too.
-//
-// Deliberately no config section, for the reason the magic-link reaper
-// has none: retention here is a PII bound, and a knob that disables it
-// re-opens the unbounded table.
-//
-// `audit_log` is intentionally NOT reaped. The platform spec (§8.2) sets
-// it at 12 months online plus 7 years archived; no archive exists, so
-// deleting rows would destroy compliance records rather than move them.
+// Deliberately no config section: retention is a PII bound, and a knob that disables it re-opens
+// the unbounded table. `audit_log` is intentionally NOT reaped: the platform spec (§8.2) keeps it
+// 12 months online plus 7 years archived, and no archive exists, so deleting would destroy records.
 package retentionreaper
 
 import (

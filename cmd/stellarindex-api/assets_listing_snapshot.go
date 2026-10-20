@@ -19,12 +19,11 @@ import (
 
 // /v1/assets listing snapshots — the boot seed.
 //
-// The prewarm cannot win the startup race, so each prewarm cycle writes its last-good page-set
-// here and the next boot seeds [v1.CachedAssetsReader] before the listener starts. The first
-// request then takes the stale-while-revalidate branch with an honest `flags.stale`.
-//
-// The key family lives here, not in internal/cachekeys (ADR-0007), because it has a sole reader
-// and writer; promote it when a second binary needs to read it.
+// The prewarm cannot win the startup race, so each prewarm cycle writes its last-good page-set here
+// and the next boot seeds [v1.CachedAssetsReader] before the listener starts; the first request
+// then takes the stale-while-revalidate branch with an honest `flags.stale`. The key family lives
+// here, not in internal/cachekeys (ADR-0007), because it has a sole reader and writer; promote it
+// when a second binary needs it.
 
 // assetsListingSnapshotKey is the typed Redis key for the
 // `assets:listing-snapshot:<schema>:<order>:<limit>` family.

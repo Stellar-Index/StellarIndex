@@ -1,19 +1,13 @@
 // Package logincodereaper bounds the `login_code_lockouts` table.
 //
-// The lockout counter is keyed by an attacker-chosen email on the unauthenticated
-// `POST /v1/auth/verify-code`, so every synthetic address inserts a row that no
-// successful sign-in will ever clear: a cheap remote table-fill bounded only by the
-// per-IP rate limit. Gating the insert on live tokens would let an address prober
-// dodge the durable counter, so the insert stays unconditional and the table gets
-// retention instead.
+// The counter is keyed by an attacker-chosen email on the unauthenticated `POST
+// /v1/auth/verify-code`, so every synthetic address inserts a row no sign-in clears. Gating the
+// insert on live tokens would let an address prober dodge the durable counter, so the insert stays
+// unconditional and the table gets retention instead. Only settled rows are swept; a live lock is
+// never reaped.
 //
-// Only settled rows are swept (updated_at < now()-Retention and no lock in force).
-// A live lock is never reaped; [DefaultRetention] outlasts the counting window, so
-// a swept row's next failure would have restarted at 1 anyway. A capped pass
-// re-sweeps after [DefaultDrainPause] because one IP can out-insert the hourly cap.
-//
-// Deliberately not operator-tunable: retention is a DoS control, and neither config
-// nor the signup reaper's `enabled=false` may switch it off.
+// Deliberately not operator-tunable: retention is a DoS control, and neither config nor the signup
+// reaper's `enabled=false` may switch it off.
 package logincodereaper
 
 import (

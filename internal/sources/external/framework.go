@@ -1,14 +1,11 @@
-// Package external is the connector framework for off-chain sources: centralised exchanges,
-// institutional FX feeds, third-party aggregators and sovereign daily anchors. Unlike the on-chain
-// dispatcher they run on their own cadence outside the ledger loop, but converge on the same
-// canonical types and hypertables.
+// Package external is the connector framework for off-chain sources: exchanges, institutional FX
+// feeds, third-party aggregators and sovereign daily anchors. They run on their own cadence outside
+// the ledger loop but converge on the same canonical types and hypertables.
 //
 // A venue implements whichever capabilities it supports:
-//
 //   - [Streamer]   — live WebSocket trade feed (exchange class)
 //   - [Poller]     — periodic REST fetch (aggregator / FX / sovereign)
-//   - [Backfiller] — historical OHLC candles, one canonical.Trade per bucket (optional; depth
-//     varies, Kraken caps at 720 intervals)
+//   - [Backfiller] — historical OHLC candles, one canonical.Trade per bucket (optional)
 //
 // [Registry] holds source class metadata, read by the aggregator at VWAP time to decide
 // contribution.

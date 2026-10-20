@@ -102,15 +102,15 @@ func decodeSwapLeg(r RawPair, tok0, tok1 canonical.Asset) (canonical.Trade, erro
 	taker := decodeSwapTaker(r.Swap.Value)
 
 	// The side with non-zero `in` is the base the trader sold. A price-forming swap has EXACTLY one
-	// non-zero `in` and one non-zero `out` on OPPOSITE token sides (0->1 or 1->0); the chain does
-	// not guarantee that, since pair.swap() is directly invokable and settles any argument mix that
-	// keeps K non-decreasing. Any other shape has no single direction, so the event is refused
+	// non-zero `in` and one non-zero `out` on OPPOSITE token sides; the chain does not guarantee
+	// that, since pair.swap() is directly invokable and settles any mix that keeps K
+	// non-decreasing. Any other shape has no single direction, so the event is refused
 	// (honest-blind beats half-decoded):
 	//   - single-sided / no cross-token move: ErrNonDirectionalSwap, a recognized no-op that Decode
 	//     does not treat as an error (real case: ledger 57,403,300).
 	//   - three OR four amounts non-zero: a matching arm would drop the extra leg and report a
-	//     GROSS `in` as the net trade, fabricating a price into VWAP/OHLC. This covers the
-	//     three-leg shape too. Returns ErrAmbiguousSwapDirection.
+	//     GROSS `in` as the net trade, fabricating a price into VWAP/OHLC. Returns
+	//     ErrAmbiguousSwapDirection.
 	var base, quote canonical.Asset
 	var baseAmt, quoteAmt canonical.Amount
 	in0, in1 := amounts.Amount0In.Sign() > 0, amounts.Amount1In.Sign() > 0

@@ -5,15 +5,14 @@
 //	                canonical.OracleUpdate → TimescaleDB
 //
 // This is the single production code path (docs/architecture/ingest-pipeline.md): no stellar-rpc
-// client, no per-source goroutines. One goroutine drives ledgerstream + dispatcher; a second
-// drains the resulting consumer.Events to Timescale. That second goroutine is deliberately
-// unguarded: a recover() would be cosmetic (persistWorker panics end the process anyway) and
-// would leave /healthz answering with a frozen cursor; crashing lets systemd restart from the
-// last cursor.
+// client, no per-source goroutines. One goroutine drives ledgerstream + dispatcher; a second drains
+// the resulting consumer.Events to Timescale. That second goroutine is deliberately unguarded: a
+// recover() would be cosmetic (persistWorker panics end the process anyway) and would leave
+// /healthz answering with a frozen cursor; crashing lets systemd restart from the last cursor.
 //
-// Flags: -config PATH (required), -dry-run (load config, open connections,
-// validate, exit), -verify-hashdb-from N / -verify-hashdb-to N (one hashdb
-// verify pass over [from,to], both required, then exit).
+// Flags: -config PATH (required), -dry-run (load config, open connections, validate, exit),
+// -verify-hashdb-from N / -verify-hashdb-to N (one hashdb verify pass over [from,to], both
+// required, then exit).
 //
 // SIGINT + SIGTERM cancel the root context; the binary waits up to 30 s.
 package main
@@ -91,10 +90,8 @@ func realMain() int {
 	// (config.LoadDefaultConfig binds the default logger then). It drops the per-S3-GET "Response
 	// has no supported checksum" WARN that floods journald on MinIO; the SDK hardcodes
 	// ChecksumMode: Enabled, so an env-var opt-out would be a no-op. Fail-soft: a pipe/dup2 error
-	// logs to the original stderr and startup continues unfiltered.
-	//
-	// The flush MUST run before exit or short-lived runs (-version, -dry-run failure) lose
-	// buffered output; see SilenceSDKChecksumWarnings.
+	// logs and startup continues unfiltered. The flush MUST run before exit or short-lived runs
+	// lose buffered output; see SilenceSDKChecksumWarnings.
 	flush := pipeline.SilenceSDKChecksumWarnings()
 	defer flush()
 

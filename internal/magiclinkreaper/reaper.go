@@ -1,27 +1,18 @@
-// Package magiclinkreaper bounds the `magic_link_tokens` table (migration 0027) that the dashboard
-// magic-link / email-code sign-in flow writes to.
+// Package magiclinkreaper bounds the `magic_link_tokens` table (migration 0027) written by the
+// dashboard magic-link / email-code sign-in flow.
 //
-// # Why this exists
+// The table holds plaintext PII (requester email and IP), its key is ATTACKER-CHOSEN, and the write
+// path (POST /v1/auth/login) is UNAUTHENTICATED. A row is removed only by being consumed, which
+// never happens for an address the caller does not own, so without this reaper the only bound is
+// the anonymous per-IP rate limit. internal/logincodereaper does the same for
+// `login_code_lockouts`.
 //
-// The table holds plaintext PII (requester email and IP), its key is ATTACKER-CHOSEN, and the
-// write path (POST /v1/auth/login) is UNAUTHENTICATED. A row is removed only by being consumed,
-// which never happens for an address the caller does not own. Without this reaper the only bound
-// is the anonymous per-IP rate limit, a slow, cheap, remote table-fill whose first alarm would be
-// the volume-level disk page. internal/logincodereaper does the same for `login_code_lockouts`.
+// Only EXPIRED rows are swept (`expires_at < now() - Retention`); a live token is never touched.
+// Retention keeps expired rows long enough to preserve the expired-vs-absent distinction
+// classifyMagicLinkMiss draws, plus a forensics window on a mint flood.
 //
-// # What is swept
-//
-// EXPIRED rows only (`expires_at < now() - Retention`). A row past `expires_at` is terminal:
-// ConsumeMagicLinkToken and ReserveLoginCode both require `expires_at > now`. Retention keeps
-// expired rows long enough to preserve the expired-vs-absent distinction classifyMagicLinkMiss
-// draws for a slow user and a forensics window on a mint flood, then deletes them over
-// `magic_link_tokens_expires_idx`. A live token is never touched at any age.
-//
-// # Not operator-tunable
-//
-// There is deliberately no config section. Retention is a DoS / PII control, so an operator
-// disabling or lengthening it re-opens the hole, and an unrelated toggle must not be able to
-// disable it silently.
+// Deliberately no config section: retention is a DoS / PII control, and an operator disabling or
+// lengthening it re-opens the hole.
 package magiclinkreaper
 
 import (

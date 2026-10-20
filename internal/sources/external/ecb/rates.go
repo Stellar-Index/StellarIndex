@@ -12,13 +12,11 @@ import (
 )
 
 // LatestEURRates returns ECB's daily reference rates as a raw EUR-base map ("1 EUR = X units of
-// that currency", as published) with the date ECB stamped on the file.
+// that currency", as published) with the date ECB stamped on the file. It reads the same document
+// as [Poller.PollOnce] so the forex worker can fall back to ECB without a second fetch/XML path.
 //
-// It reads the same document as [Poller.PollOnce] but returns rates, so the forex worker can fall
-// back to ECB when its primary (massive) is down without a second fetch/XML path.
-//
-// EUR itself is NOT in the map (ECB publishes against the euro), so callers converting to
-// another base must add it. An empty `endpoint` means [DefaultEndpoint].
+// EUR itself is NOT in the map, so callers converting to another base must add it. An empty
+// `endpoint` means [DefaultEndpoint].
 func LatestEURRates(ctx context.Context, endpoint string) (map[string]float64, time.Time, error) {
 	if endpoint == "" {
 		endpoint = DefaultEndpoint
