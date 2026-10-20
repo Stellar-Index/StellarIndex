@@ -241,20 +241,29 @@ func (s *Store) LatestAquariusReserves(ctx context.Context, windowDays int) ([]A
 }
 
 // aquariusLatestReserveLegs reads each pool's latest update_reserves legs, grouped per pool and recency-first.
+// The hash aggregate on max(ledger) narrows DISTINCT ON to one ledger's rows; sorting the whole window took ~5.7 s on r1.
 // The result set is closed before returning so LatestAquariusReserves never holds two open cursors.
 func (s *Store) aquariusLatestReserveLegs(ctx context.Context, since string) ([]AquariusPoolReserve, error) {
 	const q = `
-		WITH latest AS (
-		    SELECT DISTINCT ON (contract_id)
-		           contract_id, ledger_close_time, ledger, tx_hash, op_index, event_index
+		WITH last_ledger AS (
+		    SELECT contract_id, max(ledger) AS ledger
 		      FROM aquarius_reserves
 		     WHERE ledger_close_time > now() - $1::interval
-		     ORDER BY contract_id,
-		              ledger_close_time DESC, ledger DESC, op_index DESC, event_index DESC
+		     GROUP BY contract_id
+		),
+		latest AS (
+		    SELECT DISTINCT ON (r.contract_id)
+		           r.contract_id, r.ledger_close_time, r.ledger, r.tx_hash, r.op_index, r.event_index
+		      FROM aquarius_reserves r
+		      JOIN last_ledger m USING (contract_id, ledger)
+		     WHERE r.ledger_close_time > now() - $1::interval
+		     ORDER BY r.contract_id,
+		              r.ledger_close_time DESC, r.ledger DESC, r.op_index DESC, r.event_index DESC
 		)
 		SELECT r.contract_id, r.ledger_close_time, r.ledger, r.token_index, r.reserve::text
 		  FROM aquarius_reserves r
 		  JOIN latest l USING (contract_id, ledger_close_time, ledger, tx_hash, op_index, event_index)
+		 WHERE r.ledger_close_time > now() - $1::interval
 		 ORDER BY r.ledger_close_time DESC, r.contract_id, r.token_index`
 	rows, err := s.db.QueryContext(ctx, q, since)
 	if err != nil {
