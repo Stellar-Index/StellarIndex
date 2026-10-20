@@ -713,6 +713,53 @@ CREATE TABLE IF NOT EXISTS stellar.account_op_types_coverage
 ENGINE = MergeTree
 ORDER BY (covered_from, covered_to);
 
+-- ── contract_event_shapes — see deploy/clickhouse/contract_event_shapes.sql ──
+-- One row per distinct recognition shape (contract_id, topic_0_sym and, for a
+-- non-Symbol topic[0], topics_xdr[1], topics_xdr[2], arity) per lake partition,
+-- with row count and first/last ledger. DistinctTopicShapes reads whole partitions
+-- from here instead of rescanning contract_events, only while
+-- contract_event_shapes_coverage holds a marker (TRUNCATE the marker whenever the
+-- table is rebuilt). Keep in lockstep with deploy/clickhouse/contract_event_shapes.sql.
+CREATE TABLE IF NOT EXISTS stellar.contract_event_shapes
+(
+    part        UInt32,
+    contract_id String,
+    topic_0_sym String,
+    t0          String,
+    t1          String,
+    tn          UInt64,
+    cnt         SimpleAggregateFunction(sum, UInt64),
+    lo          SimpleAggregateFunction(min, UInt32),
+    hi          SimpleAggregateFunction(max, UInt32)
+)
+ENGINE = AggregatingMergeTree
+PARTITION BY part
+ORDER BY (contract_id, topic_0_sym, t0, t1, tn);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS stellar.contract_event_shapes_mv
+TO stellar.contract_event_shapes AS
+SELECT
+    intDiv(ledger_seq, 1000000) AS part,
+    contract_id,
+    topic_0_sym,
+    if(topic_0_sym = '', topics_xdr[1], '') AS t0,
+    if(topic_0_sym = '', topics_xdr[2], '') AS t1,
+    if(topic_0_sym = '', length(topics_xdr), 0) AS tn,
+    count() AS cnt,
+    min(ledger_seq) AS lo,
+    max(ledger_seq) AS hi
+FROM stellar.contract_events
+GROUP BY part, contract_id, topic_0_sym, t0, t1, tn;
+
+CREATE TABLE IF NOT EXISTS stellar.contract_event_shapes_coverage
+(
+    covered_from UInt32,
+    covered_to   UInt32,
+    completed_at DateTime DEFAULT now()
+)
+ENGINE = MergeTree
+ORDER BY (covered_from, covered_to);
+
 -- ── account_activity — see deploy/clickhouse/account_activity.sql ──
 -- Per-account activity watermark: (account -> the max ledger the account was EVER
 -- named in, across EVERY role the account-history readers serve: op source, tx

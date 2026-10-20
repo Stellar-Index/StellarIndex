@@ -69,7 +69,7 @@ func TestDistinctNonSymbolShapesWindowQuery_PrewhereGuardsTopics(t *testing.T) {
 // TestShapeScanQueries_BoundedSettings — each scan carries its own per-query bounds (low threads
 // + external group-by spill), so a window whose distinct set grows costs disk and time, never an OOM kill.
 func TestShapeScanQueries_BoundedSettings(t *testing.T) {
-	for _, q := range []string{distinctSymbolShapesWindowQuery(nil, nil), distinctNonSymbolShapesWindowQuery()} {
+	for _, q := range []string{distinctSymbolShapesWindowQuery(nil, nil), distinctNonSymbolShapesWindowQuery(), rolledShapesQuery(nil, nil)} {
 		for _, s := range []string{
 			"SETTINGS",
 			"max_threads = 2",
@@ -113,5 +113,18 @@ func TestShapeExemplarQuery(t *testing.T) {
 	// The shared MaxLedger dedups in the IN-set.
 	if strings.Count(q, "51000123") != 1 {
 		t.Errorf("shared MaxLedger should appear once in the ledger IN-set:\n%s", q)
+	}
+}
+
+// TestRolledShapesQuery_ExcludesSymbolShapesOnly — the rollup read applies the Symbol scan's exclusion but keeps every non-Symbol shape,
+// as the raw non-Symbol scan does.
+func TestRolledShapesQuery_ExcludesSymbolShapesOnly(t *testing.T) {
+	q := rolledShapesQuery([]string{"swap"}, []string{"CAAA"})
+	want := "AND (topic_0_sym = '' OR (topic_0_sym NOT IN ('swap') OR contract_id IN ('CAAA')))"
+	if !strings.Contains(q, want) {
+		t.Errorf("rollup read missing %q:\n%s", want, q)
+	}
+	if q := rolledShapesQuery(nil, []string{"CAAA"}); strings.Contains(q, "NOT IN") || strings.Contains(q, "contract_id IN") {
+		t.Errorf("no exclusion must mean no filter:\n%s", q)
 	}
 }

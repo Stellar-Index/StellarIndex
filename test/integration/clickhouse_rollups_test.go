@@ -1260,6 +1260,101 @@ func TestDistinctTopicShapes_NonSymbolTopic0(t *testing.T) {
 	}
 }
 
+// TestDistinctTopicShapes_ServesCoveredPartitionsFromRollup: with the contract_event_shapes_coverage marker, a whole
+// partition is read from the MV-fed contract_event_shapes rollup and returns the raw scan's shapes, exclusions included.
+func TestDistinctTopicShapes_ServesCoveredPartitionsFromRollup(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+	conn := dialClickHouse(t, ctx, "stellar")
+
+	// A partition and contract nothing else in the suite writes.
+	const lo, contract = uint32(146_000_000), "CSHAPEROLLUPFIXTURE"
+	t.Cleanup(func() {
+		cctx, ccancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer ccancel()
+		c := dialClickHouse(t, cctx, "stellar")
+		for _, q := range []string{
+			`TRUNCATE TABLE stellar.contract_event_shapes_coverage`,
+			fmt.Sprintf(`ALTER TABLE stellar.contract_event_shapes DELETE WHERE contract_id = '%s' SETTINGS mutations_sync = 2`, contract),
+			fmt.Sprintf(`ALTER TABLE stellar.contract_events DELETE WHERE contract_id = '%s' SETTINGS mutations_sync = 2`, contract),
+		} {
+			if err := c.Exec(cctx, q); err != nil {
+				t.Errorf("cleanup %q: %v", q, err)
+			}
+		}
+	})
+
+	fixture := []struct {
+		sym    string
+		topics []string
+	}{
+		{"", []string{"T0", "T1a"}},
+		{"", []string{"T0", "T1a", "T2"}},
+		{"swap", []string{"SWAP", "P1"}},
+		{"swap", []string{"SWAP", "P2"}},
+		{"sync", []string{"SYNC"}},
+	}
+	for i, e := range fixture {
+		q := fmt.Sprintf(`INSERT INTO stellar.contract_events
+			(ledger_seq, close_time, tx_hash, op_index, event_index, contract_id, event_type,
+			 topic_count, topic_0_sym, topics_xdr, data_xdr, op_args_xdr, in_successful_call)
+			VALUES (%d, '2026-08-01 00:00:00', 'rolluptx', 0, %d, '%s', 'contract', %d, '%s', ['%s'], 'D%d', [], 1)`,
+			lo+uint32(i)*1000, i, contract, len(e.topics), e.sym, strings.Join(e.topics, "','"), i)
+		if err := conn.Exec(ctx, q); err != nil {
+			t.Fatalf("insert fixture event %d: %v", i, err)
+		}
+	}
+
+	shapesOf := func(exclude, watched []string) string {
+		t.Helper()
+		shapes, err := chstore.DistinctTopicShapes(ctx, addr, lo, lo+999_999, exclude, watched)
+		if err != nil {
+			t.Fatalf("DistinctTopicShapes: %v", err)
+		}
+		var got []string
+		for _, s := range shapes {
+			if s.ContractID == contract {
+				got = append(got, fmt.Sprintf("%s|%s|%d|%d-%d|%s", s.Topic0Sym, strings.Join(s.Topics, ","), s.Count, s.MinLedger, s.MaxLedger, s.DataXDR))
+			}
+		}
+		return strings.Join(got, "\n")
+	}
+	cases := []struct {
+		name             string
+		exclude, watched []string
+	}{
+		{"no exclusion", nil, nil},
+		{"swap excluded", []string{"swap"}, nil},
+		{"swap excluded but watched", []string{"swap"}, []string{contract}},
+	}
+	raw := make([]string, len(cases))
+	for i, c := range cases {
+		raw[i] = shapesOf(c.exclude, c.watched)
+	}
+	if !strings.Contains(raw[0], "swap|") || strings.Contains(raw[1], "swap|") || !strings.Contains(raw[2], "swap|") {
+		t.Fatalf("raw scan fixture is wrong:\n%s", strings.Join(raw, "\n--\n"))
+	}
+
+	if err := conn.Exec(ctx, fmt.Sprintf(`INSERT INTO stellar.contract_event_shapes_coverage (covered_from, covered_to) VALUES (%d, %d)`, lo, lo+999_999)); err != nil {
+		t.Fatalf("write coverage marker: %v", err)
+	}
+	for i, c := range cases {
+		if got := shapesOf(c.exclude, c.watched); got != raw[i] {
+			t.Errorf("%s: rollup shapes differ from the raw scan:\n%s\nraw:\n%s", c.name, got, raw[i])
+		}
+	}
+
+	// A sentinel row only the rollup holds proves the covered partition was not raw-scanned.
+	if err := conn.Exec(ctx, fmt.Sprintf(`INSERT INTO stellar.contract_event_shapes VALUES (%d, '%s', 'sync', '', '', 0, 5, %d, %d)`,
+		lo/1_000_000, contract, lo+4000, lo+4000)); err != nil {
+		t.Fatalf("insert rollup sentinel: %v", err)
+	}
+	if got := shapesOf(nil, nil); !strings.Contains(got, fmt.Sprintf("sync|SYNC|6|%d-%d|D4", lo+4000, lo+4000)) {
+		t.Fatalf("covered partition did not read the rollup:\n%s", got)
+	}
+}
+
 // TTL-liveness end to end on a real ClickHouse: ledger_entry_changes rows flow through the ttl_live_until_mv view into
 // the slim ttl_live_until projection, and ClassifyTTLLiveness resolves verdicts from that table, not the
 // ledger_entries_current scan.
