@@ -526,3 +526,11 @@ func TestCHRebuild_WarmsTheCatalogueGatesBeforeAnythingReadsThem(t *testing.T) {
 		t.Error("the gate warm runs AFTER the writer")
 	}
 }
+
+func TestCHRebuild_CreditRefusalsWithWriteIsRefused(t *testing.T) {
+	t.Parallel()
+	err := chRebuild(chRebuildArgs(t, "-write", "-credit-refusals", "-sources", "aquarius"))
+	if err == nil || !strings.Contains(err.Error(), "-credit-refusals") {
+		t.Fatalf("-write -credit-refusals would charge the budget twice per print; got: %v", err)
+	}
+}

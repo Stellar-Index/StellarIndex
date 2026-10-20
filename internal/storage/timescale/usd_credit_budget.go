@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -45,6 +46,10 @@ type usdCreditBudget struct {
 	charged map[string]int64
 	latest  time.Time
 	admits  int
+	// tally turns on refused/refusedUSD, the committed declines a dry run reports; the live path never sets it.
+	tally      bool
+	refused    int64
+	refusedUSD *big.Rat
 }
 
 // creditLedger holds one asset's served USD per hour bucket (unix seconds of the hour).
@@ -55,11 +60,12 @@ type creditLedger struct {
 
 func newUSDCreditBudget(seed creditSeedFunc) *usdCreditBudget {
 	return &usdCreditBudget{
-		factor:  big.NewRat(creditBudgetFactor, 1),
-		window:  creditBudgetWindow,
-		seed:    seed,
-		served:  map[string]*creditLedger{},
-		charged: map[string]int64{},
+		factor:     big.NewRat(creditBudgetFactor, 1),
+		window:     creditBudgetWindow,
+		seed:       seed,
+		served:     map[string]*creditLedger{},
+		charged:    map[string]int64{},
+		refusedUSD: new(big.Rat),
 	}
 }
 
@@ -102,6 +108,10 @@ func (b *usdCreditBudget) admit(ctx context.Context, id string, asset canonical.
 	total := led.sum(b.windowStart(at), at)
 	total.Add(total, value)
 	if total.Cmp(new(big.Rat).Mul(backing, b.factor)) > 0 {
+		if commit && b.tally {
+			b.refused++
+			b.refusedUSD.Add(b.refusedUSD, value)
+		}
 		return false, nil
 	}
 	if commit {
@@ -298,4 +308,35 @@ func (s *Store) servedTokenTokenUSD(anchors []string) creditSeedFunc {
 		}
 		return out, nil
 	}
+}
+
+// ChargeTradesUSDCredit charges the credibility budget for batch exactly as BatchInsertTrades would (same filter, order and dedupe),
+// without writing, and counts the declines. Only a dry run may call it: the charges consume budget no stored row accounts for.
+func (s *Store) ChargeTradesUSDCredit(ctx context.Context, batch []canonical.Trade) error {
+	b := s.creditBudget
+	if b == nil {
+		return nil
+	}
+	b.mu.Lock()
+	b.tally = true
+	b.mu.Unlock()
+	rows := slices.Clone(s.filterStorableTrades(batch))
+	sortTradesByConflictKey(rows)
+	for _, t := range dedupeSortedTradesByConflictKey(rows) {
+		if _, _, _, err := tradeUSDVolumeCredited(ctx, t, s.usdVolumeQuoteSpec, s.usdVolumeFXResolver, b, true); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// CreditRefusals returns how many prints the credibility budget declined while charging, and their USD total; zero without a budget.
+func (s *Store) CreditRefusals() (int64, *big.Rat) {
+	b := s.creditBudget
+	if b == nil {
+		return 0, new(big.Rat)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.refused, new(big.Rat).Set(b.refusedUSD)
 }

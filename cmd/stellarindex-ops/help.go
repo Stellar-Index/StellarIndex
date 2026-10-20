@@ -685,7 +685,7 @@ Subcommands:
                           non-zero on any divergence. soroswap is re-derived
                           without pair seeding, so a range holding pairs
                           created before -from diverges by construction.
-  ch-rebuild -config PATH -from N -to N [-write] [-ch-addr H:P] [-sources CSV] [-sdex] [-sep41] [-contract-calls] [-contracts CSV] [-bulk-trades]
+  ch-rebuild -config PATH -from N -to N [-write] [-ch-addr H:P] [-sources CSV] [-sdex] [-sep41] [-contract-calls] [-contracts CSV] [-bulk-trades] [-credit-refusals]
                           Re-derive event-based served tables (Timescale)
                           from the ClickHouse lake for a range by re-running
                           the production decoders — the ADR-0034 lake-replay
@@ -712,6 +712,11 @@ Subcommands:
                           says so. Use it for a historical re-derive below
                           the source's floor — for a recovery INTO populated
                           ledgers it only adds a probe and then falls back.
+
+                          -credit-refusals (dry run only) charges each trade
+                          to the USD credibility budget in -write's upsert
+                          batch order and prints how many token/token
+                          prints it would refuse and their USD total.
   trades-cagg-refresh -config PATH -from N -to N [-force=false] -write | -config PATH -size
                           Refresh every continuous aggregate over trades
                           (prices_1m first, twap_1h/twap_1d last) over the
