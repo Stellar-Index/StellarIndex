@@ -177,9 +177,8 @@ Apply it **before** the dispatch where you can: the deploy's ClickHouse
 evidence step then finds the objects present, clears those surfaces itself,
 and no acknowledgement is needed.
 
-## Durable fix (roadmap)
+## Weekly drift check
 `ansible-drift.yml` `--check --diff`s the full archival-node playbook against
-live r1 (the authoritative drift check) but is **credential-broken since
-2026-07-20** (stale `ANSIBLE_VAULT_PASSWORD` / `ANSIBLE_VAULT_FILE_B64`).
-Restoring those secrets (operator item) makes it the real post-deploy gate;
-until then this page + the gate are the guard.
+live r1, testnet and futurenet every Monday and fails on any unapplied task.
+deploy.yml ships binaries only, so a role change reaches the test nets only
+when someone runs the playbook there; this job is what notices when nobody did.
