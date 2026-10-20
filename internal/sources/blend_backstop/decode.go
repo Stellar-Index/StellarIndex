@@ -14,9 +14,8 @@
 //  4. withdraw's body is (shares_burned, tokens_out), the OPPOSITE of deposit's
 //     (tokens_in, shares_minted), so Amount cannot uniformly promote vec[0].
 //
-// Applying these to stored rows takes
-// `projector-replay -source blend_backstop -from 51499923`. Per ADR-0013 SCVal is
-// read only through internal/scval; README.md covers wiring and provenance.
+// Applying these to stored rows takes `projector-replay -source blend_backstop -from 51499923`.
+// Per ADR-0013 SCVal is read only through internal/scval; README.md covers wiring and provenance.
 package blend_backstop
 
 import (

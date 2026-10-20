@@ -7,10 +7,9 @@
 // (/v1/ohlc, /v1/observations, /v1/history) stay visible (ADR-0018).
 //
 // Fail postures are asymmetric: below floor withholds (fail-closed); a substance query ERROR
-// serves (fail-open), so a DB blip cannot 404 the price surface.
-//
-// Pairs with no on-chain leg (fiat/fiat, CEX tickers) are exempt: their trades come from vendor
-// APIs, so mint-and-dust does not apply and the floors would only blackout synthetic pairs.
+// serves (fail-open), so a DB blip cannot 404 the price surface. Pairs with no on-chain leg
+// (fiat/fiat, CEX tickers) are exempt: their trades come from vendor APIs, so mint-and-dust does
+// not apply.
 package pricingguard
 
 import (

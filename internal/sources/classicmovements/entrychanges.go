@@ -16,15 +16,12 @@ import (
 
 // ─── Entry-changes half: LiquidityPoolDeposit/Withdraw + ────────────
 // ─── the CAP-0038 trustline-revocation auto-liquidation edge case ───
-// LiquidityPoolDeposit/WithdrawResult are bare result codes, so the amounts exchanged exist only
-// as the pool's ReserveA/ReserveB before vs. after the op in ledger_entry_changes. The CAP-0038
-// case (a revocation auto-redeeming LP shares into two ClaimableBalanceEntry rows) is the same.
+// LiquidityPoolDeposit/WithdrawResult are bare result codes, so the amounts exist only as the
+// pool's ReserveA/ReserveB before vs. after the op in ledger_entry_changes (likewise the CAP-0038
+// revocation's two ClaimableBalanceEntry rows). A SEPARATE surface from decode.go because
+// dispatcher.OpContext has no room for a change group: the backfill correlates
+// clickhouse.StreamEntryChanges by (ledger, tx_hash, op_index) and calls in here.
 //
-// This is a SEPARATE surface from decode.go because dispatcher.OpContext has no room for a
-// correlated change group: the backfill correlates clickhouse.StreamEntryChanges by
-// (ledger, tx_hash, op_index) and calls in here.
-//
-// # Ledger_entry_changes fidelity
 // Per-op fidelity starts at ~ledger 61,996,000. Absent fidelity yields ErrEntryChangesUnavailable
 // (or "no CAP-0038 liquidation"), counted by the caller, NEVER a guessed amount. Deposit/Withdraw
 // always mutate the pool, so empty means unavailable. For AllowTrust/SetTrustLineFlags the caller
@@ -271,17 +268,15 @@ func DecodeCAP0038Revocation(ledger uint32, closedAt time.Time, txHash string, o
 		return nil, nil // the common case: no CAP-0038 liquidation triggered here
 	}
 
-	// TWO movements per liquidated asset: the trustor exited the pool AND a claimable balance
-	// was created to hold the proceeds.
+	// TWO movements per liquidated asset: the trustor exited the pool AND a claimable balance was
+	// created to hold the proceeds. A pool-exit leg alone leaves the balance unresolvable: the
+	// resolver's `Kind == KindClaimableBalanceCreate` index gate skips it and cbLookupCreatesQuery
+	// filters `movement_kind = 'claimable_balance_create'`, so a later claim or clawback would be
+	// dropped silently. Do not broaden the ClickHouse predicate: that filter is a LowCardinality
+	// PREWHERE keeping the semijoin small (~2.5 min over 695M rows).
 	//
-	// A pool-exit leg alone leaves the created balance unresolvable: the resolver's
-	// `Kind == KindClaimableBalanceCreate` index gate skips it and cbLookupCreatesQuery filters
-	// `movement_kind = 'claimable_balance_create'`, so a later claim or clawback would be dropped
-	// silently. Broadening the ClickHouse predicate is the wrong fix: the `movement_kind` filter is
-	// a LowCardinality PREWHERE that keeps the semijoin small (~2.5 min over 695M rows).
-	//
-	// LegIndex: pool-exit legs take [0, len(created)) and the create legs follow, both in
-	// balance-id order (createdClaimableBalances), never change order.
+	// LegIndex: pool-exit legs take [0, len(created)), create legs follow, both in balance-id
+	// order (createdClaimableBalances), never change order.
 	movements := make([]Movement, 0, 2*len(created))
 	for i, cb := range created {
 		movements = append(movements, Movement{

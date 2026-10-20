@@ -12,14 +12,13 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// Soroban archives a contract_data entry once its TTL lapses, but the lake keeps its last
-// value forever, so "newest contract_data row for this key" cannot tell a live entry from an
-// archived one; the pool-state readers need that distinction (SAC balances keep archived entries
-// served by policy). The signal is the companion TTL entry's `liveUntilLedgerSeq`, extracted at ingest
-// into the slim `stellar.ttl_live_until` projection (key_hash -> live_until,
-// ReplacingMergeTree(version)); this reader is a bounded primary-key lookup. Scanning
-// ledger_entries_current for ttl rows (wide entry_xdr) OOMs, so there is no fallback: a missing
-// projection gives [errTTLLiveUntilTableMissing].
+// Soroban archives a contract_data entry once its TTL lapses, but the lake keeps its last value
+// forever, so "newest contract_data row" cannot tell live from archived; the pool-state readers
+// need that (SAC balances keep archived entries served by policy). The signal is the companion TTL
+// entry's `liveUntilLedgerSeq`, extracted at ingest into the slim `stellar.ttl_live_until`
+// projection (ReplacingMergeTree(version)). Scanning ledger_entries_current for ttl rows (wide
+// entry_xdr) OOMs, so there is no fallback: a missing projection gives
+// [errTTLLiveUntilTableMissing].
 
 // ttlKeyHashOffset/Len locate the 32-byte key hash in a decoded TTL LedgerKey: a 4-byte
 // LedgerEntryType discriminant (TTL = 9) then sha256 of the governed LedgerKey.

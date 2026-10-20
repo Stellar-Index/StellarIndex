@@ -908,12 +908,12 @@ func (c ContractEventsCursor) IsSet() bool { return c.Ledger > 0 }
 // Account listings resolve a page keyset from two account-keyed arms, merge it in Go, then hydrate
 // the wide columns once over the surviving keys:
 //   - sourced: stellar.ops_by_source (tx-MV rows carry the sentinel op_index).
-//   - participant: stellar.operation_participants, limited to transactions that
-//     succeeded or that the account itself sourced (participantKeys).
+//   - participant: stellar.operation_participants, limited to transactions that succeeded or that
+//     the account itself sourced (participantKeys).
 //
-// Each arm is a primary-key-prefix range, so the wide tables see only point lookups. The union of
-// two top-N sets contains the union's top N; mergeKeysDesc drops cross-arm duplicates BEFORE
-// cutting to `limit`, since a duplicate eating a slot would serve a short page read as end of history.
+// Each arm is a primary-key-prefix range, so the wide tables see only point lookups. mergeKeysDesc
+// drops cross-arm duplicates BEFORE cutting to `limit`: a duplicate eating a slot would serve a
+// short page read as end of history.
 
 // sourcedTxKeysExactQuery is the sourced tx arm's LIMIT 1 BY form: exact but O(account history), so it runs only when the windowed read
 // cannot prove a full page. The leading `ledger_seq <= ?` is redundant but required: KeyCondition does not prune on a tuple comparison.

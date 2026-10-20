@@ -14,24 +14,20 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// This file is the lake-side twin of internal/dispatcher's events.Event.StateWriteKeys enrichment:
-// per streamed contract event, it recovers from stellar.ledger_entry_changes (linkage (ledger_seq,
-// tx_hash, op_index)) the base64 LedgerKeys of the contract-data entries whose VALUE the op
-// changed, filtered to the event's contract, by the dispatcher's rule
-// (internal/dispatcher/state_write_keys.go):
+// This file is the lake-side twin of internal/dispatcher's events.Event.StateWriteKeys enrichment
+// (internal/dispatcher/state_write_keys.go): per streamed contract event, it recovers from
+// stellar.ledger_entry_changes, linked by (ledger_seq, tx_hash, op_index), the base64 LedgerKeys
+// of the event contract's contract-data entries whose VALUE the op changed:
 //
 //   - pre-image  = the op's FIRST `state` row for the key (ContractDataEntry.Val bytes);
 //   - post-image = the op's LAST `created`/`updated` row for the key;
 //   - changed    = post exists AND (no pre-image OR pre.Val != post.Val).
 //
 // Byte-identical rewrites are not changes: write_prices rewrites every requested feed's entry but
-// only the accepted feed's PriceData changes.
-// Cost: one point query per stateWriteKeyBatch events, a primary-key prefix lookup
-// ((ledger_seq, tx_hash, op_index) is the ORDER BY prefix) bounded by the batch's ledger span for
-// partition pruning. Opt-in per source (like withOpArgs).
-// ReplacingMergeTree: un-merged duplicates repeat (ledger_seq, tx_hash, op_index, change_index);
-// the scan keeps the latest ingested_at per change_index, as FINAL would, so no FINAL is needed
-// and a re-ingested correction beats its stale predecessor.
+// only the accepted feed's PriceData changes. One primary-key-prefix point query per
+// stateWriteKeyBatch events, bounded by the batch's ledger span. ReplacingMergeTree: the scan
+// keeps the latest ingested_at per change_index, as FINAL would, so a re-ingested correction beats
+// its stale predecessor without FINAL. Opt-in per source (like withOpArgs).
 
 // stateWriteKeyBatch is how many streamed events accumulate per ledger_entry_changes lookup. Buffered events hold wide OpArgs, so keep it
 // small; 128 is well under a megabyte for redstone while cutting query count by two orders of magnitude.

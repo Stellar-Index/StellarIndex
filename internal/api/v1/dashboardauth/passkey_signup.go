@@ -1,15 +1,14 @@
 package dashboardauth
 
-// Email-less account creation: a visitor with no session registers a
-// passkey and gets an account whose only credential is that passkey.
+// Email-less account creation: a visitor with no session registers a passkey and gets an account
+// whose only credential is that passkey.
 //
-// The user ID is minted at begin and bound into the credential as its
-// WebAuthn user handle, so the row is created at finish under that same
-// ID — finish-login matches the handle against users.id. Nothing is
-// written before the attestation verifies and the ceremony is spent.
+// The user ID is minted at begin and bound into the credential as its WebAuthn user handle, so the
+// row is created at finish under that same ID (finish-login matches the handle against users.id).
+// Nothing is written before the attestation verifies and the ceremony is spent.
 //
-// Trade-off, accepted deliberately: with no email there is no recovery
-// path. Losing every copy of the passkey loses the account.
+// Accepted trade-off: with no email there is no recovery path; losing every copy of the passkey
+// loses the account.
 
 import (
 	"encoding/json"

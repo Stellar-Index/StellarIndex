@@ -12,20 +12,18 @@ import (
 // The account graph's activity history: one account's creation and sponsorship activity resolved
 // into calendar months.
 //
-// The served tier stores EDGES, one row per distinct (creator, created) or (sponsor, sponsored)
-// pair, with only first_at and last_at. Per-event times exist only in the rollups' working tables
-// (account_creators_ops, account_sponsors_ops), which each cycle TRUNCATEs and refills, so a
-// mid-cycle read would serve a partial archive. Two facts are derivable and kept apart:
+// The served tier stores EDGES with only first_at and last_at; per-event times exist only in the
+// rollups' working tables, which each cycle TRUNCATEs and refills, so a mid-cycle read would serve
+// a partial archive. Two derivable facts are kept apart:
 //
 //   - NEW ACCOUNTS per month: counterparties first created/sponsored that month. COMPLETE: summed
 //     over all months it equals the distinct-counterparty total.
 //   - EVENTS per month: an edge with N > 1 events places exactly two (first_at, last_at); the
 //     other N-2 are counted as UNPLACED, never smeared into a month.
 //
-// events == placed + unplaced (TestAccountGraphHistoryPlacementIdentity).
-//
-// A month with nothing in it emits no point and nothing is carried forward. Coverage is the span
-// the rollup aggregated: an absent month inside it was quiet, one outside it was not observed.
+// events == placed + unplaced (TestAccountGraphHistoryPlacementIdentity). A quiet month emits no
+// point and nothing is carried forward; an absent month outside the rollup's span was not
+// observed.
 
 // accountGraphHistoryPeriodsQuery buckets both arms' edges by month, each sub-select a PRIMARY-KEY RANGE READ. The first-event arm has w=1
 // and the last-event arm w=0, so new_accounts counts edges while events counts placed events. toDateTime(..., 'UTC') pins the zone.

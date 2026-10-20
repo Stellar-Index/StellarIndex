@@ -11,16 +11,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// This file serves GET /v1/accounts/{g_strkey}/activity — the segmented
-// "what has this address been doing" breakdown: all-time per-op-type
-// counts (ClickHouse lake), attributed-trade total, per-(protocol,
-// action) DeFi event counts, and bridge-transfer counts (Postgres).
+// This file serves GET /v1/accounts/{g_strkey}/activity, the segmented breakdown of what an
+// address has been doing: all-time per-op-type counts (lake), attributed-trade total,
+// per-(protocol, action) DeFi event counts, and bridge-transfer counts (Postgres).
 //
-// Every segment is a WHOLE-HISTORY aggregate (the op-type arms probe the multi-billion-row
-// operations table; the trade count walks the address's full trades), so the payload is served
-// through the shared contract-detail SWR cache (contract_detail_cache.go) under an "act:"+g key.
-// The compute runs DETACHED on the refresh budget, and an expired entry is served stale
-// (flags.stale + its real as_of) while one single-flighted refresh runs. Reuse the
+// Every segment is a WHOLE-HISTORY aggregate, so the payload is served through the shared
+// contract-detail SWR cache (contract_detail_cache.go) under an "act:"+g key. The compute runs
+// DETACHED on the refresh budget; an expired entry is served stale (flags.stale + its real as_of)
+// while one single-flighted refresh runs. Reuse the
 // obs.ObserveExplorerSWRRefresh("contract_detail", ...) label: it is a bounded enum, so do not
 // mint one per key kind.
 

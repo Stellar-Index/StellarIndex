@@ -199,18 +199,15 @@ func baseAccountAddress(m xdr.MuxedAccount) (string, error) {
 
 // ─── PathPaymentStrictReceive / PathPaymentStrictSend ────
 //
-// A path payment moves TWO assets, so each op emits two 'path_payment' legs:
-//   - leg_index 0: the SOURCE leg, FromAddress only: what left the sender;
-//   - leg_index 1: the DESTINATION leg, ToAddress only: what reached the destination
-//     (result.Success.Last).
-// One row per op would put one asset on both participants' rows, booking the sender an outflow in
-// an asset it never held. Neither leg names a counterparty; both carry the whole op in Attributes.
-// There is no row per hop: per-hop ClaimAtoms already live in `trades` (sdex).
+// A path payment moves TWO assets, so each op emits two 'path_payment' legs: leg_index 0, the
+// SOURCE leg (FromAddress only, what left the sender), and leg_index 1, the DESTINATION leg
+// (ToAddress only, result.Success.Last). One row per op would put one asset on both participants'
+// rows, booking the sender an outflow in an asset it never held. No row per hop: per-hop
+// ClaimAtoms already live in `trades` (sdex).
 //
-// The destination amount is always result.Success.Last.Amount: it is what actually landed.
-// Only the source amount differs: StrictSend body.SendAmount is exact, but StrictReceive
-// body.SendMax is a ceiling, so it is derived from the result's Offers
-// (pathPaymentStrictReceiveSourceAmount, TestRealBytes_pathPaymentStrictReceive_twoHop).
+// The destination amount is always result.Success.Last.Amount (what landed). StrictSend
+// body.SendAmount is exact, but StrictReceive body.SendMax is a ceiling, so that source amount is
+// derived from the result's Offers (pathPaymentStrictReceiveSourceAmount).
 
 // decodePathPaymentStrictReceive reconstructs a 'path_payment'
 // movement for a successful PathPaymentStrictReceive op.
@@ -362,14 +359,11 @@ func pathPaymentStrictReceiveSourceAmount(sendAsset xdr.Asset, offers []xdr.Clai
 
 // ─── ClaimableBalance create/claim/clawback + Clawback ───
 //
-//   - CreateClaimableBalance: the created BalanceId is in the result, the rest in the body.
-//   - ClaimClaimableBalance / ClawbackClaimableBalance: neither body nor result carries an
-//     asset or amount, only a BalanceId. It is resolved against the create row via Decoder's
-//     in-run index, falling back to a ClickHouse lookup for creates outside this run (see the
-//     Decoder doc in dispatcher_adapter.go).
-//   - Clawback (the plain op): asset, amount and holder are all in the body.
-//
-// Every kind is exactly one row per op (leg_index 0); none has a second asset leg.
+// Claim and ClawbackClaimableBalance carry neither asset nor amount, only a BalanceId: it is
+// resolved against the create row via Decoder's in-run index, falling back to a ClickHouse lookup
+// for creates outside this run (see the Decoder doc in dispatcher_adapter.go). Create takes its
+// BalanceId from the result; plain Clawback has asset, amount and holder in the body. Every kind
+// is exactly one row per op (leg_index 0).
 
 // decodeCreateClaimableBalance reconstructs a 'claimable_balance_create' movement, source account -> escrow with ToAddress NULL.
 // Attributes carry balance_id (hex of the V0 hash bytes) and claimant addresses only; the ClaimPredicate tree is not modelled, so exact

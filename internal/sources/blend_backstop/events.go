@@ -12,13 +12,10 @@ import (
 const SourceName = "blend_backstop"
 
 // Backstop contracts: the two mainnet Blend Backstop deployments, a SEPARATE event surface from
-// the pool decoder (internal/sources/blend). Gating on BOTH is mandatory because backstop
-// symbols overlap with pool event symbols, so the contract id (ADR-0035), not the topic,
-// disambiguates them.
-//
-//   - MainnetBackstopV2 is the Backstop V2 singleton (current).
-//   - MainnetBackstopV1 is read from the sibling blend package; both were live for a span and a
-//     backfill range may replay either.
+// the pool decoder (internal/sources/blend). Gate on BOTH: backstop symbols overlap with pool
+// event symbols, so the contract id (ADR-0035), not the topic, disambiguates. Both were live for a
+// span and a backfill range may replay either. MainnetBackstopV2 is the current singleton;
+// MainnetBackstopV1 is read from the sibling blend package.
 const MainnetBackstopV2 = "CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7"
 
 // MainnetBackstopV1 re-exports blend.MainnetBackstopV1 so the two packages cannot disagree.
@@ -66,14 +63,11 @@ var (
 	TopicSymbolRwZoneRemove      = scval.MustEncodeSymbol(EventRwZoneRemove)
 )
 
-// Event is the [consumer.Event] the backstop Decoder emits, one per decoded contract event, in
-// the blend_backstop_events row shape: identity fields, promoted columns (Pool / UserAddress /
-// Amount / Amount2) and the remainder in Attributes.
-//
-// Pool / UserAddress are strkeys; Amount / Amount2 are decimal i128 strings (ADR-0003, never
-// int64). An empty value means the event type has no such field and the sink writes SQL NULL.
-// The sink (internal/pipeline/sink.go) type-switches on this; the projector is the sole writer
-// in sole-writer mode.
+// Event is the [consumer.Event] the backstop Decoder emits, one per decoded contract event, in the
+// blend_backstop_events row shape: identity fields, promoted columns (Pool / UserAddress / Amount
+// / Amount2) and the remainder in Attributes. Pool / UserAddress are strkeys; Amount / Amount2 are
+// decimal i128 strings (ADR-0003, never int64); empty means the event type has no such field and
+// the sink writes SQL NULL. The sink (internal/pipeline/sink.go) type-switches on this.
 type Event struct {
 	ContractID  string
 	Ledger      uint32

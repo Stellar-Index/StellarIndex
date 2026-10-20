@@ -22,14 +22,12 @@ import (
 )
 
 // ─── `-chunks`: the chunk-by-chunk walk (usd-volume-restamp, tag-tx-index) ───
-// The TIER-AGNOSTIC driver: it owns the chunks, compression policy, run lock and free-space
-// guard; rows are the tier's business ([chunkRestampTier]).
-//
-// A DML into a compressed chunk decompresses it wholesale, so per chunk, oldest first, the walk
-// decompresses, restamps in -chunk-batch transactions, re-compresses and heartbeats. Guards: a
-// session advisory lock, the compression policy paused for -write and restored on every exit
-// path, a free-space pre-flight, a refusal of live-adjacent chunks, and re-compression of a
-// failed chunk.
+// The TIER-AGNOSTIC driver: it owns the chunks, compression policy, run lock and free-space guard;
+// rows are the tier's business ([chunkRestampTier]). A DML into a compressed chunk decompresses it
+// wholesale, so per chunk, oldest first, the walk decompresses, restamps in -chunk-batch
+// transactions, re-compresses and heartbeats. Guards: a session advisory lock, the compression
+// policy paused for -write and restored on every exit path, a free-space pre-flight, a refusal of
+// live-adjacent chunks, and re-compression of a failed chunk.
 
 // chunkRestampStore is the DRIVER's seam: chunk, policy and lock primitives, nothing tier-aware.
 // Each tier extends it with its own plan/apply pair.

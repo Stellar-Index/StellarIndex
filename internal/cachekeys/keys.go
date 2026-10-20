@@ -55,18 +55,12 @@ func VWAP(base, quote canonical.Asset, window time.Duration) VWAPKey {
 		base.String(), quote.String(), int(window.Seconds())))
 }
 
-// VWAPMaxAge is the SILENCE GRACE on a published VWAP: how long a cached VWAP may keep serving
-// after the aggregator stops refreshing it. It is NOT the aggregation window: every (pair, window)
-// is rewritten on every tick ([orchestrator.DefaultInterval] = 30 s), so an old value means
-// nobody is publishing. Keying the TTL to the window would let a 24 h key outlive its writer by
-// 24 h, and /v1/price stamps observed_at at request time, so it would be served as current.
-//
-// No page precedes the expiry: customers see 404s first. The page for a dead publisher is
-// `stellarindex_aggregator_silent`, which fires about 10 minutes after the last write while the
-// process is still scraped and about 15 minutes after it when the process is gone, so the 404
-// window opens 5 to 10 minutes before anyone is paged. The freshness alert,
-// `stellarindex_api_price_stale`, is a ticket and reads a gauge this same aggregator emits.
-// Tighten the alert, not this grace.
+// VWAPMaxAge is the silence grace on a published VWAP, not the aggregation window: every (pair,
+// window) is rewritten each tick ([orchestrator.DefaultInterval], 30 s), so an old value means
+// nobody is publishing. Keying the TTL to the window would let a 24 h key outlive its writer and
+// be served as current, since /v1/price stamps observed_at at request time. No page precedes
+// expiry (customers see 404s first); tighten the `stellarindex_aggregator_silent` alert, not this
+// grace.
 const VWAPMaxAge = 5 * time.Minute
 
 // VWAPTTL is the TTL for a VWAP key: its window, bounded by [VWAPMaxAge] so a value never outlives its publisher by more than the silence grace; 0 for a zero window (don't cache).
@@ -84,13 +78,9 @@ func VWAPTTLWithMaxAge(window, maxAge time.Duration) time.Duration {
 
 // ─── VWAP Provenance — was this VWAP triangulated? ──────────────────
 //
-// Wire shape: `vwap:<base>:<quote>:<window-seconds>:provenance`
-// TTL: matches the VWAP value key.
-//
-// Writer: the triangulation worker writes "triangulated" beside the value key; the direct per-pair
-// refresh does NOT, so absence means direct (or unknown) and readers treat empty as not
-// triangulated. The API consults it on the Redis-fallback path (no direct prices_1m row) to set
-// flags.triangulated (ADR-0018).
+// Wire shape: `vwap:<base>:<quote>:<window-seconds>:provenance`; TTL matches the value key. Only
+// the triangulation worker writes "triangulated"; the direct refresh does not, so absence means
+// direct (or unknown) and readers treat empty as not triangulated (ADR-0018).
 
 // VWAPProvenanceKey is the typed Redis key for the `vwap:<base>:<quote>:<window>:provenance` family, a DISTINCT type from [VWAPKey] so marker and value keys are not interchangeable.
 type VWAPProvenanceKey string
@@ -109,13 +99,11 @@ const VWAPProvenanceTriangulated = "triangulated"
 
 // ─── VWAP Observed-At — when the served value was observed ─────────
 //
-// Wire shape: `vwap:<base>:<quote>:<window-seconds>:observed_at`
-// Value: RFC 3339 UTC timestamp ([FormatVWAPObservedAt]) of the closed bucket boundary the
-// value's window ends at. TTL: matches the VWAP value key, including the freeze keep-alive.
-//
-// Writer: both writers of the value key, inside the value's MULTI/EXEC.
-// Reader: the API stamps observed_at from it. A freeze extends the value's TTL without rewriting
-// it, so key existence is not freshness; a value with no readable stamp is not served.
+// Wire shape: `vwap:<base>:<quote>:<window-seconds>:observed_at`; TTL matches the value key,
+// freeze keep-alive included. Value: RFC 3339 UTC ([FormatVWAPObservedAt]) of the closed bucket
+// boundary the window ends at, written by both value writers inside the value's MULTI/EXEC. A
+// freeze extends the value's TTL without rewriting it, so key existence is not freshness: a value
+// with no readable stamp is not served.
 
 // VWAPObservedAtKey is the typed Redis key for the `vwap:<base>:<quote>:<window>:observed_at` family.
 type VWAPObservedAtKey string
@@ -145,14 +133,11 @@ func ParseVWAPObservedAt(raw string) (time.Time, error) {
 
 // ─── VWAP Coverage — did the value read its whole window? ──────────
 //
-// Wire shape: `vwap:<base>:<quote>:<window-seconds>:coverage`
-// Value: [FormatVWAPCoverage], "complete" or the RFC 3339 covered_from of a window whose trade
-// read hit the per-query row cap. TTL: matches the VWAP value key, including the freeze keep-alive.
-//
-// Writer: the direct refresh writes it in the value's MULTI/EXEC; the triangulation pass deletes
-// it there, because a composite does not track its legs' coverage.
-// Reader: the API surfaces truncated / covered_from; an absent or unreadable key is "unknown",
-// never "complete".
+// Wire shape: `vwap:<base>:<quote>:<window-seconds>:coverage`; TTL matches the value key. Value
+// ([FormatVWAPCoverage]): "complete", or the RFC 3339 covered_from of a window whose trade read
+// hit the per-query row cap. The direct refresh writes it in the value's MULTI/EXEC; the
+// triangulation pass deletes it (a composite does not track its legs' coverage). An absent or
+// unreadable key is "unknown", never "complete".
 
 // VWAPCoverageKey is the typed Redis key for the `vwap:<base>:<quote>:<window>:coverage` family.
 type VWAPCoverageKey string
@@ -201,16 +186,11 @@ func ParseVWAPCoverage(raw string) (WindowCoverage, error) {
 
 // ─── VWAP Composite Meta — router quality flags for a composite ────
 //
-// Wire shape: `vwap:<base>:<quote>:<window-seconds>:composite_meta`
-// TTL: matches the VWAP value key.
-//
-// Writer: the triangulation pass writes a JSON blob when it prices a target through the graph
-// router; absent means not router-priced this cycle. A low_confidence marker is written even when
-// the composite is NOT published over the direct price, so "served direct because the only routes
-// were dust" is distinguishable from "no composite at all".
-//
-// Reader: /v1/price decodes it via [DecodeCompositeMeta] on the triangulated serve path to set
-// flags.diverged / flags.rerouted; a miss or malformed blob leaves them unset.
+// Wire shape: `vwap:<base>:<quote>:<window-seconds>:composite_meta`; TTL matches the value key.
+// Written by the triangulation pass when the graph router prices a target; absent means not
+// router-priced this cycle. A low_confidence marker is written even when the composite is NOT
+// published over the direct price, so "direct because the only routes were dust" differs from "no
+// composite". Decoded by [DecodeCompositeMeta]; a malformed blob leaves flags unset.
 
 // VWAPCompositeMetaKey is the typed Redis key for the `vwap:<base>:<quote>:<window>:composite_meta` family.
 type VWAPCompositeMetaKey string
@@ -271,12 +251,10 @@ func ConfidenceTTL(window time.Duration) time.Duration { return VWAPTTL(window) 
 
 // ─── OHLC — one candle per (pair, granularity, bucket-start) ──────
 //
-// Wire shape: `ohlc:<base>:<quote>:<granularity>:<bucket-epoch>`
-// Granularity is "1m" / "15m" / "1h" / "4h" / "1d" / "1w" / "1mo"; bucket-epoch is the Unix
-// seconds of the candle start.
-//
-// Closed candles are immutable and cached with NO TTL (CDN-pinned). The open-candle TTL is only a
-// safety-net bound: the aggregator overwrites the key every refresh cycle.
+// Wire shape: `ohlc:<base>:<quote>:<granularity>:<bucket-epoch>` (granularity "1m".."1mo";
+// bucket-epoch is the Unix seconds of the candle start). Closed candles are immutable and cached
+// with NO TTL (CDN-pinned); the open-candle TTL is only a safety-net bound, since the aggregator
+// overwrites the key every refresh cycle.
 
 // OHLCKey is the typed Redis key for the `ohlc:<base>:<quote>:<granularity>:<bucket-epoch>` family.
 type OHLCKey string
@@ -339,14 +317,11 @@ const MetadataTTL = 5 * time.Minute
 
 // ─── Divergence detector output ───────────────────────────────────
 //
-// Wire shape: `div:<base>/<quote>`
-// Value: JSON with sources compared + max deviation + threshold.
-// Written by the divergence worker after each check cycle.
-//
+// Wire shape: `div:<base>/<quote>`; value is JSON (sources compared, max deviation, threshold).
 // The key is per-PAIR, not per-base-asset: a `div:<base>` key would let the last pair refreshed
-// clobber the asset's result (XLM/USD diverged, a later XLM/GBP refresh clears it, and /v1/price
-// serves divergence_warning=false). The by-asset reader ORs the per-pair WarningFired flags via
-// the [DivergenceBaseIndex] set, so "firing if ANY quote diverges" holds in any refresh order.
+// clobber the asset's result (XLM/USD diverged, a later XLM/GBP refresh clears it). The by-asset
+// reader ORs the per-pair WarningFired flags via the [DivergenceBaseIndex] set, so "firing if ANY
+// quote diverges" holds in any refresh order.
 
 // DivergenceKey is the typed Redis key for the `div:<base>/<quote>` family.
 type DivergenceKey string
@@ -375,14 +350,10 @@ const DivergenceTTL = 5 * time.Minute
 
 // ─── Anomaly freeze marker (ADR-0019) ─────────────────────────────
 //
-// Wire shape: `freeze:<asset_id>:<quote_id>`
-// Value: JSON anomaly Decision (deviation_pct, reason, expires_at). Presence means the pair's
-// latest bucket was frozen by the anomaly checker; the API reads it via FrozenLooker to set
-// flags.frozen.
-//
-// Writer: the orchestrator at bucket-close on ActionFreeze. Reader: the freeze package's RedisLooker.
-// TTL: [FreezeTTL] is the SILENCE GRACE, not the freeze duration: markers are written with
-// "remaining hold + FreezeTTL" and deleted outright on unfreeze.
+// Wire shape: `freeze:<asset_id>:<quote_id>`; value is the JSON anomaly Decision. Presence means
+// the pair's latest bucket was frozen; the API reads it via FrozenLooker to set flags.frozen.
+// [FreezeTTL] is the silence grace, not the freeze duration: markers are written with "remaining
+// hold + FreezeTTL" and deleted outright on unfreeze.
 
 // FreezeKey is the typed Redis key for the `freeze:<asset_id>:<quote_id>` family.
 type FreezeKey string
@@ -405,16 +376,12 @@ const FreezeTTL = 5 * time.Minute
 
 // ─── API-key records ──────────────────────────────────────────────
 //
-// Wire shape: `apikey:<sha256-hex>`
-// Value: JSON record `{identifier, tier, scopes, expires_at?, revoked_at?}`.
-// Writer: `/v1/account/keys` POST handler plus operator seeding scripts.
-// Reader: auth.RedisAPIKeyValidator on every authenticated request when auth_mode=apikey.
+// Wire shape: `apikey:<sha256-hex>`; value is JSON `{identifier, tier, scopes, expires_at?,
+// revoked_at?}`. Plaintext keys are NEVER stored: lookup SHA-256-hashes the caller's bytes
+// (32-byte high-entropy keys are preimage-safe), so a Redis dump leaks metadata but not keys.
 //
-// Plaintext keys are NEVER stored: lookup SHA-256-hashes the caller's bytes (32-byte high-entropy
-// keys are preimage-safe), so a Redis dump leaks metadata but not keys.
-//
-// No TTL: expiry and revocation live in the JSON record. No TTL does NOT protect a record from an
-// allkeys-* eviction policy, and the plaintext cannot be re-issued.
+// No TTL: expiry and revocation live in the record. That does NOT protect it from an allkeys-*
+// eviction policy, and the plaintext cannot be re-issued.
 
 // APIKeyRecordKey is the typed Redis key for the `apikey:<sha256-hex>` family.
 type APIKeyRecordKey string
@@ -448,21 +415,18 @@ func APIKeyCacheEvicted(keyHash string) APIKeyCacheKey {
 
 // ─── API-key lookup index ───
 //
-// Wire shape: `apikey-index:v1`, ONE Redis HASH with fields:
+// Wire shape: `apikey-index:v1`, ONE Redis HASH, no TTL, with fields:
 //
 //	ready            → "1", written only by a COMPLETE index build
 //	k:<key_id>       → <sha256-hex> of the record that KeyID names
 //	o:<identifier>   → space-separated <sha256-hex> list of the records that owner holds
 //
-// Writer and reader: auth.RedisAPIKeyStore, atomically with the record at issuance and by the one
-// sanctioned keyspace walk. No TTL.
+// ONE hash because under allkeys-* every key is independently evictable: an evicted per-owner set
+// would hide live credentials from list, revoke and the tier clamp. Evicting this one key takes
+// `ready` too, so readers fall back to the walk.
 //
-// Why ONE hash: under an allkeys-* policy every key is independently evictable, and a per-owner
-// set evicted while its records survive would hide live credentials from list, revoke and the tier
-// clamp. Evicting the one key takes the `ready` marker too, so readers fall back to the walk.
-//
-// NOT under `apikey:`: the `apikey:*` walk's GET would fail WRONGTYPE on a HASH. It needs its own
-// Redis ACL pattern (`~apikey-index:*`); without it every access is NOPERM and the store walks.
+// NOT under `apikey:`: that walk's GET would fail WRONGTYPE on a HASH. It needs its own Redis ACL
+// pattern (`~apikey-index:*`); without it every access is NOPERM and the store walks.
 
 // APIKeyIndexKey is the typed Redis key for the `apikey-index:*` family.
 type APIKeyIndexKey string
@@ -504,14 +468,10 @@ const HealthTTL = 60 * time.Second
 
 // ─── Oracle latest readings — read-through cache ─────────────────
 //
-// Wire shape: `oracle:latest:<asset-keys-joined>:<source-filter>`
-// Value: JSON `{"computed_at": RFC 3339, "updates": [...]}`; a bare array is read as a miss.
-// Writer and reader: api, read-through on cache miss.
-// TTL: 30 s stays inside one oracle push interval (1 to 5 minutes) while sparing the 285-580 ms
-// DISTINCT ON (source) sort on every poll.
-//
-// The asset list is sorted before joining so the same logical query hits the same key in any
-// input order.
+// Wire shape: `oracle:latest:<asset-keys-joined>:<source-filter>`; value JSON `{"computed_at": RFC
+// 3339, "updates": [...]}` (a bare array is read as a miss). The asset list is sorted before
+// joining so the same query hits the same key in any order. TTL 30 s stays inside one oracle push
+// interval (1 to 5 minutes) while sparing the 285-580 ms DISTINCT ON (source) sort on every poll.
 
 // OracleLatestKey is the typed Redis key for the `oracle:latest:<asset-keys-joined>:<source-filter>` family.
 type OracleLatestKey string
@@ -537,12 +497,10 @@ const OracleLatestTTL = 30 * time.Second
 //	`assets:list:<cursor>:<limit>`
 //	`markets:list:<cursor>:<limit>[:order=<order>[:source=<source>|:asset=<asset>|:pools=1:src=<sources>:base=<base>:quote=<quote>:asset=<asset>]]`
 //
-// Writer and reader: api, read-through on cache miss. TTL-only invalidation (60 s): both derive
-// from a 14-day rolling window over trades, and new listings surface over minutes to hours.
-//
-// `markets:list:` has several shapes because /v1/markets and /v1/pools layer filters on the base
-// cursor+limit key. Each has its own builder; concatenating onto [MarketsList] at a call site is
-// the ad-hoc key bug class this package closes, and is a compile error on [MarketsListKey] (ADR-0007).
+// TTL-only invalidation (60 s): both derive from a 14-day rolling window over trades. Markets has
+// several shapes because /v1/markets and /v1/pools layer filters on the base key; each has its own
+// builder, since concatenating onto [MarketsList] at a call site is the ad-hoc key bug class this
+// package closes (ADR-0007).
 
 // AssetsListKey is the typed Redis key for the `assets:list:<cursor>:<limit>` family.
 type AssetsListKey string
@@ -602,14 +560,10 @@ func sortStrings(ss []string) {
 
 // ─── MEV detection heartbeat ─────────────────────────────────────
 //
-// Wire shape: `mev:heartbeat`
-// Value: [MEVHeartbeatFull] when the last completed detection run had the lake tx-order resolver
-// (sandwich and oracle_sandwich detectors ran), [MEVHeartbeatPartial] when it ran without one.
-// Absence means no run completed within [MEVHeartbeatTTL]; /v1/mev reports both as
-// flags.detectors_partial.
-//
-// Writer: the aggregator's MEV worker at the end of each successful run. Reader: the API's
-// MEVPulse looker. TTL: [MEVHeartbeatTTL], three worker ticks, so one missed tick is not a gap.
+// Wire shape: `mev:heartbeat`. Value: [MEVHeartbeatFull] when the last run had the lake tx-order
+// resolver (sandwich and oracle_sandwich detectors ran), [MEVHeartbeatPartial] when it ran without
+// one; /v1/mev reports both partial and absent as flags.detectors_partial. Absence means no run
+// completed within [MEVHeartbeatTTL], three worker ticks, so one missed tick is not a gap.
 
 // MEVHeartbeatKey is the typed Redis key for the `mev:heartbeat` singleton.
 type MEVHeartbeatKey string

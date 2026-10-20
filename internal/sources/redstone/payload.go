@@ -25,8 +25,8 @@ import (
 // Signatures are NOT verified (the event proves the adapter accepted the payload). Without signer
 // filtering every package is aggregated, so medians can disagree with the adapter's.
 //
-// F1 CAVEAT (fallback path only): it misattributes only when signer-filter divergence hits a
-// surviving feed and a dropped feed's median equals that price (the BENJI twins in decode_test.go).
+// Fallback-path caveat: it misattributes only when signer-filter divergence hits a surviving feed
+// and a dropped feed's median equals that price (the BENJI twins in decode_test.go);
 // corroborateFallback refuses it when state writes name the op's feeds.
 var redstoneMarker = []byte{0x00, 0x00, 0x02, 0xed, 0x57, 0x01, 0x1e, 0x00, 0x00}
 

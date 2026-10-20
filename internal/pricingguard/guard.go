@@ -3,13 +3,9 @@
 //
 // Those paths read a bare CAGG bucket that BYPASSES the orchestrator's sigma-outlier filter,
 // min-USD-volume gate and freeze protection, so one manipulated print would be served verbatim.
-// The consumers: /v1/price (StorePriceReader.LatestPrice), /v1/assets/{slug}
-// (GlobalPriceReader.LatestVWAP), the price-alert evaluator (priceAlertVWAPReader.LatestVWAP),
-// /v1/price/at + /v1/price/changes (storePriceAtReader.PriceAt, via [GuardServedVWAP1mAt]), the
-// SEP-40 prices() series (StorePriceReader.RecentClosedSnapshots, via [GuardServedVWAP1mSeries])
-// and change_24h_pct's 24h-ago anchor (storeChange24hReader.USDPrice24hAgo, via
-// [GuardServedVWAP1mAt]). TestRawPrices1mReadersPassTheGuard (cmd/stellarindex-api) fails on a raw
-// prices_1m read with no guard entry point or missing from this list.
+// TestRawPrices1mReadersPassTheGuard (cmd/stellarindex-api) fails on a raw prices_1m read that has
+// no guard entry point ([GuardServedVWAP1mAt], [GuardServedVWAP1mSeries]) or is missing from its
+// consumer list.
 //
 // It wraps the pure exact-rational band decision ([robuststat.GuardServedVWAP]) and sits above
 // storage because timescale imports aggregate; the reverse would cycle.

@@ -18,14 +18,11 @@ import (
 
 // ─── `usd-volume-restamp -tier xlm-base` — the anchor re-derive ─────
 //
-// Unlike the exact tier (usd_volume_restamp.go), this re-derives an ESTIMATED tier: the value
-// comes from usdVolumeViaXLMBaseAnchor (the live insert calls it too); a row the anchor cannot
-// price is reported, never guessed, since a quote-side fall-through at a high derive_generation
-// would be permanent; the run is bounded, idempotent and resumable, and nothing spans a chunk;
-// and it refuses a range the live ingest tail has not passed (checkRestampLiveOverlap).
-//
-// `-report` prints the decision block to read BEFORE authorising a production run; it writes
-// nothing and refuses -write.
+// Unlike the exact tier (usd_volume_restamp.go), this re-derives an ESTIMATED tier via
+// usdVolumeViaXLMBaseAnchor (the live insert calls it too). A row the anchor cannot price is
+// reported, never guessed: a quote-side fall-through at a high derive_generation would be
+// permanent. Refuses a range the live ingest tail has not passed (checkRestampLiveOverlap).
+// `-report` prints the decision block to read BEFORE a production run; it writes nothing.
 
 // xlmBaseRestampStore is the slice of [timescale.Store] the re-derive uses (plan a window, apply
 // the plan), a seam so the chunk walk can be driven against a scripted double.

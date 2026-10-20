@@ -7,8 +7,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// The contract arm: how a Soroban-issued token qualifies with no (code, issuer) pair to
-// bind a declaration to (docs/methodology/rwa-definition.md, "The contract arm").
+// The contract arm: how a Soroban-issued token qualifies with no (code, issuer) pair to bind a
+// declaration to (docs/methodology/rwa-definition.md, "The contract arm").
 //
 // R2 is impossible for a contract and was never the guard (R3 kept impersonators out), so C2
 // requires an independent party to name this exact address, either:
@@ -18,9 +18,9 @@ import (
 //  2. an independent listing directory AND an in-repo curated binding: a listing exists for price
 //     aggregation and only corroborates, and this repo vouching for itself is never independence.
 //
-// C4 then decides whether the token is a real-world instrument, never on the contract's own
-// word. Deployer provenance, SEP-41 metadata as admission, and issuer SEP-1 naming the contract
-// were rejected (no deployer edge; free to forge; not parsed).
+// C4 then decides whether the token is a real-world instrument, never on the contract's own word.
+// Deployer provenance, SEP-41 metadata as admission, and issuer SEP-1 naming the contract are
+// rejected (no deployer edge; free to forge; not parsed).
 
 // Contract-arm bases name WHY a contract token is an instrument (C4), served beside the
 // classic bases so a consumer can filter on evidence strength.
