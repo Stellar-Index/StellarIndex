@@ -22,6 +22,8 @@ type UsdVolumePricingRow struct {
 
 // usdVolumePricingSQL is bounded by ts so chunk exclusion keeps it to the window's chunks; a classic id's issuer is its trailing 56
 // characters, read after alias_fold maps a SAC leg to its classic form.
+//
+//nolint:gosec // G202: fragments are constant SQL (helper output built from literals and $N placeholders); values bind via $N
 var usdVolumePricingSQL = `
 WITH ` + aliasFoldCTE(4) + `
 SELECT source,
