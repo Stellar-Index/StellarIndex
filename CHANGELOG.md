@@ -20,6 +20,20 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.39] - 2026-10-20
+
+No migrations. No `pkg/*` break. No config change; the alert-rule edits are comments only.
+
+### Fixed
+
+- **timescale:** unpriced trades between the declared SAC wrappers of one issuer's credits are labelled `unroutable`, like the same trades between the classic forms; a weekly wash burst on three such wrappers read as an on-chain USD-coverage gap (#3728).
+- **alerts:** the textfile-stale catch-all excludes `ops_job_tag_tx_index.prom`, which has its own staleness rule (#3726).
+
+### Changed
+
+- **release:** the cut-release hint names the hyphenated heading the changelog uses (#3725).
+- **docs:** the outlier trim-fraction runbook names the thin-pair trend case (#3724).
+
 ## [v0.116.38] - 2026-10-20
 
 No migrations. No `pkg/*` break. No config change. After the deploy, watch the latency SLO burn during the next crawler burst.
@@ -60,15 +74,3 @@ Postgres migration 0222 (new tables and a trigger; no replay). No `pkg/*` break.
 - **timescale:** the pools raw prefilter writes only the asset and source predicates for filters that are set, so a cached generic plan uses the `pools_per_source_1h` asset indexes (228 ms to 83 ms on r1) (#3703).
 - **timescale:** the SEP-41 supply fold is bounded below by its checkpoint's close time, so planning prunes `sep41_supply_events` chunks (88 ms to 0.5 ms planning); the folded set is unchanged (#3703).
 - **timescale:** SAC balance sums read the trigger-kept `sac_balance_current` table (migration 0222) instead of a full-history DISTINCT ON (3.5 s per call on r1) (#3704).
-
-## [v0.116.34] - 2026-10-20
-
-No migrations. No `pkg/*` break. No config change. After the deploy, watch `go_sql_wait_count_total{db_name="serving"}` and the API's new-session rate in `pg_stat_database` during the next explorer build.
-
-### Fixed
-
-- **timescale:** every Postgres pool keeps idle connections up to its open cap, so a burst no longer closes and reopens connections whose fresh backends re-plan hypertable chunks cold (r1 was opening 493 sessions a minute) (#3701).
-
-### Added
-
-- **api:** the serving pool exports `database/sql` stats as `go_sql_*{db_name="serving"}` (#3699).
