@@ -55,12 +55,18 @@ func VWAP(base, quote canonical.Asset, window time.Duration) VWAPKey {
 		base.String(), quote.String(), int(window.Seconds())))
 }
 
-// VWAPMaxAge is the silence grace on a published VWAP, not the aggregation window: every (pair,
-// window) is rewritten each tick ([orchestrator.DefaultInterval], 30 s), so an old value means
-// nobody is publishing. Keying the TTL to the window would let a 24 h key outlive its writer and
-// be served as current, since /v1/price stamps observed_at at request time. No page precedes
-// expiry (customers see 404s first); tighten the `stellarindex_aggregator_silent` alert, not this
-// grace.
+// VWAPMaxAge is the SILENCE GRACE on a published VWAP: how long a cached VWAP may keep serving
+// after the aggregator stops refreshing it. It is NOT the aggregation window: every (pair, window)
+// is rewritten on every tick ([orchestrator.DefaultInterval] = 30 s), so an old value means
+// nobody is publishing. Keying the TTL to the window would let a 24 h key outlive its writer by
+// 24 h, and /v1/price stamps observed_at at request time, so it would be served as current.
+//
+// No page precedes the expiry: customers see 404s first. The page for a dead publisher is
+// `stellarindex_aggregator_silent`, which fires about 10 minutes after the last write while the
+// process is still scraped and about 15 minutes after it when the process is gone, so the 404
+// window opens 5 to 10 minutes before anyone is paged. The freshness alert,
+// `stellarindex_api_price_stale`, is a ticket and reads a gauge this same aggregator emits.
+// Tighten the alert, not this grace.
 const VWAPMaxAge = 5 * time.Minute
 
 // VWAPTTL is the TTL for a VWAP key: its window, bounded by [VWAPMaxAge] so a value never outlives its publisher by more than the silence grace; 0 for a zero window (don't cache).
