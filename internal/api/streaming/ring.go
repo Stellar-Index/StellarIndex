@@ -47,10 +47,10 @@ func (r *ring) oldestID() string {
 // first-ever publish, which a stale or synthetic cursor can predate with nothing lost.
 func (r *ring) hasEvicted() bool { return r.evicted }
 
-// snapshotAfter returns a copy, in ID order, of every buffered event with ID strictly greater than lastEventID (nil for an empty one; all
-// held events if the cursor predates the oldest).
-// IDs are timestamp-packed ([Generator]), so a gap is indistinguishable from a quiet period; [Hub.Subscribe] compares against
-// [ring.oldestID] itself and emits an [EventTypeStreamGap] marker.
+// snapshotAfter returns a copy, in ID order, of every buffered event with ID strictly greater than lastEventID (nil for an
+// empty one; all held events if the cursor predates the oldest). IDs are timestamp-packed ([Generator]), so a gap is
+// indistinguishable from a quiet period; [Hub.Subscribe] compares against [ring.oldestID] itself and emits an
+// [EventTypeStreamGap] marker.
 func (r *ring) snapshotAfter(lastEventID string) []Event {
 	if lastEventID == "" {
 		return nil

@@ -47,10 +47,9 @@ const (
 // are tested against it.
 func newFlagSet() (fs *flag.FlagSet, dsn *dsnFlag, dir *string, yes, iKnow *bool) {
 	fs = flag.NewFlagSet("stellarindex-migrate", flag.ContinueOnError)
-	// The flag package prints its own parse errors — the rejected
-	// argument included, verbatim — to the FlagSet's output before it
-	// returns them. Nothing this tool is given may be echoed, so it is
-	// discarded and [parseArgv] composes the diagnostic instead.
+	// The flag package prints its own parse errors — the rejected argument included, verbatim — to the FlagSet's output before
+	// it returns them. Nothing this tool is given may be echoed, so it is discarded and [parseArgv] composes the diagnostic
+	// instead.
 	fs.SetOutput(io.Discard)
 	dsn = &dsnFlag{}
 	fs.Var(dsn, "dsn", "Postgres `DSN` (overrides STELLARINDEX_POSTGRES_DSN env). Give it at most once and never "+

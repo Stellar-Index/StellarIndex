@@ -127,10 +127,8 @@ func (p *Publisher) pollLoop(ctx context.Context, pair canonical.Pair) {
 	t := time.NewTicker(p.interval)
 	defer t.Stop()
 
-	// Poll once immediately so a freshly-restarted API binary
-	// publishes the most-recent closed bucket without waiting a full
-	// interval. The detect-change machinery guards against
-	// republishing the same bucket on the next tick.
+	// Poll once immediately so a freshly-restarted API binary publishes the most-recent closed bucket without waiting a full
+	// interval. The detect-change machinery guards against republishing the same bucket on the next tick.
 	p.tickOnce(ctx, pair, topic)
 
 	for {
@@ -158,10 +156,8 @@ func (p *Publisher) tickOnce(ctx context.Context, pair canonical.Pair, topic str
 		if errors.Is(err, v1.ErrPriceNotFound) {
 			return
 		}
-		// Suppress log noise on shutdown: the parent ctx itself is
-		// done. A pollCtx-only DeadlineExceeded (the parent still
-		// live) is a reader stall, not shutdown, and must not be
-		// mistaken for one — see [obs.StreamPublishStallTotal].
+		// Suppress log noise on shutdown: the parent ctx itself is done. A pollCtx-only DeadlineExceeded (the parent still
+		// live) is a reader stall, not shutdown, and must not be mistaken for one — see [obs.StreamPublishStallTotal].
 		if ctx.Err() != nil || errors.Is(err, context.Canceled) {
 			return
 		}

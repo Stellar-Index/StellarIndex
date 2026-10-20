@@ -84,10 +84,8 @@ func divergenceFiringHook(logger *slog.Logger, pub webhookPublisher, gates prici
 		if payload == nil {
 			return nil
 		}
-		// The divergence run is durable, the customer's copy is
-		// not, so a lost fan-out is an ERROR line rather than silence.
-		// Keyed on the episode so a retry after a partial failure only
-		// enqueues the subscribers it missed.
+		// The divergence run is durable, the customer's copy is not, so a lost fan-out is an ERROR line rather than silence.
+		// Keyed on the episode so a retry after a partial failure only enqueues the subscribers it missed.
 		since := cached.FiringSince
 		if since.IsZero() {
 			since = cached.ComputedAt

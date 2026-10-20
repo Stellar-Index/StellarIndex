@@ -66,10 +66,9 @@ type endpoint struct {
 	Path     string
 	Query    map[string]string
 	Critical bool // when true, a single failure here fails the whole run
-	// FreshTarget overrides the run-level freshness SLA target for
-	// this endpoint when non-zero. Used by /price, whose closed-bucket
-	// contract (ADR-0015) makes the run-level 30 s target structurally
-	// unmeetable — see defaultClosedBucketFreshTarget.
+	// FreshTarget overrides the run-level freshness SLA target for this endpoint when non-zero. Used by /price, whose
+	// closed-bucket contract (ADR-0015) makes the run-level 30 s target structurally unmeetable — see
+	// defaultClosedBucketFreshTarget.
 	FreshTarget time.Duration
 	// FallbackFreshTarget, when non-zero, bounds responses without data.window_seconds:
 	// /price/tip serves those from the closed 1 m bucket or VWAP snapshot when the pair had no
@@ -204,15 +203,11 @@ type stats struct {
 	// per response, so a median would pass a run in which 49 % of reads broke it.
 	// Zero when the endpoint has no observed_at field.
 	ObservedAtFreshSec *float64 `json:"observed_at_fresh_sec,omitempty"`
-	// FreshnessTargetSec — the per-endpoint freshness target override
-	// (endpoint.FreshTarget) when one is set, so the JSON evidence
-	// records which bound the verdict held this endpoint to. Zero =
-	// the run-level sla.freshness_sec applied.
+	// FreshnessTargetSec — the per-endpoint freshness target override (endpoint.FreshTarget) when one is set, so the JSON
+	// evidence records which bound the verdict held this endpoint to. Zero = the run-level sla.freshness_sec applied.
 	FreshnessTargetSec float64 `json:"freshness_target_sec,omitempty"`
-	// FallbackObservedAtFreshSec / FallbackTargetSec: the stalest
-	// fallback-served response (see endpoint.FallbackFreshTarget) and the
-	// bound it is held to, kept apart so a stale window response cannot
-	// hide behind the looser fallback bound.
+	// FallbackObservedAtFreshSec / FallbackTargetSec: the stalest fallback-served response (see endpoint.FallbackFreshTarget)
+	// and the bound it is held to, kept apart so a stale window response cannot hide behind the looser fallback bound.
 	FallbackObservedAtFreshSec *float64 `json:"fallback_observed_at_fresh_sec,omitempty"`
 	FallbackTargetSec          float64  `json:"fallback_target_sec,omitempty"`
 	// Critical mirrors endpoint.Critical: a Critical endpoint fails the whole run on ANY error,
@@ -446,10 +441,8 @@ func collectSamples(ctx context.Context, baseURL, apiKey string, endpoints []end
 				ep := endpoints[i]
 				i = (i + 1) % len(endpoints)
 				lat, failure, observedAt, fallback := hit(reqCtx, httpClient, baseURL, apiKey, ep)
-				// Stamp the receipt instant here, before the mutex: this
-				// is the clock reading freshness is measured against, and
-				// it must be the sample's own instant rather than anything
-				// the end-of-run aggregation can see.
+				// Stamp the receipt instant here, before the mutex: this is the clock reading freshness is measured against,
+				// and it must be the sample's own instant rather than anything the end-of-run aggregation can see.
 				receivedAt := time.Now()
 				mu.Lock()
 				key := sampleKey(ep)
@@ -475,10 +468,9 @@ func aggregateEndpointStats(ep endpoint, ss []probeSample) stats {
 	if len(ss) == 0 {
 		return stats{Endpoint: ep.Name, Pair: ep.Pair, Path: ep.Path, Critical: ep.Critical}
 	}
-	// Failures stay out of the latency percentiles, as they do from the
-	// server's success histogram (internal/obs/http_middleware.go): a
-	// refused connection "takes" ~0 ms, so pooling it would report a hard
-	// outage as a fast API. Failures are counted by availability instead.
+	// Failures stay out of the latency percentiles, as they do from the server's success histogram
+	// (internal/obs/http_middleware.go): a refused connection "takes" ~0 ms, so pooling it would report a hard outage as a fast
+	// API. Failures are counted by availability instead.
 	var latencies, freshSamples, fallbackSamples []float64
 	var failedBy map[string]int
 	for _, s := range ss {
@@ -490,10 +482,8 @@ func aggregateEndpointStats(ep endpoint, ss []probeSample) stats {
 			}
 			failedBy[cmp.Or(s.failure, "unknown")]++
 		}
-		// Anchored to the sample's own receipt instant, not to now():
-		// aggregation runs after the whole run, so time.Since() here
-		// would charge every sample the distance from its request to
-		// the end of the run (see probeSample.receivedAt).
+		// Anchored to the sample's own receipt instant, not to now(): aggregation runs after the whole run, so time.Since()
+		// here would charge every sample the distance from its request to the end of the run (see probeSample.receivedAt).
 		if !s.observedAt.IsZero() && !s.receivedAt.IsZero() {
 			age := s.receivedAt.Sub(s.observedAt).Seconds()
 			if s.fallback {

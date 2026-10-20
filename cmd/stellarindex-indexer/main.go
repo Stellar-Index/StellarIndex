@@ -517,13 +517,11 @@ func run(cfgPath string, dryRun bool) error {
 	metricsSrv := startMetricsServer(cfg.Obs, store, logger)
 
 	// ─── Sink goroutine ────────────────────────────────────────
-	// Sink mode depends on the projector config (ADR-0032); see pipeline.SinkModeForProjector:
-	//   - projector disabled -> SinkModeAll: this goroutine is the only writer.
-	//   - projector enabled, persist_per_source=true -> SinkModeSkipSoleWriter: parallel for
-	//     un-promoted sources, but the projector owns the SoleWriter specs outright.
-	//   - projector enabled, persist_per_source=false -> SinkModeSkipProjected: the projector is
-	//     sole writer for all projected sources.
-	// Non-Soroban events (sdex, external, band, supply observers) always ride this path.
+	// Sink mode follows the projector config (ADR-0032), see pipeline.SinkModeForProjector. Projector disabled: SinkModeAll,
+	// this goroutine is the only writer. Projector enabled with persist_per_source=true: SinkModeSkipSoleWriter, parallel for
+	// un-promoted sources while the projector owns the SoleWriter specs outright. Projector enabled with
+	// persist_per_source=false: SinkModeSkipProjected, the projector is sole writer for all projected sources. Non-Soroban
+	// events (sdex, external, band, supply observers) always ride this path.
 	sinkMode := pipeline.SinkModeForProjector(cfg.Ingestion.Projector.Enabled, cfg.Ingestion.Projector.PersistPerSource)
 	if err := pipeline.VerifySoleWriterCAGGCoverage(rootCtx, store, sinkMode); err != nil {
 		return fmt.Errorf("refusing to start: %w", err)
@@ -1255,10 +1253,9 @@ const (
 	chLiveSinkDialMaxBackoff = time.Minute
 )
 
-// startCHLiveSink dials the ClickHouse real-time dual-sink in its own goroutine (retrying until ctx ends) so a dial failure cannot fail
-// boot;
-// sink.Load() is nil until then and the ledgerstream callback skips the push. The caller MUST cancel() and wait on done: the shutdown
-// drain runs in it.
+// startCHLiveSink dials the ClickHouse real-time dual-sink in its own goroutine (retrying until ctx ends) so a dial failure
+// cannot fail boot; sink.Load() is nil until then and the ledgerstream callback skips the push. The caller MUST cancel() and
+// wait on done: the shutdown drain runs in it.
 func startCHLiveSink(parent context.Context, chAddr string, sink *atomic.Pointer[clickhouse.LiveSink], logger *slog.Logger) (context.CancelFunc, <-chan struct{}) {
 	ctx, cancel := context.WithCancel(parent)
 	done := make(chan struct{})
@@ -1647,10 +1644,8 @@ func aggregatorPairsFromCatalogue(cat *currency.Catalogue, logger *slog.Logger) 
 	for ticker := range cgIDs {
 		ca, err := canonical.NewCryptoAsset(ticker)
 		if err != nil {
-			// Ticker not on the canonical crypto allow-list (e.g. a
-			// future entry we haven't added). Skip — adding to the
-			// allow-list is a separate, deliberate change. Recorded
-			// below so the gap is visible instead of a silent drop.
+			// Ticker not on the canonical crypto allow-list (e.g. a future entry not yet added). Skip: adding to the allow-list
+			// is a separate, deliberate change. Recorded below so the gap is visible instead of a silent drop.
 			skipped = append(skipped, ticker)
 			continue
 		}
@@ -1741,8 +1736,8 @@ func defaultFXPairs(base string) []canonical.Pair {
 
 // ─── Dispatcher wiring ──────────────────────────────────────────
 // ─── Ledger processing ─────────────────────────────────────────
-// cursorReader is the one method [resolveStartLedger] needs from [timescale.Store]; read-only, so precedence rules test without a
-// database.
+// cursorReader is the one method [resolveStartLedger] needs from [timescale.Store]; read-only, so precedence rules test without
+// a database.
 type cursorReader interface {
 	GetCursor(ctx context.Context, source, sub string) (timescale.Cursor, error)
 }
@@ -1774,10 +1769,9 @@ type cursorRewinder interface {
 	RewindCursor(ctx context.Context, source, sub string, lastLedger uint32) (uint32, error)
 }
 
-// rewindCursorForSinkLoss moves the cursor below the lowest on-chain trade the sink abandoned, so the next start re-walks it (served-tier
-// writes are
-// ON CONFLICT idempotent). Only safe once the producer has stopped: a live producer's next UpsertCursor would carry the cursor over the
-// rewind.
+// rewindCursorForSinkLoss moves the cursor below the lowest on-chain trade the sink abandoned, so the next start re-walks it
+// (served-tier writes are ON CONFLICT idempotent). Only safe once the producer has stopped: a live producer's next UpsertCursor
+// would carry the cursor over the rewind.
 func rewindCursorForSinkLoss(ctx context.Context, store cursorRewinder, loss pipeline.ShutdownLoss, producerStopped bool, logger *slog.Logger) bool {
 	if loss.Rows == 0 {
 		return false
@@ -1841,10 +1835,9 @@ func processAndPersistCursor(
 	// ingest, because the gap surfaces in the substrate continuity check.
 	recordLedgerIngest(ctx, store, logger, lcm, networkPassphrase)
 	if err := store.UpsertCursor(ctx, cursorSource, "", lcm.LedgerSequence()); err != nil {
-		// Do NOT advance the cursor gauge on a persist failure. The
-		// gauge tracks the DURABLE resume position — on restart, ingest
-		// resumes from the last successfully-upserted cursor, so a gauge that
-		// advanced past it would hide the stall/gap from the cursor-lag alert.
+		// Do NOT advance the cursor gauge on a persist failure. The gauge tracks the DURABLE resume position — on restart,
+		// ingest resumes from the last successfully-upserted cursor, so a gauge that advanced past it would hide the stall/gap
+		// from the cursor-lag alert.
 		logger.Warn("cursor upsert",
 			"ledger", lcm.LedgerSequence(),
 			"err", err,
@@ -1978,18 +1971,15 @@ var marshalLedgerCloseMeta = func(lcm sdkxdr.LedgerCloseMeta) ([]byte, error) {
 	return lcm.MarshalBinary()
 }
 
-// recordHashdb appends sha256(LCM) into hdb once per ledger, synchronously (Append is one 32-byte WriteAt; a channel and drop policy would
-// be risk for no gain).
-// Errors log a WARN and bump HashdbAppendTotal{"error"} but never propagate: a diagnostics side channel must not stall customer-data
-// ingest.
+// recordHashdb appends sha256(LCM) into hdb once per ledger, synchronously (Append is one 32-byte WriteAt; a channel and drop
+// policy would be risk for no gain). Errors log a WARN and bump HashdbAppendTotal{"error"} but never propagate: a diagnostics
+// side channel must not stall customer-data ingest.
 func recordHashdb(hdb *hashdb.DB, lcm sdkxdr.LedgerCloseMeta, logger *slog.Logger, lastAppended *atomic.Uint32) {
 	seq := lcm.LedgerSequence()
 
 	raw, err := marshalLedgerCloseMeta(lcm)
-	// Timed region starts AFTER the multi-megabyte LedgerCloseMeta
-	// marshal — HashdbAppendDurationSeconds documents itself as the
-	// latency of the O(1) positional WriteAt, not of serializing the
-	// whole ledger.
+	// Timed region starts AFTER the multi-megabyte LedgerCloseMeta marshal — HashdbAppendDurationSeconds documents itself as
+	// the latency of the O(1) positional WriteAt, not of serializing the whole ledger.
 	start := time.Now()
 	if err == nil {
 		h := hashdb.Hash(raw)
@@ -2023,10 +2013,9 @@ func recordHashdb(hdb *hashdb.DB, lcm sdkxdr.LedgerCloseMeta, logger *slog.Logge
 	lastAppended.Store(seq)
 }
 
-// startHashDBVerifier runs the periodic hashdb drift check: every cfg.VerifyIntervalMinutes it re-reads a trailing cfg.VerifyWindowLedgers
-// window from the
-// live bucket (lsCfg) and compares against verifyDB. Known limit: mid-catch-up the window can name ledgers the bucket lacks, giving
-// outcome="error" until it crosses the archive/live seam.
+// startHashDBVerifier runs the periodic hashdb drift check: every cfg.VerifyIntervalMinutes it re-reads a trailing
+// cfg.VerifyWindowLedgers window from the live bucket (lsCfg) and compares against verifyDB. Known limit: mid-catch-up the
+// window can name ledgers the bucket lacks, giving outcome="error" until it crosses the archive/live seam.
 func startHashDBVerifier(
 	parent context.Context,
 	verifyDB *hashdb.DB,
@@ -2130,16 +2119,12 @@ func hashDBVerifyPass(
 	outcome := classifyHashDBVerifySweep(res, streamErr, from, to)
 	switch outcome {
 	case sweepOutcomeShutdown:
-		// Shutdown mid-walk with nothing found: don't record any
-		// outcome — a partial, driftless sweep is neither clean nor
-		// failing, and stamping it "ok" would be the same
-		// vacuous-green lie the strict-stream change above removes.
+		// Shutdown mid-walk with nothing found: record no outcome. A partial, driftless sweep is neither clean nor failing, and
+		// stamping it "ok" would be the vacuous-green result the strict stream above prevents.
 		return outcome
 	case sweepOutcomeDrift:
-		// Drift FIRST — even when the stream ALSO errored (including
-		// a shutdown cancel) mid-walk, drift already tallied is the
-		// signal this detector exists for; an error or cancel must
-		// not suppress it.
+		// Drift FIRST — even when the stream ALSO errored (including a shutdown cancel) mid-walk, drift already tallied is the
+		// signal this detector exists for; an error or cancel must not suppress it.
 		obs.HashdbVerifyRunsTotal.WithLabelValues("drift", window).Inc()
 		obs.HashdbVerifyRunDurationSeconds.WithLabelValues("drift").Observe(dur)
 		obs.HashdbDriftTotal.Add(float64(countNewDrift(res, seenDrifted)))
@@ -2157,10 +2142,8 @@ func hashDBVerifyPass(
 		obs.HashdbVerifyRunDurationSeconds.WithLabelValues("error").Observe(dur)
 		logger.Warn("hashdb verify sweep failed", "from", from, "to", to, "err", streamErr)
 	case sweepOutcomeIncomplete:
-		// A complete sweep observed every ledger in the window
-		// exactly once; anything short means the stream ended early
-		// without erroring, and "we couldn't check everything" must
-		// not read as clean.
+		// A complete sweep observed every ledger in the window exactly once; anything short means the stream ended early
+		// without erroring, and "we couldn't check everything" must not read as clean.
 		observed := res.Verified + res.Drifted + res.Missing + res.OutOfRange
 		obs.HashdbVerifyRunsTotal.WithLabelValues("error", window).Inc()
 		obs.HashdbVerifyRunDurationSeconds.WithLabelValues("error").Observe(dur)

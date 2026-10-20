@@ -69,10 +69,9 @@ type Hub struct {
 // the topic alone rather than the whole Hub.
 type topicState struct {
 	mu sync.Mutex
-	// buffer is the replay ring, nil until the topic's first publish: topic keys are client-supplied and /v1/price/stream takes up to 9 alias
-	// topics per connection, so eager
-	// allocation (~20 KiB each) would reserve gigabytes of empty rings. Read via [topicState.replayAfter]/[topicState.bufferEmpty]; only
-	// Hub.Publish allocates it.
+	// buffer is the replay ring, nil until the topic's first publish: topic keys are client-supplied and /v1/price/stream takes
+	// up to 9 alias topics per connection, so eager allocation (~20 KiB each) would reserve gigabytes of empty rings. Read via
+	// [topicState.replayAfter]/[topicState.bufferEmpty]; only Hub.Publish allocates it.
 	buffer *ring
 	subs   map[*subscription]struct{}
 
@@ -346,10 +345,9 @@ func (h *Hub) dropSubscriber(topic string, sub *subscription) bool {
 	return present && sub.close()
 }
 
-// withTopic runs fn under the named topic's lock, creating it on first use and refreshing its idle clock. It retries when the reaper
-// evicted the state between lookup and lock
-// (a push on a detached state is invisible to everyone); each retry costs a goroutine a whole sweep, so it cannot spin. With bounded set
-// it may fail with [ErrTopicCapacity].
+// withTopic runs fn under the named topic's lock, creating it on first use and refreshing its idle clock. It retries when the
+// reaper evicted the state between lookup and lock (a push on a detached state is invisible to everyone); each retry costs a
+// goroutine a whole sweep, so it cannot spin. With bounded set it may fail with [ErrTopicCapacity].
 func (h *Hub) withTopic(name string, bounded bool, fn func(t *topicState)) error {
 	for {
 		t, err := h.getOrCreateTopic(name, bounded)
@@ -419,10 +417,9 @@ func (h *Hub) maybeReapLocked(now time.Time) {
 	h.ceilingFutile = len(h.topics) >= h.maxTopics
 }
 
-// reapLocked drops subscriber-less topics with an empty buffer or idle past idleTTL, then (still at the ceiling) least-recently-used
-// first; topics with a live subscriber are NEVER dropped.
-// Caller holds h.mu for writing; topic locks are taken underneath it, the only place both are held, and no path takes h.mu under a topic
-// lock, so the order cannot invert.
+// reapLocked drops subscriber-less topics with an empty buffer or idle past idleTTL, then (still at the ceiling)
+// least-recently-used first; topics with a live subscriber are NEVER dropped. Caller holds h.mu for writing; topic locks are
+// taken underneath it, the only place both are held, and no path takes h.mu under a topic lock, so the order cannot invert.
 func (h *Hub) reapLocked(now time.Time) {
 	h.lastSweep = now
 	h.sinceSweep = 0
@@ -510,10 +507,9 @@ func (s *subscription) trySend(ev Event) (full bool) {
 	}
 }
 
-// sendReplay queues one buffered-replay event during Subscribe, false when the queue is full or the subscription closed (the client
-// reconnects with a fresher Last-Event-ID).
-// It shares trySend's mutex: replay runs while the subscription is already registered on earlier topics, so a concurrent drop could close
-// sub.ch mid-send.
+// sendReplay queues one buffered-replay event during Subscribe, false when the queue is full or the subscription closed (the
+// client reconnects with a fresher Last-Event-ID). It shares trySend's mutex: replay runs while the subscription is already
+// registered on earlier topics, so a concurrent drop could close sub.ch mid-send.
 func (s *subscription) sendReplay(ev Event) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
