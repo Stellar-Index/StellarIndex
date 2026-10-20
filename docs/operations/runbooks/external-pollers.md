@@ -305,10 +305,10 @@ The reconnect loop (`internal/sources/external/wsclient/`) already forces a fres
 
 ## stellarindex_external_dust_dropped_high
 
-`sum by (source) (rate(stellarindex_external_dust_dropped_total[15m])) > 1`, `for: 30m`, P3. Over 1 trade/s dropped as sub-$0.001 dust (floor per quote asset, `forwardTrade` in `internal/sources/external/runner.go`), sustained 30 min. Check with the metrics curl in [cex_stream_stalled](#stellarindex_cex_stream_stalled); compare with the venue's own trade feed.
+Dust share (`dust_dropped / (dust_dropped + trade_inserts)`, 15 min rate, per source) > 0.5 with dust above 0.05/s, `for: 30m`, P3. Most of a venue's streamed trades are being dropped as sub-$0.001 dust (floor per quote asset, `forwardTrade` in `internal/sources/external/runner.go`). A volume burst raises the dust rate but not its share, so it does not fire. Check with the metrics curl in [cex_stream_stalled](#stellarindex_cex_stream_stalled); compare with the venue's own trade feed.
 
-- Legitimate sub-cent fills spiked (new sub-cent token listing): expected; cross-check the venue's volume dashboard, then acknowledge.
-- Otherwise the venue changed a symbol's price/amount scaling (the guard keys off quote/base ratio, so a decimals regression reads as "everything is dust"). Never assume scaling is uniform (`Decimals` per source). Verify the rate returns to baseline.
+- The venue changed a symbol's price/amount scaling: the guard keys off the quote/base ratio, so a decimals regression reads as "everything is dust". Never assume scaling is uniform (`Decimals` per source). Fix the scaling and verify the share returns to baseline (a few percent).
+- A new sub-cent listing genuinely dominates the venue's fills: the guard is dropping real trades. Fix the floor for that quote asset in `forwardTrade`; do not silence the alert.
 
 ## Related
 
