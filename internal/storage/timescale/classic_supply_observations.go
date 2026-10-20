@@ -80,19 +80,29 @@ func (s *Store) SumTrustlineBalancesAtOrBefore(ctx context.Context, assetKey str
 	return s.sumLatestPerHolder(ctx, trustlineCurrent, assetKey, asOfLedger)
 }
 
-// currentTable names a trigger-kept per-(asset, holder) latest-row table and the history it mirrors (0215, 0220).
-// Every field is a package constant; none is caller text.
+// currentTable names a trigger-kept per-(asset, holder) latest-row table and the history it mirrors (0215, 0220, 0222).
+// holder lists the holder key columns, ", "-separated. Every field is a package constant; none is caller text.
 type currentTable struct {
 	history, current, seeded, holder string
 }
 
+// holderMatch equates every holder key column of history row h and current row c.
+func (t currentTable) holderMatch() string {
+	cols := strings.Split(t.holder, ", ")
+	for i, col := range cols {
+		cols[i] = "h." + col + " = c." + col
+	}
+	return strings.Join(cols, " AND ")
+}
+
 var (
-	trustlineCurrent = currentTable{"trustline_observations", "trustline_balance_current", "trustline_balance_current_seeded", "account_id"}
-	lpReserveCurrent = currentTable{"lp_reserve_observations", "lp_reserve_current", "lp_reserve_current_seeded", "pool_id"}
+	trustlineCurrent  = currentTable{"trustline_observations", "trustline_balance_current", "trustline_balance_current_seeded", "account_id"}
+	lpReserveCurrent  = currentTable{"lp_reserve_observations", "lp_reserve_current", "lp_reserve_current_seeded", "pool_id"}
+	sacBalanceCurrent = currentTable{"sac_balance_observations", "sac_balance_current", "sac_balance_current_seeded", "contract_id, holder"}
 )
 
 // latestOrder is the per-holder pick order shared by the full scan, the seed and the
-// 0215/0220 triggers; they must agree or the current table drifts from the scan.
+// 0215/0220/0222 triggers; they must agree or the current table drifts from the scan.
 const latestOrder = `ledger DESC, walk_version DESC, intra_ledger_seq DESC, observed_at DESC`
 
 // sumLatestPerHolder reads the current table, seeding the asset on first use, and falls back to the full history scan.
@@ -116,7 +126,7 @@ func (s *Store) sumCurrent(ctx context.Context, t currentTable, assetKey string,
 	//nolint:gosec // G202: table and column names are package constants
 	q := `
         WITH cur AS MATERIALIZED (
-            SELECT ` + t.holder + ` AS holder, ledger, balance_stroops, is_removal
+            SELECT ` + t.holder + `, ledger, balance_stroops, is_removal
               FROM ` + t.current + `
              WHERE asset_key = $1
         )
@@ -127,7 +137,7 @@ func (s *Store) sumCurrent(ctx context.Context, t currentTable, assetKey string,
                         CROSS JOIN LATERAL (
                             SELECT h.balance_stroops, h.is_removal
                               FROM ` + t.history + ` h
-                             WHERE h.asset_key = $1 AND h.` + t.holder + ` = c.holder AND h.ledger <= $2
+                             WHERE h.asset_key = $1 AND ` + t.holderMatch() + ` AND h.ledger <= $2
                              ORDER BY ` + latestOrder + `
                              LIMIT 1
                         ) p
@@ -540,21 +550,9 @@ func (s *Store) InsertSACBalanceObservation(ctx context.Context, o SACBalanceObs
 	return nil
 }
 
-// SumSACBalancesAtOrBefore sums the latest (contract_id, holder) observation across holders, keyed by asset_key so the reader gets a watched classic asset's SAC component; unbounded-latest-ok: a holder whose last row predates any floor still holds that balance at asOfLedger.
+// SumSACBalancesAtOrBefore sums the latest (contract_id, holder) observation across holders, keyed by asset_key so the reader gets a watched classic asset's SAC component, read from sac_balance_current (0222); unbounded-latest-ok: a holder whose last row predates any floor still holds that balance at asOfLedger.
 func (s *Store) SumSACBalancesAtOrBefore(ctx context.Context, assetKey string, asOfLedger uint32) (*big.Int, error) {
-	const q = `
-        SELECT COALESCE(sum(balance_stroops), 0)::text
-          FROM (
-            SELECT DISTINCT ON (contract_id, holder)
-                   balance_stroops, is_removal
-              FROM sac_balance_observations
-             WHERE asset_key = $1
-               AND ledger    <= $2
-             ORDER BY contract_id, holder, ledger DESC, walk_version DESC, intra_ledger_seq DESC
-          ) latest
-         WHERE NOT is_removal
-    `
-	return scanSum(ctx, s.db, q, assetKey, int(asOfLedger))
+	return s.sumLatestPerHolder(ctx, sacBalanceCurrent, assetKey, asOfLedger)
 }
 
 // SACBalanceObservationsExist reports whether any sac_balance_observations row exists for the asset at-or-before the ledger, regardless of is_removal.

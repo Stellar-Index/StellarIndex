@@ -1478,6 +1478,16 @@ func TestCurrentTablesMatchFullScan(t *testing.T) {
 				return s.SumLPReservesAtOrBefore
 			},
 		},
+		{
+			// One contract, so DISTINCT ON (holder) in the reference scan is the (contract_id, holder) key.
+			"sac_balance_observations", "sac_balance_current_seeded", "holder",
+			func(t *testing.T, ctx context.Context, store *timescale.Store, holder, assetKey string, ledger uint32, balance int64, observedAt time.Time, removal bool) {
+				insertSAC(t, ctx, store, sacParityContract, holder, assetKey, ledger, balance, observedAt, removal)
+			},
+			func(s *timescale.Store) func(context.Context, string, uint32) (*big.Int, error) {
+				return s.SumSACBalancesAtOrBefore
+			},
+		},
 	} {
 		t.Run(c.history, func(t *testing.T) {
 			sqlFor := strings.NewReplacer("trustline_observations", c.history,
@@ -1629,6 +1639,50 @@ func TestCurrentTablesMatchFullScan(t *testing.T) {
 			assertParity("after truncate")
 		})
 	}
+}
+
+const sacParityContract = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75" // synthetic
+
+// TestSACBalanceCurrentKeysOnContractAndHolder: one holder in two SAC contracts holds two balances, and an upsert that moves a
+// row to another asset must leave both assets' sums right.
+func TestSACBalanceCurrentKeysOnContractAndHolder(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const (
+		assetA = "KALE:GBDVX4VELCDSQ54KQJYTNHXAHFLBCA77ZY2USQBM4CSHTTV7DME7KALE"
+		assetB = "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+		c1     = sacParityContract
+		c2     = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA" // synthetic
+	)
+	t0 := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	sum := func(asset string, want int64) {
+		t.Helper()
+		got, err := store.SumSACBalancesAtOrBefore(ctx, asset, 1000)
+		if err != nil {
+			t.Fatalf("SumSACBalancesAtOrBefore %s: %v", asset, err)
+		}
+		if got.Cmp(big.NewInt(want)) != 0 {
+			t.Errorf("SumSACBalancesAtOrBefore %s = %s, want %d", asset, got, want)
+		}
+	}
+
+	insertSAC(t, ctx, store, c1, "GX", assetA, 100, 10, t0, false)
+	insertSAC(t, ctx, store, c2, "GX", assetA, 100, 20, t0, false)
+	sum(assetA, 30)
+
+	// Same (contract, holder, ledger, observed_at) under another asset: the upsert rewrites asset_key in place.
+	insertSAC(t, ctx, store, c2, "GX", assetB, 100, 20, t0, false)
+	sum(assetA, 10)
+	sum(assetB, 20)
 }
 
 // TestRecentSorobanDEXTrades_CaggPlusRawTail: pairs come from pools_per_source_1h below its
