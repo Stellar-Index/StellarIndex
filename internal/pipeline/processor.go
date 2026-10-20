@@ -52,6 +52,9 @@ func ProcessLedger(
 
 func emitDispatcherMetricDeltas(before, after dispatcher.Stats) {
 	for source, n := range after.EventsSeen {
+		// Export the error series at 0 so a first failure burst is a rate() step, not the series' first sample.
+		obs.SourceDecodeErrorsTotal.WithLabelValues(source)
+		obs.SourceOrphanEventsTotal.WithLabelValues(source)
 		delta := n - before.EventsSeen[source]
 		if delta <= 0 {
 			continue

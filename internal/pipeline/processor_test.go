@@ -30,6 +30,26 @@ func TestEmitDispatcherMetricDeltas_UnknownContractDropsWiring(t *testing.T) {
 	}
 }
 
+// TestEmitDispatcherMetricDeltas_ErrorSeriesExistBeforeFirstError: a source that matched events must export its error series at 0,
+// or the first failure burst is the series' first sample and rate()-based alerts never see it.
+func TestEmitDispatcherMetricDeltas_ErrorSeriesExistBeforeFirstError(t *testing.T) {
+	const source = "presence-probe"
+	decodeBefore := testutil.CollectAndCount(obs.SourceDecodeErrorsTotal)
+	orphanBefore := testutil.CollectAndCount(obs.SourceOrphanEventsTotal)
+
+	emitDispatcherMetricDeltas(dispatcher.Stats{}, dispatcher.Stats{EventsSeen: map[string]int{source: 5}})
+
+	if got := testutil.CollectAndCount(obs.SourceDecodeErrorsTotal) - decodeBefore; got != 1 {
+		t.Errorf("SourceDecodeErrorsTotal gained %d series, want 1", got)
+	}
+	if got := testutil.CollectAndCount(obs.SourceOrphanEventsTotal) - orphanBefore; got != 1 {
+		t.Errorf("SourceOrphanEventsTotal gained %d series, want 1", got)
+	}
+	if v := testutil.ToFloat64(obs.SourceDecodeErrorsTotal.WithLabelValues(source)); v != 0 {
+		t.Errorf("SourceDecodeErrorsTotal{%s} = %v, want 0", source, v)
+	}
+}
+
 func TestProcessLedger_ReturnsDispatcherError(t *testing.T) {
 	t.Parallel()
 
