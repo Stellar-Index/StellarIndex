@@ -133,10 +133,8 @@ func claimAtomCount(op xdr.Operation, result xdr.OperationResult) int { //nolint
 		}
 		return sdexclaim.RealTradeCount(r.MustSuccess().OffersClaimed)
 	case xdr.OperationTypeCreatePassiveSellOffer:
-		// stellar-core emits passive-offer results under the ManageSellOffer
-		// arm, so GetCreatePassiveSellOfferResult returns ok=false on real
-		// data. Try the passive arm, fall back to manage-sell. Must mirror
-		// sdex.extractClaimAtoms exactly so the census equals the SDEX count.
+		// stellar-core emits passive-offer results under the ManageSellOffer arm, so GetCreatePassiveSellOfferResult returns ok=false on real
+		// data: try the passive arm, fall back to manage-sell. Must mirror sdex.extractClaimAtoms so the census equals the SDEX count.
 		if r, ok := tr.GetCreatePassiveSellOfferResult(); ok {
 			if r.Code != xdr.ManageSellOfferResultCodeManageSellOfferSuccess {
 				return 0

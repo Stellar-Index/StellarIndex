@@ -115,10 +115,8 @@ type SupplyServiceOptions struct {
 	// Checks is the flagship asset set to cross-check. Empty falls back
 	// to [DefaultSupplyChecks] (XLM only).
 	Checks []SupplyCheck
-	// References is the external reference set. Empty is rejected by
-	// NewSupplyService — the aggregator gates on
-	// `[divergence.supply].enabled` + at least one reference before
-	// wiring, so a dark service is never constructed.
+	// References is the external reference set. Empty is rejected by NewSupplyService; the aggregator gates on
+	// `[divergence.supply].enabled` plus at least one reference, so a dark service is never constructed.
 	References []SupplyReference
 	// Reader is the served-tier read seam. Required.
 	Reader ServedSupplyReader

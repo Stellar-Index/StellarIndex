@@ -91,10 +91,7 @@ type CompareOptions struct {
 	// where divergence is best-effort.
 	PerReferenceTimeout time.Duration
 
-	// MinSuccessForMedian — Compare returns a zero Median when
-	// fewer than this many references returned successfully.
-	// Default 1 (any reference is better than none); operators
-	// can require 2+ for stronger consensus.
+	// MinSuccessForMedian: Compare returns a zero Median when fewer references succeeded. Default 1; require 2+ for stronger consensus.
 	MinSuccessForMedian int
 
 	// OverallTimeout caps the WHOLE comparison; <= 0 defaults to [overallTimeoutFactor] x PerReferenceTimeout. The per-reference timeout is only advisory (a reference
@@ -155,10 +152,8 @@ func Compare(
 
 	for _, ref := range refs {
 		go func(r Reference) {
-			// Capture the reference's name once up-front so we can
-			// report the failure even if r.Name() itself is what
-			// panics (cheap defence; references are operator-supplied
-			// in some deployments).
+			// Capture the name up front so a failure is reportable even if r.Name() itself panics (references are operator-supplied in some
+			// deployments).
 			name := safeName(r)
 
 			// Recover a LookupQuote panic into Failures so one broken reference cannot take the comparison down, and also report it via worker.Report so

@@ -31,10 +31,7 @@ func describe(t reflect.Type, prefix string) []SchemaField {
 	return out
 }
 
-// describeField returns 1+ rows for one struct field. Containers
-// (struct, map[string]struct, []struct) flatten into per-leaf rows
-// plus one row for the container itself; scalar leaves return a
-// single row.
+// describeField returns 1+ rows for one struct field: containers (struct, map[string]struct, []struct) flatten into per-leaf rows plus one for the container itself; scalars return one.
 func describeField(f reflect.StructField, prefix string) []SchemaField {
 	tomlName := f.Tag.Get("toml")
 	if tomlName == "-" {

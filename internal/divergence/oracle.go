@@ -12,10 +12,8 @@ import (
 
 // OracleReader is the narrow served-tier read seam for the on-chain oracle references; it returns (nil, nil) when the source never observed any (baseKeys x quoteKeys) combination, mapped to ErrAssetUnsupported.
 type OracleReader interface {
-	// LatestOracleObservation returns the single most-recent
-	// oracle_updates row for `source` whose asset matches ANY of
-	// baseKeys AND whose quote matches ANY of quoteKeys. Returns
-	// (nil, nil) when no row matches.
+	// LatestOracleObservation returns the most recent oracle_updates row for `source` whose asset matches ANY of baseKeys and quote ANY of
+	// quoteKeys; (nil, nil) when none match.
 	LatestOracleObservation(ctx context.Context, source string, baseKeys, quoteKeys []string) (*canonical.OracleUpdate, error)
 }
 
@@ -63,10 +61,8 @@ type OracleReferenceOptions struct {
 	// Reader is the served-tier read seam. Required.
 	Reader OracleReader
 
-	// MaxAge is the staleness ceiling: an observation older than
-	// this (relative to the comparison's observedAt) is rejected as
-	// [ErrPriceUnavailable]. <= 0 falls back to the per-family
-	// default for known sources, else DefaultOracleMaxAgeReflector.
+	// MaxAge is the staleness ceiling relative to the comparison's observedAt; older observations are [ErrPriceUnavailable]. <= 0 uses the
+	// per-family default for known sources, else DefaultOracleMaxAgeReflector.
 	MaxAge time.Duration
 }
 

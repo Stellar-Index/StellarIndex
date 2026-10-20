@@ -38,10 +38,7 @@ var (
 	jwtHeaderB64 = base64.RawURLEncoding.EncodeToString([]byte(jwtHeader))
 )
 
-// issueJWT mints an HS256-signed JWT bearing the supplied
-// subject (client G-strkey) and lifetime. Output is the canonical
-// `<header>.<body>.<signature>` form, all base64url-encoded
-// without padding.
+// issueJWT mints an HS256 JWT for the subject (client G-strkey) and lifetime, in canonical unpadded base64url `<header>.<body>.<signature>`.
 func (v *Validator) issueJWT(subject string, issuedAt, expiresAt time.Time) (string, error) {
 	body, err := json.Marshal(claims{
 		Iss:     v.homeDomain,

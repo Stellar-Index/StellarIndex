@@ -87,10 +87,8 @@ func (r *TokenStore) ConsumeMagicLinkToken(ctx context.Context, tokenHash []byte
 		&out.ExpiresAt, &consumedAt, &ipText, &out.CreatedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			// Distinguish expired-but-present from absent: a second
-			// query without the expiry guard. Cheap because the
-			// happy path is the UPDATE above; this only runs on
-			// failure.
+			// Distinguish expired-but-present from absent with a second query lacking the expiry guard; only runs on failure, the happy path is
+			// the UPDATE above.
 			return platform.MagicLinkToken{}, r.classifyMagicLinkMiss(ctx, tokenHash)
 		}
 		return platform.MagicLinkToken{}, fmt.Errorf("consume magic link token: %w", err)
@@ -208,10 +206,8 @@ func (r *TokenStore) RegisterFailedLoginCode(
 	if lockedUntil.Valid {
 		out.LockedUntil = lockedUntil.Time
 	}
-	// Arm the lock on the crossing failure. Separate statement rather
-	// than a third CASE arm: the threshold comparison needs the
-	// POST-increment count, and re-deriving it inside the same UPSERT
-	// would duplicate the increment expression a third time.
+	// Arm the lock on the crossing failure in a separate statement: the threshold comparison needs the POST-increment count, and a third
+	// CASE arm would duplicate the increment expression.
 	if out.FailedCount >= maxFailures && !out.Locked(now) {
 		const lockQ = `
 			UPDATE login_code_lockouts

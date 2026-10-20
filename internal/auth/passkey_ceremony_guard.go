@@ -31,10 +31,8 @@ func passkeyCeremonyKey(digest string) string {
 	return "passkey:ceremony:" + digest
 }
 
-// liveCeremonyKey names the begin-time reservation marker for a
-// ceremony digest. Distinct from the spent-marker passkeyCeremonyKey
-// writes for [RedisPasskeyCeremonyGuard.Consume], but under the same `passkey:ceremony:`
-// prefix so no Redis ACL allow-list change is needed.
+// liveCeremonyKey names the begin-time reservation marker for a ceremony digest. Distinct from the spent-marker passkeyCeremonyKey writes
+// for [RedisPasskeyCeremonyGuard.Consume], but under the same `passkey:ceremony:` prefix so no Redis ACL change is needed.
 func liveCeremonyKey(digest string) string {
 	return "passkey:ceremony:live:" + digest
 }

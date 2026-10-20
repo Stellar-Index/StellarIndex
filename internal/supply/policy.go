@@ -28,10 +28,8 @@ func (l LockedSet) IsEmpty() bool {
 
 // Policy is the operator configuration loaded from YAML at start (SDF-reserve accounts, per-asset locked-set and max_supply overrides); missing fields keep per-algorithm defaults, and it is read-only after load.
 type Policy struct {
-	// SDFReserveAccounts is the G-address list whose XLM balances
-	// are excluded from XLM circulating_supply per Algorithm 1.
-	// Source: SDF publishes the list; we maintain a YAML version-
-	// controlled in the deployment repo.
+	// SDFReserveAccounts is the SDF-published G-address list whose XLM balances are excluded from circulating_supply
+	// (Algorithm 1); kept as version-controlled YAML in the deployment repo.
 	SDFReserveAccounts []string
 
 	// PerAsset overrides the default locked-set per asset, keyed by [AssetKey] ("CODE:G...", "C...");

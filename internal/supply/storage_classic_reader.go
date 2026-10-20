@@ -40,10 +40,8 @@ type StorageClassicSupplyReader struct {
 
 // ClassicSupplyReaderOptions configures a StorageClassicSupplyReader; the Logger rides here, never as a positional constructor param.
 type ClassicSupplyReaderOptions struct {
-	// Logger surfaces the fail-permissive MinClassicComponentLedger error
-	// path; it is the only thing the reader logs. A nil Logger
-	// defaults to [slog.Default], keeping the blast radius small for
-	// callers that don't wire one.
+	// Logger surfaces the fail-permissive MinClassicComponentLedger error path (the reader's only log); nil defaults to
+	// [slog.Default].
 	Logger *slog.Logger
 }
 
@@ -101,16 +99,11 @@ func (r *StorageClassicSupplyReader) ClassicSupplyAt(ctx context.Context, asset 
 		return ClassicSupplyComponents{}, fmt.Errorf("supply: locked-contracts sum for %s: %w", assetKey, err)
 	}
 
-	// Per-component freshness for the Refresher's stale-component
-	// gate. A storage-side failure here is non-fatal: the gate stays
-	// permissive (MinComponentLedger=0) so a transient query error
-	// doesn't reject an otherwise acceptable snapshot. Operator's signal is the WARN log line.
+	// Freshness for the Refresher's stale-component gate. A storage failure is non-fatal: the gate stays permissive
+	// (MinComponentLedger=0) so a transient error doesn't reject an acceptable snapshot.
 	minLedger, err := r.store.MinClassicComponentLedger(ctx, assetKey, ledger)
 	if err != nil {
-		// Don't bail — the snapshot is still correct, just
-		// without freshness metadata. WARN so the operator sees the
-		// stale-component gate silently drop to permissive
-		// (MinComponentLedger=0) instead of it happening invisibly.
+		// Don't bail: the snapshot is still correct. WARN is the operator's only signal that the gate went permissive.
 		r.logger.Warn("classic supply: MinClassicComponentLedger query failed; "+
 			"stale-component freshness gate is permissive for this tick",
 			"asset_key", assetKey, "ledger", ledger, "err", err)

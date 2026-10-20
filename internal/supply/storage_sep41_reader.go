@@ -78,10 +78,8 @@ func (r *StorageSEP41SupplyReader) SEP41SupplyAt(ctx context.Context, asset cano
 		minLedger = 0
 	}
 
-	// Migration 0088: whether the pre-Soroban
-	// genesis baseline has been seeded. Non-fatal on query error —
-	// treat as not-seeded (the guard then routes a negative total to
-	// the benign `missing_baseline` outcome, the safe default).
+	// Migration 0088 genesis-baseline flag. Non-fatal on error: treated as not-seeded, so a negative total routes to the
+	// benign `missing_baseline` outcome.
 	genesisSeeded, err := r.store.SEP41GenesisBaselineSeeded(ctx, contractID)
 	if err != nil {
 		genesisSeeded = false

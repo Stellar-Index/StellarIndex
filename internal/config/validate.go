@@ -104,10 +104,8 @@ func (c Config) Validate() error {
 	return nil
 }
 
-// validateCrossSection catches config errors that span multiple
-// sections — e.g. "you enabled reflector-dex but didn't set the
-// contract address." Runs after per-section validates so we can
-// assume each section's internal shape is already sound.
+// validateCrossSection catches config errors that span sections (e.g. reflector-dex enabled without a contract address). Runs after the
+// per-section validates, so each section's own shape is already sound.
 func (c Config) validateCrossSection() error {
 	// Each on-chain oracle source needs its contract address to decode anything.
 	required := map[string]struct{ value, key string }{
@@ -235,10 +233,8 @@ func (s StorageConfig) validate() error { //nolint:gocognit,gocyclo // dispatch-
 			}
 		}
 	}
-	// S3 block is all-or-nothing. If an endpoint is set, the
-	// dependent fields must also be set — operators who set only
-	// some of them get a silent failure at archive-publish time.
-	// Empty endpoint disables object storage (local dev / testing).
+	// S3 block is all-or-nothing: with an endpoint set, a partly filled block fails silently at archive-publish time. Empty endpoint
+	// disables object storage (local dev / testing).
 	if s.S3Endpoint != "" {
 		if _, err := url.Parse(s.S3Endpoint); err != nil || !strings.Contains(s.S3Endpoint, "://") {
 			return fmt.Errorf("%w: storage.s3_endpoint %q must be a full URL",
@@ -260,10 +256,8 @@ func (s StorageConfig) validate() error { //nolint:gocognit,gocyclo // dispatch-
 			return fmt.Errorf("%w: storage.s3_secret_key_env required when s3_endpoint is set",
 				ErrInvalidConfig)
 		}
-		// Bucket names must be DNS-compatible per AWS S3 rules:
-		// lowercase, 3–63 chars, alnum + hyphen, can't be an IP.
-		// MinIO is more permissive but the AWS rule is a safe
-		// super-set for portability.
+		// Bucket names must be AWS-S3 DNS-compatible (lowercase, 3-63 chars, alnum + hyphen, not an IP). MinIO is more permissive; the AWS
+		// rule is a safe superset for portability.
 		for _, b := range []struct{ name, v string }{
 			{"s3_bucket_archive", s.S3BucketArchive},
 			{"s3_bucket_live", s.S3BucketLive},
@@ -520,10 +514,8 @@ func (a AggregateConfig) validate() error {
 		return fmt.Errorf("%w: aggregate.outlier_sigma_threshold must be > 0",
 			ErrInvalidConfig)
 	}
-	// max_hops: 0 = "use library default (3)"; any other value must be
-	// in [2,4] (a route needs at least 2 legs to be a cross, and 4
-	// covers the obscure×obscure worst case — see internal/aggregate/
-	// router.go FindRoutes).
+	// max_hops: 0 = "use library default (3)"; otherwise [2,4] (a cross needs at least 2 legs; 4 covers the obscure x obscure worst case,
+	// see internal/aggregate/router.go FindRoutes).
 	if a.MaxHops != 0 && (a.MaxHops < 2 || a.MaxHops > 4) {
 		return fmt.Errorf("%w: aggregate.max_hops must be 0 (default) or in [2,4], got %d",
 			ErrInvalidConfig, a.MaxHops)
@@ -576,10 +568,8 @@ func (a AnomalyConfig) validate() error {
 	return a.Phase2.validate()
 }
 
-// validate enforces the per-field bounds documented on
-// [Phase2FreezeConfig]. Catches config errors at startup rather
-// than letting an out-of-band threshold silently disable the
-// freeze gate (e.g. confidence_max_freeze=2.0 means "always freeze").
+// validate enforces the per-field bounds on [Phase2FreezeConfig] at startup, so an out-of-band threshold cannot silently disable the
+// freeze gate (confidence_max_freeze=2.0 means "always freeze").
 func (p Phase2FreezeConfig) validate() error {
 	if p.ConfidenceMaxFreeze < 0 || p.ConfidenceMaxFreeze > 1 {
 		return fmt.Errorf("%w: anomaly.phase2.confidence_max_freeze must be in [0, 1] (got %v)",
@@ -596,13 +586,9 @@ func (p Phase2FreezeConfig) validate() error {
 	return p.validateLifecycle()
 }
 
-// validateLifecycle enforces the ADR-0019 freeze-duration bounds.
-//
-// Split out to keep [Phase2FreezeConfig.validate] under the funlen
-// ceiling, and because these checks guard a different failure mode:
-// a bad THRESHOLD makes the freeze fire wrongly, a bad DURATION makes
-// a correctly-fired freeze end at the wrong time — which is the
-// silent failure ADR-0019's ladder exists to prevent.
+// validateLifecycle enforces the ADR-0019 freeze-duration bounds. Split from [Phase2FreezeConfig.validate] for the funlen ceiling and
+// because it guards a different failure mode: a bad threshold fires the freeze wrongly, a bad duration ends a correct freeze at the
+// wrong time.
 func (p Phase2FreezeConfig) validateLifecycle() error {
 	for _, f := range []struct {
 		name string
@@ -650,10 +636,8 @@ func (p Phase2FreezeConfig) validateLifecycle() error {
 	return nil
 }
 
-// validate checks the [divergence] section for boot-time crashers.
-// Threshold / MinSourcesForWarning are clamped to sane defaults by
-// divergence.NewService / SupplyService when <=0, so they're left
-// unchecked here.
+// validate checks the [divergence] section for boot-time crashers. Threshold / MinSourcesForWarning are clamped to defaults by
+// divergence.NewService / SupplyService when <=0, so they are not checked here.
 func (d DivergenceConfig) validate() error {
 	for _, u := range []struct{ field, value string }{
 		{"divergence.coingecko.base_url", d.CoinGecko.BaseURL},
@@ -951,19 +935,15 @@ var (
 	// doesn't depend on canonical (cycle avoidance).
 	contractIDPattern = regexp.MustCompile(`^C[A-Z2-7]{55}$`)
 
-	// envVarNameLikePattern matches this project's own STELLARINDEX_*
-	// env-var naming convention. Used to catch the "holds the VALUE"
-	// fields (redis_password, clickhouse_serving_password) being
-	// populated with an env-var NAME instead of the secret itself.
+	// envVarNameLikePattern matches this project's STELLARINDEX_* env-var naming, to catch the "holds the VALUE" fields (redis_password,
+	// clickhouse_serving_password) being filled with an env-var NAME instead of the secret.
 	envVarNameLikePattern = regexp.MustCompile(`^STELLARINDEX_[A-Z0-9_]+$`)
 
 	// envVarNameShapePattern matches UPPER_SNAKE_CASE, the shape a "holds the NAME of an env var" field
 	// (s3_access_key_env, s3_secret_key_env) should have; catches a literal secret shipped where a name was expected.
 	envVarNameShapePattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 
-	// s3BucketPattern — AWS S3 DNS-compatible bucket naming rules:
-	// lowercase, 3–63 chars, alnum + hyphen, must start/end alnum.
-	// MinIO is more permissive but we pick the strictest rule so
-	// configs stay portable across providers.
+	// s3BucketPattern: AWS S3 DNS-compatible bucket rules (lowercase, 3-63 chars, alnum + hyphen, start/end alnum); the strictest rule,
+	// so configs stay portable across providers.
 	s3BucketPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$`)
 )

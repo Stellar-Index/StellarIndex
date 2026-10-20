@@ -18,10 +18,7 @@ var (
 	// valid Amount (bad string format, wrong Scan type, etc.).
 	ErrInvalidAmount = errors.New("canonical: invalid amount")
 
-	// ErrI128Overflow — a value that should fit in 128 bits
-	// does not. Observation of this error in production means
-	// an int64 has snuck in somewhere it shouldn't have;
-	// firing SEV-1 is appropriate.
+	// ErrI128Overflow: a value that should fit in 128 bits does not. In production it means an int64 snuck in somewhere; SEV-1.
 	ErrI128Overflow = errors.New("canonical: i128 overflow (this is always a bug)")
 
 	// ErrUnknownAsset — an asset identifier did not resolve to a

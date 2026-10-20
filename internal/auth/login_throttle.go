@@ -87,10 +87,8 @@ func (t *RedisLoginThrottle) Allow(ctx context.Context, ip, email string) (bool,
 	}
 
 	if !allowed {
-		// Definitive deny. Swallow any Redis error: this decision came
-		// from a counter that answered (Redis, or the in-process
-		// fallback), and surfacing the error would route the handler
-		// into its fall-open branch and send the mail anyway.
+		// Definitive deny: swallow any Redis error, since the decision came from a counter that answered (Redis or the in-process fallback);
+		// surfacing it would route the handler into its fall-open branch and send the mail anyway.
 		return false, nil
 	}
 	return true, firstErr

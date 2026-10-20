@@ -125,9 +125,7 @@ type APIKeyStore interface {
 	// Idempotent: revoking an already-revoked key is a no-op.
 	Revoke(ctx context.Context, accountID uuid.UUID, id string, byUserID uuid.UUID, reason string) error
 
-	// TouchUsage updates LastUsedAt + LastUsedIP + LastUsedUserAgent.
-	// id must be the authenticated credential's own key ID, never a
-	// request-supplied one: a key only ever touches itself. Debounced
-	// caller-side, by default to once per auth.DefaultTouchDebounceTTL.
+	// TouchUsage updates LastUsedAt, LastUsedIP and LastUsedUserAgent. id must be the authenticated credential's own key ID, never a
+	// request-supplied one. Debounced caller-side (default auth.DefaultTouchDebounceTTL).
 	TouchUsage(ctx context.Context, id string, ip net.IP, userAgent string) error
 }
