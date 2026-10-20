@@ -76,7 +76,7 @@ func TestXLMUSDAnchor_ShapesShareOnePopulation(t *testing.T) {
 		"pick":      xlmUSDAnchorPick("LO", "HI", sac),
 		"at":        xlmUSDAnchorAt("TS", sac),
 		"grid":      xlmUSDAnchorGridCTE("g", "LO", sac),
-		"perPeriod": xlmUSDAnchorPerPeriodCTE("p", "h", "hour", "LO", sac),
+		"perPeriod": xlmUSDAnchorPerPeriodCTE("h", "hour", "LO", sac),
 	} {
 		if !strings.Contains(q, popBody) {
 			t.Errorf("%s does not read the shared anchor population", name)
@@ -96,7 +96,7 @@ func TestXLMUSDAnchor_ShapesShareOnePopulation(t *testing.T) {
 			t.Errorf("grid lacks %q", want)
 		}
 	}
-	if !strings.Contains(xlmUSDAnchorPerPeriodCTE("p", "h", "hour", "LO", sac), "ORDER BY 1, xm.form_rank, xm.bucket DESC") {
+	if !strings.Contains(xlmUSDAnchorPerPeriodCTE("h", "hour", "LO", sac), "ORDER BY 1, xm.form_rank, xm.bucket DESC") {
 		t.Error("per-period anchor must prefer form over recency")
 	}
 }

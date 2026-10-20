@@ -24,10 +24,10 @@ const freezeFingerprintSQL = `
 // The anchor per hour of the last 24h and per day of the last 7d. It is the same for every asset, and inside each
 // sparkline query it cost ~100 ms (7d) per cold asset page, so it is read once per TTL and bound in.
 var (
-	xlmUSDPerHourSQL = `WITH` + xlmUSDAnchorPerPeriodCTE("p", "t", "hour",
+	xlmUSDPerHourSQL = `WITH` + xlmUSDAnchorPerPeriodCTE("t", "hour",
 		`date_trunc('hour', now() - INTERVAL '23 hours')`, "$1::text") + `
 		SELECT t, vwap::text FROM p`
-	xlmUSDPerDaySQL = `WITH` + xlmUSDAnchorPerPeriodCTE("p", "t", "day",
+	xlmUSDPerDaySQL = `WITH` + xlmUSDAnchorPerPeriodCTE("t", "day",
 		`date_trunc('day', now() - INTERVAL '6 days')`, "$1::text") + `
 		SELECT t, vwap::text FROM p`
 )

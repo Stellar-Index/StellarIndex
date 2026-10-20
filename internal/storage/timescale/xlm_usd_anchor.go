@@ -138,11 +138,11 @@ func xlmUSDAnchorGridCTE(name, lo, sac string) string {
 		)`
 }
 
-// xlmUSDAnchorPerPeriodCTE renders CTE `name`(col, vwap): the anchor per date_trunc(unit) period
+// xlmUSDAnchorPerPeriodCTE renders CTE p(col, vwap): the anchor per date_trunc(unit) period
 // since lo, from the highest-priority form that printed in it (newest minute). The sparklines' XLM leg.
-func xlmUSDAnchorPerPeriodCTE(name, col, unit, lo, sac string) string {
+func xlmUSDAnchorPerPeriodCTE(col, unit, lo, sac string) string {
 	return `
-		` + name + ` AS (
+		p AS (
 		  SELECT DISTINCT ON (1) date_trunc('` + unit + `', xm.bucket) AS ` + col + `, xm.vwap
 		    FROM ` + xlmUSDAnchorMinutes(lo, "now()", sac) + ` xm
 		   ORDER BY 1, xm.form_rank, xm.bucket DESC
