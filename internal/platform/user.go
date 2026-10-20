@@ -53,10 +53,8 @@ type User struct {
 // Session is an authenticated dashboard session backed by an HttpOnly cookie. The cookie carries a random token, NOT the ID; only TokenHash (sha256) is persisted, so a read of the table is not replayable, and ID never leaves the server.
 type Session struct {
 	ID uuid.UUID
-	// TokenHash is sha256(cookie token). It is the lookup key on the
-	// authentication path (GetSessionByTokenHash). The plaintext token
-	// is never stored — the caller holds it just long enough to set the
-	// cookie, exactly like the magic-link plaintext.
+	// TokenHash is sha256(cookie token), the lookup key on the auth path (GetSessionByTokenHash). The plaintext is never stored, like the
+	// magic-link plaintext.
 	TokenHash    []byte
 	UserID       uuid.UUID
 	ExpiresAt    time.Time

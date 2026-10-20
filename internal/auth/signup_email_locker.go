@@ -45,10 +45,8 @@ func NewRedisSignupEmailLocker(rdb redis.Cmdable) *RedisSignupEmailLocker {
 	return &RedisSignupEmailLocker{rdb: rdb}
 }
 
-// signupLockKey returns the Redis key for an email-hash. Kept
-// separate from `signupKey` (the signup reservation key) so the
-// two namespaces don't collide; the Redis ACL allow-list already
-// permits the `signup:*` family.
+// signupLockKey returns the Redis key for an email-hash, separate from `signupKey` so the namespaces do not collide; the Redis ACL
+// allow-list already permits `signup:*`.
 func signupLockKey(emailHash string) string {
 	return "signup:lock:" + emailHash
 }

@@ -85,9 +85,7 @@ func (a *AuditStore) List(ctx context.Context, q platform.AuditQuery) ([]platfor
 	}
 	whereSQL, args := buildAuditWhere(q)
 
-	// limit is clamped to [1, 1000] above; fmt.Sprintf only sees an
-	// integer literal from a code-controlled clamp, never user input
-	// — gosec G202 is a false positive here.
+	// limit is clamped to [1, 1000] above and Sprintf only sees that integer, never user input: gosec G202 is a false positive here.
 	//nolint:gosec // limit is clamped to [1,1000]; whereSQL built only with positional placeholders
 	query := "SELECT id, account_id, actor_user_id, actor_kind, " +
 		"action, target_kind, target_id, metadata, host(ip), user_agent, ts " +

@@ -27,10 +27,8 @@ var (
 	// ErrNotImplemented means no real validator is wired (the Noop validators, or a nil validator in the middleware): 503 auth-not-configured, or 404 sep10-unavailable on the SEP-10 handlers. Never silently authorise or silently reject.
 	ErrNotImplemented = errors.New("auth: validator not implemented in this build")
 
-	// ErrSignupRateLimited — returned by the per-IP signup throttle
-	// (`v1.SignupIPThrottle`) when a single IP exhausts its
-	// hourly signup budget. Distinct from the global rate-limit
-	// 429 so the handler can return a more specific error envelope.
+	// ErrSignupRateLimited: `v1.SignupIPThrottle` fired because one IP exhausted its hourly signup budget. Distinct from the global 429 so the
+	// handler can return a more specific envelope.
 	ErrSignupRateLimited = errors.New("auth: signup rate limited for this IP")
 
 	// ErrThrottleUnavailable: the throttle layer has failed past its dwell time (default 30s), so fail-open is unsafe and the handler must return 503 + Retry-After.

@@ -80,9 +80,7 @@ type CoinGeckoOptions struct {
 	// Logger receives the per-batch HTTP-status warning. nil → slog.Default.
 	Logger *slog.Logger
 
-	// IDMap maps canonical asset_id → CoinGecko slug. At minimum
-	// the operator should provide entries for every base asset
-	// the aggregator publishes prices for. Empty map yields
+	// IDMap maps canonical asset_id to CoinGecko slug; provide an entry for every base asset the aggregator prices. Empty yields
 	// ErrAssetUnsupported on every lookup.
 	IDMap map[string]string
 
@@ -94,10 +92,8 @@ type CoinGeckoOptions struct {
 	// BatchTTL is how long one batched /simple/price response is reused across lookups; default 25s (under the 30s tick). Shorter is fresher but costs HTTP calls.
 	BatchTTL time.Duration
 
-	// MaxAge is the staleness ceiling for a quote's upstream
-	// last_updated_at. <= 0 falls back to [defaultCoinGeckoMaxAge].
-	// A quote older than this is rejected as ErrPriceUnavailable so a
-	// frozen upstream can't silently drive the divergence signal.
+	// MaxAge is the staleness ceiling for a quote's upstream last_updated_at (<= 0 uses [defaultCoinGeckoMaxAge]); older quotes are
+	// ErrPriceUnavailable so a frozen upstream cannot silently drive the divergence signal.
 	MaxAge time.Duration
 
 	// NowFn overrides time.Now for deterministic tests. Nil = time.Now.

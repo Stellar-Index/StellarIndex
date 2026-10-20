@@ -136,10 +136,8 @@ func PersistEvents(ctx context.Context, logger *slog.Logger, store *timescale.St
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
-			// store doubles as the trade writer AND — bound to the logger
-			// by storeEventPersister — as the non-trade event persister.
-			// Both seams exist so the shutdown-race tests can intercept a
-			// write with a fake.
+			// store doubles as the trade writer and, bound to the logger by storeEventPersister, the non-trade event persister. Both seams let
+			// the shutdown-race tests intercept a write with a fake.
 			persistWorker(ctx, logger, storeEventPersister(logger, store), late.writer(store), in, mode, workerID, extBuf, lt)
 		}(i)
 	}
@@ -253,10 +251,8 @@ func persistWorker(ctx context.Context, logger *slog.Logger, ep eventPersister, 
 				}
 				continue
 			}
-			// Dispatcher drain for non-trade served-tier writes (oracle
-			// updates, supply observations, blend / cctp / rozo rows):
-			// same ADR-0041 failure policy as trades — see
-			// persistEventResilient. See the flushTicker arm above.
+			// Dispatcher drain for non-trade served-tier writes (oracle updates, supply observations, blend / cctp / rozo rows), under the same
+			// ADR-0041 failure policy as trades (persistEventResilient).
 			fctx, fcancel := shutdownSafeCtx(ctx, &drain)
 			if err := persistEventResilient(fctx, logger, ep, ev); err != nil {
 				// Same carry rule as flush: only the parent-ctx case is carried; an abandon under a fresh bounded ctx is a genuine loss.
@@ -385,10 +381,8 @@ func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, ep event
 		}
 		batch := tradeBuf
 		tradeBuf = make([]canonical.Trade, 0, tradeBatchSize)
-		// nil extBuf: at shutdown the async external buffer is winding
-		// down, so every trade block-retries within the bounded drainCtx.
-		// An infra fault here abandons after the
-		// drainTimeout and logs the recoverable ledger range at ERROR.
+		// nil extBuf: at shutdown the async external buffer is winding down, so every trade block-retries within the bounded drainCtx; an infra
+		// fault abandons after drainTimeout and logs the recoverable ledger range at ERROR.
 		reportAbandonedTrades(logger, lt, "shutdown drain", flushTradeBatch(drainCtx, logger, tw, nil, batch, -1), drainCtx.Err())
 	}
 	for {
@@ -415,10 +409,8 @@ func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, ep event
 			}
 		case <-drainCtx.Done():
 			flushTrades()
-			// The bounded drain deadline tripped with events
-			// possibly still buffered. drainFinalPass makes one last
-			// best-effort NON-BLOCKING pass over whatever's immediately
-			// available and reports exactly what's left undrained.
+			// The bounded drain deadline tripped with events possibly still buffered: drainFinalPass makes one last best-effort non-blocking pass
+			// and reports exactly what is left undrained.
 			drainFinalPass(in, logger, ep, tw, mode, lt)
 			return
 		}
@@ -670,10 +662,8 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 		bumpEntryCount(ctx, logger, store, defindex.SourceName)
 		return nil
 	case defindex.VaultEvent:
-		// Vault-wrapper layer (user-facing deposit/withdraw).
-		// Persists to defindex_flows with layer='vault'. `actor` here
-		// is the end-user G-strkey (or routing C-strkey if the user
-		// came via an aggregator).
+		// Vault-wrapper layer (user-facing deposit/withdraw), persisted to defindex_flows with layer='vault'; `actor` is the end-user G-strkey
+		// (or routing C-strkey via an aggregator).
 		amounts := make([]string, 0, len(e.Flow.Amounts))
 		for _, a := range e.Flow.Amounts {
 			amounts = append(amounts, a.String())
@@ -930,10 +920,8 @@ func persistTrade(ctx context.Context, logger *slog.Logger, w tradeWriter, t can
 				"source", t.Source, "ledger", t.Ledger, "tx_hash", t.TxHash, "op_index", t.OpIndex, "err", err)
 			return err
 		}
-		// Permanent data fault — deterministic for this row, so DROP it (no
-		// retry) and REPORT the drop. The typed error unwraps to a permanent
-		// fault, which the projector skips rather than holds, so a poison row
-		// still cannot loop it (nil here would read as "landed").
+		// Permanent data fault, deterministic for this row: DROP it (no retry) and REPORT the drop. The typed error unwraps to a permanent
+		// fault, which the projector skips rather than holds (nil would read as "landed").
 		obs.SourceInsertErrorsTotal.WithLabelValues(t.Source, obs.InsertErrorKindTradeDropped).Inc()
 		logger.Error("insert trade failed (permanent data fault — row skipped)",
 			"source", t.Source,
@@ -1957,10 +1945,8 @@ func persistDefindexAdmin(ctx context.Context, logger *slog.Logger, store *times
 func persistPhoenixStake(ctx context.Context, logger *slog.Logger, store *timescale.Store, e phoenix.StakeEvent) error {
 	c := e.Change
 	amountStr := ""
-	// bond/unbond always carry an amount; withdraw_rewards /
-	// distribute_rewards don't emit one on the event itself (see
-	// phoenix/events.go doc) — leave the column NULL rather than
-	// writing the zero-value "0" (canonical.Amount{}.String() == "0").
+	// bond/unbond always carry an amount; withdraw_rewards / distribute_rewards emit none (phoenix/events.go), so leave the column NULL
+	// rather than writing canonical.Amount{}.String() == "0".
 	if c.Action == phoenix.EventActionBond || c.Action == phoenix.EventActionUnbond {
 		amountStr = c.Amount.String()
 	}

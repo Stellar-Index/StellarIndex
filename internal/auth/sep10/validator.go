@@ -62,10 +62,8 @@ var ErrAccountLoaderUnavailable = errors.New("sep10: AccountLoader required but 
 
 // Options configures a [Validator].
 type Options struct {
-	// ServerSeed is the secret-seed for the server's SEP-10 signing
-	// account. The corresponding G-address is what clients sign
-	// against. Per SEP-10 best practice this account is dedicated to
-	// SEP-10 (no other purpose) and rotated on a schedule.
+	// ServerSeed is the secret seed of the server's SEP-10 signing account (clients sign against its G-address). Per SEP-10 best practice
+	// it is dedicated to SEP-10 and rotated on a schedule.
 	ServerSeed string
 
 	// NetworkPassphrase is the Stellar network the challenge is
@@ -74,10 +72,8 @@ type Options struct {
 	//   - "Test SDF Network ; September 2015" (testnet)
 	NetworkPassphrase string
 
-	// WebAuthDomain is the SEP-10 `web_auth_domain` — the host that
-	// serves the auth endpoints. Exactly one entry. The challenge
-	// transaction's manage_data op carries this so a client can
-	// verify it isn't signing for the wrong domain.
+	// WebAuthDomain is the SEP-10 `web_auth_domain` (host serving the auth endpoints; exactly one entry). The challenge manage_data op
+	// carries it so a client can detect signing for the wrong domain.
 	WebAuthDomain string
 
 	// HomeDomain is the issuer's home domain (typically same as
@@ -85,10 +81,7 @@ type Options struct {
 	// `<HomeDomain> auth`; SEP-10 verifies this matches.
 	HomeDomain string
 
-	// ChallengeTTL is how long a challenge stays valid (between
-	// IssuedAt and ValidUntil). Default 15 minutes per SEP-10
-	// recommendation. Operators tune higher for slow clients but
-	// 15 m is the standard.
+	// ChallengeTTL is how long a challenge stays valid (IssuedAt to ValidUntil); default 15 minutes, the SEP-10 recommendation.
 	ChallengeTTL time.Duration
 
 	// JWTTTL is how long an issued JWT stays valid. Default 1 hour;
@@ -103,10 +96,8 @@ type Options struct {
 	// Now overrides time.Now for tests. Production leaves this nil.
 	Now func() time.Time
 
-	// ReplayGuard, when non-nil, makes each issued challenge
-	// redeemable once so a captured signed XDR cannot be re-submitted
-	// inside its time-bound window. Nil = no replay defence (prior
-	// behaviour). See [ReplayGuard] for production wiring.
+	// ReplayGuard, when non-nil, makes each challenge redeemable once so a captured signed XDR cannot be re-submitted inside its time-bound
+	// window. Nil means no replay defence. See [ReplayGuard] for production wiring.
 	ReplayGuard ReplayGuard
 
 	// AccountLoader supplies the client account's signers and medium
@@ -234,10 +225,8 @@ func (v *Validator) Challenge(ctx context.Context, clientAccount string) (auth.C
 
 // Verify implements [auth.SEP10Validator]: validates structure, server and client signatures, time bounds, web auth domain and home domain, then issues a JWT; errors are [auth.ErrTokenMalformed] (unparseable XDR or missing server signature), [auth.ErrUnauthorized] (client signature missing/wrong, non-signing key, or weight below the medium threshold) and [auth.ErrTokenExpired] (time bounds elapsed); any other error means signers could not be loaded.
 func (v *Validator) Verify(ctx context.Context, signedXDR string) (auth.Token, error) {
-	// ReadChallengeTx parses the transaction and validates structure
-	// (server source account, single sequence number, manage_data
-	// ops with the web auth domain, time bounds present). Returns
-	// the client account id extracted from the first manage_data op.
+	// ReadChallengeTx validates structure (server source account, single sequence number, manage_data ops with the web auth domain, time
+	// bounds) and returns the client account id from the first manage_data op.
 	challengeTx, clientAccountID, _, _, err := txnbuild.ReadChallengeTx(
 		signedXDR,
 		v.serverKP.Address(),

@@ -195,10 +195,8 @@ func (v *PostgresAPIKeyValidator) readRecord(ctx context.Context, key string) (A
 	return rec, true
 }
 
-// decodeIPAllowlist parses the on-the-wire CIDR-text slice back
-// into netip.Prefix values. Empty input yields nil. Returns an
-// error on the first un-parseable entry so the caller can treat
-// the cache row as corrupt.
+// decodeIPAllowlist parses the wire CIDR-text slice back into netip.Prefix values (empty yields nil); the first bad entry is an
+// error so the caller can treat the cache row as corrupt.
 func decodeIPAllowlist(cidrs []string) ([]netip.Prefix, error) {
 	if len(cidrs) == 0 {
 		return nil, nil
@@ -264,10 +262,8 @@ func convertPermissionEntries(entries []platform.KeyPermissionEntry) []SubjectPe
 	return out
 }
 
-// pgTierToAuthTier maps the platform-side enum to the auth-side
-// Tier. Distinct enums because the platform table also covers
-// future tier values (e.g. partner) the auth middleware doesn't
-// yet have rate-limit buckets for.
+// pgTierToAuthTier maps the platform enum to the auth Tier. Distinct enums: the platform table also covers future tiers (e.g. partner)
+// that auth has no rate-limit buckets for yet.
 func pgTierToAuthTier(t platform.APIKeyTier) Tier {
 	switch t {
 	case platform.APIKeyTierOperator:

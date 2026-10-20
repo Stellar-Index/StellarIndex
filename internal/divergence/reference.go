@@ -11,10 +11,8 @@ import (
 
 // Reference is a pluggable external price reference; implementations MUST be safe for concurrent LookupQuote calls, SHOULD set a per-call timeout via ctx, and SHOULD return ErrAssetUnsupported for an unlisted asset.
 type Reference interface {
-	// Name returns a stable, lowercase, hyphenated label suitable
-	// for Prometheus labels and JSON keys (e.g. "coingecko",
-	// "coinmarketcap", "reflector-cex"). Stable across versions —
-	// renaming is a wire break against the divergence-warning alerts.
+	// Name returns a stable, lowercase, hyphenated label for Prometheus labels and JSON keys (e.g. "coingecko", "reflector-cex"); renaming
+	// is a wire break against the divergence-warning alerts.
 	Name() string
 
 	// LookupQuote returns the source's price as `1 base = N quote` and the instant its upstream observed it. The quote's AsOf is required: [Compare] refuses a quote it cannot age (see [MaxComparableAge]).

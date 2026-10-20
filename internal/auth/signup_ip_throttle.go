@@ -44,10 +44,8 @@ type RedisSignupIPThrottle struct {
 
 // SignupIPThrottleOptions tunes a [RedisSignupIPThrottle].
 type SignupIPThrottleOptions struct {
-	// Max is the maximum number of signups permitted per IP within
-	// Window. Default 5 — tight enough to block bulk-mint, loose
-	// enough that a legitimate operator onboarding a small team
-	// through a single shared egress completes normally.
+	// Max is the signups permitted per IP within Window. Default 5: tight enough to block bulk-mint, loose enough for a team onboarding
+	// through one shared egress.
 	Max int
 	// Window is the rolling-window length. Default 1 hour.
 	Window time.Duration

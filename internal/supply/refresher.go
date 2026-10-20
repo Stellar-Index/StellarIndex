@@ -147,10 +147,10 @@ func (r *Refresher) Tick(ctx context.Context) Outcome {
 
 	snap, err := r.computer.Compute(ctx, ledger, observedAt)
 	if err != nil {
-		// ErrNoObservation (live AND static fell through) is split from generic compute errors for the
-		// bootstrap-progress signal. ErrNegativeTotalMissingBaseline (SAC-wrapper opening balance not seeded
-		// so Σburn > Σmint) routes to `missing_baseline`, excluded from error_dominant; once seeded, a still-negative
-		// total is ErrNegativeTotalSupply -> compute_error, which pages.
+		// ErrNoObservation (live and static both fell through) is split out for the bootstrap-progress signal.
+		// ErrNegativeTotalMissingBaseline (unseeded SAC-wrapper opening balance, so Σburn > Σmint) routes to
+		// `missing_baseline`, excluded from error_dominant; once seeded, a still-negative total is
+		// ErrNegativeTotalSupply -> compute_error, which pages.
 		kind := OutcomeKindComputeError
 		switch {
 		case errors.Is(err, ErrNoObservation):
