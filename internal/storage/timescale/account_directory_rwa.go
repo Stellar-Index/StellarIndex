@@ -8,14 +8,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pgarray"
 )
 
-// Directory-driven candidate discovery for the contract arm of the RWA definition.
-//
-// The directory is the population because the classic arm walks issuers from the classic-asset
-// registry, so a contract-issued entity would never become a candidate: absent before any
-// requirement runs, the silent-discard shape the funnel exists to prevent. account_directory is
-// the only table tying a real-world entity to a Stellar address without classic issuance (its
-// CHECK accepts both strkey forms). The contract arm keys on the contract address, under the same
-// scam vocabulary and a NARROWER recognition vocabulary.
+// Directory-driven candidate discovery for the contract arm of the RWA definition. The directory is
+// the population because the classic arm walks issuers from the classic-asset registry, so a
+// contract-issued entity would never become a candidate (a silent discard). account_directory is
+// the only table tying a real-world entity to a Stellar address without classic issuance. The
+// contract arm keys on the contract address, under the same scam vocabulary and a NARROWER
+// recognition one.
 
 // DirectoryRWACensus accounts for every directory row the contract-arm scan walked, with a named bucket per way a row stopped short; [DirectoryRWACensus.Check] proves the arithmetic closes.
 type DirectoryRWACensus struct {

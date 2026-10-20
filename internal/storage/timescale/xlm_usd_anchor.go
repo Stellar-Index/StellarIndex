@@ -3,26 +3,26 @@
 
 package timescale
 
-// The XLM/USD anchor: the one rate every read-side XLM-triangulated price is multiplied by. Every renderer
-// reads the same population through [xlmUSDAnchorMinutes], so the scalar, grid and per-period shapes agree.
+// The XLM/USD anchor: the one rate every read-side XLM-triangulated price is multiplied by, read by
+// every renderer through [xlmUSDAnchorMinutes] so scalar, grid and per-period shapes agree.
 //
 // Population: XLM in every alias form ([canonical.AssetAliases] order: native, crypto:XLM, the SAC)
 // against every USD proxy ([usdProxyQuotes]), in both stored directions (SDEX stores the sold asset
-// as base, swap venues store token_in), so reversed rows enter as 1/vwap. Closed minutes only, none
+// as base, swap venues token_in), so reversed rows enter as 1/vwap. Closed minutes only, none
 // inside a recorded XLM/USD-proxy freeze on any XLM form (ADR-0019, freeze_events frozen_at to
-// recovered_at): a frozen rate anchors nothing, the newest unfrozen minute does, and a freeze longer
-// than [xlmUSDAnchorMaxAge] leaves every consumer (catalogue price and changes, sparklines,
-// transitive prices, Soroban volume, MEV legs) unpriced, as the max age already does for silence.
-// An open row (recovered_at NULL) excludes every later minute until [FreezeEventSink.MarkRecovered]
-// closes it; hold_until is the ladder deadline, not the freeze's end, and does not bound the predicate.
+// recovered_at): a frozen rate anchors nothing, and a freeze longer than [xlmUSDAnchorMaxAge]
+// leaves every consumer unpriced, as the max age does for silence. An open row (recovered_at NULL)
+// excludes every later minute until [FreezeEventSink.MarkRecovered] closes it; hold_until is the
+// ladder deadline, not the freeze's end, and does not bound the predicate.
 //
-// Per minute and form the rate is the volume_usd-weighted mean of those rows, never the leg sums:
-// CEX amounts are scaled 1e8 and on-chain ones 1e7, so leg sums would weight a CEX row 10x.
+// Per minute and form the rate is the volume_usd-weighted mean, never the leg sums: CEX amounts are
+// scaled 1e8 and on-chain ones 1e7, so leg sums would weight a CEX row 10x.
 //
-// Across forms the first form (alias order) with a qualifying minute in the freshness window wins, newest
-// minute within it, matching the ingest resolver's alias loop ([VWAPUSDFXResolver.queryDB]). SAC is last so a
-// thin Soroban pool printing after a quiet SDEX minute cannot set the rate for the whole catalogue. Within one
-// form a lone dust row is still the minute's rate when nothing else printed (per-row floor [directLegMinQuoteVolume]).
+// Across forms the first form (alias order) with a qualifying minute in the freshness window wins,
+// newest minute within it ([VWAPUSDFXResolver.queryDB] loops the same way). SAC is last so a thin
+// Soroban pool printing after a quiet SDEX minute cannot set the rate for the whole catalogue.
+// Within one form a lone dust row is still the minute's rate when nothing else printed (per-row
+// floor [directLegMinQuoteVolume]).
 
 // xlmUSDAnchorMaxAge is the oldest XLM/USD minute a triangulated price may use, the ingest resolver's Freshness; past it the asset is
 // unpriced, never re-marked.

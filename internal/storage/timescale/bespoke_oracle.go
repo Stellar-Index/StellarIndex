@@ -5,21 +5,17 @@ package timescale
 // (BespokeBlock/KPI/Series/Table/Breakdown) + the dispatcher + the scan
 // helpers stay in protocol_bespoke.go.
 
-// Oracle bespoke analytics (reflector-dex/cex/fx, redstone, band).
+// Oracle bespoke analytics (reflector-dex/cex/fx, redstone, band): counts and timestamps over
+// oracle_updates scoped by source = the protocol page's name. No price averaging or rescaling:
+// aggregated pricing is the aggregator's domain and oracle sources never feed VWAP. The one price
+// shown ("Latest feed prices") is the raw observed integer verbatim with its declared decimals.
 //
-// Everything here is counts and timestamps over oracle_updates scoped by source = the protocol
-// page's name. No price averaging or rescaling happens: aggregated pricing is the aggregator's
-// domain, and oracle sources never feed VWAP. The one price shown ("Latest feed prices") is the
-// raw observed integer verbatim with its declared decimals.
+// Some sources (redstone) land one row per feed per publication, so update counts weight feeds, not
+// transactions. The median publish interval is measured between distinct publication timestamps;
+// row-to-row gaps within one batch are zero and would report a dishonest "0s cadence".
 //
-// Some sources (redstone) land one row per feed per publication, so update counts weight feeds,
-// not transactions. The median publish interval is therefore measured between distinct
-// publication timestamps; row-to-row gaps within one batch are zero and would report a dishonest
-// "0s cadence".
-//
-// oracle_updates has no retention, so "all-time" figures start at each source's first ingested
-// observation, not at protocol genesis. Windowed queries are bounded by
-// ts > now() - $N::interval so 1-day chunks are excluded.
+// oracle_updates has no retention, so "all-time" starts at each source's first ingested
+// observation. Windowed queries use ts > now() - $N::interval so 1-day chunks are excluded.
 
 import (
 	"context"

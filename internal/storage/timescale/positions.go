@@ -65,12 +65,11 @@ const (
 // blendAuctionMovesSQL yields one (pool, asset, addr, side, delta, ledger, ts) row per movement of
 // an account's b-tokens (side 'supply') or d-tokens (side 'borrow') that blend_positions cannot
 // hold; delta is the signed token amount:
-//
 //   - a UserLiquidation (0) fill moves the filled lot bTokens and bid dTokens from the auctioned
-//     user to the filler (the event carries the filled portion; see
+//     user to the filler (the event carries the filled portion;
 //     docs/operations/wasm-audits/blend.md);
-//   - a BadDebt (1) fill moves the auctioned account's bid dTokens to the filler; its lot is
-//     backstop tokens, not a pool position;
+//   - a BadDebt (1) fill moves the auctioned account's bid dTokens to the filler (its lot is
+//     backstop tokens, not a pool position);
 //   - a bad_debt emission moves the user's dTokens to the backstop.
 //
 // Interest (2) auctions trade underlying only and move no pool position.

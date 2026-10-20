@@ -235,15 +235,11 @@ func (s *Store) refreshCAGG(ctx context.Context, viewName string, from, to time.
 	}
 	q := fmt.Sprintf(`CALL refresh_continuous_aggregate('%s', $1::timestamptz, $2::timestamptz%s)`, viewName, forceArg)
 	// Retry on 55P03: Timescale rejects the loser of two concurrent refreshes of one CAGG
-	// immediately instead of blocking it.
-	//
-	// The ~3.0s budget covers only SHORT collisions (the policy refresher's tick, an operator's
-	// slice), not a long refresh: prices_1m over a weekly chunk runs for minutes. In-process
-	// fan-out must hold ingest.caggRefreshMu instead, or it exhausts these attempts with a hard
-	// error.
-	//
-	// The timeout is per ATTEMPT: a 55P03 loser never started materialising, so the winning
-	// retry gets the full budget.
+	// immediately instead of blocking it. The ~3.0s budget covers only SHORT collisions (policy
+	// tick, an operator's slice), not a long refresh (prices_1m over a weekly chunk runs minutes);
+	// in-process fan-out must hold ingest.caggRefreshMu instead or it exhausts these attempts. The
+	// timeout is per ATTEMPT: a 55P03 loser never started materialising, so the winning retry gets
+	// the full budget.
 	const maxAttempts = 5
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		err := s.refreshCAGGBounded(ctx, q, from, to, timeout)

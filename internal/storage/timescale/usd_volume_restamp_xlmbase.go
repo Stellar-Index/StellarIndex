@@ -16,20 +16,19 @@ import (
 
 // The XLM-BASE usd_volume re-derive: the estimated-tier counterpart of [usd_volume_restamp.go]
 // (`usd_volume = base_amount/1e7 x XLM/USD at ts`). Most of the population is coverage
-// (`-fill-null`), not correction; prices_1m/prices_1d coalesce NULL to 0, so a CAGG ratio
-// misreads holes as valuation errors.
+// (`-fill-null`), not correction; prices_1m/prices_1d coalesce NULL to 0, so a CAGG ratio misreads
+// holes as valuation errors.
 //
-// The arithmetic stays in Go, not SQL, for three reasons:
+// The arithmetic stays in Go, not SQL:
+//   1. Each row is rebuilt into its [canonical.Trade] and valued by the live
+//      [usdVolumeViaXLMBaseAnchor], so there is no second waterfall to drift.
+//   2. A row the anchor declines is REPORTED, never valued via [tradeUSDVolumeViaFX]: a wrong value
+//      at a high `derive_generation` cannot be clawed back; an unpriced one can.
+//   3. A declined row that carries a number is never overwritten with NULL; it is counted in
+//      [XLMBaseRestampStats.AnchorDeclinedStored].
 //
-//  1. Each row is rebuilt into its [canonical.Trade] and valued by the live
-//     [usdVolumeViaXLMBaseAnchor], so there is no second waterfall to drift.
-//  2. A row the anchor declines is REPORTED, never valued via [tradeUSDVolumeViaFX]: a wrong
-//     value at a high `derive_generation` cannot be clawed back; an unpriced one can.
-//  3. A declined row that carries a number is never overwritten with NULL; it is counted in
-//     [XLMBaseRestampStats.AnchorDeclinedStored].
-//
-// Pegged quotes belong to `-tier exact`. The candidate scan is the shared [restampScanSelect]
-// with this tier's leg: `base_asset = ANY(<the two XLM wire forms>)`.
+// Pegged quotes belong to `-tier exact`. The scan is the shared [restampScanSelect] with
+// `base_asset = ANY(<the two XLM wire forms>)`.
 
 // XLMBaseRestampParams scopes one window of the XLM-base re-derive.
 type XLMBaseRestampParams struct {
@@ -380,10 +379,9 @@ func (s *Store) applyXLMBaseRestampBatches(ctx context.Context, plan *XLMBaseRes
 // `ts` constrained only through the join (`t.ts = v.ts`) cannot be pruned at planning time, so
 // every chunk is decompressed wholesale, producing enormous WAL for a handful of rows. The join
 // already forces matched `ts` into the batch, so bounding by their min and max excludes no row.
-//
 //   - `tx_hash` is `char(64)`: bound as `text` the comparison becomes `(t.tx_hash)::text =
 //     v.tx_hash`, which no index serves; bound as `bpchar` the join rides `trades_pkey`.
-//   - Pruning needs a CUSTOM plan; a promoted generic plan cannot know the bounds, so
+//   - Pruning needs a CUSTOM plan (a promoted generic plan cannot know the bounds), so
 //     `SET LOCAL plan_cache_mode = force_custom_plan` pins it.
 
 // xlmBaseRestampTSBounds returns the inclusive `ts` span of a batch, computed rather than assumed first/last row so a planner reorder

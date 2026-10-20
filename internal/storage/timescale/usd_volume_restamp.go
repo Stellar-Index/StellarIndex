@@ -11,15 +11,13 @@ import (
 
 // The exact-tier usd_volume RE-STAMP: the WRITE side of the identity
 // `usd_volume = pegged_leg / 10^decimals` that [usd_volume_reconcile.go] verifies.
-//
 //   - tier and scale come from [ClassifyUSDVolumeTier], the SAME classifier the verifier uses
-//     (lock-stepped by TestClassifyUSDVolumeTier_TracksTheWaterfall);
+//     (TestClassifyUSDVolumeTier_TracksTheWaterfall);
 //   - a corrected row gets the run's `derive_generation`, guarded by `derive_generation <= $gen`
 //     like the InsertTrade upsert, so a gen-0 replay or older re-derive cannot undo it;
 //   - a row already satisfying the identity is untouched, so re-running a window is idempotent;
 //   - each rewrite first logs the prior value in `usd_volume_restamp_log` in the same transaction;
 //   - NULL rows are left alone unless FillNull is set.
-//
 // Estimated tiers are out of scope: their value is not reproducible from the row alone.
 
 // ExactTierUSDVolume renders the pegged leg divided by 10^decimals exactly as tradeUSDVolume does (big.Rat.FloatString(8)) so a

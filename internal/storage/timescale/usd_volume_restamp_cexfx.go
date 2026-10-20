@@ -11,7 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// ─── the CEX FIAT-QUOTE usd_volume RE-DERIVE ──────────────────────────
+// ─── the CEX FIAT-QUOTE usd_volume RE-DERIVE ───
 //
 // Re-derives off-chain trades quoted in a non-USD fiat through the vendor FX feed:
 //
@@ -20,13 +20,12 @@ import (
 // The rate comes from `fx_quotes` (rate_usd = units per 1 USD) through the insert path's own
 // resolver, inverted in exact *big.Rat space.
 //
-// As-of rule, per row: take the newest daily bucket AT OR BEFORE `ts`, never a later one and never
-// an interpolation (a rate the vendor never published). The worker rewrites today's bucket and the
-// trailing 7 days, so runs inside that window can differ by intraday FX. REFUSE the row when the
-// bucket is older than [CEXFiatMaxQuoteStaleness] ([XLMBaseRestampStats.FXDeclinedStale]).
-//
-// The default tolerance is the live insert path's bound, so this never writes what `InsertTrade`
-// would decline; `-fx-max-staleness` may only narrow it.
+// As-of rule, per row: the newest daily bucket AT OR BEFORE `ts`, never a later one and never an
+// interpolation. The worker rewrites today's bucket and the trailing 7 days, so runs inside that
+// window can differ by intraday FX. REFUSE the row when the bucket is older than
+// [CEXFiatMaxQuoteStaleness] ([XLMBaseRestampStats.FXDeclinedStale]); the default is the live
+// insert path's bound so this never writes what `InsertTrade` would decline, and
+// `-fx-max-staleness` may only narrow it.
 
 // CEXFiatMaxQuoteStaleness is the default and maximum as-of tolerance for the cex-fx tier.
 const CEXFiatMaxQuoteStaleness = fxQuotesSnapLookback

@@ -2,19 +2,17 @@ package timescale
 
 // DEX/AMM bespoke analytics (soroswap / phoenix / aquarius / comet / sdex). Three data tiers,
 // chosen per query so nothing scans the 300M+-row trades hypertable unbounded:
+//   1. dex_volume_by_pair_1d (materialized_only=true) for >1-day windows. HONESTY FLOOR: it starts
+//      well after genesis, so lifetime figures are "since <floor date>", never "all-time".
+//   2. source_volume_1h (real-time) for the 24h window.
+//   3. Raw `trades`, the only place taker addresses live, window-bounded; sdex is gated OFF beyond
+//      24h (dexRawWindowOK) and the omission is Noted.
 //
-//  1. dex_volume_by_pair_1d (materialized_only=true): the daily per-(source, pair) rollup, for
-//     >1-day windows. HONESTY FLOOR: it starts well after genesis, so lifetime figures are
-//     "since <floor date>", never "all-time".
-//  2. source_volume_1h (real-time): the 24h window.
-//  3. Raw `trades`, the ONLY place taker addresses and per-trade rows live, window-bounded; sdex
-//     is gated OFF beyond 24h (dexRawWindowOK, 45s at 7d) and the omission is Noted.
-//
-// Older soroswap rows carry NULL taker: trader metrics are omitted (with a Note) unless the window
-// has taker-stamped rows. Every USD figure is trade-time trades.usd_volume (or its CAGG sums),
-// never ad-hoc pricing. At 24h the unpriced XLM legs are named and the figure is served as a lower
-// bound; elsewhere NULL-usd trades are excluded from USD sums and averages but still count toward
-// trade totals. Division is exact NUMERIC (ADR-0003); rounding is round(x, 2), never a float.
+// Older soroswap rows carry NULL taker, so trader metrics are omitted (with a Note) unless the
+// window has taker-stamped rows. USD figures are trade-time trades.usd_volume (or its CAGG sums),
+// never ad-hoc pricing; at 24h unpriced XLM legs are named and the figure is a lower bound,
+// elsewhere NULL-usd trades are excluded from USD sums but still count toward totals. Division is
+// exact NUMERIC (ADR-0003); rounding is round(x, 2), never a float.
 
 import (
 	"context"

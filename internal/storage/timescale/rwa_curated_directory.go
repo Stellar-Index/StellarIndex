@@ -13,17 +13,16 @@ import (
 )
 
 // rwa_curated_directory caches a third party's list of tokenized real-world-asset addresses and
-// that party's own price for each, for the RWA surface's CURATED arm. Synced by
-// `stellarindex-ops curated-rwa-sync`.
+// that party's own price for each, for the RWA CURATED arm (synced by `stellarindex-ops
+// curated-rwa-sync`).
 //
-// A row is only a claim: "curator X says this address is an RWA of company Y, subclass Z, worth P
-// dollars", with no signature, proof of control or market. Such rows are served under their own
-// basis and total, beside the verified set and never inside it.
+// A row is only a claim (no signature, proof of control or market), so such rows are served under
+// their own basis and total, beside the verified set and never inside it.
 //
-// Two clocks, as in asset_listing_directory: recognition ages on `synced_at` (our clock,
-// [curatedRWARecognitionMaxAge]) and the price ages on `priced_at` (the curator's day stamp,
-// [curatedRWAPriceMaxAge]). Both bounds are spliced into the reader's SQL, never applied by a
-// caller, so no path reads a stale row as fresh.
+// Two clocks, as in asset_listing_directory: recognition ages on `synced_at`
+// ([curatedRWARecognitionMaxAge]), the price on `priced_at` (the curator's day stamp,
+// [curatedRWAPriceMaxAge]). Both bounds are spliced into the reader's SQL so no path reads a stale
+// row as fresh.
 
 // CuratedRWAEntry is one row as the curator published it.
 type CuratedRWAEntry struct {

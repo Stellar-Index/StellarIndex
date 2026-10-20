@@ -10,19 +10,16 @@ import (
 
 // Router attribution: joins persisted router invocations (soroswap_router_swaps) to the `trades`
 // rows they drove and stamps trades.routed_via with the router's registry name.
-//
 //   - FIRST-WINS: only rows with routed_via IS NULL are updated, so a tag is never overwritten and
 //     re-running a window is idempotent.
 //   - SOURCE-SCOPED: a composed tx can carry unrelated trades (Phoenix AND the Soroswap router), so
 //     only trades whose `source` matches the router's underlying venue are tagged.
-//   - TIME-BOUNDED: both join sides carry a time predicate so TimescaleDB prunes chunks. The trades
-//     bound is widened by routedViaTsSlack for second-vs-millisecond skew; correctness comes from
-//     the exact (ledger, tx_hash) equality, the ts bound is pruning only.
-//   - CALL-PATH ATTRIBUTED (ADR-0052): call_path[1] (Postgres 1-indexed; Go CallPath[0]) is the
-//     outermost invoking contract. When it is a registered 'router'-kind entry the trade is tagged
-//     with that name so /v1/aggregators can report volume per wrapper; otherwise it falls back to
-//     routerName (direct calls, unregistered wrappers, legacy NULL call_path), so the fallback never
-//     claims a wrapper it lacks evidence for.
+//   - TIME-BOUNDED: both join sides carry a time predicate so TimescaleDB prunes chunks; the trades
+//     bound is widened by routedViaTsSlack for second-vs-millisecond skew. Correctness comes from
+//     the exact (ledger, tx_hash) equality; the ts bound is pruning only.
+//   - CALL-PATH ATTRIBUTED (ADR-0052): call_path[1] (Go CallPath[0]) is the outermost invoking
+//     contract; if it is a registered 'router'-kind entry the trade is tagged with that name, else
+//     it falls back to routerName, so the fallback never claims a wrapper it lacks evidence for.
 
 // routedViaTsSlack widens the trades.ts chunk-pruning bound beyond any close-time skew while still confining the UPDATE to the window's
 // chunks.

@@ -352,16 +352,15 @@ func truncLendingID(id string) string {
 // event count. Claim amounts are token base units, not USD. Empty-safe.
 
 // bespokeCredit builds the sorocredit (consumer-USDC credit / CDP) bespoke block from the four
-// credit_* hypertables: positions opened, a window-scoped open-position proxy, statements,
-// SCHEDULED settlements (volume + count), withdrawals and a recent-settlements table.
+// credit_* hypertables.
 //
-// CRITICAL: credit_settlements rows are the on-wire "Liquidation" event but are recurring
-// SCHEDULED keeper settlements, NOT distressed liquidations. Every label and the appended Note say
-// so; a "liquidations" risk signal must never be surfaced from this data.
+// CRITICAL: credit_settlements rows are the on-wire "Liquidation" event but are recurring SCHEDULED
+// keeper settlements, NOT distressed liquidations. Every label and Note says so; never surface a
+// "liquidations" risk signal from this data.
 //
-// Empty-safe: returns nil (not an error) when no credit_* row exists in the window. Amounts are
-// token base units, never USD (no published price). A SAC wrapping a classic asset is 7-decimal on
-// chain, never the off-chain 6-decimal USDC convention (see creditAmountUnitsNote and
+// Returns nil (not an error) when no credit_* row exists in the window. Amounts are token base
+// units, never USD (no published price). A SAC wrapping a classic asset is 7-decimal on chain,
+// never the off-chain 6-decimal USDC convention (see creditAmountUnitsNote,
 // creditSettlementVolumeHint).
 const (
 	creditAmountUnitsNote      = "Amounts are in token base units (USDC settlements at 7-decimal USDC base units; statement amounts at the protocol's i128 scale) — NOT USD. sorocredit has no published price and never contributes to VWAP."

@@ -13,18 +13,15 @@ import (
 )
 
 // asset_price_snapshot: the per-asset headline-price rollup behind the GET /v1/assets listing.
-//
-// Deriving the price per request costs a dozen `DISTINCT ON ... FROM prices_1m` CTEs per asset, so
-// [assetPriceCTEs] runs off the request path on the volume rollup's cadence and the listing LEFT
-// JOINs the result. Not a continuous aggregate (no `GROUP BY` expresses a `DISTINCT ON` over quote
-// forms, XLM identities and both directions); not a materialised view (REFRESH takes ACCESS
-// EXCLUSIVE and would stall the listing, where upsert+prune takes row locks only).
+// Deriving it per request costs a dozen `DISTINCT ON ... FROM prices_1m` CTEs per asset, so
+// [assetPriceCTEs] runs off the request path and the listing LEFT JOINs the result. Not a CAGG (no
+// GROUP BY expresses it) and not a materialised view (REFRESH takes ACCESS EXCLUSIVE and would
+// stall the listing; upsert+prune takes row locks only).
 //
 // Rollup age is capped by [assetPriceSnapshotMaxAge] in the listing's join, so a dead aggregator
 // renders assets unpriced rather than stale. Observation age is not capped: the price is the newest
-// traded minute across arms ([priceArmPickExpr]) within the 7-day lookback, since a hard cutoff
-// would blank every weekly-trading asset. The detail query is separate, so a listing row can lag
-// its detail page by up to that ceiling.
+// traded minute within the 7-day lookback ([priceArmPickExpr]), since a hard cutoff would blank
+// every weekly-trading asset. The listing row can lag its detail page by up to that ceiling.
 
 // assetPriceSnapshotMaxAge is how old a snapshot row may be and still be served (enforced in the listing's LEFT JOIN, see
 // [listAssetsBaseSelect]): 7 missed 2-minute passes, so a restart never blanks the page.

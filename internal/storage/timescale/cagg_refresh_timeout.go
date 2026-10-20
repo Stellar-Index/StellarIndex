@@ -15,19 +15,17 @@ import (
 // statement_timeout, so one wedged refresh would block every `-parallel` worker behind
 // ingest.caggRefreshMu until SIGINT.
 //
-//   - refresh_continuous_aggregate refuses to run inside a transaction block, so
-//     `SET LOCAL statement_timeout` is unavailable. The GUC is set at SESSION level on one pinned
-//     pooled connection for exactly the CALL, then restored.
-//   - statement_timeout is kept although pgx also cancels on a Go deadline: the server enforces
-//     it (query_canceled, see isStatementTimeoutErr) and the connection stays healthy. The Go
-//     deadline (bound + grace) is the second line for a backend that stopped answering; the
-//     driver then closes that connection, never the pool.
+// refresh_continuous_aggregate refuses to run in a transaction block, so `SET LOCAL
+// statement_timeout` is unavailable: the GUC is set at SESSION level on one pinned pooled
+// connection for exactly the CALL, then restored. It is kept alongside pgx's Go-deadline cancel
+// because the server enforces it (query_canceled, see isStatementTimeoutErr) and the connection
+// stays healthy; the Go deadline (bound + grace) is the second line for a backend that stopped
+// answering, closing that connection, never the pool.
 //
-// Sizing derives from the refreshed window, not the view's MinWindow, because refresh cost scales
-// with the trades under it. The rate is a THROUGHPUT floor: a refresh that cannot cover its
-// window at 12x real time is wedged. The floor covers sub-hour repairs where per-CALL overhead
-// dominates; the ceiling stops coarse rungs padded to MinWindow (prices_1mo: 93 days) from
-// computing for days.
+// Sizing derives from the refreshed window, not the view's MinWindow, because cost scales with the
+// trades under it. The rate is a THROUGHPUT floor (a refresh that cannot cover its window at 12x
+// real time is wedged); the ceiling stops coarse rungs padded to MinWindow (prices_1mo: 93 days)
+// from running for days.
 const (
 	CAGGRefreshTimeoutPerWindowHour = 5 * time.Minute
 	CAGGRefreshTimeoutFloor         = 10 * time.Minute
