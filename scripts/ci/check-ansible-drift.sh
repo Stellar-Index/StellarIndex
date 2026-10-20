@@ -84,6 +84,8 @@ if [ "$#" -ne 1 ]; then
   exit 2
 fi
 DRIFT_OUT="$1"
+# The host the dry-run targeted; only names it in messages.
+DRIFT_HOST="${DRIFT_HOST:-r1}"
 
 if [ ! -s "$DRIFT_OUT" ]; then
   echo "ansible-drift ❌ dry-run output '$DRIFT_OUT' is missing or empty — the playbook never produced output. This is NOT a drift signal." >&2
@@ -142,7 +144,7 @@ if [ -z "$recap_lines" ]; then
   cat >&2 <<EOF
 ansible-drift ❌ ansible produced no PLAY RECAP — the dry-run failed
 (invalid vault password, unreachable host, or a task error). See the
-"Dry-run the playbook against r1" step above. This is NOT a drift signal.
+"Dry-run the playbook against $DRIFT_HOST" step above. This is NOT a drift signal.
 EOF
   summary "## ansible-drift ❌ no PLAY RECAP"
   summary ""
@@ -415,7 +417,7 @@ if [ "$recap_changed" -eq 0 ]; then
   echo "ansible-drift ✅ codified = live (changed=0)."
   summary "## ansible-drift ✅ codified = live"
   summary ""
-  summary "The \`--check --diff\` pass of \`archival-node\` against r1 reported \`changed=0\`."
+  summary "The \`--check --diff\` pass of \`archival-node\` against $DRIFT_HOST reported \`changed=0\`."
   summary "Every task the role owns is already in the state the repo declares."
   exit 0
 fi
@@ -443,7 +445,7 @@ if [ "$comment_only_count" -gt 0 ]; then
     echo "  handler(s) that would run only because of those comment-only changes (consequential, not drift):"
     printf '%s\n' "$consequential" | sed 's/^/  ↳ /'
   fi
-  echo "  Applying the playbook clears the diff; on r1 that runs the handlers above, so do it in a maintenance window."
+  echo "  Applying the playbook clears the diff; on $DRIFT_HOST that runs the handlers above, so do it in a maintenance window."
 fi
 if [ -n "$unexpected" ]; then
   {
@@ -451,7 +453,7 @@ if [ -n "$unexpected" ]; then
     printf '%s\n' "$unexpected" | sed 's/^/  ✗ /'
     cat <<EOF
 
-Either a hand fix on r1 needs codifying, or repo config needs applying —
+Either a hand fix on $DRIFT_HOST needs codifying, or repo config needs applying —
 see $RUNBOOK.
 
 If a task above is GENUINELY non-idempotent (it reports changed on every
@@ -459,18 +461,18 @@ run even when nothing differs), add it to $BASELINE
 with a reason. That file is shrink-only: the addition needs a
 \`Baseline-Growth: <why>\` commit trailer (scripts/ci/lint-baseline-growth.sh),
 so the widening is reviewable. Do NOT add a task that is merely
-"repo-ahead-of-r1" — that is drift, and applying the playbook is the fix.
+"repo-ahead-of-$DRIFT_HOST" — that is drift, and applying the playbook is the fix.
 EOF
   } >&2
 
   # One annotation per drifted task, pinned to its `- name:` line, not one
   # unnamed "drift detected" line above ~1,800 lines of ansible stdout.
   drift_count="$(printf '%s\n' "$unexpected" | grep -c . || true)"
-  summary "## ansible-drift ❌ $drift_count task(s) would change on r1"
+  summary "## ansible-drift ❌ $drift_count task(s) would change on $DRIFT_HOST"
   summary ""
-  summary "\`--check --diff\` of \`archival-node\` against r1. Each row is a task whose"
-  summary "live state does not match the repo — either r1 needs the playbook applied,"
-  summary "or a hand fix on r1 needs codifying (see \`$RUNBOOK\`)."
+  summary "\`--check --diff\` of \`archival-node\` against $DRIFT_HOST. Each row is a task whose"
+  summary "live state does not match the repo — either $DRIFT_HOST needs the playbook applied,"
+  summary "or a hand fix on $DRIFT_HOST needs codifying (see \`$RUNBOOK\`)."
   summary ""
   summary "| task | declared in | would touch |"
   summary "| --- | --- | --- |"
@@ -480,9 +482,9 @@ EOF
     det="$(detail_for "$t")"
     summary "| \`$t\` | \`${loc:-—}\` | ${det:-—} |"
     if [ -n "$loc" ]; then
-      echo "::error file=${loc%%:*},line=${loc##*:}::ansible-drift: this task would change on r1 — codified ≠ live${det:+ ($det)}" >&2
+      echo "::error file=${loc%%:*},line=${loc##*:}::ansible-drift: this task would change on $DRIFT_HOST — codified ≠ live${det:+ ($det)}" >&2
     else
-      echo "::error::ansible-drift: '$t' would change on r1 — codified ≠ live${det:+ ($det)}" >&2
+      echo "::error::ansible-drift: '$t' would change on $DRIFT_HOST — codified ≠ live${det:+ ($det)}" >&2
     fi
   done <<EOF
 $unexpected
@@ -490,7 +492,7 @@ EOF
   summary ""
   summary "**Fix:** apply the playbook (\`workflow_dispatch\` with \`apply=true\`), or codify the hand fix."
   summary "A genuinely non-idempotent task belongs in \`$BASELINE\` with a reason and a"
-  summary "\`Baseline-Growth:\` commit trailer — a repo-ahead-of-r1 task does **not**."
+  summary "\`Baseline-Growth:\` commit trailer — a repo-ahead-of-$DRIFT_HOST task does **not**."
   exit 1
 fi
 
@@ -521,7 +523,7 @@ fi
 summary "## ansible-drift ✅ every changed task is enumerated or comment-only"
 summary ""
 summary "\`changed=$recap_changed\`, and every one of them is a named, reasoned entry in"
-summary "\`$BASELINE\` — no unexplained drift on r1."
+summary "\`$BASELINE\` — no unexplained drift on $DRIFT_HOST."
 summary ""
 summary "| task reporting changed | declared in | would touch |"
 summary "| --- | --- | --- |"

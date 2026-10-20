@@ -454,6 +454,8 @@ jobs:
 
       - name: Drift verdict
         if: ${{ !cancelled() && steps.dryrun.outcome != 'skipped' }}
+        env:
+          DRIFT_HOST: ${{ matrix.net }}
         run: bash scripts/ci/check-ansible-drift.sh /tmp/drift.out
 
       - name: Shred materialized secrets
