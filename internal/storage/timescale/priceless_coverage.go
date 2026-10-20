@@ -5,6 +5,7 @@ package timescale
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -59,12 +60,13 @@ const coverageQuoteProxies = usdProxyQuotes + `,
 	` + xlmQuotesBound1
 
 // pricelessTradeLegs is the trailing-7d priced trade set, one row per (trade, leg): quote-leg-only assets (aquarius) need the quote
-// side; proxy quotes are skipped there since they are seeded as priced.
+// side. Proxy legs are skipped on both sides: they are seeded as priced, so never output.
 const pricelessTradeLegs = `(
   SELECT base_asset AS asset_id, ts, usd_volume, maker, taker
     FROM trades
    WHERE ts >= now() - INTERVAL '7 days'
      AND usd_volume IS NOT NULL
+     AND base_asset NOT IN (` + coverageQuoteProxies + `)
   UNION ALL
   SELECT quote_asset, ts, usd_volume, maker, taker
     FROM trades
@@ -77,31 +79,32 @@ const pricelessTradeLegs = `(
 // classifier owns the real verdict. The counterparty key is UNORDERED (LEAST/GREATEST). ONE POPULATION: only SDEX records both sides
 // (Soroban AMMs set taker only), so the key DEGENERATES to the one known account when a side is unknown; mixing populations would zero
 // an AMM-only share and never fire the wash exclusion. Unattributed rows (CEX) dilute the share DOWNWARD (errs toward paging);
-// attributed_vol_share reports the basis. COST: a full sweep is about a minute, inside DefaultSweepTimeout (5 min).
+// attributed_vol_share reports the basis. leg_keys is the one pass over the 7d legs (~67M rows on r1) that every total and the
+// counterparty split read; three scans took 31 s, one with PopularPricelessCandidates' work_mem takes ~14 s.
 const popularPricelessCandidatesSQL = `
-WITH vol7d AS (
-  SELECT asset_id,
-         SUM(usd_volume)::double precision AS vol_7d,
-         COUNT(*)                          AS trades_7d
-    FROM ` + pricelessTradeLegs + `
-   GROUP BY asset_id
-),
-vol24h AS (
-  SELECT asset_id,
-         SUM(usd_volume)::double precision AS vol_24h
-    FROM ` + pricelessTradeLegs + `
-   WHERE ts >= now() - INTERVAL '24 hours'
-   GROUP BY asset_id
-),
-actor_key AS (
+WITH leg_keys AS (
   SELECT asset_id,
          LEAST(COALESCE(maker, taker), COALESCE(taker, maker))    AS actor_lo,
          GREATEST(COALESCE(maker, taker), COALESCE(taker, maker)) AS actor_hi,
          SUM(usd_volume) AS pv,
+         SUM(usd_volume) FILTER (WHERE ts >= now() - INTERVAL '24 hours') AS pv_24h,
          COUNT(*)        AS trades
     FROM ` + pricelessTradeLegs + `
-   WHERE (maker IS NOT NULL OR taker IS NOT NULL)
    GROUP BY 1, 2, 3
+),
+vol7d AS (
+  SELECT asset_id,
+         SUM(pv)::double precision                  AS vol_7d,
+         SUM(trades)::bigint                        AS trades_7d,
+         COALESCE(SUM(pv_24h), 0)::double precision AS vol_24h
+    FROM leg_keys
+   GROUP BY asset_id
+),
+-- A NULL key means neither side was recorded (CEX feeds): in the totals, never a counterparty.
+actor_key AS (
+  SELECT asset_id, actor_lo, actor_hi, pv, trades
+    FROM leg_keys
+   WHERE actor_lo IS NOT NULL
 ),
 -- The top pair's trade COUNT must come from the same row as its volume
 -- MAX, not an independent MAX(trades) aggregate — a busier but smaller
@@ -142,7 +145,7 @@ top_pair AS (
     (p.asset_id IS NOT NULL)                                    AS has_price,
     v.vol_7d,
     v.trades_7d,
-    COALESCE(v24.vol_24h, 0)                                    AS vol_24h,
+    v.vol_24h,
     CASE WHEN v.vol_7d > 0
          THEN COALESCE(tp.top_pair_vol, 0) / v.vol_7d
          ELSE 0 END                                             AS top_pair_share,
@@ -152,7 +155,6 @@ top_pair AS (
     COALESCE(tp.top_pair_vol, 0)                                AS top_pair_vol,
     COALESCE(tp.top_pair_trades, 0)                             AS top_pair_trades
   FROM vol7d v
-  LEFT JOIN vol24h   v24 ON v24.asset_id = v.asset_id
   LEFT JOIN top_pair tp  ON tp.asset_id  = v.asset_id
   LEFT JOIN priced   p   ON p.asset_id   = v.asset_id
  WHERE p.asset_id IS NULL
@@ -160,7 +162,17 @@ top_pair AS (
 
 // PopularPricelessCandidates returns the coverage-signal set for every priceless trades asset (either leg) with priced 7d volume, the tripwire's input; priced assets are excluded in SQL.
 func (s *Store) PopularPricelessCandidates(ctx context.Context) ([]AssetCoverageSignals, error) {
-	rows, err := s.db.QueryContext(ctx, popularPricelessCandidatesSQL, canonical.NativeSACContractID())
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, fmt.Errorf("timescale: PopularPricelessCandidates begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	// The leg_keys hash aggregate spills ~630 MB at the 32 MB default; 128 MB keeps it in memory (256 MB gains nothing).
+	// SET LOCAL reverts at the transaction's end, so the pooled connection keeps the default.
+	if _, err := tx.ExecContext(ctx, "SET LOCAL work_mem = '128MB'"); err != nil {
+		return nil, fmt.Errorf("timescale: PopularPricelessCandidates set work_mem: %w", err)
+	}
+	rows, err := tx.QueryContext(ctx, popularPricelessCandidatesSQL, canonical.NativeSACContractID())
 	if err != nil {
 		return nil, fmt.Errorf("timescale: PopularPricelessCandidates: %w", err)
 	}
