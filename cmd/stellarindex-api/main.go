@@ -527,6 +527,13 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	bgWG.Add(1)
 	go func() {
 		defer bgWG.Done()
+		defer recoverBackgroundWorker(logger, "scam-sac-index-warm")
+		scamGate.WarmSACIndex(rootCtx)
+	}()
+
+	bgWG.Add(1)
+	go func() {
+		defer bgWG.Done()
 		defer recoverBackgroundWorker(logger, "forex-worker")
 		if err := forexWorker.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("forex worker exited", "err", err)

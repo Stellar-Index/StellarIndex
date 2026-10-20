@@ -26,6 +26,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // scamFlagTagSet is the lookup form of timescale.DirectoryScamFlagTags (kept beside account_directory because storage cannot import
@@ -68,6 +69,8 @@ var _ scamFlaggedAssetLister = (*timescale.Store)(nil)
 const (
 	scamCacheTTL = 60 * time.Second
 	scamCacheMax = 8192
+
+	sacRefreshTimeout = 30 * time.Second
 )
 
 type scamVerdict struct {
@@ -88,6 +91,8 @@ type ScamGate struct {
 	sacMu         sync.Mutex
 	sacIndex      map[string]struct{} // SAC contract ids of flagged issuances
 	sacExpires    time.Time
+	sacRefreshing bool
+	sacRefresh    sync.WaitGroup // tracks the background rebuild, for tests
 }
 
 // ScamGateOptions tunes a ScamGate.
@@ -316,20 +321,70 @@ func (g *ScamGate) flaggedSAC(ctx context.Context, contractID, surface string) b
 	return true
 }
 
-// flaggedSACIndex returns the cached SAC-id set, rebuilding it once per
-// scamCacheTTL so a cleared flag stops withholding on the same clock as
-// the issuer cache.
+// flaggedSACIndex returns the cached SAC-id set. Only the first build blocks: the listing is
+// ~180k rows, so an expired index is served while one background rebuild replaces it, and a
+// cleared or new flag takes effect within scamCacheTTL plus one rebuild.
 func (g *ScamGate) flaggedSACIndex(ctx context.Context) (map[string]struct{}, error) {
-	now := g.clock()
 	g.sacMu.Lock()
 	defer g.sacMu.Unlock()
-	if g.sacIndex != nil && now.Before(g.sacExpires) {
-		return g.sacIndex, nil
+	if g.sacIndex == nil {
+		return g.buildSACIndexLocked(ctx)
 	}
+	if !g.clock().Before(g.sacExpires) && !g.sacRefreshing {
+		g.sacRefreshing = true
+		g.sacRefresh.Add(1)
+		go g.refreshSACIndex(context.WithoutCancel(ctx))
+	}
+	return g.sacIndex, nil
+}
+
+// WarmSACIndex builds the SAC index before the first priced request would; a failure is left to that request.
+func (g *ScamGate) WarmSACIndex(ctx context.Context) {
+	if g == nil || g.flaggedAssets == nil {
+		return
+	}
+	_, _ = g.flaggedSACIndex(ctx)
+}
+
+// refreshSACIndex rebuilds the index off the request path. On failure the previous index stays
+// (safer than the fail-open first build) and the next expired read retries.
+func (g *ScamGate) refreshSACIndex(ctx context.Context) {
+	defer g.sacRefresh.Done()
+	// A panic must still clear sacRefreshing, or no rebuild would ever start again.
+	defer func() {
+		if r := recover(); r != nil {
+			worker.Report(g.logger, "scam-sac-index-refresh", r)
+			g.sacMu.Lock()
+			g.sacRefreshing = false
+			g.sacMu.Unlock()
+		}
+	}()
+	ctx, cancel := context.WithTimeout(ctx, sacRefreshTimeout)
+	defer cancel()
+	assets, err := g.flaggedAssets.DirectoryScamFlaggedClassicAssets(ctx)
+	g.sacMu.Lock()
+	defer g.sacMu.Unlock()
+	g.sacRefreshing = false
+	if err != nil {
+		obs.ScamGateLookupFailuresTotal.WithLabelValues("sac_index_refresh").Inc()
+		if g.logger != nil {
+			g.logger.Warn("scam pricing gate: flagged-asset listing refresh failed — keeping the previous SAC index", "err", err)
+		}
+		return
+	}
+	g.sacIndex, g.sacExpires = sacIndexOf(assets), g.clock().Add(scamCacheTTL)
+}
+
+func (g *ScamGate) buildSACIndexLocked(ctx context.Context) (map[string]struct{}, error) {
 	assets, err := g.flaggedAssets.DirectoryScamFlaggedClassicAssets(ctx)
 	if err != nil {
 		return nil, err
 	}
+	g.sacIndex, g.sacExpires = sacIndexOf(assets), g.clock().Add(scamCacheTTL)
+	return g.sacIndex, nil
+}
+
+func sacIndexOf(assets []canonical.Asset) map[string]struct{} {
 	index := make(map[string]struct{}, len(assets))
 	for _, a := range assets {
 		// An invalid stored code or issuer has no derivable SAC to match.
@@ -337,8 +392,7 @@ func (g *ScamGate) flaggedSACIndex(ctx context.Context) (map[string]struct{}, er
 			index[cid] = struct{}{}
 		}
 	}
-	g.sacIndex, g.sacExpires = index, now.Add(scamCacheTTL)
-	return index, nil
+	return index
 }
 
 func (g *ScamGate) clock() time.Time {
