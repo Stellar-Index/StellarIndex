@@ -2078,8 +2078,6 @@ func buildOracleDivergenceReferences(cfg config.DivergenceConfig, oracles diverg
 	return refs
 }
 
-// mevObserver adapts the MEV worker's per-run outcomes to Prometheus (counter, duration histogram
-// and new-events counter).
 // priceAlertVWAPStore is the storage seam priceAlertVWAPReader needs (latest closed bucket plus the
 // guard's trailing baseline), kept an interface so the reader is unit-testable without a database.
 type priceAlertVWAPStore interface {
@@ -2198,6 +2196,8 @@ func buildAggregatorSubstanceGate(cfg config.PricingGuardConfig, store *timescal
 	return pricingguard.NewSubstanceGate(store, pricingguard.SubstanceGateOptions{Policy: pol, Logger: logger})
 }
 
+// mevObserver adapts the MEV worker's per-run outcomes to Prometheus (counter, duration histogram
+// and new-events counter).
 type mevObserver struct{}
 
 func (mevObserver) Run(outcome string, dur time.Duration, _ int, inserted int) {
