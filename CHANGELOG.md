@@ -20,6 +20,16 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.35] - 2026-10-20
+
+Postgres migration 0222 (new tables and a trigger; no replay). No `pkg/*` break. No config change.
+
+### Fixed
+
+- **timescale:** the pools raw prefilter writes only the asset and source predicates for filters that are set, so a cached generic plan uses the `pools_per_source_1h` asset indexes (228 ms to 83 ms on r1) (#3703).
+- **timescale:** the SEP-41 supply fold is bounded below by its checkpoint's close time, so planning prunes `sep41_supply_events` chunks (88 ms to 0.5 ms planning); the folded set is unchanged (#3703).
+- **timescale:** SAC balance sums read the trigger-kept `sac_balance_current` table (migration 0222) instead of a full-history DISTINCT ON (3.5 s per call on r1) (#3704).
+
 ## [v0.116.34] - 2026-10-20
 
 No migrations. No `pkg/*` break. No config change. After the deploy, watch `go_sql_wait_count_total{db_name="serving"}` and the API's new-session rate in `pg_stat_database` during the next explorer build.
@@ -69,18 +79,3 @@ No migrations. No `pkg/*` break. No config change.
 
 - **ci:** the mainnet explorer deploy is dispatched by `deploy.yml` after a stable r1 deploy succeeds, not by `release.yml` at the tag, so its prerender crawl no longer hits r1 while it restarts (#3670).
 - Long comment blocks condensed across `internal/`, `cmd/`, `pkg/client` and the test files (#3662–#3667); actionlint's shellcheck pass is on (#3661).
-
-## [v0.116.30] - 2026-10-20
-
-No migrations. No `pkg/*` break. Apply the ansible role after the deploy: it renders `api.dashboard.resend_domain_id`. The deploy applies the alert-rule changes.
-
-### Fixed
-
-- **monitoring:** 34 counter alerts per rule tree also fire on a series' first appearance, so a one-off failure on an unseeded counter (born at N, where `increase()` reads 0) no longer goes unseen; the arm is muted until the TSDB holds its lookback (#3658).
-- **obs:** per-source decode and orphan error series are exported at 0, and the launch-day F-0100 presence check names its 12 families so it can fail (#3657).
-- **ansible:** the API config carries the Resend domain id, so the API pins click and open tracking off at boot (#3656).
-
-### Changed
-
-- **ci:** each stable release dispatches the mainnet explorer production deploy, still behind its approval gate (#3659).
-- **docs:** the live-deployment smoke points at the public API (#3655).
