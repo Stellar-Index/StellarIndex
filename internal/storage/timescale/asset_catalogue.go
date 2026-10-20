@@ -1247,8 +1247,8 @@ var getAssetBySlugSQL = `
 		  -- collision (the disambiguation guard from scam-token
 		  -- protection still applies on the friendly-slug path because
 		  -- a curated slug column value beats every code-only match).
-		  -- Pre-2026-05-10 canonical asset_id form (CODE-ISSUER) 404'd
-		  -- because the WHERE only matched COALESCE(slug, code).
+		  -- COALESCE(slug, code) = $1 spelled out per column, so each arm
+		  -- reads its own index instead of a full classic_assets scan.
 		  --
 		  -- Same spine as the listing's catalogue_assets: classic_assets
 		  -- UNION the traded Soroban-native contracts from
@@ -1263,7 +1263,8 @@ var getAssetBySlugSQL = `
 		      SELECT asset_id, code, issuer_g_strkey, slug,
 		             first_seen_ledger, last_seen_ledger, observation_count
 		        FROM classic_assets
-		       WHERE COALESCE(slug, code) = $1
+		       WHERE slug = $1
+		          OR (slug IS NULL AND code = $1)
 		          OR asset_id = $1
 		      UNION ALL
 		      SELECT d.contract_id AS asset_id,

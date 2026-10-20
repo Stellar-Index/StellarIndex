@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math/big"
 	"net/http/httptest"
@@ -2188,6 +2189,64 @@ func TestPoolsFilterFoldsOrientationAndAliases(t *testing.T) {
 						name, order, src, got[src], w)
 				}
 			}
+		}
+	}
+}
+
+// TestGetAssetBySlug_ResolvesEachInputShape pins the per-column predicate to COALESCE(slug, code) = $1 OR asset_id = $1:
+// a code resolves only a row with no slug, so a curated slug can't be shadowed by a bare code match.
+func TestGetAssetBySlug_ResolvesEachInputShape(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	c.InstallAliasRegistry(nil)
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	const (
+		slugged   = "FOO-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+		unslugged = "BAR-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
+	)
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO classic_assets
+		    (asset_id, code, issuer_g_strkey, slug,
+		     first_seen_at, first_seen_ledger, last_seen_at, last_seen_ledger)
+		VALUES ($1, 'FOO', 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN', 'foo',
+		        now(), 1, now(), 1),
+		       ($2, 'BAR', 'GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA', NULL,
+		        now(), 1, now(), 1)`, slugged, unslugged); err != nil {
+		t.Fatalf("seed classic_assets: %v", err)
+	}
+
+	for _, tc := range []struct{ in, want string }{
+		{"foo", slugged},
+		{slugged, slugged},
+		{"BAR", unslugged},
+		{unslugged, unslugged},
+		{"FOO", ""}, // FOO has a slug, so its bare code is not a key
+	} {
+		row, err := store.GetAssetBySlug(ctx, tc.in)
+		if tc.want == "" {
+			if !errors.Is(err, sql.ErrNoRows) {
+				t.Errorf("GetAssetBySlug(%q): err = %v, row = %q; want sql.ErrNoRows", tc.in, err, row.AssetID)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("GetAssetBySlug(%q): %v", tc.in, err)
+		}
+		if row.AssetID != tc.want {
+			t.Errorf("GetAssetBySlug(%q) = %q, want %q", tc.in, row.AssetID, tc.want)
 		}
 	}
 }
