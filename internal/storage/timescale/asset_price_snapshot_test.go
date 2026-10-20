@@ -117,7 +117,7 @@ func TestAssetPriceSnapshot_StalenessBoundIsEnforcedInSQL(t *testing.T) {
 
 	want := "aps.computed_at > now() - INTERVAL '" + assetPriceSnapshotMaxAge + "'"
 	for _, order := range []AssetsOrder{AssetsOrderVolume24hUSDDesc, AssetsOrderObservationCountDesc} {
-		sql := listAssetsBaseSelectSQL(order)
+		sql := listAssetsSQL(order, "", "$1")
 		if !strings.Contains(sql, want) {
 			t.Errorf("order %v: listing join must bound snapshot age with %q — "+
 				"without it a wedged aggregator serves indefinitely-old prices as current", order, want)

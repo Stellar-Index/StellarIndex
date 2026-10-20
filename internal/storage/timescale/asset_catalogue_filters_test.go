@@ -198,14 +198,14 @@ func TestListingRankTierExpr_ThreeCallSitesStayInStep(t *testing.T) {
 	t.Parallel()
 	for _, order := range []AssetsOrder{AssetsOrderVolume24hUSDDesc, AssetsOrderObservationCountDesc} {
 		tier := listingRankTierExpr(order)
-		sel := listAssetsBaseSelectSQL(order)
-		if strings.Contains(sel, rankTierMarker) {
-			t.Errorf("order %v: rendered SELECT still holds the %s marker — that is a syntax error, not a comment", order, rankTierMarker)
+		sel := listAssetsSQL(order, "", "$1")
+		if strings.Contains(sel, rankedMarker) {
+			t.Errorf("order %v: rendered SELECT still holds the %s marker — that is a syntax error, not a comment", order, rankedMarker)
 		}
 		if !strings.Contains(sel, tier+" AS rank_tier") {
 			t.Errorf("order %v: SELECT does not emit listingRankTierExpr AS rank_tier", order)
 		}
-		if !strings.Contains(sel, "LEFT JOIN account_directory") {
+		if !strings.Contains(sel, "FROM account_directory fd") {
 			t.Errorf("order %v: SELECT is missing the account_directory join the tier reads", order)
 		}
 		// The tier's price arm reads asset_price_snapshot (listingPriceUSDExpr ==
@@ -238,7 +238,7 @@ func TestListingRankTierExpr_PriceTierIsVolumeOrderOnly(t *testing.T) {
 		t.Errorf("observation-count order must NOT reorder on price; got %q", obs)
 	}
 	for _, expr := range []string{vol, obs} {
-		if !strings.Contains(expr, "THEN 2") || !strings.Contains(expr, "unnest(dir.tags)") {
+		if !strings.Contains(expr, "THEN 2") || !strings.Contains(expr, directoryScamFlaggedExpr) {
 			t.Errorf("every order must demote directory-flagged issuers to tier 2; got %q", expr)
 		}
 	}
@@ -409,8 +409,8 @@ func TestCatalogueSlugProjection_FallsBackToAssetID(t *testing.T) {
 	// rendering the store uses. (There is no issuer-pushdown rendering:
 	// the per-request price CTEs it narrowed are gone.)
 	for name, sql := range map[string]string{
-		"list_volume": listAssetsBaseSelectSQL(AssetsOrderVolume24hUSDDesc),
-		"list_obs":    listAssetsBaseSelectSQL(AssetsOrderObservationCountDesc),
+		"list_volume": listAssetsSQL(AssetsOrderVolume24hUSDDesc, "", "$1"),
+		"list_obs":    listAssetsSQL(AssetsOrderObservationCountDesc, "", "$1"),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if strings.Contains(sql, "COALESCE(ca.slug, ca.code)") {
@@ -487,18 +487,18 @@ func TestListAssets_readsAssetVolumeRollup(t *testing.T) {
 }
 
 // TestListAssetsBaseSelectSQL_rendersForBothOrders guards the one render-time substitution: every ordering
-// must read the volume rollup and leave no /*RANK_TIER*/ marker (listAssetsBaseSelectSQL panics if it is
+// must read the volume rollup and leave no /*RANKED*/ marker (listAssetsSQL panics if it is
 // absent).
 func TestListAssetsBaseSelectSQL_rendersForBothOrders(t *testing.T) {
 	for _, order := range []AssetsOrder{AssetsOrderVolume24hUSDDesc, AssetsOrderObservationCountDesc} {
-		sql := listAssetsBaseSelectSQL(order)
+		sql := listAssetsSQL(order, "", "$1")
 		if !strings.Contains(sql, "FROM asset_volume_24h") {
 			t.Errorf("order %v: render lost the volume rollup read", order)
 		}
 		if strings.Contains(sql, "/*PUSHDOWN_") || strings.Contains(sql, "chosen_assets") {
 			t.Errorf("order %v: pushdown machinery is back — it has nothing left to narrow", order)
 		}
-		if strings.Contains(sql, rankTierMarker) {
+		if strings.Contains(sql, rankedMarker) {
 			t.Errorf("order %v: unsubstituted rank-tier marker would ship as a syntax error", order)
 		}
 	}
