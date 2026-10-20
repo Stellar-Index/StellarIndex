@@ -35,13 +35,10 @@ type Options struct {
 	// call unless [Options.AllowInsecureHTTP] is set.
 	APIKey string
 
-	// HTTPClient is the underlying transport. Non-nil callers
-	// supply their own *http.Client to control timeouts, transport
-	// pooling, instrumentation, etc. Nil falls through to a default
-	// client with [DefaultTimeout]. The SDK uses a shallow copy whose
-	// CheckRedirect first refuses any redirect that would carry APIKey
-	// to another host or port, or from https to http, then defers to
-	// the supplied client's own CheckRedirect.
+	// HTTPClient is the underlying transport; nil falls back to a default client with [DefaultTimeout].
+	// The SDK uses a shallow copy whose CheckRedirect first refuses any redirect that would carry
+	// APIKey to another host or port, or from https to http, then defers to the supplied client's own
+	// CheckRedirect.
 	HTTPClient *http.Client
 
 	// UserAgent overrides the SDK's User-Agent header. Empty leaves
@@ -256,13 +253,9 @@ func decodeJSONResponse(resp *http.Response, method, path string, out any) error
 		if err := json.Unmarshal(bodyBytes, out); err != nil {
 			return fmt.Errorf("client: decode response: %w", err)
 		}
-		// A well-formed but degenerate 2xx body ({}, {"data":null})
-		// unmarshals without error into a zero Envelope, which would
-		// otherwise surface to the caller as a silent zero-value
-		// result. Enforce the one invariant every server envelope
-		// carries — a populated as_of — so such a response fails loudly
-		// instead. Endpoints that pass a non-Envelope out (or nil) skip
-		// this via the type assertion.
+		// A degenerate 2xx body ({}, {"data":null}) unmarshals into a zero Envelope without error. Enforce
+		// the one invariant every envelope carries (a populated as_of) so it fails loudly. Non-Envelope
+		// or nil out values skip this via the type assertion.
 		if v, ok := out.(interface{ validateEnvelope() error }); ok {
 			if err := v.validateEnvelope(); err != nil {
 				return fmt.Errorf("client: %s %s: %w", method, path, err)
