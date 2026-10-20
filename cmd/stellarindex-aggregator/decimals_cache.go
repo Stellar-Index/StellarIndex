@@ -18,10 +18,9 @@ type decimalsAssetReader interface {
 	LoadNonstandardDecimalsAssets(ctx context.Context) ([]timescale.NonstandardDecimalsAsset, error)
 }
 
-// decimalsCache mirrors api/v1.NonstandardDecimalsCache for orchestrator.Config.DecimalsLookup (decimals-normalized VWAP for non-7dp
-// legs).
-// Fail-open: a read error or unrefreshed cache reports "nothing flagged", so a Postgres blip delays normalization instead of blocking
-// VWAP.
+// decimalsCache mirrors api/v1.NonstandardDecimalsCache for orchestrator.Config.DecimalsLookup (decimals-normalized VWAP for
+// non-7dp legs). Fail-open: a read error or unrefreshed cache reports "nothing flagged", so a Postgres blip delays
+// normalization instead of blocking VWAP.
 type decimalsCache struct {
 	mu     sync.RWMutex
 	assets map[string]int

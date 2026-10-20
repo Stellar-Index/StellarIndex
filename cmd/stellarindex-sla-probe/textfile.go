@@ -24,10 +24,8 @@ func writeTextfile(w io.Writer, rep *report) error {
 	if rep == nil {
 		return nil
 	}
-	// Keyed on (Endpoint, Pair): with more than one -pair, every pair
-	// produces a "price"/"price-tip"/"oracle-latest" row, and keying on
-	// Endpoint alone would let the later pair's stats clobber the
-	// earlier one's in this map.
+	// Keyed on (Endpoint, Pair): with more than one -pair, every pair produces a "price"/"price-tip"/"oracle-latest" row, and
+	// keying on Endpoint alone would let the later pair's stats clobber the earlier one's in this map.
 	endpoints := make([]string, 0, len(rep.PerEndpoint))
 	statsByEndpoint := make(map[string]stats, len(rep.PerEndpoint))
 	for _, st := range rep.PerEndpoint {

@@ -146,10 +146,8 @@ func (r CachedMarketsReader) GetPairsVolumeHistory24hBatch(ctx context.Context, 
 }
 
 func (r CachedMarketsReader) AllPools(ctx context.Context, filter timescale.PoolsFilter, cursor string, limit int, order timescale.MarketsOrder) ([]v1.Pool, string, error) {
-	// Pools queries are heavy (group by source × pair); cache
-	// follows the same TTL as the markets list. Cache key
-	// includes the filter so pools-with-DEX-filter, pools-by-pair,
-	// and unfiltered pools don't collide.
+	// Pools queries are heavy (group by source × pair); cache follows the same TTL as the markets list. Cache key includes the
+	// filter so pools-with-DEX-filter, pools-by-pair, and unfiltered pools don't collide.
 	if r.RDB == nil {
 		return r.Inner.AllPools(ctx, filter, cursor, limit, order)
 	}

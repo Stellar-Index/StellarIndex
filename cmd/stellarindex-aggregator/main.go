@@ -166,9 +166,8 @@ func run(cfgPath string, dryRun bool) error {
 	rootCtx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 
 	// ─── Storage ─────────────────────────────────────────────────
-	// OpenBackground applies a generous session-level statement_timeout as
-	// the SQL-side runaway backstop. Heavy batch scans SET LOCAL
-	// a longer bound inside their own transactions, overriding it.
+	// OpenBackground applies a generous session-level statement_timeout as the SQL-side runaway backstop. Heavy batch scans SET
+	// LOCAL a longer bound inside their own transactions, overriding it.
 	store, err := timescale.OpenBackground(rootCtx, cfg.Storage.PostgresDSN, timescale.BackgroundStatementTimeout)
 	if err != nil {
 		cancel() // nothing else registered yet; release the signal ctx
@@ -218,8 +217,7 @@ func run(cfgPath string, dryRun bool) error {
 	logger.Info("redis configured", "mode", mode)
 
 	// ─── Pair + window resolution ────────────────────────────────
-	// Operator override via [aggregate].pairs / .windows wins; an
-	// empty list falls back to the built-in defaults so a fresh
+	// Operator override via [aggregate].pairs / .windows wins; an empty list falls back to the built-in defaults so a fresh
 	// deployment with no aggregator config still runs.
 	pairs, err := cfg.Aggregate.AggregatorPairs()
 	if err != nil {
@@ -492,10 +490,8 @@ func run(cfgPath string, dryRun bool) error {
 		}
 		var closeTimes ledgerCloseTimeReader
 		if dryRun {
-			// -dry-run validates connectivity synchronously so a bad
-			// config fails -dry-run instead of only surfacing at a real
-			// start. The process exits right after this branch either way,
-			// so a single dial attempt (no retry) is correct here.
+			// -dry-run validates connectivity synchronously so a bad config fails -dry-run instead of only surfacing at a real
+			// start. The process exits right after this branch either way, so a single dial attempt (no retry) is correct here.
 			supplyCloseTimes, err := clickhouse.NewExplorerReader(rootCtx, cfg.Storage.ClickHouseAddr)
 			if err != nil {
 				return fmt.Errorf("supply refresher close-time reader: %w", err)
@@ -604,7 +600,7 @@ func run(cfgPath string, dryRun bool) error {
 		}
 	}()
 
-	// ─── Asset volume-character rollup worker (§2) ──────────────
+	// ─── Asset volume-character rollup worker ──────────────
 	// Folds the trailing-window account-structure roll over `trades` (each trade counted on BOTH
 	// sides, folded onto canonical assets) into asset_volume_character, so /v1/assets{,/{id}} do a
 	// PK lookup instead of a ~4s per-request roll. Runs after the alias registry is installed, so
@@ -705,17 +701,15 @@ func run(cfgPath string, dryRun bool) error {
 	go func() {
 		defer worker.Recover(logger, "gap-detector")
 		defer refresherWG.Done()
-		// Network-scoped: every target Genesis is a PUBNET
-		// contract-deploy ledger, so on a test net the pubnet-only
-		// targets scan [genesis, tip] with genesis ABOVE tip and error
-		// out every cycle forever. sourcenet decides which exist here.
+		// Network-scoped: every target Genesis is a PUBNET contract-deploy ledger, so on a test net the pubnet-only targets
+		// scan [genesis, tip] with genesis ABOVE tip and error out every cycle forever. sourcenet decides which exist here.
 		if err := timescale.RunGapDetector(rootCtx, store, logger.With("component", "gap-detector"),
 			cfg.Stellar.Network); err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("gap-detector exited with error", "err", err)
 		}
 	}()
 
-	// ─── MEV detection worker (§7.20) ───────────────────────────
+	// ─── MEV detection worker ───────────────────────────
 	// Every 5 min scans the recent served-row window for MEV patterns: arbitrage and wash trading
 	// from trades, liquidation cascades from blend_auctions x oracle_updates, and (when the lake is
 	// reachable) sandwich / oracle-sandwich, which need the intra-ledger tx order only the
@@ -796,10 +790,8 @@ func run(cfgPath string, dryRun bool) error {
 			guard := decimalsguard.New(store, er, decimalsguard.Options{
 				Window: decimalsguard.DefaultWindow,
 				Logger: logger.With("component", "decimals-guard"),
-				// Persists each confirmed offender into
-				// nonstandard_decimals_assets (migration 0093) so the
-				// API's read-time serving guard can decline pricing —
-				// turns detection into an actual stop-serving lever.
+				// Persists each confirmed offender into nonstandard_decimals_assets (migration 0093) so the API's read-time
+				// serving guard can decline pricing — turns detection into an actual stop-serving lever.
 				Writer: store,
 			})
 			// One-time startup self-seed: catches a non-7-decimal token that traded and went
@@ -831,10 +823,8 @@ func run(cfgPath string, dryRun bool) error {
 				// The binary's shared withholding gate: an alert must not
 				// fire off a pair the API itself would refuse to price.
 				gate: withholding,
-				// Same decimals correction /v1/price applies before serving
-				// — without it a nonstandard-decimals asset's threshold
-				// (set from the corrected price) is compared against a raw
-				// ratio 10^k off.
+				// Same decimals correction /v1/price applies before serving — without it a nonstandard-decimals asset's
+				// threshold (set from the corrected price) is compared against a raw ratio 10^k off.
 				decimals: decimalsLookup,
 			},
 			pricealerts.Options{
@@ -975,10 +965,9 @@ func buildSupplyRefreshers(cfg config.Config, store *timescale.Store, closeTimes
 	return out, nil
 }
 
-// buildSupplyPolicy resolves per-asset locked-set/max-supply overrides into a validated supply.Policy so a malformed override fails
-// startup.
-// Both maps are re-keyed to supply.AssetKey form: the computers match keys exactly, so the dash spelling would load cleanly and never
-// apply.
+// buildSupplyPolicy resolves per-asset locked-set/max-supply overrides into a validated supply.Policy so a malformed override
+// fails startup. Both maps are re-keyed to supply.AssetKey form: the computers match keys exactly, so the dash spelling would
+// load cleanly and never apply.
 func buildSupplyPolicy(cfg config.SupplyConfig) (supply.Policy, error) {
 	maxSupply, err := supply.CanonicalizePolicyKeys(cfg.MaxSupplyOverrides)
 	if err != nil {
@@ -1178,10 +1167,9 @@ func sep41RollupOutcome(res timescale.SEP41RollupAdvance, err error) string {
 	return "ok"
 }
 
-// runSEP41SupplyRollup periodically folds newly-settled SEP-41 mint/burn/clawback events into each rollup checkpoint so readers add a
-// bounded delta.
-// Contracts advance SEQUENTIALLY: a cold first fold is a full-history sum, and fanning out would saturate Postgres and blow up API
-// p95/p99.
+// runSEP41SupplyRollup periodically folds newly-settled SEP-41 mint/burn/clawback events into each rollup checkpoint so readers
+// add a bounded delta. Contracts advance SEQUENTIALLY: a cold first fold is a full-history sum, and fanning out would saturate
+// Postgres and blow up API p95/p99.
 func runSEP41SupplyRollup(ctx context.Context, advancer sep41RollupAdvancer, contracts []string, cadence time.Duration, logger *slog.Logger) {
 	// Contracts currently pinned by an absent projector cursor; WARN once on
 	// entering that state, not every cadence.
@@ -1257,10 +1245,9 @@ func runSupplyRefresh(ctx context.Context, r *supply.Refresher, cadence time.Dur
 	}
 }
 
-// ledgerCloseTimeReader resolves the lake's landed tip at or before a ledger and its on-chain close time (stellar.ledgers); an interface
-// for
-// testability.
-// found=false means no row in the bounded window (the ledger and the maxSupplyLakeClampLedgers below it).
+// ledgerCloseTimeReader resolves the lake's landed tip at or before a ledger and its on-chain close time (stellar.ledgers); an
+// interface for testability. found=false means no row in the bounded window (the ledger and the maxSupplyLakeClampLedgers below
+// it).
 type ledgerCloseTimeReader interface {
 	LatestLedgerAtOrBefore(ctx context.Context, maxSeq uint32) (uint32, time.Time, bool, error)
 }
@@ -1280,10 +1267,9 @@ const supplyChainCursorSource = "ledgerstream"
 // so resolution fails closed. It IS the lookup's scan window (clickhouse.LatestLedgerLookbackLedgers), not a second copy.
 const maxSupplyLakeClampLedgers = clickhouse.LatestLedgerLookbackLedgers
 
-// supplyAggregatorLedgers adapts cursors + lake to supply.LedgerLookup; ObservedAt is the ledger's real stellar.ledgers close_time, never
-// time.Now().
-// Position is the chain cursor (not MAX over job cursors), clamped to the lake's landed tip; fails closed with a retryable no_ledger
-// error.
+// supplyAggregatorLedgers adapts cursors + lake to supply.LedgerLookup; ObservedAt is the ledger's real stellar.ledgers
+// close_time, never time.Now(). Position is the chain cursor (not MAX over job cursors), clamped to the lake's landed tip;
+// fails closed with a retryable no_ledger error.
 type supplyAggregatorLedgers struct {
 	s          supplyCursorLister
 	closeTimes ledgerCloseTimeReader
@@ -1572,10 +1558,9 @@ func defaultPairs() []canonical.Pair {
 	return out
 }
 
-// startMetricsServer mounts /metrics + /healthz at cfg.MetricsListen; empty disables it with a warning, though the alert rules need these
-// counters scrapable.
-// If metrics_listen was never set and holds the indexer's default, shift to :9465 so one host doesn't lose a listener to "address in use";
-// explicit values stand.
+// startMetricsServer mounts /metrics + /healthz at cfg.MetricsListen; empty disables it with a warning, though the alert rules
+// need these counters scrapable. If metrics_listen was never set and holds the indexer's default, shift to :9465 so one host
+// doesn't lose a listener to "address in use"; explicit values stand.
 func startMetricsServer(cfg config.ObsConfig, schema v1.SchemaVersionReader, logger *slog.Logger) *http.Server {
 	if cfg.MetricsListen == "" {
 		logger.Warn("obs.metrics_listen is empty — /metrics endpoint disabled; aggregator-silent / outlier-storm / class-drop-spike alerts will not fire")
@@ -1734,10 +1719,9 @@ func buildCrossCheckRefresher(cfg config.Config, store *timescale.Store, logger 
 	)
 }
 
-// crossCheckPairs derives a CrossCheckPair per sac_wrappers entry whose classic asset and contract are both watched, ordered by SAC id;
-// SEP-41 self-maps are skipped.
-// The contract must be the classic asset's derived SAC (same-asset precondition; 7 decimals make the 1-stroop tolerance meaningful), else
-// startup fails.
+// crossCheckPairs derives a CrossCheckPair per sac_wrappers entry whose classic asset and contract are both watched, ordered by
+// SAC id; SEP-41 self-maps are skipped. The contract must be the classic asset's derived SAC (same-asset precondition; 7
+// decimals make the 1-stroop tolerance meaningful), else startup fails.
 func crossCheckPairs(sc config.SupplyConfig, passphrase string, logger *slog.Logger) ([]supply.CrossCheckPair, error) {
 	if len(sc.SACWrappers) == 0 {
 		return nil, nil
@@ -2017,10 +2001,11 @@ func buildDivergenceReferences(cfg config.DivergenceConfig, cgKeys config.CoinGe
 	return appendSyntheticCrossReference(refs, extraFX, logger)
 }
 
-// appendSyntheticCrossReference derives the USD-cross reference from the ALREADY-GATED set with no gate of its own, so it exists whenever
-// a USD-quoted oracle leg and a fiat leg do. CoinGecko is excluded (it would correlate the synthetic with the source it corroborates); it
-// gives EUR/GBP pairs a second reference. extraFX are FX legs that are not references themselves: without a non-Reflector FX leg the
-// reflector-cex base leg can never pair, so the cross dies whenever the sparse redstone/chainlink legs go stale.
+// appendSyntheticCrossReference derives the USD-cross reference from the ALREADY-GATED set with no gate of its own, so it
+// exists whenever a USD-quoted oracle leg and a fiat leg do. CoinGecko is excluded (it would correlate the synthetic with the
+// source it corroborates); it gives EUR/GBP pairs a second reference. extraFX are FX legs that are not references themselves:
+// without a non-Reflector FX leg the reflector-cex base leg can never pair, so the cross dies whenever the sparse
+// redstone/chainlink legs go stale.
 func appendSyntheticCrossReference(refs, extraFX []divergence.Reference, logger *slog.Logger) []divergence.Reference {
 	byName := make(map[string]divergence.Reference, len(refs))
 	for _, r := range refs {
@@ -2102,10 +2087,8 @@ type priceAlertVWAPStore interface {
 	RecentClosedVWAP1mCombined(ctx context.Context, p canonical.Pair, limit int) ([]timescale.Vwap1mRow, error)
 }
 
-// priceAlertVWAPReader adapts the store to pricealerts.PriceReader, combining both stored pair orientations; sql.ErrNoRows maps to
-// ok=false,
-// not a failure.
-// Vwap1mRow.Bucket is the START of the 1-minute window, so the reported close time is +1 minute.
+// priceAlertVWAPReader adapts the store to pricealerts.PriceReader, combining both stored pair orientations; sql.ErrNoRows maps
+// to ok=false, not a failure. Vwap1mRow.Bucket is the START of the 1-minute window, so the reported close time is +1 minute.
 type priceAlertVWAPReader struct {
 	store  priceAlertVWAPStore
 	logger *slog.Logger
@@ -2173,10 +2156,9 @@ func (r priceAlertVWAPReader) adjustServed(b, q canonical.Asset, served timescal
 	return adjusted, served.Bucket.Add(time.Minute), true, nil
 }
 
-// adjustDecimalString scales a decimal-string ratio by the decimals factor (an exact power of ten, so no digit is lost) and renders it
-// exactly.
-// A fixed-width FloatString(10) would truncate prices below 1e-10 to "0", and a positive price must never reach the alert comparator as
-// zero.
+// adjustDecimalString scales a decimal-string ratio by the decimals factor (an exact power of ten, so no digit is lost) and
+// renders it exactly. A fixed-width FloatString(10) would truncate prices below 1e-10 to "0", and a positive price must never
+// reach the alert comparator as zero.
 func adjustDecimalString(raw string, baseDecimals, quoteDecimals int) (string, error) {
 	if baseDecimals == quoteDecimals {
 		return raw, nil
@@ -2255,11 +2237,9 @@ var (
 	decimalsResolverRetryMax = 5 * time.Minute
 )
 
-// dialDecimalsResolver opens the lake reader the decimals guard needs, retrying with exponential backoff until success or ctx done (ok
-// false
-// only on shutdown).
-// Retry is load-bearing: without the guard AdjustPrice applies no correction and served prices skew by 10^(7-decimals), so a failed boot
-// dial must delay it, not retire it.
+// dialDecimalsResolver opens the lake reader the decimals guard needs, retrying with exponential backoff until success or ctx
+// done (ok false only on shutdown). Retry is load-bearing: without the guard AdjustPrice applies no correction and served
+// prices skew by 10^(7-decimals), so a failed boot dial must delay it, not retire it.
 func dialDecimalsResolver(
 	ctx context.Context,
 	logger *slog.Logger,
