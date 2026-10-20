@@ -61,11 +61,7 @@
 #                            no file list and stays deferred to
 #                            scripts/dev/verify.sh (64 s over the tree).
 #
-# Two adoption notes, both visible in the plan output rather than silent:
-#   - actionlint runs with its embedded shellcheck pass OFF (-shellcheck=): the
-#     workflow tree has 15 pre-existing findings from it (one SC2260:error in
-#     deploy.yml) and a Tier-0 gate cannot be what adopts them. Its own checks
-#     (syntax, expressions, action inputs, runner labels) are all on and green.
+# Adoption note, visible in the plan output rather than silent:
 #   - zizmor runs --offline. CI also runs the online audits, including
 #     ref-version-mismatch (a pin whose version comment lies); see
 #     .github/zizmor.yml for the exact CI invocation.
@@ -369,8 +365,7 @@ if [ "${#wf_files[@]}" -gt 0 ]; then
     # here, and if it ever did the red would be the invariant CI asserts.
     add_step "lint-actions-pinning" "workflows dir" "$ci_dir/lint-actions-pinning.sh" ${wf_roots[@]+"${wf_roots[@]}"}
     if command -v actionlint >/dev/null 2>&1; then
-        add_step "actionlint" "embedded shellcheck off: 15 pre-existing findings in .github/workflows" \
-            actionlint -shellcheck= "${wf_files[@]}"
+        add_step "actionlint" "with embedded shellcheck" actionlint "${wf_files[@]}"
     else
         defer "actionlint" "actionlint is not installed (brew install actionlint)"
     fi

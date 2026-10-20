@@ -301,7 +301,7 @@ jobs:
       - name: Compute SHA256SUMS
         working-directory: dist
         run: |
-          sha256sum * > SHA256SUMS
+          sha256sum -- * > SHA256SUMS
           cat SHA256SUMS
 
       - name: Install cosign
@@ -419,11 +419,13 @@ jobs:
           ' CHANGELOG.md > "$NOTES"
           if [ ! -s "$NOTES" ]; then
             echo "::warning::No CHANGELOG section found for ${TAG}; falling back to commit summary"
-            echo "# Stellar Index ${TAG}" > "$NOTES"
-            echo "" >> "$NOTES"
-            echo "_Auto-generated notes — no CHANGELOG entry found for this tag._" >> "$NOTES"
-            echo "" >> "$NOTES"
-            echo "## Commits since previous release" >> "$NOTES"
+            {
+              echo "# Stellar Index ${TAG}"
+              echo ""
+              echo "_Auto-generated notes — no CHANGELOG entry found for this tag._"
+              echo ""
+              echo "## Commits since previous release"
+            } > "$NOTES"
             # `sed -n 1p`, not `head -1`: it reads to EOF, so the tag list
             # never writes into a closed pipe (scripts/ci/lint-shell-sigpipe.sh).
             PREV=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | grep -v "^${TAG}$" | sed -n 1p || true)

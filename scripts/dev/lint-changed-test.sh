@@ -137,7 +137,7 @@ expect_not "workflow -> lint-actions-pinning is NOT scoped to the changed file" 
 # workflow file(s)", blind to the sigpipe class.
 expect_has "workflow -> lint-shell-sigpipe over the workflows DIRECTORY, after the scripts" "lint-shell-sigpipe.sh scripts/dev/verify.sh tools/run.sh .github/workflows   (" "$out"
 if command -v actionlint >/dev/null 2>&1; then
-    expect_has "workflow -> actionlint with embedded shellcheck off" "actionlint -shellcheck= .github/workflows/w.yml" "$out"
+    expect_has "workflow -> actionlint with embedded shellcheck" "plan  actionlint: actionlint .github/workflows/w.yml" "$out"
 fi
 if command -v zizmor >/dev/null 2>&1; then
     expect_has "workflow -> zizmor offline at CI's confidence floor" "zizmor --offline --min-confidence medium .github/workflows/w.yml" "$out"

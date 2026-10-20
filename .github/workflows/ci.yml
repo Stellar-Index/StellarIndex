@@ -130,8 +130,8 @@ jobs:
           cache: true
       - name: Install gofumpt/goimports
         run: |
-          go install mvdan.cc/gofumpt@${GOFUMPT_VERSION}
-          go install golang.org/x/tools/cmd/goimports@${GOIMPORTS_VERSION}
+          go install "mvdan.cc/gofumpt@${GOFUMPT_VERSION}"
+          go install "golang.org/x/tools/cmd/goimports@${GOIMPORTS_VERSION}"
       # Measured standalone, full tree: gofumpt 3.8s, goimports 2.9s.
       # Both comfortably sub-5s even unscoped.
       - name: gofumpt (fast — full tree)
@@ -491,8 +491,8 @@ jobs:
       - name: Install tools
         if: needs.preflight.outputs.go == 'true'
         run: |
-          go install mvdan.cc/gofumpt@${GOFUMPT_VERSION}
-          go install golang.org/x/tools/cmd/goimports@${GOIMPORTS_VERSION}
+          go install "mvdan.cc/gofumpt@${GOFUMPT_VERSION}"
+          go install "golang.org/x/tools/cmd/goimports@${GOIMPORTS_VERSION}"
       - name: gofmt / gofumpt
         if: needs.preflight.outputs.go == 'true'
         run: |
@@ -2322,7 +2322,7 @@ jobs:
       - name: govulncheck
         if: needs.preflight.outputs.go == 'true'
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}
+          go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
           # Gated by a documented accepted-risk allowlist
           # (scripts/ci/govulncheck-allow.txt): the unmaintained lib/pq@v1.12.3
           # Postgres driver (ADR-0006) carries a batch of unpatched, malicious-
