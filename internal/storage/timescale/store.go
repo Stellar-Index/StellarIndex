@@ -76,6 +76,10 @@ type Store struct {
 	// independently and one stalling must not hide behind the other's progress.
 	sep41Watermark classicWatermarkCache
 
+	// xlmUSDPerHour and xlmUSDPerDay are the sparklines' shared XLM/USD legs ([Store.xlmUSDSeries]).
+	xlmUSDPerHour xlmUSDSeriesCache
+	xlmUSDPerDay  xlmUSDSeriesCache
+
 	// olderTradesEmpty holds pairs with no trades in [since, recent) of [Store.LatestTradesForPair]; key → when that was read.
 	olderTradesMu    sync.Mutex
 	olderTradesEmpty map[string]time.Time

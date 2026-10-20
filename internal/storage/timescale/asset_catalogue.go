@@ -795,7 +795,11 @@ const (
 // GetAssetPriceHistory24h returns up to 24 hourly USD price samples, oldest first, using the same direct-then-XLM-triangulated path as
 // price_usd.
 func (s *Store) GetAssetPriceHistory24h(ctx context.Context, assetID string) ([]AssetPricePoint, error) {
-	rows, err := s.db.QueryContext(ctx, getAssetPriceHistory24hSQL, assetAliasArray(assetID), canonical.NativeSACContractID())
+	periods, vwaps, err := s.xlmUSDSeries(ctx, &s.xlmUSDPerHour, xlmUSDPerHourSQL)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: GetAssetPriceHistory24h: %w", err)
+	}
+	rows, err := s.db.QueryContext(ctx, getAssetPriceHistory24hSQL, assetAliasArray(assetID), canonical.NativeSACContractID(), periods, vwaps)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: GetAssetPriceHistory24h: %w", err)
 	}
@@ -896,8 +900,7 @@ var getAssetPriceHistory24hSQL = `
 		      ) u
 		  ) z WHERE rn = 1
 		),
-		` + xlmUSDAnchorPerPeriodCTE("xlm_usd_per_hour", "h", "hour",
-	`date_trunc('hour', now() - INTERVAL '23 hours')`, "$2::text") + `
+		` + xlmUSDSeriesCTE("xlm_usd_per_hour", "h", 3) + `
 		SELECT
 		    to_char(hours.bucket, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS t,
 		    ROUND(COALESCE(
@@ -919,7 +922,11 @@ var getAssetPriceHistory24hSQL = `
 
 // GetAssetPriceHistory7d returns up to 7 daily USD price samples, oldest first, on the same path as GetAssetPriceHistory24h.
 func (s *Store) GetAssetPriceHistory7d(ctx context.Context, assetID string) ([]AssetPricePoint, error) {
-	rows, err := s.db.QueryContext(ctx, getAssetPriceHistory7dSQL, assetAliasArray(assetID), canonical.NativeSACContractID())
+	periods, vwaps, err := s.xlmUSDSeries(ctx, &s.xlmUSDPerDay, xlmUSDPerDaySQL)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: GetAssetPriceHistory7d: %w", err)
+	}
+	rows, err := s.db.QueryContext(ctx, getAssetPriceHistory7dSQL, assetAliasArray(assetID), canonical.NativeSACContractID(), periods, vwaps)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: GetAssetPriceHistory7d: %w", err)
 	}
@@ -1017,8 +1024,7 @@ var getAssetPriceHistory7dSQL = `
 		      ) u
 		  ) z WHERE rn = 1
 		),
-		` + xlmUSDAnchorPerPeriodCTE("xlm_usd_per_day", "d", "day",
-	`date_trunc('day', now() - INTERVAL '6 days')`, "$2::text") + `
+		` + xlmUSDSeriesCTE("xlm_usd_per_day", "d", 3) + `
 		SELECT
 		    to_char(days.bucket, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS t,
 		    ROUND(COALESCE(
@@ -1622,7 +1628,11 @@ func (s *Store) GetAssetsPriceHistory24hBatch(ctx context.Context, assetIDs []st
 		return map[string][]AssetPricePoint{}, nil
 	}
 	forms, owners, prios := assetAliasRows(assetIDs)
-	rows, err := s.db.QueryContext(ctx, getAssetsPriceHistory24hBatchSQL, forms, owners, prios, canonical.NativeSACContractID())
+	periods, vwaps, err := s.xlmUSDSeries(ctx, &s.xlmUSDPerHour, xlmUSDPerHourSQL)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: GetAssetsPriceHistory24hBatch: %w", err)
+	}
+	rows, err := s.db.QueryContext(ctx, getAssetsPriceHistory24hBatchSQL, forms, owners, prios, canonical.NativeSACContractID(), periods, vwaps)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: GetAssetsPriceHistory24hBatch: %w", err)
 	}
@@ -1714,8 +1724,7 @@ var getAssetsPriceHistory24hBatchSQL = `
 		    ) u
 		   ORDER BY asset_id, h, inverted, prio, bucket DESC, xlm_prio
 		),
-		` + xlmUSDAnchorPerPeriodCTE("xlm_usd_per_hour", "h", "hour",
-	`date_trunc('hour', now() - INTERVAL '23 hours')`, "$4::text") + `
+		` + xlmUSDSeriesCTE("xlm_usd_per_hour", "h", 5) + `
 		SELECT
 		    w.asset_id,
 		    to_char(hours.bucket, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS t,
@@ -1739,7 +1748,11 @@ func (s *Store) GetAssetsPriceHistory7dBatch(ctx context.Context, assetIDs []str
 		return map[string][]AssetPricePoint{}, nil
 	}
 	forms, owners, prios := assetAliasRows(assetIDs)
-	rows, err := s.db.QueryContext(ctx, getAssetsPriceHistory7dBatchSQL, forms, owners, prios, canonical.NativeSACContractID())
+	periods, vwaps, err := s.xlmUSDSeries(ctx, &s.xlmUSDPerDay, xlmUSDPerDaySQL)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: GetAssetsPriceHistory7dBatch: %w", err)
+	}
+	rows, err := s.db.QueryContext(ctx, getAssetsPriceHistory7dBatchSQL, forms, owners, prios, canonical.NativeSACContractID(), periods, vwaps)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: GetAssetsPriceHistory7dBatch: %w", err)
 	}
@@ -1831,8 +1844,7 @@ var getAssetsPriceHistory7dBatchSQL = `
 		    ) u
 		   ORDER BY asset_id, d, inverted, prio, bucket DESC, xlm_prio
 		),
-		` + xlmUSDAnchorPerPeriodCTE("xlm_usd_per_day", "d", "day",
-	`date_trunc('day', now() - INTERVAL '6 days')`, "$4::text") + `
+		` + xlmUSDSeriesCTE("xlm_usd_per_day", "d", 5) + `
 		SELECT
 		    w.asset_id,
 		    to_char(days.bucket, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS t,

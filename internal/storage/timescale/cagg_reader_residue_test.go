@@ -126,6 +126,11 @@ func TestUSDQuotePicksAreTieBroken(t *testing.T) {
 	if !strings.Contains(xlmLegQuery(""), "ORDER BY bucket DESC, inverted") {
 		t.Error("xlmLegQuery must break a cross-arm bucket tie on the stored direction")
 	}
+	for name, q := range map[string]string{"perHour": xlmUSDPerHourSQL, "perDay": xlmUSDPerDaySQL} {
+		if !strings.Contains(q, "ORDER BY 1, xm.form_rank, xm.bucket DESC") {
+			t.Errorf("xlmUSD %s series does not come from the anchor", name)
+		}
+	}
 	for name, q := range map[string]string{
 		"history24h":      getAssetPriceHistory24hSQL,
 		"history7d":       getAssetPriceHistory7dSQL,
@@ -140,8 +145,8 @@ func TestUSDQuotePicksAreTieBroken(t *testing.T) {
 		if n := strings.Count(q, usdQuotePref); n != 1 {
 			t.Errorf("%s ranks USD quote forms %d times, want 1 (direct)", name, n)
 		}
-		if !strings.Contains(q, "ORDER BY 1, xm.form_rank, xm.bucket DESC") {
-			t.Errorf("%s does not take its XLM/USD leg from the anchor", name)
+		if !strings.Contains(q, "FROM unnest($") {
+			t.Errorf("%s does not take its XLM/USD leg from the bound anchor series", name)
 		}
 		if !strings.Contains(q, "bucket DESC, xlm_prio") {
 			t.Errorf("%s does not break an XLM-form tie in its XLM leg", name)
