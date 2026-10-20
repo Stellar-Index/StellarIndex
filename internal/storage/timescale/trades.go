@@ -666,14 +666,20 @@ func usdPopulatedLabel(p canonical.Pair, populated, refused, thin bool) string {
 		return "yes"
 	case refused:
 		return "refused"
-	case p.Base.Type == canonical.AssetClassic && p.Quote.Type == canonical.AssetClassic &&
-		p.Base.Issuer != "" && p.Base.Issuer == p.Quote.Issuer:
+	case sameClassicIssuer(p.Base, p.Quote):
 		return "unroutable"
 	case thin:
 		return "thin"
 	default:
 		return "no"
 	}
+}
+
+// sameClassicIssuer reports whether both legs are credits of one issuer, a declared SAC wrapper counting as its classic asset: an
+// issuer's wash trades between its own tokens have no independent market whichever wire form the pool holds.
+func sameClassicIssuer(a, b canonical.Asset) bool {
+	ca, cb := canonical.CanonicalAsset(a), canonical.CanonicalAsset(b)
+	return ca.Type == canonical.AssetClassic && cb.Type == canonical.AssetClassic && ca.Issuer != "" && ca.Issuer == cb.Issuer
 }
 
 // thinMarketReporter is implemented by a resolver that can say its substance
