@@ -52,7 +52,7 @@ A failure found mid-release wastes a tag and forces a `.N+1` cut.
    - bug fix only, no operator-visible change → patch (`v0.3.0 → v0.3.1`)
    - removes a `[external]` config key → minor pre-v1.0 (`v0.3.1 → v0.4.0`), major post-v1.0
 2. **Write the CHANGELOG section** in a one-commit PR titled
-   `release: vX.Y.Z`: insert `## [vX.Y.Z] — YYYY-MM-DD` (UTC date) with
+   `release: vX.Y.Z`: insert `## [vX.Y.Z] - YYYY-MM-DD` (UTC date) with
    the pre-flight step 3 text under the empty `## [Unreleased]` heading.
    `release.yml` extracts notes from the block headed exactly `## [vX.Y.Z]`
    up to the next `## [`. No link references to update.
@@ -66,7 +66,7 @@ A failure found mid-release wastes a tag and forces a `.N+1` cut.
    ```
    It refuses unless: SemVer tag shape; on `main`, clean, in sync with
    `origin/main`; the tag does not exist locally or on origin; a
-   **non-empty** `## [vX.Y.Z] — YYYY-MM-DD` section exists; the newest
+   **non-empty** `## [vX.Y.Z] - YYYY-MM-DD` section exists; the newest
    `docs/operations/sla-proof-YYYY-MM-DD.md` is within
    `SLA_PROOF_MAX_AGE_DAYS` (default 45) and not `Verdict: FAIL`; and
    `make prepush` prints `ALL REQUIRED CHECKS PASSED` (~20 min) with `main`
