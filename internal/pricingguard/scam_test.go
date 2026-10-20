@@ -409,8 +409,40 @@ func TestScamGate_SACIndexRefreshesAfterTTL(t *testing.T) {
 	}
 	dir.assets = nil // operator cleared the flag
 	now = now.Add(scamCacheTTL + time.Second)
+	if !g.WithheldPair(ctx, flaggedSAC, native, "price_read") {
+		t.Error("an expired index was not served while it rebuilds — the request paid the full listing")
+	}
+	g.sacRefresh.Wait()
 	if g.WithheldPair(ctx, flaggedSAC, native, "price_read") {
-		t.Error("SAC still withheld past scamCacheTTL after the flag was cleared — the override must take effect within the TTL")
+		t.Error("SAC still withheld after the post-TTL rebuild — the override must take effect within the TTL plus one rebuild")
+	}
+	if dir.listings != 2 {
+		t.Errorf("flagged-asset listing ran %d times, want 2 — one build, one rebuild", dir.listings)
+	}
+}
+
+func TestScamGate_SACIndexRefreshFailureKeepsPreviousIndex(t *testing.T) {
+	flagged, _, native := pairLegAssets(t)
+	ctx := context.Background()
+	dir := &sacIndexDirectory{flagged: map[string]bool{pairLegFlaggedIssuer: true}, assets: []canonical.Asset{flagged}}
+	g := NewScamGate(dir, ScamGateOptions{})
+	now := time.Unix(1_700_000_000, 0)
+	g.now = func() time.Time { return now }
+	flaggedSAC := unregisteredSAC(t, flagged)
+
+	if !g.WithheldPair(ctx, flaggedSAC, native, "price_read") {
+		t.Fatal("fixture: flagged SAC not withheld")
+	}
+	dir.listErr = errors.New("db down")
+	now = now.Add(scamCacheTTL + time.Second)
+	g.WithheldPair(ctx, flaggedSAC, native, "price_read")
+	g.sacRefresh.Wait()
+	if !g.WithheldPair(ctx, flaggedSAC, native, "price_read") {
+		t.Fatal("a failed rebuild dropped the index — a flagged SAC was served unguarded")
+	}
+	g.sacRefresh.Wait()
+	if dir.listings != 3 {
+		t.Errorf("flagged-asset listing ran %d times, want 3 — a failed rebuild must be retried on the next expired read", dir.listings)
 	}
 }
 
@@ -429,4 +461,22 @@ func TestScamGate_SACIndexFailsOpenOnListingError(t *testing.T) {
 	if !g.WithheldPair(ctx, flaggedSAC, native, "price_read") {
 		t.Error("a failed listing was cached — the next request must re-ask")
 	}
+}
+
+func TestScamGate_WarmSACIndexBuildsAheadOfFirstRequest(t *testing.T) {
+	flagged, _, native := pairLegAssets(t)
+	dir := &sacIndexDirectory{flagged: map[string]bool{pairLegFlaggedIssuer: true}, assets: []canonical.Asset{flagged}}
+	g := NewScamGate(dir, ScamGateOptions{})
+	g.WarmSACIndex(context.Background())
+	if dir.listings != 1 {
+		t.Fatalf("warm ran the listing %d times, want 1", dir.listings)
+	}
+	if !g.WithheldPair(context.Background(), unregisteredSAC(t, flagged), native, "price_read") {
+		t.Error("flagged SAC served after warm")
+	}
+	if dir.listings != 1 {
+		t.Errorf("first request re-listed (%d listings) — warm must leave a usable index", dir.listings)
+	}
+	var nilGate *ScamGate
+	nilGate.WarmSACIndex(context.Background())
 }
