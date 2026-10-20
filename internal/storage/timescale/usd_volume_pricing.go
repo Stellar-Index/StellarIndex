@@ -15,14 +15,15 @@ type UsdVolumePricingRow struct {
 	// Unpriced is usd_volume IS NULL on a routable pair. It includes thin
 	// markets: the substance verdict is not stored on the row.
 	Unpriced int64
-	// Unroutable is unpriced AND both legs are classic assets of one issuer
-	// (no independent market can value it); same rule as usdPopulatedLabel.
+	// Unroutable is unpriced AND both legs are credits of one issuer, a declared SAC wrapper folded onto its classic asset (no
+	// independent market can value it); same rule as usdPopulatedLabel.
 	Unroutable int64
 }
 
 // usdVolumePricingSQL is bounded by ts so chunk exclusion keeps it to the window's chunks; a classic id's issuer is its trailing 56
-// characters.
-const usdVolumePricingSQL = `
+// characters, read after alias_fold maps a SAC leg to its classic form.
+var usdVolumePricingSQL = `
+WITH ` + aliasFoldCTE(4) + `
 SELECT source,
        count(*),
        count(*) FILTER (WHERE usd_volume IS NOT NULL),
@@ -30,19 +31,26 @@ SELECT source,
        count(*) FILTER (WHERE usd_volume IS NULL AND same_issuer)
   FROM (
         SELECT source, usd_volume,
-               (base_asset  ~ '^.+-G[A-Z2-7]{55}$'
-                AND quote_asset ~ '^.+-G[A-Z2-7]{55}$'
-                AND right(base_asset, 56) = right(quote_asset, 56)) AS same_issuer
-          FROM trades
-         WHERE ts >= $1::timestamptz AND ts < $2::timestamptz
-           AND source = ANY($3::text[])
+               (b ~ '^.+-G[A-Z2-7]{55}$'
+                AND q ~ '^.+-G[A-Z2-7]{55}$'
+                AND right(b, 56) = right(q, 56)) AS same_issuer
+          FROM (
+                SELECT tr.source, tr.usd_volume,
+                       COALESCE(bf.canon, tr.base_asset) AS b, COALESCE(qf.canon, tr.quote_asset) AS q
+                  FROM trades tr
+                  LEFT JOIN alias_fold bf ON bf.form = tr.base_asset
+                  LEFT JOIN alias_fold qf ON qf.form = tr.quote_asset
+                 WHERE tr.ts >= $1::timestamptz AND tr.ts < $2::timestamptz
+                   AND tr.source = ANY($3::text[])
+               ) folded
        ) t
  GROUP BY source
  ORDER BY source`
 
 // UsdVolumePricingStats counts priced, unpriced and unroutable trades per source for sources over [from, to).
 func (s *Store) UsdVolumePricingStats(ctx context.Context, from, to time.Time, sources []string) ([]UsdVolumePricingRow, error) {
-	rows, err := s.db.QueryContext(ctx, usdVolumePricingSQL, from, to, sources)
+	forms, canons := sacAliasFoldBind()
+	rows, err := s.db.QueryContext(ctx, usdVolumePricingSQL, from, to, sources, forms, canons)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: UsdVolumePricingStats: %w", err)
 	}

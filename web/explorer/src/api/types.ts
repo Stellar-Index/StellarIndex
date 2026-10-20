@@ -6189,7 +6189,7 @@ export interface components {
                 unpriced: number;
                 /**
                  * Format: int64
-                 * @description Unpriced, both classic legs from one issuer; excluded from the ratio.
+                 * @description Unpriced, both legs credits of one issuer (a declared SAC wrapper counts as its classic asset); excluded from the ratio.
                  */
                 unroutable: number;
                 /** @description priced / (trades - unroutable), decimal string truncated (never rounded up) to 6 dp so it never exceeds the true ratio. Omitted when that denominator is zero. */

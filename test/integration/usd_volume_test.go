@@ -26,9 +26,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestUsdVolumePricingStats seeds priced, unpriced and same-issuer classic
-// trades inside the window, plus rows outside it and from a source not asked
-// for, and pins the exact counts. A requested source with no rows (kraken) still gets a zero row.
+// TestUsdVolumePricingStats seeds priced, unpriced and same-issuer trades (classic and declared SAC forms) inside the window, plus rows
+// outside it and from a source not asked for, and pins the exact counts. A requested source with no rows (kraken) still gets a zero row.
 func TestUsdVolumePricingStats(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -39,6 +38,19 @@ func TestUsdVolumePricingStats(t *testing.T) {
 		t.Fatalf("store open: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
+
+	const (
+		bltIssuer = "GBQR7IMFKZHNTQDRZZU3E3XHDX2IPS3MI3QZJ47I2HBMKEF5AOPEYMRI"
+		bltaSAC   = "CCUYL75XNUTAHFE3RZAN7NEFQWZ7OIRJZNN4KUXXPA34RAHVUGLTBGT5"
+		bltbSAC   = "CAANCS7TKC7IFWLRACKL4T4HMNMDUWSWNOL5EV244TVQCU3O7BM7N4VD"
+		undecl    = "CB2J5FHCJJBQE5UPQ5FPZAWIEQD5KKP4GWLZZ3QT5EFVIT3FW5CI2OGK"
+	)
+	reg, err := c.NewAliasRegistry(c.PubnetPassphrase, map[string]string{bltaSAC: "BLTA:" + bltIssuer, bltbSAC: "BLTB:" + bltIssuer})
+	if err != nil {
+		t.Fatalf("NewAliasRegistry: %v", err)
+	}
+	c.InstallAliasRegistry(reg)
+	t.Cleanup(func() { c.InstallAliasRegistry(nil) })
 
 	issuerA := "G" + strings.Repeat("A", 55)
 	issuerB := "G" + strings.Repeat("B", 55)
@@ -68,12 +80,16 @@ func TestUsdVolumePricingStats(t *testing.T) {
 	seed("sdex", "FOO-"+issuerA, "BAR-"+issuerA, in.Add(2*time.Minute), nil)
 	seed("sdex", "BAR-"+issuerA, "FOO-"+issuerA, in.Add(3*time.Minute), nil)
 	seed("sdex", "FOO-"+issuerA, "BAR-"+issuerB, in.Add(4*time.Minute), nil)
+	// soroswap: 2 unroutable (both SAC legs, or a SAC and its issuer's classic credit), 1 unpriced with an undeclared contract leg.
+	seed("soroswap", bltaSAC, bltbSAC, in, nil)
+	seed("soroswap", bltbSAC, "BLTA-"+bltIssuer, in.Add(time.Minute), nil)
+	seed("soroswap", undecl, bltbSAC, in.Add(2*time.Minute), nil)
 	// outside the window (both edges: end is exclusive) and an unrequested source.
 	seed("binance", "crypto:BTC", "fiat:USD", from.Add(-time.Second), "1")
 	seed("binance", "crypto:BTC", "fiat:USD", to, nil)
 	seed("soroswap_router", "native", "FOO-"+issuerA, in, nil)
 
-	got, err := store.UsdVolumePricingStats(ctx, from, to, []string{"binance", "sdex", "kraken"})
+	got, err := store.UsdVolumePricingStats(ctx, from, to, []string{"binance", "sdex", "kraken", "soroswap"})
 	if err != nil {
 		t.Fatalf("stats: %v", err)
 	}
@@ -81,6 +97,7 @@ func TestUsdVolumePricingStats(t *testing.T) {
 		{Source: "binance", Trades: 3, Priced: 2, Unpriced: 1, Unroutable: 0},
 		{Source: "kraken"},
 		{Source: "sdex", Trades: 5, Priced: 1, Unpriced: 2, Unroutable: 2},
+		{Source: "soroswap", Trades: 3, Unpriced: 1, Unroutable: 2},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("rows = %+v, want %+v", got, want)
