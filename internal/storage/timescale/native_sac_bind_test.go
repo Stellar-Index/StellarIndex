@@ -5,6 +5,7 @@ package timescale
 
 import (
 	"context"
+	"database/sql/driver"
 	"fmt"
 	"regexp"
 	"slices"
@@ -36,6 +37,7 @@ func installTestnetForBind(t *testing.T) {
 func TestNativeSACIsBoundNotHardCoded(t *testing.T) {
 	installTestnetForBind(t)
 	ctx := context.Background()
+	noFreezes := scriptedResult{cols: []string{"fingerprint"}, rows: [][]driver.Value{{"0||"}}}
 	since := time.Now()
 
 	for _, tc := range []struct {
@@ -44,32 +46,36 @@ func TestNativeSACIsBoundNotHardCoded(t *testing.T) {
 		run  func(s *Store)
 		// setup answers statements issued before the query (SET LOCAL work_mem).
 		setup []scriptedResult
+		// stmt picks the checked statement when the reader issues more than one.
+		stmt int
 	}{
-		{"TradesForArbScan", 3, func(s *Store) { _, _, _ = s.TradesForArbScan(ctx, since, 10) }, nil},
-		{"SorobanVolume24hUSDForAsset", 2, func(s *Store) { _, _, _ = s.SorobanVolume24hUSDForAsset(ctx, "C1") }, nil},
-		{"GetSourceStats", 1, func(s *Store) { _, _ = s.GetSourceStats(ctx) }, nil},
-		{"GetNetworkStats", 2, func(s *Store) { _, _ = s.GetNetworkStats(ctx) }, nil},
-		{"GetAssetMarketsCount", 2, func(s *Store) { _, _ = s.GetAssetMarketsCount(ctx, "native") }, nil},
-		{"GetAssetTopMarkets", 3, func(s *Store) { _, _ = s.GetAssetTopMarkets(ctx, "native", 5) }, nil},
-		{"GetAssetBySlug", 2, func(s *Store) { _, _ = s.GetAssetBySlug(ctx, "USDC") }, nil},
-		{"GetAssetPriceHistory24h", 2, func(s *Store) { _, _ = s.GetAssetPriceHistory24h(ctx, "native") }, nil},
-		{"GetAssetPriceHistory7d", 2, func(s *Store) { _, _ = s.GetAssetPriceHistory7d(ctx, "native") }, nil},
-		{"GetAssetsPriceHistory24hBatch", 4, func(s *Store) { _, _ = s.GetAssetsPriceHistory24hBatch(ctx, []string{"native"}) }, nil},
-		{"GetAssetsPriceHistory7dBatch", 4, func(s *Store) { _, _ = s.GetAssetsPriceHistory7dBatch(ctx, []string{"native"}) }, nil},
-		{"TransitiveUSDPriceCandidates", 3, func(s *Store) { _, _ = s.TransitiveUSDPriceCandidates(ctx, "C1") }, nil},
-		{"PopularPricelessCandidates", 1, func(s *Store) { _, _ = s.PopularPricelessCandidates(ctx) }, []scriptedResult{{}}},
-		{"AssetIsPriced", 1, func(s *Store) { _, _ = s.AssetIsPriced(ctx, "C1") }, nil},
-		{"BlendFillsForMEVScan", 0, func(s *Store) { _, _ = s.BlendFillsForMEVScan(ctx, since, 10) }, nil},
+		{"TradesForArbScan", 3, func(s *Store) { _, _, _ = s.TradesForArbScan(ctx, since, 10) }, nil, 0},
+		{"SorobanVolume24hUSDForAsset", 2, func(s *Store) { _, _, _ = s.SorobanVolume24hUSDForAsset(ctx, "C1") }, nil, 0},
+		{"GetSourceStats", 1, func(s *Store) { _, _ = s.GetSourceStats(ctx) }, nil, 0},
+		{"GetNetworkStats", 2, func(s *Store) { _, _ = s.GetNetworkStats(ctx) }, nil, 0},
+		{"GetAssetMarketsCount", 2, func(s *Store) { _, _ = s.GetAssetMarketsCount(ctx, "native") }, nil, 0},
+		{"GetAssetTopMarkets", 3, func(s *Store) { _, _ = s.GetAssetTopMarkets(ctx, "native", 5) }, nil, 0},
+		{"GetAssetBySlug", 2, func(s *Store) { _, _ = s.GetAssetBySlug(ctx, "USDC") }, nil, 0},
+		{"xlmUSDPerHour", 1, func(s *Store) { _, _ = s.GetAssetPriceHistory24h(ctx, "native") }, []scriptedResult{noFreezes}, 1},
+		{"xlmUSDPerDay", 1, func(s *Store) { _, _ = s.GetAssetPriceHistory7d(ctx, "native") }, []scriptedResult{noFreezes}, 1},
+		{"GetAssetPriceHistory24h", 2, func(s *Store) { _, _ = s.GetAssetPriceHistory24h(ctx, "native") }, []scriptedResult{noFreezes, {}}, 2},
+		{"GetAssetPriceHistory7d", 2, func(s *Store) { _, _ = s.GetAssetPriceHistory7d(ctx, "native") }, []scriptedResult{noFreezes, {}}, 2},
+		{"GetAssetsPriceHistory24hBatch", 4, func(s *Store) { _, _ = s.GetAssetsPriceHistory24hBatch(ctx, []string{"native"}) }, []scriptedResult{noFreezes, {}}, 2},
+		{"GetAssetsPriceHistory7dBatch", 4, func(s *Store) { _, _ = s.GetAssetsPriceHistory7dBatch(ctx, []string{"native"}) }, []scriptedResult{noFreezes, {}}, 2},
+		{"TransitiveUSDPriceCandidates", 3, func(s *Store) { _, _ = s.TransitiveUSDPriceCandidates(ctx, "C1") }, nil, 0},
+		{"PopularPricelessCandidates", 1, func(s *Store) { _, _ = s.PopularPricelessCandidates(ctx) }, []scriptedResult{{}}, 0},
+		{"AssetIsPriced", 1, func(s *Store) { _, _ = s.AssetIsPriced(ctx, "C1") }, nil, 0},
+		{"BlendFillsForMEVScan", 0, func(s *Store) { _, _ = s.BlendFillsForMEVScan(ctx, since, 10) }, nil, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store, conn := newScriptedStore(t, tc.setup...)
 			tc.run(store)
 			// A reader may raise a session setting (SET LOCAL work_mem) before its query.
 			stmts := slices.DeleteFunc(slices.Clone(conn.stmts), func(st recordedStmt) bool { return strings.HasPrefix(st.sql, "SET ") })
-			if len(stmts) == 0 {
-				t.Fatal("no statement issued")
+			if len(stmts) <= tc.stmt {
+				t.Fatalf("%d statement(s) issued, want statement %d", len(stmts), tc.stmt)
 			}
-			st := stmts[0]
+			st := stmts[tc.stmt]
 			assertPlaceholdersMatchArgs(t, st.sql, len(st.args))
 			if tc.idx == 0 {
 				return
