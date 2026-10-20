@@ -13,11 +13,10 @@ type TransitivePricer interface {
 	TransitiveUSDPriceCandidates(ctx context.Context, assetID string) ([]timescale.TransitivePrice, error)
 }
 
-// transitivePriceFor returns a USD price through ONE intermediate hop: the first ranked candidate whose asset and hop are not scam-
-// withheld and whose two legs both clear the
-// substance floors; a failing candidate falls through. Returns ("", false) when none may be served, errors included.
-// Both legs are gated because a two-hop price inherits its weakest leg: a thin hop would otherwise reprice everything quoted against it,
-// the manipulation the floors stop.
+// transitivePriceFor returns a USD price through ONE intermediate hop: the first ranked candidate whose asset and hop are not
+// scam- withheld and whose two legs both clear the substance floors; a failing candidate falls through. Returns ("", false) when
+// none may be served, errors included. Both legs are gated because a two-hop price inherits its weakest leg: a thin hop would
+// otherwise reprice everything quoted against it, the manipulation the floors stop.
 func (s *Server) transitivePriceFor(ctx context.Context, asset canonical.Asset, assetID string) (string, bool) {
 	if s.TransitivePricer == nil {
 		return "", false
@@ -66,10 +65,9 @@ func (s *Server) transitiveCandidateAllowed(ctx context.Context, asset canonical
 	return s.assetPriceAllowed(ctx, hop, "transitive")
 }
 
-// normalizeTransitiveUSD applies the dex-nonstandard-decimals normalisation to a chain of RAW prices_1m ratios. The hop's decimals
-// telescope away, leaving an error of exactly
-// 10^(asset decimals - terminal quote decimals), the terminal being a standard-scale USD proxy ([defaultPriceQuote]); otherwise a 9dp
-// Soroban token reads 100x low.
+// normalizeTransitiveUSD applies the dex-nonstandard-decimals normalisation to a chain of RAW prices_1m ratios. The hop's
+// decimals telescope away, leaving an error of exactly 10^(asset decimals - terminal quote decimals), the terminal being a
+// standard-scale USD proxy ([defaultPriceQuote]); otherwise a 9dp Soroban token reads 100x low.
 func (s *Server) normalizeTransitiveUSD(priceUSD string, asset canonical.Asset) string {
 	return s.normalizeRawRatioString(priceUSD, asset, defaultPriceQuote)
 }

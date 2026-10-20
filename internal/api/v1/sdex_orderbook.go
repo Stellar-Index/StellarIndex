@@ -315,11 +315,10 @@ func (c *SDEXOrderBookCache) Advance(ctx context.Context) error {
 	return nil
 }
 
-// updateHealthGaugesLocked recomputes the book's data-quality gauges (caller holds mu). The crossed-pairs count is the tripwire this
-// cache keeps at zero: Stellar's DEX executes crossing offers at submission,
-// so a RESTING book never has best bid > best ask; sustained non-zero means phantom offers are served (e.g. zombies whose removal was
-// never ingested, so [VerifyPending] cannot disprove them).
-// The stellarindex_sdex_orderbook_crossed_book alert fires on it and the log line names the pairs.
+// updateHealthGaugesLocked recomputes the book's data-quality gauges (caller holds mu). The crossed-pairs count is the tripwire
+// this cache keeps at zero: Stellar's DEX executes crossing offers at submission, so a RESTING book never has best bid > best
+// ask; sustained non-zero means phantom offers are served (e.g. zombies whose removal was never ingested, so [VerifyPending]
+// cannot disprove them). The stellarindex_sdex_orderbook_crossed_book alert fires on it and the log line names the pairs.
 func (c *SDEXOrderBookCache) updateHealthGaugesLocked() {
 	pairs := crossedPairs(c.offers)
 	crossed := len(pairs)
@@ -577,10 +576,10 @@ type bookLevel struct {
 	offers int
 }
 
-// aggregateOrderBookSide folds one side's offers into sorted, cumulative price levels. Asks sell the base: N/D is already quote-per-base,
-// Amount is base stroops. Bids sell the QUOTE: N/D is base-per-quote,
-// so the level price is the exact inverse D/N, Amount is quote stroops and the base equivalent is Amount x N/D. All big.Rat; rounding
-// only at render time (7 decimal places, stroop precision).
+// aggregateOrderBookSide folds one side's offers into sorted, cumulative price levels. Asks sell the base: N/D is already
+// quote-per-base, Amount is base stroops. Bids sell the QUOTE: N/D is base-per-quote, so the level price is the exact inverse
+// D/N, Amount is quote stroops and the base equivalent is Amount x N/D. All big.Rat; rounding only at render time (7 decimal
+// places, stroop precision).
 func aggregateOrderBookSide(offers []clickhouse.LiveOffer, invert bool, depth int) []SDEXOrderBookLevelView {
 	levels := map[[2]int64]*bookLevel{}
 	for _, o := range offers {

@@ -761,10 +761,10 @@ func (s *Server) rwaHistorySupplyLevels(
 	return out, true
 }
 
-// rwaCumulateSupply turns a contract's daily net flows (ascending by day) into its supply level from each flow day onward. complete=false
-// the moment the running total goes NEGATIVE: a token cannot burn more than was minted,
-// so the flows are incompletely seeded ([clickhouse.TokenSupply.Incomplete] point-in-time). The whole series is refused, since a missing
-// mint understates every later level.
+// rwaCumulateSupply turns a contract's daily net flows (ascending by day) into its supply level from each flow day onward.
+// complete=false the moment the running total goes NEGATIVE: a token cannot burn more than was minted, so the flows are
+// incompletely seeded ([clickhouse.TokenSupply.Incomplete] point-in-time). The whole series is refused, since a missing mint
+// understates every later level.
 func rwaCumulateSupply(days []clickhouse.SupplyFlowDay) ([]rwaSupplyLevel, bool) {
 	out := make([]rwaSupplyLevel, 0, len(days))
 	running := new(big.Int)
@@ -863,9 +863,9 @@ func rwaFeedDaysBySource(rows []timescale.OracleDayPoint) map[string]rwaFeedDayI
 	return feeds
 }
 
-// rwaAdmissibleFeedRow reports whether one day bucket may enter a reference series: the oracle-class gate (R-C from rwa_reference.go),
-// and a non-positive value is bad data, not a valuation of zero
-// (as rwaReferenceValuationOf refuses), so the bucket becomes a gap.
+// rwaAdmissibleFeedRow reports whether one day bucket may enter a reference series: the oracle-class gate (R-C from
+// rwa_reference.go), and a non-positive value is bad data, not a valuation of zero (as rwaReferenceValuationOf refuses), so the
+// bucket becomes a gap.
 func rwaAdmissibleFeedRow(row timescale.OracleDayPoint) bool {
 	switch {
 	case row.Asset.Type != canonical.AssetRWA:
@@ -909,10 +909,10 @@ func rwaHistorySources(members []rwaHistoryMember) []string {
 
 // ─── the join ───────────────────────────────────────────────────────
 
-// rwaHistoryMemberDays multiplies one member's supply levels by its feed's day buckets. The PRICE drives the series: a day exists only
-// where the oracle published, and takes the supply level as of that day
-// (the complete flow log may be carried, the sampled observation may not). A price day BEFORE the first flow yields nothing: zero supply
-// times a real NAV is computable but meaningless.
+// rwaHistoryMemberDays multiplies one member's supply levels by its feed's day buckets. The PRICE drives the series: a day exists
+// only where the oracle published, and takes the supply level as of that day (the complete flow log may be carried, the sampled
+// observation may not). A price day BEFORE the first flow yields nothing: zero supply times a real NAV is computable but
+// meaningless.
 func rwaHistoryMemberDays(levels []rwaSupplyLevel, prices map[time.Time]*big.Rat, decimals int) []rwaHistoryDay {
 	if len(levels) == 0 || len(prices) == 0 {
 		return nil

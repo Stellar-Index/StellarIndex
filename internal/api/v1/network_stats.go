@@ -14,9 +14,9 @@ type NetworkStatsReader interface {
 	GetNetworkStats(ctx context.Context) (timescale.NetworkStats, error)
 }
 
-// networkStatsStaleReader is the optional freshness capability (the TTL cache has it, the raw store doesn't): GetNetworkStatsAt returns
-// observedAt
-// (zero = as_of=now) and stale so SWR cannot assert stale:false over an aged value. Mirrors marketsStaleReader.
+// networkStatsStaleReader is the optional freshness capability (the TTL cache has it, the raw store doesn't): GetNetworkStatsAt
+// returns observedAt (zero = as_of=now) and stale so SWR cannot assert stale:false over an aged value. Mirrors
+// marketsStaleReader.
 type networkStatsStaleReader interface {
 	GetNetworkStatsAt(ctx context.Context) (timescale.NetworkStats, time.Time, bool, error)
 }

@@ -11,13 +11,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
-// ohlcSeriesFiatCombined builds a fiat-quoted OHLC series by combining every USD-pegged constituent per bucket (fiat:USD itself has only
-// recent CEX
-// trades), using the aggregator's own set to stay consistent with /v1/price. Combining is exact in big.Rat, each bar lifted to the max
-// scale first (ADR-0003).
-// Held-back constituents (a declared peg's SAC wrapper) fill only buckets no established spelling answered: a thin Soroban print can move
-// a book-backed
-// high (docs/architecture/aggregation-plan.md, section 7.5). The bool is `proxied`, driving `flags.triangulated`.
+// ohlcSeriesFiatCombined builds a fiat-quoted OHLC series by combining every USD-pegged constituent per bucket (fiat:USD itself
+// has only recent CEX trades), using the aggregator's own set to stay consistent with /v1/price. Combining is exact in big.Rat,
+// each bar lifted to the max scale first (ADR-0003). Held-back constituents (a declared peg's SAC wrapper) fill only buckets no
+// established spelling answered: a thin Soroban print can move a book-backed high (docs/architecture/aggregation-plan.md, section
+// 7.5). The bool is `proxied`, driving `flags.triangulated`.
 func (s *Server) ohlcSeriesFiatCombined(
 	ctx context.Context,
 	pair canonical.Pair,
@@ -59,10 +57,9 @@ func (s *Server) ohlcSeriesFiatCombined(
 	return newestCombinedBars(out, limit), estProxied || heldBackProxied, nil
 }
 
-// newestCombinedBars keeps the NEWEST `limit` of an ascending merged series. Each constituent read is capped to its own newest `limit`
-// buckets, so
-// the old end holds buckets a dense constituent was never asked for; the newest `limit` are safe by counting, and the same count covers
-// the held-back gate.
+// newestCombinedBars keeps the NEWEST `limit` of an ascending merged series. Each constituent read is capped to its own newest
+// `limit` buckets, so the old end holds buckets a dense constituent was never asked for; the newest `limit` are safe by counting,
+// and the same count covers the held-back gate.
 func newestCombinedBars(out []OHLCSeriesBar, limit int) []OHLCSeriesBar {
 	if limit > 0 && len(out) > limit {
 		return out[len(out)-limit:]
@@ -79,12 +76,10 @@ func (s *Server) usdPeggedConstituents(pair canonical.Pair) []canonical.Pair {
 	return append(out, heldBack...)
 }
 
-// usdPeggedConstituentSets partitions a fiat-quoted target's cagg pairs into `established` (the aggregator's set: XLM dual-form aliases
-// crossed with
-// USD pegs) and `heldBack` (a declared peg's SAC wrapper, since Soroban AMMs trade the wrapper), read only where established left a
-// bucket unanswered.
-// Classic-then-SAC across ALL peg families: a pool is far thinner than the book. Deduplicated by market; a held-back pair whose flip is
-// established is dropped.
+// usdPeggedConstituentSets partitions a fiat-quoted target's cagg pairs into `established` (the aggregator's set: XLM dual-form
+// aliases crossed with USD pegs) and `heldBack` (a declared peg's SAC wrapper, since Soroban AMMs trade the wrapper), read only
+// where established left a bucket unanswered. Classic-then-SAC across ALL peg families: a pool is far thinner than the book.
+// Deduplicated by market; a held-back pair whose flip is established is dropped.
 func (s *Server) usdPeggedConstituentSets(pair canonical.Pair) (established, heldBack []canonical.Pair) {
 	seen := make(map[string]struct{})
 	add := func(dst *[]canonical.Pair, sp canonical.Pair) {
@@ -145,13 +140,11 @@ func dropMarketsIn(pairs, kept []canonical.Pair) []canonical.Pair {
 	return out
 }
 
-// fiatCombinedTrades is the point-path twin of [Server.ohlcSeriesFiatCombined]: it merges the raw trades of EVERY constituent into one
-// chronological
-// population at one amount scale, so /v1/vwap and /v1/ohlc with quote=fiat:USD agree; `proxied` drives flags.triangulated. The gate uses
-// [fiatPointGateInterval].
-// Read errors propagate (a quietly narrower money answer is worse than a 500); each read uses the caller's `maxTrades` and the merge is
-// trimmed to the
-// newest `maxTrades`, preserving the callers' `len(trades) == maxTrades` truncation signal.
+// fiatCombinedTrades is the point-path twin of [Server.ohlcSeriesFiatCombined]: it merges the raw trades of EVERY constituent
+// into one chronological population at one amount scale, so /v1/vwap and /v1/ohlc with quote=fiat:USD agree; `proxied` drives
+// flags.triangulated. The gate uses [fiatPointGateInterval]. Read errors propagate (a quietly narrower money answer is worse than
+// a 500); each read uses the caller's `maxTrades` and the merge is trimmed to the newest `maxTrades`, preserving the callers'
+// `len(trades) == maxTrades` truncation signal.
 func (s *Server) fiatCombinedTrades(
 	ctx context.Context, pair canonical.Pair, from, to time.Time, maxTrades int,
 ) (aggregate.ScaledWindow, bool, error) {
@@ -232,9 +225,8 @@ func tradeGateBuckets(trades []canonical.Trade) map[time.Time]struct{} {
 	return out
 }
 
-// dropTradesInAnsweredBuckets removes trades whose gate bucket an established spelling already answered; with nothing answered (a pool-
-// only asset)
-// the input is returned untouched, since the alternative is no price at all.
+// dropTradesInAnsweredBuckets removes trades whose gate bucket an established spelling already answered; with nothing answered (a
+// pool- only asset) the input is returned untouched, since the alternative is no price at all.
 func dropTradesInAnsweredBuckets(trades []canonical.Trade, answered map[time.Time]struct{}) []canonical.Trade {
 	if len(answered) == 0 || len(trades) == 0 {
 		return trades
@@ -255,25 +247,22 @@ func fiatPointGateBucket(ts time.Time) time.Time {
 	return ts.UTC().Truncate(fiatPointGateInterval.duration())
 }
 
-// amountScaleDecimalsFor resolves a source's smallest-unit scale from the external registry (8 CEX, 7 on-chain DEX, 6 FX); a package-
-// level func so
-// aggregate.NormalizeAmountScale avoids importing external, which imports aggregate (a cycle).
+// amountScaleDecimalsFor resolves a source's smallest-unit scale from the external registry (8 CEX, 7 on-chain DEX, 6 FX); a
+// package- level func so aggregate.NormalizeAmountScale avoids importing external, which imports aggregate (a cycle).
 func amountScaleDecimalsFor(source string) int {
 	return external.Lookup(source).AmountScaleDecimals()
 }
 
-// sortTradesChronological orders merged trades by close time ascending, as [aggregate.ComputeOHLC] and [aggregate.TWAP] require; ties
-// break by
-// [aggregate.TradeOrderLess], not slice position, so served open/close never depends on merge order (ADR-0015).
+// sortTradesChronological orders merged trades by close time ascending, as [aggregate.ComputeOHLC] and [aggregate.TWAP] require;
+// ties break by [aggregate.TradeOrderLess], not slice position, so served open/close never depends on merge order (ADR-0015).
 func sortTradesChronological(trades []canonical.Trade) {
 	sort.Slice(trades, func(i, j int) bool {
 		return aggregate.TradeOrderLess(&trades[i], &trades[j])
 	})
 }
 
-// ohlcBarScaleUnknown is the scale of a bar whose reader reported no sources: distinct from 8 (the registry fallback), which would
-// reintroduce
-// the 10x mis-weight this file corrects. It lifts by a factor of 1.
+// ohlcBarScaleUnknown is the scale of a bar whose reader reported no sources: distinct from 8 (the registry fallback), which
+// would reintroduce the 10x mis-weight this file corrects. It lifts by a factor of 1.
 const ohlcBarScaleUnknown = -1
 
 // barScaleDecimals resolves a combined bar's smallest-unit scale from its venues, as the point path does for
@@ -324,9 +313,8 @@ func (c *fiatCombine) add(b *OHLCSeriesBar) {
 }
 
 // combineConstituentBars reads each pair's bars and folds them into `c`; a non-nil `admit` decides per bucket whether a bar may
-// contribute
-// (confining the held-back pass to unanswered buckets). Read errors propagate (a narrower money answer is worse than a 500). Returns
-// `proxied`.
+// contribute (confining the held-back pass to unanswered buckets). Read errors propagate (a narrower money answer is worse than a
+// 500). Returns `proxied`.
 func (s *Server) combineConstituentBars(
 	ctx context.Context,
 	c *fiatCombine,
@@ -356,9 +344,8 @@ func (s *Server) combineConstituentBars(
 	return proxied, nil
 }
 
-// ohlcBucketAcc accumulates constituent bars sharing a bucket timestamp in big.Rat/big.Int (no float round-trip). Volume sums are kept
-// per scale
-// because the lift target (the bucket's maximum scale) is unknown until every constituent is read.
+// ohlcBucketAcc accumulates constituent bars sharing a bucket timestamp in big.Rat/big.Int (no float round-trip). Volume sums are
+// kept per scale because the lift target (the bucket's maximum scale) is unknown until every constituent is read.
 type ohlcBucketAcc struct {
 	byScale map[int]*ohlcScaleAcc // keyed by the contributing bars' scale
 	highs   []*big.Rat            // per-constituent highs (bucket high = max)
@@ -511,9 +498,8 @@ func ratFromDecimal(s string) *big.Rat {
 	return r
 }
 
-// seriesVolumeText is the one wire rendering of a series bar's v_base / v_quote: integer smallest-unit text, rounded half up because the
-// CAGG's
-// vwap*volume leg carries sub-unit NUMERIC noise.
+// seriesVolumeText is the one wire rendering of a series bar's v_base / v_quote: integer smallest-unit text, rounded half up
+// because the CAGG's vwap*volume leg carries sub-unit NUMERIC noise.
 func seriesVolumeText(r *big.Rat) string {
 	if r == nil {
 		return "0"

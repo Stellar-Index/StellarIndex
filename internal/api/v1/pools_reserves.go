@@ -280,9 +280,9 @@ func (s *Server) poolReservesDisplays(ctx context.Context, states map[string]cli
 	return displays, true
 }
 
-// buildPoolReservesRow assembles one wire row; decimals-dependent mid prices are emitted only when BOTH tokens' decimals were read, else
-// null (not the default-7 stamp,
-// which mis-scales by 10^(d-7)). Reserves and depth are base-unit exact, so always served.
+// buildPoolReservesRow assembles one wire row; decimals-dependent mid prices are emitted only when BOTH tokens' decimals were
+// read, else null (not the default-7 stamp, which mis-scales by 10^(d-7)). Reserves and depth are base-unit exact, so always
+// served.
 func buildPoolReservesRow(st clickhouse.SoroswapPairState, displays map[string]clickhouse.TokenDisplayMeta, displaysOK bool) PoolReservesRow {
 	tok := func(contract string, reserve *big.Int) (PoolReserveToken, bool) {
 		t := PoolReserveToken{Contract: contract, Decimals: 7, Reserve: reserve.String()}

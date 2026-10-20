@@ -991,9 +991,8 @@ func valueOr(s, fallback string) string {
 // heartbeat for exactly these (plus "api") and rolls `overall` up from them.
 var defaultStatusServices = []string{"indexer", "aggregator"}
 
-// statusServicesOr normalises Options.StatusServices (nil/empty falls back to the pubnet pair; never nil). Names are lower-cased because
-// heartbeats key on
-// lower-case Prometheus `job` labels, so "Indexer" would boot clean then pin `overall` degraded.
+// statusServicesOr normalises Options.StatusServices (nil/empty falls back to the pubnet pair; never nil). Names are lower-cased
+// because heartbeats key on lower-case Prometheus `job` labels, so "Indexer" would boot clean then pin `overall` degraded.
 func statusServicesOr(names []string) []string {
 	out := make([]string, 0, len(names))
 	for _, n := range names {
@@ -1218,8 +1217,8 @@ var proxyForwardHeaders = []string{
 }
 
 // loopbackOnly returns 404 unless the request is a local, un-proxied scrape (for /metrics). Requires loopback RemoteAddr AND no
-// forwarding header,
-// since a misconfigured Caddy presents loopback for public traffic. 404 not 403, which would confirm the route exists.
+// forwarding header, since a misconfigured Caddy presents loopback for public traffic. 404 not 403, which would confirm the route
+// exists.
 func loopbackOnly(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host, _, err := net.SplitHostPort(r.RemoteAddr)

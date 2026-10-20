@@ -13,9 +13,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// streamWriteDeadline bounds a single SSE write, rolled forward before every write; it fails only a write that BLOCKS (a client that stops
-// reading is bounded by
-// [DefaultMaxStreamLifetime]). Must exceed the heartbeat interval so a slow-but-alive client is not killed.
+// streamWriteDeadline bounds a single SSE write, rolled forward before every write; it fails only a write that BLOCKS (a client
+// that stops reading is bounded by [DefaultMaxStreamLifetime]). Must exceed the heartbeat interval so a slow-but-alive client is
+// not killed.
 const streamWriteDeadline = 25 * time.Second
 
 // DefaultMaxStreamLifetime is how long one SSE connection is served before the server ends it and the client reconnects; it bounds a TCP-alive client that never reads, with up to 10% jitter per stream to avoid reconnect stampedes.
@@ -44,9 +44,9 @@ func TryAcquireStreamSlot(w http.ResponseWriter, r *http.Request) (release func(
 	return admitStream(w, r)
 }
 
-// admitStream reserves one slot against the global and per-IP caps, writing the refusal itself (503 on the global cap, 429 on the per-address cap). It runs BEFORE [Hub.Subscribe]
-// (client-supplied topic key)
-// so the caps bound Hub memory, not just sockets: a refused connection must never mint a topic. The returned release is idempotent.
+// admitStream reserves one slot against the global and per-IP caps, writing the refusal itself (503 on the global cap, 429 on the
+// per-address cap). It runs BEFORE [Hub.Subscribe] (client-supplied topic key) so the caps bound Hub memory, not just sockets: a
+// refused connection must never mint a topic. The returned release is idempotent.
 func admitStream(w http.ResponseWriter, r *http.Request) (release func(), ok bool) {
 	releaseGlobal, ok := acquireGlobalStreamSlot()
 	if !ok {

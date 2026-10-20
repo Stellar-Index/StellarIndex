@@ -36,12 +36,10 @@ type oracleAtReader interface {
 }
 
 // oracleAssetCandidates expands an asset into every key form the oracle layer may hold (Reflector keys by global ticker, e.g.
-// `crypto:XLM`), through
-// [canonical.AssetAliases]; the original comes first. The `crypto:<TICKER>` translation is IDENTITY-GATED: on CODE alone a classic asset
-// spelling a ticker
-// would get the REAL issuer's rows (attacker-authored pricing), so identity is (code, issuer) and only the catalogue's own issuance may
-// claim it.
-// A Soroban contract id resolves FIRST through the deterministic SAC derivation (ADR-0013), then faces the same gate.
+// `crypto:XLM`), through [canonical.AssetAliases]; the original comes first. The `crypto:<TICKER>` translation is IDENTITY-GATED:
+// on CODE alone a classic asset spelling a ticker would get the REAL issuer's rows (attacker-authored pricing), so identity is
+// (code, issuer) and only the catalogue's own issuance may claim it. A Soroban contract id resolves FIRST through the
+// deterministic SAC derivation (ADR-0013), then faces the same gate.
 func (s *Server) oracleAssetCandidates(a canonical.Asset) []canonical.Asset {
 	candidates := canonical.AssetAliases(a)
 
@@ -83,10 +81,9 @@ func appendAssetsUnique(dst []canonical.Asset, add ...canonical.Asset) []canonic
 	return dst
 }
 
-// verifiedTickerFor returns the global ticker a CLASSIC asset may be answered under: non-empty only when this exact (code, issuer) is the
-// catalogue's
-// own Stellar issuance. A nil catalogue or unverified issuer fails CLOSED; `reference_only` tickers (USDT, BTC) are never granted: any
-// classic `USDT-G...` impersonates.
+// verifiedTickerFor returns the global ticker a CLASSIC asset may be answered under: non-empty only when this exact (code,
+// issuer) is the catalogue's own Stellar issuance. A nil catalogue or unverified issuer fails CLOSED; `reference_only` tickers
+// (USDT, BTC) are never granted: any classic `USDT-G...` impersonates.
 func (s *Server) verifiedTickerFor(a canonical.Asset) (string, bool) {
 	if a.Type != canonical.AssetClassic || a.Code == "" || a.Issuer == "" {
 		return "", false
@@ -176,9 +173,9 @@ type OracleReading struct {
 	Credit string `json:"credit,omitempty"`
 }
 
-// handleOracleLatest serves GET /v1/oracle/latest?asset=&source=&quote=: one OracleReading per (source, quote), so MORE than one per
-// source when it
-// publishes several quotes; the source filter is on-chain only (sourceFilterOK). No observations is a 200 with an empty array.
+// handleOracleLatest serves GET /v1/oracle/latest?asset=&source=&quote=: one OracleReading per (source, quote), so MORE than one
+// per source when it publishes several quotes; the source filter is on-chain only (sourceFilterOK). No observations is a 200 with
+// an empty array.
 func (s *Server) handleOracleLatest(w http.ResponseWriter, r *http.Request) {
 	reader := s.Oracle
 	if reader == nil {

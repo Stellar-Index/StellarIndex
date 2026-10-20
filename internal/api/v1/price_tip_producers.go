@@ -31,24 +31,19 @@ import (
 const tipProducerLinger = 30 * time.Second
 
 // defaultMaxTipProducers caps concurrent tip producers. A stream mints a DETACHED producer that outlives its connection for
-// tipProducerLinger, so the SSE connection caps
-// do not bound it; the key includes client-chosen window_seconds, so unauthenticated open/abort loops could otherwise leave unbounded DB-
-// polling loops.
-// At either global bound the oldest lingering entries are evicted, so only subscribed demand refuses a mint. Tune with
-// [Server.SetMaxTipProducers].
+// tipProducerLinger, so the SSE connection caps do not bound it; the key includes client-chosen window_seconds, so
+// unauthenticated open/abort loops could otherwise leave unbounded DB- polling loops. At either global bound the oldest lingering
+// entries are evicted, so only subscribed demand refuses a mint. Tune with [Server.SetMaxTipProducers].
 const defaultMaxTipProducers = 512
 
-// defaultMaxTipProducersPerCaller caps producers ONE caller has minted and still holds registered (running or lingering): the global
-// ceiling alone lets one address
-// looping the key space refuse everyone else. A slot returns only when the registry entry leaves, not at connection close. Joining a
-// running producer is never charged.
-// Tune with [Server.SetMaxTipProducersPerCaller].
+// defaultMaxTipProducersPerCaller caps producers ONE caller has minted and still holds registered (running or lingering): the
+// global ceiling alone lets one address looping the key space refuse everyone else. A slot returns only when the registry entry
+// leaves, not at connection close. Joining a running producer is never charged. Tune with [Server.SetMaxTipProducersPerCaller].
 const defaultMaxTipProducersPerCaller = 24
 
-// defaultMaxTipTicksPerMinute bounds the AGGREGATE compute rate (each tick is one computeTip plus a divergence lookup); count ceilings do
-// not, because
-// window_seconds is client-chosen down to 1s. Sized for 512 producers at the default 5s window (512 x 12 = 6144/min); shorter windows
-// spend proportionally more.
+// defaultMaxTipTicksPerMinute bounds the AGGREGATE compute rate (each tick is one computeTip plus a divergence lookup); count
+// ceilings do not, because window_seconds is client-chosen down to 1s. Sized for 512 producers at the default 5s window (512 x 12
+// = 6144/min); shorter windows spend proportionally more.
 const defaultMaxTipTicksPerMinute = defaultMaxTipProducers * (60 / defaultTipWindowSeconds)
 
 // defaultMaxTipTicksPerMinutePerCaller is one caller's share of that rate, derived from its count quota (24 x 12 = 288/min).
@@ -286,9 +281,8 @@ func overBudget(lim, held, cost int) bool {
 	return lim > 0 && held+cost > lim
 }
 
-// admitLocked decides whether caller may mint a NEW producer costing ticks, counting any refusal. Per-caller bounds come FIRST so an
-// over-share client
-// is turned away before consuming a shared slot.
+// admitLocked decides whether caller may mint a NEW producer costing ticks, counting any refusal. Per-caller bounds come FIRST so
+// an over-share client is turned away before consuming a shared slot.
 func (r *tipProducerRegistry) admitLocked(caller string, ticks int) tipProducerOutcome {
 	victims, outcome := r.planAdmitLocked(caller, ticks)
 	if outcome != tipProducerAdmitted {
@@ -329,9 +323,8 @@ func (r *tipProducerRegistry) wouldAdmit(key tipProducerKey, caller string) tipP
 	return outcome
 }
 
-// planRoomLocked fits a new producer costing ticks under the global bounds by evicting the longest-idle lingering producers; subscribed
-// producers are never evicted,
-// and nothing is evicted unless it makes room.
+// planRoomLocked fits a new producer costing ticks under the global bounds by evicting the longest-idle lingering producers;
+// subscribed producers are never evicted, and nothing is evicted unless it makes room.
 func (r *tipProducerRegistry) planRoomLocked(ticks int) ([]tipProducerKey, tipProducerOutcome) {
 	slots, held := len(r.active), r.ticks
 	fits := func() bool {
@@ -372,9 +365,8 @@ func (r *tipProducerRegistry) lingeringLocked() []tipProducerKey {
 	return keys
 }
 
-// removeLocked stops p and deletes its entry. The minter's quota slot returns only HERE: returning it at connection close would free it
-// while the producer
-// still lingers, the window the abort-loop flood exploits.
+// removeLocked stops p and deletes its entry. The minter's quota slot returns only HERE: returning it at connection close would
+// free it while the producer still lingers, the window the abort-loop flood exploits.
 func (r *tipProducerRegistry) removeLocked(key tipProducerKey, p *tipProducer) {
 	if p.linger != nil {
 		p.linger.Stop()
@@ -425,9 +417,9 @@ func (r *tipProducerRegistry) dischargeCallerLocked(caller string, ticks int) {
 	decrementOrDelete(r.mintedTicks, caller, ticks)
 }
 
-// transferChargeLocked moves p's per-caller charge from a departed minter to a caller that holds it: charging a departed minter refuses
-// it new pairs while it holds none,
-// and dropping the charge would let another address hold producers free. The smallest attributed holder is chosen, for determinism.
+// transferChargeLocked moves p's per-caller charge from a departed minter to a caller that holds it: charging a departed minter
+// refuses it new pairs while it holds none, and dropping the charge would let another address hold producers free. The smallest
+// attributed holder is chosen, for determinism.
 func (r *tipProducerRegistry) transferChargeLocked(p *tipProducer) {
 	next := unattributedTipCaller
 	for c := range p.holders {
@@ -463,11 +455,9 @@ func (r *tipProducerRegistry) acquire(
 }
 
 // acquireFor ensures a producer runs for key and holds a reference; release must be called exactly once, and only on
-// [tipProducerAdmitted].
-// A NEW producer is refused past the caller's quota/rate share or the registry's ceiling/budget; joining a running one is always allowed
-// and never charged
-// (a join during the linger takes over the departed minter's charge), since refusing it would turn away a popular pair's viewers at no
-// saving.
+// [tipProducerAdmitted]. A NEW producer is refused past the caller's quota/rate share or the registry's ceiling/budget; joining a
+// running one is always allowed and never charged (a join during the linger takes over the departed minter's charge), since
+// refusing it would turn away a popular pair's viewers at no saving.
 func (r *tipProducerRegistry) acquireFor(
 	key tipProducerKey, caller string, logger *slog.Logger, start func(ctx context.Context),
 ) (release func(), outcome tipProducerOutcome) {
@@ -556,10 +546,9 @@ func (r *tipProducerRegistry) spawn(ctx context.Context, key tipProducerKey, p *
 	}()
 }
 
-// respawnIfLive is spawn's exit hook: a recovered panic leaves the entry live with refs>0 but nothing computing, and release() starts the
-// linger only at refs==0,
-// so subscribers would get heartbeats only. A cancelled ctx (linger ended it) is never respawned; otherwise it relaunches after
-// [tipProducerRestartBackoff] if key still maps to THIS record.
+// respawnIfLive is spawn's exit hook: a recovered panic leaves the entry live with refs>0 but nothing computing, and release()
+// starts the linger only at refs==0, so subscribers would get heartbeats only. A cancelled ctx (linger ended it) is never
+// respawned; otherwise it relaunches after [tipProducerRestartBackoff] if key still maps to THIS record.
 func (r *tipProducerRegistry) respawnIfLive(ctx context.Context, key tipProducerKey, p *tipProducer) {
 	if ctx.Err() != nil {
 		return
@@ -625,9 +614,9 @@ func (s *Server) SetMaxTipProducersPerCaller(n int) {
 	s.tipProducers.maxPerCaller = n
 }
 
-// tipProducerCaller resolves the principal a producer is charged to: the trusted-proxy-aware client IP, aggregated to its /64 for IPv6
-// ([ratelimit.ThrottleIPKey])
-// because a /128 quota is bypassed by rotating low bits. Unresolvable collapses into [unknownTipCaller] (fail closed).
+// tipProducerCaller resolves the principal a producer is charged to: the trusted-proxy-aware client IP, aggregated to its /64 for
+// IPv6 ([ratelimit.ThrottleIPKey]) because a /128 quota is bypassed by rotating low bits. Unresolvable collapses into
+// [unknownTipCaller] (fail closed).
 func tipProducerCaller(r *http.Request) string {
 	ip := middleware.RemoteIP(r)
 	if ip == "" {

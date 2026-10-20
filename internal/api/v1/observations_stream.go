@@ -266,9 +266,8 @@ func (s *Server) runObservationsStreamProducer(
 	}
 }
 
-// observationsStreamEvent builds one SSE payload ((_, false) on marshal failure). stale, frozen and divergence_checked are false BY
-// DESIGN: raw
-// per-source surface, nothing to vouch for, s.Divergence never consulted (FRESHNESS CONTRACT;
+// observationsStreamEvent builds one SSE payload ((_, false) on marshal failure). stale, frozen and divergence_checked are false
+// BY DESIGN: raw per-source surface, nothing to vouch for, s.Divergence never consulted (FRESHNESS CONTRACT;
 // TestObservationsStream_DivergenceCheckedStructurallyFalse).
 func (s *Server) observationsStreamEvent(gen *streaming.Generator, pair canonical.Pair, trades []canonical.Trade) (streaming.Event, bool) {
 	rows := make([]TradeRow, len(trades))

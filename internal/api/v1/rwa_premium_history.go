@@ -46,10 +46,10 @@ const rwaPremiumHistoryMaxPoints = 4096
 // reference feeds are USD-denominated and the market leg is read against dollar spellings only.
 var rwaPremiumHistoryQuote = canonical.Asset{Type: canonical.AssetFiat, Code: "USD"}
 
-// rwaPremiumDayFloorFor derives the per-day market-substance floor from the SAME policy /v1/price serves against (s.RWAPremiumSubstance),
-// evaluated by [pricingguard.SubstanceOK]. MinVolumeUSD and MinSpan are
-// the serving values UNCHANGED but MinBuckets is NOT: serving counts MINUTE buckets (1440/day), this counts HOUR buckets (24/day), the
-// coarsest grain that still says WHEN ([timescale.Store.DailyMarketDays]); inheriting it would blank every series.
+// rwaPremiumDayFloorFor derives the per-day market-substance floor from the SAME policy /v1/price serves against
+// (s.RWAPremiumSubstance), evaluated by [pricingguard.SubstanceOK]. MinVolumeUSD and MinSpan are the serving values UNCHANGED but
+// MinBuckets is NOT: serving counts MINUTE buckets (1440/day), this counts HOUR buckets (24/day), the coarsest grain that still
+// says WHEN ([timescale.Store.DailyMarketDays]); inheriting it would blank every series.
 func (s *Server) rwaPremiumDayFloorFor() pricingguard.SubstancePolicy {
 	minVolumeUSD := s.RWAPremiumSubstance.MinVolumeUSD
 	if minVolumeUSD == nil {
@@ -439,10 +439,9 @@ func rwaPremiumExcludedRows(tally map[string]int) []RWAHistoryExcluded {
 
 // ─── assembly ───────────────────────────────────────────────────────
 
-// cachedRWAPremiumHistory returns the assembled series, rebuilt at most once per TTL behind a single-flight gate (both legs are scans),
-// as [Server.cachedRWAValueHistory]. On a failed assembly the last good series is served,
-// else an UNAVAILABLE one: an empty series would claim no token ever traded away from its NAV, which a read that did not answer may not
-// claim.
+// cachedRWAPremiumHistory returns the assembled series, rebuilt at most once per TTL behind a single-flight gate (both legs are
+// scans), as [Server.cachedRWAValueHistory]. On a failed assembly the last good series is served, else an UNAVAILABLE one: an
+// empty series would claim no token ever traded away from its NAV, which a read that did not answer may not claim.
 func (s *Server) cachedRWAPremiumHistory(ctx context.Context) rwaPremiumHistory {
 	return s.awaitRWAPremiumHistory(ctx, false)
 }
@@ -605,9 +604,9 @@ func rwaPremiumCandidates(m rwaMembership, excluded map[string]int) []rwaHistory
 
 // ─── reference leg ──────────────────────────────────────────────────
 
-// rwaPremiumReferenceDays reads the oracle day buckets for the candidates' bound feeds and reduces each to ONE publisher's series via
-// [rwaReduceFeedSeries] verbatim,
-// so the value series and this one cannot disagree about what an instrument was worth on a day.
+// rwaPremiumReferenceDays reads the oracle day buckets for the candidates' bound feeds and reduces each to ONE publisher's series
+// via [rwaReduceFeedSeries] verbatim, so the value series and this one cannot disagree about what an instrument was worth on a
+// day.
 func (s *Server) rwaPremiumReferenceDays(
 	ctx context.Context, cands []rwaHistoryCandidate, to time.Time,
 ) (map[string]*rwaFeedSeries, bool) {
@@ -658,10 +657,10 @@ func (s *Server) rwaPremiumMarketDays(
 	return out, true
 }
 
-// rwaPremiumUSDQuotes is the set of spellings a dollar may take on the quote side of a market this surface reads. Deliberately NARROW:
-// the verified USD-pegged classic assets in every canonical form plus `fiat:USD`,
-// not the chart's wider stablecoin-ticker proxy set (trusting a ticker rather than the issuer let an unpegged "USDT" set XLM's all-time
-// high, see [timescale.AssetATH]): a non-dollar quote leg is a false financial claim.
+// rwaPremiumUSDQuotes is the set of spellings a dollar may take on the quote side of a market this surface reads. Deliberately
+// NARROW: the verified USD-pegged classic assets in every canonical form plus `fiat:USD`, not the chart's wider stablecoin-ticker
+// proxy set (trusting a ticker rather than the issuer let an unpegged "USDT" set XLM's all-time high, see [timescale.AssetATH]):
+// a non-dollar quote leg is a false financial claim.
 func (s *Server) rwaPremiumUSDQuotes() []canonical.Asset {
 	seen := map[string]struct{}{}
 	out := make([]canonical.Asset, 0, 4)
@@ -739,10 +738,9 @@ func rwaPremiumDayClears(d timescale.MarketDay, floor pricingguard.SubstancePoli
 	return pricingguard.SubstanceOK(volume, d.Hours, d.SpanSeconds, floor)
 }
 
-// rwaPremiumDayOf measures one day's premium against that day's published value. ok=false (not an error) means no comparison: the oracle
-// published nothing or a non-positive value (never divided by), or the market
-// figure is not positive. Exact rationals; the 4-dp scale is `premium.pct`'s on /v1/rwa/assets so the two surfaces cannot round one
-// quantity two ways.
+// rwaPremiumDayOf measures one day's premium against that day's published value. ok=false (not an error) means no comparison: the
+// oracle published nothing or a non-positive value (never divided by), or the market figure is not positive. Exact rationals; the
+// 4-dp scale is `premium.pct`'s on /v1/rwa/assets so the two surfaces cannot round one quantity two ways.
 func rwaPremiumDayOf(d timescale.MarketDay, refPrice *big.Rat) (rwaPremiumDay, bool) {
 	if refPrice == nil || refPrice.Sign() <= 0 {
 		return rwaPremiumDay{}, false

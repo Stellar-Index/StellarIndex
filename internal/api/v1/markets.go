@@ -668,9 +668,9 @@ func compareVolumeUSD(a, b *string) int {
 	return toRat(a).Cmp(toRat(b))
 }
 
-// adjustListingPrice is the sole path a listing last_price takes to the wire: scam-issuer withholding (nil; the row still lists, as
-// /v1/price 404s)
-// then nonstandard-decimals normalization. Same pointer returned when decimals match: reformatting would change bytes for every 7dp pair.
+// adjustListingPrice is the sole path a listing last_price takes to the wire: scam-issuer withholding (nil; the row still lists,
+// as /v1/price 404s) then nonstandard-decimals normalization. Same pointer returned when decimals match: reformatting would
+// change bytes for every 7dp pair.
 func (s *Server) adjustListingPrice(ctx context.Context, base, quote canonical.Asset, lastPrice *string, surface string) *string {
 	if lastPrice == nil || *lastPrice == "" {
 		return lastPrice

@@ -16,9 +16,9 @@ import (
 // slowly, so a per-source last-good count is exact enough; one refresh runs per source per
 // protocolRosterTTL.
 
-// protocolRosterTTL is the freshness horizon of a cached roster count; past it the entry is served while ONE detached refresh runs. It
-// exceeds the prewarm sweep (~13-16 min)
-// and matches protocolDetailTTL because the roster feeds the directory the detail cache warms.
+// protocolRosterTTL is the freshness horizon of a cached roster count; past it the entry is served while ONE detached refresh
+// runs. It exceeds the prewarm sweep (~13-16 min) and matches protocolDetailTTL because the roster feeds the directory the detail
+// cache warms.
 const protocolRosterTTL = 20 * time.Minute
 
 // protocolRosterRefreshTimeout bounds one detached roster refresh (scan ~0.5-0.8s live) so a wedged query cannot pin the single-flight.

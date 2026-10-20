@@ -20,9 +20,9 @@ const tipStreamProducerQueueDepth = 4
 // connection indefinitely.
 const tipStreamTickTimeout = 8 * time.Second
 
-// tipStreamDivergenceBudget bounds the per-event divergence lookup, separately from the tick budget: a degraded auxiliary signal must
-// degrade the flag
-// (`divergence_checked: false` = could not verify), never the stream. Past the budget the event goes out unchecked.
+// tipStreamDivergenceBudget bounds the per-event divergence lookup, separately from the tick budget: a degraded auxiliary signal
+// must degrade the flag (`divergence_checked: false` = could not verify), never the stream. Past the budget the event goes out
+// unchecked.
 const tipStreamDivergenceBudget = time.Second
 
 // tipStreamDivergenceStallInterval rate-limits logging of lookups that exceeded [tipStreamDivergenceBudget]; process-wide because the one
@@ -226,9 +226,9 @@ func (s *Server) forwardTipStream(
 	}
 }
 
-// runTipStreamProducer is the per-connection compute and push loop: the initial event (skipped when empty), then every `windowSeconds`. A
-// withheld pair emits a
-// price_withheld marker ([Server.tipTickEvent]); other failures are skipped as transient. It closes ch on ctx cancel.
+// runTipStreamProducer is the per-connection compute and push loop: the initial event (skipped when empty), then every
+// `windowSeconds`. A withheld pair emits a price_withheld marker ([Server.tipTickEvent]); other failures are skipped as
+// transient. It closes ch on ctx cancel.
 func (s *Server) runTipStreamProducer(
 	ctx context.Context,
 	ch chan<- streaming.Event,
@@ -272,9 +272,8 @@ func (s *Server) runTipStreamProducer(
 	}
 }
 
-// tipTickEvent computes one tick for both producers: a tip_update, or a price_withheld marker while a gate refuses the pair, so a pair
-// crossing the gate after connect
-// reads as withheld, not a quiet market. ok is false only when there is nothing to emit.
+// tipTickEvent computes one tick for both producers: a tip_update, or a price_withheld marker while a gate refuses the pair, so a
+// pair crossing the gate after connect reads as withheld, not a quiet market. ok is false only when there is nothing to emit.
 func (s *Server) tipTickEvent(ctx context.Context, gen *streaming.Generator, asset, quote canonical.Asset, window int) (streaming.Event, bool) {
 	tickCtx, cancel := context.WithTimeout(ctx, tipStreamTickTimeout)
 	defer cancel()
@@ -316,10 +315,9 @@ func tipWithheldEvent(gen *streaming.Generator, asset, quote canonical.Asset, re
 	return streaming.Event{ID: gen.Next(), Type: "price_withheld", Data: body}, true
 }
 
-// tipStreamEvent builds the SSE payload for one emission with tipFlags from the endpoint's own lookup. Once the store is slow GET and
-// stream deliberately diverge
-// (request budget vs [tipStreamDivergenceBudget]), so a base can be checked=true on GET and false on the stream: the stream never
-// manufactures an all-clear the GET would not give.
+// tipStreamEvent builds the SSE payload for one emission with tipFlags from the endpoint's own lookup. Once the store is slow GET
+// and stream deliberately diverge (request budget vs [tipStreamDivergenceBudget]), so a base can be checked=true on GET and false
+// on the stream: the stream never manufactures an all-clear the GET would not give.
 func (s *Server) tipStreamEvent(ctx context.Context, gen *streaming.Generator, asset, quote canonical.Asset, snap PriceSnapshot, sources []string) (streaming.Event, bool) {
 	// Flags first, THEN the timestamp: as_of must be taken after the last step that can delay
 	// the emission, or a slow divergence lookup ships an as_of up to a sub-budget stale.
@@ -341,10 +339,9 @@ func (s *Server) tipStreamEvent(ctx context.Context, gen *streaming.Generator, a
 	}, true
 }
 
-// tipStreamFlags builds one emission's flags, running the divergence lookup under [tipStreamDivergenceBudget]. On a stall it degrades the
-// flag (`divergence_checked: false` means
-// "could not verify", never "prices agree"); the two contexts tell a stall (sub-budget expired only) from teardown (both), which is not
-// logged.
+// tipStreamFlags builds one emission's flags, running the divergence lookup under [tipStreamDivergenceBudget]. On a stall it
+// degrades the flag (`divergence_checked: false` means "could not verify", never "prices agree"); the two contexts tell a stall
+// (sub-budget expired only) from teardown (both), which is not logged.
 func (s *Server) tipStreamFlags(ctx context.Context, snap PriceSnapshot, asset, quote canonical.Asset, sources []string) Flags {
 	budget := s.tipDivergenceBudget()
 	lookupCtx, cancel := context.WithTimeout(ctx, budget)

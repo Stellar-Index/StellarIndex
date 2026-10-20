@@ -261,8 +261,8 @@ func ageSince(now time.Time, ts *time.Time) *time.Duration {
 }
 
 // parseBackupLabelTime extracts the start time from a pgBackRest label (`YYYYMMDD-HHMMSSF` full,
-// `<full-label>_YYYYMMDD-HHMMSS[D|I]` diff/incr; the LAST segment is the backup's own start). Labels use the host's local
-// clock; hosts run UTC.
+// `<full-label>_YYYYMMDD-HHMMSS[D|I]` diff/incr; the LAST segment is the backup's own start). Labels use the host's local clock;
+// hosts run UTC.
 func parseBackupLabelTime(label string) (time.Time, bool) {
 	seg := label
 	if i := strings.LastIndexByte(label, '_'); i >= 0 {

@@ -34,9 +34,9 @@ const rwaFunnelBasis = "Every issuer account that could carry a SEP-1 attestatio
 	"the same unit. `actor` names who can move a number: an operator, the token's own issuer, or nobody — the " +
 	"definition refusing it."
 
-// rwaFunnelClassicUnmeasured corrects the basis sentence when no issuer-bound attestation reader is wired: otherwise zero stages would
-// assert that no issuer attests to a real-world asset
-// from a scan that never ran. A WIRED scan that failed never reaches here (the cache refuses that rebuild and keeps the last good set).
+// rwaFunnelClassicUnmeasured corrects the basis sentence when no issuer-bound attestation reader is wired: otherwise zero stages
+// would assert that no issuer attests to a real-world asset from a scan that never ran. A WIRED scan that failed never reaches
+// here (the cache refuses that rebuild and keeps the last good set).
 const rwaFunnelClassicUnmeasured = "The `classic` arm was NOT MEASURED: no issuer-bound SEP-1 attestation reader " +
 	"is wired, so that population was never walked. Its stages below read zero because nobody looked, not because " +
 	"no issuer on this network attests to a real-world asset."
@@ -220,10 +220,9 @@ var rwaReferenceRefusalOrder = []string{
 	RWAReferenceValuationDecimalsUnknown,
 }
 
-// rwaReferenceDropActors names who can move each reference-valuation drop: `operator` where somebody here can act (no oracle publishes
-// the instrument, failed or stale read, no supply reading,
-// empty curated feed set); `definition` where the rule is working (flagged issuer, unbound pair, ounce-priced feed, reserve-denominated
-// or non-positive value). No drop is the ISSUER's.
+// rwaReferenceDropActors names who can move each reference-valuation drop: `operator` where somebody here can act (no oracle
+// publishes the instrument, failed or stale read, no supply reading, empty curated feed set); `definition` where the rule is
+// working (flagged issuer, unbound pair, ounce-priced feed, reserve-denominated or non-positive value). No drop is the ISSUER's.
 var rwaReferenceDropActors = map[string]string{
 	RWAPremiumIssuerFlagged:        rwaActorDefinition,
 	RWAPremiumNotBound:             rwaActorDefinition,
@@ -243,9 +242,9 @@ var rwaReferenceDropActors = map[string]string{
 	RWAReferenceValuationDecimalsUnknown: rwaActorOperator,
 }
 
-// rwaReferenceDrops renders the tallied refusals in rule order. A status missing from [rwaReferenceDropActors] is a defect here, not in
-// the data, so it is attributed to the OPERATOR and reported
-// (dropping it would unbalance the funnel uninformatively); a test pins every status a row can carry to an actor.
+// rwaReferenceDrops renders the tallied refusals in rule order. A status missing from [rwaReferenceDropActors] is a defect here,
+// not in the data, so it is attributed to the OPERATOR and reported (dropping it would unbalance the funnel uninformatively); a
+// test pins every status a row can carry to an actor.
 func rwaReferenceDrops(byReason map[string]int) []RWAFunnelDrop {
 	out := make([]RWAFunnelDrop, 0, len(byReason))
 	seen := map[string]struct{}{}
@@ -436,10 +435,9 @@ func rwaContractStages(m rwaMembership, served int) []RWAFunnelStage {
 	return stages
 }
 
-// rwaListingStages is C2's SECOND arm: every in-repo curated contract binding, narrowed to tokens an independent listing directory
-// corroborated. A separate arm because it narrows a DIFFERENT
-// population from a different root; folding them would sum two unrelated populations in one stage. Short on purpose: every drop is
-// somebody else declining to agree, or nobody asked.
+// rwaListingStages is C2's SECOND arm: every in-repo curated contract binding, narrowed to tokens an independent listing
+// directory corroborated. A separate arm because it narrows a DIFFERENT population from a different root; folding them would sum
+// two unrelated populations in one stage. Short on purpose: every drop is somebody else declining to agree, or nobody asked.
 func rwaListingStages(m rwaMembership, served int) []RWAFunnelStage {
 	lc := m.listingCensus
 	stages := []RWAFunnelStage{
@@ -528,10 +526,10 @@ func rwaListingAdmitted(m rwaMembership) int {
 	return n
 }
 
-// rwaListingCandidateDrops is what happened to candidates that reached the full ordered evaluation on this arm: C2's refusals appear on
-// the stage above; what remains is C3, a scam flag on an address the
-// directory named ONLY to flag (`definition`, the case the precedence exists for). The C4 drop is UNREACHABLE by construction, listed so
-// an admitted candidate cannot drop out of the accounting silently.
+// rwaListingCandidateDrops is what happened to candidates that reached the full ordered evaluation on this arm: C2's refusals
+// appear on the stage above; what remains is C3, a scam flag on an address the directory named ONLY to flag (`definition`, the
+// case the precedence exists for). The C4 drop is UNREACHABLE by construction, listed so an admitted candidate cannot drop out of
+// the accounting silently.
 func rwaListingCandidateDrops(m rwaMembership) []RWAFunnelDrop {
 	out := make([]RWAFunnelDrop, 0, 2)
 	for _, d := range []struct {
@@ -606,10 +604,9 @@ func rwaDrops(drops ...RWAFunnelDrop) []RWAFunnelDrop {
 }
 
 // rwaFunnelImbalance returns the reason the funnel does not add up, or "" when it does: every adjacent pair must satisfy `count -
-// sum(dropped) == next.count`, except (a) the one issuer-accounts-to-declarations
-// transition, which must carry no drops, and (b) issuer_asset_page_truncated, which counts ISSUERS not assets (letting it into the asset
-// arithmetic would close the funnel by inventing a number).
-// Surfaced through RWAFunnel.Balanced rather than raised: a funnel that cannot be reconciled must SAY so.
+// sum(dropped) == next.count`, except (a) the one issuer-accounts-to-declarations transition, which must carry no drops, and (b)
+// issuer_asset_page_truncated, which counts ISSUERS not assets (letting it into the asset arithmetic would close the funnel by
+// inventing a number). Surfaced through RWAFunnel.Balanced rather than raised: a funnel that cannot be reconciled must SAY so.
 func rwaFunnelImbalance(stages []RWAFunnelStage) string {
 	for i := 0; i+1 < len(stages); i++ {
 		if bad := rwaStagePairImbalance(stages[i], stages[i+1]); bad != "" {
@@ -642,9 +639,9 @@ func rwaStagePairImbalance(cur, next RWAFunnelStage) string {
 	return ""
 }
 
-// rwaUnbridgeablePair reports whether no subtraction relates two adjacent stages, and why; such a pair must carry no drops. Exactly
-// three: an ARM BOUNDARY (arms narrow different populations and meet only at the served set),
-// the ONE issuer-accounts-to-declarations transition (every other unit change is a one-to-one relabelling and must reconcile), and the
+// rwaUnbridgeablePair reports whether no subtraction relates two adjacent stages, and why; such a pair must carry no drops.
+// Exactly three: an ARM BOUNDARY (arms narrow different populations and meet only at the served set), the ONE
+// issuer-accounts-to-declarations transition (every other unit change is a one-to-one relabelling and must reconcile), and the
 // TERMINAL CENSUS stage (counts a population an earlier stage already dropped).
 func rwaUnbridgeablePair(cur, next RWAFunnelStage) (string, bool) {
 	switch {

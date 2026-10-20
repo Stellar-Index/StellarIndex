@@ -243,9 +243,9 @@ type rwaCuratedMember struct {
 	alsoVerified bool
 }
 
-// rwaCuratedMembership selects the curator's rows and marks which the verified set already carries. A classic member is matched by the
-// SAC its (code, issuer) derives,
-// a pure function of pair and network, so an impersonator's SAC never collides with the genuine one.
+// rwaCuratedMembership selects the curator's rows and marks which the verified set already carries. A classic member is matched
+// by the SAC its (code, issuer) derives, a pure function of pair and network, so an impersonator's SAC never collides with the
+// genuine one.
 func rwaCuratedMembership(snap rwaCurated, verified []RWAAsset) []rwaCuratedMember {
 	if !snap.available {
 		return nil
@@ -492,9 +492,9 @@ func rwaCuratedPublishedSplit(p *timescale.CuratedRWAPublished, now time.Time) (
 
 // ─── handler hook ───────────────────────────────────────────────────
 
-// attachRWACurated runs the curated arm after the verified view is complete and attaches its rows and total apart from it. Rows are
-// valued on valuationCtx, the request's contract valuation budget
-// (the snapshot read detaches from it); degraded reports a failed or cut-short read.
+// attachRWACurated runs the curated arm after the verified view is complete and attaches its rows and total apart from it. Rows
+// are valued on valuationCtx, the request's contract valuation budget (the snapshot read detaches from it); degraded reports a
+// failed or cut-short read.
 func (s *Server) attachRWACurated(
 	valuationCtx context.Context, view *RWAAssetsView, now time.Time,
 ) (degraded bool) {

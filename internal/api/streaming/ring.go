@@ -42,9 +42,9 @@ func (r *ring) oldestID() string {
 	return r.events[0].ID
 }
 
-// hasEvicted reports whether this ring has ever discarded an event. A cursor older than [ring.oldestID] is a genuine gap only then;
-// otherwise the oldest event is the topic's
-// first-ever publish, which a stale or synthetic cursor can predate with nothing lost.
+// hasEvicted reports whether this ring has ever discarded an event. A cursor older than [ring.oldestID] is a genuine gap only
+// then; otherwise the oldest event is the topic's first-ever publish, which a stale or synthetic cursor can predate with nothing
+// lost.
 func (r *ring) hasEvicted() bool { return r.evicted }
 
 // snapshotAfter returns a copy, in ID order, of every buffered event with ID strictly greater than lastEventID (nil for an
