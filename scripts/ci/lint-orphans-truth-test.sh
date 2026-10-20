@@ -3,7 +3,7 @@
 # claiming an ExecStart script "does not exist anywhere in this repo" when
 # it does (scripts/ops/completeness-incremental.sh). An ORPHANS reason that
 # asserts non-existence for a script that is actually live and referenced
-# elsewhere (docs/operations/sep41-completeness-diagnosis-2026-07-25.md)
+# elsewhere (docs/operations/sep41-completeness-diagnosis.md)
 # misleads an operator deciding whether the unit is safe to delete.
 #
 # check <orphans-file> — for every "/usr/local/(bin|sbin)/<name>" mentioned

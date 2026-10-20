@@ -58,7 +58,7 @@ systemctl list-units 'heavy-*.scope' --no-pager   # find the unit
 systemctl stop heavy-<name>-<pid>.scope           # blocks until the scope is gone
 ```
 
-`stop` SIGTERMs the whole scope, then SIGKILLs at the scope's `TimeoutStopSec`, which the wrapper sets from `HEAVY_JOB_STOP_TIMEOUT` (default `5min`, replacing systemd's 90 s). `usd-volume-restamp -chunks` re-compresses the chunk it has open (the largest `trades` chunk is 160 GB), so it names its own bound on its launch line (`HEAVY_JOB_STOP_TIMEOUT=2h`; see [../usd-volume-rederive-2026-08.md](../usd-volume-rederive-2026-08.md) "Chunk mode"). A bare integer is SECONDS under `systemd.time`; the wrapper accepts a bare integer, `Ns`, `Nmin`, `Nh` and `infinity`, refuses other spellings and anything below a 90 s floor (exit 2 before the payload starts), and prints the bound on every run.
+`stop` SIGTERMs the whole scope, then SIGKILLs at the scope's `TimeoutStopSec`, which the wrapper sets from `HEAVY_JOB_STOP_TIMEOUT` (default `5min`, replacing systemd's 90 s). `usd-volume-restamp -chunks` re-compresses the chunk it has open (the largest `trades` chunk is 160 GB), so it names its own bound on its launch line (`HEAVY_JOB_STOP_TIMEOUT=2h`; see [../usd-volume-rederive.md](../usd-volume-rederive.md) "Chunk mode"). A bare integer is SECONDS under `systemd.time`; the wrapper accepts a bare integer, `Ns`, `Nmin`, `Nh` and `infinity`, refuses other spellings and anything below a 90 s floor (exit 2 before the payload starts), and prints the bound on every run.
 
 While a long bound is in force: the disk watchdog's low-space stop (`stop_job`, the same `systemctl stop`) waits up to the bound before SIGKILL, and the `|| systemctl kill` fallback cannot fire inside that wait. Do not give a long bound to a payload whose SIGTERM cleanup consumes space or pool connections.
 
@@ -144,4 +144,4 @@ Check and fix:
 ## Related
 
 - [ingest-gap-detector-silent](ingest-gap.md#stellarindex_ingest_gap_detector_silent), [zfs-pool-full](infra.md#stellarindex_zfs_pool_low_space), [ch-schema-restore](ch-schema-restore.md).
-- [../usd-volume-rederive-2026-08.md](../usd-volume-rederive-2026-08.md) "Chunk mode": the job whose cleanup sized the stop bound.
+- [../usd-volume-rederive.md](../usd-volume-rederive.md) "Chunk mode": the job whose cleanup sized the stop bound.

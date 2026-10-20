@@ -68,7 +68,7 @@ Three launch paths reach that file:
   `/etc/default/stellarindex-ops` when the caller has not set them. This is
   the path that matters: the heavy-job runbooks
   ([sep41-mint-recovery](sep41-mint-recovery.md),
-  [usd-volume-rederive](usd-volume-rederive-2026-08.md),
+  [usd-volume-rederive](usd-volume-rederive.md),
   [fx-history-missing](runbooks/data-freshness.md#fx-history-missing),
   [lcm-cache-tiering](lcm-cache-tiering.md)) source
   `/etc/default/stellarindex`, not `-ops`. Every launch prints one stderr

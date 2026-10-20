@@ -87,7 +87,7 @@ with `meets_bar: false` and any firing `usd-volume-coverage` alert.
 
 Rows older than the v0.19.0 deploy keep their NULLs until re-derived with
 `stellarindex-ops usd-volume-restamp` at point-in-time rates (procedure:
-[usd-volume-rederive-2026-08.md](usd-volume-rederive-2026-08.md); INV-0974 done).
+[usd-volume-rederive.md](usd-volume-rederive.md); INV-0974 done).
 `fx_quotes` reaches 2001, so FX history does not limit it.
 
 ## Correctness constraints
@@ -173,8 +173,8 @@ set -a; . /etc/default/stellarindex; set +a
 ```
 
 Then run the windowed CAGG refreshes the tool prints (it refreshes nothing; every
-served volume surface reads a CAGG). Full procedure: [usd-volume-rederive-2026-08.md, Step
-5](usd-volume-rederive-2026-08.md).
+served volume surface reads a CAGG). Full procedure: [usd-volume-rederive.md, Step
+5](usd-volume-rederive.md).
 
 Do NOT backfill with a hand-written `UPDATE trades … WHERE usd_volume IS NULL`.
 `trades` is a compressed hypertable; an UPDATE with no `ts` predicate makes every

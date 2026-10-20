@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # lake-dedup-driver.sh: force ReplacingMergeTree deduplication of the raw lake,
 # partition by partition. Operator artifact; runbook:
-# docs/operations/lake-dedup-2026-07.md.
+# docs/operations/lake-dedup.md.
 #
 # WHY. The lake was ingested twice (a partial backfill, then a full one); copies
 # are value-identical (only ingested_at differs). RMT dedups ONLY when parts

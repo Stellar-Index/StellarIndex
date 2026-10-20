@@ -326,7 +326,7 @@ Fix:
 
 1. Get the head of the chain first. Cancelling a backend in the middle frees only its own slot and the convoy re-forms.
 2. Head is a long read safe to lose: `SELECT pg_cancel_backend(<pid>);` (drained in under 20 s previously).
-3. Head is a decompress/compress that is working: let it finish (`chunks_detailed_size` on that chunk climbing is progress; flat for minutes is wedged). Killing it mid-flight can leave a 160 GB chunk decompressed with compression paused: see [ops-job-stalled](ops-job-stalled.md) and `docs/operations/usd-volume-rederive-2026-08.md`. Head is a DDL: cancel and re-run with `lock_timeout` and a retry.
+3. Head is a decompress/compress that is working: let it finish (`chunks_detailed_size` on that chunk climbing is progress; flat for minutes is wedged). Killing it mid-flight can leave a 160 GB chunk decompressed with compression paused: see [ops-job-stalled](ops-job-stalled.md) and `docs/operations/usd-volume-rederive.md`. Head is a DDL: cancel and re-run with `lock_timeout` and a retry.
 4. Prefer `pg_cancel_backend` over `pg_terminate_backend` (terminate drops the connection and clients reconnect into the same convoy).
 5. Verify both convoy gauges read 0 on the next probe tick and the alert clears in 2 min; confirm `stellarindex_postgres_exporter_down` clears and `up{job="postgres"}` is 1.
 
