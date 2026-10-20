@@ -24,6 +24,10 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 No migrations. No `pkg/*` break. No config change.
 
+### Added
+
+- **ops:** `ch-rebuild -credit-refusals` (dry run only) charges each decoded trade to the USD credibility budget in `-write`'s batch order and prints how many token/token prints it would refuse and their USD total (#3710)
+
 ### Fixed
 
 - **timescale:** asset lookup by slug or id spells `COALESCE(slug, code)` out per column, so each arm reads its index instead of a parallel scan of `classic_assets` (62-75 ms to 1-14 ms on r1) (#3707).
