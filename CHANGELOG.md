@@ -20,6 +20,21 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.30] - 2026-10-20
+
+No migrations. No `pkg/*` break. Apply the ansible role after the deploy: it renders `api.dashboard.resend_domain_id`. The deploy applies the alert-rule changes.
+
+### Fixed
+
+- **monitoring:** 34 counter alerts per rule tree also fire on a series' first appearance, so a one-off failure on an unseeded counter (born at N, where `increase()` reads 0) no longer goes unseen; the arm is muted until the TSDB holds its lookback (#3658).
+- **obs:** per-source decode and orphan error series are exported at 0, and the launch-day F-0100 presence check names its 12 families so it can fail (#3657).
+- **ansible:** the API config carries the Resend domain id, so the API pins click and open tracking off at boot (#3656).
+
+### Changed
+
+- **ci:** each stable release dispatches the mainnet explorer production deploy, still behind its approval gate (#3659).
+- **docs:** the live-deployment smoke points at the public API (#3655).
+
 ## [v0.116.29] - 2026-10-19
 
 Postgres migrations 0219-0221 (catalog-only or new tables; no replay). No `pkg/*` break. Apply the ansible role after the deploy: it installs `trades-by-account.timer`.
@@ -81,15 +96,3 @@ No migrations. No `pkg/*` break.
 - **scripts:** `api-latency-sweep.sh --pages` covers the main explorer pages (#3622).
 - **clickhouse:** the empty `stellar.account_entry_changes` and `stellar.asset_entry_changes` are retired from the schema files and readers (#3625).
 - **deps:** explorer npm minor bumps (#3616), zizmor-action (#3615) and google.golang.org/api (#3606).
-
-## [v0.116.25] - 2026-10-19
-
-No migrations. No `pkg/*` break.
-
-### Fixed
-
-- **api:** the heavy prewarm refills the sources-stats slots whatever their age, so `/v1/sources?include=stats` no longer lapses between prewarm ticks (#3612).
-- **api:** `/v1/issuers` serves the last good list (flagged `stale`, `as_of` at its fill time) while one background refresh runs, instead of blocking a visitor on the rebuild (#3613).
-- **api:** `/v1/markets/sources` is cached for a minute behind the same stale-while-refresh cache, so a repeat asset or pair answers from memory instead of a ~2 s aggregate (#3614).
-- **ops:** `ch-rebuild -trades-by-account` runs the per-WASM lake gate once per invocation and lands 10k-ledger sub-windows, so a 1M-ledger range no longer pays the gate's whole-history factory walk 100 times (#3617).
-
