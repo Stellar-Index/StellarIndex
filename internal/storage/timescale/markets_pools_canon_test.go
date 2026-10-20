@@ -37,6 +37,30 @@ func TestBuildPoolsQuery_BothOrderingsSelectFromCanon(t *testing.T) {
 	}
 }
 
+// Grouping the hourly rows on the COALESCEd alias fold spilled a 218 MB sort on r1 (2.6 s per sdex page); both per-venue readers must
+// aggregate on the stored columns first. last() with a ROW comparator fails as a parallel partial aggregate, so neither stage may use it.
+func TestPerSourcePools_AggregateBeforeFold(t *testing.T) {
+	t.Parallel()
+	since := time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)
+	pools, _ := buildPoolsQuery(since, PoolsFilter{Sources: []string{"sdex"}}, "", 100, MarketsOrderVolume24hDesc)
+	venue, _ := buildSourceMarketsQuery(since, "sdex", "", 100, MarketsOrderVolume24hDesc)
+	for name, q := range map[string]string{"pools": pools, "source markets": venue} {
+		raw := q[strings.Index(q, "pools_raw AS ("):strings.Index(q, "pools AS (")]
+		if !strings.Contains(raw, "FROM pools_per_source_1h r") || !strings.Contains(raw, "GROUP BY r.source, r.base_asset, r.quote_asset") {
+			t.Errorf("%s: pools_raw does not aggregate the stored columns:\n%s", name, raw)
+		}
+		if strings.Contains(raw, "alias_fold") {
+			t.Errorf("%s: pools_raw folds aliases before grouping:\n%s", name, raw)
+		}
+		if !strings.Contains(raw, "r.source = ") {
+			t.Errorf("%s: the source filter does not reach the raw scan:\n%s", name, raw)
+		}
+		if strings.Contains(q, ", ROW(") {
+			t.Errorf("%s: last() with a ROW comparator cannot run as a parallel partial aggregate", name)
+		}
+	}
+}
+
 // /v1/pools filters run on raw pools_per_source_1h rows, which hold both orientations and every alias
 // spelling. A scalar `p.base_asset = $5` keeps one of each: the pair page would drop reversed SDEX volume and
 // ?asset=native would miss SAC-keyed pools.
