@@ -1,18 +1,18 @@
 ---
 title: Post-launch on-call query bundle (L6.7)
-last_verified: 2026-05-04
+last_verified: 2026-10-20
 status: operator runbook
 ---
 
 # Post-launch on-call query bundle
 
-PromQL the on-call runs in Grafana / `promtool query instant` during the **L6.7
+PromQL the on-call runs in the r1 Prometheus UI (`localhost:9090` over an SSH tunnel)
+or `promtool query instant` during the **L6.7
 first-24h post-launch watch**, each with its expected shape. They complement the
 alerts in `configs/prometheus/rules.r1/*.yml` (multi-host copies:
 `deploy/monitoring/rules/*.yml`): alerts fire on **bad**, these paint **normal**.
 
-Save each as a starred query in the "Stellar Index — Launch Watch" folder.
-Grafana variables: `$range` (default `5m`), `$instance` (across API binaries).
+There is no Grafana: substitute `$range` (default `5m`) before running a query.
 
 ## 1. Request rate per surface
 
