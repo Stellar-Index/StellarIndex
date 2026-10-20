@@ -130,7 +130,7 @@ systemctl start stellarindex-indexer stellarindex-aggregator
 
 Roll back BOTH `data/postgres` and `data/postgres/wal` to the SAME snapshot name (`-r` does not descend). Consequences:
 
-1. Every Postgres write after the snapshot is gone; ClickHouse is not rolled back. `ingestion_cursors` and projector cursors rewind, so the lake receives that range again: check for duplicates (`docs/operations/lake-dedup-2026-07.md`) and re-derive served-tier rows written after the snapshot (`projector-replay`).
+1. Every Postgres write after the snapshot is gone; ClickHouse is not rolled back. `ingestion_cursors` and projector cursors rewind, so the lake receives that range again: check for duplicates (`docs/operations/lake-dedup.md`) and re-derive served-tier rows written after the snapshot (`projector-replay`).
 2. The timeline must move. A cluster that simply restarts re-generates WAL names pgBackRest already archived from the discarded future; `archive-push` refuses them and `pg_wal` fills. Starting once in archive recovery ends on a new timeline.
 3. Take a new full backup once archiving is healthy.
 

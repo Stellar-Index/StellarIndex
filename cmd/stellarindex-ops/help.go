@@ -1251,7 +1251,7 @@ Subcommands:
                           pools_per_source_1h, dex_volume_by_pair_1d,
                           source_volume_1h (all direct on trades), and
                           twap_1h/twap_1d LAST (they read prices_1m).
-                          See docs/operations/usd-volume-rederive-2026-08.md.
+                          See docs/operations/usd-volume-rederive.md.
                           Fail-closed DRY RUN by default (prints per-day
                           candidate counts); -write applies. Walks -from..-to
                           (inclusive UTC days, never today) oldest → newest

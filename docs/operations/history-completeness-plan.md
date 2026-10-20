@@ -61,7 +61,7 @@ run-heavy-job.sh sdex-hist \
 - `-sources sdex` is required under `-write`: with no `-sources` the run selects the whole catalogue, which `ch-rebuild -write` refuses because it contains decoders that are not `BackfillSafe` (`checkCHRebuildBackfillSafe`, the F050 gate). `internal/ops/chops/ch_rebuild_backfillsafe_test.go` pins this block.
 - **Windows of at most 50,000 ledgers** (the SDEX op read OOMs the 10 GiB client pin above that): 61,609,955 ledgers is 1,233 windows.
 - **One job name for every window and attempt.** `run-heavy-job.sh` locks per name and host-wide; a held lock refuses with exit 75 (`fuser -v` on the lock names the holder).
-- `ch-rebuild` stamps `derive_generation` from the wall clock and mandates `timescale.InstallUSDVolumeResolution`, so `usd_volume` is populated, not NULLed. See [usd-volume-rederive-2026-08.md](usd-volume-rederive-2026-08.md) for the run discipline (env file, decompress-first, CAGG order).
+- `ch-rebuild` stamps `derive_generation` from the wall clock and mandates `timescale.InstallUSDVolumeResolution`, so `usd_volume` is populated, not NULLed. See [usd-volume-rederive.md](usd-volume-rederive.md) for the run discipline (env file, decompress-first, CAGG order).
 
 ### 2.3 Wall clock (unresolved)
 
