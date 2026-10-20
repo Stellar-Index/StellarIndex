@@ -428,10 +428,6 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// at the reader seam; handlers that compute their own price (vwap, twap, chart, price/tip)
 	// consult it themselves, see scam.go. Nil when the directory reader is absent.
 	scamGate := pricingguard.NewScamGate(store, pricingguard.ScamGateOptions{Logger: logger})
-	go func() {
-		defer recoverBackgroundWorker(logger, "scam-sac-index-warm")
-		scamGate.WarmSACIndex(rootCtx)
-	}()
 	priceReader := wiring.StorePriceReader{S: store, Logger: logger, Substance: substanceGate, Scam: scamGate}
 
 	// The latest-oracle query is expensive; a Redis read-through cache inside the oracle push
@@ -527,6 +523,13 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// boot. The wait shares the listener-drain deadline, so a wedged worker delays exit but cannot
 	// block it. The cache warmers and the subscriber hold no durable write and do not join.
 	var bgWG sync.WaitGroup
+
+	bgWG.Add(1)
+	go func() {
+		defer bgWG.Done()
+		defer recoverBackgroundWorker(logger, "scam-sac-index-warm")
+		scamGate.WarmSACIndex(rootCtx)
+	}()
 
 	bgWG.Add(1)
 	go func() {
