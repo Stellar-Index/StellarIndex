@@ -70,10 +70,8 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		return nil, nil
 	}
 	if a == actionCreatePool {
-		// Handled before the lock: the announcement needs neither the
-		// close time nor the correlation buffer, and Seed fires the
-		// durable live-upsert hook — which should not run under d.mu
-		// (aquarius does the same for add_pool).
+		// Handled before the lock: the announcement needs neither the close time nor the correlation buffer, and Seed fires the
+		// durable live-upsert hook — which should not run under d.mu (aquarius does the same for add_pool).
 		return nil, d.seedAnnouncedPool(&ev)
 	}
 
@@ -139,10 +137,9 @@ func (d *Decoder) decodeAction(a action, ev *events.Event, fieldTopic string, cl
 		// keeps covering the action enum.
 		return nil, nil
 	case actionUnknown:
-		// Unrecognised Phoenix action — recognised at the topic[0] level
-		// so the dispatcher doesn't file it as unmatched, but nothing to
-		// project. Explicit per the EVERY-event policy: a NEW phoenix
-		// action lands here and trips `exhaustive` until it's decided.
+		// Unrecognised Phoenix action — recognised at the topic[0] level so the dispatcher doesn't file it as unmatched, but
+		// nothing to project. Explicit per the EVERY-event policy: a NEW phoenix action lands here and trips `exhaustive` until
+		// it's decided.
 		return nil, nil
 	}
 	return nil, nil

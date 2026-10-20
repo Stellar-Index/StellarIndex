@@ -14,10 +14,8 @@ type Recipient struct {
 	Amount  canonical.Amount
 }
 
-// DistributeEvent is the [consumer.Event] emitted on a successful
-// `distribute` decode — one BLND emission distributed to a backstop.
-// The indexer's event sink type-switches on this and writes to
-// `blend_emitter_events` (event_kind='distribute').
+// DistributeEvent is the [consumer.Event] emitted on a successful `distribute` decode — one BLND emission distributed to a
+// backstop. The indexer's event sink type-switches on this and writes to `blend_emitter_events` (event_kind='distribute').
 type DistributeEvent struct {
 	ContractID string
 	Ledger     uint32
@@ -56,10 +54,8 @@ func (DropEvent) EventKind() string { return "blend_emitter.drop" }
 // Source implements [consumer.Event].
 func (DropEvent) Source() string { return SourceName }
 
-// SwapConfigKind discriminates the two backstop-swap lifecycle
-// events. Both share an identical body shape (new_backstop /
-// new_backstop_token / unlock_time); only the topic (and therefore
-// the lifecycle stage) differs.
+// SwapConfigKind discriminates the two backstop-swap lifecycle events. Both share an identical body shape (new_backstop /
+// new_backstop_token / unlock_time); only the topic (and therefore the lifecycle stage) differs.
 type SwapConfigKind string
 
 const (

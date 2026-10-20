@@ -68,10 +68,8 @@ func decodeRelayArgs( //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitt
 		return nil, ErrNotBandCall
 	}
 
-	// args[ratesIdx] = symbol_rates: Vec<(Symbol, u64)>.
-	// Bound guaranteed by the len(args) check in the switch above
-	// — FnRelay: len ≥ 4, ratesIdx = 1; FnForceRelay: len ≥ 3,
-	// ratesIdx = 0. gosec can't trace the invariant across cases.
+	// args[ratesIdx] = symbol_rates: Vec<(Symbol, u64)>. Bound guaranteed by the len(args) check in the switch above — FnRelay:
+	// len ≥ 4, ratesIdx = 1; FnForceRelay: len ≥ 3, ratesIdx = 0. gosec can't trace the invariant across cases.
 	ratesSv, err := scval.Parse(args[ratesIdx]) //nolint:gosec // bounds-checked in switch case above
 	if err != nil {
 		return nil, fmt.Errorf("%w: symbol_rates: %w", ErrMalformedArgs, err)
@@ -85,10 +83,8 @@ func decodeRelayArgs( //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitt
 			len(pairs), opIndexFanoutStride)
 	}
 
-	// args[timeIdx] = resolve_time: u64 (UNIX seconds).
-	// Bound guaranteed by the len(args) check in the switch above
-	// — FnRelay: len ≥ 4, timeIdx = 2; FnForceRelay: len ≥ 3,
-	// timeIdx = 1. gosec can't trace the invariant across cases.
+	// args[timeIdx] = resolve_time: u64 (UNIX seconds). Bound guaranteed by the len(args) check in the switch above — FnRelay:
+	// len ≥ 4, timeIdx = 2; FnForceRelay: len ≥ 3, timeIdx = 1. gosec can't trace the invariant across cases.
 	timeSv, err := scval.Parse(args[timeIdx]) //nolint:gosec // bounds-checked in switch case above
 	if err != nil {
 		return nil, fmt.Errorf("%w: resolve_time: %w", ErrMalformedArgs, err)
@@ -198,10 +194,8 @@ func bandRelayWouldNoOp(resolveSeconds uint64, closedAt time.Time) bool {
 	}
 	ceil := closedAt.Add(bandMaxFutureResolveTime).Unix()
 	if ceil < 0 {
-		// Mirrors canonical.SafeUnixSeconds's own pre-1970 guard: no
-		// production closedAt is ever this old, but fail toward
-		// rejecting rather than let an unchecked uint64 cast wrap the
-		// ceiling and disable the check.
+		// Mirrors canonical.SafeUnixSeconds's own pre-1970 guard: no production closedAt is ever this old, but fail toward
+		// rejecting rather than let an unchecked uint64 cast wrap the ceiling and disable the check.
 		return true
 	}
 	// Strict, like the contract: resolve_time == close + OFFSET is refused.

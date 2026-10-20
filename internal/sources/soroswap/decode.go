@@ -148,10 +148,9 @@ func decodeSwapLeg(r RawPair, tok0, tok1 canonical.Asset) (canonical.Trade, erro
 		Source: SourceName,
 		Ledger: r.Ledger,
 		TxHash: r.TxHash,
-		// Fan out by the swap event's index: a router multi-hop invokes
-		// several pairs as sub-calls of ONE op, so each pair's trade
-		// shares op_index and would collide on the trades PK (ADR-0033,
-		// same class as aquarius/comet). r.Swap is the swap event.
+		// Fan out by the swap event's index: a router multi-hop invokes several pairs as sub-calls of ONE op, so each pair's
+		// trade shares op_index and would collide on the trades PK (ADR-0033, same class as aquarius/comet). r.Swap is the swap
+		// event.
 		OpIndex:     canonical.FanoutOpIndex(int(r.OpIndex), r.Swap.EventIndex),
 		Timestamp:   r.ClosedAt,
 		Pair:        pair,

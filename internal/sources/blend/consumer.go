@@ -20,10 +20,8 @@ const (
 	AdminEventKind    = "blend.admin"
 )
 
-// EventKind / Source on the per-event types implements
-// [consumer.Event]. The dispatcher's output channel has a
-// single concrete type — consumer.Event — and the sink picks each
-// off via type-switch.
+// EventKind / Source on the per-event types implements [consumer.Event]. The dispatcher's output channel has a single concrete
+// type — consumer.Event — and the sink picks each off via type-switch.
 
 func (NewAuctionEvent) EventKind() string { return NewAuctionEventKind }
 func (NewAuctionEvent) Source() string    { return SourceName }

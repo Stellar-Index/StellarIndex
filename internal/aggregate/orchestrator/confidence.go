@@ -32,10 +32,8 @@ func (o *Orchestrator) divergenceMinSources() int {
 
 // BaselineSource looks up a per-pair MultiBaseline for the confidence step; nil means the z-factor stays in bootstrap.
 type BaselineSource interface {
-	// LatestBaseline returns the current per-pair baseline plus the
-	// wall-clock timestamp it was computed at. Implementations
-	// return ([baseline.MultiBaseline]{}, zero time, error) when
-	// the pair has no baseline yet.
+	// LatestBaseline returns the current per-pair baseline and the wall-clock time it was computed. Implementations return
+	// ([baseline.MultiBaseline]{}, zero time, error) when the pair has no baseline yet.
 	LatestBaseline(ctx context.Context, pair canonical.Pair) (baseline.MultiBaseline, time.Time, error)
 }
 
@@ -54,10 +52,8 @@ type confidenceComputation struct {
 	// record can say which scale fired.
 	ZWindow time.Duration
 
-	// CrossOracleMedian is the reference median price (0 when fewer
-	// references than the trust floor answered). See
-	// crossOracleSignal.median for why the freeze release path needs
-	// the raw median rather than the cached divergencePct.
+	// CrossOracleMedian is the reference median price (0 when fewer references than the trust floor answered). See
+	// crossOracleSignal.median for why freeze release needs the raw median rather than the cached divergencePct.
 	CrossOracleMedian float64
 
 	// TriangulationChecked / TriangulationDivergencePct carry the FRESH composite comparison for this bucket's VWAP; the freeze release path reads these because confidence.Factors folds the pct into a score and drops the raw divergence.
@@ -117,10 +113,8 @@ func (o *Orchestrator) computeConfidence(
 		LiquidityUSD:              approxUSDVolume(trades, pair),
 		CrossOracleDivergencePct:  xo.divergencePct,
 		CrossOracleAgreementCount: xo.agreementCount,
-		// Unchecked for every pair without a fresh chain output — which
-		// is every pair until an operator configures
-		// `[[aggregate.triangulations]]`, and by design leaves the score
-		// bit-identical to its pre-corroboration value.
+		// Unchecked for every pair without a fresh chain output, i.e. every pair until an operator configures
+		// `[[aggregate.triangulations]]`; by design that leaves the score bit-identical to its pre-corroboration value.
 		TriangulationChecked:       triChecked,
 		TriangulationDivergencePct: triPct,
 		BaselineAgeDays:            baselineAgeDays(multi),

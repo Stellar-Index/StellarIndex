@@ -88,10 +88,8 @@ func quoteUSDReferenceMicros(quote canonical.Asset) (uint64, bool) {
 		ref, ok := cryptoQuoteUSDMicros[quote.Code]
 		return ref, ok
 	default:
-		// Streamers are all CEX, whose legs are fiat / crypto
-		// tickers. An on-chain (native/classic/soroban) quote here
-		// would be a routing surprise — no floor rather than a
-		// guessed one.
+		// Streamers are all CEX, whose legs are fiat / crypto tickers. An on-chain (native/classic/soroban) quote here would be
+		// a routing surprise — no floor rather than a guessed one.
 		return 0, false
 	}
 }
@@ -153,10 +151,8 @@ func Run(
 		warnUnreferencedDustQuotes(s.Streamer.Name(), s.Pairs, logger)
 		ch, err := s.Streamer.Start(streamerCtx, s.Pairs)
 		if err != nil {
-			// Tear down every streamer we already launched, then wait
-			// for their goroutines to observe the cancellation and
-			// close their channels so we don't return with goroutines
-			// still draining.
+			// Tear down every streamer we already launched, then wait for their goroutines to observe the cancellation and
+			// close their channels so we don't return with goroutines still draining.
 			cancelStreamers()
 			for _, r := range launched {
 				drainUntilClosed(r.ch)
@@ -170,10 +166,8 @@ func Run(
 	for _, r := range launched {
 		wg.Add(1)
 		go func(name string, ch <-chan canonical.Trade) {
-			// A panic while forwarding one streamer's trades must not crash
-			// the whole ingest process — it unwinds this connector's
-			// goroutine (logged at Error with its stack); the other
-			// connectors keep running.
+			// A panic while forwarding one streamer's trades must not crash the whole ingest process — it unwinds this
+			// connector's goroutine (logged at Error with its stack); the other connectors keep running.
 			defer worker.Recover(logger, "external-forward:"+name)
 			defer wg.Done()
 			forwardTrades(streamerCtx, name, ch, sink, logger)
@@ -201,10 +195,8 @@ func Run(
 		}(p)
 	}
 
-	// wait() blocks until every connector goroutine has shut down, then
-	// releases the derived streamer context. cancelStreamers is also
-	// the safety valve the error paths above use to avoid leaking the
-	// already-launched streamer goroutines.
+	// wait() blocks until every connector goroutine has shut down, then releases the derived streamer context. cancelStreamers
+	// is also the safety valve the error paths above use to avoid leaking the already-launched streamer goroutines.
 	wait = func() {
 		wg.Wait()
 		cancelStreamers()

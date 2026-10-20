@@ -122,11 +122,9 @@ const (
 	EventOrderCancelled  = "order_cancelled"
 )
 
-// Kinds recognised but projected as zero rows (ADR-0033 expected-zero).
-// PT/YT mint and burn restate pt_minted / redeem in the same transaction,
-// as yield_claimed restates yield_updated and the IBT transfer;
-// rates_stored_at_expiry moves nothing; approve carries no Spectra state;
-// the rest is governance and set-up.
+// Kinds recognised but projected as zero rows (ADR-0033 expected-zero). PT/YT mint and burn restate pt_minted / redeem in the
+// same transaction, as yield_claimed restates yield_updated and the IBT transfer; rates_stored_at_expiry moves nothing; approve
+// carries no Spectra state; the rest is governance and set-up.
 const (
 	EventMint                   = "mint"
 	EventBurn                   = "burn"
@@ -205,9 +203,7 @@ var (
 	ErrMalformedPayload = errors.New("spectra: event body does not match the proven schema")
 	ErrShortTopic       = errors.New("spectra: topic vector too short for event variant")
 	ErrNotGated         = errors.New("spectra: kind is not claimed from this contract's role")
-	// ErrUnlistedInfrastructure: the registry names a factory, router,
-	// order engine or token WASM outside the hand-kept, audited set. The
-	// gate is then incomplete, so the event fails loudly instead of
-	// admitting it.
+	// ErrUnlistedInfrastructure: the registry names a factory, router, order engine or token WASM outside the hand-kept,
+	// audited set. The gate is then incomplete, so the event fails loudly instead of admitting it.
 	ErrUnlistedInfrastructure = errors.New("spectra: registry names infrastructure outside the hand-kept set")
 )

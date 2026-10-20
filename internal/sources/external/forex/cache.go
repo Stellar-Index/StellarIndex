@@ -28,10 +28,8 @@ type Snapshot struct {
 	PublishedAt time.Time
 	FetchedAt   time.Time
 	History7d   map[string][]HistoryPoint
-	// Circulation is the curated monetary-base table loaded once
-	// at worker startup from the embedded CSV. Indexed by lower-case
-	// ticker. Stays nil until the worker installs the first
-	// snapshot — readers MUST nil-check before lookup.
+	// Circulation is the curated monetary-base table loaded once at worker startup from the embedded CSV. Indexed by lower-case
+	// ticker. Stays nil until the worker installs the first snapshot — readers MUST nil-check before lookup.
 	Circulation map[string]CirculationEntry
 }
 

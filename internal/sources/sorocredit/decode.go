@@ -157,10 +157,9 @@ func decodeStatement(e *events.Event, closedAt time.Time) (decoded, error) {
 	if err != nil {
 		return decoded{}, fmt.Errorf("%w: StatementPublished timestamp: %w", ErrMalformedPayload, err)
 	}
-	// SafeUnixSeconds bound-checks tsUnix on its raw u64 form before any
-	// int64 cast: an unchecked cast of a contract-supplied value > MaxInt64
-	// wraps negative and stamps a far-past StatementTime (the router
-	// deadline_ts overflow class — see internal/canonical/safetime.go).
+	// SafeUnixSeconds bound-checks tsUnix on its raw u64 form before any int64 cast: an unchecked cast of a contract-supplied
+	// value > MaxInt64 wraps negative and stamps a far-past StatementTime (the router deadline_ts overflow class — see
+	// internal/canonical/safetime.go).
 	ts := canonical.SafeUnixSeconds(tsUnix, closedAt)
 	return decoded{
 		StatementUUID:      stmtUUID,

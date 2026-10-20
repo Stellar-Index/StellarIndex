@@ -21,10 +21,9 @@ import (
 // lose that much data per cycle.
 const DefaultHealthyConnectionThreshold = 5 * time.Minute
 
-// DefaultPingInterval / DefaultPingTimeout bound how long a half-open socket
-// goes unnoticed; conn.Read on one blocks forever. An active ping, not a read
-// deadline, because a quiet pair is indistinguishable from a wedged socket by
-// reads alone and control frames never unblock conn.Read. Worst case ≈ 40 s.
+// DefaultPingInterval / DefaultPingTimeout bound how long a half-open socket goes unnoticed; conn.Read on one blocks forever.
+// An active ping, not a read deadline, because a quiet pair is indistinguishable from a wedged socket by reads alone and
+// control frames never unblock conn.Read. Worst case ≈ 40 s.
 const (
 	DefaultPingInterval = 30 * time.Second
 	DefaultPingTimeout  = 10 * time.Second
@@ -193,10 +192,9 @@ func (l *Loop) runOnce(ctx context.Context, out chan<- canonical.Trade) error {
 		_ = conn.Close(websocket.StatusNormalClosure, "client shutdown")
 	}()
 
-	// Connection-scoped context: the stall watchdog cancels it (with the
-	// stall as the cause) so the blocked conn.Read below unblocks and the
-	// reconnect path runs. Cancelled unconditionally on return so the
-	// watchdog goroutine cannot outlive the connection.
+	// Connection-scoped context: the stall watchdog cancels it (with the stall as the cause) so the blocked conn.Read below
+	// unblocks and the reconnect path runs. Cancelled unconditionally on return so the watchdog goroutine cannot outlive the
+	// connection.
 	connCtx, cancelConn := context.WithCancelCause(ctx)
 	defer cancelConn(nil)
 	go l.pingWatchdog(connCtx, conn, cancelConn)

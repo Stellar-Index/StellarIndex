@@ -108,10 +108,8 @@ var ErrMalformedResponse = errors.New("coingecko: malformed response")
 // waits at least this long.
 const MinBackoff = 60 * time.Second
 
-// MaxBackoff caps the exponential growth per the package comment
-// — at sustained denial we still re-attempt once an hour to
-// auto-recover when an operator provisions a key or the
-// per-IP cap resets.
+// MaxBackoff caps the exponential growth per the package comment — at sustained denial we still re-attempt once an hour to
+// auto-recover when an operator provisions a key or the per-IP cap resets.
 const MaxBackoff = 1 * time.Hour
 
 // Poller implements external.Poller.
@@ -204,10 +202,8 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	cryptoAssets := map[string]canonical.Asset{}
 	currencySet := map[string]struct{}{}
 	fiatAssets := map[string]canonical.Asset{}
-	// wantedCombos filters the venue's N×M response matrix down to
-	// just the (crypto, fiat) pairs the operator configured —
-	// avoids flooding oracle_updates with divergence-candidates
-	// for pairs that have no corresponding aggregated output.
+	// wantedCombos filters the venue's N×M response matrix down to just the (crypto, fiat) pairs the operator configured —
+	// avoids flooding oracle_updates with divergence-candidates for pairs that have no corresponding aggregated output.
 	wantedCombos := map[string]struct{}{}
 
 	for _, pair := range pairs {

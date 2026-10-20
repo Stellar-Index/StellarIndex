@@ -57,10 +57,8 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 
 	closedAt, err := ev.EventClosedAt()
 	if err != nil {
-		// Fail closed like the comet/blend/phoenix/defindex siblings
-		// rather than substituting time.Now() — during a backfill
-		// replay that would stamp every event with the wall-clock of
-		// the replay run, not the historical ledger.
+		// Fail closed like the comet/blend/phoenix/defindex siblings rather than substituting time.Now() — during a backfill
+		// replay that would stamp every event with the wall-clock of the replay run, not the historical ledger.
 		return nil, err
 	}
 

@@ -40,10 +40,9 @@ var ErrMalformedTopic = errors.New("blend_backstop: malformed event topics")
 // promoted-field mismatch is not this error; it degrades into Attributes.
 var ErrMalformedBody = errors.New("blend_backstop: malformed event body")
 
-// Classify reports which backstop event the given Event is, or empty
-// string if topic[0] doesn't match. Contract-ID filtering happens
-// DOWNSTREAM (Matches) — these symbols overlap with Blend POOL events,
-// so Classify alone never decides a backstop match.
+// Classify reports which backstop event the given Event is, or empty string if topic[0] doesn't match. Contract-ID filtering
+// happens DOWNSTREAM (Matches) — these symbols overlap with Blend POOL events, so Classify alone never decides a backstop
+// match.
 func Classify(e *events.Event) string {
 	if len(e.Topic) < 1 {
 		return ""

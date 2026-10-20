@@ -18,10 +18,8 @@ import (
 // aggTrade feed. One instance per indexer process — serialises all
 // subscribed pairs onto a single WebSocket.
 type Streamer struct {
-	// PairMap maps Binance symbol (e.g. "XLMUSDT") to the canonical
-	// Pair to stamp on emitted trades. Required at construction
-	// time; Start() rejects pairs not present here rather than
-	// subscribing blind.
+	// PairMap maps Binance symbol (e.g. "XLMUSDT") to the canonical Pair to stamp on emitted trades. Required at construction
+	// time; Start() rejects pairs not present here rather than subscribing blind.
 	PairMap map[string]canonical.Pair
 
 	// Logger receives structured reconnect / error messages. If

@@ -63,10 +63,9 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		Ledger:     ev.Ledger,
 		TxHash:     ev.TxHash,
 		OpIndex:    uint32(ev.OperationIndex), //nolint:gosec // non-negative by Soroban spec.
-		// EventIndex disambiguates multiple SEP-41 events emitted by the
-		// same contract in one op (batch transfers, approve+transfer_from):
-		// it is part of the sep41_transfers PK (migration 0047), so leaving
-		// it 0 would collapse all-but-one of them via ON CONFLICT.
+		// EventIndex disambiguates multiple SEP-41 events emitted by the same contract in one op (batch transfers,
+		// approve+transfer_from): it is part of the sep41_transfers PK (migration 0047), so leaving it 0 would collapse
+		// all-but-one of them via ON CONFLICT.
 		EventIndex: uint32(ev.EventIndex), //nolint:gosec // non-negative by Soroban spec.
 		ObservedAt: closedAt,
 		Kind:       kind,

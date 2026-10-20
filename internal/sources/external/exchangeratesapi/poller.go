@@ -13,10 +13,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
 
-// Poller implements external.Poller for exchangeratesapi.io. One
-// Poller per process; thread-safe — PollOnce is the only method
-// the framework calls and it's side-effect-free besides the HTTP
-// GET.
+// Poller implements external.Poller for exchangeratesapi.io. One Poller per process; thread-safe — PollOnce is the only method
+// the framework calls and it's side-effect-free besides the HTTP GET.
 type Poller struct {
 	// APIKey is the access_key passed as a query parameter.
 	// Required; Poller construction returns ErrAPIKeyRequired
@@ -36,10 +34,8 @@ type Poller struct {
 	// Interval is the poll cadence. Defaults to [DefaultPollInterval].
 	Interval time.Duration
 
-	// Symbols is the explicit target currency list; empty means
-	// "every symbol derivable from the configured pair list."
-	// Setting here overrides pair-list-derived symbols — useful
-	// when operator wants to pre-warm unused pairs.
+	// Symbols is the explicit target currency list; empty means "every symbol derivable from the configured pair list." Setting
+	// here overrides pair-list-derived symbols — useful when operator wants to pre-warm unused pairs.
 	Symbols []string
 }
 
@@ -145,10 +141,8 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 		return nil, nil, fmt.Errorf("%w: %s", ErrAPIRejected, errInfo)
 	}
 	if !strings.EqualFold(lr.Base, base) {
-		// Paranoid sanity — if the API's `base` field doesn't match
-		// what we asked for, stop rather than stamp mislabelled
-		// rows. Happens on free tier when we ask for USD base:
-		// venue silently returns EUR.
+		// Paranoid sanity — if the API's `base` field doesn't match what we asked for, stop rather than stamp mislabelled rows.
+		// Happens on free tier when we ask for USD base: venue silently returns EUR.
 		return nil, nil, fmt.Errorf("%w: base mismatch — requested %q, got %q", ErrAPIRejected, base, lr.Base)
 	}
 

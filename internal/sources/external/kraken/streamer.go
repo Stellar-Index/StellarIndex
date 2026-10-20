@@ -64,10 +64,8 @@ type subscribeParam struct {
 	Symbol  []string `json:"symbol"`
 }
 
-// Start implements external.Streamer. Connects to v2, subscribes to
-// the trade channel for the supplied pairs, spawns the read loop,
-// returns a channel that emits canonical.Trade values until ctx
-// cancel or unrecoverable error.
+// Start implements external.Streamer. Connects to v2, subscribes to the trade channel for the supplied pairs, spawns the read
+// loop, returns a channel that emits canonical.Trade values until ctx cancel or unrecoverable error.
 func (s *Streamer) Start(ctx context.Context, pairs []canonical.Pair) (<-chan canonical.Trade, error) {
 	if len(pairs) == 0 {
 		return nil, errors.New("kraken: pairs required")
@@ -93,10 +91,8 @@ func (s *Streamer) Start(ctx context.Context, pairs []canonical.Pair) (<-chan ca
 		Logger:         logger,
 		InitialBackoff: s.InitialBackoff,
 		MaxBackoff:     s.MaxBackoff,
-		// Send subscribe AFTER the status frame arrives on real
-		// Kraken. Doing so upfront works too — v2 queues the
-		// subscription until the session is ready. We send
-		// immediately for simplicity.
+		// Send subscribe AFTER the status frame arrives on real Kraken. Doing so upfront works too — v2 queues the subscription
+		// until the session is ready. We send immediately for simplicity.
 		Subscribe: func(ctx context.Context, conn *websocket.Conn) error {
 			sub := subscribeReq{
 				Method: "subscribe",

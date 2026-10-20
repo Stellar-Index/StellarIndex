@@ -33,10 +33,8 @@ func TWAPWithCount(trades []canonical.Trade, windowEnd time.Time) (*big.Rat, int
 	totalNanos := new(big.Int)
 	scratch := new(big.Int)
 
-	// pending is the last PRICED instant seen: its price is current
-	// until the next priced instant's timestamp (or windowEnd). An
-	// unpriced instant in between contributes nothing of its own and
-	// does NOT close pending's slot — see the doc comment above.
+	// pending is the last PRICED instant seen: its price is current until the next priced instant's timestamp (or windowEnd).
+	// An unpriced instant in between contributes nothing and does NOT close pending's slot (see the doc comment above).
 	var pendingBase, pendingQuote *big.Int
 	var pendingStart time.Time
 	pendingPriced := 0

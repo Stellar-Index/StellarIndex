@@ -553,10 +553,8 @@ func seedBoundedLabelSeries() {
 			CustomerWebhookFanoutFailuresTotal.WithLabelValues(eventType, reason)
 		}
 	}
-	// FX sanity-band rejections. Bounded (one source × three
-	// reasons) and seeded because the alertable state is a SUSTAINED
-	// non-zero rate — an absent series would make "the band has never
-	// rejected anything" and "the worker never started" identical.
+	// FX sanity-band rejections. Bounded (one source x three reasons) and seeded because the alertable state is a SUSTAINED
+	// non-zero rate; an absent series would make "the band has never rejected anything" and "the worker never started" identical.
 	for _, reason := range []string{"deviation", "non_positive", "non_finite"} {
 		ExternalFXRateRejectedTotal.WithLabelValues("massive", reason)
 	}
@@ -1659,10 +1657,8 @@ var APIKeyRows = prometheus.NewGauge(
 // three — one per place the durable login-code lockout can
 // fail without the sign-in itself failing.
 const (
-	// LoginCodeLockoutOpStatusCheck — the pre-match lockout read failed.
-	// The handler FAILS OPEN here (a locked address is let through to a
-	// code comparison), so this is the one that means the control is
-	// silently off.
+	// LoginCodeLockoutOpStatusCheck: the pre-match lockout read failed. The handler FAILS OPEN here (a locked address reaches a
+	// code comparison), so this is the one that means the control is silently off.
 	LoginCodeLockoutOpStatusCheck = "status_check"
 	// LoginCodeLockoutOpRegister — a wrong-code attempt was not recorded
 	// against the durable per-email counter. The grinder got a free

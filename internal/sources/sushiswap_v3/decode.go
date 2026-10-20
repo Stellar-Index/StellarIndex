@@ -308,10 +308,9 @@ func decodeSwap(
 		Pair:        pair,
 		BaseAmount:  baseAmt,
 		QuoteAmount: quoteAmt,
-		// Taker is the account the output leg was paid to. Maker is left
-		// empty: an AMM pool has no resting counterparty, which is the same
-		// contract soroswap / aquarius / phoenix / comet record and why the
-		// source belongs in timescale.AMMSignerSources.
+		// Taker is the account the output leg was paid to. Maker is left empty: an AMM pool has no resting counterparty, which
+		// is the same contract soroswap / aquarius / phoenix / comet record and why the source belongs in
+		// timescale.AMMSignerSources.
 		Taker: fields.Recipient,
 	}, nil
 }

@@ -254,10 +254,9 @@ func classifyAny(e *events.Event) (action, string) {
 	case TopicSymbolInitialize:
 		return actionInitialize, e.Topic[1]
 	case TopicSymbolCreate:
-		// Only the factory's single documented announcement pair classifies. Any other
-		// ("create", ...) shape is unaudited: it stays actionUnknown and fail-closes into a
-		// visible ADR-0033 recognition gap instead of reaching admission. The emitter is
-		// checked separately (Matches, reg.IsFactory) because topics alone are forgeable.
+		// Only the factory's single documented announcement pair classifies. Any other ("create", ...) shape is unaudited: it
+		// stays actionUnknown and fail-closes into a visible ADR-0033 recognition gap instead of reaching admission. The
+		// emitter is checked separately (Matches, reg.IsFactory) because topics alone are forgeable.
 		if e.Topic[1] != TopicCreateLiquidityPool {
 			return actionUnknown, ""
 		}
@@ -296,10 +295,8 @@ func decodeAnnouncedPool(e *events.Event) (string, error) {
 //     NOT ActualReceived: the pool emits that as the INPUT it received of sell_token, so using it
 //     makes every trade base==quote and corrupts prices.
 func decodeSwap(r *RawSwap) (canonical.Trade, error) {
-	// Decodable, not Complete: the guard's job is "can this function
-	// read every slot it touches", and it touches five. Requiring the
-	// unread ActualReceived here silently zeroed the 7-event
-	// pre-upgrade era (see Decodable's doc).
+	// Decodable, not Complete: the guard's job is "can this function read every slot it touches", and it touches five.
+	// Requiring the unread ActualReceived here silently zeroed the 7-event pre-upgrade era (see Decodable's doc).
 	if !r.Decodable() {
 		return canonical.Trade{}, fmt.Errorf("%w: have %d/8 fields",
 			ErrIncompleteSwap, r.fieldsPresent())

@@ -477,10 +477,8 @@ func corroboratingRouteCount(survivors []scoredRoute, diverged bool) int {
 		return n
 	}
 
-	// A route too thin to trust must not corroborate: only routes whose
-	// weakest-link confidence clears the floor may be part of a corroborating
-	// pair, so a thin route that merely agrees + is edge-disjoint counts for
-	// nothing.
+	// A route too thin to trust must not corroborate: only routes whose weakest-link confidence clears the floor may join a
+	// corroborating pair, so a thin route that merely agrees and is edge-disjoint counts for nothing.
 	confident := func(i int) bool {
 		return ClearsRouteTrustFloor(survivors[i].confidence)
 	}

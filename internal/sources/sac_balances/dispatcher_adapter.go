@@ -27,10 +27,9 @@ type Observer struct {
 var (
 	ErrEmptyWrapperMap = errors.New("sac_balances: cannot construct Observer with empty SAC wrapper map")
 	ErrNotSACBalance   = errors.New("sac_balances: change is not a SAC balance entry")
-	// ErrUnknownValShape aliases the shared scval sentinel so callers
-	// (and errors.Is) keep matching the balance-value-shape error after
-	// the balance decode helpers moved to internal/scval (shared with
-	// the lake-seed reader in internal/storage/clickhouse).
+	// ErrUnknownValShape aliases the shared scval sentinel so callers (and errors.Is) keep matching the balance-value-shape
+	// error after the balance decode helpers moved to internal/scval (shared with the lake-seed reader in
+	// internal/storage/clickhouse).
 	ErrUnknownValShape = scval.ErrUnknownBalanceValShape
 )
 
@@ -47,10 +46,9 @@ func NewObserver(wrappers map[string]string) (*Observer, error) {
 		if ak == "" {
 			return nil, fmt.Errorf("sac_balances: empty asset_key for SAC contract %s", cid)
 		}
-		// A SAC-wrapped classic asset's key must match the colon-form
-		// supply.AssetKey the trustline / claimable / LP observers emit, so a
-		// dash-form entry is not silently under-counted. The supply readers
-		// resolve through the same helper, so reader and writer agree.
+		// A SAC-wrapped classic asset's key must match the colon-form supply.AssetKey the trustline / claimable / LP observers
+		// emit, so a dash-form entry is not silently under-counted. The supply readers resolve through the same helper, so
+		// reader and writer agree.
 		key, _, err := supply.SACWrapperAssetKey(ak)
 		if err != nil {
 			return nil, fmt.Errorf("sac_balances: asset_key for SAC contract %s: %w", cid, err)

@@ -80,10 +80,9 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	if kind == EventSwap {
 		trade, err := decodeSwap(&ev, closedAt)
 		if err != nil {
-			// A cleanly decoded body that maps to zero rows (self-pair or non-positive amounts)
-			// returns no output and no error, so the completeness re-derive counts expected=0
-			// instead of an undecodable blind spot holding `comet` at complete=false forever.
-			// Indeterminate parse failures keep the error path.
+			// A cleanly decoded body that maps to zero rows (self-pair or non-positive amounts) returns no output and no error,
+			// so the completeness re-derive counts expected=0 instead of an undecodable blind spot holding `comet` at
+			// complete=false forever. Indeterminate parse failures keep the error path.
 			if errors.Is(err, canonical.ErrPairMismatch) {
 				// Self-pair swap is the exploit primitive; these rows never reach `trades`, so
 				// this counter is the only place the burst is observable. Detection only.
