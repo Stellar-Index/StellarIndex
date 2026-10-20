@@ -30,7 +30,7 @@ func chargingHandler(cost int, worked *int) http.Handler {
 // X-RateLimit-Remaining to the post-charge figure.
 func TestChargeRateLimit_PricesTheRequestInTotal(t *testing.T) {
 	rdb, _ := newRLRedis(t)
-	b := ratelimit.New(rdb, 100, time.Minute)
+	b := ratelimit.New(rdb, 100, time.Minute, frozenClock)
 	var worked int
 	h := middleware.RateLimitBySubject(b, nil, nil, nil)(chargingHandler(30, &worked))
 
@@ -71,8 +71,8 @@ func TestChargeRateLimit_PricesTheRequestInTotal(t *testing.T) {
 // per-subject override when the key record carries one.
 func TestChargeRateLimit_CapsAtTheSubjectsCeiling(t *testing.T) {
 	rdb, _ := newRLRedis(t)
-	anon := ratelimit.New(rdb, 60, time.Minute)
-	authB := ratelimit.New(rdb, 60, time.Minute)
+	anon := ratelimit.New(rdb, 60, time.Minute, frozenClock)
+	authB := ratelimit.New(rdb, 60, time.Minute, frozenClock)
 	var worked int
 	h := middleware.RateLimitBySubject(anon, authB, nil, nil)(chargingHandler(1000, &worked))
 
@@ -115,7 +115,7 @@ func TestChargeRateLimit_CapsAtTheSubjectsCeiling(t *testing.T) {
 // same figure charges once.
 func TestChargeRateLimit_NeverRefundsOrDoubleCharges(t *testing.T) {
 	rdb, _ := newRLRedis(t)
-	b := ratelimit.New(rdb, 100, time.Minute)
+	b := ratelimit.New(rdb, 100, time.Minute, frozenClock)
 	h := middleware.RateLimitBySubject(b, nil, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		for _, cost := range []int{0, -7, 1, 20, 20, 5} {
 			if !middleware.ChargeRateLimit(w, r, cost) {
@@ -138,7 +138,7 @@ func TestChargeRateLimit_NeverRefundsOrDoubleCharges(t *testing.T) {
 // skipped path — has no account, and the handler proceeds untouched.
 func TestChargeRateLimit_NoLimiterMeansNoCharge(t *testing.T) {
 	rdb, _ := newRLRedis(t)
-	b := ratelimit.New(rdb, 1, time.Minute)
+	b := ratelimit.New(rdb, 1, time.Minute, frozenClock)
 	var worked int
 
 	cases := map[string]http.Handler{
@@ -166,7 +166,7 @@ func TestChargeRateLimit_NoLimiterMeansNoCharge(t *testing.T) {
 // behind it must be re-priceable on the same terms.
 func TestChargeRateLimit_SingleBucketMiddlewareChargesToo(t *testing.T) {
 	rdb, _ := newRLRedis(t)
-	b := ratelimit.New(rdb, 50, time.Minute)
+	b := ratelimit.New(rdb, 50, time.Minute, frozenClock)
 	var worked int
 	h := middleware.RateLimit(b, fixedKeyFn("k-charge"), nil, nil)(chargingHandler(20, &worked))
 

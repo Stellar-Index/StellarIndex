@@ -28,6 +28,9 @@ func newRLRedis(t *testing.T) (*redis.Client, *redistest.Server) {
 	return s.Client, s
 }
 
+// frozenClock pins a limiter to one fixed window, so a test's requests never straddle a minute boundary.
+var frozenClock = ratelimit.WithClock(func() time.Time { return time.Unix(1_700_000_000, 0) })
+
 // newDownRedis returns a client whose every dial fails, in one attempt.
 // The address of a closed miniredis is not a down Redis: during go-redis's
 // dial retries another process on the runner can bind the freed port and
@@ -62,7 +65,7 @@ func fixedKeyFn(k string) func(*http.Request) string {
 
 func TestRateLimit_AllowsUnderLimit(t *testing.T) {
 	rdb, _ := newRLRedis(t)
-	b := ratelimit.New(rdb, 3, time.Minute)
+	b := ratelimit.New(rdb, 3, time.Minute, frozenClock)
 
 	h := middleware.RateLimit(b, fixedKeyFn("k1"), nil, nil)(okHandler())
 
@@ -85,7 +88,7 @@ func TestRateLimit_AllowsUnderLimit(t *testing.T) {
 
 func TestRateLimit_Rejects429AfterLimit(t *testing.T) {
 	rdb, _ := newRLRedis(t)
-	b := ratelimit.New(rdb, 2, time.Minute)
+	b := ratelimit.New(rdb, 2, time.Minute, frozenClock)
 
 	h := middleware.RateLimit(b, fixedKeyFn("k2"), nil, nil)(okHandler())
 
@@ -137,7 +140,7 @@ func TestRateLimit_Rejects429AfterLimit(t *testing.T) {
 // refactor can't silently regress the value to "now" or omit it.
 func TestRateLimit_EmitsXRateLimitResetHeader(t *testing.T) {
 	rdb, _ := newRLRedis(t)
-	b := ratelimit.New(rdb, 5, time.Minute)
+	b := ratelimit.New(rdb, 5, time.Minute, frozenClock)
 
 	h := middleware.RateLimit(b, fixedKeyFn("k-reset"), nil, nil)(okHandler())
 
@@ -167,7 +170,7 @@ func TestRateLimit_EmitsXRateLimitResetHeader(t *testing.T) {
 
 func TestRateLimit_EmptyKeyBypasses(t *testing.T) {
 	rdb, _ := newRLRedis(t)
-	b := ratelimit.New(rdb, 1, time.Minute)
+	b := ratelimit.New(rdb, 1, time.Minute, frozenClock)
 
 	called := 0
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -191,7 +194,7 @@ func TestRateLimit_EmptyKeyBypasses(t *testing.T) {
 
 func TestRateLimit_SkipsWhenSkipReturnsTrue(t *testing.T) {
 	rdb, _ := newRLRedis(t)
-	b := ratelimit.New(rdb, 1, time.Minute)
+	b := ratelimit.New(rdb, 1, time.Minute, frozenClock)
 
 	h := middleware.RateLimit(
 		b, fixedKeyFn("k3"),
@@ -222,7 +225,7 @@ func TestRateLimit_SkipsWhenSkipReturnsTrue(t *testing.T) {
 // caller mints unlimited buckets by varying an oversize key.
 func TestRateLimit_TruncatesLongKeys(t *testing.T) {
 	rdb, _ := newRLRedis(t)
-	b := ratelimit.New(rdb, 1, time.Minute)
+	b := ratelimit.New(rdb, 1, time.Minute, frozenClock)
 	longShared := strings.Repeat("a", middleware.MaxRateLimitKeyLen+50)
 
 	h := middleware.RateLimit(b, fixedKeyFn(longShared+"AAAA"), nil, nil)(okHandler())
@@ -242,7 +245,7 @@ func TestRateLimit_TruncatesLongKeys(t *testing.T) {
 
 func TestRateLimit_FailsOpenOnRedisError(t *testing.T) {
 	rdb := newDownRedis(t)
-	b := ratelimit.New(rdb, 1, time.Minute)
+	b := ratelimit.New(rdb, 1, time.Minute, frozenClock)
 
 	h := middleware.RateLimit(b, fixedKeyFn("k4"), nil, nil)(okHandler())
 
@@ -290,8 +293,8 @@ func TestRateLimit_FailClosedPastDwellIsCounted(t *testing.T) {
 
 func TestRateLimitBySubject_AuthenticatedUsesAuthBucket(t *testing.T) {
 	rdb, _ := newRLRedis(t)
-	anonBucket := ratelimit.New(rdb, 1, time.Minute)
-	authBucket := ratelimit.New(rdb, 2, time.Minute)
+	anonBucket := ratelimit.New(rdb, 1, time.Minute, frozenClock)
+	authBucket := ratelimit.New(rdb, 2, time.Minute, frozenClock)
 
 	h := middleware.RateLimitBySubject(anonBucket, authBucket, nil, nil)(okHandler())
 	reqWithSubject := func() *http.Request {
@@ -327,8 +330,8 @@ func TestRateLimitBySubject_PerKeyOverrideRaisesLimit(t *testing.T) {
 	// middleware must honour the override — both in the wire-side
 	// X-RateLimit-Limit header and the actual allow/deny decision.
 	rdb, _ := newRLRedis(t)
-	anonBucket := ratelimit.New(rdb, 1, time.Minute)
-	authBucket := ratelimit.New(rdb, 2, time.Minute)
+	anonBucket := ratelimit.New(rdb, 1, time.Minute, frozenClock)
+	authBucket := ratelimit.New(rdb, 2, time.Minute, frozenClock)
 
 	h := middleware.RateLimitBySubject(anonBucket, authBucket, nil, nil)(okHandler())
 	reqWithSubject := func() *http.Request {
@@ -362,8 +365,8 @@ func TestRateLimitBySubject_PerKeyOverrideRaisesLimit(t *testing.T) {
 
 func TestRateLimitBySubject_AnonymousUsesAnonBucket(t *testing.T) {
 	rdb, _ := newRLRedis(t)
-	anonBucket := ratelimit.New(rdb, 1, time.Minute)
-	authBucket := ratelimit.New(rdb, 3, time.Minute)
+	anonBucket := ratelimit.New(rdb, 1, time.Minute, frozenClock)
+	authBucket := ratelimit.New(rdb, 3, time.Minute, frozenClock)
 
 	h := middleware.RateLimitBySubject(anonBucket, authBucket, nil, nil)(okHandler())
 	reqWithSubject := func() *http.Request {
@@ -394,8 +397,8 @@ func TestRateLimitBySubject_AnonymousUsesAnonBucket(t *testing.T) {
 // different User-Agents and a budget of 1 must see a 429 on the second.
 func TestRateLimitBySubject_AnonymousSameIPDifferentUADoesNotBypass(t *testing.T) {
 	rdb, _ := newRLRedis(t)
-	anonBucket := ratelimit.New(rdb, 1, time.Minute)
-	authBucket := ratelimit.New(rdb, 3, time.Minute)
+	anonBucket := ratelimit.New(rdb, 1, time.Minute, frozenClock)
+	authBucket := ratelimit.New(rdb, 3, time.Minute, frozenClock)
 
 	h := middleware.RateLimitBySubject(anonBucket, authBucket, nil, nil)(okHandler())
 
@@ -439,7 +442,7 @@ func TestRateLimit_NilKeyFnMasksIPv6To64(t *testing.T) {
 	}
 
 	rdb, _ := newRLRedis(t)
-	b := ratelimit.New(rdb, 1, time.Minute)
+	b := ratelimit.New(rdb, 1, time.Minute, frozenClock)
 
 	// nil keyFn → the default resolver under test.
 	h := middleware.RateLimit(b, nil, nil, nil)(okHandler())
@@ -501,8 +504,8 @@ func TestSkipHealthAndMetrics(t *testing.T) {
 // uses, so removing this check would otherwise go unnoticed.
 func TestRateLimitBySubject_SkipsWhenSkipReturnsTrue(t *testing.T) {
 	rdb, _ := newRLRedis(t)
-	anonBucket := ratelimit.New(rdb, 1, time.Minute)
-	authBucket := ratelimit.New(rdb, 1, time.Minute)
+	anonBucket := ratelimit.New(rdb, 1, time.Minute, frozenClock)
+	authBucket := ratelimit.New(rdb, 1, time.Minute, frozenClock)
 
 	h := middleware.RateLimitBySubject(anonBucket, authBucket, middleware.SkipHealthAndMetrics, nil)(okHandler())
 
@@ -540,8 +543,8 @@ func TestRateLimitBySubject_SkipsWhenSkipReturnsTrue(t *testing.T) {
 // of the derived authenticatedRateLimitKey must share a bucket.
 func TestRateLimitBySubject_TruncatesLongAuthKeys(t *testing.T) {
 	rdb, _ := newRLRedis(t)
-	anonBucket := ratelimit.New(rdb, 1, time.Minute)
-	authBucket := ratelimit.New(rdb, 1, time.Minute)
+	anonBucket := ratelimit.New(rdb, 1, time.Minute, frozenClock)
+	authBucket := ratelimit.New(rdb, 1, time.Minute, frozenClock)
 
 	h := middleware.RateLimitBySubject(anonBucket, authBucket, nil, nil)(okHandler())
 	longShared := strings.Repeat("a", middleware.MaxRateLimitKeyLen+50)
@@ -574,8 +577,8 @@ func TestRateLimitBySubject_AnonymousIPv6Slash64SharesBucket(t *testing.T) {
 	}
 
 	rdb, _ := newRLRedis(t)
-	anonBucket := ratelimit.New(rdb, 1, time.Minute)
-	authBucket := ratelimit.New(rdb, 3, time.Minute)
+	anonBucket := ratelimit.New(rdb, 1, time.Minute, frozenClock)
+	authBucket := ratelimit.New(rdb, 3, time.Minute, frozenClock)
 
 	h := middleware.RateLimitBySubject(anonBucket, authBucket, nil, nil)(okHandler())
 
@@ -643,7 +646,7 @@ func TestRateLimit_ClientAbortsDoNotArmFailClosed(t *testing.T) {
 // or rotating keys cannot raise it.
 func TestRateLimitBySubject_KeysOnOneAccountShareOneBucket(t *testing.T) {
 	rdb, _ := newRLRedis(t)
-	authBucket := ratelimit.New(rdb, 100, time.Minute)
+	authBucket := ratelimit.New(rdb, 100, time.Minute, frozenClock)
 	h := middleware.RateLimitBySubject(nil, authBucket, nil, nil)(okHandler())
 
 	const perMin = 3
