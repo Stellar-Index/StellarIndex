@@ -20,6 +20,18 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.34] - 2026-10-20
+
+No migrations. No `pkg/*` break. No config change. After the deploy, watch `go_sql_wait_count_total{db_name="serving"}` and the API's new-session rate in `pg_stat_database` during the next explorer build.
+
+### Fixed
+
+- **timescale:** every Postgres pool keeps idle connections up to its open cap, so a burst no longer closes and reopens connections whose fresh backends re-plan hypertable chunks cold (r1 was opening 493 sessions a minute) (#3701).
+
+### Added
+
+- **api:** the serving pool exports `database/sql` stats as `go_sql_*{db_name="serving"}` (#3699).
+
 ## [v0.116.33] - 2026-10-20
 
 No migrations. No `pkg/*` break. No config change. Operator step after the deploy: run the `deploy/clickhouse/contract_event_shapes.sql` runbook (DDL, per-partition backfill, verify, coverage marker); until its marker row exists, recognition keeps the raw scan.
@@ -72,20 +84,3 @@ No migrations. No `pkg/*` break. Apply the ansible role after the deploy: it ren
 
 - **ci:** each stable release dispatches the mainnet explorer production deploy, still behind its approval gate (#3659).
 - **docs:** the live-deployment smoke points at the public API (#3655).
-
-## [v0.116.29] - 2026-10-19
-
-Postgres migrations 0219-0221 (catalog-only or new tables; no replay). No `pkg/*` break. Apply the ansible role after the deploy: it installs `trades-by-account.timer`.
-
-### Fixed
-
-- **storage:** the SEP-41 supply delta read is bounded by close time so it prunes chunks (#3642).
-- **api:** `/v1/pools` breaks a `last_price` tie on the raw asset spelling (#3649).
-- **completeness:** reconciliation seeds Soroswap pairs from the lake instead of stellar-rpc (11 s vs 4m41s on the reference deployment) (#3653).
-- **decimals-guard:** Soroban DEX pairs are enumerated from `pools_per_source_1h` (#3651).
-
-### Added
-
-- **timescale:** `lp_reserve_current`, a trigger-kept per-pool reserve table for classic supply sums (#3644); `trades.usd_basis` records which valuation route produced each trade's `usd_volume` (#3647).
-- **ops:** a daily `trades_by_account` catch-up to the compression horizon (#3652).
-- **ansible:** r1's anonymous rate limit drops to 600/min now that explorer builds send a key (#3648).
