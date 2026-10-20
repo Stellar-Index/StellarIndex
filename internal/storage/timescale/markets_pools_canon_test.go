@@ -165,9 +165,43 @@ func TestBuildPoolsQuery_RawPrefilterCoversFoldedSpellings(t *testing.T) {
 			t.Errorf("%s folds to %s but is missing from assetAliasBind(%s): the prefilter would drop its rows", f, canons[i], canons[i])
 		}
 	}
-	q, _ := buildPoolsQuery(time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC), PoolsFilter{}, "", 100, MarketsOrderPair)
+	q, _ := buildPoolsQuery(time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC), PoolsFilter{Asset: "native"}, "", 100, MarketsOrderPair)
 	pre, post := strings.Index(q, "r.base_asset = ANY($7)"), strings.Index(q, ") p")
 	if pre < 0 || post < 0 || pre > post {
 		t.Errorf("raw prefilter must sit inside the fold subquery (prefilter at %d, subquery end at %d)", pre, post)
+	}
+}
+
+// A guarded prefilter (`cardinality($n) = 0 OR ...`) cannot drive an index under a cached generic plan, so
+// each set filter is spelled bare and an unset one not at all.
+func TestPoolsRawPrefilterSQL_SpellsOnlySetFilters(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		filter PoolsFilter
+		want   []string
+		absent []string
+	}{
+		{PoolsFilter{}, nil, []string{"$4", "$5", "$6", "$7"}},
+		{PoolsFilter{Asset: "native"}, []string{"r.base_asset = ANY($7) OR r.quote_asset = ANY($7)"}, []string{"$4", "$5", "$6"}},
+		{
+			PoolsFilter{Sources: []string{"sdex"}, Base: "native", Quote: "fiat:USD"},
+			[]string{"r.source = ANY($4)", "r.quote_asset = ANY($5)", "r.base_asset = ANY($6)"},
+			[]string{"$7"},
+		},
+	} {
+		got := poolsRawPrefilterSQL(tc.filter)
+		if strings.Contains(got, "cardinality") {
+			t.Errorf("%+v: prefilter carries a cardinality guard:%s", tc.filter, got)
+		}
+		for _, w := range tc.want {
+			if !strings.Contains(got, w) {
+				t.Errorf("%+v: prefilter missing %q:%s", tc.filter, w, got)
+			}
+		}
+		for _, a := range tc.absent {
+			if strings.Contains(got, a) {
+				t.Errorf("%+v: prefilter references unset %s:%s", tc.filter, a, got)
+			}
+		}
 	}
 }

@@ -816,6 +816,72 @@ func TestSEP41SupplyRollup_SettledBoundIsTheDurableCursor(t *testing.T) {
 	}
 }
 
+// The fold reads only rows at or after its checkpoint's close time less a margin, so planning prunes chunks. That bound must not
+// drop a row: events weeks apart (separate chunks) and a post-checkpoint row whose close time skews behind the checkpoint must
+// all reach the fold, which must equal the full sum that never consults the rollup.
+func TestSEP41SupplyRollup_TimeBoundedFoldDropsNothing(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const contractID = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC" // synthetic
+	t0 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	insert := func(ledger uint32, at time.Time, kind timescale.SEP41EventKind, amount int64) {
+		t.Helper()
+		if err := store.InsertSEP41SupplyEvent(ctx, timescale.SEP41SupplyEvent{
+			ContractID: contractID, Ledger: ledger, TxHash: fmt.Sprintf("%064x", ledger), OpIndex: 0,
+			ObservedAt: at, Kind: kind, Amount: big.NewInt(amount), Counterparty: "GA1",
+		}); err != nil {
+			t.Fatalf("insert %s@%d: %v", kind, ledger, err)
+		}
+	}
+	fold := func(label string) timescale.SEP41KindTotals {
+		t.Helper()
+		if _, err := store.AdvanceSEP41SupplyRollup(ctx, contractID); err != nil {
+			t.Fatalf("%s: advance: %v", label, err)
+		}
+		cps, err := store.ListSEP41RollupCheckpoints(ctx, []string{contractID})
+		if err != nil || len(cps) != 1 {
+			t.Fatalf("%s: ListSEP41RollupCheckpoints = %d rows, %v", label, len(cps), err)
+		}
+		return cps[0].Fold
+	}
+
+	insert(100, t0, timescale.SEP41EventMint, 1_000)
+	insert(200, t0.Add(14*24*time.Hour), timescale.SEP41EventMint, 2_000)
+	insert(300, t0.Add(28*24*time.Hour), timescale.SEP41EventBurn, 300)
+	settleSEP41Cursor(t, ctx, store, sep41SettledTestCursorLedger)
+	if got := fold("first fold"); got.Mint.Cmp(big.NewInt(3_000)) != 0 || got.Burn.Sign() != 0 {
+		t.Fatalf("first fold = mint %s burn %s; want mint 3000 burn 0 (tip 300 deferred)", got.Mint, got.Burn)
+	}
+
+	checkpointAt := t0.Add(14 * 24 * time.Hour)
+	insert(250, checkpointAt.Add(-12*time.Hour), timescale.SEP41EventMint, 40_000) // writer skew inside the margin
+	insert(400, t0.Add(56*24*time.Hour), timescale.SEP41EventClawback, 5)
+	insert(500, t0.Add(70*24*time.Hour), timescale.SEP41EventMint, 7)
+	got := fold("second fold")
+	if got.Mint.Cmp(big.NewInt(43_000)) != 0 || got.Burn.Cmp(big.NewInt(300)) != 0 || got.Clawback.Cmp(big.NewInt(5)) != 0 {
+		t.Errorf("second fold = mint %s burn %s clawback %s; want 43000 / 300 / 5 (tip 500 deferred)", got.Mint, got.Burn, got.Clawback)
+	}
+
+	full, err := store.SEP41NetMintAtOrBefore(ctx, contractID, 400)
+	if err != nil {
+		t.Fatalf("SEP41NetMintAtOrBefore: %v", err)
+	}
+	net := new(big.Int).Sub(got.Mint, new(big.Int).Add(got.Burn, got.Clawback))
+	if net.Cmp(full) != 0 {
+		t.Errorf("fold net through 400 = %s, full sum = %s: the time bound dropped %s", net, full, new(big.Int).Sub(full, net))
+	}
+}
+
 // Projects *timescale.Store onto supply.SEP41SupplyStore (supply defines its own SEP41KindTotals to avoid an import
 // cycle), mirroring supplyAggregatorSEP41Store so the test exercises the production reader-to-computer path.
 type sep41StoreAdapter struct{ s *timescale.Store }

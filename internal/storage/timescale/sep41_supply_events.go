@@ -650,9 +650,13 @@ func beginSEP41RollupTx(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
 // foldSEP41RollupLocked folds a contract's newly-settled events on a txn that ALREADY holds the row lock ([lockSEP41RollupRow]).
 // Returns the checkpoint ledger before and after, and whether the projector's cursor row was absent (nothing foldable).
 func foldSEP41RollupLocked(ctx context.Context, tx *sql.Tx, contractID string) (fromLedger, toLedger int64, cursorAbsent bool, err error) {
+	lower, err := sep41FoldLowerBound(ctx, tx, contractID)
+	if err != nil {
+		return 0, 0, false, err
+	}
 	// One statement under the caller's lock. `locked` is the boundary and floor: it cannot change while locked and the snapshot
 	// postdates the lock, so boundary and summed events are one consistent view (MATERIALIZED evaluates once). `bound.mx` is the
-	// contract's max ledger; folding strictly below defers the mid-write tip. `settled` is the durable cursor, NULL if the
+	// contract's max ledger since $4, the global max whenever that is past from_ledger; folding strictly below defers the mid-write tip. `settled` is the durable cursor, NULL if the
 	// projector never committed a cycle (delta treats it as 0). `delta` is the settled tail sum over (from_ledger, settled
 	// bound), floored. `unbounded` is the checkpoint's close time when its bound is missing (a row folded before 0219), so an
 	// eventless fold still fills it in. UPDATE adds the delta, moves last_ledger to the max ledger folded and records its close
@@ -670,6 +674,7 @@ func foldSEP41RollupLocked(ctx context.Context, tx *sql.Tx, contractID string) (
             SELECT COALESCE(max(ledger), 0) AS mx
               FROM sep41_supply_events
              WHERE contract_id = $1
+               AND observed_at >= $4
         ),
         unbounded AS (
             SELECT max(e.observed_at) AS at
@@ -699,6 +704,7 @@ func foldSEP41RollupLocked(ctx context.Context, tx *sql.Tx, contractID string) (
                AND e.ledger      >= (SELECT floor_ledger FROM locked)
                AND e.ledger       < (SELECT mx FROM bound)
                AND e.ledger      <= (SELECT COALESCE(through, 0) FROM settled)
+               AND e.observed_at >= $4
         )
         UPDATE sep41_supply_rollup r
            SET mint_total     = r.mint_total     + d.d_mint,
@@ -715,11 +721,30 @@ func foldSEP41RollupLocked(ctx context.Context, tx *sql.Tx, contractID string) (
         RETURNING d.from_ledger, r.last_ledger, d.cursor_absent
     `
 	if err := tx.QueryRowContext(ctx, q, contractID,
-		sep41SupplyCursorSource, sep41SupplyCursorSub,
+		sep41SupplyCursorSource, sep41SupplyCursorSub, lower.UTC(),
 	).Scan(&fromLedger, &toLedger, &cursorAbsent); err != nil {
 		return 0, 0, false, fmt.Errorf("fold: %w", err)
 	}
 	return fromLedger, toLedger, cursorAbsent, nil
+}
+
+// sep41FoldLowerBound is the fold's observed_at floor: the checkpoint's close time less [sep41BoundMargin], so planning prunes the
+// hypertable's chunks (88 ms planning unbounded vs 0.5 ms on r1). Exact because every ledger after the checkpoint closed after it.
+// Zero, admitting every row, when the bound is unknown or a reset cleared it. The caller holds the row lock, so the fold sees this row.
+func sep41FoldLowerBound(ctx context.Context, tx *sql.Tx, contractID string) (time.Time, error) {
+	const q = `
+        SELECT CASE WHEN bound_ledger = last_ledger THEN bound_observed_at END
+          FROM sep41_supply_rollup
+         WHERE contract_id = $1
+    `
+	var at sql.NullTime
+	if err := tx.QueryRowContext(ctx, q, contractID).Scan(&at); err != nil {
+		return time.Time{}, fmt.Errorf("fold bound: %w", err)
+	}
+	if !at.Valid {
+		return time.Time{}, nil
+	}
+	return at.Time.Add(-sep41BoundMargin), nil
 }
 
 // lockSEP41RollupRow materialises and locks the rollup row in statements of their own, BEFORE the fold: a lock taken inside it
