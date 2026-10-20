@@ -1071,22 +1071,30 @@ func TestLatestTradesForPair_RemembersAnEmptyOlderRange(t *testing.T) {
 	}
 }
 
-// TestLatestTradesForPair_ReReadsANonEmptyOlderRange: only a range read as empty is remembered.
-func TestLatestTradesForPair_ReReadsANonEmptyOlderRange(t *testing.T) {
+// TestLatestTradesForPair_RemembersANonEmptyOlderRange: a pair whose newest trade is older than the recent window paid the wide pass
+// on every call too. The recent pass still runs, so a trade landing after the first read ranks ahead of the remembered rows.
+func TestLatestTradesForPair_RemembersANonEmptyOlderRange(t *testing.T) {
 	pair := dirAQUAUSDCPair(t)
 	since := time.Now().Add(-400 * 24 * time.Hour)
+	oldTS := time.Now().Add(-30 * 24 * time.Hour)
+	freshTS := time.Now().Add(-time.Hour)
 	empty := scriptedResult{cols: latestTradeCols}
-	older := scriptedResult{cols: latestTradeCols, rows: [][]driver.Value{
-		reverseStoredRow("sdex", 58_000_001, dirTxA, time.Now().Add(-30*24*time.Hour)),
-	}}
-	store, conn := newScriptedStore(t, empty, older, empty, older)
-	for range 2 {
-		got, err := store.LatestTradesForPair(context.Background(), pair, 1, since)
-		if err != nil || len(got) != 1 {
-			t.Fatalf("LatestTradesForPair = %d rows, %v; want the 30-day-old trade", len(got), err)
-		}
+	older := scriptedResult{cols: latestTradeCols, rows: [][]driver.Value{reverseStoredRow("sdex", 58_000_001, dirTxA, oldTS)}}
+	fresh := scriptedResult{cols: latestTradeCols, rows: [][]driver.Value{reverseStoredRow("sdex", 58_900_001, dirTxB, freshTS)}}
+	store, conn := newScriptedStore(t, empty, older, fresh, fresh)
+
+	if got, err := store.LatestTradesForPair(context.Background(), pair, 2, since); err != nil || len(got) != 1 || !got[0].Timestamp.Equal(oldTS) {
+		t.Fatalf("first call = %v, %v; want the 30-day-old trade", got, err)
+	}
+	got, err := store.LatestTradesForPair(context.Background(), pair, 2, since)
+	if err != nil || len(got) != 2 || !got[0].Timestamp.Equal(freshTS) || !got[1].Timestamp.Equal(oldTS) {
+		t.Fatalf("second call = %v, %v; want the fresh trade then the remembered one", got, err)
+	}
+	got, err = store.LatestTradesForPair(context.Background(), pair, 1, since)
+	if err != nil || len(got) != 1 || !got[0].Timestamp.Equal(freshTS) {
+		t.Fatalf("limit-1 call = %v, %v; want the fresh trade alone", got, err)
 	}
 	if len(conn.stmts) != 4 {
-		t.Fatalf("issued %d statements, want recent + wide on both calls", len(conn.stmts))
+		t.Fatalf("issued %d statements, want recent + wide, then recent alone twice", len(conn.stmts))
 	}
 }

@@ -1,26 +1,39 @@
 package timescale
 
-import "time"
+import (
+	"time"
 
-// Live writes land inside the recent window, so only a backfill or re-derive can fill [since, recent) after a miss; the TTL bounds how
-// long that stays unseen. A miss there plans every trades chunk in range (~165ms per arm on a fresh connection on r1).
-const (
-	olderTradesEmptyTTL        = time.Minute
-	olderTradesEmptyMaxEntries = 4096
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-func (s *Store) olderTradesKnownEmpty(key string) bool {
-	s.olderTradesMu.Lock()
-	defer s.olderTradesMu.Unlock()
-	at, ok := s.olderTradesEmpty[key]
-	return ok && time.Since(at) < olderTradesEmptyTTL
+// Both bounds of [since, recent) are midnight-floored, so the range is fixed past history: only a backfill or re-derive changes it, and
+// the TTL bounds how long that stays unseen. A wide read plans every trades chunk in range (~150ms per call on r1), and a batch client
+// returning after an idle gap longer than the TTL pays it again on every row.
+const (
+	olderTradesTTL        = 6 * time.Hour
+	olderTradesMaxEntries = 4096
+)
+
+type olderTradesEntry struct {
+	trades []canonical.Trade // the range's newest trades, newest first; empty when it has none
+	at     time.Time
 }
 
-func (s *Store) markOlderTradesEmpty(key string) {
+func (s *Store) cachedOlderTrades(key string) ([]canonical.Trade, bool) {
 	s.olderTradesMu.Lock()
 	defer s.olderTradesMu.Unlock()
-	if s.olderTradesEmpty == nil || len(s.olderTradesEmpty) >= olderTradesEmptyMaxEntries {
-		s.olderTradesEmpty = map[string]time.Time{}
+	e, ok := s.olderTrades[key]
+	if !ok || time.Since(e.at) >= olderTradesTTL {
+		return nil, false
 	}
-	s.olderTradesEmpty[key] = time.Now()
+	return e.trades, true
+}
+
+func (s *Store) rememberOlderTrades(key string, trades []canonical.Trade) {
+	s.olderTradesMu.Lock()
+	defer s.olderTradesMu.Unlock()
+	if s.olderTrades == nil || len(s.olderTrades) >= olderTradesMaxEntries {
+		s.olderTrades = map[string]olderTradesEntry{}
+	}
+	s.olderTrades[key] = olderTradesEntry{trades: trades, at: time.Now()}
 }

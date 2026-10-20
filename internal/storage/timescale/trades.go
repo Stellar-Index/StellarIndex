@@ -1283,13 +1283,19 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
 	if err != nil || len(out) >= limit {
 		return out, err
 	}
-	key := fmt.Sprintf("%s|%s|%d|%d", p.Base, p.Quote, since.Unix(), recent.Unix())
-	if s.olderTradesKnownEmpty(key) {
-		return out, nil
+	// Every older row ranks below every recent one, so the live recent pass plus the remembered older rows is the wide read.
+	key := fmt.Sprintf("%s|%s|%d|%d|%d", p.Base, p.Quote, since.Unix(), recent.Unix(), limit)
+	if older, ok := s.cachedOlderTrades(key); ok {
+		merged := append(slices.Clip(out), older...)
+		return merged[:min(len(merged), limit)], nil
 	}
 	all, err := s.latestTradesForPair(ctx, p, limit, since)
-	if err == nil && !slices.ContainsFunc(all, func(t canonical.Trade) bool { return t.Timestamp.Before(recent) }) {
-		s.markOlderTradesEmpty(key)
+	if err == nil {
+		at := slices.IndexFunc(all, func(t canonical.Trade) bool { return t.Timestamp.Before(recent) })
+		if at < 0 {
+			at = len(all)
+		}
+		s.rememberOlderTrades(key, slices.Clone(all[at:]))
 	}
 	return all, err
 }

@@ -80,9 +80,9 @@ type Store struct {
 	xlmUSDPerHour xlmUSDSeriesCache
 	xlmUSDPerDay  xlmUSDSeriesCache
 
-	// olderTradesEmpty holds pairs with no trades in [since, recent) of [Store.LatestTradesForPair]; key → when that was read.
-	olderTradesMu    sync.Mutex
-	olderTradesEmpty map[string]time.Time
+	// olderTrades holds the newest trades in [since, recent) of [Store.LatestTradesForPair], per pair, bounds and limit.
+	olderTradesMu sync.Mutex
+	olderTrades   map[string]olderTradesEntry
 }
 
 // SetUSDVolumeQuoteSpec installs the quote-asset spec InsertTrade uses for on-chain trades.usd_volume; nil reverts to off-chain-only; call once at startup, not concurrently with InsertTrade.
