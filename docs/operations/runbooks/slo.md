@@ -141,12 +141,19 @@ journalctl -u stellarindex-api --since '5 min ago' --no-pager -o cat \
 
 # Is it a database query slowing us down?
 runuser -u postgres -- psql -d stellarindex -c "SELECT query, calls, mean_exec_time, max_exec_time FROM pg_stat_statements ORDER BY max_exec_time DESC LIMIT 10;"
+
+# Is the API waiting on its Postgres pool? Near-zero wait rules the pool out.
+curl -s 'http://127.0.0.1:9090/api/v1/query' \
+  --data-urlencode 'query=increase(go_sql_wait_duration_seconds_total{db_name="serving"}[5m])'
+
+# Or on ClickHouse? Busiest serving query shapes in the last 5 min, by total time.
+HOME=/root clickhouse-client --port 9300 -q "SELECT count() n, round(avg(query_duration_ms)) avg_ms, substring(any(normalizeQuery(query)),1,120) q FROM system.query_log WHERE type=2 AND user='api_serving' AND event_time > now() - INTERVAL 5 MINUTE GROUP BY normalizedQueryHash(query) ORDER BY n*avg_ms DESC LIMIT 5"
 ```
 
 **Likely causes.**
 
 - One slow route: code-path regression after a deploy.
-- All routes slow: CPU, memory, Postgres connections or Redis latency.
+- All routes slow: CPU, memory, Postgres connections, Redis latency, or ClickHouse load from one client crawling heavy pages (asset detail, chart, history); group the access log by `remote_ip` to see it.
 - First 5 min after a deploy (pool warm-up); the SLA probe (`stellarindex-sla-probe.timer`, 15 min, ~30 s at concurrency 1) at low traffic.
 - r1 runs at p95 = 246 ms structurally (F-1267); multi-region cutover is the long-term fix.
 
