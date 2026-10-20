@@ -438,8 +438,8 @@ type MarketsOptions struct {
 	//
 	// Volume-desc ranks on a mutable key, so a pair whose 24h volume changes mid-walk can be seen
 	// twice or missed. For a complete enumeration pass [MarketsOrderPair] explicitly: its keyset is
-	// the immutable `base|quote` with a strict `>`, so the walk is stable. The SDK does not send
-	// order_by=pair for you, so it agrees with an equivalent curl and the OpenAPI default.
+	// the immutable `base|quote` with a strict `>`. The SDK never sends order_by=pair itself, so it
+	// agrees with an equivalent curl and the OpenAPI default.
 	OrderBy MarketsOrderBy
 	// Include opts into the extra columns [Market] documents as
 	// request-gated: "sparkline" populates VolumeHistory24h,
@@ -447,12 +447,10 @@ type MarketsOptions struct {
 	// internal/api/v1/markets.go). Comma-joined into the `include`
 	// query param; empty omits both.
 	Include []string
-	// Source restricts the listing to markets a single registered
-	// on-chain source or CEX venue observed in the recency window; a data
-	// vendor (aggregator, FX, oracle) 400s `off-chain-source-filter`.
-	// Mutually exclusive with
-	// Asset — the server 400s `unknown-source` / `invalid-asset-id`
-	// rather than silently ignoring one, same posture as [PoolsQuery].
+	// Source restricts the listing to markets a single registered on-chain source or CEX venue observed
+	// in the recency window; a data vendor (aggregator, FX, oracle) 400s `off-chain-source-filter`.
+	// Mutually exclusive with Asset: the server 400s `unknown-source` / `invalid-asset-id` rather than
+	// silently ignoring one, same posture as [PoolsQuery].
 	Source string
 	// Asset restricts the listing to markets where the given
 	// canonical asset_id appears on either side (base or quote).
@@ -693,13 +691,10 @@ type ChartQuery struct {
 	// other token is a 400 — the previous comment here advertised
 	// 7d / 30d / 90d, which the server has never accepted.
 	Timeframe string
-	// Granularity is 1m / 15m / 1h / 4h / 1d / 1w / 1mo; the default
-	// tracks Timeframe. The server may serve a COARSER width than the
-	// one asked for when the requested grid exceeds its 50,000-bucket
-	// response cap (1y + 1m is served at 15m); read
-	// [ChartSeries.Granularity] for the width actually served. 1m may
-	// additionally be bounded to the last 90 days on a given
-	// deployment; coarser widths are never bounded.
+	// Granularity is 1m / 15m / 1h / 4h / 1d / 1w / 1mo; the default tracks Timeframe. The server may
+	// serve a COARSER width when the grid exceeds its 50,000-bucket response cap (1y + 1m is served at
+	// 15m); read [ChartSeries.Granularity] for the width actually served. 1m may also be bounded to the
+	// last 90 days on a given deployment; coarser widths are never bounded.
 	Granularity string
 }
 

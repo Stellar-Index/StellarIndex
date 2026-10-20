@@ -9,13 +9,12 @@ dated-md docs/operations/usd-volume-rederive-2026-08.md
 dated-md docs/operations/wasm-audits/evidence/blend_emitter/shape-verification-2026-07-10.md
 dated-md docs/operations/wasm-audits/r1-walk-2026-05-01.md
 dated-md docs/operations/wasm-audits/walker-investigation-2026-05-01.md
-go-lines cmd/stellarindex-aggregator/main.go 2506
-go-lines cmd/stellarindex-api/main.go 2870
-go-lines cmd/stellarindex-indexer/main.go 2380
-go-lines internal/api/v1/assets.go 3951
-go-lines internal/api/v1/price.go 2627
-go-lines internal/api/v1/server.go 2365
-go-lines internal/obs/metrics.go 3700
-go-lines internal/pipeline/sink.go 2074
-go-lines internal/storage/clickhouse/explorer_reader.go 2266
-go-lines pkg/client/types.go 2461
+go-lines cmd/stellarindex-aggregator/main.go 2344
+go-lines cmd/stellarindex-api/main.go 2849
+go-lines cmd/stellarindex-indexer/main.go 2252
+go-lines internal/api/v1/assets.go 3879
+go-lines internal/api/v1/price.go 2503
+go-lines internal/api/v1/server.go 2311
+go-lines internal/obs/metrics.go 3084
+go-lines internal/pipeline/sink.go 2041
+go-lines internal/storage/clickhouse/explorer_reader.go 2161

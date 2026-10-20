@@ -53,13 +53,11 @@
 //     Do not build against it there.
 //
 //     On a deployment that does configure it, a JWT is passed as
-//     Options.APIKey (the SDK forwards any token verbatim in the
-//     `Authorization: Bearer` header). Note that a deployment runs
-//     exactly ONE auth mode: JWTs are honoured only under
-//     `auth_mode = "sep10"`, which stops `sip_*` (and legacy
-//     `rek_*`) API keys from working. The two credential types are
-//     alternatives, not peers on the same surface. A typed SEP-10
-//     helper wrapping the two-step flow lands as a follow-up.
+//     Options.APIKey (forwarded verbatim in the `Authorization: Bearer`
+//     header). A deployment runs exactly ONE auth mode: JWTs are
+//     honoured only under `auth_mode = "sep10"`, which stops `sip_*`
+//     (and legacy `rek_*`) API keys from working. There is no typed
+//     SEP-10 helper yet.
 //
 // # Error handling
 //

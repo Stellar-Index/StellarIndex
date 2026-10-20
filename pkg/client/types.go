@@ -9,13 +9,9 @@ import (
 type Envelope[T any] struct {
 	Data T         `json:"data"`
 	AsOf time.Time `json:"as_of"`
-	// CoverageFrom is the earliest instant the server holds price
-	// history at for the pair the request named. Present on the
-	// windowed surfaces (History, Chart, OHLC) when the server could
-	// establish it. Nil means UNKNOWN, never "from the beginning of
-	// time" — a consumer treating an empty series as "this market is
-	// dead" needs this field to tell that apart from a window that
-	// simply predates the server's data.
+	// CoverageFrom is the earliest instant the server holds price history for the requested pair. Present on the
+	// windowed surfaces (History, Chart, OHLC) when the server could establish it. Nil means UNKNOWN, never "from the
+	// beginning of time"; a consumer needs it to tell a dead market from a window that predates the server's data.
 	CoverageFrom *time.Time `json:"coverage_from,omitempty"`
 	// Withheld names the requested ids [Client.PriceBatch] omitted from
 	// Data because the server declined to publish their price (thin
@@ -33,13 +29,9 @@ type Envelope[T any] struct {
 	UnderReviewReason string   `json:"under_review_reason,omitempty"`
 	Sources           []string `json:"sources,omitempty"`
 	Flags             Flags    `json:"flags"`
-	// Pagination is a POINTER so it matches the server's wire shape
-	// (internal/api/v1/envelope.go uses *Pagination): nil ⇒ the field
-	// is absent. A value type here made `omitempty` a no-op (omitempty
-	// never elides a non-pointer struct), so re-encoding a non-list
-	// response emitted `"pagination":{}` where the server omits it
-	// entirely — round-trip drift. Consumers
-	// must nil-check before reading `.Next`.
+	// Pagination is a POINTER to match the server's wire shape (nil means absent): a value type makes `omitempty`
+	// a no-op, so re-encoding a non-list response would emit `"pagination":{}`. Consumers must nil-check before
+	// reading `.Next`.
 	Pagination *Pagination `json:"pagination,omitempty"`
 }
 
@@ -59,28 +51,19 @@ type Flags struct {
 	Triangulated      bool `json:"triangulated"`
 	DivergenceWarning bool `json:"divergence_warning"`
 
-	// DivergenceChecked reports whether the cross-reference divergence
-	// check reached a verdict at all. When false the check was blind, so
-	// a false warning must not be read as "prices agree"; a true
-	// warning is the last evaluated verdict carried forward, not a fresh
-	// one. Without this field a consumer
-	// gating on !DivergenceWarning passes 100% of the time while being
-	// structurally unable to detect the blindness.
+	// DivergenceChecked reports whether the cross-reference divergence check reached a verdict at all. When false
+	// the check was blind, so a false warning must not be read as "prices agree"; a true warning is the last
+	// evaluated verdict carried forward, not a fresh one. A consumer gating only on !DivergenceWarning cannot
+	// otherwise detect the blindness.
 	DivergenceChecked bool `json:"divergence_checked"`
-	// OutsideCoverage marks an empty answer whose requested range ends
-	// at or before the envelope's CoverageFrom — the window predates the
-	// server's history for the pair, so there was nothing to return.
-	// Mirrors the server's envelope flag; dropping it would leave a
-	// consumer unable to distinguish the two meanings of an empty series
-	// (a false that reads as a verdict when it is
-	// really "not applicable").
+	// OutsideCoverage marks an empty answer whose requested range ends at or before the envelope's CoverageFrom:
+	// the window predates the server's history for the pair, so there was nothing to return. Lets a consumer
+	// distinguish the two meanings of an empty series.
 	OutsideCoverage bool `json:"outside_coverage,omitempty"`
 	Frozen          bool `json:"frozen,omitempty"`
-	// FrozenChecked reports whether the freeze marker was actually
-	// read. When false, Frozen is NOT meaningful — the check never
-	// ran (looker not wired, or the read failed), so a false Frozen
-	// must not be read as "confirmed not frozen". Same shape
-	// as DivergenceChecked.
+	// FrozenChecked reports whether the freeze marker was actually read. When false, Frozen is NOT meaningful (the
+	// looker is not wired or the read failed), so a false Frozen must not be read as "confirmed not frozen". Same
+	// shape as DivergenceChecked.
 	FrozenChecked bool `json:"frozen_checked,omitempty"`
 	SingleSource  bool `json:"single_source,omitempty"`
 	// Diverged is set on a TRIANGULATED /v1/price response when the
@@ -102,23 +85,19 @@ type Flags struct {
 	UnderReview bool `json:"under_review,omitempty"`
 	// ProxyDeviation: a triangulated fiat:USD price was served through a USD peg while a declared peg trades off $1.
 	ProxyDeviation bool `json:"proxy_deviation,omitempty"`
-	// UnverifiedTickerCollision fires on `/v1/assets/{id}` when the
-	// requested asset's code matches a verified currency's Stellar
-	// ticker but its issuer doesn't match the verified entry — i.e.
-	// someone issued their own "USDC" on Stellar. Mirrors the server's
-	// envelope flag (G22-03). The decoder ignores unknown fields so
-	// adding this is non-breaking for older SDK builds.
+	// UnverifiedTickerCollision fires on `/v1/assets/{id}` when the requested asset's code matches a verified
+	// currency's Stellar ticker but its issuer does not match the verified entry, i.e. someone issued their own
+	// "USDC". The decoder ignores unknown fields, so older SDK builds are unaffected.
 	UnverifiedTickerCollision bool `json:"unverified_ticker_collision,omitempty"`
 	// DetectorsPartial fires on `/v1/mev` when the detection worker has
 	// not completed a full run within its heartbeat TTL, so a quiet feed is
 	// a detection gap rather than a quiet network.
 	DetectorsPartial bool `json:"detectors_partial,omitempty"`
-	// FiltersIgnored names the row-narrowing query parameters the response did NOT apply, spelled
-	// as the caller sent them ("type", "code", "issuer", "q"). Empty, and omitted, when everything
-	// supplied was applied. `/v1/assets` sets it on listings whose rows come from a source that
-	// cannot narrow: the class-scoped listings (`asset_class=fiat|stablecoin|crypto`) and the lean
-	// asset-catalog fallback. A page that dropped a filter looks otherwise identical to one that
-	// matched, so a consumer re-filtering the page keys on this.
+	// FiltersIgnored names the row-narrowing query parameters the response did NOT apply, spelled as the caller
+	// sent them ("type", "code", "issuer", "q"). Empty, and omitted, when everything supplied was applied.
+	// `/v1/assets` sets it on listings whose rows come from a source that cannot narrow (the class-scoped listings
+	// and the lean asset-catalog fallback). A page that dropped a filter looks identical to one that matched, so a
+	// consumer re-filtering the page keys on this.
 	FiltersIgnored []string `json:"filters_ignored,omitempty"`
 }
 
@@ -150,9 +129,9 @@ type PriceSnapshot struct {
 	// converted: USDLeg.Price × FXRate is Price.
 	USDLeg *USDLeg `json:"usd_leg,omitempty"`
 
-	// Change24hPct is the trailing-24h percentage change vs USD
-	// (signed, 2dp) on batch rows with a fiat:USD quote. Nil
-	// otherwise.
+	// Change24hPct is the trailing-24h price change as a signed percentage with two fractional digits (e.g.
+	// "+1.27", "-0.05", "0.00"). Null when no current USD price exists or there is no comparison bucket ~24h ago
+	// (e.g. first traded < 24h ago). Clients should render "—" on null rather than fabricating "0%".
 	Change24hPct *string `json:"change_24h_pct,omitempty"`
 	// Confidence is the multi-factor confidence score per ADR-0019,
 	// in [0, 1]. Populated only on /v1/price (the closed-bucket
@@ -294,12 +273,9 @@ type HistoryPoint struct {
 
 // AssetDetail is the data shape of [Client.Assets] (listing) and, as one branch of [AssetLookup], of [Client.Asset].
 type AssetDetail struct {
-	// Kind vs Type: Kind says which WIRE SHAPE this is — always
-	// "stellar_asset" on this struct, the discriminator [AssetLookup]
-	// switches on for the /v1/assets/{asset_id} dual response (ADR-0042).
-	// Type says which STELLAR ASSET CLASS this is within that
-	// shape (native / classic / soroban / fiat / global / external).
-	// Don't conflate them: Kind never varies on this struct; Type does.
+	// Kind vs Type: Kind is the WIRE SHAPE discriminator ("stellar_asset" on this struct) that [AssetLookup]
+	// switches on for the /v1/assets/{asset_id} dual response (ADR-0042). Type is the STELLAR ASSET CLASS within
+	// that shape (native / classic / soroban / fiat / global / external). Kind never varies here; Type does.
 	Kind string `json:"kind"`
 
 	// Identity
@@ -313,14 +289,10 @@ type AssetDetail struct {
 	// (always present on the wire). Stellar classic + native = 7;
 	// SEP-41 contracts publish their own value via `decimals()`.
 	Decimals int `json:"decimals"`
-	// DisplayDecimals is the issuer's SEP-1 `display_decimals` rounding hint (USDC declares 2):
-	// how many fractional digits to show.
-	//
-	// It is NOT a unit scale and must never enter amount math. Divide by
-	// 10^[AssetDetail.Decimals]; round the result for display to this. Deriving the unit scale
-	// from this issuer-controlled hint would inflate market_cap_usd.
-	//
-	// nil when the issuer's SEP-1 overlay declares none.
+	// DisplayDecimals is the issuer's SEP-1 `display_decimals` rounding hint (USDC declares 2): how many
+	// fractional digits to show. It is NOT a unit scale and must never enter amount math: divide by
+	// 10^[AssetDetail.Decimals], then round for display to this. Deriving the unit scale from this issuer-controlled
+	// hint would inflate market_cap_usd. Nil when the issuer's SEP-1 overlay declares none.
 	DisplayDecimals *int `json:"display_decimals,omitempty"`
 
 	// Sep1Status is one of "not_applicable" / "not_fetched" /
@@ -362,12 +334,11 @@ type AssetDetail struct {
 	// enabled).
 	PriceUSD *string `json:"price_usd,omitempty"`
 
-	// PriceBasis identifies a PriceUSD that is not a direct market observation. "global_market":
-	// filled from the vetted global ticker's cross-venue price (see GlobalMarket). "declared_peg":
-	// an operator-declared 1:1 fiat peg times the current fiat-to-USD rate, used because no
-	// market-derived price survived the server's substance gate. "transitive": derived through one
-	// intermediate hop (asset, hop, USD proxy). Empty means market-derived. Peg-priced rows carry
-	// no change pills or market-history-derived valuation fields.
+	// PriceBasis identifies a PriceUSD that is not a direct market observation. "global_market": the vetted
+	// global ticker's cross-venue price (see GlobalMarket). "declared_peg": an operator-declared 1:1 fiat peg times
+	// the current fiat-to-USD rate, used because no market-derived price survived the server's substance gate.
+	// "transitive": derived through one intermediate hop (asset, hop, USD proxy). Empty means market-derived.
+	// Peg-priced rows carry no change pills or market-history-derived valuation fields.
 	PriceBasis string `json:"price_basis,omitempty"`
 
 	// Price provenance on a listing row whose price is a published rate
@@ -412,16 +383,16 @@ type AssetDetail struct {
 	// (see MarketCapLowLiquidity and MarketCapDecimalsMismatch).
 	FDVUSD *string `json:"fdv_usd,omitempty"`
 
-	// MarketCapLowLiquidity is true when market_cap_usd or fdv_usd were deliberately suppressed
-	// (served null) by either guard:
+	// MarketCapLowLiquidity is true when market_cap_usd or fdv_usd were deliberately suppressed (served null) by
+	// either guard:
 	//
-	//   - the floor: the backing price came from negligible liquidity (a single venue AND low
-	//     trailing-24h USD volume), or
-	//   - the ceiling: the figure exceeds the server's maximum multiple of the asset's own
-	//     trailing-24h USD volume. FDV can breach it alone, leaving market_cap_usd served.
+	//   - the floor: the backing price came from negligible liquidity (a single venue AND low trailing-24h USD
+	//     volume), or
+	//   - the ceiling: the figure exceeds the server's maximum multiple of the asset's own trailing-24h USD
+	//     volume. FDV can breach it alone, leaving market_cap_usd served.
 	//
-	// Distinguishes "suppressed on purpose" from "no supply/price data"; price_usd still serves.
-	// Omitted (false) when neither figure was suppressed.
+	// Distinguishes "suppressed on purpose" from "no supply/price data"; price_usd still serves. Omitted (false)
+	// when neither figure was suppressed.
 	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
 
 	// MarketCapDecimalsMismatch is true when market_cap_usd (and fdv_usd) were refused (served
@@ -456,14 +427,12 @@ type AssetDetail struct {
 	SupplyAsOf       *time.Time `json:"supply_as_of,omitempty"`
 	SupplyAsOfLedger *uint32    `json:"supply_as_of_ledger,omitempty"`
 
-	// VolumeUSD24h is the trailing-24h USD-denominated trade volume across every pair this asset
-	// participates in. "0" is a valid value (asset tracked, no trades in the window); null means
-	// the volume reader isn't wired or the lookup failed.
+	// VolumeUSD24h is the trailing-24h USD-denominated trade volume across every pair this asset participates in.
+	// "0" is valid (tracked, no trades in the window); null means the volume reader isn't wired or the lookup failed.
 	//
-	// Off-chain CEX/FX trades populate it directly (uniform 10^8 scale). On-chain DEX trades
-	// populate it when the quote asset is on the operator's `[trades].usd_pegged_classic_assets`
-	// list (trusted 1:1 peg), or, when the list is non-empty, when a recent `<quote>/<USD-peg>`
-	// VWAP exists in prices_1m at the trade's timestamp.
+	// Off-chain CEX/FX trades populate it directly (uniform 10^8 scale). On-chain DEX trades populate it when the
+	// quote asset is on the operator's `[trades].usd_pegged_classic_assets` list (trusted 1:1 peg), or, when the
+	// list is non-empty, when a recent `<quote>/<USD-peg>` VWAP exists in prices_1m at the trade's timestamp.
 	VolumeUSD24h *string `json:"volume_24h_usd,omitempty"`
 	// VolumeLowerBound is true when VolumeUSD24h excludes unpriced trades.
 	VolumeLowerBound bool `json:"volume_lower_bound,omitempty"`
@@ -485,13 +454,10 @@ type AssetDetail struct {
 	ApprovalServer         *string `json:"approval_server,omitempty"`
 	ApprovalCriteria       *string `json:"approval_criteria,omitempty"`
 
-	// ─── SEP-1 issuance declarations ─────────────────────────────
+	// ─── SEP-1 issuance declarations ───
 	//
-	// The issuer's own commitments from their stellar.toml
-	// `[[CURRENCIES]]` entry; populated only when Sep1Status ==
-	// "verified". Distinct from the F2 fields above which observe
-	// live ledger state — these say what the issuer pledged, the F2
-	// fields say what's actually on-chain.
+	// The issuer's own commitments from their stellar.toml `[[CURRENCIES]]` entry; populated only when Sep1Status
+	// == "verified". These say what the issuer pledged; the F2 fields above observe what is actually on-chain.
 
 	// Conditions is the issuer's free-form terms / conditions text
 	// (SEP-1 `conditions`).
@@ -520,21 +486,17 @@ type AssetDetail struct {
 	// `Flags.UnverifiedTickerCollision` on the envelope.
 	UnverifiedWarning *UnverifiedWarning `json:"unverified_warning,omitempty"`
 
-	// UnverifiedTickerCollision is the listing-row trust signal on /v1/assets: true when this
-	// row's (code, issuer) uses a verified currency's ticker but is not the verified issuer (a
-	// look-alike). The listing serves COALESCE(slug, code) AS slug, so a NULL-slug impersonator
-	// emits the verified asset's code as its slug; consumers must AND the verified-slug check with
-	// `!UnverifiedTickerCollision`. False (omitted) for the verified asset and for codes no
-	// verified currency claims. The detail path carries UnverifiedWarning instead.
+	// UnverifiedTickerCollision is the listing-row trust signal on /v1/assets: true when this row's (code, issuer)
+	// uses a verified currency's ticker but is not the verified issuer (a look-alike). The listing serves
+	// COALESCE(slug, code) AS slug, so a NULL-slug impersonator emits the verified asset's code as its slug;
+	// consumers must AND the verified-slug check with `!UnverifiedTickerCollision`. False (omitted) for the verified
+	// asset and for codes no verified currency claims. The detail path carries UnverifiedWarning instead.
 	UnverifiedTickerCollision bool `json:"unverified_ticker_collision,omitempty"`
 
-	// FiatCodeAnchor points at the catalogue's fiat denomination when
-	// the requested asset's code names a sovereign currency (USD, EUR,
-	// …) with no Stellar issuance of its own. Distinct from
-	// UnverifiedWarning: a fiat code is a denomination, never an
-	// impersonation claim, so its presence never suppresses
-	// MarketCapUSD. Nil for any code the catalogue does not hold as a
-	// fiat denomination.
+	// FiatCodeAnchor points at the catalogue's fiat denomination when the requested asset's code names a sovereign
+	// currency (USD, EUR, ...) with no Stellar issuance of its own. A fiat code is a denomination, never an
+	// impersonation claim, so its presence never suppresses MarketCapUSD (unlike UnverifiedWarning). Nil for any
+	// code the catalogue does not hold as a fiat denomination.
 	FiatCodeAnchor *FiatCodeAnchor `json:"fiat_code_anchor,omitempty"`
 
 	// ─── Asset-catalogue overlay listing fields (populated when
@@ -554,22 +516,18 @@ type AssetDetail struct {
 	IssuerScamReason string           `json:"issuer_scam_reason,omitempty"`
 	TopMarkets       []AssetTopMarket `json:"top_markets,omitempty"`
 
-	// IssuerDirectoryTags / Domain / Name are the live stellar-expert
-	// account_directory attribution for the issuer (e.g. the
-	// {malicious,unsafe} tags + audrev-stellar.com domain on the
-	// wash-inflated scam AUD). Display-only, third-party attribution —
-	// never an input to verification. Omitted when no directory reader is
-	// wired, the issuer isn't listed, or the lookup failed.
+	// IssuerDirectoryTags / Domain / Name are the live stellar-expert account_directory attribution for the issuer
+	// (e.g. {malicious,unsafe} tags on a wash-inflated scam asset). Display-only third-party attribution, never an
+	// input to verification. Omitted when no directory reader is wired, the issuer isn't listed, or the lookup
+	// failed.
 	IssuerDirectoryTags   []string `json:"issuer_directory_tags,omitempty"`
 	IssuerDirectoryDomain string   `json:"issuer_directory_domain,omitempty"`
 	IssuerDirectoryName   string   `json:"issuer_directory_name,omitempty"`
 
-	// VolumeCharacter classifies the asset's trailing-window trade volume
-	// by account structure: "market" (honest multi-account, default),
-	// "operational" (issuer-side wrap corridor), or "concentrated" (>90%
-	// in one account pair on a market-styled pair — wash/ping-pong/dust).
-	// ANALYTICS / DISPLAY only — it does NOT re-rank and never feeds
-	// pricing or verification. Omitted when the reader isn't wired.
+	// VolumeCharacter classifies the asset's trailing-window trade volume by account structure: "market" (honest
+	// multi-account, default), "operational" (issuer-side wrap corridor), or "concentrated" (>90% in one account
+	// pair on a market-styled pair: wash/ping-pong/dust). ANALYTICS / DISPLAY only: it does not re-rank and never
+	// feeds pricing or verification. Omitted when the reader isn't wired.
 	VolumeCharacter string `json:"volume_character,omitempty"`
 
 	// VolumeCharacterSignals are the account-structure signals
@@ -635,13 +593,13 @@ type TradeRow struct {
 	//
 	// The scale is a property of the row's source, not of the asset, and a single page mixes both:
 	//
-	//   - on-chain rows (sdex, soroswap, aquarius, phoenix, comet) carry the asset's own scale: 7
-	//     for native/classic, the token contract's declared decimals() for Soroban tokens;
+	//   - on-chain rows (sdex, soroswap, aquarius, phoenix, comet) carry the asset's own scale: 7 for
+	//     native/classic, the token contract's declared decimals() for Soroban tokens;
 	//   - CEX rows (binance, kraken, bitstamp, coinbase) carry 8 regardless of the pair.
 	//
-	// Never substitute a constant: Price is quote/base and scale-invariant, so a wrong assumed
-	// scale is undetectable from the payload. Populated by [Client.History]; omitted (zero) on the
-	// /v1/observations rows, which carry no per-side scale.
+	// Never substitute a constant: Price is quote/base and scale-invariant, so a wrong assumed scale is undetectable
+	// from the payload. Populated by [Client.History]; omitted (zero) on /v1/observations rows, which carry no
+	// per-side scale.
 	BaseDecimals  int `json:"base_decimals,omitempty"`
 	QuoteDecimals int `json:"quote_decimals,omitempty"`
 	// RoutedVia is the router/aggregator whose same-transaction
@@ -679,12 +637,10 @@ type OHLCBar struct {
 	Close       string    `json:"close"`
 	BaseVolume  string    `json:"base_volume"`
 	QuoteVolume string    `json:"quote_volume"`
-	// BaseVolumeDecimals / QuoteVolumeDecimals are the decimal
-	// exponent of the two sums above. Equal to each other today (a
-	// source stamps both legs of a trade at one scale); carried
-	// separately because a scale belongs to an amount, not a pair.
-	// nil when a contributing trade's source is unrecognised: the
-	// sums are then not convertible to asset units.
+	// BaseVolumeDecimals / QuoteVolumeDecimals are the decimal exponent of the two sums above. Equal today (a
+	// source stamps both legs at one scale) but carried separately because a scale belongs to an amount, not a
+	// pair. Nil when a contributing trade's source is unrecognised: the sums are then not convertible to asset
+	// units.
 	BaseVolumeDecimals  *int `json:"base_volume_decimals"`
 	QuoteVolumeDecimals *int `json:"quote_volume_decimals"`
 	TradeCount          int  `json:"trade_count"`
@@ -996,12 +952,9 @@ type Issuer struct {
 	AuthRevocable *bool  `json:"auth_revocable,omitempty"`
 	AuthImmutable *bool  `json:"auth_immutable,omitempty"`
 	AuthClawback  *bool  `json:"auth_clawback,omitempty"`
-	// AuthFlagsSource says WHERE the four flags above came from:
-	// "live" for a current ledger entry, "last_known" for an account
-	// that has since been removed. A last_known row is a
-	// historical fact, not a current one — do not present it as the
-	// issuer's present configuration, and note it carries no
-	// home_domain, because a dead account must not keep advertising one.
+	// AuthFlagsSource says WHERE the four flags above came from: "live" for a current ledger entry, "last_known"
+	// for an account that has since been removed. A last_known row is a historical fact, not the issuer's present
+	// configuration, and carries no home_domain (a dead account must not keep advertising one).
 	AuthFlagsSource   string  `json:"auth_flags_source,omitempty"`
 	AuthFlagsAsOfLedg *uint32 `json:"auth_flags_as_of_ledger,omitempty"`
 	SEP1ResolvedAt    *string `json:"sep1_resolved_at,omitempty"`
@@ -1036,13 +989,9 @@ type Status struct {
 	Latency   StatusLatency   `json:"latency"`
 	Freshness StatusFreshness `json:"freshness"`
 	Incidents StatusIncidents `json:"incidents"`
-	// IncidentsStatus is the explicit tri-state trust signal for the
-	// Incidents block — "ok", "degraded", or "unknown". Read it BEFORE
-	// the counts: on "unknown" the Alertmanager query failed (or no
-	// metrics backend is wired) and the counts are the zero value of a
-	// failure, NOT an all-clear. Rendering active_count directly on
-	// "unknown" is how a status banner publishes "0 active alerts"
-	// while alerting is blind.
+	// IncidentsStatus is the explicit tri-state trust signal for the Incidents block: "ok", "degraded", or
+	// "unknown". Read it BEFORE the counts: on "unknown" the Alertmanager query failed (or no metrics backend is
+	// wired) and the counts are the zero value of a failure, NOT an all-clear.
 	IncidentsStatus string `json:"incidents_status"`
 	// FreshnessStatus is the same trust signal for the Freshness block:
 	// "ok" (every enabled source active), "degraded" (active < total) or
@@ -1133,12 +1082,10 @@ type Version struct {
 type ChartSeries struct {
 	AssetID string `json:"asset_id"`
 	Quote   string `json:"quote"`
-	// Granularity is the bucket width the series is ON, which is not
-	// always the width requested: price_type=twap snaps onto the 1h /
-	// 1d TWAP aggregates, and a (Timeframe, Granularity) pair whose
-	// grid exceeds the server's 50,000-bucket response cap is served at
-	// the finest width that fits — 1y + 1m comes back as 15m. Label an
-	// axis from this field, not from the request.
+	// Granularity is the bucket width the series is ON, which may differ from the request: price_type=twap snaps
+	// onto the 1h / 1d TWAP aggregates, and a (Timeframe, Granularity) pair whose grid exceeds the server's
+	// 50,000-bucket response cap is served at the finest width that fits (1y + 1m comes back as 15m). Label an axis
+	// from this field, not from the request.
 	Granularity   string         `json:"granularity"`
 	Timeframe     string         `json:"timeframe"`
 	PriceType     string         `json:"price_type"`
@@ -1657,18 +1604,14 @@ type RWAAssetsView struct {
 	// Funnel accounts for the entire population the served set was
 	// narrowed from.
 	Funnel RWAFunnel `json:"funnel"`
-	// UnreachedEntities names curated-directory entities recognised as
-	// issuing or custodying value for which this index holds NO Stellar
-	// token at all. They are not refused by any requirement — no token
-	// of theirs was ever collected, so none was ever evaluated. Served
-	// so a consumer can tell a recognised entity the index cannot see
-	// from one that does not exist.
+	// UnreachedEntities names curated-directory entities recognised as issuing or custodying value for which this
+	// index holds NO Stellar token at all. No token of theirs was ever collected, so none was ever evaluated and none
+	// was refused by a requirement. Served so a consumer can tell a recognised entity the index cannot see from one
+	// that does not exist.
 	UnreachedEntities []RWAUnreachedEntity `json:"unreached_entities"`
-	// CuratedAssets is a named third party's list of tokenized real-world
-	// assets, on that party's word and at that party's own price. It is
-	// served APART from Assets and is never merged into Summary or the
-	// group totals: Basis on each row is "third_party_curated", and a row
-	// also present in the verified set is flagged on its Curator. Empty
+	// CuratedAssets is a named third party's list of tokenized real-world assets, on that party's word and at that
+	// party's own price. It is served APART from Assets and never merged into Summary or the group totals: Basis on
+	// each row is "third_party_curated", and a row also present in the verified set is flagged on its Curator. Empty
 	// whenever Curated is nil or its Status is not "served".
 	CuratedAssets []RWAAsset `json:"curated_assets,omitempty"`
 	// Curated describes the curated arm — which curator, whether it was

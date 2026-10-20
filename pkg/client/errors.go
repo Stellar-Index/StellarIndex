@@ -42,21 +42,15 @@ type APIError struct {
 	// typically sleep for this value before retrying.
 	RetryAfter time.Duration
 
-	// CoverageFrom is the `coverage_from` extension member the server
-	// attaches to /v1/price/at's 404: the earliest instant it holds
-	// price history at for the requested pair. It is the same field
-	// the 2xx envelope carries ([Envelope.CoverageFrom]), on the one
-	// windowed surface whose "nothing there" answer is a problem body
-	// rather than an empty array. Nil means the server did not say —
-	// never "from the beginning of time".
+	// CoverageFrom is the `coverage_from` extension member on /v1/price/at's 404: the earliest instant
+	// the server holds price history for the requested pair (the same field the 2xx envelope carries,
+	// [Envelope.CoverageFrom]). Nil means the server did not say, never "from the beginning of time".
 	CoverageFrom *time.Time
 
-	// OutsideCoverage is the `outside_coverage` extension member on the
-	// same 404: true when the requested instant is at or before
-	// CoverageFrom, so the miss is "before the server's history for
-	// this pair" rather than a gap inside it. Only ever true when
-	// CoverageFrom is also set; false carries no information on its
-	// own (the server omits it whenever the floor is unknown).
+	// OutsideCoverage is the `outside_coverage` extension member on the same 404: true when the
+	// requested instant is at or before CoverageFrom, i.e. before the server's history for this pair
+	// rather than a gap inside it. Only true when CoverageFrom is also set; false carries no
+	// information (the server omits it when the floor is unknown).
 	OutsideCoverage bool
 
 	// Substance is the `substance` extension member on a thin-market
@@ -190,12 +184,10 @@ func parseRetryAfter(v string) time.Duration {
 		if secs <= 0 {
 			return 0
 		}
-		// Overflow guard: time.Duration is int64 nanoseconds, so a delta-seconds value above
-		// ~292 years wraps negative and a caller sleeping on it would retry immediately. Return 0,
-		// the documented absent/unparseable sentinel, rather than clamp: APIError.RetryAfter
-		// reports what the wire said, and choosing a ceiling is the caller's back-off policy.
-		// Compared in int64 because an `int` constant conversion overflows on 32-bit and
-		// pkg/client must cross-compile there.
+		// Overflow guard: time.Duration is int64 nanoseconds, so a value above ~292 years wraps negative
+		// and a caller sleeping on it would retry immediately. Return 0 (the absent/unparseable sentinel)
+		// rather than clamp: RetryAfter reports what the wire said; a ceiling is the caller's policy.
+		// Compared in int64 because an `int` constant conversion overflows on 32-bit.
 		if int64(secs) > math.MaxInt64/int64(time.Second) {
 			return 0
 		}
