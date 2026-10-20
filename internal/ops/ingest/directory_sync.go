@@ -130,10 +130,8 @@ func directorySync(args []string) error {
 	}
 	res, err := store.ReplaceDirectoryWithin(ctx, directorySource, entries, limit)
 	if errors.Is(err, timescale.ErrDirectoryChurnExceeded) {
-		// Nonzero exit fails the systemd unit, which
-		// stellarindex_systemd_unit_failed tickets; the numbers land in
-		// journald beside this hint. hb.Stop(exitOK) below also flips
-		// stellarindex_ops_job_last_exit_ok, which tickets far sooner.
+		// Nonzero exit fails the systemd unit, which stellarindex_systemd_unit_failed tickets; the numbers land in journald
+		// beside this hint. hb.Stop(exitOK) below also flips stellarindex_ops_job_last_exit_ok, which tickets far sooner.
 		return fmt.Errorf("%w — nothing written; if upstream really changed this much, re-run with -accept-churn", err)
 	}
 	if err != nil {

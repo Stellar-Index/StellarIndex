@@ -196,10 +196,9 @@ func extractWasmFromGalexie(args []string) error { //nolint:funlen,gocognit,gocy
 	}
 	wg.Wait()
 	close(errCh)
-	// First non-cancel worker error wins; printed AND returned — dropping
-	// it after printing would let a stream failure (wrong bucket, MinIO
-	// down) exit 0 with "N hash(es) not found — try a wider range" instead
-	// of reporting the walk itself never completed.
+	// First non-cancel worker error wins; printed AND returned — dropping it after printing would let a stream failure (wrong
+	// bucket, MinIO down) exit 0 with "N hash(es) not found — try a wider range" instead of reporting the walk itself never
+	// completed.
 	var workerErr error
 	for err := range errCh {
 		if workerErr == nil {

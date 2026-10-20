@@ -205,10 +205,9 @@ func runCap67CatchUp(ctx context.Context, chAddr string, from, to, window uint32
 	}
 }
 
-// Idle-tick policy for -follow. An idle tick resolved an empty range. A healthy feed idles a few
-// ticks per ledger, never many in a row, so a long run means stalled ingest, an unhealed hole or
-// a resume point the lake never reaches (start=1 against a lake beginning at 2). Respond by
-// logging at a bounded rate and backing off the ContiguousWatermark scan.
+// Idle-tick policy for -follow. An idle tick resolved an empty range. A healthy feed idles a few ticks per ledger, never many
+// in a row, so a long run means stalled ingest, an unhealed hole or a resume point the lake never reaches (start=1 against a
+// lake beginning at 2). Respond by logging at a bounded rate and backing off the ContiguousWatermark scan.
 const (
 	// cap67IdleLogEvery is the consecutive-idle-tick period of the
 	// "idle: start=… contiguous tip=… min_present=…" journal line.
@@ -342,13 +341,12 @@ func resolveDeriveRange(ctx context.Context, chAddr, verb string, from, to, floo
 		}
 		start = resolveStart(wm, floorLedger, lakeMin)
 	}
-	// Contiguity gate: the LiveSink drops whole ledgers under buffer pressure, so the lake can
-	// have holes near the tip, and deriving past one would advance the watermark over it and lose
-	// that ledger's movements permanently. Clamp to the contiguous watermark (as
-	// projector.resolveTip does), keyed off stellar.ledgers, the commit marker flushed last; it
-	// returns start-1 when start is a hole, which the caller's `last < start` guard treats as
-	// nothing to do. The clamp is unconditional: an operator-supplied -to is min()'d against the
-	// tip, or `-to N` would walk past a hole below N and stamp the watermark over it.
+	// Contiguity gate: the LiveSink drops whole ledgers under buffer pressure, so the lake can have holes near the tip, and
+	// deriving past one would advance the watermark over it and lose that ledger's movements permanently. Clamp to the
+	// contiguous watermark (as projector.resolveTip does), keyed off stellar.ledgers, the commit marker flushed last; it
+	// returns start-1 when start is a hole, which the caller's `last < start` guard treats as nothing to do. The clamp is
+	// unconditional: an operator-supplied -to is min()'d against the tip, or `-to N` would walk past a hole below N and stamp
+	// the watermark over it.
 	tip, err := clickhouse.ContiguousWatermark(ctx, chAddr, start)
 	if err != nil {
 		return 0, 0, fmt.Errorf("resolve contiguous lake tip: %w", err)
@@ -379,10 +377,8 @@ func deriveCap67MovementsWindow(ctx context.Context, addr string, lo, hi uint32,
 // deriveCap67Window is deriveCap67MovementsWindow over the given topic[0]
 // symbols only.
 func deriveCap67Window(ctx context.Context, addr string, lo, hi uint32, topics []string, dryRun bool) (int64, uint64, error) {
-	// Decoders with an empty watched set: Decode() classifies by topic
-	// alone; Matches() (the watched-set gate) is deliberately NOT
-	// consulted — this job's whole point is covering the unwatched
-	// contracts (native XLM above all).
+	// Decoders with an empty watched set: Decode() classifies by topic alone; Matches() (the watched-set gate) is deliberately
+	// NOT consulted — this job's whole point is covering the unwatched contracts (native XLM above all).
 	dec := sep41.NewUngatedDecoder()
 	sup := sep41supply.NewUngatedDecoder()
 
@@ -430,10 +426,8 @@ func deriveCap67Window(ctx context.Context, addr string, lo, hi uint32, topics [
 		return written, decErrs, err
 	}
 	if decErrs > 0 {
-		// Not fatal per window: a deterministically undecodable transfer
-		// event re-fails on every retry; the raw event stays in
-		// contract_events for audit. The one-shot run's exit status
-		// accounts for it via enforceDecodeBudget.
+		// Not fatal per window: a deterministically undecodable transfer event re-fails on every retry; the raw event stays in
+		// contract_events for audit. The one-shot run's exit status accounts for it via enforceDecodeBudget.
 		fmt.Fprintf(os.Stderr, "ch-cap67-movements: window [%d,%d]: %d events skipped (decode)\n", lo, hi, decErrs)
 	}
 	return written, decErrs, nil

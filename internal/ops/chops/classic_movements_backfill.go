@@ -135,20 +135,16 @@ func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,f
 		}
 		if werr != nil {
 			if errors.Is(werr, context.Canceled) || ctx.Err() != nil {
-				// -resume is data-derived (MaxAccountMovementLedger), so
-				// it restarts at the highest ledger this window managed to
-				// write, NOT at the window's start — saying otherwise sends
-				// operators looking for a gap in the wrong place.
+				// -resume is data-derived (MaxAccountMovementLedger), so it restarts at the highest ledger this window managed
+				// to write, NOT at the window's start — saying otherwise sends operators looking for a gap in the wrong place.
 				fmt.Fprintf(os.Stderr, "classic-movements-backfill: cancelled mid-window [%d,%d] — a -resume run restarts from the highest ledger already written to stellar.account_movements in [-from,-to], which for a partially-written window is above %d; inserts are ledger-ordered, so every ledger below that point is complete and that ledger itself is re-processed\n", wlo, whi, wlo)
 				break
 			}
 			return fmt.Errorf("classic-movements-backfill: window [%d,%d]: %w", wlo, whi, werr)
 		}
 
-		// Merge into the run totals — reached only after a successful
-		// attempt (first try or the one retry), so a window that failed
-		// both tries never contributes partial counts or a partial
-		// batch to the run (it already returned above instead).
+		// Merge into the run totals — reached only after a successful attempt (first try or the one retry), so a window that
+		// failed both tries never contributes partial counts or a partial batch to the run (it already returned above instead).
 		for k, v := range res.windowCounts {
 			counts[k] += v
 		}

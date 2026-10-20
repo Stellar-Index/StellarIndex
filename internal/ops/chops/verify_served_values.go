@@ -295,10 +295,9 @@ func renderServedValueProm(results []servedValueResult, list *reserveListResult,
 			skipped = 1
 		}
 		b.line(fmt.Sprintf(`stellarindex_served_value_skipped{check=%q} %d`, r.name, skipped))
-		// A skipped check asserts NO ok verdict: emitting ok=1 would
-		// hide a real drift behind a dark truth source (F5 fail-open),
-		// and ok=0 would page for a third-party outage. Absence is the
-		// honest state — the skipped gauge above carries the signal.
+		// A skipped check asserts NO ok verdict: emitting ok=1 would hide a real drift behind a dark truth source (F5
+		// fail-open), and ok=0 would page for a third-party outage. Absence is the honest state — the skipped gauge above
+		// carries the signal.
 		if r.skipped {
 			continue
 		}

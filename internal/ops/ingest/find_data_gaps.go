@@ -166,10 +166,8 @@ func writeFindDataGapsJSON(w io.Writer, m findDataGapsMultiReport) error {
 
 // writeFindDataGapsMultiText emits one block per target, including zero-gap ones, so the operator can confirm every target was scanned.
 func writeFindDataGapsMultiText(w io.Writer, m findDataGapsMultiReport) {
-	// fmt.Fprint{,f,ln} errors on operator output are not actionable —
-	// a broken-pipe on operator-CLI output is the operator's terminal,
-	// not a system fault — so we swallow them via _, _ = ... rather
-	// than threading an error all the way up to main.
+	// fmt.Fprint{,f,ln} errors on operator output are not actionable — a broken-pipe on operator-CLI output is the operator's
+	// terminal, not a system fault — so we swallow them via _, _ = ... rather than threading an error all the way up to main.
 	_, _ = fmt.Fprintf(w, "find-data-gaps: %d targets scanned at %s\n",
 		len(m.Reports), m.ScannedAt.Format(time.RFC3339))
 	for _, r := range m.Reports {

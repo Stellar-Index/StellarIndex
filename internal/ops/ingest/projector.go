@@ -26,10 +26,9 @@ const replayGenerationNote = "note: the projector re-writes at derive_generation
 const replayNotReachedMsg = "projector cursor for source=%q is at ledger %d, which has not yet passed requested ledger %d — " +
 	"nothing to rewind; the live projector's forward pass will project it (%d ledgers still ahead of the cursor).\n"
 
-// projectorReplay rewinds the projector's per-source cursor to re-project a range from soroban_events (replaces *-backfill, ADR-0032;
-// gen-0 rows only), then STAYS to re-materialize the price CAGGs (refresh policy only rolls forward) and fails loudly if it cannot;
-// -refresh-caggs=false opts out.
-// See docs/operations/runbooks/projector.md#stellarindex_projector_replay_stalled.
+// projectorReplay rewinds the projector's per-source cursor to re-project a range from soroban_events (replaces *-backfill,
+// ADR-0032; gen-0 rows only), then STAYS to re-materialize the price CAGGs (refresh policy only rolls forward) and fails loudly
+// if it cannot; -refresh-caggs=false opts out. See docs/operations/runbooks/projector.md#stellarindex_projector_replay_stalled.
 func projectorReplay(w io.Writer, args []string) error {
 	fs := flag.NewFlagSet("projector-replay", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -50,10 +49,8 @@ func projectorReplay(w io.Writer, args []string) error {
 	if *refreshOnly {
 		return projectorRefreshOnly(w, *cfgPath, *source, uint32(*from), uint32(*refreshTo), gate)
 	}
-	// Before the config load and before any store access: a refusal
-	// must not depend on a reachable database, and applies to -dry-run
-	// too (a dry run that prints a rewind plan for a source the real
-	// run would refuse is a plan nobody can execute).
+	// Before the config load and before any store access: a refusal must not depend on a reachable database, and applies to
+	// -dry-run too (a dry run that prints a rewind plan for a source the real run would refuse is a plan nobody can execute).
 	if err := checkReplayBackfillSafe(*source, uint32(*from)); err != nil {
 		return err
 	}
@@ -101,10 +98,8 @@ func projectorReplay(w io.Writer, args []string) error {
 	_, _ = fmt.Fprintf(w,
 		"rewind projector cursor source=%q from %d → %d (delta = %d ledgers)\n",
 		*source, currentLedger, target, currentLedger-target)
-	// Projector cursor is "last fully-processed ledger." Rewinding
-	// to (target - 1) makes the projector start its next cycle at
-	// `target` inclusive (see projector.cycleOneSource:fromLedger =
-	// cursor.LastLedger + 1).
+	// Projector cursor is "last fully-processed ledger." Rewinding to (target - 1) makes the projector start its next cycle at
+	// `target` inclusive (see projector.cycleOneSource:fromLedger = cursor.LastLedger + 1).
 	rewindTo := target
 	if rewindTo > 0 {
 		rewindTo--

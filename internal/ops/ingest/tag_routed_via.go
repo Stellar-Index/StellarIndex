@@ -109,10 +109,9 @@ func tagRoutedVia(args []string) error { //nolint:funlen,gocognit,gocyclo // lin
 			fmt.Fprintf(os.Stderr, "tag-routed-via: window %d..%d tagged %d trades (total %d)\n",
 				lo, hi, tagged, totalTagged)
 		case ok:
-			// Preview: the UPDATE's own predicate decides the row count,
-			// and asking for it without running it means a second scan of
-			// the very chunks the windowing exists to keep compressed. So
-			// the preview reports the WINDOW it would tag, not an estimate.
+			// Preview: the UPDATE's own predicate decides the row count, and asking for it without running it means a second
+			// scan of the very chunks the windowing exists to keep compressed. So the preview reports the WINDOW it would tag,
+			// not an estimate.
 			windowsPending++
 			fmt.Fprintf(os.Stderr, "tag-routed-via: window %d..%d WOULD tag soroswap trades in [%s, %s) (pass -write to apply)\n",
 				lo, hi, minTS.UTC().Format(time.RFC3339), maxTS.Add(time.Second).UTC().Format(time.RFC3339))

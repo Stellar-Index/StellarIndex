@@ -1,11 +1,10 @@
 // Copyright 2026 Stellar Index contributors
 // SPDX-License-Identifier: Apache-2.0
 
-// Package chops holds the stellarindex-ops ClickHouse-lake subcommands (named chops, not
-// clickhouse, so the import does not shadow internal/storage/clickhouse): the lake backfill, gate,
-// reproject and rebuild tools, the projected-source catch-up, and the completeness,
-// reconciliation, contiguity, hash-chain and network-state verifiers, plus their shared
-// re-derivation helpers. cmd/stellarindex-ops main.go's dispatch table calls Run below.
+// Package chops holds the stellarindex-ops ClickHouse-lake subcommands (named chops, not clickhouse, so the import does not
+// shadow internal/storage/clickhouse): the lake backfill, gate, reproject and rebuild tools, the projected-source catch-up, and
+// the completeness, reconciliation, contiguity, hash-chain and network-state verifiers, plus their shared re-derivation
+// helpers. cmd/stellarindex-ops main.go's dispatch table calls Run below.
 package chops
 
 import (

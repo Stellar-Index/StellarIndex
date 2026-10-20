@@ -169,10 +169,9 @@ func backfill(args []string) error {
 		"chunks", len(chunks),
 	)
 
-	// The heartbeat reports liveness + progress for the whole walk, so a wedged backfill
-	// (stalled S3 read, storage write that never returns, OOM-killed chunk
-	// goroutine) is distinguishable from a working one without tailing the
-	// journal. Inert off-r1 — see opsutil.NewJobHeartbeat.
+	// The heartbeat reports liveness + progress for the whole walk, so a wedged backfill (stalled S3 read, storage write that
+	// never returns, OOM-killed chunk goroutine) is distinguishable from a working one without tailing the journal. Inert
+	// off-r1 — see opsutil.NewJobHeartbeat.
 	opts.wasmGate = &replayGateOnce{}
 	opts.heartbeat = opsutil.NewJobHeartbeat("backfill", opts.heartbeatPath, nil)
 	opts.walkedTotal = &atomic.Uint64{}
@@ -183,10 +182,8 @@ func backfill(args []string) error {
 	backfillOK := false
 	defer func() { opts.heartbeat.Stop(backfillOK) }()
 
-	// Sequential fast-path. Same shape as the pre-parallelism code,
-	// minus the redundant goroutine + channel hop. Lets `-parallel 1`
-	// (the default) keep its existing semantics: one cursor row, one
-	// ledgerstream, one events channel.
+	// Sequential fast-path. Same shape as the pre-parallelism code, minus the redundant goroutine + channel hop. Lets
+	// `-parallel 1` (the default) keep its existing semantics: one cursor row, one ledgerstream, one events channel.
 	if len(chunks) == 1 {
 		err := runBackfillChunk(rootCtx, logger, opts, cfg, store, chunks[0])
 		backfillOK = err == nil
@@ -285,10 +282,9 @@ func buildChunkDispatcher(
 			return nil, nil, fmt.Errorf("soroswap registry: %w", err)
 		}
 	}
-	// gated=nil is safe only because checkBackfillSourcePolicy above
-	// refused every projector-owned source: an empty identity gate
-	// here would otherwise make blend write zero rows and exit 0, and
-	// SinkModeAll would make the rest a second writer (invariant [7]).
+	// gated=nil is safe only because checkBackfillSourcePolicy above refused every projector-owned source: an empty identity
+	// gate here would otherwise make blend write zero rows and exit 0, and SinkModeAll would make the rest a second writer
+	// (invariant [7]).
 	disp, err := pipeline.BuildDispatcher(realSources, cfg.Oracle, nil, soroswapOpts...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("build dispatcher: %w", err)
@@ -297,10 +293,8 @@ func buildChunkDispatcher(
 		return disp, nil, nil
 	}
 
-	// soroban-events pseudo-source: wire the RawEventSink (ADR-0029).
-	// Sink lifecycle is local to this chunk so a parallel-N backfill
-	// gets N independent sinks each with their own batch buffer.
-	// Stop()'d at chunk end to flush any partial batch.
+	// soroban-events pseudo-source: wire the RawEventSink (ADR-0029). Sink lifecycle is local to this chunk so a parallel-N
+	// backfill gets N independent sinks each with their own batch buffer. Stop()'d at chunk end to flush any partial batch.
 	rawSink := sorobanevents.NewAsyncSink(store, sorobanevents.AsyncSinkOptions{
 		IsPermanentFault: timescale.IsPermanentDataError,
 		BufferSize:       4096,
@@ -356,10 +350,8 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 	var persistLoss pipeline.ShutdownLoss // read only after <-sinkDone
 	go func() {
 		defer close(sinkDone)
-		// Backfill always uses SinkModeAll — the projector only runs
-		// in the indexer, not in `stellarindex-ops backfill`, so this
-		// subcommand keeps writing every event class itself. See
-		// ADR-0032 § "Out of scope for projector".
+		// Backfill always uses SinkModeAll — the projector only runs in the indexer, not in `stellarindex-ops backfill`, so
+		// this subcommand keeps writing every event class itself. See ADR-0032 § "Out of scope for projector".
 		persistLoss = pipeline.PersistEvents(ctx, logger, store, events, pipeline.SinkModeAll, nil)
 	}()
 
@@ -387,10 +379,8 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 			if err := pipeline.ProcessLedger(ctx, disp, events, logger, lcm, cfg.Stellar.Passphrase()); err != nil {
 				return err
 			}
-			// Report into the run-wide heartbeat AFTER the ledger
-			// was actually processed — a counter bumped before the work
-			// would keep advancing while ProcessLedger wedges, which is
-			// the exact hang the progress alert exists to catch.
+			// Report into the run-wide heartbeat AFTER the ledger was actually processed — a counter bumped before the work
+			// would keep advancing while ProcessLedger wedges, which is the exact hang the progress alert exists to catch.
 			if opts.walkedTotal != nil {
 				opts.heartbeat.Progress(opts.walkedTotal.Add(1), uint64(lcm.LedgerSequence()))
 			}
@@ -420,10 +410,8 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 		return errors.Join(fmt.Errorf("stream: %w", streamErr), lossErr)
 	}
 	if ierr := backfillChunkInterrupted(ctx.Err(), chunk, lastFullyEnqueued); ierr != nil {
-		// Graceful shutdown (SIGINT/SIGTERM): checkpoint what fully
-		// drained and stop HERE — `ctx` is dead, so the CAGG refresh
-		// below would fail spuriously. The chunk is NOT complete, so it
-		// fails the run; see backfillChunkInterrupted.
+		// Graceful shutdown (SIGINT/SIGTERM): checkpoint what fully drained and stop HERE — `ctx` is dead, so the CAGG refresh
+		// below would fail spuriously. The chunk is NOT complete, so it fails the run; see backfillChunkInterrupted.
 		checkpointBackfillChunk(logger, store, cursorSub, interruptedCheckpoint(chunk, lastFullyEnqueued), startFrom) //nolint:contextcheck // deliberately does NOT use the caller's ctx — see checkpointBackfillChunk's doc comment
 		if lossErr != nil {
 			ierr = errors.Join(ierr, lossErr)
@@ -451,10 +439,9 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 		"ledgers_walked", walked,
 	)
 
-	// CAGG refresh path: skipped for the soroban-events pseudo-source
-	// (the soroban_events hypertable has no CAGGs built on top of it
-	// — future per-source decoders read from it directly via SELECT).
-	// Nothing to materialise, so the checkpoint below is unconditional.
+	// CAGG refresh path: skipped for the soroban-events pseudo-source (the soroban_events hypertable has no CAGGs built on top
+	// of it — future per-source decoders read from it directly via SELECT). Nothing to materialise, so the checkpoint below is
+	// unconditional.
 	switch {
 	case pseudo:
 		logger.Info("skipping CAGG refresh — soroban-events has no CAGGs")
@@ -607,10 +594,9 @@ func refreshCAGGsForChunk(ctx context.Context, logger *slog.Logger, store caggRe
 	if err != nil || len(plan) == 0 {
 		return err
 	}
-	// One worker at a time through the whole plan — see caggRefreshMu.
-	// Held across the loop rather than per view: releasing between
-	// rungs would just hand the next worker a view this one is about
-	// to ask for, which is the collision the lock exists to remove.
+	// One worker at a time through the whole plan — see caggRefreshMu. Held across the loop rather than per view: releasing
+	// between rungs would just hand the next worker a view this one is about to ask for, which is the collision the lock exists
+	// to remove.
 	caggRefreshMu.Lock()
 	defer caggRefreshMu.Unlock()
 

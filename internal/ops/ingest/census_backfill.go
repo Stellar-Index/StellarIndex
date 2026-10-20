@@ -91,10 +91,9 @@ func censusBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 	)
 	const checkpointInterval = 30 * time.Second
 
-	// A preview must not advance the resume checkpoint: the next run
-	// would skip the ledgers it only LOOKED at and leave a substrate hole
-	// behind a cursor that claims they are done (the stride-past
-	// failure, with the write never having happened at all).
+	// A preview must not advance the resume checkpoint: the next run would skip the ledgers it only LOOKED at and leave a
+	// substrate hole behind a cursor that claims they are done (the stride-past failure, with the write never having happened
+	// at all).
 	checkpoint := func(seq uint32) {
 		if !write {
 			return

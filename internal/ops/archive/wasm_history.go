@@ -191,10 +191,8 @@ func wasmHistory(args []string) error { //nolint:funlen,gocognit,gocyclo // line
 	fmt.Fprintf(os.Stderr, "\nwasm-history: scanned %d ledgers across %d worker(s) in %s\n",
 		totalScanned, *parallel, time.Since(startedAt).Round(time.Second))
 
-	// Merge worker outputs. Each worker's per-contract ranges are
-	// already in ledger-order within its chunk; concatenating in
-	// worker-order produces a globally ordered list, then we collapse
-	// adjacent same-hash ranges across the boundaries.
+	// Merge worker outputs. Each worker's per-contract ranges are already in ledger-order within its chunk; concatenating in
+	// worker-order produces a globally ordered list, then we collapse adjacent same-hash ranges across the boundaries.
 	merged := mergeWasmHistories(workerStates, watch)
 
 	// Render: stable order by C-strkey for deterministic output.
@@ -214,10 +212,9 @@ func wasmHistory(args []string) error { //nolint:funlen,gocognit,gocyclo // line
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Contract < out[j].Contract })
 
-	// Tier-2 outputs (storage rotations + code uploads) are written
-	// to separate JSON files so the main wasm-history JSON shape on
-	// stdout stays backward-compatible. Each tier-2 feature is opt-in
-	// via its `-out` flag; when unset, no extra output is produced.
+	// Tier-2 outputs (storage rotations + code uploads) are written to separate JSON files so the main wasm-history JSON shape
+	// on stdout stays backward-compatible. Each tier-2 feature is opt-in via its `-out` flag; when unset, no extra output is
+	// produced.
 	if trackStorage {
 		if err := writeStorageRotationsOutput(*storageOut, watch, workerStates); err != nil {
 			return fmt.Errorf("write storage rotations: %w", err)
@@ -683,10 +680,9 @@ func runOneWasmHistoryWorker( //nolint:funlen,gocognit // worker hot path; refac
 	}
 }
 
-// mergeWasmHistories combines per-worker state into one per-contract timeline. Workers scan disjoint ordered chunks, so their ranges
-// become point transitions concatenated in worker order;
-// buildRangesFromTransitions collapses unchanged hashes at boundaries, and the final range closes at the LAST worker's upperEnd (last
-// ledger observed), not -to.
+// mergeWasmHistories combines per-worker state into one per-contract timeline. Workers scan disjoint ordered chunks, so their
+// ranges become point transitions concatenated in worker order; buildRangesFromTransitions collapses unchanged hashes at
+// boundaries, and the final range closes at the LAST worker's upperEnd (last ledger observed), not -to.
 func mergeWasmHistories(
 	workers []workerResult,
 	watch map[sdkxdr.Hash]string,
@@ -1129,10 +1125,8 @@ type transitionRecord struct {
 	Contract string `json:"contract,omitempty"`
 	WasmHash string `json:"wasm_hash,omitempty"`
 	AtLedger uint32 `json:"at_ledger"`
-	// Watermark marks this line as the worker's own record of how
-	// far it actually scanned (AtLedger holds that ledger), rather
-	// than a WASM-hash transition. Contract/WasmHash are empty on a
-	// watermark line.
+	// Watermark marks this line as the worker's own record of how far it actually scanned (AtLedger holds that ledger), rather
+	// than a WASM-hash transition. Contract/WasmHash are empty on a watermark line.
 	Watermark bool `json:"watermark,omitempty"`
 }
 

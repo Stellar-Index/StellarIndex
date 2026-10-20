@@ -224,10 +224,8 @@ func copyColdToHot(ctx context.Context, logger *slog.Logger, hot, cold rehydrate
 		logger.Warn("cold file absent — genuine gap", "path", path)
 		return rehydrateMissing
 	}
-	// Read from cold, write to hot. Stream through a buffer so
-	// PutFile's WriterTo contract is satisfied; the LCM file sizes
-	// are bounded (~tens of KB per file at LedgersPerFile=1 —
-	// Galexie's default) so in-memory buffering is fine.
+	// Read from cold, write to hot. Stream through a buffer so PutFile's WriterTo contract is satisfied; the LCM file sizes are
+	// bounded (~tens of KB per file at LedgersPerFile=1 — Galexie's default) so in-memory buffering is fine.
 	rc, _, gerr := cold.GetFile(ctx, path)
 	if gerr != nil {
 		// cold.Exists just confirmed the file IS there — a GetFile

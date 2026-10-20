@@ -382,10 +382,9 @@ func allChunkIdxs(chunks []opsutil.RangeChunk) []int {
 	return idxs
 }
 
-// planResumedWalk narrows resumeChunks to what this run can still prove, and never returns an empty plan. Done only means the walk
-// returned no error (stitch, anchor and high-water proofs come after),
-// so an all-Done run with InProgress left behind is re-walked, not certified; a chunk is skipped only if its boundary evidence was
-// persisted.
+// planResumedWalk narrows resumeChunks to what this run can still prove, and never returns an empty plan. Done only means the
+// walk returned no error (stitch, anchor and high-water proofs come after), so an all-Done run with InProgress left behind is
+// re-walked, not certified; a chunk is skipped only if its boundary evidence was persisted.
 func planResumedWalk(st VerifyArchiveState, tier string, from, to uint32, workers int, chunks []opsutil.RangeChunk, doCheckpoint bool) ([]opsutil.RangeChunk, []int, string) {
 	keep, idxs, reason := resumeChunks(st, tier, from, to, workers, chunks)
 	if len(keep) == 0 {

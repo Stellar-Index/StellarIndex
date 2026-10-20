@@ -59,10 +59,9 @@ func crossRegionMonitor(args []string) error { //nolint:funlen,gocognit,gocyclo 
 		return err
 	}
 	if len(regions) < 2 {
-		// Before R2/R3 bring-up only R1 is deployed. Refusing to start
-		// trains operators to disable the monitor; instead log + exit cleanly so a
-		// systemd unit wrapper can stay disabled until R2/R3 land
-		// and a healthy `systemctl status` reports the reason.
+		// Before R2/R3 bring-up only R1 is deployed. Refusing to start trains operators to disable the monitor; instead log +
+		// exit cleanly so a systemd unit wrapper can stay disabled until R2/R3 land and a healthy `systemctl status` reports
+		// the reason.
 		_, _ = fmt.Fprintf(os.Stdout,
 			"cross-region-monitor: only %d region configured; needs ≥ 2 to compare.\n"+
 				"This is the pre-launch posture (R2/R3 not yet deployed). Exiting cleanly.\n"+
@@ -188,10 +187,9 @@ func runOneTick(
 		return
 	}
 
-	// reached records whether ANY comparison in this sweep got data back
-	// from at least one region — the second liveness fact /healthz needs
-	// (see crossRegionHealth). Tracked per sweep, not per comparison, so
-	// one bad pair among many doesn't declare the monitor blind.
+	// reached records whether ANY comparison in this sweep got data back from at least one region — the second liveness fact
+	// /healthz needs (see crossRegionHealth). Tracked per sweep, not per comparison, so one bad pair among many doesn't declare
+	// the monitor blind.
 	reached := false
 
 	for _, pair := range pairs {

@@ -27,10 +27,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
-// verifyArchive runs verification tiers against a galexie bucket: A chain links, B checkpoint hashes vs the local archive, D peer
-// archives, E stellar-archivist scan, C SDF sample.
-// `-tier all` (A, B, D, E) runs sequentially and any mismatch is a hard stop; defaults: bucket S3BucketArchive else S3BucketLive, from 2
-// (ledger 1 has no predecessor), to 0 = unbounded.
+// verifyArchive runs verification tiers against a galexie bucket: A chain links, B checkpoint hashes vs the local archive, D
+// peer archives, E stellar-archivist scan, C SDF sample. `-tier all` (A, B, D, E) runs sequentially and any mismatch is a hard
+// stop; defaults: bucket S3BucketArchive else S3BucketLive, from 2 (ledger 1 has no predecessor), to 0 = unbounded.
 func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocyclo // linear diagnostic; splitting reduces readability
 	fs := flag.NewFlagSet("verify-archive", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -197,10 +196,8 @@ func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocy
 				retErr == nil, time.Now(),
 			); werr != nil {
 				fmt.Fprintf(os.Stderr, "verify-archive: write textfile %s: %v\n", *textfileOutput, werr)
-				// Never mask the verification error with the
-				// bookkeeping one — but a run that cannot publish its
-				// divergence signal has failed at its job, so surface
-				// it when nothing else did.
+				// Never mask the verification error with the bookkeeping one — but a run that cannot publish its divergence
+				// signal has failed at its job, so surface it when nothing else did.
 				if retErr == nil {
 					retErr = fmt.Errorf("write textfile %s: %w", *textfileOutput, werr)
 				}
@@ -311,10 +308,9 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 	// The chain up to the last-delivered ledger is what gets reported.
 	lsCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, bucket, workers)
 
-	// maxRuntime == 0 → no cap (uncancellable parent). Operators
-	// pass 0 for full-archive runs that exceed any single-day
-	// budget. No signal handler is wired on either branch, so SIGTERM
-	// kills the walk outright; chunks already done are in -state-file.
+	// maxRuntime == 0 → no cap (uncancellable parent). Operators pass 0 for full-archive runs that exceed any single-day
+	// budget. No signal handler is wired on either branch, so SIGTERM kills the walk outright; chunks already done are in
+	// -state-file.
 	var (
 		ctx    context.Context
 		cancel context.CancelFunc
@@ -379,10 +375,8 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 		return 0, "", fmt.Errorf("verification FAILED: empty walk plan for [%d, %d] across %d worker(s)", from, to, workers)
 	}
 
-	// Seed the in-flight state with the full unfiltered chunk plan
-	// so a SIGTERM mid-run still leaves a coherent in-progress
-	// record (including already-Done markers). Mutated under
-	// stateMu by the OnChunkDone callback below.
+	// Seed the in-flight state with the full unfiltered chunk plan so a SIGTERM mid-run still leaves a coherent in-progress
+	// record (including already-Done markers). Mutated under stateMu by the OnChunkDone callback below.
 	stateNow := startTierProgress(priorState, tier, from, to, workers, chunks, time.Now().UTC())
 	if stateFile != "" {
 		if err := writeVerifyArchiveState(stateFile, stateNow); err != nil {
@@ -421,10 +415,8 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 		},
 	)
 
-	// Aggregate counters across chunks for the final summary. Match
-	// the pre-parallel field naming so log-scrapers don't break.
-	// highestLedger / highestHash are reported back to the caller so
-	// it can persist incremental-run state via -state-file.
+	// Aggregate counters across chunks for the final summary. Match the pre-parallel field naming so log-scrapers don't break.
+	// highestLedger / highestHash are reported back to the caller so it can persist incremental-run state via -state-file.
 	var (
 		verified       int
 		mismatches     int
@@ -474,10 +466,8 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 	fmt.Fprintf(os.Stderr, "\nverify-archive: verified %d ledgers in %s (%.0f ledgers/s, %d workers)\n",
 		verified, elapsed.Round(time.Second), float64(verified)/elapsed.Seconds(), workers)
 	if doCheckpoint {
-		// missed = absent from INSIDE the mirror's coverage span (a
-		// hole in the cross-anchor archive). unmirrored = beyond that
-		// span, i.e. the walk reached a checkpoint the mirror's fill
-		// job has not delivered yet — a lag, not a hole.
+		// missed = absent from INSIDE the mirror's coverage span (a hole in the cross-anchor archive). unmirrored = beyond that
+		// span, i.e. the walk reached a checkpoint the mirror's fill job has not delivered yet — a lag, not a hole.
 		note := "unmirrored = beyond the mirror's coverage, not a failure"
 		if failOnMissed {
 			note = "fail-on-missed: any in-coverage miss = hard failure"
@@ -803,10 +793,8 @@ func verifyArchiveArchivist(bin, url string, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	// gosec G204: bin + url are operator-supplied diagnostic flags
-	// on a CLI that ALREADY shells the operator's environment —
-	// any "untrusted input" boundary at this point has already
-	// been crossed by the operator running this command at all.
+	// gosec G204: bin + url are operator-supplied diagnostic flags on a CLI that ALREADY shells the operator's environment —
+	// any "untrusted input" boundary at this point has already been crossed by the operator running this command at all.
 	cmd := exec.CommandContext(ctx, bin, "scan", "--verify", url) //nolint:gosec // operator-supplied flags
 
 	cmd.Stdout = os.Stderr

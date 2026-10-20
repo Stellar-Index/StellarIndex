@@ -142,10 +142,9 @@ func runIssuerFlags(ctx context.Context, store issuerFlagsStore, reader issuerFl
 		break
 	}
 
-	// Self-accounting: every candidate lands in exactly one bucket, so an
-	// operator can check the arithmetic rather than trust the summary. A
-	// short fall means the run stopped early on its timeout — which is not
-	// an error, the queues are resumable by construction.
+	// Self-accounting: every candidate lands in exactly one bucket, so an operator can check the arithmetic rather than trust
+	// the summary. A short fall means the run stopped early on its timeout — which is not an error, the queues are resumable by
+	// construction.
 	_, _ = fmt.Fprintf(o.out,
 		"issuer-flags: processed %d of %d candidate(s) — resolved_live=%d resolved_last_known=%d absent=%d written=%d (dry-run=%v)\n",
 		c.resolvedLive+c.resolvedLastKnown+c.absent, c.candidates,
@@ -153,10 +152,9 @@ func runIssuerFlags(ctx context.Context, store issuerFlagsStore, reader issuerFl
 	_, _ = fmt.Fprintf(o.out,
 		"issuer-flags: re-check processed %d of %d last-known row(s) — revived_to_live=%d still_merged=%d\n",
 		c.recheckSeen, c.recheckCandidates, c.revived, c.recheckSeen-c.revived)
-	// The chain re-check accounts the same way: every examined row is
-	// corrected, agreed-with, or unread. A short fall against `candidates`
-	// means the run stopped on its timeout; the next day's run starts one
-	// batch further on, so the rows it missed are not missed every night.
+	// The chain re-check accounts the same way: every examined row is corrected, agreed-with, or unread. A short fall against
+	// `candidates` means the run stopped on its timeout; the next day's run starts one batch further on, so the rows it missed
+	// are not missed every night.
 	_, _ = fmt.Fprintf(o.out,
 		"issuer-flags: chain re-check processed %d of %d filled row(s) — corrected=%d agreed=%d unread=%d (merged=%d)\n",
 		c.chainSeen, c.chainCandidates, c.chainCorrected, c.chainAgreed, c.chainUnread, c.chainMerged)
@@ -196,10 +194,9 @@ func issuerFlagsResolveChunk(
 	if err != nil {
 		return err
 	}
-	// Only the misses go to the fallback. Ordering matters and is not an
-	// optimisation: a live AccountEntry is the authority on its own account,
-	// so an account re-created at an address that was once merged must
-	// resolve `live`, never to its own pre-image.
+	// Only the misses go to the fallback. Ordering matters and is not an optimisation: a live AccountEntry is the authority on
+	// its own account, so an account re-created at an address that was once merged must resolve `live`, never to its own
+	// pre-image.
 	misses := make([]string, 0, len(chunk)-len(live))
 	for _, g := range chunk {
 		if _, ok := live[g]; !ok {

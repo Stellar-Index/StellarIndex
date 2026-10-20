@@ -114,10 +114,9 @@ func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	if err != nil {
 		return fmt.Errorf("usd-volume-restamp: usd-volume quote spec: %w", err)
 	}
-	// The xlm-base tier re-derives through the store's OWN waterfall, so
-	// it needs the same wiring every trade writer gets — from the single
-	// blessed installer, never a hand-tuned resolver (the drift class
-	// InstallUSDVolumeResolution exists to close).
+	// The xlm-base tier re-derives through the store's OWN waterfall, so it needs the same wiring every trade writer gets —
+	// from the single blessed installer, never a hand-tuned resolver (the drift class InstallUSDVolumeResolution exists to
+	// close).
 	if restampTierIsEstimated(*tier) {
 		if err := timescale.InstallUSDVolumeResolution(store, cfg.Trades.USDPeggedClassicAssets, cfg.Supply.SACWrappers, cfg.PricingGuard.FiatPeggedClassicAssets); err != nil {
 			return fmt.Errorf("usd-volume-restamp: install usd-volume resolution: %w", err)
@@ -501,10 +500,9 @@ type restampRun struct {
 	hb         *opsutil.JobHeartbeat
 	progress   uint64
 
-	// days caches each UTC day's classification. The tier and the scale
-	// are a property of the DAY's groups, and a chunk boundary puts the
-	// same day in two chunks — so the chunk walk would otherwise re-run
-	// TradeValuationByDay (a whole-day aggregate) for it twice.
+	// days caches each UTC day's classification. The tier and the scale are a property of the DAY's groups, and a chunk
+	// boundary puts the same day in two chunks — so the chunk walk would otherwise re-run TradeValuationByDay (a whole-day
+	// aggregate) for it twice.
 	days map[time.Time]exactTierDay
 }
 
@@ -564,10 +562,8 @@ type exactSpan struct {
 	targets []timescale.USDVolumeRestampGroup
 	lo, hi  time.Time
 	apply   exactTierApply
-	// probe is the chunk walk's read-only pre-check: stop at the first
-	// slice that would change a row, print nothing, and count nothing
-	// towards the run's progress. A chunk that probes clean is skipped
-	// without ever being decompressed.
+	// probe is the chunk walk's read-only pre-check: stop at the first slice that would change a row, print nothing, and count
+	// nothing towards the run's progress. A chunk that probes clean is skipped without ever being decompressed.
 	probe bool
 	// dated prefixes each slice's progress line with its UTC day. The
 	// chunk walk crosses days inside one label; the day walk does not.

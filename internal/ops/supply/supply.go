@@ -122,10 +122,9 @@ func supplySnapshot(args []string) error {
 	// value in place and wins over the live gen-0 snapshot.
 	store.SetDeriveGeneration(startedAt.Unix())
 
-	// The snapshot's ObservedAt must be the chosen ledger's REAL close time
-	// — a re-derived HISTORICAL snapshot stamped with the wall-clock
-	// write-time corrupts point-in-time supply queries. The authoritative
-	// every-ledger source is ClickHouse stellar.ledgers.
+	// The snapshot's ObservedAt must be the chosen ledger's REAL close time — a re-derived HISTORICAL snapshot stamped with the
+	// wall-clock write-time corrupts point-in-time supply queries. The authoritative every-ledger source is ClickHouse
+	// stellar.ledgers.
 	closeTimes, err := clickhouse.NewExplorerReader(ctx, *chAddr)
 	if err != nil {
 		return supplySnapshotMaybeEmitFailure(*textfileOut, *assetRaw, startedAt, fmt.Errorf("clickhouse close-time reader: %w", err))

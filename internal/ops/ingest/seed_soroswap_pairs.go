@@ -68,10 +68,8 @@ func seedSoroswapPairs(args []string) error {
 	if err != nil {
 		return err
 	}
-	// Decoder.SeedPair fires the WithPairUpsertHook callback for every
-	// pair the factory walk discovers, so SeedFromFactoryRPC + the hook
-	// is the entire pipeline. The decoder's in-memory map is throwaway
-	// here — postgres is the durable side.
+	// Decoder.SeedPair fires the WithPairUpsertHook callback for every pair the factory walk discovers, so SeedFromFactoryRPC +
+	// the hook is the entire pipeline. The decoder's in-memory map is throwaway here — postgres is the durable side.
 	dec := soroswap.NewDecoder(soroswap.WithPairUpsertHook(seeder.seed))
 
 	rpc := stellarrpc.New(endpoint, stellarrpc.WithTimeout(60*time.Second))

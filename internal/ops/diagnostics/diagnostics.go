@@ -1,10 +1,8 @@
 // Copyright 2026 Stellar Index contributors
 // SPDX-License-Identifier: Apache-2.0
 
-// Package diagnostics holds the stellarindex-ops operator diagnostic
-// subcommands: `rpc-probe`, `verify-decoders`, `verify-external`,
-// `hubble-check`, `hubble-soroban-events`. cmd/stellarindex-ops's
-// dispatch table calls Run below.
+// Package diagnostics holds the stellarindex-ops operator diagnostic subcommands: `rpc-probe`, `verify-decoders`,
+// `verify-external`, `hubble-check`, `hubble-soroban-events`. cmd/stellarindex-ops's dispatch table calls Run below.
 package diagnostics
 
 import (

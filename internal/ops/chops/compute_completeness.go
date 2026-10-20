@@ -163,10 +163,9 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		return fmt.Errorf("compute-completeness: %w", verr)
 	}
 
-	// Warm the factory-anchored gated registries (ADR-0035) so recognition accepts real protocol
-	// children and flags foreign emitters of the same topic. Read-only: the audit must not mutate
-	// the registry. An unseeded protocol_contracts table would surface every child as a false gap.
-	// Warmed before any catalogue reader because the same options gate the projection side.
+	// Warm the factory-anchored gated registries (ADR-0035) so recognition accepts real protocol children and flags foreign
+	// emitters of the same topic. Read-only: the audit must not mutate the registry. An unseeded protocol_contracts table would
+	// surface every child as a false gap. Warmed before any catalogue reader because the same options gate the projection side.
 	gatedOpts, gerr := pipeline.GatedRegistryOptions(ctx, store, slog.Default(), ctx, false)
 	if gerr != nil {
 		return fmt.Errorf("gated registry warm: %w", gerr)
@@ -215,20 +214,18 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		soroswapOpts = append(soroswapOpts, soroswap.WithSeededPairTokensDecoder(seed))
 	}
 	recGaps, recErr := runRecognitionScan(*skipRecognition, func() ([]completeness.RecognitionGap, error) {
-		// Recognition (Claim 2a) is a full-history property, so it is never scoped to the
-		// incremental -from window: a low-volume source's rare wrong-topic event would slip
-		// through. DistinctTopicShapes is bounded-memory at any lake size, so always scan from
-		// genesis; -from scopes only the row-by-row projection reconcile below.
+		// Recognition (Claim 2a) is a full-history property, so it is never scoped to the incremental -from window: a
+		// low-volume source's rare wrong-topic event would slip through. DistinctTopicShapes is bounded-memory at any lake
+		// size, so always scan from genesis; -from scopes only the row-by-row projection reconcile below.
 		return computeRecognitionGapsCH(ctx, cfg, *chAddr, gatedOpts, sorobanFloor, tip, soroswapOpts...)
 	})
 	if recErr != nil {
 		return recErr
 	}
 	ownerOf := contractOwners(catalogue)
-	// Topic-matched sources (soroswap, aquarius, phoenix, comet, defindex, blend) have no static
-	// ownerOf entries; without the protocol_contracts and soroswap_pairs registries a dropped
-	// topic on their pools would go unattributed and their recognition axis could never fail.
-	// Fail closed on a registry read error. Only done when the scan found gaps.
+	// Topic-matched sources (soroswap, aquarius, phoenix, comet, defindex, blend) have no static ownerOf entries; without the
+	// protocol_contracts and soroswap_pairs registries a dropped topic on their pools would go unattributed and their
+	// recognition axis could never fail. Fail closed on a registry read error. Only done when the scan found gaps.
 	if len(recGaps) > 0 {
 		if oerr := loadRegistryOwners(ctx, store, ownerOf); oerr != nil {
 			return fmt.Errorf("recognition owner attribution (failing closed — an incomplete owner map cannot fail recognition for the topic-matched sources): %w", oerr)
@@ -262,10 +259,9 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		return fmt.Errorf("contract_events census (failing closed — cannot certify the event table recognition and projection read): %w", err)
 	}
 
-	// Prior verdicts. An incremental run (-from) reconciles only a suffix, so it may confirm or
-	// downgrade the served `complete` axis but never upgrade it; the prior verdict is the only
-	// evidence for the untouched prefix. Read them before the loop overwrites them and fail
-	// closed on error (see projectionClaim).
+	// Prior verdicts. An incremental run (-from) reconciles only a suffix, so it may confirm or downgrade the served `complete`
+	// axis but never upgrade it; the prior verdict is the only evidence for the untouched prefix. Read them before the loop
+	// overwrites them and fail closed on error (see projectionClaim).
 	priorSnaps, err := store.ListCompletenessSnapshots(ctx)
 	if err != nil {
 		return fmt.Errorf("prior completeness verdicts (failing closed — an incremental run cannot gate its claim without them): %w", err)
@@ -285,10 +281,9 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		return fmt.Errorf("durable projection floors (failing closed — cannot distinguish served-tier loss from never-projected without them): %w", err)
 	}
 
-	// Pending replay-rewind dirty windows. A projector-replay that rewound below a source's
-	// watermark rewrote rows the carried projection claim still certifies, so the carry is invalid
-	// until that range is re-reconciled. Fail closed: a run blind to them would republish carried
-	// claims over rewritten ranges.
+	// Pending replay-rewind dirty windows. A projector-replay that rewound below a source's watermark rewrote rows the carried
+	// projection claim still certifies, so the carry is invalid until that range is re-reconciled. Fail closed: a run blind to
+	// them would republish carried claims over rewritten ranges.
 	dirtyWindows, err := store.ProjectionDirtyWindows(ctx)
 	if err != nil {
 		return fmt.Errorf("pending replay-rewind dirty windows (failing closed — carrying a projection claim over a rewound range is the invalidation this record exists to prevent): %w", err)

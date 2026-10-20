@@ -167,10 +167,9 @@ func Emit(args []string) error {
 		return errors.New("payload marshal failed (see WARN log above)")
 	}
 
-	// Count subscribers up-front so the operator gets a deterministic
-	// stderr line — Fanout.Publish itself is intentionally quiet on
-	// the no-subscriber path (the freeze + divergence hot paths fire
-	// constantly and shouldn't log per-event when nobody's listening).
+	// Count subscribers up-front so the operator gets a deterministic stderr line — Fanout.Publish itself is intentionally
+	// quiet on the no-subscriber path (the freeze + divergence hot paths fire constantly and shouldn't log per-event when
+	// nobody's listening).
 	subs, err := store.ListWebhooksSubscribedTo(ctx, eventType)
 	if err != nil {
 		return fmt.Errorf("list subscribers: %w", err)

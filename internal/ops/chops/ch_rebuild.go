@@ -405,10 +405,8 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	if *sep41SupplyOnly && !*includeSEP41 {
 		return fmt.Errorf("-sep41-supply-only requires -sep41")
 	}
-	// BackfillSafe gate, first leg: sources the operator NAMED.
-	// Asked before the config load so the refusal needs no reachable
-	// database; the default-all case is asked again once the catalogue
-	// exists — see checkCHRebuildBackfillSafe.
+	// BackfillSafe gate, first leg: sources the operator NAMED. Asked before the config load so the refusal needs no reachable
+	// database; the default-all case is asked again once the catalogue exists — see checkCHRebuildBackfillSafe.
 	if write {
 		if gerr := checkCHRebuildBackfillSafe(parseCSVList(*only)); gerr != nil {
 			return gerr
@@ -472,10 +470,9 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	if cerr != nil {
 		return fmt.Errorf("ch-rebuild: reconciliation catalogue: %w", cerr)
 	}
-	// -record-dirty-window returns here, before the gate warm-up, factory preseed and any lake
-	// read. It writes no served row, only an obligation on the completeness verifier, so nothing
-	// downstream may refuse it: a window emptied for a source whose gate has since closed or
-	// whose preseed now errors is the hole /v1/coverage must stop certifying clean.
+	// -record-dirty-window returns here, before the gate warm-up, factory preseed and any lake read. It writes no served row,
+	// only an obligation on the completeness verifier, so nothing downstream may refuse it: a window emptied for a source whose
+	// gate has since closed or whose preseed now errors is the hole /v1/coverage must stop certifying clean.
 	if *recordDirty {
 		named, rerr := chRebuildRecordDirtySources(cat, parseCSVList(*only))
 		if rerr != nil {
@@ -575,10 +572,8 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 		return fmt.Errorf("ch-rebuild: range [%d,%d] spans %d ledgers — every decode pass (event, sep41, sdex, contract-call) buffers in-process; window invocations to <=%d ledgers (loop externally, resume per window)",
 			*from, *to, *to-*from, maxBufferedRange)
 	}
-	// -preflight stops HERE: past the last refusal, before the first lake
-	// read. Everything above is read-only against Postgres, so a caller
-	// that deletes on the strength of this answer has deleted nothing the
-	// run below would then refuse to rewrite.
+	// -preflight stops HERE: past the last refusal, before the first lake read. Everything above is read-only against Postgres,
+	// so a caller that deletes on the strength of this answer has deleted nothing the run below would then refuse to rewrite.
 	if *preflight {
 		return reportCHRebuildPreflight(os.Stdout, lo, hi, reDerivedSourcesInRun(cat, sep41Cat, passes, enabled))
 	}
@@ -595,10 +590,9 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 		}
 	}
 	gate.Banner()
-	// Factory-anchored sources (ADR-0035): seed each gate registry from the factory's creation
-	// events in [genesis, lo) before the re-derive, as verify-reconciliation does. Without it a
-	// source with no in-code curated set (blend) re-derives 0 rows above its factory deploys.
-	// Read-only and idempotent. It reads the lake, so it sits below the -preflight stop.
+	// Factory-anchored sources (ADR-0035): seed each gate registry from the factory's creation events in [genesis, lo) before
+	// the re-derive, as verify-reconciliation does. Without it a source with no in-code curated set (blend) re-derives 0 rows
+	// above its factory deploys. Read-only and idempotent. It reads the lake, so it sits below the -preflight stop.
 	for _, src := range cat {
 		if len(src.factories) == 0 {
 			continue
@@ -687,10 +681,9 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 					}
 				}
 			}
-			// Topic prefilter: -sep41-supply-only reads ONLY the supply-affecting
-			// topics (mint/burn/clawback), skipping the transfer firehose at the
-			// SQL layer. Invalid with sep41_transfers enabled — it would silently
-			// drop transfer recovery — so require -sources sep41_supply.
+			// Topic prefilter: -sep41-supply-only reads ONLY the supply-affecting topics (mint/burn/clawback), skipping the
+			// transfer firehose at the SQL layer. Invalid with sep41_transfers enabled — it would silently drop transfer
+			// recovery — so require -sources sep41_supply.
 			var sep41Topic0 []string
 			if *sep41SupplyOnly {
 				if enabled(sep41transfers.SourceName) {
@@ -738,10 +731,9 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 			return streamCHRebuildSDEX(ctx, *chAddr, sdexDec, rlo, rhi, &buf)
 		}
 		if *sdexGaps {
-			// Re-derive ONLY the served gaps in one pass: each gap is an empty
-			// ledger range, so the decode + write is a pure insert (no ON CONFLICT
-			// walk over the 121M served rows that makes a full-range pass slow).
-			// This clears the dual-sink drop backlog cheaply and safely.
+			// Re-derive ONLY the served gaps in one pass: each gap is an empty ledger range, so the decode + write is a pure
+			// insert (no ON CONFLICT walk over the 121M served rows that makes a full-range pass slow). This clears the
+			// dual-sink drop backlog cheaply and safely.
 			targets, terr := ingest.ResolveFindDataGapsTargets("sdex")
 			if terr != nil {
 				return fmt.Errorf("ch-rebuild: sdex gap targets: %w", terr)
@@ -761,18 +753,15 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 			}
 			fmt.Fprintf(os.Stderr, "ch-rebuild: SDEX gap-only read done (%d gaps) in %s\n", ng, time.Since(sStart).Round(time.Second))
 		} else if *sdexReconcile {
-			// Re-derive only partial-drop ledgers, where the distinct Validate-passing census exceeds
-			// the served count; the empty-gap pass misses these because served > 0. Per 100k window,
-			// queue every event of a short ledger. Writing the full set is fine, as ON CONFLICT
-			// no-ops existing rows.
+			// Re-derive only partial-drop ledgers, where the distinct Validate-passing census exceeds the served count; the
+			// empty-gap pass misses these because served > 0. Per 100k window, queue every event of a short ledger. Writing the
+			// full set is fine, as ON CONFLICT no-ops existing rows.
 			type pk struct {
 				tx string
 				op uint32
 			}
-			// 25k: the sdex reconcile joins OOM'd at 100k even
-			// under grace_hash — and a wedged-CH
-			// bad_alloc followed the same heavy sequence. Match
-			// compute_completeness's window.
+			// 25k: the sdex reconcile joins OOM'd at 100k even under grace_hash — and a wedged-CH bad_alloc followed the same
+			// heavy sequence. Match compute_completeness's window.
 			const rwin = 25_000
 			var nShort int
 			for wlo := lo; wlo <= hi; wlo += rwin {
@@ -970,10 +959,9 @@ type eventWriter struct {
 	handle     func(context.Context, consumer.Event) error
 }
 
-// Trade batch sizes for drainAndWrite's flush. The upsert path is capped by
-// Postgres's 65535 bind parameters (13 per row); the bulk path has no
-// placeholder ceiling at all - COPY streams - so it is sized for amortising
-// the emptiness proof and filling the parallel writers instead.
+// Trade batch sizes for drainAndWrite's flush. The upsert path is capped by Postgres's 65535 bind parameters (13 per row); the
+// bulk path has no placeholder ceiling at all - COPY streams - so it is sized for amortising the emptiness proof and filling
+// the parallel writers instead.
 const (
 	upsertTradeBatchN = 1000
 	bulkTradeBatchN   = 100_000
@@ -1236,10 +1224,9 @@ func runCHRebuildEventPass(ctx context.Context, reads chRebuildEventReads, lo, h
 	}
 	var buf []consumer.Event
 	if len(firehoseSrcs) > 0 {
-		// Exclude the CAP-67 classic-token firehose (99.99% of contract_events);
-		// sources whose decoders consume those topics take the scoped read below.
-		// FirehoseExcludeSyms, not ClassicTokenTopic0Syms: Blend and Comet emit a
-		// pool set_admin sharing the token topic.
+		// Exclude the CAP-67 classic-token firehose (99.99% of contract_events); sources whose decoders consume those topics
+		// take the scoped read below. FirehoseExcludeSyms, not ClassicTokenTopic0Syms: Blend and Comet emit a pool set_admin
+		// sharing the token topic.
 		if err := reads.firehose(ctx, lo, hi, clickhouse.FirehoseExcludeSyms, decodeCHRebuildEvents(firehoseSrcs, contractsOverride, &buf)); err != nil {
 			return nil, fmt.Errorf("ch-rebuild: event stream: %w", err)
 		}

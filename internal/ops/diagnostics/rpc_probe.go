@@ -82,10 +82,8 @@ func rpcProbe(endpoint string) error {
 					shortHex(er.Events[0].ContractID, 12), er.Events[0].Type, len(er.Events[0].Topic))
 			}
 
-			// getTransaction round-trip against the sample event's tx
-			// hash. Proves the RPC's tx retention window covers at least
-			// the current tip — sources rely on this to decode tx-level
-			// context (observer account, envelope XDR).
+			// getTransaction round-trip against the sample event's tx hash. Proves the RPC's tx retention window covers at
+			// least the current tip — sources rely on this to decode tx-level context (observer account, envelope XDR).
 			if len(er.Events) > 0 && er.Events[0].TxHash != "" {
 				tx, err := c.GetTransaction(ctx, er.Events[0].TxHash)
 				switch {

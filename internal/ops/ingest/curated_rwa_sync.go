@@ -311,10 +311,8 @@ func (c *curatedRWAClient) readQueryPage(ctx context.Context, queryID int64, off
 
 // ─── parse ──────────────────────────────────────────────────────────
 
-// The row shapes, decoded STRICTLY: an unknown or renamed column is a
-// malformed row, counted and skipped, never guessed at. Values arrive as
-// json.Number so the literal the curator printed is what is stored
-// (ADR-0003) and never a float re-rendering.
+// The row shapes, decoded STRICTLY: an unknown or renamed column is a malformed row, counted and skipped, never guessed at.
+// Values arrive as json.Number so the literal the curator printed is what is stored (ADR-0003) and never a float re-rendering.
 
 type duneMonthlyTotalRow struct {
 	MonthEnd             string      `json:"month_end"`

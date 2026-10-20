@@ -331,10 +331,8 @@ func unwindSep1Backoff(store *timescale.Store, keys []string, dryRun bool) {
 	if dryRun || len(keys) == 0 {
 		return
 	}
-	// The run's own context may already be past its deadline (that is
-	// one of the ways a run ends up looking systemic), and the unwind
-	// is corrective — it must not be skipped because the budget that
-	// produced the failures has expired.
+	// The run's own context may already be past its deadline (that is one of the ways a run ends up looking systemic), and the
+	// unwind is corrective — it must not be skipped because the budget that produced the failures has expired.
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	n, err := store.UnwindIssuerSep1Backoff(ctx, keys)

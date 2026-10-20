@@ -158,10 +158,9 @@ func (o checkpointAnchorOutcome) String() string {
 	return "unknown"
 }
 
-// classifyCheckpointAnchor classifies the mirror's header hash for checkpoint seq against ours. An ABSENT file is "missed" only when the
-// mirror covers that checkpoint; above its high-water
-// the walk is ahead of the fill job by design, and counting those would make the invariant unenforceable. Read failures and hash
-// divergence abort the chunk walk.
+// classifyCheckpointAnchor classifies the mirror's header hash for checkpoint seq against ours. An ABSENT file is "missed" only
+// when the mirror covers that checkpoint; above its high-water the walk is ahead of the fill job by design, and counting those
+// would make the invariant unenforceable. Read failures and hash divergence abort the chunk walk.
 func classifyCheckpointAnchor(archiveRoot string, seq uint32, ourHash sdkxdr.Hash, cov archiveMirrorCoverage) (checkpointAnchorOutcome, error) {
 	expected, hit, err := readArchivedLedgerHash(archiveRoot, seq)
 	switch {
@@ -356,10 +355,8 @@ func runVerifyChunks(
 			updateMu.Lock()
 			results[i] = res
 			updateMu.Unlock()
-			// Mark Done in the state file only on clean completion
-			// — an errored chunk's partial-progress isn't durable
-			// (in-flight-chunk resume is a future revision; see
-			// ChunkProgress doc in verify_archive_state.go).
+			// Mark Done in the state file only on clean completion — an errored chunk's partial-progress isn't durable
+			// (in-flight-chunk resume is a future revision; see ChunkProgress doc in verify_archive_state.go).
 			if err == nil && opts.OnChunkDone != nil {
 				opts.OnChunkDone(originalIdx, res)
 			}

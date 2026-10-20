@@ -39,9 +39,8 @@ var (
 )
 
 // ch-entry-index builds the ledger index of classic-entry activity (stellar.account_entry_ledgers by account and role,
-// stellar.asset_entry_ledgers by asset) from stellar.ledger_entry_changes, plus the signer role from set_options
-// operations, windowed and resumable via the entry_index row of stellar.entry_history_watermark; without -write it
-// only counts.
+// stellar.asset_entry_ledgers by asset) from stellar.ledger_entry_changes, plus the signer role from set_options operations,
+// windowed and resumable via the entry_index row of stellar.entry_history_watermark; without -write it only counts.
 func chEntryIndex(args []string) error {
 	fs := flag.NewFlagSet("ch-entry-index", flag.ContinueOnError)
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")

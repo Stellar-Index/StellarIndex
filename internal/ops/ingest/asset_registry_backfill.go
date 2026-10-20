@@ -177,10 +177,8 @@ func runAssetRegistryBackfill(
 		_, _ = fmt.Fprintf(o.out, "asset-registry-backfill: heartbeat -> %s\n", hb.Path())
 	}
 	hb.Start()
-	// exitOK is flipped only by a walk that reached the end of the lake.
-	// A run that stopped on its timeout, a signal or -limit did real work
-	// and is resumable, but it did NOT finish, and last_exit_ok must not
-	// say it did.
+	// exitOK is flipped only by a walk that reached the end of the lake. A run that stopped on its timeout, a signal or -limit
+	// did real work and is resumable, but it did NOT finish, and last_exit_ok must not say it did.
 	exitOK := false
 	defer func() { hb.Stop(exitOK && err == nil) }()
 
@@ -337,10 +335,9 @@ func assetRegistryWritePage(
 		// reporting would put the whole write phase inside that window.
 		hb.Progress(uint64(c.scanned), uint64(c.maxLedger)) //nolint:gosec // scanned is a non-negative running count
 	}
-	// The whole page wrote cleanly, including any trailing seeds that were
-	// legitimately skipped (unparsed / non-classic) rather than batched —
-	// safe to move past those too, since a skip is deterministic and
-	// re-seeing them on resume would just re-skip them.
+	// The whole page wrote cleanly, including any trailing seeds that were legitimately skipped (unparsed / non-classic) rather
+	// than batched — safe to move past those too, since a skip is deterministic and re-seeing them on resume would just re-skip
+	// them.
 	c.cursor = seeds[len(seeds)-1].Asset
 	return nil
 }
