@@ -1,20 +1,18 @@
-// Package sushiswap_v3 decodes on-chain events from SushiSwap V3 on Stellar,
-// a Uniswap-V3-shaped concentrated-liquidity AMM on Soroban whose pools are
-// created by a single factory ([MainnetFactory]).
+// Package sushiswap_v3 decodes on-chain events from SushiSwap V3 on Stellar, a Uniswap-V3-shaped
+// concentrated-liquidity AMM on Soroban whose pools are created by a single factory
+// ([MainnetFactory]).
 //
-// Every pool topic is a one-element Symbol vector and the pool address is not in it, so topic
-// bytes identify nothing: gating must be on contract identity (ADR-0035). `swap`, `mint` and
-// `burn` are among the most common symbols on pubnet.
+// Every pool topic is a one-element Symbol vector and the pool address is not in it, so topic bytes
+// identify nothing: gate on contract identity (ADR-0035). `swap`, `mint` and `burn` are among the
+// most common symbols on pubnet.
 //
 // `swap` is the only trade-forming event: a 7-entry Map {amount0 i128, amount1 i128, liquidity
-// u128, recipient, sender, sqrt_price_x96 u256, tick i32}. It is identical across both deployed
-// WASM versions; decoding is by field name so an appended field stays readable. The factory has
-// emitted `pool_created` twice for a pool inside its creation transaction, so seeding must be
-// idempotent.
+// u128, recipient, sender, sqrt_price_x96 u256, tick i32}, identical across both deployed WASM
+// versions; decode by field name so an appended field stays readable. The factory has emitted
+// `pool_created` twice for a pool inside its creation transaction, so seeding must be idempotent.
 //
-// A V3 pool prices from `sqrt_price_x96` and a tick range, not reserves, so
-// reserve-based TVL or pricing would be WRONG and neither is derived. Trade rows
-// carry the two realised amounts, which are exact and orientation-free.
+// A V3 pool prices from `sqrt_price_x96` and a tick range, not reserves, so reserve-based TVL or
+// pricing would be WRONG and neither is derived.
 package sushiswap_v3
 
 import (

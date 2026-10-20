@@ -1,16 +1,15 @@
 // Package cryptocompare polls CryptoCompare's /data/pricemultifull for cross-check reference
 // prices. `ClassAggregator`: divergence signal only, excluded from VWAP.
 //
-// Wire shape (fields we read; the full object carries ~40 more):
+// Wire shape (fields we read):
 //
 //	GET https://min-api.cryptocompare.com/data/pricemultifull?fsyms=XLM,BTC&tsyms=USD,EUR
 //	Header: Authorization: Apikey <KEY>
 //
 // /data/pricemultifull is used rather than /data/pricemulti because only it carries LASTUPDATE.
-// Each row is stamped with the upstream publication time, never our poll time, since the
-// aggregator price tier, price_as_of and the oracle-stale alert read OracleUpdate.Timestamp as
-// "when this price was true". A quote with no LASTUPDATE is dropped. The free tier works
-// (~100k calls/month); a paid plan removes the redistribution restriction.
+// Each row is stamped with the upstream publication time, never our poll time, since the aggregator
+// price tier, price_as_of and the oracle-stale alert read OracleUpdate.Timestamp as "when this
+// price was true". A quote with no LASTUPDATE is dropped.
 package cryptocompare
 
 import (

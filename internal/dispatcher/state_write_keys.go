@@ -9,21 +9,17 @@ import (
 
 // This file populates events.Event.StateWriteKeys on the production LCM path: the base64 XDR
 // LedgerKeys of contract-data entries whose VALUE the event's operation CHANGED, filtered to the
-// event's own contract.
+// event's own contract. Value-changed, not merely written: RedStone's write_prices rewrites every
+// requested feed's entry, byte-identical for feeds its freshness verifier rejected.
 //
-// Value-changed, not merely written: RedStone's write_prices rewrites every requested feed's entry,
-// byte-identical for feeds its freshness verifier rejected, while an accepted feed always changes.
-//
-// The rule, identical here and in the ClickHouse re-derive twin
+// The rule, identical here and in the ClickHouse twin
 // (internal/storage/clickhouse/state_write_keys.go):
-//
-//   - pre-image  = the op's FIRST `state` change for the key
-//     (ContractDataEntry.Val bytes);
+//   - pre-image  = the op's FIRST `state` change for the key (ContractDataEntry.Val bytes);
 //   - post-image = the op's LAST `created`/`updated` change for the key;
 //   - changed    = post exists AND (no pre-image OR pre.Val != post.Val).
 //
-// `removed` is a deletion, not a value write. P23 `restored` changes are ignored
-// on BOTH sides. A per-key parse/marshal failure excludes that key.
+// `removed` is a deletion, not a value write. P23 `restored` changes are ignored on BOTH sides. A
+// per-key parse/marshal failure excludes that key.
 
 // contractDataWrite is one value-changing contract-data write.
 type contractDataWrite struct {

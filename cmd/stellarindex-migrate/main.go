@@ -1,6 +1,5 @@
-// Binary stellarindex-migrate applies and rolls back TimescaleDB
-// schema migrations under migrations/, wrapping golang-migrate/migrate
-// with env-based DSN resolution and safety rails.
+// Binary stellarindex-migrate applies and rolls back TimescaleDB schema migrations under
+// migrations/, wrapping golang-migrate/migrate with env-based DSN resolution and safety rails.
 //
 // Subcommands:
 //
@@ -12,12 +11,9 @@
 //	stellarindex-migrate version         Build version.
 //	stellarindex-migrate help            Print usage.
 //
-// DSN resolution order: --dsn flag, then STELLARINDEX_POSTGRES_DSN env,
-// then fail. We intentionally do NOT fall back to defaults here —
-// running migrations against "whatever DB happens to be local" is
-// how people wipe production.
-//
-// Locking: a Postgres advisory lock serialises concurrent runners.
+// DSN resolution order: --dsn flag, then STELLARINDEX_POSTGRES_DSN env, then fail. There is
+// intentionally no default: migrating "whatever DB happens to be local" is how people wipe
+// production. A Postgres advisory lock serialises concurrent runners.
 package main
 
 import (
@@ -436,15 +432,15 @@ func parseArgv(fs *flag.FlagSet, argv []string) []string {
 	//
 	// Go's flag package stops at the first non-flag argument, so in
 	//
-	//	stellarindex-migrate down 1 -dsn postgres://staging/…
+	// 	stellarindex-migrate down 1 -dsn postgres://staging/…
 	//
-	// the -dsn would be silently dropped and the DSN would fall back to
-	// $STELLARINDEX_POSTGRES_DSN, running the rollback on production while printing success.
+	// the -dsn would be silently dropped and the DSN would fall back to $STELLARINDEX_POSTGRES_DSN,
+	// running the rollback on production while printing success.
 	//
 	// The trailing form is accepted rather than refused because cmd/stellarindex-ops also parses
-	// flags over args[1:], and two binaries disagreeing on placement causes the mistake. The
-	// verb's leading positionals (down's N, force's V) are taken first, then the SAME flag set
-	// parses the rest. Anything left is a hard error: `down -dsn X 1` is ambiguous.
+	// flags over args[1:], and two binaries disagreeing on placement causes the mistake. The verb's
+	// leading positionals (down's N, force's V) are taken first, then the SAME flag set parses the
+	// rest. Anything left is a hard error: `down -dsn X 1` is ambiguous.
 	rest := args[1:]
 	nPos := 0
 	for nPos < len(rest) && !strings.HasPrefix(rest[nPos], "-") {

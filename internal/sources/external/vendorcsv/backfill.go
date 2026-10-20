@@ -1,11 +1,11 @@
 // Package vendorcsv replays a vendor's daily XLM/USD close series from an owner-exported CSV into
-// the trades table for the span no exchange feed covers (2014-08 to 2017-01). It is history only:
-// no streamer, no live path, no network access.
+// the trades table for the span no exchange feed covers (2014-08 to 2017-01). History only: no
+// streamer, no live path, no network.
 //
 // A row dated D is the vendor's 00:00 UTC snapshot of the close of D-1, so it is stored one second
-// before D with the close as the quote amount for exactly one XLM. The rows are registered with
-// IncludeInVWAP=false and weight 0: they surface per point through `sources` and never enter a
-// VWAP, a total or usd_volume.
+// before D with the close as the quote amount for exactly one XLM. Rows are registered with
+// IncludeInVWAP=false and weight 0: they surface through `sources` and never enter a VWAP, a total
+// or usd_volume.
 package vendorcsv
 
 import (

@@ -1,16 +1,12 @@
-// Package customerwebhook drains the platform.WebhookStore delivery queue.
-// Each pending row is HMAC-signed, POSTed to the customer's URL, and either marked delivered (2xx)
-// or rescheduled with exponential backoff (5xx / network error). Permanent failures (4xx, attempt
-// budget exhausted) leave delivered_at and next_attempt_at unset, so the row drops out of the
-// pending listing but stays in the dashboard delivery log.
+// Package customerwebhook drains the platform.WebhookStore delivery queue. Each pending row is
+// HMAC-signed and POSTed to the customer's URL, then marked delivered (2xx) or rescheduled with
+// exponential backoff (5xx / network error). Permanent failures (4xx, attempt budget exhausted)
+// leave the pending listing but stay in the dashboard delivery log.
 //
-// # Concurrency contract
-//
-// A second instance is safe because the STORE guarantees at-most-one-in-flight delivery per row:
-// [DeliveryStore.ListPendingDeliveries] claims rows with `FOR UPDATE SKIP LOCKED` and in the same
-// statement pushes `next_attempt_at` 5 minutes out as a lease. A worker that dies mid-delivery
-// releases the row at lease expiry. Any substitute DeliveryStore MUST claim and lease atomically,
-// or two workers can POST the same row twice.
+// Concurrency: a second instance is safe because the STORE guarantees at-most-one-in-flight
+// delivery per row: [DeliveryStore.ListPendingDeliveries] claims rows with `FOR UPDATE SKIP LOCKED`
+// and leases them by pushing `next_attempt_at` 5 minutes out in the same statement. Any substitute
+// store MUST claim and lease atomically, or two workers can POST the same row twice.
 package customerwebhook
 
 import (
@@ -446,14 +442,12 @@ func (w *Worker) deliverOne(ctx context.Context, d platform.WebhookDelivery) {
 //
 // The claim query withholds a non-active account's rows, but a batch drains serially, so an account
 // suspended mid-batch has rows already in hand.
-//
 //   - not found: the webhook vanished since the lookup; terminal.
-//   - status unreadable: fail CLOSED. Leave the row for lease expiry so a Postgres blip delays
+//   - status unreadable: fail CLOSED, leave the row for lease expiry, so a Postgres blip delays
 //     deliveries rather than dropping them or POSTing to a just-suspended customer.
-//   - closed: terminal; a closed account is not coming back.
-//   - anything else non-active (suspended, or an unknown value): park for lease expiry.
-//     Suspension is reversible, so destroying the backlog would lose events a reinstated
-//     customer is owed.
+//   - closed: terminal.
+//   - anything else non-active: park for lease expiry; suspension is reversible, so destroying the
+//     backlog would lose events a reinstated customer is owed.
 func (w *Worker) accountGateOpen(ctx context.Context, d platform.WebhookDelivery) bool {
 	status, err := w.accounts.WebhookAccountStatus(ctx, d.WebhookID)
 	switch {

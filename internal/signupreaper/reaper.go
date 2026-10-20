@@ -1,13 +1,10 @@
 // Package signupreaper deletes the orphan "speculative-account" rows left by the lost-signup-race
 // recovery path.
 //
-// Two concurrent /v1/auth/callback provisions for one email can both create an `accounts` row,
-// but only one CreateUser wins on `users_email_idx`. The recovery path in
-// internal/api/v1/dashboardauth marks the loser Suspended with a `signup-race:` reason, which
-// this reaper matches.
-//
-// It sweeps once immediately, then every Interval, deleting rows Suspended with that reason,
-// older than MinAge and, as a second guard, with no child users or api_keys.
+// Two concurrent /v1/auth/callback provisions for one email can both create an `accounts` row, but
+// only one CreateUser wins on `users_email_idx`; internal/api/v1/dashboardauth marks the loser
+// Suspended with a `signup-race:` reason. The reaper deletes rows with that reason older than
+// MinAge and, as a second guard, with no child users or api_keys.
 package signupreaper
 
 import (

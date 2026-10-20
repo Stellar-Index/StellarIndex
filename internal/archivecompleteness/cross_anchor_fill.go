@@ -310,13 +310,11 @@ func (f *CrossAnchorFiller) fetchOne(ctx context.Context, seq uint32, rng *rand.
 	finalPath := filepath.Join(f.archiveRoot, relPath)
 	tmpPath := finalPath + ".new"
 
-	// Create the parent directory BEFORE the first GET so a bad destination fails fast even when
-	// the HTTP source is healthy.
+	// Create the parent directory BEFORE the first GET so a bad destination fails fast.
 	//
-	// 0755, not 0750: the daemon runs as root but the verifier (stellar-archivist / verify-archive
-	// -tier checkpoint) runs as a non-root service user. A 0750 root:root parent makes every placed
-	// file unreadable to it, since the chown never covers the parent, and the ADR-0017 anchor check
-	// then fails with EACCES, which the verifier treats as a hard mismatch rather than a missing file.
+	// 0755, not 0750: the daemon runs as root but the verifier runs as a non-root service user, and
+	// a 0750 root:root parent makes every placed file unreadable to it (the chown never covers the
+	// parent), so the ADR-0017 anchor check fails with EACCES, which it treats as a hard mismatch.
 	//
 	// nolint:gosec // G301 wants <=0750. Deliberate: this is public blockchain history read by a
 	// verifier running as a different user than the chown target, and every byte comes from public

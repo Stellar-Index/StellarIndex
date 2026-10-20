@@ -1,14 +1,12 @@
 // Copyright (c) 2026 Stellar Index contributors.
 // SPDX-License-Identifier: Apache-2.0
 
-// Package pricelesscoverage pages when a popular asset has no served price and
-// no recorded reason, instead of waiting for someone to notice it on /assets.
+// Package pricelesscoverage pages when a popular asset has no served price and no recorded reason.
 //
-// Popularity is measured on market-character volume, never raw volume: a wash
-// farm trades huge raw volume and would otherwise self-select into the alert.
-// Volume concentrated in one counterparty key is excluded on every venue that
-// records one; venues recording no account only dilute the share, so an
-// unmeasurable market pages rather than being quietly dropped.
+// Popularity is measured on market-character volume, never raw volume: a wash farm trades huge raw
+// volume and would otherwise self-select into the alert. Volume concentrated in one counterparty
+// key is excluded; venues recording no account only dilute the share, so an unmeasurable market
+// pages rather than being quietly dropped.
 package pricelesscoverage
 
 import (

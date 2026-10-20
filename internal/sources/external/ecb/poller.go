@@ -1,14 +1,11 @@
 // Package ecb polls the European Central Bank's daily foreign-exchange reference rates: a
 // `ClassAuthoritySanity` connector whose end-of-day fix anchors divergence detection against an
-// upstream FX feed. It is neither primary pricing (one fix per TARGET business day) nor a
-// triangulation input (the forex-snap reads the `massive` feed's fx_quotes).
+// upstream FX feed. It is neither primary pricing nor a triangulation input (the forex-snap reads
+// the `massive` feed's fx_quotes).
 //
-// Free and unauthenticated. With no new fix the poller re-emits the same rate with a fresh
-// Observer timestamp; the stable tx_hash makes that insert idempotent.
-//
-// Wire shape: a gesmes:Envelope holding <Cube><Cube time="YYYY-MM-DD"> with one
-// <Cube currency="USD" rate="1.0825"/> per currency. Each `rate` is "1 EUR = X currency"; to fit
-// our canonical "price of Asset in Quote" we invert: Asset = <currency>, Quote = EUR, Price = 1/rate.
+// With no new fix the poller re-emits the same rate with a fresh Observer timestamp; the stable
+// tx_hash makes that insert idempotent. Each `rate` is "1 EUR = X currency"; to fit our canonical
+// "price of Asset in Quote" we invert: Asset = <currency>, Quote = EUR, Price = 1/rate.
 package ecb
 
 import (

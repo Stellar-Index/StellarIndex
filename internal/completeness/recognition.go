@@ -5,8 +5,8 @@
 //   - Recognition (this file): every on-chain event shape is one a decoder handles.
 //   - Projection reconciliation (reconcile.go): every captured event became a row.
 //
-// It is a pure consumer of internal/storage/timescale and internal/dispatcher via narrow
-// interfaces; nothing imports it back.
+// It consumes internal/storage/timescale and internal/dispatcher through narrow interfaces; nothing
+// imports it back.
 package completeness
 
 import (

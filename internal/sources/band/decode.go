@@ -105,14 +105,13 @@ func decodeRelayArgs( //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitt
 	// resolve_time is a relayer-supplied u64; SafeUnixSeconds bound-checks the RAW value
 	// (catching the >MaxInt64 wrap class) and falls back to the ledger close on garbage.
 	ts := canonical.SafeUnixSeconds(resolveSeconds, closedAt)
-	// relay() (not force_relay) silently no-ops outside its window though the tx succeeds.
-	// Writing such a rate would let one the chain never applied win our `ORDER BY ts DESC`
-	// latest-read, so drop it (bandRelayWouldNoOp). We can't see the per-symbol stored
-	// resolve_time the contract also gates on, so a genuine first write for a symbol with no
-	// live RefData entry is dropped too: an accepted false-negative over serving a rejected
-	// rate. Both surface via obs.SourceDecodeErrorsTotal{source="band"}. force_relay is the
-	// unconditional admin path and keeps the clamp-to-close fallback below. Applied after the
-	// symbol_rates loop so a malformed pair still surfaces its own ErrMalformedArgs.
+	// relay() (not force_relay) silently no-ops outside its window though the tx succeeds. Writing
+	// such a rate would let one the chain never applied win our `ORDER BY ts DESC` latest-read, so
+	// drop it (bandRelayWouldNoOp). The per-symbol stored resolve_time is not visible, so a genuine
+	// first write for a symbol with no live RefData entry is dropped too: an accepted
+	// false-negative over serving a rejected rate. force_relay is the unconditional admin path and
+	// keeps the clamp-to-close fallback below. Applied after the symbol_rates loop so a malformed
+	// pair surfaces ErrMalformedArgs.
 	relayRejected := fnName == FnRelay && bandRelayWouldNoOp(resolveSeconds, closedAt)
 	if !ts.Before(closedAt.Add(bandMaxFutureResolveTime)) {
 		ts = closedAt.UTC()

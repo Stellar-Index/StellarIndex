@@ -1,20 +1,18 @@
-// Package exchangeratesapi polls exchangeratesapi.io's REST endpoint
-// for fiat reference rates.
+// Package exchangeratesapi polls exchangeratesapi.io's REST endpoint for fiat reference rates.
 //
 // It emits canonical.OracleUpdate, not Trade: an FX reference rate is a computed benchmark, not an
 // executed trade. The triangulation layer uses it (`XLM/USD × USD/EUR = XLM/EUR`) when no venue
 // trades a pair directly.
 //
-// Professional tier is the minimum (first with a USD base and redistribution rights). The free
-// tier (EUR base only) is rejected at startup, because it would force every FX consumer to
-// triangulate through EUR.
+// Professional tier is the minimum (first with a USD base and redistribution rights). The free tier
+// (EUR base only) is rejected at startup, because it would force every FX consumer to triangulate
+// through EUR.
 //
 // Wire format (https://exchangeratesapi.io/documentation):
 //
 //	GET https://api.exchangeratesapi.io/v1/latest?access_key=KEY&base=USD&symbols=EUR,GBP,JPY,...
-//
-//	{"success": true, "timestamp": 1745000000, "base": "USD",
-//	 "date": "YYYY-MM-DD", "rates": {"EUR": 0.92350, "GBP": 0.78450}}
+//	{"success": true, "timestamp": 1745000000, "base": "USD", "date": "YYYY-MM-DD",
+//	 "rates": {"EUR": 0.92350, "GBP": 0.78450}}
 package exchangeratesapi
 
 import (

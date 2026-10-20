@@ -6,16 +6,14 @@ import (
 )
 
 // This file adds the fourth ADR-0033 integrity check, the DERIVED-CHECKPOINT reconcile: an
-// incrementally maintained running total must still equal the authoritative re-sum of the rows
-// it folds.
+// incrementally maintained total must still equal the authoritative re-sum of the rows it folds.
 //
-// `sep41_supply_rollup` advances by a watermark worker that sums only `ledger > last_ledger`. A
+// `sep41_supply_rollup` advances by a watermark worker summing only `ledger > last_ledger`. A
 // history re-derive rewriting raw rows BELOW an existing checkpoint, without resetting it, makes
-// the worker re-fold history (served supply exactly 2x), which row-count reconciles
-// (reconcile.go) cannot see because the raw rows are correct.
+// the worker re-fold history (served supply exactly 2x), which row-count reconciles cannot see.
 //
-// Invariant: for every checkpointed contract, checkpoint.total == the sum of the raw rows it
-// folds; zero tolerance catches a double-fold (k*truth) and a below-checkpoint edit alike.
+// Invariant: checkpoint.total == the sum of the raw rows it folds, with zero tolerance, so a
+// double-fold (k*truth) and a below-checkpoint edit are both caught.
 
 // RunningTotals is the per-kind supply total a SEP-41 contract's incremental checkpoint carries; fields are *big.Int per ADR-0003 (a mint sum can exceed i128) and nil reads as zero.
 type RunningTotals struct {

@@ -52,13 +52,9 @@ func NewDecoder(watched []string) (*Decoder, error) {
 // Name implements [dispatcher.Decoder].
 func (*Decoder) Name() string { return SourceName }
 
-// Matches implements [dispatcher.Decoder]. Returns true when:
-//
-//  1. The event is a contract event from a watched contract id.
-//  2. topic[0] decodes to one of mint / burn / clawback.
-//
-// Transfers are NOT matched: they don't change total supply (the discovery sniffer in
-// internal/canonical/discovery records them separately). Match is a contract-id map lookup plus
+// Matches implements [dispatcher.Decoder]: true for a contract event from a watched contract id
+// whose topic[0] is mint / burn / clawback. Transfers are NOT matched, since they don't change
+// total supply (the discovery sniffer records them separately). It is a contract-id map lookup plus
 // base64 byte-equality on topic[0].
 func (d *Decoder) Matches(ev events.Event) bool {
 	if ev.Type != "contract" {

@@ -1,17 +1,15 @@
-// Package comet decodes on-chain events from Comet, a Soroban
-// implementation of Balancer v1's weighted-AMM design (N >= 2 tokens,
-// arbitrary weights).
+// Package comet decodes on-chain events from Comet, a Soroban implementation of Balancer v1's
+// weighted-AMM design (N >= 2 tokens, arbitrary weights).
 //
-// Wire shape: topic[0] = Symbol("POOL"), topic[1] = Symbol("<event_name>"),
-// body a Map. Five events: "swap" -> a canonical.Trade; "join_pool" /
-// "exit_pool" -> a LiquidityEvent per token; "deposit" / "withdraw" ->
-// single-asset add / remove. Any other POOL topic is rejected with
-// ErrNotCometEvent. BPT transfers belong to internal/sources/sep41_supply.
+// Wire shape: topic[0] = Symbol("POOL"), topic[1] = Symbol("<event_name>"), body a Map. Five
+// events: "swap" -> a canonical.Trade; "join_pool" / "exit_pool" -> a LiquidityEvent per token;
+// "deposit" / "withdraw" -> single-asset add / remove. Any other POOL topic is rejected with
+// ErrNotCometEvent.
 //
 // `POOL` is shared by every Balancer-v1-derived contract, so routing is by topic bytes but
 // attribution is gated on contract identity (ADR-0035/0040): Decoder.Matches claims only events
-// from the curated registry. A comet-shaped event from an unregistered contract is left for the
-// recognition audit, never attributed.
+// from the curated registry, and a comet-shaped event from an unregistered contract is left for the
+// recognition audit.
 package comet
 
 import (

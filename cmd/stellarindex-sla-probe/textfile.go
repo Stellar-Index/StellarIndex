@@ -8,10 +8,8 @@ import (
 	"time"
 )
 
-// writeTextfile renders rep to w in Prometheus exposition format
-// (the format node_exporter's textfile collector reads).
-//
-// Metric set:
+// writeTextfile renders rep to w in Prometheus exposition format (node_exporter's textfile
+// collector). Metric set:
 //
 //	stellarindex_sla_probe_latency_ms{endpoint=,quantile=}     gauge
 //	stellarindex_sla_probe_availability_pct{endpoint=}         gauge
@@ -21,8 +19,7 @@ import (
 //	stellarindex_sla_probe_unit_failed                         gauge (1 on fail, 0 on pass)
 //	stellarindex_sla_probe_samples{endpoint=}                  gauge
 //
-// Wiring is in docs/operations/sla-probe.md: a systemd timer runs the probe with
-// -textfile-output pointing at node_exporter's textfile_collector dir.
+// Wiring: docs/operations/sla-probe.md.
 func writeTextfile(w io.Writer, rep *report) error {
 	if rep == nil {
 		return nil

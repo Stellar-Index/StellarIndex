@@ -1,24 +1,18 @@
 // Package accounterasure erases a platform account: the one writer both
-// DELETE /v1/dashboard/account and `stellarindex-ops account-erase` call.
+// DELETE /v1/dashboard/account and `stellarindex-ops account-erase` call. Each step is safe to
+// repeat:
 //
-// Sequence, each step safe to repeat:
-//
-//  1. Plan: read the account, its members and Postgres keys; refuse one
-//     with billing state or a staff member.
+//  1. Plan: read the account, members and Postgres keys; refuse billing state or a staff member.
 //  2. Collect the Redis self-service keys the account's identifier holds.
-//  3. One Postgres transaction closes the account, scrubs its audit rows,
-//     renames its usage rows to one fresh erased:<uuid> subject, deletes
-//     everything else and records a hashed slug tombstone plus an
+//  3. One Postgres transaction closes the account, scrubs audit rows, renames usage rows to a
+//     fresh erased:<uuid> subject, deletes the rest and records a hashed slug tombstone plus an
 //     account.erase audit row. A failure rolls all of it back.
-//  4. After the commit: delete the Redis key records, cache rows and
-//     usage counters, then do it again and re-run the usage rename with
-//     the same uuid. The second pass catches a key mint or a rollup sweep
-//     that was in flight across the commit.
+//  4. After commit, delete Redis key records, cache rows and usage counters twice and re-run the
+//     usage rename with the same uuid, catching a key mint or rollup in flight across the commit.
 //
-// A record that slips past both passes can still authenticate until the
-// validator's cached account status expires (auth.DefaultAccountStatusCacheTTL,
-// 30 s) and GetBySlug returns not-found; after that it cannot, and the
-// tombstone keeps any new account off the slug.
+// A record that slips past both passes can still authenticate until the validator's cached account
+// status expires (auth.DefaultAccountStatusCacheTTL, 30 s); the tombstone keeps new accounts off
+// the slug.
 package accounterasure
 
 import (

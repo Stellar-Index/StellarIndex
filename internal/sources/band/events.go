@@ -1,14 +1,10 @@
-// Package band decodes on-chain price updates from Band Protocol's Soroban
-// StandardReference contract.
+// Package band decodes on-chain price updates from Band Protocol's Soroban StandardReference
+// contract, which **emits zero events**. It plugs into dispatcher.ContractCallDecoder and decodes
+// the relayer's call args (relay / force_relay: symbol_rates Vec<(Symbol, u64)>, resolve_time,
+// request_id) as the payload.
 //
-// Band's Stellar contract **emits zero events**, so this package plugs into
-// dispatcher.ContractCallDecoder and decodes the relayer's call args (relay / force_relay:
-// symbol_rates Vec<(Symbol, u64)>, resolve_time, request_id) as the payload.
-//
-// Rates are u64 at E9 scale, USD-denominated per symbol. Pair rates are computed on read at
-// E18, so relay calls do not carry them. resolve_time is UNIX seconds.
-//
-// See docs/protocols/band.md for the full analysis.
+// Rates are u64 at E9 scale, USD-denominated per symbol; pair rates are computed on read at E18, so
+// relay calls do not carry them. resolve_time is UNIX seconds. See docs/protocols/band.md.
 package band
 
 import "errors"

@@ -3,17 +3,16 @@
 // contract, which runs its OWN USDC credit book and deploys a per-user `Collateral-<uuid>` child
 // per position.
 //
-// CRITICAL: `Liquidation` is a SCHEDULED SETTLEMENT, not distress. One keeper account executes
-// ALL of them, ~1:1 with StatementPublished. They surface as `settlement` ([TypeSettlement], table
+// CRITICAL: `Liquidation` is a SCHEDULED SETTLEMENT, not distress. One keeper account executes ALL
+// of them, ~1:1 with StatementPublished. They surface as `settlement` ([TypeSettlement], table
 // `credit_settlements`), NEVER as "liquidations"; no surface may report a liquidation risk signal
 // from this source.
 //
 // Gating (ADR-0035): the main contract is the single trust root. NewCollateralContract is honored
-// only from it and announces the child C-address (topic[1]), seeded into a [contractid.Registry]
-// child set; every other event needs the trust root OR a registered child. Two OTHER mainnet
-// contracts emit the same symbols, so the identity gate, not the topic, rejects them.
-//
-// Per ADR-0013 SCVal is read only through internal/scval.
+// only from it and announces the child C-address (topic[1]), seeded into a [contractid.Registry];
+// every other event needs the trust root OR a registered child. Two OTHER mainnet contracts emit
+// the same symbols, so the identity gate, not the topic, rejects them. SCVal is read only through
+// internal/scval (ADR-0013).
 package sorocredit
 
 import (

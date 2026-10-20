@@ -1,6 +1,6 @@
-// Package sep41_transfers decodes SEP-41 transfer, approve, set_admin and
-// set_authorized events into a queryable hypertable for per-account
-// net-position; mint, burn and clawback belong to [sep41_supply].
+// Package sep41_transfers decodes SEP-41 transfer, approve, set_admin and set_authorized events
+// into a queryable hypertable for per-account net-position; mint, burn and clawback belong to
+// [sep41_supply].
 //
 // Topic shapes (SEP-41 v0.4.1, CAP-67):
 //

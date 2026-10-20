@@ -1,17 +1,15 @@
-// Package defindex decodes Soroban events from both layers of paltalabs'
-// DeFindex protocol:
+// Package defindex decodes Soroban events from both layers of paltalabs' DeFindex protocol:
 //
 //  1. STRATEGY layer: Blend autocompound strategy contracts. Topic[0] =
-//     ScvString("BlendStrategy"); body { from: Address, amount: i128 } where
-//     `from` is the VAULT contract, not the end user.
-//  2. VAULT layer: wrapper contracts users call directly. Topic[0] =
-//     ScvString("DeFindexVault"); the body carries the end-user G-strkey,
-//     multi-asset `amounts` (Vec<i128>) and share deltas (i128).
+//     ScvString("BlendStrategy"); body { from: Address, amount: i128 } where `from` is the VAULT
+//     contract, not the end user.
+//  2. VAULT layer: wrapper contracts users call directly. Topic[0] = ScvString("DeFindexVault");
+//     the body carries the end-user G-strkey, multi-asset `amounts` (Vec<i128>) and share deltas.
 //
-// Both layers are needed: end-user attribution lives in the 100+ factory-deployed wrappers.
-// Topic only classifies an event; a match also requires contract identity (ADR-0035/0040).
-// Flows come only from a registered vault or strategy, factory events only from
-// MainnetFactories, and an unregistered emitter fails closed.
+// Both layers are needed: end-user attribution lives in the 100+ factory-deployed wrappers. Topic
+// only classifies an event; a match also requires contract identity (ADR-0035/0040): flows only
+// from a registered vault or strategy, factory events only from MainnetFactories; an unregistered
+// emitter fails closed.
 //
 // Flows are attribution only: never price-discovery, never in VWAP. Out of scope: factory
 // `create`/`n_fee`, vault `rebalance` and `n_wasm` (docs/operations/wasm-audits/defindex.md).

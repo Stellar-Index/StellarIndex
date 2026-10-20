@@ -633,24 +633,15 @@ func (p Phase2FreezeConfig) validateLifecycle() error {
 		return fmt.Errorf("%w: anomaly.phase2.unfreeze_buckets must be >= 0 (got %d; 0 = use the ADR-0019 default of 2)",
 			ErrInvalidConfig, p.UnfreezeBuckets)
 	}
-	// Hysteresis, the invariant this whole lifecycle exists to
-	// guarantee: no bucket may satisfy BOTH the freeze condition and the
-	// auto-unfreeze condition. If one can, a signal sitting near the
-	// trigger flaps the pair frozen and unfrozen bucket after bucket —
-	// publishing, each time it unfreezes, exactly the value the freeze
-	// just refused. That must not be reachable by config.
+	// Hysteresis: no bucket may satisfy BOTH the freeze condition and the auto-unfreeze condition,
+	// or a signal near the trigger flaps the pair frozen/unfrozen and publishes, on each unfreeze,
+	// exactly the value the freeze just refused. That must not be reachable by config.
 	//
-	// The z axis is what carries the disjointness, and it is the ONLY
-	// axis that has to. The confidence bands deliberately DO overlap
-	// at the shipped defaults — auto-unfreeze wants confidence > 0.30
-	// while the freeze fires below 0.45, so (0.30, 0.45) satisfies
-	// both confidence legs — and that is harmless because the two
-	// conditions are ANDs whose z legs (z > 5.0 vs z < 3.0) cannot
-	// hold together. Rejecting the confidence overlap would reject the
-	// ADR's own numbers.
+	// Only the z axis has to be disjoint. The confidence bands deliberately overlap at the defaults
+	// (unfreeze > 0.30, freeze < 0.45), which is harmless because the z legs (z > 5.0 vs z < 3.0)
+	// cannot hold together; rejecting the overlap would reject the ADR's own numbers.
 	//
-	// Checked only when the operator set both, since 0 means "use the
-	// default" and the defaults satisfy this by construction.
+	// Checked only when the operator set both, since 0 means "use the default".
 	if p.UnfreezeZScoreMax != 0 && p.ZScoreMinFreeze != 0 && p.UnfreezeZScoreMax > p.ZScoreMinFreeze {
 		return fmt.Errorf("%w: anomaly.phase2.unfreeze_z_score_max (%v) must be <= z_score_min_freeze (%v) — "+
 			"otherwise the release band overlaps the fire band and the pair flaps frozen/unfrozen at the trigger",

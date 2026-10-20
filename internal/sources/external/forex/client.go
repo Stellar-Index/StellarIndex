@@ -2,15 +2,14 @@
 // massive.com REST API (daily grain, ~200 currencies, API key in env MASSIVE_API_KEY).
 //
 // fx_quotes holds Massive's grouped-daily aggregate: one row per ticker per UTC day. The worker
-// polls hourly, but every write buckets to the day, so per-window figures on /v1/currencies are
-// derived from daily rows (see internal/sources/external/registry.go).
+// polls hourly, but every write buckets to the day, so per-window figures on /v1/currencies derive
+// from daily rows (see internal/sources/external/registry.go).
 //
-// This package and its sibling [frankfurter] sit outside the [external.Connector] framework with
-// their own worker / FXQuoteWriter seam. forex ("massive" in [external.Registry]) is the ACTIVE
-// feed, run in the API binary (not the indexer); see
-// docs/operations/runbooks/external-pollers.md#stellarindex_external_fx_feed_stale. [ecb] and
-// [exchangeratesapi] are Connector-framework pollers, disabled by default; ecb and [frankfurter]
-// read the same upstream through two code paths, an accepted duplication.
+// This package and its sibling [frankfurter] sit outside the [external.Connector] framework. forex
+// ("massive" in [external.Registry]) is the ACTIVE feed, run in the API binary; see
+// docs/operations/runbooks/external-pollers.md. [ecb] and [exchangeratesapi] are
+// Connector-framework pollers, disabled by default; ecb and [frankfurter] read the same upstream
+// through two code paths, an accepted duplication.
 package forex
 
 import (

@@ -1,12 +1,9 @@
 // Package pgarray adapts Postgres array columns to database/sql under the pgx v5 stdlib driver.
 //
 // pgx's stdlib driver surfaces an array column as its TEXT form ("{a,b,c}"), which database/sql
-// cannot scan into a plain Go slice ("unsupported Scan, storing driver.Value type string into
-// type *[]string"). Query ARGUMENTS need no wrapper (pgx encodes Go slices natively); only SCAN
-// destinations do.
-//
-// The adapters implement [sql.Scanner] by delegating to pgx's pgtype array codec rather than
-// hand-parsing array text. SQL NULL decodes to a nil slice, and "{}" to a non-nil empty slice.
+// cannot scan into a plain Go slice. Query ARGUMENTS need no wrapper (pgx encodes Go slices
+// natively); only SCAN destinations do. The adapters implement [sql.Scanner] via pgx's pgtype array
+// codec rather than hand-parsing. SQL NULL decodes to a nil slice, and "{}" to a non-nil empty one.
 package pgarray
 
 import (

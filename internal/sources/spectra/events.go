@@ -1,11 +1,10 @@
-// Package spectra decodes on-chain events from Spectra, the yield
-// tokenisation protocol (PT/YT split of an interest-bearing token, IBT).
-// See docs/protocols/spectra.md.
+// Package spectra decodes on-chain events from Spectra, the yield tokenisation protocol (PT/YT
+// split of an interest-bearing token). See docs/protocols/spectra.md.
 //
 // Only (role, kind) pairs observed on mainnet are classified, each pinned by a lake fixture;
-// `unwrap` is the exception, decoded from published source because it shares wrap's body. Any
-// other topic is NOT claimed: Matches returns false and the recognition audit surfaces it,
-// rather than a guessed shape being recorded as expected-zero.
+// `unwrap` is decoded from published source because it shares wrap's body. Any other topic is NOT
+// claimed: Matches returns false and the recognition audit surfaces it, rather than a guessed shape
+// being recorded as expected-zero.
 package spectra
 
 import (

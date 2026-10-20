@@ -1,16 +1,15 @@
 // Package coinmarketcap polls CoinMarketCap's Pro /v2 quotes endpoint for cross-check reference
-// prices. ClassAggregator: divergence signal only, excluded from VWAP.
-//
-// Production needs the Standard tier, the minimum that allows redistribution of the data.
+// prices. ClassAggregator: divergence signal only, excluded from VWAP. Production needs the
+// Standard tier, the minimum that allows redistribution of the data.
 //
 // Wire shape:
 //
 //	GET https://pro-api.coinmarketcap.com/v2/cryptocurrency/quotes/latest?symbol=XLM,BTC,ETH&convert=USD
 //	{"data": {"XLM": [{"quote": {"USD": {"price": 0.17582, "last_updated": "..."}}}]}, ...}
 //
-// CMC wraps each symbol's payload in an array because coins can share a ticker. `id=` mode pins
-// one project and verifies the entry's id; `symbol=` mode has no discriminator, so an entry with
-// more than one coin is refused rather than guessed.
+// CMC wraps each symbol's payload in an array because coins can share a ticker. `id=` mode pins one
+// project and verifies the entry's id; `symbol=` mode has no discriminator, so an entry with more
+// than one coin is refused rather than guessed.
 package coinmarketcap
 
 import (

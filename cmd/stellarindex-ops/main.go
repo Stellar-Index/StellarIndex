@@ -1,13 +1,11 @@
-// Binary stellarindex-ops is the admin CLI for operational tasks that don't
-// belong in the long-running binaries.
+// Binary stellarindex-ops is the admin CLI for operational tasks that don't belong in the
+// long-running binaries.
 //
 // Subcommand implementations live in internal/ops/*, with shared helpers in internal/ops/opsutil.
 // chops (the ClickHouse-lake tools) is not named clickhouse to avoid shadowing
-// internal/storage/clickhouse in every file there. main.go holds only the dispatch table and
-// subcommands too small for a package (docs-config).
-//
-// The canonical subcommand list is the `subcommands` map below plus the
-// `stellarindex-ops --help` output.
+// internal/storage/clickhouse. main.go holds only the dispatch table and subcommands too small for
+// a package (docs-config). The canonical subcommand list is the `subcommands` map below plus
+// `stellarindex-ops --help`.
 package main
 
 import (

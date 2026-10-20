@@ -1,8 +1,7 @@
-// Package hashdb is a tiny on-disk record of (ledger_seq → sha256 of LCM
-// bytes), a drift detector against retroactive rewrites of upstream galexie
-// objects. Upstream can rewrite a fetched ledger's bytes while staying
-// chain-link consistent, so Tier A + Tier D pass; only a fingerprint of what we
-// first saw catches it.
+// Package hashdb is a tiny on-disk record of (ledger_seq → sha256 of LCM bytes), a drift detector
+// against retroactive rewrites of upstream galexie objects. Upstream can rewrite a ledger while
+// staying chain-link consistent, so Tier A + Tier D pass; only a fingerprint of what we first saw
+// catches it.
 //
 // Format: a 16-byte header followed by dense fixed-size records.
 //
@@ -11,12 +10,11 @@
 //	startLedger uint32     // ledger of record 0 (records are dense)
 //	then N records of: hash [32]byte  // sha256 of the LCM XDR bytes
 //
-// The sequence is implicit: `seq = startLedger + index`. No gaps. An all-zero
-// record means "not yet written" and Verify() rejects it as ErrMissing.
+// The sequence is implicit (`seq = startLedger + index`). An all-zero record means "not yet
+// written" and Verify() rejects it as ErrMissing.
 //
-// Concurrency: callers must serialise calls (one writer, one reader, never both
-// at once). A record write is NOT atomic everywhere: 1 record in 128 straddles a
-// 4 KiB page, and a torn record reads as non-zero (permanent false drift).
+// Callers must serialise calls. A record write is NOT atomic everywhere: 1 record in 128 straddles
+// a 4 KiB page, and a torn record reads as non-zero (permanent false drift).
 package hashdb
 
 import (

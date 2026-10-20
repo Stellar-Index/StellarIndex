@@ -1,15 +1,10 @@
-// Package contractid provides the shared contract-identity registry
-// that factory-anchored Soroban decoders use to gate Matches().
+// Package contractid is the shared contract-identity registry that factory-anchored Soroban
+// decoders use to gate Matches().
 //
-// Per ADR-0035, a decoder must only accept events from contracts that belong to its protocol: the
-// protocol's factory (a hard-coded trust root) plus every child the factory creates, recursively.
-// Topic symbols (`swap`, `deploy`, ...) are NOT unique across protocols, so topic alone
-// mis-attributes foreign contracts' events.
-//
-// A Registry is seeded three ways, all through [Registry.Seed]: live (a factory creation event,
-// which fires the persistence hook), DB warm (`protocol_contracts` via WithSeed), and
-// genesis/reconcile (operator tooling walks the lake). Seed may run concurrently with reads, so
-// the set is mutex-guarded.
+// Per ADR-0035 a decoder accepts only events from its protocol's contracts: the hard-coded factory
+// plus every child it creates, recursively. Topic symbols (`swap`, `deploy`, ...) are NOT unique
+// across protocols, so topic alone mis-attributes foreign events. [Registry.Seed] feeds it from
+// live creation events, the DB warm and operator reconcile, and may run concurrently with reads.
 package contractid
 
 import "sync"

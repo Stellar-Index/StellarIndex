@@ -1,11 +1,9 @@
-// Package rozo decodes Rozo intent-bridge events on Soroban.
+// Package rozo decodes Rozo intent-bridge events on Soroban. Scoped to **v1 Payment**, the contract
+// live on mainnet; v2 and the newer schema are in docs/protocols/rozo.md.
 //
-// Scoped to **v1 Payment**, the Rozo contract live on mainnet; v2 and the newer schema are in
-// docs/protocols/rozo.md.
-//
-// Wiring: decode.go decodes; consumer.go projects each event into the canonical rozo.Event row;
+// decode.go decodes; consumer.go projects each event into the canonical rozo.Event row;
 // dispatcher_adapter.go is the Decoder; the projector, this table's sole writer (ADR-0032),
-// persists rows via Store.InsertRozoEvent into the rozo_events hypertable. See README.md.
+// persists rows via Store.InsertRozoEvent into the rozo_events hypertable.
 package rozo
 
 import (

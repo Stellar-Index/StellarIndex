@@ -1,7 +1,7 @@
 // Binary stellarindex-aggregator computes VWAP over the ingested canonical trade stream and writes
-// pre-aggregated results to Redis, so API requests serve from cache rather than recomputing. Its
-// workers are each driven from one orchestrator.Config field (internal/aggregate/orchestrator);
-// TOML knobs are under [aggregate] in docs/reference/config/README.md.
+// pre-aggregated results to Redis, so API requests serve from cache. Its workers are each driven
+// from one orchestrator.Config field (internal/aggregate/orchestrator); TOML knobs are under
+// [aggregate] in docs/reference/config/README.md.
 //
 // VWAP is exchange-class only by default: aggregator and oracle classes would double-count or mix
 // methodologies. CAGG refresh stays Timescale-driven; the orchestrator never refreshes manually.
@@ -253,9 +253,9 @@ func run(cfgPath string, dryRun bool) error {
 	// marker, so frozen windows would serve a stale price as fresh. rdb is always non-nil here.
 	//
 	// ─── Price withholding ([pricing_guard]) ─────────────────────
-	// The same pair decision /v1/price serves under, consulted by every customer-facing price this
-	// binary pushes (price-alert, anomaly.freeze and divergence.firing webhooks). A scam-flagged
-	// issuer or a thin market must not reach a signed delivery the API itself would refuse to publish.
+	// The same pair decision /v1/price serves under gates every customer-facing price this binary
+	// pushes (price-alert, anomaly.freeze, divergence.firing webhooks): a scam-flagged issuer or a
+	// thin market must not reach a signed delivery the API itself would refuse to publish.
 	withholding := pricingguard.Gate{
 		Substance: buildAggregatorSubstanceGate(cfg.PricingGuard, store, logger),
 		Scam: pricingguard.NewScamGate(store, pricingguard.ScamGateOptions{
@@ -404,7 +404,7 @@ func run(cfgPath string, dryRun bool) error {
 	// ─── Decimals-normalization lookup (dex-nonstandard-decimals) ──
 	// Mirrors `nonstandard_decimals_assets` so the orchestrator can scale a window's raw VWAP by
 	// 10^(base_decimals-quote_decimals) (aggregate.AdjustPrice). One blocking refresh so the first
-	// Tick, which runs before the cache's background loop, does not see an empty snapshot.
+	// Tick does not see an empty snapshot.
 	//
 	// FATAL on failure: at BOOT there is no last-good snapshot, and an empty map says "nothing is
 	// flagged", publishing windows unnormalized (wrong by 10^(7-decimals)) into prices_1m and the
@@ -773,18 +773,14 @@ func run(cfgPath string, dryRun bool) error {
 	}()
 
 	// ─── Decimals-assumption guard ─
-	// The served price is Sum(quote)/Sum(base) on raw smallest-unit integers, so decimals cancel
-	// only when base and quote share a scale; a non-7-decimal SEP-41 token with DEX liquidity skews
-	// its pairs by 10^(7-decimals). The sweep resolves each recently traded Soroban token's
-	// decimals() from the lake and raises stellarindex_dex_trade_nonstandard_decimals_total when
-	// one is != 7. It only detects; Writer persists into nonstandard_decimals_assets.
+	// Detection half of AdjustPrice's decimals assumption (see internal/decimalsguard): the sweep
+	// raises stellarindex_dex_trade_nonstandard_decimals_total when a traded Soroban token's
+	// decimals() != 7. It only detects; Writer persists into nonstandard_decimals_assets.
 	//
 	// The lake dial retries with backoff in the guard's goroutine, never one inline dial: after a
 	// reboot clickhouse-server spends minutes loading metadata and this unit's After= does not name
-	// it, so one failed dial would leave the aggregator unguarded until restart.
-	//
-	// MarkEnabled seeds the sweep heartbeat before the dial, so a lake-less aggregator reads
-	// "disabled", not "stale".
+	// it, so one failed dial would leave the aggregator unguarded until restart. MarkEnabled seeds
+	// the sweep heartbeat before the dial, so a lake-less aggregator reads "disabled", not "stale".
 	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
 		decimalsguard.MarkEnabled(time.Now())
 		refresherWG.Add(1)

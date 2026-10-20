@@ -1,16 +1,14 @@
 // Package kraken streams live trades from Kraken's public WebSocket v2 trade channel. XLM/USD,
 // XLM/EUR and XLM/GBP are all natively quoted (no stablecoin proxy).
 //
-// Symbols are "XLM/USD" (slash-separated, uppercase) and subscription is an explicit JSON call
-// after connect. Numbers arrive as JSON floats; [encoding/json.Number] keeps the decimal string
-// so no float is involved (ADR-0003).
+// Symbols are "XLM/USD" and subscription is an explicit JSON call after connect. Numbers arrive as
+// JSON floats; [encoding/json.Number] keeps the decimal string so no float is involved (ADR-0003).
+// Reference: https://docs.kraken.com/api/docs/websocket-v2/trade
 //
-// Wire format reference: https://docs.kraken.com/api/docs/websocket-v2/trade
-//
-// The snapshot (last ~50 trades) is emitted like any trade; a re-delivered snapshot dedupes on
-// the synthesised tx_hash (symbol + trade_id), which BackfillTrades derives identically. Candles
-// key on close time and never match a live row, so backfill-external refuses a window that
-// already holds rows.
+// The snapshot (last ~50 trades) is emitted like any trade; a re-delivered snapshot dedupes on the
+// synthesised tx_hash (symbol + trade_id), which BackfillTrades derives identically. Candles key on
+// close time and never match a live row, so backfill-external refuses a window that already holds
+// rows.
 package kraken
 
 import (

@@ -1,12 +1,10 @@
-// Package streampublish bridges the closed-bucket VWAP cache to the
-// SSE streaming Hub backing /v1/price/stream.
+// Package streampublish bridges the closed-bucket VWAP cache to the SSE streaming Hub backing
+// /v1/price/stream.
 //
 // One [Publisher] polls the same PriceReader as /v1/price for each configured pair and calls
 // [streaming.Hub.Publish] when ObservedAt advances. Payloads are byte-identical to /v1/price,
-// keeping the cross-region consistency property (ADR-0015).
-//
-// The pair list is static (config + restart to change). Pairs without observations stay silent,
-// with no synthetic events; a withheld pair publishes price_withheld instead of its bucket.
+// keeping the cross-region consistency property (ADR-0015). Pairs without observations stay silent;
+// a withheld pair publishes price_withheld instead of its bucket.
 package streampublish
 
 import (
