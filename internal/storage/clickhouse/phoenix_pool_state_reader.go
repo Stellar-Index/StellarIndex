@@ -12,11 +12,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// Phoenix pool PERSISTENT-storage layout (phoenix-contracts contracts/pool/src/storage.rs): keys are plain ScvU32; U32(1)/U32(2) are
-// ReserveA/ReserveB (i128), and `CONFIG` is a map whose `token_a`/`token_b` carry the token identities. Pools upgrade in place
-// (phoenix.MainnetPools vs MainnetMapPools): after an upgrade check that ledger_entries_current FINAL still returns three contract_data
-// rows per phoenixPoolKeys and that reserves match the latest phoenix_trades post-state; a mismatch surfaces as undecodable pools
-// (fail-to-absent).
+// Phoenix pool PERSISTENT-storage layout (phoenix-contracts contracts/pool/src/storage.rs): keys are plain ScvU32;
+// U32(1)/U32(2) are ReserveA/ReserveB (i128), and `CONFIG` is a map whose `token_a`/`token_b` carry the token identities. Pools
+// upgrade in place (phoenix.MainnetPools vs MainnetMapPools): after an upgrade check that ledger_entries_current FINAL still
+// returns three contract_data rows per phoenixPoolKeys and that reserves match the latest phoenix_trades post-state; a mismatch
+// surfaces as undecodable pools (fail-to-absent).
 const (
 	phoenixKeyReserveA = 1 // DataKey::ReserveA
 	phoenixKeyReserveB = 2 // DataKey::ReserveB

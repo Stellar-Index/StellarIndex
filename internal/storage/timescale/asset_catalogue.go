@@ -128,10 +128,8 @@ type ListAssetsOptions struct {
 	// Cursor is the keyset cursor returned by the previous
 	// response's NextCursor field. Empty for the first page.
 	Cursor string
-	// Q, when non-empty, filters rows where code, slug, or
-	// issuer_g_strkey contains the substring (case-insensitive).
-	// Useful for the explorer's `/assets?q=…` search box —
-	// otherwise a six-figure asset directory is unsearchable.
+	// Q, when non-empty, filters rows where code, slug, or issuer_g_strkey contains the substring (case-insensitive). Useful
+	// for the explorer's `/assets?q=…` search box — otherwise a six-figure asset directory is unsearchable.
 	Q string
 	// Order controls the sort + cursor scheme. Zero value is
 	// observation_count desc (preserves the historical contract).
@@ -715,10 +713,8 @@ func assetsOrderBy(order AssetsOrder) string {
 	// asset sorts below every unflagged one whatever the active sort key.
 	orderBy := " ORDER BY " + listingRankTierExpr(order) + " ASC, "
 	if order == AssetsOrderVolume24hUSDDesc {
-		// §4-B "annotate + demote": within a tier, rank by the
-		// concentration-adjusted volume, not raw, so wash/operational assets
-		// don't sit atop the directory. The raw volume_24h_usd stays the
-		// visible payload value.
+		// §4-B "annotate + demote": within a tier, rank by the concentration-adjusted volume, not raw, so wash/operational
+		// assets don't sit atop the directory. The raw volume_24h_usd stays the visible payload value.
 		return orderBy + adjustedVolume24hExpr + " DESC, ca.asset_id ASC"
 	}
 	return orderBy + "ca.observation_count DESC, ca.asset_id ASC"

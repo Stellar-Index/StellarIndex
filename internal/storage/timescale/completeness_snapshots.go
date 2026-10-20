@@ -15,20 +15,18 @@ type CompletenessSnapshot struct {
 	Watermark   uint32
 	CoveragePct float64
 	Complete    bool
-	// LakeComplete is the ADR-0033/ADR-0034 two-axis verdict's lake
-	// (archive) axis: substrate ∧ recognition only, genesis-to-tip,
-	// decoupled from the retention-scoped projection reconcile that
-	// additionally gates Complete (the served/combined axis).
+	// LakeComplete is the ADR-0033/ADR-0034 two-axis verdict's lake (archive) axis: substrate ∧ recognition only,
+	// genesis-to-tip, decoupled from the retention-scoped projection reconcile that additionally gates Complete (the
+	// served/combined axis).
 	LakeComplete bool
 	FirstProblem uint32 // 0 = none
 	// FoundProblem is write-only (no column): this run found a failure FirstProblem cannot localise,
 	// since the ClickHouse projection reconcile is an aggregate whose nonzero delta names no
 	// ledger. Never set for a claim that was merely not evaluated.
 	FoundProblem bool
-	// ProjectionVerifiedFrom is the PROJECTION axis's floor: the source's genesis, or for a
-	// declared served window the minimum served row over its targets. ProjectionOK claims
-	// nothing below it (Genesis is the LAKE floor, routinely far lower). 0 means not recorded;
-	// never read 0 as a floor.
+	// ProjectionVerifiedFrom is the PROJECTION axis's floor: the source's genesis, or for a declared served window the minimum
+	// served row over its targets. ProjectionOK claims nothing below it (Genesis is the LAKE floor, routinely far lower). 0
+	// means not recorded; never read 0 as a floor.
 	ProjectionVerifiedFrom uint32
 	// ProjectionReconciledFrom is the lowest ledger THIS run's projection
 	// reconcile covered (migration 0201); [ProjectionVerifiedFrom,
@@ -38,10 +36,8 @@ type CompletenessSnapshot struct {
 	// served range cleanly — the oldest evidence behind ProjectionOK, which
 	// a carry preserves and ComputedAt does not. Zero = none on record.
 	ProjectionEvidencedAt time.Time
-	// ProjectionEvidencedNow is write-only (no column): this run reconciled
-	// the whole served range cleanly, so the write stamps
-	// projection_evidenced_at with the same now() as computed_at and
-	// ignores ProjectionEvidencedAt.
+	// ProjectionEvidencedNow is write-only (no column): this run reconciled the whole served range cleanly, so the write stamps
+	// projection_evidenced_at with the same now() as computed_at and ignores ProjectionEvidencedAt.
 	ProjectionEvidencedNow bool
 	SubstrateOK            bool
 	RecognitionOK          bool
@@ -141,15 +137,11 @@ type DirtyWindowClear struct {
 
 // VerdictPublication is what [Store.PublishCompletenessVerdict] did.
 type VerdictPublication struct {
-	// Applied is false when the never-regress guard rejected the
-	// write (this run's tip is below the stored tip and it found no
-	// problem). The stored verdict is then UNCHANGED — whatever the run
-	// computed was not recorded.
+	// Applied is false when the never-regress guard rejected the write (this run's tip is below the stored tip and it found no
+	// problem). The stored verdict is then UNCHANGED — whatever the run computed was not recorded.
 	Applied bool
-	// WindowCleared is true when the dirty window row was deleted. Always
-	// false when Applied is false; may also be false when Applied is true
-	// because a concurrent replay re-recorded the window (see
-	// clearProjectionDirtyWindowQuery).
+	// WindowCleared is true when the dirty window row was deleted. Always false when Applied is false; may also be false when
+	// Applied is true because a concurrent replay re-recorded the window (see clearProjectionDirtyWindowQuery).
 	WindowCleared bool
 }
 

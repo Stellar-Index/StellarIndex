@@ -17,50 +17,42 @@ type GapDetectorTarget struct {
 	Table        string
 	LedgerColumn string
 
-	// CanonicalSource is the [sourcenet] source name for targets keyed by a per-TABLE name
-	// ("aquarius-liquidity" -> "aquarius"). Empty means Source is already canonical. The detector
-	// asks sourcenet whether the source exists on this network.
-	// [TestGapDetectorTargetsResolveToKnownSources] fails when a target resolves to a name
-	// sourcenet does not know, which on a test net would silently mean EXCLUDED.
+	// CanonicalSource is the [sourcenet] source name for targets keyed by a per-TABLE name ("aquarius-liquidity" -> "aquarius"). Empty
+	// means Source is already canonical. The detector asks sourcenet whether the source exists on this network;
+	// [TestGapDetectorTargetsResolveToKnownSources] fails when a target resolves to a name sourcenet does not know, which on a test net
+	// would silently mean EXCLUDED.
 	CanonicalSource string
 
-	// Genesis is the first ledger at which this source could have data: the contract deploy
-	// ledger for Soroban sources, 2 for SDEX. Density is distinct / (tip - Genesis + 1).
-	//
-	// Literal because storage may not import internal/sources (lint-imports
-	// L/storage-below-compute); TestCatalogueGenesisLocksStepWithGapDetectorTargets pins each
-	// floor to the catalogue and to any exported package constant.
+	// Genesis is the first ledger at which this source could have data: the contract deploy ledger for Soroban sources, 2 for SDEX.
+	// Density is distinct / (tip - Genesis + 1). Literal because storage may not import internal/sources (lint-imports
+	// L/storage-below-compute); TestCatalogueGenesisLocksStepWithGapDetectorTargets pins each floor to the catalogue and to any exported
+	// package constant.
 	Genesis int64
 
-	// WhereFilter is an optional predicate ANDed into the gap query (without the leading "AND",
-	// e.g. `source = 'sdex'`) to scan one source's slice of a shared table. SAFETY: interpolated
-	// like Table and LedgerColumn, so it must come only from [DefaultGapDetectorTargets]
-	// (ADR-0030).
+	// WhereFilter is an optional predicate ANDed into the gap query (without the leading "AND", e.g. `source = 'sdex'`) to scan one
+	// source's slice of a shared table. SAFETY: interpolated like Table and LedgerColumn, so it must come only from
+	// [DefaultGapDetectorTargets] (ADR-0030).
 	WhereFilter string
 
-	// MinGapSizeOverride overrides [GapDetectorMinGapSize] (default 1000 ledgers) for this
-	// target; sparse sources (Blend, CCTP/Rozo) would otherwise page on every quiet stretch.
-	// It is alerting cadence only and can mask a gap just under the threshold, so it is not a
+	// MinGapSizeOverride overrides [GapDetectorMinGapSize] (default 1000 ledgers) for this target; sparse sources (Blend, CCTP/Rozo) would
+	// otherwise page on every quiet stretch. It is alerting cadence only and can mask a gap just under the threshold, so it is not a
 	// coverage signal; the completeness watermark (completeness_snapshots) proves quiet vs gap.
 	MinGapSizeOverride int64
 
-	// ScanCadence overrides [GapDetectorInterval] (default 30 min) for huge tables where the
-	// LAG-DISTINCT scan is slow, trading signal freshness for not saturating postgres. Each cycle
-	// stays bounded by a 15 min Go timeout and the SQL `SET LOCAL statement_timeout` backstop
-	// ([gapDetectorStatementTimeoutMS], 13 min).
+	// ScanCadence overrides [GapDetectorInterval] (default 30 min) for huge tables where the LAG-DISTINCT scan is slow, trading signal
+	// freshness for not saturating postgres. Each cycle stays bounded by a 15 min Go timeout and the SQL `SET LOCAL statement_timeout`
+	// backstop ([gapDetectorStatementTimeoutMS], 13 min).
 	ScanCadence time.Duration
 
-	// DistinctLedgerCountSQL optionally replaces the generic COUNT(DISTINCT <LedgerColumn>) that
-	// [Store.CountDistinctLedgers] runs. When set it MUST be a complete statement binding $1/$2 as
-	// the inclusive ledger range and returning one bigint, because the generic query full-scans a
-	// table with no leading-`ledger` index. Interpolated verbatim, so the compile-time-only rule
-	// of Table / WhereFilter applies.
+	// DistinctLedgerCountSQL optionally replaces the generic COUNT(DISTINCT <LedgerColumn>) that [Store.CountDistinctLedgers] runs. When
+	// set it MUST be a complete statement binding $1/$2 as the inclusive ledger range and returning one bigint, because the generic query
+	// full-scans a table with no leading-`ledger` index. Interpolated verbatim, so the compile-time-only rule of Table / WhereFilter
+	// applies.
 	DistinctLedgerCountSQL string
 
-	// CloseTimeColumn names the close-time partition column of a hypertable partitioned by time
-	// rather than ledger. The gap scan also bounds it by the close times ledger_ingest_log records
-	// around [from, to]; a bare `ledger BETWEEN` excludes no chunk and decompresses every
-	// compressed one. Same ADR-0030 discipline as Table.
+	// CloseTimeColumn names the close-time partition column of a hypertable partitioned by time rather than ledger. The gap scan also
+	// bounds it by the close times ledger_ingest_log records around [from, to]; a bare `ledger BETWEEN` excludes no chunk and decompresses
+	// every compressed one. Same ADR-0030 discipline as Table.
 	CloseTimeColumn string
 }
 

@@ -546,10 +546,9 @@ type OracleDayPoint struct {
 	// scale travel together and the caller scales once).
 	Price    *big.Int
 	Decimals uint8
-	// Observations is how many publications the oracle made in the day.
-	// A bucket built from ONE observation and one built from a thousand
-	// are different evidence for the same closing figure, and a surface
-	// that publishes the figure should be able to say which it had.
+	// Observations is how many publications the oracle made in the day. A bucket built from ONE observation and one built from
+	// a thousand are different evidence for the same closing figure, and a surface that publishes the figure should be able to
+	// say which it had.
 	Observations int64
 }
 

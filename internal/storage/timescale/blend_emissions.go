@@ -28,10 +28,8 @@ func (s *Store) InsertBlendEmissionEvent(ctx context.Context, e domain.BlendEmis
 		return fmt.Errorf("timescale: InsertBlendEmissionEvent: marshal attributes: %w", err)
 	}
 
-	// Generation-guarded corrective upsert (migration 0110): a
-	// corrected re-derive of the emission `amount` (or asset / user /
-	// attributes) lands in place when its generation is >= the stored one; a
-	// live gen-0 replay can never revert it.
+	// Generation-guarded corrective upsert: a corrected re-derive of the emission `amount` (or asset / user / attributes) lands
+	// in place when its generation is >= the stored one; a live gen-0 replay can never revert it.
 	const q = `
         INSERT INTO blend_emissions (
             pool, ledger, tx_hash, op_index, event_index, ledger_close_time,
@@ -135,10 +133,8 @@ func bigIntOrEmpty(n interface{ String() string }) string {
 	if n == nil {
 		return ""
 	}
-	// big.Int's String() is defined on the value receiver, and
-	// (*big.Int)(nil).String() does NOT panic in modern Go (it
-	// returns "<nil>"). Catch that explicit sentinel + the empty
-	// case as "no amount".
+	// big.Int's String() is defined on the value receiver, and (*big.Int)(nil).String() does NOT panic in modern Go (it returns
+	// "<nil>"). Catch that explicit sentinel + the empty case as "no amount".
 	s := n.String()
 	if s == "" || s == "<nil>" {
 		return ""

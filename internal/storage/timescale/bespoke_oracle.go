@@ -1,9 +1,7 @@
 package timescale
 
-// Each per-category visual suite has its own file so suites can be built
-// in parallel without colliding on one file. Shared types
-// (BespokeBlock/KPI/Series/Table/Breakdown) + the dispatcher + the scan
-// helpers stay in protocol_bespoke.go.
+// Each per-category visual suite has its own file so suites can be built in parallel without colliding on one file. Shared
+// types (BespokeBlock/KPI/Series/Table/Breakdown) + the dispatcher + the scan helpers stay in protocol_bespoke.go.
 
 // Oracle bespoke analytics (reflector-dex/cex/fx, redstone, band): counts and timestamps over
 // oracle_updates scoped by source = the protocol page's name. No price averaging or rescaling:

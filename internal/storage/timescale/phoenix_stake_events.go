@@ -15,10 +15,9 @@ type PhoenixStakeAction string
 const (
 	PhoenixBond   PhoenixStakeAction = "bond"
 	PhoenixUnbond PhoenixStakeAction = "unbond"
-	// PhoenixWithdrawRewards / PhoenixDistributeRewards — the stake
-	// contract's reward-claim surface (migration 0097). Neither carries
-	// an amount on the wire (see internal/sources/phoenix/events.go);
-	// distribute_rewards is pool-wide and carries no user either.
+	// PhoenixWithdrawRewards / PhoenixDistributeRewards — the stake contract's reward-claim surface (migration 0097). Neither
+	// carries an amount on the wire (see internal/sources/phoenix/events.go); distribute_rewards is pool-wide and carries no
+	// user either.
 	PhoenixWithdrawRewards   PhoenixStakeAction = "withdraw_rewards"
 	PhoenixDistributeRewards PhoenixStakeAction = "distribute_rewards"
 	// Stake-contract lifecycle (migration 0195): a reward flow opened for
@@ -95,10 +94,8 @@ func (s *Store) InsertPhoenixStakeEvent(ctx context.Context, e PhoenixStakeEvent
 			e.StakeContract, e.TxHash)
 	}
 
-	// Generation-guarded corrective upsert (migration 0110): a
-	// corrected re-derive of the staked `amount` (or user_addr / lp_token)
-	// lands in place when its generation is >= the stored one; a live gen-0
-	// replay can never revert it.
+	// Generation-guarded corrective upsert (migration 0110): a corrected re-derive of the staked `amount` (or user_addr /
+	// lp_token) lands in place when its generation is >= the stored one; a live gen-0 replay can never revert it.
 	const q = `
         INSERT INTO phoenix_stake_events (
             stake_contract, ledger, ledger_close_time, tx_hash, op_index,

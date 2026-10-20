@@ -5,10 +5,10 @@ import (
 	"fmt"
 )
 
-// countRecentEventsQuery is the trailing-24h per-protocol event census behind /v1/protocols' events_24h: one UNION ALL over every served
-// table, each leg labelled with the API registry's source name. It runs only from [Store.RefreshProtocolEventCounts] into
-// protocol_events_24h; the handler reads the rollup. Several legs sum into one source; the trades and oracle_updates legs GROUP BY source
-// and also yield CEX/FX/oracle sources callers ignore.
+// countRecentEventsQuery is the trailing-24h per-protocol event census behind /v1/protocols' events_24h: one UNION ALL over
+// every served table, each leg labelled with the API registry's source name. It runs only from
+// [Store.RefreshProtocolEventCounts] into protocol_events_24h; the handler reads the rollup. Several legs sum into one source;
+// the trades and oracle_updates legs GROUP BY source and also yield CEX/FX/oracle sources callers ignore.
 const countRecentEventsQuery = `
 	SELECT source, count(*) AS n
 	  FROM trades

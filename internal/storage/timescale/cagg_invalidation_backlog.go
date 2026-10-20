@@ -28,10 +28,9 @@ type CAGGInvalidationBacklog struct {
 	// source inherits them. SourceFrom/SourceTo is their hull.
 	SourceRanges         int64
 	SourceFrom, SourceTo time.Time
-	// Below counts the bounded entries of either log that start before the
-	// cutoff; BelowFrom/BelowTo is their hull, clipped to end at it.
-	// AboveFrom/AboveTo is the hull of what lies at or after the cutoff,
-	// straddling entries cut at it. Each hull is zero when it is empty.
+	// Below counts the bounded entries of either log that start before the cutoff; BelowFrom/BelowTo is their hull, clipped to end at it.
+	// AboveFrom/AboveTo is the hull of what lies at or after the cutoff, straddling entries cut at it. Each hull is zero when it is
+	// empty.
 	Below              int64
 	BelowFrom, BelowTo time.Time
 	AboveFrom, AboveTo time.Time

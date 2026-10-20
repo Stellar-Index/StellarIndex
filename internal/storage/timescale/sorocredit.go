@@ -102,10 +102,8 @@ func (s *Store) InsertCreditPosition(ctx context.Context, e CreditPosition) erro
 	if e.TxHash == "" {
 		return errors.New("timescale: InsertCreditPosition: TxHash is empty")
 	}
-	// Generation-guarded corrective upsert (migration 0110): a
-	// re-derive with a higher-or-equal generation UPDATEs the decoded value
-	// columns in place; a lower generation (a live gen-0 replay) can never
-	// revert a correction.
+	// Generation-guarded corrective upsert (migration 0110): a re-derive with a higher-or-equal generation UPDATEs the decoded
+	// value columns in place; a lower generation (a live gen-0 replay) never reverts a correction.
 	const q = `
         INSERT INTO credit_positions (
             collateral_contract, position_uuid, position_name, owner,
@@ -142,10 +140,8 @@ func (s *Store) InsertCreditStatement(ctx context.Context, e CreditStatement) er
 	if e.TxHash == "" {
 		return errors.New("timescale: InsertCreditStatement: TxHash is empty")
 	}
-	// Generation-guarded corrective upsert (migration 0110): a
-	// corrected re-derive of `amount` (or any decoded column) lands in place
-	// when its generation is >= the stored one; a live gen-0 replay can never
-	// revert it.
+	// Generation-guarded corrective upsert (migration 0110): a corrected re-derive of `amount` (or any decoded column) lands in
+	// place when its generation is >= the stored one; a live gen-0 replay never reverts it.
 	const q = `
         INSERT INTO credit_statements (
             statement_uuid, position_uuid, collateral_contract,
@@ -275,10 +271,9 @@ type CreditAnalyticsSummary struct {
 	// PositionsOpened is the count of NewCollateralContract events in the
 	// window (one child Collateral-<uuid> contract per opened position).
 	PositionsOpened int64
-	// OpenPositions is the count of positions opened in the window whose
-	// collateral child has no observed withdrawal (cash-out) in the window
-	// — a window-scoped proxy for still-open positions, not an all-time
-	// live-position count (the served tier is retention-scoped).
+	// OpenPositions is the count of positions opened in the window whose collateral child has no observed withdrawal (cash-out)
+	// in the window: a window-scoped proxy for still-open positions, not an all-time live-position count (the served tier is
+	// retention-scoped).
 	OpenPositions int64
 	// UniqueUsers is the count of distinct position owners (G-addresses) in
 	// the window.
@@ -292,10 +287,9 @@ type CreditAnalyticsSummary struct {
 	// liquidations. Label accordingly wherever surfaced.
 	Settlements      int64
 	SettlementVolume canonical.Amount
-	// SettlementsNotFullySummed counts window settlements whose debt is not
-	// wholly inside SettlementVolume: a non-USDC or undecoded primary leg, or
-	// extra legs the decoder recorded only as attributes.debt_legs. Non-zero
-	// makes SettlementVolume a lower bound.
+	// SettlementsNotFullySummed counts window settlements whose debt is not wholly inside SettlementVolume: a non-USDC or
+	// undecoded primary leg, or extra legs the decoder recorded only as attributes.debt_legs. Non-zero makes SettlementVolume a
+	// lower bound.
 	SettlementsNotFullySummed int64
 
 	// Withdrawals is a count only: credit_events.amount is per `asset`, so
@@ -347,10 +341,9 @@ func (s *Store) CreditWindowAnalytics(ctx context.Context, windowDays int) (*Cre
 		wdLatest     sql.NullTime
 	)
 
-	// Positions + open-position proxy + distinct owners. The NOT EXISTS is
-	// window-scoped on both sides so it stays an index-only probe of
-	// credit_events (credit_events_collateral_ts_idx) and the semantics are
-	// honestly "opened AND not withdrawn within the window".
+	// Positions + open-position proxy + distinct owners. The NOT EXISTS is window-scoped on both sides so it stays an index-only
+	// probe of credit_events (credit_events_collateral_ts_idx) and the semantics are honestly "opened AND not withdrawn within
+	// the window".
 	if err := s.db.QueryRowContext(ctx, `
 		SELECT count(*),
 		       count(*) FILTER (WHERE NOT EXISTS (

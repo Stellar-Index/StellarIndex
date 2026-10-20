@@ -1,9 +1,7 @@
 package timescale
 
-// Each per-category visual suite has its own file so suites can be built
-// in parallel without colliding on one file. Shared types
-// (BespokeBlock/KPI/Series/Table/Breakdown) + the dispatcher + the scan
-// helpers stay in protocol_bespoke.go.
+// Each per-category visual suite has its own file so suites can be built in parallel without colliding. Shared types
+// (BespokeBlock/KPI/Series/Table/Breakdown), the dispatcher and the scan helpers stay in protocol_bespoke.go.
 
 // bespokeLending builds the Blend lending bespoke block: PER-ASSET net supplied (supply +
 // supply_collateral - withdraw - withdraw_collateral) and net borrowed (borrow - repay) from
@@ -17,10 +15,9 @@ import (
 )
 
 func (s *Store) bespokeLending(ctx context.Context, source string, windowDays int) (*BespokeBlock, error) {
-	// sorocredit is a lending-category source with its own event surface
-	// (credit_positions / credit_statements / credit_settlements /
-	// credit_events, migration 0090) — not the Blend money-market tables —
-	// so it gets a dedicated builder rather than the blend_* path below.
+	// sorocredit is a lending-category source with its own event surface (credit_positions / credit_statements /
+	// credit_settlements / credit_events), not the Blend money-market tables, so it gets a dedicated builder rather than the
+	// blend_* path below.
 	if source == "sorocredit" {
 		return s.bespokeCredit(ctx, windowDays)
 	}
@@ -81,10 +78,9 @@ const (
 	lendingBorrowSideKinds = `'borrow','repay','flash_loan'`
 )
 
-// blendSupplyNetExpr / blendBorrowNetExpr sign blend_positions.token_amount
-// into each leg's running net; every blend fold sums through these. A
-// flash_loan mints d-tokens to its user (0045 body: tokens_out,
-// d_tokens_minted) that only a later repay burns, so it opens debt as borrow does.
+// blendSupplyNetExpr / blendBorrowNetExpr sign blend_positions.token_amount into each leg's running net; every blend fold sums
+// through these. A flash_loan mints d-tokens to its user (0045 body: tokens_out, d_tokens_minted) that only a later repay
+// burns, so it opens debt as borrow does.
 const (
 	blendSupplyNetExpr = `CASE WHEN event_kind IN ('supply','supply_collateral') THEN token_amount
 	                          WHEN event_kind IN ('withdraw','withdraw_collateral') THEN -token_amount END`

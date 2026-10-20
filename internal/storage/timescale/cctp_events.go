@@ -100,11 +100,9 @@ func (s *Store) InsertCCTPEvent(ctx context.Context, e CCTPEvent) error {
 		attrs = marshaled
 	}
 
-	// Generation-guarded upsert (migration 0110): a corrected re-derive of the i128 amounts or
-	// other decoded columns lands when its generation is >= the stored one; a live gen-0 replay
-	// never reverts it. event_index ($13) is in the ON CONFLICT target (migration 0112) because two
-	// same-type events from one op differ only by it, and the second row would otherwise collapse
-	// onto the first.
+	// Generation-guarded upsert: a corrected re-derive of the i128 amounts or other decoded columns lands when its generation
+	// is >= the stored one; a live gen-0 replay never reverts it. event_index ($13) is in the ON CONFLICT target because two
+	// same-type events from one op differ only by it, and the second row would otherwise collapse onto the first.
 	const q = `
         INSERT INTO cctp_events (
             contract_id, ledger, tx_hash, op_index, ts,

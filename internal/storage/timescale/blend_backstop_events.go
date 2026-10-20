@@ -78,10 +78,8 @@ func (s *Store) InsertBlendBackstopEvent(ctx context.Context, e BlendBackstopEve
 		attrs = marshaled
 	}
 
-	// Generation-guarded corrective upsert (migration 0110): a
-	// corrected re-derive of the i128 amounts (amount / amount2) or the other
-	// decoded columns lands in place when its generation is >= the stored
-	// one; a live gen-0 replay can never revert it.
+	// Generation-guarded corrective upsert (migration 0110): a corrected re-derive of the i128 amounts (amount / amount2) or the
+	// other decoded columns lands in place when its generation is >= the stored one; a live gen-0 replay never reverts it.
 	const q = `
         INSERT INTO blend_backstop_events (
             contract_id, ledger, tx_hash, op_index, event_index, ledger_close_time,

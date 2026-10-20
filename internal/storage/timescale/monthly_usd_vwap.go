@@ -22,10 +22,8 @@ type MonthlyUSDVWAP struct {
 	Asset string
 	// Month is the first instant of the calendar month, UTC.
 	Month time.Time
-	// VWAPUSD is Σ quote / Σ base in whole units over every folded row
-	// (see [monthlyUSDVWAPScale]), rendered like a
-	// combined VWAP (25 significant digits, trailing zeros trimmed). The
-	// rendering is the only lossy step; the fold is exact.
+	// VWAPUSD is Σ quote / Σ base in whole units over every folded row (see [monthlyUSDVWAPScale]), rendered like a combined
+	// VWAP (25 significant digits, trailing zeros trimmed). The rendering is the only lossy step; the fold is exact.
 	VWAPUSD string
 	// VolumeUSD is the folded rows' USD volume — a magnitude for ranking
 	// and for judging how much market stood behind the price.

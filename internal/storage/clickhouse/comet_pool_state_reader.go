@@ -12,10 +12,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// Comet pool PERSISTENT-storage layout (CometDEX/comet-contracts-v1 c_pool): DataKey::AllRecordData is Map<Address, Record{balance,
-// weight, scalar: i128; index: u32}>, keyed ScvVec[ScvSymbol("<Variant>")]. Decode is by field name; only `balance` is required. The
-// reader probes BOTH key encodings (Vec[Symbol] per spec, bare Symbol defensively); a pool matching neither is fail-to-absent, never a
-// misread number.
+// Comet pool PERSISTENT-storage layout (CometDEX/comet-contracts-v1 c_pool): DataKey::AllRecordData is Map<Address,
+// Record{balance, weight, scalar: i128; index: u32}>, keyed ScvVec[ScvSymbol("<Variant>")]. Decode is by field name; only
+// `balance` is required. The reader probes BOTH key encodings (Vec[Symbol] per spec, bare Symbol defensively); a pool matching
+// neither is fail-to-absent, never a misread number.
 const (
 	cometRecordDataKeySymbol = "AllRecordData"
 	cometFieldBalance        = "balance"

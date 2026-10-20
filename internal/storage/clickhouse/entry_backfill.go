@@ -12,10 +12,10 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// seedIntraLedgerSeq is the intra_ledger_seq a snapshot/seed backfill row stamps: math.MaxUint32, the END of that ledger's order
-// (ADR-0034: a snapshot 'state' row is authoritative), so a live change never overwrites it in ledger_entries_current's version comparison
-// while a re-snapshot stays corrective. Mirrors timescale.SeedIntraLedgerSeq; local so the lake layer does not depend on the served-tier
-// package.
+// seedIntraLedgerSeq is the intra_ledger_seq a snapshot/seed backfill row stamps: math.MaxUint32, the END of that ledger's
+// order (ADR-0034: a snapshot 'state' row is authoritative), so a live change never overwrites it in ledger_entries_current's
+// version comparison while a re-snapshot stays corrective. Mirrors timescale.SeedIntraLedgerSeq; local so the lake layer does
+// not depend on the served-tier package.
 const seedIntraLedgerSeq = uint32(0xFFFFFFFF) // math.MaxUint32
 
 // SnapshotEntryRow builds a ledger_entry_changes row from a live snapshot entry using the indexer's own helpers; ok=false on a marshal error (skip the entry, never abort the backfill).
@@ -141,10 +141,10 @@ func insertEntryChunk(ctx context.Context, conn clickhouse.Conn, chunk []LedgerE
 // collisions resolve within a handful of probes).
 const maxChangeIndexProbeAttempts = 1 << 20
 
-// resolveChangeIndexCollisions makes ChangeIndex unique within every (ledger_seq, tx_hash, op_index) group, the tuple prefix the
-// ReplacingMergeTree ORDER BY shares with change_index: a 32-bit crc32(key) collides often enough in a multi-million-row backfill to
-// silently drop a row at merge. Colliding rows are walked in KeyXDR-sorted order (never arrival order) and re-hashed with an incrementing
-// salt, so the outcome depends only on the SET of keys and a resumed backfill stays idempotent.
+// resolveChangeIndexCollisions makes ChangeIndex unique within every (ledger_seq, tx_hash, op_index) group, the tuple prefix
+// the ReplacingMergeTree ORDER BY shares with change_index: a 32-bit crc32(key) collides often enough in a multi-million-row
+// backfill to silently drop a row at merge. Colliding rows are walked in KeyXDR-sorted order (never arrival order) and
+// re-hashed with an incrementing salt, so the outcome depends only on the SET of keys and a resumed backfill stays idempotent.
 func resolveChangeIndexCollisions(rows []LedgerEntryChangeRow) error {
 	type groupKey struct {
 		ledgerSeq uint32

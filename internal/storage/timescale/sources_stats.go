@@ -20,10 +20,8 @@ type SourceStats struct {
 	// usd_volume. They are excluded from VolumeUSD24h, which is then a
 	// lower bound.
 	UnpricedTrades24h int64
-	// MarketsCount24h is the number of distinct markets the source
-	// observed in the trailing 24h, a market being its unordered
-	// {base, quote} pair (see marketKeySQL). A useful "pools per DEX"
-	// proxy for AMMs where each pair contract = one pool.
+	// MarketsCount24h is the number of distinct markets the source observed in the trailing 24h, a market being its unordered
+	// {base, quote} pair (see marketKeySQL). A useful "pools per DEX" proxy for AMMs where each pair contract = one pool.
 	MarketsCount24h int64
 }
 

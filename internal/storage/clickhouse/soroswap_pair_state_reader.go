@@ -41,10 +41,11 @@ type TokenDisplayMeta struct {
 	HasMeta  bool
 }
 
-// SoroswapPairReserves reads CURRENT reserves in one batched `key_xdr IN (...)` lookup (PK-prefix on (entry_type, key_xdr)); uncaptured
-// or off-layout pairs are absent, never zero. ARCHIVED pairs are absent too: ledger_entries_current keeps an entry's last value after its
-// TTL lapses. Fail-open: only a positively-resolved, lapsed TTL drops a pair (see [ClassifyTTLLiveness]). soroswapPairStateQuery's
-// SETTINGS pins are shared with the sibling readers so a planner or layout shift fails THIS query loudly.
+// SoroswapPairReserves reads CURRENT reserves in one batched `key_xdr IN (...)` lookup (PK-prefix on (entry_type, key_xdr));
+// uncaptured or off-layout pairs are absent, never zero. ARCHIVED pairs are absent too: ledger_entries_current keeps an entry's
+// last value after its TTL lapses. Fail-open: only a positively-resolved, lapsed TTL drops a pair (see [ClassifyTTLLiveness]).
+// soroswapPairStateQuery's SETTINGS pins are shared with the sibling readers so a planner or layout shift fails THIS query
+// loudly.
 const soroswapPairStateQuery = `SELECT key_xdr, ledger_seq, entry_xdr
 	FROM stellar.ledger_entries_current FINAL
 	WHERE entry_type = 'contract_data' AND key_xdr IN (?) AND entry_xdr != ''

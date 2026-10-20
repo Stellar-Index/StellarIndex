@@ -48,10 +48,8 @@ type CometLiquidityEvent struct {
 	LedgerCloseTime time.Time
 	TxHash          string
 	OpIndex         uint32
-	// EventIndex is the contract event's index within its operation —
-	// the per-event discriminator added to the comet_liquidity PK by
-	// migration 0059 so two same-(kind,token) events from one
-	// op don't collide.
+	// EventIndex is the contract event's index within its operation — the per-event discriminator added to the comet_liquidity
+	// PK by migration 0059 so two same-(kind,token) events from one op don't collide.
 	EventIndex   uint32
 	Kind         CometLiquidityKind
 	Caller       string
@@ -92,10 +90,9 @@ func (s *Store) InsertCometLiquidity(ctx context.Context, e CometLiquidityEvent)
 		poolAmountIn = sql.NullString{String: e.PoolAmountIn.String(), Valid: true}
 	}
 
-	// Generation-guarded corrective upsert (migration 0110): a
-	// corrected re-derive of the i128 amounts (amount / pool_amount_in) or
-	// direction / caller lands in place when its generation is >= the stored
-	// one; a live gen-0 replay can never revert it.
+	// Generation-guarded corrective upsert (migration 0110): a corrected re-derive of the i128 amounts (amount /
+	// pool_amount_in) or direction / caller lands in place when its generation is >= the stored one; a live gen-0 replay can
+	// never revert it.
 	const q = `
         INSERT INTO comet_liquidity (
             contract_id, ledger, ledger_close_time, tx_hash, op_index,

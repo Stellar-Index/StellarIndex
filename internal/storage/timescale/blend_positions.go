@@ -34,10 +34,8 @@ func (s *Store) InsertBlendPositionEvent(ctx context.Context, e domain.BlendPosi
 		return fmt.Errorf("timescale: InsertBlendPositionEvent: BOrDAmount must be >= 0 (got %s)", e.BOrDAmount)
 	}
 
-	// Generation-guarded corrective upsert (migration 0110): a
-	// corrected re-derive of the i128 amounts (token_amount / b_or_d_amount)
-	// lands in place when its generation is >= the stored one; a live gen-0
-	// replay can never revert it.
+	// Generation-guarded corrective upsert (migration 0110): a corrected re-derive of the i128 amounts (token_amount /
+	// b_or_d_amount) lands in place when its generation is >= the stored one; a live gen-0 replay can never revert it.
 	const q = `
         INSERT INTO blend_positions (
             pool, ledger, tx_hash, op_index, event_index, ledger_close_time,

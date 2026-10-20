@@ -61,10 +61,8 @@ func (s *Store) InsertSEP41TransferBatch(ctx context.Context, rows []SEP41Transf
 
 	const ncols = 13
 	var sb strings.Builder
-	// Generation-guarded corrective upsert: a re-derive with a higher-or-
-	// equal generation UPDATEs the decoded value columns (amount, event_kind,
-	// addresses, …) in place; a live gen-0 replay can never revert a
-	// correction.
+	// Generation-guarded corrective upsert: a re-derive with a higher-or- equal generation UPDATEs the decoded value columns
+	// (amount, event_kind, addresses, …) in place; a live gen-0 replay can never revert a correction.
 	sb.WriteString(`
         INSERT INTO sep41_transfers (
             ledger_close_time, ledger, tx_hash, op_index, event_index,

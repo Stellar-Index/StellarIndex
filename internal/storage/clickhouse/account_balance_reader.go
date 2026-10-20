@@ -45,10 +45,9 @@ func QueryAccountBalance(ctx context.Context, addr, accountID string) (snap Acco
 		return AccountBalanceSnapshot{}, false, fmt.Errorf("clickhouse: query account balance %s: %w", accountID, err)
 	}
 	if snapshots == 0 {
-		// Aggregate queries without GROUP BY always return exactly one
-		// row even when zero source rows matched — argMax/max degrade
-		// to their zero values in that case, which is indistinguishable
-		// from a genuine 0-stroop balance without checking snapshots.
+		// Aggregate queries without GROUP BY always return exactly one row even when zero source rows matched — argMax/max
+		// degrade to their zero values in that case, which is indistinguishable from a genuine 0-stroop balance without
+		// checking snapshots.
 		return AccountBalanceSnapshot{}, false, nil
 	}
 	return AccountBalanceSnapshot{Stroops: bal, AtLedger: atLedger, Snapshots: snapshots}, true, nil

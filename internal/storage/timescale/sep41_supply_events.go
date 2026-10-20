@@ -61,10 +61,8 @@ func (s *Store) InsertSEP41SupplyEvent(ctx context.Context, e SEP41SupplyEvent) 
 	if e.Amount.Sign() < 0 {
 		return fmt.Errorf("timescale: InsertSEP41SupplyEvent: negative Amount %s (event amounts are non-negative; kind discriminates direction)", e.Amount)
 	}
-	// Generation-guarded corrective upsert (migration 0110): a corrected
-	// re-derive of the supply-event `amount` (or counterparty) lands in
-	// place when its generation is >= the stored one; a live gen-0
-	// replay can never revert it.
+	// Generation-guarded corrective upsert (migration 0110): a corrected re-derive of the supply-event `amount` (or
+	// counterparty) lands in place when its generation is >= the stored one; a live gen-0 replay never reverts it.
 	const q = `
         INSERT INTO sep41_supply_events (
             contract_id, ledger, tx_hash, op_index, observed_at,
@@ -652,18 +650,13 @@ func beginSEP41RollupTx(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
 // foldSEP41RollupLocked folds a contract's newly-settled events on a txn that ALREADY holds the row lock ([lockSEP41RollupRow]).
 // Returns the checkpoint ledger before and after, and whether the projector's cursor row was absent (nothing foldable).
 func foldSEP41RollupLocked(ctx context.Context, tx *sql.Tx, contractID string) (fromLedger, toLedger int64, cursorAbsent bool, err error) {
-	// One statement under the caller's lock:
-	//   locked   - the boundary and floor; cannot change while locked and the snapshot postdates
-	//   the
-	//              lock, so boundary and summed events are one consistent view. MATERIALIZED
-	//              evaluates once.
-	//   bound.mx - the contract's max ledger; folding strictly below defers the mid-write tip.
-	//   settled  - the durable cursor; NULL if the projector never committed a cycle (delta treats
-	//   as 0).
-	//   delta    - the settled tail sum over (from_ledger, settled bound), floored.
-	//   unbounded - the checkpoint's close time when its bound is missing (a row folded before 0219), so an
-	//              eventless fold still fills it in.
-	//   UPDATE   - add the delta, move last_ledger to the max ledger folded, record its close time.
+	// One statement under the caller's lock. `locked` is the boundary and floor: it cannot change while locked and the snapshot
+	// postdates the lock, so boundary and summed events are one consistent view (MATERIALIZED evaluates once). `bound.mx` is the
+	// contract's max ledger; folding strictly below defers the mid-write tip. `settled` is the durable cursor, NULL if the
+	// projector never committed a cycle (delta treats it as 0). `delta` is the settled tail sum over (from_ledger, settled
+	// bound), floored. `unbounded` is the checkpoint's close time when its bound is missing (a row folded before 0219), so an
+	// eventless fold still fills it in. UPDATE adds the delta, moves last_ledger to the max ledger folded and records its close
+	// time.
 	const q = `
         WITH locked AS MATERIALIZED (
             SELECT last_ledger                          AS from_ledger,

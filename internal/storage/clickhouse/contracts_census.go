@@ -11,10 +11,9 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// Census rollup (deploy/clickhouse/contracts_census_daily.sql): plain
-// per-day per-contract event counts, recomputed a whole day at a time and
-// swapped in with REPLACE PARTITION so re-runs are idempotent (no MV, no
-// incremental addition, so no Summing double-count).
+// Census rollup (deploy/clickhouse/contracts_census_daily.sql): plain per-day per-contract event counts, recomputed a whole
+// day at a time and swapped in with REPLACE PARTITION so re-runs are idempotent (no MV, no incremental addition, so no
+// Summing double-count).
 
 // censusExecConn is the subset of driver.Conn RunCensusDay needs, so the
 // staging/swap critical section can be unit-tested without ClickHouse.
@@ -151,9 +150,8 @@ func runCensusDayConn(ctx context.Context, conn censusExecConn, day time.Time, s
 	next := dayUTC.Add(24 * time.Hour)
 	start := time.Now()
 
-	// Compute into a fresh PRIVATE staging table, then swap the day in.
-	// REPLACE PARTITION is atomic (per-table alter lock), so concurrent runs of the same day
-	// each swap in a COMPLETE partition. DDL takes no bound parameters on the native protocol;
+	// Compute into a fresh PRIVATE staging table, then swap the day in. REPLACE PARTITION is atomic (per-table alter lock), so
+	// concurrent runs of the same day each swap in a COMPLETE partition. DDL takes no bound parameters on the native protocol;
 	// every literal below is a Format-produced date or a crypto-random staging name.
 	partition := dayUTC.Format("2006-01-02")
 	staging, err := privateStagingTable()

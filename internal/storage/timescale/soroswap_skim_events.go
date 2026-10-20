@@ -43,10 +43,8 @@ func (s *Store) InsertSoroswapSkimEvent(ctx context.Context, e SoroswapSkimEvent
 		return fmt.Errorf("timescale: InsertSoroswapSkimEvent: Amount1 is empty (contract=%s ledger=%d)", e.ContractID, e.Ledger)
 	}
 
-	// Generation-guarded corrective upsert (migration 0110): a
-	// corrected re-derive of the skimmed amounts (amount_0 / amount_1) lands
-	// in place when its generation is >= the stored one; a live gen-0 replay
-	// can never revert it.
+	// Generation-guarded corrective upsert (migration 0110): a corrected re-derive of the skimmed amounts (amount_0 / amount_1)
+	// lands in place when its generation is >= the stored one; a live gen-0 replay never reverts it.
 	const q = `
         INSERT INTO soroswap_skim_events (
             ledger_close_time, ledger, tx_hash, op_index, event_index,
