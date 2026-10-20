@@ -20,6 +20,15 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.32] - 2026-10-20
+
+No migrations. No `pkg/*` break. No config change.
+
+### Fixed
+
+- **api:** the `/v1/price` last-trade fallback tries a 7-day window before its 400-day bound, so a fresh connection plans ~2 trades chunks per arm instead of ~58 (3 ms vs 205-240 ms on r1) and a burst of new connections no longer stalls price reads (#3674).
+- **deploy:** the binary swap hard-links the backup and renames the new build into place, so the live path is never absent and a timer firing mid-deploy no longer fails with 203/EXEC (#3673).
+
 ## [v0.116.31] - 2026-10-20
 
 No migrations. No `pkg/*` break. No config change.
@@ -83,15 +92,3 @@ No Postgres migrations. No `pkg/*` break. ClickHouse: apply Step 1 of `deploy/cl
 - **explorer:** the account page shows the sponsorships in force (#3630); the prerender sends a build API key, never the browser (#3631).
 - **dev:** `api-latency-sweep --pages` times explorer detail pages (#3632).
 - **docs:** the off-site drill's measured multi-hour restore and a 6h run ceiling (#3638).
-
-## [v0.116.27] - 2026-10-19
-
-No migrations. No `pkg/*` break.
-
-### Fixed
-
-- **ops:** `verify-usd-volume` passes a day with no trades only when `ledger_ingest_log` proves it tradeless (every ledger logged, zero classic trade effects, no trade rows), instead of failing every quiet day on a low-traffic network (#3628).
-
-### Added
-
-- **ops:** `tag-tx-index -chunks` fills `tx_index` on historical trades chunk by chunk (decompress, tag, recompress) under the trades `-chunks` lock, with a per-chunk dry run (#3626).
