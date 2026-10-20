@@ -1053,3 +1053,40 @@ func TestLatestTradesForPair_ArmsOrderByTheOuterKey(t *testing.T) {
 		t.Fatalf("full-key ORDER BY appears %d times, want 3 (both arms and the outer sort)", n)
 	}
 }
+
+// TestLatestTradesForPair_RemembersAnEmptyOlderRange: a /v1/price/batch burst repeats the same never-traded pairs, and each repeat
+// of the wide pass plans every trades chunk in range; the recent pass still runs, so a live trade is never hidden.
+func TestLatestTradesForPair_RemembersAnEmptyOlderRange(t *testing.T) {
+	pair := dirAQUAUSDCPair(t)
+	since := time.Now().Add(-400 * 24 * time.Hour)
+	empty := scriptedResult{cols: latestTradeCols}
+	store, conn := newScriptedStore(t, empty, empty, empty)
+	for range 2 {
+		if got, err := store.LatestTradesForPair(context.Background(), pair, 1, since); err != nil || len(got) != 0 {
+			t.Fatalf("LatestTradesForPair = %d rows, %v; want 0, nil", len(got), err)
+		}
+	}
+	if len(conn.stmts) != 3 {
+		t.Fatalf("issued %d statements, want recent + wide, then recent alone", len(conn.stmts))
+	}
+}
+
+// TestLatestTradesForPair_ReReadsANonEmptyOlderRange: only a range read as empty is remembered.
+func TestLatestTradesForPair_ReReadsANonEmptyOlderRange(t *testing.T) {
+	pair := dirAQUAUSDCPair(t)
+	since := time.Now().Add(-400 * 24 * time.Hour)
+	empty := scriptedResult{cols: latestTradeCols}
+	older := scriptedResult{cols: latestTradeCols, rows: [][]driver.Value{
+		reverseStoredRow("sdex", 58_000_001, dirTxA, time.Now().Add(-30*24*time.Hour)),
+	}}
+	store, conn := newScriptedStore(t, empty, older, empty, older)
+	for range 2 {
+		got, err := store.LatestTradesForPair(context.Background(), pair, 1, since)
+		if err != nil || len(got) != 1 {
+			t.Fatalf("LatestTradesForPair = %d rows, %v; want the 30-day-old trade", len(got), err)
+		}
+	}
+	if len(conn.stmts) != 4 {
+		t.Fatalf("issued %d statements, want recent + wide on both calls", len(conn.stmts))
+	}
+}
