@@ -1610,3 +1610,22 @@ jobs:
             fi
             echo "- Outcome: \`${JOB_STATUS}\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  explorer:
+    name: Dispatch the mainnet explorer deploy
+    # The prerender crawls the live r1 API, so it starts only once r1 serves the new release; dispatched at release time it
+    # crawled through the API restarts and their cache warm-up and burned the latency SLO. The explorer-production
+    # approval gate on explorer-deploy.yml still holds the publish.
+    needs: deploy
+    if: ${{ inputs.region == 'r1' && !contains(inputs.version, '-') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch explorer-deploy from main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        # main, not the tag: resolve-pages-branch.sh publishes production only from main.
+        run: gh workflow run explorer-deploy.yml --repo "$REPO" --ref main -f network=mainnet -f environment=production

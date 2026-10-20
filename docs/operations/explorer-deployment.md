@@ -161,8 +161,9 @@ A new Function must set its own security headers or route through `shellFallback
 For hotfixes or when the CF git integration is paused. `workflow_dispatch` only;
 `environment=production` only from `main` (`scripts/ci/resolve-pages-branch.sh`),
 any other ref publishes a preview. `status-page.yml` does the same for status.
-Each stable release tag also dispatches the mainnet production deploy from
-`release.yml`; it waits on the `explorer-production` approval like a manual one.
+Each successful r1 deploy of a stable release also dispatches the mainnet production
+deploy from `deploy.yml`, after r1 serves the release, since the prerender crawls the
+live API. It waits on the `explorer-production` approval like a manual one.
 
 ```sh
 gh workflow run explorer-deploy.yml --ref main -f environment=production
