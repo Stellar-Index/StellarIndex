@@ -93,7 +93,7 @@ jobs:
             fi
           done <<< "$binaries"
           echo "Discovered:"
-          echo "$binaries" | sed 's/^/  /'
+          echo "  ${binaries//$'\n'/$'\n'  }"
           {
             echo 'binaries<<EOF'
             echo "$binaries"

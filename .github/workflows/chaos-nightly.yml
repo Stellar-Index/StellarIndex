@@ -72,7 +72,7 @@ jobs:
         run: |
           go build -o bin/stellarindex-api ./cmd/stellarindex-api
           ./bin/stellarindex-api -config configs/example.toml &
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             curl -sf http://localhost:3000/v1/healthz && exit 0
             sleep 1
           done

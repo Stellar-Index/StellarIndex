@@ -146,7 +146,7 @@ jobs:
         if: inputs.stage == 'create-and-deploy'
         run: |
           set -euo pipefail
-          for i in $(seq 1 12); do
+          for _ in $(seq 1 12); do
             CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://$NEW_PROJECT.pages.dev/")
             [ "$CODE" = "200" ] && { echo "new project serving (HTTP 200)"; exit 0; }
             sleep 10

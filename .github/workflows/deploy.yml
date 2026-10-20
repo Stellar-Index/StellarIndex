@@ -644,6 +644,7 @@ jobs:
           #     ##[error]Process completed with exit code 2
           # It is a race, so it passes until it does not.
           # Materialise the list first; `head` on a FILE closes nothing.
+          # shellcheck disable=SC2012 # migration names are fixed-format, never odd bytes
           ls dist/migrations/ | sort > dist/.migration-list
           echo "staged $(wc -l < dist/.migration-list) migration files"
           head -n 10 dist/.migration-list
@@ -740,7 +741,7 @@ jobs:
           # `<REGION>_SSH_KNOWN_HOSTS` from a trusted out-of-band
           # capture before the first deploy of each region.
           if [ -z "${KNOWN_HOSTS_B64:-}" ]; then
-            echo "::error::${REGION:-R1}_SSH_KNOWN_HOSTS is unset. Capture once via `ssh root@<host> 'ssh-keyscan -t ed25519 <host>' | base64 -w0` and set it as a repo secret before retrying. Live ssh-keyscan fallback was removed in wave 126 (F-1297) — it was a MITM hole." >&2
+            echo "::error::${REGION:-R1}_SSH_KNOWN_HOSTS is unset. Capture once via \`ssh root@<host> 'ssh-keyscan -t ed25519 <host>' | base64 -w0\` and set it as a repo secret before retrying. Live ssh-keyscan fallback was removed in wave 126 (F-1297) — it was a MITM hole." >&2
             exit 1
           fi
           echo "$KNOWN_HOSTS_B64" | base64 -d > ~/.ssh/known_hosts
@@ -1070,6 +1071,7 @@ jobs:
           # unchecked `awk 1` under an unconditional `exit 0` would let an
           # unreadable file contribute nothing and silently RAISE the
           # baseline — the same false green, by a different door.
+          # shellcheck disable=SC2016 # expands on the remote host, not here
           remote='d=/var/lib/stellarindex/deployed-versions;
                   [ -d "$d" ] || exit 0;
                   for f in "$d"/stellarindex-*; do
@@ -1080,6 +1082,7 @@ jobs:
                   done;
                   exit 0'
           set +e
+          # shellcheck disable=SC2086 # proxy is empty or several ssh args; it must split
           raw=$(ssh -i ~/.ssh/id_deploy -o BatchMode=yes -o ConnectTimeout=15 \
                   ${proxy} "${DEPLOY_USER}@${DEPLOY_HOST}" "$remote")
           rc=$?

@@ -202,6 +202,7 @@ jobs:
         run: |
           test -d out || { echo "out/ missing — Next.js build produced no static export"; exit 1; }
           test -f out/index.html || { echo "out/index.html missing — sitemap or routing broken"; exit 1; }
+          # shellcheck disable=SC2012 # a log listing, not parsed
           ls -la out/ | head
 
       # The three post-build guards — the Next 16 `__next.*` segment-cache

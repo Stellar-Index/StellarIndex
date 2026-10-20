@@ -111,6 +111,7 @@ jobs:
         run: |
           test -d out || { echo "out/ missing"; exit 1; }
           test -f out/status/index.html || { echo "out/status/index.html missing"; exit 1; }
+          # shellcheck disable=SC2012 # a log listing, not parsed
           ls -la out/ | head
 
       - name: Resolve deploy branch
