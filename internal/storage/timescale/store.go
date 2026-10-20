@@ -75,6 +75,10 @@ type Store struct {
 	// sep41Watermark is the SEP-41 counterpart, a separate cache because the producers advance
 	// independently and one stalling must not hide behind the other's progress.
 	sep41Watermark classicWatermarkCache
+
+	// olderTradesEmpty holds pairs with no trades in [since, recent) of [Store.LatestTradesForPair]; key → when that was read.
+	olderTradesMu    sync.Mutex
+	olderTradesEmpty map[string]time.Time
 }
 
 // SetUSDVolumeQuoteSpec installs the quote-asset spec InsertTrade uses for on-chain trades.usd_volume; nil reverts to off-chain-only; call once at startup, not concurrently with InsertTrade.

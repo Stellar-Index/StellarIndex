@@ -1287,13 +1287,22 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
 	// Floored to a UTC midnight so the statement text, and its cached plan, holds for a day. `limit` rows inside the window are the
 	// newest `limit` overall; fewer means older rows may rank, so the caller's bound decides.
 	recent := time.Now().Add(-recentTradesWindow).UTC().Truncate(24 * time.Hour)
-	if since.Before(recent) {
-		out, err := s.latestTradesForPair(ctx, p, limit, recent)
-		if err != nil || len(out) >= limit {
-			return out, err
-		}
+	if !since.Before(recent) {
+		return s.latestTradesForPair(ctx, p, limit, since)
 	}
-	return s.latestTradesForPair(ctx, p, limit, since)
+	out, err := s.latestTradesForPair(ctx, p, limit, recent)
+	if err != nil || len(out) >= limit {
+		return out, err
+	}
+	key := fmt.Sprintf("%s|%s|%d|%d", p.Base, p.Quote, since.Unix(), recent.Unix())
+	if s.olderTradesKnownEmpty(key) {
+		return out, nil
+	}
+	all, err := s.latestTradesForPair(ctx, p, limit, since)
+	if err == nil && !slices.ContainsFunc(all, func(t canonical.Trade) bool { return t.Timestamp.Before(recent) }) {
+		s.markOlderTradesEmpty(key)
+	}
+	return all, err
 }
 
 func (s *Store) latestTradesForPair(ctx context.Context, p canonical.Pair, limit int, since time.Time) ([]canonical.Trade, error) {
