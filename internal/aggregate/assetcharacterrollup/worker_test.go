@@ -11,8 +11,14 @@ import (
 )
 
 type fakeRefresher struct {
-	err   error
-	calls int
+	err        error
+	calls      int
+	computedAt time.Time
+	atErr      error
+}
+
+func (f *fakeRefresher) AssetVolumeCharacterComputedAt(context.Context) (time.Time, error) {
+	return f.computedAt, f.atErr
 }
 
 func (f *fakeRefresher) RefreshAssetVolumeCharacter(context.Context) error {
@@ -76,6 +82,27 @@ func TestRun_StartupDelayHoldsFirstRoll(t *testing.T) {
 	}
 	if f.calls != 0 {
 		t.Errorf("refresher called %d times during the startup delay, want 0", f.calls)
+	}
+}
+
+// A restart must not re-roll a rollup that is not yet due: the first roll waits out the rest of the interval, never less than the
+// startup delay, and an unreadable or empty rollup falls back to the startup delay.
+func TestFirstDelay_WaitsForTheStoredRollToComeDue(t *testing.T) {
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	for name, tc := range map[string]struct {
+		f    *fakeRefresher
+		want time.Duration
+	}{
+		"fresh roll waits out the interval": {&fakeRefresher{computedAt: now.Add(-time.Hour)}, 5 * time.Hour},
+		"nearly due keeps the floor":        {&fakeRefresher{computedAt: now.Add(-6*time.Hour + time.Minute)}, 30 * time.Minute},
+		"overdue keeps the floor":           {&fakeRefresher{computedAt: now.Add(-7 * time.Hour)}, 30 * time.Minute},
+		"empty rollup keeps the floor":      {&fakeRefresher{}, 30 * time.Minute},
+		"read error keeps the floor":        {&fakeRefresher{computedAt: now, atErr: errors.New("boom")}, 30 * time.Minute},
+	} {
+		w := New(tc.f, Options{Interval: 6 * time.Hour, StartupDelay: 30 * time.Minute})
+		if got := w.firstDelay(context.Background(), now); got != tc.want {
+			t.Errorf("%s: firstDelay = %s, want %s", name, got, tc.want)
+		}
 	}
 }
 

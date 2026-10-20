@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
@@ -183,6 +184,15 @@ func (s *Store) RefreshAssetVolumeCharacter(ctx context.Context) error {
 		return fmt.Errorf("timescale: RefreshAssetVolumeCharacter commit: %w", err)
 	}
 	return nil
+}
+
+// AssetVolumeCharacterComputedAt returns the newest roll time, zero when the rollup is empty.
+func (s *Store) AssetVolumeCharacterComputedAt(ctx context.Context) (time.Time, error) {
+	var at sql.NullTime
+	if err := s.db.QueryRowContext(ctx, `SELECT max(computed_at) FROM asset_volume_character`).Scan(&at); err != nil {
+		return time.Time{}, fmt.Errorf("timescale: AssetVolumeCharacterComputedAt: %w", err)
+	}
+	return at.Time, nil
 }
 
 // rollAssetVolumeCharacter returns one row per canonical asset with priced volume. Like [Store.refreshCAGGBounded], it restores the pinned

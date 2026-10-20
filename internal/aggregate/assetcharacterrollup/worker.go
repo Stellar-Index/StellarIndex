@@ -22,6 +22,8 @@ const DefaultStartupDelay = 30 * time.Minute
 // Refresher recomputes and atomically replaces the asset_volume_character rollup.
 type Refresher interface {
 	RefreshAssetVolumeCharacter(ctx context.Context) error
+	// AssetVolumeCharacterComputedAt is the last roll's time; zero when the rollup is empty.
+	AssetVolumeCharacterComputedAt(ctx context.Context) (time.Time, error)
 }
 
 // Options tunes a Worker.
@@ -67,8 +69,8 @@ func (w *Worker) Run(ctx context.Context) error {
 	if w == nil {
 		return errors.New("assetcharacterrollup: nil Worker")
 	}
-	if w.delay > 0 {
-		t := time.NewTimer(w.delay)
+	if delay := w.firstDelay(ctx, time.Now()); delay > 0 {
+		t := time.NewTimer(delay)
 		defer t.Stop()
 		select {
 		case <-ctx.Done():
@@ -77,6 +79,20 @@ func (w *Worker) Run(ctx context.Context) error {
 		}
 	}
 	return rollupworker.Run(ctx, w.interval, w.refresh)
+}
+
+// firstDelay holds the first roll until the stored rollup is due, so a restart (every deploy) does not re-run the ~17 min roll early.
+// The startup delay stays the floor; an unreadable computed_at falls back to it.
+func (w *Worker) firstDelay(ctx context.Context, now time.Time) time.Duration {
+	at, err := w.refresher.AssetVolumeCharacterComputedAt(ctx)
+	if err != nil {
+		w.logger.Warn("asset-character rollup: read last roll time", "err", err)
+		return w.delay
+	}
+	if due := at.Add(w.interval).Sub(now); due > w.delay {
+		return due
+	}
+	return w.delay
 }
 
 // refresh runs one roll-and-upsert pass, recording the paired outcome
