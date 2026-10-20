@@ -23,10 +23,8 @@ func reapCursors(args []string) error {
 	if err != nil {
 		return err
 	}
-	// Announce the mode before any slow or mutating work, the same way
-	// every other write-gated subcommand does. The gate decision is
-	// carried in opts, so this is the plain-bool form of
-	// [opsutil.WriteGate.Banner].
+	// Announce the mode before any slow or mutating work, the same way every other write-gated subcommand does. The gate
+	// decision is carried in opts, so this is the plain-bool form of [opsutil.WriteGate.Banner].
 	opsutil.PrintWriteBanner(opts.write)
 
 	cfg, err := config.LoadWithEnv(opts.cfgPath)

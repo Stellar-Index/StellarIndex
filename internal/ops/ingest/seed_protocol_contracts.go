@@ -145,10 +145,8 @@ func seedCuratedSet(ctx context.Context, store gatedSeedStore, write bool, sourc
 		}
 		return len(meta.CuratedSet), nil
 	}
-	// One writer for curated rows (pipeline.SeedCuratedContracts), so
-	// this and the indexer's warm-time reconcile cannot drift into
-	// different provenance or first_ledger. have=nil: the CLI's
-	// documented contract is a full idempotent re-seed.
+	// One writer for curated rows (pipeline.SeedCuratedContracts), so this and the indexer's warm-time reconcile cannot drift
+	// into different provenance or first_ledger. have=nil: the CLI's documented contract is a full idempotent re-seed.
 	return pipeline.SeedCuratedContracts(ctx, store, source, meta, nil)
 }
 

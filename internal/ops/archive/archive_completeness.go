@@ -179,10 +179,9 @@ func archiveCompletenessVerify(args []string) error {
 		fmt.Fprintf(os.Stderr,
 			"archive-completeness verify: %d residual missing checkpoint(s); see report\n",
 			report.CrossAnchor.MissingCount)
-		// opsutil.ErrExitSilently: realMain's deferred flush MUST run before
-		// the process exits, so we return rather than os.Exit. The
-		// message above already explains the failure; the wrapper
-		// suppresses its generic "archive-completeness: <err>" prefix.
+		// opsutil.ErrExitSilently: realMain's deferred flush MUST run before the process exits, so we return rather than
+		// os.Exit. The message above already explains the failure; the wrapper suppresses its generic "archive-completeness:
+		// <err>" prefix.
 		return opsutil.ErrExitSilently
 	}
 	fmt.Fprintf(os.Stderr,
@@ -329,10 +328,8 @@ func archiveCompletenessFix(args []string) error {
 		fmt.Fprintf(os.Stderr, "  FAILED seq=%d reason=%s\n", f.Seq, f.Reason)
 	}
 
-	// Phase 3 — re-check: after the fill, scan again so the report
-	// reflects the state after the fill. The Filler is idempotent (next run
-	// will just skip files now present), so the re-check is the
-	// authoritative measure of what's still missing.
+	// Phase 3 — re-check: after the fill, scan again so the report reflects the state after the fill. The Filler is idempotent
+	// (next run will just skip files now present), so the re-check is the authoritative measure of what's still missing.
 	postRes, err := checker.Check(from32, to32)
 	if err != nil {
 		return fmt.Errorf("post-fix cross-anchor check: %w", err)

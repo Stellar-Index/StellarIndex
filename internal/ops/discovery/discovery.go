@@ -80,10 +80,8 @@ func discoveryList(args []string) error {
 		return fmt.Errorf("ListDiscovered: %w", err)
 	}
 
-	// Apply -since in Go rather than at SQL level so the storage
-	// layer's ListDiscovered stays simple. discovered_assets is
-	// small (per-contract, not per-event), so client-side filtering
-	// has no measurable cost.
+	// Apply -since in Go rather than at SQL level so the storage layer's ListDiscovered stays simple. discovered_assets is
+	// small (per-contract, not per-event), so client-side filtering has no measurable cost.
 	if *since > 0 {
 		cutoff := time.Now().UTC().Add(-*since)
 		filtered := make([]timescale.DiscoveredAsset, 0, len(rows))

@@ -253,10 +253,9 @@ func parseListingCatalogue(r io.Reader) ([]timescale.ListingEntry, listingCounts
 		entries []timescale.ListingEntry
 	)
 	dec := json.NewDecoder(r)
-	// UseNumber for the same reason listingMarket.CurrentPrice is a
-	// json.Number: nothing on this path may turn an upstream number into
-	// a float64. The catalogue carries none today, and the decoder is
-	// configured so that it still would not if one appeared.
+	// UseNumber for the same reason listingMarket.CurrentPrice is a json.Number: nothing on this path may turn an upstream
+	// number into a float64. The catalogue carries none today, and the decoder is configured so that it still would not if one
+	// appeared.
 	dec.UseNumber()
 
 	tok, err := dec.Token()

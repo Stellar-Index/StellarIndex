@@ -80,10 +80,9 @@ func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // line
 
 	// ─── ClickHouse side: one pass, every event-based decoder per event ──
 	fmt.Fprintf(os.Stderr, "ch-reproject: re-deriving [%d,%d] from ClickHouse %s\n", lo, hi, *chAddr)
-	// Bucket per SOURCE then kind: the 3 reflector variants all emit the same
-	// EventKind ("reflector.update") but route to oracle_updates under distinct
-	// source filters, so a kind-only bucket would merge them. Per-source keying
-	// keeps each variant's output (and its contractIDs prefilter) separate.
+	// Bucket per SOURCE then kind: the 3 reflector variants all emit the same EventKind ("reflector.update") but route to
+	// oracle_updates under distinct source filters, so a kind-only bucket would merge them. Per-source keying keeps each
+	// variant's output (and its contractIDs prefilter) separate.
 	chBySrc := make(map[string]map[string]map[uint32]int)
 	chStart := time.Now()
 	accumulate := func(ev events.Event) error {

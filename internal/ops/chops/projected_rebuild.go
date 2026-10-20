@@ -55,10 +55,8 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	if *cfgPath == "" || *sourceName == "" || *from == 0 {
 		return fmt.Errorf("-config, -source, and -from are required")
 	}
-	// BackfillSafe gate, before the config load and long before the
-	// decoder is built: a refusal must not need a reachable database, and
-	// it applies to the default dry-run too — see
-	// checkProjectedRebuildBackfillSafe.
+	// BackfillSafe gate, before the config load and long before the decoder is built: a refusal must not need a reachable
+	// database, and it applies to the default dry-run too — see checkProjectedRebuildBackfillSafe.
 	if gerr := checkProjectedRebuildBackfillSafe(*sourceName, uint32(*from)); gerr != nil { //nolint:gosec // ledger sequences fit uint32 in real usage.
 		return gerr
 	}
@@ -92,10 +90,9 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	// pipeline.HandleEvent and win over live gen-0 values. Harmless in the dry run.
 	store.SetDeriveGeneration(time.Now().Unix())
 
-	// Every trade written wins the ON CONFLICT guard and assigns `usd_volume = EXCLUDED.usd_volume`
-	// unconditionally. Without the USD-volume resolvers tradeUSDVolume returns nil for DEX and
-	// FX-priced CEX trades, so -write would overwrite correct values with NULL. Install them as
-	// ch_rebuild.go does; even an aquarius rewards catch-up decodes trades in range.
+	// Every trade written wins the ON CONFLICT guard and assigns `usd_volume = EXCLUDED.usd_volume` unconditionally. Without
+	// the USD-volume resolvers tradeUSDVolume returns nil for DEX and FX-priced CEX trades, so -write would overwrite correct
+	// values with NULL. Install them as ch_rebuild.go does; even an aquarius rewards catch-up decodes trades in range.
 	if err := timescale.InstallUSDVolumeResolution(
 		store,
 		cfg.Trades.USDPeggedClassicAssets,
@@ -107,9 +104,8 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 
 	logger := opsutil.MkBackfillLogger()
 
-	// Build the same decoder the live projector uses. withHook=false keeps the gate warm
-	// read-only, like the other lake tools: the bulk path must not mutate the contractid
-	// registry mid-run. A new factory child found in history converges on the next
+	// Build the same decoder the live projector uses. withHook=false keeps the gate warm read-only, like the other lake tools:
+	// the bulk path must not mutate the contractid registry mid-run. A new factory child found in history converges on the next
 	// `seed-protocol-contracts` run or indexer restart.
 	gatedOpts, err := pipeline.GatedRegistryOptions(ctx, store, logger, ctx, false)
 	if err != nil {
@@ -161,10 +157,9 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	fmt.Fprintf(os.Stderr, "projected-rebuild: source=%s range=[%d,%d] window=%d workers=%d mode=%s ch=%s\n",
 		*sourceName, fromLedger, toLedger, windowSize, numWorkers, writeModeLabel(write), *chAddr)
 
-	// A -write run rewrites served rows below the live watermark, so, as with projector-replay,
-	// the prior clean claim must be invalidated. Record the dirty window before writing and
-	// refuse without it: a crash after the record leaves one spurious window, while the reverse
-	// order leaves rewritten rows certified by stale evidence. Dry run records nothing.
+	// A -write run rewrites served rows below the live watermark, so, as with projector-replay, the prior clean claim must be
+	// invalidated. Record the dirty window before writing and refuse without it: a crash after the record leaves one spurious
+	// window, while the reverse order leaves rewritten rows certified by stale evidence. Dry run records nothing.
 	if write {
 		if derr := store.RecordProjectionDirtyWindow(ctx, timescale.ProjectionDirtyWindow{
 			Source: *sourceName,
@@ -360,10 +355,8 @@ type ProjectedRebuildOptions struct {
 	// Every worker's HandleEvent draws a connection from the one Store pool per row insert
 	// (timescale.PoolMaxOpenConns = 25), so projectedRebuildMaxWorkers is capped to fit it.
 	Workers int
-	// Write persists decoded events via pipeline.HandleEvent AND records
-	// a per-window checkpoint on success. false = dry-run: counts and
-	// reports only — no writes, no checkpoints (mirrors
-	// classic-movements-backfill's -write gate).
+	// Write persists decoded events via pipeline.HandleEvent AND records a per-window checkpoint on success. false = dry-run:
+	// counts and reports only — no writes, no checkpoints (mirrors classic-movements-backfill's -write gate).
 	Write bool
 	// Resume skips windows already checkpointed by a prior -write run for
 	// this source. Consulted even in dry-run mode, so a dry-run preview
@@ -480,10 +473,8 @@ type ProjectedRebuildResult struct {
 	// entries aged out without their partner event (e.g. a Soroswap SwapEvent
 	// whose SyncEvent never arrived) — trades lost before reaching the store.
 	EvictedOrphans int64
-	// KindCounts is emitted-event count by consumer.Event.EventKind() —
-	// the "per-topic emitted counts" report so an operator can eyeball
-	// against the census tables. ADR-0033 compute-completeness remains
-	// the authoritative verdict.
+	// KindCounts is emitted-event count by consumer.Event.EventKind() — the "per-topic emitted counts" report so an operator
+	// can eyeball against the census tables. ADR-0033 compute-completeness remains the authoritative verdict.
 	KindCounts map[string]int64
 	Elapsed    time.Duration
 }
@@ -504,10 +495,9 @@ func RunProjectedRebuild(ctx context.Context, opts ProjectedRebuildOptions) (Pro
 		logger.Warn("projected-rebuild: workers lowered to stay inside the ClickHouse ops_batch query budget",
 			"requested_workers", opts.Workers, "workers", numWorkers, "max_concurrent_queries", projectedRebuildQueryBudget)
 	}
-	// A correlation-buffer decoder (the EvictedOrphans interface) emits a group only when a later
-	// event completes or sweeps it. Workers claiming windows out of ledger order starve those
-	// triggers and silently drop groups (phoenix 7-field era: workers=4 lost ~650 of 5,154
-	// trades, workers=1 none), so clamp rather than trust the operator.
+	// A correlation-buffer decoder (the EvictedOrphans interface) emits a group only when a later event completes or sweeps it.
+	// Workers claiming windows out of ledger order starve those triggers and silently drop groups (phoenix 7-field era:
+	// workers=4 lost ~650 of 5,154 trades, workers=1 none), so clamp rather than trust the operator.
 	if numWorkers > 1 {
 		if _, stateful := opts.Source.Decoder.(interface{ EvictedOrphans() int }); stateful {
 			logger.Warn("projected-rebuild: workers clamped to 1 — this source's decoder correlates events across the stream; out-of-order windows silently drop sweep-emitted groups",

@@ -77,10 +77,8 @@ func trimGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,funlen 
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	if !opts.verifyUpstream {
-		// --no-verify-upstream disables the ONLY check that the
-		// cold tier actually holds what we're about to delete from hot.
-		// Loud + unmissable, naming the exact span, since this is a
-		// destructive run with the primary safety primitive off.
+		// --no-verify-upstream disables the ONLY check that the cold tier actually holds what we're about to delete from hot.
+		// Loud + unmissable, naming the exact span, since this is a destructive run with the primary safety primitive off.
 		logger.Warn("!!! trim-galexie-archive: --no-verify-upstream is set — deleting hot files below the cutoff with NO check that the cold tier holds them !!!",
 			"older_than_ledger", opts.olderThan,
 			"commit", opts.commit,
@@ -146,10 +144,8 @@ func trimGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,funlen 
 		"dry_run", opts.dryRun,
 	)
 
-	// Enumerate hot files: discover the partition directories, then
-	// page through the ones that can hold sub-cutoff ledgers. See the
-	// "partition-scoped enumeration" block below for why a single
-	// ListFilePaths call can never work here.
+	// Enumerate hot files: discover the partition directories, then page through the ones that can hold sub-cutoff ledgers. See
+	// the "partition-scoped enumeration" block below for why a single ListFilePaths call can never work here.
 	parts, rootObjects, err := listHotPartitions(rootCtx, s3Client, hotBucket, hotKeyPrefix)
 	if err != nil {
 		return err

@@ -285,10 +285,8 @@ func (h *JobHeartbeat) render() string {
 	writeGauge("stellarindex_ops_job_progress_bytes_total",
 		"Bytes of storage a stellarindex-ops job has OBSERVED move in the current run during a phase that completes no units of work (a Timescale chunk decompress). Flat TOGETHER with progress_total while running = hung.",
 		fmt.Sprintf("%d", moved))
-	// last_finish/last_exit are only meaningful once a run has ended.
-	// Emitting them mid-run (as 0, or as the PREVIOUS run's values) would
-	// be worse than absent: a 0 finish timestamp reads as 1970 to every
-	// `time() - x` expression.
+	// last_finish/last_exit are only meaningful once a run has ended. Emitting them mid-run (as 0, or as the PREVIOUS run's
+	// values) would be worse than absent: a 0 finish timestamp reads as 1970 to every `time() - x` expression.
 	if finished {
 		writeGauge("stellarindex_ops_job_last_finish_unix",
 			"Unix time the most recent stellarindex-ops job run exited.",

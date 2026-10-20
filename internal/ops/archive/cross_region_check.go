@@ -97,10 +97,8 @@ func crossRegionCheck(args []string) error { //nolint:funlen,gocognit,gocyclo //
 		return err
 	}
 	if len(regions) < 2 {
-		// Before R2/R3 bring-up only R1 is deployed; treating that as
-		// an error trains operators to ignore the command. Return nil so the
-		// pre-launch smoke flow can call this unconditionally and
-		// get a meaningful no-op until multi-region lands.
+		// Before R2/R3 bring-up only R1 is deployed; treating that as an error trains operators to ignore the command. Return
+		// nil so the pre-launch smoke flow can call this unconditionally and get a meaningful no-op until multi-region lands.
 		_, _ = fmt.Fprintf(os.Stdout,
 			"cross-region-check: only %d region configured; consistency check needs ≥ 2 regions.\n"+
 				"This is the pre-launch posture (R2/R3 not yet deployed). Returning success.\n"+
@@ -320,10 +318,8 @@ func analyseRegionResults(
 		return false, false
 	}
 
-	// Compare the stable contract fields. Equality is exact
-	// byte-string/value match per ADR-0015 once the trade corpus
-	// agrees; intentionally ephemeral fields such as `as_of` are not
-	// part of the comparison set.
+	// Compare the stable contract fields. Equality is exact byte-string/value match per ADR-0015 once the trade corpus agrees;
+	// intentionally ephemeral fields such as `as_of` are not part of the comparison set.
 	keys := comparableKeys(metric)
 	disagreements := map[string]map[string]string{} // key → region → value
 	for _, k := range keys {
@@ -343,10 +339,8 @@ func analyseRegionResults(
 	}
 
 	if len(disagreements) == 0 {
-		// Agreement among all reachable regions — emit OK regardless of
-		// whether we hit fetch errors on other regions. The fetch error
-		// was already reported above as ERR; OK reflects the success of
-		// the comparison itself.
+		// Agreement among all reachable regions — emit OK regardless of whether we hit fetch errors on other regions. The fetch
+		// error was already reported above as ERR; OK reflects the success of the comparison itself.
 		_, _ = fmt.Fprintf(w, "OK   %s/%s/[%s, %s) — %d regions agree\n",
 			metric, pair, from.Format(time.RFC3339), to.Format(time.RFC3339), len(good))
 		return false, true

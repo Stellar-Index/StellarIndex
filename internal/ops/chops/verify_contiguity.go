@@ -84,10 +84,9 @@ func verifyContiguity(args []string) error {
 	}
 
 	total := ledgerGaps + ecDeficiency
-	// A check narrowed out via -check must not report as "0" — that reads
-	// identically to "ran, found zero". checkFieldValue prints
-	// SKIPPED for the check(s) not requested, and checks_run= makes a
-	// pasted report self-describing about its own coverage.
+	// A check narrowed out via -check must not report as "0" — that reads identically to "ran, found zero". checkFieldValue
+	// prints SKIPPED for the check(s) not requested, and checks_run= makes a pasted report self-describing about its own
+	// coverage.
 	fmt.Printf("\nverify-contiguity: summary check1_missing_ledgers=%s check2_deficiency=%s check2_backfill_pending=%s checks_run=%s\n",
 		checkFieldValue(runLedgers, ledgerGaps), checkFieldValue(runEntryChanges, ecDeficiency), checkFieldValue(runEntryChanges, ecPending),
 		contiguityChecksRunLabel(runLedgers, runEntryChanges))

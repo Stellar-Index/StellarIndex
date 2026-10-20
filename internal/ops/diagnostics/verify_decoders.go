@@ -106,10 +106,8 @@ func verifyDecoders(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 		return fmt.Errorf("no decoders registered — check oracle contract addresses in config")
 	}
 
-	// Optional Soroswap factory seed. Without it, pairs created
-	// before the -from ledger are invisible to the decoder (see Q6
-	// in internal/sources/soroswap/README.md on swaps whose pair has
-	// no token mapping).
+	// Optional Soroswap factory seed. Without it, pairs created before the -from ledger are invisible to the decoder (see Q6 in
+	// internal/sources/soroswap/README.md on swaps whose pair has no token mapping).
 	if cfg.Oracle.Soroswap.FactoryContract != "" {
 		seedEndpoint := cfg.Oracle.Soroswap.SeedRPCEndpoint
 		if seedEndpoint == "" && len(cfg.Stellar.RPCEndpoints) > 0 {
@@ -153,10 +151,8 @@ func verifyDecoders(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	// Signal channel: total events processed (not emitted outputs —
-	// the dispatcher's internal unmatched hit counter tracks "events
-	// the decoders saw but ignored"; here we're interested in what
-	// each decoder OUTPUTTED, which is the verify claim).
+	// Signal channel: total events processed (not emitted outputs — the dispatcher's internal unmatched hit counter tracks
+	// "events the decoders saw but ignored"; here we're interested in what each decoder OUTPUTTED, which is the verify claim).
 	err = ledgerstream.Stream(ctx, lsCfg, uint32(*from), uint32(*to),
 		func(lcm sdkxdr.LedgerCloseMeta) error {
 			totalLedgers++
@@ -217,10 +213,8 @@ func verifyDecoders(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 			"no longer matches.\n", silent, len(registered))
 	}
 
-	// Dispatcher-internal stats surface here. They distinguish
-	// "matched but Decode errored" (decodeErrors) from "no decoder
-	// claimed the event" (unmatchedHits) — essential for localising
-	// a silent-source finding to either the match or decode side.
+	// Dispatcher-internal stats surface here. They distinguish "matched but Decode errored" (decodeErrors) from "no decoder
+	// claimed the event" (unmatchedHits) — essential for localising a silent-source finding to either the match or decode side.
 	dispStats := disp.Stats()
 	if len(dispStats.DecodeErrors) > 0 || dispStats.UnmatchedHits > 0 {
 		fmt.Fprintf(os.Stderr, "\ndispatcher stats — unmatched events: %d\n", dispStats.UnmatchedHits)

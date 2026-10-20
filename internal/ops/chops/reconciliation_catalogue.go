@@ -88,16 +88,14 @@ type reconSource struct {
 	census       bool   // sdex: expected = decoder re-derive over the lake's SDEX ops
 	genesis      uint32 // first-possible-data ledger; mirrors DefaultGapDetectorTargets (WASM-audit sourced)
 
-	// servedWindowReason, when non-empty, floors the projection reconcile at each target's served
-	// MIN(ledger) instead of genesis, because the served tier deliberately holds only a window.
-	// Empty means genesis-to-tip, so an unprojected prefix fails the axis.
-	// TestCatalogue_ServedWindowExemptionsReviewed pins the allow-list.
+	// servedWindowReason, when non-empty, floors the projection reconcile at each target's served MIN(ledger) instead of
+	// genesis, because the served tier deliberately holds only a window. Empty means genesis-to-tip, so an unprojected prefix
+	// fails the axis. TestCatalogue_ServedWindowExemptionsReviewed pins the allow-list.
 	servedWindowReason string
 
-	// Factory-anchored gating (ADR-0035): dec gates Matches() on a registry of factory-deployed
-	// children. A re-derive from genesis self-seeds in-stream, but a sub-range does not, so the
-	// caller pre-walks creation events via preseedFactoryChildren. creationSym is the creation
-	// event's topic_0_sym; a protocol can have several factories.
+	// Factory-anchored gating (ADR-0035): dec gates Matches() on a registry of factory-deployed children. A re-derive from
+	// genesis self-seeds in-stream, but a sub-range does not, so the caller pre-walks creation events via
+	// preseedFactoryChildren. creationSym is the creation event's topic_0_sym; a protocol can have several factories.
 	factories   []string
 	creationSym string
 
@@ -117,10 +115,9 @@ type reconSource struct {
 	// needsOpArgs, so other sources skip the batched key lookups.
 	needsStateWriteKeys bool
 
-	// aggregate, when non-nil, compares window totals at ledgers <= its boundary and strict per
-	// ledger above it. Per-ledger is the default because totals let a real drop net against a
-	// phantom. Only a source whose served ledger keying differs from the event ledger over a
-	// fixed historical span may opt out.
+	// aggregate, when non-nil, compares window totals at ledgers <= its boundary and strict per ledger above it. Per-ledger is
+	// the default because totals let a real drop net against a phantom. Only a source whose served ledger keying differs from
+	// the event ledger over a fixed historical span may opt out.
 	aggregate *aggregateWaiver
 
 	// waived names the served rows the projection reconcile deliberately does NOT count, with why,
@@ -307,10 +304,9 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			{"comet_liquidity", "", []string{"comet.liquidity"}},
 		}},
 		{
-			// Factory-anchored; factories/creationSym admit pools created after the in-code seed.
-			// newGatedDec, not a static contractIDs list, scopes the re-derive: a static list would
-			// drop later pools from ch-rebuild and ch-reproject. A V3 swap body is self-contained,
-			// so the served row keys 1:1.
+			// Factory-anchored; factories/creationSym admit pools created after the in-code seed. newGatedDec, not a static
+			// contractIDs list, scopes the re-derive: a static list would drop later pools from ch-rebuild and ch-reproject. A
+			// V3 swap body is self-contained, so the served row keys 1:1.
 			name:        "sushiswap_v3",
 			genesis:     sushiswap_v3.FactoryGenesisLedger,
 			dec:         sushiswap_v3.NewDecoder(),
