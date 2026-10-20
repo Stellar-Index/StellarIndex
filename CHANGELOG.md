@@ -63,18 +63,3 @@ No migrations. No `pkg/*` break. No config change. After the deploy, watch `go_s
 ### Added
 
 - **api:** the serving pool exports `database/sql` stats as `go_sql_*{db_name="serving"}` (#3699).
-
-## [v0.116.33] - 2026-10-20
-
-No migrations. No `pkg/*` break. No config change. Operator step after the deploy: run the `deploy/clickhouse/contract_event_shapes.sql` runbook (DDL, per-partition backfill, verify, coverage marker); until its marker row exists, recognition keeps the raw scan.
-
-### Fixed
-
-- **api:** `/v1/price` remembers for a minute that a pair has no trades older than the 7-day window, so a burst of native-quoted `/v1/price/batch` misses stops re-planning the 400-day trades pass on every call (165 ms planning per arm on r1) (#3684).
-- **api:** `/v1/assets` ranks a narrow set before the value joins (#3676).
-- **aggregate:** the asset-character roll waits until the stored roll is due (#3677).
-- **timescale:** per-venue pools aggregate on stored columns before the alias fold (#3678); source stats fold orientation over stored-column groups (#3681).
-- **priceless:** the popular-priceless sweep takes one trades pass (#3679).
-- **aquarius:** latest reserves narrow `DISTINCT ON` to each pool's last ledger (#3680).
-- **healthchecks:** binary heartbeats ping every 40 s so jitter stays inside the 60 s period (#3682).
-- **clickhouse:** recognition reads covered partitions from the MV-fed `stellar.contract_event_shapes` rollup instead of a raw scan of `contract_events` (#3683).
