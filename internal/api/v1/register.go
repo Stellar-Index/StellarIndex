@@ -190,16 +190,14 @@ func (s *Server) mintRegisterKey(ctx context.Context, acct platform.Account) (st
 		MonthlyQuota:    tier.MaxMonthlyQuota(),
 		Permissions:     platform.KeyPermissions{All: true},
 	}
-	// Mirror the credential into the Redis validator store FIRST, before the durable Postgres row.
-	// r1 runs the Redis validator, so the mirror IS the working credential and the Postgres
-	// api_keys row is only the management record (listing, tier clamp, revocation); a Postgres-only
-	// key 401s on first use.
+	// Mirror the credential into the Redis validator store FIRST, before the Postgres row: r1 runs
+	// the Redis validator, so the mirror IS the working credential (a Postgres-only key 401s) and
+	// the api_keys row is only the management record.
 	//
-	// Mirror-first matters for orphan reaping: a mirror failure leaves no api_keys row, only the
-	// account row that handleRegister suspends for the signupreaper, rather than a permanent pair
-	// no reaper matches. The mirror uses the same plaintext so one secret validates on either
-	// backend, and its idle TTL re-warms on use (CreateWithSecret) so it cannot grow the
-	// allkeys-lru keyspace without bound.
+	// Mirror-first also matters for orphan reaping: a mirror failure leaves only the account row
+	// that handleRegister suspends for the signupreaper. The mirror uses the same plaintext so one
+	// secret validates on either backend, and its idle TTL (CreateWithSecret) bounds allkeys-lru
+	// growth.
 	if s.APIKeyBudgets.RedisMirror != nil {
 		mirrored, err := auth.APIKeyRecordFromPlatform(rec, auth.AccountIdentifier(acct.Slug))
 		if err != nil {
@@ -218,13 +216,12 @@ func (s *Server) mintRegisterKey(ctx context.Context, acct platform.Account) (st
 	out, err := s.APIKeyBudgets.Platform.Create(ctx, rec, tier.MaxActiveKeys())
 	if err != nil {
 		// The credential is live in the validator store but its management row failed to commit.
-		// Roll the mirror back so we never emit an unlistable, unrevokable key. Best-effort: the
-		// account is suspended and reaped and the mirror has an idle TTL, so a failed rollback
-		// self-heals.
+		// Roll the mirror back so we never emit an unlistable, unrevokable key; best-effort, since
+		// the account is reaped and the mirror has an idle TTL.
 		//
-		// Detached from ctx: a canceled or expired request context is the common trigger (the
-		// Create above just failed on it), so rolling back on the same dead context would also
-		// fail and leave a live credential for the mirror's full idle TTL.
+		// Detached from ctx: a canceled request context is the common trigger, and rolling back on
+		// the same dead context would fail and leave a live credential for the mirror's full idle
+		// TTL.
 		if s.APIKeyBudgets.RedisMirror != nil {
 			rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			if rbErr := s.APIKeyBudgets.RedisMirror.RevokeKeyByID(rbCtx, auth.AccountIdentifier(acct.Slug), rec.ID); rbErr != nil && !errors.Is(rbErr, auth.ErrKeyNotFound) {

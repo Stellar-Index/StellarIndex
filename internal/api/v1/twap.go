@@ -51,24 +51,20 @@ func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Scam-issuer gate. /v1/vwap and /v1/twap must withhold a flagged issuer's
-	// aggregated price as /v1/price, /v1/price/tip, /v1/price/batch, the SEP-40
-	// oracle and the asset headline do. Neither the reader-seam gate nor any
-	// middleware covers these two endpoints.
+	// Scam-issuer gate: /v1/vwap and /v1/twap must withhold a flagged issuer's aggregated price
+	// like /v1/price, /v1/price/tip, /v1/price/batch, the SEP-40 oracle and the asset headline do;
+	// neither the reader-seam gate nor middleware covers these two.
 	//
-	// Ask about BOTH legs (scamWithheld, pricingguard's pair fold). Keyed on base
-	// alone, `?base=native&quote=<FLAGGED>` would serve the exact reciprocal of the
-	// price withheld for the other orientation: both name one market.
+	// Ask about BOTH legs (scamWithheld): keyed on base alone, `?base=native&quote=<FLAGGED>` would
+	// serve the exact reciprocal of the price withheld for the other orientation.
 	//
-	// SCAM ONLY, not the substance gate: the substance gate would newly 404 every
-	// THIN pair here, a breaking change and arguably wrong, since VWAPResult's doc
-	// and ADR-0015 position /v1/vwap as the "narrow the window and compute it
-	// yourself" surface opposite /v1/price. That is an owner decision.
+	// SCAM ONLY, not the substance gate: that would newly 404 every THIN pair, a breaking change,
+	// and ADR-0015 positions /v1/vwap as the "compute it yourself" surface opposite /v1/price.
+	// Owner call.
 	//
-	// The gate lives in the HANDLER, not in tradesInRangeWithStablecoinFallback:
-	// that helper also feeds the single-bar /v1/ohlc, and scam.go, substance.go,
-	// the config docs and the withheld problem's guidance text all promise /v1/ohlc
-	// stays visible.
+	// The gate lives in the HANDLER, not tradesInRangeWithStablecoinFallback, which also feeds the
+	// single-bar /v1/ohlc that scam.go, substance.go and the withheld problem's text promise stays
+	// visible.
 	if s.writeIfScamWithheld(w, r, base, quote, "twap") {
 		return
 	}

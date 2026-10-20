@@ -7,15 +7,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// Boot-seeding the /v1/assets listing cache.
+// Boot-seeding the /v1/assets listing cache: the cold aggregate takes ~10s, so the prewarm cannot
+// beat the first requests. Seed entries from the previous process's last-good page-set (Redis);
+// fetchRows then serves stale at once with one detached refresh, labelled `flags.stale`.
 //
-// The prewarm cannot beat the first /v1/assets requests (the cold aggregate takes ~10s), so boot
-// seeds entries from the previous process's last-good page-set (persisted to Redis, see
-// cmd/stellarindex-api/assets_listing_snapshot.go). [CachedAssetsReader.fetchRows] then takes
-// branch (A'): serve stale at once, one detached refresh behind it, labelled `flags.stale`.
-//
-// The seeded entry's `at` is the snapshot's REAL observation time, never `time.Now()`, so age
-// resets only on a real upstream refresh; [Server.listAssetsExtAt] hands it to the handler.
+// The seeded entry's `at` is the snapshot's REAL observation time, never time.Now(), so age resets
+// only on a real upstream refresh.
 
 // listAssetsCacheKey derives the [CachedAssetsReader.entries] key for ListAssetsExt. It MUST stay byte-identical to the key in
 // [CachedAssetsReader.ListAssetsExt], else a seed lands in a phantom slot (TestListAssetsCacheKeyMatchesListAssetsExt).

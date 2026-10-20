@@ -335,20 +335,15 @@ func buildPoolReservesRow(st clickhouse.SoroswapPairState, displays map[string]c
 	return row
 }
 
-// ─── Depth math — exact integer/rational arithmetic (ADR-0003) ────
+// Depth math: exact big.Int arithmetic (ADR-0003), floored to base units.
 //
-// Constant-product AMM with the fee on the input side (Uniswap-v2 / Soroswap): for reserves
-// (x, y), input Δx and fee f = feeBps/10⁴, the output is
+// Constant-product AMM, fee f = feeBps/10⁴ on the input side. For reserves (x, y) and input Δx:
 //
-//	Δy = y·(1−f)·Δx / (x + (1−f)·Δx)
+// 	Δy = y·(1−f)·Δx / (x + (1−f)·Δx)
+// 	Δx = x·(s−f)·10⁴ / ((10⁴−f)·(10⁴−s))  [max input at slippage ≤ s, bps-scaled]
 //
-// so the average execution price relative to mid carries slippage
-// s = 1 − x·(1−f)/(x + (1−f)·Δx). The largest Δx with slippage ≤ s is
-//
-//	Δx = x·(s−f)·10⁴ / ((10⁴−f)·(10⁴−s))    [bps-scaled]
-//
-// Both use exact big.Int arithmetic, floored to base units. The wire's `model` label states the
-// assumptions: x·y=k with the whole fee on input, and no other trade between state and execution.
+// The wire's `model` label states the assumptions: x·y=k, whole fee on input, no other trade
+// between state and execution.
 
 // maxInputWithinSlippage returns the largest input (base units, floored) whose average price stays within slipBps of mid; zero when
 // slipBps <= feeBps.

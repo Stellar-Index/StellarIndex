@@ -45,10 +45,10 @@ type Flags struct {
 	// `min_sources_for_warning` responding references). When false the check is blind: a `false`
 	// warning is not "prices agree" and a `true` one is the last verdict carried forward.
 	//
-	// Set only on surfaces that consult the verdict, each looking up the exact (base, quote)
-	// spelling served, never another alias's market (lookupDivergenceFlag). Elsewhere false means
-	// "not consulted". The tip stream's lookup has a short budget ([tipStreamDivergenceBudget]); a
-	// slow store degrades the flag, never the cadence.
+	// Set only where the verdict is consulted, for the exact (base, quote) spelling served, never
+	// another alias's market (lookupDivergenceFlag). Elsewhere false means "not consulted". The tip
+	// stream's lookup has a short budget ([tipStreamDivergenceBudget]); a slow store degrades the
+	// flag, never the cadence.
 	DivergenceChecked bool `json:"divergence_checked"`
 	// OutsideCoverage marks an empty answer whose range ends at or before `coverage_from`, which
 	// otherwise looks identical to a quiet market. False when the floor is unknown.

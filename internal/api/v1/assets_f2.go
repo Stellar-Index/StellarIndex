@@ -342,26 +342,21 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 		// DecimalsUnresolved: the lake read failed and no projection row vouches for the scale, so
 		// detail.Decimals is a guess.
 		//
-		// Decimals lockstep refusal (applyTokenDecimals): the price was normalised through the
-		// nonstandard_decimals_assets projection but detail.Decimals is the lake's reading and they
-		// disagree, so usdMarketValue would be wrong by 10^|difference| with both inputs plausible.
-		// price_usd and supply still serve. Placed before the liquidity guards because this is not a
-		// liquidity verdict.
+		// Decimals lockstep refusal (applyTokenDecimals): the price was normalised via the
+		// nonstandard_decimals_assets projection but detail.Decimals disagrees, so usdMarketValue
+		// would be off by 10^|difference|. price_usd and supply still serve. Not a liquidity
+		// verdict, hence before the liquidity guards.
 		return
 	}
 	usdPrice := *detail.PriceUSD
 	_ = ctx
-	// Valuation-integrity guard: when the price came from a single venue AND trailing-24h USD
-	// volume is below the operator floor, suppress BOTH market_cap_usd and fdv_usd and flag it, so
-	// one dust trade cannot present an obscure asset as worth billions. price_usd still serves.
-	// VolumeUSD24h is set by populateVolume24h before this join.
+	// Valuation-integrity guard: single-venue price AND trailing-24h USD volume below the operator
+	// floor suppresses market_cap_usd and fdv_usd (flagged), so one dust trade cannot make an
+	// obscure asset look worth billions. price_usd still serves.
 	//
-	// Native carve-out for list/detail parity: the listing SQL forces native XLM's source_count to
-	// NULL, so XLM is NEVER dust-suppressed there; mirror that so /v1/assets/native agrees.
-	//
-	// For non-native assets detail and listing count venues via DIFFERENT fallbacks (USDC proxy vs
-	// XLM triangulation), so an asset can suppress on one and not the other. Detail is
-	// deliberately the STRICTER and must not be weakened.
+	// Native is never dust-suppressed: the listing SQL forces its source_count to NULL; mirror
+	// that. For other assets detail and listing count venues via different fallbacks, so they can
+	// disagree; detail is deliberately the STRICTER and must not be weakened.
 	if refused, lowLiquidity := s.marketCapRefused(asset, priceSourceCount, detail.VolumeUSD24h); refused {
 		detail.MarketCapLowLiquidity = lowLiquidity
 		return

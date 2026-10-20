@@ -19,19 +19,17 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// GET /v1/rwa/history — the tokenized-real-world-asset set valued over
-// time, on the reference basis.
+// GET /v1/rwa/history: the tokenized-real-world-asset set valued over time, on the reference basis.
 //
-// It is the reference valuation of /v1/rwa/assets over time, not its market cap: most of the set
-// is held to maturity and never trades. Per-asset market-cap history is
+// It is the reference valuation of /v1/rwa/assets over time, not its market cap (most of the set is
+// held to maturity and never trades); per-asset market-cap history is
 // /v1/chart?price_type=market_cap.
 //
 // A member's daily value is circulating supply x the day's closing oracle value. Supply is
-// cumulated from the lake's append-only mint/burn/clawback log (`stellar.supply_flows`, keyed on
-// the SAC address), not `supply_1d`, which rolls up only `watched_classic_assets` and holds no RWA
-// issuer. Price comes from `oracle_prices_1d` (`rwa:<CODE>` / `fiat:USD`) and is never carried: a
-// silent oracle day drops that member and shows in `assets_valued`. A day with no valued member
-// has no point, because a zero cannot say whether it means worthless or unseen.
+// cumulated from `stellar.supply_flows` (keyed on the SAC address), not `supply_1d`, which holds no
+// RWA issuer. Price comes from `oracle_prices_1d` and is never carried: a silent oracle day drops
+// that member (see `assets_valued`). A day with no valued member has no point, since a zero cannot
+// say worthless from unseen.
 //
 // Membership is today's SEP-1 attestations and curated directory, applied to the whole window
 // (see `membership_as_of` and `basis`).

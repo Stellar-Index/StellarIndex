@@ -16,16 +16,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// The classic supply map ([Server.cachedClassicSupply]) sums trustline balances, but a classic
-// asset's supply sits in four places: trustlines, claimable balances, liquidity-pool reserves and
-// SAC balances held by contracts. `stellar.ledger_entries_current` fills `asset` for trustlines
-// only, and a pool row holds two assets while a SAC balance entry names its contract, so widening
-// the state query cannot work. The lake reads `stellar.supply_flows` instead (i128): Σmint −
-// Σburn − Σclawback over the asset's SAC, as GET /v1/assets/{id}/supply does.
+// A classic asset's supply sits in trustlines, claimable balances, liquidity-pool reserves and SAC
+// balances held by contracts; the trustline-only map ([Server.cachedClassicSupply]) misses the rest
+// and `stellar.ledger_entries_current` cannot be widened to fill them. The lake's
+// `stellar.supply_flows` (i128) gives Σmint − Σburn − Σclawback over the SAC instead.
 //
-// The trustline sum is a provable lower bound on issued supply. A flows total below it means
-// incompletely seeded flows, so [higherClassicSupply] keeps the trustline figure and the lake can
-// only ever raise the served number.
+// The trustline sum is a provable lower bound on issued supply, so [higherClassicSupply] keeps it
+// when flows come in lower (incompletely seeded): the lake can only raise the served number.
 
 const (
 	// classicLakeSupplyTTL bounds how long one asset's lake-flows reading is reused. Supply moves

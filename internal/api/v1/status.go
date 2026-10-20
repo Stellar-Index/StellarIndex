@@ -39,14 +39,10 @@ type StatusResponse struct {
 	// counts are the zero value of a FAILED query and MUST NOT be read as an all-clear.
 	Incidents StatusIncidents `json:"incidents"`
 
-	// IncidentsStatus is the trust signal for the Incidents block. A failed Alertmanager query
-	// zeroes the counts, byte-identical to "no alerts firing", so without it a banner would publish
-	// "0 active alerts" while alerting is blind.
-	//   - "ok":       query succeeded, no alerts firing.
-	//   - "degraded": query succeeded, one or more alerts firing.
-	//   - "unknown":  the query FAILED or no metrics backend is wired; the UI must render
-	//                 "unknown", not "0 active".
-	// Always present (no omitempty) so an omitted field is never mistaken for a zero count.
+	// IncidentsStatus is the trust signal for the Incidents block: a failed Alertmanager query
+	// zeroes the counts, identical to "no alerts firing". "ok" = no alerts; "degraded" = alerts
+	// firing; "unknown" = query FAILED or no backend wired, and the UI must render "unknown", not
+	// "0 active". Always present (no omitempty) so an omitted field is never read as a zero count.
 	IncidentsStatus string `json:"incidents_status"`
 
 	// FreshnessStatus is the trust signal for the Freshness block, for the same reason: a failed

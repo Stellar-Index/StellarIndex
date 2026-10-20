@@ -32,17 +32,12 @@ type GlobalAssetView struct {
 	CoinGeckoID    string `json:"coingecko_id,omitempty"`
 	CMCID          string `json:"coinmarketcap_id,omitempty"`
 
-	// ─── Headline price (ComputeGlobalPrice's three-tier fallback chain) ───
+	// Headline price (ComputeGlobalPrice's three-tier fallback). All four fields are null together
+	// when nothing produced a price.
 	//
-	// All four fields are null/empty together when nothing produced a price (typically a
-	// Stellar-only token with no CEX or reference-aggregator coverage; see /v1/assets/{asset_id}).
-	//
-	// This is a GLOBAL (CEX/aggregator) price, not the on-chain closed-bucket VWAP /v1/price
-	// serves, so the two are expected to differ. PriceAsOf is the tier's own observation time and
-	// the field to read for freshness; for fiat it is a point from a DAILY series, so it can
-	// legitimately be days old over a weekend. It is null only under price_authority
-	// onchain_listing, whose listing row carries no observation time. The package doc's
-	// "Current-price surfaces and their windows" section maps every price surface.
+	// This is a GLOBAL (CEX/aggregator) price, not the on-chain VWAP /v1/price serves, so they
+	// differ. PriceAsOf is the tier's own observation time; for fiat it comes from a DAILY series
+	// and can be days old over a weekend. It is null only under price_authority onchain_listing.
 	PriceUSD       *string                  `json:"price_usd,omitempty"`
 	PriceAuthority aggregate.PriceAuthority `json:"price_authority,omitempty"`
 	PriceSources   []string                 `json:"price_sources,omitempty"`

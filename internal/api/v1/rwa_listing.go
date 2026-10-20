@@ -9,9 +9,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// C2's second arm on the read path: the independent listing directory and the candidate
-// population it opens up. The rule, and why a listing map corroborates rather than attests,
-// lives in internal/rwa/contract.go.
+// C2's second arm on the read path: the independent listing directory and the candidate population
+// it opens up. The rule lives in internal/rwa/contract.go.
 //
 // Enumerating is not admitting: a curated binding must still be named by the listing directory to
 // pass C2, else it is refused under contract_curated_binding_without_independent_listing. The two
@@ -135,9 +134,8 @@ type rwaListingCensus struct {
 	// available is false when the arm was not walked at all.
 	available bool
 
-	// dir is the storage layer's census of the whole listing directory. A zero corroborated count
-	// is ambiguous; these counts separate never synced, sync stopped, and a healthy directory this
-	// set predates:
+	// dir is the census of the whole listing directory. A zero corroborated count is ambiguous;
+	// these counts separate the cases:
 	//
 	//   - Entries 0                 -> never synced
 	//   - Entries > 0, Stale = all  -> the sync stopped

@@ -16,17 +16,15 @@ import (
 
 // Oracle NAV reference and premium/discount for /v1/rwa/assets.
 //
-// Five rules gate the premium, each blocking a number that would mean something other than what it
-// says. R-0: bound to this exact (code, issuer), since a code-only join would price an unrelated
-// token against a real security ([rwa.InstrumentFeed], ADR-0040). R-A: quoted in dollars (a bare
-// `_FUNDAMENTAL` feed is a ratio in the reserve asset). R-B: prices one token (`rwa:XAU` is not
-// bindable). R-C: published by an [external.ClassOracle]; aggregators share the hypertable and a
-// premium against one compares the market with itself. R-D: the market price is observed, not a
+// Five rules gate the premium, each blocking a number that would mean other than it says. R-0:
+// bound to this exact (code, issuer), since a code-only join would price an unrelated token against
+// a real security ([rwa.InstrumentFeed], ADR-0040). R-A: quoted in dollars. R-B: prices one token
+// (`rwa:XAU` is not bindable). R-C: published by an [external.ClassOracle]; a premium against an
+// aggregator compares the market with itself. R-D: the market price is observed, not a
 // `price_basis` peg or derivation. A refused row names its rule and never carries a zero.
 //
-// `reference_valuation` is the reference times the float. It skips R-D, so it is published under
-// its own name and total, never inside `market_cap_usd`. `premium.status` and
-// `reference_valuation.status` share one constant so one refusal reads as one event.
+// `reference_valuation` skips R-D, so it is published under its own name and total, never inside
+// `market_cap_usd`.
 
 // rwaReferenceTTL bounds reuse of one oracle-stream snapshot. 30s keeps the surface off a
 // per-request hypertable scan; far shorter than [rwaMembershipTTL] because prices move faster.

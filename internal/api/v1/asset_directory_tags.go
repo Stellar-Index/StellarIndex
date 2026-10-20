@@ -10,18 +10,14 @@ import (
 
 // Issuer directory-label overlay for /v1/assets + /v1/assets/{id}.
 //
-// Joins each asset's issuer G-address (a contract token's own C-address) against
-// account_directory and stamps issuer_directory_{tags,domain,name} onto AssetDetail.
-// Display-only, except for scam-class tags (malicious/unsafe/fraud/scam/hack/phishing):
+// Stamps issuer_directory_{tags,domain,name} onto AssetDetail. Display-only, except scam-class tags
+// (malicious/unsafe/fraud/scam/hack/phishing), which:
 //
-//  1. WITHHOLD every dollar figure on the row via suppressScamIssuerPricing and
-//     pricingguard.ScamGate: a scam token must not lend itself legitimacy.
-//  2. DEMOTE the asset in the /v1/assets listing (listingRankTierExpr); the row and its
-//     warning fields stay.
+//  1. WITHHOLD every dollar figure (suppressScamIssuerPricing, pricingguard.ScamGate).
+//  2. DEMOTE the asset in the listing (listingRankTierExpr); the row and its warnings stay.
 //
-// Labels are best-effort: a nil reader, unlisted issuer or failed lookup omits the fields.
-// A failed lookup still withholds pricing (issuerDirectoryUnchecked); a nil reader prices
-// normally and the SQL demotion fails open.
+// A failed lookup still withholds pricing (issuerDirectoryUnchecked); a nil reader prices normally
+// and the SQL demotion fails open.
 
 // stampIssuerDirectory copies one curated directory label onto the detail; tags are set only when non-empty so an unlabelled
 // entry never emits `[]`.
