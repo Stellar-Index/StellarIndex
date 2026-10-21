@@ -25,7 +25,20 @@
 # and in what order, is docs/operations/pgbackrest-encryption.md.
 
 [global]
+{% if pgbackrest_repo1_sftp_host | default('') != '' %}
+# repo1 on a second host over sftp, host key pinned by fingerprint.
+repo1-type=sftp
+repo1-path={{ pgbackrest_repo1_sftp_path }}
+repo1-sftp-host={{ pgbackrest_repo1_sftp_host }}
+repo1-sftp-host-port={{ pgbackrest_repo1_sftp_port }}
+repo1-sftp-host-user={{ pgbackrest_repo1_sftp_user }}
+repo1-sftp-private-key-file={{ pgbackrest_repo1_sftp_private_key_file }}
+repo1-sftp-host-key-check-type=fingerprint
+repo1-sftp-host-key-hash-type=sha256
+repo1-sftp-host-fingerprint={{ pgbackrest_repo1_sftp_host_fingerprint }}
+{% else %}
 repo1-path=/var/lib/pgbackrest
+{% endif %}
 repo1-retention-full=2
 repo1-bundle=y
 repo1-block=y
