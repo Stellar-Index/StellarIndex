@@ -20,6 +20,19 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.47] - 2026-10-21
+
+No migrations. No `pkg/*` break. No config change.
+
+### Fixed
+
+- **api:** identical in-flight `/v1/price/batch` rows are resolved once and shared across requests, so the explorer build's sharded identical batches stop queueing behind each other past the 200 ms latency SLO (#3766).
+
+### Changed
+
+- **tests:** guardscan scanner fixtures build in a temp module (#3765).
+- **docs:** config-assertion, incident and six operator docs re-verified; two dead multi-region docs deleted (#3763, #3764).
+
 ## [v0.116.46] - 2026-10-21
 
 No migrations. No `pkg/*` break. No config change.
@@ -68,11 +81,3 @@ No migrations. No `pkg/*` break. No config change. Protocol 30 readiness: run th
 
 - **scval:** a CAP-0084 muxed contract address (`W…`) encodes to its strkey; a transfer to one previously errored and its row was dropped (#3739). The explorer resolves a `W…` address to its contract (#3740).
 - **api:** the self-prewarm also issues one `/v1/price/batch` over the verified assets, so the first batch after a restart no longer reads Postgres cold and re-fires the latency burn (#3742).
-
-## [v0.116.42] - 2026-10-21
-
-No migrations. No `pkg/*` break. No config change.
-
-### Fixed
-
-- **api:** `/v1/price`'s last-trade fallback for a dormant pair (no closed 1m bucket in 14 days, no trade in 7) runs its 400-day walk on a 4-connection pool warmed at startup, instead of on whichever fresh serving connection a burst opened. After the v0.116.41 restart six such reads each spent ~1s planning ~58 chunks per arm at once and re-fired the latency burn. Served values are unchanged (#3737).
