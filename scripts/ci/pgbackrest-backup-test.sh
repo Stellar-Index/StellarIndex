@@ -171,6 +171,12 @@ run "$ONE_REPO" 3 PGBR_FAIL_ALL=1
 if [[ $RC -eq 43 ]]; then ok "single-repo failure propagates rc 43"; else bad "rc $RC (want 43)"; fi
 run "$TMP/does-not-exist.conf" 3
 if [[ "$(cat "$LOG")" == "--stanza=stellarindex --type=diff backup" ]]; then ok "unreadable conf falls back to the legacy single command"; else bad "argv: $(cat "$LOG")"; fi
+# pgbackrest_repo1_enabled=false renders repo2 alone: one backup, metrics labelled repo 2.
+REPO2_ONLY="$TMP/repo2-only.conf"
+grep -v '^repo1-' "$TWO_REPO" > "$REPO2_ONLY"
+run "$REPO2_ONLY" 3
+if [[ $RC -eq 0 && "$(cat "$LOG")" == "--stanza=stellarindex --type=diff backup" ]]; then ok "repo2-only conf runs one backup"; else bad "rc $RC argv: $(cat "$LOG")"; fi
+if grep -q 'last_rc{repo="2"} 0' "$PROM" && ! grep -q 'repo="1"' "$PROM"; then ok "repo2-only conf reports repo 2 only"; else bad "prom: $(cat "$PROM")"; fi
 
 # ─── 4. weekly full on Sunday, diff otherwise ───────────────────────
 echo "pgbackrest-backup-test: type selection"

@@ -6,6 +6,9 @@
 # that is exactly why repo2 exists).
 # repo2 = the survival copy: offsite S3-compatible object storage
 # Rendered only when pgbackrest_repo2_s3_bucket is set.
+# pgbackrest_repo{1,2}_enabled=false drops that repo's lines, so archive-push
+# stops queueing WAL for a repo that is down and the 192 GiB queue cap
+# cannot discard the healthy repo's WAL with it.
 #
 # SECRETS: the cipher passphrases and the repo2 S3 key pair are
 # vault-managed inventory vars rendered INTO this file — pgbackrest has
@@ -25,6 +28,7 @@
 # and in what order, is docs/operations/pgbackrest-encryption.md.
 
 [global]
+{% if pgbackrest_repo1_enabled | default(true) | bool %}
 {% if pgbackrest_repo1_sftp_host | default('') != '' %}
 # repo1 on a second host over sftp, host key pinned by fingerprint.
 repo1-type=sftp
@@ -58,7 +62,8 @@ repo1-cipher-pass={{ pgbackrest_repo1_cipher_pass }}
 # docs/operations/pgbackrest-encryption.md — the repo must be re-created,
 # it cannot be converted in place.
 {% endif %}
-{% if pgbackrest_repo2_s3_bucket | default('') != '' %}
+{% endif %}
+{% if pgbackrest_repo2_s3_bucket | default('') != '' and pgbackrest_repo2_enabled | default(true) | bool %}
 repo2-type=s3
 repo2-s3-endpoint={{ pgbackrest_repo2_s3_endpoint }}
 repo2-s3-bucket={{ pgbackrest_repo2_s3_bucket }}

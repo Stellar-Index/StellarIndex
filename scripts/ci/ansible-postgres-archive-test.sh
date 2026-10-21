@@ -147,6 +147,18 @@ paths = [l for l in conf.render(pgbackrest_repo1_sftp_host="ab1.example", pgback
          if l.startswith("repo1-path=")]
 check(paths == ["repo1-path=/srv/pgbackrest"], f"sftp repo1 renders exactly one repo1-path (got {paths})")
 
+# Outage switches: a disabled repo renders no lines at all; the other stays.
+both = dict(pgbackrest_repo2_s3_bucket="b", pgbackrest_repo2_s3_endpoint="e")
+for flag in (False, "False"):
+    lines = conf.render(pgbackrest_repo1_enabled=flag, **both).splitlines()
+    check(not any(l.startswith("repo1-") for l in lines) and "repo2-type=s3" in lines,
+          f"repo1_enabled={flag!r}: no repo1 lines, repo2 kept")
+    lines = conf.render(pgbackrest_repo2_enabled=flag, **both).splitlines()
+    check(not any(l.startswith("repo2-") for l in lines) and "repo1-path=/var/lib/pgbackrest" in lines,
+          f"repo2_enabled={flag!r}: no repo2 lines, repo1 kept")
+lines = conf.render(**both).splitlines()
+check("repo1-path=/var/lib/pgbackrest" in lines and "repo2-type=s3" in lines, "both repos render by default")
+
 if failed:
     print("ansible-postgres-archive-test: FAIL", file=sys.stderr)
     sys.exit(1)
