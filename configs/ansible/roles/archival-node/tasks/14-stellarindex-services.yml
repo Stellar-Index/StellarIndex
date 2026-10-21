@@ -1156,6 +1156,7 @@
     owner: root
     group: root
     mode: "0644"
+  tags: [heavy-job-wrapper]
 
 - name: Install verify-archive-tier-a / supply-snapshot units
   ansible.builtin.template:
