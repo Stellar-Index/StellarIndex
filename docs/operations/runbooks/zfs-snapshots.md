@@ -23,7 +23,7 @@ While stale, a logical fault (bad `DROP`, bad migration) costs a multi-hour pgBa
 `zfs-snapshot.timer` -> `zfs-snapshot.service` -> `/usr/local/bin/zfs-snapshot.sh rotate`, daily 01:45 UTC (+5 min jitter), config `/etc/default/zfs-snapshot`:
 
 1. Retention: destroy `auto-YYYYMMDD-HHMM` snapshots older than 3 d (`data/clickhouse`, `data/postgres`).
-2. Min-free guard (`zfs_snapshot_min_free_bytes`, default 2 TiB): below it, destroy `auto-*` snapshots oldest-first across both datasets, never a dataset's newest.
+2. Min-free guard (`zfs_snapshot_min_free_bytes`, 1.4 TiB on r1; the script's own default is 2 TiB), on usable free space (`zfs get available data`): below it, destroy `auto-*` snapshots oldest-first across both datasets, never a dataset's newest.
 3. Snapshot `zfs snapshot -r <dataset>@auto-YYYYMMDD-HHMM` if at/above the floor; else skip and set `stellarindex_zfs_snapshot_guard_skipped{dataset}=1`. Recursive, so `data/postgres/wal` is captured with its parent.
 4. Write `/var/lib/node_exporter/textfile_collector/zfs_snapshot.prom`.
 
@@ -34,7 +34,7 @@ Only `auto-*` names are ever destroyed. A `manual-*` or operator-named snapshot 
 ```sh
 systemctl status zfs-snapshot.timer zfs-snapshot.service
 journalctl -u zfs-snapshot.service -n 50 --no-pager      # "SKIPPED", "destroyed", "created"
-zpool list -o name,size,alloc,free data
+zfs get -Hp available data
 zfs list -t snapshot -o name,creation,used,refer -s creation -r data/clickhouse data/postgres
 zfs get -Hp usedbysnapshots data/clickhouse data/postgres
 cat /var/lib/node_exporter/textfile_collector/zfs_snapshot.prom
@@ -45,7 +45,7 @@ Likely causes:
 - Skip logged and `guard_skipped=1`: capacity, not the job.
 - Timer inactive or unit failed: the job.
 - No `.prom` file: the job never ran here, or the textfile dir moved (`--collector.textfile.directory`).
-- `zfs_snapshot_error.prom` present: `zpool list -Hp -o free data` failed. The job is fail-closed; fix `zpool` (`zpool status`), then `systemctl start zfs-snapshot.service`.
+- `zfs_snapshot_error.prom` present: `zfs get -Hp -o value available data` failed. The job is fail-closed; fix the pool (`zpool status`), then `systemctl start zfs-snapshot.service`.
 
 ## Fix
 

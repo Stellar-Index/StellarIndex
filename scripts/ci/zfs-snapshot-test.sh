@@ -54,8 +54,12 @@ t() { test "$@"; }
 #                     like ZFS after the next txg)
 #   $POOL/destroyed   append-only log of every destroy
 #   $POOL/created     append-only log of every snapshot create
+#   $POOL/avail-cmd   script `zfs get available data` runs (prints $POOL/free)
 export FAKE_POOL="$TMP/pool"
 mkdir -p "$FAKE_POOL" "$TMP/bin"
+# What `zfs get available data` runs; avail_mode swaps it for fault cases.
+# shellcheck disable=SC2016 # literal: the zfs stub runs it later
+echo 'cat "$FAKE_POOL/free"' > "$FAKE_POOL/avail-cmd"
 
 cat > "$TMP/bin/zfs" <<'STUB'
 #!/usr/bin/env bash
@@ -114,6 +118,12 @@ case "$cmd" in
     done
     exit 0 ;;
   get)
+    # zfs get -Hp -o value available <pool>: delegated to $P/avail-cmd so a
+    # case can make the read fail or return garbage.
+    if [[ "${*: -2:1}" == "available" ]]; then
+      [[ "${*: -1}" == "data" ]] || { echo "cannot open '${*: -1}': dataset does not exist" >&2; exit 1; }
+      exec bash "$P/avail-cmd"
+    fi
     # zfs get -Hp -o value usedbysnapshots <ds>
     ds="${*: -1}"
     # Fault injection for the metrics-tmp-leak test: make the property
@@ -127,12 +137,6 @@ case "$cmd" in
     grep "^${ds}@" "$P/snapshots" 2>/dev/null | awk -F'\t' '{s+=$3} END{print s+0}'; exit 0 ;;
   *) echo "zfs stub: unsupported: $cmd $*" >&2; exit 99 ;;
 esac
-STUB
-cat > "$TMP/bin/zpool" <<'STUB'
-#!/usr/bin/env bash
-# zpool list -Hp -o free <pool>
-[[ "${*: -1}" == "data" ]] || { echo "cannot open '${*: -1}': no such pool" >&2; exit 1; }
-cat "$FAKE_POOL/free"
 STUB
 # `logger` must not reach the real journal from a test run.
 printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/bin/logger"
@@ -164,7 +168,7 @@ else
   "$real" -r "$FAKE_DATE_EPOCH" "$fmt" 2>/dev/null || "$real" -d "@$FAKE_DATE_EPOCH" "$fmt"
 fi
 STUB
-chmod +x "$TMP/bin/zfs" "$TMP/bin/zpool" "$TMP/bin/logger" "$TMP/bin/date"
+chmod +x "$TMP/bin/zfs" "$TMP/bin/logger" "$TMP/bin/date"
 export PATH="$TMP/bin:$PATH"
 
 export TEXTFILE_DIR="$TMP/textfile"
@@ -239,7 +243,7 @@ res $? "snapshot name is auto-YYYYMMDD-HHMM" "created=[$(created_list)]"
 protected_intact
 res $? "manual-/operator/look-alike/unmanaged snapshots untouched" "destroyed=[$(destroyed_list)]"
 t "$(metric 'stellarindex_zfs_pool_free_bytes{pool="data"}')" = "$(cat "$FAKE_POOL/free")"
-res $? "pool_free_bytes gauge matches zpool" "got $(metric 'stellarindex_zfs_pool_free_bytes{pool="data"}')"
+res $? "pool_free_bytes gauge matches zfs available" "got $(metric 'stellarindex_zfs_pool_free_bytes{pool="data"}')"
 latest="$(metric 'stellarindex_zfs_snapshot_latest_unix{dataset="data/clickhouse"}')"
 t -n "$latest" -a "${latest:-0}" -ge "$NOW"
 res $? "snapshot_latest_unix{clickhouse} is the fresh snapshot" "latest=$latest now=$NOW"
@@ -353,29 +357,29 @@ protected_intact
 res $? "protected snapshots intact through the now/--keep block" "destroyed=[$(destroyed_list)]"
 
 echo "zfs-snapshot-test: unreadable pool free space is FAIL-CLOSED"
-# A zpool failure inside a command substitution must not leave free=""
+# An available-space read failure inside a command substitution must not leave free=""
 # (= 0 < floor), or the guard prunes everything down to newest-per-dataset with rc=0. On unreadable free:
 # NO destroy, NO snapshot, non-zero exit, error textfile.
-zpool_mode() { printf '#!/usr/bin/env bash\n%s\n' "$1" > "$TMP/bin/zpool"; chmod +x "$TMP/bin/zpool"; }
+avail_mode() { printf '%s\n' "$1" > "$FAKE_POOL/avail-cmd"; }
 for mode in 'exit 1' 'echo -' 'echo ""'; do
-  zpool_mode "$mode"
+  avail_mode "$mode"
   reset_pool $(( 5 * TIB ))
   # Fresh fixture with no retention candidates, so ANY destroy is the guard's.
   grep -Ev "@auto-$(stamp_days_ago 5)|@auto-$(stamp_days_ago 4)|@auto-$(stamp_days_ago 9)"$'\t' "$FAKE_POOL/snapshots" > "$FAKE_POOL/s.new"; mv "$FAKE_POOL/s.new" "$FAKE_POOL/snapshots"
   rm -f "$TEXTFILE_DIR/zfs_snapshot_error.prom"
   "$SCRIPT" rotate 2>"$TMP/log8"; rc=$?
   t "$rc" -ne 0 -a "$(n_destroyed)" -eq 0 -a "$(n_created)" -eq 0
-  res $? "rotate with zpool '$mode': non-zero exit, nothing destroyed, nothing created" "rc=$rc destroyed=[$(destroyed_list)] created=[$(created_list)]"
+  res $? "rotate with avail '$mode': non-zero exit, nothing destroyed, nothing created" "rc=$rc destroyed=[$(destroyed_list)] created=[$(created_list)]"
   grep -q 'stellarindex_zfs_snapshot_pool_free_unreadable{pool="data"} 1' "$TEXTFILE_DIR/zfs_snapshot_error.prom" 2>/dev/null
-  res $? "rotate with zpool '$mode': error textfile written"
+  res $? "rotate with avail '$mode': error textfile written"
   "$SCRIPT" now data/postgres --keep pre-x 2>>"$TMP/log8"; rc=$?
   t "$rc" -ne 0 -a "$(n_destroyed)" -eq 0 -a "$(n_created)" -eq 0
-  res $? "now --keep with zpool '$mode': refused, nothing destroyed or created" "rc=$rc destroyed=[$(destroyed_list)] created=[$(created_list)]"
+  res $? "now --keep with avail '$mode': refused, nothing destroyed or created" "rc=$rc destroyed=[$(destroyed_list)] created=[$(created_list)]"
   "$SCRIPT" now data/clickhouse 2>>"$TMP/log8"; rc=$?
   t "$rc" -ne 0 -a "$(n_destroyed)" -eq 0 -a "$(n_created)" -eq 0
-  res $? "now with zpool '$mode': refused, nothing destroyed or created" "rc=$rc"
+  res $? "now with avail '$mode': refused, nothing destroyed or created" "rc=$rc"
 done
-zpool_mode "cat \"\$FAKE_POOL/free\""
+avail_mode "cat \"\$FAKE_POOL/free\""
 reset_pool $(( 5 * TIB ))
 "$SCRIPT" rotate 2>/dev/null
 t ! -e "$TEXTFILE_DIR/zfs_snapshot_error.prom"
