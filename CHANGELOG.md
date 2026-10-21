@@ -20,6 +20,19 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.40] - 2026-10-21
+
+No migrations. No `pkg/*` break. No config change.
+
+### Fixed
+
+- **timescale:** the USD-volume pricing endpoint folds SAC legs to their classic form before its same-issuer test, matching the trade labeller (#3730).
+
+### Changed
+
+- **ci:** the config-apply gate's refusal lists the substantive surfaces it found (#3732).
+- **docs:** the API runbook says a restart that clears `ch_schema_probe_absent` is not a fix (#3731).
+
 ## [v0.116.39] - 2026-10-20
 
 No migrations. No `pkg/*` break. No config change; the alert-rule edits are comments only.
@@ -64,13 +77,3 @@ No migrations. No `pkg/*` break. No config change.
 
 - **timescale:** asset lookup by slug or id spells `COALESCE(slug, code)` out per column, so each arm reads its index instead of a parallel scan of `classic_assets` (62-75 ms to 1-14 ms on r1) (#3707).
 - **timescale:** the sparklines' XLM/USD leg is read once per 30 s and shared across assets, re-read at once when `freeze_events` changes (7d history 107 ms to about 1 ms per cold asset page on r1) (#3708).
-
-## [v0.116.35] - 2026-10-20
-
-Postgres migration 0222 (new tables and a trigger; no replay). No `pkg/*` break. No config change.
-
-### Fixed
-
-- **timescale:** the pools raw prefilter writes only the asset and source predicates for filters that are set, so a cached generic plan uses the `pools_per_source_1h` asset indexes (228 ms to 83 ms on r1) (#3703).
-- **timescale:** the SEP-41 supply fold is bounded below by its checkpoint's close time, so planning prunes `sep41_supply_events` chunks (88 ms to 0.5 ms planning); the folded set is unchanged (#3703).
-- **timescale:** SAC balance sums read the trigger-kept `sac_balance_current` table (migration 0222) instead of a full-history DISTINCT ON (3.5 s per call on r1) (#3704).
