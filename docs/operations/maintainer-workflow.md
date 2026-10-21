@@ -38,6 +38,13 @@ lake for 11 hours. Galexie carries MemoryLow=16G + elevated CPU/IO weight;
 `stellarindex_galexie_catchup_refused` pages if the core refuses catchup
 again. One heavy job at a time.
 
+Bound every operator job to a few hours (`-from`/`-to` chunks, one queue
+item each). An unbounded `ch-entry-history -write` held the lock exclusive
+for 17h with about 23h to go, and the daily archive-completeness verify,
+lake backup and verdict refresh queued behind it until
+`stellarindex_archive_completeness_stale` fired. Between chunks the queued
+scheduled jobs take the lock.
+
 **Timer units.** `restore-drill` and `restore-drill-offsite` run under the
 wrapper (`HEAVY_JOB_CLASS=scheduled`, `SuccessExitStatus=75` for a lock
 skip). The drill refuses up front unless pool free space covers the restore
