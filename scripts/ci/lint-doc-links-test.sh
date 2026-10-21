@@ -36,14 +36,16 @@ check() { # <name> <expected ok|red> [full|adr] — scoped to $FIX unless
           # "full" is passed, in which case the gate runs its default
           # whole-tree discovery with no file list, or "adr", which scopes
           # it to $ADR_FIX.
-  local name="$1" want="$2" scope="${3:-scoped}" rc
+  local name="$1" want="$2" scope="${3:-scoped}" rc t=$SECONDS
   if [ "$scope" = full ]; then
     bash "$GATE" >/dev/null 2>&1; rc=$?
+    [ $((SECONDS - t)) -le "$full_max_s" ] || full_max_s=$((SECONDS - t))
   elif [ "$scope" = adr ]; then
     bash "$GATE" "$ADR_FIX" >/dev/null 2>&1; rc=$?
   else
     bash "$GATE" "$FIX" >/dev/null 2>&1; rc=$?
   fi
+  [ "$scope" = full ] || scoped_s=$((scoped_s + SECONDS - t))
   if { [ "$want" = ok ] && [ "$rc" -eq 0 ]; } || { [ "$want" = red ] && [ "$rc" -gt 0 ]; }; then
     printf '  ok   %s\n' "$name"; PASS=$((PASS+1))
   else
@@ -52,15 +54,12 @@ check() { # <name> <expected ok|red> [full|adr] — scoped to $FIX unless
 }
 
 # Wall-clock budget: the ok/red verdict on every check below is identical
-# whether the gate scans one file or all 607 — a boolean pass/fail cannot
-# tell scoped mode from a regression back to always-full-scan, only the
-# clock can. t0 brackets the whole run; single_scan_s times the very first
-# check's full-tree scan, so the budget below scales with THIS machine's
-# speed rather than a hardcoded second count.
-t0=$SECONDS
+# whether the gate scans one file or all of them — only the clock can tell
+# scoped mode from a regression back to always-full-scan. The scoped checks
+# are timed against the slowest full scan of the same run, so load that
+# rises mid-run inflates both sides instead of failing the budget.
+full_max_s=1 scoped_s=0
 check "clean tree passes" ok full
-single_scan_s=$((SECONDS - t0))
-[ "$single_scan_s" -ge 1 ] || single_scan_s=1
 
 printf '# fixture\n\n[gone](./does-not-exist-%s.md)\n' "$$" > "$FIX"
 check "a broken relative link is caught" red
@@ -146,17 +145,14 @@ check "a Go-shaped span outside docs/adr is not identifier-checked" ok
 rm -f "$FIX"
 check "clean tree passes again" ok full
 
-# This run does 3 full-tree scans (clean/untracked/clean-again) plus 17
-# scoped, near-instant ones; a regression back to always-full-scan does 20
-# full-tree scans. 6x a single scan sits well above the 3 this run needs and
-# well below the 20 the defect this test exists to catch would cost.
-total_s=$((SECONDS - t0))
-budget_s=$((single_scan_s * 6))
-if [ "$total_s" -le "$budget_s" ]; then
-  printf '  ok   %s\n' "self-test cost stays near 3 full scans, not 20 (${total_s}s <= ${budget_s}s budget, single scan ~${single_scan_s}s)"
+# The 17 scoped checks are near-instant; a regression to always-full-scan
+# makes them cost 17 full scans. 3x the slowest full scan sits well between.
+budget_s=$((full_max_s * 3))
+if [ "$scoped_s" -le "$budget_s" ]; then
+  printf '  ok   %s\n' "scoped checks stay scoped (${scoped_s}s <= ${budget_s}s budget, slowest full scan ${full_max_s}s)"
   PASS=$((PASS+1))
 else
-  printf '  FAIL %s\n' "self-test cost stays near 3 full scans, not 20 (${total_s}s > ${budget_s}s budget, single scan ~${single_scan_s}s — a check likely regressed to an unscoped full-tree call)"
+  printf '  FAIL %s\n' "scoped checks stay scoped (${scoped_s}s > ${budget_s}s budget, slowest full scan ${full_max_s}s — a check likely regressed to an unscoped full-tree call)"
   FAIL=$((FAIL+1))
 fi
 
