@@ -106,6 +106,7 @@ func warmExplorerBuildAssets(ctx context.Context, logger *slog.Logger, get func(
 		return
 	}
 	ids, err := listingAssetIDs(resp)
+	_ = resp.Body.Close()
 	if err != nil {
 		return
 	}
@@ -126,9 +127,8 @@ func warmExplorerBuildAssets(ctx context.Context, logger *slog.Logger, get func(
 	wg.Wait()
 }
 
-// listingAssetIDs reads the asset_id of each row of a /v1/assets listing response and closes its body.
+// listingAssetIDs reads the asset_id of each row of a /v1/assets listing response.
 func listingAssetIDs(resp *http.Response) ([]string, error) {
-	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("listing status %d", resp.StatusCode)
 	}
