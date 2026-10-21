@@ -1,6 +1,6 @@
 ---
 title: Runbook — supply
-last_verified: 2026-10-06
+last_verified: 2026-10-21
 status: living
 severity: P2
 ---
@@ -98,6 +98,14 @@ run-heavy-job.sh supply-seed-sac-balances \
 3. Notes on the run: add `-contracts <id>,<id>` (ids from `[supply.sac_wrappers]`) to re-seed only some wrappers (prints a `PARTIAL` banner). The walk is silent for about an hour; progress is the `ops_job="supply-seed-sac-balances"` heartbeat. Printed `sum=<stroops>` per contract should rise by the dormant holding. Removed holders are written as zero-balance tombstones (`retracted=`), which clears phantom rows without a DELETE.
 4. Errors: `lake is not intact over the range it would reduce` names the first missing ledger and nothing was written; heal it (`ch-live-catchup` near tip, `ch-backfill` below) and re-run. `matched no Balance entry` names a `[supply.sac_wrappers]` id that found nothing; check it. `neither re-seeded nor retracted` means old holder rows are still served; escalate, do not re-run.
 5. After the next refresher tick the gauge drops to 0. If it does not, and provenance shows a genuine `full_history` seed below the floor, treat it as fresh corruption (generic path). Record the outcome per asset in [`audit-remediation-operator-actions.md`](../audit-remediation-operator-actions.md).
+
+### Fix: eviction tombstones written before the archived-balance rule
+
+Before PR #3414 the SAC balance observer wrote a removal row when a persistent balance entry was evicted. The entry is archived, not gone: the holder can restore and spend it, and `total_supply` counts it. Those rows under-report supply until they are deleted.
+
+1. Prove each removal row is an eviction. The lake writes no row for a persistent eviction, so a real removal has a `removed` change carrying a `tx_hash` at the same ledger and key. Export `contract_id, holder, ledger` for `WHERE is_removal`, build each Balance key (`ContractData{contract, Vec[Symbol("Balance"), Address(holder)], persistent}`, base64 XDR), and join on `stellar.ledger_entry_changes (key_xdr, ledger_seq)`. Expect 0 rows. Check the key builder on a sample by joining each holder's last non-removal ledger instead; expect every key found.
+2. Delete in one transaction that asserts the exact count both before and after the DELETE (`SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0`; the rows sit in compressed chunks). The `sac_balance_current` trigger drops each touched asset's seeded marker, and the next read reseeds it.
+3. After the next refresher tick, re-run `supply audit` for the largest assets; the served figure rises by the archived holdings.
 
 ### Fix: generic path
 
