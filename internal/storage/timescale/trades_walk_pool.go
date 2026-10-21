@@ -15,11 +15,11 @@ import (
 // enough that the cold catalog load stays on a handful of backends.
 const tradeWalkConns = 4
 
-// configureTradeWalkPool is [configurePool] for walkDB minus the idle reap, which would hand the walk a cold backend after a quiet spell.
+// configureTradeWalkPool keeps walkDB's backends for the process lifetime: an idle reap or [PoolConnMaxLifetime] would retire all of
+// them together and bring the cold plan back. A conn that died with Postgres fails pgx's ping on checkout and is replaced.
 func configureTradeWalkPool(db *sql.DB) {
 	db.SetMaxOpenConns(tradeWalkConns)
 	db.SetMaxIdleConns(tradeWalkConns)
-	db.SetConnMaxLifetime(PoolConnMaxLifetime)
 }
 
 func (s *Store) tradeWalkDB() *sql.DB {
