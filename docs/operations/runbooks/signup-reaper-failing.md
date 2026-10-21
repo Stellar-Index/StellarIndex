@@ -1,6 +1,6 @@
 ---
 title: Runbook — signup-reaper-failing
-last_verified: 2026-07-05
+last_verified: 2026-10-21
 status: living
 severity: P3
 ---
@@ -11,21 +11,26 @@ severity: P3
 
 P3. `stellarindex_signup_reaper_failing`; orphan accounts accumulate, not customer-facing. Typical MTTR 5-30 min.
 
-P3 (ticket). Rule: `deploy/monitoring/rules/signup-reaper.yml`. The reaper (`internal/signupreaper`, hourly) cannot delete orphan `accounts` rows left by lost signup races (F-1255), so they accumulate. A slow table leak, not customer-facing. Typical MTTR 5-30 min.
+P3 (ticket). Rule: `configs/prometheus/rules.r1/signup-reaper.yml` (r1), mirrored in `deploy/monitoring/rules/signup-reaper.yml`. The reaper (`internal/signupreaper`, hourly) cannot delete orphan `accounts` rows left by lost signup races (F-1255), so they accumulate. A slow table leak, not customer-facing. Typical MTTR 5-30 min.
 
-Symptom: `rate(stellarindex_signup_reaper_runs_total{outcome="error"}[6h]) > rate(stellarindex_signup_reaper_runs_total{outcome="ok"}[6h])` for 30+ min; API log `signup-reaper: reap failed`.
+Symptom: the summed 6h `error` rate of `stellarindex_signup_reaper_runs_total` exceeds the `ok` rate (with at least one run) for 30+ min; API log `signup-reaper: reap failed`.
 
 ## What the reaper runs
 
-An `error` outcome means this DELETE failed; the sweep is a no-op and retries next tick:
+`ReapSuspendedOrphans` (`internal/platform/postgresstore/account_store.go`) runs this in bounded batches. An `error` outcome means a batch failed; batches already committed stay deleted and the rest retries next tick:
 
 ```sql
 DELETE FROM accounts a
-WHERE a.status = 'suspended'
-  AND a.suspended_reason LIKE 'signup-race:%'
-  AND a.suspended_at < now() - <min_age>       -- default 24h safety window
-  AND NOT EXISTS (SELECT 1 FROM users u    WHERE u.account_id = a.id)
-  AND NOT EXISTS (SELECT 1 FROM api_keys k WHERE k.account_id = a.id);
+WHERE a.id IN (
+  SELECT a2.id FROM accounts a2
+   WHERE a2.status = 'suspended'
+     AND a2.suspended_reason LIKE 'signup-race:%'
+     AND a2.suspended_at IS NOT NULL
+     AND a2.suspended_at < now() - interval '24 hours'   -- DefaultMinAge
+     AND NOT EXISTS (SELECT 1 FROM users u    WHERE u.account_id = a2.id)
+     AND NOT EXISTS (SELECT 1 FROM api_keys k WHERE k.account_id = a2.id)
+   LIMIT 2000
+);
 ```
 
 ## Check
@@ -40,7 +45,7 @@ journalctl -u stellarindex-api -n 100 \
   | grep 'signup-reaper: reap failed'
 
 # 3) Backlog size.
-psql "$STELLARINDEX_POSTGRES_DSN" -c \
+sudo -u postgres psql -X -d stellarindex -c \
   "SELECT count(*) FROM accounts WHERE status='suspended' AND suspended_reason LIKE 'signup-race:%';"
 ```
 
@@ -58,7 +63,7 @@ psql "$STELLARINDEX_POSTGRES_DSN" -c \
 2. Fix table ownership if the error is `42501`.
 3. Verify the `ok` rate recovers above the `error` rate; the alert clears after 30 min sustained.
 4. To turn the reaper off, set `[signup_reaper] enabled = false` and restart the API (orphans are harmless).
-5. Optional: once Postgres is healthy, run the DELETE above by hand in `psql` to clear the backlog.
+5. Optional: once Postgres is healthy, run the DELETE above by hand in `psql`, repeating until it deletes 0 rows, to clear the backlog.
 
 False positives: a cold-start blip or one transient error at very low volume; `for: 30m` and the 6h window damp both. A large backlog with a healthy `/v1/auth/callback` also warrants checking whether the signup race fires abnormally often.
 

@@ -1,6 +1,6 @@
 ---
 title: Runbook — price-alert-eval-failing
-last_verified: 2026-07-05
+last_verified: 2026-10-21
 status: living
 severity: P3
 ---
@@ -11,9 +11,9 @@ severity: P3
 
 Price-alert evaluator failing; one alert, one section.
 
-P3 (ticket). Rule: `deploy/monitoring/rules/price-alerts.yml`. `rate(stellarindex_price_alert_eval_total{outcome="list_error"}[5m]) > rate(stellarindex_price_alert_eval_total{outcome="ok"}[5m])` for 30+ min: the aggregator's evaluator (`internal/pricealerts.Worker`, 30 s ticker, `[price_alerts] enabled = true`) cannot read the enabled `price_alerts` set, so NO customer `price.alert` webhooks fire. Public pricing is unaffected.
+P3 (ticket). Rule: `configs/prometheus/rules.r1/price-alerts.yml` (r1), mirrored in `deploy/monitoring/rules/price-alerts.yml`. `rate(stellarindex_price_alert_eval_total{outcome="list_error"}[5m]) > rate(stellarindex_price_alert_eval_total{outcome="ok"}[5m])` for 30+ min: the aggregator's evaluator (`internal/pricealerts.Worker`, 30 s ticker, `[price_alerts] enabled = true`) cannot read the enabled `price_alerts` set, so NO customer `price.alert` webhooks fire. Public pricing is unaffected.
 
-Sibling alerts: `stellarindex_price_alert_eval_no_successful_sweeps` (every alert errors: `partial_error` with zero `ok`), `stellarindex_price_alert_evaluations_failing` (over half of per-alert evaluations end `error` or `timeout`), `stellarindex_price_alert_sweep_stale` (no sweep for 15+ min). Each alert's reads share a deadline of a third of the sweep interval (10 s); a pair that times out every sweep is usually never-traded (`LatestClosedVWAP1mForPair`).
+Sibling alerts: `stellarindex_price_alert_eval_no_successful_sweeps` (every alert errors: `partial_error` with zero `ok`), `stellarindex_price_alert_evaluations_failing` (over half of per-alert evaluations end `error` or `timeout`), `stellarindex_price_alert_sweep_stale` (no sweep for 15+ min), `stellarindex_price_alert_eval_never_initialized` (no `ok` sweep in 36h). Each alert's reads share a deadline of a third of the sweep interval (10 s); a pair that times out every sweep is usually never-traded (`LatestClosedVWAP1mForPair`).
 
 ## Check
 
@@ -22,7 +22,7 @@ curl -fs http://localhost:9465/metrics \
   | grep '^stellarindex_price_alert_eval_total'
 journalctl -u stellarindex-aggregator -n 100 \
   | grep 'price-alert sweep: list enabled alerts failed'
-psql "$STELLARINDEX_POSTGRES_DSN" -c 'SELECT count(*) FROM price_alerts;'
+sudo -u postgres psql -X -d stellarindex -c 'SELECT count(*) FROM price_alerts;'
 ```
 
 ```promql
