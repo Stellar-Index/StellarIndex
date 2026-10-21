@@ -9,8 +9,8 @@ import (
 	"testing"
 )
 
-// TestSelfPrewarmPaths_CoversDetailAndExplorerListings: a pass warms each asset's detail variants and every explorer listing read,
-// and each listing path is a /v1/assets query the listing handler keys on.
+// TestSelfPrewarmPaths_CoversDetailAndExplorerListings: a pass warms each asset's detail variants, every explorer listing read and
+// a price batch over the same assets, and each listing path is a /v1/assets query the listing handler keys on.
 func TestSelfPrewarmPaths_CoversDetailAndExplorerListings(t *testing.T) {
 	got := selfPrewarmPaths([]string{"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"})
 	for _, want := range []string{
@@ -19,6 +19,7 @@ func TestSelfPrewarmPaths_CoversDetailAndExplorerListings(t *testing.T) {
 		"/v1/assets/native/entry-changes",
 		"/v1/assets/USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN?include_thin=true",
 		"/v1/assets?asset_class=all&limit=100&include=sparkline7d&include_thin=true",
+		"/v1/price/batch?asset_ids=native,USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
 	} {
 		if !slices.Contains(got, want) {
 			t.Errorf("selfPrewarmPaths missing %q", want)
