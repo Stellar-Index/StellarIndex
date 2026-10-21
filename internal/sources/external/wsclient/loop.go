@@ -284,13 +284,14 @@ func (l *Loop) pingWatchdog(connCtx context.Context, conn *websocket.Conn, fail 
 		case <-ticker.C:
 			pingCtx, cancel := context.WithTimeout(connCtx, timeout)
 			err := conn.Ping(pingCtx)
+			timedOut := errors.Is(pingCtx.Err(), context.DeadlineExceeded)
 			cancel()
 			if err == nil {
 				continue
 			}
-			if connCtx.Err() != nil {
-				// Shutdown or an unrelated disconnect won the race —
-				// not a stall.
+			if connCtx.Err() != nil || !timedOut {
+				// Shutdown, or the socket died under the ping (a venue close
+				// fails it at once): the reader reports the real reason.
 				return
 			}
 			fail(fmt.Errorf("%w (after %s): %w", ErrStreamStalled, timeout, err))
