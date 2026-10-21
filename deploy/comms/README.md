@@ -52,8 +52,8 @@ name.
 
 ## Cross-references
 
-- [`docs/operations/launch-day-checklist.md`](../../docs/operations/launch-day-checklist.md) §T-0
-  — calls `launch-announcement.md`.
+- [`docs/operations/v1-launch-plan.md`](../../docs/operations/v1-launch-plan.md#1-launch-sequence-and-gate-rationale) step 4
+  — the cutover; this announcement goes out once it completes.
 - [`docs/operations/rollback.md`](../../docs/operations/rollback.md) §Post-rollback
   — calls `rollback-update.md`.
 - [`docs/operations/sev-playbook.md`](../../docs/operations/sev-playbook.md)

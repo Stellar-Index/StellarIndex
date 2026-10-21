@@ -1,6 +1,6 @@
 ---
 title: SEP-1 stellar.toml resolution — operational reference
-last_verified: 2026-05-03
+last_verified: 2026-10-21
 status: living procedure
 ---
 
@@ -20,7 +20,7 @@ sep1-refresh.timer →
     for each due issuer, sequentially:
       metadata.Resolver.Resolve(home_domain)
         ↓ HTTP GET https://<home_domain>/.well-known/stellar.toml
-            ↓ DNS resolve → SSRF guard (private/loopback/link-local rejected)
+            ↓ DNS resolve → SSRF guard (non-public ranges rejected; port 443 only)
             ↓ TLS handshake (5s timeout)
             ↓ HTTP read (10s total budget)
             ↓ TOML parse
@@ -30,8 +30,8 @@ sep1-refresh.timer →
 v1/assets/{id} handler → issuers.sep1_payload for the asset's issuer (Postgres)
 ```
 
-Timeouts and SSRF deny-list: `internal/metadata/sep1.go`. Rotation size and
-cadence: `sep1-refresh.service.j2` / `sep1-refresh.timer`.
+Timeouts: `internal/metadata/sep1.go`; SSRF deny-list: `internal/nettools/ssrf.go`.
+Rotation size and cadence: `sep1-refresh.service.j2` / `sep1-refresh.timer`.
 
 ## Failure modes
 
@@ -42,15 +42,17 @@ are `null`, `home_domain` stays populated from the `AccountEntry`, and
 
 | Mode | Resolver error | Causes | On-call action |
 |---|---|---|---|
-| 404 | `ErrSEP1NotFound` | Issuer never published a SEP-1 file (most cases); path rotated (rare) | None for one asset. Investigate if many domains report `not_found` at once (our egress). |
-| TLS / connection | `ErrSEP1HTTP` (wraps net error) | Expired cert, DNS down, redirect loop, CN mismatch | Scoped to that asset; third-party infra, so `host-down` / `scrape-failing` runbooks don't apply. |
-| Timeout | `ErrSEP1Timeout` | Slow issuer exceeding `metadata.ResolverConfig.HTTPTimeout` (default 10s, total read budget; not tuned per host) | None; ladder advances. |
-| TOML parse | `ErrSEP1MalformedTOML` | HTML injected by CMS, BOM, trailing garbage, invalid UTF-8 | Report the issuer; we don't fix their file. |
-| SSRF | `ErrSEP1PrivateIP` | Resolved IP in deny-list | Malicious-issuer event: investigate. The `home_domain` came from chain (`SetOptionsOp`); the offender is the issuer. Report per [SECURITY.md](../../SECURITY.md). |
+| HTTP status | `ErrHTTPStatus` | Non-200, 404 above all: issuer never published a SEP-1 file (most cases); path rotated (rare) | None for one asset. Investigate if many domains report `http` at once (our egress). |
+| TLS / connection | net / x509 error (labels `dns`, `connect`, `tls`); `ErrRedirectRefused` for redirects (cross-host, https downgrade, over 5 hops) | Expired cert, DNS down, CN mismatch | Scoped to that asset; third-party infra, so `host-down` / `scrape-failing` runbooks don't apply. |
+| Timeout | context deadline / net timeout (label `timeout`) | Slow issuer exceeding `metadata.Options.Timeout` (default 10s, total budget; not tuned per host) | None; ladder advances. |
+| TOML parse | `ErrTOMLParse`; also `ErrTOMLTooLarge` (over 100 KiB), `ErrTOMLTooDeep`, `ErrInvalidDomain` | HTML injected by CMS, BOM, trailing garbage, invalid UTF-8 | Report the issuer; we don't fix their file. |
+| SSRF | `ErrSSRFBlocked` | Resolved IP in deny-list | Malicious-issuer event: investigate. The `home_domain` came from chain (`SetOptionsOp`); the offender is the issuer. Report per [SECURITY.md](../../SECURITY.md). |
 
-SSRF deny-list (checked after DNS resolution): IPv4 10/8, 172.16/12,
-192.168/16, loopback 127/8, link-local 169.254/16 (covers
-`169.254.169.254`), multicast 224/4; IPv6 fc00::/7, ::1, fe80::/10.
+SSRF deny-list (checked after DNS resolution, `nettools.IsBlockedIP`): loopback,
+unspecified, link-local (covers `169.254.169.254`), multicast, RFC 1918 and
+fc00::/7, plus CGNAT 100.64/10, 192.0.0/24, 198.18/15, 0/8, 240/4 and reserved
+or transition IPv6 ranges (full list: `extraBlockedNets`). Any port but 443 is
+also refused.
 
 ## Refresh cadence
 
@@ -66,10 +68,10 @@ to the fast cadence.
 
 ```sh
 stellarindex-ops sep1-refresh -config /etc/stellarindex.toml \
-  -issuer <G-strkey>
+  -issuer <G-strkey> -write
 ```
 
-A chain `home_domain` change needs no action: the next refresh resolves the
+Without `-write` the run is a preview and persists nothing. A chain `home_domain` change needs no action: the next refresh resolves the
 new domain.
 
 ## Operator-facing tasks
@@ -123,7 +125,7 @@ curl -sfL "https://<home_domain>/.well-known/stellar.toml"
 
 # 4. If 2 and 3 disagree, re-fetch (see §"Forcing a re-fetch"):
 stellarindex-ops sep1-refresh -config /etc/stellarindex.toml \
-  -issuer <G-strkey>
+  -issuer <G-strkey> -write
 ```
 
 ## Metrics + alerts

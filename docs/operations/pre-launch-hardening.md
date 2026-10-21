@@ -1,6 +1,6 @@
 ---
 title: Pre-launch hardening checklist
-last_verified: 2026-05-05
+last_verified: 2026-10-21
 status: operator runbook
 ---
 
@@ -104,6 +104,7 @@ HEALTHCHECKS_DEADMANSSWITCH_URL='https://hc-ping.com/<uuid-dms>'
 # single channel.
 DISCORD_WEBHOOK_URL_PAGES='https://discord.com/api/webhooks/<id>/<token>'
 DISCORD_WEBHOOK_URL_ALERTS='https://discord.com/api/webhooks/<id>/<token>'
+DISCORD_WEBHOOK_URL_INFORMATIONAL='https://discord.com/api/webhooks/<id>/<token>'
 ```
 
 Apply. `stellarindex-sla-probe.timer` must be in the restart set so systemd reloads
@@ -119,17 +120,21 @@ bash /opt/stellarindex/alertmanager/apply.sh
 
 ## 6. FX API keys (recommended, not blocking)
 
-The 4 FX sources shown "stopped" in `/v1/sources` lack operator API keys. In
-`/etc/stellarindex.toml`:
+Keyed FX sources stay off until an operator key is set. In `/etc/stellarindex.toml`
+(or the env var named in each field's `env:` tag in `internal/config/config.go`):
 
 ```toml
-[external.fx]
-openexchangerates_app_id = "<your-key>"
-# … per the source-config docs
+[external.exchangeratesapi]
+enabled = true
+api_key = "<your-key>"   # env EXCHANGERATESAPI_KEY
+
+[external.openexchangerates]
+enabled = true
+app_id = "<your-key>"    # env OPENEXCHANGERATES_APP_ID
 ```
 
-Restart the indexer; the aggregator picks them up next tick. Without them fiat
-divergence has fewer cross-checks (CoinGecko + Reflector still cover most cases).
+Restart the indexer and API. Without them fiat divergence has fewer cross-checks
+(CoinGecko + Reflector still cover most cases).
 
 ## 7. Smoke from the open internet
 
@@ -139,18 +144,17 @@ After DNS lands and Caddy has its cert, from your laptop (NOT R1):
 API_BASE_URL=https://api.stellarindex.io make smoke
 ```
 
-13/13 green confirms TLS, DNS, cert and path end-to-end.
+`scripts/dev/r1-smoke.sh` exiting 0 (no failed checks) confirms TLS, DNS, cert and path end-to-end.
 
 ## 8. Backup baseline
 
-Until L4.16 (automated daily Postgres dumps + MinIO replication) lands, take a
-manual baseline, copy it off-host and document where:
+Automated backups are `pgbackrest-backup.timer` (daily, stanza `stellarindex`) and the
+off-site streams in [off-site-backup-plan.md](off-site-backup-plan.md). Before DNS,
+confirm both ran:
 
 ```sh
-# On R1:
-pg_dump -h localhost -U stellarindex stellarindex | gzip \
-  > /var/backups/stellarindex-baseline-$(date +%F).sql.gz
-mc mirror /var/lib/galexie-archive remote-backup/galexie-archive-baseline-$(date +%F)
+systemctl list-timers pgbackrest-backup.timer --no-pager
+pgbackrest info --stanza=stellarindex    # status: ok
 ```
 
 ## Verification at the end

@@ -195,7 +195,7 @@ curl -s https://stellarindex.io/robots.txt
 `scripts/ci/site-crawl-check.sh` also fails when the deployed build is behind
 `main` (stuck auto-deploy).
 
-See also [cdn-setup.md](cdn-setup.md), [launch-day-checklist.md](launch-day-checklist.md).
+See also [cdn-setup.md](cdn-setup.md), [v1-launch-plan.md](v1-launch-plan.md#1-launch-sequence-and-gate-rationale).
 
 ## Cloudflare Pages bootstrap
 

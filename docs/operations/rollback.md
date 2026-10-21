@@ -233,7 +233,7 @@ If it cannot be corrected within the SEV-2 detection window:
 
 ## Cross-references
 
-- [`launch-day-checklist.md`](launch-day-checklist.md): the cut-over this protects.
+- [`v1-launch-plan.md`](v1-launch-plan.md#1-launch-sequence-and-gate-rationale): the cut-over this protects.
 - [`release-process.md`](release-process.md): per-release procedure;
   §Post-flight has the rollback one-liner.
 - [`sev-playbook.md`](sev-playbook.md): SEV escalation.

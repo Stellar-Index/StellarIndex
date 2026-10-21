@@ -1,14 +1,14 @@
 ---
 title: r1 archival node — historical bringup snapshot (2026-04/05)
-last_verified: 2026-05-12
+last_verified: 2026-10-21
 status: historical snapshot
 ---
 
 # r1-01 (FSN1) deployment state
 
 > **HISTORICAL SNAPSHOT, not current node state.** Known-stale: API
-> `auth_mode` is now `apikey_optional`; "15 migrations" is the bringup count;
-> the `data` pool is **raidz1** (see §Disk layout). For live state query the
+> `auth_mode` is now `apikey_optional` and the API binds `127.0.0.1:3000`
+> behind Caddy; the `data` pool is **raidz1** (see §Disk layout). For live state query the
 > host. Binary versions: [deployed-versions.md](deployed-versions.md). New
 > node: [archival-node-bringup.md](archival-node-bringup.md).
 
@@ -31,20 +31,22 @@ nvme0n1 / nvme1n1 : OS mirror (mdadm RAID1)
 nvme2n1 / nvme3n1 : untouched, full 7.68T (ZFS data-pool members)
 ```
 
-ZFS pool `data`: a single **raidz1** vdev (SINGLE parity: tolerates exactly
-ONE drive failure), ~18.3 TB / ~16.8 TiB usable. Datasets:
+ZFS pool `data`: a single **raidz1** vdev over 4 NVMe (SINGLE parity: tolerates
+exactly ONE drive failure). Datasets (`zfs_datasets` in `defaults/main.yml`):
 - `data/os` -> `/var/lib/stellarindex`
-- `data/postgres` -> `/var/lib/postgresql` (recordsize=8K, logbias=throughput)
+- `data/postgres` -> `/var/lib/postgresql` (recordsize=8K, logbias=throughput);
+  child `data/postgres/wal` -> `/var/lib/postgresql/wal`
 - `data/galexie` -> `/var/lib/galexie`
 - `data/minio` -> `/var/lib/minio`
 - `data/archive` -> `/srv/history-archive`
+- also `data/{clickhouse,pgbackrest,prometheus,loki,restore-drill}`
 
 > Authority: `zfs_data_pool_type` in `configs/ansible/inventory/r1.example.yml`;
 > `scripts/ci/lint-docs.sh` §18 lints every r1-scoped file against it.
 > Evidence: [storage-considerations.md](../architecture/storage-considerations.md).
 
-`data/core` and `data/rpc` are gated behind `run_stellar_core` /
-`run_stellar_rpc` (`defaults/main.yml`, default false); neither exists on r1.
+A `data/core` dataset is gated behind `run_stellar_core` (`defaults/main.yml`,
+default false); it does not exist on r1.
 
 ## Services (systemd)
 
@@ -53,13 +55,13 @@ ONE drive failure), ~18.3 TB / ~16.8 TiB usable. Datasets:
 | postgresql@15-main | active | TimescaleDB installed; `stellarindex` role + DB |
 | redis-server | active | single node |
 | ~~stellar-core~~ | REMOVED |
-| ~~stellar-rpc~~ | REMOVED | indexer consumes galexie's MinIO output directly; see §Architecture |
+| ~~stellar-rpc~~ | REMOVED (masked) | indexer consumes galexie's MinIO output directly; see §Architecture |
 | galexie | active | own captive-core; one `FC4A....xdr.zst` object per ledger into MinIO `galexie-live`. **The single stellar-core on the box.** |
 | minio | active | buckets `galexie-live`, `galexie-archive`, `backups`; users `galexie-writer` (write-only `galexie-live`), `galexie-archive-writer` (write-only `galexie-archive`), `stellarindex-reader` (read on both); secret in `/etc/default/stellarindex` |
-| stellarindex-indexer | active | reads galexie-live via S3 GetObject, cursor-resumable; 11 source decoders -> `trades` + `oracle_updates`; /metrics `127.0.0.1:9464` |
+| stellarindex-indexer | active | reads galexie-live via S3 GetObject, cursor-resumable; source decoders -> `trades` + `oracle_updates`; /metrics `127.0.0.1:9464` |
 | stellarindex-aggregator | active | VWAP/TWAP/divergence/freeze/supply tick; writes `vwap:<pair>:<window>` to Redis + `prices_1m` CAGG; /metrics `127.0.0.1:9465` |
-| stellarindex-api | active | REST + SSE on `0.0.0.0:3000`; /v1/healthz + /v1/readyz |
-| node_exporter | active | :9100 |
+| stellarindex-api | active | REST + SSE on `127.0.0.1:3000` (Caddy fronts it); /v1/healthz + /v1/readyz |
+| prometheus-node-exporter | active | :9100 |
 | ~~stellar-core-prometheus-exporter~~ | REMOVED | no /info on captives |
 | node-healthcheck.timer | active | 5-min push to Healthchecks.io |
 
@@ -94,9 +96,10 @@ www.franklintempleton.com archive frequently 404s upstream.
 - `/srv/history-archive` (`stellar-archivist mirror`, complete, 7.0 TB) is the
   full pubnet history and the trusted reference for `verify-archive` Tier B.
   It lands on ZFS, not MinIO.
-- `galexie-archive` bucket: historical fill (4.76 TB, 974 partitions, ledgers
-  1 -> ~62.3 M) mirrored from the AWS public bucket by per-partition `mc
-  mirror`; gotchas in [galexie-backfill.md](galexie-backfill.md).
+- `galexie-archive` bucket: mirrored from the AWS public bucket to the tip by
+  `galexie-archive-fill.timer` (hourly, per-partition `mc mirror`). Local copy
+  starts at `stellarindex_archive_hot_floor` (49984000); older ledgers are on the
+  cold tier (ADR-0027). Gotchas in [galexie-backfill.md](galexie-backfill.md).
 - Healthchecks.io push every 5 min (service health, ledger age, ZFS, disk).
 
 ### Prometheus exporters
@@ -108,8 +111,8 @@ rules sit on `absent_over_time`.
 
 1. Set `pgbackrest_exporter_release_sha256: "<64 hex>"` in
    `configs/ansible/inventory/r1.secrets.yml` (default
-   `pgbackrest_exporter_version: "0.18.0"` in `defaults/main.yml`; SHA from
-   https://github.com/woblerr/pgbackrest_exporter/releases/tag/v0.18.0), and
+   `pgbackrest_exporter_version: "0.23.0"` in `defaults/main.yml`; SHA from
+   https://github.com/woblerr/pgbackrest_exporter/releases/tag/v0.23.0), and
    confirm apt `universe` is enabled.
 2. Run the exporters tag:
    ```sh
@@ -127,16 +130,17 @@ rules sit on `absent_over_time`.
 1. **Captive-core ports.** `PEER_PORT = 0` is stripped by the go-stellar-sdk
    marshaller, so a captive falls back to 11625 and collides with the primary
    (SIGABRT loop). Every captive-core needs `HTTP_PORT=0` and its own non-zero PEER_PORT in a
-   separate `/etc/stellar/captive-core*.cfg` (primary 11625, stellar-rpc
-   captive 11725, galexie captive 11726).
+   separate `/etc/stellar/captive-core*.cfg` (primary 11625, galexie captive 11726,
+   backfill captive 11727; `defaults/main.yml`).
 2. **Decoders are `BackfillSafe`** (`internal/sources/external/registry.go`)
    after per-WASM-hash audits (`docs/operations/wasm-audits/`); any upgrade
    needs the same:
    [ingest-pipeline.md#contract-schema-evolution](../architecture/ingest-pipeline.md#contract-schema-evolution).
 3. **Deploy.** `gh workflow run deploy.yml -f region=r1 -f version=vX.Y.Z`;
-   backups `/usr/local/bin/<binary>.prev-<previous-tag>` (5 retained), running
+   backups `/usr/local/bin/<binary>.prev-<previous-tag>` (latest 5 kept), running
    tag per binary in `/var/lib/stellarindex/deployed-versions/<binary>`;
-   secrets `R1_HOST`, `R1_USER`, `DEPLOY_SSH_PRIVATE_KEY`, `R1_SSH_KNOWN_HOSTS`.
+   secrets `R1_HOST`, `R1_USER`, `DEPLOY_SSH_PRIVATE_KEY`, `R1_SSH_KNOWN_HOSTS`; per-region binary set in
+   `scripts/dev/region-binaries.tsv`.
    Runbook: [deploy-workflow.md](deploy-workflow.md). linux/amd64 only;
    `cmd/` binaries: stellarindex-{indexer, aggregator, api, ops,
    migrate, sla-probe}.
@@ -184,7 +188,7 @@ rules sit on `absent_over_time`.
 9. **Open.** Redis ACL lockdown (opt-in role flag); 1-year `prices_1m`
    backfill ([backfill-procedure.md](backfill-procedure.md)); p95 over SLA
    needs [multi-region cutover](../architecture/ha-plan.md#10-roadmap-and-launch-checklist);
-   `/etc/prometheus/minio.token` is empty, so `up{job=minio}` is 0.
+   `/etc/prometheus/minio.token` (minted by `16-prometheus-exporters.yml`) must be non-empty or `up{job=minio}` is 0.
 
 ## Prometheus and Caddy
 
@@ -206,27 +210,27 @@ Units from `deploy/systemd/` in `/etc/systemd/system/`
   mint `STELLARINDEX_PROBE_API_KEY` at Partner/Operator tier in
   `/etc/default/stellarindex-healthchecks`. Quote `PAIRS`:
   `Environment="PAIRS=..."`.
-- `archive-completeness.timer` every 4 h; `-to` = indexer cursor minus 64 from
+- `archive-completeness.timer` daily 02:17 UTC; `-to` = indexer cursor minus 64 from
   `/usr/local/sbin/compute-archive-to.sh` (`ExecStartPre`, writes
   `/run/archive-completeness.env`).
 - `supply-snapshot.timer` daily (upserts via
   `ON CONFLICT ON CONSTRAINT asset_supply_history_asset_ledger_idx`; Timescale
   rejects column inference on hypertable unique indexes).
-- `verify-archive-tier-a.timer` weekly.
+- `verify-archive-tier-a.timer` daily 03:23 UTC.
 
 ## Host firewall
 
 Default-deny `/etc/nftables.conf` (`nftables.service` enabled) allows only:
-22/tcp (**30/minute** new connections, also in
-`configs/ansible/roles/archival-node/templates/nftables.conf.j2`; 4/min locked
-out operators), 80/443 (Caddy), 11625/11626/11725/11726 (SCP), ICMP 10/sec,
-loopback. The role's `nftables.conf.j2` (`internal_cidrs`) supersedes it on the
-next full run.
+22/tcp (**30/minute** per source, `ssh_allowed_v4` only;
+`configs/ansible/roles/archival-node/templates/nftables.conf.j2`), 80/443
+(Caddy), ICMP 10/sec, loopback. 11625 (SCP) opens only when
+`run_stellar_core=true` (`public_allow_ports` in `defaults/main.yml`);
+captive-cores dial out.
 
 ## Swap
 
-`/swap_f1209`, 16G (fstab `/swap_f1209 none swap sw,pri=1 0 0`) plus the 4G
-swap: 19Gi. A stopgap; the real fix is more RAM or lower `shared_buffers`.
+`/swap_f1209`, 4G (fstab `/swap_f1209 none swap sw,pri=1 0 0`) plus the 4G
+md0 swap: 8G. A stopgap; the real fix is more RAM or lower `shared_buffers`.
 
 ## Config pitfalls (all fixed in the role)
 
