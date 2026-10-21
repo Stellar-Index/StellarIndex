@@ -296,6 +296,7 @@ func (c *CachedMarketsReader) settleFailedFillLocked(op, key string, entry *mark
 	entry.flight = nil
 	if !entry.at.IsZero() {
 		obs.APICacheOpsTotal.WithLabelValues("markets", op, "refresh_error").Inc()
+		c.logger.Warn("cache refresh failed; serving stale value", "cache", "markets", "op", op, "key", key, "err", err)
 		return
 	}
 	entry.err = err

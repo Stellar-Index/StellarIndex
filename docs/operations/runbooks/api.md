@@ -252,8 +252,10 @@ False positives: cold buffers after a deploy and the `/v1/markets` cold scan dur
 **Check.** `{cache, op}` names the wrapper (list under [cache_miss_rate_high](#stellarindex_api_cache_miss_rate_high)).
 
 ```sh
-journalctl -u stellarindex-api --since -1h | grep -i refresh
+journalctl -u stellarindex-api --since -1h | grep 'cache refresh failed'
 ```
+
+Each line carries `cache`, `op`, `key` and `err`.
 
 **Likely causes.** Upstream read failing (Postgres/ClickHouse timeout, missing relation after a migration, statement cancel).
 

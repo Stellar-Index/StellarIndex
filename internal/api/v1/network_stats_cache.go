@@ -139,5 +139,6 @@ func (c *CachedNetworkStatsReader) settle(v timescale.NetworkStats, err error) {
 
 	if err != nil && stale {
 		obs.APICacheOpsTotal.WithLabelValues("network_stats", "get", "refresh_error").Inc()
+		c.logger.Warn("cache refresh failed; serving stale value", "cache", "network_stats", "op", "get", "err", err)
 	}
 }
