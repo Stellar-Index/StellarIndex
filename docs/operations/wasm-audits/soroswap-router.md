@@ -1,6 +1,6 @@
 ---
 title: Soroswap Router WASM-history audit
-last_verified: 2026-05-19
+last_verified: 2026-10-21
 status: complete — BackfillSafe=true (audited 2026-05-19)
 source: soroswap-router
 backfill_safe: true

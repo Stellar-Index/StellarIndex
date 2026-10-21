@@ -1,6 +1,6 @@
 ---
 title: Reflector WASM-history audit
-last_verified: 2026-05-03
+last_verified: 2026-10-21
 status: ratified — v2 walk confirms two-hash inventory
 sources: reflector-dex, reflector-cex, reflector-fx
 backfill_safe: true
