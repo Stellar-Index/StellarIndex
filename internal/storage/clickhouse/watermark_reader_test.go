@@ -454,7 +454,7 @@ func TestAccountOperations_WindowedReadHasNoLimit1By(t *testing.T) {
 	}
 	var arms, hydrations int
 	for i, q := range conn.queries {
-		if isOpsBySourceProbe(q) || strings.Contains(q, "account_activity") || isVisibilityLookup(q) {
+		if isOpsBySourceProbe(q) || strings.Contains(q, "account_activity") || isVisibilityLookup(q) || isOpTypesCoverageProbe(q) {
 			continue
 		}
 		if strings.Contains(q, "LIMIT 1 BY") {

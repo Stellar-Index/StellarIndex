@@ -940,7 +940,8 @@ func (r *ExplorerReader) AccountTransactions(ctx context.Context, account string
 	if cur.IsSet() {
 		from = &accountTxKey{cur.Ledger, cur.A}
 	}
-	part, frontier, err := participantKeys(ctx, r.conn, account, limit, txParticipantArm, "", nil, from)
+	fixed, _ := r.accountPartitionsClause(ctx, account)
+	part, frontier, err := participantKeys(ctx, r.conn, account, limit, txParticipantArm, fixed, nil, from)
 	if err != nil {
 		return nil, resume, fmt.Errorf("clickhouse: account %s txs: %w", account, err)
 	}
@@ -958,7 +959,7 @@ func (r *ExplorerReader) AccountTransactions(ctx context.Context, account string
 	// RMT parts a bare SELECT cannot order (see txByLedgerAndHash). Cheap: a bounded IN over PK points.
 	q := `SELECT ` + txCols + ` FROM stellar.transactions FINAL
 		WHERE (ledger_seq, tx_index) IN (` + tupleList(keys, func(k accountTxKey) []uint32 { return []uint32{k.ledger, k.txIndex} }) + `)
-		ORDER BY ledger_seq DESC, tx_index DESC LIMIT ?` + explorerScanSettings
+		ORDER BY ledger_seq DESC, tx_index DESC LIMIT ?` + explorerScanSettings + `, do_not_merge_across_partitions_select_final = 1`
 	rows, err := r.conn.Query(ctx, q, limit)
 	if err != nil {
 		return nil, resume, fmt.Errorf("clickhouse: account %s txs: %w", account, err)
@@ -1230,9 +1231,10 @@ func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, 
 	if err != nil {
 		return nil, resume, fmt.Errorf("clickhouse: account %s ops: %w", account, err)
 	}
-	fixed, fixedArgs := "", []any(nil)
+	fixed, _ := r.accountPartitionsClause(ctx, account)
+	var fixedArgs []any
 	if hasBound {
-		fixed, fixedArgs = ` AND ledger_seq <= ?`, []any{bound}
+		fixed, fixedArgs = fixed+` AND ledger_seq <= ?`, []any{bound}
 	}
 	var from *accountOpKey
 	if cur.IsSet() {
@@ -1255,7 +1257,7 @@ func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, 
 	// FINAL for AccountTransactions' tie-break reason; opCols carries body_xdr, read only here, once.
 	q := `SELECT ` + opCols + ` FROM stellar.operations FINAL
 		WHERE (ledger_seq, tx_index, op_index) IN (` + tupleList(keys, func(k accountOpKey) []uint32 { return []uint32{k.ledger, k.txIndex, k.opIndex} }) + `)
-		ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT ?` + explorerScanSettings
+		ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT ?` + explorerScanSettings + `, do_not_merge_across_partitions_select_final = 1`
 	rows, err := r.conn.Query(ctx, q, limit)
 	if err != nil {
 		return nil, resume, fmt.Errorf("clickhouse: account %s ops: %w", account, err)

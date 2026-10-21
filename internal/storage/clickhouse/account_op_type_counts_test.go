@@ -221,3 +221,58 @@ func TestAccountOperationTypeCounts_ServesRollupWhenPlanned(t *testing.T) {
 		t.Errorf("bound %d args, want 2", len(args))
 	}
 }
+
+// With a plan, the participant arms read only the account's partitions, stale ones and the tail; without one they stay unfiltered.
+func TestAccountListings_ParticipantReadIsPartitionScoped(t *testing.T) {
+	planned := true
+	conn := &stubConn{respond: func(q string) (driver.Rows, error) {
+		switch {
+		case isOpTypesCoverageProbe(q):
+			return &stubRows{data: [][]any{{uint32(1)}}}, nil
+		case strings.Contains(q, "WHERE account = ''"):
+			if !planned {
+				return &stubRows{}, nil
+			}
+			return &stubRows{data: [][]any{{uint32(0), uint32(mL), uint64(5)}, {uint32(1), uint32(mL), uint64(4)}, {uint32(2), uint32(2*mL + 9), uint64(0)}}}, nil
+		case strings.Contains(q, "system.parts"):
+			return &stubRows{data: [][]any{{uint32(0), uint64(5)}, {uint32(1), uint64(3)}, {uint32(2), uint64(1)}}}, nil
+		case strings.Contains(q, "SELECT DISTINCT part FROM stellar.account_op_type_counts"):
+			return &stubRows{data: [][]any{{uint32(0)}}}, nil
+		}
+		return (&opsBySourceLake{rows: true}).respond(q)
+	}}
+	participantQuery := func() string {
+		for i := len(conn.queries) - 1; i >= 0; i-- {
+			if strings.Contains(conn.queries[i], "FROM stellar.operation_participants") {
+				return conn.queries[i]
+			}
+		}
+		t.Fatal("no participant read")
+		return ""
+	}
+	clk := newFakeClock()
+	r := &ExplorerReader{conn: conn, opTypesCoverageProbe: schemaProbe{now: clk.now}}
+	ctx := context.Background()
+	want := "AND (ledger_seq >= 2000009 OR intDiv(ledger_seq, 1000000) IN (0, 1))"
+	if _, _, err := r.AccountTransactions(ctx, "GTESTPARTS", 50, ExplorerCursor{}); err != nil {
+		t.Fatal(err)
+	}
+	if q := participantQuery(); !strings.Contains(q, want) {
+		t.Errorf("tx participant read lacks %q:\n%s", want, q)
+	}
+	if _, _, err := r.AccountOperations(ctx, "GTESTPARTS", 50, ExplorerCursor{}); err != nil {
+		t.Fatal(err)
+	}
+	if q := participantQuery(); !strings.Contains(q, want) {
+		t.Errorf("op participant read lacks %q:\n%s", want, q)
+	}
+
+	planned = false
+	r.opTypeRollup = opTypeRollupCache{}
+	if _, _, err := r.AccountTransactions(ctx, "GTESTPARTS", 50, ExplorerCursor{}); err != nil {
+		t.Fatal(err)
+	}
+	if q := participantQuery(); strings.Contains(q, "intDiv") {
+		t.Errorf("no plan: participant read is still partition-scoped:\n%s", q)
+	}
+}

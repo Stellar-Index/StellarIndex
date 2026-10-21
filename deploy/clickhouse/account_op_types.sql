@@ -149,6 +149,9 @@ SETTINGS index_granularity = 1024;
 --   3. Verify 20 accounts as in Step 4: the api's /v1/accounts/{g}/activity
 --      counts must equal the account_op_types FINAL query.
 --   4. systemctl enable --now optype-rollup.timer
+-- The account transactions and operations listings also use it to read only
+-- the partitions an account has ops in (accountPartitionsClause), so an
+-- operation_participants row missing from account_op_types is not listed.
 -- Whenever account_op_types is rebuilt, TRUNCATE stellar.account_op_type_counts:
 -- a rebuild landing on the same row count would keep stale counts valid.
 --
