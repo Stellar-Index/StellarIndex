@@ -158,6 +158,8 @@ SR
 chmod +x "$TMP/bin/systemd-run"
 export PATH="$TMP/bin:$PATH"
 export HEAVY_JOB_LOCK_DIR="$TMP/lock"
+# Never read the host's real per-host floor; case 4b points at a fixture.
+export HEAVY_JOB_FLOOR_FILE="$TMP/no-floor-file"
 
 # The payload prints exactly what the wrapped job would see.
 PAYLOAD="$TMP/payload.sh"
@@ -166,6 +168,7 @@ cat > "$PAYLOAD" <<'SH'
 printf 'USER=%s\n' "${STELLARINDEX_CLICKHOUSE_OPS_USER-<unset>}"
 printf 'PASS=%s\n' "${STELLARINDEX_CLICKHOUSE_OPS_PASSWORD-<unset>}"
 printf 'AWS=%s\n'  "${AWS_ACCESS_KEY_ID-<unset>}"
+printf 'FLOOR=%s\n' "${HEAVY_MIN_DATA_KB-<unset>}"
 # Case 8: stay alive until the watchdog has run its first sleep.
 if [ -n "${FD9_REC:-}" ]; then
   for _ in $(seq 50); do [ -s "$FD9_REC" ] && break; /bin/sleep 0.1; done
@@ -222,6 +225,16 @@ if err_has "WARNING" && err_has "CH 'default' user at SERVING priority"; then ok
 printf 'AWS_ACCESS_KEY_ID=ops-reader-key\n' > "$TMP/stellarindex-ops-nopair"
 run HEAVY_JOB_OPS_ENV="$TMP/stellarindex-ops-nopair"
 if out_has "USER=<unset>" && err_has "CH 'default' user"; then ok "file without the pair (profile not applied): WARNING on stderr"; else bad "file without pair: no WARNING ($(cat "$TMP/err"))"; fi
+
+# ── 4b. per-host pool floor: file applies, caller wins, default otherwise ─
+# Tiny values so the watchdog's pool guard never trips on the test host.
+printf '# Rendered by Ansible\nHEAVY_MIN_DATA_KB=7\n' > "$TMP/floor"
+run HEAVY_JOB_OPS_ENV="$OPS_ENV" HEAVY_JOB_FLOOR_FILE="$TMP/floor"
+if out_has "FLOOR=7"; then ok "floor file sets the pool floor, exported to the payload"; else bad "floor file ignored ($(grep FLOOR= "$TMP/out"))"; fi
+run HEAVY_JOB_OPS_ENV="$OPS_ENV" HEAVY_JOB_FLOOR_FILE="$TMP/floor" HEAVY_MIN_DATA_KB=9
+if out_has "FLOOR=9"; then ok "caller-set floor wins over the file"; else bad "caller floor overridden ($(grep FLOOR= "$TMP/out"))"; fi
+run HEAVY_JOB_OPS_ENV="$OPS_ENV"
+if out_has "FLOOR=314572800"; then ok "no floor file: 300 GiB default exported"; else bad "default floor wrong ($(grep FLOOR= "$TMP/out"))"; fi
 
 # ── 5. the scope's stop bound (root branch only) ─────────────────────
 # Without TimeoutStopSec a scope takes systemd's 90 s default, and

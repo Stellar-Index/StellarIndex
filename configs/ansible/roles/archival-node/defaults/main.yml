@@ -1522,6 +1522,9 @@ zfs_snapshot_datasets:
 # 2 TiB = 2199023255552. Alert thresholds (2.5 TiB ticket / 1.5 TiB
 # page) live in deploy/monitoring/rules/zfs-snapshots.yml.
 zfs_snapshot_min_free_bytes: 2199023255552
+# run-heavy-job.sh pool floor in KiB (watchdog kill + restore-drill start
+# gate). 300 GiB suits small hosts; a large pool sets it per host.
+heavy_min_data_kb: 314572800
 # 01:45 UTC: before pgbackrest-backup (02:00) and the ch-schema-snapshot
 # (03:40), so the day's snapshot predates the day's other ops jobs.
 zfs_snapshot_on_calendar: "*-*-* 01:45:00 UTC"

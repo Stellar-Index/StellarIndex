@@ -706,6 +706,14 @@
           esac
         done < "$OPS_ENV"
       fi
+      # A per-host pool floor from /etc/default/run-heavy-job (ansible
+      # heavy_min_data_kb) applies unless the caller set one. Exported on
+      # both branches so a payload such as restore-drill.sh gates on it.
+      FLOOR_FILE="${HEAVY_JOB_FLOOR_FILE:-/etc/default/run-heavy-job}"
+      if [ -z "${HEAVY_MIN_DATA_KB:-}" ] && [ -r "$FLOOR_FILE" ]; then
+        HEAVY_MIN_DATA_KB="$(sed -n 's/^HEAVY_MIN_DATA_KB=\([0-9][0-9]*\)$/\1/p' "$FLOOR_FILE" | tail -1)"
+      fi
+      export HEAVY_MIN_DATA_KB="${HEAVY_MIN_DATA_KB:-314572800}"
       # Loud either way (the failure this guards is a job running at
       # serving priority with nothing saying so): name the identity
       # the job will use, or WARN that it is the CH `default` user.
@@ -775,7 +783,7 @@
       # LIVE ingest + merges, not just this job. 300 GiB keeps headroom for
       # merges + the live sink, well above the point where ZFS write
       # performance collapses.
-      POOL_MIN_KB="${HEAVY_MIN_DATA_KB:-314572800}"
+      POOL_MIN_KB="$HEAVY_MIN_DATA_KB"
       # Fail LOUD, not silent: if POOL_PATH doesn't resolve, every watchdog tick
       # would hit the "df glitched — skip" arm and the pool guard would protect
       # nothing, invisibly, while the root guard kept working and masked the
@@ -1136,6 +1144,18 @@
     mode: "0600"
   no_log: true
   when: galexie_archive_trim_enabled | bool
+
+# Read by run-heavy-job.sh: the pool floor below which its watchdog stops a
+# heavy job, and (via the exported value) restore-drill.sh's start gate.
+- name: Render /etc/default/run-heavy-job
+  ansible.builtin.copy:
+    dest: /etc/default/run-heavy-job
+    content: |
+      # Rendered by Ansible (heavy_min_data_kb). Do not edit by hand.
+      HEAVY_MIN_DATA_KB={{ heavy_min_data_kb | int }}
+    owner: root
+    group: root
+    mode: "0644"
 
 - name: Install verify-archive-tier-a / supply-snapshot units
   ansible.builtin.template:
