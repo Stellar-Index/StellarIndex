@@ -22,7 +22,8 @@
 #   3. single-repo conf → the command is BYTE-IDENTICAL to the
 #      older wrapper (no --repo);
 #   4. Sunday → --type=full; any other day → --type=diff;
-#   5. no secret from pgbackrest.conf reaches argv or stdout/stderr.
+#   5. no secret from pgbackrest.conf reaches argv or stdout/stderr;
+#   7. a dated override changes only its repo, only on its date.
 #
 # pgbackrest and date are stubbed on PATH (runs on macOS, no pgbackrest).
 #
@@ -72,6 +73,7 @@ SH
 cat > "$TMP/bin/date" <<SH
 #!/usr/bin/env bash
 if [[ "\$1" == "+%u" ]]; then echo "\${FAKE_DOW:-3}"; exit 0; fi
+if [[ "\$1" == "+%F" ]]; then echo "\${FAKE_DATE:-2026-10-21}"; exit 0; fi
 exec "$REAL_DATE" "\$@"
 SH
 chmod +x "$TMP/bin/pgbackrest" "$TMP/bin/date"
@@ -366,6 +368,19 @@ if [[ $RC -ne 0 ]] && cmp -s "$PREV" "$PUB" && [[ "$ERR" == *"non-numeric tally"
 else
   bad "rc=$RC err='$ERR' published='$(cat "$PUB")'"
 fi
+
+# ─── 7. dated one-shot type override ─────────────────────────────────
+echo "pgbackrest-backup-test: dated per-repo type override"
+OVR="$TMP/override"
+printf '# comment\n2026-10-25 1 diff\n2026-10-25 2 bogus\n' > "$OVR"
+run "$TWO_REPO" 7 FAKE_DATE=2026-10-25 PGBACKREST_TYPE_OVERRIDE="$OVR"
+if [[ "$(sed -n 1p "$LOG")" == "--stanza=stellarindex --repo=1 --type=diff backup" ]]; then ok "override date: repo1 takes the override (diff on a Sunday)"; else bad "repo1 argv: $(sed -n 1p "$LOG")"; fi
+if [[ "$(sed -n 2p "$LOG")" == "--stanza=stellarindex --repo=2 --type=full backup" ]]; then ok "an invalid override type is ignored: repo2 keeps full"; else bad "repo2 argv: $(sed -n 2p "$LOG")"; fi
+if [[ "$OUT" == *"ignoring override type 'bogus' for repo2"* ]]; then ok "the invalid type is named"; else bad "no warning: $OUT"; fi
+run "$TWO_REPO" 7 FAKE_DATE=2026-11-01 PGBACKREST_TYPE_OVERRIDE="$OVR"
+if [[ "$(sed -n 1p "$LOG")" == "--stanza=stellarindex --repo=1 --type=full backup" ]]; then ok "another date: the stale override is inert"; else bad "repo1 argv: $(sed -n 1p "$LOG")"; fi
+run "$TWO_REPO" 7 FAKE_DATE=2026-10-25 PGBACKREST_TYPE_OVERRIDE="$TMP/absent"
+if [[ $RC -eq 0 && "$(sed -n 1p "$LOG")" == "--stanza=stellarindex --repo=1 --type=full backup" ]]; then ok "no override file: the schedule decides"; else bad "rc=$RC argv: $(sed -n 1p "$LOG")"; fi
 
 printf 'pgbackrest-backup-test: %d passed, %d failed\n' "$pass" "$fail"
 [[ $fail -eq 0 ]]

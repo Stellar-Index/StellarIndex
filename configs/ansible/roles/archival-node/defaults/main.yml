@@ -1534,6 +1534,12 @@ zfs_snapshot_on_calendar: "*-*-* 01:45:00 UTC"
 # PITR window = the diff/WAL retention.
 pgbackrest_repo2_retention_full: 1
 pgbackrest_repo2_retention_diff: 7
+# One-shot backup-type overrides for pgbackrest-backup.sh, each applied only
+# on its date: [{date: "2026-10-25", repo: 1, type: diff}].
+pgbackrest_backup_type_overrides: []
+# Past this WAL queue size pgBackRest drops the queue rather than let pg_wal
+# fill and stop Postgres; PITR then needs a new backup.
+pgbackrest_archive_push_queue_max: 192GiB
 # repo1 over sftp to a second host; empty keeps repo1 local. Switching an
 # existing stanza needs its repo copied there first (pgbackrest does not move it).
 pgbackrest_repo1_sftp_host: ""

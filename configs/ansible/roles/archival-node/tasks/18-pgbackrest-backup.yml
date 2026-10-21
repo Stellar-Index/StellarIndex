@@ -45,6 +45,19 @@
     mode: "0755"
   when: pgbackrest_backup_enabled | default(true)
 
+- name: Install pgBackRest one-shot backup-type overrides
+  ansible.builtin.copy:
+    dest: /etc/pgbackrest/backup-type-override
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Rendered from pgbackrest_backup_type_overrides; "date repo type".
+      {% for o in pgbackrest_backup_type_overrides %}
+      {{ o.date }} {{ o.repo }} {{ o.type }}
+      {% endfor %}
+  when: pgbackrest_backup_enabled | default(true)
+
 - name: Install pgBackRest backup systemd units
   ansible.builtin.template:
     src: "systemd/{{ item }}.j2"

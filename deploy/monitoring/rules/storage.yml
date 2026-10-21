@@ -25,6 +25,26 @@ groups:
             within 60 s — if not, follow the manual-failover path in the
             runbook.
 
+      # pg_wal past 64 GiB means archiving is falling behind; at
+      # pgbackrest_archive_push_queue_max the WAL queue is dropped and PITR breaks.
+      - alert: stellarindex_pg_wal_large
+        expr: |
+          (node_filesystem_size_bytes{mountpoint="/var/lib/postgresql/wal"}
+            - node_filesystem_avail_bytes{mountpoint="/var/lib/postgresql/wal"}) > 64 * 1024^3
+        for: 15m
+        labels:
+          severity: page
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres.md#stellarindex_pg_wal_large
+          summary: "pg_wal on {{ $labels.instance }} holds {{ $value | humanize1024 }}B"
+          description: |
+            WAL is not leaving pg_wal as fast as it is written. Archiving
+            is stalled or slow, or a replication slot is holding WAL. At
+            the archive-push queue limit pgBackRest drops the queued WAL
+            and point-in-time recovery breaks until the next backup.
+
       # A *sql.DB pool can hold dead conns for hours after a postgres crash; the
       # 30 min PoolConnMaxLifetime is only the slow safety net, this is the live
       # signal.
