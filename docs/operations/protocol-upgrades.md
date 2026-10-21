@@ -94,8 +94,10 @@ checklist and a decode-failure watch after the vote.
 
 ## Protocol 30 — readiness
 
-Core `30.0.0` released 2026-10-16; galexie `galexie-v30.0.0` 2026-10-20. The
-mainnet vote date is **unconfirmed**.
+Core `30.0.0` released 2026-10-16; galexie `galexie-v30.0.0` 2026-10-20.
+Votes ("Bell"): testnet 2026-11-03 17:00 UTC, mainnet 2026-11-23 17:00 UTC
+([upgrade guide](https://stellar.org/blog/developers/bell-protocol-30-upgrade-guide)).
+The futurenet date is **unconfirmed**.
 
 | Change | Handling |
 | --- | --- |
@@ -106,8 +108,10 @@ mainnet vote date is **unconfirmed**.
 
 Primary sources read: stellar-core [v30.0.0](https://github.com/stellar/stellar-core/releases/tag/v30.0.0), stellar-galexie [galexie-v30.0.0](https://github.com/stellar/stellar-galexie/releases/tag/galexie-v30.0.0).
 
-- [ ] Apply the galexie pin on r1 before the vote (`-e galexie_restart_ack=true`).
-- [ ] Upgrade core on r1 to `30.0.0` before the vote.
+- [ ] Apply the galexie pin on testnet/futurenet before 2026-11-03 and on r1
+  before 2026-11-23 (`-e galexie_restart_ack=true`). On 2026-10-21 both test
+  nets ran core `30.0.0` at ledger protocol 29.
+- [ ] Upgrade core on r1 to `30.0.0` before 2026-11-23.
 - [ ] Watch for decode failures and the stack-version probe after the vote.
 
 ## Protocol 29 — readiness
