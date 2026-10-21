@@ -20,6 +20,19 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.47] - 2026-10-21
+
+No migrations. No `pkg/*` break. No config change.
+
+### Fixed
+
+- **api:** identical in-flight `/v1/price/batch` rows are resolved once and shared across requests, so the explorer build's sharded identical batches stop queueing behind each other past the 200 ms latency SLO (#3766).
+
+### Changed
+
+- **tests:** guardscan scanner fixtures build in a temp module (#3765).
+- **docs:** config-assertion, incident and six operator docs re-verified; two dead multi-region docs deleted (#3763, #3764).
+
 ## [v0.116.46] - 2026-10-21
 
 No migrations. No `pkg/*` break. No config change.
