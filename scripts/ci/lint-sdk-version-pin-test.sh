@@ -67,6 +67,11 @@ printf 'module example.com/fixture\n\ngo 1.27.0\n\nrequire (\n\tgithub.com/stell
 check "block-form require, matching -> pass" 0 "$TMP/block.mod" "$TMP/ok.md"
 check "block-form require, stale row -> FAIL" 1 "$TMP/block.mod" "$TMP/stale.md"
 
+# ── a tools/ binary row on another tag above the library row is ignored ──
+# shellcheck disable=SC2016  # literal backticks in the markdown row
+{ printf '| `stellar/go-stellar-sdk` — `tools/stellar-archivist` | `cafe` | 2026-08-20 | `v0.6.0` | apt binary |\n'; cat "$TMP/ok.md"; } > "$TMP/tool.md"
+check "tools/ row on another tag is not the library pin -> pass" 0 "$TMP/ok.mod" "$TMP/tool.md"
+
 # ── missing inputs fail closed, not vacuously ────────────────────────
 check "missing go.mod -> FAIL" 1 "$TMP/nope.mod" "$TMP/ok.md"
 check "missing VERSIONS.md -> FAIL" 1 "$TMP/ok.mod" "$TMP/nope.md"

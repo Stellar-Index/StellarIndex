@@ -35,7 +35,8 @@ if [[ -z "$want" ]]; then
 fi
 
 # shellcheck disable=SC2016  # literal backticks in the markdown row pattern, not expansion
-sdk_row_pattern='^\| `stellar/go-stellar-sdk`'
+# The bare-name row is the library; `stellar/go-stellar-sdk` — `tools/...` rows pin separate binaries.
+sdk_row_pattern='^\| `stellar/go-stellar-sdk` \|'
 sdk_row="$(grep -E "$sdk_row_pattern" "$VERSIONS" || true)"
 got_raw="$(awk -F'|' '{print $5; exit}' <<<"$sdk_row")"
 got="${got_raw//[ \`]/}"

@@ -320,7 +320,7 @@ func AsAmountFromI256(sv xdr.ScVal) (canonical.Amount, error) {
 	), nil
 }
 
-// AsAddressStrkey returns the strkey of an ScVal::Address (G/C/M/B/L) with validation delegated to the SDK so a malformed address never reaches the database; it handles all five CAP-67 ScAddress variants, since a narrower decoder silently drops events.
+// AsAddressStrkey returns the strkey of an ScVal::Address (G/C/M/B/L/W) with validation delegated to the SDK so a malformed address never reaches the database; it handles every ScAddress variant (CAP-67, CAP-84), since a narrower decoder silently drops events.
 func AsAddressStrkey(sv xdr.ScVal) (string, error) {
 	if sv.Type != xdr.ScValTypeScvAddress {
 		return "", fmt.Errorf("%w: want Address, got %s", ErrScValType, sv.Type.String())
@@ -351,6 +351,12 @@ func AsAddressStrkey(sv xdr.ScVal) (string, error) {
 	case xdr.ScAddressTypeScAddressTypeLiquidityPool:
 		lp := addr.MustLiquidityPoolId()
 		return strkey.Encode(strkey.VersionByteLiquidityPool, lp[:])
+	case xdr.ScAddressTypeScAddressTypeMuxedContract:
+		m := addr.MustMuxedContract()
+		raw := make([]byte, 40)
+		copy(raw, m.ContractId[:])
+		binary.BigEndian.PutUint64(raw[32:], uint64(m.Id))
+		return strkey.Encode(strkey.VersionByteMuxedContract, raw)
 	default:
 		return "", fmt.Errorf("%w: unknown ScAddress type %d", ErrScValType, addr.Type)
 	}

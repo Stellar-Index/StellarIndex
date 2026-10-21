@@ -8,6 +8,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -191,6 +192,25 @@ func TestAsAddressStrkey_muxed(t *testing.T) {
 	}
 	if len(got) == 0 || got[0] != 'M' {
 		t.Errorf("got %q, expected M-strkey", got)
+	}
+}
+
+// TestAsAddressStrkey_muxedContract pins the CAP-84 / P30 W-strkey against the SEP-23 vector.
+func TestAsAddressStrkey_muxedContract(t *testing.T) {
+	cid, err := strkey.Decode(strkey.VersionByteContract, "CA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJUWDA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scAddr := xdr.ScAddress{
+		Type:          xdr.ScAddressTypeScAddressTypeMuxedContract,
+		MuxedContract: &xdr.MuxedContract{Id: xdr.Uint64(1 << 63), ContractId: xdr.ContractId(cid)},
+	}
+	got, err := AsAddressStrkey(xdr.ScVal{Type: xdr.ScValTypeScvAddress, Address: &scAddr})
+	if err != nil {
+		t.Fatalf("AsAddressStrkey: %v", err)
+	}
+	if want := "WA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVAAAAAAAAAAAACWJY"; got != want {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }
 
