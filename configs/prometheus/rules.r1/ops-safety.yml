@@ -48,7 +48,6 @@ groups:
           severity: page
           team: stellarindex
           component: ops
-          alert_family: "catchup_lane/{{ $labels.lane }}"
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#stellarindex_catchup_lane_failed
           summary: "Catch-up lane {{ $labels.lane }} stopped on a failed step"
@@ -68,7 +67,6 @@ groups:
           severity: ticket
           team: stellarindex
           component: ops
-          alert_family: "catchup_lane/{{ $labels.lane }}"
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#stellarindex_catchup_lane_failed
           summary: "Catch-up lane {{ $labels.lane }} has work queued and no log line for 24 h"

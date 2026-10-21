@@ -96,7 +96,6 @@ tests:
               severity: page
               team: stellarindex
               component: ops
-              alert_family: catchup_lane/b
               lane: b
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#stellarindex_catchup_lane_failed
@@ -128,7 +127,6 @@ tests:
               severity: ticket
               team: stellarindex
               component: ops
-              alert_family: catchup_lane/a
               lane: a
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#stellarindex_catchup_lane_failed
