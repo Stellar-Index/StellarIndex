@@ -1,0 +1,139 @@
+---
+rule_files:
+  - ../rules/ops-safety.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    name: a clean scan and healthy lanes fire nothing
+    input_series:
+      - series: 'stellarindex_pg_compressed_chunks_unreadable'
+        values: '0x120'
+      - series: 'stellarindex_pg_chunk_scan_last_success_timestamp_seconds'
+        values: '0x120'
+      - series: 'stellarindex_catchup_lane_failed{lane="a"}'
+        values: '0x120'
+      - series: 'stellarindex_catchup_lane_queued{lane="a"}'
+        values: '3x120'
+      - series: 'stellarindex_catchup_lane_last_event_timestamp_seconds{lane="a"}'
+        values: '0+60x120'
+      - series: 'stellarindex_catchup_lanes_stopped'
+        values: '0x120'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: stellarindex_pg_compressed_chunks_unreadable
+        exp_alerts: []
+      - eval_time: 2h
+        alertname: stellarindex_pg_chunk_scan_stale
+        exp_alerts: []
+      - eval_time: 2h
+        alertname: stellarindex_catchup_lane_failed
+        exp_alerts: []
+      - eval_time: 2h
+        alertname: stellarindex_catchup_lane_stalled
+        exp_alerts: []
+
+  - interval: 1m
+    name: one unreadable chunk pages at once
+    input_series:
+      - series: 'stellarindex_pg_compressed_chunks_unreadable'
+        values: '0 0 4x10'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: stellarindex_pg_compressed_chunks_unreadable
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: postgres
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale.md#stellarindex_pg_compressed_chunks_unreadable
+              summary: "4 compressed TimescaleDB chunk(s) cannot be decoded"
+              description: |
+                pg-chunk-scan decoded every compressed_data column and some fail.
+                Reads that touch these chunks error or crash the backend, and
+                count(*) still looks normal. Which chunks:
+                stellarindex_pg_compressed_chunk_unreadable. Do not merge, drop or
+                recompress them; repair from a PITR copy per the runbook.
+
+  - interval: 1m
+    name: no scan for 36 h tickets
+    input_series:
+      - series: 'stellarindex_pg_chunk_scan_last_success_timestamp_seconds'
+        values: '0x2900'
+    alert_rule_test:
+      - eval_time: 30h
+        alertname: stellarindex_pg_chunk_scan_stale
+        exp_alerts: []
+      - eval_time: 40h
+        alertname: stellarindex_pg_chunk_scan_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: postgres
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale.md#stellarindex_pg_compressed_chunks_unreadable
+              summary: "No completed compressed-chunk scan for 36 h"
+              description: |
+                The nightly scan has not completed, so a corrupted chunk would go
+                unseen. Check `journalctl -u pg-chunk-scan`.
+
+  - interval: 1m
+    name: a failed lane pages after 10 minutes
+    input_series:
+      - series: 'stellarindex_catchup_lane_failed{lane="b"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_catchup_lane_failed
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: stellarindex_catchup_lane_failed
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: ops
+              alert_family: catchup_lane/b
+              lane: b
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#stellarindex_catchup_lane_failed
+              summary: "Catch-up lane b stopped on a failed step"
+              description: |
+                The lane sleeps until <lane>.failed is removed. Read the step's
+                log under /var/lib/stellarindex/catchup, fix the cause, then remove
+                the file.
+
+  - interval: 1m
+    name: queued work and a silent log for a day tickets, unless lanes are stopped
+    input_series:
+      - series: 'stellarindex_catchup_lane_failed{lane="a"}'
+        values: '0x1700'
+      - series: 'stellarindex_catchup_lane_queued{lane="a"}'
+        values: '2x1700'
+      - series: 'stellarindex_catchup_lane_last_event_timestamp_seconds{lane="a"}'
+        values: '0x1700'
+      - series: 'stellarindex_catchup_lanes_stopped'
+        values: '0x1700'
+    alert_rule_test:
+      - eval_time: 20h
+        alertname: stellarindex_catchup_lane_stalled
+        exp_alerts: []
+      - eval_time: 26h
+        alertname: stellarindex_catchup_lane_stalled
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: ops
+              alert_family: catchup_lane/a
+              lane: a
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#stellarindex_catchup_lane_failed
+              summary: "Catch-up lane a has work queued and no log line for 24 h"
+              description: |
+                A step has run for over a day, or the driver is not running.
+                Check `systemctl is-active si-catchup-a` and the
+                step's log.

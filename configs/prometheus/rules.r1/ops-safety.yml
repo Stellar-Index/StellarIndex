@@ -1,0 +1,78 @@
+---
+# Destructive-operation and silent-failure guards.
+# Producers: configs/ansible/roles/archival-node/files/pg-chunk-scan.sh and
+# catchup-lanes.sh (textfile collector).
+
+groups:
+  - name: stellarindex.ops_safety
+    interval: 1m
+    rules:
+
+      - alert: stellarindex_pg_compressed_chunks_unreadable
+        expr: stellarindex_pg_compressed_chunks_unreadable > 0
+        for: 0m
+        labels:
+          severity: page
+          team: stellarindex
+          component: postgres
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale.md#stellarindex_pg_compressed_chunks_unreadable
+          summary: "{{ $value }} compressed TimescaleDB chunk(s) cannot be decoded"
+          description: |
+            pg-chunk-scan decoded every compressed_data column and some fail.
+            Reads that touch these chunks error or crash the backend, and
+            count(*) still looks normal. Which chunks:
+            stellarindex_pg_compressed_chunk_unreadable. Do not merge, drop or
+            recompress them; repair from a PITR copy per the runbook.
+
+      - alert: stellarindex_pg_chunk_scan_stale
+        expr: |
+          time() - stellarindex_pg_chunk_scan_last_success_timestamp_seconds > 36 * 3600
+            or absent(stellarindex_pg_chunk_scan_last_success_timestamp_seconds)
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: postgres
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale.md#stellarindex_pg_compressed_chunks_unreadable
+          summary: "No completed compressed-chunk scan for 36 h"
+          description: |
+            The nightly scan has not completed, so a corrupted chunk would go
+            unseen. Check `journalctl -u pg-chunk-scan`.
+
+      - alert: stellarindex_catchup_lane_failed
+        expr: stellarindex_catchup_lane_failed == 1
+        for: 10m
+        labels:
+          severity: page
+          team: stellarindex
+          component: ops
+          alert_family: "catchup_lane/{{ $labels.lane }}"
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#stellarindex_catchup_lane_failed
+          summary: "Catch-up lane {{ $labels.lane }} stopped on a failed step"
+          description: |
+            The lane sleeps until <lane>.failed is removed. Read the step's
+            log under /var/lib/stellarindex/catchup, fix the cause, then remove
+            the file.
+
+      - alert: stellarindex_catchup_lane_stalled
+        expr: |
+          stellarindex_catchup_lane_queued > 0
+            and stellarindex_catchup_lane_failed == 0
+            and on() stellarindex_catchup_lanes_stopped == 0
+            and time() - stellarindex_catchup_lane_last_event_timestamp_seconds > 24 * 3600
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ops
+          alert_family: "catchup_lane/{{ $labels.lane }}"
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#stellarindex_catchup_lane_failed
+          summary: "Catch-up lane {{ $labels.lane }} has work queued and no log line for 24 h"
+          description: |
+            A step has run for over a day, or the driver is not running.
+            Check `systemctl is-active si-catchup-{{ $labels.lane }}` and the
+            step's log.

@@ -1,0 +1,16 @@
+# systemd service: publish the operator catch-up lanes' state
+# (files/catchup-lanes.sh). A failed lane sleeps silently until an operator
+# clears it; this is what makes that visible.
+[Unit]
+Description=Stellar Index — catch-up lane state probe
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/catchup-lanes
+User=root
+Nice=15
+TimeoutStartSec=1min
+ProtectSystem=strict
+ReadWritePaths=/var/lib/node_exporter/textfile_collector
+PrivateTmp=true
+NoNewPrivileges=true

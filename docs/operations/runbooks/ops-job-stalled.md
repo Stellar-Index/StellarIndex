@@ -141,6 +141,15 @@ Check and fix:
 4. Re-derive one window by hand after a lake repair (rows collapse on merge; the watermark never moves down):
    `stellarindex-ops ch-entry-index -ch-addr 127.0.0.1:9300 -from <l> -to <l> -write`.
 
+## stellarindex_catchup_lane_failed
+
+The catch-up lanes (`si-catchup-a`, `si-catchup-b`) run the steps in `/var/lib/stellarindex/catchup/<lane>.queue` in order. A step that exits 75 defers and retries; any other failure writes `<lane>.failed` and the lane sleeps until the file is gone. `catchup-lanes.timer` publishes the lane state every 5 min.
+
+1. `tail -20 /var/lib/stellarindex/catchup/<lane>.log` names the failed step; its own log sits beside it.
+2. Fix the cause, then `rm /var/lib/stellarindex/catchup/<lane>.failed`. To skip the step instead, comment its queue line with `#`.
+
+`stellarindex_catchup_lane_stalled` fires when a lane has queued steps, is not failed or stopped, and has logged nothing for 24 h: a step is hung, or the driver is down (`systemctl is-active si-catchup-<lane>`). A long step is normal; check its own progress before stopping it.
+
 ## Related
 
 - [ingest-gap-detector-silent](ingest-gap.md#stellarindex_ingest_gap_detector_silent), [zfs-pool-full](infra.md#stellarindex_zfs_pool_low_space), [ch-schema-restore](ch-schema-restore.md).

@@ -123,6 +123,10 @@ Evidence for each: [docs/architecture/domain-traps.md](docs/architecture/domain-
 - **ALWAYS gate a Soroban backfill behind a per-WASM-hash decoder audit.** Contracts upgrade in
   place; backfill sees every prior version
   (`ch_rebuild_backfillsafe_test.go`).
+- **NEVER call `merge_chunks()` or `drop_chunks()` from code, migrations or ops scripts.**
+  `merge_chunks` on a compressed chunk left four r1 chunks undecodable while `count(*)` looked
+  normal. Retention is policy-driven; a one-off drop goes through Ash with the rows' copy shown
+  (`scripts/ci/lint-chunk-functions.sh`; nightly detection: `pg-chunk-scan.timer`).
 - **ALWAYS collapse `stellar.operations` and `stellar.transactions` on their identity before
   aggregating** — they are `ReplacingMergeTree` and hold rows twice
   (`scripts/ci/lint-lake-dedup.sh`, .go/.sql only; ad-hoc queries: FINAL or uniqExact; [docs/contributing/lake-reads.md](docs/contributing/lake-reads.md)).

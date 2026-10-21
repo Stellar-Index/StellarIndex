@@ -270,6 +270,9 @@ echo "=== Shell SIGPIPE (pipe-into-head) ===" && ./scripts/ci/lint-shell-sigpipe
 echo "=== Git fixture isolation ===" && ./scripts/ci/lint-git-fixture-isolation.sh
 echo "=== YAML duplicate keys ===" && python3 ./scripts/ci/lint-yaml-duplicate-keys.py
 echo "=== Memory-mappings probe self-test ===" && ./scripts/ci/memory-mappings-test.sh
+echo "=== pg-chunk-scan probe self-test ===" && ./scripts/ci/pg-chunk-scan-test.sh
+echo "=== catchup-lanes probe self-test ===" && ./scripts/ci/catchup-lanes-test.sh
+echo "=== lint-chunk-functions ===" && ./scripts/ci/lint-chunk-functions.sh && ./scripts/ci/lint-chunk-functions-test.sh
 echo "=== HTTP timeouts ===" && ./scripts/ci/lint-http-timeouts.sh
 echo "=== HTTP timeouts self-test ===" && ./scripts/ci/lint-http-timeouts-test.sh
 echo "=== API-key keyspace walk ===" && ./scripts/ci/lint-apikey-scan.sh

@@ -1,0 +1,10 @@
+[Unit]
+Description=Publish catch-up lane state every 5 minutes
+
+[Timer]
+OnCalendar=*-*-* *:02,07,12,17,22,27,32,37,42,47,52,57:00 UTC
+Persistent=true
+Unit=catchup-lanes.service
+
+[Install]
+WantedBy=timers.target
