@@ -1,6 +1,6 @@
 ---
 title: Self-hosting Stellar Index — end-to-end operator guide
-last_verified: 2026-07-10
+last_verified: 2026-10-21
 status: living doc
 ---
 
@@ -55,7 +55,7 @@ For a live feed from today forward, skip the multi-TB mirror and
 
 ## 3. Prerequisites
 
-- Ubuntu 22.04+/24.04+ (NVMe), Docker Engine 24+ with Compose v2, Go ≥ 1.25.
+- Ubuntu 22.04+/24.04+ (NVMe), Docker Engine 24+ with Compose v2, Go ≥ 1.27.
 - `stellar-core` + Galexie from `apt.stellar.org` / the
   [`stellar-galexie`](https://github.com/stellar/stellar-galexie) release; not
   in this repo ([ADR-0002](../adr/0002-minio-s3-compat-storage.md)).
@@ -277,8 +277,8 @@ curl -s localhost:3000/v1/coverage | jq    # ADR-0033 verdict per source: .compl
   after a full mirror, `galexie-archive`.
 - **Monitoring.** [`deploy/monitoring/rules/`](../../deploy/monitoring/rules/), [`runbooks/`](runbooks/).
 - **Heavy one-shot jobs** run under a memory/IO cap: r1's role installs
-  `/usr/local/sbin/run-heavy-job.sh` (`systemd-run --scope`, `MemoryMax=20G
-  MemorySwapMax=0`; `configs/ansible/roles/archival-node/tasks/14-stellarindex-services.yml`).
+  `/usr/local/sbin/run-heavy-job.sh` (`systemd-run --scope`, `MemoryMax=20G` or
+  `HEAVY_JOB_MEMORY_MAX`, `MemorySwapMax=0`; `configs/ansible/roles/archival-node/tasks/14-stellarindex-services.yml`).
 - **Catching up:** [`backfill-procedure.md`](backfill-procedure.md). Projected
   Soroban source: `stellarindex-ops projector-replay -config PATH -source <name> -from <ledger> -write`
   (no `-write`, no writes). Non-projected (`sdex`, contract
@@ -290,7 +290,9 @@ curl -s localhost:3000/v1/coverage | jq    # ADR-0033 verdict per source: .compl
 
 [`configs/ansible/roles/archival-node/`](../../configs/ansible/roles/archival-node/)
 does all of §4: follow [`archival-node-bringup.md`](archival-node-bringup.md).
-It does **not** install `stellar-archivist` or ClickHouse (§4.5).
+It installs ClickHouse only with `run_clickhouse: true` (plus
+`clickhouse_apply_schema` for the DDL; both default off), and never
+`stellar-archivist`.
 
 ## What's not covered
 
