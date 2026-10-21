@@ -632,5 +632,55 @@ else
   ok "no exit path returns the raw failure count"
 fi
 
+echo "restore-drill-run-test: the archive drain fails on a stall, not on elapsed time"
+# Fake clock and replica: each sleep advances the clock; each replay poll
+# returns the next LSN from $WD/lsns (the last one repeats). LSNs are 0/<n>.
+WD="$work/drain"
+mkdir -p "$WD"
+DRN="$WD/drain.sh"
+{
+  echo 'set -uo pipefail'
+  # shellcheck disable=SC2016  # emitted into the harness verbatim
+  cat <<'HARNESS'
+WD="$1"; WAL_DRAIN_TIMEOUT="$2"; WAL_DRAIN_STALL_TIMEOUT="$3"
+echo 0 > "$WD/clock"; echo 1 > "$WD/i"
+date() { cat "$WD/clock"; }
+sleep() { echo $(( $(cat "$WD/clock") + $1 )) > "$WD/clock"; }
+q() {
+  case "$1" in
+    *pg_is_in_recovery*) cat "$WD/recovery" ;;
+    *pg_last_wal_replay_lsn*)
+      local i n; i=$(cat "$WD/i"); n=$(wc -l < "$WD/lsns")
+      (( i > n )) && i=$n
+      sed -n "${i}p" "$WD/lsns"; echo $((i + 1)) > "$WD/i" ;;
+    *pg_lsn*)
+      [[ "$1" =~ \'0/([0-9]+)\'::pg_lsn\ \>=\ \'0/([0-9]+)\' ]] || return 1
+      if (( BASH_REMATCH[1] >= BASH_REMATCH[2] )); then echo t; else echo f; fi ;;
+  esac
+}
+HARNESS
+  sed -n '/^wal_drain_wait() {/,/^}/p' "$DRILL"
+  # shellcheck disable=SC2016  # emitted into the harness verbatim
+  echo 'wal_drain_wait "0/$4"; echo "$drained|$drain_why|$(cat "$WD/clock")"'
+} > "$DRN"
+drain_case() { # drain_case <name> <recovery t|f> <lsn-count> <stuck-after> <target> <timeout> <stall> <want-drained> <want-why-substr>
+  local name="$1" got
+  echo "$2" > "$WD/recovery"
+  : > "$WD/lsns"
+  for ((k = 1; k <= $3; k++)); do echo "0/$(( k < $4 ? k : $4 ))" >> "$WD/lsns"; done
+  got="$(bash "$DRN" "$WD" "$6" "$7" "$5" 2>&1)"
+  if [[ "$got" == "$8|"*"$9"* ]]; then ok "$name"; else bad "$name: got '$got'"; fi
+}
+drain_case "a drain that takes over an hour but keeps moving passes" t 500 999 450 28800 1800 1 "replay reached 0/450 after 4490s"
+drain_case "replay frozen short of the target fails as a stall" t 60 50 450 28800 1800 0 "replay stalled at 0/50 for 1800s"
+drain_case "recovery ending counts as drained" f 1 1 450 28800 1800 1 "recovery ended"
+drain_case "a moving drain past the backstop fails" t 2000 9999 1500 600 1800 0 "did NOT reach 0/1500 within 600s"
+# shellcheck disable=SC2016  # literal match
+if grep -q '^WAL_DRAIN_TIMEOUT="${WAL_DRAIN_TIMEOUT:-3600}"' "$DRILL"; then
+  bad "WAL_DRAIN_TIMEOUT still defaults to one hour"
+else
+  ok "the drain backstop is not the old fixed hour"
+fi
+
 echo "restore-drill-run-test: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]] || exit 1

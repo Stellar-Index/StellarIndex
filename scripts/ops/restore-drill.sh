@@ -71,8 +71,12 @@ DRILL_CH_BUCKET="${DRILL_CH_BUCKET:-galexie-archive}"
 # WAL replay from the last backup to now legitimately takes tens of minutes: a
 # daily-diff schedule means up to ~24h of busy-ingest WAL through archive-get.
 PG_START_TIMEOUT="${PG_START_TIMEOUT:-7200}"
-# Ceiling on draining the archive stream after consistency.
-WAL_DRAIN_TIMEOUT="${WAL_DRAIN_TIMEOUT:-3600}"
+# Draining the archive stream after consistency fails when replay stops moving
+# for WAL_DRAIN_STALL_TIMEOUT, not on elapsed time: a repo2 restore takes ~2.7 h
+# and catch-up writes ~50 GiB/h of WAL, so a healthy drain ran past a fixed hour
+# (r1, 2026-10-15/16). WAL_DRAIN_TIMEOUT is the backstop the unit timeout covers.
+WAL_DRAIN_TIMEOUT="${WAL_DRAIN_TIMEOUT:-28800}"
+WAL_DRAIN_STALL_TIMEOUT="${WAL_DRAIN_STALL_TIMEOUT:-1800}"
 # Evidence log + metric destinations: EXPLICIT host paths (env-overridable), NOT
 # computed from $0. The installed copy runs as /usr/local/bin/restore-drill.sh,
 # where a $0-relative LOG_DIR resolved to a non-existent path and silently
@@ -582,28 +586,44 @@ check "core_tables" "$([[ "$tables" == "4" ]] && echo 1 || echo 0)" "found $tabl
 # it. A standby replays only ARCHIVED WAL, so on a quiet primary the target
 # segment may not archive until it fills: hence bounded, and a timeout is its own
 # outcome rather than a silent early measurement.
+# wal_drain_wait <target-lsn>: sets drained (0|1), drain_why and replayed.
+wal_drain_wait() {
+  local target="$1" t0 now last="" last_move
+  t0=$(date +%s); last_move=$t0
+  drained=0; drain_why=""; replayed=""
+  while :; do
+    now=$(date +%s)
+    # Two terminal states, both meaning "everything available was applied": still
+    # in recovery AND replay passed the target LSN; or no longer in recovery.
+    # pgBackRest type=default writes recovery.signal, so once the archive stream is
+    # exhausted Postgres promotes and pg_last_wal_replay_lsn() returns NULL; polling
+    # only the LSN would spin to the timeout on the run that succeeded.
+    if [[ "$(q "SELECT pg_is_in_recovery()" 2>/dev/null)" == "f" ]]; then
+      drained=1; drain_why="recovery ended (archive stream exhausted, promoted) after $((now - t0))s"
+      return
+    fi
+    replayed=$(q "SELECT coalesce(pg_last_wal_replay_lsn()::text,'')" 2>/dev/null || echo "")
+    if [[ -n "$replayed" ]]; then
+      if [[ "$(q "SELECT ('$replayed'::pg_lsn >= '$target'::pg_lsn)")" == "t" ]]; then
+        drained=1; drain_why="replay reached $target after $((now - t0))s"
+        return
+      fi
+      if [[ "$replayed" != "$last" ]]; then last="$replayed"; last_move=$now; fi
+    fi
+    if (( now - last_move >= WAL_DRAIN_STALL_TIMEOUT )); then
+      drain_why="replay stalled at ${replayed:-none} for ${WAL_DRAIN_STALL_TIMEOUT}s short of $target"
+      return
+    fi
+    if (( now - t0 >= WAL_DRAIN_TIMEOUT )); then
+      drain_why="did NOT reach $target within ${WAL_DRAIN_TIMEOUT}s (last replayed: ${replayed:-none})"
+      return
+    fi
+    sleep 10
+  done
+}
 wal_target=$(qlive "SELECT pg_current_wal_lsn()")
-drain_deadline=$(( $(date +%s) + WAL_DRAIN_TIMEOUT ))
-drained=0
-drain_why=""
-while (( $(date +%s) < drain_deadline )); do
-  # Two terminal states, both meaning "everything available was applied": still
-  # in recovery AND replay passed the target LSN; or no longer in recovery.
-  # pgBackRest type=default writes recovery.signal, so once the archive stream is
-  # exhausted Postgres promotes and pg_last_wal_replay_lsn() returns NULL; polling
-  # only the LSN would spin to the timeout on the run that succeeded.
-  if [[ "$(q "SELECT pg_is_in_recovery()" 2>/dev/null)" == "f" ]]; then
-    drained=1; drain_why="recovery ended (archive stream exhausted, promoted)"
-    break
-  fi
-  replayed=$(q "SELECT coalesce(pg_last_wal_replay_lsn()::text,'')" 2>/dev/null || echo "")
-  if [[ -n "$replayed" ]] && [[ "$(q "SELECT ('$replayed'::pg_lsn >= '$wal_target'::pg_lsn)")" == "t" ]]; then
-    drained=1; drain_why="replay reached $wal_target"
-    break
-  fi
-  sleep 10
-done
-check "wal_drain" "$drained" "${drain_why:-did NOT reach $wal_target within ${WAL_DRAIN_TIMEOUT}s (last replayed: ${replayed:-none})}"
+wal_drain_wait "$wal_target"
+check "wal_drain" "$drained" "$drain_why"
 
 restored_tip=$(q "SELECT coalesce(max(ledger_seq),0) FROM ledger_ingest_log")
 live_tip=$(qlive "SELECT coalesce(max(ledger_seq),0) FROM ledger_ingest_log")

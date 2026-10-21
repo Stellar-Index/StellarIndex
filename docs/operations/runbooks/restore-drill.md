@@ -132,6 +132,7 @@ sudo -u postgres pgbackrest --stanza=stellarindex info
 - `ABORTED at pg_start`: no consistency within `PG_START_TIMEOUT` (7200 s): a WAL gap, or mirrored GUCs (`max_connections`, `max_locks_per_transaction`, ...) differ from the primary. The datadir is KEPT under `/srv/restore-drill/pgdata-*`; read `pgdata-*/log/`, then delete it.
 - A check failed (`core_tables`, `wal_drain`, `tip_lag`, `hash_chain_sample`, `trades_window_match`, `ch_rederive`); the log line `FAIL <check> — <detail>` names it, datadir kept. `wal_drain`/`tip_lag` point at WAL archiving, `hash_chain_sample`/`trades_window_match` at data integrity.
 - `wal_drain` after a long WAL span: the drill restored an older backup. It waits up to `BACKUP_WAIT_TIMEOUT` (6 h) for `pgbackrest-backup.service`; check `pgbackrest info` for which backup it took.
+- `wal_drain` fails when replay stops advancing for `WAL_DRAIN_STALL_TIMEOUT` (30 min), or misses the 8 h `WAL_DRAIN_TIMEOUT` backstop. A slow drain is not a failure: the log's `after <n>s` says how long it took. A stall names the LSN it stopped at; `pgbackrest archive-get` of the next segment shows whether the archive has a hole.
 - Evidence unwritable: fix ownership of `/var/lib/stellarindex/restore-drills`.
 
 **Fix** Apply the matching fix and re-run (`sudo systemctl start restore-drill.service`, or `restore-drill-offsite.service` for repo2). Confirm the `.prom` carries `stellarindex_restore_drill_failures 0` and a fresh `last_success_unix`.

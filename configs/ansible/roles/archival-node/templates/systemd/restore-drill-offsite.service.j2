@@ -79,11 +79,10 @@ Nice=15
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7
 
-# The restore alone took up to 2.7 h and the archive drain may add its
-# 3600 s budget, so 4 h no longer covered a healthy run; 6 h still fails a
-# wedged pull and frees the next tick.
-# Whole seconds: the 43200 s lock wait + 6h for the run itself.
-TimeoutStartSec=64800
+# The restore takes up to 2.7 h and the archive drain up to its 8 h backstop
+# (a stalled drain fails after 30 min). Whole seconds: the 43200 s lock wait
+# + 12 h for the run itself.
+TimeoutStartSec=86400
 
 # Hardening — identical to restore-drill.service.j2, for the same reasons
 # recorded there: ProtectSystem=full leaves /var, /srv and /run
