@@ -9,21 +9,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker/guardscan"
 )
 
-// fixture writes a Go file into a temp package under testdata/ inside this module, so the scanner's go.mod lookup and
-// import-path to directory mapping run for real rather than mocked.
-func fixture(t *testing.T, name, src string) string {
+// fixture writes src as main.go of package fx/<name> inside mod.
+func fixture(t *testing.T, mod, name, src string) string {
 	t.Helper()
-	dir := filepath.Join("testdata", name)
+	dir := filepath.Join(mod, "fx", name)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatalf("mkdir %s: %v", dir, err)
 	}
-	t.Cleanup(func() {
-		_ = os.RemoveAll(dir)
-		// Remove the parent too once the last fixture has gone; this
-		// fails harmlessly while other fixtures still live in it, so the
-		// tree is left exactly as it was found.
-		_ = os.Remove("testdata")
-	})
 	path := filepath.Join(dir, "main.go")
 	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
 		t.Fatalf("write %s: %v", path, err)
@@ -45,7 +37,8 @@ func scan(t *testing.T, path string) []guardscan.Site {
 // TestScan_FuncLiteral covers the shape the original guard tests
 // understood, plus the two ways a literal can fail to be guarded.
 func TestScan_FuncLiteral(t *testing.T) {
-	path := fixture(t, "funclit", `package main
+	mod := guardscan.FixtureModule(t)
+	path := fixture(t, mod, "funclit", `package main
 
 import "log/slog"
 
@@ -94,7 +87,8 @@ func work() {}
 // TestScan_NamedSameFileCallee: a walk that returns early on any non-FuncLit callee makes `go loop(ctx)` invisible,
 // so the site count would omit it. Both spellings must be seen and told apart.
 func TestScan_NamedSameFileCallee(t *testing.T) {
-	path := fixture(t, "named", `package main
+	mod := guardscan.FixtureModule(t)
+	path := fixture(t, mod, "named", `package main
 
 import "log/slog"
 
@@ -146,14 +140,10 @@ func work() {}
 // TestScan_NamedCalleeGoStmtsAreWalked: a named callee may start further goroutines in another file of the package.
 // ScanFile must surface all three sites, attributing the two inner ones to workers.go, not report only the one.
 func TestScan_NamedCalleeGoStmtsAreWalked(t *testing.T) {
-	dir := filepath.Join("testdata", "namedcallee_gostmts")
+	dir := filepath.Join(guardscan.FixtureModule(t), "fx", "namedcallee_gostmts")
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatalf("mkdir %s: %v", dir, err)
 	}
-	t.Cleanup(func() {
-		_ = os.RemoveAll(dir)
-		_ = os.Remove("testdata")
-	})
 	if err := os.WriteFile(filepath.Join(dir, "workers.go"), []byte(`package main
 
 import "github.com/Stellar-Index/StellarIndex/internal/worker"
@@ -211,7 +201,8 @@ func run() {
 // TestScan_CrossPackageResolvesRealModuleSource resolves against the real internal/worker package, not fixtures.
 // Both must report Recovers=false: worker.Recover calls recover() but defers nothing, so `go worker.Recover(...)` guards nothing.
 func TestScan_CrossPackageResolvesRealModuleSource(t *testing.T) {
-	path := fixture(t, "crosspkg", `package main
+	mod := guardscan.FixtureModule(t)
+	path := fixture(t, mod, "crosspkg", `package main
 
 import "log/slog"
 
@@ -245,7 +236,8 @@ func run(logger *slog.Logger) {
 // module that DOES defer a guard is accepted, and its unguarded sibling is not. Two fixture
 // packages, so the module-local import path is followed for real.
 func TestScan_CrossPackageGuardedCallee(t *testing.T) {
-	fixture(t, "dep", `package dep
+	mod := guardscan.FixtureModule(t)
+	fixture(t, mod, "dep", `package dep
 
 import (
 	"log/slog"
@@ -265,12 +257,12 @@ func Bare(logger *slog.Logger) { Work() }
 
 func Work() {}
 `)
-	path := fixture(t, "crosspkg_guarded", `package main
+	path := fixture(t, mod, "crosspkg_guarded", `package main
 
 import (
 	"log/slog"
 
-	"github.com/Stellar-Index/StellarIndex/internal/worker/guardscan/testdata/dep"
+	"github.com/Stellar-Index/StellarIndex/fx/dep"
 )
 
 func run(logger *slog.Logger) {
@@ -299,7 +291,8 @@ func run(logger *slog.Logger) {
 // TestScan_MethodOnConstructedValue covers `go x.M(...)` where x's type is only knowable from its constructor's
 // declared result type, which the scanner reads from the package index before looking up the method.
 func TestScan_MethodOnConstructedValue(t *testing.T) {
-	path := fixture(t, "method", `package main
+	mod := guardscan.FixtureModule(t)
+	path := fixture(t, mod, "method", `package main
 
 import "log/slog"
 
@@ -337,7 +330,8 @@ func run(logger *slog.Logger) {
 // TestScan_UnresolvableFailsClosed: a callee the scanner cannot follow (a method on an out-of-module type) must come back
 // as KindUnresolved so the calling test demands a literal wrapper, never silently skip it.
 func TestScan_UnresolvableFailsClosed(t *testing.T) {
-	path := fixture(t, "unresolvable", `package main
+	mod := guardscan.FixtureModule(t)
+	path := fixture(t, mod, "unresolvable", `package main
 
 import "net/http"
 
@@ -364,7 +358,8 @@ func run(srv *http.Server) {
 // tests use to justify an exemption by CONTENT rather than by line
 // number.
 func TestSite_ContentPredicates(t *testing.T) {
-	path := fixture(t, "content", `package main
+	mod := guardscan.FixtureModule(t)
+	path := fixture(t, mod, "content", `package main
 
 import (
 	"net/http"
