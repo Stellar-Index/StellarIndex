@@ -544,7 +544,7 @@ func (r *ExplorerReader) AccountMovements(ctx context.Context, address string, l
 	if cur.IsSet() {
 		args = append(args, cur.Ledger, cur.Ledger, cur.TxHash, cur.OpIndex, cur.LegIndex)
 	}
-	filter.partitions, _ = r.partitionsClause(ctx, MovementCountsRollup, address, "ledger")
+	filter.partitions = r.partitionsClause(ctx, MovementCountsRollup, address, "ledger")
 	window := windowRows(limit, windowFactorKeys)
 	if page, ok, err := r.accountMovementsWindowed(ctx, address, limit, window, cur, filter, append(args, window)); err != nil || ok {
 		return page, err

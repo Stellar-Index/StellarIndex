@@ -368,21 +368,21 @@ func (rc *CountsRollup) runPartitionConn(ctx context.Context, conn driver.Conn, 
 
 // accountPartitionsClause narrows an account-keyed read of operation_participants to the partitions the account has ops in. It is only
 // as complete as account_op_types: re-deriving operation_participants must re-run its participant arm (account_op_types.sql).
-func (r *ExplorerReader) accountPartitionsClause(ctx context.Context, account string) (string, bool) {
+func (r *ExplorerReader) accountPartitionsClause(ctx context.Context, account string) string {
 	if !r.accountOpTypesCovered(ctx) {
-		return "", false
+		return ""
 	}
 	return r.partitionsClause(ctx, OpTypeCountsRollup, account, "ledger_seq")
 }
 
 // partitionsClause narrows an account-keyed read to the partitions rc has the account in: one granule per part is otherwise read from
 // all ~200 parts, ~1.5M rows for an account with a handful of rows. It keeps every stale partition and the whole partition the plan's
-// tail starts in, so a row landing late below the open partition's built mark is still read. ok=false (plan missing, read error) means
+// tail starts in, so a row landing late below the open partition's built mark is still read. "" (plan missing, read error) means
 // read unfiltered.
-func (r *ExplorerReader) partitionsClause(ctx context.Context, rc *CountsRollup, account, ledgerCol string) (string, bool) {
+func (r *ExplorerReader) partitionsClause(ctx context.Context, rc *CountsRollup, account, ledgerCol string) string {
 	plan, ok := r.planFor(ctx, rc)
 	if !ok {
-		return "", false
+		return ""
 	}
 	parts, err := queryKeys(ctx, r.conn, `SELECT DISTINCT part FROM stellar.`+rc.table+`
 		WHERE account = ? AND part IN (`+joinUint32(plan.valid)+`)`+explorerScanSettings,
@@ -392,7 +392,7 @@ func (r *ExplorerReader) partitionsClause(ctx context.Context, rc *CountsRollup,
 			return p, err
 		})
 	if err != nil {
-		return "", false
+		return ""
 	}
 	parts = append(parts, plan.stale...)
 	tail := plan.tailFrom / opTypePartitionWidth * opTypePartitionWidth
@@ -401,5 +401,5 @@ func (r *ExplorerReader) partitionsClause(ctx context.Context, rc *CountsRollup,
 		slices.Sort(parts)
 		clause += " OR intDiv(" + ledgerCol + ", " + strconv.Itoa(opTypePartitionWidth) + ") IN (" + joinUint32(parts) + ")"
 	}
-	return clause + ")", true
+	return clause + ")"
 }
