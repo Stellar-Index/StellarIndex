@@ -1,6 +1,6 @@
 ---
 title: CDN setup for `api.stellarindex.io` (L3.14)
-last_verified: 2026-05-03
+last_verified: 2026-10-21
 status: operator runbook
 ---
 
@@ -21,11 +21,11 @@ Authority: `internal/api/v1/middleware/cachecontrol.go` (`policyForPath` +
 
 | Path | Cache policy (CDN enabled) | Why |
 | --- | --- | --- |
-| `/v1/assets`, `/v1/assets/{id}`, `/v1/pools/reserves`, `/v1/liquidity-pools`, `/v1/sdex/orderbook`, `/v1/lending/pools/{pool}/reserves`, `/v1/external/assets`, `/v1/external/assets/{slug}` | `public, max-age=30, s-maxage=60` | Current price + lake state; turns over inside one bucket / a few ledgers |
-| `/v1/price`, `/v1/price/batch`, `/v1/price/changes`, `/v1/oracle/latest` | `public, max-age=30, s-maxage=5` | Closed-bucket price. The 5 s shared TTL is bounded by the SLA probe's 150 s freshness target (60 s bucket + 30 s CAGG `end_offset` + schedule + runtime); longer puts a compliant origin outside its SLA at the edge (#344) |
-| `/v1/history*`, `/v1/price/at`, `/v1/ohlc`, `/v1/vwap`, `/v1/twap`, `/v1/chart`, `/v1/markets`, `/v1/markets/sources`, `/v1/mev`, `/v1/search`, `/v1/pairs`, `/v1/sources`, the rest of `/v1/oracle/*` (NOT `latest`), `/v1/pools`, `/v1/lending/pools`, `/v1/aggregators`, `/v1/network/stats`, `/v1/incidents`, `/v1/sac-wrappers`, `/v1/issuers`, `/v1/issuers/{g}`, `/v1/accounts/stats`, `/v1/accounts/creators`, `/v1/accounts/sponsors`, `/v1/directory`, `/v1/changes/*` | `public, max-age=60, s-maxage=300` | Closed-bucket + catalogue. Immutable per ADR-0015 but the trailing edge advances; `s-maxage` caps CDN lag |
+| `/v1/assets`, `/v1/assets/*`, `/v1/rwa/assets`, `/v1/stablecoins`, `/v1/pools/reserves`, `/v1/liquidity-pools`, `/v1/sdex/orderbook`, `/v1/protocols/{name}/tvl`, `/v1/lending/pools/{pool}/reserves`, `/v1/external/assets`, `/v1/external/assets/*`, `/v1/aggregators` | `public, max-age=30, s-maxage=60` | Current price + lake state; turns over inside one bucket / a few ledgers |
+| `/v1/price`, `/v1/price/batch*`, `/v1/price/changes`, `/v1/price/at`, `/v1/vwap`, `/v1/twap`, `/v1/oracle/latest`, `/v1/oracle/lastprice`, `/v1/oracle/prices`, `/v1/oracle/x_last_price` | `public, max-age=30, s-maxage=5` | Closed-bucket price. The 5 s shared TTL is bounded by the SLA probe's 150 s freshness target (60 s bucket + 30 s CAGG `end_offset` + schedule + runtime); longer puts a compliant origin outside its SLA at the edge (#344) |
+| `/v1/history*`, `/v1/ohlc`, `/v1/chart`, `/v1/markets`, `/v1/markets/sources`, `/v1/mev`, `/v1/search`, `/v1/pairs`, `/v1/sources`, the rest of `/v1/oracle/*`, `/v1/pools`, `/v1/lending/pools`, `/v1/incidents`, `/v1/sac-wrappers`, `/v1/issuers`, `/v1/issuers/{g}`, `/v1/accounts/stats`, `/v1/accounts/creators`, `/v1/accounts/sponsors`, `/v1/directory`, `/v1/changes/*`, `/v1/rwa/history`, `/v1/rwa/premium` | `public, max-age=60, s-maxage=300` | Closed-bucket + catalogue. Immutable per ADR-0015 but the trailing edge advances; `s-maxage` caps CDN lag |
 | `/v1/ledgers/{n}`, `/v1/ledgers/{n}/transactions`, `/v1/ledgers/{n}/operations`, `/v1/tx/{hash}` | `public, max-age=60, s-maxage=300` | Immutable once closed; 5 min not a year because a seconds-old ledger can be served before every projection lands |
-| `/v1/ledgers`, `/v1/network/throughput`, `/v1/status`, `/v1/status/notices`, `/v1/operations`, `/v1/contracts`, `/v1/contracts/{id}`, `/v1/contracts/{id}/interactions`, `/v1/contracts/{id}/code-history`, `/v1/contracts/{id}/transfers` | `public, max-age=10, s-maxage=15` | Polled surfaces that move every few seconds. Deliberately NOT the 300 s band: the server-side cache serves stale on expiry and refreshes only on a request, so at low arrival rates entry age is bounded by the inter-arrival gap (93 s measured on r1) and a long shared TTL would compound it. `/transfers` first page moves with every transfer |
+| `/v1/ledgers`, `/v1/ledgers/at`, `/v1/network/throughput`, `/v1/network/stats`, `/v1/status`, `/v1/status/notices`, `/v1/operations`, `/v1/contracts`, `/v1/contracts/stats`, `/v1/contracts/{id}`, `/v1/contracts/{id}/interactions`, `/v1/contracts/{id}/code-history`, `/v1/contracts/{id}/transfers` | `public, max-age=10, s-maxage=15` | Polled surfaces that move every few seconds. Deliberately NOT the 300 s band: the server-side cache serves stale on expiry and refreshes only on a request, so at low arrival rates entry age is bounded by the inter-arrival gap (93 s measured on r1) and a long shared TTL would compound it. `/transfers` first page moves with every transfer |
 | `/v1/methodology` | `public, max-age=300, s-maxage=600` | Mostly-static prose |
 | `/v1/incidents.atom` | `public, max-age=60, s-maxage=120` | Poll-cadence feed |
 | `/v1/price/tip`, `/v1/price/tip/*`, `/v1/observations*`, `/v1/sources/{name}/*` | `private, no-cache, must-revalidate` | Tip has no cross-region consistency contract (ADR-0018); caching would change it |
@@ -37,17 +37,17 @@ infer these from the table above:
 
 | Path | Cache policy | Set by |
 | --- | --- | --- |
-| `/v1/history/since-inception` | `public, max-age=300, s-maxage=86400` | Closed buckets are immutable: long edge, short browser |
-| `/v1/assets/{id}` | `public, max-age=60` | F2 fields refresh on supply-snapshot cadence |
-| `/v1/diagnostics/*` | `private, no-cache, must-revalidate` | Operator live data, showcase polls every 15 s |
-| `/v1/diagnostics/ingestion` | `public, max-age=15, s-maxage=15` | `diagnostics_ingestion.go:508,524` (middleware's private band would defeat the edge) |
-| `/v1/diagnostics/backups` | `public, max-age=60, s-maxage=60` | `diagnostics_backups.go:645` |
-| `/v1/ledger/tip` | `public, max-age=2` | `ledger_tip.go:72` |
-| `/v1/coverage/verdicts`, `/v1/protocols*` | `public, max-age=60` | `coverage_verdicts.go:216`, `protocols.go:660,755` |
-| `/v1/incidents/{slug}` | `public, max-age=300` | `incidents.go:157` |
-| `/errors/`, `/errors/{slug}` | `public, max-age=3600` | `server.go:2428,2434,2447` |
-| `/.well-known/security.txt`, `/robots.txt` | `public, max-age=86400` | `server.go:2391,2507` |
-| `/v1/livez/lake` | `no-store` | `server.go:2313` |
+| `/v1/diagnostics/ingestion` | `public, max-age=15, s-maxage=15` | `diagnostics_ingestion.go` (middleware's private band would defeat the edge) |
+| `/v1/diagnostics/backups` | `public, max-age=60, s-maxage=60` | `diagnostics_backups.go` |
+| `/v1/ledger/tip` | `public, max-age=2` | `ledger_tip.go` |
+| `/v1/coverage/verdicts`, `/v1/protocols`, `/v1/protocols/{name}` | `public, max-age=60` | `coverage_verdicts.go`, `protocols.go` |
+| `/v1/contracts/{id}/wasm` | `public, max-age=300` with a TTL, else `public, max-age=60, s-maxage=300` | `explorer/wasm_view.go` |
+| `/v1/incidents/{slug}` | `public, max-age=300` | `incidents.go` |
+| `/errors/`, `/errors/{slug}` | `public, max-age=3600` | `server.go` |
+| `/.well-known/security.txt`, `/robots.txt` | `public, max-age=86400` | `server.go` |
+| `/v1/livez/lake` | `no-store` | `server.go` |
+| Any error response, and any envelope flagged `degraded` | `no-store` | `envelope.go`, so a CDN never replays a transient failure |
+| CSV exports | `private, no-store` | `explorer/csv.go` |
 | SSE streams (`/stream` suffix) | `no-store` | CDN must passthrough |
 
 If a CDN deployment differs, override per path at the CDN layer rather than
@@ -60,7 +60,7 @@ one panel for DNS + TLS; rules port to Bunny/CloudFront later).
 
 | Provider | Pricing (rough) | Notes |
 | --- | --- | --- |
-| CloudFront (AWS) | ~$0.085/GB | r2 runs on AWS; natural if multi-region shares AWS infra |
+| CloudFront (AWS) | ~$0.085/GB | No AWS footprint since r2/r3 moved to Vultr (ADR-0050) |
 | Bunny CDN | ~$0.005–0.020/GB | Best price/performance; manual web-UI config |
 | Cloudflare | Free–$20/mo | Zero TLS work; deepest DDoS posture |
 
@@ -84,16 +84,11 @@ one panel for DNS + TLS; rules port to Bunny/CloudFront later).
 
 3. Configure caching
    - Caching → Configuration → Browser Cache TTL: Respect Existing Headers.
-   - Page Rules / Cache Rules:
-     - URL pattern: api.stellarindex.io/v1/history/*
-       Cache Level: Cache Everything
-       Edge Cache TTL: 1 day
-     - URL pattern: api.stellarindex.io/v1/sources
-       Cache Level: Cache Everything
-       Edge Cache TTL: 5 minutes
-     - URL pattern: api.stellarindex.io/v1/markets
-       Cache Level: Cache Everything
-       Edge Cache TTL: 5 minutes
+   - Cache Rules: Cache Eligibility = Eligible for cache, Edge TTL =
+     "Use cache-control header if present". Never set a fixed Edge TTL:
+     the origin's `s-maxage` bands are the contract (the price band's 5 s
+     is bounded by the SLA probe), and Cloudflare does not cache JSON
+     without a rule.
      - URL pattern: api.stellarindex.io/v1/auth/*
        Cache Level: Bypass
      - URL pattern: api.stellarindex.io/v1/account/*
