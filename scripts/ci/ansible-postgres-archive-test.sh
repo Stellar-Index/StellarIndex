@@ -116,6 +116,37 @@ for label, flag in (("backups disabled (bool)", False), ("backups disabled (defa
     check("archive_command" not in got, f"{label}: no archive_command rendered")
     check(got.get("wal_level") == "replica", f"{label}: wal_level = replica")
 
+# repo1 placement: local by default; sftp only when a host is set, and then
+# with the host key pinned by fingerprint.
+conf_env = jinja2.Environment(keep_trailing_newline=True)
+conf_env.filters["bool"] = ansible_bool
+conf = conf_env.from_string(open(f"{role}/templates/pgbackrest.conf.j2").read())
+
+
+def repo1(**extra):
+    out = {}
+    for line in conf.render(**extra).splitlines():
+        m = re.match(r"^(repo1-[a-z-]+)=(.*)$", line)
+        if m:
+            out[m.group(1)] = m.group(2)
+    return out
+
+
+got = repo1()
+check(got.get("repo1-path") == "/var/lib/pgbackrest" and "repo1-type" not in got,
+      f"repo1 local by default (got {got})")
+got = repo1(pgbackrest_repo1_sftp_host="ab1.example", pgbackrest_repo1_sftp_port=22,
+            pgbackrest_repo1_sftp_user="pgbackrest", pgbackrest_repo1_sftp_path="/srv/pgbackrest",
+            pgbackrest_repo1_sftp_private_key_file="/var/lib/postgresql/.ssh/pgbackrest_repo1",
+            pgbackrest_repo1_sftp_host_fingerprint="ab12")
+check(got.get("repo1-type") == "sftp" and got.get("repo1-sftp-host") == "ab1.example"
+      and got.get("repo1-path") == "/srv/pgbackrest", f"repo1 sftp when a host is set (got {got})")
+check(got.get("repo1-sftp-host-key-check-type") == "fingerprint"
+      and got.get("repo1-sftp-host-fingerprint") == "ab12", "sftp repo1 pins the host key by fingerprint")
+paths = [l for l in conf.render(pgbackrest_repo1_sftp_host="ab1.example", pgbackrest_repo1_sftp_path="/srv/pgbackrest").splitlines()
+         if l.startswith("repo1-path=")]
+check(paths == ["repo1-path=/srv/pgbackrest"], f"sftp repo1 renders exactly one repo1-path (got {paths})")
+
 if failed:
     print("ansible-postgres-archive-test: FAIL", file=sys.stderr)
     sys.exit(1)

@@ -1534,6 +1534,15 @@ zfs_snapshot_on_calendar: "*-*-* 01:45:00 UTC"
 # PITR window = the diff/WAL retention.
 pgbackrest_repo2_retention_full: 1
 pgbackrest_repo2_retention_diff: 7
+# repo1 over sftp to a second host; empty keeps repo1 local. Switching an
+# existing stanza needs its repo copied there first (pgbackrest does not move it).
+pgbackrest_repo1_sftp_host: ""
+pgbackrest_repo1_sftp_port: 22
+pgbackrest_repo1_sftp_user: pgbackrest
+pgbackrest_repo1_sftp_path: /var/lib/pgbackrest
+pgbackrest_repo1_sftp_private_key_file: /var/lib/postgresql/.ssh/pgbackrest_repo1
+# sha256 host-key fingerprint, as pgbackrest expects it (hex).
+pgbackrest_repo1_sftp_host_fingerprint: ""
 
 # Off-site restore-drill (repo2) — restore-drill-offsite.{service,timer}
 # in 18-pgbackrest-backup.yml. Gated on the same fact that renders the

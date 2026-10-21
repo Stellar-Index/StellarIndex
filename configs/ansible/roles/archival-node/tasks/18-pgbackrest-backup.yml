@@ -115,6 +115,22 @@
     quiet: true
   when: pgbackrest_manage_conf | default(false)
 
+- name: Refuse an sftp repo1 without a pinned host key and its own cipher
+  ansible.builtin.assert:
+    that:
+      - pgbackrest_repo1_sftp_host_fingerprint | default('') != ''
+      - pgbackrest_repo1_cipher_pass | default('') != ''
+    fail_msg: >-
+      repo1 over sftp leaves this host: it needs
+      pgbackrest_repo1_sftp_host_fingerprint (no trust-on-first-use) and
+      pgbackrest_repo1_cipher_pass (an unencrypted ack does not cover a
+      copy on another machine).
+    quiet: true
+  no_log: true
+  when:
+    - pgbackrest_manage_conf | default(false)
+    - pgbackrest_repo1_sftp_host | default('') != ''
+
 - name: Refuse repo2 without its cipher pass (offsite copies are encrypted by us)
   ansible.builtin.assert:
     that:
