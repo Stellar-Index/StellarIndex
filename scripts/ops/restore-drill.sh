@@ -44,6 +44,9 @@ MIN_FREE_GB="${MIN_FREE_GB:-200}"
 # archive-get pulls into pg_wal during recovery.
 DRILL_SIZE_MARGIN_PCT="${DRILL_SIZE_MARGIN_PCT:-125}"
 DRILL_WAL_HEADROOM_GB="${DRILL_WAL_HEADROOM_GB:-50}"
+# Path on the live cluster's dataset, whose ZFS compression ratio the restore
+# will see too.
+DRILL_RATIO_REF="${DRILL_RATIO_REF:-/var/lib/postgresql}"
 # Pool free space run-heavy-job.sh's watchdog stops the job below
 # (HEAVY_MIN_DATA_KB): the restore must fit above it or it is killed mid-way.
 DRILL_POOL_FLOOR_GB="${DRILL_POOL_FLOOR_GB:-$(( ${HEAVY_MIN_DATA_KB:-314572800} / 1048576 ))}"
@@ -205,13 +208,23 @@ if [[ ! "$backup_bytes" =~ ^[0-9]+$ ]] || (( backup_bytes == 0 )); then
   exit 2
 fi
 backup_gb=$(( (backup_bytes + 1073741823) / 1073741824 ))   # GiB, matching df -BG
-need_gb=$(( backup_gb * DRILL_SIZE_MARGIN_PCT / 100 + DRILL_WAL_HEADROOM_GB ))
+# The restore lands compressed, so size it by the live cluster's on-disk ratio
+# (the emptied drill dataset itself reads 1.00x). Non-ZFS hosts keep 1.00.
+ratio_pct=100
+ratio_ds=$(df --output=source "$DRILL_RATIO_REF" 2>/dev/null | tail -1) || ratio_ds=""
+ratio=$(zfs get -Hp -o value refcompressratio "$ratio_ds" 2>/dev/null) || ratio=""
+if [[ "$ratio" =~ ^([0-9]+)\.([0-9]{2})x?$ ]]; then
+  ratio_pct=$(( 10#${BASH_REMATCH[1]} * 100 + 10#${BASH_REMATCH[2]} ))
+  (( ratio_pct < 100 )) && ratio_pct=100
+fi
+disk_gb=$(( (backup_gb * 100 + ratio_pct - 1) / ratio_pct ))
+need_gb=$(( disk_gb * DRILL_SIZE_MARGIN_PCT / 100 + DRILL_WAL_HEADROOM_GB ))
 (( need_gb < MIN_FREE_GB )) && need_gb=$MIN_FREE_GB
 
 mkdir -p "$DRILL_ROOT"
 free_gb=$(df -BG --output=avail "$DRILL_ROOT" | tail -1 | tr -dc '0-9')
 if (( free_gb < need_gb + DRILL_POOL_FLOOR_GB )); then
-  note "only ${free_gb}G free under $DRILL_ROOT, need ${need_gb}G (latest backup ${backup_gb}G × ${DRILL_SIZE_MARGIN_PCT}% + ${DRILL_WAL_HEADROOM_GB}G WAL headroom; floor ${MIN_FREE_GB}G) + ${DRILL_POOL_FLOOR_GB}G pool floor — refusing"
+  note "only ${free_gb}G free under $DRILL_ROOT, need ${need_gb}G (latest backup ${backup_gb}G ÷ ${ratio_pct}% on-disk ratio × ${DRILL_SIZE_MARGIN_PCT}% + ${DRILL_WAL_HEADROOM_GB}G WAL headroom; floor ${MIN_FREE_GB}G) + ${DRILL_POOL_FLOOR_GB}G pool floor — refusing"
   exit 2
 fi
 note "capacity: ${free_gb}G free under $DRILL_ROOT ≥ ${need_gb}G needed for a ${backup_gb}G backup (+ ${DRILL_POOL_FLOOR_GB}G pool floor)"

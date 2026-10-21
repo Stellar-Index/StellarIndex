@@ -116,6 +116,9 @@ all:
     # r1 as raidz2 would hand back a pool too small for its own data.
     zfs_data_pool_type:  "raidz1"             # raidz1 | raidz2 | mirror | stripe
     zfs_data_pool_name:  "data"
+    # Heavy jobs stop (and drills refuse to start) below 1.25 TiB free,
+    # just above the 7% fill ticket; the 300 GiB role default is far below it.
+    heavy_min_data_kb: 1342177280
 
     # ───── Roles colocated on this host ────────────────────────────
     # r1 runs neither stellar-core nor stellar-rpc — galexie carries its
