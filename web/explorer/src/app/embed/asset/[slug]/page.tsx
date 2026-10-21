@@ -31,6 +31,9 @@ interface AssetIndex {
   // canonical form only) and the thin GlobalAssetView these slugs return
   // carries no asset_id, so we resolve it from the listing here.
   byKey: Map<string, string>;
+  // Lowercased slug / asset_id → listing row; fetchCoin renders from it so
+  // a build does not send one cold /v1/assets/{id} per widget.
+  rows: Map<string, Coin>;
 }
 
 let assetIndexPromise: Promise<AssetIndex> | null = null;
@@ -45,23 +48,30 @@ function getAssetIndex(): Promise<AssetIndex> {
   assetIndexPromise = (async () => {
     const slugs: string[] = [];
     const byKey = new Map<string, string>();
-    if (isCIStub) return { slugs, byKey };
+    const rows = new Map<string, Coin>();
+    if (isCIStub) return { slugs, byKey, rows };
     try {
-      const res = await fetch(`${API_BASE_URL}/v1/assets?limit=500`, {
-        headers: buildHeaders(),
-        signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
-      });
+      const res = await fetch(
+        `${API_BASE_URL}/v1/assets?limit=500&include=sparkline24h`,
+        {
+          headers: buildHeaders(),
+          signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
+        },
+      );
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const env = (await res.json()) as {
-        data: { slug?: string; asset_id?: string }[];
-      };
+      const env = (await res.json()) as { data: Coin[] };
       for (const row of env.data ?? []) {
         const slug = row.slug || row.asset_id || '';
         if (slug) slugs.push(slug);
         const id = row.asset_id || '';
         if (id) {
-          if (row.slug) byKey.set(row.slug.toLowerCase(), id);
+          if (row.slug) {
+            byKey.set(row.slug.toLowerCase(), id);
+            if (!rows.has(row.slug.toLowerCase()))
+              rows.set(row.slug.toLowerCase(), row);
+          }
           byKey.set(id.toLowerCase(), id);
+          if (!rows.has(id.toLowerCase())) rows.set(id.toLowerCase(), row);
         }
       }
       // Catalogue slugs. The listing above is the
@@ -108,7 +118,7 @@ function getAssetIndex(): Promise<AssetIndex> {
       // Leave empty — generateStaticParams falls back to the single
       // anchor slug, and the sparkline fallback simply renders no chart.
     }
-    return { slugs, byKey };
+    return { slugs, byKey, rows };
   })();
   return assetIndexPromise;
 }
@@ -240,8 +250,8 @@ export async function generateMetadata({
 }
 
 async function fetchCoin(slug: string): Promise<Coin | null> {
-  // Per-asset detail fetched from /v1/assets/{slug}, the
-  // CoinSummary-superset surface. The `Coin`
+  // The build-wide listing row when the slug is listed, else per-asset
+  // detail from /v1/assets/{slug}, the CoinSummary-superset surface. The `Coin`
   // type alias here is kept for stability; field shape is identical
   // for the read columns this embed renders (price_usd /
   // change_*_pct / volume_24h_usd / price_history_24h / code).
@@ -253,6 +263,8 @@ async function fetchCoin(slug: string): Promise<Coin | null> {
   // degraded.
   const norm = slug.toLowerCase();
   const id = norm === 'xlm' || norm === 'native' ? 'native' : slug;
+  const listed = (await getAssetIndex()).rows.get(id.toLowerCase());
+  if (listed) return listed;
   try {
     const res = await fetch(
       `${API_BASE_URL}/v1/assets/${encodeURIComponent(id)}`,

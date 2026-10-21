@@ -327,7 +327,7 @@ function getBuildCoinsCache(): Promise<BuildCoinsCache | null> {
     // API. Double timeout — the heaviest listing call of the build.
     const data = await buildFetchData<
       { coins?: CoinSummary[] } | CoinSummary[]
-    >('/v1/assets?limit=500&include=sparkline,sparkline7d,ath', {
+    >('/v1/assets?limit=500&include=sparkline24h,sparkline7d', {
       timeoutMs: 16_000,
     });
     if (!data) return null; // CI stub (a 4xx here is caught by generateStaticParams' fail-hard check)
