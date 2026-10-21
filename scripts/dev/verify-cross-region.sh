@@ -194,6 +194,6 @@ if [ "$FAIL_UNREACH" -gt 0 ]; then
     bold "Run again once the affected region is healthy."
 fi
 echo
-bold "Cross-reference docs/operations/multi-region-cutover.md §Stage 5."
+bold "Cross-reference docs/architecture/ha-plan.md (edge failover)."
 [ "$FAIL_DIVERGE" -gt 0 ] && exit 1
 exit 2

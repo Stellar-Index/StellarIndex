@@ -1,44 +1,30 @@
 ---
 title: Incidents — public-facing customer comms (moved)
-last_verified: 2026-05-07
+last_verified: 2026-10-21
 status: redirect
 ---
 
 # Incidents — moved
 
-The customer-facing incident posts now live at
-**[`internal/incidents/data/`](../../../internal/incidents/data/)**.
+The customer-facing incident posts live at
+**[`internal/incidents/data/`](../../../internal/incidents/data/)**, where the
+stellarindex-api binary embeds them (`go:embed`) and serves the parsed corpus via
+`GET /v1/incidents`. The public status page (stellarindex.io/status) reads that endpoint.
 
-They were moved out of `docs/operations/incidents/` so the
-stellarindex-api binary can `go:embed` them at build time and serve
-the parsed corpus via `GET /v1/incidents`. The public status page
-(stellarindex.io/status) reads from that endpoint instead of the
-hardcoded array it shipped with previously.
-
-## Why the move
-
-`go:embed` paths can't traverse upward (`..` is forbidden), so the
-data directory has to live under the importing package's tree. We
-chose to move the source-of-truth rather than mirror the files via
-a Makefile rule — single source of truth, no drift.
+`go:embed` cannot traverse upward (`..`), so the source of truth lives under the importing
+package rather than being mirrored by a build rule.
 
 ## File naming + workflow
 
-Unchanged. Files still use `<YYYY-MM-DD>-<short-slug>.md` with the
-same YAML frontmatter shape (see
-[`internal/incidents/data/_template.md`](../../../internal/incidents/data/_template.md)).
-The same SEV declaration / update / resolution playbook from
-[`sev-playbook.md`](../sev-playbook.md) applies — only the
-filesystem destination changed.
+Files use `<YYYY-MM-DD>-<short-slug>.md` with the YAML frontmatter of
+[`internal/incidents/data/_template.md`](../../../internal/incidents/data/_template.md).
+Declare, update and resolve per [`sev-playbook.md`](../sev-playbook.md).
 
 ## API surface
 
-`GET /v1/incidents` returns the parsed corpus as JSON, sorted by
-`started_at` descending (most recent first). Files starting with
-`_` (templates) are skipped.
+`GET /v1/incidents` returns the corpus as JSON, newest `started_at` first. Files starting with
+`_` (templates) are skipped; a file that fails to parse is logged and skipped.
 
 ## Internal postmortems
 
-Distinct from the customer-facing posts above, internal post-mortems
-still live at [`docs/operations/postmortems/`](../postmortems/) — that
-directory is unaffected by this move.
+Internal post-mortems live separately at [`docs/operations/postmortems/`](../postmortems/).
