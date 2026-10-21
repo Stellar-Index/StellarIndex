@@ -1,14 +1,14 @@
 ---
 title: Supply-snapshot writer — daily cron + operator-managed reserve balances
-last_verified: 2026-05-03
+last_verified: 2026-10-21
 status: living procedure
 ---
 
 # Supply-snapshot writer — daily cron + operator-managed reserve balances
 
 Operational companion to [ADR-0011](../adr/0011-supply-algorithm.md).
-Code: `cmd/stellarindex-ops/supply.go` (`supply snapshot`),
-`internal/supply/config_reader.go` (`ReserveBalanceReader`).
+Code: `internal/ops/supply/supply.go` (`supply snapshot`),
+`internal/supply/config_reader.go` (`ConfigReserveBalanceReader`).
 
 ## Purpose
 
@@ -39,7 +39,10 @@ account has rows; otherwise it falls back to the static
 `[supply].reserve_balances_stroops` map (chained-fallback reader:
 [supply-pipeline](../architecture/supply-pipeline.md#the-chained-fallback-reader-pattern)).
 The static map is a bring-up cushion; it may be empty once the observer
-has caught up.
+has caught up. It is dated: the static reader refuses to answer when
+`[supply].reserve_balances_as_of` is unset or older than
+`reserve_balances_max_age` (default 168h), so the XLM tick fails rather than
+republish stale balances.
 
 ```toml
 [supply]
@@ -49,22 +52,24 @@ sdf_reserve_accounts = [
   # … one entry per active SDF reserve account, per latest SDF announcement
 ]
 
+reserve_balances_as_of = "2026-01-31"   # YYYY-MM-DD UTC, date of the balances below
+
 [supply.reserve_balances_stroops]
 GA5XIGA5C7QTPTWXQHY6MCJRMTRZDOSHR6EFIBNDQTCQHG262N4GGKTM = "12345678900000000"
 GBLDBN3QQAA2QAH7ZQI6LQ5TXGMVCOATJYBSXQYDQB7ZUR3OVF5JEHO5 = "98765432100000000"
 ```
 
-Writer start validates that **every** `sdf_reserve_accounts` entry has a
-`reserve_balances_stroops` entry. Missing = hard fail (treating unknown
-as zero would overstate circulating supply, which ADR-0011 prohibits).
+**Every** `sdf_reserve_accounts` entry needs a `reserve_balances_stroops`
+entry. The static reader errors on a missing account (treating unknown as
+zero would overstate circulating supply, which ADR-0011 prohibits).
 
 ### When SDF announces a reserve move
 
 Bootstrap-only once the observer covers the operator set.
 
 1. Wait for SDF's public announcement (account + stroop amount).
-2. Edit `[supply.reserve_balances_stroops]`; add new accounts to
-   `sdf_reserve_accounts`.
+2. Edit `[supply.reserve_balances_stroops]` and bump `reserve_balances_as_of`;
+   add new accounts to `sdf_reserve_accounts`.
 3. Next timer fire picks it up; no restart.
 4. Optional out-of-cadence run: `sudo systemctl start supply-snapshot.service`
 
@@ -80,11 +85,13 @@ storage errors transiently, the whole call drops to the static reader.
 
 ### Files
 
-- `deploy/systemd/supply-snapshot.timer`: `OnCalendar=04:42 UTC` daily,
-  up to 5 min jitter (after archive-completeness verify 02:17 and
-  verify-archive-tier-a 03:23).
-- `deploy/systemd/supply-snapshot.service`: runs
-  `stellarindex-ops supply snapshot -config $CONFIG_PATH -asset $ASSET`.
+- `deploy/systemd/supply-snapshot.timer` (r1: Ansible template
+  `supply-snapshot.timer.j2`): `OnCalendar=04:42 UTC` daily, up to 5 min
+  jitter (after archive-completeness verify 02:17 and verify-archive-tier-a
+  03:23).
+- `deploy/systemd/supply-snapshot.service` (template `supply-snapshot.service.j2`):
+  runs `stellarindex-ops supply snapshot -config $CONFIG_PATH -asset $ASSET
+  -write`, plus `-textfile-output` when `TEXTFILE_OUTPUT` is set.
 
 ### Operator wiring
 
@@ -99,17 +106,17 @@ Override via `/etc/default/supply-snapshot`:
 ```sh
 CONFIG_PATH=/etc/stellarindex.toml      # default
 ASSET=native                            # default; only `native` at v1
-EXTRA_FLAGS="-ledger 50000000"          # pin to a specific ledger
-                                        # (default: max from ingestion_cursors)
+EXTRA_FLAGS="-ledger 50000000"          # pin to a specific ledger (default: the
+                                        # `ledgerstream` cursor, clamped to the lake tip)
 ```
 
-### Pre-flight: dry-run
+### Pre-flight: preview
 
-Before enabling the timer:
+Without `-write` the command only prints (the default). Before enabling the timer:
 
 ```sh
 sudo -u stellarindex /usr/local/bin/stellarindex-ops supply snapshot \
-  -config /etc/stellarindex.toml -dry-run
+  -config /etc/stellarindex.toml
 ```
 
 Prints `total_supply` / `circulating_supply` / `max_supply` / `basis` /
@@ -151,7 +158,7 @@ stellarindex_supply_snapshot_ledger{asset_key=}                gauge   ledger se
 stellarindex_supply_snapshot_observed_at_seconds{asset_key=}   gauge   unix
 stellarindex_supply_snapshot_run_duration_seconds              gauge   seconds
 stellarindex_supply_snapshot_unit_failed{asset_key=}           gauge   1 on fail, 0 on pass
-stellarindex_supply_snapshot_last_success_timestamp{asset_key=} gauge  unix; only on pass
+stellarindex_supply_snapshot_last_success_timestamp{asset_key=} gauge  unix; carried over on a failed run
 ```
 
 Values are in **XLM**, not stroops (float64; sub-stroop precision lost,
@@ -159,14 +166,16 @@ fine for monitoring). The hypertable keeps full NUMERIC.
 
 ### Alerts
 
-`deploy/monitoring/rules/supply-snapshot.yml`; each has a runbook under
-`docs/operations/runbooks/supply-snapshot-*.md`.
+`configs/prometheus/rules.r1/supply-snapshot.yml` (mirrored in
+`deploy/monitoring/rules/`); each has a section in
+[`runbooks/supply.md`](runbooks/supply.md).
 
 | Alert | Condition | Severity |
 |-------|-----------|----------|
 | `stellarindex_supply_snapshot_unit_failed_alert` | unit_failed=1 sustained 30 min | P3 ticket |
 | `stellarindex_supply_snapshot_stale` | last_success > 36 h | P3 ticket |
 | `stellarindex_supply_snapshot_critical_stale` | last_success > 72 h | **P2** page |
+| `stellarindex_supply_snapshot_never_initialized` | last_success absent for 36 h | P3 ticket |
 | `stellarindex_supply_snapshot_circulating_zero` | circulating ≤ 0 (XLM only) | **P2** page |
 
 ## Verifying it ran
