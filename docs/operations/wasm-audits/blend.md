@@ -1,6 +1,6 @@
 ---
 title: Blend WASM-history audit
-last_verified: 2026-05-03
+last_verified: 2026-10-21
 status: Phases 1–4 complete. BackfillSafe=true. Also covers Comet (Blend backstop is the only mainnet Comet deployment).
 source: blend
 backfill_safe: true

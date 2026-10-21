@@ -1,6 +1,5 @@
 ---
 title: wasm-history walker investigation + wide-net walk plan (2026-05-01)
-last_verified: 2026-05-01
 status: investigation complete; wide-net walk recommendations below
 related:
   - docs/operations/wasm-audits/r1-walk-2026-05-01.md

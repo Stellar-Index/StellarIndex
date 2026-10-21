@@ -1,6 +1,6 @@
 ---
 title: Rozo WASM-history audit
-last_verified: 2026-07-09
+last_verified: 2026-10-21
 status: "approved — 4 contracts (see 2026-07-09 addendum)"
 source: rozo
 backfill_safe: true

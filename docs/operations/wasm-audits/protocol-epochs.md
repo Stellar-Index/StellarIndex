@@ -1,6 +1,5 @@
 ---
 title: Protocol epoch timelines (2026-05-01 r1 walk)
-last_verified: 2026-05-01
 status: comprehensive (8 sources, 540/543 contracts, 52 WASMs)
 related:
   - docs/operations/wasm-audits/r1-walk-2026-05-01.md

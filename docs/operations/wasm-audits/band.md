@@ -1,6 +1,6 @@
 ---
 title: Band WASM-history audit
-last_verified: 2026-05-03
+last_verified: 2026-10-21
 status: ratified — v2 walk confirms single stable WASM
 source: band
 backfill_safe: true

@@ -1,6 +1,6 @@
 ---
 title: Comet WASM-history audit
-last_verified: 2026-05-03
+last_verified: 2026-10-21
 status: ratified — v2 folded into Blend audit
 source: comet
 backfill_safe: true

@@ -1,6 +1,6 @@
 ---
 title: Blend Emitter WASM-history audit
-last_verified: 2026-07-10
+last_verified: 2026-10-21
 status: complete -- BackfillSafe=true (2026-07-10, ClickHouse-lake-only audit, no wasm-history walk)
 source: blend_emitter
 backfill_safe: true

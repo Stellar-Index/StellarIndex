@@ -1,6 +1,6 @@
 ---
 title: CCTP WASM-history audit
-last_verified: 2026-05-26
+last_verified: 2026-10-21
 status: "approved — see Audit decision"
 source: cctp
 backfill_safe: true

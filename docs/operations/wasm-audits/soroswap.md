@@ -1,6 +1,6 @@
 ---
 title: Soroswap WASM-history audit
-last_verified: 2026-05-03
+last_verified: 2026-10-21
 status: ratified — v2 per-instance walk complete
 source: soroswap
 backfill_safe: true
