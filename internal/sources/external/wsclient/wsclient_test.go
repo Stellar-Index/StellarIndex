@@ -293,3 +293,40 @@ func TestLoop_ReadsFrameLargerThanDefaultLimit(t *testing.T) {
 	cancel()
 	<-done
 }
+
+// TestPingWatchdog_ClosedSocketIsNotAStall: a ping on a socket the venue already
+// closed fails at once, before the read loop cancels connCtx. That is a
+// disconnect, not an unanswered ping, so it must not be labelled "stall".
+func TestPingWatchdog_ClosedSocketIsNotAStall(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		c.CloseNow()
+	}))
+	defer srv.Close()
+
+	conn, _, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	conn.CloseNow()
+
+	l := &Loop{PingInterval: 10 * time.Millisecond, PingTimeout: time.Second}
+	connCtx, fail := context.WithCancelCause(context.Background())
+	defer fail(nil)
+	done := make(chan struct{})
+	go func() {
+		l.pingWatchdog(connCtx, conn, fail)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("pingWatchdog did not return on a closed socket")
+	}
+	if cause := context.Cause(connCtx); errors.Is(cause, ErrStreamStalled) {
+		t.Fatalf("closed socket reported as a stall: %v", cause)
+	}
+}
