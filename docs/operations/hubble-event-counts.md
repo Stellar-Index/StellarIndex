@@ -1,6 +1,6 @@
 ---
 title: Per-source recipe — Hubble event-count cross-check (Soroban)
-last_verified: 2026-04-27
+last_verified: 2026-10-21
 status: living procedure
 ---
 
@@ -136,7 +136,7 @@ Compare to `source = 'redstone'`. **Expected N <= M.**
 
 ### Band
 
-**Not applicable.** Band's Soroban contract emits zero events (AGENTS.md); the
+**Not applicable.** Band's Soroban contract emits zero events ([band.md](../protocols/band.md)); the
 decoder reads InvokeContract op args via the `ContractCallDecoder` hook. The
 per-WASM-hash decoder audit is the only safety net.
 

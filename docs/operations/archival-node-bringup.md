@@ -1,7 +1,8 @@
 ---
 title: Archival node bring-up — end-to-end recipe
-last_verified: 2026-04-27
+last_verified: 2026-10-21
 status: living doc
+---
 # Archival node bring-up
 
 Provision an archival node from a reachable box to `stellarindex-indexer` committing rows to TimescaleDB. Recovering a node: [§ Disaster recovery](#disaster-recovery).
@@ -14,8 +15,8 @@ Provision an archival node from a reachable box to `stellarindex-indexer` commit
 | Root SSH | `inventory/<host>.yml` (`ansible_user: root`) | |
 | ansible-vault password | Password manager | Never on disk |
 | Inventory file | `configs/ansible/inventory/<host>.yml` | Copy `r1.example.yml`; fill disk serials + IP |
-| Inventory secrets | `configs/ansible/inventory/<host>.secrets.yml` | `ansible-vault create` if new; needs `postgres_pass_*`, `minio_root_password`, `galexie_s3_*`, `stellarindex_reader_secret_key`, `stellarindex_pass_stellarindex` |
-| Local Go ≥ 1.25 | Operator's machine | Cross-compiles the binaries |
+| Inventory secrets | `configs/ansible/inventory/<host>.secrets.yml` | `ansible-vault create` if new; needs `postgres_pass_*`, `minio_root_password`, `galexie_s3_*`, `vault_stellarindex_reader_secret_key`, `stellarindex_pass_stellarindex` |
+| Local Go ≥ 1.27 | Operator's machine | Cross-compiles the binaries |
 
 ## Bring-up sequence
 
@@ -37,9 +38,9 @@ All four `--extra-vars` are required; omitting one silently yields a half-built 
 - **`secrets_file=`**: the default is r1's vault, and `--extra-vars "@…"` does not change it. Do not `@`-load.
 - **`manage_stellarindex_binaries=true`**: defaults `false`; else no binaries.
 - **`stellarindex_apply_migrations=true`**: defaults `false`; else an empty database.
-- **`run_clickhouse=true`**: defaults `false`, but the live sink defaults on, so the indexer **will not start** at step 6 without ClickHouse. Or opt out with `stellarindex_clickhouse_live_sink=false` (loses the lake; ADR-0034/0041).
+- **`run_clickhouse=true`**: defaults `false`, but the live sink defaults on. Without ClickHouse the indexer still starts, but the sink keeps retrying its dial and the lake never fills. Or opt out with `stellarindex_clickhouse_live_sink=false` (loses the lake; ADR-0034/0041).
 
-Creates: ZFS, MinIO + buckets + IAM, Postgres 15 + TimescaleDB, galexie (live tail starts immediately), the five `stellarindex-*` binaries, migrations, and the indexer unit (**stopped** until step 6).
+Creates: ZFS, MinIO + buckets + IAM, Postgres 15 + TimescaleDB, galexie (live tail starts immediately), the six `stellarindex-*` binaries, migrations, and the indexer unit. The role **starts and enables** the indexer; stop it (`systemctl stop stellarindex-indexer`) until step 6 sets the seam.
 
 Verify:
 
@@ -48,11 +49,6 @@ ssh <host> 'systemctl is-active galexie minio postgresql@15-main'   # all active
 ssh <host> 'mc admin user list local'   # galexie-writer, galexie-archive-writer, stellarindex-reader
 ssh <host> 'mc ls local/'               # galexie-archive (empty), galexie-live (filling), backups
 ssh <host> 'sudo -u postgres psql -d stellarindex -c "\dt"'   # trades, oracle_updates, ingestion_cursors, schema_migrations
-```
-
-**Capture the live seam** (where the archive ends and live begins):
-
-```sh
 ```
 
 **Capture the live seam** (where the archive ends and live begins):
@@ -125,7 +121,7 @@ Historical ledger-meta comes from the AWS public bucket ([galexie-backfill.md](g
 ssh <host> '/usr/local/bin/galexie-archive-fill 2>&1 | tee /var/log/galexie-archive-fill.log'
 ```
 
-It deletes partials and mirrors each missing partition, 8-way parallel. Expect 974 partitions, 4.7+ TB:
+It deletes partials and mirrors each missing partition, 8-way parallel. The role also installs `galexie-archive-fill.timer` (hourly at :17), which keeps the archive filled after bring-up. Check the result:
 
 ```sh
 ssh <host> 'mc ls local/galexie-archive/ | wc -l'
@@ -152,7 +148,7 @@ tmux send-keys -t gbackfill:verify-A "
 " Enter
 ```
 
-`-tier` is single-valued (`chain | checkpoint | peers | archivist | all`). The heavy-job wrapper is mandatory ([maintainer-workflow.md](maintainer-workflow.md)).
+`-tier` is single-valued (`chain | checkpoint | peers | archivist | sdf-sample | all`); `sdf-sample` needs an explicit `-to` and is not part of `all`. The heavy-job wrapper is mandatory ([maintainer-workflow.md](maintainer-workflow.md)).
 
 `<SEAM>` is the step-1 live-start ledger. Tier A checks hash-chain links; Tier B compares every 64th ledger's hash with `/srv/history-archive`; Tier E needs the full mirror, so once it is trimmed to `history/` + `ledger/` use `-tier chain` and `-tier checkpoint`.
 
@@ -160,7 +156,7 @@ Expected: `verified <N> ledgers, chain-link integrity OK ✓, checkpoint anchor 
 
 ### 6. Set the live seam in inventory + reapply, start the indexer (5 min)
 
-Set the real seam (the indexer is stopped):
+Set the real seam (the indexer is still stopped from step 1):
 
 ```yaml
 # inventory/<host>.yml
@@ -186,7 +182,6 @@ This re-templates the config and restarts the indexer. Log:
 ```
 ledgerstream: archive phase from=2 to=<SEAM-1>
 ledgerstream: archive phase complete; handing off to live
-ledgerstream: live-only seam=<SEAM>
 ```
 
 ```sh
@@ -241,8 +236,8 @@ Projected domains (`IsProjectedEvent`) come from the projector, reading the lake
 
 By what survived:
 
-1. **A backup chain exists.** Restore the newest link, then catch up with `ch-live-catchup` (hours): [ch-lake-backup § Restore](runbooks/ch-lake-backup.md#restore).
-2. **No chain.** Recreate tables from the schema snapshot, re-derive from `galexie-archive` with `ch-full-backfill.sh` (~1-2 weeks): [ch-schema-restore](runbooks/ch-schema-restore.md#restore-path-snapshot-to-create). `ch-backfill` historical reads need `-bucket galexie-archive`.
+1. **A backup chain exists.** Restore the newest link, then catch up with the `ch-live-catchup` timer (hours): [ch-lake-backup § Restore](runbooks/ch-lake-backup.md#restore).
+2. **No chain.** Recreate tables from the schema snapshot, re-derive from `galexie-archive` with `scripts/ops/ch-full-backfill.sh` (~1-2 weeks): [ch-schema-restore](runbooks/ch-schema-restore.md#restore-path-snapshot-to-create). `ch-backfill` historical reads need `-bucket galexie-archive`.
 
 Either way run `verify-lake` / `verify-contiguity` before the projector reads the lake.
 
@@ -254,7 +249,7 @@ Either way run `verify-lake` / `verify-contiguity` before the projector reads th
 2. Step 4 to re-mirror from AWS.
 3. Wait for galexie to fill `galexie-live` (it resumes from the highest exported ledger).
 4. Update `stellarindex_live_seam_ledger` if galexie restarted at a different ledger.
-5. Re-run migrations + restart the indexer .
+5. Re-run migrations + restart the indexer.
 
 ## Time budget summary
 
