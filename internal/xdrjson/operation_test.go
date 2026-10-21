@@ -360,6 +360,48 @@ func TestDecodeOperationBody_InvokeHostFunction_AuthCredentials(t *testing.T) {
 	}
 }
 
+// TestDecodeOperationBody_InvokeHostFunction_MuxedCredentials: a credentials address of a muxed variant (M, or W from
+// protocol 30) renders as its strkey, not as an empty address.
+func TestDecodeOperationBody_InvokeHostFunction_MuxedCredentials(t *testing.T) {
+	var cid xdr.ContractId
+	cid[0] = 0xC1
+	acct := xdr.MustAddress(gAddr2)
+	cases := map[string]xdr.ScAddress{
+		"M": {Type: xdr.ScAddressTypeScAddressTypeMuxedAccount, MuxedAccount: &xdr.MuxedEd25519Account{Id: 7, Ed25519: *acct.Ed25519}},
+		"W": {Type: xdr.ScAddressTypeScAddressTypeMuxedContract, MuxedContract: &xdr.MuxedContract{Id: 7, ContractId: cid}},
+	}
+	for prefix, addr := range cases {
+		t.Run(prefix, func(t *testing.T) {
+			want, err := addr.String()
+			if err != nil {
+				t.Fatalf("encode: %v", err)
+			}
+			entry := xdr.SorobanAuthorizationEntry{
+				Credentials: xdr.SorobanCredentials{
+					Type: xdr.SorobanCredentialsTypeSorobanCredentialsAddress,
+					Address: &xdr.SorobanAddressCredentials{
+						Address:   addr,
+						Signature: xdr.ScVal{Type: xdr.ScValTypeScvVoid},
+					},
+				},
+				RootInvocation: authNode(0xB0, "transfer"),
+			}
+			b64 := mustBody(t, xdr.OperationTypeInvokeHostFunction, xdr.InvokeHostFunctionOp{
+				HostFunction: invokeSwapHF(t),
+				Auth:         []xdr.SorobanAuthorizationEntry{entry},
+			})
+			d, err := xdrjson.DecodeOperationBody(b64)
+			if err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			got := d.Fields["authorizations"].([]xdrjson.AuthInvocation)[0].Credentials.Address
+			if got != want || !strings.HasPrefix(got, prefix) {
+				t.Fatalf("credentials address = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 // TestDecodeOperationBody_InvokeHostFunction_SourceAccountCredentials proves
 // the source_account variant (the common case — the op's own source signed
 // it) renders with no address/nonce, not a zero-valued address entry.

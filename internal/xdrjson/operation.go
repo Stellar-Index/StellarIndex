@@ -475,7 +475,7 @@ func authCredentialsFields(c xdr.SorobanCredentials) *AuthCredentials {
 // addressCredentialsFields renders the common shape shared by the address,
 // address-v2, and address-with-delegates SorobanCredentials variants.
 func addressCredentialsFields(a xdr.SorobanAddressCredentials) *AuthCredentials {
-	addr, _ := contractAddress(a.Address)
+	addr, _ := scval.AsAddressStrkey(xdr.ScVal{Type: xdr.ScValTypeScvAddress, Address: &a.Address})
 	return &AuthCredentials{
 		Kind:                      "address",
 		Address:                   addr,
