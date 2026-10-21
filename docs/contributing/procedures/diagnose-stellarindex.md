@@ -38,7 +38,13 @@ ssh root@136.243.90.96 'sudo -u postgres psql -d stellarindex -c "SELECT source,
 - Inserts crawling (~6/s) → chunk bloat: check chunk counts;
   `merge_chunks()` swept 3445→619 once (memory:
   trades-chunk-perf). Check `max_locks_per_transaction` before
-  chunk surgery.
+  chunk surgery. NEVER `merge_chunks()` a COMPRESSED chunk: on
+  TimescaleDB 2.26.4 it left the large merged chunks unreadable
+  (`invalid compression algorithm N`, then a backend segfault on a full
+  read), and `count(*)` cannot show it because compressed chunks answer it
+  from batch metadata. Decompress first, and validate afterwards with
+  `_timescaledb_functions.compressed_data_info()` over every compressed
+  column and a real value read.
 - Galexie itself stalled → check the captive-core subprocess +
   MinIO cred drift (`SignatureDoesNotMatch` = env file diverged from
   the MinIO user secret).
