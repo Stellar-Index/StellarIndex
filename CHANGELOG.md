@@ -20,6 +20,18 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.46] - 2026-10-21
+
+No migrations. No `pkg/*` break. No config change.
+
+### Fixed
+
+- **api:** after startup the API warms every asset detail on the top-500 listing once, so the explorer build's first pass after a deploy no longer reads cold and burns the latency SLO (#3759).
+
+### Changed
+
+- **docs:** archival-node bring-up, Hubble event counts and nine WASM audits re-verified against the code and r1 (#3757, #3760).
+
 ## [v0.116.45] - 2026-10-21
 
 No migrations. No `pkg/*` break. No config change.
@@ -64,16 +76,3 @@ No migrations. No `pkg/*` break. No config change.
 ### Fixed
 
 - **api:** `/v1/price`'s last-trade fallback for a dormant pair (no closed 1m bucket in 14 days, no trade in 7) runs its 400-day walk on a 4-connection pool warmed at startup, instead of on whichever fresh serving connection a burst opened. After the v0.116.41 restart six such reads each spent ~1s planning ~58 chunks per arm at once and re-fired the latency burn. Served values are unchanged (#3737).
-
-## [v0.116.41] - 2026-10-21
-
-No migrations. No `pkg/*` break. No config change.
-
-### Fixed
-
-- **api:** the `change_24h_pct` anchor is read once per asset per minute and shared, with concurrent misses single-flighted; the explorer build's burst of identical `/v1/price/batch` rows on a freshly restarted pool no longer re-reads `prices_1m` per row (8 of 595 calls crossed 200 ms after the v0.116.40 restart). Served values are unchanged (#3735).
-
-### Security
-
-- **build:** v0.116.40 moved to Go 1.27.3 for GO-2026-6809 (`crypto/x509` trusted compromised intermediates; reachable through passkey registration) (#3734).
-
