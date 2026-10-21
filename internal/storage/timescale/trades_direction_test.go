@@ -315,6 +315,27 @@ func TestLatestTradesForPair_ClampsLimit(t *testing.T) {
 	}
 }
 
+// TestLatestTradesForPair_LongRangeFallbackUsesTheWalkPool: only the fallback past the recent window goes to walkDB, whose backends keep
+// its ~58-chunk plan warm; the recent try stays on the main pool.
+func TestLatestTradesForPair_LongRangeFallbackUsesTheWalkPool(t *testing.T) {
+	pair := dirAQUAUSDCPair(t)
+	store, mainConn := newScriptedStore(t, scriptedResult{cols: latestTradeCols})
+	walk, walkConn := newScriptedStore(t, scriptedResult{cols: latestTradeCols})
+	store.walkDB = walk.db
+
+	since := time.Now().Add(-LatestVWAPWindow).UTC().Truncate(24 * time.Hour)
+	if _, err := store.LatestTradesForPair(context.Background(), pair, 1, since); err != nil {
+		t.Fatalf("LatestTradesForPair: %v", err)
+	}
+	if len(mainConn.stmts) != 1 || len(walkConn.stmts) != 1 {
+		t.Fatalf("main pool ran %d statements, walk pool %d; want the recent try on main and the fallback on walk",
+			len(mainConn.stmts), len(walkConn.stmts))
+	}
+	if lower := since.Format("2006-01-02 15:04:05-07"); !strings.Contains(walkConn.only(t).sql, lower) {
+		t.Errorf("walk pool statement lacks the caller's %s bound:\n%s", lower, walkConn.only(t).sql)
+	}
+}
+
 // TestLatestTradesForPair_SinceIsAPlanTimeLiteral: the /v1/price miss path is cheap only when both arms carry the bound as a literal
 // TimescaleDB can exclude chunks on while planning; a zero since keeps the unbounded walk as the fallback.
 func TestLatestTradesForPair_SinceIsAPlanTimeLiteral(t *testing.T) {

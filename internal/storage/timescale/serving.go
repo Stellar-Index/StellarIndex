@@ -43,7 +43,12 @@ func openWithSessionSetup(ctx context.Context, dsn string, statementTimeout time
 		_ = db.Close()
 		return nil, fmt.Errorf("timescale: ping: %w", err)
 	}
-	return &Store{db: db}, nil
+	st := &Store{db: db}
+	if forceCustomPlans {
+		st.walkDB = sql.OpenDB(connector)
+		configureTradeWalkPool(st.walkDB)
+	}
+	return st, nil
 }
 
 // boundedConnector builds the SET-statement_timeout-on-connect connector, or (nil, nil) for "no bound, use [Open]"; split out to unit-test

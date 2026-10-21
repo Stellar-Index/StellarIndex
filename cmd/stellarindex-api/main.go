@@ -527,6 +527,15 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	bgWG.Add(1)
 	go func() {
 		defer bgWG.Done()
+		defer recoverBackgroundWorker(logger, "trade-walk-warm")
+		if err := store.WarmTradeWalkPool(rootCtx); err != nil {
+			logger.Warn("trade walk pool warm failed", "err", err)
+		}
+	}()
+
+	bgWG.Add(1)
+	go func() {
+		defer bgWG.Done()
 		defer recoverBackgroundWorker(logger, "scam-sac-index-warm")
 		scamGate.WarmSACIndex(rootCtx)
 	}()

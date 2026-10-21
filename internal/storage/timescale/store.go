@@ -83,6 +83,10 @@ type Store struct {
 	// olderTradesEmpty holds pairs with no trades in [since, recent) of [Store.LatestTradesForPair]; key → when that was read.
 	olderTradesMu    sync.Mutex
 	olderTradesEmpty map[string]time.Time
+
+	// walkDB serves [Store.LatestTradesForPair]'s long-range fallback (nil: db). Its few backends keep that plan's ~58 chunks per arm in
+	// their catalog cache; on the main pool every fresh backend paid it cold, ~1s each when a burst opened several.
+	walkDB *sql.DB
 }
 
 // SetUSDVolumeQuoteSpec installs the quote-asset spec InsertTrade uses for on-chain trades.usd_volume; nil reverts to off-chain-only; call once at startup, not concurrently with InsertTrade.
@@ -256,6 +260,9 @@ func (s *Store) PingContext(ctx context.Context) error {
 func (s *Store) Close() error {
 	if s == nil || s.db == nil {
 		return nil
+	}
+	if s.walkDB != nil {
+		_ = s.walkDB.Close()
 	}
 	return s.db.Close()
 }
