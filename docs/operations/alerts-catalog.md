@@ -174,8 +174,8 @@ its first link must be the rule's `runbook_url` page
 | `stellarindex_clickhouse_query_failures_high` | `rate(ClickHouseProfileEvents_FailedQuery[10m])` | > 0.1/s sustained 15 min | ticket | [clickhouse-server-health](runbooks/clickhouse.md#stellarindex_clickhouse_query_failures_high) |
 | `stellarindex_clickhouse_inserts_rejected` | `increase(ClickHouseProfileEvents_RejectedInserts[1h])` | > 0 ("too many parts"); holds until the hour clears. A rejected block is a lake gap | ticket | [clickhouse-server-health](runbooks/clickhouse.md#stellarindex_clickhouse_inserts_rejected) |
 | `stellarindex_restore_drill_stale` | `time() - restore_drill_last_success_unix{repo=~"1\|"}`, or absent | > 40 d, 30 min (on-box repo1 drill) | ticket | [restore-drill-stale](runbooks/restore-drill.md#stellarindex_restore_drill_stale) |
-| `stellarindex_zfs_pool_free_low` | `zfs_pool_free_bytes` | < 2.5 TiB for 15 min | ticket | [zfs-snapshots](runbooks/zfs-snapshots.md) |
-| `stellarindex_zfs_pool_free_critical` | same | < 1.5 TiB for 5 min (below snapshot job's 2 TiB floor) | page | [zfs-snapshots](runbooks/zfs-snapshots.md) |
+| `stellarindex_zfs_pool_free_low` | `zfs_pool_free_bytes` | < 1.6 TiB for 15 min | ticket | [zfs-snapshots](runbooks/zfs-snapshots.md) |
+| `stellarindex_zfs_pool_free_critical` | same | < 1.3 TiB for 5 min (below snapshot job's 1.4 TiB floor) | page | [zfs-snapshots](runbooks/zfs-snapshots.md) |
 | `stellarindex_zfs_snapshot_stale` | `time() - zfs_snapshot_latest_unix` per dataset | > 36 h, 30 min | ticket | [zfs-snapshots](runbooks/zfs-snapshots.md) |
 | `stellarindex_zfs_snapshot_pool_free_unreadable` | `zfs_snapshot_pool_free_unreadable` | == 1 for 10 min (job refused to prune/snapshot) | ticket | [zfs-snapshots](runbooks/zfs-snapshots.md) |
 | `stellarindex_restore_drill_failed` | `restore_drill_failures` per repo | > 0 for 30 min | ticket | [restore-drill-failed](runbooks/restore-drill.md#stellarindex_restore_drill_failed) |

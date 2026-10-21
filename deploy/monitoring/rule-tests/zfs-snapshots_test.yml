@@ -16,12 +16,12 @@ rule_files:
 evaluation_interval: 1m
 
 tests:
-  # ── 2.0 TiB free: under the 2.5 TiB ticket line, above the 1.5 TiB page line ──
+  # ── 1.5 TiB free: under the 1.6 TiB ticket line, above the 1.3 TiB page line ──
   - interval: 1m
-    name: 2.0 TiB free fires the ticket, not the page
+    name: 1.5 TiB free fires the ticket, not the page
     input_series:
       - series: 'stellarindex_zfs_pool_free_bytes{pool="data"}'
-        values: '2199023255552x30'
+        values: '1649267441664x30'
     alert_rule_test:
       - eval_time: 20m
         alertname: stellarindex_zfs_pool_free_low
@@ -34,11 +34,11 @@ tests:
               alert_family: zfs_pool_free/data
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-snapshots.md
-              summary: "ZFS pool data free space 2TiB < 2.5 TiB — snapshot guard will start pruning"
+              summary: "ZFS pool data free space 1.5TiB < 1.6 TiB — snapshot guard will start pruning"
               description: |
-                `zpool list` free space on data has been under
-                2.5 TiB for 15 min. The rolling-snapshot job prunes its
-                oldest auto-* snapshots below 2 TiB and stops snapshotting
+                Usable free space on data has been under
+                1.6 TiB for 15 min. The rolling-snapshot job prunes its
+                oldest auto-* snapshots below 1.4 TiB and stops snapshotting
                 entirely if that is not enough — at ~250 GB/day of pinned
                 ClickHouse churn per retained day, that is days away.
                 Reclaim space (retention, archive → S3, or destroy a
@@ -65,10 +65,10 @@ tests:
               alert_family: zfs_pool_free/data
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-snapshots.md
-              summary: "ZFS pool data free space 1TiB < 1.5 TiB — below the snapshot guard floor"
+              summary: "ZFS pool data free space 1TiB < 1.3 TiB — below the snapshot guard floor"
               description: |
-                `zpool list` free space on data is under
-                1.5 TiB — already below the snapshot job's 2 TiB floor, so
+                Usable free space on data is under
+                1.3 TiB — already below the snapshot job's 1.4 TiB floor, so
                 it has pruned everything it is allowed to and is now
                 SKIPPING snapshots (stellarindex_zfs_snapshot_guard_skipped=1).
                 Every ZFS writer (ClickHouse, MinIO, Postgres) shares this
@@ -181,8 +181,8 @@ tests:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/zfs-snapshots.md
               summary: "zfs-snapshot job could not read free space on pool data — refused to prune or snapshot"
               description: |
-                The last zfs-snapshot run could not read `zpool list -Hp -o
-                free data` (command failed or non-numeric
+                The last zfs-snapshot run could not read `zfs get -Hp -o
+                value available data` (command failed or non-numeric
                 output). By design it destroyed nothing and took no snapshot;
                 the unit exited non-zero. Until a run succeeds no new
                 snapshots are being taken. Check `zpool status`,

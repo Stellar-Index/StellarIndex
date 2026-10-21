@@ -24,6 +24,9 @@
 #
 #   1. RETENTION: destroy `auto-*` snapshots older than each dataset's window.
 #   2. MIN-FREE GUARD (hard): if pool free is below $ZFS_SNAPSHOT_MIN_FREE_BYTES,
+#      read as the pool root's usable `available` (raw `zpool list` free counts
+#      raidz parity and reads ~1.9x usable on r1, so a floor on it fired after the
+#      7% low-space ticket),
 #      destroy `auto-*` snapshots oldest-first across all managed datasets,
 #      re-reading free after each, until the floor is met or every dataset is
 #      down to its NEWEST auto snapshot (never pruned by the guard: the last
@@ -154,13 +157,13 @@ POOL_FREE=""
 read_pool_free() {
   local v
   POOL_FREE=""
-  if ! v="$(zpool list -Hp -o free "$ZFS_SNAPSHOT_POOL")"; then
+  if ! v="$(zfs get -Hp -o value available "$ZFS_SNAPSHOT_POOL")"; then
     write_error_metric
-    die "zpool list $ZFS_SNAPSHOT_POOL failed — refusing to prune or snapshot on unknown free space"
+    die "zfs get available $ZFS_SNAPSHOT_POOL failed — refusing to prune or snapshot on unknown free space"
   fi
   if [[ -z "$v" || ! "$v" =~ ^[0-9]+$ ]]; then
     write_error_metric
-    die "zpool free for $ZFS_SNAPSHOT_POOL is not a number: '$v' — refusing to prune or snapshot"
+    die "available for $ZFS_SNAPSHOT_POOL is not a number: '$v' — refusing to prune or snapshot"
   fi
   POOL_FREE="$v"
 }
@@ -175,7 +178,7 @@ write_error_metric() {
   out="$TEXTFILE_DIR/zfs_snapshot_error.prom"
   tmp="$out.tmp.$$"
   {
-    echo "# HELP stellarindex_zfs_snapshot_pool_free_unreadable 1 while the last snapshot run could not read zpool free space and therefore refused to prune or snapshot."
+    echo "# HELP stellarindex_zfs_snapshot_pool_free_unreadable 1 while the last snapshot run could not read the pool's available space and therefore refused to prune or snapshot."
     echo "# TYPE stellarindex_zfs_snapshot_pool_free_unreadable gauge"
     echo "stellarindex_zfs_snapshot_pool_free_unreadable{pool=\"$ZFS_SNAPSHOT_POOL\"} 1"
   } > "$tmp"
@@ -314,7 +317,7 @@ write_metrics() {
   METRICS_TMP="$tmp"   # see the EXIT trap: a die() below must not leak it
   read_pool_free; free="$POOL_FREE"
   {
-    echo "# HELP stellarindex_zfs_pool_free_bytes Free bytes in the ZFS pool as reported by zpool list (pool-level, unlike node_filesystem_avail_bytes)."
+    echo "# HELP stellarindex_zfs_pool_free_bytes Usable free bytes in the ZFS pool (zfs get available on the pool root; what writers can still use)."
     echo "# TYPE stellarindex_zfs_pool_free_bytes gauge"
     echo "stellarindex_zfs_pool_free_bytes{pool=\"$ZFS_SNAPSHOT_POOL\"} $free"
     echo "# HELP stellarindex_zfs_snapshot_min_free_bytes The guard floor: below this the snapshot job prunes, then skips."
