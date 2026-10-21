@@ -920,7 +920,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		IssuerAuthFlags:    issuerAuthFlagsReader,
 		StaticHomeDomain:   homeDomainLookup.static,
 		Volume:             wiring.StoreVolumeReader{S: store},
-		Change24h:          storeChange24hReader{s: store, pegs: usdPegs, decimals: nonstandardDecimalsCache, logger: logger},
+		Change24h:          newMinuteChange24hReader(storeChange24hReader{s: store, pegs: usdPegs, decimals: nonstandardDecimalsCache, logger: logger}),
 		PriceAt:            storePriceAtReader{s: store, substance: substanceGate, scam: scamGate, logger: logger.With("component", "price-at-guard")},
 		ChangeSummary:      store,
 		AssetsReader:       cachedAssetsReader,
