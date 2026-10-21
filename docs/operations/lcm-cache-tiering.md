@@ -100,6 +100,11 @@ One-shot, not on a timer. Reclaims ~3-4 TB.
    "dry_run":true,...}`. Non-zero `skipped_not_in_cold` means local files
    absent from aws-public-blockchain: investigate before committing.
 
+   To keep older ranges hot (a replay still reads them), add
+   `-newer-than-ledger <floor>`: files starting below the floor are kept
+   and counted as `skipped_below_floor`. Without it the trim deletes
+   oldest-first from ledger 2.
+
 3. **Trim in 1M-ledger chunks** so a partial failure leaves a clear position.
 
    - A chunk is done only at `enumeration_complete=true`: `-max-files

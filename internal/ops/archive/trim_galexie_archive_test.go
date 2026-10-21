@@ -71,6 +71,15 @@ func TestParseTrimFlags(t *testing.T) {
 		{"dry-run with commit is refused", with("-dry-run", "-commit"), "mutually exclusive", nil},
 		{"dry-run with write is refused", with("-dry-run", "-write"), "mutually exclusive", nil},
 		{"cutoff overflow", []string{"-older-than-ledger", "9999999999"}, "uint32 range", nil},
+		{"lower bound parsed", with("-newer-than-ledger", "400"), "", func(t *testing.T, o trimOpts) {
+			if o.newerThan != 400 {
+				t.Errorf("newerThan = %d, want 400", o.newerThan)
+			}
+		}},
+		{"lower bound at cutoff refused", with("-newer-than-ledger", "1000"), "must be below", nil},
+		{"lower bound above cutoff refused", with("-newer-than-ledger", "1001"), "must be below", nil},
+		{"lower bound overflow", with("-newer-than-ledger", "9999999999"), "uint32 range", nil},
+		{"lower bound negative", with("-newer-than-ledger", "-1"), "uint32 range", nil},
 		// -max-files once had only a > 0 check, so a typo could delete the full archive.
 		{"max-files 99999999 refused", with("-max-files", "99999999"), "max-files", nil},
 		{"max-files 1000001 refused", with("-max-files", "1000001"), "max-files", nil},
@@ -447,6 +456,32 @@ func TestPlanTrim_SkipsAboveCutoffPartitionsWithoutListing(t *testing.T) {
 	}
 	if len(plan.candidates) != 1 {
 		t.Errorf("candidates = %d, want 1 (ledger 0 only)", len(plan.candidates))
+	}
+}
+
+// TestPlanTrim_LowerBoundTrimsOnlyTheBand: with -newer-than-ledger the oldest ranges stay hot, and partitions wholly below the floor cost no listing.
+func TestPlanTrim_LowerBoundTrimsOnlyTheBand(t *testing.T) {
+	t.Parallel()
+	hot := newFakeArchive(t, 500, 2000)
+	parts := hot.partitionsOf(t)
+	hot.listFileCalls = 0
+	opts := trimTestOpts(1500, 100000)
+	opts.newerThan = 700
+	plan, err := planTrim(context.Background(), discardLogger(), hot, &fakeCold{}, parts, opts)
+	if err != nil {
+		t.Fatalf("planTrim: %v", err)
+	}
+	if got, want := ledgerSetOf(t, plan.candidates), ledgerSeq(700, 1499); !slices.Equal(got, want) {
+		t.Errorf("candidates cover %d ledgers, want 800 of 700..1499", len(got))
+	}
+	if plan.partitionsSkippedBelowFloor != 1 || plan.partitionsSkippedAboveCutoff != 1 {
+		t.Errorf("skipped below/above = %d/%d, want 1/1", plan.partitionsSkippedBelowFloor, plan.partitionsSkippedAboveCutoff)
+	}
+	if plan.skippedBelowFloor != 200 {
+		t.Errorf("skippedBelowFloor = %d, want 200 (ledgers 500..699)", plan.skippedBelowFloor)
+	}
+	if plan.partitionsScanned != 2 {
+		t.Errorf("partitionsScanned = %d, want 2", plan.partitionsScanned)
 	}
 }
 
