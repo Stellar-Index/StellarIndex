@@ -2,7 +2,7 @@
 title: Design system — Stellar Index web (v3, dark)
 date: 2026-07-21
 status: active
-last_verified: 2026-07-21
+last_verified: 2026-10-21
 supersedes: v2 (light-mode, 2026-06-17)
 ---
 
@@ -23,18 +23,19 @@ rationale: `docs/frontend/dark-redesign-direction.md`. Restructuring companion:
 
 ## Principles
 
-1. **Dark only.** A neutral near-black canvas (`#0a0b0d`, a whisper of cool).
+1. **Dark only.** A neutral near-black canvas (`#0b0c0f`, a whisper of cool).
    Design for depth via **surface layering + hairline borders**, not shadows.
 2. **Minimal, instrument-like, dense.** Hairline "ledger-grid" dividers and
    tabular data. Let the data read like a readout; cut chrome.
 3. **Functional colour.** Blue (`brand`) = identity/action (links, focus,
    active, primary); green/red (`up`/`down`) = price direction + freshness;
    amber (`warn`/time-pin) = severity/time. Never decoration.
-4. **Serif ⟷ mono is the signature.** **Fraunces** (serif) carries the display/
-   identity voice — page titles (`h1`), hero figures (`.font-display`). **Inter**
-   is body/UI. **JetBrains Mono** carries *all data* — prices, volumes, ledger
-   seqs, hashes, table cells, and eyebrow/section labels (uppercase, tracked).
-   Aligned numbers use tabular figures (`.tnum` / `font-mono`).
+4. **Serif ⟷ mono is the signature.** **Lora** (serif) carries the display/
+   identity voice — page titles (`h1`), hero figures (`.font-display`). **Onest**
+   is body/UI, including in-panel labels (`PANEL_LABEL_CLASS`: small, uppercase,
+   tracked). **Geist Mono** carries *all data* — prices, volumes, ledger seqs,
+   hashes, table cells. Aligned numbers use tabular figures (`.tnum` / `font-mono`).
+   Fonts load through `next/font` in `src/app/layout.tsx`.
 5. **Reuse the primitives.** Build pages from `@/components/ui`, not bespoke
    markup. If a pattern recurs, promote it to a primitive.
 
@@ -43,13 +44,13 @@ rationale: `docs/frontend/dark-redesign-direction.md`. Restructuring companion:
 | Group | Tokens | Use |
 |---|---|---|
 | **brand** | `brand-50…950` (accent `brand-500/600`, bright text `700/900`, dark tints `50/100`) | Actions, links, focus, active, selection |
-| **surface** | `surface-canvas` (`#0a0b0d` page bg), `surface` (card), `surface-muted` (raised/hover), `surface-subtle` (well) | Layering: canvas → card → raised |
+| **surface** | `surface-canvas` (`#0b0c0f` page bg), `surface` (card), `surface-muted` (raised/hover), `surface-subtle` (well) | Layering: canvas → card → raised |
 | **line** | `line-subtle`, `line`, `line-strong` | Hairline borders (default `border` colour is `line`) |
 | **ink** | `ink` (headings), `ink-body`, `ink-muted`, `ink-faint` | Text hierarchy (light on dark) |
 | **up / down** | `up`, `down` (+ `subtle`/`strong`) | Price direction, deltas, freshness |
 | **warn / bad / ok** | `*-50/300/500/700` (`-50` = **dark tint bg**, `-700/900` = **bright text**) | Severity (banners, status, validation) |
 | **type** | `text-display`, `display-sm`, `h1`, `h2`, `h3`; fonts `font-serif` / `font-sans` / `font-mono` | Display serif, body sans, data mono |
-| **radius** | `rounded-card` (**6px**), `rounded-lg` (6px), `rounded-md` (4px), `rounded-full` | Crisp, not childish; `full` only for dots/avatars |
+| **radius** | every `rounded-*` step and `rounded-card` are **2px**; `rounded-full` | Crisp, not childish; `full` only for dots/avatars |
 | **shadow** | `shadow-elevated` (overlays only), `shadow-focus` | On dark, depth = borders + layering; shadows for menus/overlays only |
 | **width** | `max-w-page` (1728px), `max-w-prose` | Page frame / reading measure |
 
@@ -65,7 +66,7 @@ The explorer is built on Tailwind CSS v4, which relies on cascade layers,
 ## Components (`@/components/ui`)
 
 `Button`/`ButtonLink`, `Card`/`CardHeader`/`CardBody`/`CardFooter`, `Badge`,
-`Stat`/`StatGrid`/`StatCell`, `Table` primitives, `Container`/`Section`/
+`TxStatusBadge`, `FactList`/`Fact`, `LinkRow`, `Stat`/`StatGrid`/`StatCell`, `Table` primitives, `Container`/`Section`/
 `PageHeader`/`Breadcrumbs`/`SectionHeader`, `Input`/`Textarea`/`Select`/`Field`,
 `EmptyState`/`Skeleton`/`Callout`, `TabNav`/`Segmented`, `Mono`/`CopyButton`.
 
