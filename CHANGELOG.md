@@ -20,6 +20,19 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.43] - 2026-10-21
+
+No migrations. No `pkg/*` break. No config change. Protocol 30 readiness: run the galexie role on each host before the network votes (testnet 2026-11-03, mainnet 2026-11-23).
+
+### Changed
+
+- **build:** galexie `v30.0.0` and `go-stellar-sdk` `v0.8.0`, which decode Protocol 30's millisecond close-time ledger headers (CAP-0088); the v29 builds cannot (#3739).
+
+### Fixed
+
+- **scval:** a CAP-0084 muxed contract address (`W…`) encodes to its strkey; a transfer to one previously errored and its row was dropped (#3739). The explorer resolves a `W…` address to its contract (#3740).
+- **api:** the self-prewarm also issues one `/v1/price/batch` over the verified assets, so the first batch after a restart no longer reads Postgres cold and re-fires the latency burn (#3742).
+
 ## [v0.116.42] - 2026-10-21
 
 No migrations. No `pkg/*` break. No config change.
@@ -66,12 +79,3 @@ No migrations. No `pkg/*` break. No config change; the alert-rule edits are comm
 
 - **release:** the cut-release hint names the hyphenated heading the changelog uses (#3725).
 - **docs:** the outlier trim-fraction runbook names the thin-pair trend case (#3724).
-
-## [v0.116.38] - 2026-10-20
-
-No migrations. No `pkg/*` break. No config change. After the deploy, watch the latency SLO burn during the next crawler burst.
-
-### Fixed
-
-- **api:** asset detail caches the lake token-supply sum per contract for 5 minutes and serves the last good value on a ClickHouse error; under a crawl, the uncached `supply_flows FINAL` sum dominated ClickHouse serving load (#3721).
-- **alerts:** `dust_dropped_high` fires on the share of a venue's trades dropped as dust, not the absolute rate, so a volume burst no longer pages (#3720).
