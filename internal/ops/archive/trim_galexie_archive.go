@@ -44,6 +44,7 @@ const (
 type trimOpts struct {
 	cfgPath                string
 	olderThan              uint32 // ledger sequence boundary; files entirely below this are candidates
+	newerThan              uint32 // lower bound; files starting below it are kept (0 = none)
 	verifyUpstream         bool
 	iHaveVerifiedOutOfBand bool // required alongside --no-verify-upstream
 	dryRun                 bool
@@ -138,6 +139,7 @@ func trimGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,funlen 
 		"hot_bucket", hotBucket,
 		"hot_key_prefix", hotKeyPrefix,
 		"older_than_ledger", opts.olderThan,
+		"newer_than_ledger", opts.newerThan,
 		"hot_tip_ledger", hotTip,
 		"verify_upstream", opts.verifyUpstream,
 		"max_files", opts.maxFiles,
@@ -165,6 +167,7 @@ func trimGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,funlen 
 		"partitions_total", plan.partitionsTotal,
 		"partitions_scanned", plan.partitionsScanned,
 		"partitions_skipped_above_cutoff", plan.partitionsSkippedAboveCutoff,
+		"partitions_skipped_below_floor", plan.partitionsSkippedBelowFloor,
 		"partitions_straddling_cutoff", plan.partitionsStraddling,
 		"partitions_unparsed_name_scanned", plan.partitionsUnparsed,
 		"partitions_unvisited", plan.partitionsUnvisited,
@@ -180,6 +183,7 @@ func trimGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,funlen 
 	logger.Info("trim plan ready",
 		"candidates", len(candidates),
 		"skipped_too_fresh", plan.skippedTooFresh,
+		"skipped_below_floor", plan.skippedBelowFloor,
 		"skipped_not_in_cold", plan.skippedNotInCold,
 		"verify_errors", errs,
 		"dry_run", opts.dryRun,
@@ -301,14 +305,16 @@ type hotPartition struct {
 // trimPlan is the result of enumeration + filtering: the candidates plus the counters that make "found nothing" distinguishable from
 // "barely looked".
 type trimPlan struct {
-	candidates       []string
-	skippedTooFresh  int
-	skippedNotInCold int
-	verifyErrors     int
+	candidates        []string
+	skippedTooFresh   int
+	skippedBelowFloor int
+	skippedNotInCold  int
+	verifyErrors      int
 
 	partitionsTotal              int
 	partitionsScanned            int
 	partitionsSkippedAboveCutoff int
+	partitionsSkippedBelowFloor  int
 	partitionsStraddling         int
 	partitionsUnparsed           int
 	partitionsUnvisited          int
@@ -417,6 +423,9 @@ func planTrim(ctx context.Context, logger *slog.Logger, hot trimFileLister, cold
 			// calls on every run.
 			plan.partitionsSkippedAboveCutoff++
 			continue
+		case part.parsed && part.end < opts.newerThan:
+			plan.partitionsSkippedBelowFloor++
+			continue
 		case !part.parsed:
 			plan.partitionsUnparsed++
 		case part.end >= opts.olderThan:
@@ -484,7 +493,7 @@ func scanPartition(ctx context.Context, logger *slog.Logger, hot trimFileLister,
 // evaluateTrimFile buckets one enumerated path through the per-file safety chain (parse, cutoff, cold-tier HEAD), separate so enumeration
 // can change without the filter changing.
 func evaluateTrimFile(ctx context.Context, logger *slog.Logger, cold trimColdChecker, path string, opts trimOpts, plan *trimPlan) {
-	_, to, perr := datastore.ParseRangeFromObjectKey(path)
+	from, to, perr := datastore.ParseRangeFromObjectKey(path)
 	if perr != nil {
 		// Unparseable path — leave alone. This is the safe
 		// posture; only files we can confidently bucket as
@@ -493,6 +502,10 @@ func evaluateTrimFile(ctx context.Context, logger *slog.Logger, cold trimColdChe
 	}
 	if to >= opts.olderThan {
 		plan.skippedTooFresh++
+		return
+	}
+	if from < opts.newerThan {
+		plan.skippedBelowFloor++
 		return
 	}
 	if opts.verifyUpstream {
@@ -516,10 +529,12 @@ func parseTrimFlags(args []string) (trimOpts, error) {
 	var (
 		opts      trimOpts
 		olderThan int64
+		newerThan int64
 		noVerify  bool
 	)
 	fs.StringVar(&opts.cfgPath, "config", "/etc/stellarindex.toml", "Path to stellarindex.toml")
 	fs.Int64Var(&olderThan, "older-than-ledger", 0, "REQUIRED. Files whose entire ledger range is below this sequence become deletion candidates. No default to prevent unintentional trims.")
+	fs.Int64Var(&newerThan, "newer-than-ledger", 0, "Optional lower bound: files starting below this sequence are kept, so a middle band can be trimmed without touching older ranges. 0 means no bound.")
 	fs.BoolVar(&opts.commit, "commit", false, "Actually delete: an alias for -write. Requires explicit opt-in (default behaviour is dry-run).")
 	fs.BoolVar(&noVerify, "no-verify-upstream", false, "Skip the HEAD-against-cold check. NOT RECOMMENDED — disables the primary safety primitive. Requires --i-have-verified-cold-out-of-band too.")
 	fs.BoolVar(&opts.iHaveVerifiedOutOfBand, "i-have-verified-cold-out-of-band", false, "Required alongside --no-verify-upstream: an explicit second acknowledgement that you have confirmed the cold tier holds these files by some other means. --no-verify-upstream alone is refused.")
@@ -537,10 +552,17 @@ func parseTrimFlags(args []string) (trimOpts, error) {
 	if olderThan < 0 || olderThan > int64(^uint32(0)) {
 		return trimOpts{}, fmt.Errorf("--older-than-ledger out of uint32 range: %d", olderThan)
 	}
+	if newerThan < 0 || newerThan > int64(^uint32(0)) {
+		return trimOpts{}, fmt.Errorf("--newer-than-ledger out of uint32 range: %d", newerThan)
+	}
+	if newerThan > 0 && newerThan >= olderThan {
+		return trimOpts{}, fmt.Errorf("--newer-than-ledger %d must be below --older-than-ledger %d", newerThan, olderThan)
+	}
 	if opts.maxFiles <= 0 || opts.maxFiles > trimMaxFilesCeiling {
 		return trimOpts{}, fmt.Errorf("--max-files must be in 1..%d; got %d", trimMaxFilesCeiling, opts.maxFiles)
 	}
 	opts.olderThan = uint32(olderThan)
+	opts.newerThan = uint32(newerThan)
 	opts.verifyUpstream = !noVerify
 	if noVerify && !opts.iHaveVerifiedOutOfBand {
 		return trimOpts{}, fmt.Errorf("--no-verify-upstream disables the primary safety primitive and requires --i-have-verified-cold-out-of-band as a second explicit acknowledgement — refusing to proceed with only one flag set")
