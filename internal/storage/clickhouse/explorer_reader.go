@@ -186,6 +186,8 @@ type ExplorerReader struct {
 
 	// opTypeRollup caches the stellar.account_op_type_counts read plan; no plan means the indexed query.
 	opTypeRollup opTypeRollupCache
+	// movementRollup caches the stellar.account_movement_counts read plan (the movements partition directory).
+	movementRollup opTypeRollupCache
 
 	// contractLedgersProbe probes stellar.contract_active_ledgers. Present and non-empty bounds ContractEventsRecent to the contract's
 	// active ledgers; absent means the unbounded reverse walk. requireRows: per-contract emptiness is served as an authoritative "no
@@ -1348,7 +1350,7 @@ const accountOpTypeCountsIndexedQuery = `SELECT op_type, toInt64(count()) AS n
 func (r *ExplorerReader) AccountOperationTypeCounts(ctx context.Context, account string) ([]OpTypeCount, error) {
 	q, args := accountOpTypeCountsIndexedQuery, []any{account}
 	if r.accountOpTypesCovered(ctx) {
-		if plan, ok := r.opTypeCountsPlanFor(ctx); ok {
+		if plan, ok := r.planFor(ctx, OpTypeCountsRollup); ok {
 			q, args = opTypeCountsRollupQuery(plan), []any{account, account}
 		}
 	} else {

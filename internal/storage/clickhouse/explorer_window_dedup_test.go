@@ -239,8 +239,14 @@ func TestAccountMovements_UnprovenWindowFallsBackToExactQuery(t *testing.T) {
 	if _, err := r.AccountMovements(context.Background(), "GADDR", limit, AccountMovementCursor{}, AccountMovementFilter{}); err != nil {
 		t.Fatalf("AccountMovements: %v", err)
 	}
-	if len(conn.queries) != 2 || !strings.Contains(conn.queries[1], "LIMIT 1 BY ledger, tx_hash, op_index, leg_index") {
-		t.Fatalf("want windowed read then the exact query, got %v", conn.queries)
+	var reads []string
+	for _, q := range conn.queries {
+		if strings.Contains(q, "FROM stellar.account_movements WHERE") {
+			reads = append(reads, q)
+		}
+	}
+	if len(reads) != 2 || !strings.Contains(reads[1], "LIMIT 1 BY ledger, tx_hash, op_index, leg_index") {
+		t.Fatalf("want windowed read then the exact query, got %v", reads)
 	}
 }
 

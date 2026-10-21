@@ -457,6 +457,9 @@ type AccountMovementFilter struct {
 	// HasMaxLedger is the explicit set-signal: 0 is a reachable ceiling (genesis floor
 	// with no watermark) and must serve nothing, which a `MaxLedger > 0` sentinel would break.
 	HasMaxLedger bool
+
+	// partitions is AccountMovements' partition-directory clause (literals only, no args); "" reads every partition.
+	partitions string
 }
 
 // AccountMovementCursor is the descending (ledger, tx_hash, op_index, leg_index) keyset position; Ledger==0 means first page.
@@ -491,7 +494,7 @@ func accountMovementsSQL(filter AccountMovementFilter, hasCursor, exactDedup boo
 	if !exactDedup {
 		cols += ", ingested_at"
 	}
-	sb.WriteString("SELECT " + cols + " FROM stellar.account_movements WHERE address = ?")
+	sb.WriteString("SELECT " + cols + " FROM stellar.account_movements WHERE address = ?" + filter.partitions)
 	if filter.Kind != "" {
 		sb.WriteString(" AND movement_kind = ?")
 	}
@@ -541,6 +544,7 @@ func (r *ExplorerReader) AccountMovements(ctx context.Context, address string, l
 	if cur.IsSet() {
 		args = append(args, cur.Ledger, cur.Ledger, cur.TxHash, cur.OpIndex, cur.LegIndex)
 	}
+	filter.partitions, _ = r.partitionsClause(ctx, MovementCountsRollup, address, "ledger")
 	window := windowRows(limit, windowFactorKeys)
 	if page, ok, err := r.accountMovementsWindowed(ctx, address, limit, window, cur, filter, append(args, window)); err != nil || ok {
 		return page, err
