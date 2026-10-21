@@ -1,19 +1,21 @@
 ---
 title: Per-WASM-hash decoder audits — procedure
-last_verified: 2026-05-03
+last_verified: 2026-10-21
 status: living procedure
 ---
 
 # WASM audits
 
-One audit log per on-chain Soroban source, as the evidence trail for a single
-`internal/sources/external.Registry` `BackfillSafe` flip `false` → `true`.
-Until it lands, the source's `stellarindex-ops backfill` runs are refused; once
-the audit shows the decoder handles every WASM version in the replay range, the
-flag flips in the same PR.
+One audit log per on-chain Soroban source, as the evidence trail for moving
+its `Backfill` policy in `internal/sources/external/registry.go` from
+`BackfillUnsafe` (the zero value: every replay refused) to `BackfillPerWASM`.
+Under `BackfillPerWASM` a replay is admitted only when every WASM hash its
+contracts ran in the range is listed in `internal/wasmaudit/audited_wasm.json`
+(`internal/wasmaudit/gate.go`). The audit log, the JSON entries and the policy
+change land in one PR.
 
-Why (AGENTS.md "Soroban DeFi contracts upgrade in place"): Soroswap, Aquarius,
-Phoenix, Comet, Reflector\*, Redstone, and Band can each `update_contract` at
+Why (AGENTS.md, "gate a Soroban backfill behind a per-WASM-hash decoder audit"):
+Soroban contracts can each `update_contract` at
 the same address, changing event body schemas / topic shapes. Live ingest sees
 only the current WASM; a since-inception backfill replays every prior version,
 and a current-only decoder silently produces wrong trades.
@@ -22,12 +24,12 @@ and a current-only decoder silently produces wrong trades.
 
 - `README.md` — this file. Procedure + checklist.
 - `internal/wasmaudit/audited_wasm.json` — the machine-readable audited set: every hash these logs string-checked, which `stellarindex-ops wasm-drift` checks each gated contract against ([runbook](../runbooks/wasm-drift.md)).
-- `soroswap.md` — Soroswap audit (in progress).
-- `sushiswap_v3.md` — SushiSwap V3 factory + 58 pools, four hashes string-checked from the lake's instance lineage.
-- `upshift.md` — Upshift earnUSDC / earnXLM vaults, one hash string-checked from the lake's instance lineage.
-- `spectra.md` — Spectra registry, factory, router, order engines, PTs, YTs and wrappers, 8 hashes string-checked from the lake's instance lineage.
-- (`aquarius.md`, `phoenix.md`, `comet.md`, `reflector-{dex,cex,fx}.md`,
-  `redstone.md`, `band.md` — to land per source.)
+- `<source>.md` — one audit log per source (e.g. `soroswap.md`, `aquarius.md`,
+  `phoenix.md`, `comet.md`, `blend.md`, `spectra.md`); `ls` this directory for
+  the current set.
+- `evidence/` — walk JSON worth keeping.
+- `protocol-epochs.md`, `r1-walk-2026-05-01.md`,
+  `walker-investigation-2026-05-01.md` — dated investigations, kept as history.
 
 ## Procedure
 
@@ -58,14 +60,12 @@ replay range (output location: "Where walk output goes" below):
       > /var/log/wasm-audit/<source>-wasm-history.json \
       2> /var/log/wasm-audit/<source>-wasm-history.stderr
 
-> **`-to` upper bound on r1.** Use the verified tip of `galexie-archive`, NOT
-> the network tip. As of 2026-05-01 the archive is frozen at **62,249,727**
-> (last ledger fully exported during the historical fill); live galexie writes
-> to `galexie-live`, which the walker does not consult. A `-to` past that
-> fails partway with `ledger object containing sequence X is missing` (the
-> partial trailing partition, not corruption). Cross-check the safe boundary
-> against `/var/lib/galexie/detect-gaps.json` on r1 (`scan_to` field) and
-> [docs/operations/r1-deployment-state.md §3a](../r1-deployment-state.md).
+> **`-to` upper bound on r1.** Use the tip of `galexie-archive`, NOT the
+> network tip. `galexie-archive-fill.timer` extends the archive hourly and
+> trails `galexie-live` (which the walker does not consult) by thousands of
+> ledgers; read the bound from the `galexie_archive_tip_ledger` metric. A `-to`
+> past it fails partway with `ledger object containing sequence X is missing`
+> (the partial trailing partition, not corruption).
 
 Output is a JSON timeline `(contract_id → [(active_from, active_to,
 wasm_hash)])`; save it verbatim into the audit log under "WASM timeline".
@@ -100,7 +100,7 @@ first:
     mkdir -p /var/log/wasm-audit/<source>-checkpoint
     stellarindex-ops wasm-history \
       -config /etc/stellarindex.toml \
-      -from 50457424 -to 62249727 \
+      -from 50457424 -to <archive-tip> \
       -parallel 8 \
       -checkpoint-dir /var/log/wasm-audit/<source>-checkpoint \
       -contracts ... > /var/log/wasm-audit/<source>-wasm-history.json \
@@ -113,7 +113,7 @@ recover the JSON from the partial transitions:
 
     stellarindex-ops wasm-history-merge-jsonl \
       -checkpoint-dir /var/log/wasm-audit/<source>-checkpoint \
-      -to 62249727 \
+      -to <archive-tip> \
       -output /var/log/wasm-audit/<source>-wasm-history-recovered.json
 
 `-to` MUST match the original walk's `-to` so the last open range per contract
@@ -158,17 +158,18 @@ expectations" in each per-source log):
 | Event split into multiple events (e.g. `swap` → `swap_in` + `swap_out`) | correlation logic breaks; decoder may emit 0 or 2 trades per swap |
 | Topic arity changed (2-tuple → 3-tuple) | classification matches on `topic[0..2]` so a longer topic still matches — but our position-based assumptions about further topic slots break |
 
-If every hash passes, document the findings and flip `BackfillSafe: true` in
-`internal/sources/external/registry.go` in the same PR as the audit log.
+If every hash passes, document the findings, add each hash to
+`internal/wasmaudit/audited_wasm.json` and set `Backfill: BackfillPerWASM` in
+`internal/sources/external/registry.go`, in the same PR as the audit log.
 
 If any hash diverges, fix the decoder (plus a fixture test under
-`internal/sources/<source>/` against that hash) in the same PR. Don't flip
-`BackfillSafe` if a hash needs a decoder change that isn't deployed yet.
+`internal/sources/<source>/` against that hash) in the same PR. Don't add a
+hash to `audited_wasm.json` if it needs a decoder change that isn't deployed yet.
 
 ### 4. Hubble cross-check (where applicable)
 
-Where Hubble has a decoded view (currently SDEX only — see
-`cmd/stellarindex-ops/hubble_check.go`), running `hubble-check` over the
+Where Hubble has a decoded view (currently SDEX only — `stellarindex-ops
+hubble-check`, in `internal/ops/diagnostics`), running `hubble-check` over the
 replay range proves decoder + audit produce correct output. Soroban sources
 have no Hubble view; the WASM audit is the load-bearing check.
 
@@ -181,17 +182,18 @@ Update the audit log with:
 - Per-hash findings (one line each: "matches current decoder" or "diverges,
   fix landed in PR #N").
 - Active ledger ranges per hash, so future audits resume from `(last audited ledger + 1)`.
-- The decision: `BackfillSafe: true | false`.
+- The decision: `BackfillPerWASM` or stays `BackfillUnsafe`.
 
-Then flip the registry entry in the same PR.
+Then update `audited_wasm.json` and the registry entry in the same PR.
 
 ## Audit log lifecycle
 
 An audit log is **append-only** with respect to history. A hash audited as
 "matches current decoder" for a ledger range keeps that finding; only the upper
-bound extends as the network closes ledgers. New hashes get appended; if any
-diverges, flip `BackfillSafe: false` and ship the fix.
+bound extends as the network closes ledgers. New hashes get appended to the log and to
+`audited_wasm.json`; a diverging hash stays out of the JSON (so replays over
+its range are refused) until the decoder fix ships.
 
 `last_verified` in each audit doc's frontmatter MUST be updated whenever the
-audit extends — the docs CI (`scripts/ci/lint-docs.sh`) fails on stale
-freshness markers.
+audit extends — the docs CI (`scripts/ci/lint-docs.sh`) warns past 90
+days and fails past 180.

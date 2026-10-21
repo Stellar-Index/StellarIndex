@@ -145,11 +145,12 @@ rules sit on `absent_over_time`.
    Starter key (1000 req/min) for `Authorization: Bearer <key>`; anonymous
    keeps 60/min; invalid key -> 401. Pro/Business needs `stellarindex-ops
    mint-key -rate-limit-per-min`.
-5. **`galexie-archive` is frozen at 62,249,727; `galexie-live` keeps
-   advancing.** Anything reading `galexie-archive` (`stellarindex-ops
-   wasm-history`, `backfill`, `verify-archive`) MUST bound `-to` <= 62,249,727
-   or fail on the partial trailing partition (FC49CDFF--62272000-62335999).
-   Gaps sit in 40M-41M and 44M-45M (`/var/lib/galexie/detect-gaps.json`).
+5. **`galexie-archive` trails `galexie-live`.** `galexie-archive-fill.timer`
+   extends it hourly; its tip is the `galexie_archive_tip_ledger` metric.
+   Anything reading `galexie-archive` (`stellarindex-ops wasm-history`,
+   `backfill`, `verify-archive`) MUST bound `-to` at or below that tip or fail
+   on the partial trailing partition. `galexie-archive-contiguity.timer` scans
+   it hourly; `/var/lib/galexie/detect-gaps.json` is an April snapshot.
    ch-backfill historical reads need `-bucket galexie-archive`.
 6. **Monitoring.** Healthchecks.io catches total death only; Prometheus +
    AlertManager and Loki/Promtail are separate roles
