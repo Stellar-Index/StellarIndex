@@ -940,7 +940,7 @@ func (r *ExplorerReader) AccountTransactions(ctx context.Context, account string
 	if cur.IsSet() {
 		from = &accountTxKey{cur.Ledger, cur.A}
 	}
-	fixed, _ := r.accountPartitionsClause(ctx, account)
+	fixed := r.accountPartitionsClause(ctx, account)
 	part, frontier, err := participantKeys(ctx, r.conn, account, limit, txParticipantArm, fixed, nil, from)
 	if err != nil {
 		return nil, resume, fmt.Errorf("clickhouse: account %s txs: %w", account, err)
@@ -1231,7 +1231,7 @@ func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, 
 	if err != nil {
 		return nil, resume, fmt.Errorf("clickhouse: account %s ops: %w", account, err)
 	}
-	fixed, _ := r.accountPartitionsClause(ctx, account)
+	fixed := r.accountPartitionsClause(ctx, account)
 	var fixedArgs []any
 	if hasBound {
 		fixed, fixedArgs = fixed+` AND ledger_seq <= ?`, []any{bound}

@@ -339,15 +339,15 @@ func runOpTypeCountsPartitionConn(ctx context.Context, conn driver.Conn, w OpTyp
 
 // accountPartitionsClause narrows an account-keyed read of a table partitioned like account_op_types to the partitions the account has
 // ops in: one granule per part is otherwise read from all ~200 parts, ~1.5M rows for an account with a handful of ops. The clause keeps
-// every stale partition and everything at or past the plan's tail. ok=false (marker or plan missing, read error) means read unfiltered.
+// every stale partition and everything at or past the plan's tail. "" (marker or plan missing, read error) means read unfiltered.
 // It is only as complete as account_op_types: re-deriving operation_participants must re-run its participant arm (account_op_types.sql).
-func (r *ExplorerReader) accountPartitionsClause(ctx context.Context, account string) (string, bool) {
+func (r *ExplorerReader) accountPartitionsClause(ctx context.Context, account string) string {
 	if !r.accountOpTypesCovered(ctx) {
-		return "", false
+		return ""
 	}
 	plan, ok := r.opTypeCountsPlanFor(ctx)
 	if !ok {
-		return "", false
+		return ""
 	}
 	parts, err := queryKeys(ctx, r.conn, `SELECT DISTINCT part FROM stellar.account_op_type_counts
 		WHERE account = ? AND part IN (`+joinUint32(plan.valid)+`)`+explorerScanSettings,
@@ -357,7 +357,7 @@ func (r *ExplorerReader) accountPartitionsClause(ctx context.Context, account st
 			return p, err
 		})
 	if err != nil {
-		return "", false
+		return ""
 	}
 	parts = append(parts, plan.stale...)
 	clause := " AND (ledger_seq >= " + strconv.FormatUint(uint64(plan.tailFrom), 10)
@@ -365,5 +365,5 @@ func (r *ExplorerReader) accountPartitionsClause(ctx context.Context, account st
 		slices.Sort(parts)
 		clause += " OR intDiv(ledger_seq, " + strconv.Itoa(opTypePartitionWidth) + ") IN (" + joinUint32(parts) + ")"
 	}
-	return clause + ")", true
+	return clause + ")"
 }
