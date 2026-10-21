@@ -2184,6 +2184,25 @@ type batchRowFailure struct {
 	detail string
 }
 
+// resolveBatchRowShared coalesces [Server.resolveBatchRow] across concurrent requests for the same (id, quote, include_thin):
+// sharded explorer builds ask for the same cold 100-id chunks at once, and each duplicate re-ran the gates and fallback chain.
+// The shared work keeps the leader's deadline (priceReadFlightTimeout if none) but not its cancellation, so one client
+// hanging up can't fail the row for the rest.
+func (s *Server) resolveBatchRowShared(ctx context.Context, r *http.Request, raw string, quote canonical.Asset) batchRowResult {
+	key := raw + "/" + quote.String() + "/thin:" + strconv.FormatBool(includeThinRequested(r))
+	v, _, _ := s.batchRowFlight.Do(key, func() (any, error) { //nolint:contextcheck // deliberately detached from the leader's cancellation, see above
+		dl, ok := ctx.Deadline()
+		if !ok {
+			dl = time.Now().Add(priceReadFlightTimeout)
+		}
+		fctx, cancel := context.WithDeadline(context.WithoutCancel(ctx), dl)
+		defer cancel()
+		return s.resolveBatchRow(fctx, r.WithContext(fctx), raw, quote), nil
+	})
+	row, _ := v.(batchRowResult)
+	return row
+}
+
 // resolveBatchRow resolves one (raw_id, quote) pair, goroutine-safe (never touches w); returns ok (a row), skip (per-asset miss, omitted)
 // or fail (aborts the batch).
 func (s *Server) resolveBatchRow(ctx context.Context, r *http.Request, raw string, quote canonical.Asset) batchRowResult {
@@ -2316,7 +2335,7 @@ func (s *Server) lookupPriceBatch(w http.ResponseWriter, r *http.Request, ids []
 			defer worker.Recover(s.logger, "api-price-batch-row")
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			results[i] = s.resolveBatchRow(ctx, r, raw, quote)
+			results[i] = s.resolveBatchRowShared(ctx, r, raw, quote)
 		}(i, raw)
 	}
 	wg.Wait()

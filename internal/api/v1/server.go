@@ -173,6 +173,8 @@ type Server struct {
 	// priceReadFlight coalesces concurrent readPriceWithAliasesServed calls for the same
 	// (asset, quote) pair, so a burst of identical price requests for a hot pair costs one DB read.
 	priceReadFlight singleflight.Group
+	// batchRowFlight coalesces identical in-flight /v1/price/batch rows across requests (see resolveBatchRowShared).
+	batchRowFlight singleflight.Group
 	// Cached top-N native (CAP-38) LP listing: a whole-prefix lake scan (~40k pools) ranked in Go.
 	// nativeLPMu is NEVER held across the scan, or callers queue behind it after each TTL lapse.
 	// nativeLPFillMu collapses COLD fills onto one scan; nativeLPRefreshing admits one rescan.
