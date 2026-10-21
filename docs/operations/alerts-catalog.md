@@ -20,7 +20,7 @@ its first link must be the rule's `runbook_url` page
 
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
-  | `page` | 68 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
+  | `page` | 69 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
   | `ticket` | 268 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
@@ -126,6 +126,7 @@ its first link must be the rule's `runbook_url` page
 | `stellarindex_source_recognition_failing` | `stellarindex_recognition_ok` | == 0 for > 1 h | ticket | [source-recognition-failing](runbooks/data-freshness.md#stellarindex_source_recognition_failing) |
 | `stellarindex_dependency_down` | `stellarindex_dependency_up` | == 0 for > 2 m | page | [dependency-down](runbooks/dependency-down.md) |
 | `stellarindex_timescale_primary_down` | `up{job="postgres",role="primary"}` | == 0 for > 30 s | page | [timescale-primary-down](runbooks/postgres.md#stellarindex_timescale_primary_down) |
+| `stellarindex_pg_wal_large` | `node_filesystem` used on `/var/lib/postgresql/wal` | > 64 GiB for 15 min | page | [pg-wal-large](runbooks/postgres.md#stellarindex_pg_wal_large) |
 | `stellarindex_timescale_replica_lag` | `pg_replication_lag_seconds`, sync replica | > 5 s for 2 min | ticket | [replica-lag](runbooks/postgres.md#stellarindex_timescale_replica_lag) |
 | `stellarindex_timescale_disk_full` | avail % on DB volume | < 10 % | page | [db-disk-full](runbooks/postgres.md#stellarindex_timescale_disk_full) |
 | `stellarindex_timescale_disk_warning` | same | < 20 % | ticket | [db-disk-full](runbooks/postgres.md#stellarindex_timescale_disk_full) |

@@ -156,6 +156,7 @@ archive-async=y
 # Heavy replays can queue >1k WAL segments; the 60s default made the nightly
 # backup abort waiting for its start segment while the async push drained.
 archive-timeout=900
+archive-push-queue-max={{ pgbackrest_archive_push_queue_max }}
 spool-path=/var/spool/pgbackrest
 
 [stellarindex]

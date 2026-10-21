@@ -33,6 +33,37 @@ rule_files:
 evaluation_interval: 1m
 
 tests:
+  # ══ stellarindex_pg_wal_large ═════════════════════════════════════
+  - interval: 1m
+    name: pg_wal at 68 GiB for 15 minutes pages; 60 GiB does not
+    input_series:
+      - series: 'node_filesystem_size_bytes{job="node_exporter",instance="r1:9100",mountpoint="/var/lib/postgresql/wal"}'
+        values: '1099511627776x30'
+      - series: 'node_filesystem_avail_bytes{job="node_exporter",instance="r1:9100",mountpoint="/var/lib/postgresql/wal"}'
+        values: '1035087118336x10 1026497183744x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_pg_wal_large
+        exp_alerts: []
+      - eval_time: 27m
+        alertname: stellarindex_pg_wal_large
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              mountpoint: /var/lib/postgresql/wal
+              severity: page
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/postgres.md#stellarindex_pg_wal_large
+              summary: "pg_wal on r1:9100 holds 68GiB"
+              description: |
+                WAL is not leaving pg_wal as fast as it is written. Archiving
+                is stalled or slow, or a replication slot is holding WAL. At
+                the archive-push queue limit pgBackRest drops the queued WAL
+                and point-in-time recovery breaks until the next backup.
+
   # ══ stellarindex_timescale_primary_down ═══════════════════════════
   - interval: 1m
     name: an unreachable postgres primary pages within a minute

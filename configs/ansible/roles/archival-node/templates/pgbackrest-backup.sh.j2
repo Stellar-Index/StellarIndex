@@ -42,6 +42,23 @@ METRIC_OUT="$TEXTFILE_DIR/pgbackrest_backup.prom"
 
 if [ "$(date +%u)" -eq 7 ]; then TYPE=full; else TYPE="diff"; fi
 
+# One-shot per-repo type override: lines "YYYY-MM-DD <repo> <type>", applied
+# only on that date, so a stale entry can never change a later night's backup.
+OVERRIDE_FILE="${PGBACKREST_TYPE_OVERRIDE:-/etc/pgbackrest/backup-type-override}"
+TODAY=$(date +%F)
+type_for_repo() {
+  local d r t
+  while read -r d r t _; do
+    if [ "$d" = "$TODAY" ] && [ "$r" = "$1" ]; then
+      case "$t" in
+        full | diff | incr) echo "$t"; return ;;
+        *) echo "pgbackrest-backup: WARN ignoring override type '$t' for repo$1" >&2 ;;
+      esac
+    fi
+  done < <(grep -Ev '^[[:space:]]*(#|$)' "$OVERRIDE_FILE" 2>/dev/null)
+  echo "$TYPE"
+}
+
 # Every repoN-* key in any section names a repo (repo1 may carry only
 # repo1-path; repo2 is s3 and carries repo2-type). Sorted numerically so
 # repo1 (local, fast) always runs first. Unreadable/absent conf → repo1
@@ -176,22 +193,24 @@ RC=0
 METRIC_LINES=()
 for i in "${!REPOS[@]}"; do
   repo=${REPOS[$i]}
+  RTYPE=$(type_for_repo "$repo")
+  [ "$RTYPE" = "$TYPE" ] || echo "pgbackrest-backup: override for $TODAY: repo$repo takes --type=$RTYPE instead of $TYPE"
   if [ "$REPO_COUNT" -eq 1 ]; then
-    CMD=(pgbackrest --stanza="$STANZA" --type="$TYPE" backup)
+    CMD=(pgbackrest --stanza="$STANZA" --type="$RTYPE" backup)
   else
-    CMD=(pgbackrest --stanza="$STANZA" --repo="$repo" --type="$TYPE" backup)
+    CMD=(pgbackrest --stanza="$STANZA" --repo="$repo" --type="$RTYPE" backup)
   fi
-  echo "pgbackrest-backup: starting --type=$TYPE backup of $STANZA (repo$repo)"
+  echo "pgbackrest-backup: starting --type=$RTYPE backup of $STANZA (repo$repo)"
   START=$(date +%s)
   "${CMD[@]}"
   rc=$?
   END=$(date +%s)
   DURATION=$((END - START))
   if [ "$rc" -eq 0 ]; then
-    echo "pgbackrest-backup: repo$repo --type=$TYPE OK in ${DURATION}s"
+    echo "pgbackrest-backup: repo$repo --type=$RTYPE OK in ${DURATION}s"
     LAST_SUCCESS=$END
   else
-    echo "pgbackrest-backup: repo$repo --type=$TYPE FAILED rc=$rc after ${DURATION}s — continuing to the next repo" >&2
+    echo "pgbackrest-backup: repo$repo --type=$RTYPE FAILED rc=$rc after ${DURATION}s — continuing to the next repo" >&2
     [ "$RC" -ne 0 ] || RC=$rc
     # Carry the previous success forward so the series ages instead of
     # disappearing (an absent series is what alert `absent()` guards

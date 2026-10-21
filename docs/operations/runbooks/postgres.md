@@ -75,6 +75,19 @@ Fix:
 
 Escalate: for the postmortem collect the postgres log, `dmesg`, disk/IOPS metrics and recent role changes.
 
+## stellarindex_pg_wal_large
+
+P1 (page, `for: 15m`). pg_wal (`data/postgres/wal`, mounted at `/var/lib/postgresql/wal`) holds more than 64 GiB. WAL is written faster than it leaves: archive-push is failing or slow, or a replication slot pins it. At `archive-push-queue-max` (`pgbackrest_archive_push_queue_max`, 192 GiB) pgBackRest drops the whole queue so Postgres never stops on a full pg_wal; PITR then breaks until the next backup.
+
+Check:
+
+```sh
+ssh root@136.243.90.96 'du -sh /var/lib/postgresql/wal/15-main/pg_wal; ls /var/lib/postgresql/wal/15-main/pg_wal/archive_status | grep -c ready'
+ssh root@136.243.90.96 'journalctl -u postgresql@15-main -n 50 --no-pager | grep -iE "archive|pgbackrest" | grep -viE "password|secret|key"'
+```
+
+Fix the cause: repo reachability (`pgbackrest check`), a heavy write job (pause it), or an unused slot in `pg_replication_slots`. If the queue was dropped (Postgres log warning), take a full backup of each repo once archiving is healthy.
+
 ## stellarindex_postgres_ping_failing
 
 P1 (page, `for: 2m`). `rate(stellarindex_postgres_ping_total{outcome="error"}[5m]) > 0`. The indexer (`watchPostgresPing`) probes its pool every 60 s and emits `stellarindex_postgres_ping_total{outcome}` and `stellarindex_postgres_ping_failure_streak`; the pool also retires connections (`SetConnMaxLifetime` 30 min, idle 5 min). One failed probe in the window is enough; `for: 2m` rides through a clean restart. Rules: `configs/prometheus/rules.r1/storage.yml` (template `deploy/monitoring/rules/storage.yml`). Indexer ingest is stalled or about to stall. MTTR ~5 min.
