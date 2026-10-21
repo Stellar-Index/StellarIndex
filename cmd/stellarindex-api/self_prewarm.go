@@ -78,7 +78,7 @@ func selfPrewarmAssetEndpoints(ctx context.Context, logger *slog.Logger, listenA
 
 	// 60 s matches lightCadence so the readers' 1-2 minute TTLs do not lapse between cycles.
 	runPass()
-	warmExplorerBuildAssets(ctx, get, warm)
+	warmExplorerBuildAssets(ctx, logger, get, warm)
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -100,7 +100,7 @@ const explorerBuildWarmConcurrency = 8
 
 // warmExplorerBuildAssets warms /v1/assets/<id> once for every [explorerBuildListingPath] row. Once is enough: the readers serve
 // stale values while one fill refreshes them, so only the first read after a restart is slow.
-func warmExplorerBuildAssets(ctx context.Context, get func(string) *http.Response, warm func(string)) {
+func warmExplorerBuildAssets(ctx context.Context, logger *slog.Logger, get func(string) *http.Response, warm func(string)) {
 	resp := get(explorerBuildListingPath)
 	if resp == nil {
 		return
@@ -119,6 +119,7 @@ func warmExplorerBuildAssets(ctx context.Context, get func(string) *http.Respons
 		wg.Add(1)
 		go func(id string) {
 			defer func() { <-sem; wg.Done() }()
+			defer recoverBackgroundWorker(logger, "self-prewarm-build-asset")
 			warm("/v1/assets/" + url.PathEscape(id))
 		}(id)
 	}

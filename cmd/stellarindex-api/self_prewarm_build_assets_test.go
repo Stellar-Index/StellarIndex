@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -36,7 +37,7 @@ func TestWarmExplorerBuildAssets_WarmsEveryListingRow(t *testing.T) {
 		return resp
 	}
 	warm := func(path string) { _ = get(path).Body.Close() }
-	warmExplorerBuildAssets(context.Background(), get, warm)
+	warmExplorerBuildAssets(context.Background(), slog.Default(), get, warm)
 
 	sort.Strings(got)
 	want := []string{"/v1/assets/USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", "/v1/assets/native"}
@@ -60,5 +61,5 @@ func TestWarmExplorerBuildAssets_SkipsOnListingError(t *testing.T) {
 		}
 		return resp
 	}
-	warmExplorerBuildAssets(context.Background(), get, func(string) { t.Error("warm called") })
+	warmExplorerBuildAssets(context.Background(), slog.Default(), get, func(string) { t.Error("warm called") })
 }
