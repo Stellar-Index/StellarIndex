@@ -20,6 +20,18 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.41] - 2026-10-21
+
+No migrations. No `pkg/*` break. No config change.
+
+### Fixed
+
+- **api:** the `change_24h_pct` anchor is read once per asset per minute and shared, with concurrent misses single-flighted; the explorer build's burst of identical `/v1/price/batch` rows on a freshly restarted pool no longer re-reads `prices_1m` per row (8 of 595 calls crossed 200 ms after the v0.116.40 restart). Served values are unchanged (#3735).
+
+### Security
+
+- **build:** v0.116.40 moved to Go 1.27.3 for GO-2026-6809 (`crypto/x509` trusted compromised intermediates; reachable through passkey registration) (#3734).
+
 ## [v0.116.40] - 2026-10-21
 
 No migrations. No `pkg/*` break. No config change.
@@ -64,16 +76,3 @@ No migrations. No `pkg/*` break. No config change.
 
 - **pricingguard:** the scam gate's flagged-SAC index (about 180k rows) is rebuilt in the background once it expires, serving the previous index meanwhile, and is built at API startup; previously the request that found it expired waited about 220 ms for the rebuild, which drove the price-latency SLO burn after every deploy (#3713).
 - **ops:** `ch-rebuild` reads SDEX ops in 25k-ledger windows on the full-range and gap paths too; a one-query read of 1M ledgers hit ClickHouse's 10 GiB query cap (#3716).
-
-## [v0.116.36] - 2026-10-20
-
-No migrations. No `pkg/*` break. No config change.
-
-### Added
-
-- **ops:** `ch-rebuild -credit-refusals` (dry run only) charges each decoded trade to the USD credibility budget in `-write`'s batch order and prints how many token/token prints it would refuse and their USD total (#3710)
-
-### Fixed
-
-- **timescale:** asset lookup by slug or id spells `COALESCE(slug, code)` out per column, so each arm reads its index instead of a parallel scan of `classic_assets` (62-75 ms to 1-14 ms on r1) (#3707).
-- **timescale:** the sparklines' XLM/USD leg is read once per 30 s and shared across assets, re-read at once when `freeze_events` changes (7d history 107 ms to about 1 ms per cold asset page on r1) (#3708).
