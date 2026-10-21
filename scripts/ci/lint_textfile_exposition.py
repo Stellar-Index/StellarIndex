@@ -278,6 +278,7 @@ def read_quoted(text: str, start: int) -> tuple[str, int]:
 
 # Direct `-c "…"` / `-tAc "…"` / `--command "…"` forms.
 RE_COMMAND_FLAG = re.compile(r"(?:^|\s)-(?:-command|[A-Za-z]*c)(?:\s+|=)(?=['\"])")
+RE_SHELL_BEFORE_FLAG = re.compile(r"\b(?:ba|da|z)?sh\s+(?:-[A-Za-z]+\s+)*$")
 # A shell function that forwards its first argument to a SQL client.
 RE_FUNC_DEF = re.compile(r"^[ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(\)[ \t]*\{?[ \t]*$", re.MULTILINE)
 RE_SQL_CLIENT = re.compile(r"\bpsql\b|\$\{?PSQL\}?|\bclickhouse-client\b")
@@ -304,6 +305,10 @@ def sql_call_sites(text: str) -> list[tuple[int, str]]:
 
     # (a) `-c "…"` and friends.
     for m in RE_COMMAND_FLAG.finditer(joined):
+        # `bash -c '…'` is a shell script, not SQL; its `set -o pipefail;`
+        # would otherwise read as a SET statement.
+        if RE_SHELL_BEFORE_FLAG.search(joined, joined.rfind("\n", 0, m.start()) + 1, m.start() + 1):
+            continue
         q = m.end()
         if q < len(joined) and joined[q] in "\"'":
             sql, _ = read_quoted(joined, q)
