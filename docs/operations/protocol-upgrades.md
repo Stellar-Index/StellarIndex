@@ -92,6 +92,24 @@ reads `/ledgers/{seq}`, `/ledgers/{seq}/transactions` and
 cannot rehearse a mainnet-only amendment such as CAP-0076; rely on the
 checklist and a decode-failure watch after the vote.
 
+## Protocol 30 — readiness
+
+Core `30.0.0` released 2026-10-16; galexie `galexie-v30.0.0` 2026-10-20. The
+mainnet vote date is **unconfirmed**.
+
+| Change | Handling |
+| --- | --- |
+| **CAP-0088** millisecond close times: new `StellarValue` ext arms `SignedMs` / `EmptyTxSetMs`. Every post-P30 ledger header uses them; an older SDK or galexie cannot decode the header. | galexie pinned to `galexie-v30.0.0`, `go-stellar-sdk` to `v0.8.0`. `ScpValue.CloseTime` stays in seconds, so `ClosedAt()` / `LedgerCloseTime()` are unchanged. Nothing reads `StellarValueExt` directly. |
+| **CAP-0084** muxed contract addresses: `ScAddress` arm 5 (`W…` strkey). | `scval.AsAddressStrkey` encodes it (SEP-23 vector test + fuzz arm); before, a transfer to a W address errored and the row dropped. Other `ScAddress` switches gate on `Contract` / `Account` only and ignore the arm. |
+| **CAP-0087** ML-DSA host functions: new cost types. | Fee/budget fields, not shapes. No decoder change. |
+| Core: overlay minimum is v29.0.0's maximum; account banning removed. | Inside core. No code change. |
+
+Primary sources read: stellar-core [v30.0.0](https://github.com/stellar/stellar-core/releases/tag/v30.0.0), stellar-galexie [galexie-v30.0.0](https://github.com/stellar/stellar-galexie/releases/tag/galexie-v30.0.0).
+
+- [ ] Apply the galexie pin on r1 before the vote (`-e galexie_restart_ack=true`).
+- [ ] Upgrade core on r1 to `30.0.0` before the vote.
+- [ ] Watch for decode failures and the stack-version probe after the vote.
+
 ## Protocol 29 — readiness
 
 Core `29.0.0` reached apt 2026-09-24; the mainnet vote is 2026-10-01.
