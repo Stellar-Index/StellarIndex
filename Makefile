@@ -337,7 +337,7 @@ verify: ## Underlying sequential gate; use make prepush for clean-tree, capabili
 
 .PHONY: verify-cross-region
 verify-cross-region: ## Cross-region byte-identical-VWAP consistency check (ADR-0015 §verification)
-	@# docs/operations/multi-region-cutover.md Stage 5 pre-flight runs this target.
+	@# The region-failover test in docs/architecture/ha-plan.md runs this target first.
 	@./scripts/dev/verify-cross-region.sh
 
 .PHONY: audit

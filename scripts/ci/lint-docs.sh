@@ -769,9 +769,7 @@ else
     docs/architecture/ha-plan.md
     docs/architecture/storage-considerations.md
     docs/operations/r1-deployment-state.md
-    docs/operations/r3-deployment-state.md
     docs/operations/self-hosting.md
-    docs/operations/multi-region-cutover.md
     docs/operations/lcm-cache-tiering.md
     docs/operations/runbooks/infra.md
     docs/operations/runbooks/zfs-snapshots.md
