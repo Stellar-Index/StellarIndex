@@ -1,0 +1,49 @@
+# systemd unit: account op-type counts rollup.
+#
+# Rendered by Ansible. Maintains stellar.account_op_type_counts, the
+# per-partition op-type counts behind the account page's activity
+# panel. Timer mode rebuilds the open partition plus up to four closed
+# ones whose source changed (REPLACE PARTITION, idempotent); the FIRST
+# fill is `ch-optype-rollup -max-closed 0 -write` run manually under
+# run-heavy-job.sh (deploy/clickhouse/account_op_types.sql Step 6).
+
+[Unit]
+Description=Stellar Index — account op-type counts rollup
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/optype-rollup
+EnvironmentFile=-/etc/default/stellarindex
+EnvironmentFile=-/etc/default/stellarindex-ops
+
+Environment=CH_ADDR=127.0.0.1:9300
+Environment=EXTRA_FLAGS=
+
+ExecStart=/usr/local/bin/stellarindex-ops ch-optype-rollup \
+  -ch-addr ${CH_ADDR} \
+  -write \
+  $EXTRA_FLAGS
+
+User=stellarindex
+Group=stellarindex
+
+ProtectSystem=strict
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# A partition build is ~30 s; the ceiling guards a wedged run, and a
+# killed run leaves the partition's previous counts in place.
+TimeoutStartSec=30min
+
+MemoryMax=4G
+MemorySwapMax=0
+CPUWeight=25
+IOWeight=25
+
+[Install]
+WantedBy=multi-user.target

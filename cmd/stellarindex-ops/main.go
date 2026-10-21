@@ -114,6 +114,7 @@ var subcommands = map[string]func(args []string) error{
 	"ch-contract-ledgers-backfill": chops.Run,
 	"ch-instance-backfill":         chops.Run,
 	"ch-census-rollup":             chops.Run,
+	"ch-optype-rollup":             chops.Run,
 	"ch-cap67-movements":           chops.Run,
 	"ch-entry-history":             chops.Run,
 	"ch-entry-index":               chops.Run,

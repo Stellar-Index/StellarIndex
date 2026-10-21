@@ -184,6 +184,9 @@ type ExplorerReader struct {
 	// (deploy/clickhouse/account_op_types.sql Step 5). Without a row the table is partial and op-type counts take the join.
 	opTypesCoverageProbe schemaProbe
 
+	// opTypeRollup caches the stellar.account_op_type_counts read plan; no plan means the indexed query.
+	opTypeRollup opTypeRollupCache
+
 	// contractLedgersProbe probes stellar.contract_active_ledgers. Present and non-empty bounds ContractEventsRecent to the contract's
 	// active ledgers; absent means the unbounded reverse walk. requireRows: per-contract emptiness is served as an authoritative "no
 	// events", so an existing-but-empty index must read as unavailable.
@@ -1342,7 +1345,11 @@ const accountOpTypeCountsIndexedQuery = `SELECT op_type, toInt64(count()) AS n
 // account_op_types coverage marker it is a whole-history join, so run it under a detached stale-while-revalidate budget.
 func (r *ExplorerReader) AccountOperationTypeCounts(ctx context.Context, account string) ([]OpTypeCount, error) {
 	q, args := accountOpTypeCountsIndexedQuery, []any{account}
-	if !r.accountOpTypesCovered(ctx) {
+	if r.accountOpTypesCovered(ctx) {
+		if plan, ok := r.opTypeCountsPlanFor(ctx); ok {
+			q, args = opTypeCountsRollupQuery(plan), []any{account, account}
+		}
+	} else {
 		if !r.opsBySourceAvailable(ctx) {
 			return nil, errOpsBySourceMissing
 		}

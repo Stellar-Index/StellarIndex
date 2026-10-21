@@ -62,6 +62,23 @@ CREATE TABLE IF NOT EXISTS stellar.account_op_types_coverage
 ENGINE = MergeTree
 ORDER BY (covered_from, covered_to);
 
+-- Step 6's rollup: per lake partition, count() FINAL of account_op_types by
+-- (account, op_type), plus one sentinel row (account '', op_type '') whose
+-- `through` is the ledger the build stopped before and whose `n` is the source
+-- partition's active row count at build start.
+CREATE TABLE IF NOT EXISTS stellar.account_op_type_counts
+(
+    part    UInt32,
+    account String,
+    op_type LowCardinality(String),
+    n       UInt64,
+    through UInt32
+)
+ENGINE = MergeTree
+PARTITION BY part
+ORDER BY (account, op_type)
+SETTINGS index_granularity = 1024;
+
 -- ── Step 3: windowed historical backfill ────────────────────────────────────
 -- ***Heavy op.*** run-heavy-job.sh, one window at a time. Duplicate source rows
 -- (operations and transactions are RMTs holding rows twice) collapse in the
@@ -118,9 +135,28 @@ ORDER BY (covered_from, covered_to);
 -- Then restart the api: a probe that found the marker absent latches for the
 -- process lifetime.
 --
+-- ── Step 6: op-type counts rollup ───────────────────────────────────────────
+-- WHY: a whale's count() FINAL over account_op_types still reads every row it
+-- has (tens of millions for the busiest), ~0.9 s per lake partition. The reader
+-- (opTypeCountsRollupQuery) sums the rollup for partitions whose sentinel still
+-- matches the source's active row count and counts the rest from source.
+-- Measured on r1 (partition 60, 785M rows): build 29 s, 4.46M count rows;
+-- whale lookup 6 ms against 0.9 s.
+--   1. Apply the CREATE above (instant). Readers ignore an empty table.
+--   2. Backfill every partition, ~30 min:
+--        /usr/local/sbin/run-heavy-job.sh optype-rollup-backfill \
+--          stellarindex-ops ch-optype-rollup -max-closed 0 -write
+--   3. Verify 20 accounts as in Step 4: the api's /v1/accounts/{g}/activity
+--      counts must equal the account_op_types FINAL query.
+--   4. systemctl enable --now optype-rollup.timer
+-- Whenever account_op_types is rebuilt, TRUNCATE stellar.account_op_type_counts:
+-- a rebuild landing on the same row count would keep stale counts valid.
+--
 -- ── ROLLBACK ────────────────────────────────────────────────────────────────
 -- Roll the binaries back to a build that does not write or read the table
 -- first (the sink refuses to start without it), then:
+--   systemctl disable --now optype-rollup.timer
+--   DROP TABLE IF EXISTS stellar.account_op_type_counts SYNC;
 --   DROP TABLE IF EXISTS stellar.account_op_types_source_mv;
 --   DROP TABLE IF EXISTS stellar.account_op_types_coverage;
 --   DROP TABLE IF EXISTS stellar.account_op_types SYNC;

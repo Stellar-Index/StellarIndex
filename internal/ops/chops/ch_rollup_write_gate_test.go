@@ -97,6 +97,7 @@ func TestBoardRollupsRequireAStatedMode(t *testing.T) {
 func TestBoardRollupUnitsPassWrite(t *testing.T) {
 	for _, unit := range []string{
 		"census-rollup.service.j2",
+		"optype-rollup.service.j2",
 		"holders-rollup.service.j2",
 		"creators-rollup.service.j2",
 		"sponsors-rollup.service.j2",
@@ -390,5 +391,16 @@ func TestChHoldersRollupWiresHeartbeat(t *testing.T) {
 	}
 	if !strings.Contains(body, "stellarindex_ops_job_last_finish_unix{ops_job=\"ch-holders-rollup\"}") {
 		t.Errorf("last_finish_unix missing — no last-run timestamp published:\n%s", body)
+	}
+}
+
+// TestChOpTypeRollupNeedsClickHouse: the dry run reads the plan, so both modes fail against an unreachable ClickHouse instead of
+// reporting "up to date".
+func TestChOpTypeRollupNeedsClickHouse(t *testing.T) {
+	for _, args := range [][]string{{}, {"-write"}} {
+		err := Run(append([]string{"ch-optype-rollup", "-ch-addr", "127.0.0.1:1"}, args...))
+		if err == nil || !strings.Contains(err.Error(), "clickhouse") {
+			t.Errorf("args %v: err = %v, want a ClickHouse connect error", args, err)
+		}
 	}
 }

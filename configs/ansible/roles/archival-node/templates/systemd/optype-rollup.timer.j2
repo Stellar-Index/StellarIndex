@@ -1,0 +1,18 @@
+# systemd timer: account op-type counts rollup — every 30 minutes.
+#
+# Rendered by Ansible. Companion to optype-rollup.service; readers count
+# everything past the built mark from account_op_types, so the cadence
+# only bounds how much they read there.
+
+[Unit]
+Description=account op-type counts rollup every 30 minutes
+
+[Timer]
+OnBootSec=14min
+OnUnitInactiveSec=30min
+RandomizedDelaySec=120
+Persistent=true
+Unit=optype-rollup.service
+
+[Install]
+WantedBy=timers.target
