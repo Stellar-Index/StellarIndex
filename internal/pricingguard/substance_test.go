@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"math/big"
@@ -888,5 +889,65 @@ func TestFailedFloor_NamesTheFloor(t *testing.T) {
 		if ok := SubstanceOK(tc.vol, tc.buckets, tc.spanS, pol); ok != (tc.want == FloorNone) {
 			t.Errorf("%s: SubstanceOK = %v disagrees with FailedFloor %q", tc.name, ok, tc.want)
 		}
+	}
+}
+
+// fillerAssets returns n distinct gated classic assets.
+func fillerAssets(t *testing.T, n int) []canonical.Asset {
+	t.Helper()
+	out := make([]canonical.Asset, n)
+	for i := range out {
+		out[i] = mustAsset(t, fmt.Sprintf("F%d-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V", i))
+	}
+	return out
+}
+
+func TestSubstanceGate_OverflowKeepsLiveVerdicts(t *testing.T) {
+	native := mustAsset(t, "native")
+	hot := mustAsset(t, "SCAM-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V")
+	reader := &fakeSubstanceReader{byPair: map[string]timescale.MarketSubstance{}}
+	gate := NewSubstanceGate(reader, SubstanceGateOptions{Policy: testPolicy()})
+	now := time.Unix(1_700_000_000, 0)
+	gate.now = func() time.Time { return now }
+
+	fillers := fillerAssets(t, substanceCacheMax)
+	for _, a := range fillers[:substanceCacheMax-1] {
+		gate.Allowed(context.Background(), a, native, "test")
+	}
+	now = now.Add(substanceCacheTTL + time.Second)
+	gate.Allowed(context.Background(), hot, native, "test")
+	// The cache is full; this insert must evict the expired fillers, not the live hot verdict.
+	gate.Allowed(context.Background(), fillers[substanceCacheMax-1], native, "test")
+	before := reader.calls
+	gate.Allowed(context.Background(), hot, native, "test")
+	if reader.calls != before {
+		t.Error("overflow evicted a live verdict; the hot pair was re-measured")
+	}
+}
+
+func TestSubstanceGate_OverflowDoesNotReLogWithheldPairs(t *testing.T) {
+	native := mustAsset(t, "native")
+	reader := &fakeSubstanceReader{byPair: map[string]timescale.MarketSubstance{}}
+	warns := 0
+	gate := NewSubstanceGate(reader, SubstanceGateOptions{
+		Policy: testPolicy(),
+		Logger: slog.New(countingHandler{warns: &warns}),
+	})
+	now := time.Unix(1_700_000_000, 0)
+	gate.now = func() time.Time { return now }
+
+	fillers := fillerAssets(t, substanceCacheMax+1)
+	for _, a := range fillers {
+		gate.Allowed(context.Background(), a, native, "test")
+	}
+	if warns != len(fillers) {
+		t.Fatalf("each first withheld observation must WARN once, got %d of %d", warns, len(fillers))
+	}
+	now = now.Add(substanceCacheTTL + time.Second)
+	for _, a := range fillers {
+		gate.Allowed(context.Background(), a, native, "test")
+	}
+	if warns != len(fillers) {
+		t.Errorf("re-measuring still-withheld pairs after an overflow re-WARNed: %d extra", warns-len(fillers))
 	}
 }
