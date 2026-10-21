@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -2812,8 +2813,8 @@ var explorerAssetListingPaths = []string{
 	"/v1/assets?asset_class=stablecoin&limit=100",
 }
 
-// selfPrewarmPaths is one pass of the self-prewarm: /v1/assets/<id> for native (the explorer's default landing, biggest cache-miss
-// surface) and each verified currency, then the explorer's listing reads.
+// selfPrewarmPaths is one pass of the self-prewarm: /v1/assets/<id> for native (the explorer's landing) and each verified currency,
+// the explorer's listing reads, and one price batch over the same assets (batch rows read Postgres uncached; cold after a restart).
 func selfPrewarmPaths(verifiedAssetIDs []string) []string {
 	// The explorer opts into include_thin, which is its own cache entry. The entry-changes first page is
 	// one cache entry at any limit, and a liquid asset's walk outlasts a cold page view.
@@ -2825,7 +2826,8 @@ func selfPrewarmPaths(verifiedAssetIDs []string) []string {
 			paths = append(paths, "/v1/assets/"+id+query)
 		}
 	}
-	return append(paths, explorerAssetListingPaths...)
+	paths = append(paths, explorerAssetListingPaths...)
+	return append(paths, "/v1/price/batch?asset_ids="+strings.Join(targets, ","))
 }
 
 // storePriceAtReader serves /v1/price/at and /v1/price/changes via ClosedVWAPAtOrBefore (ErrNoRows to the sentinel). It carries the same
