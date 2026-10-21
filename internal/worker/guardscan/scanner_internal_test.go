@@ -7,17 +7,35 @@ import (
 	"testing"
 )
 
+// FixtureModule returns a temp module with this repo's module path and internal/worker linked to the real package, so
+// the scanner's go.mod lookup and import mapping run for real without writing into the source tree, which other
+// packages' tests walk in parallel. Exported for the external test package.
+func FixtureModule(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module github.com/Stellar-Index/StellarIndex\n"), 0o600); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	worker, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatalf("abs: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o750); err != nil {
+		t.Fatalf("mkdir internal: %v", err)
+	}
+	if err := os.Symlink(worker, filepath.Join(root, "internal", "worker")); err != nil {
+		t.Fatalf("link internal/worker: %v", err)
+	}
+	return root
+}
+
 // A Scanner reused across files must parse each package it resolves into once; re-indexing per file made the repo-wide
 // guard walks quadratic and pushed them past the CI test timeout under -race.
 func TestScanner_IndexesEachPackageOnce(t *testing.T) {
-	dir := filepath.Join("testdata", "shared")
+	dir := filepath.Join(FixtureModule(t), "fx", "shared")
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatalf("mkdir %s: %v", dir, err)
 	}
-	t.Cleanup(func() {
-		_ = os.RemoveAll(dir)
-		_ = os.Remove("testdata")
-	})
 	files := map[string]string{
 		"a.go": `package shared
 
@@ -81,7 +99,7 @@ func startC(logger *slog.Logger) { go worker.Recover(logger, "x") }
 	if s := got["c.go"]; s.Kind != KindImportedFunc {
 		t.Errorf("c.go: go worker.Recover() = %+v, want imported-func", s)
 	}
-	// testdata/shared once, internal/worker once — not once per file.
+	// fx/shared once, internal/worker once — not once per file.
 	if sc.parsedDirs != 2 {
 		t.Errorf("indexed %d package directories scanning 3 files, want 2 (each package once)", sc.parsedDirs)
 	}
@@ -91,14 +109,10 @@ func startC(logger *slog.Logger) { go worker.Recover(logger, "x") }
 // resolve Line and a FuncLit's Origin against the callee's own FileSet (indexDir/indexImport
 // each build one), not the scanned file's r.fset, or it reports Line 0 and a garbage Origin.
 func TestScan_RecursedFuncLitUsesCalleeFileSet(t *testing.T) {
-	dir := filepath.Join("testdata", "recursed_funclit")
+	dir := filepath.Join(FixtureModule(t), "fx", "recursed_funclit")
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatalf("mkdir %s: %v", dir, err)
 	}
-	t.Cleanup(func() {
-		_ = os.RemoveAll(dir)
-		_ = os.Remove("testdata")
-	})
 	if err := os.WriteFile(filepath.Join(dir, "workers.go"), []byte(`package main
 
 func startWorkers() {
