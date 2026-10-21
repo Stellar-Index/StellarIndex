@@ -109,9 +109,12 @@ func durationOrZero(n int, unit time.Duration) time.Duration {
 // request rate, and a pair crossing the floor flips within a minute.
 const substanceCacheTTL = 60 * time.Second
 
-// substanceCacheMax bounds the verdict cache, far above any realistic hot set. Overflow drops the
-// whole map; a reset costs one substance query per hot pair.
+// substanceCacheMax bounds the verdict cache. An explorer build measures more pairs than this
+// within a TTL, so overflow first sweeps expired verdicts and drops the whole map only if still full.
 const substanceCacheMax = 8192
+
+// substanceLoggedMax bounds the last-logged-state map; a key costs a string and a bool.
+const substanceLoggedMax = 1 << 16
 
 type substanceVerdict struct {
 	allowed  bool
@@ -168,6 +171,9 @@ type SubstanceGate struct {
 	// from `cache` because the instant is caller-chosen: a client walking timestamps can fill
 	// this map at will, and its overflow reset must not evict the LIVE verdicts.
 	atCache map[string]substanceVerdict
+	// logged is the last verdict logged per pair, kept apart from `cache` so an eviction does not
+	// re-log every withheld pair as a first observation.
+	logged map[string]bool
 }
 
 // SubstanceGateOptions configures [NewSubstanceGate]; a nil Logger disables logging only.
@@ -192,6 +198,7 @@ func NewSubstanceGate(store SubstanceStore, opts SubstanceGateOptions) *Substanc
 		logger:  opts.Logger,
 		cache:   make(map[string]substanceVerdict),
 		atCache: make(map[string]substanceVerdict),
+		logged:  make(map[string]bool),
 	}
 	if g.logger != nil {
 		g.logger.Info("substance gate armed",
@@ -377,8 +384,7 @@ func (g *SubstanceGate) Measure(ctx context.Context, base, quote canonical.Asset
 	key := pairCacheKey(base, quote)
 	now := g.clock()
 	g.mu.Lock()
-	prior, hadPrior := g.cache[key]
-	if hadPrior && now.Before(prior.expires) {
+	if prior, ok := g.cache[key]; ok && now.Before(prior.expires) {
 		g.mu.Unlock()
 		return prior.verdict()
 	}
@@ -394,13 +400,33 @@ func (g *SubstanceGate) Measure(ctx context.Context, base, quote canonical.Asset
 	}
 	entry.expires = now.Add(substanceCacheTTL)
 	g.mu.Lock()
-	if len(g.cache) >= substanceCacheMax {
-		g.cache = make(map[string]substanceVerdict)
-	}
+	g.cache = sweepOrReset(g.cache, now)
 	g.cache[key] = entry
+	priorAllowed, hadPrior := g.logged[key]
+	if len(g.logged) >= substanceLoggedMax {
+		g.logged = make(map[string]bool)
+	}
+	g.logged[key] = entry.allowed
 	g.mu.Unlock()
-	g.logTransition(base, quote, entry.allowed, entry.floor, hadPrior, prior.allowed)
+	g.logTransition(base, quote, entry.allowed, entry.floor, hadPrior, priorAllowed)
 	return entry.verdict()
+}
+
+// sweepOrReset makes room in a full verdict cache: expired entries go first, so a burst of cold
+// pairs does not evict the live hot set; the map is dropped only when every entry is still live.
+func sweepOrReset(m map[string]substanceVerdict, now time.Time) map[string]substanceVerdict {
+	if len(m) < substanceCacheMax {
+		return m
+	}
+	for k, v := range m {
+		if !now.Before(v.expires) {
+			delete(m, k)
+		}
+	}
+	if len(m) >= substanceCacheMax {
+		return make(map[string]substanceVerdict)
+	}
+	return m
 }
 
 // logTransition logs a verdict on TRANSITIONS only (first observation, or a flip): the steady
@@ -514,9 +540,7 @@ func (g *SubstanceGate) MeasureAt(ctx context.Context, base, quote canonical.Ass
 	}
 	entry.expires = now.Add(substanceCacheTTL)
 	g.mu.Lock()
-	if len(g.atCache) >= substanceCacheMax {
-		g.atCache = make(map[string]substanceVerdict)
-	}
+	g.atCache = sweepOrReset(g.atCache, now)
 	g.atCache[key] = entry
 	g.mu.Unlock()
 	return entry.verdict()
