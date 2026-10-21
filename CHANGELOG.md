@@ -20,6 +20,21 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.44] - 2026-10-21
+
+No migrations. No `pkg/*` break. No config change.
+
+### Fixed
+
+- **wsclient:** the ping watchdog counts a stall only when the ping times out; a venue closing the socket under the ping is reported as the close it is, not as `ErrStreamStalled`, so a routine Kraken reconnect no longer fires `cex_stream_stalled` (#3750).
+- **explorer:** embed widgets render from the build's one `/v1/assets` listing call instead of one `/v1/assets/{id}` each; the ~500 cold detail calls per build tripped the latency SLO burn during every explorer deploy. The asset page's listing call asks for `include=sparkline24h`, the token the API matches (#3752).
+
+### Changed
+
+- **api:** the markets, history and network_stats caches log the error behind a refresh failure (#3747).
+- **ci:** doc-links scoped checks are timed against the slowest full scan (#3748).
+- **docs:** supply history corrected for eviction tombstones (#3743); two stale runbooks, the self-hosting guide (#3749), the design-system doc (#3751), the WASM audit README and the r1 archive section (#3753) re-verified.
+
 ## [v0.116.43] - 2026-10-21
 
 No migrations. No `pkg/*` break. No config change. Protocol 30 readiness: run the galexie role on each host before the network votes (testnet 2026-11-03, mainnet 2026-11-23).
@@ -65,17 +80,3 @@ No migrations. No `pkg/*` break. No config change.
 
 - **ci:** the config-apply gate's refusal lists the substantive surfaces it found (#3732).
 - **docs:** the API runbook says a restart that clears `ch_schema_probe_absent` is not a fix (#3731).
-
-## [v0.116.39] - 2026-10-20
-
-No migrations. No `pkg/*` break. No config change; the alert-rule edits are comments only.
-
-### Fixed
-
-- **timescale:** unpriced trades between the declared SAC wrappers of one issuer's credits are labelled `unroutable`, like the same trades between the classic forms; a weekly wash burst on three such wrappers read as an on-chain USD-coverage gap (#3728).
-- **alerts:** the textfile-stale catch-all excludes `ops_job_tag_tx_index.prom`, which has its own staleness rule (#3726).
-
-### Changed
-
-- **release:** the cut-release hint names the hyphenated heading the changelog uses (#3725).
-- **docs:** the outlier trim-fraction runbook names the thin-pair trend case (#3724).
