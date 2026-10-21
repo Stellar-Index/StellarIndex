@@ -1236,6 +1236,8 @@
     - cohort-rollup.timer
     - census-rollup.service
     - census-rollup.timer
+    - optype-rollup.service
+    - optype-rollup.timer
     - compute-completeness.service
     - compute-completeness.timer
     - verify-usd-volume.service
@@ -1297,6 +1299,8 @@
     # runbook); enabled by hand as that runbook's last step.
     - cohort-rollup.timer
     - census-rollup.timer
+    # optype-rollup.timer is enabled by hand as the last step of
+    # deploy/clickhouse/account_op_types.sql Step 6, after its table exists.
     - compute-completeness.timer
     - verify-usd-volume.timer
     - compute-completeness-sdex.timer

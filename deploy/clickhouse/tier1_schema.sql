@@ -713,6 +713,23 @@ CREATE TABLE IF NOT EXISTS stellar.account_op_types_coverage
 ENGINE = MergeTree
 ORDER BY (covered_from, covered_to);
 
+-- Step 6's rollup: per lake partition, count() FINAL of account_op_types by
+-- (account, op_type), plus one sentinel row (account '', op_type '') whose
+-- `through` is the ledger the build stopped before and whose `n` is the source
+-- partition's active row count at build start.
+CREATE TABLE IF NOT EXISTS stellar.account_op_type_counts
+(
+    part    UInt32,
+    account String,
+    op_type LowCardinality(String),
+    n       UInt64,
+    through UInt32
+)
+ENGINE = MergeTree
+PARTITION BY part
+ORDER BY (account, op_type)
+SETTINGS index_granularity = 1024;
+
 -- ── contract_event_shapes — see deploy/clickhouse/contract_event_shapes.sql ──
 -- One row per distinct recognition shape (contract_id, topic_0_sym and, for a
 -- non-Symbol topic[0], topics_xdr[1], topics_xdr[2], arity) per lake partition,

@@ -184,6 +184,9 @@ type ExplorerReader struct {
 	// (deploy/clickhouse/account_op_types.sql Step 5). Without a row the table is partial and op-type counts take the join.
 	opTypesCoverageProbe schemaProbe
 
+	// opTypeRollup caches the stellar.account_op_type_counts read plan; no plan means the indexed query.
+	opTypeRollup opTypeRollupCache
+
 	// contractLedgersProbe probes stellar.contract_active_ledgers. Present and non-empty bounds ContractEventsRecent to the contract's
 	// active ledgers; absent means the unbounded reverse walk. requireRows: per-contract emptiness is served as an authoritative "no
 	// events", so an existing-but-empty index must read as unavailable.
@@ -937,7 +940,8 @@ func (r *ExplorerReader) AccountTransactions(ctx context.Context, account string
 	if cur.IsSet() {
 		from = &accountTxKey{cur.Ledger, cur.A}
 	}
-	part, frontier, err := participantKeys(ctx, r.conn, account, limit, txParticipantArm, "", nil, from)
+	fixed := r.accountPartitionsClause(ctx, account)
+	part, frontier, err := participantKeys(ctx, r.conn, account, limit, txParticipantArm, fixed, nil, from)
 	if err != nil {
 		return nil, resume, fmt.Errorf("clickhouse: account %s txs: %w", account, err)
 	}
@@ -955,7 +959,7 @@ func (r *ExplorerReader) AccountTransactions(ctx context.Context, account string
 	// RMT parts a bare SELECT cannot order (see txByLedgerAndHash). Cheap: a bounded IN over PK points.
 	q := `SELECT ` + txCols + ` FROM stellar.transactions FINAL
 		WHERE (ledger_seq, tx_index) IN (` + tupleList(keys, func(k accountTxKey) []uint32 { return []uint32{k.ledger, k.txIndex} }) + `)
-		ORDER BY ledger_seq DESC, tx_index DESC LIMIT ?` + explorerScanSettings
+		ORDER BY ledger_seq DESC, tx_index DESC LIMIT ?` + explorerScanSettings + `, do_not_merge_across_partitions_select_final = 1`
 	rows, err := r.conn.Query(ctx, q, limit)
 	if err != nil {
 		return nil, resume, fmt.Errorf("clickhouse: account %s txs: %w", account, err)
@@ -1227,9 +1231,10 @@ func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, 
 	if err != nil {
 		return nil, resume, fmt.Errorf("clickhouse: account %s ops: %w", account, err)
 	}
-	fixed, fixedArgs := "", []any(nil)
+	fixed := r.accountPartitionsClause(ctx, account)
+	var fixedArgs []any
 	if hasBound {
-		fixed, fixedArgs = ` AND ledger_seq <= ?`, []any{bound}
+		fixed, fixedArgs = fixed+` AND ledger_seq <= ?`, []any{bound}
 	}
 	var from *accountOpKey
 	if cur.IsSet() {
@@ -1252,7 +1257,7 @@ func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, 
 	// FINAL for AccountTransactions' tie-break reason; opCols carries body_xdr, read only here, once.
 	q := `SELECT ` + opCols + ` FROM stellar.operations FINAL
 		WHERE (ledger_seq, tx_index, op_index) IN (` + tupleList(keys, func(k accountOpKey) []uint32 { return []uint32{k.ledger, k.txIndex, k.opIndex} }) + `)
-		ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT ?` + explorerScanSettings
+		ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT ?` + explorerScanSettings + `, do_not_merge_across_partitions_select_final = 1`
 	rows, err := r.conn.Query(ctx, q, limit)
 	if err != nil {
 		return nil, resume, fmt.Errorf("clickhouse: account %s ops: %w", account, err)
@@ -1342,7 +1347,11 @@ const accountOpTypeCountsIndexedQuery = `SELECT op_type, toInt64(count()) AS n
 // account_op_types coverage marker it is a whole-history join, so run it under a detached stale-while-revalidate budget.
 func (r *ExplorerReader) AccountOperationTypeCounts(ctx context.Context, account string) ([]OpTypeCount, error) {
 	q, args := accountOpTypeCountsIndexedQuery, []any{account}
-	if !r.accountOpTypesCovered(ctx) {
+	if r.accountOpTypesCovered(ctx) {
+		if plan, ok := r.opTypeCountsPlanFor(ctx); ok {
+			q, args = opTypeCountsRollupQuery(plan), []any{account, account}
+		}
+	} else {
 		if !r.opsBySourceAvailable(ctx) {
 			return nil, errOpsBySourceMissing
 		}

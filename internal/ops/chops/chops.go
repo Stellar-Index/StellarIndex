@@ -51,6 +51,8 @@ func lakeMutatorVerb(verb string) (func([]string) error, bool) {
 		return chInstanceBackfill, true
 	case "ch-census-rollup":
 		return chCensusRollup, true
+	case "ch-optype-rollup":
+		return chOpTypeRollup, true
 	case "ch-holders-rollup":
 		return chHoldersRollup, true
 	case "ch-creators-rollup":

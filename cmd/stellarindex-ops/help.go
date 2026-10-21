@@ -656,6 +656,11 @@ Subcommands:
                           day-keyed census behind fast /v1/contracts).
                           Timer mode recomputes today + missing days;
                           -backfill walks from the lake's first event.
+  ch-optype-rollup        -ch-addr ADDR [-max-closed N] [-shrink-ok] [-write]
+                          Maintain stellar.account_op_type_counts (per-
+                          partition op-type counts behind the account
+                          activity panel). -max-closed 0 is the backfill;
+                          run it under run-heavy-job.sh.
   ch-backfill -config PATH -from N -to N [-bucket NAME] [-ch-addr H:P] [-flush-every N] [-parallel N] [-changes-only] (-write | -dry-run)
                           Structurally decode [from,to]
                           from galexie into the ClickHouse stellar.* Tier-1

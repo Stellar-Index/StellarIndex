@@ -112,6 +112,7 @@ var subcommandClasses = map[string]subcommandClass{
 	"ch-contract-ledgers-backfill": gate(),
 	"ch-instance-backfill":         gate(),
 	"ch-census-rollup":             gate(),
+	"ch-optype-rollup":             gate(),
 	"ch-cap67-movements":           gate(),
 	"ch-entry-history":             gate(),
 	"ch-entry-index":               gate(),

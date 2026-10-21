@@ -62,7 +62,7 @@ on:
         # including the data-integrity gates (verify-archive
         # tier-a/b, archive-completeness, ch-schema-drift,
         # restore-drill) and the served-tier writers (census-rollup,
-        # holders-rollup, supply-snapshot, sep1-refresh,
+        # optype-rollup, holders-rollup, supply-snapshot, sep1-refresh,
         # directory-sync, cap67-movements). A stale gate binary
         # silently validates the lake with retired rules — the
         # failure mode is a gate that PASSES when it should not.
