@@ -161,7 +161,7 @@ func buildStub(newOps, liveOps uint64) *execStubConn {
 func TestRunOpTypeCountsPartition_SwapsAndRecordsFingerprint(t *testing.T) {
 	conn := buildStub(10, 9)
 	w := OpTypeRollupPartition{Part: 60, Through: opTypePartitionEnd(60), Reason: "test"}
-	if err := runOpTypeCountsPartitionConn(context.Background(), conn, w, false, t.Logf); err != nil {
+	if err := OpTypeCountsRollup.runPartitionConn(context.Background(), conn, w, false, t.Logf); err != nil {
 		t.Fatal(err)
 	}
 	sentinel := conn.execd("VALUES (?, '', '', ?, ?)")
@@ -181,9 +181,9 @@ func TestRunOpTypeCountsPartition_SwapsAndRecordsFingerprint(t *testing.T) {
 func TestRunOpTypeCountsPartition_ShrinkRefusesReplace(t *testing.T) {
 	conn := buildStub(8, 9)
 	w := OpTypeRollupPartition{Part: 60, Through: opTypePartitionEnd(60)}
-	err := runOpTypeCountsPartitionConn(context.Background(), conn, w, false, t.Logf)
-	if !errors.Is(err, ErrOpTypeCountsShrink) {
-		t.Fatalf("err = %v, want ErrOpTypeCountsShrink", err)
+	err := OpTypeCountsRollup.runPartitionConn(context.Background(), conn, w, false, t.Logf)
+	if !errors.Is(err, ErrCountsShrink) {
+		t.Fatalf("err = %v, want ErrCountsShrink", err)
 	}
 	if n := len(conn.execd("REPLACE PARTITION")); n != 0 {
 		t.Errorf("replaced %d time(s) after a shrink", n)
@@ -192,7 +192,7 @@ func TestRunOpTypeCountsPartition_ShrinkRefusesReplace(t *testing.T) {
 		t.Errorf("staging drops = %d, want 1", n)
 	}
 	conn = buildStub(8, 9)
-	if err := runOpTypeCountsPartitionConn(context.Background(), conn, w, true, t.Logf); err != nil {
+	if err := OpTypeCountsRollup.runPartitionConn(context.Background(), conn, w, true, t.Logf); err != nil {
 		t.Fatalf("shrinkOK: %v", err)
 	}
 }
@@ -253,7 +253,7 @@ func TestAccountListings_ParticipantReadIsPartitionScoped(t *testing.T) {
 	clk := newFakeClock()
 	r := &ExplorerReader{conn: conn, opTypesCoverageProbe: schemaProbe{now: clk.now}}
 	ctx := context.Background()
-	want := "AND (ledger_seq >= 2000009 OR intDiv(ledger_seq, 1000000) IN (0, 1))"
+	want := "AND (ledger_seq >= 2000000 OR intDiv(ledger_seq, 1000000) IN (0, 1))"
 	if _, _, err := r.AccountTransactions(ctx, "GTESTPARTS", 50, ExplorerCursor{}); err != nil {
 		t.Fatal(err)
 	}
@@ -274,5 +274,70 @@ func TestAccountListings_ParticipantReadIsPartitionScoped(t *testing.T) {
 	}
 	if q := participantQuery(); strings.Contains(q, "intDiv") {
 		t.Errorf("no plan: participant read is still partition-scoped:\n%s", q)
+	}
+}
+
+// The movements listing reads only the partitions account_movement_counts has the address in, plus stale ones and the tail's whole
+// partition; without a plan it reads every partition.
+func TestAccountMovements_ReadIsPartitionScoped(t *testing.T) {
+	planned := true
+	conn := &stubConn{respond: func(q string) (driver.Rows, error) {
+		switch {
+		case strings.Contains(q, "FROM stellar.account_movement_counts WHERE account = ''"):
+			if !planned {
+				return &stubRows{}, nil
+			}
+			return &stubRows{data: [][]any{{uint32(0), uint32(mL), uint64(5)}, {uint32(1), uint32(mL), uint64(4)}, {uint32(2), uint32(2*mL + 9), uint64(0)}}}, nil
+		case strings.Contains(q, "system.parts"):
+			return &stubRows{data: [][]any{{uint32(0), uint64(5)}, {uint32(1), uint64(3)}, {uint32(2), uint64(1)}}}, nil
+		case strings.Contains(q, "SELECT DISTINCT part FROM stellar.account_movement_counts"):
+			return &stubRows{data: [][]any{{uint32(0)}}}, nil
+		}
+		return &stubRows{}, nil
+	}}
+	movementsQuery := func() string {
+		for i := len(conn.queries) - 1; i >= 0; i-- {
+			if strings.Contains(conn.queries[i], "FROM stellar.account_movements WHERE") {
+				return conn.queries[i]
+			}
+		}
+		t.Fatal("no movements read")
+		return ""
+	}
+	r := &ExplorerReader{conn: conn}
+	ctx := context.Background()
+	if _, err := r.AccountMovements(ctx, "GTESTMOVES", 25, AccountMovementCursor{}, AccountMovementFilter{}); err != nil {
+		t.Fatal(err)
+	}
+	want := "WHERE address = ? AND (ledger >= 2000000 OR intDiv(ledger, 1000000) IN (0, 1))"
+	if q := movementsQuery(); !strings.Contains(q, want) {
+		t.Errorf("movements read lacks %q:\n%s", want, q)
+	}
+
+	planned = false
+	r.movementRollup = opTypeRollupCache{}
+	if _, err := r.AccountMovements(ctx, "GTESTMOVES", 25, AccountMovementCursor{}, AccountMovementFilter{}); err != nil {
+		t.Fatal(err)
+	}
+	if q := movementsQuery(); strings.Contains(q, "intDiv") {
+		t.Errorf("no plan: movements read is still partition-scoped:\n%s", q)
+	}
+}
+
+func TestRunPartition_MovementsCountsItsOwnColumns(t *testing.T) {
+	conn := buildStub(10, 9)
+	w := OpTypeRollupPartition{Part: 60, Through: opTypePartitionEnd(60)}
+	if err := MovementCountsRollup.runPartitionConn(context.Background(), conn, w, false, t.Logf); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"SELECT toUInt32(?), address, movement_kind, count(), toUInt32(?)",
+		"FROM stellar.account_movements FINAL",
+		"WHERE ledger >= ? AND ledger < ?",
+		"ALTER TABLE stellar.account_movement_counts REPLACE PARTITION ID '60'",
+	} {
+		if len(conn.execd(want)) != 1 {
+			t.Errorf("no exec containing %q: %v", want, conn.execs)
+		}
 	}
 }

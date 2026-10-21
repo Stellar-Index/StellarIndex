@@ -15,20 +15,46 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// Op-type counts rollup (deploy/clickhouse/account_op_types.sql Step 6): per lake partition, count() FINAL of account_op_types
-// grouped by (account, op_type), swapped in with REPLACE PARTITION. Each partition also holds one sentinel row (account '') whose
+// Per-account counts rollups (deploy/clickhouse/account_op_types.sql Step 6): per lake partition, count() FINAL of a source table
+// grouped by (account, group column), swapped in with REPLACE PARTITION. Each partition also holds one sentinel row (account '') whose
 // `through` is the ledger the build stopped before and whose `n` is the source partition's active row count at build start, so the
-// reader serves counts only where they still match the source and reads everything else from account_op_types.
+// reader trusts a partition only while it still matches the source and reads everything else from the source.
 
-// opTypePartitionWidth is account_op_types' PARTITION BY intDiv(ledger_seq, 1000000).
+// CountsRollup names one rollup: target(part, account, <group>, n, through) counts source rows per account and group.
+type CountsRollup struct {
+	Name    string
+	table   string
+	source  string
+	ledger  string
+	account string
+	group   string
+}
+
+var (
+	// OpTypeCountsRollup serves the activity panel's op-type counts and the transactions/operations partition directory.
+	OpTypeCountsRollup = &CountsRollup{
+		Name: "op-types", table: "account_op_type_counts", source: "account_op_types",
+		ledger: "ledger_seq", account: "account", group: "op_type",
+	}
+	// MovementCountsRollup is the movements listing's partition directory. account_op_types cannot be: CAP-67 movements land on
+	// accounts that are no operation's participant.
+	MovementCountsRollup = &CountsRollup{
+		Name: "movements", table: "account_movement_counts", source: "account_movements",
+		ledger: "ledger", account: "address", group: "movement_kind",
+	}
+	// CountsRollups is every rollup ch-optype-rollup maintains.
+	CountsRollups = []*CountsRollup{OpTypeCountsRollup, MovementCountsRollup}
+)
+
+// opTypePartitionWidth is every source's PARTITION BY intDiv(<ledger>, 1000000).
 const opTypePartitionWidth = 1_000_000
 
-// opTypeRollupTipMargin keeps the open partition's build this many ledgers (~1 h) behind the contiguous tip: an account_op_types row
-// can land after its ledger row, and a row below the built-through mark is not re-read until the next build.
+// opTypeRollupTipMargin keeps the open partition's build this many ledgers (~1 h) behind the contiguous tip: a source row can land
+// after its ledger row, and a row below the built-through mark is not re-read until the next build.
 const opTypeRollupTipMargin = 720
 
-// ErrOpTypeCountsShrink marks a partition recompute that counted fewer ops than the live partition; the partition is left untouched.
-var ErrOpTypeCountsShrink = errors.New("op-type counts recompute is smaller than the live partition")
+// ErrCountsShrink marks a partition recompute that counted fewer rows than the live partition; the partition is left untouched.
+var ErrCountsShrink = errors.New("counts rollup recompute is smaller than the live partition")
 
 // opTypeBuilt is one partition's sentinel: counts cover ledger_seq < through, built from srcRows active source rows.
 type opTypeBuilt struct {
@@ -38,8 +64,8 @@ type opTypeBuilt struct {
 
 func opTypePartitionEnd(p uint32) uint32 { return (p + 1) * opTypePartitionWidth }
 
-// opTypeCountsPlan says how the reader splits one account's counts: rollup rows for the valid partitions, account_op_types FINAL for
-// ledger_seq >= tailFrom and for the stale partitions below it.
+// opTypeCountsPlan says how the reader splits one account's counts: rollup rows for the valid partitions, the source FINAL for
+// ledger >= tailFrom and for the stale partitions below it.
 type opTypeCountsPlan struct {
 	valid    []uint32
 	stale    []uint32
@@ -118,12 +144,12 @@ func opTypeCountsRollupQuery(plan opTypeCountsPlan) string {
 	) GROUP BY op_type ORDER BY n DESC` + explorerScanSettings + `, do_not_merge_across_partitions_select_final = 1`
 }
 
-// readOpTypeRollupState reads every partition's sentinel and the source's active row count per partition.
-func readOpTypeRollupState(ctx context.Context, conn driver.Conn) (map[uint32]opTypeBuilt, map[uint32]uint64, error) {
+// readState reads every partition's sentinel and the source's active row count per partition.
+func (rc *CountsRollup) readState(ctx context.Context, conn driver.Conn) (map[uint32]opTypeBuilt, map[uint32]uint64, error) {
 	built := map[uint32]opTypeBuilt{}
-	rows, err := conn.Query(ctx, `SELECT part, through, n FROM stellar.account_op_type_counts WHERE account = ''`)
+	rows, err := conn.Query(ctx, `SELECT part, through, n FROM stellar.`+rc.table+` WHERE account = ''`)
 	if err != nil {
-		return nil, nil, fmt.Errorf("clickhouse: op-type counts sentinels: %w", err)
+		return nil, nil, fmt.Errorf("clickhouse: %s sentinels: %w", rc.table, err)
 	}
 	for rows.Next() {
 		var p uint32
@@ -138,23 +164,23 @@ func readOpTypeRollupState(ctx context.Context, conn driver.Conn) (map[uint32]op
 	if err := rows.Err(); err != nil {
 		return nil, nil, err
 	}
-	src, err := opTypeSourceRows(ctx, conn, "")
+	src, err := rc.sourceRows(ctx, conn, "")
 	return built, src, err
 }
 
-// opTypeSourceRows sums active account_op_types rows per partition, or for the one partition id given. Inserts and dedup merges move
-// it; a plain merge does not.
-func opTypeSourceRows(ctx context.Context, conn driver.Conn, partitionID string) (map[uint32]uint64, error) {
+// sourceRows sums the source's active rows per partition, or for the one partition id given. Inserts and dedup merges move it; a
+// plain merge does not.
+func (rc *CountsRollup) sourceRows(ctx context.Context, conn driver.Conn, partitionID string) (map[uint32]uint64, error) {
 	q := `SELECT toUInt32(partition_id), toUInt64(sum(rows)) FROM system.parts
-	       WHERE database = 'stellar' AND table = 'account_op_types' AND active`
-	var args []any
+	       WHERE database = 'stellar' AND table = ? AND active`
+	args := []any{rc.source}
 	if partitionID != "" {
 		q += ` AND partition_id = ?`
 		args = append(args, partitionID)
 	}
 	rows, err := conn.Query(ctx, q+` GROUP BY partition_id`, args...)
 	if err != nil {
-		return nil, fmt.Errorf("clickhouse: account_op_types partition rows: %w", err)
+		return nil, fmt.Errorf("clickhouse: %s partition rows: %w", rc.source, err)
 	}
 	defer func() { _ = rows.Close() }()
 	src := map[uint32]uint64{}
@@ -181,16 +207,19 @@ type opTypeRollupCache struct {
 	fetchedAt time.Time
 }
 
-// opTypeCountsPlanFor returns the cached plan, refreshing it once the TTL lapses; an error (table not yet created) means no plan
-// until the next refresh, so the caller takes the indexed query.
-func (r *ExplorerReader) opTypeCountsPlanFor(ctx context.Context) (opTypeCountsPlan, bool) {
+// planFor returns rc's cached plan, refreshing it once the TTL lapses; an error (table not yet created) means no plan until the next
+// refresh, so the caller reads the source.
+func (r *ExplorerReader) planFor(ctx context.Context, rc *CountsRollup) (opTypeCountsPlan, bool) {
 	c := &r.opTypeRollup
+	if rc == MovementCountsRollup {
+		c = &r.movementRollup
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.fetchedAt.IsZero() && time.Since(c.fetchedAt) < opTypeRollupPlanTTL {
 		return c.plan, c.ok
 	}
-	built, src, err := readOpTypeRollupState(ctx, r.conn)
+	built, src, err := rc.readState(ctx, r.conn)
 	c.fetchedAt = time.Now()
 	if err != nil {
 		c.plan, c.ok = opTypeCountsPlan{}, false
@@ -200,22 +229,22 @@ func (r *ExplorerReader) opTypeCountsPlanFor(ctx context.Context) (opTypeCountsP
 	return c.plan, c.ok
 }
 
-// OpTypeRollupPartition is one partition RunOpTypeCountsRollup would (re)build, counting ledger_seq < Through.
+// OpTypeRollupPartition is one partition a rollup run would (re)build, counting ledgers below Through.
 type OpTypeRollupPartition struct {
 	Part    uint32
 	Through uint32
 	Reason  string
 }
 
-// PlanOpTypeCountsRollup lists the partitions a run rebuilds: closed partitions whose counts are missing, incomplete or no longer match
-// the source (newest first, at most maxClosed, 0 = all), then the open partition through the contiguous tip less a margin.
-func PlanOpTypeCountsRollup(ctx context.Context, addr string, maxClosed int) ([]OpTypeRollupPartition, error) {
+// Plan lists the partitions a run rebuilds: closed partitions whose counts are missing, incomplete or no longer match the source
+// (newest first, at most maxClosed, 0 = all), then the open partition through the contiguous tip less a margin.
+func (rc *CountsRollup) Plan(ctx context.Context, addr string, maxClosed int) ([]OpTypeRollupPartition, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = conn.Close() }()
-	built, src, err := readOpTypeRollupState(ctx, conn)
+	built, src, err := rc.readState(ctx, conn)
 	if err != nil {
 		return nil, err
 	}
@@ -225,12 +254,12 @@ func PlanOpTypeCountsRollup(ctx context.Context, addr string, maxClosed int) ([]
 	head := slices.Max(slicesKeys(src))
 	tip, err := contiguousWatermarkOn(ctx, conn, head*opTypePartitionWidth)
 	if err != nil {
-		return nil, fmt.Errorf("clickhouse: op-type counts contiguous tip: %w", err)
+		return nil, fmt.Errorf("clickhouse: %s contiguous tip: %w", rc.table, err)
 	}
 	return opTypeRollupWork(built, src, head, tip, maxClosed), nil
 }
 
-// opTypeRollupWork is PlanOpTypeCountsRollup's decision, split out for tests. tip is the contiguous watermark from head's first
+// opTypeRollupWork is Plan's decision, split out for tests. tip is the contiguous watermark from head's first
 // ledger (below it when that ledger is missing).
 func opTypeRollupWork(built map[uint32]opTypeBuilt, src map[uint32]uint64, head, tip uint32, maxClosed int) []OpTypeRollupPartition {
 	var work []OpTypeRollupPartition
@@ -268,32 +297,32 @@ func opTypeRollupWork(built map[uint32]opTypeBuilt, src map[uint32]uint64, head,
 	return work
 }
 
-// RunOpTypeCountsPartition recomputes one partition below through and swaps it in atomically (private staging table, idempotent); a
-// recompute counting fewer ops than the live partition is refused with ErrOpTypeCountsShrink unless shrinkOK.
-func RunOpTypeCountsPartition(ctx context.Context, addr string, w OpTypeRollupPartition, shrinkOK bool, logf func(string, ...any)) error {
+// RunPartition recomputes one partition below through and swaps it in atomically (private staging table, idempotent); a recompute
+// counting fewer rows than the live partition is refused with ErrCountsShrink unless shrinkOK.
+func (rc *CountsRollup) RunPartition(ctx context.Context, addr string, w OpTypeRollupPartition, shrinkOK bool, logf func(string, ...any)) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = conn.Close() }()
-	return runOpTypeCountsPartitionConn(ctx, conn, w, shrinkOK, logf)
+	return rc.runPartitionConn(ctx, conn, w, shrinkOK, logf)
 }
 
-func runOpTypeCountsPartitionConn(ctx context.Context, conn driver.Conn, w OpTypeRollupPartition, shrinkOK bool, logf func(string, ...any)) error {
+func (rc *CountsRollup) runPartitionConn(ctx context.Context, conn driver.Conn, w OpTypeRollupPartition, shrinkOK bool, logf func(string, ...any)) error {
 	start := time.Now()
 	pid := strconv.FormatUint(uint64(w.Part), 10)
 	// Read the fingerprint BEFORE the compute: a row landing mid-build then shows as a mismatch and the next run rebuilds.
-	src, err := opTypeSourceRows(ctx, conn, pid)
+	src, err := rc.sourceRows(ctx, conn, pid)
 	if err != nil {
 		return err
 	}
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		return fmt.Errorf("clickhouse: op-type counts staging name: %w", err)
+		return fmt.Errorf("clickhouse: %s staging name: %w", rc.table, err)
 	}
-	staging := "account_op_type_counts_staging_" + hex.EncodeToString(b[:])
-	if err := conn.Exec(ctx, "CREATE TABLE stellar."+staging+" AS stellar.account_op_type_counts"); err != nil {
-		return fmt.Errorf("clickhouse: op-type counts staging create %s: %w", staging, err)
+	staging := rc.table + "_staging_" + hex.EncodeToString(b[:])
+	if err := conn.Exec(ctx, "CREATE TABLE stellar."+staging+" AS stellar."+rc.table); err != nil {
+		return fmt.Errorf("clickhouse: %s staging create %s: %w", rc.table, staging, err)
 	}
 	defer func() { //nolint:contextcheck // detached cleanup ctx: must fire even when the parent ctx is already cancelled
 		dropCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -303,53 +332,59 @@ func runOpTypeCountsPartitionConn(ctx context.Context, conn driver.Conn, w OpTyp
 		}
 	}()
 
-	if err := conn.Exec(ctx, `INSERT INTO stellar.`+staging+` (part, account, op_type, n, through)
-		SELECT toUInt32(?), account, op_type, count(), toUInt32(?)
-		  FROM stellar.account_op_types FINAL
-		 WHERE ledger_seq >= ? AND ledger_seq < ?
-		 GROUP BY account, op_type
+	if err := conn.Exec(ctx, `INSERT INTO stellar.`+staging+` (part, account, `+rc.group+`, n, through)
+		SELECT toUInt32(?), `+rc.account+`, `+rc.group+`, count(), toUInt32(?)
+		  FROM stellar.`+rc.source+` FINAL
+		 WHERE `+rc.ledger+` >= ? AND `+rc.ledger+` < ?
+		 GROUP BY `+rc.account+`, `+rc.group+`
 		SETTINGS max_threads = 4, max_memory_usage = 8589934592, max_bytes_before_external_group_by = 4000000000,
 		         max_execution_time = 1800, do_not_merge_across_partitions_select_final = 1`,
 		w.Part, w.Through, w.Part*opTypePartitionWidth, w.Through); err != nil {
-		return fmt.Errorf("clickhouse: op-type counts partition %s compute: %w", pid, err)
+		return fmt.Errorf("clickhouse: %s partition %s compute: %w", rc.table, pid, err)
 	}
-	if err := conn.Exec(ctx, `INSERT INTO stellar.`+staging+` (part, account, op_type, n, through) VALUES (?, '', '', ?, ?)`,
+	if err := conn.Exec(ctx, `INSERT INTO stellar.`+staging+` (part, account, `+rc.group+`, n, through) VALUES (?, '', '', ?, ?)`,
 		w.Part, src[w.Part], w.Through); err != nil {
-		return fmt.Errorf("clickhouse: op-type counts partition %s sentinel: %w", pid, err)
+		return fmt.Errorf("clickhouse: %s partition %s sentinel: %w", rc.table, pid, err)
 	}
 	if !shrinkOK {
 		var newOps, liveOps uint64
 		if err := conn.QueryRow(ctx, `SELECT
 			(SELECT toUInt64(sum(n)) FROM stellar.`+staging+` WHERE account != ''),
-			(SELECT toUInt64(sum(n)) FROM stellar.account_op_type_counts WHERE part = ? AND account != '')`, w.Part).
+			(SELECT toUInt64(sum(n)) FROM stellar.`+rc.table+` WHERE part = ? AND account != '')`, w.Part).
 			Scan(&newOps, &liveOps); err != nil {
-			return fmt.Errorf("clickhouse: op-type counts partition %s size check: %w", pid, err)
+			return fmt.Errorf("clickhouse: %s partition %s size check: %w", rc.table, pid, err)
 		}
 		if newOps < liveOps {
-			return fmt.Errorf("%w: partition %s recomputed %d op(s), live has %d — the lake lost rows under it; pass -shrink-ok only if intended",
-				ErrOpTypeCountsShrink, pid, newOps, liveOps)
+			return fmt.Errorf("%w: %s partition %s recomputed %d row(s), live has %d — the lake lost rows under it; pass -shrink-ok only if intended",
+				ErrCountsShrink, rc.table, pid, newOps, liveOps)
 		}
 	}
-	if err := conn.Exec(ctx, "ALTER TABLE stellar.account_op_type_counts REPLACE PARTITION ID '"+pid+"' FROM stellar."+staging); err != nil {
-		return fmt.Errorf("clickhouse: op-type counts partition %s replace: %w", pid, err)
+	if err := conn.Exec(ctx, "ALTER TABLE stellar."+rc.table+" REPLACE PARTITION ID '"+pid+"' FROM stellar."+staging); err != nil {
+		return fmt.Errorf("clickhouse: %s partition %s replace: %w", rc.table, pid, err)
 	}
-	logf("partition %s through %d (%s) done in %s", pid, w.Through, w.Reason, time.Since(start).Round(time.Second))
+	logf("%s partition %s through %d (%s) done in %s", rc.Name, pid, w.Through, w.Reason, time.Since(start).Round(time.Second))
 	return nil
 }
 
-// accountPartitionsClause narrows an account-keyed read of a table partitioned like account_op_types to the partitions the account has
-// ops in: one granule per part is otherwise read from all ~200 parts, ~1.5M rows for an account with a handful of ops. The clause keeps
-// every stale partition and everything at or past the plan's tail. "" (marker or plan missing, read error) means read unfiltered.
-// It is only as complete as account_op_types: re-deriving operation_participants must re-run its participant arm (account_op_types.sql).
+// accountPartitionsClause narrows an account-keyed read of operation_participants to the partitions the account has ops in. It is only
+// as complete as account_op_types: re-deriving operation_participants must re-run its participant arm (account_op_types.sql).
 func (r *ExplorerReader) accountPartitionsClause(ctx context.Context, account string) string {
 	if !r.accountOpTypesCovered(ctx) {
 		return ""
 	}
-	plan, ok := r.opTypeCountsPlanFor(ctx)
+	return r.partitionsClause(ctx, OpTypeCountsRollup, account, "ledger_seq")
+}
+
+// partitionsClause narrows an account-keyed read to the partitions rc has the account in: one granule per part is otherwise read from
+// all ~200 parts, ~1.5M rows for an account with a handful of rows. It keeps every stale partition and the whole partition the plan's
+// tail starts in, so a row landing late below the open partition's built mark is still read. "" (plan missing, read error) means
+// read unfiltered.
+func (r *ExplorerReader) partitionsClause(ctx context.Context, rc *CountsRollup, account, ledgerCol string) string {
+	plan, ok := r.planFor(ctx, rc)
 	if !ok {
 		return ""
 	}
-	parts, err := queryKeys(ctx, r.conn, `SELECT DISTINCT part FROM stellar.account_op_type_counts
+	parts, err := queryKeys(ctx, r.conn, `SELECT DISTINCT part FROM stellar.`+rc.table+`
 		WHERE account = ? AND part IN (`+joinUint32(plan.valid)+`)`+explorerScanSettings,
 		[]any{account}, func(rows driver.Rows) (uint32, error) {
 			var p uint32
@@ -360,10 +395,11 @@ func (r *ExplorerReader) accountPartitionsClause(ctx context.Context, account st
 		return ""
 	}
 	parts = append(parts, plan.stale...)
-	clause := " AND (ledger_seq >= " + strconv.FormatUint(uint64(plan.tailFrom), 10)
+	tail := plan.tailFrom / opTypePartitionWidth * opTypePartitionWidth
+	clause := " AND (" + ledgerCol + " >= " + strconv.FormatUint(uint64(tail), 10)
 	if len(parts) > 0 {
 		slices.Sort(parts)
-		clause += " OR intDiv(ledger_seq, " + strconv.Itoa(opTypePartitionWidth) + ") IN (" + joinUint32(parts) + ")"
+		clause += " OR intDiv(" + ledgerCol + ", " + strconv.Itoa(opTypePartitionWidth) + ") IN (" + joinUint32(parts) + ")"
 	}
 	return clause + ")"
 }

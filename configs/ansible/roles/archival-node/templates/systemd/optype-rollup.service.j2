@@ -1,8 +1,9 @@
-# systemd unit: account op-type counts rollup.
+# systemd unit: account counts rollups.
 #
-# Rendered by Ansible. Maintains stellar.account_op_type_counts, the
-# per-partition op-type counts behind the account page's activity
-# panel. Timer mode rebuilds the open partition plus up to four closed
+# Rendered by Ansible. Maintains stellar.account_op_type_counts (the
+# account page's activity panel and transactions/operations partition
+# directory) and stellar.account_movement_counts (the movements
+# partition directory). Timer mode rebuilds the open partition plus up to four closed
 # ones whose source changed (REPLACE PARTITION, idempotent); the FIRST
 # fill is `ch-optype-rollup -max-closed 0 -write` run manually under
 # run-heavy-job.sh (deploy/clickhouse/account_op_types.sql Step 6).

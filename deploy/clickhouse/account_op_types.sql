@@ -79,6 +79,22 @@ PARTITION BY part
 ORDER BY (account, op_type)
 SETTINGS index_granularity = 1024;
 
+-- The movements listing's partition directory, built by the same command:
+-- count() FINAL of account_movements by (address, movement_kind), same
+-- sentinel scheme (account '', movement_kind '').
+CREATE TABLE IF NOT EXISTS stellar.account_movement_counts
+(
+    part          UInt32,
+    account       String,
+    movement_kind LowCardinality(String),
+    n             UInt64,
+    through       UInt32
+)
+ENGINE = MergeTree
+PARTITION BY part
+ORDER BY (account, movement_kind)
+SETTINGS index_granularity = 1024;
+
 -- ── Step 3: windowed historical backfill ────────────────────────────────────
 -- ***Heavy op.*** run-heavy-job.sh, one window at a time. Duplicate source rows
 -- (operations and transactions are RMTs holding rows twice) collapse in the
@@ -142,24 +158,30 @@ SETTINGS index_granularity = 1024;
 -- matches the source's active row count and counts the rest from source.
 -- Measured on r1 (partition 60, 785M rows): build 29 s, 4.46M count rows;
 -- whale lookup 6 ms against 0.9 s.
---   1. Apply the CREATE above (instant). Readers ignore an empty table.
+--   1. Apply both CREATEs above (instant). Readers ignore an empty table.
 --   2. Backfill every partition, ~30 min:
 --        /usr/local/sbin/run-heavy-job.sh optype-rollup-backfill \
 --          stellarindex-ops ch-optype-rollup -max-closed 0 -write
 --   3. Verify 20 accounts as in Step 4: the api's /v1/accounts/{g}/activity
---      counts must equal the account_op_types FINAL query.
+--      counts must equal the account_op_types FINAL query, and its movements
+--      page must equal the same read with the directory clause removed.
 --   4. systemctl enable --now optype-rollup.timer
 -- The account transactions and operations listings also use it to read only
 -- the partitions an account has ops in (accountPartitionsClause), so an
 -- operation_participants row missing from account_op_types is not listed.
--- Whenever account_op_types is rebuilt, TRUNCATE stellar.account_op_type_counts:
--- a rebuild landing on the same row count would keep stale counts valid.
+-- The movements listing reads only the partitions account_movement_counts has
+-- the address in (MovementCountsRollup): account_op_types cannot direct it,
+-- because CAP-67 movements land on accounts that are no op's participant.
+-- Whenever a source is rebuilt, TRUNCATE its counts table (account_op_types ->
+-- account_op_type_counts, account_movements -> account_movement_counts): a
+-- rebuild landing on the same row count would keep stale partitions valid.
 --
 -- ── ROLLBACK ────────────────────────────────────────────────────────────────
 -- Roll the binaries back to a build that does not write or read the table
 -- first (the sink refuses to start without it), then:
 --   systemctl disable --now optype-rollup.timer
 --   DROP TABLE IF EXISTS stellar.account_op_type_counts SYNC;
+--   DROP TABLE IF EXISTS stellar.account_movement_counts SYNC;
 --   DROP TABLE IF EXISTS stellar.account_op_types_source_mv;
 --   DROP TABLE IF EXISTS stellar.account_op_types_coverage;
 --   DROP TABLE IF EXISTS stellar.account_op_types SYNC;

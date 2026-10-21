@@ -730,6 +730,22 @@ PARTITION BY part
 ORDER BY (account, op_type)
 SETTINGS index_granularity = 1024;
 
+-- The movements listing's partition directory, built by the same command:
+-- count() FINAL of account_movements by (address, movement_kind), same
+-- sentinel scheme (account '', movement_kind '').
+CREATE TABLE IF NOT EXISTS stellar.account_movement_counts
+(
+    part          UInt32,
+    account       String,
+    movement_kind LowCardinality(String),
+    n             UInt64,
+    through       UInt32
+)
+ENGINE = MergeTree
+PARTITION BY part
+ORDER BY (account, movement_kind)
+SETTINGS index_granularity = 1024;
+
 -- ── contract_event_shapes — see deploy/clickhouse/contract_event_shapes.sql ──
 -- One row per distinct recognition shape (contract_id, topic_0_sym and, for a
 -- non-Symbol topic[0], topics_xdr[1], topics_xdr[2], arity) per lake partition,
