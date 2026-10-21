@@ -28,6 +28,7 @@ type fakeHist struct {
 	calls   atomic.Int64
 	hold    *upstreamHold
 	failGE2 atomic.Bool
+	failAll atomic.Bool
 }
 
 func (f *fakeHist) LatestTradePerSource(
@@ -37,7 +38,7 @@ func (f *fakeHist) LatestTradePerSource(
 	if err := f.hold.park(ctx, n); err != nil {
 		return nil, err
 	}
-	if n >= 2 && f.failGE2.Load() {
+	if f.failAll.Load() || (n >= 2 && f.failGE2.Load()) {
 		return nil, errors.New("swr history boom")
 	}
 	ledger := uint32(histStaleLedger)
@@ -284,6 +285,21 @@ func TestCachedHistoryReader_SWRKeepsStaleOnError(t *testing.T) {
 	}
 	if !waitFor(2*time.Second, func() bool { return up.calls.Load() == 3 }) {
 		t.Fatalf("refresh not retried after re-expire; calls=%d want 3", up.calls.Load())
+	}
+}
+
+// A failed cold fill is a miss with an error, not a refresh_error: there was no stale value to keep serving.
+func TestCachedHistoryReader_ColdFillErrorIsNotRefreshError(t *testing.T) {
+	up := &fakeHist{}
+	up.failAll.Store(true)
+	c := NewCachedHistoryReader(up, time.Minute)
+	counter := obs.APICacheOpsTotal.WithLabelValues("observations", "latest_per_source", "refresh_error")
+	before := testutil.ToFloat64(counter)
+	if _, err := c.LatestTradePerSource(context.Background(), histTestPair(t), ""); err == nil {
+		t.Fatal("cold fill against a failing upstream returned no error")
+	}
+	if got := testutil.ToFloat64(counter) - before; got != 0 {
+		t.Fatalf("refresh_error moved by %v on a cold fill error; want 0", got)
 	}
 }
 

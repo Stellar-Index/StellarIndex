@@ -229,11 +229,10 @@ func (c *CachedHistoryReader) fill(
 		entry.trades = rows
 		entry.flight = nil
 	case !entry.at.IsZero():
-		// Stale-while-revalidate refresh failed: KEEP serving the
-		// existing stale value. Don't set entry.err, don't delete —
-		// just clear flight so the next expiry retries. (Mirrors
-		// markets_cache.go settleFailedFillLocked.)
+		// A failed refresh keeps serving the stale value; clearing flight lets the next expiry retry.
 		entry.flight = nil
+		obs.APICacheOpsTotal.WithLabelValues("observations", "latest_per_source", "refresh_error").Inc()
+		c.logger.Warn("cache refresh failed; serving stale value", "cache", "observations", "op", "latest_per_source", "key", key, "err", err)
 	default:
 		// Cold fill failed (no prior value): propagate the error to
 		// waiters via their retained entry pointer and don't
@@ -245,8 +244,4 @@ func (c *CachedHistoryReader) fill(
 		}
 	}
 	c.mu.Unlock()
-
-	if err != nil {
-		obs.APICacheOpsTotal.WithLabelValues("observations", "latest_per_source", "refresh_error").Inc()
-	}
 }
