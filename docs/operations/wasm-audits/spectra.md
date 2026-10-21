@@ -1,7 +1,7 @@
 ---
 title: Spectra WASM audit
-last_verified: 2026-10-06
-status: string-checked — 8 hashes, one per contract role, no upgrade seen; lake lineage to ledger 64,716,536
+last_verified: 2026-10-21
+status: string-checked — 9 hashes; the order engine upgraded in place at ledger 64,907,566, re-checked 2026-10-21
 source: spectra
 backfill_safe: true
 ---
@@ -9,14 +9,15 @@ backfill_safe: true
 # Spectra WASM audit
 
 Audit log for the `spectra` source ([`README.md`](README.md) = procedure). The
-eight hashes below are the `spectra` entries in
+nine hashes below are the `spectra` entries in
 `internal/wasmaudit/audited_wasm.json`, which `stellarindex-ops wasm-drift`
 checks every gated contract against ([runbook](../runbooks/wasm-drift.md)).
 
 ## Status
 
-**String-checked 2026-10-06.** Every Spectra contract ran one WASM for its
-whole observed life (nothing was upgraded in place). Each hash carries the
+**String-checked 2026-10-06; order-engine upgrade re-checked 2026-10-21.**
+Every Spectra contract ran one WASM for its whole observed life except the
+order engine, upgraded in place once (see below). Each hash carries the
 event-kind literals its role is expected to emit, and every
 `(contract, topic[0])` pair observed on chain matches the lake's own
 `topics_xdr` byte for byte. On that basis the source is
@@ -95,11 +96,19 @@ Query 3 was compared locally with the expected `ScVal` symbol encoding of
 | `20ec1744c3f9e2c840c714b4ad2dc42d844d2eb7c164ced8c685cf267516b0f0` | order-engine | `CC2CEV23…` (v0), `CCKNOCLH…` | 63,778,288 | 64,547,666 | 6 | all 8 present: `order_registered`, `order_filled`, `order_cancelled`, `limit_order_engine_initialized`, `limit_order_fee_change`, `registry_change`, `fee_collector_change`, `role_granted` |
 | `11b4bacca38f670e792b7a1bbd6c6888f9e572c06e1def9cc5adf9294403bbb2` | blend-wrapper | `CBRT4E5A…` (sw-USDC), `CCECATRP…` (sw-EURC) | 63,780,144 | 64,547,666 | 44 | all 9 present: `deposit`, `withdraw`, `transfer`, `mint`, `burn`, `approve`, `wrap`, `unwrap`, `role_granted` |
 | `0e8d68e206d66b087a2e0b64430356aec834ff906260e057180702d74d6f81f4` | deJTRSY-wrapper | `CAHPZLEH…` (sw-deJTRSY) | 64,452,971 | 64,716,536 | 71 | 9 of 10 present: `wrap`, `unwrap`, `dejtrsy_wrapper_initialized`, `transfer`, `burn`, `approve`, `deposit`, `withdraw`, `role_granted`. `mint` absent (packed symbol; the wrapper emits no `mint` on chain) |
+| `69e90533a0d1f7d396b326f24186e4bdbf9e5e1f269df313364e0024593bea5e` | order-engine (v2) | `CCKNOCLH…` | 64,907,566 | 64,907,566 | 1 | all 11 present: the 8 of `20ec1744…` plus `admin_transfer_initiated`, `admin_transfer_completed`, `role_revoked`; decoder fields `maker`, `making_amount`, `actual_making` present |
 
 Each contract's first instance change is the ledger of its first event
 (`role_granted`, `factory_initialized` or `pt_deployed`); no second hash appears
 on any of the 22 contracts. The order engine's v0 instance (`CC2CEV23…`) was
 replaced at ledger 63,780,164 by `CCKNOCLH…`, which carries the same hash.
+
+`CCKNOCLH…` was upgraded in place to `69e90533…` at ledger 64,907,566, the
+first upgrade on any Spectra contract (`wasm-drift` flagged it on 2026-10-21).
+The bytes came from the lake's `contract_code` entry and hash to that value; the
+export list keeps `register_order`, `fill_orders`, `cancel_order` and adds batch
+variants. The `spectra` projector logged 0 decode errors on the order engine's
+events after the upgrade. Rows under `20ec1744…` are unaffected.
 
 ### Observed on chain, ledgers 63,778,000 to 64,800,000
 

@@ -95,6 +95,14 @@
     "audited": "2026-09-30",
     "doc": "docs/operations/wasm-audits/phoenix.md"
   },
+  "69e90533a0d1f7d396b326f24186e4bdbf9e5e1f269df313364e0024593bea5e": {
+    "sources": [
+      "spectra"
+    ],
+    "role": "order-engine",
+    "audited": "2026-10-21",
+    "doc": "docs/operations/wasm-audits/spectra.md"
+  },
   "20ec1744c3f9e2c840c714b4ad2dc42d844d2eb7c164ced8c685cf267516b0f0": {
     "sources": [
       "spectra"
