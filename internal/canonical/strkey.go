@@ -41,6 +41,25 @@ func MuxedAccountID(m string) (string, bool) {
 	return g, true
 }
 
+// IsMuxedContract reports whether s is a valid CRC-checked muxed contract address (W-strkey, CAP-84 / P30).
+func IsMuxedContract(s string) bool {
+	_, err := strkey.Decode(strkey.VersionByteMuxedContract, s)
+	return err == nil
+}
+
+// MuxedContractID returns the C-strkey underlying a W-strkey (its first 32 bytes); ok=false on a malformed W.
+func MuxedContractID(w string) (string, bool) {
+	raw, err := strkey.Decode(strkey.VersionByteMuxedContract, w)
+	if err != nil || len(raw) < 32 {
+		return "", false
+	}
+	c, err := strkey.Encode(strkey.VersionByteContract, raw[:32])
+	if err != nil {
+		return "", false
+	}
+	return c, true
+}
+
 // IsClaimableBalance reports whether s is a valid CRC-checked claimable-balance address (B-strkey).
 func IsClaimableBalance(s string) bool {
 	_, err := strkey.Decode(strkey.VersionByteClaimableBalance, s)

@@ -8,6 +8,8 @@ const (
 	searchTestContractC = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA" // XLM SAC
 	searchTestMuxedM    = "MA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVAAAAAAAAAAAAAJLK"
 	searchTestMuxedG    = "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
+	searchTestMuxedW    = "WA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJUAAAAAAAAAAAAAWWC"
+	searchTestMuxedWC   = "CA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJUWDA"
 )
 
 // /v1/search must route account and contract hits to the canonical detail endpoints mounted in
@@ -23,6 +25,7 @@ func TestClassifySearchRoutesToMountedEndpoints(t *testing.T) {
 		{"account", searchTestAccountG, "account", "/v1/accounts/" + searchTestAccountG},
 		{"contract", searchTestContractC, "contract", "/v1/contracts/" + searchTestContractC},
 		{"muxed", searchTestMuxedM, "account", "/v1/accounts/" + searchTestMuxedG},
+		{"muxed contract", searchTestMuxedW, "contract", "/v1/contracts/" + searchTestMuxedWC},
 	}
 
 	for _, tc := range cases {

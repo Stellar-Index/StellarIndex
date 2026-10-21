@@ -97,6 +97,24 @@ func TestMuxedAccountID_ResolvesUnderlyingAccount(t *testing.T) {
 	}
 }
 
+// SEP-23 test vector: the W-strkey for CA7QYNF7...UWDA with muxed id 0 (CAP-84).
+func TestMuxedContractID_ResolvesUnderlyingContract(t *testing.T) {
+	const w = "WA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJUAAAAAAAAAAAAAWWC"
+	const want = "CA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJUWDA"
+	if !IsMuxedContract(w) {
+		t.Fatalf("IsMuxedContract(%q) = false", w)
+	}
+	got, ok := MuxedContractID(w)
+	if !ok || got != want {
+		t.Fatalf("MuxedContractID(%q) = (%q, %v), want (%q, true)", w, got, ok, want)
+	}
+	for _, bad := range []string{want, mutateLastChar(w), "MA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVAAAAAAAAAAAAAJLK", ""} {
+		if c, ok := MuxedContractID(bad); ok {
+			t.Errorf("MuxedContractID(%q) = (%q, true), want ok=false", bad, c)
+		}
+	}
+}
+
 // mutateLastChar swaps the final character with an adjacent valid
 // base32 character so the result is the same length + prefix but a
 // different payload — guaranteed to fail CRC verification.
