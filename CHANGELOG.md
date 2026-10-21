@@ -20,6 +20,14 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.42] - 2026-10-21
+
+No migrations. No `pkg/*` break. No config change.
+
+### Fixed
+
+- **api:** `/v1/price`'s last-trade fallback for a dormant pair (no closed 1m bucket in 14 days, no trade in 7) runs its 400-day walk on a 4-connection pool warmed at startup, instead of on whichever fresh serving connection a burst opened. After the v0.116.41 restart six such reads each spent ~1s planning ~58 chunks per arm at once and re-fired the latency burn. Served values are unchanged (#3737).
+
 ## [v0.116.41] - 2026-10-21
 
 No migrations. No `pkg/*` break. No config change.
@@ -67,12 +75,3 @@ No migrations. No `pkg/*` break. No config change. After the deploy, watch the l
 
 - **api:** asset detail caches the lake token-supply sum per contract for 5 minutes and serves the last good value on a ClickHouse error; under a crawl, the uncached `supply_flows FINAL` sum dominated ClickHouse serving load (#3721).
 - **alerts:** `dust_dropped_high` fires on the share of a venue's trades dropped as dust, not the absolute rate, so a volume burst no longer pages (#3720).
-
-## [v0.116.37] - 2026-10-20
-
-No migrations. No `pkg/*` break. No config change.
-
-### Fixed
-
-- **pricingguard:** the scam gate's flagged-SAC index (about 180k rows) is rebuilt in the background once it expires, serving the previous index meanwhile, and is built at API startup; previously the request that found it expired waited about 220 ms for the rebuild, which drove the price-latency SLO burn after every deploy (#3713).
-- **ops:** `ch-rebuild` reads SDEX ops in 25k-ledger windows on the full-range and gap paths too; a one-query read of 1M ledgers hit ClickHouse's 10 GiB query cap (#3716).
