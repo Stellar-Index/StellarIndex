@@ -1,6 +1,6 @@
 <!--
 Public launch announcement. Send T-0 (immediately after the
-cut completes per launch-day-checklist.md §T-0 step 6).
+cut completes per v1-launch-plan.md §1 step 4).
 
 Channels:
   - Email to the launch contacts (Stellar + Freighter)

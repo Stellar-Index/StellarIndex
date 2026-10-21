@@ -156,14 +156,27 @@ Healthy: off-chain CEX/FX sources are dominated by `yes`. On-chain sources
 show `yes` only for trades priced by the USD-volume tiers (see
 [usd-volume-coverage-plan.md](usd-volume-coverage-plan.md)).
 
+## 13. Counter presence (F-0100)
+
+"No fired alerts" is a false green when a counter went stale and its rule sees
+no data. Run before the go/no-go and at the start of the watch:
+
+```promql
+count by (__name__) ({__name__=~"http_requests_total|http_request_duration_seconds_bucket|stellarindex_source_events_total|stellarindex_source_decode_errors_total|stellarindex_trade_inserts_total|stellarindex_aggregator_ticks_total|stellarindex_aggregator_vwap_writes_total|stellarindex_aggregator_stream_publish_total|stellarindex_api_stream_subscribe_total|stellarindex_oracle_last_update_unix|stellarindex_oracle_staleness_budget_seconds|stellarindex_ratelimit_fail_open_total"})
+```
+
+Healthy: 12 rows, one per family the queries above read (12 on r1,
+2026-10-21). A missing row is a missing family: investigate before trusting
+any alert built on it.
+
 ## Launch-day use
 
-[`launch-day-checklist.md`](launch-day-checklist.md) §T-0 step 7 points here.
+The cutover in [`v1-launch-plan.md`](v1-launch-plan.md#1-launch-sequence-and-gate-rationale) step 4 points here.
 Keep queries 1-7 + 11 in a tabbed dashboard; pull 8-10 + 12 when investigating.
 
 ## Cross-references
 
 - [`deploy/monitoring/README.md`](../../deploy/monitoring/README.md) — alert rules.
-- [`docs/operations/launch-day-checklist.md`](launch-day-checklist.md) — cutover orchestration.
+- [`docs/operations/v1-launch-plan.md`](v1-launch-plan.md#1-launch-sequence-and-gate-rationale) — cutover orchestration.
 - [`docs/operations/sla-probe.md`](sla-probe.md) — SLA-evidence probe (15-min cron).
 - [`docs/reference/metrics/README.md`](../reference/metrics/README.md) — every metric referenced.
