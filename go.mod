@@ -36,7 +36,7 @@ require (
 	github.com/prometheus/client_golang v1.25.0 // /metrics + counters/gauges in internal/obs
 	github.com/prometheus/client_model v0.6.3
 	github.com/redis/go-redis/v9 v9.23.0 // Redis client (ADR-0007) — rate-limit + SEP-1 cache
-	github.com/stellar/go-stellar-sdk v0.7.3 // SCVal/XDR decoding for Soroban event connectors (ADR-0013). Pinned SHA in VERSIONS.md.
+	github.com/stellar/go-stellar-sdk v0.8.0 // SCVal/XDR decoding for Soroban event connectors (ADR-0013). Pinned SHA in VERSIONS.md.
 	github.com/testcontainers/testcontainers-go v0.44.0 // Integration-test Postgres container
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0 // Timescale-flavoured container helper
 	github.com/xeipuuv/gojsonschema v1.2.0 // JSON-Schema validation for scripts/ci/lint-golangci-config (offline .golangci.yml check, #317); already in the graph via go-stellar-sdk
@@ -118,7 +118,6 @@ require (
 	github.com/google/s2a-go v0.1.11 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.23 // indirect
 	github.com/googleapis/gax-go/v2 v2.26.2 // indirect
-	github.com/hashicorp/golang-lru v1.0.2 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect

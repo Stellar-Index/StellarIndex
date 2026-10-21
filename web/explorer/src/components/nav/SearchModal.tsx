@@ -66,7 +66,8 @@ function looksLikeExplorerEntity(q: string): boolean {
     /^[0-9a-fA-F]{64}$/.test(s) || // tx hash
     /^\d{1,12}$/.test(s) || // ledger sequence
     /^G[A-Z2-7]{55}$/.test(s) || // account (G-strkey)
-    /^C[A-Z2-7]{55}$/.test(s) // contract (C-strkey)
+    /^C[A-Z2-7]{55}$/.test(s) || // contract (C-strkey)
+    /^W[A-Z2-7]{68}$/.test(s) // muxed contract (W-strkey); the backend resolves it to the C
   );
 }
 

@@ -64,6 +64,12 @@ func classifySearch(q string) SearchResultView {
 		res.Kind, res.Canonical, res.Href, res.Supported = "account", g, "/v1/accounts/"+g, true
 		res.Note = "muxed address resolved to its underlying account " + g
 
+	case canonical.IsMuxedContract(q):
+		// A W-address (CAP-84) is a contract plus a routing id; state belongs to the C.
+		c, _ := canonical.MuxedContractID(q)
+		res.Kind, res.Canonical, res.Href, res.Supported = "contract", c, "/v1/contracts/"+c, true
+		res.Note = "muxed address resolved to its underlying contract " + c
+
 	default:
 		if a, err := canonical.ParseAsset(q); err == nil {
 			id := a.String()

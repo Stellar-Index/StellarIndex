@@ -84,6 +84,7 @@ func FuzzAddressStrkey(f *testing.F) {
 	f.Add(uint8(2), []byte{0xaa}, uint64(0x0102030405060708))
 	f.Add(uint8(3), []byte{0x10}, uint64(0))
 	f.Add(uint8(4), []byte{0x20}, uint64(0))
+	f.Add(uint8(5), []byte{0x30}, uint64(1<<63))
 	f.Fuzz(func(t *testing.T, kind uint8, key []byte, id uint64) {
 		var k32 [32]byte
 		copy(k32[:], key)
@@ -91,7 +92,7 @@ func FuzzAddressStrkey(f *testing.F) {
 		var addr xdr.ScAddress
 		var ver strkey.VersionByte
 		var wantRaw []byte
-		switch kind % 5 {
+		switch kind % 6 {
 		case 0:
 			addr = xdr.ScAddress{
 				Type:      xdr.ScAddressTypeScAddressTypeAccount,
@@ -120,6 +121,13 @@ func FuzzAddressStrkey(f *testing.F) {
 			lp := xdr.PoolId(k32)
 			addr = xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeLiquidityPool, LiquidityPoolId: &lp}
 			ver, wantRaw = strkey.VersionByteLiquidityPool, k32[:]
+		case 5:
+			addr = xdr.ScAddress{
+				Type:          xdr.ScAddressTypeScAddressTypeMuxedContract,
+				MuxedContract: &xdr.MuxedContract{Id: xdr.Uint64(id), ContractId: xdr.ContractId(k32)},
+			}
+			ver = strkey.VersionByteMuxedContract
+			wantRaw = binary.BigEndian.AppendUint64(append([]byte{}, k32[:]...), id)
 		}
 		sv := xdr.ScVal{Type: xdr.ScValTypeScvAddress, Address: &addr}
 		raw, err := sv.MarshalBinary()
@@ -133,7 +141,7 @@ func FuzzAddressStrkey(f *testing.F) {
 
 		s, err := scval.AsAddressStrkey(sv)
 		if err != nil {
-			t.Fatalf("AsAddressStrkey(kind %d): %v", kind%5, err)
+			t.Fatalf("AsAddressStrkey(kind %d): %v", kind%6, err)
 		}
 		dec, err := strkey.Decode(ver, s)
 		if err != nil {
@@ -150,8 +158,8 @@ func FuzzAddressStrkey(f *testing.F) {
 		}
 
 		cid, ok := scval.ContractIDFromScAddress(addr)
-		if ok != (kind%5 == 1) {
-			t.Fatalf("ContractIDFromScAddress(kind %d) ok=%v", kind%5, ok)
+		if ok != (kind%6 == 1) {
+			t.Fatalf("ContractIDFromScAddress(kind %d) ok=%v", kind%6, ok)
 		}
 		if ok && cid != s {
 			t.Fatalf("ContractIDFromScAddress = %q, AsAddressStrkey = %q", cid, s)
