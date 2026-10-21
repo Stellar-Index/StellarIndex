@@ -1,9 +1,15 @@
 package v1
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"log/slog"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -72,4 +78,39 @@ func TestSWRCache_EvictsOldestAtCapacity(t *testing.T) {
 	if _, ok := c.entries["0"]; ok || len(c.entries) != 2 {
 		t.Fatalf("entries = %d, has oldest = %v; want 2 without key 0", len(c.entries), ok)
 	}
+}
+
+// A failed refresh is logged, else the refresh_error alert's runbook has nothing to grep.
+func TestSWRCache_LogsFailedRefresh(t *testing.T) {
+	var buf bytes.Buffer
+	var mu sync.Mutex
+	logger := slog.New(slog.NewTextHandler(&lockedWriter{w: &buf, mu: &mu}, nil))
+	c := newSWRCache[int](logger, "test", "test-fill", time.Nanosecond, 0)
+	if _, _, _, err := c.get(context.Background(), "op", "k", func(context.Context) (int, error) { return 1, nil }); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := c.get(context.Background(), "op", "k", func(context.Context) (int, error) { return 0, errors.New("statement timeout") }); err != nil {
+		t.Fatal(err)
+	}
+	logged := func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return strings.Contains(buf.String(), "statement timeout") && strings.Contains(buf.String(), "op=op")
+	}
+	if !waitFor(time.Second, logged) {
+		mu.Lock()
+		defer mu.Unlock()
+		t.Fatalf("log = %q; want the refresh error with its op", buf.String())
+	}
+}
+
+type lockedWriter struct {
+	w  io.Writer
+	mu *sync.Mutex
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
 }

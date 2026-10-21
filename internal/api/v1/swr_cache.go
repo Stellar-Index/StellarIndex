@@ -12,7 +12,7 @@ import (
 // swrCache is a keyed TTL cache with single-flight fills and stale-while-revalidate: once a key has filled, an expired value is
 // served (dated by its fill time, flagged stale) while one detached fill replaces it, and a failed refresh keeps the old value.
 type swrCache[V any] struct {
-	logger     *slog.Logger // sinks a panic recovered in a detached fill
+	logger     *slog.Logger // sinks a failed refresh and a panic recovered in a detached fill
 	cache      string       // APICacheOpsTotal cache label
 	fillName   string
 	ttl        time.Duration
@@ -31,6 +31,9 @@ type swrEntry[V any] struct {
 }
 
 func newSWRCache[V any](logger *slog.Logger, cache, fillName string, ttl time.Duration, maxEntries int) *swrCache[V] {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &swrCache[V]{
 		logger: logger, cache: cache, fillName: fillName, ttl: ttl, maxEntries: maxEntries,
 		entries: map[string]*swrEntry[V]{},
@@ -110,6 +113,7 @@ func (c *swrCache[V]) settle(op, key string, entry *swrEntry[V]) func(V, error) 
 			if !entry.at.IsZero() {
 				entry.flight = nil
 				c.count(op, "refresh_error")
+				c.logger.Warn("cache refresh failed; serving stale value", "cache", c.cache, "op", op, "key", key, "err", err)
 				return
 			}
 			entry.err = err

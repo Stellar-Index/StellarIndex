@@ -17,10 +17,8 @@ import (
 
 // CachedAssetsReader wraps [AssetsReader] with a per-key TTL cache and single-flight for the slow listing and price-history calls; other methods pass through.
 type CachedAssetsReader struct {
-	// logger sinks a panic recovered in a detached refresh goroutine. It is the process
-	// default because the reader wrappers are built before the API Server exists; the
-	// load-bearing signal is stellarindex_worker_panics_total, which worker.Report moves
-	// regardless of the sink.
+	// logger sinks failed refreshes and panics recovered in detached refreshes. It is the process default because the reader
+	// wrappers are built before the API Server exists.
 	logger *slog.Logger
 
 	upstream AssetsReader
@@ -253,6 +251,7 @@ func (c *CachedAssetsReader) settleRowsFillLocked(op, key string, entry *assetsC
 		apply()
 	case !entry.at.IsZero():
 		obs.APICacheOpsTotal.WithLabelValues("coins", op, "refresh_error").Inc()
+		c.logger.Warn("cache refresh failed; serving stale value", "cache", "coins", "op", op, "key", key, "err", err)
 	default:
 		entry.err = err
 		if c.entries[key] == entry {
