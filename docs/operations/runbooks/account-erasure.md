@@ -66,7 +66,7 @@ Measured on r1; re-measure before quoting.
 
 | Store | Holds | Expiry today |
 | ----- | ----- | ------------ |
-| pgBackRest repo1 (local) | full database, unencrypted (`cipher-type=none`) | `repo1-retention-full=2`: up to ~15 days |
+| pgBackRest repo1 (local) | full database, AES-256 encrypted | `repo1-retention-full=2`: up to ~15 days |
 | pgBackRest repo2 (S3, `aes-256-cbc`) | full database | full/diff ~14 days, but **WAL expiry is unset on r1** (`repo2-retention-archive-type=diff`, no `repo2-retention-archive`; the `configs/ansible` `pgbackrest.conf.j2` fix is not applied), so WAL holding deleted rows is kept indefinitely |
 | ZFS `auto-*` snapshots of `postgres` | full database, `encryption=off` | 3 days; manual snapshots never pruned (`zfs list -t snapshot`) |
 | Redis RDB dump | Redis keyspace | next `save` (<= ~1 hour) |
