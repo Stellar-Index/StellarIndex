@@ -99,6 +99,17 @@ sys.exit(1)
 PY
 chmod +x "$TMP/run-heavy-job.sh"
 WRAP="$TMP/run-heavy-job.sh"
+mkdir -p "$TMP/chshim"
+python3 - "$TASKS" "$TMP/chshim/clickhouse-client" <<'PY' || { echo "run-heavy-job-test: could not extract clickhouse-client shim" >&2; exit 2; }
+import sys, yaml
+for t in yaml.safe_load(open(sys.argv[1])):
+    c = t.get("ansible.builtin.copy") or {}
+    if c.get("dest") == "/usr/local/lib/stellarindex/heavy-bin/clickhouse-client":
+        open(sys.argv[2], "w").write(c["content"])
+        sys.exit(0)
+sys.exit(1)
+PY
+chmod +x "$TMP/chshim/clickhouse-client"
 
 mkdir -p "$TMP/bin" "$TMP/lock"
 # macOS has no flock; FLOCK_HELD answers "held" (case 7); FLOCK_REC
@@ -156,6 +167,8 @@ done
 exec "$@"
 SR
 chmod +x "$TMP/bin/systemd-run"
+printf '#!/usr/bin/env bash\necho "CH_ARGS=$*"\n' > "$TMP/bin/clickhouse-client"
+chmod +x "$TMP/bin/clickhouse-client"
 export PATH="$TMP/bin:$PATH"
 export HEAVY_JOB_LOCK_DIR="$TMP/lock"
 # Never read the host's real per-host floor; case 4b points at a fixture.
@@ -169,6 +182,7 @@ printf 'USER=%s\n' "${STELLARINDEX_CLICKHOUSE_OPS_USER-<unset>}"
 printf 'PASS=%s\n' "${STELLARINDEX_CLICKHOUSE_OPS_PASSWORD-<unset>}"
 printf 'AWS=%s\n'  "${AWS_ACCESS_KEY_ID-<unset>}"
 printf 'FLOOR=%s\n' "${HEAVY_MIN_DATA_KB-<unset>}"
+[ -n "${CH_PROBE:-}" ] && clickhouse-client $CH_PROBE
 # Case 8: stay alive until the watchdog has run its first sleep.
 if [ -n "${FD9_REC:-}" ]; then
   for _ in $(seq 50); do [ -s "$FD9_REC" ] && break; /bin/sleep 0.1; done
@@ -235,6 +249,16 @@ run HEAVY_JOB_OPS_ENV="$OPS_ENV" HEAVY_JOB_FLOOR_FILE="$TMP/floor" HEAVY_MIN_DAT
 if out_has "FLOOR=9"; then ok "caller-set floor wins over the file"; else bad "caller floor overridden ($(grep FLOOR= "$TMP/out"))"; fi
 run HEAVY_JOB_OPS_ENV="$OPS_ENV"
 if out_has "FLOOR=314572800"; then ok "no floor file: 300 GiB default exported"; else bad "default floor wrong ($(grep FLOOR= "$TMP/out"))"; fi
+
+# ── 4c. payload clickhouse-client calls default to the ops_batch config ─
+printf '<config/>\n' > "$TMP/ops-batch.xml"
+CHENV=(HEAVY_JOB_OPS_ENV="$OPS_ENV" HEAVY_JOB_CH_SHIM_DIR="$TMP/chshim" HEAVY_JOB_CH_BATCH_CONF="$TMP/ops-batch.xml" HEAVY_JOB_CH_REAL="$TMP/bin/clickhouse-client")
+run "${CHENV[@]}" CH_PROBE="-q x"
+if out_has "CH_ARGS=-C $TMP/ops-batch.xml -q x"; then ok "payload clickhouse-client gets the ops_batch -C file"; else bad "shim not applied ($(grep CH_ARGS= "$TMP/out"))"; fi
+run "${CHENV[@]}" CH_PROBE="-C other.xml -q x"
+if out_has "CH_ARGS=-C other.xml -q x"; then ok "caller-named config wins over the shim"; else bad "shim overrode a caller config ($(grep CH_ARGS= "$TMP/out"))"; fi
+run HEAVY_JOB_OPS_ENV="$OPS_ENV" HEAVY_JOB_CH_SHIM_DIR="$TMP/chshim" HEAVY_JOB_CH_BATCH_CONF="$TMP/no-such.xml" CH_PROBE="-q x"
+if out_has "CH_ARGS=-q x"; then ok "no ops_batch config: clickhouse-client unshimmed"; else bad "shim applied without its config ($(grep CH_ARGS= "$TMP/out"))"; fi
 
 # ── 5. the scope's stop bound (root branch only) ─────────────────────
 # Without TimeoutStopSec a scope takes systemd's 90 s default, and

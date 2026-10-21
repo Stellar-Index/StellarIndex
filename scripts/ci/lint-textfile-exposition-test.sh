@@ -152,6 +152,17 @@ convoy_probe "$root" "SELECT pg_sleep(0);
 run_gate "$root" "$root/manifest"
 expect "two SELECTs in one command string are RED (a -q remedy would not help)" red
 
+# `bash -c '…'` in a file that also calls a SQL client is shell, not SQL:
+# its `set -o pipefail; …; …` must not count as SET statements.
+root="$(new_tree shellc)"
+convoy_probe "$root" ""
+cat >> "$root/configs/ansible/roles/fixture/files/convoy-probe.sh" <<'SH'
+bash -c 'set -o pipefail; true; true | cat'
+clickhouse-client -q "SELECT 1"
+SH
+run_gate "$root" "$root/manifest"
+expect "bash -c 'set -o pipefail; …' beside a SQL client is GREEN" green
+
 # ─── 2. non-vacuity ─────────────────────────────────────────────────
 root="$(new_tree empty)"
 : > "$root/manifest"

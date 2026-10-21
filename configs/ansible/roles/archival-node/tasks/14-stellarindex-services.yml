@@ -451,6 +451,33 @@
   changed_when: false
   tags: [heavy-job-wrapper]
 
+- name: heavy-job clickhouse-client shim directory
+  ansible.builtin.file:
+    path: /usr/local/lib/stellarindex/heavy-bin
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [heavy-job-wrapper]
+
+- name: heavy-job clickhouse-client shim (ops_batch unless a config is named)
+  ansible.builtin.copy:
+    dest: /usr/local/lib/stellarindex/heavy-bin/clickhouse-client
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/bin/sh
+      # Managed by ansible. run-heavy-job.sh puts this first on PATH.
+      REAL="${HEAVY_JOB_CH_REAL:-/usr/bin/clickhouse-client}"
+      for a in "$@"; do
+        case "$a" in
+          -C|-C?*|-c|--config|--config=*|--config-file|--config-file=*) exec "$REAL" "$@" ;;
+        esac
+      done
+      exec "$REAL" -C "${HEAVY_JOB_CH_BATCH_CONF:-/etc/clickhouse-client/ops-batch.xml}" "$@"
+  tags: [heavy-job-wrapper]
+
 - name: heavy-job wrapper (mandatory for ops one-shots on this host)
   # Serialises + host-protects heavy ops one-shots. Four jobs:
   #   1. Singleton lock: a per-job flock so overlapping
@@ -714,6 +741,16 @@
         HEAVY_MIN_DATA_KB="$(sed -n 's/^HEAVY_MIN_DATA_KB=\([0-9][0-9]*\)$/\1/p' "$FLOOR_FILE" | tail -1)"
       fi
       export HEAVY_MIN_DATA_KB="${HEAVY_MIN_DATA_KB:-314572800}"
+      # Payload scripts that shell out to clickhouse-client would run as
+      # root's ops_admin at serving priority (INSERTs starved /v1/price).
+      # The shim first on PATH adds the ops_batch -C file unless the
+      # caller names a config itself.
+      CH_SHIM_DIR="${HEAVY_JOB_CH_SHIM_DIR:-/usr/local/lib/stellarindex/heavy-bin}"
+      CH_BATCH_CONF="${HEAVY_JOB_CH_BATCH_CONF:-/etc/clickhouse-client/ops-batch.xml}"
+      if [ -x "$CH_SHIM_DIR/clickhouse-client" ] && [ -r "$CH_BATCH_CONF" ]; then
+        export PATH="$CH_SHIM_DIR:$PATH" HEAVY_JOB_CH_BATCH_CONF="$CH_BATCH_CONF"
+        echo "run-heavy-job: ${NAME} clickhouse-client defaults to ${CH_BATCH_CONF}" >&2
+      fi
       # Loud either way (the failure this guards is a job running at
       # serving priority with nothing saying so): name the identity
       # the job will use, or WARN that it is the CH `default` user.
