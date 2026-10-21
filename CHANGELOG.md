@@ -20,6 +20,15 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.45] - 2026-10-21
+
+No migrations. No `pkg/*` break. No config change.
+
+### Fixed
+
+- **pricingguard:** the substance gate's verdict cache drops expired verdicts before resetting at its size cap; an explorer build measures more pairs than the cap in one TTL, so each reset sent the hot pairs back to Postgres mid-build and re-logged every withheld pair's first-observation WARN (#3755).
+- **wasmaudit:** the Spectra order engine's in-place upgrade at ledger 64,907,566 (WASM `69e90533…`) is audited and admitted; `wasm-drift` reported it as unaudited (#3756).
+
 ## [v0.116.44] - 2026-10-21
 
 No migrations. No `pkg/*` break. No config change.
@@ -68,15 +77,3 @@ No migrations. No `pkg/*` break. No config change.
 
 - **build:** v0.116.40 moved to Go 1.27.3 for GO-2026-6809 (`crypto/x509` trusted compromised intermediates; reachable through passkey registration) (#3734).
 
-## [v0.116.40] - 2026-10-21
-
-No migrations. No `pkg/*` break. No config change.
-
-### Fixed
-
-- **timescale:** the USD-volume pricing endpoint folds SAC legs to their classic form before its same-issuer test, matching the trade labeller (#3730).
-
-### Changed
-
-- **ci:** the config-apply gate's refusal lists the substantive surfaces it found (#3732).
-- **docs:** the API runbook says a restart that clears `ch_schema_probe_absent` is not a fix (#3731).
