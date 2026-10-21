@@ -168,6 +168,12 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		}
 	}()
 	logger.Info("storage connected")
+	go func() {
+		defer recoverBackgroundWorker(logger, "trade-walk-warm")
+		if err := store.WarmTradeWalkPool(rootCtx); err != nil {
+			logger.Warn("trade walk pool warm failed", "err", err)
+		}
+	}()
 	// Pool wait time is the signal that one slow route class is starving the latency-SLO routes.
 	obs.Registry.MustRegister(collectors.NewDBStatsCollector(store.DB(), "serving"))
 

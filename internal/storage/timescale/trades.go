@@ -1283,9 +1283,9 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
 	// newest `limit` overall; fewer means older rows may rank, so the caller's bound decides.
 	recent := time.Now().Add(-recentTradesWindow).UTC().Truncate(24 * time.Hour)
 	if !since.Before(recent) {
-		return s.latestTradesForPair(ctx, p, limit, since)
+		return s.latestTradesForPair(ctx, s.db, p, limit, since)
 	}
-	out, err := s.latestTradesForPair(ctx, p, limit, recent)
+	out, err := s.latestTradesForPair(ctx, s.db, p, limit, recent)
 	if err != nil || len(out) >= limit {
 		return out, err
 	}
@@ -1293,14 +1293,14 @@ func (s *Store) LatestTradesForPair(ctx context.Context, p canonical.Pair, limit
 	if s.olderTradesKnownEmpty(key) {
 		return out, nil
 	}
-	all, err := s.latestTradesForPair(ctx, p, limit, since)
+	all, err := s.latestTradesForPair(ctx, s.tradeWalkDB(), p, limit, since)
 	if err == nil && !slices.ContainsFunc(all, func(t canonical.Trade) bool { return t.Timestamp.Before(recent) }) {
 		s.markOlderTradesEmpty(key)
 	}
 	return all, err
 }
 
-func (s *Store) latestTradesForPair(ctx context.Context, p canonical.Pair, limit int, since time.Time) ([]canonical.Trade, error) {
+func (s *Store) latestTradesForPair(ctx context.Context, db tradeQuerier, p canonical.Pair, limit int, since time.Time) ([]canonical.Trade, error) {
 	// A LITERAL lower bound, as in latestClosedVWAP1m: TimescaleDB excludes chunks at plan time only for a constant, and planning
 	// every trades chunk is most of an unbounded miss (~325ms vs ~24ms per arm on r1 at a 400-day bound).
 	// The LIMIT is a literal too: a bound LIMIT makes the generic plan cost out worse than a custom one, so
@@ -1341,7 +1341,7 @@ func (s *Store) latestTradesForPair(ctx context.Context, p canonical.Pair, limit
         ORDER BY ts DESC, ledger DESC, tx_hash DESC, op_index DESC, source DESC
         LIMIT %[2]d
     `, lower, limit)
-	rows, err := s.db.QueryContext(ctx, q, p.Base.String(), p.Quote.String())
+	rows, err := db.QueryContext(ctx, q, p.Base.String(), p.Quote.String())
 	if err != nil {
 		return nil, fmt.Errorf("timescale: LatestTradesForPair: %w", err)
 	}
