@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -970,5 +971,65 @@ func TestBatchIDs_AreDistinct(t *testing.T) {
 	}
 	if len(seen) != 1000 {
 		t.Fatalf("distinct ids = %d, want 1000", len(seen))
+	}
+}
+
+// blockingChange24h counts USDPrice24hAgo calls and holds every call until release closes.
+type blockingChange24h struct {
+	calls   atomic.Int32
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (b *blockingChange24h) USDPrice24hAgo(context.Context, canonical.Asset) (string, error) {
+	if b.calls.Add(1) == 1 {
+		close(b.entered)
+	}
+	<-b.release
+	return "0.10", nil
+}
+
+// TestPriceBatch_ConcurrentIdenticalRowsShareOneResolution pins that two in-flight batches asking for the same
+// (id, quote) resolve the row once: sharded explorer builds send identical cold chunks together, and duplicate
+// resolutions queued behind each other past the 200ms latency SLO.
+func TestPriceBatch_ConcurrentIdenticalRowsShareOneResolution(t *testing.T) {
+	t0 := time.Unix(1_770_000_000, 0).UTC()
+	reader := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{
+			"native/fiat:USD": {
+				AssetID: "native", Quote: "fiat:USD",
+				Price: "0.12", PriceType: "last_trade", ObservedAt: v1.WireTime(t0),
+			},
+		},
+		sources: map[string][]string{"native/fiat:USD": {"soroswap"}},
+	}
+	change := &blockingChange24h{entered: make(chan struct{}), release: make(chan struct{})}
+	srv := v1.New(v1.Options{Prices: reader, Change24h: change})
+	ts := startHTTPTest(t, srv.Handler())
+	url := ts.URL + "/v1/price/batch?asset_ids=native&quote=fiat:USD"
+
+	done := make(chan *http.Response, 2)
+	go func() { done <- mustGet(t, url) }()
+	<-change.entered
+	go func() { done <- mustGet(t, url) }()
+	// The second request must reach the in-flight row before the first finishes.
+	time.Sleep(100 * time.Millisecond)
+	close(change.release)
+
+	for i := 0; i < 2; i++ {
+		resp := <-done
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("request %d: status = %d, want 200", i+1, resp.StatusCode)
+		}
+		var body struct {
+			Data []v1.PriceSnapshot `json:"data"`
+		}
+		mustDecode(t, resp, &body)
+		if len(body.Data) != 1 || body.Data[0].Change24hPct == nil {
+			t.Fatalf("request %d: data = %+v, want one row with change_24h_pct", i+1, body.Data)
+		}
+	}
+	if got := change.calls.Load(); got != 1 {
+		t.Fatalf("USDPrice24hAgo calls = %d, want 1 (identical in-flight rows must share one resolution)", got)
 	}
 }
