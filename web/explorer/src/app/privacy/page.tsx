@@ -394,7 +394,7 @@ export default function PrivacyPage() {
             },
             {
               term: 'Backups',
-              def: 'The local backup repository (a weekly full backup, kept for up to about three weeks) sits on the database host and is not separately encrypted. Local snapshots are kept for 7 days, except one an operator pins by hand, which is deleted by hand. The off-site copy is AES-256 encrypted and expires on a rolling schedule of a few weeks (one full plus seven differential sets).',
+              def: 'The local backup repository (a weekly full backup, kept for up to about three weeks) sits on the database host and is AES-256 encrypted. Local snapshots are kept for 7 days, except one an operator pins by hand, which is deleted by hand. The off-site copy is encrypted the same way, under a separate key, and expires on a rolling schedule of a few weeks (one full plus seven differential sets).',
             },
             {
               term: 'Correspondence',

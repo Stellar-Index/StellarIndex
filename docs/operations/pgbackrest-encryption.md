@@ -6,8 +6,8 @@ status: current
 
 # pgBackRest repository encryption (F4-F2)
 
-**Status:** repo1 is UNENCRYPTED on r1 today. This is the procedure to fix
-that and what it costs.
+**Status:** done on r1: `pgbackrest info` reports `aes-256-cbc` for repo1 and
+repo2. The procedure below is kept for new hosts.
 
 `templates/pgbackrest.conf.j2` renders `repo1-cipher-type=aes-256-cbc` when
 `pgbackrest_repo1_cipher_pass` is set, and `tasks/18-pgbackrest-backup.yml`

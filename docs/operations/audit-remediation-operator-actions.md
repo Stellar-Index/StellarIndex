@@ -83,7 +83,7 @@ of it; on the running host do the ownership flips in this order:
   `OUT_DIR=deploy/clickhouse/schema-snapshot TEXTFILE_DIR=/dev/null scripts/ops/ch-schema-snapshot.sh`,
   then commit the result.
 - [ ] **Full-CH-backup decision** — waits on the drill's measured re-derive throughput.
-- [ ] **Encrypt pgBackRest repo1** (F4-F2) — repo1 is `cipher-type=none`: a plaintext DB
+- [x] **Encrypt pgBackRest repo1** (F4-F2) — done; `pgbackrest info` shows aes-256-cbc. Was `cipher-type=none`: a plaintext DB
   copy (API keys, Stripe ids) on local disk and in any ZFS send. The role renders
   `repo1-cipher-type=aes-256-cbc` when `pgbackrest_repo1_cipher_pass` is set and refuses an
   unencrypted repo1 otherwise. pgbackrest cannot re-encrypt in place: `stanza-delete` +

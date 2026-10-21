@@ -130,11 +130,10 @@ describe('legal pages', () => {
         // Export is the export.go field list, not "everything we hold"; slug confirm.
         /the account, its members, sessions, passkeys, API keys, webhooks, price alerts, invitations, usage counts and audit log/,
         /you type the account slug back to confirm/,
-        // Backups: repo1 is unencrypted on r1 (pgbackrest-encryption.md), only
-        // the off-site repo2 copy is AES-256; ZFS 7 d; restore hedge
+        // Backups: repo1 and repo2 are both aes-256-cbc on r1; ZFS 7 d; restore hedge
         // (account-erasure.md is a manual runbook step).
-        /sits on the database host and is not separately encrypted\. Local snapshots are kept for 7 days/,
-        /The off-site copy is AES-256 encrypted and expires on a rolling schedule of a few weeks/,
+        /sits on the database host and is AES-256 encrypted\. Local snapshots are kept for 7 days/,
+        /The off-site copy is encrypted the same way, under a separate key, and expires on a rolling schedule of a few weeks/,
         /if a restore predates your erasure request, tell us and we will erase again/,
         /Anonymous browsing sets none of ours/,
         /__cf_bm/,
