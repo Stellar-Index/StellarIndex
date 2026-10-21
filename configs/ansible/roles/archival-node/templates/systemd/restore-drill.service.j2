@@ -65,8 +65,9 @@ IOSchedulingPriority=7
 # hours on a busy ingest DB (script's own PG_START_TIMEOUT default);
 # cap generously above that so a genuinely wedged drill still fails
 # and frees the next tick instead of running forever.
-# Whole seconds: the 43200 s lock wait + 4h for the run itself.
-TimeoutStartSec=57600
+# The archive drain's backstop is 8 h (a stalled drain fails after 30 min).
+# Whole seconds: the 43200 s lock wait + 10 h for the run itself.
+TimeoutStartSec=79200
 
 # Hardening — ProtectSystem=full (not strict): /usr, /boot and /etc are
 # read-only but /var stays WRITABLE, so with no extra ReadWritePaths the
