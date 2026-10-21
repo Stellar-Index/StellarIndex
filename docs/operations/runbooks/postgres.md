@@ -88,6 +88,16 @@ ssh root@136.243.90.96 'journalctl -u postgresql@15-main -n 50 --no-pager | grep
 
 Fix the cause: repo reachability (`pgbackrest check`), a heavy write job (pause it), or an unused slot in `pg_replication_slots`. If the queue was dropped (Postgres log warning), take a full backup of each repo once archiving is healthy.
 
+One repo down (ab1 or B2) holds WAL for both: the queue is shared, so a drop loses the healthy repo's WAL too. At ~300 GiB/day the cap is ~15 h away when this pages. If the down repo is not back 2 h after the page, switch it off in inventory and deploy, so WAL flows to the other repo alone:
+
+```sh
+# from configs/ansible, with pgbackrest_repo1_enabled: false (ab1 down) or pgbackrest_repo2_enabled: false (B2 down) in inventory/r1.yml
+ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml --tags pgbackrest --check --diff
+ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml --tags pgbackrest
+```
+
+When it is back: set the flag true, deploy, take a full backup of that repo, and record the gap in its WAL.
+
 ## stellarindex_postgres_ping_failing
 
 P1 (page, `for: 2m`). `rate(stellarindex_postgres_ping_total{outcome="error"}[5m]) > 0`. The indexer (`watchPostgresPing`) probes its pool every 60 s and emits `stellarindex_postgres_ping_total{outcome}` and `stellarindex_postgres_ping_failure_streak`; the pool also retires connections (`SetConnMaxLifetime` 30 min, idle 5 min). One failed probe in the window is enough; `for: 2m` rides through a clean restart. Rules: `configs/prometheus/rules.r1/storage.yml` (template `deploy/monitoring/rules/storage.yml`). Indexer ingest is stalled or about to stall. MTTR ~5 min.

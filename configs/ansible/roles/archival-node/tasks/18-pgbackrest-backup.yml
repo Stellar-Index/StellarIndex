@@ -18,6 +18,13 @@
 # true) or the operator explicitly acknowledges the gap with
 # pgbackrest_offsite_ack=true (see docs/operations/off-site-backup-plan.md
 # for the deferred-offsite decision).
+- name: Refuse a pgBackRest config with both repos switched off
+  ansible.builtin.assert:
+    that:
+      - (pgbackrest_repo1_enabled | bool) or ((pgbackrest_repo2_enabled | bool) and (pgbackrest_repo2_s3_bucket | default('') != ''))
+    fail_msg: pgbackrest_repo1_enabled and pgbackrest_repo2_enabled cannot both be false; WAL would go nowhere.
+    quiet: true
+
 - name: Refuse to proceed without an offsite (repo2) backup or an explicit ack of the gap
   ansible.builtin.assert:
     that:

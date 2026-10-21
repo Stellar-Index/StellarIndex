@@ -1540,6 +1540,10 @@ pgbackrest_backup_type_overrides: []
 # Past this WAL queue size pgBackRest drops the queue rather than let pg_wal
 # fill and stop Postgres; PITR then needs a new backup.
 pgbackrest_archive_push_queue_max: 192GiB
+# Outage switches: false drops the repo from pgbackrest.conf (and the repo2
+# off-site drill). Runbook: postgres.md#stellarindex_pg_wal_large.
+pgbackrest_repo1_enabled: true
+pgbackrest_repo2_enabled: true
 # repo1 over sftp to a second host; empty keeps repo1 local. Switching an
 # existing stanza needs its repo copied there first (pgbackrest does not move it).
 pgbackrest_repo1_sftp_host: ""
@@ -1571,4 +1575,4 @@ pgbackrest_repo1_sftp_host_fingerprint: ""
 # stellarindex_restore_drill_offsite_stale will ticket from 35 days
 # later — which is the point, so decide whether to keep paying rather
 # than silencing the alert.
-restore_drill_offsite_enabled: "{{ (pgbackrest_backup_enabled | default(true) | bool) and (pgbackrest_repo2_s3_bucket | default('') != '') }}"
+restore_drill_offsite_enabled: "{{ (pgbackrest_backup_enabled | default(true) | bool) and (pgbackrest_repo2_s3_bucket | default('') != '') and (pgbackrest_repo2_enabled | bool) }}"
