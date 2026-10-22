@@ -36,7 +36,12 @@
 #                        cohort the account / contract page is loaded for; a
 #                        panel's p95 pools every load across the cohort.
 #                        TEXTFILE=path writes each panel's and page's p95 as a
-#                        node_exporter textfile (written atomically).
+#                        node_exporter textfile (written atomically). A non-2xx
+#                        panel counts as a timeout, so a refused page never
+#                        reads as fast.
+#
+# STELLARINDEX_PROBE_API_KEY, when set, is sent as X-API-Key so a sweep of
+# hundreds of reads is not answered by the anonymous per-IP rate limit.
 #
 set -uo pipefail
 
@@ -63,6 +68,15 @@ ISS="GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 ACCOUNTS="${ACCOUNTS:-$ISS}"
 CONTRACTS="${CONTRACTS:-CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH}"
 TEXTFILE="${TEXTFILE:-}"
+
+# The key reaches curl through a header file, never argv, where ps would show it.
+HDR=()
+hdrfile=""
+if [ -n "${STELLARINDEX_PROBE_API_KEY:-}" ]; then
+  hdrfile="$(mktemp)"; trap 'rm -f "$hdrfile"' EXIT
+  printf 'X-API-Key: %s\n' "$STELLARINDEX_PROBE_API_KEY" > "$hdrfile"
+  HDR=(-H "@$hdrfile")
+fi
 
 # name|path — the anonymous, non-streaming GET surface. SSE (/v1/*/stream,
 # /v1/oracle/streams) and auth-gated routes (/v1/account/*, /v1/dashboard/*,
@@ -171,7 +185,7 @@ pctl() { sort -n | awk -v p="$1" '
   i=int((p/100)*NR + 0.999999); if(i<1)i=1; if(i>NR)i=NR; print a[i] }'; }
 
 if [ "${1:-}" = "--pages" ]; then
-  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp" ${hdrfile:+"$hdrfile"}' EXIT
   CRIT=0
   printf '%s%s pages vs %s — %s loads/page%s%s\n' "$B" "api-latency-sweep" "$API_BASE_URL" "$ITERS" \
     "$([ "$CACHE_BUST" = 1 ] && echo ' (cache-bust)')" "$O"
@@ -186,13 +200,14 @@ if [ "${1:-}" = "--pages" ]; then
     for ((i=0;i<ITERS;i++)); do
       for ((k=0;k<${#panels[@]};k++)); do
         u="${panels[$k]//\{A\}/$ent}"; u="${u//\{C\}/$ent}"
-        ( curl -s -o /dev/null --max-time "$TIMEOUT" -w '%{http_code} %{time_total}\n' \
+        ( curl -s ${HDR[@]+"${HDR[@]}"} -o /dev/null --max-time "$TIMEOUT" -w '%{http_code} %{time_total}\n' \
             "$(bust_url "${API_BASE_URL}${u}" "$i$k")" 2>/dev/null || echo "000 $TIMEOUT" ) > "$tmp/r$k" &
       done
       wait
       worst=0
       for ((k=0;k<${#panels[@]};k++)); do
         read -r code tt < "$tmp/r$k"
+        case "$code" in 2*) ;; *) tt=$TIMEOUT;; esac
         ms=$(awk -v t="${tt:-$TIMEOUT}" 'BEGIN{printf "%d", t*1000}')
         echo "$ms $code" >> "$tmp/p$k"
         [ "$ms" -gt "$worst" ] && worst=$ms
@@ -237,10 +252,10 @@ RESULTS=()
 for e in "${ENDPOINTS[@]}"; do
   name="${e%%|*}"; path="${e#*|}"
   times=""; okc=0; n=0
-  [ "$WARMUP" = "1" ] && curl -s -o /dev/null --max-time "$TIMEOUT" "${API_BASE_URL}${path}" >/dev/null 2>&1
+  [ "$WARMUP" = "1" ] && curl -s ${HDR[@]+"${HDR[@]}"} -o /dev/null --max-time "$TIMEOUT" "${API_BASE_URL}${path}" >/dev/null 2>&1
   for ((i=0;i<ITERS;i++)); do
     u="$(bust_url "${API_BASE_URL}${path}" "$i")"
-    read -r code tt < <(curl -s -o /dev/null --max-time "$TIMEOUT" \
+    read -r code tt < <(curl -s ${HDR[@]+"${HDR[@]}"} -o /dev/null --max-time "$TIMEOUT" \
       -w '%{http_code} %{time_total}\n' "$u" 2>/dev/null || echo "000 $TIMEOUT")
     ms=$(awk -v t="${tt:-$TIMEOUT}" 'BEGIN{printf "%d", t*1000}')
     times+="${ms}"$'\n'; n=$((n+1))
