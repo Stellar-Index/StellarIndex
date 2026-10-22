@@ -1,8 +1,10 @@
 package clickhouse
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -74,48 +76,112 @@ func sponsorshipSideColumn(side string) (string, error) {
 	return "", fmt.Errorf("clickhouse: sponsorship side %q", side)
 }
 
+// sponsorshipWindowRows bounds one in-order read of an account's events; sponsorshipMaxWindows bounds a page, so an
+// account whose arrangements are mostly over answers a short page with a resume key instead of scanning everything.
+const (
+	sponsorshipWindowRows = 20000
+	sponsorshipMaxWindows = 8
+)
+
 // AccountSponsorships pages, in key order after `after`, the arrangements in which the account is the side's party,
-// each with every event through maxLedger; inForceOnly keeps the arrangements whose last event is a start. An
+// each with every event through maxLedger; inForceOnly keeps the arrangements whose last event is a start. Events
+// are read in sort-key order a window at a time, which stops early, where a GROUP BY over the account would not. When
+// the window budget runs out first, the page is short and the returned key is where the next page resumes. An
 // absent table reads as none.
 func (r *ExplorerReader) AccountSponsorships(ctx context.Context, account, side string, inForceOnly bool,
 	after SponsorshipKey, maxLedger uint32, limit int,
-) ([]SponsorshipArrangement, error) {
+) ([]SponsorshipArrangement, SponsorshipKey, error) {
 	col, err := sponsorshipSideColumn(side)
 	if err != nil {
-		return nil, err
+		return nil, SponsorshipKey{}, err
 	}
 	if limit <= 0 {
-		return nil, nil
+		return nil, SponsorshipKey{}, nil
 	}
-	having := ``
-	if inForceOnly {
-		having = ` HAVING ` + sponsorshipLastEvent + ` = 'started'`
+	window := `SELECT ` + sponsorshipEventCols + ` FROM stellar.sponsorship_events
+		WHERE ` + col + ` = ? AND ledger <= ? AND (sponsor, sponsored, kind, key_id) > (?, ?, ?, ?)
+		ORDER BY sponsor, sponsored, kind, key_id, ledger LIMIT ?` + explorerScanSettings
+	whole := `SELECT ` + sponsorshipEventCols + ` FROM stellar.sponsorship_events
+		WHERE (sponsor, sponsored, kind, key_id) = (?, ?, ?, ?) AND ledger <= ?` + explorerScanSettings
+	return pageSponsorships(after, limit, sponsorshipWindowRows, sponsorshipMaxWindows, inForceOnly,
+		func(after SponsorshipKey) ([]SponsorshipArrangement, int, error) {
+			return r.sponsorshipArrangements(ctx, window, account, maxLedger,
+				after.Sponsor, after.Sponsored, after.Kind, after.KeyID, sponsorshipWindowRows)
+		},
+		func(k SponsorshipKey) ([]SponsorshipArrangement, error) {
+			out, _, err := r.sponsorshipArrangements(ctx, whole, k.Sponsor, k.Sponsored, k.Kind, k.KeyID, maxLedger)
+			return out, err
+		})
+}
+
+// pageSponsorships fills a page from windows of at most windowRows events each, read in key order after `after`. A
+// full window's last arrangement may be cut short, so it is left to the next window, unless it is the window's only
+// one, which is then read whole.
+func pageSponsorships(after SponsorshipKey, limit, windowRows, maxWindows int, inForceOnly bool,
+	window func(after SponsorshipKey) ([]SponsorshipArrangement, int, error),
+	whole func(SponsorshipKey) ([]SponsorshipArrangement, error),
+) ([]SponsorshipArrangement, SponsorshipKey, error) {
+	var out []SponsorshipArrangement
+	for range maxWindows {
+		win, n, err := window(after)
+		if err != nil {
+			return nil, SponsorshipKey{}, err
+		}
+		full := n >= windowRows
+		if full {
+			if win, err = completeWindow(win, whole); err != nil {
+				return nil, SponsorshipKey{}, err
+			}
+		}
+		for _, a := range win {
+			if inForceOnly && !sponsorshipInForce(a.Events) {
+				continue
+			}
+			out = append(out, a)
+			if len(out) == limit {
+				return out, SponsorshipKey{}, nil
+			}
+		}
+		if !full || len(win) == 0 {
+			return out, SponsorshipKey{}, nil
+		}
+		after = win[len(win)-1].SponsorshipKey
 	}
-	q := `SELECT ` + sponsorshipEventCols + ` FROM stellar.sponsorship_events
-		WHERE ` + col + ` = ? AND ledger <= ? AND (sponsor, sponsored, kind, key_id) IN (
-			SELECT sponsor, sponsored, kind, key_id FROM stellar.sponsorship_events
-			WHERE ` + col + ` = ? AND ledger <= ? AND (sponsor, sponsored, kind, key_id) > (?, ?, ?, ?)
-			GROUP BY sponsor, sponsored, kind, key_id` + having + `
-			ORDER BY sponsor, sponsored, kind, key_id LIMIT ?)
-		ORDER BY sponsor, sponsored, kind, key_id, ledger, intra_ledger_seq, change_index` + explorerScanSettings
-	rows, err := r.conn.Query(ctx, q, account, maxLedger, account, maxLedger,
-		after.Sponsor, after.Sponsored, after.Kind, after.KeyID, limit)
+	return out, after, nil
+}
+
+// completeWindow drops a full window's last arrangement, whose events may run past it, or reads it whole when it
+// is the window's only one.
+func completeWindow(win []SponsorshipArrangement, whole func(SponsorshipKey) ([]SponsorshipArrangement, error),
+) ([]SponsorshipArrangement, error) {
+	if len(win) == 1 {
+		return whole(win[0].SponsorshipKey)
+	}
+	return win[:len(win)-1], nil
+}
+
+// sponsorshipArrangements runs an event query in key order and groups its rows into arrangements, each with its
+// events deduplicated and in apply order; it also returns the raw row count.
+func (r *ExplorerReader) sponsorshipArrangements(ctx context.Context, q string, args ...any) ([]SponsorshipArrangement, int, error) {
+	rows, err := r.conn.Query(ctx, q, args...)
 	if err != nil {
 		if absentReadsEmpty("sponsorship_events", err) {
-			return nil, nil
+			return nil, 0, nil
 		}
-		return nil, fmt.Errorf("clickhouse: account sponsorships: %w", err)
+		return nil, 0, fmt.Errorf("clickhouse: account sponsorships: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	var out []SponsorshipArrangement
+	n := 0
 	seen := map[sponsorshipEventKey]struct{}{}
 	for rows.Next() {
+		n++
 		var k SponsorshipKey
 		var reserves uint8
 		var e SponsorshipEventRow
 		if err := rows.Scan(&k.Sponsor, &k.Sponsored, &k.Kind, &k.KeyID, &reserves, &e.Ledger, &e.CloseTime,
 			&e.TxHash, &e.OpIndex, &e.ChangeIndex, &e.IntraLedgerSeq, &e.Event); err != nil {
-			return nil, fmt.Errorf("clickhouse: account sponsorships scan: %w", err)
+			return nil, 0, fmt.Errorf("clickhouse: account sponsorships scan: %w", err)
 		}
 		if len(out) == 0 || out[len(out)-1].SponsorshipKey != k {
 			out = append(out, SponsorshipArrangement{SponsorshipKey: k, Reserves: reserves})
@@ -130,9 +196,20 @@ func (r *ExplorerReader) AccountSponsorships(ctx context.Context, account, side 
 		a.Events = append(a.Events, e)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("clickhouse: account sponsorships: %w", err)
+		return nil, 0, fmt.Errorf("clickhouse: account sponsorships: %w", err)
 	}
-	return out, nil
+	for i := range out {
+		slices.SortStableFunc(out[i].Events, func(a, b SponsorshipEventRow) int {
+			return cmp.Or(cmp.Compare(a.Ledger, b.Ledger), cmp.Compare(a.IntraLedgerSeq, b.IntraLedgerSeq),
+				cmp.Compare(a.ChangeIndex, b.ChangeIndex))
+		})
+	}
+	return out, n, nil
+}
+
+// sponsorshipInForce reports whether the last event applied, of events in apply order, is a start.
+func sponsorshipInForce(events []SponsorshipEventRow) bool {
+	return len(events) > 0 && events[len(events)-1].Event == "started"
 }
 
 // SponsorshipTotals counts the account's arrangements on one side through maxLedger: the completed buckets plus the

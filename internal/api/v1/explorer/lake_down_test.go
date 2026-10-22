@@ -666,8 +666,8 @@ func TestExplorerReads_DeadlineMapsTo503(t *testing.T) {
 	}
 }
 
-func (downReader) AccountSponsorships(context.Context, string, string, bool, clickhouse.SponsorshipKey, uint32, int) ([]clickhouse.SponsorshipArrangement, error) {
-	return nil, errLakeDown
+func (downReader) AccountSponsorships(context.Context, string, string, bool, clickhouse.SponsorshipKey, uint32, int) ([]clickhouse.SponsorshipArrangement, clickhouse.SponsorshipKey, error) {
+	return nil, clickhouse.SponsorshipKey{}, errLakeDown
 }
 
 func (downReader) SponsorshipTotals(context.Context, string, string, uint32) (clickhouse.SponsorshipTotals, error) {

@@ -835,8 +835,8 @@ func TestExplorer_Unavailable503(t *testing.T) {
 	}
 }
 
-func (s *stubExplorerReader) AccountSponsorships(context.Context, string, string, bool, clickhouse.SponsorshipKey, uint32, int) ([]clickhouse.SponsorshipArrangement, error) {
-	return nil, s.err
+func (s *stubExplorerReader) AccountSponsorships(context.Context, string, string, bool, clickhouse.SponsorshipKey, uint32, int) ([]clickhouse.SponsorshipArrangement, clickhouse.SponsorshipKey, error) {
+	return nil, clickhouse.SponsorshipKey{}, s.err
 }
 
 func (s *stubExplorerReader) SponsorshipTotals(context.Context, string, string, uint32) (clickhouse.SponsorshipTotals, error) {
