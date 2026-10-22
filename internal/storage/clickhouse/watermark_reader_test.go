@@ -927,7 +927,7 @@ func TestContractInteractions_CapsDistinctTxsNotEventRows(t *testing.T) {
 	conn.respond = func(q string) (driver.Rows, error) {
 		switch {
 		case strings.Contains(q, "contract_active_ledgers"):
-			if strings.Contains(q, "SELECT DISTINCT ledger_seq FROM") { // per-contract walk
+			if strings.Contains(q, "SELECT ledger_seq FROM stellar.contract_active_ledgers WHERE") { // per-contract walk
 				return &stubRows{}, nil // quiet: keep the full requested window
 			}
 			return &stubRows{data: [][]any{{uint32(1)}}}, nil // probe present
@@ -969,5 +969,50 @@ func TestHashChainWindowResult_Checked(t *testing.T) {
 				t.Fatalf("Checked() = %d, want %d", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestContractActiveLedgers_CollapsesDuplicatesAcrossPages: un-merged RMT rows repeat a ledger, so a page can come back
+// short of n distinct ledgers; the walk must collapse them and continue strictly below the page's oldest row.
+func TestContractActiveLedgers_CollapsesDuplicatesAcrossPages(t *testing.T) {
+	lake := []uint32{50, 50, 50, 50, 50, 50, 50, 50, 50, 49, 49, 48, 47, 46, 45}
+	conn := &stubConn{}
+	conn.respond = func(q string) (driver.Rows, error) {
+		if strings.Contains(q, "DISTINCT") {
+			t.Fatalf("DISTINCT defeats the reverse key walk: %s", q)
+		}
+		args := conn.args[len(conn.args)-1]
+		before, limit := uint32(0), args[len(args)-1].(int)
+		if len(args) == 3 {
+			before = args[1].(uint32)
+		}
+		var data [][]any
+		for _, l := range lake {
+			if (before == 0 || l <= before) && len(data) < limit {
+				data = append(data, []any{l})
+			}
+		}
+		return &stubRows{data: data}, nil
+	}
+	r := &ExplorerReader{conn: conn}
+
+	got, err := r.contractActiveLedgers(context.Background(), "CTEST", 0, 2)
+	if err != nil {
+		t.Fatalf("contractActiveLedgers: %v", err)
+	}
+	if want := []uint32{50, 49}; !slices.Equal(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	if len(conn.queries) < 2 {
+		t.Fatalf("queries = %d, want a second page after duplicates filled the first", len(conn.queries))
+	}
+
+	conn.queries, conn.args = nil, nil
+	got, err = r.contractActiveLedgers(context.Background(), "CTEST", 46, 10)
+	if err != nil {
+		t.Fatalf("contractActiveLedgers before=46: %v", err)
+	}
+	if want := []uint32{46, 45}; !slices.Equal(got, want) {
+		t.Fatalf("got %v, want %v (exhausted lake, inclusive cursor)", got, want)
 	}
 }
