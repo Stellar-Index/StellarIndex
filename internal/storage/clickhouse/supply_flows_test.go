@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -91,6 +92,12 @@ func bulkSupplyConn(t *testing.T, rows [][]any) (*SupplyReader, *stubConn) {
 		if !strings.Contains(q, "stellar.supply_flows") {
 			t.Fatalf("unexpected query: %s", q)
 		}
+		switch {
+		case strings.Contains(q, "max(ledger_seq)"):
+			return &stubRows{data: [][]any{{uint32(0)}}}, nil
+		case strings.Contains(q, ">= ?"):
+			return &stubRows{}, nil
+		}
 		return &stubRows{data: rows}, nil
 	}}
 	return &SupplyReader{conn: conn}, conn
@@ -120,13 +127,13 @@ func TestTokenSupplyForContracts_SumsPerContract(t *testing.T) {
 	if got["CAAA"].Incomplete || got["CBBB"].Incomplete {
 		t.Errorf("neither positive net total is incomplete: %+v", got)
 	}
-	if n := len(conn.queries); n != 1 {
-		t.Errorf("issued %d queries for 2 contracts, want 1 (the bulk read is the point): %v", n, conn.queries)
+	if n := len(conn.queries); n != 3 {
+		t.Errorf("issued %d queries for 2 contracts, want 3 (settled ledger, base, recent; the bulk read is the point): %v", n, conn.queries)
 	}
-	if len(conn.args) != 1 || len(conn.args[0]) != 1 {
-		t.Fatalf("want exactly one bound arg (the IN-list), got %v", conn.args)
+	if len(conn.args) != 3 || len(conn.args[1]) != 2 {
+		t.Fatalf("want the base read to bind the IN-list and the settled ledger, got %v", conn.args)
 	}
-	ids, ok := conn.args[0][0].([]string)
+	ids, ok := conn.args[1][0].([]string)
 	if !ok || len(ids) != 2 {
 		t.Fatalf("IN-list must bind the contract ids as a slice, got %#v", conn.args[0][0])
 	}
@@ -223,10 +230,10 @@ func TestTokenSupplyForContracts_QueryShape(t *testing.T) {
 	if _, err := r.TokenSupplyForContracts(t.Context(), []string{"CAAA"}); err != nil {
 		t.Fatalf("TokenSupplyForContracts: %v", err)
 	}
-	q := conn.queries[0]
+	q := conn.queries[1]
 	for _, s := range []string{
 		"stellar.supply_flows FINAL",
-		"WHERE contract_id IN (?)",
+		"WHERE contract_id IN (?) AND ledger_seq < ?",
 		"GROUP BY contract_id",
 		"toInt256",
 		"toString(",
@@ -234,5 +241,69 @@ func TestTokenSupplyForContracts_QueryShape(t *testing.T) {
 		if !strings.Contains(q, s) {
 			t.Errorf("bulk supply query missing %q:\n%s", s, q)
 		}
+	}
+}
+
+// TestTokenSupplyForContracts_RereadsOnlyAboveSettledBase pins the memo: a refresh sums only flows at or above the settled ledger the
+// base stopped below, adds them to the memoised base exactly (above int64), and the base expires after supplyBaseMaxAge.
+func TestTokenSupplyForContracts_RereadsOnlyAboveSettledBase(t *testing.T) {
+	big1 := "170141183460469231731687303715884105000"
+	conn := &stubConn{respond: func(q string) (driver.Rows, error) {
+		switch {
+		case strings.Contains(q, "max(ledger_seq)"):
+			return &stubRows{data: [][]any{{uint32(64_900_000)}}}, nil
+		case strings.Contains(q, "ledger_seq < ?"):
+			return &stubRows{data: [][]any{{"CBIG", big1, "0", "0", uint64(10)}}}, nil
+		}
+		return &stubRows{data: [][]any{
+			{"CBIG", "700", "0", "0", uint64(1)},
+			{"CNEW", "5", "0", "0", uint64(1)},
+		}}, nil
+	}}
+	clock := time.Unix(1_700_000_000, 0)
+	r := &SupplyReader{conn: conn, now: func() time.Time { return clock }}
+	ids := []string{"CBIG", "CNEW", "CNONE"}
+	want, _ := new(big.Int).SetString(big1, 10)
+	want.Add(want, big.NewInt(700))
+	check := func(label string, got map[string]TokenSupply) {
+		t.Helper()
+		if s := got["CBIG"]; s.Total == nil || s.Total.Cmp(want) != 0 || s.FlowCount != 11 {
+			t.Errorf("%s: CBIG = %v/%d flows, want base+recent %s/11", label, s.Total, s.FlowCount, want)
+		}
+		if s := got["CNEW"]; s.Total == nil || s.Total.String() != "5" {
+			t.Errorf("%s: CNEW's only flow is above the base; want total 5, got %+v", label, s)
+		}
+		if _, ok := got["CNONE"]; ok {
+			t.Errorf("%s: CNONE has no flows; it must be absent", label)
+		}
+	}
+
+	first, err := r.TokenSupplyForContracts(t.Context(), ids)
+	if err != nil {
+		t.Fatalf("first read: %v", err)
+	}
+	check("cold", first)
+
+	clock = clock.Add(supplyBaseMaxAge - time.Second)
+	before := len(conn.queries)
+	second, err := r.TokenSupplyForContracts(t.Context(), ids)
+	if err != nil {
+		t.Fatalf("warm read: %v", err)
+	}
+	check("warm", second)
+	if n := len(conn.queries) - before; n != 1 || !strings.Contains(conn.queries[before], "ledger_seq >= ?") {
+		t.Fatalf("warm read must be one recent-flows query, got %d: %v", n, conn.queries[before:])
+	}
+	if b := conn.args[before][1]; b != uint32(64_900_000) {
+		t.Errorf("recent-flows bound %v, want the settled ledger 64900000", b)
+	}
+
+	clock = clock.Add(time.Second)
+	before = len(conn.queries)
+	if _, err := r.TokenSupplyForContracts(t.Context(), ids); err != nil {
+		t.Fatalf("expired read: %v", err)
+	}
+	if n := len(conn.queries) - before; n != 3 {
+		t.Errorf("an expired base must be re-read in full (3 queries), got %d", n)
 	}
 }
