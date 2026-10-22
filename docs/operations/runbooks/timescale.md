@@ -317,6 +317,15 @@ The known cause is `merge_chunks()` on a compressed chunk (r1, TimescaleDB 2.26.
 
 `stellarindex_pg_chunk_scan_stale` means no scan has completed for 36 h, so corruption would go unseen. Read `journalctl -u pg-chunk-scan -n 50`; the probe prints the psql ERROR line.
 
+## stellarindex_pg_compressed_chunk_index_bloat
+
+The same nightly scan lists fully compressed chunks (status without the partial bit) whose indexes exceed 1 GiB, in `stellarindex_pg_compressed_chunk_index_bytes{hypertable,chunk}`. Their rows live in the compressed chunk, so a healthy heap is near-empty and its indexes are tens of MB. On r1 (2026-10-21) 13 `trades` chunks held 3-26 GB of indexes each over 0-byte heaps, 161 GB in all; `n_tup_del` matched `n_tup_ins`. Compression-policy recompression rebuilds the indexes itself, so the cause is a writer that deleted heap rows (INV-3083 tracks which).
+
+1. Rebuild each listed chunk's indexes. It takes a short exclusive lock, so cap the wait:
+   `SET lock_timeout = '5s'; REINDEX TABLE _timescaledb_internal.<chunk>;` (r1: ~150 ms each). Re-run on `55P03`.
+2. The space returns to ZFS once the snapshots holding the old blocks expire (2 days for `data/postgres`).
+3. Re-run the scan (`systemctl start pg-chunk-scan.service`) to clear the alert.
+
 ## Related
 
 - [config-assertion-failed](config-assertion-failed.md); `postgres.md#stellarindex_timescale_disk_full`; `postgres.md#stellarindex_timescale_connections_saturated`; `api.md#stellarindex_api_latency_p95_high`; `api.md#stellarindex_api_price_stale`.
