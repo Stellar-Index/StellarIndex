@@ -93,28 +93,8 @@ type TokenSupply struct {
 	Incomplete bool
 }
 
-// supplySumQuery sums a contract's supply_flows. FINAL dedups the RMT parts for the contract's small contract_id-ordered range; sums are
-// Int256 because Σmint alone can exceed i128, then returned as *big.Int (ADR-0003). No flows scans to zeros.
-const supplySumQuery = `
-	SELECT
-		toString(sum(toInt256(if(kind = 'mint', amount, toInt128(0))))) AS mint,
-		toString(sum(toInt256(if(kind = 'burn', amount, toInt128(0))))) AS burn,
-		toString(sum(toInt256(if(kind = 'clawback', amount, toInt128(0))))) AS clawback,
-		count() AS flows
-	FROM stellar.supply_flows FINAL
-	WHERE contract_id = ?`
-
-func querySupply(ctx context.Context, conn driver.Conn, contractID string) (TokenSupply, error) {
-	var mintS, burnS, clawbackS string
-	var flows uint64
-	if err := conn.QueryRow(ctx, supplySumQuery, contractID).Scan(&mintS, &burnS, &clawbackS, &flows); err != nil {
-		return TokenSupply{}, fmt.Errorf("clickhouse: supply for %s: %w", contractID, err)
-	}
-	return assembleTokenSupply(contractID, mintS, burnS, clawbackS, flows), nil
-}
-
-// supplySumBelowLedgerQuery is supplySumQuery with `ledger_seq < ?`: the pre-Soroban
-// opening-balance slice for the SEP-41 baseline seed. Int256 for the same reason.
+// supplySumBelowLedgerQuery sums one contract's supply_flows below a ledger: the pre-Soroban opening-balance slice for the SEP-41
+// baseline seed. Sums are Int256 because Σmint alone can exceed i128, then returned as *big.Int (ADR-0003).
 const supplySumBelowLedgerQuery = `
 	SELECT
 		toString(sum(toInt256(if(kind = 'mint', amount, toInt128(0))))) AS mint,
@@ -189,14 +169,18 @@ func NewSupplyReaderAuth(ctx context.Context, addr, username, password string) (
 	return &SupplyReader{conn: conn}, nil
 }
 
-// TokenSupply returns a contract's live supply (Σmint − Σburn − Σclawback).
+// TokenSupply returns a contract's live supply (Σmint − Σburn − Σclawback), reading only the flows above its memoised settled base.
 func (r *SupplyReader) TokenSupply(ctx context.Context, contractID string) (TokenSupply, error) {
-	return querySupply(ctx, r.conn, contractID)
+	sums, err := r.flowSumsForContracts(ctx, []string{contractID})
+	if err != nil {
+		return TokenSupply{}, err
+	}
+	return sums[contractID].supply(contractID), nil
 }
 
-// supplySumByContractsQuery is [supplySumQuery] for a SET of contracts in ONE read, over a ledger range the caller appends: `contract_id`
+// supplySumByContractsQuery sums supply_flows for a SET of contracts in ONE read, over a ledger range the caller appends: `contract_id`
 // LEADS the ORDER BY, so the IN-list is primary-key prefix ranges and FINAL's setup cost is paid once. Int256 and string projection as
-// in [supplySumQuery] (ADR-0003). ledger_seq is in the dedup key, so FINAL never merges a row across a range split. Contracts with no
+// in [supplySumBelowLedgerQuery] (ADR-0003). ledger_seq is in the dedup key, so FINAL never merges a row across a range split. Contracts with no
 // flows in the range are ABSENT.
 const supplySumByContractsQuery = `
 	SELECT
@@ -277,11 +261,26 @@ func (m *settledSupplyMemo) put(id string, b settledBase) {
 // (zero would publish a fully-burned supply), and Incomplete carries through. Each contract's sum below a settled ledger is memoised
 // for supplyBaseMaxAge, so a refresh re-reads only the flows above it: the full FINAL sum of a busy SAC is hundreds of millions of rows.
 func (r *SupplyReader) TokenSupplyForContracts(ctx context.Context, contractIDs []string) (map[string]TokenSupply, error) {
+	sums, err := r.flowSumsForContracts(ctx, contractIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]TokenSupply, len(sums))
+	for id, sum := range sums {
+		if sum.flows > 0 {
+			out[id] = sum.supply(id)
+		}
+	}
+	return out, nil
+}
+
+// flowSumsForContracts is every contract's all-time sums: its memoised settled base plus the flows above it, zero when it has none.
+func (r *SupplyReader) flowSumsForContracts(ctx context.Context, contractIDs []string) (map[string]flowSums, error) {
 	groups, err := r.settledBases(ctx, contractIDs)
 	if err != nil {
 		return nil, err
 	}
-	out := make(map[string]TokenSupply, len(contractIDs))
+	out := make(map[string]flowSums, len(contractIDs))
 	for settled, bases := range groups {
 		ids := make([]string, 0, len(bases))
 		for id := range bases {
@@ -296,9 +295,7 @@ func (r *SupplyReader) TokenSupplyForContracts(ctx context.Context, contractIDs 
 			if d, ok := recent[id]; ok {
 				sum = sum.plus(d)
 			}
-			if sum.flows > 0 {
-				out[id] = sum.supply(id)
-			}
+			out[id] = sum
 		}
 	}
 	return out, nil
@@ -340,8 +337,10 @@ func (r *SupplyReader) settledBases(ctx context.Context, contractIDs []string) (
 		b := settledBase{settled: settled, sums: below[id], at: now}
 		if b.sums.mint == nil {
 			b.sums = parseFlowSums("0", "0", "0", 0)
+		} else {
+			// Only real bases are kept: an empty one costs nothing to re-read, and request-chosen ids must not evict them.
+			r.bases.put(id, b)
 		}
-		r.bases.put(id, b)
 		add(id, b)
 	}
 	return groups, nil

@@ -3,6 +3,7 @@ package clickhouse
 import (
 	"errors"
 	"math/big"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -291,11 +292,21 @@ func TestTokenSupplyForContracts_RereadsOnlyAboveSettledBase(t *testing.T) {
 		t.Fatalf("warm read: %v", err)
 	}
 	check("warm", second)
-	if n := len(conn.queries) - before; n != 1 || !strings.Contains(conn.queries[before], "ledger_seq >= ?") {
-		t.Fatalf("warm read must be one recent-flows query, got %d: %v", n, conn.queries[before:])
+	recent := 0
+	for i := before; i < len(conn.queries); i++ {
+		q := conn.queries[i]
+		if strings.Contains(q, "ledger_seq < ?") && slices.Contains(conn.args[i][0].([]string), "CBIG") {
+			t.Fatalf("warm read re-summed CBIG's memoised base: %v", conn.args[i])
+		}
+		if strings.Contains(q, "ledger_seq >= ?") {
+			recent++
+			if b := conn.args[i][1]; b != uint32(64_900_000) {
+				t.Errorf("recent-flows bound %v, want the settled ledger 64900000", b)
+			}
+		}
 	}
-	if b := conn.args[before][1]; b != uint32(64_900_000) {
-		t.Errorf("recent-flows bound %v, want the settled ledger 64900000", b)
+	if recent != 1 {
+		t.Errorf("warm read issued %d recent-flows queries, want 1", recent)
 	}
 
 	clock = clock.Add(time.Second)
@@ -373,5 +384,33 @@ func TestTokenSupplyForContracts_FailedBaseIsNotMemoised(t *testing.T) {
 	}
 	if n := len(conn.queries) - before; n != 3 {
 		t.Errorf("after a failed base the next read must be in full (3 queries), got %d", n)
+	}
+}
+
+// The single-contract read shares the settled-base memo, and a contract with no flows reads as a zero-flow supply, not an error.
+func TestTokenSupply_SharesSettledBaseMemo(t *testing.T) {
+	conn := &stubConn{respond: func(q string) (driver.Rows, error) {
+		switch {
+		case strings.Contains(q, "max(ledger_seq)"):
+			return &stubRows{data: [][]any{{uint32(64_900_000)}}}, nil
+		case strings.Contains(q, "ledger_seq < ?"):
+			return &stubRows{data: [][]any{{"CBIG", "1000", "100", "0", uint64(4)}}}, nil
+		}
+		return &stubRows{data: [][]any{{"CBIG", "50", "0", "0", uint64(1)}}}, nil
+	}}
+	r := &SupplyReader{conn: conn}
+	for _, label := range []string{"cold", "warm"} {
+		before := len(conn.queries)
+		got, err := r.TokenSupply(t.Context(), "CBIG")
+		if err != nil || got.Total.String() != "950" || got.FlowCount != 5 || got.ContractID != "CBIG" {
+			t.Fatalf("%s: TokenSupply = %+v, %v; want 950 over 5 flows", label, got, err)
+		}
+		if label == "warm" && (len(conn.queries)-before != 1 || !strings.Contains(conn.queries[before], "ledger_seq >= ?")) {
+			t.Fatalf("warm read issued %v; want only the above-base sum", conn.queries[before:])
+		}
+	}
+	none, err := r.TokenSupply(t.Context(), "CNONE")
+	if err != nil || none.FlowCount != 0 || none.Total.Sign() != 0 || none.ContractID != "CNONE" {
+		t.Fatalf("no-flow contract = %+v, %v; want a zero supply", none, err)
 	}
 }

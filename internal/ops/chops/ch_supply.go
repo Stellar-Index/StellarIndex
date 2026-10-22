@@ -19,8 +19,8 @@ import (
 //
 //	supply(contract) = Σ mint − Σ burn − Σ clawback   (baseline 0 at genesis)
 //
-// Not persisted: the serving path sums `stellar.supply_flows` live (SupplyReader.TokenSupply, "no rollup refresh" by design); -seed-flows
-// keeps supply_flows complete and is gated by the shared -write flag (else it counts).
+// Not persisted: the serving path sums `stellar.supply_flows` (SupplyReader.TokenSupply: a base memoised up to 6h plus the flows above it,
+// so restart the API to serve a -seed-flows at once); -seed-flows keeps supply_flows complete, gated by -write (else it counts).
 func chSupply(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: parse, stream+accumulate, optional seed, report; splitting hurts clarity.
 	fs, gate := opsutil.NewMutatingFlagSet("ch-supply")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
