@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/big"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -544,13 +546,42 @@ func (r *ExplorerReader) AccountMovements(ctx context.Context, address string, l
 	if cur.IsSet() {
 		args = append(args, cur.Ledger, cur.Ledger, cur.TxHash, cur.OpIndex, cur.LegIndex)
 	}
-	filter.partitions = r.partitionsClause(ctx, MovementCountsRollup, address, "ledger")
 	window := windowRows(limit, windowFactorKeys)
+	if parts, tail, ok := r.accountPartitions(ctx, MovementCountsRollup, address); ok {
+		filter.partitions = partitionsClauseFor(parts, tail, "ledger")
+		if floor, ok := newestPartitionFloor(parts, cur, filter); ok {
+			bounded := filter
+			bounded.partitions += " AND ledger >= " + strconv.FormatUint(uint64(floor), 10)
+			page, _, err := r.accountMovementsWindowed(ctx, address, limit, window, cur, bounded, append(args, window))
+			if err != nil || len(page) == limit {
+				return page, err
+			}
+		}
+	}
 	if page, ok, err := r.accountMovementsWindowed(ctx, address, limit, window, cur, filter, append(args, window)); err != nil || ok {
 		return page, err
 	}
 	exactFallback("account_movements")
 	return r.queryAccountMovements(ctx, address, accountMovementsQuery(filter, cur.IsSet()), append(args, limit))
+}
+
+// newestPartitionFloor is the first ledger of the newest partition the account has rows in at or below the page's ceiling, when an older
+// one exists too. A busy account sits in every partition and pays one granule per part in each; a page from its newest one alone is a
+// fraction of that, and since every row above the floor is read, a full page from it is the true page.
+func newestPartitionFloor(parts []uint32, cur AccountMovementCursor, filter AccountMovementFilter) (uint32, bool) {
+	ceiling := uint32(math.MaxUint32)
+	if cur.IsSet() {
+		ceiling = cur.Ledger
+	}
+	if filter.HasMaxLedger {
+		ceiling = min(ceiling, filter.MaxLedger)
+	}
+	for i := len(parts) - 1; i > 0; i-- {
+		if floor := parts[i] * opTypePartitionWidth; floor <= ceiling {
+			return floor, true
+		}
+	}
+	return 0, false
 }
 
 func (r *ExplorerReader) queryAccountMovements(ctx context.Context, address, q string, args []any) ([]AccountMovementRow, error) {

@@ -388,9 +388,19 @@ func (r *ExplorerReader) accountPartitionsClause(ctx context.Context, account st
 // tail starts in, so a row landing late below the open partition's built mark is still read. "" (plan missing, read error) means
 // read unfiltered.
 func (r *ExplorerReader) partitionsClause(ctx context.Context, rc *CountsRollup, account, ledgerCol string) string {
-	plan, ok := r.planFor(ctx, rc)
+	parts, tail, ok := r.accountPartitions(ctx, rc, account)
 	if !ok {
 		return ""
+	}
+	return partitionsClauseFor(parts, tail, ledgerCol)
+}
+
+// accountPartitions returns the sorted partitions rc has the account in plus every stale one, and the first ledger of the partition
+// the plan's tail starts in; ok=false (plan missing, read error) means the account's partitions are unknown.
+func (r *ExplorerReader) accountPartitions(ctx context.Context, rc *CountsRollup, account string) (parts []uint32, tail uint32, ok bool) {
+	plan, ok := r.planFor(ctx, rc)
+	if !ok {
+		return nil, 0, false
 	}
 	parts, err := queryKeys(ctx, r.conn, `SELECT DISTINCT part FROM stellar.`+rc.table+`
 		WHERE account = ? AND part IN (`+joinUint32(plan.valid)+`)`+explorerScanSettings,
@@ -400,13 +410,16 @@ func (r *ExplorerReader) partitionsClause(ctx context.Context, rc *CountsRollup,
 			return p, err
 		})
 	if err != nil {
-		return ""
+		return nil, 0, false
 	}
 	parts = append(parts, plan.stale...)
-	tail := plan.tailFrom / opTypePartitionWidth * opTypePartitionWidth
+	slices.Sort(parts)
+	return parts, plan.tailFrom / opTypePartitionWidth * opTypePartitionWidth, true
+}
+
+func partitionsClauseFor(parts []uint32, tail uint32, ledgerCol string) string {
 	clause := " AND (" + ledgerCol + " >= " + strconv.FormatUint(uint64(tail), 10)
 	if len(parts) > 0 {
-		slices.Sort(parts)
 		clause += " OR intDiv(" + ledgerCol + ", " + strconv.Itoa(opTypePartitionWidth) + ") IN (" + joinUint32(parts) + ")"
 	}
 	return clause + ")"
