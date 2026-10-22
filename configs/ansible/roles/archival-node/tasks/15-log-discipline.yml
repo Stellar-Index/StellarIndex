@@ -514,10 +514,11 @@
   tags: [clickhouse, log-discipline]
 
 - name: ClickHouse system-log TTL drop-in
-  # The system.*_log tables (query/trace/part/metric/asynchronous_metric)
-  # grow UNBOUNDED by default — the highest-volume ones (trace_log,
-  # metric_log, asynchronous_metric_log) add rows every collection tick and
-  # were a recurring ~40 GiB of self-inflicted pool bloat with no retention.
+  # Most system.*_log tables grow UNBOUNDED by default; the highest-volume
+  # ones (trace_log, metric_log, asynchronous_metric_log) add rows every
+  # collection tick and were a recurring ~40 GiB of pool bloat. Every log
+  # table r1 writes is listed: the unlisted ones still held rows from
+  # 2026-06, and processors_profile_log's own 30-day default held 39 GiB.
   # A <ttl> under each log section makes ClickHouse apply it as the table's
   # native TTL, so old rows age out automatically. event_date exists on all
   # of these. 14 days keeps ample debugging history while bounding growth.
@@ -542,6 +543,12 @@
           <part_log><ttl>event_date + INTERVAL 14 DAY DELETE</ttl></part_log>
           <metric_log><ttl>event_date + INTERVAL 14 DAY DELETE</ttl></metric_log>
           <asynchronous_metric_log><ttl>event_date + INTERVAL 14 DAY DELETE</ttl></asynchronous_metric_log>
+          <processors_profile_log><ttl>event_date + INTERVAL 14 DAY DELETE</ttl></processors_profile_log>
+          <query_views_log><ttl>event_date + INTERVAL 14 DAY DELETE</ttl></query_views_log>
+          <query_metric_log><ttl>event_date + INTERVAL 14 DAY DELETE</ttl></query_metric_log>
+          <text_log><ttl>event_date + INTERVAL 14 DAY DELETE</ttl></text_log>
+          <error_log><ttl>event_date + INTERVAL 14 DAY DELETE</ttl></error_log>
+          <background_schedule_pool_log><ttl>event_date + INTERVAL 14 DAY DELETE</ttl></background_schedule_pool_log>
       </clickhouse>
   # No automatic restart — same operator-coordinated policy as above.
   when: clickhouse_config_tasks_enabled | default(false) | bool
