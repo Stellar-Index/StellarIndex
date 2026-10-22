@@ -355,11 +355,22 @@ func contractEventView(e clickhouse.ContractActivityRow) ContractEventView {
 	}
 }
 
-// contractEventsFirstPageCached serves the contract's first activity page through the contract-detail SWR cache,
-// computed at the max page size and sliced to the request's limit (see ContractDetail).
+// contractEventsFirstPageSizes are the sizes a first page is computed at. Each walked active ledger costs one granule of the wide XDR
+// columns, so computing the explorer's 50-row page at 500 read ~3x the granules the 100 bucket does.
+var contractEventsFirstPageSizes = [...]int{100, 500}
+
+// contractEventsFirstPageCached serves the contract's first activity page through the contract-detail SWR cache, computed at the
+// smallest contractEventsFirstPageSizes bucket covering limit and sliced to it (see ContractDetail).
 func (h *Handler) contractEventsFirstPageCached(ctx context.Context, cid string, limit int) ([]clickhouse.ContractActivityRow, time.Time, bool, error) {
-	v, asOf, degraded, err := h.contractDetailCached(ctx, "ev:"+cid, func(rctx context.Context) (any, error) {
-		full, cerr := h.Reader.ContractEventsRecent(rctx, cid, 500, clickhouse.ContractEventsCursor{})
+	size := contractEventsFirstPageSizes[len(contractEventsFirstPageSizes)-1]
+	for _, s := range contractEventsFirstPageSizes {
+		if limit <= s {
+			size = s
+			break
+		}
+	}
+	v, asOf, degraded, err := h.contractDetailCached(ctx, fmt.Sprintf("ev:%d:%s", size, cid), func(rctx context.Context) (any, error) {
+		full, cerr := h.Reader.ContractEventsRecent(rctx, cid, size, clickhouse.ContractEventsCursor{})
 		if cerr != nil {
 			return nil, cerr
 		}
