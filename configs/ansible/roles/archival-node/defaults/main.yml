@@ -1197,11 +1197,17 @@ internal_cidrs:
 # source ∈ internal_cidrs).
 stellarindex_api_listen_addr: "127.0.0.1:3000"
 
-# page-latency-sweep.timer: loads per page per entity, and the account cohort the account page is timed for (pooled
-# into each panel's p95). Add whales and dormant accounts here as they are picked.
+# page-latency-sweep.timer: loads per page per entity, and the account and contract cohorts each page is timed for
+# (pooled into each panel's p95).
 page_sweep_iters: 5
 page_sweep_accounts:
   - GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+page_sweep_contracts:
+  - CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH
+  # Most events over the last week (20.9M): the busy tail.
+  - CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA
+  # 7.1M events, none since 2019-03-22: the dormant tail.
+  - CCRVYI3RB6ADTXQ5XM4TYSFFW6524DIU4K77BKHASLFPFMEHVUHVJ2VM
 
 # ───── Observability ─────────────────────────────────────────────────
 # node_exporter is the Debian `prometheus-node-exporter` package (see
