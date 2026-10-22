@@ -135,11 +135,14 @@ func topic0Predicate(topic0Syms []string) string {
 		}
 		asStrings = append(asStrings, b64)
 	}
-	pred := "topic_0_sym IN (" + sqlQuoteList(topic0Syms) + ")"
-	if len(asStrings) > 0 {
-		pred += " OR topics_xdr[1] IN (" + sqlQuoteList(asStrings) + ")"
+	symIn := func(names []string) string { return "topic_0_sym IN (" + sqlQuoteList(names) + ")" }
+	if len(asStrings) == 0 {
+		return "(" + symIn(topic0Syms) + ")"
 	}
-	return "(" + pred + ")"
+	// The leading conjunct is a cheap PREWHERE step: topics_xdr is read only for granules still holding a requested Symbol or an empty
+	// topic_0_sym (the String case), not for every granule a busy contract touches (aquarius router: 32 GiB -> 8 GiB per window).
+	gate := symIn(append(append([]string(nil), topic0Syms...), ""))
+	return "(" + gate + " AND (" + symIn(topic0Syms) + " OR topics_xdr[1] IN (" + sqlQuoteList(asStrings) + ")))"
 }
 
 // symbolTopic0Predicate is topic0Predicate without the ScvString arm, for decoders matching topic[0] only as a Symbol: testing
