@@ -651,6 +651,11 @@ Subcommands:
                           /contracts/{id}/code-history) from
                           ledger_entry_changes. Windowed + resumable; run
                           under run-heavy-job.sh.
+  ch-index-proof          -ch-addr ADDR (-write | -dry-run) [-from N] [-to N] [-window N]
+                          Prove stellar.ops_by_source holds every sourced
+                          tx and op key, per window; a clean genesis-to-tip
+                          run records its watermark. Read-only otherwise;
+                          run under run-heavy-job.sh.
   ch-census-rollup        -ch-addr ADDR [-backfill] [-from-day YYYY-MM-DD] [-write]
                           Maintain stellar.contracts_census_daily (the
                           day-keyed census behind fast /v1/contracts).

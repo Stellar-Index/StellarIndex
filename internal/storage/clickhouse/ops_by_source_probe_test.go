@@ -8,10 +8,13 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 func isOpsBySourceProbe(q string) bool {
-	return strings.Contains(q, "stellar.ops_by_source") && !strings.Contains(q, "WHERE")
+	return (strings.Contains(q, "stellar.ops_by_source") && !strings.Contains(q, "WHERE")) || q == opsBySourceProofProbeQuery
 }
 
 func isOpTypesCoverageProbe(q string) bool {
@@ -138,5 +141,35 @@ func TestAccountOperationTypeCounts_MarkerSwitchesToIndexedTable(t *testing.T) {
 	}
 	if last := conn.queries[len(conn.queries)-1]; last != accountOpTypeCountsQuery {
 		t.Fatalf("unmarked: ran %q, want accountOpTypeCountsQuery", last)
+	}
+}
+
+// TestOpsBySourceAvailable_UnprovenServesAndReportsAbsent: without ch-index-proof's row the projection still serves
+// (there is no fallback to refuse to), and the proof probe answers absent so the schema-probe alert pages.
+func TestOpsBySourceAvailable_UnprovenServesAndReportsAbsent(t *testing.T) {
+	for _, proven := range []bool{false, true} {
+		conn := &stubConn{respond: func(q string) (driver.Rows, error) {
+			if q == opsBySourceProofProbeQuery {
+				if proven {
+					return &stubRows{data: [][]any{{uint32(65_000_000)}}}, nil
+				}
+				return &stubRows{}, nil
+			}
+			if isOpsBySourceProbe(q) {
+				return &stubRows{data: [][]any{{uint32(1)}}}, nil
+			}
+			return &stubRows{}, nil
+		}}
+		r := &ExplorerReader{conn: conn, opsBySourceProofProbe: schemaProbe{name: "ops_by_source_proof"}}
+		if !r.opsBySourceAvailable(context.Background()) {
+			t.Fatalf("proven=%v: a populated ops_by_source must serve", proven)
+		}
+		want := 0.0
+		if proven {
+			want = 1
+		}
+		if got := testutil.ToFloat64(obs.CHSchemaProbePresent.WithLabelValues("ops_by_source_proof")); got != want {
+			t.Errorf("proven=%v: ops_by_source_proof probe present = %v, want %v", proven, got, want)
+		}
 	}
 }

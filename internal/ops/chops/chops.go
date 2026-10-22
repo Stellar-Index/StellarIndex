@@ -49,6 +49,8 @@ func lakeMutatorVerb(verb string) (func([]string) error, bool) {
 		return chContractLedgersBackfill, true
 	case "ch-instance-backfill":
 		return chInstanceBackfill, true
+	case "ch-index-proof":
+		return chIndexProof, true
 	case "ch-census-rollup":
 		return chCensusRollup, true
 	case "ch-optype-rollup":

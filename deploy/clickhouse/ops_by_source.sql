@@ -104,7 +104,10 @@ WHERE source_account != '';
 --           WHERE ledger_seq > (SELECT max(ledger_seq) - 10000 FROM stellar.ledgers)
 --           LIMIT 20) t)
 --
--- Expect 0.
+-- Expect 0. Then prove the whole table, window by window, and record the
+-- proof watermark the API probes (ops_by_source_proof):
+--
+--   /usr/local/sbin/run-heavy-job.sh obs-proof stellarindex-ops ch-index-proof -ch-addr 127.0.0.1:9300 -write
 --
 -- ── ROLLBACK ────────────────────────────────────────────────────────────────
 -- Additive projection; nothing else writes or reads it. Pair a drop with
