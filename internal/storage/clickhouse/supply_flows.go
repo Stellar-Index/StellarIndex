@@ -208,9 +208,10 @@ const supplySumByContractsQuery = `
 	FROM stellar.supply_flows FINAL
 	WHERE contract_id IN (?) AND ledger_seq `
 
-// supplySettledQuery is the ledger a base sum stops below: supplySettledMargin under the newest flow, rounded down. max() is answered
-// from part metadata.
-const supplySettledQuery = `SELECT toUInt32(greatest(intDiv(toInt64(max(ledger_seq)) - ` + supplySettledMargin + `, 100000) * 100000, 0))
+// supplySettledQuery is the ledger a base sum stops below: supplySettledMargin under the newest flow, rounded down, and never above the
+// lake tip, so a stray far-future row cannot pull live flows into a base. Both max() reads are answered from part metadata.
+const supplySettledQuery = `SELECT toUInt32(greatest(intDiv(toInt64(least(max(ledger_seq),
+		ifNull((SELECT max(ledger_seq) FROM stellar.ledgers), 0))) - ` + supplySettledMargin + `, 100000) * 100000, 0))
 	FROM stellar.supply_flows`
 
 const (
@@ -266,7 +267,7 @@ func (m *settledSupplyMemo) get(id string, now time.Time) (settledBase, bool) {
 func (m *settledSupplyMemo) put(id string, b settledBase) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.m == nil || len(m.m) >= supplyBaseMemoMax {
+	if _, held := m.m[id]; m.m == nil || (!held && len(m.m) >= supplyBaseMemoMax) {
 		m.m = make(map[string]settledBase)
 	}
 	m.m[id] = b

@@ -307,3 +307,71 @@ func TestTokenSupplyForContracts_RereadsOnlyAboveSettledBase(t *testing.T) {
 		t.Errorf("an expired base must be re-read in full (3 queries), got %d", n)
 	}
 }
+
+// TestTokenSupplyForContracts_GroupsBySettledAndKeepsBaseOnly: bases memoised at different settled ledgers each get their own
+// recent read bound to their own ledger, and a contract with no recent flows is still served from its base.
+func TestTokenSupplyForContracts_GroupsBySettledAndKeepsBaseOnly(t *testing.T) {
+	settled := uint32(64_900_000)
+	conn := &stubConn{respond: func(q string) (driver.Rows, error) {
+		switch {
+		case strings.Contains(q, "max(ledger_seq)"):
+			return &stubRows{data: [][]any{{settled}}}, nil
+		case strings.Contains(q, "ledger_seq < ?"):
+			return &stubRows{data: [][]any{{"COLD1", "100", "0", "0", uint64(1)}, {"COLD2", "40", "0", "0", uint64(1)}}}, nil
+		}
+		return &stubRows{}, nil
+	}}
+	clock := time.Unix(1_700_000_000, 0)
+	r := &SupplyReader{conn: conn, now: func() time.Time { return clock }}
+	if _, err := r.TokenSupplyForContracts(t.Context(), []string{"COLD1"}); err != nil {
+		t.Fatal(err)
+	}
+	settled = 65_000_000
+	if _, err := r.TokenSupplyForContracts(t.Context(), []string{"COLD2"}); err != nil {
+		t.Fatal(err)
+	}
+	before := len(conn.queries)
+	got, err := r.TokenSupplyForContracts(t.Context(), []string{"COLD1", "COLD2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bounds := map[uint32]bool{}
+	for i := before; i < len(conn.queries); i++ {
+		if !strings.Contains(conn.queries[i], "ledger_seq >= ?") {
+			t.Fatalf("warm read issued a non-recent query: %s", conn.queries[i])
+		}
+		bounds[conn.args[i][1].(uint32)] = true
+	}
+	if len(bounds) != 2 || !bounds[64_900_000] || !bounds[65_000_000] {
+		t.Errorf("want one recent read per settled ledger, got bounds %v", bounds)
+	}
+	if got["COLD1"].Total.String() != "100" || got["COLD2"].Total.String() != "40" {
+		t.Errorf("base-only contracts must be served from their base, got %+v", got)
+	}
+}
+
+// TestTokenSupplyForContracts_FailedBaseIsNotMemoised: a base read that fails leaves nothing behind, so the next call reads in full.
+func TestTokenSupplyForContracts_FailedBaseIsNotMemoised(t *testing.T) {
+	fail := true
+	conn := &stubConn{respond: func(q string) (driver.Rows, error) {
+		switch {
+		case strings.Contains(q, "max(ledger_seq)"):
+			return &stubRows{data: [][]any{{uint32(64_900_000)}}}, nil
+		case strings.Contains(q, "ledger_seq < ?") && fail:
+			return nil, errors.New("boom")
+		}
+		return &stubRows{}, nil
+	}}
+	r := &SupplyReader{conn: conn}
+	if _, err := r.TokenSupplyForContracts(t.Context(), []string{"CAAA"}); err == nil {
+		t.Fatal("base read failure swallowed")
+	}
+	fail = false
+	before := len(conn.queries)
+	if _, err := r.TokenSupplyForContracts(t.Context(), []string{"CAAA"}); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(conn.queries) - before; n != 3 {
+		t.Errorf("after a failed base the next read must be in full (3 queries), got %d", n)
+	}
+}
