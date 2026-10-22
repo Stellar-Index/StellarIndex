@@ -536,9 +536,9 @@ func TestDirectoryLookup_ReadDeadlineIs503NotInternal500(t *testing.T) {
 	}
 }
 
-func (r *capReader) AccountSponsorships(ctx context.Context, _, _ string, _ bool, _ clickhouse.SponsorshipKey, _ uint32, _ int) ([]clickhouse.SponsorshipArrangement, error) {
+func (r *capReader) AccountSponsorships(ctx context.Context, _, _ string, _ bool, _ clickhouse.SponsorshipKey, _ uint32, _ int) ([]clickhouse.SponsorshipArrangement, clickhouse.SponsorshipKey, error) {
 	r.probe.record(ctx)
-	return nil, nil
+	return nil, clickhouse.SponsorshipKey{}, nil
 }
 
 func (r *capReader) SponsorshipTotals(ctx context.Context, _, _ string, _ uint32) (clickhouse.SponsorshipTotals, error) {

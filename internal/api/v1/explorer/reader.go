@@ -202,7 +202,7 @@ type ExplorerReader interface {
 	AccountsSignedBy(ctx context.Context, key string, ledgers []uint32, maxAccounts int) (clickhouse.SignerScan, error)
 	// AccountSponsorships pages the sponsorship arrangements in which the account is the side's party (sponsor or
 	// sponsored), each with its events through maxLedger; inForceOnly keeps the ones whose last event is a start.
-	AccountSponsorships(ctx context.Context, account, side string, inForceOnly bool, after clickhouse.SponsorshipKey, maxLedger uint32, limit int) ([]clickhouse.SponsorshipArrangement, error)
+	AccountSponsorships(ctx context.Context, account, side string, inForceOnly bool, after clickhouse.SponsorshipKey, maxLedger uint32, limit int) ([]clickhouse.SponsorshipArrangement, clickhouse.SponsorshipKey, error)
 	// SponsorshipTotals counts one side of the account's arrangements through maxLedger.
 	SponsorshipTotals(ctx context.Context, account, side string, maxLedger uint32) (clickhouse.SponsorshipTotals, error)
 	// AssetEntryLedgers lists, newest first, the indexed ledgers at or below maxLedger for the asset.

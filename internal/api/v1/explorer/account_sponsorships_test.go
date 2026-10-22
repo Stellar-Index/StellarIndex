@@ -19,6 +19,7 @@ type sponsorshipsReader struct {
 	*capReader
 	wm           uint32
 	arrangements []clickhouse.SponsorshipArrangement
+	resume       clickhouse.SponsorshipKey
 	totals       map[string]clickhouse.SponsorshipTotals
 	state        clickhouse.AccountState
 	lastSide     string
@@ -33,9 +34,9 @@ func (r *sponsorshipsReader) EntryHistoryWatermark(context.Context) (uint32, err
 
 func (r *sponsorshipsReader) AccountSponsorships(_ context.Context, _, side string, inForce bool,
 	after clickhouse.SponsorshipKey, _ uint32, limit int,
-) ([]clickhouse.SponsorshipArrangement, error) {
+) ([]clickhouse.SponsorshipArrangement, clickhouse.SponsorshipKey, error) {
 	r.lastSide, r.lastInForce, r.lastAfter, r.lastLimit = side, inForce, after, limit
-	return r.arrangements, nil
+	return r.arrangements, r.resume, nil
 }
 
 func (r *sponsorshipsReader) SponsorshipTotals(_ context.Context, _, side string, _ uint32) (clickhouse.SponsorshipTotals, error) {
@@ -89,6 +90,19 @@ func callAccountSponsorships(t *testing.T, reader ExplorerReader, q url.Values, 
 	rec := httptest.NewRecorder()
 	h.AccountSponsorships(rec, r)
 	return rec.Code, view
+}
+
+func TestAccountSponsorships_ShortPageCarriesTheReadersResumeKey(t *testing.T) {
+	reader := newSponsorshipsReader(200)
+	reader.arrangements = reader.arrangements[:1]
+	reader.resume = spDataKey
+	code, view := callAccountSponsorships(t, reader, url.Values{"direction": {"sponsored"}}, 5)
+	if code != http.StatusOK || len(view.Arrangements) != 1 {
+		t.Fatalf("status %d, %d arrangements; want 200 with the one found", code, len(view.Arrangements))
+	}
+	if view.NextCursor != sponsorshipCursor(spDataKey) {
+		t.Fatalf("next_cursor = %q, want the resume key so the client keeps paging", view.NextCursor)
+	}
 }
 
 func TestAccountSponsorships_PageEpisodesAndProof(t *testing.T) {
@@ -189,9 +203,9 @@ func (r *barrierSponsorshipsReader) barrier() error {
 
 func (r *barrierSponsorshipsReader) AccountSponsorships(ctx context.Context, account, side string, inForce bool,
 	after clickhouse.SponsorshipKey, wm uint32, limit int,
-) ([]clickhouse.SponsorshipArrangement, error) {
+) ([]clickhouse.SponsorshipArrangement, clickhouse.SponsorshipKey, error) {
 	if err := r.barrier(); err != nil {
-		return nil, err
+		return nil, clickhouse.SponsorshipKey{}, err
 	}
 	return r.sponsorshipsReader.AccountSponsorships(ctx, account, side, inForce, after, wm, limit)
 }
