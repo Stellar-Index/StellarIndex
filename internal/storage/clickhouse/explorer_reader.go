@@ -262,6 +262,9 @@ type ExplorerReader struct {
 	// without it: a bloom-scan fallback would restore the slow sourced arm and an empty
 	// arm would hide the account's own transactions.
 	opsBySourceProbe schemaProbe
+	// opsBySourceProofProbe probes for ch-index-proof's watermark row. The readers serve without it (non-empty is all
+	// they can check per request, and there is no fallback); its absent answer is what pages.
+	opsBySourceProofProbe schemaProbe
 
 	// accountActivityProbe probes stellar.account_activity. Present and non-empty bounds AccountOperations' reverse primary-key resolve at
 	// the account's last-active ledger (`ledger_seq <= ?`); absent means unbounded. The bound is only a perf hint, and an available
@@ -363,6 +366,7 @@ func newExplorerReader(conn driver.Conn) *ExplorerReader {
 		accountSponsorEdgesProbe: schemaProbe{name: "account_sponsor_edges"},
 		holdersRollupProbe:       schemaProbe{name: "asset_holders_rollup"},
 		opsBySourceProbe:         schemaProbe{name: "ops_by_source"},
+		opsBySourceProofProbe:    schemaProbe{name: "ops_by_source_proof"},
 		accountActivityProbe:     schemaProbe{name: "account_activity"},
 		lecVersionProbe:          schemaProbe{name: "ledger_entries_current_version"},
 		wealthCache:              newAccountsWealthCache(),
@@ -1547,9 +1551,15 @@ var errOpsBySourceMissing = errors.New(
 // opsBySourceAvailable reports whether ops_by_source exists AND holds rows: an empty
 // sourced arm reads as "sourced nothing", so an unfed or TRUNCATEd projection must refuse.
 func (r *ExplorerReader) opsBySourceAvailable(ctx context.Context) bool {
-	return r.probeSchema(ctx, &r.opsBySourceProbe,
+	ok := r.probeSchema(ctx, &r.opsBySourceProbe,
 		`SELECT ledger_seq FROM stellar.ops_by_source LIMIT 1`, true)
+	if ok {
+		r.probeSchema(ctx, &r.opsBySourceProofProbe, opsBySourceProofProbeQuery, true)
+	}
+	return ok
 }
+
+const opsBySourceProofProbeQuery = `SELECT thru_ledger FROM stellar.entry_history_watermark WHERE name = '` + OpsBySourceProofName + `' AND thru_ledger > 0 LIMIT 1`
 
 // accountActivityAvailable reports whether stellar.account_activity is usable.
 // requireRows: an empty watermark bounds nothing, so it reads as unavailable and re-probes.

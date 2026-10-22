@@ -374,7 +374,7 @@ A `worker panicked` line names the reaper ([worker-panicked](infra.md#stellarind
 
 **Trigger.** `stellarindex_ch_schema_probe_present{probe="..."} == 0` for 30m on one API instance, P3. The explorer reader (`internal/storage/clickhouse/explorer_reader.go`) latches a "no such table/column" answer until restart, so the API stays on a slow fallback (or 503s). `0` = absent or empty; an unanswering lake moves `stellarindex_ch_schema_probe_unanswered_total` instead. A restart clears the series until the probe next answers, so the alert resolving on a deploy is not a fix: re-check step 1 after the first explorer read.
 
-Each `probe` names the lake table `stellar.<probe>` (e.g. `tx_hash_index`, `contract_active_ledgers`, `accounts_stats`, `asset_holders_rollup`, `ops_by_source`, `account_activity`) except: `tx_hash_index_coverage` is a marker (apply `deploy/clickhouse/tx_hash_index_coverage.sql`, then backfill or insert the row); `contract_instance_changes_tx_key` is the `tx_hash` + `intra_ledger_seq` columns on `stellar.contract_instance_changes`; `ledger_entries_current_version` is the `version` column on `stellar.ledger_entries_current`.
+Each `probe` names the lake table `stellar.<probe>` (e.g. `tx_hash_index`, `contract_active_ledgers`, `accounts_stats`, `asset_holders_rollup`, `ops_by_source`, `account_activity`) except: `tx_hash_index_coverage` is a marker (apply `deploy/clickhouse/tx_hash_index_coverage.sql`, then backfill or insert the row); `contract_instance_changes_tx_key` is the `tx_hash` + `intra_ledger_seq` columns on `stellar.contract_instance_changes`; `ledger_entries_current_version` is the `version` column on `stellar.ledger_entries_current`. `ops_by_source_proof` is ch-index-proof's row in `stellar.entry_history_watermark`: account history serves without it, unproven. Run `stellarindex-ops ch-index-proof -ch-addr 127.0.0.1:9300 -write` under `run-heavy-job.sh` (about 70 s per million ledgers); a mismatch names the window to refill with `deploy/clickhouse/ops_by_source.sql` Step 2, then re-run from genesis.
 
 **Check** (5 min).
 
@@ -420,6 +420,12 @@ Fix:
 1. Find the table behind `read` (`sourced_*_keys`: `stellar.ops_by_source`; `*_movements`: `stellar.account_movements`; `recent_operations`: `stellar.operations`; `contract_events`: `stellar.contract_events`) and count its active parts per partition in `system.parts`; a pile of small parts means merges are behind.
 2. Check `system.merges` for a stuck merge, and whether a backfill or replay is re-inserting rows into old partitions.
 3. Once merges catch up the rate falls on its own; if one whale account drives it, raise that read's window factor in `explorer_window_dedup.go`.
+
+## stellarindex_derived_index_watermark_missing
+
+**What.** `stellar.entry_history_watermark` has no row for the index (or the table is missing). Reads gated on it (contract activity walk, contract stats, sponsorships, entry and signer history) serve their scan or lower-bound fallback.
+
+**Fix.** Run the job that proves the index and stamps its row: `contract_active_ledgers` → `ch-contract-ledgers-backfill -genesis -full`; `contract_instance_changes` → `ch-instance-backfill`; `entry_index`/`signer_index` → entry-index.timer; `sponsorship_events` → `ch-entry-history`. The gauge updates on the next gated read. **Escalate:** [clickhouse](clickhouse.md); metrics in the [reference](../../reference/metrics/README.md).
 
 ## stellarindex_customer_webhook_delivery_failing
 

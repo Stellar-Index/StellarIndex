@@ -76,7 +76,7 @@ func lakeMutatorVerb(verb string) (func([]string) error, bool) {
 	}
 }
 
-// historyDeriveVerb resolves the lake → per-account/per-asset history derives,
+// historyDeriveVerb resolves the lake → per-account/per-asset history derives and their completeness proof,
 // split from lakeMutatorVerb to keep each switch under the gocyclo ceiling.
 func historyDeriveVerb(verb string) (func([]string) error, bool) {
 	switch verb {
@@ -86,6 +86,8 @@ func historyDeriveVerb(verb string) (func([]string) error, bool) {
 		return chEntryHistory, true
 	case "ch-entry-index":
 		return chEntryIndex, true
+	case "ch-index-proof":
+		return chIndexProof, true
 	case "classic-movements-backfill":
 		return classicMovementsBackfill, true
 	default:

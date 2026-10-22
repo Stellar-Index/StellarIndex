@@ -354,6 +354,12 @@ func (r *ExplorerReader) instanceGenesisWatermark(ctx context.Context) (uint32, 
 func (r *ExplorerReader) genesisWatermark(ctx context.Context, table string) (uint32, error) {
 	var wm uint32
 	err := r.conn.QueryRow(ctx, instanceGenesisWatermarkQuery, table).Scan(&wm)
+	switch {
+	case err == nil:
+		observeWatermark(table, wm)
+	case isSchemaAbsent(err):
+		observeWatermark(table, 0)
+	}
 	return wm, err
 }
 

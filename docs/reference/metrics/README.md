@@ -1829,6 +1829,12 @@ Counter. Label `table` (`account_entry_ledgers`, `asset_entry_ledgers`, `sponsor
 
 Explorer reads answered as empty because their ClickHouse table or column is missing. Alert: `stellarindex_explorer_schema_absent_empty`.
 
+### `stellarindex_derived_index_watermark_ledger`
+
+Gauge. Label `index` (an `entry_history_watermark` name: `contract_active_ledgers`, `contract_instance_changes`, `entry_index`, `signer_index`, `sponsorship_events`).
+
+The ledger the index is proven complete through, as last read; `0` = no row or no table. Set only when a read consults it. Alert: `stellarindex_derived_index_watermark_missing`.
+
 ### `stellarindex_protocol_detail_refresh_total`
 
 Counter. Labels: `outcome` (`ok` | `stale` | `degraded` | `timeout`).

@@ -357,7 +357,7 @@ func registerStorageAndExplorerMetrics() {
 		SDEXOrderBookUndecodableOffersTotal,
 		ExplorerSWRRefreshTotal, ExplorerSWRRefreshDurationSeconds,
 		ExplorerRefreshGateSaturatedTotal,
-		CHSchemaProbePresent, CHSchemaProbeUnansweredTotal, ExplorerSchemaAbsentEmptyTotal,
+		CHSchemaProbePresent, CHSchemaProbeUnansweredTotal, DerivedIndexWatermarkLedger, ExplorerSchemaAbsentEmptyTotal,
 		ProtocolDetailRefreshTotal,
 		ProtocolDetailRefreshDurationSeconds,
 		WorkerPanicsTotal,
@@ -3043,6 +3043,15 @@ var CHSchemaProbePresent = prometheus.NewGaugeVec(
 		Help: "Last ClickHouse answer to each explorer schema probe (1 = object usable, 0 = absent or empty; the explorer serves that surface from its fallback while 0).",
 	},
 	[]string{"probe"},
+)
+
+// DerivedIndexWatermarkLedger is the completeness watermark last read for each derived ClickHouse index (0 = absent).
+var DerivedIndexWatermarkLedger = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_derived_index_watermark_ledger",
+		Help: "Ledger each derived ClickHouse index is proven complete through, as last read from stellar.entry_history_watermark (0 = no watermark row or no table; the fast paths gated on it serve their fallback).",
+	},
+	[]string{"index"},
 )
 
 // ExplorerSchemaAbsentEmptyTotal counts explorer reads served as empty because their ClickHouse table or column is missing.
