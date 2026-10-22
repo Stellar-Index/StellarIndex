@@ -17,7 +17,7 @@ flips — those need infrastructure beyond `make dev`.
 | File | Stresses | Pass criteria |
 |---|---|---|
 | `scenarios/01-redis-down.sh` | rate-limit fail-open + Redis-fed read paths | API `/v1/healthz` returns 200/503 throughout; recovers within 30s |
-| `scenarios/02-timescale-down.sh` | DB-backed read paths fail loudly | uncached `/v1/markets?limit=97` 5xx; default `/v1/markets` 5xx OR cached body, never an empty 200 over a non-empty baseline |
+| `scenarios/02-timescale-down.sh` | DB-backed read paths fail loudly | uncached `/v1/markets?limit=497` 5xx; default `/v1/markets` 5xx OR cached body, never an empty 200 over a non-empty baseline |
 | `scenarios/03-redis-network-partition.sh` | go-redis cold-conn timeout vs connection-refused | ≤ 1 transient sample failure during 30s partition; clean recovery |
 | `scenarios/04-redis-misconf.sh` | Redis MISCONF (stop-writes-on-bgsave-error) → rate-limiter dwell-time policy | inside the 30s dwell window every GET route answers its pre-fault status (fail-OPEN, never 500); after it every rate-limited route, `POST /v1/signup` included, answers 503 `errors/throttle-unavailable` + Retry-After (fail-CLOSED); all routes back to baseline within 30s of heal |
 
