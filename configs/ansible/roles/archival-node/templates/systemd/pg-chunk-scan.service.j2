@@ -1,0 +1,26 @@
+# systemd service: decode every new or rewritten compressed TimescaleDB chunk
+# and publish the unreadable count (files/pg-chunk-scan.sh).
+#
+# count(*) cannot see a corrupted compressed chunk; only decoding it can
+# (r1, 2026-10-21: merge_chunks left 4 chunks unreadable).
+[Unit]
+Description=Stellar Index — compressed-chunk readability scan
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale.md#stellarindex_pg_compressed_chunks_unreadable
+After=postgresql.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/pg-chunk-scan
+User=root
+Nice=15
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+# A first (full) run decodes every compressed chunk; later runs only new ones.
+TimeoutStartSec=4h
+ProtectSystem=strict
+ReadWritePaths=/var/lib/node_exporter/textfile_collector /var/lib/stellarindex
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true

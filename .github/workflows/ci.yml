@@ -1228,6 +1228,13 @@ jobs:
         # readers, a max()-only rollup, a count() above a collapsing
         # subquery, and prose.
         run: ./scripts/ci/lint-lake-dedup-test.sh
+      - name: lint-chunk-functions
+        # merge_chunks on compressed chunks left 4 chunks unreadable on r1,
+        # and count(*) could not see it. No tracked code may call it or
+        # drop_chunks; retention goes through add_retention_policy.
+        run: ./scripts/ci/lint-chunk-functions.sh
+      - name: lint-chunk-functions self-test
+        run: ./scripts/ci/lint-chunk-functions-test.sh
       - name: lint-ch-apply-scope
         # deploy/clickhouse/ is not a bootstrap manifest. Executing every file
         # in the directory on each fresh provision would run OPERATOR migration
@@ -1482,6 +1489,10 @@ jobs:
         # macOS has no /proc, so this is the only place the probe's
         # process-selection and fail-closed behaviour can be exercised at all.
         run: ./scripts/ci/memory-mappings-test.sh
+      - name: pg-chunk-scan self-test
+        run: ./scripts/ci/pg-chunk-scan-test.sh
+      - name: catchup-lanes self-test
+        run: ./scripts/ci/catchup-lanes-test.sh
 
       - name: lint-textfile-exposition
         # psql prints a SET's command tag on stdout and `-At` does not suppress

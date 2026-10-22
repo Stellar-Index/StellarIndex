@@ -127,6 +127,7 @@ done
 # file has nothing to lint, and verify.sh's whole-tree gates judge its removal.
 # Paths are NUL-separated so a name with a space cannot split in two.
 changed=()
+chunkfn=0
 how=""
 if [ "$mode" = files ]; then
     for f in ${explicit[@]+"${explicit[@]}"}; do
@@ -230,6 +231,10 @@ for f in "${changed[@]}"; do
         configs/ansible/roles/archival-node/tasks/08-clickhouse.yml| \
         */configs/ansible/roles/archival-node/tasks/08-clickhouse.yml)
             ch_files+=("$f"); hit=1 ;;
+    esac
+    case "$f" in
+        *.go|*.sql|*.sh|*.j2|*.yml|*.yaml|*.py)
+            if grep -qE '(merge_chunks|drop_chunks)' "$f"; then chunkfn=1; hit=1; fi ;;
     esac
     # The lake-dedup gate's own subject filter, applied here so the trigger
     # is exactly the set of files that gate would examine.
@@ -391,6 +396,10 @@ if [ "${#mig_files[@]}" -gt 0 ]; then
     fi
 elif [ "$op_corpus" -eq 1 ]; then
     add_step "lint-migration-commands" "" "$ci_dir/lint-migration-commands.sh"
+fi
+
+if [ "$chunkfn" -eq 1 ]; then
+    add_step "lint-chunk-functions" "" "$ci_dir/lint-chunk-functions.sh"
 fi
 
 # 5. verify.sh ↔ CI parity, when either side of it changed.

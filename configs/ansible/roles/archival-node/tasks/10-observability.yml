@@ -1022,6 +1022,78 @@
     - not (ansible_check_mode and memory_mappings_units is changed)
   tags: [observability, memory-mappings]
 
+# ── Compressed-chunk readability scan ─────────────────────────────
+# count(*) cannot see an unreadable compressed chunk; decoding it can. Alerts: deploy/monitoring/rules/ops-safety.yml.
+- name: Install compressed-chunk readability scan
+  ansible.builtin.copy:
+    src: pg-chunk-scan.sh
+    dest: /usr/local/bin/pg-chunk-scan
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [observability, pg-chunk-scan]
+
+- name: Install pg-chunk-scan systemd service + timer
+  ansible.builtin.template:
+    src: "systemd/{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - pg-chunk-scan.service
+    - pg-chunk-scan.timer
+  notify: Reload systemd
+  register: pg_chunk_scan_units
+  tags: [observability, pg-chunk-scan]
+
+- name: Enable + start pg-chunk-scan.timer
+  ansible.builtin.systemd:
+    name: pg-chunk-scan.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  when:
+    # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
+    - not (ansible_check_mode and pg_chunk_scan_units is changed)
+  tags: [observability, pg-chunk-scan]
+
+# ── Catch-up lane state probe ─────────────────────────────
+# A failed lane sleeps until an operator clears it. Alerts: deploy/monitoring/rules/ops-safety.yml.
+- name: Install catch-up lane state probe
+  ansible.builtin.copy:
+    src: catchup-lanes.sh
+    dest: /usr/local/bin/catchup-lanes
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [observability, catchup-lanes]
+
+- name: Install catchup-lanes systemd service + timer
+  ansible.builtin.template:
+    src: "systemd/{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - catchup-lanes.service
+    - catchup-lanes.timer
+  notify: Reload systemd
+  register: catchup_lanes_units
+  tags: [observability, catchup-lanes]
+
+- name: Enable + start catchup-lanes.timer
+  ansible.builtin.systemd:
+    name: catchup-lanes.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  when:
+    # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
+    - not (ansible_check_mode and catchup_lanes_units is changed)
+  tags: [observability, catchup-lanes]
+
 # ── TimescaleDB job/CAGG health probe ─────────────────────────────
 # Producer for stellarindex_timescale_cagg_stale and
 # stellarindex_timescale_compression_lag (deploy/monitoring/rules/storage.yml);

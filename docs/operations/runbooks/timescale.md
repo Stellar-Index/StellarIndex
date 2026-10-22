@@ -304,6 +304,19 @@ stellarindex-ops trades-cagg-refresh -config /etc/stellarindex.toml -size
 
 The floor is `prices_1m`'s earliest materialised bucket. Below it, or on the first day where `trades` and `prices_1m` disagree, `-force=false` refuses and names the window; refresh those ranges with the forced form (rebuilds `prices_1m` from `trades` first) with the retention policy disarmed. A piece failing with `55P03` raced the policy job: re-run step 2.
 
+## stellarindex_pg_compressed_chunks_unreadable
+
+`pg-chunk-scan.timer` (04:20 UTC) decodes every `compressed_data` column of every compressed chunk with `compressed_data_info()`. A chunk that fails is listed in `stellarindex_pg_compressed_chunk_unreadable{hypertable,chunk}`. `count(*)` and `chunks_detailed_size` stay normal on such a chunk; a read that touches it errors or crashes the backend, and a crash loop restarts Postgres.
+
+The known cause is `merge_chunks()` on a compressed chunk (r1, TimescaleDB 2.26.4). `scripts/ci/lint-chunk-functions.sh` keeps it and `drop_chunks()` out of the tree.
+
+1. Do not merge, drop, decompress or recompress the chunk. Each rewrites it and can lose the evidence or the rows.
+2. Find which rows it held: `SELECT range_start, range_end FROM timescaledb_information.chunks WHERE chunk_name = '<chunk>';`.
+3. Restore those rows. A derived table (a cagg, a projection) re-derives from its source for that range. A primary table restores from a pgBackRest PITR copy on another host; r1 has no room for a full restore (plan §5.1). Copy the range back with `COPY`, then drop the broken chunk only after the copy verifies, with Ash's yes.
+4. Re-run the scan: `systemctl start pg-chunk-scan.service`. It keeps a list of verified chunks in `/var/lib/stellarindex/pg-chunk-scan.verified` and re-scans only new or rewritten ones; delete that file to force a full scan.
+
+`stellarindex_pg_chunk_scan_stale` means no scan has completed for 36 h, so corruption would go unseen. Read `journalctl -u pg-chunk-scan -n 50`; the probe prints the psql ERROR line.
+
 ## Related
 
 - [config-assertion-failed](config-assertion-failed.md); `postgres.md#stellarindex_timescale_disk_full`; `postgres.md#stellarindex_timescale_connections_saturated`; `api.md#stellarindex_api_latency_p95_high`; `api.md#stellarindex_api_price_stale`.

@@ -104,8 +104,7 @@ Evidence for each: [docs/architecture/domain-traps.md](docs/architecture/domain-
   (example test, `internal/canonical/alias_registry_test.go`; no repo-wide guard).
 - **ALWAYS correlate a Soroswap `SwapEvent` with the immediately-following `SyncEvent`** by
   `(ledger, tx_hash, op_index)` (`internal/sources/soroswap/adapter_test.go`).
-- **ALWAYS group all 8 Phoenix events** to reconstruct one swap
-  (`TestDecoder_Decode_completesAfterEighthField`).
+- **ALWAYS group all 8 Phoenix events** to reconstruct one swap (`TestDecoder_Decode_completesAfterEighthField`).
 - **ALWAYS gate a decoder on contract identity, never on topic alone** (ADR-0035). Comet's
   `("POOL", <event>)` topic is shared by every Balancer-v1 deployment. Each gated decoder
   package has a foreign-contract rejection test (e.g. `TestDecoder_GateRejectsForeignContract` in
@@ -121,8 +120,9 @@ Evidence for each: [docs/architecture/domain-traps.md](docs/architecture/domain-
   at compute time. No lint: eager normalisation hides a depeg, and no static check can tell it
   from a legitimate pair.
 - **ALWAYS gate a Soroban backfill behind a per-WASM-hash decoder audit.** Contracts upgrade in
-  place; backfill sees every prior version
-  (`ch_rebuild_backfillsafe_test.go`).
+  place; backfill sees every prior version (`ch_rebuild_backfillsafe_test.go`).
+- **NEVER call `merge_chunks()` or `drop_chunks()` from code, migrations or ops scripts.** Merging
+  compressed chunks left r1 chunks undecodable (`lint-chunk-functions.sh`, `pg-chunk-scan.timer`).
 - **ALWAYS collapse `stellar.operations` and `stellar.transactions` on their identity before
   aggregating** — they are `ReplacingMergeTree` and hold rows twice
   (`scripts/ci/lint-lake-dedup.sh`, .go/.sql only; ad-hoc queries: FINAL or uniqExact; [docs/contributing/lake-reads.md](docs/contributing/lake-reads.md)).
