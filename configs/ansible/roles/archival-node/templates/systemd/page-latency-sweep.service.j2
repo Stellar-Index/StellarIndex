@@ -10,6 +10,7 @@ Environment=API_BASE_URL=http://{{ stellarindex_api_listen_addr }}
 Environment=ITERS={{ page_sweep_iters }}
 Environment=CACHE_BUST=1
 Environment="ACCOUNTS={{ page_sweep_accounts | join(' ') }}"
+Environment="CONTRACTS={{ page_sweep_contracts | join(' ') }}"
 Environment=TEXTFILE=/var/lib/node_exporter/textfile_collector/page_latency_sweep.prom
 ExecStart=/usr/local/bin/page-latency-sweep --pages
 # The exit code counts pages over 1 s; that is the measurement, not a unit failure.
