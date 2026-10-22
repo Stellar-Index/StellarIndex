@@ -33,14 +33,18 @@ type AccountObservationSeed struct {
 func (r *ExplorerReader) LatestAccountEntrySeed(ctx context.Context, account string) (AccountObservationSeed, error) {
 	const q = `SELECT entry_xdr, change_type, ledger_seq, close_time
 		FROM stellar.ledger_entries_current FINAL
-		WHERE account_id = ? AND entry_type = 'account'
+		WHERE entry_type = 'account' AND key_xdr = ?
 		LIMIT 1`
+	key, err := accountKeyXDR(account)
+	if err != nil {
+		return AccountObservationSeed{}, err
+	}
 	var (
 		entryXDR, changeType string
 		ledgerSeq            uint32
 		closeTime            time.Time
 	)
-	row := r.conn.QueryRow(ctx, q, account)
+	row := r.conn.QueryRow(ctx, q, key)
 	if err := row.Scan(&entryXDR, &changeType, &ledgerSeq, &closeTime); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return AccountObservationSeed{}, nil
