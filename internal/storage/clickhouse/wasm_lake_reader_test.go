@@ -757,3 +757,67 @@ func TestContractWasm_WaiterDeadlineDoesNotCancelFill(t *testing.T) {
 		t.Fatalf("contract_code reads = %d, want 1 (the abandoned fill completed and was reused)", got)
 	}
 }
+
+func sacInstanceEntryB64(t *testing.T, name string) string {
+	t.Helper()
+	var cidRaw xdr.Hash
+	cid := xdr.ContractId(cidRaw)
+	nameSym, metaSym, str := xdr.ScSymbol("name"), xdr.ScSymbol("METADATA"), xdr.ScString(name)
+	meta := xdr.ScMap{{
+		Key: xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &nameSym},
+		Val: xdr.ScVal{Type: xdr.ScValTypeScvString, Str: &str},
+	}}
+	metaPtr := &meta
+	storage := xdr.ScMap{{
+		Key: xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &metaSym},
+		Val: xdr.ScVal{Type: xdr.ScValTypeScvMap, Map: &metaPtr},
+	}}
+	inst := xdr.ScContractInstance{
+		Executable: xdr.ContractExecutable{Type: xdr.ContractExecutableTypeContractExecutableStellarAsset},
+		Storage:    &storage,
+	}
+	entry := xdr.LedgerEntry{Data: xdr.LedgerEntryData{
+		Type: xdr.LedgerEntryTypeContractData,
+		ContractData: &xdr.ContractDataEntry{
+			Contract:   xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &cid},
+			Key:        xdr.ScVal{Type: xdr.ScValTypeScvLedgerKeyContractInstance},
+			Durability: xdr.ContractDataDurabilityPersistent,
+			Val:        xdr.ScVal{Type: xdr.ScValTypeScvContractInstance, Instance: &inst},
+		},
+	}}
+	b64, err := xdr.MarshalBase64(entry)
+	if err != nil {
+		t.Fatalf("marshal SAC instance entry: %v", err)
+	}
+	return b64
+}
+
+// TestSACClassicAssetName_MemoisesOnlyProvenVerdicts pins that a WASM or SAC instance is read once per contract, while a contract
+// with no captured instance is read again, since the lake may yet capture a SAC for it.
+func TestSACClassicAssetName_MemoisesOnlyProvenVerdicts(t *testing.T) {
+	cases := map[string]struct {
+		rows     [][]any
+		wantName string
+		wantSAC  bool
+		reads    int
+	}{
+		"wasm":        {[][]any{{instanceEntryB64(t, wasmHashN(1))}}, "", false, 1},
+		"sac":         {[][]any{{sacInstanceEntryB64(t, "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")}}, "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", true, 1},
+		"no instance": {nil, "", false, 3},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			conn := &stubConn{respond: func(string) (driver.Rows, error) { return &stubRows{data: tc.rows}, nil }}
+			r := &ExplorerReader{conn: conn}
+			for range 3 {
+				got, sac, err := r.SACClassicAssetName(context.Background(), testContractID)
+				if err != nil || got != tc.wantName || sac != tc.wantSAC {
+					t.Fatalf("SACClassicAssetName = %q, %v, %v; want %q, %v, nil", got, sac, err, tc.wantName, tc.wantSAC)
+				}
+			}
+			if len(conn.queries) != tc.reads {
+				t.Fatalf("lake reads = %d, want %d", len(conn.queries), tc.reads)
+			}
+		})
+	}
+}

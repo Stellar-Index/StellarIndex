@@ -251,6 +251,9 @@ type ExplorerReader struct {
 	// requireRows: an empty rollup must read as unavailable, not "no asset has holders".
 	holdersRollupProbe schemaProbe
 
+	// sacVerdicts memoises SACClassicAssetName answers an instance proved for good.
+	sacVerdicts sacVerdictMemo
+
 	// cap67 movements coverage cache (see Cap67MovementsWatermark): cap67WMErr/At
 	// negatively cache a failed read; cap67WMFlight is non-nil while a read is in flight.
 	cap67WMMu     sync.Mutex
