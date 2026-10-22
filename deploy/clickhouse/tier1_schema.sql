@@ -1542,6 +1542,25 @@ ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY intDiv(ledger, 1000000)
 ORDER BY (sponsor, sponsored, kind, key_id, ledger, tx_hash, op_index, change_index);
 
+-- One account-side's sponsorship totals per 10,000-ledger bucket, recomputed from
+-- sponsorship_events by ch-entry-history: in_force is the bucket's net change, so
+-- completed buckets sum to the totals and the route reads only its tip bucket live.
+CREATE TABLE IF NOT EXISTS stellar.sponsorship_totals_buckets
+(
+    account           String,
+    side              LowCardinality(String),
+    bucket            UInt32,
+    in_force          Int64,
+    in_force_reserves Int64,
+    started           UInt64,
+    revoked           UInt64,
+    ended             UInt64,
+    refreshed_at      DateTime64(6) DEFAULT now64(6)
+)
+ENGINE = ReplacingMergeTree(refreshed_at)
+PARTITION BY intDiv(bucket, 100)
+ORDER BY (account, side, bucket);
+
 -- ── entry_history_watermark — see deploy/clickhouse/entry_history.sql ──
 CREATE TABLE IF NOT EXISTS stellar.entry_history_watermark
 (

@@ -3,6 +3,8 @@ package chops
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -302,6 +304,7 @@ func TestRunEntryHistory_WritesOnlySponsorshipEvents(t *testing.T) {
 		wm = [2]uint32{from, thru}
 		return nil
 	}
+	totals := stubSponsorshipTotals(t, 0, nil)
 	st := newEntryHistoryStats()
 	if err := runEntryHistory(context.Background(), "unused", ehLedger, ehLedger+2, 10, false, st); err != nil {
 		t.Fatalf("runEntryHistory: %v", err)
@@ -312,5 +315,89 @@ func TestRunEntryHistory_WritesOnlySponsorshipEvents(t *testing.T) {
 	}
 	if wm != [2]uint32{ehLedger, ehLedger + 2} || st.events[entryhistory.SponsorshipStarted] != 1 {
 		t.Fatalf("watermark window = %v, started = %d; want [%d %d] and 1", wm, st.events[entryhistory.SponsorshipStarted], ehLedger, ehLedger+2)
+	}
+	if want := [][2]uint32{{ehLedger, ehLedger + 2}}; !slices.Equal(totals.refreshed, want) || !slices.Equal(totals.advanced, want) {
+		t.Fatalf("totals refreshed %v advanced %v, want both %v", totals.refreshed, totals.advanced, want)
+	}
+}
+
+type totalsCalls struct {
+	refreshed, advanced [][2]uint32
+	events              uint32
+}
+
+// stubSponsorshipTotals fakes the totals seams: the watermark reads as wm and every advance returns advanceErr.
+func stubSponsorshipTotals(t *testing.T, wm uint32, advanceErr error) *totalsCalls {
+	t.Helper()
+	origWM, origEv, origRefresh, origSet := sponsorshipTotalsWatermark, sponsorshipEventsWatermark, refreshSponsorshipTotals, setSponsorshipTotalsWM
+	t.Cleanup(func() {
+		sponsorshipTotalsWatermark, sponsorshipEventsWatermark, refreshSponsorshipTotals, setSponsorshipTotalsWM = origWM, origEv, origRefresh, origSet
+	})
+	c := &totalsCalls{}
+	sponsorshipTotalsWatermark = func(context.Context, string) (uint32, error) { return wm, nil }
+	sponsorshipEventsWatermark = func(context.Context, string) (uint32, error) { return c.events, nil }
+	refreshSponsorshipTotals = func(_ context.Context, _ string, lo, hi uint32) error {
+		c.refreshed = append(c.refreshed, [2]uint32{lo, hi})
+		return nil
+	}
+	setSponsorshipTotalsWM = func(_ context.Context, _ string, lo, hi uint32) error {
+		if advanceErr != nil {
+			return advanceErr
+		}
+		c.advanced = append(c.advanced, [2]uint32{lo, hi})
+		return nil
+	}
+	return c
+}
+
+func TestSponsorshipTotalsFollower_ClosesTheGapThenFollowsEachWindow(t *testing.T) {
+	c := stubSponsorshipTotals(t, 100, nil)
+	c.events = 130
+	f := sponsorshipTotalsFollower{addr: "unused"}
+	if err := f.start(context.Background(), 131, 10); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.follow(context.Background(), 131, 140); err != nil {
+		t.Fatal(err)
+	}
+	want := [][2]uint32{{101, 110}, {111, 120}, {121, 130}, {131, 140}}
+	if !slices.Equal(c.refreshed, want) || !slices.Equal(c.advanced, want) {
+		t.Fatalf("refreshed %v advanced %v, want both %v", c.refreshed, c.advanced, want)
+	}
+}
+
+func TestSponsorshipTotalsFollower_UnfilledBucketsTurnItOffWithoutFailingTheDerive(t *testing.T) {
+	c := stubSponsorshipTotals(t, 0, fmt.Errorf("wrapped: %w", clickhouse.ErrSponsorshipTotalsUnfilled))
+	f := sponsorshipTotalsFollower{addr: "unused"}
+	if err := f.start(context.Background(), 500, 10); err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range [][2]uint32{{500, 509}, {510, 519}} {
+		if err := f.follow(context.Background(), w[0], w[1]); err != nil {
+			t.Fatalf("follow %v: %v", w, err)
+		}
+	}
+	if len(c.refreshed) != 1 || len(c.advanced) != 0 {
+		t.Fatalf("refreshed %v advanced %v: want one refused attempt, then off", c.refreshed, c.advanced)
+	}
+}
+
+func TestSponsorshipTotalsFollower_OtherAdvanceErrorsFail(t *testing.T) {
+	stubSponsorshipTotals(t, 0, clickhouse.ErrSponsorshipTotalsAheadOfEvents)
+	f := sponsorshipTotalsFollower{addr: "unused"}
+	if err := f.follow(context.Background(), 1, 10); !errors.Is(err, clickhouse.ErrSponsorshipTotalsAheadOfEvents) {
+		t.Fatalf("err = %v, want ErrSponsorshipTotalsAheadOfEvents", err)
+	}
+}
+
+func TestSponsorshipTotalsFollower_GapStopsAtTheEventsWatermark(t *testing.T) {
+	c := stubSponsorshipTotals(t, 100, nil)
+	c.events = 105
+	f := sponsorshipTotalsFollower{addr: "unused"}
+	if err := f.start(context.Background(), 131, 10); err != nil {
+		t.Fatal(err)
+	}
+	if want := [][2]uint32{{101, 105}}; !slices.Equal(c.refreshed, want) {
+		t.Fatalf("refreshed %v, want %v", c.refreshed, want)
 	}
 }

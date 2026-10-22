@@ -251,6 +251,9 @@ type ExplorerReader struct {
 	// requireRows: an empty rollup must read as unavailable, not "no asset has holders".
 	holdersRollupProbe schemaProbe
 
+	// sacVerdicts memoises SACClassicAssetName answers an instance proved for good.
+	sacVerdicts sacVerdictMemo
+
 	// cap67 movements coverage cache (see Cap67MovementsWatermark): cap67WMErr/At
 	// negatively cache a failed read; cap67WMFlight is non-nil while a read is in flight.
 	cap67WMMu     sync.Mutex
@@ -259,6 +262,9 @@ type ExplorerReader struct {
 	cap67WMErr    error
 	cap67WMErrAt  time.Time
 	cap67WMFlight chan struct{}
+
+	// protocolDaily memoises the protocol-page reads over contract_events_daily; see memoProtocolDaily.
+	protocolDaily protocolDailyMemo
 
 	// opsBySourceProbe probes stellar.ops_by_source. The account-history readers REFUSE
 	// without it: a bloom-scan fallback would restore the slow sourced arm and an empty
