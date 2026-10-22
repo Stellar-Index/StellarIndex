@@ -74,12 +74,10 @@ func itoa(u uint32) string {
 	return fmt.Sprintf("%d", u)
 }
 
-// One multi-row INSERT may carry at most 65,535 bind parameters; at 13 per
-// row the sub-batch cap has to sit under 5,041, and every row must land in
-// exactly one sub-batch.
+// One multi-row INSERT may carry at most 65,535 bind parameters, including the 2 ts bounds; every row must land in exactly one sub-batch.
 func TestTradeInsertChunkBounds(t *testing.T) {
-	if tradeInsertMaxRows*tradeColsPerRow > 65535 {
-		t.Fatalf("tradeInsertMaxRows=%d × %d params exceeds the 65,535-parameter ceiling", tradeInsertMaxRows, tradeColsPerRow)
+	if tradeInsertMaxRows*tradeColsPerRow+2 > 65535 {
+		t.Fatalf("tradeInsertMaxRows=%d × %d params + 2 ts bounds exceeds the 65,535-parameter ceiling", tradeInsertMaxRows, tradeColsPerRow)
 	}
 	for _, n := range []int{0, 1, tradeInsertMaxRows - 1, tradeInsertMaxRows, tradeInsertMaxRows + 1, 100_000} {
 		bounds := tradeInsertChunkBounds(n)
