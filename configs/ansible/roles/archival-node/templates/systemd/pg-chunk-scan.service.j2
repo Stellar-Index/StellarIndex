@@ -11,14 +11,19 @@ After=postgresql.service
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/pg-chunk-scan
-User=root
+# Peer auth as postgres. Not User=root + runuser: ProtectKernelTunables and
+# ProtectKernelModules make runuser's setuid fail with EPERM.
+User=postgres
+Group=postgres
+SupplementaryGroups=stellarindex
+StateDirectory=pg-chunk-scan
 Nice=15
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7
 # A first (full) run decodes every compressed chunk; later runs only new ones.
 TimeoutStartSec=4h
 ProtectSystem=strict
-ReadWritePaths=/var/lib/node_exporter/textfile_collector /var/lib/stellarindex
+ReadWritePaths=/var/lib/node_exporter/textfile_collector
 PrivateTmp=true
 NoNewPrivileges=true
 ProtectKernelTunables=true

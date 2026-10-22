@@ -17,7 +17,7 @@ for a in "$@"; do case "$a" in
   first=*) echo "${a#first=}" >"$FAKE_DIR/first.seen" ;;
 esac; done
 cat >/dev/null
-[ -e "$FAKE_DIR/fail" ] && { echo "psql:<stdin>:2: ERROR:  canceling statement due to statement timeout" >&2; exit 3; }
+[ -e "$FAKE_DIR/fail" ] && { echo "psql: error: connection to server failed: Permission denied" >&2; exit 2; }
 cat "$FAKE_DIR/notices" >&2
 FAKE
 chmod +x "$t/psql"
@@ -50,8 +50,10 @@ check "partial run flagged"          "grep -qx 'stellarindex_pg_chunk_scan_parti
 check "partial full run keeps state" "grep -qx '101:5001' '$t/state' && grep -qx '103:5004' '$t/state'"
 
 touch "$t/fail"
-rc=0; "$probe" >/dev/null 2>&1 </dev/null || rc=$?
+rc=0; "$probe" >/dev/null 2>"$t/err" </dev/null || rc=$?
 check "psql failure exits non-zero"  "[ $rc -ne 0 ]"
+check "failure prints psql output"   "grep -q 'connection to server failed' '$t/err'"
+check "failure prom world-readable"  "[ -n \"\$(find '$prom' -perm -0004)\" ]"
 check "failure publishes success 0"  "grep -qx 'stellarindex_pg_chunk_scan_success 0' '$prom'"
 check "failure keeps last verdict"   "grep -qx 'stellarindex_pg_compressed_chunks_unreadable 1' '$prom'"
 check "failure keeps state"          "grep -qx '101:5001' '$t/state'"
