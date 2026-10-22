@@ -357,7 +357,7 @@ func registerStorageAndExplorerMetrics() {
 		SDEXOrderBookUndecodableOffersTotal,
 		ExplorerSWRRefreshTotal, ExplorerSWRRefreshDurationSeconds,
 		ExplorerRefreshGateSaturatedTotal,
-		CHSchemaProbePresent, CHSchemaProbeUnansweredTotal,
+		CHSchemaProbePresent, CHSchemaProbeUnansweredTotal, ExplorerSchemaAbsentEmptyTotal,
 		ProtocolDetailRefreshTotal,
 		ProtocolDetailRefreshDurationSeconds,
 		WorkerPanicsTotal,
@@ -3043,6 +3043,15 @@ var CHSchemaProbePresent = prometheus.NewGaugeVec(
 		Help: "Last ClickHouse answer to each explorer schema probe (1 = object usable, 0 = absent or empty; the explorer serves that surface from its fallback while 0).",
 	},
 	[]string{"probe"},
+)
+
+// ExplorerSchemaAbsentEmptyTotal counts explorer reads served as empty because their ClickHouse table or column is missing.
+var ExplorerSchemaAbsentEmptyTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_explorer_schema_absent_empty_total",
+		Help: "Explorer reads answered as empty because their ClickHouse table or column does not exist, by table.",
+	},
+	[]string{"table"},
 )
 
 // CHSchemaProbeUnansweredTotal counts explorer schema probes that got no answer (transport error, deadline); leaves [CHSchemaProbePresent] untouched.

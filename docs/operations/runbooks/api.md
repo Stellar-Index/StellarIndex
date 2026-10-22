@@ -405,6 +405,12 @@ clickhouse-client --port 9300 -q "SELECT name FROM system.columns
 
 An optional object a deployment deliberately omits is a standing ticket; silence with an expiry. **Escalate:** [clickhouse](clickhouse.md) if the lake itself is down; metrics in the [reference](../../reference/metrics/README.md).
 
+## stellarindex_explorer_schema_absent_empty
+
+**What.** An explorer read of `stellar.<table>` got "table/column does not exist" and served an empty result. The page shows no entry changes, trustline days or sponsorships, which reads as true.
+
+**Fix.** Apply the table's DDL from `deploy/clickhouse/`, then run the backfill documented beside it (`account_entry_ledgers`/`asset_entry_ledgers`: entry-index; `sponsorship_events`: its backfill). The counter stops on the next read; the alert clears an hour later. **Escalate:** [clickhouse](clickhouse.md); metrics in the [reference](../../reference/metrics/README.md).
+
 ## stellarindex_explorer_exact_fallback_sustained
 
 Ticket. `sum by (read) (rate(stellarindex_explorer_exact_fallback_total[30m])) > 0.05` for 1h. Explorer page reads (recent operations, account transactions/operations key arms, account and asset movements, contract events) read a bounded window in sort-key order and dedup it in Go; when duplicates fill the window, they re-run as the exact query over the whole history. Correct, but seconds per page.

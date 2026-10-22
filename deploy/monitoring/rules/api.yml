@@ -987,6 +987,26 @@ groups:
             (slower scans) or 503ing it. If the object now exists and
             holds rows, the verdict latched before the DDL landed and the
             API must be restarted to pick it up.
+      # A read whose table or column is missing answers empty, which a page shows as "no activity". Any such read tickets:
+      # the schema probes cover only the tables they probe.
+      - alert: stellarindex_explorer_schema_absent_empty
+        expr: |
+          sum by (table) (increase(stellarindex_explorer_schema_absent_empty_total[1h])) > 0
+        for: 0m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_explorer_schema_absent_empty
+          summary: "Explorer reads of stellar.{{ $labels.table }} answered empty because the table is missing"
+          description: |
+            An explorer read of stellar.{{ $labels.table }} got a
+            missing-table or missing-column answer from ClickHouse in
+            the last hour and was served as an empty result. Pages
+            built on it (entry changes, trustline history,
+            sponsorships) show "nothing" instead of the truth until
+            the table is created and backfilled.
       # A page read whose bounded window cannot prove a full page re-runs as the exact O(history) query: correct, but the slow path
       # the window exists to avoid. Sustained fallbacks mean un-merged duplicates are piling up on that read's table.
       - alert: stellarindex_explorer_exact_fallback_sustained

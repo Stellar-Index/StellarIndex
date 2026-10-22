@@ -169,6 +169,24 @@ func isSchemaAbsent(err error) bool {
 	return ok
 }
 
+var absentEmptyTables = []string{"account_entry_ledgers", "asset_entry_ledgers", "sponsorship_events"}
+
+func init() {
+	for _, t := range absentEmptyTables {
+		obs.ExplorerSchemaAbsentEmptyTotal.WithLabelValues(t)
+	}
+}
+
+// absentReadsEmpty reports whether err is a missing-schema answer that the caller serves as an empty result,
+// counting it so an unbuilt index pages instead of reading as "no activity".
+func absentReadsEmpty(table string, err error) bool {
+	if !isSchemaAbsent(err) {
+		return false
+	}
+	obs.ExplorerSchemaAbsentEmptyTotal.WithLabelValues(table).Inc()
+	return true
+}
+
 // ExplorerReader serves the network-explorer reads (ADR-0038) from the certified lake (ADR-0034); construct once and reuse, reads are by immutable key and cacheable.
 type ExplorerReader struct {
 	conn driver.Conn
