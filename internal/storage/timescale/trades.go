@@ -754,7 +754,7 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
                 maker             = EXCLUDED.maker,
                 taker             = EXCLUDED.taker,
                 derive_generation = EXCLUDED.derive_generation
-              WHERE %[2]s
+              WHERE trades.derive_generation <= EXCLUDED.derive_generation AND %[2]s
             RETURNING (xmax = 0) AS inserted
         ), bump AS (
             INSERT INTO source_entry_counts AS sec (source, entry_count, updated_at)
@@ -1019,7 +1019,7 @@ func (s *Store) insertTradeRows(ctx context.Context, insertRows []canonical.Trad
                 maker             = EXCLUDED.maker,
                 taker             = EXCLUDED.taker,
                 derive_generation = EXCLUDED.derive_generation
-              WHERE %[2]s
+              WHERE trades.derive_generation <= EXCLUDED.derive_generation AND %[2]s
             RETURNING (xmax = 0) AS inserted, source, ledger, ts,
                       base_asset, quote_asset, base_amount, quote_amount
         ), bump AS (
