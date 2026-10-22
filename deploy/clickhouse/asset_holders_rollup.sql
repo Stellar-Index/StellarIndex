@@ -62,7 +62,11 @@ AS stellar.asset_holders_counts;
 -- covers, so /v1/assets' classic market cap reads it instead of re-running
 -- that scan. Additive with DEFAULT 0, so an older binary's INSERT still
 -- works; the reader treats a held asset summing to 0 as a cycle written
--- before the column and scans instead. Both twins, or EXCHANGE refuses.
+-- before the column and scans instead. ch-holders-rollup runs these two at
+-- the start of every cycle, so a binary that lands before this file heals
+-- the schema instead of failing its INSERT. By hand, stop
+-- holders-rollup.timer first: an EXCHANGE between the two ALTERs leaves one
+-- twin without the column.
 ALTER TABLE stellar.asset_holders_counts ADD COLUMN IF NOT EXISTS circulating Int128 DEFAULT 0 AFTER holders;
 ALTER TABLE stellar.asset_holders_counts_staging ADD COLUMN IF NOT EXISTS circulating Int128 DEFAULT 0 AFTER holders;
 

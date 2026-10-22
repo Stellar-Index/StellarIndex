@@ -12,7 +12,7 @@ import (
 // nobody.
 const classicCirculatingSupplyQuery = `SELECT asset, toString(sum(toInt128(balance))) AS circ
 		FROM stellar.ledger_entries_current FINAL
-		WHERE entry_type = 'trustline' AND change_type != 'removed' AND balance > 0
+		WHERE ` + classicCirculatingFilter + `
 		GROUP BY asset` + explorerScanSettings + `, max_execution_time = 150`
 
 // ClassicCirculatingSupply returns per-asset sum of positive trustline balances (CODE-ISSUER to i128 string, 7 decimals); a LOWER BOUND, not the supply (blind to claimable balances, LP reserves and SAC holders), and callers MUST cache it.
@@ -42,12 +42,19 @@ func (r *ExplorerReader) ClassicCirculatingSupply(ctx context.Context) (map[stri
 	return out, rows.Err()
 }
 
+// classicCirculatingFilter is the trustline population both the scan and the holders rollup's count step sum, so the two agree.
+const classicCirculatingFilter = `entry_type = 'trustline' AND change_type != 'removed' AND balance > 0`
+
+// classicCirculatingRollupMaxAge leaves room for the API's 30-min classicSupplyMaxAge, so a served total is never more than
+// holdersRollupMaxAge behind; a healthy 30-min timer keeps cycles well inside it.
+const classicCirculatingRollupMaxAge = 90 * time.Minute
+
 // classicCirculatingRollupQuery reads the sums the holders rollup computes in its own scan of the same trustline population.
 const classicCirculatingRollupQuery = `SELECT asset, toString(circulating), holders, computed_at
 		FROM stellar.asset_holders_counts WHERE asset != 'native'`
 
 // classicCirculatingFromRollup is ClassicCirculatingSupply from the holders rollup; ok=false sends the caller to the scan when the table
-// or column is absent, the read fails, the cycle is older than holdersRollupMaxAge, or a held asset sums to 0 (a cycle written before
+// or column is absent, the read fails, the cycle is older than classicCirculatingRollupMaxAge, or a held asset sums to 0 (a cycle written before
 // the column existed).
 func (r *ExplorerReader) classicCirculatingFromRollup(ctx context.Context) (map[string]string, bool) {
 	rows, err := r.conn.Query(ctx, classicCirculatingRollupQuery)
@@ -72,7 +79,7 @@ func (r *ExplorerReader) classicCirculatingFromRollup(ctx context.Context) (map[
 			out[asset] = circ
 		}
 	}
-	if rows.Err() != nil || len(out) == 0 || !holdersRollupStamped(at) || time.Since(at) > holdersRollupMaxAge {
+	if rows.Err() != nil || len(out) == 0 || !holdersRollupStamped(at) || time.Since(at) > classicCirculatingRollupMaxAge {
 		return nil, false
 	}
 	return out, true

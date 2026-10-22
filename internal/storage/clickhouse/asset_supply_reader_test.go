@@ -185,7 +185,7 @@ func TestClassicCirculatingSupply_ScansWhenRollupUnusable(t *testing.T) {
 	fresh := time.Now().Add(-time.Minute).Truncate(time.Second)
 	scan := [][]any{{"USDC-" + testIssuer, "500"}}
 	for name, rows := range map[string][][]any{
-		"stale cycle":           {{"USDC-" + testIssuer, "400", int64(2), time.Now().Add(-holdersRollupMaxAge - time.Minute)}},
+		"stale cycle":           {{"USDC-" + testIssuer, "400", int64(2), time.Now().Add(-classicCirculatingRollupMaxAge - time.Minute)}},
 		"cycle before column":   {{"USDC-" + testIssuer, "0", int64(2), fresh}},
 		"empty table":           nil,
 		"mixed cycle stamps":    {{"USDC-" + testIssuer, "400", int64(2), fresh}, {"EURC-" + testIssuer, "9", int64(1), fresh.Add(-time.Second)}},
