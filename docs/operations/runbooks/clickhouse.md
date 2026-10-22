@@ -84,6 +84,19 @@ Fix:
 
 False positive: during a bulk `ch-backfill`, rejections are back-pressure, not loss, provided the backfill's resume state records the window incomplete. Verify first.
 
+## stellarindex_counts_rollup_plan_unusable
+
+Ticket. `stellarindex_counts_rollup_plan_ok{rollup} == 0` for 30m, exported by the API on each plan refresh (1/min, on page traffic). The explorer reader has no usable plan for `account_op_type_counts` (op-types) or `account_movement_counts` (movements), so account activity, transactions/operations and movements read the source table whole: correct, but seconds per page.
+
+Fix:
+
+1. Table missing: build it per `deploy/clickhouse/account_op_types.sql` Step 6 (`ch-optype-rollup -max-closed 0 -write` under `run-heavy-job.sh`), then enable `optype-rollup.timer`.
+2. Table present: `stellarindex-ops ch-optype-rollup` (dry run) lists the partitions it would rebuild; check the API log for the sentinel read error.
+
+## stellarindex_counts_rollup_stale_partitions
+
+Ticket. `stellarindex_counts_rollup_stale_partitions{rollup} > 0` for 2h. Partitions whose rollup row count no longer matches the source are read from source. `optype-rollup.timer` rebuilds 4 per run; check it is enabled and `journalctl -u optype-rollup` shows runs. After a backfill into many closed partitions, run `ch-optype-rollup -max-closed 0 -write` under `run-heavy-job.sh`. `ErrCountsShrink` in the log means a recompute counted fewer rows than the live partition: find out why before passing `-shrink-ok`.
+
 ## ch-live-sink
 
 Alerts on `stellarindex_ch_live_sink_*` counters (rules: `deploy/monitoring/rules/ingestion.yml`, `configs/prometheus/rules.r1/ingestion.yml`). The indexer writes each ledger twice ([ADR-0034](../../adr/0034-tiered-clickhouse-architecture.md), [ADR-0041](../../adr/0041-ingest-durability-semantics.md)): `clickhouse.ExtractLedger` to the lake's live edge and `dispatcher.CensusLedger` to `ledger_ingest_log`. Served pricing is unaffected by drops and errors; under `read_undercount` projected Soroban sources (soroswap, aquarius, phoenix) under-read the short ledgers until replayed. Identify which counter fired; remedies differ:

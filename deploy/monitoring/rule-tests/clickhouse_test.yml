@@ -352,3 +352,54 @@ tests:
       - eval_time: 80m
         alertname: stellarindex_clickhouse_inserts_rejected
         exp_alerts: []   # released once the burst leaves the window
+
+  # Counts rollup plan: op-types healthy, movements missing its table for 30m+ -> only movements fires; a stale backlog that
+  # clears inside 2h stays silent, one that holds past 2h fires.
+  - interval: 1m
+    input_series:
+      - series: 'stellarindex_counts_rollup_plan_ok{job="stellarindex-api",instance="localhost:8080",rollup="op-types"}'
+        values: '1x60'
+      - series: 'stellarindex_counts_rollup_plan_ok{job="stellarindex-api",instance="localhost:8080",rollup="movements"}'
+        values: '0x60'
+      - series: 'stellarindex_counts_rollup_stale_partitions{job="stellarindex-api",instance="localhost:8080",rollup="op-types"}'
+        values: '3x60 0x200'
+      - series: 'stellarindex_counts_rollup_stale_partitions{job="stellarindex-api",instance="localhost:8080",rollup="movements"}'
+        values: '2x200'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_counts_rollup_plan_unusable
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: stellarindex_counts_rollup_plan_unusable
+        exp_alerts:
+          - exp_labels:
+              rollup: movements
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse.md#stellarindex_counts_rollup_plan_unusable
+              summary: "The movements counts rollup has no usable read plan — account panels scan the source"
+              description: |
+                The explorer reader found no usable plan for the
+                movements counts rollup for 30 minutes: the table is
+                missing or unreadable, or no partition matches its source.
+                Account activity / movements still answer correctly but read
+                the whole source, far past the 300 ms page budget.
+      - eval_time: 150m
+        alertname: stellarindex_counts_rollup_stale_partitions
+        exp_alerts:
+          - exp_labels:
+              rollup: movements
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse.md#stellarindex_counts_rollup_stale_partitions
+              summary: "2 movements counts-rollup partitions stale for 2h — read from source"
+              description: |
+                The reader's plan has served 2 closed partitions
+                of the movements rollup from the source for 2 hours.
+                optype-rollup.timer rebuilds 4 per 30-minute run, so a
+                backlog that outlives 2 hours means the timer is not running,
+                is failing, or a backfill outpaced it.
