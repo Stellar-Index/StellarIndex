@@ -10,6 +10,9 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 func ident(k int) int { return k }
@@ -178,12 +181,16 @@ func TestAccountTransactions_UnprovenWindowFallsBackToExactQuery(t *testing.T) {
 	router := &txArmRouter{sourced: filled}
 	conn := &stubConn{respond: withOpsBySourceRows(router.respond)}
 	r := &ExplorerReader{conn: conn}
+	before := testutil.ToFloat64(obs.ExplorerExactFallbackTotal.WithLabelValues("sourced_tx_keys"))
 
 	if _, _, err := r.AccountTransactions(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
 		t.Fatalf("AccountTransactions: %v", err)
 	}
 	if exactQueries(conn, sourcedTxKeysExactQuery(false)) != 1 {
 		t.Fatalf("the sourced arm did not fall back to its exact LIMIT 1 BY query: %v", conn.queries)
+	}
+	if testutil.ToFloat64(obs.ExplorerExactFallbackTotal.WithLabelValues("sourced_tx_keys")) <= before {
+		t.Error("the exact fallback was not counted")
 	}
 }
 
@@ -236,8 +243,12 @@ func TestAccountMovements_UnprovenWindowFallsBackToExactQuery(t *testing.T) {
 		return &stubRows{data: filled}, nil
 	}}
 	r := &ExplorerReader{conn: conn}
+	before := testutil.ToFloat64(obs.ExplorerExactFallbackTotal.WithLabelValues("account_movements"))
 	if _, err := r.AccountMovements(context.Background(), "GADDR", limit, AccountMovementCursor{}, AccountMovementFilter{}); err != nil {
 		t.Fatalf("AccountMovements: %v", err)
+	}
+	if testutil.ToFloat64(obs.ExplorerExactFallbackTotal.WithLabelValues("account_movements")) <= before {
+		t.Error("the exact fallback was not counted")
 	}
 	var reads []string
 	for _, q := range conn.queries {

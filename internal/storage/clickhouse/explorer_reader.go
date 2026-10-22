@@ -671,6 +671,7 @@ func (r *ExplorerReader) recentOperationsPage(ctx context.Context, limit int, cu
 		}
 		return deduped, nil
 	}
+	exactFallback("recent_operations")
 	return r.queryRecentOperations(ctx, recentOperationsSQL(cur.IsSet(), bounded, true, typed), cur, bounded, opTypes, limit)
 }
 
@@ -1020,6 +1021,7 @@ func (r *ExplorerReader) sourcedTxKeys(ctx context.Context, account string, limi
 	if err != nil || ok {
 		return keys, err
 	}
+	exactFallback("sourced_tx_keys")
 	args = append(append([]any{account}, cursorArgs...), limit)
 	return queryKeys(ctx, r.conn, sourcedTxKeysExactQuery(cur.IsSet()), args, scanTxKey)
 }
@@ -1327,6 +1329,7 @@ func (r *ExplorerReader) sourcedOpKeys(ctx context.Context, account string, limi
 	if err != nil || ok {
 		return keys, err
 	}
+	exactFallback("sourced_op_keys")
 	args = append(append([]any{account}, extra...), limit)
 	return queryKeys(ctx, r.conn, sourcedOpKeysExactQuery(cur.IsSet(), hasBound), args, scanOpKey)
 }
@@ -1873,6 +1876,7 @@ func (r *ExplorerReader) ContractEventsRecent(ctx context.Context, contractID st
 	if len(out) < limit && raw == fetch {
 		// Duplicate storm: the over-fetch was ALL consumed and dedup still could not fill the
 		// page, the only case where a short page would lie (next_cursor keys on a FULL page).
+		exactFallback("contract_events")
 		out, _, err = r.contractEventsScan(ctx, contractEventsRecentDedupQuery(cur.IsSet(), ledgers != nil), contractID, limit, limit, cur, ledgers)
 	}
 	return out, err
