@@ -131,9 +131,13 @@ FROM stellar.ledger_entry_changes;
 -- To fix HISTORICAL resurrections, first re-derive ledger_entry_changes
 -- (idempotent-corrective under this RMT — no truncate):
 --   stellarindex-ops ch-backfill -from 2 -to <tip>   (new binary, windowed, genesis->tip)
--- Same-ledger ties begin in (38M,40M] ([287404->38M] has none), so this
--- reproject's Step-2 windows only need [38M->tip]. Run the re-derive BEFORE the
--- windows. ***
+-- Same-ledger ties begin in (38M,40M] ([287404->38M] has none), but a [38M->tip]
+-- window still drops every entry last changed below 38M: also reproject the
+-- dormant tail, `WHERE ledger_seq < 38000000 AND tx_hash = '' AND change_type =
+-- 'state'` (the state-snapshot rows; 3.87M on r1). Run the re-derive BEFORE the
+-- windows: a re-derive that renumbers a ledger AFTER its rows reached this table
+-- leaves the old ingest's higher-version rows winning, and only deleting those
+-- keys here and re-inserting from ledger_entry_changes FINAL removes them. ***
 --
 --   SELECT key_xdr,
 --          v1.change_type AS v1_ct, v1.ledger_seq AS v1_ledger,
