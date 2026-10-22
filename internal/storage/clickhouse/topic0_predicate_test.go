@@ -116,6 +116,17 @@ func TestTopic0SymIncludePredicates_OnlyReviewedSites(t *testing.T) {
 	}
 }
 
+// TestTopic0Predicate_GatesStringArmOnEmptySymbol pins the conjunct that keeps topics_xdr out of the scan for granules holding only
+// other Symbol topics: a String topic[0] always leaves topic_0_sym empty, so admitting the empty string loses no row.
+func TestTopic0Predicate_GatesStringArmOnEmptySymbol(t *testing.T) {
+	t.Parallel()
+	pred := topic0Predicate([]string{"create"})
+	want := "(topic_0_sym IN ('create','') AND (topic_0_sym IN ('create') OR topics_xdr[1] IN ('" + scval.MustEncodeString("create") + "')))"
+	if pred != want {
+		t.Errorf("predicate = %s\nwant        %s", pred, want)
+	}
+}
+
 // TestTopic0Predicate_SymbolOnlyNamesStillFilter pins that the widening does
 // not turn the prefilter into a pass-through: a name that is not requested
 // must not appear, in either encoding.
