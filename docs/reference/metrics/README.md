@@ -1229,6 +1229,18 @@ Counter, label `read` (`recent_operations`, `sourced_tx_keys`, `sourced_op_keys`
 
 Explorer page reads whose bounded window could not prove a full page of distinct keys, so the read re-ran as the exact LIMIT 1 BY / dedup query (O(account or contract history)). Alert: `stellarindex_explorer_exact_fallback_sustained`.
 
+### `stellarindex_counts_rollup_plan_ok`
+
+Gauge, label `rollup` (`op-types`, `movements`).
+
+1 while the explorer reader holds a usable read plan for the counts rollup; 0 while the table is missing or unreadable and account panels scan the source. Set on each plan refresh (at most 1/min, on page traffic). Alert: `stellarindex_counts_rollup_plan_unusable`.
+
+### `stellarindex_counts_rollup_stale_partitions`
+
+Gauge, label `rollup`.
+
+Closed partitions the current plan reads from the source because their rollup no longer matches. Alert: `stellarindex_counts_rollup_stale_partitions`.
+
 ## Supply derivation (aggregator binary)
 
 ### `stellarindex_supply_cross_check_divergence_stroops`

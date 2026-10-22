@@ -56,18 +56,30 @@ func (o *applyOrderer) add(ev events.Event) error {
 }
 
 // flush resolves the batch's tx_index values, stable-sorts by (ledger, tx_index) and forwards every event. A transaction missing from
-// stellar.transactions fails the stream: guessing its apply order is the bug this type exists to remove.
+// stellar.transactions fails the stream: guessing its apply order is the bug this type exists to remove. A ledger whose buffered events
+// all share one transaction has no order to resolve, so it is not looked up; a sparse contract's ledgers are mostly that case.
 func (o *applyOrderer) flush() error {
 	if len(o.buf) == 0 {
 		return nil
 	}
-	idx, err := o.lookup(o.ctx, o.ledgers)
-	if err != nil {
-		return err
+	multi := o.multiTxLedgers()
+	var idx map[ledgerTx]uint32
+	needed := make(map[uint32]bool, len(multi))
+	if len(multi) > 0 {
+		var err error
+		if idx, err = o.lookup(o.ctx, multi); err != nil {
+			return err
+		}
+		for _, l := range multi {
+			needed[l] = true
+		}
 	}
 	order := make([]uint32, len(o.buf))
 	for i := range o.buf {
 		k := ledgerTx{Ledger: o.buf[i].Ledger, TxHash: o.buf[i].TxHash}
+		if !needed[k.Ledger] {
+			continue
+		}
 		ti, ok := idx[k]
 		if !ok {
 			return fmt.Errorf("clickhouse: apply order unresolved: tx %s in ledger %d has contract_events but no stellar.transactions row", k.TxHash, k.Ledger)
@@ -93,6 +105,18 @@ func (o *applyOrderer) flush() error {
 	o.buf = o.buf[:0]
 	o.ledgers = o.ledgers[:0]
 	return nil
+}
+
+// multiTxLedgers returns the buffered ledgers whose events span more than one transaction, ascending.
+func (o *applyOrderer) multiTxLedgers() []uint32 {
+	var out []uint32
+	for i := 1; i < len(o.buf); i++ {
+		prev, cur := &o.buf[i-1], &o.buf[i]
+		if cur.Ledger == prev.Ledger && cur.TxHash != prev.TxHash && (len(out) == 0 || out[len(out)-1] != cur.Ledger) {
+			out = append(out, cur.Ledger)
+		}
+	}
+	return out
 }
 
 // connTxIndexLookup reads tx_index for every transaction in the ledgers. Unmerged ReplacingMergeTree duplicates carry the same tx_index,

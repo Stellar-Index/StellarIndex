@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 71 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 272 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 274 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -174,6 +174,8 @@ its first link must be the rule's `runbook_url` page
 | `stellarindex_clickhouse_server_down` | `up{job="clickhouse"}` | == 0 for 2 min, or absent 10 min | page | [clickhouse-server-health](runbooks/clickhouse.md#stellarindex_clickhouse_server_down) |
 | `stellarindex_clickhouse_query_failures_high` | `rate(ClickHouseProfileEvents_FailedQuery[10m])` | > 0.1/s sustained 15 min | ticket | [clickhouse-server-health](runbooks/clickhouse.md#stellarindex_clickhouse_query_failures_high) |
 | `stellarindex_clickhouse_inserts_rejected` | `increase(ClickHouseProfileEvents_RejectedInserts[1h])` | > 0 ("too many parts"); holds until the hour clears. A rejected block is a lake gap | ticket | [clickhouse-server-health](runbooks/clickhouse.md#stellarindex_clickhouse_inserts_rejected) |
+| `stellarindex_counts_rollup_plan_unusable` | `min by (rollup) (stellarindex_counts_rollup_plan_ok)` | == 0 for 30m: account panels scan the source instead of the counts rollup | ticket | [clickhouse](runbooks/clickhouse.md#stellarindex_counts_rollup_plan_unusable) |
+| `stellarindex_counts_rollup_stale_partitions` | `max by (rollup) (stellarindex_counts_rollup_stale_partitions)` | > 0 for 2h: optype-rollup.timer is not keeping up | ticket | [clickhouse](runbooks/clickhouse.md#stellarindex_counts_rollup_stale_partitions) |
 | `stellarindex_restore_drill_stale` | `time() - restore_drill_last_success_unix{repo=~"1\|"}`, or absent | > 40 d, 30 min (on-box repo1 drill) | ticket | [restore-drill-stale](runbooks/restore-drill.md#stellarindex_restore_drill_stale) |
 | `stellarindex_zfs_pool_free_low` | `zfs_pool_free_bytes` | < 1.6 TiB for 15 min | ticket | [zfs-snapshots](runbooks/zfs-snapshots.md) |
 | `stellarindex_zfs_pool_free_critical` | same | < 1.3 TiB for 5 min (below snapshot job's 1.4 TiB floor) | page | [zfs-snapshots](runbooks/zfs-snapshots.md) |

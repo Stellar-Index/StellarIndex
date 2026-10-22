@@ -112,11 +112,43 @@ func TestApplyOrderer_UnresolvedTxFailsStream(t *testing.T) {
 		t.Fatal("event delivered with unknown apply order")
 		return nil
 	})
-	if err := o.add(events.Event{Ledger: 7, TxHash: "missing"}); err != nil {
-		t.Fatalf("add: %v", err)
+	for _, h := range []string{"a", "missing"} {
+		if err := o.add(events.Event{Ledger: 7, TxHash: h}); err != nil {
+			t.Fatalf("add: %v", err)
+		}
 	}
 	if err := o.flush(); err == nil || !strings.Contains(err.Error(), "apply order unresolved") {
 		t.Fatalf("flush err = %v, want apply-order-unresolved error", err)
+	}
+}
+
+// A ledger whose events all come from one transaction has no apply order to resolve: it must not cost a stellar.transactions read,
+// while a multi-tx ledger in the same batch is still looked up and reordered.
+func TestApplyOrderer_SkipsLookupForSingleTxLedgers(t *testing.T) {
+	idx := map[ledgerTx]uint32{{9, "b"}: 0, {9, "a"}: 1}
+	var calls [][]uint32
+	var got []string
+	o := newApplyOrderer(context.Background(), fakeLookup(idx, &calls), func(ev events.Event) error {
+		got = append(got, ev.TxHash)
+		return nil
+	})
+	collect(t, o, []events.Event{
+		{Ledger: 7, TxHash: "only", EventIndex: 0},
+		{Ledger: 7, TxHash: "only", EventIndex: 1},
+		{Ledger: 9, TxHash: "a"},
+		{Ledger: 9, TxHash: "b"},
+		{Ledger: 11, TxHash: "solo"},
+	})
+	if strings.Join(got, ",") != "only,only,b,a,solo" {
+		t.Fatalf("delivery order = %v", got)
+	}
+	if len(calls) != 1 || len(calls[0]) != 1 || calls[0][0] != 9 {
+		t.Fatalf("lookups = %v, want one call for ledger 9 only", calls)
+	}
+	calls = nil
+	collect(t, o, []events.Event{{Ledger: 12, TxHash: "x"}, {Ledger: 13, TxHash: "y"}})
+	if len(calls) != 0 {
+		t.Fatalf("all-single-tx batch made lookups %v", calls)
 	}
 }
 
