@@ -5,7 +5,7 @@
 #
 # Pass criteria:
 #   1. While down, /v1/healthz returns 200 or 503.
-#   2. While down, an uncached /v1/markets variant (?limit=97) returns 5xx; a
+#   2. While down, an uncached /v1/markets variant (?limit=497) returns 5xx; a
 #      200 there is a silent fall-through.
 #   3. While down, default /v1/markets returns 200 (cache hit) or 5xx; a 200
 #      with empty data fails unless the pre-outage answer was empty too (a
@@ -25,10 +25,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TIMESCALE_CONTAINER="${TIMESCALE_CONTAINER:-stellarindex-timescale}"
 HEALTH_URL="$CHAOS_TARGET/v1/healthz"
 MARKETS_URL="$CHAOS_TARGET/v1/markets"
-# Both markets caches (Redis list cache, in-process SWR) key on
-# (cursor, limit, order) and store only successes; 97 is outside the
-# prewarm set, so this request must reach Postgres.
-MARKETS_UNCACHED_URL="$CHAOS_TARGET/v1/markets?limit=97"
+# Both markets caches store only successes, and every first page up to
+# limit=200 is sliced from one shared head slot (headLimit), so only a
+# limit above 200 is guaranteed to reach Postgres.
+MARKETS_UNCACHED_URL="$CHAOS_TARGET/v1/markets?limit=497"
 
 markets_data_empty() {
     grep -qE '"data":[[:space:]]*\[\]' <<<"$1"
@@ -44,6 +44,11 @@ cleanup() {
         # scenario, so warn.
         if ! docker start "$TIMESCALE_CONTAINER" >/dev/null 2>&1; then
             warn "cleanup: failed to restart $TIMESCALE_CONTAINER — it may still be down; check manually (docker start $TIMESCALE_CONTAINER)"
+        # A run that died mid-outage skipped step 6, so the next scenario's
+        # baseline would hit a DB still starting. healthz can be 200 with the
+        # DB down; wait on a DB read instead.
+        elif ! wait_for_status "$MARKETS_UNCACHED_URL" "200" 60; then
+            warn "cleanup: uncached /v1/markets not 200 within 60s of restarting $TIMESCALE_CONTAINER"
         fi
     fi
 }
@@ -81,10 +86,10 @@ esac
 uncached_status="$(http_status "$MARKETS_UNCACHED_URL" 15)"
 case "$uncached_status" in
     5*)
-        log "API /v1/markets?limit=97 (uncached) correctly 5xx while Timescale is down ($uncached_status)"
+        log "API /v1/markets?limit=497 (uncached) correctly 5xx while Timescale is down ($uncached_status)"
         ;;
     *)
-        die "API /v1/markets?limit=97 (uncached) returned $uncached_status while Timescale is down — should be 5xx"
+        die "API /v1/markets?limit=497 (uncached) returned $uncached_status while Timescale is down — should be 5xx"
         ;;
 esac
 
