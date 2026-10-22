@@ -451,13 +451,14 @@ func (r *ExplorerReader) RecentLedgers(ctx context.Context, limit int, beforeSeq
 	}
 	q := `SELECT ` + ledgerCols + ` FROM stellar.ledgers FINAL`
 	args := []any{}
+	// A cursor page reads ~64 ledgers per row (one granule per part for the limit-1 probes FirstCapturedClosedAfter issues),
+	// never more than the tail window: without a lower bound this is a whole-table FINAL merge, caller-controlled via ?before=.
+	window := uint32(min(recentLedgersTailWindow, 64*limit))
 	if beforeSeq > 0 {
-		// Bound the cursor page to the tip branch's tail window: without a lower bound this
-		// is a whole-table FINAL merge, caller-controlled via ?before=. A short page (a
-		// lake hole wider than the window) is re-read wider below. Clamp at 0 to avoid uint32 underflow.
+		// A short page (a lake hole wider than the window) is re-read wider below. Clamp at 0 to avoid uint32 underflow.
 		lower := uint32(0)
-		if beforeSeq > uint32(recentLedgersTailWindow) {
-			lower = beforeSeq - uint32(recentLedgersTailWindow)
+		if beforeSeq > window {
+			lower = beforeSeq - window
 		}
 		q += ` WHERE ledger_seq < ? AND ledger_seq >= ?`
 		args = append(args, beforeSeq, lower)
@@ -472,7 +473,7 @@ func (r *ExplorerReader) RecentLedgers(ctx context.Context, limit int, beforeSeq
 	args = append(args, limit)
 
 	out, err := r.queryLedgers(ctx, q, args, limit)
-	if err != nil || len(out) == limit || (beforeSeq > 0 && beforeSeq <= uint32(recentLedgersTailWindow)) {
+	if err != nil || len(out) == limit || (beforeSeq > 0 && beforeSeq <= window) {
 		return out, err
 	}
 	return r.recentLedgersWidened(ctx, limit, beforeSeq)
