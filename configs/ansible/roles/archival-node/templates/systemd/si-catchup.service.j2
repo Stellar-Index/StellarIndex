@@ -1,0 +1,20 @@
+# systemd unit: catch-up lane {{ lane }} (rendered once per lane as si-catchup-{{ lane }}.service).
+# Runs /var/lib/stellarindex/catchup/{{ lane }}.queue one step at a time; see si-catchup.sh.
+# Steps are operator commands under run-heavy-job.sh, so root and no NoNewPrivileges/PrivateTmp
+# (HARDENING-EXCEPTIONS). Stopping the unit kills the running step.
+[Unit]
+Description=Catch-up lane {{ lane }}
+After=network-online.target postgresql.service clickhouse-server.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/si-catchup.sh {{ lane }}
+User=root
+Restart=on-failure
+RestartSec=60
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target

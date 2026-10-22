@@ -1005,6 +1005,45 @@
   # `--tags stellarindex` build+deploy pass.
   tags: [heavy-job-wrapper]
 
+# ── Catch-up lanes ─────────────────────────────────────────
+# Operator queue runners: append "name<TAB>command" to <lane>.queue.
+- name: Install catch-up lane driver
+  ansible.builtin.copy:
+    src: si-catchup.sh
+    dest: /usr/local/sbin/si-catchup.sh
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [catchup-lanes]
+
+- name: Install catch-up lane units
+  ansible.builtin.template:
+    src: systemd/si-catchup.service.j2
+    dest: "/etc/systemd/system/si-catchup-{{ lane }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: [a, b]
+  loop_control:
+    loop_var: lane
+  notify: Reload systemd
+  register: si_catchup_units
+  tags: [catchup-lanes]
+
+- name: Enable + start catch-up lanes
+  ansible.builtin.systemd:
+    name: "si-catchup-{{ lane }}.service"
+    enabled: true
+    state: started
+    daemon_reload: true
+  loop: [a, b]
+  loop_control:
+    loop_var: lane
+  when:
+    # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
+    - not (ansible_check_mode and si_catchup_units is changed)
+  tags: [catchup-lanes]
+
 - name: archive-completeness drop-in directory
   # `copy` does not create parent dirs — without this the override.conf
   # copy below fails on a fresh host with "Destination directory
