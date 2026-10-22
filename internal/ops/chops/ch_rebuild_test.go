@@ -185,6 +185,37 @@ func negativeTradeEvent(t *testing.T, ledger, op uint32) soroswap.TradeEvent {
 // TestDrainAndWriteCountsOneSideZeroAsWritten pins that a one-side-zero fill
 // is tallied as written (the store persists it) on every path, and that a
 // Validate-failing trade is tallied as failed.
+// A run that writes per SDEX window must report the same totals as one drain of everything, and charge every chunk.
+func TestCHRebuildSinkAccumulatesAcrossDrains(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	w := okWriter()
+	w.handle = func(_ context.Context, ev consumer.Event) error {
+		if ev.(fakeProtoEvent).src == "bad" {
+			return errInsert
+		}
+		return nil
+	}
+	var charged int
+	sink := &chRebuildSink{
+		ctx: context.Background(), logger: logger, w: w, write: true,
+		written: map[string]int{}, failed: map[string]int{},
+		charge: func(evs []consumer.Event) error { charged += len(evs); return nil },
+	}
+	chunks := [][]consumer.Event{
+		{fakeProtoEvent{src: "reflector"}, fakeProtoEvent{src: "bad"}},
+		nil,
+		{fakeProtoEvent{src: "reflector"}, fakeProtoEvent{src: "reflector"}, fakeProtoEvent{src: "bad"}},
+	}
+	for _, c := range chunks {
+		if err := sink.drain(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if sink.written["reflector"] != 3 || sink.failed["bad"] != 2 || charged != 5 {
+		t.Errorf("written=%v failed=%v charged=%d, want reflector 3, bad 2, charged 5", sink.written, sink.failed, charged)
+	}
+}
+
 func TestDrainAndWriteCountsOneSideZeroAsWritten(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	ctx := context.Background()

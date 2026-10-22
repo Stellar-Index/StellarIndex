@@ -727,13 +727,49 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 		cat = append(cat, sep41Cat...)
 	}
 
-	// ─── SDEX op-based pass (opt-in; read → buffer) ──────────────────────
+	// ─── Postgres writer ─────────────────────────────────────────────────
+	// drainAndWrite counts an event in written[] only after its insert is confirmed and tallies
+	// failures in failed[], so the report and exit code cannot call a partial recovery complete.
+	w := eventWriter{
+		batchTrades: store.BatchInsertTrades,
+		insertTrade: store.InsertTrade,
+		copyXfer:    store.CopyMergeSEP41Transfers,
+		insertXfer:  store.InsertSEP41Transfer,
+		copySup:     store.CopyMergeSEP41SupplyEvents,
+		insertSup:   store.InsertSEP41SupplyEvent,
+		handle: func(ctx context.Context, ev consumer.Event) error {
+			return pipeline.HandleEvent(ctx, logger, store, ev)
+		},
+	}
+	if *bulkTrades {
+		// Opt-in, and only ever set here: the live indexer never builds an
+		// eventWriter, so nothing outside this flag can reach the bulk writer.
+		w.bulkTrades = func(ctx context.Context, batch []canonical.Trade) (timescale.BulkBackfillResult, error) {
+			return store.BulkBackfillTrades(ctx, batch, timescale.BulkBackfillOptions{})
+		}
+	}
+	sink := &chRebuildSink{ctx: ctx, logger: logger, w: w, write: write, written: map[string]int{}, failed: map[string]int{}}
+	if *creditRefusals {
+		sink.charge = func(evs []consumer.Event) error { return chargeCreditRefusals(ctx, store, evs) }
+	}
+
+	// ─── SDEX op-based pass (opt-in; read → write per window) ────────────
+	// A range's SDEX trades do not fit in memory (~20M in 250k ledgers OOM-killed at 20 GB), so each
+	// window is written once its stream closes. The earlier passes drain first to keep write order.
 	if *includeSDEX && enabled("sdex") {
+		if err := sink.drain(buf); err != nil {
+			return err
+		}
+		buf = nil
 		sdexDec := sdex.NewDecoder()
 		sStart := time.Now()
 		decodeRange := func(rlo, rhi uint32) error {
 			return eachTradesByAccountWindow(rlo, rhi, chRebuildSDEXWindow, func(wlo, whi uint32) error {
-				return streamCHRebuildSDEX(ctx, *chAddr, sdexDec, wlo, whi, &buf)
+				var win []consumer.Event
+				if err := streamCHRebuildSDEX(ctx, *chAddr, sdexDec, wlo, whi, &win); err != nil {
+					return err
+				}
+				return sink.drain(win)
 			})
 		}
 		if *sdexGaps {
@@ -851,33 +887,15 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 		fmt.Fprintf(os.Stderr, "ch-rebuild: contract-call read done in %s\n", time.Since(ccStart).Round(time.Second))
 	}
 
-	// ─── write the buffered events to Postgres ───────────────────────────
-	// drainAndWrite counts an event in written[] only after its insert is confirmed and tallies
-	// failures in failed[], so the report and exit code cannot call a partial recovery complete.
-	w := eventWriter{
-		batchTrades: store.BatchInsertTrades,
-		insertTrade: store.InsertTrade,
-		copyXfer:    store.CopyMergeSEP41Transfers,
-		insertXfer:  store.InsertSEP41Transfer,
-		copySup:     store.CopyMergeSEP41SupplyEvents,
-		insertSup:   store.InsertSEP41SupplyEvent,
-		handle: func(ctx context.Context, ev consumer.Event) error {
-			return pipeline.HandleEvent(ctx, logger, store, ev)
-		},
+	// ─── write what is still buffered ────────────────────────────────────
+	if err := sink.drain(buf); err != nil {
+		return err
 	}
-	if *bulkTrades {
-		// Opt-in, and only ever set here: the live indexer never builds an
-		// eventWriter, so nothing outside this flag can reach the bulk writer.
-		w.bulkTrades = func(ctx context.Context, batch []canonical.Trade) (timescale.BulkBackfillResult, error) {
-			return store.BulkBackfillTrades(ctx, batch, timescale.BulkBackfillOptions{})
-		}
-	}
-	written, failed := drainAndWrite(ctx, logger, w, buf, write)
+	buf = nil
 	if *creditRefusals {
-		if err := reportCreditRefusals(ctx, store, buf); err != nil {
-			return err
-		}
+		printCreditRefusals(store)
 	}
+	written, failed := sink.written, sink.failed
 
 	if write {
 		// ─── reset the SEP-41 supply rollup fold checkpoint ──────────────
@@ -1003,9 +1021,9 @@ func tallyTrade(t canonical.Trade, src string, written, failed map[string]int) {
 	failed[src]++
 }
 
-// reportCreditRefusals charges buf's trades to the store's credibility budget in -write's upsert batches (upsertTradeBatchN, cut on a
-// ledger boundary) and prints what it declined.
-func reportCreditRefusals(ctx context.Context, store *timescale.Store, buf []consumer.Event) error {
+// chargeCreditRefusals charges buf's trades to the store's credibility budget in -write's upsert batches (upsertTradeBatchN, cut on a
+// ledger boundary); printCreditRefusals reports the running total.
+func chargeCreditRefusals(ctx context.Context, store *timescale.Store, buf []consumer.Event) error {
 	batch := make([]canonical.Trade, 0, upsertTradeBatchN)
 	charge := func() error {
 		if err := store.ChargeTradesUSDCredit(ctx, batch); err != nil {
@@ -1027,12 +1045,40 @@ func reportCreditRefusals(ctx context.Context, store *timescale.Store, buf []con
 		batch = append(batch, t)
 	}
 	if len(batch) > 0 {
-		if err := charge(); err != nil {
-			return err
-		}
+		return charge()
 	}
+	return nil
+}
+
+func printCreditRefusals(store *timescale.Store) {
 	n, usd := store.CreditRefusals()
 	fmt.Printf("ch-rebuild: credit budget would refuse %d token/token print(s), %s USD\n", n, usd.FloatString(2))
+}
+
+// chRebuildSink writes decoded events in chunks and keeps the run's per-source tallies, so a pass can write as it reads.
+type chRebuildSink struct {
+	ctx             context.Context //nolint:containedctx // one run's sink, built and drained inside chRebuild
+	logger          *slog.Logger
+	w               eventWriter
+	write           bool
+	charge          func([]consumer.Event) error // -credit-refusals; nil otherwise
+	written, failed map[string]int
+}
+
+func (s *chRebuildSink) drain(evs []consumer.Event) error {
+	if len(evs) == 0 {
+		return nil
+	}
+	written, failed := drainAndWrite(s.ctx, s.logger, s.w, evs, s.write)
+	for k, v := range written {
+		s.written[k] += v
+	}
+	for k, v := range failed {
+		s.failed[k] += v
+	}
+	if s.charge != nil {
+		return s.charge(evs)
+	}
 	return nil
 }
 
