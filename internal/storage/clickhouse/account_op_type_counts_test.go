@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -280,6 +281,53 @@ func TestAccountListings_ParticipantReadIsPartitionScoped(t *testing.T) {
 	}
 }
 
+// The participant arm reads the newest partition alone first and widens only when that leaves the page short.
+func TestNewestFirstParticipantKeys(t *testing.T) {
+	const limit = 2
+	newest := [][]any{txKeyRow(mL+9, 1), txKeyRow(mL+5, 0)}
+	all := append(newest[:1:1], txKeyRow(7, 0))
+	cases := []struct {
+		name      string
+		bounded   [][]any
+		hasFloor  bool
+		wantReads int
+		want      []accountTxKey
+	}{
+		{"full page from the newest partition", newest, true, 1, []accountTxKey{{mL + 9, 1}, {mL + 5, 0}}},
+		{"short page widens", newest[:1], true, 2, []accountTxKey{{mL + 9, 1}, {7, 0}}},
+		{"no floor reads every partition", nil, false, 1, []accountTxKey{{mL + 9, 1}, {7, 0}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			conn := &stubConn{respond: func(q string) (driver.Rows, error) {
+				switch {
+				case strings.Contains(q, "FROM stellar.transactions"):
+					return &stubRows{data: append(append([][]any{}, newest...), all...)}, nil
+				case strings.Contains(q, "ledger_seq >= 1000000 ORDER BY"):
+					return &stubRows{data: tc.bounded}, nil
+				}
+				return &stubRows{data: all}, nil
+			}}
+			keys, frontier, err := newestFirstParticipantKeys(context.Background(), conn, "GTEST", limit, txParticipantArm, "", nil, nil, mL, tc.hasFloor)
+			if err != nil || frontier != nil {
+				t.Fatalf("err=%v frontier=%v", err, frontier)
+			}
+			if !slices.Equal(keys, tc.want) {
+				t.Errorf("keys = %v, want %v", keys, tc.want)
+			}
+			var reads int
+			for _, q := range conn.queries {
+				if strings.Contains(q, "FROM stellar.operation_participants") {
+					reads++
+				}
+			}
+			if reads != tc.wantReads {
+				t.Errorf("participant reads = %d, want %d", reads, tc.wantReads)
+			}
+		})
+	}
+}
+
 // The movements listing reads only the partitions account_movement_counts has the address in, plus stale ones and the tail's whole
 // partition; without a plan it reads every partition.
 func TestAccountMovements_ReadIsPartitionScoped(t *testing.T) {
@@ -324,6 +372,66 @@ func TestAccountMovements_ReadIsPartitionScoped(t *testing.T) {
 	}
 	if q := movementsQuery(); strings.Contains(q, "intDiv") {
 		t.Errorf("no plan: movements read is still partition-scoped:\n%s", q)
+	}
+}
+
+// An address in several partitions is first read from its newest one alone; only a full page from it is served, since an older
+// partition can still hold the rest of a short one.
+func TestAccountMovements_NewestPartitionFirst(t *testing.T) {
+	const limit = 3
+	row := func(ledger uint32) []any { return movementRow(ledger, "c", time.Unix(1_000, 0).UTC()) }
+	cases := []struct {
+		name        string
+		cur         AccountMovementCursor
+		bounded     [][]any
+		wantReads   int
+		wantBounded bool
+	}{
+		{"full page from the newest partition", AccountMovementCursor{}, [][]any{row(2*mL + 5), row(2*mL + 4), row(mL + 7)}, 1, true},
+		{"short page widens to every partition", AccountMovementCursor{}, [][]any{row(mL + 7)}, 2, true},
+		{"cursor below the newest partition", AccountMovementCursor{Ledger: 500, TxHash: "tx"}, nil, 1, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			conn := &stubConn{respond: func(q string) (driver.Rows, error) {
+				switch {
+				case strings.Contains(q, "FROM stellar.account_movement_counts WHERE account = ''"):
+					return &stubRows{data: [][]any{{uint32(0), uint32(mL), uint64(5)}, {uint32(1), uint32(mL), uint64(4)}, {uint32(2), uint32(2*mL + 9), uint64(0)}}}, nil
+				case strings.Contains(q, "system.parts"):
+					return &stubRows{data: [][]any{{uint32(0), uint64(5)}, {uint32(1), uint64(3)}, {uint32(2), uint64(1)}}}, nil
+				case strings.Contains(q, "SELECT DISTINCT part FROM stellar.account_movement_counts"):
+					return &stubRows{data: [][]any{{uint32(0)}}}, nil
+				case strings.Contains(q, "ledger >= 1000000 ORDER BY"):
+					return &stubRows{data: tc.bounded}, nil
+				}
+				return &stubRows{}, nil
+			}}
+			r := &ExplorerReader{conn: conn}
+			page, err := r.AccountMovements(context.Background(), "GTESTMOVES", limit, tc.cur, AccountMovementFilter{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var reads []string
+			for _, q := range conn.queries {
+				if strings.Contains(q, "FROM stellar.account_movements WHERE") {
+					reads = append(reads, q)
+				}
+			}
+			if len(reads) != tc.wantReads {
+				t.Fatalf("got %d movements reads, want %d: %v", len(reads), tc.wantReads, reads)
+			}
+			if got := strings.Contains(reads[0], "ledger >= 1000000 ORDER BY"); got != tc.wantBounded {
+				t.Errorf("first read bounded to the newest partition = %v, want %v:\n%s", got, tc.wantBounded, reads[0])
+			}
+			if tc.wantBounded && tc.wantReads == 1 && len(page) != limit {
+				t.Errorf("page = %d rows, want %d", len(page), limit)
+			}
+			for _, q := range reads[1:] {
+				if strings.Contains(q, "ledger >= 1000000 ORDER BY") {
+					t.Errorf("a widened read is still bounded:\n%s", q)
+				}
+			}
+		})
 	}
 }
 

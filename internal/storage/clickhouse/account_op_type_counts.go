@@ -374,23 +374,28 @@ func (rc *CountsRollup) runPartitionConn(ctx context.Context, conn driver.Conn, 
 	return nil
 }
 
-// accountPartitionsClause narrows an account-keyed read of operation_participants to the partitions the account has ops in. It is only
-// as complete as account_op_types: re-deriving operation_participants must re-run its participant arm (account_op_types.sql).
-func (r *ExplorerReader) accountPartitionsClause(ctx context.Context, account string) string {
+// accountParticipantPartitions narrows an account-keyed read of operation_participants to the partitions the account has ops in, and
+// gives newestPartitionFloor under ceiling. It is only as complete as account_op_types: re-deriving operation_participants must re-run
+// its participant arm (account_op_types.sql).
+func (r *ExplorerReader) accountParticipantPartitions(ctx context.Context, account string, ceiling uint32) (clause string, floor uint32, hasFloor bool) {
 	if !r.accountOpTypesCovered(ctx) {
-		return ""
+		return "", 0, false
 	}
-	return r.partitionsClause(ctx, OpTypeCountsRollup, account, "ledger_seq")
+	parts, tail, ok := r.accountPartitions(ctx, OpTypeCountsRollup, account)
+	if !ok {
+		return "", 0, false
+	}
+	floor, hasFloor = newestPartitionFloor(parts, ceiling)
+	return partitionsClauseFor(parts, tail, "ledger_seq"), floor, hasFloor
 }
 
-// partitionsClause narrows an account-keyed read to the partitions rc has the account in: one granule per part is otherwise read from
-// all ~200 parts, ~1.5M rows for an account with a handful of rows. It keeps every stale partition and the whole partition the plan's
-// tail starts in, so a row landing late below the open partition's built mark is still read. "" (plan missing, read error) means
-// read unfiltered.
-func (r *ExplorerReader) partitionsClause(ctx context.Context, rc *CountsRollup, account, ledgerCol string) string {
+// accountPartitions returns the sorted partitions rc has the account in plus every stale one, and the first ledger of the partition
+// the plan's tail starts in, so a row landing late below the open partition's built mark is still read. Without it one granule per part
+// is read from all ~200 parts. ok=false (plan missing, read error) means the account's partitions are unknown.
+func (r *ExplorerReader) accountPartitions(ctx context.Context, rc *CountsRollup, account string) (parts []uint32, tail uint32, ok bool) {
 	plan, ok := r.planFor(ctx, rc)
 	if !ok {
-		return ""
+		return nil, 0, false
 	}
 	parts, err := queryKeys(ctx, r.conn, `SELECT DISTINCT part FROM stellar.`+rc.table+`
 		WHERE account = ? AND part IN (`+joinUint32(plan.valid)+`)`+explorerScanSettings,
@@ -400,13 +405,28 @@ func (r *ExplorerReader) partitionsClause(ctx context.Context, rc *CountsRollup,
 			return p, err
 		})
 	if err != nil {
-		return ""
+		return nil, 0, false
 	}
 	parts = append(parts, plan.stale...)
-	tail := plan.tailFrom / opTypePartitionWidth * opTypePartitionWidth
+	slices.Sort(parts)
+	return parts, plan.tailFrom / opTypePartitionWidth * opTypePartitionWidth, true
+}
+
+// newestPartitionFloor is the first ledger of the newest of parts at or below ceiling, when an older one exists too. A busy account sits
+// in every partition and pays one granule per part in each; a page from its newest one alone is a fraction of that, and since every
+// row above the floor is read, a full page from it is the true page.
+func newestPartitionFloor(parts []uint32, ceiling uint32) (uint32, bool) {
+	for i := len(parts) - 1; i > 0; i-- {
+		if floor := parts[i] * opTypePartitionWidth; floor <= ceiling {
+			return floor, true
+		}
+	}
+	return 0, false
+}
+
+func partitionsClauseFor(parts []uint32, tail uint32, ledgerCol string) string {
 	clause := " AND (" + ledgerCol + " >= " + strconv.FormatUint(uint64(tail), 10)
 	if len(parts) > 0 {
-		slices.Sort(parts)
 		clause += " OR intDiv(" + ledgerCol + ", " + strconv.Itoa(opTypePartitionWidth) + ") IN (" + joinUint32(parts) + ")"
 	}
 	return clause + ")"

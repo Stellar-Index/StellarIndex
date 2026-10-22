@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/big"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -544,8 +546,25 @@ func (r *ExplorerReader) AccountMovements(ctx context.Context, address string, l
 	if cur.IsSet() {
 		args = append(args, cur.Ledger, cur.Ledger, cur.TxHash, cur.OpIndex, cur.LegIndex)
 	}
-	filter.partitions = r.partitionsClause(ctx, MovementCountsRollup, address, "ledger")
 	window := windowRows(limit, windowFactorKeys)
+	if parts, tail, ok := r.accountPartitions(ctx, MovementCountsRollup, address); ok {
+		filter.partitions = partitionsClauseFor(parts, tail, "ledger")
+		ceiling := uint32(math.MaxUint32)
+		if cur.IsSet() {
+			ceiling = cur.Ledger
+		}
+		if filter.HasMaxLedger {
+			ceiling = min(ceiling, filter.MaxLedger)
+		}
+		if floor, ok := newestPartitionFloor(parts, ceiling); ok {
+			bounded := filter
+			bounded.partitions += " AND ledger >= " + strconv.FormatUint(uint64(floor), 10)
+			page, _, err := r.accountMovementsWindowed(ctx, address, limit, window, cur, bounded, append(args, window))
+			if err != nil || len(page) == limit {
+				return page, err
+			}
+		}
+	}
 	if page, ok, err := r.accountMovementsWindowed(ctx, address, limit, window, cur, filter, append(args, window)); err != nil || ok {
 		return page, err
 	}
