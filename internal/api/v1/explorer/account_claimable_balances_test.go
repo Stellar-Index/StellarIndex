@@ -15,7 +15,7 @@ import (
 
 type claimableReader struct {
 	downReader
-	wm         uint32
+	wm, cwm    uint32
 	ledgers    []uint32
 	live       []clickhouse.LiveClaimableBalance
 	keys       int
@@ -25,6 +25,12 @@ type claimableReader struct {
 }
 
 func (r *claimableReader) EntryIndexWatermark(context.Context) (uint32, error) { return r.wm, nil }
+
+func (r *claimableReader) ClaimableIndexWatermark(context.Context) (uint32, error) { return r.cwm, nil }
+
+func (r *claimableReader) IndexedClaimableBalances(context.Context, string, int) (clickhouse.ClaimableScan, error) {
+	return clickhouse.ClaimableScan{Live: r.live, Keys: r.keys}, nil
+}
 
 func (r *claimableReader) AccountEntryLedgers(_ context.Context, _ string, roles []string, _ uint32, _ int) ([]uint32, error) {
 	r.gotRoles = roles
@@ -113,5 +119,23 @@ func TestAccountClaimableBalances_CapsServeALowerBound(t *testing.T) {
 func TestAccountClaimableBalances_UnbuiltIndexIs503(t *testing.T) {
 	if code, _ := callAccountClaimable(t, &claimableReader{}); code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503 before the entry index is built", code)
+	}
+}
+
+func TestAccountClaimableBalances_BuiltClaimableIndexSkipsTheLedgerScan(t *testing.T) {
+	reader := &claimableReader{cwm: 700, keys: 1, live: []clickhouse.LiveClaimableBalance{
+		claimable(650, "0000000003", "12", validTestAccount),
+	}}
+	code, view := callAccountClaimable(t, reader)
+	if code != http.StatusOK || len(view.ClaimableBalances) != 1 || view.ThroughLedger != 700 || view.LowerBound {
+		t.Fatalf("status/balances/through/lower = %d/%d/%d/%v, want 200, one balance through the claimable watermark 700",
+			code, len(view.ClaimableBalances), view.ThroughLedger, view.LowerBound)
+	}
+	if reader.gotRoles != nil || reader.gotLedger != nil {
+		t.Fatalf("ledger scan ran (roles %v, ledgers %v) although the claimable index is built", reader.gotRoles, reader.gotLedger)
+	}
+	_, view = callAccountClaimable(t, &claimableReader{cwm: 700, keys: claimableKeyCap})
+	if !view.LowerBound || !strings.Contains(view.CoverageNote, "older ones are left out") {
+		t.Fatalf("capped indexed read: lower_bound/note = %v/%q, want a flagged lower bound", view.LowerBound, view.CoverageNote)
 	}
 }

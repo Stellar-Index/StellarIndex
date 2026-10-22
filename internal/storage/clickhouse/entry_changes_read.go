@@ -29,6 +29,12 @@ func (r *ExplorerReader) SignerIndexWatermark(ctx context.Context) (uint32, erro
 	return entryWatermarkOn(ctx, r.conn, signerIndexWatermarkName)
 }
 
+// ClaimableIndexWatermark is the ledger the claimable index is complete through (0 = not yet built from the lake
+// floor); below it the claimable-balances route keeps its ledger scan.
+func (r *ExplorerReader) ClaimableIndexWatermark(ctx context.Context) (uint32, error) {
+	return entryWatermarkOn(ctx, r.conn, claimableIndexWatermarkName)
+}
+
 // AccountEntryLedgers lists, newest first, the ledgers at or below maxLedger in which the account (raw 32-byte key)
 // had an entry change in one of the roles; an absent index table reads as no ledgers.
 func (r *ExplorerReader) AccountEntryLedgers(ctx context.Context, account string, roles []string, maxLedger uint32, limit int) ([]uint32, error) {
@@ -193,6 +199,14 @@ const claimableCurrentQuery = `SELECT w.1, w.2, w.3 FROM (
 	GROUP BY key_xdr)
 	ORDER BY w.1 DESC` + explorerScanSettings
 
+// LIMIT 1 BY takes each balance's newest version in place of FINAL. Removals are looked up by key in the account's own
+// key set, so neither table is scanned beyond the account.
+const indexedClaimablesQuery = `SELECT ledger, close_time, entry_xdr FROM stellar.account_claimables
+	WHERE account = ? AND key_xdr NOT IN (
+		SELECT key_xdr FROM stellar.claimable_removals
+		WHERE key_xdr IN (SELECT key_xdr FROM stellar.account_claimables WHERE account = ?))
+	ORDER BY ledger DESC LIMIT 1 BY key_xdr LIMIT ?` + explorerScanSettings
+
 // ClaimableScan is one capped read of an account's claimable balances.
 type ClaimableScan struct {
 	Live []LiveClaimableBalance
@@ -221,35 +235,72 @@ func (r *ExplorerReader) LiveClaimableBalancesInLedgers(ctx context.Context, acc
 	resolved := 0
 	for rows.Next() {
 		var (
-			c   LiveClaimableBalance
-			b64 string
-			e   xdr.LedgerEntry
+			ledger uint32
+			at     time.Time
+			b64    string
 		)
-		if err := rows.Scan(&c.Ledger, &c.CloseTime, &b64); err != nil {
+		if err := rows.Scan(&ledger, &at, &b64); err != nil {
 			return scan, fmt.Errorf("clickhouse: scan live claimable balance: %w", err)
 		}
 		resolved++
 		if b64 == "" {
 			continue
 		}
-		if err := xdr.SafeUnmarshalBase64(b64, &e); err != nil {
-			return scan, fmt.Errorf("clickhouse: decode claimable balance at ledger %d: %w", c.Ledger, err)
+		c, err := decodeLiveClaimable(ledger, at, b64)
+		if err != nil {
+			return scan, err
 		}
-		cb, ok := e.Data.GetClaimableBalance()
-		if !ok {
-			return scan, fmt.Errorf("clickhouse: claimable_balance row at ledger %d holds a %s entry", c.Ledger, e.Data.Type)
-		}
-		for _, cl := range cb.Claimants {
-			if v0, ok := cl.GetV0(); ok {
-				c.Claimants = append(c.Claimants, v0.Destination.Address())
-			}
-		}
-		c.Fields, _ = xdrjson.LedgerEntryFields(e)
-		c.CloseTime = c.CloseTime.UTC()
 		scan.Live = append(scan.Live, c)
 	}
 	scan.Unresolved = scan.Keys - resolved
 	return scan, rows.Err()
+}
+
+// IndexedClaimableBalances returns, newest first, at most maxKeys unclaimed balances naming the raw account as a
+// claimant, read from the claimable index; Keys counts them, so maxKeys means capped.
+func (r *ExplorerReader) IndexedClaimableBalances(ctx context.Context, account string, maxKeys int) (ClaimableScan, error) {
+	var scan ClaimableScan
+	rows, err := r.conn.Query(ctx, indexedClaimablesQuery, account, account, maxKeys)
+	if err != nil {
+		return scan, fmt.Errorf("clickhouse: indexed claimable balances: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var (
+			ledger uint32
+			at     time.Time
+			b64    string
+		)
+		if err := rows.Scan(&ledger, &at, &b64); err != nil {
+			return scan, fmt.Errorf("clickhouse: scan indexed claimable balance: %w", err)
+		}
+		c, err := decodeLiveClaimable(ledger, at, b64)
+		if err != nil {
+			return scan, err
+		}
+		scan.Live = append(scan.Live, c)
+	}
+	scan.Keys = len(scan.Live)
+	return scan, rows.Err()
+}
+
+func decodeLiveClaimable(ledger uint32, at time.Time, b64 string) (LiveClaimableBalance, error) {
+	c := LiveClaimableBalance{Ledger: ledger, CloseTime: at.UTC()}
+	var e xdr.LedgerEntry
+	if err := xdr.SafeUnmarshalBase64(b64, &e); err != nil {
+		return c, fmt.Errorf("clickhouse: decode claimable balance at ledger %d: %w", ledger, err)
+	}
+	cb, ok := e.Data.GetClaimableBalance()
+	if !ok {
+		return c, fmt.Errorf("clickhouse: claimable_balance row at ledger %d holds a %s entry", ledger, e.Data.Type)
+	}
+	for _, cl := range cb.Claimants {
+		if v0, ok := cl.GetV0(); ok {
+			c.Claimants = append(c.Claimants, v0.Destination.Address())
+		}
+	}
+	c.Fields, _ = xdrjson.LedgerEntryFields(e)
+	return c, nil
 }
 
 func (r *ExplorerReader) claimableKeys(ctx context.Context, account string, ledgers []uint32, maxKeys int) ([]string, error) {

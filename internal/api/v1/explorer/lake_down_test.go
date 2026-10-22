@@ -197,6 +197,14 @@ func (downReader) LiveClaimableBalancesInLedgers(context.Context, string, []uint
 	return clickhouse.ClaimableScan{}, errLakeDown
 }
 
+func (downReader) ClaimableIndexWatermark(context.Context) (uint32, error) {
+	return 0, errLakeDown
+}
+
+func (downReader) IndexedClaimableBalances(context.Context, string, int) (clickhouse.ClaimableScan, error) {
+	return clickhouse.ClaimableScan{}, errLakeDown
+}
+
 func (downReader) SignerIndexWatermark(context.Context) (uint32, error) {
 	return 0, errLakeDown
 }

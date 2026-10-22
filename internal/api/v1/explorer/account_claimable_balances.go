@@ -42,7 +42,8 @@ type AccountClaimableBalancesView struct {
 }
 
 // AccountClaimableBalances serves GET /v1/accounts/{g_strkey}/claimable-balances: the unclaimed claimable balances
-// that name the account as a claimant, newest first, located through the entry index's claimant role.
+// that name the account as a claimant, newest first: from the claimable index once it is built, otherwise located through
+// the entry index's claimant role.
 func (h *Handler) AccountClaimableBalances(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -52,8 +53,27 @@ func (h *Handler) AccountClaimableBalances(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
+	raw, err := strkey.Decode(strkey.VersionByteAccountID, account)
+	if err != nil {
+		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/invalid-account", "Invalid account", http.StatusBadRequest, err.Error())
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
+	cwm, err := h.Reader.ClaimableIndexWatermark(ctx)
+	if err != nil {
+		h.accountClaimableError(w, r, ctx, err, account)
+		return
+	}
+	if cwm > 0 {
+		scan, err := h.Reader.IndexedClaimableBalances(ctx, string(raw), claimableKeyCap)
+		if err != nil {
+			h.accountClaimableError(w, r, ctx, err, account)
+			return
+		}
+		h.writeAccountClaimables(w, r, ctx, account, cwm, scan, scan.Keys >= claimableKeyCap, true)
+		return
+	}
 	wm, err := h.Reader.EntryIndexWatermark(ctx)
 	if err != nil {
 		h.accountClaimableError(w, r, ctx, err, account)
@@ -62,11 +82,6 @@ func (h *Handler) AccountClaimableBalances(w http.ResponseWriter, r *http.Reques
 	if wm == 0 {
 		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/entry-index-not-built", "Claimable balances not yet derived",
 			http.StatusServiceUnavailable, "the entry index has not been built on this deployment yet; retry later")
-		return
-	}
-	raw, err := strkey.Decode(strkey.VersionByteAccountID, account)
-	if err != nil {
-		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/invalid-account", "Invalid account", http.StatusBadRequest, err.Error())
 		return
 	}
 	ledgers, err := h.Reader.AccountEntryLedgers(ctx, string(raw), []string{clickhouse.EntryIndexRoleClaimant}, wm, claimableLedgerCap)
@@ -79,15 +94,20 @@ func (h *Handler) AccountClaimableBalances(w http.ResponseWriter, r *http.Reques
 		h.accountClaimableError(w, r, ctx, err, account)
 		return
 	}
+	h.writeAccountClaimables(w, r, ctx, account, wm, scan, len(ledgers) >= claimableLedgerCap || scan.Keys >= claimableKeyCap, false)
+}
+
+func (h *Handler) writeAccountClaimables(w http.ResponseWriter, r *http.Request, ctx context.Context, account string, wm uint32,
+	scan clickhouse.ClaimableScan, capped, indexed bool,
+) {
 	balances, err := claimableBalancesFor(account, scan.Live)
 	if err != nil {
 		h.accountClaimableError(w, r, ctx, err, account)
 		return
 	}
-	capped := len(ledgers) >= claimableLedgerCap || scan.Keys >= claimableKeyCap
 	out := AccountClaimableBalancesView{
 		Account: account, ClaimableBalances: balances, ThroughLedger: wm, LowerBound: capped || scan.Unresolved > 0,
-		CoverageNote: accountClaimableNote(wm, capped, scan.Unresolved),
+		CoverageNote: accountClaimableNote(wm, capped, indexed, scan.Unresolved),
 	}
 	h.writeJSONAt(w, out, h.movementsStale(ctx, wm), false, time.Time{})
 }
@@ -131,13 +151,17 @@ func (h *Handler) accountClaimableError(w http.ResponseWriter, r *http.Request, 
 	h.WriteProblem(w, r, "https://api.stellarindex.io/errors/internal", "Internal error", http.StatusInternalServerError, "")
 }
 
-func accountClaimableNote(wm uint32, capped bool, unresolved int) string {
+func accountClaimableNote(wm uint32, capped, indexed bool, unresolved int) string {
 	note := fmt.Sprintf("unclaimed claimable balances naming the account as a claimant, through ledger %d", wm)
 	if unresolved > 0 {
 		note += fmt.Sprintf("; %d balance(s) naming the account have no current-state row in the lake, so whether they "+
 			"are still unclaimed is unknown and they are left out", unresolved)
 	}
-	if capped {
+	switch {
+	case capped && indexed:
+		note += fmt.Sprintf("; only the account's %d most recently modified unclaimed balances are listed, so older ones are left out",
+			claimableKeyCap)
+	case capped:
 		note += fmt.Sprintf("; only the account's %d most recent claimant ledgers (at most %d balances) were examined, "+
 			"so older unclaimed balances may be missing", claimableLedgerCap, claimableKeyCap)
 	}

@@ -315,6 +315,16 @@ func (r *capReader) LiveClaimableBalancesInLedgers(ctx context.Context, _ string
 	return clickhouse.ClaimableScan{}, nil
 }
 
+func (r *capReader) ClaimableIndexWatermark(ctx context.Context) (uint32, error) {
+	r.probe.record(ctx)
+	return 0, nil
+}
+
+func (r *capReader) IndexedClaimableBalances(ctx context.Context, _ string, _ int) (clickhouse.ClaimableScan, error) {
+	r.probe.record(ctx)
+	return clickhouse.ClaimableScan{}, nil
+}
+
 func (r *capReader) SignerIndexWatermark(ctx context.Context) (uint32, error) {
 	r.probe.record(ctx)
 	return 1, nil
