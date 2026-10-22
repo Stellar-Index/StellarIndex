@@ -1202,6 +1202,10 @@ stellarindex_api_listen_addr: "127.0.0.1:3000"
 page_sweep_iters: 5
 page_sweep_accounts:
   - GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+  # Busiest source account in a recent 20k-ledger window: the whale tail.
+  - GC5HBIPAKK3Z3OV5XKAIHLXPZLVDI6ERAJA2RWSQEKXFOXENLGOQIZR4
+  # Last operation at ledger 1001906: the dormant tail that misses every cache.
+  - GCTXPYSS2EIYRMGJN5XUEMI32MTMUVHPRBHMLDMISW4UXIYXO3HTFQSB
 
 # ───── Observability ─────────────────────────────────────────────────
 # node_exporter is the Debian `prometheus-node-exporter` package (see
