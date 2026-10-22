@@ -19,4 +19,7 @@ TimeoutStartSec=20m
 ProtectSystem=strict
 ReadWritePaths=/var/lib/node_exporter/textfile_collector
 PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
 NoNewPrivileges=true
