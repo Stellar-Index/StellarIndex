@@ -1817,6 +1817,12 @@ Counter. Label `probe` (as above).
 
 Probes that got no answer (transport error, deadline, or a non-schema ClickHouse exception). The gauge `stellarindex_ch_schema_probe_present` stays unchanged, so a rising rate means "the lake is not answering", not "the object is gone".
 
+### `stellarindex_derived_index_watermark_ledger`
+
+Gauge. Label `index` (an `entry_history_watermark` name: `contract_active_ledgers`, `contract_instance_changes`, `entry_index`, `signer_index`, `sponsorship_events`).
+
+The ledger the index is proven complete through, as last read; `0` = no row or no table. Set only when a read consults it. Alert: `stellarindex_derived_index_watermark_missing`.
+
 ### `stellarindex_protocol_detail_refresh_total`
 
 Counter. Labels: `outcome` (`ok` | `stale` | `degraded` | `timeout`).
