@@ -375,3 +375,31 @@ func TestTokenSupplyForContracts_FailedBaseIsNotMemoised(t *testing.T) {
 		t.Errorf("after a failed base the next read must be in full (3 queries), got %d", n)
 	}
 }
+
+// The single-contract read shares the settled-base memo, and a contract with no flows reads as a zero-flow supply, not an error.
+func TestTokenSupply_SharesSettledBaseMemo(t *testing.T) {
+	conn := &stubConn{respond: func(q string) (driver.Rows, error) {
+		switch {
+		case strings.Contains(q, "max(ledger_seq)"):
+			return &stubRows{data: [][]any{{uint32(64_900_000)}}}, nil
+		case strings.Contains(q, "ledger_seq < ?"):
+			return &stubRows{data: [][]any{{"CBIG", "1000", "100", "0", uint64(4)}}}, nil
+		}
+		return &stubRows{data: [][]any{{"CBIG", "50", "0", "0", uint64(1)}}}, nil
+	}}
+	r := &SupplyReader{conn: conn}
+	for _, label := range []string{"cold", "warm"} {
+		before := len(conn.queries)
+		got, err := r.TokenSupply(t.Context(), "CBIG")
+		if err != nil || got.Total.String() != "950" || got.FlowCount != 5 || got.ContractID != "CBIG" {
+			t.Fatalf("%s: TokenSupply = %+v, %v; want 950 over 5 flows", label, got, err)
+		}
+		if label == "warm" && (len(conn.queries)-before != 1 || !strings.Contains(conn.queries[before], "ledger_seq >= ?")) {
+			t.Fatalf("warm read issued %v; want only the above-base sum", conn.queries[before:])
+		}
+	}
+	none, err := r.TokenSupply(t.Context(), "CNONE")
+	if err != nil || none.FlowCount != 0 || none.Total.Sign() != 0 || none.ContractID != "CNONE" {
+		t.Fatalf("no-flow contract = %+v, %v; want a zero supply", none, err)
+	}
+}
