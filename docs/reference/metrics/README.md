@@ -1817,6 +1817,12 @@ Counter. Label `probe` (as above).
 
 Probes that got no answer (transport error, deadline, or a non-schema ClickHouse exception). The gauge `stellarindex_ch_schema_probe_present` stays unchanged, so a rising rate means "the lake is not answering", not "the object is gone".
 
+### `stellarindex_explorer_schema_absent_empty_total`
+
+Counter. Label `table` (`account_entry_ledgers`, `asset_entry_ledgers`, `sponsorship_events`).
+
+Explorer reads answered as empty because their ClickHouse table or column is missing. Alert: `stellarindex_explorer_schema_absent_empty`.
+
 ### `stellarindex_protocol_detail_refresh_total`
 
 Counter. Labels: `outcome` (`ok` | `stale` | `degraded` | `timeout`).

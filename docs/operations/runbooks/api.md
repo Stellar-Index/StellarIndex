@@ -405,6 +405,12 @@ clickhouse-client --port 9300 -q "SELECT name FROM system.columns
 
 An optional object a deployment deliberately omits is a standing ticket; silence with an expiry. **Escalate:** [clickhouse](clickhouse.md) if the lake itself is down; metrics in the [reference](../../reference/metrics/README.md).
 
+## stellarindex_explorer_schema_absent_empty
+
+**What.** An explorer read of `stellar.<table>` got "table/column does not exist" and served an empty result. The page shows no entry changes, trustline days or sponsorships, which reads as true.
+
+**Fix.** Apply the table's DDL from `deploy/clickhouse/`, then run the backfill documented beside it (`account_entry_ledgers`/`asset_entry_ledgers`: entry-index; `sponsorship_events`: its backfill). The counter stops on the next read; the alert clears an hour later. **Escalate:** [clickhouse](clickhouse.md); metrics in the [reference](../../reference/metrics/README.md).
+
 ## stellarindex_customer_webhook_delivery_failing
 
 **Trigger.** `sum(rate(stellarindex_customer_webhook_delivery_attempts_total{outcome=~"server_error|network_error"}[5m])) > 0.05` for 15m, P3. Customers are not receiving callbacks (including SEV-1 pings); the API is unaffected. Retries back off 30s to 1h with a 15-attempt budget (about 4-8 h). The 15-attempt budget lands the last retry ~4–8 h after the event.
