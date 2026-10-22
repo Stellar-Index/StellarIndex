@@ -142,12 +142,13 @@ func (h *Handler) accountSponsorshipsPage(ctx context.Context, account, directio
 	// The four reads are independent; run serially they summed to ~0.5s for the busiest sponsor.
 	var (
 		arrangements          []clickhouse.SponsorshipArrangement
+		resume                clickhouse.SponsorshipKey
 		sponsoring, sponsored clickhouse.SponsorshipTotals
 		st                    clickhouse.AccountState
 	)
 	g, gctx := errgroup.WithContext(ctx)
 	h.goSponsorshipRead(g, "arrangements", func() (err error) {
-		arrangements, err = h.Reader.AccountSponsorships(gctx, account, side, state == sponsorshipStateInForce, cur, wm, limit+1)
+		arrangements, resume, err = h.Reader.AccountSponsorships(gctx, account, side, state == sponsorshipStateInForce, cur, wm, limit+1)
 		return err
 	})
 	h.goSponsorshipRead(g, "sponsoring totals", func() (err error) {
@@ -173,6 +174,9 @@ func (h *Handler) accountSponsorshipsPage(ctx context.Context, account, directio
 	if len(arrangements) > limit {
 		arrangements = arrangements[:limit]
 		out.NextCursor = sponsorshipCursor(arrangements[limit-1].SponsorshipKey)
+	} else if resume.IsSet() {
+		// The reader's scan budget ran out first: the page is short, and the next one resumes past what was read.
+		out.NextCursor = sponsorshipCursor(resume)
 	}
 	for _, a := range arrangements {
 		out.Arrangements = append(out.Arrangements, sponsorshipArrangementView(a))
