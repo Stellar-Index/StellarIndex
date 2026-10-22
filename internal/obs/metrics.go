@@ -274,6 +274,7 @@ func registerAppMetricsTail() {
 		MEVScanTruncatedTotal,
 		MEVLakeOrderLookupSkippedTotal,
 		TxIndexTagLookupSkippedTotal,
+		ExplorerExactFallbackTotal,
 
 		PostgresPingTotal,
 		PostgresPingFailureStreak,
@@ -1818,6 +1819,15 @@ var TxIndexTagLookupSkippedTotal = prometheus.NewCounter(
 		Name: "stellarindex_tx_index_tag_lookup_skipped_total",
 		Help: "tx hashes the trades.tx_index tagger (live sweep and tag-tx-index) left untagged because a ClickHouse tx_hash_index lookup chunk failed; the page's rows stay NULL until a later pass resolves them.",
 	},
+)
+
+// ExplorerExactFallbackTotal counts explorer page reads whose bounded window could not prove a full page and re-ran as the exact query.
+var ExplorerExactFallbackTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_explorer_exact_fallback_total",
+		Help: "Explorer page reads whose bounded sort-key window could not prove a full page of distinct keys (un-merged duplicates), so the read re-ran as the exact LIMIT 1 BY / dedup query, which is O(account or contract history).",
+	},
+	[]string{"read"},
 )
 
 // OracleStreamRowsUnparsedTotal counts oracle_updates rows LatestOracleStreams drops because asset or quote will not parse (a bad raw-SQL relabel would otherwise look like success); `field` names which.
