@@ -1347,7 +1347,7 @@
     - verify-network-state.timer
     - data-freshness.timer
     - ch-supply.timer
-    - trades-by-account.timer
+    # trades-by-account.timer is enabled on pubnet only, below.
     - issuer-flags.timer
     - asset-registry-backfill.timer
   when:
@@ -1357,6 +1357,34 @@
     # and the drift run aborts here. The register is the whole loop, so ONE
     # new unit stands the preview down for all of them — but in that state
     # the install task above is already naming the drift.
+    - not (ansible_check_mode and ops_job_units is changed)
+  tags: [ops-jobs]
+
+# ── trades-by-account — pubnet only ──────────────────────────────────
+# A window records only when every TradesByAccountSources venue decoded, and
+# the test nets configure none of the mainnet AMMs, so the catch-up can never
+# record one there and fails daily.
+- name: Enable + start trades-by-account.timer (pubnet)
+  ansible.builtin.systemd:
+    name: trades-by-account.timer
+    state: started
+    enabled: true
+    daemon_reload: true
+  when:
+    - (stellar_network | default('pubnet')) == 'pubnet'
+    - not (ansible_check_mode and ops_job_units is changed)
+  tags: [ops-jobs]
+
+- name: Stop + disable trades-by-account on non-pubnet networks
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop:
+    - trades-by-account.timer
+    - trades-by-account.service
+  when:
+    - (stellar_network | default('pubnet')) != 'pubnet'
     - not (ansible_check_mode and ops_job_units is changed)
   tags: [ops-jobs]
 
