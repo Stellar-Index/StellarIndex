@@ -200,7 +200,7 @@ func TestCHRebuild_BothBackfillSafeLegsAreCalledInOrder(t *testing.T) {
 	catalogue := strings.Index(body, "buildReconciliationCatalogue(cfg)")
 	sep41Catalogue := strings.Index(body, "buildSEP41ReconSources(cfg)")
 	passes := strings.Index(body, "passes := chRebuildPasses{sep41: *includeSEP41, contractCalls: *contractCalls, sdex: *includeSDEX}")
-	writer := strings.Index(body, "drainAndWrite(")
+	writer := strings.Index(body, "sink.drain(")
 
 	if cfgLoad < 0 || catalogue < 0 || sep41Catalogue < 0 || writer < 0 {
 		t.Fatalf("anchors not found (config load %d, catalogue %d, sep41 catalogue %d, writer %d) — this test is asserting nothing",
@@ -433,7 +433,7 @@ func TestCHRebuild_ValidatesSourcesAgainstTheCatalogue(t *testing.T) {
 	call := strings.Index(body, "checkCHRebuildSources(cat, parseCSVList(*only))")
 	catalogue := strings.Index(body, "buildReconciliationCatalogue(cfg)")
 	warm := strings.Index(body, "warmCatalogueGates(")
-	writer := strings.Index(body, "drainAndWrite(")
+	writer := strings.Index(body, "sink.drain(")
 	if catalogue < 0 || warm < 0 || writer < 0 {
 		t.Fatalf("anchors not found (catalogue %d, warm %d, writer %d) — this test is asserting nothing", catalogue, warm, writer)
 	}
@@ -465,7 +465,7 @@ func TestCHRebuild_WriteRecordsDirtyWindowBeforeWriting(t *testing.T) {
 	}
 	record := strings.Index(body, "recordCHRebuildDirtyWindows(ctx, store, os.Stderr, lo, hi, rederived, timescale.CHRebuildWriteReason)")
 	preflight := strings.Index(body, "return reportCHRebuildPreflight(")
-	writer := strings.Index(body, "drainAndWrite(")
+	writer := strings.Index(body, "sink.drain(")
 	if preflight < 0 || writer < 0 {
 		t.Fatalf("anchors not found (preflight %d, writer %d) — this test is asserting nothing", preflight, writer)
 	}
@@ -507,7 +507,7 @@ func TestCHRebuild_WarmsTheCatalogueGatesBeforeAnythingReadsThem(t *testing.T) {
 	}
 	catalogue := strings.Index(body, "buildReconciliationCatalogue(cfg)")
 	preseed := strings.Index(body, "preseedFactoryChildren(")
-	writer := strings.Index(body, "drainAndWrite(")
+	writer := strings.Index(body, "sink.drain(")
 	if catalogue < 0 || preseed < 0 || writer < 0 {
 		t.Fatalf("anchors not found (catalogue %d, preseed %d, writer %d) — this test is asserting nothing",
 			catalogue, preseed, writer)
