@@ -253,6 +253,8 @@ type ExplorerReader struct {
 
 	// sacVerdicts memoises SACClassicAssetName answers an instance proved for good.
 	sacVerdicts sacVerdictMemo
+	// activityBases memoises each contract's activity span below a settled ledger.
+	activityBases contractActivityMemo
 
 	// cap67 movements coverage cache (see Cap67MovementsWatermark): cap67WMErr/At
 	// negatively cache a failed read; cap67WMFlight is non-nil while a read is in flight.
@@ -1523,13 +1525,11 @@ func (r *ExplorerReader) ContractActivitySummaryFor(ctx context.Context, contrac
 	if days <= 0 || days > 365 {
 		days = 30
 	}
-	var s ContractActivitySummary
-	if err := r.conn.QueryRow(ctx, `
-		SELECT min(close_time), max(close_time), toUInt64(uniqExact(ledger_seq))
-		FROM stellar.contract_active_ledgers WHERE contract_id = ?`,
-		contractID).Scan(&s.FirstSeen, &s.LastSeen, &s.ActiveLedgersTotal); err != nil {
-		return ContractActivitySummary{}, false, fmt.Errorf("clickhouse: contract activity bounds: %w", err)
+	b, err := r.contractActivityBounds(ctx, contractID)
+	if err != nil {
+		return ContractActivitySummary{}, false, err
 	}
+	s := ContractActivitySummary{FirstSeen: b.first, LastSeen: b.last, ActiveLedgersTotal: b.total}
 	if s.ActiveLedgersTotal == 0 {
 		return s, true, nil
 	}

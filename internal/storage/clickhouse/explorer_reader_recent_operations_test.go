@@ -663,7 +663,11 @@ func TestContractActivitySummaryFor_DedupsRMTCount(t *testing.T) {
 		switch {
 		case strings.Contains(q, "contract_active_ledgers LIMIT 1"): // probe
 			return &stubRows{data: [][]any{{uint32(1)}}}, nil
-		case strings.Contains(q, "min(close_time)"): // bounds + total
+		case strings.Contains(q, "FROM stellar.ledgers"): // settled split
+			return &stubRows{data: [][]any{{uint32(100000)}}}, nil
+		case strings.Contains(q, "min(close_time)") && strings.HasSuffix(q, ">= ?"): // live tail
+			return &stubRows{data: [][]any{{time.Unix(1700050000, 0).UTC(), time.Unix(1700100000, 0).UTC(), uint64(2)}}}, nil
+		case strings.Contains(q, "min(close_time)"): // memoised base
 			if strings.Contains(q, "count()") {
 				t.Fatalf("total query uses bare count() over un-merged RMT parts: %s", q)
 			}
@@ -671,7 +675,7 @@ func TestContractActivitySummaryFor_DedupsRMTCount(t *testing.T) {
 				t.Fatalf("total query = %q, want toUInt64(uniqExact(ledger_seq))", q)
 			}
 			return &stubRows{data: [][]any{{
-				time.Unix(1700000000, 0).UTC(), time.Unix(1700100000, 0).UTC(), uint64(7),
+				time.Unix(1700000000, 0).UTC(), time.Unix(1700040000, 0).UTC(), uint64(5),
 			}}}, nil
 		default: // daily series
 			if !strings.Contains(q, "ledger_seq >= ?") || conn.args[len(conn.args)-1][1] != uint32(1234) {
