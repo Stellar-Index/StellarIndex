@@ -21,6 +21,9 @@ const entryIndexLockPath = "/var/lib/stellarindex/ch-entry-index.lock"
 // entryIndexSignersLockPath is -signers-only's own lock: that walk runs for hours beside the timer's windows.
 const entryIndexSignersLockPath = "/var/lib/stellarindex/ch-entry-index-signers.lock"
 
+// entryIndexClaimablesLockPath is -claimables-only's own lock, for the same reason.
+const entryIndexClaimablesLockPath = "/var/lib/stellarindex/ch-entry-index-claimables.lock"
+
 // entryIndexFlushRowCount bounds the rows held in memory before an INSERT.
 const entryIndexFlushRowCount = 500_000
 
@@ -30,11 +33,15 @@ var (
 	streamEntryIndexAssets     = clickhouse.StreamEntryIndexAssets
 	streamEntryIndexDecodeRows = clickhouse.StreamEntryIndexDecodeRows
 	streamEntryIndexSignerOps  = clickhouse.StreamEntryIndexSignerOps
+	streamClaimableRemovals    = clickhouse.StreamEntryIndexClaimableRemovals
 	insertEntryIndex           = clickhouse.InsertEntryIndex
+	insertClaimableIndex       = clickhouse.InsertClaimableIndex
 	setEntryIndexWatermark     = clickhouse.SetEntryIndexWatermark
 	setSignerIndexWatermark    = clickhouse.SetSignerIndexWatermark
+	setClaimableIndexWatermark = clickhouse.SetClaimableIndexWatermark
 	entryIndexWatermark        = clickhouse.EntryIndexWatermark
 	signerIndexWatermark       = clickhouse.SignerIndexWatermark
+	claimableIndexWatermark    = clickhouse.ClaimableIndexWatermark
 	resolveEntryIndexRange     = resolveDeriveRange
 )
 
@@ -50,6 +57,7 @@ func chEntryIndex(args []string) error {
 	floorLedger := fs.Uint("floor-ledger", 1, "first-run start when no watermark exists; clamped up to the lake's first ledger")
 	lockFile := fs.String("lock-file", entryIndexLockPath, "flock serialising concurrent -write runs (-signers-only defaults to "+entryIndexSignersLockPath+")")
 	signersOnly := fs.Bool("signers-only", false, "build only the signer role, from the signer watermark (the lake floor on first run) up to the entry_index watermark; sets only the signer watermark")
+	claimablesOnly := fs.Bool("claimables-only", false, "build only account_claimables and claimable_removals, from the claimable watermark (the lake floor on first run) up to the entry_index watermark; sets only the claimable watermark")
 	heartbeat := fs.String("heartbeat", "", "ops-job heartbeat textfile path. Empty = "+opsutil.DefaultTextfileDir+"/ops_job_ch-entry-index.prom when that directory exists")
 	maxDecodeErrs := registerDecodeBudget(fs)
 	gate := opsutil.RegisterWriteGate(fs)
@@ -62,17 +70,26 @@ func chEntryIndex(args []string) error {
 	if *floorLedger == 0 {
 		return fmt.Errorf("-floor-ledger must be > 0 (the genesis ledger is 1)")
 	}
+	if *signersOnly && *claimablesOnly {
+		return fmt.Errorf("-signers-only and -claimables-only are separate walks; run one at a time")
+	}
 	gate.Banner()
-	run := &entryIndexRun{chAddr: *chAddr, from: uint32(*from), to: uint32(*to), window: uint32(*window), floor: uint32(*floorLedger), dryRun: gate.DryRun(), maxDecodeErrs: *maxDecodeErrs, signersOnly: *signersOnly} //nolint:gosec // ledger sequences fit uint32
+	run := &entryIndexRun{chAddr: *chAddr, from: uint32(*from), to: uint32(*to), window: uint32(*window), floor: uint32(*floorLedger), dryRun: gate.DryRun(), maxDecodeErrs: *maxDecodeErrs, signersOnly: *signersOnly, claimablesOnly: *claimablesOnly} //nolint:gosec // ledger sequences fit uint32
 	if run.dryRun {
 		return run.exec()
 	}
 	// The lock comes before any network call so a second timer firing exits at once.
 	job := "ch-entry-index"
-	if run.signersOnly {
+	switch {
+	case run.signersOnly:
 		job = "ch-entry-index-signers"
 		if *lockFile == entryIndexLockPath {
 			*lockFile = entryIndexSignersLockPath
+		}
+	case run.claimablesOnly:
+		job = "ch-entry-index-claimables"
+		if *lockFile == entryIndexLockPath {
+			*lockFile = entryIndexClaimablesLockPath
 		}
 	}
 	unlock, err := acquireRollupLock(job, *lockFile)
@@ -94,6 +111,7 @@ type entryIndexRun struct {
 	chAddr                  string
 	from, to, window, floor uint32
 	dryRun, signersOnly     bool
+	claimablesOnly          bool
 	maxDecodeErrs           uint64
 	hb                      *opsutil.JobHeartbeat // nil in a dry run
 }
@@ -108,8 +126,11 @@ func (r *entryIndexRun) progress(windows uint64, cursor uint32) {
 func (r *entryIndexRun) exec() error {
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
-	if r.signersOnly {
-		return r.execSigners(ctx)
+	switch {
+	case r.signersOnly:
+		return r.execRole(ctx, "signer role", signerIndexWatermark)
+	case r.claimablesOnly:
+		return r.execRole(ctx, "claimable index", claimableIndexWatermark)
 	}
 
 	start, last, err := resolveEntryIndexRange(ctx, r.chAddr, "ch-entry-index", r.from, r.to, r.floor, clickhouse.EntryIndexWatermark)
@@ -129,13 +150,13 @@ func (r *entryIndexRun) exec() error {
 	return enforceDecodeBudget("ch-entry-index", st.skipped, r.maxDecodeErrs)
 }
 
-// execSigners walks the signer role up to the entry_index watermark, re-reading it until the two meet: from there each
+// execRole walks a floor-anchored role up to the entry_index watermark, re-reading it until the two meet: from there each
 // timer window advances both. An explicit -from or a dry run (which moves no watermark) makes one pass.
-func (r *entryIndexRun) execSigners(ctx context.Context) error {
+func (r *entryIndexRun) execRole(ctx context.Context, what string, watermark func(context.Context, string) (uint32, error)) error {
 	st := &entryIndexStats{}
 	var first, through uint32
 	for {
-		start, last, err := resolveEntryIndexRange(ctx, r.chAddr, "ch-entry-index", r.from, r.to, r.floor, signerIndexWatermark)
+		start, last, err := resolveEntryIndexRange(ctx, r.chAddr, "ch-entry-index", r.from, r.to, r.floor, watermark)
 		if err != nil {
 			return err
 		}
@@ -148,7 +169,7 @@ func (r *entryIndexRun) execSigners(ctx context.Context) error {
 			break
 		}
 		if through != 0 && start <= through {
-			return fmt.Errorf("signer watermark did not advance past %d after a written pass", through)
+			return fmt.Errorf("%s watermark did not advance past %d after a written pass", what, through)
 		}
 		if first == 0 {
 			first = start
@@ -162,7 +183,7 @@ func (r *entryIndexRun) execSigners(ctx context.Context) error {
 		}
 	}
 	if first == 0 {
-		fmt.Fprintln(os.Stderr, "ch-entry-index: signer role already caught up with the entry_index watermark")
+		fmt.Fprintf(os.Stderr, "ch-entry-index: %s already caught up with the entry_index watermark\n", what)
 		return nil
 	}
 	st.report(first, through)
@@ -171,6 +192,7 @@ func (r *entryIndexRun) execSigners(ctx context.Context) error {
 
 type entryIndexStats struct {
 	accountRows, assetRows, decoded, skipped uint64
+	claimableRows, removalRows               uint64
 	logged                                   int
 }
 
@@ -183,8 +205,8 @@ func (st *entryIndexStats) skip(ledger uint32, what string, err error) {
 }
 
 func (st *entryIndexStats) report(start, last uint32) {
-	fmt.Fprintf(os.Stderr, "ch-entry-index: [%d,%d] %d account rows, %d asset rows, %d entries decoded, %d skipped\n",
-		start, last, st.accountRows, st.assetRows, st.decoded, st.skipped)
+	fmt.Fprintf(os.Stderr, "ch-entry-index: [%d,%d] %d account rows, %d asset rows, %d claimable rows, %d removals, %d entries decoded, %d skipped\n",
+		start, last, st.accountRows, st.assetRows, st.claimableRows, st.removalRows, st.decoded, st.skipped)
 }
 
 // runEntryIndex builds [start, last] window by window, advancing the watermark after each written window.
@@ -197,7 +219,7 @@ func runEntryIndex(ctx context.Context, r *entryIndexRun, start, last uint32, st
 			hi = lo + r.window - 1
 		}
 		windowStart := time.Now()
-		w := &entryIndexWindow{chAddr: r.chAddr, dryRun: r.dryRun, signersOnly: r.signersOnly, st: st}
+		w := &entryIndexWindow{chAddr: r.chAddr, dryRun: r.dryRun, signersOnly: r.signersOnly, claimablesOnly: r.claimablesOnly, st: st}
 		if err := w.build(ctx, lo, hi); err != nil {
 			return fmt.Errorf("window [%d,%d]: %w — resume with -from %d (or no -from: the watermark holds)", lo, hi, err, lo)
 		}
@@ -207,6 +229,8 @@ func runEntryIndex(ctx context.Context, r *entryIndexRun, start, last uint32, st
 		windows++
 		st.accountRows += w.accountRows
 		st.assetRows += w.assetRows
+		st.claimableRows += w.claimableRows
+		st.removalRows += w.removalRows
 		r.progress(windows, hi)
 		fmt.Fprintf(os.Stderr, "ch-entry-index: window [%d,%d] done — %d account rows, %d asset rows, %d tx ledgers (%s; elapsed %s)\n",
 			lo, hi, w.accountRows, w.assetRows, w.txLedgers, time.Since(windowStart).Round(time.Millisecond), time.Since(runStart).Round(time.Second))
@@ -217,7 +241,7 @@ func runEntryIndex(ctx context.Context, r *entryIndexRun, start, last uint32, st
 	}
 }
 
-// advanceWatermarks records a written window: the signer watermark alone under -signers-only, else both.
+// advanceWatermarks records a written window: one role's watermark alone under -signers-only or -claimables-only, else all.
 func (r *entryIndexRun) advanceWatermarks(ctx context.Context, lo, hi uint32, txLedgers uint64) error {
 	switch {
 	case r.dryRun:
@@ -227,10 +251,18 @@ func (r *entryIndexRun) advanceWatermarks(ctx context.Context, lo, hi uint32, tx
 			return fmt.Errorf("window [%d,%d] written but signer watermark refused: %w — resume with no -from", lo, hi, err)
 		}
 		return nil
+	case r.claimablesOnly:
+		if err := setClaimableIndexWatermark(ctx, r.chAddr, lo, hi); err != nil {
+			return fmt.Errorf("window [%d,%d] written but claimable watermark refused: %w — resume with no -from", lo, hi, err)
+		}
+		return nil
 	}
-	// The signer watermark goes first: a refused entry watermark re-runs the window, which re-records nothing.
+	// The role watermarks go first: a refused entry watermark re-runs the window, which re-records nothing.
 	if err := setSignerIndexWatermark(ctx, r.chAddr, lo, hi); err != nil && !errors.Is(err, clickhouse.ErrEntryHistorySkippedPrefix) {
 		return fmt.Errorf("window [%d,%d] written but signer watermark refused: %w — re-run it with -from %d -to %d", lo, hi, err, lo, hi)
+	}
+	if err := setClaimableIndexWatermark(ctx, r.chAddr, lo, hi); err != nil && !errors.Is(err, clickhouse.ErrEntryHistorySkippedPrefix) {
+		return fmt.Errorf("window [%d,%d] written but claimable watermark refused: %w — re-run it with -from %d -to %d", lo, hi, err, lo, hi)
 	}
 	if err := setEntryIndexWatermark(ctx, r.chAddr, lo, hi, txLedgers); err != nil {
 		return fmt.Errorf("window [%d,%d] written but watermark refused: %w — re-run it with -from %d -to %d", lo, hi, err, lo, hi)
@@ -243,10 +275,14 @@ func (r *entryIndexRun) advanceWatermarks(ctx context.Context, lo, hi uint32, tx
 type entryIndexWindow struct {
 	chAddr                            string
 	dryRun, signersOnly               bool
+	claimablesOnly                    bool
 	st                                *entryIndexStats
 	accounts                          []clickhouse.EntryIndexAccountRow
 	assets                            []clickhouse.EntryIndexAssetRow
+	claimables                        []clickhouse.EntryIndexClaimableRow
+	removals                          []clickhouse.EntryIndexClaimableRemoval
 	accountRows, assetRows, txLedgers uint64
+	claimableRows, removalRows        uint64
 }
 
 func (w *entryIndexWindow) build(ctx context.Context, lo, hi uint32) error {
@@ -256,10 +292,22 @@ func (w *entryIndexWindow) build(ctx context.Context, lo, hi uint32) error {
 		}
 		return w.flush(ctx)
 	}
+	if w.claimablesOnly {
+		if err := w.decodeRoles(ctx, lo, hi); err != nil {
+			return err
+		}
+		if err := w.claimableRemovals(ctx, lo, hi); err != nil {
+			return err
+		}
+		return w.flush(ctx)
+	}
 	if err := w.owners(ctx, lo, hi); err != nil {
 		return err
 	}
 	if err := w.decodeRoles(ctx, lo, hi); err != nil {
+		return err
+	}
+	if err := w.claimableRemovals(ctx, lo, hi); err != nil {
 		return err
 	}
 	if err := w.signers(ctx, lo, hi); err != nil {
@@ -286,8 +334,34 @@ func (w *entryIndexWindow) flush(ctx context.Context) error {
 			return err
 		}
 	}
+	if !w.dryRun {
+		if err := insertClaimableIndex(ctx, w.chAddr, w.claimables, w.removals); err != nil {
+			return err
+		}
+	}
 	w.accounts, w.assets = w.accounts[:0], w.assets[:0]
+	w.claimables, w.removals = w.claimables[:0], w.removals[:0]
 	return nil
+}
+
+func (w *entryIndexWindow) addClaimable(ctx context.Context, row clickhouse.EntryIndexClaimableRow) error {
+	w.claimables = append(w.claimables, row)
+	w.claimableRows++
+	if len(w.claimables) >= entryIndexFlushRowCount {
+		return w.flush(ctx)
+	}
+	return nil
+}
+
+func (w *entryIndexWindow) claimableRemovals(ctx context.Context, lo, hi uint32) error {
+	return streamClaimableRemovals(ctx, w.chAddr, lo, hi, func(r clickhouse.EntryIndexClaimableRemoval) error {
+		w.removals = append(w.removals, r)
+		w.removalRows++
+		if len(w.removals) >= entryIndexFlushRowCount {
+			return w.flush(ctx)
+		}
+		return nil
+	})
 }
 
 func (w *entryIndexWindow) owners(ctx context.Context, lo, hi uint32) error {
@@ -321,6 +395,14 @@ func (w *entryIndexWindow) decodeRoles(ctx context.Context, lo, hi uint32) error
 			return nil
 		}
 		w.st.decoded++
+		for _, c := range claimableRows(&e, r) {
+			if err := w.addClaimable(ctx, c); err != nil {
+				return err
+			}
+		}
+		if w.claimablesOnly {
+			return nil
+		}
 		for _, row := range entryIndexRoleRows(&e, r.Ledger) {
 			if _, dup := seen[row]; dup {
 				continue
@@ -352,6 +434,25 @@ func entryIndexRoleRows(e *xdr.LedgerEntry, ledger uint32) []clickhouse.EntryInd
 	if sp := e.SponsoringID(); sp != nil {
 		if key, ok := sp.GetEd25519(); ok {
 			rows = append(rows, clickhouse.EntryIndexAccountRow{Account: string(key[:]), Role: clickhouse.EntryIndexRoleSponsor, Ledger: ledger})
+		}
+	}
+	return rows
+}
+
+// claimableRows lists one account_claimables row per ed25519 claimant of a decoded claimable balance.
+func claimableRows(e *xdr.LedgerEntry, r clickhouse.EntryIndexDecodeRow) []clickhouse.EntryIndexClaimableRow {
+	cb, ok := e.Data.GetClaimableBalance()
+	if !ok {
+		return nil
+	}
+	var rows []clickhouse.EntryIndexClaimableRow
+	for _, c := range cb.Claimants {
+		v0, ok := c.GetV0()
+		if !ok {
+			continue
+		}
+		if key, ok := v0.Destination.GetEd25519(); ok {
+			rows = append(rows, clickhouse.EntryIndexClaimableRow{Account: string(key[:]), KeyXDR: r.KeyXDR, Ledger: r.Ledger, EntryXDR: r.EntryXDR})
 		}
 	}
 	return rows

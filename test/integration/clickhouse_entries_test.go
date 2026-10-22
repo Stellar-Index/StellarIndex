@@ -2189,6 +2189,14 @@ func TestChEntryIndex_WriteFillsBothIndexes(t *testing.T) {
 		row(base+2, 0, "created", "claimable_balance", "", "", claimable),
 		row(base+2, 1, "updated", "account", bob, "", sponsored),
 	}
+	// base+2: an earlier claimable balance is claimed; the removal row carries its key and no entry.
+	claimed := claimable
+	claimed.Data.ClaimableBalance = &xdr.ClaimableBalanceEntry{BalanceId: xdr.ClaimableBalanceId{
+		Type: xdr.ClaimableBalanceIdTypeClaimableBalanceIdTypeV0, V0: &xdr.Hash{3},
+	}, Asset: xdr.MustNewNativeAsset(), Amount: 5}
+	removal := row(base+2, 2, "removed", "claimable_balance", "", "", claimed)
+	removal.EntryXDR = ""
+	src = append(src, removal)
 	if _, err := chstore.InsertEntryChanges(ctx, addr, src, 0); err != nil {
 		t.Fatalf("seed ledger_entry_changes: %v", err)
 	}
@@ -2266,6 +2274,22 @@ func TestChEntryIndex_WriteFillsBothIndexes(t *testing.T) {
 	}
 	if created != 1 || updated != 0 || removed != 0 {
 		t.Fatalf("asset counts = %d/%d/%d, want 1/0/0", created, updated, removed)
+	}
+	createdKey := src[3].KeyXDR
+	var claimKey, claimEntry string
+	var claimLedger uint32
+	if err := conn.QueryRow(ctx, `SELECT key_xdr, ledger, entry_xdr FROM stellar.account_claimables FINAL WHERE account = ?`, raw(alice)).Scan(&claimKey, &claimLedger, &claimEntry); err != nil {
+		t.Fatalf("read account_claimables: %v", err)
+	}
+	if claimKey != createdKey || claimLedger != base+2 || claimEntry != src[3].EntryXDR {
+		t.Fatalf("account_claimables row = (%s, %d), want alice's balance %s at %d with its entry", claimKey, claimLedger, createdKey, base+2)
+	}
+	var removedAt uint32
+	if err := conn.QueryRow(ctx, `SELECT ledger FROM stellar.claimable_removals FINAL WHERE key_xdr = ?`, removal.KeyXDR).Scan(&removedAt); err != nil {
+		t.Fatalf("read claimable_removals: %v", err)
+	}
+	if removedAt != base+2 {
+		t.Fatalf("claimable_removals ledger = %d, want %d", removedAt, base+2)
 	}
 	wm, err := chstore.EntryIndexWatermark(ctx, addr)
 	if err != nil {
