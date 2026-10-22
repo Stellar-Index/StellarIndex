@@ -219,7 +219,8 @@ if [ "${1:-}" = "--pages" ]; then
     printf '%s%-12s%s %7s %s%7s%s  %s (%s, %s%%)\n' "$c" "/$name" "$O" "$p50" "$c" "$p95" "$O" "$slow" "$slow95" "$slowok"
   done
   if [ -n "$TEXTFILE" ]; then
-    { printf '# HELP stellarindex_page_sweep_p95_seconds p95 of a page load (its slowest panel) in the last sweep.\n# TYPE stellarindex_page_sweep_p95_seconds gauge\n'
+    {
+      printf '# HELP stellarindex_page_sweep_p95_seconds p95 of a page load (its slowest panel) in the last sweep.\n# TYPE stellarindex_page_sweep_p95_seconds gauge\n'
       grep '^stellarindex_page_sweep_p95_seconds' "$prom"
       printf '# HELP stellarindex_page_sweep_panel_p95_seconds p95 of one page panel read in the last sweep, pooled over the entity cohort.\n# TYPE stellarindex_page_sweep_panel_p95_seconds gauge\n'
       grep '^stellarindex_page_sweep_panel_p95_seconds' "$prom"
