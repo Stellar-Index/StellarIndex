@@ -3,6 +3,7 @@ package clickhouse
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
@@ -35,6 +36,7 @@ type EntryIndexAssetRow struct {
 // EntryIndexDecodeRow is an entry whose XDR the builder decodes for claimants or a sponsor.
 type EntryIndexDecodeRow struct {
 	Ledger    uint32
+	CloseTime time.Time
 	EntryType string
 	KeyXDR    string
 	EntryXDR  string
@@ -42,10 +44,11 @@ type EntryIndexDecodeRow struct {
 
 // EntryIndexClaimableRow is one row of stellar.account_claimables; Account holds the raw 32-byte claimant key.
 type EntryIndexClaimableRow struct {
-	Account  string
-	KeyXDR   string
-	Ledger   uint32
-	EntryXDR string
+	Account   string
+	KeyXDR    string
+	Ledger    uint32
+	CloseTime time.Time
+	EntryXDR  string
 }
 
 // EntryIndexClaimableRemoval is one row of stellar.claimable_removals: the ledger a claimable balance was removed in.
@@ -101,7 +104,7 @@ const sponsoredEntryPredicate = `(entry_type = 'claimable_balance'
             AND substring(right(tryBase64Decode(right(entry_xdr, 68)), 48), 45, 4) = unhex('00000000')))`
 
 const entryIndexDecodeQuery = `
-SELECT ledger_seq, entry_type, key_xdr, entry_xdr
+SELECT ledger_seq, close_time, entry_type, key_xdr, entry_xdr
   FROM stellar.ledger_entry_changes
  WHERE ledger_seq BETWEEN ? AND ?
    AND tx_hash != ''
@@ -174,7 +177,7 @@ func StreamEntryIndexAssets(ctx context.Context, addr string, from, to uint32, f
 func StreamEntryIndexDecodeRows(ctx context.Context, addr string, from, to uint32, fn func(EntryIndexDecodeRow) error) error {
 	return streamEntryIndex(ctx, addr, "decode rows", entryIndexDecodeQuery, from, to, func(rows driver.Rows) error {
 		var r EntryIndexDecodeRow
-		if err := rows.Scan(&r.Ledger, &r.EntryType, &r.KeyXDR, &r.EntryXDR); err != nil {
+		if err := rows.Scan(&r.Ledger, &r.CloseTime, &r.EntryType, &r.KeyXDR, &r.EntryXDR); err != nil {
 			return fmt.Errorf("clickhouse: scan entry-index decode row: %w", err)
 		}
 		return fn(r)
@@ -246,12 +249,12 @@ func InsertClaimableIndex(ctx context.Context, addr string, claimables []EntryIn
 	}
 	defer func() { _ = conn.Close() }()
 	for i := 0; i < len(claimables); i += entryIndexInsertChunk {
-		batch, err := conn.PrepareBatch(ctx, `INSERT INTO stellar.account_claimables (account, key_xdr, ledger, entry_xdr)`)
+		batch, err := conn.PrepareBatch(ctx, `INSERT INTO stellar.account_claimables (account, key_xdr, ledger, close_time, entry_xdr)`)
 		if err != nil {
 			return fmt.Errorf("clickhouse: prepare account_claimables batch: %w", err)
 		}
 		for _, r := range claimables[i:min(i+entryIndexInsertChunk, len(claimables))] {
-			if err := batch.Append(r.Account, r.KeyXDR, r.Ledger, r.EntryXDR); err != nil {
+			if err := batch.Append(r.Account, r.KeyXDR, r.Ledger, r.CloseTime, r.EntryXDR); err != nil {
 				return fmt.Errorf("clickhouse: append account_claimables row: %w", err)
 			}
 		}

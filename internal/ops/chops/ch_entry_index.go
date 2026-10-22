@@ -452,7 +452,7 @@ func claimableRows(e *xdr.LedgerEntry, r clickhouse.EntryIndexDecodeRow) []click
 			continue
 		}
 		if key, ok := v0.Destination.GetEd25519(); ok {
-			rows = append(rows, clickhouse.EntryIndexClaimableRow{Account: string(key[:]), KeyXDR: r.KeyXDR, Ledger: r.Ledger, EntryXDR: r.EntryXDR})
+			rows = append(rows, clickhouse.EntryIndexClaimableRow{Account: string(key[:]), KeyXDR: r.KeyXDR, Ledger: r.Ledger, CloseTime: r.CloseTime, EntryXDR: r.EntryXDR})
 		}
 	}
 	return rows

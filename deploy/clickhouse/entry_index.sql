@@ -80,8 +80,9 @@ CREATE TABLE IF NOT EXISTS stellar.account_claimables
 (
     account   FixedString(32),
     key_xdr   String,
-    ledger    UInt32,
-    entry_xdr String CODEC(ZSTD(3))
+    ledger     UInt32,
+    close_time DateTime64(3, 'UTC'),
+    entry_xdr  String CODEC(ZSTD(3))
 )
 ENGINE = ReplacingMergeTree(ledger)
 ORDER BY (account, key_xdr);
