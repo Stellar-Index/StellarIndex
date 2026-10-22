@@ -36,9 +36,10 @@
 #                        cohort the account / contract page is loaded for; a
 #                        panel's p95 pools every load across the cohort.
 #                        TEXTFILE=path writes each panel's and page's p95 as a
-#                        node_exporter textfile (written atomically). A non-2xx
-#                        panel counts as a timeout, so a refused page never
-#                        reads as fast.
+#                        node_exporter textfile (written atomically). A panel
+#                        answered other than 2xx or 404 counts as a timeout,
+#                        so a refused page never reads as fast; a 404 is an
+#                        answer the page renders (a SAC has no /wasm).
 #
 # STELLARINDEX_PROBE_API_KEY, when set, is sent as X-API-Key so a sweep of
 # hundreds of reads is not answered by the anonymous per-IP rate limit.
@@ -207,7 +208,7 @@ if [ "${1:-}" = "--pages" ]; then
       worst=0
       for ((k=0;k<${#panels[@]};k++)); do
         read -r code tt < "$tmp/r$k"
-        case "$code" in 2*) ;; *) tt=$TIMEOUT;; esac
+        case "$code" in 2*|404) ;; *) tt=$TIMEOUT;; esac
         ms=$(awk -v t="${tt:-$TIMEOUT}" 'BEGIN{printf "%d", t*1000}')
         echo "$ms $code" >> "$tmp/p$k"
         [ "$ms" -gt "$worst" ] && worst=$ms
@@ -220,12 +221,12 @@ if [ "${1:-}" = "--pages" ]; then
     slow=""; slow95=-1; slowok=0
     for ((k=0;k<${#panels[@]};k++)); do
       k95=$(cut -d' ' -f1 "$tmp/p$k" | pctl 95)
-      kok=$(awk '$2 ~ /^2/ {o++} END{printf "%.3f", (NR? o/NR:0)}' "$tmp/p$k")
+      kok=$(awk '$2 ~ /^(2|404)/ {o++} END{printf "%.3f", (NR? o/NR:0)}' "$tmp/p$k")
       printf 'stellarindex_page_sweep_panel_p95_seconds{page="%s",panel="%s"} %s\n' "$name" "${panels[$k]}" "$(awk -v m="$k95" 'BEGIN{printf "%.3f", m/1000}')" >> "$prom"
       printf 'stellarindex_page_sweep_panel_ok_ratio{page="%s",panel="%s"} %s\n' "$name" "${panels[$k]}" "$kok" >> "$prom"
       if [ "$k95" -gt "$slow95" ]; then
         slow95=$k95; slow="${panels[$k]}"
-        slowok=$(awk '$2 ~ /^2/ {o++} END{printf "%d", (NR? o*100/NR:0)}' "$tmp/p$k")
+        slowok=$(awk '$2 ~ /^(2|404)/ {o++} END{printf "%d", (NR? o*100/NR:0)}' "$tmp/p$k")
       fi
     done
     if   [ "$p95" -gt "$CRIT_MS" ]; then c="$R"; CRIT=$((CRIT+1))
