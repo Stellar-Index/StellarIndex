@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/stellar/go-stellar-sdk/strkey"
@@ -638,6 +639,9 @@ func (r *ExplorerReader) SACClassicAssetName(ctx context.Context, contractID str
 	if err != nil {
 		return "", false, fmt.Errorf("clickhouse: SACClassicAssetName: bad contract id: %w", err)
 	}
+	if v, ok := r.sacVerdicts.get(contractID); ok {
+		return v.name, v.sac, nil
+	}
 	var cid xdr.Hash
 	copy(cid[:], raw)
 	keys, err := instanceKeyXDR(cid)
@@ -661,24 +665,69 @@ func (r *ExplorerReader) SACClassicAssetName(ctx context.Context, contractID str
 	if err := rows.Scan(&b64); err != nil {
 		return "", false, fmt.Errorf("clickhouse: scan SAC instance: %w", err)
 	}
-	name, ok := sacNameFromInstanceEntry(b64)
-	return name, ok, rows.Err()
+	name, ok, final := sacNameFromInstanceEntry(b64)
+	if err := rows.Err(); err != nil {
+		return "", false, err
+	}
+	if final {
+		r.sacVerdicts.put(contractID, sacVerdict{name: name, sac: ok})
+	}
+	return name, ok, nil
+}
+
+// sacVerdictMemoMax bounds the memo; a full memo is emptied, so a flood of distinct contracts costs lake reads, never memory.
+const sacVerdictMemoMax = 4096
+
+// sacVerdict is one SACClassicAssetName answer that cannot change.
+type sacVerdict struct {
+	name string
+	sac  bool
+}
+
+// sacVerdictMemo keeps the verdicts an instance proves for good: a SAC's name (its executable cannot be upgraded) or a WASM executable,
+// which can never become a SAC because a SAC address derives from an asset preimage. A missing instance is not kept: the lake may yet
+// capture it. Zero value ready to use.
+type sacVerdictMemo struct {
+	mu sync.Mutex
+	m  map[string]sacVerdict
+}
+
+func (m *sacVerdictMemo) get(contractID string) (sacVerdict, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	v, ok := m.m[contractID]
+	return v, ok
+}
+
+func (m *sacVerdictMemo) put(contractID string, v sacVerdict) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.m == nil || len(m.m) >= sacVerdictMemoMax {
+		m.m = make(map[string]sacVerdict)
+	}
+	m.m[contractID] = v
 }
 
 // sacNameFromInstanceEntry returns the SAC metadata name iff the executable is the core-minted
-// StellarAsset type (a WASM contract cannot claim it).
-func sacNameFromInstanceEntry(b64 string) (string, bool) {
+// StellarAsset type (a WASM contract cannot claim it); final reports a verdict that no later entry can change.
+func sacNameFromInstanceEntry(b64 string) (name string, ok, final bool) {
 	var entry xdr.LedgerEntry
 	if xdr.SafeUnmarshalBase64(b64, &entry) != nil {
-		return "", false
+		return "", false, false
 	}
 	cd, ok := entry.Data.GetContractData()
 	if !ok {
-		return "", false
+		return "", false, false
 	}
 	inst, ok := cd.Val.GetInstance()
-	if !ok || inst.Executable.Type != xdr.ContractExecutableTypeContractExecutableStellarAsset || inst.Storage == nil {
-		return "", false
+	if !ok {
+		return "", false, false
+	}
+	if inst.Executable.Type == xdr.ContractExecutableTypeContractExecutableWasm {
+		return "", false, true
+	}
+	if inst.Executable.Type != xdr.ContractExecutableTypeContractExecutableStellarAsset || inst.Storage == nil {
+		return "", false, false
 	}
 	for _, kv := range *inst.Storage {
 		sym, ok := kv.Key.GetSym()
@@ -690,11 +739,11 @@ func sacNameFromInstanceEntry(b64 string) (string, bool) {
 				continue
 			}
 			if name, ok := e.Val.GetStr(); ok {
-				return string(name), true
+				return string(name), true, true
 			}
 		}
 	}
-	return "", false
+	return "", false, false
 }
 
 // SACAssetFromEvents infers the classic asset from the trailing sep0011_asset topic of CAP-67 events, the last resort for SACs with no captured instance; the caller MUST re-derive the SAC address from the asset (the topic is attacker-influenceable).
