@@ -1,0 +1,10 @@
+[Unit]
+Description=Explorer page latency sweep every 30 min
+
+[Timer]
+OnCalendar=*:07/30
+RandomizedDelaySec=2m
+Unit=page-latency-sweep.service
+
+[Install]
+WantedBy=timers.target

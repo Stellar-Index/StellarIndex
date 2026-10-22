@@ -32,6 +32,11 @@
 #                        its slowest panel. With CACHE_BUST=1 this is the cold
 #                        load past the HTTP cache; in-process caches stay warm,
 #                        so a fully cold number needs a fresh API process.
+#                        ACCOUNTS / CONTRACTS (space-separated strkeys) set the
+#                        cohort the account / contract page is loaded for; a
+#                        panel's p95 pools every load across the cohort.
+#                        TEXTFILE=path writes each panel's and page's p95 as a
+#                        node_exporter textfile (written atomically).
 #
 set -uo pipefail
 
@@ -55,6 +60,9 @@ else G=""; Y=""; R=""; B=""; D=""; O=""; fi
 # issuer strkey for the issuer route.
 U="USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 ISS="GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+ACCOUNTS="${ACCOUNTS:-$ISS}"
+CONTRACTS="${CONTRACTS:-CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH}"
+TEXTFILE="${TEXTFILE:-}"
 
 # name|path — the anonymous, non-streaming GET surface. SSE (/v1/*/stream,
 # /v1/oracle/streams) and auth-gated routes (/v1/account/*, /v1/dashboard/*,
@@ -117,8 +125,8 @@ PAGES=(
   "network|/v1/network/stats /v1/ledgers?limit=12 /v1/network/throughput?window_days=30 /v1/assets/native /v1/sources?include=stats /v1/pools?limit=8&order_by=volume_24h_usd_desc"
   "rwa|/v1/rwa/assets /v1/rwa/history?timeframe=1y&group_by=none /v1/rwa/premium?timeframe=1y /v1/assets?asset_class=stablecoin&limit=100"
   "asset|/v1/price?asset=USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN&quote=fiat:USD&include_thin=true /v1/changes/coin/USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN /v1/ohlc?base=USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN&quote=fiat%3AUSD&interval=15m&limit=674 /v1/assets/USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN/holders?limit=100 /v1/markets/sources?asset=USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN /v1/issuers/GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
-  "account|/v1/accounts/GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN /v1/accounts/GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN/transactions?limit=50 /v1/accounts/GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN/operations?limit=50 /v1/issuers?limit=100 /v1/accounts/GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN/signer-on /v1/accounts/GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN/activity /v1/accounts/GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN/movements?limit=25 /v1/accounts/GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN/positions /v1/accounts/GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN/trades?limit=25 /v1/accounts/GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN/graph"
-  "contract|/v1/contracts/CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH/wasm /v1/contracts/CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH?limit=50 /v1/contracts/CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH/transfers?limit=25 /v1/contracts/CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH/code-history /v1/contracts/CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH/interactions?days=90&limit=50 /v1/sac-wrappers"
+  "account|/v1/accounts/{A} /v1/accounts/{A}/transactions?limit=50 /v1/accounts/{A}/operations?limit=50 /v1/issuers?limit=100 /v1/accounts/{A}/signer-on /v1/accounts/{A}/activity /v1/accounts/{A}/movements?limit=25 /v1/accounts/{A}/positions /v1/accounts/{A}/trades?limit=25 /v1/accounts/{A}/graph"
+  "contract|/v1/contracts/{C}/wasm /v1/contracts/{C}?limit=50 /v1/contracts/{C}/transfers?limit=25 /v1/contracts/{C}/code-history /v1/contracts/{C}/interactions?days=90&limit=50 /v1/sac-wrappers"
   "ledger|/v1/ledgers/60000000 /v1/ledgers/60000000/transactions"
   "tx|/v1/tx/8de565f6c81ca5d51361774be8b37a396532db5ce9c36a5723aeba5792c0522b"
 )
@@ -168,14 +176,18 @@ if [ "${1:-}" = "--pages" ]; then
   printf '%s%s pages vs %s — %s loads/page%s%s\n' "$B" "api-latency-sweep" "$API_BASE_URL" "$ITERS" \
     "$([ "$CACHE_BUST" = 1 ] && echo ' (cache-bust)')" "$O"
   printf '%s%-12s %7s %7s  %s%s\n' "$D" "page" "p50ms" "p95ms" "slowest panel (p95ms, ok%)" "$O"
+  prom="$tmp/prom"; : > "$prom"
   for pg in "${PAGES[@]}"; do
     name="${pg%%|*}"; read -r -a panels <<< "${pg#*|}"
+    case "$pg" in *"{A}"*) ents=$ACCOUNTS;; *"{C}"*) ents=$CONTRACTS;; *) ents="-";; esac
     : > "$tmp/page"
     for ((k=0;k<${#panels[@]};k++)); do : > "$tmp/p$k"; done
+    for ent in $ents; do
     for ((i=0;i<ITERS;i++)); do
       for ((k=0;k<${#panels[@]};k++)); do
+        u="${panels[$k]//\{A\}/$ent}"; u="${u//\{C\}/$ent}"
         ( curl -s -o /dev/null --max-time "$TIMEOUT" -w '%{http_code} %{time_total}\n' \
-            "$(bust_url "${API_BASE_URL}${panels[$k]}" "$i$k")" 2>/dev/null || echo "000 $TIMEOUT" ) > "$tmp/r$k" &
+            "$(bust_url "${API_BASE_URL}${u}" "$i$k")" 2>/dev/null || echo "000 $TIMEOUT" ) > "$tmp/r$k" &
       done
       wait
       worst=0
@@ -187,10 +199,15 @@ if [ "${1:-}" = "--pages" ]; then
       done
       echo "$worst" >> "$tmp/page"
     done
+    done
     p50=$(pctl 50 < "$tmp/page"); p95=$(pctl 95 < "$tmp/page")
+    printf 'stellarindex_page_sweep_p95_seconds{page="%s"} %s\n' "$name" "$(awk -v m="$p95" 'BEGIN{printf "%.3f", m/1000}')" >> "$prom"
     slow=""; slow95=-1; slowok=0
     for ((k=0;k<${#panels[@]};k++)); do
       k95=$(cut -d' ' -f1 "$tmp/p$k" | pctl 95)
+      kok=$(awk '$2 ~ /^2/ {o++} END{printf "%.3f", (NR? o/NR:0)}' "$tmp/p$k")
+      printf 'stellarindex_page_sweep_panel_p95_seconds{page="%s",panel="%s"} %s\n' "$name" "${panels[$k]}" "$(awk -v m="$k95" 'BEGIN{printf "%.3f", m/1000}')" >> "$prom"
+      printf 'stellarindex_page_sweep_panel_ok_ratio{page="%s",panel="%s"} %s\n' "$name" "${panels[$k]}" "$kok" >> "$prom"
       if [ "$k95" -gt "$slow95" ]; then
         slow95=$k95; slow="${panels[$k]}"
         slowok=$(awk '$2 ~ /^2/ {o++} END{printf "%d", (NR? o*100/NR:0)}' "$tmp/p$k")
@@ -201,6 +218,16 @@ if [ "${1:-}" = "--pages" ]; then
     else c="$G"; fi
     printf '%s%-12s%s %7s %s%7s%s  %s (%s, %s%%)\n' "$c" "/$name" "$O" "$p50" "$c" "$p95" "$O" "$slow" "$slow95" "$slowok"
   done
+  if [ -n "$TEXTFILE" ]; then
+    { printf '# HELP stellarindex_page_sweep_p95_seconds p95 of a page load (its slowest panel) in the last sweep.\n# TYPE stellarindex_page_sweep_p95_seconds gauge\n'
+      grep '^stellarindex_page_sweep_p95_seconds' "$prom"
+      printf '# HELP stellarindex_page_sweep_panel_p95_seconds p95 of one page panel read in the last sweep, pooled over the entity cohort.\n# TYPE stellarindex_page_sweep_panel_p95_seconds gauge\n'
+      grep '^stellarindex_page_sweep_panel_p95_seconds' "$prom"
+      printf '# HELP stellarindex_page_sweep_panel_ok_ratio Share of 2xx answers for one page panel in the last sweep.\n# TYPE stellarindex_page_sweep_panel_ok_ratio gauge\n'
+      grep '^stellarindex_page_sweep_panel_ok_ratio' "$prom"
+      printf '# HELP stellarindex_page_sweep_last_run_timestamp_seconds When the last sweep finished.\n# TYPE stellarindex_page_sweep_last_run_timestamp_seconds gauge\nstellarindex_page_sweep_last_run_timestamp_seconds %s\n' "$(date +%s)"
+    } > "$TEXTFILE.tmp.$$" && mv -f "$TEXTFILE.tmp.$$" "$TEXTFILE"
+  fi
   exit "$CRIT"
 fi
 
