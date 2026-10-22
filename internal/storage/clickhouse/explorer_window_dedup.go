@@ -20,6 +20,10 @@ const (
 	// windowFactorTxArm: ops_by_source / operation_participants carry several rows per transaction (tx sentinel + one per op), so a tx arm
 	// needs a wider window to hold `limit` distinct transactions.
 	windowFactorTxArm = 16
+	// windowGrowth and windowWidenings widen an unproven tx-arm window before the exact fallback. A 100-op
+	// transaction leaves a x16 window 8 keys; x8 wider still reads in sort-key order, ~15 ms against the exact scan's ~200 ms on r1.
+	windowGrowth    = 8
+	windowWidenings = 2
 )
 
 // exactFallbackReads is the closed `read` label set of stellarindex_explorer_exact_fallback_total, pre-set so a rate never starts from a

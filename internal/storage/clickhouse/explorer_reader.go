@@ -1007,8 +1007,8 @@ func scanTxKey(rows driver.Rows) (accountTxKey, error) {
 	return k, err
 }
 
-// sourcedTxKeys is the sourced arm's exact top `limit` keys: a bounded window read in
-// sort-key order, falling back to sourcedTxKeysExactQuery when the window cannot prove a full page.
+// sourcedTxKeys is the sourced arm's exact top `limit` keys: a bounded window read in sort-key order, widened up to windowWidenings
+// times, falling back to sourcedTxKeysExactQuery when no window can prove a full page.
 func (r *ExplorerReader) sourcedTxKeys(ctx context.Context, account string, limit int, cur ExplorerCursor) ([]accountTxKey, error) {
 	window := windowRows(limit, windowFactorTxArm)
 	cursorClause := ""
@@ -1017,13 +1017,15 @@ func (r *ExplorerReader) sourcedTxKeys(ctx context.Context, account string, limi
 		cursorClause = ` AND ledger_seq <= ? AND (ledger_seq, tx_index) < (?, ?)`
 		cursorArgs = []any{cur.Ledger, cur.Ledger, cur.A}
 	}
-	args := append(append([]any{account}, cursorArgs...), window)
-	keys, ok, err := windowedKeyRead(ctx, r.conn,
-		`SELECT ledger_seq, tx_index FROM stellar.ops_by_source WHERE source_account = ?`+cursorClause+
-			` ORDER BY ledger_seq DESC, tx_index DESC LIMIT ?`+explorerScanSettings,
-		args, window, limit, scanTxKey)
-	if err != nil || ok {
-		return keys, err
+	args := append([]any{account}, cursorArgs...)
+	for i := 0; i <= windowWidenings; i, window = i+1, window*windowGrowth {
+		keys, ok, err := windowedKeyRead(ctx, r.conn,
+			`SELECT ledger_seq, tx_index FROM stellar.ops_by_source WHERE source_account = ?`+cursorClause+
+				` ORDER BY ledger_seq DESC, tx_index DESC LIMIT ?`+explorerScanSettings,
+			args, window, limit, scanTxKey)
+		if err != nil || ok {
+			return keys, err
+		}
 	}
 	exactFallback("sourced_tx_keys")
 	args = append(append([]any{account}, cursorArgs...), limit)
@@ -1051,12 +1053,12 @@ func queryKeys[K any](ctx context.Context, conn driver.Conn, q string, args []an
 	return out, nil
 }
 
-// windowedKeyRead runs one windowed key read and collapses adjacent duplicate keys;
+// windowedKeyRead runs one windowed key read (q's final `LIMIT ?` binds to window, after args) and collapses adjacent duplicate keys;
 // ok=false when the window cannot prove `limit` distinct keys.
 func windowedKeyRead[K comparable](ctx context.Context, conn driver.Conn, q string, args []any, window, limit int,
 	scan func(driver.Rows) (K, error),
 ) ([]K, bool, error) {
-	raw, err := queryKeys(ctx, conn, q, args, scan)
+	raw, err := queryKeys(ctx, conn, q, append(args[:len(args):len(args)], window), scan)
 	if err != nil {
 		return nil, false, err
 	}
@@ -1325,7 +1327,7 @@ func (r *ExplorerReader) sourcedOpKeys(ctx context.Context, account string, limi
 		clauses += ` AND ledger_seq <= ? AND (ledger_seq, tx_index, op_index) < (?, ?, ?)`
 		extra = append(extra, cur.Ledger, cur.Ledger, cur.A, cur.B)
 	}
-	args := append(append([]any{account}, extra...), window)
+	args := append([]any{account}, extra...)
 	keys, ok, err := windowedKeyRead(ctx, r.conn,
 		`SELECT ledger_seq, tx_index, op_index FROM stellar.ops_by_source WHERE source_account = ? AND op_index != 4294967295`+clauses+
 			` ORDER BY ledger_seq DESC, tx_index DESC, op_index DESC LIMIT ?`+explorerScanSettings,
