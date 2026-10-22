@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"slices"
+	"sync"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -151,7 +153,9 @@ func assembleTokenSupply(contractID, mintS, burnS, clawbackS string, flows uint6
 
 // SupplyReader is a persistent ClickHouse connection serving per-token supply on the API hot path; construct once, reuse, Close at shutdown.
 type SupplyReader struct {
-	conn driver.Conn
+	conn  driver.Conn
+	bases settledSupplyMemo
+	now   func() time.Time
 }
 
 // NewSupplyReader dials ClickHouse with a request-sized pool and pings it, using the environment's identity (chAuth).
@@ -190,9 +194,10 @@ func (r *SupplyReader) TokenSupply(ctx context.Context, contractID string) (Toke
 	return querySupply(ctx, r.conn, contractID)
 }
 
-// supplySumByContractsQuery is [supplySumQuery] for a SET of contracts in ONE read: `contract_id` LEADS the ORDER BY, so the IN-list is
-// primary-key prefix ranges and FINAL's setup cost is paid once. Int256 and string projection as in [supplySumQuery] (ADR-0003).
-// Contracts with no flows are ABSENT; see [SupplyReader.TokenSupplyForContracts].
+// supplySumByContractsQuery is [supplySumQuery] for a SET of contracts in ONE read, over a ledger range the caller appends: `contract_id`
+// LEADS the ORDER BY, so the IN-list is primary-key prefix ranges and FINAL's setup cost is paid once. Int256 and string projection as
+// in [supplySumQuery] (ADR-0003). ledger_seq is in the dedup key, so FINAL never merges a row across a range split. Contracts with no
+// flows in the range are ABSENT.
 const supplySumByContractsQuery = `
 	SELECT
 		contract_id,
@@ -201,27 +206,162 @@ const supplySumByContractsQuery = `
 		toString(sum(toInt256(if(kind = 'clawback', amount, toInt128(0))))) AS clawback,
 		count() AS flows
 	FROM stellar.supply_flows FINAL
-	WHERE contract_id IN (?)
-	GROUP BY contract_id`
+	WHERE contract_id IN (?) AND ledger_seq `
 
-// TokenSupplyForContracts sums TokenSupply for many contracts in one read, keyed by contract id; a contract with NO flows is OMITTED, never zero (zero would publish a fully-burned supply), and Incomplete carries through.
-func (r *SupplyReader) TokenSupplyForContracts(ctx context.Context, contractIDs []string) (map[string]TokenSupply, error) {
-	if len(contractIDs) == 0 {
-		return map[string]TokenSupply{}, nil
+// supplySettledQuery is the ledger a base sum stops below: supplySettledMargin under the newest flow, rounded down, and never above the
+// lake tip, so a stray far-future row cannot pull live flows into a base. Both max() reads are answered from part metadata.
+const supplySettledQuery = `SELECT toUInt32(greatest(intDiv(toInt64(least(max(ledger_seq),
+		ifNull((SELECT max(ledger_seq) FROM stellar.ledgers), 0))) - ` + supplySettledMargin + `, 100000) * 100000, 0))
+	FROM stellar.supply_flows`
+
+const (
+	// supplySettledMargin keeps the split well below the live writer (~14h of ledgers).
+	supplySettledMargin = "10000"
+	// supplyBaseMaxAge bounds how long a flow written late below the split (a replay) can go unseen.
+	supplyBaseMaxAge  = 6 * time.Hour
+	supplyBaseMemoMax = 8192
+)
+
+// flowSums is a contract's supply_flows sums over a ledger range; all fields are set.
+type flowSums struct {
+	mint, burn, clawback *big.Int
+	flows                uint64
+}
+
+func parseFlowSums(mintS, burnS, clawbackS string, flows uint64) flowSums {
+	return flowSums{mint: mustBig(mintS), burn: mustBig(burnS), clawback: mustBig(clawbackS), flows: flows}
+}
+
+func (a flowSums) plus(b flowSums) flowSums {
+	return flowSums{
+		mint:     new(big.Int).Add(a.mint, b.mint),
+		burn:     new(big.Int).Add(a.burn, b.burn),
+		clawback: new(big.Int).Add(a.clawback, b.clawback),
+		flows:    a.flows + b.flows,
 	}
-	rows, err := r.conn.Query(ctx, supplySumByContractsQuery, contractIDs)
+}
+
+func (a flowSums) supply(contractID string) TokenSupply {
+	return assembleTokenSupply(contractID, a.mint.String(), a.burn.String(), a.clawback.String(), a.flows)
+}
+
+// settledBase is a contract's sums strictly below settled, as read at at.
+type settledBase struct {
+	settled uint32
+	sums    flowSums
+	at      time.Time
+}
+
+type settledSupplyMemo struct {
+	mu sync.Mutex
+	m  map[string]settledBase
+}
+
+func (m *settledSupplyMemo) get(id string, now time.Time) (settledBase, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.m[id]
+	return b, ok && now.Sub(b.at) < supplyBaseMaxAge
+}
+
+func (m *settledSupplyMemo) put(id string, b settledBase) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, held := m.m[id]; m.m == nil || (!held && len(m.m) >= supplyBaseMemoMax) {
+		m.m = make(map[string]settledBase)
+	}
+	m.m[id] = b
+}
+
+// TokenSupplyForContracts sums TokenSupply for many contracts, keyed by contract id; a contract with NO flows is OMITTED, never zero
+// (zero would publish a fully-burned supply), and Incomplete carries through. Each contract's sum below a settled ledger is memoised
+// for supplyBaseMaxAge, so a refresh re-reads only the flows above it: the full FINAL sum of a busy SAC is hundreds of millions of rows.
+func (r *SupplyReader) TokenSupplyForContracts(ctx context.Context, contractIDs []string) (map[string]TokenSupply, error) {
+	groups, err := r.settledBases(ctx, contractIDs)
 	if err != nil {
-		return nil, fmt.Errorf("clickhouse: supply for %d contracts: %w", len(contractIDs), err)
+		return nil, err
+	}
+	out := make(map[string]TokenSupply, len(contractIDs))
+	for settled, bases := range groups {
+		ids := make([]string, 0, len(bases))
+		for id := range bases {
+			ids = append(ids, id)
+		}
+		slices.Sort(ids)
+		recent, err := r.sumFlows(ctx, ids, ">= ?", settled)
+		if err != nil {
+			return nil, err
+		}
+		for id, sum := range bases {
+			if d, ok := recent[id]; ok {
+				sum = sum.plus(d)
+			}
+			if sum.flows > 0 {
+				out[id] = sum.supply(id)
+			}
+		}
+	}
+	return out, nil
+}
+
+// settledBases groups each contract's base sums by the settled ledger they stop below, reading and memoising the ones not memoised.
+func (r *SupplyReader) settledBases(ctx context.Context, contractIDs []string) (map[uint32]map[string]flowSums, error) {
+	now := time.Now()
+	if r.now != nil {
+		now = r.now()
+	}
+	groups := map[uint32]map[string]flowSums{}
+	add := func(id string, b settledBase) {
+		if groups[b.settled] == nil {
+			groups[b.settled] = map[string]flowSums{}
+		}
+		groups[b.settled][id] = b.sums
+	}
+	var cold []string
+	for _, id := range contractIDs {
+		if b, ok := r.bases.get(id, now); ok {
+			add(id, b)
+		} else {
+			cold = append(cold, id)
+		}
+	}
+	if len(cold) == 0 {
+		return groups, nil
+	}
+	var settled uint32
+	if err := r.conn.QueryRow(ctx, supplySettledQuery).Scan(&settled); err != nil {
+		return nil, fmt.Errorf("clickhouse: supply settled ledger: %w", err)
+	}
+	below, err := r.sumFlows(ctx, cold, "< ?", settled)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range cold {
+		b := settledBase{settled: settled, sums: below[id], at: now}
+		if b.sums.mint == nil {
+			b.sums = parseFlowSums("0", "0", "0", 0)
+		}
+		r.bases.put(id, b)
+		add(id, b)
+	}
+	return groups, nil
+}
+
+func (r *SupplyReader) sumFlows(ctx context.Context, ids []string, ledgerCond string, ledger uint32) (map[string]flowSums, error) {
+	rows, err := r.conn.Query(ctx, supplySumByContractsQuery+ledgerCond+`
+	GROUP BY contract_id`, ids, ledger)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: supply for %d contracts: %w", len(ids), err)
 	}
 	defer func() { _ = rows.Close() }()
-	out := make(map[string]TokenSupply, len(contractIDs))
+	out := make(map[string]flowSums, len(ids))
 	for rows.Next() {
-		var contractID, mintS, burnS, clawbackS string
-		var flows uint64
-		if err := rows.Scan(&contractID, &mintS, &burnS, &clawbackS, &flows); err != nil {
+		var id, m, b, c string
+		var f uint64
+		if err := rows.Scan(&id, &m, &b, &c, &f); err != nil {
 			return nil, fmt.Errorf("clickhouse: scan bulk supply row: %w", err)
 		}
-		out[contractID] = assembleTokenSupply(contractID, mintS, burnS, clawbackS, flows)
+		out[id] = parseFlowSums(m, b, c, f)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("clickhouse: bulk supply stream: %w", err)
