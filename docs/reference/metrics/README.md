@@ -1223,6 +1223,12 @@ Fires once per gate consultation whose `account_directory` lookup errored, so th
 Alert: `stellarindex_scam_gate_fail_open` →
 [scam-gate-fail-open](../../operations/runbooks/api.md#stellarindex_scam_gate_fail_open).
 
+### `stellarindex_explorer_exact_fallback_total`
+
+Counter, label `read` (`recent_operations`, `sourced_tx_keys`, `sourced_op_keys`, `account_movements`, `asset_movements`, `contract_events`).
+
+Explorer page reads whose bounded window could not prove a full page of distinct keys, so the read re-ran as the exact LIMIT 1 BY / dedup query (O(account or contract history)). Alert: `stellarindex_explorer_exact_fallback_sustained`.
+
 ### `stellarindex_counts_rollup_plan_ok`
 
 Gauge, label `rollup` (`op-types`, `movements`).
@@ -1816,6 +1822,12 @@ The lake's last answer to each explorer schema probe: `1` = exists, `0` = absent
 Counter. Label `probe` (as above).
 
 Probes that got no answer (transport error, deadline, or a non-schema ClickHouse exception). The gauge `stellarindex_ch_schema_probe_present` stays unchanged, so a rising rate means "the lake is not answering", not "the object is gone".
+
+### `stellarindex_explorer_schema_absent_empty_total`
+
+Counter. Label `table` (`account_entry_ledgers`, `asset_entry_ledgers`, `sponsorship_events`).
+
+Explorer reads answered as empty because their ClickHouse table or column is missing. Alert: `stellarindex_explorer_schema_absent_empty`.
 
 ### `stellarindex_protocol_detail_refresh_total`
 

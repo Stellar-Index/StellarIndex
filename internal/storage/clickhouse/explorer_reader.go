@@ -169,6 +169,24 @@ func isSchemaAbsent(err error) bool {
 	return ok
 }
 
+var absentEmptyTables = []string{"account_entry_ledgers", "asset_entry_ledgers", "sponsorship_events"}
+
+func init() {
+	for _, t := range absentEmptyTables {
+		obs.ExplorerSchemaAbsentEmptyTotal.WithLabelValues(t)
+	}
+}
+
+// absentReadsEmpty reports whether err is a missing-schema answer that the caller serves as an empty result,
+// counting it so an unbuilt index pages instead of reading as "no activity".
+func absentReadsEmpty(table string, err error) bool {
+	if !isSchemaAbsent(err) {
+		return false
+	}
+	obs.ExplorerSchemaAbsentEmptyTotal.WithLabelValues(table).Inc()
+	return true
+}
+
 // ExplorerReader serves the network-explorer reads (ADR-0038) from the certified lake (ADR-0034); construct once and reuse, reads are by immutable key and cacheable.
 type ExplorerReader struct {
 	conn driver.Conn
@@ -653,6 +671,7 @@ func (r *ExplorerReader) recentOperationsPage(ctx context.Context, limit int, cu
 		}
 		return deduped, nil
 	}
+	exactFallback("recent_operations")
 	return r.queryRecentOperations(ctx, recentOperationsSQL(cur.IsSet(), bounded, true, typed), cur, bounded, opTypes, limit)
 }
 
@@ -1002,6 +1021,7 @@ func (r *ExplorerReader) sourcedTxKeys(ctx context.Context, account string, limi
 	if err != nil || ok {
 		return keys, err
 	}
+	exactFallback("sourced_tx_keys")
 	args = append(append([]any{account}, cursorArgs...), limit)
 	return queryKeys(ctx, r.conn, sourcedTxKeysExactQuery(cur.IsSet()), args, scanTxKey)
 }
@@ -1309,6 +1329,7 @@ func (r *ExplorerReader) sourcedOpKeys(ctx context.Context, account string, limi
 	if err != nil || ok {
 		return keys, err
 	}
+	exactFallback("sourced_op_keys")
 	args = append(append([]any{account}, extra...), limit)
 	return queryKeys(ctx, r.conn, sourcedOpKeysExactQuery(cur.IsSet(), hasBound), args, scanOpKey)
 }
@@ -1855,6 +1876,7 @@ func (r *ExplorerReader) ContractEventsRecent(ctx context.Context, contractID st
 	if len(out) < limit && raw == fetch {
 		// Duplicate storm: the over-fetch was ALL consumed and dedup still could not fill the
 		// page, the only case where a short page would lie (next_cursor keys on a FULL page).
+		exactFallback("contract_events")
 		out, _, err = r.contractEventsScan(ctx, contractEventsRecentDedupQuery(cur.IsSet(), ledgers != nil), contractID, limit, limit, cur, ledgers)
 	}
 	return out, err

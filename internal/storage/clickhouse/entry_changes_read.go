@@ -35,7 +35,7 @@ func (r *ExplorerReader) AccountEntryLedgers(ctx context.Context, account string
 	const q = `SELECT DISTINCT ledger FROM stellar.account_entry_ledgers
 		WHERE account = ? AND role IN (?) AND ledger <= ?
 		ORDER BY ledger DESC LIMIT ?` + explorerScanSettings
-	return r.entryLedgers(ctx, "account entry ledgers", q, account, roles, maxLedger, limit)
+	return r.entryLedgers(ctx, "account_entry_ledgers", q, account, roles, maxLedger, limit)
 }
 
 // AssetEntryLedgers lists, newest first, the ledgers at or below maxLedger in which an entry of one of the types held
@@ -44,26 +44,26 @@ func (r *ExplorerReader) AssetEntryLedgers(ctx context.Context, asset string, en
 	const q = `SELECT DISTINCT ledger FROM stellar.asset_entry_ledgers
 		WHERE asset = ? AND entry_type IN (?) AND ledger <= ?
 		ORDER BY ledger DESC LIMIT ?` + explorerScanSettings
-	return r.entryLedgers(ctx, "asset entry ledgers", q, asset, entryTypes, maxLedger, limit)
+	return r.entryLedgers(ctx, "asset_entry_ledgers", q, asset, entryTypes, maxLedger, limit)
 }
 
-func (r *ExplorerReader) entryLedgers(ctx context.Context, label, q, key string, in []string, maxLedger uint32, limit int) ([]uint32, error) {
+func (r *ExplorerReader) entryLedgers(ctx context.Context, table, q, key string, in []string, maxLedger uint32, limit int) ([]uint32, error) {
 	if len(in) == 0 || limit <= 0 {
 		return nil, nil
 	}
 	rows, err := r.conn.Query(ctx, q, key, in, maxLedger, limit)
 	if err != nil {
-		if isSchemaAbsent(err) {
+		if absentReadsEmpty(table, err) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("clickhouse: %s: %w", label, err)
+		return nil, fmt.Errorf("clickhouse: %s: %w", table, err)
 	}
 	defer func() { _ = rows.Close() }()
 	out := make([]uint32, 0, limit)
 	for rows.Next() {
 		var l uint32
 		if err := rows.Scan(&l); err != nil {
-			return nil, fmt.Errorf("clickhouse: %s scan: %w", label, err)
+			return nil, fmt.Errorf("clickhouse: %s scan: %w", table, err)
 		}
 		out = append(out, l)
 	}
@@ -152,7 +152,7 @@ const assetTrustlineDailyQuery = `WITH
 func (r *ExplorerReader) AssetTrustlineDaily(ctx context.Context, asset string, maxLedger uint32) ([]AssetTrustlineDay, error) {
 	rows, err := r.conn.Query(ctx, assetTrustlineDailyQuery, maxLedger, asset, maxLedger)
 	if err != nil {
-		if isSchemaAbsent(err) {
+		if absentReadsEmpty("asset_entry_ledgers", err) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("clickhouse: asset trustline daily: %w", err)

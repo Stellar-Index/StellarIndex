@@ -101,7 +101,7 @@ func (r *ExplorerReader) AccountSponsorships(ctx context.Context, account, side 
 	rows, err := r.conn.Query(ctx, q, account, maxLedger, account, maxLedger,
 		after.Sponsor, after.Sponsored, after.Kind, after.KeyID, limit)
 	if err != nil {
-		if isSchemaAbsent(err) {
+		if absentReadsEmpty("sponsorship_events", err) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("clickhouse: account sponsorships: %w", err)
@@ -154,7 +154,7 @@ func (r *ExplorerReader) SponsorshipTotals(ctx context.Context, account, side st
 			GROUP BY sponsor, sponsored, kind, key_id)` + explorerScanSettings
 	var t SponsorshipTotals
 	if err := r.conn.QueryRow(ctx, q, account, maxLedger).Scan(&t.InForce, &t.InForceReserves, &t.Started, &t.Revoked, &t.Ended); err != nil {
-		if isSchemaAbsent(err) {
+		if absentReadsEmpty("sponsorship_events", err) {
 			return SponsorshipTotals{}, nil
 		}
 		return SponsorshipTotals{}, fmt.Errorf("clickhouse: sponsorship totals: %w", err)

@@ -549,6 +549,7 @@ func (r *ExplorerReader) AccountMovements(ctx context.Context, address string, l
 	if page, ok, err := r.accountMovementsWindowed(ctx, address, limit, window, cur, filter, append(args, window)); err != nil || ok {
 		return page, err
 	}
+	exactFallback("account_movements")
 	return r.queryAccountMovements(ctx, address, accountMovementsQuery(filter, cur.IsSet()), append(args, limit))
 }
 

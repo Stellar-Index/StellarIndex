@@ -274,6 +274,7 @@ func registerAppMetricsTail() {
 		MEVScanTruncatedTotal,
 		MEVLakeOrderLookupSkippedTotal,
 		TxIndexTagLookupSkippedTotal,
+		ExplorerExactFallbackTotal,
 		CountsRollupPlanOK,
 		CountsRollupStalePartitions,
 
@@ -356,7 +357,7 @@ func registerStorageAndExplorerMetrics() {
 		SDEXOrderBookUndecodableOffersTotal,
 		ExplorerSWRRefreshTotal, ExplorerSWRRefreshDurationSeconds,
 		ExplorerRefreshGateSaturatedTotal,
-		CHSchemaProbePresent, CHSchemaProbeUnansweredTotal,
+		CHSchemaProbePresent, CHSchemaProbeUnansweredTotal, ExplorerSchemaAbsentEmptyTotal,
 		ProtocolDetailRefreshTotal,
 		ProtocolDetailRefreshDurationSeconds,
 		WorkerPanicsTotal,
@@ -1822,6 +1823,15 @@ var TxIndexTagLookupSkippedTotal = prometheus.NewCounter(
 	},
 )
 
+// ExplorerExactFallbackTotal counts explorer page reads whose bounded window could not prove a full page and re-ran as the exact query.
+var ExplorerExactFallbackTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_explorer_exact_fallback_total",
+		Help: "Explorer page reads whose bounded sort-key window could not prove a full page of distinct keys (un-merged duplicates), so the read re-ran as the exact LIMIT 1 BY / dedup query, which is O(account or contract history).",
+	},
+	[]string{"read"},
+)
+
 // CountsRollupPlanOK is 1 while the explorer reader has a usable plan for a counts rollup, 0 while it falls back to the source scan.
 var CountsRollupPlanOK = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
@@ -3033,6 +3043,15 @@ var CHSchemaProbePresent = prometheus.NewGaugeVec(
 		Help: "Last ClickHouse answer to each explorer schema probe (1 = object usable, 0 = absent or empty; the explorer serves that surface from its fallback while 0).",
 	},
 	[]string{"probe"},
+)
+
+// ExplorerSchemaAbsentEmptyTotal counts explorer reads served as empty because their ClickHouse table or column is missing.
+var ExplorerSchemaAbsentEmptyTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_explorer_schema_absent_empty_total",
+		Help: "Explorer reads answered as empty because their ClickHouse table or column does not exist, by table.",
+	},
+	[]string{"table"},
 )
 
 // CHSchemaProbeUnansweredTotal counts explorer schema probes that got no answer (transport error, deadline); leaves [CHSchemaProbePresent] untouched.
