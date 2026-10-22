@@ -11,9 +11,8 @@ superseded_by: null
 
 ## Context
 
-The availability target forces per-component redundancy and a graceful-degradation contract for when
-a plane fails. [docs/architecture/ha-plan.md](../architecture/ha-plan.md) holds the full design; this
-ADR binds its load-bearing decisions for per-region infrastructure.
+The availability target forces per-component redundancy and a degradation contract for when a plane
+fails. [ha-plan.md](../architecture/ha-plan.md) holds the design; this ADR binds its per-region parts.
 
 ## Decision
 
@@ -65,14 +64,10 @@ reads cold-tier storage synchronously on a hot-path request violates the tier co
 
 ## Consequences
 
-Self-hosted hardware plus cloud DR covers the commitment without vendor lock-in, and the tier split
-makes the degradation contract reviewable. It costs operational complexity (Patroni, keepalived,
-Sentinel, mirror schedules, two failure-mode sets) and manual hardware refresh. A new service should
-declare its tier, redundancy and degraded mode; backup retention, alert thresholds and
-failover procedures live in `docs/operations/runbooks/`. Full cloud, single-replica Postgres,
-stellar-core in AWS and serverless aggregation were rejected.
+Owned hardware plus cloud DR meets the commitment without lock-in, at the cost of running Patroni,
+keepalived, Sentinel and mirrors. A new service declares its tier, redundancy and degraded mode;
+runbooks live in `docs/operations/runbooks/`. Rejected: full cloud, single-replica Postgres.
 
 ## Evidence
 
-`cmd/stellarindex-aggregator/main.go` (`HoldInstanceLock`); `deploy/monitoring/rules/slo.yml`
-(budget 0.001, label `api_availability_3_nines`); the two chops tests above.
+`cmd/stellarindex-aggregator/main.go`, `deploy/monitoring/rules/slo.yml`, the two chops tests above.
