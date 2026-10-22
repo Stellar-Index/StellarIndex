@@ -2,6 +2,7 @@ package chops
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -25,6 +26,7 @@ func chEntryHistory(args []string) error {
 	window := fs.Uint("window", 10_000, "ledgers per derive window")
 	floorLedger := fs.Uint("floor-ledger", 1, "first-run start when no watermark exists; clamped up to the lake's first ledger")
 	maxDecodeErrs := registerDecodeBudget(fs)
+	totalsOnly := fs.Bool("totals-only", false, "refresh only stellar.sponsorship_totals_buckets from the derived events, from its watermark (or -from) through the sponsorship_events watermark (or -to)")
 	proof := fs.String("proof", "", "comma-separated accounts: print each one's sponsorship counters against the derived in-force reserves and exit (reads only)")
 	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
@@ -46,6 +48,9 @@ func chEntryHistory(args []string) error {
 
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
+	if *totalsOnly {
+		return runTotalsOnly(ctx, *chAddr, uint32(*from), uint32(*to), uint32(*window), dryRun) //nolint:gosec // ledger numbers fit uint32
+	}
 
 	start, last, err := resolveDeriveRange(ctx, *chAddr, "ch-entry-history", uint32(*from), uint32(*to), uint32(*floorLedger), clickhouse.SponsorshipWatermark) //nolint:gosec // ledger numbers fit uint32
 	if err != nil {
@@ -78,9 +83,15 @@ func chEntryHistory(args []string) error {
 }
 
 // runEntryHistory derives [start, last] window by window, advancing the
-// watermark after each written window.
+// watermark after each written window, then refreshing its totals buckets.
 func runEntryHistory(ctx context.Context, chAddr string, start, last, window uint32, dryRun bool, st *entryHistoryStats) error {
 	runStart := time.Now()
+	totals := sponsorshipTotalsFollower{addr: chAddr}
+	if !dryRun {
+		if err := totals.start(ctx, start, window); err != nil {
+			return err
+		}
+	}
 	for lo := start; ; {
 		hi := last
 		if last-lo >= window {
@@ -93,6 +104,9 @@ func runEntryHistory(ctx context.Context, chAddr string, start, last, window uin
 		if !dryRun {
 			if err := setSponsorshipWatermark(ctx, chAddr, lo, hi); err != nil {
 				return fmt.Errorf("advance watermark to %d: %w", hi, err)
+			}
+			if err := totals.follow(ctx, lo, hi); err != nil {
+				return fmt.Errorf("window [%d,%d] totals: %w", lo, hi, err)
 			}
 		}
 		fmt.Fprintf(os.Stderr, "ch-entry-history: window [%d,%d] done — %d sponsorship events (elapsed %s)\n",
@@ -109,6 +123,10 @@ var (
 	streamSponsorshipCandidates = clickhouse.StreamSponsorshipCandidates
 	insertSponsorshipEvents     = clickhouse.InsertSponsorshipEvents
 	setSponsorshipWatermark     = clickhouse.SetSponsorshipWatermark
+	sponsorshipTotalsWatermark  = clickhouse.SponsorshipTotalsWatermark
+	sponsorshipEventsWatermark  = clickhouse.SponsorshipWatermark
+	refreshSponsorshipTotals    = clickhouse.RefreshSponsorshipTotals
+	setSponsorshipTotalsWM      = clickhouse.SetSponsorshipTotalsWatermark
 	entryHistoryFlushRowCount   = 50_000
 )
 
@@ -231,4 +249,93 @@ func sponsorshipProofFor(ctx context.Context, rd *clickhouse.ExplorerReader, g s
 		return entryhistory.SponsorshipProof{}, err
 	}
 	return entryhistory.ProveSponsorships(st, wm, sponsoring, sponsored), nil
+}
+
+// sponsorshipTotalsFollower keeps the totals buckets in step with the derive. On a host whose events predate the
+// buckets the first advance is refused, and it turns off rather than claim buckets with history missing below them.
+type sponsorshipTotalsFollower struct {
+	addr string
+	off  bool
+}
+
+// start closes any gap a stopped run left between the totals watermark and the events below the derive's start.
+func (f *sponsorshipTotalsFollower) start(ctx context.Context, start, window uint32) error {
+	wm, err := sponsorshipTotalsWatermark(ctx, f.addr)
+	if err != nil {
+		return fmt.Errorf("read sponsorship_totals watermark: %w", err)
+	}
+	ev, err := sponsorshipEventsWatermark(ctx, f.addr)
+	if err != nil {
+		return fmt.Errorf("read sponsorship_events watermark: %w", err)
+	}
+	if end := min(start-1, ev); wm > 0 && wm < end {
+		return f.run(ctx, wm+1, end, window)
+	}
+	return nil
+}
+
+func (f *sponsorshipTotalsFollower) follow(ctx context.Context, lo, hi uint32) error {
+	if f.off {
+		return nil
+	}
+	err := f.run(ctx, lo, hi, hi-lo+1)
+	if errors.Is(err, clickhouse.ErrSponsorshipTotalsUnfilled) {
+		f.off = true
+		fmt.Fprintf(os.Stderr, "ch-entry-history: sponsorship totals buckets unfilled (%v); fill them with -totals-only -write\n", err)
+		return nil
+	}
+	return err
+}
+
+// run refreshes [lo, last] window by window, advancing the totals watermark after each.
+func (f *sponsorshipTotalsFollower) run(ctx context.Context, lo, last, window uint32) error {
+	for {
+		hi := last
+		if last-lo >= window {
+			hi = lo + window - 1
+		}
+		if err := refreshSponsorshipTotals(ctx, f.addr, lo, hi); err != nil {
+			return err
+		}
+		if err := setSponsorshipTotalsWM(ctx, f.addr, lo, hi); err != nil {
+			return fmt.Errorf("advance sponsorship_totals watermark to %d: %w", hi, err)
+		}
+		fmt.Fprintf(os.Stderr, "ch-entry-history: totals [%d,%d] done\n", lo, hi)
+		if hi >= last {
+			return nil
+		}
+		lo = hi + 1
+	}
+}
+
+// runTotalsOnly fills the totals buckets from already-derived events, resumable from their watermark.
+func runTotalsOnly(ctx context.Context, addr string, from, to, window uint32, dryRun bool) error {
+	ev, err := sponsorshipEventsWatermark(ctx, addr)
+	if err != nil {
+		return fmt.Errorf("read sponsorship_events watermark: %w", err)
+	}
+	wm, err := sponsorshipTotalsWatermark(ctx, addr)
+	if err != nil {
+		return fmt.Errorf("read sponsorship_totals watermark: %w", err)
+	}
+	lo, last := wm+1, ev
+	if from > 0 {
+		lo = from
+	}
+	if to > 0 && to < last {
+		last = to
+	}
+	if last < lo {
+		fmt.Fprintf(os.Stderr, "ch-entry-history: totals: nothing to refresh (from %d, events watermark %d)\n", lo, ev)
+		return nil
+	}
+	if dryRun {
+		fmt.Fprintf(os.Stderr, "ch-entry-history: totals: would refresh [%d,%d] in %d-ledger windows\n", lo, last, window)
+		return nil
+	}
+	f := sponsorshipTotalsFollower{addr: addr}
+	if err := f.run(ctx, lo, last, window); err != nil {
+		return fmt.Errorf("totals: %w — resume with no -from (the watermark holds)", err)
+	}
+	return nil
 }

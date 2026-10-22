@@ -135,13 +135,51 @@ func (r *ExplorerReader) AccountSponsorships(ctx context.Context, account, side 
 	return out, nil
 }
 
-// SponsorshipTotals counts the account's arrangements on one side through maxLedger. Unmerged duplicates of an
-// event share its identity, so events are counted with uniqExact; an absent table reads as zero.
+// SponsorshipTotals counts the account's arrangements on one side through maxLedger: the completed buckets plus the
+// tip bucket read live, or every event when the buckets do not yet reach maxLedger's bucket.
 func (r *ExplorerReader) SponsorshipTotals(ctx context.Context, account, side string, maxLedger uint32) (SponsorshipTotals, error) {
 	col, err := sponsorshipSideColumn(side)
 	if err != nil {
 		return SponsorshipTotals{}, err
 	}
+	if t, ok, err := r.sponsorshipTotalsFromBuckets(ctx, account, side, col, maxLedger); ok || err != nil {
+		return t, err
+	}
+	return r.sponsorshipTotalsFromEvents(ctx, account, col, maxLedger)
+}
+
+// sponsorshipTotalsFromBuckets reports !ok when the buckets cannot answer exactly: unfilled below the tip bucket,
+// absent, or summing negative (events out of order across buckets), each of which the event count still answers.
+func (r *ExplorerReader) sponsorshipTotalsFromBuckets(ctx context.Context, account, side, col string, maxLedger uint32) (SponsorshipTotals, bool, error) {
+	cut := maxLedger / SponsorshipTotalsBucketLedgers
+	q := `SELECT twm, bf + tf, bfr + tfr, bs + ts, br + tr, be + te
+		FROM (SELECT max(thru_ledger) AS twm FROM stellar.entry_history_watermark WHERE name = ?) AS w
+		CROSS JOIN (SELECT sum(in_force) AS bf, sum(in_force_reserves) AS bfr, sum(started) AS bs, sum(revoked) AS br, sum(ended) AS be
+			FROM stellar.sponsorship_totals_buckets FINAL WHERE account = ? AND side = ? AND bucket < ?) AS b
+		CROSS JOIN (SELECT sum(d) AS tf, sum(d * toInt64(res)) AS tfr, sum(ns) AS ts, sum(nr) AS tr, sum(ne) AS te
+			FROM (` + fmt.Sprintf(sponsorshipBucketDeltas, col+" = ? AND") + `)) AS t` + explorerScanSettings
+	var (
+		twm       uint32
+		f, fr     int64
+		s, rv, en uint64
+	)
+	err := r.conn.QueryRow(ctx, q, sponsorshipTotalsWatermarkName, account, side, cut, account, cut*SponsorshipTotalsBucketLedgers, maxLedger).
+		Scan(&twm, &f, &fr, &s, &rv, &en)
+	if err != nil {
+		if isSchemaAbsent(err) {
+			return SponsorshipTotals{}, false, nil
+		}
+		return SponsorshipTotals{}, false, fmt.Errorf("clickhouse: sponsorship totals buckets: %w", err)
+	}
+	if uint64(twm)+1 < uint64(cut)*SponsorshipTotalsBucketLedgers || f < 0 || fr < 0 {
+		return SponsorshipTotals{}, false, nil
+	}
+	return SponsorshipTotals{InForce: uint64(f), InForceReserves: uint64(fr), Started: s, Revoked: rv, Ended: en}, true, nil
+}
+
+// sponsorshipTotalsFromEvents counts every event through maxLedger. Unmerged duplicates of an event share its
+// identity, so events are counted with uniqExact; an absent table reads as zero.
+func (r *ExplorerReader) sponsorshipTotalsFromEvents(ctx context.Context, account, col string, maxLedger uint32) (SponsorshipTotals, error) {
 	q := `SELECT countIf(last_event = 'started'), sumIf(res, last_event = 'started'),
 			sum(n_started), sum(n_revoked), sum(n_ended)
 		FROM (
