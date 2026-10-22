@@ -1242,6 +1242,36 @@ tests:
                 sponsorships) show "nothing" instead of the truth until
                 the table is created and backfilled.
 
+  # Exact fallbacks: sourced_tx_keys at 0.1/s (6/min) for 2h fires after 1h; recent_operations at 0.01/s stays silent.
+  - interval: 1m
+    input_series:
+      - series: 'stellarindex_explorer_exact_fallback_total{job="stellarindex-api",instance="localhost:8080",read="sourced_tx_keys"}'
+        values: '0+6x150'
+      - series: 'stellarindex_explorer_exact_fallback_total{job="stellarindex-api",instance="localhost:8080",read="recent_operations"}'
+        values: '0+0.6x150'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_explorer_exact_fallback_sustained
+        exp_alerts: []
+      - eval_time: 120m
+        alertname: stellarindex_explorer_exact_fallback_sustained
+        exp_alerts:
+          - exp_labels:
+              read: sourced_tx_keys
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_explorer_exact_fallback_sustained
+              summary: "Explorer sourced_tx_keys reads fall back to the exact query 0.10/s for 1h"
+              description: |
+                More than 3 per minute of the explorer's sourced_tx_keys
+                page reads could not prove a full page from their bounded
+                window and re-ran as the exact LIMIT 1 BY / dedup query,
+                which reads the account's or contract's whole history.
+                Pages stay correct but slow. The usual cause is un-merged
+                ReplacingMergeTree duplicates on that read's table.
+
   # Watermark missing: sponsorship_events at 0 for 40m fires after 30m; entry_index with a watermark stays silent.
   - interval: 1m
     input_series:

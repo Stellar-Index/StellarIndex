@@ -1223,6 +1223,12 @@ Fires once per gate consultation whose `account_directory` lookup errored, so th
 Alert: `stellarindex_scam_gate_fail_open` →
 [scam-gate-fail-open](../../operations/runbooks/api.md#stellarindex_scam_gate_fail_open).
 
+### `stellarindex_explorer_exact_fallback_total`
+
+Counter, label `read` (`recent_operations`, `sourced_tx_keys`, `sourced_op_keys`, `account_movements`, `asset_movements`, `contract_events`).
+
+Explorer page reads whose bounded window could not prove a full page of distinct keys, so the read re-ran as the exact LIMIT 1 BY / dedup query (O(account or contract history)). Alert: `stellarindex_explorer_exact_fallback_sustained`.
+
 ### `stellarindex_counts_rollup_plan_ok`
 
 Gauge, label `rollup` (`op-types`, `movements`).

@@ -78,6 +78,7 @@ func (r *ExplorerReader) AssetMovements(ctx context.Context, asset string, limit
 		},
 		func(a, b assetMovementVersion) bool { return a.ingestedAt.After(b.ingestedAt) })
 	if !ok {
+		exactFallback("asset_movements")
 		if deduped, err = r.queryAssetMovements(ctx, asset, assetMovementsSQL(cur.IsSet(), true), append(args, limit)); err != nil {
 			return nil, err
 		}

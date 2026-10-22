@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 71 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 275 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 276 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -459,6 +459,7 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | `stellarindex_sdex_orderbook_crossed_book` | `max(sdex_orderbook_crossed_pairs)` | > 0 for 30 min (best bid > best ask: phantom offers) | ticket | [sdex-orderbook-maintain-failing](runbooks/api.md#stellarindex_sdex_orderbook_crossed_book) |
 | `stellarindex_ch_schema_probe_absent` | `ch_schema_probe_present` per (instance, probe) | == 0 for 30 min (an "absent" answer latches until restart; surface stays on fallback) | ticket | [ch-schema-probe-absent](runbooks/api.md#stellarindex_ch_schema_probe_absent) |
 | `stellarindex_explorer_schema_absent_empty` | `increase(explorer_schema_absent_empty_total[1h])` per table | > 0, any occurrence: a read served empty because its table is missing | ticket | [explorer-schema-absent-empty](runbooks/api.md#stellarindex_explorer_schema_absent_empty) |
+| `stellarindex_explorer_exact_fallback_sustained` | `rate(explorer_exact_fallback_total[30m])` per read | > 0.05/s for 1h: page reads re-run as the exact O(history) query | ticket | [explorer-exact-fallback](runbooks/api.md#stellarindex_explorer_exact_fallback_sustained) |
 | `stellarindex_derived_index_watermark_missing` | `min(derived_index_watermark_ledger)` per index | == 0 for 30 min: no completeness watermark, gated reads serve their fallback | ticket | [derived-index-watermark-missing](runbooks/api.md#stellarindex_derived_index_watermark_missing) |
 | `stellarindex_protocol_events_rollup_failing` | `rate(stellarindex_protocol_events_rollup_sweeps_total{outcome="refresh_error"}[15m])` | > 0 for ≥ 30 min | ticket | [protocol-events-rollup-failing](runbooks/aggregator.md#stellarindex_protocol_events_rollup_failing) |
 | `stellarindex_asset_volume_rollup_failing` | `rate(stellarindex_asset_volume_rollup_sweeps_total{outcome="refresh_error"}[15m])` | > 0 for ≥ 30 min | ticket | [asset-volume-rollup-failing](runbooks/aggregator.md#stellarindex_asset_volume_rollup_failing) |

@@ -3,6 +3,8 @@ package clickhouse
 import (
 	"strconv"
 	"strings"
+
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // A per-arm `LIMIT 1 BY <key>` between the sort-key ORDER BY and the LIMIT stops ClickHouse's
@@ -19,6 +21,19 @@ const (
 	// needs a wider window to hold `limit` distinct transactions.
 	windowFactorTxArm = 16
 )
+
+// exactFallbackReads is the closed `read` label set of stellarindex_explorer_exact_fallback_total, pre-set so a rate never starts from a
+// missing series.
+var exactFallbackReads = []string{"recent_operations", "sourced_tx_keys", "sourced_op_keys", "account_movements", "asset_movements", "contract_events"}
+
+func init() {
+	for _, r := range exactFallbackReads {
+		obs.ExplorerExactFallbackTotal.WithLabelValues(r)
+	}
+}
+
+// exactFallback counts one window that could not prove a full page, so the read re-ran as the exact O(history) query.
+func exactFallback(read string) { obs.ExplorerExactFallbackTotal.WithLabelValues(read).Inc() }
 
 // windowRows is the row budget one windowed read asks for.
 func windowRows(limit, factor int) int { return limit*factor + 8 }
