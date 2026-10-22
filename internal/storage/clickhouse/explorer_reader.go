@@ -1550,33 +1550,6 @@ func (r *ExplorerReader) ContractActivitySummaryFor(ctx context.Context, contrac
 	return s, true, rows.Err()
 }
 
-// contractActiveLedgers returns the contract's newest active ledgers (descending), at most n, optionally <= before (inclusive: the
-// boundary ledger can hold events older than the cursor tuple). Primary-key reverse walk; DISTINCT collapses un-merged RMT duplicates.
-func (r *ExplorerReader) contractActiveLedgers(ctx context.Context, contractID string, before uint32, n int) ([]uint32, error) {
-	q := `SELECT DISTINCT ledger_seq FROM stellar.contract_active_ledgers WHERE contract_id = ?`
-	args := []any{contractID}
-	if before > 0 {
-		q += ` AND ledger_seq <= ?`
-		args = append(args, before)
-	}
-	q += ` ORDER BY ledger_seq DESC LIMIT ?`
-	args = append(args, n)
-	rows, err := r.conn.Query(ctx, q, args...)
-	if err != nil {
-		return nil, fmt.Errorf("clickhouse: contract %s active ledgers: %w", contractID, err)
-	}
-	defer func() { _ = rows.Close() }()
-	var out []uint32
-	for rows.Next() {
-		var l uint32
-		if err := rows.Scan(&l); err != nil {
-			return nil, fmt.Errorf("clickhouse: scan active ledger: %w", err)
-		}
-		out = append(out, l)
-	}
-	return out, rows.Err()
-}
-
 // errOpsBySourceMissing: the sourced-history projection is not provisioned or populated.
 // Fail-loud by design: a silent fallback or empty arm would restore the slow read or hide the account's own history.
 var errOpsBySourceMissing = errors.New(
