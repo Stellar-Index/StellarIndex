@@ -2,10 +2,12 @@ package explorer
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -69,7 +71,7 @@ func newSponsorshipsReader(wm uint32) *sponsorshipsReader {
 	}
 }
 
-func callAccountSponsorships(t *testing.T, reader *sponsorshipsReader, q url.Values, limit int) (int, AccountSponsorshipsView) {
+func callAccountSponsorships(t *testing.T, reader ExplorerReader, q url.Values, limit int) (int, AccountSponsorshipsView) {
 	t.Helper()
 	var view AccountSponsorshipsView
 	h := newProbeHandler(reader, nil)
@@ -163,5 +165,67 @@ func TestAccountSponsorships_NotBuiltAndBadParams(t *testing.T) {
 		if code, _ := callAccountSponsorships(t, reader, q, 25); code != http.StatusBadRequest {
 			t.Fatalf("%v status = %d, want 400", q, code)
 		}
+	}
+}
+
+// barrierSponsorshipsReader holds every read until all four have started, so a serial handler times out.
+type barrierSponsorshipsReader struct {
+	*sponsorshipsReader
+	started    sync.WaitGroup
+	panicState bool
+}
+
+func (r *barrierSponsorshipsReader) barrier() error {
+	r.started.Done()
+	all := make(chan struct{})
+	go func() { r.started.Wait(); close(all) }()
+	select {
+	case <-all:
+		return nil
+	case <-time.After(2 * time.Second):
+		return errors.New("reads ran one at a time")
+	}
+}
+
+func (r *barrierSponsorshipsReader) AccountSponsorships(ctx context.Context, account, side string, inForce bool,
+	after clickhouse.SponsorshipKey, wm uint32, limit int,
+) ([]clickhouse.SponsorshipArrangement, error) {
+	if err := r.barrier(); err != nil {
+		return nil, err
+	}
+	return r.sponsorshipsReader.AccountSponsorships(ctx, account, side, inForce, after, wm, limit)
+}
+
+func (r *barrierSponsorshipsReader) SponsorshipTotals(ctx context.Context, account, side string, wm uint32) (clickhouse.SponsorshipTotals, error) {
+	if err := r.barrier(); err != nil {
+		return clickhouse.SponsorshipTotals{}, err
+	}
+	return r.sponsorshipsReader.SponsorshipTotals(ctx, account, side, wm)
+}
+
+func (r *barrierSponsorshipsReader) AccountStateCached(ctx context.Context, account string) (clickhouse.AccountState, bool, error) {
+	if err := r.barrier(); err != nil {
+		return clickhouse.AccountState{}, false, err
+	}
+	if r.panicState {
+		panic("account state exploded")
+	}
+	return r.sponsorshipsReader.AccountStateCached(ctx, account)
+}
+
+func newBarrierSponsorshipsReader(panicState bool) *barrierSponsorshipsReader {
+	r := &barrierSponsorshipsReader{sponsorshipsReader: newSponsorshipsReader(200), panicState: panicState}
+	r.started.Add(4)
+	return r
+}
+
+func TestAccountSponsorships_ReadsRunConcurrentlyAndAPanicIsA500(t *testing.T) {
+	code, view := callAccountSponsorships(t, newBarrierSponsorshipsReader(false), url.Values{"direction": {"sponsored"}}, 25)
+	if code != http.StatusOK || len(view.Arrangements) != 2 || view.Totals.Sponsored.InForce != 2 || view.Proof.Match == nil || !*view.Proof.Match {
+		t.Fatalf("status/arrangements/in-force/match = %d/%d/%d/%v, want 200 with both arrangements and a matching proof",
+			code, len(view.Arrangements), view.Totals.Sponsored.InForce, view.Proof.Match != nil)
+	}
+	if code, _ := callAccountSponsorships(t, newBarrierSponsorshipsReader(true), nil, 25); code != http.StatusInternalServerError {
+		t.Fatalf("panicking read: status = %d, want 500", code)
 	}
 }

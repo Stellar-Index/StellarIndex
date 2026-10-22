@@ -7,8 +7,11 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/Stellar-Index/StellarIndex/internal/entryhistory"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 const (
@@ -136,20 +139,30 @@ func (h *Handler) AccountSponsorships(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) accountSponsorshipsPage(ctx context.Context, account, direction, side, state string,
 	cur clickhouse.SponsorshipKey, wm uint32, limit int,
 ) (AccountSponsorshipsView, error) {
-	arrangements, err := h.Reader.AccountSponsorships(ctx, account, side, state == sponsorshipStateInForce, cur, wm, limit+1)
-	if err != nil {
-		return AccountSponsorshipsView{}, err
-	}
-	sponsoring, err := h.Reader.SponsorshipTotals(ctx, account, clickhouse.SponsorshipSideSponsor, wm)
-	if err != nil {
-		return AccountSponsorshipsView{}, err
-	}
-	sponsored, err := h.Reader.SponsorshipTotals(ctx, account, clickhouse.SponsorshipSideSponsored, wm)
-	if err != nil {
-		return AccountSponsorshipsView{}, err
-	}
-	st, _, err := h.Reader.AccountStateCached(ctx, account)
-	if err != nil {
+	// The four reads are independent; run serially they summed to ~0.5s for the busiest sponsor.
+	var (
+		arrangements          []clickhouse.SponsorshipArrangement
+		sponsoring, sponsored clickhouse.SponsorshipTotals
+		st                    clickhouse.AccountState
+	)
+	g, gctx := errgroup.WithContext(ctx)
+	h.goSponsorshipRead(g, "arrangements", func() (err error) {
+		arrangements, err = h.Reader.AccountSponsorships(gctx, account, side, state == sponsorshipStateInForce, cur, wm, limit+1)
+		return err
+	})
+	h.goSponsorshipRead(g, "sponsoring totals", func() (err error) {
+		sponsoring, err = h.Reader.SponsorshipTotals(gctx, account, clickhouse.SponsorshipSideSponsor, wm)
+		return err
+	})
+	h.goSponsorshipRead(g, "sponsored totals", func() (err error) {
+		sponsored, err = h.Reader.SponsorshipTotals(gctx, account, clickhouse.SponsorshipSideSponsored, wm)
+		return err
+	})
+	h.goSponsorshipRead(g, "account state", func() (err error) {
+		st, _, err = h.Reader.AccountStateCached(gctx, account)
+		return err
+	})
+	if err := g.Wait(); err != nil {
 		return AccountSponsorshipsView{}, err
 	}
 	out := AccountSponsorshipsView{
@@ -171,6 +184,20 @@ func (h *Handler) accountSponsorshipsPage(ctx context.Context, account, directio
 	}
 	out.CoverageNote = accountSponsorshipsNote(wm, proof.Match)
 	return out, nil
+}
+
+// goSponsorshipRead runs one read off the handler goroutine, where middleware.Recoverer does not reach, so a panic
+// becomes that read's error instead of a crash.
+func (h *Handler) goSponsorshipRead(g *errgroup.Group, what string, read func() error) {
+	g.Go(func() (err error) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				worker.Report(h.Logger, "explorer-account-sponsorships-read", rec)
+				err = fmt.Errorf("sponsorships %s panicked: %v", what, rec)
+			}
+		}()
+		return read()
+	})
 }
 
 func sponsorshipEventView(e *clickhouse.SponsorshipEventRow) *SponsorshipEventView {
