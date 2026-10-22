@@ -274,6 +274,8 @@ func registerAppMetricsTail() {
 		MEVScanTruncatedTotal,
 		MEVLakeOrderLookupSkippedTotal,
 		TxIndexTagLookupSkippedTotal,
+		CountsRollupPlanOK,
+		CountsRollupStalePartitions,
 
 		PostgresPingTotal,
 		PostgresPingFailureStreak,
@@ -1818,6 +1820,24 @@ var TxIndexTagLookupSkippedTotal = prometheus.NewCounter(
 		Name: "stellarindex_tx_index_tag_lookup_skipped_total",
 		Help: "tx hashes the trades.tx_index tagger (live sweep and tag-tx-index) left untagged because a ClickHouse tx_hash_index lookup chunk failed; the page's rows stay NULL until a later pass resolves them.",
 	},
+)
+
+// CountsRollupPlanOK is 1 while the explorer reader has a usable plan for a counts rollup, 0 while it falls back to the source scan.
+var CountsRollupPlanOK = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_counts_rollup_plan_ok",
+		Help: "1 while the explorer reader holds a usable read plan for the counts rollup (op-types, movements); 0 while the rollup table is missing, unreadable or has no valid partition, and account panels scan the source instead.",
+	},
+	[]string{"rollup"},
+)
+
+// CountsRollupStalePartitions counts the closed partitions the reader's current plan reads from the source because the rollup no longer matches.
+var CountsRollupStalePartitions = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_counts_rollup_stale_partitions",
+		Help: "Partitions the explorer reader's current counts-rollup plan reads from the source FINAL because their rollup row count no longer matches (or was never built); ch-optype-rollup rebuilds 4 per run.",
+	},
+	[]string{"rollup"},
 )
 
 // OracleStreamRowsUnparsedTotal counts oracle_updates rows LatestOracleStreams drops because asset or quote will not parse (a bad raw-SQL relabel would otherwise look like success); `field` names which.

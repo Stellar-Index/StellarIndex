@@ -8,6 +8,9 @@ import (
 	"testing"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 const mL = opTypePartitionWidth
@@ -339,5 +342,27 @@ func TestRunPartition_MovementsCountsItsOwnColumns(t *testing.T) {
 		if len(conn.execd(want)) != 1 {
 			t.Errorf("no exec containing %q: %v", want, conn.execs)
 		}
+	}
+}
+
+type missingRollupConn struct{ driver.Conn }
+
+func (missingRollupConn) Query(context.Context, string, ...any) (driver.Rows, error) {
+	return nil, errors.New("code: 60, Table stellar.account_movement_counts does not exist")
+}
+
+// A missing rollup table sends every account read to the source scan; the reader must say so on the plan gauge, not fall back silently.
+func TestPlanFor_ExportsUnusablePlan(t *testing.T) {
+	obs.CountsRollupPlanOK.WithLabelValues(MovementCountsRollup.Name).Set(1)
+	obs.CountsRollupStalePartitions.WithLabelValues(MovementCountsRollup.Name).Set(3)
+	r := &ExplorerReader{conn: missingRollupConn{}}
+	if _, ok := r.planFor(context.Background(), MovementCountsRollup); ok {
+		t.Fatal("planFor ok with the rollup table missing")
+	}
+	if got := testutil.ToFloat64(obs.CountsRollupPlanOK.WithLabelValues(MovementCountsRollup.Name)); got != 0 {
+		t.Errorf("plan_ok = %v, want 0", got)
+	}
+	if got := testutil.ToFloat64(obs.CountsRollupStalePartitions.WithLabelValues(MovementCountsRollup.Name)); got != 0 {
+		t.Errorf("stale_partitions = %v, want 0", got)
 	}
 }

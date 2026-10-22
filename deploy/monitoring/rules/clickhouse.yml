@@ -149,3 +149,39 @@ groups:
             LIMIT 20` finds the partition; check for a stuck or
             starved merge (`system.merges`, `system.mutations`) and
             confirm `ch-live-catchup.timer` heals the range afterwards.
+      # The explorer's account panels read the counts rollups through a plan; with no usable plan, or with stale
+      # partitions, they fall back to a source scan that is correct but O(account history) slow (activity: 9 s p95).
+      - alert: stellarindex_counts_rollup_plan_unusable
+        expr: |
+          min by (rollup) (stellarindex_counts_rollup_plan_ok) == 0
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse.md#stellarindex_counts_rollup_plan_unusable
+          summary: "The {{ $labels.rollup }} counts rollup has no usable read plan — account panels scan the source"
+          description: |
+            The explorer reader found no usable plan for the
+            {{ $labels.rollup }} counts rollup for 30 minutes: the table is
+            missing or unreadable, or no partition matches its source.
+            Account activity / movements still answer correctly but read
+            the whole source, far past the 300 ms page budget.
+      - alert: stellarindex_counts_rollup_stale_partitions
+        expr: |
+          max by (rollup) (stellarindex_counts_rollup_stale_partitions) > 0
+        for: 2h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/clickhouse.md#stellarindex_counts_rollup_stale_partitions
+          summary: "{{ $value }} {{ $labels.rollup }} counts-rollup partitions stale for 2h — read from source"
+          description: |
+            The reader's plan has served {{ $value }} closed partitions
+            of the {{ $labels.rollup }} rollup from the source for 2 hours.
+            optype-rollup.timer rebuilds 4 per 30-minute run, so a
+            backlog that outlives 2 hours means the timer is not running,
+            is failing, or a backfill outpaced it.

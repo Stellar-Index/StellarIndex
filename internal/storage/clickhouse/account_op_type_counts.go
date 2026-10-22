@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // Per-account counts rollups (deploy/clickhouse/account_op_types.sql Step 6): per lake partition, count() FINAL of a source table
@@ -208,7 +210,7 @@ type opTypeRollupCache struct {
 }
 
 // planFor returns rc's cached plan, refreshing it once the TTL lapses; an error (table not yet created) means no plan until the next
-// refresh, so the caller reads the source.
+// refresh, so the caller reads the source. Each refresh exports the plan's health: the fallback is a full scan, which would otherwise be silent.
 func (r *ExplorerReader) planFor(ctx context.Context, rc *CountsRollup) (opTypeCountsPlan, bool) {
 	c := &r.opTypeRollup
 	if rc == MovementCountsRollup {
@@ -223,9 +225,15 @@ func (r *ExplorerReader) planFor(ctx context.Context, rc *CountsRollup) (opTypeC
 	c.fetchedAt = time.Now()
 	if err != nil {
 		c.plan, c.ok = opTypeCountsPlan{}, false
-		return c.plan, c.ok
+	} else {
+		c.plan, c.ok = planOpTypeCounts(built, src)
 	}
-	c.plan, c.ok = planOpTypeCounts(built, src)
+	ok := 0.0
+	if c.ok {
+		ok = 1
+	}
+	obs.CountsRollupPlanOK.WithLabelValues(rc.Name).Set(ok)
+	obs.CountsRollupStalePartitions.WithLabelValues(rc.Name).Set(float64(len(c.plan.stale)))
 	return c.plan, c.ok
 }
 
