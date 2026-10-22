@@ -2,11 +2,15 @@ package explorer
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
+
+	"github.com/stellar/go-stellar-sdk/strkey"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
@@ -141,7 +145,7 @@ func (h *Handler) assetEntrySource(asset string) entryPageSource[clickhouse.Asse
 		ledgers: func(ctx context.Context, ceiling uint32) ([]uint32, error) {
 			return h.Reader.AssetEntryLedgers(ctx, asset, assetEntryTypes, ceiling, entryLedgerBatch)
 		},
-		stream: h.Reader.StreamEntryChangesForLedgers,
+		stream: assetEntryStream(h.Reader, asset),
 		keep: func(out []clickhouse.AssetEntryChange, _ []clickhouse.AccountEntryChange, rows []clickhouse.AssetEntryChange) []clickhouse.AssetEntryChange {
 			for _, a := range rows {
 				if a.Asset == asset && !slices.Contains(assetEntryOfferRoles, a.Role) {
@@ -152,6 +156,32 @@ func (h *Handler) assetEntrySource(asset string) entryPageSource[clickhouse.Asse
 		},
 		key: assetEntryKey,
 	}
+}
+
+// assetEntryStream narrows the stream to the groups carrying the asset's raw issuer key or pool id: every entry an
+// asset row comes from holds one of them in its key or body, so the kept rows are unchanged.
+func assetEntryStream(r ExplorerReader, asset string) func(context.Context, []uint32, func(clickhouse.EntryHistorySourceRow) error) error {
+	raw, ok := assetRawKey(asset)
+	if !ok {
+		return r.StreamEntryChangesForLedgers
+	}
+	return func(ctx context.Context, ledgers []uint32, fn func(clickhouse.EntryHistorySourceRow) error) error {
+		return r.StreamAccountEntryChangesForLedgers(ctx, raw, ledgers, fn)
+	}
+}
+
+// assetRawKey is the 32 bytes every entry of the asset carries: a credit asset's issuer key or a pool share's pool id.
+func assetRawKey(asset string) (string, bool) {
+	if id, ok := strings.CutPrefix(asset, "pool:"); ok {
+		raw, err := hex.DecodeString(id)
+		return string(raw), err == nil && len(raw) == 32
+	}
+	_, issuer, ok := strings.Cut(asset, "-")
+	if !ok {
+		return "", false
+	}
+	raw, err := strkey.Decode(strkey.VersionByteAccountID, issuer)
+	return string(raw), err == nil
 }
 
 func (h *Handler) assetEntryChangesError(w http.ResponseWriter, r *http.Request, ctx context.Context, err error, asset string) {
