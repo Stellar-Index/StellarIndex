@@ -5,16 +5,19 @@ import (
 	"math/big"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// classicSupplyConn returns an ExplorerReader whose single query answers with
-// the given (asset, circulating) rows, plus the recorder so the SQL can be
-// inspected.
+// classicSupplyConn returns an ExplorerReader with no holders rollup whose scan answers with the given (asset, circulating) rows, plus
+// the recorder so the SQL can be inspected.
 func classicSupplyConn(t *testing.T, rows [][]any) (*ExplorerReader, *stubConn) {
 	t.Helper()
 	conn := &stubConn{respond: func(q string) (driver.Rows, error) {
+		if strings.Contains(q, "stellar.asset_holders_counts") {
+			return nil, errors.New("Table stellar.asset_holders_counts does not exist")
+		}
 		if !strings.Contains(q, "stellar.ledger_entries_current") {
 			t.Fatalf("unexpected query: %s", q)
 		}
@@ -91,10 +94,10 @@ func TestClassicCirculatingSupply_QueryShape(t *testing.T) {
 	if _, err := r.ClassicCirculatingSupply(t.Context()); err != nil {
 		t.Fatalf("ClassicCirculatingSupply: %v", err)
 	}
-	if len(conn.queries) != 1 {
-		t.Fatalf("issued %d queries, want exactly 1 (this read is far too heavy to fan out)", len(conn.queries))
+	if len(conn.queries) != 2 {
+		t.Fatalf("issued %d queries, want the rollup probe and exactly 1 scan (this read is far too heavy to fan out)", len(conn.queries))
 	}
-	q := conn.queries[0]
+	q := conn.queries[1]
 	for _, s := range []string{
 		"entry_type = 'trustline'",
 		"change_type != 'removed'",
@@ -113,7 +116,7 @@ func TestClassicCirculatingSupply_QueryShape(t *testing.T) {
 	}
 	// No bound arguments: the read is over the whole current-state trustline
 	// slice, so a stray placeholder would mean an unbound clause.
-	if got := len(conn.args[0]); got != 0 {
+	if got := len(conn.args[1]); got != 0 {
 		t.Errorf("ClassicCirculatingSupply bound %d args, want 0", got)
 	}
 }
@@ -147,5 +150,56 @@ func TestClassicCirculatingSupply_TruncatedStreamIsAnError(t *testing.T) {
 	got, err := r.ClassicCirculatingSupply(t.Context())
 	if !errors.Is(err, truncated) {
 		t.Fatalf("err = %v (map %v), want the truncation error — a partial supply map must not be reported as complete", err, got)
+	}
+}
+
+// rollupSupplyConn answers the holders-rollup read with rows (asset, circulating, holders, computed_at) and the scan with scanRows.
+func rollupSupplyConn(rows, scanRows [][]any) *stubConn {
+	return &stubConn{respond: func(q string) (driver.Rows, error) {
+		if strings.Contains(q, "stellar.asset_holders_counts") {
+			return &stubRows{data: rows}, nil
+		}
+		return &stubRows{data: scanRows}, nil
+	}}
+}
+
+// A fresh rollup cycle answers without the 150M-row trustline scan, keeping i128 totals as strings and dropping zero rows.
+func TestClassicCirculatingSupply_ServesFreshRollup(t *testing.T) {
+	huge := new(big.Int).Lsh(big.NewInt(1), 70).String()
+	at := time.Now().Add(-time.Hour).Truncate(time.Second)
+	conn := rollupSupplyConn([][]any{
+		{"USDC-" + testIssuer, huge, int64(3), at},
+		{"GONE-" + testIssuer, "0", int64(0), at},
+	}, nil)
+	got, err := (&ExplorerReader{conn: conn}).ClassicCirculatingSupply(t.Context())
+	if err != nil || len(got) != 1 || got["USDC-"+testIssuer] != huge {
+		t.Fatalf("got %v, %v; want only USDC at %s", got, err, huge)
+	}
+	if len(conn.queries) != 1 || !strings.Contains(conn.queries[0], "FROM stellar.asset_holders_counts WHERE asset != 'native'") {
+		t.Fatalf("want one rollup read and no scan, got %v", conn.queries)
+	}
+}
+
+// Every reason the rollup cannot be trusted sends the read to the scan, never to a stale or partial map.
+func TestClassicCirculatingSupply_ScansWhenRollupUnusable(t *testing.T) {
+	fresh := time.Now().Add(-time.Minute).Truncate(time.Second)
+	scan := [][]any{{"USDC-" + testIssuer, "500"}}
+	for name, rows := range map[string][][]any{
+		"stale cycle":           {{"USDC-" + testIssuer, "400", int64(2), time.Now().Add(-classicCirculatingRollupMaxAge - time.Minute)}},
+		"cycle before column":   {{"USDC-" + testIssuer, "0", int64(2), fresh}},
+		"empty table":           nil,
+		"mixed cycle stamps":    {{"USDC-" + testIssuer, "400", int64(2), fresh}, {"EURC-" + testIssuer, "9", int64(1), fresh.Add(-time.Second)}},
+		"unstamped (epoch) row": {{"USDC-" + testIssuer, "400", int64(2), time.Unix(0, 0)}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			conn := rollupSupplyConn(rows, scan)
+			got, err := (&ExplorerReader{conn: conn}).ClassicCirculatingSupply(t.Context())
+			if err != nil || len(got) != 1 || got["USDC-"+testIssuer] != "500" {
+				t.Fatalf("got %v, %v; want the scan's 500", got, err)
+			}
+			if len(conn.queries) != 2 || !strings.Contains(conn.queries[1], "stellar.ledger_entries_current FINAL") {
+				t.Fatalf("want the rollup read then the scan, got %v", conn.queries)
+			}
+		})
 	}
 }

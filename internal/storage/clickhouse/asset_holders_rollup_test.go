@@ -346,7 +346,8 @@ func TestHoldersRollupUnitTimeoutCoversStatementCeilings(t *testing.T) {
 		if len(m) == 0 {
 			// Metadata-only statements: no scan to bound.
 			head := strings.TrimSpace(stmt)
-			if strings.HasPrefix(head, "TRUNCATE TABLE ") || strings.HasPrefix(head, "EXCHANGE TABLES ") {
+			if strings.HasPrefix(head, "TRUNCATE TABLE ") || strings.HasPrefix(head, "EXCHANGE TABLES ") ||
+				(strings.HasPrefix(head, "ALTER TABLE ") && strings.Contains(head, " ADD COLUMN IF NOT EXISTS ")) {
 				continue
 			}
 			t.Fatalf("holders rollup statement %d carries no max_execution_time, so the cycle has no computable ceiling:\n%s", i+1, stmt)
@@ -426,5 +427,37 @@ func TestRunHoldersRollupReportsEachStep(t *testing.T) {
 	want := len(holdersRollupStatements(cycleAt)) + len(assetStatsSnapshotFills(cycleAt)) + 1
 	if steps != want || steps != len(conn.execCalls) {
 		t.Errorf("onStep fired %d times, want %d (one per executed statement, %d executed)", steps, want, len(conn.execCalls))
+	}
+}
+
+// The classic circulating read trusts the rollup only if its trustline count step sums the same balances as the scan.
+func TestHoldersRollupCountStepCarriesCirculating(t *testing.T) {
+	for _, s := range holdersRollupStatements(time.Now()) {
+		if strings.Contains(s, "asset_holders_counts_staging (asset, holders, circulating, computed_at)") {
+			if !strings.Contains(s, "sum(toInt128(balance))") || !strings.Contains(s, "WHERE "+classicCirculatingFilter+"\n") {
+				t.Fatalf("trustline count step does not sum the scan's population as Int128:\n%s", s)
+			}
+			return
+		}
+	}
+	t.Fatal("no count step writes circulating")
+}
+
+// A binary that lands before the operator ALTER must heal the schema before it writes the new column, on both twins.
+func TestHoldersRollupAddsCirculatingBeforeWriting(t *testing.T) {
+	stmts := holdersRollupStatements(time.Now())
+	altered := map[string]int{}
+	for i, s := range stmts {
+		for _, tbl := range []string{"stellar.asset_holders_counts ", "stellar.asset_holders_counts_staging "} {
+			if strings.HasPrefix(s, "ALTER TABLE "+tbl+"ADD COLUMN IF NOT EXISTS circulating") {
+				altered[tbl] = i + 1
+			}
+		}
+		if strings.Contains(s, "circulating, computed_at)") && (altered["stellar.asset_holders_counts "] == 0 || altered["stellar.asset_holders_counts_staging "] == 0) {
+			t.Fatalf("statement %d writes circulating before both twins are altered (%v)", i+1, altered)
+		}
+	}
+	if len(altered) != 2 {
+		t.Fatalf("want both twins altered, got %v", altered)
 	}
 }

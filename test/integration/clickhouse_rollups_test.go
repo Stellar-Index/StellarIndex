@@ -522,6 +522,23 @@ func TestHoldersRollupFreshness_ExecutesAgainstServer(t *testing.T) {
 	if got := holders(lateAsset); got != 0 {
 		t.Errorf("fresh cycle, late asset: total = %d, want 0 served from the rollup", got)
 	}
+	circulating := func() map[string]string {
+		t.Helper()
+		r, err := chstore.NewExplorerReader(ctx, addr)
+		if err != nil {
+			t.Fatalf("NewExplorerReader: %v", err)
+		}
+		defer func() { _ = r.Close() }()
+		m, err := r.ClassicCirculatingSupply(ctx)
+		if err != nil {
+			t.Fatalf("ClassicCirculatingSupply: %v", err)
+		}
+		return m
+	}
+	// The cycle's count step summed the listed asset's balance; the late asset is absent until the next cycle.
+	if m := circulating(); m[listedAsset] != "42" || m[lateAsset] != "" {
+		t.Errorf("fresh cycle: circulating = %v, want only %s at 42 from the rollup", m, listedAsset)
+	}
 
 	for _, table := range []string{"asset_holders_rollup", "asset_holders_counts"} {
 		if err := conn.Exec(ctx, "ALTER TABLE stellar."+table+
@@ -533,6 +550,9 @@ func TestHoldersRollupFreshness_ExecutesAgainstServer(t *testing.T) {
 	// late asset's holder.
 	if got := holders(lateAsset); got != 1 {
 		t.Errorf("stale cycle, late asset: total = %d, want 1 from the live scan — a 3h-old rollup was served as current", got)
+	}
+	if m := circulating(); m[listedAsset] != "42" || m[lateAsset] != "42" {
+		t.Errorf("stale cycle: circulating = %v, want both assets at 42 from the scan", m)
 	}
 }
 

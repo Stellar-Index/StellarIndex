@@ -31,6 +31,9 @@ func holdersRollupStatements(cycleAt time.Time) []string {
 	// age holdersRollupFresh gates on.
 	at := "'" + cycleAt.UTC().Format(holdersRollupTimeLayout) + "', 'UTC'"
 	stmts := []string{
+		// The count step writes circulating; adding it here, before either twin is written, keeps a new binary on an old schema working.
+		`ALTER TABLE stellar.asset_holders_counts ADD COLUMN IF NOT EXISTS circulating Int128 DEFAULT 0 AFTER holders`,
+		`ALTER TABLE stellar.asset_holders_counts_staging ADD COLUMN IF NOT EXISTS circulating Int128 DEFAULT 0 AFTER holders`,
 		`TRUNCATE TABLE stellar.asset_holders_rollup_staging`,
 		`TRUNCATE TABLE stellar.asset_holders_counts_staging`,
 	}
@@ -76,10 +79,10 @@ func holdersBoardSteps(at string) []string {
 // holdersCountSteps fills the per-asset holder counts alongside the board.
 func holdersCountSteps(at string) []string {
 	return []string{
-		`INSERT INTO stellar.asset_holders_counts_staging (asset, holders, computed_at)
-		 SELECT asset, toInt64(count()), toDateTime(` + at + `)
+		`INSERT INTO stellar.asset_holders_counts_staging (asset, holders, circulating, computed_at)
+		 SELECT asset, toInt64(count()), sum(toInt128(balance)), toDateTime(` + at + `)
 		 FROM stellar.ledger_entries_current FINAL
-		 WHERE entry_type = 'trustline' AND change_type != 'removed' AND balance > 0
+		 WHERE ` + classicCirculatingFilter + `
 		 GROUP BY asset
 		 SETTINGS max_threads = 4, max_memory_usage = 8589934592,
 		          max_bytes_before_external_group_by = 4000000000, max_execution_time = 600`,
