@@ -1271,3 +1271,31 @@ tests:
                 which reads the account's or contract's whole history.
                 Pages stay correct but slow. The usual cause is un-merged
                 ReplacingMergeTree duplicates on that read's table.
+
+  # Watermark missing: sponsorship_events at 0 for 40m fires after 30m; entry_index with a watermark stays silent.
+  - interval: 1m
+    input_series:
+      - series: 'stellarindex_derived_index_watermark_ledger{job="stellarindex-api",instance="localhost:8080",index="sponsorship_events"}'
+        values: '0x40'
+      - series: 'stellarindex_derived_index_watermark_ledger{job="stellarindex-api",instance="localhost:8080",index="entry_index"}'
+        values: '65070430x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_derived_index_watermark_missing
+        exp_alerts: []
+      - eval_time: 35m
+        alertname: stellarindex_derived_index_watermark_missing
+        exp_alerts:
+          - exp_labels:
+              index: sponsorship_events
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_derived_index_watermark_missing
+              summary: "Derived index sponsorship_events has no completeness watermark"
+              description: |
+                stellar.entry_history_watermark holds no row for
+                sponsorship_events (or the table is missing), so the
+                explorer cannot prove that index complete and every read
+                gated on it serves its slow or lower-bound fallback.

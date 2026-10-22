@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // Entry-change history. `ch-entry-history` pairs the pre- and post-images of the stellar.ledger_entry_changes rows that
@@ -240,11 +242,19 @@ func entryWatermarkOn(ctx context.Context, conn driver.Conn, name string) (uint3
 	var wm uint32
 	if err := conn.QueryRow(ctx, q, name).Scan(&wm); err != nil {
 		if isSchemaAbsent(err) {
+			observeWatermark(name, 0)
 			return 0, nil
 		}
 		return 0, fmt.Errorf("clickhouse: %s watermark: %w", name, err)
 	}
+	observeWatermark(name, wm)
 	return wm, nil
+}
+
+// observeWatermark exports a derived index's completeness watermark as last read; 0 (absent) pages, since every
+// fast path gated on it is then serving its fallback.
+func observeWatermark(name string, wm uint32) {
+	obs.DerivedIndexWatermarkLedger.WithLabelValues(name).Set(float64(wm))
 }
 
 // SetSponsorshipWatermark records completion through `thru` only for a contiguous window the entry index already

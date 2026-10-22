@@ -421,6 +421,12 @@ Fix:
 2. Check `system.merges` for a stuck merge, and whether a backfill or replay is re-inserting rows into old partitions.
 3. Once merges catch up the rate falls on its own; if one whale account drives it, raise that read's window factor in `explorer_window_dedup.go`.
 
+## stellarindex_derived_index_watermark_missing
+
+**What.** `stellar.entry_history_watermark` has no row for the index (or the table is missing). Reads gated on it (contract activity walk, contract stats, sponsorships, entry and signer history) serve their scan or lower-bound fallback.
+
+**Fix.** Run the job that proves the index and stamps its row: `contract_active_ledgers` → `ch-contract-ledgers-backfill -genesis -full`; `contract_instance_changes` → `ch-instance-backfill`; `entry_index`/`signer_index` → entry-index.timer; `sponsorship_events` → `ch-entry-history`. The gauge updates on the next gated read. **Escalate:** [clickhouse](clickhouse.md); metrics in the [reference](../../reference/metrics/README.md).
+
 ## stellarindex_customer_webhook_delivery_failing
 
 **Trigger.** `sum(rate(stellarindex_customer_webhook_delivery_attempts_total{outcome=~"server_error|network_error"}[5m])) > 0.05` for 15m, P3. Customers are not receiving callbacks (including SEV-1 pings); the API is unaffected. Retries back off 30s to 1h with a 15-attempt budget (about 4-8 h). The 15-attempt budget lands the last retry ~4–8 h after the event.

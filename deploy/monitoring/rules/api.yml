@@ -1027,3 +1027,21 @@ groups:
             which reads the account's or contract's whole history.
             Pages stay correct but slow. The usual cause is un-merged
             ReplacingMergeTree duplicates on that read's table.
+      # A derived index with no completeness watermark leaves every fast path gated on it serving its fallback (a scan,
+      # or a lower bound): the G6 rule is that this pages rather than degrading quietly.
+      - alert: stellarindex_derived_index_watermark_missing
+        expr: |
+          min by (index) (stellarindex_derived_index_watermark_ledger) == 0
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_derived_index_watermark_missing
+          summary: "Derived index {{ $labels.index }} has no completeness watermark"
+          description: |
+            stellar.entry_history_watermark holds no row for
+            {{ $labels.index }} (or the table is missing), so the
+            explorer cannot prove that index complete and every read
+            gated on it serves its slow or lower-bound fallback.
