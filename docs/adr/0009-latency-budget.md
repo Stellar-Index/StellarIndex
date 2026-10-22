@@ -11,9 +11,8 @@ superseded_by: null
 
 ## Context
 
-The API commits to p95 <= 200 ms and p99 <= 500 ms end to end (TLS at HAProxy to client) on the public
-REST endpoints. Without a per-component allocation those numbers are aspirational and drift is found
-only after it lands. Cold storage is never on the request path (ADR-0008).
+The API commits to p95 <= 200 ms and p99 <= 500 ms end to end (TLS at HAProxy to client). Without a
+per-component allocation drift is found only after it lands. Cold storage is never on the request path.
 
 ## Decision
 
@@ -55,14 +54,12 @@ Handlers on novel paths should assert latency in their unit test.
 
 ## Consequences
 
-Every PR has a yardstick, and the 135 ms headroom is the budget for the degradation tax (envelope
-flags, source list, `as_of`). The budget is deliberately conservative (65 ms steady state against a
-200 ms promise) and auth costs 10 ms unconditionally; both are open to review with real traffic.
-Alert rules and `docs/operations/alerts-catalog.md` stay in lockstep (doc-lint enforces the symmetry).
-A stricter 100 ms target and a budget-free global limit were rejected.
+Every PR has a yardstick, and the 135 ms headroom pays the degradation tax (envelope flags, source
+list, `as_of`). The 65 ms steady-state budget and the unconditional 10 ms auth cost are deliberately
+conservative and open to review with real traffic. Alert rules (`internal/obs/metrics.go` histograms)
+and [alerts-catalog.md](../operations/alerts-catalog.md) stay in lockstep under doc-lint. Rejected: a
+stricter 100 ms target and one global limit with no budget.
 
 ## Evidence
 
-`internal/obs/metrics.go` histograms; alerts in
-[docs/operations/alerts-catalog.md](../operations/alerts-catalog.md); launch-checklist load test in
-[docs/architecture/ha-plan.md](../architecture/ha-plan.md).
+`internal/obs/metrics.go`; [alerts-catalog.md](../operations/alerts-catalog.md).

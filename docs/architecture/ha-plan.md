@@ -640,6 +640,7 @@ In-region HA on R1 (ADR-0050 Phase 1) goes before R2 if still wanted (§11).
 - [ ] Point-in-time restore to 24 h ago in under 2 h wall clock.
 - [ ] DR drill: fail over to another region, serve for 1 h, fail back.
 - [ ] Every alert has a runbook link.
+- [ ] Patroni and etcd metrics scraped: `roles/prometheus/templates/prometheus.yml.j2` has no job for either yet.
 - [ ] SEV-1 and SEV-2 playbooks rehearsed as a tabletop.
 - [ ] Pre-flip gate for a new region: `scripts/dev/verify-cross-region.sh` and `stellarindex-ops cross-region-check` show byte-identical closed-bucket VWAPs, then hold DNS for a 24 h clean window.
 

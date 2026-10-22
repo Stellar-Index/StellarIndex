@@ -59,5 +59,4 @@ The table is a default, not a constraint; an explicit `granularity` overrides it
 
 ## Evidence
 
-- `internal/api/v1/chart.go`, `internal/api/v1/chart_test.go`; `historyMaxPoints` in `internal/api/v1/history.go`.
-- Migrations 0081 (TWAP aggregates) and 0156 (`prices_1m` retention).
+`internal/api/v1/chart.go`, `chart_test.go`, `historyMaxPoints` in `history.go`; migrations 0081 and 0156.

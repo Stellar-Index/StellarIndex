@@ -11,8 +11,7 @@ superseded_by: null
 
 ## Context
 
-The API must publish `total_supply`, `circulating_supply` and `max_supply` for every indexed asset (requirement F2.4, `docs/architecture/coverage-matrix.md`).
-Native XLM, classic credit assets and SEP-41 tokens have three structurally different sources of truth, so no single pipeline serves all three.
+The API publishes `total_supply`, `circulating_supply` and `max_supply` for every indexed asset (F2.4). Native XLM, classic credit assets and SEP-41 tokens have structurally different sources of truth, so no single pipeline serves all three.
 
 ## Decision
 
@@ -65,4 +64,4 @@ Market-cap, FDV and supply-percentage fields depend on this table.
 
 ## Evidence
 
-`internal/supply/` (policy, overlay, crosscheck), `internal/storage/timescale/supply.go`, `docs/architecture/supply-pipeline.md`, and `docs/operations/runbooks/supply.md#stellarindex_supply_cross_check_divergence`.
+`internal/supply/`, `internal/storage/timescale/supply.go`, `docs/architecture/supply-pipeline.md`.

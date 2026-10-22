@@ -59,5 +59,4 @@ DragonflyDB/KeyDB and no cache at all were rejected.
 
 ## Evidence
 
-HA topology in [docs/architecture/ha-plan.md](../architecture/ha-plan.md); the redis-sentinel Ansible
-role applies the eviction policy.
+HA topology: [ha-plan.md](../architecture/ha-plan.md); the redis-sentinel role applies the eviction policy.

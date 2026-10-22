@@ -247,9 +247,12 @@ else
     fail=1
   fi
   malformed="$(awk '
-    /^\| 0[0-9][0-9][0-9] \| / {
+    /^[|] 0[0-9][0-9][0-9] [|] / {
       c = $0
-      sub(/^\| 0[0-9][0-9][0-9] \| /, "", c); sub(/ \|[[:space:]]*$/, "", c)
+      sub(/^[|] 0[0-9][0-9][0-9] [|] /, "", c)
+      sub(/ [|][[:space:]]*$/, "", c)
+      # A row may still carry a File cell before the description; descriptions hold no pipe.
+      if (index(c, " | ")) c = substr(c, index(c, " | ") + 3)
       e = c; sub(/\**$/, "", e)
       if (e !~ /\.$/) printf "  %s (does not end in a full stop: ...%s)\n", substr($0, 3, 4), substr(c, length(c) - 39)
       else if (c !~ /^([A-Z0-9`]|\*\*)/) printf "  %s (does not start a sentence: %s...)\n", substr($0, 3, 4), substr(c, 1, 40)
