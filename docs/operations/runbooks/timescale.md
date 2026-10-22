@@ -319,7 +319,7 @@ The known cause is `merge_chunks()` on a compressed chunk (r1, TimescaleDB 2.26.
 
 ## stellarindex_pg_compressed_chunk_index_bloat
 
-The same nightly scan lists fully compressed chunks (status without the partial bit) whose indexes exceed 1 GiB, in `stellarindex_pg_compressed_chunk_index_bytes{hypertable,chunk}`. Their rows live in the compressed chunk, so a healthy heap is near-empty and its indexes are tens of MB. On r1 (2026-10-21) 13 `trades` chunks held 3-26 GB of indexes each over 0-byte heaps, 161 GB in all; `n_tup_del` matched `n_tup_ins`. Compression-policy recompression rebuilds the indexes itself, so the cause is a writer that deleted heap rows (INV-3083 tracks which).
+The same nightly scan lists fully compressed chunks (status without the partial bit) whose indexes exceed 1 GiB, in `stellarindex_pg_compressed_chunk_index_bytes{hypertable,chunk}`. Their rows live in the compressed chunk, so a healthy heap is near-empty and its indexes are tens of MB. On r1 (2026-10-21) 13 `trades` chunks held 3-26 GB of indexes each over 0-byte heaps, 161 GB in all; `n_tup_del` matched `n_tup_ins`. Reproduced on 2.26.4: a by-hand `compress_chunk()` on a partial chunk (status 9) recompresses segment-wise and leaves the heap's indexes at full size. The compression policy (`CALL run_job(<job>)`), `compress_chunk()` after a full `decompress_chunk()`, and DELETE or upsert through a compressed chunk all leave them small. Recompress a partial chunk with the policy job, never `compress_chunk()`.
 
 1. Rebuild each listed chunk's indexes. It takes a short exclusive lock, so cap the wait:
    `SET lock_timeout = '5s'; REINDEX TABLE _timescaledb_internal.<chunk>;` (r1: ~150 ms each). Re-run on `55P03`.
