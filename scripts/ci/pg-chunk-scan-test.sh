@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Drives configs/ansible/roles/archival-node/files/pg-chunk-scan.sh with a fake
 # psql: an unreadable chunk is published and never marked verified, a verified
-# chunk is skipped next run, a budget-limited run keeps its progress, and a
-# psql failure keeps the last verdicts.
+# chunk is skipped next run, a budget-limited run keeps its progress, a
+# compressed chunk with oversized indexes is listed, and a psql failure keeps
+# the last verdicts.
 set -euo pipefail
 here="$(cd "$(dirname "$0")/../.." && pwd)"
 probe="$here/configs/ansible/roles/archival-node/files/pg-chunk-scan.sh"
@@ -26,7 +27,8 @@ prom="$t/tf/pg_chunk_scan.prom"
 
 printf '%s\n' \
   'psql:<stdin>:3: NOTICE:  CHUNK|ok|101:5001|trades|_hyper_1_1_chunk' \
-  'psql:<stdin>:3: NOTICE:  CHUNK|bad|102:5002|claimable_observations|_hyper_7_9_chunk' >"$t/notices"
+  'psql:<stdin>:3: NOTICE:  CHUNK|bad|102:5002|claimable_observations|_hyper_7_9_chunk' \
+  'psql:<stdin>:40: NOTICE:  BLOAT|trades|_hyper_1_24874_chunk|25769803776' >"$t/notices"
 "$probe" >/dev/null </dev/null
 check "first run is full"            "grep -qx '{}' '$t/skip.seen'"
 check "unreadable count published"   "grep -qx 'stellarindex_pg_compressed_chunks_unreadable 1' '$prom'"
@@ -34,6 +36,8 @@ check "bad chunk labelled"           "grep -q 'chunk_unreadable{hypertable=\"cla
 check "readable chunk verified"      "grep -qx '101:5001' '$t/state'"
 check "bad chunk not verified"       "! grep -q '102:5002' '$t/state'"
 check "success 1"                    "grep -qx 'stellarindex_pg_chunk_scan_success 1' '$prom'"
+check "index bloat counted"          "grep -qx 'stellarindex_pg_compressed_chunks_index_bloated 1' '$prom'"
+check "index bloat labelled"         "grep -q 'chunk_index_bytes{hypertable=\"trades\",chunk=\"_hyper_1_24874_chunk\"} 25769803776' '$prom'"
 
 printf '%s\n' 'psql:<stdin>:3: NOTICE:  CHUNK|bad|102:5002|claimable_observations|_hyper_7_9_chunk' >"$t/notices"
 "$probe" >/dev/null </dev/null
@@ -57,6 +61,7 @@ check "failure prom world-readable"  "[ -n \"\$(find '$prom' -perm -0004)\" ]"
 check "failure publishes success 0"  "grep -qx 'stellarindex_pg_chunk_scan_success 0' '$prom'"
 check "failure keeps last verdict"   "grep -qx 'stellarindex_pg_compressed_chunks_unreadable 1' '$prom'"
 check "failure keeps state"          "grep -qx '101:5001' '$t/state'"
+check "failure keeps index bloat"    "grep -qx 'stellarindex_pg_compressed_chunks_index_bloated 0' '$prom'"
 rm "$t/fail"
 
 printf '%s\n' 'psql:<stdin>:3: NOTICE:  CHUNK|ok|102:5003|claimable_observations|_hyper_7_9_chunk' >"$t/notices"
@@ -64,4 +69,5 @@ printf '%s\n' 'psql:<stdin>:3: NOTICE:  CHUNK|ok|102:5003|claimable_observations
 check "repaired chunk clears"        "grep -qx 'stellarindex_pg_compressed_chunks_unreadable 0' '$prom'"
 check "complete run not partial"     "grep -qx 'stellarindex_pg_chunk_scan_partial 0' '$prom'"
 check "no stray series when clean"   "! grep -q '^stellarindex_pg_compressed_chunk_unreadable{' '$prom'"
+check "no bloat series when clean"   "! grep -q '^stellarindex_pg_compressed_chunk_index_bytes{' '$prom' && grep -qx 'stellarindex_pg_compressed_chunks_index_bloated 0' '$prom'"
 exit "$fail"

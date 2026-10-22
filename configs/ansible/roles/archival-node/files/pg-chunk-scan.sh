@@ -11,6 +11,10 @@
 # $STATE. An unreadable chunk is never recorded, so it stays counted until it is
 # repaired. PG_CHUNK_SCAN_FULL=1 (or a missing state file) decodes everything.
 #
+# It also lists fully compressed chunks whose indexes exceed 1 GiB. Their heap
+# is near-empty, so healthy indexes are tens of MB; r1 had 13 at 3-26 GB each
+# (161 GB) after a writer deleted the heap rows without rebuilding them.
+#
 # A run stops starting chunks after PG_CHUNK_SCAN_BUDGET seconds (a full r1
 # pass is ~5.5h, past the unit's 4h timeout) and keeps what it verified; the
 # next night continues. Last run's unreadable chunks are decoded first, so a
@@ -79,6 +83,21 @@ BEGIN
   END;
  END LOOP;
 END $$;
+DO $$
+DECLARE r record;
+BEGIN
+ FOR r IN
+  SELECT h.table_name AS ht, c.table_name AS chunk,
+         pg_indexes_size(format('%I.%I', c.schema_name, c.table_name)::regclass) AS idx
+    FROM _timescaledb_catalog.chunk c
+    JOIN _timescaledb_catalog.hypertable h ON h.id = c.hypertable_id
+   WHERE c.compressed_chunk_id IS NOT NULL AND c.status & 8 = 0
+ LOOP
+  IF r.idx > 1073741824 THEN
+   RAISE NOTICE 'BLOAT|%|%|%', r.ht, r.chunk, r.idx;
+  END IF;
+ END LOOP;
+END $$;
 SQL
 
 now=$(date +%s)
@@ -106,6 +125,8 @@ bad=$(printf '%s\n' "$V" | grep '^CHUNK|bad|' | cut -d'|' -f4,5 | sort -u)
 scanned=$(printf '%s\n' "$V" | grep -c '^CHUNK|')
 nbad=0; [ -n "$bad" ] && nbad=$(printf '%s\n' "$bad" | wc -l | tr -d ' ')
 partial=0; grep -q 'NOTICE:  SCAN|partial' "$RAW" && partial=1
+bloat=$(sed -n 's/.*NOTICE:  BLOAT|//p' "$RAW")
+nbloat=0; [ -n "$bloat" ] && nbloat=$(printf '%s\n' "$bloat" | wc -l | tr -d ' ')
 printf '%s\n' "$V" | grep '^CHUNK|bad|' | cut -d'|' -f3 | sort -u >"$BADF"
 
 # Verified keys: a completed full run replaces the set (dropped chunks fall
@@ -126,6 +147,16 @@ printf '%s\n' "$V" | grep '^CHUNK|bad|' | cut -d'|' -f3 | sort -u >"$BADF"
       echo "stellarindex_pg_compressed_chunk_unreadable{hypertable=\"$ht\",chunk=\"$chunk\"} 1"
     done
   fi
+  echo "# HELP stellarindex_pg_compressed_chunks_index_bloated Fully compressed chunks whose indexes exceed 1 GiB."
+  echo "# TYPE stellarindex_pg_compressed_chunks_index_bloated gauge"
+  echo "stellarindex_pg_compressed_chunks_index_bloated $nbloat"
+  echo "# HELP stellarindex_pg_compressed_chunk_index_bytes Index bytes of each fully compressed chunk over 1 GiB."
+  echo "# TYPE stellarindex_pg_compressed_chunk_index_bytes gauge"
+  if [ -n "$bloat" ]; then
+    printf '%s\n' "$bloat" | while IFS='|' read -r ht chunk idx; do
+      echo "stellarindex_pg_compressed_chunk_index_bytes{hypertable=\"$ht\",chunk=\"$chunk\"} $idx"
+    done
+  fi
   echo "# HELP stellarindex_pg_compressed_chunks_scanned Compressed chunks decoded by the last run."
   echo "# TYPE stellarindex_pg_compressed_chunks_scanned gauge"
   echo "stellarindex_pg_compressed_chunks_scanned $scanned"
@@ -141,4 +172,4 @@ printf '%s\n' "$V" | grep '^CHUNK|bad|' | cut -d'|' -f3 | sort -u >"$BADF"
 } >"$TMP"
 chmod 0644 "$TMP"
 mv "$TMP" "$OUT"
-echo "pg-chunk-scan: scanned=$scanned unreadable=$nbad full=$FULL partial=$partial"
+echo "pg-chunk-scan: scanned=$scanned unreadable=$nbad index_bloated=$nbloat full=$FULL partial=$partial"
