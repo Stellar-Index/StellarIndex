@@ -25,6 +25,22 @@ groups:
             stellarindex_pg_compressed_chunk_unreadable. Do not merge, drop or
             recompress them; repair from a PITR copy per the runbook.
 
+      - alert: stellarindex_pg_compressed_chunk_index_bloat
+        expr: stellarindex_pg_compressed_chunks_index_bloated > 0
+        for: 0m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: postgres
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale.md#stellarindex_pg_compressed_chunk_index_bloat
+          summary: "{{ $value }} fully compressed chunk(s) carry over 1 GiB of indexes"
+          description: |
+            A fully compressed chunk's heap is near-empty, so its indexes should
+            be tens of MB. Something deleted its rows without rebuilding them.
+            Which chunks: stellarindex_pg_compressed_chunk_index_bytes. REINDEX
+            each per the runbook.
+
       - alert: stellarindex_pg_chunk_scan_stale
         expr: |
           time() - stellarindex_pg_chunk_scan_last_success_timestamp_seconds > 36 * 3600

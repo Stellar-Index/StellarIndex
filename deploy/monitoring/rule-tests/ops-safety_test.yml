@@ -10,6 +10,8 @@ tests:
     input_series:
       - series: 'stellarindex_pg_compressed_chunks_unreadable'
         values: '0x120'
+      - series: 'stellarindex_pg_compressed_chunks_index_bloated'
+        values: '0x120'
       - series: 'stellarindex_pg_chunk_scan_last_success_timestamp_seconds'
         values: '0x120'
       - series: 'stellarindex_catchup_lane_failed{lane="a"}'
@@ -25,6 +27,9 @@ tests:
         alertname: stellarindex_pg_compressed_chunks_unreadable
         exp_alerts: []
       - eval_time: 2h
+        alertname: stellarindex_pg_compressed_chunk_index_bloat
+        exp_alerts: []
+      - eval_time: 2h
         alertname: stellarindex_pg_chunk_scan_stale
         exp_alerts: []
       - eval_time: 2h
@@ -33,6 +38,28 @@ tests:
       - eval_time: 2h
         alertname: stellarindex_catchup_lane_stalled
         exp_alerts: []
+
+  - interval: 1m
+    name: a bloated compressed chunk files a ticket at once
+    input_series:
+      - series: 'stellarindex_pg_compressed_chunks_index_bloated'
+        values: '0 0 13x10'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: stellarindex_pg_compressed_chunk_index_bloat
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: postgres
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale.md#stellarindex_pg_compressed_chunk_index_bloat
+              summary: "13 fully compressed chunk(s) carry over 1 GiB of indexes"
+              description: |
+                A fully compressed chunk's heap is near-empty, so its indexes should
+                be tens of MB. Something deleted its rows without rebuilding them.
+                Which chunks: stellarindex_pg_compressed_chunk_index_bytes. REINDEX
+                each per the runbook.
 
   - interval: 1m
     name: one unreadable chunk pages at once
