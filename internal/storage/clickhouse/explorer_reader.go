@@ -260,6 +260,9 @@ type ExplorerReader struct {
 	cap67WMErrAt  time.Time
 	cap67WMFlight chan struct{}
 
+	// protocolDaily memoises the protocol-page reads over contract_events_daily; see memoProtocolDaily.
+	protocolDaily protocolDailyMemo
+
 	// opsBySourceProbe probes stellar.ops_by_source. The account-history readers REFUSE
 	// without it: a bloom-scan fallback would restore the slow sourced arm and an empty
 	// arm would hide the account's own transactions.
