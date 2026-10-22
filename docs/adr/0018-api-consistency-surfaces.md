@@ -65,4 +65,4 @@ Customers choose their consistency tier by URL, which is greppable, at the price
 
 ## Evidence
 
-`scripts/ci/lint-openapi-urls/`, `internal/api/v1/price.go`, `price_tip.go`, `observations.go`, their tests, and `docs/reference/api-design.md` section 5.
+`scripts/ci/lint-openapi-urls/`, `internal/api/v1/price.go`, `price_tip.go`, `observations.go`, `docs/reference/api-design.md` section 5.
