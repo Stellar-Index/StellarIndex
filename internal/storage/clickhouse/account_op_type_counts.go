@@ -374,13 +374,19 @@ func (rc *CountsRollup) runPartitionConn(ctx context.Context, conn driver.Conn, 
 	return nil
 }
 
-// accountPartitionsClause narrows an account-keyed read of operation_participants to the partitions the account has ops in. It is only
-// as complete as account_op_types: re-deriving operation_participants must re-run its participant arm (account_op_types.sql).
-func (r *ExplorerReader) accountPartitionsClause(ctx context.Context, account string) string {
+// accountParticipantPartitions narrows an account-keyed read of operation_participants to the partitions the account has ops in, and
+// gives newestPartitionFloor under ceiling. It is only as complete as account_op_types: re-deriving operation_participants must re-run
+// its participant arm (account_op_types.sql).
+func (r *ExplorerReader) accountParticipantPartitions(ctx context.Context, account string, ceiling uint32) (clause string, floor uint32, hasFloor bool) {
 	if !r.accountOpTypesCovered(ctx) {
-		return ""
+		return "", 0, false
 	}
-	return r.partitionsClause(ctx, OpTypeCountsRollup, account, "ledger_seq")
+	parts, tail, ok := r.accountPartitions(ctx, OpTypeCountsRollup, account)
+	if !ok {
+		return "", 0, false
+	}
+	floor, hasFloor = newestPartitionFloor(parts, ceiling)
+	return partitionsClauseFor(parts, tail, "ledger_seq"), floor, hasFloor
 }
 
 // partitionsClause narrows an account-keyed read to the partitions rc has the account in: one granule per part is otherwise read from
@@ -415,6 +421,18 @@ func (r *ExplorerReader) accountPartitions(ctx context.Context, rc *CountsRollup
 	parts = append(parts, plan.stale...)
 	slices.Sort(parts)
 	return parts, plan.tailFrom / opTypePartitionWidth * opTypePartitionWidth, true
+}
+
+// newestPartitionFloor is the first ledger of the newest of parts at or below ceiling, when an older one exists too. A busy account sits
+// in every partition and pays one granule per part in each; a page from its newest one alone is a fraction of that, and since every
+// row above the floor is read, a full page from it is the true page.
+func newestPartitionFloor(parts []uint32, ceiling uint32) (uint32, bool) {
+	for i := len(parts) - 1; i > 0; i-- {
+		if floor := parts[i] * opTypePartitionWidth; floor <= ceiling {
+			return floor, true
+		}
+	}
+	return 0, false
 }
 
 func partitionsClauseFor(parts []uint32, tail uint32, ledgerCol string) string {

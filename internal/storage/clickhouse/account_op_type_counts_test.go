@@ -281,6 +281,53 @@ func TestAccountListings_ParticipantReadIsPartitionScoped(t *testing.T) {
 	}
 }
 
+// The participant arm reads the newest partition alone first and widens only when that leaves the page short.
+func TestNewestFirstParticipantKeys(t *testing.T) {
+	const limit = 2
+	newest := [][]any{txKeyRow(mL+9, 1), txKeyRow(mL+5, 0)}
+	all := append(newest[:1:1], txKeyRow(7, 0))
+	cases := []struct {
+		name      string
+		bounded   [][]any
+		hasFloor  bool
+		wantReads int
+		want      []accountTxKey
+	}{
+		{"full page from the newest partition", newest, true, 1, []accountTxKey{{mL + 9, 1}, {mL + 5, 0}}},
+		{"short page widens", newest[:1], true, 2, []accountTxKey{{mL + 9, 1}, {7, 0}}},
+		{"no floor reads every partition", nil, false, 1, []accountTxKey{{mL + 9, 1}, {7, 0}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			conn := &stubConn{respond: func(q string) (driver.Rows, error) {
+				switch {
+				case strings.Contains(q, "FROM stellar.transactions"):
+					return &stubRows{data: append(append([][]any{}, newest...), all...)}, nil
+				case strings.Contains(q, "ledger_seq >= 1000000 ORDER BY"):
+					return &stubRows{data: tc.bounded}, nil
+				}
+				return &stubRows{data: all}, nil
+			}}
+			keys, frontier, err := newestFirstParticipantKeys(context.Background(), conn, "GTEST", limit, txParticipantArm, "", nil, nil, mL, tc.hasFloor)
+			if err != nil || frontier != nil {
+				t.Fatalf("err=%v frontier=%v", err, frontier)
+			}
+			if !slices.Equal(keys, tc.want) {
+				t.Errorf("keys = %v, want %v", keys, tc.want)
+			}
+			var reads int
+			for _, q := range conn.queries {
+				if strings.Contains(q, "FROM stellar.operation_participants") {
+					reads++
+				}
+			}
+			if reads != tc.wantReads {
+				t.Errorf("participant reads = %d, want %d", reads, tc.wantReads)
+			}
+		})
+	}
+}
+
 // The movements listing reads only the partitions account_movement_counts has the address in, plus stale ones and the tail's whole
 // partition; without a plan it reads every partition.
 func TestAccountMovements_ReadIsPartitionScoped(t *testing.T) {

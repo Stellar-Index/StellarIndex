@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -965,8 +967,12 @@ func (r *ExplorerReader) AccountTransactions(ctx context.Context, account string
 	if cur.IsSet() {
 		from = &accountTxKey{cur.Ledger, cur.A}
 	}
-	fixed := r.accountPartitionsClause(ctx, account)
-	part, frontier, err := participantKeys(ctx, r.conn, account, limit, txParticipantArm, fixed, nil, from)
+	ceiling := uint32(math.MaxUint32)
+	if from != nil {
+		ceiling = from.ledger
+	}
+	fixed, floor, hasFloor := r.accountParticipantPartitions(ctx, account, ceiling)
+	part, frontier, err := newestFirstParticipantKeys(ctx, r.conn, account, limit, txParticipantArm, fixed, nil, from, floor, hasFloor)
 	if err != nil {
 		return nil, resume, fmt.Errorf("clickhouse: account %s txs: %w", account, err)
 	}
@@ -1171,6 +1177,21 @@ func participantKeys[K comparable](ctx context.Context, conn driver.Conn, accoun
 	}
 }
 
+// newestFirstParticipantKeys runs participantKeys over the newest partition first (newestPartitionFloor) and widens only when that
+// cannot fill the page; a run-out budget's frontier lies above the floor, so that answer stands too.
+func newestFirstParticipantKeys[K comparable](ctx context.Context, conn driver.Conn, account string, limit int,
+	arm participantArm[K], fixed string, fixedArgs []any, from *K, floor uint32, hasFloor bool,
+) ([]K, *K, error) {
+	if hasFloor {
+		bounded := fixed + ` AND ledger_seq >= ` + strconv.FormatUint(uint64(floor), 10)
+		keys, frontier, err := participantKeys(ctx, conn, account, limit, arm, bounded, fixedArgs, from)
+		if err != nil || len(keys) >= limit || frontier != nil {
+			return keys, frontier, err
+		}
+	}
+	return participantKeys(ctx, conn, account, limit, arm, fixed, fixedArgs, from)
+}
+
 // visibleTxPredicate is the stellar.transactions filter a participant row's tx must pass; its placeholder binds the listed account.
 const visibleTxPredicate = `(successful = 1 OR source_account = ?)`
 
@@ -1257,7 +1278,14 @@ func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, 
 	if err != nil {
 		return nil, resume, fmt.Errorf("clickhouse: account %s ops: %w", account, err)
 	}
-	fixed := r.accountPartitionsClause(ctx, account)
+	ceiling := uint32(math.MaxUint32)
+	if cur.IsSet() {
+		ceiling = cur.Ledger
+	}
+	if hasBound {
+		ceiling = min(ceiling, bound)
+	}
+	fixed, floor, hasFloor := r.accountParticipantPartitions(ctx, account, ceiling)
 	var fixedArgs []any
 	if hasBound {
 		fixed, fixedArgs = fixed+` AND ledger_seq <= ?`, []any{bound}
@@ -1266,7 +1294,7 @@ func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, 
 	if cur.IsSet() {
 		from = &accountOpKey{cur.Ledger, cur.A, cur.B}
 	}
-	part, frontier, err := participantKeys(ctx, r.conn, account, limit, opParticipantArm, fixed, fixedArgs, from)
+	part, frontier, err := newestFirstParticipantKeys(ctx, r.conn, account, limit, opParticipantArm, fixed, fixedArgs, from, floor, hasFloor)
 	if err != nil {
 		return nil, resume, fmt.Errorf("clickhouse: account %s ops: %w", account, err)
 	}
