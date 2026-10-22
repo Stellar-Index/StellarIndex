@@ -248,7 +248,7 @@ type ExplorerReader interface {
 	// ContractActivitySummaryFor is the per-contract liveness card
 	// (first/last seen + daily active-ledger series; ok=false when the
 	// active-ledgers index isn't usable — callers omit the card).
-	ContractActivitySummaryFor(ctx context.Context, contractID string, days int) (clickhouse.ContractActivitySummary, bool, error)
+	ContractActivitySummaryFor(ctx context.Context, contractID string, days int, sinceLedger uint32) (clickhouse.ContractActivitySummary, bool, error)
 }
 
 // ContractsReader is the narrow read seam onto the protocol_contracts registry (ADR-0035): contract_id to owning protocol.

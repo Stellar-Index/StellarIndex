@@ -257,7 +257,7 @@ func (downReader) AccountCohort(context.Context, string, string) (clickhouse.Acc
 	return clickhouse.AccountCohort{}, false, errLakeDown
 }
 
-func (downReader) ContractActivitySummaryFor(context.Context, string, int) (clickhouse.ContractActivitySummary, bool, error) {
+func (downReader) ContractActivitySummaryFor(context.Context, string, int, uint32) (clickhouse.ContractActivitySummary, bool, error) {
 	return clickhouse.ContractActivitySummary{}, false, errLakeDown
 }
 

@@ -261,7 +261,7 @@ func (s *stubExplorerReader) AccountCreators(_ context.Context, limit int, accou
 	return out, true, nil
 }
 
-func (s *stubExplorerReader) ContractActivitySummaryFor(_ context.Context, _ string, _ int) (clickhouse.ContractActivitySummary, bool, error) {
+func (s *stubExplorerReader) ContractActivitySummaryFor(_ context.Context, _ string, _ int, _ uint32) (clickhouse.ContractActivitySummary, bool, error) {
 	return s.contractActivity, s.contractActivity.ActiveLedgersTotal > 0, nil
 }
 

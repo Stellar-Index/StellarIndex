@@ -218,7 +218,9 @@ type cachedActivitySummary struct {
 // Goes through the SWR cache: the lifetime uniqExact over a busy contract's active ledgers (the XLM SAC: 45M rows) costs seconds.
 func (h *Handler) contractActivityCard(ctx context.Context, cid string) *ContractActivityV {
 	v, _, _, err := h.contractDetailCached(ctx, "act:"+cid, func(rctx context.Context) (any, error) {
-		s, ok, err := h.Reader.ContractActivitySummaryFor(rctx, cid, 30)
+		// A failed floor read leaves the series unpruned (0), never short.
+		since, _ := h.windowFloorLedger(rctx, 30)
+		s, ok, err := h.Reader.ContractActivitySummaryFor(rctx, cid, 30, since)
 		if err != nil {
 			return nil, err
 		}

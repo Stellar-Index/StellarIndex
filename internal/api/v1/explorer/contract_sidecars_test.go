@@ -44,7 +44,12 @@ type sidecarReader struct {
 	b *barrier
 }
 
-func (r sidecarReader) ContractActivitySummaryFor(ctx context.Context, _ string, _ int) (clickhouse.ContractActivitySummary, bool, error) {
+// An empty lake: the activity card's series floor reads as unknown (0).
+func (sidecarReader) RecentLedgers(context.Context, int, uint32) ([]clickhouse.LedgerHeader, error) {
+	return nil, nil
+}
+
+func (r sidecarReader) ContractActivitySummaryFor(ctx context.Context, _ string, _ int, _ uint32) (clickhouse.ContractActivitySummary, bool, error) {
 	if err := r.b.wait(ctx); err != nil {
 		return clickhouse.ContractActivitySummary{}, false, err
 	}
@@ -154,7 +159,11 @@ type countingActivityReader struct {
 	n *int
 }
 
-func (r countingActivityReader) ContractActivitySummaryFor(context.Context, string, int) (clickhouse.ContractActivitySummary, bool, error) {
+func (countingActivityReader) RecentLedgers(context.Context, int, uint32) ([]clickhouse.LedgerHeader, error) {
+	return nil, nil
+}
+
+func (r countingActivityReader) ContractActivitySummaryFor(context.Context, string, int, uint32) (clickhouse.ContractActivitySummary, bool, error) {
 	*r.n++
 	return clickhouse.ContractActivitySummary{ActiveLedgersTotal: 7}, true, nil
 }
