@@ -174,9 +174,9 @@ func TestAccountTransactions_WindowedMergeCollapsesDuplicatesAndOverlap(t *testi
 
 func TestAccountTransactions_UnprovenWindowFallsBackToExactQuery(t *testing.T) {
 	const limit = 3
-	filled := make([][]any, windowRows(limit, windowFactorTxArm))
+	filled := make([][]any, widestWindow(limit, windowFactorTxArm))
 	for i := range filled {
-		filled[i] = txKeyRow(100, 1) // one 100-op tx fills the window
+		filled[i] = txKeyRow(100, 1) // one huge tx fills even the widest window
 	}
 	router := &txArmRouter{sourced: filled}
 	conn := &stubConn{respond: withOpsBySourceRows(router.respond)}
@@ -191,6 +191,57 @@ func TestAccountTransactions_UnprovenWindowFallsBackToExactQuery(t *testing.T) {
 	}
 	if testutil.ToFloat64(obs.ExplorerExactFallbackTotal.WithLabelValues("sourced_tx_keys")) <= before {
 		t.Error("the exact fallback was not counted")
+	}
+}
+
+// widestWindow is the last window windowedKeyRead tries before the exact fallback.
+func widestWindow(limit, factor int) int {
+	w := windowRows(limit, factor)
+	for range windowWidenings {
+		w *= windowGrowth
+	}
+	return w
+}
+
+// A whale whose transactions each carry more rows than the x16 window holds resolves in a wider window, not the O(history) exact scan.
+func TestAccountTransactions_UnprovenWindowWidensBeforeExactQuery(t *testing.T) {
+	const limit = 3
+	first := make([][]any, windowRows(limit, windowFactorTxArm))
+	for i := range first {
+		first[i] = txKeyRow(100, 1)
+	}
+	var wider [][]any
+	for tx := uint32(10); tx > 0; tx-- {
+		for range 40 {
+			wider = append(wider, txKeyRow(100, tx))
+		}
+	}
+	reads := 0
+	router := &txArmRouter{}
+	conn := &stubConn{respond: withOpsBySourceRows(func(q string) (driver.Rows, error) {
+		if strings.Contains(q, "FROM stellar.ops_by_source WHERE source_account") {
+			reads++
+			if reads == 1 {
+				return &stubRows{data: first}, nil
+			}
+			return &stubRows{data: wider}, nil
+		}
+		return router.respond(q)
+	})}
+	r := &ExplorerReader{conn: conn}
+
+	if _, _, err := r.AccountTransactions(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
+		t.Fatalf("AccountTransactions: %v", err)
+	}
+	if exactQueries(conn, sourcedTxKeysExactQuery(false)) != 0 {
+		t.Fatalf("the widened window proved a full page, yet the exact query ran: %v", conn.queries)
+	}
+	if reads != 2 {
+		t.Fatalf("sourced window reads = %d, want 2 (one widening)", reads)
+	}
+	last := conn.queries[len(conn.queries)-1]
+	if !strings.Contains(last, "IN ((100,10),(100,9),(100,8))") {
+		t.Fatalf("hydration keys are not the widened window's top %d: %s", limit, last)
 	}
 }
 
