@@ -280,6 +280,97 @@ func TestChEntryHistory_RefusesOperationsShortfall(t *testing.T) {
 // TestChEntryHistory_WatermarkRefusesSkippedPrefix proves a -write window
 // starting above watermark+1 is refused: advancing would mark the ledgers
 // between them derived when they never were.
+// The bucket totals must equal the exact count from every event, across a bucket boundary and with the duplicate
+// starts and revoke-then-restart sequences the lake holds.
+func TestSponsorshipTotals_BucketsMatchTheEventCount(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+	conn := dialClickHouse(t, ctx, "stellar")
+	for _, q := range []string{
+		`TRUNCATE TABLE stellar.entry_history_watermark`, `TRUNCATE TABLE stellar.sponsorship_events`,
+		`TRUNCATE TABLE stellar.sponsorship_totals_buckets`,
+	} {
+		if err := conn.Exec(ctx, q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	const base = uint32(160_939_998) // base, base+1 in bucket 16093; base+2, base+3 in 16094
+	entryHistorySeedLedgers(t, ctx, addr, []uint32{base, base + 1, base + 2, base + 3, base + 4}, 0, true)
+	account := func(fill byte) string {
+		return strkey.MustEncode(strkey.VersionByteAccountID, []byte(strings.Repeat(string(fill), 32)))
+	}
+	dave, erin := account(0x6d), account(0x6e)
+	ev := func(ledger, change uint32, sponsored, kind, key string, res uint8, event string) chstore.SponsorshipEvent {
+		return chstore.SponsorshipEvent{
+			Ledger: ledger, CloseTime: time.Unix(1_700_000_000, 0).UTC(), TxHash: fmt.Sprintf("%064x", ledger),
+			ChangeIndex: change, Sponsor: dave, Sponsored: sponsored, Kind: kind, KeyID: key, Reserves: res, Event: event,
+		}
+	}
+	if _, err := chstore.InsertSponsorshipEvents(ctx, addr, []chstore.SponsorshipEvent{
+		ev(base, 0, erin, "trustline", "k1", 1, "started"), // revoked in the next bucket, then restarted: in force
+		ev(base+2, 0, erin, "trustline", "k1", 1, "revoked"),
+		ev(base+3, 0, erin, "trustline", "k1", 1, "started"),
+		ev(base, 1, erin, "account", "k2", 2, "started"), // started twice in one op, then ended: not in force
+		ev(base, 2, erin, "account", "k2", 2, "started"),
+		ev(base+1, 0, erin, "account", "k2", 2, "ended"),
+		ev(base+1, 1, "", "claimable_balance", "k3", 3, "started"), // no sponsored side
+	}); err != nil {
+		t.Fatalf("insert events: %v", err)
+	}
+	if err := conn.Exec(ctx, `INSERT INTO stellar.entry_history_watermark (name, thru_ledger) VALUES ('sponsorship_events', ?)`, base+3); err != nil {
+		t.Fatalf("set events watermark: %v", err)
+	}
+	rd, err := chstore.NewExplorerReader(ctx, addr)
+	if err != nil {
+		t.Fatalf("explorer reader: %v", err)
+	}
+	defer func() { _ = rd.Close() }()
+	type read struct {
+		account, side string
+		at            uint32
+	}
+	reads := []read{
+		{dave, chstore.SponsorshipSideSponsor, base + 3},
+		{erin, chstore.SponsorshipSideSponsored, base + 3},
+		{dave, chstore.SponsorshipSideSponsor, base + 2},
+		{dave, chstore.SponsorshipSideSponsor, base + 1},
+	}
+	exact := make([]chstore.SponsorshipTotals, len(reads)) // the buckets are unfilled, so these count every event
+	for i, r := range reads {
+		if exact[i], err = rd.SponsorshipTotals(ctx, r.account, r.side, r.at); err != nil {
+			t.Fatalf("exact totals %+v: %v", r, err)
+		}
+	}
+	if want := (chstore.SponsorshipTotals{InForce: 2, InForceReserves: 4, Started: 5, Revoked: 1, Ended: 1}); exact[0] != want {
+		t.Fatalf("dave exact = %+v, want %+v", exact[0], want)
+	}
+
+	if err := chstore.RefreshSponsorshipTotals(ctx, addr, base, base+3); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if err := chstore.SetSponsorshipTotalsWatermark(ctx, addr, base, base+3); err != nil {
+		t.Fatalf("set totals watermark: %v", err)
+	}
+	if err := chstore.RefreshSponsorshipTotals(ctx, addr, base, base+3); err != nil { // idempotent
+		t.Fatalf("second refresh: %v", err)
+	}
+	var rows uint64
+	if err := conn.QueryRow(ctx, `SELECT count() FROM stellar.sponsorship_totals_buckets FINAL WHERE account = ? AND bucket = 16093`, dave).Scan(&rows); err != nil || rows != 1 {
+		t.Fatalf("dave bucket 16093 rows = %d (%v), want 1", rows, err)
+	}
+	for i, r := range reads {
+		got, err := rd.SponsorshipTotals(ctx, r.account, r.side, r.at)
+		if err != nil || got != exact[i] {
+			t.Fatalf("bucket totals %+v = %+v (%v), want the exact %+v", r, got, err, exact[i])
+		}
+	}
+	err = chstore.SetSponsorshipTotalsWatermark(ctx, addr, base+4, base+4)
+	if !errors.Is(err, chstore.ErrSponsorshipTotalsAheadOfEvents) {
+		t.Fatalf("advance past the events: err = %v, want ErrSponsorshipTotalsAheadOfEvents", err)
+	}
+}
+
 func TestChEntryHistory_WatermarkRefusesSkippedPrefix(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()

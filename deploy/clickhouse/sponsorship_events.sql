@@ -49,5 +49,28 @@ ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY intDiv(ledger, 1000000)
 ORDER BY (sponsor, sponsored, kind, key_id, ledger, tx_hash, op_index, change_index);
 
+-- Per-10,000-ledger totals for the account route: in_force is the bucket's net
+-- change, so completed buckets sum to the totals and only the tip bucket is read
+-- live. ch-entry-history refreshes the buckets each window touches and advances
+-- the `sponsorship_totals` watermark; on a host whose events predate this table,
+-- fill it once with `stellarindex-ops ch-entry-history -totals-only -write`
+-- (resumable). Until that watermark reaches the route's bucket, the route
+-- counts from the events directly.
+CREATE TABLE IF NOT EXISTS stellar.sponsorship_totals_buckets
+(
+    account           String,
+    side              LowCardinality(String),
+    bucket            UInt32,
+    in_force          Int64,
+    in_force_reserves Int64,
+    started           UInt64,
+    revoked           UInt64,
+    ended             UInt64,
+    refreshed_at      DateTime64(6) DEFAULT now64(6)
+)
+ENGINE = ReplacingMergeTree(refreshed_at)
+PARTITION BY intDiv(bucket, 100)
+ORDER BY (account, side, bucket);
+
 -- Retrofit for a host whose table predates the skip index (no-op right after the CREATE above).
 ALTER TABLE stellar.sponsorship_events ADD INDEX IF NOT EXISTS sponsored_bf sponsored TYPE bloom_filter GRANULARITY 4;
