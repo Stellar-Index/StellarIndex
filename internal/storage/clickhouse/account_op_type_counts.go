@@ -389,20 +389,9 @@ func (r *ExplorerReader) accountParticipantPartitions(ctx context.Context, accou
 	return partitionsClauseFor(parts, tail, "ledger_seq"), floor, hasFloor
 }
 
-// partitionsClause narrows an account-keyed read to the partitions rc has the account in: one granule per part is otherwise read from
-// all ~200 parts, ~1.5M rows for an account with a handful of rows. It keeps every stale partition and the whole partition the plan's
-// tail starts in, so a row landing late below the open partition's built mark is still read. "" (plan missing, read error) means
-// read unfiltered.
-func (r *ExplorerReader) partitionsClause(ctx context.Context, rc *CountsRollup, account, ledgerCol string) string {
-	parts, tail, ok := r.accountPartitions(ctx, rc, account)
-	if !ok {
-		return ""
-	}
-	return partitionsClauseFor(parts, tail, ledgerCol)
-}
-
 // accountPartitions returns the sorted partitions rc has the account in plus every stale one, and the first ledger of the partition
-// the plan's tail starts in; ok=false (plan missing, read error) means the account's partitions are unknown.
+// the plan's tail starts in, so a row landing late below the open partition's built mark is still read. Without it one granule per part
+// is read from all ~200 parts. ok=false (plan missing, read error) means the account's partitions are unknown.
 func (r *ExplorerReader) accountPartitions(ctx context.Context, rc *CountsRollup, account string) (parts []uint32, tail uint32, ok bool) {
 	plan, ok := r.planFor(ctx, rc)
 	if !ok {
