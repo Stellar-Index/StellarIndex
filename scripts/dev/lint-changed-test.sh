@@ -478,8 +478,8 @@ if [ -x "$TMP/customhooks/pre-commit" ]; then ok "the hook was written there"; e
 echo "lint-changed-test: the dispatcher and the installer pass their own lints"
 out="$("$DISPATCH" -- scripts/dev/lint-changed.sh scripts/dev/install-hooks.sh 2>&1)"; rc=$?
 expect_exit "lint-changed over its own two scripts passes" 0 "$rc"
-selfcount=5; [ "$HAVE_SHELLCHECK" -eq 1 ] && selfcount=6
-expect_has "and accounts for what it ran (bash -n twice, sigpipe, fixture-isolation, migration-commands, shellcheck)" "lint-changed: OK — ${selfcount} lint(s) over 2 changed file(s)" "$out"
+selfcount=6; [ "$HAVE_SHELLCHECK" -eq 1 ] && selfcount=7
+expect_has "and accounts for what it ran (bash -n twice, sigpipe, fixture-isolation, migration-commands, chunk-functions, shellcheck)" "lint-changed: OK — ${selfcount} lint(s) over 2 changed file(s)" "$out"
 
 echo "lint-changed-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
