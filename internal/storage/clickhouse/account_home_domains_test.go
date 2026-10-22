@@ -2,6 +2,7 @@ package clickhouse
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -84,5 +85,39 @@ func TestAccountHomeDomainsReportsADeclaredNone(t *testing.T) {
 	}
 	if _, ok := got[unreadable]; ok {
 		t.Errorf("%s is present, want absent — an undecodable entry was not read", unreadable)
+	}
+}
+
+// TestAccountEntryReadsUseTheSortKey: ledger_entries_current is ordered by (entry_type, key_xdr); filtering accounts on
+// account_id falls back to a bloom scan (40.7M rows for 50 accounts on r1), so these reads must pass LedgerKey XDR.
+func TestAccountEntryReadsUseTheSortKey(t *testing.T) {
+	const g = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	want, err := accountKeyXDR(g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{accountsUnspendableQuery, signerCurrentQuery} {
+		if !strings.Contains(q, "key_xdr IN (?)") || strings.Contains(q, "account_id IN") {
+			t.Errorf("query must filter on key_xdr, not account_id:\n%s", q)
+		}
+	}
+	conn := &stubConn{respond: func(string) (driver.Rows, error) { return &stubRows{}, nil }}
+	r := &ExplorerReader{conn: conn}
+	if _, err := r.AccountsUnspendable(context.Background(), []string{g, "not-a-strkey"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.AccountHomeDomains(context.Background(), []string{g}); err != nil {
+		t.Fatal(err)
+	}
+	if len(conn.queries) != 2 {
+		t.Fatalf("queries = %d, want 2", len(conn.queries))
+	}
+	for i, q := range conn.queries {
+		if !strings.Contains(q, "key_xdr IN (?)") {
+			t.Errorf("query %d filters on something other than key_xdr:\n%s", i, q)
+		}
+		if keys, ok := conn.args[i][0].([]string); !ok || len(keys) != 1 || keys[0] != want {
+			t.Errorf("query %d args = %v, want [%s]", i, conn.args[i], want)
+		}
 	}
 }
