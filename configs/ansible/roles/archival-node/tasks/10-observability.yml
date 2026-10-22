@@ -1058,6 +1058,41 @@
     - not (ansible_check_mode and pg_chunk_scan_units is changed)
   tags: [observability, pg-chunk-scan]
 
+# ── Explorer page latency sweep (G6) ─────────────────────
+- name: Install page latency sweep
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../../scripts/dev/api-latency-sweep.sh"
+    dest: /usr/local/bin/page-latency-sweep
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [observability, page-latency-sweep]
+
+- name: Install page-latency-sweep systemd service + timer
+  ansible.builtin.template:
+    src: "systemd/{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - page-latency-sweep.service
+    - page-latency-sweep.timer
+  notify: Reload systemd
+  register: page_latency_sweep_units
+  tags: [observability, page-latency-sweep]
+
+- name: Enable + start page-latency-sweep.timer
+  ansible.builtin.systemd:
+    name: page-latency-sweep.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  when:
+    # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
+    - not (ansible_check_mode and page_latency_sweep_units is changed)
+  tags: [observability, page-latency-sweep]
+
 # ── Catch-up lane state probe ─────────────────────────────
 # A failed lane sleeps until an operator clears it. Alerts: deploy/monitoring/rules/ops-safety.yml.
 - name: Install catch-up lane state probe

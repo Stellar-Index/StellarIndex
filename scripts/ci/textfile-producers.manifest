@@ -34,6 +34,7 @@ configs/ansible/roles/archival-node/files/galexie-archive-tip-lag.sh      galexi
 configs/ansible/roles/archival-node/files/ledger-meta-decode-probe.sh     ledger_meta_decode.prom            -
 configs/ansible/roles/archival-node/files/memory-mappings.sh              memory_mappings.prom               scripts/ci/memory-mappings-test.sh
 configs/ansible/roles/archival-node/files/pg-chunk-scan.sh             pg_chunk_scan.prom                 scripts/ci/pg-chunk-scan-test.sh
+scripts/dev/api-latency-sweep.sh                                          operator-supplied                  -
 configs/ansible/roles/archival-node/files/catchup-lanes.sh             catchup_lanes.prom                 scripts/ci/catchup-lanes-test.sh
 configs/ansible/roles/archival-node/files/stellar-core-auto-upgrade.sh    stellar_core_autoupgrade.prom      scripts/ci/stellar-core-auto-upgrade-test.sh
 configs/ansible/roles/archival-node/templates/pgbackrest-backup.sh.j2     pgbackrest_backup.prom             scripts/ci/pgbackrest-backup-test.sh

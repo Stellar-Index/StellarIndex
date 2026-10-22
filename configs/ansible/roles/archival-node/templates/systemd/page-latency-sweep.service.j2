@@ -1,0 +1,25 @@
+# systemd service: time every explorer page's panels against the local API, past the HTTP cache, and publish each
+# panel's p95 as a textfile (scripts/dev/api-latency-sweep.sh --pages). The G6 latency target is read from these.
+[Unit]
+Description=Stellar Index — explorer page latency sweep
+After=stellarindex-api.service
+
+[Service]
+Type=oneshot
+Environment=API_BASE_URL=http://{{ stellarindex_api_listen_addr }}
+Environment=ITERS={{ page_sweep_iters }}
+Environment=CACHE_BUST=1
+Environment="ACCOUNTS={{ page_sweep_accounts | join(' ') }}"
+Environment=TEXTFILE=/var/lib/node_exporter/textfile_collector/page_latency_sweep.prom
+ExecStart=/usr/local/bin/page-latency-sweep --pages
+# The exit code counts pages over 1 s; that is the measurement, not a unit failure.
+SuccessExitStatus=1 2 3 4 5 6 7 8 9 10 11 12 13 14 15
+User=stellarindex
+TimeoutStartSec=20m
+ProtectSystem=strict
+ReadWritePaths=/var/lib/node_exporter/textfile_collector
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+NoNewPrivileges=true
