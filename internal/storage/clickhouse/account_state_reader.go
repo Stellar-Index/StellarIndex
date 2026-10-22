@@ -434,17 +434,18 @@ func (r *ExplorerReader) AccountsByWealth(ctx context.Context, assets, prices []
 	return out, rows.Err()
 }
 
-// account_id-bloom-probed FINAL scan; the IN list keeps probes few. Wealth-cache
-// background refresh only.
+// Filters on key_xdr (the sort key), not account_id: on r1 the account_id bloom scan read 40.7M rows for 50 accounts, the point
+// reads 142k. Wealth-cache background refresh only.
 const accountsUnspendableQuery = `SELECT account_id, entry_xdr FROM stellar.ledger_entries_current FINAL
-		WHERE entry_type = 'account' AND account_id IN (?) AND change_type != 'removed'` + explorerScanSettings
+		WHERE entry_type = 'account' AND key_xdr IN (?) AND change_type != 'removed'` + explorerScanSettings
 
 // AccountsUnspendable reports locked burn addresses: master weight 0 and no other signers, so no signature set reaches any threshold.
 func (r *ExplorerReader) AccountsUnspendable(ctx context.Context, accountIDs []string) (map[string]bool, error) {
-	if len(accountIDs) == 0 {
+	_, keys := accountLedgerKeys(accountIDs)
+	if len(keys) == 0 {
 		return nil, nil
 	}
-	rows, err := r.conn.Query(ctx, accountsUnspendableQuery, accountIDs)
+	rows, err := r.conn.Query(ctx, accountsUnspendableQuery, keys)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: accounts unspendable: %w", err)
 	}
@@ -487,12 +488,13 @@ func signerAddress(k xdr.SignerKey) string {
 
 // AccountHomeDomains returns account to home_domain for live decodable entries; non-empty = declared, "" = read but none declared, absent key = not read.
 func (r *ExplorerReader) AccountHomeDomains(ctx context.Context, accounts []string) (map[string]string, error) {
-	if len(accounts) == 0 {
+	_, keys := accountLedgerKeys(accounts)
+	if len(keys) == 0 {
 		return map[string]string{}, nil
 	}
 	const q = `SELECT account_id, entry_xdr FROM stellar.ledger_entries_current FINAL
-		WHERE entry_type = 'account' AND account_id IN (?) AND change_type != 'removed' AND entry_xdr != ''`
-	rows, err := r.conn.Query(ctx, q, accounts)
+		WHERE entry_type = 'account' AND key_xdr IN (?) AND change_type != 'removed' AND entry_xdr != ''`
+	rows, err := r.conn.Query(ctx, q, keys)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: account home_domains: %w", err)
 	}

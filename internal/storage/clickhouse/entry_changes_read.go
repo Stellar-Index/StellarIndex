@@ -347,7 +347,7 @@ const signerCandidatesQuery = `SELECT account_id FROM stellar.ledger_entry_chang
 const signerCurrentQuery = `SELECT w.1, w.2 FROM (
 	SELECT key_xdr, argMax((ledger_seq, entry_xdr), version) AS w
 	FROM stellar.ledger_entries_current
-	WHERE entry_type = 'account' AND account_id IN (?)
+	WHERE entry_type = 'account' AND key_xdr IN (?)
 	GROUP BY key_xdr)
 	ORDER BY w.1 DESC` + explorerScanSettings
 
@@ -367,7 +367,11 @@ func (r *ExplorerReader) AccountsSignedBy(ctx context.Context, key string, ledge
 		return scan, err
 	}
 	scan.Candidates = len(candidates)
-	rows, err := r.conn.Query(ctx, signerCurrentQuery, candidates)
+	_, keys := accountLedgerKeys(candidates)
+	if len(keys) == 0 {
+		return scan, nil
+	}
+	rows, err := r.conn.Query(ctx, signerCurrentQuery, keys)
 	if err != nil {
 		return scan, fmt.Errorf("clickhouse: current state of %d signer candidates: %w", len(candidates), err)
 	}
