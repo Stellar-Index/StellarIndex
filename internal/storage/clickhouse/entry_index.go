@@ -248,12 +248,19 @@ func InsertClaimableIndex(ctx context.Context, addr string, claimables []EntryIn
 		return err
 	}
 	defer func() { _ = conn.Close() }()
-	for i := 0; i < len(claimables); i += entryIndexInsertChunk {
+	if err := insertAccountClaimables(ctx, conn, claimables); err != nil {
+		return err
+	}
+	return insertClaimableRemovals(ctx, conn, removals)
+}
+
+func insertAccountClaimables(ctx context.Context, conn driver.Conn, rows []EntryIndexClaimableRow) error {
+	for i := 0; i < len(rows); i += entryIndexInsertChunk {
 		batch, err := conn.PrepareBatch(ctx, `INSERT INTO stellar.account_claimables (account, key_xdr, ledger, close_time, entry_xdr)`)
 		if err != nil {
 			return fmt.Errorf("clickhouse: prepare account_claimables batch: %w", err)
 		}
-		for _, r := range claimables[i:min(i+entryIndexInsertChunk, len(claimables))] {
+		for _, r := range rows[i:min(i+entryIndexInsertChunk, len(rows))] {
 			if err := batch.Append(r.Account, r.KeyXDR, r.Ledger, r.CloseTime, r.EntryXDR); err != nil {
 				return fmt.Errorf("clickhouse: append account_claimables row: %w", err)
 			}
@@ -262,12 +269,16 @@ func InsertClaimableIndex(ctx context.Context, addr string, claimables []EntryIn
 			return err
 		}
 	}
-	for i := 0; i < len(removals); i += entryIndexInsertChunk {
+	return nil
+}
+
+func insertClaimableRemovals(ctx context.Context, conn driver.Conn, rows []EntryIndexClaimableRemoval) error {
+	for i := 0; i < len(rows); i += entryIndexInsertChunk {
 		batch, err := conn.PrepareBatch(ctx, `INSERT INTO stellar.claimable_removals (key_xdr, ledger)`)
 		if err != nil {
 			return fmt.Errorf("clickhouse: prepare claimable_removals batch: %w", err)
 		}
-		for _, r := range removals[i:min(i+entryIndexInsertChunk, len(removals))] {
+		for _, r := range rows[i:min(i+entryIndexInsertChunk, len(rows))] {
 			if err := batch.Append(r.KeyXDR, r.Ledger); err != nil {
 				return fmt.Errorf("clickhouse: append claimable_removals row: %w", err)
 			}
