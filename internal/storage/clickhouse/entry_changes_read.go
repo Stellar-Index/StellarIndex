@@ -3,6 +3,7 @@ package clickhouse
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/stellar/go-stellar-sdk/strkey"
@@ -38,26 +39,30 @@ func (r *ExplorerReader) ClaimableIndexWatermark(ctx context.Context) (uint32, e
 // AccountEntryLedgers lists, newest first, the ledgers at or below maxLedger in which the account (raw 32-byte key)
 // had an entry change in one of the roles; an absent index table reads as no ledgers.
 func (r *ExplorerReader) AccountEntryLedgers(ctx context.Context, account string, roles []string, maxLedger uint32, limit int) ([]uint32, error) {
-	const q = `SELECT DISTINCT ledger FROM stellar.account_entry_ledgers
-		WHERE account = ? AND role IN (?) AND ledger <= ?
-		ORDER BY ledger DESC LIMIT ?` + explorerScanSettings
-	return r.entryLedgers(ctx, "account_entry_ledgers", q, account, roles, maxLedger, limit)
+	return r.entryLedgers(ctx, "account_entry_ledgers", "account", "role", account, roles, maxLedger, limit)
 }
 
 // AssetEntryLedgers lists, newest first, the ledgers at or below maxLedger in which an entry of one of the types held
 // the asset changed.
 func (r *ExplorerReader) AssetEntryLedgers(ctx context.Context, asset string, entryTypes []string, maxLedger uint32, limit int) ([]uint32, error) {
-	const q = `SELECT DISTINCT ledger FROM stellar.asset_entry_ledgers
-		WHERE asset = ? AND entry_type IN (?) AND ledger <= ?
-		ORDER BY ledger DESC LIMIT ?` + explorerScanSettings
-	return r.entryLedgers(ctx, "asset_entry_ledgers", q, asset, entryTypes, maxLedger, limit)
+	return r.entryLedgers(ctx, "asset_entry_ledgers", "asset", "entry_type", asset, entryTypes, maxLedger, limit)
 }
 
-func (r *ExplorerReader) entryLedgers(ctx context.Context, table, q, key string, in []string, maxLedger uint32, limit int) ([]uint32, error) {
-	if len(in) == 0 || limit <= 0 {
+// entryLedgers reads each (key, kind) prefix of the index newest-first on its own and merges them: an IN-list over the second
+// ORDER BY column cannot read in order, so it sorted every row the key has (32.8M rows for one busy asset, against 0.95M).
+func (r *ExplorerReader) entryLedgers(ctx context.Context, table, keyCol, kindCol, key string, kinds []string, maxLedger uint32, limit int) ([]uint32, error) {
+	if len(kinds) == 0 || limit <= 0 {
 		return nil, nil
 	}
-	rows, err := r.conn.Query(ctx, q, key, in, maxLedger, limit)
+	arms := make([]string, len(kinds))
+	args := make([]any, 0, 4*len(kinds)+1)
+	for i, kind := range kinds {
+		arms[i] = `SELECT ledger FROM stellar.` + table + ` WHERE ` + keyCol + ` = ? AND ` + kindCol + ` = ? AND ledger <= ?
+			ORDER BY ledger DESC LIMIT ?`
+		args = append(args, key, kind, maxLedger, limit)
+	}
+	q := `SELECT DISTINCT ledger FROM (` + strings.Join(arms, " UNION ALL ") + `) ORDER BY ledger DESC LIMIT ?` + explorerScanSettings
+	rows, err := r.conn.Query(ctx, q, append(args, limit)...)
 	if err != nil {
 		if absentReadsEmpty(table, err) {
 			return nil, nil
