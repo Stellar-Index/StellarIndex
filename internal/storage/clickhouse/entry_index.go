@@ -3,6 +3,7 @@ package clickhouse
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
@@ -35,8 +36,25 @@ type EntryIndexAssetRow struct {
 // EntryIndexDecodeRow is an entry whose XDR the builder decodes for claimants or a sponsor.
 type EntryIndexDecodeRow struct {
 	Ledger    uint32
+	CloseTime time.Time
 	EntryType string
+	KeyXDR    string
 	EntryXDR  string
+}
+
+// EntryIndexClaimableRow is one row of stellar.account_claimables; Account holds the raw 32-byte claimant key.
+type EntryIndexClaimableRow struct {
+	Account   string
+	KeyXDR    string
+	Ledger    uint32
+	CloseTime time.Time
+	EntryXDR  string
+}
+
+// EntryIndexClaimableRemoval is one row of stellar.claimable_removals: the ledger a claimable balance was removed in.
+type EntryIndexClaimableRemoval struct {
+	KeyXDR string
+	Ledger uint32
 }
 
 // EntryIndexSignerOp is one set_options operation body the builder decodes for an added signer.
@@ -86,12 +104,23 @@ const sponsoredEntryPredicate = `(entry_type = 'claimable_balance'
             AND substring(right(tryBase64Decode(right(entry_xdr, 68)), 48), 45, 4) = unhex('00000000')))`
 
 const entryIndexDecodeQuery = `
-SELECT ledger_seq, entry_type, entry_xdr
+SELECT ledger_seq, close_time, entry_type, key_xdr, entry_xdr
   FROM stellar.ledger_entry_changes
  WHERE ledger_seq BETWEEN ? AND ?
    AND tx_hash != ''
    AND entry_xdr != ''
    AND ` + sponsoredEntryPredicate + `
+ ORDER BY ledger_seq`
+
+// A balance id hashes its creating operation, so a removed key never returns and one removal row settles liveness.
+const entryIndexClaimableRemovalQuery = `
+SELECT key_xdr, ledger_seq
+  FROM stellar.ledger_entry_changes
+ WHERE ledger_seq BETWEEN ? AND ?
+   AND tx_hash != ''
+   AND entry_type = 'claimable_balance'
+   AND change_type = 'removed'
+ GROUP BY key_xdr, ledger_seq
  ORDER BY ledger_seq`
 
 // Failed transactions and duplicate op rows only add candidate ledgers; readers confirm against current account state.
@@ -148,8 +177,19 @@ func StreamEntryIndexAssets(ctx context.Context, addr string, from, to uint32, f
 func StreamEntryIndexDecodeRows(ctx context.Context, addr string, from, to uint32, fn func(EntryIndexDecodeRow) error) error {
 	return streamEntryIndex(ctx, addr, "decode rows", entryIndexDecodeQuery, from, to, func(rows driver.Rows) error {
 		var r EntryIndexDecodeRow
-		if err := rows.Scan(&r.Ledger, &r.EntryType, &r.EntryXDR); err != nil {
+		if err := rows.Scan(&r.Ledger, &r.CloseTime, &r.EntryType, &r.KeyXDR, &r.EntryXDR); err != nil {
 			return fmt.Errorf("clickhouse: scan entry-index decode row: %w", err)
+		}
+		return fn(r)
+	})
+}
+
+// StreamEntryIndexClaimableRemovals yields the claimable balances removed in one window, ascending by ledger.
+func StreamEntryIndexClaimableRemovals(ctx context.Context, addr string, from, to uint32, fn func(EntryIndexClaimableRemoval) error) error {
+	return streamEntryIndex(ctx, addr, "claimable removals", entryIndexClaimableRemovalQuery, from, to, func(rows driver.Rows) error {
+		var r EntryIndexClaimableRemoval
+		if err := rows.Scan(&r.KeyXDR, &r.Ledger); err != nil {
+			return fmt.Errorf("clickhouse: scan entry-index claimable removal: %w", err)
 		}
 		return fn(r)
 	})
@@ -196,6 +236,58 @@ func InsertEntryIndex(ctx context.Context, addr string, accounts []EntryIndexAcc
 		written += int64(end - i)
 	}
 	return written, nil
+}
+
+// InsertClaimableIndex writes one batch of account_claimables and claimable_removals; retry-safe like InsertEntryIndex.
+func InsertClaimableIndex(ctx context.Context, addr string, claimables []EntryIndexClaimableRow, removals []EntryIndexClaimableRemoval) error {
+	if len(claimables) == 0 && len(removals) == 0 {
+		return nil
+	}
+	conn, err := openAccountMovementsWrite(ctx, addr)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	if err := insertAccountClaimables(ctx, conn, claimables); err != nil {
+		return err
+	}
+	return insertClaimableRemovals(ctx, conn, removals)
+}
+
+func insertAccountClaimables(ctx context.Context, conn driver.Conn, rows []EntryIndexClaimableRow) error {
+	for i := 0; i < len(rows); i += entryIndexInsertChunk {
+		batch, err := conn.PrepareBatch(ctx, `INSERT INTO stellar.account_claimables (account, key_xdr, ledger, close_time, entry_xdr)`)
+		if err != nil {
+			return fmt.Errorf("clickhouse: prepare account_claimables batch: %w", err)
+		}
+		for _, r := range rows[i:min(i+entryIndexInsertChunk, len(rows))] {
+			if err := batch.Append(r.Account, r.KeyXDR, r.Ledger, r.CloseTime, r.EntryXDR); err != nil {
+				return fmt.Errorf("clickhouse: append account_claimables row: %w", err)
+			}
+		}
+		if err := wrapSend(batch.Send(), "account_claimables"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func insertClaimableRemovals(ctx context.Context, conn driver.Conn, rows []EntryIndexClaimableRemoval) error {
+	for i := 0; i < len(rows); i += entryIndexInsertChunk {
+		batch, err := conn.PrepareBatch(ctx, `INSERT INTO stellar.claimable_removals (key_xdr, ledger)`)
+		if err != nil {
+			return fmt.Errorf("clickhouse: prepare claimable_removals batch: %w", err)
+		}
+		for _, r := range rows[i:min(i+entryIndexInsertChunk, len(rows))] {
+			if err := batch.Append(r.KeyXDR, r.Ledger); err != nil {
+				return fmt.Errorf("clickhouse: append claimable_removals row: %w", err)
+			}
+		}
+		if err := wrapSend(batch.Send(), "claimable_removals"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func insertEntryIndexAccounts(ctx context.Context, conn driver.Conn, rows []EntryIndexAccountRow) error {
@@ -261,8 +353,31 @@ func SignerIndexWatermark(ctx context.Context, addr string) (uint32, error) {
 // SetSignerIndexWatermark records the signer role complete through `thru`. Its first value must come from a window
 // starting at the lake floor, so a live-only build never claims history; such a window gets ErrEntryHistorySkippedPrefix.
 func SetSignerIndexWatermark(ctx context.Context, addr string, from, thru uint32) error {
-	return advanceEntryWatermark(ctx, addr, signerIndexWatermarkName, from, thru, func(ctx context.Context, conn driver.Conn) error {
-		wm, err := entryWatermarkOn(ctx, conn, signerIndexWatermarkName)
+	return setFloorAnchoredWatermark(ctx, addr, signerIndexWatermarkName, from, thru)
+}
+
+// claimableIndexWatermarkName is the ledger account_claimables and claimable_removals are complete through from the
+// lake's first ledger.
+const claimableIndexWatermarkName = "claimable_index"
+
+// ClaimableIndexWatermark returns the ledger the claimable index is complete through (0 = not yet built from the lake floor).
+func ClaimableIndexWatermark(ctx context.Context, addr string) (uint32, error) {
+	conn, err := openRead(ctx, addr)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = conn.Close() }()
+	return entryWatermarkOn(ctx, conn, claimableIndexWatermarkName)
+}
+
+// SetClaimableIndexWatermark records the claimable index complete through `thru`, anchored at the lake floor like the signer role.
+func SetClaimableIndexWatermark(ctx context.Context, addr string, from, thru uint32) error {
+	return setFloorAnchoredWatermark(ctx, addr, claimableIndexWatermarkName, from, thru)
+}
+
+func setFloorAnchoredWatermark(ctx context.Context, addr, name string, from, thru uint32) error {
+	return advanceEntryWatermark(ctx, addr, name, from, thru, func(ctx context.Context, conn driver.Conn) error {
+		wm, err := entryWatermarkOn(ctx, conn, name)
 		if err != nil || wm > 0 {
 			return err
 		}
@@ -271,7 +386,7 @@ func SetSignerIndexWatermark(ctx context.Context, addr string, from, thru uint32
 			return err
 		}
 		if from > floor {
-			return fmt.Errorf("%w: %s [%d,%d] has no watermark yet and starts above the lake floor %d", ErrEntryHistorySkippedPrefix, signerIndexWatermarkName, from, thru, floor)
+			return fmt.Errorf("%w: %s [%d,%d] has no watermark yet and starts above the lake floor %d", ErrEntryHistorySkippedPrefix, name, from, thru, floor)
 		}
 		return nil
 	})

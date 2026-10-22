@@ -21,6 +21,11 @@ type eiCapture struct {
 	signerOps []clickhouse.EntryIndexSignerOp
 	signerWM  [][2]uint32
 	signerErr error
+	// removalsIn feeds the claimable-removal stream; claimables, removals and claimableWM capture the claimable index writes.
+	removalsIn  []clickhouse.EntryIndexClaimableRemoval
+	claimables  []clickhouse.EntryIndexClaimableRow
+	removals    []clickhouse.EntryIndexClaimableRemoval
+	claimableWM [][2]uint32
 }
 
 // eiStub serves the fixtures through the seams, filtered to each window's range, and captures every write.
@@ -28,9 +33,11 @@ func eiStub(t *testing.T, owners []clickhouse.EntryIndexOwnerRow, decode []click
 	t.Helper()
 	origO, origA, origD, origI, origS := streamEntryIndexOwners, streamEntryIndexAssets, streamEntryIndexDecodeRows, insertEntryIndex, setEntryIndexWatermark
 	origSO, origSW := streamEntryIndexSignerOps, setSignerIndexWatermark
+	origCR, origCI, origCW := streamClaimableRemovals, insertClaimableIndex, setClaimableIndexWatermark
 	t.Cleanup(func() {
 		streamEntryIndexOwners, streamEntryIndexAssets, streamEntryIndexDecodeRows, insertEntryIndex, setEntryIndexWatermark = origO, origA, origD, origI, origS
 		streamEntryIndexSignerOps, setSignerIndexWatermark = origSO, origSW
+		streamClaimableRemovals, insertClaimableIndex, setClaimableIndexWatermark = origCR, origCI, origCW
 	})
 	streamEntryIndexOwners = func(_ context.Context, _ string, from, to uint32, fn func(clickhouse.EntryIndexOwnerRow) error) error {
 		for _, r := range owners {
@@ -86,6 +93,25 @@ func eiStub(t *testing.T, owners []clickhouse.EntryIndexOwnerRow, decode []click
 		got.wm = append(got.wm, readTxLedgers)
 		return nil
 	}
+	streamClaimableRemovals = func(_ context.Context, _ string, from, to uint32, fn func(clickhouse.EntryIndexClaimableRemoval) error) error {
+		for _, r := range got.removalsIn {
+			if r.Ledger >= from && r.Ledger <= to {
+				if err := fn(r); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	insertClaimableIndex = func(_ context.Context, _ string, c []clickhouse.EntryIndexClaimableRow, r []clickhouse.EntryIndexClaimableRemoval) error {
+		got.claimables = append(got.claimables, c...)
+		got.removals = append(got.removals, r...)
+		return nil
+	}
+	setClaimableIndexWatermark = func(_ context.Context, _ string, from, thru uint32) error {
+		got.claimableWM = append(got.claimableWM, [2]uint32{from, thru})
+		return nil
+	}
 	return got
 }
 
@@ -127,7 +153,7 @@ func eiFixtures(t *testing.T) ([]clickhouse.EntryIndexOwnerRow, []clickhouse.Ent
 		{AccountID: ehAlice, Ledger: ehLedger}, {AccountID: ehBob, Ledger: ehLedger}, {AccountID: ehAlice, Ledger: ehLedger + 2},
 	}
 	decode := []clickhouse.EntryIndexDecodeRow{
-		{Ledger: ehLedger, EntryType: "claimable_balance", EntryXDR: eiXDR(t, eiClaimable(ehBob, ehAlice))},
+		{Ledger: ehLedger, EntryType: "claimable_balance", KeyXDR: "cb-key", EntryXDR: eiXDR(t, eiClaimable(ehBob, ehAlice))},
 		{Ledger: ehLedger + 1, EntryType: "account", EntryXDR: sponsored},
 		{Ledger: ehLedger + 1, EntryType: "account", EntryXDR: sponsored}, // same sponsor twice in one ledger: one row
 		{Ledger: ehLedger + 2, EntryType: "account", EntryXDR: sponsored}, // a new ledger: a new row
@@ -335,7 +361,7 @@ func TestExecSigners_WalksOnlySignersUntilTheEntryWatermark(t *testing.T) {
 	// The timer finishes a window while the first pass runs: the walk goes round again to meet it.
 	eiSignersOnly(t, got, ehLedger+1, ehLedger+3, ehLedger+3)
 	r := &entryIndexRun{chAddr: "unused", window: 10, floor: ehLedger, signersOnly: true}
-	if err := r.execSigners(context.Background()); err != nil {
+	if err := r.execRole(context.Background(), "signer role", signerIndexWatermark); err != nil {
 		t.Fatal(err)
 	}
 	bob := eiRaw(t, ehBob)
@@ -356,7 +382,51 @@ func TestExecSigners_RefusedSignerWatermarkFails(t *testing.T) {
 	got.signerErr = fmt.Errorf("wrapped: %w", clickhouse.ErrEntryHistorySkippedPrefix)
 	eiSignersOnly(t, got, ehLedger+2)
 	r := &entryIndexRun{chAddr: "unused", window: 10, floor: ehLedger, signersOnly: true}
-	if err := r.execSigners(context.Background()); err == nil {
+	if err := r.execRole(context.Background(), "signer role", signerIndexWatermark); err == nil {
 		t.Fatal("a signers-only walk exists to set the signer watermark; a refusal must fail it")
+	}
+}
+
+func TestRunEntryIndex_ClaimableIndexRowsPerClaimantAndRemovals(t *testing.T) {
+	owners, decode, assets := eiFixtures(t)
+	got := eiStub(t, owners, decode, assets)
+	got.removalsIn = []clickhouse.EntryIndexClaimableRemoval{{KeyXDR: "cb-gone", Ledger: ehLedger + 2}}
+	r := &entryIndexRun{chAddr: "unused", window: 10}
+	if err := runEntryIndex(context.Background(), r, ehLedger, ehLedger+2, &entryIndexStats{}); err != nil {
+		t.Fatal(err)
+	}
+	entry := decode[0].EntryXDR
+	want := []clickhouse.EntryIndexClaimableRow{
+		{Account: eiRaw(t, ehBob), KeyXDR: "cb-key", Ledger: ehLedger, EntryXDR: entry},
+		{Account: eiRaw(t, ehAlice), KeyXDR: "cb-key", Ledger: ehLedger, EntryXDR: entry},
+	}
+	if !slices.Equal(got.claimables, want) {
+		t.Fatalf("claimable rows = %+v, want one per claimant %+v", got.claimables, want)
+	}
+	if !slices.Equal(got.removals, got.removalsIn) {
+		t.Fatalf("removals = %+v, want %+v", got.removals, got.removalsIn)
+	}
+	if want := [][2]uint32{{ehLedger, ehLedger + 2}}; !slices.Equal(got.claimableWM, want) {
+		t.Fatalf("claimable watermark windows = %v, want %v", got.claimableWM, want)
+	}
+}
+
+func TestRunEntryIndex_ClaimablesOnlyWritesOnlyTheClaimableIndex(t *testing.T) {
+	owners, decode, assets := eiFixtures(t)
+	got := eiStub(t, owners, decode, assets)
+	got.removalsIn = []clickhouse.EntryIndexClaimableRemoval{{KeyXDR: "cb-gone", Ledger: ehLedger + 1}}
+	r := &entryIndexRun{chAddr: "unused", window: 10, claimablesOnly: true}
+	if err := runEntryIndex(context.Background(), r, ehLedger, ehLedger+2, &entryIndexStats{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.accounts) != 0 || len(got.assets) != 0 || len(got.wm) != 0 || len(got.signerWM) != 0 {
+		t.Fatalf("claimables-only wrote %d account rows, %d asset rows, %d entry and %d signer watermarks; want none",
+			len(got.accounts), len(got.assets), len(got.wm), len(got.signerWM))
+	}
+	if len(got.claimables) != 2 || len(got.removals) != 1 {
+		t.Fatalf("claimables-only wrote %d claimable rows and %d removals, want 2 and 1", len(got.claimables), len(got.removals))
+	}
+	if want := [][2]uint32{{ehLedger, ehLedger + 2}}; !slices.Equal(got.claimableWM, want) {
+		t.Fatalf("claimable watermark windows = %v, want %v", got.claimableWM, want)
 	}
 }

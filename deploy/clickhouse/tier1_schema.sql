@@ -1566,6 +1566,29 @@ ENGINE = ReplacingMergeTree
 PARTITION BY intDiv(ledger, 10000000)
 ORDER BY (account, role, ledger);
 
+-- account_claimables: one row per (claimant, claimable balance) from the same decode pass, carrying the newest entry
+-- version seen, so the claimable-balances route reads a key range instead of scanning every change in the claimant
+-- ledgers. claimable_removals: the ledger each claimable balance was claimed or clawed back; removal rows name no
+-- claimant, so liveness is a key lookup here rather than in the 5B-row ledger_entries_current.
+CREATE TABLE IF NOT EXISTS stellar.account_claimables
+(
+    account   FixedString(32),
+    key_xdr   String,
+    ledger     UInt32,
+    close_time DateTime64(3, 'UTC'),
+    entry_xdr  String CODEC(ZSTD(3))
+)
+ENGINE = ReplacingMergeTree(ledger)
+ORDER BY (account, key_xdr);
+
+CREATE TABLE IF NOT EXISTS stellar.claimable_removals
+(
+    key_xdr String,
+    ledger  UInt32
+)
+ENGINE = ReplacingMergeTree(ledger)
+ORDER BY key_xdr;
+
 CREATE TABLE IF NOT EXISTS stellar.asset_entry_ledgers
 (
     asset      String,
