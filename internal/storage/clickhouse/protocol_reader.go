@@ -2,8 +2,12 @@ package clickhouse
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
+	"slices"
 	"sort"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -290,6 +294,12 @@ func (r *ExplorerReader) DailyActivityAvailable(ctx context.Context) (available,
 
 // ProtocolDailyActivityFast is ProtocolDailyActivity over the pre-aggregation; sinceDay bounds the window at day grain.
 func (r *ExplorerReader) ProtocolDailyActivityFast(ctx context.Context, contractIDs []string, sinceDay time.Time) ([]ProtocolDailyPoint, error) {
+	return memoProtocolDaily(&r.protocolDaily, "protocolDailyActivityFast", contractIDs, sinceDay, func() ([]ProtocolDailyPoint, error) {
+		return r.protocolDailyActivityFast(ctx, contractIDs, sinceDay)
+	})
+}
+
+func (r *ExplorerReader) protocolDailyActivityFast(ctx context.Context, contractIDs []string, sinceDay time.Time) ([]ProtocolDailyPoint, error) {
 	if len(contractIDs) == 0 {
 		return nil, nil
 	}
@@ -316,6 +326,12 @@ func (r *ExplorerReader) ProtocolDailyActivityFast(ctx context.Context, contract
 
 // ProtocolContractActivityFast is ProtocolContractActivity over the pre-aggregation at day grain, replacing the raw FINAL scan that blew the 2 GiB per-query limit; counts match within the rollup's uniqCombined error.
 func (r *ExplorerReader) ProtocolContractActivityFast(ctx context.Context, contractIDs []string, sinceDay time.Time) ([]ProtocolContractActivity, error) {
+	return memoProtocolDaily(&r.protocolDaily, "protocolContractActivityFast", contractIDs, sinceDay, func() ([]ProtocolContractActivity, error) {
+		return r.protocolContractActivityFast(ctx, contractIDs, sinceDay)
+	})
+}
+
+func (r *ExplorerReader) protocolContractActivityFast(ctx context.Context, contractIDs []string, sinceDay time.Time) ([]ProtocolContractActivity, error) {
 	if len(contractIDs) == 0 {
 		return nil, nil
 	}
@@ -344,6 +360,12 @@ func (r *ExplorerReader) ProtocolContractActivityFast(ctx context.Context, contr
 
 // ProtocolEventBreakdownFast is ProtocolEventBreakdown over the pre-aggregation; t1_xdr/t0_xdr carry the raw topics for name recovery (effectiveEventName).
 func (r *ExplorerReader) ProtocolEventBreakdownFast(ctx context.Context, contractIDs []string, sinceDay time.Time) ([]ProtocolEventTypeCount, error) {
+	return memoProtocolDaily(&r.protocolDaily, "protocolEventBreakdownFast", contractIDs, sinceDay, func() ([]ProtocolEventTypeCount, error) {
+		return r.protocolEventBreakdownFast(ctx, contractIDs, sinceDay)
+	})
+}
+
+func (r *ExplorerReader) protocolEventBreakdownFast(ctx context.Context, contractIDs []string, sinceDay time.Time) ([]ProtocolEventTypeCount, error) {
 	if len(contractIDs) == 0 {
 		return nil, nil
 	}
@@ -358,4 +380,56 @@ func (r *ExplorerReader) ProtocolEventBreakdownFast(ctx context.Context, contrac
 	}
 	defer func() { _ = rows.Close() }()
 	return scanEventBreakdown(rows)
+}
+
+// protocolDailyMaxAge bounds how long a backfilled past day can go unseen; the reads stop before today, so they otherwise change only
+// when the UTC day turns.
+const (
+	protocolDailyMaxAge  = 2 * time.Hour
+	protocolDailyMemoMax = 512
+)
+
+type protocolDailyEntry struct {
+	v   any
+	day string
+	at  time.Time
+}
+
+type protocolDailyMemo struct {
+	mu  sync.Mutex
+	m   map[[32]byte]protocolDailyEntry
+	now func() time.Time
+}
+
+// memoProtocolDaily answers read from the memo while it is from today (UTC) and under protocolDailyMaxAge. The key is order-free in
+// contractIDs, since each read binds them as an IN-list. Errors are not memoised.
+func memoProtocolDaily[T any](m *protocolDailyMemo, kind string, contractIDs []string, sinceDay time.Time, read func() ([]T, error)) ([]T, error) {
+	if len(contractIDs) == 0 {
+		return nil, nil
+	}
+	ids := slices.Clone(contractIDs)
+	slices.Sort(ids)
+	key := sha256.Sum256([]byte(kind + "\x00" + sinceDay.UTC().Format(time.RFC3339) + "\x00" + strings.Join(ids, ",")))
+	now := time.Now()
+	if m.now != nil {
+		now = m.now()
+	}
+	today := now.UTC().Format(time.DateOnly)
+	m.mu.Lock()
+	e, ok := m.m[key]
+	m.mu.Unlock()
+	if ok && e.day == today && now.Sub(e.at) < protocolDailyMaxAge {
+		return slices.Clone(e.v.([]T)), nil
+	}
+	v, err := read()
+	if err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	if m.m == nil || len(m.m) >= protocolDailyMemoMax {
+		m.m = make(map[[32]byte]protocolDailyEntry)
+	}
+	m.m[key] = protocolDailyEntry{v: slices.Clone(v), day: today, at: now}
+	m.mu.Unlock()
+	return v, nil
 }
