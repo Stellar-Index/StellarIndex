@@ -1515,7 +1515,8 @@ type ContractActivityDay struct {
 }
 
 // ContractActivitySummaryFor reads the contract's activity card; ok=false when the index is not usable, so callers omit the card rather than fabricate one.
-func (r *ExplorerReader) ContractActivitySummaryFor(ctx context.Context, contractID string, days int) (ContractActivitySummary, bool, error) {
+// sinceLedger > 0 must be at or below the first ledger of the series window: close_time is not in the key, so only it prunes the series read.
+func (r *ExplorerReader) ContractActivitySummaryFor(ctx context.Context, contractID string, days int, sinceLedger uint32) (ContractActivitySummary, bool, error) {
 	if !r.contractLedgersIndexAvailable(ctx) {
 		return ContractActivitySummary{}, false, nil
 	}
@@ -1535,8 +1536,8 @@ func (r *ExplorerReader) ContractActivitySummaryFor(ctx context.Context, contrac
 	rows, err := r.conn.Query(ctx, `
 		SELECT toDate(close_time) AS d, toUInt64(uniqExact(ledger_seq))
 		FROM stellar.contract_active_ledgers
-		WHERE contract_id = ? AND close_time >= now() - INTERVAL ? DAY
-		GROUP BY d ORDER BY d`, contractID, days)
+		WHERE contract_id = ? AND ledger_seq >= ? AND close_time >= now() - INTERVAL ? DAY
+		GROUP BY d ORDER BY d`, contractID, sinceLedger, days)
 	if err != nil {
 		return ContractActivitySummary{}, false, fmt.Errorf("clickhouse: contract activity series: %w", err)
 	}

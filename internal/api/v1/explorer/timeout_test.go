@@ -90,7 +90,7 @@ func (r *capReader) AccountCohort(ctx context.Context, _, _ string) (clickhouse.
 	return clickhouse.AccountCohort{}, false, nil
 }
 
-func (r *capReader) ContractActivitySummaryFor(ctx context.Context, _ string, _ int) (clickhouse.ContractActivitySummary, bool, error) {
+func (r *capReader) ContractActivitySummaryFor(ctx context.Context, _ string, _ int, _ uint32) (clickhouse.ContractActivitySummary, bool, error) {
 	r.probe.record(ctx)
 	return clickhouse.ContractActivitySummary{}, false, nil
 }

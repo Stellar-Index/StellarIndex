@@ -1768,7 +1768,8 @@ func TestClickHouseContractActivitySummaryRMTDedup(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = er.Close() })
 
-	s, ok, err := er.ContractActivitySummaryFor(ctx, contractID, 30)
+	// The series floor is inclusive: bounding at the oldest ledger must keep all three.
+	s, ok, err := er.ContractActivitySummaryFor(ctx, contractID, 30, ledgers[0])
 	if err != nil || !ok {
 		t.Fatalf("ContractActivitySummaryFor: ok=%v err=%v", ok, err)
 	}

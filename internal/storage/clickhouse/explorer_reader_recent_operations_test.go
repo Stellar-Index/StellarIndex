@@ -674,6 +674,9 @@ func TestContractActivitySummaryFor_DedupsRMTCount(t *testing.T) {
 				time.Unix(1700000000, 0).UTC(), time.Unix(1700100000, 0).UTC(), uint64(7),
 			}}}, nil
 		default: // daily series
+			if !strings.Contains(q, "ledger_seq >= ?") || conn.args[len(conn.args)-1][1] != uint32(1234) {
+				t.Fatalf("daily query = %q args %v, want pruned on ledger_seq >= sinceLedger", q, conn.args[len(conn.args)-1])
+			}
 			if strings.Contains(q, "count()") {
 				t.Fatalf("daily series uses bare count() over un-merged RMT parts: %s", q)
 			}
@@ -687,7 +690,7 @@ func TestContractActivitySummaryFor_DedupsRMTCount(t *testing.T) {
 	}
 	r := &ExplorerReader{conn: conn}
 
-	s, ok, err := r.ContractActivitySummaryFor(context.Background(), "CTESTCONTRACT", 30)
+	s, ok, err := r.ContractActivitySummaryFor(context.Background(), "CTESTCONTRACT", 30, 1234)
 	if err != nil || !ok {
 		t.Fatalf("ContractActivitySummaryFor: ok=%v err=%v", ok, err)
 	}
