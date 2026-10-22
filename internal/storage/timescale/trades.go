@@ -723,21 +723,15 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
 	// only for a fresh INSERT (`xmax = 0`), bump source_entry_counts so a re-walk never inflates
 	// the tally. Data-modifying CTEs run though `bump` is unreferenced. The trailing count (1 for
 	// a new row, else 0) gates the registry hook, outcome metric and sentinels.
-	const q = `
-        WITH ins AS (
+	//nolint:gosec // G201: SQL built only from compile-time fragments; values are bind params.
+	q := fmt.Sprintf(`
+        WITH v (%[1]s) AS (
+            VALUES (%[4]s)
+        ), ins AS (
             -- routed_via, signer and tx_index are post-insert tagger
             -- columns: never list them here (first-wins, see tx_index.go).
-            INSERT INTO trades (
-                source, ledger, tx_hash, op_index, ts,
-                base_asset, quote_asset,
-                base_amount, quote_amount, usd_volume,
-                maker, taker, derive_generation, usd_basis
-            ) VALUES (
-                $1, $2, $3, $4, $5,
-                $6, $7,
-                $8, $9, $10,
-                NULLIF($11, ''), NULLIF($12, ''), $13, NULLIF($14, '')
-            )
+            INSERT INTO trades (%[1]s)
+            %[3]s
             ON CONFLICT (source, ledger, tx_hash, op_index, ts) DO UPDATE SET
                 base_asset        = EXCLUDED.base_asset,
                 quote_asset       = EXCLUDED.quote_asset,
@@ -760,7 +754,7 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
                 maker             = EXCLUDED.maker,
                 taker             = EXCLUDED.taker,
                 derive_generation = EXCLUDED.derive_generation
-              WHERE trades.derive_generation <= EXCLUDED.derive_generation
+              WHERE trades.derive_generation <= EXCLUDED.derive_generation AND %[2]s
             RETURNING (xmax = 0) AS inserted
         ), bump AS (
             INSERT INTO source_entry_counts AS sec (source, entry_count, updated_at)
@@ -771,7 +765,8 @@ func (s *Store) InsertTrade(ctx context.Context, t canonical.Trade) error {
                   updated_at  = EXCLUDED.updated_at
         )
         SELECT count(*) FILTER (WHERE inserted) FROM ins
-    `
+    `, tradeUpsertColumns, tradeUpsertWrites("trades", "EXCLUDED"), tradeUpsertSkipNoOp(5, 5),
+		fmt.Sprintf(tradeValuesRow, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14))
 	var usdVolume any // sql NULL when nil; pq accepts the *string form too
 	v, basis, label, err := s.resolveUSDVolume(ctx, t)
 	if err != nil {
@@ -841,10 +836,9 @@ func (s *Store) tradeBatchValues(ctx context.Context, insertRows []canonical.Tra
 	valuesParts := make([]string, 0, len(insertRows))
 	for i, t := range insertRows {
 		base := i*tradeColsPerRow + 1
-		valuesParts = append(valuesParts, fmt.Sprintf(
-			"($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, NULLIF($%d, ''), NULLIF($%d, ''), $%d, NULLIF($%d, ''))",
+		valuesParts = append(valuesParts, "("+fmt.Sprintf(tradeValuesRow,
 			base, base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9, base+10, base+11, base+12, base+13,
-		))
+		)+")")
 		var usdVolume any
 		v, basis, label, err := s.resolveUSDVolume(ctx, t)
 		if err != nil {
@@ -963,7 +957,7 @@ func scanBatchTradeRows(ctx context.Context, tx *sql.Tx, query string, args []an
 }
 
 // tradeInsertMaxRows is the largest sub-batch per INSERT that keeps tradeColsPerRow params per row under the 65,535 bind ceiling.
-const tradeInsertMaxRows = 65535 / tradeColsPerRow
+const tradeInsertMaxRows = (65535 - 2) / tradeColsPerRow // 2: tradeUpsertSkipNoOp's ts bounds
 
 // tradeInsertChunkBounds splits n rows into [start, end) sub-batches of at
 // most tradeInsertMaxRows. n <= 0 yields no chunks.
@@ -996,15 +990,13 @@ func (s *Store) insertTradeRows(ctx context.Context, insertRows []canonical.Trad
 	// mirrors isDexUnitRatioTrade; keep the two in sync.
 	//nolint:gosec // G201: VALUES placeholders constructed only from compile-time format string.
 	query := fmt.Sprintf(`
-        WITH ins AS (
+        WITH v (%[1]s) AS (
+            VALUES %[4]s
+        ), ins AS (
             -- routed_via, signer and tx_index are post-insert tagger
             -- columns: never list them here (first-wins, see tx_index.go).
-            INSERT INTO trades (
-                source, ledger, tx_hash, op_index, ts,
-                base_asset, quote_asset,
-                base_amount, quote_amount, usd_volume,
-                maker, taker, derive_generation, usd_basis
-            ) VALUES %s
+            INSERT INTO trades (%[1]s)
+            %[3]s
             ON CONFLICT (source, ledger, tx_hash, op_index, ts) DO UPDATE SET
                 base_asset        = EXCLUDED.base_asset,
                 quote_asset       = EXCLUDED.quote_asset,
@@ -1027,7 +1019,7 @@ func (s *Store) insertTradeRows(ctx context.Context, insertRows []canonical.Trad
                 maker             = EXCLUDED.maker,
                 taker             = EXCLUDED.taker,
                 derive_generation = EXCLUDED.derive_generation
-              WHERE trades.derive_generation <= EXCLUDED.derive_generation
+              WHERE trades.derive_generation <= EXCLUDED.derive_generation AND %[2]s
             RETURNING (xmax = 0) AS inserted, source, ledger, ts,
                       base_asset, quote_asset, base_amount, quote_amount
         ), bump AS (
@@ -1059,7 +1051,9 @@ func (s *Store) insertTradeRows(ctx context.Context, insertRows []canonical.Trad
         SELECT source, ledger, ts, base_asset, quote_asset,
                (ledger <> 0 AND base_amount = quote_amount AND base_amount <> 0) AS is_unit_ratio
           FROM ins WHERE inserted
-    `, strings.Join(valuesParts, ", "))
+    `, tradeUpsertColumns, tradeUpsertWrites("trades", "EXCLUDED"), tradeUpsertSkipNoOp(len(args)+1, len(args)+2), strings.Join(valuesParts, ", "))
+	minTS, maxTS := tradeTSBounds(insertRows)
+	args = append(args, minTS, maxTS)
 
 	return s.scanBatchTradeOutcome(ctx, query, args)
 }
