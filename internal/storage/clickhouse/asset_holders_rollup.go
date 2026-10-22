@@ -76,8 +76,8 @@ func holdersBoardSteps(at string) []string {
 // holdersCountSteps fills the per-asset holder counts alongside the board.
 func holdersCountSteps(at string) []string {
 	return []string{
-		`INSERT INTO stellar.asset_holders_counts_staging (asset, holders, computed_at)
-		 SELECT asset, toInt64(count()), toDateTime(` + at + `)
+		`INSERT INTO stellar.asset_holders_counts_staging (asset, holders, circulating, computed_at)
+		 SELECT asset, toInt64(count()), sum(toInt128(balance)), toDateTime(` + at + `)
 		 FROM stellar.ledger_entries_current FINAL
 		 WHERE entry_type = 'trustline' AND change_type != 'removed' AND balance > 0
 		 GROUP BY asset

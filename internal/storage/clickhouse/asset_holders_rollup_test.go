@@ -428,3 +428,16 @@ func TestRunHoldersRollupReportsEachStep(t *testing.T) {
 		t.Errorf("onStep fired %d times, want %d (one per executed statement, %d executed)", steps, want, len(conn.execCalls))
 	}
 }
+
+// The classic circulating read trusts the rollup only if its trustline count step sums the same balances as the scan.
+func TestHoldersRollupCountStepCarriesCirculating(t *testing.T) {
+	for _, s := range holdersRollupStatements(time.Now()) {
+		if strings.Contains(s, "asset_holders_counts_staging (asset, holders, circulating, computed_at)") {
+			if !strings.Contains(s, "sum(toInt128(balance))") || !strings.Contains(s, "balance > 0") {
+				t.Fatalf("trustline count step does not sum positive balances as Int128:\n%s", s)
+			}
+			return
+		}
+	}
+	t.Fatal("no count step writes circulating")
+}

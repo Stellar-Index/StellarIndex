@@ -899,6 +899,7 @@ CREATE TABLE IF NOT EXISTS stellar.asset_holders_counts
 (
     asset       String,
     holders     Int64,
+    circulating Int128 DEFAULT 0,
     computed_at DateTime DEFAULT now()
 )
 ENGINE = MergeTree

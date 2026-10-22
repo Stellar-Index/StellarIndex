@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS stellar.asset_holders_counts
 (
     asset       String,
     holders     Int64,
+    circulating Int128 DEFAULT 0,
     computed_at DateTime DEFAULT now()
 )
 ENGINE = MergeTree
@@ -56,6 +57,14 @@ ORDER BY asset;
 
 CREATE TABLE IF NOT EXISTS stellar.asset_holders_counts_staging
 AS stellar.asset_holders_counts;
+
+-- circulating: the sum of the same positive trustline balances the count
+-- covers, so /v1/assets' classic market cap reads it instead of re-running
+-- that scan. Additive with DEFAULT 0, so an older binary's INSERT still
+-- works; the reader treats a held asset summing to 0 as a cycle written
+-- before the column and scans instead. Both twins, or EXCHANGE refuses.
+ALTER TABLE stellar.asset_holders_counts ADD COLUMN IF NOT EXISTS circulating Int128 DEFAULT 0 AFTER holders;
+ALTER TABLE stellar.asset_holders_counts_staging ADD COLUMN IF NOT EXISTS circulating Int128 DEFAULT 0 AFTER holders;
 
 -- asset_stats_daily — one concentration snapshot per asset per UTC day
 -- (holders, trustlines incl. zero-balance, top-10/100 balance, Gini),
