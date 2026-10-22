@@ -29,6 +29,9 @@ import (
 // assertion made after it name the same day.
 var holedToday = time.Now().UTC().Truncate(24 * time.Hour)
 
+// holedClock pins the server's clock to midday of holedToday.
+func holedClock() time.Time { return holedToday.Add(12 * time.Hour) }
+
 // holedDay is a UTC midnight `n` days ago, inside `timeframe=1y`.
 func holedDay(n int) time.Time {
 	return holedToday.AddDate(0, 0, -n)
@@ -199,6 +202,7 @@ func holedServer(t *testing.T, store v1.HistoryReader) *testServer {
 	t.Helper()
 	usdc := installUSDCSACRegistry(t)
 	return httpTestServer(t, v1.New(v1.Options{
+		Clock:             holedClock,
 		History:           store,
 		USDPeggedClassics: []canonical.Asset{usdc},
 	}))
@@ -293,6 +297,7 @@ func TestChartMarketCap_HoledPriceLegReachesTheProxyWalk(t *testing.T) {
 		})
 	}
 	ts := httpTestServer(t, v1.New(v1.Options{
+		Clock:              holedClock,
 		History:            holedFlagshipStore(),
 		Supply:             sup,
 		USDPeggedClassics:  []canonical.Asset{usdc},
@@ -406,6 +411,7 @@ func TestChartMarketCap_ValuationGuards(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			priceKey := tc.asset + "/fiat:USD"
 			srv := v1.New(v1.Options{
+				Clock: holedClock,
 				History: &stubHistoryReader{points: []v1.HistoryPoint{
 					{Bucket: d(1), VWAP: "0.50"},
 					{Bucket: d(2), VWAP: "0.50"},
@@ -462,6 +468,7 @@ func TestChartMarketCap_DeadSupplyIsNotForwardFilledForever(t *testing.T) {
 	}
 	priceKey := dustGuardAssetID + "/fiat:USD"
 	srv := v1.New(v1.Options{
+		Clock:   holedClock,
 		History: &stubHistoryReader{points: price},
 		Supply: &stubSupplyLooker{daily: []timescale.SupplyDayPoint{
 			{Bucket: d(1), Circulating: mustBigInt("100000000000000000")}, // last observed June 1

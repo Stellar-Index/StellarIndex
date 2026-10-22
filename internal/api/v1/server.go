@@ -868,6 +868,9 @@ type Options struct {
 	// prices. The declaration has no timestamp, so zero uses construction time and the stamp resets
 	// on every restart; set it to pin the wire value.
 	PegDeclaredAt time.Time
+	// Clock is the chart handlers' clock; nil uses time.Now. Tests pin it so a fixture built
+	// before UTC midnight and a request served after it name the same day.
+	Clock func() time.Time
 
 	// FiatPeggedClassics maps a classic asset_id ("CODE-ISSUER") to the fiat asset the operator
 	// declares it 1:1-pegged to. Rows whose price_usd is nil after the substance gate are filled
@@ -1024,6 +1027,14 @@ func durationOr(d, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
+}
+
+// now reads [Options.Clock], falling back to the wall clock.
+func (s *Server) now() time.Time {
+	if s.Clock != nil {
+		return s.Clock()
+	}
+	return time.Now()
 }
 
 // timeOr returns t when it is set, else fallback. Used to back an unset

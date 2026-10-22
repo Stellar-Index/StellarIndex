@@ -147,7 +147,7 @@ func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
 
 	var from time.Time
 	if tf.Duration > 0 {
-		from = time.Now().Add(-tf.Duration).UTC()
+		from = s.now().Add(-tf.Duration).UTC()
 	} else if !middleware.ChargeRateLimit(w, r, sinceInceptionCost(gran)) {
 		// timeframe=all has no window to coarsen against, so its read is
 		// priced by grain like /v1/history/since-inception.
@@ -446,7 +446,7 @@ func (s *Server) handleChartFiat(
 	}
 
 	// Default window: trailing 25y (ECB inception) when timeframe=all.
-	to := time.Now().UTC().Truncate(24 * time.Hour)
+	to := s.now().UTC().Truncate(24 * time.Hour)
 	queryFrom := from
 	if queryFrom.IsZero() {
 		queryFrom = to.AddDate(-25, 0, 0) // ECB inception
@@ -513,7 +513,7 @@ func (s *Server) handleChartFiatCross(
 ) {
 	// Same default window as the direct fiat path: trailing 25y when
 	// timeframe=all (ECB inception).
-	to := time.Now().UTC().Truncate(24 * time.Hour)
+	to := s.now().UTC().Truncate(24 * time.Hour)
 	queryFrom := from
 	if queryFrom.IsZero() {
 		queryFrom = to.AddDate(-25, 0, 0)
@@ -913,7 +913,7 @@ func (w *chartWalk) step(ctx context.Context, sp canonical.Pair, class chartSour
 		w.claim(sp, points)
 		return true, nil
 	}
-	now := time.Now().UTC()
+	now := w.s.now().UTC()
 	if w.win.covered(w.merge, now) {
 		return false, nil // every readable bucket is already claimed
 	}
@@ -1441,7 +1441,7 @@ func (s *Server) handleChartMarketCap(
 
 	// Default window: trailing 25y (ECB inception), the same as the direct
 	// fiat path, when timeframe=all.
-	to := time.Now().UTC().Truncate(24 * time.Hour)
+	to := s.now().UTC().Truncate(24 * time.Hour)
 	queryFrom := from
 	if queryFrom.IsZero() {
 		queryFrom = to.AddDate(-25, 0, 0)
@@ -1594,7 +1594,7 @@ func (s *Server) handleChartMarketCapCrypto(
 	baseDec := aggregate.ResolveDecimals(s.NonstandardDecimals, pair.Base)
 
 	// Daily circulating supply (forward-filled via the carry-in row).
-	to := time.Now().UTC().Truncate(24 * time.Hour)
+	to := s.now().UTC().Truncate(24 * time.Hour)
 	supPts, err := s.Supply.DailyCirculatingSupply(ctx, supplyKey, from, to)
 	if err != nil {
 		if clientAborted(r, err) {
