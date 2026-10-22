@@ -356,7 +356,7 @@ func registerStorageAndExplorerMetrics() {
 		SDEXOrderBookUndecodableOffersTotal,
 		ExplorerSWRRefreshTotal, ExplorerSWRRefreshDurationSeconds,
 		ExplorerRefreshGateSaturatedTotal,
-		CHSchemaProbePresent, CHSchemaProbeUnansweredTotal, DerivedIndexWatermarkLedger,
+		CHSchemaProbePresent, CHSchemaProbeUnansweredTotal, DerivedIndexWatermarkLedger, ExplorerSchemaAbsentEmptyTotal,
 		ProtocolDetailRefreshTotal,
 		ProtocolDetailRefreshDurationSeconds,
 		WorkerPanicsTotal,
@@ -3042,6 +3042,15 @@ var DerivedIndexWatermarkLedger = prometheus.NewGaugeVec(
 		Help: "Ledger each derived ClickHouse index is proven complete through, as last read from stellar.entry_history_watermark (0 = no watermark row or no table; the fast paths gated on it serve their fallback).",
 	},
 	[]string{"index"},
+)
+
+// ExplorerSchemaAbsentEmptyTotal counts explorer reads served as empty because their ClickHouse table or column is missing.
+var ExplorerSchemaAbsentEmptyTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_explorer_schema_absent_empty_total",
+		Help: "Explorer reads answered as empty because their ClickHouse table or column does not exist, by table.",
+	},
+	[]string{"table"},
 )
 
 // CHSchemaProbeUnansweredTotal counts explorer schema probes that got no answer (transport error, deadline); leaves [CHSchemaProbePresent] untouched.
