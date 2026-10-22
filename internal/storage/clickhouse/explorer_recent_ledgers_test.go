@@ -141,3 +141,17 @@ func TestRecentLedgers_ContiguousIsOneQuery(t *testing.T) {
 		}
 	}
 }
+
+// A limit-1 cursor probe reads a narrow window first, and still finds the newest ledger below a hole wider than it.
+func TestRecentLedgers_SingleRowCursorIsNarrow(t *testing.T) {
+	conn := ledgerLakeStub(t, func(s uint32) bool { return s < 90_000 }, 100_000)
+	r := &ExplorerReader{conn: conn}
+	got, err := r.RecentLedgers(context.Background(), 1, 95_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSeqs(t, got, 89_999, 1)
+	if lo := conn.args[0][1].(uint32); lo != 95_000-64 {
+		t.Fatalf("first read starts at %d, want %d", lo, 95_000-64)
+	}
+}

@@ -103,8 +103,8 @@ func ledgerAtCheck(t *testing.T, reader *ledgerAtReader, ts time.Time) {
 	case want != 0 && (code != http.StatusOK || got.Sequence != want):
 		t.Fatalf("ts %s: status %d ledger %d, want 200 ledger %d", ts.Format(time.RFC3339Nano), code, got.Sequence, want)
 	}
-	// Bounded: one tip read, a binary search of probes, one point read.
-	if limit := bits.Len32(reader.tip) + 1; reader.belowReads > limit || reader.pointReads > 1 || reader.recentCalls != 1 {
+	// Bounded: one tip read, at most ~2x a binary search of probes (the aimed search's safeguard), one point read.
+	if limit := 2*bits.Len32(reader.tip) + 2; reader.belowReads > limit || reader.pointReads > 1 || reader.recentCalls != 1 {
 		t.Fatalf("ts %s: %d probes / %d point reads / %d tip reads, want <= %d / 1 / 1",
 			ts, reader.belowReads, reader.pointReads, reader.recentCalls, limit)
 	}
@@ -137,6 +137,25 @@ func TestLedgerAt_MatchesBruteForceOnEveryLedger(t *testing.T) {
 	holed := &ledgerAtReader{first: 1, tip: 2_000, holes: interiorHole}
 	if holed.want(ledgerAtClose(500)) != 500 || holed.want(ledgerAtClose(999)) != 0 || holed.want(ledgerAtClose(1005)) != 0 {
 		t.Fatal("the brute-force model is wrong about the interior hole; the sweep proves nothing")
+	}
+}
+
+// On a full lake, interpolation finds a window boundary in a handful of reads where bisection of the same lake needs 27.
+func TestFirstCapturedClosedAfter_AimedSearchIsShort(t *testing.T) {
+	reader := &ledgerAtReader{first: 1, tip: 60_000_000}
+	for _, days := range []int{1, 7, 30, 365} {
+		reader.belowReads = 0
+		boundary := ledgerAtClose(reader.tip).AddDate(0, 0, -days)
+		got, err := FirstCapturedClosedAfter(context.Background(), reader, reader.tip, boundary)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ledgerAtClose(got).After(boundary) || ledgerAtClose(got-1).After(boundary) {
+			t.Fatalf("%dd: ledger %d is not the first closed after %s", days, got, boundary)
+		}
+		if reader.belowReads > 8 {
+			t.Fatalf("%dd: %d probes, want <= 8", days, reader.belowReads)
+		}
 	}
 }
 

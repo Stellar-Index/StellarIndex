@@ -98,26 +98,80 @@ type LedgerPager interface {
 	RecentLedgers(ctx context.Context, limit int, beforeSeq uint32) ([]clickhouse.LedgerHeader, error)
 }
 
-// FirstCapturedClosedAfter binary-searches for the lowest captured ledger closed after ts (tipSeq must qualify); each probe reads the
-// newest captured ledger at or below mid, so lake gaps cannot mislead it.
+// FirstCapturedClosedAfter searches for the lowest captured ledger closed after ts (tipSeq must qualify); each probe reads the
+// newest captured ledger at or below mid, so lake gaps cannot mislead it. Probes are aimed by close-time interpolation (a few reads
+// instead of ~26 bisections); two that fail to halve the interval make the next a bisection, bounding the worst case at ~2x.
 func FirstCapturedClosedAfter(ctx context.Context, r LedgerPager, tipSeq uint32, ts time.Time) (uint32, error) {
 	lo, hi := uint32(0), tipSeq
+	var s ledgerSearch
+	aimed, prevWidth := true, tipSeq
 	for lo < hi {
-		mid := lo + (hi-lo)/2
+		width := hi - lo
+		mid := lo + width/2
+		if est, ok := s.aim(lo, hi, ts); aimed && ok {
+			mid = est
+		}
 		below, err := r.RecentLedgers(ctx, 1, mid+1)
 		if err != nil {
 			return 0, err
 		}
 		if len(below) == 0 || !below[0].CloseTime.After(ts) {
 			lo = mid + 1
-			continue
+			if len(below) > 0 {
+				s.below, s.haveBelow = below[0], true
+			}
+			s.step(-1)
+		} else {
+			if below[0].Seq > mid {
+				return 0, fmt.Errorf("ledger read below %d returned ledger %d", mid+1, below[0].Seq)
+			}
+			hi = below[0].Seq
+			s.above, s.haveAbove = below[0], true
+			s.step(+1)
 		}
-		if below[0].Seq > mid {
-			return 0, fmt.Errorf("ledger read below %d returned ledger %d", mid+1, below[0].Seq)
-		}
-		hi = below[0].Seq
+		// Judge over two probes: an aimed probe landing a ledger short of the answer leaves the far bound untouched.
+		aimed = !aimed || hi-lo <= prevWidth/2 || prevWidth == tipSeq
+		prevWidth = width
 	}
 	return lo, nil
+}
+
+// ledgerSearch holds the probed ledgers nearest ts on each side and a margin that doubles while probes keep landing on one side.
+type ledgerSearch struct {
+	below, above         clickhouse.LedgerHeader
+	haveBelow, haveAbove bool
+	side                 int
+	margin               uint32
+}
+
+func (s *ledgerSearch) step(side int) {
+	if side == s.side {
+		s.margin = min(2*s.margin, 1<<24)
+	} else {
+		s.side, s.margin = side, 4
+	}
+}
+
+// aim returns a probe in [lo, hi-1]: just under the tip until a close time is known, then the interpolated answer pushed back
+// across the bound the last probe moved, by the margin. ok=false when the estimate falls outside the interval (e.g. below a
+// lake that starts above genesis): the model is wrong there, so bisect.
+func (s *ledgerSearch) aim(lo, hi uint32, ts time.Time) (uint32, bool) {
+	if !s.haveAbove {
+		return hi - 1, true
+	}
+	perLedger := 5 * time.Second
+	if s.haveBelow && s.above.Seq > s.below.Seq {
+		perLedger = s.above.CloseTime.Sub(s.below.CloseTime) / time.Duration(s.above.Seq-s.below.Seq)
+	}
+	est := float64(s.above.Seq)
+	if perLedger > 0 {
+		est -= float64(s.above.CloseTime.Sub(ts)) / float64(perLedger)
+	}
+	if est < float64(lo)-1 || est > float64(hi)+1 {
+		return 0, false
+	}
+	est -= float64(s.side) * float64(min(s.margin, (hi-lo)/4))
+	return uint32(max(float64(lo), min(est, float64(hi-1)))), true
 }
 
 // parseLedgerAtTS reads the required `ts`: RFC 3339 or non-negative unix
