@@ -2291,6 +2291,22 @@ func TestChEntryIndex_WriteFillsBothIndexes(t *testing.T) {
 	if removedAt != base+2 {
 		t.Fatalf("claimable_removals ledger = %d, want %d", removedAt, base+2)
 	}
+	// alice once held the claimed balance too; the reader must drop it through claimable_removals.
+	if err := conn.Exec(ctx, `INSERT INTO stellar.account_claimables (account, key_xdr, ledger, close_time, entry_xdr) VALUES (?, ?, ?, ?, '')`,
+		raw(alice), removal.KeyXDR, base+1, time.Unix(0, 0).UTC()); err != nil {
+		t.Fatalf("seed claimed balance: %v", err)
+	}
+	er, err := chstore.NewExplorerReader(ctx, addr)
+	if err != nil {
+		t.Fatalf("NewExplorerReader: %v", err)
+	}
+	scan, err := er.IndexedClaimableBalances(ctx, raw(alice), 10)
+	if err != nil {
+		t.Fatalf("IndexedClaimableBalances: %v", err)
+	}
+	if scan.Keys != 1 || scan.Live[0].Ledger != base+2 || !slices.Contains(scan.Live[0].Claimants, alice) {
+		t.Fatalf("indexed claimables = %+v, want only alice's live balance at %d", scan.Live, base+2)
+	}
 	wm, err := chstore.EntryIndexWatermark(ctx, addr)
 	if err != nil {
 		t.Fatalf("watermark: %v", err)

@@ -192,6 +192,10 @@ type ExplorerReader interface {
 	AccountEntryLedgers(ctx context.Context, account string, roles []string, maxLedger uint32, limit int) ([]uint32, error)
 	// LiveClaimableBalancesInLedgers returns the still-unclaimed balances naming the raw account changed in the ledgers.
 	LiveClaimableBalancesInLedgers(ctx context.Context, account string, ledgers []uint32, maxKeys int) (clickhouse.ClaimableScan, error)
+	// ClaimableIndexWatermark is the ledger the claimable index is complete through (0 = not built).
+	ClaimableIndexWatermark(ctx context.Context) (uint32, error)
+	// IndexedClaimableBalances returns at most maxKeys unclaimed balances naming the raw account, from the claimable index.
+	IndexedClaimableBalances(ctx context.Context, account string, maxKeys int) (clickhouse.ClaimableScan, error)
 	// SignerIndexWatermark is the ledger the entry index's signer role is complete through (0 = not built).
 	SignerIndexWatermark(ctx context.Context) (uint32, error)
 	// AccountsSignedBy returns the accounts changed in the ledgers whose current signers hold the raw ed25519 key.
