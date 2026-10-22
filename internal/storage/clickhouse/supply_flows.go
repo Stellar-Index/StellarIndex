@@ -337,8 +337,10 @@ func (r *SupplyReader) settledBases(ctx context.Context, contractIDs []string) (
 		b := settledBase{settled: settled, sums: below[id], at: now}
 		if b.sums.mint == nil {
 			b.sums = parseFlowSums("0", "0", "0", 0)
+		} else {
+			// Only real bases are kept: an empty one costs nothing to re-read, and request-chosen ids must not evict them.
+			r.bases.put(id, b)
 		}
-		r.bases.put(id, b)
 		add(id, b)
 	}
 	return groups, nil

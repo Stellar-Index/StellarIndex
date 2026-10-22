@@ -3,6 +3,7 @@ package clickhouse
 import (
 	"errors"
 	"math/big"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -291,11 +292,21 @@ func TestTokenSupplyForContracts_RereadsOnlyAboveSettledBase(t *testing.T) {
 		t.Fatalf("warm read: %v", err)
 	}
 	check("warm", second)
-	if n := len(conn.queries) - before; n != 1 || !strings.Contains(conn.queries[before], "ledger_seq >= ?") {
-		t.Fatalf("warm read must be one recent-flows query, got %d: %v", n, conn.queries[before:])
+	recent := 0
+	for i := before; i < len(conn.queries); i++ {
+		q := conn.queries[i]
+		if strings.Contains(q, "ledger_seq < ?") && slices.Contains(conn.args[i][0].([]string), "CBIG") {
+			t.Fatalf("warm read re-summed CBIG's memoised base: %v", conn.args[i])
+		}
+		if strings.Contains(q, "ledger_seq >= ?") {
+			recent++
+			if b := conn.args[i][1]; b != uint32(64_900_000) {
+				t.Errorf("recent-flows bound %v, want the settled ledger 64900000", b)
+			}
+		}
 	}
-	if b := conn.args[before][1]; b != uint32(64_900_000) {
-		t.Errorf("recent-flows bound %v, want the settled ledger 64900000", b)
+	if recent != 1 {
+		t.Errorf("warm read issued %d recent-flows queries, want 1", recent)
 	}
 
 	clock = clock.Add(time.Second)
