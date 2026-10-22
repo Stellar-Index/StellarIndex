@@ -20,8 +20,8 @@
 # PG_CHUNK_SCAN_PSQL. The unit sets none of them.
 set -uo pipefail
 DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
-STATE="${PG_CHUNK_SCAN_STATE:-/var/lib/stellarindex/pg-chunk-scan.verified}"
-PSQL="${PG_CHUNK_SCAN_PSQL:-runuser -u postgres -- psql -X -q -d stellarindex -v ON_ERROR_STOP=1}"
+STATE="${PG_CHUNK_SCAN_STATE:-/var/lib/pg-chunk-scan/verified}"
+PSQL="${PG_CHUNK_SCAN_PSQL:-psql -X -q -d stellarindex -v ON_ERROR_STOP=1}"
 FULL="${PG_CHUNK_SCAN_FULL:-0}"
 BUDGET="${PG_CHUNK_SCAN_BUDGET:-10800}"
 BADF="$STATE.bad"
@@ -84,7 +84,8 @@ SQL
 now=$(date +%s)
 if [ "$rc" -ne 0 ]; then
   echo "pg-chunk-scan: psql exited $rc:" >&2
-  grep -E 'ERROR|FATAL' "$RAW" >&2 || true
+  # Not just ERROR lines: a connection or auth failure has none.
+  grep -v 'NOTICE:  CHUNK|' "$RAW" | tail -n 20 >&2
   # Keep the previous verdicts; publish only the failure so the stale alert
   # and the unit-failed alert both see it.
   {
@@ -93,6 +94,7 @@ if [ "$rc" -ne 0 ]; then
     echo "stellarindex_pg_chunk_scan_success 0"
     grep -E '^stellarindex_pg_(compressed_chunk|chunk_scan_last_success)' "$OUT" 2>/dev/null
   } >"$TMP"
+  chmod 0644 "$TMP"
   mv "$TMP" "$OUT"
   exit 1
 fi
