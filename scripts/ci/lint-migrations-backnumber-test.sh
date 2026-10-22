@@ -43,7 +43,7 @@ mkfixture() {
 }
 
 register_row() {
-  printf '| %s | fixture | Fixture migration. |\n' "$1" >>"$TMP/migrations/README.md"
+  printf '| %s | Fixture migration. |\n' "$1" >>"$TMP/migrations/README.md"
 }
 
 # ─── build the scratch repo: base has 0001 and 0005, a gap at 0002-0004 ───
@@ -56,7 +56,7 @@ printf 'CREATE TABLE IF NOT EXISTS stellar.dummy (id UInt64) ENGINE = MergeTree 
 mkfixture 0001 fixture
 mkfixture 0005 fixture
 {
-  printf '# fixture register\n\n| Number | File | Adds |\n| --- | --- | --- |\n'
+  printf '# fixture register\n\n| Number | Adds |\n| --- | --- |\n'
   register_row 0001
   register_row 0005
 } >"$TMP/migrations/README.md"
@@ -79,7 +79,7 @@ base_sha="$(git -C "$TMP" rev-parse HEAD)"
 # ─── case 1: back-numbered into the existing gap (0002) — FATAL ───
 mkfixture 0002 backfilled
 {
-  printf '# fixture register\n\n| Number | File | Adds |\n| --- | --- | --- |\n'
+  printf '# fixture register\n\n| Number | Adds |\n| --- | --- |\n'
   register_row 0001
   register_row 0002
   register_row 0005
@@ -111,7 +111,7 @@ fi
 git -C "$TMP" reset -q --hard "$base_sha"
 mkfixture 0006 forward
 {
-  printf '# fixture register\n\n| Number | File | Adds |\n| --- | --- | --- |\n'
+  printf '# fixture register\n\n| Number | Adds |\n| --- | --- |\n'
   register_row 0001
   register_row 0005
   register_row 0006
