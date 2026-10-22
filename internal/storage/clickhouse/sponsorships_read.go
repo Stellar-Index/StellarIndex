@@ -128,13 +128,10 @@ func pageSponsorships(after SponsorshipKey, limit, windowRows, maxWindows int, i
 			return nil, SponsorshipKey{}, err
 		}
 		full := n >= windowRows
-		switch {
-		case full && len(win) == 1:
-			if win, err = whole(win[0].SponsorshipKey); err != nil {
+		if full {
+			if win, err = completeWindow(win, whole); err != nil {
 				return nil, SponsorshipKey{}, err
 			}
-		case full:
-			win = win[:len(win)-1]
 		}
 		for _, a := range win {
 			if inForceOnly && !sponsorshipInForce(a.Events) {
@@ -151,6 +148,16 @@ func pageSponsorships(after SponsorshipKey, limit, windowRows, maxWindows int, i
 		after = win[len(win)-1].SponsorshipKey
 	}
 	return out, after, nil
+}
+
+// completeWindow drops a full window's last arrangement, whose events may run past it, or reads it whole when it
+// is the window's only one.
+func completeWindow(win []SponsorshipArrangement, whole func(SponsorshipKey) ([]SponsorshipArrangement, error),
+) ([]SponsorshipArrangement, error) {
+	if len(win) == 1 {
+		return whole(win[0].SponsorshipKey)
+	}
+	return win[:len(win)-1], nil
 }
 
 // sponsorshipArrangements runs an event query in key order and groups its rows into arrangements, each with its
