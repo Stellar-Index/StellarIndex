@@ -76,8 +76,7 @@ import { AccountTradesPanel } from './AccountTrades';
 import { AccountGraphPanel } from './AccountGraph';
 import { AccountSponsorshipsPanel } from './AccountSponsorships';
 import { AccountsAnalytics } from './AccountsAnalytics';
-
-const ACCOUNT_RE = /^G[A-Z2-7]{55}$/;
+import { ACCOUNT_ID_RE as ACCOUNT_RE } from '@/lib/preload/manifest';
 const PAGE_SIZE = 50;
 
 /** Cursor paging that only walks backwards through history, like the API. */
