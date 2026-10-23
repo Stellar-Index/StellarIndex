@@ -18,6 +18,7 @@ import (
 
 type fakeMarketsReader struct {
 	allPoolsCalls atomic.Int64
+	sparkCalls    atomic.Int64
 	delay         time.Duration
 	err           error
 }
@@ -54,6 +55,7 @@ func (f *fakeMarketsReader) PairMarket(ctx context.Context, base, quote canonica
 }
 
 func (f *fakeMarketsReader) GetPairsVolumeHistory24hBatch(ctx context.Context, pairs [][2]string) (map[string][]timescale.PairVolumePoint, error) {
+	f.sparkCalls.Add(1)
 	return nil, nil
 }
 
@@ -555,4 +557,27 @@ func (brokenMarketSourceReader) PairSourceStats(context.Context, []string, []str
 
 func (brokenMarketSourceReader) AssetSourceStats(context.Context, []string) ([]timescale.SourceStats, error) {
 	return nil, io.ErrUnexpectedEOF
+}
+
+// One sparkline batch per pair set per TTL, whatever order the page lists the pairs in; a different set is its own key.
+func TestCachedMarkets_SparklineBatchCachedPerPairSet(t *testing.T) {
+	up := &fakeMarketsReader{}
+	c := NewCachedMarketsReader(up, time.Minute)
+	ctx := context.Background()
+	ab := [][2]string{{"native", "USDC"}, {"crypto:BTC", "USD"}}
+	ba := [][2]string{{"crypto:BTC", "USD"}, {"native", "USDC"}}
+	for _, pairs := range [][][2]string{ab, ba, ab} {
+		if _, stale, err := c.GetPairsVolumeHistory24hBatchAt(ctx, pairs); err != nil || stale {
+			t.Fatalf("GetPairsVolumeHistory24hBatchAt = stale %v, err %v", stale, err)
+		}
+	}
+	if n := up.sparkCalls.Load(); n != 1 {
+		t.Errorf("upstream batch calls = %d, want 1", n)
+	}
+	if _, _, err := c.GetPairsVolumeHistory24hBatchAt(ctx, ab[:1]); err != nil {
+		t.Fatal(err)
+	}
+	if n := up.sparkCalls.Load(); n != 2 {
+		t.Errorf("upstream batch calls after a new pair set = %d, want 2", n)
+	}
 }

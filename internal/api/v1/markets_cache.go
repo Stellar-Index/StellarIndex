@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 	"slices"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,6 +26,9 @@ type CachedMarketsReader struct {
 
 	mu      sync.Mutex
 	entries map[string]*marketsCacheEntry
+
+	// sparks caches the per-listing sparkline batch, which adds ~200 ms to a /v1/markets page on r1.
+	sparks *swrCache[map[string][]timescale.PairVolumePoint]
 }
 
 // marketsCacheMaxEntries bounds the map: keys carry client-controlled parts (cursor, q, asset ids), so uncapped one caller could exhaust
@@ -74,16 +79,40 @@ func NewCachedMarketsReader(upstream MarketsReader, ttl time.Duration) *CachedMa
 		upstream: upstream,
 		ttl:      ttl,
 		entries:  map[string]*marketsCacheEntry{},
+		sparks:   newSWRCache[map[string][]timescale.PairVolumePoint](nil, "markets", "api-markets-sparkline-fill", ttl, marketsSparklineMaxEntries),
 	}
 }
 
-// PairMarket and GetPairsVolumeHistory24hBatch pass through uncached; see the type comment.
+// marketsSparklineMaxEntries bounds the sparkline cache; keys are the pair sets of served listing pages.
+const marketsSparklineMaxEntries = 128
+
+// PairMarket passes through uncached.
 func (c *CachedMarketsReader) PairMarket(ctx context.Context, base, quote canonical.Asset) (Market, bool, error) {
 	return c.upstream.PairMarket(ctx, base, quote)
 }
 
+// GetPairsVolumeHistory24hBatch is GetPairsVolumeHistory24hBatchAt without the staleness bit.
 func (c *CachedMarketsReader) GetPairsVolumeHistory24hBatch(ctx context.Context, pairs [][2]string) (map[string][]timescale.PairVolumePoint, error) {
-	return c.upstream.GetPairsVolumeHistory24hBatch(ctx, pairs)
+	hist, _, err := c.GetPairsVolumeHistory24hBatchAt(ctx, pairs)
+	return hist, err
+}
+
+// GetPairsVolumeHistory24hBatchAt caches one batch per pair set and reports whether the served batch is past its TTL. The
+// returned map is shared: callers read it, never write it.
+func (c *CachedMarketsReader) GetPairsVolumeHistory24hBatchAt(ctx context.Context, pairs [][2]string) (map[string][]timescale.PairVolumePoint, bool, error) {
+	if c.ttl <= 0 {
+		hist, err := c.upstream.GetPairsVolumeHistory24hBatch(ctx, pairs)
+		return hist, false, err
+	}
+	keys := make([]string, len(pairs))
+	for i, p := range pairs {
+		keys[i] = p[0] + "|" + p[1]
+	}
+	sort.Strings(keys)
+	hist, _, stale, err := c.sparks.get(ctx, "pairs_volume_24h", strings.Join(keys, ","), func(ctx context.Context) (map[string][]timescale.PairVolumePoint, error) {
+		return c.upstream.GetPairsVolumeHistory24hBatch(ctx, pairs)
+	})
+	return hist, stale, err
 }
 
 // FirstTradeBatch passes through uncached: inception is immutable and the call is opt-in via ?include=inception.
