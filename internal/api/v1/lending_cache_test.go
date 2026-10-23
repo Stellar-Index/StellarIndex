@@ -75,3 +75,25 @@ func TestCachedLendingReader_ErrorNotCached(t *testing.T) {
 		t.Errorf("upstream calls = %d, want 2", n)
 	}
 }
+
+// A pool's reserves view is built once per TTL: the page fans out one request per pool, and a repeat must not re-read the lake.
+func TestLendingPoolReserves_BuiltOncePerTTL(t *testing.T) {
+	pool := mkCStrkey(t, 7)
+	explorer := &stubExplorerReader{}
+	srv := v1.New(v1.Options{
+		Explorer: explorer,
+		Lending:  &stubLendingReader{assets: []string{mkCStrkey(t, 20)}},
+	})
+	base := httpTestServer(t, srv).URL
+
+	for range 2 {
+		resp := mustGet(t, base+"/v1/lending/pools/"+pool+"/reserves")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+		_, _ = readAll(resp)
+	}
+	if n := len(explorer.reserveCalls); n != 1 {
+		t.Errorf("BlendPoolReserves calls = %d, want 1 (second request served from cache)", n)
+	}
+}
