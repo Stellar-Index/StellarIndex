@@ -330,11 +330,18 @@ export function useLedgerFollow(
     if (!enabled) return;
     if (streamLatest == null) return;
     const now = Date.now();
-    const last = lastFollowRefetchByKey.get(keyStr) ?? 0;
+    const key = JSON.parse(keyStr) as unknown[];
+    // Data fetched moments ago counts as a refresh: without this the first
+    // frame after mount refetches everything the page just loaded.
+    const fetchedAt = queryClient
+      .getQueryCache()
+      .findAll({ queryKey: key })
+      .reduce((m, q) => Math.max(m, q.state.dataUpdatedAt), 0);
+    const last = Math.max(lastFollowRefetchByKey.get(keyStr) ?? 0, fetchedAt);
     if (now - last < minIntervalMs) return;
     lastFollowRefetchByKey.set(keyStr, now);
     void queryClient.invalidateQueries(
-      { queryKey: JSON.parse(keyStr) as unknown[] },
+      { queryKey: key },
       // Second argument — InvalidateOptions, NOT the filters object.
       // `cancelRefetch` is not a filter, and putting it in the first
       // argument type-errors rather than silently doing nothing.

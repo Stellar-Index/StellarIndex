@@ -186,6 +186,8 @@ func shortBandPolicy(path string, cdnEnabled bool) (string, bool) {
 		protocolTVLPath.MatchString(path),
 		// Lending-pool reserves: current contract state, like /v1/pools/reserves.
 		lendingReservesPath.MatchString(path),
+		// The pool list carries each pool's summary from that same reserves view.
+		path == "/v1/lending/pools",
 		// The non-Stellar half of /v1/assets: same live valuations, so the same band.
 		path == "/v1/external/assets",
 		strings.HasPrefix(path, "/v1/external/assets/"),
@@ -317,7 +319,6 @@ func routePolicy(path string, cdnEnabled bool) (string, bool) {
 		// Closed-bucket OHLCV (ADR-0015), same semantics as /v1/ohlc.
 		path == "/v1/chart",
 		path == "/v1/pools",
-		path == "/v1/lending/pools",
 		// Embedded with the binary, changes only on redeploy (.atom sets its own header).
 		path == "/v1/incidents",
 		// Operator config, changes only on restart: the most cacheable surface.

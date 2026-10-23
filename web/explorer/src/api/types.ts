@@ -1792,6 +1792,13 @@ export interface paths {
          *     whenever either is null or net supply ≤ 0. Current-state
          *     per-reserve supplied / borrowed / utilization / APR are served
          *     by `/v1/lending/pools/{pool}/reserves`.
+         *
+         *     `summary` totals that same reserves view per pool. The list
+         *     never waits on a reserves build: a pool whose view has not
+         *     been built yet has `summary: null, summary_pending: true`
+         *     (fetch its `/reserves`, which joins the same build), and the
+         *     response is sent `Cache-Control: no-store`. A pool whose build
+         *     just failed has `summary_error: true` for up to a minute.
          */
         get: operations["listLendingPools"];
         put?: never;
@@ -17167,7 +17174,20 @@ export interface operations {
                      *           "unique_users_30d": 10946,
                      *           "last_seen": "2026-07-03T22:37:27Z",
                      *           "net_supplied_30d": null,
-                     *           "net_borrowed_30d": null
+                     *           "net_borrowed_30d": null,
+                     *           "summary": {
+                     *             "tvl_usd": "41250310.55",
+                     *             "lower_bound": false,
+                     *             "borrowed_usd": "18020114.20",
+                     *             "borrowed_lower_bound": false,
+                     *             "utilization_pct": 43.68,
+                     *             "supply_apr": 0.0412,
+                     *             "borrow_apr": 0.0861,
+                     *             "priced_reserve_count": 4,
+                     *             "reserve_count": 4
+                     *           },
+                     *           "summary_pending": false,
+                     *           "summary_error": false
                      *         }
                      *       ],
                      *       "as_of": "2026-07-03T22:37:47.445630311Z",
@@ -17198,6 +17218,30 @@ export interface operations {
                             net_borrowed_30d?: string | null;
                             /** @description Single-asset window borrow/supply ratio %; null when either net flow is null or net supply ≤ 0. */
                             utilization_30d_pct?: number | null;
+                            /** @description Current-state totals from the pool's `/reserves` view; null while that view is pending or failed. Utilization and APRs cover priced reserves only. */
+                            summary?: {
+                                /** @description Decimal USD, the reserves view's tvl_usd; null when no reserve is priced. */
+                                tvl_usd?: string | null;
+                                /** @description tvl_usd leaves out at least one unpriced reserve. */
+                                lower_bound?: boolean;
+                                /** @description Decimal USD sum of the reserves with a borrowed USD value; null when none has one. */
+                                borrowed_usd?: string | null;
+                                /** @description borrowed_usd leaves out at least one unpriced reserve. */
+                                borrowed_lower_bound?: boolean;
+                                /** @description Borrowed / supplied USD × 100 over the reserves priced on both sides. */
+                                utilization_pct?: number | null;
+                                /** @description Supply APR (fraction) weighted by supplied USD over priced reserves with a rate. */
+                                supply_apr?: number | null;
+                                /** @description Borrow APR (fraction) weighted by borrowed USD over priced reserves with a rate. */
+                                borrow_apr?: number | null;
+                                /** @description Reserves with both supplied and borrowed USD values. */
+                                priced_reserve_count?: number;
+                                reserve_count?: number;
+                            } | null;
+                            /** @description The pool's reserves view is still being built; summary is null. */
+                            summary_pending?: boolean;
+                            /** @description The pool's last reserves build failed; summary is null and the list retries after a minute. */
+                            summary_error?: boolean;
                         }[];
                     };
                 };
