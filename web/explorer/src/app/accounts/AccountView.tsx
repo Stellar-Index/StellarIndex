@@ -39,7 +39,7 @@ import {
 import { AccountClaimablePanel } from './AccountClaimable';
 import { AccountSignerOnPanel } from './AccountSignerOn';
 import { apiGet, asExample } from '@/api/client';
-import { useIssuers } from '@/api/hooks';
+import { ISSUER_LOOKUP_LIMIT, useIssuers } from '@/api/hooks';
 import { cn } from '@/lib/cn';
 import {
   DIRECTORY_OPERATOR_OVERRIDE_SOURCE,
@@ -146,7 +146,7 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
     },
     staleTime: 30_000,
   });
-  const issuersQ = useIssuers(100);
+  const issuersQ = useIssuers(ISSUER_LOOKUP_LIMIT);
   const isKnownIssuer = (issuersQ.data ?? []).some(
     (iss) => iss.g_strkey === id,
   );
@@ -224,7 +224,7 @@ export function AccountView({ id: idProp }: { id?: string } = {}) {
       />
       <AccountPositions id={id} />
       {state?.exists && <AccountEntriesPanels state={state} />}
-      {state?.exists && <AccountClaimablePanel id={id} />}
+      <AccountClaimablePanel id={id} />
       <AccountSignerOnPanel id={id} />
       <AccountActivitySummaryPanel id={id} />
       <AccountMovementsPanel id={id} />

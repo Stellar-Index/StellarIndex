@@ -236,3 +236,35 @@ describe('AccountView non-G addresses', () => {
     ).toBe(`/contracts/${C}/`);
   });
 });
+
+describe('AccountView claimable balances', () => {
+  it('lists claimable balances for an account that is not funded yet', async () => {
+    mockApi({
+      [`/v1/accounts/${G}`]: { account_id: G, exists: false },
+      '/claimable-balances': {
+        account: G,
+        claimable_balances: [
+          {
+            balance_id: '00'.repeat(36),
+            asset: 'native',
+            amount: '10.0000000',
+            last_modified_ledger: 1,
+            last_modified_time: '2026-10-01T00:00:00Z',
+            entry: {
+              claimants: [
+                { destination: G, predicate: { type: 'unconditional' } },
+              ],
+            },
+          },
+        ],
+        through_ledger: 1,
+        lower_bound: false,
+        coverage_note: '',
+      },
+    });
+    renderWithClient(<AccountView id={G} />);
+    expect(
+      await screen.findByText('Claimable balances (1)'),
+    ).toBeInTheDocument();
+  });
+});
