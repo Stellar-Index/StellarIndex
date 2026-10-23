@@ -1798,7 +1798,9 @@ export interface paths {
          *     been built yet has `summary: null, summary_pending: true`
          *     (fetch its `/reserves`, which joins the same build), and the
          *     response is sent `Cache-Control: no-store`. A pool whose build
-         *     just failed has `summary_error: true` for up to a minute.
+         *     just failed has `summary_error: true`; the list retries it
+         *     after a minute, and a cached copy of the list can hold the flag
+         *     for a minute more.
          */
         get: operations["listLendingPools"];
         put?: never;

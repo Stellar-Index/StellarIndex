@@ -148,13 +148,7 @@ func (s *Server) attachLendingSummaries(rows []LendingPool, vintage *dataVintage
 			rows[i].SummaryError = true
 			continue
 		}
-		res, at, cacheStale, ok := s.lendingReserves.peek("pool_reserves", pool, func(ctx context.Context) (poolReserves, error) {
-			res, err := s.buildPoolReserves(ctx, pool)
-			if err != nil {
-				s.noteLendingSummaryFailure(pool)
-			}
-			return res, err
-		})
+		res, at, cacheStale, ok := s.lendingReserves.peek("pool_reserves", pool, s.fillPoolReserves(pool))
 		if !ok {
 			rows[i].SummaryPending, pending = true, true
 			continue
@@ -165,6 +159,22 @@ func (s *Server) attachLendingSummaries(rows []LendingPool, vintage *dataVintage
 		flags.Degraded = flags.Degraded || res.flags.Degraded
 	}
 	return pending
+}
+
+// fillPoolReserves is the one upstream both the list and the reserves handler fill through, so a failed or panicking build is
+// remembered whichever handler started it.
+func (s *Server) fillPoolReserves(pool string) func(context.Context) (poolReserves, error) {
+	return func(ctx context.Context) (res poolReserves, err error) {
+		failed := true
+		defer func() {
+			if failed {
+				s.noteLendingSummaryFailure(pool)
+			}
+		}()
+		res, err = s.buildPoolReserves(ctx, pool)
+		failed = err != nil
+		return res, err
+	}
 }
 
 func (s *Server) lendingSummaryFailedRecently(pool string) bool {
@@ -306,9 +316,11 @@ func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Reques
 	ctx, cancel := context.WithTimeout(r.Context(), maxHandlerBudget)
 	defer cancel()
 
-	res, at, cacheStale, err := s.lendingReserves.get(ctx, "pool_reserves", pool, func(ctx context.Context) (poolReserves, error) {
-		return s.buildPoolReserves(ctx, pool)
-	})
+	res, at, cacheStale, err := s.lendingReserves.get(ctx, "pool_reserves", pool, s.fillPoolReserves(pool))
+	if errors.Is(err, errPoolLineageUnknown) {
+		writeJSON(w, LendingPoolReservesView{Pool: pool, Reserves: []ReserveView{}}, Flags{})
+		return
+	}
 	if err != nil {
 		stage := "lending reserves cache wait"
 		var se *lendingStageErr
@@ -345,6 +357,10 @@ type lendingStageErr struct {
 func (e *lendingStageErr) Error() string { return e.stage + ": " + e.err.Error() }
 func (e *lendingStageErr) Unwrap() error { return e.err }
 
+// errPoolLineageUnknown withholds a pool's reserves without caching the empty view: any C-strkey reaches this path, and a cached
+// success per junk key would evict the listed pools.
+var errPoolLineageUnknown = errors.New("blend pool lineage unknown")
+
 // buildPoolReserves reads and prices one pool's reserves; as_of_ledger and flags.stale are the lake watermark at build time.
 func (s *Server) buildPoolReserves(ctx context.Context, pool string) (poolReserves, error) {
 	version, err := s.Lending.BlendPoolVersion(ctx, pool)
@@ -353,7 +369,7 @@ func (s *Server) buildPoolReserves(ctx context.Context, pool string) (poolReserv
 	}
 	if version == blend.PoolVersionUnknown {
 		s.logger.Warn("blend pool lineage unknown; reserves withheld", "pool", pool)
-		return poolReserves{view: LendingPoolReservesView{Pool: pool, Reserves: []ReserveView{}}}, nil
+		return poolReserves{}, errPoolLineageUnknown
 	}
 	assets, err := s.Lending.BlendPoolAssets(ctx, pool)
 	if err != nil {

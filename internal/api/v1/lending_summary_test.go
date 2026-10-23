@@ -15,11 +15,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// gatedExplorer parks every reserves build until gate closes and counts builds; fail makes them error.
+// gatedExplorer parks every reserves build until gate closes and counts builds; fail makes them error, panics makes them panic.
 type gatedExplorer struct {
 	*stubExplorerReader
 	gate   chan struct{}
 	fail   atomic.Bool
+	panics atomic.Bool
 	mu     sync.Mutex
 	builds int
 }
@@ -34,6 +35,9 @@ func (g *gatedExplorer) BlendPoolReserves(ctx context.Context, _ string, _ blend
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
+	}
+	if g.panics.Load() {
+		panic("decoder bug")
 	}
 	if g.fail.Load() {
 		return nil, errors.New("lake down")
@@ -173,6 +177,71 @@ func TestLendingPools_FailedBuildIsHeldOff(t *testing.T) {
 	getPoolsList(t, base)
 	if n := explorer.buildCount(); n != 1 {
 		t.Errorf("builds = %d, want 1 inside the retry window", n)
+	}
+}
+
+// A cold build that fails under the reserves handler is remembered too: the list serves an error row and starts no build of its own.
+func TestLendingPools_ReservesFailureHoldsOffList(t *testing.T) {
+	explorer := &gatedExplorer{stubExplorerReader: &stubExplorerReader{}}
+	explorer.fail.Store(true)
+	pools := blendPools(t, 1)
+	srv := v1.New(v1.Options{Explorer: explorer, Lending: &stubLendingReader{pools: pools}})
+	base := httpTestServer(t, srv).URL
+
+	if resp := mustGet(t, base+"/v1/lending/pools/"+pools[0].Pool+"/reserves"); resp.StatusCode == http.StatusOK {
+		t.Fatal("reserves status = 200, want a failure")
+	}
+	l := getPoolsList(t, base)
+	if !l.rows[0].SummaryError || l.rows[0].SummaryPending {
+		t.Errorf("row = %+v, want error, not pending", l.rows[0])
+	}
+	if n := explorer.buildCount(); n != 1 {
+		t.Errorf("builds = %d, want 1", n)
+	}
+}
+
+// A panicking build is held off like a failing one, instead of being restarted by every list request.
+func TestLendingPools_PanickedBuildIsHeldOff(t *testing.T) {
+	explorer := &gatedExplorer{stubExplorerReader: &stubExplorerReader{}}
+	explorer.panics.Store(true)
+	srv := v1.New(v1.Options{Explorer: explorer, Lending: &stubLendingReader{pools: blendPools(t, 1)}})
+	base := httpTestServer(t, srv).URL
+
+	pollPoolsList(t, base, func(l poolsList) bool { return l.rows[0].SummaryError })
+	getPoolsList(t, base)
+	if n := explorer.buildCount(); n != 1 {
+		t.Errorf("builds = %d, want 1 inside the retry window", n)
+	}
+}
+
+// countingVersionReader counts lineage lookups, which run once per reserves build.
+type countingVersionReader struct {
+	stubLendingReader
+	calls atomic.Int32
+}
+
+func (r *countingVersionReader) BlendPoolVersion(ctx context.Context, pool string) (blend.PoolVersion, error) {
+	r.calls.Add(1)
+	return r.stubLendingReader.BlendPoolVersion(ctx, pool)
+}
+
+// An unknown-lineage view is not cached: any C-strkey reaches it, and cached junk would evict the listed pools.
+func TestLendingPoolReserves_UnknownLineageNotCached(t *testing.T) {
+	unknown := blend.PoolVersionUnknown
+	lending := &countingVersionReader{stubLendingReader: stubLendingReader{version: &unknown}}
+	srv := v1.New(v1.Options{Explorer: &stubExplorerReader{}, Lending: lending})
+	base := httpTestServer(t, srv).URL
+
+	pool := mkCStrkey(t, 9)
+	for range 2 {
+		resp := mustGet(t, base+"/v1/lending/pools/"+pool+"/reserves")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+		_ = resp.Body.Close()
+	}
+	if n := lending.calls.Load(); n != 2 {
+		t.Errorf("lineage lookups = %d, want 2 (no cached view)", n)
 	}
 }
 

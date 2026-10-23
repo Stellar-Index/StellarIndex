@@ -1,8 +1,12 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-import { LendingPoolsTable } from './LendingPoolsTable';
+import {
+  LendingPoolsTable,
+  PENDING_POLL_MAX,
+  PENDING_POLL_MS,
+} from './LendingPoolsTable';
 
 vi.mock('@/api/client', async () => {
   const actual =
@@ -25,6 +29,11 @@ function renderIt() {
 
 beforeEach(() => {
   vi.mocked(apiGet).mockReset();
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 const POOL = 'CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD';
@@ -157,11 +166,59 @@ describe('LendingPoolsTable', () => {
       return { data: { reserves: [] } };
     });
     renderIt();
+    await waitFor(() => expect(listCalls).toBe(1));
+    await vi.advanceTimersByTimeAsync(PENDING_POLL_MS);
     await waitFor(() => expect(screen.getByText('50.0%')).toBeInTheDocument());
     const reserveCalls = vi
       .mocked(apiGet)
       .mock.calls.filter(([p]) => String(p).endsWith('/reserves'));
     expect(reserveCalls.length).toBe(1);
     expect(listCalls).toBe(2);
+  });
+
+  it('a pending row whose /reserves call failed still picks up the summary the build later produced', async () => {
+    let listCalls = 0;
+    vi.mocked(apiGet).mockImplementation(async (path: unknown) => {
+      if (path === '/v1/lending/pools') {
+        listCalls += 1;
+        return {
+          data: [
+            listCalls < 3
+              ? row({ summary: null, summary_pending: true })
+              : row({
+                  summary: {
+                    tvl_usd: '100.00',
+                    lower_bound: false,
+                    utilization_pct: 25,
+                    priced_reserve_count: 1,
+                    reserve_count: 1,
+                  },
+                }),
+          ],
+        };
+      }
+      throw new Error('503');
+    });
+    renderIt();
+    await waitFor(() =>
+      expect(screen.getAllByText('unavailable').length).toBeGreaterThan(0),
+    );
+    await vi.advanceTimersByTimeAsync(PENDING_POLL_MS * 2);
+    await waitFor(() => expect(screen.getByText('25.0%')).toBeInTheDocument());
+  });
+
+  it('stops polling a list that stays pending', async () => {
+    let listCalls = 0;
+    vi.mocked(apiGet).mockImplementation(async (path: unknown) => {
+      if (path === '/v1/lending/pools') {
+        listCalls += 1;
+        return { data: [row({ summary: null, summary_pending: true })] };
+      }
+      return { data: { reserves: [] } };
+    });
+    renderIt();
+    await waitFor(() => expect(listCalls).toBe(1));
+    await vi.advanceTimersByTimeAsync(PENDING_POLL_MS * (PENDING_POLL_MAX + 5));
+    expect(listCalls).toBe(PENDING_POLL_MAX);
   });
 });

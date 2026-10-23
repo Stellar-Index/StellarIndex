@@ -1,8 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import {
@@ -170,11 +169,10 @@ function PoolStats({ row }: { row: LendingPool }) {
 
 /**
  * PendingPoolStats — the list was served before this pool's reserves view
- * was built. Fetching /reserves joins that build; once it lands the list is
- * refetched and carries the summary.
+ * was built. Fetching /reserves joins that build; the list polls until the
+ * summary lands.
  */
 function PendingPoolStats({ pool }: { pool: string }) {
-  const queryClient = useQueryClient();
   const q = useQuery({
     queryKey: ['/v1/lending/pools/{pool}/reserves', pool, 'pools-table'],
     staleTime: 300_000,
@@ -185,21 +183,24 @@ function PendingPoolStats({ pool }: { pool: string }) {
         {},
       ),
   });
-  const built = q.isSuccess;
-  useEffect(() => {
-    if (built)
-      void queryClient.invalidateQueries({
-        queryKey: ['/v1/lending/pools'],
-        exact: true,
-      });
-  }, [built, queryClient]);
   const v = q.isError ? 'unavailable' : '…';
   return <StatCells tvl={v} util={v} supply={v} borrow={v} />;
 }
 
+// A pending row's build can outlive its /reserves call (a 503 past the
+// handler budget, or a /reserves answer from the HTTP cache), so the list
+// polls the server for the summary instead of trusting that call.
+export const PENDING_POLL_MS = 3_000;
+export const PENDING_POLL_MAX = 20;
+
 export function LendingPoolsTable() {
   const q = useQuery<LendingPool[]>({
     queryKey: ['/v1/lending/pools'],
+    refetchInterval: (query) =>
+      query.state.data?.some((r) => r.summary_pending) &&
+      query.state.dataUpdateCount < PENDING_POLL_MAX
+        ? PENDING_POLL_MS
+        : false,
     queryFn: async () => {
       const env = await apiGet<{ data: LendingPool[] }>(
         '/v1/lending/pools',
