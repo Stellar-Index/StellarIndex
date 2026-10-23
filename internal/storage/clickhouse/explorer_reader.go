@@ -1227,39 +1227,9 @@ const visibilityChunk = 500
 func visibleParticipantKeys[K comparable](ctx context.Context, conn driver.Conn, account string, keys []K, tx func(K) accountTxKey, need int,
 	known map[accountTxKey]struct{},
 ) (_ []K, lookups int, _ error) {
-	seen := make(map[accountTxKey]struct{}, len(keys))
-	visible := make(map[accountTxKey]struct{}, len(keys))
-	var txs []accountTxKey
-	for _, k := range keys {
-		t := tx(k)
-		if _, dup := seen[t]; dup {
-			continue
-		}
-		seen[t] = struct{}{}
-		if _, ok := known[t]; ok {
-			visible[t] = struct{}{}
-		} else {
-			txs = append(txs, t)
-		}
-	}
+	visible, txs := splitKnownTxs(keys, tx, known)
 	checked := make(map[accountTxKey]struct{}, len(txs))
-	// settled: the newest `need` visible keys are known, i.e. they are reached before any unchecked tx.
-	settled := func() bool {
-		n := 0
-		for _, k := range keys {
-			t := tx(k)
-			if _, v := visible[t]; v {
-				if n++; n >= need {
-					return true
-				}
-				continue
-			}
-			if _, c := checked[t]; !c {
-				return false
-			}
-		}
-		return true
-	}
+	settled := func() bool { return visibleSettled(keys, tx, need, visible, checked) }
 	chunk := max(need, 1)
 	for len(txs) > 0 && !settled() {
 		n := min(len(txs), chunk)
@@ -1287,6 +1257,44 @@ func visibleParticipantKeys[K comparable](ctx context.Context, conn driver.Conn,
 		}
 	}
 	return out, lookups, nil
+}
+
+// splitKnownTxs dedups keys' txs in order: those in known start visible, the rest still need a lookup.
+func splitKnownTxs[K comparable](keys []K, tx func(K) accountTxKey, known map[accountTxKey]struct{}) (map[accountTxKey]struct{}, []accountTxKey) {
+	seen := make(map[accountTxKey]struct{}, len(keys))
+	visible := make(map[accountTxKey]struct{}, len(keys))
+	var txs []accountTxKey
+	for _, k := range keys {
+		t := tx(k)
+		if _, dup := seen[t]; dup {
+			continue
+		}
+		seen[t] = struct{}{}
+		if _, ok := known[t]; ok {
+			visible[t] = struct{}{}
+		} else {
+			txs = append(txs, t)
+		}
+	}
+	return visible, txs
+}
+
+// visibleSettled reports whether the newest `need` visible keys are known, i.e. they are reached before any unchecked tx.
+func visibleSettled[K comparable](keys []K, tx func(K) accountTxKey, need int, visible, checked map[accountTxKey]struct{}) bool {
+	n := 0
+	for _, k := range keys {
+		t := tx(k)
+		if _, v := visible[t]; v {
+			if n++; n >= need {
+				return true
+			}
+			continue
+		}
+		if _, c := checked[t]; !c {
+			return false
+		}
+	}
+	return true
 }
 
 // sourcedOpKeysExactQuery is the sourced op arm's LIMIT 1 BY form (exact, O(account history)); sentinel op_index rows (tx-sourced) are
