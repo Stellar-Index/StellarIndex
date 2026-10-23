@@ -61,6 +61,10 @@ async function settle() {
   });
 }
 
+function ageCachedData(client: QueryClient) {
+  for (const q of client.getQueryCache().getAll()) q.setState({ dataUpdatedAt: 1 });
+}
+
 beforeEach(() => {
   listeners.length = 0;
   resetLedgerFollowThrottleForTest();
@@ -94,6 +98,8 @@ describe.each<[string, string, () => ReactElement]>([
 
     // Positive control: at the tip a ledger close does refetch, so the
     // assertion below is not passing merely because nothing ever fires.
+    // Data fetched inside the follow window is skipped, so age it first.
+    ageCachedData(client);
     pushLedger(1000);
     await waitFor(() => expect(fetchesOf(path, undefined)).toBe(2));
 
@@ -101,6 +107,7 @@ describe.each<[string, string, () => ReactElement]>([
     await waitFor(() => expect(fetchesOf(path, PAGE2_CURSOR)).toBe(1));
 
     resetLedgerFollowThrottleForTest();
+    ageCachedData(client);
     pushLedger(1001);
     await settle();
 

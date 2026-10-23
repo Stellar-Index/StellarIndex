@@ -108,31 +108,24 @@ export function useVerifiedSlugs() {
 
 export function useIssuerLookup() {
   return useQuery<
+    IssuerListEntry[],
+    Error,
     Record<
       string,
       { home_domain?: string; org_name?: string; org_verified?: boolean }
     >
   >({
-    queryKey: ['/v1/issuers', 'lookup'],
-    queryFn: async () => {
-      const env = await apiGet<{
-        data: Array<{
-          g_strkey: string;
-          home_domain?: string;
-          org_name?: string;
-          // Bidirectional SEP-1 proof. Downstream renderers
-          // (AssetLabel) MUST gate authoritative "by {org_name}"
-          // attribution on this — org_name alone is self-declared and
-          // spoofable (a scam issuer can set home_domain to a reputable
-          // org's domain to borrow its ORG_NAME).
-          org_verified?: boolean;
-        }>;
-      }>('/v1/issuers', { limit: 500 });
+    // Shares useIssuers(ISSUER_LOOKUP_LIMIT)'s cache entry so a page using both sends one request.
+    queryKey: issuersListKey(ISSUER_LOOKUP_LIMIT),
+    queryFn: () => fetchIssuers(ISSUER_LOOKUP_LIMIT),
+    // Downstream renderers (AssetLabel) MUST gate authoritative "by {org_name}"
+    // attribution on org_verified: org_name alone is self-declared and spoofable.
+    select: (rows) => {
       const out: Record<
         string,
         { home_domain?: string; org_name?: string; org_verified?: boolean }
       > = {};
-      for (const row of env.data ?? []) {
+      for (const row of rows) {
         if (row.org_name || row.home_domain) {
           out[row.g_strkey] = {
             home_domain: row.home_domain,
@@ -844,16 +837,25 @@ type IssuersListEnvelope = { data: IssuerListEntry[] };
  */
 export function useIssuers(limit = 100) {
   return useQuery<IssuerListEntry[]>({
-    queryKey: ['/v1/issuers', limit, 'list'],
-    queryFn: async () => {
-      const env = await apiGet<IssuersListEnvelope | IssuerListEntry[]>(
-        '/v1/issuers',
-        { limit },
-      );
-      return Array.isArray(env) ? env : env.data;
-    },
+    queryKey: issuersListKey(limit),
+    queryFn: () => fetchIssuers(limit),
     staleTime: 5 * 60_000,
   });
+}
+
+/** The issuer-directory page size useIssuerLookup reads; a page that also lists issuers passes it to share one request. */
+export const ISSUER_LOOKUP_LIMIT = 500;
+
+function issuersListKey(limit: number) {
+  return ['/v1/issuers', limit, 'list'] as const;
+}
+
+async function fetchIssuers(limit: number): Promise<IssuerListEntry[]> {
+  const body = await apiGet<IssuersListEnvelope | IssuerListEntry[]>(
+    '/v1/issuers',
+    { limit },
+  );
+  return (Array.isArray(body) ? body : body.data) ?? [];
 }
 
 type IssuerDetailData = GetJSON<'/issuers/{g_strkey}'>['data'];

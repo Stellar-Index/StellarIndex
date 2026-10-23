@@ -218,3 +218,29 @@ describe('resetLedgerFollowThrottleForTest production gating', () => {
     );
   });
 });
+
+describe('useLedgerFollow first frame', () => {
+  const t0 = 1_756_000_000_000;
+
+  // The page just fetched this key; the first ledger frame after mount
+  // must not refetch it again.
+  it('skips a query fetched inside the window', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(t0);
+    client.setQueryData(['/v1/assets'], [], { updatedAt: t0 - 2_000 });
+    renderFollowers([['/v1/assets']]);
+
+    pushLedger(1000);
+    expect(invalidateSpy).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
+  it('still refreshes a query older than the window', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(t0);
+    client.setQueryData(['/v1/assets'], [], { updatedAt: t0 - 60_000 });
+    renderFollowers([['/v1/assets']]);
+
+    pushLedger(1000);
+    expect(invalidateSpy).toHaveBeenCalledTimes(1);
+    vi.restoreAllMocks();
+  });
+});
