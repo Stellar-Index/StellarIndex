@@ -4,10 +4,14 @@
 // aria-busy. contract-page-audit.py models panels by hand; this reads what the page does.
 //
 // Usage: NODE_PATH=<dir holding playwright> node scripts/ops/page-load-audit.cjs paths.txt
+//        NODE_PATH=... node scripts/ops/page-load-audit.cjs --self-test   (offline fixtures)
 //   paths.txt: one explorer path per line ("/accounts/G..."); "#" starts a comment.
 //   BASE (https://stellarindex.io), BUDGET_MS (1000), QUIET_MS (500), TIMEOUT_MS (30000),
-//   REPEAT (1; >1 adds warm loads in the same context), JSON=1 for one JSON line per load.
-// Exit code = pages over budget + pages that never finished loading.
+//   COLD (10 cold loads per path, each in a new browser context), REPEAT (1; >1 adds warm loads
+//   in the last cold context), JSON=1 for one JSON line per load, VERBOSE=1 for every request.
+// A page's time is the latest of: its last request settling, its last fetch() resolving (a
+// preload settles early, the fetch that uses it later), and the last aria-busy clearing.
+// Exit code = paths whose cold p95 is over budget or that had a load never finish.
 'use strict';
 const fs = require('fs');
 const { chromium } = require('playwright');
@@ -17,6 +21,22 @@ const BUDGET = Number(process.env.BUDGET_MS || 1000);
 const QUIET = Number(process.env.QUIET_MS || 500);
 const TIMEOUT = Number(process.env.TIMEOUT_MS || 30000);
 const REPEAT = Number(process.env.REPEAT || 1);
+const COLD = Number(process.env.COLD || 10);
+
+// Installed before any page script: records every fetch() the page makes, start and resolution.
+function fetchSpy() {
+  const log = [];
+  window.__plFetch = log;
+  const orig = window.fetch;
+  window.fetch = function (input, init) {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const e = { url: new URL(url, location.href).href, start: Date.now(), end: null };
+    log.push(e);
+    const p = orig.call(this, input, init);
+    p.then(() => { e.end = Date.now(); }, () => { e.end = Date.now(); });
+    return p;
+  };
+}
 
 function template(path) {
   return path
@@ -27,13 +47,14 @@ function template(path) {
     .replace(/^\/(assets|markets|protocols|sources|dexes|exchanges|lending|liquidity-pools|issuers)\/[^/]+/, '/$1/{id}');
 }
 
-async function loadOnce(ctx, path) {
+async function loadOnce(ctx, path, base = BASE) {
   const page = await ctx.newPage();
+  await page.addInitScript(fetchSpy);
   // Abort router prefetches of other routes: they also pull those routes' JS chunks, which would
   // otherwise read as this page still loading. The current page's own payload is inline in its HTML.
-  await page.route((u) => u.origin === new URL(BASE).origin, (route) => {
+  await page.route((u) => u.origin === new URL(base).origin, (route) => {
     const r = route.request();
-    return (r.resourceType() === 'fetch' || r.resourceType() === 'xhr') ? route.abort() : route.continue();
+    return (r.resourceType() === 'fetch' || r.resourceType() === 'xhr') ? route.abort() : route.fallback();
   });
   const t0 = Date.now();
   const inflight = new Set();
@@ -45,14 +66,14 @@ async function loadOnce(ctx, path) {
     const u = new URL(r.url());
     if (process.env.VERBOSE) console.log(`  ${String(r._t - t0).padStart(5)} +${String(lastSettle - r._t).padStart(5)} ${r.resourceType()} ${status} ${u.host}${u.pathname}`);
     if (r.resourceType() === 'fetch' || r.resourceType() === 'xhr') {
-      reqs.push({ url: u.host + u.pathname + u.search, status, ms: lastSettle - r._t, end: lastSettle - t0 });
+      reqs.push({ url: u.href, status, start: r._t - t0, ms: lastSettle - r._t, end: lastSettle - t0 });
     }
   };
   // Router prefetches of other pages and long-lived streams are not part of this page's load.
   const counted = (r) => {
     if (r.resourceType() === 'eventsource' || r.resourceType() === 'websocket') return false;
     // Same-origin fetches are router payloads for other routes (link prefetch on hover/viewport).
-    if ((r.resourceType() === 'fetch' || r.resourceType() === 'xhr') && new URL(r.url()).origin === new URL(BASE).origin) return false;
+    if ((r.resourceType() === 'fetch' || r.resourceType() === 'xhr') && new URL(r.url()).origin === new URL(base).origin) return false;
     const h = r.headers();
     return !(h['next-router-prefetch'] || h.purpose === 'prefetch' || h['sec-purpose'] || r.url().includes('_rsc='));
   };
@@ -62,14 +83,33 @@ async function loadOnce(ctx, path) {
 
   let ttfb = null;
   let ok = true;
+  let lastBusy = t0;
+  let busyOn = false;
+  let lastFetch = t0;
+  let fetches = [];
+  let unusedPreloads = [];
   try {
-    const resp = await page.goto(BASE + path, { waitUntil: 'load', timeout: TIMEOUT });
+    const resp = await page.goto(base + path, { waitUntil: 'load', timeout: TIMEOUT });
     ttfb = resp ? Math.round(resp.request().timing().responseStart) : null;
     for (;;) {
       if (Date.now() - t0 > TIMEOUT) { ok = false; break; }
-      const busy = await page.locator('[aria-busy="true"]').count();
-      if (process.env.VERBOSE && busy && !page._busyLogged) { page._busyLogged = 1; console.log('  busy at', Date.now() - t0); }
-      if (inflight.size === 0 && busy === 0 && Date.now() - lastSettle >= QUIET) break;
+      const st = await page.evaluate((origin) => ({
+        busy: document.querySelectorAll('[aria-busy="true"]').length,
+        // Same-origin fetches are router payloads for other routes, aborted above.
+        fetches: (window.__plFetch || []).filter((f) => new URL(f.url).origin !== origin),
+        preloads: [...document.querySelectorAll('link[rel="preload"][as="fetch"]')].map((l) => l.href),
+      }), new URL(base).origin);
+      const now = Date.now();
+      // Stamped when the clear is first seen, so the time is never earlier than the real clear.
+      if (st.busy) busyOn = true;
+      else if (busyOn) { busyOn = false; lastBusy = now; }
+      fetches = st.fetches;
+      // A preload the page has not fetched yet means the render that uses it is still to come.
+      unusedPreloads = st.preloads.filter((h) => !fetches.some((f) => f.url === h));
+      const pending = fetches.some((f) => f.end === null) || unusedPreloads.length > 0;
+      for (const f of fetches) if (f.end !== null && f.end > lastFetch) lastFetch = f.end;
+      const last = Math.max(lastSettle, lastFetch, lastBusy);
+      if (inflight.size === 0 && !pending && st.busy === 0 && now - last >= QUIET) break;
       await page.waitForTimeout(50);
     }
   } catch (e) {
@@ -78,7 +118,56 @@ async function loadOnce(ctx, path) {
   await page.close();
   const failed = reqs.filter((r) => r.status !== 404 && (r.status < 200 || r.status >= 300));
   const slowest = reqs.reduce((a, b) => (b.ms > (a ? a.ms : -1) ? b : a), null);
-  return { path, template: template(path), ok: ok && failed.length === 0, total: lastSettle - t0, ttfb, n: reqs.length, slowest, failed };
+  const seen = {};
+  for (const r of reqs) seen[r.url] = (seen[r.url] || 0) + 1;
+  const dups = Object.entries(seen).filter(([, c]) => c > 1).map(([url, c]) => ({ url, count: c }));
+  const firstFetch = fetches.length ? Math.min(...fetches.map((f) => f.start)) - t0 : null;
+  return {
+    path, template: template(path), ok: ok && failed.length === 0,
+    total: Math.max(lastSettle, lastFetch, lastBusy) - t0,
+    network: lastSettle - t0, fetchEnd: lastFetch - t0, busyEnd: lastBusy - t0,
+    firstFetch, ttfb, n: reqs.length, slowest, failed, dups, unusedPreloads, reqs,
+  };
+}
+
+function line(r, over) {
+  const slow = r.slowest ? r.slowest.ms + 'ms ' + r.slowest.url : '-';
+  const dup = r.dups.length ? ' dup=' + r.dups.map((d) => d.count + 'x ' + d.url).join(',') : '';
+  const fail = r.failed.length ? ' failed=' + r.failed.map((f) => f.status + ' ' + f.url).join(',') : '';
+  const unused = r.unusedPreloads.length ? ' unused-preload=' + r.unusedPreloads.join(',') : '';
+  return `${over ? 'FAIL' : 'ok  '} ${String(r.total).padStart(6)}ms ${r.warm ? 'warm' : 'cold'} first-fetch=${r.firstFetch ?? '-'} ` +
+    `net=${r.network} fetch=${r.fetchEnd} busy=${r.busyEnd} n=${r.n} slowest=${slow}${dup}${fail}${unused}${r.ok ? '' : ' UNLOADED'} ${r.path}`;
+}
+
+// Offline fixtures served through page.route: each must report the time its page really finished.
+async function selfTest(browser) {
+  const base = 'https://page.fixture.test';
+  const api = 'https://api.fixture.test';
+  const pages = {
+    // The preload settles at once; the page uses it 800 ms later and renders after that.
+    '/late-preload': { min: 800, html: `<link rel="preload" as="fetch" crossorigin="anonymous" href="${api}/v1/x">
+      <script>setTimeout(() => fetch('${api}/v1/x').then((r) => r.json()).then(() => { document.body.dataset.done = 1; }), 800);</script>` },
+    // No requests at all; a panel stays aria-busy for 900 ms.
+    '/busy': { min: 900, html: `<div id="p" aria-busy="true"></div>
+      <script>setTimeout(() => document.getElementById('p').setAttribute('aria-busy', 'false'), 900);</script>` },
+    // A chained fetch: the second request starts only after the first resolves.
+    '/chained': { min: 400, html: `<script>setTimeout(() => fetch('${api}/v1/x').then(() => fetch('${api}/v1/y?delay=1')), 200);</script>` },
+  };
+  let bad = 0;
+  for (const [path, want] of Object.entries(pages)) {
+    const ctx = await browser.newContext();
+    await ctx.route(`${base}/**`, (route) => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><body>${want.html}</body></html>` }));
+    await ctx.route(`${api}/**`, async (route) => {
+      if (route.request().url().includes('delay=1')) await new Promise((r) => setTimeout(r, 200));
+      route.fulfill({ contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '{}' });
+    });
+    const r = await loadOnce(ctx, path, base);
+    await ctx.close();
+    const pass = r.ok && r.total >= want.min;
+    if (!pass) bad++;
+    console.log(`${pass ? 'PASS' : 'FAIL'} ${path} ok=${r.ok} total=${r.total}ms want>=${want.min} (net=${r.network} fetch=${r.fetchEnd} busy=${r.busyEnd})`);
+  }
+  return bad;
 }
 
 function pct(xs, p) {
@@ -88,23 +177,35 @@ function pct(xs, p) {
 
 (async () => {
   const file = process.argv[2];
-  if (!file) { console.error('usage: page-load-audit.cjs paths.txt'); process.exit(2); }
-  const paths = fs.readFileSync(file, 'utf8').split('\n').map((l) => l.replace(/#.*/, '').trim()).filter(Boolean);
+  if (!file) { console.error('usage: page-load-audit.cjs paths.txt | --self-test'); process.exit(2); }
   const browser = await chromium.launch();
+  if (file === '--self-test') {
+    const bad = await selfTest(browser);
+    await browser.close();
+    process.exit(bad);
+  }
+  const paths = fs.readFileSync(file, 'utf8').split('\n').map((l) => l.replace(/#.*/, '').trim()).filter(Boolean);
   const results = [];
   let bad = 0;
   for (const path of paths) {
-    const ctx = await browser.newContext();
-    for (let i = 0; i < REPEAT; i++) {
-      const r = await loadOnce(ctx, path);
-      r.warm = i > 0;
-      results.push(r);
-      const over = !r.ok || r.total > BUDGET;
-      if (!r.warm && over) bad++;
-      if (process.env.JSON) console.log(JSON.stringify(r));
-      else console.log(`${over ? 'FAIL' : 'ok  '} ${String(r.total).padStart(6)}ms ${r.warm ? 'warm' : 'cold'} n=${r.n} slowest=${r.slowest ? r.slowest.ms + 'ms ' + r.slowest.url : '-'}${r.failed.length ? ' failed=' + r.failed.map((f) => f.status + ' ' + f.url).join(',') : ''}${r.ok ? '' : ' UNLOADED'} ${path}`);
+    const cold = [];
+    let unloaded = false;
+    for (let c = 0; c < COLD; c++) {
+      const ctx = await browser.newContext();
+      const warmLoads = c === COLD - 1 ? REPEAT : 1;
+      for (let i = 0; i < warmLoads; i++) {
+        const r = await loadOnce(ctx, path);
+        r.warm = i > 0;
+        results.push(r);
+        if (!r.warm) { cold.push(r.total); unloaded = unloaded || !r.ok; }
+        const out = { ...r };
+        if (!process.env.VERBOSE) delete out.reqs;
+        if (process.env.JSON) console.log(JSON.stringify(out));
+        else console.log(line(r, !r.ok || r.total > BUDGET));
+      }
+      await ctx.close();
     }
-    await ctx.close();
+    if (unloaded || pct(cold, 95) > BUDGET) bad++;
   }
   await browser.close();
   const byT = {};
