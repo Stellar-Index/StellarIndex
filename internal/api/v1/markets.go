@@ -77,6 +77,12 @@ type marketsStaleReader interface {
 	AssetMarketsAt(ctx context.Context, asset, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, time.Time, bool, error)
 }
 
+// sparklineStaleReader is the optional cached sparkline batch read; stale means the batch came from the stale-while-revalidate
+// branch, and the page then carries flags.stale.
+type sparklineStaleReader interface {
+	GetPairsVolumeHistory24hBatchAt(ctx context.Context, pairs [][2]string) (map[string][]timescale.PairVolumePoint, bool, error)
+}
+
 // poolsStaleReader is marketsStaleReader's /v1/pools counterpart; stale means the rows came from
 // the cache's stale-while-revalidate branch.
 type poolsStaleReader interface {
@@ -487,7 +493,16 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 		}
 		// Share mCtx so the sparkline batch cannot push the request past the 8s cap. It is
 		// best-effort: on failure it logs at WARN and the response ships without sparklines.
-		if hist, hErr := reader.GetPairsVolumeHistory24hBatch(mCtx, pairs); hErr != nil {
+		var hist map[string][]timescale.PairVolumePoint
+		var hErr error
+		if at, ok := reader.(sparklineStaleReader); ok {
+			var sparkStale bool
+			hist, sparkStale, hErr = at.GetPairsVolumeHistory24hBatchAt(mCtx, pairs)
+			stale = stale || sparkStale
+		} else {
+			hist, hErr = reader.GetPairsVolumeHistory24hBatch(mCtx, pairs)
+		}
+		if hErr != nil {
 			s.logger.Warn("markets sparkline batch failed", "err", hErr)
 			enrichFailed = true
 		} else {
