@@ -23,6 +23,11 @@ type LendingReader interface {
 	BlendReserveConfigs(ctx context.Context, pool string) (map[string]blend.ReserveConfig, error)
 }
 
+// lendingAtReader is the optional fill-time read a cached LendingReader offers, so the envelope dates a cached list.
+type lendingAtReader interface {
+	ListBlendPoolsAt(ctx context.Context) ([]timescale.BlendPoolSummary, time.Time, bool, error)
+}
+
 // LendingPool is a /v1/lending/pools entry (Blend-only); net_supplied_30d/net_borrowed_30d are a 30-day NET-FLOW proxy, NOT TVL, and null across more than one reserve asset.
 type LendingPool struct {
 	Protocol          string   `json:"protocol"`
@@ -49,7 +54,18 @@ func (s *Server) handleLendingPools(w http.ResponseWriter, r *http.Request) {
 	// queries against the trades hypertable; cold cache can take 5+s.
 	lpCtx, lpCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer lpCancel()
-	rows, err := reader.ListBlendPools(lpCtx)
+	var vintage dataVintage
+	var rows []timescale.BlendPoolSummary
+	var stale bool
+	var err error
+	if at, ok := reader.(lendingAtReader); ok {
+		var filled time.Time
+		rows, filled, stale, err = at.ListBlendPoolsAt(lpCtx)
+		vintage.note(filled)
+	} else {
+		rows, err = reader.ListBlendPools(lpCtx)
+		vintage.note(time.Time{})
+	}
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -87,7 +103,7 @@ func (s *Server) handleLendingPools(w http.ResponseWriter, r *http.Request) {
 			Utilization30dPct: utilizationPct(p.NetSupplied30d, p.NetBorrowed30d),
 		}
 	}
-	writeJSON(w, out, Flags{})
+	writeEnvelope(w, Envelope{Data: out, AsOf: vintage.asOf(), Flags: Flags{Stale: stale}})
 }
 
 // LendingPoolReservesView is the GET /v1/lending/pools/{pool}/reserves response: per-reserve current state (ADR-0039) from the lake's contract storage.

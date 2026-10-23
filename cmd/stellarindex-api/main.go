@@ -574,6 +574,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// The issuers listing is a full aggregate no index can help, and the verified-issuer
 	// catalogue changes slowly, so a long TTL is safe.
 	cachedIssuersReader := v1.NewCachedIssuersReader(store, issuersCacheTTL)
+	// The lending pool list aggregates both Blend tables in full on every call; auction counts and
+	// 30-day flows barely move in a minute.
+	cachedLendingReader := v1.NewCachedLendingReader(store, time.Minute)
 	// Network stats is the slowest route; stale-while-revalidate with a 30 s TTL keeps it off the
 	// request path, and trailing-24h figures barely move in 30 s.
 	cachedNetworkStats := v1.NewCachedNetworkStatsReader(store, 30*time.Second)
@@ -961,7 +964,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		MarketSources: v1.NewCachedMarketSourceReader(store, time.Minute),
 		// The 24h per-source aggregation takes seconds, so a 60 s cache fronts it.
 		SourcesStats: cachedSourcesStats,
-		Lending:      store,
+		Lending:      cachedLendingReader,
 		MEV:          store,
 		MEVPulse:     mevPulse,
 		Anomalies:    store,
