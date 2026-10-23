@@ -736,3 +736,17 @@ func TestVisibleParticipantKeys_KnownSkipsLookup(t *testing.T) {
 		}
 	}
 }
+
+// Known txs deeper in the window must not fill the page past newer, unchecked keys.
+func TestVisibleParticipantKeys_KnownKeepsOrder(t *testing.T) {
+	keys := []accountTxKey{{10, 0}, {9, 0}, {8, 0}, {7, 0}}
+	known := txKeySet([]accountTxKey{{9, 0}, {7, 0}})
+	lake := &participantLake{}
+	got, lookups, err := visibleParticipantKeys(context.Background(), lake, "GTEST", keys, txParticipantArm.tx, 2, known)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lookups != 1 || len(got) < 2 || got[0] != keys[0] || got[1] != keys[1] {
+		t.Fatalf("got %v with %d lookups, want the newest two keys %v after 1 lookup", got, lookups, keys[:2])
+	}
+}

@@ -1242,17 +1242,26 @@ func visibleParticipantKeys[K comparable](ctx context.Context, conn driver.Conn,
 			txs = append(txs, t)
 		}
 	}
-	countVisible := func() int {
+	checked := make(map[accountTxKey]struct{}, len(txs))
+	// settled: the newest `need` visible keys are known, i.e. they are reached before any unchecked tx.
+	settled := func() bool {
 		n := 0
 		for _, k := range keys {
-			if _, v := visible[tx(k)]; v {
-				n++
+			t := tx(k)
+			if _, v := visible[t]; v {
+				if n++; n >= need {
+					return true
+				}
+				continue
+			}
+			if _, c := checked[t]; !c {
+				return false
 			}
 		}
-		return n
+		return true
 	}
-	chunk := max(need-countVisible(), 1)
-	for len(txs) > 0 && countVisible() < need {
+	chunk := max(need, 1)
+	for len(txs) > 0 && !settled() {
 		n := min(len(txs), chunk)
 		chunk = visibilityChunk
 		q := `SELECT ledger_seq, tx_index FROM stellar.transactions
@@ -1265,6 +1274,9 @@ func visibleParticipantKeys[K comparable](ctx context.Context, conn driver.Conn,
 		lookups++
 		for _, k := range ok {
 			visible[k] = struct{}{}
+		}
+		for _, t := range txs[:n] {
+			checked[t] = struct{}{}
 		}
 		txs = txs[n:]
 	}
