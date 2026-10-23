@@ -405,7 +405,7 @@ func walkParticipantKeys(t *testing.T, lake *participantLake, limit int) (got []
 	var from *accountOpKey
 	for page := 0; ; page++ {
 		before := lake.queries()
-		keys, frontier, err := participantKeys(context.Background(), lake, "GTEST", limit, opParticipantArm, "", nil, from)
+		keys, frontier, err := participantKeys(context.Background(), lake, "GTEST", limit, opParticipantArm, "", nil, from, nil)
 		if err != nil {
 			t.Fatalf("page %d: %v", page, err)
 		}
@@ -494,7 +494,7 @@ func TestParticipantKeys_BudgetEndsPageAtFrontier(t *testing.T) {
 	lake.rows = append(lake.rows, last)
 	want = append(want, last)
 
-	first, frontier, err := participantKeys(context.Background(), lake, "GTEST", limit, opParticipantArm, "", nil, nil)
+	first, frontier, err := participantKeys(context.Background(), lake, "GTEST", limit, opParticipantArm, "", nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -703,5 +703,50 @@ func TestContractActivitySummaryFor_DedupsRMTCount(t *testing.T) {
 	}
 	if len(s.Daily) != 1 || s.Daily[0].ActiveLedgers != 3 {
 		t.Fatalf("daily = %+v, want one day with 3 active ledgers", s.Daily)
+	}
+}
+
+// Sourced-arm keys reach the page whatever the tx's result, so the participant arm must not spend a lookup on them.
+func TestVisibleParticipantKeys_KnownSkipsLookup(t *testing.T) {
+	keys := []accountTxKey{{10, 3}, {10, 1}, {9, 2}, {8, 0}}
+	all := txKeySet(keys)
+
+	lake := &participantLake{failed: map[accountTxKey]bool{{10, 3}: true}}
+	got, lookups, err := visibleParticipantKeys(context.Background(), lake, "GTEST", keys, txParticipantArm.tx, len(keys), all)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lookups != 0 || len(got) != len(keys) {
+		t.Fatalf("all known: got %v with %d lookups, want every key and no lookup", got, lookups)
+	}
+
+	lake = &participantLake{failed: map[accountTxKey]bool{{9, 2}: true}}
+	known := txKeySet(keys[:1])
+	got, lookups, err = visibleParticipantKeys(context.Background(), lake, "GTEST", keys, txParticipantArm.tx, len(keys), known)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []accountTxKey{{10, 3}, {10, 1}, {8, 0}}
+	if lookups != 1 || !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v with %d lookups, want %v with 1", got, lookups, want)
+	}
+	for _, tup := range inTuples(lake.lookups[0]) {
+		if tup[0] == 10 && tup[1] == 3 {
+			t.Fatalf("lookup re-checked a known tx: %s", lake.lookups[0])
+		}
+	}
+}
+
+// Known txs deeper in the window must not fill the page past newer, unchecked keys.
+func TestVisibleParticipantKeys_KnownKeepsOrder(t *testing.T) {
+	keys := []accountTxKey{{10, 0}, {9, 0}, {8, 0}, {7, 0}}
+	known := txKeySet([]accountTxKey{{9, 0}, {7, 0}})
+	lake := &participantLake{}
+	got, lookups, err := visibleParticipantKeys(context.Background(), lake, "GTEST", keys, txParticipantArm.tx, 2, known)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lookups != 1 || len(got) < 2 || got[0] != keys[0] || got[1] != keys[1] {
+		t.Fatalf("got %v with %d lookups, want the newest two keys %v after 1 lookup", got, lookups, keys[:2])
 	}
 }

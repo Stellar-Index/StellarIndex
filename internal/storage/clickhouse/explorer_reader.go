@@ -981,7 +981,7 @@ func (r *ExplorerReader) AccountTransactions(ctx context.Context, account string
 		ceiling = from.ledger
 	}
 	fixed, floor, hasFloor := r.accountParticipantPartitions(ctx, account, ceiling)
-	part, frontier, err := newestFirstParticipantKeys(ctx, r.conn, account, limit, txParticipantArm, fixed, nil, from, floor, hasFloor)
+	part, frontier, err := newestFirstParticipantKeys(ctx, r.conn, account, limit, txParticipantArm, fixed, nil, from, floor, hasFloor, txKeySet(sourced))
 	if err != nil {
 		return nil, resume, fmt.Errorf("clickhouse: account %s txs: %w", account, err)
 	}
@@ -1014,6 +1014,16 @@ type accountTxKey struct{ ledger, txIndex uint32 }
 
 func (k accountTxKey) after(o accountTxKey) bool {
 	return k.ledger > o.ledger || (k.ledger == o.ledger && k.txIndex > o.txIndex)
+}
+
+// txKeySet indexes the sourced arm's keys as participantKeys' `known`: they reach the page through that arm whatever the
+// tx's result, so a visibility lookup on them is wasted.
+func txKeySet(keys []accountTxKey) map[accountTxKey]struct{} {
+	m := make(map[accountTxKey]struct{}, len(keys))
+	for _, k := range keys {
+		m[k] = struct{}{}
+	}
+	return m
 }
 
 func scanTxKey(rows driver.Rows) (accountTxKey, error) {
@@ -1146,8 +1156,9 @@ const participantQueryBudget = 16
 // participantKeys returns the account's newest `limit` participant keys older than `from` whose tx is visible (visibleParticipantKeys);
 // filtering inside the arm avoids short pages at hydration. If the budget runs out, frontier is the oldest key scanned: keys are exact at
 // or newer than it and the caller resumes strictly below. `fixed` carries predicates every read must keep (the activity-watermark bound).
+// `known` holds txs already proven visible, which skip the lookup.
 func participantKeys[K comparable](ctx context.Context, conn driver.Conn, account string, limit int,
-	arm participantArm[K], fixed string, fixedArgs []any, from *K,
+	arm participantArm[K], fixed string, fixedArgs []any, from *K, known map[accountTxKey]struct{},
 ) (keys []K, frontier *K, err error) {
 	var out []K
 	window := windowRows(limit, windowFactorKeys)
@@ -1175,7 +1186,7 @@ func participantKeys[K comparable](ctx context.Context, conn driver.Conn, accoun
 				keys = append(keys, k)
 			}
 		}
-		kept, lookups, err := visibleParticipantKeys(ctx, conn, account, keys, arm.tx, limit-len(out))
+		kept, lookups, err := visibleParticipantKeys(ctx, conn, account, keys, arm.tx, limit-len(out), known)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1191,16 +1202,16 @@ func participantKeys[K comparable](ctx context.Context, conn driver.Conn, accoun
 // newestFirstParticipantKeys runs participantKeys over the newest partition first (newestPartitionFloor) and widens only when that
 // cannot fill the page; a run-out budget's frontier lies above the floor, so that answer stands too.
 func newestFirstParticipantKeys[K comparable](ctx context.Context, conn driver.Conn, account string, limit int,
-	arm participantArm[K], fixed string, fixedArgs []any, from *K, floor uint32, hasFloor bool,
+	arm participantArm[K], fixed string, fixedArgs []any, from *K, floor uint32, hasFloor bool, known map[accountTxKey]struct{},
 ) ([]K, *K, error) {
 	if hasFloor {
 		bounded := fixed + ` AND ledger_seq >= ` + strconv.FormatUint(uint64(floor), 10)
-		keys, frontier, err := participantKeys(ctx, conn, account, limit, arm, bounded, fixedArgs, from)
+		keys, frontier, err := participantKeys(ctx, conn, account, limit, arm, bounded, fixedArgs, from, known)
 		if err != nil || len(keys) >= limit || frontier != nil {
 			return keys, frontier, err
 		}
 	}
-	return participantKeys(ctx, conn, account, limit, arm, fixed, fixedArgs, from)
+	return participantKeys(ctx, conn, account, limit, arm, fixed, fixedArgs, from, known)
 }
 
 // visibleTxPredicate is the stellar.transactions filter a participant row's tx must pass; its placeholder binds the listed account.
@@ -1212,19 +1223,15 @@ const visibilityChunk = 500
 // visibleParticipantKeys keeps, in order, keys whose tx succeeded or was sourced by the account (its own failed txs stay in its history),
 // via point lookups on the transactions primary key; it reports how many it ran. The first covers only `need` txs, later ones
 // visibilityChunk. No FINAL: successful and source_account are ledger facts, identical across un-merged versions of a key.
-func visibleParticipantKeys[K comparable](ctx context.Context, conn driver.Conn, account string, keys []K, tx func(K) accountTxKey, need int) (_ []K, lookups int, _ error) {
-	seen := make(map[accountTxKey]struct{}, len(keys))
-	var txs []accountTxKey
-	for _, k := range keys {
-		t := tx(k)
-		if _, dup := seen[t]; !dup {
-			seen[t] = struct{}{}
-			txs = append(txs, t)
-		}
-	}
-	visible := make(map[accountTxKey]struct{}, len(txs))
+// Txs in `known` count as visible without a lookup.
+func visibleParticipantKeys[K comparable](ctx context.Context, conn driver.Conn, account string, keys []K, tx func(K) accountTxKey, need int,
+	known map[accountTxKey]struct{},
+) (_ []K, lookups int, _ error) {
+	visible, txs := splitKnownTxs(keys, tx, known)
+	checked := make(map[accountTxKey]struct{}, len(txs))
+	settled := func() bool { return visibleSettled(keys, tx, need, visible, checked) }
 	chunk := max(need, 1)
-	for len(txs) > 0 {
+	for len(txs) > 0 && !settled() {
 		n := min(len(txs), chunk)
 		chunk = visibilityChunk
 		q := `SELECT ledger_seq, tx_index FROM stellar.transactions
@@ -1238,16 +1245,10 @@ func visibleParticipantKeys[K comparable](ctx context.Context, conn driver.Conn,
 		for _, k := range ok {
 			visible[k] = struct{}{}
 		}
+		for _, t := range txs[:n] {
+			checked[t] = struct{}{}
+		}
 		txs = txs[n:]
-		nVisible := 0
-		for _, k := range keys {
-			if _, v := visible[tx(k)]; v {
-				nVisible++
-			}
-		}
-		if nVisible >= need {
-			break
-		}
 	}
 	out := keys[:0:0]
 	for _, k := range keys {
@@ -1256,6 +1257,44 @@ func visibleParticipantKeys[K comparable](ctx context.Context, conn driver.Conn,
 		}
 	}
 	return out, lookups, nil
+}
+
+// splitKnownTxs dedups keys' txs in order: those in known start visible, the rest still need a lookup.
+func splitKnownTxs[K comparable](keys []K, tx func(K) accountTxKey, known map[accountTxKey]struct{}) (map[accountTxKey]struct{}, []accountTxKey) {
+	seen := make(map[accountTxKey]struct{}, len(keys))
+	visible := make(map[accountTxKey]struct{}, len(keys))
+	var txs []accountTxKey
+	for _, k := range keys {
+		t := tx(k)
+		if _, dup := seen[t]; dup {
+			continue
+		}
+		seen[t] = struct{}{}
+		if _, ok := known[t]; ok {
+			visible[t] = struct{}{}
+		} else {
+			txs = append(txs, t)
+		}
+	}
+	return visible, txs
+}
+
+// visibleSettled reports whether the newest `need` visible keys are known, i.e. they are reached before any unchecked tx.
+func visibleSettled[K comparable](keys []K, tx func(K) accountTxKey, need int, visible, checked map[accountTxKey]struct{}) bool {
+	n := 0
+	for _, k := range keys {
+		t := tx(k)
+		if _, v := visible[t]; v {
+			if n++; n >= need {
+				return true
+			}
+			continue
+		}
+		if _, c := checked[t]; !c {
+			return false
+		}
+	}
+	return true
 }
 
 // sourcedOpKeysExactQuery is the sourced op arm's LIMIT 1 BY form (exact, O(account history)); sentinel op_index rows (tx-sourced) are
@@ -1305,7 +1344,7 @@ func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, 
 	if cur.IsSet() {
 		from = &accountOpKey{cur.Ledger, cur.A, cur.B}
 	}
-	part, frontier, err := newestFirstParticipantKeys(ctx, r.conn, account, limit, opParticipantArm, fixed, fixedArgs, from, floor, hasFloor)
+	part, frontier, err := newestFirstParticipantKeys(ctx, r.conn, account, limit, opParticipantArm, fixed, fixedArgs, from, floor, hasFloor, nil)
 	if err != nil {
 		return nil, resume, fmt.Errorf("clickhouse: account %s ops: %w", account, err)
 	}
