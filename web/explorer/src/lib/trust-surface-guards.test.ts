@@ -77,9 +77,14 @@ function closingIndex(code: string, open: number): number {
 }
 
 const SAFE_SINK_HEAD = /^\{\s*\{\s*__html:\s*serializeJsonLd\(/;
+// The layout's preload script: built from constants, its data escaped by
+// serializeJsonLd inside (lib/preload/manifest.test.tsx). Exact form only.
+const PRELOAD_SINK =
+  /^\{\s*\{\s*__html:\s*preloadScript\(API_BASE_URL\)\s*\}\s*\}$/;
 
 /** True if a sink's `{...}` value is exactly `{{ __html: serializeJsonLd(...) }}`. */
 function isEscapedSink(expr: string): boolean {
+  if (PRELOAD_SINK.test(expr)) return true;
   const head = SAFE_SINK_HEAD.exec(expr);
   if (!head) return false;
   const close = closingIndex(expr, head[0].length - 1);

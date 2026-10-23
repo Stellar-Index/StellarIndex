@@ -6,6 +6,7 @@ import { QueryProvider } from './QueryProvider';
 import { serializeJsonLd } from '@/lib/seo';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import { API_BASE_URL } from '@/api/client';
+import { preloadScript } from '@/lib/preload/manifest';
 
 // Onest (UI + display) and Geist Mono (ids, hashes, figures). next/font
 // self-hosts both at build time and exposes them as the --font-sans /
@@ -142,6 +143,11 @@ export default function RootLayout({
           rel="preconnect"
           href={new URL(API_BASE_URL).origin}
           crossOrigin="anonymous"
+        />
+        {/* Starts the page's first-wave API calls during HTML parse; apiGet's
+            fetch for the same URL then takes the preloaded response. */}
+        <script
+          dangerouslySetInnerHTML={{ __html: preloadScript(API_BASE_URL) }}
         />
         {/* Build identifier — same SHA + time as the footer badge,
             in machine-readable form. `curl -s stellarindex.io | grep
