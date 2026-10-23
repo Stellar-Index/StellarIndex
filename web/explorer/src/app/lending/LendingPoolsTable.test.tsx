@@ -1,8 +1,12 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-import { LendingPoolsTable } from './LendingPoolsTable';
+import {
+  LendingPoolsTable,
+  PENDING_POLL_MAX,
+  PENDING_POLL_MS,
+} from './LendingPoolsTable';
 
 vi.mock('@/api/client', async () => {
   const actual =
@@ -25,6 +29,11 @@ function renderIt() {
 
 beforeEach(() => {
   vi.mocked(apiGet).mockReset();
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 const POOL = 'CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD';
@@ -53,74 +62,163 @@ describe('LendingPoolsTable', () => {
     );
   });
 
-  it('computes utilization over priced reserves only — unpriced reserves are excluded, not counted as $0', async () => {
-    vi.mocked(apiGet).mockImplementation(async (path: unknown) => {
-      if (path === '/v1/lending/pools') {
-        return {
-          data: [
-            {
-              pool: POOL,
-              protocol: 'blend',
-              auctions_total: 0,
-              auctions_24h: 0,
-            },
-          ],
-        };
-      }
-      // One priced reserve (util 50%) + one wholly unpriced reserve. The
-      // coerced-zero math would still produce 50% here, but the APR average
-      // must not fold the unpriced reserve's APR in at weight 0 and absent
-      // APRs in at 0% — the basis must be priced reserves only.
-      return {
-        data: {
-          tvl_usd: '150',
-          reserves: [
-            {
-              supplied_usd: '100',
-              borrowed_usd: '50',
-              supply_apr: 0.04,
-              borrow_apr: 0.08,
-            },
-            { supply_apr: 0.99 },
-          ],
-        },
-      };
-    });
-    renderIt();
-    await waitFor(() => expect(screen.getByText('50.0%')).toBeInTheDocument());
-    // Weighted APRs come from the single priced reserve alone.
-    expect(screen.getByText('4.00%')).toBeInTheDocument();
-    expect(screen.getByText('8.00%')).toBeInTheDocument();
-    // The basis is labelled (util + both APR cells carry the same note).
-    expect(
-      screen.getAllByTitle('Priced reserves only (1 of 2)').length,
-    ).toBeGreaterThan(0);
+  const row = (extra: Record<string, unknown>) => ({
+    pool: POOL,
+    protocol: 'blend',
+    auctions_total: 0,
+    auctions_24h: 0,
+    ...extra,
   });
 
-  it('renders "—" when no reserve is priced instead of a fabricated 0-based percentage', async () => {
-    vi.mocked(apiGet).mockImplementation(async (path: unknown) => {
-      if (path === '/v1/lending/pools') {
-        return {
-          data: [
-            {
-              pool: POOL,
-              protocol: 'blend',
-              auctions_total: 0,
-              auctions_24h: 0,
-            },
-          ],
-        };
-      }
-      return { data: { reserves: [{ supply_apr: 0.05 }, {}] } };
+  it('renders the server summary, a partial TVL as a lower bound, and never calls /reserves', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: [
+        row({
+          summary: {
+            tvl_usd: '2500000.00',
+            lower_bound: true,
+            borrowed_usd: '1000000.00',
+            borrowed_lower_bound: true,
+            utilization_pct: 40,
+            supply_apr: 0.04,
+            borrow_apr: 0.08,
+            priced_reserve_count: 1,
+            reserve_count: 2,
+          },
+          summary_pending: false,
+          summary_error: false,
+        }),
+      ],
+    });
+    renderIt();
+    await waitFor(() => expect(screen.getByText('40.0%')).toBeInTheDocument());
+    expect(screen.getByText('≥$2.50M')).toBeInTheDocument();
+    expect(screen.getByText('4.00%')).toBeInTheDocument();
+    expect(screen.getByText('8.00%')).toBeInTheDocument();
+    expect(screen.getAllByTitle('Priced reserves only (1 of 2)').length).toBe(
+      3,
+    );
+    expect(vi.mocked(apiGet)).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders "—" for a summary with nothing priced instead of a fabricated 0-based percentage', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: [
+        row({
+          summary: {
+            tvl_usd: null,
+            lower_bound: false,
+            borrowed_usd: null,
+            borrowed_lower_bound: false,
+            utilization_pct: null,
+            supply_apr: null,
+            borrow_apr: null,
+            priced_reserve_count: 0,
+            reserve_count: 2,
+          },
+        }),
+      ],
     });
     renderIt();
     await waitFor(() =>
       expect(screen.getByText(/Pool #1/)).toBeInTheDocument(),
     );
-    // TVL, utilization, and both APRs all fall back to "—".
-    await waitFor(() =>
-      expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(4),
-    );
+    expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(4);
     expect(screen.queryByText(/%$/)).toBeNull();
+  });
+
+  it('shows "unavailable" for an errored summary and does not call /reserves', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: [
+        row({ summary: null, summary_pending: false, summary_error: true }),
+      ],
+    });
+    renderIt();
+    await waitFor(() =>
+      expect(screen.getAllByText('unavailable').length).toBe(4),
+    );
+    expect(vi.mocked(apiGet)).toHaveBeenCalledTimes(1);
+  });
+
+  it('a pending row fetches /reserves once, then refetches the list for its summary', async () => {
+    let listCalls = 0;
+    vi.mocked(apiGet).mockImplementation(async (path: unknown) => {
+      if (path === '/v1/lending/pools') {
+        listCalls += 1;
+        return {
+          data: [
+            listCalls === 1
+              ? row({ summary: null, summary_pending: true })
+              : row({
+                  summary: {
+                    tvl_usd: '100.00',
+                    lower_bound: false,
+                    utilization_pct: 50,
+                    supply_apr: 0.04,
+                    borrow_apr: 0.08,
+                    priced_reserve_count: 1,
+                    reserve_count: 1,
+                  },
+                }),
+          ],
+        };
+      }
+      return { data: { reserves: [] } };
+    });
+    renderIt();
+    await waitFor(() => expect(listCalls).toBe(1));
+    await vi.advanceTimersByTimeAsync(PENDING_POLL_MS);
+    await waitFor(() => expect(screen.getByText('50.0%')).toBeInTheDocument());
+    const reserveCalls = vi
+      .mocked(apiGet)
+      .mock.calls.filter(([p]) => String(p).endsWith('/reserves'));
+    expect(reserveCalls.length).toBe(1);
+    expect(listCalls).toBe(2);
+  });
+
+  it('a pending row whose /reserves call failed still picks up the summary the build later produced', async () => {
+    let listCalls = 0;
+    vi.mocked(apiGet).mockImplementation(async (path: unknown) => {
+      if (path === '/v1/lending/pools') {
+        listCalls += 1;
+        return {
+          data: [
+            listCalls < 3
+              ? row({ summary: null, summary_pending: true })
+              : row({
+                  summary: {
+                    tvl_usd: '100.00',
+                    lower_bound: false,
+                    utilization_pct: 25,
+                    priced_reserve_count: 1,
+                    reserve_count: 1,
+                  },
+                }),
+          ],
+        };
+      }
+      throw new Error('503');
+    });
+    renderIt();
+    await waitFor(() =>
+      expect(screen.getAllByText('unavailable').length).toBeGreaterThan(0),
+    );
+    await vi.advanceTimersByTimeAsync(PENDING_POLL_MS * 2);
+    await waitFor(() => expect(screen.getByText('25.0%')).toBeInTheDocument());
+  });
+
+  it('stops polling a list that stays pending', async () => {
+    let listCalls = 0;
+    vi.mocked(apiGet).mockImplementation(async (path: unknown) => {
+      if (path === '/v1/lending/pools') {
+        listCalls += 1;
+        return { data: [row({ summary: null, summary_pending: true })] };
+      }
+      return { data: { reserves: [] } };
+    });
+    renderIt();
+    await waitFor(() => expect(listCalls).toBe(1));
+    await vi.advanceTimersByTimeAsync(PENDING_POLL_MS * (PENDING_POLL_MAX + 5));
+    expect(listCalls).toBe(PENDING_POLL_MAX);
   });
 });

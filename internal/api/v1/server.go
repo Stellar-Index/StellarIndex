@@ -203,6 +203,9 @@ type Server struct {
 	protocolRosterCache rosterCache
 	// Per-pool built reserves views for GET /v1/lending/pools/{pool}/reserves; see buildPoolReserves.
 	lendingReserves *swrCache[poolReserves]
+	// lendingSummaryFailed maps a pool to when the list last saw its reserves build fail; see attachLendingSummaries.
+	lendingSummaryMu     sync.Mutex
+	lendingSummaryFailed map[string]time.Time
 	// SAC contract id → the asset_id it wraps, and → expiry of a "not a SAC" answer; see sacWrappedAssetID.
 	sacWrapped    sync.Map
 	sacNotWrapped sync.Map

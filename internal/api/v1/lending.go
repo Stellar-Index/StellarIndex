@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"errors"
+	"math"
 	"math/big"
 	"net/http"
 	"time"
@@ -40,6 +41,26 @@ type LendingPool struct {
 	NetSupplied30d    *string  `json:"net_supplied_30d"`              // token base-units, window net-flow proxy; null when multi-asset
 	NetBorrowed30d    *string  `json:"net_borrowed_30d"`              // token base-units, window net-flow proxy; null when multi-asset
 	Utilization30dPct *float64 `json:"utilization_30d_pct,omitempty"` // single-asset borrow/supply window ratio
+	// Summary is the pool's current state from its cached reserves view; null while that view's first build runs
+	// (SummaryPending) or after it failed (SummaryError), and when no reserves reader is wired.
+	Summary        *LendingPoolSummary `json:"summary"`
+	SummaryPending bool                `json:"summary_pending"`
+	SummaryError   bool                `json:"summary_error"`
+}
+
+// LendingPoolSummary totals one pool's GET /v1/lending/pools/{pool}/reserves view. Utilization and APRs cover priced reserves only.
+type LendingPoolSummary struct {
+	TVLUSD     *string `json:"tvl_usd"`
+	LowerBound bool    `json:"lower_bound"` // TVLUSD leaves out an unpriced reserve
+	// BorrowedUSD sums the reserves with a borrowed USD value; null when none has one.
+	BorrowedUSD        *string  `json:"borrowed_usd"`
+	BorrowedLowerBound bool     `json:"borrowed_lower_bound"`
+	UtilizationPct     *float64 `json:"utilization_pct"`
+	//floatmoney:ok supplied-weighted yield rate, not an amount
+	SupplyAPR          *float64 `json:"supply_apr"`
+	BorrowAPR          *float64 `json:"borrow_apr"`
+	PricedReserveCount int      `json:"priced_reserve_count"` // reserves with both supplied and borrowed USD values
+	ReserveCount       int      `json:"reserve_count"`
 }
 
 // handleLendingPools serves GET /v1/lending/pools: one row per Blend pool seen in the trailing-7d auction stream, by total
@@ -104,7 +125,138 @@ func (s *Server) handleLendingPools(w http.ResponseWriter, r *http.Request) {
 			Utilization30dPct: utilizationPct(p.NetSupplied30d, p.NetBorrowed30d),
 		}
 	}
-	writeEnvelope(w, Envelope{Data: out, AsOf: vintage.asOf(), Flags: Flags{Stale: stale}})
+	flags := Flags{Stale: stale}
+	if s.attachLendingSummaries(out, &vintage, &flags) {
+		w.Header().Set("Cache-Control", "no-store")
+	}
+	writeEnvelope(w, Envelope{Data: out, AsOf: vintage.asOf(), Flags: flags})
+}
+
+// lendingSummaryRetry is how long the list holds off rebuilding a pool whose first reserves build failed: one failing pool must
+// neither refire a build on every request nor keep the list uncacheable.
+const lendingSummaryRetry = time.Minute
+
+// attachLendingSummaries fills each row's summary from the per-pool reserves cache without waiting on a build: a pool with no value
+// yet starts its build and is marked pending. It reports whether any row is pending. as_of and flags take every used entry's.
+func (s *Server) attachLendingSummaries(rows []LendingPool, vintage *dataVintage, flags *Flags) (pending bool) {
+	if s.Explorer == nil {
+		return false
+	}
+	for i := range rows {
+		pool := rows[i].Pool
+		if s.lendingSummaryFailedRecently(pool) && !s.lendingReserves.filled(pool) {
+			rows[i].SummaryError = true
+			continue
+		}
+		res, at, cacheStale, ok := s.lendingReserves.peek("pool_reserves", pool, s.fillPoolReserves(pool))
+		if !ok {
+			rows[i].SummaryPending, pending = true, true
+			continue
+		}
+		rows[i].Summary = summarizeReserves(res.view)
+		vintage.note(at)
+		flags.Stale = flags.Stale || res.flags.Stale || cacheStale
+		flags.Degraded = flags.Degraded || res.flags.Degraded
+	}
+	return pending
+}
+
+// fillPoolReserves is the one upstream both the list and the reserves handler fill through, so a failed or panicking build is
+// remembered whichever handler started it.
+func (s *Server) fillPoolReserves(pool string) func(context.Context) (poolReserves, error) {
+	return func(ctx context.Context) (res poolReserves, err error) {
+		failed := true
+		defer func() {
+			if failed {
+				s.noteLendingSummaryFailure(pool)
+			}
+		}()
+		res, err = s.buildPoolReserves(ctx, pool)
+		failed = err != nil
+		return res, err
+	}
+}
+
+func (s *Server) lendingSummaryFailedRecently(pool string) bool {
+	s.lendingSummaryMu.Lock()
+	defer s.lendingSummaryMu.Unlock()
+	at, ok := s.lendingSummaryFailed[pool]
+	return ok && time.Since(at) < lendingSummaryRetry
+}
+
+func (s *Server) noteLendingSummaryFailure(pool string) {
+	s.lendingSummaryMu.Lock()
+	defer s.lendingSummaryMu.Unlock()
+	if s.lendingSummaryFailed == nil {
+		s.lendingSummaryFailed = map[string]time.Time{}
+	}
+	s.lendingSummaryFailed[pool] = time.Now()
+}
+
+// summarizeReserves totals a reserves view with exact decimal sums; a reserve without a USD value is left out of every figure, and a
+// total that leaves one out is flagged a lower bound (AGENTS.md money invariant).
+func summarizeReserves(v LendingPoolReservesView) *LendingPoolSummary {
+	out := &LendingPoolSummary{TVLUSD: v.TVLUSD, LowerBound: v.LowerBound, ReserveCount: len(v.Reserves)}
+	borrowed, bothSupplied, bothBorrowed := new(big.Rat), new(big.Rat), new(big.Rat)
+	var supplyAPR, borrowAPR weightedRate
+	nBorrowed := 0
+	for _, r := range v.Reserves {
+		sup, supOK := parseUSD(r.SuppliedUSD)
+		bor, borOK := parseUSD(r.BorrowedUSD)
+		if borOK {
+			borrowed.Add(borrowed, bor)
+			nBorrowed++
+			borrowAPR.add(bor, r.BorrowAPR)
+		}
+		if supOK {
+			supplyAPR.add(sup, r.SupplyAPR)
+		}
+		if supOK && borOK {
+			bothSupplied.Add(bothSupplied, sup)
+			bothBorrowed.Add(bothBorrowed, bor)
+			out.PricedReserveCount++
+		}
+	}
+	if nBorrowed > 0 {
+		b := borrowed.FloatString(2)
+		out.BorrowedUSD, out.BorrowedLowerBound = &b, nBorrowed < len(v.Reserves)
+	}
+	if bothSupplied.Sign() > 0 {
+		pct, _ := new(big.Rat).Mul(new(big.Rat).Quo(bothBorrowed, bothSupplied), big.NewRat(100, 1)).Float64() // i128:ok a percentage, not an amount
+		out.UtilizationPct = &pct
+	}
+	out.SupplyAPR, out.BorrowAPR = supplyAPR.value(), borrowAPR.value()
+	return out
+}
+
+func parseUSD(s *string) (*big.Rat, bool) {
+	if s == nil {
+		return nil, false
+	}
+	return new(big.Rat).SetString(*s)
+}
+
+// weightedRate is a USD-weighted mean of a rate over the reserves that carry both.
+type weightedRate struct{ num, den big.Rat }
+
+func (w *weightedRate) add(weight *big.Rat, rate *float64) {
+	if rate == nil || math.IsNaN(*rate) || math.IsInf(*rate, 0) {
+		return
+	}
+	r := new(big.Rat)
+	if r.SetFloat64(*rate) == nil {
+		return
+	}
+	w.num.Add(&w.num, r.Mul(r, weight))
+	w.den.Add(&w.den, weight)
+}
+
+func (w *weightedRate) value() *float64 {
+	if w.den.Sign() <= 0 {
+		return nil
+	}
+	f, _ := new(big.Rat).Quo(&w.num, &w.den).Float64() // i128:ok a yield rate, not an amount
+	return &f
 }
 
 // LendingPoolReservesView is the GET /v1/lending/pools/{pool}/reserves response: per-reserve current state (ADR-0039) from the lake's contract storage.
@@ -164,9 +316,11 @@ func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Reques
 	ctx, cancel := context.WithTimeout(r.Context(), maxHandlerBudget)
 	defer cancel()
 
-	res, at, cacheStale, err := s.lendingReserves.get(ctx, "pool_reserves", pool, func(ctx context.Context) (poolReserves, error) {
-		return s.buildPoolReserves(ctx, pool)
-	})
+	res, at, cacheStale, err := s.lendingReserves.get(ctx, "pool_reserves", pool, s.fillPoolReserves(pool))
+	if errors.Is(err, errPoolLineageUnknown) {
+		writeJSON(w, LendingPoolReservesView{Pool: pool, Reserves: []ReserveView{}}, Flags{})
+		return
+	}
 	if err != nil {
 		stage := "lending reserves cache wait"
 		var se *lendingStageErr
@@ -203,6 +357,10 @@ type lendingStageErr struct {
 func (e *lendingStageErr) Error() string { return e.stage + ": " + e.err.Error() }
 func (e *lendingStageErr) Unwrap() error { return e.err }
 
+// errPoolLineageUnknown withholds a pool's reserves without caching the empty view: any C-strkey reaches this path, and a cached
+// success per junk key would evict the listed pools.
+var errPoolLineageUnknown = errors.New("blend pool lineage unknown")
+
 // buildPoolReserves reads and prices one pool's reserves; as_of_ledger and flags.stale are the lake watermark at build time.
 func (s *Server) buildPoolReserves(ctx context.Context, pool string) (poolReserves, error) {
 	version, err := s.Lending.BlendPoolVersion(ctx, pool)
@@ -211,7 +369,7 @@ func (s *Server) buildPoolReserves(ctx context.Context, pool string) (poolReserv
 	}
 	if version == blend.PoolVersionUnknown {
 		s.logger.Warn("blend pool lineage unknown; reserves withheld", "pool", pool)
-		return poolReserves{view: LendingPoolReservesView{Pool: pool, Reserves: []ReserveView{}}}, nil
+		return poolReserves{}, errPoolLineageUnknown
 	}
 	assets, err := s.Lending.BlendPoolAssets(ctx, pool)
 	if err != nil {

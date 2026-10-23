@@ -48,6 +48,61 @@ func (c *swrCache[V]) count(op, result string) {
 // and then only on the fill or its own ctx: fills run detached (runDetachedFill), so one caller's abort cannot fail the others.
 func (c *swrCache[V]) get(ctx context.Context, op, key string, upstream func(context.Context) (V, error)) (V, time.Time, bool, error) {
 	var zero V
+	r := c.lookup(op, key, upstream)
+	if r.entry == nil {
+		return r.val, r.at, r.stale, nil
+	}
+	select {
+	case <-r.flight:
+		c.mu.Lock()
+		val, at, err := r.entry.val, r.entry.at, r.entry.err
+		c.mu.Unlock()
+		if err != nil {
+			if !r.leader {
+				c.count(op, "miss")
+			}
+			return zero, time.Time{}, false, err
+		}
+		if !r.leader {
+			c.count(op, "hit")
+		}
+		return val, at, false, nil
+	case <-ctx.Done():
+		return zero, time.Time{}, false, ctx.Err()
+	}
+}
+
+// peek is get without the wait: where get would block on a first fill (starting it if none is in flight), peek reports a miss.
+func (c *swrCache[V]) peek(op, key string, upstream func(context.Context) (V, error)) (V, time.Time, bool, bool) {
+	r := c.lookup(op, key, upstream)
+	if r.entry != nil {
+		var zero V
+		return zero, time.Time{}, false, false
+	}
+	return r.val, r.at, r.stale, true
+}
+
+// filled reports whether key holds a value (fresh or stale), without starting a fill.
+func (c *swrCache[V]) filled(key string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[key]
+	return ok && !e.at.IsZero()
+}
+
+// lookupResult is a filled value (entry nil) or the cold-fill entry to wait on.
+type lookupResult[V any] struct {
+	val    V
+	at     time.Time
+	stale  bool
+	entry  *swrEntry[V]
+	flight chan struct{}
+	leader bool
+}
+
+// lookup is get's locked step: a fresh or stale value returns at once (a stale one starts at most one refresh); otherwise it joins
+// the first fill in flight or starts it.
+func (c *swrCache[V]) lookup(op, key string, upstream func(context.Context) (V, error)) lookupResult[V] {
 	c.mu.Lock()
 	e, ok := c.entries[key]
 
@@ -55,7 +110,7 @@ func (c *swrCache[V]) get(ctx context.Context, op, key string, upstream func(con
 		out, at := e.val, e.at
 		c.mu.Unlock()
 		c.count(op, "hit")
-		return out, at, false, nil
+		return lookupResult[V]{val: out, at: at}
 	}
 
 	if ok && !e.at.IsZero() {
@@ -67,7 +122,7 @@ func (c *swrCache[V]) get(ctx context.Context, op, key string, upstream func(con
 		}
 		c.mu.Unlock()
 		c.count(op, "stale")
-		return out, at, true, nil
+		return lookupResult[V]{val: out, at: at, stale: true}
 	}
 
 	entry, leader := e, false
@@ -83,24 +138,7 @@ func (c *swrCache[V]) get(ctx context.Context, op, key string, upstream func(con
 	if leader {
 		c.count(op, "miss")
 	}
-	select {
-	case <-ch:
-		c.mu.Lock()
-		val, at, err := entry.val, entry.at, entry.err
-		c.mu.Unlock()
-		if err != nil {
-			if !leader {
-				c.count(op, "miss")
-			}
-			return zero, time.Time{}, false, err
-		}
-		if !leader {
-			c.count(op, "hit")
-		}
-		return val, at, false, nil
-	case <-ctx.Done():
-		return zero, time.Time{}, false, ctx.Err()
-	}
+	return lookupResult[V]{entry: entry, flight: ch, leader: leader}
 }
 
 // settle applies a fill: cache on success; a failed refresh keeps the old value, a failed cold fill hands err to its waiters and

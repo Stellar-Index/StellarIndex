@@ -1168,25 +1168,6 @@ type IncidentsList struct {
 // removed — `/v1/currencies` HTTP surface retired (no production
 // consumers). Use AssetDetail from `/v1/assets` instead.
 
-// LendingPool is one Blend pool from [Client.LendingPools] observed in the trailing 7d auction stream; the shape is designed to grow with new fields.
-type LendingPool struct {
-	Protocol       string    `json:"protocol"`
-	Pool           string    `json:"pool"`
-	Auctions24h    int64     `json:"auctions_24h"`
-	AuctionsTotal  int64     `json:"auctions_total"`
-	UniqueUsers30d int64     `json:"unique_users_30d"`
-	LastSeen       time.Time `json:"last_seen"`
-	// NetSupplied30d / NetBorrowed30d are 30-day NET-FLOW proxies in
-	// token base-units (decimal strings) — not all-time TVL or
-	// current reserve balances. nil when the window's flows span more
-	// than one reserve asset, whose base units do not add.
-	NetSupplied30d *string `json:"net_supplied_30d"`
-	NetBorrowed30d *string `json:"net_borrowed_30d"`
-	// Utilization30dPct is the single-asset borrow/supply window
-	// ratio; nil when either flow is nil or net supply ≤ 0.
-	Utilization30dPct *float64 `json:"utilization_30d_pct,omitempty"`
-}
-
 // VWAPResult is the data shape of [Client.VWAP]; Truncated means the window exceeded the server's 10000-trade cap, the OLDEST trades were dropped and Price is NOT the true window VWAP, and volumes are smallest-unit integers at a per-SOURCE scale (divide by 10^BaseVolumeDecimals).
 type VWAPResult struct {
 	From        time.Time `json:"from"`

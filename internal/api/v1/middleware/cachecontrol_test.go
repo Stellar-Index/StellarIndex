@@ -121,7 +121,7 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		// JSON + pools — all read endpoints in the long catalogue
 		// cache band.
 		{"/v1/chart", "public, max-age=60, s-maxage=300"},
-		{"/v1/lending/pools", "public, max-age=60, s-maxage=300"},
+		{"/v1/lending/pools", "public, max-age=30, s-maxage=60"},
 		{"/v1/sac-wrappers", "public, max-age=60, s-maxage=300"},
 		{"/v1/incidents", "public, max-age=60, s-maxage=300"},
 		{"/v1/pools", "public, max-age=60, s-maxage=300"},
