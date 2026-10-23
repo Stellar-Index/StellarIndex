@@ -308,7 +308,7 @@ func TestNewestFirstParticipantKeys(t *testing.T) {
 				}
 				return &stubRows{data: all}, nil
 			}}
-			keys, frontier, err := newestFirstParticipantKeys(context.Background(), conn, "GTEST", limit, txParticipantArm, "", nil, nil, mL, tc.hasFloor)
+			keys, frontier, err := newestFirstParticipantKeys(context.Background(), conn, "GTEST", limit, txParticipantArm, "", nil, nil, mL, tc.hasFloor, nil)
 			if err != nil || frontier != nil {
 				t.Fatalf("err=%v frontier=%v", err, frontier)
 			}
