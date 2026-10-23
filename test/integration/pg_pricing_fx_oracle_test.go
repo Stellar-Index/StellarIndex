@@ -2338,3 +2338,60 @@ func TestXLMUSDAnchor_NoFreshAnchorUnpricesOnlyTheXLMArm(t *testing.T) {
 		t.Errorf("native row price_usd = %s, want unpriced", *nrow.PriceUSD)
 	}
 }
+
+// LatestOracleStreams returns each (source, asset, quote) stream's newest row in the 7-day window: two sources on one pair stay
+// two streams, an older row never wins, and a stream last seen before the window is absent.
+func TestStorage_LatestOracleStreams_NewestRowPerStream(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	usd, _ := c.NewFiatAsset("USD")
+	btc, _ := c.NewCryptoAsset("BTC")
+	now := time.Now().UTC().Truncate(time.Second)
+	const tx = "4444444444444444444444444444444444444444444444444444444444444444"
+	row := func(source string, ledger uint32, at time.Time, asset c.Asset, price int64) c.OracleUpdate {
+		return c.OracleUpdate{
+			Source: source, Ledger: ledger, TxHash: tx, OpIndex: 0, Timestamp: at,
+			Asset: asset, Quote: usd, Price: c.NewAmount(big.NewInt(price)), Decimals: 7,
+		}
+	}
+	seeds := []c.OracleUpdate{
+		row("reflector-cex", 100, now.Add(-2*time.Hour), btc, 1),
+		row("reflector-cex", 101, now.Add(-time.Hour), btc, 2),
+		row("band", 102, now.Add(-time.Minute), btc, 3),
+		row("band", 99, now.Add(-3*time.Hour), btc, 4),
+		row("band", 98, now.Add(-8*24*time.Hour), c.NativeAsset(), 5),
+	}
+	for _, u := range seeds {
+		if err := store.InsertOracleUpdate(ctx, u); err != nil {
+			t.Fatalf("InsertOracleUpdate(%s@%d): %v", u.Source, u.Ledger, err)
+		}
+	}
+
+	streams, err := store.LatestOracleStreams(ctx)
+	if err != nil {
+		t.Fatalf("LatestOracleStreams: %v", err)
+	}
+	got := map[string]string{}
+	for _, u := range streams {
+		got[u.Source+"/"+u.Asset.String()] = u.Price.String()
+	}
+	want := map[string]string{"band/crypto:BTC": "3", "reflector-cex/crypto:BTC": "2"}
+	if len(got) != len(want) {
+		t.Fatalf("LatestOracleStreams = %v, want %v", got, want)
+	}
+	for k, p := range want {
+		if got[k] != p {
+			t.Errorf("stream %s price = %s, want %s (the newest row)", k, got[k], p)
+		}
+	}
+}

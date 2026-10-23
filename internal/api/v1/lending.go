@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"errors"
 	"math/big"
 	"net/http"
 	"time"
@@ -21,6 +22,11 @@ type LendingReader interface {
 	BlendPoolAssets(ctx context.Context, pool string) ([]string, error)
 	BlendPoolVersion(ctx context.Context, pool string) (blend.PoolVersion, error)
 	BlendReserveConfigs(ctx context.Context, pool string) (map[string]blend.ReserveConfig, error)
+}
+
+// lendingAtReader is the optional fill-time read a cached LendingReader offers, so the envelope dates a cached list.
+type lendingAtReader interface {
+	ListBlendPoolsAt(ctx context.Context) ([]timescale.BlendPoolSummary, time.Time, bool, error)
 }
 
 // LendingPool is a /v1/lending/pools entry (Blend-only); net_supplied_30d/net_borrowed_30d are a 30-day NET-FLOW proxy, NOT TVL, and null across more than one reserve asset.
@@ -49,7 +55,18 @@ func (s *Server) handleLendingPools(w http.ResponseWriter, r *http.Request) {
 	// queries against the trades hypertable; cold cache can take 5+s.
 	lpCtx, lpCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer lpCancel()
-	rows, err := reader.ListBlendPools(lpCtx)
+	var vintage dataVintage
+	var rows []timescale.BlendPoolSummary
+	var stale bool
+	var err error
+	if at, ok := reader.(lendingAtReader); ok {
+		var filled time.Time
+		rows, filled, stale, err = at.ListBlendPoolsAt(lpCtx)
+		vintage.note(filled)
+	} else {
+		rows, err = reader.ListBlendPools(lpCtx)
+		vintage.note(time.Time{})
+	}
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -87,7 +104,7 @@ func (s *Server) handleLendingPools(w http.ResponseWriter, r *http.Request) {
 			Utilization30dPct: utilizationPct(p.NetSupplied30d, p.NetBorrowed30d),
 		}
 	}
-	writeJSON(w, out, Flags{})
+	writeEnvelope(w, Envelope{Data: out, AsOf: vintage.asOf(), Flags: Flags{Stale: stale}})
 }
 
 // LendingPoolReservesView is the GET /v1/lending/pools/{pool}/reserves response: per-reserve current state (ADR-0039) from the lake's contract storage.
@@ -147,9 +164,58 @@ func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Reques
 	ctx, cancel := context.WithTimeout(r.Context(), maxHandlerBudget)
 	defer cancel()
 
-	version, assets, proceed := s.blendReserveInputs(ctx, w, r, pool)
-	if !proceed {
+	res, at, cacheStale, err := s.lendingReserves.get(ctx, "pool_reserves", pool, func(ctx context.Context) (poolReserves, error) {
+		return s.buildPoolReserves(ctx, pool)
+	})
+	if err != nil {
+		stage := "lending reserves cache wait"
+		var se *lendingStageErr
+		if errors.As(err, &se) {
+			stage, err = se.stage, se.err
+		}
+		s.writeLendingLookupError(ctx, w, r, stage, pool, err)
 		return
+	}
+	flags := res.flags
+	flags.Stale = flags.Stale || cacheStale
+	writeEnvelope(w, Envelope{Data: res.view, AsOf: WireTime(at.UTC()), Flags: flags})
+}
+
+// lendingReservesTTL bounds how long a pool's built reserves view is served before one detached rebuild; the page fans out one
+// request per pool at once, and each build is a lake read plus per-reserve pricing.
+const lendingReservesTTL = time.Minute
+
+// lendingReservesMaxEntries bounds the per-pool cache: the key is a client-supplied C-strkey.
+const lendingReservesMaxEntries = 256
+
+// poolReserves is one built GET /v1/lending/pools/{pool}/reserves body and its flags, cached per pool.
+type poolReserves struct {
+	view  LendingPoolReservesView
+	flags Flags
+}
+
+// lendingStageErr names the read that failed, so the handler maps it as it did before the cache.
+type lendingStageErr struct {
+	stage string
+	err   error
+}
+
+func (e *lendingStageErr) Error() string { return e.stage + ": " + e.err.Error() }
+func (e *lendingStageErr) Unwrap() error { return e.err }
+
+// buildPoolReserves reads and prices one pool's reserves; as_of_ledger and flags.stale are the lake watermark at build time.
+func (s *Server) buildPoolReserves(ctx context.Context, pool string) (poolReserves, error) {
+	version, err := s.Lending.BlendPoolVersion(ctx, pool)
+	if err != nil {
+		return poolReserves{}, &lendingStageErr{"BlendPoolVersion", err}
+	}
+	if version == blend.PoolVersionUnknown {
+		s.logger.Warn("blend pool lineage unknown; reserves withheld", "pool", pool)
+		return poolReserves{view: LendingPoolReservesView{Pool: pool, Reserves: []ReserveView{}}}, nil
+	}
+	assets, err := s.Lending.BlendPoolAssets(ctx, pool)
+	if err != nil {
+		return poolReserves{}, &lendingStageErr{"BlendPoolAssets", err}
 	}
 	// Rate-model configs (for APY) come from blend_admin events — the
 	// on-chain ResConfig storage entry is usually uncaptured. Best-effort:
@@ -157,25 +223,13 @@ func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Reques
 	configs, err := s.Lending.BlendReserveConfigs(ctx, pool)
 	var configsFailed bool
 	if err != nil {
-		if clientAborted(r, err) {
-			return
-		}
 		s.logger.Warn("BlendReserveConfigs failed", "err", err, "pool", pool)
 		configsFailed = true
 		configs = nil
 	}
 	states, err := s.Explorer.BlendPoolReserves(ctx, pool, version, assets, configs)
 	if err != nil {
-		if clientAborted(r, err) {
-			return
-		}
-		if handlerTimedOut(ctx, err) {
-			s.writeLendingReservesTimeout(w, r, "BlendPoolReserves", pool)
-			return
-		}
-		s.logger.Error("BlendPoolReserves failed", "err", err, "pool", pool)
-		writeProblem(w, r, "https://api.stellarindex.io/errors/internal", "Internal error", http.StatusInternalServerError, "")
-		return
+		return poolReserves{}, &lendingStageErr{"BlendPoolReserves", err}
 	}
 
 	// Price reserves with a BOUNDED fan-out, not serially: each USD price resolution can cost
@@ -198,7 +252,7 @@ func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Reques
 	// reads carry.
 	wmLedger, stale, _ := s.lakeWatermark(ctx)
 	out.AsOfLedger = wmLedger
-	writeJSON(w, out, Flags{Stale: stale, Degraded: configsFailed})
+	return poolReserves{view: out, flags: Flags{Stale: stale, Degraded: configsFailed}}, nil
 }
 
 // reservesTVLUSD sums the priced reserves' supplied USD in reserve order. total is nil when none is priced; lowerBound is true
@@ -217,28 +271,6 @@ func reservesTVLUSD(suppliedUSD []*big.Rat) (total *string, lowerBound bool) {
 	}
 	s := tvl.FloatString(2)
 	return &s, priced < len(suppliedUSD)
-}
-
-// blendReserveInputs resolves the pool's contract generation and reserve assets. A pool with no known V1/V2 lineage gets an
-// empty reserve list, since a guessed rate scale is off by 10^3. proceed=false means a response was written or the client has
-// gone.
-func (s *Server) blendReserveInputs(ctx context.Context, w http.ResponseWriter, r *http.Request, pool string) (version blend.PoolVersion, assets []string, proceed bool) {
-	version, err := s.Lending.BlendPoolVersion(ctx, pool)
-	if err != nil {
-		s.writeLendingLookupError(ctx, w, r, "BlendPoolVersion", pool, err)
-		return version, nil, false
-	}
-	if version == blend.PoolVersionUnknown {
-		s.logger.Warn("blend pool lineage unknown; reserves withheld", "pool", pool)
-		writeJSON(w, LendingPoolReservesView{Pool: pool, Reserves: []ReserveView{}}, Flags{})
-		return version, nil, false
-	}
-	assets, err = s.Lending.BlendPoolAssets(ctx, pool)
-	if err != nil {
-		s.writeLendingLookupError(ctx, w, r, "BlendPoolAssets", pool, err)
-		return version, nil, false
-	}
-	return version, assets, true
 }
 
 // writeLendingLookupError maps a failed served-tier lookup: nothing for an aborted client, the retryable 503 on the handler

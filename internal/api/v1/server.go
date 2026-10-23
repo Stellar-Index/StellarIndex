@@ -201,6 +201,8 @@ type Server struct {
 	// served-tier `SELECT DISTINCT ... LIMIT 5000` scan on an unauthenticated route, so scanning on
 	// every origin miss would be a DoS surface.
 	protocolRosterCache rosterCache
+	// Per-pool built reserves views for GET /v1/lending/pools/{pool}/reserves; see buildPoolReserves.
+	lendingReserves *swrCache[poolReserves]
 	// SAC contract id → the asset_id it wraps, and → expiry of a "not a SAC" answer; see sacWrappedAssetID.
 	sacWrapped    sync.Map
 	sacNotWrapped sync.Map
@@ -937,6 +939,7 @@ func New(opts Options) *Server {
 		Options:            opts,
 		logger:             logger,
 		coverageFloorCache: &coverageFloorCache{entries: map[string]coverageFloorEntry{}},
+		lendingReserves:    newSWRCache[poolReserves](logger, "lending_reserves", "api-lending-reserves-fill", lendingReservesTTL, lendingReservesMaxEntries),
 		fxCrossMaxAge:      fxCrossMaxAgeOrDefault(opts.FXCrossMaxAgeHours),
 		fxFixings:          newFXFixingCache(opts.FXFixings, logger, fxCrossMaxAgeOrDefault(opts.FXCrossMaxAgeHours)),
 		streamDrain:        streaming.NewDrain(),

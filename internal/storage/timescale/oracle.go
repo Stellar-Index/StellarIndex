@@ -471,18 +471,30 @@ func (s *Store) CountOracleUpdates(ctx context.Context) (int64, error) {
 
 // LatestOracleStreams returns the newest observation per (source, asset, quote) in the trailing 7d window for /v1/oracles/streams; the window is the live-stream definition, so a dead feed does not surface as current.
 func (s *Store) LatestOracleStreams(ctx context.Context) ([]canonical.OracleUpdate, error) {
+	// One (asset, quote, ts DESC) index probe per stream instead of sorting the whole 7-day window
+	// (~275k rows for ~190 streams on r1: 490 ms -> 80 ms, same rows).
 	const q = `
-        SELECT DISTINCT ON (source, asset, quote)
-               source, COALESCE(contract_id, ''),
-               ledger, tx_hash, op_index, ts,
-               asset, quote,
-               price, decimals,
-               COALESCE(confidence, 0),
-               COALESCE(observer, ''),
-               published_price
-          FROM oracle_updates -- totality: includes unmapped
-         WHERE ts > NOW() - INTERVAL '7 days'
-         ORDER BY source, asset, quote, ts DESC
+        WITH streams AS (
+            SELECT DISTINCT source, asset, quote
+              FROM oracle_updates -- totality: includes unmapped
+             WHERE ts > NOW() - INTERVAL '7 days'
+        )
+        SELECT l.source, COALESCE(l.contract_id, ''),
+               l.ledger, l.tx_hash, l.op_index, l.ts,
+               l.asset, l.quote,
+               l.price, l.decimals,
+               COALESCE(l.confidence, 0),
+               COALESCE(l.observer, ''),
+               l.published_price
+          FROM streams s
+         CROSS JOIN LATERAL (
+            SELECT * FROM oracle_updates o
+             WHERE o.source = s.source AND o.asset = s.asset AND o.quote = s.quote
+               AND o.ts > NOW() - INTERVAL '7 days'
+             ORDER BY o.ts DESC
+             LIMIT 1
+         ) l
+         ORDER BY l.source, l.asset, l.quote
     `
 	rows, err := s.db.QueryContext(ctx, q)
 	if err != nil {
