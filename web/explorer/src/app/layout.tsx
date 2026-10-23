@@ -5,6 +5,7 @@ import { ConsoleShell } from '@/components/nav/ConsoleShell';
 import { QueryProvider } from './QueryProvider';
 import { serializeJsonLd } from '@/lib/seo';
 import { CURRENT_NETWORK } from '@/lib/networks';
+import { API_BASE_URL } from '@/api/client';
 
 // Onest (UI + display) and Geist Mono (ids, hashes, figures). next/font
 // self-hosts both at build time and exposes them as the --font-sans /
@@ -134,6 +135,14 @@ export default function RootLayout({
       className={`${onest.variable} ${lora.variable} ${geistMono.variable}`}
     >
       <head>
+        {/* Every panel fetches the API cross-origin; opening that TLS
+            connection during HTML parse instead of after hydration
+            takes a round trip off each page's first data request. */}
+        <link
+          rel="preconnect"
+          href={new URL(API_BASE_URL).origin}
+          crossOrigin="anonymous"
+        />
         {/* Build identifier — same SHA + time as the footer badge,
             in machine-readable form. `curl -s stellarindex.io | grep
             re-build` reveals the live build without rendering JS. */}
