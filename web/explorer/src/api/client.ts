@@ -117,15 +117,27 @@ export function buildHeaders(): Record<string, string> {
   return headers;
 }
 
+// The API sheds a cold read it did not start with a 503 + short Retry-After (busy, retry); a longer
+// hint means a dependency outage, where one quick retry cannot help.
+const SHED_RETRY_MAX_S = 8;
+
 export async function apiGet<T>(
   path: string,
   params?: Record<string, string | number | undefined>,
 ): Promise<T> {
-  const res = await fetch(buildUrl(path, params), {
-    headers: buildHeaders(),
-    next: { revalidate: 60 },
-    signal: timeoutSignal(),
-  });
+  const url = buildUrl(path, params);
+  const get = () =>
+    fetch(url, {
+      headers: buildHeaders(),
+      next: { revalidate: 60 },
+      signal: timeoutSignal(),
+    });
+  let res = await get();
+  const after = res.status === 503 ? Number(res.headers.get('Retry-After')) : 0;
+  if (after > 0 && after <= SHED_RETRY_MAX_S) {
+    await new Promise((resolve) => setTimeout(resolve, after * 1000));
+    res = await get();
+  }
   if (!res.ok) {
     // Surface the RFC-9457 problem `title` (and `detail`) in the error so
     // callers can distinguish failure modes that share a status code — e.g.
