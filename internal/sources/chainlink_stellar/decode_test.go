@@ -1,6 +1,7 @@
 package chainlink_stellar
 
 import (
+	"encoding/hex"
 	"errors"
 	"math/big"
 	"strings"
@@ -181,12 +182,27 @@ func TestFeedRegistry_EveryEntryIsMappedAndUSDQuoted(t *testing.T) {
 		if e.Quote.String() != "fiat:USD" {
 			t.Errorf("%s: quote %s", id, e.Quote)
 		}
-		if e.Base.String() == "raw:FLHY" {
+		if b := e.Base.String(); b == "raw:FLHY" || b == "raw:USPC" {
 			continue
 		}
 		if !e.Base.IsMapped() {
 			t.Errorf("%s: base %s unmapped", id, e.Base)
 		}
+	}
+}
+
+// USPC NAV (FeedConfigSet at ledger 65079956) has no canonical asset on Stellar, so it is named raw.
+func TestResolveFeed_USPCNavIsNamedRaw(t *testing.T) {
+	id, err := hex.DecodeString("016e06407e000332000000000000000000000000000000000000000000000000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := resolveFeed(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Base.String() != "raw:USPC" || e.Base.IsMapped() || e.Quote.String() != "fiat:USD" {
+		t.Errorf("got %s/%s, want raw:USPC/fiat:USD", e.Base, e.Quote)
 	}
 }
 
