@@ -1,11 +1,14 @@
 ---
-# Weekly production crawl guard.
+# Daily production crawl guard.
 #
 # Why: silent site rot: pages 404ing from the site's
 # own links, canonicals pointing at dead URLs, doubled titles, a
 # curated sliver presented as the asset universe. Each incident is
 # pinned as a check in scripts/ci/site-crawl-check.sh; this runs the
-# battery weekly against production and on demand.
+# battery daily against production and on demand. The `browser` job
+# crawls all three explorers in Chromium (scripts/ci/site-crawl-browser/crawl.cjs)
+# for client-rendered Not found pages and failing API calls, which curl
+# cannot see.
 #
 # Read-only: ~80 GETs against the public site + API, no secrets.
 #
@@ -21,12 +24,10 @@ name: site-crawl
 
 on:
   schedule:
-    - cron: '20 6 * * 1' # Mondays 06:20 UTC
+    - cron: '20 6 * * *' # daily 06:20 UTC
   workflow_dispatch: {}
 
-permissions:
-  contents: read
-  issues: write
+permissions: {}
 
 concurrency:
   group: site-crawl
@@ -39,6 +40,9 @@ env:
 jobs:
   crawl:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -98,4 +102,87 @@ jobs:
               --json number --jq '.[].number' || true); do
             gh issue close "$n" --comment "site-crawl-check.sh is clean again — site-crawl closing automatically."
             echo "Closed site-crawl-drift issue #$n."
+          done
+
+  browser:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - network: mainnet
+            site: https://stellarindex.io
+            api: https://api.stellarindex.io
+          - network: testnet
+            site: https://testnet.stellarindex.io
+            api: https://api.testnet.stellarindex.io
+          - network: futurenet
+            site: https://futurenet.stellarindex.io
+            api: https://api.futurenet.stellarindex.io
+    env:
+      BROWSER_LABEL: site-crawl-browser-${{ matrix.network }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - name: Install Playwright Chromium
+        run: |
+          set -euo pipefail
+          cd scripts/ci/site-crawl-browser
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+      - name: Crawl the explorer in a browser
+        id: crawl
+        env:
+          SITE: ${{ matrix.site }}
+          API: ${{ matrix.api }}
+        run: |
+          set -uo pipefail
+          rc=0
+          node scripts/ci/site-crawl-browser/crawl.cjs "$SITE" "$API" 300 > /tmp/browser-crawl.txt 2>&1 || rc=$?
+          cat /tmp/browser-crawl.txt
+          {
+            echo "verdict_rc=${rc}"
+            echo "report<<REPORT_EOF"
+            cat /tmp/browser-crawl.txt
+            echo "REPORT_EOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: Open or update the tracking issue (browser crawl regressed)
+        if: steps.crawl.outputs.verdict_rc != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REPORT: ${{ steps.crawl.outputs.report }}
+          NETWORK: ${{ matrix.network }}
+        run: |
+          set -euo pipefail
+          gh label create "$BROWSER_LABEL" --color B60205 \
+            --description "scripts/ci/site-crawl-browser/crawl.cjs found a regression on $NETWORK" 2>/dev/null || true
+          body="$(printf '%s\n\n---\n_Auto-managed by the site-crawl workflow (run %s). Closes automatically once the %s browser crawl is clean again._\n' \
+            "$REPORT" "${GITHUB_RUN_ID:-?}" "$NETWORK")"
+          existing="$(gh issue list --label "$BROWSER_LABEL" --state open \
+            --json number --jq '.[0].number' || true)"
+          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "Browser crawl regression ($NETWORK explorer)" --label "$BROWSER_LABEL" --body "$body"
+          fi
+          echo "::warning::$NETWORK browser crawl found a regression — see the tracking issue."
+      - name: Close the tracking issue (browser crawl clean)
+        if: steps.crawl.outputs.verdict_rc == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for n in $(gh issue list --label "$BROWSER_LABEL" --state open \
+              --json number --jq '.[].number' || true); do
+            gh issue close "$n" --comment "Browser crawl is clean again — closing automatically."
           done

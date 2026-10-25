@@ -1,0 +1,8 @@
+{
+  "name": "site-crawl-browser",
+  "private": true,
+  "description": "Browser crawl of the explorer; run by .github/workflows/site-crawl.yml.",
+  "dependencies": {
+    "playwright": "1.59.1"
+  }
+}
