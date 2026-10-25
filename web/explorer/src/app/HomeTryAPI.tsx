@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { API_BASE_URL } from '@/api/client';
 import { CopyButton, Segmented } from '@/components/ui';
+import { USDC_ASSET_ID } from '@/lib/networks';
 
 type Lang = 'curl' | 'js' | 'python' | 'go';
 
@@ -39,7 +40,7 @@ interface Example {
 const EXAMPLES: Example[] = [
   {
     label: 'Latest XLM/USDC price (VWAP)',
-    path: '/v1/price?asset=native&quote=USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+    path: `/v1/price?asset=native&quote=${USDC_ASSET_ID}`,
   },
   {
     label: 'Network stats — 24h volume + market count',
@@ -59,7 +60,7 @@ const EXAMPLES: Example[] = [
   },
   {
     label: 'Per-source breakdown for XLM/USDC',
-    path: '/v1/pools?base=native&quote=USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+    path: `/v1/pools?base=native&quote=${USDC_ASSET_ID}`,
   },
   {
     label: 'Sources with 24h trade counts',
@@ -83,7 +84,7 @@ const EXAMPLES: Example[] = [
   },
   {
     label: 'Recent XLM/USDC trades',
-    path: '/v1/history?base=native&quote=USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN&limit=5',
+    path: `/v1/history?base=native&quote=${USDC_ASSET_ID}&limit=5`,
   },
   {
     label: 'Per-source ingest cursors',

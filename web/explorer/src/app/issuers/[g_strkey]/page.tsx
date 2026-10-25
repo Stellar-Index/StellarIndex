@@ -14,7 +14,7 @@ import { Container, PageHeader } from '@/components/ui';
 import type { AssetDetail, Issuer } from '@/api/hooks';
 import { buildFetchData, failBuild, requireRows } from '@/lib/buildFetch';
 import { ogImageFor, shellMetadata } from '@/lib/seo';
-import { CURRENT_NETWORK } from '@/lib/networks';
+import { CURRENT_NETWORK, USDC_ASSET_ID } from '@/lib/networks';
 
 /**
  * /issuers/[g_strkey] — single-issuer detail page.
@@ -32,9 +32,7 @@ export async function generateStaticParams() {
   // serves its HTML for any issuer beyond the pre-rendered top-100
   // (they would otherwise hard-404 while search + asset pages link
   // to them). Same pattern as accounts/contracts/ledgers/transactions.
-  const fallback = [
-    { g_strkey: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN' },
-  ];
+  const fallback = [{ g_strkey: USDC_ASSET_ID.split('-')[1] }];
   // Fail-hard (src/lib/buildFetch.ts): an unreachable or empty issuers
   // listing throws so the build fails instead of exporting only the
   // fallback route. CI-stub builds fall through to the fallback.

@@ -115,3 +115,20 @@ describe('explorer + API origins', () => {
     expect(test.CURRENT_NETWORK.stellarName).toBe('Testnet');
   });
 });
+
+describe('USDC_ASSET_ID', () => {
+  // A pubnet issuer on testnet made every XLM/USDC panel and example 404 there.
+  it.each([
+    [
+      'mainnet',
+      'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+    ],
+    [
+      'testnet',
+      'USDC-GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
+    ],
+  ])('is Circle USDC on %s', async (network, want) => {
+    const { USDC_ASSET_ID } = await loadFor(network);
+    expect(USDC_ASSET_ID).toBe(want);
+  });
+});

@@ -38,6 +38,7 @@ func main() {
         p.Data.Price, p.Data.PriceType, p.Data.ObservedAt)
 }`;
 import { Container, PageHeader } from '@/components/ui';
+import { USDC_ASSET_ID } from '@/lib/networks';
 
 const PATTERNS: { title: string; blurb: string; code: string }[] = [
   {
@@ -47,7 +48,7 @@ const PATTERNS: { title: string; blurb: string; code: string }[] = [
     code: `prices, err := c.PriceBatch(ctx, client.PriceBatchQuery{
     AssetIDs: []string{
         "native",
-        "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+        "${USDC_ASSET_ID}",
         "AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
     },
     Quote: "fiat:USD",
@@ -65,7 +66,7 @@ for _, p := range prices.Data {
       'Cursor-paginated. For a one-shot recent-trades panel, take the first page; for a backfill or aggregator, follow Pagination.Next until empty.',
     code: `h, err := c.History(ctx, client.HistoryRangeQuery{
     Base:  "native",
-    Quote: "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+    Quote: "${USDC_ASSET_ID}",
     Limit: 50,
 })
 if err != nil {
