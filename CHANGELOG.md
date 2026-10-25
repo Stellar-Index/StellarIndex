@@ -20,6 +20,16 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.49] - 2026-10-25
+
+No migrations. No `pkg/*` break. No config change. The weekly `compute-completeness-sep41` unit gains a second run for `sep41_supply`; the deploy's ansible step installs it.
+
+### Fixed
+
+- **completeness:** `sep41_supply` is re-proved weekly beside `sep41_transfers` instead of in the nightly pass, where its from-genesis re-derive hit the per-source timeout (#3843).
+- **explorer:** a read the API sheds with `Retry-After` of 8 s or less is retried once, so account panels no longer show "warming or failed" for a busy cold read; the site crawl judges each API URL by its last response (#3844).
+- **explorer:** links only to asset pages that exist (#3842).
+
 ## [v0.116.48] - 2026-10-25
 
 No migrations. No `pkg/*` break (`LendingPool` gains `Summary`, `SummaryPending`, `SummaryError`). No config change. New ClickHouse tables (`account_op_type_counts`, `account_movement_counts`, `account_claimables`, `claimable_removals`, `sponsorship_totals_buckets`) and the holders rollup's `circulating` column are applied on every host before deploy; backfills follow their `deploy/clickhouse/*.sql` steps.
@@ -72,18 +82,3 @@ No migrations. No `pkg/*` break. No config change.
 
 - **pricingguard:** the substance gate's verdict cache drops expired verdicts before resetting at its size cap; an explorer build measures more pairs than the cap in one TTL, so each reset sent the hot pairs back to Postgres mid-build and re-logged every withheld pair's first-observation WARN (#3755).
 - **wasmaudit:** the Spectra order engine's in-place upgrade at ledger 64,907,566 (WASM `69e90533…`) is audited and admitted; `wasm-drift` reported it as unaudited (#3756).
-
-## [v0.116.44] - 2026-10-21
-
-No migrations. No `pkg/*` break. No config change.
-
-### Fixed
-
-- **wsclient:** the ping watchdog counts a stall only when the ping times out; a venue closing the socket under the ping is reported as the close it is, not as `ErrStreamStalled`, so a routine Kraken reconnect no longer fires `cex_stream_stalled` (#3750).
-- **explorer:** embed widgets render from the build's one `/v1/assets` listing call instead of one `/v1/assets/{id}` each; the ~500 cold detail calls per build tripped the latency SLO burn during every explorer deploy. The asset page's listing call asks for `include=sparkline24h`, the token the API matches (#3752).
-
-### Changed
-
-- **api:** the markets, history and network_stats caches log the error behind a refresh failure (#3747).
-- **ci:** doc-links scoped checks are timed against the slowest full scan (#3748).
-- **docs:** supply history corrected for eviction tombstones (#3743); two stale runbooks, the self-hosting guide (#3749), the design-system doc (#3751), the WASM audit README and the r1 archive section (#3753) re-verified.
