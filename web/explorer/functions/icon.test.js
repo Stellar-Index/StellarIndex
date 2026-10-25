@@ -121,6 +121,60 @@ describe('/icon', () => {
     expect(res.status).toBe(413);
   });
 
+  it('serves an edge-cache hit without refetching', async () => {
+    const f = vi.fn();
+    vi.stubGlobal('fetch', f);
+    const match = vi.fn(
+      async () =>
+        new Response(new Uint8Array([9]), {
+          headers: { 'content-type': 'image/png' },
+        }),
+    );
+    vi.stubGlobal('caches', { default: { match, put: vi.fn() } });
+    const res = await onRequest({
+      request: req('https://centre.io/a.png', 'HEAD'),
+    });
+    expect(res.status).toBe(200);
+    expect(res.body).toBeNull();
+    expect(f).not.toHaveBeenCalled();
+    expect(match.mock.calls[0][0].method).toBe('GET');
+  });
+
+  it('stores a fetched image in the edge cache, and never an error', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(new Uint8Array([1, 2, 3]), {
+            headers: { 'content-type': 'image/png' },
+          }),
+      ),
+    );
+    const put = vi.fn(async () => {});
+    vi.stubGlobal('caches', { default: { match: async () => undefined, put } });
+    const waitUntil = vi.fn();
+    const res = await onRequest({
+      request: req('https://centre.io/a.png'),
+      waitUntil,
+    });
+    expect((await res.arrayBuffer()).byteLength).toBe(3);
+    expect(put).toHaveBeenCalledTimes(1);
+    expect(waitUntil).toHaveBeenCalledTimes(1);
+    const [key, stored] = put.mock.calls[0];
+    expect(key.url).toContain(encodeURIComponent('https://centre.io/a.png'));
+    expect((await stored.arrayBuffer()).byteLength).toBe(3);
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('x', { status: 500 })),
+    );
+    expect(
+      (await onRequest({ request: req('https://centre.io/b.png'), waitUntil }))
+        .status,
+    ).toBe(404);
+    expect(put).toHaveBeenCalledTimes(1);
+  });
+
   it('does not follow a redirect to a private host', async () => {
     const f = vi.fn(
       async () =>
