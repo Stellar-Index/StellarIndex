@@ -20,6 +20,15 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.50] - 2026-10-25
+
+No migrations. No `pkg/*` break. No config change. Run `stellarindex-ops projector-replay -source chainlink-stellar -from 65079956` after the deploy to re-key the three USPC NAV oracle rows.
+
+### Fixed
+
+- **chainlink-stellar:** the USPC NAV feed (data_id `016e0640…`) is recorded as `raw:USPC` instead of an unknown `raw:<hex>` id, clearing the unknown-symbol alert (#3847).
+- **explorer:** `/icon` stores successful issuer-icon responses in the Cloudflare edge cache, so a cold visitor no longer waits on the issuer's host (#3848).
+
 ## [v0.116.49] - 2026-10-25
 
 No migrations. No `pkg/*` break. No config change. The weekly `compute-completeness-sep41` unit gains a second run for `sep41_supply`; the deploy's ansible step installs it.
@@ -73,12 +82,3 @@ No migrations. No `pkg/*` break. No config change.
 ### Changed
 
 - **docs:** archival-node bring-up, Hubble event counts and nine WASM audits re-verified against the code and r1 (#3757, #3760).
-
-## [v0.116.45] - 2026-10-21
-
-No migrations. No `pkg/*` break. No config change.
-
-### Fixed
-
-- **pricingguard:** the substance gate's verdict cache drops expired verdicts before resetting at its size cap; an explorer build measures more pairs than the cap in one TTL, so each reset sent the hot pairs back to Postgres mid-build and re-logged every withheld pair's first-observation WARN (#3755).
-- **wasmaudit:** the Spectra order engine's in-place upgrade at ledger 64,907,566 (WASM `69e90533…`) is audited and admitted; `wasm-drift` reported it as unaudited (#3756).
