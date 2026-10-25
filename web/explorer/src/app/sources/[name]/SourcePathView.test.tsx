@@ -58,7 +58,7 @@ describe('SourcePathView', () => {
     expect(
       screen.getByRole('heading', { level: 1, name: 'newvenue' }),
     ).toBeInTheDocument();
-    expect(seen).toEqual(['newvenue', 'newvenue']);
+    await waitFor(() => expect(seen).toEqual(['newvenue', 'newvenue']));
     await waitFor(() => expect(marketCalls()).toHaveLength(1));
     expect(marketCalls()[0][1]).toMatchObject({ source: 'newvenue' });
   });
@@ -75,6 +75,16 @@ describe('SourcePathView', () => {
     // reach /v1/markets, so absence is not just "not yet".
     await new Promise((r) => setTimeout(r, 50));
     expect(marketCalls()).toEqual([]);
+  });
+
+  it('says so, and fetches no panel, for a name the registry lacks', async () => {
+    serve(true);
+    window.history.pushState({}, '', '/sources/blend/');
+    renderView();
+    expect(
+      await screen.findByText('Not a source on this network'),
+    ).toBeInTheDocument();
+    expect(seen).toEqual([]);
   });
 
   it('does not throw on a malformed percent-escape segment', () => {

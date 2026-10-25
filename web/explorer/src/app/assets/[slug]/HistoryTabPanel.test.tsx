@@ -1,7 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-import { HistoryTabPanel, tradeVenueRows } from './HistoryTabPanel';
+import {
+  HistoryTabPanel,
+  historyQuote,
+  tradeVenueRows,
+} from './HistoryTabPanel';
+import { USDC_ASSET_ID } from '@/lib/networks';
 import type { TradeRow } from '@/api/hooks';
 
 // quote_amount is always the native-XLM leg
@@ -61,6 +66,15 @@ describe('HistoryTabPanel', () => {
     row.base_amount = '900719925474099312';
     render(<HistoryTabPanel assetID="SHEKEL:GABC" decimals={2} />);
     expect(screen.getByText('9007.2T')).toBeInTheDocument();
+  });
+});
+
+describe('historyQuote', () => {
+  it('quotes XLM in USDC, since XLM/XLM is no market the API serves', () => {
+    expect(historyQuote('native')).toBe(USDC_ASSET_ID);
+  });
+  it('quotes every other asset in XLM', () => {
+    expect(historyQuote(USDC_ASSET_ID)).toBe('native');
   });
 });
 

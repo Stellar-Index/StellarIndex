@@ -132,8 +132,10 @@ export function ExternalAssetDetailView({ view }: { view: GlobalAssetView }) {
   );
 }
 
-// USD is the chart's quote, so its own chart would be a flat line at 1.
+// USD is the chart's quote, so its own chart would be a flat line at 1. An unpriced
+// entry (e.g. a ticker outside ADR-0014's crypto allow-list) has no series to chart.
 export function externalChartAssetID(view: GlobalAssetView): string | null {
+  if (!view.price_usd) return null;
   if (view.class === 'fiat') {
     return view.ticker === 'USD' ? null : `fiat:${view.ticker}`;
   }

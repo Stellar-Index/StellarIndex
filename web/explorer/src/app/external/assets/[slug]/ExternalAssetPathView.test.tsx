@@ -3,6 +3,8 @@ import { render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { ExternalAssetPathView } from './ExternalAssetPathView';
+import { externalChartAssetID } from './ExternalAssetDetailView';
+import { type GlobalAssetView } from '../../../assets/catalogue';
 
 // The runtime fallback for a reference asset added after the last build.
 function renderAt(pathname: string, status: number, body: unknown) {
@@ -57,5 +59,24 @@ describe('ExternalAssetPathView', () => {
     expect(
       screen.queryByText('External asset not found'),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe('externalChartAssetID', () => {
+  const view = (v: Partial<GlobalAssetView>) =>
+    ({ ticker: 'BTC', slug: 'btc', name: 'Bitcoin', ...v }) as GlobalAssetView;
+
+  it('charts a priced crypto entry', () => {
+    expect(
+      externalChartAssetID(view({ class: 'crypto', price_usd: '1' })),
+    ).toBe('crypto:BTC');
+  });
+
+  it('skips an unpriced entry, whose ticker the price API may not accept', () => {
+    expect(
+      externalChartAssetID(
+        view({ class: 'crypto', ticker: 'POL', slug: 'pol' }),
+      ),
+    ).toBeNull();
   });
 });

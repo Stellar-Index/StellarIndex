@@ -128,7 +128,7 @@ export default async function IncidentPage({
       </div>
 
       <article className="space-y-3">
-        {intro && <Markdown source={intro} />}
+        {intro && <Markdown source={intro} sourcePath={inc.source_path} />}
         {sections.map((sec, i) => (
           <details
             key={sec.title}
@@ -141,7 +141,7 @@ export default async function IncidentPage({
               </h2>
             </summary>
             <div className="px-4 pb-4">
-              <Markdown source={sec.body} />
+              <Markdown source={sec.body} sourcePath={inc.source_path} />
             </div>
           </details>
         ))}
