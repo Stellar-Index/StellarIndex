@@ -720,6 +720,8 @@ func buildSEP41ReconSources(cfg config.Config) ([]reconSource, error) {
 			},
 			symbolTopic0: true,
 			targets:      []reconTarget{{"sep41_supply_events", filter, []string{sep41supply.EventKind}}},
+			reproofOutlastsPass: "same watched set as sep41_transfers, KALE SAC included; its from-genesis " +
+				"re-derive hit -source-timeout on r1 on 2026-10-24 and 2026-10-25",
 		},
 	}, nil
 }

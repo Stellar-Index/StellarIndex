@@ -1,4 +1,5 @@
-# systemd unit: weekly full re-proof of the sep41_transfers completeness verdict.
+# systemd unit: weekly full re-proof of the sep41_transfers and sep41_supply
+# completeness verdicts.
 #
 # Rendered by Ansible. The nightly -pass never re-floors sep41_transfers
 # (reconSource.reproofOutlastsPass): the watched set includes the KALE SAC,
@@ -8,8 +9,11 @@
 # projection_evidenced_at ages past the /v1/coverage evidence gate. -timeout
 # is the sdex unit's 360m: both re-read the full Soroban-era range, sdex
 # measured ~4.8 h, and sep41_transfers is unmeasured beyond ">45 min", so it
-# gets the proven ceiling rather than a guess. A -source run ignores
-# -source-timeout.
+# gets the proven ceiling rather than a guess. sep41_supply reads the same
+# watched set and overran the 45 min too (2026-10-24/25); transfers took ~3 h
+# on 2026-10-21, so supply runs second with 300m. At both ceilings the pair
+# ends ~06:00 UTC; the nightly pass then waits on the shared lock (it queues
+# up to 12 h). A -source run ignores -source-timeout.
 #
 # Wednesday, opposite the sdex unit's Sunday, so the two weekly re-proofs
 # never queue together; 18:47 UTC is clear of the 05:30 daily pass and the
@@ -18,7 +22,7 @@
 # per-name lock keeps the writers of completeness_snapshots from overlapping.
 
 [Unit]
-Description=Stellar Index — weekly full sep41_transfers completeness re-proof
+Description=Stellar Index — weekly full sep41_transfers + sep41_supply completeness re-proof
 Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness.md#stellarindex_completeness_incomplete
 After=network-online.target postgresql.service clickhouse-server.service
 Wants=network-online.target
@@ -38,6 +42,7 @@ SuccessExitStatus=75
 Environment=HEAVY_JOB_CLASS=scheduled
 Environment=HEAVY_JOB_LOCK_WAIT=10800
 ExecStart=/usr/local/sbin/run-heavy-job.sh compute-completeness /usr/local/sbin/run-compute-completeness.sh -source sep41_transfers -timeout 360m
+ExecStart=/usr/local/sbin/run-heavy-job.sh compute-completeness /usr/local/sbin/run-compute-completeness.sh -source sep41_supply -timeout 300m
 
 User=stellarindex
 Group=stellarindex
@@ -49,9 +54,9 @@ ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
 
-# Whole seconds: up to 180 min queued behind the nightly lock + the tool's
-# 360 min -timeout + 15 min margin.
-TimeoutStartSec=33300
+# Whole seconds: up to 180 min queued behind the nightly lock + 360 + 300 min
+# -timeouts + 15 min margin.
+TimeoutStartSec=51300
 
 [Install]
 WantedBy=multi-user.target

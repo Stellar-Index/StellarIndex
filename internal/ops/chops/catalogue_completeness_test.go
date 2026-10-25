@@ -531,8 +531,10 @@ func TestCatalogue_DefindexReDeriveIsContractScoped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildSEP41ReconSources: %v", err)
 	}
-	if s := catalogueSource(t, sep, "sep41_transfers"); !s.outlastsPass() {
-		t.Error("sep41_transfers must stay out of the pass's forced re-proof")
+	for _, name := range []string{"sep41_transfers", "sep41_supply"} {
+		if s := catalogueSource(t, sep, name); !s.outlastsPass() {
+			t.Errorf("%s must stay out of the pass's forced re-proof", name)
+		}
 	}
 }
 
