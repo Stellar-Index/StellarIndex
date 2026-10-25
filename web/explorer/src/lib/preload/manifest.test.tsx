@@ -3,7 +3,15 @@ import { act, cleanup, render } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { API_BASE_URL } from '@/api/client';
+import AccountsPage from '@/app/accounts/page';
 import { AccountView } from '@/app/accounts/AccountView';
+import { AssetsTable } from '@/app/assets/AssetsTable';
+import ContractsPage from '@/app/contracts/page';
+import LedgersPage from '@/app/ledgers/page';
+import LendingPage from '@/app/lending/page';
+import HomePage from '@/app/page';
+import ProtocolsPage from '@/app/protocols/page';
+import TransactionsPage from '@/app/transactions/page';
 import { MarketsTable } from '@/app/markets/MarketsTable';
 import { ConsoleShell } from '@/components/nav/ConsoleShell';
 
@@ -80,6 +88,24 @@ describe('preload lists match what each page fetches first', () => {
     );
   });
 
+  // A page may also fetch a shell global; the shell's preload covers it.
+  it.each<[string, () => React.ReactNode]>([
+    ['/', () => <HomePage />],
+    ['/lending/', () => <LendingPage />],
+    ['/assets/', () => <AssetsTable verifiedSlugs={[]} />],
+    ['/contracts/', () => <ContractsPage />],
+    ['/ledgers/', () => <LedgersPage />],
+    ['/transactions/', () => <TransactionsPage />],
+    ['/protocols/', () => <ProtocolsPage />],
+    ['/accounts/', () => <AccountsPage />],
+  ])('%s', async (path, ui) => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const wave = await stableFirstWave(ui());
+    expect(wave.filter((u) => !PRELOAD_GLOBAL.includes(u))).toEqual(
+      routeUrls(path),
+    );
+  });
+
   it('/accounts/{G}', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     expect(await stableFirstWave(<AccountView id={G} />)).toEqual(
@@ -131,6 +157,12 @@ describe('preloadScript', () => {
   });
 
   it('preloads the globals on a page with no route list', () => {
-    expect(preloadsAt('/ledgers/')).toEqual([...PRELOAD_GLOBAL].sort());
+    expect(preloadsAt('/ledgers/123/')).toEqual([...PRELOAD_GLOBAL].sort());
+  });
+
+  it('matches the home list on / only', () => {
+    expect(preloadsAt('/')).toEqual(
+      [...PRELOAD_GLOBAL, ...routeUrls('/')].sort(),
+    );
   });
 });
