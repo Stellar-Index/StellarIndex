@@ -209,3 +209,41 @@ func TestAssetsVerified_StaticPathDoesNotShadowSlugDispatch(t *testing.T) {
 		t.Fatalf("status = %d (slug dispatch shadowed the static route?)", resp.StatusCode)
 	}
 }
+
+// TestAssets_TestNetServesNoCatalogue pins that a test net serves none of the pubnet catalogue: a catalogue slug is not an
+// asset there, and no listing carries catalogue rows (the explorer linked /assets/usdc on testnet and 404'd on it). Native
+// XLM is the one entry every network shares.
+func TestAssets_TestNetServesNoCatalogue(t *testing.T) {
+	for _, network := range []string{"testnet", "futurenet"} {
+		ts := httpTestServer(t, v1.New(v1.Options{VerifiedCurrencies: newTestCatalogue(t), Network: network}))
+
+		resp := mustGet(t, ts.URL+"/v1/assets/usdc")
+		// The answer any unknown slug gets (400 invalid id), not the catalogue view.
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("%s: /v1/assets/usdc status = %d, want 400", network, resp.StatusCode)
+		}
+		_ = resp.Body.Close()
+		resp = mustGet(t, ts.URL+"/v1/assets/xlm")
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("%s: /v1/assets/xlm status = %d, want 200", network, resp.StatusCode)
+		}
+		_ = resp.Body.Close()
+
+		for _, q := range []string{"asset_class=all", "asset_class=stablecoin", "asset_class=crypto"} {
+			resp := mustGet(t, ts.URL+"/v1/assets?"+q)
+			if resp.StatusCode != http.StatusOK {
+				_ = resp.Body.Close()
+				continue
+			}
+			var body struct {
+				Data []v1.AssetDetail `json:"data"`
+			}
+			mustDecode(t, resp, &body)
+			for _, row := range body.Data {
+				if row.Type == "global" && row.Slug != "xlm" {
+					t.Errorf("%s: /v1/assets?%s served catalogue row %q", network, q, row.Slug)
+				}
+			}
+		}
+	}
+}
