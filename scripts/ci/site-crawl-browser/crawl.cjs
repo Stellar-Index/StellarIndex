@@ -58,7 +58,9 @@ async function visit(ctx, path) {
     const n = ++seq;
     lastSeq.set(rel, n);
     if (r.status() < 400) return;
-    pending.push(r.json().catch(() => ({})).then((body) => {
+    // An EventSource response exposes no body to the page; read the problem type off a plain GET.
+    const body = r.json().catch(() => ctx.request.get(url).then((g) => g.json()).catch(() => ({})));
+    pending.push(body.then((body) => {
       const type = String(body.type || '').split('/').pop();
       if (!ALLOWED_TYPES.some((a) => a.type === type && (!a.page || a.page.test(path)))) {
         failed.push({ rel, n, msg: `${r.status()} ${rel}${type ? ` (${type})` : ''}` });
@@ -102,9 +104,17 @@ async function visit(ctx, path) {
   let pages = 0;
   while (queue.length && pages < MAX_PAGES) {
     const batch = [];
+    // The API runs one account-trades scan per caller; parallel account pages from one crawler would
+    // shed each other, which no single visitor sees, so a batch takes at most one.
+    let accountInBatch = false;
+    const deferred = [];
     while (queue.length && batch.length < 4) {
       const [path, from] = queue.shift();
       if (seen.has(path)) continue;
+      if (path.startsWith('/accounts/G')) {
+        if (accountInBatch) { deferred.push([path, from]); continue; }
+        accountInBatch = true;
+      }
       seen.add(path);
       const k = pattern(path);
       perPattern[k] = (perPattern[k] || 0) + 1;
@@ -117,6 +127,7 @@ async function visit(ctx, path) {
         for (const l of r.links) if (!seen.has(l)) queue.push([l, path]);
       }));
     }
+    queue.unshift(...deferred);
     await Promise.all(batch);
   }
   await browser.close();
