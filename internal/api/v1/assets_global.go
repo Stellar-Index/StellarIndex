@@ -381,13 +381,9 @@ type VerifiedCurrencyListItem struct {
 	Issuer  string `json:"issuer,omitempty"`
 }
 
-// handleAssetsVerified serves GET /v1/assets/verified in deterministic seed-file order; 503 when no catalogue is wired, empty
-// on a test net.
+// handleAssetsVerified serves GET /v1/assets/verified in deterministic seed-file order; 503 when no catalogue is wired.
+// The catalogue is loaded scoped to this network, so a test net lists only its own issuances.
 func (s *Server) handleAssetsVerified(w http.ResponseWriter, r *http.Request) {
-	if !s.servesPubnetReference() {
-		writeJSON(w, []VerifiedCurrencyListItem{}, Flags{})
-		return
-	}
 	if s.VerifiedCurrencies == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/verified-currencies-unavailable",

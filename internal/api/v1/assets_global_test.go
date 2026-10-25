@@ -16,6 +16,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/holds"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -1887,8 +1888,8 @@ func TestAssetGet_CuratedMapStillFillsWhenChainSilent(t *testing.T) {
 	}
 }
 
-// TestAssetGet_TickerCollision_NetworkScoped pins that the look-alike
-// warning, which points at a pubnet issuer, is not stamped on a test net.
+// TestAssetGet_TickerCollision_NetworkScoped pins that a test net stamps the look-alike warning against its own catalogue
+// (Circle's testnet USDC), as pubnet does against the pubnet one.
 func TestAssetGet_TickerCollision_NetworkScoped(t *testing.T) {
 	opts := v1.Options{VerifiedCurrencies: newTestCatalogue(t)}
 	decode := func(body string) (bool, bool) {
@@ -1906,13 +1907,15 @@ func TestAssetGet_TickerCollision_NetworkScoped(t *testing.T) {
 	if flag, warning := decode(body); !flag || !warning {
 		t.Fatalf("pubnet: collision flag=%v warning=%v on a USDC look-alike, want both", flag, warning)
 	}
-	for _, network := range testNets {
-		status, body := networkGet(t, opts, network, path)
-		if status != http.StatusOK {
-			t.Fatalf("%s: status = %d, want 200", network, status)
-		}
-		if flag, warning := decode(body); flag || warning {
-			t.Errorf("%s: collision flag=%v warning=%v, want neither", network, flag, warning)
-		}
+	testCat, err := currency.LoadEmbeddedForNetwork("testnet")
+	if err != nil {
+		t.Fatalf("LoadEmbeddedForNetwork: %v", err)
+	}
+	status, body := networkGet(t, v1.Options{VerifiedCurrencies: testCat}, "testnet", path)
+	if status != http.StatusOK {
+		t.Fatalf("testnet: status = %d, want 200", status)
+	}
+	if flag, warning := decode(body); !flag || !warning {
+		t.Errorf("testnet: collision flag=%v warning=%v on a USDC look-alike, want both", flag, warning)
 	}
 }

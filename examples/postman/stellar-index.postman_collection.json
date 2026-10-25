@@ -1469,7 +1469,7 @@
               "request": {
                 "name": "Verified-currency catalogue listing.",
                 "description": {
-                  "content": "Returns every entry in the verified-currency catalogue — the\nhand-curated set of verified Stellar assets (USDC, EURC,\nAQUA, …) that the API surfaces with a \"verified\" badge.\n\nDistinct from `/v1/assets` which lists every Stellar-indexed\nasset (verified or not). This endpoint is identity-only —\nno price block — so it's a cheap directory call suitable for\nbuilding a verified-currencies section on a listing page.\n\nOrder matches the seed-file order (deterministic). Empty on\ntestnet and futurenet: the catalogue names pubnet issuers.\n",
+                  "content": "Returns every entry in the verified-currency catalogue — the\nhand-curated set of verified Stellar assets (USDC, EURC,\nAQUA, …) that the API surfaces with a \"verified\" badge.\n\nDistinct from `/v1/assets` which lists every Stellar-indexed\nasset (verified or not). This endpoint is identity-only —\nno price block — so it's a cheap directory call suitable for\nbuilding a verified-currencies section on a listing page.\n\nOrder matches the seed-file order (deterministic). On testnet\nand futurenet only entries with an issuance on that network\nare listed (native XLM, plus e.g. Circle's testnet USDC), with\nthat network's asset id.\n",
                   "type": "text/plain"
                 },
                 "url": {

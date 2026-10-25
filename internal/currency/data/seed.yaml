@@ -35,10 +35,14 @@
 #                          empty.
 #   networks:              The Stellar issuance identity. A browseable
 #                          (non-fiat, non-reference_only) entry carries
-#                          exactly one `network: stellar` entry. Fiat +
-#                          reference_only entries omit `networks`
-#                          entirely. Each entry has:
-#                              network:        always "stellar"
+#                          exactly one `network: stellar` entry, plus a
+#                          `network: stellar-testnet` / `stellar-futurenet`
+#                          entry where the issuer publishes one (an entry
+#                          without one, native XLM aside, is not served on
+#                          that test net). Fiat + reference_only entries
+#                          omit `networks` entirely. Each entry has:
+#                              network:        "stellar" (pubnet) or
+#                                              "stellar-<test net>"
 #                              code:           classic asset code (Stellar)
 #                              issuer:         G-strkey (Stellar classic)
 #                              asset_id:       precomputed canonical
@@ -82,6 +86,11 @@ verified_currencies:
         code: USDC
         issuer: GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
         asset_id: USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+      # developers.circle.com/stablecoins/usdc-contract-addresses
+      - network: stellar-testnet
+        code: USDC
+        issuer: GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
+        asset_id: USDC-GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
 
   - ticker: USDT
     slug: usdt
@@ -152,6 +161,11 @@ verified_currencies:
         code: EURC
         issuer: GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2
         asset_id: EURC-GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2
+      # developers.circle.com/stablecoins/eurc-contract-addresses
+      - network: stellar-testnet
+        code: EURC
+        issuer: GB3Q6QDZYTHWT7E5PVS3W7FUT5GVAFC5KSZFFLPU25GO7VTC3NM2ZTVO
+        asset_id: EURC-GB3Q6QDZYTHWT7E5PVS3W7FUT5GVAFC5KSZFFLPU25GO7VTC3NM2ZTVO
 
   # ─── Pricing-reference crypto (reference_only — NOT browseable) ───
   # No Stellar-native issuance. Kept only so their coingecko_id /

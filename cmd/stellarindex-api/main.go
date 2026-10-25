@@ -586,7 +586,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 
 	// The catalogue is embedded, so a load failure is a broken build and fatal. It must load
 	// before the prewarm goroutine, which uses it to prewarm canonical asset ids.
-	verifiedCurrencies, err := currency.LoadEmbedded()
+	verifiedCurrencies, err := currency.LoadEmbeddedForNetwork(cfg.Stellar.Network)
 	if err != nil {
 		return fmt.Errorf("load verified-currency catalogue: %w", err)
 	}

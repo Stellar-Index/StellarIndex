@@ -1719,7 +1719,7 @@ func (s *Server) handleAssetListFromCatalogue(
 	// StellarIssued (not Browseable): /v1/assets is Stellar-only, so
 	// asset_class=fiat yields nothing here (fiat lives on
 	// /v1/external/assets); stablecoin/crypto yield only Stellar-issued rows.
-	matched := filterCatalogueByClass(s.stellarIssuedCatalogue(), currency.AssetClass(class))
+	matched := filterCatalogueByClass(s.VerifiedCurrencies.StellarIssued(), currency.AssetClass(class))
 	caps := s.computeCatalogueMarketCaps(r.Context(), matched, class)
 	rows := s.projectCatalogueRows(r.Context(), matched, caps)
 	s.writeCataloguePage(w, r, rows, limit, cursor, flags)
@@ -2103,7 +2103,7 @@ func (s *Server) serveCatalogueUnifiedPage(
 	//
 	// Narrow BEFORE the market-cap fan-out: a filtered-out entry would otherwise cost a supply and
 	// FX read for a row that can never be served.
-	entries := filterCatalogueEntries(s.stellarIssuedCatalogue(), filters)
+	entries := filterCatalogueEntries(s.VerifiedCurrencies.StellarIssued(), filters)
 	caps := s.computeAllCatalogueMarketCaps(r.Context(), entries)
 	rows := s.projectCatalogueRows(r.Context(), entries, caps)
 	// q= over the catalogue phase (the classic phase filters in SQL). It is applied to the rows,
@@ -2667,36 +2667,13 @@ func (s *Server) lookupCatalogue(raw string) *currency.VerifiedCurrency {
 	if s.VerifiedCurrencies == nil {
 		return nil
 	}
-	vc, ok := s.VerifiedCurrencies.LookupBySlug(raw)
-	if !ok {
-		vc, ok = s.VerifiedCurrencies.LookupByTicker(raw)
+	if vc, ok := s.VerifiedCurrencies.LookupBySlug(raw); ok {
+		return vc
 	}
-	if !ok || !s.servesCatalogueEntry(vc) {
-		return nil
+	if vc, ok := s.VerifiedCurrencies.LookupByTicker(raw); ok {
+		return vc
 	}
-	return vc
-}
-
-// servesCatalogueEntry reports whether vc names an asset on this network: on a test net only the native entry does, since
-// every other catalogue issuance is a pubnet issuer.
-func (s *Server) servesCatalogueEntry(vc *currency.VerifiedCurrency) bool {
-	if s.servesPubnetReference() {
-		return true
-	}
-	se := vc.StellarEntry()
-	return se != nil && se.AssetID == canonical.NativeAsset().String()
-}
-
-// stellarIssuedCatalogue is the catalogue's Stellar-issued entries that name an asset on this network.
-func (s *Server) stellarIssuedCatalogue() []*currency.VerifiedCurrency {
-	all := s.VerifiedCurrencies.StellarIssued()
-	out := all[:0]
-	for _, vc := range all {
-		if s.servesCatalogueEntry(vc) {
-			out = append(out, vc)
-		}
-	}
-	return out
+	return nil
 }
 
 // handleExternalAssetGet serves GET /v1/external/assets/{slug}: detail for a NON-Stellar asset (fiat or reference-only coin); a
@@ -2731,9 +2708,7 @@ func (s *Server) handleExternalAssetGet(w http.ResponseWriter, r *http.Request) 
 // verifiedCurrencyFlags applies the unverified-collision warning to detail and returns the matching envelope flags.
 func (s *Server) verifiedCurrencyFlags(detail *AssetDetail, asset canonical.Asset) Flags {
 	flags := Flags{}
-	// The catalogue's verified issuers are pubnet accounts; on a test net
-	// every look-alike stamp would point at an asset that does not exist.
-	if s.servesPubnetReference() && applyUnverifiedWarning(detail, asset, s.VerifiedCurrencies) {
+	if applyUnverifiedWarning(detail, asset, s.VerifiedCurrencies) {
 		flags.UnverifiedTickerCollision = true
 	}
 	applyFiatCodeAnchorNote(detail, asset, s.VerifiedCurrencies)
@@ -2763,9 +2738,9 @@ func applyFiatCodeAnchorNote(detail *AssetDetail, asset canonical.Asset, cat *cu
 
 // stampListingCollisions sets UnverifiedTickerCollision on listing rows whose (code, issuer) look-alikes a verified ticker,
 // since a NULL-slug impersonator emits the verified CODE as slug and a slug-keyed consumer would badge it verified. No-op
-// without a catalogue or on a test net; type=global rows are skipped.
+// without a catalogue; type=global rows are skipped.
 func (s *Server) stampListingCollisions(rows []AssetDetail) {
-	if s.VerifiedCurrencies == nil || !s.servesPubnetReference() {
+	if s.VerifiedCurrencies == nil {
 		return
 	}
 	for i := range rows {

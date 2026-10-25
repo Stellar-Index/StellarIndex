@@ -210,39 +210,54 @@ func TestAssetsVerified_StaticPathDoesNotShadowSlugDispatch(t *testing.T) {
 	}
 }
 
-// TestAssets_TestNetServesNoCatalogue pins that a test net serves none of the pubnet catalogue: a catalogue slug is not an
-// asset there, and no listing carries catalogue rows (the explorer linked /assets/usdc on testnet and 404'd on it). Native
-// XLM is the one entry every network shares.
-func TestAssets_TestNetServesNoCatalogue(t *testing.T) {
-	for _, network := range []string{"testnet", "futurenet"} {
-		ts := httpTestServer(t, v1.New(v1.Options{VerifiedCurrencies: newTestCatalogue(t), Network: network}))
+// TestAssets_TestNetServesItsOwnCatalogue pins that a test net serves the catalogue scoped to it: usdc is Circle's testnet
+// issuance (the explorer linked /assets/usdc on testnet and 404'd on it), an entry with no testnet issuance is unknown, and
+// no listing carries a pubnet-only catalogue row.
+func TestAssets_TestNetServesItsOwnCatalogue(t *testing.T) {
+	const circleTestnetUSDC = "USDC-GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+	cat, err := currency.LoadEmbeddedForNetwork("testnet")
+	if err != nil {
+		t.Fatalf("LoadEmbeddedForNetwork: %v", err)
+	}
+	ts := httpTestServer(t, v1.New(v1.Options{VerifiedCurrencies: cat, Network: "testnet"}))
 
-		resp := mustGet(t, ts.URL+"/v1/assets/usdc")
-		// The answer any unknown slug gets (400 invalid id), not the catalogue view.
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Errorf("%s: /v1/assets/usdc status = %d, want 400", network, resp.StatusCode)
+	resp := mustGet(t, ts.URL+"/v1/assets/verified")
+	var verified struct {
+		Data []v1.VerifiedCurrencyListItem `json:"data"`
+	}
+	mustDecode(t, resp, &verified)
+	got := map[string]string{}
+	for _, v := range verified.Data {
+		got[v.Slug] = v.AssetID
+	}
+	if got["usdc"] != circleTestnetUSDC || got["xlm"] != "native" {
+		t.Errorf("/v1/assets/verified = %v, want usdc=%s and xlm=native", got, circleTestnetUSDC)
+	}
+	if _, ok := got["aqua"]; ok {
+		t.Error("/v1/assets/verified lists aqua, which has no testnet issuance")
+	}
+
+	for path, want := range map[string]int{"usdc": http.StatusOK, "xlm": http.StatusOK, "aqua": http.StatusBadRequest} {
+		resp := mustGet(t, ts.URL+"/v1/assets/"+path)
+		if resp.StatusCode != want {
+			t.Errorf("/v1/assets/%s status = %d, want %d", path, resp.StatusCode, want)
 		}
 		_ = resp.Body.Close()
-		resp = mustGet(t, ts.URL+"/v1/assets/xlm")
+	}
+
+	for _, q := range []string{"asset_class=all", "asset_class=stablecoin", "asset_class=crypto"} {
+		resp := mustGet(t, ts.URL+"/v1/assets?"+q)
 		if resp.StatusCode != http.StatusOK {
-			t.Errorf("%s: /v1/assets/xlm status = %d, want 200", network, resp.StatusCode)
+			_ = resp.Body.Close()
+			continue
 		}
-		_ = resp.Body.Close()
-
-		for _, q := range []string{"asset_class=all", "asset_class=stablecoin", "asset_class=crypto"} {
-			resp := mustGet(t, ts.URL+"/v1/assets?"+q)
-			if resp.StatusCode != http.StatusOK {
-				_ = resp.Body.Close()
-				continue
-			}
-			var body struct {
-				Data []v1.AssetDetail `json:"data"`
-			}
-			mustDecode(t, resp, &body)
-			for _, row := range body.Data {
-				if row.Type == "global" && row.Slug != "xlm" {
-					t.Errorf("%s: /v1/assets?%s served catalogue row %q", network, q, row.Slug)
-				}
+		var body struct {
+			Data []v1.AssetDetail `json:"data"`
+		}
+		mustDecode(t, resp, &body)
+		for _, row := range body.Data {
+			if _, ok := got[row.Slug]; row.Type == "global" && !ok {
+				t.Errorf("/v1/assets?%s served catalogue row %q, which has no testnet issuance", q, row.Slug)
 			}
 		}
 	}
