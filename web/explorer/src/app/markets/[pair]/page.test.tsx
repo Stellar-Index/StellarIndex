@@ -28,13 +28,14 @@ const BASE = 'crypto:XLM';
 const QUOTE = 'fiat:USD';
 const PAIR = `${BASE}~${QUOTE}`;
 
-async function renderPair() {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+function newClient() {
+  return new QueryClient({ defaultOptions: { queries: { retry: false } } });
+}
+
+async function renderPair(pair = PAIR, client = newClient()) {
   render(
     <QueryClientProvider client={client}>
-      {await PairPage({ params: Promise.resolve({ pair: PAIR }) })}
+      {await PairPage({ params: Promise.resolve({ pair }) })}
     </QueryClientProvider>,
   );
 }
@@ -131,5 +132,49 @@ describe('markets/[pair]/page USD volume stats', () => {
     withPoints([v]);
     await renderPair();
     expect(screen.queryByText('24h USD vol')).toBeNull();
+  });
+});
+
+// A crypto/fiat leg is a bare ticker: /assets/ETH renders "Asset not
+// found", so a leg links only to a page the catalogue lists.
+describe('markets/[pair]/page leg links', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
+    vi.mocked(buildFetchData).mockResolvedValue(null as never);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function withCatalogue(external: string[]) {
+    const client = newClient();
+    client.setQueryData(['catalogue-slugs'], {
+      stellar: new Set<string>(),
+      external: new Set(external),
+    });
+    return client;
+  }
+
+  it('links catalogued tickers to their external pages', async () => {
+    await renderPair(
+      'crypto:ETH~fiat:USD',
+      withCatalogue(['eth', 'us-dollar']),
+    );
+    expect(screen.getAllByRole('link', { name: 'ETH' })[0]).toHaveAttribute(
+      'href',
+      expect.stringMatching(/^\/external\/assets\/eth\/?$/),
+    );
+    expect(
+      screen
+        .queryAllByRole('link')
+        .some((a) =>
+          /^\/assets\/(ETH|USD)\b/i.test(a.getAttribute('href') ?? ''),
+        ),
+    ).toBe(false);
+  });
+
+  it('renders uncatalogued tickers as plain text', async () => {
+    await renderPair('crypto:ETH~crypto:USDT', withCatalogue([]));
+    expect(screen.queryAllByRole('link', { name: /^(ETH|USDT)$/ })).toEqual([]);
   });
 });

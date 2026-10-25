@@ -49,7 +49,8 @@ import { SourceBreakdown } from './SourceBreakdown';
 import { SourcePriceSpread } from './SourcePriceSpread';
 import { TradeScatter } from './TradeScatter';
 import { shortAssetText } from '@/lib/asset-label';
-import { assetHref, assetHrefFor } from '@/lib/fiat-slugs';
+import { assetHref } from '@/lib/fiat-slugs';
+import { AssetText } from '@/components/AssetLink';
 import { CURRENT_NETWORK, USDC_ASSET_ID } from '@/lib/networks';
 import type { TradeRow } from '@/api/hooks';
 
@@ -680,22 +681,10 @@ function AssetBadge({ canonical }: { canonical: string }) {
   if (canonical === 'native' || /^\d+$/.test(canonical)) {
     label = 'XLM';
     slug = 'native';
-  } else if (canonical.startsWith('fiat:')) {
-    // A fiat leg's declared canonical page is /external/assets/{slug}
-    // never /assets/{ticker} — route it through assetHrefFor
-    // rather than the generic slug/href path below.
-    const ticker = canonical.replace('fiat:', '');
-    return (
-      <Link
-        href={assetHrefFor(ticker)}
-        className="hover:text-brand-600 transition-colors"
-      >
-        {ticker}
-      </Link>
-    );
-  } else if (canonical.startsWith('crypto:')) {
-    label = canonical.replace('crypto:', '');
-    slug = label;
+  } else if (canonical.startsWith('fiat:') || canonical.startsWith('crypto:')) {
+    // A bare ticker has a page only if the catalogue lists it (fiat and
+    // most crypto live under /external/assets); AssetText checks.
+    return <AssetText canonical={canonical} />;
   } else if (/^C[A-Za-z0-9]{55}$/.test(canonical)) {
     // Raw SAC contract — no safe asset route; show truncated, no link.
     label = `${canonical.slice(0, 4)}…${canonical.slice(-4)}`;

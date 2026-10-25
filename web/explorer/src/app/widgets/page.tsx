@@ -19,12 +19,19 @@ const SITE_URL = CURRENT_NETWORK.explorerUrl;
 // The full asset_id form (`USDC-GA5Z…`) is also a valid input on the
 // API but isn't currently in the static-params output, so iframes
 // pointing at it 404. The showcase uses slugs to stay aligned with
-// what's actually built.
-const ASSET_EXAMPLES: { slug: string; label: string }[] = [
-  { slug: 'XLM', label: 'XLM (native)' },
-  { slug: 'USDC', label: 'USDC (Centre)' },
-  { slug: 'AQUA', label: 'AQUA' },
-];
+// what's actually built. AQUA is issued on mainnet only, and futurenet
+// carries no issued assets.
+function assetExamples(): { slug: string; label: string }[] {
+  return [
+    { slug: 'XLM', label: 'XLM (native)' },
+    ...(CURRENT_NETWORK.hasAssets
+      ? [{ slug: 'USDC', label: 'USDC (Circle)' }]
+      : []),
+    ...(CURRENT_NETWORK.id === 'mainnet'
+      ? [{ slug: 'AQUA', label: 'AQUA' }]
+      : []),
+  ];
+}
 
 // Pair embeds key on `<base-asset-id>~<quote-asset-id>` and the
 // static-params builder enumerates real trading pairs from
@@ -68,7 +75,7 @@ export default function WidgetsPage() {
           </p>
         </div>
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-          {ASSET_EXAMPLES.map((ex) => (
+          {assetExamples().map((ex) => (
             <WidgetCard
               key={ex.slug}
               label={ex.label}

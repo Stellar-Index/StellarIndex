@@ -17,7 +17,7 @@ const MAX_PAGES = Number(MAX_ARG || 300);
 const PER_PATTERN = 3;
 const SETTLE_MS = 5000;
 
-const SEEDS = ['/', '/assets/', '/assets/usdc/', '/assets/xlm/', '/markets/', '/ledgers/', '/transactions/',
+const SEEDS = ['/', '/assets/', '/assets/xlm/', '/markets/', '/ledgers/', '/transactions/',
   '/operations/', '/accounts/', '/contracts/', '/protocols/', '/lending/', '/network/', '/status/', '/widgets/', '/sdk/'];
 
 // Typed API answers (problem+json `type`) that are a page's expected reply, not a dead
@@ -25,6 +25,8 @@ const SEEDS = ['/', '/assets/', '/assets/usdc/', '/assets/xlm/', '/markets/', '/
 const ALLOWED_TYPES = [
   // Thin market: the price surfaces decline to publish; pages show "withheld".
   { type: 'price-withheld' },
+  // An asset with no priced trades; the asset page renders without a price.
+  { type: 'price-not-found', page: /^\/assets\// },
   // A SAC is host logic with no WASM; the contract page shows the SAC panel instead.
   { type: 'contract-is-sac' },
   // A contract that never recorded supply flows; the page omits the supply panel.
@@ -56,12 +58,13 @@ async function visit(ctx, path) {
       }
     }));
   });
-  let status = 0, title = '', hrefs = [], error = null;
+  let status = 0, title = '', heading = '', hrefs = [], error = null;
   try {
     const resp = await page.goto(SITE + path, { waitUntil: 'load', timeout: 30000 });
     status = resp ? resp.status() : 0;
     await page.waitForTimeout(SETTLE_MS);
     title = await page.title();
+    heading = await page.evaluate(() => document.querySelector('main h1, main h2')?.textContent?.trim() || '');
     hrefs = await page.evaluate(() => [...document.querySelectorAll('a[href]')].map((a) => a.getAttribute('href')));
   } catch (e) {
     error = e.message.split('\n')[0].slice(0, 160);
@@ -77,7 +80,8 @@ async function visit(ctx, path) {
       // not a URL
     }
   }
-  return { status, notFound: status === 404 || /^Not found/i.test(title), error, apiErrors, links: [...links] };
+  return { status, // A client-rendered empty state answers HTTP 200, so its heading is the only signal.
+    notFound: status === 404 || /^Not found/i.test(title) || /not found$/i.test(heading), error, apiErrors, links: [...links] };
 }
 
 (async () => {
@@ -101,7 +105,7 @@ async function visit(ctx, path) {
       batch.push(visit(ctx, path).then((r) => {
         if (r.error) failures.push(`${path} (linked from ${from}): ${r.error}`);
         if (r.notFound) failures.push(`${path} (linked from ${from}): renders Not found (HTTP ${r.status})`);
-        for (const e of r.apiErrors) failures.push(`${path}: API ${e}`);
+        for (const e of r.apiErrors) failures.push(`${path} (linked from ${from}): API ${e}`);
         for (const l of r.links) if (!seen.has(l)) queue.push([l, path]);
       }));
     }
