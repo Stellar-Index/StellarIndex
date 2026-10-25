@@ -45,16 +45,23 @@ function pattern(path) {
 
 async function visit(ctx, path) {
   const page = await ctx.newPage();
-  const apiErrors = [];
+  const failed = [];
   const pending = [];
+  // Judge each URL by its last response, as the reader sees it: the explorer retries a failed
+  // query once, so a shed 503 that the retry answers is not a finding.
+  const lastSeq = new Map();
+  let seq = 0;
   page.on('response', (r) => {
     const url = r.url();
-    if (!url.startsWith(API) || r.status() < 400) return;
+    if (!url.startsWith(API)) return;
     const rel = url.slice(API.length);
+    const n = ++seq;
+    lastSeq.set(rel, n);
+    if (r.status() < 400) return;
     pending.push(r.json().catch(() => ({})).then((body) => {
       const type = String(body.type || '').split('/').pop();
       if (!ALLOWED_TYPES.some((a) => a.type === type && (!a.page || a.page.test(path)))) {
-        apiErrors.push(`${r.status()} ${rel}${type ? ` (${type})` : ''}`);
+        failed.push({ rel, n, msg: `${r.status()} ${rel}${type ? ` (${type})` : ''}` });
       }
     }));
   });
@@ -71,6 +78,7 @@ async function visit(ctx, path) {
   }
   await Promise.all(pending);
   await page.close();
+  const apiErrors = failed.filter((f) => lastSeq.get(f.rel) === f.n).map((f) => f.msg);
   const links = new Set();
   for (const h of hrefs) {
     try {

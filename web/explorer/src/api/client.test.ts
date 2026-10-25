@@ -113,6 +113,60 @@ describe('apiGet', () => {
     expect(init?.signal).toBeInstanceOf(AbortSignal);
     expect(init?.signal?.aborted).toBe(false);
   });
+
+  const shed = (after?: string) =>
+    new Response(JSON.stringify({ type: 'x/account-trades-timeout' }), {
+      status: 503,
+      headers: after ? { 'Retry-After': after } : {},
+    });
+
+  it('retries a shed 503 once after its Retry-After', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(shed('5'))
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ ok: true }), { status: 200 }),
+        );
+      const p = apiGet<{ ok: boolean }>('/v1/accounts/G/trades');
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(p).resolves.toEqual({ ok: true });
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('throws when the retry is shed too', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(shed('5'))
+        .mockResolvedValueOnce(shed('5'));
+      const p = apiGet('/v1/accounts/G/trades');
+      const done = expect(p).rejects.toThrow(/^503/);
+      await vi.advanceTimersByTimeAsync(5_000);
+      await done;
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([['30'], [undefined]])(
+    'does not retry a 503 with Retry-After %s',
+    async (after) => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(shed(after));
+      await expect(apiGet('/v1/accounts/G/trades')).rejects.toThrow(/^503/);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    },
+  );
 });
 
 describe('buildHeaders', () => {
