@@ -184,7 +184,7 @@ sudo -u postgres psql -d stellarindex -c \
   sudo systemctl start --no-block compute-completeness-sdex.service
   ```
 
-- `sep41_transfers` via `compute-completeness-sep41.timer` (Wednesday 18:47 UTC, `-source sep41_transfers -timeout 360m`; the KALE SAC overruns the pass's 45 min `-source-timeout`): `sudo systemctl start --no-block compute-completeness-sep41.service`.
+- `sep41_transfers` and `sep41_supply` via `compute-completeness-sep41.timer` (Wednesday 18:47 UTC, `-source sep41_transfers -timeout 360m` then `-source sep41_supply -timeout 300m`; the KALE SAC overruns the pass's 45 min `-source-timeout`): `sudo systemctl start --no-block compute-completeness-sep41.service`.
 
 Prefer the unit (it applies the driver's tip-100 margin). Do not add `-from`: a run starting above the served floor stamps no evidence.
 
