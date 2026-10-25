@@ -164,6 +164,43 @@ export function useSACWrappers() {
   });
 }
 
+/** Slugs that have a catalogue page: on-chain (/assets/{slug}) and off-chain (/external/assets/{slug}). */
+export interface CatalogueSlugs {
+  stellar: ReadonlySet<string>;
+  external: ReadonlySet<string>;
+}
+
+/**
+ * useCatalogueSlugs lets a `crypto:`/`fiat:` id link only to a page that
+ * exists: a bare ticker like BTC or EUROB has no /assets page.
+ */
+export function useCatalogueSlugs(enabled = true) {
+  return useQuery<CatalogueSlugs>({
+    queryKey: ['catalogue-slugs'],
+    enabled,
+    queryFn: async () => {
+      type Rows = { data?: { slug?: string; type?: string }[] };
+      const [onChain, offChain] = await Promise.all([
+        // Catalogue rows (type global) lead the unified listing.
+        apiGet<Rows>('/v1/assets', { asset_class: 'all', limit: 100 }),
+        apiGet<Rows>('/v1/external/assets', { limit: 500 }),
+      ]);
+      const slugs = (rows: Rows, globalOnly: boolean) =>
+        new Set(
+          (rows.data ?? [])
+            .filter((r) => r.slug && (!globalOnly || r.type === 'global'))
+            .map((r) => r.slug!.toLowerCase()),
+        );
+      return {
+        stellar: slugs(onChain, true),
+        external: slugs(offChain, false),
+      };
+    },
+    staleTime: 60 * 60 * 1000,
+    gcTime: 24 * 60 * 60 * 1000,
+  });
+}
+
 /**
  * The one /v1/status poll cadence: the status page's 30 s, not the
  * banner's 60 s. Every consumer shares the ['/v1/status'] query so a viewport holds ONE

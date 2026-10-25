@@ -1,9 +1,10 @@
 'use client';
 
-import { PageHeader } from '@/components/ui';
+import { EmptyState, PageHeader } from '@/components/ui';
 import { SourceStatsPanel } from '@/app/dexes/[source]/SourceStatsPanel';
 import { SourceTopChart } from '@/app/dexes/[source]/SourceTopChart';
 import { useSources } from '@/api/hooks';
+import { CURRENT_NETWORK } from '@/lib/networks';
 import { useLastPathSegment } from '@/lib/useLastPathSegment';
 
 import { sourceLabel, sourceUnitsLabel } from '../sourceLabel';
@@ -37,7 +38,15 @@ export function SourcePathView() {
           label !== name ? <span className="font-mono">{name}</span> : undefined
         }
       />
-      {name && (
+      {name && sources.data && !row && (
+        <EmptyState
+          headingLevel={2}
+          title="Not a source on this network"
+          description={`${CURRENT_NETWORK.label} does not run ${name}, so it has no health or market data here.`}
+        />
+      )}
+      {/* Panels wait for the registry: their endpoints 404 for a name it lacks. */}
+      {name && row && (
         <>
           <SourceHealthPanel source={name} />
           <SourceStatsPanel

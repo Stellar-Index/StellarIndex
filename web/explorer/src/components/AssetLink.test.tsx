@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { assetSlug } from './AssetLink';
+import { assetLinkHref, assetSlug } from './AssetLink';
 
 // assetSlug decides where every asset reference in the explorer POINTS,
 // and had no behavioural test — the repo-walk guard in
@@ -78,5 +78,42 @@ describe('assetSlug', () => {
     expect(assetSlug(null)).toBeNull();
     expect(assetSlug(undefined)).toBeNull();
     expect(assetSlug('')).toBeNull();
+  });
+});
+
+describe('assetLinkHref', () => {
+  const catalogue = {
+    stellar: new Set(['usdc', 'xlm']),
+    external: new Set(['btc', 'us-dollar']),
+  };
+
+  it('links a crypto ticker to the page that exists', () => {
+    expect(assetLinkHref('crypto:USDC', 'USDC', catalogue)).toBe(
+      '/assets/usdc',
+    );
+    expect(assetLinkHref('crypto:BTC', 'BTC', catalogue)).toBe(
+      '/external/assets/btc',
+    );
+  });
+
+  it('renders an uncatalogued ticker unlinked', () => {
+    // /assets/EUROB 400s and /assets/BTC 404s (asset-is-external).
+    expect(assetLinkHref('crypto:EUROB', 'EUROB', catalogue)).toBeNull();
+    expect(assetLinkHref('fiat:ARS', 'ARS', catalogue)).toBeNull();
+  });
+
+  it('links a catalogued fiat to its external page', () => {
+    expect(assetLinkHref('fiat:USD', 'USD', catalogue)).toBe(
+      '/external/assets/us-dollar',
+    );
+  });
+
+  it('does not link a ticker before the catalogue loads', () => {
+    expect(assetLinkHref('crypto:BTC', 'BTC', undefined)).toBeNull();
+  });
+
+  it('links a classic asset without the catalogue', () => {
+    const id = 'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
+    expect(assetLinkHref(id, id, undefined)).toBe(`/assets/${id}`);
   });
 });

@@ -2,9 +2,13 @@
 
 import Link from 'next/link';
 
-import { useSACWrappers } from '@/api/hooks';
+import {
+  useCatalogueSlugs,
+  useSACWrappers,
+  type CatalogueSlugs,
+} from '@/api/hooks';
 import { cn } from '@/lib/cn';
-import { assetHref, assetHrefFor } from '@/lib/fiat-slugs';
+import { assetHref, assetHrefFor, fiatSlugFor } from '@/lib/fiat-slugs';
 import { AssetLabel } from './AssetLabel';
 
 import {
@@ -79,19 +83,34 @@ export function assetSlug(canonical: string | undefined | null): string | null {
 
 /**
  * assetLinkHref decides the target for a resolved `slug` given the
- * ORIGINAL canonical id it came from. A `fiat:` canonical's declared
- * canonical page is /external/assets/{friendly-slug} (assetHrefFor), not
- * /assets/{slug} — see fiat-slugs.ts's assetHrefFor docstring.
- * assetSlug() intentionally still returns the bare ticker for a `fiat:`
- * id (existing callers rely on that), so the fiat/non-fiat branch has to
- * live here, at the href call site, not inside assetSlug.
+ * ORIGINAL canonical id it came from. A `fiat:` or `crypto:` id is a bare
+ * ticker, so it links only to a catalogue page that exists (null = plain
+ * label); a fiat's declared canonical page is /external/assets (see
+ * fiat-slugs.ts's assetHrefFor). Returns null until `catalogue` loads.
  */
-function assetLinkHref(
+export function assetLinkHref(
   canonical: string | undefined | null,
   slug: string,
-): string {
-  if (canonical?.startsWith('fiat:')) return assetHrefFor(canonical.slice(5));
+  catalogue: CatalogueSlugs | undefined,
+): string | null {
+  if (canonical?.startsWith('fiat:')) {
+    const ticker = canonical.slice(5);
+    return catalogue?.external.has(fiatSlugFor(ticker))
+      ? assetHrefFor(ticker)
+      : null;
+  }
+  if (canonical?.startsWith('crypto:')) {
+    const ticker = slug.toLowerCase();
+    if (catalogue?.stellar.has(ticker)) return assetHref(ticker);
+    if (catalogue?.external.has(ticker)) return `/external/assets/${ticker}`;
+    return null;
+  }
   return assetHref(slug);
+}
+
+/** isTickerId: ids whose link depends on the catalogue. */
+function isTickerId(canonical: string | undefined | null): boolean {
+  return !!canonical && /^(fiat|crypto):/.test(canonical);
 }
 
 /**
@@ -109,6 +128,7 @@ export function AssetLink({
   className?: string;
 }) {
   const { data: sacMap } = useSACWrappers();
+  const { data: catalogue } = useCatalogueSlugs(isTickerId(canonical));
 
   let slug = assetSlug(canonical);
   // Resolve a SAC contract to its wrapped classic asset's code so the
@@ -122,10 +142,11 @@ export function AssetLink({
     else if (resolved) slug = resolved;
   }
 
-  if (!slug) return <AssetLabel canonical={canonical} />;
+  const href = slug ? assetLinkHref(canonical, slug, catalogue) : null;
+  if (!href) return <AssetLabel canonical={canonical} />;
   return (
     <Link
-      href={assetLinkHref(canonical, slug)}
+      href={href}
       className={cn('hover:text-brand-600 transition-colors', className)}
     >
       <AssetLabel canonical={canonical} />
@@ -152,12 +173,14 @@ export function AssetText({
   canonical: string | undefined | null;
   className?: string;
 }) {
+  const { data: catalogue } = useCatalogueSlugs(isTickerId(canonical));
   const slug = assetSlug(canonical);
   const text = shortAssetText(canonical);
-  if (!slug) return <span className={className}>{text}</span>;
+  const href = slug ? assetLinkHref(canonical, slug, catalogue) : null;
+  if (!href) return <span className={className}>{text}</span>;
   return (
     <Link
-      href={assetLinkHref(canonical, slug)}
+      href={href}
       title={canonical ?? undefined}
       className={cn(
         'hover:text-brand-600 transition-colors hover:underline',

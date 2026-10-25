@@ -17,13 +17,13 @@ import {
 } from '@/components/ui';
 import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 import { asExample } from '@/api/client';
+import { USDC_ASSET_ID } from '@/lib/networks';
 import { useHistory, type TradeRow } from '@/api/hooks';
 import { useObservationsFollow } from '@/lib/live/hooks';
 import { formatRelative, formatUnitsReadable } from '@/lib/format';
 import { TradeScatter } from '../../markets/[pair]/TradeScatter';
 import { HBarList, type HBarItem } from '@/components/charts/Bars';
 
-const DEFAULT_QUOTE = 'native';
 const HISTORY_LIMIT = 100;
 
 /**
@@ -31,7 +31,7 @@ const HISTORY_LIMIT = 100;
  *
  * Fetches recent trades from /v1/history with
  * `base=<asset_id>&quote=native` (XLM) — the most active on-chain
- * pair for any classic asset on Stellar. The asset_id comes from
+ * pair for any classic asset on Stellar; XLM itself is quoted in USDC. The asset_id comes from
  * the parent server component's /v1/coins/{slug} lookup.
  *
  * Fiat-quoted trades (e.g. against `fiat:USD`) don't surface here:
@@ -45,14 +45,11 @@ export function HistoryTabPanel({
   assetID: string;
   decimals?: number;
 }) {
-  const history = useHistory(assetID, DEFAULT_QUOTE, HISTORY_LIMIT);
+  const quote = historyQuote(assetID);
+  const history = useHistory(assetID, quote, HISTORY_LIMIT);
   // Live tape (RT-2): refresh the instant this pair trades, event-driven off
   // the observations stream (one connection — single pair, cap-safe).
-  useObservationsFollow(assetID, DEFAULT_QUOTE, [
-    '/v1/history',
-    assetID,
-    DEFAULT_QUOTE,
-  ]);
+  useObservationsFollow(assetID, quote, ['/v1/history', assetID, quote]);
 
   if (history.isError) {
     return (
@@ -61,7 +58,7 @@ export function HistoryTabPanel({
         title="Recent trades"
         source={asExample('/v1/history', {
           base: assetID,
-          quote: DEFAULT_QUOTE,
+          quote,
           limit: HISTORY_LIMIT,
         })}
       >
@@ -77,7 +74,7 @@ export function HistoryTabPanel({
         title="Recent trades"
         source={asExample('/v1/history', {
           base: assetID,
-          quote: DEFAULT_QUOTE,
+          quote,
           limit: HISTORY_LIMIT,
         })}
       >
@@ -100,12 +97,13 @@ export function HistoryTabPanel({
         title="Recent trades"
         source={asExample('/v1/history', {
           base: assetID,
-          quote: DEFAULT_QUOTE,
+          quote,
           limit: HISTORY_LIMIT,
         })}
         bodyClassName="text-sm text-ink-muted"
       >
-        No trades against XLM in the recent window.
+        No trades against {quote === 'native' ? 'XLM' : 'USDC'} in the recent
+        window.
       </Panel>
     );
   }
@@ -116,7 +114,7 @@ export function HistoryTabPanel({
       title={`Recent trades — last ${rows.length}`}
       source={asExample('/v1/history', {
         base: assetID,
-        quote: DEFAULT_QUOTE,
+        quote,
         limit: HISTORY_LIMIT,
       })}
       bodyClassName="-mx-4"
@@ -179,8 +177,8 @@ export function HistoryTabPanel({
                   )}
                 </Td>
                 <Td align="right" className="font-mono text-xs">
-                  {/* quote leg is always DEFAULT_QUOTE ('native' XLM, fixed 7
-                    decimals) — never the base asset's own `decimals` prop. */}
+                  {/* quote leg is XLM or classic USDC, both fixed 7 decimals —
+                    never the base asset's own `decimals` prop. */}
                   {formatUnitsReadable(r.quote_amount, r.quote_decimals ?? 7)}
                 </Td>
                 <Td align="right" className="font-mono text-xs">
@@ -193,6 +191,11 @@ export function HistoryTabPanel({
       </div>
     </Panel>
   );
+}
+
+/** XLM against itself is not a market, so XLM's tape is its USDC pair. */
+export function historyQuote(assetID: string): string {
+  return assetID === 'native' ? USDC_ASSET_ID : 'native';
 }
 
 /** Trade count per venue over the rows shown, ranked. */
