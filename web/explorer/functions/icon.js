@@ -99,6 +99,13 @@ export async function onRequest(context) {
   const target = new URL(request.url).searchParams.get('u');
   if (!isProxyableUrl(target)) return fail(400);
 
+  // CF Pages does not edge-cache a Function response from Cache-Control alone,
+  // so without this every cold visitor refetches from the issuer's host.
+  const cache = globalThis.caches?.default;
+  const cacheKey = new Request(request.url, { method: 'GET' });
+  const cached = cache && (await cache.match(cacheKey));
+  if (cached) return request.method === 'HEAD' ? headOf(cached) : cached;
+
   let res;
   try {
     res = await fetchIcon(target);
@@ -117,7 +124,7 @@ export async function onRequest(context) {
   const body = await readCapped(res).catch(() => null);
   if (!body) return fail(413);
 
-  return new Response(request.method === 'HEAD' ? null : body, {
+  const out = new Response(body, {
     headers: {
       'Content-Type': outType,
       'Cache-Control': 'public, max-age=86400',
@@ -126,4 +133,14 @@ export async function onRequest(context) {
       'Content-Security-Policy': "default-src 'none'; sandbox",
     },
   });
+  if (cache) {
+    const put = cache.put(cacheKey, out.clone()).catch(() => {});
+    if (context.waitUntil) context.waitUntil(put);
+    else await put;
+  }
+  return request.method === 'HEAD' ? headOf(out) : out;
+}
+
+function headOf(res) {
+  return new Response(null, { status: res.status, headers: res.headers });
 }
