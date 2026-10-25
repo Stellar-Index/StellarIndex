@@ -9,6 +9,7 @@ import { apiGet, asExample } from '@/api/client';
 import { Container, PageHeader, EmptyState, Skeleton } from '@/components/ui';
 
 import { useLastPathSegment } from '@/lib/useLastPathSegment';
+import { CURRENT_NETWORK } from '@/lib/networks';
 import { shortAssetText } from '@/components/AssetLink';
 import type { Envelope } from '@/app/explorer-shared';
 
@@ -65,7 +66,7 @@ export function PairPathView() {
 
   const { data, isLoading, isError } = useQuery<PairPrice | null>({
     queryKey: ['/v1/price', base, quote],
-    enabled: valid,
+    enabled: valid && CURRENT_NETWORK.pricing, // no aggregator on test nets → /v1/price 404s
     retry: false,
     staleTime: 60_000,
     refetchInterval: 60_000,
@@ -107,18 +108,27 @@ export function PairPathView() {
           hint="Volume-weighted across every venue we index"
           source={asExample('/v1/price', { base, quote })}
         >
+          {!CURRENT_NETWORK.pricing && (
+            <EmptyState
+              title="No prices on this network"
+              description={`${CURRENT_NETWORK.label} has no price aggregator, so pair prices are not computed.`}
+            />
+          )}
           {isLoading && <Skeleton className="h-20 w-full" />}
           {isError && (
             <p className="text-ink-muted text-sm">
               Price is unavailable for this pair right now.
             </p>
           )}
-          {!isLoading && !isError && !data?.price && (
-            <EmptyState
-              title="No price for this pair"
-              description="We have not observed a trade on this market recently."
-            />
-          )}
+          {CURRENT_NETWORK.pricing &&
+            !isLoading &&
+            !isError &&
+            !data?.price && (
+              <EmptyState
+                title="No price for this pair"
+                description="We have not observed a trade on this market recently."
+              />
+            )}
           {!isLoading && !isError && data?.price && (
             <div className="space-y-1">
               <div className="text-h2 text-ink font-mono" title={data.price}>

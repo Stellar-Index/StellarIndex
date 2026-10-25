@@ -5,6 +5,7 @@ import { compareDecimalStrings, formatPriceSmall } from '@/lib/format';
 import { pollWhileVisible } from '@/lib/live/visiblePoll';
 
 import { API_BASE_URL as API_BASE, timeoutSignal } from '@/api/client';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 /**
  * LivePrice — client-side price hydration for the embed widgets
@@ -33,7 +34,7 @@ export function LivePrice({
   const [withheld, setWithheld] = useState(false);
 
   useEffect(() => {
-    if (!assetId) return;
+    if (!assetId || !CURRENT_NETWORK.pricing) return; // test nets have no /v1/price
     let cancelled = false;
     async function tick() {
       try {
