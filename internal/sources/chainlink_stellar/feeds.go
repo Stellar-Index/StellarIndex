@@ -17,7 +17,7 @@ type feedEntry struct {
 var quoteUSD = mustAsset(canonical.NewFiatAsset("USD"))
 
 // feedRegistry maps the mainnet cache's data_ids (hex) to their pair, taken from each feed's
-// FeedConfigSet description (ledgers 64442968 and 64471781).
+// FeedConfigSet description (ledgers 64442968, 64471781 and 65079956).
 var feedRegistry = map[string]feedEntry{
 	"01a0b4d920000332000000000000000000000000000000000000000000000000": {Base: mustAsset(canonical.NewCryptoAsset("BTC")), Quote: quoteUSD},     // BTC/USD
 	"01d585327c000332000000000000000000000000000000000000000000000000": {Base: mustAsset(canonical.NewCryptoAsset("ETH")), Quote: quoteUSD},     // ETH/USD
@@ -28,6 +28,7 @@ var feedRegistry = map[string]feedEntry{
 	"01962615c3000332000000000000000000000000000000000000000000000000": {Base: mustAsset(canonical.NewCryptoAsset("EURC")), Quote: quoteUSD},    // EURC/USD
 	"0197aabf9c000332000000000000000000000000000000000000000000000000": {Base: mustAsset(canonical.NewRWAAsset("XAUm")), Quote: quoteUSD},       // XAUM Reference Rate
 	"0142ac24bc000332000000000000000000000000000000000000000000000000": {Base: mustAsset(canonical.NewOracleRawAsset("FLHY")), Quote: quoteUSD}, // FLHY/USD
+	"016e06407e000332000000000000000000000000000000000000000000000000": {Base: mustAsset(canonical.NewOracleRawAsset("USPC")), Quote: quoteUSD}, // USPC NAV
 }
 
 // resolveFeed returns the registered pair, else a raw:<data_id hex> row quoted in USD (every

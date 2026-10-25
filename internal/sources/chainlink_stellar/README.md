@@ -31,7 +31,7 @@ First `FeedConfigSet` ledger 64442968; first `FeedUpdated` ledger 64545407.
 
 A `data_id` missing from `feeds.go` lands as `raw:<64-hex data_id>` quoted in USD and bumps
 `stellarindex_source_unknown_symbols_total{source="chainlink-stellar"}`. Add the entry and
-replay to promote it. FLHY is raw on purpose: no canonical asset exists for it.
+replay to promote it. FLHY and USPC (a NAV feed) are raw on purpose: no canonical asset exists for them.
 
 ## Sources
 
