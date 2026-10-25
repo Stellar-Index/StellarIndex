@@ -20,6 +20,25 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.48] - 2026-10-25
+
+No migrations. No `pkg/*` break (`LendingPool` gains `Summary`, `SummaryPending`, `SummaryError`). No config change. New ClickHouse tables (`account_op_type_counts`, `account_movement_counts`, `account_claimables`, `claimable_removals`, `sponsorship_totals_buckets`) and the holders rollup's `circulating` column are applied on every host before deploy; backfills follow their `deploy/clickhouse/*.sql` steps.
+
+### Fixed
+
+- **explorer:** dead links found by a browser crawl of all three sites are gone: ticker links render as text when no page exists, unregistered sources show an empty state, incident docs link correctly; the crawl runs daily (#3840).
+- **api, explorer:** testnet serves its own Circle USDC and asset catalogue, so `/assets/usdc` and `/assets/xlm` resolve there (#3839).
+- **xdrjson:** muxed auth-credential addresses render instead of an empty string (#3779).
+- **timescale:** no-op trade replays stay off compressed chunks (#3825).
+
+### Changed
+
+- **explorer:** first visits are faster: API preconnect, first-wave preloads on `/markets/` and `/accounts/{G}`, fewer duplicate calls on account and home (#3831, #3834, #3838).
+- **api:** the lending pools list carries each pool's summary; lending pools, reserves and the markets sparkline batch are cached (#3832, #3833, #3836).
+- **explorer:** account pages read per-account indexes and rollups (claimables, op-type counts, sponsorship buckets, movement partitions) instead of scanning the lake (#3780, #3781, #3807-#3812).
+- **perf:** contract, ledger, supply and protocol reads memoised or bounded (#3793, #3794, #3813-#3824, #3826).
+- **ops:** G6 page-panel sweep every 30 min, derived-index and fallback alerts, chunk-destroying-call guards, pgBackRest repo options, heavy-job pool floors (#3768-#3778, #3783-#3806).
+
 ## [v0.116.47] - 2026-10-21
 
 No migrations. No `pkg/*` break. No config change.
@@ -68,16 +87,3 @@ No migrations. No `pkg/*` break. No config change.
 - **api:** the markets, history and network_stats caches log the error behind a refresh failure (#3747).
 - **ci:** doc-links scoped checks are timed against the slowest full scan (#3748).
 - **docs:** supply history corrected for eviction tombstones (#3743); two stale runbooks, the self-hosting guide (#3749), the design-system doc (#3751), the WASM audit README and the r1 archive section (#3753) re-verified.
-
-## [v0.116.43] - 2026-10-21
-
-No migrations. No `pkg/*` break. No config change. Protocol 30 readiness: run the galexie role on each host before the network votes (testnet 2026-11-03, mainnet 2026-11-23).
-
-### Changed
-
-- **build:** galexie `v30.0.0` and `go-stellar-sdk` `v0.8.0`, which decode Protocol 30's millisecond close-time ledger headers (CAP-0088); the v29 builds cannot (#3739).
-
-### Fixed
-
-- **scval:** a CAP-0084 muxed contract address (`W…`) encodes to its strkey; a transfer to one previously errored and its row was dropped (#3739). The explorer resolves a `W…` address to its contract (#3740).
-- **api:** the self-prewarm also issues one `/v1/price/batch` over the verified assets, so the first batch after a restart no longer reads Postgres cold and re-fires the latency burn (#3742).
