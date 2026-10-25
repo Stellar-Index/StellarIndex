@@ -90,4 +90,25 @@ describe('AssetPathView', () => {
       expect(document.title).toBe('BLND — Soroban token · Stellar Index'),
     );
   });
+
+  it('renders a catalogue slug as its Stellar issuance', async () => {
+    const usdc = 'USDC-GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+    vi.mocked(apiGet).mockImplementation((path: string) => {
+      if (path === '/v1/assets/usdc')
+        return Promise.resolve({ data: { kind: 'catalogue', slug: 'usdc' } });
+      if (path === '/v1/assets/verified')
+        return Promise.resolve({ data: [{ slug: 'usdc', asset_id: usdc }] });
+      if (path === `/v1/assets/${encodeURIComponent(usdc)}`)
+        return Promise.resolve({
+          data: { asset_id: usdc, type: 'credit_alphanum4', code: 'USDC' },
+        });
+      return new Promise(() => {});
+    });
+    renderAtPath('/assets/usdc');
+    await waitFor(() =>
+      expect(document.title).toBe('USDC — Stellar asset · Stellar Index'),
+    );
+    expect(screen.queryByText('Asset not found')).toBeNull();
+    vi.mocked(apiGet).mockImplementation(() => new Promise(() => {}));
+  });
 });

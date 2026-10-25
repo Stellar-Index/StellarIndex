@@ -20,7 +20,7 @@ import { isSafeHref } from '@/lib/markdown';
 import { hrefFor } from '@/lib/hrefFor';
 import type { components, paths } from '@/api/types';
 import { API_BASE_URL, timeoutSignal } from '@/api/client';
-import { CURRENT_NETWORK } from '@/lib/networks';
+import { CURRENT_NETWORK, USDC_ASSET_ID } from '@/lib/networks';
 import { pollWhileVisible } from '@/lib/live/visiblePoll';
 import { useStatus } from '@/api/hooks';
 import { DataTrustTabs } from '@/components/nav/DataTrustTabs';
@@ -328,7 +328,7 @@ const PUBLIC_ENDPOINTS: PublicEndpoint[] = [
     // probe success.
     probe: {
       kind: 'get',
-      path: '/v1/vwap?base=native&quote=USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+      path: `/v1/vwap?base=native&quote=${USDC_ASSET_ID}`,
       expect: expectEnvelope,
     },
   },
@@ -338,7 +338,7 @@ const PUBLIC_ENDPOINTS: PublicEndpoint[] = [
     description: 'TWAP over a window',
     probe: {
       kind: 'get',
-      path: '/v1/twap?base=native&quote=USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+      path: `/v1/twap?base=native&quote=${USDC_ASSET_ID}`,
       expect: expectEnvelope,
     },
   },
@@ -348,7 +348,7 @@ const PUBLIC_ENDPOINTS: PublicEndpoint[] = [
     description: 'OHLC bar',
     probe: {
       kind: 'get',
-      path: '/v1/ohlc?base=native&quote=USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+      path: `/v1/ohlc?base=native&quote=${USDC_ASSET_ID}`,
       expect: expectEnvelope,
     },
   },

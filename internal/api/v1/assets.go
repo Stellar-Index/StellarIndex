@@ -2708,9 +2708,7 @@ func (s *Server) handleExternalAssetGet(w http.ResponseWriter, r *http.Request) 
 // verifiedCurrencyFlags applies the unverified-collision warning to detail and returns the matching envelope flags.
 func (s *Server) verifiedCurrencyFlags(detail *AssetDetail, asset canonical.Asset) Flags {
 	flags := Flags{}
-	// The catalogue's verified issuers are pubnet accounts; on a test net
-	// every look-alike stamp would point at an asset that does not exist.
-	if s.servesPubnetReference() && applyUnverifiedWarning(detail, asset, s.VerifiedCurrencies) {
+	if applyUnverifiedWarning(detail, asset, s.VerifiedCurrencies) {
 		flags.UnverifiedTickerCollision = true
 	}
 	applyFiatCodeAnchorNote(detail, asset, s.VerifiedCurrencies)
@@ -2740,9 +2738,9 @@ func applyFiatCodeAnchorNote(detail *AssetDetail, asset canonical.Asset, cat *cu
 
 // stampListingCollisions sets UnverifiedTickerCollision on listing rows whose (code, issuer) look-alikes a verified ticker,
 // since a NULL-slug impersonator emits the verified CODE as slug and a slug-keyed consumer would badge it verified. No-op
-// without a catalogue or on a test net; type=global rows are skipped.
+// without a catalogue; type=global rows are skipped.
 func (s *Server) stampListingCollisions(rows []AssetDetail) {
-	if s.VerifiedCurrencies == nil || !s.servesPubnetReference() {
+	if s.VerifiedCurrencies == nil {
 		return
 	}
 	for i := range rows {

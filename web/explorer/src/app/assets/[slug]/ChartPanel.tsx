@@ -7,10 +7,10 @@ import { MarketChart } from '@/components/charts/MarketChart';
 import { LineChart } from '@/components/charts/LineChart';
 import { useFiatUsdSeries } from '@/api/hooks';
 import { shortAssetText } from '@/lib/asset-label';
+import { USDC_ASSET_ID } from '@/lib/networks';
 
-// The verified Circle-issued USDC — the chart anchor quote.
-export const USDC_ASSET_ID =
-  'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
+// The verified Circle-issued USDC is the chart anchor quote.
+export { USDC_ASSET_ID };
 
 // chartQuoteFor picks the ONE quote an asset's price chart renders
 // against: every chart is anchored to

@@ -45,7 +45,8 @@ func envelopeData(t *testing.T, body string) (string, int) {
 
 // TestReferenceListings_NetworkScoped pins that the pubnet-anchored
 // reference listings are served in full on pubnet (identical to the empty
-// default) and empty on a test net.
+// default) and empty on a test net. /v1/assets/verified is scoped by the
+// catalogue instead (TestAssets_TestNetServesItsOwnCatalogue).
 func TestReferenceListings_NetworkScoped(t *testing.T) {
 	reader := &stubAggregatorsReader{rows: []timescale.AggregatorRollupRow{{
 		ContractID:   "CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH",
@@ -55,7 +56,7 @@ func TestReferenceListings_NetworkScoped(t *testing.T) {
 	}}}
 	opts := v1.Options{VerifiedCurrencies: newTestCatalogue(t), Aggregators: reader}
 
-	for _, path := range []string{"/v1/assets/verified", "/v1/external/assets", "/v1/aggregators"} {
+	for _, path := range []string{"/v1/external/assets", "/v1/aggregators"} {
 		defStatus, def := networkGet(t, opts, "", path)
 		pubStatus, pub := networkGet(t, opts, "pubnet", path)
 		if defStatus != http.StatusOK || pubStatus != http.StatusOK {

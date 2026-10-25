@@ -917,3 +917,44 @@ func TestFiatCodedAnchorIsNotAnImpersonator(t *testing.T) {
 		})
 	}
 }
+
+// TestLoadEmbeddedForNetwork pins the test-net scoping: Circle's testnet issuance answers usdc, native XLM is kept, an
+// entry with no issuance on that net is dropped, and pubnet is the unscoped catalogue.
+func TestLoadEmbeddedForNetwork(t *testing.T) {
+	const circleTestnetUSDC = "USDC-GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+	test, err := LoadEmbeddedForNetwork("testnet")
+	if err != nil {
+		t.Fatalf("testnet: %v", err)
+	}
+	if vc, ok := test.LookupBySlug("usdc"); !ok || vc.StellarEntry().AssetID != circleTestnetUSDC {
+		t.Errorf("testnet usdc = %+v, want %s", vc, circleTestnetUSDC)
+	}
+	if vc, ok := test.LookupByStellarAssetID(circleTestnetUSDC); !ok || vc.Slug != "usdc" {
+		t.Errorf("testnet asset-id lookup = %+v, want usdc", vc)
+	}
+	if vc, ok := test.LookupBySlug("xlm"); !ok || vc.StellarEntry().AssetID != "native" {
+		t.Errorf("testnet xlm = %+v, want native", vc)
+	}
+	if _, ok := test.LookupBySlug("aqua"); ok {
+		t.Error("testnet kept aqua, which has no testnet issuance")
+	}
+	if _, ok := test.LookupBySlug("us-dollar"); !ok {
+		t.Error("testnet dropped the us-dollar fiat entry")
+	}
+
+	future, err := LoadEmbeddedForNetwork("futurenet")
+	if err != nil {
+		t.Fatalf("futurenet: %v", err)
+	}
+	if _, ok := future.LookupBySlug("usdc"); ok {
+		t.Error("futurenet kept usdc, which has no futurenet issuance")
+	}
+
+	pub, err := LoadEmbeddedForNetwork("pubnet")
+	if err != nil {
+		t.Fatalf("pubnet: %v", err)
+	}
+	if vc, ok := pub.LookupBySlug("usdc"); !ok || vc.StellarEntry().Issuer != "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN" {
+		t.Errorf("pubnet usdc = %+v, want Circle's pubnet issuer", vc)
+	}
+}

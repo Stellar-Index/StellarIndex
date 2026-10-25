@@ -398,7 +398,7 @@ export function useChangeSummary(
       );
       return { ...env.data, flags: env.flags };
     },
-    enabled: !!entityID,
+    enabled: !!entityID && PRICING_ENABLED, // change-summary rows come from the aggregator
     staleTime: 60_000,
   });
 }

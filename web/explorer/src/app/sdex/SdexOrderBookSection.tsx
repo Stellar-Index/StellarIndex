@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { OrderBookPanel } from '../markets/[pair]/OrderBookPanel';
 import { Segmented } from '@/components/ui';
 import { SECTION_HEADING_CLASS } from '@/components/ui/Page';
+import { USDC_ASSET_ID } from '@/lib/networks';
 
 /**
  * SdexOrderBookSection — the live SDEX book for a handful of headline
@@ -22,7 +23,7 @@ const HEADLINE_PAIRS: { label: string; base: string; quote: string }[] = [
   {
     label: 'XLM / USDC',
     base: 'native',
-    quote: 'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+    quote: USDC_ASSET_ID,
   },
   {
     label: 'XLM / EURC',

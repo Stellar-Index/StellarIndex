@@ -92,6 +92,8 @@ export interface NetworkInfo {
    * shipped assertion before #328 moved it into the shared table.)
    */
   hasBridges: boolean;
+  /** Circle's USDC on this network, the explorer's default USD-stablecoin quote. */
+  usdcAssetId: string;
 }
 
 // Ordered mainnet → testnet → futurenet (production first, protocol-upgrade
@@ -114,6 +116,8 @@ export const NETWORKS: NetworkInfo[] = [
     hasAssets: true,
     hasSdexActivity: true,
     hasBridges: true,
+    usdcAssetId:
+      'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
   },
   {
     id: 'testnet',
@@ -132,6 +136,8 @@ export const NETWORKS: NetworkInfo[] = [
     hasAssets: true,
     hasSdexActivity: true,
     hasBridges: false,
+    usdcAssetId:
+      'USDC-GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
   },
   {
     id: 'futurenet',
@@ -152,6 +158,9 @@ export const NETWORKS: NetworkInfo[] = [
     hasAssets: false,
     hasSdexActivity: false,
     hasBridges: false,
+    // Circle issues no futurenet USDC; its asset and SDEX surfaces are off (hasAssets=false).
+    usdcAssetId:
+      'USDC-GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
   },
 ];
 
@@ -171,6 +180,8 @@ export const CURRENT_NETWORK_ID: NetworkId = ((): NetworkId => {
 })();
 
 export const CURRENT_NETWORK: NetworkInfo = NETWORKS_BY_ID[CURRENT_NETWORK_ID];
+
+export const USDC_ASSET_ID = CURRENT_NETWORK.usdcAssetId;
 
 /**
  * Absolute stellar.expert URL for an entity on THIS network, or null when

@@ -19,6 +19,8 @@ import { type PriceBasis, provenanceFromBasis } from './priceProvenance';
 import { formatCompactUnits } from '@/lib/format';
 
 interface AssetShellDetail {
+  /** 'catalogue' = a verified-currency view, which carries no Stellar id. */
+  kind?: string;
   asset_id?: string;
   slug?: string;
   type?: string;
@@ -80,19 +82,39 @@ export function AssetPathView() {
     retry: false,
   });
 
+  // A catalogue slug (xlm, usdc) answers with the currency view, which has no asset_id; the
+  // verified list maps it to this network's issuance, whose detail the page renders.
+  const catalogueSlug =
+    detail.data?.data?.kind === 'catalogue' ? detail.data.data.slug : undefined;
+  const issuance = useQuery({
+    queryKey: ['asset-shell-issuance', catalogueSlug],
+    enabled: Boolean(catalogueSlug),
+    queryFn: async () => {
+      const verified = await apiGet<
+        Envelope<{ slug: string; asset_id?: string }[]>
+      >('/v1/assets/verified');
+      const id = verified.data?.find((r) => r.slug === catalogueSlug)?.asset_id;
+      if (!id) return null;
+      return apiGet<Envelope<AssetShellDetail>>(
+        `/v1/assets/${encodeURIComponent(id)}`,
+      );
+    },
+    retry: false,
+  });
+
   // Restamp the shell's generic baked <title> once the real asset
   // loads — the same HTML serves every long-tail asset URL. Effect,
   // not render-body mutation (react-compiler rule).
-  const loadedCode = detail.data?.data?.code;
-  const kindNoun =
-    detail.data?.data?.type === 'soroban' ? 'Soroban token' : 'Stellar asset';
+  const d = issuance.data?.data ?? detail.data?.data;
+  const loadedCode = d?.code;
+  const kindNoun = d?.type === 'soroban' ? 'Soroban token' : 'Stellar asset';
   useEffect(() => {
     if (loadedCode) {
       document.title = `${loadedCode} — ${kindNoun} · Stellar Index`;
     }
   }, [loadedCode, kindNoun]);
 
-  if (!slug || offChain || detail.isLoading) {
+  if (!slug || offChain || detail.isLoading || issuance.isLoading) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-8 w-64" />
@@ -101,7 +123,6 @@ export function AssetPathView() {
     );
   }
 
-  const d = detail.data?.data;
   const sacHref = slug ? sacRedirectHref(slug, d?.slug) : null;
   if (sacHref) return <SacRedirect href={sacHref} />;
   if (detail.isError || !d?.asset_id) {

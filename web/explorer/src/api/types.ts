@@ -327,8 +327,10 @@ export interface paths {
          *     no price block — so it's a cheap directory call suitable for
          *     building a verified-currencies section on a listing page.
          *
-         *     Order matches the seed-file order (deterministic). Empty on
-         *     testnet and futurenet: the catalogue names pubnet issuers.
+         *     Order matches the seed-file order (deterministic). On testnet
+         *     and futurenet only entries with an issuance on that network
+         *     are listed (native XLM, plus e.g. Circle's testnet USDC), with
+         *     that network's asset id.
          */
         get: operations["listVerifiedAssets"];
         put?: never;
@@ -11545,9 +11547,9 @@ export interface components {
              *
              *     Null for the verified asset itself, for non-classic
              *     assets (native / Soroban / fiat), and for any code that
-             *     no verified currency claims on Stellar. Always null on
-             *     testnet and futurenet, where the verified issuers (pubnet
-             *     accounts) do not exist. See
+             *     no verified currency claims on Stellar. On testnet and
+             *     futurenet the match is against that network's issuances
+             *     (e.g. Circle's testnet USDC). See
              *     docs/architecture/supply-pipeline.md#asset-identity.
              */
             unverified_warning?: components["schemas"]["UnverifiedWarning"] | null;

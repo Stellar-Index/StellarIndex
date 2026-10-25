@@ -50,7 +50,7 @@ import { SourcePriceSpread } from './SourcePriceSpread';
 import { TradeScatter } from './TradeScatter';
 import { shortAssetText } from '@/lib/asset-label';
 import { assetHref, assetHrefFor } from '@/lib/fiat-slugs';
-import { CURRENT_NETWORK } from '@/lib/networks';
+import { CURRENT_NETWORK, USDC_ASSET_ID } from '@/lib/networks';
 import type { TradeRow } from '@/api/hooks';
 
 type Params = Promise<{ pair: string }>;
@@ -135,10 +135,7 @@ export async function generateStaticParams() {
   // parallelised across page workers.
   const fallback = [
     {
-      pair: pairSlug(
-        'native',
-        'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-      ),
+      pair: pairSlug('native', USDC_ASSET_ID),
     },
   ];
   // Fail-hard (src/lib/buildFetch.ts): an unreachable or empty markets

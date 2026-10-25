@@ -12,7 +12,7 @@ import { EmbedPairPathView } from './EmbedPairPathView';
 import { LiveChangeChip } from '../../LiveChangeChip';
 import { buildFetchPairPrice, isCIStub } from '@/lib/buildFetch';
 import { shortAssetText } from '@/lib/asset-label';
-import { CURRENT_NETWORK } from '@/lib/networks';
+import { CURRENT_NETWORK, USDC_ASSET_ID } from '@/lib/networks';
 
 const BUILD_FETCH_TIMEOUT_MS = 8_000;
 
@@ -42,9 +42,7 @@ export async function generateStaticParams() {
   const fallback = [
     SHELL,
     {
-      pair: encodeURIComponent(
-        `native${PAIR_SEPARATOR}USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN`,
-      ),
+      pair: encodeURIComponent(`native${PAIR_SEPARATOR}${USDC_ASSET_ID}`),
     },
   ];
   if (isCIStub) return fallback;

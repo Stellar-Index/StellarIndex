@@ -1,9 +1,7 @@
 'use client';
 
 import { OrderBookPanel } from '../../markets/[pair]/OrderBookPanel';
-
-const USDC_ASSET_ID =
-  'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
+import { USDC_ASSET_ID } from '@/lib/networks';
 
 /**
  * orderBookQuote — the SDEX counter an asset page shows depth against:

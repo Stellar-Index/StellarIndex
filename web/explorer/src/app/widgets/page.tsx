@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { CopyableSnippet } from './CopyableSnippet';
-import { CURRENT_NETWORK } from '@/lib/networks';
+import { CURRENT_NETWORK, USDC_ASSET_ID } from '@/lib/networks';
 import { Container, PageHeader } from '@/components/ui';
 
 export const metadata: Metadata = {
@@ -36,7 +36,7 @@ const ASSET_EXAMPLES: { slug: string; label: string }[] = [
 // who want fiat-quoted figures.
 const PAIR_EXAMPLES: { pair: string; label: string }[] = [
   {
-    pair: 'native~USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+    pair: `native~${USDC_ASSET_ID}`,
     label: 'XLM / USDC',
   },
 ];

@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Stellar-Index/StellarIndex/internal/sourcenet"
 )
 
 //go:embed data/seed.yaml
@@ -131,29 +133,94 @@ func LoadEmbedded() (*Catalogue, error) {
 	return LoadFromBytes(seedYAML)
 }
 
+// LoadEmbeddedForNetwork is LoadEmbedded scoped to one network ([sourcenet] names): on a test net each entry's
+// `network: stellar-<net>` issuance serves as its Stellar issuance, native XLM and entries with no issuance (fiat) are kept,
+// and every other entry is dropped because its issuer is a pubnet account. Any other name loads the pubnet catalogue.
+func LoadEmbeddedForNetwork(network string) (*Catalogue, error) {
+	return LoadFromBytesForNetwork(seedYAML, network)
+}
+
 // LoadFromBytes parses an arbitrary YAML blob (tests, operator-config override).
 func LoadFromBytes(b []byte) (*Catalogue, error) {
+	return LoadFromBytesForNetwork(b, sourcenet.Pubnet)
+}
+
+// LoadFromBytesForNetwork parses a YAML blob scoped to network (see [LoadEmbeddedForNetwork]).
+func LoadFromBytesForNetwork(b []byte, network string) (*Catalogue, error) {
 	var raw rawCatalogue
 	dec := yaml.NewDecoder(bytes.NewReader(b))
 	dec.KnownFields(true) // reject a misspelled/renamed key instead of silently dropping it
 	if err := dec.Decode(&raw); err != nil {
 		return nil, fmt.Errorf("currency: yaml parse: %w", err)
 	}
+	var entries []rawCurrency
+	if network == sourcenet.Testnet || network == sourcenet.Futurenet {
+		entries = scopeToTestNet(raw.VerifiedCurrencies, network)
+	} else {
+		entries = dropTestNetIssuances(raw.VerifiedCurrencies)
+	}
 
 	cat := &Catalogue{
-		bySlug:           make(map[string]*VerifiedCurrency, len(raw.VerifiedCurrencies)),
-		byTicker:         make(map[string]*VerifiedCurrency, len(raw.VerifiedCurrencies)),
+		bySlug:           make(map[string]*VerifiedCurrency, len(entries)),
+		byTicker:         make(map[string]*VerifiedCurrency, len(entries)),
 		byStellarAssetID: make(map[string]*VerifiedCurrency),
 		byStellarCode:    make(map[string]*VerifiedCurrency),
 		byFiatCode:       make(map[string]*VerifiedCurrency),
 	}
 
-	for i, rc := range raw.VerifiedCurrencies {
+	for i, rc := range entries {
 		if err := cat.append(i, rc); err != nil {
 			return nil, err
 		}
 	}
 	return cat, nil
+}
+
+// dropTestNetIssuances strips every `stellar-<test net>` issuance, leaving the pubnet catalogue.
+func dropTestNetIssuances(entries []rawCurrency) []rawCurrency {
+	out := make([]rawCurrency, len(entries))
+	for i, rc := range entries {
+		kept := make([]rawIssuance, 0, len(rc.Issuance))
+		for _, n := range rc.Issuance {
+			if !strings.HasPrefix(strings.ToLower(n.Network), "stellar-") {
+				kept = append(kept, n)
+			}
+		}
+		if len(rc.Issuance) > 0 {
+			rc.Issuance = kept
+		}
+		out[i] = rc
+	}
+	return out
+}
+
+// scopeToTestNet keeps the entries that exist on a test net, each with that net's issuance relabelled `stellar`.
+func scopeToTestNet(entries []rawCurrency, network string) []rawCurrency {
+	want := "stellar-" + network
+	out := make([]rawCurrency, 0, len(entries))
+	for _, rc := range entries {
+		if len(rc.Issuance) == 0 {
+			out = append(out, rc)
+			continue
+		}
+		var keep *rawIssuance
+		for i := range rc.Issuance {
+			n := rc.Issuance[i]
+			switch {
+			case strings.EqualFold(n.Network, want):
+				keep = &n
+			case keep == nil && strings.EqualFold(n.Network, "stellar") && n.AssetID == nativeAssetID:
+				keep = &n
+			}
+		}
+		if keep == nil {
+			continue
+		}
+		keep.Network = "stellar"
+		rc.Issuance = []rawIssuance{*keep}
+		out = append(out, rc)
+	}
+	return out
 }
 
 // append validates one raw entry, builds the typed *VerifiedCurrency and indexes it.

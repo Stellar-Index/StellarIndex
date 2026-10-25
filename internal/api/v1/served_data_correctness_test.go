@@ -65,21 +65,22 @@ func TestStampListingCollisionsNilCatalogue(t *testing.T) {
 	}
 }
 
-// TestStampListingCollisionsTestNet pins that listing rows on a test net
-// are not stamped against the catalogue's pubnet issuers.
+// TestStampListingCollisionsTestNet pins that a test net stamps look-alikes against its own issuer: Circle's testnet USDC
+// is clean and any other USDC is a collision.
 func TestStampListingCollisionsTestNet(t *testing.T) {
-	cat, err := currency.LoadEmbedded()
+	cat, err := currency.LoadEmbeddedForNetwork("testnet")
 	if err != nil {
-		t.Fatalf("LoadEmbedded: %v", err)
+		t.Fatalf("LoadEmbeddedForNetwork: %v", err)
 	}
-	for _, network := range []string{"testnet", "futurenet"} {
-		s := &Server{Options: Options{VerifiedCurrencies: cat, Network: network}}
-		fakeIss := fakeIssuerStrkey
-		rows := []AssetDetail{{Code: "USDC", Issuer: &fakeIss, Slug: "USDC"}}
-		s.stampListingCollisions(rows)
-		if rows[0].UnverifiedTickerCollision {
-			t.Errorf("%s: USDC row stamped against a pubnet issuer", network)
-		}
+	s := &Server{Options: Options{VerifiedCurrencies: cat, Network: "testnet"}}
+	fakeIss, circleIss := fakeIssuerStrkey, "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+	rows := []AssetDetail{{Code: "USDC", Issuer: &fakeIss, Slug: "USDC"}, {Code: "USDC", Issuer: &circleIss, Slug: "usdc"}}
+	s.stampListingCollisions(rows)
+	if !rows[0].UnverifiedTickerCollision {
+		t.Error("look-alike USDC not stamped on testnet")
+	}
+	if rows[1].UnverifiedTickerCollision {
+		t.Error("Circle's testnet USDC stamped as a collision")
 	}
 }
 
