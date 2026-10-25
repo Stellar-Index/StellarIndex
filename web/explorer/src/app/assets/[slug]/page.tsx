@@ -28,12 +28,10 @@ import {
   shellMetadata,
 } from '@/lib/seo';
 import { sacRedirectHref } from '@/lib/assetRoute';
-import { assetHref } from '@/lib/fiat-slugs';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import { sacAddress } from '@/lib/strkey';
 import {
   Badge,
-  Callout,
   Container,
   PageHeader,
   Table,
@@ -45,6 +43,7 @@ import {
 } from '@/components/ui';
 import { PANEL_LABEL_CLASS } from '@/components/ui/Page';
 import { AssetScamCallout } from './AssetScamCallout';
+import { UnverifiedTickerCallout } from './UnverifiedTickerCallout';
 import { AssetClientFallback } from './AssetClientFallback';
 import { AssetPathView } from './AssetPathView';
 import { SacRedirect } from './SacRedirect';
@@ -1025,33 +1024,10 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
             there, with a broken link to the non-existent "verified" asset.
             Suppress the warning on no-pricing nets. (API-side gate is queued.) */}
         {CURRENT_NETWORK.pricing && detail?.unverified_warning && (
-          <Callout
-            tone="warn"
-            title={
-              <span className="flex flex-wrap items-center gap-2">
-                Unverified {assetSymbol(coin)}
-                <Badge tone="warn">Ticker collision</Badge>
-              </span>
-            }
-          >
-            {detail.unverified_warning.note} The verified asset is available at{' '}
-            <Link
-              href={assetHref(detail.unverified_warning.verified_slug)}
-              className="font-medium underline"
-            >
-              {detail.unverified_warning.verified_name}
-            </Link>
-            {detail.unverified_warning.verified_issuer && (
-              <>
-                {' '}
-                — issued by{' '}
-                <span className="font-medium">
-                  {detail.unverified_warning.verified_issuer}
-                </span>
-              </>
-            )}
-            .
-          </Callout>
+          <UnverifiedTickerCallout
+            symbol={assetSymbol(coin)}
+            warning={detail.unverified_warning}
+          />
         )}
       </header>
 

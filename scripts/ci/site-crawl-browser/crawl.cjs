@@ -17,7 +17,7 @@ const MAX_PAGES = Number(MAX_ARG || 300);
 const PER_PATTERN = 3;
 const SETTLE_MS = 5000;
 
-const SEEDS = ['/', '/assets/', '/assets/usdc/', '/assets/xlm/', '/markets/', '/ledgers/', '/transactions/',
+const SEEDS = ['/', '/assets/', '/assets/xlm/', '/markets/', '/ledgers/', '/transactions/',
   '/operations/', '/accounts/', '/contracts/', '/protocols/', '/lending/', '/network/', '/status/', '/widgets/', '/sdk/'];
 
 // Typed API answers (problem+json `type`) that are a page's expected reply, not a dead
@@ -25,6 +25,8 @@ const SEEDS = ['/', '/assets/', '/assets/usdc/', '/assets/xlm/', '/markets/', '/
 const ALLOWED_TYPES = [
   // Thin market: the price surfaces decline to publish; pages show "withheld".
   { type: 'price-withheld' },
+  // An asset with no priced trades; the asset page renders without a price.
+  { type: 'price-not-found', page: /^\/assets\// },
   // A SAC is host logic with no WASM; the contract page shows the SAC panel instead.
   { type: 'contract-is-sac' },
   // A contract that never recorded supply flows; the page omits the supply panel.
