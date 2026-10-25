@@ -12,12 +12,14 @@ import LendingPage from '@/app/lending/page';
 import HomePage from '@/app/page';
 import ProtocolsPage from '@/app/protocols/page';
 import TransactionsPage from '@/app/transactions/page';
+import { ContractView } from '@/app/contract/ContractView';
 import { MarketsTable } from '@/app/markets/MarketsTable';
 import { ConsoleShell } from '@/components/nav/ConsoleShell';
 
 import { PRELOAD_GLOBAL, PRELOAD_ROUTES, preloadScript } from './manifest';
 
 const G = 'GAQ7XD7LJIRBLW5KTB7TDBDZ4MPYS2OHPELHX7NNP3MVOL22YBA7EPGF';
+const C = 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75';
 const ORIGIN = new URL(API_BASE_URL).origin;
 
 // Every fetch stays pending, so what is captured is exactly the first wave: the
@@ -106,6 +108,13 @@ describe('preload lists match what each page fetches first', () => {
     );
   });
 
+  it('/contracts/{C}', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    expect(await stableFirstWave(<ContractView id={C} />)).toEqual(
+      routeUrls(`/contracts/${C}`, C),
+    );
+  });
+
   it('/accounts/{G}', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     expect(await stableFirstWave(<AccountView id={G} />)).toEqual(
@@ -154,6 +163,12 @@ describe('preloadScript', () => {
 
   it('preloads nothing outside the console shell', () => {
     expect(preloadsAt('/embed/price/native')).toEqual([]);
+  });
+
+  it('preloads only the globals for an invalid contract id', () => {
+    expect(preloadsAt('/contracts/not-a-contract')).toEqual(
+      [...PRELOAD_GLOBAL].sort(),
+    );
   });
 
   it('preloads the globals on a page with no route list', () => {

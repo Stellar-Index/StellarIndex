@@ -6,6 +6,7 @@ import { serializeJsonLd } from '@/lib/seo';
 // the page does not use costs a request, and one it misses costs nothing.
 
 export const ACCOUNT_ID_RE = /^G[A-Z2-7]{55}$/;
+export const CONTRACT_ID_RE = /^C[A-Z2-7]{55}$/;
 
 /** Fetched by the console shell on every page it wraps. */
 export const PRELOAD_GLOBAL = ['/v1/assets/verified', '/v1/status'];
@@ -73,6 +74,11 @@ export const PRELOAD_ROUTES: PreloadRoute[] = [
     urls: [
       '/v1/markets?limit=100&order_by=volume_24h_usd_desc&include=sparkline',
     ],
+  },
+  {
+    path: /^\/contracts\/([^/]+)\/?$/,
+    id: CONTRACT_ID_RE,
+    urls: ['/v1/contracts/{id}/wasm', '/v1/contracts/{id}?limit=50'],
   },
   {
     path: /^\/accounts\/([^/]+)\/?$/,
