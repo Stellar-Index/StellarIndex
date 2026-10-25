@@ -56,12 +56,13 @@ async function visit(ctx, path) {
       }
     }));
   });
-  let status = 0, title = '', hrefs = [], error = null;
+  let status = 0, title = '', heading = '', hrefs = [], error = null;
   try {
     const resp = await page.goto(SITE + path, { waitUntil: 'load', timeout: 30000 });
     status = resp ? resp.status() : 0;
     await page.waitForTimeout(SETTLE_MS);
     title = await page.title();
+    heading = await page.evaluate(() => document.querySelector('main h1, main h2')?.textContent?.trim() || '');
     hrefs = await page.evaluate(() => [...document.querySelectorAll('a[href]')].map((a) => a.getAttribute('href')));
   } catch (e) {
     error = e.message.split('\n')[0].slice(0, 160);
@@ -77,7 +78,8 @@ async function visit(ctx, path) {
       // not a URL
     }
   }
-  return { status, notFound: status === 404 || /^Not found/i.test(title), error, apiErrors, links: [...links] };
+  return { status, // A client-rendered empty state answers HTTP 200, so its heading is the only signal.
+    notFound: status === 404 || /^Not found/i.test(title) || /not found$/i.test(heading), error, apiErrors, links: [...links] };
 }
 
 (async () => {
@@ -101,7 +103,7 @@ async function visit(ctx, path) {
       batch.push(visit(ctx, path).then((r) => {
         if (r.error) failures.push(`${path} (linked from ${from}): ${r.error}`);
         if (r.notFound) failures.push(`${path} (linked from ${from}): renders Not found (HTTP ${r.status})`);
-        for (const e of r.apiErrors) failures.push(`${path}: API ${e}`);
+        for (const e of r.apiErrors) failures.push(`${path} (linked from ${from}): API ${e}`);
         for (const l of r.links) if (!seen.has(l)) queue.push([l, path]);
       }));
     }
