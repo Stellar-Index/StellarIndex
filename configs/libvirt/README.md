@@ -78,6 +78,14 @@ explicit futurenet captive config; see the inventory's TODOs).
   `/64` ::2). Keep the `api.*` records **DNS-only** on Cloudflare (its proxy
   breaks SSE streams).
 
+## 7. NIC hang watchdog
+The onboard Intel e1000e NIC can wedge ("Detected Hardware Unit Hang") and take
+the host off the network while it keeps running. [setup-host-nic.sh](./setup-host-nic.sh)
+persists the TSO/GSO-off workaround and installs
+[host-nic-watchdog.sh](./host-nic-watchdog.sh) on a 1-minute timer: it bounces
+the interface after 3 minutes without the default gateway and reboots after 10
+(at most once an hour). `journalctl -u si-nic-watchdog` shows what it did.
+
 ## What is NOT auto-provisioned (deliberate)
 - Ordering the box + activating Rescue (Hetzner Robot — manual/API).
 - Installing Caddy on the host (one-liner; config is shipped here).
