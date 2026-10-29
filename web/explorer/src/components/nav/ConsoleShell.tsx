@@ -8,7 +8,6 @@ import { StellarMark } from '@/components/StellarMark';
 
 import { useDialog } from '@/lib/useDialog';
 
-import { DegradedBanner } from './DegradedBanner';
 import { Footer } from './Footer';
 import { Sidebar, SidebarNav } from './Sidebar';
 
@@ -79,7 +78,6 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
           </button>
         </div>
 
-        <DegradedBanner />
         <main id="main" className="flex-1">
           {children}
         </main>
