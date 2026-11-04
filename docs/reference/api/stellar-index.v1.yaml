@@ -6059,7 +6059,14 @@ paths:
                                   type: integer
                                   format: int64
                                   description: Lake-axis watermark (substrate ∧ recognition), NOT gated by projection.
-                                tip_ledger: { type: integer, format: int64 }
+                                tip_ledger:
+                                  type: integer
+                                  format: int64
+                                  description: >-
+                                    Network tip when the coverage audit computed this verdict (see
+                                    `computed_at`), NOT the live tip. It trails the chain by up to one
+                                    audit period; `flags.stale` turns true once it trails too far. The
+                                    live tip is the newest row of `GET /v1/ledgers`.
                                 projection_verified_from:
                                   type: integer
                                   format: int64
@@ -6173,7 +6180,10 @@ paths:
                                 type: integer
                                 format: int64
                                 description: The audit's floor — the start of the Soroban era, before which no contract events existed.
-                              tip_ledger: { type: integer, format: int64 }
+                              tip_ledger:
+                                type: integer
+                                format: int64
+                                description: Network tip when this audit ran (see `computed_at`), NOT the live tip.
                               meaning:
                                 type: string
                                 description: >-
