@@ -19453,7 +19453,10 @@ export interface operations {
                                  * @description Lake-axis watermark (substrate ∧ recognition), NOT gated by projection.
                                  */
                                 watermark_ledger: number;
-                                /** Format: int64 */
+                                /**
+                                 * Format: int64
+                                 * @description Network tip when the coverage audit computed this verdict (see `computed_at`), NOT the live tip. It trails the chain by up to one audit period; `flags.stale` turns true once it trails too far. The live tip is the newest row of `GET /v1/ledgers`.
+                                 */
                                 tip_ledger: number;
                                 /**
                                  * Format: int64
@@ -19554,7 +19557,10 @@ export interface operations {
                                  * @description The audit's floor — the start of the Soroban era, before which no contract events existed.
                                  */
                                 scanned_from_ledger: number;
-                                /** Format: int64 */
+                                /**
+                                 * Format: int64
+                                 * @description Network tip when this audit ran (see `computed_at`), NOT the live tip.
+                                 */
                                 tip_ledger: number;
                                 /** @description Plain-language statement of what this axis is and is not, served on the wire rather than only here: a consumer charting this JSON never reads the spec, and the number is easy to mistake for a data gap. */
                                 meaning: string;
