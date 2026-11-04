@@ -27,7 +27,14 @@ pass=0
 fail=0
 ok()  { printf '  ok   %s\n' "$1"; pass=$((pass + 1)); }
 bad() { printf '  FAIL %s\n' "$1"; fail=$((fail + 1)); }
-check() { if eval "$1"; then ok "$2"; else bad "$2"; sed 's/^/       /' "$LOG" "$OUT" 2>/dev/null | tail -20; fi; }
+check() {
+  if eval "$1"; then ok "$2"; return; fi
+  bad "$2"
+  sed 's/^/       /' "$LOG" "$OUT" 2>/dev/null | tail -20
+  # The ops calls and the done-windows state are what most checks assert on.
+  printf '       ops calls:\n'; sed 's/^/         /' "$OPSL" 2>/dev/null
+  printf '       windows.txt:\n'; sed 's/^/         /' "$SD/windows.txt" 2>/dev/null
+}
 
 mkdir -p "$TMP/bin"
 cat > "$TMP/bin/df" <<'STUB'
