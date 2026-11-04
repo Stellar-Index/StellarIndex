@@ -83,14 +83,17 @@ mkdir -p "$SDIR" || die "cannot create state dir $SDIR"
 # One run per state dir (a second doubles worker memory). A lock whose holder
 # is gone (kill -9) is taken over so a resume needs no hand cleanup.
 LOCK="$SDIR/lock"
-if ! mkdir "$LOCK" 2>/dev/null; then
+# noclobber makes bash create with O_EXCL, atomic in the kernel. mkdir is not:
+# uutils coreutils (Ubuntu 26.04) lets two racing mkdirs of one path both succeed.
+excl() { ( set -C; echo "$$" > "$1" ) 2>/dev/null; }
+mkdir -p "$LOCK" || die "cannot create $LOCK"
+if ! excl "$LOCK/pid"; then
   holder="$(cat "$LOCK/pid" 2>/dev/null)"
   if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; then
     die "another run (pid $holder) holds $SDIR"
   fi
-  rm -rf "$LOCK"; mkdir "$LOCK" || die "cannot take lock $LOCK"
+  rm -rf "$LOCK"; mkdir -p "$LOCK"; excl "$LOCK/pid" || die "cannot take lock $LOCK"
 fi
-echo "$$" > "$LOCK/pid"
 trap 'rm -rf "$LOCK"' EXIT
 
 if [ -s "$SDIR/to" ]; then
@@ -114,14 +117,14 @@ WINDOWS=()
 for (( w=FROM; w<=TO; w+=WINDOW )); do WINDOWS=("$w" ${WINDOWS[@]+"${WINDOWS[@]}"}); done
 CLAIMS="$LOCK/claims"; mkdir -p "$CLAIMS"
 
-# worker: claim the next undone window (mkdir is the atomic claim) until the
+# worker: claim the next undone window (excl is the atomic claim) until the
 # queue is empty or another worker has failed.
 worker() {
   local w wto rc
   for w in "${WINDOWS[@]}"; do
     [ -e "$LOCK/failed" ] && return 0
     grep -qx "$w" "$WSTATE" && continue
-    mkdir "$CLAIMS/$w" 2>/dev/null || continue
+    excl "$CLAIMS/$w" || continue
     wto=$((w + WINDOW - 1)); [ "$wto" -gt "$TO" ] && wto=$TO
     PHASED_LOG="$LOG" PHASED_OPS="$OPS" bash "$HERE/phaseD-range.sh" "$w" "$wto" "$WSTATE" "$PAR" || {
       rc=$?
