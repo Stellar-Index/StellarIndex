@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, type ReactNode } from 'react';
 
 import { useMe, type MeResponse } from '@/api/hooks';
+import { sessionHintPresent } from '@/api/sessionHint';
 import {
   Button,
   Container,
@@ -11,6 +12,7 @@ import {
   Section,
   Skeleton,
 } from '@/components/ui';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 // AccountGate is the client auth gate for every /dashboard/* page. It
 // reuses `useMe()` — the same cookie-authed `/v1/account/me` probe the
@@ -62,10 +64,14 @@ export function AccountGate({
     // on error would sign a legitimately-authenticated visitor out just
     // because the API was momentarily unreachable, so isError is
     // excluded here and handled as its own terminal state below.
-    if (!me.isLoading && !me.isError && !signedIn) {
+    // The hydration render reads the hint as absent even when the cookie is
+    // set, so a disabled probe alone can't mean signed out: check the jar.
+    const probeStarting =
+      me.data === undefined && CURRENT_NETWORK.accounts && sessionHintPresent();
+    if (!me.isLoading && !me.isError && !signedIn && !probeStarting) {
       router.replace('/signin');
     }
-  }, [me.isLoading, me.isError, signedIn, router]);
+  }, [me.isLoading, me.isError, me.data, signedIn, router]);
 
   if (me.isLoading) {
     return <AccountGateSkeleton />;
