@@ -84,8 +84,8 @@ vault (same class as `STELLARINDEX_LOAD_API_KEY` for the k6 weekly) and
 set it before enabling the timer. It is sent as
 `Authorization: Bearer <key>`, never on the unit's command line.
 
-The key does not lift the limit where `[api].key_rate_limit_per_min`
-equals the anonymous one (R1: both 6,000). The binary's `-max-rps`
+The key still has a limit: `[api].key_rate_limit_per_min` (R1: 6,000,
+against 1,000 anonymous). The binary's `-max-rps`
 pacing (default 100 req/s, shared by all workers; the wrapper does not
 pass it) keeps a 30 s run at 3,000 requests, half the budget, leaving
 room for the smoke runner. `-max-rps 0` removes the cap; unpaced, a 30 s

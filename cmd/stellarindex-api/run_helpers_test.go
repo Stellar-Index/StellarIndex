@@ -538,14 +538,14 @@ func TestSessionPeekerAdapter_ServesEnforcedDefaultKeyLimits(t *testing.T) {
 		wantQuota int64
 	}{
 		{
-			"partner comped to 5000/min",
-			platform.Account{Tier: platform.TierPartner, RateLimitPerMinOverride: 5000, MonthlyRequestQuotaOverride: 200_000},
-			5000, 200_000,
+			"partner comped to 8000/min",
+			platform.Account{Tier: platform.TierPartner, RateLimitPerMinOverride: 8000, MonthlyRequestQuotaOverride: 200_000},
+			8000, 200_000,
 		},
 		{
 			"partner without overrides",
 			platform.Account{Tier: platform.TierPartner},
-			1000, platform.TierPartner.MaxMonthlyQuota(),
+			6000, platform.TierPartner.MaxMonthlyQuota(),
 		},
 	}
 	for _, tc := range cases {

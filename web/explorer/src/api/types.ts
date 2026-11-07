@@ -21840,7 +21840,7 @@ export interface operations {
                      *         "key_id": "kid_8f3a2c1b9e7d4f6a",
                      *         "label": "production-api-1",
                      *         "tier": "apikey",
-                     *         "rate_limit_per_min": 1000,
+                     *         "rate_limit_per_min": 6000,
                      *         "created_at": "2026-04-12T09:32:18Z"
                      *       },
                      *       "as_of": "2026-05-05T16:25:42.881Z",
@@ -22683,7 +22683,7 @@ export interface operations {
                      *         "key_prefix": "sip_4f9c1d8b",
                      *         "tier": "free",
                      *         "limits": {
-                     *           "rate_limit_per_min": 1000,
+                     *           "rate_limit_per_min": 6000,
                      *           "monthly_quota": 1000000,
                      *           "max_active_keys": 25,
                      *           "max_webhooks": 10,

@@ -486,14 +486,14 @@ func TestAdminAccountView_EffectiveLimits(t *testing.T) {
 	}{
 		{
 			name:      "partner comped below the tier ceiling",
-			acct:      platform.Account{Tier: platform.TierPartner, RateLimitPerMinOverride: 5000, MonthlyRequestQuotaOverride: 200_000},
-			wantRate:  5000,    // a default-minted key (1000) raised to the override floor
+			acct:      platform.Account{Tier: platform.TierPartner, RateLimitPerMinOverride: 8000, MonthlyRequestQuotaOverride: 200_000},
+			wantRate:  8000,    // a default-minted key (6000) raised to the override floor
 			wantQuota: 200_000, // a default-minted key stores 0 and inherits the override
 		},
 		{
 			name:      "partner, no overrides: not the 100k ceiling",
 			acct:      platform.Account{Tier: platform.TierPartner},
-			wantRate:  1000,
+			wantRate:  6000,
 			wantQuota: 1_000_000_000,
 		},
 		{
@@ -505,7 +505,7 @@ func TestAdminAccountView_EffectiveLimits(t *testing.T) {
 		{
 			name:      "no override: the default key's budgets",
 			acct:      platform.Account{Tier: platform.TierFree},
-			wantRate:  1000,
+			wantRate:  6000,
 			wantQuota: 1_000_000,
 		},
 	}

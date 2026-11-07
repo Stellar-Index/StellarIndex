@@ -147,7 +147,7 @@ caller's own keys.
 | Tier | Hosted `api.stellarindex.io` | Self-hosted default |
 |---|---|---|
 | Anonymous (per IP) | 1 000 / min | 60 / min (`[api].anon_rate_limit_per_min`) |
-| Free key (per key) | 6 000 / min (stamped at mint) | 1 000 / min (`[api].key_rate_limit_per_min`) |
+| Free key (per key) | 6 000 / min (stamped at mint) | 6 000 / min (stamped at mint) |
 | Partner (per key) | staff-set, up to 100 000 / min | — |
 
 On the hosted deployment a free key has six times an anonymous IP's

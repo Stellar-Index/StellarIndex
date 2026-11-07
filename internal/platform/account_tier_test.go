@@ -119,6 +119,7 @@ func TestAccountEffectiveRateLimitPerMin(t *testing.T) {
 		{"free, no override", TierFree, 0, 6000},
 		{"partner, no override: the default key's 6000, not the 100k ceiling", TierPartner, 0, 6000},
 		{"partner comped to 8000: the override", TierPartner, 8000, 8000},
+		{"override under the key default: the default", TierPartner, 5000, 6000},
 		{"free, override above tier default: raised to the override", TierFree, 50_000, 50_000},
 		{"override below the default key budget cannot lower it", TierFree, 500, 6000},
 	}
