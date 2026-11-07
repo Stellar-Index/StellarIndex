@@ -258,7 +258,7 @@ func TestAccountMe_Authenticated(t *testing.T) {
 func TestAccountMe_SessionEffectiveLimits(t *testing.T) {
 	acct := platform.Account{
 		Tier:                        platform.TierPartner,
-		RateLimitPerMinOverride:     5000,
+		RateLimitPerMinOverride:     8000,
 		MonthlyRequestQuotaOverride: 200_000,
 	}
 	srv := v1.New(v1.Options{
@@ -279,8 +279,8 @@ func TestAccountMe_SessionEffectiveLimits(t *testing.T) {
 	if got.AccountInfo == nil {
 		t.Fatal("AccountInfo is nil")
 	}
-	if got.AccountInfo.RateLimitPerMin != 5000 {
-		t.Errorf("AccountInfo.RateLimitPerMin = %d, want 5000 (the comped override; 100000 is the tier ceiling)", got.AccountInfo.RateLimitPerMin)
+	if got.AccountInfo.RateLimitPerMin != 8000 {
+		t.Errorf("AccountInfo.RateLimitPerMin = %d, want 8000 (the comped override; 100000 is the tier ceiling)", got.AccountInfo.RateLimitPerMin)
 	}
 	if got.AccountInfo.MonthlyRequestQuota != 200_000 {
 		t.Errorf("AccountInfo.MonthlyRequestQuota = %d, want 200000", got.AccountInfo.MonthlyRequestQuota)

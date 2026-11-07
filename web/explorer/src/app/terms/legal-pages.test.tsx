@@ -68,9 +68,9 @@ describe('legal pages', () => {
         OFFICE,
         // Both budgets are keyed on the account (middleware.authenticatedRateLimitKey,
         // UsageKeyForSubject; platform.Tier.MaxMonthlyQuota = 1,000,000 for free).
-        /All keys on an account share one rate limit \(currently 1,000 requests per minute\) and one monthly request quota \(currently 1,000,000 requests\)/,
+        /All keys on an account share one rate limit \(currently 6,000 requests per minute\) and one monthly request quota \(currently 1,000,000 requests\)/,
         // Anonymous limit: stellarindex.toml.j2 anon_rate_limit_per_min, /64 keying.
-        /6,000 requests per minute; IPv6 callers share one limit per \/64 block/,
+        /1,000 requests per minute; IPv6 callers share one limit per \/64 block/,
         // Venue feeds: no "tier-restricted or paid feeds" claim — nothing enforces it.
         /check them before redistributing \/v1\/observations data/,
         // Erasure needs the slug typed back (dashboardauth/account.go).

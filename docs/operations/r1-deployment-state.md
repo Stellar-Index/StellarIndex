@@ -146,8 +146,8 @@ rules sit on `absent_over_time`.
    migrate, sla-probe}.
 4. **Auth.** r1 runs `[api].auth_mode = "apikey_optional"` in
    `/etc/stellarindex.toml`: `POST /v1/signup {"email": "..."}` returns a
-   Starter key (1000 req/min) for `Authorization: Bearer <key>`; anonymous
-   keeps 60/min; invalid key -> 401. Pro/Business needs `stellarindex-ops
+   free key (6000 req/min) for `Authorization: Bearer <key>`; anonymous
+   keeps 1000/min; invalid key -> 401. Pro/Business needs `stellarindex-ops
    mint-key -rate-limit-per-min`.
 5. **`galexie-archive` trails `galexie-live`.** `galexie-archive-fill.timer`
    extends it hourly; its tip is the `galexie_archive_tip_ledger` metric.

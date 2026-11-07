@@ -77,15 +77,15 @@ each repeats the chart, price and oracle-latest probes for that pair.
 ### Why an API key is required
 
 Without `STELLARINDEX_PROBE_API_KEY`, the probe hits
-`[api].anon_rate_limit_per_min` (shipped default 60/min; R1 sets 6,000),
+`[api].anon_rate_limit_per_min` (shipped default 60/min; R1 sets 1,000),
 every non-`/healthz` endpoint reads as unavailable, and the verdict fails
 for reasons unrelated to the SLA. Mint a load-test key from the operator
 vault (same class as `STELLARINDEX_LOAD_API_KEY` for the k6 weekly) and
 set it before enabling the timer. It is sent as
 `Authorization: Bearer <key>`, never on the unit's command line.
 
-The key does not lift the limit where `[api].key_rate_limit_per_min`
-equals the anonymous one (R1: both 6,000). The binary's `-max-rps`
+The key still has a limit: `[api].key_rate_limit_per_min` (R1: 6,000,
+against 1,000 anonymous). The binary's `-max-rps`
 pacing (default 100 req/s, shared by all workers; the wrapper does not
 pass it) keeps a 30 s run at 3,000 requests, half the budget, leaving
 room for the smoke runner. `-max-rps 0` removes the cap; unpaced, a 30 s

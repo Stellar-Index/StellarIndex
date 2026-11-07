@@ -74,10 +74,10 @@ export function titleCase(s: string | null | undefined): string {
 // legacy tier strings are kept here folded to their canonical rung in
 // case an older API still serves them.
 const TIER_RATE_CEILING: Record<string, number> = {
-  free: 1000,
+  free: 6000,
   partner: 100000,
   // Legacy names → canonical rungs (starter≡free; pro/business/enterprise≡partner).
-  starter: 1000,
+  starter: 6000,
   pro: 100000,
   business: 100000,
   enterprise: 100000,

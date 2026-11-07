@@ -87,10 +87,10 @@ export default function HomePage() {
             >
               <Badge tone="brand">VWAP, TWAP, OHLC over REST + SSE</Badge>
               <Badge>
-                Anonymous reads free: 6,000 requests a minute per IP
+                Anonymous reads free: 1,000 requests a minute per IP
               </Badge>
               <Badge>
-                API key: per-key budget of 1,000 a minute, higher for partners
+                API key: per-key budget of 6,000 a minute, higher for partners
               </Badge>
             </p>
             <div className="flex flex-wrap items-center gap-3 pt-1">

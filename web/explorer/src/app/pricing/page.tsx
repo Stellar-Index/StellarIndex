@@ -13,7 +13,7 @@ import {
 export const metadata: Metadata = {
   title: 'Pricing — free access, quotas, SLAs',
   description:
-    'Stellar Index is free. Anonymous public reads at 6,000 req/min per IP, plus free registered accounts for per-account attribution and usage analytics — no payments, no card. Need more per-account throughput? Talk to us about a partner limit.',
+    'Stellar Index is free. Anonymous public reads at 1,000 req/min per IP, plus free registered accounts for per-account attribution and usage analytics — no payments, no card. Need more per-account throughput? Talk to us about a partner limit.',
   alternates: { canonical: '/pricing' },
 };
 
@@ -34,7 +34,7 @@ const TIERS: Tier[] = [
     name: 'Anonymous',
     price: '$0',
     priceSubtitle: 'forever',
-    rateLimit: '6,000 req/min per IP',
+    rateLimit: '1,000 req/min per IP',
     cta: { label: 'Read the docs', href: 'https://docs.stellarindex.io' },
     description:
       'Anonymous public reads. Same data as every tier, just rate-limited per IP. Perfect for prototyping, low-traffic embeds, and read-only integrations.',
@@ -42,7 +42,7 @@ const TIERS: Tier[] = [
       'Every public endpoint',
       'No signup, no API key, no auth',
       'Same VWAP / freshness as every tier',
-      '6,000 requests / minute per source IP',
+      '1,000 requests / minute per source IP',
     ],
     notFeatures: [
       'Per-account attribution',
@@ -54,14 +54,14 @@ const TIERS: Tier[] = [
     name: 'Free account',
     price: '$0',
     priceSubtitle: 'self-service',
-    rateLimit: '1,000 req/min per account',
+    rateLimit: '6,000 req/min per account',
     cta: { label: 'Create account', href: '/signup' },
     description:
       'Register in one curl (POST /v1/register) or sign in with magic-link, mint an API key, get per-account usage analytics and a budget that is yours rather than shared with every client on your IP. Designed for builders and agents shipping to customers.',
     highlight: true,
     features: [
       'Every public endpoint, same data',
-      '1,000 requests / minute per account, shared by all its keys (a separate budget, not a raise)',
+      '6,000 requests / minute per account, shared by all its keys',
       'One-curl onboarding: POST /v1/register',
       'Per-account usage history (30d)',
       'Mint & rotate keys at /account',
@@ -94,7 +94,7 @@ export default function PricingPage() {
               Need a bigger per-account budget?
             </h2>
             <p className="text-ink-muted max-w-2xl text-sm">
-              A free key is stamped at 1,000 req/min. Wallets, exchanges, and
+              A free key is stamped at 6,000 req/min. Wallets, exchanges, and
               redistributors that need more get a staff-set partner limit —
               there is nothing to buy. Email us with your use-case and scale and
               we&apos;ll raise your key&apos;s limit.

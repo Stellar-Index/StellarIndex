@@ -2919,7 +2919,7 @@ Apache License
    limitations under the License.
 
 ------------------------------------------------------------------------
-github.com/andybalholm/brotli v1.2.6
+github.com/andybalholm/brotli v1.2.7
 License: see text
 
 Copyright (c) 2009, 2010, 2013-2016 by the Brotli Authors.
@@ -11752,7 +11752,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 ------------------------------------------------------------------------
-github.com/klauspost/compress v1.20.1
+github.com/klauspost/compress v1.20.2
 License: see text
 
 Copyright (c) 2012 The Go Authors. All rights reserved.

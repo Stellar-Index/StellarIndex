@@ -547,7 +547,7 @@ func TestAdminAccountOverrides_TierLoweringClampsKeyBudgets(t *testing.T) {
 		t.Fatalf("status = %d, want 200; body=%s", resp.StatusCode, body)
 	}
 
-	const freeCeiling = 1000 // platform.TierFree.MaxRateLimitPerMin()
+	const freeCeiling = 6000 // platform.TierFree.MaxRateLimitPerMin()
 	if got := platform.TierFree.MaxRateLimitPerMin(); got != freeCeiling {
 		t.Fatalf("tier ladder moved: TierFree.MaxRateLimitPerMin() = %d, want %d", got, freeCeiling)
 	}
