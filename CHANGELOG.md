@@ -20,6 +20,24 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.116.51] - 2026-11-07
+
+No migrations. No `pkg/*` break. Config: `[api].anon_rate_limit_per_min` is 1000 in the r1 template, already applied on r1. No replay.
+
+### Changed
+
+- **api:** the hosted anonymous limit is 1000/min per IP, and new free keys and the free tier ceiling are 6000/min. Keys already minted keep their stamped limit. The key form, pricing, terms, signup, contact, docs and landing pages state the new limits.
+
+### Fixed
+
+- **explorer:** a signed-in visitor who opens `/dashboard` directly stays there instead of being sent to `/signin`.
+- **explorer:** the degraded banner no longer renders in the app shell, and `/contracts/{C}` preloads its first API calls.
+- **ops:** `rederive-from` takes its lock and claims atomically, so concurrent runs cannot race on Ubuntu 26.04.
+
+### Security
+
+- **deps:** `klauspost/compress` 1.20.2 (GO-2026-6865) and `andybalholm/brotli` 1.2.7 (GO-2026-6888).
+
 ## [v0.116.50] - 2026-10-25
 
 No migrations. No `pkg/*` break. No config change. Run `stellarindex-ops projector-replay -source chainlink-stellar -from 65079956` after the deploy to re-key the three USPC NAV oracle rows.
@@ -70,15 +88,3 @@ No migrations. No `pkg/*` break. No config change.
 
 - **tests:** guardscan scanner fixtures build in a temp module (#3765).
 - **docs:** config-assertion, incident and six operator docs re-verified; two dead multi-region docs deleted (#3763, #3764).
-
-## [v0.116.46] - 2026-10-21
-
-No migrations. No `pkg/*` break. No config change.
-
-### Fixed
-
-- **api:** after startup the API warms every asset detail on the top-500 listing once, so the explorer build's first pass after a deploy no longer reads cold and burns the latency SLO (#3759).
-
-### Changed
-
-- **docs:** archival-node bring-up, Hubble event counts and nine WASM audits re-verified against the code and r1 (#3757, #3760).
