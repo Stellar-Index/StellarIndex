@@ -60,7 +60,7 @@ curl -X POST https://api.stellarindex.io/v1/register \
 | Tier | Who | Rate limit | Monthly quota |
 |---|---|---|---|
 | `anon` | no key at all | 6,000 req/min per IP on the hosted API (60/min is the self-hosted default) | — |
-| `free` | anyone who registers (this page) | 1,000 req/min per key, stamped at mint | 1M req/month |
+| `free` | anyone who registers (this page) | 6,000 req/min per key, stamped at mint | 1M req/month |
 | `partner` | staff-set per-account limits — [contact us](mailto:hello@stellarindex.io) | up to 100,000 req/min | negotiated |
 
 Everything is free; `partner` is not a paid plan, it's an operator

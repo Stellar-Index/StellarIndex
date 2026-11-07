@@ -34,7 +34,8 @@
 #                             projects (mainnet renamed from
 #                             stellarindex-showcase)
 #   - CLOUDFLARE_ACCOUNT_ID — the CF account UUID
-#   - EXPLORER_BUILD_API_KEY — optional mainnet API key for the prerender
+#   - EXPLORER_BUILD_API_KEY — optional mainnet API key for the prerender;
+#                               identifier explorer-build, 100000 req/min
 #                               (sent to the mainnet API only)
 
 name: explorer-deploy

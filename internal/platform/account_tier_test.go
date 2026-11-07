@@ -78,15 +78,15 @@ func TestTierLadders(t *testing.T) {
 	}
 	rows := []row{
 		{TierAnon, 60, 0, 0, 0, 0},
-		{TierFree, 1000, 25, 1_000_000, 10, 25},
+		{TierFree, 6000, 25, 1_000_000, 10, 25},
 		{TierPartner, 100_000, 250, 1_000_000_000, 100, 1000},
 		// Legacy mapping: starter ≡ free, pro/business/enterprise ≡ partner.
-		{TierStarter, 1000, 25, 1_000_000, 10, 25},
+		{TierStarter, 6000, 25, 1_000_000, 10, 25},
 		{TierPro, 100_000, 250, 1_000_000_000, 100, 1000},
 		{TierBusiness, 100_000, 250, 1_000_000_000, 100, 1000},
 		{TierEnterprise, 100_000, 250, 1_000_000_000, 100, 1000},
 		// Corrupt rows fail closed to free.
-		{Tier("corrupt"), 1000, 25, 1_000_000, 10, 25},
+		{Tier("corrupt"), 6000, 25, 1_000_000, 10, 25},
 	}
 	for _, r := range rows {
 		if got := r.tier.MaxRateLimitPerMin(); got != r.rate {
@@ -116,11 +116,11 @@ func TestAccountEffectiveRateLimitPerMin(t *testing.T) {
 		override int
 		want     int
 	}{
-		{"free, no override", TierFree, 0, 1000},
-		{"partner, no override: the default key's 1000, not the 100k ceiling", TierPartner, 0, 1000},
-		{"partner comped to 5000: the override", TierPartner, 5000, 5000},
+		{"free, no override", TierFree, 0, 6000},
+		{"partner, no override: the default key's 6000, not the 100k ceiling", TierPartner, 0, 6000},
+		{"partner comped to 8000: the override", TierPartner, 8000, 8000},
 		{"free, override above tier default: raised to the override", TierFree, 50_000, 50_000},
-		{"override below the default key budget cannot lower it", TierFree, 500, 1000},
+		{"override below the default key budget cannot lower it", TierFree, 500, 6000},
 	}
 	for _, c := range cases {
 		a := Account{Tier: c.tier, RateLimitPerMinOverride: c.override}

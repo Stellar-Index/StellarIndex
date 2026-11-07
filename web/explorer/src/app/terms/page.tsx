@@ -29,9 +29,12 @@ export const metadata: Metadata = {
   alternates: { canonical: '/terms' },
 };
 
-const LAST_UPDATED = '2026-09-30';
+const LAST_UPDATED = '2026-11-07';
 
-const POLICY_HISTORY = [{ date: '2026-09-30', note: 'first published' }];
+const POLICY_HISTORY = [
+  { date: '2026-09-30', note: 'first published' },
+  { date: '2026-11-07', note: 'rate limits updated' },
+];
 
 export default function TermsPage() {
   return (
@@ -116,15 +119,15 @@ export default function TermsPage() {
               // Production enforces anon_rate_limit_per_min = 6000 (ansible
               // stellarindex.toml.j2); the code default is 60. IPv6 is keyed
               // on the /64 prefix (ratelimit.go remoteIPPrefixFor).
-              def: 'Every public endpoint may be read without an account or key, rate-limited per IP address (currently 6,000 requests per minute; IPv6 callers share one limit per /64 block).',
+              def: 'Every public endpoint may be read without an account or key, rate-limited per IP address (currently 1,000 requests per minute; IPv6 callers share one limit per /64 block).',
             },
             {
               term: 'Free account',
               // Both budgets are keyed on the ACCOUNT (authenticatedRateLimitKey
               // and UsageKeyForSubject derive "acct:<slug>"), so every key an
-              // account holds draws on one 1,000/min bucket and one monthly
+              // account holds draws on one 6,000/min bucket and one monthly
               // quota (Tier.MaxMonthlyQuota: 1,000,000 for free).
-              def: 'An account (created by magic-link sign-in, or by POST /v1/register, which also issues a first key) lets you mint API keys and see usage analytics. All keys on an account share one rate limit (currently 1,000 requests per minute) and one monthly request quota (currently 1,000,000 requests); minting more keys does not multiply either.',
+              def: 'An account (created by magic-link sign-in, or by POST /v1/register, which also issues a first key) lets you mint API keys and see usage analytics. All keys on an account share one rate limit (currently 6,000 requests per minute) and one monthly request quota (currently 1,000,000 requests); minting more keys does not multiply either.',
             },
             {
               term: 'Partner',

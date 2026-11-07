@@ -399,7 +399,7 @@ status_services = [{{ '"indexer", "aggregator"' if run_aggregator | default(true
 # Defaults 60 (anon) / 1000 (key). The explorer prerender fetches from one
 # IP with its build key (EXPLORER_BUILD_API_KEY), so the key tier carries
 # the build and anon stays well under it.
-anon_rate_limit_per_min = 600
+anon_rate_limit_per_min = 1000
 key_rate_limit_per_min = 6000
 
 # In-site dashboard (magic-link login). cookie_domain scopes only the

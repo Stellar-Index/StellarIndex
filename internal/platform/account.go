@@ -61,7 +61,7 @@ func (t Tier) StorageValue() string {
 	return string(TierFree)
 }
 
-// MaxRateLimitPerMin returns the per-tier ceiling (anon 60, free 1000, partner 100_000) on a dashboard-minted key's `rate_limit_per_min`; the staff-set account override is the real partner limit.
+// MaxRateLimitPerMin returns the per-tier ceiling (anon 60, free 6000, partner 100_000) on a dashboard-minted key's `rate_limit_per_min`; the staff-set account override is the real partner limit.
 func (t Tier) MaxRateLimitPerMin() int {
 	switch t.Canonical() {
 	case TierAnon:
@@ -69,7 +69,7 @@ func (t Tier) MaxRateLimitPerMin() int {
 	case TierPartner:
 		return 100_000
 	default: // TierFree + any unknown value
-		return 1000
+		return 6000
 	}
 }
 
@@ -153,7 +153,7 @@ type Account struct {
 }
 
 // DashboardKeyDefaultRateLimitPerMin is the rate_limit_per_min a dashboard-minted key gets when the request leaves it unset.
-const DashboardKeyDefaultRateLimitPerMin = 1000
+const DashboardKeyDefaultRateLimitPerMin = 6000
 
 // ResolveKeyRateLimitPerMin is the per-minute limit auth enforces for one of the account's keys: the account override is a FLOOR over the key's own budget.
 func (a Account) ResolveKeyRateLimitPerMin(keyRate int) int {

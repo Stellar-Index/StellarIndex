@@ -53,7 +53,7 @@ func newTestRig(t *testing.T) (*Handlers, *fakeKeyStore, dashboardauth.SessionCo
 		Account: platform.Account{
 			ID:   uuid.New(),
 			Slug: "example",
-			// Default test account uses Starter tier (1000/min ceiling)
+			// Default test account uses Starter tier (6000/min ceiling)
 			// so legacy tests that supply RateLimitPerMin: 1000 don't
 			// silently get clamped to the free-tier cap. Tier-
 			// clamp regressions get their own test below.
@@ -163,11 +163,11 @@ func TestHandleCreate_TierClampsRateLimit(t *testing.T) {
 		requested int
 		wantCap   int
 	}{
-		{"free clamps 100k to 1000", platform.TierFree, 100_000, 1000},
-		{"free clamps 10000 to 1000", platform.TierFree, 10_000, 1000},
+		{"free clamps 100k to 6000", platform.TierFree, 100_000, 6000},
+		{"free clamps 10000 to 6000", platform.TierFree, 10_000, 6000},
 		{"free passes 1000", platform.TierFree, 1000, 1000},
 		{"partner passes 100k", platform.TierPartner, 100_000, 100_000},
-		{"legacy starter maps to free: clamps 10000 to 1000", platform.TierStarter, 10_000, 1000},
+		{"legacy starter maps to free: clamps 10000 to 6000", platform.TierStarter, 10_000, 6000},
 		{"legacy pro maps to partner: passes 100k", platform.TierPro, 100_000, 100_000},
 		{"legacy business maps to partner: passes 60k", platform.TierBusiness, 60_000, 60_000},
 		{"legacy enterprise maps to partner: passes 100k", platform.TierEnterprise, 100_000, 100_000},
@@ -248,7 +248,7 @@ func TestHandleCreate_ClampsMonthlyQuota(t *testing.T) {
 
 // TestDefaultMintedKey_MatchesAccountEffectiveLimits locks the effective limits served on
 // /v1/account/me and the staff views to what auth enforces on a key minted with limits unset:
-// both must equal the expected value. A partner comped to 5,000/min must read 5,000, not the
+// both must equal the expected value. A partner comped to 8,000/min must read 8,000, not the
 // 100,000 tier ceiling.
 func TestDefaultMintedKey_MatchesAccountEffectiveLimits(t *testing.T) {
 	cases := []struct {
@@ -259,9 +259,9 @@ func TestDefaultMintedKey_MatchesAccountEffectiveLimits(t *testing.T) {
 		wantRate  int
 		wantQuota int64
 	}{
-		{"partner comped to 5000/min", platform.TierPartner, 5000, 200_000, 5000, 200_000},
-		{"partner, no overrides", platform.TierPartner, 0, 0, 1000, platform.TierPartner.MaxMonthlyQuota()},
-		{"free, no overrides", platform.TierFree, 0, 0, 1000, platform.TierFree.MaxMonthlyQuota()},
+		{"partner comped to 8000/min", platform.TierPartner, 8000, 200_000, 8000, 200_000},
+		{"partner, no overrides", platform.TierPartner, 0, 0, 6000, platform.TierPartner.MaxMonthlyQuota()},
+		{"free, no overrides", platform.TierFree, 0, 0, 6000, platform.TierFree.MaxMonthlyQuota()},
 		{"free raised above its tier", platform.TierFree, 50_000, 5_000_000, 50_000, 5_000_000},
 	}
 	for _, tc := range cases {

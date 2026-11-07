@@ -96,7 +96,7 @@ curl -X POST https://api.stellarindex.io/v1/register \
 ```
 
 The response carries `data.api_key` (shown **once**) plus the
-account's free-tier limits (1,000 req/min, 1M req/month). Optional
+account's free-tier limits (6,000 req/min, 1M req/month). Optional
 `name` / `email` fields personalise the account; the email is
 contact-only and never verified.
 
@@ -146,14 +146,13 @@ caller's own keys.
 
 | Tier | Hosted `api.stellarindex.io` | Self-hosted default |
 |---|---|---|
-| Anonymous (per IP) | 6 000 / min | 60 / min (`[api].anon_rate_limit_per_min`) |
-| Free key (per key) | 1 000 / min (stamped at mint) | 1 000 / min (`[api].key_rate_limit_per_min`) |
+| Anonymous (per IP) | 1 000 / min | 60 / min (`[api].anon_rate_limit_per_min`) |
+| Free key (per key) | 6 000 / min (stamped at mint) | 1 000 / min (`[api].key_rate_limit_per_min`) |
 | Partner (per key) | staff-set, up to 100 000 / min | — |
 
-On the hosted deployment an anonymous IP's throughput deliberately
-exceeds a single free key's: keys exist for per-subject attribution,
-usage reporting and the private surfaces, not for headroom. A free
-key's budget is **stamped on the key at mint time** and overrides the
+On the hosted deployment a free key has six times an anonymous IP's
+throughput, plus per-subject attribution, usage reporting and the
+private surfaces. A free key's budget is **stamped on the key at mint time** and overrides the
 deployment's default, so the two numbers move independently.
 
 **The live limit is always the one in `X-RateLimit-Limit`** — read it

@@ -17,14 +17,11 @@ vi.mock('next/navigation', () => ({
 
 import HomePage from './page';
 
-// The landing page's API pitch sold two things the deployment
+// The landing page's API pitch must not sell what the deployment
 // contradicts:
 //
-//   1. "an API key raises your rate limit from 60 to 1,000+ requests a
-//      minute". The hosted API's anonymous header is
-//      `x-ratelimit-limit: 6000`; a free key is stamped at 1,000. A key
-//      is a per-key budget, not a raise — /pricing has said so all
-//      along, so the front door contradicted the plans page.
+//   1. "from 60 to 1,000+ requests a minute". The hosted limits are
+//      1,000 anonymous and 6,000 per free key, as /pricing publishes.
 //   2. "Candles — daily history back to 2015". The first daily bar
 //      /v1/ohlc serves for XLM/USD is 2018-07-01, and 2021-01-31 →
 //      2026-03-12 has none at all.
@@ -54,13 +51,12 @@ describe('HomePage API pitch', () => {
   it('does not claim a key raises the limit from 60 to 1,000+', () => {
     const { pitch } = renderHome();
     expect(pitch).not.toHaveTextContent(/from 60 to 1,000/i);
-    expect(pitch).not.toHaveTextContent(/raises your rate limit/i);
   });
 
   it('states the anonymous and per-key limits /pricing publishes', () => {
     const { pitch } = renderHome();
-    expect(pitch).toHaveTextContent(/6,000\s+requests a minute per IP/i);
-    expect(pitch).toHaveTextContent(/per-key budget of\s+1,000 a minute/i);
+    expect(pitch).toHaveTextContent(/1,000\s+requests a minute per IP/i);
+    expect(pitch).toHaveTextContent(/per-key budget of\s+6,000 a minute/i);
   });
 
   it('does not claim daily OHLC history back to 2015', () => {

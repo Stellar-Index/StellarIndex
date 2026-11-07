@@ -163,11 +163,9 @@ export default function DocsPage() {
       <Section id="rate-limits" title="Rate limits">
         <p>
           Anonymous reads are limited per source IP; a key&apos;s budget is per
-          key. On the hosted deployment the anonymous IP limit (6,000 req/min)
-          deliberately exceeds a single free key&apos;s (1,000 req/min) — a key
-          buys attribution and a budget nothing else on your IP can spend, not
-          extra throughput. Higher per-key partner limits are set on request;
-          see{' '}
+          key. On the hosted deployment the anonymous IP limit is 1,000 req/min
+          and a free key gets 6,000 req/min, a budget nothing else on your IP
+          can spend. Higher per-key partner limits are set on request; see{' '}
           <Link className="text-brand-600 hover:underline" href="/pricing">
             pricing
           </Link>

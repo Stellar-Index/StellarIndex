@@ -17,16 +17,16 @@ export const metadata: Metadata = {
 const TIERS = [
   {
     name: 'Anonymous',
-    rateLimit: '6,000 req/min per IP',
+    rateLimit: '1,000 req/min per IP',
     cost: '$0',
     notes: 'Public read of every endpoint. No account, no key, no auth.',
   },
   {
     name: 'Free',
-    rateLimit: '1,000 req/min per key',
+    rateLimit: '6,000 req/min per key',
     cost: '$0',
     notes:
-      'Every registered account. A per-key budget and usage analytics, not extra throughput — it is lower than the anonymous per-IP limit by design. Sign in with the form on the right (first sign-in creates the account), or register straight from the terminal: POST /v1/register returns an account + API key in one call.',
+      'Every registered account. A per-key budget six times the anonymous per-IP limit, plus usage analytics. Sign in with the form on the right (first sign-in creates the account), or register straight from the terminal: POST /v1/register returns an account + API key in one call.',
     highlight: true,
   },
   {
@@ -157,12 +157,11 @@ export default function SignupPage() {
         <a href="https://docs.stellarindex.io" className="underline">
           the public endpoints
         </a>{' '}
-        directly — the 6,000 req/min per-IP budget covers exploratory scripts
+        directly — the 1,000 req/min per-IP budget covers exploratory scripts
         and low-traffic embeds. Create an account when you want a budget
         attributed to you rather than shared with your IP, plus usage analytics
-        — not for extra throughput, since a free key is stamped at 1,000
-        req/min. Ask us for a partner limit when you&rsquo;re ready to ship to
-        customers at scale.
+        and more throughput: a free key is stamped at 6,000 req/min. Ask us for
+        a partner limit when you&rsquo;re ready to ship to customers at scale.
       </section>
 
       <p className="text-ink-muted mt-8 text-xs">

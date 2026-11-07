@@ -491,11 +491,11 @@ Free and Partner, plus anonymous callers:
 | Tier | How obtained | Per-key default (req/min) | Per-key ceiling (req/min) | Identity |
 | ---- | ------------ | ------------------------: | ------------------------: | -------- |
 | Anonymous | no API key | `[api].anon_rate_limit_per_min` (code default **60**; r1 runs it higher — read `X-RateLimit-Limit`, don't hard-code either number) | n/a (`[api].anon_rate_limit_per_min`) | per IP (XFF-aware via `api.trusted_proxy_cidrs`) |
-| Free | `POST /v1/register` (every registered account's default) | **1,000** | **1,000** | per API key |
-| Partner | staff-set `tier` on `PATCH /v1/admin/accounts/{id}` | **1,000** | **100,000** | per API key |
+| Free | `POST /v1/register` (every registered account's default) | **6,000** | **6,000** | per API key |
+| Partner | staff-set `tier` on `PATCH /v1/admin/accounts/{id}` | **6,000** | **100,000** | per API key |
 
 Default and ceiling apply to dashboard-minted keys: a key minted
-without `rate_limit_per_min` gets 1,000, and a requested value is
+without `rate_limit_per_min` gets 6,000, and a requested value is
 clamped down to the tier's `platform.Tier.MaxRateLimitPerMin`. So
 100,000 is the most a Partner key can be minted with, not what every
 Partner key gets. Operator-minted keys (`stellarindex-ops mint-key` /
@@ -539,7 +539,7 @@ The `X-RateLimit-Limit` header reflects the *active* budget for
 the current request's identity — anonymous callers see the deployment's
 configured `anon_rate_limit_per_min` (code default 60; see
 [getting-started.md](../getting-started.md#rate-limits) for the live
-r1 value), authenticated callers see their key's budget (1,000 by
+r1 value), authenticated callers see their key's budget (6,000 by
 default, up to the tier ceiling above), raised to at least the
 account's `rate_limit_per_min_override` when one is set.
 

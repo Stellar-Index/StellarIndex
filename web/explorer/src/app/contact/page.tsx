@@ -40,7 +40,7 @@ const CHANNELS: Channel[] = [
     icon: KeyRound,
     title: 'Partner limits',
     blurb:
-      'Need higher than the 1,000 req/min free rate-limit, named on-call, or a Slack channel? There is nothing to buy — partner limits are staff-set. Email us with your traffic profile and we’ll raise your account’s limits. (We serve from one region today, so dedicated regional capacity is not something we can offer yet — see ADR-0050.)',
+      'Need higher than the 6,000 req/min free rate-limit, named on-call, or a Slack channel? There is nothing to buy — partner limits are staff-set. Email us with your traffic profile and we’ll raise your account’s limits. (We serve from one region today, so dedicated regional capacity is not something we can offer yet — see ADR-0050.)',
     destination: 'sales@stellarindex.io',
     href: 'mailto:sales@stellarindex.io',
   },
@@ -75,7 +75,7 @@ const CHANNELS: Channel[] = [
 const FAQS: { q: string; a: string }[] = [
   {
     q: 'Is the public tier really free?',
-    a: 'Yes. 6,000 req/min per IP on the hosted API, no auth, no signup. The same data every tier serves, just rate-limited per-IP. Sign up when you want a budget attributed to your key rather than your IP, plus usage analytics — a free key is stamped at 1,000 req/min, so it is attribution, not extra throughput. Ask us for a partner limit if you need more.',
+    a: 'Yes. 1,000 req/min per IP on the hosted API, no auth, no signup. The same data every tier serves, just rate-limited per-IP. Sign up when you want a budget attributed to your key rather than your IP, plus usage analytics — a free key is stamped at 6,000 req/min. Ask us for a partner limit if you need more.',
   },
   {
     q: 'Do you redistribute paid CEX data?',

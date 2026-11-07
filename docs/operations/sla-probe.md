@@ -77,7 +77,7 @@ each repeats the chart, price and oracle-latest probes for that pair.
 ### Why an API key is required
 
 Without `STELLARINDEX_PROBE_API_KEY`, the probe hits
-`[api].anon_rate_limit_per_min` (shipped default 60/min; R1 sets 6,000),
+`[api].anon_rate_limit_per_min` (shipped default 60/min; R1 sets 1,000),
 every non-`/healthz` endpoint reads as unavailable, and the verdict fails
 for reasons unrelated to the SLA. Mint a load-test key from the operator
 vault (same class as `STELLARINDEX_LOAD_API_KEY` for the k6 weekly) and

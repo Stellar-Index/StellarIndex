@@ -110,10 +110,8 @@ The recurring trail is `docs/operations/sla-proof-<YYYY-MM-DD>.md`:
 anonymous 60/min, keys 1000/min (`anon_rate_limit_per_min`,
 `key_rate_limit_per_min` in `internal/config/config.go` and
 `configs/example.toml`; per key via `mint-key -rate-limit-per-min`).
-r1 sets both to 6000 in
+r1 sets anonymous to 1000 and keys to 6000 in
 `configs/ansible/roles/archival-node/templates/stellarindex.toml.j2`.
-Whether 6000/min is the intended public anonymous tier is an open
-operator decision.
 
 **Historical depth ≥ 1 year.** Measured on r1 2026-09-08, `min(ts)` per
 source: kraken 2017-01-17, soroswap 2024-03-11, aquarius 2024-07-25,
@@ -243,7 +241,7 @@ Supply runs for operator-watched assets (XLM always; classic/SEP-41 via `[supply
 | ID | Requirement | Mechanism | Status |
 |---|---|---|---|
 | F5.1 | REST or GraphQL | `api/v1` REST; problem+json URIs and OpenAPI host need re-pointing to `stellarindex.io` | ⚠ |
-| F5.2 | Rate limits ≥ 1000 req/min | `ratelimit`, `api.key_rate_limit_per_min`; anon 6000/min | ✅ |
+| F5.2 | Rate limits ≥ 1000 req/min | `ratelimit`, `api.key_rate_limit_per_min`; anon 1000/min | ✅ |
 | F5.3 | Bulk / batch queries | `GET /v1/price/batch` (≤100), `POST` (≤1000); batch peg rows set `flags.stale=true`, single does not | ✅ |
 
 #### Miscellaneous

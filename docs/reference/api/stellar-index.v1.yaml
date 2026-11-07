@@ -16112,11 +16112,11 @@ components:
             **Silently clamped to the account's tier ceiling** —
             see `platform.Tier.MaxRateLimitPerMin` in code:
 
-              - free:    1000/min
+              - free:    6000/min
               - partner: 100000/min ceiling (the staff-set
                 per-account override is the real limit)
 
-            A request of 100000 on a free account persists 1000.
+            A request of 100000 on a free account persists 6000.
             The `maximum: 100000` in this schema is the hard ceiling
             for any tier; the effective cap is whichever is lower.
         monthly_quota:
