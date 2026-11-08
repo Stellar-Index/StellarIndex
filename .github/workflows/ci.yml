@@ -1827,7 +1827,7 @@ jobs:
           # PROM_TARBALL_SHA256_DEFAULT (in the job env, versioned + reviewable),
           # then unpack.
           SHA="$PROM_TARBALL_SHA256_DEFAULT"
-          curl -fsSL "https://github.com/prometheus/prometheus/releases/download/v${PROM_VERSION}/prometheus-${PROM_VERSION}.linux-amd64.tar.gz" -o /tmp/prom.tar.gz
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 "https://github.com/prometheus/prometheus/releases/download/v${PROM_VERSION}/prometheus-${PROM_VERSION}.linux-amd64.tar.gz" -o /tmp/prom.tar.gz
           echo "${SHA}  /tmp/prom.tar.gz" | sha256sum -c -
           tar -xzf /tmp/prom.tar.gz
           sudo install -m 0755 "prometheus-${PROM_VERSION}.linux-amd64/promtool" /usr/local/bin/promtool
@@ -1836,7 +1836,7 @@ jobs:
       - name: install amtool
         run: |
           # SHA-verified install, same shape as promtool above.
-          curl -fsSL "https://github.com/prometheus/alertmanager/releases/download/v${AM_VERSION}/alertmanager-${AM_VERSION}.linux-amd64.tar.gz" -o /tmp/am.tar.gz
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 "https://github.com/prometheus/alertmanager/releases/download/v${AM_VERSION}/alertmanager-${AM_VERSION}.linux-amd64.tar.gz" -o /tmp/am.tar.gz
           echo "${AM_TARBALL_SHA256_DEFAULT}  /tmp/am.tar.gz" | sha256sum -c -
           tar -xzf /tmp/am.tar.gz
           sudo install -m 0755 "alertmanager-${AM_VERSION}.linux-amd64/amtool" /usr/local/bin/amtool
