@@ -807,7 +807,7 @@ jobs:
         # password and database credentials. zizmor audits them for template
         # injection through untrusted context, over-broad permissions, and
         # dangerous triggers. Pinned by digest like every other action here.
-        uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e  # v0.7.1
+        uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd  # v0.8.1
         with:
           advanced-security: false
           persona: regular
@@ -1747,7 +1747,7 @@ jobs:
             echo "::error::Generated Postman collection is stale. Run 'make docs-postman' locally and commit the result."
             exit 1
           fi
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413  # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115  # v6.1.1
         if: needs.preflight.outputs.go == 'true' || needs.preflight.outputs.web == 'true'
         with:
           package_json_file: web/explorer/package.json
@@ -2230,7 +2230,7 @@ jobs:
       # `version:` floated independently of web/explorer/package.json's
       # `packageManager` pin — package_json_file lets action-setup read the
       # pin itself instead of a second, driftable copy.
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413  # v6.1.0
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115  # v6.1.1
         if: needs.preflight.outputs.web == 'true'
         with:
           package_json_file: web/explorer/package.json
