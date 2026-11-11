@@ -156,6 +156,16 @@ CF Pages does not apply `_headers` to Pages Function responses
 
 A new Function must set its own security headers or route through `shellFallback`.
 
+### Which requests run a Function
+
+`web/explorer/public/_routes.json` lists the Function routes. Every request it
+includes is a billed Functions invocation, even when a static file exists at
+that path. It excludes `*.txt` under each catch-all route, so the
+RSC prefetches Next makes for every link in view are served as static files.
+An unknown entity's prefetch gets a static 404, and the click falls back to a
+full page load through the Function. Add a new Function to `_routes.json` in
+the same change; `functions/routes.test.js` fails on drift.
+
 ## Break-glass: `explorer-deploy.yml` (Wrangler)
 
 For hotfixes or when the CF git integration is paused. `workflow_dispatch` only;
