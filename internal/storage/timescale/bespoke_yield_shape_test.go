@@ -52,8 +52,11 @@ func TestDefindexSeriesQueryShapes(t *testing.T) {
 // like its sibling queries and excludes 'harvest' (yield, not capital moved) from the capital-volume figure.
 func TestDefindexStrategyVolumeSeriesExcludesHarvest(t *testing.T) {
 	q := defindexStrategyVolumeSeriesQuery(90)
-	if !strings.Contains(q, "SELECT direction,") {
-		t.Error("strategy volume series must select direction so callers can fold it into per-direction lines")
+	if !strings.Contains(q, "SELECT contract_id, direction,") {
+		t.Error("strategy volume series must select strategy and direction: each strategy's flows are priced in its own asset before summing")
+	}
+	if !strings.Contains(q, "to_char(date_trunc('day', ledger_close_time), 'YYYY-MM-DD')") {
+		t.Error("strategy volume series must carry the UTC day so each sum is valued at that day's price")
 	}
 	if !strings.Contains(q, "direction IN ('deposit', 'withdraw')") {
 		t.Error("strategy volume series must filter to deposit/withdraw directions, excluding 'harvest' (strategy yield, not a capital flow) from the summed volume")
@@ -65,8 +68,13 @@ func TestDefindexStrategyVolumeSeriesExcludesHarvest(t *testing.T) {
 func TestDefindexKPIQueriesShape(t *testing.T) {
 	w := defindexWindowKPIQuery()
 	assertYieldWindowBounded(t, "window KPIs", w)
-	if !strings.Contains(w, "AND layer = 'strategy'),0)") {
-		t.Error("window volume KPIs must sum the strategy-layer scalar amounts")
+	if strings.Contains(w, "sum(") {
+		t.Error("window KPI query must stay counts only: raw amounts summed across strategies mix assets (volume is valued in USD in Go)")
+	}
+	k := defindexStrategyVolumeKPIQuery()
+	assertYieldWindowBounded(t, "volume KPI", k)
+	if !strings.Contains(k, "layer = 'strategy'") || !strings.Contains(k, "GROUP BY 1, 2, 3, 4") || strings.Contains(k, completeDayCutoffSQL) {
+		t.Error("volume KPI must sum strategy-layer amounts per (strategy, direction, day) over the whole window, today included")
 	}
 	if !strings.Contains(w, "count(DISTINCT actor) FILTER (WHERE layer = 'vault' AND direction = 'deposit')") {
 		t.Error("unique depositors must count distinct vault-layer deposit actors (the end-user owner column)")
@@ -155,6 +163,8 @@ func TestYieldOracleNoFloatLiterals(t *testing.T) {
 		"yield all-time KPIs":   defindexAllTimeKPIQuery(),
 		"yield vault series":    defindexVaultCountSeriesQuery(90),
 		"yield strategy volume": defindexStrategyVolumeSeriesQuery(90),
+		"yield volume KPI":      defindexStrategyVolumeKPIQuery(),
+		"yield USD prices":      defindexDailyUSDPricesSQL,
 		"yield strategy events": defindexStrategyEventsSeriesQuery(90),
 		"yield breakdown":       defindexVaultBreakdownQuery(),
 		"yield vault table":     defindexVaultFlowsTableQuery(),
