@@ -97,8 +97,8 @@ type PositionEntry struct {
 	Assets          []string `json:"assets,omitempty"`
 	Amount          string   `json:"amount"`
 	AmountSemantics string   `json:"amount_semantics"`
-	// Decimals scales Amount to whole units; set only where the unit is a
-	// known token (net_underlying_at_event_time) and its scale was read.
+	// Decimals scales Amount to whole units; set only where the unit is a known token whose scale was read
+	// (net_underlying_at_event_time, and vault_shares from the vault's own share token).
 	Decimals     *int                 `json:"decimals,omitempty"`
 	LastActivity PositionLastActivity `json:"last_activity"`
 	Basis        string               `json:"basis"`
@@ -521,8 +521,8 @@ func (h *Handler) buildPhoenixStakePositions(ctx context.Context, address string
 	return out
 }
 
-// buildDefindexPositions maps DefindexVaultFold rows to `vault_shares` entries. defindex_flows has only a positional amounts_vec with no
-// asset identity, so Assets and VenueLabel are left absent rather than guessed.
+// buildDefindexPositions maps DefindexVaultFold rows to `vault_shares` entries, named and scaled by the vault's own share-token metadata.
+// defindex_flows has only a positional amounts_vec with no asset identity, so Assets is left absent rather than guessed.
 func (h *Handler) buildDefindexPositions(ctx context.Context, address string, cov *positionsCoverage) []PositionEntry {
 	rows, err := h.Positions.DefindexVaultSharesByUser(ctx, address)
 	if err != nil {
@@ -530,12 +530,22 @@ func (h *Handler) buildDefindexPositions(ctx context.Context, address string, co
 		cov.fail("defindex")
 		return nil
 	}
+	vaults := make([]string, 0, len(rows))
+	for _, row := range rows {
+		vaults = append(vaults, row.ContractID)
+	}
+	dctx, cancel := context.WithTimeout(ctx, movementDecimalsBudget)
+	defer cancel()
+	displays := h.vaultDisplays(dctx, vaults)
 	out := make([]PositionEntry, 0, len(rows))
 	for _, row := range rows {
+		vd := displays[row.ContractID]
 		out = append(out, PositionEntry{
 			Protocol:        "defindex",
 			PositionKind:    PositionKindVaultShares,
 			Venue:           row.ContractID,
+			VenueLabel:      vd.Label,
+			Decimals:        vd.Decimals,
 			Amount:          row.SharesNet,
 			AmountSemantics: AmountSemanticsShares,
 			LastActivity:    fmtActivity(row.LastLedger, row.LastActivity),
