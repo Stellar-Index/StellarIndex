@@ -20,11 +20,11 @@ const (
 func TestFoldDailyUSDPrices_WeightsSpellingsAndPrefersDaily(t *testing.T) {
 	spellings := defindexPriceSpellings(defindexStrategyAssets)
 	got := foldDailyUSDPrices([]usdPriceRow{
-		{daily: true, day: "2026-11-10", base: testCETES, vwap: rat("0.05"), volPriced: rat("3000")},
-		{daily: true, day: "2026-11-10", base: testCETESSAC, vwap: rat("0.06"), volPriced: rat("1000")},
-		{daily: false, day: "2026-11-10", base: testCETES, vwap: rat("9"), volPriced: rat("1")},
-		{daily: false, day: "2026-11-11", base: testCETESSAC, vwap: rat("0.07"), volPriced: rat("5")},
-		{daily: true, day: "2026-11-10", base: "SCAM-GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", vwap: rat("100"), volPriced: rat("1")},
+		{daily: true, day: "2026-11-10", asset: testCETES, vwap: rat("0.05"), volPriced: rat("3000")},
+		{daily: true, day: "2026-11-10", asset: testCETESSAC, vwap: rat("0.06"), volPriced: rat("1000")},
+		{daily: false, day: "2026-11-10", asset: testCETES, vwap: rat("9"), volPriced: rat("1")},
+		{daily: false, day: "2026-11-11", asset: testCETESSAC, vwap: rat("0.07"), volPriced: rat("5")},
+		{daily: true, day: "2026-11-10", asset: "SCAM-GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", vwap: rat("100"), volPriced: rat("1")},
 	}, spellings)
 	if p := got[assetDay{testCETES, "2026-11-10"}]; p == nil || p.Cmp(rat("0.0525")) != 0 {
 		t.Errorf("2026-11-10 CETES = %v, want 0.0525 (daily rows only, volume-weighted across spellings)", p)
@@ -34,6 +34,34 @@ func TestFoldDailyUSDPrices_WeightsSpellingsAndPrefersDaily(t *testing.T) {
 	}
 	if len(got) != 2 {
 		t.Errorf("got %d prices, want 2: a spelling outside the strategy assets must not be read", len(got))
+	}
+}
+
+// A flipped (USDC, CETES) row's vwap is CETES per USDC: it adds vol USD for vwap·vol CETES, folded with the forward rows.
+func TestFoldDailyUSDPrices_FoldsFlippedRows(t *testing.T) {
+	got := foldDailyUSDPrices([]usdPriceRow{
+		{daily: true, flipped: true, day: "2026-11-12", asset: testCETES, vwap: rat("20"), volPriced: rat("100")},
+		{daily: true, day: "2026-11-12", asset: testCETESSAC, vwap: rat("0.04"), volPriced: rat("500")},
+		{daily: true, flipped: true, day: "2026-11-13", asset: testCETESSAC, vwap: rat("25"), volPriced: rat("4")},
+	}, defindexPriceSpellings(defindexStrategyAssets))
+	if p := got[assetDay{testCETES, "2026-11-12"}]; p == nil || p.Cmp(rat("0.048")) != 0 {
+		t.Errorf("2026-11-12 CETES = %v, want 0.048 = (100 + 20) USD / (2000 + 500) CETES", p)
+	}
+	if p := got[assetDay{testCETES, "2026-11-13"}]; p == nil || p.Cmp(rat("0.04")) != 0 {
+		t.Errorf("2026-11-13 CETES = %v, want 0.04 = 1 / 25 from the flipped row alone", p)
+	}
+}
+
+// The flipped arms read the on-chain USDC proxies only: fiat:USD volume is not on the asset's 7-decimal scale.
+func TestDefindexDailyUSDPricesSQL_BothDirectionsOnChainFlips(t *testing.T) {
+	if n := strings.Count(defindexDailyUSDPricesSQL, "UNION ALL"); n != 3 {
+		t.Fatalf("got %d UNION ALL, want 4 arms (prices_1d, prices_1h) × (forward, flipped)", n)
+	}
+	if n := strings.Count(defindexDailyUSDPricesSQL, "AND base_asset NOT LIKE 'fiat:%'"); n != 2 {
+		t.Errorf("got %d fiat exclusions, want one per flipped arm", n)
+	}
+	if n := strings.Count(defindexDailyUSDPricesSQL, "AND quote_asset = ANY($2::text[])"); n != 2 {
+		t.Errorf("got %d flipped arms, want 2", n)
 	}
 }
 
@@ -57,10 +85,10 @@ func TestValueStrategyFlows_PricesExactlyAndNamesExclusions(t *testing.T) {
 	if _, ok := v.byDirBucket["deposit"]["2026-11-11"]; ok {
 		t.Error("an unpriced day must leave no valued point, not a zero")
 	}
-	if c := v.lowerBoundClause("deposit"); c != "excludes 2 strategy flows (CETES) with no USD price that day" {
+	if c := v.lowerBoundClause("deposit"); c != "excludes 2 strategy flows it could not value in USD: CETES (no USD price that day)" {
 		t.Errorf("deposit clause = %q", c)
 	}
-	if c := v.lowerBoundClause("withdraw"); !strings.Contains(c, "4 strategy flows (unmapped strategy CUNMAPPED") {
+	if c := v.lowerBoundClause("withdraw"); !strings.Contains(c, "4 strategy flows it could not value in USD: strategy CUNMAPPED") {
 		t.Errorf("withdraw clause = %q", c)
 	}
 	if v.total("withdraw").Sign() != 0 {
@@ -79,6 +107,12 @@ func TestYieldVolumeKPIHint_NamesLowerBound(t *testing.T) {
 	}
 	if h := yieldVolumeKPIHint("withdraw", "withdrawals", partial); strings.Contains(h, "LOWER BOUND") {
 		t.Errorf("withdraw hint inherits the deposit exclusion: %q", h)
+	}
+	if c := full.seriesLowerBoundClause(); c != "" {
+		t.Errorf("fully priced series clause = %q, want none", c)
+	}
+	if c := partial.seriesLowerBoundClause(); !strings.HasPrefix(c, "deposit excludes 1 strategy flows") || strings.Contains(c, "withdraw") {
+		t.Errorf("partial series clause = %q, want the deposit exclusion only", c)
 	}
 }
 

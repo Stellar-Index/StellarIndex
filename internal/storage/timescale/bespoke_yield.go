@@ -128,7 +128,7 @@ func (s *Store) bespokeYield(ctx context.Context, source string, windowDays int)
 		Category: "yield",
 		Notes: []string{
 			"Deposit/withdraw volume is the STRATEGY layer's defindex_flows.amount (the capital actually deployed; the vault layer carries amounts as a per-strategy vector and its scalar is NULL), valued in USD before summing: each strategy's flows on a UTC day × that day's volume-weighted USD price of the strategy's asset from this index's own USD-quoted markets (USDC counts as $1). 'harvest' rows (strategy yield, not capital flow) are excluded.",
-			"A flow whose asset had no USD-quoted trade that day is excluded, not guessed; the volume KPIs then read LOWER BOUND and name what they exclude.",
+			"A flow whose asset had no USD-quoted trade that day is excluded, not guessed; the volume KPIs then read LOWER BOUND and name what they exclude, and a note marks the volume series the same way.",
 			"The net-flow-by-strategy table is a window AUM proxy, not all-time TVL (the served tier is retention-scoped), in each strategy's own asset base units (7 decimals).",
 			"Per-vault deposited/withdrawn amounts are the vault's OWN asset in base units (single-entry amounts_vec) and are shown only for vaults whose every window flow is single-asset; multi-asset or vector-less vaults show '—'. Amounts are NEVER summed across vaults — different vaults hold different assets, so cross-vault figures here are counts.",
 			"All-time totals cover every retained defindex_flows row (no retention) — history begins at the source's first ingested event, not vault genesis.",
@@ -202,6 +202,9 @@ func (s *Store) yieldSeriesBlocks(ctx context.Context, blk *BespokeBlock, since 
 	volume, err := s.strategyVolumeUSD(ctx, defindexStrategyVolumeSeriesQuery(windowDays), since)
 	if err != nil {
 		return err
+	}
+	if c := volume.seriesLowerBoundClause(); c != "" {
+		blk.Notes = append(blk.Notes, "LOWER BOUND: the strategy volume series "+c+".")
 	}
 	for _, d := range []struct{ direction, name string }{
 		{"deposit", yieldSeriesNameStrategyDepositVol},

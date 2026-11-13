@@ -78,23 +78,31 @@ func defindexStrategyFlowsQuery(trunc, format, extra string) string {
 		GROUP BY 1, 2, 3, 4`
 }
 
-// defindexDailyUSDPricesSQL reads each strategy asset's USD-quoted daily rows. prices_1d leaves yesterday unmaterialized for hours after
-// midnight, so the last two days also come from prices_1h, used only for a day prices_1d lacks. $1 = interval, $2 = base spellings,
-// $3 = non-VWAP sources.
-const defindexDailyUSDPricesSQL = `
-SELECT true, to_char(bucket, 'YYYY-MM-DD'), base_asset, vwap::text, volume_priced::text
-  FROM prices_1d
- WHERE quote_asset IN (` + usdProxyQuotes + `) AND base_asset = ANY($2::text[])
-   AND bucket >= date_trunc('day', now() - $1::interval)
-   AND vwap IS NOT NULL AND volume_priced > 0
-   AND NOT COALESCE(sources <@ string_to_array($3, ','), false)
-UNION ALL
-SELECT false, to_char(bucket, 'YYYY-MM-DD'), base_asset, vwap::text, volume_priced::text
-  FROM prices_1h
- WHERE quote_asset IN (` + usdProxyQuotes + `) AND base_asset = ANY($2::text[])
-   AND bucket >= GREATEST(date_trunc('day', now() - $1::interval), date_trunc('day', now()) - interval '1 day')
-   AND vwap IS NOT NULL AND volume_priced > 0
-   AND NOT COALESCE(sources <@ string_to_array($3, ','), false)`
+// defindexDailyUSDPricesSQL reads each strategy asset's USD-quoted daily rows in both market directions: (asset, USD) rows and the
+// flipped (USD, asset) rows. prices_1d leaves yesterday unmaterialized for hours after midnight, so the last two days also come from
+// prices_1h, used only for a day prices_1d lacks. $1 = interval, $2 = base spellings, $3 = non-VWAP sources.
+var defindexDailyUSDPricesSQL = strings.Join([]string{
+	usdPriceArm("prices_1d", false, "date_trunc('day', now() - $1::interval)"),
+	usdPriceArm("prices_1d", true, "date_trunc('day', now() - $1::interval)"),
+	usdPriceArm("prices_1h", false, "GREATEST(date_trunc('day', now() - $1::interval), date_trunc('day', now()) - interval '1 day')"),
+	usdPriceArm("prices_1h", true, "GREATEST(date_trunc('day', now() - $1::interval), date_trunc('day', now()) - interval '1 day')"),
+}, "\nUNION ALL")
+
+// usdPriceArm selects (daily, flipped, day, asset, vwap, volume_priced) from one table and direction. A flipped arm admits only the
+// on-chain USDC proxies as base: their 7-decimal volume shares the asset's scale, which fiat:USD's does not.
+func usdPriceArm(table string, flipped bool, from string) string {
+	asset, usd, onChainOnly := "base_asset", "quote_asset", ""
+	if flipped {
+		asset, usd, onChainOnly = "quote_asset", "base_asset", " AND base_asset NOT LIKE 'fiat:%'"
+	}
+	return fmt.Sprintf(`
+SELECT %t, %t, to_char(bucket, 'YYYY-MM-DD'), %s, vwap::text, volume_priced::text
+  FROM %s
+ WHERE %s IN (`+usdProxyQuotes+`)%s AND %s = ANY($2::text[])
+   AND bucket >= %s
+   AND vwap IS NOT NULL AND vwap > 0 AND volume_priced > 0
+   AND NOT COALESCE(sources <@ string_to_array($3, ','), false)`, table == "prices_1d", flipped, asset, table, usd, onChainOnly, asset, from)
+}
 
 // strategyFlowSum is one row of defindexStrategyFlowsQuery, amount in base units.
 type strategyFlowSum struct {
@@ -105,8 +113,8 @@ type strategyFlowSum struct {
 
 // usdPriceRow is one row of defindexDailyUSDPricesSQL.
 type usdPriceRow struct {
-	daily           bool
-	day, base       string
+	daily, flipped  bool
+	day, asset      string
 	vwap, volPriced *big.Rat
 }
 
@@ -118,7 +126,7 @@ type yieldUSD struct {
 	unpriced    map[string]*unpricedTally
 }
 
-// unpricedTally is one direction's excluded flows and the assets (or unmapped strategies) behind them.
+// unpricedTally is one direction's excluded flows and why each was excluded.
 type unpricedTally struct {
 	flows  int64
 	assets map[string]bool
@@ -139,13 +147,14 @@ func isUSDProxyAsset(id string) bool {
 	return strings.Contains(usdProxyQuotes, "'"+id+"'")
 }
 
-// foldDailyUSDPrices is each (asset, day)'s volume-weighted USD price across its spellings and every USD proxy quote: Σ vwap·vol / Σ vol.
-// All spellings are 7-decimal on-chain amounts, so the weights share one scale. A day prices_1d holds never reads prices_1h.
+// foldDailyUSDPrices is each (asset, day)'s volume-weighted USD price across its spellings, proxies and directions: Σ USD / Σ asset,
+// where an (asset, USD) row adds vwap·vol USD for vol asset and a flipped (USD, asset) row adds vol USD for vwap·vol asset. All sides
+// are 7-decimal on-chain amounts, so the weights share one scale. A day prices_1d holds never reads prices_1h.
 func foldDailyUSDPrices(rows []usdPriceRow, spellings map[string]string) map[assetDay]*big.Rat {
-	type fold struct{ quote, base *big.Rat }
+	type fold struct{ usd, asset *big.Rat }
 	folds := [2]map[assetDay]*fold{{}, {}} // [0] hourly, [1] daily
 	for _, r := range rows {
-		asset, ok := spellings[r.base]
+		asset, ok := spellings[r.asset]
 		if !ok {
 			continue
 		}
@@ -159,14 +168,20 @@ func foldDailyUSDPrices(rows []usdPriceRow, spellings map[string]string) map[ass
 			f = &fold{new(big.Rat), new(big.Rat)}
 			folds[tier][k] = f
 		}
-		f.quote.Add(f.quote, new(big.Rat).Mul(r.vwap, r.volPriced))
-		f.base.Add(f.base, r.volPriced)
+		quoteSide := new(big.Rat).Mul(r.vwap, r.volPriced)
+		if r.flipped {
+			f.usd.Add(f.usd, r.volPriced)
+			f.asset.Add(f.asset, quoteSide)
+		} else {
+			f.usd.Add(f.usd, quoteSide)
+			f.asset.Add(f.asset, r.volPriced)
+		}
 	}
 	out := map[assetDay]*big.Rat{}
 	for _, tier := range folds {
 		for k, f := range tier {
-			if f.base.Sign() > 0 {
-				out[k] = new(big.Rat).Quo(f.quote, f.base)
+			if f.asset.Sign() > 0 {
+				out[k] = new(big.Rat).Quo(f.usd, f.asset)
 			}
 		}
 	}
@@ -184,12 +199,12 @@ func valueStrategyFlows(flows []strategyFlowSum, assets map[string]defindexStrat
 		missing := ""
 		switch {
 		case !mapped:
-			missing = "unmapped strategy " + f.strategy
+			missing = "strategy " + f.strategy + " (no asset mapping)"
 		case isUSDProxyAsset(a.Classic):
 			price = big.NewRat(1, 1)
 		default:
 			if price = prices[assetDay{a.Classic, f.day}]; price == nil {
-				missing = assetCode(a.Classic)
+				missing = assetCode(a.Classic) + " (no USD price that day)"
 			}
 		}
 		if price == nil {
@@ -244,7 +259,7 @@ func (y yieldUSD) lowerBoundClause(direction string) string {
 		names = append(names, a)
 	}
 	sort.Strings(names)
-	return fmt.Sprintf("excludes %d strategy flows (%s) with no USD price that day", t.flows, strings.Join(names, ", "))
+	return fmt.Sprintf("excludes %d strategy flows it could not value in USD: %s", t.flows, strings.Join(names, ", "))
 }
 
 // strategyVolumeUSD runs a defindexStrategyFlowsQuery and values its sums in USD.
@@ -298,14 +313,14 @@ func (s *Store) scanUSDPriceRows(ctx context.Context, since string, bases []stri
 	for rows.Next() {
 		var r usdPriceRow
 		var vwap, vol string
-		if err := rows.Scan(&r.daily, &r.day, &r.base, &vwap, &vol); err != nil {
+		if err := rows.Scan(&r.daily, &r.flipped, &r.day, &r.asset, &vwap, &vol); err != nil {
 			return nil, fmt.Errorf("timescale: bespokeYield USD prices scan: %w", err)
 		}
 		var ok1, ok2 bool
 		r.vwap, ok1 = new(big.Rat).SetString(vwap)
 		r.volPriced, ok2 = new(big.Rat).SetString(vol)
 		if !ok1 || !ok2 {
-			return nil, fmt.Errorf("timescale: bespokeYield USD prices: unparseable numeric for %s @ %s (vwap=%q volume=%q)", r.base, r.day, vwap, vol)
+			return nil, fmt.Errorf("timescale: bespokeYield USD prices: unparseable numeric for %s @ %s (vwap=%q volume=%q)", r.asset, r.day, vwap, vol)
 		}
 		out = append(out, r)
 	}
@@ -325,4 +340,15 @@ func seriesFromBuckets(byBucket map[string]*big.Rat) []BespokeSeriesPt {
 	}
 	sort.Slice(pts, func(i, j int) bool { return pts[i].Date < pts[j].Date })
 	return pts
+}
+
+// seriesLowerBoundClause names, per direction, what the volume series exclude, or "" when nothing was excluded.
+func (y yieldUSD) seriesLowerBoundClause() string {
+	var parts []string
+	for _, d := range []string{"deposit", "withdraw"} {
+		if c := y.lowerBoundClause(d); c != "" {
+			parts = append(parts, d+" "+c)
+		}
+	}
+	return strings.Join(parts, "; ")
 }
