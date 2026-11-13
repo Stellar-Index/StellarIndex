@@ -539,10 +539,10 @@ export function AccountRelationCohort({
                     <Td>
                       <Link
                         href={`/contracts/${p.venue}`}
-                        className="font-mono text-xs underline-offset-2 hover:underline"
+                        className={`${p.venue_label ? '' : 'font-mono text-xs'}underline-offset-2 hover:underline`}
                         title={p.venue}
                       >
-                        {truncateMiddle(p.venue, 14)}
+                        {p.venue_label ?? truncateMiddle(p.venue, 14)}
                       </Link>
                     </Td>
                     <Td>
@@ -554,7 +554,9 @@ export function AccountRelationCohort({
                         ))}
                     </Td>
                     <Td align="right">{numFmt.format(p.holders)}</Td>
-                    <Td align="right">{formatCompactUnits(p.amount)}</Td>
+                    <Td align="right">
+                      {formatCompactUnits(p.amount, p.decimals ?? 0)}
+                    </Td>
                   </LinkRow>
                 ))}
               </TBody>
@@ -565,7 +567,9 @@ export function AccountRelationCohort({
           From the served tier&rsquo;s per-protocol folds (blend, blend
           backstop, phoenix stake, defindex vaults, sorocredit, aquarius gauges)
           joined to the cohort. Amount is the fold&rsquo;s own unit summed
-          across holders — a magnitude, not a settlement figure.
+          across holders — a magnitude, not a settlement figure. Vault shares
+          are scaled by the vault&rsquo;s own share-token decimals; other rows
+          are in base units.
           {data.cycle &&
             ` Rollup computed ${formatTimestamp(data.cycle.computed_at)}.`}
         </p>

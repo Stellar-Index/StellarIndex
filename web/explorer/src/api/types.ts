@@ -6700,7 +6700,9 @@ export interface components {
             /**
              * @description Best-effort human label for `venue` (e.g. "USDC/XLM" for a
              *     Blend pool's reserve set, resolved via the same pool-tokens
-             *     machinery the /v1/protocols/{name} roster's pair labels use).
+             *     machinery the /v1/protocols/{name} roster's pair labels use;
+             *     for a DeFindex vault, its name and symbol from the vault's own
+             *     share-token metadata, contract-authored and not an identity).
              *     Absent when no label could be resolved — never a guess.
              */
             venue_label?: string;
@@ -6758,8 +6760,9 @@ export interface components {
             amount_semantics: "net_underlying_at_event_time" | "shares" | "stateful_current_unconfirmed_unit" | "signed_delta_sum_unconfirmed_unit" | "superseded_by_auction" | "not_yet_published";
             /**
              * @description Scale of `amount` to whole token units. Set only for
-             *     net_underlying_at_event_time legs whose token scale was read;
-             *     absent otherwise, never a guessed 7.
+             *     net_underlying_at_event_time legs whose token scale was read,
+             *     and for vault_shares from the vault's own share-token
+             *     decimals; absent otherwise, never a guessed 7.
              */
             decimals?: number;
             /** @description The most recent contributing event's ledger + close time. */
@@ -7336,14 +7339,18 @@ export interface components {
             position_kind: string;
             /** @description The venue contract (a pool, a vault, a stake contract). */
             venue: string;
+            /** @description For a vault, its name and symbol from the vault's own share-token metadata (contract-authored, a label not an identity). */
+            venue_label?: string;
             /** @description The position's asset, when denominated in one (absent for venue shares). */
             asset?: string;
             /** @description A display label for `asset` where the lake can name it. */
             asset_label?: string;
             /** Format: int64 */
             holders: number;
-            /** @description The fold's own unit summed across holders — a magnitude, not a settlement figure. */
+            /** @description The fold's own unit summed across holders, in base units — a magnitude, not a settlement figure. */
             amount: string;
+            /** @description Scales `amount` to whole units; set only for vault_shares whose share-token decimals were read. Absent means unscaled. */
+            decimals?: number;
         };
         /** @description When the cohort rollup last ran, and the lake tip it read to. */
         AccountCohortCycle: {

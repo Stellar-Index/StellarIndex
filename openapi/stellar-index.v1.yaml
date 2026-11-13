@@ -15418,7 +15418,9 @@ components:
           description: |
             Best-effort human label for `venue` (e.g. "USDC/XLM" for a
             Blend pool's reserve set, resolved via the same pool-tokens
-            machinery the /v1/protocols/{name} roster's pair labels use).
+            machinery the /v1/protocols/{name} roster's pair labels use;
+            for a DeFindex vault, its name and symbol from the vault's own
+            share-token metadata, contract-authored and not an identity).
             Absent when no label could be resolved — never a guess.
         assets:
           type: array
@@ -15477,8 +15479,9 @@ components:
           type: integer
           description: |
             Scale of `amount` to whole token units. Set only for
-            net_underlying_at_event_time legs whose token scale was read;
-            absent otherwise, never a guessed 7.
+            net_underlying_at_event_time legs whose token scale was read,
+            and for vault_shares from the vault's own share-token
+            decimals; absent otherwise, never a guessed 7.
         last_activity:
           type: object
           description: The most recent contributing event's ledger + close time.
@@ -16026,10 +16029,12 @@ components:
         protocol: { type: string }
         position_kind: { type: string }
         venue: { type: string, description: "The venue contract (a pool, a vault, a stake contract)." }
+        venue_label: { type: string, description: "For a vault, its name and symbol from the vault's own share-token metadata (contract-authored, a label not an identity)." }
         asset: { type: string, description: "The position's asset, when denominated in one (absent for venue shares)." }
         asset_label: { type: string, description: A display label for `asset` where the lake can name it. }
         holders: { type: integer, format: int64 }
-        amount: { type: string, description: "The fold's own unit summed across holders — a magnitude, not a settlement figure." }
+        amount: { type: string, description: "The fold's own unit summed across holders, in base units — a magnitude, not a settlement figure." }
+        decimals: { type: integer, description: "Scales `amount` to whole units; set only for vault_shares whose share-token decimals were read. Absent means unscaled." }
       required: [protocol, position_kind, venue, holders, amount]
     AccountCohortCycle:
       type: object

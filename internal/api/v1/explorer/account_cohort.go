@@ -124,10 +124,13 @@ type AccountCohortPositionV struct {
 	Protocol     string `json:"protocol"`
 	PositionKind string `json:"position_kind"`
 	Venue        string `json:"venue"`
+	VenueLabel   string `json:"venue_label,omitempty"`
 	Asset        string `json:"asset,omitempty"`
 	AssetLabel   string `json:"asset_label,omitempty"`
 	Holders      uint64 `json:"holders"`
 	Amount       string `json:"amount"`
+	// Decimals scales Amount to whole units; set only for vault_shares whose share-token scale was read.
+	Decimals *int `json:"decimals,omitempty"`
 }
 
 // AccountCohortCycleV dates the snapshot.
@@ -470,15 +473,28 @@ func (h *Handler) cohortContractsView(ctx context.Context, contracts []clickhous
 	return out
 }
 
-// cohortPositionsView resolves a position's asset to a display label
-// where it is a token contract the lake can name.
+// cohortPositionsView resolves a position's asset to a display label where it is a token contract the lake can name,
+// and names and scales a vault position from the vault's own share token.
 func (h *Handler) cohortPositionsView(ctx context.Context, positions []clickhouse.AccountCohortPosition) []AccountCohortPositionV {
 	out := make([]AccountCohortPositionV, 0, len(positions))
 	var resolve positionAssetResolver
+	var vaults []string
+	for _, p := range positions {
+		if p.PositionKind == PositionKindVaultShares {
+			vaults = append(vaults, p.Venue)
+		}
+	}
+	dctx, cancel := context.WithTimeout(ctx, movementDecimalsBudget)
+	defer cancel()
+	displays := h.vaultDisplays(dctx, vaults)
 	for _, p := range positions {
 		v := AccountCohortPositionV{
 			Protocol: p.Protocol, PositionKind: p.PositionKind, Venue: p.Venue, Asset: p.Asset,
 			Holders: p.Holders, Amount: p.Amount.String(),
+		}
+		if p.PositionKind == PositionKindVaultShares {
+			vd := displays[p.Venue]
+			v.VenueLabel, v.Decimals = vd.Label, vd.Decimals
 		}
 		if p.Asset != "" {
 			if resolve == nil {
