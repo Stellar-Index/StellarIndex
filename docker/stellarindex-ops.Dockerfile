@@ -3,9 +3,9 @@
 # See docker/README.md for the shared image-shape rationale.
 
 # Base image pinned by immutable digest (supply-chain, DEP-low). Resolved
-# 2026-10-09 with `docker buildx imagetools inspect golang:1.27-alpine`
+# 2026-11-13 with `docker buildx imagetools inspect golang:1.27-alpine`
 # (multi-platform index digest).
-FROM golang:1.27-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd AS builder
+FROM golang:1.27-alpine@sha256:eb61c3873c97416fff0116553fff65d67a3549f72e11d9758849a689cdd8b523 AS builder
 RUN apk add --no-cache git ca-certificates tzdata
 WORKDIR /src
 # Cache modules separately so source-only edits don't invalidate
