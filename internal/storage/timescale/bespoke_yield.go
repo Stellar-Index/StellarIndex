@@ -8,9 +8,9 @@ package timescale
 // actor is the vault contract, contract_id the strategy, amount a single-asset scalar.
 //
 // Amount honesty (the mixed-asset-sum trap): per-vault amounts show only for vaults whose every window flow has a single-entry
-// amounts_vec; any multi-asset or missing vector shows '—' instead of a fabricated sum. Never sum amounts across vaults or strategies
-// into one number-with-a-unit (different assets): cross-vault headlines are counts, and cross-strategy gross-volume KPIs carry a
-// "summed base units across strategies" caveat in the Notes.
+// amounts_vec; any multi-asset or missing vector shows '—' instead of a fabricated sum. Never sum raw amounts across vaults or
+// strategies (different assets): cross-vault headlines are counts, and cross-strategy volume is summed only after valuing each
+// strategy's flows in USD (bespoke_yield_usd.go).
 
 import (
 	"context"
@@ -29,13 +29,10 @@ const (
 // yieldBreakdownTopN caps the flows-by-vault donut, folding the tail into "Others" (counts only, see foldBreakdownRows).
 const yieldBreakdownTopN = 10
 
-// defindexWindowKPIQuery returns windowed headline figures: strategy-layer volume, vault-layer counts, depositors, vaults, actors. $1 =
-// interval.
+// defindexWindowKPIQuery returns windowed headline counts: vault-layer flows, depositors, vaults, actors. $1 = interval.
 func defindexWindowKPIQuery() string {
 	return `
 		SELECT
-		  COALESCE(sum(amount) FILTER (WHERE direction = 'deposit'  AND layer = 'strategy'),0)::text,
-		  COALESCE(sum(amount) FILTER (WHERE direction = 'withdraw' AND layer = 'strategy'),0)::text,
 		  count(*) FILTER (WHERE layer = 'vault' AND direction = 'deposit')::text,
 		  count(*) FILTER (WHERE layer = 'vault' AND direction = 'withdraw')::text,
 		  count(DISTINCT actor) FILTER (WHERE layer = 'vault' AND direction = 'deposit')::text,
@@ -62,18 +59,6 @@ func defindexVaultCountSeriesQuery(windowDays int) string {
 		SELECT direction, to_char(date_trunc('` + trunc + `', ledger_close_time), '` + format + `'), count(*)::text
 		FROM defindex_flows
 		WHERE ledger_close_time > now() - $1::interval AND layer = 'vault'` +
-		completeDaysOnly(windowDays, "ledger_close_time") + `
-		GROUP BY 1, 2 ORDER BY 1, 2 ASC`
-}
-
-// defindexStrategyVolumeSeriesQuery builds strategy-layer volume by direction (base units summed across strategies). 'harvest' is excluded:
-// it is yield, not capital moved. $1 = interval.
-func defindexStrategyVolumeSeriesQuery(windowDays int) string {
-	trunc, format := bridgeSeriesGrain(windowDays)
-	return `
-		SELECT direction, to_char(date_trunc('` + trunc + `', ledger_close_time), '` + format + `'), COALESCE(sum(amount),0)::text
-		FROM defindex_flows
-		WHERE ledger_close_time > now() - $1::interval AND layer = 'strategy' AND direction IN ('deposit', 'withdraw')` +
 		completeDaysOnly(windowDays, "ledger_close_time") + `
 		GROUP BY 1, 2 ORDER BY 1, 2 ASC`
 }
@@ -142,8 +127,9 @@ func (s *Store) bespokeYield(ctx context.Context, source string, windowDays int)
 	blk := &BespokeBlock{
 		Category: "yield",
 		Notes: []string{
-			"Flow volume is deposit/withdraw defindex_flows.amount, summed by direction over the window from the STRATEGY layer — the vault layer records who/when but carries the amount as a per-strategy vector (amounts_vec), so its scalar amount is NULL; the strategy-layer scalars are the actual capital deployed. 'harvest' rows (strategy yield, not capital flow) are excluded from this series.",
-			"Net flow (deposit − withdraw) is a window AUM proxy, not all-time TVL (the served tier is retention-scoped). Contract is a Soroban strategy contract id; amounts are summed token base units (per-asset decimals) across strategies.",
+			"Deposit/withdraw volume is the STRATEGY layer's defindex_flows.amount (the capital actually deployed; the vault layer carries amounts as a per-strategy vector and its scalar is NULL), valued in USD before summing: each strategy's flows on a UTC day × that day's volume-weighted USD price of the strategy's asset from this index's own USD-quoted markets (USDC counts as $1). 'harvest' rows (strategy yield, not capital flow) are excluded.",
+			"A flow whose asset had no USD-quoted trade that day is excluded, not guessed; the volume KPIs then read LOWER BOUND and name what they exclude.",
+			"The net-flow-by-strategy table is a window AUM proxy, not all-time TVL (the served tier is retention-scoped), in each strategy's own asset base units (7 decimals).",
 			"Per-vault deposited/withdrawn amounts are the vault's OWN asset in base units (single-entry amounts_vec) and are shown only for vaults whose every window flow is single-asset; multi-asset or vector-less vaults show '—'. Amounts are NEVER summed across vaults — different vaults hold different assets, so cross-vault figures here are counts.",
 			"All-time totals cover every retained defindex_flows row (no retention) — history begins at the source's first ingested event, not vault genesis.",
 		},
@@ -162,9 +148,9 @@ func (s *Store) bespokeYield(ctx context.Context, source string, windowDays int)
 
 // yieldKPIs fills the windowed and retained-history headline cards.
 func (s *Store) yieldKPIs(ctx context.Context, blk *BespokeBlock, since string, windowDays int) error {
-	var depositVol, withdrawVol, vaultDeps, vaultWds, depositors, activeVaults, actors string
+	var vaultDeps, vaultWds, depositors, activeVaults, actors string
 	err := s.db.QueryRowContext(ctx, defindexWindowKPIQuery(), since).
-		Scan(&depositVol, &withdrawVol, &vaultDeps, &vaultWds, &depositors, &activeVaults, &actors)
+		Scan(&vaultDeps, &vaultWds, &depositors, &activeVaults, &actors)
 	if err != nil {
 		return fmt.Errorf("timescale: bespokeYield KPIs: %w", err)
 	}
@@ -173,9 +159,13 @@ func (s *Store) yieldKPIs(ctx context.Context, blk *BespokeBlock, since string, 
 		Scan(&allFlows, &allVaultDeps, &allVaultWds, &firstSeen); err != nil {
 		return fmt.Errorf("timescale: bespokeYield all-time KPIs: %w", err)
 	}
+	vol, err := s.strategyVolumeUSD(ctx, defindexStrategyVolumeKPIQuery(), since)
+	if err != nil {
+		return err
+	}
 	blk.KPIs = append(blk.KPIs,
-		BespokeKPI{Label: fmt.Sprintf("Deposit volume (%dd)", windowDays), Value: depositVol, Unit: "token-units", Hint: "gross strategy-layer deposit amount (base units)"},
-		BespokeKPI{Label: fmt.Sprintf("Withdraw volume (%dd)", windowDays), Value: withdrawVol, Unit: "token-units", Hint: "gross strategy-layer withdraw amount (base units)"},
+		BespokeKPI{Label: fmt.Sprintf("Deposit volume (%dd)", windowDays), Value: usdString(vol.total("deposit")), Unit: "USD", Hint: yieldVolumeKPIHint("deposit", "deposits", vol)},
+		BespokeKPI{Label: fmt.Sprintf("Withdraw volume (%dd)", windowDays), Value: usdString(vol.total("withdraw")), Unit: "USD", Hint: yieldVolumeKPIHint("withdraw", "withdrawals", vol)},
 		BespokeKPI{Label: fmt.Sprintf("Vault deposits / withdrawals (%dd)", windowDays), Value: vaultDeps + " / " + vaultWds, Hint: "vault-layer (end-user) flow event counts in the window"},
 		BespokeKPI{Label: fmt.Sprintf("Unique depositors (%dd)", windowDays), Value: depositors, Hint: "distinct vault-layer depositor addresses (end-user G-strkeys, occasionally routing contracts)"},
 		BespokeKPI{Label: fmt.Sprintf("Active vaults (%dd)", windowDays), Value: activeVaults, Hint: "distinct vault contracts with at least one end-user flow in the window"},
@@ -185,6 +175,14 @@ func (s *Store) yieldKPIs(ctx context.Context, blk *BespokeBlock, since string, 
 		BespokeKPI{Label: "Observed since", Value: firstSeen, Hint: "date of the source's first retained flow event"},
 	)
 	return nil
+}
+
+// yieldVolumeKPIHint states the volume KPI's derivation, as a named LOWER BOUND when any flow went unpriced (AGENTS.md money rule).
+func yieldVolumeKPIHint(direction, what string, vol yieldUSD) string {
+	if c := vol.lowerBoundClause(direction); c != "" {
+		return "LOWER BOUND: gross strategy-layer " + what + " valued at each day's USD price of the strategy's asset; " + c
+	}
+	return "gross strategy-layer " + what + " valued at each day's USD price of the strategy's asset"
 }
 
 // yieldSeriesBlocks appends the vault count lines and strategy volume/event lines at the window's grain (hourly at 24h, else daily).
@@ -201,17 +199,18 @@ func (s *Store) yieldSeriesBlocks(ctx context.Context, blk *BespokeBlock, since 
 	}
 	blk.Series = append(blk.Series, directional...)
 
-	volume, err := s.collectKeyedSeries(ctx, defindexStrategyVolumeSeriesQuery(windowDays), "token-units",
-		func(key string) string {
-			if key == "deposit" {
-				return yieldSeriesNameStrategyDepositVol
-			}
-			return yieldSeriesNameStrategyWithdrawVol
-		}, since)
+	volume, err := s.strategyVolumeUSD(ctx, defindexStrategyVolumeSeriesQuery(windowDays), since)
 	if err != nil {
-		return fmt.Errorf("timescale: bespokeYield strategy volume series: %w", err)
+		return err
 	}
-	blk.Series = append(blk.Series, volume...)
+	for _, d := range []struct{ direction, name string }{
+		{"deposit", yieldSeriesNameStrategyDepositVol},
+		{"withdraw", yieldSeriesNameStrategyWithdrawVol},
+	} {
+		if pts := seriesFromBuckets(volume.byDirBucket[d.direction]); len(pts) > 0 {
+			blk.Series = append(blk.Series, BespokeSeries{Name: d.name, Unit: "USD", Points: pts})
+		}
+	}
 
 	events, err := s.scanDailySeries(ctx, defindexStrategyEventsSeriesQuery(windowDays), since)
 	if err != nil {
