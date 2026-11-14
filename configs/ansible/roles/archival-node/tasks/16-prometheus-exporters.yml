@@ -191,27 +191,36 @@
       failed_when: false
       check_mode: false
 
+    - name: create the root-only install scratch dir
+      # Not /tmp: any local user can pre-create a predictable name there and root would install what it holds.
+      ansible.builtin.file:
+        path: /var/cache/stellarindex-install
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
     - name: Download pgbackrest_exporter release tarball
       # Skipped when the installed version already matches. URL naming is
       # name-version-os-arch (>=0.23).
       when: pgbackrest_exporter_version not in ((pge_current.stdout | default('')) + (pge_current.stderr | default('')))
       ansible.builtin.get_url:
         url: "https://github.com/woblerr/pgbackrest_exporter/releases/download/v{{ pgbackrest_exporter_version }}/pgbackrest_exporter-{{ pgbackrest_exporter_version }}-linux-x86_64.tar.gz"
-        dest: "/tmp/pgbackrest_exporter-{{ pgbackrest_exporter_version }}.tgz"
+        dest: "/var/cache/stellarindex-install/pgbackrest_exporter-{{ pgbackrest_exporter_version }}.tgz"
         checksum: "sha256:{{ pgbackrest_exporter_release_sha256 }}"
         mode: "0644"
 
     - name: Extract pgbackrest_exporter tarball
       when: pgbackrest_exporter_version not in ((pge_current.stdout | default('')) + (pge_current.stderr | default('')))
       ansible.builtin.unarchive:
-        src: "/tmp/pgbackrest_exporter-{{ pgbackrest_exporter_version }}.tgz"
-        dest: /tmp/
+        src: "/var/cache/stellarindex-install/pgbackrest_exporter-{{ pgbackrest_exporter_version }}.tgz"
+        dest: /var/cache/stellarindex-install/
         remote_src: true
 
     - name: Install pgbackrest_exporter binary
       when: pgbackrest_exporter_version not in ((pge_current.stdout | default('')) + (pge_current.stderr | default('')))
       ansible.builtin.copy:
-        src: "/tmp/pgbackrest_exporter-{{ pgbackrest_exporter_version }}-linux-x86_64/pgbackrest_exporter"
+        src: "/var/cache/stellarindex-install/pgbackrest_exporter-{{ pgbackrest_exporter_version }}-linux-x86_64/pgbackrest_exporter"
         dest: /usr/local/bin/pgbackrest_exporter
         owner: root
         group: root

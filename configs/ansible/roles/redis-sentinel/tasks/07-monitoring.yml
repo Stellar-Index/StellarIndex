@@ -26,27 +26,36 @@
       https://github.com/oliver006/redis_exporter/releases/tag/{{ redis_exporter_version }}
   when: redis_exporter_version | length > 0
 
+- name: create the root-only install scratch dir
+  # Not /tmp: any local user can pre-create a predictable name there and root would install what it holds.
+  file:
+    path: /var/cache/stellarindex-install
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
 - name: download redis_exporter
   get_url:
     url: >-
       https://github.com/oliver006/redis_exporter/releases/download/{{
       redis_exporter_version }}/redis_exporter-{{ redis_exporter_version
       }}.linux-amd64.tar.gz
-    dest: /tmp/redis_exporter.tar.gz
+    dest: /var/cache/stellarindex-install/redis_exporter.tar.gz
     mode: "0644"
     checksum: "sha256:{{ redis_exporter_release_sha256 }}"
   when: redis_exporter_version | length > 0
 
 - name: extract redis_exporter
   unarchive:
-    src: /tmp/redis_exporter.tar.gz
-    dest: /tmp/
+    src: /var/cache/stellarindex-install/redis_exporter.tar.gz
+    dest: /var/cache/stellarindex-install/
     remote_src: yes
   when: redis_exporter_version | length > 0
 
 - name: install redis_exporter binary
   copy:
-    src: "/tmp/redis_exporter-{{ redis_exporter_version }}.linux-amd64/redis_exporter"
+    src: "/var/cache/stellarindex-install/redis_exporter-{{ redis_exporter_version }}.linux-amd64/redis_exporter"
     dest: /usr/local/bin/redis_exporter
     mode: "0755"
     remote_src: yes

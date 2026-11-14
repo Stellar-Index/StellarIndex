@@ -71,7 +71,7 @@
 
 - name: detect existing Patroni state
   uri:
-    url: "http://127.0.0.1:8008/cluster"
+    url: "http://{{ patroni_rest_connect_address }}/cluster"
     status_code: [200, 503]
   register: _patroni_state
   failed_when: false

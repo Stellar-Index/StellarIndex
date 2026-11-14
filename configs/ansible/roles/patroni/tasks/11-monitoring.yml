@@ -27,7 +27,7 @@
       TMP="$(mktemp "${OUT}.XXXXXX")"
       trap 'rm -f "$TMP"' EXIT
 
-      JSON=$(curl -fsS http://127.0.0.1:8008/cluster || echo '{}')
+      JSON=$(curl -fsS http://{{ patroni_rest_connect_address }}/cluster || echo '{}')
       ROLE=$(echo "$JSON" | jq -r '.members[]? | select(.host == "{{ ansible_host }}") | .role // "unknown"')
       STATE=$(echo "$JSON" | jq -r '.members[]? | select(.host == "{{ ansible_host }}") | .state // "unknown"')
 

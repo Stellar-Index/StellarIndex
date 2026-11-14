@@ -79,7 +79,14 @@ user default off nopass nocommands
 {#   signup handler Reserves a hashed token, /v1/signup/verify Consumes it #}
 {#   via GETDEL. Disjoint from `signup:email:` (prior-signup reservation) #}
 {#   and `signup:lock:` (per-email serialisation lock). #}
-user stellarindex on >{{ redis_password }} -@all +@read +@write +@scripting +@pubsub +@connection -@admin -@dangerous ~vwap:* ~confidence:* ~freeze:* ~div:* ~rl:* ~signup-ip:* ~signup:email:* ~signup:lock:* ~signup:verify:* ~touch:apikey:* ~toml:* ~meta:* ~price:* ~apikey:* ~apikey-index:* ~apikey-cache:* ~health:* ~oracle:* ~sub:* ~sep10:seen:* ~usage:* ~passkey:ceremony:* ~assets:list:* ~markets:list:* &closed-bucket-* &stream-*
+{# - `login-throttle:*` (sign-in attempt counters), `mev:*` (the MEV #}
+{#   heartbeat) and `assets:listing-snapshot:*` (the listing snapshot; #}
+{#   `assets:list:*` does not match it) are each written by a running #}
+{#   binary. `+@transaction` is MULTI/EXEC: the aggregator's bucket and #}
+{#   freeze writes and the usage counters are transactions. #}
+{# - The channel is `stellarindex:closed-bucket:v1`, the aggregator's #}
+{#   closed-bucket feed the API's SSE streams subscribe to. #}
+user stellarindex on >{{ redis_password }} -@all +@read +@write +@scripting +@pubsub +@connection +@transaction -@admin -@dangerous ~vwap:* ~confidence:* ~freeze:* ~div:* ~rl:* ~signup-ip:* ~signup:email:* ~signup:lock:* ~signup:verify:* ~touch:apikey:* ~toml:* ~meta:* ~price:* ~apikey:* ~apikey-index:* ~apikey-cache:* ~health:* ~oracle:* ~sub:* ~sep10:seen:* ~usage:* ~passkey:ceremony:* ~assets:list:* ~assets:listing-snapshot:* ~markets:list:* ~login-throttle:* ~mev:* &stellarindex:closed-bucket:* &closed-bucket-* &stream-*
 
 {# Exporter user — narrow command set the oliver006/redis_exporter #}
 {# binary needs for INFO / CLIENT / CLUSTER / CONFIG GET / DBSIZE / #}
@@ -103,8 +110,10 @@ user redis_exporter on >{{ redis_password }} -@all +@connection +info +client +c
 {# GET/SET/REWRITE to persist `replicaof` across restarts, and #}
 {# REPLICAOF/SLAVEOF itself to promote/demote on failover — the last #}
 {# two live in `@dangerous`/`@admin`, which is why this can't reuse #}
-{# the `stellarindex` application user. #}
-user sentinel on >{{ redis_password }} -@all +auth +ping +info +subscribe +publish +config|get +config|set +config|rewrite +replicaof +slaveof +role +client|setname +client|getname +client|id +client|list ~* &*
+{# the `stellarindex` application user. A failover demotes the old #}
+{# primary inside MULTI/EXEC with CLIENT KILL, and SCRIPT KILL frees a #}
+{# primary stuck in a script; without them the failover never completes. #}
+user sentinel on >{{ redis_password }} -@all +auth +ping +info +subscribe +publish +config|get +config|set +config|rewrite +replicaof +slaveof +role +multi +exec +client|setname +client|getname +client|id +client|list +client|kill +script|kill ~* &*
 
 {# Replication user. redis.conf.j2's `masteruser` points here instead #}
 {# of the disabled `default` user, so a replica's masterauth AUTH #}

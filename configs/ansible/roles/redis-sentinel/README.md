@@ -40,11 +40,12 @@ SEV-1 time. ADR-0024 captures the full reasoning.
 
 - Three hosts named per inventory (`cache-01` / `02` / `03` by
   default). Each needs:
-  - Ubuntu 24.04 LTS (or 22.04).
+  - Ubuntu 24.04 LTS. 22.04 ships Redis 6.0, which cannot load the
+    rendered ACL (`&` channel patterns, `|` subcommands) or Sentinel config.
   - Network reachability between them on TCP `6379` (data) and
     `26379` (Sentinel).
   - `redis-server` and `redis-sentinel` available via apt (default
-    on Ubuntu 22.04+).
+    on Ubuntu 24.04).
 
 - Vault contents:
   - `redis_password` — used as both `requirepass` (clients

@@ -121,23 +121,28 @@
   # `cat /tmp/ch-schema/*.sql | clickhouse-client`.
   when: clickhouse_apply_schema | default(false) | bool
   ansible.builtin.file:
-    path: /tmp/ch-schema
+    path: "{{ item }}"
     state: absent
+  loop:
+    - /tmp/ch-schema
+    - /var/lib/stellarindex/ch-schema
 
 - name: Create schema staging dir
   # Persistent so the copy below is idempotent; a dir removed and re-created
   # every run reports a change in check mode and keeps ansible-drift red.
   when: clickhouse_apply_schema | default(false) | bool
   ansible.builtin.file:
-    path: /var/lib/stellarindex/ch-schema
+    # Root-owned tree: under /var/lib/stellarindex the service user could plant the files root pipes into clickhouse-client.
+    path: /usr/local/share/stellarindex/ch-schema
     state: directory
-    follow: false
+    owner: root
+    group: root
     mode: "0755"
 
 - name: Find staged schema files outside the allow-list
   when: clickhouse_apply_schema | default(false) | bool
   ansible.builtin.find:
-    paths: /var/lib/stellarindex/ch-schema
+    paths: /usr/local/share/stellarindex/ch-schema
     excludes: "{{ clickhouse_fresh_host_schema }}"
   register: clickhouse_stale_schema
 
@@ -154,7 +159,7 @@
     # playbook_dir is configs/ansible/playbooks, so three levels up is the repo
     # root.
     src: "{{ playbook_dir }}/../../../deploy/clickhouse/{{ item }}"
-    dest: /var/lib/stellarindex/ch-schema/
+    dest: /usr/local/share/stellarindex/ch-schema/
     mode: "0644"
   loop: "{{ clickhouse_fresh_host_schema }}"
 
@@ -180,14 +185,14 @@
     set -u
     P={{ clickhouse_tcp_port | default(9300) }}
     want={{ clickhouse_fresh_host_schema | length }}
-    if ! clickhouse-client --port "$P" --multiquery < /var/lib/stellarindex/ch-schema/tier1_schema.sql; then
+    if ! clickhouse-client --port "$P" --multiquery < /usr/local/share/stellarindex/ch-schema/tier1_schema.sql; then
       echo "FAILED: tier1_schema.sql (base lake) — nothing else was attempted" >&2
       exit 1
     fi
     applied=1
     failed=""
     {% for f in clickhouse_fresh_host_schema if f != 'tier1_schema.sql' %}
-    if clickhouse-client --port "$P" --multiquery < /var/lib/stellarindex/ch-schema/{{ f }}; then
+    if clickhouse-client --port "$P" --multiquery < /usr/local/share/stellarindex/ch-schema/{{ f }}; then
       applied=$((applied + 1))
     else
       failed="${failed} {{ f }}"

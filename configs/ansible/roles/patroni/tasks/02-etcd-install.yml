@@ -38,25 +38,34 @@
       in the SHA256SUMS file.
   when: not _etcd_bin.stat.exists or 'v3.5.21' not in (_etcd_version_check.stdout | default(''))
 
+- name: create the root-only install scratch dir
+  # Not /tmp: any local user can pre-create a predictable name there and root would install what it holds.
+  file:
+    path: /var/cache/stellarindex-install
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
 - name: download etcd 3.5.21
   get_url:
     url: "https://github.com/etcd-io/etcd/releases/download/v3.5.21/etcd-v3.5.21-linux-{{ etcd_arch | default('amd64') }}.tar.gz"
-    dest: /tmp/etcd.tar.gz
+    dest: /var/cache/stellarindex-install/etcd.tar.gz
     checksum: "sha256:{{ etcd_release_sha256 }}"
     mode: '0644'
   when: not _etcd_bin.stat.exists or 'v3.5.21' not in _etcd_version_check.stdout | default('')
 
 - name: extract etcd
   unarchive:
-    src: /tmp/etcd.tar.gz
-    dest: /tmp/
+    src: /var/cache/stellarindex-install/etcd.tar.gz
+    dest: /var/cache/stellarindex-install/
     remote_src: yes
-    creates: /tmp/etcd-v3.5.21-linux-{{ etcd_arch | default('amd64') }}/etcd
+    creates: /var/cache/stellarindex-install/etcd-v3.5.21-linux-{{ etcd_arch | default('amd64') }}/etcd
   when: not _etcd_bin.stat.exists or 'v3.5.21' not in _etcd_version_check.stdout | default('')
 
 - name: install etcd binary
   copy:
-    src: "/tmp/etcd-v3.5.21-linux-{{ etcd_arch | default('amd64') }}/etcd"
+    src: "/var/cache/stellarindex-install/etcd-v3.5.21-linux-{{ etcd_arch | default('amd64') }}/etcd"
     dest: /usr/local/bin/etcd
     mode: '0755'
     remote_src: yes
@@ -65,7 +74,7 @@
 
 - name: install etcdctl binary
   copy:
-    src: "/tmp/etcd-v3.5.21-linux-{{ etcd_arch | default('amd64') }}/etcdctl"
+    src: "/var/cache/stellarindex-install/etcd-v3.5.21-linux-{{ etcd_arch | default('amd64') }}/etcdctl"
     dest: /usr/local/bin/etcdctl
     mode: '0755'
     remote_src: yes
@@ -76,8 +85,8 @@
     path: "{{ item }}"
     state: absent
   loop:
-    - /tmp/etcd.tar.gz
-    - "/tmp/etcd-v3.5.21-linux-{{ etcd_arch | default('amd64') }}"
+    - /var/cache/stellarindex-install/etcd.tar.gz
+    - "/var/cache/stellarindex-install/etcd-v3.5.21-linux-{{ etcd_arch | default('amd64') }}"
   when: not _etcd_bin.stat.exists or 'v3.5.21' not in _etcd_version_check.stdout | default('')
 
 - name: ensure etcd system user
