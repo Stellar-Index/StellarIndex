@@ -245,6 +245,7 @@ func TestKeyIndex_IssuanceAfterReadyNeedsNoWalk(t *testing.T) {
 	mirrored := MirroredKey{
 		Plaintext: "sip_" + strings.Repeat("ab", 32),
 		Record:    APIKeyRecord{KeyID: "kid_mirrored01", Identifier: owner},
+		IdleTTL:   MirroredKeyIdleTTL,
 	}
 	if err := f.store.CreateWithSecret(context.Background(), mirrored); err != nil {
 		t.Fatalf("CreateWithSecret: %v", err)
@@ -579,5 +580,33 @@ func TestKeyIndex_InvalidateUnderDeniedACLIsNotAnError(t *testing.T) {
 	f.denier.deny.Store(true)
 	if err := f.store.InvalidateKeyIndex(context.Background()); err != nil {
 		t.Fatalf("InvalidateKeyIndex under a denying ACL = %v, want nil", err)
+	}
+}
+
+// The index hash has no TTL, so the pointer of a record that aged out is freed only when the index is invalidated.
+func TestKeyIndex_InvalidateDropsPointersOfExpiredRecords(t *testing.T) {
+	f := newKeyIndexFixture(t)
+	ctx := context.Background()
+	const owner = "account:abandoned"
+	gone, gonePlain := f.mint(t, owner)
+	kept, _ := f.mint(t, "account:live")
+	_ = listedKeyIDs(t, f.store, owner) // builds
+
+	f.mr.Del(cachekeys.APIKey(hashAPIKey(gonePlain)).String()) // the record aged out
+	if _, ok := f.indexField(t, "k:"+gone.KeyID); !ok {
+		t.Fatal("precondition: the aged-out record's pointer should still be indexed")
+	}
+
+	if err := f.store.InvalidateKeyIndex(ctx); err != nil {
+		t.Fatalf("InvalidateKeyIndex: %v", err)
+	}
+	if got := listedKeyIDs(t, f.store, "account:live"); !sameKeyIDs(got, kept.KeyID) {
+		t.Fatalf("list after invalidation = %v, want the live key", got)
+	}
+	if _, ok := f.indexField(t, "k:"+gone.KeyID); ok {
+		t.Fatal("the aged-out record's pointer survived invalidation and rebuild")
+	}
+	if _, ok := f.indexField(t, "k:"+kept.KeyID); !ok {
+		t.Fatal("the live record was not re-indexed")
 	}
 }

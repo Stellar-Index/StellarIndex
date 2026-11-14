@@ -119,6 +119,7 @@ func TestUpdateRateLimit_PreservesMirroredKeyTTL(t *testing.T) {
 	if err := store.CreateWithSecret(ctx, MirroredKey{
 		Plaintext: "sip_mirrored_secret",
 		Record:    APIKeyRecord{KeyID: "kid_mirrored", Identifier: AccountIdentifier("acme")},
+		IdleTTL:   MirroredKeyIdleTTL,
 	}); err != nil {
 		t.Fatalf("CreateWithSecret: %v", err)
 	}
@@ -137,5 +138,35 @@ func TestUpdateRateLimit_PreservesMirroredKeyTTL(t *testing.T) {
 	after := mr.TTL(recordKey)
 	if after <= 0 {
 		t.Fatalf("mirrored record TTL after UpdateRateLimit = %v, want > 0 (TTL must survive the write-back, not be cleared to persistent)", after)
+	}
+}
+
+func TestUpdateMonthlyQuota_RewritesTheRecordAndKeepsItsTTL(t *testing.T) {
+	store, mr, _ := newTestStore(t)
+	ctx := context.Background()
+	if err := store.CreateWithSecret(ctx, MirroredKey{
+		Plaintext: "sip_quota_secret",
+		Record: APIKeyRecord{
+			KeyID: "kid_quota", Identifier: AccountIdentifier("acme"), MonthlyQuota: 1_000_000_000, RateLimitPerMin: 600,
+		},
+		IdleTTL: MirroredKeyIdleTTL,
+	}); err != nil {
+		t.Fatalf("CreateWithSecret: %v", err)
+	}
+	rec, err := store.UpdateMonthlyQuota(ctx, "kid_quota", 1_000_000)
+	if err != nil {
+		t.Fatalf("UpdateMonthlyQuota: %v", err)
+	}
+	if rec.MonthlyQuota != 1_000_000 || rec.RateLimitPerMin != 600 {
+		t.Fatalf("record = %+v, want quota 1e6 and the rate limit untouched", rec)
+	}
+	if ttl := mr.TTL(cachekeys.APIKey(hashAPIKey("sip_quota_secret")).String()); ttl <= 0 {
+		t.Fatalf("TTL after the write-back = %v, want the idle window kept", ttl)
+	}
+	if _, err := store.UpdateMonthlyQuota(ctx, "kid_quota", 0); err == nil {
+		t.Error("quota 0 accepted: it would unmeter the key")
+	}
+	if _, err := store.UpdateMonthlyQuota(ctx, "kid_absent", 5); !errors.Is(err, ErrKeyNotFound) {
+		t.Errorf("unknown key: err = %v, want ErrKeyNotFound", err)
 	}
 }

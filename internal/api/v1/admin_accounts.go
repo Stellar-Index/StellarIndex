@@ -335,14 +335,21 @@ func (s *Server) revokeSessionsOnClosure(ctx context.Context, acct platform.Acco
 	return users, failed
 }
 
-// clampKeysAfterTierChange lowers every key to the new tier's budget when a PATCH LOWERED the tier, since the enforced rate
-// limit is read off the key record, not accounts.tier. Raises are not mirrored. The account-level rate_limit_per_min_override
-// is NOT clamped: it is an explicit, audited field of the same request.
+// clampKeysAfterTierChange lowers every key to the new tier's budgets when a PATCH LOWERED the tier, since the enforced rate
+// limit and monthly quota are read off the key record, not accounts.tier. Raises are not mirrored. The account-level
+// overrides are NOT clamped: they are explicit, audited fields of the same request, and a set quota override already
+// caps every key at auth time, so the per-key quota is left to it.
 func (s *Server) clampKeysAfterTierChange(
 	ctx context.Context, subject auth.Subject, priorTier platform.Tier, acct platform.Account,
 ) (lowered, failed int) {
-	ceiling := acct.Tier.MaxRateLimitPerMin()
-	if ceiling >= priorTier.MaxRateLimitPerMin() {
+	var ceiling keyCeilings
+	if rate := acct.Tier.MaxRateLimitPerMin(); rate < priorTier.MaxRateLimitPerMin() {
+		ceiling.rate = rate
+	}
+	if quota := acct.Tier.MaxMonthlyQuota(); quota < priorTier.MaxMonthlyQuota() && acct.MonthlyRequestQuotaOverride <= 0 {
+		ceiling.quota = quota
+	}
+	if ceiling == (keyCeilings{}) {
 		return 0, 0
 	}
 	cause := "admin PATCH /v1/admin/accounts/" + acct.ID.String() +

@@ -15,6 +15,19 @@ import (
 type SelfServiceKeyManager interface {
 	ListKeysForIdentifier(ctx context.Context, identifier string) ([]auth.APIKeyRecord, error)
 	UpdateRateLimit(ctx context.Context, keyID string, newRateLimitPerMin int) (auth.APIKeyRecord, error)
+	UpdateMonthlyQuota(ctx context.Context, keyID string, quota int64) (auth.APIKeyRecord, error)
+}
+
+// keyCeilings is what a tier clamp lowers a key to. A zero field leaves that budget alone.
+type keyCeilings struct {
+	rate  int
+	quota int64
+}
+
+// over reports which of a key's two budgets exceed the ceilings. A quota of 0 is an inherit/unmetered key, not an
+// over-ceiling one, and is left alone.
+func (c keyCeilings) over(rate int, quota int64) (rateOver, quotaOver bool) {
+	return c.rate > 0 && rate > c.rate, c.quota > 0 && quota > c.quota
 }
 
 // KeyMirror writes a caller-minted credential into the validator's own store.
@@ -84,7 +97,7 @@ func (s *Server) clampKeyBudgetsToTier(
 	cause string,
 	st APIKeyBudgetStores,
 	account platform.Account,
-	ceiling int,
+	ceiling keyCeilings,
 ) (lowered, failed int) {
 	pl, pf := s.downgradePlatformAPIKeys(ctx, cause, st, account, ceiling)
 	rl, rf := s.downgradeRedisAPIKeys(ctx, cause, st, account, ceiling)
@@ -107,7 +120,7 @@ func (s *Server) downgradePlatformAPIKeys(
 	cause string,
 	st APIKeyBudgetStores,
 	account platform.Account,
-	ceiling int,
+	ceiling keyCeilings,
 ) (lowered, failed int) {
 	if st.Platform == nil {
 		return 0, 0
@@ -121,10 +134,16 @@ func (s *Server) downgradePlatformAPIKeys(
 	}
 	for i := range keys {
 		k := keys[i]
-		if !k.RevokedAt.IsZero() || k.RateLimitPerMin <= ceiling {
+		rateOver, quotaOver := ceiling.over(k.RateLimitPerMin, k.MonthlyQuota)
+		if !k.RevokedAt.IsZero() || (!rateOver && !quotaOver) {
 			continue
 		}
-		k.RateLimitPerMin = ceiling
+		if rateOver {
+			k.RateLimitPerMin = ceiling.rate
+		}
+		if quotaOver {
+			k.MonthlyQuota = ceiling.quota
+		}
 		if err := st.Platform.Update(ctx, account.ID, k); err != nil {
 			st.note("key_update")
 			s.logger.Error("tier clamp: platform-key downgrade Update failed",
@@ -139,7 +158,7 @@ func (s *Server) downgradePlatformAPIKeys(
 	if lowered > 0 {
 		s.logger.Info("tier clamp: lowered platform-backed dashboard keys to the new tier budget",
 			"cause", cause, "account_id", account.ID,
-			"tier", string(account.Tier), "rate_limit_per_min", ceiling,
+			"tier", string(account.Tier), "rate_limit_per_min", ceiling.rate, "monthly_quota", ceiling.quota,
 			"keys_lowered", lowered)
 	}
 	return lowered, failed
@@ -152,7 +171,7 @@ func (s *Server) downgradeRedisAPIKeys(
 	cause string,
 	st APIKeyBudgetStores,
 	account platform.Account,
-	ceiling int,
+	ceiling keyCeilings,
 ) (lowered, failed int) {
 	if st.Redis == nil || account.Slug == "" {
 		return 0, 0
@@ -166,10 +185,18 @@ func (s *Server) downgradeRedisAPIKeys(
 		return 0, 1
 	}
 	for _, k := range keys {
-		if !k.RevokedAt.IsZero() || k.RateLimitPerMin <= ceiling {
+		rateOver, quotaOver := ceiling.over(k.RateLimitPerMin, k.MonthlyQuota)
+		if !k.RevokedAt.IsZero() || (!rateOver && !quotaOver) {
 			continue
 		}
-		if _, err := st.Redis.UpdateRateLimit(ctx, k.KeyID, ceiling); err != nil {
+		var err error
+		if rateOver {
+			_, err = st.Redis.UpdateRateLimit(ctx, k.KeyID, ceiling.rate)
+		}
+		if quotaOver && err == nil {
+			_, err = st.Redis.UpdateMonthlyQuota(ctx, k.KeyID, ceiling.quota)
+		}
+		if err != nil {
 			st.note("key_update")
 			s.logger.Error("tier clamp: redis-key downgrade failed",
 				"cause", cause, "identifier", identifier,
@@ -182,7 +209,7 @@ func (s *Server) downgradeRedisAPIKeys(
 	if lowered > 0 {
 		s.logger.Info("tier clamp: lowered redis-backed self-service keys to the new tier budget",
 			"cause", cause, "identifier", identifier,
-			"rate_limit_per_min", ceiling, "keys_lowered", lowered)
+			"rate_limit_per_min", ceiling.rate, "monthly_quota", ceiling.quota, "keys_lowered", lowered)
 	}
 	return lowered, failed
 }

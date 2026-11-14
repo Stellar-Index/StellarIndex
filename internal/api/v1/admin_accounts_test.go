@@ -811,3 +811,61 @@ func newAdminClampServer(
 	t.Cleanup(ts.Close)
 	return ts
 }
+
+// A tier lowering also lowers a per-key monthly quota above the new tier's ceiling, in both key stores. A key with no
+// quota of its own is left alone, and so is every key when the account carries a quota override (it caps them at auth).
+func TestAdminAccountOverrides_TierLoweringClampsKeyQuotas(t *testing.T) {
+	const freeQuota = 1_000_000
+	if got := platform.TierFree.MaxMonthlyQuota(); got != freeQuota {
+		t.Fatalf("tier ladder moved: TierFree.MaxMonthlyQuota() = %d, want %d", got, freeQuota)
+	}
+	for _, tc := range []struct {
+		name     string
+		override int64
+		want     int
+	}{
+		{name: "no account override", want: 1},
+		{name: "account quota override", override: 5_000_000, want: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			acctID := uuid.MustParse("33333333-3333-3333-3333-333333333333")
+			accounts := newFakePlatformAccountStore(platform.Account{
+				ID: acctID, Name: "Former Partner", Slug: "former", Tier: platform.TierPartner,
+				Status: platform.AccountActive, MonthlyRequestQuotaOverride: tc.override,
+			})
+			pgKeys := &fakePlatformAPIKeysForBridge{byAcct: map[uuid.UUID][]platform.APIKey{
+				acctID: {
+					{ID: "pg_big", AccountID: acctID, RateLimitPerMin: 30, MonthlyQuota: 1_000_000_000},
+					{ID: "pg_inherit", AccountID: acctID, RateLimitPerMin: 30},
+				},
+			}}
+			id := auth.AccountIdentifier("former")
+			redisKeys := &fakeSelfServiceKeyManager{keys: map[string][]auth.APIKeyRecord{
+				id: {
+					{KeyID: "rk_big", Identifier: id, RateLimitPerMin: 30, MonthlyQuota: 1_000_000_000},
+					{KeyID: "rk_small", Identifier: id, RateLimitPerMin: 30, MonthlyQuota: 500},
+				},
+			}}
+			ts := newAdminClampServer(t, accounts, v1.APIKeyBudgetStores{Platform: pgKeys, Redis: redisKeys},
+				&recordingAuditSink{})
+
+			resp := patchJSON(t, ts.URL+"/v1/admin/accounts/"+acctID.String(), "contract ended", `{"tier":"free"}`)
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				t.Fatalf("status = %d, want 200; body=%s", resp.StatusCode, body)
+			}
+			if len(pgKeys.updates) != tc.want || len(redisKeys.updates) != tc.want {
+				t.Fatalf("updates: platform=%+v redis=%+v, want %d each", pgKeys.updates, redisKeys.updates, tc.want)
+			}
+			if tc.want == 0 {
+				return
+			}
+			if k := pgKeys.updates[0]; k.ID != "pg_big" || k.MonthlyQuota != freeQuota || k.RateLimitPerMin != 30 {
+				t.Errorf("platform key = %+v, want pg_big at quota %d with its rate limit kept", k, freeQuota)
+			}
+			if u := redisKeys.updates[0]; u.keyID != "rk_big" || u.quota != freeQuota {
+				t.Errorf("redis update = %+v, want rk_big at quota %d", u, freeQuota)
+			}
+		})
+	}
+}

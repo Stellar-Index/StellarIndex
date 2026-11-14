@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
@@ -19,6 +20,10 @@ type MirroredKey struct {
 	// CreatedAt (stamped now). KeyID must match the management row's id
 	// so revocation and listings line up across the two stores.
 	Record APIKeyRecord
+	// IdleTTL is the sliding idle window the record is written with; zero means it never expires. Only the open
+	// registration path sets it: a key an account manages must not vanish from the validator while its management
+	// row still lists it as active.
+	IdleTTL time.Duration
 }
 
 // APIKeyRecordFromPlatform maps a Postgres management row onto the Redis validator record field-for-field; k.MonthlyQuota must be resolved (0 means UNMETERED there), so a zero is refused rather than shipping an uncapped key.
@@ -70,9 +75,8 @@ func (s *RedisAPIKeyStore) CreateWithSecret(ctx context.Context, k MirroredKey) 
 		return fmt.Errorf("auth: CreateWithSecret: marshal record: %w", err)
 	}
 	hash := hashAPIKey(k.Plaintext)
-	// Write with the sliding idle TTL rather than 0: the register mirror is the open-registration growth vector, and the validator re-warms the TTL on each Lookup so only abandoned keys age out.
 	// Indexed in the same atomic write as the record, as Create does: POST /v1/register rolls back a failed registration through RevokeKeyByID, which finds the record via the index.
-	if err := s.writeRecord(ctx, hash, rec, body, MirroredKeyIdleTTL); err != nil {
+	if err := s.writeRecord(ctx, hash, rec, body, max(k.IdleTTL, 0)); err != nil {
 		return fmt.Errorf("auth: CreateWithSecret: redis set: %w", err)
 	}
 	return nil
