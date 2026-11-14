@@ -402,3 +402,25 @@ func mcCallsWithPrefix(t *testing.T, h *fillHarness, prefix string) []string {
 	}
 	return calls
 }
+
+// ingestion_cursors holds job positions too (tag-signer -to, backfills): a tip read as the max over all rows lets one of them ratchet the permanent hot floor.
+func TestTipReadersUseTheLiveIngestCursor(t *testing.T) {
+	t.Parallel()
+	for _, script := range []string{
+		cutoffScript,
+		"configs/ansible/roles/archival-node/files/compute-archive-to.sh",
+		"configs/ansible/roles/archival-node/files/data-freshness.sh",
+		"scripts/ops/ch-live-catchup.sh",
+	} {
+		body := readRepoFile(t, script)
+		if !strings.Contains(body, "FROM ingestion_cursors WHERE source = 'ledgerstream' AND sub_source = ''") {
+			t.Errorf("%s: does not read the tip from the ledgerstream cursor", script)
+		}
+		for _, line := range strings.Split(body, "\n") {
+			l := strings.ToLower(line)
+			if strings.Contains(l, "max(last_ledger)") && strings.Contains(l, "ingestion_cursors") {
+				t.Errorf("%s: tip read as max over every cursor: %s", script, strings.TrimSpace(line))
+			}
+		}
+	}
+}

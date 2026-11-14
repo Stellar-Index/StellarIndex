@@ -180,7 +180,7 @@ reproject)
     CHI=$(( CLO + CHUNK )); [ "$CHI" -gt "$TO" ] && CHI=$TO
     q "INSERT INTO stellar.ledger_entries_current_v2 ($BASE_COLS)
        SELECT $BASE_COLS
-       FROM stellar.ledger_entry_changes
+       FROM stellar.ledger_entry_changes FINAL
        WHERE ledger_seq >= $CLO AND ledger_seq < $CHI"
     echo "$CHI" > "$PROG"
     log "  window [$CLO,$CHI) inserted"
@@ -274,7 +274,7 @@ cutover)
      SELECT $BASE_COLS FROM stellar.ledger_entry_changes"
   q "INSERT INTO stellar.ledger_entries_current ($BASE_COLS)
      SELECT $BASE_COLS
-     FROM stellar.ledger_entry_changes
+     FROM stellar.ledger_entry_changes FINAL
      WHERE ledger_seq >= $TIPC"
   log "cutover DONE (old table retained as ledger_entries_current_old; finalize drops it after a settling period)"
   ;;

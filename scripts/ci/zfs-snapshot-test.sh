@@ -74,6 +74,15 @@ case "$cmd" in
     #   zfs list -H -o name -t snapshot <ds@snap>       (snapshot exists?)
     #   zfs list -Hp -t snapshot -d 1 -o name,creation,used -s creation <ds>
     target="${*: -1}"
+    WANT=name,clones,userrefs
+    if has_flag "$@"; then
+      # zfs list -H -r -t snapshot -o name,clones,userrefs <ds>; $P/pinned holds "<snap>\t<clones>\t<userrefs>".
+      grep -E "^${target}(/[^@]*)?@" "$P/snapshots" 2>/dev/null | cut -f1 | while read -r n; do
+        pin="$(grep "^${n}"$'\t' "$P/pinned" 2>/dev/null | cut -f2,3 || true)"
+        printf '%s\t%s\n' "$n" "${pin:--$'\t'0}"
+      done
+      exit 0
+    fi
     WANT=snapshot
     if has_flag "$@"; then
       if [[ "$target" == *@* ]]; then
@@ -107,6 +116,11 @@ case "$cmd" in
     [[ -n "$line" ]] || { echo "could not find any snapshots to destroy; check snapshot names." >&2; exit 1; }
     targets="$ds"
     [[ -n "$rec" ]] && targets="$(grep -E "^${ds}(/|\$)" "$P/datasets")"
+    for d in $targets; do
+      if grep -q "^${d}@${snap}"$'\t' "$P/pinned" 2>/dev/null; then
+        echo "cannot destroy '$d@$snap': snapshot has dependent clones" >&2; exit 1
+      fi
+    done
     for d in $targets; do
       line="$(grep "^${d}@${snap}"$'\t' "$P/snapshots" 2>/dev/null || true)"
       [[ -n "$line" ]] || continue
@@ -193,7 +207,7 @@ add_snap() { printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "$FAKE_POOL/snapshots"; }
 reset_pool() {
   local free="$1" d
   printf '%s\n' data/clickhouse data/postgres data/minio > "$FAKE_POOL/datasets"
-  : > "$FAKE_POOL/snapshots"; : > "$FAKE_POOL/destroyed"; : > "$FAKE_POOL/created"
+  : > "$FAKE_POOL/snapshots"; : > "$FAKE_POOL/destroyed"; : > "$FAKE_POOL/created"; : > "$FAKE_POOL/pinned"
   echo "$free" > "$FAKE_POOL/free"
   for d in 5 4 3 2 1; do
     add_snap "data/clickhouse@auto-$(stamp_days_ago "$d")" "$(days_ago "$d")" $(( 250 * GB ))
@@ -300,7 +314,7 @@ res $? "within a dataset the guard prunes older before newer (clickhouse@3d befo
 # Free 1.9 TiB, no retention candidates: the guard needs 100 GiB, must
 # destroy exactly ONE 250 GB clickhouse snapshot, stop, then snapshot.
 printf '%s\n' data/clickhouse data/postgres > "$FAKE_POOL/datasets"
-: > "$FAKE_POOL/snapshots"; : > "$FAKE_POOL/destroyed"; : > "$FAKE_POOL/created"
+: > "$FAKE_POOL/snapshots"; : > "$FAKE_POOL/destroyed"; : > "$FAKE_POOL/created"; : > "$FAKE_POOL/pinned"
 echo $(( 19 * TIB / 10 )) > "$FAKE_POOL/free"
 for d in 2 1; do
   add_snap "data/clickhouse@auto-$(stamp_days_ago "$d")" "$(days_ago "$d")" $(( 250 * GB ))
@@ -451,6 +465,29 @@ was_destroyed "data/postgres/wal@auto-$(stamp_days_ago 9)" \
 res $? "the child's snapshot is destroyed with its parent's (9d) and kept with it (6d)" "destroyed=[$(destroyed_list)]"
 protected_intact
 res $? "recursive destroy leaves manual-/operator/unmanaged snapshots alone" "destroyed=[$(destroyed_list)]"
+
+echo "zfs-snapshot-test: a cloned or held snapshot is skipped, not fatal"
+# The runbook's recovery clones an expired auto snapshot. Rotate must still snapshot every dataset.
+reset_pool $(( 5 * TIB ))
+printf '%s\t%s\t%s\n' "data/clickhouse@auto-$(stamp_days_ago 5)" "data/recover" 0 >> "$FAKE_POOL/pinned"
+printf '%s\t%s\t%s\n' "data/postgres@auto-$(stamp_days_ago 9)" "-" 1 >> "$FAKE_POOL/pinned"
+"$SCRIPT" rotate 2>"$TMP/logpin"; rc=$?
+res $(( rc != 0 )) "rotate exits 0 with a cloned and a held snapshot past retention" "exit $rc: $(cat "$TMP/logpin")"
+! was_destroyed "data/clickhouse@auto-$(stamp_days_ago 5)" && ! was_destroyed "data/postgres@auto-$(stamp_days_ago 9)" \
+  && was_destroyed "data/clickhouse@auto-$(stamp_days_ago 4)"
+res $? "pinned snapshots kept, the other expired one destroyed" "destroyed=[$(destroyed_list)]"
+t "$(grep -c '^data/clickhouse@auto-' "$FAKE_POOL/created")" -eq 1 -a "$(grep -c '^data/postgres@auto-' "$FAKE_POOL/created")" -eq 1
+res $? "every dataset still got its new snapshot" "created=[$(created_list)]"
+t "$(metric 'stellarindex_zfs_snapshot_destroy_blocked{dataset="data/clickhouse"}')" = 1 \
+  -a "$(metric 'stellarindex_zfs_snapshot_destroy_blocked{dataset="data/postgres"}')" = 1
+res $? "destroy_blocked=1 for each dataset"
+# Below the floor the guard must pass over the pinned snapshot, not select it forever.
+reset_pool $(( 1 * TIB ))
+printf '%s\t%s\t%s\n' "data/postgres@auto-$(stamp_days_ago 6)" "data/recover" 0 >> "$FAKE_POOL/pinned"
+"$SCRIPT" rotate 2>"$TMP/logpin2"; rc=$?
+res $(( rc != 0 )) "guard run with a pinned oldest candidate exits 0" "exit $rc: $(tail -3 "$TMP/logpin2")"
+! was_destroyed "data/postgres@auto-$(stamp_days_ago 6)" && was_destroyed "data/postgres@auto-$(stamp_days_ago 5)"
+res $? "guard skipped the pinned snapshot and pruned the next oldest" "destroyed=[$(destroyed_list)]"
 
 echo "zfs-snapshot-test: config validation"
 ZFS_SNAPSHOT_DATASETS="data/clickhouse" "$SCRIPT" rotate 2>/dev/null; rc=$?

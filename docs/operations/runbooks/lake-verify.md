@@ -42,7 +42,7 @@ cat /var/lib/node_exporter/textfile_collector/lake_verify.prom
 
 1. `contiguity` / `hash_chain` / `entry_changes`: re-read the range, then gate it: `stellarindex-ops ch-backfill -config PATH -from LO -to HI -write`, `ch-gate -config PATH -from LO -to HI`. Omit `-bucket` for ledgers in the live window; add `-bucket galexie-archive` only for older ranges the trimmer removed.
 2. `raw_census` on `transactions`, `operations`, `operation_results` or `contract_events`: the `SHORT` line names table and partition (`p` x 1,000,000 ... +999,999); `ch-backfill -write` that range, then `ch-gate`.
-3. `raw_census` on `operation_participants` below the live-capture floor: `stellarindex-ops ch-participant-backfill -from LO -to HI -write`.
+3. `raw_census` on `operation_participants` below the live-capture floor: `stellarindex-ops ch-participant-backfill -from LO -to HI -write`. Then re-run the participant arm of Step 3 in `deploy/clickhouse/account_op_types.sql` over the same range (the run's `FOLLOW-UP OWED` line names it): the materialized view feeds on live inserts only, so without it the repaired rows stay out of served account counts and listings.
 4. By hand, `stellarindex-ops` gets 403 AccessDenied on the MinIO read unless the transient unit loads the env files: `systemd-run --unit=NAME --collect -p EnvironmentFile=-/etc/default/stellarindex -p EnvironmentFile=-/etc/default/stellarindex-ops /usr/local/sbin/run-heavy-job.sh NAME /usr/local/bin/stellarindex-ops SUBCOMMAND ...`
 5. Backfill vs projector replay: [the replay decision rule](../../architecture/ingest-pipeline.md#the-replay-decision-rule); never add a bespoke per-table backfill. Verify: `systemctl start verify-lake.service`; every `stellarindex_lake_verify_failures` series reads 0.
 
