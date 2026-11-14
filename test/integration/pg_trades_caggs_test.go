@@ -892,6 +892,10 @@ func TestPriceCAGGsPriceableFilter(t *testing.T) {
 		})
 	}
 
+	t.Run("readers skip an all-zero-leg bucket", func(t *testing.T) {
+		assertReadersSkipUnpricedBucket(t, ctx, dsn, allZero, t0)
+	})
+
 	var notional int64
 	if err := db.QueryRowContext(ctx, `SELECT notional_trade_count FROM prices_1m
 		 WHERE base_asset = $1 AND quote_asset = $2 AND bucket = $3`,
@@ -2210,4 +2214,61 @@ func catalogNames(t *testing.T, ctx context.Context, store *timescale.Store, q s
 		t.Fatalf("rows: %v", err)
 	}
 	return out
+}
+
+// assertReadersSkipUnpricedBucket calls every price reader over a window whose
+// only bucket has a NULL vwap: each must answer "no price", never a scan error.
+func assertReadersSkipUnpricedBucket(t *testing.T, ctx context.Context, dsn string, pair ohlcDustPair, t0 time.Time) {
+	t.Helper()
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("timescale.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	base, err := c.ParseAsset(pair.base)
+	if err != nil {
+		t.Fatalf("ParseAsset(%s): %v", pair.base, err)
+	}
+	quote, err := c.ParseAsset(pair.quote)
+	if err != nil {
+		t.Fatalf("ParseAsset(%s): %v", pair.quote, err)
+	}
+	p, err := c.NewPair(base, quote)
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	from, to := t0.Add(-time.Hour), t0.Add(time.Hour)
+	at := t0.Add(2 * time.Minute)
+
+	empty := func(name string, n int, err error) {
+		t.Helper()
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("%s: %v — a bucket with no priceable trade must read as no price", name, err)
+		}
+		if n != 0 {
+			t.Errorf("%s returned %d row(s) for a pair whose only bucket is unpriced", name, n)
+		}
+	}
+	for _, g := range []timescale.HistoryGranularity{timescale.Granularity1m, timescale.Granularity1h, timescale.Granularity1d} {
+		pts, err := store.HistoryPointsInRange(ctx, p, g, from, to, 100)
+		empty("HistoryPointsInRange/"+string(g), len(pts), err)
+		bars, err := store.OHLCSeries(ctx, p, g, from, to, 100)
+		empty("OHLCSeries/"+string(g), len(bars), err)
+	}
+	pts, err := store.HistoryPoints(ctx, p, timescale.Granularity1d, 100)
+	empty("HistoryPoints", len(pts), err)
+	pts, err = store.TWAPPointsInRange(ctx, p, timescale.Granularity1h, from, to, 100)
+	empty("TWAPPointsInRange", len(pts), err)
+	bars, err := store.OHLCSeriesReBucketed(ctx, p, timescale.Granularity1m, "5 minutes", from, to, 100)
+	empty("OHLCSeriesReBucketed", len(bars), err)
+	rows, err := store.ClosedVWAP1mCombinedBefore(ctx, p, at, 10)
+	empty("ClosedVWAP1mCombinedBefore", len(rows), err)
+	_, err = store.ClosedVWAP1mAtOrBefore(ctx, p, at)
+	empty("ClosedVWAP1mAtOrBefore", 0, err)
+	_, err = store.ClosedVWAPAtOrBefore(ctx, p, at, time.Hour)
+	empty("ClosedVWAPAtOrBefore", 0, err)
+	timed, err := store.TimedVWAPsForPair1m(ctx, p, from, to)
+	empty("TimedVWAPsForPair1m", len(timed), err)
+	vw, err := store.VWAPsForPair1m(ctx, p, from, to)
+	empty("VWAPsForPair1m", len(vw), err)
 }

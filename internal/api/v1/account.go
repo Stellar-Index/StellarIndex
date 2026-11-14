@@ -35,6 +35,7 @@ type Account struct {
 	KeyID           string       `json:"key_id,omitempty"`
 	Label           string       `json:"label,omitempty"`
 	KeyPrefix       string       `json:"key_prefix,omitempty"`
+	ParentKeyID     string       `json:"parent_key_id,omitempty"`
 	Tier            string       `json:"tier,omitempty"`
 	RateLimitPerMin int          `json:"rate_limit_per_min,omitempty"`
 	CreatedAt       WireTime     `json:"created_at,omitempty"`
@@ -686,6 +687,7 @@ func (s *Server) handleAccountKeysList(w http.ResponseWriter, r *http.Request) {
 			KeyID:           k.KeyID,
 			Label:           k.Label,
 			KeyPrefix:       k.KeyPrefix,
+			ParentKeyID:     k.ParentKeyID,
 			Tier:            string(k.Tier),
 			RateLimitPerMin: k.RateLimitPerMin,
 			CreatedAt:       WireTime(k.CreatedAt),

@@ -381,21 +381,27 @@ type RWASummary struct {
 	// Basis is a one-line statement of what was measured and how it was valued.
 	Basis string `json:"basis"`
 	// Truncated reports that a cap bound the rebuild (issuer cap, contract scan cap or a full
-	// per-issuer listing page), so members may be missing; Basis names which.
+	// per-issuer listing page) or a read behind the definition did not answer, so members may be
+	// missing; Basis names which.
 	Truncated bool `json:"truncated,omitempty"`
 }
 
-// rwaTruncation counts what each rebuild cap left unread. Every cap, not only the issuer cap,
-// makes the summary total a lower bound.
+// rwaTruncation counts what each rebuild cap left unread and what a failed read left unevaluated.
+// Each of them, not only the issuer cap, makes the summary total a lower bound.
 type rwaTruncation struct {
 	overIssuerCap   int
 	overContractCap int
 	issuerPagesFull int
+	// unread counts contract candidates refused because the listing, curated-tag or symbol read
+	// did not answer: an outage, not a finding about the candidate.
+	unread int
 }
 
-func (t rwaTruncation) any() bool {
+func (t rwaTruncation) capped() bool {
 	return t.overIssuerCap > 0 || t.overContractCap > 0 || t.issuerPagesFull > 0
 }
+
+func (t rwaTruncation) any() bool { return t.capped() || t.unread > 0 }
 
 // rwaTruncationOf gathers the caps from the membership and the catalogue join.
 func rwaTruncationOf(m rwaMembership, join rwaCatalogueJoin) rwaTruncation {
@@ -403,6 +409,8 @@ func rwaTruncationOf(m rwaMembership, join rwaCatalogueJoin) rwaTruncation {
 		overIssuerCap:   m.overIssuerCap,
 		overContractCap: m.contractCensus.overCap,
 		issuerPagesFull: join.pagesTruncated,
+		unread: m.listingCensus.listingUnavailable + m.listingCensus.tagsUnavailable +
+			m.listingCensus.symbolsUnread + m.contractCensus.symbolsUnread,
 	}
 }
 
@@ -725,7 +733,7 @@ func (s *Server) buildRWAMembership(ctx context.Context) rwaMembership {
 	// A wired contract reader whose scan errored leaves census.available false just like an
 	// unwired one; only this layer holds the wiring, so only it can tell them apart (see
 	// [rwaMembership.readFailed]). The listing arm is not folded in: it fails closed under
-	// `independent_listing_unavailable`, so its outage is already a stated refusal.
+	// `independent_listing_unavailable`, and [rwaTruncation.unread] makes the totals a lower bound.
 	if s.RWAContracts != nil && !c.census.available {
 		out.readFailed = true
 	}
@@ -1174,7 +1182,8 @@ func (s *Server) buildRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error)
 	for i := range view.Assets {
 		rwaApplyReference(&view.Assets[i], refs, listingRefs, classicListingRefs, now)
 	}
-	view.Summary = rwaSummarise(view.Assets, rwaTruncationOf(m, join))
+	trunc := rwaTruncationOf(m, join)
+	view.Summary = rwaSummarise(view.Assets, trunc)
 	view.ByClass = rwaByClass(view.Assets)
 	view.ByIssuer = rwaByIssuer(view.Assets)
 	view.Funnel = rwaFunnelOf(m, join, len(classicAssets), dirCounts.served, listingCounts.served, view.Assets)
@@ -1182,7 +1191,7 @@ func (s *Server) buildRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error)
 	// the verified set carries and never feeds a figure back into the totals above.
 	curatedDegraded := s.attachRWACurated(vctx, &view, now)
 	stale := degraded || curatedDegraded
-	return rwaAssetsBuild{view: view, flags: Flags{Stale: stale, Degraded: stale || m.readFailed}}, nil
+	return rwaAssetsBuild{view: view, flags: Flags{Stale: stale, Degraded: stale || m.readFailed || trunc.unread > 0}}, nil
 }
 
 // rwaMembershipUnavailable is true when NEITHER arm answered. One arm failing beside a reporting one is a partial measurement, not an
@@ -1818,9 +1827,14 @@ func rwaWriteTruncation(b *strings.Builder, t rwaTruncation) {
 	if t.issuerPagesFull > 0 {
 		caps = append(caps, strconv.Itoa(t.issuerPagesFull)+" member issuer(s) have more classic assets than one listing page reads")
 	}
-	b.WriteString(" A rebuild cap bound this set (")
-	b.WriteString(strings.Join(caps, "; "))
-	b.WriteString("), so members may be missing and the total is a LOWER BOUND on the value of the set.")
+	if t.capped() {
+		b.WriteString(" A rebuild cap bound this set (")
+		b.WriteString(strings.Join(caps, "; "))
+		b.WriteString("), so members may be missing and the total is a LOWER BOUND on the value of the set.")
+	}
+	if t.unread > 0 {
+		b.WriteString(" " + strconv.Itoa(t.unread) + " contract candidate(s) went unevaluated because a read the definition depends on did not answer (the funnel names which), so members may be missing and the total is a LOWER BOUND on the value of the set.")
+	}
 }
 
 // rwaUnclassified groups the oracle-basis assets, which declare no anchor class; inventing one

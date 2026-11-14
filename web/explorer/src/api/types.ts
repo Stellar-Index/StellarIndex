@@ -3399,6 +3399,12 @@ export interface paths {
          *     `series[].market_withheld_days`, never published and never
          *     silently dropped.
          *
+         *     The floor measures substance, not price, so the price is held
+         *     to the served-price band as well. A day whose price falls
+         *     outside the band around the market's own days of the preceding
+         *     30 (around the published value when there is none) is counted
+         *     in `market_withheld_days` too.
+         *
          *     The floor is not, and cannot be, the live gate: that one
          *     measures a trailing 24 hours ending now. So an asset may carry a
          *     premium on a past day and none today, because its market was
@@ -4149,6 +4155,9 @@ export interface paths {
          *     recently created revoked keys for the authenticated user's
          *     account, ordered oldest-first. `revoked_truncated` is true
          *     when older revoked keys exist and were omitted.
+         *     Keys minted by another key through `POST /v1/account/keys`
+         *     follow, marked `delegated`; `delegated_unavailable` is true
+         *     when they could not be read and so may be missing.
          *     Plaintext is never returned by this endpoint — only
          *     the prefix (`sip_4f9c1d8b…`).
          */
@@ -4186,6 +4195,10 @@ export interface paths {
          *     idempotent. 404 when the key doesn't exist OR belongs
          *     to a different account (same shape so attackers can't
          *     enumerate cross-account key_ids).
+         *     A `delegated` key is removed outright, by an owner or admin
+         *     only, and a second revoke of it is 404. Revoking a key does
+         *     not revoke the keys it minted: revoke each one listed with
+         *     its `parent_key_id`.
          */
         delete: operations["deleteDashboardKey"];
         options?: never;
@@ -7374,6 +7387,18 @@ export interface components {
             id: string;
             name: string;
             description?: string;
+            /**
+             * @description Present and true on a key with no dashboard record: one
+             *     another key minted through `POST /v1/account/keys`, or one
+             *     an operator issued. It authenticates like any other key of
+             *     the account and holds no key slot.
+             */
+            delegated?: boolean;
+            /**
+             * @description On a `delegated` key, the id of the key that minted it.
+             *     Absent on delegated keys minted before the link was recorded.
+             */
+            parent_key_id?: string;
             /** @description First 12 chars of the plaintext (`sip_<8hex>`). */
             key_prefix: string;
             /** @enum {string} */
@@ -8775,7 +8800,8 @@ export interface components {
             points: components["schemas"]["RWAPremiumHistoryPoint"][];
             /**
              * @description Days inside the window that carried observed trades which did
-             *     NOT clear the thin-market floor. Served because "we saw
+             *     NOT clear the thin-market floor, or whose price fell
+             *     outside the served-price band. Served because "we saw
              *     trades and refused to price them" and "there were no trades"
              *     are opposite findings that an absent point renders
              *     identically.
@@ -9198,7 +9224,7 @@ export interface components {
             assets_valued: number;
             /** @description Assets whose valuation is withheld or unavailable; each contributes nothing. */
             assets_unvalued: number;
-            /** @description True whenever any member is unvalued or a rebuild cap bound the set (`truncated`), i.e. whenever the total may be less than the value of the set. */
+            /** @description True whenever any member is unvalued or a rebuild cap or an unanswered read bound the set (`truncated`), i.e. whenever the total may be less than the value of the set. */
             lower_bound: boolean;
             /**
              * Format: int64
@@ -9225,7 +9251,7 @@ export interface components {
             both_bases: components["schemas"]["RWABothBases"];
             /** @description One-line statement of what the total measured and how it was valued. */
             basis: string;
-            /** @description True when a rebuild cap bound the set (the issuer cap, the contract scan cap, or a member issuer whose classic assets fill one listing page), so members may be missing; `basis` names which cap. Implies `lower_bound` on both totals. Absent when false. */
+            /** @description True when a rebuild cap bound the set (the issuer cap, the contract scan cap, or a member issuer whose classic assets fill one listing page), or when a read the set definition depends on did not answer (the independent listing, the curated tags, a contract's symbol), so members may be missing; `basis` names which. Implies `lower_bound` on both totals. Absent when false. */
             truncated?: boolean;
         };
         /**
@@ -9273,7 +9299,7 @@ export interface components {
              *     `valuation` arm breaks this number down by reason.
              */
             assets_unvalued: number;
-            /** @description True whenever any member carries no reference valuation or a rebuild cap bound the set, i.e. whenever this total may be less than the reference-priced value of the set. */
+            /** @description True whenever any member carries no reference valuation or a rebuild cap or an unanswered read bound the set, i.e. whenever this total may be less than the reference-priced value of the set. */
             lower_bound: boolean;
             /**
              * @description The distinct PUBLISHERS whose published values make up the
@@ -13063,6 +13089,13 @@ export interface components {
             account?: components["schemas"]["AccountInfo"];
             key_id?: string;
             label?: string;
+            /**
+             * @description The `key_id` of the key that minted this one through
+             *     `POST /v1/account/keys`. Absent on any other key, and on
+             *     keys minted before the link was recorded. Revoking the
+             *     parent does not revoke this key.
+             */
+            parent_key_id?: string;
             /**
              * @description First 12 characters of the plaintext key (e.g.
              *     `sip_4f9c1d8b`). Safe to log; customers use it to
@@ -23031,6 +23064,7 @@ export interface operations {
                      *         }
                      *       ],
                      *       "revoked_truncated": false,
+                     *       "delegated_unavailable": false,
                      *       "max_active_keys": 25
                      *     }
                      */
@@ -23047,6 +23081,11 @@ export interface operations {
                          *     so an expired key holds its slot until revoked.
                          */
                         max_active_keys: number;
+                        /**
+                         * @description True when keys minted by other keys could not be
+                         *     read: the list may be missing live credentials.
+                         */
+                        delegated_unavailable: boolean;
                     };
                 };
             };

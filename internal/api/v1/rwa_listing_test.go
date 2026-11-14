@@ -353,6 +353,14 @@ func TestRWAListing_UnavailableShrinksTheSetAndSaysSo(t *testing.T) {
 	if !strings.Contains(view.Funnel.Basis, "independent_listing_unavailable") {
 		t.Error("the funnel basis does not say the set is smaller because the listing did not answer")
 	}
+	// The totals are over a set a failed read shrank, so they are lower bounds and say why.
+	if !view.Summary.LowerBound || !view.Summary.Truncated || !view.Summary.ReferenceValuation.LowerBound {
+		t.Errorf("lower_bound = %v truncated = %v reference lower_bound = %v, want all true",
+			view.Summary.LowerBound, view.Summary.Truncated, view.Summary.ReferenceValuation.LowerBound)
+	}
+	if !strings.Contains(view.Summary.Basis, "did not answer") {
+		t.Errorf("the summary basis does not name the unanswered read: %s", view.Summary.Basis)
+	}
 }
 
 // TestRWAListing_EntirelyStaleSnapshotIsAnOutageNotAFinding: `synced_at` is stamped once per sync, so all rows age out

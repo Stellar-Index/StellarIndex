@@ -260,13 +260,13 @@ const timedVWAPs1mForChangeSummaryQuery = `
 		  FROM (
 		    SELECT bucket, base_asset, vwap, volume_priced, trade_count, sources
 		      FROM prices_1m
-		     WHERE base_asset = $1 AND quote_asset = $2
+		     WHERE base_asset = $1 AND quote_asset = $2 AND vwap IS NOT NULL
 		       AND bucket >= $3
 		       AND bucket <= LEAST($4::timestamptz, now()) - INTERVAL '1 minute'
 		    UNION ALL
 		    SELECT bucket, base_asset, vwap, volume_priced, trade_count, sources
 		      FROM prices_1m
-		     WHERE base_asset = $2 AND quote_asset = $1
+		     WHERE base_asset = $2 AND quote_asset = $1 AND vwap IS NOT NULL
 		       AND bucket >= $3
 		       AND bucket <= LEAST($4::timestamptz, now()) - INTERVAL '1 minute'
 		  ) u

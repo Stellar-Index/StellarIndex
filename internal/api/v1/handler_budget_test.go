@@ -401,7 +401,7 @@ var inlineDetachments = map[string]string{
 		"at most once per rwaCuratedSnapshotTTL and bounded by rwaCuratedReadBudget (5s). The " +
 		"inline-build shape the contract-protocol index used to have: a known residual, not a pattern to copy",
 	"price.go#resolveBatchRowShared": "coalesced /v1/price/batch row: detached from the leader's " +
-		"cancellation only; it keeps the leader's request deadline (priceReadFlightTimeout without one), so it adds no time past it",
+		"cancellation and deadline so a spent leader cannot fail the freeze read for its followers; bounded by priceReadFlightTimeout (8s)",
 	"observations_stream.go#observationsStreamTick": "inside singleflight.DoChan's own goroutine, not the " +
 		"stream's: the subscriber selects on its own context beside the result; the scan is bounded by priceReadFlightTimeout",
 	"asset_listing_valuation.go#assetListingSnapshotWithin": "the asset-listing directory refresh, " +

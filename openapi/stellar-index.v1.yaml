@@ -8304,6 +8304,12 @@ paths:
         `series[].market_withheld_days`, never published and never
         silently dropped.
 
+        The floor measures substance, not price, so the price is held
+        to the served-price band as well. A day whose price falls
+        outside the band around the market's own days of the preceding
+        30 (around the published value when there is none) is counted
+        in `market_withheld_days` too.
+
         The floor is not, and cannot be, the live gate: that one
         measures a trailing 24 hours ending now. So an asset may carry a
         premium on a past day and none today, because its market was
@@ -9849,6 +9855,9 @@ paths:
         recently created revoked keys for the authenticated user's
         account, ordered oldest-first. `revoked_truncated` is true
         when older revoked keys exist and were omitted.
+        Keys minted by another key through `POST /v1/account/keys`
+        follow, marked `delegated`; `delegated_unavailable` is true
+        when they could not be read and so may be missing.
         Plaintext is never returned by this endpoint — only
         the prefix (`sip_4f9c1d8b…`).
       responses:
@@ -9870,6 +9879,7 @@ paths:
                   last_used_at: '2026-07-03T08:59:41Z'
                   created_at: '2026-06-12T08:30:00Z'
                 revoked_truncated: false
+                delegated_unavailable: false
                 max_active_keys: 25
               schema:
                 type: object
@@ -9888,7 +9898,12 @@ paths:
                       The key cap POST enforces for this account. It
                       counts every unrevoked key, expired ones included,
                       so an expired key holds its slot until revoked.
-                required: [keys, revoked_truncated, max_active_keys]
+                  delegated_unavailable:
+                    type: boolean
+                    description: |
+                      True when keys minted by other keys could not be
+                      read: the list may be missing live credentials.
+                required: [keys, revoked_truncated, max_active_keys, delegated_unavailable]
         "401":
           description: No valid session cookie.
           content:
@@ -9970,6 +9985,10 @@ paths:
         idempotent. 404 when the key doesn't exist OR belongs
         to a different account (same shape so attackers can't
         enumerate cross-account key_ids).
+        A `delegated` key is removed outright, by an owner or admin
+        only, and a second revoke of it is 404. Revoking a key does
+        not revoke the keys it minted: revoke each one listed with
+        its `parent_key_id`.
       parameters:
         - name: id
           in: path
@@ -16059,6 +16078,18 @@ components:
         id: { type: string }
         name: { type: string }
         description: { type: string }
+        delegated:
+          type: boolean
+          description: |
+            Present and true on a key with no dashboard record: one
+            another key minted through `POST /v1/account/keys`, or one
+            an operator issued. It authenticates like any other key of
+            the account and holds no key slot.
+        parent_key_id:
+          type: string
+          description: |
+            On a `delegated` key, the id of the key that minted it.
+            Absent on delegated keys minted before the link was recorded.
         key_prefix:
           type: string
           description: First 12 chars of the plaintext (`sip_<8hex>`).
@@ -17671,7 +17702,8 @@ components:
           type: integer
           description: |
             Days inside the window that carried observed trades which did
-            NOT clear the thin-market floor. Served because "we saw
+            NOT clear the thin-market floor, or whose price fell
+            outside the served-price band. Served because "we saw
             trades and refused to price them" and "there were no trades"
             are opposite findings that an absent point renders
             identically.
@@ -18176,7 +18208,7 @@ components:
           description: "Assets whose valuation is withheld or unavailable; each contributes nothing."
         lower_bound:
           type: boolean
-          description: True whenever any member is unvalued or a rebuild cap bound the set (`truncated`), i.e. whenever the total may be less than the value of the set.
+          description: True whenever any member is unvalued or a rebuild cap or an unanswered read bound the set (`truncated`), i.e. whenever the total may be less than the value of the set.
         earliest_first_seen_ledger:
           type: integer
           format: int64
@@ -18205,7 +18237,7 @@ components:
           description: One-line statement of what the total measured and how it was valued.
         truncated:
           type: boolean
-          description: True when a rebuild cap bound the set (the issuer cap, the contract scan cap, or a member issuer whose classic assets fill one listing page), so members may be missing; `basis` names which cap. Implies `lower_bound` on both totals. Absent when false.
+          description: True when a rebuild cap bound the set (the issuer cap, the contract scan cap, or a member issuer whose classic assets fill one listing page), or when a read the set definition depends on did not answer (the independent listing, the curated tags, a contract's symbol), so members may be missing; `basis` names which. Implies `lower_bound` on both totals. Absent when false.
 
     RWAReferenceSummary:
       type: object
@@ -18257,7 +18289,7 @@ components:
             `valuation` arm breaks this number down by reason.
         lower_bound:
           type: boolean
-          description: True whenever any member carries no reference valuation or a rebuild cap bound the set, i.e. whenever this total may be less than the reference-priced value of the set.
+          description: True whenever any member carries no reference valuation or a rebuild cap or an unanswered read bound the set, i.e. whenever this total may be less than the reference-priced value of the set.
         sources:
           type: array
           description: |
@@ -22631,6 +22663,13 @@ components:
           description: "Session caller's parent account — present on cookie-session responses only."
         key_id:           { type: string }
         label:            { type: string }
+        parent_key_id:
+          type: string
+          description: |
+            The `key_id` of the key that minted this one through
+            `POST /v1/account/keys`. Absent on any other key, and on
+            keys minted before the link was recorded. Revoking the
+            parent does not revoke this key.
         key_prefix:
           type: string
           description: |

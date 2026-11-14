@@ -93,16 +93,21 @@ function KeysBody({ me }: { me: MeResponse }) {
   }, [queryClient]);
 
   async function handleRevoke(key: APIKey) {
+    const minted = (keys ?? []).filter((k) => k.parent_key_id === key.id);
+    const mintedNote =
+      minted.length > 0
+        ? ` ${fmtInt(minted.length)} ${minted.length === 1 ? 'key' : 'keys'} it minted will keep working: revoke each one too if this key leaked.`
+        : '';
     if (
       !confirm(
-        `Revoke "${key.name}"? Apps using it will stop authenticating — normally at once, but if the API's auth cache cannot be cleared, a cached copy keeps working until that cache expires. This cannot be undone.`,
+        `Revoke "${key.name || 'Unnamed key'}"? Apps using it will stop authenticating — normally at once, but if the API's auth cache cannot be cleared, a cached copy keeps working until that cache expires. This cannot be undone.${mintedNote}`,
       )
     ) {
       return;
     }
     try {
       await revokeKey(key.id);
-      setNotice(`Key "${key.name}" revoked.`);
+      setNotice(`Key "${key.name || 'Unnamed key'}" revoked.`);
       await refresh();
     } catch (err) {
       setActionError(
@@ -115,6 +120,8 @@ function KeysBody({ me }: { me: MeResponse }) {
   const live = keys?.filter((k) => keyStatus(k) === 'active') ?? [];
   const expired = keys?.filter((k) => keyStatus(k) === 'expired') ?? [];
   const revokedCount = (keys?.length ?? 0) - live.length - expired.length;
+  // Keys minted outside the dashboard hold no slot: the server's cap counts dashboard keys only.
+  const slotsUsed = [...live, ...expired].filter((k) => !k.delegated).length;
 
   return (
     <Container>
@@ -174,6 +181,13 @@ function KeysBody({ me }: { me: MeResponse }) {
           </Callout>
         )}
 
+        {keysQuery.data?.delegatedUnavailable && (
+          <Callout tone="warn" title="This list may be incomplete">
+            Keys minted by your other keys could not be loaded just now. Reload
+            before relying on this list to find every live key.
+          </Callout>
+        )}
+
         {keys === null && !error ? (
           <Card>
             <CardBody className="space-y-3">
@@ -204,7 +218,7 @@ function KeysBody({ me }: { me: MeResponse }) {
             {expired.length > 0 && `, ${fmtInt(expired.length)} expired`}
             {revokedCount > 0 && `, ${fmtInt(revokedCount)} revoked`}
             {maxActiveKeys !== null &&
-              ` — ${fmtInt(live.length + expired.length)} of ${fmtInt(maxActiveKeys)} key slots used`}
+              ` — ${fmtInt(slotsUsed)} of ${fmtInt(maxActiveKeys)} key slots used`}
             . Expired keys no longer authenticate but hold a slot until you
             revoke them; revoked keys are kept for your audit trail.
           </p>
@@ -438,6 +452,15 @@ function CreateKeyForm({
 
 // ─── Keys table ────────────────────────────────────────────────────
 
+// A delegated key stays live when the key that minted it is revoked, so
+// the row names its parent for the owner to trace and revoke it.
+function mintedBy(k: APIKey, keys: APIKey[]): string {
+  if (!k.parent_key_id) return 'Issued outside the dashboard';
+  const parent = keys.find((p) => p.id === k.parent_key_id);
+  if (!parent) return 'Minted by a key that no longer exists';
+  return `Minted by "${parent.name || parent.key_prefix}"`;
+}
+
 function KeysTable({
   keys,
   onRevoke,
@@ -467,7 +490,14 @@ function KeysTable({
             return (
               <TR key={k.id} className={revoked ? 'opacity-60' : undefined}>
                 <Td>
-                  <div className="text-ink font-medium">{k.name}</div>
+                  <div className="text-ink font-medium">
+                    {k.name || 'Unnamed key'}
+                  </div>
+                  {k.delegated && (
+                    <div className="text-ink-muted mt-0.5 text-xs">
+                      {mintedBy(k, keys)}
+                    </div>
+                  )}
                   {k.description && (
                     <div className="text-ink-muted mt-0.5 text-xs">
                       {k.description}

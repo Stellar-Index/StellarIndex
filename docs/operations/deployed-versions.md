@@ -83,6 +83,10 @@ Notes:
   disabled, sidecar frozen at v0.63.0 — is reported as ignored and does not
   drag the baseline back. Nothing deploys that binary there, so its sidecar
   says nothing about which config the host has applied.
+- `.config-applied` in the same directory is not a binary sidecar: it is the
+  version the host's config is applied through, and the gate's baseline is the
+  lower of it and the minimum above
+  ([deploy-config-apply.md](deploy-config-apply.md)).
 - Legacy `ratesengine-*` sidecars may also be present on the host — those predate
   the binary rename and are NOT the current fleet; ignore them.
 

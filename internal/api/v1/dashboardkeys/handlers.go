@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -70,6 +71,7 @@ type CacheInvalidator interface {
 type KeyMirror interface {
 	CreateWithSecret(ctx context.Context, k auth.MirroredKey) error
 	RevokeKeyByID(ctx context.Context, identifier, keyID string) error
+	ListKeysForIdentifier(ctx context.Context, identifier string) ([]auth.APIKeyRecord, error)
 }
 
 func (c *Config) validate() error {
@@ -136,6 +138,28 @@ type keyDTO struct {
 	RevokedReason string         `json:"revoked_reason,omitempty"`
 	LastUsedAt    *wiretime.Time `json:"last_used_at,omitempty"`
 	CreatedAt     wiretime.Time  `json:"created_at"`
+	// Delegated marks a credential a key minted for itself through POST /v1/account/keys: it has no management row,
+	// so it is listed from the validator's store. ParentKeyID names the key that minted it, when recorded.
+	Delegated   bool   `json:"delegated,omitempty"`
+	ParentKeyID string `json:"parent_key_id,omitempty"`
+}
+
+func delegatedDTO(rec auth.APIKeyRecord) keyDTO {
+	return keyDTO{
+		ID:              rec.KeyID,
+		Name:            rec.Label,
+		KeyPrefix:       rec.KeyPrefix,
+		Tier:            string(rec.Tier),
+		RateLimitPerMin: rec.RateLimitPerMin,
+		MonthlyQuota:    rec.MonthlyQuota,
+		// The validator enforces the stored value as is; an account override set later does not reach this key.
+		EffectiveMonthlyQuota: rec.MonthlyQuota,
+		Scopes:                rec.Scopes,
+		ExpiresAt:             wiretime.NilIfZero(rec.ExpiresAt),
+		CreatedAt:             wiretime.Time(rec.CreatedAt),
+		Delegated:             true,
+		ParentKeyID:           rec.ParentKeyID,
+	}
 }
 
 func toDTO(k platform.APIKey, acct platform.Account) keyDTO {
@@ -178,6 +202,9 @@ type listResponse struct {
 	// MaxActiveKeys is the ceiling create enforces (checkQuota), so the
 	// dashboard can show "N of M" before the 409 rather than after.
 	MaxActiveKeys int `json:"max_active_keys"`
+	// DelegatedUnavailable is true when the validator's store could not be read, so keys minted by other keys
+	// may exist and are not listed.
+	DelegatedUnavailable bool `json:"delegated_unavailable"`
 }
 
 // HandleList returns the account's active keys plus the most recently created revoked ones, oldest-first.
@@ -198,10 +225,38 @@ func (h *Handlers) HandleList(w http.ResponseWriter, r *http.Request) {
 		RevokedTruncated: moreRevoked,
 		MaxActiveKeys:    h.maxKeysFor(sc.Account.Tier),
 	}
+	managed := make(map[string]struct{}, len(keys))
 	for _, k := range keys {
 		out.Keys = append(out.Keys, toDTO(k, sc.Account))
+		managed[k.ID] = struct{}{}
 	}
+	delegated, err := h.delegatedKeys(r.Context(), sc.Account, managed)
+	if err != nil {
+		h.cfg.Logger.Error("list delegated keys", "err", err, "account_id", sc.Account.ID)
+		out.DelegatedUnavailable = true
+	}
+	out.Keys = append(out.Keys, delegated...)
 	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// delegatedKeys returns the account's live credentials that have no management row, oldest first: keys minted by
+// another key. They authenticate like any other, so an owner must be able to see and revoke them.
+func (h *Handlers) delegatedKeys(ctx context.Context, acct platform.Account, managed map[string]struct{}) ([]keyDTO, error) {
+	if h.cfg.Mirror == nil {
+		return nil, nil
+	}
+	recs, err := h.cfg.Mirror.ListKeysForIdentifier(ctx, auth.AccountIdentifier(acct.Slug))
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(recs, func(i, j int) bool { return recs[i].CreatedAt.Before(recs[j].CreatedAt) })
+	var out []keyDTO
+	for _, rec := range recs {
+		if _, ok := managed[rec.KeyID]; !ok {
+			out = append(out, delegatedDTO(rec))
+		}
+	}
+	return out, nil
 }
 
 type createRequest struct {
@@ -418,7 +473,7 @@ func (h *Handlers) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 	existing, err := h.cfg.Keys.Get(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, platform.ErrNotFound) {
-			writeProblem(w, http.StatusNotFound, "key not found", r.URL.Path)
+			h.revokeDelegated(w, r, sc, id)
 			return
 		}
 		h.cfg.Logger.Error("get key for revoke", "err", err, "key_id", id)
@@ -465,6 +520,41 @@ func (h *Handlers) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 			"key revoked, but its live credential could not be removed; retry", r.URL.Path)
 		return
 	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// revokeDelegated removes a credential that has no management row. Only roles that may revoke any key reach it:
+// a delegated key has no creating user to scope a member's grant to.
+func (h *Handlers) revokeDelegated(w http.ResponseWriter, r *http.Request, sc dashboardauth.SessionContext, id string) {
+	if h.cfg.Mirror == nil {
+		writeProblem(w, http.StatusNotFound, "key not found", r.URL.Path)
+		return
+	}
+	identifier := auth.AccountIdentifier(sc.Account.Slug)
+	if !canManageAnyKey(sc.User.Role) {
+		// A member sees the key in the list, so its refusal names the role; any other id stays a 404.
+		status, detail := http.StatusNotFound, "key not found"
+		if recs, err := h.cfg.Mirror.ListKeysForIdentifier(r.Context(), identifier); err == nil {
+			for _, rec := range recs {
+				if rec.KeyID == id {
+					status, detail = http.StatusForbidden, "your role can't revoke keys you didn't create"
+				}
+			}
+		}
+		writeProblem(w, status, detail, r.URL.Path)
+		return
+	}
+	err := h.cfg.Mirror.RevokeKeyByID(r.Context(), identifier, id)
+	if errors.Is(err, auth.ErrKeyNotFound) {
+		writeProblem(w, http.StatusNotFound, "key not found", r.URL.Path)
+		return
+	}
+	if err != nil {
+		h.cfg.Logger.Error("revoke delegated key", "err", err, "key_id", id)
+		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
+		return
+	}
+	h.recordKeyAudit(r, sc, dashboardauth.AuditActionKeyRevoke, platform.APIKey{ID: id})
 	w.WriteHeader(http.StatusNoContent)
 }
 

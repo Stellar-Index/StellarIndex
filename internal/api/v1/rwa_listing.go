@@ -122,6 +122,8 @@ type rwaListingCensus struct {
 	// tagsUnavailable counts bindings refused because the curated directory's tag read did not
 	// answer, leaving C3 unevaluated.
 	tagsUnavailable int
+	// symbolsUnread counts candidates refused while their symbol read had failed.
+	symbolsUnread int
 	// notListed counts bindings the listing directory does not name: the refusal that holds
 	// independence up.
 	notListed int

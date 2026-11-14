@@ -60,6 +60,9 @@ type CreateAPIKeyRequest struct {
 	// only for mints with no HTTP subject: signup and the operator CLI.
 	MintedBy *Subject
 
+	// ParentKeyID is the KeyID of the credential that delegated this key to itself; empty for every other mint.
+	ParentKeyID string
+
 	// SelfService writes the record with the sliding [MirroredKeyIdleTTL]
 	// instead of no expiry: a caller-minted child or signup key must age
 	// out once abandoned, while operator-issued keys stay persistent.
@@ -100,6 +103,7 @@ func ClampToMinter(minter Subject, scopes []string, rateLimitPerMin int) ([]stri
 func ChildKeyRequest(parent Subject, label string, scopes []string) CreateAPIKeyRequest {
 	return CreateAPIKeyRequest{
 		MintedBy:        &parent,
+		ParentKeyID:     parent.KeyID,
 		Identifier:      parent.Identifier,
 		Label:           label,
 		Tier:            parent.Tier,
@@ -231,6 +235,7 @@ func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) 
 		Identifier:      req.Identifier,
 		Label:           req.Label,
 		KeyPrefix:       KeyPrefix(plaintext),
+		ParentKeyID:     req.ParentKeyID,
 		Tier:            tier,
 		Scopes:          req.Scopes,
 		RateLimitPerMin: req.RateLimitPerMin,
