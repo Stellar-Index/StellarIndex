@@ -150,7 +150,7 @@ func (f *Fanout) enqueueOne(
 		f.logger.Info("customerwebhook.fanout: delivery already enqueued",
 			"event_type", eventType, "webhook_id", webhookID, "delivery_id", id)
 		res.AlreadyEnqueued++
-	case suppressed(err):
+	case Suppressed(err):
 		// The account kill switch closed between the resolve and this
 		// insert. Nothing was lost that should have been delivered, so
 		// this is not a fan-out failure and must not touch the lost-event
@@ -176,9 +176,8 @@ func (f *Fanout) enqueueOne(
 // store import.
 type deliverySuppressor interface{ WebhookSuppressed() bool }
 
-// suppressed reports whether err is a policy refusal (see
-// [deliverySuppressor]) rather than a lost delivery.
-func suppressed(err error) bool {
+// Suppressed reports whether err is a policy refusal (see [deliverySuppressor]) rather than a lost delivery.
+func Suppressed(err error) bool {
 	var s deliverySuppressor
 	return errors.As(err, &s) && s.WebhookSuppressed()
 }

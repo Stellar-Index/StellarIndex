@@ -62,25 +62,23 @@ func NewRedisLoginThrottle(rdb redis.UniversalClient, opts LoginThrottleOptions)
 	}
 }
 
-// Allow increments the per-IP and per-email counters and reports whether BOTH are within cap; the email is hashed so plaintext never reaches Redis, and a definitive deny returns (false, nil) rather than an error.
+// Allow increments the per-IP counter, then the per-email one, and reports whether BOTH are within cap; the email is hashed so plaintext never reaches Redis, and a definitive deny returns (false, nil) rather than an error.
 func (t *RedisLoginThrottle) Allow(ctx context.Context, ip, email string) (bool, error) {
 	allowed := true
 	var firstErr error
 
-	// Per-target-email cap (the email-bomb dimension). An empty email
-	// shouldn't reach here (handler validates first) but guard anyway.
-	if email != "" {
-		ok, err := t.incrUnderCap(ctx, t.keyPrefix+"mail:"+HashEmail(email), t.maxPerMail)
-		allowed = allowed && ok
-		if err != nil && firstErr == nil {
-			firstErr = err
-		}
-	}
-
 	// Per-IP cap (the spray-many-addresses dimension); an IP-less direct call skips it, as in the signup throttle. The address is masked via ratelimit.ThrottleIPKey, else an attacker with any IPv6 /64 rotates the /128 and never shares a bucket.
 	if ip != "" {
 		ok, err := t.incrUnderCap(ctx, t.keyPrefix+"ip:"+ratelimit.ThrottleIPKey(ip), t.maxPerIP)
-		allowed = allowed && ok
+		allowed = ok
+		firstErr = err
+	}
+
+	// Per-target-email cap (the email-bomb dimension). It is charged only after the IP passed: a denied IP that still
+	// spent the victim's budget could lock any address out of sign-in.
+	if allowed && email != "" {
+		ok, err := t.incrUnderCap(ctx, t.keyPrefix+"mail:"+HashEmail(email), t.maxPerMail)
+		allowed = ok
 		if err != nil && firstErr == nil {
 			firstErr = err
 		}

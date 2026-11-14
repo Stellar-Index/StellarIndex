@@ -939,10 +939,10 @@ Per-sweep outcome of the price-alert evaluator. Emits only when `[price_alerts] 
 ### `stellarindex_price_alert_evaluated_total`
 
 Counter, label `outcome` (`fired` / `not_crossed` / `already_fired` / `no_price` / `stale` /
-`cooling_down` / `no_subscriber` / `claim_lost` / `error` / `timeout`),
+`cooling_down` / `no_subscriber` / `claim_lost` / `suppressed` / `error` / `timeout`),
 every child seeded when the evaluator is built.
 
-One increment per alert per sweep. `timeout` = the alert's own deadline (a third of the sweep interval). `stale` = VWAP bucket older than 15 min, rejected. `already_fired` = condition still holds; it re-arms once cleared. Over half `error` / `timeout` for 30 min fires `stellarindex_price_alert_evaluations_failing`.
+One increment per alert per sweep. `timeout` = the alert's own deadline (a third of the sweep interval). `stale` = VWAP bucket older than 15 min, rejected. `already_fired` = condition still holds; it re-arms once cleared. `suppressed` = crossed, but every delivery was withheld because the account is suspended or closed. Over half `error` / `timeout` for 30 min fires `stellarindex_price_alert_evaluations_failing`.
 
 ### `stellarindex_price_alert_last_sweep_unix`
 

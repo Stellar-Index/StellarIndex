@@ -78,6 +78,27 @@ func TestLoginThrottle_PerEmailCapIsCaseAndWhitespaceInsensitive(t *testing.T) {
 // the outage tests below build on: the (Max+1)th magic-link send for one
 // target inbox is denied, and a denial is reported as (false, nil) so the
 // handler skips the send rather than falling open.
+// An IP past its own cap must not spend a victim's per-email budget.
+func TestLoginThrottle_DeniedIPDoesNotChargeTheEmail(t *testing.T) {
+	th, _ := newLoginThrottle(t, auth.LoginThrottleOptions{MaxPerIP: 2, MaxPerEmail: 2})
+	ctx := context.Background()
+	for i := 0; i < 2; i++ {
+		if ok, err := th.Allow(ctx, "198.51.100.7", "filler@example.com"); !ok || err != nil {
+			t.Fatalf("filler %d: ok=%v err=%v", i, ok, err)
+		}
+	}
+	for i := 0; i < 10; i++ {
+		if ok, _ := th.Allow(ctx, "198.51.100.7", "victim@example.com"); ok {
+			t.Fatalf("attempt %d from the exhausted IP was allowed", i)
+		}
+	}
+	for i := 0; i < 2; i++ {
+		if ok, err := th.Allow(ctx, "203.0.113.9", "victim@example.com"); !ok || err != nil {
+			t.Fatalf("victim send %d from their own IP: ok=%v err=%v, want allowed", i, ok, err)
+		}
+	}
+}
+
 func TestLoginThrottle_AllowsUpToCapThenDenies(t *testing.T) {
 	tt, _ := newLoginThrottle(t, auth.LoginThrottleOptions{
 		MaxPerIP:    100,

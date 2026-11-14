@@ -706,6 +706,39 @@ func TestFreezeWindowLadders_EscalationSurvivesSiblingWrite(t *testing.T) {
 	}
 }
 
+type fixedLedger uint32
+
+func (l fixedLedger) LatestLedger() uint32 { return uint32(l) }
+
+// The operator tool's sink has no ledger provider, and the aggregator's reads 0 on a cursor failure. Either must
+// still close a row frozen at a real ledger; the unknown release ledger is stored as NULL.
+func TestFreezeEvents_ReleaseWithUnknownLedgerClosesTheRow(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	asset, _ := c.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	quote, _ := c.NewFiatAsset("USD")
+
+	live := timescale.NewFreezeEventSink(store, timescale.WithFreezeLedgerProvider(fixedLedger(60_000_000)))
+	if err := live.RecordFreeze(ctx, asset, quote, "0.874500000000", anomaly.Decision{
+		Action: anomaly.ActionFreeze, Class: anomaly.ClassStablecoin, Reason: "phase2:3_signal_AND",
+	}); err != nil {
+		t.Fatalf("RecordFreeze: %v", err)
+	}
+	if err := timescale.NewFreezeEventSink(store).MarkRecovered(ctx, asset, quote, "operator:test"); err != nil {
+		t.Fatalf("MarkRecovered without a ledger provider: %v", err)
+	}
+	if n := countOpenFreezeRows(t, ctx, dsn, asset.String(), quote.String()); n != 0 {
+		t.Fatalf("%d open rows after the operator release, want 0", n)
+	}
+}
+
 // TestFreezeLadder_DurableAcrossRedisLoss pins what only Postgres answers: 0119 applies to a freeze_events chunk compressed
 // before migrating (a fresh DB has none), SaveLadder/LoadLadder round-trip the exact ladder on the open row, LoadLadder
 // honours recovered_at IS NULL, and a pre-0119 row (NULL hold_until) reads as no durable ladder, not a zero one.

@@ -1554,7 +1554,7 @@ var PriceAlertEvalTotal = prometheus.NewCounterVec(
 var PriceAlertEvaluatedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_price_alert_evaluated_total",
-		Help: "Per-alert price-alert evaluation outcomes (fired|not_crossed|already_fired|no_price|stale|cooling_down|no_subscriber|claim_lost|error|timeout).",
+		Help: "Per-alert price-alert evaluation outcomes (fired|not_crossed|already_fired|no_price|stale|cooling_down|no_subscriber|claim_lost|suppressed|error|timeout).",
 	},
 	[]string{"outcome"},
 )

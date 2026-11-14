@@ -30,6 +30,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
+	"github.com/Stellar-Index/StellarIndex/internal/redact"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
@@ -422,9 +423,10 @@ func (w *Worker) deliverOne(ctx context.Context, d platform.WebhookDelivery) {
 	if err != nil {
 		obs.CustomerWebhookDeliveryDurationSeconds.WithLabelValues("network_error").Observe(time.Since(start).Seconds())
 		// err can name the resolved address the SSRF guard blocked. last_error is served verbatim
-		// to the customer, so store a fixed address-free reason and log the real error.
+		// to the customer, so store a fixed address-free reason and log the real error. The log keeps the host only:
+		// the path of a chat-hook URL is the credential to post into the customer's channel.
 		w.opts.Logger.Warn("customer-webhook: delivery POST failed",
-			"err", err, "delivery_id", d.ID, "webhook_id", d.WebhookID)
+			"err", redact.URLError(err, wh.URL), "delivery_id", d.ID, "webhook_id", d.WebhookID)
 		w.handleFailure(ctx, d, 0, "network error contacting webhook URL", "network_error")
 		return
 	}

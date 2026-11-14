@@ -1,6 +1,7 @@
 package customerwebhook_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -8,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -265,7 +267,8 @@ func TestWorker_SignatureV2BindsDeliveryIDAndEvent(t *testing.T) {
 // destination host:port, and last_error is served verbatim by the dashboard API's deliveryDTO.
 func TestWorker_NetworkErrorDoesNotLeakRawErrorText(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	url := ts.URL
+	// The path stands in for a chat-hook credential.
+	url := ts.URL + "/services/T000/B000/hook-path-secret"
 	ts.Close() // listener now refuses every connection
 
 	store := newFakeStore()
@@ -280,7 +283,16 @@ func TestWorker_NetworkErrorDoesNotLeakRawErrorText(t *testing.T) {
 		Payload:   []byte(`{}`), NextAttemptAt: time.Now().Add(-time.Second),
 	})
 
-	runOneTick(t, store, customerwebhook.Options{PollInterval: 30 * time.Millisecond})
+	var logs bytes.Buffer
+	runOneTick(t, store, customerwebhook.Options{
+		PollInterval: 30 * time.Millisecond, Logger: slog.New(slog.NewTextHandler(&logs, nil)),
+	})
+	if !strings.Contains(logs.String(), "delivery POST failed") {
+		t.Fatalf("no delivery-failure log line: %q", logs.String())
+	}
+	if strings.Contains(logs.String(), "hook-path-secret") {
+		t.Errorf("the log carries the webhook URL path: %q", logs.String())
+	}
 
 	store.mu.Lock()
 	defer store.mu.Unlock()
