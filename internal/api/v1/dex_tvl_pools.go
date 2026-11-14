@@ -256,6 +256,9 @@ func (s *Server) handleProtocolTVL(w http.ResponseWriter, r *http.Request) {
 			dexTVLNotDerivedReason(meta.Name))
 		return
 	}
+	if dexTVLLakeDerived[meta.Name] && s.lakeStale(r.Context()) {
+		snap.TVL.Stale = true
+	}
 	view := ProtocolTVLDetailView{
 		Protocol:       meta.Name,
 		TVL:            snap.TVL,
@@ -269,7 +272,7 @@ func (s *Server) handleProtocolTVL(w http.ResponseWriter, r *http.Request) {
 		Data:    view,
 		AsOf:    WireTime(snap.FetchedAt.UTC()),
 		Sources: []string{meta.Name},
-		Flags:   Flags{Stale: snap.CarriedForward, Degraded: snap.CarriedForward},
+		Flags:   Flags{Stale: snap.TVL.Stale || snap.CarriedForward, Degraded: snap.TVL.Stale || snap.CarriedForward},
 	})
 }
 

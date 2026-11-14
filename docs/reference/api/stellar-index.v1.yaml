@@ -17118,7 +17118,7 @@ components:
       type: object
       required:
         [name, category, description, genesis_ledger, factories,
-         contract_count, events_24h]
+         contract_count]
       properties:
         name: { type: string, example: blend }
         category:
@@ -17146,7 +17146,7 @@ components:
         events_24h:
           type: integer
           format: int64
-          description: Trailing-24h decoded events across the protocol's served tables.
+          description: Trailing-24h decoded events across the protocol's served tables. Absent when the count could not be read (a failed read is never a zero); `coverage_note` says so on the directory.
         completeness:
           type: object
           description: Latest ADR-0033 verdict summary; absent when no snapshot exists. Full verdict on /coverage.
@@ -17229,6 +17229,13 @@ components:
           type: string
           format: date-time
           description: When the snapshot was computed.
+        stale:
+          type: boolean
+          description: |
+            True when the figure is older than `as_of` suggests: carried
+            forward from an earlier refresh (for at most six hours, after
+            which no figure is published), or read from a lake that has
+            stopped advancing. Travels with `flags.stale`. Absent when false.
         basis:
           type: string
           description: One-line provenance of what was measured and how it was valued.
@@ -17426,6 +17433,9 @@ components:
           type: string
           format: date-time
           description: When the snapshot the total was reconciled from was computed.
+        stale:
+          type: boolean
+          description: True when a summed protocol reads a lake that has stopped advancing; travels with `flags.stale`. Absent when false.
         basis:
           type: string
           description: One-line provenance for the total, naming the protocols summed.

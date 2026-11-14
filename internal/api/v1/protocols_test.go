@@ -156,8 +156,8 @@ func TestHandleProtocolsList_Happy(t *testing.T) {
 	}
 	// Roster = 2 pools + 2 folded-in Backstop module contracts + 1 folded-in Emitter contract; events_24h = blend (1234) +
 	// blend_backstop (42); the mock has no blend_emitter entry, so it contributes 0.
-	if blend.ContractCount != 5 || blend.Events24h != 1276 {
-		t.Errorf("blend joins wrong: count=%d events=%d", blend.ContractCount, blend.Events24h)
+	if blend.ContractCount != 5 || events24hOrNeg(blend.Events24h) != 1276 {
+		t.Errorf("blend joins wrong: count=%d events=%d", blend.ContractCount, events24hOrNeg(blend.Events24h))
 	}
 	if blend.Completeness == nil || !blend.Completeness.Complete || blend.Completeness.WatermarkLedger != 62_999_000 {
 		t.Errorf("blend completeness summary wrong: %+v", blend.Completeness)
@@ -166,8 +166,8 @@ func TestHandleProtocolsList_Happy(t *testing.T) {
 	// soroswap's contract count comes from soroswap_pairs, not
 	// protocol_contracts, and its failing verdict surfaces as-is.
 	soroswap := protocolRow(t, d.Protocols, "soroswap")
-	if soroswap.ContractCount != 3 || soroswap.Events24h != 567 {
-		t.Errorf("soroswap joins wrong: count=%d events=%d", soroswap.ContractCount, soroswap.Events24h)
+	if soroswap.ContractCount != 3 || events24hOrNeg(soroswap.Events24h) != 567 {
+		t.Errorf("soroswap joins wrong: count=%d events=%d", soroswap.ContractCount, events24hOrNeg(soroswap.Events24h))
 	}
 	if soroswap.Completeness == nil || soroswap.Completeness.Complete {
 		t.Errorf("soroswap completeness summary wrong: %+v", soroswap.Completeness)
@@ -176,7 +176,7 @@ func TestHandleProtocolsList_Happy(t *testing.T) {
 	// A source with no snapshot, no registry, no events: zeros, no
 	// completeness block, factories present-but-empty (never null).
 	band := protocolRow(t, d.Protocols, "band")
-	if band.ContractCount != 0 || band.Events24h != 0 || band.Completeness != nil {
+	if band.ContractCount != 0 || events24hOrNeg(band.Events24h) != 0 || band.Completeness != nil {
 		t.Errorf("band should be all-zero/absent: %+v", band)
 	}
 	if band.Factories == nil {
@@ -407,13 +407,13 @@ func TestHandleProtocols_NilReaderDegradation(t *testing.T) {
 	for _, p := range env.Data.Protocols {
 		// blend carries statically-known Backstop + Emitter module contracts (ExtraContracts);
 		// like Factories they are registry constants, not DB reads, so they survive nil readers.
-		// Its dynamic joins (events, completeness) still degrade to zero/absent.
+		// Its dynamic joins (events, completeness) are absent: an unread count is not a zero.
 		wantContracts := 0
 		if p.Name == "blend" {
 			wantContracts = 3
 		}
-		if p.ContractCount != wantContracts || p.Events24h != 0 || p.Completeness != nil {
-			t.Errorf("%s should degrade to zeros: %+v", p.Name, p)
+		if p.ContractCount != wantContracts || p.Events24h != nil || p.Completeness != nil {
+			t.Errorf("%s should degrade to zero contracts and absent joins: %+v", p.Name, p)
 		}
 	}
 
@@ -1399,4 +1399,12 @@ func TestProtocolDetail_FailedBreakdownServesNoAnalyticsBlock(t *testing.T) {
 		t.Errorf("half-filled analytics served: breakdown=%+v series=%+v total=%d window=%d",
 			d.EventBreakdown, d.ActivitySeries, d.EventsTotal, d.ActivityWindowDays)
 	}
+}
+
+// events24hOrNeg flattens the optional count for comparisons; -1 is "absent".
+func events24hOrNeg(n *int64) int64 {
+	if n == nil {
+		return -1
+	}
+	return *n
 }
