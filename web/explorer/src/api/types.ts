@@ -4769,6 +4769,10 @@ export interface paths {
          *     another user is indistinguishable from a nonexistent one
          *     (404 either way). Email-code sign-in always remains, so
          *     removing the last passkey cannot lock the account out.
+         *
+         *     A successful removal signs the user out of every other
+         *     session, including any the removed passkey opened. The session
+         *     that made the call stays signed in.
          */
         delete: operations["deletePasskeyCredential"];
         options?: never;

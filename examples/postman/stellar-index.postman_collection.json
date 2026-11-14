@@ -42225,7 +42225,7 @@
                       "request": {
                         "name": "Customer dashboard — remove one of the signed-in user's passkeys.",
                         "description": {
-                          "content": "Session-gated and owner-scoped: a credential belonging to\nanother user is indistinguishable from a nonexistent one\n(404 either way). Email-code sign-in always remains, so\nremoving the last passkey cannot lock the account out.\n",
+                          "content": "Session-gated and owner-scoped: a credential belonging to\nanother user is indistinguishable from a nonexistent one\n(404 either way). Email-code sign-in always remains, so\nremoving the last passkey cannot lock the account out.\n\nA successful removal signs the user out of every other\nsession, including any the removed passkey opened. The session\nthat made the call stays signed in.\n",
                           "type": "text/plain"
                         },
                         "url": {
