@@ -126,7 +126,7 @@ describe('RWAPremiumPanel', () => {
         ],
       },
       [
-        /4 that have never traded against a dollar/,
+        /4 with no dollar trade in the price history we hold/,
         /4 with no oracle feed bound to their exact \(code, issuer\)/,
       ],
     ],

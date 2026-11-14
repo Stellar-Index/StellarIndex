@@ -1515,13 +1515,15 @@ type RWAPremiumHistoryView struct {
 	// Members plus every Excluded[].Assets is exactly Assets, so the
 	// account closes. NOT windowed — a narrower Timeframe can leave
 	// Series shorter than this.
-	Members        int                       `json:"members"`
-	MembershipAsOf time.Time                 `json:"membership_as_of"`
-	Excluded       []RWAHistoryExcluded      `json:"excluded,omitempty"`
-	Sources        []string                  `json:"sources,omitempty"`
-	Series         []RWAPremiumSeries        `json:"series"`
-	Coverage       []RWAPremiumCoveragePoint `json:"coverage,omitempty"`
-	Truncated      bool                      `json:"truncated,omitempty"`
+	Members        int       `json:"members"`
+	MembershipAsOf time.Time `json:"membership_as_of"`
+	// MarketObservedFrom is the first day the served price history holds; nil when unread.
+	MarketObservedFrom *time.Time                `json:"market_observed_from,omitempty"`
+	Excluded           []RWAHistoryExcluded      `json:"excluded,omitempty"`
+	Sources            []string                  `json:"sources,omitempty"`
+	Series             []RWAPremiumSeries        `json:"series"`
+	Coverage           []RWAPremiumCoveragePoint `json:"coverage,omitempty"`
+	Truncated          bool                      `json:"truncated,omitempty"`
 }
 
 // RWAPremiumSeries is one member's premium-to-NAV history.
