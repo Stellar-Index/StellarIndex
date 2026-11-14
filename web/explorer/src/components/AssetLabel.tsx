@@ -48,7 +48,8 @@ function renderCodeIssuer(
   code: string,
   issuer: string,
   issuerMap:
-    Record<string, { home_domain?: string; org_verified?: boolean }> | undefined,
+    | Record<string, { home_domain?: string; org_verified?: boolean }>
+    | undefined,
   badge?: string,
 ) {
   const known = issuerMap?.[issuer];
