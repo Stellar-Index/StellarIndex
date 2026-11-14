@@ -95,6 +95,9 @@ type RWAPremiumHistoryView struct {
 	// MembershipAsOf is when the set was decided. Every point is measured against THIS membership,
 	// including points that predate an asset's admission.
 	MembershipAsOf WireTime `json:"membership_as_of"`
+	// MarketObservedFrom is the first day the served price history holds: no series starts before
+	// it, and `no_market_history` means none since it. Absent when it could not be read.
+	MarketObservedFrom *WireTime `json:"market_observed_from,omitempty"`
 	// Excluded names the set members with no series and why, tallied by
 	// reason.
 	Excluded []RWAHistoryExcluded `json:"excluded,omitempty"`
@@ -173,9 +176,9 @@ type RWAPremiumCoveragePoint struct {
 // (issuer_flagged, not_bound, contract_not_bound, no_reference_history) are reused verbatim from
 // rwa_history.go: two spellings of one reason is how a funnel starts lying.
 const (
-	// RWAPremiumExcludedNoMarketHistory — bound to a feed the oracle has published for, but this
-	// index has never observed a dollar-quoted trade in the token. The ordinary state of a
-	// held-to-maturity instrument, not a defect.
+	// RWAPremiumExcludedNoMarketHistory — bound to a feed the oracle has published for, but the
+	// served history holds no dollar-quoted trade in the token. Says nothing about trading before
+	// `market_observed_from`.
 	RWAPremiumExcludedNoMarketHistory = "no_market_history"
 	// RWAPremiumExcludedMarketBelowFloor — dollar-quoted trades exist but no day cleared the
 	// thin-market floor, so no day may carry an aggregated price claim.
@@ -190,7 +193,7 @@ var rwaPremiumExcludedDetail = map[string]string{
 	RWAHistoryExcludedContract:           rwaHistoryExcludedDetail[RWAHistoryExcludedContract],
 	RWAHistoryExcludedIssuerFlagged:      rwaHistoryExcludedDetail[RWAHistoryExcludedIssuerFlagged],
 	RWAHistoryExcludedNoReferenceHistory: rwaHistoryExcludedDetail[RWAHistoryExcludedNoReferenceHistory],
-	RWAPremiumExcludedNoMarketHistory:    "No dollar-quoted trade in this token has ever been observed, so there is no market price to compare the instrument's published value against. This is the ordinary condition of a tokenized bill that is bought and held rather than traded — it is not a gap in the index, and only a market can move it.",
+	RWAPremiumExcludedNoMarketHistory:    "No dollar-quoted trade in this token is in the served price history, so there is no market price to compare the instrument's published value against. That history begins at `market_observed_from`; trading before it is not read here. This is the ordinary condition of a tokenized bill that is bought and held rather than traded.",
 	RWAPremiumExcludedMarketBelowFloor:   "Trades exist, but no single day cleared the thin-market floor a published price claim requires, so no day may carry one. Honest low volume is fully visible through the raw trade surfaces; what is withheld here is only the aggregated claim that the price of this token WAS some number on that day.",
 	RWAPremiumExcludedNoOverlap:          "A market price and a published value both exist for this asset, but never on the same day, and neither may be carried across a day it was not observed on. A premium needs both legs struck on one clock.",
 }
@@ -205,6 +208,7 @@ const rwaPremiumBasisUnavailable = "No premium series is published: membership c
 // RWAMarketHistoryReader reads the observed daily dollar market, the market leg of GET /v1/rwa/premium; nil disables the endpoint because a premium missing its market leg is no series.
 type RWAMarketHistoryReader interface {
 	DailyMarketDays(ctx context.Context, assets, quotes []canonical.Asset, from, to time.Time) ([]timescale.MarketDay, error)
+	EarliestMarketHour(ctx context.Context) (time.Time, bool, error)
 }
 
 // ─── assembled series ───────────────────────────────────────────────
@@ -243,6 +247,8 @@ type rwaPremiumHistory struct {
 	excluded   map[string]int
 	sources    []string
 	builtAt    time.Time
+	// marketFrom is the first day the market leg could have observed; zero when not read.
+	marketFrom time.Time
 	// stale marks a cached assembly served past its TTL because the
 	// rebuild failed or has not answered; builtAt is then its real age.
 	stale bool
@@ -280,6 +286,9 @@ func (s *Server) handleRWAPremiumHistory(w http.ResponseWriter, r *http.Request)
 	view.Issuers = hist.setIssuers
 	view.Bound = hist.bound
 	view.MembershipAsOf = WireTime(hist.builtAt)
+	if !hist.marketFrom.IsZero() {
+		view.MarketObservedFrom = wireTimePtr(&hist.marketFrom)
+	}
 	view.Excluded = rwaPremiumExcludedRows(hist.excluded)
 	view.Sources = hist.sources
 	view.Series, view.Truncated = rwaPremiumSeriesRows(hist.members, from)
@@ -543,6 +552,12 @@ func (s *Server) buildRWAPremiumHistory(ctx context.Context) rwaPremiumHistory {
 	market, ok := s.rwaPremiumMarketDays(ctx, cands, to)
 	if !ok {
 		return rwaPremiumHistory{}
+	}
+	// Unread leaves the field absent; the series itself does not depend on it.
+	if at, found, err := s.MarketHistory.EarliestMarketHour(ctx); err != nil {
+		s.logger.Warn("rwa premium: served market floor read failed", "err", err)
+	} else if found {
+		out.marketFrom = at.Truncate(24 * time.Hour)
 	}
 
 	for _, c := range cands {

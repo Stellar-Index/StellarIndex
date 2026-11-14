@@ -404,7 +404,13 @@ type usdPriceLookup struct {
 	price    string
 	sources  int
 	withheld PriceWithheldReason
+	// stale is the reader's own verdict on a closed bucket (old, low-confidence or substituted);
+	// for a proxy price, an observation older than usdProxyFreshness.
+	stale bool
 }
+
+// usdProxyFreshness matches the price reader's default closed-bucket freshness.
+const usdProxyFreshness = 15 * time.Minute
 
 // lookupUSDPriceWithSources is [Server.lookupUSDPrice] plus the DISTINCT venue count (liquidity signal for
 // [dustLiquiditySuppressed]) and the withholding verdict.
@@ -423,7 +429,7 @@ func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.
 	// and `crypto:XLM`) and the aggregator writes the fresh CEX VWAP under whichever matches its
 	// pair set; a bare LatestPrice(native, fiat:USD) would miss it and fall to the SDEX proxy,
 	// diverging /v1/assets/native from /v1/price by ~0.2%. Non-aliased assets are unaffected.
-	snap, sources, _, err := s.readPriceWithAliases(ctx, s.Prices, asset, defaultPriceQuote)
+	snap, sources, stale, err := s.readPriceWithAliases(ctx, s.Prices, asset, defaultPriceQuote)
 	if errors.Is(err, ErrPriceWithheld) {
 		// Withheld beats every fallback, as on /v1/price: the proxy below
 		// would re-serve the refused market through a side door.
@@ -435,7 +441,7 @@ func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.
 		// fixes each at once; it is a no-op for a 7dp asset. The proxy branch below normalizes
 		// itself.
 		s.normalizeRawPriceSnapshot(&snap, asset, defaultPriceQuote)
-		return usdPriceLookup{price: snap.Price, sources: len(sources)}
+		return usdPriceLookup{price: snap.Price, sources: len(sources), stale: stale}
 	}
 	// Stablecoin-fiat proxy fallback, already decimals-normalized inside tryStablecoinFiatProxy:
 	// do NOT re-apply.
@@ -448,7 +454,9 @@ func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.
 		return usdPriceLookup{}
 	}
 	if ok && proxy.Price != "" {
-		return usdPriceLookup{price: proxy.Price, sources: len(proxySources)}
+		// A declaration (no sources) is not an observation and has no age.
+		old := len(proxySources) > 0 && time.Since(proxy.ObservedAt.Time()) > usdProxyFreshness
+		return usdPriceLookup{price: proxy.Price, sources: len(proxySources), stale: old}
 	}
 	if withheld != "" {
 		// The walk's own verdict, so the detail agrees with the listing: this asset's thin market is

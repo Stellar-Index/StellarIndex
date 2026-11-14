@@ -6,6 +6,7 @@ import (
 	"math"
 	"math/big"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
@@ -402,8 +403,9 @@ func (s *Server) buildPoolReserves(ctx context.Context, pool string) (poolReserv
 	// afterwards in reserve order so the total does not depend on completion order.
 	views := make([]ReserveView, len(states))
 	suppliedUSD := make([]*big.Rat, len(states))
+	stalePrice := make([]bool, len(states))
 	forEachBounded(s.logger, len(states), readFanoutConcurrency, func(i int) {
-		views[i], suppliedUSD[i] = s.buildReserveView(ctx, states[i]) // distinct indices — no mutex needed
+		views[i], suppliedUSD[i], stalePrice[i] = s.buildReserveView(ctx, states[i]) // distinct indices — no mutex needed
 	})
 
 	out := LendingPoolReservesView{Pool: pool, Reserves: views, OmittedReserves: reservesWithoutState(assets, states)}
@@ -415,6 +417,8 @@ func (s *Server) buildPoolReserves(ctx context.Context, pool string) (poolReserv
 	// reads carry.
 	wmLedger, stale, _ := s.lakeWatermark(ctx)
 	out.AsOfLedger = wmLedger
+	// A USD figure valued at a stale price is stale whatever the lake's own freshness.
+	stale = stale || slices.Contains(stalePrice, true)
 	return poolReserves{view: out, flags: Flags{Stale: stale, Degraded: configsFailed}}, nil
 }
 
@@ -477,8 +481,8 @@ func (s *Server) writeLendingReservesTimeout(w http.ResponseWriter, r *http.Requ
 }
 
 // buildReserveView maps one decoded reserve state to its wire shape, pricing it in USD best-effort; returns the supplied-USD
-// contribution (nil when unpriced) for the pool TVL sum.
-func (s *Server) buildReserveView(ctx context.Context, st clickhouse.BlendReserveState) (ReserveView, *big.Rat) {
+// contribution (nil when unpriced) for the pool TVL sum, and whether a served USD figure rests on a stale price.
+func (s *Server) buildReserveView(ctx context.Context, st clickhouse.BlendReserveState) (ReserveView, *big.Rat, bool) {
 	rv := ReserveView{
 		Asset:          st.Asset,
 		Supplied:       st.Metrics.SuppliedUnderlying.String(),
@@ -496,17 +500,17 @@ func (s *Server) buildReserveView(ctx context.Context, st clickhouse.BlendReserv
 		d := uint32(dec)
 		rv.Decimals = &d
 	}
-	price, priceScale, ok := s.reservePriceUSD(ctx, st.Asset)
+	price, priceScale, stale, ok := s.reservePriceUSD(ctx, st.Asset)
 	if !ok || !decKnown {
 		// Without established decimals the USD figures, and the pool TVL,
 		// would be wrong by a power of ten; withhold the valuation instead.
-		return rv, nil
+		return rv, nil, false
 	}
 	if priceScale != dec {
 		// The price was normalised on a different scale than the amounts
 		// are divided by; their product is off by 10^|difference|.
 		obs.NonstandardDecimalsLockstepMismatchTotal.WithLabelValues("lending_reserve", "").Inc()
-		return rv, nil
+		return rv, nil, false
 	}
 	var suppliedContrib *big.Rat
 	if usd, err := usdMarketValue(st.Metrics.SuppliedUnderlying, price, dec); err == nil {
@@ -518,7 +522,7 @@ func (s *Server) buildReserveView(ctx context.Context, st clickhouse.BlendReserv
 	if usd, err := usdMarketValue(st.Metrics.BorrowedUnderlying, price, dec); err == nil {
 		rv.BorrowedUSD = &usd
 	}
-	return rv, suppliedContrib
+	return rv, suppliedContrib, stale && (rv.SuppliedUSD != nil || rv.BorrowedUSD != nil)
 }
 
 // reserveDecimals returns the reserve token's real decimal exponent: the pool's reserve config when captured, else 7 for a
@@ -539,21 +543,22 @@ func (s *Server) reserveDecimals(ctx context.Context, st clickhouse.BlendReserve
 
 // reservePriceUSD resolves a USD price for a reserve's token. A SAC C-id is mapped back to the classic/native asset it wraps and priced
 // there (feeds are keyed by (code, issuer)); ok=false means token units only. scale is the decimals the price was normalised with
-// (nonstandard-decimals projection, else 7): only an amount divided by that same exponent can be multiplied by it.
-func (s *Server) reservePriceUSD(ctx context.Context, assetC string) (price string, scale int, ok bool) {
+// (nonstandard-decimals projection, else 7): only an amount divided by that same exponent can be multiplied by it. stale is the
+// price's own verdict ([usdPriceLookup]).
+func (s *Server) reservePriceUSD(ctx context.Context, assetC string) (price string, scale int, stale, ok bool) {
 	if canonicalID, ok := s.resolveSACAsset(assetC); ok {
 		if a, err := canonical.ParseAsset(canonicalID); err == nil {
-			if p, ok := s.lookupUSDPrice(ctx, a); ok {
-				return p, aggregate.ResolveDecimals(s.NonstandardDecimals, a), true
+			if l := s.lookupUSDPriceWithSources(ctx, a); l.price != "" {
+				return l.price, aggregate.ResolveDecimals(s.NonstandardDecimals, a), l.stale, true
 			}
 		}
 	}
 	asset, err := canonical.ParseAsset(assetC)
 	if err != nil {
-		return "", 0, false
+		return "", 0, false, false
 	}
-	price, ok = s.lookupUSDPrice(ctx, asset)
-	return price, aggregate.ResolveDecimals(s.NonstandardDecimals, asset), ok
+	l := s.lookupUSDPriceWithSources(ctx, asset)
+	return l.price, aggregate.ResolveDecimals(s.NonstandardDecimals, asset), l.stale, l.price != ""
 }
 
 // pubnetPassphrase is the mainnet passphrase; the verified-currency catalogue is pubnet-only, so SAC contract ids are computed

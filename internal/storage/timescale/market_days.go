@@ -5,6 +5,8 @@ package timescale
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -88,6 +90,20 @@ const dailyMarketDaysQuery = `
          GROUP BY day, member
          ORDER BY day ASC, member ASC
     `
+
+// EarliestMarketHour is the oldest hourly price bucket the served tier holds, for any pair: where
+// DailyMarketDays' history can begin. ok=false when the tier is empty.
+func (s *Store) EarliestMarketHour(ctx context.Context) (time.Time, bool, error) {
+	var at time.Time
+	err := s.db.QueryRowContext(ctx, `SELECT bucket FROM prices_1h ORDER BY bucket ASC LIMIT 1`).Scan(&at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("timescale: EarliestMarketHour: %w", err)
+	}
+	return at.UTC(), true, nil
+}
 
 func (s *Store) DailyMarketDays(
 	ctx context.Context,

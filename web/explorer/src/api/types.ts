@@ -8774,6 +8774,14 @@ export interface components {
              *     admission.
              */
             membership_as_of: string;
+            /**
+             * Format: date-time
+             * @description The first day the served price history holds. No series
+             *     starts before it, and `no_market_history` means no
+             *     dollar-quoted trade since it — trading before this day is
+             *     not read here. Absent when it could not be read.
+             */
+            market_observed_from?: string;
             /** @description Set members with no series, tallied by reason. */
             excluded?: components["schemas"]["RWAHistoryExcluded"][];
             /** @description Distinct oracles behind the reference leg, sorted. */
@@ -13787,8 +13795,10 @@ export interface components {
          *     traded — an empty minute is not carried forward; served at 1h or 1d
          *     granularity, the requested granularity snapped onto the
          *     nearer of the two). `market_cap` returns a USD-denominated
-         *     market-cap series. For fiat:* base assets it is M2
-         *     (verified-currency catalogue) × daily FX rate (fx_quotes).
+         *     market-cap series. For fiat:* base assets it is the
+         *     catalogue's current M2 figure × daily FX rate (fx_quotes),
+         *     for the most recent days only: there is no M2 history, so a
+         *     longer window comes back `truncated` with `data_starts_at`.
          *     For on-chain (native / classic / Soroban) base assets it is
          *     the daily USD price × daily circulating supply (the
          *     `supply_1d` continuous aggregate, forward-filled). Off-chain
@@ -16359,8 +16369,10 @@ export interface operations {
                  *     traded — an empty minute is not carried forward; served at 1h or 1d
                  *     granularity, the requested granularity snapped onto the
                  *     nearer of the two). `market_cap` returns a USD-denominated
-                 *     market-cap series. For fiat:* base assets it is M2
-                 *     (verified-currency catalogue) × daily FX rate (fx_quotes).
+                 *     market-cap series. For fiat:* base assets it is the
+                 *     catalogue's current M2 figure × daily FX rate (fx_quotes),
+                 *     for the most recent days only: there is no M2 history, so a
+                 *     longer window comes back `truncated` with `data_starts_at`.
                  *     For on-chain (native / classic / Soroban) base assets it is
                  *     the daily USD price × daily circulating supply (the
                  *     `supply_1d` continuous aggregate, forward-filled). Off-chain
@@ -21608,7 +21620,7 @@ export interface operations {
                      *           {
                      *             "reason": "no_market_history",
                      *             "assets": 4,
-                     *             "detail": "No dollar-quoted trade in this token has ever been observed."
+                     *             "detail": "No dollar-quoted trade in this token is in the served price history."
                      *           },
                      *           {
                      *             "reason": "contract_not_bound",

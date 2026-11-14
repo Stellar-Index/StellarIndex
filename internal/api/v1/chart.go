@@ -1390,8 +1390,9 @@ func parseChartAssetQuote(w http.ResponseWriter, r *http.Request) (canonical.Ass
 	return asset, quote, true
 }
 
-// handleChartMarketCap serves price_type=market_cap. Fiat base: daily M2 (catalogue) x inverse_usd (fx_quotes); non-fiat goes
-// to handleChartMarketCapCrypto. The quote is always fiat:USD.
+// handleChartMarketCap serves price_type=market_cap. Fiat base: the catalogue's one current M2 figure x inverse_usd (fx_quotes),
+// for recent days only, since the catalogue holds no M2 history; non-fiat goes to handleChartMarketCapCrypto. The quote is
+// always fiat:USD.
 func (s *Server) handleChartMarketCap(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -1439,12 +1440,13 @@ func (s *Server) handleChartMarketCap(
 		return
 	}
 
-	// Default window: trailing 25y (ECB inception), the same as the direct
-	// fiat path, when timeframe=all.
+	// The catalogue's M2 is today's figure: multiplied by an older day's rate it invents a history.
+	// Only days it may be carried onto are read, and the response says where the series starts.
+	// The floor steps back over a weekend, when fx_quotes has no rows.
 	to := s.now().UTC().Truncate(24 * time.Hour)
-	queryFrom := from
-	if queryFrom.IsZero() {
-		queryFrom = to.AddDate(-25, 0, 0)
+	queryFrom := to.Add(-marketCapSupplyMaxCarry - 48*time.Hour)
+	if from.After(queryFrom) {
+		queryFrom = from
 	}
 
 	fxCtx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
@@ -1477,12 +1479,12 @@ func (s *Server) handleChartMarketCap(
 		PriceType:   "market_cap",
 		Points:      wire,
 	}
-	if !from.IsZero() && len(wire) > 0 {
-		if grace := chartGranularityGrace(gran); wire[0].T.Time().Sub(from) > grace {
-			startsAt := wire[0].T
+	if len(wire) > 0 && (from.IsZero() || wire[0].T.Time().Sub(from) > chartGranularityGrace(gran)) {
+		startsAt := wire[0].T
+		series.Truncated = true
+		series.DataStartsAt = &startsAt
+		if !from.IsZero() {
 			requested := from
-			series.Truncated = true
-			series.DataStartsAt = &startsAt
 			series.RequestedFrom = wireTimePtr(&requested)
 		}
 	}
