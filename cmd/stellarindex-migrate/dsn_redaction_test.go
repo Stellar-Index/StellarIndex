@@ -411,7 +411,7 @@ func TestMigrate_NoSlotEchoesAConnectionStringItWasHanded(t *testing.T) {
 		}{
 			"subcommand": {[]string{tc.dsn}, "unknown subcommand"},
 			"down N":     {[]string{"down", tc.dsn}, "N must be a positive integer"},
-			"force V":    {[]string{"force", tc.dsn}, "version must be a non-negative integer"},
+			"force V":    {[]string{"force", tc.dsn}, "version must be a migration number"},
 			"leftover":   {[]string{"status", "-migrations", migDir, tc.dsn}, "unexpected argument"},
 		} {
 			t.Run(tc.name+"/"+slot, func(t *testing.T) {
