@@ -133,9 +133,22 @@ func TestPoisonTracker_CountsConsecutiveCycles(t *testing.T) {
 		t.Errorf("healed row count = %d, want 1 (a healed row restarts its budget)", got)
 	}
 
-	tr.forget(a)
+	tr.giveUp(a)
+	if !tr.gaveUp(a) || tr.gaveUp(b) {
+		t.Errorf("gaveUp(a), gaveUp(b) = %v, %v, want true, false", tr.gaveUp(a), tr.gaveUp(b))
+	}
 	if got := tr.fail(a); got != 1 {
-		t.Errorf("forgotten row count = %d, want 1", got)
+		t.Errorf("given-up row count = %d, want 1", got)
+	}
+	// Retention is about failure counts; a given-up row stays so until the cursor passes its ledger.
+	tr.retain(map[rowIdentity]bool{})
+	tr.passed(9)
+	if !tr.gaveUp(a) {
+		t.Error("row forgotten before the cursor passed its ledger")
+	}
+	tr.passed(10)
+	if tr.gaveUp(a) {
+		t.Error("row still given up after the cursor passed its ledger; a replay rewind must retry it")
 	}
 }
 

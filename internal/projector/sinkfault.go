@@ -134,6 +134,9 @@ type rowIdentity struct {
 // failing inside one [BatchLimit] window: [poisonTracker.retain] drops every identity that did not fail in the last cycle.
 type poisonTracker struct {
 	fails map[rowIdentity]int
+	// givenUp holds rows already shed or quarantined whose ledger the cursor has not passed: a sibling held at the same
+	// ledger makes them be re-read, and re-counting them there would take the one give-up per cycle forever.
+	givenUp map[rowIdentity]struct{}
 }
 
 // fail records one more consecutive failing cycle for id and returns the new
@@ -146,10 +149,28 @@ func (t *poisonTracker) fail(id rowIdentity) int {
 	return t.fails[id]
 }
 
-// forget drops id's history — used when a row is quarantined, so the cursor
-// moving past it cannot leave a stale count behind.
-func (t *poisonTracker) forget(id rowIdentity) {
+// giveUp records that id was shed or quarantined and drops its count; it stays given up until [poisonTracker.passed].
+func (t *poisonTracker) giveUp(id rowIdentity) {
 	delete(t.fails, id)
+	if t.givenUp == nil {
+		t.givenUp = make(map[rowIdentity]struct{})
+	}
+	t.givenUp[id] = struct{}{}
+}
+
+// gaveUp reports whether id was given up and is being re-read only because its ledger is still held.
+func (t *poisonTracker) gaveUp(id rowIdentity) bool {
+	_, ok := t.givenUp[id]
+	return ok
+}
+
+// passed drops the given-up rows at or below ledger once the cursor committed there: they are never read again.
+func (t *poisonTracker) passed(ledger uint32) {
+	for id := range t.givenUp {
+		if id.ledger <= ledger {
+			delete(t.givenUp, id)
+		}
+	}
 }
 
 // retain keeps only the identities that failed in the cycle just finished. A row that succeeded
