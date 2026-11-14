@@ -735,30 +735,38 @@ func (s *Store) lendingPositionBlocks(ctx context.Context, blk *BespokeBlock, si
 	return nil
 }
 
-// lendingAuctionBlocks fills the auction-count KPIs and the recent-auctions
-// table from blend_auctions.
+// lendingAuctionBlocks fills the auction-count KPIs and the recent-auctions table from blend_auctions plus the V1
+// user-liquidation starts, which V1 pools announce as new_liquidation_auction and the projector stores in blend_admin.
 func (s *Store) lendingAuctionBlocks(ctx context.Context, blk *BespokeBlock, since string, windowDays int) error {
 	var newAuctions, fills string
 	if err := s.db.QueryRowContext(ctx, `
-		SELECT count(*) FILTER (WHERE event_kind = 'new')::text,
+		SELECT (count(*) FILTER (WHERE event_kind = 'new')
+		        + (SELECT count(*) FROM blend_admin
+		            WHERE event_kind = 'new_liquidation_auction' AND ledger_close_time > now() - $1::interval))::text,
 		       count(*) FILTER (WHERE event_kind = 'fill')::text
 		FROM blend_auctions WHERE ts > now() - $1::interval`, since).
 		Scan(&newAuctions, &fills); err != nil {
 		return fmt.Errorf("timescale: bespokeLending auction KPIs: %w", err)
 	}
 	blk.KPIs = append(blk.KPIs,
-		BespokeKPI{Label: fmt.Sprintf("Auctions started (%dd)", windowDays), Value: newAuctions, Hint: "blend_auctions new events (type 0 user-liquidation, 1 bad-debt, 2 interest)"},
+		BespokeKPI{Label: fmt.Sprintf("Auctions started (%dd)", windowDays), Value: newAuctions, Hint: "auction starts: type 0 user-liquidation (V1 and V2 pools), 1 bad-debt, 2 interest"},
 		BespokeKPI{Label: fmt.Sprintf("Auctions filled (%dd)", windowDays), Value: fills},
 	)
 
 	atbl, err := s.scanTable(ctx,
 		BespokeTable{Title: "Recent auctions", Columns: []string{"When", "Type", "Kind", "User", "Fill %"}},
-		`SELECT to_char(ts, 'YYYY-MM-DD HH24:MI'),
-		        CASE auction_type WHEN 0 THEN 'user-liquidation' WHEN 1 THEN 'bad-debt' WHEN 2 THEN 'interest' ELSE auction_type::text END,
-		        event_kind,
-		        user_address,
-		        COALESCE(fill_percent::text,'—')
-		   FROM blend_auctions WHERE ts > now() - $1::interval
+		`SELECT to_char(ts, 'YYYY-MM-DD HH24:MI'), kind_label, event_kind, user_address, fill
+		   FROM (SELECT ts,
+		                CASE auction_type WHEN 0 THEN 'user-liquidation' WHEN 1 THEN 'bad-debt' WHEN 2 THEN 'interest' ELSE auction_type::text END AS kind_label,
+		                event_kind, user_address, COALESCE(fill_percent::text,'—') AS fill
+		           FROM blend_auctions WHERE ts > now() - $1::interval
+		         UNION ALL
+		         SELECT ledger_close_time, 'user-liquidation',
+		                CASE event_kind WHEN 'new_liquidation_auction' THEN 'new' ELSE 'delete' END,
+		                COALESCE(target, ''), '—'
+		           FROM blend_admin
+		          WHERE event_kind IN ('new_liquidation_auction', 'delete_liquidation_auction')
+		            AND ledger_close_time > now() - $1::interval) a
 		  ORDER BY ts DESC LIMIT 25`, since)
 	if err != nil {
 		return err

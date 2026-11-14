@@ -21,6 +21,8 @@ type DefiActionCount struct {
 }
 
 // defiActionCountsQuery UNIONs one GROUP BY per per-account table; blend_auctions has no user-leading index (small table, ~10k rows).
+// A Blend V1 user liquidation is announced as new_liquidation_auction / delete_liquidation_auction and lands in blend_admin
+// (target = the user), never in blend_auctions, so the auctions leg folds those rows in under the same action names.
 // sorocredit's credit_events has no owner column, so its only per-account count is positions opened (credit_positions.owner).
 const defiActionCountsQuery = `
 	SELECT 'blend' AS protocol, event_kind AS action, count(*) AS n
@@ -29,8 +31,13 @@ const defiActionCountsQuery = `
 	SELECT 'blend_backstop', event_kind, count(*)
 	  FROM blend_backstop_events WHERE user_address = $1 GROUP BY event_kind
 	UNION ALL
-	SELECT 'blend_auctions', event_kind, count(*)
-	  FROM blend_auctions WHERE user_address = $1 GROUP BY event_kind
+	SELECT 'blend_auctions', action, count(*)
+	  FROM (SELECT event_kind AS action FROM blend_auctions WHERE user_address = $1
+	        UNION ALL
+	        SELECT CASE event_kind WHEN 'new_liquidation_auction' THEN 'new' ELSE 'delete' END
+	          FROM blend_admin
+	         WHERE event_kind IN ('new_liquidation_auction', 'delete_liquidation_auction') AND target = $1) a
+	 GROUP BY action
 	UNION ALL
 	SELECT 'phoenix_stake', action, count(*)
 	  FROM phoenix_stake_events WHERE user_addr = $1 GROUP BY action
