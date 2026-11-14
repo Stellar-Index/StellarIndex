@@ -32,7 +32,7 @@ func TestMintSession_RevokesTheSessionItReplaces(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/auth/verify-code", nil)
 	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: oldToken})
 	w := httptest.NewRecorder()
-	if err := rig.h.mintSession(w, req, rig.user); err != nil {
+	if err := rig.h.mintSession(w, req, rig.user, SignInMethodEmailCode); err != nil {
 		t.Fatalf("mintSession: %v", err)
 	}
 
@@ -83,7 +83,7 @@ func TestMintSession_CapsLiveSessionsPerUser(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/auth/passkey/finish-login", nil)
 	req.RemoteAddr = "203.0.113.10:44100"
 	w := httptest.NewRecorder()
-	if err := rig.h.mintSession(w, req, rig.user); err != nil {
+	if err := rig.h.mintSession(w, req, rig.user, SignInMethodEmailCode); err != nil {
 		t.Fatalf("mintSession: %v", err)
 	}
 	var minted string
@@ -181,7 +181,7 @@ func TestMintSession_SetsSameCookieAsEmailFlow(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/auth/passkey/finish-login", nil)
 	req.RemoteAddr = "203.0.113.10:44100"
 	w := httptest.NewRecorder()
-	if err := rig.h.mintSession(w, req, rig.user); err != nil {
+	if err := rig.h.mintSession(w, req, rig.user, SignInMethodEmailCode); err != nil {
 		t.Fatalf("mintSession: %v", err)
 	}
 

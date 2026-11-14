@@ -770,8 +770,8 @@ func TestPasskeyFinishLogin_ReplayIsAuditedAndCounted(t *testing.T) {
 	if first := finishLogin(t, rig, cookie, body); first.Code != http.StatusOK {
 		t.Fatalf("first finish-login status = %d, want 200", first.Code)
 	}
-	if n := len(sink.all()); n != 0 {
-		t.Fatalf("a successful sign-in wrote %d refusal rows, want 0", n)
+	if rows := sink.all(); len(rows) != 1 || rows[0].Action != AuditActionSessionSignIn {
+		t.Fatalf("a successful sign-in wrote %+v, want only its session.signin row", rows)
 	}
 	before := testutil.ToFloat64(refusals)
 	if second := finishLogin(t, rig, cookie, body); second.Code != http.StatusBadRequest {
@@ -780,7 +780,11 @@ func TestPasskeyFinishLogin_ReplayIsAuditedAndCounted(t *testing.T) {
 	if got := testutil.ToFloat64(refusals) - before; got != 1 {
 		t.Fatalf("ceremony_replay refusals rose by %v, want 1", got)
 	}
-	e := onlyAuditEntry(t, sink)
+	rows := sink.all()
+	if len(rows) != 2 {
+		t.Fatalf("audit rows = %d, want the sign-in and the refusal", len(rows))
+	}
+	e := rows[1]
 	if e.Action != AuditActionPasskeyLoginReplay || e.ActorKind != platform.ActorSystem ||
 		e.AccountID != rig.user.AccountID || e.TargetID != stored.ID.String() {
 		t.Fatalf("audit row = %+v, want a system passkey.login_replay on %s", e, stored.ID)
