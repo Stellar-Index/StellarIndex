@@ -1634,7 +1634,7 @@ func (s *Server) handleChartMarketCapCrypto(
 	}
 
 	wire, supplyStale := marketCapPoints(pricePts, supPts, baseDec)
-	refused, lowLiquidity := s.marketCapSeriesRefused(ctx, base, wire)
+	refused, lowLiquidity, guardUnread := s.marketCapSeriesRefused(ctx, base, wire)
 	if refused {
 		wire = []HistoryPointWire{}
 	}
@@ -1659,31 +1659,37 @@ func (s *Server) handleChartMarketCapCrypto(
 	if !refused {
 		series.markRowCap(walk)
 	}
-	writeChartJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded || supplyStale, Degraded: walk.degraded})
+	// A guard whose input was not read has not ruled, so the series must not be cached as cleared.
+	writeChartJSON(w, series, Flags{
+		Triangulated: walk.proxied, Stale: walk.degraded || supplyStale || guardUnread, Degraded: walk.degraded || guardUnread,
+	})
 }
 
 // marketCapSeriesRefused applies the detail page's valuation guards ([Server.marketCapRefused], then the turnover ceiling on
 // the latest cap) so the chart cannot plot a valuation the headline refuses. Today's verdict covers the whole series (inputs
 // are current readings); unmeasured inputs never refuse.
-func (s *Server) marketCapSeriesRefused(ctx context.Context, base canonical.Asset, wire []HistoryPointWire) (refused, lowLiquidity bool) {
+func (s *Server) marketCapSeriesRefused(
+	ctx context.Context, base canonical.Asset, wire []HistoryPointWire,
+) (refused, lowLiquidity, unread bool) {
 	if len(wire) == 0 {
-		return false, false
+		return false, false, false
 	}
 	var probe AssetDetail
 	if s.MinMarketCapVolumeUSD > 0 || s.MaxMarketCapVolumeRatio > 0 {
-		s.populateVolume24h(ctx, &probe, base)
+		unread = s.populateVolume24h(ctx, &probe, base)
 	}
 	sources := 0
 	if probe.VolumeUSD24h != nil && s.MinMarketCapVolumeUSD > 0 {
-		sources = s.lookupUSDPriceWithSources(ctx, base).sources
+		l := s.lookupUSDPriceWithSources(ctx, base)
+		sources, unread = l.sources, unread || l.unread
 	}
 	if refused, lowLiquidity = s.marketCapRefused(base, sources, probe.VolumeUSD24h); refused {
-		return refused, lowLiquidity
+		return refused, lowLiquidity, unread
 	}
 	if capExceedsObservedTurnover(wire[len(wire)-1].P, probe.VolumeUSD24h, s.MaxMarketCapVolumeRatio) {
-		return true, true
+		return true, true, unread
 	}
-	return false, false
+	return false, false, unread
 }
 
 // marketCapSupplyMaxCarry bounds forward-filling a supply_1d bucket onto later price days: two days covers the post-midnight

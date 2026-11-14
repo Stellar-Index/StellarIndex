@@ -1355,13 +1355,13 @@ func (s *Server) rwaListingRows(
 		// drift from /v1/assets one omission at a time.
 		s.stampListingCollisions(details)
 		unmeasured := s.applySubstanceGateToListing(ctx, details, false)
-		s.fillMarketCapsFromSupply(ctx, details, assetRowSourceCounts(keep))
+		supplyUnread := s.fillMarketCapsFromSupply(ctx, details, assetRowSourceCounts(keep))
 		// The fill above reads supply only to multiply by a price, so an unpriced asset keeps none;
 		// the reference basis here values a float that has never traded. Touches no price or gate.
-		s.rwaFillMissingSupply(ctx, details)
+		supplyUnread = s.rwaFillMissingSupply(ctx, details) || supplyUnread
 		s.fillDeclaredPegPricesInListing(ctx, details)
 		s.fillIssuerDirectoryTags(ctx, details)
-		join.unanswered = join.unanswered || unmeasured || anyDirectoryUnchecked(details)
+		join.unanswered = join.unanswered || unmeasured || supplyUnread || anyDirectoryUnchecked(details)
 		for i, d := range details {
 			out[rwaKey(memberCodes[i], issuer)] = d
 		}
@@ -1372,18 +1372,11 @@ func (s *Server) rwaListingRows(
 // rwaFillMissingSupply attaches circulating supply to rows the market-cap fill left without one. Only rows with no reading at all
 // are touched, so a deliberately attached supply (dust-suppressed and ticker-collision branches) is never overwritten; supply is
 // a chain fact, so no valuation or gate changes.
-func (s *Server) rwaFillMissingSupply(ctx context.Context, rows []AssetDetail) {
-	missing := false
-	for i := range rows {
-		if rows[i].CirculatingSupply == nil {
-			missing = true
-			break
-		}
+func (s *Server) rwaFillMissingSupply(ctx context.Context, rows []AssetDetail) (supplyUnread bool) {
+	if !slices.ContainsFunc(rows, func(d AssetDetail) bool { return d.CirculatingSupply == nil }) {
+		return false
 	}
-	if !missing {
-		return
-	}
-	precise := s.latestPreciseSupply(ctx)
+	precise, supplyUnread := s.latestPreciseSupply(ctx)
 	broad := s.cachedClassicSupply(ctx)
 	lake := s.classicLakeSupply(ctx, rows)
 	for i := range rows {
@@ -1397,6 +1390,7 @@ func (s *Server) rwaFillMissingSupply(ctx context.Context, rows []AssetDetail) {
 		}
 		stampCirculatingSupply(&rows[i], circ, basis)
 	}
+	return supplyUnread
 }
 
 // rwaKey is the membership join key: code and issuer both exact (codes are case-sensitive, so
