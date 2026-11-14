@@ -142,6 +142,7 @@ func (s *Server) populateGlobalCryptoPrice(ctx context.Context, view GlobalAsset
 		}
 		s.logger.Warn("global asset view: ComputeGlobalPrice failed",
 			"ticker", vc.Ticker, "err", err)
+		reportUnreadRead(ctx)
 		return view
 	}
 
@@ -258,6 +259,9 @@ func assetForCurrency(vc *currency.VerifiedCurrency) (canonical.Asset, bool) {
 	return globalBaseForTicker(vc.Ticker)
 }
 
+// fiatRateStaleAfter is the age past which a daily FX point is no longer the current rate: a weekend plus one holiday.
+const fiatRateStaleAfter = 4 * 24 * time.Hour
+
 // fiatUSDPriceFor resolves a non-USD fiat's USD price, shared by the LISTING and DETAIL paths so they cannot drift. Order is
 // load-bearing: fx_quotes first, PriceReader only as a last resort (it returns ErrPriceNotFound for fiat quotes). Use
 // InverseUSD ("1 unit in USD"), NOT RateUSD (units per USD): swapping them is a 24,000x error for JPY.
@@ -266,12 +270,17 @@ func (s *Server) fiatUSDPriceFor(ctx context.Context, ticker string) (price stri
 	if s.FXHistory != nil {
 		now := time.Now().UTC()
 		points, err := s.FXHistory.ListFXHistory(ctx, ticker, now.AddDate(0, 0, -7), now)
-		if err == nil && len(points) > 0 {
-			// oldest→newest; take the latest usable point. Served price is the stored NUMERIC text, never the float.
-			for i := len(points) - 1; i >= 0; i-- {
-				if _, usable := points[i].inverseUSDRat(); usable {
-					return points[i].InverseUSDText, points[i].Bucket, []string{fxQuoteSourceLabel(points[i].Source)}, true
+		if err != nil {
+			s.logger.Warn("fiat USD price: fx history read failed", "ticker", ticker, "err", err)
+			reportUnreadRead(ctx)
+		}
+		// oldest→newest; take the latest usable point. Served price is the stored NUMERIC text, never the float.
+		for i := len(points) - 1; i >= 0; i-- {
+			if _, usable := points[i].inverseUSDRat(); usable {
+				if now.Sub(points[i].Bucket) > fiatRateStaleAfter {
+					reportStaleRead(ctx)
 				}
+				return points[i].InverseUSDText, points[i].Bucket, []string{fxQuoteSourceLabel(points[i].Source)}, true
 			}
 		}
 	}
@@ -289,6 +298,9 @@ func (s *Server) fiatUSDPriceFor(ctx context.Context, ticker string) (price stri
 	}
 	snap, srcs, _, err := s.Prices.LatestPrice(ctx, base, quote)
 	if err != nil {
+		if isPriceReadFailure(err) {
+			reportUnreadRead(ctx)
+		}
 		return "", time.Time{}, nil, false
 	}
 	return snap.Price, snap.ObservedAt.Time(), srcs, true
@@ -353,8 +365,10 @@ func globalBaseForTicker(ticker string) (canonical.Asset, bool) {
 // handleGlobalAsset serves the verified-currency global view at `/v1/assets/{slug}` (via handleAssetGet). Always 200:
 // `price_usd: null` is legitimate for a Stellar-only token with no global price.
 func (s *Server) handleGlobalAsset(w http.ResponseWriter, r *http.Request, vc *currency.VerifiedCurrency) {
-	view := s.buildGlobalAssetView(r.Context(), vc)
-	writeJSON(w, view, Flags{})
+	ctx, rep := withReadReport(r.Context())
+	view := s.buildGlobalAssetView(ctx, vc)
+	unread := rep.unread.Load()
+	writeJSON(w, view, Flags{Stale: unread || rep.stale.Load(), Degraded: unread})
 }
 
 // VerifiedCurrencyListItem is one `GET /v1/assets/verified` entry: identity only, no price block or description, to avoid N storage round-trips.

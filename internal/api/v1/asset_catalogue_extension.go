@@ -45,9 +45,11 @@ func (s *Server) applyAssetExtensionFields(ctx context.Context, detail *AssetDet
 
 	cctx, cancel := context.WithTimeout(ctx, assetExtensionTimeout)
 	defer cancel()
+	cctx, rep := withReadReport(cctx)
 
 	row, rowErr := s.lookupAssetRow(cctx, asset, assetID)
 	results := s.fetchAssetExtensionResults(cctx, assetID)
+	detail.extensionStale = rep.stale.Load()
 
 	s.applyAssetRowToDetail(cctx, detail, asset, row, rowErr, assetID)
 	s.applyAssetExtensionResults(detail, asset, results)

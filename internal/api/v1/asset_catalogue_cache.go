@@ -233,10 +233,13 @@ func (c *CachedAssetsReader) GetAssetTradeCount24h(ctx context.Context, assetID 
 
 // swr is the per-asset single-value read through c.single (a free function: methods cannot take type parameters).
 func swr[T any](ctx context.Context, c *CachedAssetsReader, op, key string, upstream func(context.Context) (T, error)) (T, error) {
-	v, _, _, err := c.single.get(ctx, op, key, func(ctx context.Context) (any, error) { return upstream(ctx) })
+	v, _, stale, err := c.single.get(ctx, op, key, func(ctx context.Context) (any, error) { return upstream(ctx) })
 	if err != nil {
 		var zero T
 		return zero, err
+	}
+	if stale {
+		reportStaleRead(ctx)
 	}
 	return v.(T), nil
 }
@@ -264,13 +267,16 @@ func (c *CachedAssetsReader) settleRowsFillLocked(op, key string, entry *assetsC
 // the cache advances instead of perpetually re-spawning.
 const assetsRefreshBudget = 30 * time.Second
 
-// fetchRows returns just the rows, for callers that do not need observation time.
+// fetchRows returns just the rows; a caller that installed a [readReport] still learns they came from an expired entry.
 func (c *CachedAssetsReader) fetchRows(
 	ctx context.Context,
 	op, key string,
 	upstream func(context.Context) ([]timescale.AssetRow, error),
 ) ([]timescale.AssetRow, error) {
-	rows, _, err := c.fetchRowsAt(ctx, op, key, upstream)
+	rows, at, err := c.fetchRowsAt(ctx, op, key, upstream)
+	if err == nil && !at.IsZero() && time.Since(at) >= c.ttl {
+		reportStaleRead(ctx)
+	}
 	return rows, err
 }
 

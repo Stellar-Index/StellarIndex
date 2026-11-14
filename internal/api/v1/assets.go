@@ -315,6 +315,8 @@ type AssetDetail struct {
 	f2ReadFailed bool
 	// extensionUnread: the catalogue row or one of the six extension reads errored, so an absent field is not "none".
 	extensionUnread bool
+	// extensionStale: the catalogue row or an extension read answered from an expired cache entry.
+	extensionStale bool
 	// priceUnread: the USD price read failed; a null price_usd is then not "no market".
 	priceUnread bool
 
@@ -1950,10 +1952,11 @@ func dropServedCatalogueRows(rows []AssetDetail, served []string) []AssetDetail 
 // order follows published figures; ranking first would rank Stellar-issued rows on nil caps. unmeasured is
 // fillCatalogueStatsForPage's.
 func (s *Server) fillAndRankCatalogueRows(ctx context.Context, rows []AssetDetail, filters assetListFilters) (unmeasured bool) {
+	ctx, rep := withReadReport(ctx)
 	s.fillCataloguePricesForPage(ctx, rows)
 	unmeasured = s.fillCatalogueStatsForPage(ctx, rows, filters)
 	sortAssetDetailsByMarketCapDesc(rows)
-	return unmeasured
+	return unmeasured || rep.unread.Load()
 }
 
 // fillCataloguePricesForPage resolves each row's headline USD price through buildGlobalAssetView's fallback chain so listing
@@ -2001,6 +2004,9 @@ func (s *Server) onChainListingPriceUSD(ctx context.Context, assetID string) *st
 	}
 	row, err := s.AssetsReader.GetAssetByAssetID(ctx, assetID)
 	if err != nil || row.PriceUSD == nil {
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			reportUnreadRead(ctx)
+		}
 		return nil
 	}
 	if s.Substance != nil {
@@ -2554,13 +2560,13 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 // assetDetailStale reports whether detail rests on a failed, cut-short or
 // carried-forward read.
 func assetDetailStale(detail *AssetDetail, homeDomainDegraded, ctxDead bool) bool {
-	return homeDomainDegraded || detail.DecimalsUnresolved || detail.SupplyStale || detail.f2ReadFailed || detail.extensionUnread || ctxDead
+	return homeDomainDegraded || detail.DecimalsUnresolved || detail.SupplyStale || detail.f2ReadFailed || detail.extensionUnread || detail.extensionStale || ctxDead
 }
 
 // transientlyDegraded reports whether detail rests on a read that failed or
 // was cut short, so the body must not outlive the request in the detail cache.
 func transientlyDegraded(detail *AssetDetail, ctxDead bool) bool {
-	return detail.DecimalsUnresolved || ctxDead || detail.issuerDirectoryUnchecked || detail.f2ReadFailed || detail.extensionUnread
+	return detail.DecimalsUnresolved || ctxDead || detail.issuerDirectoryUnchecked || detail.f2ReadFailed || detail.extensionUnread || detail.extensionStale
 }
 
 // resolveAssetDetail fetches the AssetDetail for parsed from the reader, else a canonical echo.
