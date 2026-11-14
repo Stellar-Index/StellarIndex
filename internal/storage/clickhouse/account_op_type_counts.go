@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strconv"
 	"strings"
@@ -225,6 +226,7 @@ func (r *ExplorerReader) planFor(ctx context.Context, rc *CountsRollup) (opTypeC
 	c.fetchedAt = time.Now()
 	if err != nil {
 		c.plan, c.ok = opTypeCountsPlan{}, false
+		slog.Default().Warn("counts rollup plan unreadable; account reads fall back to the source scan", "rollup", rc.Name, "err", err)
 	} else {
 		c.plan, c.ok = planOpTypeCounts(built, src)
 	}

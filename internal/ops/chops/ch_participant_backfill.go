@@ -57,6 +57,9 @@ func chParticipantBackfill(args []string) error {
 	if berr != nil {
 		return berr
 	}
+	if !dryRun {
+		fmt.Fprintln(os.Stderr, participantBackfillFollowUp(uint32(*from), last))
+	}
 	return enforceDecodeBudget("ch-participant-backfill", stats.DecodeErrors, *maxDecodeErrs)
 }
 
@@ -73,6 +76,14 @@ func participantBackfillSummary(stats clickhouse.ParticipantBackfillStats, dryRu
 	}
 	return fmt.Sprintf("ch-participant-backfill: done — scanned %d ops, %s %d participant rows (%d decode-errors)",
 		stats.OpsScanned, verb, stats.Participants, stats.DecodeErrors)
+}
+
+// participantBackfillFollowUp names the step a write run leaves owed: account_op_types takes its participant arm from the live sink
+// only, so rows written here are absent from it until that arm is re-run.
+func participantBackfillFollowUp(from, last uint32) string {
+	return fmt.Sprintf("ch-participant-backfill: FOLLOW-UP OWED — stellar.account_op_types does not hold the participant rows for ledgers %d..%d; "+
+		"re-run the participant arm of Step 3 in deploy/clickhouse/account_op_types.sql over that range, or account op-type counts and filters under-report",
+		from, last)
 }
 
 // backfillOperationParticipants is the lake pass, a var so the exit-status
