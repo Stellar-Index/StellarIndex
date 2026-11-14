@@ -144,7 +144,7 @@ type keyDTO struct {
 	ParentKeyID string `json:"parent_key_id,omitempty"`
 }
 
-func delegatedDTO(rec auth.APIKeyRecord, acct platform.Account) keyDTO {
+func delegatedDTO(rec auth.APIKeyRecord) keyDTO {
 	return keyDTO{
 		ID:              rec.KeyID,
 		Name:            rec.Label,
@@ -253,7 +253,7 @@ func (h *Handlers) delegatedKeys(ctx context.Context, acct platform.Account, man
 	var out []keyDTO
 	for _, rec := range recs {
 		if _, ok := managed[rec.KeyID]; !ok {
-			out = append(out, delegatedDTO(rec, acct))
+			out = append(out, delegatedDTO(rec))
 		}
 	}
 	return out, nil

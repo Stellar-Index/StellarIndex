@@ -23051,6 +23051,7 @@ export interface operations {
                      *         }
                      *       ],
                      *       "revoked_truncated": false,
+                     *       "delegated_unavailable": false,
                      *       "max_active_keys": 25
                      *     }
                      */

@@ -9867,6 +9867,7 @@ paths:
                   last_used_at: '2026-07-03T08:59:41Z'
                   created_at: '2026-06-12T08:30:00Z'
                 revoked_truncated: false
+                delegated_unavailable: false
                 max_active_keys: 25
               schema:
                 type: object
