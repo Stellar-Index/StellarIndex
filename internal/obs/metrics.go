@@ -525,6 +525,8 @@ func seedBoundedLabelSeries() {
 		// sign-in refusals that carry a credential-theft signal.
 		"passkey_register", "passkey_delete",
 		"passkey_clone_warning", "passkey_login_replay",
+		"webhook_create", "webhook_update", "webhook_delete", "webhook_rotate_secret",
+		"price_alert_create", "price_alert_update", "price_alert_delete",
 	} {
 		AdminAuditWriteFailuresTotal.WithLabelValues(surface)
 	}

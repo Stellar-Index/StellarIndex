@@ -27,6 +27,17 @@ const (
 	AuditActionKeyRevoke           = "key.revoke"
 )
 
+// audit_log actions for a session's changes to where the account's signed data is sent and what triggers it.
+const (
+	AuditActionWebhookCreate       = "webhook.create"
+	AuditActionWebhookUpdate       = "webhook.update"
+	AuditActionWebhookDelete       = "webhook.delete"
+	AuditActionWebhookRotateSecret = "webhook.rotate_secret"
+	AuditActionPriceAlertCreate    = "price_alert.create"
+	AuditActionPriceAlertUpdate    = "price_alert.update"
+	AuditActionPriceAlertDelete    = "price_alert.delete"
+)
+
 // CredentialEvent is one self-service change to a credential that can authenticate as the account.
 type CredentialEvent struct {
 	Action     string

@@ -34,8 +34,10 @@ type Config struct {
 	// Webhooks is the platform store powering CRUD + queue. In
 	// production: `internal/platform/postgresstore.WebhookStore`.
 	Webhooks platform.WebhookStore
-	Logger   *slog.Logger
-	Now      func() time.Time
+	// Audit receives one row per webhook change; nil records nothing.
+	Audit  platform.AuditStore
+	Logger *slog.Logger
+	Now    func() time.Time
 
 	// WebhookQuotas optionally overrides the per-tier ceiling on
 	// registered webhook endpoints. Tiers absent from the map (or a
@@ -253,6 +255,7 @@ func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
+	h.recordWebhookAudit(r, sc, dashboardauth.AuditActionWebhookCreate, out.ID, webhookAuditMeta(out))
 	httpx.WriteJSON(w, http.StatusCreated, createResponse{Webhook: toDTO(out), Secret: secret})
 }
 
@@ -289,6 +292,7 @@ func (h *Handlers) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
+	before := current
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 8<<10))
 	if err != nil {
@@ -337,6 +341,12 @@ func (h *Handlers) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
+	meta := webhookAuditMeta(current)
+	if before.URL != current.URL {
+		meta["previous_url_host"] = urlHost(before.URL)
+	}
+	meta["url_changed"] = before.URL != current.URL
+	h.recordWebhookAudit(r, sc, dashboardauth.AuditActionWebhookUpdate, id, meta)
 	updated, err := h.getWebhookMeta(r.Context(), id)
 	if err != nil {
 		h.cfg.Logger.Error("reload webhook after update", "err", err, "id", id)
@@ -366,6 +376,7 @@ func (h *Handlers) HandleDelete(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
+	h.recordWebhookAudit(r, sc, dashboardauth.AuditActionWebhookDelete, id, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -414,11 +425,43 @@ func (h *Handlers) HandleRotateSecret(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
+	h.recordWebhookAudit(r, sc, dashboardauth.AuditActionWebhookRotateSecret, id,
+		map[string]any{"previous_secret_expires_at": expiresAt.UTC().Format(time.RFC3339)})
 	httpx.WriteJSON(w, http.StatusOK, rotateSecretResponse{
 		WebhookID:               id.String(),
 		Secret:                  secret,
 		PreviousSecretExpiresAt: wiretime.Time(expiresAt),
 	})
+}
+
+// recordWebhookAudit appends the audit row for a change that has already committed.
+func (h *Handlers) recordWebhookAudit(
+	r *http.Request, sc dashboardauth.SessionContext, action string, id uuid.UUID, meta map[string]any,
+) {
+	dashboardauth.RecordSessionCredentialEvent(r, h.cfg.Audit, h.cfg.Logger, h.cfg.Now(), sc, dashboardauth.CredentialEvent{
+		Action:     action,
+		TargetKind: "customer_webhook",
+		TargetID:   id.String(),
+		Metadata:   meta,
+	})
+}
+
+// webhookAuditMeta describes a webhook for the audit row. Only the URL's host is kept: receiver URLs often carry a
+// token in the path or query, and the signing key is never recorded.
+func webhookAuditMeta(wh platform.CustomerWebhook) map[string]any {
+	return map[string]any{
+		"url_host": urlHost(wh.URL),
+		"events":   wh.Events,
+		"enabled":  wh.Enabled,
+	}
+}
+
+func urlHost(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return u.Host
 }
 
 type deliveriesResponse struct {

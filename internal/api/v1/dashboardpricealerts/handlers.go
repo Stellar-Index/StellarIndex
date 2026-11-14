@@ -27,6 +27,8 @@ type Config struct {
 	// Alerts is the platform store powering CRUD. In production:
 	// postgresstore.PriceAlertStore.
 	Alerts platform.PriceAlertStore
+	// Audit receives one row per alert change; nil records nothing.
+	Audit  platform.AuditStore
 	Logger *slog.Logger
 	Now    func() time.Time
 
@@ -212,6 +214,7 @@ func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
+	h.recordAlertAudit(r, sc, dashboardauth.AuditActionPriceAlertCreate, out.ID, alertAuditMeta(out))
 	httpx.WriteJSON(w, http.StatusCreated, toDTO(out))
 }
 
@@ -265,6 +268,7 @@ func (h *Handlers) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
+	h.recordAlertAudit(r, sc, dashboardauth.AuditActionPriceAlertUpdate, id, alertAuditMeta(current))
 	updated, err := h.cfg.Alerts.GetPriceAlert(r.Context(), id)
 	if err != nil {
 		h.cfg.Logger.Error("reload price alert after update", "err", err, "id", id)
@@ -294,10 +298,34 @@ func (h *Handlers) HandleDelete(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
+	h.recordAlertAudit(r, sc, dashboardauth.AuditActionPriceAlertDelete, id, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // ─── helpers ────────────────────────────────────────────────────
+
+// recordAlertAudit appends the audit row for a change that has already committed.
+func (h *Handlers) recordAlertAudit(
+	r *http.Request, sc dashboardauth.SessionContext, action string, id uuid.UUID, meta map[string]any,
+) {
+	dashboardauth.RecordSessionCredentialEvent(r, h.cfg.Audit, h.cfg.Logger, h.cfg.Now(), sc, dashboardauth.CredentialEvent{
+		Action:     action,
+		TargetKind: "price_alert",
+		TargetID:   id.String(),
+		Metadata:   meta,
+	})
+}
+
+func alertAuditMeta(a platform.PriceAlert) map[string]any {
+	return map[string]any{
+		"base_asset":       a.BaseAsset,
+		"quote_asset":      a.QuoteAsset,
+		"condition":        string(a.Condition),
+		"threshold":        a.Threshold,
+		"cooldown_seconds": a.CooldownSeconds,
+		"enabled":          a.Enabled,
+	}
+}
 
 func canManage(role platform.Role) bool {
 	switch role {
