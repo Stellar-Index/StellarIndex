@@ -373,6 +373,9 @@ func EventCensusShortfalls(ctx context.Context, addr string, from, to uint32) ([
 	if err != nil {
 		return nil, err
 	}
+	if err := boundCensusTipPartition(ctx, conn, map[string]map[uint32]uint64{"contract_events": present}, to); err != nil {
+		return nil, err
+	}
 	return censusShortfalls(expected, present), nil
 }
 

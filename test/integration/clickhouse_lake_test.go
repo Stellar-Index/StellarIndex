@@ -1495,6 +1495,66 @@ func TestEventCensusShortfalls_DroppedEventPartition(t *testing.T) {
 	}
 }
 
+// The census ends at `to`, but its partition also holds the ledgers ingested above it; those rows must not stand in for
+// events lost at or below `to`.
+func TestEventCensusShortfalls_RowsAboveTheRangeDoNotHideALoss(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+
+	const p = uint32(148_000_000) // a partition nothing else in the suite writes
+	sink, err := chstore.Open(ctx, addr, 1000)
+	if err != nil {
+		t.Fatalf("open sink: %v", err)
+	}
+	t.Cleanup(func() { _ = sink.Close(ctx) })
+	conn := dialClickHouse(t, ctx, "stellar")
+	t.Cleanup(func() {
+		cctx, ccancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer ccancel()
+		if err := conn.Exec(cctx, fmt.Sprintf(`ALTER TABLE stellar.ledgers DELETE
+			WHERE ledger_seq BETWEEN %d AND %d SETTINGS mutations_sync = 2`, p, p+3)); err != nil {
+			t.Errorf("purge census fixture ledgers: %v", err)
+		}
+	})
+	for seq := p; seq <= p+3; seq++ {
+		ext := chstore.LedgerExtract{Ledger: chstore.LedgerRow{
+			LedgerSeq: seq, CloseTime: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
+			LedgerHash: fmt.Sprintf("h%d", seq), PrevHash: fmt.Sprintf("h%d", seq-1),
+			ProtocolVersion: 22, BucketListHash: "cc00",
+			SorobanEventCount: 2,
+			TotalCoins:        1, FeePool: 1, BaseFee: 100, BaseReserve: 5_000_000,
+		}}
+		for i := uint32(0); i < 2; i++ {
+			ext.Events = append(ext.Events, chstore.ContractEventRow{
+				LedgerSeq: seq, CloseTime: ext.Ledger.CloseTime, TxHash: fmt.Sprintf("tx%d", seq),
+				EventIndex: i, ContractID: "CCENSUSTIPFIXTURE", EventType: "contract",
+				TopicCount: 1, Topic0Sym: "transfer", InSuccessfulCall: 1,
+			})
+		}
+		if err := sink.Add(ctx, ext); err != nil {
+			t.Fatalf("sink add ledger %d: %v", seq, err)
+		}
+	}
+	if err := sink.Flush(ctx); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+
+	// Lose ledger p's two events; ledgers p+2 and p+3 sit above the census range.
+	if err := conn.Exec(ctx, fmt.Sprintf(`ALTER TABLE stellar.contract_events DELETE
+		WHERE ledger_seq = %d SETTINGS mutations_sync = 2`, p)); err != nil {
+		t.Fatalf("delete events: %v", err)
+	}
+	short, err := chstore.EventCensusShortfalls(ctx, addr, p, p+1)
+	if err != nil {
+		t.Fatalf("EventCensusShortfalls: %v", err)
+	}
+	want := chstore.EventCensusShortfall{Partition: 148, FirstEventLedger: p, Expected: 4, Present: 2}
+	if len(short) != 1 || short[0] != want {
+		t.Fatalf("shortfalls = %+v, want %+v", short, want)
+	}
+}
+
 // verify-lake's raw-table census: a DROP PARTITION on a non-ledger raw table leaves ledgers contiguous and hash-chained,
 // so SubstrateProblem reports the range clean and only the census sees the rows are gone.
 func TestVerifyLake_RawCensusCatchesDroppedTablePartition(t *testing.T) {

@@ -222,18 +222,24 @@ func PrepareTradesByAccountWindow(ctx context.Context, addr string, lo, hi uint3
 	if err := CheckTradesByAccountOverlap(recorded, lo, hi, replace); err != nil {
 		return err
 	}
-	if len(recorded) == 0 {
-		return nil
-	}
-	for _, stmt := range []string{
-		`ALTER TABLE stellar.trades_by_account_windows DELETE WHERE from_ledger >= ? AND to_ledger <= ? SETTINGS mutations_sync = 2`,
-		`ALTER TABLE stellar.trades_by_account DELETE WHERE ledger >= ? AND ledger <= ? SETTINGS mutations_sync = 2`,
-	} {
+	for _, stmt := range tradesByAccountClearStmts(replace) {
 		if err := conn.Exec(ctx, stmt, lo, hi); err != nil {
 			return fmt.Errorf("clickhouse: trades_by_account -replace [%d,%d]: %w", lo, hi, err)
 		}
 	}
 	return nil
+}
+
+// tradesByAccountClearStmts is the -replace clear, window records first. It does not depend on what is recorded: rows can exist
+// with no window (an insert whose record was refused, or a clear that died between the two statements).
+func tradesByAccountClearStmts(replace bool) []string {
+	if !replace {
+		return nil
+	}
+	return []string{
+		`ALTER TABLE stellar.trades_by_account_windows DELETE WHERE from_ledger >= ? AND to_ledger <= ? SETTINGS mutations_sync = 2`,
+		`ALTER TABLE stellar.trades_by_account DELETE WHERE ledger >= ? AND ledger <= ? SETTINGS mutations_sync = 2`,
+	}
 }
 
 // TradesByAccountTip returns the last ledger of the newest recorded run for sourcesKey; ok is false when nothing is recorded.

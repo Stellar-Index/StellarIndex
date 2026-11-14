@@ -204,3 +204,15 @@ func TestCheckTradesByAccountOverlap(t *testing.T) {
 		}
 	}
 }
+
+// TestTradesByAccountClearStmts_ReplaceAlwaysClearsRows: the clear must not be skipped because no window is recorded.
+func TestTradesByAccountClearStmts_ReplaceAlwaysClearsRows(t *testing.T) {
+	if got := tradesByAccountClearStmts(false); got != nil {
+		t.Fatalf("without replace = %v, want no statements", got)
+	}
+	stmts := tradesByAccountClearStmts(true)
+	if len(stmts) != 2 || !strings.Contains(stmts[0], "trades_by_account_windows DELETE") ||
+		!strings.Contains(stmts[1], "stellar.trades_by_account DELETE WHERE ledger >= ? AND ledger <= ?") {
+		t.Fatalf("replace statements = %v, want the window records then the rows of the range", stmts)
+	}
+}
