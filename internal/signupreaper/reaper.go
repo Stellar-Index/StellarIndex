@@ -30,6 +30,8 @@ type OrphanStore interface {
 	// ReapSuspendedOrphans deletes accounts Suspended with a reason starting with reasonPrefix
 	// and suspended before olderThan, returning the rows removed. The predicate is conservative.
 	ReapSuspendedOrphans(ctx context.Context, reasonPrefix string, olderThan time.Time) (int64, error)
+	// ReactivateSuspendedWithUsers unsuspends accounts carrying the orphan mark that have a user, returning the rows released.
+	ReactivateSuspendedWithUsers(ctx context.Context, reasonPrefix string) (int64, error)
 	// CountAccounts feeds [obs.AccountRows]: POST /v1/register is unauthenticated and mints a
 	// permanent account per call, which the sweep never touches, so this gauge is the only view
 	// of growth.
@@ -145,6 +147,19 @@ func (r *Reaper) refreshRowGauges(ctx context.Context) {
 // sweepOnce performs the delete and returns (rows deleted, outcome). Cancellation reports "ok"
 // (clean shutdown, not a failure), matching the pricealerts worker.
 func (r *Reaper) sweepOnce(ctx context.Context) (int64, string) {
+	outcome := "ok"
+	// An orphan mark on an account that has a user was a lost race with the user insert; the delete below never takes such an
+	// account, so without this it would stay suspended.
+	released, err := r.store.ReactivateSuspendedWithUsers(ctx, SignupRaceReasonPrefix)
+	switch {
+	case errors.Is(err, context.Canceled):
+		return 0, "ok"
+	case err != nil:
+		r.logger.Warn("signup-reaper: releasing marked accounts that have a user failed", "err", err)
+		outcome = "error"
+	case released > 0:
+		r.logger.Warn("signup-reaper released accounts wrongly marked as orphans", "released", released)
+	}
 	olderThan := r.now().Add(-r.minAge)
 	deleted, err := r.store.ReapSuspendedOrphans(ctx, SignupRaceReasonPrefix, olderThan)
 	if err != nil {
@@ -154,5 +169,5 @@ func (r *Reaper) sweepOnce(ctx context.Context) (int64, string) {
 		r.logger.Warn("signup-reaper: reap failed", "err", err)
 		return 0, "error"
 	}
-	return deleted, "ok"
+	return deleted, outcome
 }

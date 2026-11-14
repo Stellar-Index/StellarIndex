@@ -29,6 +29,35 @@ type fakeOrphanStore struct {
 	accountRows int64
 	apiKeyRows  int64
 	countErr    error
+	releases    []string
+	releaseErr  error
+}
+
+func (f *fakeOrphanStore) ReactivateSuspendedWithUsers(_ context.Context, prefix string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.releases = append(f.releases, prefix)
+	return 0, f.releaseErr
+}
+
+// TestSweep_ReleasesMarkedAccountsThatHaveAUser: the release runs every sweep with the reaper's prefix, and its failure is
+// an error outcome that does not stop the delete.
+func TestSweep_ReleasesMarkedAccountsThatHaveAUser(t *testing.T) {
+	store := &fakeOrphanStore{deleted: 2, releaseErr: errors.New("db down")}
+	r := signupreaper.New(store, signupreaper.Options{Logger: silent()})
+	before := testutil.ToFloat64(obs.SignupReaperRunsTotal.WithLabelValues("error"))
+
+	r.Sweep(context.Background())
+
+	if len(store.releases) != 1 || store.releases[0] != signupreaper.SignupRaceReasonPrefix {
+		t.Errorf("releases = %v, want one call with %q", store.releases, signupreaper.SignupRaceReasonPrefix)
+	}
+	if len(store.calls) != 1 {
+		t.Errorf("delete ran %d times after a failed release, want 1", len(store.calls))
+	}
+	if got := testutil.ToFloat64(obs.SignupReaperRunsTotal.WithLabelValues("error")) - before; got != 1 {
+		t.Errorf("runs_total{error} delta = %v, want 1", got)
+	}
 }
 
 func (f *fakeOrphanStore) ReapSuspendedOrphans(_ context.Context, prefix string, olderThan time.Time) (int64, error) {

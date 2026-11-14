@@ -278,6 +278,26 @@ func (r *AccountStore) Unsuspend(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// ReactivateSuspendedWithUsers unsuspends accounts suspended with a reason starting with reasonPrefix that have a user: the
+// orphan mark was wrong, and the reaper would otherwise leave the owner's keys refused for good. Returns rows released.
+func (r *AccountStore) ReactivateSuspendedWithUsers(ctx context.Context, reasonPrefix string) (int64, error) {
+	const q = `
+		UPDATE accounts a SET
+			status = 'active',
+			suspended_at = NULL,
+			suspended_reason = NULL
+		WHERE a.status = 'suspended'
+		  AND a.suspended_reason LIKE $1 ESCAPE '\'
+		  AND EXISTS (SELECT 1 FROM users u WHERE u.account_id = a.id)
+	`
+	res, err := r.s.db.ExecContext(ctx, q, likePrefixPattern(reasonPrefix))
+	if err != nil {
+		return 0, fmt.Errorf("reactivate suspended accounts with users: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 // ReapSuspendedOrphans hard-deletes suspended signup-race orphans (reason starts with reasonPrefix, older than olderThan, NO users AND NO api_keys) and returns rows deleted; reasonPrefix LIKE metacharacters are escaped.
 func (r *AccountStore) ReapSuspendedOrphans(ctx context.Context, reasonPrefix string, olderThan time.Time) (int64, error) {
 	const q = `
