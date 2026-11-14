@@ -103,3 +103,24 @@ func TestDecodeTopicName(t *testing.T) {
 		t.Error("empty input must be ok=false")
 	}
 }
+
+// TestFoldEventBreakdown_CutGroupsAreCountedAsOther: groups past the read limit stay in the composition as one
+// labelled bucket, and nameless groups are counted as untyped by the reader.
+func TestFoldEventBreakdown_CutGroupsAreCountedAsOther(t *testing.T) {
+	groups := []eventBreakdownGroup{
+		{sym: "swap", count: 70},
+		{sym: "", count: 20},
+	}
+	got := map[string]uint64{}
+	for _, r := range foldEventBreakdown(groups, 100) {
+		got[r.EventType] = r.Count
+	}
+	if got["swap"] != 70 || got[UntypedEventType] != 20 || got[OtherEventType] != 10 || len(got) != 3 {
+		t.Errorf("cut read = %v, want swap 70, untyped 20, other 10", got)
+	}
+	for _, r := range foldEventBreakdown(groups, 90) {
+		if r.EventType == OtherEventType {
+			t.Errorf("complete read grew an %q bucket: %+v", OtherEventType, r)
+		}
+	}
+}

@@ -60,9 +60,24 @@ describe('PoolReserves', () => {
     renderIt();
     const line = await screen.findByText(/Pool TVL:/);
     expect(line.textContent).toMatch(
-      /^Pool TVL: ≥ \$1,000 \(at least this — .*excludes unpriced USDX\)$/,
+      /^Pool TVL: ≥ \$1,000 \(at least this — .*excludes USDX \(unpriced\)\)$/,
     );
     expect(screen.getByText('≥ $1K')).toBeInTheDocument();
+  });
+
+  it('names a reserve the response omitted for lack of decoded state', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: {
+        pool: POOL,
+        tvl_usd: '1000',
+        lower_bound: true,
+        omitted_reserves: ['USDX-GABC'],
+        reserves: [reserve('native', '1000')],
+      },
+    });
+    renderIt();
+    const line = await screen.findByText(/Pool TVL:/);
+    expect(line.textContent).toMatch(/excludes USDX \(no decoded state\)\)$/);
   });
 
   it('renders a fully priced tvl_usd as a plain total', async () => {

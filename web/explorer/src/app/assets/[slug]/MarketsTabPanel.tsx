@@ -66,9 +66,11 @@ export function MarketsTabPanel({ assetID }: { assetID: string }) {
 
   const barMax = useMemo(() => maxVolume(matched), [matched]);
 
-  // A next cursor means the server holds more rows than this page: the count
-  // is a lower bound, never a total.
-  const truncated = Boolean(markets.data?.nextCursor);
+  // A next cursor or the truncated flag means the server holds more rows than
+  // this page: the count is a lower bound, never a total.
+  const truncated =
+    Boolean(markets.data?.nextCursor) ||
+    Boolean(markets.data?.flags?.truncated);
 
   if (markets.isError) {
     return (

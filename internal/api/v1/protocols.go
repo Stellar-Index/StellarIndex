@@ -481,17 +481,16 @@ type ProtocolDetailView struct {
 
 	// ─── Lake analytics (populated when the activity reader is wired) ──
 
-	// EventBreakdown is the event-type distribution (topic[0] symbol -> count) over the trailing
-	// ActivityWindowDays, descending. A synthetic "untyped" bucket covers events whose topic[0] is
-	// not a denormalized Symbol, so sum(EventBreakdown) reconciles to EventsTotal.
+	// EventBreakdown is the event-type distribution (event name -> count) over the trailing
+	// ActivityWindowDays, descending. "untyped" is a counted type: events whose topics yield no name.
+	// Its sum and EventsTotal come from separate aggregations and may differ within estimation error.
 	EventBreakdown []ProtocolEventTypeView `json:"event_breakdown,omitempty"`
 	// ActivitySeries is the daily decoded-event count over the trailing
 	// ActivityWindowDays — the protocol's on-chain activity chart.
 	ActivitySeries []ProtocolActivityPointView `json:"activity_series,omitempty"`
 	// ActivityWindowDays is the lookback all the analytics fields cover.
 	ActivityWindowDays int `json:"activity_window_days,omitempty"`
-	// EventsTotal is the unfiltered contract-event count over ActivityWindowDays (= sum of
-	// ActivitySeries = sum of EventBreakdown incl. untyped), NOT the typed-breakdown sum.
+	// EventsTotal is the unfiltered contract-event count over ActivityWindowDays (= sum of ActivitySeries).
 	EventsTotal int64 `json:"events_total,omitempty"`
 
 	// Bespoke is the category-specific analytics block (TVL, volume, AUM and so on). Absent when
@@ -809,14 +808,13 @@ func (s *Server) enrichProtocolAnalytics(ctx context.Context, meta ProtocolMeta,
 	plan := s.protocolActivityPlanFor(ctx, tip)
 	view.ActivityWindowDays = protocolActivityWindowDays
 	// The reads write disjoint fields and run concurrently; they share ONE plan so series and
-	// breakdown cannot split across sources. "untyped" needs EventsTotal, so it is appended after
-	// the barrier.
+	// breakdown cannot split across sources.
 	var wg sync.WaitGroup
 	var seriesOK, breakdownOK, contractsOK bool
 	wg.Add(2)
 	// Detached from the handler, so middleware.Recoverer does not cover these; a recovered panic
 	// leaves the OK flag false so it cannot displace a healthy cached entry. Series and breakdown
-	// are ONE fill, or mixed fast/raw windows would break sum(EventBreakdown)==EventsTotal.
+	// are ONE fill, or the two would cover different windows.
 	go func() {
 		defer wg.Done()
 		defer worker.Recover(s.logger, "api-protocol-series-breakdown-fill")
@@ -828,20 +826,11 @@ func (s *Server) enrichProtocolAnalytics(ctx context.Context, meta ProtocolMeta,
 		contractsOK = s.fillProtocolContractActivity(ctx, meta.Name, ids, plan, view)
 	}()
 	wg.Wait()
-	reconcileProtocolBreakdown(view)
+	if !seriesOK || !breakdownOK {
+		// Half the block reads as a real composition (a total over no types, types over no total); serve none of it.
+		view.EventBreakdown, view.ActivitySeries, view.EventsTotal, view.ActivityWindowDays = nil, nil, 0, 0
+	}
 	return seriesOK && breakdownOK && contractsOK
-}
-
-// reconcileProtocolBreakdown appends the "untyped" bucket (events whose topic[0] symbol the lake
-// did not denormalize, mostly AMM swap/sync) so the breakdown sums to EventsTotal.
-func reconcileProtocolBreakdown(view *ProtocolDetailView) {
-	var typedSum int64
-	for _, b := range view.EventBreakdown {
-		typedSum += b.Count
-	}
-	if untyped := view.EventsTotal - typedSum; untyped > 0 {
-		view.EventBreakdown = append(view.EventBreakdown, ProtocolEventTypeView{EventType: "untyped", Count: untyped})
-	}
 }
 
 // protocolContractIDs is the dedup'd analytics scope: instances plus the factories, which emit
@@ -869,8 +858,7 @@ func protocolContractIDs(contracts []ProtocolContractView, factories []string) [
 }
 
 // fillProtocolSeriesAndBreakdown fills the daily series (+EventsTotal) and the breakdown from the SAME source, fast or raw: the
-// windows differ and sum(EventBreakdown)==EventsTotal assumes one, so EITHER fast query erroring forces BOTH onto raw. The
-// "untyped" bucket covers rows without a plain Symbol topic_0_sym.
+// windows differ, so EITHER fast query erroring forces BOTH onto raw.
 func (s *Server) fillProtocolSeriesAndBreakdown(ctx context.Context, name string, ids []string, plan protocolActivityPlan, view *ProtocolDetailView) (seriesOK, breakdownOK bool) {
 	if plan.fast != nil {
 		series, sErr := plan.fast.ProtocolDailyActivityFast(ctx, ids, plan.sinceDay)
@@ -898,8 +886,7 @@ func (s *Server) fillProtocolSeriesAndBreakdown(ctx context.Context, name string
 	return sErr == nil, bErr == nil
 }
 
-// applyProtocolSeries projects the daily points onto the view and sets EventsTotal, the unfiltered
-// window total (sum of the daily points) the breakdown reconciles against, NOT the typed sum.
+// applyProtocolSeries projects the daily points onto the view and sets EventsTotal, the unfiltered window total.
 func applyProtocolSeries(view *ProtocolDetailView, series []clickhouse.ProtocolDailyPoint) {
 	view.ActivitySeries = make([]ProtocolActivityPointView, 0, len(series))
 	var total int64
@@ -910,10 +897,9 @@ func applyProtocolSeries(view *ProtocolDetailView, series []clickhouse.ProtocolD
 	view.EventsTotal = total
 }
 
-// applyProtocolBreakdown projects the typed event-count rows onto the view; the reconciling "untyped" bucket is appended by
-// reconcileProtocolBreakdown once EventsTotal is set.
+// applyProtocolBreakdown projects the counted event-type rows onto the view.
 func applyProtocolBreakdown(view *ProtocolDetailView, breakdown []clickhouse.ProtocolEventTypeCount) {
-	view.EventBreakdown = make([]ProtocolEventTypeView, 0, len(breakdown)+1)
+	view.EventBreakdown = make([]ProtocolEventTypeView, 0, len(breakdown))
 	for _, b := range breakdown {
 		view.EventBreakdown = append(view.EventBreakdown, ProtocolEventTypeView{EventType: b.EventType, Count: int64(b.Count)})
 	}
@@ -1221,7 +1207,7 @@ func (s *Server) fastActivity(ctx context.Context) protocolFastActivityReader {
 }
 
 // protocolActivityPlan is the ONE shared fast-vs-raw decision and window for a detail build's concurrent fills: independent
-// probes could take different paths and break the sum(EventBreakdown)==EventsTotal reconcile, and a failed tip read (tip==0)
+// probes could take different paths and serve a series and a breakdown over different windows, and a failed tip read (tip==0)
 // would silently serve a 1-day window labeled 90d.
 type protocolActivityPlan struct {
 	// sinceLedger is the raw readers' cutoff (tip − window), always set.

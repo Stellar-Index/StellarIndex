@@ -22,7 +22,7 @@ import { shortAssetText } from '@/lib/asset-label';
 
 interface ReserveRow {
   asset: string;
-  decimals: number;
+  decimals: number | null;
   supplied: string;
   borrowed: string;
   supplied_usd: string | null;
@@ -36,6 +36,7 @@ interface ReservesResp {
   pool: string;
   tvl_usd: string | null;
   lower_bound?: boolean;
+  omitted_reserves?: string[];
   reserves: ReserveRow[];
 }
 
@@ -45,7 +46,9 @@ const usdFmt = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 0,
 });
 
-function tokenAmount(base: string, decimals: number): string {
+function tokenAmount(base: string, decimals: number | null): string {
+  // No established exponent: show the exact base units, never a guessed scale.
+  if (decimals == null) return `${base} base units`;
   // Reserve amounts are exact i128 base-unit strings (ADR-0003); scale
   // via the string-split path, never Number() on the raw integer, which
   // loses precision above 2^53.
@@ -96,11 +99,13 @@ export function PoolReserves({ pool }: { pool: string }) {
   // Either signal makes the total partial: the served flag, or an unpriced
   // reserve the client-side fallback sum could not include.
   const unpriced = reserves.filter((rv) => rv.supplied_usd == null);
+  const omitted = q.data?.omitted_reserves ?? [];
   const lowerBound = q.data?.lower_bound === true || unpriced.length > 0;
-  const excluded =
-    unpriced.length > 0
-      ? unpriced.map((rv) => shortAssetText(rv.asset)).join(', ')
-      : 'reserves';
+  const left = [
+    ...unpriced.map((rv) => `${shortAssetText(rv.asset)} (unpriced)`),
+    ...omitted.map((a) => `${shortAssetText(a)} (no decoded state)`),
+  ];
+  const excluded = left.length > 0 ? left.join(', ') : 'some reserves';
 
   return (
     <Panel
@@ -125,7 +130,7 @@ export function PoolReserves({ pool }: { pool: string }) {
             {lowerBound ? (
               <>
                 (<strong>at least</strong> this — Σ supplied across priced
-                reserves; excludes unpriced {excluded})
+                reserves; excludes {excluded})
               </>
             ) : (
               '(Σ supplied across priced reserves)'

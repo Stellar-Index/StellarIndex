@@ -196,7 +196,8 @@ func (s *Server) noteLendingSummaryFailure(pool string) {
 // summarizeReserves totals a reserves view with exact decimal sums; a reserve without a USD value is left out of every figure, and a
 // total that leaves one out is flagged a lower bound (AGENTS.md money invariant).
 func summarizeReserves(v LendingPoolReservesView) *LendingPoolSummary {
-	out := &LendingPoolSummary{TVLUSD: v.TVLUSD, LowerBound: v.LowerBound, ReserveCount: len(v.Reserves)}
+	reserves := len(v.Reserves) + len(v.OmittedReserves)
+	out := &LendingPoolSummary{TVLUSD: v.TVLUSD, LowerBound: v.LowerBound, ReserveCount: reserves}
 	borrowed, bothSupplied, bothBorrowed := new(big.Rat), new(big.Rat), new(big.Rat)
 	var supplyAPR, borrowAPR weightedRate
 	nBorrowed := 0
@@ -219,7 +220,7 @@ func summarizeReserves(v LendingPoolReservesView) *LendingPoolSummary {
 	}
 	if nBorrowed > 0 {
 		b := borrowed.FloatString(2)
-		out.BorrowedUSD, out.BorrowedLowerBound = &b, nBorrowed < len(v.Reserves)
+		out.BorrowedUSD, out.BorrowedLowerBound = &b, nBorrowed < reserves
 	}
 	if bothSupplied.Sign() > 0 {
 		pct, _ := new(big.Rat).Mul(new(big.Rat).Quo(bothBorrowed, bothSupplied), big.NewRat(100, 1)).Float64() // i128:ok a percentage, not an amount
@@ -268,6 +269,8 @@ type LendingPoolReservesView struct {
 	// supplied_usd is null — so the pool holds at least TVLUSD.
 	LowerBound bool          `json:"lower_bound"`
 	Reserves   []ReserveView `json:"reserves"`
+	// OmittedReserves are the pool's reserve assets with no decoded state in the lake; TVLUSD leaves them out.
+	OmittedReserves []string `json:"omitted_reserves,omitempty"`
 	// AsOfLedger is the highest ledger the lake had captured at serve time (ADR-0041 Decision 4).
 	// Reserve state is decoded from lake storage, so a wedged sink makes it stale; pairs with
 	// `flags.stale`. Omitted when no watermark reader is wired.
@@ -276,8 +279,9 @@ type LendingPoolReservesView struct {
 
 // ReserveView is one reserve's decoded state and derived metrics; amounts are base-unit decimal strings (ADR-0003), USD values decimal strings or null when unpriced.
 type ReserveView struct {
-	Asset          string  `json:"asset"`
-	Decimals       uint32  `json:"decimals"`
+	Asset string `json:"asset"`
+	// Decimals is nil when the token's exponent is not established; Supplied and Borrowed are then unscalable base units.
+	Decimals       *uint32 `json:"decimals"`
 	Supplied       string  `json:"supplied"` // underlying token base units
 	Borrowed       string  `json:"borrowed"`
 	SuppliedUSD    *string `json:"supplied_usd"`
@@ -402,8 +406,9 @@ func (s *Server) buildPoolReserves(ctx context.Context, pool string) (poolReserv
 		views[i], suppliedUSD[i] = s.buildReserveView(ctx, states[i]) // distinct indices — no mutex needed
 	})
 
-	out := LendingPoolReservesView{Pool: pool, Reserves: views}
+	out := LendingPoolReservesView{Pool: pool, Reserves: views, OmittedReserves: reservesWithoutState(assets, states)}
 	out.TVLUSD, out.LowerBound = reservesTVLUSD(suppliedUSD)
+	out.LowerBound = out.LowerBound || (out.TVLUSD != nil && len(out.OmittedReserves) > 0)
 	// ADR-0041 Decision 4: stamp the lake watermark this current-state
 	// read is fresh to, and flip `flags.stale` when the sink is wedged —
 	// same disclosure the sibling /v1/pools/reserves + account-state
@@ -411,6 +416,21 @@ func (s *Server) buildPoolReserves(ctx context.Context, pool string) (poolReserv
 	wmLedger, stale, _ := s.lakeWatermark(ctx)
 	out.AsOfLedger = wmLedger
 	return poolReserves{view: out, flags: Flags{Stale: stale, Degraded: configsFailed}}, nil
+}
+
+// reservesWithoutState lists the pool's reserve assets the lake returned no state for, in pool order.
+func reservesWithoutState(assets []string, states []clickhouse.BlendReserveState) []string {
+	have := make(map[string]struct{}, len(states))
+	for _, st := range states {
+		have[st.Asset] = struct{}{}
+	}
+	var out []string
+	for _, a := range assets {
+		if _, ok := have[a]; !ok {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // reservesTVLUSD sums the priced reserves' supplied USD in reserve order. total is nil when none is priced; lowerBound is true
@@ -461,7 +481,6 @@ func (s *Server) writeLendingReservesTimeout(w http.ResponseWriter, r *http.Requ
 func (s *Server) buildReserveView(ctx context.Context, st clickhouse.BlendReserveState) (ReserveView, *big.Rat) {
 	rv := ReserveView{
 		Asset:          st.Asset,
-		Decimals:       st.Decimals,
 		Supplied:       st.Metrics.SuppliedUnderlying.String(),
 		Borrowed:       st.Metrics.BorrowedUnderlying.String(),
 		UtilizationPct: round2(st.Metrics.UtilizationPct),
@@ -474,7 +493,8 @@ func (s *Server) buildReserveView(ctx context.Context, st clickhouse.BlendReserv
 	}
 	dec, decKnown := s.reserveDecimals(ctx, st)
 	if decKnown {
-		rv.Decimals = uint32(dec)
+		d := uint32(dec)
+		rv.Decimals = &d
 	}
 	price, priceScale, ok := s.reservePriceUSD(ctx, st.Asset)
 	if !ok || !decKnown {

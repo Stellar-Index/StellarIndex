@@ -13,6 +13,7 @@ const rows = [
 ] as Market[];
 
 let nextCursor: string | undefined;
+let truncatedFlag = false;
 
 vi.mock('@/api/hooks', async () => {
   const actual =
@@ -22,7 +23,7 @@ vi.mock('@/api/hooks', async () => {
     useMarkets: () => ({
       isError: false,
       isLoading: false,
-      data: { markets: rows, nextCursor },
+      data: { markets: rows, nextCursor, flags: { truncated: truncatedFlag } },
     }),
   };
 });
@@ -70,5 +71,13 @@ describe('MarketsTabPanel title', () => {
     expect(screen.getByText('Top 3 markets by 24h volume')).toBeTruthy();
     expect(screen.queryByText('3 active markets')).toBeNull();
     nextCursor = undefined;
+  });
+
+  it('treats a capped slug list with no cursor as truncated', () => {
+    truncatedFlag = true;
+    render(<MarketsTabPanel assetID="xlm" />);
+    expect(screen.getByText('Top 3 markets by 24h volume')).toBeTruthy();
+    expect(screen.queryByText('3 active markets')).toBeNull();
+    truncatedFlag = false;
   });
 });

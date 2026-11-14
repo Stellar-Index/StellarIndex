@@ -93,6 +93,8 @@ type Flags struct {
 	// not completed a full run within its heartbeat TTL, so a quiet feed is
 	// a detection gap rather than a quiet network.
 	DetectorsPartial bool `json:"detectors_partial,omitempty"`
+	// Truncated: the list was capped and no cursor continues it, so its length is a lower bound.
+	Truncated bool `json:"truncated,omitempty"`
 	// FiltersIgnored names the row-narrowing query parameters the response did NOT apply, spelled as the caller
 	// sent them ("type", "code", "issuer", "q"). Empty, and omitted, when everything supplied was applied.
 	// `/v1/assets` sets it on listings whose rows come from a source that cannot narrow (the class-scoped listings

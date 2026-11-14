@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -107,63 +108,92 @@ func (r *ExplorerReader) ProtocolEventBreakdown(ctx context.Context, contractIDs
 		return nil, fmt.Errorf("clickhouse: protocol event breakdown: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	// Aggregated by effectiveEventName; unrecoverable names are dropped here and protocols.go folds
-	// them into "untyped".
 	return scanEventBreakdown(rows)
 }
+
+// UntypedEventType labels the events whose topics yield no name; they are counted like any other type.
+const UntypedEventType = "untyped"
+
+// OtherEventType sums the groups past protocolBreakdownGroupLimit, so a cut composition still adds up to every event.
+const OtherEventType = "other"
+
+// protocolBreakdownGroupLimit caps the (topic_0_sym, t1, t0) groups read back, largest first; the query carries the
+// all-groups total beside each row so the remainder is counted as OtherEventType instead of vanishing.
+const protocolBreakdownGroupLimit = 5000
+
+var protocolBreakdownGroupLimitSQL = ` LIMIT ` + strconv.Itoa(protocolBreakdownGroupLimit)
 
 // protocolEventBreakdownQuery builds the raw breakdown query, split out so its shape (FINAL, ledger bound, row ceiling) is unit-testable.
 // FINAL is REQUIRED: contract_events is ReplacingMergeTree(ingested_at) with large unmerged duplicates (+45% on a busy contract); LIMIT 1
 // BY cannot replace it (ingested_at is 1 s, no same-second tie-break).
 func protocolEventBreakdownQuery(windowed bool) string {
-	q := `SELECT topic_0_sym,
+	q := `SELECT topic_0_sym, t1, t0, c, toUInt64(sum(c) OVER ()) AS total FROM (
+		SELECT topic_0_sym,
 		       if(topic_0_sym = '', topics_xdr[2], '') AS t1,
 		       if(topic_0_sym = '', topics_xdr[1], '') AS t0,
 		       count() AS c
 		-- Complete days only: the daily activity series excludes the current
 		-- (partial) day (UXP-16 phantom cliff), and EventsTotal is derived
-		-- from that series — the breakdown must share the bound or
-		-- sum(EventBreakdown) != EventsTotal breaks the reconcile.
+		-- from that series — the breakdown must cover the same days.
 		FROM stellar.contract_events FINAL
 		WHERE contract_id IN (?) AND event_type = 'contract'
 		  AND close_time < toStartOfDay(now())`
 	if windowed {
 		q += ` AND ledger_seq >= ?`
 	}
-	return q + ` GROUP BY topic_0_sym, t1, t0 ORDER BY c DESC LIMIT 200` +
+	return q + ` GROUP BY topic_0_sym, t1, t0) ORDER BY c DESC` + protocolBreakdownGroupLimitSQL +
 		protocolRawScanRowCeiling
 }
 
 // scanEventBreakdown folds (topic_0_sym, topic1_xdr, topic0_xdr, count) rows into named counts,
 // shared by the raw and daily paths so name recovery is identical.
 func scanEventBreakdown(rows driver.Rows) ([]ProtocolEventTypeCount, error) {
-	byName := make(map[string]uint64)
+	var groups []eventBreakdownGroup
+	var total uint64
 	for rows.Next() {
-		var sym, t1, t0 string
-		var c uint64
-		if err := rows.Scan(&sym, &t1, &t0, &c); err != nil {
+		var g eventBreakdownGroup
+		if err := rows.Scan(&g.sym, &g.t1, &g.t0, &g.count, &total); err != nil {
 			return nil, fmt.Errorf("clickhouse: scan event breakdown: %w", err)
 		}
-		name := effectiveEventName(sym, t1, t0)
-		if name == "" {
-			continue
-		}
-		byName[name] += c
+		groups = append(groups, g)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+	return foldEventBreakdown(groups, total), nil
+}
+
+type eventBreakdownGroup struct {
+	sym, t1, t0 string
+	count       uint64
+}
+
+// foldEventBreakdown names each group and counts whatever total holds beyond the groups read as OtherEventType.
+func foldEventBreakdown(groups []eventBreakdownGroup, total uint64) []ProtocolEventTypeCount {
+	byName := make(map[string]uint64)
+	var read uint64
+	for _, g := range groups {
+		name := effectiveEventName(g.sym, g.t1, g.t0)
+		if name == "" {
+			name = UntypedEventType
+		}
+		byName[name] += g.count
+		read += g.count
+	}
+	if total > read {
+		byName[OtherEventType] += total - read
 	}
 	out := make([]ProtocolEventTypeCount, 0, len(byName))
 	for name, c := range byName {
 		out = append(out, ProtocolEventTypeCount{EventType: name, Count: c})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Count > out[j].Count })
-	return out, nil
+	return out
 }
 
 // effectiveEventName resolves the display label: topic_0_sym; else topic[1] as a Symbol under a String-marker topic[0] (Soroswap;
 // Symbol-ONLY so it cannot match Phoenix's String field names); else topic[0] as Symbol or String (Phoenix). Returns "" when none yields
-// a name (folded into "untyped" upstream).
+// a name (counted as UntypedEventType by scanEventBreakdown).
 func effectiveEventName(topic0Sym, topic1XDR, topic0XDR string) string {
 	if topic0Sym != "" {
 		return topic0Sym
@@ -369,11 +399,12 @@ func (r *ExplorerReader) protocolEventBreakdownFast(ctx context.Context, contrac
 	if len(contractIDs) == 0 {
 		return nil, nil
 	}
-	const q = `SELECT topic_0_sym, t1_xdr, t0_xdr, toUInt64(uniqCombinedMerge(17)(events)) AS c
+	q := `SELECT topic_0_sym, t1_xdr, t0_xdr, c, toUInt64(sum(c) OVER ()) AS total FROM (
+		SELECT topic_0_sym, t1_xdr, t0_xdr, toUInt64(uniqCombinedMerge(17)(events)) AS c
 		FROM stellar.contract_events_daily
 		WHERE contract_id IN (?) AND event_type = 'contract' AND day >= ?
 		  AND day < toDate(now())
-		GROUP BY topic_0_sym, t1_xdr, t0_xdr ORDER BY c DESC LIMIT 200`
+		GROUP BY topic_0_sym, t1_xdr, t0_xdr) ORDER BY c DESC` + protocolBreakdownGroupLimitSQL
 	rows, err := r.conn.Query(ctx, q, contractIDs, sinceDay)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: protocol event breakdown (fast): %w", err)

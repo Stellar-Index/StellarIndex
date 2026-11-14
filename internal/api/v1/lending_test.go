@@ -637,11 +637,14 @@ func TestLendingPoolReserves_NoConfigNeverInventsDecimals(t *testing.T) {
 	}
 
 	r18 := got.Reserves[0]
-	if strOrNil(r18.SuppliedUSD) != "6.00" || strOrNil(r18.BorrowedUSD) != "2.00" || r18.Decimals != 18 {
-		t.Errorf("18-dp reserve: supplied_usd=%s borrowed_usd=%s decimals=%d, want 6.00 / 2.00 / 18",
+	if strOrNil(r18.SuppliedUSD) != "6.00" || strOrNil(r18.BorrowedUSD) != "2.00" || r18.Decimals == nil || *r18.Decimals != 18 {
+		t.Errorf("18-dp reserve: supplied_usd=%s borrowed_usd=%s decimals=%v, want 6.00 / 2.00 / 18",
 			strOrNil(r18.SuppliedUSD), strOrNil(r18.BorrowedUSD), r18.Decimals)
 	}
 	ru := got.Reserves[1]
+	if ru.Decimals != nil {
+		t.Errorf("unknown-decimals reserve published decimals=%d; the placeholder is not a fact", *ru.Decimals)
+	}
 	if ru.SuppliedUSD != nil || ru.BorrowedUSD != nil {
 		t.Errorf("unknown-decimals reserve: supplied_usd=%s borrowed_usd=%s, want both null",
 			strOrNil(ru.SuppliedUSD), strOrNil(ru.BorrowedUSD))
@@ -650,8 +653,8 @@ func TestLendingPoolReserves_NoConfigNeverInventsDecimals(t *testing.T) {
 		t.Errorf("unknown-decimals reserve token amounts = %s/%s, want exact 50000000/10000000", ru.Supplied, ru.Borrowed)
 	}
 	rx := got.Reserves[2]
-	if strOrNil(rx.SuppliedUSD) != "6.00" || strOrNil(rx.BorrowedUSD) != "2.00" || rx.Decimals != 7 {
-		t.Errorf("native SAC reserve: supplied_usd=%s borrowed_usd=%s decimals=%d, want 6.00 / 2.00 / 7",
+	if strOrNil(rx.SuppliedUSD) != "6.00" || strOrNil(rx.BorrowedUSD) != "2.00" || rx.Decimals == nil || *rx.Decimals != 7 {
+		t.Errorf("native SAC reserve: supplied_usd=%s borrowed_usd=%s decimals=%v, want 6.00 / 2.00 / 7",
 			strOrNil(rx.SuppliedUSD), strOrNil(rx.BorrowedUSD), rx.Decimals)
 	}
 	if strOrNil(got.TVLUSD) != "12.00" {
@@ -683,9 +686,9 @@ func TestLendingPoolReserves_ConfigDecimalsAreAuthoritative(t *testing.T) {
 		t.Fatalf("len(reserves) = %d, want 1", len(got.Reserves))
 	}
 	rv := got.Reserves[0]
-	if strOrNil(rv.SuppliedUSD) != "6.00" || strOrNil(rv.BorrowedUSD) != "2.00" || rv.Decimals != 6 {
+	if strOrNil(rv.SuppliedUSD) != "6.00" || strOrNil(rv.BorrowedUSD) != "2.00" || decOrNeg(rv.Decimals) != 6 {
 		t.Errorf("configured reserve: supplied_usd=%s borrowed_usd=%s decimals=%d, want 6.00 / 2.00 / 6",
-			strOrNil(rv.SuppliedUSD), strOrNil(rv.BorrowedUSD), rv.Decimals)
+			strOrNil(rv.SuppliedUSD), strOrNil(rv.BorrowedUSD), decOrNeg(rv.Decimals))
 	}
 	if dec.wasConsulted(asset) {
 		t.Error("lake token decimals consulted for a reserve whose config already declares them")
@@ -712,9 +715,9 @@ func TestLendingPoolReserves_UnpricedReserveReportsDeclaredDecimals(t *testing.T
 		t.Fatalf("len(reserves) = %d, want 1", len(got.Reserves))
 	}
 	rv := got.Reserves[0]
-	if rv.Decimals != 18 || rv.SuppliedUSD != nil || got.TVLUSD != nil {
+	if decOrNeg(rv.Decimals) != 18 || rv.SuppliedUSD != nil || got.TVLUSD != nil {
 		t.Errorf("unpriced reserve: decimals=%d supplied_usd=%s tvl_usd=%s, want 18 / <nil> / <nil>",
-			rv.Decimals, strOrNil(rv.SuppliedUSD), strOrNil(got.TVLUSD))
+			decOrNeg(rv.Decimals), strOrNil(rv.SuppliedUSD), strOrNil(got.TVLUSD))
 	}
 }
 
@@ -744,8 +747,8 @@ func TestLendingPoolReserves_PriceScaleMustMatchReserveDecimals(t *testing.T) {
 		t.Errorf("no projection row: supplied_usd=%s borrowed_usd=%s tvl_usd=%s, want all null",
 			strOrNil(rv.SuppliedUSD), strOrNil(rv.BorrowedUSD), strOrNil(got.TVLUSD))
 	}
-	if rv.Decimals != 6 || rv.Supplied != "30000000" {
-		t.Errorf("decimals=%d supplied=%s, want 6 / 30000000 served either way", rv.Decimals, rv.Supplied)
+	if decOrNeg(rv.Decimals) != 6 || rv.Supplied != "30000000" {
+		t.Errorf("decimals=%d supplied=%s, want 6 / 30000000 served either way", decOrNeg(rv.Decimals), rv.Supplied)
 	}
 
 	got = getReserves(t, newSrv(nonstandardDecimalsCacheWith(t, asset, 6)), pool)
