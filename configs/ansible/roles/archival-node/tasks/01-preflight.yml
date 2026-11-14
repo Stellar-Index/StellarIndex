@@ -18,6 +18,20 @@
     that:
       - ansible_facts.architecture == "x86_64"
 
+# A non-loopback API bind means the reverse proxy is on another host, so its requests do not arrive from 127.0.0.1.
+- name: Verify the API trusts the proxy that actually fronts it
+  ansible.builtin.assert:
+    that:
+      - >-
+        (stellarindex_api_listen_addr is match('(127\\.|localhost:|\\[::1\\])'))
+        or (stellarindex_trusted_proxy_cidrs | reject('match', '^127\\.') | reject('match', '^::1/') | list | length > 0)
+    fail_msg: >-
+      stellarindex_api_listen_addr is {{ stellarindex_api_listen_addr }}, so the reverse proxy is not on this host,
+      but stellarindex_trusted_proxy_cidrs names only loopback. The API would ignore the proxy's X-Forwarded-For and
+      key every client as the proxy's address. Set stellarindex_trusted_proxy_cidrs in inventory to the proxy's
+      address as this host sees it (the KVM bridge address for a test-net VM).
+  when: run_stellarindex | bool
+
 # region_id has no role default (see
 # defaults/main.yml) — every inventory must set it explicitly so a
 # new-region provisioning that forgets the override fails loudly here
