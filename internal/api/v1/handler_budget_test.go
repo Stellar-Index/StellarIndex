@@ -409,6 +409,8 @@ var inlineDetachments = map[string]string{
 		"known residual as rwaCuratedSnapshotWithin",
 	"dashboardauth/credential_audit.go#appendCredentialAudit": "after the credential change has committed: one audit-row " +
 		"insert that a hung-up client must not cancel; credentialAuditTimeout (5s)",
+	"dashboardauth/credential_audit.go#recordLogout": "the user lookup for a logout's audit row after the revoke " +
+		"committed; credentialAuditTimeout (5s)",
 	"dashboardauth/middleware.go#newTouchCtx": "constructor for the context the async " +
 		"TouchSession goroutine runs under; never used on the request goroutine",
 	"dashboardauth/handlers.go#markOrphanSignupAccount": "error path only: hands a userless sign-up " +

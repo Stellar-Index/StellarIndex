@@ -48,7 +48,8 @@ const (
 	SignInMethodPasskey       = "passkey"
 	SignInMethodPasskeySignup = "passkey_signup"
 
-	auditTargetSession = "user_session"
+	// The user, not the session: target_id is exported unredacted to every member of the account.
+	auditTargetUser = "user"
 )
 
 // recordSignIn audits a session issued to user; best-effort like every credential row.
@@ -58,8 +59,8 @@ func (h *Handlers) recordSignIn(r *http.Request, user platform.User, sess platfo
 		ActorUserID: user.ID,
 		ActorKind:   platform.ActorUser,
 		Action:      AuditActionSessionSignIn,
-		TargetKind:  auditTargetSession,
-		TargetID:    sess.ID.String(),
+		TargetKind:  auditTargetUser,
+		TargetID:    user.ID.String(),
 		Timestamp:   h.cfg.Now(),
 	}, map[string]any{"session_id": sess.ID.String(), "method": method})
 }
@@ -69,7 +70,10 @@ func (h *Handlers) recordLogout(r *http.Request, sess platform.Session, all bool
 	if h.cfg.Audit == nil {
 		return
 	}
-	user, err := h.cfg.Users.GetUserByID(r.Context(), sess.UserID)
+	// Detached like the append: the revoke has committed, so a hang-up must not lose its row.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), credentialAuditTimeout)
+	defer cancel()
+	user, err := h.cfg.Users.GetUserByID(ctx, sess.UserID)
 	if err != nil {
 		obs.AdminAuditWriteFailuresTotal.WithLabelValues("session_revoke").Inc()
 		h.cfg.Logger.Warn("logout audit: user lookup failed (skipping audit row)", "err", err, "user_id", sess.UserID)
@@ -80,8 +84,8 @@ func (h *Handlers) recordLogout(r *http.Request, sess platform.Session, all bool
 		ActorUserID: user.ID,
 		ActorKind:   platform.ActorUser,
 		Action:      AuditActionSessionRevoke,
-		TargetKind:  auditTargetSession,
-		TargetID:    sess.ID.String(),
+		TargetKind:  auditTargetUser,
+		TargetID:    user.ID.String(),
 		Timestamp:   h.cfg.Now(),
 	}, map[string]any{"session_id": sess.ID.String(), "all_sessions": all, "reason": "logout"})
 }

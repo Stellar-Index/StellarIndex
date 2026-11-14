@@ -25,10 +25,12 @@ func TestSignInAndLogout_WriteAuditRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	if e.Action != AuditActionSessionSignIn || e.ActorUserID != rig.user.ID || e.AccountID != rig.account.ID ||
-		e.TargetID == "" || meta["method"] != SignInMethodEmailCode || e.UserAgent != "audit-test/1" {
+		e.TargetKind != "user" || e.TargetID != rig.user.ID.String() || meta["session_id"] == nil ||
+		meta["method"] != SignInMethodEmailCode || e.UserAgent != "audit-test/1" {
 		t.Fatalf("sign-in row = %+v meta=%v", e, meta)
 	}
 
+	signInSession := meta["session_id"]
 	var cookie *http.Cookie
 	for _, c := range w.Result().Cookies() {
 		if c.Name == SessionCookieName {
@@ -51,7 +53,8 @@ func TestSignInAndLogout_WriteAuditRows(t *testing.T) {
 	if err := json.Unmarshal(last.Metadata, &meta); err != nil {
 		t.Fatal(err)
 	}
-	if last.Action != AuditActionSessionRevoke || last.TargetID != e.TargetID || meta["all_sessions"] != true {
+	if last.Action != AuditActionSessionRevoke || last.TargetID != rig.user.ID.String() ||
+		meta["session_id"] != signInSession || meta["all_sessions"] != true {
 		t.Fatalf("logout row = %+v meta=%v", last, meta)
 	}
 
