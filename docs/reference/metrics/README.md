@@ -1692,6 +1692,20 @@ Unix seconds of the last successful sweep; 0 where the guard is disabled. `time(
 
 Alert `stellarindex_decimals_guard_sweep_stale` (> 45 min). Scoped to `job="stellarindex-aggregator"` because other binaries register it at zero, the same trap `stellarindex_priceless_coverage_check_stale` guards against.
 
+### `stellarindex_decimals_guard_pending_writes`
+
+Gauge, no labels.
+
+Confirmed non-7-decimal (`source`, `asset`) pairs whose `nonstandard_decimals_assets` write failed. The guard retries them every sweep tick, whether or not the asset trades again. Expected value is 0; while nonzero those pairs are served uncorrected.
+
+### `stellarindex_decimals_guard_unresolved_assets`
+
+Gauge, no labels.
+
+DEX-traded Soroban assets whose `decimals()` the lake could not derive since process start. They are priced on the 7-decimals assumption, not on a reading.
+
+Alert `stellarindex_decimals_guard_unconfirmed` (either gauge > 0 for 1 h), scoped to the aggregator job.
+
 ## Nonstandard-decimals serving guard (API binary)
 
 ### `stellarindex_price_serve_declined_nonstandard_decimals_total`
@@ -1932,6 +1946,7 @@ Gauge. Unix time the last completed comparison wrote the file.
 
 ## Changelog
 
+- 2026-11-14 — added `stellarindex_decimals_guard_pending_writes`, `stellarindex_decimals_guard_unresolved_assets` and `stellarindex_decimals_guard_unconfirmed` alert.
 - 2026-10-03 — added `stellarindex_change_summary_passes_total`, `stellarindex_change_summary_last_success_unix`, `stellarindex_change_summary_stale` alert.
 - 2026-09-27 — added `stellarindex_ch_live_sink_read_undercount_total` and `stellarindex_ingestion_ch_live_sink_read_undercount` alert.
 - 2026-09-24 — `stellarindex_decimals_guard_sweep_last_success_unix` seeded at start; `stellarindex_decimals_guard_sweep_stale` gains a `> 0` arm.

@@ -413,6 +413,25 @@ The line carries `flagged` (the row that exists) and `unflagged_alias` (the row 
 
 Seed the missing spelling with the flagged row's decimals: [dex.md#dex-nonstandard-decimals](dex.md#dex-nonstandard-decimals). The alert clears 15 minutes after the next refresh sees the full family.
 
+## stellarindex_decimals_guard_unconfirmed
+
+P3 ticket, `for: 1h`. A correction write is stranded, or the count of unreadable assets rose over the last day.
+
+- `stellarindex_decimals_guard_pending_writes`: a token's `decimals()` was confirmed non-7 and the `nonstandard_decimals_assets` write keeps failing. Its pairs are served uncorrected. The guard retries every 15 minutes.
+- `stellarindex_decimals_guard_unresolved_assets`: the lake could not derive `decimals()` for a traded Soroban asset. Its pairs are priced on the 7-decimals assumption. The alert compares the count with a day earlier, so a standing count does not ticket and a new asset tickets for one day.
+
+### Check
+
+```sh
+journalctl -u stellarindex-aggregator --since '-7h' | grep -E 'failed to persist confirmed|not derivable from the lake'
+```
+
+Each line names the asset. The unresolved line is logged once per asset per process.
+
+### Fix
+
+Pending write: fix what the upsert error names (Postgres reachability, the table's CHECK); the next tick writes it. Unresolved asset: read the contract's `decimals()` yourself and, if it is not 7, hand-seed it: [dex.md#dex-nonstandard-decimals](dex.md#dex-nonstandard-decimals). A hand-seeded asset leaves the count on the next tick, and so does one the lake later answers for. An asset you checked and found to be 7 cannot be seeded; it stays in the count and stops ticketing after a day.
+
 ## stellarindex_customer_webhook_fanout_failing
 
 P3, `for: 5m`. Expr: `sum by (event_type, reason) (increase(stellarindex_customer_webhook_fanout_failures_total[1h])) > 0`; one occurrence is worth a ticket. A subscriber got no delivery row written, so nothing retries and the event is lost to them until re-emitted. Delivery-attempt failures after a row exists are [`api.md#stellarindex_customer_webhook_delivery_failing`](api.md#stellarindex_customer_webhook_delivery_failing). Fan-out failure means no delivery row was written, so nothing retries; delivery attempts that do exist retry on a 15-attempt budget whose last retry lands ~4–8 h after the event.
