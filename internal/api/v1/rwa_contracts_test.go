@@ -108,7 +108,8 @@ func (s *stubTokenSupplies) TokenSupply(_ context.Context, id string) (clickhous
 		return clickhouse.TokenSupply{ContractID: id}, nil
 	}
 	n, _ := new(big.Int).SetString(raw, 10)
-	return clickhouse.TokenSupply{ContractID: id, Total: n, Incomplete: n.Sign() < 0}, nil
+	// A listed id models a token with an event log; an unlisted one has none.
+	return clickhouse.TokenSupply{ContractID: id, Total: n, Incomplete: n.Sign() < 0, FlowCount: 1}, nil
 }
 
 // NativeTotalCoins satisfies the rest of the TokenSupplyReader seam. The

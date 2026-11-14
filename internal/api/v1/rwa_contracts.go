@@ -507,8 +507,8 @@ func refuseUnscaledContractCaps(rows []AssetDetail, scaled map[string]struct{}) 
 
 // contractSupplyReading resolves one contract token's circulating supply and basis. Counterpart to [classicSupplyReading]: the
 // preference order lives in ONE place, or two surfaces publish different bases under one field name. Readings measure ISSUANCE
-// against DISTRIBUTION and are never summed. ok=false means no defensible figure, including an INCOMPLETE flow sum (negative net,
-// never clamped to zero).
+// against DISTRIBUTION and are never summed. ok=false means no defensible figure: an INCOMPLETE flow sum (negative net, never
+// clamped to zero), or no flows and no storage reading.
 func (s *Server) contractSupplyReading(
 	ctx context.Context, assetID string,
 ) (string, supply.Basis, bool) {
@@ -517,11 +517,14 @@ func (s *Server) contractSupplyReading(
 		return "", "", false
 	}
 	// A token emitting no SEP-41 events is ABSENT from the event reader and sums to a confident zero.
-	// With no log at all, read held balances, as GET /v1/assets/{id}/supply does.
+	// With no log at all, read held balances; if storage declines too there is no figure, as on
+	// GET /v1/assets/{id}/supply.
 	if sup.FlowCount == 0 {
-		if st, ok := s.contractStorageCirculating(ctx, assetID); ok {
-			return st, supply.BasisContractStorageBalances, true
+		st, ok := s.contractStorageCirculating(ctx, assetID)
+		if !ok {
+			return "", "", false
 		}
+		return st, supply.BasisContractStorageBalances, true
 	}
 	// The lake's event-flow sum over the contract's own mint/burn/clawback log.
 	return sup.Total.String(), supply.BasisSEP41LakeFlows, true
