@@ -112,18 +112,18 @@ export function IssuerDetailView({
             {detail.org_name &&
               (detail.org_verified ? (
                 <Badge
-                  tone="ok"
-                  dot
-                  title="The organisation’s own stellar.toml lists this account as an issuer"
+                  tone="neutral"
+                  title="The stellar.toml at this account’s home domain lists it as an issuer. That proves control of the domain, not who the organisation is; the name is self-declared."
                 >
-                  Verified
+                  Domain linked
+                  {detail.home_domain ? `: ${detail.home_domain}` : ''}
                 </Badge>
               ) : (
                 <Badge
                   tone="neutral"
-                  title="The organisation name is self-declared in this account’s stellar.toml and has not been confirmed by the organisation"
+                  title="The organisation name is self-declared in this account’s stellar.toml and its home domain does not list the account back"
                 >
-                  Unverified
+                  Self-declared name
                 </Badge>
               ))}
             <ButtonLink
@@ -257,8 +257,8 @@ export function IssuerDetailView({
           title="Organisation"
           hint={
             detail.org_verified
-              ? 'From the issuer’s stellar.toml, which lists this account back'
-              : 'Self-declared in the issuer’s stellar.toml; not confirmed by the organisation'
+              ? 'Self-declared in the stellar.toml at the issuer’s home domain, which lists this account back. That proves control of the domain, not the organisation’s identity'
+              : 'Self-declared in the issuer’s stellar.toml; its home domain does not list this account back'
           }
           source={source}
         >
