@@ -46,6 +46,21 @@ func TestPriceFallback_ReadFailureIsNotAMiss(t *testing.T) {
 			}},
 			"/v1/price?asset=" + foo + "&quote=crypto:BTC",
 		},
+		"a spelling fails behind an absent one": {
+			v1.Options{Prices: &stubPriceReader{errByPair: map[string]error{"crypto:XLM/fiat:USD": broken}}},
+			"/v1/price?asset=native&quote=fiat:USD",
+		},
+		"tip: a spelling fails behind an absent one": {
+			v1.Options{Prices: &stubPriceReader{errByPair: map[string]error{"crypto:XLM/fiat:USD": broken}}},
+			"/v1/price/tip?asset=native&quote=fiat:USD",
+		},
+		"declared peg: the XLM/USD pivot fails on its second spelling": {
+			v1.Options{Prices: &stubPriceReader{
+				snapshots: map[string]v1.PriceSnapshot{usdc.String() + "/native": {Price: "6.1", PriceType: "vwap"}},
+				errByPair: map[string]error{"crypto:XLM/fiat:USD": broken},
+			}},
+			"/v1/price?asset=" + usdc.String() + "&quote=fiat:USD",
+		},
 		"cache unread and nothing below answers": {
 			v1.Options{Prices: &stubPriceReader{}, Triangulated: failingVWAPLooker{}},
 			"/v1/price?asset=" + foo + "&quote=fiat:USD",

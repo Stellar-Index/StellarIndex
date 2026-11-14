@@ -89,6 +89,14 @@ func (s *Server) handlePriceTip(w http.ResponseWriter, r *http.Request) {
 		}
 		s.logger.Error("computeTip failed",
 			"err", err, "asset", asset.String(), "quote", quote.String())
+		if errors.Is(err, errPegLegRead) || errors.Is(err, context.DeadlineExceeded) {
+			// As /v1/price answers the same unread layer.
+			writeProblem(w, r,
+				"https://api.stellarindex.io/errors/price-unavailable",
+				"Price unavailable", http.StatusServiceUnavailable,
+				"a price source could not be read; retry")
+			return
+		}
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
@@ -133,6 +141,12 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 	}
 	snap, sources, ok, err := s.tipFallback(ctx, asset, quote)
 	if err != nil {
+		// An unread layer does not stop the SAC-last walk below from serving; a refusal does.
+		if !errors.Is(err, ErrPriceWithheld) {
+			if sacSnap, sacSources, sacOK := s.tipWindowEscalating(ctx, asset, quote, windowSeconds, last); sacOK {
+				return sacSnap, sacSources, nil
+			}
+		}
 		return PriceSnapshot{}, nil, err
 	}
 	if ok {
@@ -172,10 +186,14 @@ func (s *Server) tipFallback(ctx context.Context, asset, quote canonical.Asset) 
 	// XLM/USDC-GA5Z...) the literal pair is absent from prices_1m, so the miss above is expected and
 	// the Redis vwap: key is the source of truth. Mirrors /v1/price's tryRedisVWAPFallback; the
 	// provenance marker is dropped since the tip envelope has no triangulated flag.
+	unread := aliasUnread(err)
 	cacheSnap, cacheSources, _, tri, ok, cacheErr := s.tryRedisVWAPFallback(ctx, asset, quote)
 	if ok {
 		cacheSnap.ProxyDeviation = tri && s.proxyDeviation(ctx, time.Now().UTC())
 		return cacheSnap, cacheSources, true, nil
+	}
+	if unread != nil {
+		cacheErr = unread
 	}
 	// Read-time stablecoin-fiat proxy: rewrites X/fiat:USD to X/<peg> using the operator's
 	// [trades].usd_pegged_classic_assets allow-list, as priceFallback does. Nothing on-chain quotes

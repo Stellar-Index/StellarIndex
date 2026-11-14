@@ -662,7 +662,7 @@ func (s *Server) resolvePriceServe(ctx context.Context, reader PriceReader, asse
 	// names (ADR-0010).
 	snapshot, sources, stale, served, err := s.readPriceWithAliasesServed(ctx, reader, asset, quote)
 	if errors.Is(err, ErrPriceNotFound) {
-		fb := s.priceFallback(ctx, asset, quote)
+		fb := s.priceFallback(ctx, asset, quote, err)
 		if !fb.ok {
 			return priceServe{miss: &fb}
 		}
@@ -919,19 +919,12 @@ func (s *Server) readPriceWithAliasesServedOnce(ctx context.Context, reader Pric
 	var firstSnap PriceSnapshot
 	var firstSrcs []string
 	var firstServed canonical.Asset
-	var firstErr error
-	var firstWithheldErr error
+	var errs aliasReadErrors
 	freshFound := false
 	for _, a := range aliases {
 		snap, srcs, stale, err := reader.LatestPrice(ctx, a, quote)
 		if err != nil {
-			if errors.Is(err, ErrPriceWithheld) && firstWithheldErr == nil {
-				// Keep the reader's own error so its withheld reason survives to the response.
-				firstWithheldErr = err
-			}
-			if firstErr == nil {
-				firstErr = err
-			}
+			errs.note(err)
 			continue
 		}
 		if !stale {
@@ -948,13 +941,62 @@ func (s *Server) readPriceWithAliasesServedOnce(ctx context.Context, reader Pric
 		// All stale: still surface flags.stale=true rather than fall through to priceFallback.
 		return firstSnap, firstSrcs, true, firstServed, nil
 	}
-	// A withheld verdict on ANY alias wins over not-found, which would send the caller into
-	// priceFallback and re-serve the withheld market through the Redis/proxy side doors.
-	if firstWithheldErr != nil {
-		return PriceSnapshot{}, nil, false, canonical.Asset{}, firstWithheldErr
+	return PriceSnapshot{}, nil, false, canonical.Asset{}, errs.err()
+}
+
+// aliasReadErrors collects an alias walk's errors when no spelling priced.
+type aliasReadErrors struct{ first, withheld, read error }
+
+func (e *aliasReadErrors) note(err error) {
+	if e.first == nil {
+		e.first = err
+	}
+	// Keep the reader's own error so its withheld reason survives to the response.
+	if e.withheld == nil && errors.Is(err, ErrPriceWithheld) {
+		e.withheld = err
+	}
+	if e.read == nil && isPriceReadFailure(err) {
+		e.read = err
+	}
+}
+
+func (e *aliasReadErrors) err() error {
+	switch {
+	case e.withheld != nil:
+		// A withheld verdict on ANY alias wins over not-found, which would send the caller into
+		// priceFallback and re-serve the withheld market through the Redis/proxy side doors.
+		return e.withheld
+	case e.read != nil && errors.Is(e.first, ErrPriceNotFound):
+		// A spelling that failed behind one that was absent: still not-found, so a lower layer may
+		// serve, but carrying the failure so an exhausted chain reports unread, not "no market".
+		return &aliasUnreadError{cause: e.read}
 	}
 	// Otherwise the first error keeps the ErrPriceNotFound -> priceFallback branch working.
-	return PriceSnapshot{}, nil, false, canonical.Asset{}, firstErr
+	return e.first
+}
+
+// isPriceReadFailure: err says the read did not happen, not that the pair is absent, withheld or
+// not a pair at all.
+func isPriceReadFailure(err error) bool {
+	return !errors.Is(err, ErrPriceNotFound) && !errors.Is(err, ErrPriceWithheld) &&
+		!errors.Is(err, canonical.ErrPairMismatch) && !errors.Is(err, canonical.ErrInvalidAsset)
+}
+
+// aliasUnreadError is ErrPriceNotFound from an alias walk in which another spelling could not be read.
+type aliasUnreadError struct{ cause error }
+
+func (e *aliasUnreadError) Error() string {
+	return "price not found; a spelling could not be read: " + e.cause.Error()
+}
+func (e *aliasUnreadError) Unwrap() []error { return []error{ErrPriceNotFound, e.cause} }
+
+// aliasUnread returns the read failure a not-found alias walk carried, or nil.
+func aliasUnread(err error) error {
+	var u *aliasUnreadError
+	if errors.As(err, &u) {
+		return u.cause
+	}
+	return nil
 }
 
 // normalizeRawPriceSnapshot applies nonstandard-decimals normalization (aggregate.AdjustPrice) to a snapshot from a RAW prices_1m ratio
@@ -996,7 +1038,7 @@ func normalizeRawRatioStringWithLookup(value string, base, quote canonical.Asset
 // rewrite against the declared classic USD-pegs, (3) fiat-vs-fiat cross-rate from the forex snapshot (always triangulated).
 // ok=false when all miss; served is layer 1's base alias, else zero. The chain is entered on ErrPriceNotFound, whose exits are
 // UNGATED, so the scam decision is asked HERE.
-func (s *Server) priceFallback(ctx context.Context, asset, quote canonical.Asset) fallbackResult {
+func (s *Server) priceFallback(ctx context.Context, asset, quote canonical.Asset, primaryErr error) fallbackResult {
 	// Scam gate before layer 1: the cached VWAP is written without directory consultation. Later
 	// layers read through the GATED LatestPrice, so one ask here covers all. SCAM ONLY, not the
 	// substance gate: that floor is measured on the alias union, and a triangulated pair has zero
@@ -1030,7 +1072,10 @@ func (s *Server) priceFallback(ctx context.Context, asset, quote canonical.Asset
 	if cross.ok || cross.err != nil {
 		return cross
 	}
-	// The cache is the first layer: with it unread, neither "no price" nor a lower layer's refusal is known to be the answer.
+	// With the closed bucket or the cache unread, neither "no price" nor a lower layer's refusal is known to be the answer.
+	if unread := aliasUnread(primaryErr); unread != nil {
+		return fallbackResult{err: unread}
+	}
 	if cacheErr != nil {
 		return fallbackResult{err: cacheErr}
 	}
@@ -1296,10 +1341,14 @@ func (s *Server) resolveUSDLeg(
 	case !errors.Is(err, ErrPriceNotFound):
 		return PriceSnapshot{}, nil, canonical.Asset{}, false, false, false, err
 	}
+	unread := aliasUnread(err)
 	// A fallback USD leg is below the closed-bucket contract: stale.
 	cacheSnap, cacheSrcs, _, _, ok, cacheErr := s.tryRedisVWAPFallback(ctx, asset, usd)
 	if ok {
 		return cacheSnap, cacheSrcs, canonical.Asset{}, true, true, false, nil
+	}
+	if unread != nil {
+		cacheErr = unread
 	}
 	snap, srcs, ok, proxyWithheld, err := s.tryStablecoinFiatProxy(ctx, asset, usd)
 	switch {
@@ -1501,6 +1550,9 @@ func (s *Server) crossDeclaredPegThroughXLM(
 	case errors.Is(err, ErrPriceWithheld):
 		// XLM/USD is the pivot's market, not the peg's own: whatever its reason, it is upstream.
 		return PriceSnapshot{}, nil, pegXLMLegRefused, PriceWithheldUpstreamLeg
+	case aliasUnread(err) != nil:
+		s.logPegLegReadFailure(ctx, aliasUnread(err), xlm, quote)
+		return PriceSnapshot{}, nil, pegXLMLegReadFailed, ""
 	case errors.Is(err, ErrPriceNotFound):
 		return PriceSnapshot{}, nil, pegXLMLegNoMarket, ""
 	case err != nil:
@@ -2301,7 +2353,7 @@ func (s *Server) readBatchRow(ctx context.Context, r *http.Request, asset, quote
 	if errors.Is(err, ErrPriceNotFound) {
 		// Share /v1/price's fallback chain: skipping the stablecoin proxy would drop ids that return
 		// 200 there. A withheld verdict from any leg goes on `withheld`, never into "no data".
-		fb := s.priceFallback(ctx, asset, quote)
+		fb := s.priceFallback(ctx, asset, quote, err)
 		fs, fsrc, fserved, ftri := fb.snap, fb.sources, fb.served, fb.triangulated
 		if fb.ok {
 			// Fallbacks sit below the closed-bucket contract, so stale; triangulated carries through
