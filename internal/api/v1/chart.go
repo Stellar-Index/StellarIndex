@@ -145,12 +145,15 @@ func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// timeframe=all has no window to coarsen against, so its read is priced by the grain it walks, like
+	// /v1/history/since-inception; a window is priced by the points its grid asks for.
 	var from time.Time
+	cost := sinceInceptionCost(chartServedGranularity(pair, priceType, gran))
 	if tf.Duration > 0 {
 		from = s.now().Add(-tf.Duration).UTC()
-	} else if !middleware.ChargeRateLimit(w, r, sinceInceptionCost(chartServedGranularity(pair, priceType, gran))) {
-		// timeframe=all has no window to coarsen against, so its read is
-		// priced by the grain it walks, like /v1/history/since-inception.
+		cost = chartWindowCost(pair, priceType, gran, tf.Duration)
+	}
+	if !middleware.ChargeRateLimit(w, r, cost) {
 		return
 	}
 
@@ -275,6 +278,25 @@ func chartServedGranularity(pair canonical.Pair, priceType, gran string) string 
 		return twapChartGranularity(gran)
 	}
 	return gran
+}
+
+// chartPointsPerToken is the grid size one rate-limit token buys on a windowed chart. Every default (timeframe, granularity)
+// pair is under it; the widest grid a window can ask for (50 000 points) costs eleven tokens.
+const chartPointsPerToken = 5000
+
+// chartWindowCost is the rate-limit price in tokens of a windowed chart: one, plus one per [chartPointsPerToken] points of the
+// grid actually walked (the served grain, coarsened to fit). An unknown grain costs the base token (400 before any read).
+func chartWindowCost(pair canonical.Pair, priceType, gran string, window time.Duration) int {
+	ladder := chartVWAPGranularityLadder
+	if priceType == "twap" {
+		ladder = chartTWAPGranularityLadder
+	}
+	served := chartFitGranularity(ladder, chartServedGranularity(pair, priceType, gran), window)
+	width := timescale.HistoryGranularity(served).BucketDuration()
+	if width <= 0 || window <= 0 {
+		return 1
+	}
+	return 1 + min(historyMaxPoints, int((window+width-1)/width))/chartPointsPerToken
 }
 
 // fiatChartGranularity snaps any granularity to the one fx_quotes serves (daily); the SNAPPED value is stamped so

@@ -61,3 +61,37 @@ func TestChartServedGranularity_ChargeFollowsTheRead(t *testing.T) {
 		t.Errorf("twap 4h charged %d tokens, want the 1h price %d", twap4h, oneH)
 	}
 }
+
+// TestChartWindowCost_PricedByTheGridWalked: every default chart costs one token; a client-chosen fine grain pays for its grid.
+func TestChartWindowCost_PricedByTheGridWalked(t *testing.T) {
+	usd, eur := canonical.Asset{Type: canonical.AssetFiat, Code: "USD"}, canonical.Asset{Type: canonical.AssetFiat, Code: "EUR"}
+	xlmUSD := canonical.Pair{Base: canonical.NativeAsset(), Quote: usd}
+	for tf, spec := range chartTimeframes {
+		if spec.Duration == 0 {
+			continue
+		}
+		if got := chartWindowCost(xlmUSD, "vwap", spec.DefaultGranule, spec.Duration); got != 1 {
+			t.Errorf("default %s at %s costs %d tokens, want 1", tf, spec.DefaultGranule, got)
+		}
+	}
+	day := 24 * time.Hour
+	for _, tc := range []struct {
+		pair            canonical.Pair
+		priceType, gran string
+		window          time.Duration
+		want            int
+	}{
+		{xlmUSD, "vwap", "1m", 30 * day, 9},  // 43 200 points
+		{xlmUSD, "vwap", "1m", 365 * day, 8}, // served at 15m: 35 040 points
+		{xlmUSD, "vwap", "1m", 7 * day, 3},   // 10 080 points
+		{xlmUSD, "vwap", "1h", 7 * day, 1},   // the explorer's own chart
+		{xlmUSD, "twap", "1m", 365 * day, 2}, // snapped to 1h: 8 760 points
+		{xlmUSD, "market_cap", "1m", 365 * day, 1},
+		{canonical.Pair{Base: eur, Quote: usd}, "vwap", "1m", 365 * day, 1},
+		{xlmUSD, "vwap", "nonsense", 365 * day, 1},
+	} {
+		if got := chartWindowCost(tc.pair, tc.priceType, tc.gran, tc.window); got != tc.want {
+			t.Errorf("%s %s over %s: %d tokens, want %d", tc.priceType, tc.gran, tc.window, got, tc.want)
+		}
+	}
+}
