@@ -1,5 +1,6 @@
 'use client';
 
+import { txNotFoundDescription } from '@/lib/txNotFound';
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
@@ -114,17 +115,19 @@ export function TxView({ hash: hashProp }: { hash?: string } = {}) {
           title={
             status === 400
               ? 'Invalid transaction hash'
-              : 'Transaction not found'
+              : status === 404
+                ? 'Transaction not found'
+                : 'Lookup failed'
           }
           description={
             status === 404
-              ? 'No transaction with that hash in the served tier.'
+              ? txNotFoundDescription(q.error)
               : status === 400
                 ? 'The API rejected that hash as malformed.'
                 : `Lookup failed: ${q.error instanceof Error ? q.error.message : 'unknown error'}.`
           }
           action={
-            status === 404 || status === 400 ? undefined : (
+            status === 400 ? undefined : (
               <Button variant="secondary" size="sm" onClick={() => q.refetch()}>
                 Retry
               </Button>

@@ -21,6 +21,8 @@ export function IssuerAssetMix({
     code: string;
     href: string;
     marketCapUsd?: string | null;
+    /** The cap rests on a floor supply. */
+    floor?: boolean;
   }[];
 }) {
   const priced = assets.flatMap((a) => {
@@ -33,6 +35,7 @@ export function IssuerAssetMix({
             href: a.href,
             value: n,
             decimal: a.marketCapUsd,
+            floor: a.floor === true,
           },
         ]
       : [];
@@ -40,6 +43,7 @@ export function IssuerAssetMix({
   if (priced.length < 2) return null;
   const unpriced = assets.length - priced.length;
   const total = sumDecimalStrings(priced.map((p) => p.decimal));
+  const atLeast = unpriced > 0 || priced.some((p) => p.floor);
   return (
     <div className="px-4 pb-4">
       <div className={`${PANEL_LABEL_CLASS} mb-2`}>
@@ -52,7 +56,7 @@ export function IssuerAssetMix({
         thickness={18}
         centerLabel={
           total
-            ? `${unpriced > 0 ? '≥ ' : ''}$${formatCompactUnits(total, 0)}`
+            ? `${atLeast ? '≥ ' : ''}$${formatCompactUnits(total, 0)}`
             : undefined
         }
         centerSub={unpriced > 0 ? 'priced market cap' : 'market cap'}

@@ -1012,7 +1012,36 @@ export function usePools(
 
 export type Cursor = GetJSON<'/diagnostics/cursors'>['data'][number];
 
-type CursorsEnvelope = { data: Cursor[] };
+type CursorsEnvelope = { data: Cursor[]; pagination?: { next?: string } };
+
+const CURSOR_PAGE_LIMIT = 2000;
+const CURSOR_MAX_PAGES = 10;
+
+/**
+ * fetchAllCursors walks every page of /v1/diagnostics/cursors. The health
+ * summaries read this set as the whole table, so a first page alone would
+ * silently drop the sources that sort after it.
+ */
+export async function fetchAllCursors(
+  get: (
+    path: string,
+    params?: Record<string, string | number | undefined>,
+  ) => Promise<CursorsEnvelope | Cursor[]> = apiGet,
+): Promise<Cursor[]> {
+  const rows: Cursor[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < CURSOR_MAX_PAGES; page++) {
+    const body = await get('/v1/diagnostics/cursors', {
+      limit: CURSOR_PAGE_LIMIT,
+      cursor,
+    });
+    if (Array.isArray(body)) return body;
+    rows.push(...body.data);
+    cursor = body.pagination?.next || undefined;
+    if (!cursor) return rows;
+  }
+  throw new Error('cursor list did not end within the page budget');
+}
 
 /**
  * useCursors — fetches the per-source ingest cursor table from
@@ -1022,12 +1051,7 @@ type CursorsEnvelope = { data: Cursor[] };
 export function useCursors() {
   return useQuery<Cursor[]>({
     queryKey: ['/v1/diagnostics/cursors'],
-    queryFn: async () => {
-      const env = await apiGet<CursorsEnvelope | Cursor[]>(
-        '/v1/diagnostics/cursors',
-      );
-      return Array.isArray(env) ? env : env.data;
-    },
+    queryFn: () => fetchAllCursors(),
     refetchInterval: 15_000,
   });
 }

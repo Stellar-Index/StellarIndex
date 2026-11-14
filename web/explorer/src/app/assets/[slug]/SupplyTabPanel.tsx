@@ -149,6 +149,7 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
               a.supply_basis === 'contract_storage_balances' ||
               onchain.data?.data?.circulating_supply_lower_bound === true
             }
+            derived={a.supply_basis === 'classic_lake_flows'}
           />
 
           {(a.market_cap_usd || a.fdv_usd) && (
@@ -306,6 +307,7 @@ function OnChainSupply({
   const storage = data.source === 'contract_storage_balances';
   const decimals = onChainSupplyDecimals(data, assetDecimals);
   const floor = data.circulating_supply_lower_bound === true;
+  const derived = data.supply_basis === 'classic_lake_flows';
   const total = formatSupply(data.total_supply, decimals);
   return (
     <div className="border-line border-b pb-4">
@@ -321,7 +323,13 @@ function OnChainSupply({
       <div className="grid grid-cols-2 gap-3">
         <Metric
           label={
-            native ? 'Ledger total_coins' : floor ? 'Total (at least)' : 'Total'
+            native
+              ? 'Ledger total_coins'
+              : floor
+                ? 'Total (at least)'
+                : derived
+                  ? 'Total (derived)'
+                  : 'Total'
           }
           value={total !== '—' && floor ? `≥ ${total}` : total}
           sublabel={supplySublabel(data, decimals)}
@@ -353,6 +361,13 @@ function OnChainSupply({
           </Badge>
         </p>
       )}
+      {derived && (
+        <p className="mt-2">
+          <Badge tone="warn" title={CLASSIC_FLOWS_CAVEAT}>
+            Derived, not certified
+          </Badge>
+        </p>
+      )}
       <details className="text-ink-muted mt-3 text-xs">
         <summary className="cursor-pointer">
           {data.as_of_ledger != null
@@ -364,6 +379,9 @@ function OnChainSupply({
     </div>
   );
 }
+
+const CLASSIC_FLOWS_CAVEAT =
+  'Σ mint − burn − clawback over this classic asset’s Stellar Asset Contract events. A derived reading, not an issuer-certified supply: it is only as complete as the replayed flow history, and a replayed mint with no matching burn inflates it.';
 
 function supplySublabel(data: AssetSupply, decimals: number | null): string {
   if (decimals == null) return 'base units — the contract declares no scale';
@@ -381,6 +399,7 @@ function supplyFootnote(data: AssetSupply): string {
   if (data.source === 'contract_storage_balances') {
     return 'Σ per-holder balances read from the contract’s own storage — the token emits no supply events.';
   }
+  if (data.supply_basis === 'classic_lake_flows') return CLASSIC_FLOWS_CAVEAT;
   return 'Σ mint − burn − clawback from on-chain supply flows, current to the latest ledger — no refresh lag.';
 }
 

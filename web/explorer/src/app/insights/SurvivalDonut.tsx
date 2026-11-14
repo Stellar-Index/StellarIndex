@@ -1,7 +1,7 @@
 'use client';
 
 import { DonutChart, type DonutSlice } from '@/components/charts/DonutChart';
-import { formatCompact, ratioPct } from '@/lib/format';
+import { formatCompact, sharePct } from '@/lib/format';
 
 /**
  * survivalSlices — a cohort split into members still live and members
@@ -43,7 +43,7 @@ export function SurvivalDonut({
 }) {
   const slices = survivalSlices(accounts, live);
   if (!slices) return null;
-  const pct = ratioPct(String(live), String(accounts), 1);
+  const pct = sharePct(live, accounts, 1);
   return (
     <div data-testid="survival-donut">
       <DonutChart

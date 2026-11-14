@@ -418,10 +418,19 @@ export function SearchModal({ shortcut = true }: { shortcut?: boolean }) {
     };
   }, [explorer.data, debouncedQ]);
 
+  // Placeholder rows belong to the previous query, and a failed query has
+  // no rows: neither is a match (or a non-match) for the text typed now.
+  const isServerSearched = debouncedQ.length >= 2;
+  const coinsPending =
+    isServerSearched &&
+    (searchedCoins.isPending || searchedCoins.isPlaceholderData);
+  const coinsFailed = isServerSearched && searchedCoins.isError;
+
   const results = useMemo(() => {
-    const isServerSearched = debouncedQ.length >= 2;
     const sourceCoins = isServerSearched
-      ? (searchedCoins.data?.coins ?? [])
+      ? coinsPending || coinsFailed
+        ? []
+        : (searchedCoins.data?.coins ?? [])
       : (topCoins.data?.coins ?? []);
     const base = search(
       q,
@@ -440,7 +449,9 @@ export function SearchModal({ shortcut = true }: { shortcut?: boolean }) {
     return base;
   }, [
     q,
-    debouncedQ,
+    isServerSearched,
+    coinsPending,
+    coinsFailed,
     searchedCoins.data,
     topCoins.data,
     currencies.data,
@@ -503,8 +514,12 @@ export function SearchModal({ shortcut = true }: { shortcut?: boolean }) {
               <div className="sr-only" role="status" aria-live="polite">
                 {q.trim() === ''
                   ? ''
-                  : results.length === 0
-                    ? 'No matches.'
+                  : coinsPending
+                    ? 'Searching.'
+                    : coinsFailed
+                      ? 'Asset search is unavailable.'
+                      : results.length === 0
+                        ? 'No matches.'
                     : `${results.length} result${results.length === 1 ? '' : 's'}.`}
               </div>
               {/* Empty query → orient the user with the searchable scopes
@@ -553,11 +568,26 @@ export function SearchModal({ shortcut = true }: { shortcut?: boolean }) {
                     Top assets
                   </li>
                 )}
-                {q.trim() !== '' && results.length === 0 && (
+                {q.trim() !== '' && coinsPending && (
                   <li className="text-ink-muted px-3 py-2 text-xs">
-                    No matches across the asset directory, protocols, or pages.
+                    Searching the asset directory…
                   </li>
                 )}
+                {q.trim() !== '' && coinsFailed && (
+                  <li className="text-warn-700 px-3 py-2 text-xs">
+                    The asset directory could not be searched. Protocols and
+                    pages below are still matched; try again for assets.
+                  </li>
+                )}
+                {q.trim() !== '' &&
+                  !coinsPending &&
+                  !coinsFailed &&
+                  results.length === 0 && (
+                    <li className="text-ink-muted px-3 py-2 text-xs">
+                      No matches across the asset directory, protocols, or
+                      pages.
+                    </li>
+                  )}
                 {results.map((r) => (
                   <li key={`${r.type}:${r.label}:${r.href}`}>
                     <Link

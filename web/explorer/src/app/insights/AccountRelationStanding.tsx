@@ -12,7 +12,7 @@ import type {
   SponsorRow,
   SponsorsResp,
 } from '@/api/relationTypes';
-import { formatCompact } from '@/lib/format';
+import { formatCompact, sharePct } from '@/lib/format';
 
 import { formatTimestamp, xlmReadable } from '../explorer-shared';
 import { RELATION, type Relation } from './accountRelation';
@@ -226,5 +226,7 @@ function readBoard(data: CreatorsResp | SponsorsResp):
 
 function survival(row: CreatorRow): string | undefined {
   if (row.accounts_created === 0) return undefined;
-  return `${((row.live_accounts / row.accounts_created) * 100).toFixed(1)}% of ${formatCompact(row.accounts_created)}`;
+  const pct = sharePct(row.live_accounts, row.accounts_created, 1);
+  if (pct == null) return undefined;
+  return `${pct}% of ${formatCompact(row.accounts_created)}`;
 }

@@ -34,6 +34,7 @@ import {
   buildSupplyFlowRows,
 } from '../assets/[slug]/SupplyFlowsBar';
 import { onChainSupplyDecimals } from '../assets/[slug]/SupplyTabPanel';
+import { supplyIsFloor } from '@/lib/supplyFloor';
 
 type HoldersResp = NonNullable<
   paths['/assets/{asset_id}/holders']['get']['responses'][200]['content']['application/json']['data']
@@ -109,18 +110,20 @@ function AssetIdentity({ a }: { a: AssetDetail }) {
   const name = a.name ?? (a.type === 'native' ? 'Stellar Lumens' : undefined);
   const holders = useTopHolders(a.asset_id);
   const holderCount = holders.data?.holder_count;
+  const floor = supplyIsFloor(a);
+  const atLeast = (v: string | null) => (v && floor ? `≥ ${v}` : v);
   const stats = (
     [
       {
         label: 'Price',
         value: a.price_usd ? `$${formatPriceSmall(a.price_usd)}` : null,
       },
-      { label: 'Market cap', value: usd(a.market_cap_usd) },
+      { label: 'Market cap', value: atLeast(usd(a.market_cap_usd)) },
       {
         label: 'Circulating',
         value:
           a.circulating_supply != null
-            ? formatCompactUnits(a.circulating_supply, decimals)
+            ? atLeast(formatCompactUnits(a.circulating_supply, decimals))
             : null,
       },
       {

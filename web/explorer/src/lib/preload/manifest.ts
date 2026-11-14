@@ -27,7 +27,7 @@ export const PRELOAD_ROUTES: PreloadRoute[] = [
       '/v1/assets?limit=10&order_by=volume_24h_usd_desc&include_thin=true',
       '/v1/assets?limit=50',
       '/v1/coverage',
-      '/v1/diagnostics/cursors',
+      '/v1/diagnostics/cursors?limit=2000',
       '/v1/markets?limit=25&order_by=volume_24h_usd_desc',
       '/v1/markets?limit=3&order_by=volume_24h_usd_desc',
       '/v1/network/stats',

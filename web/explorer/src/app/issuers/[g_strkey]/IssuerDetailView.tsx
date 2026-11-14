@@ -36,6 +36,7 @@ import { CURRENT_NETWORK } from '@/lib/networks';
 import { isSafeHomeDomain } from '@/lib/safe-domain';
 
 import { IssuerAssetMix } from './IssuerAssetMix';
+import { SUPPLY_FLOOR_HINT, supplyIsFloor } from '@/lib/supplyFloor';
 
 /** Price, volume, supply and market cap per asset_id, from /v1/assets?issuer=. */
 export type CoinPrices = Record<string, Partial<AssetDetail>>;
@@ -349,6 +350,7 @@ export function IssuerDetailView({
                   code: a.code,
                   href: assetHref(a.slug),
                   marketCapUsd: coins[a.asset_id]?.market_cap_usd,
+                  floor: supplyIsFloor(coins[a.asset_id] ?? {}),
                 }))}
               />
             )}
@@ -525,15 +527,23 @@ function IssuedAssetsTable({
                 )}
                 {pricing && (
                   <Td align="right">
-                    <UsdCell raw={coin?.market_cap_usd} />
+                    <UsdCell
+                      raw={coin?.market_cap_usd}
+                      floor={coin ? supplyIsFloor(coin) : false}
+                    />
                   </Td>
                 )}
                 <Td align="right" className="hidden font-mono xl:table-cell">
                   {coin?.circulating_supply ? (
-                    formatCompactUnits(
-                      coin.circulating_supply,
-                      coin.decimals ?? 7,
-                    )
+                    <span
+                      title={supplyIsFloor(coin) ? SUPPLY_FLOOR_HINT : undefined}
+                    >
+                      {supplyIsFloor(coin) ? '≥ ' : ''}
+                      {formatCompactUnits(
+                        coin.circulating_supply,
+                        coin.decimals ?? 7,
+                      )}
+                    </span>
                   ) : (
                     <span className="text-ink-faint">—</span>
                   )}
@@ -621,10 +631,14 @@ function ChangeCell({ raw }: { raw?: string | null }) {
   );
 }
 
-function UsdCell({ raw }: { raw?: string | null }) {
+function UsdCell({ raw, floor }: { raw?: string | null; floor?: boolean }) {
   const v = formatCompactUnits(raw, 0);
   if (v === '—') return <span className="text-ink-faint">—</span>;
-  return <span className="font-mono">${v}</span>;
+  return (
+    <span className="font-mono" title={floor ? SUPPLY_FLOOR_HINT : undefined}>
+      {floor ? '≥ ' : ''}${v}
+    </span>
+  );
 }
 
 /** The organisation block of a SEP-1 stellar.toml, strings only. */

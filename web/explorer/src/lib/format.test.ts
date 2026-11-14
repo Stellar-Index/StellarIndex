@@ -364,3 +364,19 @@ describe('formatFractionPrice', () => {
     expect(format.formatFractionPrice(1, 0)).toBe('—');
   });
 });
+
+describe('sharePct', () => {
+  it('never rounds up to 100, so only a complete share prints 100', () => {
+    expect(format.sharePct(4346, 108730, 1)).toBe('4.0');
+    expect(format.sharePct(9996, 10000, 1)).toBe('99.9');
+    expect(format.sharePct(999_999_999, 1_000_000_000, 1)).toBe('99.9');
+    expect(format.sharePct(10000, 10000, 1)).toBe('100.0');
+    expect(format.sharePct(1, 3, 1)).toBe('33.3');
+  });
+
+  it('is null when the counts are not a share of a positive whole', () => {
+    expect(format.sharePct(1, 0)).toBeNull();
+    expect(format.sharePct(-1, 5)).toBeNull();
+    expect(format.sharePct(1.5, 5)).toBeNull();
+  });
+});
