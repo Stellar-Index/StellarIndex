@@ -103,13 +103,32 @@ func TestDetectSandwiches_Bracket(t *testing.T) {
 // TestDetectSandwiches_OrientationIndependent: pair identity ignores the orientation it is written in.
 func TestDetectSandwiches_OrientationIndependent(t *testing.T) {
 	trades := []canonical.Trade{
-		mkTrade(t, tOpt{tx: txA, taker: "GATK", base: "native", quote: usdc}), // front: buys native
-		mkTrade(t, tOpt{tx: txB, taker: "GVIC", base: usdc, quote: "native"}), // victim, flipped orientation
-		mkTrade(t, tOpt{tx: txC, taker: "GATK", base: usdc, quote: "native"}), // back: sells native
+		mkTrade(t, tOpt{tx: txA, taker: "GATK", base: usdc, quote: "native"}), // front: buys usdc, written usdc-first
+		mkTrade(t, tOpt{tx: txB, taker: "GVIC", base: usdc, quote: "native"}), // victim: buys usdc too
+		mkTrade(t, tOpt{tx: txC, taker: "GATK", base: "native", quote: usdc}), // back: sells usdc, written native-first
 	}
 	idx := map[string]uint32{txA: 1, txB: 2, txC: 3}
 	if got := DetectSandwiches(trades, nil, idx); len(got) != 1 {
 		t.Fatalf("got %d candidates, want 1", len(got))
+	}
+}
+
+// A bracketed trade against the front-run got a better price from it, and one on another venue paid a price the
+// front-run never moved: neither is a victim, and with no victim left no account is named.
+func TestDetectSandwiches_BracketedTradeTheFrontRunCouldNotHarmIsNotAVictim(t *testing.T) {
+	idx := map[string]uint32{txA: 1, txB: 3, txC: 5}
+	front := tOpt{tx: txA, taker: "GATK", base: "native", quote: usdc} // buys native
+	back := tOpt{tx: txC, taker: "GATK", base: usdc, quote: "native"}  // sells native
+	cases := map[string]tOpt{
+		"sells into the front-run": {tx: txB, taker: "GVIC", base: usdc, quote: "native"},
+		"trades on another venue":  {source: "soroswap", tx: txB, taker: "GVIC", base: usdc, quote: "native"},
+		"direction unknown":        {source: "mysteryvenue", tx: txB, taker: "GVIC", base: "native", quote: usdc},
+	}
+	for name, mid := range cases {
+		trades := []canonical.Trade{mkTrade(t, front), mkTrade(t, mid), mkTrade(t, back)}
+		if got := DetectSandwiches(trades, nil, idx); len(got) != 0 {
+			t.Errorf("%s: got %d candidates, want 0: %+v", name, len(got), got)
+		}
 	}
 }
 

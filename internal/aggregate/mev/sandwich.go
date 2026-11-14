@@ -124,7 +124,7 @@ func buildSandwichCandidate(trades []canonical.Trade, usdVolume []domain.MEVLegU
 			continue
 		}
 		vi := txIdx[trades[i].TxHash]
-		if vi > frontIdx && vi < backIdx {
+		if vi > frontIdx && vi < backIdx && frontRunCouldHarm(trades[front], trades[i]) {
 			victims = append(victims, i)
 		}
 	}
@@ -197,6 +197,14 @@ func bracketTrades(trades []canonical.Trade, txIdx map[string]uint32, idxs []int
 
 // oppositeDirection reports whether front and back sit on OPPOSITE sides of the pair. If either direction is
 // indeterminate it returns false: we never assert an opposition we cannot prove.
+// frontRunCouldHarm reports whether a bracketed trade can be the front-run's victim: same venue, so the front-run moved
+// the price it paid, and same direction, so that move was against it. An indeterminate direction is not a victim.
+func frontRunCouldHarm(front, bracketed canonical.Trade) bool {
+	fl, fok := takerReceivesLowAsset(front)
+	vl, vok := takerReceivesLowAsset(bracketed)
+	return fok && vok && fl == vl && front.Source == bracketed.Source
+}
+
 func oppositeDirection(front, back canonical.Trade) bool {
 	fl, fok := takerReceivesLowAsset(front)
 	bl, bok := takerReceivesLowAsset(back)
