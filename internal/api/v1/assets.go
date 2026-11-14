@@ -315,6 +315,8 @@ type AssetDetail struct {
 	f2ReadFailed bool
 	// extensionUnread: the catalogue row or one of the six extension reads errored, so an absent field is not "none".
 	extensionUnread bool
+	// extensionStale: the catalogue row or an extension read answered from a cache entry its refresh has not kept up with.
+	extensionStale bool
 	// priceUnread: the USD price read failed; a null price_usd is then not "no market".
 	priceUnread bool
 
@@ -1950,10 +1952,11 @@ func dropServedCatalogueRows(rows []AssetDetail, served []string) []AssetDetail 
 // order follows published figures; ranking first would rank Stellar-issued rows on nil caps. unmeasured is
 // fillCatalogueStatsForPage's.
 func (s *Server) fillAndRankCatalogueRows(ctx context.Context, rows []AssetDetail, filters assetListFilters) (unmeasured bool) {
+	ctx, rep := withReadReport(ctx)
 	s.fillCataloguePricesForPage(ctx, rows)
 	unmeasured = s.fillCatalogueStatsForPage(ctx, rows, filters)
 	sortAssetDetailsByMarketCapDesc(rows)
-	return unmeasured
+	return unmeasured || rep.unread.Load()
 }
 
 // fillCataloguePricesForPage resolves each row's headline USD price through buildGlobalAssetView's fallback chain so listing
@@ -2001,6 +2004,9 @@ func (s *Server) onChainListingPriceUSD(ctx context.Context, assetID string) *st
 	}
 	row, err := s.AssetsReader.GetAssetByAssetID(ctx, assetID)
 	if err != nil || row.PriceUSD == nil {
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			reportUnreadRead(ctx)
+		}
 		return nil
 	}
 	if s.Substance != nil {
@@ -2495,7 +2501,9 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	if includeThin {
 		s.thinDetailPricePass(ctx, &detail, parsed, off)
 	}
-	s.fillDeclaredPegPrice(ctx, &detail, nil)
+	pegCtx, pegReads := withReadReport(ctx)
+	s.fillDeclaredPegPrice(pegCtx, &detail, nil)
+	detail.f2ReadFailed = detail.f2ReadFailed || pegReads.unread.Load()
 
 	// Scam-issuer price suppression, the payload-side twin of the reader-seam ScamGate. Runs AFTER
 	// every price producer (including the peg fill) so nothing can resurrect the value: a flagged
@@ -2554,7 +2562,7 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 // assetDetailStale reports whether detail rests on a failed, cut-short or
 // carried-forward read.
 func assetDetailStale(detail *AssetDetail, homeDomainDegraded, ctxDead bool) bool {
-	return homeDomainDegraded || detail.DecimalsUnresolved || detail.SupplyStale || detail.f2ReadFailed || detail.extensionUnread || ctxDead
+	return homeDomainDegraded || detail.DecimalsUnresolved || detail.SupplyStale || detail.f2ReadFailed || detail.extensionUnread || detail.extensionStale || ctxDead
 }
 
 // transientlyDegraded reports whether detail rests on a read that failed or

@@ -233,12 +233,21 @@ func (c *CachedAssetsReader) GetAssetTradeCount24h(ctx context.Context, assetID 
 
 // swr is the per-asset single-value read through c.single (a free function: methods cannot take type parameters).
 func swr[T any](ctx context.Context, c *CachedAssetsReader, op, key string, upstream func(context.Context) (T, error)) (T, error) {
-	v, _, _, err := c.single.get(ctx, op, key, func(ctx context.Context) (any, error) { return upstream(ctx) })
+	v, at, _, err := c.single.get(ctx, op, key, func(ctx context.Context) (any, error) { return upstream(ctx) })
 	if err != nil {
 		var zero T
 		return zero, err
 	}
+	c.reportIfOverdue(ctx, at)
 	return v.(T), nil
+}
+
+// reportIfOverdue marks the request's [readReport] stale when an entry has outlived its ttl by more than one refresh budget.
+// Plain expiry is not reported: every rebuild of a view cached for the same ttl reads entries that have just expired.
+func (c *CachedAssetsReader) reportIfOverdue(ctx context.Context, at time.Time) {
+	if !at.IsZero() && time.Since(at) >= c.ttl+assetsRefreshBudget {
+		reportStaleRead(ctx)
+	}
 }
 
 // settleRowsFillLocked applies a finished fill: on failure keep a stale value, or hand err to a cold entry's waiters and drop
@@ -264,13 +273,16 @@ func (c *CachedAssetsReader) settleRowsFillLocked(op, key string, entry *assetsC
 // the cache advances instead of perpetually re-spawning.
 const assetsRefreshBudget = 30 * time.Second
 
-// fetchRows returns just the rows, for callers that do not need observation time.
+// fetchRows returns just the rows; a caller that installed a [readReport] still learns they came from an overdue entry.
 func (c *CachedAssetsReader) fetchRows(
 	ctx context.Context,
 	op, key string,
 	upstream func(context.Context) ([]timescale.AssetRow, error),
 ) ([]timescale.AssetRow, error) {
-	rows, _, err := c.fetchRowsAt(ctx, op, key, upstream)
+	rows, at, err := c.fetchRowsAt(ctx, op, key, upstream)
+	if err == nil {
+		c.reportIfOverdue(ctx, at)
+	}
 	return rows, err
 }
 
