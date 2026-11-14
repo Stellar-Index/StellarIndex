@@ -2255,6 +2255,12 @@ paths:
         - Recurring events fire unconditionally on each tick (no
           server-side dedupe) — clients diff against the previous
           payload if they want change-detection.
+        - Subscribers of the same asset, quote, source and aggregate
+          share one scan per tick, so `as_of` is when that scan ran:
+          up to half a second before the event.
+        - Scans for all streams share a fixed budget. A tick that
+          cannot get a scan within its interval is skipped; the next
+          tick tries again.
         - Heartbeats every 15 s as comment lines.
         - `flags.stale` and `flags.divergence_checked` are always
           `false` on every tick, for the reasons given on the request

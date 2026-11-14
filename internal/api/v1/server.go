@@ -305,6 +305,8 @@ type Server struct {
 	// tipProducers is the shared tip-stream producer registry: one compute loop per distinct
 	// (asset, quote, window), refcounted by open /v1/price/tip/stream connections.
 	tipProducers tipProducerRegistry
+	// observationsTicks shares and bounds the scans behind open /v1/observations/stream connections.
+	observationsTicks observationsTicks
 	// tipDivergenceStalls rate-limits the warning for a tip-stream divergence lookup that exceeds
 	// its sub-budget. Process-wide because the stalling store is shared by every stream.
 	tipDivergenceStalls tipDivergenceStallLog
