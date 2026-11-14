@@ -79,6 +79,8 @@ type Flags struct {
 	// oracle_sandwich ran on a partial map or not at all), or the heartbeat could not be read. A
 	// quiet feed under this flag is a detection gap, not a quiet network.
 	DetectorsPartial bool `json:"detectors_partial,omitempty"`
+	// Truncated: the list was capped and no cursor continues it, so its length is a lower bound.
+	Truncated bool `json:"truncated,omitempty"`
 	// FiltersIgnored names the row-narrowing query parameters the response did NOT apply, spelled
 	// as sent; a listing that dropped a filter is otherwise the same 200 as one that matched.
 	FiltersIgnored []string `json:"filters_ignored,omitempty"`

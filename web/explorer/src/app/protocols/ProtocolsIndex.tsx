@@ -170,6 +170,8 @@ export function ProtocolsIndex({
   // not the whole directory. Summing `cards` would make the category
   // landings publish the directory's totals over their own handful of
   // rows (e.g. "16 protocols · 1.15M events" for 2 bridges).
+  // No row carries a count when the read failed; the headline then has no figure either.
+  const eventsRead = visible.some((c) => c.events_24h != null);
   const totalEvents24h = visible.reduce((s, c) => s + (c.events_24h ?? 0), 0);
   const verifiedCount = visible.filter((c) => c.completeness?.complete).length;
   // The static-registry fallback carries no category, so under a locked
@@ -208,7 +210,7 @@ export function ProtocolsIndex({
         <StatCell>
           <Stat
             label="Events · last 24h"
-            value={live ? formatCompact(totalEvents24h) : '—'}
+            value={live && eventsRead ? formatCompact(totalEvents24h) : '—'}
           />
         </StatCell>
       </StatGrid>

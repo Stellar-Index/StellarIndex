@@ -30,6 +30,8 @@ type DEXTVLTotalView struct {
 	// AsOf (RFC3339) equals every included protocol's as_of, since reconciliation refuses a
 	// protocol whose as_of differs.
 	AsOf string `json:"as_of"`
+	// Stale is set when a summed protocol reads a lake that has stopped advancing.
+	Stale bool `json:"stale,omitempty"`
 	// Basis is a one-line provenance statement for the total.
 	Basis string `json:"basis"`
 	// Excluded lists the pooled-value surfaces NOT in TVLUSD with reasons: the standing scope
@@ -127,6 +129,10 @@ const (
 		"to carry forward, so no figure is published — the protocol is derived here, its TVL is not zero"
 	dexTVLUnavailableNoPools = "its reserve read returned no pools this cycle; absence is " +
 		"unavailable, never zero TVL, so no figure is published"
+	dexTVLUnavailableCarryExpired = "its reserve read has kept failing and the last figure is too old " +
+		"to carry forward, so no figure is published — its TVL is not zero"
+	dexTVLUnavailableNotWired = "its reserve reader or pool set is not wired on this process " +
+		"(not configured, or its connection failed at start), so no figure is published — its TVL is not zero"
 )
 
 // Total returns the latest reconciled headline total, or nil before the first refresh (handlers omit the field, never 503).

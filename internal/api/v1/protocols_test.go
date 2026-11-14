@@ -26,6 +26,8 @@ type stubProtocolActivityReader struct {
 	breakdown []clickhouse.ProtocolEventTypeCount
 	daily     []clickhouse.ProtocolDailyPoint
 	contracts []clickhouse.ProtocolContractActivity
+	// breakdownErr fails the breakdown read while the other reads answer.
+	breakdownErr error
 }
 
 func (s *stubProtocolActivityReader) LakeTipLedger(context.Context) (uint32, error) {
@@ -33,7 +35,7 @@ func (s *stubProtocolActivityReader) LakeTipLedger(context.Context) (uint32, err
 }
 
 func (s *stubProtocolActivityReader) ProtocolEventBreakdown(context.Context, []string, uint32) ([]clickhouse.ProtocolEventTypeCount, error) {
-	return s.breakdown, nil
+	return s.breakdown, s.breakdownErr
 }
 
 func (s *stubProtocolActivityReader) ProtocolDailyActivity(context.Context, []string, uint32) ([]clickhouse.ProtocolDailyPoint, error) {
@@ -154,8 +156,8 @@ func TestHandleProtocolsList_Happy(t *testing.T) {
 	}
 	// Roster = 2 pools + 2 folded-in Backstop module contracts + 1 folded-in Emitter contract; events_24h = blend (1234) +
 	// blend_backstop (42); the mock has no blend_emitter entry, so it contributes 0.
-	if blend.ContractCount != 5 || blend.Events24h != 1276 {
-		t.Errorf("blend joins wrong: count=%d events=%d", blend.ContractCount, blend.Events24h)
+	if blend.ContractCount != 5 || events24hOrNeg(blend.Events24h) != 1276 {
+		t.Errorf("blend joins wrong: count=%d events=%d", blend.ContractCount, events24hOrNeg(blend.Events24h))
 	}
 	if blend.Completeness == nil || !blend.Completeness.Complete || blend.Completeness.WatermarkLedger != 62_999_000 {
 		t.Errorf("blend completeness summary wrong: %+v", blend.Completeness)
@@ -164,8 +166,8 @@ func TestHandleProtocolsList_Happy(t *testing.T) {
 	// soroswap's contract count comes from soroswap_pairs, not
 	// protocol_contracts, and its failing verdict surfaces as-is.
 	soroswap := protocolRow(t, d.Protocols, "soroswap")
-	if soroswap.ContractCount != 3 || soroswap.Events24h != 567 {
-		t.Errorf("soroswap joins wrong: count=%d events=%d", soroswap.ContractCount, soroswap.Events24h)
+	if soroswap.ContractCount != 3 || events24hOrNeg(soroswap.Events24h) != 567 {
+		t.Errorf("soroswap joins wrong: count=%d events=%d", soroswap.ContractCount, events24hOrNeg(soroswap.Events24h))
 	}
 	if soroswap.Completeness == nil || soroswap.Completeness.Complete {
 		t.Errorf("soroswap completeness summary wrong: %+v", soroswap.Completeness)
@@ -174,7 +176,7 @@ func TestHandleProtocolsList_Happy(t *testing.T) {
 	// A source with no snapshot, no registry, no events: zeros, no
 	// completeness block, factories present-but-empty (never null).
 	band := protocolRow(t, d.Protocols, "band")
-	if band.ContractCount != 0 || band.Events24h != 0 || band.Completeness != nil {
+	if band.ContractCount != 0 || events24hOrNeg(band.Events24h) != 0 || band.Completeness != nil {
 		t.Errorf("band should be all-zero/absent: %+v", band)
 	}
 	if band.Factories == nil {
@@ -405,13 +407,13 @@ func TestHandleProtocols_NilReaderDegradation(t *testing.T) {
 	for _, p := range env.Data.Protocols {
 		// blend carries statically-known Backstop + Emitter module contracts (ExtraContracts);
 		// like Factories they are registry constants, not DB reads, so they survive nil readers.
-		// Its dynamic joins (events, completeness) still degrade to zero/absent.
+		// Its dynamic joins (events, completeness) are absent: an unread count is not a zero.
 		wantContracts := 0
 		if p.Name == "blend" {
 			wantContracts = 3
 		}
-		if p.ContractCount != wantContracts || p.Events24h != 0 || p.Completeness != nil {
-			t.Errorf("%s should degrade to zeros: %+v", p.Name, p)
+		if p.ContractCount != wantContracts || p.Events24h != nil || p.Completeness != nil {
+			t.Errorf("%s should degrade to zero contracts and absent joins: %+v", p.Name, p)
 		}
 	}
 
@@ -446,10 +448,10 @@ func TestHandleProtocolDetail_LakeAnalytics(t *testing.T) {
 		}},
 		ProtocolActivity: &stubProtocolActivityReader{
 			tip: 63_000_000,
-			// Typed breakdown (topic_0_sym != '') sums to 700 while the daily series counts all 1000 contract events; the 300-event
-			// gap is non-Symbol-topic events the breakdown must surface as a reconciling "untyped" bucket.
+			// The reader counts the nameless events itself; the handler serves its rows as they are.
 			breakdown: []clickhouse.ProtocolEventTypeCount{
 				{EventType: "supply", Count: 600},
+				{EventType: clickhouse.UntypedEventType, Count: 300},
 				{EventType: "borrow", Count: 100},
 			},
 			daily: []clickhouse.ProtocolDailyPoint{
@@ -476,25 +478,15 @@ func TestHandleProtocolDetail_LakeAnalytics(t *testing.T) {
 	}
 	d := body.Data
 
-	// Typed entries first (desc by count), then the reconciling untyped
-	// bucket = EventsTotal(1000) − typedSum(700) = 300.
 	if len(d.EventBreakdown) != 3 || d.EventBreakdown[0].EventType != "supply" || d.EventBreakdown[0].Count != 600 {
 		t.Errorf("event_breakdown = %+v", d.EventBreakdown)
 	}
-	if last := d.EventBreakdown[len(d.EventBreakdown)-1]; last.EventType != "untyped" || last.Count != 300 {
-		t.Errorf("untyped bucket = %+v, want {untyped 300}", last)
+	if u := d.EventBreakdown[1]; u.EventType != "untyped" || u.Count != 300 {
+		t.Errorf("untyped row = %+v, want the reader's {untyped 300}", u)
 	}
 	// EventsTotal is the unfiltered series sum (not the typed-breakdown sum).
 	if d.EventsTotal != 1000 {
 		t.Errorf("events_total = %d, want 1000", d.EventsTotal)
-	}
-	// sum(EventBreakdown) must reconcile to EventsTotal.
-	var bdSum int64
-	for _, b := range d.EventBreakdown {
-		bdSum += b.Count
-	}
-	if bdSum != d.EventsTotal {
-		t.Errorf("breakdown sum %d != events_total %d", bdSum, d.EventsTotal)
 	}
 	if len(d.ActivitySeries) != 2 || d.ActivitySeries[1].Events != 600 {
 		t.Errorf("activity_series = %+v", d.ActivitySeries)
@@ -1358,4 +1350,61 @@ func TestProtocols_StaleWhenRepublishedVerdictIsOld(t *testing.T) {
 			t.Errorf("GET %s: flags.stale = true for a 5-minute-old verdict", path)
 		}
 	}
+}
+
+func protocolDetailWith(t *testing.T, activity *stubProtocolActivityReader) v1.ProtocolDetailView {
+	t.Helper()
+	srv := v1.New(v1.Options{
+		ProtocolContracts: &stubProtocolContractsReader{bySource: map[string][]timescale.ProtocolContract{
+			"blend": {{Source: "blend", ContractID: "CPOOL1", FactoryID: "CFAC", FirstLedger: 51_500_000}},
+		}},
+		ProtocolActivity: activity,
+	})
+	resp := mustGet(t, httpTestServer(t, srv).URL+"/v1/protocols/blend")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var body struct {
+		Data v1.ProtocolDetailView `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return body.Data
+}
+
+// The series and the breakdown are separate aggregations: a gap between them is estimation error, not events of a type.
+func TestProtocolDetail_BreakdownGapIsNotServedAsUntyped(t *testing.T) {
+	d := protocolDetailWith(t, &stubProtocolActivityReader{
+		tip:       63_000_000,
+		breakdown: []clickhouse.ProtocolEventTypeCount{{EventType: "supply", Count: 995}},
+		daily:     []clickhouse.ProtocolDailyPoint{{Date: "2026-06-14", Events: 1000}},
+	})
+	if len(d.EventBreakdown) != 1 || d.EventBreakdown[0].EventType != "supply" {
+		t.Errorf("event_breakdown = %+v, want the one counted type and no residual bucket", d.EventBreakdown)
+	}
+	if d.EventsTotal != 1000 {
+		t.Errorf("events_total = %d, want 1000", d.EventsTotal)
+	}
+}
+
+// A failed breakdown read must not leave a total over no types: the whole block is absent.
+func TestProtocolDetail_FailedBreakdownServesNoAnalyticsBlock(t *testing.T) {
+	d := protocolDetailWith(t, &stubProtocolActivityReader{
+		tip:          63_000_000,
+		breakdownErr: errors.New("clickhouse: memory limit exceeded"),
+		daily:        []clickhouse.ProtocolDailyPoint{{Date: "2026-06-14", Events: 1000}},
+	})
+	if len(d.EventBreakdown) != 0 || len(d.ActivitySeries) != 0 || d.EventsTotal != 0 || d.ActivityWindowDays != 0 {
+		t.Errorf("half-filled analytics served: breakdown=%+v series=%+v total=%d window=%d",
+			d.EventBreakdown, d.ActivitySeries, d.EventsTotal, d.ActivityWindowDays)
+	}
+}
+
+// events24hOrNeg flattens the optional count for comparisons; -1 is "absent".
+func events24hOrNeg(n *int64) int64 {
+	if n == nil {
+		return -1
+	}
+	return *n
 }

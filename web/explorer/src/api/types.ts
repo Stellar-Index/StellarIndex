@@ -8175,6 +8175,11 @@ export interface components {
             proxy_deviation: boolean;
             /** @default false */
             unverified_ticker_collision: boolean;
+            /**
+             * @description The list was capped and no cursor continues it, so its length is a lower bound. Set by `/v1/markets?asset=<slug>`. Omitted when false.
+             * @default false
+             */
+            truncated: boolean;
             /** @description Names of the row-narrowing query parameters this response did NOT apply, spelled as the caller sent them (`type`, `code`, `issuer`, `q`). Absent when the response applied every filter it was given — an ignored filter and a matched one otherwise produce the same 200 over the same shape, so a client re-filtering the page has nothing else to key on. Set by `/v1/assets` on the listings whose rows come from a source that cannot narrow: the class-scoped catalogue listings (`asset_class=fiat|stablecoin|crypto`), and the lean asset-catalog fallback served when no listing store is configured. */
             filters_ignored?: string[];
             /**
@@ -8307,9 +8312,9 @@ export interface components {
             contract_count: number;
             /**
              * Format: int64
-             * @description Trailing-24h decoded events across the protocol's served tables.
+             * @description Trailing-24h decoded events across the protocol's served tables. Absent when the count could not be read (a failed read is never a zero); `coverage_note` says so on the directory.
              */
-            events_24h: number;
+            events_24h?: number;
             /** @description Latest ADR-0033 verdict summary; absent when no snapshot exists. Full verdict on /coverage. */
             completeness?: {
                 complete: boolean;
@@ -8385,6 +8390,13 @@ export interface components {
              * @description When the snapshot was computed.
              */
             as_of: string;
+            /**
+             * @description True when the figure is older than `as_of` suggests: carried
+             *     forward from an earlier refresh (for at most six hours, after
+             *     which no figure is published), or read from a lake that has
+             *     stopped advancing. Travels with `flags.stale`. Absent when false.
+             */
+            stale?: boolean;
             /** @description One-line provenance of what was measured and how it was valued. */
             basis: string;
         };
@@ -8570,6 +8582,8 @@ export interface components {
              * @description When the snapshot the total was reconciled from was computed.
              */
             as_of: string;
+            /** @description True when a summed protocol reads a lake that has stopped advancing; travels with `flags.stale`. Absent when false. */
+            stale?: boolean;
             /** @description One-line provenance for the total, naming the protocols summed. */
             basis: string;
             /**
@@ -17295,11 +17309,11 @@ export interface operations {
                             summary?: {
                                 /** @description Decimal USD, the reserves view's tvl_usd; null when no reserve is priced. */
                                 tvl_usd?: string | null;
-                                /** @description tvl_usd leaves out at least one unpriced reserve. */
+                                /** @description tvl_usd leaves out at least one unpriced or omitted reserve. */
                                 lower_bound?: boolean;
                                 /** @description Decimal USD sum of the reserves with a borrowed USD value; null when none has one. */
                                 borrowed_usd?: string | null;
-                                /** @description borrowed_usd leaves out at least one unpriced reserve. */
+                                /** @description borrowed_usd leaves out at least one unpriced or omitted reserve. */
                                 borrowed_lower_bound?: boolean;
                                 /** @description Borrowed / supplied USD × 100 over the reserves priced on both sides. */
                                 utilization_pct?: number | null;
@@ -17309,6 +17323,7 @@ export interface operations {
                                 borrow_apr?: number | null;
                                 /** @description Reserves with both supplied and borrowed USD values. */
                                 priced_reserve_count?: number;
+                                /** @description The pool's reserves, including any the reserves view omits. */
                                 reserve_count?: number;
                             } | null;
                             /** @description The pool's reserves view is still being built; summary is null. */
@@ -17390,12 +17405,15 @@ export interface operations {
                             pool?: string;
                             /** @description Σ supplied_usd across priced reserves; null when none priced. A lower bound when `lower_bound` is true. */
                             tvl_usd?: string | null;
-                            /** @description True when `tvl_usd` is rendered but leaves out at least one reserve with no USD value — the `reserves[]` entries whose `supplied_usd` is null — so the pool holds at least `tvl_usd`. False when every reserve is priced or when `tvl_usd` is null. */
+                            /** @description True when `tvl_usd` is rendered but leaves out at least one reserve with no USD value — the `reserves[]` entries whose `supplied_usd` is null — or a reserve named in `omitted_reserves` — so the pool holds at least `tvl_usd`. False when every reserve is priced or when `tvl_usd` is null. */
                             lower_bound?: boolean;
+                            /** @description Reserve assets of the pool with no decoded state in the lake (archived or uncaptured storage). Absent when every reserve is listed in `reserves`. */
+                            omitted_reserves?: string[];
                             reserves?: {
                                 /** @description Reserve underlying token (C-strkey). */
                                 asset?: string;
-                                decimals?: number;
+                                /** @description The token's decimal exponent. Null when it is not established; `supplied` and `borrowed` are then base units with no known scale. */
+                                decimals?: number | null;
                                 /** @description Total supplied, underlying token base units. */
                                 supplied?: string;
                                 /** @description Total borrowed, underlying token base units. */
@@ -17933,6 +17951,13 @@ export interface operations {
                  *     value isn't a parseable canonical asset_id (e.g.
                  *     `native`, `USDC-G…`, `fiat:USD`). Mutually
                  *     exclusive with `source`.
+                 *
+                 *     A catalogue slug (`xlm`, `usdc`) is also accepted and
+                 *     expands to every asset_id of that currency. The merged
+                 *     list is capped at `limit` and has no cursor; when it was
+                 *     capped, `flags.truncated` is true and the list is a
+                 *     lower bound. Page through one canonical asset_id for
+                 *     the full set.
                  */
                 asset?: string;
                 /**
@@ -19933,10 +19958,10 @@ export interface operations {
                             activity_window_days?: number;
                             /**
                              * Format: int64
-                             * @description Total decoded contract events across the protocol over activity_window_days (sum of event_breakdown counts).
+                             * @description Total contract events across the protocol over activity_window_days (the sum of activity_series). event_breakdown is a separate aggregation; on the approximate daily rollup its sum can differ from this by estimation error.
                              */
                             events_total?: number;
-                            /** @description Event-type distribution (topic[0] symbol → count) over the window, descending — "which event types fired, and how often." */
+                            /** @description Event-type distribution (event name → count) over the window, descending. `untyped` is a counted type: events whose topics yield no name. `other` sums the types beyond the 5000 largest topic groups. Absent, with the series and total, when either read failed. */
                             event_breakdown?: {
                                 /** @example supply_collateral */
                                 event_type?: string;

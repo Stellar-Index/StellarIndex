@@ -19,6 +19,7 @@ import (
 type perAssetStaleReader struct {
 	rows map[string][]Market
 	errs map[string]error
+	next map[string]string
 }
 
 func (r *perAssetStaleReader) DistinctPairsExt(context.Context, string, int, timescale.MarketsOrder) ([]Market, string, error) {
@@ -61,7 +62,37 @@ func (r *perAssetStaleReader) AssetMarketsAt(_ context.Context, asset string, _ 
 	if err, ok := r.errs[asset]; ok {
 		return nil, "", time.Time{}, false, err
 	}
-	return r.rows[asset], "", time.Now(), false, nil
+	return r.rows[asset], r.next[asset], time.Now(), false, nil
+}
+
+// A capped merge, or a leg holding more than it returned, is a partial list and must say so: no cursor continues it.
+func TestFanOutAssetMarketsReportsTruncation(t *testing.T) {
+	two := []Market{{Base: "native", Quote: "a"}, {Base: "native", Quote: "b"}}
+	s := quietServer()
+	cases := []struct {
+		name   string
+		reader *perAssetStaleReader
+		limit  int
+		want   bool
+	}{
+		{"everything fits", &perAssetStaleReader{rows: map[string][]Market{"native": two}}, 10, false},
+		{"merge capped", &perAssetStaleReader{rows: map[string][]Market{
+			"native": two, "crypto:XLM": {{Base: "crypto:XLM", Quote: "c"}},
+		}}, 2, true},
+		{"a leg has a next page", &perAssetStaleReader{
+			rows: map[string][]Market{"native": two}, next: map[string]string{"native": "cursor"},
+		}, 10, true},
+	}
+	for _, c := range cases {
+		_, _, _, truncated, err := s.fanOutAssetMarkets(context.Background(), c.reader,
+			[]string{"native", "crypto:XLM"}, c.limit, timescale.MarketsOrderPair)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if truncated != c.want {
+			t.Errorf("%s: truncated = %v, want %v", c.name, truncated, c.want)
+		}
+	}
 }
 
 // TestFanOutAssetMarketsSurfacesPartialFailure: when one asset_id fan-out leg errors and another succeeds, the merged
@@ -77,7 +108,7 @@ func TestFanOutAssetMarketsSurfacesPartialFailure(t *testing.T) {
 	}
 	s := quietServer()
 
-	merged, _, stale, err := s.fanOutAssetMarkets(context.Background(), reader,
+	merged, _, stale, _, err := s.fanOutAssetMarkets(context.Background(), reader,
 		[]string{"native", "crypto:XLM"}, 100, timescale.MarketsOrderVolume24hDesc)
 	if err != nil {
 		t.Fatalf("fanOutAssetMarkets returned error %v, want nil (partial success)", err)
@@ -110,7 +141,7 @@ func TestFanOutAssetMarketsSortsByRequestedOrder(t *testing.T) {
 	}
 	s := quietServer()
 
-	merged, _, _, err := s.fanOutAssetMarkets(context.Background(), reader,
+	merged, _, _, _, err := s.fanOutAssetMarkets(context.Background(), reader,
 		[]string{"native"}, 100, timescale.MarketsOrderPair)
 	if err != nil {
 		t.Fatalf("fanOutAssetMarkets: %v", err)
@@ -120,7 +151,7 @@ func TestFanOutAssetMarketsSortsByRequestedOrder(t *testing.T) {
 			"the hardcoded trade-count sort must not override order_by", merged)
 	}
 
-	merged, _, _, err = s.fanOutAssetMarkets(context.Background(), reader,
+	merged, _, _, _, err = s.fanOutAssetMarkets(context.Background(), reader,
 		[]string{"native"}, 100, timescale.MarketsOrderVolume24hDesc)
 	if err != nil {
 		t.Fatalf("fanOutAssetMarkets: %v", err)
