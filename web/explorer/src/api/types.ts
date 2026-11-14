@@ -19925,7 +19925,7 @@ export interface operations {
                              * @description Total contract events across the protocol over activity_window_days (the sum of activity_series). event_breakdown is a separate aggregation; on the approximate daily rollup its sum can differ from this by estimation error.
                              */
                             events_total?: number;
-                            /** @description Event-type distribution (event name → count) over the window, descending. `untyped` is a counted type: events whose topics yield no name. Absent, with the series and total, when either read failed. */
+                            /** @description Event-type distribution (event name → count) over the window, descending. `untyped` is a counted type: events whose topics yield no name. `other` sums the types beyond the 5000 largest topic groups. Absent, with the series and total, when either read failed. */
                             event_breakdown?: {
                                 /** @example supply_collateral */
                                 event_type?: string;

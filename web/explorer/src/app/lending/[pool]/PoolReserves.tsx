@@ -36,6 +36,7 @@ interface ReservesResp {
   pool: string;
   tvl_usd: string | null;
   lower_bound?: boolean;
+  omitted_reserves?: string[];
   reserves: ReserveRow[];
 }
 
@@ -98,11 +99,13 @@ export function PoolReserves({ pool }: { pool: string }) {
   // Either signal makes the total partial: the served flag, or an unpriced
   // reserve the client-side fallback sum could not include.
   const unpriced = reserves.filter((rv) => rv.supplied_usd == null);
+  const omitted = q.data?.omitted_reserves ?? [];
   const lowerBound = q.data?.lower_bound === true || unpriced.length > 0;
-  const excluded =
-    unpriced.length > 0
-      ? unpriced.map((rv) => shortAssetText(rv.asset)).join(', ')
-      : 'reserves';
+  const left = [
+    ...unpriced.map((rv) => `${shortAssetText(rv.asset)} (unpriced)`),
+    ...omitted.map((a) => `${shortAssetText(a)} (no decoded state)`),
+  ];
+  const excluded = left.length > 0 ? left.join(', ') : 'some reserves';
 
   return (
     <Panel
@@ -127,7 +130,7 @@ export function PoolReserves({ pool }: { pool: string }) {
             {lowerBound ? (
               <>
                 (<strong>at least</strong> this — Σ supplied across priced
-                reserves; excludes unpriced {excluded})
+                reserves; excludes {excluded})
               </>
             ) : (
               '(Σ supplied across priced reserves)'
