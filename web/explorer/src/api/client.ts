@@ -169,6 +169,7 @@ export type Envelope<T> = {
   data: T;
   as_of?: string;
   flags?: EnvelopeFlags;
+  under_review_reason?: string;
   pagination?: { next?: string };
 };
 

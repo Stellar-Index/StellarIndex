@@ -130,10 +130,11 @@ export async function LiquidityTabPanel({
             <TBody>
               {merged.map((p) => {
                 const slug = encodeURIComponent(`${p.base}~${p.quote}`);
-                const avgTrade = divideDecimalString(
-                  p.volume_24h_usd,
-                  p.trade_count_24h,
-                );
+                // A floor divided by the full trade count is not an average.
+                const floor = p.volume_lower_bound === true;
+                const avgTrade = floor
+                  ? null
+                  : divideDecimalString(p.volume_24h_usd, p.trade_count_24h);
                 const lpFixed = p.last_price
                   ? formatPairPrice(p.last_price)
                   : null;
@@ -169,8 +170,16 @@ export async function LiquidityTabPanel({
                     </Td>
                     <Td align="right">
                       {p.volume_24h_usd ? (
-                        <span className="font-mono">
-                          ${formatCompactUnits(p.volume_24h_usd)}
+                        <span
+                          className="font-mono"
+                          title={
+                            floor
+                              ? 'Lower bound: unvalued pools and trades without a trade-time USD value are excluded.'
+                              : undefined
+                          }
+                        >
+                          {floor ? '≥ ' : ''}$
+                          {formatCompactUnits(p.volume_24h_usd)}
                         </span>
                       ) : (
                         <span className="text-ink-faint">—</span>

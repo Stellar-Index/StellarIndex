@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { supplyAsOfNote, withheldNote } from './headerNotes';
+import { marketCapNote, supplyAsOfNote, withheldNote } from './headerNotes';
 
 describe('withheldNote', () => {
   it('names each withheld reason', () => {
@@ -22,5 +22,20 @@ describe('supplyAsOfNote', () => {
   it('is silent when absent or unparseable', () => {
     expect(supplyAsOfNote(undefined)).toBeUndefined();
     expect(supplyAsOfNote('nope')).toBeUndefined();
+  });
+});
+
+describe('marketCapNote', () => {
+  it('names why a market cap is absent', () => {
+    expect(marketCapNote({ market_cap_decimals_mismatch: true })).toBe(
+      'refused · decimals disagree',
+    );
+    expect(marketCapNote({ market_cap_low_liquidity: true })).toBe(
+      'withheld · negligible liquidity',
+    );
+    expect(marketCapNote({ price_withheld_reason: 'substance' })).toBe(
+      'withheld · thin market',
+    );
+    expect(marketCapNote({})).toBeUndefined();
   });
 });

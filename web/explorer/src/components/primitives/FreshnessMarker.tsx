@@ -4,6 +4,8 @@ import { Badge, type BadgeTone } from '@/components/ui';
 export type FreshnessMarkerProps = {
   /** The response envelope's `flags`; absent renders nothing. */
   flags?: EnvelopeFlags | null;
+  /** The envelope's `under_review_reason`, shown on the hold's badge. */
+  underReviewReason?: string;
   className?: string;
 };
 
@@ -13,6 +15,13 @@ const MARKERS: {
   tone: BadgeTone;
   title: string;
 }[] = [
+  {
+    key: 'under_review',
+    label: 'Under review',
+    tone: 'warn',
+    title:
+      'An operator has put these figures on hold; treat them as unconfirmed.',
+  },
   {
     key: 'frozen',
     label: 'Frozen',
@@ -48,17 +57,30 @@ const MARKERS: {
 
 /**
  * FreshnessMarker — renders the degradation flags a /v1 envelope carries
- * (frozen, stale, divergence, reduced redundancy, triangulated) so a
+ * (under review, frozen, stale, divergence, reduced redundancy, triangulated) so a
  * client-fetched page shows the same caveats the API published.
  */
-export function FreshnessMarker({ flags, className }: FreshnessMarkerProps) {
+export function FreshnessMarker({
+  flags,
+  underReviewReason,
+  className,
+}: FreshnessMarkerProps) {
   if (!flags) return null;
   const set = MARKERS.filter((m) => flags[m.key] === true);
   if (set.length === 0) return null;
   return (
     <span className={className}>
       {set.map((m) => (
-        <Badge key={m.key} tone={m.tone} title={m.title} className="mr-1">
+        <Badge
+          key={m.key}
+          tone={m.tone}
+          title={
+            m.key === 'under_review' && underReviewReason
+              ? `${m.title} Reason: ${underReviewReason}`
+              : m.title
+          }
+          className="mr-1"
+        >
           {m.label}
         </Badge>
       ))}

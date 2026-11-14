@@ -124,7 +124,7 @@ export function SystemHealthLivePanel() {
           status={archiveStatus(coverage.data)}
           subtext={
             coverage.data
-              ? `${coverage.data.lake_complete_sources}/${coverage.data.total_sources} sources genesis-complete (/v1/coverage)`
+              ? `${coverage.data.lake_complete_sources}/${coverage.data.total_sources} sources genesis-complete${coverage.data.stale ? ', verdicts stale' : ''} (/v1/coverage)`
               : 'verdict unavailable (/v1/coverage)'
           }
         />
@@ -195,8 +195,10 @@ type HealthStatus = 'ok' | 'degraded' | 'down' | 'unknown';
 
 // A missing or empty verdict renders unknown, never ok: absence of a
 // completeness result is not evidence of completeness.
-function archiveStatus(v: CoverageVerdicts | undefined): HealthStatus {
-  if (!v || v.total_sources <= 0) return 'unknown';
+function archiveStatus(
+  v: (CoverageVerdicts & { stale?: boolean }) | undefined,
+): HealthStatus {
+  if (!v || v.stale || v.total_sources <= 0) return 'unknown';
   if (v.lake_complete_sources >= v.total_sources) return 'ok';
   return v.lake_complete_sources > 0 ? 'degraded' : 'down';
 }

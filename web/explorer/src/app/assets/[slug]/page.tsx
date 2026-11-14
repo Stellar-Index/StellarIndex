@@ -6,7 +6,7 @@ import { BadgeCheck } from 'lucide-react';
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
 import type { components } from '@/api/types';
-import { supplyAsOfNote, withheldNote } from './headerNotes';
+import { marketCapNote, supplyAsOfNote } from './headerNotes';
 import {
   buildFetchData,
   buildFetchEnvelope,
@@ -1214,6 +1214,10 @@ function OverviewBody({
             <Stat
               label="Volume 24h"
               value={fmtUsd(detail?.volume_24h_usd ?? coin.volume_24h_usd)}
+              accent={
+                (detail ?? coin).volume_lower_bound ? 'lower bound' : undefined
+              }
+              accentTone="amber"
             />
             <Stat
               label="Markets 24h"
@@ -1226,7 +1230,7 @@ function OverviewBody({
             <Stat
               label="Market cap"
               value={fmtUsd(detail?.market_cap_usd ?? coin.market_cap_usd)}
-              accent={withheldNote(detail?.price_withheld_reason)}
+              accent={marketCapNote(detail ?? coin)}
               accentTone="amber"
             />
             <Stat

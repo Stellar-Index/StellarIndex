@@ -96,7 +96,11 @@ export function SupplyTabPanel({ assetID }: { assetID: string }) {
       source={asExample('/v1/assets/{asset_id}', { asset_id: assetID })}
       bodyClassName="space-y-4"
     >
-      <FreshnessMarker flags={asset.data?.flags} className="block" />
+      <FreshnessMarker
+        flags={asset.data?.flags}
+        underReviewReason={asset.data?.under_review_reason}
+        className="block"
+      />
       {onchain.data?.data && (
         <OnChainSupply env={onchain.data} assetDecimals={a.decimals} />
       )}
@@ -309,7 +313,10 @@ function OnChainSupply({
         className={`${PANEL_LABEL_CLASS} mb-3 flex flex-wrap items-center gap-2`}
       >
         On-chain supply (live)
-        <FreshnessMarker flags={env.flags} />
+        <FreshnessMarker
+          flags={env.flags}
+          underReviewReason={env.under_review_reason}
+        />
       </h3>
       <div className="grid grid-cols-2 gap-3">
         <Metric

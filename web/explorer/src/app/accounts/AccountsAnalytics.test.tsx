@@ -101,3 +101,19 @@ describe('AccountsAnalytics XLM held', () => {
     expect(await screen.findByText('512.3T XLM')).toBeInTheDocument();
   });
 });
+
+describe('AccountsAnalytics freshness', () => {
+  it('dates the snapshot and marks a stale one', async () => {
+    const { apiGet } = await import('@/api/client');
+    vi.mocked(apiGet).mockResolvedValueOnce({
+      ...statsFixture,
+      flags: { stale: true },
+    } as never);
+    renderWithQuery(<AccountsAnalytics />);
+
+    expect(
+      await screen.findByText(/as of 2026-08-08 19:30:00 UTC/),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Stale')).toBeInTheDocument();
+  });
+});

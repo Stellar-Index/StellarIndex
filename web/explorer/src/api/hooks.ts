@@ -614,6 +614,7 @@ export type CoinsPage = {
   coins: Coin[];
   next_cursor: string;
   limit: number;
+  flags?: EnvelopeFlags;
 };
 
 /**
@@ -836,6 +837,7 @@ export function useCoins(
         coins: env.data ?? [],
         next_cursor: env.pagination?.next ?? '',
         limit,
+        flags: env.flags,
       };
     },
     // Keep showing the previous page data while a new query (e.g.
@@ -1050,11 +1052,12 @@ export type RecognitionAxis = CoverageVerdicts['recognition'];
  * runs (timer cadence: hours), so a 60s stale window costs nothing.
  */
 export function useCoverage() {
-  return useQuery<CoverageVerdicts>({
+  return useQuery<CoverageVerdicts & { stale?: boolean }>({
     queryKey: ['/v1/coverage'],
     queryFn: async () => {
-      const env = await apiGet<{ data: CoverageVerdicts }>('/v1/coverage');
-      return env.data;
+      const env = await apiGet<Envelope<CoverageVerdicts>>('/v1/coverage');
+      // Stale verdicts describe an older tip; callers must not read them as current.
+      return { ...env.data, stale: env.flags?.stale === true };
     },
     staleTime: 60_000,
     refetchInterval: 60_000,

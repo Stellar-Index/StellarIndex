@@ -28,3 +28,19 @@ export function supplyAsOfNote(
     ? undefined
     : `as of ${d.toISOString().slice(0, 10)}`;
 }
+
+// A null market cap with no withheld price still has a served reason.
+export function marketCapNote(a: {
+  price_withheld_reason?: Reason | null;
+  market_cap_decimals_mismatch?: boolean;
+  market_cap_low_liquidity?: boolean;
+}): string | undefined {
+  return (
+    withheldNote(a.price_withheld_reason) ??
+    (a.market_cap_decimals_mismatch
+      ? 'refused · decimals disagree'
+      : a.market_cap_low_liquidity
+        ? 'withheld · negligible liquidity'
+        : undefined)
+  );
+}
