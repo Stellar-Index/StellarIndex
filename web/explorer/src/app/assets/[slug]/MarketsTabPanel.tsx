@@ -197,7 +197,11 @@ function Row({
   const isBase = matches(m.base ?? '');
   const counterparty = isBase ? m.quote : m.base;
   const pairSlug = `${m.base}~${m.quote}`;
-  const avgTrade = divideDecimalString(m.volume_24h_usd, m.trade_count_24h);
+  // A floor divided by the full trade count is not an average.
+  const floor = m.volume_lower_bound === true;
+  const avgTrade = floor
+    ? null
+    : divideDecimalString(m.volume_24h_usd, m.trade_count_24h);
   return (
     <LinkRow href={`/markets/${encodeURIComponent(pairSlug)}/`}>
       <Td className="whitespace-nowrap">
@@ -216,8 +220,17 @@ function Row({
         </span>
       </Td>
       <Td align="right">
-        <span className="font-mono text-xs">
-          {m.volume_24h_usd ? `$${formatCompactUnits(m.volume_24h_usd)}` : '—'}
+        <span
+          className="font-mono text-xs"
+          title={
+            floor
+              ? 'Lower bound: trades without a trade-time USD value are excluded.'
+              : undefined
+          }
+        >
+          {m.volume_24h_usd
+            ? `${floor ? '≥ ' : ''}$${formatCompactUnits(m.volume_24h_usd)}`
+            : '—'}
         </span>
         {barPct > 0 && (
           <span

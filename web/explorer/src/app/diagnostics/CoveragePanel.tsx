@@ -62,8 +62,13 @@ export function CoveragePanel() {
     );
   }
 
-  const allComplete = data.complete_sources === data.total_sources;
-  const allLakeComplete = data.lake_complete_sources === data.total_sources;
+  // Stale verdicts are not a current claim, so neither pill may read green.
+  const allComplete =
+    !data.stale && data.complete_sources === data.total_sources;
+  const allLakeComplete =
+    !data.stale && data.lake_complete_sources === data.total_sources;
+  const unverified = data.unverified_sources ?? [];
+  const lagging = data.lagging_sources ?? [];
 
   return (
     <section className="border-line bg-surface rounded-lg border p-4">
@@ -90,6 +95,14 @@ export function CoveragePanel() {
           >
             {data.lake_complete_sources}/{data.total_sources} archive (lake)
           </span>
+          {data.stale && (
+            <Badge
+              tone="warn"
+              title="The completeness audit has not run recently; these verdicts describe an older tip."
+            >
+              Stale
+            </Badge>
+          )}
         </div>
         <span className="text-ink-faint text-xs">
           /v1/coverage ·{' '}
@@ -135,6 +148,20 @@ export function CoveragePanel() {
           </tbody>
         </table>
       </div>
+
+      {unverified.length > 0 && (
+        <p className="text-warn-700 mt-3 text-xs">
+          <span className="font-medium">No verdict yet:</span>{' '}
+          {unverified.map((u) => `${u.source} (${u.reason})`).join(', ')}.
+          Counted in the total, never as complete.
+        </p>
+      )}
+      {lagging.length > 0 && (
+        <p className="text-warn-700 mt-3 text-xs">
+          <span className="font-medium">Verdict from an earlier run:</span>{' '}
+          {lagging.map((l) => `${l.source} (${l.reason})`).join(', ')}.
+        </p>
+      )}
 
       <RecognitionAxisCard rec={data.recognition} />
 

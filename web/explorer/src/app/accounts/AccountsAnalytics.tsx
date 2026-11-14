@@ -3,7 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
-import { Stat, StatCell, StatGrid } from '@/components/ui';
+import { Badge, Stat, StatCell, StatGrid } from '@/components/ui';
 import { HBarList, type HBarItem } from '@/components/charts/Bars';
 import { AssetLink } from '@/components/AssetLink';
 import { apiGet, asExample } from '@/api/client';
@@ -51,16 +51,16 @@ function wealthBucketLabel(bucket: number): string {
 function asOf(iso: string): string {
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return `as of ${iso}`;
-  return `as of ${new Date(t).toISOString().slice(11, 19)} UTC`;
+  return `as of ${new Date(t).toISOString().slice(0, 19).replace('T', ' ')} UTC`;
 }
 
 export function AccountsAnalytics() {
-  const q = useQuery<AccountsStatsResp>({
+  const q = useQuery<AccountsStatsResp & { stale?: boolean }>({
     queryKey: ['/v1/accounts/stats'],
     queryFn: async () => {
       const env =
         await apiGet<Envelope<AccountsStatsResp>>('/v1/accounts/stats');
-      return env.data;
+      return { ...env.data, stale: env.flags?.stale === true };
     },
     retry: false,
     refetchInterval: 10 * 60 * 1000,
@@ -163,6 +163,15 @@ export function AccountsAnalytics() {
           title="Snapshot recomputed every 30 minutes from the captured ledger state. Balance statistics cover funded accounts' XLM."
         >
           {asOf(s.computed_at)}
+          {s.stale && (
+            <Badge
+              tone="warn"
+              className="ml-2"
+              title="The snapshot is older than its refresh cycle; these figures are not current."
+            >
+              Stale
+            </Badge>
+          )}
         </p>
       </Panel>
 

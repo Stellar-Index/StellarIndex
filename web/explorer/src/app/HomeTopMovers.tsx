@@ -10,6 +10,7 @@ import { useCoins, useVerifiedSlugs, coinSlug, type Coin } from '@/api/hooks';
 import { assetHref } from '@/lib/fiat-slugs';
 import { assetLabel } from '@/lib/asset-label';
 import { useLedgerFollow } from '@/lib/live/hooks';
+import { FreshnessMarker } from '@/components/primitives/FreshnessMarker';
 
 /**
  * HomeTopMovers — top 5 gainers + top 5 losers by 24h % change.
@@ -40,7 +41,10 @@ export function HomeTopMovers() {
   return (
     <section className="space-y-3">
       <div className="space-y-1">
-        <h2 className="text-h3 text-ink font-semibold">Top movers</h2>
+        <h2 className="text-h3 text-ink flex flex-wrap items-center gap-2 font-semibold">
+          Top movers
+          <FreshnessMarker flags={data?.flags} />
+        </h2>
         <p className="text-ink-body text-sm">
           24h price change, most active classic assets.
         </p>

@@ -122,4 +122,27 @@ describe('CoveragePanel', () => {
       screen.getByText(/legacy row written before the census format existed/),
     ).toBeInTheDocument();
   });
+
+  it('does not read stale verdicts as complete, and names lagging sources', () => {
+    renderWith({
+      sources: [blend],
+      recognition,
+      complete_sources: 1,
+      lake_complete_sources: 1,
+      total_sources: 1,
+      network: 'pubnet',
+      not_applicable_sources: [],
+      unverified_sources: [],
+      lagging_sources: [
+        { source: 'comet', tip_ledger: 64000000, reason: 'older run' },
+      ],
+      stale: true,
+    });
+
+    expect(screen.getByText('Stale')).toBeInTheDocument();
+    expect(screen.getByText(/comet \(older run\)/)).toBeInTheDocument();
+    expect(screen.getByTitle(/^Served tier: substrate \+ recognition \+ projection verified/).className).not.toContain(
+      'text-up',
+    );
+  });
 });

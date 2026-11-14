@@ -40,6 +40,7 @@ import { StellarMark } from '@/components/StellarMark';
 import { RequestReveal } from '@/components/reveal/RequestReveal';
 import { asExample } from '@/api/client';
 import { assetLabel } from '@/lib/asset-label';
+import { FreshnessMarker } from '@/components/primitives/FreshnessMarker';
 
 /**
  * HomeTopAssets — the top 10 assets ranked by trailing-24h trading
@@ -98,6 +99,7 @@ export function HomeTopAssets() {
           </p>
         </div>
         <div className="flex items-center gap-3 whitespace-nowrap">
+          <FreshnessMarker flags={data?.flags} />
           <RequestReveal example={listExample} position="inline" />
           <Link
             href="/assets"
