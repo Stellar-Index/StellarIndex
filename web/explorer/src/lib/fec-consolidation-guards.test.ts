@@ -46,6 +46,7 @@ describe('FEC guards (repo-walk)', () => {
       'components/LastPriceCell.tsx',
       'app/exchanges/ExchangesView.tsx',
       'app/embed/currency/[ticker]/page.tsx',
+      'app/embed/currency/[ticker]/LiveUsdRate.tsx',
       'app/markets/[pair]/page.tsx',
       'app/markets/[pair]/TradeScatter.tsx',
       'app/sources/[name]/page.tsx',
