@@ -53,7 +53,9 @@ of it; on the running host do the ownership flips in this order:
    (`systemctl list-units 'stellarindex-*' '*completeness*' 'ch-supply*' 'sep1-*' 'data-freshness*' 'supply-snapshot*' 'verify-archive-*'`),
    then `systemctl stop stellarindex-api stellarindex-aggregator stellarindex-indexer`
 3. Chown state + env files (binaries in `/usr/local/bin` stay root:root 0755):
-   - `chown -R stellarindex:stellarindex /var/lib/stellarindex`
+   - `chown root:stellarindex /var/lib/stellarindex && chmod 1770 /var/lib/stellarindex`, then
+     `chown stellarindex:stellarindex` the service's own files there (`verify-archive-state.json`,
+     `hashdb.bin`, `*.lock`). Never `-R`: root jobs keep state in the subdirectories.
    - `chown -R stellarindex:stellarindex /var/lib/node_exporter/textfile_collector`
    - `chgrp stellarindex /etc/default/stellarindex /etc/default/stellarindex-ops && chmod 0640 /etc/default/stellarindex /etc/default/stellarindex-ops`
 4. Install the units (`--tags stellarindex`), `systemctl daemon-reload`.

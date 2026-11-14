@@ -46,15 +46,35 @@
   when: run_minio | bool
 
 - name: Ownership — stellarindex data dir
-  # WorkingDirectory + verify-archive state file + deployed-versions
-  # sidecars live here. deploy-one-binary.yml writes the sidecars as
-  # root, which still works inside a stellarindex-owned dir.
+  # Root jobs keep state in subdirectories here, so the service user must not
+  # be able to rename them away and plant its own: root owns the directory and
+  # the sticky bit limits the service user (group rwx) to entries it created.
   ansible.builtin.file:
     path: /var/lib/stellarindex
     state: directory
-    owner: stellarindex
+    owner: root
     group: stellarindex
-    mode: "0750"
+    mode: "1770"
+
+- name: Ownership — root job state under the stellarindex data dir
+  # Created here, before any service runs, so a root script's own `mkdir -p`
+  # never adopts a directory the service user made first.
+  ansible.builtin.file:
+    path: "/var/lib/stellarindex/{{ item.name }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+    follow: false
+  loop:
+    - { name: deployed-versions, mode: "0755" }
+    - { name: catchup, mode: "0755" }
+    - { name: restore-drills, mode: "0755" }
+    - { name: config-backup, mode: "0700" }
+    - { name: ch-lake-backup, mode: "0750" }
+    - { name: ch-schema-snapshot, mode: "0750" }
+  loop_control:
+    label: "{{ item.name }}"
 
 - name: Ownership — stellar-core data dir
   ansible.builtin.file:

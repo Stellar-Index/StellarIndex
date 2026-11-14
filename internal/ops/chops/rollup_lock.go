@@ -44,8 +44,8 @@ func acquireRollupLock(job, path string) (func(), error) {
 	}, nil
 }
 
-// handLockToDirOwner gives a lock file a root run created to its directory's owner; left root-owned 0600, the unit's
-// non-root user could never open it again.
+// handLockToDirOwner makes a lock file a root run created openable by the unit's non-root user; left root-owned 0600
+// it never could be. A service-owned directory gets the file; a root-owned one shares it with the directory's group.
 func handLockToDirOwner(f *os.File, dir string) error {
 	dst, err := os.Stat(dir)
 	if err != nil {
@@ -60,17 +60,25 @@ func handLockToDirOwner(f *os.File, dir string) error {
 	if !dok || !lok {
 		return nil
 	}
-	uid, gid, need := lockChownTarget(os.Geteuid(), d.Uid, d.Gid, l.Uid)
+	uid, gid, mode, need := lockChownTarget(os.Geteuid(), d.Uid, d.Gid, l.Uid)
 	if !need {
 		return nil
 	}
-	return f.Chown(uid, gid)
+	if err := f.Chown(uid, gid); err != nil {
+		return err
+	}
+	return f.Chmod(mode)
 }
 
-// lockChownTarget reports whether a process with euid must chown a lock file owned by fileUID to its directory's owner.
-func lockChownTarget(euid int, dirUID, dirGID, fileUID uint32) (int, int, bool) {
-	if euid != 0 || fileUID == dirUID {
-		return 0, 0, false
+// lockChownTarget reports the owner and mode a process with euid must give a lock file owned by fileUID: the directory's
+// owner when that is a service user, root plus the directory's group (0660) when root owns the directory.
+func lockChownTarget(euid int, dirUID, dirGID, fileUID uint32) (uid, gid int, mode os.FileMode, need bool) {
+	switch {
+	case euid != 0 || fileUID != 0:
+		return 0, 0, 0, false
+	case dirUID == 0:
+		return 0, int(dirGID), 0o660, true
+	default:
+		return int(dirUID), int(dirGID), 0o600, true
 	}
-	return int(dirUID), int(dirGID), true
 }

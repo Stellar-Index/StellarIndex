@@ -63,6 +63,16 @@
   register: sidecar
   ignore_errors: true
 
+- name: "[{{ binary }}] Refuse a sidecar that is not a version string"
+  # The value names the rollback copy under install_dir; anything but a tag here is corruption or tampering.
+  ansible.builtin.assert:
+    that:
+      - (sidecar.content | b64decode | trim) is match('^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$')
+    fail_msg: >-
+      /var/lib/stellarindex/deployed-versions/{{ binary }} does not hold a version string.
+      Inspect it on the host before deploying; do not delete it without knowing why it changed.
+  when: sidecar is succeeded and sidecar.content is defined
+
 - name: "[{{ binary }}] Compute backup tag"
   ansible.builtin.set_fact:
     # Prefer the sidecar; fall back to a UTC timestamp so first-ever
@@ -119,7 +129,12 @@
   block:
     - name: "[{{ binary }}] Backup current binary"
       ansible.builtin.command:
-        cmd: "ln -f {{ install_dir }}/{{ binary }} {{ install_dir }}/{{ binary }}.prev-{{ backup_tag }}"
+        argv:
+          - ln
+          - -f
+          - --
+          - "{{ install_dir }}/{{ binary }}"
+          - "{{ install_dir }}/{{ binary }}.prev-{{ backup_tag }}"
       when: current_stat.stat.exists
 
     - name: "[{{ binary }}] Stamp backup mtime to now (backup time, not the binary's original copy time)"

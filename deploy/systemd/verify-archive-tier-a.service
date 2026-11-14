@@ -106,7 +106,7 @@ ExecStart=/usr/local/bin/stellarindex-ops verify-archive \
 
 # De-privileged to match the deployed template: writes only the
 # state file under /var/lib/stellarindex and the textfile metric, both
-# stellarindex-owned. A manual install needs that user and directory
+# writable by stellarindex. A manual install needs that user and directory
 # first (04-users.yml).
 User=stellarindex
 Group=stellarindex

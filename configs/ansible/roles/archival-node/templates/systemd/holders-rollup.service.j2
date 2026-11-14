@@ -50,7 +50,7 @@ ProtectControlGroups=true
 # makes the whole filesystem read-only except what is listed here —
 # PrivateTmp is per-unit-instance and would NOT be visible to a
 # manually-invoked process outside systemd, so the lock has to live on
-# the shared, already stellarindex-owned data dir, not under /tmp.
+# the shared data dir the stellarindex group can already write, not under /tmp.
 ReadWritePaths=/var/lib/stellarindex /var/lib/node_exporter/textfile_collector
 
 # The cycle runs its statements serially and seven of them cap
