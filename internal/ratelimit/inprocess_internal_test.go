@@ -174,6 +174,9 @@ func TestLocalStore_FullMapThrottlesTheFloodingRegionOnly(t *testing.T) {
 	if take("anon:2001:db8:b:1::") {
 		t.Error("the flooding /32 must share one budget across its /48s once the map is full")
 	}
+	if take("anon:2001:db8:0:5::") {
+		t.Error("a /48 that is out of allowance must land in its /32's one bucket, not a second one")
+	}
 	if got := len(s.entries); got != 9 { // 6 tracked + 3 region buckets
 		t.Errorf("entries = %d, want 9", got)
 	}

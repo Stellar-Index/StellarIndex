@@ -103,6 +103,7 @@ func (s *localStore) take(key string, window int64, limit int, now time.Time, wi
 // admitLocked picks the bucket for an untracked key: its own, its /48's shared bucket once that
 // /48 is out of allowance, or once the map is full its region's bucket, else [localOverflowKey]. Caller holds s.mu.
 func (s *localStore) admitLocked(key string, window int64) string {
+	orig := key
 	p48, isV6 := slash48Key(key)
 	if isV6 {
 		c := s.per48[p48]
@@ -120,7 +121,8 @@ func (s *localStore) admitLocked(key string, window int64) string {
 		return key
 	}
 	obs.RateLimitInProcessOverflowTotal.Inc()
-	if region, ok := regionKey(key); ok {
+	// From the caller's key: the /48 tag would give one /32 a second region bucket.
+	if region, ok := regionKey(orig); ok {
 		bucket := localRegionBucketTag + region
 		if _, tracked := s.entries[bucket]; tracked || len(s.entries) < s.maxKeys+s.maxRegions {
 			return bucket

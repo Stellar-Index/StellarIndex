@@ -1300,11 +1300,11 @@ var RateLimitFailOpenTotal = prometheus.NewCounter(
 	},
 )
 
-// RateLimitInProcessOverflowTotal counts requests an in-process limiter could not give a private counter because its key map was full.
+// RateLimitInProcessOverflowTotal counts takes an in-process limiter could not give a private counter because its key map was full.
 var RateLimitInProcessOverflowTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_ratelimit_inprocess_overflow_total",
-		Help: "Requests counted against a shared region or overflow bucket because an in-process limiter's key map was full.",
+		Help: "Takes (one per token charged) counted against a shared region or overflow bucket because an in-process limiter's key map was full.",
 	},
 )
 
