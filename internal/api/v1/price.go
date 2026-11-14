@@ -1997,6 +1997,7 @@ func (s *Server) holdFrozenBatchRow(r *http.Request, row batchRowResult, served,
 	held := s.resolveFrozenServeFor(r, row.snap, row.asset, served, quote)
 	switch held.outcome {
 	case frozenServeNotFrozen:
+		row.freezeUnknown = s.Freeze != nil && !held.checked
 		return row
 	case frozenServeNothingHeld:
 		return batchRowResult{skip: true}
@@ -2172,7 +2173,9 @@ type batchRowResult struct {
 	thin bool
 	// readFailed qualifies a skip: dropped because a read failed, not because there is no price.
 	readFailed bool
-	fail       *batchRowFailure
+	// freezeUnknown: a wired freeze marker did not answer, so the row is served with no verdict and derives no single_source.
+	freezeUnknown bool
+	fail          *batchRowFailure
 }
 
 // batchRowFailure aborts the whole batch with a problem+json. It is a value because resolveBatchRow runs in a worker goroutine,
@@ -2186,16 +2189,12 @@ type batchRowFailure struct {
 
 // resolveBatchRowShared coalesces [Server.resolveBatchRow] across concurrent requests for the same (id, quote, include_thin):
 // sharded explorer builds ask for the same cold 100-id chunks at once, and each duplicate re-ran the gates and fallback chain.
-// The shared work keeps the leader's deadline (priceReadFlightTimeout if none) but not its cancellation, so one client
-// hanging up can't fail the row for the rest.
+// The shared work runs on its own priceReadFlightTimeout budget, never the leader's deadline or cancellation: a leader that had
+// overrun would otherwise fail the freeze read and hand every follower the bucket the freeze refused.
 func (s *Server) resolveBatchRowShared(ctx context.Context, r *http.Request, raw string, quote canonical.Asset) batchRowResult {
 	key := raw + "/" + quote.String() + "/thin:" + strconv.FormatBool(includeThinRequested(r))
 	v, _, _ := s.batchRowFlight.Do(key, func() (any, error) { //nolint:contextcheck // deliberately detached from the leader's cancellation, see above
-		dl, ok := ctx.Deadline()
-		if !ok {
-			dl = time.Now().Add(priceReadFlightTimeout)
-		}
-		fctx, cancel := context.WithDeadline(context.WithoutCancel(ctx), dl)
+		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), priceReadFlightTimeout)
 		defer cancel()
 		return s.resolveBatchRow(fctx, r.WithContext(fctx), raw, quote), nil
 	})
@@ -2335,6 +2334,11 @@ func (s *Server) lookupPriceBatch(w http.ResponseWriter, r *http.Request, ids []
 			defer worker.Recover(s.logger, "api-price-batch-row")
 			sem <- struct{}{}
 			defer func() { <-sem }()
+			if ctx.Err() != nil {
+				// The request is over: starting a row now would only open a flight for others to join.
+				results[i] = batchRowResult{skip: true, readFailed: true}
+				return
+			}
 			results[i] = s.resolveBatchRowShared(ctx, r, raw, quote)
 		}(i, raw)
 	}
@@ -2360,11 +2364,11 @@ func (s *Server) lookupPriceBatch(w http.ResponseWriter, r *http.Request, ids []
 	writeEnvelope(w, env)
 }
 
-// batchDegraded reports a row dropped by a failed read or recovered panic, not a genuine miss.
+// batchDegraded reports a row dropped by a failed read or recovered panic, not a genuine miss, or served with no freeze verdict.
 func batchDegraded(results []batchRowResult) bool {
 	for i := range results {
 		r := &results[i]
-		if r.readFailed || (!r.ok && !r.skip && r.fail == nil) {
+		if r.readFailed || r.freezeUnknown || (!r.ok && !r.skip && r.fail == nil) {
 			return true
 		}
 	}
@@ -2402,7 +2406,7 @@ func batchEnvelope(ids []string, results []batchRowResult) Envelope {
 		if row.frozen {
 			anyFrozen = true
 			anySingleSource = true // freeze implies single-source
-		} else if marketSingleSource(row.snap, row.sources) {
+		} else if !row.freezeUnknown && marketSingleSource(row.snap, row.sources) {
 			anySingleSource = true
 		}
 		out = append(out, row.snap)
