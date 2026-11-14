@@ -198,22 +198,27 @@ func touchedDirs(files []string) (map[string]bool, bool, error) {
 			}
 		}
 		dirs[wiringPkg] = true
-		readers, err := gitGrep(path.Base(f), "*.go")
-		if err != nil {
+		if err := markPathReaders(f, dirs); err != nil {
 			return nil, false, err
-		}
-		for _, r := range readers {
-			dirs[path.Dir(r)] = true
-		}
-		walkers, err := walkerReaders(f, gitGrep)
-		if err != nil {
-			return nil, false, err
-		}
-		for _, r := range walkers {
-			dirs[path.Dir(r)] = true
 		}
 	}
 	return dirs, false, nil
+}
+
+// markPathReaders marks the packages whose Go files name f, or whose tests name a directory above it.
+func markPathReaders(f string, dirs map[string]bool) error {
+	readers, err := gitGrep(path.Base(f), "*.go")
+	if err != nil {
+		return err
+	}
+	walkers, err := walkerReaders(f, gitGrep)
+	if err != nil {
+		return err
+	}
+	for _, r := range append(readers, walkers...) {
+		dirs[path.Dir(r)] = true
+	}
+	return nil
 }
 
 // walkerReaders returns the tests that name one of f's ancestor directories
