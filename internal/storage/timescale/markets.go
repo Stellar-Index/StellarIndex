@@ -674,13 +674,22 @@ const distinctPairsActivityCTEs = `
              GROUP BY p.base_asset, p.quote_asset
         ),
         -- Pairs with a trade in the window that carried no trade-time usd_volume: vol_24h_num leaves those out.
+        -- The hourly view starts at the bucket holding the window's first minute and is materialized only to
+        -- the last closed hour (5 min end_offset), so the two newest hours are read from trades.
         u AS (
-            SELECT DISTINCT r.base_asset, r.quote_asset
+            SELECT r.base_asset, r.quote_asset
               FROM pools_per_source_1h r
-             WHERE r.bucket >= NOW() - INTERVAL '24 hours'
+             WHERE r.bucket >= date_trunc('hour', NOW() - INTERVAL '24 hours')
                AND r.sum_base_unpriced IS NOT NULL
                AND ($4 = '' OR r.source = $4)
                AND (cardinality($5::text[]) = 0 OR r.base_asset = ANY($5) OR r.quote_asset = ANY($5))
+            UNION
+            SELECT t.base_asset, t.quote_asset
+              FROM trades t
+             WHERE t.ts >= date_trunc('hour', NOW()) - INTERVAL '1 hour'
+               AND t.usd_volume IS NULL
+               AND ($4 = '' OR t.source = $4)
+               AND (cardinality($5::text[]) = 0 OR t.base_asset = ANY($5) OR t.quote_asset = ANY($5))
         ),
 `
 
