@@ -307,6 +307,9 @@ type AssetDetail struct {
 	// issuerDirectoryUnchecked: the directory read for this issuer failed,
 	// so the absence of a scam tag proves nothing and pricing is withheld.
 	issuerDirectoryUnchecked bool
+	// twinSeriesWithheld: the catalogue row's Stellar twin had its on-chain price withheld or marked thin, so its raw series is not
+	// publishable beside the row's global price.
+	twinSeriesWithheld bool
 	// priceUnmeasured: the substance gate could not measure this row, so its
 	// missing price is an unanswered read, not a market that produced none.
 	priceUnmeasured bool
@@ -887,6 +890,7 @@ func (s *Server) buildAssetListPage(
 	// asset_listing_valuation.go.
 	s.applyListingValuations(r.Context(), out)
 	s.fillImagesFromSep1(r.Context(), out)
+	suppressFlaggedIssuerIdentities(out)
 	// Last, after every price producer and both gates: the sparkline attaches only to rows that
 	// still publish a price.
 	s.attachSparklinesIfRequested(r, out)
@@ -2345,6 +2349,7 @@ func (s *Server) fetchClassicUnifiedRows(
 	// asset_listing_valuation.go.
 	s.applyListingValuations(r.Context(), out)
 	s.fillImagesFromSep1(r.Context(), out)
+	suppressFlaggedIssuerIdentities(out)
 	s.attachSparklinesIfRequested(r, out)
 	nextInner := ""
 	// `hasMore` alone, NOT `hasMore && len(out) > 0`: `out` shrinks after the query (twin
@@ -2532,6 +2537,7 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// flags.unverified_ticker_collision when the code matches a verified ticker but the issuer
 	// does not.
 	flags := s.verifiedCurrencyFlags(&detail, parsed)
+	suppressFlaggedIssuerIdentity(&detail)
 	// Output-only summary of the finished payload; nothing upstream reads it.
 	detail.Trust = buildAssetTrust(&detail, flags.UnverifiedTickerCollision)
 	// Every enrichment is best-effort and just leaves its field null, so a context that died in the
@@ -2968,6 +2974,9 @@ func (s *Server) handleAssetMetadata(w http.ResponseWriter, r *http.Request) {
 	} else if detail.HomeDomain != nil && *detail.HomeDomain != "" && detail.Sep1Status == "" {
 		detail.Sep1Status = "not_fetched"
 	}
+	stampIssuerScamReason(&detail, parsed)
+	s.applyIssuerDirectoryTags(r.Context(), &detail)
+	suppressFlaggedIssuerIdentity(&detail)
 
 	out := AssetMetadata{
 		AssetID:         detail.AssetID,
@@ -3376,7 +3385,8 @@ func priceSeriesPublishable(d *AssetDetail) bool {
 	if d == nil {
 		return false
 	}
-	return d.PriceUSD != nil && d.PriceBasis != priceBasisDeclaredPeg && d.PriceBasis != priceBasisGlobalMarket && !d.ThinMarket
+	return d.PriceUSD != nil && d.PriceBasis != priceBasisDeclaredPeg && d.PriceBasis != priceBasisGlobalMarket && !d.ThinMarket &&
+		!d.twinSeriesWithheld
 }
 
 // seriesAssetIDForRow resolves the asset_id behind a row's price series: a catalogue row's Stellar twin; "" when the entry has
@@ -3846,6 +3856,7 @@ func mergeTwinStats(dst *AssetDetail, twin AssetDetail) {
 	// reference without its valuation would be a price with no statement of what it was used for.
 	dst.ListingReference = twin.ListingReference
 	dst.ListingValuation = twin.ListingValuation
+	dst.twinSeriesWithheld = twin.PriceWithheldReason != "" || twin.ThinMarket
 	carryTwinIssuerVerdict(dst, twin)
 }
 

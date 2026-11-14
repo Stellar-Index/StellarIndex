@@ -1,6 +1,9 @@
 package v1
 
-import "github.com/Stellar-Index/StellarIndex/internal/canonical"
+import (
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
+)
 
 // scamFlag marks a G-strkey that stellar.expert's directory tags "malicious" or "unsafe". Hand-curated so the API does not
 // depend on a third party's uptime: add one only when its directory entry (api.stellar.expert/explorer/public/directory/<g>)
@@ -107,5 +110,28 @@ func scamReason(gStrkey string) string {
 func stampIssuerScamReason(detail *AssetDetail, asset canonical.Asset) {
 	if reason := scamReason(asset.Issuer); reason != "" {
 		detail.IssuerScamReason = reason
+	}
+}
+
+// suppressFlaggedIssuerIdentity clears the issuer-written identity of a scam-flagged issuer: for a counterfeit that text and logo
+// are the impersonation, and they name the victim brand. The warnings and the G-key stay. A home domain survives only when its
+// stellar.toml lists the asset back, which makes it the issuer's own. Catalogue rows carry curated identity and are left alone.
+func suppressFlaggedIssuerIdentity(d *AssetDetail) {
+	if d.Type == assetTypeGlobal {
+		return
+	}
+	if d.IssuerScamReason == "" && !pricingguard.IsDirectoryScamFlagged(d.IssuerDirectoryTags) {
+		return
+	}
+	d.OrgName, d.Name, d.Description, d.Image = nil, nil, nil, nil
+	d.AnchorAsset, d.AnchorAssetType, d.Conditions = nil, nil, nil
+	if d.Sep1Status != "verified" {
+		d.HomeDomain = nil
+	}
+}
+
+func suppressFlaggedIssuerIdentities(rows []AssetDetail) {
+	for i := range rows {
+		suppressFlaggedIssuerIdentity(&rows[i])
 	}
 }

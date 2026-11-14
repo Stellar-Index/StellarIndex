@@ -64,15 +64,15 @@ tests:
         values: '0+800x200'
     promql_expr_test:
       - expr: |
-          count(stellarindex_source_enabled == 1)
+          count(count by (source) (stellarindex_source_enabled == 1))
         eval_time: 7d
         exp_samples:
           - value: 3
       - expr: |
-          count(
+          count(count by (source) (
             (rate(stellarindex_source_events_total[7d]) > 0)
             and on (source) (stellarindex_source_enabled == 1)
-          )
+          ))
         eval_time: 7d
         exp_samples:
           - value: 2
@@ -103,15 +103,51 @@ tests:
         values: '1+0x200'
     promql_expr_test:
       - expr: |
-          count(stellarindex_source_enabled == 1)
+          count(count by (source) (stellarindex_source_enabled == 1))
         eval_time: 7d
         exp_samples:
           - value: 4
       - expr: |
-          count(
+          count(count by (source) (
             (rate(stellarindex_source_events_total[7d]) > 0)
             and on (source) (stellarindex_source_enabled == 1)
-          )
+          ))
         eval_time: 7d
         exp_samples:
           - value: 3
+
+  # ── one source emitted by two binaries is one source ──────────────
+  # ecb runs in the indexer and, as the FX worker's fallback, emits from
+  # the API binary too. binance is enabled and silent, so the true
+  # counts are 2 active of 3; counting series would read 3 of 3.
+  - interval: 1h
+    name: a source emitted by two binaries is counted once
+    input_series:
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="sdex"}'
+        values: '1+0x200'
+      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="sdex"}'
+        values: '0+3600x200'
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="binance"}'
+        values: '1+0x200'
+      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="binance"}'
+        values: '40+0x200'
+      - series: 'stellarindex_source_enabled{job="stellarindex_indexer",instance="r1:9100",source="ecb"}'
+        values: '1+0x200'
+      - series: 'stellarindex_source_events_total{job="stellarindex_indexer",instance="r1:9100",source="ecb"}'
+        values: '0+30x200'
+      - series: 'stellarindex_source_events_total{job="stellarindex_api",instance="r1:8080",source="ecb"}'
+        values: '0+30x200'
+    promql_expr_test:
+      - expr: |
+          count(count by (source) (stellarindex_source_enabled == 1))
+        eval_time: 7d
+        exp_samples:
+          - value: 3
+      - expr: |
+          count(count by (source) (
+            (rate(stellarindex_source_events_total[7d]) > 0)
+            and on (source) (stellarindex_source_enabled == 1)
+          ))
+        eval_time: 7d
+        exp_samples:
+          - value: 2
