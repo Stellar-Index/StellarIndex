@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"net/http"
+	"slices"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
@@ -94,40 +95,52 @@ func (s *Server) pairMarketWithAliases(
 		out   Market
 		lead  canonical.Pair
 		found bool
-		seen  []canonical.Pair
 	)
-	for _, b := range assetAliases(base) {
-		for _, q := range assetAliases(quote) {
-			ap, perr := canonical.NewPair(b, q)
-			if perr != nil {
-				continue // degenerate alias combination (identity pair)
-			}
-			folded, perr := canonical.NewPair(sacFolded(b), sacFolded(q))
-			if perr != nil {
-				folded = ap // an asset against its own SAC is a market of its own
-			}
-			if (found && !folded.Equal(lead)) || pairSeen(seen, ap) {
-				continue
-			}
-			seen = append(seen, ap) // PairMarket reads both stored directions: a flip is the same rows
-			market, ok, err := reader.PairMarket(ctx, ap.Base, ap.Quote)
-			if err != nil {
-				return Market{}, false, err
-			}
-			if !ok {
-				continue
-			}
-			// Scam gate and decimals resolve against the spelling that produced the row.
-			market.LastPrice = s.adjustListingPrice(ctx, ap.Base, ap.Quote, market.LastPrice, "pairs")
-			if !found {
-				out, lead, found = market, folded, true
-				out.Base, out.Quote = folded.Base.String(), folded.Quote.String()
-				continue
-			}
-			foldPairSpelling(&out, market)
+	for _, sp := range pairSpellings(base, quote) {
+		if found && !sp.folded.Equal(lead) {
+			continue
 		}
+		market, ok, err := reader.PairMarket(ctx, sp.stored.Base, sp.stored.Quote)
+		if err != nil {
+			return Market{}, false, err
+		}
+		if !ok {
+			continue
+		}
+		// Scam gate and decimals resolve against the spelling that produced the row.
+		market.LastPrice = s.adjustListingPrice(ctx, sp.stored.Base, sp.stored.Quote, market.LastPrice, "pairs")
+		if !found {
+			out, lead, found = market, sp.folded, true
+			out.Base, out.Quote = sp.folded.Base.String(), sp.folded.Quote.String()
+			continue
+		}
+		foldPairSpelling(&out, market)
 	}
 	return out, found, nil
+}
+
+// pairSpelling is one stored spelling of a pair and the /v1/markets row it folds into.
+type pairSpelling struct{ stored, folded canonical.Pair }
+
+// pairSpellings lists a pair's alias spellings once each; PairMarket reads both stored directions, so a flip is the same rows.
+func pairSpellings(base, quote canonical.Asset) []pairSpelling {
+	var out []pairSpelling
+	for _, b := range assetAliases(base) {
+		for _, q := range assetAliases(quote) {
+			stored, err := canonical.NewPair(b, q)
+			if err != nil {
+				continue // degenerate alias combination (identity pair)
+			}
+			folded, err := canonical.NewPair(sacFolded(b), sacFolded(q))
+			if err != nil {
+				folded = stored // an asset against its own SAC is a market of its own
+			}
+			if !slices.ContainsFunc(out, func(k pairSpelling) bool { return k.stored.EqualEitherWay(stored) }) {
+				out = append(out, pairSpelling{stored: stored, folded: folded})
+			}
+		}
+	}
+	return out
 }
 
 // sacFolded maps a SAC spelling to its classic or native form, the key /v1/markets folds rows on; any other asset is itself.
@@ -136,15 +149,6 @@ func sacFolded(a canonical.Asset) canonical.Asset {
 		return canonical.CanonicalAsset(a)
 	}
 	return a
-}
-
-func pairSeen(seen []canonical.Pair, p canonical.Pair) bool {
-	for _, k := range seen {
-		if k.EqualEitherWay(p) {
-			return true
-		}
-	}
-	return false
 }
 
 // foldPairSpelling adds another stored spelling of the same market into dst: counts and volume sum, and the newer trade's
