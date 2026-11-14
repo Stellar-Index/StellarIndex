@@ -1650,18 +1650,21 @@ type RWACuratedPublished struct {
 
 // RWACuratedSummary is the curated arm's headline; Status is "served", "published_totals", "unavailable" or "unwired", and AdditionalValueUSD counts only rows NOT in the verified set so CombinedValueUSD never double counts.
 type RWACuratedSummary struct {
-	Curator            string               `json:"curator"`
-	CuratorCredit      string               `json:"curator_credit,omitempty"`
-	Status             string               `json:"status"`
-	Assets             int                  `json:"assets"`
-	AlsoVerified       int                  `json:"also_verified"`
-	AssetsValued       int                  `json:"assets_valued"`
-	AdditionalValueUSD *string              `json:"additional_value_usd,omitempty"`
-	CombinedValueUSD   *string              `json:"combined_value_usd,omitempty"`
-	VerifiedValueUSD   *string              `json:"verified_value_usd,omitempty"`
-	Census             RWACuratedCensus     `json:"census"`
-	Published          *RWACuratedPublished `json:"published,omitempty"`
-	Basis              string               `json:"basis"`
+	Curator            string  `json:"curator"`
+	CuratorCredit      string  `json:"curator_credit,omitempty"`
+	Status             string  `json:"status"`
+	Assets             int     `json:"assets"`
+	AlsoVerified       int     `json:"also_verified"`
+	AssetsValued       int     `json:"assets_valued"`
+	AdditionalValueUSD *string `json:"additional_value_usd,omitempty"`
+	CombinedValueUSD   *string `json:"combined_value_usd,omitempty"`
+	VerifiedValueUSD   *string `json:"verified_value_usd,omitempty"`
+	// AdditionalValueLowerBound / CombinedValueLowerBound: that figure leaves a row out or sums a floor supply.
+	AdditionalValueLowerBound bool                 `json:"additional_value_lower_bound"`
+	CombinedValueLowerBound   bool                 `json:"combined_value_lower_bound"`
+	Census                    RWACuratedCensus     `json:"census"`
+	Published                 *RWACuratedPublished `json:"published,omitempty"`
+	Basis                     string               `json:"basis"`
 }
 
 // RWAUnreachedEntity is one recognised issuing entity the index holds no token for; the labels are the curated third party's own.
@@ -1958,6 +1961,9 @@ type RWAGroupTotal struct {
 	AssetsUnvalued          int     `json:"assets_unvalued"`
 	ReferenceValueUSD       *string `json:"reference_value_usd,omitempty"`
 	AssetsReferenceUnvalued int     `json:"assets_reference_unvalued"`
+	// MarketCapLowerBound / ReferenceValueLowerBound: that total leaves a member out or sums a floor supply.
+	MarketCapLowerBound      bool `json:"market_cap_lower_bound"`
+	ReferenceValueLowerBound bool `json:"reference_value_lower_bound"`
 	// Note explains a group that did not name itself (e.g. rows admitted
 	// on an oracle binding with no declared class). Absent otherwise.
 	Note string `json:"note,omitempty"`
@@ -1973,6 +1979,9 @@ type RWAIssuerTotal struct {
 	AssetsUnvalued          int     `json:"assets_unvalued"`
 	ReferenceValueUSD       *string `json:"reference_value_usd,omitempty"`
 	AssetsReferenceUnvalued int     `json:"assets_reference_unvalued"`
+	// MarketCapLowerBound / ReferenceValueLowerBound: that total leaves a member out or sums a floor supply.
+	MarketCapLowerBound      bool `json:"market_cap_lower_bound"`
+	ReferenceValueLowerBound bool `json:"reference_value_lower_bound"`
 }
 
 // RWARefusal counts the candidates one membership requirement turned away.

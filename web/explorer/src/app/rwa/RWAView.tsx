@@ -52,6 +52,10 @@ const ENDPOINT = '/v1/rwa/assets';
 const VALUATION_REASON: Record<string, string> = {
   withheld_issuer_flagged:
     'Withheld — the issuer carries a scam-class directory flag, so no price or market cap is published for it anywhere on this site.',
+  withheld_issuer_unchecked:
+    'Withheld — the issuer could not be checked against the scam directory just now, so no price or market cap is shown until that check answers.',
+  price_unmeasured:
+    'Not measured — the market-depth check did not answer, so whether a servable price exists is unknown right now.',
   unpriced:
     'No served USD price — either the market produced none, or it is too thin to aggregate and the price is withheld.',
   withheld_low_liquidity:
@@ -91,6 +95,8 @@ const BASIS_PROSE_FALLBACK =
  * finding, and a comparison that was never made is not that finding.
  */
 const PREMIUM_REASON: Record<string, string> = {
+  withheld_issuer_unchecked:
+    'Withheld — the issuer could not be checked against the scam directory just now. Until that check answers it is treated as flagged, and no valuation is published for it.',
   withheld_issuer_flagged:
     'Withheld — the issuer carries a scam-class directory flag. No valuation is published for it, including an independent one: handing an impersonator the real instrument’s value would be a larger claim than the one the flag suppressed.',
   reference_not_bound:
@@ -212,6 +218,7 @@ const FUNNEL_DROP_PROSE: Record<string, string> = {
   // labels here are the short form of the same reasons the table cells
   // spell out in full.
   withheld_issuer_flagged: 'Issuer flagged, so no valuation of any kind',
+  withheld_issuer_unchecked: 'Issuer check did not answer, so no valuation',
   reference_unavailable: 'The oracle read did not answer',
   reference_contract_not_bound: 'No oracle feed bound to this contract',
   reference_not_instrument_scoped: 'The feed prices an ounce, not a token',

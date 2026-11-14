@@ -261,6 +261,7 @@ func TestRWAReferenceDropActors_CoverEveryStatusARowCanCarry(t *testing.T) {
 	// with a reference but no market price still has a full reference valuation.
 	carried := map[string]struct{}{
 		RWAPremiumIssuerFlagged:        {},
+		RWAPremiumIssuerUnchecked:      {},
 		RWAPremiumReferenceUnavailable: {},
 		RWAPremiumContractNotBound:     {},
 		RWAPremiumNotInstrumentScoped:  {},

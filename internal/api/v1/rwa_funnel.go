@@ -207,6 +207,7 @@ func rwaValuationStages(assets []RWAAsset) []RWAFunnelStage {
 // order drops are reported; map iteration would reorder the wire between identical responses.
 var rwaReferenceRefusalOrder = []string{
 	RWAPremiumIssuerFlagged,
+	RWAPremiumIssuerUnchecked,
 	RWAPremiumReferenceUnavailable,
 	RWAPremiumContractNotBound,
 	RWAPremiumReferenceISINMismatch,
@@ -225,6 +226,7 @@ var rwaReferenceRefusalOrder = []string{
 // working (flagged issuer, unbound pair, ounce-priced feed, reserve-denominated or non-positive value). No drop is the ISSUER's.
 var rwaReferenceDropActors = map[string]string{
 	RWAPremiumIssuerFlagged:        rwaActorDefinition,
+	RWAPremiumIssuerUnchecked:      rwaActorOperator,
 	RWAPremiumNotBound:             rwaActorDefinition,
 	RWAPremiumNotInstrumentScoped:  rwaActorDefinition,
 	RWAPremiumReferenceNotUSD:      rwaActorDefinition,
