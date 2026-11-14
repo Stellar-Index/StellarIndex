@@ -78,9 +78,13 @@ mkdir -p "$work" || { note "cannot create $work"; exit 1; }
 # ─── 1. the tables ──────────────────────────────────────────────────
 # system.tables covers tables, MVs and dictionaries in one list, as a restore
 # needs: a missing MV after a rebuild is a silently empty serving surface.
+# Dependents sort last: the restore replays this file in order and stops at the
+# first failure, and a materialized view cannot be created before its tables.
 tables="$(ch "SELECT name FROM system.tables
              WHERE database = '$CH_DATABASE' AND NOT is_temporary
-             ORDER BY name FORMAT TabSeparated")" || {
+             ORDER BY multiIf(engine = 'MaterializedView', 2,
+                              engine IN ('View', 'Dictionary'), 1, 0), name
+             FORMAT TabSeparated")" || {
   note "cannot list tables in database '$CH_DATABASE' via $CH_HTTP"
   exit 1
 }
