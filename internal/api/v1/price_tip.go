@@ -172,14 +172,18 @@ func (s *Server) tipFallback(ctx context.Context, asset, quote canonical.Asset) 
 	// XLM/USDC-GA5Z...) the literal pair is absent from prices_1m, so the miss above is expected and
 	// the Redis vwap: key is the source of truth. Mirrors /v1/price's tryRedisVWAPFallback; the
 	// provenance marker is dropped since the tip envelope has no triangulated flag.
-	if cacheSnap, cacheSources, _, tri, ok := s.tryRedisVWAPFallback(ctx, asset, quote); ok {
+	cacheSnap, cacheSources, _, tri, ok, cacheErr := s.tryRedisVWAPFallback(ctx, asset, quote)
+	if ok {
 		cacheSnap.ProxyDeviation = tri && s.proxyDeviation(ctx, time.Now().UTC())
 		return cacheSnap, cacheSources, true, nil
 	}
 	// Read-time stablecoin-fiat proxy: rewrites X/fiat:USD to X/<peg> using the operator's
 	// [trades].usd_pegged_classic_assets allow-list, as priceFallback does. Nothing on-chain quotes
 	// in fiat:USD, so without it the tip would 404 on every fresh deployment.
-	proxySnap, proxySources, proxyOK, proxyWithheld := s.tryStablecoinFiatProxy(ctx, asset, quote)
+	proxySnap, proxySources, proxyOK, proxyWithheld, err := s.tryStablecoinFiatProxy(ctx, asset, quote)
+	if err != nil {
+		return PriceSnapshot{}, nil, false, err
+	}
 	if proxyOK {
 		proxySnap.ProxyDeviation = s.proxyDeviation(ctx, time.Now().UTC())
 		return proxySnap, proxySources, true, nil
@@ -192,9 +196,16 @@ func (s *Server) tipFallback(ctx context.Context, asset, quote canonical.Asset) 
 	// USD-anchored cross for a non-fiat asset in a fiat with no market (ADR-0051, the
 	// local-currency path), so the tip answers as /v1/price does instead of a 404 only this surface
 	// returns. Last, so an observed market still wins.
-	if fxSnap, fxSources, ok, withheld := s.tryUSDAnchoredFiatCross(ctx, asset, quote); ok {
+	fxSnap, fxSources, ok, withheld, err := s.tryUSDAnchoredFiatCross(ctx, asset, quote)
+	switch {
+	case ok:
 		return fxSnap, fxSources, true, nil
-	} else if withheld || proxyWithheld != "" {
+	case err != nil:
+		return PriceSnapshot{}, nil, false, err
+	case cacheErr != nil:
+		// The first layer went unread: neither a miss nor a lower layer's refusal is known to be the answer.
+		return PriceSnapshot{}, nil, false, cacheErr
+	case withheld || proxyWithheld != "":
 		// A withheld USD leg withholds the derived price too. The peg walk carries its own reason
 		// (this asset's thin market is `substance`); the cross's leg is upstream of the pair asked for.
 		reason := proxyWithheld

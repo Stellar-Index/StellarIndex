@@ -33,7 +33,10 @@ func (s *Server) closedUSDAnchoredFiatCross(ctx context.Context, asset, quote ca
 	if asset.Type == canonical.AssetFiat || !asset.IsMapped() || quote.Type != canonical.AssetFiat || quote.Code == "USD" {
 		return fallbackResult{}
 	}
-	usdSnap, usdSources, usdServed, usdStale, ok, withheld := s.resolveUSDLeg(ctx, asset)
+	usdSnap, usdSources, usdServed, usdStale, ok, withheld, err := s.resolveUSDLeg(ctx, asset)
+	if err != nil {
+		return fallbackResult{err: err}
+	}
 	if withheld {
 		return fallbackResult{withheld: PriceWithheldUnattributed}
 	}
@@ -72,7 +75,10 @@ func (s *Server) closedUSDAnchoredCryptoCross(ctx context.Context, asset, quote 
 		a   canonical.Asset
 		leg *crossLeg
 	}{{asset, &legs.asset}, {quote, &legs.quote}} {
-		snap, sources, served, stale, ok, withheld := s.resolveUSDLeg(ctx, l.a)
+		snap, sources, served, stale, ok, withheld, err := s.resolveUSDLeg(ctx, l.a)
+		if err != nil {
+			return fallbackResult{err: err}
+		}
 		if withheld {
 			return fallbackResult{withheld: PriceWithheldUnattributed}
 		}

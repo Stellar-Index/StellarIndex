@@ -448,27 +448,31 @@ func (s *Server) lookupCachedVWAP(ctx context.Context, base, quote canonical.Ass
 
 // lookupCachedVWAPAliased walks [Server.lookupCachedVWAP] over every spelling in priority order, returning the first hit and the
 // literal pair it was read under: the aggregator publishes under ONE spelling (GBP composite only as crypto:XLM/fiat:GBP).
-// Callers key every per-pair marker on the returned pair.
-func (s *Server) lookupCachedVWAPAliased(ctx context.Context, bases, quotes []canonical.Asset, window time.Duration) (v CachedVWAP, base, quote canonical.Asset, found bool) {
+// Callers key every per-pair marker on the returned pair. err is the first failed lookup, set only when no spelling answered:
+// a miss beside it is unknown, not absent.
+func (s *Server) lookupCachedVWAPAliased(ctx context.Context, bases, quotes []canonical.Asset, window time.Duration) (v CachedVWAP, base, quote canonical.Asset, found bool, err error) {
 	for _, a := range bases {
 		for _, q := range quotes {
 			if a.Equal(q) {
 				continue
 			}
-			got, ok, err := s.lookupCachedVWAP(ctx, a, q, window)
-			if err != nil {
+			got, ok, lerr := s.lookupCachedVWAP(ctx, a, q, window)
+			if lerr != nil {
 				if ctx.Err() == nil {
 					s.logger.Warn("vwap cache lookup failed",
-						"err", err, "asset", a.String(), "quote", q.String())
+						"err", lerr, "asset", a.String(), "quote", q.String())
+				}
+				if err == nil {
+					err = lerr
 				}
 				continue
 			}
 			if ok {
-				return got, a, q, true
+				return got, a, q, true, nil
 			}
 		}
 	}
-	return CachedVWAP{}, canonical.Asset{}, canonical.Asset{}, false
+	return CachedVWAP{}, canonical.Asset{}, canonical.Asset{}, false, err
 }
 
 // CompositeMetaLooker is an OPTIONAL [TriangulatedPriceLooker] capability exposing `diverged`/`rerouted` flags; a miss or error leaves them unset and NEVER fails the request.
@@ -766,14 +770,14 @@ const triangulationLookupWindow = 5 * time.Minute
 
 // tryRedisVWAPFallback consults the [TriangulatedPriceLooker] after a Timescale miss, covering triangulated and stablecoin-proxy
 // values absent from `prices_1m` (literal trade pairs only); marker-absent hits are accepted. Sources is empty (no provenance in
-// Redis keys); staleness is the caller's call (ADR-0018).
-func (s *Server) tryRedisVWAPFallback(ctx context.Context, asset, quote canonical.Asset) (snap PriceSnapshot, sources []string, served canonical.Asset, triangulated, ok bool) {
+// Redis keys); staleness is the caller's call (ADR-0018). A non-nil err beside ok=false means the cache could not be read.
+func (s *Server) tryRedisVWAPFallback(ctx context.Context, asset, quote canonical.Asset) (snap PriceSnapshot, sources []string, served canonical.Asset, triangulated, ok bool, err error) {
 	if s.Triangulated == nil {
-		return PriceSnapshot{}, nil, canonical.Asset{}, false, false
+		return PriceSnapshot{}, nil, canonical.Asset{}, false, false, nil
 	}
-	v, served, _, found := s.lookupCachedVWAPAliased(ctx, assetAliases(asset), []canonical.Asset{quote}, triangulationLookupWindow)
+	v, served, _, found, err := s.lookupCachedVWAPAliased(ctx, assetAliases(asset), []canonical.Asset{quote}, triangulationLookupWindow)
 	if !found {
-		return PriceSnapshot{}, nil, canonical.Asset{}, false, false
+		return PriceSnapshot{}, nil, canonical.Asset{}, false, false, err
 	}
 	snap = withCoverage(PriceSnapshot{
 		AssetID:       asset.String(),
@@ -783,7 +787,7 @@ func (s *Server) tryRedisVWAPFallback(ctx context.Context, asset, quote canonica
 		ObservedAt:    WireTime(v.ObservedAt),
 		WindowSeconds: int(triangulationLookupWindow.Seconds()),
 	}, v.Coverage)
-	return snap, []string{}, served, v.Triangulated, true
+	return snap, []string{}, served, v.Triangulated, true, nil
 }
 
 // assetAliases is the api/v1 spelling of [canonical.AssetAliases] (`native`, `crypto:XLM`, its SAC) in read priority; SAC last so a thin
@@ -1000,10 +1004,14 @@ func (s *Server) priceFallback(ctx context.Context, asset, quote canonical.Asset
 	if scamWithheld(ctx, s.Scam, asset, quote, "price_read") {
 		return fallbackResult{withheld: PriceWithheldScamIssuer}
 	}
-	if snap, srcs, served, triangulated, ok := s.tryRedisVWAPFallback(ctx, asset, quote); ok {
-		return fallbackResult{snap: snap, sources: srcs, served: served, triangulated: triangulated, ok: true, stale: true}
+	cacheSnap, cacheSrcs, served, triangulated, ok, cacheErr := s.tryRedisVWAPFallback(ctx, asset, quote)
+	if ok {
+		return fallbackResult{snap: cacheSnap, sources: cacheSrcs, served: served, triangulated: triangulated, ok: true, stale: true}
 	}
-	snap, srcs, ok, withheld := s.tryStablecoinFiatProxy(ctx, asset, quote)
+	snap, srcs, ok, withheld, err := s.tryStablecoinFiatProxy(ctx, asset, quote)
+	if err != nil {
+		return fallbackResult{err: err}
+	}
 	if ok {
 		return fallbackResult{snap: snap, sources: srcs, triangulated: true, ok: true, stale: true}
 	}
@@ -1019,7 +1027,14 @@ func (s *Server) priceFallback(ctx context.Context, asset, quote canonical.Asset
 	default:
 		cross = s.closedUSDAnchoredFiatCross(ctx, asset, quote)
 	}
-	if cross.ok || cross.err != nil || cross.withheld != "" {
+	if cross.ok || cross.err != nil {
+		return cross
+	}
+	// The cache is the first layer: with it unread, neither "no price" nor a lower layer's refusal is known to be the answer.
+	if cacheErr != nil {
+		return fallbackResult{err: cacheErr}
+	}
+	if cross.withheld != "" {
 		return cross
 	}
 	// `withheld` separates "no price" from "one we decline to publish" (price-withheld vs not-found).
@@ -1040,21 +1055,21 @@ type fallbackResult struct {
 	// cross, which carries its legs' own staleness.
 	stale    bool
 	withheld PriceWithheldReason // non-empty: a leg declined to publish
-	err      error               // the FX store failed: not a miss
+	err      error               // a layer could not be read (cache, price store, FX store): not a miss
 }
 
-// writeFallbackMiss answers an exhausted fallback chain: 503 when the FX
-// store failed, else the withheld or not-found 404 carrying ev.
+// writeFallbackMiss answers an exhausted fallback chain: 503 when a layer
+// could not be read, else the withheld or not-found 404 carrying ev.
 func (s *Server) writeFallbackMiss(w http.ResponseWriter, r *http.Request, asset, quote canonical.Asset, fb fallbackResult, ev *SubstanceEvidence) {
 	if fb.err != nil {
 		if clientAborted(r, fb.err) {
 			return
 		}
-		s.logger.Error("fx fixing read failed", "err", fb.err, "asset", asset.String(), "quote", quote.String())
+		s.logger.Error("price fallback read failed", "err", fb.err, "asset", asset.String(), "quote", quote.String())
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/price-unavailable",
-			"FX rate unavailable", http.StatusServiceUnavailable,
-			"the FX fixing store could not be read; retry")
+			"Price unavailable", http.StatusServiceUnavailable,
+			"a price source could not be read; retry")
 		return
 	}
 	writeNoPriceProblem(w, r, asset, quote, fb.withheld, ev)
@@ -1173,19 +1188,19 @@ func (s *Server) closedFiatCross(ctx context.Context, asset, quote canonical.Ass
 // rate onto a withheld leg would publish it via an ungated side door.
 func (s *Server) tryUSDAnchoredFiatCross(
 	ctx context.Context, asset, quote canonical.Asset,
-) (PriceSnapshot, []string, bool, bool) {
+) (PriceSnapshot, []string, bool, bool, error) {
 	if asset.Type == canonical.AssetFiat || quote.Type != canonical.AssetFiat {
-		return PriceSnapshot{}, nil, false, false
+		return PriceSnapshot{}, nil, false, false, nil
 	}
 	if quote.Code == "USD" {
-		return PriceSnapshot{}, nil, false, false
+		return PriceSnapshot{}, nil, false, false, nil
 	}
 	if s.Currencies == nil {
-		return PriceSnapshot{}, nil, false, false
+		return PriceSnapshot{}, nil, false, false, nil
 	}
 	fx := s.Currencies.Latest()
 	if fx == nil {
-		return PriceSnapshot{}, nil, false, false
+		return PriceSnapshot{}, nil, false, false, nil
 	}
 	var rate float64
 	var rateUpdatedAt time.Time
@@ -1199,29 +1214,32 @@ func (s *Server) tryUSDAnchoredFiatCross(
 		}
 	}
 	if rate <= 0 {
-		return PriceSnapshot{}, nil, false, false
+		return PriceSnapshot{}, nil, false, false, nil
 	}
 	// fxObservedAt: the older of snapshot publication and this ticker's UpdatedAt. [Cache.Latest]
 	// never expires, so without this bound an fx worker outage would serve the last fetch forever.
 	fxObservedAt := olderNonZero(fx.PublishedAt, rateUpdatedAt)
 	if fxCrossStale(fxObservedAt, s.fxCrossMaxAge) {
-		return PriceSnapshot{}, nil, false, false
+		return PriceSnapshot{}, nil, false, false, nil
 	}
 
-	usdSnap, usdSources, usdServed, _, ok, withheld := s.resolveUSDLeg(ctx, asset)
+	usdSnap, usdSources, usdServed, _, ok, withheld, err := s.resolveUSDLeg(ctx, asset)
+	if err != nil {
+		return PriceSnapshot{}, nil, false, false, err
+	}
 	if withheld {
-		return PriceSnapshot{}, nil, false, true
+		return PriceSnapshot{}, nil, false, true, nil
 	}
 	// A declared peg is 1:1 against USD only; times a rate it is neither declaration nor observation.
 	if !ok || isDeclaredPeg(usdSnap) {
-		return PriceSnapshot{}, nil, false, false
+		return PriceSnapshot{}, nil, false, false, nil
 	}
 
 	// Exact rationals (ADR-0003); the float64 rate goes via its shortest round-trip decimal.
 	usdRat, okU := new(big.Rat).SetString(usdSnap.Price)
 	rateRat, okR := new(big.Rat).SetString(strconv.FormatFloat(rate, 'f', -1, 64))
 	if !okU || !okR {
-		return PriceSnapshot{}, nil, false, false
+		return PriceSnapshot{}, nil, false, false, nil
 	}
 
 	out := usdSnap
@@ -1231,7 +1249,7 @@ func (s *Server) tryUSDAnchoredFiatCross(
 	// observed_at is the OLDER leg: the USD stamp alone would hide a stale FX component.
 	out.ObservedAt = WireTime(olderNonZero(time.Time(usdSnap.ObservedAt), fxObservedAt))
 	out.usdLeg = &usdLegFacts{sources: usdSources, served: usdServed}
-	return out, appendFXSource(usdSources, rateSource), true, false
+	return out, appendFXSource(usdSources, rateSource), true, false, nil
 }
 
 // defaultFXCrossMaxAge is the default [Server.fxCrossMaxAge]. It mirrors
@@ -1257,15 +1275,16 @@ func fxCrossStale(observedAt time.Time, maxAge time.Duration) bool {
 
 // resolveUSDLeg resolves asset/fiat:USD through the layers /v1/price uses, so the derived price rests on exactly what the USD
 // endpoint serves. It does NOT re-enter [Server.priceFallback] (recursion into [tryUSDAnchoredFiatCross]); a withheld leg is
-// neither served nor reported absent. It reads no freeze marker ([Server.resolveFrozenServeFor]).
+// neither served nor reported absent, and a leg that could not be read is err, not absent. It reads no freeze marker
+// ([Server.resolveFrozenServeFor]).
 func (s *Server) resolveUSDLeg(
 	ctx context.Context, asset canonical.Asset,
-) (snap PriceSnapshot, sources []string, served canonical.Asset, stale, ok, withheld bool) {
+) (snap PriceSnapshot, sources []string, served canonical.Asset, stale, ok, withheld bool, err error) {
 	usd := defaultPriceQuote
-	snap, sources, stale, served, err := s.readPriceWithAliasesServed(ctx, s.Prices, asset, usd)
+	snap, sources, stale, served, err = s.readPriceWithAliasesServed(ctx, s.Prices, asset, usd)
 	switch {
 	case errors.Is(err, ErrPriceWithheld):
-		return PriceSnapshot{}, nil, canonical.Asset{}, false, false, true
+		return PriceSnapshot{}, nil, canonical.Asset{}, false, false, true, nil
 	case err == nil:
 		// A fallback is served without the handler's normalization, so the raw bucket scales here.
 		base := served
@@ -1273,19 +1292,25 @@ func (s *Server) resolveUSDLeg(
 			base = asset
 		}
 		s.normalizeRawPriceSnapshot(&snap, base, usd)
-		return snap, sources, served, stale, true, false
+		return snap, sources, served, stale, true, false, nil
 	case !errors.Is(err, ErrPriceNotFound):
-		return PriceSnapshot{}, nil, canonical.Asset{}, false, false, false
+		return PriceSnapshot{}, nil, canonical.Asset{}, false, false, false, err
 	}
 	// A fallback USD leg is below the closed-bucket contract: stale.
-	if snap, srcs, _, _, ok := s.tryRedisVWAPFallback(ctx, asset, usd); ok {
-		return snap, srcs, canonical.Asset{}, true, true, false
-	}
-	snap, srcs, ok, proxyWithheld := s.tryStablecoinFiatProxy(ctx, asset, usd)
+	cacheSnap, cacheSrcs, _, _, ok, cacheErr := s.tryRedisVWAPFallback(ctx, asset, usd)
 	if ok {
-		return snap, srcs, canonical.Asset{}, true, true, false
+		return cacheSnap, cacheSrcs, canonical.Asset{}, true, true, false, nil
 	}
-	return PriceSnapshot{}, nil, canonical.Asset{}, false, false, proxyWithheld != ""
+	snap, srcs, ok, proxyWithheld, err := s.tryStablecoinFiatProxy(ctx, asset, usd)
+	switch {
+	case err != nil:
+		return PriceSnapshot{}, nil, canonical.Asset{}, false, false, false, err
+	case ok:
+		return snap, srcs, canonical.Asset{}, true, true, false, nil
+	case cacheErr != nil:
+		return PriceSnapshot{}, nil, canonical.Asset{}, false, false, false, cacheErr
+	}
+	return PriceSnapshot{}, nil, canonical.Asset{}, false, false, proxyWithheld != "", nil
 }
 
 // primaryFXSource is the forex worker's primary feed, credited for an entry with no Source.
@@ -1328,44 +1353,56 @@ type proxyPairGate interface {
 // literal pair has no prices_1m rows). A non-peg walks usd_pegged_classic_assets ([Server.walkUSDPegs]); a declared peg is priced
 // via its XLM book ([Server.crossDeclaredPegThroughXLM]) and the declaration answers only when the cross has nothing (a depeg is
 // when they disagree), never via another declared peg. Snapshots are triangulated; sticky `withheld` (ErrPriceWithheld) must not
-// collapse into not-found, and a refused declared-peg cross is withheld (`upstream_leg`), not replaced by a flat 1.0.
-func (s *Server) tryStablecoinFiatProxy(ctx context.Context, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, PriceWithheldReason) {
+// collapse into not-found, and a refused declared-peg cross is withheld (`upstream_leg`), not replaced by a flat 1.0. A leg
+// that could not be read is err: neither a miss nor grounds for the declaration.
+func (s *Server) tryStablecoinFiatProxy(ctx context.Context, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, PriceWithheldReason, error) {
 	// Self-peg: a `crypto:<STABLE>` ticker priced in the fiat it tracks (aggregate.FiatProxy); a
 	// depeg surfaces via divergence, not here. Runs only after the literal read missed, so an
 	// observed bucket still wins over the declaration.
 	if proxy, isStable := aggregate.FiatProxy(asset); isStable && proxy.Equal(quote) {
-		return s.declaredPegSnapshot(asset, quote), nil, true, ""
+		return s.declaredPegSnapshot(asset, quote), nil, true, "", nil
 	}
 	// Returns before the walk carry no withheld reason: no peg leg has been read yet.
 	if quote.Type != canonical.AssetFiat || quote.Code != "USD" {
-		return PriceSnapshot{}, nil, false, ""
+		return PriceSnapshot{}, nil, false, "", nil
 	}
 	if len(s.USDPeggedClassics) == 0 || s.Prices == nil {
-		return PriceSnapshot{}, nil, false, ""
+		return PriceSnapshot{}, nil, false, "", nil
 	}
 	if s.isDeclaredUSDPeg(asset) {
 		snap, srcs, verdict, withheld := s.crossDeclaredPegThroughXLM(ctx, asset, quote)
 		switch verdict {
 		case pegXLMLegPriced:
-			return snap, srcs, true, ""
+			return snap, srcs, true, "", nil
+		case pegXLMLegReadFailed:
+			// Unknown is not "no market": a depeg and a struggling store arrive together, and the
+			// declaration would print 1.0 over it.
+			return PriceSnapshot{}, nil, false, "", pegLegReadError(ctx)
 		case pegXLMLegRefused:
 			// The peg's own XLM book names its reason (`substance` below the floor, as the listing
 			// says); a withheld XLM/USD pivot lies beyond that market and reads `upstream_leg`.
 			if withheld == "" {
 				withheld = PriceWithheldUnattributed
 			}
-			return PriceSnapshot{}, nil, false, withheld
-		case pegXLMLegNoMarket, pegXLMLegReadFailed, pegXLMLegFlagged:
+			return PriceSnapshot{}, nil, false, withheld, nil
+		case pegXLMLegNoMarket, pegXLMLegFlagged:
 		}
 		// No market priced this peg and none was refused: publish the declaration with nil sources
 		// (empty is not "single-sourced").
-		return s.declaredPegSnapshot(asset, quote), nil, true, ""
+		return s.declaredPegSnapshot(asset, quote), nil, true, "", nil
 	}
-	snap, srcs, ok, withheld := s.walkUSDPegs(ctx, asset, quote)
-	if ok {
-		return snap, srcs, true, withheld
+	return s.walkUSDPegs(ctx, asset, quote)
+}
+
+// errPegLegRead: a declared peg's XLM book or the XLM/USD pivot could not be read.
+var errPegLegRead = errors.New("declared peg leg read failed")
+
+// pegLegReadError is errPegLegRead carrying the context's own error, so a spent deadline still reads as one.
+func pegLegReadError(ctx context.Context) error {
+	if cerr := ctx.Err(); cerr != nil {
+		return fmt.Errorf("%w: %w", errPegLegRead, cerr)
 	}
-	return PriceSnapshot{}, nil, false, withheld
+	return errPegLegRead
 }
 
 // isDeclaredUSDPeg reports whether asset is a usd_pegged_classic_assets entry under ANY spelling ([sameAsset] folds the SAC into the
@@ -1380,10 +1417,11 @@ func (s *Server) isDeclaredUSDPeg(asset canonical.Asset) bool {
 }
 
 // walkUSDPegs is [Server.tryStablecoinFiatProxy]'s allow-list walk: the first observed asset/<peg> price in priority order, re-quoted to
-// fiat:USD; a declared peg never reaches it.
+// fiat:USD; a declared peg never reaches it. A read that failed ends the walk with err: a later peg is a different market, and
+// taking it because of a blip is not priority order.
 func (s *Server) walkUSDPegs(
 	ctx context.Context, asset, quote canonical.Asset,
-) (snapshot PriceSnapshot, sources []string, ok bool, withheld PriceWithheldReason) {
+) (snapshot PriceSnapshot, sources []string, ok bool, withheld PriceWithheldReason, err error) {
 	// Empty-proxy-pair gate. On a VWAP miss LatestPrice falls through to an UNBOUNDED last-trade
 	// scan, which a Soroban token that only trades vs XLM would pay once PER PEG. A probe ERROR falls
 	// through to LatestPrice so a blip never suppresses a real price.
@@ -1395,23 +1433,26 @@ func (s *Server) walkUSDPegs(
 				continue
 			}
 		}
-		snap, srcs, _, err := s.Prices.LatestPrice(ctx, asset, peg)
-		if err != nil {
+		snap, srcs, _, lerr := s.Prices.LatestPrice(ctx, asset, peg)
+		switch {
+		case errors.Is(lerr, ErrPriceWithheld):
 			// A WITHHELD verdict is not a miss. Walk on, a later peg may serve; if none does, the
 			// caller reports the loudest reason ([walkWithheldReason]) rather than not-found.
-			if errors.Is(err, ErrPriceWithheld) {
-				withheld = walkWithheldReason(withheld, err)
-			}
+			withheld = walkWithheldReason(withheld, lerr)
 			continue
+		case errors.Is(lerr, ErrPriceNotFound):
+			continue
+		case lerr != nil:
+			return PriceSnapshot{}, nil, false, "", lerr
 		}
 		// LatestPrice returns the RAW asset/<peg> ratio; this is the SINGLE place the proxy tier
 		// is decimals-corrected, against the ACTUAL legs (asset, peg), NOT the requested fiat:USD.
 		s.normalizeRawPriceSnapshot(&snap, asset, peg)
 		// The wire response reflects what the user asked for, not the proxy peg.
 		snap.Quote = quote.String()
-		return snap, srcs, true, withheld
+		return snap, srcs, true, withheld, nil
 	}
-	return PriceSnapshot{}, nil, false, withheld
+	return PriceSnapshot{}, nil, false, withheld, nil
 }
 
 // walkWithheldRank orders the reasons [Server.walkUSDPegs] reports when no peg serves: the asset's
@@ -1463,6 +1504,7 @@ func (s *Server) crossDeclaredPegThroughXLM(
 	case errors.Is(err, ErrPriceNotFound):
 		return PriceSnapshot{}, nil, pegXLMLegNoMarket, ""
 	case err != nil:
+		s.logPegLegReadFailure(ctx, err, xlm, quote)
 		return PriceSnapshot{}, nil, pegXLMLegReadFailed, ""
 	}
 	// Both legs are RAW ratios; decimals-correct each before taking the product.
@@ -1494,8 +1536,8 @@ func (s *Server) crossDeclaredPegThroughXLM(
 // advances only on pegXLMLegNoMarket.
 // pegXLMLegPriced ends it (fresh beats stale only within a spelling; a zero/unparsable price counts as answered so one degenerate print
 // can't hand the deep book to a thin pool).
-// pegXLMLegRefused/Flagged end it (the scam gate never fires on a non-classic base); pegXLMLegReadFailed ends it and the declaration
-// answers. Canonical-first order (SAC last).
+// pegXLMLegRefused/Flagged end it (the scam gate never fires on a non-classic base); pegXLMLegReadFailed ends it and the route
+// errors. Canonical-first order (SAC last).
 func (s *Server) readDeclaredPegXLMLeg(
 	ctx context.Context, asset canonical.Asset,
 ) (PriceSnapshot, []string, pegXLMLegVerdict, PriceWithheldReason) {
@@ -1590,10 +1632,17 @@ func (s *Server) readPegXLMLegPair(
 	case errors.Is(err, ErrPriceNotFound):
 		return PriceSnapshot{}, nil, false, pegXLMLegNoMarket, ""
 	case err != nil:
+		s.logPegLegReadFailure(ctx, err, base, xlm)
 		return PriceSnapshot{}, nil, false, pegXLMLegReadFailed, ""
 	}
 	s.normalizeRawPriceSnapshot(&snap, base, xlm)
 	return snap, srcs, stale, pegXLMLegPriced, ""
+}
+
+func (s *Server) logPegLegReadFailure(ctx context.Context, err error, base, quote canonical.Asset) {
+	if ctx.Err() == nil {
+		s.logger.Warn("declared peg leg read failed", "err", err, "base", base.String(), "quote", quote.String())
+	}
 }
 
 // unionSources merges two legs' source sets (deduplicated, sorted): an audit of a crossed price
@@ -2264,9 +2313,9 @@ func (s *Server) readBatchRow(ctx context.Context, r *http.Request, asset, quote
 		}
 		readFailed := fb.err != nil && !clientAborted(r, fb.err)
 		if readFailed {
-			s.logger.Warn("batch: fx fixing read failed", "err", fb.err, "asset", asset.String())
+			s.logger.Warn("batch: price fallback read failed", "err", fb.err, "asset", asset.String())
 		}
-		// A failed FX read omits the row without listing it as withheld.
+		// A failed read omits the row without listing it as withheld.
 		return batchRowResult{skip: true, withheld: fb.withheld != "", withheldReason: fb.withheld, readFailed: readFailed} // omit, do not 404 the batch
 	}
 	if err != nil {

@@ -156,10 +156,10 @@ func (s *Server) fetchObservationsOrWriteError(
 // observationsHaveTriangulatedPrice is the best-effort check behind the empty-observations hint (would /v1/price serve the pair
 // via Redis VWAP or the stablecoin-fiat proxy); errors downgrade to false since it is a UX hint only.
 func (s *Server) observationsHaveTriangulatedPrice(ctx context.Context, pair canonical.Pair) bool {
-	if _, _, _, _, ok := s.tryRedisVWAPFallback(ctx, pair.Base, pair.Quote); ok {
+	if _, _, _, _, ok, _ := s.tryRedisVWAPFallback(ctx, pair.Base, pair.Quote); ok {
 		return true
 	}
-	if _, _, ok, _ := s.tryStablecoinFiatProxy(ctx, pair.Base, pair.Quote); ok {
+	if _, _, ok, _, _ := s.tryStablecoinFiatProxy(ctx, pair.Base, pair.Quote); ok {
 		return true
 	}
 	return false
