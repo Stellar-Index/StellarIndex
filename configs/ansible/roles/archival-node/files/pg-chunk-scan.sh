@@ -8,105 +8,50 @@
 #
 # Cost: a chunk is decoded once per (compressed chunk id, relfilenode); a
 # rewrite gets a new relfilenode and is decoded again. Verified keys live in
-# $STATE. An unreadable chunk is never recorded, so it stays counted until it is
+# $STATE, appended as each chunk passes and pruned to the chunks that still
+# exist. An unreadable chunk is never recorded, so it stays counted until it is
 # repaired. PG_CHUNK_SCAN_FULL=1 (or a missing state file) decodes everything.
+#
+# Each chunk is decoded on its own connection and transaction: the scan holds a
+# lock on one chunk at a time, a chunk dropped mid-run costs only itself, and a
+# chunk that kills its backend is retried once and then named as unreadable.
 #
 # It also lists fully compressed chunks whose indexes exceed 1 GiB. Their heap
 # is near-empty, so healthy indexes are tens of MB; r1 had 13 at 3-26 GB each
 # (161 GB) after a writer deleted the heap rows without rebuilding them.
 #
 # A run stops starting chunks after PG_CHUNK_SCAN_BUDGET seconds (a full r1
-# pass is ~5.5h, past the unit's 4h timeout) and keeps what it verified; the
-# next night continues. Last run's unreadable chunks are decoded first, so a
-# partial run cannot drop them from the count.
+# pass is ~5.5h, past the unit's 4h timeout); the next night continues. Last
+# run's unreadable chunks are decoded first, so a partial run cannot drop them
+# from the count.
 #
 # Seams for scripts/ci/pg-chunk-scan-test.sh: TEXTFILE_DIR, PG_CHUNK_SCAN_STATE,
-# PG_CHUNK_SCAN_PSQL. The unit sets none of them.
+# PG_CHUNK_SCAN_PSQL, PG_CHUNK_SCAN_RECOVER_WAIT. The unit sets none of them.
 set -uo pipefail
 DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
 STATE="${PG_CHUNK_SCAN_STATE:-/var/lib/pg-chunk-scan/verified}"
 PSQL="${PG_CHUNK_SCAN_PSQL:-psql -X -q -d stellarindex -v ON_ERROR_STOP=1}"
 FULL="${PG_CHUNK_SCAN_FULL:-0}"
 BUDGET="${PG_CHUNK_SCAN_BUDGET:-10800}"
+RECOVER_WAIT="${PG_CHUNK_SCAN_RECOVER_WAIT:-180}"
 BADF="$STATE.bad"
 OUT="$DIR/pg_chunk_scan.prom"
 mkdir -p "$DIR" "$(dirname "$STATE")"
 [ -s "$STATE" ] || FULL=1
-skip='{}'
-if [ "$FULL" != 1 ]; then
-  skip="{$(paste -sd, "$STATE")}"
-fi
-first="{$(paste -sd, "$BADF" 2>/dev/null)}"
+touch "$STATE" "$BADF"
 
-RAW=$(mktemp "$DIR/.pg_chunk_scan.raw.XXXXXX")
+W=$(mktemp -d "${TMPDIR:-/tmp}/pg-chunk-scan.XXXXXX")
 TMP=$(mktemp "$DIR/.pg_chunk_scan.prom.XXXXXX")
-trap 'rm -f "$RAW" "$TMP"' EXIT
+trap 'rm -rf "$W" "$TMP"' EXIT
+: >"$W/skip"; : >"$W/bad"; : >"$W/rescanned"; : >"$W/err"
+[ "$FULL" = 1 ] || cp "$STATE" "$W/skip"
 
-# Notices carry the per-chunk verdicts; psql's own errors land beside them and
-# fail the run through ON_ERROR_STOP.
-rc=0
-$PSQL -v skip="$skip" -v first="$first" -v budget="$BUDGET" -f - >"$RAW" 2>&1 <<'SQL' || rc=$?
-SET pgchunkscan.skip = :'skip';
-SET pgchunkscan.first = :'first';
-SET pgchunkscan.budget = :'budget';
-DO $$
-DECLARE ch record; cols text; n bigint; key text;
-  skip text[] := current_setting('pgchunkscan.skip')::text[];
-  first text[] := current_setting('pgchunkscan.first')::text[];
-  deadline timestamptz := clock_timestamp() + make_interval(secs => current_setting('pgchunkscan.budget')::int);
-BEGIN
- FOR ch IN
-  SELECT h.table_name AS ht, c.table_name AS chunk,
-         format('%I.%I', cc.schema_name, cc.table_name) AS cc,
-         cc.id || ':' || pg_relation_filenode(format('%I.%I', cc.schema_name, cc.table_name)::regclass) AS key
-    FROM _timescaledb_catalog.chunk c
-    JOIN _timescaledb_catalog.hypertable h ON h.id = c.hypertable_id
-    JOIN _timescaledb_catalog.chunk cc ON cc.id = c.compressed_chunk_id
-   ORDER BY (cc.id || ':' || pg_relation_filenode(format('%I.%I', cc.schema_name, cc.table_name)::regclass)) = ANY(first) DESC, c.id
- LOOP
-  CONTINUE WHEN ch.key = ANY(skip);
-  IF clock_timestamp() > deadline THEN
-   RAISE NOTICE 'SCAN|partial';
-   EXIT;
-  END IF;
-  SELECT string_agg(format('(SELECT count(*) FROM %s t, LATERAL _timescaledb_functions.compressed_data_info(t.%I) i)', ch.cc, attname), '+')
-    INTO cols
-    FROM pg_attribute
-   WHERE attrelid = ch.cc::regclass AND attnum > 0 AND NOT attisdropped
-     AND atttypid = '_timescaledb_internal.compressed_data'::regtype;
-  IF cols IS NULL THEN CONTINUE; END IF;
-  BEGIN
-   EXECUTE 'SELECT ' || cols INTO n;
-   RAISE NOTICE 'CHUNK|ok|%|%|%', ch.key, ch.ht, ch.chunk;
-  EXCEPTION WHEN OTHERS THEN
-   RAISE NOTICE 'CHUNK|bad|%|%|%', ch.key, ch.ht, ch.chunk;
-  END;
- END LOOP;
-END $$;
-DO $$
-DECLARE r record;
-BEGIN
- FOR r IN
-  SELECT h.table_name AS ht, c.table_name AS chunk,
-         pg_indexes_size(format('%I.%I', c.schema_name, c.table_name)::regclass) AS idx
-    FROM _timescaledb_catalog.chunk c
-    JOIN _timescaledb_catalog.hypertable h ON h.id = c.hypertable_id
-   WHERE c.compressed_chunk_id IS NOT NULL AND c.status & 8 = 0
- LOOP
-  IF r.idx > 1073741824 THEN
-   RAISE NOTICE 'BLOAT|%|%|%', r.ht, r.chunk, r.idx;
-  END IF;
- END LOOP;
-END $$;
-SQL
-
-now=$(date +%s)
-if [ "$rc" -ne 0 ]; then
-  echo "pg-chunk-scan: psql exited $rc:" >&2
-  # Not just ERROR lines: a connection or auth failure has none.
-  grep -v 'NOTICE:  CHUNK|' "$RAW" | tail -n 20 >&2
-  # Keep the previous verdicts; publish only the failure so the stale alert
-  # and the unit-failed alert both see it.
+# Keeps the previous verdicts and publishes only the failure, so the stale
+# alert and the unit-failed alert both see it.
+fail_run() {
+  echo "pg-chunk-scan: $1" >&2
+  tail -n 20 "$W/err" >&2
+  cut -d'|' -f1 "$W/bad" >>"$BADF"
   {
     echo "# HELP stellarindex_pg_chunk_scan_success 1 if the last pg-chunk-scan run completed."
     echo "# TYPE stellarindex_pg_chunk_scan_success gauge"
@@ -116,25 +61,121 @@ if [ "$rc" -ne 0 ]; then
   chmod 0644 "$TMP"
   mv "$TMP" "$OUT"
   exit 1
-fi
+}
 
-# psql prefixes script notices with "psql:<file>:<line>: ".
-V=$(sed -n 's/.*NOTICE:  CHUNK|/CHUNK|/p' "$RAW")
-ok_keys=$(printf '%s\n' "$V" | grep '^CHUNK|ok|' | cut -d'|' -f3)
-bad=$(printf '%s\n' "$V" | grep '^CHUNK|bad|' | cut -d'|' -f4,5 | sort -u)
-scanned=$(printf '%s\n' "$V" | grep -c '^CHUNK|')
-nbad=0; [ -n "$bad" ] && nbad=$(printf '%s\n' "$bad" | wc -l | tr -d ' ')
-partial=0; grep -q 'NOTICE:  SCAN|partial' "$RAW" && partial=1
-bloat=$(sed -n 's/.*NOTICE:  BLOAT|//p' "$RAW")
+# One short transaction: C|key|hypertable|chunk|compressed relation, then
+# B|hypertable|chunk|index bytes.
+$PSQL -At -F'|' -f - >"$W/list" 2>"$W/err" <<'SQL' || fail_run "listing chunks: psql exited $?"
+SELECT 'C', cc.id || ':' || pg_relation_filenode(format('%I.%I', cc.schema_name, cc.table_name)::regclass),
+       h.table_name, c.table_name, format('%I.%I', cc.schema_name, cc.table_name)
+  FROM _timescaledb_catalog.chunk c
+  JOIN _timescaledb_catalog.hypertable h ON h.id = c.hypertable_id
+  JOIN _timescaledb_catalog.chunk cc ON cc.id = c.compressed_chunk_id
+ ORDER BY c.id;
+SELECT 'B', h.table_name, c.table_name, pg_indexes_size(format('%I.%I', c.schema_name, c.table_name)::regclass)
+  FROM _timescaledb_catalog.chunk c
+  JOIN _timescaledb_catalog.hypertable h ON h.id = c.hypertable_id
+ WHERE c.compressed_chunk_id IS NOT NULL AND c.status & 8 = 0
+   AND pg_indexes_size(format('%I.%I', c.schema_name, c.table_name)::regclass) > 1073741824;
+SQL
+
+# To decode: every listed chunk not yet verified, last run's unreadable first.
+awk -F'|' -v badf="$BADF" -v skipf="$W/skip" '
+  BEGIN { while ((getline l < badf) > 0) b[l]; while ((getline l < skipf) > 0) v[l] }
+  $1 == "C" && !($2 in v) { print (($2 in b) ? 0 : 1) "|" $2 "|" $3 "|" $4 "|" $5 }
+' "$W/list" | sort -s -t'|' -k1,1n | cut -d'|' -f2- >"$W/todo"
+
+# Prints ok, skip, bad or lost. A caught error that says nothing about the
+# chunk's bytes (dropped mid-run, lock wait, out of resources) is a skip.
+decode() {
+  local rc=0 v
+  $PSQL -v cc="$1" -f - >/dev/null 2>"$W/err" <<'SQL' || rc=$?
+SET lock_timeout = '30s';
+SET pgchunkscan.cc = :'cc';
+DO $$
+DECLARE cc text := current_setting('pgchunkscan.cc'); cols text; n bigint;
+BEGIN
+  SELECT string_agg(format('(SELECT count(*) FROM %s t, LATERAL _timescaledb_functions.compressed_data_info(t.%I) i)', cc, attname), '+')
+    INTO cols
+    FROM pg_attribute
+   WHERE attrelid = cc::regclass AND attnum > 0 AND NOT attisdropped
+     AND atttypid = '_timescaledb_internal.compressed_data'::regtype;
+  IF cols IS NOT NULL THEN EXECUTE 'SELECT ' || cols INTO n; END IF;
+  RAISE NOTICE 'CHUNK|ok';
+EXCEPTION
+  WHEN undefined_table OR lock_not_available OR deadlock_detected OR insufficient_resources THEN
+    RAISE NOTICE 'CHUNK|skip|% %', SQLSTATE, SQLERRM;
+  WHEN OTHERS THEN
+    RAISE NOTICE 'CHUNK|bad|% %', SQLSTATE, SQLERRM;
+END $$;
+SQL
+  v=$(sed -n 's/.*NOTICE:  CHUNK|\([a-z]*\).*/\1/p' "$W/err")
+  v=${v%%$'\n'*}
+  case "$v" in
+    ok | skip | bad) echo "$v" ;;
+    # 3 is a script error on a live connection (a cancel, say): undecided.
+    *) if [ "$rc" -eq 3 ]; then echo skip; else echo lost; fi ;;
+  esac
+}
+
+server_back() {
+  local waited=0
+  until $PSQL -c 'SELECT 1' </dev/null >/dev/null 2>>"$W/err"; do
+    [ "$waited" -ge "$RECOVER_WAIT" ] && return 1
+    sleep 5
+    waited=$((waited + 5))
+  done
+}
+
+start=$(date +%s)
+partial=0 scanned=0 skipped=0
+while IFS='|' read -r key ht chunk cc; do
+  if [ $(($(date +%s) - start)) -ge "$BUDGET" ]; then
+    partial=1
+    break
+  fi
+  v=$(decode "$cc")
+  if [ "$v" = lost ]; then
+    # The connection died: the server went away, or this chunk killed its
+    # backend. A second death on a server that is back up is the chunk's.
+    server_back || fail_run "server unreachable while decoding $ht/$chunk"
+    v=$(decode "$cc")
+    if [ "$v" = lost ]; then
+      server_back || fail_run "server unreachable while decoding $ht/$chunk"
+      echo "pg-chunk-scan: $ht/$chunk ends its backend when decoded; counted unreadable" >&2
+      v=bad
+    fi
+  fi
+  case "$v" in
+    ok) echo "$key" >>"$STATE"; scanned=$((scanned + 1)) ;;
+    bad)
+      echo "$key|$ht|$chunk" >>"$W/bad"; scanned=$((scanned + 1))
+      echo "pg-chunk-scan: $ht/$chunk unreadable: $(grep -m1 'CHUNK|bad' "$W/err")" >&2
+      ;;
+    *) skipped=$((skipped + 1)); echo "pg-chunk-scan: $ht/$chunk undecided: $(tail -n 1 "$W/err")" >&2 ;;
+  esac
+  [ "$v" = skip ] || echo "$key" >>"$W/rescanned"
+done <"$W/todo"
+
+# An unreadable chunk this run did not reach (budget) stays counted while it
+# still exists.
+awk -F'|' -v donef="$W/rescanned" -v badf="$BADF" '
+  BEGIN { while ((getline l < donef) > 0) d[l]; while ((getline l < badf) > 0) b[l] }
+  $1 == "C" && ($2 in b) && !($2 in d) { print $2 "|" $3 "|" $4 }
+' "$W/list" >>"$W/bad"
+sort -u "$W/bad" -o "$W/bad"
+cut -d'|' -f1 "$W/bad" >"$BADF.new" && mv "$BADF.new" "$BADF"
+bad=$(cut -d'|' -f2,3 "$W/bad")
+nbad=$(wc -l <"$W/bad" | tr -d ' ')
+bloat=$(sed -n 's/^B|//p' "$W/list")
 nbloat=0; [ -n "$bloat" ] && nbloat=$(printf '%s\n' "$bloat" | wc -l | tr -d ' ')
-printf '%s\n' "$V" | grep '^CHUNK|bad|' | cut -d'|' -f3 | sort -u >"$BADF"
 
-# Verified keys: a completed full run replaces the set (dropped chunks fall
-# out); any other run adds to it.
-{
-  [ "$FULL" = 1 ] && [ "$partial" = 0 ] || cat "$STATE" 2>/dev/null
-  [ -n "$ok_keys" ] && printf '%s\n' "$ok_keys"
-} | sort -u >"$STATE.new" && mv "$STATE.new" "$STATE"
+# Verified keys of chunks that no longer exist fall out on every run.
+awk -F'|' -v statef="$STATE" '
+  BEGIN { while ((getline l < statef) > 0) s[l] }
+  $1 == "C" && ($2 in s) && !seen[$2]++ { print $2 }
+' "$W/list" >"$STATE.new" && mv "$STATE.new" "$STATE"
+now=$(date +%s)
 
 {
   echo "# HELP stellarindex_pg_compressed_chunks_unreadable Compressed chunks whose compressed_data cannot be decoded."
@@ -172,4 +213,4 @@ printf '%s\n' "$V" | grep '^CHUNK|bad|' | cut -d'|' -f3 | sort -u >"$BADF"
 } >"$TMP"
 chmod 0644 "$TMP"
 mv "$TMP" "$OUT"
-echo "pg-chunk-scan: scanned=$scanned unreadable=$nbad index_bloated=$nbloat full=$FULL partial=$partial"
+echo "pg-chunk-scan: scanned=$scanned unreadable=$nbad undecided=$skipped index_bloated=$nbloat full=$FULL partial=$partial"

@@ -315,7 +315,7 @@ The known cause is `merge_chunks()` on a compressed chunk (r1, TimescaleDB 2.26.
 3. Restore those rows. A derived table (a cagg, a projection) re-derives from its source for that range. A primary table restores from a pgBackRest PITR copy on another host; r1 has no room for a full restore (plan §5.1). Copy the range back with `COPY`, then drop the broken chunk only after the copy verifies, with Ash's yes.
 4. Re-run the scan: `systemctl start pg-chunk-scan.service`. It keeps a list of verified chunks in `/var/lib/pg-chunk-scan/verified` and re-scans only new or rewritten ones; delete that file to force a full scan.
 
-`stellarindex_pg_chunk_scan_stale` means no scan has completed for 36 h, so corruption would go unseen. Read `journalctl -u pg-chunk-scan -n 50`; the probe prints the psql ERROR line.
+`stellarindex_pg_chunk_scan_stale` means no scan has completed for 36 h, so corruption would go unseen. Read `journalctl -u pg-chunk-scan -n 50`; the probe prints the psql ERROR line. A chunk that ends its backend when decoded is retried once, then listed as unreadable; the journal names it (`ends its backend when decoded`). A chunk dropped or locked mid-run is logged as `undecided` and decoded again the next night.
 
 ## stellarindex_pg_compressed_chunk_index_bloat
 
