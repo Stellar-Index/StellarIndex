@@ -161,8 +161,8 @@ func TestPriceReadersOnZeroLegBuckets(t *testing.T) {
 		}
 	})
 	t.Run("DailyMarketDays", func(t *testing.T) {
-		// H1 at 2 and H2 at 4 on 10 priced units each; `volume` would
-		// weight them 40:15.
+		// 20 + 40 dollars for 10 + 10 priced units stored forward, plus the flipped
+		// H1 fill of 40 dollars for 10: 100 / 30. `volume` would weight zero-leg trades in.
 		days, err := store.DailyMarketDays(ctx, []c.Asset{zlegAsset}, []c.Asset{usdc}, day, day)
 		if err != nil {
 			t.Fatalf("DailyMarketDays: %v", err)
@@ -171,8 +171,8 @@ func TestPriceReadersOnZeroLegBuckets(t *testing.T) {
 			t.Fatalf("days = %d, want 1", len(days))
 		}
 		var ok bool
-		if err := db.QueryRowContext(ctx, `SELECT $1::numeric = 3`, days[0].VWAP).Scan(&ok); err != nil || !ok {
-			t.Errorf("day vwap = %s, want 3 (err %v)", days[0].VWAP, err)
+		if err := db.QueryRowContext(ctx, `SELECT round($1::numeric, 9) = round(10::numeric / 3, 9)`, days[0].VWAP).Scan(&ok); err != nil || !ok {
+			t.Errorf("day vwap = %s, want 10/3 (err %v)", days[0].VWAP, err)
 		}
 	})
 	t.Run("MonthlyUSDVWAPs", func(t *testing.T) {

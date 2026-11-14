@@ -58,10 +58,28 @@ func TestMarketDayFamilies_BindsSACSpellingOntoMember(t *testing.T) {
 // double-count an hour traded under both.
 func TestDailyMarketDaysQueryGroupsByMember(t *testing.T) {
 	q := dailyMarketDaysQuery
-	if !strings.Contains(q, "GROUP BY day, family.member") {
+	if !strings.Contains(q, "GROUP BY day, member") {
 		t.Error("query must group by the alias family's member key")
 	}
 	if strings.Contains(q, "GROUP BY day, base_asset") {
 		t.Error("query groups by the stored base_asset spelling; SAC-form rows would not fold onto their member")
+	}
+}
+
+// TestDailyMarketDaysQueryReadsBothOrientations: a fill where the maker sold dollars is stored (dollar, asset); reading
+// the (asset, dollar) rows alone serves a one-sided VWAP and half the volume.
+func TestDailyMarketDaysQueryReadsBothOrientations(t *testing.T) {
+	q := dailyMarketDaysQuery
+	for _, want := range []string{
+		"family.spelling = prices_1h.base_asset",
+		"family.spelling = prices_1h.quote_asset",
+		"NOT (base_asset = ANY($1) AND quote_asset = ANY($2))",
+	} {
+		if !strings.Contains(q, want) {
+			t.Errorf("query lacks %q", want)
+		}
+	}
+	if n := strings.Count(q, "bucket <= now() - INTERVAL '1 hour'"); n != 2 {
+		t.Errorf("closed-bucket guard appears %d time(s), want one per orientation", n)
 	}
 }
