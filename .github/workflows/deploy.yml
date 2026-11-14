@@ -1080,6 +1080,11 @@ jobs:
                     v=$(awk 1 "$f") || exit 3;
                     printf "%s\t%s\n" "${f##*/}" "$v";
                   done;
+                  m="$d/.config-applied";
+                  if [ -e "$m" ]; then
+                    v=$(awk 1 "$m") || exit 3;
+                    printf ".config-applied\t%s\n" "$v";
+                  fi;
                   exit 0'
           set +e
           # shellcheck disable=SC2086 # proxy is empty or several ssh args; it must split
@@ -1099,8 +1104,15 @@ jobs:
           # rows only; an empty set (a manifest row with no binaries)
           # falls through to every sidecar, which is the old behaviour.
           versions=""
+          applied=""
+          has_marker=0
           while IFS=$'\t' read -r name ver; do
             [ -n "$name" ] || continue
+            if [ "$name" = ".config-applied" ]; then
+              has_marker=1
+              applied="$ver"
+              continue
+            fi
             if [ -n "${REGION_SET:-}" ] && ! grep -qxF -- "$name" <<<"${REGION_SET// /$'\n'}"; then
               echo "::notice::ignoring sidecar ${name}=${ver}: not in ${REGION}'s manifest set (${REGION_SET})"
               continue
@@ -1115,6 +1127,63 @@ jobs:
             echo "::warning::the host has no deployed-versions sidecar (first deploy to this host, or the directory was wiped); the config-apply gate falls back to the previous release tag by ancestry, which is only correct if the fleet is exactly one release behind."
             echo "live=" >> "$GITHUB_OUTPUT"
           fi
+          # The sidecars say where the BINARIES are; .config-applied says how far
+          # the CONFIG got. The playbook advances the sidecars whatever the gate
+          # later decides, so after a red gate only the marker still remembers
+          # the config that is owed.
+          config="$live"
+          if [ "$has_marker" -eq 1 ]; then
+            if ! grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' <<<"$applied"; then
+              echo "::error::config-apply gate: ${DEPLOY_HOST}'s .config-applied marker holds '${applied}', which is not a version. Refusing to continue: ignoring it would raise the baseline past config that may still be owed. Write the version whose config is known applied into /var/lib/stellarindex/deployed-versions/.config-applied and re-run."
+              exit 1
+            fi
+            config=$(printf '%s\n%s\n' "$live" "$applied" | grep . | sort -V | sed -n '1p')
+            echo "config applied through: $applied (baseline for the config-apply gate: $config)"
+          fi
+          echo "config=$config" >> "$GITHUB_OUTPUT"
+          echo "has_marker=$has_marker" >> "$GITHUB_OUTPUT"
+
+      - name: Record the config baseline on the host
+        # Before the playbook: once it runs, the sidecars read VERSION and
+        # nothing else on the host says the config is older. Only an absent
+        # marker is written, so config a previous run left owed is kept.
+        id: config_seed
+        if: steps.baseline.outputs.has_marker != '1'
+        env:
+          VERSION: ${{ inputs.version }}
+          CONFIG_BASELINE: ${{ steps.baseline.outputs.config }}
+          DEPLOY_HOST: ${{ steps.region.outputs.host }}
+          DEPLOY_USER: ${{ steps.region.outputs.user }}
+          DEPLOY_JUMP: ${{ steps.region.outputs.jump }}
+        run: |
+          set -euo pipefail
+          seed="${CONFIG_BASELINE}"
+          if [ -z "$seed" ]; then
+            # Same assumption the gate makes when the host reports nothing.
+            seed="$(git describe --tags --abbrev=0 "${VERSION}^" 2>/dev/null || true)"
+          fi
+          if [ -z "$seed" ]; then
+            echo "no baseline resolves (first release); nothing to record."
+            exit 0
+          fi
+          if ! grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' <<<"$seed"; then
+            echo "::error::config-apply gate: baseline '${seed}' is not a release version; refusing to record it."
+            exit 1
+          fi
+          proxy=""
+          [ -n "${DEPLOY_JUMP:-}" ] && proxy="-o ProxyJump=${DEPLOY_JUMP}"
+          # shellcheck disable=SC2016 # expands on the remote host, not here
+          write='d=/var/lib/stellarindex/deployed-versions;
+                  install -d -o root -g root -m 0755 "$d";
+                  [ -e "$d/.config-applied" ] && exit 0;
+                  t=$(mktemp "$d/.config-applied.XXXXXX");
+                  printf "%s" "$1" > "$t";
+                  chmod 0644 "$t";
+                  mv -f "$t" "$d/.config-applied"'
+          # shellcheck disable=SC2086 # proxy is empty or several ssh args; it must split
+          ssh -i ~/.ssh/id_deploy -o BatchMode=yes -o ConnectTimeout=15 \
+            ${proxy} "${DEPLOY_USER}@${DEPLOY_HOST}" "sh -c '$write' sh '$seed'"
+          echo "recorded config baseline ${seed} on ${DEPLOY_HOST}"
 
       - name: Migration follow-up gate
         # Before the playbook, so no migration that blanks data (and names
@@ -1272,7 +1341,7 @@ jobs:
         continue-on-error: true
         env:
           VERSION: ${{ inputs.version }}
-          BASELINE: ${{ steps.baseline.outputs.live }}
+          BASELINE: ${{ steps.baseline.outputs.config }}
           DEPLOY_HOST: ${{ steps.region.outputs.host }}
           DEPLOY_USER: ${{ steps.region.outputs.user }}
           DEPLOY_JUMP: ${{ steps.region.outputs.jump }}
@@ -1380,7 +1449,7 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           CONFIG_ACK: ${{ inputs.config_acknowledged }}
-          BASELINE: ${{ steps.baseline.outputs.live }}
+          BASELINE: ${{ steps.baseline.outputs.config }}
           # Surfaces THIS run applied and verified. The Apply-Prometheus-rules
           # step writes this output as its LAST action, after apply-rules.sh
           # has polled /api/v1/rules and confirmed every alert is live — and
@@ -1403,6 +1472,31 @@ jobs:
           UNANSWERED: ${{ steps.ch_ddl.outputs.unanswered }}
         run: |
           bash scripts/ci/config-apply-gate.sh "$VERSION" "$CONFIG_ACK" "$BASELINE" "$APPLIED" "$REFUTED" "$UNANSWERED"
+
+      - name: Record the config as applied through this version
+        # Only a passed gate reaches this step. A red gate leaves the marker
+        # where it was, so the next run diffs from the same baseline again.
+        id: config_mark
+        env:
+          VERSION: ${{ inputs.version }}
+          DEPLOY_HOST: ${{ steps.region.outputs.host }}
+          DEPLOY_USER: ${{ steps.region.outputs.user }}
+          DEPLOY_JUMP: ${{ steps.region.outputs.jump }}
+        run: |
+          set -euo pipefail
+          proxy=""
+          [ -n "${DEPLOY_JUMP:-}" ] && proxy="-o ProxyJump=${DEPLOY_JUMP}"
+          # shellcheck disable=SC2016 # expands on the remote host, not here
+          write='d=/var/lib/stellarindex/deployed-versions;
+                  install -d -o root -g root -m 0755 "$d";
+                  t=$(mktemp "$d/.config-applied.XXXXXX");
+                  printf "%s" "$1" > "$t";
+                  chmod 0644 "$t";
+                  mv -f "$t" "$d/.config-applied"'
+          # shellcheck disable=SC2086 # proxy is empty or several ssh args; it must split
+          ssh -i ~/.ssh/id_deploy -o BatchMode=yes -o ConnectTimeout=15 \
+            ${proxy} "${DEPLOY_USER}@${DEPLOY_HOST}" "sh -c '$write' sh '$VERSION'"
+          echo "config recorded as applied through ${VERSION} on ${DEPLOY_HOST}"
 
       - name: Served-path smoke
         # Runs AFTER the config-apply gate, i.e. after every deploy

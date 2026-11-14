@@ -79,7 +79,8 @@ run_baseline() {
   out="$(DEPLOY_HOST=h DEPLOY_USER=u DEPLOY_JUMP="" GITHUB_OUTPUT="$TMP/gh_output" \
          REGION=testnet REGION_SET="${REGION_SET:-}" bash "$TMP/baseline.sh" 2>&1)"
   local rc=$?
-  gh="$(cat "$TMP/gh_output")"
+  gh="$(grep '^live=' "$TMP/gh_output")"
+  cfg="$(grep '^config=' "$TMP/gh_output")"
   return $rc
 }
 
@@ -208,6 +209,111 @@ else
   fi
 fi
 
+
+echo "deploy-baseline-test: config owed after a red gate"
+
+# The playbook moves every sidecar to the deploying version before the gate
+# runs, so the sidecars alone make a re-run diff VERSION..VERSION and pass.
+# The .config-applied marker is what a re-run must read instead.
+fake_ssh 0 $'stellarindex-api\tv0.58.0\nstellarindex-indexer\tv0.58.0\n.config-applied\tv0.57.0'
+if run_baseline && [ "$gh" = "live=v0.58.0" ] && [ "$cfg" = "config=v0.57.0" ]; then
+  ok "binaries ahead of the applied config: the config baseline stays behind"
+else
+  bad "owed config: live='$gh' config='$cfg' log='$out'"
+fi
+
+fake_ssh 0 $'stellarindex-api\tv0.44.7\nstellarindex-indexer\tv0.58.0\n.config-applied\tv0.58.0'
+if run_baseline && [ "$cfg" = "config=v0.44.7" ]; then
+  ok "a lagging binary still drags the config baseline below the marker"
+else
+  bad "lagging binary under a current marker: config='$cfg' log='$out'"
+fi
+
+fake_ssh 0 $'stellarindex-api\tv0.58.0\n.config-applied\tgarbage'
+if run_baseline; then
+  bad "a marker that is not a version passed: config='$cfg' log='$out'"
+else
+  ok "a marker that is not a version FAILS the step rather than being ignored"
+fi
+
+# Two deploys against one stateful host: every ssh runs its remote command
+# locally against a fixture directory.
+step_script() {
+  python3 - "$WORKFLOW" "$1" "$TMP/$1.sh" <<'PY'
+import sys, yaml
+wf = yaml.safe_load(open(sys.argv[1]))
+for job in wf["jobs"].values():
+    for step in job.get("steps", []):
+        if step.get("id") == sys.argv[2]:
+            open(sys.argv[3], "w").write(step["run"])
+            sys.exit(0)
+sys.exit(1)
+PY
+}
+step_script config_seed || { echo "deploy-baseline-test: no config_seed step" >&2; exit 2; }
+step_script config_mark || { echo "deploy-baseline-test: no config_mark step" >&2; exit 2; }
+
+HOSTDIR="$TMP/host"
+mkdir -p "$HOSTDIR"
+cat > "$TMP/bin/ssh" <<EOF
+#!/usr/bin/env bash
+for last; do :; done
+printf '%s' "\$last" | sed 's#/var/lib/stellarindex/deployed-versions#$HOSTDIR#g; s#install -d -o root -g root#install -d#' > "$TMP/remote-cmd.sh"
+exec bash "$TMP/remote-cmd.sh"
+EOF
+chmod +x "$TMP/bin/ssh"
+
+run_step() { # run_step <id> <VERSION> <CONFIG_BASELINE>
+  DEPLOY_HOST=h DEPLOY_USER=u DEPLOY_JUMP="" VERSION="$2" CONFIG_BASELINE="${3:-}" \
+    bash "$TMP/$1.sh" >"$TMP/step.log" 2>&1
+}
+swap_binaries() {
+  printf '%s' "$1" > "$HOSTDIR/stellarindex-api"
+  printf '%s' "$1" > "$HOSTDIR/stellarindex-indexer"
+}
+
+swap_binaries v0.57.0
+run_baseline
+if [ "$cfg" = "config=v0.57.0" ] && run_step config_seed v0.58.0 v0.57.0 \
+   && [ "$(cat "$HOSTDIR/.config-applied" 2>/dev/null)" = "v0.57.0" ]; then
+  ok "first deploy records the baseline on the host before the binaries swap"
+else
+  bad "seed: config='$cfg' marker='$(cat "$HOSTDIR/.config-applied" 2>/dev/null)' log='$(cat "$TMP/step.log")'"
+fi
+
+swap_binaries v0.58.0 # the playbook ran; the gate then went red, so config_mark never ran
+run_baseline
+if [ "$gh" = "live=v0.58.0" ] && [ "$cfg" = "config=v0.57.0" ]; then
+  ok "a re-run after a red gate still diffs from the owed baseline"
+else
+  bad "re-run after red: live='$gh' config='$cfg' log='$out'"
+fi
+
+swap_binaries v0.58.1 # the next release deploys over the unapplied config
+run_step config_seed v0.58.1 v0.57.0
+run_baseline
+if [ "$cfg" = "config=v0.57.0" ] && [ "$(cat "$HOSTDIR/.config-applied")" = "v0.57.0" ]; then
+  ok "the next release still diffs from the owed baseline, and the seed keeps the marker"
+else
+  bad "next release: config='$cfg' marker='$(cat "$HOSTDIR/.config-applied")'"
+fi
+
+if run_step config_mark v0.58.1 && run_baseline && [ "$cfg" = "config=v0.58.1" ]; then
+  ok "a passed gate advances the marker to the deployed version"
+else
+  bad "mark: config='$cfg' log='$(cat "$TMP/step.log")'"
+fi
+if [ -z "$(find "$HOSTDIR" -name '.config-applied.*')" ]; then
+  ok "no staging file is left beside the marker"
+else
+  bad "staging files left behind: $(ls -A "$HOSTDIR")"
+fi
+
+if grep -qF 'd/.config-applied" || exit 3' scripts/dev/preflight-deploy.sh; then
+  ok "preflight-deploy.sh reads the same marker into its baseline"
+else
+  bad "preflight-deploy.sh no longer reads .config-applied — its plan would diff a narrower range than the gate"
+fi
 
 echo "deploy-baseline-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

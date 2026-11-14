@@ -36,6 +36,15 @@ rules, `deploy/systemd/`, `deploy/clickhouse/`, and the repo scripts the role
 copies onto the host verbatim (`scripts/ops/config-assertions.sh`,
 `ch-schema-snapshot.sh`, `restore-drill.sh`, `scripts/dev/r1-smoke.sh`).
 
+The gate diffs from the version the host's **config** is applied through, not
+the version its binaries run. `deploy.yml` keeps that in
+`/var/lib/stellarindex/deployed-versions/.config-applied`: written before the
+playbook when absent, advanced to the deployed version only when the gate
+passes. A red gate leaves it alone, so a re-run or the next release diffs from
+the same baseline and lists the owed surfaces again. After applying config by
+hand, re-run the deploy with `-f config_acknowledged=true`; do not edit the
+marker.
+
 ## Three cases, not two
 
 "Comment-only, so acknowledge" is **false** as a general rule:
