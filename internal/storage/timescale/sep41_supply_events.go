@@ -314,6 +314,11 @@ func sep41SorobanFloor(cp sep41RollupRow) uint32 {
 	return cp.genesisLedger
 }
 
+// SEP41EventTotalsInRange sums a contract's stored supply events over fromLedger <= ledger <= toLedger, with no rollup and no genesis baseline.
+func (s *Store) SEP41EventTotalsInRange(ctx context.Context, contractID string, fromLedger, toLedger uint32) (SEP41KindTotals, error) {
+	return s.sep41KindTotalsFullSum(ctx, contractID, fromLedger, toLedger)
+}
+
 // sep41KindTotalsFullSum is the full per-contract aggregate at-or-before asOfLedger, the
 // correctness backstop the fast path falls back to; it must stay equal to rollup plus delta.
 func (s *Store) sep41KindTotalsFullSum(ctx context.Context, contractID string, floorLedger, asOfLedger uint32) (SEP41KindTotals, error) {

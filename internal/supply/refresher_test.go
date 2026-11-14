@@ -911,6 +911,50 @@ func TestGenesisSeedingComputer_FailedSeedStaysBenignAndBacksOff(t *testing.T) {
 	}
 }
 
+// A watched contract whose Soroban-era events are not shown to be replayed publishes nothing: no compute, no seed, no row.
+func TestGenesisSeedingComputer_UncoveredHistoryPublishesNothing(t *testing.T) {
+	seeded := true
+	inner := &seededComputer{seeded: &seeded}
+	replayed := false
+	var checks int
+	g := NewGenesisSeedingComputer(inner, "CNEW", GenesisSeedingOptions{
+		Seed: func(context.Context, string) error { t.Fatal("seeded before coverage was shown"); return nil },
+		Covers: func(_ context.Context, id string, ledger uint32) error {
+			checks++
+			if id != "CNEW" || ledger != 10 {
+				t.Fatalf("coverage check for %q@%d", id, ledger)
+			}
+			if !replayed {
+				return errors.New("lake mint=900 served mint=0")
+			}
+			return nil
+		},
+		RetryAfter: time.Hour, Logger: discardLogger(),
+	})
+	ins := &stubInserter{}
+	r := NewRefresher(stubLedgers{ledger: 10, observedAt: time.Unix(1, 0)}, g, ins, discardLogger())
+	for i := 0; i < 3; i++ {
+		if out := r.Tick(context.Background()); out.Kind != OutcomeKindMissingBaseline || !errors.Is(out.Err, ErrSEP41HistoryNotCovered) {
+			t.Fatalf("pass %d: kind=%s err=%v, want %s / ErrSEP41HistoryNotCovered", i, out.Kind, out.Err, OutcomeKindMissingBaseline)
+		}
+	}
+	if inner.calls != 0 || ins.calls != 0 || checks != 1 {
+		t.Fatalf("computes=%d rows=%d checks=%d, want 0 / 0 / 1 (backoff)", inner.calls, ins.calls, checks)
+	}
+
+	// After the replay lands the check passes once and is not repeated.
+	replayed = true
+	g.lastFailure = time.Time{}
+	for i := 0; i < 2; i++ {
+		if _, err := g.Compute(context.Background(), 10, time.Unix(1, 0)); err != nil {
+			t.Fatalf("covered pass %d: %v", i, err)
+		}
+	}
+	if checks != 2 || inner.calls != 2 {
+		t.Fatalf("checks=%d computes=%d, want 2 / 2", checks, inner.calls)
+	}
+}
+
 func TestGenesisSeedingComputer_OtherErrorsDoNotSeed(t *testing.T) {
 	g := NewGenesisSeedingComputer(stubComputer{err: ErrNegativeTotalSupply}, "C", GenesisSeedingOptions{Seed: func(context.Context, string) error {
 		t.Fatal("seeded on an unrelated error")

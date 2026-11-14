@@ -136,6 +136,13 @@ inconsistency keeps `ErrNegativeTotalSupply` (pages). The one-time seed is
 
 ## Backfill / catch-up
 
+A contract added to `watched_sep41_contracts` is matched only from the
+projector's current cursor. Until its Soroban-era events are replayed the
+aggregator publishes no supply for it (`missing_baseline`): on first use
+it compares the contract's per-kind sums in `sep41_supply_events` with the
+lake's `stellar.supply_flows` over the same settled range and retries
+every ten minutes until they are equal.
+
 Projected sources (ADR-0031/0032): supply catch-up after a missing window
 is `stellarindex-ops projector-replay -source sep41_supply -from <ledger>`
 (and `-source sep41_transfers`), never a bespoke backfill subcommand. The

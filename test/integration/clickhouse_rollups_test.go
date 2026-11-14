@@ -1044,6 +1044,24 @@ func TestDailySupplyFlowsPerKindSplit(t *testing.T) {
 			t.Errorf("day %d = %+v flows=%d, want %+v flows=%d", i, gd, g.Flows, w, wantFlows[i])
 		}
 	}
+
+	// Both range bounds are inclusive.
+	for _, tc := range []struct {
+		from, to             uint32
+		mint, burn, clawback string
+	}{
+		{80_000_001, 80_000_001, "18446744073709551621", "21", "0"},
+		{80_000_002, 80_050_000, "100", "0", "4"},
+		{80_000_003, 80_049_999, "0", "0", "0"},
+	} {
+		got, err := sr.TokenSupplyInLedgerRange(ctx, contract, tc.from, tc.to)
+		if err != nil {
+			t.Fatalf("TokenSupplyInLedgerRange [%d, %d]: %v", tc.from, tc.to, err)
+		}
+		if got.Mint.String() != tc.mint || got.Burn.String() != tc.burn || got.Clawback.String() != tc.clawback {
+			t.Errorf("range [%d, %d] = mint %s burn %s clawback %s, want %s / %s / %s", tc.from, tc.to, got.Mint, got.Burn, got.Clawback, tc.mint, tc.burn, tc.clawback)
+		}
+	}
 }
 
 // TestSupplyObservedAt_StampsLedgerCloseTimeNotWallClock: a re-derived historical supply snapshot must carry the

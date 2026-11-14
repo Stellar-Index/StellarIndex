@@ -373,6 +373,22 @@ func (r *SupplyReader) TokenSupplyBelowLedger(ctx context.Context, contractID st
 	return querySupplyBelowLedger(ctx, r.conn, contractID, ledgerExclusive)
 }
 
+// TokenSupplyInLedgerRange returns a contract's per-kind sums over fromLedger <= ledger_seq <= toLedger.
+func (r *SupplyReader) TokenSupplyInLedgerRange(ctx context.Context, contractID string, fromLedger, toLedger uint32) (TokenSupply, error) {
+	var mintS, burnS, clawbackS string
+	var flows uint64
+	if err := r.conn.QueryRow(ctx, supplySumBelowLedgerQuery+` AND ledger_seq >= ?`, contractID, toLedger+1, fromLedger).Scan(&mintS, &burnS, &clawbackS, &flows); err != nil {
+		return TokenSupply{}, fmt.Errorf("clickhouse: supply for %s over ledgers [%d, %d]: %w", contractID, fromLedger, toLedger, err)
+	}
+	return assembleTokenSupply(contractID, mintS, burnS, clawbackS, flows), nil
+}
+
+// LakeTip returns the newest ledger the lake holds.
+func (r *SupplyReader) LakeTip(ctx context.Context) (uint32, error) {
+	_, ledger, err := r.NativeTotalCoins(ctx)
+	return ledger, err
+}
+
 // NativeTotalCoins returns XLM's total supply (stroops) and its ledger from the latest header's total_coins; XLM has no supply_flows.
 func (r *SupplyReader) NativeTotalCoins(ctx context.Context) (totalCoins int64, ledger uint32, err error) {
 	const q = `SELECT total_coins, ledger_seq FROM stellar.ledgers ORDER BY ledger_seq DESC LIMIT 1`

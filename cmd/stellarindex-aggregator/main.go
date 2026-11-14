@@ -1076,6 +1076,7 @@ func buildSEP41Refreshers(cfg config.Config, store *timescale.Store, closeTimes 
 		return nil, fmt.Errorf("sep41 computer: %w", err)
 	}
 	seeder := newGenesisAutoSeeder(cfg, store)
+	covers := newSEP41CoverageCheck(cfg, store)
 	out := make([]supplyRefresherBinding, 0, len(cfg.Supply.WatchedSEP41Contracts))
 	for _, contractID := range cfg.Supply.WatchedSEP41Contracts {
 		asset, err := canonical.NewSorobanAsset(contractID)
@@ -1093,7 +1094,7 @@ func buildSEP41Refreshers(cfg config.Config, store *timescale.Store, closeTimes 
 		out = append(out, supplyRefresherBinding{
 			refresher: supply.NewRefresher(
 				supplyAggregatorLedgers{s: store, closeTimes: closeTimes},
-				supply.NewGenesisSeedingComputer(bound, contractID, supply.GenesisSeedingOptions{Seed: seeder, RetryAfter: genesisAutoSeedRetry, Logger: logger.With("asset", contractID)}),
+				supply.NewGenesisSeedingComputer(bound, contractID, supply.GenesisSeedingOptions{Seed: seeder, Covers: covers, RetryAfter: genesisAutoSeedRetry, Logger: logger.With("asset", contractID)}),
 				supplyAggregatorInserter{s: store},
 				logger.With("asset", contractID),
 				opts...,
