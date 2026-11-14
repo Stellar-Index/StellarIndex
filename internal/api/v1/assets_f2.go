@@ -446,7 +446,7 @@ func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.
 		s.normalizeRawPriceSnapshot(&snap, asset, defaultPriceQuote)
 		return usdPriceLookup{price: snap.Price, sources: len(sources), stale: stale}
 	}
-	unread := err != nil && !errors.Is(err, ErrPriceNotFound)
+	unread := err != nil && (isPriceReadFailure(err) || aliasUnread(err) != nil)
 	if unread && ctx.Err() == nil {
 		s.logger.Warn("usd price read failed", "err", err, "asset", asset.String())
 	}

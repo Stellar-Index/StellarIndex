@@ -111,7 +111,7 @@ func (s *Server) handlePriceTip(w http.ResponseWriter, r *http.Request) {
 // Stale stays false (PriceReader's bit is ignored); divergence flags come from the requested (base, quote) spelling only, never ORed
 // across other quotes or aliases.
 func (s *Server) tipFlags(ctx context.Context, snap PriceSnapshot, asset, quote canonical.Asset, sources []string) Flags {
-	flags := Flags{SingleSource: marketSingleSource(snap, sources), ProxyDeviation: snap.ProxyDeviation}
+	flags := Flags{SingleSource: marketSingleSource(snap, sources), ProxyDeviation: snap.ProxyDeviation, Degraded: snap.PegUnchecked}
 	flags.DivergenceWarning, flags.DivergenceChecked = s.lookupDivergenceFlag(ctx, asset, quote, 0)
 	return flags
 }
@@ -189,7 +189,9 @@ func (s *Server) tipFallback(ctx context.Context, asset, quote canonical.Asset) 
 	unread := aliasUnread(err)
 	cacheSnap, cacheSources, _, tri, ok, cacheErr := s.tryRedisVWAPFallback(ctx, asset, quote)
 	if ok {
-		cacheSnap.ProxyDeviation = tri && s.proxyDeviation(ctx, time.Now().UTC())
+		if tri {
+			cacheSnap.ProxyDeviation, cacheSnap.PegUnchecked = s.proxyDeviationChecked(ctx, time.Now().UTC())
+		}
 		return cacheSnap, cacheSources, true, nil
 	}
 	if unread != nil {
@@ -203,7 +205,7 @@ func (s *Server) tipFallback(ctx context.Context, asset, quote canonical.Asset) 
 		return PriceSnapshot{}, nil, false, err
 	}
 	if proxyOK {
-		proxySnap.ProxyDeviation = s.proxyDeviation(ctx, time.Now().UTC())
+		proxySnap.ProxyDeviation, proxySnap.PegUnchecked = s.proxyDeviationChecked(ctx, time.Now().UTC())
 		return proxySnap, proxySources, true, nil
 	}
 	// Fiat-vs-fiat cross-rate via the forex snapshot (see tryFiatCrossRate); no on-chain pair

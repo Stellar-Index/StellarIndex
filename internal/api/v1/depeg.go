@@ -54,15 +54,8 @@ func (s *Server) pegUSDObservationPairs() []canonical.Pair {
 	return out
 }
 
-// proxyDeviation reports whether any declared USD peg's observed price at `at` is outside the [depegBand]; false also covers
-// "no observation" (the flag is omitted, not asserted held).
-func (s *Server) proxyDeviation(ctx context.Context, at time.Time) bool {
-	deviated, _ := s.proxyDeviationChecked(ctx, at)
-	return deviated
-}
-
-// proxyDeviationChecked is [Server.proxyDeviation] plus unread: a peg's read failed and no peg was seen outside the band, so the
-// absent flag is not a verdict.
+// proxyDeviationChecked reports whether any declared USD peg's observed price at `at` is outside the [depegBand]. unread: a peg's
+// read failed and none was seen outside the band, so false is not a verdict; "no observation" is neither.
 func (s *Server) proxyDeviationChecked(ctx context.Context, at time.Time) (deviated, unread bool) {
 	if s.PriceAt == nil {
 		return false, false

@@ -63,6 +63,7 @@ func TestPopulatePriceUSD_UnreadIsNotAbsent(t *testing.T) {
 		{"proxy read failed", withheldUSDReader{viaPeg: {err: boom}}, true},
 		{"direct failed, proxy served", withheldUSDReader{direct: {err: boom}, viaPeg: {price: "0.5"}}, true},
 		{"never traded", withheldUSDReader{}, false},
+		{"pair mismatch is a verdict", withheldUSDReader{direct: {err: canonical.ErrPairMismatch}}, false},
 		{"served", withheldUSDReader{direct: {price: "0.25"}}, false},
 	}
 	for _, c := range cases {
@@ -75,5 +76,18 @@ func TestPopulatePriceUSD_UnreadIsNotAbsent(t *testing.T) {
 		if detail.priceUnread != c.unread {
 			t.Errorf("%s: priceUnread = %v, want %v", c.name, detail.priceUnread, c.unread)
 		}
+	}
+}
+
+// TestPopulatePriceUSD_UnreadAliasIsNotAbsent: a not-found on one XLM spelling must not hide a failed read of another.
+func TestPopulatePriceUSD_UnreadAliasIsNotAbsent(t *testing.T) {
+	s := &Server{
+		Options: Options{Prices: withheldUSDReader{"crypto:XLM/" + defaultPriceQuote.String(): {err: errors.New("pool timeout")}}},
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	var detail AssetDetail
+	s.populatePriceUSD(context.Background(), &detail, canonical.Asset{Type: canonical.AssetNative})
+	if !detail.priceUnread {
+		t.Error("priceUnread = false with crypto:XLM unread; a null price_usd would be cached as no market")
 	}
 }
