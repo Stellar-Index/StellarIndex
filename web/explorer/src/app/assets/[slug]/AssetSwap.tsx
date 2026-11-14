@@ -2,14 +2,18 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowDownUp, ChevronDown, Search, X } from 'lucide-react';
+import { ArrowDownUp, BadgeCheck, ChevronDown, Search, X } from 'lucide-react';
 
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
 import type { components } from '@/api/types';
-import { useCoins, coinSlug } from '@/api/hooks';
+import { useCoins, useVerifiedSlugs, coinSlug } from '@/api/hooks';
 import { CURRENT_NETWORK } from '@/lib/networks';
-import { formatRelative, formatSubunitPrice } from '@/lib/format';
+import {
+  formatRelative,
+  formatSubunitPrice,
+  truncateMiddle,
+} from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { iconProxySrc, isSafePublicImageUrl } from '@/lib/safe-domain';
 import { useDialog } from '@/lib/useDialog';
@@ -59,6 +63,48 @@ export interface SwapToken {
   /** When `usdPrice` was OBSERVED (RFC 3339), where the API said. */
   observedAt?: string | null;
   kind: 'crypto' | 'fiat';
+  /** The row is the verified asset for its ticker. */
+  verified?: boolean;
+  /** The API flagged the row as reusing a verified asset's ticker. */
+  collision?: boolean;
+  /** Issuer or contract address, the only thing that tells same-code rows apart. */
+  issuer?: string | null;
+}
+
+/** assetIssuer — the G…/C… address in a canonical asset id, if it has one. */
+export function assetIssuer(assetId: string): string | null {
+  const m = /(?:^|-)([GC][A-Z2-7]{55})$/.exec(assetId);
+  return m ? m[1] : null;
+}
+
+/**
+ * rankSwapTokens — picker order. A ticker-collision row always sorts last, and
+ * with a query the verified row leads its match tier, so a look-alike cannot
+ * sit above the asset whose code it copies.
+ */
+export function rankSwapTokens(tokens: SwapToken[], q: string): SwapToken[] {
+  const tier = (t: SwapToken) => {
+    if (!q) return 0;
+    const sym = t.symbol.toLowerCase();
+    const name = (t.name ?? '').toLowerCase();
+    if (sym === q) return 0;
+    if (sym.startsWith(q)) return 1;
+    if (sym.includes(q)) return 2;
+    if (name.startsWith(q)) return 3;
+    if (name.includes(q)) return 4;
+    return 5;
+  };
+  const trusted = (t: SwapToken) => (t.kind === 'fiat' || t.verified ? 0 : 1);
+  return tokens
+    .map((t, i) => ({ t, i, r: tier(t) }))
+    .sort(
+      (a, b) =>
+        Number(a.t.collision ?? false) - Number(b.t.collision ?? false) ||
+        a.r - b.r ||
+        (q ? trusted(a.t) - trusted(b.t) : 0) ||
+        a.i - b.i,
+    )
+    .map((x) => x.t);
 }
 
 // Fiat legs offered in the picker, priced from the forex batch. USD is the
@@ -582,6 +628,7 @@ function TokenPicker({
   );
   const coins = isSearching ? searchedCoins : topCoins;
 
+  const { data: verifiedSlugs } = useVerifiedSlugs();
   const cryptoTokens = useMemo<SwapToken[]>(() => {
     const rows = coins.data?.coins ?? [];
     return (
@@ -595,12 +642,19 @@ function TokenPicker({
             image: c.image,
             usdPrice: price != null && price > 0 ? price : null,
             kind: 'crypto',
+            collision: c.unverified_ticker_collision ?? false,
+            // Same rule as the search modal: the slug match alone would badge
+            // a NULL-slug row that borrows the verified asset's code.
+            verified:
+              (verifiedSlugs?.has(coinSlug(c).toLowerCase()) ?? false) &&
+              !c.unverified_ticker_collision,
+            issuer: assetIssuer(c.asset_id ?? ''),
           };
         })
         // Only offer legs we can actually price.
         .filter((t) => t.usdPrice != null)
     );
-  }, [coins.data]);
+  }, [coins.data, verifiedSlugs]);
 
   const q = debounced.toLowerCase();
   const fiatMatches = useMemo(
@@ -631,25 +685,10 @@ function TokenPicker({
       seen.add(t.key);
       out.push(t);
     }
-    if (!q) return out;
-    // With a query, rank by match quality so the thing the user typed surfaces
-    // to the top — otherwise the /v1/assets popularity fallback (which returns
-    // top coins even for a non-matching query like "DKK") buries the exact fiat
-    // match at the bottom of the list. Stable within each tier.
-    const rank = (t: SwapToken) => {
-      const sym = t.symbol.toLowerCase();
-      const name = (t.name ?? '').toLowerCase();
-      if (sym === q) return 0;
-      if (sym.startsWith(q)) return 1;
-      if (sym.includes(q)) return 2;
-      if (name.startsWith(q)) return 3;
-      if (name.includes(q)) return 4;
-      return 5;
-    };
-    return out
-      .map((t, i) => ({ t, i, r: rank(t) }))
-      .sort((a, b) => a.r - b.r || a.i - b.i)
-      .map((x) => x.t);
+    // With a query, match quality leads so the thing the user typed surfaces —
+    // otherwise the /v1/assets popularity fallback (which returns top coins even
+    // for a non-matching query like "DKK") buries the exact fiat match.
+    return rankSwapTokens(out, q);
   }, [pageMatch, cryptoTokens, fiatMatches, q]);
 
   return (
@@ -707,12 +746,33 @@ function TokenPicker({
           >
             <TokenIcon token={t} size={26} />
             <span className="min-w-0 flex-1">
-              <span className="text-ink block truncate text-sm font-medium">
-                {t.symbol}
+              <span className="text-ink flex items-center gap-1 text-sm font-medium">
+                <span className="truncate">{t.symbol}</span>
+                {t.verified && (
+                  <BadgeCheck
+                    className="text-up h-3.5 w-3.5 shrink-0"
+                    role="img"
+                    aria-label="Verified currency"
+                  />
+                )}
+                {t.collision && (
+                  <span
+                    className="text-warn-700 shrink-0 text-[10px] tracking-wider uppercase"
+                    title="Reuses a verified asset's ticker; check the issuer"
+                  >
+                    unverified
+                  </span>
+                )}
               </span>
               <span className="text-ink-faint block truncate text-[11px]">
                 {t.name ??
                   (t.kind === 'fiat' ? 'Fiat currency' : 'Stellar asset')}
+                {t.issuer && (
+                  <span className="font-mono" title={t.issuer}>
+                    {' · '}
+                    {truncateMiddle(t.issuer, 4, 4)}
+                  </span>
+                )}
               </span>
             </span>
             <span className="text-ink-muted shrink-0 font-mono text-xs tabular-nums">

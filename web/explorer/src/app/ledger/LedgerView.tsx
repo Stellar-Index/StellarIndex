@@ -32,6 +32,7 @@ import {
 } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
+import { memoLabel } from '@/lib/memo';
 import { totalCoinsCaption } from '@/lib/xlm-supply';
 import {
   type Envelope,
@@ -372,7 +373,7 @@ function TransactionsPanel({
             result_code: t.result_code,
             fee_charged: t.fee_charged,
             memo_type: t.memo_type,
-            memo: t.memo,
+            memo: memoLabel(t.memo, t.memo_base64) || undefined,
           })),
         }}
         bodyClassName="-mx-4 -mb-4"
@@ -424,8 +425,8 @@ function TransactionsPanel({
                   </Td>
                   <Td className="text-ink-muted max-w-56 truncate text-xs">
                     {t.memo ? (
-                      <span title={t.memo}>
-                        {t.memo_type} · {t.memo}
+                      <span title={memoLabel(t.memo, t.memo_base64)}>
+                        {t.memo_type} · {memoLabel(t.memo, t.memo_base64)}
                       </span>
                     ) : (
                       '—'

@@ -77,6 +77,7 @@ import { AccountGraphPanel } from './AccountGraph';
 import { AccountSponsorshipsPanel } from './AccountSponsorships';
 import { AccountsAnalytics } from './AccountsAnalytics';
 import { ACCOUNT_ID_RE as ACCOUNT_RE } from '@/lib/preload/manifest';
+import { memoLabel } from '@/lib/memo';
 const PAGE_SIZE = 50;
 
 /** Cursor paging that only walks backwards through history, like the API. */
@@ -1134,11 +1135,14 @@ function TransactionsPanel({
                 </Td>
                 <Td className="whitespace-nowrap">
                   {t.memo_type && t.memo_type !== 'none' ? (
-                    <span className="text-xs" title={t.memo ?? ''}>
+                    <span
+                      className="text-xs"
+                      title={memoLabel(t.memo, t.memo_base64)}
+                    >
                       <span className="text-ink-muted">{t.memo_type}</span>
                       {t.memo && (
                         <span className="text-ink-body ml-1.5 font-mono">
-                          {truncate(t.memo, 18)}
+                          {memoLabel(t.memo, t.memo_base64, 18)}
                         </span>
                       )}
                     </span>
@@ -1302,8 +1306,4 @@ function OperationRow({ op }: { op: TxOperation }) {
       )}
     </li>
   );
-}
-
-function truncate(s: string, n: number): string {
-  return s.length > n ? `${s.slice(0, n)}…` : s;
 }

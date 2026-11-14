@@ -9,7 +9,12 @@ vi.mock('@/api/client', async () => {
 });
 
 import { apiGet } from '@/api/client';
-import { AssetSwap } from './AssetSwap';
+import {
+  AssetSwap,
+  assetIssuer,
+  rankSwapTokens,
+  type SwapToken,
+} from './AssetSwap';
 
 // The converter's fiat legs come from /v1/price/batch, which
 // this widget typed as `{data: Array<{asset_id, price}>}` — so
@@ -231,5 +236,85 @@ describe('AssetSwap token picker crypto rows', () => {
     const row = await screen.findByRole('button', { name: /USDC/ });
     expect(row).toHaveTextContent('USD Coin');
     expect(row).not.toHaveTextContent('Stellar asset');
+  });
+});
+
+describe('swap picker look-alikes', () => {
+  const G1 = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
+  const G2 = 'GDUKMGUGDZQK6YHYA5Z6AY2G4XDSZPSZ3SW5UN3ARVMO6QSRDWP5YLEX';
+  const tok = (key: string, extra: Partial<SwapToken>): SwapToken => ({
+    key,
+    symbol: 'USDC',
+    usdPrice: 1,
+    kind: 'crypto',
+    ...extra,
+  });
+
+  it('reads the issuer out of a canonical asset id', () => {
+    expect(assetIssuer(`USDC-${G1}`)).toBe(G1);
+    expect(assetIssuer('native')).toBeNull();
+    expect(assetIssuer('fiat:USD')).toBeNull();
+  });
+
+  it('puts the verified asset above a same-code row and a collision last', () => {
+    const fake = tok(`USDC-${G2}`, {});
+    const flagged = tok('USDC-flagged', { collision: true });
+    const real = tok(`USDC-${G1}`, { verified: true });
+    const other = tok('native', { symbol: 'XLM' });
+
+    expect(rankSwapTokens([flagged, fake, real], 'usdc')).toEqual([
+      real,
+      fake,
+      flagged,
+    ]);
+    // No query: catalogue order stands, but a collision still sinks.
+    expect(rankSwapTokens([flagged, fake, other, real], '')).toEqual([
+      fake,
+      other,
+      real,
+      flagged,
+    ]);
+  });
+
+  it('shows the issuer and the verified mark on a crypto row', async () => {
+    stubApi();
+    const base = vi.mocked(apiGet).getMockImplementation()!;
+    vi.mocked(apiGet).mockImplementation(async (path: string) => {
+      if (path.startsWith('/v1/assets/verified')) {
+        return { data: [{ slug: 'usdc' }] };
+      }
+      if (path.startsWith('/v1/assets')) {
+        return {
+          data: [
+            {
+              asset_id: `USDC-${G1}`,
+              slug: 'usdc',
+              code: 'USDC',
+              name: 'USD Coin',
+              price_usd: '1.0001',
+            },
+            {
+              asset_id: `USDC-${G2}`,
+              slug: `USDC-${G2}`,
+              code: 'USDC',
+              name: 'USD Coin',
+              price_usd: '0.5',
+            },
+          ],
+          pagination: { next: '' },
+        };
+      }
+      return base(path);
+    });
+    renderSwap();
+    fireEvent.click(await screen.findByRole('button', { name: /USD/ }));
+
+    const rows = await screen.findAllByRole('button', { name: /USDC/ });
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent('GA5Z…KZVN');
+    expect(rows[1]).toHaveTextContent('GDUK…YLEX');
+    expect(
+      await screen.findAllByRole('img', { name: 'Verified currency' }),
+    ).toHaveLength(1);
   });
 });

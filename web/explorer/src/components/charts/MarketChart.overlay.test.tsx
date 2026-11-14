@@ -2,7 +2,12 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { MarketChart, overlayPoints, selectableSources } from './MarketChart';
+import {
+  MarketChart,
+  overlayIsCut,
+  overlayPoints,
+  selectableSources,
+} from './MarketChart';
 
 const lw = vi.hoisted(() => ({ setData: vi.fn() }));
 vi.mock('lightweight-charts', async (importOriginal) => ({
@@ -97,6 +102,13 @@ function renderChart(sourceOverlay: boolean) {
     </QueryClientProvider>,
   );
 }
+
+describe('overlayIsCut', () => {
+  it('is true only when the read filled its page', () => {
+    expect(overlayIsCut(999)).toBe(false);
+    expect(overlayIsCut(1000)).toBe(true);
+  });
+});
 
 describe('MarketChart source overlay', () => {
   it('is absent unless the surface opts in', () => {

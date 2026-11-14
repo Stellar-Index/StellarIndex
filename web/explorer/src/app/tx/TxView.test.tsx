@@ -152,6 +152,21 @@ describe('TxView variants', () => {
     expect(await screen.findByText('/w==')).toBeInTheDocument();
     expect(screen.getByText('base64')).toBeInTheDocument();
   });
+
+  it('shows the base64 copy when the served text carries replacement characters', async () => {
+    renderTx({
+      ...base,
+      successful: true,
+      result: 'tx_success',
+      memo_type: 'text',
+      memo: '�ab�',
+      memo_base64: '/2Fi/w==',
+      operations: [],
+    });
+    expect(await screen.findByText('/2Fi/w==')).toBeInTheDocument();
+    expect(screen.getByText('base64')).toBeInTheDocument();
+    expect(screen.queryByText('�ab�')).toBeNull();
+  });
 });
 
 describe('TxView not found', () => {

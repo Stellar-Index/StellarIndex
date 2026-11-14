@@ -556,6 +556,11 @@ export function AccountRelationCohort({
                     <Td align="right">{numFmt.format(p.holders)}</Td>
                     <Td align="right">
                       {formatCompactUnits(p.amount, p.decimals ?? 0)}
+                      {p.decimals == null && (
+                        <span className="text-ink-faint ml-1 text-[11px]">
+                          base units
+                        </span>
+                      )}
                     </Td>
                   </LinkRow>
                 ))}
@@ -568,8 +573,9 @@ export function AccountRelationCohort({
           backstop, phoenix stake, defindex vaults, sorocredit, aquarius gauges)
           joined to the cohort. Amount is the fold&rsquo;s own unit summed
           across holders — a magnitude, not a settlement figure. Vault shares
-          are scaled by the vault&rsquo;s own share-token decimals; other rows
-          are in base units.
+          are scaled by the vault&rsquo;s own share-token decimals when those
+          were read; a row marked &ldquo;base units&rdquo; is unscaled and is
+          not comparable with a scaled one.
           {data.cycle &&
             ` Rollup computed ${formatTimestamp(data.cycle.computed_at)}.`}
         </p>

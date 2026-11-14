@@ -9,6 +9,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { CrossReference } from '@/components/CrossReference';
 import { OpTypeStrip, feeUsage } from '@/components/ChainCharts';
+import { memoDisplay } from '@/lib/memo';
 import {
   Badge,
   Button,
@@ -477,14 +478,14 @@ function Memo({
 }) {
   if (!type || type === 'none')
     return <span className="text-ink-faint">—</span>;
-  const value = text ?? b64;
+  const { value, base64 } = memoDisplay(text, b64);
   return (
     <span className="inline-flex flex-wrap items-center gap-2">
       <Badge tone="neutral">{type}</Badge>
       {value && (
         <span className="font-mono text-[13px] break-all">{value}</span>
       )}
-      {text == null && b64 && (
+      {base64 && (
         <span
           className="text-ink-muted text-xs"
           title="Not valid UTF-8; shown as base64"
