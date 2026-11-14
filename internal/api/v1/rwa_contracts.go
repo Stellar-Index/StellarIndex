@@ -100,6 +100,8 @@ type rwaContractCensus struct {
 	duplicates int
 	// available is false when no directory contract reader is wired.
 	available bool
+	// symbolsUnread counts contracts refused while their symbol read had failed.
+	symbolsUnread int
 }
 
 // buildRWAContractMembership applies the contract requirements to every recognised contract the curated directory names: ONE
@@ -186,7 +188,7 @@ func (s *Server) buildRWADirectoryMembership(
 		// The symbol is read AFTER the directory named the address and BEFORE the verdict, since
 		// only C4 reads it; a contract the directory did not name never has its self-declared
 		// metadata consulted.
-		symbol := s.rwaContractSymbol(mctx, e.Address)
+		symbol, symbolUnread := s.rwaContractSymbol(mctx, e.Address)
 		v := rwa.QualifyContract(rwa.ContractCandidate{
 			ContractID:     e.Address,
 			DirectoryNamed: true,
@@ -199,6 +201,9 @@ func (s *Server) buildRWADirectoryMembership(
 		})
 		if !v.InSet {
 			refusals[v.Reject]++
+			if symbolUnread {
+				census.symbolsUnread++
+			}
 			continue
 		}
 		members = append(members, rwaContractMember{
@@ -244,7 +249,7 @@ func (s *Server) buildRWAListingMembership(
 
 	members := make([]rwaContractMember, 0, len(candidates))
 	for _, c := range candidates {
-		symbol := s.rwaContractSymbol(mctx, c.contractID)
+		symbol, symbolUnread := s.rwaContractSymbol(mctx, c.contractID)
 		v := rwa.QualifyContract(rwa.ContractCandidate{
 			ContractID: c.contractID,
 			// The directory does not name this address as an issuer, which is why it is on this arm.
@@ -257,6 +262,9 @@ func (s *Server) buildRWAListingMembership(
 		})
 		if !v.InSet {
 			refusals[v.Reject]++
+			if symbolUnread {
+				census.symbolsUnread++
+			}
 			continue
 		}
 		entry := listing.byAddress[c.contractID]
@@ -276,16 +284,21 @@ func (s *Server) buildRWAListingMembership(
 }
 
 // rwaContractSymbol reads one contract's on-chain symbol, best-effort: no reader or no usable
-// metadata yields "", which fails C4's oracle arm, never an error or a guess.
-func (s *Server) rwaContractSymbol(ctx context.Context, contractID string) string {
+// metadata yields "", which fails C4's oracle arm, never an error or a guess. unread reports a
+// read that failed, so a refusal resting on it is counted as unevaluated rather than as a finding.
+func (s *Server) rwaContractSymbol(ctx context.Context, contractID string) (sym string, unread bool) {
 	if s.TokenSymbol == nil {
-		return ""
+		return "", false
 	}
 	sym, ok, err := s.TokenSymbol.TokenSymbol(ctx, contractID)
-	if err != nil || !ok {
-		return ""
+	if err != nil {
+		s.logger.Warn("rwa: contract symbol read failed", "contract_id", contractID, "err", err)
+		return "", true
 	}
-	return sym
+	if !ok {
+		return "", false
+	}
+	return sym, false
 }
 
 // rwaUnreachedEntities names recognised issuing entities with no token here. Best-effort: a failed

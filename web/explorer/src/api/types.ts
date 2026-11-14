@@ -9192,7 +9192,7 @@ export interface components {
             assets_valued: number;
             /** @description Assets whose valuation is withheld or unavailable; each contributes nothing. */
             assets_unvalued: number;
-            /** @description True whenever any member is unvalued or a rebuild cap bound the set (`truncated`), i.e. whenever the total may be less than the value of the set. */
+            /** @description True whenever any member is unvalued or a rebuild cap or an unanswered read bound the set (`truncated`), i.e. whenever the total may be less than the value of the set. */
             lower_bound: boolean;
             /**
              * Format: int64
@@ -9219,7 +9219,7 @@ export interface components {
             both_bases: components["schemas"]["RWABothBases"];
             /** @description One-line statement of what the total measured and how it was valued. */
             basis: string;
-            /** @description True when a rebuild cap bound the set (the issuer cap, the contract scan cap, or a member issuer whose classic assets fill one listing page), so members may be missing; `basis` names which cap. Implies `lower_bound` on both totals. Absent when false. */
+            /** @description True when a rebuild cap bound the set (the issuer cap, the contract scan cap, or a member issuer whose classic assets fill one listing page), or when a read the set definition depends on did not answer (the independent listing, the curated tags, a contract's symbol), so members may be missing; `basis` names which. Implies `lower_bound` on both totals. Absent when false. */
             truncated?: boolean;
         };
         /**
@@ -9267,7 +9267,7 @@ export interface components {
              *     `valuation` arm breaks this number down by reason.
              */
             assets_unvalued: number;
-            /** @description True whenever any member carries no reference valuation or a rebuild cap bound the set, i.e. whenever this total may be less than the reference-priced value of the set. */
+            /** @description True whenever any member carries no reference valuation or a rebuild cap or an unanswered read bound the set, i.e. whenever this total may be less than the reference-priced value of the set. */
             lower_bound: boolean;
             /**
              * @description The distinct PUBLISHERS whose published values make up the

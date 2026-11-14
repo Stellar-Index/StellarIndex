@@ -93,9 +93,15 @@ func (s *stubContractCatalogue) ContractCatalogueRows(
 
 // stubTokenSymbols / stubTokenSupplies / stubTokenDecimalsRdr are the
 // three lake reads the contract arm makes per candidate.
-type stubTokenSymbols struct{ byID map[string]string }
+type stubTokenSymbols struct {
+	byID    map[string]string
+	failFor string
+}
 
 func (s *stubTokenSymbols) TokenSymbol(_ context.Context, id string) (string, bool, error) {
+	if id != "" && id == s.failFor {
+		return "", false, errors.New("lake did not answer")
+	}
 	v, ok := s.byID[id]
 	return v, ok, nil
 }
@@ -385,6 +391,42 @@ func TestRWAContracts_ScanCapMakesTheTotalALowerBound(t *testing.T) {
 	}
 	if !strings.Contains(view.Summary.Basis, "contract scan cap left 3 recognised contract(s) unevaluated") {
 		t.Errorf("basis does not name the contract scan cap: %q", view.Summary.Basis)
+	}
+}
+
+// TestRWAContracts_UnreadSymbolMakesTheTotalALowerBound: a contract refused because its symbol read failed may be a member,
+// so the totals over the rest are lower bounds and the response is degraded.
+func TestRWAContracts_UnreadSymbolMakesTheTotalALowerBound(t *testing.T) {
+	const unread = "CBEXAMPLEUNREADSYMBOLCONTRACT"
+	srv := v1.New(v1.Options{
+		Sep1Cache: &stubSep1BoundReader{},
+		Directory: &stubDirectoryReader{},
+		AssetsReader: &rwaListStub{
+			stubAssetsReaderExt: &stubAssetsReaderExt{},
+			byIssuer:            map[string][]timescale.AssetRow{},
+		},
+		RWAContracts: &stubRWAContractReader{contracts: []timescale.DirectoryEntry{
+			recognisedContract(rwaContractGood, "Example Treasury Fund"),
+			recognisedContract(unread, "Example Credit Fund"),
+		}},
+		ContractCatalogue: &stubContractCatalogue{rows: map[string]timescale.AssetRow{
+			rwaContractGood: rwaContractRow(rwaContractGood, sptr("1.0740000000")),
+			unread:          rwaContractRow(unread, sptr("1.0000000000")),
+		}},
+		TokenSymbol:   &stubTokenSymbols{byID: map[string]string{rwaContractGood: "USTRY"}, failFor: unread},
+		TokenSupply:   &stubTokenSupplies{byID: map[string]string{rwaContractGood: "1000000000000", unread: "5000000"}},
+		TokenDecimals: &stubTokenDecimalsRdr{byID: map[string]uint32{rwaContractGood: 6, unread: 6}},
+	})
+	view := getRWA(t, srv)
+	if len(view.Assets) != 1 {
+		t.Fatalf("assets = %d, want only the contract whose symbol was read", len(view.Assets))
+	}
+	if !view.Summary.LowerBound || !view.Summary.Truncated || !view.Summary.ReferenceValuation.LowerBound {
+		t.Errorf("lower_bound = %v truncated = %v reference lower_bound = %v, want all true",
+			view.Summary.LowerBound, view.Summary.Truncated, view.Summary.ReferenceValuation.LowerBound)
+	}
+	if !strings.Contains(view.Summary.Basis, "1 contract candidate(s) went unevaluated") {
+		t.Errorf("basis does not name the unread candidate: %q", view.Summary.Basis)
 	}
 }
 
