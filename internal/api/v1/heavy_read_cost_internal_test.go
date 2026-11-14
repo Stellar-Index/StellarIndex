@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"testing"
 )
@@ -16,7 +17,7 @@ func TestHeavyReadCosts(t *testing.T) {
 		}
 	}
 	for q, want := range map[string]bool{"": false, "sparkline": false, "inception": true, "sparkline, inception": true} {
-		r := httptest.NewRequest("GET", "/v1/markets", nil)
+		r := httptest.NewRequest(http.MethodGet, "/v1/markets", nil)
 		v := r.URL.Query()
 		v.Set("include", q)
 		r.URL.RawQuery = v.Encode()

@@ -181,25 +181,7 @@ func (s *Server) handleSEP41Transfers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entries := make([]SEP41TransferEntry, 0, len(rows))
-	for _, row := range rows {
-		e := SEP41TransferEntry{
-			Ledger:          row.Ledger,
-			LedgerCloseTime: row.ObservedAt.UTC().Format(time.RFC3339Nano),
-			TxHash:          row.TxHash,
-			OpIndex:         row.OpIndex,
-			EventIndex:      row.EventIndex,
-			Kind:            string(row.Kind),
-			From:            row.FromAddr,
-			To:              row.ToAddr,
-			LiveUntilLedger: row.LiveUntilLedger,
-			Authorized:      row.Authorized,
-		}
-		if row.Amount != nil {
-			e.Amount = row.Amount.String()
-		}
-		entries = append(entries, e)
-	}
+	entries := sep41TransferEntries(rows)
 
 	decimals, ok := s.resolveTokenDecimals(r.Context(), contractID)
 	if !ok {
@@ -219,6 +201,30 @@ func (s *Server) handleSEP41Transfers(w http.ResponseWriter, r *http.Request) {
 		resp.SearchedFrom = searchedFrom.UTC().Format(time.RFC3339)
 	}
 	writeJSON(w, resp, Flags{})
+}
+
+// sep41TransferEntries maps storage rows to wire entries.
+func sep41TransferEntries(rows []timescale.SEP41TransferRow) []SEP41TransferEntry {
+	entries := make([]SEP41TransferEntry, 0, len(rows))
+	for _, row := range rows {
+		e := SEP41TransferEntry{
+			Ledger:          row.Ledger,
+			LedgerCloseTime: row.ObservedAt.UTC().Format(time.RFC3339Nano),
+			TxHash:          row.TxHash,
+			OpIndex:         row.OpIndex,
+			EventIndex:      row.EventIndex,
+			Kind:            string(row.Kind),
+			From:            row.FromAddr,
+			To:              row.ToAddr,
+			LiveUntilLedger: row.LiveUntilLedger,
+			Authorized:      row.Authorized,
+		}
+		if row.Amount != nil {
+			e.Amount = row.Amount.String()
+		}
+		entries = append(entries, e)
+	}
+	return entries
 }
 
 // parseSEP41TransferIdentifiers validates the path contract_id and optional ?from / ?to as strkeys; on failure it writes a 400 and
