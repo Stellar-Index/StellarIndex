@@ -20,6 +20,26 @@ set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 ROLE_DIR="configs/ansible/roles/redis-sentinel"
 
+PY=""
+for cand in python3 /opt/homebrew/bin/python3; do
+  if command -v "$cand" >/dev/null 2>&1 && "$cand" -c 'import jinja2' >/dev/null 2>&1; then
+    PY="$cand"
+    break
+  fi
+done
+if [ -z "$PY" ] && command -v ansible-playbook >/dev/null 2>&1; then
+  cand=$(head -1 "$(command -v ansible-playbook)" | sed 's|^#!||' | awk '{print $1}')
+  if [ -x "$cand" ] && "$cand" -c 'import jinja2' >/dev/null 2>&1; then PY="$cand"; fi
+fi
+if [ -z "$PY" ]; then
+  if [ "${CI:-}" = "true" ]; then
+    echo "redis-sentinel-acl-lockdown-test: FAIL — no python3 with jinja2 (required in CI)" >&2
+    exit 1
+  fi
+  echo "redis-sentinel-acl-lockdown-test: SKIP (no python3 with jinja2 locally; CI enforces)"
+  exit 0
+fi
+
 pass=0
 fail=0
 
@@ -34,12 +54,12 @@ record() {
   fi
 }
 
-RENDERED_CONF="$(python3 - "$ROLE_DIR/templates/redis.conf.j2" <<'PY'
+RENDERED_CONF="$("$PY" - "$ROLE_DIR/templates/redis.conf.j2" <<'PY'
 import sys
 import jinja2
 
 env = jinja2.Environment()
-env.filters["bool"] = bool  # ansible's `| bool` filter; stub for this fixture
+env.filters["bool"] = bool  # stub for the ansible bool filter (no apostrophe here: bash 3.2 miscounts one in a nested heredoc)
 
 with open(sys.argv[1]) as f:
     tmpl = env.from_string(f.read())
@@ -55,7 +75,7 @@ print(tmpl.render(
     redis_save_rules=["900 1"],
     redis_maxmemory="4gb",
     redis_maxmemory_policy="allkeys-lru",
-    redis_role="replica",
+    ansible_host="10.0.0.5",
     redis_effective_primary_host="10.0.0.4",
     redis_log_dir="/var/log/redis",
     redis_data_dir="/var/lib/redis",
@@ -63,7 +83,7 @@ print(tmpl.render(
 PY
 )"
 
-RENDERED_ACL="$(python3 - "$ROLE_DIR/templates/users.acl.j2" <<'PY'
+RENDERED_ACL="$("$PY" - "$ROLE_DIR/templates/users.acl.j2" <<'PY'
 import sys
 import jinja2
 

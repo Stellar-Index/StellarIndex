@@ -114,7 +114,7 @@
         {% if redis_acl_lockdown | bool -%}
         -redis.user=redis_exporter \
         {% endif -%}
-        -web.listen-address=:{{ redis_exporter_listen_port }}
+        -web.listen-address={{ ansible_host }}:{{ redis_exporter_listen_port }}
       Restart=on-failure
       RestartSec=5s
       [Install]

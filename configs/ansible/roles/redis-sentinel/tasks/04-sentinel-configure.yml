@@ -4,6 +4,15 @@
 # primary unless redis_first_run_only=false (an explicit
 # re-bootstrap).
 
+# A re-render without this line mints a new Sentinel id. The others keep
+# the old one as a voter that never answers, which raises the failover
+# majority above the Sentinels that are left.
+- name: read the Sentinel id this host already has
+  command: sed -n 's/^sentinel myid \([0-9a-f]\{40\}\)$/\1/p' /etc/redis/sentinel.conf
+  register: redis_sentinel_myid
+  failed_when: false
+  changed_when: false
+
 - name: render /etc/redis/sentinel.conf
   template:
     src: sentinel.conf.j2
@@ -11,5 +20,5 @@
     owner: "{{ redis_user }}"
     group: "{{ redis_group }}"
     mode: "0640"
-  when: not redis_first_run_only or redis_sentinel_state.rc != 0
+  when: redis_render_configs | bool
   notify: "sentinel config changed"

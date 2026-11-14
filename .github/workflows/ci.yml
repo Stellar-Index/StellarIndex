@@ -2062,6 +2062,15 @@ jobs:
         # which runs this on every prepush.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/zfs-snapshot-coverage-test.sh
+      - name: redis-sentinel role render tests
+        # Renders the role's real templates: a re-render follows the live
+        # primary and keeps the Sentinel id, and the exporter port is open
+        # only to the scrape addresses. No hosts, no ansible run.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: |
+          ./scripts/ci/redis-sentinel-topology-test.sh
+          ./scripts/ci/redis-sentinel-acl-lockdown-test.sh
+          ./scripts/ci/redis-sentinel-firewall-ipv6-test.sh
       - name: galexie restart-wiring test (structural + local ansible run)
         # Pins that galexie-input renders restart only on EFFECTIVE change (a
         # comment-only edit must not cost a ~9-min mainnet catchup) and that the

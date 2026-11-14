@@ -17,6 +17,10 @@ bind {{ redis_bind_address }} 127.0.0.1
 # enforces the contract the rest of the project already assumes.
 requirepass {{ redis_password }}
 
+{% if redis_sentinel_myid.stdout | default('') | trim %}
+sentinel myid {{ redis_sentinel_myid.stdout | trim }}
+
+{% endif %}
 # `sentinel monitor` sets the initial primary. Once Sentinel
 # elects a new primary mid-flight, it re-writes this directive
 # in place. The role's idempotency check in

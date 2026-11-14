@@ -41,12 +41,10 @@ maxmemory {{ redis_maxmemory }}
 maxmemory-policy {{ redis_maxmemory_policy }}
 
 # Replica-side: point to whatever Sentinel says is primary right
-# now. On first deploy that's redis_role=primary's host; on
-# re-deploys against a failed-over cluster the
-# 03-redis-configure.yml task short-circuits and never re-renders
-# this file (so the live replicaof set by Sentinel stays
-# authoritative).
-{% if redis_role == 'replica' %}
+# now, and decide replica-ness from that answer, not from the
+# inventory role: after a failover the inventory replica is the
+# primary, and `replicaof <itself>` would leave it read-only.
+{% if ansible_host != redis_effective_primary_host %}
 replicaof {{ redis_effective_primary_host }} {{ redis_port }}
 replica-serve-stale-data yes
 {% endif %}
