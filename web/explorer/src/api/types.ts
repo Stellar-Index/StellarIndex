@@ -8312,9 +8312,9 @@ export interface components {
             contract_count: number;
             /**
              * Format: int64
-             * @description Trailing-24h decoded events across the protocol's served tables.
+             * @description Trailing-24h decoded events across the protocol's served tables. Absent when the count could not be read (a failed read is never a zero); `coverage_note` says so on the directory.
              */
-            events_24h: number;
+            events_24h?: number;
             /** @description Latest ADR-0033 verdict summary; absent when no snapshot exists. Full verdict on /coverage. */
             completeness?: {
                 complete: boolean;
@@ -8390,6 +8390,13 @@ export interface components {
              * @description When the snapshot was computed.
              */
             as_of: string;
+            /**
+             * @description True when the figure is older than `as_of` suggests: carried
+             *     forward from an earlier refresh (for at most six hours, after
+             *     which no figure is published), or read from a lake that has
+             *     stopped advancing. Travels with `flags.stale`. Absent when false.
+             */
+            stale?: boolean;
             /** @description One-line provenance of what was measured and how it was valued. */
             basis: string;
         };
@@ -8575,6 +8582,8 @@ export interface components {
              * @description When the snapshot the total was reconciled from was computed.
              */
             as_of: string;
+            /** @description True when a summed protocol reads a lake that has stopped advancing; travels with `flags.stale`. Absent when false. */
+            stale?: boolean;
             /** @description One-line provenance for the total, naming the protocols summed. */
             basis: string;
             /**

@@ -269,7 +269,9 @@ func TestDEXTVLCache_PerProtocolErrorKeepsPreviousEntry(t *testing.T) {
 		t.Fatal("second Refresh should surface the aquarius error")
 	}
 	after, _ := c.Snapshot()
-	if after["aquarius"] != before["aquarius"] {
+	want := before["aquarius"]
+	want.Stale = true
+	if after["aquarius"] != want {
 		t.Errorf("aquarius entry should be carried over on error: %+v vs %+v",
 			after["aquarius"], before["aquarius"])
 	}
@@ -289,6 +291,11 @@ func TestDEXTVLCache_MissingReadersOmitProtocols(t *testing.T) {
 	}
 	if at.IsZero() {
 		t.Error("fetchedAt should be stamped even when nothing is wired")
+	}
+	for _, name := range []string{"soroswap", "aquarius", "phoenix", "comet"} {
+		if reason, down := c.Unavailable(name); !down || reason != dexTVLUnavailableNotWired {
+			t.Errorf("%s: unavailable=%v reason=%q, want it named as not wired", name, down, reason)
+		}
 	}
 }
 
@@ -348,8 +355,10 @@ func TestDEXTVLCache_PriceReadErrorCarriesThePreviousFigureForward(t *testing.T)
 
 	after, _ := c.Snapshot()
 	for _, name := range []string{"soroswap", "aquarius", "phoenix", "comet"} {
-		if after[name] != before[name] {
-			t.Errorf("%s: want the previous figure carried forward %+v, got %+v",
+		want := before[name]
+		want.Stale = true
+		if after[name] != want {
+			t.Errorf("%s: want the previous figure carried forward, marked stale, %+v, got %+v",
 				name, before[name], after[name])
 		}
 		if !strings.Contains(errText, name) {
@@ -729,7 +738,9 @@ func TestDEXTVLCache_ProtocolCarriesPoolsAcrossAFailedRefresh(t *testing.T) {
 	if !ok || !carried.CarriedForward {
 		t.Fatalf("carried aquarius = %+v ok=%v, want the previous entry labelled carried", carried, ok)
 	}
-	if !reflect.DeepEqual(carried.Pools, before.Pools) || carried.TVL != before.TVL {
+	wantTVL := before.TVL
+	wantTVL.Stale = true
+	if !reflect.DeepEqual(carried.Pools, before.Pools) || carried.TVL != wantTVL {
 		t.Errorf("carried entry must be the previous cycle's figure AND pools: %+v vs %+v", carried, before)
 	}
 	if ss, _ := c.Protocol("soroswap"); ss.CarriedForward {

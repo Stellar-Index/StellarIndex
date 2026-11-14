@@ -777,6 +777,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		PhoenixReserves: phoenixTVLReserves,
 		CometPools:      comet.MainnetGatedSet(),
 		CometReserves:   cometTVLReserves,
+		LakeWatermark:   lakeWatermarkReader,
 		// The same trust gates as every price surface; a withheld leg counts its pool unpriced so
 		// the total stays an honest lower bound.
 		Gate: buildDEXTVLValueGate(substanceGate, scamGate, usdPegs),
