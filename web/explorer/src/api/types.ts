@@ -10083,6 +10083,10 @@ export interface components {
             reference_value_usd?: string;
             /** @description Members of this group with no reference valuation. */
             assets_reference_unvalued: number;
+            /** @description True when `market_cap_usd` leaves a member out or sums a market cap computed from a floor supply. */
+            market_cap_lower_bound?: boolean;
+            /** @description True when `reference_value_usd` leaves a member out or sums a valuation computed from a floor supply. */
+            reference_value_lower_bound?: boolean;
             /**
              * @description Present only on `unclassified`: why the group carries no class.
              *     Its members were admitted because an independent oracle prices
@@ -10163,6 +10167,10 @@ export interface components {
             additional_value_usd?: string;
             /** @description The verified reference total plus `additional_value_usd`. */
             combined_value_usd?: string;
+            /** @description True when a curated row outside the verified set is unvalued or valued from a floor supply. */
+            additional_value_lower_bound?: boolean;
+            /** @description True when `additional_value_usd` or the verified reference total is a lower bound. */
+            combined_value_lower_bound?: boolean;
             /** @description Repeats `summary.reference_valuation.value_usd` so the three figures read together. */
             verified_value_usd?: string;
             census: components["schemas"]["RWACuratedCensus"];
@@ -10262,6 +10270,10 @@ export interface components {
             reference_value_usd?: string;
             /** @description This issuer's members with no reference valuation. */
             assets_reference_unvalued: number;
+            /** @description True when `market_cap_usd` leaves a member out or sums a market cap computed from a floor supply. */
+            market_cap_lower_bound?: boolean;
+            /** @description True when `reference_value_usd` leaves a member out or sums a valuation computed from a floor supply. */
+            reference_value_lower_bound?: boolean;
         };
         /**
          * @description How many candidate assets one requirement turned away.

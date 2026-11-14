@@ -196,7 +196,8 @@ func stablecoinAssetOf(m stablecoinMember, d AssetDetail, found bool) Stablecoin
 		bs := b.String()
 		a.SupplyBasis, a.CirculatingSupplyLowerBound = &bs, b.LowerBound()
 	}
-	withheld := d.MarketCapLowLiquidity || d.MarketCapDecimalsMismatch || d.DecimalsUnresolved || d.UnverifiedTickerCollision
+	withheld := d.MarketCapLowLiquidity || d.MarketCapDecimalsMismatch || d.DecimalsUnresolved || d.UnverifiedTickerCollision ||
+		d.issuerDirectoryUnchecked
 	switch {
 	case d.MarketCapUSD != nil:
 		a.SupplyUSD = d.MarketCapUSD

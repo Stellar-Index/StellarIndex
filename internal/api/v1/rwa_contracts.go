@@ -365,7 +365,7 @@ func (s *Server) rwaContractListingRows(
 	// still divide by the default 7 when its decimals read misses; fillContractMarketCaps below
 	// discards any such cap.
 	s.stampListingCollisions(details)
-	unmeasured := s.applySubstanceGateToListing(ctx, details, false)
+	s.applySubstanceGateToListing(ctx, details, false)
 	s.fillMarketCapsFromSupply(ctx, details, map[string]int{})
 	s.fillDeclaredPegPricesInListing(ctx, details)
 	s.fillIssuerDirectoryTags(ctx, details)
@@ -381,7 +381,17 @@ func (s *Server) rwaContractListingRows(
 	for _, d := range details {
 		out[d.AssetID] = d
 	}
-	return out, notObserved, decimalsCut || capsCut || unmeasured || anyDirectoryUnchecked(details), nil
+	return out, notObserved, decimalsCut || capsCut, nil
+}
+
+// rwaRowsUnanswered reports a row whose price gate or issuer-directory read did not answer: its figures are withheld, not refused.
+func rwaRowsUnanswered(rows map[string]AssetDetail) bool {
+	for _, d := range rows {
+		if d.priceUnmeasured || d.issuerDirectoryUnchecked {
+			return true
+		}
+	}
+	return false
 }
 
 // fillContractDecimals overlays each contract's real on-chain decimals; assetDetailFromAssetRow hardcodes 7, and market cap

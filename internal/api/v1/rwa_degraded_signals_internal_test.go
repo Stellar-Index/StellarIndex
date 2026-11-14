@@ -1,9 +1,12 @@
 package v1
 
 import (
+	"context"
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -98,5 +101,101 @@ func TestRWAHistoryIssuerGroups_ExcludedMemberMakesTheGroupALowerBound(t *testin
 			t.Errorf("%s: assets_unvalued = %d lower_bound = %v, want %d and %v",
 				g.Key, p.AssetsUnvalued, p.LowerBound, wantUnvalued, wantUnvalued > 0)
 		}
+	}
+}
+
+type unansweredListingGate struct{}
+
+func (unansweredListingGate) Allowed(context.Context, canonical.Asset, canonical.Asset, string) bool {
+	return false
+}
+
+func (unansweredListingGate) Probe(context.Context, canonical.Asset, canonical.Asset) (bool, bool, pricingguard.SubstanceFloor) {
+	return false, false, pricingguard.FloorNone
+}
+
+// The gate's unanswered verdict is carried on the row, so a caller holding only the rows can tell withheld from refused.
+func TestApplySubstanceGateToListing_UnansweredGateMarksTheRow(t *testing.T) {
+	price := "1.04"
+	rows := []AssetDetail{{AssetID: "USTRY-GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC", PriceUSD: &price}}
+	s := &Server{Options: Options{Substance: unansweredListingGate{}}}
+	if !s.applySubstanceGateToListing(context.Background(), rows, false) || !rows[0].priceUnmeasured {
+		t.Fatalf("unanswered gate: row = %+v, want priceUnmeasured", rows[0])
+	}
+	if !rwaRowsUnanswered(map[string]AssetDetail{rows[0].AssetID: rows[0]}) {
+		t.Error("an unmeasured row does not read as unanswered")
+	}
+	if rwaRowsUnanswered(map[string]AssetDetail{"x": {}, "y": {MarketCapLowLiquidity: true}}) {
+		t.Error("a refused row reads as unanswered")
+	}
+}
+
+// A class or issuer total follows the same rule as the summary: unvalued member or floor supply makes it a lower bound.
+func TestRWAGroups_LowerBoundPerBasis(t *testing.T) {
+	capUSD, refUSD := "100.00", "120.00"
+	valued := func(floor bool) RWAAsset {
+		return RWAAsset{
+			Issuer: "GISSUER", AnchorClass: "bond", CirculatingSupplyLowerBound: floor,
+			Valuation:          RWAValuation{Status: RWAValuationPublished, MarketCapUSD: &capUSD},
+			ReferenceValuation: RWAReferenceValuation{Status: RWAReferenceValuationPublished, ValueUSD: &refUSD},
+		}
+	}
+	refOnly := valued(false)
+	refOnly.Valuation = RWAValuation{Status: RWAValuationUnpriced}
+	cases := []struct {
+		name             string
+		rows             []RWAAsset
+		wantCap, wantRef bool
+	}{
+		{"all valued exactly", []RWAAsset{valued(false), valued(false)}, false, false},
+		{"one floor supply", []RWAAsset{valued(false), valued(true)}, true, true},
+		{"one member without a market cap", []RWAAsset{valued(false), refOnly}, true, false},
+		{"nothing valued", []RWAAsset{{Issuer: "GISSUER", AnchorClass: "bond"}}, false, false},
+	}
+	for _, c := range cases {
+		class, issuer := rwaByClass(c.rows)[0], rwaByIssuer(c.rows)[0]
+		if class.MarketCapLowerBound != c.wantCap || class.ReferenceValueLowerBound != c.wantRef {
+			t.Errorf("%s: class bounds = %v/%v, want %v/%v", c.name, class.MarketCapLowerBound, class.ReferenceValueLowerBound, c.wantCap, c.wantRef)
+		}
+		if issuer.MarketCapLowerBound != c.wantCap || issuer.ReferenceValueLowerBound != c.wantRef {
+			t.Errorf("%s: issuer bounds = %v/%v, want %v/%v", c.name, issuer.MarketCapLowerBound, issuer.ReferenceValueLowerBound, c.wantCap, c.wantRef)
+		}
+	}
+}
+
+// The curator-counted figures inherit a floor from their own rows, and the combined one from the verified total too.
+func TestRWACuratedTally_PartialSumIsALowerBound(t *testing.T) {
+	ref := "50.00"
+	row := func(valued, floor, alsoVerified bool) RWAAsset {
+		a := RWAAsset{CirculatingSupplyLowerBound: floor, Curator: &RWACurator{AlsoVerified: alsoVerified}}
+		if valued {
+			a.ReferenceValuation.ValueUSD = &ref
+		}
+		return a
+	}
+	cases := []struct {
+		name string
+		rows []RWAAsset
+		want bool
+	}{
+		{"all valued exactly", []RWAAsset{row(true, false, false), row(true, false, false)}, false},
+		{"one unvalued", []RWAAsset{row(true, false, false), row(false, false, false)}, true},
+		{"one from a floor supply", []RWAAsset{row(true, false, false), row(true, true, false)}, true},
+		{"only a verified row is unvalued", []RWAAsset{row(true, false, false), row(false, false, true)}, false},
+	}
+	for _, c := range cases {
+		if _, _, partial := rwaCuratedTally(c.rows, &RWACuratedSummary{}); partial != c.want {
+			t.Errorf("%s: partial = %v, want %v", c.name, partial, c.want)
+		}
+	}
+}
+
+// An unchecked issuer's stablecoin row is withheld and named in not_summed, not reported as a market with no price.
+func TestStablecoinOf_UncheckedIssuerIsWithheld(t *testing.T) {
+	supply := "1000"
+	d := AssetDetail{AssetID: "USDX-GISSUER", CirculatingSupply: &supply, issuerDirectoryUnchecked: true}
+	a := stablecoinAssetOf(stablecoinMember{ticker: "USDX", code: "USDX", issuer: "GISSUER"}, d, true)
+	if a.ValuationStatus != stablecoinWithheld {
+		t.Errorf("valuation status = %q, want %q", a.ValuationStatus, stablecoinWithheld)
 	}
 }

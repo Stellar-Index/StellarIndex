@@ -19134,6 +19134,12 @@ components:
         assets_reference_unvalued:
           type: integer
           description: Members of this group with no reference valuation.
+        market_cap_lower_bound:
+          type: boolean
+          description: True when `market_cap_usd` leaves a member out or sums a market cap computed from a floor supply.
+        reference_value_lower_bound:
+          type: boolean
+          description: True when `reference_value_usd` leaves a member out or sums a valuation computed from a floor supply.
         note:
           type: string
           description: |
@@ -19224,6 +19230,12 @@ components:
         combined_value_usd:
           type: string
           description: The verified reference total plus `additional_value_usd`.
+        additional_value_lower_bound:
+          type: boolean
+          description: True when a curated row outside the verified set is unvalued or valued from a floor supply.
+        combined_value_lower_bound:
+          type: boolean
+          description: True when `additional_value_usd` or the verified reference total is a lower bound.
         verified_value_usd:
           type: string
           description: Repeats `summary.reference_valuation.value_usd` so the three figures read together.
@@ -19340,6 +19352,12 @@ components:
         assets_reference_unvalued:
           type: integer
           description: This issuer's members with no reference valuation.
+        market_cap_lower_bound:
+          type: boolean
+          description: True when `market_cap_usd` leaves a member out or sums a market cap computed from a floor supply.
+        reference_value_lower_bound:
+          type: boolean
+          description: True when `reference_value_usd` leaves a member out or sums a valuation computed from a floor supply.
 
     RWARefusal:
       type: object

@@ -210,6 +210,10 @@ type RWACuratedSummary struct {
 	// CombinedValueUSD is the verified reference total plus AdditionalValueUSD, i.e. counting the
 	// way the curator counts. It is labelled so it cannot be mistaken for the verified total.
 	CombinedValueUSD *string `json:"combined_value_usd,omitempty"`
+	// Each figure is a lower bound when a curated row outside the verified set is unvalued or valued from a floor supply;
+	// the combined one also when the verified total is.
+	AdditionalValueLowerBound bool `json:"additional_value_lower_bound"`
+	CombinedValueLowerBound   bool `json:"combined_value_lower_bound"`
 	// VerifiedValueUSD repeats summary.reference_valuation.value_usd so
 	// the three figures read together.
 	VerifiedValueUSD *string          `json:"verified_value_usd,omitempty"`
@@ -292,12 +296,13 @@ func sortCuratedMembers(m []rwaCuratedMember) {
 
 // rwaCuratedRows turns members into served rows through the SAME catalogue, supply and decimals path the contract arm uses, so supply is
 // the lake's reading, not the curator's.
-// degraded reports a failed read or a valuation ctx cut short.
+// degraded reports a failed read or a valuation ctx cut short; unanswered a row whose own gate or directory read did not answer,
+// which withholds that row's figures without making the catalogue unreadable.
 func (s *Server) rwaCuratedRows(
 	ctx context.Context, members []rwaCuratedMember, now time.Time,
-) (rows []RWAAsset, notObserved int, degraded bool) {
+) (rows []RWAAsset, notObserved int, degraded, unanswered bool) {
 	if len(members) == 0 {
-		return nil, 0, false
+		return nil, 0, false, false
 	}
 	cm := make([]rwaContractMember, 0, len(members))
 	for _, m := range members {
@@ -313,7 +318,7 @@ func (s *Server) rwaCuratedRows(
 	details, notObserved, cut, err := s.rwaContractListingRows(ctx, cm)
 	if err != nil {
 		s.logger.Error("rwa curated listing read failed", "err", err)
-		return nil, len(members), true
+		return nil, len(members), true, false
 	}
 	rows = rwaContractAssetRows(cm, details)
 	byID := make(map[string]rwaCuratedMember, len(members))
@@ -331,7 +336,7 @@ func (s *Server) rwaCuratedRows(
 		rwaApplyCuratorReference(&rows[i], m.entry, now)
 	}
 	rwaSortAssets(rows)
-	return rows, notObserved, cut
+	return rows, notObserved, cut, rwaRowsUnanswered(details)
 }
 
 // rwaApplyCuratorReference attaches the curator's price as the row's reference. No premium is published against it, for a stronger
@@ -356,7 +361,9 @@ func rwaApplyCuratorReference(a *RWAAsset, e timescale.CuratedRWAEntry, now time
 
 // ─── summary ────────────────────────────────────────────────────────
 
-func rwaCuratedSummarise(snap rwaCurated, rows []RWAAsset, degraded bool, verifiedRef *string, now time.Time) *RWACuratedSummary {
+func rwaCuratedSummarise(
+	snap rwaCurated, rows []RWAAsset, degraded bool, verifiedRef *string, verifiedLowerBound bool, now time.Time,
+) *RWACuratedSummary {
 	out := &RWACuratedSummary{
 		Curator:       rwaCuratorDune,
 		CuratorCredit: rwaCuratorCredit,
@@ -392,13 +399,13 @@ func rwaCuratedSummarise(snap rwaCurated, rows []RWAAsset, degraded bool, verifi
 	}
 	out.Status = "served"
 	out.Assets = len(rows)
-	additional, anyAdditional := rwaCuratedTally(rows, out)
+	additional, anyAdditional, partial := rwaCuratedTally(rows, out)
 	if anyAdditional {
 		s := additional.FloatString(2)
-		out.AdditionalValueUSD = &s
+		out.AdditionalValueUSD, out.AdditionalValueLowerBound = &s, partial
 		if vr := ratFromOptionalString(verifiedRef); vr != nil {
 			c := new(big.Rat).Add(vr, additional).FloatString(2)
-			out.CombinedValueUSD = &c
+			out.CombinedValueUSD, out.CombinedValueLowerBound = &c, partial || verifiedLowerBound
 		}
 	}
 	return out
@@ -406,28 +413,31 @@ func rwaCuratedSummarise(snap rwaCurated, rows []RWAAsset, degraded bool, verifi
 
 // rwaCuratedTally counts the served rows into the summary and sums the value of rows the verified set does NOT carry, the only part that
 // adds to the verified total.
-// The bool reports whether any such row carried a value, so an all-verified set serves no "additional" figure rather than zero.
-func rwaCuratedTally(rows []RWAAsset, out *RWACuratedSummary) (*big.Rat, bool) {
-	additional := new(big.Rat)
-	anyAdditional := false
+// anyAdditional reports whether any such row carried a value, so an all-verified set serves no "additional" figure rather than zero;
+// partial that the sum leaves one of those rows out or counts one from a floor supply.
+func rwaCuratedTally(rows []RWAAsset, out *RWACuratedSummary) (additional *big.Rat, anyAdditional, partial bool) {
+	additional = new(big.Rat)
 	for _, r := range rows {
 		alsoVerified := r.Curator != nil && r.Curator.AlsoVerified
 		if alsoVerified {
 			out.AlsoVerified++
 		}
-		if r.ReferenceValuation.ValueUSD == nil {
-			continue
+		v := ratFromOptionalString(r.ReferenceValuation.ValueUSD)
+		if r.ReferenceValuation.ValueUSD != nil {
+			out.AssetsValued++
 		}
-		out.AssetsValued++
 		if alsoVerified {
 			continue
 		}
-		if v := ratFromOptionalString(r.ReferenceValuation.ValueUSD); v != nil {
-			additional.Add(additional, v)
-			anyAdditional = true
+		if v == nil {
+			partial = true
+			continue
 		}
+		additional.Add(additional, v)
+		anyAdditional = true
+		partial = partial || r.CirculatingSupplyLowerBound
 	}
-	return additional, anyAdditional
+	return additional, anyAdditional, partial
 }
 
 // rwaCuratedPublishedBlock renders what the curator last published with the signed gap to the verified reference total; figures are
@@ -499,8 +509,9 @@ func (s *Server) attachRWACurated(
 ) (degraded bool) {
 	snap := s.rwaCuratedSnapshot(valuationCtx)
 	members := rwaCuratedMembership(snap, view.Assets)
-	rows, _, degraded := s.rwaCuratedRows(valuationCtx, members, now)
+	rows, _, degraded, unanswered := s.rwaCuratedRows(valuationCtx, members, now)
 	view.CuratedAssets = rows
-	view.Curated = rwaCuratedSummarise(snap, rows, degraded, view.Summary.ReferenceValuation.ValueUSD, now)
-	return degraded
+	ref := view.Summary.ReferenceValuation
+	view.Curated = rwaCuratedSummarise(snap, rows, degraded, ref.ValueUSD, ref.LowerBound, now)
+	return degraded || unanswered
 }
