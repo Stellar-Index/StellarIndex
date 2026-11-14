@@ -442,7 +442,7 @@ func TestAssetsUnifiedTypeSorobanServesTheContractArm(t *testing.T) {
 
 // TestAssetsCatalogueRowVolumeFoldsTheContractArm: the catalogue phase takes analytics from an exact-issuer lookup, which a SAC
 // wrapper (no issuer) misses, so it must fold the contract arm itself on unfiltered requests; a filtered row reports the arm the
-// filter admitted. XLM is the carve-out: the `xlm` row reports the native reader's arm even with a funded XLM SAC row.
+// filter admitted. XLM folds the same way: its SAC markets are an on-Stellar population the native reader does not sum.
 func TestAssetsCatalogueRowVolumeFoldsTheContractArm(t *testing.T) {
 	installFoldRegistry(t)
 	// foldUSDCIssuer IS the catalogue's USDC issuance, so this asset is served by the
@@ -464,7 +464,7 @@ func TestAssetsCatalogueRowVolumeFoldsTheContractArm(t *testing.T) {
 	}{
 		{target: "/v1/assets?asset_class=all&limit=200", slug: "usdc", want: "44600000"},
 		{target: "/v1/assets?asset_class=all&type=classic&limit=200", slug: "usdc", want: "35600000"},
-		{target: "/v1/assets?asset_class=all&limit=200", slug: "xlm", want: "700000"},
+		{target: "/v1/assets?asset_class=all&limit=200", slug: "xlm", want: "1600000"},
 	} {
 		t.Run(tc.slug+" "+tc.target, func(t *testing.T) {
 			row := rowByAssetID(t, decodeAssetRows(t, serveAssets(t, s, tc.target)), tc.slug)

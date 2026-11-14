@@ -70,6 +70,8 @@ type AssetListingValuation struct {
 	// balances a trustline query cannot see, so the wrong basis gives a valuation hundreds of
 	// times too small.
 	SupplyBasis string `json:"supply_basis,omitempty"`
+	// ValueLowerBound: the supply was a provable floor (a trustline or storage-balance sum), so ValueUSD is at least this.
+	ValueLowerBound bool `json:"value_lower_bound,omitempty"`
 }
 
 // AssetListingReference.AddressForm values.
@@ -396,6 +398,7 @@ func (s *Server) publishListingValuation(row *AssetDetail, lake string) {
 		ValueUSD:          &value,
 		CirculatingSupply: circ,
 		SupplyBasis:       basis,
+		ValueLowerBound:   reading.LowerBound(),
 	}
 }
 
