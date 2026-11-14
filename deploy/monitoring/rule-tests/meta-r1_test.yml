@@ -1,0 +1,174 @@
+---
+# promtool unit tests for the r1 overlay copies of the alerts whose expr
+# scripts/ci/rule-equivalence.baseline waives against the multi-host tree.
+# meta_test.yml proves the multi-host copies; a waived expr is a different
+# expression, so the r1 copy needs its own firing proof.
+#
+# Run: promtool test rules deploy/monitoring/rule-tests/meta-r1_test.yml
+
+rule_files:
+  - ../../../configs/prometheus/rules.r1/meta.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    name: r1 alertmanager scrape target down fires alertmanager_down
+    input_series:
+      - series: 'up{job="alertmanager",instance="localhost:9093"}'
+        values: '0+0x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_alertmanager_down
+        exp_alerts:
+          - exp_labels:
+              job: alertmanager
+              instance: localhost:9093
+              severity: page
+              team: stellarindex
+              component: meta
+            exp_annotations:
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_alertmanager_down"
+              summary: "AlertManager is down or unscraped"
+              description: |
+                Alertmanager is not answering its scrape. Every alert in the
+                system is undeliverable while this is true, including this
+                one — treat the Prometheus UI, not Discord, as the source of
+                truth until it clears.
+
+  - interval: 1m
+    name: r1 alertmanager scrape target healthy stays silent
+    input_series:
+      - series: 'up{job="alertmanager",instance="localhost:9093"}'
+        values: '1+0x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_alertmanager_down
+        exp_alerts: []
+
+  - interval: 1m
+    name: only the multi-host job name being up still fires on r1
+    input_series:
+      - series: 'up{job="alertmanager_pair",instance="am1:9093"}'
+        values: '1+0x20'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_alertmanager_down
+        exp_alerts:
+          - exp_labels:
+              job: alertmanager
+              severity: page
+              team: stellarindex
+              component: meta
+            exp_annotations:
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_alertmanager_down"
+              summary: "AlertManager is down or unscraped"
+              description: |
+                Alertmanager is not answering its scrape. Every alert in the
+                system is undeliverable while this is true, including this
+                one — treat the Prometheus UI, not Discord, as the source of
+                truth until it clears.
+
+  - interval: 1m
+    name: flat r1 webhook counter for 15m fires not_notifying
+    input_series:
+      - series: 'alertmanager_notifications_total{job="alertmanager",instance="localhost:9093",integration="webhook"}'
+        values: '5+0x25'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: stellarindex_alertmanager_not_notifying
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: meta
+            exp_annotations:
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_alertmanager_not_notifying"
+              summary: "AlertManager has sent no notifications in 15m \u2014 the fan-out is dead"
+              description: |
+                The deadman's switch alone should produce ~30 webhook
+                notifications an hour. Zero means notifications are not
+                leaving the process. Most likely a receiver's *_configs block
+                was dropped because its URL env var is empty — check
+                /etc/default/alertmanager-secrets, then re-run
+                configs/alertmanager/apply.sh, which now refuses to install
+                a config whose receivers deliver to nobody.
+
+  - interval: 1m
+    name: steadily incrementing r1 webhook counter stays silent
+    input_series:
+      - series: 'alertmanager_notifications_total{job="alertmanager",instance="localhost:9093",integration="webhook"}'
+        values: '0+1x25'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: stellarindex_alertmanager_not_notifying
+        exp_alerts: []
+
+  - interval: 1m
+    name: r1 failed-notification counter rising fires notifications_failing
+    input_series:
+      - series: 'alertmanager_notifications_failed_total{job="alertmanager",instance="localhost:9093",integration="webhook"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_alertmanager_notifications_failing
+        exp_alerts:
+          - exp_labels:
+              job: alertmanager
+              instance: localhost:9093
+              integration: webhook
+              severity: ticket
+              team: stellarindex
+              component: meta
+            exp_annotations:
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_alertmanager_notifications_failing"
+              summary: "AlertManager notifications to webhook are failing"
+              description: |
+                Alertmanager is attempting delivery and being refused
+                (). A revoked Discord webhook or a deleted
+                Healthchecks check presents exactly this way. Unlike
+                not_notifying, the pipeline is alive — the far end is
+                rejecting it.
+
+  - interval: 1m
+    name: r1 failed-notification counter flat at zero stays silent
+    input_series:
+      - series: 'alertmanager_notifications_failed_total{job="alertmanager",instance="localhost:9093",integration="webhook"}'
+        values: '0+0x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_alertmanager_notifications_failing
+        exp_alerts: []
+
+  - interval: 1m
+    name: an r1-only scrape job down fires scrape_failing
+    input_series:
+      - series: 'up{job="caddy",instance="localhost:2019"}'
+        values: '0+0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_prometheus_scrape_failing
+        exp_alerts:
+          - exp_labels:
+              job: caddy
+              instance: localhost:2019
+              severity: ticket
+              team: stellarindex
+              component: meta
+            exp_annotations:
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_prometheus_scrape_failing"
+              summary: "Prometheus scrape of caddy@localhost:2019 failing"
+              description: |
+                A scrape target has been down for 2+ min. We lose visibility
+                into that subsystem's health until it returns. Doesn't mean the
+                subsystem is down — often the exporter is the problem.
+
+  - interval: 1m
+    name: a job r1 does not scrape stays silent
+    input_series:
+      - series: 'up{job="alertmanager_pair",instance="am1:9093"}'
+        values: '0+0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_prometheus_scrape_failing
+        exp_alerts: []

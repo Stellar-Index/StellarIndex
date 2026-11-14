@@ -52,6 +52,8 @@ HEALTHCHECKS_URL_API=
 HEALTHCHECKS_URL_SMOKE=
 # SLA probe (latency + freshness; 15 min cadence, grace 30 min):
 HEALTHCHECKS_URL_SLA_PROBE=
+# REQUIRED for the SLA probe: without a key it reports no verdict.
+# STELLARINDEX_PROBE_API_KEY=
 # SLA probe tuning (defaults match the binary's flag defaults).
 # SLA_PROBE_BASE_URL=http://localhost:3000/v1
 # SLA_PROBE_DURATION=30s

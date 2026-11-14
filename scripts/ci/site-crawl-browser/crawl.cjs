@@ -1,6 +1,6 @@
 // Browser crawl of one explorer: fails on any page that renders "Not found" (HTTP 404 or the
 // client-rendered not-found shell, which curl cannot see) and on any API call a page makes that
-// answers 4xx/5xx. Catches a network calling an endpoint it does not serve and an endpoint a host
+// answers 4xx/5xx or gets no answer the page may read (CORS, TLS, DNS, refused). Catches a network calling an endpoint it does not serve and an endpoint a host
 // never built, neither of which site-crawl-check.sh's curl pass can see.
 //
 // Usage: (npm ci here first) node scripts/ci/site-crawl-browser/crawl.cjs <site> <api> [maxPages]
@@ -15,7 +15,7 @@ if (!SITE || !API) {
 }
 const MAX_PAGES = Number(MAX_ARG || 300);
 const PER_PATTERN = 3;
-const SETTLE_MS = 5000;
+const SETTLE_MS = Number(process.env.CRAWL_SETTLE_MS || 5000);
 
 const SEEDS = ['/', '/assets/', '/assets/xlm/', '/markets/', '/ledgers/', '/transactions/',
   '/operations/', '/accounts/', '/contracts/', '/protocols/', '/lending/', '/network/', '/status/', '/widgets/', '/sdk/'];
@@ -66,6 +66,18 @@ async function visit(ctx, path) {
         failed.push({ rel, n, msg: `${r.status()} ${rel}${type ? ` (${type})` : ''}` });
       }
     }));
+  });
+  // A request the browser blocks or cannot complete has no response event at all. ERR_ABORTED is
+  // the page cancelling its own request (navigation, a closed stream), which the reader never sees.
+  page.on('requestfailed', (req) => {
+    const url = req.url();
+    if (!url.startsWith(API)) return;
+    const why = req.failure()?.errorText || 'failed';
+    if (why.includes('ERR_ABORTED')) return;
+    const rel = url.slice(API.length);
+    const n = ++seq;
+    lastSeq.set(rel, n);
+    failed.push({ rel, n, msg: `no answer ${rel} (${why})` });
   });
   let status = 0, title = '', heading = '', hrefs = [], error = null;
   try {

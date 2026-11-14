@@ -1,0 +1,46 @@
+---
+# promtool unit tests for the r1 overlay copies of the alerts whose expr
+# scripts/ci/rule-equivalence.baseline waives against the multi-host tree.
+# cache_test.yml proves the multi-host copies; a waived expr is a different
+# expression, so the r1 copy needs its own firing proof.
+#
+# Run: promtool test rules deploy/monitoring/rule-tests/cache-r1_test.yml
+
+rule_files:
+  - ../../../configs/prometheus/rules.r1/cache.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    name: single-node r1 with no expected-replica series stays silent
+    input_series:
+      - series: 'redis_connected_slaves{instance="localhost:9121"}'
+        values: '0+0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_redis_replication_broken
+        exp_alerts: []
+
+  - interval: 1m
+    name: fewer replicas than the expected-replica series fires
+    input_series:
+      - series: 'redis_connected_slaves{instance="localhost:9121"}'
+        values: '0+0x10'
+      - series: 'redis_expected_slaves{instance="localhost:9121"}'
+        values: '1+0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_redis_replication_broken
+        exp_alerts:
+          - exp_labels:
+              instance: localhost:9121
+              severity: ticket
+              team: stellarindex
+              component: cache
+            exp_annotations:
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cache.md#stellarindex_redis_replication_broken"
+              summary: "Redis master localhost:9121 missing replicas"
+              description: |
+                Master reports 0 connected replicas, fewer than
+                expected. Sentinel can't promote on failover if replicas are gone.

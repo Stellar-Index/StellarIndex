@@ -162,8 +162,35 @@ func touchedDirs(files []string) (map[string]bool, bool, error) {
 		for _, r := range readers {
 			dirs[path.Dir(r)] = true
 		}
+		walkers, err := walkerReaders(f, gitGrep)
+		if err != nil {
+			return nil, false, err
+		}
+		for _, r := range walkers {
+			dirs[path.Dir(r)] = true
+		}
 	}
 	return dirs, false, nil
+}
+
+// walkerReaders returns the tests that name one of f's ancestor directories
+// as a path segment. A test that walks or globs a directory never names the
+// files in it, so the basename grep cannot find it.
+func walkerReaders(f string, grep func(fixed, glob string) ([]string, error)) ([]string, error) {
+	seen := map[string]bool{}
+	for dir := path.Dir(f); dir != "." && dir != "/"; dir = path.Dir(dir) {
+		seg := path.Base(dir)
+		for _, quoted := range []string{`"` + seg + `"`, `/` + seg + `"`, `"` + seg + `/`, `/` + seg + `/`} {
+			readers, err := grep(quoted, "*_test.go")
+			if err != nil {
+				return nil, err
+			}
+			for _, r := range readers {
+				seen[r] = true
+			}
+		}
+	}
+	return sortedKeys(seen), nil
 }
 
 // addCitationReaders marks the packages whose tests read a doc that cites a
