@@ -240,3 +240,18 @@ func withholdingServer() *Server {
 		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 }
+
+// /v1/divergence is uncached and its read grows with the window, so its ceiling is 30 days, not the 365 /v1/anomalies takes.
+func TestDivergence_WindowDaysCeiling(t *testing.T) {
+	s := &Server{
+		Options: Options{Divergences: &withholdingDivergenceReader{}},
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	for raw, want := range map[string]int{"30": http.StatusOK, "31": http.StatusBadRequest, "365": http.StatusBadRequest} {
+		rec := httptest.NewRecorder()
+		s.handleDivergence(rec, httptest.NewRequest(http.MethodGet, "/v1/divergence?window_days="+raw, nil))
+		if rec.Code != want {
+			t.Errorf("window_days=%s: status = %d, want %d (body %s)", raw, rec.Code, want, rec.Body.String())
+		}
+	}
+}

@@ -75,9 +75,9 @@ type Flags struct {
 	// `unverified_warning` body points at the verified asset.
 	UnverifiedTickerCollision bool `json:"unverified_ticker_collision,omitempty"`
 	// DetectorsPartial: /v1/mev when the aggregator's MEV worker has not completed a run within the
-	// heartbeat TTL, its last run did not resolve every lake tx-order hash (sandwich and
-	// oracle_sandwich ran on a partial map or not at all), or the heartbeat could not be read. A
-	// quiet feed under this flag is a detection gap, not a quiet network.
+	// heartbeat TTL, its last run did not see every detector's whole input (a tx-order hash unresolved,
+	// a scan capped, an oracle or auction scan failed), the heartbeat could not be read, or the kind
+	// asked for has no detector. A quiet feed under this flag is a detection gap, not a quiet network.
 	DetectorsPartial bool `json:"detectors_partial,omitempty"`
 	// Truncated: the list was capped and no cursor continues it, so its length is a lower bound.
 	Truncated bool `json:"truncated,omitempty"`

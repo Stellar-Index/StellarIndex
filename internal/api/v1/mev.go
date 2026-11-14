@@ -11,7 +11,7 @@ import (
 )
 
 // validMEVKinds is the ?kind= enum: detector Kind* constants plus oracle_deviation (no detector yet; filtering yields no rows, not a
-// 400).
+// 400, and the answer is flagged detectors_partial).
 var validMEVKinds = map[string]bool{
 	mev.KindArbitrage:          true,
 	mev.KindSandwich:           true,
@@ -75,6 +75,10 @@ func (s *Server) handleMEVEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	kind := r.URL.Query().Get("kind")
+	if kind == "oracle_deviation" {
+		// No detector writes this kind: its empty list is never a full answer.
+		flags.DetectorsPartial = true
+	}
 	if kind != "" && !validMEVKinds[kind] {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-kind",

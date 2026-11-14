@@ -1934,8 +1934,11 @@ export interface paths {
          *     absent: it is set when the detection worker has not completed a
          *     run within 15 minutes, when its last run could not resolve every
          *     intra-ledger tx order from the lake (so `sandwich` and
-         *     `oracle_sandwich` ran on a partial map or not at all), or when
-         *     the worker's heartbeat could not be read.
+         *     `oracle_sandwich` ran on a partial map or not at all), when that
+         *     run's trade, oracle or auction scan failed or hit its cap (an
+         *     unread oracle scan leaves `oracle_sandwich` and
+         *     `liquidation_cascade` blind), when the worker's heartbeat could
+         *     not be read, and always for `kind=oracle_deviation`.
          */
         get: operations["listMevEvents"];
         put?: never;
@@ -2007,7 +2010,7 @@ export interface paths {
          *     A reference with `status: firing` breached its per-(reference,
          *     pair) threshold at its latest observation — the signal behind
          *     `flags.divergence_warning`. `?firing=true` keeps pairs with at
-         *     least one firing reference; `?window_days=` (default 7);
+         *     least one firing reference; `?window_days=` (default 7, max 30);
          *     `?limit=` counts pairs (default 100, max 500). 200 + empty
          *     payload when the reader isn't wired. A pair whose market
          *     `/v1/price` withholds is omitted: `our_price` is that market's
@@ -8215,7 +8218,7 @@ export interface components {
              */
             under_review: boolean;
             /**
-             * @description Set on `/v1/mev` when the aggregator's MEV detection worker has not completed a run within 15 minutes, when its last run could not resolve every intra-ledger tx order from the lake (the `sandwich` and `oracle_sandwich` detectors ran on a partial map or not at all), or when the worker's heartbeat could not be read. An empty or short feed under this flag is a detection gap, not a quiet network. Omitted when false.
+             * @description Set on `/v1/mev` when the aggregator's MEV detection worker has not completed a run within 15 minutes, when its last run could not resolve every intra-ledger tx order from the lake (the `sandwich` and `oracle_sandwich` detectors ran on a partial map or not at all), when that run's trade, oracle or auction scan failed or hit its cap, when the worker's heartbeat could not be read, or when the kind asked for has no detector (`oracle_deviation`). An empty or short feed under this flag is a detection gap, not a quiet network. Omitted when false.
              * @default false
              */
             detectors_partial: boolean;
@@ -17685,7 +17688,7 @@ export interface operations {
             query?: {
                 /** @description true → only pairs with at least one reference whose latest status is firing. */
                 firing?: boolean;
-                /** @description Trailing lookback in days for divergence rows (1-365, default 7). */
+                /** @description Trailing lookback in days for divergence rows (1-30, default 7). Out-of-range values return 400. */
                 window_days?: number;
                 /** @description Maximum pairs to return (1-500, default 100). Out-of-range values return 400. */
                 limit?: number;

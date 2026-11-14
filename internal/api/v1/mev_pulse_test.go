@@ -32,3 +32,21 @@ func mevFlags(t *testing.T, opts v1.Options) v1.Flags {
 	}
 	return page.Flags
 }
+
+// No detector writes oracle_deviation, so its empty list is flagged even on a fresh full beat.
+func TestMEVEvents_ReservedKindIsAlwaysPartial(t *testing.T) {
+	ts := httpTestServer(t, v1.New(v1.Options{MEV: &stubMEVReader{}, MEVPulse: stubPulse{full: true, present: true}}))
+	for kind, want := range map[string]bool{"oracle_deviation": true, "arbitrage": false} {
+		resp := mustGet(t, ts.URL+"/v1/mev?kind="+kind)
+		body, _ := readAll(resp)
+		var page struct {
+			Flags v1.Flags `json:"flags"`
+		}
+		if err := json.Unmarshal([]byte(body), &page); err != nil {
+			t.Fatalf("decode: %v: %s", err, body)
+		}
+		if page.Flags.DetectorsPartial != want {
+			t.Errorf("kind=%s: detectors_partial = %v, want %v", kind, page.Flags.DetectorsPartial, want)
+		}
+	}
+}
