@@ -17,8 +17,8 @@
 #   find-external-gaps.sh                     # every external source
 #   find-external-gaps.sh kraken bitstamp     # named sources
 #   MIN_GAP_DAYS=3 find-external-gaps.sh      # only runs >= 3 days (default 2)
-# Env: STELLARINDEX_POSTGRES_DSN (required). Exit 0 no gaps, 1 gaps found,
-# 2 DSN unset.
+# Env: STELLARINDEX_POSTGRES_DSN (required). Exit 0 no gaps, 1 gaps found or a
+# source has no rows, 2 DSN unset, 3 a query failed (nothing is known).
 set -euo pipefail
 
 MIN_GAP_DAYS="${MIN_GAP_DAYS:-2}"
@@ -35,10 +35,11 @@ if [ "${#SOURCES[@]}" -eq 0 ]; then
 fi
 
 rc=0
+failed=0
 for src in "${SOURCES[@]}"; do
-    # One scan per source. Zero-row days INSIDE the source's active range are
-    # holes; outside it they are "not started yet" / "ended".
-    out="$(psql "$DSN" -tAF'|' <<SQL
+    # One scan per source. The range runs from the first trade to yesterday
+    # (UTC), so a source that went dark and stayed dark is a trailing hole.
+    if ! out="$(psql "$DSN" -X -v ON_ERROR_STOP=1 -tAF'|' <<SQL
 WITH bounds AS (
     SELECT min(ts)::date AS lo, max(ts)::date AS hi
     FROM trades WHERE source = '${src}'
@@ -46,16 +47,29 @@ WITH bounds AS (
     SELECT DISTINCT ts::date AS d
     FROM trades WHERE source = '${src}'
 ), all_days AS (
-    SELECT generate_series(lo, hi, interval '1 day')::date AS d FROM bounds
+    SELECT generate_series(
+        lo, GREATEST(hi, (now() AT TIME ZONE 'utc')::date - 1), interval '1 day'
+    )::date AS d FROM bounds
 ), missing AS (
     SELECT a.d FROM all_days a LEFT JOIN present p USING (d) WHERE p.d IS NULL
 ), runs AS (
     SELECT d, d - (row_number() OVER (ORDER BY d))::int AS grp FROM missing
 )
-SELECT min(d), max(d), count(*)
-FROM runs GROUP BY grp HAVING count(*) >= ${MIN_GAP_DAYS} ORDER BY 1;
+SELECT 'norows', '', 0 FROM bounds WHERE lo IS NULL
+UNION ALL
+(SELECT min(d)::text, max(d)::text, count(*)
+ FROM runs GROUP BY grp HAVING count(*) >= ${MIN_GAP_DAYS} ORDER BY 1);
 SQL
-)"
+)"; then
+        echo "find-external-gaps: ${src}: query FAILED, coverage unknown" >&2
+        failed=1
+        continue
+    fi
+    if [ "${out%%|*}" = "norows" ]; then
+        echo "find-external-gaps: ${src}: NO ROWS at all"
+        rc=1
+        continue
+    fi
     if [ -z "$out" ]; then
         echo "find-external-gaps: ${src}: no gap >= ${MIN_GAP_DAYS} day(s)"
         continue
@@ -67,4 +81,5 @@ SQL
     done
     rc=1
 done
+[ "$failed" -eq 1 ] && exit 3
 exit "$rc"

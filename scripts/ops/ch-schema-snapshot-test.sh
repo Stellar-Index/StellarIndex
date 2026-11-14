@@ -46,6 +46,7 @@ while [[ $# -gt 0 ]]; do
 done
 case "$q" in
   *"SELECT name FROM system.tables"*)
+    [[ -n "${MOCK_LIST_QUERY_LOG:-}" ]] && printf '%s\n' "$q" > "$MOCK_LIST_QUERY_LOG"
     for t in ${MOCK_TABLES:-}; do echo "$t"; done ;;
   *"SHOW CREATE TABLE"*)
     for bad_t in ${MOCK_SHOW_CREATE_FAILS:-}; do
@@ -82,7 +83,16 @@ schema_of() { cat "$TMP/$1/out"/*/schema.sql 2>/dev/null; }
 # ─── 1. full capture ────────────────────────────────────────────────
 export MOCK_TABLES="ledgers transactions contract_events"
 export MOCK_SHOW_CREATE_FAILS=""
+export MOCK_LIST_QUERY_LOG="$TMP/list-query"
 rc="$(run_snapshot full)"
+
+# The restore replays schema.sql in order, so views must follow their tables.
+if grep -q "engine = 'MaterializedView', 2" "$MOCK_LIST_QUERY_LOG" \
+   && ! grep -q 'ORDER BY name' "$MOCK_LIST_QUERY_LOG"; then
+  ok "table listing orders materialized views after plain tables"
+else
+  bad "table listing is not ordered dependents-last: $(tr '\n' ' ' < "$MOCK_LIST_QUERY_LOG")"
+fi
 
 if [[ "$rc" == "0" ]]; then
   ok "full capture exits 0"

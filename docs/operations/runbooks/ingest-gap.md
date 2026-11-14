@@ -27,7 +27,7 @@ stellarindex-ops find-data-gaps --config /etc/stellarindex.toml --output text
 ssh root@<region-host> 'sudo -iu postgres psql -d stellarindex -c "SELECT MAX(ledger_close_time), MAX(ledger) FROM soroban_events;"'
 ```
 
-`find-data-gaps` prints each `[from, to]` range plus a ready-to-paste `backfill` command. It is ledger-scoped and cannot see CEX/oracle sources: for those run `scripts/ops/find-external-gaps.sh [source...]` on the host (needs `STELLARINDEX_POSTGRES_DSN`; `MIN_GAP_DAYS` defaults to 2; reports day-level holes in `kraken coinbase bitstamp binance`; a human judges each, since a venue may truly not have traded). `MAX(ledger_close_time)` fresh (~30 s) means the writer is healthy and the gap historic; stale means still wedged and growing.
+`find-data-gaps` prints each `[from, to]` range plus a ready-to-paste `backfill` command. It is ledger-scoped and cannot see CEX/oracle sources: for those run `scripts/ops/find-external-gaps.sh [source...]` on the host (needs `STELLARINDEX_POSTGRES_DSN`; `MIN_GAP_DAYS` defaults to 2; reports day-level holes in `kraken coinbase bitstamp binance` up to yesterday UTC, so a source still dark shows as a trailing hole; exit 1 = holes or a source with no rows, exit 3 = a query failed and nothing is known; a human judges each hole, since a venue may truly not have traded). `MAX(ledger_close_time)` fresh (~30 s) means the writer is healthy and the gap historic; stale means still wedged and growing.
 
 Likely causes:
 
