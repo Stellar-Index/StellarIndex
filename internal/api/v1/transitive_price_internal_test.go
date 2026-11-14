@@ -67,9 +67,9 @@ func TestTransitivePriceFor_FallsBackToNextHopWhenTopHopGated(t *testing.T) {
 	ranked := func(hops ...timescale.TransitivePrice) *stubPricer {
 		return &stubPricer{candidates: hops}
 	}
-	thin := timescale.TransitivePrice{PriceUSD: thinUSD, Hop: thinHop, HopVolume24hUSD: "50000"}
-	flagged := timescale.TransitivePrice{PriceUSD: flagUSD, Hop: flagHop, HopVolume24hUSD: "20000"}
-	deep := timescale.TransitivePrice{PriceUSD: deepUSD, Hop: deepHop, HopVolume24hUSD: "5000"}
+	thin := timescale.TransitivePrice{PriceUSD: thinUSD, Hop: thinHop, HopVolume24hUSD: "50000", HopQuote: "native"}
+	flagged := timescale.TransitivePrice{PriceUSD: flagUSD, Hop: flagHop, HopVolume24hUSD: "20000", HopQuote: "native"}
+	deep := timescale.TransitivePrice{PriceUSD: deepUSD, Hop: deepHop, HopVolume24hUSD: "5000", HopQuote: "native"}
 
 	tests := []struct {
 		name   string
@@ -107,7 +107,9 @@ func TestTransitivePriceFor_GateMatrix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse asset: %v", err)
 	}
-	priced := timescale.TransitivePrice{PriceUSD: "7934.40", Hop: hopID, HopVolume24hUSD: "18755.68"}
+	priced := timescale.TransitivePrice{PriceUSD: "7934.40", Hop: hopID, HopVolume24hUSD: "18755.68", HopQuote: "native"}
+	const usdcID = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	viaUSDC := timescale.TransitivePrice{PriceUSD: "9999999.00", Hop: hopID, HopVolume24hUSD: "18755.68", HopQuote: usdcID}
 
 	// Both legs allowed: near leg (asset,hop) and the hop standing on its
 	// own against XLM — the same shape listingPriceAllowed checks.
@@ -173,6 +175,38 @@ func TestTransitivePriceFor_GateMatrix(t *testing.T) {
 			wantPrice: "7934.40",
 			wantOK:    true,
 		},
+		{
+			// The hop is deep against XLM but its price was read from its USDC market, which did not clear.
+			name:   "hop priced through a market the gate did not clear",
+			pricer: &stubPricer{tp: viaUSDC, ok: true},
+			gate:   &stubListingGate{allow: bothLegs},
+		},
+		{
+			name:      "the same hop's XLM route is served when its USD route is refused",
+			pricer:    &stubPricer{candidates: []timescale.TransitivePrice{viaUSDC, priced}},
+			gate:      &stubListingGate{allow: bothLegs},
+			wantPrice: "7934.40",
+			wantOK:    true,
+		},
+		{
+			name:      "hop priced through USDC and that market clears",
+			pricer:    &stubPricer{tp: viaUSDC, ok: true},
+			gate:      &stubListingGate{allow: map[string]bool{assetID + "|" + hopID: true, hopID + "|" + usdcID: true}},
+			wantPrice: "9999999.00",
+			wantOK:    true,
+		},
+		{
+			name:   "non-XLM hop with no named market was never gated",
+			pricer: &stubPricer{tp: timescale.TransitivePrice{PriceUSD: "7934.40", Hop: hopID}, ok: true},
+			gate:   &stubListingGate{allow: bothLegs},
+		},
+		{
+			name:      "hop is the XLM SAC — priced as the anchor",
+			pricer:    &stubPricer{tp: timescale.TransitivePrice{PriceUSD: "0.16", Hop: canonical.XLMSacContractID}, ok: true},
+			gate:      &stubListingGate{allow: map[string]bool{assetID + "|" + canonical.XLMSacContractID: true, canonical.XLMSacContractID + "|fiat:USD": true}},
+			wantPrice: "0.16",
+			wantOK:    true,
+		},
 	}
 
 	for _, tc := range tests {
@@ -228,7 +262,7 @@ func TestTransitivePriceFor_ScamGateOnBothLegs(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &Server{
-				Options: Options{TransitivePricer: &stubPricer{tp: timescale.TransitivePrice{PriceUSD: "7934.40", Hop: hopID}, ok: true}, Substance: substance, Scam: transitiveScamGate{flagged: tc.flagged}},
+				Options: Options{TransitivePricer: &stubPricer{tp: timescale.TransitivePrice{PriceUSD: "7934.40", Hop: hopID, HopQuote: "native"}, ok: true}, Substance: substance, Scam: transitiveScamGate{flagged: tc.flagged}},
 			}
 			got, ok := s.transitivePriceFor(context.Background(), asset, assetID)
 			if ok != tc.wantOK {
@@ -267,7 +301,7 @@ func TestTransitivePriceFor_ResolverCalledOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := &stubPricer{tp: timescale.TransitivePrice{PriceUSD: "1.00", Hop: hopID}, ok: true}
+	p := &stubPricer{tp: timescale.TransitivePrice{PriceUSD: "1.00", Hop: hopID, HopQuote: "native"}, ok: true}
 	s := &Server{
 		Options: Options{TransitivePricer: p, Substance: &stubListingGate{allow: map[string]bool{
 			assetID + "|" + hopID: true,
@@ -295,7 +329,7 @@ func TestApplyAssetRowToDetail_FillsTransitiveWhenNoCatalogueRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &Server{
-		Options: Options{TransitivePricer: &stubPricer{ok: true, tp: timescale.TransitivePrice{PriceUSD: "7934.40", Hop: hopID}}, Substance: &stubListingGate{allow: map[string]bool{
+		Options: Options{TransitivePricer: &stubPricer{ok: true, tp: timescale.TransitivePrice{PriceUSD: "7934.40", Hop: hopID, HopQuote: "native"}}, Substance: &stubListingGate{allow: map[string]bool{
 			assetID + "|" + hopID: true,
 			hopID + "|native":     true,
 		}}},
@@ -404,7 +438,7 @@ func TestTransitivePriceFor_NormalisesNonstandardDecimals(t *testing.T) {
 				t.Fatalf("parse asset: %v", err)
 			}
 			s := &Server{
-				Options: Options{TransitivePricer: &stubPricer{tp: timescale.TransitivePrice{PriceUSD: tc.raw, Hop: hopID}, ok: true}, Substance: &stubListingGate{allow: map[string]bool{
+				Options: Options{TransitivePricer: &stubPricer{tp: timescale.TransitivePrice{PriceUSD: tc.raw, Hop: hopID, HopQuote: "native"}, ok: true}, Substance: &stubListingGate{allow: map[string]bool{
 					tc.assetID + "|" + hopID: true,
 					hopID + "|native":        true,
 				}}, NonstandardDecimals: decimalsCacheFlagging(t, tc.flagged)},
