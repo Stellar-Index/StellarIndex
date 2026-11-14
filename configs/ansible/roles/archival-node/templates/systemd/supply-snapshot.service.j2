@@ -59,7 +59,7 @@ NoNewPrivileges=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
-ReadWritePaths=/var/lib/node_exporter/textfile_collector
+ReadWritePaths=-/var/lib/node_exporter/textfile_collector
 
 # A snapshot run is fast: one ListCursors + one Compute + one
 # InsertSupply. Worst case is a slow Postgres — cap at 5 minutes
