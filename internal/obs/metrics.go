@@ -558,6 +558,7 @@ func seedBoundedLabelSeries() {
 	} {
 		for _, reason := range []string{
 			FanoutFailureInvalidPayload, FanoutFailureListSubscribers, FanoutFailureEnqueue,
+			FanoutFailureQueueFull,
 		} {
 			CustomerWebhookFanoutFailuresTotal.WithLabelValues(eventType, reason)
 		}
@@ -2104,7 +2105,7 @@ var CustomerWebhookDeliveryAttemptsTotal = prometheus.NewCounterVec(
 )
 
 // Reason labels on [CustomerWebhookFanoutFailuresTotal]. Bounded set
-// of three — one per way a producer-side fan-out can lose a customer's
+// of four — one per way a producer-side fan-out can lose a customer's
 // event before a delivery row exists.
 const (
 	// FanoutFailureInvalidPayload — the caller handed Publish bytes
@@ -2116,6 +2117,8 @@ const (
 	// FanoutFailureEnqueue — one subscriber's EnqueueDelivery insert
 	// failed. Counted once per LOST delivery.
 	FanoutFailureEnqueue = "enqueue"
+	// FanoutFailureQueueFull — the producer's off-tick queue had no room, so the fan-out never started.
+	FanoutFailureQueueFull = "queue_full"
 )
 
 // CustomerWebhookFanoutFailuresTotal counts customer events that never became a delivery row and are permanently lost, by reason; the producer-side counterpart of [CustomerWebhookDeliveryAttemptsTotal].

@@ -9,6 +9,7 @@ import (
 	"go/token"
 	"io/fs"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -38,12 +39,6 @@ func (p *recordingPublisher) PublishOnce(_ context.Context, ev platform.WebhookE
 	p.events = append(p.events, ev)
 	p.payloads = append(p.payloads, payload)
 	return customerwebhook.PublishResult{}, p.err
-}
-
-func (p *recordingPublisher) Publish(_ context.Context, ev platform.WebhookEventType, payload []byte) (customerwebhook.PublishResult, error) {
-	p.events = append(p.events, ev)
-	p.payloads = append(p.payloads, payload)
-	return customerwebhook.PublishResult{}, nil
 }
 
 func webhookGatePairs(t *testing.T) (flagged, native canonical.Asset) {
@@ -317,5 +312,78 @@ func ruleWebhookPublishScanCatchesMethodValues(t *testing.T) {
 		if pub != c.wantPublish || gated != c.wantGated {
 			t.Errorf("%s: publishes=%v gated=%v, want %v %v", c.name, pub, gated, c.wantPublish, c.wantGated)
 		}
+	}
+}
+
+// blockingPublisher holds every fan-out until release is closed, as a slow Postgres would.
+type blockingPublisher struct {
+	release chan struct{}
+	mu      sync.Mutex
+	keys    []string
+	failN   int
+}
+
+func (p *blockingPublisher) PublishOnce(ctx context.Context, _ platform.WebhookEventType, key string, _ []byte) (customerwebhook.PublishResult, error) {
+	select {
+	case <-p.release:
+	case <-ctx.Done():
+		return customerwebhook.PublishResult{}, ctx.Err()
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.keys = append(p.keys, key)
+	if p.failN > 0 {
+		p.failN--
+		return customerwebhook.PublishResult{Failed: 1}, errors.New("one delivery lost")
+	}
+	return customerwebhook.PublishResult{}, nil
+}
+
+// The freeze hook runs inside the price tick: it must return while the fan-out is still stuck, the fan-out must
+// outlive the tick's context, and a partial fan-out is run once more under the same key.
+func TestOffTickPublisher_FreezeHookDoesNotWaitAndOutlivesTheTick(t *testing.T) {
+	_, native := webhookGatePairs(t)
+	usd, err := canonical.NewFiatAsset("USD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	slow := &blockingPublisher{release: make(chan struct{}), failN: 1}
+	off := newOffTickPublisher(slow, discardLogger())
+	runCtx, stop := context.WithCancel(context.Background())
+	go off.run(runCtx)
+
+	tickCtx, tickDone := context.WithCancel(context.Background())
+	hook := anomalyFreezeHook(discardLogger(), off, flaggedWithholding())
+	returned := make(chan struct{})
+	go func() {
+		hook(tickCtx, native, usd, "0.4200000", anomaly.Decision{Reason: "test"})
+		close(returned)
+	}()
+	select {
+	case <-returned:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the freeze hook waited for the fan-out")
+	}
+	tickDone() // the tick deadline fires with the fan-out still pending
+	close(slow.release)
+	stop()
+	off.wait(5 * time.Second)
+
+	slow.mu.Lock()
+	defer slow.mu.Unlock()
+	if len(slow.keys) != 2 || slow.keys[0] != slow.keys[1] || slow.keys[0] == "" {
+		t.Fatalf("fan-out passes = %q, want the failed pass repeated once under one key", slow.keys)
+	}
+}
+
+func TestOffTickPublisher_FullQueueIsReportedAsLost(t *testing.T) {
+	off := newOffTickPublisher(&recordingPublisher{}, discardLogger())
+	for i := range offTickFanoutBuffer {
+		if _, err := off.PublishOnce(context.Background(), platform.WebhookEventAnomalyFreeze, "k", []byte(`{}`)); err != nil {
+			t.Fatalf("job %d refused with room in the queue: %v", i, err)
+		}
+	}
+	if _, err := off.PublishOnce(context.Background(), platform.WebhookEventAnomalyFreeze, "k", []byte(`{}`)); !errors.Is(err, errOffTickFanoutFull) {
+		t.Fatalf("err = %v, want errOffTickFanoutFull", err)
 	}
 }

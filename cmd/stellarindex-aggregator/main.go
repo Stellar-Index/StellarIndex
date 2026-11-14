@@ -280,7 +280,11 @@ func run(cfgPath string, dryRun bool) error {
 		webhookStore := postgresstore.NewWebhookStore(postgresstore.New(store.DB()))
 		fanout := customerwebhook.NewFanout(webhookStore, logger.With("component", "webhook-fanout"))
 		if fanout != nil {
-			sinkOpts = append(sinkOpts, timescale.WithFreezeHook(anomalyFreezeHook(logger, fanout, withholding)))
+			// Off the tick: one INSERT per subscriber per frozen pair would otherwise run inside the price refresh.
+			offTick := newOffTickPublisher(fanout, logger.With("component", "webhook-fanout"))
+			go offTick.run(rootCtx)
+			defer offTick.wait(offTickShutdownWait)
+			sinkOpts = append(sinkOpts, timescale.WithFreezeHook(anomalyFreezeHook(logger, offTick, withholding)))
 			logger.Info("freeze events: customer-webhook fan-out wired")
 		}
 		sink := timescale.NewFreezeEventSink(store, sinkOpts...)
