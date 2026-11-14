@@ -913,6 +913,14 @@ func (s *Server) fillMarketCapsFromSupply(ctx context.Context, rows []AssetDetai
 	// Precise supply: the ADR-0011 observer's latest reading, bounded by [preciseSupplyMaxAge].
 	// Authoritative (includes claimable and LP-locked holdings), so preferred.
 	precise, supplyUnread := s.latestPreciseSupply(ctx)
+	s.fillMarketCapsWith(ctx, rows, sourceCounts, precise)
+	return supplyUnread
+}
+
+// fillMarketCapsWith is [Server.fillMarketCapsFromSupply] over a precise-supply map the caller read once for many calls.
+func (s *Server) fillMarketCapsWith(
+	ctx context.Context, rows []AssetDetail, sourceCounts map[string]int, precise map[string]timescale.SupplyObservation,
+) {
 	// Broad fallback: cached trustline-balance sums from the lake for every classic asset. It
 	// undercounts (omits claimable and LP), so it only fills rows the precise pipeline misses.
 	broad := s.cachedClassicSupply(ctx)
@@ -928,7 +936,7 @@ func (s *Server) fillMarketCapsFromSupply(ctx context.Context, rows []AssetDetai
 		}
 	}
 	if len(precise) == 0 && len(broad) == 0 && len(lake) == 0 {
-		return supplyUnread
+		return
 	}
 	// Bounded once for the whole page, not per row (tokenMetadataReadTimeout
 	// is a PER-CALL budget and a listing can carry many Soroban rows) — same
@@ -938,7 +946,6 @@ func (s *Server) fillMarketCapsFromSupply(ctx context.Context, rows []AssetDetai
 	for i := range rows {
 		s.fillRowMarketCap(dctx, &rows[i], precise, lake, broad, sourceCounts)
 	}
-	return supplyUnread
 }
 
 // listingDecimalsLockstepBudget bounds the total time [fillMarketCapsFromSupply]
@@ -3709,6 +3716,9 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 	}
 	counted := countedSACs(page, nil)
 	var anyUnmeasured atomic.Bool
+	// One observer read for the page: per row, a failing read would repeat for every entry of a page nothing can cache.
+	precise, supplyUnread := s.latestPreciseSupply(statsCtx)
+	anyUnmeasured.Store(supplyUnread)
 	forEachBounded(s.logger, len(page), readFanoutConcurrency, func(i int) {
 		vc, ok := s.VerifiedCurrencies.LookupBySlug(page[i].Slug)
 		if !ok {
@@ -3743,9 +3753,7 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 		// Same supply-derived market-cap fill as the classic phase. The twin populates
 		// source_count, so the dust-liquidity guard can fire here exactly as for a classic row;
 		// mergeTwinStats carries market_cap_low_liquidity onto the catalogue row.
-		if s.fillMarketCapsFromSupply(statsCtx, twin, assetRowSourceCounts([]timescale.AssetRow{*twinRow})) {
-			anyUnmeasured.Store(true)
-		}
+		s.fillMarketCapsWith(statsCtx, twin, assetRowSourceCounts([]timescale.AssetRow{*twinRow}), precise)
 		// Only the twin carries the G-issuer the directory is keyed on (fillIssuerDirectoryTags
 		// skips a catalogue row). Without this the valuation arm below would publish a valuation
 		// for a flagged issuer that the listing spine already refused.
