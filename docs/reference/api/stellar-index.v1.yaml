@@ -6981,6 +6981,9 @@ paths:
                             description: |
                               SUM(prices_1m.volume_usd) over the trailing
                               24h. Decimal string per ADR-0003.
+                          volume_lower_bound:
+                            type: boolean
+                            description: "True when any asset's trailing-24h window holds a trade with no trade-time `usd_volume`. Those trades are never valued at today's price, so `volume_24h_usd` is a lower bound. Absent when nothing was excluded."
                           markets_count_24h:
                             type: integer
                             description: Distinct (base, quote) pairs with non-null volume in 24h.
@@ -21990,6 +21993,9 @@ components:
             valuation (usd_volume is aggregator-backfilled and can
             lag) — distinct from a zero-trade router, which reports
             `routed_trades_24h: 0`.
+        volume_lower_bound:
+          type: boolean
+          description: "True when a routed trade in the window carries no trade-time `usd_volume`. It is never valued at today's price, so `routed_volume_24h_usd` is a lower bound. Absent when nothing was excluded."
         last_routed_at:
           type: [string, "null"]
           format: date-time
@@ -22456,7 +22462,7 @@ components:
           description: "Trailing-24h USD volume summed from prices_1m. Decimal string. Null when no USD-equivalent trades."
         volume_lower_bound:
           type: boolean
-          description: "Set only when the request sets `?source=`. True when `volume_24h_usd` excludes this venue's trades that carry no trade-time `usd_volume`; they are never valued at today's price, so the figure is a lower bound. Absent when nothing was excluded."
+          description: "True when `volume_24h_usd` excludes trades that carry no trade-time `usd_volume` (this venue's, under `?source=`); they are never valued at today's price, so the figure is a lower bound. Read per hourly bucket, so it can stay set up to an hour after the last unpriced trade left the window. Absent when nothing was excluded."
         last_price:
           type: [string, "null"]
           description: "Most recent quote-per-base price observed for this pair within the trailing 24h: across every source, or that source's own when the request sets `?source=`. Decimal string. Null when none was observed."

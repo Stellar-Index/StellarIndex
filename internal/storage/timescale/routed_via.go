@@ -110,7 +110,9 @@ type AggregatorRollupRow struct {
 
 	RoutedTrades int64
 	RoutedVolume *string // SUM(usd_volume) over routed trades, decimal string
-	LastRoutedAt *time.Time
+	// VolumeLowerBound: RoutedTrades counts trades with no trade-time usd_volume that RoutedVolume leaves out.
+	VolumeLowerBound bool
+	LastRoutedAt     *time.Time
 }
 
 // AggregatorRollup returns every routers-registry entry with its routed-trade rollup for trades with ts >= since; entries with no routed trades still appear (LEFT JOIN) with zero counts.
@@ -119,12 +121,14 @@ func (s *Store) AggregatorRollup(ctx context.Context, since time.Time) ([]Aggreg
         SELECT r.contract_id, r.name, r.kind, r.protocol_slug, r.auto_discovered,
                COALESCE(t.routed_trades, 0),
                t.routed_volume_usd::text,
-               t.last_routed_at
+               t.last_routed_at,
+               COALESCE(t.unpriced_trades, 0) > 0
           FROM routers r
           LEFT JOIN (
                 SELECT routed_via,
                        count(*)        AS routed_trades,
                        sum(usd_volume) AS routed_volume_usd,
+                       count(*) FILTER (WHERE usd_volume IS NULL) AS unpriced_trades,
                        max(ts)         AS last_routed_at
                   FROM trades
                  WHERE ts >= $1
@@ -148,7 +152,7 @@ func (s *Store) AggregatorRollup(ctx context.Context, since time.Time) ([]Aggreg
 		)
 		if err := rows.Scan(
 			&row.ContractID, &row.Name, &row.Kind, &row.ProtocolSlug, &row.AutoDiscovered,
-			&row.RoutedTrades, &vol, &lastAt,
+			&row.RoutedTrades, &vol, &lastAt, &row.VolumeLowerBound,
 		); err != nil {
 			return nil, fmt.Errorf("timescale: AggregatorRollup scan: %w", err)
 		}

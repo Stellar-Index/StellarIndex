@@ -12513,6 +12513,8 @@ export interface components {
              *     `routed_trades_24h: 0`.
              */
             routed_volume_24h_usd: string | null;
+            /** @description True when a routed trade in the window carries no trade-time `usd_volume`. It is never valued at today's price, so `routed_volume_24h_usd` is a lower bound. Absent when nothing was excluded. */
+            volume_lower_bound?: boolean;
             /**
              * Format: date-time
              * @description ts of the most recent routed trade in the window; null when none.
@@ -12895,7 +12897,7 @@ export interface components {
             trade_count_24h: number;
             /** @description Trailing-24h USD volume summed from prices_1m. Decimal string. Null when no USD-equivalent trades. */
             volume_24h_usd?: string | null;
-            /** @description Set only when the request sets `?source=`. True when `volume_24h_usd` excludes this venue's trades that carry no trade-time `usd_volume`; they are never valued at today's price, so the figure is a lower bound. Absent when nothing was excluded. */
+            /** @description True when `volume_24h_usd` excludes trades that carry no trade-time `usd_volume` (this venue's, under `?source=`); they are never valued at today's price, so the figure is a lower bound. Read per hourly bucket, so it can stay set up to an hour after the last unpriced trade left the window. Absent when nothing was excluded. */
             volume_lower_bound?: boolean;
             /** @description Most recent quote-per-base price observed for this pair within the trailing 24h: across every source, or that source's own when the request sets `?source=`. Decimal string. Null when none was observed. */
             last_price?: string | null;
@@ -20403,6 +20405,8 @@ export interface operations {
                              *     24h. Decimal string per ADR-0003.
                              */
                             volume_24h_usd?: string | null;
+                            /** @description True when any asset's trailing-24h window holds a trade with no trade-time `usd_volume`. Those trades are never valued at today's price, so `volume_24h_usd` is a lower bound. Absent when nothing was excluded. */
+                            volume_lower_bound?: boolean;
                             /** @description Distinct (base, quote) pairs with non-null volume in 24h. */
                             markets_count_24h: number;
                             /** @description Total rows in classic_assets. */

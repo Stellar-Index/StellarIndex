@@ -539,6 +539,9 @@ func TestMarketsListingGrain(t *testing.T) {
 	// ── pair C: first trade is TODAY ──────────────────────────────────
 	seedGrainTrade(t, ctx, db, 40, "sdex", today(2*time.Minute), "crypto:SOL", "fiat:USD", "1", "7", "7")
 
+	// ── pair D: one priced print and one with no trade-time usd_volume ─
+	seedGrainTrade(t, ctx, db, 50, "sdex", now.Add(-40*time.Minute), "crypto:ADA", "fiat:USD", "1", "3", "3")
+
 	// prices_1m and pools_per_source_1h are materialized whole (end_offsets 30 s and 5 min); prices_1d only to the previous
 	// UTC midnight, the state its 6h end_offset leaves it in for every pair that traded today.
 	for _, stmt := range []string{
@@ -548,6 +551,18 @@ func TestMarketsListingGrain(t *testing.T) {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			t.Fatalf("refresh cagg (%s): %v", stmt, err)
 		}
+	}
+	// Pair D's unpriced print lands after the hourly refresh, as a recent trade does in production (an hour is
+	// materialized 5-10 min after it ends): the flag has to find it in trades.
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO trades (source, ledger, tx_hash, op_index, ts, base_asset, quote_asset, base_amount, quote_amount)
+		VALUES ('sdex', 70000051, $1, 0, $2, 'crypto:ADA', 'fiat:USD', 1, 3)`,
+		fmt.Sprintf("%064x", 700_051), now.Add(-35*time.Minute),
+	); err != nil {
+		t.Fatalf("seed unpriced trade: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`); err != nil {
+		t.Fatalf("refresh prices_1m after the unpriced print: %v", err)
 	}
 	if _, err := db.ExecContext(ctx,
 		`CALL refresh_continuous_aggregate('prices_1d', NULL, $1::timestamptz)`, dayStart,
@@ -611,6 +626,22 @@ func TestMarketsListingGrain(t *testing.T) {
 		row := findGrainMarket(t, markets, "crypto:ETH", "fiat:USD")
 		if got := numeric(t, row.LastPrice); got != 20 {
 			t.Errorf("last_price = %v, want 20 (today's print; 10 is yesterday's prices_1d close)", got)
+		}
+	})
+
+	t.Run("a volume that leaves an unpriced trade out is a lower bound", func(t *testing.T) {
+		for _, order := range []timescale.MarketsOrder{timescale.MarketsOrderPair, timescale.MarketsOrderVolume24hDesc} {
+			markets, _, err := store.DistinctPairsExt(ctx, "", 500, order)
+			if err != nil {
+				t.Fatalf("DistinctPairsExt(order %v): %v", order, err)
+			}
+			floor := findGrainMarket(t, markets, "crypto:ADA", "fiat:USD")
+			if got := numeric(t, floor.Volume24hUSD); got != 3 || !floor.VolumeLowerBound {
+				t.Errorf("order %v: unpriced pair volume = %v lower_bound = %v, want 3 flagged", order, got, floor.VolumeLowerBound)
+			}
+			if exact := findGrainMarket(t, markets, "native", usdc); exact.VolumeLowerBound {
+				t.Errorf("order %v: a fully priced pair is flagged a lower bound", order)
+			}
 		}
 	})
 

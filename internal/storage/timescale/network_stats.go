@@ -29,6 +29,8 @@ type NetworkStats struct {
 	// cursor namespaces ([LiveCursorSources]). A one-shot job's shard
 	// cursor marks the end of a historical range, not the live tip.
 	LatestLedger int64
+	// VolumeLowerBound: some asset has trades in the window with no trade-time usd_volume, which Volume24hUSD leaves out.
+	VolumeLowerBound bool
 }
 
 // GetNetworkStats returns the home-page aggregate stats in one call.
@@ -43,6 +45,7 @@ func (s *Store) GetNetworkStats(ctx context.Context) (NetworkStats, error) {
 		&out.MarketsCount24h,
 		&out.AssetsIndexed,
 		&out.LatestLedger,
+		&out.VolumeLowerBound,
 	); err != nil {
 		return NetworkStats{}, fmt.Errorf("timescale: GetNetworkStats: %w", err)
 	}
@@ -72,6 +75,8 @@ func networkStatsQuery() string {
 		    (SELECT MAX(last_ledger)::bigint FROM ingestion_cursors
 		      WHERE source = ANY($1)),
 		    0
-		  )                                                    AS latest_ledger
+		  )                                                    AS latest_ledger,
+		  EXISTS (SELECT 1 FROM asset_volume_24h u
+		           WHERE u.unpriced_trades > 0)                 AS volume_lower_bound
 	`
 }
