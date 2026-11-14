@@ -4,27 +4,91 @@
 # current primary is — never overwrite a post-failover replicaof
 # directive when redis_first_run_only=true.
 
+# The package ships its own sentinel.conf, so the file existing says
+# nothing. The auth-pass line is written only by this role and Sentinel
+# keeps it across its own rewrites.
+- name: detect a sentinel.conf this role rendered
+  command: grep -q '^sentinel auth-pass {{ redis_sentinel_master_name }} ' /etc/redis/sentinel.conf
+  register: redis_sentinel_managed
+  failed_when: false
+  changed_when: false
+
 - name: detect current primary via Sentinel (skip on first run)
   command: >-
     redis-cli -h {{ ansible_host }} -p {{ redis_sentinel_port }}
-    -a "{{ redis_password }}" --no-auth-warning
     SENTINEL get-master-addr-by-name {{ redis_sentinel_master_name }}
+  environment:
+    REDISCLI_AUTH: "{{ redis_password }}"
   register: redis_sentinel_state
   failed_when: false
   changed_when: false
   no_log: true
 
+# A configured host renders only on an explicit re-bootstrap. A Sentinel
+# that is merely down is not a first run: rendering then would point the
+# real primary at the inventory primary.
+- name: decide whether this run renders redis.conf and sentinel.conf
+  set_fact:
+    redis_render_configs: "{{ (not redis_first_run_only) or redis_sentinel_managed.rc != 0 }}"
+    redis_sentinel_answered: "{{ redis_sentinel_state.rc == 0 and redis_sentinel_state.stdout_lines | length >= 1 }}"
+
+- name: ask the other Sentinels when the local one does not answer
+  shell: |
+    for h in {{ groups['redis_cluster'] | difference([inventory_hostname]) | map('extract', hostvars, 'ansible_host') | join(' ') }}; do
+      out=$(redis-cli -h "$h" -p {{ redis_sentinel_port }} SENTINEL get-master-addr-by-name {{ redis_sentinel_master_name }} 2>/dev/null | sed -n 1p) || continue
+      [ -n "$out" ] || continue
+      echo "$out"
+      exit 0
+    done
+    exit 1
+  args:
+    executable: /bin/bash
+  environment:
+    REDISCLI_AUTH: "{{ redis_password }}"
+  register: redis_sentinel_peer_state
+  failed_when: false
+  changed_when: false
+  no_log: true
+  when:
+    - redis_render_configs | bool
+    - redis_sentinel_managed.rc == 0
+    - not (redis_sentinel_answered | bool)
+
+- name: refuse to re-render a configured host when no Sentinel names the primary
+  fail:
+    msg: >-
+      {{ inventory_hostname }} already has a rendered sentinel.conf, and neither its own
+      Sentinel nor any other cluster node's answered get-master-addr-by-name. Rendering
+      from the inventory primary could demote the live primary. Start a Sentinel first.
+  when:
+    - redis_render_configs | bool
+    - redis_sentinel_managed.rc == 0
+    - not (redis_sentinel_answered | bool)
+    - redis_sentinel_peer_state.rc | default(1) != 0
+
 - name: derive effective primary host (Sentinel-aware)
   set_fact:
     redis_effective_primary_host: >-
-      {%- if redis_sentinel_state.rc == 0 and redis_sentinel_state.stdout_lines | length >= 1 -%}
+      {%- if redis_sentinel_answered | bool -%}
       {{ redis_sentinel_state.stdout_lines[0] }}
+      {%- elif redis_sentinel_peer_state.stdout | default('') | length > 0 -%}
+      {{ redis_sentinel_peer_state.stdout | trim }}
       {%- else -%}
       {{ hostvars[groups['redis_cluster']
           | map('extract', hostvars)
           | selectattr('redis_role', 'equalto', 'primary')
           | map(attribute='inventory_hostname') | first].ansible_host }}
       {%- endif -%}
+
+# redis.conf decides replica-ness by comparing this host's ansible_host with
+# the live primary, so an answer that is no inventory host (an error reply, a
+# hostname) must stop the play, not render every node as a replica.
+- name: refuse to render when the live primary is not an inventory host
+  assert:
+    that:
+      - redis_effective_primary_host in (groups['redis_cluster'] | map('extract', hostvars, 'ansible_host') | list)
+    fail_msg: "Sentinel's primary does not match any redis_cluster host's ansible_host; nothing rendered."
+  when: redis_render_configs | bool
 
 - name: render /etc/redis/redis.conf
   template:
@@ -33,7 +97,7 @@
     owner: "{{ redis_user }}"
     group: "{{ redis_group }}"
     mode: "0640"
-  when: not redis_first_run_only or redis_sentinel_state.rc != 0
+  when: redis_render_configs | bool
   notify: "redis config changed"
 
 # When redis_acl_lockdown is true, render
@@ -51,7 +115,7 @@
     mode: "0640"
   when:
     - redis_acl_lockdown | bool
-    - not redis_first_run_only or redis_sentinel_state.rc != 0
+    - redis_render_configs | bool
   notify: "redis config changed"
 
 # redis.conf is rendered on first run only (above), so a changed

@@ -3,6 +3,7 @@ package pricealerts
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"math/big"
@@ -142,7 +143,17 @@ type fakeWebhooks struct {
 	// enqErrFor fails EnqueueDelivery only for the named webhook, letting a
 	// test model one bad target among several without failing every target.
 	enqErrFor map[uuid.UUID]error
+	// enqFailOnce fails the first EnqueueDelivery for the named webhook only.
+	enqFailOnce map[uuid.UUID]error
+	// enqCommitThenFail stores the first delivery for the named webhook and still reports an error.
+	enqCommitThenFail map[uuid.UUID]error
 }
+
+// suppressedErr stands in for the store's account-inactive refusal.
+type suppressedErr struct{}
+
+func (suppressedErr) Error() string           { return "account suspended" }
+func (suppressedErr) WebhookSuppressed() bool { return true }
 
 func (s *fakeWebhooks) ListWebhooksForAccount(_ context.Context, accountID uuid.UUID) ([]platform.CustomerWebhook, error) {
 	return s.byAcct[accountID], nil
@@ -152,6 +163,25 @@ func (s *fakeWebhooks) EnqueueDelivery(_ context.Context, d platform.WebhookDeli
 	if err, ok := s.enqErrFor[d.WebhookID]; ok {
 		return err
 	}
+	s.mu.Lock()
+	if err, ok := s.enqFailOnce[d.WebhookID]; ok {
+		delete(s.enqFailOnce, d.WebhookID)
+		s.mu.Unlock()
+		return err
+	}
+	for _, have := range s.enqueued {
+		if have.ID == d.ID && d.ID != uuid.Nil {
+			s.mu.Unlock()
+			return platform.ErrDeliveryAlreadyEnqueued
+		}
+	}
+	if err, ok := s.enqCommitThenFail[d.WebhookID]; ok {
+		delete(s.enqCommitThenFail, d.WebhookID)
+		s.enqueued = append(s.enqueued, d)
+		s.mu.Unlock()
+		return err
+	}
+	s.mu.Unlock()
 	if s.enqErr != nil {
 		return s.enqErr
 	}
@@ -240,11 +270,14 @@ func TestEnqueueAll_ContinuesPastFailure(t *testing.T) {
 	}
 	w := buildWorker(&fakeAlertStore{}, hooks, fakePrices{})
 
-	enqueued, err := w.enqueueAll(context.Background(),
-		[]platform.CustomerWebhook{good1, bad, good2}, []byte(`{}`))
+	enqueued, missed, err := w.enqueueAll(context.Background(),
+		[]platform.CustomerWebhook{good1, bad, good2}, []byte(`{}`), "k")
 
 	if err == nil {
 		t.Fatal("want non-nil error for the failing webhook, got nil")
+	}
+	if len(missed) != 1 || missed[0].ID != bad.ID {
+		t.Fatalf("missed = %+v, want only the failing webhook", missed)
 	}
 	if enqueued != 2 {
 		t.Fatalf("want 2 successful deliveries enqueued despite the middle failure, got %d", enqueued)
@@ -255,6 +288,73 @@ func TestEnqueueAll_ContinuesPastFailure(t *testing.T) {
 	gotIDs := map[uuid.UUID]bool{hooks.enqueued[0].WebhookID: true, hooks.enqueued[1].WebhookID: true}
 	if !gotIDs[good1.ID] || !gotIDs[good2.ID] {
 		t.Fatalf("want deliveries for both surviving webhooks, got %+v", hooks.enqueued)
+	}
+}
+
+// crossedSetup is one armed alert that a 0.50 quote crosses, with the given webhooks subscribed.
+func crossedSetup(acct uuid.UUID, hooks ...platform.CustomerWebhook) (*fakeAlertStore, *fakeWebhooks) {
+	alert := platform.PriceAlert{
+		ID: uuid.New(), AccountID: acct, BaseAsset: "native", QuoteAsset: "fiat:USD",
+		Condition: platform.AlertAbove, Threshold: "0.40", Enabled: true,
+	}
+	return &fakeAlertStore{enabled: []platform.PriceAlert{alert}},
+		&fakeWebhooks{byAcct: map[uuid.UUID][]platform.CustomerWebhook{acct: hooks}}
+}
+
+// A webhook whose enqueue fails once still gets the crossing, and the one that succeeded is not notified twice.
+func TestSweep_MissedWebhookIsRetriedWithoutDuplicates(t *testing.T) {
+	acct := uuid.New()
+	good := priceAlertWebhook(acct, true, string(platform.WebhookEventPriceAlert))
+	flaky := priceAlertWebhook(acct, true, string(platform.WebhookEventPriceAlert))
+	store, hooks := crossedSetup(acct, good, flaky)
+	hooks.enqFailOnce = map[uuid.UUID]error{flaky.ID: context.DeadlineExceeded}
+	w := buildWorker(store, hooks, fakePrices{price: "0.50", bucket: time.Date(2026, 7, 5, 11, 59, 0, 0, time.UTC), ok: true})
+
+	if got := w.sweepOnce(context.Background()); got != "ok" {
+		t.Fatalf("sweep outcome = %q, want ok", got)
+	}
+	seen := map[uuid.UUID]int{}
+	for _, d := range hooks.enqueued {
+		seen[d.WebhookID]++
+	}
+	if seen[good.ID] != 1 || seen[flaky.ID] != 1 {
+		t.Fatalf("deliveries per webhook = %v, want one each", seen)
+	}
+}
+
+// An enqueue that committed but reported an error is retried under the same delivery id, so the webhook gets one row.
+func TestSweep_CommittedButErroredEnqueueIsNotDuplicated(t *testing.T) {
+	acct := uuid.New()
+	hook := priceAlertWebhook(acct, true, string(platform.WebhookEventPriceAlert))
+	store, hooks := crossedSetup(acct, hook)
+	hooks.enqCommitThenFail = map[uuid.UUID]error{hook.ID: context.DeadlineExceeded}
+	w := buildWorker(store, hooks, fakePrices{price: "0.50", bucket: time.Date(2026, 7, 5, 11, 59, 0, 0, time.UTC), ok: true})
+
+	if got := w.sweepOnce(context.Background()); got != "ok" {
+		t.Fatalf("sweep outcome = %q, want ok", got)
+	}
+	if len(hooks.enqueued) != 1 {
+		t.Fatalf("%d delivery rows, want 1", len(hooks.enqueued))
+	}
+	if store.rearms != 0 {
+		t.Fatalf("re-arms = %d, want 0: the crossing was delivered", store.rearms)
+	}
+}
+
+// A suspended account's refusal is not a failure: the sweep stays ok, and the alert is armed again so the crossing
+// is delivered once the account is reinstated.
+func TestSweep_SuppressedAccountIsNotAnError(t *testing.T) {
+	acct := uuid.New()
+	hook := priceAlertWebhook(acct, true, string(platform.WebhookEventPriceAlert))
+	store, hooks := crossedSetup(acct, hook)
+	hooks.enqErr = fmt.Errorf("enqueue: %w", suppressedErr{})
+	w := buildWorker(store, hooks, fakePrices{price: "0.50", bucket: time.Date(2026, 7, 5, 11, 59, 0, 0, time.UTC), ok: true})
+
+	if got := w.sweepOnce(context.Background()); got != "ok" {
+		t.Fatalf("sweep outcome = %q, want ok", got)
+	}
+	if store.rearms != 1 {
+		t.Fatalf("re-arms = %d, want 1: a withheld crossing must fire after reinstatement", store.rearms)
 	}
 }
 

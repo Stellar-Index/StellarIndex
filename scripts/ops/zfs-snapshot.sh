@@ -207,6 +207,19 @@ list_auto_snapshots() {
   done < <(list_snapshots "$1")
 }
 
+# Space-delimited snapshots this run could not destroy. A recovery clone (the runbook's Option A) or a hold makes `zfs destroy`
+# fail, and dying there would stop every dataset's snapshot for as long as the clone lives.
+BLOCKED=" "
+snapshot_pinned() {
+  local full="$1" ds snap out
+  ds="${full%%@*}"
+  snap="${full#*@}"
+  out="$(zfs list -H -r -t snapshot -o name,clones,userrefs "$ds")" || die "zfs list clones,userrefs $ds failed"
+  awk -F'\t' -v s="@$snap" '
+    substr($1, length($1) - length(s) + 1) == s && (($2 != "-" && $2 != "") || $3 + 0 > 0) { pinned = 1 }
+    END { exit !pinned }' <<<"$out"
+}
+
 # The single destroy path. Refuses anything but <managed-dataset>@auto-YYYYMMDD-HHMM;
 # the invariant lives at this choke point, not at each caller.
 destroy_auto_snapshot() {
@@ -218,6 +231,11 @@ destroy_auto_snapshot() {
   [[ "$snap" =~ $AUTO_RE ]] || die "refusing to destroy '$full': not an auto-* snapshot"
   if ! snapshot_exists "$full"; then
     log "destroy $full: already gone (no-op)"
+    return 0
+  fi
+  if snapshot_pinned "$full"; then
+    BLOCKED+="$full "
+    log "destroy $full: SKIPPED, it or a descendant's same-named snapshot has a clone or a hold ($why)"
     return 0
   fi
   zfs destroy -r "$full" || die "zfs destroy -r $full failed"
@@ -270,7 +288,8 @@ enforce_min_free() {
     # unbounded on a long-lived pool, so `| head` could EPIPE `sort` under
     # pipefail and abort the prune loop just as the pool fills: sort to
     # completion in a substitution, then slice in the shell.
-    sorted_candidates="$(printf '%s' "$candidates" | awk -F'\t' 'NF==2' | sort -t $'\t' -k2,2n)"
+    # A blocked snapshot is not a candidate, or the loop would pick the same name forever.
+    sorted_candidates="$(printf '%s' "$candidates" | awk -F'\t' -v b="$BLOCKED" 'NF==2 && !index(b, " " $1 " ")' | sort -t $'\t' -k2,2n)"
     name="${sorted_candidates%%$'\n'*}"
     name="${name%%$'\t'*}"
     if [[ -z "$name" ]]; then
@@ -349,6 +368,12 @@ write_metrics() {
     for i in "${!DATASETS[@]}"; do
       ds="${DATASETS[$i]}"
       echo "stellarindex_zfs_snapshot_guard_skipped{dataset=\"$ds\"} ${GUARD_SKIPPED[$i]}"
+    done
+    echo "# HELP stellarindex_zfs_snapshot_destroy_blocked Auto snapshots this run was due to destroy but skipped because a clone or a hold pins them."
+    echo "# TYPE stellarindex_zfs_snapshot_destroy_blocked gauge"
+    for ds in "${DATASETS[@]}"; do
+      count="$(tr ' ' '\n' <<<"$BLOCKED" | grep -c "^${ds}@" || true)"
+      echo "stellarindex_zfs_snapshot_destroy_blocked{dataset=\"$ds\"} $count"
     done
     echo "# HELP stellarindex_zfs_snapshot_last_run_unix Unix time the snapshot job last completed (any mode)."
     echo "# TYPE stellarindex_zfs_snapshot_last_run_unix gauge"

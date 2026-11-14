@@ -7,8 +7,9 @@ import (
 	"math/big"
 )
 
-// AccountObservationLookup is the storage-side primitive of [LCMReserveBalanceReader]; a missing observation maps to [ErrNoObservation] so the chained caller falls back to config.
+// AccountObservationLookup is the storage-side primitive of [LCMReserveBalanceReader].
 type AccountObservationLookup interface {
+	// A missing observation is an error that Is [ErrNoObservation]; any other error is a failed read.
 	LatestAccountObservationAtOrBefore(ctx context.Context, accountID string, asOfLedger uint32) (AccountObservationRow, error)
 
 	// MaxAccountObservationLedger reports the account OBSERVER's processed watermark at-or-before
@@ -39,12 +40,13 @@ func NewLCMReserveBalanceReader(store AccountObservationLookup) *LCMReserveBalan
 }
 
 // ReserveBalanceTotal sums the latest observed balance per account at-or-before `ledger`; any missing observation returns [ErrNoObservation] for the whole call (live and static are never mixed), and removed accounts count as zero.
+// A failed read is returned as itself: an outage must not read as "not observed yet" and select the static balances.
 func (r *LCMReserveBalanceReader) ReserveBalanceTotal(ctx context.Context, accounts []string, ledger uint32) (*big.Int, error) {
 	total := big.NewInt(0)
 	for _, acc := range accounts {
 		row, err := r.store.LatestAccountObservationAtOrBefore(ctx, acc, ledger)
 		if err != nil {
-			return nil, fmt.Errorf("%w: account %s: %w", ErrNoObservation, acc, err)
+			return nil, lookupErr(acc, err)
 		}
 		if row.IsRemoval {
 			// Removed account contributes 0; skip the Add (avoid a
@@ -68,10 +70,7 @@ func (r *LCMReserveBalanceReader) MinReserveAccountLedger(ctx context.Context, a
 	for _, acc := range accounts {
 		row, err := r.store.LatestAccountObservationAtOrBefore(ctx, acc, asOfLedger)
 		if err != nil {
-			// Treat lookup failure as "no signal" rather than
-			// surfacing — caller (XLMComputer) treats this as
-			// the gate-permissive bypass.
-			return 0, fmt.Errorf("%w: account %s: %w", ErrNoObservation, acc, err)
+			return 0, lookupErr(acc, err)
 		}
 		if row.Ledger == 0 {
 			// Sentinel "no observation found" — the gate sees
@@ -87,3 +86,10 @@ var (
 	_ ReserveBalanceReader          = (*LCMReserveBalanceReader)(nil)
 	_ ReserveBalanceFreshnessReader = (*LCMReserveBalanceReader)(nil)
 )
+
+func lookupErr(acc string, err error) error {
+	if errors.Is(err, ErrNoObservation) {
+		return fmt.Errorf("account %s: %w", acc, err)
+	}
+	return fmt.Errorf("supply: read reserve account %s: %w", acc, err)
+}

@@ -22,6 +22,11 @@
 #   directory MUST set `follow: false` (`state: absent` never follows). A
 #   templated path (`{{ item }}`) is not seen.
 #
+# Rule 4: stage-in-tmp. A task that downloads, unpacks or copies through a
+#   literal path under /tmp or /var/tmp runs as root on a name any local user
+#   can create first, so root installs what that user put there. Stage in a
+#   root-only directory. `path:` (a removal of an old leftover) is not seen.
+#
 # The rules are line-oriented (awk), deliberately conservative, and
 # self-tested by lint-ansible-tasks-test.sh. Exit code = number of findings.
 # Prints a self-accounting line so a scan of zero files cannot pass silently.
@@ -127,6 +132,11 @@ for f in "${yml_files[@]}"; do
         if (line ~ /^[ \t]*(path|dest|name):[ \t]*"?\/(var\/lib\/(stellar-core|galexie|minio|clickhouse|promtail|postgresql|stellarindex)|srv\/history-archive|tmp|var\/tmp)\/[^ \t"]/) file_path_line = NR
         if (line ~ /^[ \t]*state:[ \t]*absent[ \t]*$/) file_absent = 1
         if (line ~ /^[ \t]*follow:[ \t]*(false|no)[ \t]*$/) follow_false = 1
+      }
+      if (line ~ /^[ \t]*(src|dest|creates):[ \t]*"?\/(var\/)?tmp(\/|"|[ \t]|$)/) {
+        printf("%s:%d: stage-in-tmp: root task reads or writes a predictable path under a world-writable directory — stage in a root-only directory (task: %s)\n",
+               file, NR, task_name)
+        n++
       }
       if ((is_shell || is_cmd) && in_body \
           && line ~ /\{\{[^}]*(password|secret|_pass\b|token|api_key)[^}]*\}\}/) {

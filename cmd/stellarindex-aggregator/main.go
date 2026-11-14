@@ -280,7 +280,11 @@ func run(cfgPath string, dryRun bool) error {
 		webhookStore := postgresstore.NewWebhookStore(postgresstore.New(store.DB()))
 		fanout := customerwebhook.NewFanout(webhookStore, logger.With("component", "webhook-fanout"))
 		if fanout != nil {
-			sinkOpts = append(sinkOpts, timescale.WithFreezeHook(anomalyFreezeHook(logger, fanout, withholding)))
+			// Off the tick: one INSERT per subscriber per frozen pair would otherwise run inside the price refresh.
+			offTick := newOffTickPublisher(fanout, logger.With("component", "webhook-fanout"))
+			go offTick.run(rootCtx)
+			defer offTick.wait(offTickShutdownWait)
+			sinkOpts = append(sinkOpts, timescale.WithFreezeHook(anomalyFreezeHook(logger, offTick, withholding)))
 			logger.Info("freeze events: customer-webhook fan-out wired")
 		}
 		sink := timescale.NewFreezeEventSink(store, sinkOpts...)
@@ -1335,6 +1339,9 @@ type supplyAggregatorStoreLookup struct{ s *timescale.Store }
 
 func (a supplyAggregatorStoreLookup) LatestAccountObservationAtOrBefore(ctx context.Context, accountID string, asOfLedger uint32) (supply.AccountObservationRow, error) {
 	row, err := a.s.LatestAccountObservationAtOrBefore(ctx, accountID, asOfLedger)
+	if errors.Is(err, timescale.ErrNotFound) {
+		return supply.AccountObservationRow{}, fmt.Errorf("%w: %w", supply.ErrNoObservation, err)
+	}
 	if err != nil {
 		return supply.AccountObservationRow{}, err
 	}

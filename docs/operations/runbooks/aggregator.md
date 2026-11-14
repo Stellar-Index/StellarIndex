@@ -436,7 +436,7 @@ Pending write: fix what the upsert error names (Postgres reachability, the table
 
 P3, `for: 5m`. Expr: `sum by (event_type, reason) (increase(stellarindex_customer_webhook_fanout_failures_total[1h])) > 0`; one occurrence is worth a ticket. A subscriber got no delivery row written, so nothing retries and the event is lost to them until re-emitted. Delivery-attempt failures after a row exists are [`api.md#stellarindex_customer_webhook_delivery_failing`](api.md#stellarindex_customer_webhook_delivery_failing). Fan-out failure means no delivery row was written, so nothing retries; delivery attempts that do exist retry on a 15-attempt budget whose last retry lands ~4–8 h after the event.
 
-`reason`: `enqueue` (one subscriber's INSERT failed), `list_subscribers` (every subscriber of that event type), `invalid_payload` (producer code bug).
+`reason`: `enqueue` (one subscriber's INSERT failed), `list_subscribers` (every subscriber of that event type), `invalid_payload` (producer code bug), `queue_full` (the aggregator's off-tick fan-out queue had no room: the fan-out worker is stuck or Postgres is not answering).
 
 ### Check
 

@@ -74,6 +74,7 @@ func registerAppMetrics() {
 		SourceInsertErrorsTotal,
 		TradesZeroLegAdmittedTotal,
 		RateLimitFailOpenTotal,
+		RateLimitInProcessOverflowTotal,
 		MonthlyQuotaFailOpenTotal,
 		MonthlyQuotaFailClosedTotal,
 		AdminAuditWriteFailuresTotal,
@@ -558,6 +559,7 @@ func seedBoundedLabelSeries() {
 	} {
 		for _, reason := range []string{
 			FanoutFailureInvalidPayload, FanoutFailureListSubscribers, FanoutFailureEnqueue,
+			FanoutFailureQueueFull,
 		} {
 			CustomerWebhookFanoutFailuresTotal.WithLabelValues(eventType, reason)
 		}
@@ -1299,6 +1301,14 @@ var RateLimitFailOpenTotal = prometheus.NewCounter(
 	},
 )
 
+// RateLimitInProcessOverflowTotal counts takes an in-process limiter could not give a private counter because its key map was full.
+var RateLimitInProcessOverflowTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_ratelimit_inprocess_overflow_total",
+		Help: "Takes (one per token charged) counted against a shared region or overflow bucket because an in-process limiter's key map was full.",
+	},
+)
+
 // RateLimitFailClosedTotal counts requests rejected (503 or 429) because a Redis-backed throttle had been erroring past its dwell time.
 var RateLimitFailClosedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
@@ -1554,7 +1564,7 @@ var PriceAlertEvalTotal = prometheus.NewCounterVec(
 var PriceAlertEvaluatedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_price_alert_evaluated_total",
-		Help: "Per-alert price-alert evaluation outcomes (fired|not_crossed|already_fired|no_price|stale|cooling_down|no_subscriber|claim_lost|error|timeout).",
+		Help: "Per-alert price-alert evaluation outcomes (fired|not_crossed|already_fired|no_price|stale|cooling_down|no_subscriber|claim_lost|suppressed|error|timeout).",
 	},
 	[]string{"outcome"},
 )
@@ -2104,7 +2114,7 @@ var CustomerWebhookDeliveryAttemptsTotal = prometheus.NewCounterVec(
 )
 
 // Reason labels on [CustomerWebhookFanoutFailuresTotal]. Bounded set
-// of three — one per way a producer-side fan-out can lose a customer's
+// of four — one per way a producer-side fan-out can lose a customer's
 // event before a delivery row exists.
 const (
 	// FanoutFailureInvalidPayload — the caller handed Publish bytes
@@ -2116,6 +2126,8 @@ const (
 	// FanoutFailureEnqueue — one subscriber's EnqueueDelivery insert
 	// failed. Counted once per LOST delivery.
 	FanoutFailureEnqueue = "enqueue"
+	// FanoutFailureQueueFull — the producer's off-tick queue had no room, so the fan-out never started.
+	FanoutFailureQueueFull = "queue_full"
 )
 
 // CustomerWebhookFanoutFailuresTotal counts customer events that never became a delivery row and are permanently lost, by reason; the producer-side counterpart of [CustomerWebhookDeliveryAttemptsTotal].

@@ -29,22 +29,31 @@
       Get the SHA from the release page:
       https://github.com/grafana/loki/releases/tag/v{{ loki_version }}
 
+- name: create the root-only install scratch dir
+  # Not /tmp: any local user can pre-create a predictable name there and root would install what it holds.
+  file:
+    path: /var/cache/stellarindex-install
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
 - name: download loki tarball
   get_url:
     url: "https://github.com/grafana/loki/releases/download/v{{ loki_version }}/loki-linux-amd64.zip"
-    dest: /tmp/loki.zip
+    dest: /var/cache/stellarindex-install/loki.zip
     checksum: "sha256:{{ loki_release_sha256 }}"
     mode: "0644"
 
 - name: extract loki binary
   unarchive:
-    src: /tmp/loki.zip
-    dest: /tmp
+    src: /var/cache/stellarindex-install/loki.zip
+    dest: /var/cache/stellarindex-install
     remote_src: yes
 
 - name: install loki binary
   copy:
-    src: /tmp/loki-linux-amd64
+    src: /var/cache/stellarindex-install/loki-linux-amd64
     dest: /usr/local/bin/loki
     owner: root
     group: root

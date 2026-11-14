@@ -2,6 +2,7 @@ package main
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -90,5 +91,41 @@ func TestCitationReaders(t *testing.T) {
 	want := []string{"internal/chops/plan_test.go", "test/controlwiring/other_test.go"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("citationReaders = %v, want %v", got, want)
+	}
+}
+
+func TestWalkerReaders(t *testing.T) {
+	// One reader per spelling a test uses to reach a directory it walks.
+	hits := map[string]string{
+		`/docs"`:           "internal/ops/supply/supply_audit_args_test.go",
+		`"protocols"`:      "internal/api/v1/protocols_verification_pages_test.go",
+		`/protocols/`:      "internal/api/v1/other_test.go",
+		`"docs/`:           "internal/api/v1/adr_test.go",
+		`"new-protocol.md`: "never/asked_test.go",
+	}
+	grep := func(fixed, glob string) ([]string, error) {
+		if glob != "*_test.go" {
+			t.Errorf("grep glob = %q, want *_test.go", glob)
+		}
+		if r, ok := hits[fixed]; ok {
+			return []string{r}, nil
+		}
+		return nil, nil
+	}
+	got, err := walkerReaders("docs/protocols/new-protocol.md", grep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"internal/api/v1/adr_test.go",
+		"internal/api/v1/other_test.go",
+		"internal/api/v1/protocols_verification_pages_test.go",
+		"internal/ops/supply/supply_audit_args_test.go",
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("walkerReaders = %v, want %v", got, want)
+	}
+	if got, _ := walkerReaders("README.md", grep); len(got) != 0 {
+		t.Errorf("a root file has no ancestor directory to walk, got %v", got)
 	}
 }

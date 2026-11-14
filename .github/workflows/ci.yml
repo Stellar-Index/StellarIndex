@@ -2062,6 +2062,15 @@ jobs:
         # which runs this on every prepush.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/zfs-snapshot-coverage-test.sh
+      - name: redis-sentinel role render tests
+        # Renders the role's real templates: a re-render follows the live
+        # primary and keeps the Sentinel id, and the exporter port is open
+        # only to the scrape addresses. No hosts, no ansible run.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: |
+          ./scripts/ci/redis-sentinel-topology-test.sh
+          ./scripts/ci/redis-sentinel-acl-lockdown-test.sh
+          ./scripts/ci/redis-sentinel-firewall-ipv6-test.sh
       - name: galexie restart-wiring test (structural + local ansible run)
         # Pins that galexie-input renders restart only on EFFECTIVE change (a
         # comment-only edit must not cost a ~9-min mainnet catchup) and that the
@@ -2160,6 +2169,12 @@ jobs:
         # grep, no hosts.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/promtail-listen-address-test.sh
+      - name: loki push target test
+        # Evaluates the loki role's promtail_target_url default and the
+        # agent refusal: an agent is never pointed at an address Loki does
+        # not listen on. Jinja only, no hosts.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/loki-push-target-test.sh
       - name: haproxy http-request timeout test (SL01)
         # defaults block set connect/client/server timeouts but no
         # timeout http-request, leaving a slow-header client holding a

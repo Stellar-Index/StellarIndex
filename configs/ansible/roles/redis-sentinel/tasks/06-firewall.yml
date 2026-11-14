@@ -112,9 +112,10 @@
           tcp dport { {{ redis_port }}, {{ redis_sentinel_port }} } ip6 saddr @internal_v6 accept comment "redis-sentinel-internal-v6"
           tcp dport { {{ redis_port }}, {{ redis_sentinel_port }} } ip saddr 127.0.0.1 accept comment "redis-sentinel-loopback"
 
-          # redis_exporter scrape (Prometheus, internal-only).
-          tcp dport {{ redis_exporter_listen_port }} ip saddr @internal_v4 accept comment "redis-exporter-internal"
-          tcp dport {{ redis_exporter_listen_port }} ip6 saddr @internal_v6 accept comment "redis-exporter-internal-v6"
+          # redis_exporter scrape: the Prometheus hosts only (see redis_exporter_scrape_addrs).
+      {% for addr in redis_exporter_scrape_addrs %}
+          tcp dport {{ redis_exporter_listen_port }} {{ 'ip6' if ':' in addr else 'ip' }} saddr {{ addr }} accept comment "redis-exporter-prometheus"
+      {% endfor %}
 
           limit rate 1/second log prefix "nft-drop: " flags all
         }

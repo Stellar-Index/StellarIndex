@@ -32,22 +32,31 @@
       Get the SHA from the release page:
       https://github.com/prometheus/prometheus/releases/tag/v{{ prometheus_version }}
 
+- name: create the root-only install scratch dir
+  # Not /tmp: any local user can pre-create a predictable name there and root would install what it holds.
+  file:
+    path: /var/cache/stellarindex-install
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
 - name: download prometheus tarball
   get_url:
     url: "https://github.com/prometheus/prometheus/releases/download/v{{ prometheus_version }}/prometheus-{{ prometheus_version }}.linux-amd64.tar.gz"
-    dest: /tmp/prometheus.tar.gz
+    dest: /var/cache/stellarindex-install/prometheus.tar.gz
     mode: "0644"
     checksum: "sha256:{{ prometheus_sha256 }}"
 
 - name: extract prometheus tarball
   unarchive:
-    src: /tmp/prometheus.tar.gz
-    dest: /tmp
+    src: /var/cache/stellarindex-install/prometheus.tar.gz
+    dest: /var/cache/stellarindex-install
     remote_src: yes
 
 - name: install prometheus + promtool binaries
   copy:
-    src: "/tmp/prometheus-{{ prometheus_version }}.linux-amd64/{{ item }}"
+    src: "/var/cache/stellarindex-install/prometheus-{{ prometheus_version }}.linux-amd64/{{ item }}"
     dest: "/usr/local/bin/{{ item }}"
     owner: root
     group: root
@@ -73,19 +82,19 @@
 - name: download alertmanager tarball
   get_url:
     url: "https://github.com/prometheus/alertmanager/releases/download/v{{ alertmanager_version }}/alertmanager-{{ alertmanager_version }}.linux-amd64.tar.gz"
-    dest: /tmp/alertmanager.tar.gz
+    dest: /var/cache/stellarindex-install/alertmanager.tar.gz
     mode: "0644"
     checksum: "sha256:{{ alertmanager_sha256 }}"
 
 - name: extract alertmanager tarball
   unarchive:
-    src: /tmp/alertmanager.tar.gz
-    dest: /tmp
+    src: /var/cache/stellarindex-install/alertmanager.tar.gz
+    dest: /var/cache/stellarindex-install
     remote_src: yes
 
 - name: install alertmanager + amtool binaries
   copy:
-    src: "/tmp/alertmanager-{{ alertmanager_version }}.linux-amd64/{{ item }}"
+    src: "/var/cache/stellarindex-install/alertmanager-{{ alertmanager_version }}.linux-amd64/{{ item }}"
     dest: "/usr/local/bin/{{ item }}"
     owner: root
     group: root

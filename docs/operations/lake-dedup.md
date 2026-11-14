@@ -23,7 +23,7 @@ One table at a time, biggest reclaim first:
 
 ```sh
 DRY_RUN=1 /usr/local/bin/lake-dedup-driver transactions     # plan; touches nothing
-systemd-run --unit=lake-dedup-transactions --nice=15 /usr/local/bin/lake-dedup-driver transactions
+/usr/local/sbin/run-heavy-job.sh lake-dedup-transactions /usr/local/bin/lake-dedup-driver transactions
 tail -f /var/log/lake-dedup-transactions.log
 # repeat for: operations, operation_results, contract_events, ledgers
 ```
@@ -31,7 +31,9 @@ tail -f /var/log/lake-dedup-transactions.log
 - Stop gracefully: `touch /tmp/lake-dedup.stop` (finishes the in-flight partition); delete the file before resuming.
 - Re-running is safe: the driver skips partitions where `count() - uniqExact(<ORDER BY key>)` is 0.
 - `ledger_entry_changes` is excluded on purpose (~1.4% dup on 6.17 TiB = 6 TiB rewrite for ~90 GiB).
-- Scratch guard: aborts if free space < 3x the next partition (20-40 GB each).
+- Scratch guard: aborts if free space < 3x the next partition (20-40 GB each) or below the heavy-job pool floor (`HEAVY_MIN_DATA_KB`).
+- The wrapper holds the shared heavy-job lock and its pool watchdog. ZFS snapshots pin the rewritten parts: wait for a
+  `data/clickhouse` snapshot rotation before starting the next table.
 - Never run beside the pre-trim parity check, the completeness audit's `uniqExact` scans or the
   galexie trim (I/O contention). Order: verification, dedup, trim. A crash mid-merge leaves the old parts active.
 

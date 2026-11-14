@@ -30,6 +30,14 @@ type fakeSelfServiceKeyManager struct {
 type keyBudgetUpdateCall struct {
 	keyID     string
 	rateLimit int
+	quota     int64
+}
+
+func (f *fakeSelfServiceKeyManager) UpdateMonthlyQuota(_ context.Context, keyID string, quota int64) (auth.APIKeyRecord, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.updates = append(f.updates, keyBudgetUpdateCall{keyID: keyID, quota: quota})
+	return auth.APIKeyRecord{KeyID: keyID, MonthlyQuota: quota}, nil
 }
 
 func (f *fakeSelfServiceKeyManager) ListKeysForIdentifier(_ context.Context, identifier string) ([]auth.APIKeyRecord, error) {

@@ -91,6 +91,12 @@ type FreezeOverrideReader interface {
 	OverrideRecorded(ctx context.Context, asset, quote canonical.Asset) (bool, error)
 }
 
+// FreezeOverrideTimeReader dates the tombstone, so a key with no marker of its own can tell an override of this freeze from
+// an older one; optional like [FreezeOverrideReader].
+type FreezeOverrideTimeReader interface {
+	OverrideRecordedAt(ctx context.Context, asset, quote canonical.Asset) (time.Time, bool, error)
+}
+
 // Config controls the orchestrator's behaviour; the orchestrator itself doesn't know about TOML.
 type Config struct {
 	// Pairs is the set to pre-compute VWAP for; empty makes the orchestrator a no-op.
@@ -411,6 +417,10 @@ type Orchestrator struct {
 	// In-memory is the working copy; the first evaluation after a restart re-hydrates from the marker so a deploy doesn't restart the escalation clock. Lock-free as prevVWAPs.
 	freezeStates map[string]freeze.State
 
+	// markerUnwritten holds the keys whose last marker write failed. An absent marker is the operator override only if a
+	// marker was written, so these keys skip that reading until a write lands. Lock-free as freezeStates.
+	markerUnwritten map[string]struct{}
+
 	// bootstrapReleased is each pair's last bootstrap-cap gate state (true once its score cleared the cap), the prior state for the hysteresis band ([confidence.BootstrapReengageDensityDays]).
 	// In-memory only, so a restart falls back to the stricter upper gate; same invariant as prevVWAPs.
 	bootstrapReleased map[string]bool
@@ -419,6 +429,7 @@ type Orchestrator struct {
 	// [WindowedFreezeMarker] / [FreezeOverrideReader], else nil; resolved once in [New].
 	windowedFreeze WindowedFreezeMarker
 	overrideReader FreezeOverrideReader
+	overrideAt     FreezeOverrideTimeReader
 
 	// clock is injectable so the freeze ladder, measured in tens of minutes, is testable without
 	// sleeping. Defaults to time.Now.
@@ -473,6 +484,7 @@ func New(store Store, cache Cache, cfg Config) *Orchestrator {
 		lastWriteAt:       make(map[string]time.Time, len(cfg.Pairs)),
 		lastComposites:    make(map[string]compositeSample, len(cfg.Triangulations)*max(len(cfg.Windows), 1)),
 		freezeStates:      make(map[string]freeze.State, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
+		markerUnwritten:   make(map[string]struct{}),
 		bootstrapReleased: make(map[string]bool, len(cfg.Pairs)),
 		decidedBuckets:    make(map[string]decidedBucket, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
 		refreshOrder:      refreshOrder(cfg),
@@ -484,6 +496,9 @@ func New(store Store, cache Cache, cfg Config) *Orchestrator {
 	}
 	if reader, ok := cfg.FreezeWriter.(FreezeOverrideReader); ok {
 		o.overrideReader = reader
+	}
+	if reader, ok := cfg.FreezeWriter.(FreezeOverrideTimeReader); ok {
+		o.overrideAt = reader
 	}
 	return o
 }

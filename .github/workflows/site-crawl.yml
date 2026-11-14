@@ -138,6 +138,8 @@ jobs:
           cd scripts/ci/site-crawl-browser
           npm ci --no-audit --no-fund
           npx playwright install --with-deps chromium
+      - name: Crawler self-test
+        run: node scripts/ci/site-crawl-browser/crawl-test.cjs
       - name: Crawl the explorer in a browser
         id: crawl
         env:

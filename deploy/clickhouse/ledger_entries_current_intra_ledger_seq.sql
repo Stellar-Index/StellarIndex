@@ -115,7 +115,7 @@ FROM stellar.ledger_entry_changes;
 --        ledger_seq, close_time, entry_xdr, intra_ledger_seq)
 --   SELECT entry_type, key_xdr, account_id, asset, balance, change_type,
 --          ledger_seq, close_time, entry_xdr, intra_ledger_seq
---   FROM stellar.ledger_entry_changes
+--   FROM stellar.ledger_entry_changes FINAL
 --   WHERE ledger_seq >= {window_start} AND ledger_seq < {window_end};
 --
 -- ── Step 3: verify v2 against v1 (spot-check a handful of hot keys — v2 must

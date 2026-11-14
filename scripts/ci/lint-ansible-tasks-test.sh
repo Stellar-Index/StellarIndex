@@ -153,6 +153,30 @@ cat > "$F/follow.yml" <<'YML'
     state: directory
 YML
 
+cat > "$T/stage.yml" <<'YML'
+---
+- name: bad — download into /tmp
+  get_url:
+    url: https://example.invalid/x.tar.gz
+    dest: /tmp/x.tar.gz
+
+- name: bad — unpack from /tmp
+  unarchive:
+    src: "/tmp/x.tar.gz"
+    dest: /opt/x
+    remote_src: true
+
+- name: good — root-only scratch dir
+  get_url:
+    url: https://example.invalid/x.tar.gz
+    dest: /var/cache/stellarindex-install/x.tar.gz
+
+- name: good — removing an old leftover
+  file:
+    path: /tmp/x.tar.gz
+    state: absent
+YML
+
 cat > "$F/bad.sh" <<'SH'
 #!/bin/bash
 # mc alias set live "$URL" "$KEY" "$AWS_SECRET_ACCESS_KEY"   <- comment, ignored
@@ -173,7 +197,11 @@ run() { (cd "$ROOT" && BASELINE="${1:-/nonexistent}" bash scripts/ci/lint-ansibl
 
 echo "case: no baseline"
 out="$(run)"; rc=$?
-expect_rc 5 "exit code = 5 findings"
+expect_rc 7 "exit code = 7 findings"
+expect_hit 'stage.yml:5: stage-in-tmp' "download into /tmp flagged"
+expect_hit 'stage.yml:9: stage-in-tmp' "quoted src under /tmp flagged"
+expect_miss 'stage.yml:1[0-9]:' "root-only scratch dir not flagged"
+expect_miss 'stage.yml:2[0-9]:' "removal of a /tmp leftover not flagged"
 expect_hit 'follow.yml:4: follow-in-service-dir' "file task inside a service dir without follow: false flagged"
 expect_miss 'follow.yml:1[0-9]:' "follow: false and state: absent not flagged"
 expect_miss 'follow.yml:2[0-9]:' "service dir itself and root-owned tree not flagged"
@@ -188,13 +216,13 @@ expect_hit 'secrets.yml:37: secret-on-argv' "folded command body secret flagged"
 expect_hit 'bad.sh:3: secret-on-argv' "mc positional secret (continuation) flagged"
 expect_miss 'bad.sh:2:' "commented mc line not flagged"
 expect_miss 'good.sh' "stdin-piped mc not flagged"
-expect_hit 'scanned 3 task files + 2 shell scripts' "self-accounting line"
+expect_hit 'scanned 4 task files + 2 shell scripts' "self-accounting line"
 
 echo "case: baseline suppresses + stale entry fails"
 printf 'secret-on-argv\tconfigs/ansible/roles/fx/tasks/secrets.yml\npipefail-needs-bash\tconfigs/ansible/roles/fx/tasks/nolonger.yml\n' > "$TMP/baseline"
 out="$(run "$TMP/baseline")"; rc=$?
-# 5 live findings − 2 baselined (both secrets.yml) + 1 stale = 4
-expect_rc 4 "exit code = 4"
+# 7 live findings − 2 baselined (both secrets.yml) + 1 stale = 6
+expect_rc 6 "exit code = 6"
 expect_hit 'baselined (shrink-only' "baselined finding reported"
 expect_hit 'STALE baseline entry.*nolonger.yml' "stale entry flagged"
 

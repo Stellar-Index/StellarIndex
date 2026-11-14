@@ -136,3 +136,75 @@ func TestSlash48Key(t *testing.T) {
 		}
 	}
 }
+
+// A flood from many /48s can fill the map. A new client from elsewhere must then keep a full budget of its own region,
+// and the flood's own regions share one each; with no room for another region the single overflow bucket still closes.
+func TestLocalStore_FullMapThrottlesTheFloodingRegionOnly(t *testing.T) {
+	const windowDur = time.Minute
+	now := time.Unix(1_700_000_000, 0)
+	window := now.Unix() / int64(windowDur.Seconds())
+
+	s := newLocalStore()
+	s.maxKeys = 6
+	s.maxPer48 = 2
+	s.maxRegions = 3
+	for i := 0; i < 3; i++ { // three /48s of one /32 fill the map
+		for j := 0; j < 2; j++ {
+			s.take("anon:2001:db8:"+strconv.Itoa(i)+":"+strconv.Itoa(j)+"::", window, 1, now, windowDur)
+		}
+	}
+	if len(s.entries) != 6 {
+		t.Fatalf("precondition: entries = %d, want the map full at 6", len(s.entries))
+	}
+
+	take := func(key string) bool {
+		_, allowed := s.take(key, window, 2, now, windowDur)
+		return allowed
+	}
+	for _, k := range []string{"anon:198.51.100.7", "anon:2a00:1450:4001:1::"} {
+		if !take(k) || !take(k) {
+			t.Errorf("new client %q denied inside its own budget: the flood must not spend it", k)
+		}
+	}
+	if take("anon:198.51.7.7") {
+		t.Error("a second client of an exhausted region must share that region's budget")
+	}
+	take("anon:2001:db8:9:1::")
+	take("anon:2001:db8:a:1::")
+	if take("anon:2001:db8:b:1::") {
+		t.Error("the flooding /32 must share one budget across its /48s once the map is full")
+	}
+	if take("anon:2001:db8:0:5::") {
+		t.Error("a /48 that is out of allowance must land in its /32's one bucket, not a second one")
+	}
+	if got := len(s.entries); got != 9 { // 6 tracked + 3 region buckets
+		t.Errorf("entries = %d, want 9", got)
+	}
+	// No room for a fourth region: the shared overflow bucket takes it, and still closes.
+	if !take("anon:203.0.113.1") || !take("anon:192.0.2.1") {
+		t.Error("the overflow bucket should allow up to the limit")
+	}
+	if take("anon:100.64.0.1") {
+		t.Error("past maxRegions the single overflow bucket must fail closed")
+	}
+	if got := len(s.entries); got != 10 {
+		t.Errorf("entries = %d, want 10 (bounded at maxKeys + maxRegions + overflow)", got)
+	}
+}
+
+func TestRegionKey(t *testing.T) {
+	for _, tc := range []struct {
+		key, want string
+		ok        bool
+	}{
+		{"anon:198.51.100.7", "anon:198.51.0.0/16", true},
+		{"anon:::ffff:198.51.100.7", "anon:198.51.0.0/16", true},
+		{"rl:ip:2001:db8:abcd:ef01::", "rl:ip:2001:db8::/32", true},
+		{"flood-1", "", false},
+	} {
+		got, ok := regionKey(tc.key)
+		if got != tc.want || ok != tc.ok {
+			t.Errorf("regionKey(%q) = %q, %v; want %q, %v", tc.key, got, ok, tc.want, tc.ok)
+		}
+	}
+}

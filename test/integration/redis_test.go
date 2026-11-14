@@ -25,6 +25,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
+	"github.com/Stellar-Index/StellarIndex/internal/api/streaming/redispub"
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
@@ -431,6 +432,30 @@ func TestRedisACLTemplate_LoadsIntoRedisServer(t *testing.T) {
 	if err := app.Publish(ctx, "stream-acl-load", "x").Err(); err != nil {
 		t.Fatalf("stellarindex PUBLISH stream-*: %v", err)
 	}
+	// What the running binaries do under lockdown: every key family with a producer, the SSE feed, and a transaction.
+	for _, k := range []string{
+		"login-throttle:mail:acl-load", cachekeys.MEVHeartbeat().String(), "assets:listing-snapshot:acl-load",
+		"usage:acl-load", "apikey-index:v1", "passkey:ceremony:acl-load", "sep10:seen:live:acl-load", "oracle:latest:acl-load",
+	} {
+		if err := app.Set(ctx, k, "1", time.Minute).Err(); err != nil {
+			t.Errorf("stellarindex SET %s: %v", k, err)
+		}
+	}
+	sub := app.Subscribe(ctx, redispub.DefaultChannel)
+	t.Cleanup(func() { _ = sub.Close() })
+	if _, err := sub.Receive(ctx); err != nil {
+		t.Errorf("stellarindex SUBSCRIBE %s: %v", redispub.DefaultChannel, err)
+	}
+	if err := app.Publish(ctx, redispub.DefaultChannel, "x").Err(); err != nil {
+		t.Errorf("stellarindex PUBLISH %s: %v", redispub.DefaultChannel, err)
+	}
+	if _, err := app.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		p.Set(ctx, "vwap:acl-load-tx", "1", time.Minute)
+		p.Incr(ctx, "usage:acl-load-tx")
+		return nil
+	}); err != nil {
+		t.Errorf("stellarindex MULTI/EXEC: %v", err)
+	}
 	if err := app.FlushAll(ctx).Err(); err == nil || !strings.Contains(err.Error(), "NOPERM") {
 		t.Fatalf("stellarindex FLUSHALL = %v, want NOPERM", err)
 	}
@@ -438,8 +463,19 @@ func TestRedisACLTemplate_LoadsIntoRedisServer(t *testing.T) {
 	if err := client("redis_exporter", aclLoadFixturePwd).Info(ctx).Err(); err != nil {
 		t.Fatalf("redis_exporter INFO: %v", err)
 	}
-	if err := client("sentinel", aclLoadFixturePwd).Do(ctx, "ROLE").Err(); err != nil {
+	sentinel := client("sentinel", aclLoadFixturePwd)
+	if err := sentinel.Do(ctx, "ROLE").Err(); err != nil {
 		t.Fatalf("sentinel ROLE: %v", err)
+	}
+	// The failover's demotion step: MULTI, CLIENT KILL, EXEC. SCRIPT KILL answers NOTBUSY when permitted.
+	if _, err := sentinel.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		p.Do(ctx, "CLIENT", "KILL", "TYPE", "pubsub")
+		return nil
+	}); err != nil {
+		t.Errorf("sentinel MULTI / CLIENT KILL / EXEC: %v", err)
+	}
+	if err := sentinel.Do(ctx, "SCRIPT", "KILL").Err(); err != nil && strings.Contains(err.Error(), "NOPERM") {
+		t.Errorf("sentinel SCRIPT KILL: %v", err)
 	}
 	if err := client("replication", aclLoadFixturePwd).Ping(ctx).Err(); err != nil {
 		t.Fatalf("replication PING: %v", err)

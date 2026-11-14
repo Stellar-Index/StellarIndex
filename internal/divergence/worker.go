@@ -71,6 +71,11 @@ type CachedResult struct {
 	ComputedAt time.Time `json:"computed_at"`
 }
 
+// Evaluated reports whether the entry is a verdict on a live price: a reference quorum answered and OurPrice was not a pinned last-known-good.
+func (c CachedResult) Evaluated(minSources int) bool {
+	return c.SuccessCount >= minSources && !c.Pinned
+}
+
 // ObservationSink is the optional durable mirror of per-(pair, reference) observations; implementations must not block the hot path on network failures.
 type ObservationSink interface {
 	// RecordObservation persists one (pair, reference) comparison; firing is true when
@@ -301,7 +306,7 @@ func (s *Service) refresh(ctx context.Context, pair canonical.Pair, ourPrice flo
 	// Use AgreementCount==0, not "any reference disagrees" (one flaky reference would pin the warning on). Both legs need SuccessCount >= minSources:
 	// with no responses, 0 means unchecked.
 	checked := res.SuccessCount >= s.minSources
-	evaluated := checked && !pinned
+	evaluated := CachedResult{SuccessCount: res.SuccessCount, Pinned: pinned}.Evaluated(s.minSources)
 	recordReferenceHealth(pair, res, checked)
 	s.gaps.observe(pair.String(), ourPrice, res.Sources, pinned, time.Now())
 
@@ -593,7 +598,7 @@ func (s *Service) LookupCached(ctx context.Context, asset canonical.Asset) (Asse
 			warning = true
 		}
 		// The same quorum RefreshPair gates WarningFired on.
-		if cached.SuccessCount >= s.minSources {
+		if cached.Evaluated(s.minSources) {
 			checked = true
 		}
 
@@ -665,6 +670,6 @@ func (s *Service) LookupCachedPairVerdict(ctx context.Context, pair canonical.Pa
 	if err != nil || !found {
 		return false, false, 0, err
 	}
-	return cached.WarningFired, cached.SuccessCount >= s.minSources,
+	return cached.WarningFired, cached.Evaluated(s.minSources),
 		time.Duration(cached.WindowSeconds) * time.Second, nil
 }

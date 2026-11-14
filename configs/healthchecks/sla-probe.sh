@@ -74,10 +74,15 @@ OUT="$(
 )"
 RC=$?
 
-# An unauthenticated probe measures our rate limiter, not our SLA. Say so loudly
-# rather than pinging /fail and sending an operator after a phantom outage.
+# An unauthenticated probe measures our rate limiter, not our SLA, so it has no
+# verdict to report. /log records the run without moving the check's state:
+# no phantom outage, and no success either, so the check goes late and the
+# missing key is seen.
 if [ -z "${STELLARINDEX_PROBE_API_KEY:-}" ]; then
-  echo "sla-probe: WARNING no STELLARINDEX_PROBE_API_KEY — this run measured the anonymous rate limit, not the SLA" >&2
+  MSG="sla-probe: WARNING no STELLARINDEX_PROBE_API_KEY — this run measured the anonymous rate limit, not the SLA; no verdict reported"
+  echo "$MSG" >&2
+  hc_ping sla-probe "${URL:+${URL}/log}" --data-binary "$MSG"
+  exit 0
 fi
 
 # A failing run pings /fail only after HC_FAIL_AFTER (default 2) consecutive

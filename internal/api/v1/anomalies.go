@@ -251,7 +251,7 @@ func (s *Server) handleDivergence(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	firingOnly := r.URL.Query().Get("firing") == "true"
-	windowDays, ok := parseWindowDays(w, r, 7)
+	windowDays, ok := parseWindowDaysMax(w, r, 7, divergenceMaxWindowDays)
 	if !ok {
 		return
 	}
@@ -499,15 +499,22 @@ func (s *Server) divergenceSeriesWithheld(w http.ResponseWriter, r *http.Request
 // parseWindowDays reads an optional ?window_days= in [1, 365], def when absent; an invalid value writes a 400 rather than being
 // silently ignored.
 func parseWindowDays(w http.ResponseWriter, r *http.Request, def int) (int, bool) {
+	return parseWindowDaysMax(w, r, def, 365)
+}
+
+// divergenceMaxWindowDays bounds /v1/divergence: the read is uncached and its cost grows with the window.
+const divergenceMaxWindowDays = 30
+
+func parseWindowDaysMax(w http.ResponseWriter, r *http.Request, def, maxDays int) (int, bool) {
 	raw := r.URL.Query().Get("window_days")
 	if raw == "" {
 		return def, true
 	}
 	n, err := strconv.Atoi(raw)
-	if err != nil || n < 1 || n > 365 {
+	if err != nil || n < 1 || n > maxDays {
 		writeProblem(w, r, "https://api.stellarindex.io/errors/invalid-parameter",
 			"Invalid window_days", http.StatusBadRequest,
-			"window_days must be an integer in [1, 365]")
+			"window_days must be an integer in [1, "+strconv.Itoa(maxDays)+"]")
 		return 0, false
 	}
 	return n, true

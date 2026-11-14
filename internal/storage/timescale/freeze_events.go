@@ -517,6 +517,8 @@ func (s *FreezeEventSink) MarkRecovered(ctx context.Context, asset, quote canoni
 			asset.String(), quote.String(), releasedBy)
 	}
 	now := s.clock().UTC()
+	// 0 is "ledger unknown" (no provider, or its cursor read failed) and is stored as NULL: a literal 0 breaks the
+	// recovered_at_ledger >= frozen_at_ledger CHECK and the release would never land.
 	var ledger uint32
 	if s.getLedger != nil {
 		ledger = s.getLedger.LatestLedger()
@@ -525,7 +527,7 @@ func (s *FreezeEventSink) MarkRecovered(ctx context.Context, asset, quote canoni
 	const q = `
 		UPDATE freeze_events
 		   SET recovered_at        = $3,
-		       recovered_at_ledger = $4,
+		       recovered_at_ledger = NULLIF($4::bigint, 0),
 		       released_by         = $5
 		 WHERE asset_id = $1 AND quote_id = $2 AND recovered_at IS NULL
 	`

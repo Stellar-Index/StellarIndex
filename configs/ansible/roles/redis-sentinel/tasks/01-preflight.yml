@@ -1,13 +1,14 @@
 ---
 # Sanity-check the host before any install. Cheap, fail-fast.
 
-- name: assert OS is Ubuntu 22.04 or 24.04
+- name: assert OS is Ubuntu 24.04
   assert:
     that:
       - ansible_distribution == "Ubuntu"
-      - ansible_distribution_version in ["22.04", "24.04"]
+      - ansible_distribution_version == "24.04"
     fail_msg: >-
-      redis-sentinel role supports Ubuntu 22.04 / 24.04 only;
+      redis-sentinel role supports Ubuntu 24.04 only (22.04 ships Redis
+      6.0, which cannot load the rendered ACL and Sentinel config);
       detected {{ ansible_distribution }} {{ ansible_distribution_version }}
 
 - name: assert host is in the redis_cluster inventory group

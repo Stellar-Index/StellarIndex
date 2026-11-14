@@ -53,7 +53,7 @@ journalctl -u patroni-textfile-scraper.service -n 50
 
 Likely causes:
 
-- `curl` to `127.0.0.1:8008/cluster` fails (patroni REST API down).
+- `curl` to `<patroni_rest_connect_address>/cluster` fails (patroni REST API down; it binds the host address, not loopback).
 - `jq` missing.
 - The timer was disabled by an ansible re-apply that did not restart it.
 

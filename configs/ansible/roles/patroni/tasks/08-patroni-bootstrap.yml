@@ -97,7 +97,7 @@
 
 - name: wait for Patroni REST API
   uri:
-    url: "http://127.0.0.1:8008/cluster"
+    url: "http://{{ patroni_rest_connect_address }}/cluster"
     status_code: 200
   register: _bootstrap_state
   retries: 30

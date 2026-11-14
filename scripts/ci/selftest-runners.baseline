@@ -45,8 +45,6 @@ node-healthcheck-header-test.sh
 prometheus-basic-auth-wiring-test.sh
 prometheus-firewall-ipv6-test.sh
 redis-oom-reject-alert-test.sh
-redis-sentinel-acl-lockdown-test.sh
-redis-sentinel-firewall-ipv6-test.sh
 release-tag-validation-test.sh
 sep41-mint-recovery-runbook-test.sh
 site-crawl-check-test.sh

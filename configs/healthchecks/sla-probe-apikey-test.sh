@@ -28,9 +28,17 @@ cat > "$STUB" <<'EOF'
 printf '%s\n' "$@" > "$STUB_ARGV_LOG"
 printf '%s' "${STELLARINDEX_PROBE_API_KEY:-}" > "$STUB_ENV_LOG"
 echo '{"pass":true}'
-exit 0
+exit "${STUB_RC:-0}"
 EOF
 chmod +x "$STUB"
+
+# --- stub curl: records the URL each ping went to ---
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/curl" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "${@: -1}" >> "$STUB_CURL_LOG"
+EOF
+chmod +x "$TMP/bin/curl"
 
 run_probe() {  # run_probe <api-key-or-empty>
   local key="$1"
@@ -38,7 +46,9 @@ run_probe() {  # run_probe <api-key-or-empty>
   : > "$TMP/env.log"
   STUB_ARGV_LOG="$TMP/argv.log" STUB_ENV_LOG="$TMP/env.log" \
     PROBE_BIN="$STUB" \
-    HEALTHCHECKS_URL_SLA_PROBE="" \
+    HEALTHCHECKS_URL_SLA_PROBE="${HC_URL:-}" \
+    STUB_CURL_LOG="$TMP/curl.log" PATH="$TMP/bin:$PATH" \
+    HC_PING_TEXTFILE_DIR="$TMP" HC_FAIL_AFTER=1 \
     TEXTFILE_DIR="/dev/null" \
     SLA_PROBE_TEXTFILE_OUTPUT="" \
     STELLARINDEX_PROBE_API_KEY="$key" \
@@ -74,6 +84,25 @@ if grep -q 'WARNING no STELLARINDEX_PROBE_API_KEY' "$TMP/stderr.log"; then
   ok "RLT-335: unauthenticated-probe warning still fires when no key is configured"
 else
   bad "RLT-335: missing unauthenticated-probe warning when no key is configured"
+fi
+
+# A keyless run that fails must not report an SLA outage.
+: > "$TMP/curl.log"
+HC_URL="https://hc.invalid/ping/x" STUB_RC=1 run_probe ""
+if grep -q '/fail$' "$TMP/curl.log"; then
+  bad "keyless failing run pinged /fail: $(cat "$TMP/curl.log")"
+elif grep -qx 'https://hc.invalid/ping/x/log' "$TMP/curl.log"; then
+  ok "keyless failing run pings /log, never /fail"
+else
+  bad "keyless run sent no /log ping: $(cat "$TMP/curl.log")"
+fi
+
+: > "$TMP/curl.log"
+HC_URL="https://hc.invalid/ping/x" STUB_RC=1 run_probe "$FIXTURE_KEY"
+if grep -qx 'https://hc.invalid/ping/x/fail' "$TMP/curl.log"; then
+  ok "keyed failing run still pings /fail"
+else
+  bad "keyed failing run did not ping /fail: $(cat "$TMP/curl.log")"
 fi
 
 echo

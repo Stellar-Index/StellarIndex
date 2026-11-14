@@ -270,9 +270,11 @@ func (s *RedisAPIKeyStore) buildKeyIndexLocked(ctx context.Context, gen string) 
 	return indexed, nil
 }
 
-// InvalidateKeyIndex drops `ready` and any in-flight build's generation so the next lookup rebuilds from the records; NOPERM is not an error.
+// InvalidateKeyIndex deletes the whole index so the next lookup rebuilds it from the live records; NOPERM is not an error.
+// Deleting, not just clearing `ready`, is what reclaims the pointers of records that aged out: the hash has no TTL, so
+// nothing else ever frees them.
 func (s *RedisAPIKeyStore) InvalidateKeyIndex(ctx context.Context) error {
-	err := s.rdb.HDel(ctx, cachekeys.APIKeyIndex().String(), keyIndexReadyField, keyIndexGenField).Err()
+	err := s.rdb.Unlink(ctx, cachekeys.APIKeyIndex().String()).Err()
 	if err != nil && !isRedisNoPerm(err) {
 		return fmt.Errorf("auth: InvalidateKeyIndex: %w", err)
 	}

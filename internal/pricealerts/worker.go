@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/customerwebhook"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
@@ -37,6 +38,7 @@ const (
 	outcomeCoolingDown  = "cooling_down"
 	outcomeNoSubscriber = "no_subscriber"
 	outcomeClaimLost    = "claim_lost"
+	outcomeSuppressed   = "suppressed"
 	outcomeError        = "error"
 	outcomeTimeout      = "timeout"
 )
@@ -44,7 +46,7 @@ const (
 // AlertOutcomes is the complete per-alert outcome vocabulary.
 var AlertOutcomes = []string{
 	outcomeFired, outcomeNotCrossed, outcomeAlreadyFired, outcomeNoPrice, outcomeStale,
-	outcomeCoolingDown, outcomeNoSubscriber, outcomeClaimLost, outcomeError, outcomeTimeout,
+	outcomeCoolingDown, outcomeNoSubscriber, outcomeClaimLost, outcomeSuppressed, outcomeError, outcomeTimeout,
 }
 
 // AlertStore is the read/mark seam the evaluator needs from the platform price-alert store (postgresstore.PriceAlertStore).
@@ -317,14 +319,33 @@ func (w *Worker) fire(ctx context.Context, a platform.PriceAlert, now time.Time,
 			"alert_id", a.ID, "account_id", a.AccountID)
 		return outcomeClaimLost, nil
 	}
-	enqueued, err := w.enqueueAll(ctx, c.hooks, payload)
-	if enqueued == 0 && err != nil {
+	// The delivery id is a function of (alert, claim stamp, webhook), so a second attempt cannot notify a webhook twice.
+	eventKey := a.ID.String() + "@" + now.UTC().Format(time.RFC3339Nano)
+	enqueued, missed, err := w.enqueueAll(ctx, c.hooks, payload, eventKey)
+	if len(missed) > 0 {
+		// One more pass for the webhooks that were missed, on a fresh budget: the alert is disarmed now, so a
+		// webhook missed here never hears of this crossing.
+		retryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), w.alertTimeout)
+		var again int
+		again, _, err = w.enqueueAll(retryCtx, missed, payload, eventKey)
+		cancel()
+		enqueued += again
+	}
+	if enqueued == 0 {
 		// CAS on the stamp the claim just wrote, on a fresh budget: the usual
 		// cause is the fan-out exhausting ctx, which would sink the re-arm too.
 		rearmCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), w.alertTimeout)
 		defer cancel()
-		if _, rerr := w.alerts.RearmPriceAlert(rearmCtx, a.ID, now); rerr != nil {
+		_, rerr := w.alerts.RearmPriceAlert(rearmCtx, a.ID, now)
+		if rerr != nil {
 			err = errors.Join(err, fmt.Errorf("re-arm after failed fan-out: %w", rerr))
+		}
+		if err == nil {
+			// Every target belongs to a suspended or closed account. Not a failure, and the alert is armed again:
+			// a suspension is reversible, and a reinstated customer is owed a crossing that still holds.
+			w.logger.Info("price alert crossed but every delivery is withheld by account status",
+				"alert_id", a.ID, "account_id", a.AccountID, "targets", len(c.hooks))
+			return outcomeSuppressed, nil
 		}
 	}
 	w.logger.Info("price alert fired",
@@ -380,24 +401,33 @@ func (w *Worker) subscribedHooks(ctx context.Context, accountID uuid.UUID) ([]pl
 	return targets, nil
 }
 
-// enqueueAll enqueues one price.alert delivery per target webhook and returns the count. It attempts every webhook even after a
-// failure (the alert is already marked fired); per-webhook errors are joined so the caller can log which targets were missed.
-func (w *Worker) enqueueAll(ctx context.Context, hooks []platform.CustomerWebhook, payload []byte) (int, error) {
+// enqueueAll enqueues one price.alert delivery per target webhook and returns the count plus the webhooks it missed. It attempts
+// every webhook even after a failure (the alert is already marked fired); per-webhook errors are joined so the caller can log
+// which targets were missed. A delivery the account kill switch withheld is neither enqueued, missed nor an error.
+func (w *Worker) enqueueAll(
+	ctx context.Context, hooks []platform.CustomerWebhook, payload []byte, eventKey string,
+) (int, []platform.CustomerWebhook, error) {
 	enqueued := 0
+	var missed []platform.CustomerWebhook
 	var errs []error
 	for _, h := range hooks {
 		d := platform.WebhookDelivery{
+			ID:        customerwebhook.EventDeliveryID(platform.WebhookEventPriceAlert, eventKey, h.ID),
 			WebhookID: h.ID,
 			EventType: string(platform.WebhookEventPriceAlert),
 			Payload:   payload,
 		}
-		if err := w.webhooks.EnqueueDelivery(ctx, d); err != nil {
+		err := w.webhooks.EnqueueDelivery(ctx, d)
+		switch {
+		case err == nil, errors.Is(err, platform.ErrDeliveryAlreadyEnqueued):
+			enqueued++
+		case customerwebhook.Suppressed(err):
+		default:
+			missed = append(missed, h)
 			errs = append(errs, fmt.Errorf("enqueue delivery for webhook %s: %w", h.ID, err))
-			continue
 		}
-		enqueued++
 	}
-	return enqueued, errors.Join(errs...)
+	return enqueued, missed, errors.Join(errs...)
 }
 
 // observe records the paired counter + histogram for one sweep.

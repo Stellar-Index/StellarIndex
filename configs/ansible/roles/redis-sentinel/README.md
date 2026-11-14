@@ -40,11 +40,12 @@ SEV-1 time. ADR-0024 captures the full reasoning.
 
 - Three hosts named per inventory (`cache-01` / `02` / `03` by
   default). Each needs:
-  - Ubuntu 24.04 LTS (or 22.04).
+  - Ubuntu 24.04 LTS. 22.04 ships Redis 6.0, which cannot load the
+    rendered ACL (`&` channel patterns, `|` subcommands) or Sentinel config.
   - Network reachability between them on TCP `6379` (data) and
     `26379` (Sentinel).
   - `redis-server` and `redis-sentinel` available via apt (default
-    on Ubuntu 22.04+).
+    on Ubuntu 24.04).
 
 - Vault contents:
   - `redis_password` — used as both `requirepass` (clients
@@ -115,9 +116,25 @@ primary Sentinel currently believes is correct — even if that
 differs from `redis_role: primary` in inventory (because
 Sentinel failed over since the last deploy).
 
+A host that already has a rendered `sentinel.conf` is never
+re-rendered on a normal run, whether or not its Sentinel answers: a
+Sentinel that is down is not a first run.
+
 To force a config re-render against a live cluster (e.g. tuning
 `maxmemory`), set `redis_first_run_only: false` in inventory for
-that run. Don't ship that as a default — it's a foot-gun.
+that run. Don't ship that as a default — it's a foot-gun. A forced
+render takes the primary from the local Sentinel, or from another
+node's when the local one is down, and stops if none answers or the
+answer is not an inventory host. `replicaof` follows that answer, not
+`redis_role`, and the host keeps its `sentinel myid`.
+
+A replaced host (same inventory name, empty disk) gets a new Sentinel
+id. Run `SENTINEL RESET <master>` on each surviving Sentinel, one at a
+time, afterwards; the role does not do it.
+
+`redis_exporter` listens on `ansible_host` and port 9121 is open only
+to `redis_exporter_scrape_addrs` (default: the `prometheus_pair`
+hosts).
 
 ## How API + aggregator clients connect
 

@@ -64,6 +64,7 @@ rendered = jinja2.Template(nft_src).render(
     redis_port=6379,
     redis_sentinel_port=26379,
     redis_exporter_listen_port=9121,
+    redis_exporter_scrape_addrs=["10.0.9.1", "2001:db8:9::1"],
 )
 
 failed = False
@@ -90,6 +91,12 @@ check(
 )
 check("ip6 saddr @internal_v6" in rendered, "an accept rule matches on @internal_v6")
 check("ip6 saddr @ssh_allowed_v6" in rendered, "an accept rule matches on @ssh_allowed_v6")
+
+# The exporter hands the Redis password to any target a caller names, so 9121 is the Prometheus hosts only.
+exporter = [l for l in rendered.splitlines() if "dport 9121" in l]
+check(len(exporter) == 2 and "ip saddr 10.0.9.1 accept" in exporter[0] and "ip6 saddr 2001:db8:9::1 accept" in exporter[1],
+      "9121 is opened to each scrape address and nothing else")
+check(not any("@internal" in l for l in exporter), "9121 is not opened to the internal CIDR sets")
 
 if failed:
     sys.exit(1)

@@ -89,7 +89,14 @@ func TestCheckExprWaiversAreTested(t *testing.T) {
 	}
 
 	failures = nil
-	tested := map[string]bool{"stellarindex_alertmanager_down": true}
+	tested := map[string]bool{"multi/meta.yml:stellarindex_alertmanager_down": true}
+	checkExprWaiversAreTested(baseline, tested, "deploy/monitoring/rule-tests", fail)
+	if len(failures) != 1 {
+		t.Fatalf("a waiver whose only test loads the multi-host file: got %d failures, want 1 naming the r1 copy", len(failures))
+	}
+
+	failures = nil
+	tested["r1/meta.yml:stellarindex_alertmanager_down"] = true
 	checkExprWaiversAreTested(baseline, tested, "deploy/monitoring/rule-tests", fail)
 	if len(failures) != 0 {
 		t.Fatalf("checkExprWaiversAreTested flagged a waived rule that IS covered by a promtool test: %v", failures)
@@ -114,8 +121,25 @@ tests:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !tested["stellarindex_alertmanager_down"] {
-		t.Fatalf("ruleTestedAlerts(%q) = %v, want stellarindex_alertmanager_down present", dir, tested)
+	if !tested["multi/meta.yml:stellarindex_alertmanager_down"] || len(tested) != 1 {
+		t.Fatalf("ruleTestedAlerts(%q) = %v, want only the multi-host meta.yml copy", dir, tested)
+	}
+
+	const r1 = `rule_files:
+  - ../../../configs/prometheus/rules.r1/meta.yml
+tests:
+  - alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_alertmanager_down
+`
+	if err := os.WriteFile(filepath.Join(dir, "meta-r1_test.yml"), []byte(r1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if tested, err = ruleTestedAlerts(dir); err != nil {
+		t.Fatal(err)
+	}
+	if !tested["r1/meta.yml:stellarindex_alertmanager_down"] {
+		t.Fatalf("ruleTestedAlerts(%q) = %v, want the r1 meta.yml copy", dir, tested)
 	}
 }
 

@@ -45,7 +45,9 @@ func remoteIPFor(r *http.Request) string {
 	if !requestCameViaTrustedProxy(peer) {
 		return peer
 	}
-	if client := rightmostUntrustedForwardedFor(r.Header.Get("X-Forwarded-For")); client != "" {
+	// Every header line, in order: a proxy that adds its own line (HAProxy `option forwardfor`) puts the real peer in the LAST one, and
+	// Get would return the first, which the client wrote.
+	if client := rightmostUntrustedForwardedFor(strings.Join(r.Header.Values("X-Forwarded-For"), ",")); client != "" {
 		return client
 	}
 	return peer
@@ -108,6 +110,8 @@ func rightmostUntrustedForwardedFor(xff string) string {
 			// direct peer rather than trusting a guessed value.
 			return ""
 		}
+		// A proxy on a dual-stack socket reports an IPv4 hop as ::ffff:a.b.c.d, which no IPv4 CIDR contains.
+		addr = addr.Unmap()
 		if requestCameViaTrustedProxy(addr.String()) {
 			continue
 		}

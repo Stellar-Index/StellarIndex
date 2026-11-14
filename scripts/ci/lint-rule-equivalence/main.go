@@ -137,13 +137,14 @@ func loadBaseline(path string) (map[string]bool, error) {
 
 var alertnameRe = regexp.MustCompile(`(?m)^\s*alertname:\s*(\S+)`)
 
-// ruleTestedAlerts returns every alertname asserted by a promtool
-// unit test under testsDir (deploy/monitoring/rule-tests). The
-// equivalence baseline can waive a rule's expr as an intentional
-// per-deployment divergence, but a waived rule still needs SOME
-// promtool test proving its own tree's version actually fires —
-// otherwise "divergence is intentional" and "nobody tests either
-// copy" are indistinguishable from the outside.
+var ruleFileRe = regexp.MustCompile(`(?m)^\s*-\s*\S*?(rules\.r1|rules)/([\w.-]+\.ya?ml)\s*$`)
+
+// testedKey names one tree's copy of an alert: tree is "r1" or "multi".
+func testedKey(tree, file, alert string) string { return tree + "/" + file + ":" + alert }
+
+// ruleTestedAlerts returns the alerts asserted by the promtool tests under
+// testsDir, keyed by the rule file each test loads, so a test of one tree's
+// copy is never counted as a test of the other's.
 func ruleTestedAlerts(testsDir string) (map[string]bool, error) {
 	tested := map[string]bool{}
 	files, err := filepath.Glob(filepath.Join(testsDir, "*.yml"))
@@ -155,15 +156,22 @@ func ruleTestedAlerts(testsDir string) (map[string]bool, error) {
 		if err != nil {
 			return nil, err
 		}
-		for _, m := range alertnameRe.FindAllStringSubmatch(string(raw), -1) {
-			tested[m[1]] = true
+		for _, rf := range ruleFileRe.FindAllStringSubmatch(string(raw), -1) {
+			tree := "multi"
+			if rf[1] == "rules.r1" {
+				tree = "r1"
+			}
+			for _, m := range alertnameRe.FindAllStringSubmatch(string(raw), -1) {
+				tested[testedKey(tree, rf[2], m[1])] = true
+			}
 		}
 	}
 	return tested, nil
 }
 
-// checkExprWaiversAreTested fails any `:expr` baseline entry naming a
-// rule with no promtool test anywhere under testsDir.
+// checkExprWaiversAreTested fails any `:expr` baseline entry whose rule lacks
+// a promtool test of either tree's copy: a waived expr is two different
+// expressions, and a test of one proves nothing about the other.
 func checkExprWaiversAreTested(baseline map[string]bool, tested map[string]bool, testsDir string, fail func(string, ...any)) {
 	keys := make([]string, 0, len(baseline))
 	for k := range baseline {
@@ -178,9 +186,11 @@ func checkExprWaiversAreTested(baseline map[string]bool, tested map[string]bool,
 		if len(parts) < 2 {
 			continue
 		}
-		rule := parts[1]
-		if !tested[rule] {
-			fail("baseline entry %q waives %q's firing behavior as an intentional per-deployment divergence, but no promtool rule test under %s proves either tree's copy actually fires — add one", key, rule, testsDir)
+		file, rule := parts[0], parts[1]
+		for _, tree := range []string{"multi", "r1"} {
+			if !tested[testedKey(tree, file, rule)] {
+				fail("baseline entry %q waives %q's expr as a per-deployment divergence, but no promtool test under %s loads the %s tree's %s and asserts it — add one", key, rule, testsDir, tree, file)
+			}
 		}
 	}
 }

@@ -966,6 +966,9 @@ type watermarkStoreAdapter struct{ s *timescale.Store }
 
 func (a watermarkStoreAdapter) LatestAccountObservationAtOrBefore(ctx context.Context, accountID string, asOfLedger uint32) (supply.AccountObservationRow, error) {
 	row, err := a.s.LatestAccountObservationAtOrBefore(ctx, accountID, asOfLedger)
+	if errors.Is(err, timescale.ErrNotFound) {
+		return supply.AccountObservationRow{}, fmt.Errorf("%w: %w", supply.ErrNoObservation, err)
+	}
 	if err != nil {
 		return supply.AccountObservationRow{}, err
 	}

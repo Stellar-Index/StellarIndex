@@ -21,7 +21,8 @@
 # RMT-duplicate rows (same ORDER BY key, keeps max ingested_at), is atomic per
 # partition and idempotent. The partitions are write-cold; the live sink writes
 # only near tip. Each merge needs scratch ~ the partition's size (~20-40 GB), so
-# the driver refuses to start a partition without 3x that free.
+# the driver refuses to start a partition without 3x that free, or with the pool
+# below the heavy-job floor (HEAVY_MIN_DATA_KB).
 #
 # USAGE (on r1):
 #   ./lake-dedup-driver.sh <table> [max_partitions]
@@ -128,6 +129,14 @@ write_progress 0
 # (e.g. a df surprise) both arrive as non-digits, so this is the one check between
 # either and an unguarded OPTIMIZE. `${p:+ partition=$p}` is set-u-safe before $p
 # exists.
+# The floor run-heavy-job.sh enforces, read the way it reads it, so a bare run of this driver keeps the same headroom.
+POOL_FLOOR_KB="${HEAVY_MIN_DATA_KB:-}"
+FLOOR_FILE="${HEAVY_JOB_FLOOR_FILE:-/etc/default/run-heavy-job}"
+if [ -z "$POOL_FLOOR_KB" ] && [ -r "$FLOOR_FILE" ]; then
+  POOL_FLOOR_KB="$(sed -n 's/^HEAVY_MIN_DATA_KB=\([0-9][0-9]*\)$/\1/p' "$FLOOR_FILE" | tail -1)"
+fi
+POOL_FLOOR_KB="${POOL_FLOOR_KB:-314572800}"
+
 require_number() {
   case "$2" in
     ''|*[!0-9]*)
@@ -202,6 +211,11 @@ for p in $PARTS; do
   require_number "free_bytes" "$free_bytes"
   if [ "$free_bytes" -lt $((bytes_before * 3)) ]; then
     log "ABORT partition=$p: free=$free_bytes < 3x partition=$bytes_before — pool too tight"
+    exit 1
+  fi
+  # A whole-table rewrite is pinned by ZFS snapshots until they rotate, so one partition's scratch is not the bound: hold the heavy-job pool floor too.
+  if [ "$free_bytes" -lt $((POOL_FLOOR_KB * 1024)) ]; then
+    log "ABORT partition=$p: free=$free_bytes < pool floor ${POOL_FLOOR_KB} KiB (HEAVY_MIN_DATA_KB) — wait for a snapshot rotation"
     exit 1
   fi
 

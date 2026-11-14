@@ -37,8 +37,8 @@ type TxOrderResolver interface {
 	TxIndexes(ctx context.Context, hashes []string) (map[string]uint32, error)
 }
 
-// Heartbeat records a completed detection run (nil is a no-op). full is false when the sandwich
-// detectors did not see every ordering hash: resolver unwired, lookup failed, or hashes missing.
+// Heartbeat records a completed detection run (nil is a no-op). full is false when any detector did not see its whole
+// input: an ordering hash unresolved, a scan capped, or an oracle or auction scan unwired or failed.
 type Heartbeat interface {
 	Beat(ctx context.Context, full bool)
 }
@@ -209,7 +209,7 @@ func (w *Worker) SetOrder(o TxOrderResolver) {
 func (w *Worker) RunOnce(ctx context.Context, now time.Time) (detected, inserted int, err error) {
 	start := now
 	since := now.Add(-w.window)
-	trades, usd, err := w.scanTrades(ctx, since)
+	trades, usd, tradesWhole, err := w.scanTrades(ctx, since)
 	if err != nil {
 		w.obs.Run("scan_error", time.Since(start), 0, 0)
 		return 0, 0, fmt.Errorf("mev: scan trades: %w", err)
@@ -217,10 +217,12 @@ func (w *Worker) RunOnce(ctx context.Context, now time.Time) (detected, inserted
 	cands := DetectArbitrage(trades, usd)
 	cands = append(cands, DetectWashTrades(trades, usd)...)
 
-	oracles := w.scanOracles(ctx, since)
-	ordered, full := w.orderedCandidates(ctx, trades, usd, oracles)
+	oracles, oraclesWhole := w.scanOracles(ctx, since)
+	ordered, ordersWhole := w.orderedCandidates(ctx, trades, usd, oracles)
 	cands = append(cands, ordered...)
-	cands = append(cands, w.cascadeCandidates(ctx, since, oracles)...)
+	cascades, auctionsWhole := w.cascadeCandidates(ctx, since, oracles)
+	cands = append(cands, cascades...)
+	full := tradesWhole && oraclesWhole && ordersWhole && auctionsWhole
 	detected = len(cands)
 	for _, c := range cands {
 		ev, mErr := storedFrom(c)
@@ -270,12 +272,13 @@ func (w *Worker) Run(ctx context.Context, interval time.Duration) error {
 	}
 }
 
-// scanTrades reads the window's newest scanLimit trades. A capped scan is reported and its oldest ledger dropped:
-// the cap may cut it mid-transaction, and a dropped leg can lift the single-venue leg-count rejection.
-func (w *Worker) scanTrades(ctx context.Context, since time.Time) ([]canonical.Trade, []domain.MEVLegUSD, error) {
+// scanTrades reads the window's newest scanLimit trades; whole is false when the cap cut the window. A capped scan is
+// reported and its oldest ledger dropped: the cap may cut it mid-transaction, and a dropped leg can lift the
+// single-venue leg-count rejection.
+func (w *Worker) scanTrades(ctx context.Context, since time.Time) (_ []canonical.Trade, _ []domain.MEVLegUSD, whole bool, _ error) {
 	trades, usd, err := w.scanner.TradesForArbScan(ctx, since, w.scanLimit)
 	if err != nil || len(trades) < w.scanLimit {
-		return trades, usd, err
+		return trades, usd, err == nil, err
 	}
 	w.obs.Truncated(ScanInputTrades)
 	w.logger.Warn("mev: trade scan hit the cap — detecting over the newest rows only",
@@ -285,29 +288,29 @@ func (w *Worker) scanTrades(ctx context.Context, since time.Time) ([]canonical.T
 		cut++
 	}
 	if cut > len(usd) {
-		return trades[cut:], nil, nil
+		return trades[cut:], nil, false, nil
 	}
-	return trades[cut:], usd[cut:], nil
+	return trades[cut:], usd[cut:], false, nil
 }
 
-// scanOracles fetches the window's on-chain oracle updates.
-// Best-effort: nil scanner or an error → nil (the oracle-correlated
-// detectors just don't run this tick).
-func (w *Worker) scanOracles(ctx context.Context, since time.Time) []OracleRef {
+// scanOracles fetches the window's on-chain oracle updates. Best-effort: a nil scanner or an error yields nil and the
+// oracle-correlated detectors do not run this tick. whole is false then, and when the scan hit its cap.
+func (w *Worker) scanOracles(ctx context.Context, since time.Time) (_ []OracleRef, whole bool) {
 	if w.oracles == nil {
-		return nil
+		return nil, false
 	}
 	oracles, err := w.oracles.OracleUpdatesForMEVScan(ctx, since, w.scanLimit)
 	if err != nil {
 		if ctx.Err() == nil {
 			w.logger.Warn("mev: oracle scan failed — skipping oracle-correlated detectors this tick", "err", err)
 		}
-		return nil
+		return nil, false
 	}
 	if len(oracles) >= w.scanLimit {
 		w.obs.Truncated(ScanInputOracles)
+		return oracles, false
 	}
-	return oracles
+	return oracles, true
 }
 
 // orderedCandidates runs the tx_index-dependent detectors (sandwich + oracle_sandwich) when a lake order resolver is wired; lookups are
@@ -337,24 +340,27 @@ func (w *Worker) orderedCandidates(ctx context.Context, trades []canonical.Trade
 	return append(out, DetectOracleSandwiches(trades, usd, oracles, txIdx)...), len(txIdx) >= len(hashes)
 }
 
-// cascadeCandidates runs the liquidation-cascade detector when an
-// auction scanner is wired. The oracle-correlation requirement means
-// no oracles → no candidates, so it short-circuits.
-func (w *Worker) cascadeCandidates(ctx context.Context, since time.Time, oracles []OracleRef) []Candidate {
-	if w.auctions == nil || len(oracles) == 0 {
-		return nil
+// cascadeCandidates runs the liquidation-cascade detector when an auction scanner is wired. The oracle-correlation
+// requirement means no oracles → no candidates, so it short-circuits. whole is false when the scanner is unwired, the
+// scan failed, or it hit its cap.
+func (w *Worker) cascadeCandidates(ctx context.Context, since time.Time, oracles []OracleRef) (_ []Candidate, whole bool) {
+	if w.auctions == nil {
+		return nil, false
+	}
+	if len(oracles) == 0 {
+		return nil, true
 	}
 	fills, err := w.auctions.BlendFillsForMEVScan(ctx, since, w.scanLimit)
 	if err != nil {
 		if ctx.Err() == nil {
 			w.logger.Warn("mev: auction-fill scan failed — skipping cascade detection this tick", "err", err)
 		}
-		return nil
+		return nil, false
 	}
 	if len(fills) >= w.scanLimit {
 		w.obs.Truncated(ScanInputAuctions)
 	}
-	return DetectLiquidationCascades(fills, oracles)
+	return DetectLiquidationCascades(fills, oracles), len(fills) < w.scanLimit
 }
 
 type nopObserver struct{}

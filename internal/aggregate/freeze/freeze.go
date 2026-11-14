@@ -750,6 +750,21 @@ func (w *Writer) OverrideRecorded(ctx context.Context, asset, quote canonical.As
 	return true, nil
 }
 
+// OverrideRecordedAt returns when the live tombstone was written; a body that does not parse reads as the zero time.
+func (w *Writer) OverrideRecordedAt(ctx context.Context, asset, quote canonical.Asset) (time.Time, bool, error) {
+	key := cachekeys.FreezeOverride(asset, quote)
+	body, err := w.cache.Get(ctx, key.String()).Bytes()
+	switch {
+	case errors.Is(err, redis.Nil):
+		return time.Time{}, false, nil
+	case err != nil:
+		return time.Time{}, false, fmt.Errorf("freeze: cache get %s: %w", key, err)
+	}
+	var rec overrideRecord
+	_ = json.Unmarshal(body, &rec)
+	return rec.At, true, nil
+}
+
 // Looker reads freeze markers; it satisfies internal/api/v1.FrozenLooker structurally. Concurrent-safe.
 type Looker struct {
 	cache RedisCache

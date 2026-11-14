@@ -266,12 +266,28 @@ func (o *Orchestrator) loadFreezeState(
 		return st, false, nil
 	}
 
-	if st.Active() {
-		if _, ok, err := o.cfg.FreezeWriter.LoadState(ctx, pair.Base, pair.Quote); err == nil && !ok {
-			return st, true, nil
-		}
+	if !st.Active() {
+		return st, false, nil
 	}
-	return st, false, nil
+	// A marker that could not be read is not an override: the freeze holds and the next bucket reads again.
+	_, present, readErr := o.cfg.FreezeWriter.LoadState(ctx, pair.Base, pair.Quote)
+	if present || readErr != nil {
+		return st, false, nil //nolint:nilerr // an unread marker keeps the freeze; it is not this bucket's failure
+	}
+	if _, unwritten := o.markerUnwritten[stateKey]; unwritten {
+		return st, o.overriddenSince(ctx, pair, st.FiredAt), nil
+	}
+	return st, true, nil
+}
+
+// overriddenSince reports an operator tombstone written after firedAt. A key whose own marker write failed cannot read
+// an absent marker as the override, so only a tombstone newer than its freeze releases it.
+func (o *Orchestrator) overriddenSince(ctx context.Context, pair canonical.Pair, firedAt time.Time) bool {
+	if o.overrideAt == nil {
+		return false
+	}
+	at, ok, err := o.overrideAt.OverrideRecordedAt(ctx, pair.Base, pair.Quote)
+	return err == nil && ok && at.After(firedAt)
 }
 
 // loadMarkerState reads the lifecycle the marker records for (pair, window), via the window-aware reader when the writer has one.
@@ -331,11 +347,14 @@ func (o *Orchestrator) engageFreeze(
 	// Record the ladder against the window that owns it: the marker is pair-scoped (its presence is the pair-wide flags.frozen) but the lifecycle in it is this window's alone, and a cold sibling would otherwise adopt it ([WindowedFreezeMarker]).
 	if err := o.markHoldForWindow(ctx, pair, window,
 		frozenValue, decision, out.State, out.MarkerTTL); err != nil {
+		o.markerUnwritten[stateKey] = struct{}{}
 		o.logger.Warn("freeze marker write failed",
 			"pair", pair.String(), "window", window, "err", err)
 		// Soft-fail: the anomaly was detected but the marker write failed, so the API won't see flags.frozen. Operators alert on
 		// AnomalyFreezeEngagedTotal vs the API-side flag rate (a sustained gap = broken writer). Don't fail the tick.
+		return
 	}
+	delete(o.markerUnwritten, stateKey)
 }
 
 // reseedValueWithCoverageLua sets KEYS[1] to ARGV[1] only if absent and, only
@@ -477,6 +496,7 @@ func (o *Orchestrator) releaseFreeze(
 	}
 
 	mode := "auto"
+	delete(o.markerUnwritten, stateKey)
 	o.freezeStates[stateKey] = freeze.State{}
 	if transition == freeze.TransitionOverridden {
 		mode = o.overrideMode(ctx, pair)

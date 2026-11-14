@@ -11,6 +11,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
@@ -158,6 +159,7 @@ func TestCreateWithSecret_WritesBoundedIdleTTL(t *testing.T) {
 	if err := store.CreateWithSecret(context.Background(), MirroredKey{
 		Plaintext: plaintext,
 		Record:    APIKeyRecord{KeyID: "kid_ttl", Identifier: AccountIdentifier("reg-ttl")},
+		IdleTTL:   MirroredKeyIdleTTL,
 	}); err != nil {
 		t.Fatalf("CreateWithSecret: %v", err)
 	}
@@ -168,5 +170,30 @@ func TestCreateWithSecret_WritesBoundedIdleTTL(t *testing.T) {
 	}
 	if ttl > MirroredKeyIdleTTL {
 		t.Errorf("mirrored key TTL = %s, want <= MirroredKeyIdleTTL (%s)", ttl, MirroredKeyIdleTTL)
+	}
+}
+
+// A key an account manages is mirrored with no idle window: it must keep authenticating for as long as its management
+// row lists it, however long it sits unused.
+func TestCreateWithSecret_ZeroIdleTTLNeverExpires(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	const plaintext = "sip_" + "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+	store := NewRedisAPIKeyStore(rdb)
+	if err := store.CreateWithSecret(context.Background(), MirroredKey{
+		Plaintext: plaintext,
+		Record:    APIKeyRecord{KeyID: "kid_dash", Identifier: AccountIdentifier("paying")},
+	}); err != nil {
+		t.Fatalf("CreateWithSecret: %v", err)
+	}
+	key := cachekeys.APIKey(hashAPIKey(plaintext)).String()
+	if ttl := mr.TTL(key); ttl != 0 {
+		t.Fatalf("record TTL = %s, want none", ttl)
+	}
+	mr.FastForward(MirroredKeyIdleTTL + 24*time.Hour)
+	if !mr.Exists(key) {
+		t.Fatal("the record aged out while its management row still lists the key")
 	}
 }

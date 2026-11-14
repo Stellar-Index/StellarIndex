@@ -204,6 +204,9 @@ func (s *Server) mintRegisterKey(ctx context.Context, acct platform.Account) (st
 		if err := s.APIKeyBudgets.RedisMirror.CreateWithSecret(ctx, auth.MirroredKey{
 			Plaintext: plaintext,
 			Record:    mirrored,
+			// Open registration is the growth vector: the validator re-warms the TTL on each Lookup, so only
+			// abandoned keys age out.
+			IdleTTL: auth.MirroredKeyIdleTTL,
 		}); err != nil {
 			// No management row committed yet — refuse rather than hand back
 			// a key that silently fails, and leave no durable orphan.

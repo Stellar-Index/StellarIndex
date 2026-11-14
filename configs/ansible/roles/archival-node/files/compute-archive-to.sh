@@ -24,7 +24,7 @@ load_env_file() {
   done < "$1"
 }
 load_env_file "${STELLARINDEX_ENV_FILE:-/etc/default/stellarindex}"
-TO=$(psql "$STELLARINDEX_POSTGRES_DSN" -tA -c 'SELECT GREATEST(MAX(last_ledger) - 64, 2) FROM ingestion_cursors WHERE last_ledger > 0' 2>/dev/null | tr -d '[:space:]')
+TO=$(psql "$STELLARINDEX_POSTGRES_DSN" -tA -c "SELECT GREATEST(COALESCE((SELECT last_ledger FROM ingestion_cursors WHERE source = 'ledgerstream' AND sub_source = ''), 0) - 64, 2)" 2>/dev/null | tr -d '[:space:]')
 if [ -z "$TO" ] || [ "$TO" = "0" ]; then
   echo "compute-archive-to: indexer cursor not yet advanced; bailing" >&2
   exit 1
