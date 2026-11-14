@@ -861,7 +861,9 @@ type AssetMetadata struct {
 // Account is the data shape returned by [Client.Me].
 type Account struct {
 	KeyID string `json:"key_id"`
-	Label string `json:"label,omitempty"`
+	// ParentKeyID is the key that minted this one; empty for a key issued by registration or the dashboard.
+	ParentKeyID string `json:"parent_key_id,omitempty"`
+	Label       string `json:"label,omitempty"`
 	// KeyPrefix is the first characters of the plaintext key
 	// (`sip_<8hex>`) — safe to log/display; customers use it to
 	// identify which key a row refers to.

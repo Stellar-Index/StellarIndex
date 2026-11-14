@@ -146,13 +146,14 @@ type keyDTO struct {
 
 func delegatedDTO(rec auth.APIKeyRecord, acct platform.Account) keyDTO {
 	return keyDTO{
-		ID:                    rec.KeyID,
-		Name:                  rec.Label,
-		KeyPrefix:             rec.KeyPrefix,
-		Tier:                  string(rec.Tier),
-		RateLimitPerMin:       rec.RateLimitPerMin,
-		MonthlyQuota:          rec.MonthlyQuota,
-		EffectiveMonthlyQuota: acct.ResolveKeyMonthlyQuota(rec.MonthlyQuota),
+		ID:              rec.KeyID,
+		Name:            rec.Label,
+		KeyPrefix:       rec.KeyPrefix,
+		Tier:            string(rec.Tier),
+		RateLimitPerMin: rec.RateLimitPerMin,
+		MonthlyQuota:    rec.MonthlyQuota,
+		// The validator enforces the stored value as is; an account override set later does not reach this key.
+		EffectiveMonthlyQuota: rec.MonthlyQuota,
 		Scopes:                rec.Scopes,
 		ExpiresAt:             wiretime.NilIfZero(rec.ExpiresAt),
 		CreatedAt:             wiretime.Time(rec.CreatedAt),
@@ -525,11 +526,25 @@ func (h *Handlers) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 // revokeDelegated removes a credential that has no management row. Only roles that may revoke any key reach it:
 // a delegated key has no creating user to scope a member's grant to.
 func (h *Handlers) revokeDelegated(w http.ResponseWriter, r *http.Request, sc dashboardauth.SessionContext, id string) {
-	if h.cfg.Mirror == nil || !canManageAnyKey(sc.User.Role) {
+	if h.cfg.Mirror == nil {
 		writeProblem(w, http.StatusNotFound, "key not found", r.URL.Path)
 		return
 	}
-	err := h.cfg.Mirror.RevokeKeyByID(r.Context(), auth.AccountIdentifier(sc.Account.Slug), id)
+	identifier := auth.AccountIdentifier(sc.Account.Slug)
+	if !canManageAnyKey(sc.User.Role) {
+		// A member sees the key in the list, so its refusal names the role; any other id stays a 404.
+		status, detail := http.StatusNotFound, "key not found"
+		if recs, err := h.cfg.Mirror.ListKeysForIdentifier(r.Context(), identifier); err == nil {
+			for _, rec := range recs {
+				if rec.KeyID == id {
+					status, detail = http.StatusForbidden, "your role can't revoke keys you didn't create"
+				}
+			}
+		}
+		writeProblem(w, status, detail, r.URL.Path)
+		return
+	}
+	err := h.cfg.Mirror.RevokeKeyByID(r.Context(), identifier, id)
 	if errors.Is(err, auth.ErrKeyNotFound) {
 		writeProblem(w, http.StatusNotFound, "key not found", r.URL.Path)
 		return

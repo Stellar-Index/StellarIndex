@@ -1242,8 +1242,16 @@ func TestDashboard_DelegatedKeyIsListedAndRevocable(t *testing.T) {
 
 	member := sc
 	member.User.Role = platform.RoleMember
-	if w := doRevoke(t, h, member, child.KeyID); w.Code != http.StatusNotFound {
-		t.Errorf("member revoke of a delegated key = %d, want 404", w.Code)
+	if w := doRevoke(t, h, member, child.KeyID); w.Code != http.StatusForbidden {
+		t.Errorf("member revoke of a delegated key = %d, want 403", w.Code)
+	}
+	if w := doRevoke(t, h, member, "kid_unknown"); w.Code != http.StatusNotFound {
+		t.Errorf("member revoke of an unknown id = %d, want 404", w.Code)
+	}
+	other := sc
+	other.Account.ID, other.Account.Slug = uuid.New(), "someone-else"
+	if w := doRevoke(t, h, other, child.KeyID); w.Code != http.StatusNotFound {
+		t.Errorf("another account's owner revoking this key = %d, want 404", w.Code)
 	}
 	if _, err := validator.Lookup(ctx, childPlaintext); err != nil {
 		t.Fatalf("child stopped authenticating after a refused revoke: %v", err)

@@ -7376,9 +7376,10 @@ export interface components {
             name: string;
             description?: string;
             /**
-             * @description Present and true on a key another key minted for itself
-             *     through `POST /v1/account/keys`. It authenticates like any
-             *     other key of the account.
+             * @description Present and true on a key with no dashboard record: one
+             *     another key minted through `POST /v1/account/keys`, or one
+             *     an operator issued. It authenticates like any other key of
+             *     the account and holds no key slot.
              */
             delegated?: boolean;
             /**

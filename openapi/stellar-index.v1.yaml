@@ -16068,9 +16068,10 @@ components:
         delegated:
           type: boolean
           description: |
-            Present and true on a key another key minted for itself
-            through `POST /v1/account/keys`. It authenticates like any
-            other key of the account.
+            Present and true on a key with no dashboard record: one
+            another key minted through `POST /v1/account/keys`, or one
+            an operator issued. It authenticates like any other key of
+            the account and holds no key slot.
         parent_key_id:
           type: string
           description: |
