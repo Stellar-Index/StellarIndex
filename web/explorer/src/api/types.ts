@@ -3393,6 +3393,14 @@ export interface paths {
          *     `series[].market_withheld_days`, never published and never
          *     silently dropped.
          *
+         *     The floor measures substance, not price, so the price is held
+         *     to the served-price band as well. An hour priced more than 3x
+         *     off the day's median hour is left out of that day, along with
+         *     its volume. A day whose price falls outside the band around the
+         *     market's own preceding days (around the published value when
+         *     there is no preceding day) is counted in
+         *     `market_withheld_days` too.
+         *
          *     The floor is not, and cannot be, the live gate: that one
          *     measures a trailing 24 hours ending now. So an asset may carry a
          *     premium on a past day and none today, because its market was
@@ -8769,7 +8777,8 @@ export interface components {
             points: components["schemas"]["RWAPremiumHistoryPoint"][];
             /**
              * @description Days inside the window that carried observed trades which did
-             *     NOT clear the thin-market floor. Served because "we saw
+             *     NOT clear the thin-market floor, or whose price fell
+             *     outside the served-price band. Served because "we saw
              *     trades and refused to price them" and "there were no trades"
              *     are opposite findings that an absent point renders
              *     identically.

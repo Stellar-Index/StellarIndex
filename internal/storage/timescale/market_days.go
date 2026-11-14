@@ -44,8 +44,10 @@ type MarketDay struct {
 
 // dailyMarketDaysQuery sums every dollar spelling per asset and UTC day from prices_1h (prices_1d lacks intra-day timing; prices_1m can
 // carry retention). Both stored orientations: SDEX stores the maker's sold asset as base, so a fill where the maker sold dollars sits
-// under (dollar, asset) with vwap in asset per dollar; its legs are swapped back. Closed buckets only; package-level so a test pins
-// sargability.
+// under (dollar, asset) with vwap in asset per dollar; its legs are swapped back. An hour priced more than 3x off the day's median
+// hour (the served guard's ratio band) is left out of the day, with its volume and count, so one off-market print cannot set the
+// day's price or carry it past the floor. percentile_disc keeps the centre an exact NUMERIC. Closed buckets only; package-level
+// so a test pins sargability.
 const dailyMarketDaysQuery = `
         WITH family AS (
             SELECT spelling, member
@@ -76,17 +78,32 @@ const dailyMarketDaysQuery = `
                AND bucket <  $4::timestamptz + INTERVAL '1 day'
                AND vwap IS NOT NULL
                AND volume_priced > 0
+        ),
+        hours AS (
+            SELECT time_bucket('1 day', bucket) AS day, member, bucket,
+                   sum(usd_leg) AS usd_leg, sum(asset_leg) AS asset_leg,
+                   sum(volume_usd) AS volume_usd, sum(trade_count) AS trade_count
+              FROM legs
+             GROUP BY day, member, bucket
+        ),
+        centre AS (
+            SELECT day, member,
+                   percentile_disc(0.5) WITHIN GROUP (ORDER BY usd_leg / asset_leg) AS mid
+              FROM hours
+             GROUP BY day, member
         )
-        SELECT time_bucket('1 day', bucket)                                     AS day,
-               member,
+        SELECT hours.day,
+               hours.member,
                (sum(usd_leg) / sum(asset_leg))::text                            AS vwap,
                COALESCE(sum(volume_usd), 0)::text                               AS volume_usd,
-               count(DISTINCT bucket)                                           AS hours,
+               count(*)                                                         AS hours,
                COALESCE(EXTRACT(EPOCH FROM (max(bucket) - min(bucket)))::bigint, 0) AS span_seconds,
                COALESCE(sum(trade_count), 0)                                    AS trades
-          FROM legs
-         GROUP BY day, member
-         ORDER BY day ASC, member ASC
+          FROM hours
+          JOIN centre ON centre.day = hours.day AND centre.member = hours.member
+         WHERE usd_leg / asset_leg BETWEEN centre.mid / 3 AND centre.mid * 3
+         GROUP BY hours.day, hours.member
+         ORDER BY hours.day ASC, hours.member ASC
     `
 
 func (s *Store) DailyMarketDays(
