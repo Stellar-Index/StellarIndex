@@ -261,7 +261,7 @@ func rwaCuratedMembership(snap rwaCurated, verified []RWAAsset) []rwaCuratedMemb
 			continue
 		}
 		if a.Code != "" && a.Issuer != "" {
-			if sac, err := (canonical.Asset{Code: a.Code, Issuer: a.Issuer}).SacContractID(); err == nil {
+			if sac, err := (canonical.Asset{Type: canonical.AssetClassic, Code: a.Code, Issuer: a.Issuer}).SacContractID(); err == nil {
 				seen[sac] = struct{}{}
 			}
 		}

@@ -8158,7 +8158,7 @@ paths:
         that DO trade is at `/v1/chart?price_type=market_cap`.
 
         HOW A DAY IS VALUED. One member's value on a day is its
-        circulating supply times that day's closing oracle value for its
+        issued supply times that day's closing oracle value for its
         bound instrument. The two legs come from different places and
         have different rights:
 
@@ -8167,7 +8167,11 @@ paths:
           Stellar Asset Contract address. Because the log records every
           event that can move the level, a day with no entry is a day
           the supply did not change — carrying the running total across
-          it is arithmetic, not extrapolation.
+          it is arithmetic, not extrapolation. It is the TOTAL ISSUED
+          (`supply_basis: classic_lake_flows`): units the issuer or a
+          locked account holds are not netted out, so a day's figure can
+          sit above the circulating supply `/v1/rwa/assets` values the
+          same asset on, and the two are not expected to agree.
         * PRICE is the closing observation in the day's
           `oracle_prices_1d` bucket for the `rwa:<CODE>` / `fiat:USD`
           feed. It is a sampled observation of a quantity that moves on
@@ -8224,10 +8228,11 @@ paths:
               example:
                 data:
                   basis: >-
-                    Circulating supply, reconstructed from the lake's complete
-                    mint/burn record, times the day's closing value published by
+                    Total issued supply per the lake's mint/burn record, times
+                    the day's closing value published by
                     an independent oracle for the real-world instrument each
                     token declares it anchors to.
+                  supply_basis: classic_lake_flows
                   granularity: 1d
                   timeframe: 1y
                   quote: fiat:USD
@@ -17481,6 +17486,15 @@ components:
         basis:
           type: string
           description: What was measured, on which basis, and what it is not.
+        supply_basis:
+          type: string
+          enum: [classic_lake_flows]
+          description: |
+            The supply leg of every point, in the vocabulary of
+            `/v1/assets` `supply.basis`. `classic_lake_flows` is mints
+            less burns and clawbacks: total issued, not net of
+            issuer-held or locked balances. Absent when no series is
+            published.
         granularity:
           type: string
           enum: [1d]
@@ -19446,6 +19460,7 @@ components:
             - contract_scam_flagged
             - contract_named_without_issuing_tag
             - no_real_world_instrument_basis_for_contract
+            - contract_is_classic_member_sac
             - contract_listed_without_curated_binding
             - contract_curated_binding_without_independent_listing
             - independent_listing_unavailable
@@ -19823,6 +19838,9 @@ components:
             vocabulary proves too narrow.
             `no_real_world_instrument_basis_for_contract` — requirement
             C4: neither a curated binding nor an oracle-priced symbol.
+            `contract_is_classic_member_sac` — the address is the SAC of
+            a classic member already in the set: one asset, valued once
+            on its classic row.
             `duplicate_directory_entry_for_contract` — the same contract
             named twice. The address is the upstream primary key, so
             this should be zero; it is counted rather than assumed.
@@ -19912,6 +19930,7 @@ components:
             - contract_scam_flagged
             - contract_named_without_issuing_tag
             - no_real_world_instrument_basis_for_contract
+            - contract_is_classic_member_sac
             - duplicate_directory_entry_for_contract
             - over_contract_scan_cap
             - issuer_asset_page_truncated

@@ -540,6 +540,7 @@ func rwaListingCandidateDrops(m rwaMembership) []RWAFunnelDrop {
 	}{
 		{rwa.RejectContractScam, rwaActorDefinition},
 		{rwa.RejectNoContractBasis, rwaActorDefinition},
+		{rwa.RejectContractIsClassicMemberSAC, rwaActorDefinition},
 	} {
 		if n := m.listingRefusals[d.reason]; n > 0 {
 			out = append(out, RWAFunnelDrop{Reason: d.reason, Count: n, Actor: d.actor})
@@ -548,8 +549,8 @@ func rwaListingCandidateDrops(m rwaMembership) []RWAFunnelDrop {
 	return out
 }
 
-// rwaContractCandidateDrops is what happened to contracts that reached the full ordered evaluation: the C4 refusal, then the structural
-// non-refusal drop. C1 to C3 are decided by the scan itself, so their refusal constants are unreachable here.
+// rwaContractCandidateDrops is what happened to contracts that reached the full ordered evaluation: the C4 refusal, the classic
+// member's SAC, then the structural non-refusal drop. C1 to C3 are decided by the scan itself, so their refusal constants are unreachable here.
 func rwaContractCandidateDrops(m rwaMembership) []RWAFunnelDrop {
 	out := make([]RWAFunnelDrop, 0, 2)
 	if n := m.refusals[rwa.RejectNoContractBasis]; n > 0 {
@@ -557,9 +558,13 @@ func rwaContractCandidateDrops(m rwaMembership) []RWAFunnelDrop {
 			Reason: rwa.RejectNoContractBasis, Count: n, Actor: rwaActorDefinition,
 		})
 	}
-	return append(out, rwaDrops(RWAFunnelDrop{
-		Reason: rwaDropDuplicateContractEntry, Count: m.contractCensus.duplicates, Actor: rwaActorOperator,
-	})...)
+	return append(out, rwaDrops(
+		RWAFunnelDrop{
+			Reason: rwa.RejectContractIsClassicMemberSAC, Actor: rwaActorDefinition,
+			Count: m.contractRefusals[rwa.RejectContractIsClassicMemberSAC],
+		},
+		RWAFunnelDrop{Reason: rwaDropDuplicateContractEntry, Count: m.contractCensus.duplicates, Actor: rwaActorOperator},
+	)...)
 }
 
 // rwaCandidateDrops is what happened to candidates that reached the full ordered evaluation: requirement refusals in R1-R4 order, then

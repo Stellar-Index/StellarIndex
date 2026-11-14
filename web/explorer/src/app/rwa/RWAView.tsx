@@ -212,6 +212,8 @@ const FUNNEL_DROP_PROSE: Record<string, string> = {
     'Named, but as infrastructure rather than an issuer',
   no_real_world_instrument_basis_for_contract:
     'Declares no real-world instrument',
+  contract_is_classic_member_sac:
+    'Contract form of an asset already counted',
   duplicate_directory_entry_for_contract: 'Same contract named twice',
   over_contract_scan_cap: 'Beyond the per-rebuild contract cap',
   // The valuation arm's drops are the statuses the rows carry, so the

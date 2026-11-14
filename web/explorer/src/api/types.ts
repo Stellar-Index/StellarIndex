@@ -3314,7 +3314,7 @@ export interface paths {
          *     that DO trade is at `/v1/chart?price_type=market_cap`.
          *
          *     HOW A DAY IS VALUED. One member's value on a day is its
-         *     circulating supply times that day's closing oracle value for its
+         *     issued supply times that day's closing oracle value for its
          *     bound instrument. The two legs come from different places and
          *     have different rights:
          *
@@ -3323,7 +3323,11 @@ export interface paths {
          *       Stellar Asset Contract address. Because the log records every
          *       event that can move the level, a day with no entry is a day
          *       the supply did not change — carrying the running total across
-         *       it is arithmetic, not extrapolation.
+         *       it is arithmetic, not extrapolation. It is the TOTAL ISSUED
+         *       (`supply_basis: classic_lake_flows`): units the issuer or a
+         *       locked account holds are not netted out, so a day's figure can
+         *       sit above the circulating supply `/v1/rwa/assets` values the
+         *       same asset on, and the two are not expected to agree.
          *     * PRICE is the closing observation in the day's
          *       `oracle_prices_1d` bucket for the `rwa:<CODE>` / `fiat:USD`
          *       feed. It is a sampled observation of a quantity that moves on
@@ -8615,6 +8619,15 @@ export interface components {
             /** @description What was measured, on which basis, and what it is not. */
             basis: string;
             /**
+             * @description The supply leg of every point, in the vocabulary of
+             *     `/v1/assets` `supply.basis`. `classic_lake_flows` is mints
+             *     less burns and clawbacks: total issued, not net of
+             *     issuer-held or locked balances. Absent when no series is
+             *     published.
+             * @enum {string}
+             */
+            supply_basis?: "classic_lake_flows";
+            /**
              * @description Bucket width. Always `1d`: both legs are daily, and a finer
              *     grain would interpolate one of them.
              * @enum {string}
@@ -10329,7 +10342,7 @@ export interface components {
          */
         RWARefusal: {
             /** @enum {string} */
-            reason: "not_a_classic_asset" | "no_issuer_bound_sep1_entry" | "issuer_scam_flagged" | "issuer_not_independently_recognised" | "no_real_world_instrument_basis" | "not_a_contract_address" | "contract_not_named_in_directory" | "contract_scam_flagged" | "contract_named_without_issuing_tag" | "no_real_world_instrument_basis_for_contract" | "contract_listed_without_curated_binding" | "contract_curated_binding_without_independent_listing" | "independent_listing_unavailable" | "curated_tag_lookup_unavailable";
+            reason: "not_a_classic_asset" | "no_issuer_bound_sep1_entry" | "issuer_scam_flagged" | "issuer_not_independently_recognised" | "no_real_world_instrument_basis" | "not_a_contract_address" | "contract_not_named_in_directory" | "contract_scam_flagged" | "contract_named_without_issuing_tag" | "no_real_world_instrument_basis_for_contract" | "contract_is_classic_member_sac" | "contract_listed_without_curated_binding" | "contract_curated_binding_without_independent_listing" | "independent_listing_unavailable" | "curated_tag_lookup_unavailable";
             assets: number;
         };
         /**
@@ -10659,6 +10672,9 @@ export interface components {
              *     vocabulary proves too narrow.
              *     `no_real_world_instrument_basis_for_contract` — requirement
              *     C4: neither a curated binding nor an oracle-priced symbol.
+             *     `contract_is_classic_member_sac` — the address is the SAC of
+             *     a classic member already in the set: one asset, valued once
+             *     on its classic row.
              *     `duplicate_directory_entry_for_contract` — the same contract
              *     named twice. The address is the upstream primary key, so
              *     this should be zero; it is counted rather than assumed.
@@ -10729,7 +10745,7 @@ export interface components {
              *     `refused[]`.
              * @enum {string}
              */
-            reason: "sep1_attestation_never_fetched" | "domain_served_no_sep1_attestation" | "sep1_attestation_stale" | "sep1_payload_unreadable" | "sep1_declares_no_currencies" | "entry_declares_no_asset_code" | "entry_declares_no_issuer" | "entry_declares_another_issuer" | "not_a_classic_asset" | "no_issuer_bound_sep1_entry" | "issuer_scam_flagged" | "issuer_not_independently_recognised" | "no_real_world_instrument_basis" | "duplicate_declaration_of_the_same_asset" | "over_issuer_cap" | "admitted_but_never_observed_on_chain" | "directory_entry_names_an_account" | "contract_scam_flagged" | "contract_named_without_issuing_tag" | "no_real_world_instrument_basis_for_contract" | "duplicate_directory_entry_for_contract" | "over_contract_scan_cap" | "issuer_asset_page_truncated" | "withheld_issuer_flagged" | "withheld_issuer_unchecked" | "reference_unavailable" | "reference_contract_not_bound" | "reference_not_instrument_scoped" | "reference_not_bound" | "reference_not_usd_denominated" | "no_reference_feed" | "reference_expired" | "reference_not_positive" | "reference_isin_mismatch" | "supply_unavailable" | "decimals_unavailable" | "contract_already_evaluated_by_directory_arm" | "independent_listing_unavailable" | "contract_curated_binding_without_independent_listing" | "contract_listed_without_curated_binding" | "curated_tag_lookup_unavailable";
+            reason: "sep1_attestation_never_fetched" | "domain_served_no_sep1_attestation" | "sep1_attestation_stale" | "sep1_payload_unreadable" | "sep1_declares_no_currencies" | "entry_declares_no_asset_code" | "entry_declares_no_issuer" | "entry_declares_another_issuer" | "not_a_classic_asset" | "no_issuer_bound_sep1_entry" | "issuer_scam_flagged" | "issuer_not_independently_recognised" | "no_real_world_instrument_basis" | "duplicate_declaration_of_the_same_asset" | "over_issuer_cap" | "admitted_but_never_observed_on_chain" | "directory_entry_names_an_account" | "contract_scam_flagged" | "contract_named_without_issuing_tag" | "no_real_world_instrument_basis_for_contract" | "contract_is_classic_member_sac" | "duplicate_directory_entry_for_contract" | "over_contract_scan_cap" | "issuer_asset_page_truncated" | "withheld_issuer_flagged" | "withheld_issuer_unchecked" | "reference_unavailable" | "reference_contract_not_bound" | "reference_not_instrument_scoped" | "reference_not_bound" | "reference_not_usd_denominated" | "no_reference_feed" | "reference_expired" | "reference_not_positive" | "reference_isin_mismatch" | "supply_unavailable" | "decimals_unavailable" | "contract_already_evaluated_by_directory_arm" | "independent_listing_unavailable" | "contract_curated_binding_without_independent_listing" | "contract_listed_without_curated_binding" | "curated_tag_lookup_unavailable";
             count: number;
             /**
              * @description Who can move this number. `operator` — a fetch nobody has
@@ -21509,7 +21525,8 @@ export interface operations {
                     /**
                      * @example {
                      *       "data": {
-                     *         "basis": "Circulating supply, reconstructed from the lake's complete mint/burn record, times the day's closing value published by an independent oracle for the real-world instrument each token declares it anchors to.",
+                     *         "basis": "Total issued supply per the lake's mint/burn record, times the day's closing value published by an independent oracle for the real-world instrument each token declares it anchors to.",
+                     *         "supply_basis": "classic_lake_flows",
                      *         "granularity": "1d",
                      *         "timeframe": "1y",
                      *         "quote": "fiat:USD",
