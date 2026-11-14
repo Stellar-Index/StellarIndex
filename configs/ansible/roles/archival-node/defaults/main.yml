@@ -1197,6 +1197,11 @@ internal_cidrs:
 # source ∈ internal_cidrs).
 stellarindex_api_listen_addr: "127.0.0.1:3000"
 
+# Peers allowed to supply X-Forwarded-For. Loopback fits a proxy on the box. A host whose proxy is elsewhere (the
+# test-net VMs: Caddy on the KVM host) must name the proxy's address as the API sees it, or every client is keyed
+# as that one address for rate limits, stream caps and IP records. 01-preflight refuses the mismatch.
+stellarindex_trusted_proxy_cidrs: ["127.0.0.1/32"]
+
 # page-latency-sweep.timer: loads per page per entity, and the account and contract cohorts each page is timed for
 # (pooled into each panel's p95).
 page_sweep_iters: 5
