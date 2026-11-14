@@ -27,6 +27,8 @@ type VerifiedCurrencyListItem =
 export type GlobalAssetView = components['schemas']['GlobalAssetView'];
 
 let cataloguePromise: Promise<Map<string, GlobalAssetView>> | null = null;
+// Catalogue slug per verified Stellar issuance, filled with the catalogue.
+const slugByAssetID = new Map<string, string>();
 
 export function getCatalogue(): Promise<Map<string, GlobalAssetView>> {
   if (cataloguePromise) return cataloguePromise;
@@ -59,6 +61,7 @@ async function fetchCatalogue(): Promise<Map<string, GlobalAssetView>> {
       name: item.name,
       class: item.class,
     });
+    if (item.asset_id) slugByAssetID.set(item.asset_id, item.slug);
   }
   return map;
 }
@@ -73,4 +76,17 @@ export async function lookupGlobalAsset(
 ): Promise<GlobalAssetView | null> {
   const map = await getCatalogue();
   return map.get(slug) ?? map.get(slug.toLowerCase()) ?? null;
+}
+
+/**
+ * The catalogue entry whose verified Stellar issuance is exactly this
+ * asset_id, so /assets/<asset_id> carries the same identity as its
+ * catalogue-slug URL. Exact match only: a look-alike has another issuer.
+ */
+export async function lookupGlobalAssetByAssetID(
+  assetID: string,
+): Promise<GlobalAssetView | null> {
+  const map = await getCatalogue();
+  const slug = slugByAssetID.get(assetID);
+  return slug ? (map.get(slug) ?? null) : null;
 }

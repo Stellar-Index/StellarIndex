@@ -66,7 +66,19 @@ function stubFetch(status: number, body: unknown, path = '') {
   vi.stubGlobal('fetch', vi.fn().mockImplementation(reply));
 }
 
-const fetchSettled = () => vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+// /v1/price withholds; /v1/assets/{id} answers with `detail`.
+function stubDerived(detail: unknown) {
+  const reply = async (input: string | URL) => {
+    const url = String(input);
+    if (url.includes('/v1/assets/'))
+      return { status: 200, ok: true, json: async () => detail };
+    const code = url.includes('/v1/price') ? 404 : 500;
+    return { status: code, ok: false, json: async () => ({ type: WITHHELD }) };
+  };
+  vi.stubGlobal('fetch', vi.fn().mockImplementation(reply));
+}
+
+const fetchSettled =() => vi.waitFor(() => expect(fetch).toHaveBeenCalled());
 
 beforeEach(() => {
   useTipStream.mockReturnValue(null);
@@ -83,14 +95,14 @@ describe('LiveAssetPrice', () => {
   it.each([
     ['vwap1m', 'native', '0.17', /\$0\.17/, /1-min VWAP · USD/i, null],
     ['declared_peg', AUDD, '0.655', /\$0\.655/, PEG_CAPTION, /VWAP/i],
-    // Fetched live from /v1/assets, and not the aggregator's FX cross-rate.
+    // Not the aggregator's FX cross-rate; baked until /v1/assets answers.
     [
       'transitive',
       CAUP7,
       '7768.93',
       /7,?768/,
-      /two-hop DEX route/i,
-      /as baked at deploy|triangulated via XLM/i,
+      /two-hop DEX route.*as baked at deploy/i,
+      /triangulated via XLM/i,
     ],
   ] as const)(
     'renders a baked %s price with its own caption',
@@ -139,14 +151,56 @@ describe('LiveAssetPrice', () => {
   ] as const)(
     'a price-withheld poll does not blank a %s price',
     async (initialProvenance, assetID, initialPrice, caption) => {
-      stubFetch(404, { type: WITHHELD });
+      stubDerived({
+        data: { price_usd: initialPrice, price_basis: initialProvenance },
+      });
       renderPrice({ assetID, initialPrice, initialProvenance });
-      await fetchSettled();
+      await vi.waitFor(() => hides(/as baked at deploy/i));
       await screen.findByText(`$${initialPrice}`, { exact: false });
       shows(caption);
-      hides(/price withheld|as baked at deploy/i);
+      hides(/price withheld/i);
     },
   );
+
+  // A derived price is baked at build; /v1/price never refreshes it.
+  it('re-reads a derived price from the asset detail', async () => {
+    stubDerived({
+      data: { price_usd: '0.61', price_basis: 'declared_peg' },
+      flags: { stale: true },
+    });
+    renderPrice({
+      assetID: AUDD,
+      initialPrice: '0.655',
+      initialProvenance: 'declared_peg',
+    });
+    await screen.findByText(/\$0\.61/);
+    shows(PEG_CAPTION, /stale/);
+    hides(/\$0\.655/, /as baked at deploy/i);
+  });
+
+  it('says a derived price is baked while the asset detail is unread', async () => {
+    stubFetch(404, { type: WITHHELD }, '/v1/price');
+    renderPrice({
+      assetID: AUDD,
+      initialPrice: '0.655',
+      initialProvenance: 'declared_peg',
+    });
+    await fetchSettled();
+    await screen.findByText(/as baked at deploy/i);
+    shows(/\$0\.655/);
+  });
+
+  it('drops a baked derived price the asset detail no longer publishes', async () => {
+    stubDerived({ data: { asset_id: AUDD } });
+    renderPrice({
+      assetID: AUDD,
+      initialPrice: '0.655',
+      initialProvenance: 'declared_peg',
+    });
+    await vi.waitFor(() => hides(/\$0\.655/));
+    shows('—');
+    hides(PEG_CAPTION);
+  });
 
   it('a price-withheld poll replaces a market-provenance price with the server wording', async () => {
     stubFetch(404, {
@@ -199,7 +253,11 @@ describe('LiveAssetPrice', () => {
   });
 
   it('a thin-market poll does not displace a declared-peg price', async () => {
-    stubFetch(200, { data: { price: '0.42' }, flags: { thin_market: true } });
+    stubFetch(
+      200,
+      { data: { price: '0.42' }, flags: { thin_market: true } },
+      '/v1/price',
+    );
     renderPrice({
       assetID: AUDD,
       initialPrice: '0.655',

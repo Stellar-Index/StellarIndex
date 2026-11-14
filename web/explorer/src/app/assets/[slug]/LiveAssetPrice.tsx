@@ -1,6 +1,6 @@
 'use client';
 
-import { useChangeSummary } from '@/api/hooks';
+import { useAsset, useChangeSummary } from '@/api/hooks';
 import {
   isFrameStale,
   tipCaveat,
@@ -15,6 +15,7 @@ import { cn } from '@/lib/cn';
 import { formatPriceSmall, positiveDecimal } from '@/lib/format';
 
 import { unwrapChangeSummary } from './ChangeSummaryStrip';
+import { provenanceFromBasis } from './priceProvenance';
 
 export type PriceProvenance =
   | 'vwap1m'
@@ -134,11 +135,26 @@ export function LiveAssetPrice({
   const withheld = poll.withheld && !derived;
   const thin = poll.thin && !derived;
   const seed = positiveDecimal(initialPrice);
-  const price = refused && derived ? seed : poll.price;
+  // /v1/price has nothing to say about a derived price, so the baked one is
+  // re-read from /v1/assets/{id}; until that answers it is captioned as baked.
+  const detail = useAsset(derived ? assetID : undefined);
+  const detailRow = detail.data?.data;
+  const fromAssets = derived && (!poll.polled || refused);
+  const reread = fromAssets && detailRow != null;
+  const bakedDerived = fromAssets && detailRow == null;
+  const detailPrice = positiveDecimal(detailRow?.price_usd);
+  const price = reread ? detailPrice : fromAssets ? seed : poll.price;
   const live = poll.polled;
-  const stale = poll.polled ? poll.stale : Boolean(initialStale);
-  const provenance: PriceProvenance =
-    poll.polled && !refused
+  const stale = reread
+    ? Boolean(detail.data?.flags?.stale)
+    : poll.polled
+      ? poll.stale
+      : Boolean(initialStale);
+  const provenance: PriceProvenance = reread
+    ? detailPrice != null
+      ? provenanceFromBasis(detailRow.price_basis, 'listing')
+      : null
+    : poll.polled && !refused
       ? poll.triangulated
         ? 'triangulated'
         : 'vwap1m'
@@ -245,20 +261,11 @@ export function LiveAssetPrice({
         {!withheld && !tipActive && shown != null && stale && (
           <span className="text-warn-500"> · stale</span>
         )}
-        {/* 'transitive' joins listing/declared_peg here: those captions
-            describe a price that never came from the /v1/price poll, so
-            "as baked at deploy" would be a lie about its freshness. The
-            transitive figure is fetched live from /v1/assets on this
-            very render — it is the poll that has nothing to say, not
-            the price that is old. */}
+        {/* A listing snapshot's caption already says it is not live. */}
         {!withheld &&
           !tipActive &&
           shown != null &&
-          !live &&
-          provenance !== 'listing' &&
-          provenance !== 'global_market' &&
-          provenance !== 'declared_peg' &&
-          provenance !== 'transitive' &&
+          (bakedDerived || (!live && !derived && provenance !== 'listing')) &&
           ' · as baked at deploy'}
       </p>
       {thin && shown != null && (

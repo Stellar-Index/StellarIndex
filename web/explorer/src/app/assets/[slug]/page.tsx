@@ -70,6 +70,7 @@ import { HistoryTabPanel } from './HistoryTabPanel';
 import { SupplyTabPanel } from './SupplyTabPanel';
 import {
   lookupGlobalAsset,
+  lookupGlobalAssetByAssetID,
   getCatalogue,
   type GlobalAssetView,
 } from '../catalogue';
@@ -705,13 +706,17 @@ export async function generateMetadata({
     fetchGlobalAsset(slug),
   ]);
   let coin = metaResults[0];
-  const globalView = metaResults[1];
+  let globalView = metaResults[1];
   // Catalogue slugs resolve to the verified issuance's rich row for
   // metadata too, so /assets/usdc titles "USDC $0.9997 …" like the
   // page body it now describes (memoised fetches — no extra API
   // calls beyond what the page render already does).
   if (!coin && globalView) {
     coin = await resolveVerifiedListingCoin(globalView);
+  }
+  // The asset_id URL of a verified issuance is the same entity.
+  if (!globalView && coin) {
+    globalView = await lookupGlobalAssetByAssetID(coin.asset_id);
   }
   const code = globalView?.ticker ?? coin?.code ?? slug;
   const priceStr = coin?.price_usd ? formatPriceSmall(coin.price_usd) : '—';
@@ -870,13 +875,10 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
       : coin.code && coin.issuer
         ? await sacAddress(coin.code, coin.issuer, CURRENT_NETWORK.passphrase)
         : null;
-  // Reaching this point means slug had a /v1/coins row but NO
-  // catalogue entry — an unverified Stellar asset. There's no
-  // cross-chain identity to render, so globalView is null and
-  // every `globalView?.x` reference below short-circuits. Cast
-  // through to keep the wider type so downstream `?.` chains
-  // typecheck without further narrowing pain.
-  const globalView = globalViewEarly as GlobalAssetView | null;
+  // The asset_id URL of a verified issuance has no slug match, so it is
+  // matched on identity; null means an unverified Stellar asset.
+  const globalView: GlobalAssetView | null =
+    globalViewEarly ?? (await lookupGlobalAssetByAssetID(coin.asset_id));
 
   // BreadcrumbList JSON-LD derives from the visible Crumb[] inside Breadcrumbs below.
   // Schema.org FAQPage (JSON-LD only, no visible panel) so Google can pick up

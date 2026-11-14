@@ -62,6 +62,9 @@ dashboard.
 fails the build. It lives there so every publisher (CF Pages,
 `explorer-deploy.yml`, the `web-explorer` CI job, a laptop) runs it.
 
+- `postbuild:hosts` (`scripts/ci/explorer-network-hosts.sh`): rewrites the
+  mainnet API host in `out/_redirects` and `out/llms.txt` to
+  `NEXT_PUBLIC_API_BASE_URL` on a testnet or futurenet build.
 - `postbuild:pages`: heading outline on every page (WCAG 1.3.1); every
   nav-linked route exports a real frame.
 - `postbuild:prune`: deletes Next 16 `__next.*` prefetch files, **keeping
