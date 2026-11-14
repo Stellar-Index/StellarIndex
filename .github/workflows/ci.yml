@@ -2160,6 +2160,12 @@ jobs:
         # grep, no hosts.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/promtail-listen-address-test.sh
+      - name: loki push target test
+        # Evaluates the loki role's promtail_target_url default and the
+        # agent refusal: an agent is never pointed at an address Loki does
+        # not listen on. Jinja only, no hosts.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/loki-push-target-test.sh
       - name: haproxy http-request timeout test (SL01)
         # defaults block set connect/client/server timeouts but no
         # timeout http-request, leaving a slow-header client holding a

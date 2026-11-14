@@ -57,10 +57,18 @@ promtail_user: promtail
 # replaying weeks of bootlog noise.
 promtail_journal_max_age: "12h"
 
-# Where the agent ships logs. Defaults to the first
-# `log_aggregator` host's ansible_host:port; operators can
-# override to point at a load-balanced front (HAProxy etc.).
-promtail_target_url: "http://{{ hostvars[groups['log_aggregator'][0]].ansible_host }}:{{ loki_http_port }}/loki/api/v1/push"
+# Where the agent ships logs. On the aggregator itself this is the
+# address Loki binds (loopback by default); elsewhere it is the first
+# `log_aggregator` host's ansible_host. Operators can override to
+# point at a load-balanced front (HAProxy etc.).
+promtail_target_url: >-
+  http://{%- set agg = groups['log_aggregator'][0] -%}
+  {%- if inventory_hostname == agg and loki_listen_address not in ['0.0.0.0', '::'] -%}
+  {{ ('[' ~ loki_listen_address ~ ']') if ':' in loki_listen_address else loki_listen_address }}
+  {%- else -%}
+  {{ hostvars[agg].ansible_host }}
+  {%- endif -%}
+  :{{ loki_http_port }}/loki/api/v1/push
 
 # ── Firewall ───────────────────────────────────────────────────
 # Loki accepts ingest from any agent on internal CIDR.

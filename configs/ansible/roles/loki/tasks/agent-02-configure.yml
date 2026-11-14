@@ -1,4 +1,23 @@
 ---
+# A shipper on another host cannot reach a loopback-bound Loki; without this
+# the play goes green and every push is refused.
+- name: refuse to ship to a Loki that only listens on loopback
+  vars:
+    loki_agg: "{{ groups['log_aggregator'][0] }}"
+    loki_agg_listen: "{{ hostvars[loki_agg].loki_listen_address | default(loki_listen_address) }}"
+  assert:
+    that:
+      - >-
+        not (loki_agg_listen is match('^(127\\.|localhost$|::1$)')
+        and (hostvars[loki_agg].ansible_host ~ ':' ~ loki_http_port) in promtail_target_url)
+    fail_msg: >-
+      {{ inventory_hostname }} would ship to {{ promtail_target_url }}, but Loki on
+      {{ loki_agg }} listens on {{ loki_agg_listen }} only. Set loki_listen_address
+      on {{ loki_agg }} to its internal address (port {{ loki_http_port }} is already
+      limited to loki_internal_cidrs), or point promtail_target_url at a front that
+      reaches it.
+  when: inventory_hostname != groups['log_aggregator'][0]
+
 - name: render /etc/promtail/promtail-config.yaml
   template:
     src: promtail-config.yaml.j2

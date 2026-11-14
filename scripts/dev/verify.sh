@@ -555,6 +555,7 @@ lane_d() { # everything else
     echo "=== Ansible Caddy signing-key pipefail self-test ===" && ./scripts/ci/ansible-caddy-key-pipefail-test.sh
     echo "=== Ansible galexie-backfill-status empty-log self-test ===" && ./scripts/ci/ansible-galexie-backfill-status-test.sh
     echo "=== Promtail server listen-address self-test ===" && ./scripts/ci/promtail-listen-address-test.sh
+    echo "=== Loki push target self-test ===" && ./scripts/ci/loki-push-target-test.sh
     echo "=== Ansible README parity self-test ===" && ./scripts/ci/ansible-readme-parity-test.sh
     echo "=== Ansible env-file secret guard self-test ===" && ./scripts/ci/ansible-envfile-secret-guard-test.sh
     echo "=== Ansible pubnet example checksum parity self-test ===" && ./scripts/ci/ansible-pubnet-checksum-parity-test.sh
