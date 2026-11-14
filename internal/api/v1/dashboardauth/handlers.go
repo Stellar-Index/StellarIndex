@@ -836,21 +836,58 @@ func (h *Handlers) signupNewUser(ctx context.Context, email string) (platform.Us
 			// re-fetch and use its user.
 			h.cfg.Logger.Warn("signup race: rolling back to winning user",
 				"email", maskEmail(email), "speculative_account_id", acct.ID)
+			// The address belongs to another account, so this one can never get its user.
+			h.markOrphanSignupAccount(ctx, acct.ID)
 			winner, getErr := h.cfg.Users.GetUserByEmail(ctx, email)
 			if getErr != nil {
 				return platform.User{}, fmt.Errorf("create user conflict + reload: %w", getErr)
 			}
-			// Best-effort: the winner's login has already succeeded. The reason carries no address
-			// because it is copied into audit metadata.
-			if suspErr := h.cfg.Accounts.Suspend(ctx, acct.ID, "signup-race: orphan speculative account"); suspErr != nil {
-				h.cfg.Logger.Warn("signup race: failed to mark orphan account",
-					"err", suspErr, "speculative_account_id", acct.ID)
-			}
 			return winner, nil
 		}
+		h.markUserlessSignupAccount(ctx, acct.ID, email)
 		return platform.User{}, fmt.Errorf("create user: %w", err)
 	}
 	return user, nil
+}
+
+// markOrphanSignupAccount hands a userless signup account to the reaper, which deletes only
+// suspended rows with this reason. It outlives the request: a dropped connection is the usual
+// cause, and an unmarked row keeps the address past the user's own erasure. The reason carries
+// no address because it is copied into audit metadata.
+func (h *Handlers) markOrphanSignupAccount(ctx context.Context, id uuid.UUID) bool {
+	var err error
+	for range 2 {
+		attempt, cancel := context.WithTimeout(context.WithoutCancel(ctx), orphanMarkTimeout)
+		err = h.cfg.Accounts.Suspend(attempt, id, "signup-race: orphan speculative account")
+		cancel()
+		if err == nil {
+			return true
+		}
+	}
+	h.cfg.Logger.Error("signup: failed to mark orphan account; it holds the address until removed by hand",
+		"err", err, "speculative_account_id", id)
+	return false
+}
+
+const orphanMarkTimeout = 5 * time.Second
+
+// markUserlessSignupAccount marks the account after a user insert whose outcome is unknown: the insert can still commit after
+// its context ended. The account is marked first and released if the user is then found on it; an insert that lands later
+// still is released by the reaper, which reactivates a marked account that has a user and never deletes one.
+func (h *Handlers) markUserlessSignupAccount(ctx context.Context, id uuid.UUID, email string) {
+	if !h.markOrphanSignupAccount(ctx, id) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), orphanMarkTimeout)
+	defer cancel()
+	u, err := h.cfg.Users.GetUserByEmail(ctx, email)
+	if err != nil || u.AccountID != id {
+		return
+	}
+	if err := h.cfg.Accounts.Unsuspend(ctx, id); err != nil {
+		h.cfg.Logger.Error("signup: account marked as an orphan has a user; the reaper will release it",
+			"err", err, "speculative_account_id", id)
+	}
 }
 
 // createSignupAccount inserts the account for a first-login email. Name and slug derive from the

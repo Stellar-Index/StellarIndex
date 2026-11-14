@@ -239,6 +239,21 @@ func TestPlatformPostgresStores(t *testing.T) {
 		if _, err := accounts.Get(ctx, abuse.ID); err != nil {
 			t.Errorf("abuse-victim wrongly reaped (reason gate failed): %v", err)
 		}
+
+		// A marked account that has a user was mis-marked: it is released, and only it.
+		released, err := accounts.ReactivateSuspendedWithUsers(ctx, signupreaper.SignupRaceReasonPrefix)
+		if err != nil {
+			t.Fatalf("reactivate: %v", err)
+		}
+		if released != 1 {
+			t.Errorf("released %d, want exactly 1 (the marked account with a user)", released)
+		}
+		if got, err := accounts.Get(ctx, withUser.ID); err != nil || got.Status != platform.AccountActive || got.SuspendedReason != "" {
+			t.Errorf("race-with-user after release = %+v (err %v), want active with no reason", got, err)
+		}
+		if got, err := accounts.Get(ctx, abuse.ID); err != nil || got.Status != platform.AccountSuspended {
+			t.Errorf("abuse-victim after release = %+v (err %v), want still suspended", got, err)
+		}
 	})
 
 	// CountAccounts+CountAPIKeys feed the signup-reaper's obs.AccountRows/APIKeyRows: POST /v1/register mints permanent rows
