@@ -92,7 +92,7 @@ NoNewPrivileges=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
-ReadWritePaths=/srv/history-archive /var/lib/galexie /var/lib/node_exporter
+ReadWritePaths=/srv/history-archive /var/lib/galexie -/var/lib/node_exporter
 
 # A clean run is fast; a worst-case (lots of fallback chain
 # fetches) shouldn't exceed 30 min. Hard-cap so a hung HTTP source

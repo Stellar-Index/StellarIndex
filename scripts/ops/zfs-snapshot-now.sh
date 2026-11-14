@@ -8,8 +8,10 @@
 #   sudo scripts/ops/zfs-snapshot-now.sh data/postgres --keep pre-0123-migration
 #
 # Without --keep the snapshot is `auto-YYYYMMDD-HHMM`: it rides normal
-# retention (3 d ClickHouse / 7 d Postgres) and the min-free guard, so it does
-# not become a forgotten 250 GB/day pin. With --keep it is `manual-<label>` and
+# retention (1 d for ClickHouse and Postgres) and the min-free guard, so it does
+# not become a forgotten 250 GB/day pin: it is gone by the second nightly
+# rotate. Before a change you may need to undo later, use --keep. With --keep
+# it is `manual-<label>` and
 # is NEVER auto-destroyed; you own its deletion.
 #
 # Recursive: data/postgres includes data/postgres/wal, so data and WAL come

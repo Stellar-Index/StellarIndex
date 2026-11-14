@@ -74,7 +74,9 @@ NoNewPrivileges=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
-ReadWritePaths=/var/lib/node_exporter/textfile_collector
+# "-": a host without node_exporter has no such directory, and a missing
+# non-optional path fails the unit with 226/NAMESPACE before it runs.
+ReadWritePaths=-/var/lib/node_exporter/textfile_collector
 
 # A snapshot run is fast: one ListCursors + one Compute + one
 # InsertSupply. Worst case is a slow Postgres — cap at 5 minutes

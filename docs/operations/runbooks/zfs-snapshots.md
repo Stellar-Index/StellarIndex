@@ -22,7 +22,7 @@ While stale, a logical fault (bad `DROP`, bad migration) costs a multi-hour pgBa
 
 `zfs-snapshot.timer` -> `zfs-snapshot.service` -> `/usr/local/bin/zfs-snapshot.sh rotate`, daily 01:45 UTC (+5 min jitter), config `/etc/default/zfs-snapshot`:
 
-1. Retention: destroy `auto-YYYYMMDD-HHMM` snapshots older than 3 d (`data/clickhouse`, `data/postgres`).
+1. Retention: destroy `auto-YYYYMMDD-HHMM` snapshots older than 1 d (`data/clickhouse`, `data/postgres`) or 7 d (`data/minio`).
 2. Min-free guard (`zfs_snapshot_min_free_bytes`, 1.4 TiB on r1; the script's own default is 2 TiB), on usable free space (`zfs get available data`): below it, destroy `auto-*` snapshots oldest-first across both datasets, never a dataset's newest.
 3. Snapshot `zfs snapshot -r <dataset>@auto-YYYYMMDD-HHMM` if at/above the floor; else skip and set `stellarindex_zfs_snapshot_guard_skipped{dataset}=1`. Recursive, so `data/postgres/wal` is captured with its parent.
 4. Write `/var/lib/node_exporter/textfile_collector/zfs_snapshot.prom`.
@@ -71,7 +71,7 @@ Escalate: if the pool stays under 1.5 TiB after removing manual snapshots, page 
 `docs/operations/clickhouse-destructive-ddl.md` requires a fresh snapshot before any `DROP` / irreversible `ALTER`; do the same before a risky Postgres migration.
 
 ```sh
-sudo scripts/ops/zfs-snapshot-now.sh data/clickhouse                 # auto-YYYYMMDD-HHMM: rides the 3 d retention
+sudo scripts/ops/zfs-snapshot-now.sh data/clickhouse                 # auto-YYYYMMDD-HHMM: rides the 1 d retention
 sudo scripts/ops/zfs-snapshot-now.sh data/postgres --keep pre-0123   # manual-pre-0123: never auto-pruned; you delete it
 ```
 

@@ -343,6 +343,7 @@ echo "=== galexie archive contiguity self-test ===" && ./scripts/ci/galexie-arch
 echo "=== stellar-core auto-upgrade self-test ===" && ./scripts/ci/stellar-core-auto-upgrade-test.sh
 echo "=== catch-up lane runner self-test ===" && ./scripts/ci/si-catchup-test.sh
 echo "=== galexie archive tip-lag self-test ===" && ./scripts/ci/galexie-archive-tip-lag-test.sh
+echo "=== operator-script self-tests ===" && bash configs/ansible/roles/archival-node/files/galexie-archive-fill_test.sh && bash configs/ansible/roles/archival-node/files/compute-archive-to_test.sh && bash configs/ansible/roles/archival-node/files/galexie-append_test.sh && bash scripts/ops/route-sweep-test.sh && bash scripts/ops/reconcile-supply-vs-horizon-test.sh
 # BASE_SHA-gated. This and lint-replay-plan.sh below take their comparison base
 # from the environment and, with none set, print a skip line and exit 0, which
 # made verify<->CI parity look honest while checking nothing (an undeclared

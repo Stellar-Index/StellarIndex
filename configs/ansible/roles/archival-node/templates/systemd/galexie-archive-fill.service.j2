@@ -41,9 +41,8 @@ Environment=HEAVY_JOB_LOCK_WAIT=3300
 ExecStart=/usr/local/sbin/run-heavy-job.sh galexie-archive-fill /usr/local/bin/galexie-archive-fill
 # A routine hourly drift fills in seconds-minutes; a large catch-up
 # after an outage (e.g. the original ~346k-ledger hole) can run for
-# hours. Cap generously rather than risk a half-mirrored partition
-# from a mid-run kill (the script handles missing partitions cleanly
-# on the next fire anyway).
+# hours. Cap generously. A run killed mid-mirror leaves its partitions
+# in the script's pending list and the next fire takes them up again.
 TimeoutStartSec=21600
 Nice=10
 IOSchedulingClass=idle
