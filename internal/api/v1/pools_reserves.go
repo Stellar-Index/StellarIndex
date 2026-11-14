@@ -291,7 +291,8 @@ func buildPoolReservesRow(st clickhouse.SoroswapPairState, displays map[string]c
 			return t, false
 		}
 		t.Decimals = meta.Decimals
-		t.Symbol = meta.Symbol
+		// Contract-authored text: an implausible ticker is served as no symbol.
+		t.Symbol, _ = clickhouse.SanitiseTokenSymbol(meta.Symbol)
 		return t, true
 	}
 	token0, known0 := tok(st.Token0, st.Reserve0)

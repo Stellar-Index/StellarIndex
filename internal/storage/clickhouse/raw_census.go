@@ -79,6 +79,9 @@ func RawTableCensus(ctx context.Context, addr string, from, to uint32) ([]RawTab
 	if err != nil {
 		return nil, nil, err
 	}
+	if err := boundCensusTipPartition(ctx, conn, present, to); err != nil {
+		return nil, nil, err
+	}
 	short, totals := rawCensusShortfalls(expected, present)
 	return short, totals, nil
 }
@@ -140,6 +143,28 @@ func rawCensusPresent(ctx context.Context, conn driver.Conn, tables ...string) (
 		out[table][p] = n
 	}
 	return out, rows.Err()
+}
+
+// boundCensusTipPartition recounts each table's partition holding `to` over ledgers <= to: system.parts counts the whole
+// partition, and rows above `to` (live ingest, the tip margin) would otherwise stand in for rows lost below it.
+func boundCensusTipPartition(ctx context.Context, conn driver.Conn, present map[string]map[uint32]uint64, to uint32) error {
+	if (to+1)%eventCensusPartitionWidth == 0 {
+		return nil
+	}
+	p := to / eventCensusPartitionWidth
+	for table, parts := range present {
+		if _, ok := parts[p]; !ok {
+			continue
+		}
+		// Not FINAL: system.parts counts un-merged duplicates too, and the two sides must agree.
+		q := "SELECT toUInt64(count()) FROM stellar." + table + " WHERE ledger_seq BETWEEN ? AND ?" //nolint:gosec // table is a census constant
+		var n uint64
+		if err := conn.QueryRow(ctx, q, p*eventCensusPartitionWidth, to).Scan(&n); err != nil {
+			return fmt.Errorf("clickhouse: census tip partition %s/%d: %w", table, p, err)
+		}
+		parts[p] = n
+	}
+	return nil
 }
 
 // rawCensusShortfalls compares expected header sums with present row counts (a partition absent from present reads as 0), in

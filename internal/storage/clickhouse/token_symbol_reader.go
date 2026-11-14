@@ -73,7 +73,7 @@ func symbolFromInstanceEntry(b64 string) (string, bool) {
 			if !ok || string(ksym) != "symbol" {
 				continue
 			}
-			return sanitiseTokenSymbol(scValText(e.Val))
+			return SanitiseTokenSymbol(scValText(e.Val))
 		}
 	}
 	return "", false
@@ -91,9 +91,8 @@ func scValText(v xdr.ScVal) string {
 	return ""
 }
 
-// sanitiseTokenSymbol trims a declared symbol and refuses one that is not a plausible ticker: control characters, newlines or an essay
-// mean the token declares no symbol, and reporting it absent is true and safe, trimming it toward a match is neither.
-func sanitiseTokenSymbol(s string) (string, bool) {
+// SanitiseTokenSymbol trims a contract-declared symbol and refuses one that is not a plausible ticker (control or format characters, an essay).
+func SanitiseTokenSymbol(s string) (string, bool) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return "", false
