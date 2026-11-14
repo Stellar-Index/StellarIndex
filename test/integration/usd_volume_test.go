@@ -1520,6 +1520,10 @@ func TestXLMQuoteRestampChunks_RestampsInsideACompressedChunk(t *testing.T) {
 	if err := f.store.InsertTrade(ctx, anchor); err != nil {
 		t.Fatalf("InsertTrade anchor: %v", err)
 	}
+	// A second anchor minute: the resolver prices nothing off a minute with no baseline.
+	if err := f.store.InsertTrade(ctx, mkIntegrationTrade("sdex", 30, anchorTS.Add(-time.Minute), xlmUSDC, 1_000_000_000, 500_000_000)); err != nil {
+		t.Fatalf("InsertTrade anchor baseline: %v", err)
+	}
 	f.exec(`CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`)
 
 	// 10 XLM in the QUOTE leg against a token with no USD market, so the
@@ -1948,6 +1952,10 @@ func TestXLMBaseRestamp_RederivesThroughTheLiveAnchor(t *testing.T) {
 	if err := store.InsertTrade(ctx, anchor); err != nil {
 		t.Fatalf("InsertTrade anchor: %v", err)
 	}
+	// A second anchor minute: the resolver prices nothing off a minute with no baseline.
+	if err := store.InsertTrade(ctx, mkIntegrationTrade("sdex", 4, anchorTS.Add(-time.Minute), xlmUSDC, 1_000_000_000, 500_000_000)); err != nil {
+		t.Fatalf("InsertTrade anchor baseline: %v", err)
+	}
 
 	// Thin TOKEN/USDC book, the defect's other half: a direct market 4h later, after the XLM/USD anchor aged past the 1h
 	// direct-leg freshness. The old waterfall valued the trade through this counterparty-authored book.
@@ -1958,6 +1966,9 @@ func TestXLMBaseRestamp_RederivesThroughTheLiveAnchor(t *testing.T) {
 	thinBook := mkIntegrationTrade("sdex", 2, anchorTS.Add(3*time.Hour+55*time.Minute), tokenUSDC, 1_000, 5_000_000)
 	if err := store.InsertTrade(ctx, thinBook); err != nil {
 		t.Fatalf("InsertTrade thin book: %v", err)
+	}
+	if err := store.InsertTrade(ctx, mkIntegrationTrade("sdex", 5, anchorTS.Add(3*time.Hour+54*time.Minute), tokenUSDC, 1_000, 5_000_000)); err != nil {
+		t.Fatalf("InsertTrade thin book baseline: %v", err)
 	}
 	// $1000 at the same rate earlier that day, so the book clears the
 	// valuation substance floor and the quote side really can price.
@@ -2128,9 +2139,9 @@ func TestXLMBaseRestamp_RederivesThroughTheLiveAnchor(t *testing.T) {
 			t.Error("the higher-generation row entered the plan — INV-3 says a newer re-derive is never clawed back")
 		}
 	}
-	// 8. the exact-tier anchor trade (native/USDC) is classified out.
-	if plan.Stats.QuotePegged != 1 {
-		t.Errorf("QuotePegged = %d, want 1 (the native/USDC anchor row belongs to `-tier exact`)", plan.Stats.QuotePegged)
+	// 8. the exact-tier anchor trades (native/USDC, two minutes) are classified out.
+	if plan.Stats.QuotePegged != 2 {
+		t.Errorf("QuotePegged = %d, want 2 (the native/USDC anchor rows belong to `-tier exact`)", plan.Stats.QuotePegged)
 	}
 	if plan.Stats.Unchanged != 1 {
 		t.Errorf("Unchanged = %d, want 1 (the already-correct row)", plan.Stats.Unchanged)
@@ -2300,6 +2311,10 @@ func TestXLMBaseRestamp_SkipsARowMovedAfterThePlan(t *testing.T) {
 
 	day := time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)
 	anchorTS := day.Add(10 * time.Hour)
+	// Two anchor minutes: the resolver prices nothing off a minute with no baseline.
+	if err := store.InsertTrade(ctx, mkIntegrationTrade("sdex", 30, anchorTS.Add(-time.Minute), xlmUSDC, 1_000_000_000, 500_000_000)); err != nil {
+		t.Fatalf("InsertTrade anchor baseline: %v", err)
+	}
 	if err := store.InsertTrade(ctx, mkIntegrationTrade("sdex", 1, anchorTS, xlmUSDC, 1_000_000_000, 500_000_000)); err != nil {
 		t.Fatalf("InsertTrade anchor: %v", err)
 	}
@@ -2585,6 +2600,12 @@ func TestXLMLegVolume_TradeTimeNeverSpot(t *testing.T) {
 		t.Fatalf("refresh prices_1m: %v", err)
 	}
 
+	// A second unfrozen minute beside the 50-min anchor: the resolver prices nothing off a minute with no baseline.
+	f.trade("sdex", 51*time.Minute, native, usdc, 10*unit, 3*unit, "3")
+	if _, err := db.ExecContext(f.ctx, `CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`); err != nil {
+		t.Fatalf("refresh prices_1m: %v", err)
+	}
+
 	// The ingest resolver refuses the frozen and triggering minutes on its direct leg: an XLM-base stamp written at the 30-min
 	// trade's time prices at the unfrozen 50-min anchor (0.3), never 0.4 or 0.5; with the freshness floor inside the freeze it
 	// prices nothing.
@@ -2715,6 +2736,10 @@ func TestXLMQuoteRestamp_StampsItsOwnBasis(t *testing.T) {
 
 	day := time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC)
 	anchorTS := day.Add(10 * time.Hour)
+	// Two anchor minutes: the resolver prices nothing off a minute with no baseline.
+	if err := store.InsertTrade(ctx, mkIntegrationTrade("sdex", 30, anchorTS.Add(-time.Minute), xlmUSDC, 1_000_000_000, 500_000_000)); err != nil {
+		t.Fatalf("InsertTrade anchor baseline: %v", err)
+	}
 	if err := store.InsertTrade(ctx, mkIntegrationTrade("sdex", 1, anchorTS, xlmUSDC, 1_000_000_000, 500_000_000)); err != nil {
 		t.Fatalf("InsertTrade anchor: %v", err)
 	}
