@@ -60,6 +60,13 @@ var dexTVLScopeExclusions = []DEXTVLExclusion{
 			"different quantity from locked value and is served separately at /v1/sdex/orderbook",
 	},
 	{
+		Subject: "spectra",
+		Reason: "Principal and Yield Tokens trade through limit-order engines, not pools, so there " +
+			"are no pooled reserves to sum; the value held behind the tokens sits in the wrapped " +
+			"interest-bearing token, whose holdings are not captured as current state, so no figure " +
+			"is derived",
+	},
+	{
 		Subject: "sushiswap_v3",
 		Reason: "concentrated liquidity is not constant product: a V3 pool spreads its depth " +
 			"across per-position tick ranges, so the pool's token balances are not a two-sided " +
