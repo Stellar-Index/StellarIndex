@@ -1,17 +1,18 @@
 ---
 title: Spectra — contract & event scoping
-last_verified: 2026-10-06
-status: scoping — lake-verified
+last_verified: 2026-11-14
+status: integrated (events) — lake-verified
 ---
 
 # Spectra — contract & event scoping
 
-> **Status: not integrated.** No decoder, table or source exists yet
-> (INV-2044). This page records what is confirmed, what is inferred and
-> what is unknown, so the Spectra team can correct it before code lands.
-> Contract roles, hashes and event shapes below were checked against r1's
-> ClickHouse lake (ledgers 63,778,000 to 64,800,000, tip about 64,798,584).
-> Do not read the sets below as a gate.
+> **Status: integrated (events).** Spectra contracts are gated on the
+> factory trust root, decoded by `internal/sources/spectra`, projected into
+> `spectra_events` (migration 0210) from ledger 63,778,088 and listed at
+> `/v1/protocols/spectra`. No price or TVL is derived; see
+> "Status and slice order". Contract roles, hashes and event shapes below
+> were checked against r1's ClickHouse lake (ledgers 63,778,000 to
+> 64,800,000).
 
 ## What Spectra is
 
@@ -153,7 +154,10 @@ in the same transaction. Not decided; slice 8.
 
 ## Status and slice order
 
-Not integrated. Planned PRs, smallest first:
+Events are integrated: the decoder, the `spectra_events` table, the projector
+wiring and the `/v1/protocols` row have landed. The original plan, for
+reference (slices 1 to 6 are done; 7 and 8 were not re-checked for this
+update):
 
 1. This page, done.
 2. WASM audit doc and `protocol-epochs.md` rows, done: 8 hashes, no
@@ -161,7 +165,7 @@ Not integrated. Planned PRs, smallest first:
 3. Lake fixtures, done: `capture-spectra-fixtures.sh` has a lake mode
    (`LAKE_SSH`), one fixture per (hash, kind) observed on chain. Expiry kinds
    are re-captured after 2026-10-16.
-4. `internal/sources/spectra` decoder, not wired.
+4. `internal/sources/spectra` decoder, done.
 5. Migration for `spectra_events` and `spectra_markets`, store writer.
 6. Wiring (projected source: `buildSource`, `IsProjectedEvent`, replay
    via `projector-replay -source spectra`).

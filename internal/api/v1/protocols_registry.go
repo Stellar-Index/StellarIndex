@@ -10,6 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/rozo"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorocredit"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/spectra"
 	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
@@ -235,6 +236,14 @@ var protocolRegistry = withVerificationPages([]ProtocolMeta{
 		Description:   "Chainlink Data Feeds on Stellar — per-feed answers written to Chainlink's DataFeedsCache contract.",
 		GenesisLedger: 64_442_968,
 		EventKinds:    []string{"chainlink_stellar.update"},
+	},
+	{
+		Name:          "spectra",
+		Category:      "yield",
+		Description:   "Spectra — yield tokenisation: an interest-bearing token split into Principal and Yield Tokens deployed by the Spectra factory, traded through its limit-order engines.",
+		GenesisLedger: spectra.GenesisLedger,
+		Factories:     []string{spectra.MainnetFactory},
+		EventKinds:    []string{spectra.EventKind},
 	},
 })
 

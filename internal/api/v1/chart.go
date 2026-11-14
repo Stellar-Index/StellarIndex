@@ -419,6 +419,19 @@ func (s *Server) handleChartTWAP(
 	writeChartJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded, Degraded: walk.degraded})
 }
 
+// fxClosedDayWindow is the fx_quotes read window for a chart: closed UTC days only, because the
+// forex worker rewrites today's row on every refresh and a served bucket is final. `from` is
+// floored to its day so a 24h window holds yesterday's bucket; a zero `from` (timeframe=all) reads
+// 25 years, back to ECB inception. The bounds are inclusive, as ListFXHistory reads them.
+func fxClosedDayWindow(now, from time.Time) (queryFrom, to time.Time) {
+	today := now.UTC().Truncate(24 * time.Hour)
+	to = today.Add(-time.Nanosecond)
+	if from.IsZero() {
+		return today.AddDate(-25, 0, 0), to
+	}
+	return from.UTC().Truncate(24 * time.Hour), to
+}
+
 // handleChartFiat serves fiat:fiat pairs from fx_quotes, one row per ticker per UTC day. The reader gives CCY-per-USD:
 // fiat:CCY/fiat:USD uses InverseUSD, fiat:USD/fiat:CCY RateUSD, and a cross goes to [Server.handleChartFiatCross].
 func (s *Server) handleChartFiat(
@@ -459,12 +472,7 @@ func (s *Server) handleChartFiat(
 		return
 	}
 
-	// Default window: trailing 25y (ECB inception) when timeframe=all.
-	to := s.now().UTC().Truncate(24 * time.Hour)
-	queryFrom := from
-	if queryFrom.IsZero() {
-		queryFrom = to.AddDate(-25, 0, 0) // ECB inception
-	}
+	queryFrom, to := fxClosedDayWindow(s.now(), from)
 
 	fxCtx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
@@ -525,13 +533,7 @@ func (s *Server) handleChartFiatCross(
 	gran string,
 	from time.Time,
 ) {
-	// Same default window as the direct fiat path: trailing 25y when
-	// timeframe=all (ECB inception).
-	to := s.now().UTC().Truncate(24 * time.Hour)
-	queryFrom := from
-	if queryFrom.IsZero() {
-		queryFrom = to.AddDate(-25, 0, 0)
-	}
+	queryFrom, to := fxClosedDayWindow(s.now(), from)
 
 	fxCtx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
@@ -1453,13 +1455,7 @@ func (s *Server) handleChartMarketCap(
 		return
 	}
 
-	// Default window: trailing 25y (ECB inception), the same as the direct
-	// fiat path, when timeframe=all.
-	to := s.now().UTC().Truncate(24 * time.Hour)
-	queryFrom := from
-	if queryFrom.IsZero() {
-		queryFrom = to.AddDate(-25, 0, 0)
-	}
+	queryFrom, to := fxClosedDayWindow(s.now(), from)
 
 	fxCtx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
