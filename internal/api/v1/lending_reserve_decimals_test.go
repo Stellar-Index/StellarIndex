@@ -69,6 +69,14 @@ func usdKey(t *testing.T, assetID string) string {
 	return a.String() + "/fiat:USD"
 }
 
+// decOrNeg is the served decimals, or -1 when the response published none.
+func decOrNeg(p *uint32) int64 {
+	if p == nil {
+		return -1
+	}
+	return int64(*p)
+}
+
 func strOrNil(p *string) string {
 	if p == nil {
 		return "<nil>"

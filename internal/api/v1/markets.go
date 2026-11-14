@@ -391,6 +391,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 		next       string
 		observedAt time.Time
 		stale      bool
+		truncated  bool
 		err        error
 	)
 	// Hard 8s ceiling, as on /v1/pools: DistinctPairsExt and SourceMarkets scan the trades
@@ -408,7 +409,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 		// Slug expansion fans out one AssetMarkets query per asset_id and merges in memory. There
 		// is no pagination: each cursor is per-asset_id and no combined keyset exists, so callers
 		// wanting the full stream pass the canonical asset_id.
-		rows, observedAt, stale, err = s.fanOutAssetMarkets(mCtx, reader, expandedAssets, limit, order)
+		rows, observedAt, stale, truncated, err = s.fanOutAssetMarkets(mCtx, reader, expandedAssets, limit, order)
 		next = ""
 	case asset != "":
 		if staleAware {
@@ -526,7 +527,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 	// observedAt zero and writeEnvelope defaults as_of to now.
 	env := Envelope{
 		Data:  rows,
-		Flags: Flags{Stale: stale, Degraded: stale || enrichFailed},
+		Flags: Flags{Stale: stale, Degraded: stale || enrichFailed, Truncated: truncated},
 	}
 	if !observedAt.IsZero() {
 		env.AsOf = WireTime(observedAt.UTC())
@@ -577,35 +578,37 @@ func (s *Server) expandSlugToAssetIDs(slug string) []string {
 }
 
 // assetMarketsLeg fetches one expanded asset_id's markets plus observedAt/stale when the reader is
-// staleness-aware (zero/false otherwise), keeping fanOutAssetMarkets free of the capability branch.
-func assetMarketsLeg(ctx context.Context, reader MarketsReader, asset string, limit int, order timescale.MarketsOrder) ([]Market, time.Time, bool, error) {
+// staleness-aware (zero/false otherwise), keeping fanOutAssetMarkets free of the capability branch. more reports that
+// the leg holds rows past limit.
+func assetMarketsLeg(ctx context.Context, reader MarketsReader, asset string, limit int, order timescale.MarketsOrder) (rows []Market, observedAt time.Time, stale, more bool, err error) {
+	var next string
 	if sr, ok := reader.(marketsStaleReader); ok {
-		rows, _, observedAt, stale, err := sr.AssetMarketsAt(ctx, asset, "", limit, order)
-		return rows, observedAt, stale, err
+		rows, next, observedAt, stale, err = sr.AssetMarketsAt(ctx, asset, "", limit, order)
+		return rows, observedAt, stale, next != "", err
 	}
-	rows, _, err := reader.AssetMarkets(ctx, asset, "", limit, order)
-	return rows, time.Time{}, false, err
+	rows, next, err = reader.AssetMarkets(ctx, asset, "", limit, order)
+	return rows, time.Time{}, false, next != "", err
 }
 
 // fanOutAssetMarkets runs AssetMarkets per expanded asset_id, dedupes on (base, quote), sorts and caps at limit; no pagination (cursors
 // don't compose).
 // Freshness is conservative: observedAt is the oldest leg, stale the OR of legs; zero/false when the reader cannot report them.
-func (s *Server) fanOutAssetMarkets(ctx context.Context, reader MarketsReader, assets []string, limit int, order timescale.MarketsOrder) ([]Market, time.Time, bool, error) {
+// truncated is true when the merge was capped or a leg held more rows than it returned.
+func (s *Server) fanOutAssetMarkets(ctx context.Context, reader MarketsReader, assets []string, limit int, order timescale.MarketsOrder) (rows []Market, observedAt time.Time, stale, truncated bool, err error) {
 	type result struct {
 		rows       []Market
 		observedAt time.Time
 		stale      bool
+		more       bool
 		err        error
 	}
 	results := make([]result, len(assets))
 	forEachBounded(s.logger, len(assets), readFanoutConcurrency, func(i int) {
-		rows, observedAt, stale, err := assetMarketsLeg(ctx, reader, assets[i], limit, order)
-		results[i] = result{rows: rows, observedAt: observedAt, stale: stale, err: err} // distinct indices — no mutex needed
+		rows, observedAt, stale, more, err := assetMarketsLeg(ctx, reader, assets[i], limit, order)
+		results[i] = result{rows: rows, observedAt: observedAt, stale: stale, more: more, err: err} // distinct indices — no mutex needed
 	})
 	// No fail-fast: an asset_id with no recent trades just contributes zero rows.
 	var firstErr error
-	var observedAt time.Time
-	var stale bool
 	type pairKey struct{ base, quote string }
 	seen := make(map[pairKey]struct{})
 	merged := make([]Market, 0, limit)
@@ -623,6 +626,7 @@ func (s *Server) fanOutAssetMarkets(ctx context.Context, reader MarketsReader, a
 			observedAt = r.observedAt
 		}
 		stale = stale || r.stale
+		truncated = truncated || r.more
 		for _, m := range r.rows {
 			k := pairKey{base: m.Base, quote: m.Quote}
 			if _, dup := seen[k]; dup {
@@ -633,13 +637,13 @@ func (s *Server) fanOutAssetMarkets(ctx context.Context, reader MarketsReader, a
 		}
 	}
 	if firstErr != nil && len(merged) == 0 {
-		return nil, time.Time{}, false, firstErr
+		return nil, time.Time{}, false, false, firstErr
 	}
 	sortMergedMarkets(merged, order)
 	if len(merged) > limit {
-		merged = merged[:limit]
+		merged, truncated = merged[:limit], true
 	}
-	return merged, observedAt, stale, nil
+	return merged, observedAt, stale, truncated, nil
 }
 
 // sortMergedMarkets mirrors the single-asset SQL order so order_by matches for asset_id and slug: NULL volume is zero, ties by (base,

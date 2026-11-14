@@ -3667,14 +3667,14 @@ paths:
                               description: "Current-state totals from the pool's `/reserves` view; null while that view is pending or failed. Utilization and APRs cover priced reserves only."
                               properties:
                                 tvl_usd:              { type: [string, "null"], description: "Decimal USD, the reserves view's tvl_usd; null when no reserve is priced." }
-                                lower_bound:          { type: boolean, description: "tvl_usd leaves out at least one unpriced reserve." }
+                                lower_bound:          { type: boolean, description: "tvl_usd leaves out at least one unpriced or omitted reserve." }
                                 borrowed_usd:         { type: [string, "null"], description: "Decimal USD sum of the reserves with a borrowed USD value; null when none has one." }
-                                borrowed_lower_bound: { type: boolean, description: "borrowed_usd leaves out at least one unpriced reserve." }
+                                borrowed_lower_bound: { type: boolean, description: "borrowed_usd leaves out at least one unpriced or omitted reserve." }
                                 utilization_pct:      { type: [number, "null"], description: "Borrowed / supplied USD × 100 over the reserves priced on both sides." }
                                 supply_apr:           { type: [number, "null"], description: "Supply APR (fraction) weighted by supplied USD over priced reserves with a rate." }
                                 borrow_apr:           { type: [number, "null"], description: "Borrow APR (fraction) weighted by borrowed USD over priced reserves with a rate." }
                                 priced_reserve_count:      { type: integer, description: "Reserves with both supplied and borrowed USD values." }
-                                reserve_count:       { type: integer }
+                                reserve_count:       { type: integer, description: "The pool's reserves, including any the reserves view omits." }
                             summary_pending: { type: boolean, description: "The pool's reserves view is still being built; summary is null." }
                             summary_error:   { type: boolean, description: "The pool's last reserves build failed; summary is null and the list retries after a minute." }
         "400": { $ref: "#/components/responses/BadRequest" }
@@ -3760,14 +3760,18 @@ paths:
                         properties:
                           pool:    { type: string }
                           tvl_usd: { type: [string, "null"], description: "Σ supplied_usd across priced reserves; null when none priced. A lower bound when `lower_bound` is true." }
-                          lower_bound: { type: boolean, description: "True when `tvl_usd` is rendered but leaves out at least one reserve with no USD value — the `reserves[]` entries whose `supplied_usd` is null — so the pool holds at least `tvl_usd`. False when every reserve is priced or when `tvl_usd` is null." }
+                          lower_bound: { type: boolean, description: "True when `tvl_usd` is rendered but leaves out at least one reserve with no USD value — the `reserves[]` entries whose `supplied_usd` is null — or a reserve named in `omitted_reserves` — so the pool holds at least `tvl_usd`. False when every reserve is priced or when `tvl_usd` is null." }
+                          omitted_reserves:
+                            type: array
+                            items: { type: string }
+                            description: "Reserve assets of the pool with no decoded state in the lake (archived or uncaptured storage). Absent when every reserve is listed in `reserves`."
                           reserves:
                             type: array
                             items:
                               type: object
                               properties:
                                 asset:           { type: string, description: Reserve underlying token (C-strkey). }
-                                decimals:        { type: integer }
+                                decimals:        { type: [integer, "null"], description: "The token's decimal exponent. Null when it is not established; `supplied` and `borrowed` are then base units with no known scale." }
                                 supplied:        { type: string, description: "Total supplied, underlying token base units." }
                                 borrowed:        { type: string, description: "Total borrowed, underlying token base units." }
                                 supplied_usd:    { type: [string, "null"] }
@@ -4371,6 +4375,13 @@ paths:
             value isn't a parseable canonical asset_id (e.g.
             `native`, `USDC-G…`, `fiat:USD`). Mutually
             exclusive with `source`.
+
+            A catalogue slug (`xlm`, `usdc`) is also accepted and
+            expands to every asset_id of that currency. The merged
+            list is capped at `limit` and has no cursor; when it was
+            capped, `flags.truncated` is true and the list is a
+            lower bound. Page through one canonical asset_id for
+            the full set.
           schema: { type: string }
         - name: include
           in: query
@@ -6529,10 +6540,10 @@ paths:
                               events_total:
                                 type: integer
                                 format: int64
-                                description: Total decoded contract events across the protocol over activity_window_days (sum of event_breakdown counts).
+                                description: "Total contract events across the protocol over activity_window_days (the sum of activity_series). event_breakdown is a separate aggregation; on the approximate daily rollup its sum can differ from this by estimation error."
                               event_breakdown:
                                 type: array
-                                description: Event-type distribution (topic[0] symbol → count) over the window, descending — "which event types fired, and how often."
+                                description: "Event-type distribution (event name → count) over the window, descending. `untyped` is a counted type: events whose topics yield no name. Absent, with the series and total, when either read failed."
                                 items:
                                   type: object
                                   properties:
@@ -16891,6 +16902,12 @@ components:
             peg's observed crypto:<STABLE>/fiat:USD price is more than 2% from $1.
             Omitted when false, including when no observation was available.
         unverified_ticker_collision: { type: boolean, default: false }
+        truncated:
+          type: boolean
+          default: false
+          description: >
+            The list was capped and no cursor continues it, so its length is
+            a lower bound. Set by `/v1/markets?asset=<slug>`. Omitted when false.
         filters_ignored:
           type: array
           items: { type: string }

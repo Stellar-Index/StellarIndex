@@ -22,7 +22,7 @@ import { shortAssetText } from '@/lib/asset-label';
 
 interface ReserveRow {
   asset: string;
-  decimals: number;
+  decimals: number | null;
   supplied: string;
   borrowed: string;
   supplied_usd: string | null;
@@ -45,7 +45,9 @@ const usdFmt = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 0,
 });
 
-function tokenAmount(base: string, decimals: number): string {
+function tokenAmount(base: string, decimals: number | null): string {
+  // No established exponent: show the exact base units, never a guessed scale.
+  if (decimals == null) return `${base} base units`;
   // Reserve amounts are exact i128 base-unit strings (ADR-0003); scale
   // via the string-split path, never Number() on the raw integer, which
   // loses precision above 2^53.
