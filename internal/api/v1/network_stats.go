@@ -23,12 +23,14 @@ type networkStatsStaleReader interface {
 
 // NetworkStats is the /v1/network/stats shape with numeric fields as strings (ADR-0003); its source counts are the static registry, unlike the region-enabled counts on /v1/status.freshness.
 type NetworkStats struct {
-	Volume24hUSD    *string `json:"volume_24h_usd,omitempty"`
-	MarketsCount24h int64   `json:"markets_count_24h"`
-	AssetsIndexed   int64   `json:"assets_indexed"`
-	LatestLedger    int64   `json:"latest_ledger"`
-	ExchangeSources int     `json:"exchange_sources"`
-	TotalSources    int     `json:"total_sources"`
+	Volume24hUSD *string `json:"volume_24h_usd,omitempty"`
+	// VolumeLowerBound: Volume24hUSD excludes trades with no trade-time usd_volume.
+	VolumeLowerBound bool  `json:"volume_lower_bound,omitempty"`
+	MarketsCount24h  int64 `json:"markets_count_24h"`
+	AssetsIndexed    int64 `json:"assets_indexed"`
+	LatestLedger     int64 `json:"latest_ledger"`
+	ExchangeSources  int   `json:"exchange_sources"`
+	TotalSources     int   `json:"total_sources"`
 }
 
 // handleNetworkStats serves GET /v1/network/stats: the home-page aggregates in one call. One SQL
@@ -74,14 +76,15 @@ func (s *Server) handleNetworkStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := NetworkStats{
-		Volume24hUSD:    stats.Volume24hUSD,
-		MarketsCount24h: stats.MarketsCount24h,
-		AssetsIndexed:   stats.AssetsIndexed,
-		LatestLedger:    stats.LatestLedger,
-		ExchangeSources: exchangeSources,
-		TotalSources:    totalSources,
+		Volume24hUSD:     stats.Volume24hUSD,
+		VolumeLowerBound: stats.VolumeLowerBound,
+		MarketsCount24h:  stats.MarketsCount24h,
+		AssetsIndexed:    stats.AssetsIndexed,
+		LatestLedger:     stats.LatestLedger,
+		ExchangeSources:  exchangeSources,
+		TotalSources:     totalSources,
 	}
-	env := Envelope{Data: out, Flags: Flags{Stale: stale}}
+	env := Envelope{Data: out, Flags: Flags{Stale: stale, Degraded: stale}}
 	if !observedAt.IsZero() {
 		env.AsOf = WireTime(observedAt.UTC())
 	}

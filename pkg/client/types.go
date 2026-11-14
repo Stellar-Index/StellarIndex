@@ -622,6 +622,7 @@ type AggregatorRow struct {
 
 	RoutedTrades24h    int64      `json:"routed_trades_24h"`
 	RoutedVolume24hUSD *string    `json:"routed_volume_24h_usd"`
+	VolumeLowerBound   bool       `json:"volume_lower_bound,omitempty"` // RoutedVolume24hUSD excludes unpriced trades
 	LastRoutedAt       *time.Time `json:"last_routed_at"`
 
 	// Notes are coverage caveats for this row's stats; nil for
@@ -1141,12 +1142,14 @@ type ChangeSummary struct {
 
 // NetworkStats is the data shape of [Client.NetworkStats], the home-page aggregate snapshot; Volume24hUSD is a *string per ADR-0003, nil when the 24h window has no USD-equivalent trades.
 type NetworkStats struct {
-	Volume24hUSD    *string `json:"volume_24h_usd,omitempty"`
-	MarketsCount24h int64   `json:"markets_count_24h"`
-	AssetsIndexed   int64   `json:"assets_indexed"`
-	LatestLedger    int64   `json:"latest_ledger"`
-	ExchangeSources int     `json:"exchange_sources"`
-	TotalSources    int     `json:"total_sources"`
+	Volume24hUSD *string `json:"volume_24h_usd,omitempty"`
+	// VolumeLowerBound is true when Volume24hUSD excludes unpriced trades.
+	VolumeLowerBound bool  `json:"volume_lower_bound,omitempty"`
+	MarketsCount24h  int64 `json:"markets_count_24h"`
+	AssetsIndexed    int64 `json:"assets_indexed"`
+	LatestLedger     int64 `json:"latest_ledger"`
+	ExchangeSources  int   `json:"exchange_sources"`
+	TotalSources     int   `json:"total_sources"`
 }
 
 // Incident is one customer-facing incident post from [Client.Incidents]; Severity is SEV-1..SEV-4, Status is investigating/identified/monitoring/resolved, and BodyMarkdown is the full post.
