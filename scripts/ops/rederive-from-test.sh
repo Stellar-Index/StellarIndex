@@ -78,6 +78,7 @@ if [ "$cmd" = ch-backfill ]; then
   fi
 fi
 [ "$cmd" = projected-rebuild ] && [ "$src" = "${FAIL_SOURCE:-none}" ] && exit 5
+[ "$cmd" = trades-cagg-refresh ] && [ -n "${FAIL_CAGG:-}" ] && exit 6
 exit 0
 STUB
 chmod +x "$TMP/bin/"*
@@ -124,6 +125,7 @@ check '[ "$(sort -n "$TMP/running.seen" | tail -1)" -ge 2 ]' "workers ran ch-bac
 check 'grep -qx "ch-supply 1000 1000999 -" "$OPSL" && [ "$(calls ch-supply)" -eq 5 ]' "supply_flows seeded over [L,TO]"
 check 'grep -qx "projected-rebuild 1000 - soroswap" "$OPSL" && grep -qx "projected-rebuild 1000 - aquarius" "$OPSL"' "each -projected source rebuilt from L behind the live tail (no -to)"
 check 'awk "/^ch-backfill/ { b = NR } /^ch-supply/ && !s { s = NR } END { exit !(b && s && b < s) }" "$OPSL"' "seeding starts only after the last window"
+check '[ "$(awk "/^projected-rebuild/ { p = NR } /^trades-cagg-refresh 1000 4500999 -\$/ { c = NR } END { print (p && c > p) }" "$OPSL")" = 1 ] && [ "$(calls trades-cagg-refresh)" -eq 1 ]' "aggregates over trades refreshed over [L,TO] after the last rebuild"
 check '[ "$(tail -1 "$OPSL")" = "seed-entry-counts - - -" ] && [ "$(calls seed-entry-counts)" -eq 1 ]' "entry counts recomputed once, last"
 check '[ "$(grep -c REDERIVE_COMPLETE "$LOG")" -eq 1 ] && [ ! -e "$SD/lock" ] && [ "$(cat "$SD/to")" = 4500999 ]' "REDERIVE_COMPLETE logged, lock released, end pinned"
 
@@ -183,7 +185,17 @@ fresh stagefail
 run FAIL_SOURCE=aquarius -- "${RANGE[@]}" -workers 2 -projected soroswap,aquarius
 check '[ "$RC" -eq 5 ] && [ "$(calls seed-entry-counts)" -eq 0 ] && ! grep -q REDERIVE_COMPLETE "$LOG"' "a failed projected-rebuild stops the chain with its exit code"
 run -- "${RANGE[@]}" -workers 2 -projected soroswap,aquarius
-check '[ "$RC" -eq 0 ] && [ "$(cat "$OPSL" | tr "\n" "|")" = "projected-rebuild 1000 - aquarius|seed-entry-counts - - -|" ]' "resume re-runs only the failed source, then the entry counts"
+check '[ "$RC" -eq 0 ] && [ "$(cat "$OPSL" | tr "\n" "|")" = "projected-rebuild 1000 - aquarius|trades-cagg-refresh 1000 4500999 -|seed-entry-counts - - -|" ]' "resume re-runs only the failed source, then the refresh and the entry counts"
+
+echo "rederive-from-test: the aggregate refresh"
+fresh cagg
+run FAIL_CAGG=1 LAKE_TIP=5000000 -- "${RANGE[@]}" -workers 2 -projected soroswap
+check '[ "$RC" -eq 6 ] && [ "$(calls seed-entry-counts)" -eq 0 ] && ! grep -q REDERIVE_COMPLETE "$LOG"' "a failed refresh ⇒ its exit code, no REDERIVE_COMPLETE"
+run LAKE_TIP=5000000 -- "${RANGE[@]}" -workers 2 -projected soroswap
+check '[ "$RC" -eq 0 ] && [ "$(cat "$OPSL" | tr "\n" "|")" = "trades-cagg-refresh 1000 5000000 -|seed-entry-counts - - -|" ]' "resume retries the refresh, out to the lake tip the rebuild reached"
+fresh nocagg
+run -- "${RANGE[@]}" -workers 2
+check '[ "$RC" -eq 0 ] && [ "$(calls trades-cagg-refresh)" -eq 0 ]' "no -projected source ⇒ no refresh"
 
 echo "rederive-from-test: one run per state dir"
 fresh locked
