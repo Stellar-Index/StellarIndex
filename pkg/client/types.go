@@ -1445,6 +1445,7 @@ type AccountOrg struct {
 // RWAHistoryView is the /v1/rwa/history payload: the RWA set valued daily on the reference basis; Assets sizes the WHOLE set, Members is the subset in the series, and each point's AssetsUnvalued is counted against Assets.
 type RWAHistoryView struct {
 	Basis       string `json:"basis"`
+	SupplyBasis string `json:"supply_basis,omitempty"`
 	Granularity string `json:"granularity"`
 	Timeframe   string `json:"timeframe"`
 	Quote       string `json:"quote"`

@@ -17,6 +17,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
 // GET /v1/rwa/history: the tokenized-real-world-asset set valued over time, on the reference basis.
@@ -25,7 +26,7 @@ import (
 // held to maturity and never trades); per-asset market-cap history is
 // /v1/chart?price_type=market_cap.
 //
-// A member's daily value is circulating supply x the day's closing oracle value. Supply is
+// A member's daily value is issued supply (mints less burns, not exclusion-netted) x the day's closing oracle value. Supply is
 // cumulated from `stellar.supply_flows` (keyed on the SAC address), not `supply_1d`, which holds no
 // RWA issuer. Price comes from `oracle_prices_1d` and is never carried: a silent oracle day drops
 // that member (see `assets_valued`). A day with no valued member has no point, since a zero cannot
@@ -58,6 +59,8 @@ type RWAHistoryView struct {
 	// figures are not — the same posture the point-in-time summary
 	// takes, because a total over time is no less in need of it.
 	Basis string `json:"basis"`
+	// SupplyBasis names the supply leg, in the vocabulary /v1/assets uses for `supply.basis`.
+	SupplyBasis string `json:"supply_basis,omitempty"`
 	// Granularity is the bucket width. Always "1d": both legs are daily
 	// and a finer grain would interpolate one of them.
 	Granularity string `json:"granularity"`
@@ -183,7 +186,7 @@ var rwaHistoryExcludedDetail = map[string]string{
 
 // rwaHistoryBasis is the prose on every response: what the number is, what it is not, and the two structural caveats a reader cannot
 // recover from the figures.
-const rwaHistoryBasis = "Circulating supply, reconstructed from the lake's complete mint/burn record, times the day's closing value published by an independent oracle for the real-world instrument each token declares it anchors to. It is NOT a market capitalisation: nobody was observed paying it, and the price and liquidity gates behind the market-cap column cannot check it. Membership is today's set applied backwards — an asset that qualifies now is valued back to its first mint. A day on which no member could be valued is absent from the series rather than plotted as zero."
+const rwaHistoryBasis = "Total issued supply per the lake's mint/burn record, times the day's closing value published by an independent oracle for the real-world instrument each token declares it anchors to. It is NOT a market capitalisation: nobody was observed paying it, and the price and liquidity gates behind the market-cap column cannot check it. The supply is every unit minted and not burned: it is NOT net of balances the issuer or a locked account holds, so it can sit above the circulating figure /v1/rwa/assets values the same asset on. Membership is today's set applied backwards — an asset that qualifies now is valued back to its first mint. A day on which no member could be valued is absent from the series rather than plotted as zero."
 
 const rwaHistoryBasisUnavailable = "No series is published: membership could not be established, or neither the supply-flow log nor the oracle day buckets answered. An empty chart would be a claim about the sector that the reads did not earn."
 
@@ -262,6 +265,7 @@ func (s *Server) handleRWAHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	view := RWAHistoryView{
 		Basis:       rwaHistoryBasis,
+		SupplyBasis: string(supply.BasisClassicLakeFlows),
 		Granularity: "1d",
 		Timeframe:   tf,
 		Quote:       rwaHistoryQuote.String(),

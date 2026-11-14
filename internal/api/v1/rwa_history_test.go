@@ -423,6 +423,10 @@ func TestRWAHistory_ValuesSupplyTimesTheDaysOracleClose(t *testing.T) {
 	if len(v.Points) != 2 {
 		t.Fatalf("points = %+v, want 2", v.Points)
 	}
+	// The supply leg is total issued, and the response must not call it circulating.
+	if v.SupplyBasis != "classic_lake_flows" || containsFold(v.Basis, "circulating supply,") || !containsFold(v.Basis, "not net of") {
+		t.Errorf("supply_basis = %q basis = %q, want the issued-total basis named", v.SupplyBasis, v.Basis)
+	}
 	if v.Points[0].ValueUSD != "21.40" {
 		t.Errorf("day 1 = %q, want 21.40 (20 × 1.07)", v.Points[0].ValueUSD)
 	}

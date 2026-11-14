@@ -3314,7 +3314,7 @@ export interface paths {
          *     that DO trade is at `/v1/chart?price_type=market_cap`.
          *
          *     HOW A DAY IS VALUED. One member's value on a day is its
-         *     circulating supply times that day's closing oracle value for its
+         *     issued supply times that day's closing oracle value for its
          *     bound instrument. The two legs come from different places and
          *     have different rights:
          *
@@ -3323,7 +3323,11 @@ export interface paths {
          *       Stellar Asset Contract address. Because the log records every
          *       event that can move the level, a day with no entry is a day
          *       the supply did not change — carrying the running total across
-         *       it is arithmetic, not extrapolation.
+         *       it is arithmetic, not extrapolation. It is the TOTAL ISSUED
+         *       (`supply_basis: classic_lake_flows`): units the issuer or a
+         *       locked account holds are not netted out, so a day's figure can
+         *       sit above the circulating supply `/v1/rwa/assets` values the
+         *       same asset on, and the two are not expected to agree.
          *     * PRICE is the closing observation in the day's
          *       `oracle_prices_1d` bucket for the `rwa:<CODE>` / `fiat:USD`
          *       feed. It is a sampled observation of a quantity that moves on
@@ -8610,6 +8614,15 @@ export interface components {
         RWAHistoryView: {
             /** @description What was measured, on which basis, and what it is not. */
             basis: string;
+            /**
+             * @description The supply leg of every point, in the vocabulary of
+             *     `/v1/assets` `supply.basis`. `classic_lake_flows` is mints
+             *     less burns and clawbacks: total issued, not net of
+             *     issuer-held or locked balances. Absent when no series is
+             *     published.
+             * @enum {string}
+             */
+            supply_basis?: "classic_lake_flows";
             /**
              * @description Bucket width. Always `1d`: both legs are daily, and a finer
              *     grain would interpolate one of them.
@@ -21494,7 +21507,8 @@ export interface operations {
                     /**
                      * @example {
                      *       "data": {
-                     *         "basis": "Circulating supply, reconstructed from the lake's complete mint/burn record, times the day's closing value published by an independent oracle for the real-world instrument each token declares it anchors to.",
+                     *         "basis": "Total issued supply per the lake's mint/burn record, times the day's closing value published by an independent oracle for the real-world instrument each token declares it anchors to.",
+                     *         "supply_basis": "classic_lake_flows",
                      *         "granularity": "1d",
                      *         "timeframe": "1y",
                      *         "quote": "fiat:USD",
