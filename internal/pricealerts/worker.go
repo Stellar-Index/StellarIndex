@@ -331,20 +331,21 @@ func (w *Worker) fire(ctx context.Context, a platform.PriceAlert, now time.Time,
 		cancel()
 		enqueued += again
 	}
-	if enqueued == 0 && err == nil {
-		// Every target belongs to a suspended or closed account. The alert stays disarmed, so later sweeps do not
-		// claim and re-arm it each tick.
-		w.logger.Info("price alert crossed but every delivery is withheld by account status",
-			"alert_id", a.ID, "account_id", a.AccountID, "targets", len(c.hooks))
-		return outcomeSuppressed, nil
-	}
-	if enqueued == 0 && err != nil {
+	if enqueued == 0 {
 		// CAS on the stamp the claim just wrote, on a fresh budget: the usual
 		// cause is the fan-out exhausting ctx, which would sink the re-arm too.
 		rearmCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), w.alertTimeout)
 		defer cancel()
-		if _, rerr := w.alerts.RearmPriceAlert(rearmCtx, a.ID, now); rerr != nil {
+		_, rerr := w.alerts.RearmPriceAlert(rearmCtx, a.ID, now)
+		if rerr != nil {
 			err = errors.Join(err, fmt.Errorf("re-arm after failed fan-out: %w", rerr))
+		}
+		if err == nil {
+			// Every target belongs to a suspended or closed account. Not a failure, and the alert is armed again:
+			// a suspension is reversible, and a reinstated customer is owed a crossing that still holds.
+			w.logger.Info("price alert crossed but every delivery is withheld by account status",
+				"alert_id", a.ID, "account_id", a.AccountID, "targets", len(c.hooks))
+			return outcomeSuppressed, nil
 		}
 	}
 	w.logger.Info("price alert fired",

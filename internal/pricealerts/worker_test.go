@@ -145,6 +145,8 @@ type fakeWebhooks struct {
 	enqErrFor map[uuid.UUID]error
 	// enqFailOnce fails the first EnqueueDelivery for the named webhook only.
 	enqFailOnce map[uuid.UUID]error
+	// enqCommitThenFail stores the first delivery for the named webhook and still reports an error.
+	enqCommitThenFail map[uuid.UUID]error
 }
 
 // suppressedErr stands in for the store's account-inactive refusal.
@@ -172,6 +174,12 @@ func (s *fakeWebhooks) EnqueueDelivery(_ context.Context, d platform.WebhookDeli
 			s.mu.Unlock()
 			return platform.ErrDeliveryAlreadyEnqueued
 		}
+	}
+	if err, ok := s.enqCommitThenFail[d.WebhookID]; ok {
+		delete(s.enqCommitThenFail, d.WebhookID)
+		s.enqueued = append(s.enqueued, d)
+		s.mu.Unlock()
+		return err
 	}
 	s.mu.Unlock()
 	if s.enqErr != nil {
@@ -314,7 +322,27 @@ func TestSweep_MissedWebhookIsRetriedWithoutDuplicates(t *testing.T) {
 	}
 }
 
-// A suspended account's refusal is not a failure: the sweep stays ok and the alert is not re-armed for another claim.
+// An enqueue that committed but reported an error is retried under the same delivery id, so the webhook gets one row.
+func TestSweep_CommittedButErroredEnqueueIsNotDuplicated(t *testing.T) {
+	acct := uuid.New()
+	hook := priceAlertWebhook(acct, true, string(platform.WebhookEventPriceAlert))
+	store, hooks := crossedSetup(acct, hook)
+	hooks.enqCommitThenFail = map[uuid.UUID]error{hook.ID: context.DeadlineExceeded}
+	w := buildWorker(store, hooks, fakePrices{price: "0.50", bucket: time.Date(2026, 7, 5, 11, 59, 0, 0, time.UTC), ok: true})
+
+	if got := w.sweepOnce(context.Background()); got != "ok" {
+		t.Fatalf("sweep outcome = %q, want ok", got)
+	}
+	if len(hooks.enqueued) != 1 {
+		t.Fatalf("%d delivery rows, want 1", len(hooks.enqueued))
+	}
+	if store.rearms != 0 {
+		t.Fatalf("re-arms = %d, want 0: the crossing was delivered", store.rearms)
+	}
+}
+
+// A suspended account's refusal is not a failure: the sweep stays ok, and the alert is armed again so the crossing
+// is delivered once the account is reinstated.
 func TestSweep_SuppressedAccountIsNotAnError(t *testing.T) {
 	acct := uuid.New()
 	hook := priceAlertWebhook(acct, true, string(platform.WebhookEventPriceAlert))
@@ -325,8 +353,8 @@ func TestSweep_SuppressedAccountIsNotAnError(t *testing.T) {
 	if got := w.sweepOnce(context.Background()); got != "ok" {
 		t.Fatalf("sweep outcome = %q, want ok", got)
 	}
-	if store.rearms != 0 {
-		t.Fatalf("re-arms = %d, want 0: a withheld alert stays disarmed", store.rearms)
+	if store.rearms != 1 {
+		t.Fatalf("re-arms = %d, want 1: a withheld crossing must fire after reinstatement", store.rearms)
 	}
 }
 

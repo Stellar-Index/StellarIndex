@@ -404,8 +404,9 @@ func (w *Worker) deliverOne(ctx context.Context, d platform.WebhookDelivery) {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, wh.URL, bytes.NewReader(d.Payload))
 	if err != nil {
-		// The customer-set URL is malformed; retrying cannot fix it.
-		w.markTerminal(ctx, d, fmt.Sprintf("build request: %v", err), "build_error")
+		// The customer-set URL is malformed; retrying cannot fix it. The parse error quotes the whole URL, so it is
+		// not stored: last_error is served to everyone on the account.
+		w.markTerminal(ctx, d, "invalid webhook URL", "build_error")
 		// No roundtrip happened; observe zero so the build_error bucket still populates.
 		obs.CustomerWebhookDeliveryDurationSeconds.WithLabelValues("build_error").Observe(0)
 		return
