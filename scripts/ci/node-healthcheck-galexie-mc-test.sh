@@ -58,8 +58,10 @@ chmod +x "$TMP"/bin/*
 
 run_check() {  # run_check MC_RC MC_STDOUT
   local mc_rc="$1" mc_out="$2"
+  : > "$TMP/mc-calls"
   cat > "$TMP/bin/mc" <<EOF
 #!/usr/bin/env bash
+echo "\$*" >> "$TMP/mc-calls"
 printf '%s' '$mc_out'
 exit $mc_rc
 EOF
@@ -76,6 +78,12 @@ if grep -q "mc ls local/galexie-live/ failed" "$TMP/stderr"; then
 else
   bad "mc failure was swallowed — stderr: $(cat "$TMP/stderr")"
 fi
+# A failed top-level listing names no partition; the whole bucket must not be listed instead.
+if grep -q -- "--recursive" "$TMP/mc-calls"; then
+  bad "a failed listing fell back to listing the whole bucket"
+else
+  ok "a failed listing lists nothing recursively"
+fi
 
 # Scenario 2: mc works, bucket genuinely has no matching objects yet —
 # must NOT regress into a false positive.
@@ -87,5 +95,39 @@ else
 fi
 
 echo
+# Scenario 3: a partitioned bucket. Only the newest partition is listed, and a
+# fresh object there passes; the whole bucket is never listed recursively.
+now_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+cat > "$TMP/bin/mc" <<EOF
+#!/usr/bin/env bash
+echo "\$*" >> "$TMP/mc-calls"
+fresh_object=FC1FCFF0--65024015.xdr.zst
+case "\$*" in
+  "ls --json local/galexie-live/")
+    echo '{"key":"FC20C9FF--64960000-65023999/"}'
+    echo '{"key":"FC1FCFFF--65024000-65087999/"}' ;;
+  "ls --json --recursive local/galexie-live/FC1FCFFF--65024000-65087999/")
+    printf '{"%s":"%s","lastModified":"$now_iso"}\n' key "\$fresh_object" ;;
+  *) echo '{"key":"OLD--1.xdr.zst","lastModified":"2020-01-01T00:00:00Z"}' ;;
+esac
+EOF
+chmod +x "$TMP/bin/mc"
+: > "$TMP/mc-calls"
+PATH="$TMP/bin:$PATH" HEALTHCHECK_PING_URL="http://example.invalid/ping" \
+  GALEXIE_WARMUP_SEC=1 GALEXIE_MAX_LAG_SEC=600 \
+  bash "$SCRIPT" 2>"$TMP/stderr" >"$TMP/stdout"
+if ! date -d "$now_iso" +%s >/dev/null 2>&1; then
+  echo "  skip freshness verdict: this date cannot parse -d (the script targets GNU date)"
+elif grep -q "galexie last upload" "$TMP/stderr"; then
+  bad "fresh object in the newest partition was reported stale — stderr: $(cat "$TMP/stderr")"
+else
+  ok "the newest partition's fresh object passes"
+fi
+if grep -qx "ls --json --recursive local/galexie-live/" "$TMP/mc-calls"; then
+  bad "the whole bucket was listed recursively"
+else
+  ok "only the newest partition is listed recursively"
+fi
+
 echo "node-healthcheck-galexie-mc-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

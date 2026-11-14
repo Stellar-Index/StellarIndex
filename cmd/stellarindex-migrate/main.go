@@ -24,11 +24,13 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/database"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 
@@ -105,9 +107,9 @@ func main() { //nolint:gocognit,gocyclo // dispatch-heavy; splitting would reduc
 		if len(args) < 2 {
 			die("force: requires a version number. Usage: force <version>")
 		}
-		v, err := strconv.Atoi(args[1])
-		if err != nil || v < 0 {
-			die("force: version must be a non-negative integer (got %s)", describeArg(args[1]))
+		v, err := forceTarget(*dir, args[1])
+		if err != nil {
+			die("force: %v", err)
 		}
 		if resolvedDSN == "" {
 			die("no DSN: set STELLARINDEX_POSTGRES_DSN or pass -dsn")
@@ -285,13 +287,39 @@ func cmdStatus(dir, dsn string) error {
 	v, dirty, err := m.Version()
 	if err != nil {
 		if errors.Is(err, migrate.ErrNilVersion) {
-			fmt.Println("current version: 0 (no migrations applied)")
+			fmt.Println("current version: none (no migrations applied)")
 			return nil
 		}
 		return err
 	}
 	fmt.Printf("current version: %d (dirty=%v)\n", v, dirty)
 	return nil
+}
+
+// forceTarget resolves force's argument: "none" is the nothing-applied state, and a number must name a migration file,
+// because a stored version with no file makes every later `up` fail.
+func forceTarget(dir, arg string) (int, error) {
+	if arg == "none" {
+		return database.NilVersion, nil
+	}
+	v, err := strconv.Atoi(arg)
+	if err != nil || v < 0 {
+		return 0, fmt.Errorf("version must be a migration number or \"none\" (got %s)", describeArg(arg))
+	}
+	ups, err := filepath.Glob(filepath.Join(dir, "*.up.sql"))
+	if err != nil {
+		return 0, err
+	}
+	for _, f := range ups {
+		num, _, _ := strings.Cut(filepath.Base(f), "_")
+		if n, err := strconv.Atoi(num); err == nil && n == v {
+			return v, nil
+		}
+	}
+	if v == 0 {
+		return 0, errors.New("there is no migration 0; for the nothing-applied state use `force none`")
+	}
+	return 0, fmt.Errorf("no migration %d in %s; a forced version with no file makes every later `up` fail", v, dir)
 }
 
 // cmdForce sets the schema_migrations.version row to `v` and clears the dirty flag. Dangerous: only after confirming the DB's actual
@@ -305,6 +333,10 @@ func cmdForce(dir, dsn string, v int) error {
 
 	if err := m.Force(v); err != nil {
 		return err
+	}
+	if v == database.NilVersion {
+		fmt.Println("forced to none: no migrations applied (dirty=false)")
+		return nil
 	}
 	fmt.Printf("forced to version %d (dirty=false)\n", v)
 	return nil
@@ -389,9 +421,11 @@ Subcommands:
                   pass -yes to skip it (required when stdin is not a
                   TTY).
   status          Show current applied version.
-  force <V>       Clear dirty flag + set version to V (DANGEROUS —
+  force <V|none>  Clear dirty flag + set version to V (DANGEROUS —
                   manually verify the DB's actual schema matches V
-                  first; only use after partial-apply recovery).
+                  first; only use after partial-apply recovery). V
+                  must be a migration in -dir; "none" is the
+                  nothing-applied state.
   version         Build version.
   help            This help.
 

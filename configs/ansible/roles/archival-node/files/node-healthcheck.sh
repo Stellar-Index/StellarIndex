@@ -125,10 +125,23 @@ if [ "$g_age" -gt "$GALEXIE_WARMUP_SEC" ]; then
   # to a file and `head` reads it back: with pipefail, `sort -r | head -1` makes
   # sort die on EPIPE once the listing exceeds the pipe buffer, logging "Broken
   # pipe" every run. pipefail still lets us read mc's exit code below.
-  mc ls --json --recursive local/galexie-live/ 2>/dev/null \
-    | jq -r 'select(.key | test("\\.xdr\\.zst$")) | .lastModified' 2>/dev/null \
-    | sort -r > /tmp/galexie-live-mtimes.txt
-  mc_rc=$?
+  # Only the partition with the highest range end is listed: the bucket holds one
+  # object per ledger with no expiry, and a whole-bucket listing outlasts the lag
+  # threshold, so the listing itself read as a stuck captive-core.
+  newest_partition=$(mc ls --json local/galexie-live/ 2>/dev/null \
+    | jq -rs 'map(select(.key | test("--[0-9]+-[0-9]+/$")))
+              | max_by(.key | capture("-(?<e>[0-9]+)/$").e | tonumber) | .key // empty' 2>/dev/null)
+  top_rc=$?
+  # No partition named (empty bucket, or the listing failed): never fall back to the whole bucket.
+  : > /tmp/galexie-live-mtimes.txt
+  mc_rc=$top_rc
+  if [ -n "$newest_partition" ]; then
+    mc ls --json --recursive "local/galexie-live/${newest_partition}" 2>/dev/null \
+      | jq -r 'select(.key | test("\\.xdr\\.zst$")) | .lastModified' 2>/dev/null \
+      | sort -r > /tmp/galexie-live-mtimes.txt
+    mc_rc=$?
+    [ "$top_rc" -ne 0 ] && mc_rc=$top_rc
+  fi
   last_iso=$(head -1 /tmp/galexie-live-mtimes.txt)
   if [ -n "$last_iso" ]; then
     last_epoch=$(date -d "$last_iso" +%s 2>/dev/null || echo 0)
