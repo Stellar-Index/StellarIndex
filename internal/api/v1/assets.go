@@ -2165,9 +2165,12 @@ func (s *Server) serveCatalogueUnifiedPage(
 		}
 		nextInner := classic.next
 		env.Data = append(page, classic.rows...)
-		env.Flags.Stale = unmeasured || classic.stale()
-		env.Flags.Degraded = env.Flags.Degraded || classic.stale() || anyDirectoryUnchecked(classic.rows)
-		env.AsOf = classic.asOf()
+		// A fill that added no row does not date or stale the catalogue rows above it.
+		if len(classic.rows) > 0 {
+			env.Flags.Stale = unmeasured || classic.stale()
+			env.Flags.Degraded = env.Flags.Degraded || classic.stale() || anyDirectoryUnchecked(classic.rows)
+			env.AsOf = classic.asOf()
+		}
 		if nextInner != "" {
 			env.Pagination = &Pagination{Next: "classic:" + nextInner}
 		} else {
