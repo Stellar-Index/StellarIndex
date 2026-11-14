@@ -17,3 +17,7 @@
 # operation leaves an un-merged duplicate part that inflates count()
 # until a background merge. Keeping this file empty is the goal, not an
 # accident.
+test/integration/clickhouse_accounts_test.go:stellar.transactions  counts the physical versions of each key: the precondition that both versions exist before FINAL is tested
+test/integration/clickhouse_accounts_test.go:stellar.operations  counts the physical versions of each key: the precondition that both versions exist before FINAL is tested
+test/integration/clickhouse_lake_test.go:stellar.account_movements  asserts the physical rows one fixture insert wrote; FINAL would hide a writer that emits a row twice
+test/integration/clickhouse_rollups_test.go:stellar.movements_by_asset  asserts the catch-up wrote no physical row for a stale key

@@ -54,6 +54,17 @@ echo "$*" >> "$STUB_MC_CALLS"
 target="${*: -1}"
 case "$1" in
   ls)
+    # A per-partition object count: one object upstream, and one locally
+    # once the partition is listed as present or has been mirrored.
+    case " $* " in *" --recursive "*)
+      for a in "$@"; do case "$a" in */*) path="$a" ;; esac; done
+      part="${path%/}"; part="${part##*/}"
+      case "$path" in
+        aws-public/*) echo obj ;;
+        *) { grep -qF "$part" "$STUB_LOCAL_LIST" || grep -qxF "$path" "$STUB_MIRRORED"; } 2>/dev/null && echo obj ;;
+      esac
+      exit 0 ;;
+    esac
     case "$target" in
       aws-public/*/pubnet/) cat "$STUB_AWS_LIST" ;;
       "${STUB_DEST:-local/galexie-archive}/") cat "$STUB_LOCAL_LIST" ;;
@@ -127,6 +138,7 @@ func (h *fillHarness) run(t *testing.T, script string, extra ...string) (string,
 		{"/var/log/galexie-mirror.log", filepath.Join(h.dir, "fill.log"), script == fillScript},
 		{"/etc/default/galexie-archive-fill", filepath.Join(h.dir, "no-such-defaults"), script == fillScript},
 		{"/var/lib/galexie-archive/hot-floor", h.floorFile, false},
+		{"/var/lib/galexie-archive/fill-pending", filepath.Join(h.dir, "state", "fill-pending"), script == fillScript},
 		{"/run/lock/galexie-archive-fill.lock", h.lock, false},
 	} {
 		if p.required && !strings.Contains(body, p.host) {

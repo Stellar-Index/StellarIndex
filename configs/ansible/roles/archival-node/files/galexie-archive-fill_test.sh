@@ -4,7 +4,9 @@
 # mirror go through the bucket-scoped writer alias (no delete), only the
 # operator PARTIALS delete uses the separately named delete alias, an
 # operator-set ARCHIVE_DEST keeps its own alias for both, and an unresolvable
-# alias fails the run before it mirrors or deletes anything.
+# alias fails the run before it mirrors or deletes anything. Also pins the
+# pending list: a partition whose mirror was not confirmed complete is retried
+# by the next run, and one behind the tip that stays short fails the run.
 #
 # Runs a copy of the real script with its root-owned paths and lock rewritten
 # into a temp dir, beside the defaults file 07-galexie.yml renders, against a
@@ -26,6 +28,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/bin"
 PART=FC42F7FF--62720000-62783999
+OLD=FC43F1FF--62656000-62719999
 
 # The copy under test: root-owned paths into $TMP, and the flock block
 # dropped (fd-variable redirection needs bash 4.1; the lock is not under test).
@@ -34,10 +37,11 @@ sed -e "s#/var/log/galexie-mirror.log#$TMP/mirror.log#" \
     -e "s#/run/lock/galexie-archive-fill.lock#$TMP/fill.lock#" \
     -e "s#/etc/default/galexie-archive-fill#$TMP/default#g" \
     -e "s#/var/lib/galexie-archive/hot-floor#$TMP/hot-floor#" \
+    -e "s#/var/lib/galexie-archive/fill-pending#$TMP/fill-pending#" \
     -e 's#^exec {lock_fd}>"\$LOCK"$#:#' \
     -e 's#^if ! flock -n "\$lock_fd"; then$#if false; then#' \
     "$SCRIPT" > "$TMP/fill.sh"
-for want in "$TMP/mirror.log" "$TMP/fill.lock" "$TMP/default" "$TMP/hot-floor" '^:$' '^if false; then$'; do
+for want in "$TMP/mirror.log" "$TMP/fill.lock" "$TMP/default" "$TMP/hot-floor" "$TMP/fill-pending" '^:$' '^if false; then$'; do
   grep -q -- "$want" "$TMP/fill.sh" || { echo "FAIL: rewrite of the script copy missed '$want' — update this test"; exit 1; }
 done
 
@@ -51,7 +55,9 @@ grep -q 'ARCHIVE_DEST=archivewriter/galexie-archive' "$TMP/default" \
   || { echo "FAIL: rendered defaults lack the writer ARCHIVE_DEST — update this test"; exit 1; }
 
 # Stub mc: logs every call; an alias outside $MC_ALIASES does not resolve.
-# The AWS bucket holds one partition of 3 objects; the archive holds none.
+# The AWS bucket holds $MC_AWS_PARTS, 3 objects each. The archive holds what
+# $MC_STATE records: one file per mirrored partition, its content the object
+# count that mirror left ($MC_MIRROR = full, short or fail).
 cat > "$TMP/bin/mc" <<'EOF'
 #!/usr/bin/env bash
 echo "$*" >> "$MC_CALLS"
@@ -62,10 +68,24 @@ case "$1" in
     target="${*: -1}"
     known "$target" || { echo "mc: <ERROR> alias not found" >&2; exit 1; }
     case "$target" in
-      aws-public/*/pubnet/) echo "[2026-09-30 00:00:00 UTC]     0B $PART/" ;;
+      aws-public/*/pubnet/) for p in $MC_AWS_PARTS; do echo "[2026-09-30 00:00:00 UTC]     0B $p/"; done ;;
       aws-public/*) printf 'obj1\nobj2\nobj3\n' ;;
+      */galexie-archive/) for f in "$MC_STATE"/*; do [ -e "$f" ] && echo "[2026-09-30 00:00:00 UTC]     0B ${f##*/}/"; done ;;
+      */galexie-archive/*/)
+        p=${target%/}; p=${p##*/}
+        [ -e "$MC_STATE/$p" ] && seq 1 "$(cat "$MC_STATE/$p")" ;;
     esac ;;
-  mirror | rm) known "${*: -1}" || exit 1 ;;
+  mirror)
+    known "${*: -1}" || exit 1
+    p=${*: -1}; p=${p%/}; p=${p##*/}
+    case "$MC_MIRROR" in
+      fail) exit 1 ;;
+      short) echo 1 > "$MC_STATE/$p" ;;
+      *) echo 3 > "$MC_STATE/$p" ;;
+    esac ;;
+  rm)
+    known "${*: -1}" || exit 1
+    p=${*: -1}; p=${p%/}; rm -f "$MC_STATE/${p##*/}" ;;
 esac
 exit 0
 EOF
@@ -95,7 +115,9 @@ fi
 run() {
   local aliases=$1; shift
   : > "$TMP/calls"
-  env PATH="$TMP/bin:$PATH" MC_CALLS="$TMP/calls" MC_ALIASES="$aliases" PART="$PART" \
+  mkdir -p "$TMP/state"
+  env PATH="$TMP/bin:$PATH" MC_CALLS="$TMP/calls" MC_ALIASES="$aliases" \
+    MC_AWS_PARTS="${AWS_PARTS:-$PART}" MC_STATE="$TMP/state" MC_MIRROR="${MIRROR:-full}" \
     TMPDIR="$TMP" PARTIAL_CHECK_WINDOW=1 "$@" \
     bash "$TMP/fill.sh" > "$TMP/stdout" 2> "$TMP/stderr"
   rc=$?
@@ -109,6 +131,9 @@ else bad "no mirror to archivewriter/galexie-archive/$PART/"; fi
 if grep -q 'local/' "$TMP/calls"; then bad "used the root alias: $(grep -m1 'local/' "$TMP/calls")"
 else ok "no call through the local (root) alias"; fi
 if grep -q '^rm ' "$TMP/calls"; then bad "timer run deleted"; else ok "no delete"; fi
+
+if [ -s "$TMP/fill-pending" ]; then bad "a confirmed partition stayed pending: $(cat "$TMP/fill-pending")"
+else ok "confirmed partition leaves the pending list"; fi
 
 echo "2. writer alias missing: fail before any mirror"
 run "aws-public local"
@@ -136,6 +161,43 @@ if grep -q "^rm --recursive --force other/galexie-archive/$PART/\$" "$TMP/calls"
 else bad "no rm via other/galexie-archive/$PART/"; fi
 if grep -qE '(local|archivewriter)/' "$TMP/calls"; then bad "left the operator's store: $(grep -m1 -E '(local|archivewriter)/' "$TMP/calls")"
 else ok "no call outside other/"; fi
+
+W="aws-public local archivewriter"
+reset() { rm -rf "$TMP/state" "$TMP/fill-pending"; }
+
+echo "6. a short mirror behind the tip fails the run and stays pending"
+reset
+AWS_PARTS="$PART $OLD" MIRROR=short run "$W"
+if [ "$rc" -ne 0 ]; then ok "exit $rc"; else bad "exit 0 with $OLD short"; fi
+if grep -qx "$OLD" "$TMP/fill-pending"; then ok "$OLD is pending"; else bad "pending list lacks $OLD: $(cat "$TMP/fill-pending" 2>&1)"; fi
+
+echo "7. the next run retries a pending partition the presence diff calls present"
+AWS_PARTS="$PART $OLD" run "$W"
+if [ "$rc" -eq 0 ]; then ok "exit 0"; else bad "exit $rc: $(tail -3 "$TMP/stderr")"; fi
+if grep -q "^mirror .* archivewriter/galexie-archive/$OLD/\$" "$TMP/calls"; then ok "mirrored $OLD again"
+else bad "$OLD was not mirrored again"; fi
+if [ -s "$TMP/fill-pending" ]; then bad "still pending: $(cat "$TMP/fill-pending")"; else ok "pending list is empty"; fi
+
+echo "8. a short tip partition is not a failure, but is retried"
+reset
+MIRROR=short run "$W"
+if [ "$rc" -eq 0 ]; then ok "exit 0"; else bad "exit $rc: $(tail -3 "$TMP/stderr")"; fi
+if grep -qx "$PART" "$TMP/fill-pending"; then ok "tip partition is pending"; else bad "tip partition not pending"; fi
+
+echo "9. a mirror that exits non-zero fails the run and stays pending"
+reset
+AWS_PARTS="$PART $OLD" MIRROR=fail run "$W"
+if [ "$rc" -ne 0 ]; then ok "exit $rc"; else bad "exit 0 after every mirror failed"; fi
+if grep -qx "$OLD" "$TMP/fill-pending"; then ok "$OLD is pending"; else bad "pending list lacks $OLD"; fi
+
+echo "10. a run killed before the mirror left its list behind"
+reset
+mkdir -p "$TMP/state"; echo 1 > "$TMP/state/$OLD"; echo 3 > "$TMP/state/$PART"
+echo "$OLD" > "$TMP/fill-pending"
+AWS_PARTS="$PART $OLD" run "$W"
+if [ "$rc" -eq 0 ]; then ok "exit 0"; else bad "exit $rc: $(tail -3 "$TMP/stderr")"; fi
+if grep -q "^mirror .* archivewriter/galexie-archive/$OLD/\$" "$TMP/calls"; then ok "resumed $OLD"
+else bad "$OLD was not resumed"; fi
 
 echo
 echo "passed: $pass  failed: $fail"

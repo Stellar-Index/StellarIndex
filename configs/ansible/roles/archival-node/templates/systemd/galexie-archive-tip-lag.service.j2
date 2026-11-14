@@ -17,8 +17,9 @@
 [Unit]
 Description=Stellar Index — galexie-archive tip-lag metric updater (538d0e752)
 Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive.md#stellarindex_galexie_archive_tip_lag_metric_stale
+# After= only: Wants= would make every 5-minute tick start a MinIO an
+# operator stopped for maintenance. With it down the probe reports failure.
 After=minio.service
-Wants=minio.service
 
 [Service]
 Type=oneshot

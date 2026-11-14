@@ -1,7 +1,8 @@
 [Unit]
 Description=Stellar Index — ClickHouse Tier-1 live fan-out catch-up (ADR-0034)
+# After= only: Wants= would make every 10-minute tick start a ClickHouse an
+# operator stopped for maintenance. With the server down the run fails.
 After=clickhouse-server.service network-online.target
-Wants=clickhouse-server.service
 
 [Service]
 Type=oneshot

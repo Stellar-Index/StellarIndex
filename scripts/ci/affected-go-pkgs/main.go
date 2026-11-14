@@ -39,6 +39,44 @@ var fullPrefixes = []string{"migrations/", "deploy/", "openapi/", "configs/", "t
 // they agree, so any change outside a Go package runs it.
 const wiringPkg = "test/controlwiring"
 
+// moneyGuardPkg holds the tree-wide money guards: its tests load every
+// package, so a narrowing in any production file is theirs to catch.
+const moneyGuardPkg = "internal/canonical"
+
+// withMoneyGuards adds the guard package alone: marking it touched would
+// select every package that imports it.
+func withMoneyGuards(pkgs []string) ([]string, error) {
+	out, err := cmdOutput("go", "list", "./"+moneyGuardPkg)
+	if err != nil {
+		return nil, err
+	}
+	guard := strings.TrimSpace(out)
+	for _, p := range pkgs {
+		if p == guard {
+			return pkgs, nil
+		}
+	}
+	pkgs = append(pkgs, guard)
+	sort.Strings(pkgs)
+	return pkgs, nil
+}
+
+// touchesProductionGo reports whether any file is non-test Go under the
+// trees the money guards walk.
+func touchesProductionGo(files []string) bool {
+	for _, f := range files {
+		if !strings.HasSuffix(f, ".go") || strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		for _, p := range []string{"internal/", "cmd/", "pkg/"} {
+			if strings.HasPrefix(f, p) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func main() {
 	files := flag.Bool("files", false, "print substantive changed files instead of packages")
 	worktree := flag.Bool("worktree", false, "diff BASE_SHA against the working tree, untracked files included, instead of HEAD")
@@ -81,6 +119,11 @@ func run(base string, filesMode, worktree bool) error {
 	pkgs, err := dependents(dirs)
 	if err != nil {
 		return err
+	}
+	if touchesProductionGo(substantive) {
+		if pkgs, err = withMoneyGuards(pkgs); err != nil {
+			return err
+		}
 	}
 	for _, p := range pkgs {
 		fmt.Println(p)

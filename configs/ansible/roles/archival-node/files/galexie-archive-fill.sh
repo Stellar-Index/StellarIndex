@@ -60,6 +60,10 @@ if [ -e "$ARCHIVE_HOT_FLOOR_FILE" ]; then
   fi
 fi
 PARTIAL_CHECK_WINDOW="${PARTIAL_CHECK_WINDOW:-4}"
+# Partitions queued for a mirror that was not confirmed complete. A killed run
+# or a short mirror leaves them here and the next run takes them up again;
+# the presence diff and the newest-N count check would both pass them over.
+PENDING_FILE=/var/lib/galexie-archive/fill-pending
 
 # Destination as <mc-alias>/<bucket>[/<prefix>], e.g. a regional node filling
 # a remote object store. It prefixes `mc rm --recursive --force`, so a value
@@ -197,10 +201,14 @@ mc ls "$ARCHIVE_DEST/" \
   | awk '{print $NF}' | sed 's:/$::' | sort > "$WORK/local.txt"
 comm -23 "$WORK/aws.txt" "$WORK/local.txt" \
   > "$WORK/missing.txt"
-# needs-work = MISSING + INCOMPLETE (Phase 1b), unioned directly and mirrored
-# incrementally.
+# needs-work = MISSING + INCOMPLETE (Phase 1b) + PENDING (unconfirmed by an
+# earlier run), unioned directly and mirrored incrementally.
 touch "$WORK/incomplete.txt"
-sort -u "$WORK/missing.txt" "$WORK/incomplete.txt" \
+: > "$WORK/pending.txt"
+if [ -s "$PENDING_FILE" ]; then
+  valid_partitions < "$PENDING_FILE" > "$WORK/pending.txt"
+fi
+sort -u "$WORK/missing.txt" "$WORK/incomplete.txt" "$WORK/pending.txt" \
   > "$WORK/needs-work.unfloored.txt"
 # Drop partitions entirely below the hot floor — those are trimmed on
 # purpose, not missing. A partition STRADDLING the floor stays eligible.
@@ -219,7 +227,17 @@ echo "  AWS partitions: $(wc -l < "$WORK/aws.txt")" | tee -a "$LOG"
 echo "  local partitions present: $(wc -l < "$WORK/local.txt")" | tee -a "$LOG"
 echo "  missing entirely: $(wc -l < "$WORK/missing.txt")" | tee -a "$LOG"
 echo "  incomplete (queued by Phase 1b): $(wc -l < "$WORK/incomplete.txt")" | tee -a "$LOG"
+echo "  pending from an earlier run: $(wc -l < "$WORK/pending.txt")" | tee -a "$LOG"
 echo "  needs work (total): $(wc -l < "$WORK/needs-work.txt")" | tee -a "$LOG"
+
+# save_pending <file>: replace the pending list in one rename.
+save_pending() {
+  mkdir -p "$(dirname "$PENDING_FILE")"
+  cp "$1" "$PENDING_FILE.new"
+  mv "$PENDING_FILE.new" "$PENDING_FILE"
+}
+# Recorded before the first copy, so a run killed mid-mirror is resumed.
+save_pending "$WORK/needs-work.txt"
 
 echo "=== $(date -Iseconds) Phase 3: mirror per-partition (parallel=$PARALLEL) ===" | tee -a "$LOG"
 # Partitions here are missing or incomplete; `mc mirror` copies only absent
@@ -237,13 +255,40 @@ xargs -r -a "$WORK/needs-work.txt" -d '\n' -P "$PARALLEL" -n 1 bash -c '
     exit 1
   fi
   echo "==> $(date -Iseconds) $p" >> "$log"
+  rc=0
   mc mirror --skip-errors \
     "aws-public/aws-public-blockchain/v1.1/stellar/ledgers/pubnet/$p/" \
-    "$dest/$p/" >> "$log" 2>&1
-  echo "<== $(date -Iseconds) $p" >> "$log"
-' mirror-partition "$LOG" "$PARTITION_RE" "$ARCHIVE_DEST"
+    "$dest/$p/" >> "$log" 2>&1 || rc=$?
+  echo "<== $(date -Iseconds) $p rc=$rc" >> "$log"
+  exit "$rc"
+' mirror-partition "$LOG" "$PARTITION_RE" "$ARCHIVE_DEST" \
+  || echo "  one or more mirrors exited non-zero (xargs $?); Phase 4 decides what is complete" | tee -a "$LOG"
+
+# Phase 4: a mirror's exit code is not evidence (--skip-errors passes over a
+# failed object), so every partition worked on is counted against AWS.
+echo "=== $(date -Iseconds) Phase 4: confirm mirrored partitions ===" | tee -a "$LOG"
+: > "$WORK/still.txt"
+: > "$WORK/still-old.txt"
+# The newest partitions are still being written upstream; falling short there is not a fault.
+head -n "$(( PARTIAL_CHECK_WINDOW > 0 ? PARTIAL_CHECK_WINDOW : 1 ))" "$WORK/aws.txt" > "$WORK/tip.txt"
+while read -r p; do
+  [ -z "$p" ] && continue
+  aws_n=$(aws_ls "aws-public-blockchain/v1.1/stellar/ledgers/pubnet/$p/" --recursive | wc -l)
+  local_n=$(mc ls --recursive "$ARCHIVE_DEST/$p/" 2>/dev/null | wc -l)
+  if [ "$local_n" -lt "$aws_n" ]; then
+    echo "  still incomplete: $p  local=$local_n  aws=$aws_n  -> stays pending" | tee -a "$LOG"
+    echo "$p" >> "$WORK/still.txt"
+    grep -qxF "$p" "$WORK/tip.txt" || echo "$p" >> "$WORK/still-old.txt"
+  fi
+done < "$WORK/needs-work.txt"
+save_pending "$WORK/still.txt"
 
 report_rejected
+
+if [ -s "$WORK/still-old.txt" ]; then
+  echo "galexie-archive-fill: FAILED — $(wc -l < "$WORK/still-old.txt") partition(s) behind the tip are still incomplete after the mirror; they stay in $PENDING_FILE and the next run retries them. See $LOG." | tee -a "$LOG" >&2
+  exit 1
+fi
 
 echo "=== $(date -Iseconds) Done ===" | tee -a "$LOG"
 echo "Next: stellarindex-ops verify-archive -tier all -from 2 -to <last-mirrored-ledger>" | tee -a "$LOG"

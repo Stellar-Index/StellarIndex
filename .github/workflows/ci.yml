@@ -1632,6 +1632,15 @@ jobs:
         # disarming every tip-lag threshold. Runs the shipped script against
         # a stubbed mc. No MinIO, no systemd.
         run: ./scripts/ci/galexie-archive-tip-lag-test.sh
+      - name: Operator-script self-tests no other job runs
+        # Each drives the shipped script against stubs in a temp dir. No
+        # MinIO, no network, no systemd.
+        run: |
+          bash configs/ansible/roles/archival-node/files/galexie-archive-fill_test.sh
+          bash configs/ansible/roles/archival-node/files/compute-archive-to_test.sh
+          bash configs/ansible/roles/archival-node/files/galexie-append_test.sh
+          bash scripts/ops/route-sweep-test.sh
+          bash scripts/ops/reconcile-supply-vs-horizon-test.sh
       - name: API-smoke textfile self-test
         # stellarindex-smoke.timer ran a 34-GET API smoke with jq shape
         # assertions every 5 minutes and reported to NOTHING:

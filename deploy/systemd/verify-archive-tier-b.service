@@ -147,7 +147,9 @@ ProtectControlGroups=true
 # (10-observability.yml) and lives under /var, which ProtectSystem=full
 # already leaves writable; listed explicitly so the write surface this
 # unit needs is stated rather than inferred.
-ReadWritePaths=/var/lib/node_exporter/textfile_collector
+# "-": a host without node_exporter has no such directory, and a missing
+# non-optional path fails the unit with 226/NAMESPACE before it runs.
+ReadWritePaths=-/var/lib/node_exporter/textfile_collector
 
 # With Type=notify + WatchdogSec=1h, TimeoutStartSec only governs the time
 # the binary has to send READY=1 (fires immediately on startup). The walk

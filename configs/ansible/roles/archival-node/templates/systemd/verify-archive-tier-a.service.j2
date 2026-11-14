@@ -133,7 +133,7 @@ ProtectControlGroups=true
 # (10-observability.yml) and lives under /var, which ProtectSystem=full
 # already leaves writable; listed explicitly so the write surface this
 # unit needs is stated rather than inferred.
-ReadWritePaths=/var/lib/node_exporter/textfile_collector
+ReadWritePaths=-/var/lib/node_exporter/textfile_collector
 
 # With Type=notify + WatchdogSec=1h above, TimeoutStartSec governs
 # the time until READY=1: the lock wait (HEAVY_JOB_LOCK_WAIT=72000)

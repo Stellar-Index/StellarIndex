@@ -22,6 +22,10 @@
 #     is CAUGHT;
 #   - a GROUP BY over HALF the operations identity is CAUGHT — a
 #     partial key is not a collapse;
+#   - a sum() beside a uniqExact, under a GROUP BY on the identity, under
+#     SELECT DISTINCT or LIMIT 1 BY is CAUGHT: none collapses its input;
+#   - COUNT(*), countState(), sumKahan() and a lowercase statement are
+#     CAUGHT, and so is a sum() over the three amount tables;
 #   - the five per-entity detail readers' shape is NOT flagged, nor is
 #     a max()-only rollup, nor a count() above a collapsing subquery,
 #     nor a SELECT DISTINCT sample, nor prose;
@@ -213,17 +217,68 @@ GO
 catches "a GROUP BY over HALF the operations identity is caught" "$partial" stellar.operations
 
 # The same shape on transactions, where (ledger_seq, tx_index) IS the
-# whole identity, must pass — otherwise the gate is just banning GROUP BY.
+# whole identity, passes when it picks one version per key — otherwise the
+# gate is just banning GROUP BY.
 whole="$(mk whole)"
 cat > "$whole/$GODIR/whole.go" <<'GO'
 package clickhouse
 
-const perTxFees = `SELECT ledger_seq, tx_index, argMax(fee_charged, ingested_at) AS fee, count() AS n
+const perTxFees = `SELECT ledger_seq, tx_index, argMax(fee_charged, ingested_at) AS fee
 		FROM stellar.transactions
 		WHERE ledger_seq BETWEEN ? AND ?
 		GROUP BY ledger_seq, tx_index`
 GO
 check "a GROUP BY over the WHOLE transactions identity passes" 0 "$whole"
+
+# ── nothing beside the aggregate collapses its input ─────────────────
+# Each of these passed the gate once. A group holds every version of its
+# key, DISTINCT and LIMIT BY run after aggregation, and an exact uniq says
+# nothing about the sum next to it.
+probe() { # probe <name> <desc> <table> <sql>
+  local d
+  d="$(mk "$1")"
+  printf '%s\n' "$4" > "$d/$SQLDIR/probe.sql"
+  catches "$2" "$d" "$3"
+}
+probe grp_sum "a sum() grouped on the identity is caught" stellar.transactions \
+  'SELECT ledger_seq, tx_index, sum(fee_charged) AS fees FROM stellar.transactions WHERE ledger_seq > 1 GROUP BY ledger_seq, tx_index;'
+probe grp_ver "a GROUP BY that adds the version column is caught" stellar.transactions \
+  'SELECT sum(fee_charged) AS fees FROM stellar.transactions WHERE ledger_seq > 1 GROUP BY ledger_seq, tx_index, ingested_at;'
+probe uniq_sum "a sum() beside a uniqExact over the identity is caught" stellar.transactions \
+  'SELECT uniqExact(ledger_seq, tx_index) AS txs, sum(fee_charged) AS fees FROM stellar.transactions WHERE ledger_seq > 1;'
+probe distinct "an aggregate under SELECT DISTINCT is caught" stellar.operations \
+  'SELECT DISTINCT count() AS n FROM stellar.operations WHERE ledger_seq > 1;'
+probe limitby "an aggregate with LIMIT 1 BY the identity is caught" stellar.operations \
+  'SELECT ledger_seq, tx_index, op_index, count() AS n FROM stellar.operations GROUP BY ledger_seq, tx_index, op_index LIMIT 1 BY ledger_seq, tx_index, op_index;'
+
+# ── SQL is case-insensitive and aggregates take suffixes ─────────────
+probe upper "COUNT(*) is caught" stellar.operations \
+  'SELECT COUNT(*) FROM stellar.operations WHERE ledger_seq > 1;'
+probe uppersum "SUM() is caught" stellar.transactions \
+  'SELECT SUM(fee_charged) FROM stellar.transactions WHERE ledger_seq > 1;'
+probe state "countState() is caught" stellar.operations \
+  'SELECT source_account, countState() AS n FROM stellar.operations GROUP BY source_account;'
+probe kahan "sumKahan() is caught" stellar.transactions \
+  'SELECT sumKahan(fee_charged) FROM stellar.transactions WHERE ledger_seq > 1;'
+probe lower "a lowercase statement is caught" stellar.operations \
+  'select count() from stellar.operations where ledger_seq > 1;'
+
+# ── the amount tables are archives too ───────────────────────────────
+probe flows "a sum() over supply_flows is caught" stellar.supply_flows \
+  'SELECT contract_id, sum(amount) FROM stellar.supply_flows GROUP BY contract_id;'
+probe moves "a sum() over account_movements is caught" stellar.account_movements \
+  'SELECT address, sum(amount) FROM stellar.account_movements GROUP BY address;'
+probe byasset "a count() over movements_by_asset is caught" stellar.movements_by_asset \
+  'SELECT asset, count() FROM stellar.movements_by_asset GROUP BY asset;'
+
+quiet="$(mk quiet_forms)"
+cat > "$quiet/$SQLDIR/probe.sql" <<'SQL'
+SELECT countDistinct(ledger_seq, tx_index) FROM stellar.transactions WHERE ledger_seq > 1;
+SELECT COUNT(DISTINCT tx_hash) FROM stellar.transactions WHERE ledger_seq > 1;
+SELECT contract_id, sum(amount) FROM stellar.supply_flows FINAL GROUP BY contract_id;
+SELECT sum(fee) FROM (SELECT argMax(fee_charged, ingested_at) AS fee FROM stellar.transactions GROUP BY ledger_seq, tx_index);
+SQL
+check "countDistinct, FINAL and the two-level form pass" 0 "$quiet"
 
 # ── the collapse belongs to ONE query block ──────────────────────────
 # A UNION arm that collapses must not excuse the arm beside it: block
