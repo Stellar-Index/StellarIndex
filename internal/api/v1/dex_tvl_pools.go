@@ -243,7 +243,7 @@ func (s *Server) handleProtocolTVL(w http.ResponseWriter, r *http.Request) {
 	}
 	snap, ok := s.DEXTVL.Protocol(meta.Name)
 	if !ok {
-		if reason, down := s.DEXTVL.Unavailable(meta.Name); down {
+		if reason, down := s.DEXTVL.Unavailable(meta.Name); down && reason != dexTVLUnavailableNotWired {
 			writeProblem(w, r,
 				"https://api.stellarindex.io/errors/protocol-tvl-not-derived",
 				"No TVL figure for this protocol this cycle", http.StatusNotFound,
@@ -255,6 +255,9 @@ func (s *Server) handleProtocolTVL(w http.ResponseWriter, r *http.Request) {
 			"No TVL derivation for this protocol", http.StatusNotFound,
 			dexTVLNotDerivedReason(meta.Name))
 		return
+	}
+	if dexTVLLakeDerived[meta.Name] && s.lakeStale(r.Context()) {
+		snap.TVL.Stale = true
 	}
 	view := ProtocolTVLDetailView{
 		Protocol:       meta.Name,
@@ -269,7 +272,7 @@ func (s *Server) handleProtocolTVL(w http.ResponseWriter, r *http.Request) {
 		Data:    view,
 		AsOf:    WireTime(snap.FetchedAt.UTC()),
 		Sources: []string{meta.Name},
-		Flags:   Flags{Stale: snap.CarriedForward, Degraded: snap.CarriedForward},
+		Flags:   Flags{Stale: snap.TVL.Stale || snap.CarriedForward, Degraded: snap.TVL.Stale || snap.CarriedForward},
 	})
 }
 

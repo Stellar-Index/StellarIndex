@@ -308,9 +308,9 @@ type ProtocolView struct {
 	// soroswap_pairs rows for soroswap). It is the TRUE total, which for a counted-not-enumerated
 	// protocol exceeds len(Contracts) on the detail view; see protocolContractCounter.
 	ContractCount int `json:"contract_count"`
-	// Events24h is the trailing-24h decoded-event count across the
-	// protocol's served tables.
-	Events24h int64 `json:"events_24h"`
+	// Events24h is the trailing-24h decoded-event count across the protocol's served tables;
+	// absent when the count was not read, so a failed read is never a zero.
+	Events24h *int64 `json:"events_24h,omitempty"`
 	// Completeness is the latest ADR-0033 verdict summary, absent when
 	// no completeness snapshot exists for this source.
 	Completeness *ProtocolCompletenessView `json:"completeness,omitempty"`
@@ -510,7 +510,7 @@ func (s *Server) handleProtocolsList(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	events, eventsOK := s.protocolEvents24h(ctx)
 	verdicts, verdictsOK, verdictsStale := s.protocolVerdicts(ctx)
-	tvls, tvlTotal := s.protocolTVLsAndTotal()
+	tvls, tvlTotal, tvlStale := s.protocolTVLsAndTotal(ctx)
 
 	view := ProtocolsView{Protocols: make([]ProtocolView, 0, len(protocolRegistry))}
 	var degraded []string
@@ -527,22 +527,32 @@ func (s *Server) handleProtocolsList(w http.ResponseWriter, r *http.Request) {
 	}
 	view.TotalProtocols = len(view.Protocols)
 	view.TVLTotal = tvlTotal
-	view.CoverageNote = protocolsCoverageNote(degraded)
+	view.CoverageNote = protocolsCoverageNote(degraded, eventsOK, verdictsOK)
 
 	w.Header().Set("Cache-Control", "public, max-age=60")
-	// Each row republishes a /v1/coverage verdict, so the envelope carries that freshness gate.
-	writeJSON(w, view, Flags{Stale: verdictsStale, Degraded: !eventsOK || !verdictsOK || len(degraded) > 0})
+	// Each row republishes a /v1/coverage verdict and a TVL figure, so the envelope carries both freshness gates.
+	writeJSON(w, view, Flags{
+		Stale:    verdictsStale || tvlStale,
+		Degraded: !eventsOK || !verdictsOK || len(degraded) > 0 || tvlStale,
+	})
 }
 
-// protocolsCoverageNote is non-empty when sources were omitted because their roster read failed
-// with no last-good count, so an incomplete directory is distinguishable on the wire.
-func protocolsCoverageNote(omitted []string) string {
-	if len(omitted) == 0 {
-		return ""
+// protocolsCoverageNote names each part of the directory that could not be read, so an incomplete
+// directory is distinguishable on the wire; empty when every read answered.
+func protocolsCoverageNote(omitted []string, eventsOK, verdictsOK bool) string {
+	var parts []string
+	if len(omitted) > 0 {
+		parts = append(parts, "the contract roster for "+strings.Join(omitted, ", ")+
+			" could not be read and no cached count was available; "+
+			"these sources are omitted from this directory (not shown with a zero contract_count) and will reappear once the read recovers")
 	}
-	return "the contract roster for " + strings.Join(omitted, ", ") +
-		" could not be read and no cached count was available; " +
-		"these sources are omitted from this directory (not shown with a zero contract_count) and will reappear once the read recovers"
+	if !eventsOK {
+		parts = append(parts, "the 24h event counts could not be read; events_24h is absent on every row, not zero")
+	}
+	if !verdictsOK {
+		parts = append(parts, "the completeness verdicts could not be read; a row without one has not been judged incomplete")
+	}
+	return strings.Join(parts, "; ")
 }
 
 // protocolBespokeWindowDays parses the optional ?days= window of the bespoke block. The whitelist is deliberate: each window is a
@@ -601,14 +611,22 @@ func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 	if stale {
 		view = staleProtocolDetail(view)
 	}
+	// The cached view predates a later failed reserve read or lake stall, so the figure and its
+	// stale mark are read per request.
+	if tvls, _, _ := s.protocolTVLsAndTotal(ctx); view.TVL != nil {
+		if t, ok := tvls[view.Name]; ok {
+			view.TVL = &t
+		}
+	}
+	tvlStale := view.TVL != nil && view.TVL.Stale
 	// The flag tracks the ANALYTICS status, not just entry age: analytics.status="stale" always
 	// travels with flags.stale (openapi contract).
-	staleFlag := stale || view.verdictsStale ||
+	staleFlag := stale || view.verdictsStale || tvlStale ||
 		(view.Analytics != nil && view.Analytics.Status == protocolAnalyticsStale)
 
 	w.Header().Set("Cache-Control", "public, max-age=60")
 	// A stale or partial view is replaced by the next rebuild; verdictsStale alone stays cacheable.
-	degraded := stale || (view.Analytics != nil && view.Analytics.Status != protocolAnalyticsOK)
+	degraded := stale || tvlStale || (view.Analytics != nil && view.Analytics.Status != protocolAnalyticsOK)
 	// as_of is the build time, so a re-served entry replays byte-identical.
 	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(builtAt.UTC()), Flags: Flags{Stale: staleFlag, Degraded: degraded}})
 }
@@ -638,9 +656,10 @@ func (s *Server) buildProtocolDetail(ctx context.Context, meta ProtocolMeta, win
 		EventKinds:       append([]string{}, meta.EventKinds...),
 		VerificationPage: meta.VerificationPage,
 	}
-	attachProtocolTVL(&v.ProtocolView, s.protocolTVLs())
+	tvls, _, _ := s.protocolTVLsAndTotal(ctx)
+	attachProtocolTVL(&v.ProtocolView, tvls)
 	lakeOK := s.enrichProtocolAnalytics(ctx, meta, &v)
-	bespokeOK, bespokeStale := s.enrichBespoke(ctx, meta, &v, windowDays)
+	bespokeOK, bespokeStale, bespokeAt := s.enrichBespoke(ctx, meta, &v, windowDays)
 	status := protocolAnalyticsOK
 	switch {
 	case !rosterOK || !tokensOK || !lakeOK || !bespokeOK || !contractCountOK || !eventsOK || !verdictsOK || ctx.Err() != nil:
@@ -648,7 +667,12 @@ func (s *Server) buildProtocolDetail(ctx context.Context, meta ProtocolMeta, win
 	case bespokeStale:
 		status = protocolAnalyticsStale
 	}
-	v.Analytics = &ProtocolAnalyticsStatus{Status: status, AsOf: time.Now().UTC().Format(time.RFC3339)}
+	// as_of is the age of the oldest part: a last-good bespoke block predates this build.
+	asOf := time.Now().UTC()
+	if !bespokeAt.IsZero() && bespokeAt.Before(asOf) {
+		asOf = bespokeAt.UTC()
+	}
+	v.Analytics = &ProtocolAnalyticsStatus{Status: status, AsOf: asOf.Format(time.RFC3339)}
 	return v
 }
 
@@ -670,13 +694,16 @@ func staleProtocolDetail(v ProtocolDetailView) ProtocolDetailView {
 // block.
 // ok=false: no reader, or the FIRST-EVER build failed (absence means degradation); stale: older than bespokeStaleAfter, surfaced as
 // analytics.status "stale".
-func (s *Server) enrichBespoke(ctx context.Context, meta ProtocolMeta, view *ProtocolDetailView, windowDays int) (ok, stale bool) {
+func (s *Server) enrichBespoke(ctx context.Context, meta ProtocolMeta, view *ProtocolDetailView, windowDays int) (ok, stale bool, builtAt time.Time) {
 	blk, stale, ok := s.cachedBespoke(ctx, meta.Name, meta.Category, windowDays)
 	if !ok {
-		return false, false
+		return false, false, time.Time{}
 	}
 	view.Bespoke = bespokeFromStore(blk)
-	return true, stale
+	if e, has := s.protocolBespokeCache.get(protocolBespokeCacheKey(meta.Name, meta.Category, windowDays)); has {
+		builtAt = e.at
+	}
+	return true, stale, builtAt
 }
 
 // classifyContractKinds tags each roster contract "factory" (a verified trust-root) or "instance";
@@ -1001,12 +1028,15 @@ func (s *Server) protocolWindowFloor(ctx context.Context, tip uint32) (sinceLedg
 // buildProtocolView projects one registry entry + the dynamic joins
 // into the directory wire shape.
 func buildProtocolView(meta ProtocolMeta, contractCount int, events map[string]int64, verdicts map[string]timescale.CompletenessSnapshot) ProtocolView {
-	events24h := events[meta.Name]
-	// Fold in any sub-module source's 24h count (e.g. blend_backstop into
-	// blend) so the protocol's headline event count reflects the whole
-	// surface the page now shows.
-	for _, src := range meta.ExtraEventSources {
-		events24h += events[src]
+	var events24h *int64
+	if events != nil {
+		n := events[meta.Name]
+		// Fold in any sub-module source's 24h count (e.g. blend_backstop into blend) so the
+		// headline covers the whole surface the page shows.
+		for _, src := range meta.ExtraEventSources {
+			n += events[src]
+		}
+		events24h = &n
 	}
 	v := ProtocolView{
 		Name:          meta.Name,
@@ -1027,25 +1057,54 @@ func buildProtocolView(meta ProtocolMeta, contractCount int, events map[string]i
 	return v
 }
 
-// protocolTVLs reads the per-protocol TVL snapshot, degrading to nil (tvl stays absent) when the cache is unwired or has not completed
-// its first refresh.
-func (s *Server) protocolTVLs() map[string]ProtocolTVLView {
-	if s.DEXTVL == nil {
-		return nil
-	}
-	snap, _ := s.DEXTVL.Snapshot()
-	return snap
+// dexTVLLakeDerived names the protocols whose reserves are read from the lake: when the lake stops
+// advancing their refresh still succeeds, on old reserves.
+var dexTVLLakeDerived = map[string]bool{"soroswap": true, "phoenix": true, "comet": true}
+
+// lakeStale reports whether the lake watermark is past its freshness threshold (false when no watermark reader is wired).
+func (s *Server) lakeStale(ctx context.Context) bool {
+	_, stale, _ := s.lakeWatermark(ctx)
+	return stale
 }
 
 // protocolTVLsAndTotal reads the per-protocol TVL snapshot and the headline total from the SAME refresh cycle: separate calls can
-// straddle a Refresh() and pair one cycle's figures with another's total.
-// Both are nil when the cache is unwired or not yet filled.
-func (s *Server) protocolTVLsAndTotal() (map[string]ProtocolTVLView, *DEXTVLTotalView) {
+// straddle a Refresh() and pair one cycle's figures with another's total. Both are nil when the cache is unwired or not yet
+// filled. stale reports that a published figure is carried forward or read from a stale lake.
+func (s *Server) protocolTVLsAndTotal(ctx context.Context) (tvls map[string]ProtocolTVLView, total *DEXTVLTotalView, stale bool) {
 	if s.DEXTVL == nil {
-		return nil, nil
+		return nil, nil, false
 	}
 	snap, total, _ := s.DEXTVL.SnapshotAndTotal()
-	return snap, total
+	if len(snap) == 0 {
+		return snap, total, false
+	}
+	return markLakeStaleTVL(snap, total, s.lakeStale(ctx))
+}
+
+// markLakeStaleTVL returns copies (the cached snapshot is shared) with stale set on lake-derived
+// figures when the lake is behind now, and on a total that sums a stale figure (one read from a
+// lake that was behind keeps its mark); it reports whether any figure is stale.
+func markLakeStaleTVL(snap map[string]ProtocolTVLView, total *DEXTVLTotalView, lakeStale bool) (map[string]ProtocolTVLView, *DEXTVLTotalView, bool) {
+	anyStale := false
+	out := make(map[string]ProtocolTVLView, len(snap))
+	for name, v := range snap {
+		if lakeStale && dexTVLLakeDerived[name] {
+			v.Stale = true
+		}
+		anyStale = anyStale || v.Stale
+		out[name] = v
+	}
+	if total == nil {
+		return out, total, anyStale
+	}
+	for _, name := range total.Protocols {
+		if out[name].Stale {
+			t := *total
+			t.Stale = true
+			return out, &t, true
+		}
+	}
+	return out, total, anyStale
 }
 
 // attachProtocolTVL joins the snapshot's TVL entry (if any) onto a
@@ -1067,6 +1126,9 @@ func (s *Server) protocolEvents24h(ctx context.Context) (map[string]int64, bool)
 	if err != nil {
 		s.logger.Warn("protocols events_24h read failed", "err", err)
 		return nil, false
+	}
+	if counts == nil {
+		counts = map[string]int64{}
 	}
 	return counts, true
 }

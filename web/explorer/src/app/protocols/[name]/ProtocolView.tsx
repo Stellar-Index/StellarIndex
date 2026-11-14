@@ -176,7 +176,12 @@ export function ProtocolView({
           </StatCell>
         )}
         <StatCell>
-          <Stat label="Events · 24h" value={formatCompact(data.events_24h)} />
+          <Stat
+            label="Events · 24h"
+            value={
+              data.events_24h != null ? formatCompact(data.events_24h) : '—'
+            }
+          />
         </StatCell>
         {hasContracts && (
           <StatCell>

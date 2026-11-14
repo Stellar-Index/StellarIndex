@@ -35,9 +35,15 @@ type ProtocolTVLView struct {
 	AsOfLedger uint32 `json:"as_of_ledger,omitempty"`
 	// AsOf is when the snapshot was computed (RFC3339).
 	AsOf string `json:"as_of"`
+	// Stale marks a figure that is older than its as_of suggests: carried forward from an earlier
+	// refresh, or read from a lake that has stopped advancing.
+	Stale bool `json:"stale,omitempty"`
 	// Basis is a one-line provenance statement of what was measured and how it was valued.
 	Basis string `json:"basis"`
 }
+
+// dexTVLCarryMaxAge bounds how long a failed read keeps republishing the last figure; past it the protocol is unavailable.
+const dexTVLCarryMaxAge = 6 * time.Hour
 
 // DEXTVLRefreshInterval is the background Refresh cadence; TVL moves slowly enough that faster adds no signal.
 const DEXTVLRefreshInterval = 10 * time.Minute
@@ -104,6 +110,8 @@ type DEXTVLSources struct {
 	CometPools []string
 	// CometReserves is the lake current-record-state reader.
 	CometReserves CometTVLReserveReader
+	// LakeWatermark lets a refresh record that it read from a lake that was behind. Optional.
+	LakeWatermark LakeWatermarkReader
 	// Pricer resolves reserve legs to USD; nil leaves every leg unpriced (and the snapshot says so).
 	Pricer TVLUSDPricer
 	// PegInfo short-circuits operator-declared USD pegs to $1 at their real decimals. Optional.
@@ -129,6 +137,15 @@ type DEXTVLCache struct {
 	total       *DEXTVLTotalView
 	fetchedAt   time.Time
 	src         DEXTVLSources
+}
+
+// lakeStaleAtRead reports whether the lake is behind as this cycle reads it; a failed watermark read counts as behind.
+func (c *DEXTVLCache) lakeStaleAtRead(ctx context.Context, now time.Time) bool {
+	if c.src.LakeWatermark == nil {
+		return false
+	}
+	ledger, closedAt, err := c.src.LakeWatermark.LakeWatermark(ctx)
+	return err != nil || ledger == 0 || now.Sub(closedAt) > lakeStaleThreshold
 }
 
 // NewDEXTVLCache constructs an empty cache; production calls Refresh at startup, then every DEXTVLRefreshInterval.
@@ -211,6 +228,8 @@ func (c *DEXTVLCache) Refresh(ctx context.Context) error {
 	next := make(map[string]ProtocolTVLView, 4)
 	nextPools := make(map[string][]DEXTVLPoolView, 4)
 	prev, _ := c.Snapshot()
+	// Read before the reserves, so a fresh verdict cannot cover reserves older than it.
+	lakeStale := c.lakeStaleAtRead(ctx, now)
 	var errs []error
 	// carried names protocols serving a PREVIOUS cycle's figure. It is tracked explicitly, not
 	// inferred from as_of: RFC3339 is second-resolution, so two refreshes can share a stamp.
@@ -230,16 +249,22 @@ func (c *DEXTVLCache) Refresh(ctx context.Context) error {
 			unavailable = append(unavailable, DEXTVLExclusion{Subject: p.name, Reason: dexTVLUnavailableNoPools})
 		case err != nil:
 			errs = append(errs, fmt.Errorf("%s tvl: %w", p.name, err))
-			if !carryPrev(next, prev, p.name) {
-				unavailable = append(unavailable, DEXTVLExclusion{Subject: p.name, Reason: dexTVLUnavailableReadFailed})
+			if reason := carryPrev(next, prev, p.name, now); reason != "" {
+				unavailable = append(unavailable, DEXTVLExclusion{Subject: p.name, Reason: reason})
 				continue
 			}
 			carried = append(carried, p.name)
 			carriedSet[p.name] = true
 			nextPools[p.name] = c.prevPools(p.name)
 		case res != nil:
+			if lakeStale && dexTVLLakeDerived[p.name] {
+				res.view.Stale = true
+			}
 			next[p.name] = res.view
 			nextPools[p.name] = res.pools
+		default:
+			// Unwired here (not configured, or its connection failed at start): named, not dropped.
+			unavailable = append(unavailable, DEXTVLExclusion{Subject: p.name, Reason: dexTVLUnavailableNotWired})
 		}
 	}
 
@@ -305,14 +330,20 @@ func (c *DEXTVLCache) basisTail() string {
 		") is counted unpriced rather than valued"
 }
 
-// carryPrev keeps a protocol's previous entry across a failed refresh and reports whether one
-// existed (a first-cycle failure leaves the protocol absent).
-func carryPrev(next, prev map[string]ProtocolTVLView, name string) bool {
+// carryPrev keeps a protocol's previous entry, marked stale, across a failed refresh. It returns the
+// unavailability reason when there is nothing to carry or the entry is past dexTVLCarryMaxAge.
+func carryPrev(next, prev map[string]ProtocolTVLView, name string, now time.Time) string {
 	v, ok := prev[name]
-	if ok {
-		next[name] = v
+	if !ok {
+		return dexTVLUnavailableReadFailed
 	}
-	return ok
+	at, err := time.Parse(time.RFC3339, v.AsOf)
+	if err != nil || now.Sub(at) > dexTVLCarryMaxAge {
+		return dexTVLUnavailableCarryExpired
+	}
+	v.Stale = true
+	next[name] = v
+	return ""
 }
 
 // prevPools returns the pools published for name on the previous cycle, so a carried-forward

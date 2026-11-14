@@ -56,7 +56,7 @@ interface RegistryProtocol {
   category: string;
   factories: string[];
   contract_count: number;
-  events_24h: number;
+  events_24h?: number;
 }
 
 type SACMap = Record<string, string> | undefined;
@@ -504,7 +504,7 @@ function RegistryPanel() {
                   )}
                 </Td>
                 <Td align="right" className="font-mono">
-                  {formatCompact(p.events_24h ?? 0)}
+                  {p.events_24h != null ? formatCompact(p.events_24h) : '—'}
                 </Td>
               </LinkRow>
             ))}
