@@ -266,12 +266,26 @@ func (o *Orchestrator) loadFreezeState(
 		return st, false, nil
 	}
 
-	if _, unwritten := o.markerUnwritten[stateKey]; st.Active() && !unwritten {
-		if _, ok, err := o.cfg.FreezeWriter.LoadState(ctx, pair.Base, pair.Quote); err == nil && !ok {
-			return st, true, nil
-		}
+	if !st.Active() {
+		return st, false, nil
 	}
-	return st, false, nil
+	if _, ok, err := o.cfg.FreezeWriter.LoadState(ctx, pair.Base, pair.Quote); err != nil || ok {
+		return st, false, nil
+	}
+	if _, unwritten := o.markerUnwritten[stateKey]; unwritten {
+		return st, o.overriddenSince(ctx, pair, st.FiredAt), nil
+	}
+	return st, true, nil
+}
+
+// overriddenSince reports an operator tombstone written after firedAt. A key whose own marker write failed cannot read
+// an absent marker as the override, so only a tombstone newer than its freeze releases it.
+func (o *Orchestrator) overriddenSince(ctx context.Context, pair canonical.Pair, firedAt time.Time) bool {
+	if o.overrideAt == nil {
+		return false
+	}
+	at, ok, err := o.overrideAt.OverrideRecordedAt(ctx, pair.Base, pair.Quote)
+	return err == nil && ok && at.After(firedAt)
 }
 
 // loadMarkerState reads the lifecycle the marker records for (pair, window), via the window-aware reader when the writer has one.

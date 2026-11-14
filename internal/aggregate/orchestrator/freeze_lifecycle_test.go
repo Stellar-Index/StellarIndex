@@ -1285,3 +1285,34 @@ func TestFreezeLifecycle_FailedMarkerWriteIsNotAnOverride(t *testing.T) {
 		t.Error("an operator override after the marker landed did not release the freeze")
 	}
 }
+
+type stubOverrideAt struct{ at time.Time }
+
+func (s stubOverrideAt) OverrideRecordedAt(context.Context, canonical.Asset, canonical.Asset) (time.Time, bool, error) {
+	return s.at, true, nil
+}
+
+// While a key's marker write keeps failing, an operator release must still land: a tombstone newer than the freeze
+// releases it, and an older one (a previous freeze's override) does not.
+func TestFreezeLifecycle_OperatorOverrideReachesAKeyWithNoMarker(t *testing.T) {
+	f := newFreezeFixture(t)
+	f.marker.err = errors.New("redis: connection reset")
+	f.feed(t, manipQuoteAmount, "soroswap")
+	f.tick(t, closedBucket)
+	fired := f.state().FiredAt
+	if fired.IsZero() || f.marker.present {
+		t.Fatalf("setup: want a fired freeze with no marker; fired=%v present=%v", fired, f.marker.present)
+	}
+
+	f.orch.overrideAt = stubOverrideAt{at: fired.Add(-time.Hour)}
+	f.tick(t, closedBucket)
+	if !f.state().Active() {
+		t.Fatal("a tombstone older than the freeze released it")
+	}
+
+	f.orch.overrideAt = stubOverrideAt{at: fired.Add(time.Second)}
+	f.tick(t, closedBucket)
+	if f.state().Active() {
+		t.Error("an operator override written after the freeze fired did not release it")
+	}
+}

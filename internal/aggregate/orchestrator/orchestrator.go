@@ -91,6 +91,12 @@ type FreezeOverrideReader interface {
 	OverrideRecorded(ctx context.Context, asset, quote canonical.Asset) (bool, error)
 }
 
+// FreezeOverrideTimeReader dates the tombstone, so a key with no marker of its own can tell an override of this freeze from
+// an older one; optional like [FreezeOverrideReader].
+type FreezeOverrideTimeReader interface {
+	OverrideRecordedAt(ctx context.Context, asset, quote canonical.Asset) (time.Time, bool, error)
+}
+
 // Config controls the orchestrator's behaviour; the orchestrator itself doesn't know about TOML.
 type Config struct {
 	// Pairs is the set to pre-compute VWAP for; empty makes the orchestrator a no-op.
@@ -423,6 +429,7 @@ type Orchestrator struct {
 	// [WindowedFreezeMarker] / [FreezeOverrideReader], else nil; resolved once in [New].
 	windowedFreeze WindowedFreezeMarker
 	overrideReader FreezeOverrideReader
+	overrideAt     FreezeOverrideTimeReader
 
 	// clock is injectable so the freeze ladder, measured in tens of minutes, is testable without
 	// sleeping. Defaults to time.Now.
@@ -489,6 +496,9 @@ func New(store Store, cache Cache, cfg Config) *Orchestrator {
 	}
 	if reader, ok := cfg.FreezeWriter.(FreezeOverrideReader); ok {
 		o.overrideReader = reader
+	}
+	if reader, ok := cfg.FreezeWriter.(FreezeOverrideTimeReader); ok {
+		o.overrideAt = reader
 	}
 	return o
 }
