@@ -350,7 +350,7 @@ func (s *Server) recentClosedWithStablecoinFallback(
 		if len(pegSnapshots) == 0 {
 			continue
 		}
-		if len(best) == 0 || pegAt.After(bestAt) {
+		if s.oracleSeriesSupersedes(best, bestAt, pegSnapshots, pegAt) {
 			best, bestAt, viaPeg = pegSnapshots, pegAt, true
 		}
 		if s.oracleSeriesLive(pegSnapshots, pegAt) {
@@ -371,6 +371,16 @@ func (s *Server) recentClosedWithStablecoinFallback(
 // oracleSeriesLive reports whether a series' newest bucket is inside oracleLiveWindow.
 func (s *Server) oracleSeriesLive(snapshots []PriceSnapshot, newest time.Time) bool {
 	return len(snapshots) > 0 && s.now().Sub(newest) <= oracleLiveWindow
+}
+
+// oracleSeriesSupersedes: a later leg replaces an earlier one only when it is live or newer by more
+// than oracleLiveWindow. The walk order is depth order (direct, classic pegs, SAC forms), so a thin
+// leg a minute newer must not displace it, nor the answer flip between requests.
+func (s *Server) oracleSeriesSupersedes(best []PriceSnapshot, bestAt time.Time, cand []PriceSnapshot, candAt time.Time) bool {
+	if len(best) == 0 {
+		return true
+	}
+	return s.oracleSeriesLive(cand, candAt) || candAt.Sub(bestAt) > oracleLiveWindow
 }
 
 // recentClosedForAliases reads asset under each of its spellings (see [assetAliases]) against
@@ -394,7 +404,7 @@ func (s *Server) recentClosedForAliases(ctx context.Context, asset, quote canoni
 			continue
 		}
 		at := newestSnapshotTime(snapshots)
-		if len(best) == 0 || at.After(bestAt) {
+		if s.oracleSeriesSupersedes(best, bestAt, snapshots, at) {
 			best, bestAt = snapshots, at
 		}
 		if s.oracleSeriesLive(snapshots, at) {
