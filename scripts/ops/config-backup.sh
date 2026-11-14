@@ -35,7 +35,7 @@ write_metrics() {
   [[ "$TEXTFILE_DIR" == "/dev/null" ]] && return
   mkdir -p "$TEXTFILE_DIR"
   local out="$TEXTFILE_DIR/config_backup.prom" tmp
-  tmp="$out.tmp.$$"
+  tmp="$(mktemp "$out.tmp.XXXXXX")"
   {
     echo "# HELP stellarindex_config_backup_last_success_unix Unix time of the most recent encrypted config backup."
     echo "# TYPE stellarindex_config_backup_last_success_unix gauge"

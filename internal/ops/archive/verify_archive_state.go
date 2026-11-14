@@ -9,6 +9,7 @@ import (
 
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 
+	"github.com/Stellar-Index/StellarIndex/internal/atomicfile"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
@@ -112,14 +113,7 @@ func writeVerifyArchiveState(path string, st VerifyArchiveState) error {
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return fmt.Errorf("write %s: %w", tmp, err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return fmt.Errorf("rename %s → %s: %w", tmp, path, err)
-	}
-	return nil
+	return atomicfile.WriteBytes(path, 0o600, data)
 }
 
 // resolveIncrementalFrom computes the incremental lower bound: the prior LastVerifiedLedger minus a safety overlap (default 5000 ledgers) so late anomalies are re-checked.

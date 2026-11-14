@@ -254,7 +254,7 @@ fi
 if [[ "$TEXTFILE_DIR" != "/dev/null" ]]; then
   mkdir -p "$TEXTFILE_DIR"
   out="$TEXTFILE_DIR/ch_schema_snapshot.prom"
-  tmp="$out.tmp.$$"
+  tmp="$(mktemp "$out.tmp.XXXXXX")"
   {
     echo "# HELP stellarindex_ch_schema_snapshot_last_success_unix Unix time of the most recent successful ClickHouse schema+state snapshot (ADR-0043 §2.1)."
     echo "# TYPE stellarindex_ch_schema_snapshot_last_success_unix gauge"

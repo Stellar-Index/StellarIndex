@@ -234,8 +234,8 @@ if [ "${1:-}" = "--pages" ]; then
     else c="$G"; fi
     printf '%s%-12s%s %7s %s%7s%s  %s (%s, %s%%)\n' "$c" "/$name" "$O" "$p50" "$c" "$p95" "$O" "$slow" "$slow95" "$slowok"
   done
-  if [ -n "$TEXTFILE" ]; then
-    {
+  if [ -n "$TEXTFILE" ] && tf_tmp="$(mktemp "$TEXTFILE.tmp.XXXXXX")"; then
+    if {
       printf '# HELP stellarindex_page_sweep_p95_seconds p95 of a page load (its slowest panel) in the last sweep.\n# TYPE stellarindex_page_sweep_p95_seconds gauge\n'
       grep '^stellarindex_page_sweep_p95_seconds' "$prom"
       printf '# HELP stellarindex_page_sweep_panel_p95_seconds p95 of one page panel read in the last sweep, pooled over the entity cohort.\n# TYPE stellarindex_page_sweep_panel_p95_seconds gauge\n'
@@ -243,7 +243,11 @@ if [ "${1:-}" = "--pages" ]; then
       printf '# HELP stellarindex_page_sweep_panel_ok_ratio Share of 2xx answers for one page panel in the last sweep.\n# TYPE stellarindex_page_sweep_panel_ok_ratio gauge\n'
       grep '^stellarindex_page_sweep_panel_ok_ratio' "$prom"
       printf '# HELP stellarindex_page_sweep_last_run_timestamp_seconds When the last sweep finished.\n# TYPE stellarindex_page_sweep_last_run_timestamp_seconds gauge\nstellarindex_page_sweep_last_run_timestamp_seconds %s\n' "$(date +%s)"
-    } > "$TEXTFILE.tmp.$$" && mv -f "$TEXTFILE.tmp.$$" "$TEXTFILE"
+    } > "$tf_tmp" && chmod 644 "$tf_tmp"; then
+      mv -f "$tf_tmp" "$TEXTFILE"
+    else
+      rm -f "$tf_tmp"
+    fi
   fi
   exit "$CRIT"
 fi

@@ -73,7 +73,7 @@ emit_metrics() {
   local running="$1" exit_ok="$2" processed tmp
   processed=$(cat "$PROGRESS_FILE" 2>/dev/null || echo 0)
   mkdir -p "$TEXTFILE_DIR" 2>/dev/null
-  tmp="${METRICS_OUT}.tmp.$$"
+  tmp="$(mktemp "${METRICS_OUT}.tmp.XXXXXX" 2>/dev/null)" || return 0
   {
     echo "# HELP stellarindex_lake_dedup_running 1 while lake-dedup-driver is executing this table, 0 once it has exited."
     echo "# TYPE stellarindex_lake_dedup_running gauge"

@@ -13,11 +13,11 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/atomicfile"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/httpx"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
@@ -537,24 +537,7 @@ func writeCuratedRWATextfile(path string, c curatedRWACounts, written, refused b
 	return writeTextfileAtomic(path, b.String())
 }
 
-// writeTextfileAtomic writes a node_exporter exposition to a sibling temp file and renames it over path, so no half-written read.
+// writeTextfileAtomic replaces the world-readable collector file so node_exporter never reads a half-written one.
 func writeTextfileAtomic(path, body string) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp.*")
-	if err != nil {
-		return err
-	}
-	if _, err := tmp.WriteString(body); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmp.Name())
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmp.Name())
-		return err
-	}
-	if err := os.Chmod(tmp.Name(), 0o644); err != nil { //nolint:gosec // world-readable metrics file by design: the collector reads it
-		_ = os.Remove(tmp.Name())
-		return err
-	}
-	return os.Rename(tmp.Name(), path)
+	return atomicfile.WriteBytes(path, 0o644, []byte(body))
 }

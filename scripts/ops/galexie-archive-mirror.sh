@@ -46,7 +46,7 @@ write_metrics() {
   [[ "$TEXTFILE_DIR" == "/dev/null" ]] && return 0
   mkdir -p "$TEXTFILE_DIR"
   local out="$TEXTFILE_DIR/galexie_archive_mirror.prom" tmp
-  tmp="$out.tmp.$$"
+  tmp="$(mktemp "$out.tmp.XXXXXX")"
   {
     echo "# HELP stellarindex_galexie_archive_mirror_configured 1 if an off-site mirror target (DEST_ENDPOINT) is configured on this host, else 0."
     echo "# TYPE stellarindex_galexie_archive_mirror_configured gauge"

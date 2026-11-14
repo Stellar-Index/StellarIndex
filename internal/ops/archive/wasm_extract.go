@@ -15,6 +15,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/support/datastore"
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 
+	"github.com/Stellar-Index/StellarIndex/internal/atomicfile"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/ledgerstream"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
@@ -318,17 +319,12 @@ func maybeWriteWasmCode(
 
 	hexHash := wantHexes[cc.Hash]
 	outPath := filepath.Join(outputDir, hexHash+".wasm")
-	tmpPath := outPath + ".tmp"
-	writeErr := os.WriteFile(tmpPath, cc.Code, 0o600)
-	if writeErr == nil {
-		writeErr = os.Rename(tmpPath, outPath)
-	}
+	writeErr := atomicfile.WriteBytes(outPath, 0o600, cc.Code)
 
 	foundMu.Lock()
 	if writeErr != nil {
 		delete(found, cc.Hash) // unclaim so a later occurrence can retry
 		foundMu.Unlock()
-		_ = os.Remove(tmpPath)
 		fmt.Fprintf(os.Stderr, "extract-wasm: ERROR writing %s: %v\n", outPath, writeErr)
 		return
 	}

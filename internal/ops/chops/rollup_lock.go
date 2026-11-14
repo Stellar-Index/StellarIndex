@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+
+	"github.com/Stellar-Index/StellarIndex/internal/atomicfile"
 )
 
 // acquireRollupLock takes an exclusive, non-blocking flock on path and returns the release; job names the caller so a colliding operator
@@ -24,7 +26,7 @@ func acquireRollupLock(job, path string) (func(), error) {
 	}
 	// path is an operator-supplied -lock-file flag; filepath.Clean above
 	// resolves any ../ traversal before it reaches OpenFile (gosec G304).
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	f, err := atomicfile.OpenLock(path, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("%s: open lock file %s: %w", job, path, err)
 	}

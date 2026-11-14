@@ -15,6 +15,8 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/atomicfile"
 )
 
 // verify-served-values reconciles served values against independent truth (XLM supply vs SDF lumen API, USDC supply vs Stellar Expert, SDF
@@ -351,14 +353,9 @@ func (b *jsonSafeBuilder) String() string {
 	return b.s
 }
 
-// writeAtomic writes via temp+rename so node_exporter never reads a
-// half-written collector file (same contract as data-freshness.sh).
+// writeAtomic replaces the world-readable collector file so node_exporter never reads a half-written one.
 func writeAtomic(path, body string) error {
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(body), 0o644); err != nil { //nolint:gosec // world-readable metrics file by design
-		return err
-	}
-	return os.Rename(tmp, path)
+	return atomicfile.WriteBytes(path, 0o644, []byte(body))
 }
 
 // ─── served-side readers ────────────────────────────────────────────

@@ -99,7 +99,7 @@ die() { log "ERROR: $1"; exit "${2:-1}"; }
 
 # write_metrics builds the textfile in a temp file and renames it into place. A
 # `die` INSIDE that brace group (e.g. `zfs get usedbysnapshots` failing) exits
-# past the mv/rm and would leave one `zfs_snapshot.prom.tmp.<pid>` per timer run
+# past the mv/rm and would leave one `zfs_snapshot.prom.tmp.*` per timer run
 # (node_exporter ignores non-.prom files, but the directory fills). METRICS_TMP
 # holds the in-flight name; the trap removes it on ANY exit path and
 # write_metrics clears it after the rename.
@@ -176,7 +176,7 @@ write_error_metric() {
   local out tmp
   mkdir -p "$TEXTFILE_DIR"
   out="$TEXTFILE_DIR/zfs_snapshot_error.prom"
-  tmp="$out.tmp.$$"
+  tmp="$(mktemp "$out.tmp.XXXXXX")"
   {
     echo "# HELP stellarindex_zfs_snapshot_pool_free_unreadable 1 while the last snapshot run could not read the pool's available space and therefore refused to prune or snapshot."
     echo "# TYPE stellarindex_zfs_snapshot_pool_free_unreadable gauge"
@@ -313,7 +313,7 @@ write_metrics() {
   local out tmp free ds latest count used name created i
   mkdir -p "$TEXTFILE_DIR"
   out="$TEXTFILE_DIR/zfs_snapshot.prom"
-  tmp="$out.tmp.$$"
+  tmp="$(mktemp "$out.tmp.XXXXXX")"
   METRICS_TMP="$tmp"   # see the EXIT trap: a die() below must not leak it
   read_pool_free; free="$POOL_FREE"
   {

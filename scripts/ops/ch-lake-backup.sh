@@ -80,7 +80,7 @@ write_metrics() {
   [[ "$TEXTFILE_DIR" == "/dev/null" ]] && return 0
   mkdir -p "$TEXTFILE_DIR"
   local out="$TEXTFILE_DIR/ch_lake_backup.prom" tmp full_unix="" prev_success=""
-  tmp="$out.tmp.$$"
+  tmp="$(mktemp "$out.tmp.XXXXXX")"
   # A deferred run did no backup, so it re-emits the last real success rather
   # than dropping it: the stale alert must age from that, not from the deferral.
   if [[ "${1:-}" == keep_success && -r "$out" ]]; then

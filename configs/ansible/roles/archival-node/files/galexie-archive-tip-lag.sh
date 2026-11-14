@@ -32,7 +32,6 @@ set -euo pipefail
 # hermetically (same idiom as ch-schema-drift.sh).
 TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
 OUT="$TEXTFILE_DIR/galexie_archive_tip_lag.prom"
-TMP="$OUT.tmp.$$"
 
 # ledger_from_object_name <name> — print the newest ledger held by a
 # galexie object, or nothing if <name> is not a galexie object name.
@@ -126,6 +125,8 @@ if [ "${1:-}" = "--self-test" ]; then
 fi
 
 mkdir -p "$TEXTFILE_DIR"
+TMP="$(mktemp "$OUT.tmp.XXXXXX")"
+trap 'rm -f "$TMP"' EXIT
 
 live="" archive=""
 if ! live=$(newest_ledger local/galexie-live) || ! archive=$(newest_ledger local/galexie-archive); then

@@ -13,6 +13,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/atomicfile"
 )
 
 // DefaultTextfileDir is the node_exporter textfile directory; heartbeats default here and are inert where it is absent.
@@ -66,7 +68,7 @@ func NewJobHeartbeat(job, path string, now func() time.Time) *JobHeartbeat {
 // since identical label sets across files make node_exporter fail the whole scrape and the alert joins need pid.
 // Fail-soft: if the lock cannot be created the original path is used unlocked.
 func claimPath(path string) (string, *os.File) {
-	f, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o644) //nolint:gosec // operator-supplied metrics path, same trust as the .prom itself
+	f, err := atomicfile.OpenLock(path+".lock", 0o644)
 	if err != nil {
 		return path, nil
 	}
@@ -302,13 +304,7 @@ func (h *JobHeartbeat) render() string {
 // contract — see the type doc.
 func (h *JobHeartbeat) write() {
 	body := h.render()
-	tmp := h.path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(body), 0o644); err != nil { //nolint:gosec // world-readable metrics file by design, same as verify-served-values
-		return
-	}
-	if err := os.Rename(tmp, h.path); err != nil {
-		_ = os.Remove(tmp)
-	}
+	_ = atomicfile.WriteBytes(h.path, 0o644, []byte(body))
 }
 
 // sanitizeJobName reduces a subcommand name to the characters that are
