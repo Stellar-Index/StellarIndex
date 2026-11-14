@@ -182,6 +182,9 @@ func cmdUp(dir, dsn string) error {
 			fmt.Println(upNoChangeMsg)
 			return nil
 		}
+		if v, dirty, vErr := m.Version(); vErr == nil && dirty {
+			return fmt.Errorf("%w\n%s", err, dirtyGuidance(dir, int(v)))
+		}
 		return err
 	}
 	v, dirty, vErr := m.Version()
@@ -190,6 +193,31 @@ func cmdUp(dir, dsn string) error {
 	}
 	fmt.Printf(upAppliedFormat, v, dirty)
 	return nil
+}
+
+// dirtyGuidance names the step that clears a dirty version: golang-migrate marks a migration dirty before running it and
+// leaves the mark on failure, so every later `up` stops until an operator forces the version back.
+func dirtyGuidance(dir string, dirtyVersion int) string {
+	return fmt.Sprintf("migration %d failed and is marked dirty; no later `up` runs until the mark is cleared. "+
+		"Check which of its statements took effect and undo them (a lock or statement timeout normally rolls the whole file back), "+
+		"then run `stellarindex-migrate -migrations %s force %s` and run `up` again.",
+		dirtyVersion, dir, previousMigration(dir, dirtyVersion))
+}
+
+// previousMigration is the force argument that puts the version just below v: the highest migration number under v, or "none".
+func previousMigration(dir string, v int) string {
+	ups, _ := filepath.Glob(filepath.Join(dir, "*.up.sql"))
+	prev := -1
+	for _, f := range ups {
+		num, _, _ := strings.Cut(filepath.Base(f), "_")
+		if n, err := strconv.Atoi(num); err == nil && n < v && n > prev {
+			prev = n
+		}
+	}
+	if prev < 0 {
+		return "none"
+	}
+	return strconv.Itoa(prev)
 }
 
 func cmdDown(dir, dsn string, n int, yes, iKnow bool) error {

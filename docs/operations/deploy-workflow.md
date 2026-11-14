@@ -171,8 +171,11 @@ applied (each commits in its own transaction). Then:
 
 1. `stellarindex-migrate -migrations /usr/local/share/stellarindex/migrations status` on the host.
 2. Read the failing `.up.sql` against the Ansible output's Postgres error.
-3. Fix forward with a **new** migration; never edit one that may have run (rule 1).
-4. Re-deploy the new tag; `migrate up` resumes.
+3. The failed migration is marked dirty, and no later `up` runs until the mark is cleared. Confirm none of its
+   statements took effect (a lock or statement timeout rolls the file back; undo by hand anything that did land),
+   then run the `force <previous version>` command the failed `up` printed.
+4. For a timeout, retry the deploy in a low-write window. For a defect in the migration, fix forward with a **new**
+   migration; never edit one that may have run (rule 1). Re-deploy; `migrate up` resumes.
 
 ## Failure modes
 
