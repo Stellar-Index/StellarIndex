@@ -40,7 +40,7 @@
   ansible.builtin.file:
     path: /var/lib/node_exporter/textfile_collector
     state: directory
-    owner: stellarindex
+    owner: root
     group: stellarindex
     mode: "1775"
 

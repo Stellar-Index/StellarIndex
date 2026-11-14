@@ -25,11 +25,13 @@
   ansible.builtin.file:
     path: /var/lib/node_exporter/textfile_collector
     state: directory
-    owner: stellarindex
+    # Root-owned: root jobs write here, and a directory's owner can rename
+    # any entry despite the sticky bit, so the owner must not be a service user.
+    owner: root
     group: stellarindex
-    # Group-write is for units that write .prom files via
-    # SupplementaryGroups=stellarindex: pgbackrest-backup.service (User=postgres)
-    # and the DynamicUser stellarindex-{sla-probe,smoke,heartbeat@}.service.
+    # Group-write is for User=stellarindex units and for units that join the
+    # group: pgbackrest-backup.service (User=postgres) and the DynamicUser
+    # stellarindex-{sla-probe,smoke,heartbeat@}.service.
     # Sticky: a group writer cannot delete or rename over another writer's .prom.
     mode: "1775"
 
@@ -1758,6 +1760,14 @@
     - apt
     - nvme
 
+- name: Install the textfile publisher the apt/nvme collectors pipe into
+  ansible.builtin.copy:
+    src: textfile-publish.sh
+    dest: /usr/local/bin/textfile-publish
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Redirect packaged apt/nvme textfile collectors to the read dir
   ansible.builtin.copy:
     dest: "/etc/systemd/system/prometheus-node-exporter-{{ item.name }}.service.d/textfile-dir.conf"
@@ -1773,9 +1783,9 @@
       ExecStart={{ item.cmd }}
   loop:
     - name: apt
-      cmd: '/bin/bash -c "/usr/share/prometheus-node-exporter-collectors/apt_info.py | sponge /var/lib/node_exporter/textfile_collector/apt.prom"'
+      cmd: '/bin/bash -c "/usr/share/prometheus-node-exporter-collectors/apt_info.py | /usr/local/bin/textfile-publish apt"'
     - name: nvme
-      cmd: '/bin/sh -c "/usr/share/prometheus-node-exporter-collectors/nvme_metrics.py | sponge /var/lib/node_exporter/textfile_collector/nvme.prom"'
+      cmd: '/bin/sh -c "/usr/share/prometheus-node-exporter-collectors/nvme_metrics.py | /usr/local/bin/textfile-publish nvme"'
   loop_control:
     label: "{{ item.name }}"
   notify: Reload systemd

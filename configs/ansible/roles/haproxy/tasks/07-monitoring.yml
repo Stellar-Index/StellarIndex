@@ -9,9 +9,10 @@
   file:
     path: "{{ haproxy_node_exporter_textfile_dir }}"
     state: directory
-    owner: haproxy
-    group: haproxy
-    mode: "0755"
+    # Root's: the scraper below runs as root, and a directory's owner can
+    # swap any entry under it. Group and mode are not set here because the
+    # archival-node role declares the same path with a writer group.
+    owner: root
 
 - name: install keepalived-state textfile scraper
   copy:

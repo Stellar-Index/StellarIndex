@@ -112,7 +112,7 @@ fi
 publish_metrics() {
   metric_src="$1"
   metric_dst="$2"
-  metric_checked="$metric_src.checked"
+  metric_checked=$(mktemp "$metric_dst.chk.XXXXXX") || return 1
   if ! METRIC_DROPPED=$(awk -v keep="$metric_checked" '
     /^[ \t]*$/ || /^#/ { print > keep; next }
     {

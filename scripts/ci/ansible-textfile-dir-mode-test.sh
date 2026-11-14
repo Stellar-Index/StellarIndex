@@ -8,6 +8,9 @@
 #     DynamicUser sla-probe, smoke and heartbeat@ healthchecks). Dropping
 #     group-write silently loses their metrics; world-write lets anyone forge them.
 #     The sticky bit stops one group writer deleting or renaming over another's file.
+#   - The owner is root: root jobs write here, and a directory's owner can rename
+#     any entry whatever the sticky bit says. The HA roles declare the same
+#     path, so they must name root too and leave group and mode alone.
 #
 # Structural only (awk/grep over the real role files) — no hosts, no ansible run.
 set -uo pipefail
@@ -15,7 +18,7 @@ set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 ROLE="${ROLE:-configs/ansible/roles/archival-node}"
 DIR=/var/lib/node_exporter/textfile_collector
-WANT="stellarindex:stellarindex:1775"
+WANT="root:stellarindex:1775"
 
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "  ok   — $1"; }
@@ -51,6 +54,42 @@ while IFS='|' read -r file got; do
     bad "$file: $got — want $WANT (every declaring task must agree)"
   fi
 done <<<"$decls"
+
+for f in configs/ansible/roles/{haproxy,patroni,redis-sentinel}/tasks/*monitoring.yml; do
+  got="$(awk '/textfile_dir }}"/ { hit = 1; next }
+    hit && /^- name:/ { exit }
+    hit && /^[ \t]*(owner|group|mode):/ { gsub(/[ \t"]/, ""); printf "%s ", $0 }' "$f")"
+  if [ "$got" = "owner:root " ]; then
+    ok "$f: textfile dir is root's, group and mode left alone"
+  else
+    bad "$f: textfile dir declares '$got' — want only owner: root"
+  fi
+done
+
+# No root unit may write a .prom through a tool that follows a link at the target.
+if grep -rnE '\| *sponge ' configs/ansible/roles deploy/systemd; then
+  bad "a collector pipes into sponge, which follows a symlink at its target — pipe into /usr/local/bin/textfile-publish"
+else
+  ok "no collector pipes into sponge"
+fi
+
+# The publisher replaces a link planted at the target instead of writing
+# through it. BSD mv has no -T, so this arm runs where the hosts' mv does.
+T="$(mktemp -d)"
+if mv -T "$T" "$T.r" 2>/dev/null; then
+  T="$T.r"
+  echo victim > "$T/victim"
+  ln -s "$T/victim" "$T/apt.prom"
+  echo 'm 1' | TEXTFILE_DIR="$T" sh "$ROLE/files/textfile-publish.sh" apt
+  if [ "$(cat "$T/victim")" = victim ] && [ ! -L "$T/apt.prom" ] && [ "$(cat "$T/apt.prom")" = 'm 1' ]; then
+    ok "textfile-publish replaces a planted link and leaves its target alone"
+  else
+    bad "textfile-publish wrote through a link planted at the target"
+  fi
+else
+  echo "  skip — mv has no -T here; the publisher arm runs on Linux"
+fi
+rm -rf "$T"
 
 # Every unit that joins group stellarindex is a group writer the 0775 mode
 # exists for. Under ProtectSystem=strict it also needs the dir in
