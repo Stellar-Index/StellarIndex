@@ -315,7 +315,7 @@ type AssetDetail struct {
 	f2ReadFailed bool
 	// extensionUnread: the catalogue row or one of the six extension reads errored, so an absent field is not "none".
 	extensionUnread bool
-	// extensionStale: the catalogue row or an extension read answered from an expired cache entry.
+	// extensionStale: the catalogue row or an extension read answered from a cache entry its refresh has not kept up with.
 	extensionStale bool
 	// priceUnread: the USD price read failed; a null price_usd is then not "no market".
 	priceUnread bool
@@ -2501,7 +2501,9 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	if includeThin {
 		s.thinDetailPricePass(ctx, &detail, parsed, off)
 	}
-	s.fillDeclaredPegPrice(ctx, &detail, nil)
+	pegCtx, pegReads := withReadReport(ctx)
+	s.fillDeclaredPegPrice(pegCtx, &detail, nil)
+	detail.f2ReadFailed = detail.f2ReadFailed || pegReads.unread.Load()
 
 	// Scam-issuer price suppression, the payload-side twin of the reader-seam ScamGate. Runs AFTER
 	// every price producer (including the peg fill) so nothing can resurrect the value: a flagged
@@ -2566,7 +2568,7 @@ func assetDetailStale(detail *AssetDetail, homeDomainDegraded, ctxDead bool) boo
 // transientlyDegraded reports whether detail rests on a read that failed or
 // was cut short, so the body must not outlive the request in the detail cache.
 func transientlyDegraded(detail *AssetDetail, ctxDead bool) bool {
-	return detail.DecimalsUnresolved || ctxDead || detail.issuerDirectoryUnchecked || detail.f2ReadFailed || detail.extensionUnread || detail.extensionStale
+	return detail.DecimalsUnresolved || ctxDead || detail.issuerDirectoryUnchecked || detail.f2ReadFailed || detail.extensionUnread
 }
 
 // resolveAssetDetail fetches the AssetDetail for parsed from the reader, else a canonical echo.

@@ -142,6 +142,7 @@ func (s *Server) populateGlobalCryptoPrice(ctx context.Context, view GlobalAsset
 		}
 		s.logger.Warn("global asset view: ComputeGlobalPrice failed",
 			"ticker", vc.Ticker, "err", err)
+		// Unread even when the on-chain fallback then prices the view: the better source was not consulted.
 		reportUnreadRead(ctx)
 		return view
 	}
@@ -259,8 +260,9 @@ func assetForCurrency(vc *currency.VerifiedCurrency) (canonical.Asset, bool) {
 	return globalBaseForTicker(vc.Ticker)
 }
 
-// fiatRateStaleAfter is the age past which a daily FX point is no longer the current rate: a weekend plus one holiday.
-const fiatRateStaleAfter = 4 * 24 * time.Hour
+// fiatRateStaleAfter is the age past which a daily FX point is no longer the current rate. Six days clears the longest gap
+// the ECB calendar leaves (Thursday's rate is still current on the Tuesday after Easter).
+const fiatRateStaleAfter = 6 * 24 * time.Hour
 
 // fiatUSDPriceFor resolves a non-USD fiat's USD price, shared by the LISTING and DETAIL paths so they cannot drift. Order is
 // load-bearing: fx_quotes first, PriceReader only as a last resort (it returns ErrPriceNotFound for fiat quotes). Use

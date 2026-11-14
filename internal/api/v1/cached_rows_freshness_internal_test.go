@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 )
 
@@ -21,8 +22,17 @@ func (f fxPointsReader) ListFXHistory(context.Context, string, time.Time, time.T
 	return f.points, f.err
 }
 
-// TestSWR_ExpiredEntryIsReported: a row answered from an expired cache entry tells the response it is not current.
-func TestSWR_ExpiredEntryIsReported(t *testing.T) {
+// ageSWREntries moves every single-row entry's observation time back by d.
+func ageSWREntries(c *CachedAssetsReader, d time.Duration) {
+	c.single.mu.Lock()
+	defer c.single.mu.Unlock()
+	for _, e := range c.single.entries {
+		e.at = e.at.Add(-d)
+	}
+}
+
+// TestSWR_OverdueEntryIsReported: plain expiry is routine; an entry its refresh has not replaced is not current.
+func TestSWR_OverdueEntryIsReported(t *testing.T) {
 	hold := newUpstreamHold(2) // the refresh stays parked, so the second read is the expired entry
 	t.Cleanup(hold.release)
 	c := NewCachedAssetsReader(&swrAssetByIDUpstream{fakeAssetsUpstream: &fakeAssetsUpstream{}, hold: hold}, time.Minute)
@@ -34,12 +44,19 @@ func TestSWR_ExpiredEntryIsReported(t *testing.T) {
 	if rep.stale.Load() {
 		t.Fatal("cold fetch reported stale")
 	}
-	expireSWREntries(c)
+	ageSWREntries(c, time.Minute+time.Second)
+	if _, err := c.GetAssetByAssetID(ctx, "X"); err != nil {
+		t.Fatal(err)
+	}
+	if rep.stale.Load() {
+		t.Fatal("an entry one second past its ttl was reported stale")
+	}
+	ageSWREntries(c, assetsRefreshBudget)
 	if _, err := c.GetAssetByAssetID(ctx, "X"); err != nil {
 		t.Fatal(err)
 	}
 	if !rep.stale.Load() {
-		t.Error("read of an expired entry was not reported stale")
+		t.Error("an entry past its ttl and a refresh budget was not reported stale")
 	}
 	if _, err := c.GetAssetByAssetID(context.Background(), "X"); err != nil {
 		t.Errorf("read with no report installed: %v", err)
@@ -60,7 +77,7 @@ func TestFiatUSDPrice_ReportsOldAndUnreadRates(t *testing.T) {
 	}{
 		{"yesterday", fxPointsReader{points: point(24 * time.Hour)}, false, false, true},
 		{"after a long weekend", fxPointsReader{points: point(fiatRateStaleAfter - time.Hour)}, false, false, true},
-		{"six days old", fxPointsReader{points: point(6 * 24 * time.Hour)}, true, false, true},
+		{"a week old", fxPointsReader{points: point(fiatRateStaleAfter + time.Hour)}, true, false, true},
 		{"read failed", fxPointsReader{err: errors.New("pool timeout")}, false, true, false},
 	}
 	for _, c := range cases {
@@ -87,7 +104,7 @@ func TestGlobalAsset_FlagsFollowTheReads(t *testing.T) {
 		noStore bool
 	}{
 		{"fresh", fxPointsReader{points: rate(time.Hour)}, false, false},
-		{"old rate", fxPointsReader{points: rate(6 * 24 * time.Hour)}, true, false},
+		{"old rate", fxPointsReader{points: rate(fiatRateStaleAfter + time.Hour)}, true, false},
 		{"read failed", fxPointsReader{err: errors.New("pool timeout")}, true, true},
 	}
 	for _, c := range cases {
@@ -109,10 +126,42 @@ func TestGlobalAsset_FlagsFollowTheReads(t *testing.T) {
 	}
 }
 
-// TestAssetDetail_ExpiredRowIsStaleAndNotCached: a detail built on an expired catalogue row is marked and kept out of the cache.
-func TestAssetDetail_ExpiredRowIsStaleAndNotCached(t *testing.T) {
-	d := &AssetDetail{extensionStale: true}
-	if !assetDetailStale(d, false, false) || !transientlyDegraded(d, false) {
-		t.Errorf("stale=%v transient=%v, want both", assetDetailStale(d, false, false), transientlyDegraded(d, false))
+// TestAssetDetail_OverdueRowIsStaleButCached: a detail built on an overdue catalogue row is marked stale and still cached, so
+// a refresh that keeps failing does not also switch the detail cache off.
+func TestAssetDetail_OverdueRowIsStaleButCached(t *testing.T) {
+	hold := newUpstreamHold(2)
+	t.Cleanup(hold.release)
+	c := NewCachedAssetsReader(&swrAssetByIDUpstream{fakeAssetsUpstream: &fakeAssetsUpstream{}, hold: hold}, time.Minute)
+	s := unreadTestServer(Options{AssetsReader: c})
+	asset := mustAsset(t, withheldTestAsset)
+
+	var first AssetDetail
+	s.applyAssetExtensionFields(context.Background(), &first, asset)
+	if first.extensionStale {
+		t.Fatal("cold reads marked the detail stale")
+	}
+	ageSWREntries(c, time.Minute+assetsRefreshBudget+time.Second)
+	var d AssetDetail
+	s.applyAssetExtensionFields(context.Background(), &d, asset)
+	if !d.extensionStale || !assetDetailStale(&d, false, false) {
+		t.Errorf("overdue row: extensionStale=%v stale=%v, want both", d.extensionStale, assetDetailStale(&d, false, false))
+	}
+	if transientlyDegraded(&d, false) {
+		t.Error("overdue row kept the detail out of its cache")
+	}
+}
+
+// TestAssetDetail_UnreadPegRateIsNotCached: a declared-peg asset whose FX read failed has no price because nothing answered.
+func TestAssetDetail_UnreadPegRateIsNotCached(t *testing.T) {
+	asset := mustAsset(t, withheldTestAsset)
+	s := unreadTestServer(Options{
+		FXHistory:          fxPointsReader{err: errors.New("pool timeout")},
+		FiatPeggedClassics: map[string]canonical.Asset{asset.String(): {Type: canonical.AssetFiat, Code: "EUR"}},
+	})
+	ctx, rep := withReadReport(context.Background())
+	d := AssetDetail{AssetID: asset.String()}
+	s.fillDeclaredPegPrice(ctx, &d, nil)
+	if d.PriceUSD != nil || !rep.unread.Load() {
+		t.Errorf("price=%v unread=%v, want no price and unread", d.PriceUSD, rep.unread.Load())
 	}
 }
