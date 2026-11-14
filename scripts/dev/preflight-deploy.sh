@@ -390,6 +390,7 @@ done"
               case "$f" in *stellarindex-migrate) continue ;; esac;
               awk 1 "$f" || exit 3;
             done;
+            if [ -e "$d/.config-applied" ]; then awk 1 "$d/.config-applied" || exit 3; fi;
             exit 0'
     if baseline_raw="$(ssh_read "$baseline_remote")"; then
         candidates=""
@@ -403,7 +404,7 @@ done"
             # baseline came back empty and silently fell through to ancestry.
             sorted="$(printf '%s' "$candidates" | sort -V)"
             BASELINE="$(sed -n '1p' <<<"$sorted")"
-            baseline_source="host sidecars (lowest across every deployed binary, migrate excluded)"
+            baseline_source="host sidecars (lowest across every deployed binary and the .config-applied marker, migrate excluded)"
         fi
     else
         block "could not read the deployed-versions sidecars on ${HOST} for the config-apply baseline; deploy.yml FAILS CLOSED on exactly this read rather than falling back"
