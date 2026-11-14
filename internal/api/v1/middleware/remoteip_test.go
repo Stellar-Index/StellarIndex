@@ -183,6 +183,17 @@ func TestRemoteIPFor(t *testing.T) {
 		}
 	})
 
+	t.Run("forged XFF line does NOT win when the proxy adds its own line", func(t *testing.T) {
+		_ = SetTrustedProxyCIDRs([]string{"10.0.0.0/8"})
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.RemoteAddr = "10.0.0.5:1234"
+		req.Header.Add("X-Forwarded-For", "9.9.9.9")
+		req.Header.Add("X-Forwarded-For", "8.8.8.8")
+		if got := remoteIPFor(req); got != "8.8.8.8" {
+			t.Errorf("got %q, want 8.8.8.8 (the line the trusted proxy added, not the client's)", got)
+		}
+	})
+
 	t.Run("trusted peer with empty XFF falls back to peer", func(t *testing.T) {
 		_ = SetTrustedProxyCIDRs([]string{"10.0.0.0/8"})
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
