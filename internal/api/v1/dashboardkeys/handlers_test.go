@@ -1178,3 +1178,97 @@ func TestDashboardRevoke_MirrorRemovalOutcome(t *testing.T) {
 		})
 	}
 }
+
+type listFailingMirror struct {
+	KeyMirror
+}
+
+func (listFailingMirror) ListKeysForIdentifier(context.Context, string) ([]auth.APIKeyRecord, error) {
+	return nil, errors.New("redis down")
+}
+
+func listKeys(t *testing.T, h *Handlers, sc dashboardauth.SessionContext) listResponse {
+	t.Helper()
+	w := httptest.NewRecorder()
+	h.HandleList(w, sessionRequest(t, http.MethodGet, "/v1/dashboard/keys", nil, sc))
+	if w.Code != http.StatusOK {
+		t.Fatalf("list status = %d; body = %s", w.Code, w.Body.String())
+	}
+	var out listResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	return out
+}
+
+// A key minted by another key has no management row. The owner must still see it, see which key minted it,
+// and be able to kill it: otherwise whoever holds a leaked key keeps a credential the dashboard never shows.
+func TestDashboard_DelegatedKeyIsListedAndRevocable(t *testing.T) {
+	ctx := context.Background()
+	rdb := newMiniRedis(t)
+	h := newMirroredHandlers(t, newFakeKeyStore(), rdb)
+	_, _, sc := newTestRig(t)
+
+	minted, w := mintViaDashboard(t, h, sc, createRequest{Name: "parent"})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("mint status = %d; body = %s", w.Code, w.Body.String())
+	}
+	validator := auth.NewRedisAPIKeyValidator(rdb)
+	parent, err := validator.Lookup(ctx, minted.Plaintext)
+	if err != nil {
+		t.Fatalf("Lookup parent: %v", err)
+	}
+	child, childPlaintext, err := auth.NewRedisAPIKeyStore(rdb).Create(ctx, auth.ChildKeyRequest(parent, "minted by a key", nil))
+	if err != nil {
+		t.Fatalf("mint child: %v", err)
+	}
+
+	var row *keyDTO
+	list := listKeys(t, h, sc)
+	for i := range list.Keys {
+		if list.Keys[i].ID == child.KeyID {
+			row = &list.Keys[i]
+		}
+	}
+	if row == nil {
+		t.Fatalf("delegated key %s missing from the dashboard list: %+v", child.KeyID, list.Keys)
+	}
+	if !row.Delegated || row.ParentKeyID != parent.KeyID {
+		t.Errorf("delegated row = {delegated:%v parent:%q}, want {true %q}", row.Delegated, row.ParentKeyID, parent.KeyID)
+	}
+	if len(list.Keys) != 2 || list.DelegatedUnavailable {
+		t.Errorf("list = %d keys, unavailable=%v; want the parent once and the child once", len(list.Keys), list.DelegatedUnavailable)
+	}
+
+	member := sc
+	member.User.Role = platform.RoleMember
+	if w := doRevoke(t, h, member, child.KeyID); w.Code != http.StatusNotFound {
+		t.Errorf("member revoke of a delegated key = %d, want 404", w.Code)
+	}
+	if _, err := validator.Lookup(ctx, childPlaintext); err != nil {
+		t.Fatalf("child stopped authenticating after a refused revoke: %v", err)
+	}
+
+	if w := doRevoke(t, h, sc, child.KeyID); w.Code != http.StatusNoContent {
+		t.Fatalf("owner revoke of a delegated key = %d; body = %s", w.Code, w.Body.String())
+	}
+	if _, err := validator.Lookup(ctx, childPlaintext); !errors.Is(err, auth.ErrUnauthorized) {
+		t.Errorf("Lookup child after revoke = %v, want ErrUnauthorized", err)
+	}
+	if _, err := validator.Lookup(ctx, minted.Plaintext); err != nil {
+		t.Errorf("revoking the child took the parent with it: %v", err)
+	}
+	if w := doRevoke(t, h, sc, child.KeyID); w.Code != http.StatusNotFound {
+		t.Errorf("second revoke = %d, want 404", w.Code)
+	}
+}
+
+// An unreadable validator store must say so: a list that silently omits delegated keys reads as "there are none".
+func TestDashboardList_UnreadableDelegatedKeysAreFlagged(t *testing.T) {
+	h := newMirroredHandlers(t, newFakeKeyStore(), newMiniRedis(t))
+	h.cfg.Mirror = listFailingMirror{h.cfg.Mirror}
+	_, _, sc := newTestRig(t)
+	if list := listKeys(t, h, sc); !list.DelegatedUnavailable {
+		t.Error("delegated_unavailable = false after the validator store failed to list")
+	}
+}

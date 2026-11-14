@@ -9843,6 +9843,9 @@ paths:
         recently created revoked keys for the authenticated user's
         account, ordered oldest-first. `revoked_truncated` is true
         when older revoked keys exist and were omitted.
+        Keys minted by another key through `POST /v1/account/keys`
+        follow, marked `delegated`; `delegated_unavailable` is true
+        when they could not be read and so may be missing.
         Plaintext is never returned by this endpoint — only
         the prefix (`sip_4f9c1d8b…`).
       responses:
@@ -9882,7 +9885,12 @@ paths:
                       The key cap POST enforces for this account. It
                       counts every unrevoked key, expired ones included,
                       so an expired key holds its slot until revoked.
-                required: [keys, revoked_truncated, max_active_keys]
+                  delegated_unavailable:
+                    type: boolean
+                    description: |
+                      True when keys minted by other keys could not be
+                      read: the list may be missing live credentials.
+                required: [keys, revoked_truncated, max_active_keys, delegated_unavailable]
         "401":
           description: No valid session cookie.
           content:
@@ -9964,6 +9972,10 @@ paths:
         idempotent. 404 when the key doesn't exist OR belongs
         to a different account (same shape so attackers can't
         enumerate cross-account key_ids).
+        A `delegated` key is removed outright, by an owner or admin
+        only, and a second revoke of it is 404. Revoking a key does
+        not revoke the keys it minted: revoke each one listed with
+        its `parent_key_id`.
       parameters:
         - name: id
           in: path
@@ -16053,6 +16065,17 @@ components:
         id: { type: string }
         name: { type: string }
         description: { type: string }
+        delegated:
+          type: boolean
+          description: |
+            Present and true on a key another key minted for itself
+            through `POST /v1/account/keys`. It authenticates like any
+            other key of the account.
+        parent_key_id:
+          type: string
+          description: |
+            On a `delegated` key, the id of the key that minted it.
+            Absent on delegated keys minted before the link was recorded.
         key_prefix:
           type: string
           description: First 12 chars of the plaintext (`sip_<8hex>`).
@@ -22625,6 +22648,13 @@ components:
           description: "Session caller's parent account — present on cookie-session responses only."
         key_id:           { type: string }
         label:            { type: string }
+        parent_key_id:
+          type: string
+          description: |
+            The `key_id` of the key that minted this one through
+            `POST /v1/account/keys`. Absent on any other key, and on
+            keys minted before the link was recorded. Revoking the
+            parent does not revoke this key.
         key_prefix:
           type: string
           description: |

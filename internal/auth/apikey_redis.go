@@ -89,6 +89,10 @@ type APIKeyRecord struct {
 	// enough to authenticate) and shown in dashboard listings. Empty on records minted without one.
 	KeyPrefix string `json:"key_prefix,omitempty"`
 
+	// ParentKeyID is the KeyID of the key that minted this one for its own identifier. It is how an owner traces
+	// a key they did not create to the credential that did; revoking the parent does not revoke it.
+	ParentKeyID string `json:"parent_key_id,omitempty"`
+
 	// Tier is the [Tier] this key authenticates as: [TierAPIKey], or [TierOperator] to unlock admin endpoints.
 	Tier Tier `json:"tier"`
 
