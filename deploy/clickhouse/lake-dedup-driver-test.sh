@@ -206,6 +206,24 @@ else
 fi
 no_optimize df_garbage "unparseable df output"
 
+# ── 3b. pool floor: 3x one partition is not the bound ─────────────────
+run pool_floor ENUM_PARTS=$'0000000001\n' DF_AVAIL=200000000000 HEAVY_JOB_FLOOR_FILE=/nonexistent -- transactions
+if [ "$RC" -ne 0 ] && grep -q "pool floor" "$LOG"; then
+  ok "free below the 300 GiB default floor ⇒ ABORT"
+else
+  bad "free below the pool floor ⇒ no ABORT (rc=$RC)"
+  sed 's/^/       /' "$LOG"
+fi
+no_optimize pool_floor "pool below floor"
+printf 'HEAVY_MIN_DATA_KB=1000\n' > "$TMP/floor"
+run pool_floor_file ENUM_PARTS=$'0000000001\n' DF_AVAIL=200000000000 HEAVY_JOB_FLOOR_FILE="$TMP/floor" -- transactions
+if [ "$RC" -eq 0 ] && ! grep -q "pool floor" "$LOG"; then
+  ok "floor file lowers the floor ⇒ partition runs"
+else
+  bad "floor file ignored (rc=$RC)"
+  sed 's/^/       /' "$LOG"
+fi
+
 # ── 4. OPTIMIZE itself fails ──────────────────────────────────────────
 run optimize_fail ENUM_PARTS=$'0000000002\n' OPT_FAIL=1 -- operations
 if [ "$RC" -ne 0 ]; then

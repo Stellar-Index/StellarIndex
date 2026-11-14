@@ -56,8 +56,9 @@ load_env_file /etc/default/stellarindex
 # 90 days @ 5s ledger close = 17280 ledgers/day × 90 = 1,555,200.
 HOT_WINDOW_LEDGERS=1555200
 
+# The live ingest cursor only: a job cursor (tag-signer -to past the tip) must not move the permanent hot floor.
 TIP=$(psql "$STELLARINDEX_POSTGRES_DSN" -tA -c \
-  'SELECT GREATEST(MAX(last_ledger), 0) FROM ingestion_cursors WHERE last_ledger > 0' \
+  "SELECT COALESCE((SELECT last_ledger FROM ingestion_cursors WHERE source = 'ledgerstream' AND sub_source = ''), 0)" \
   2>/dev/null | tr -d '[:space:]')
 
 if [ -z "$TIP" ] || [ "$TIP" = "0" ]; then

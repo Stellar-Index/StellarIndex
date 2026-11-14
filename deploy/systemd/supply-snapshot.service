@@ -24,7 +24,7 @@
 #   EXTRA_FLAGS    Optional flags appended to the command line.
 #                  E.g. EXTRA_FLAGS="-ledger 50000000" pins the
 #                  snapshot to a specific ledger; default attribution
-#                  is the max last_ledger across ingestion_cursors.
+#                  is the live ledgerstream cursor.
 #
 # Reserve balances are operator-managed via the [supply] config
 # block in CONFIG_PATH — `sdf_reserve_accounts` enumerates the

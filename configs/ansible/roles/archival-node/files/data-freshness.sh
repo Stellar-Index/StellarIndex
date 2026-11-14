@@ -329,7 +329,7 @@ fi
 # small manual -to). Emit per-source lag (ingest cursor tip - verdict watermark) so that is
 # alertable rather than a green "N/N complete" badge.
 if ! "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
-WITH tip AS (SELECT max(last_ledger) AS t FROM ingestion_cursors)
+WITH tip AS (SELECT last_ledger AS t FROM ingestion_cursors WHERE source = 'ledgerstream' AND sub_source = '')
 SELECT 'stellarindex_completeness_watermark_lag_ledgers{source="'||s.source||'"} '
        ||greatest(0, (SELECT t FROM tip) - s.watermark_ledger)::text
   FROM (SELECT DISTINCT ON (source) source, watermark_ledger

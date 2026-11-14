@@ -4,6 +4,8 @@
     name: redis-server
     state: restarted
     daemon_reload: yes
+  # One member at a time, or the cluster has no primary until every node reloads.
+  throttle: 1
   listen: "redis config changed"
 
 - name: restart redis-sentinel
@@ -11,6 +13,7 @@
     name: redis-sentinel
     state: restarted
     daemon_reload: yes
+  throttle: 1
   listen: "sentinel config changed"
 
 - name: reload firewall

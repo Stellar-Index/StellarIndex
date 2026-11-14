@@ -84,7 +84,7 @@ case "$LIVE_ERA_FROM" in
 esac
 
 CH_MAX=$(CH -q "SELECT max(ledger_seq) FROM stellar.ledgers" 2>/dev/null)
-TIP=$(psql "$DSN" -tAc "SELECT max(last_ledger) FROM ingestion_cursors" 2>/dev/null | tr -d '[:space:]')
+TIP=$(psql "$DSN" -tAc "SELECT last_ledger FROM ingestion_cursors WHERE source = 'ledgerstream' AND sub_source = ''" 2>/dev/null | tr -d '[:space:]')
 if [ -z "${CH_MAX:-}" ] || [ -z "${TIP:-}" ]; then
   echo "$(date -u) ch-live-catchup: could not resolve CH_MAX=$CH_MAX / TIP=$TIP" >&2
   exit 1
