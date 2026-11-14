@@ -21,3 +21,16 @@ func TestRefreshOnce_EmptyHistoryRefetchKeepsTheHeldSeries(t *testing.T) {
 		t.Fatalf("held history = %+v, want the series kept when the refetch returned nothing", w.rawHistory)
 	}
 }
+
+// TestRefreshOnce_HeldSeriesPastItsWindowIsDropped: a long primary outage must not leave an old week standing in for the trailing one.
+func TestRefreshOnce_HeldSeriesPastItsWindowIsDropped(t *testing.T) {
+	up := &fakeMassive{names: guardedNames, groupedStatus: 500}
+	w := newGuardedWorker(t, up, nil).WithFallbacks(&stubProvider{name: "ecb", rates: map[string]float64{"EUR": 0.92}})
+	w.rawHistory = map[string][]HistoryPoint{"EUR": {{Date: time.Date(2026, 8, 10, 0, 0, 0, 0, time.UTC), RateUSD: 0.93}}}
+
+	w.refreshOnce(context.Background())
+
+	if len(w.rawHistory) != 0 {
+		t.Fatalf("held history = %+v, want a series 17 days behind the publication day dropped", w.rawHistory)
+	}
+}

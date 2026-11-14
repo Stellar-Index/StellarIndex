@@ -283,9 +283,15 @@ func (w *Worker) refreshOnce(ctx context.Context) {
 	if w.shouldRefreshHistory(w.rawHistory, publishedAt) {
 		// A refetch that returned nothing is a failed fetch: keep the held series, which the heal
 		// and the confirm veto read, and try again next refresh.
-		if fetched := w.fetchHistory(ctx, names, publishedAt); len(fetched) > 0 || len(w.rawHistory) == 0 {
+		// A held series past the 7-day window describes another week, so it is dropped, not kept.
+		fetched := w.fetchHistory(ctx, names, publishedAt)
+		switch {
+		case len(fetched) > 0 || len(w.rawHistory) == 0:
 			w.rawHistory = fetched
-		} else {
+		case publishedAt.Sub(newestHistoryBar(w.rawHistory)) > heldHistoryMaxAge:
+			w.logger.Warn("forex: history refetch returned nothing and the held series is past its window — dropping it", "tickers", len(w.rawHistory))
+			w.rawHistory = nil
+		default:
 			w.logger.Warn("forex: history refetch returned nothing — keeping the held series", "tickers", len(w.rawHistory))
 		}
 	}
@@ -794,9 +800,20 @@ func (w *Worker) shouldRefreshHistory(prevHistory map[string][]HistoryPoint, pub
 	if len(prevHistory) == 0 {
 		return true
 	}
-	// Tickers can end on different days (a 404 day is skipped per ticker): use the newest bar overall.
+	newest := newestHistoryBar(prevHistory)
+	if newest.IsZero() {
+		return true
+	}
+	return newest.Before(publishedAt.Truncate(24 * time.Hour))
+}
+
+// heldHistoryMaxAge is how far behind the publication day a held series' newest bar may fall before it stops being the trailing week.
+const heldHistoryMaxAge = 7 * 24 * time.Hour
+
+// newestHistoryBar is the newest bar across all tickers; they can end on different days (a 404 day is skipped per ticker).
+func newestHistoryBar(history map[string][]HistoryPoint) time.Time {
 	var newest time.Time
-	for _, points := range prevHistory {
+	for _, points := range history {
 		if len(points) == 0 {
 			continue
 		}
@@ -804,10 +821,7 @@ func (w *Worker) shouldRefreshHistory(prevHistory map[string][]HistoryPoint, pub
 			newest = d
 		}
 	}
-	if newest.IsZero() {
-		return true
-	}
-	return newest.Before(publishedAt.Truncate(24 * time.Hour))
+	return newest
 }
 
 // fetchHistory assembles a per-ticker series from the trailing-7d daily snapshots. Days that 404
