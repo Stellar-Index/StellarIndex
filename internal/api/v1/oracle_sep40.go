@@ -330,7 +330,7 @@ func (s *Server) recentClosedWithStablecoinFallback(
 	if quote.Type != canonical.AssetFiat || quote.Code != "USD" || s.oracleSeriesLive(best, bestAt) {
 		return best, false, nil
 	}
-	var withheldErr, firstErr error
+	var failed oracleLegErrors
 	for _, peg := range s.usdPegProxyQuotes() {
 		// A peg asked for under any of its spellings — the classic id or
 		// its SAC wrapper — is not a market against itself.
@@ -338,16 +338,8 @@ func (s *Server) recentClosedWithStablecoinFallback(
 			continue
 		}
 		pegSnapshots, pegAt, pegErr := s.recentClosedForAliases(ctx, asset, peg, n)
-		if pegErr != nil {
-			if errors.Is(pegErr, ErrPriceWithheld) && withheldErr == nil {
-				withheldErr = pegErr
-			}
-			if firstErr == nil {
-				firstErr = pegErr
-			}
-			continue
-		}
-		if len(pegSnapshots) == 0 {
+		if pegErr != nil || len(pegSnapshots) == 0 {
+			failed.note(pegErr)
 			continue
 		}
 		if s.oracleSeriesSupersedes(best, bestAt, pegSnapshots, pegAt) {
@@ -357,15 +349,30 @@ func (s *Server) recentClosedWithStablecoinFallback(
 			break
 		}
 	}
-	switch {
-	case len(best) > 0:
+	if len(best) > 0 {
 		return best, viaPeg, nil
-	case withheldErr != nil:
-		return nil, false, withheldErr
-	case firstErr != nil:
-		return nil, false, firstErr
 	}
-	return best, false, nil
+	return nil, false, failed.err()
+}
+
+// oracleLegErrors keeps what the peg walk's failed legs said: a withheld verdict outranks the
+// first read error.
+type oracleLegErrors struct{ withheld, first error }
+
+func (e *oracleLegErrors) note(err error) {
+	if errors.Is(err, ErrPriceWithheld) && e.withheld == nil {
+		e.withheld = err
+	}
+	if e.first == nil {
+		e.first = err
+	}
+}
+
+func (e oracleLegErrors) err() error {
+	if e.withheld != nil {
+		return e.withheld
+	}
+	return e.first
 }
 
 // oracleSeriesLive reports whether a series' newest bucket is inside oracleLiveWindow.
