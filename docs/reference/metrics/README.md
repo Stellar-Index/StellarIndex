@@ -1711,7 +1711,7 @@ Counter, no labels.
 
 Flagged non-7-decimal assets seen at refresh whose alias family is only PARTLY flagged.
 
-Unlike the counter above, this **is** a pricing-correctness signal. `NonstandardDecimalsCache.Lookup` does not alias-fold, so the price and supply legs can diverge by a **power of ten** while both look plausible. Expected value is 0. A nonzero value means one spelling of an aliasing asset was flagged (XLM: `native`, `crypto:XLM`, its SAC). Flag the missing spellings.
+Unlike the counter above, this **is** a pricing-correctness signal. `NonstandardDecimalsCache.Lookup` does not alias-fold, so the price and supply legs can diverge by a **power of ten** while both look plausible. Expected value is 0. A nonzero value means one spelling of an aliasing asset was flagged (XLM: `native`, `crypto:XLM`, its SAC). Flag the missing spellings. Alert: `stellarindex_nonstandard_decimals_partial_alias_family`.
 
 ### `stellarindex_nonstandard_decimals_lockstep_mismatch_total`
 

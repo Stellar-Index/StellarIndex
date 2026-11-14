@@ -397,6 +397,22 @@ For a lockstep hit read the ERROR `decimals-guard: nonstandard_decimals_assets r
 
 Mitigation, hand-seeding and the lockstep `site` meanings: [dex.md#dex-nonstandard-decimals](dex.md#dex-nonstandard-decimals).
 
+## stellarindex_nonstandard_decimals_partial_alias_family
+
+P3 ticket, `for: 5m`. `stellarindex_nonstandard_decimals_partial_alias_family_total` rose: `nonstandard_decimals_assets` flags one spelling of an asset and not another. The lookup does not alias-fold, so a price or supply read under the unflagged spelling is served unscaled, off by a power of ten against the other leg. The counter rises on every 60 s cache refresh while the row is missing.
+
+### Check
+
+```sh
+journalctl -u stellarindex-api --since '-30m' | grep 'UNFLAGGED alias'
+```
+
+The line carries `flagged` (the row that exists) and `unflagged_alias` (the row that is missing).
+
+### Fix
+
+Seed the missing spelling with the flagged row's decimals: [dex.md#dex-nonstandard-decimals](dex.md#dex-nonstandard-decimals). The alert clears 15 minutes after the next refresh sees the full family.
+
 ## stellarindex_customer_webhook_fanout_failing
 
 P3, `for: 5m`. Expr: `sum by (event_type, reason) (increase(stellarindex_customer_webhook_fanout_failures_total[1h])) > 0`; one occurrence is worth a ticket. A subscriber got no delivery row written, so nothing retries and the event is lost to them until re-emitted. Delivery-attempt failures after a row exists are [`api.md#stellarindex_customer_webhook_delivery_failing`](api.md#stellarindex_customer_webhook_delivery_failing). Fan-out failure means no delivery row was written, so nothing retries; delivery attempts that do exist retry on a 15-attempt budget whose last retry lands ~4–8 h after the event.

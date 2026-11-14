@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
@@ -124,6 +125,9 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 
 	sigma, ok := parseOHLCOutlierSigma(w, r)
 	if !ok {
+		return
+	}
+	if !middleware.ChargeRateLimit(w, r, tradeScanCost(from, to)) {
 		return
 	}
 
