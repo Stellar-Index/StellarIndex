@@ -8776,10 +8776,12 @@ export interface components {
             membership_as_of: string;
             /**
              * Format: date-time
-             * @description The first day the served price history holds. No series
-             *     starts before it, and `no_market_history` means no
-             *     dollar-quoted trade since it — trading before this day is
-             *     not read here. Absent when it could not be read.
+             * @description The first full day for which the served price history holds
+             *     a dollar-quoted trade of any asset. No series starts before
+             *     it, and `no_market_history` means no dollar-quoted trade
+             *     since it — trading before this day is not read here. A venue
+             *     whose served history starts later is covered only from its
+             *     own start. Absent when it could not be read.
              */
             market_observed_from?: string;
             /** @description Set members with no series, tallied by reason. */

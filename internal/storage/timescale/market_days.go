@@ -91,11 +91,30 @@ const dailyMarketDaysQuery = `
          ORDER BY day ASC, member ASC
     `
 
-// EarliestMarketHour is the oldest hourly price bucket the served tier holds, for any pair: where
-// DailyMarketDays' history can begin. ok=false when the tier is empty.
-func (s *Store) EarliestMarketHour(ctx context.Context) (time.Time, bool, error) {
+// earliestMarketHourQuery applies DailyMarketDays' own row filter: a bucket of some other pair is
+// not evidence that a dollar trade would have been seen.
+const earliestMarketHourQuery = `
+        SELECT bucket
+          FROM prices_1h
+         WHERE (quote_asset = ANY($1) OR base_asset = ANY($1))
+           AND vwap IS NOT NULL
+           AND volume_priced > 0
+         ORDER BY bucket ASC
+         LIMIT 1`
+
+// EarliestMarketHour is the oldest hourly bucket the served tier holds for a trade against one of
+// `quotes`, in either stored orientation: where DailyMarketDays' history can begin. ok=false when
+// there is none.
+func (s *Store) EarliestMarketHour(ctx context.Context, quotes []canonical.Asset) (time.Time, bool, error) {
+	if len(quotes) == 0 {
+		return time.Time{}, false, nil
+	}
+	keys := make([]string, len(quotes))
+	for i, q := range quotes {
+		keys[i] = q.String()
+	}
 	var at time.Time
-	err := s.db.QueryRowContext(ctx, `SELECT bucket FROM prices_1h ORDER BY bucket ASC LIMIT 1`).Scan(&at)
+	err := s.db.QueryRowContext(ctx, earliestMarketHourQuery, keys).Scan(&at)
 	if errors.Is(err, sql.ErrNoRows) {
 		return time.Time{}, false, nil
 	}

@@ -455,7 +455,7 @@ func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.
 	}
 	if ok && proxy.Price != "" {
 		// A declaration (no sources) is not an observation and has no age.
-		old := len(proxySources) > 0 && time.Since(proxy.ObservedAt.Time()) > usdProxyFreshness
+		old := len(proxySources) > 0 && s.now().Sub(proxy.ObservedAt.Time()) > usdProxyFreshness
 		return usdPriceLookup{price: proxy.Price, sources: len(proxySources), stale: old}
 	}
 	if withheld != "" {

@@ -40,7 +40,7 @@ type stubMarketHistory struct {
 	earliestErr error
 }
 
-func (s *stubMarketHistory) EarliestMarketHour(context.Context) (time.Time, bool, error) {
+func (s *stubMarketHistory) EarliestMarketHour(_ context.Context, _ []canonical.Asset) (time.Time, bool, error) {
 	return s.earliest, !s.earliest.IsZero(), s.earliestErr
 }
 
@@ -671,8 +671,8 @@ func TestRWAPremium_NoMarketHistoryIsBoundedByTheServedFloor(t *testing.T) {
 	floor := time.Date(2026, 3, 9, 14, 0, 0, 0, time.UTC)
 
 	v := getRWAPremium(t, rwaPremiumServer(t, bound, dir, rows, oracle, &stubMarketHistory{earliest: floor}), "?timeframe=all")
-	if v.MarketObservedFrom == nil || !time.Time(*v.MarketObservedFrom).Equal(floor.Truncate(24*time.Hour)) {
-		t.Errorf("market_observed_from = %v, want the floor's UTC day", v.MarketObservedFrom)
+	if v.MarketObservedFrom == nil || !time.Time(*v.MarketObservedFrom).Equal(time.Date(2026, 3, 10, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("market_observed_from = %v, want the first full day held", v.MarketObservedFrom)
 	}
 	for _, e := range v.Excluded {
 		if e.Reason == "no_market_history" && (strings.Contains(e.Detail, "ever") || !strings.Contains(e.Detail, "market_observed_from")) {

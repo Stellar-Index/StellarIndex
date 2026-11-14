@@ -44,4 +44,11 @@ func TestChart_FiatMarketCap_HasNoInventedHistory(t *testing.T) {
 			t.Errorf("timeframe=%s: truncated=%v data_starts_at=%v, want the series start named", tf, got.Truncated, got.DataStartsAt)
 		}
 	}
+
+	// No rate in the days read: an empty series must still say older days were not read.
+	fx.points = fx.points[:2]
+	got := getChartOpts(t, opts, "asset=fiat:TRY&quote=fiat:USD&price_type=market_cap&granularity=1d&timeframe=all")
+	if len(got.Points) != 0 || !got.Truncated {
+		t.Errorf("stale rates: points=%d truncated=%v, want an empty series marked truncated", len(got.Points), got.Truncated)
+	}
 }

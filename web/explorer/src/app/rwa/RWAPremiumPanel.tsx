@@ -235,6 +235,8 @@ function Coverage({ data }: { data: RWAPremiumHistoryView }) {
             .map((e) => `${e.assets} ${excludedLabel(e.reason)}`)
             .join(', ')}
           .
+          {data.market_observed_from &&
+            ` That price history starts ${data.market_observed_from.slice(0, 10)}.`}
         </p>
       )}
       {hidden > 0 && (
@@ -261,7 +263,7 @@ const EXCLUDED_LABEL: Record<string, string> = {
   contract_not_bound: 'contract-issued, which the binding table cannot key',
   issuer_flagged: 'withheld for a scam-class issuer flag',
   no_reference_history: 'whose instrument has no published value history',
-  no_market_history: 'that have never traded against a dollar',
+  no_market_history: 'with no dollar trade in the price history we hold',
   market_below_floor: 'whose market never cleared the thin-market floor',
   no_same_day_observation:
     'whose market and oracle were never observed on the same day',

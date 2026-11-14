@@ -1479,7 +1479,10 @@ func (s *Server) handleChartMarketCap(
 		PriceType:   "market_cap",
 		Points:      wire,
 	}
-	if len(wire) > 0 && (from.IsZero() || wire[0].T.Time().Sub(from) > chartGranularityGrace(gran)) {
+	if len(wire) == 0 {
+		// No rate in the days read is not "no history": older days were not read.
+		series.Truncated = true
+	} else if from.IsZero() || wire[0].T.Time().Sub(from) > chartGranularityGrace(gran) {
 		startsAt := wire[0].T
 		series.Truncated = true
 		series.DataStartsAt = &startsAt

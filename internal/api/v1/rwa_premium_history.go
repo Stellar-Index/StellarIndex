@@ -208,7 +208,7 @@ const rwaPremiumBasisUnavailable = "No premium series is published: membership c
 // RWAMarketHistoryReader reads the observed daily dollar market, the market leg of GET /v1/rwa/premium; nil disables the endpoint because a premium missing its market leg is no series.
 type RWAMarketHistoryReader interface {
 	DailyMarketDays(ctx context.Context, assets, quotes []canonical.Asset, from, to time.Time) ([]timescale.MarketDay, error)
-	EarliestMarketHour(ctx context.Context) (time.Time, bool, error)
+	EarliestMarketHour(ctx context.Context, quotes []canonical.Asset) (time.Time, bool, error)
 }
 
 // ─── assembled series ───────────────────────────────────────────────
@@ -554,10 +554,11 @@ func (s *Server) buildRWAPremiumHistory(ctx context.Context) rwaPremiumHistory {
 		return rwaPremiumHistory{}
 	}
 	// Unread leaves the field absent; the series itself does not depend on it.
-	if at, found, err := s.MarketHistory.EarliestMarketHour(ctx); err != nil {
+	if at, found, err := s.MarketHistory.EarliestMarketHour(ctx, s.rwaPremiumUSDQuotes()); err != nil {
 		s.logger.Warn("rwa premium: served market floor read failed", "err", err)
 	} else if found {
-		out.marketFrom = at.Truncate(24 * time.Hour)
+		// Rounded up: the day the first bucket falls in is only partly held.
+		out.marketFrom = at.UTC().Add(24*time.Hour - time.Nanosecond).Truncate(24 * time.Hour)
 	}
 
 	for _, c := range cands {
