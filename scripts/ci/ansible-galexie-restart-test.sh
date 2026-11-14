@@ -151,6 +151,7 @@ else
 - hosts: localhost
   connection: local
   gather_facts: false
+  force_handlers: true  # as playbooks/archival-node.yml: a notified handler runs even on a failed host
   vars:
     galexie_restart_ack: false
     galexie_effective_inputs:
@@ -174,7 +175,9 @@ YML
            ansible-playbook -i localhost, fixture.yml "$@" 2>&1)"; rc=$?
     got=quiet
     [ -f "$TMP/restarted" ] && got=fired
-    [ "$rc" -ne 0 ] && got=refused
+    if [ "$rc" -ne 0 ]; then
+      if [ "$got" = fired ]; then got=refused-but-restarted; else got=refused; fi
+    fi
     if [ "$got" = quiet ] && grep -q 'RUNNING HANDLER \[Restart galexie\]' <<<"$out"; then got=previewed; fi
     if [ "$got" = "$expect" ]; then ok "$desc → $got (expected $expect)"
     else bad "$desc → $got (expected $expect): $out"; fi

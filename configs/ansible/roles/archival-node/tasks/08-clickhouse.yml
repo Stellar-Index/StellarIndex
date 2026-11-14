@@ -131,6 +131,7 @@
   ansible.builtin.file:
     path: /var/lib/stellarindex/ch-schema
     state: directory
+    follow: false
     mode: "0755"
 
 - name: Find staged schema files outside the allow-list

@@ -355,6 +355,7 @@
   ansible.builtin.file:
     path: /var/lib/galexie/captive
     state: directory
+    follow: false
     owner: galexie
     group: galexie
     mode: "0750"

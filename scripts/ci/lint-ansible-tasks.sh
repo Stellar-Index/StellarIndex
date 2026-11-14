@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# lint-ansible-tasks.sh — two structural guards over configs/ansible/**.
+# lint-ansible-tasks.sh — three structural guards over configs/ansible/**.
 #
 # Rule 1: pipefail-needs-bash. `ansible.builtin.shell` runs its body via
 #   /bin/sh, which is dash on every target host (Ubuntu noble). dash < 0.5.13
@@ -15,7 +15,14 @@
 #   `environment:`. Same for shipped shell scripts: `mc alias set` /
 #   `mc admin user add` must take the secret on stdin, not as an argument.
 #
-# Both rules are line-oriented (awk), deliberately conservative, and
+# Rule 3: follow-in-service-dir. `ansible.builtin.file` follows a symlink at
+#   its path by default and applies owner/group/mode to the TARGET. Under a
+#   directory a service user owns, that user can plant the link and have root
+#   chown or chmod any file. A file task whose literal path is inside such a
+#   directory MUST set `follow: false` (`state: absent` never follows). A
+#   templated path (`{{ item }}`) is not seen.
+#
+# The rules are line-oriented (awk), deliberately conservative, and
 # self-tested by lint-ansible-tasks-test.sh. Exit code = number of findings.
 # Prints a self-accounting line so a scan of zero files cannot pass silently.
 
@@ -73,6 +80,12 @@ for f in "${yml_files[@]}"; do
                file, task_line, pipefail_line, task_name)
         n++
       }
+      if (file_path_line && !file_absent && !follow_false) {
+        printf("%s:%d: follow-in-service-dir: file task path is inside a service-owned directory but the task has no `follow: false` — root would chown/chmod the target of a planted link (task: %s)\n",
+               file, file_path_line, task_name)
+        n++
+      }
+      file_path_line = 0; file_absent = 0; follow_false = 0
       is_shell = 0; is_cmd = 0; pipefail_line = 0; bash_exec = 0; task_line = 0; task_name = ""
       key = ""; subkey = ""; key_indent = -1
     }
@@ -110,6 +123,11 @@ for f in "${yml_files[@]}"; do
       if (is_shell && in_body && !pipefail_line \
           && (line ~ /^[ \t]*set[ \t]+[-+][A-Za-z]*o[A-Za-z]*[ \t]+pipefail/ || line ~ /^[ \t]*set[ \t]+.*-o[ \t]+pipefail/)) pipefail_line = NR
       if (line ~ /^[ \t]*executable:[ \t]*\/bin\/bash[ \t]*$/) bash_exec = 1
+      if (key == "ansible.builtin.file" || key == "file") {
+        if (line ~ /^[ \t]*(path|dest|name):[ \t]*"?\/(var\/lib\/(stellar-core|galexie|minio|clickhouse|promtail|postgresql|stellarindex)|srv\/history-archive|tmp|var\/tmp)\/[^ \t"]/) file_path_line = NR
+        if (line ~ /^[ \t]*state:[ \t]*absent[ \t]*$/) file_absent = 1
+        if (line ~ /^[ \t]*follow:[ \t]*(false|no)[ \t]*$/) follow_false = 1
+      }
       if ((is_shell || is_cmd) && in_body \
           && line ~ /\{\{[^}]*(password|secret|_pass\b|token|api_key)[^}]*\}\}/) {
         printf("%s:%d: secret-on-argv: vault value interpolated into the command body (visible in /proc/<pid>/cmdline; no_log hides it from Ansible output only) — feed it via `stdin:` or `environment:` (task: %s)\n",
