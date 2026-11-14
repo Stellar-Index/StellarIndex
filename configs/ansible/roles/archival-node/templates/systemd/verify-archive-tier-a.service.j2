@@ -115,8 +115,8 @@ ExecStart=/usr/local/sbin/run-heavy-job.sh verify-archive \
 
 # De-privileged — the stellarindex user is
 # created by 04-users.yml. Reads the archive via S3 (network)
-# and writes only the state file under /var/lib/stellarindex, which is
-# stellarindex-owned (04-users.yml).
+# and writes only the state file under /var/lib/stellarindex, which the
+# stellarindex group can write (04-users.yml).
 User=stellarindex
 Group=stellarindex
 

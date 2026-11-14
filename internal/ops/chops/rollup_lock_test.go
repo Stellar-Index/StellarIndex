@@ -4,6 +4,7 @@
 package chops
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -12,22 +13,26 @@ func TestLockChownTarget(t *testing.T) {
 	cases := []struct {
 		name     string
 		euid     int
+		dirUID   uint32
 		fileUID  uint32
 		wantNeed bool
+		wantUID  int
+		wantMode os.FileMode
 	}{
-		{"root run leaves a root-owned lock in the service dir", 0, 0, true},
-		{"root run over a lock the service already owns", 0, 990, false},
-		{"service user run", 990, 990, false},
-		{"other non-root run cannot chown", 1000, 1000, false},
+		{"root run leaves a root-owned lock in a service-owned dir", 0, 990, 0, true, 990, 0o600},
+		{"root run leaves a root-owned lock in a root-owned dir", 0, 0, 0, true, 0, 0o660},
+		{"root run over a lock the service already owns", 0, 0, 990, false, 0, 0},
+		{"service user run", 990, 0, 990, false, 0, 0},
+		{"other non-root run cannot chown", 1000, 0, 1000, false, 0, 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			uid, gid, need := lockChownTarget(c.euid, 990, 991, c.fileUID)
+			uid, gid, mode, need := lockChownTarget(c.euid, c.dirUID, 991, c.fileUID)
 			if need != c.wantNeed {
 				t.Fatalf("need = %v, want %v", need, c.wantNeed)
 			}
-			if need && (uid != 990 || gid != 991) {
-				t.Fatalf("target = %d:%d, want 990:991", uid, gid)
+			if need && (uid != c.wantUID || gid != 991 || mode != c.wantMode) {
+				t.Fatalf("target = %d:%d %o, want %d:991 %o", uid, gid, mode, c.wantUID, c.wantMode)
 			}
 		})
 	}

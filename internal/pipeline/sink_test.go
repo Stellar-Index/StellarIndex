@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"math"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -161,6 +162,34 @@ func TestIndexerStopTimeout_UnitsCoverDrainBudgets(t *testing.T) {
 		}
 		if got < IndexerStopTimeout {
 			t.Errorf("%s TimeoutStopSec=%v < IndexerStopTimeout %v — SIGKILL lands mid-drain", unit, got, IndexerStopTimeout)
+		}
+	}
+}
+
+// TestUnits_NoSignalOnlyExecStop: an ExecStop that only signals returns at once, and systemd then sends KillSignal
+// itself. The daemon has released its handler after the first SIGTERM, so the second ends it before it drains.
+func TestUnits_NoSignalOnlyExecStop(t *testing.T) {
+	var units []string
+	for _, pattern := range []string{
+		repoDir("deploy", "systemd", "*.service"),
+		repoDir("configs", "ansible", "roles", "archival-node", "templates", "systemd", "*.service.j2"),
+	} {
+		matches, err := filepath.Glob(pattern)
+		if err != nil || len(matches) == 0 {
+			t.Fatalf("glob %s: %d unit(s), err %v", pattern, len(matches), err)
+		}
+		units = append(units, matches...)
+	}
+	for _, unit := range units {
+		raw, err := os.ReadFile(unit)
+		if err != nil {
+			t.Fatalf("read %s: %v", unit, err)
+		}
+		for _, line := range strings.Split(string(raw), "\n") {
+			cmd, ok := strings.CutPrefix(strings.TrimSpace(line), "ExecStop=")
+			if ok && strings.Contains(cmd, "kill") {
+				t.Errorf("%s: ExecStop=%s signals without waiting; drop it and let systemd send the one SIGTERM", unit, cmd)
+			}
 		}
 	}
 }

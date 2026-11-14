@@ -29,7 +29,6 @@ Environment=GALEXIE_START={{ galexie_start_ledger }}
 #    or resumes from its last-exported-ledger+1 if MinIO already
 #    has a cursor for us (the wrapper probes for it).
 ExecStart=/usr/local/bin/galexie-append.sh
-ExecStop=/bin/kill -TERM $MAINPID
 
 LimitNOFILE=1048576
 LimitNPROC=1048576

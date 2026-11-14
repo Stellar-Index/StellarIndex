@@ -69,8 +69,9 @@ live_tip() {
 fix_perms() {
   local f
   for f in "$STELLAR_ETC"/captive-core-galexie*.cfg; do
-    [[ -e "$f" ]] || continue
-    chgrp galexie "$f" && chmod 0640 "$f" || return 1
+    # /etc/stellar belongs to the stellar user: a link planted there must not be handed to the galexie group.
+    [[ -f "$f" && ! -L "$f" ]] || continue
+    chgrp -h galexie "$f" && chmod 0640 "$f" || return 1
   done
 }
 

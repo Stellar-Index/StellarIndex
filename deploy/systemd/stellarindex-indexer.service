@@ -119,7 +119,6 @@ EnvironmentFile=-/etc/default/stellarindex-ops
 UnsetEnvironment=STELLARINDEX_CLICKHOUSE_OPS_USER STELLARINDEX_CLICKHOUSE_OPS_PASSWORD
 
 ExecStart=/usr/local/bin/stellarindex-indexer -config /etc/stellarindex.toml
-ExecStop=/bin/kill -TERM $MAINPID
 # Must be >= pipeline.IndexerStopTimeout (120s): the drain budgets main
 # runs in sequence after SIGTERM, plus margin. systemd's 90s default
 # SIGKILLs mid-drain. Pinned by TestIndexerStopTimeout_UnitsCoverDrainBudgets.

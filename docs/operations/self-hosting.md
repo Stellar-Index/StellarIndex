@@ -213,7 +213,7 @@ Start in order, each healthy before the next:
 sudo cp bin/stellarindex-indexer bin/stellarindex-aggregator bin/stellarindex-api /usr/local/bin/
 sudo cp deploy/systemd/stellarindex-{indexer,aggregator,api}.service /etc/systemd/system/
 sudo useradd --system --no-create-home stellarindex   # if not already present
-sudo mkdir -p /var/lib/stellarindex && sudo chown stellarindex:stellarindex /var/lib/stellarindex
+sudo install -d -o root -g stellarindex -m 1770 /var/lib/stellarindex
 
 # env file all three units load:
 sudo tee /etc/default/stellarindex-ops >/dev/null <<'EOT'

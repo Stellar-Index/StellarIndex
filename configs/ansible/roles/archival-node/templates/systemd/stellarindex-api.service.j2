@@ -33,7 +33,6 @@ EnvironmentFile=/etc/default/stellarindex
 # Optional; carries the stellarindex_api role's DSN (migration 0213).
 EnvironmentFile=-/etc/default/stellarindex-api
 ExecStart=/usr/local/bin/stellarindex-api -config /etc/stellarindex.toml
-ExecStop=/bin/kill -TERM $MAINPID
 
 LimitNOFILE=1048576
 Restart=on-failure

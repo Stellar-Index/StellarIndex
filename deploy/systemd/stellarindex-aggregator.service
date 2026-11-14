@@ -69,7 +69,6 @@ EnvironmentFile=-/etc/default/stellarindex-ops
 UnsetEnvironment=STELLARINDEX_CLICKHOUSE_OPS_USER STELLARINDEX_CLICKHOUSE_OPS_PASSWORD
 
 ExecStart=/usr/local/bin/stellarindex-aggregator -config /etc/stellarindex.toml
-ExecStop=/bin/kill -TERM $MAINPID
 
 LimitNOFILE=1048576
 LimitNPROC=1048576

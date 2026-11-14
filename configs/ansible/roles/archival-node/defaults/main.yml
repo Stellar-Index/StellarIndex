@@ -224,7 +224,7 @@ zfs_datasets:
   #     /tmp and /var/tmp, so a drill root there is invisible in the unit's mount
   #     namespace and systemd fails it (226/NAMESPACE). A 616 GB restore is not temp
   #     data either.
-  #   - /var/lib/stellarindex is 0750 stellarindex:stellarindex, which pgbackrest
+  #   - /var/lib/stellarindex is 1770 root:stellarindex, which pgbackrest
   #     (running as POSTGRES) cannot traverse.
   # /srv is root:root 0755, writable under ProtectSystem=full, and already hosts
   # history-archive. The mount dir is postgres-owned because pgbackrest creates the

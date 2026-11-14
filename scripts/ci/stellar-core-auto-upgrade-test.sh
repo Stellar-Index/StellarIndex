@@ -115,13 +115,18 @@ check "same version reports current, exit 0" '[[ $rc == 0 ]] && result_is curren
 check "same version never stops galexie" '! grep -q "systemctl stop galexie" "$ST/calls"'
 
 echo "stellar-core-auto-upgrade-test: upgrade that advances the tip"
-setup "$V28" "$V29" "$V28" "$V29"; run
+setup "$V28" "$V29" "$V28" "$V29"
+echo secret > "$ST/root-only"; chmod 0600 "$ST/root-only"
+ln -s "$ST/root-only" "$STELLAR_ETC/captive-core-galexie-planted.cfg"
+run
 check "reports upgraded, exit 0" '[[ $rc == 0 ]] && result_is upgraded ""'
 check "installed the candidate" '[[ $(cat "$ST/installed") == "$V29" ]]'
 check "galexie stopped before the install and started after" \
   '[[ $(grep -oE "^(systemctl stop galexie|apt-get install|systemctl start galexie)$|^apt-get install" "$ST/calls" | tr "\n" ,) == "systemctl stop galexie,apt-get install,systemctl start galexie," ]]'
 check "captive-core configs chgrp galexie and mode 0640" \
-  '[[ $(grep -c "^chgrp galexie" "$ST/calls") == 2 ]] && [[ $(stat -c %a "$STELLAR_ETC/captive-core-galexie.cfg" 2>/dev/null || stat -f %Lp "$STELLAR_ETC/captive-core-galexie.cfg") == 640 ]]'
+  '[[ $(grep -c "^chgrp -h galexie" "$ST/calls") == 2 ]] && [[ $(stat -c %a "$STELLAR_ETC/captive-core-galexie.cfg" 2>/dev/null || stat -f %Lp "$STELLAR_ETC/captive-core-galexie.cfg") == 640 ]]'
+check "a link planted beside the configs is left alone" \
+  '! grep -q "planted" "$ST/calls" && [[ $(stat -c %a "$ST/root-only" 2>/dev/null || stat -f %Lp "$ST/root-only") == 600 ]]'
 check "galexie left running" '[[ -e "$ST/galexie_running" ]]'
 check "exposition is one-hot" '[[ $(grep -c "^stellarindex_stellar_core_autoupgrade_result{.*} 1$" "$TEXTFILE_DIR/stellar_core_autoupgrade.prom") == 1 ]]'
 check "run stamp written" 'grep -qE "^stellarindex_stellar_core_autoupgrade_last_run_timestamp_seconds [0-9]+$" "$TEXTFILE_DIR/stellar_core_autoupgrade.prom"'
