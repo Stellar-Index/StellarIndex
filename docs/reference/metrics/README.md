@@ -677,6 +677,12 @@ Counter, no labels.
 
 Requests that bypassed rate-limiting because Redis errored (deliberate fail-open). Alert: `stellarindex_ratelimit_fail_open`.
 
+### `stellarindex_ratelimit_inprocess_overflow_total`
+
+Counter, no labels.
+
+Requests an in-process limiter (the passkey begin-login and signup caps, and every limiter on a Redis-less boot) counted against a shared region or overflow bucket because its 100k-key map was full. Nonzero means a many-address flood: new clients in the flooding IPv4 /16s and IPv6 /32s share one budget until the window rolls.
+
 ### `stellarindex_ratelimit_fail_closed_total`
 
 Counter, label `limiter` (`api` / `failed_auth` / `signup_ip`). Pre-seeded at zero.

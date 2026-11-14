@@ -74,6 +74,7 @@ func registerAppMetrics() {
 		SourceInsertErrorsTotal,
 		TradesZeroLegAdmittedTotal,
 		RateLimitFailOpenTotal,
+		RateLimitInProcessOverflowTotal,
 		MonthlyQuotaFailOpenTotal,
 		MonthlyQuotaFailClosedTotal,
 		AdminAuditWriteFailuresTotal,
@@ -1296,6 +1297,14 @@ var RateLimitFailOpenTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_ratelimit_fail_open_total",
 		Help: "Requests that bypassed rate-limiting because Redis errored.",
+	},
+)
+
+// RateLimitInProcessOverflowTotal counts requests an in-process limiter could not give a private counter because its key map was full.
+var RateLimitInProcessOverflowTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_ratelimit_inprocess_overflow_total",
+		Help: "Requests counted against a shared region or overflow bucket because an in-process limiter's key map was full.",
 	},
 )
 
