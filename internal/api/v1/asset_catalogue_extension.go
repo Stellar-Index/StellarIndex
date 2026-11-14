@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"math/big"
+	"strings"
 	"sync"
 	"time"
 
@@ -50,7 +51,7 @@ func (s *Server) applyAssetExtensionFields(ctx context.Context, detail *AssetDet
 
 	s.applyAssetRowToDetail(cctx, detail, asset, row, rowErr, assetID)
 	s.applyAssetExtensionResults(detail, asset, results)
-	s.logAssetExtensionFailures(assetID, results)
+	s.logAssetExtensionFailures(detail, assetID, results)
 }
 
 // fetchAssetExtensionResults runs the six reader calls in parallel. Each goroutine is DETACHED from the handler (outside
@@ -103,6 +104,7 @@ func (s *Server) applyAssetRowToDetail(ctx context.Context, detail *AssetDetail,
 		if !errors.Is(err, sql.ErrNoRows) {
 			s.logger.Debug("asset extension: row lookup failed",
 				"asset_id", assetID, "err", err)
+			detail.extensionUnread = true
 			return
 		}
 		// NO catalogue row, which is the case transitive pricing exists for: `classic_assets`
@@ -250,7 +252,7 @@ func (s *Server) normalizedAssetPointsToWire(pts []timescale.AssetPricePoint, as
 
 // logAssetExtensionFailures emits one Debug line per failed sub-fetch to correlate cold-cache
 // spikes, keeping logging out of the parallel goroutines.
-func (s *Server) logAssetExtensionFailures(assetID string, r assetExtensionResults) {
+func (s *Server) logAssetExtensionFailures(detail *AssetDetail, assetID string, r assetExtensionResults) {
 	for _, e := range [...]struct {
 		err error
 		tag string
@@ -263,6 +265,7 @@ func (s *Server) logAssetExtensionFailures(assetID string, r assetExtensionResul
 		{r.athErr, "ath"},
 	} {
 		if e.err != nil {
+			detail.extensionUnread = true
 			s.logger.Debug("asset extension: "+e.tag+" failed",
 				"asset_id", assetID, "err", e.err)
 		}
@@ -313,4 +316,35 @@ func (s *Server) fillTransitivePrice(ctx context.Context, detail *AssetDetail, a
 		detail.PriceBasis = priceBasisTransitive
 		detail.PriceWithheldReason = ""
 	}
+}
+
+// lookupCatalogueTwin resolves a catalogue entry's Stellar asset id to its listing row (native reader for XLM; exact-issuer
+// filter for classic, as Q never matches a full id); nil if not served. The row is the classic arm only; unfiltered, the caller
+// adds the contract arm ([Server.mergeContractArmVolume]).
+func (s *Server) lookupCatalogueTwin(ctx context.Context, assetID string) (row *timescale.AssetRow, unread bool) {
+	if assetID == "native" {
+		native, err := s.AssetsReader.GetNativeAssetRow(ctx)
+		if err != nil {
+			return nil, !errors.Is(err, sql.ErrNoRows)
+		}
+		return &native, false
+	}
+	dashIx := strings.Index(assetID, "-")
+	if dashIx < 0 {
+		return nil, false
+	}
+	rows, err := s.AssetsReader.ListAssetsExt(ctx, timescale.ListAssetsOptions{
+		Limit:  50,
+		Issuer: assetID[dashIx+1:],
+		Order:  timescale.AssetsOrderVolume24hUSDDesc,
+	})
+	if err != nil {
+		return nil, true
+	}
+	for j := range rows {
+		if rows[j].AssetID == assetID {
+			return &rows[j], false
+		}
+	}
+	return nil, false
 }

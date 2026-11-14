@@ -5,9 +5,12 @@ package v1
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -57,5 +60,33 @@ func TestCatalogueStatsUseListingReader(t *testing.T) {
 	}
 	if page[0].VolumeUSD24h == nil {
 		t.Fatal("volume not merged")
+	}
+}
+
+// failingSupplyAssets is listingOnlyAssets whose supply observer read fails, counted.
+type failingSupplyAssets struct {
+	listingOnlyAssets
+	supplyReads atomic.Int32
+}
+
+func (f *failingSupplyAssets) LatestSupplyObservations(context.Context, time.Duration) (map[string]timescale.SupplyObservation, error) {
+	f.supplyReads.Add(1)
+	return nil, errors.New("pool timeout")
+}
+
+// TestCatalogueStatsReadPreciseSupplyOncePerPage: a failing observer read marks the page and is not repeated per entry.
+func TestCatalogueStatsReadPreciseSupplyOncePerPage(t *testing.T) {
+	cat, err := currency.LoadEmbedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := &failingSupplyAssets{}
+	s := unreadTestServer(Options{AssetsReader: reader, VerifiedCurrencies: cat})
+	page := []AssetDetail{{Slug: "usdc", Code: "USDC", AssetID: "usdc"}, {Slug: "usdc", Code: "USDC", AssetID: "usdc"}}
+	if !s.fillCatalogueStatsForPage(context.Background(), page, assetListFilters{}) {
+		t.Error("supply read failed: page reported measured")
+	}
+	if n := reader.supplyReads.Load(); n != 1 {
+		t.Errorf("supply observer read %d times for a two-entry page, want 1", n)
 	}
 }

@@ -148,7 +148,7 @@ func stablecoinAliasSupply(
 
 // stablecoinFillAliasSupply attaches supply, under any alias form, to rows the listing pipeline left without one. Supply is a chain fact;
 // it moves no price and no gate.
-func (s *Server) stablecoinFillAliasSupply(ctx context.Context, rows map[string]AssetDetail) {
+func (s *Server) stablecoinFillAliasSupply(ctx context.Context, rows map[string]AssetDetail) (supplyUnread bool) {
 	var missing []AssetDetail
 	for _, d := range rows {
 		if d.CirculatingSupply == nil {
@@ -156,9 +156,9 @@ func (s *Server) stablecoinFillAliasSupply(ctx context.Context, rows map[string]
 		}
 	}
 	if len(missing) == 0 {
-		return
+		return false
 	}
-	precise := s.latestPreciseSupply(ctx)
+	precise, supplyUnread := s.latestPreciseSupply(ctx)
 	broad := s.cachedClassicSupply(ctx)
 	lake := s.classicLakeSupply(ctx, missing)
 	for key, d := range rows {
@@ -169,6 +169,7 @@ func (s *Server) stablecoinFillAliasSupply(ctx context.Context, rows map[string]
 		stampCirculatingSupply(&d, circ, basis)
 		rows[key] = d
 	}
+	return supplyUnread
 }
 
 func stablecoinAssetOf(m stablecoinMember, d AssetDetail, found bool) StablecoinAsset {
@@ -323,7 +324,7 @@ func (s *Server) handleStablecoins(w http.ResponseWriter, r *http.Request) {
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
-	s.stablecoinFillAliasSupply(r.Context(), rows)
+	join.unanswered = s.stablecoinFillAliasSupply(r.Context(), rows) || join.unanswered
 
 	for _, m := range members {
 		d, ok := rows[rwaKey(m.code, m.issuer)]

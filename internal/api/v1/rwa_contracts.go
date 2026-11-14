@@ -366,7 +366,7 @@ func (s *Server) rwaContractListingRows(
 	// discards any such cap.
 	s.stampListingCollisions(details)
 	s.applySubstanceGateToListing(ctx, details, false)
-	s.fillMarketCapsFromSupply(ctx, details, map[string]int{})
+	supplyUnread := s.fillMarketCapsFromSupply(ctx, details, map[string]int{})
 	s.fillDeclaredPegPricesInListing(ctx, details)
 	s.fillIssuerDirectoryTags(ctx, details)
 
@@ -381,7 +381,7 @@ func (s *Server) rwaContractListingRows(
 	for _, d := range details {
 		out[d.AssetID] = d
 	}
-	return out, notObserved, decimalsCut || capsCut, nil
+	return out, notObserved, decimalsCut || capsCut || supplyUnread, nil
 }
 
 // rwaRowsUnanswered reports a row whose price gate or issuer-directory read did not answer: its figures are withheld, not refused.

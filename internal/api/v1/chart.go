@@ -1557,6 +1557,23 @@ func emptyMarketCapSeries(pair canonical.Pair, tfRaw, gran string, _ time.Time) 
 	}
 }
 
+// writeMarketCapReadFailure answers a failed price or supply read behind the crypto market-cap chart: nothing for a client
+// that left, the timeout problem past the handler budget, otherwise an empty series marked stale and no-store.
+func (s *Server) writeMarketCapReadFailure(
+	ctx context.Context, w http.ResponseWriter, r *http.Request, err error, op string, pair canonical.Pair, tfRaw string, from time.Time,
+) {
+	const gran = "1d"
+	if clientAborted(r, err) {
+		return
+	}
+	if handlerTimedOut(ctx, err) {
+		s.writeMarketCapTimeout(w, r, op, pair, tfRaw, gran)
+		return
+	}
+	s.logger.Warn("market_cap crypto: read failed", "op", op, "asset", pair.Base.String(), "err", err)
+	writeChartJSON(w, emptyMarketCapSeries(pair, tfRaw, gran, from), Flags{Stale: true, Degraded: true})
+}
+
 // handleChartMarketCapCrypto serves market_cap for an on-chain base: daily USD price (prices_1d, stablecoin-USD proxy fallback)
 // x forward-filled supply_1d. Off-chain crypto:* assets have no on-chain supply (supply.AssetKey errors) and return an empty
 // series, not a fabricated cap.
@@ -1595,16 +1612,7 @@ func (s *Server) handleChartMarketCapCrypto(
 	pricePts, walk, err := s.chartSeriesPoints(ctx, pair,
 		chartWindow{from: from, gran: gran}, s.chartVWAPReader(gran))
 	if err != nil {
-		if clientAborted(r, err) {
-			return
-		}
-		if handlerTimedOut(ctx, err) {
-			s.writeMarketCapTimeout(w, r, "HistoryPointsInRange", pair, tfRaw, gran)
-			return
-		}
-		s.logger.Warn("market_cap crypto: price history failed",
-			"asset", pair.Base.String(), "err", err)
-		writeChartJSON(w, emptyMarketCapSeries(pair, tfRaw, gran, from), Flags{Stale: true, Degraded: true})
+		s.writeMarketCapReadFailure(ctx, w, r, err, "HistoryPointsInRange", pair, tfRaw, from)
 		return
 	}
 	// The price leg is already normalised per SOURCE pair ([Server.adjustSourcePoints]). baseDec is
@@ -1620,21 +1628,12 @@ func (s *Server) handleChartMarketCapCrypto(
 	to := s.now().UTC().Truncate(24 * time.Hour)
 	supPts, err := s.Supply.DailyCirculatingSupply(ctx, supplyKey, from, to)
 	if err != nil {
-		if clientAborted(r, err) {
-			return
-		}
-		if handlerTimedOut(ctx, err) {
-			s.writeMarketCapTimeout(w, r, "DailyCirculatingSupply", pair, tfRaw, gran)
-			return
-		}
-		s.logger.Warn("market_cap crypto: supply history failed",
-			"asset_key", supplyKey, "err", err)
-		writeChartJSON(w, emptyMarketCapSeries(pair, tfRaw, gran, from), Flags{Stale: true, Degraded: true})
+		s.writeMarketCapReadFailure(ctx, w, r, err, "DailyCirculatingSupply", pair, tfRaw, from)
 		return
 	}
 
 	wire, supplyStale := marketCapPoints(pricePts, supPts, baseDec)
-	refused, lowLiquidity := s.marketCapSeriesRefused(ctx, base, wire)
+	refused, lowLiquidity, guardUnread := s.marketCapSeriesRefused(ctx, base, wire)
 	if refused {
 		wire = []HistoryPointWire{}
 	}
@@ -1659,31 +1658,37 @@ func (s *Server) handleChartMarketCapCrypto(
 	if !refused {
 		series.markRowCap(walk)
 	}
-	writeChartJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded || supplyStale, Degraded: walk.degraded})
+	// A guard whose input was not read has not ruled, so the series must not be cached as cleared.
+	writeChartJSON(w, series, Flags{
+		Triangulated: walk.proxied, Stale: walk.degraded || supplyStale || guardUnread, Degraded: walk.degraded || guardUnread,
+	})
 }
 
 // marketCapSeriesRefused applies the detail page's valuation guards ([Server.marketCapRefused], then the turnover ceiling on
 // the latest cap) so the chart cannot plot a valuation the headline refuses. Today's verdict covers the whole series (inputs
 // are current readings); unmeasured inputs never refuse.
-func (s *Server) marketCapSeriesRefused(ctx context.Context, base canonical.Asset, wire []HistoryPointWire) (refused, lowLiquidity bool) {
+func (s *Server) marketCapSeriesRefused(
+	ctx context.Context, base canonical.Asset, wire []HistoryPointWire,
+) (refused, lowLiquidity, unread bool) {
 	if len(wire) == 0 {
-		return false, false
+		return false, false, false
 	}
 	var probe AssetDetail
 	if s.MinMarketCapVolumeUSD > 0 || s.MaxMarketCapVolumeRatio > 0 {
-		s.populateVolume24h(ctx, &probe, base)
+		unread = s.populateVolume24h(ctx, &probe, base)
 	}
 	sources := 0
 	if probe.VolumeUSD24h != nil && s.MinMarketCapVolumeUSD > 0 {
-		sources = s.lookupUSDPriceWithSources(ctx, base).sources
+		l := s.lookupUSDPriceWithSources(ctx, base)
+		sources, unread = l.sources, unread || l.unread
 	}
 	if refused, lowLiquidity = s.marketCapRefused(base, sources, probe.VolumeUSD24h); refused {
-		return refused, lowLiquidity
+		return refused, lowLiquidity, unread
 	}
 	if capExceedsObservedTurnover(wire[len(wire)-1].P, probe.VolumeUSD24h, s.MaxMarketCapVolumeRatio) {
-		return true, true
+		return true, true, unread
 	}
-	return false, false
+	return false, false, unread
 }
 
 // marketCapSupplyMaxCarry bounds forward-filling a supply_1d bucket onto later price days: two days covers the post-midnight

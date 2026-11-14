@@ -173,7 +173,7 @@ func TestLatestPreciseSupply_AsksForABoundedRead(t *testing.T) {
 	stub := &preciseSupplyStub{obs: observedSupply(map[string]string{"native": "1"})}
 	s := &Server{Options: Options{AssetsReader: stub}}
 
-	got := s.latestPreciseSupply(context.Background())
+	got, _ := s.latestPreciseSupply(context.Background())
 
 	if stub.calls != 1 {
 		t.Fatalf("supply seam called %d times, want 1 — the arm resolved to a different reader", stub.calls)

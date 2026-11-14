@@ -313,6 +313,8 @@ type AssetDetail struct {
 	// f2ReadFailed: a volume, 24h-change or supply read errored, so the
 	// fields it feeds (incl. market_cap_usd / fdv_usd) are missing, not absent.
 	f2ReadFailed bool
+	// extensionUnread: the catalogue row or one of the six extension reads errored, so an absent field is not "none".
+	extensionUnread bool
 	// priceUnread: the USD price read failed; a null price_usd is then not "no market".
 	priceUnread bool
 
@@ -868,7 +870,7 @@ func (s *Server) buildAssetListPage(
 	}
 	s.stampListingCollisions(out)
 	unmeasured := s.applySubstanceGateToListing(r.Context(), out, includeThinRequested(r))
-	s.fillMarketCapsFromSupply(r.Context(), out, assetRowSourceCounts(rows))
+	unmeasured = s.fillMarketCapsFromSupply(r.Context(), out, assetRowSourceCounts(rows)) || unmeasured
 	// After the gate (which would strip it) and the market-cap fill (so no valuation derives from
 	// it); see fillDeclaredPegPricesInListing's ordering contract.
 	s.fillDeclaredPegPricesInListing(r.Context(), out)
@@ -907,10 +909,18 @@ func (s *Server) buildAssetListPage(
 // fillMarketCapsFromSupply fills market_cap and circulating_supply on rows with a supply reading and USD price, best-effort.
 // sourceCounts maps asset_id to distinct price venues; a single-venue price under aggregate.min_market_cap_volume_usd has its
 // cap suppressed, and a missing entry is unmeasured.
-func (s *Server) fillMarketCapsFromSupply(ctx context.Context, rows []AssetDetail, sourceCounts map[string]int) {
+func (s *Server) fillMarketCapsFromSupply(ctx context.Context, rows []AssetDetail, sourceCounts map[string]int) (supplyUnread bool) {
 	// Precise supply: the ADR-0011 observer's latest reading, bounded by [preciseSupplyMaxAge].
 	// Authoritative (includes claimable and LP-locked holdings), so preferred.
-	precise := s.latestPreciseSupply(ctx)
+	precise, supplyUnread := s.latestPreciseSupply(ctx)
+	s.fillMarketCapsWith(ctx, rows, sourceCounts, precise)
+	return supplyUnread
+}
+
+// fillMarketCapsWith is [Server.fillMarketCapsFromSupply] over a precise-supply map the caller read once for many calls.
+func (s *Server) fillMarketCapsWith(
+	ctx context.Context, rows []AssetDetail, sourceCounts map[string]int, precise map[string]timescale.SupplyObservation,
+) {
 	// Broad fallback: cached trustline-balance sums from the lake for every classic asset. It
 	// undercounts (omits claimable and LP), so it only fills rows the precise pipeline misses.
 	broad := s.cachedClassicSupply(ctx)
@@ -958,16 +968,19 @@ var (
 // latestPreciseSupply reads the supply observer's latest observation per asset, authoritative (all four holding domains,
 // locked-set policy); missing method or read error yields nil. Bounded by [preciseSupplyMaxAge] so a stale figure cannot
 // outrank a live lake reading; supply_1d is no substitute (newest bucket ages to ~27h).
-func (s *Server) latestPreciseSupply(ctx context.Context) map[string]timescale.SupplyObservation {
+func (s *Server) latestPreciseSupply(ctx context.Context) (obs map[string]timescale.SupplyObservation, unread bool) {
 	sr, ok := s.AssetsReader.(preciseSupplyReader)
 	if !ok {
-		return nil
+		return nil, false
 	}
 	m, err := sr.LatestSupplyObservations(ctx, preciseSupplyMaxAge)
 	if err != nil {
-		return nil
+		if ctx.Err() == nil {
+			s.logger.Warn("precise supply read failed; rows fall back to a lesser supply basis", "err", err)
+		}
+		return nil, true
 	}
-	return m
+	return m, false
 }
 
 // fillRowMarketCap fills one row's market cap from circulating supply. A dust-liquidity price (single venue AND sub-floor 24h
@@ -2309,7 +2322,7 @@ func (s *Server) fetchClassicUnifiedRows(
 	}
 	s.stampListingCollisions(out)
 	unmeasured := s.applySubstanceGateToListing(r.Context(), out, includeThinRequested(r))
-	s.fillMarketCapsFromSupply(r.Context(), out, assetRowSourceCounts(rows))
+	unmeasured = s.fillMarketCapsFromSupply(r.Context(), out, assetRowSourceCounts(rows)) || unmeasured
 	// AFTER the gate (which would strip it) and the market-cap fill (so no valuation derives from
 	// it); see fillDeclaredPegPricesInListing's ordering contract.
 	s.fillDeclaredPegPricesInListing(r.Context(), out)
@@ -2541,13 +2554,13 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 // assetDetailStale reports whether detail rests on a failed, cut-short or
 // carried-forward read.
 func assetDetailStale(detail *AssetDetail, homeDomainDegraded, ctxDead bool) bool {
-	return homeDomainDegraded || detail.DecimalsUnresolved || detail.SupplyStale || detail.f2ReadFailed || ctxDead
+	return homeDomainDegraded || detail.DecimalsUnresolved || detail.SupplyStale || detail.f2ReadFailed || detail.extensionUnread || ctxDead
 }
 
 // transientlyDegraded reports whether detail rests on a read that failed or
 // was cut short, so the body must not outlive the request in the detail cache.
 func transientlyDegraded(detail *AssetDetail, ctxDead bool) bool {
-	return detail.DecimalsUnresolved || ctxDead || detail.issuerDirectoryUnchecked || detail.f2ReadFailed
+	return detail.DecimalsUnresolved || ctxDead || detail.issuerDirectoryUnchecked || detail.f2ReadFailed || detail.extensionUnread
 }
 
 // resolveAssetDetail fetches the AssetDetail for parsed from the reader, else a canonical echo.
@@ -3703,6 +3716,9 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 	}
 	counted := countedSACs(page, nil)
 	var anyUnmeasured atomic.Bool
+	// One observer read for the page: per row, a failing read would repeat for every entry of a page nothing can cache.
+	precise, supplyUnread := s.latestPreciseSupply(statsCtx)
+	anyUnmeasured.Store(supplyUnread)
 	forEachBounded(s.logger, len(page), readFanoutConcurrency, func(i int) {
 		vc, ok := s.VerifiedCurrencies.LookupBySlug(page[i].Slug)
 		if !ok {
@@ -3715,7 +3731,10 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 		// ListAssetsExt, not GetAssetByAssetID: only the listing query computes the windowed
 		// change columns. Filter by issuer, not Q: Q substring-matches column values, so a full
 		// asset id matches nothing.
-		twinRow := s.lookupCatalogueTwin(statsCtx, entry.AssetID)
+		twinRow, twinUnread := s.lookupCatalogueTwin(statsCtx, entry.AssetID)
+		if twinUnread {
+			anyUnmeasured.Store(true)
+		}
 		if twinRow == nil {
 			return
 		}
@@ -3734,7 +3753,7 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 		// Same supply-derived market-cap fill as the classic phase. The twin populates
 		// source_count, so the dust-liquidity guard can fire here exactly as for a classic row;
 		// mergeTwinStats carries market_cap_low_liquidity onto the catalogue row.
-		s.fillMarketCapsFromSupply(statsCtx, twin, assetRowSourceCounts([]timescale.AssetRow{*twinRow}))
+		s.fillMarketCapsWith(statsCtx, twin, assetRowSourceCounts([]timescale.AssetRow{*twinRow}), precise)
 		// Only the twin carries the G-issuer the directory is keyed on (fillIssuerDirectoryTags
 		// skips a catalogue row). Without this the valuation arm below would publish a valuation
 		// for a flagged issuer that the listing spine already refused.
@@ -3778,37 +3797,6 @@ func (s *Server) mergeContractArmVolumeExcept(ctx context.Context, dst *AssetDet
 		}
 		mergeAliasVolume(dst, assetDetailFromAssetRow(row))
 	}
-}
-
-// lookupCatalogueTwin resolves a catalogue entry's Stellar asset id to its listing row (native reader for XLM; exact-issuer
-// filter for classic, as Q never matches a full id); nil if not served. The row is the classic arm only; unfiltered, the caller
-// adds the contract arm ([Server.mergeContractArmVolume]).
-func (s *Server) lookupCatalogueTwin(ctx context.Context, assetID string) *timescale.AssetRow {
-	if assetID == "native" {
-		row, err := s.AssetsReader.GetNativeAssetRow(ctx)
-		if err != nil {
-			return nil
-		}
-		return &row
-	}
-	dashIx := strings.Index(assetID, "-")
-	if dashIx < 0 {
-		return nil
-	}
-	rows, err := s.AssetsReader.ListAssetsExt(ctx, timescale.ListAssetsOptions{
-		Limit:  50,
-		Issuer: assetID[dashIx+1:],
-		Order:  timescale.AssetsOrderVolume24hUSDDesc,
-	})
-	if err != nil {
-		return nil
-	}
-	for j := range rows {
-		if rows[j].AssetID == assetID {
-			return &rows[j]
-		}
-	}
-	return nil
 }
 
 // mergeTwinStats fills a catalogue row's nil analytics from its
