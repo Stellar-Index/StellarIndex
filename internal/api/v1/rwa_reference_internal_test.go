@@ -793,6 +793,7 @@ func TestRWASummarise_EveryCapMakesALowerBound(t *testing.T) {
 		{"issuer cap", rwaTruncation{overIssuerCap: 2}, "issuer cap turned away 2 qualifying asset(s)"},
 		{"contract scan cap", rwaTruncation{overContractCap: 5}, "contract scan cap left 5 recognised contract(s) unevaluated"},
 		{"full issuer page", rwaTruncation{issuerPagesFull: 1}, "1 member issuer(s) have more classic assets"},
+		{"a read that did not answer", rwaTruncation{unread: 3}, "3 contract candidate(s) went unevaluated"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sum := rwaSummarise(assets, tc.trunc)

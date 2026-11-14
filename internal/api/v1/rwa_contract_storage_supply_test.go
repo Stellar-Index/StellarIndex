@@ -15,12 +15,16 @@ type storageSupplyStub struct {
 	byContract map[string]clickhouse.ContractStorageSupply
 	err        error
 	asked      []string
+	onAsk      func()
 }
 
 func (s *storageSupplyStub) ContractStorageSupply(
 	_ context.Context, contractID string,
 ) (clickhouse.ContractStorageSupply, error) {
 	s.asked = append(s.asked, contractID)
+	if s.onAsk != nil {
+		s.onAsk()
+	}
 	if s.err != nil {
 		return clickhouse.ContractStorageSupply{}, s.err
 	}
@@ -92,8 +96,8 @@ func TestContractArmKeepsTheEventReadingWhenThereIsHistory(t *testing.T) {
 	}
 }
 
-// TestContractArmRefusesAnEmptyStorageRead: no balance entries is an absent reading, not a zero supply; publishing it
-// would swap one unfounded zero for another. The row keeps what the event reader said.
+// TestContractArmRefusesAnEmptyStorageRead: no balance entries is an absent reading, not a zero supply, and a flowless
+// event log is not one either. The row carries no supply at all.
 func TestContractArmRefusesAnEmptyStorageRead(t *testing.T) {
 	const contractID = "CB53TITR65ZKTREWEWEEKMFAQZAE6IPJONH32JWOFOWJPHZL6ODP6R4F"
 	for _, tt := range []struct {
@@ -120,29 +124,61 @@ func TestContractArmRefusesAnEmptyStorageRead(t *testing.T) {
 
 			s.fillContractMarketCaps(context.Background(), rows, nil, map[string]struct{}{contractID: {}})
 
-			if rows[0].SupplyBasis == nil || *rows[0].SupplyBasis != supply.BasisSEP41LakeFlows.String() {
-				t.Errorf("supply_basis = %v, want the event basis left in place", rows[0].SupplyBasis)
+			if rows[0].CirculatingSupply != nil || rows[0].SupplyBasis != nil || rows[0].MarketCapUSD != nil {
+				t.Errorf("supply = %v basis = %v cap = %v, want an unmeasured row",
+					rows[0].CirculatingSupply, rows[0].SupplyBasis, rows[0].MarketCapUSD)
 			}
 		})
 	}
 }
 
-// TestContractArmWithNoStorageReaderWiredIsUnchanged — the reader is optional
-// wiring, and a deployment without it must behave exactly as it did before
-// this path existed rather than panicking on a nil seam.
-func TestContractArmWithNoStorageReaderWiredIsUnchanged(t *testing.T) {
+// TestContractArmWithNoStorageReaderWiredPublishesNoZero: the reader is optional wiring. Without it a flowless contract is
+// unmeasured, not fully burned, and a contract with flows is read as before.
+func TestContractArmWithNoStorageReaderWiredPublishesNoZero(t *testing.T) {
+	const flowless = "CB42I4CUI4VHF5JEOOAPGDS7WKHTZ3W6ODUKC2ARTMERGAE3KAIAWY4H"
+	const flowing = "CB53TITR65ZKTREWEWEEKMFAQZAE6IPJONH32JWOFOWJPHZL6ODP6R4F"
+	s := &Server{
+		Options: Options{TokenSupply: &lakeSupplyStub{byContract: map[string]clickhouse.TokenSupply{
+			flowless: {ContractID: flowless, Total: big.NewInt(0), FlowCount: 0},
+			flowing:  {ContractID: flowing, Total: big.NewInt(0), FlowCount: 4},
+		}}},
+		logger: discardLogger(),
+	}
+	rows := []AssetDetail{
+		{AssetID: flowless, Kind: "soroban_token", Decimals: 7},
+		{AssetID: flowing, Kind: "soroban_token", Decimals: 7},
+	}
+
+	cut := s.fillContractMarketCaps(context.Background(), rows, nil, map[string]struct{}{flowless: {}, flowing: {}})
+
+	if cut {
+		t.Error("cut = true on a live context")
+	}
+	if rows[0].CirculatingSupply != nil || rows[0].SupplyBasis != nil {
+		t.Errorf("flowless: supply = %v basis = %v, want none", rows[0].CirculatingSupply, rows[0].SupplyBasis)
+	}
+	if rows[1].CirculatingSupply == nil || *rows[1].CirculatingSupply != "0" {
+		t.Errorf("minted then fully burned: supply = %v, want 0 from the event log", rows[1].CirculatingSupply)
+	}
+}
+
+// TestContractArmCountsAStorageDeadlineAsACut: a storage read that ran out of time is unread, so the walk reports a cut and
+// the view degrades instead of caching the member as absent.
+func TestContractArmCountsAStorageDeadlineAsACut(t *testing.T) {
 	const contractID = "CB42I4CUI4VHF5JEOOAPGDS7WKHTZ3W6ODUKC2ARTMERGAE3KAIAWY4H"
+	ctx, cancel := context.WithCancel(context.Background())
 	s := &Server{
 		Options: Options{TokenSupply: &lakeSupplyStub{byContract: map[string]clickhouse.TokenSupply{
 			contractID: {ContractID: contractID, Total: big.NewInt(0), FlowCount: 0},
-		}}},
+		}}, ContractStorageSupply: &storageSupplyStub{err: context.Canceled, onAsk: cancel}},
 		logger: discardLogger(),
 	}
 	rows := []AssetDetail{{AssetID: contractID, Kind: "soroban_token", Decimals: 7}}
 
-	s.fillContractMarketCaps(context.Background(), rows, nil, map[string]struct{}{contractID: {}})
-
-	if rows[0].CirculatingSupply == nil || *rows[0].CirculatingSupply != "0" {
-		t.Errorf("circulating_supply = %v, want the unchanged pre-fallback reading", rows[0].CirculatingSupply)
+	if cut := s.fillContractMarketCaps(ctx, rows, nil, map[string]struct{}{contractID: {}}); !cut {
+		t.Error("cut = false after the storage read ended the context")
+	}
+	if rows[0].CirculatingSupply != nil {
+		t.Errorf("supply = %v, want none", rows[0].CirculatingSupply)
 	}
 }

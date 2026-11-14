@@ -43,31 +43,50 @@ type MarketDay struct {
 }
 
 // dailyMarketDaysQuery sums every dollar spelling per asset and UTC day from prices_1h (prices_1d lacks intra-day timing; prices_1m can
-// carry retention). Base-side only; closed buckets only; an unmaterialised span reads as "did not trade"; package-level so a test pins
+// carry retention). Both stored orientations: SDEX stores the maker's sold asset as base, so a fill where the maker sold dollars sits
+// under (dollar, asset) with vwap in asset per dollar; its legs are swapped back. Closed buckets only; package-level so a test pins
 // sargability.
 const dailyMarketDaysQuery = `
         WITH family AS (
             SELECT spelling, member
               FROM unnest($1::text[], $5::text[]) AS f(spelling, member)
+        ),
+        legs AS (
+            SELECT bucket, family.member, vwap * volume_priced AS usd_leg, volume_priced AS asset_leg,
+                   volume_usd, trade_count
+              FROM prices_1h
+              JOIN family ON family.spelling = prices_1h.base_asset
+             WHERE base_asset  = ANY($1)
+               AND quote_asset = ANY($2)
+               AND bucket <= now() - INTERVAL '1 hour'
+               AND bucket >= $3
+               AND bucket <  $4::timestamptz + INTERVAL '1 day'
+               AND vwap IS NOT NULL
+               AND volume_priced > 0
+            UNION ALL
+            SELECT bucket, family.member, volume_priced AS usd_leg, vwap * volume_priced AS asset_leg,
+                   volume_usd, trade_count
+              FROM prices_1h
+              JOIN family ON family.spelling = prices_1h.quote_asset
+             WHERE base_asset  = ANY($2)
+               AND quote_asset = ANY($1)
+               AND NOT (base_asset = ANY($1) AND quote_asset = ANY($2))
+               AND bucket <= now() - INTERVAL '1 hour'
+               AND bucket >= $3
+               AND bucket <  $4::timestamptz + INTERVAL '1 day'
+               AND vwap IS NOT NULL
+               AND volume_priced > 0
         )
         SELECT time_bucket('1 day', bucket)                                     AS day,
-               family.member,
-               (sum(vwap * volume_priced) / sum(volume_priced))::text           AS vwap,
+               member,
+               (sum(usd_leg) / sum(asset_leg))::text                            AS vwap,
                COALESCE(sum(volume_usd), 0)::text                               AS volume_usd,
                count(DISTINCT bucket)                                           AS hours,
                COALESCE(EXTRACT(EPOCH FROM (max(bucket) - min(bucket)))::bigint, 0) AS span_seconds,
                COALESCE(sum(trade_count), 0)                                    AS trades
-          FROM prices_1h
-          JOIN family ON family.spelling = prices_1h.base_asset
-         WHERE base_asset  = ANY($1)
-           AND quote_asset = ANY($2)
-           AND bucket <= now() - INTERVAL '1 hour'
-           AND bucket >= $3
-           AND bucket <  $4::timestamptz + INTERVAL '1 day'
-           AND vwap IS NOT NULL
-           AND volume_priced > 0
-         GROUP BY day, family.member
-         ORDER BY day ASC, family.member ASC
+          FROM legs
+         GROUP BY day, member
+         ORDER BY day ASC, member ASC
     `
 
 func (s *Store) DailyMarketDays(

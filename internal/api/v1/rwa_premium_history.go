@@ -12,6 +12,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
+	"github.com/Stellar-Index/StellarIndex/internal/robuststat"
 	"github.com/Stellar-Index/StellarIndex/internal/rwa"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -129,7 +130,7 @@ type RWAPremiumSeries struct {
 	// observed on is ABSENT.
 	Points []RWAPremiumHistoryPoint `json:"points"`
 	// MarketWithheldDays is how many days carried observed trades that did NOT clear the day
-	// floor; "saw trades, refused to price them" and "no trades" are opposite findings that an
+	// floor or were priced outside the served-price band of the market's own recent days; "saw trades, refused to price them" and "no trades" are opposite findings that an
 	// absent point renders identically.
 	MarketWithheldDays int `json:"market_withheld_days,omitempty"`
 	// ReferenceOnlyDays is how many days carried a published NAV and no market at all, the ordinary
@@ -704,8 +705,32 @@ func rwaPremiumJoin(
 		// per the reference-only bound below.
 		return out
 	}
+	var (
+		trailing     []*big.Rat // newest first: earlier days that cleared the floor
+		trailingDays []time.Time
+	)
 	for _, d := range market {
 		if !rwaPremiumDayClears(d, floor) {
+			out.withheld = append(out.withheld, d.Day)
+			continue
+		}
+		// A market that last traded long ago says little about today's price; past the age bound the published value is the centre.
+		fresh := len(trailing)
+		for fresh > 0 && d.Day.Sub(trailingDays[fresh-1]) > rwaPremiumTrailingMaxAge {
+			fresh--
+		}
+		trailing, trailingDays = trailing[:fresh], trailingDays[:fresh]
+		price, priced := new(big.Rat).SetString(d.VWAP)
+		offMarket := priced && rwaPremiumDayOffMarket(price, trailing, ref.days[d.Day])
+		if priced && price.Sign() > 0 {
+			// Refused days stay in the baseline, so a lasting repricing becomes the centre instead of being refused forever.
+			trailing = append([]*big.Rat{price}, trailing...)
+			trailingDays = append([]time.Time{d.Day}, trailingDays...)
+			if len(trailing) > rwaPremiumTrailingDays {
+				trailing, trailingDays = trailing[:rwaPremiumTrailingDays], trailingDays[:rwaPremiumTrailingDays]
+			}
+		}
+		if offMarket {
 			out.withheld = append(out.withheld, d.Day)
 			continue
 		}
@@ -726,6 +751,24 @@ func rwaPremiumJoin(
 	sortDays(out.refOnly)
 	sortDays(out.withheld)
 	return out
+}
+
+// rwaPremiumTrailingDays is how many earlier floor-clearing days a day's price is judged against.
+const rwaPremiumTrailingDays = 14
+
+// rwaPremiumTrailingMaxAge is how old an earlier day may be and still count toward that baseline.
+const rwaPremiumTrailingMaxAge = 30 * 24 * time.Hour
+
+// rwaPremiumDayOffMarket judges a day's price with the served-price band ([robuststat.GuardServedVWAP]) against the market's own
+// earlier days, so a day the floor let through cannot publish a premium the live price path would refuse. With no earlier day the
+// published value is the only centre there is; that band is the wide thin-baseline one.
+func rwaPremiumDayOffMarket(price *big.Rat, trailing []*big.Rat, refPrice *big.Rat) bool {
+	baseline := trailing
+	if len(baseline) == 0 && refPrice != nil && refPrice.Sign() > 0 {
+		baseline = []*big.Rat{refPrice}
+	}
+	accept, _ := robuststat.GuardServedVWAP(price, baseline)
+	return !accept
 }
 
 // rwaPremiumDayClears applies the thin-market floor to one day; a volume that will not parse counts as zero and the day fails, matching

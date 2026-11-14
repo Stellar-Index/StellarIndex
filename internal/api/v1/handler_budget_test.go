@@ -401,7 +401,7 @@ var inlineDetachments = map[string]string{
 		"at most once per rwaCuratedSnapshotTTL and bounded by rwaCuratedReadBudget (5s). The " +
 		"inline-build shape the contract-protocol index used to have: a known residual, not a pattern to copy",
 	"price.go#resolveBatchRowShared": "coalesced /v1/price/batch row: detached from the leader's " +
-		"cancellation only; it keeps the leader's request deadline (priceReadFlightTimeout without one), so it adds no time past it",
+		"cancellation and deadline so a spent leader cannot fail the freeze read for its followers; bounded by priceReadFlightTimeout (8s)",
 	"asset_listing_valuation.go#assetListingSnapshotWithin": "the asset-listing directory refresh, " +
 		"at most once per assetListingSnapshotTTL and bounded by assetListingReadBudget (5s); the same " +
 		"known residual as rwaCuratedSnapshotWithin",

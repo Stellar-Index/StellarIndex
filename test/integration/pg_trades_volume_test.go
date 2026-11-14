@@ -2851,3 +2851,80 @@ func TestXLMSacAsBase_PriceableThroughEveryPath(t *testing.T) {
 		}
 	})
 }
+
+// TestStoreDailyMarketDays_FoldsBothStoredOrientations: SDEX stores the maker's sold asset as base, so one market sits
+// under both (asset, dollar) and (dollar, asset). 1000 tokens bought for 1500 dollars plus 1000 sold for 500 is a day
+// VWAP of 1, not the 1.5 the (asset, dollar) rows alone give.
+func TestStoreDailyMarketDays_FoldsBothStoredOrientations(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	const issuerAccount = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	usdc, err := c.NewClassicAsset("USDC", issuerAccount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ustry, err := c.NewClassicAsset("USTRY", issuerAccount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forward, err := c.NewPair(ustry, usdc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flipped, err := c.NewPair(usdc, ustry)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	day := time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC)
+	for i, tr := range []c.Trade{
+		mkAPITrade(21, day.Add(time.Hour+10*time.Minute), forward, 1_000_000_000, 1_500_000_000),
+		mkAPITrade(22, day.Add(7*time.Hour+10*time.Minute), flipped, 500_000_000, 1_000_000_000),
+	} {
+		if err := store.InsertTrade(ctx, tr); err != nil {
+			t.Fatalf("InsertTrade[%d]: %v", i, err)
+		}
+	}
+	if _, err := store.DB().ExecContext(ctx,
+		`CALL refresh_continuous_aggregate('prices_1h', NULL, NULL)`); err != nil {
+		t.Fatalf("refresh prices_1h: %v", err)
+	}
+
+	days, err := store.DailyMarketDays(ctx, []c.Asset{ustry}, []c.Asset{usdc}, day, day)
+	if err != nil {
+		t.Fatalf("DailyMarketDays: %v", err)
+	}
+	if len(days) != 1 {
+		t.Fatalf("days = %d, want 1: %+v", len(days), days)
+	}
+	d := days[0]
+	if d.Hours != 2 || d.Trades != 2 || d.SpanSeconds != 6*3600 {
+		t.Errorf("Hours, Trades, SpanSeconds = %d, %d, %d; want 2, 2, %d over both orientations", d.Hours, d.Trades, d.SpanSeconds, 6*3600)
+	}
+	got, ok := new(big.Rat).SetString(d.VWAP)
+	if !ok || got.Cmp(big.NewRat(1, 1)) != 0 {
+		t.Errorf("VWAP = %s, want 1 (2000 dollars over 2000 tokens across both orientations)", d.VWAP)
+	}
+
+	// An asset that is also one of the dollar spellings must not be read twice.
+	self, err := store.DailyMarketDays(ctx, []c.Asset{ustry, usdc}, []c.Asset{usdc, ustry}, day, day)
+	if err != nil {
+		t.Fatalf("DailyMarketDays (overlapping sets): %v", err)
+	}
+	var trades int64
+	for _, r := range self {
+		trades += r.Trades
+	}
+	if trades != 2 {
+		t.Errorf("overlapping asset and quote sets counted %d trade(s), want each stored row once (2)", trades)
+	}
+}
