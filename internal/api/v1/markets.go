@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
@@ -304,6 +305,22 @@ type MarketVolumeBucket struct {
 	VolumeUSD string   `json:"volume_usd"`
 }
 
+// marketsSurchargeInception prices ?include=inception: an uncached first-bucket read over every pair on the page.
+const marketsSurchargeInception = 2
+
+// marketsIncludes parses ?include= into the two opt-in enrichments.
+func marketsIncludes(r *http.Request) (sparkline, inception bool) {
+	for _, f := range strings.Split(r.URL.Query().Get("include"), ",") {
+		switch strings.TrimSpace(f) {
+		case "sparkline":
+			sparkline = true
+		case "inception":
+			inception = true
+		}
+	}
+	return sparkline, inception
+}
+
 // handleMarkets serves GET /v1/markets; order_by defaults to volume_24h_usd_desc so clients skip ~5K dust pairs.
 // asset is exclusive with source; data vendors are refused by sourceFilterOK.
 func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,gocyclo,funlen // option parsing + source/asset/no-filter dispatch + 8s-timeout guard + sparkline backfill are linear; splitting fragments the request lifecycle
@@ -348,6 +365,11 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 
 	source := r.URL.Query().Get("source")
 	if !sourceFilterOK(w, r, source) {
+		return
+	}
+	// Charged before any read: the inception batch is uncached and runs once per request.
+	if _, inception := marketsIncludes(r); inception && source == "" &&
+		!middleware.ChargeRateLimit(w, r, 1+marketsSurchargeInception) {
 		return
 	}
 
@@ -460,16 +482,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 	}
 
 	// Opt-in enrichment, default off to avoid ~50KB of sparkline per page.
-	includeSparkline := false
-	includeInception := false
-	for _, f := range strings.Split(r.URL.Query().Get("include"), ",") {
-		switch strings.TrimSpace(f) {
-		case "sparkline":
-			includeSparkline = true
-		case "inception":
-			includeInception = true
-		}
-	}
+	includeSparkline, includeInception := marketsIncludes(r)
 	// Both enrichment readers are pair-wide (every venue). Beside a
 	// ?source= row's single-venue headline they would contradict it, so omit them.
 	pairWide := source == ""
