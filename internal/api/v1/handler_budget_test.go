@@ -409,6 +409,10 @@ var inlineDetachments = map[string]string{
 		"known residual as rwaCuratedSnapshotWithin",
 	"dashboardauth/middleware.go#newTouchCtx": "constructor for the context the async " +
 		"TouchSession goroutine runs under; never used on the request goroutine",
+	"dashboardauth/handlers.go#markOrphanSignupAccount": "error path only: hands a userless sign-up " +
+		"account to the reaper, which a dropped connection (the usual cause) must not skip; two attempts of orphanMarkTimeout (5s)",
+	"dashboardauth/handlers.go#markUserlessSignupAccount": "error path only: checks whether the failed " +
+		"user insert landed after all, so a real owner's account is released; orphanMarkTimeout (5s)",
 	"dashboardauth/handlers.go#HandleLogin": "the magic-link send after the token is durably " +
 		"written, which a client disconnect must not abort; bounded by sendTimeout",
 	"dashboardauth/credential_audit.go#notifyPasskeyChanged": "the passkey add/remove notice " +
