@@ -250,6 +250,7 @@ type Server struct {
 	rwaRefMu     sync.Mutex
 	rwaRefCache  *rwaReferences
 	rwaRefAt     time.Time
+	rwaRefTried  time.Time
 	rwaRefFlight chan struct{}
 	// Assembled /v1/rwa/assets view: the per-issuer listing reads and valuation behind it take
 	// seconds, so readers get the last build while the next one runs.

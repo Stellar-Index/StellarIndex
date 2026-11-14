@@ -341,55 +341,48 @@ func ratFromScaledInt(value *big.Int, decimals uint8) *big.Rat {
 	return r.Quo(r, new(big.Rat).SetInt(scale))
 }
 
-// cachedRWAReferences returns the reference snapshot, refreshed at most once per TTL behind a single-flight gate. On a failed read it
-// serves the last good snapshot, else an unavailable one:
-// an empty snapshot would tell every row "no oracle publishes your instrument", a finding a failed read may not make.
+// rwaReferenceRetryAfter spaces refills while a snapshot is being served past its TTL, so a failing read is not restarted per request.
+const rwaReferenceRetryAfter = 5 * time.Second
+
+// cachedRWAReferences returns the reference snapshot, refreshed at most once per TTL behind a single-flight gate. Once a snapshot
+// exists nobody waits: an expired one is served while one detached refill runs, and each reference is still aged by its own asOf
+// where it is applied. Only a cold cache blocks; a failed cold read is an unavailable snapshot, never an empty one, which would
+// tell every row "no oracle publishes your instrument".
 func (s *Server) cachedRWAReferences(ctx context.Context) rwaReferences {
 	if s.Oracle == nil {
 		return rwaReferences{}
 	}
 	s.rwaRefMu.Lock()
-	if s.rwaRefCache != nil && time.Since(s.rwaRefAt) < rwaReferenceTTL {
-		snap := *s.rwaRefCache
+	cached := s.rwaRefCache
+	if cached != nil && time.Since(s.rwaRefAt) < rwaReferenceTTL {
 		s.rwaRefMu.Unlock()
-		return snap
+		return *cached
 	}
-	if ch := s.rwaRefFlight; ch != nil {
-		s.rwaRefMu.Unlock()
-		select {
-		case <-ch:
-			s.rwaRefMu.Lock()
-			var snap rwaReferences
-			if s.rwaRefCache != nil {
-				snap = *s.rwaRefCache
-			}
-			s.rwaRefMu.Unlock()
-			return snap
-		case <-ctx.Done():
-			return rwaReferences{}
-		}
+	flight := s.rwaRefFlight
+	if flight == nil && (cached == nil || time.Since(s.rwaRefTried) >= rwaReferenceRetryAfter) {
+		flight = make(chan struct{})
+		s.rwaRefFlight = flight
+		s.rwaRefTried = time.Now()
+		//nolint:gosec,contextcheck // G118 / contextcheck: intentional detached fill; one caller's ctx must not abort
+		// a fill every other caller shares.
+		go s.fillRWAReferences(flight)
 	}
-	done := make(chan struct{})
-	s.rwaRefFlight = done
 	s.rwaRefMu.Unlock()
-	//nolint:gosec,contextcheck // G118 / contextcheck:
-	// intentional detached fill — the waking caller's own ctx must not
-	// abort a fill every other single-flighted caller depends on; see
-	// fillRWAReferences's doc comment.
-	go s.fillRWAReferences(done)
+	if cached != nil {
+		return *cached
+	}
 
 	select {
-	case <-done:
+	case <-flight:
 	case <-ctx.Done():
 		return rwaReferences{}
 	}
 	s.rwaRefMu.Lock()
-	var snap rwaReferences
+	defer s.rwaRefMu.Unlock()
 	if s.rwaRefCache != nil {
-		snap = *s.rwaRefCache
+		return *s.rwaRefCache
 	}
-	s.rwaRefMu.Unlock()
-	return snap
+	return rwaReferences{}
 }
 
 // fillRWAReferences runs the oracle-stream read and releases the single-flight gate even on panic (a skipped release would wedge
