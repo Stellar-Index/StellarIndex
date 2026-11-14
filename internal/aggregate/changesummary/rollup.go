@@ -16,6 +16,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/robuststat"
 )
 
 // Row is the storage-neutral summary the worker hands to the Sink.
@@ -226,7 +227,7 @@ func closedPoints(series []TimedValue, now time.Time) []TimedValue {
 // computeSummary derives the Row from an oldest-first series (len >= 1, enforced upstream);
 // split out so it is testable without a fake PriceSource.
 func computeSummary(ent Entity, series []TimedValue, now time.Time) Row {
-	current := series[len(series)-1]
+	current := series[guardedIdx(series, len(series)-1)]
 
 	row := Row{
 		EntityType:   ent.Type,
@@ -343,10 +344,42 @@ func valueAt(series []TimedValue, target, notBefore time.Time) (string, bool) {
 	idx := sort.Search(len(series), func(i int) bool {
 		return series[i].At.After(target)
 	}) - 1
-	if idx < 0 || series[idx].At.Before(notBefore) {
+	if idx < 0 {
+		return "", false
+	}
+	idx = guardedIdx(series, idx)
+	if series[idx].At.Before(notBefore) {
 		return "", false
 	}
 	return series[idx].Value, true
+}
+
+// The served-price guard's baseline: pricingguard.SampleFetch buckets within pricingguard.BaselineMaxAge. Restated
+// here because that package reads storage and this worker does not.
+const (
+	guardSample = 40
+	guardMaxAge = 24 * time.Hour
+)
+
+// guardedIdx returns the point that stands for series[idx]: itself, or the newest in-band point before it when the
+// served-price guard refuses it. /v1/price holds such a bucket back, so a change measured from it would contradict the price.
+func guardedIdx(series []TimedValue, idx int) int {
+	cand, ok := new(big.Rat).SetString(series[idx].Value)
+	if !ok {
+		return idx
+	}
+	var trailing []*big.Rat
+	for j := idx - 1; j >= 0 && len(trailing) < guardSample; j-- {
+		if series[idx].At.Sub(series[j].At) > guardMaxAge {
+			break
+		}
+		v, _ := new(big.Rat).SetString(series[j].Value)
+		trailing = append(trailing, v)
+	}
+	if accept, lkg := robuststat.GuardServedVWAP(cand, trailing); !accept {
+		return idx - 1 - lkg
+	}
+	return idx
 }
 
 // deltaPct = (current - past) / past * 100; 0 on past=0 or an unparseable leg (undefined delta, avoids Inf%).

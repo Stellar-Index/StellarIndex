@@ -22,12 +22,16 @@ import (
 
 const substanceTestIssuer = "GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2"
 
+// A leg read prices nothing off a lone minute, so each hit carries the minute before it as its baseline.
 func directHit(bucket time.Time, vwap string) scriptedResult {
-	return scriptedResult{cols: []string{"bucket", "vwap"}, rows: [][]driver.Value{{bucket, vwap}}}
+	return scriptedResult{cols: []string{"bucket", "vwap"}, rows: [][]driver.Value{{bucket, vwap}, {bucket.Add(-time.Minute), vwap}}}
 }
 
 func xlmLegHit(bucket time.Time, vwap string) scriptedResult {
-	return scriptedResult{cols: []string{"bucket", "vwap", "inverted"}, rows: [][]driver.Value{{bucket, vwap, false}}}
+	return scriptedResult{
+		cols: []string{"bucket", "vwap", "inverted"},
+		rows: [][]driver.Value{{bucket, vwap, false}, {bucket.Add(-time.Minute), vwap, false}},
+	}
 }
 
 func xlmLegMiss() scriptedResult {

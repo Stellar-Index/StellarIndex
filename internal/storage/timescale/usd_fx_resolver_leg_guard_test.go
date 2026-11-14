@@ -37,7 +37,7 @@ func TestGuardedLegMinute(t *testing.T) {
 		wantOK bool
 	}{
 		{"no minutes", nil, "", false},
-		{"lone minute keeps the candidate", []string{"5"}, "5", true},
+		{"lone minute has no baseline and prices nothing", []string{"5"}, "", false},
 		{"in-band candidate is served", []string{"0.32", "0.31", "0.315", "0.31", "0.32", "0.315"}, "0.32", true},
 		{"spike yields to the newest in-band minute", []string{"9", "0.31", "0.315", "0.31", "0.32", "0.315"}, "0.31", true},
 		{"crash yields too", []string{"0.0001", "0.315", "0.31", "0.315", "0.32", "0.31"}, "0.315", true},
@@ -45,7 +45,7 @@ func TestGuardedLegMinute(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := guardedLegMinute(legMinutes(t, newest, tc.rates...))
+			got, ok := guardedLegMinute(legMinutes(t, newest, tc.rates...), time.Time{})
 			if ok != tc.wantOK || got.text != tc.want {
 				t.Errorf("guardedLegMinute = (%q, %t), want (%q, %t)", got.text, ok, tc.want, tc.wantOK)
 			}
@@ -57,9 +57,32 @@ func TestGuardedLegMinute(t *testing.T) {
 		// the fallback is the previous minute, never the same minute's less-preferred form.
 		rows := legMinutes(t, newest, "9", "0.32", "0.31", "0.315", "0.31", "0.32", "0.315")
 		rows[1].bucket = rows[0].bucket
-		got, ok := guardedLegMinute(rows)
+		got, ok := guardedLegMinute(rows, time.Time{})
 		if !ok || got.text != "0.31" {
 			t.Errorf("guardedLegMinute = (%q, %t), want (\"0.31\", true)", got.text, ok)
+		}
+	})
+
+	// The baseline may be older than the freshness floor; the minute that prices the trade may not.
+	t.Run("freshness floor", func(t *testing.T) {
+		floor := newest.Add(-time.Hour)
+		old := func(rates ...string) []legMinute {
+			rows := legMinutes(t, newest, rates...)
+			for i := 1; i < len(rows); i++ {
+				rows[i].bucket = newest.Add(-time.Duration(i+2) * time.Hour)
+			}
+			return rows
+		}
+		if got, ok := guardedLegMinute(old("0.32", "0.31", "0.315"), floor); !ok || got.text != "0.32" {
+			t.Errorf("fresh in-band print on an old baseline = (%q, %t), want (\"0.32\", true)", got.text, ok)
+		}
+		if got, ok := guardedLegMinute(old("31.5", "0.31", "0.315"), floor); ok {
+			t.Errorf("fresh 100x print on an old baseline = (%q, true), want no rate: the in-band minute is stale", got.text)
+		}
+		stale := old("0.32", "0.31", "0.315")
+		stale[0].bucket = newest.Add(-2 * time.Hour)
+		if got, ok := guardedLegMinute(stale, floor); ok {
+			t.Errorf("newest minute older than the floor = (%q, true), want no rate", got.text)
 		}
 	})
 }

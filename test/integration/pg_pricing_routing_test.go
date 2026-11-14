@@ -84,6 +84,7 @@ func TestPriceReadersOnZeroLegBuckets(t *testing.T) {
 	// is one stroop each way beside a whole-unit zero-quote trade.
 	seed(t, db, ctx, dust, []seedTrade{
 		{off: 10 * time.Second, base: "100000000", quote: "200000000", usd: "20"},
+		{off: 70 * time.Second, base: "100000000", quote: "200000000", usd: "20"},
 	}, h1)
 	seed(t, db, ctx, dust, []seedTrade{
 		{off: 10 * time.Second, base: "1", quote: "1", usd: ""},

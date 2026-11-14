@@ -2510,8 +2510,12 @@ func TestInsertTrade_L76XLMBaseAnchorPopulatesUSDVolume(t *testing.T) {
 
 	// Insert and refresh the anchor FIRST, then the tier-4 trade: VWAPUSDFXResolver reads the prices_1m CAGG, not raw
 	// `trades`, so the XLM/USD anchor must already be materialised, as in production.
-	if err := store.InsertTrade(ctx, anchorTrade); err != nil {
-		t.Fatalf("InsertTrade anchor: %v", err)
+	// Two anchor minutes: the resolver prices nothing off a minute with no baseline.
+	anchorBaseline := mkIntegrationTrade("soroswap", 3, ts.Add(-time.Minute), xlmUSDC, 1_000_000_000, 500_000_000)
+	for _, tr := range []c.Trade{anchorTrade, anchorBaseline} {
+		if err := store.InsertTrade(ctx, tr); err != nil {
+			t.Fatalf("InsertTrade anchor: %v", err)
+		}
 	}
 	if _, err := store.DB().ExecContext(ctx,
 		`CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`); err != nil {

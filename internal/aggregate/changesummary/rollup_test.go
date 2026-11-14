@@ -241,11 +241,38 @@ func TestComputeSummary_WildCurrentLeavesExtremesNil(t *testing.T) {
 	}
 	for _, c := range []struct{ base, cur string }{{"0.11", "9000"}, {"1", "0.0001"}} {
 		row := computeSummary(Entity{Type: "coin", ID: "x"}, build(c.base, c.cur), now)
-		if row.CurrentValue != c.cur {
-			t.Errorf("CurrentValue = %q, want %q", row.CurrentValue, c.cur)
+		// The served-price guard refuses the wild bucket, so the summary stands on the last bucket it accepts.
+		if row.CurrentValue != c.base {
+			t.Errorf("CurrentValue = %q, want %q", row.CurrentValue, c.base)
 		}
-		if row.ATHValue != nil || row.ATLValue != nil {
-			t.Errorf("base %s cur %s: ATH/ATL = %v/%v, want nil/nil", c.base, c.cur, row.ATHValue, row.ATLValue)
+		if row.ATHValue == nil || *row.ATHValue != c.base || row.ATLValue == nil || *row.ATLValue != c.base {
+			t.Errorf("base %s cur %s: ATH/ATL = %v/%v, want both %s", c.base, c.cur, row.ATHValue, row.ATLValue, c.base)
+		}
+	}
+}
+
+// One dust print must not move a change the served price never showed, as the newest point or as a horizon anchor.
+func TestComputeSummary_RefusedBucketIsNotAChange(t *testing.T) {
+	now := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
+	flat := func(spikeAt time.Time) []TimedValue {
+		var s []TimedValue
+		for i := 180; i >= 0; i-- {
+			at := now.Add(-time.Duration(i) * time.Minute)
+			v := "0.11"
+			if at.Equal(spikeAt) {
+				v = "11.0"
+			}
+			s = append(s, TimedValue{At: at, Value: v})
+		}
+		return s
+	}
+	for name, spikeAt := range map[string]time.Time{"newest": now, "h1 anchor": now.Add(-time.Hour)} {
+		row := computeSummary(Entity{Type: "coin", ID: "x"}, flat(spikeAt), now)
+		if row.CurrentValue != "0.11" {
+			t.Errorf("%s: CurrentValue = %q, want 0.11", name, row.CurrentValue)
+		}
+		if row.H1DeltaPct == nil || *row.H1DeltaPct != 0 {
+			t.Errorf("%s: H1DeltaPct = %v, want 0", name, row.H1DeltaPct)
 		}
 	}
 }

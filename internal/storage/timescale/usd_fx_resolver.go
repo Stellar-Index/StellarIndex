@@ -693,12 +693,16 @@ func (r *VWAPUSDFXResolver) queryXLMLeg(ctx context.Context, asset canonical.Ass
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("timescale: VWAPUSDFXResolver XLM leg: %w", err)
 	}
-	m, ok := guardedLegMinute(minutes)
+	m, ok := guardedLegMinute(minutes, time.Time{})
 	if !ok {
 		return nil, nil
 	}
 	return m.rate, nil
 }
+
+// legBaselineWindow is how far back a direct-leg read looks for the minutes its candidate is judged against. It is the
+// substance gate's window, so a market that clears the gate has a baseline here even after a quiet hour.
+const legBaselineWindow = valuationSubstanceWindow
 
 // legGuardSample is how many prices_1m minutes a trade-time leg read takes: the candidate plus the
 // 40 trailing minutes the served-price guard uses (pricingguard.SampleFetch, which imports this package).
@@ -713,10 +717,11 @@ type legMinute struct {
 
 // guardedLegMinute runs the newest of newest-first minutes through the served-price outlier band so a trade is
 // never valued at a one-minute print the API would refuse to serve: a rejected minute yields to the newest
-// in-band one. An empty baseline keeps the candidate; thin markets are the substance gate's call.
+// in-band one. A candidate with no baseline is not a rate: nothing judged it, and a stamped notional cannot be
+// recalled. freshFloor (zero = none) is the oldest minute that may price the trade; older rows are baseline only.
 // Rows sharing a bucket (several peg or XLM forms) collapse to the first, the query's preferred form, so one
 // minute is one vote.
-func guardedLegMinute(rows []legMinute) (legMinute, bool) {
+func guardedLegMinute(rows []legMinute, freshFloor time.Time) (legMinute, bool) {
 	minutes := make([]legMinute, 0, len(rows))
 	for _, m := range rows {
 		if n := len(minutes); n > 0 && minutes[n-1].bucket.Equal(m.bucket) {
@@ -724,17 +729,21 @@ func guardedLegMinute(rows []legMinute) (legMinute, bool) {
 		}
 		minutes = append(minutes, m)
 	}
-	if len(minutes) == 0 {
+	if len(minutes) < 2 || minutes[0].bucket.Before(freshFloor) {
 		return legMinute{}, false
 	}
 	trailing := make([]*big.Rat, len(minutes)-1)
 	for i, m := range minutes[1:] {
 		trailing[i] = m.rate
 	}
-	if accept, lkg := robuststat.GuardServedVWAP(minutes[0].rate, trailing); !accept {
-		return minutes[lkg+1], true
+	if !robuststat.ServedBaselineValidated(trailing) {
+		return legMinute{}, false
 	}
-	return minutes[0], true
+	pick := minutes[0]
+	if accept, lkg := robuststat.GuardServedVWAP(minutes[0].rate, trailing); !accept {
+		pick = minutes[lkg+1]
+	}
+	return pick, !pick.bucket.Before(freshFloor)
 }
 
 // xlmLegQuery is queryXLMLeg's SQL, newest [legGuardSample] minutes first. Arms are parenthesised (Postgres rejects bare ORDER BY/LIMIT
@@ -805,8 +814,10 @@ func (r *VWAPUSDFXResolver) queryDirectLeg(ctx context.Context, asset canonical.
 		at.UTC(),
 		directLegMinQuoteVolume,
 	}
+	var freshFloor time.Time
 	if r.freshness > 0 {
-		args = append(args, at.UTC().Add(-r.freshness))
+		freshFloor = at.UTC().Add(-r.freshness)
+		args = append(args, at.UTC().Add(-max(r.freshness, legBaselineWindow)))
 	}
 	xlm := isXLMAliasForm(asset)
 	if xlm {
@@ -832,7 +843,7 @@ func (r *VWAPUSDFXResolver) queryDirectLeg(ctx context.Context, asset canonical.
 	if err := rows.Err(); err != nil {
 		return "", time.Time{}, fmt.Errorf("timescale: VWAPUSDFXResolver query: %w", err)
 	}
-	m, ok := guardedLegMinute(minutes)
+	m, ok := guardedLegMinute(minutes, freshFloor)
 	if !ok {
 		return "", time.Time{}, nil
 	}
@@ -853,7 +864,7 @@ func isXLMAliasForm(asset canonical.Asset) bool {
 	return false
 }
 
-// directLegQuery is queryDirectLeg's SQL, newest [legGuardSample] minutes first; bounded adds the `$5` freshness floor. Ties go to the peg form first in $2, never scan order.
+// directLegQuery is queryDirectLeg's SQL, newest [legGuardSample] minutes first; bounded adds the `$5` floor, which is the baseline window; the freshness floor is applied to the pick in Go. Ties go to the peg form first in $2, never scan order.
 // xlm refuses a minute inside a recorded XLM/USD-proxy freeze ([xlmUSDFreezeOverlap]), the native SAC bound at the last placeholder:
 // the XLM-base anchor and the bridge's XLM leg both price through this read, so a frozen rate never stamps a notional. The pick then
 // falls back to the newest unfrozen minute within the freshness floor, else nothing.

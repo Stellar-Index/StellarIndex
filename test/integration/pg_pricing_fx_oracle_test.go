@@ -1831,16 +1831,18 @@ func TestVWAPUSDFXResolver_QueriesPrices1m(t *testing.T) {
 	eurc, _ := c.NewClassicAsset("EURC", eurcIssuer)
 	pair, _ := c.NewPair(eurc, usdc)
 
-	// Anchor 2h ago so the trade lands inside the prices_1m window
-	// the CAGG materialises by default. Single trade is enough —
-	// the resolver only needs one VWAP row.
+	// Anchor 2h ago so the trades land inside the prices_1m window
+	// the CAGG materialises by default. Two minutes: the resolver
+	// prices nothing off a minute with no baseline.
 	t0 := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Minute)
-	trade := mkIntegrationTrade("sdex", 1, t0,
-		pair,
-		1_000_000_000, // 100 EURC at 7-decimals
-		1_085_000_000) // 108.5 USDC at 7-decimals → 1.085 EUR/USD
-	if err := store.InsertTrade(ctx, trade); err != nil {
-		t.Fatalf("InsertTrade: %v", err)
+	for i, at := range []time.Time{t0, t0.Add(-time.Minute)} {
+		trade := mkIntegrationTrade("sdex", i+1, at,
+			pair,
+			1_000_000_000, // 100 EURC at 7-decimals
+			1_085_000_000) // 108.5 USDC at 7-decimals → 1.085 EUR/USD
+		if err := store.InsertTrade(ctx, trade); err != nil {
+			t.Fatalf("InsertTrade: %v", err)
+		}
 	}
 	if _, err := store.DB().ExecContext(ctx,
 		`CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`,
@@ -1901,10 +1903,12 @@ func TestVWAPUSDFXResolver_DustBucketDoesNotOutrankRealBucket(t *testing.T) {
 	pair, _ := c.NewPair(eurc, usdc)
 
 	t0 := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Minute)
-	// The real market: 100 EURC for 108.50 USDC → 1.085.
-	realBucket := mkIntegrationTrade("sdex", 1, t0, pair, 1_000_000_000, 1_085_000_000)
-	if err := store.InsertTrade(ctx, realBucket); err != nil {
-		t.Fatalf("InsertTrade(real): %v", err)
+	// The real market: 100 EURC for 108.50 USDC → 1.085, over two minutes so the real bucket has a baseline.
+	for i, at := range []time.Time{t0, t0.Add(-time.Minute)} {
+		realBucket := mkIntegrationTrade("sdex", 10+i, at, pair, 1_000_000_000, 1_085_000_000)
+		if err := store.InsertTrade(ctx, realBucket); err != nil {
+			t.Fatalf("InsertTrade(real): %v", err)
+		}
 	}
 	// The dust: 2 stroops of EURC for 40000 stroops of USDC — $0.004 of
 	// the peg, five minutes FRESHER than the real bucket.
@@ -1989,9 +1993,11 @@ func TestVWAPUSDFXResolver_BootstrapsWithoutUSDVolume(t *testing.T) {
 	pair, _ := c.NewPair(eurc, usdc)
 
 	t0 := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Minute)
-	trade := mkIntegrationTrade("sdex", 1, t0, pair, 1_000_000_000, 1_085_000_000)
-	if err := store.InsertTrade(ctx, trade); err != nil {
-		t.Fatalf("InsertTrade: %v", err)
+	for i, at := range []time.Time{t0, t0.Add(-time.Minute)} {
+		trade := mkIntegrationTrade("sdex", i+1, at, pair, 1_000_000_000, 1_085_000_000)
+		if err := store.InsertTrade(ctx, trade); err != nil {
+			t.Fatalf("InsertTrade: %v", err)
+		}
 	}
 	if _, err := store.DB().ExecContext(ctx,
 		`CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`,
@@ -2008,12 +2014,12 @@ func TestVWAPUSDFXResolver_BootstrapsWithoutUSDVolume(t *testing.T) {
 	).Scan(&nullUSDVolumes); err != nil {
 		t.Fatalf("usd_volume check: %v", err)
 	}
-	if nullUSDVolumes != 1 {
-		t.Fatalf("fixture: %d trades with NULL usd_volume, want 1", nullUSDVolumes)
+	if nullUSDVolumes != 2 {
+		t.Fatalf("fixture: %d trades with NULL usd_volume, want 2", nullUSDVolumes)
 	}
 	var volumeUSD string
 	if err := store.DB().QueryRowContext(ctx,
-		`SELECT volume_usd::text FROM prices_1m
+		`SELECT max(volume_usd)::text FROM prices_1m
 		  WHERE base_asset = $1 AND quote_asset = $2`,
 		eurc.String(), usdc.String(),
 	).Scan(&volumeUSD); err != nil {

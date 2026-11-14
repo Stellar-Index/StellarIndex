@@ -532,10 +532,7 @@ func TestVWAPUSDFXResolver_XLMAnchorResolvesThroughItsSorobanForms(t *testing.T)
 	store, conn := newScriptedStore(t,
 		scriptedResult{cols: []string{"bucket", "vwap"}}, // native     → miss
 		scriptedResult{cols: []string{"bucket", "vwap"}}, // crypto:XLM → miss
-		scriptedResult{ // the SAC form → hit
-			cols: []string{"bucket", "vwap"},
-			rows: [][]driver.Value{{bucket, storedVWAP}},
-		},
+		directHit(bucket, storedVWAP),                    // the SAC form → hit
 	)
 	r, err := NewVWAPUSDFXResolver(store, VWAPUSDFXResolverOptions{
 		USDPegs:        []string{usdcClassicPeg},
@@ -593,7 +590,7 @@ func TestVWAPUSDFXResolver_AliasLoopStopsAtTheEstablishedForm(t *testing.T) {
 	bucket := at.Add(-1 * time.Minute)
 
 	store, conn := newScriptedStore(t,
-		scriptedResult{cols: []string{"bucket", "vwap"}, rows: [][]driver.Value{{bucket, "0.31500000"}}},
+		directHit(bucket, "0.31500000"),
 		// A second scripted row a later form would consume if the loop
 		// wrongly kept going / wrongly preferred the fresher bucket.
 		scriptedResult{cols: []string{"bucket", "vwap"}, rows: [][]driver.Value{{at, "99.00000000"}}},
@@ -720,7 +717,7 @@ func TestVWAPUSDFXResolver_DirectLegRefusesFrozenXLMMinutes(t *testing.T) {
 	miss := scriptedResult{cols: []string{"bucket", "vwap"}}
 	store, conn := newScriptedStore(t,
 		miss, miss, miss, // native, crypto:XLM, SAC
-		scriptedResult{cols: []string{"bucket", "vwap"}, rows: [][]driver.Value{{at.Add(-2 * time.Minute), "0.00120000"}}}, // AQUA direct
+		directHit(at.Add(-2*time.Minute), "0.00120000"), // AQUA direct
 	)
 	r, err := NewVWAPUSDFXResolver(store, VWAPUSDFXResolverOptions{
 		USDPegs:              []string{usdcClassicPeg},

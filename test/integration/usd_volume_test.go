@@ -751,9 +751,12 @@ func TestXLMBaseRestampChunks_RestampsInsideACompressedChunk(t *testing.T) {
 	anchorTS := day.Add(10 * time.Hour)
 
 	// XLM/USD anchor: 100 XLM for 50 USDC -> $0.50.
+	// Two minutes: the resolver prices nothing off a minute with no baseline.
 	anchor := mkIntegrationTrade("sdex", 1, anchorTS, xlmUSDC, 1_000_000_000, 500_000_000)
-	if err := store.InsertTrade(ctx, anchor); err != nil {
-		t.Fatalf("InsertTrade anchor: %v", err)
+	for _, tr := range []c.Trade{anchor, mkIntegrationTrade("sdex", 2, anchorTS.Add(-time.Minute), xlmUSDC, 1_000_000_000, 500_000_000)} {
+		if err := store.InsertTrade(ctx, tr); err != nil {
+			t.Fatalf("InsertTrade anchor: %v", err)
+		}
 	}
 	if _, err := store.DB().ExecContext(ctx, `CALL refresh_continuous_aggregate('prices_1m', NULL, NULL)`); err != nil {
 		t.Fatalf("refresh prices_1m: %v", err)
