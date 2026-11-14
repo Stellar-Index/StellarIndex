@@ -2688,6 +2688,11 @@ paths:
         request). `1m` may additionally be bounded to 90 days on a
         given deployment — see the `granularity` parameter.
 
+        A windowed request costs one rate-limit token plus one per
+        5 000 buckets of the grid it asks for, so every default
+        (`timeframe`, `granularity`) pair costs one token and
+        `timeframe=1mo&granularity=1m` (43 200 buckets) costs nine.
+
         `price_type=twap` returns a time-weighted series from the
         `twap_1h` / `twap_1d` continuous aggregates. TWAP is
         time-weighted at 1-minute resolution (each minute's mean price
