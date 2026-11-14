@@ -17914,7 +17914,7 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "Comma-separated opt-in row enrichments, off by default.\n`sparkline` populates `volume_history_24h` (24 hourly USD\nbuckets, both stored orientations of the pair summed);\n`inception` populates `first_trade_at` (the pair's first\ndaily bucket). Both are best-effort: a failed enrichment\nships the page without the field rather than an error.\n",
+                    "content": "Comma-separated opt-in row enrichments, off by default.\n`sparkline` populates `volume_history_24h` (24 hourly USD\nbuckets, both stored orientations of the pair summed);\n`inception` populates `first_trade_at` (the pair's first\ndaily bucket). Both are best-effort: a failed enrichment\nships the page without the field rather than an error.\n`inception` is read per request and costs two further\nrate-limit tokens.\n",
                     "type": "text/plain"
                   },
                   "key": "include",
@@ -17993,7 +17993,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Comma-separated opt-in row enrichments, off by default.\n`sparkline` populates `volume_history_24h` (24 hourly USD\nbuckets, both stored orientations of the pair summed);\n`inception` populates `first_trade_at` (the pair's first\ndaily bucket). Both are best-effort: a failed enrichment\nships the page without the field rather than an error.\n",
+                        "content": "Comma-separated opt-in row enrichments, off by default.\n`sparkline` populates `volume_history_24h` (24 hourly USD\nbuckets, both stored orientations of the pair summed);\n`inception` populates `first_trade_at` (the pair's first\ndaily bucket). Both are best-effort: a failed enrichment\nships the page without the field rather than an error.\n`inception` is read per request and costs two further\nrate-limit tokens.\n",
                         "type": "text/plain"
                       },
                       "key": "include",
@@ -18082,7 +18082,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Comma-separated opt-in row enrichments, off by default.\n`sparkline` populates `volume_history_24h` (24 hourly USD\nbuckets, both stored orientations of the pair summed);\n`inception` populates `first_trade_at` (the pair's first\ndaily bucket). Both are best-effort: a failed enrichment\nships the page without the field rather than an error.\n",
+                        "content": "Comma-separated opt-in row enrichments, off by default.\n`sparkline` populates `volume_history_24h` (24 hourly USD\nbuckets, both stored orientations of the pair summed);\n`inception` populates `first_trade_at` (the pair's first\ndaily bucket). Both are best-effort: a failed enrichment\nships the page without the field rather than an error.\n`inception` is read per request and costs two further\nrate-limit tokens.\n",
                         "type": "text/plain"
                       },
                       "key": "include",
@@ -18171,7 +18171,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Comma-separated opt-in row enrichments, off by default.\n`sparkline` populates `volume_history_24h` (24 hourly USD\nbuckets, both stored orientations of the pair summed);\n`inception` populates `first_trade_at` (the pair's first\ndaily bucket). Both are best-effort: a failed enrichment\nships the page without the field rather than an error.\n",
+                        "content": "Comma-separated opt-in row enrichments, off by default.\n`sparkline` populates `volume_history_24h` (24 hourly USD\nbuckets, both stored orientations of the pair summed);\n`inception` populates `first_trade_at` (the pair's first\ndaily bucket). Both are best-effort: a failed enrichment\nships the page without the field rather than an error.\n`inception` is read per request and costs two further\nrate-limit tokens.\n",
                         "type": "text/plain"
                       },
                       "key": "include",
@@ -18314,7 +18314,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Comma-separated opt-in row enrichments, off by default.\n`sparkline` populates `volume_history_24h` (24 hourly USD\nbuckets, both stored orientations of the pair summed);\n`inception` populates `first_trade_at` (the pair's first\ndaily bucket). Both are best-effort: a failed enrichment\nships the page without the field rather than an error.\n",
+                        "content": "Comma-separated opt-in row enrichments, off by default.\n`sparkline` populates `volume_history_24h` (24 hourly USD\nbuckets, both stored orientations of the pair summed);\n`inception` populates `first_trade_at` (the pair's first\ndaily bucket). Both are best-effort: a failed enrichment\nships the page without the field rather than an error.\n`inception` is read per request and costs two further\nrate-limit tokens.\n",
                         "type": "text/plain"
                       },
                       "key": "include",
@@ -18403,7 +18403,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "Comma-separated opt-in row enrichments, off by default.\n`sparkline` populates `volume_history_24h` (24 hourly USD\nbuckets, both stored orientations of the pair summed);\n`inception` populates `first_trade_at` (the pair's first\ndaily bucket). Both are best-effort: a failed enrichment\nships the page without the field rather than an error.\n",
+                        "content": "Comma-separated opt-in row enrichments, off by default.\n`sparkline` populates `volume_history_24h` (24 hourly USD\nbuckets, both stored orientations of the pair summed);\n`inception` populates `first_trade_at` (the pair's first\ndaily bucket). Both are best-effort: a failed enrichment\nships the page without the field rather than an error.\n`inception` is read per request and costs two further\nrate-limit tokens.\n",
                         "type": "text/plain"
                       },
                       "key": "include",
@@ -19621,7 +19621,7 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "Filter to events where this G/C-strkey was the\nsender (transfer.from, approve.from).\n",
+                            "content": "Filter to events where this G/C-strkey was the\nsender (transfer.from, approve.from).\nA request with `from` or `to` set costs four further\nrate-limit tokens: a page the recent windows cannot fill\nreads the token's whole history.\n",
                             "type": "text/plain"
                           },
                           "key": "from",
@@ -19686,7 +19686,7 @@
                             {
                               "disabled": false,
                               "description": {
-                                "content": "Filter to events where this G/C-strkey was the\nsender (transfer.from, approve.from).\n",
+                                "content": "Filter to events where this G/C-strkey was the\nsender (transfer.from, approve.from).\nA request with `from` or `to` set costs four further\nrate-limit tokens: a page the recent windows cannot fill\nreads the token's whole history.\n",
                                 "type": "text/plain"
                               },
                               "key": "from",
@@ -19761,7 +19761,7 @@
                             {
                               "disabled": false,
                               "description": {
-                                "content": "Filter to events where this G/C-strkey was the\nsender (transfer.from, approve.from).\n",
+                                "content": "Filter to events where this G/C-strkey was the\nsender (transfer.from, approve.from).\nA request with `from` or `to` set costs four further\nrate-limit tokens: a page the recent windows cannot fill\nreads the token's whole history.\n",
                                 "type": "text/plain"
                               },
                               "key": "from",
@@ -19836,7 +19836,7 @@
                             {
                               "disabled": false,
                               "description": {
-                                "content": "Filter to events where this G/C-strkey was the\nsender (transfer.from, approve.from).\n",
+                                "content": "Filter to events where this G/C-strkey was the\nsender (transfer.from, approve.from).\nA request with `from` or `to` set costs four further\nrate-limit tokens: a page the recent windows cannot fill\nreads the token's whole history.\n",
                                 "type": "text/plain"
                               },
                               "key": "from",
@@ -19965,7 +19965,7 @@
                             {
                               "disabled": false,
                               "description": {
-                                "content": "Filter to events where this G/C-strkey was the\nsender (transfer.from, approve.from).\n",
+                                "content": "Filter to events where this G/C-strkey was the\nsender (transfer.from, approve.from).\nA request with `from` or `to` set costs four further\nrate-limit tokens: a page the recent windows cannot fill\nreads the token's whole history.\n",
                                 "type": "text/plain"
                               },
                               "key": "from",
@@ -20040,7 +20040,7 @@
                             {
                               "disabled": false,
                               "description": {
-                                "content": "Filter to events where this G/C-strkey was the\nsender (transfer.from, approve.from).\n",
+                                "content": "Filter to events where this G/C-strkey was the\nsender (transfer.from, approve.from).\nA request with `from` or `to` set costs four further\nrate-limit tokens: a page the recent windows cannot fill\nreads the token's whole history.\n",
                                 "type": "text/plain"
                               },
                               "key": "from",

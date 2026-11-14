@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -102,6 +103,17 @@ func writeDecimalsUnavailable(w http.ResponseWriter, r *http.Request, problemTyp
 		"the token contract's decimals() could not be read, and every amount in this response is scaled by it; retry shortly.")
 }
 
+// sep41TransfersAddressSurcharge prices an address filter: a page the lookback ladder cannot fill reads the token's whole history.
+const sep41TransfersAddressSurcharge = 4
+
+// sep41TransfersCost is the rate-limit price in tokens of one transfers read.
+func sep41TransfersCost(fromAddr, toAddr string) int {
+	if fromAddr != "" || toAddr != "" {
+		return 1 + sep41TransfersAddressSurcharge
+	}
+	return 1
+}
+
 // handleSEP41Transfers serves GET /v1/contracts/{contract_id}/transfers[?from=&to=&limit=],
 // enabling per-account net-position queries.
 func (s *Server) handleSEP41Transfers(w http.ResponseWriter, r *http.Request) {
@@ -128,6 +140,10 @@ func (s *Server) handleSEP41Transfers(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		limit = n
+	}
+
+	if !middleware.ChargeRateLimit(w, r, sep41TransfersCost(fromAddr, toAddr)) {
+		return
 	}
 
 	listCtx, listCancel := context.WithTimeout(r.Context(), sep41TransfersReadTimeout)

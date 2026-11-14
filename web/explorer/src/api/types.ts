@@ -18010,6 +18010,8 @@ export interface operations {
                  *     `inception` populates `first_trade_at` (the pair's first
                  *     daily bucket). Both are best-effort: a failed enrichment
                  *     ships the page without the field rather than an error.
+                 *     `inception` is read per request and costs two further
+                 *     rate-limit tokens.
                  * @example sparkline,inception
                  */
                 include?: string;
@@ -18404,6 +18406,9 @@ export interface operations {
                 /**
                  * @description Filter to events where this G/C-strkey was the
                  *     sender (transfer.from, approve.from).
+                 *     A request with `from` or `to` set costs four further
+                 *     rate-limit tokens: a page the recent windows cannot fill
+                 *     reads the token's whole history.
                  */
                 from?: string;
                 /**
