@@ -241,7 +241,7 @@ func TestBuildTrade_UnknownSymbol(t *testing.T) {
 		Symbol:    "FAKE/USD",
 		Qty:       "1",
 		Price:     "1",
-		TradeID:   1,
+		TradeID:   new(int64),
 		Timestamp: "2026-04-24T00:00:00Z",
 	}, buildPairMap(t))
 	if !errors.Is(err, ErrUnknownSymbol) {
@@ -256,7 +256,7 @@ func TestBuildTrade_DustReturnsTypedSentinel(t *testing.T) {
 		Symbol:    "XLM/USD",
 		Qty:       "0.00000001",
 		Price:     "0.16000000",
-		TradeID:   1,
+		TradeID:   new(int64),
 		Timestamp: "2026-04-24T00:00:00Z",
 	}, buildPairMap(t))
 	if !errors.Is(err, ErrDustTrade) {
@@ -295,7 +295,7 @@ func TestBuildTrade_RejectsSymbolThatWouldTruncateSeed(t *testing.T) {
 	// Only the symbol's length matters; the pair is any valid one.
 	pm := map[string]canonical.Pair{"FARTCOIN/USDT": buildPairMap(t)["XLM/USD"]}
 	fill := func(id int64) tradePayload {
-		return tradePayload{Symbol: "FARTCOIN/USDT", Qty: "10", Price: "1", TradeID: id, Timestamp: "2026-04-24T00:00:00Z"}
+		return tradePayload{Symbol: "FARTCOIN/USDT", Qty: "10", Price: "1", TradeID: &id, Timestamp: "2026-04-24T00:00:00Z"}
 	}
 	a, errA := buildTrade(fill(987654321), pm)
 	b, errB := buildTrade(fill(987654322), pm)

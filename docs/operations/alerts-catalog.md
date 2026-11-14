@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 71 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 278 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 279 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -114,6 +114,7 @@ its first link must be the rule's `runbook_url` page
 | `stellarindex_external_poller_error_rate_high` | poll error ratio `[15m]` | > 0.5 for 15 min | informational | [external-pollers](runbooks/external-pollers.md#stellarindex_external_poller_error_rate_high) |
 | `stellarindex_external_fx_feed_stale` | `time() - max(external_fx_last_quote_unix)` | > 21600 s (6h) for 15 min | ticket | [external-pollers](runbooks/external-pollers.md#stellarindex_external_fx_feed_stale) |
 | `stellarindex_external_fx_feed_absent` | `absent(stellarindex_external_fx_last_quote_unix)` | series missing for 30 min | ticket | [external-pollers](runbooks/external-pollers.md#stellarindex_external_fx_feed_absent) |
+| `stellarindex_external_fx_primary_down` | newest standby `external_fx_last_quote_unix` minus `massive`'s (0 if absent) | > 21600 s (6h) for 2 h (standby hides a primary outage from feed_stale) | ticket | [external-pollers](runbooks/external-pollers.md#stellarindex_external_fx_primary_down) |
 | `stellarindex_external_fx_rate_rejections` | `increase(external_fx_rate_rejected_total[3h])`, excl. `*_stuck` reasons | > 2, for 30 min (ticker wedged on last accepted rate) | ticket | [external-pollers](runbooks/external-pollers.md#stellarindex_external_fx_rate_rejections) |
 | `stellarindex_fx_fixings_refresh_stale` | `time() - max(fx_fixings_last_refresh_unix)` | > 10800 s (3h) for 15 min | ticket | [external-pollers](runbooks/external-pollers.md#stellarindex_fx_fixings_refresh_stale) |
 | `stellarindex_fx_fixings_series_stale` | `time() - max(fx_fixings_newest_bar_end_unix)` | > 14400 s (4h) while FX trades (Mon 02:00-Fri 22:00 UTC), for 15 min | ticket | [external-pollers](runbooks/external-pollers.md#stellarindex_fx_fixings_series_stale) |

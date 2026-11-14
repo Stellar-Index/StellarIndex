@@ -93,7 +93,7 @@ type tradePayload struct {
 	Qty       json.Number `json:"qty"`       // base-asset quantity, decimal
 	Price     json.Number `json:"price"`     // quote-per-base, decimal
 	OrdType   string      `json:"ord_type"`  // "market" | "limit" (unused)
-	TradeID   int64       `json:"trade_id"`  // per-symbol monotonic
+	TradeID   *int64      `json:"trade_id"`  // per-symbol monotonic
 	Timestamp string      `json:"timestamp"` // RFC 3339 with subsecond precision
 }
 
@@ -198,7 +198,10 @@ func buildTrade(t tradePayload, pairMap map[string]canonical.Pair) (canonical.Tr
 		return canonical.Trade{}, &entryError{skipBadTimestamp, fmt.Errorf("%w: timestamp %q: %w", ErrMalformedFrame, t.Timestamp, err)}
 	}
 
-	txHash, err := formatTxHash(t.Symbol, t.TradeID)
+	if t.TradeID == nil {
+		return canonical.Trade{}, &entryError{skipBadTradeID, fmt.Errorf("%w: missing trade_id", ErrMalformedFrame)}
+	}
+	txHash, err := formatTxHash(t.Symbol, *t.TradeID)
 	if err != nil {
 		return canonical.Trade{}, &entryError{skipBadTradeID, err}
 	}

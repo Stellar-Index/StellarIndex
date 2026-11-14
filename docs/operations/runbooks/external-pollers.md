@@ -184,7 +184,7 @@ Healthy: one `fx_quotes persisted` line per hour (~803 rows/tick on r1).
 1. Check the massive.com dashboard (subscription, quota).
 2. Update `MASSIVE_API_KEY` in the r1 env file, `systemctl restart stellarindex-api`.
 3. Verify: seconds after restart the log shows `forex: fx_quotes persisted` and the gauge re-stamps.
-4. Standby: the worker falls back to ECB daily rates (`forex.ECBProvider`, always on), so `stellarindex_external_fx_last_quote_unix{source="ecb"}` keeps the alert clear while `massive` is down. `forex: primary failed - serving from fallback` means the standby serves; `forex: fallback failed` or `rates fetch failed on every source` means both are down and the 7-day lookback is your time budget. Both dry past 7 days needs a code change to `FXQuoteAtOrBefore`: escalate.
+4. Standby: the worker falls back to ECB daily rates (`forex.ECBProvider`, always on), so `stellarindex_external_fx_last_quote_unix{source="ecb"}` keeps this alert clear while `massive` is down; [fx_primary_down](#stellarindex_external_fx_primary_down) is the ticket for that state. `forex: primary failed - serving from fallback` means the standby serves; `forex: fallback failed` or `rates fetch failed on every source` means both are down and the 7-day lookback is your time budget. Both dry past 7 days needs a code change to `FXQuoteAtOrBefore`: escalate.
 
 Capture for a postmortem: `SELECT ticker, MAX(bucket) FROM fx_quotes GROUP BY ticker`.
 
@@ -201,6 +201,21 @@ Capture for a postmortem: `SELECT ticker, MAX(bucket) FROM fx_quotes GROUP BY ti
 ### Fix
 
 Fix the missing piece, restart `stellarindex-api`, and verify the gauge appears.
+
+## stellarindex_external_fx_primary_down
+
+A standby's `stellarindex_external_fx_last_quote_unix` stamp is more than 6 h newer than `massive`'s (or `massive` has no stamp since API start), `for: 2h`, P3. The standby keeps [fx_feed_stale](#stellarindex_external_fx_feed_stale) clear, so this is the only signal that the primary is down.
+
+Impact: currencies the standby publishes stay fresh. Currencies only `massive` publishes (NGN, ARS, KES, VND, PHP and others) are served as held rates, then leave the cache and the `fx_quotes` snap 7 days after their last row; their fiat-quoted prices then go dark. `fx_fixings_series_stale` fires alongside and has the same cause.
+
+### Check
+
+1. `journalctl -u stellarindex-api | grep 'forex: primary failed'` gives the upstream error. 401/403 is a lapsed subscription or a bad `MASSIVE_API_KEY`; 429 is quota.
+2. Days left: `SELECT ticker, MAX(bucket) FROM fx_quotes WHERE source = 'massive' GROUP BY ticker ORDER BY 2 LIMIT 5`.
+
+### Fix
+
+Same as [fx_feed_stale](#stellarindex_external_fx_feed_stale): restore the subscription or key, restart `stellarindex-api`, and confirm `source="massive"` re-stamps.
 
 ## stellarindex_external_fx_rate_rejections
 

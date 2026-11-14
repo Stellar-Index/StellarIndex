@@ -26,7 +26,7 @@ type eventEnvelope struct {
 // tradePayload matches Bitstamp's live_trades_* shape (https://www.bitstamp.net/websocket/v2/). Price and amount are read from the
 // authoritative, precision-safe *_str variants, not float64; Microtimestamp is a string microsecond count.
 type tradePayload struct {
-	ID             int64  `json:"id"`
+	ID             *int64 `json:"id"`             // a pointer so an absent field is not id 0
 	Timestamp      string `json:"timestamp"`      // unix seconds, string
 	Microtimestamp string `json:"microtimestamp"` // unix microseconds, string
 	Amount         any    `json:"amount"`         // float form — ignored
@@ -118,6 +118,9 @@ func parseTrade(env eventEnvelope, pairMap map[string]canonical.Pair) (canonical
 	if err := json.Unmarshal(env.Data, &t); err != nil {
 		return canonical.Trade{}, fmt.Errorf("%w: trade data: %w", ErrMalformedFrame, err)
 	}
+	if t.ID == nil {
+		return canonical.Trade{}, fmt.Errorf("%w: missing trade id", ErrMalformedFrame)
+	}
 	if t.AmountStr == "" || t.PriceStr == "" {
 		return canonical.Trade{}, fmt.Errorf("%w: missing amount_str / price_str", ErrMalformedFrame)
 	}
@@ -148,7 +151,7 @@ func parseTrade(env eventEnvelope, pairMap map[string]canonical.Pair) (canonical
 	return canonical.Trade{
 		Source:      SourceName,
 		Ledger:      0,
-		TxHash:      formatTxHash(symbol, t.ID),
+		TxHash:      formatTxHash(symbol, *t.ID),
 		OpIndex:     0,
 		Timestamp:   ts,
 		Pair:        pair,

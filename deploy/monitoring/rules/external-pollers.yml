@@ -174,6 +174,33 @@ groups:
             the first tick. Same customer-impact profile + same runbook
             as stellarindex_external_fx_feed_stale.
 
+      # A standby (ecb/frankfurter) stamps the same liveness gauge, so
+      # feed_stale and feed_absent stay quiet through a whole primary
+      # outage while the currencies only the primary publishes age out.
+      # 2h spans two hourly refreshes, so one failed refresh cannot trip it.
+      - alert: stellarindex_external_fx_primary_down
+        expr: |
+          (
+            max(stellarindex_external_fx_last_quote_unix{source!="massive"})
+            - (max(stellarindex_external_fx_last_quote_unix{source="massive"}) or vector(0))
+          ) > 21600
+        for: 2h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: external-poller
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_external_fx_primary_down
+          summary: "(P3) fiat-FX is served from a standby; the primary feed has committed nothing for 6+ h"
+          description: |
+            A standby FX source has committed rates more than 6 h newer
+            than the primary (`massive`), for 2 h. Currencies the standby
+            publishes stay fresh. Currencies only the primary publishes
+            are served as held rates and leave the cache and the fx_quotes
+            snap after 7 days, when their fiat-quoted prices go dark.
+            Likely cause: a lapsed subscription or a bad MASSIVE_API_KEY
+            (401/403 on every refresh).
+
       # The forex worker's sanity band refused
       # to persist an upstream rate. fx_quotes is the denominator of every
       # fiat-quoted usd_volume the X2.5 triangulation derives, so one bad

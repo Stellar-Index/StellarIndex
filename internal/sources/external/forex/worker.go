@@ -280,9 +280,7 @@ func (w *Worker) refreshOnce(ctx context.Context) {
 	// History is re-fetched once a day. It is the RAW series, private to the worker: the heal and
 	// the confirm veto need the bars the band REFUSED, while the served snapshot carries only
 	// admitted ones.
-	if w.shouldRefreshHistory(w.rawHistory, publishedAt) {
-		w.rawHistory = w.fetchHistory(ctx, names, publishedAt)
-	}
+	w.refreshRawHistory(ctx, names, publishedAt)
 
 	// GUARD FIRST, INSTALL SECOND: only what the band clears reaches the cache that /v1/price's fiat
 	// paths read; banding just the fx_quotes write would still price off a bad cached rate. The band
@@ -423,6 +421,48 @@ func (w *Worker) persistSnapshot(ctx context.Context, snap *Snapshot) {
 }
 
 // guardSnapshot runs the sanity band over one raw snapshot and returns its verdicts. It is the ONLY place band state advances and must
+// refreshRawHistory refetches the raw 7-day series when a new day is due.
+func (w *Worker) refreshRawHistory(ctx context.Context, names map[string]string, publishedAt time.Time) {
+	if !w.shouldRefreshHistory(w.rawHistory, publishedAt) {
+		return
+	}
+	// A refetch that returned nothing is a failed fetch: keep the held series, which the heal
+	// and the confirm veto read, and try again next refresh.
+	// A held series past the 7-day window describes another week, so it is dropped, not kept.
+	fetched := w.fetchHistory(ctx, names, publishedAt)
+	switch {
+	case len(fetched) > 0 || len(w.rawHistory) == 0:
+		w.rawHistory = fetched
+	case publishedAt.Sub(newestHistoryBar(w.rawHistory)) > heldHistoryMaxAge:
+		w.logger.Warn("forex: history refetch returned nothing and the held series is past its window — dropping it", "tickers", len(w.rawHistory))
+		w.rawHistory = nil
+	default:
+		w.logger.Warn("forex: history refetch returned nothing — keeping the held series", "tickers", len(w.rawHistory))
+	}
+}
+
+// bandBaselineless returns a series unchanged when its ticker has an accepted rate; otherwise the bars within the band of the
+// series' own median, and ok=false when the series is too short to have one.
+func (w *Worker) bandBaselineless(ticker string, points []HistoryPoint) ([]HistoryPoint, bool) {
+	if g, ok := w.guards[ticker]; ok && g.lastAccepted > 0 {
+		return points, true
+	}
+	ownMedian, ok := historyMedian(points)
+	if !ok {
+		return nil, false
+	}
+	kept := make([]HistoryPoint, 0, len(points))
+	for _, p := range points {
+		if !withinBand(p.RateUSD, ownMedian) {
+			w.logger.Warn("forex: history bar refused against its own series — ticker has no current rate",
+				"ticker", ticker, "date", p.Date.Format("2006-01-02"), "rate", p.RateUSD, "series_median", ownMedian)
+			continue
+		}
+		kept = append(kept, p)
+	}
+	return kept, true
+}
+
 // run exactly once per refresh: acceptRate arms pending on a refusal, so a second pass would confirm the outlier the first refused.
 func (w *Worker) guardSnapshot(snap *Snapshot) guardResult {
 	today := snap.PublishedAt.UTC().Truncate(24 * time.Hour)
@@ -453,6 +493,13 @@ func (w *Worker) guardSnapshot(snap *Snapshot) guardResult {
 		})
 	}
 	for ticker, points := range snap.History7d {
+		// With no accepted current rate the only reference for a past bar is its own series, and an
+		// fx_quotes row is never rewritten by a later refusal: band against the series median, and
+		// hold a series too short to have one until the ticker has a baseline.
+		points, ok := w.bandBaselineless(ticker, points)
+		if !ok {
+			continue
+		}
 		var rejected []HistoryPoint
 		for _, p := range points {
 			if !w.acceptHistoryRate(ticker, p.RateUSD) {
@@ -721,6 +768,21 @@ func withinBand(rate, baseline float64) bool {
 	return math.Abs(rate-baseline)/baseline <= maxRateDeviation
 }
 
+// historyMedian is the median of a series' usable rates, and false below [historyHealMinBars] of them.
+func historyMedian(points []HistoryPoint) (float64, bool) {
+	rates := make([]float64, 0, len(points))
+	for _, p := range points {
+		if p.RateUSD > 0 && isFiniteFloat(p.RateUSD) {
+			rates = append(rates, p.RateUSD)
+		}
+	}
+	if len(rates) < historyHealMinBars {
+		return 0, false
+	}
+	sort.Float64s(rates)
+	return rates[len(rates)/2], true
+}
+
 // historyMajority reports the median of a rejected history series and whether it is heal-grade: at least [historyHealMinBars] bars, all
 // within [historyHealAgreement] of the median. A series split across two levels (a real redenomination) fails.
 func historyMajority(rejected []HistoryPoint) (float64, bool) {
@@ -758,9 +820,20 @@ func (w *Worker) shouldRefreshHistory(prevHistory map[string][]HistoryPoint, pub
 	if len(prevHistory) == 0 {
 		return true
 	}
-	// Tickers can end on different days (a 404 day is skipped per ticker): use the newest bar overall.
+	newest := newestHistoryBar(prevHistory)
+	if newest.IsZero() {
+		return true
+	}
+	return newest.Before(publishedAt.Truncate(24 * time.Hour))
+}
+
+// heldHistoryMaxAge is how far behind the publication day a held series' newest bar may fall before it stops being the trailing week.
+const heldHistoryMaxAge = 7 * 24 * time.Hour
+
+// newestHistoryBar is the newest bar across all tickers; they can end on different days (a 404 day is skipped per ticker).
+func newestHistoryBar(history map[string][]HistoryPoint) time.Time {
 	var newest time.Time
-	for _, points := range prevHistory {
+	for _, points := range history {
 		if len(points) == 0 {
 			continue
 		}
@@ -768,10 +841,7 @@ func (w *Worker) shouldRefreshHistory(prevHistory map[string][]HistoryPoint, pub
 			newest = d
 		}
 	}
-	if newest.IsZero() {
-		return true
-	}
-	return newest.Before(publishedAt.Truncate(24 * time.Hour))
+	return newest
 }
 
 // fetchHistory assembles a per-ticker series from the trailing-7d daily snapshots. Days that 404

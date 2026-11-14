@@ -29,7 +29,7 @@ func FuzzBuildTrade(f *testing.F) {
 	f.Fuzz(func(t *testing.T, qty, price, symbol string, tradeID int64) {
 		trade, perr := buildTrade(tradePayload{
 			Symbol: symbol, Qty: json.Number(qty), Price: json.Number(price),
-			TradeID: tradeID, Timestamp: "2026-04-24T12:34:56.789000Z",
+			TradeID: &tradeID, Timestamp: "2026-04-24T12:34:56.789000Z",
 		}, pairs)
 
 		wantBase, qErr := scale.DecimalStringToScaledInt(qty, externalAmountDecimals)

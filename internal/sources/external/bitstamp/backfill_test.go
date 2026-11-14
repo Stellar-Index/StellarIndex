@@ -305,3 +305,55 @@ func TestBitstampBackfill_UnparseableCandleFailsPage(t *testing.T) {
 		}
 	}
 }
+
+// newWindowedOHLC answers as production does for `start` alone: the candles inside [start, start+limit*step), however few.
+func newWindowedOHLC(t *testing.T, series []bitstampCandle) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		start, _ := strconv.ParseInt(q.Get("start"), 10, 64)
+		limit, _ := strconv.ParseInt(q.Get("limit"), 10, 64)
+		step, _ := strconv.ParseInt(q.Get("step"), 10, 64)
+		body := ohlcResponse{}
+		body.Data.Pair = "XLM/USD"
+		body.Data.OHLC = []bitstampCandle{}
+		for _, c := range series {
+			if ts, _ := strconv.ParseInt(c.Timestamp, 10, 64); ts >= start && ts < start+limit*step {
+				body.Data.OHLC = append(body.Data.OHLC, c)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(body)
+	}))
+}
+
+// A short or empty page is a hole in that window, not the end of the data: the walk must reach `to`.
+func TestBitstampBackfill_WalksPastShortAndEmptyPages(t *testing.T) {
+	const startSec = int64(1_577_836_800)
+	const hourSec = int64(3_600)
+	// Nothing for the first 1200 hours (pre-listing), 100 candles, a 1400-hour outage, then 200 more.
+	series := synthesiseBitstampCandles(100, startSec+1200*hourSec, hourSec)
+	series = append(series, synthesiseBitstampCandles(200, startSec+2700*hourSec, hourSec)...)
+	srv := newWindowedOHLC(t, series)
+	defer srv.Close()
+
+	m, err := DefaultPairs()
+	if err != nil {
+		t.Fatalf("DefaultPairs: %v", err)
+	}
+	s := NewStreamer(m)
+	s.Endpoint = srv.URL
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	usd, _ := canonical.NewFiatAsset("USD")
+	pair, _ := canonical.NewPair(xlm, usd)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	trades, err := s.Backfill(ctx, pair, time.Unix(startSec, 0).UTC(), time.Unix(startSec+2900*hourSec, 0).UTC(), time.Hour)
+	if err != nil {
+		t.Fatalf("Backfill: %v", err)
+	}
+	if len(trades) != 300 {
+		t.Fatalf("got %d trades, want 300: the walk stopped at a short or empty page", len(trades))
+	}
+}

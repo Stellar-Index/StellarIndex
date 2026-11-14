@@ -28,7 +28,7 @@ type aggTradePayload struct {
 	EventType  string `json:"e"` // "aggTrade"
 	EventTime  int64  `json:"E"` // ms since epoch (ignored — we use T)
 	Symbol     string `json:"s"` // e.g. "XLMUSDT"
-	AggTradeID int64  `json:"a"` // aggregate trade id (unique per symbol)
+	AggTradeID *int64 `json:"a"` // aggregate trade id (unique per symbol); a pointer so an absent field is not id 0
 	Price      string `json:"p"` // decimal string, quote-per-base
 	Quantity   string `json:"q"` // decimal string, base asset amount
 	FirstID    int64  `json:"f"` // first underlying trade id (unused)
@@ -86,7 +86,10 @@ func parseAggTradeFrame(raw []byte, pairMap map[string]canonical.Pair) (canonica
 		return canonical.Trade{}, ErrDustTrade
 	}
 
-	txHash, err := formatTxHash(ev.Symbol, ev.AggTradeID)
+	if ev.AggTradeID == nil {
+		return canonical.Trade{}, fmt.Errorf("%w: missing aggregate trade id", ErrMalformedFrame)
+	}
+	txHash, err := formatTxHash(ev.Symbol, *ev.AggTradeID)
 	if err != nil {
 		return canonical.Trade{}, err
 	}
