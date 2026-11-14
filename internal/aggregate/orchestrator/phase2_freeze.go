@@ -269,8 +269,10 @@ func (o *Orchestrator) loadFreezeState(
 	if !st.Active() {
 		return st, false, nil
 	}
-	if _, ok, err := o.cfg.FreezeWriter.LoadState(ctx, pair.Base, pair.Quote); err != nil || ok {
-		return st, false, nil
+	// A marker that could not be read is not an override: the freeze holds and the next bucket reads again.
+	_, present, readErr := o.cfg.FreezeWriter.LoadState(ctx, pair.Base, pair.Quote)
+	if present || readErr != nil {
+		return st, false, nil //nolint:nilerr // an unread marker keeps the freeze; it is not this bucket's failure
 	}
 	if _, unwritten := o.markerUnwritten[stateKey]; unwritten {
 		return st, o.overriddenSince(ctx, pair, st.FiredAt), nil
