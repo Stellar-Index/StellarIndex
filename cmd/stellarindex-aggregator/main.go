@@ -794,11 +794,11 @@ func run(cfgPath string, dryRun bool) error {
 				// serving guard can decline pricing — turns detection into an actual stop-serving lever.
 				Writer: store,
 			})
-			// One-time startup self-seed: catches a non-7-decimal token that traded and went
-			// DORMANT before the periodic sweep's short (20m) window saw it. A failure is
-			// logged and does not block the periodic sweep.
+			// Startup pass over the 90-day window: catches a non-7-decimal token that went DORMANT
+			// before the periodic sweep's short (20m) window saw it. Run repeats it every 6 h, so a
+			// failure here is logged and does not block the periodic sweep.
 			if err := guard.Backfill(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
-				logger.Error("decimals-guard: startup backfill failed — a dormant nonstandard-decimals token may remain unseeded until the operator hand-seeds it per the runbook", "err", err)
+				logger.Warn("decimals-guard: startup backfill incomplete; the 6-hourly re-enumeration retries it", "err", err)
 			}
 			if err := guard.Run(rootCtx, decimalsguard.DefaultInterval); err != nil && !errors.Is(err, context.Canceled) {
 				logger.Error("decimals-guard exited with error", "err", err)

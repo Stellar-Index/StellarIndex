@@ -349,19 +349,23 @@ tests:
   # ══ stellarindex_decimals_guard_unconfirmed ══════════════════════
   # The API binary registers the same gauge; only the aggregator's counts.
   - interval: 1m
-    name: an unreadable decimals() tickets after an hour, on the aggregator only
+    name: a newly unreadable decimals() tickets after an hour, on the aggregator only
     input_series:
       - series: 'stellarindex_decimals_guard_unresolved_assets{job="stellarindex_aggregator",instance="r1:9102"}'
-        values: '0+0x10 1+0x90'
+        values: '2+0x1450 3+0x200'
       - series: 'stellarindex_decimals_guard_pending_writes{job="stellarindex_aggregator",instance="r1:9102"}'
-        values: '0+0x100'
+        values: '0+0x1700'
       - series: 'stellarindex_decimals_guard_unresolved_assets{job="stellarindex_api",instance="r1:9101"}'
-        values: '3+0x100'
+        values: '3+0x1700'
     alert_rule_test:
-      - eval_time: 60m
+      # A standing count of unreadable assets is not a ticket; a rise is.
+      - eval_time: 1445m
         alertname: stellarindex_decimals_guard_unconfirmed
         exp_alerts: []
-      - eval_time: 75m
+      - eval_time: 1500m
+        alertname: stellarindex_decimals_guard_unconfirmed
+        exp_alerts: []
+      - eval_time: 1525m
         alertname: stellarindex_decimals_guard_unconfirmed
         exp_alerts:
           - exp_labels:
@@ -372,16 +376,18 @@ tests:
               component: aggregator
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_decimals_guard_unconfirmed
-              summary: "Decimals guard holds an unwritten correction or an asset whose decimals() it could not read — pairs may be served on an unverified scale (P2)"
+              summary: "Decimals guard holds an unwritten correction or a newly traded asset whose decimals() it could not read — pairs may be served on an unverified scale (P3)"
               description: |
                 The aggregator's decimals guard (internal/decimalsguard) reports
                 either a confirmed non-7-decimal asset whose
                 nonstandard_decimals_assets write keeps failing
                 (stellarindex_decimals_guard_pending_writes; its pairs are served
-                uncorrected until the write lands) or a traded Soroban asset
+                uncorrected until the write lands) or a newly traded Soroban asset
                 whose decimals() the lake could not derive
                 (stellarindex_decimals_guard_unresolved_assets; its pairs are
-                priced on the 7-decimals assumption, not on a reading). The
+                priced on the 7-decimals assumption, not on a reading; the arm
+                compares the count with a day earlier, so it clears by itself a
+                day after the asset appeared). The
                 aggregator log names the asset in both cases.
                 Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_decimals_guard_unconfirmed
 

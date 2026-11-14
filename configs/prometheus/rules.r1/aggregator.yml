@@ -519,7 +519,8 @@ groups:
         expr: |
           stellarindex_decimals_guard_pending_writes{job="stellarindex-aggregator"} > 0
           or
-          stellarindex_decimals_guard_unresolved_assets{job="stellarindex-aggregator"} > 0
+          stellarindex_decimals_guard_unresolved_assets{job="stellarindex-aggregator"}
+            > (stellarindex_decimals_guard_unresolved_assets{job="stellarindex-aggregator"} offset 1d)
         for: 1h
         labels:
           severity: ticket
@@ -527,16 +528,18 @@ groups:
           component: aggregator
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_decimals_guard_unconfirmed
-          summary: "Decimals guard holds an unwritten correction or an asset whose decimals() it could not read — pairs may be served on an unverified scale (P2)"
+          summary: "Decimals guard holds an unwritten correction or a newly traded asset whose decimals() it could not read — pairs may be served on an unverified scale (P3)"
           description: |
             The aggregator's decimals guard (internal/decimalsguard) reports
             either a confirmed non-7-decimal asset whose
             nonstandard_decimals_assets write keeps failing
             (stellarindex_decimals_guard_pending_writes; its pairs are served
-            uncorrected until the write lands) or a traded Soroban asset
+            uncorrected until the write lands) or a newly traded Soroban asset
             whose decimals() the lake could not derive
             (stellarindex_decimals_guard_unresolved_assets; its pairs are
-            priced on the 7-decimals assumption, not on a reading). The
+            priced on the 7-decimals assumption, not on a reading; the arm
+            compares the count with a day earlier, so it clears by itself a
+            day after the asset appeared). The
             aggregator log names the asset in both cases.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_decimals_guard_unconfirmed
 

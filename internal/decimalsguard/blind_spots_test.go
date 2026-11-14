@@ -138,3 +138,22 @@ func (s *syncWriter) UpsertNonstandardDecimalsAsset(_ context.Context, asset str
 	s.landed <- asset
 	return nil
 }
+
+// TestSeededAsset_LeavesTheUnresolvedCount: hand-seeding is the runbook's fix for an asset the lake cannot read, so it must clear the count.
+func TestSeededAsset_LeavesTheUnresolvedCount(t *testing.T) {
+	const asset = "fixed-in-code-18dp"
+	reader := &fakeReader{refs: []timescale.SorobanDEXTradeRef{{Source: "phoenix", Asset: asset}}}
+	store := newFakeStore()
+	g := New(reader, &fakeResolver{decimals: map[string]uint32{}}, Options{Window: time.Minute, Writer: store})
+
+	g.tick(context.Background(), "periodic")
+	if got := testutil.ToFloat64(obs.DecimalsGuardUnresolvedAssets); got != 1 {
+		t.Fatalf("unresolved gauge = %v, want 1 before the seed", got)
+	}
+	store.rows[asset] = timescale.NonstandardDecimalsAsset{Asset: asset, Decimals: 18}
+	g.tick(context.Background(), "periodic")
+	g.tick(context.Background(), "periodic")
+	if got := testutil.ToFloat64(obs.DecimalsGuardUnresolvedAssets); got != 0 {
+		t.Errorf("unresolved gauge = %v, want 0 once the asset is seeded", got)
+	}
+}

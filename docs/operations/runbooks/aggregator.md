@@ -415,10 +415,10 @@ Seed the missing spelling with the flagged row's decimals: [dex.md#dex-nonstanda
 
 ## stellarindex_decimals_guard_unconfirmed
 
-P3 ticket, `for: 1h`. One of two gauges on the aggregator is above zero.
+P3 ticket, `for: 1h`. A correction write is stranded, or the count of unreadable assets rose over the last day.
 
 - `stellarindex_decimals_guard_pending_writes`: a token's `decimals()` was confirmed non-7 and the `nonstandard_decimals_assets` write keeps failing. Its pairs are served uncorrected. The guard retries every 15 minutes.
-- `stellarindex_decimals_guard_unresolved_assets`: the lake could not derive `decimals()` for a traded Soroban asset. Its pairs are priced on the 7-decimals assumption.
+- `stellarindex_decimals_guard_unresolved_assets`: the lake could not derive `decimals()` for a traded Soroban asset. Its pairs are priced on the 7-decimals assumption. The alert compares the count with a day earlier, so a standing count does not ticket and a new asset tickets for one day.
 
 ### Check
 
@@ -430,7 +430,7 @@ Each line names the asset. The unresolved line is logged once per asset per proc
 
 ### Fix
 
-Pending write: fix what the upsert error names (Postgres reachability, the table's CHECK); the next tick writes it. Unresolved asset: read the contract's `decimals()` yourself and, if it is not 7, hand-seed it: [dex.md#dex-nonstandard-decimals](dex.md#dex-nonstandard-decimals). The gauge drops when the lake answers for that asset or the aggregator restarts.
+Pending write: fix what the upsert error names (Postgres reachability, the table's CHECK); the next tick writes it. Unresolved asset: read the contract's `decimals()` yourself and, if it is not 7, hand-seed it: [dex.md#dex-nonstandard-decimals](dex.md#dex-nonstandard-decimals). A hand-seeded asset leaves the count on the next tick, and so does one the lake later answers for. An asset you checked and found to be 7 cannot be seeded; it stays in the count and stops ticketing after a day.
 
 ## stellarindex_customer_webhook_fanout_failing
 

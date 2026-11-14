@@ -101,6 +101,9 @@ type Guard struct {
 	// unresolved holds enumerated assets whose decimals() the lake could not derive: priced on the
 	// 7-decimals assumption, not on a reading.
 	unresolved map[string]struct{}
+	// seeded holds every asset with a persisted row: an operator or the guard already ruled on it,
+	// so an underivable reading for it is not counted as unresolved.
+	seeded map[string]struct{}
 }
 
 type pendingWrite struct {
@@ -222,6 +225,8 @@ func (g *Guard) tick(ctx context.Context, phase string) {
 	if err := g.Reconcile(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		g.logger.Warn("decimals-guard: lockstep reconcile failed", "phase", phase, "err", err)
 	}
+	// Again after the reconcile: a retried write or a seeded row may have landed while the sweep's enumeration failed.
+	g.publishGauges()
 }
 
 // Sweep resolves decimals for recently-DEX-traded Soroban tokens and raises the metric once per source+asset for a confirmed non-7 value. It errors if trade enumeration fails or if every lake read of the pass failed; any other pass stamps obs.DecimalsGuardSweepLastSuccessUnix so "found nothing" differs from "never armed" and from "could not look".
@@ -329,9 +334,12 @@ func (g *Guard) classify(ctx context.Context, asset string, tally *passTally) (d
 		// Not derivable yet: not cached (a later-captured instance is re-checked), never an offender.
 		g.mu.Lock()
 		_, known := g.unresolved[asset]
-		g.unresolved[asset] = struct{}{}
+		_, seeded := g.seeded[asset]
+		if !seeded {
+			g.unresolved[asset] = struct{}{}
+		}
 		g.mu.Unlock()
-		if !known {
+		if !known && !seeded {
 			g.logger.Warn("decimals-guard: decimals() not derivable from the lake; pairs of this asset are priced on the 7-decimals assumption (runbook: dex.md)", "asset", asset)
 		}
 		return 0, false
@@ -418,6 +426,7 @@ func (g *Guard) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	g.markSeeded(rows)
 	repaired := 0
 	for _, row := range rows {
 		if ctx.Err() != nil {
@@ -479,6 +488,18 @@ func (g *Guard) reconcileRow(ctx context.Context, row timescale.NonstandardDecim
 	}
 	g.remember(row.Asset, lake)
 	return true
+}
+
+// markSeeded records which assets have a persisted row and stops counting them as unresolved.
+func (g *Guard) markSeeded(rows []timescale.NonstandardDecimalsAsset) {
+	seeded := make(map[string]struct{}, len(rows))
+	g.mu.Lock()
+	for _, row := range rows {
+		seeded[row.Asset] = struct{}{}
+		delete(g.unresolved, row.Asset)
+	}
+	g.seeded = seeded
+	g.mu.Unlock()
 }
 
 // remember caches a CONFIRMED lake reading so the next Sweep agrees with what Reconcile verified.
