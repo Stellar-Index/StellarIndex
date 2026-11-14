@@ -144,6 +144,8 @@ func (h *Handlers) recordPasskeyLoginRefusal(
 // auditTargetPasskey is the audit_log target_kind for a passkey row.
 const auditTargetPasskey = "webauthn_credential"
 
+const credentialAuditTimeout = 5 * time.Second
+
 func appendCredentialAudit(
 	r *http.Request, sink platform.AuditStore, logger *slog.Logger, entry platform.AuditEntry, meta map[string]any,
 ) {
@@ -161,7 +163,10 @@ func appendCredentialAudit(
 	entry.Metadata = raw
 	entry.IP = clientIP(r)
 	entry.UserAgent = truncateUA(r.UserAgent())
-	if err := sink.Append(r.Context(), entry); err != nil {
+	// The change has committed, so a client that hangs up must not cancel the row that records it.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), credentialAuditTimeout)
+	defer cancel()
+	if err := sink.Append(ctx, entry); err != nil {
 		obs.AdminAuditWriteFailuresTotal.WithLabelValues(surface).Inc()
 		logger.Warn("credential audit: append failed (best-effort)",
 			"err", err, "action", entry.Action, "target_id", entry.TargetID, "account_id", entry.AccountID)
