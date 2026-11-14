@@ -1061,3 +1061,62 @@ func TestUpshiftVaultShareSupplies_DeployedTiebreakWithinLedger(t *testing.T) {
 			row.DeployedAssets, want)
 	}
 }
+
+// TestBlendV1LiquidationAuctionsAreCounted: a V1 pool announces a user liquidation as new_liquidation_auction, stored in
+// blend_admin. The account's DeFi counts and the protocol's auction KPI and table must include it beside blend_auctions.
+func TestBlendV1LiquidationAuctionsAreCounted(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const (
+		pool = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+		user = "GABCDEFGHIJKLMNOPQRSTUVWXYZ234567ABCDEFGHIJKLMNOPQRSTU56K"
+	)
+	t0 := time.Now().UTC().Add(-10 * time.Hour)
+	for i, kind := range []string{blend.EventNewLiquidationAuction, blend.EventDeleteLiquidationAuction, blend.EventNewLiquidationAuction} {
+		ev := blend.AdminEvent{
+			ContractID: pool, Kind: kind, Target: user,
+			Ledger: uint32(62_100_000 + i), TxHash: pad64("e", i), OpIndex: 0, Timestamp: t0.Add(time.Duration(i) * time.Minute),
+		}
+		if err := store.InsertBlendAdminEvent(ctx, domain.BlendAdminEvent(ev)); err != nil {
+			t.Fatalf("InsertBlendAdminEvent (%s): %v", kind, err)
+		}
+	}
+
+	counts, err := store.DefiActionCountsByUser(ctx, user)
+	if err != nil {
+		t.Fatalf("DefiActionCountsByUser: %v", err)
+	}
+	got := map[string]int64{}
+	for _, c := range counts {
+		if c.Protocol == "blend_auctions" {
+			got[c.Action] += c.Count
+		}
+	}
+	if got["new"] != 2 || got["delete"] != 1 {
+		t.Errorf("blend_auctions counts = %v, want new=2 delete=1 from the V1 rows in blend_admin", got)
+	}
+
+	blk, err := store.BuildProtocolBespoke(ctx, "blend", "lending", 90)
+	if err != nil || blk == nil {
+		t.Fatalf("BuildProtocolBespoke blend = %v, %v", blk, err)
+	}
+	assertKPI(t, kpiMap(blk), "Auctions started (90d)", "2")
+	var rows [][]string
+	for _, tbl := range blk.Tables {
+		if tbl.Title == "Recent auctions" {
+			rows = tbl.Rows
+		}
+	}
+	if len(rows) != 3 || rows[0][1] != "user-liquidation" || rows[0][2] != "new" || rows[0][3] != user {
+		t.Errorf("Recent auctions = %v, want the three V1 rows, newest first, as user-liquidation for %s", rows, user)
+	}
+}
