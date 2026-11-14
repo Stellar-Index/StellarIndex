@@ -700,10 +700,6 @@ func (r *VWAPUSDFXResolver) queryXLMLeg(ctx context.Context, asset canonical.Ass
 	return m.rate, nil
 }
 
-// legBaselineWindow is how far back a direct-leg read looks for the minutes its candidate is judged against. It is the
-// substance gate's window, so a market that clears the gate has a baseline here even after a quiet hour.
-const legBaselineWindow = valuationSubstanceWindow
-
 // legGuardSample is how many prices_1m minutes a trade-time leg read takes: the candidate plus the
 // 40 trailing minutes the served-price guard uses (pricingguard.SampleFetch, which imports this package).
 const legGuardSample = 41
@@ -817,7 +813,7 @@ func (r *VWAPUSDFXResolver) queryDirectLeg(ctx context.Context, asset canonical.
 	var freshFloor time.Time
 	if r.freshness > 0 {
 		freshFloor = at.UTC().Add(-r.freshness)
-		args = append(args, at.UTC().Add(-max(r.freshness, legBaselineWindow)))
+		args = append(args, freshFloor)
 	}
 	xlm := isXLMAliasForm(asset)
 	if xlm {
