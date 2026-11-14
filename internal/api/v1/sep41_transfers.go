@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -102,6 +103,17 @@ func writeDecimalsUnavailable(w http.ResponseWriter, r *http.Request, problemTyp
 		"the token contract's decimals() could not be read, and every amount in this response is scaled by it; retry shortly.")
 }
 
+// sep41TransfersAddressSurcharge prices an address filter: a page the lookback ladder cannot fill reads the token's whole history.
+const sep41TransfersAddressSurcharge = 4
+
+// sep41TransfersCost is the rate-limit price in tokens of one transfers read.
+func sep41TransfersCost(fromAddr, toAddr string) int {
+	if fromAddr != "" || toAddr != "" {
+		return 1 + sep41TransfersAddressSurcharge
+	}
+	return 1
+}
+
 // handleSEP41Transfers serves GET /v1/contracts/{contract_id}/transfers[?from=&to=&limit=],
 // enabling per-account net-position queries.
 func (s *Server) handleSEP41Transfers(w http.ResponseWriter, r *http.Request) {
@@ -128,6 +140,10 @@ func (s *Server) handleSEP41Transfers(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		limit = n
+	}
+
+	if !middleware.ChargeRateLimit(w, r, sep41TransfersCost(fromAddr, toAddr)) {
+		return
 	}
 
 	listCtx, listCancel := context.WithTimeout(r.Context(), sep41TransfersReadTimeout)
@@ -165,25 +181,7 @@ func (s *Server) handleSEP41Transfers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entries := make([]SEP41TransferEntry, 0, len(rows))
-	for _, row := range rows {
-		e := SEP41TransferEntry{
-			Ledger:          row.Ledger,
-			LedgerCloseTime: row.ObservedAt.UTC().Format(time.RFC3339Nano),
-			TxHash:          row.TxHash,
-			OpIndex:         row.OpIndex,
-			EventIndex:      row.EventIndex,
-			Kind:            string(row.Kind),
-			From:            row.FromAddr,
-			To:              row.ToAddr,
-			LiveUntilLedger: row.LiveUntilLedger,
-			Authorized:      row.Authorized,
-		}
-		if row.Amount != nil {
-			e.Amount = row.Amount.String()
-		}
-		entries = append(entries, e)
-	}
+	entries := sep41TransferEntries(rows)
 
 	decimals, ok := s.resolveTokenDecimals(r.Context(), contractID)
 	if !ok {
@@ -203,6 +201,30 @@ func (s *Server) handleSEP41Transfers(w http.ResponseWriter, r *http.Request) {
 		resp.SearchedFrom = searchedFrom.UTC().Format(time.RFC3339)
 	}
 	writeJSON(w, resp, Flags{})
+}
+
+// sep41TransferEntries maps storage rows to wire entries.
+func sep41TransferEntries(rows []timescale.SEP41TransferRow) []SEP41TransferEntry {
+	entries := make([]SEP41TransferEntry, 0, len(rows))
+	for _, row := range rows {
+		e := SEP41TransferEntry{
+			Ledger:          row.Ledger,
+			LedgerCloseTime: row.ObservedAt.UTC().Format(time.RFC3339Nano),
+			TxHash:          row.TxHash,
+			OpIndex:         row.OpIndex,
+			EventIndex:      row.EventIndex,
+			Kind:            string(row.Kind),
+			From:            row.FromAddr,
+			To:              row.ToAddr,
+			LiveUntilLedger: row.LiveUntilLedger,
+			Authorized:      row.Authorized,
+		}
+		if row.Amount != nil {
+			e.Amount = row.Amount.String()
+		}
+		entries = append(entries, e)
+	}
+	return entries
 }
 
 // parseSEP41TransferIdentifiers validates the path contract_id and optional ?from / ?to as strkeys; on failure it writes a 400 and

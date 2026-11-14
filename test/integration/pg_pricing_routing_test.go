@@ -1240,13 +1240,17 @@ func TestRoutedViaTaggingAndRollup(t *testing.T) { //nolint:gocognit // linear s
 	if router.RoutedVolume != nil {
 		t.Errorf("RoutedVolume = %v, want nil (no USD valuation)", *router.RoutedVolume)
 	}
+	if !router.VolumeLowerBound {
+		t.Error("VolumeLowerBound = false, want true (both routed trades are unpriced)")
+	}
 	if router.LastRoutedAt == nil || !router.LastRoutedAt.Equal(t0) {
 		t.Errorf("LastRoutedAt = %v, want %v (max ts of routed trades)", router.LastRoutedAt, t0)
 	}
 	// Vault entries carry zero routed stats.
 	for i := range rollup {
-		if rollup[i].Kind == "aggregator-vault" && rollup[i].RoutedTrades != 0 {
-			t.Errorf("vault %s RoutedTrades = %d, want 0", rollup[i].Name, rollup[i].RoutedTrades)
+		if rollup[i].Kind == "aggregator-vault" && (rollup[i].RoutedTrades != 0 || rollup[i].VolumeLowerBound) {
+			t.Errorf("vault %s RoutedTrades = %d lower_bound = %v, want 0 and false",
+				rollup[i].Name, rollup[i].RoutedTrades, rollup[i].VolumeLowerBound)
 		}
 	}
 

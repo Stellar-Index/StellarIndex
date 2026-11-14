@@ -414,7 +414,7 @@ func (s *Store) sourceMarketsCommon(ctx context.Context, source, cursor string, 
 	}
 	defer func() { _ = rows.Close() }()
 
-	out, hasMore, err := scanDistinctPairs(rows, limit, true)
+	out, hasMore, err := scanDistinctPairs(rows, limit)
 	if err != nil {
 		return nil, "", err
 	}
@@ -502,7 +502,7 @@ func (s *Store) distinctPairsCommon(ctx context.Context, source, asset, cursor s
 	}
 	defer func() { _ = rows.Close() }()
 
-	out, hasMore, err := scanDistinctPairs(rows, limit, false)
+	out, hasMore, err := scanDistinctPairs(rows, limit)
 	if err != nil {
 		return nil, "", err
 	}
@@ -513,9 +513,8 @@ func (s *Store) distinctPairsCommon(ctx context.Context, source, asset, cursor s
 	return out, nextCursor, nil
 }
 
-// scanDistinctPairs reads up to `limit+1` rows; the extra row sets hasMore. withLowerBound reads
-// the per-source query's trailing vol_lower_bound column.
-func scanDistinctPairs(rows *sql.Rows, limit int, withLowerBound bool) ([]Market, bool, error) {
+// scanDistinctPairs reads up to `limit+1` rows; the extra row sets hasMore.
+func scanDistinctPairs(rows *sql.Rows, limit int) ([]Market, bool, error) {
 	out := make([]Market, 0, limit)
 	n := 0
 	hasMore := false
@@ -529,11 +528,7 @@ func scanDistinctPairs(rows *sql.Rows, limit int, withLowerBound bool) ([]Market
 			lastPrice         sql.NullString
 			lowerBound        bool
 		)
-		dest := []any{&baseRaw, &quoteRaw, &lastAt, &bucketCloseAt, &count24h, &vol24hUSD, &lastPrice}
-		if withLowerBound {
-			dest = append(dest, &lowerBound)
-		}
-		if err := rows.Scan(dest...); err != nil {
+		if err := rows.Scan(&baseRaw, &quoteRaw, &lastAt, &bucketCloseAt, &count24h, &vol24hUSD, &lastPrice, &lowerBound); err != nil {
 			return nil, false, fmt.Errorf("timescale: DistinctPairs scan: %w", err)
 		}
 		n++
@@ -678,6 +673,24 @@ const distinctPairsActivityCTEs = `
                AND (cardinality($5::text[]) = 0 OR p.base_asset = ANY($5) OR p.quote_asset = ANY($5))
              GROUP BY p.base_asset, p.quote_asset
         ),
+        -- Pairs with a trade in the window that carried no trade-time usd_volume: vol_24h_num leaves those out.
+        -- The hourly view starts at the bucket holding the window's first minute and is materialized only to
+        -- the last closed hour (5 min end_offset), so the two newest hours are read from trades.
+        u AS (
+            SELECT r.base_asset, r.quote_asset
+              FROM pools_per_source_1h r
+             WHERE r.bucket >= date_trunc('hour', NOW() - INTERVAL '24 hours')
+               AND r.sum_base_unpriced IS NOT NULL
+               AND ($4 = '' OR r.source = $4)
+               AND (cardinality($5::text[]) = 0 OR r.base_asset = ANY($5) OR r.quote_asset = ANY($5))
+            UNION
+            SELECT t.base_asset, t.quote_asset
+              FROM trades t
+             WHERE t.ts >= date_trunc('hour', NOW()) - INTERVAL '1 hour'
+               AND t.usd_volume IS NULL
+               AND ($4 = '' OR t.source = $4)
+               AND (cardinality($5::text[]) = 0 OR t.base_asset = ANY($5) OR t.quote_asset = ANY($5))
+        ),
 `
 
 // buildDistinctPairsQuery composes the per-pair-volume CTE and SELECT. Cursors: MarketsOrderPair is `<base>|<quote>` (strict-greater);
@@ -715,7 +728,10 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
             SELECT COALESCE(bf.canon, raw.base_asset)  AS base_asset,
                    COALESCE(qf.canon, raw.quote_asset) AS quote_asset,
                    raw.last_trade_at, raw.bucket_close_at, raw.count_24h,
-                   raw.vol_24h_num, raw.last_price
+                   raw.vol_24h_num, raw.last_price,
+                   EXISTS (SELECT 1 FROM u
+                            WHERE u.base_asset = raw.base_asset
+                              AND u.quote_asset = raw.quote_asset) AS vol_lower_bound
               FROM raw
               LEFT JOIN alias_fold bf ON bf.form = raw.base_asset
               LEFT JOIN alias_fold qf ON qf.form = raw.quote_asset
@@ -728,12 +744,13 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
                    MAX(bucket_close_at) AS bucket_close_at,
                    SUM(count_24h)       AS count_24h,
                    SUM(vol_24h_num)     AS vol_24h_num,
-                   ` + canonLastPriceSQL(flipped) + ` AS last_price
+                   ` + canonLastPriceSQL(flipped) + ` AS last_price,
+                   bool_or(vol_lower_bound) AS vol_lower_bound
               FROM folded
              GROUP BY ` + canonBase + `, ` + canonQuote + `
         )
         SELECT base_asset, quote_asset, last_trade_at, bucket_close_at,
-               count_24h, NULLIF(vol_24h_num, 0)::text AS vol_24h_usd, last_price
+               count_24h, NULLIF(vol_24h_num, 0)::text AS vol_24h_usd, last_price, vol_lower_bound
           FROM canon
     `
 	assets := assetAliasBind(asset)
