@@ -1557,6 +1557,23 @@ func emptyMarketCapSeries(pair canonical.Pair, tfRaw, gran string, _ time.Time) 
 	}
 }
 
+// writeMarketCapReadFailure answers a failed price or supply read behind the crypto market-cap chart: nothing for a client
+// that left, the timeout problem past the handler budget, otherwise an empty series marked stale and no-store.
+func (s *Server) writeMarketCapReadFailure(
+	ctx context.Context, w http.ResponseWriter, r *http.Request, err error, op string, pair canonical.Pair, tfRaw string, from time.Time,
+) {
+	const gran = "1d"
+	if clientAborted(r, err) {
+		return
+	}
+	if handlerTimedOut(ctx, err) {
+		s.writeMarketCapTimeout(w, r, op, pair, tfRaw, gran)
+		return
+	}
+	s.logger.Warn("market_cap crypto: read failed", "op", op, "asset", pair.Base.String(), "err", err)
+	writeChartJSON(w, emptyMarketCapSeries(pair, tfRaw, gran, from), Flags{Stale: true, Degraded: true})
+}
+
 // handleChartMarketCapCrypto serves market_cap for an on-chain base: daily USD price (prices_1d, stablecoin-USD proxy fallback)
 // x forward-filled supply_1d. Off-chain crypto:* assets have no on-chain supply (supply.AssetKey errors) and return an empty
 // series, not a fabricated cap.
@@ -1595,16 +1612,7 @@ func (s *Server) handleChartMarketCapCrypto(
 	pricePts, walk, err := s.chartSeriesPoints(ctx, pair,
 		chartWindow{from: from, gran: gran}, s.chartVWAPReader(gran))
 	if err != nil {
-		if clientAborted(r, err) {
-			return
-		}
-		if handlerTimedOut(ctx, err) {
-			s.writeMarketCapTimeout(w, r, "HistoryPointsInRange", pair, tfRaw, gran)
-			return
-		}
-		s.logger.Warn("market_cap crypto: price history failed",
-			"asset", pair.Base.String(), "err", err)
-		writeChartJSON(w, emptyMarketCapSeries(pair, tfRaw, gran, from), Flags{Stale: true, Degraded: true})
+		s.writeMarketCapReadFailure(ctx, w, r, err, "HistoryPointsInRange", pair, tfRaw, from)
 		return
 	}
 	// The price leg is already normalised per SOURCE pair ([Server.adjustSourcePoints]). baseDec is
@@ -1620,16 +1628,7 @@ func (s *Server) handleChartMarketCapCrypto(
 	to := s.now().UTC().Truncate(24 * time.Hour)
 	supPts, err := s.Supply.DailyCirculatingSupply(ctx, supplyKey, from, to)
 	if err != nil {
-		if clientAborted(r, err) {
-			return
-		}
-		if handlerTimedOut(ctx, err) {
-			s.writeMarketCapTimeout(w, r, "DailyCirculatingSupply", pair, tfRaw, gran)
-			return
-		}
-		s.logger.Warn("market_cap crypto: supply history failed",
-			"asset_key", supplyKey, "err", err)
-		writeChartJSON(w, emptyMarketCapSeries(pair, tfRaw, gran, from), Flags{Stale: true, Degraded: true})
+		s.writeMarketCapReadFailure(ctx, w, r, err, "DailyCirculatingSupply", pair, tfRaw, from)
 		return
 	}
 
