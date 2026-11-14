@@ -630,7 +630,7 @@ func (h *Handlers) HandlePasskeyFinishLogin(w http.ResponseWriter, r *http.Reque
 		h.clearLoginCodeLockouts(r, email)
 	}
 
-	if err := h.mintSession(w, r, matchedUser); err != nil {
+	if err := h.mintSession(w, r, matchedUser, SignInMethodPasskey); err != nil {
 		h.cfg.Logger.Error("start session (passkey)", "err", err, "user_id", matchedUser.ID)
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return

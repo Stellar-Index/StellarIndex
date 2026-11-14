@@ -27,6 +27,69 @@ const (
 	AuditActionKeyRevoke           = "key.revoke"
 )
 
+// audit_log actions for a session's changes to where the account's signed data is sent and what triggers it.
+const (
+	AuditActionWebhookCreate       = "webhook.create"
+	AuditActionWebhookUpdate       = "webhook.update"
+	AuditActionWebhookDelete       = "webhook.delete"
+	AuditActionWebhookRotateSecret = "webhook.rotate_secret"
+	AuditActionPriceAlertCreate    = "price_alert.create"
+	AuditActionPriceAlertUpdate    = "price_alert.update"
+	AuditActionPriceAlertDelete    = "price_alert.delete"
+)
+
+// audit_log actions for a dashboard session starting and ending. The method names the door that was used.
+const (
+	AuditActionSessionSignIn = "session.signin"
+	AuditActionSessionRevoke = "session.revoke"
+
+	SignInMethodMagicLink     = "magic_link"
+	SignInMethodEmailCode     = "email_code"
+	SignInMethodPasskey       = "passkey"
+	SignInMethodPasskeySignup = "passkey_signup"
+
+	// The user, not the session: target_id is exported unredacted to every member of the account.
+	auditTargetUser = "user"
+)
+
+// recordSignIn audits a session issued to user; best-effort like every credential row.
+func (h *Handlers) recordSignIn(r *http.Request, user platform.User, sess platform.Session, method string) {
+	appendCredentialAudit(r, h.cfg.Audit, h.cfg.Logger, platform.AuditEntry{
+		AccountID:   user.AccountID,
+		ActorUserID: user.ID,
+		ActorKind:   platform.ActorUser,
+		Action:      AuditActionSessionSignIn,
+		TargetKind:  auditTargetUser,
+		TargetID:    user.ID.String(),
+		Timestamp:   h.cfg.Now(),
+	}, map[string]any{"session_id": sess.ID.String(), "method": method})
+}
+
+// recordLogout audits a logout that revoked sess (and, with all, the user's other sessions).
+func (h *Handlers) recordLogout(r *http.Request, sess platform.Session, all bool) {
+	if h.cfg.Audit == nil {
+		return
+	}
+	// Detached like the append: the revoke has committed, so a hang-up must not lose its row.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), credentialAuditTimeout)
+	defer cancel()
+	user, err := h.cfg.Users.GetUserByID(ctx, sess.UserID)
+	if err != nil {
+		obs.AdminAuditWriteFailuresTotal.WithLabelValues("session_revoke").Inc()
+		h.cfg.Logger.Warn("logout audit: user lookup failed (skipping audit row)", "err", err, "user_id", sess.UserID)
+		return
+	}
+	appendCredentialAudit(r, h.cfg.Audit, h.cfg.Logger, platform.AuditEntry{
+		AccountID:   user.AccountID,
+		ActorUserID: user.ID,
+		ActorKind:   platform.ActorUser,
+		Action:      AuditActionSessionRevoke,
+		TargetKind:  auditTargetUser,
+		TargetID:    user.ID.String(),
+		Timestamp:   h.cfg.Now(),
+	}, map[string]any{"session_id": sess.ID.String(), "all_sessions": all, "reason": "logout"})
+}
+
 // CredentialEvent is one self-service change to a credential that can authenticate as the account.
 type CredentialEvent struct {
 	Action     string
@@ -133,6 +196,8 @@ func (h *Handlers) recordPasskeyLoginRefusal(
 // auditTargetPasskey is the audit_log target_kind for a passkey row.
 const auditTargetPasskey = "webauthn_credential"
 
+const credentialAuditTimeout = 5 * time.Second
+
 func appendCredentialAudit(
 	r *http.Request, sink platform.AuditStore, logger *slog.Logger, entry platform.AuditEntry, meta map[string]any,
 ) {
@@ -150,7 +215,10 @@ func appendCredentialAudit(
 	entry.Metadata = raw
 	entry.IP = clientIP(r)
 	entry.UserAgent = truncateUA(r.UserAgent())
-	if err := sink.Append(r.Context(), entry); err != nil {
+	// The change has committed, so a client that hangs up must not cancel the row that records it.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), credentialAuditTimeout)
+	defer cancel()
+	if err := sink.Append(ctx, entry); err != nil {
 		obs.AdminAuditWriteFailuresTotal.WithLabelValues(surface).Inc()
 		logger.Warn("credential audit: append failed (best-effort)",
 			"err", err, "action", entry.Action, "target_id", entry.TargetID, "account_id", entry.AccountID)

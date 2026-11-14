@@ -38,7 +38,7 @@ func TestSessionTokenIsHashedAtRest(t *testing.T) {
 	// passkey all terminate here).
 	w := httptest.NewRecorder()
 	mintReq := httptest.NewRequest(http.MethodPost, "/v1/auth/finish", nil)
-	if err := r.h.mintSession(w, mintReq, user); err != nil {
+	if err := r.h.mintSession(w, mintReq, user, SignInMethodEmailCode); err != nil {
 		t.Fatalf("mintSession: %v", err)
 	}
 	var cookie *http.Cookie

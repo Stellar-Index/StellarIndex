@@ -1498,10 +1498,11 @@ type dashboardBundle struct {
 
 // buildWebhookHandlers builds the webhook CRUD handlers over a fresh store and returns the store
 // for the delivery worker.
-func buildWebhookHandlers(db *sql.DB, sealer *platform.WebhookKeySealer, logger *slog.Logger) (*postgresstore.WebhookStore, *dashboardwebhooks.Handlers, error) {
+func buildWebhookHandlers(db *sql.DB, sealer *platform.WebhookKeySealer, audit platform.AuditStore, logger *slog.Logger) (*postgresstore.WebhookStore, *dashboardwebhooks.Handlers, error) {
 	store := postgresstore.NewSealingWebhookStore(postgresstore.New(db), sealer)
 	h, err := dashboardwebhooks.NewHandlers(dashboardwebhooks.Config{
 		Webhooks: store,
+		Audit:    audit,
 		Logger:   logger.With("component", "dashboard-webhooks"),
 	})
 	if err != nil {
@@ -1513,12 +1514,12 @@ func buildWebhookHandlers(db *sql.DB, sealer *platform.WebhookKeySealer, logger 
 // buildSealingWebhookHandlers is [buildWebhookHandlers] with the store
 // sealing signing keys when the seal secret is set, after sealing any
 // key a previous start stored raw.
-func buildSealingWebhookHandlers(cfg config.DashboardConfig, db *sql.DB, logger *slog.Logger) (*postgresstore.WebhookStore, *dashboardwebhooks.Handlers, error) {
+func buildSealingWebhookHandlers(cfg config.DashboardConfig, db *sql.DB, audit platform.AuditStore, logger *slog.Logger) (*postgresstore.WebhookStore, *dashboardwebhooks.Handlers, error) {
 	sealer, err := buildWebhookKeySealer(cfg, logger)
 	if err != nil {
 		return nil, nil, err
 	}
-	store, h, err := buildWebhookHandlers(db, sealer, logger)
+	store, h, err := buildWebhookHandlers(db, sealer, audit, logger)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1563,9 +1564,10 @@ func sealLegacyWebhookKeys(store *postgresstore.WebhookStore, logger *slog.Logge
 
 // buildPriceAlertHandlers builds the price-alert CRUD handlers; the evaluator runs in the
 // aggregator binary.
-func buildPriceAlertHandlers(pg *postgresstore.Store, logger *slog.Logger) (*dashboardpricealerts.Handlers, error) {
+func buildPriceAlertHandlers(pg *postgresstore.Store, audit platform.AuditStore, logger *slog.Logger) (*dashboardpricealerts.Handlers, error) {
 	h, err := dashboardpricealerts.NewHandlers(dashboardpricealerts.Config{
 		Alerts: postgresstore.NewPriceAlertStore(pg),
+		Audit:  audit,
 		Logger: logger.With("component", "dashboard-price-alerts"),
 	})
 	if err != nil {
@@ -1777,12 +1779,12 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 	}
 
 	// Same Postgres store the delivery worker drains.
-	webhookStore, webhooksH, err := buildSealingWebhookHandlers(cfg, db, logger)
+	webhookStore, webhooksH, err := buildSealingWebhookHandlers(cfg, db, dashboardAudit, logger)
 	if err != nil {
 		return dashboardBundle{}, err
 	}
 
-	priceAlertsH, err := buildPriceAlertHandlers(pg, logger)
+	priceAlertsH, err := buildPriceAlertHandlers(pg, dashboardAudit, logger)
 	if err != nil {
 		return dashboardBundle{}, err
 	}
