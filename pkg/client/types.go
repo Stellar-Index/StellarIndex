@@ -1353,6 +1353,8 @@ type AssetListingValuation struct {
 	// material: USDT0's trustline-visible supply is 6,469 tokens against
 	// 2,581,052 by mint minus burn.
 	SupplyBasis string `json:"supply_basis,omitempty"`
+	// ValueLowerBound is true when the supply was a provable floor, so ValueUSD is a minimum, not the valuation.
+	ValueLowerBound bool `json:"value_lower_bound,omitempty"`
 }
 
 // AssetTrust is the output-only trust score on [AssetDetail]; a factor with no evidence is "unknown" with nil Points and is excluded from Score, which is nil when no factor has evidence.
