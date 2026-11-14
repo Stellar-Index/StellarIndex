@@ -14,6 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // Metric labels for the withholding gates on this binary's webhook surfaces.
@@ -117,6 +118,7 @@ func (p *offTickPublisher) PublishOnce(
 // run publishes queued fan-outs until ctx ends, then publishes what is already queued and closes done.
 func (p *offTickPublisher) run(ctx context.Context) {
 	defer close(p.done)
+	defer worker.Recover(p.logger, "webhook-fanout")
 	for {
 		select {
 		case j := <-p.jobs:
