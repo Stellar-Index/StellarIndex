@@ -1332,15 +1332,17 @@ func TestPrice_NonPegSACAssetStillWalksTheDeclaredPegs(t *testing.T) {
 }
 
 // TestPrice_DeclaredPegXLMCrossClassicBookFailureEndsTheSpellingWalk: a flagged-issuer refusal or read failure on the
-// classic book ends the walk and serves the declaration, not the SAC thin pool the scam gate withheld.
+// classic book ends the walk, never reaching the SAC thin pool the scam gate withheld: the refusal serves the
+// declaration, the read failure an error.
 func TestPrice_DeclaredPegXLMCrossClassicBookFailureEndsTheSpellingWalk(t *testing.T) {
 	cases := []struct {
 		name      string
 		err       error
 		spellings []string
+		unread    bool
 	}{
-		{"flagged-issuer refusal", v1.PriceWithheldError(pricingguard.WithheldFlaggedIssuer), pegSpellings},
-		{"read failure", errors.New(`ERROR: operator does not exist: numeric = text (SQLSTATE 42883)`), pegSpellings[:1]},
+		{"flagged-issuer refusal", v1.PriceWithheldError(pricingguard.WithheldFlaggedIssuer), pegSpellings, false},
+		{"read failure", errors.New(`ERROR: operator does not exist: numeric = text (SQLSTATE 42883)`), pegSpellings[:1], true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1348,7 +1350,14 @@ func TestPrice_DeclaredPegXLMCrossClassicBookFailureEndsTheSpellingWalk(t *testi
 			base := pegServer(t, reader)
 
 			for _, spelling := range tc.spellings {
-				assertDeclarationServed(t, getPegEnvelope(t, pegPriceURL(base, spelling)), spelling)
+				if !tc.unread {
+					assertDeclarationServed(t, getPegEnvelope(t, pegPriceURL(base, spelling)), spelling)
+					continue
+				}
+				// Unread is unknown: a depeg and a struggling store arrive together, so no 1.0.
+				if resp := mustGet(t, pegPriceURL(base, spelling)); resp.StatusCode < 500 {
+					t.Errorf("%s: status = %d, want 5xx for a peg book that could not be read", spelling, resp.StatusCode)
+				}
 			}
 			asked := reader.pairsAsked()
 			if callIndex(asked, pegClassicXLMBook) < 0 {

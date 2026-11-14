@@ -192,8 +192,8 @@ func TestWalkUSDPegs_WithheldReasonRank(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &Server{Options: Options{Prices: tc.reader, USDPeggedClassics: []canonical.Asset{pegA, pegB}}}
-			_, _, ok, got := s.walkUSDPegs(context.Background(), asset, defaultPriceQuote)
-			if ok || got != tc.want {
+			_, _, ok, got, err := s.walkUSDPegs(context.Background(), asset, defaultPriceQuote)
+			if err != nil || ok || got != tc.want {
 				t.Fatalf("ok=%v reason=%q, want false and %q", ok, got, tc.want)
 			}
 		})

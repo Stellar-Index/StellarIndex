@@ -105,7 +105,7 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 		// fiat cross-rate. prices_1m has no literal native/fiat:USD bucket, so without it
 		// `lastprice(native)` would 404 in steady state.
 		viaFallback = true
-		fb := s.priceFallback(ctx, asset, defaultPriceQuote)
+		fb := s.priceFallback(ctx, asset, defaultPriceQuote, err)
 		snapshot, sources, served, triangulated = fb.snap, fb.sources, fb.served, fb.triangulated
 		ok := fb.ok
 		// A withheld verdict reached from the proxy leg must be
@@ -491,7 +491,7 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 		// cross-rate, for the reason /v1/oracle/lastprice gives — see
 		// that handler's comment.
 		viaFallback = true
-		fb := s.priceFallback(ctx, base, quote)
+		fb := s.priceFallback(ctx, base, quote, err)
 		snapshot, sources, served, triangulated = fb.snap, fb.sources, fb.served, fb.triangulated
 		ok := fb.ok
 		// A withheld proxy-leg verdict is reported as withheld, as above.

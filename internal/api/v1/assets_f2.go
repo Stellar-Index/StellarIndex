@@ -439,7 +439,14 @@ func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.
 	}
 	// Stablecoin-fiat proxy fallback, already decimals-normalized inside tryStablecoinFiatProxy:
 	// do NOT re-apply.
-	proxy, proxySources, ok, withheld := s.tryStablecoinFiatProxy(ctx, asset, defaultPriceQuote)
+	proxy, proxySources, ok, withheld, err := s.tryStablecoinFiatProxy(ctx, asset, defaultPriceQuote)
+	if err != nil {
+		// Unread is unpriced here, never the 1.0 declaration.
+		if ctx.Err() == nil {
+			s.logger.Warn("usd price proxy read failed", "err", err, "asset", asset.String())
+		}
+		return usdPriceLookup{}
+	}
 	if ok && proxy.Price != "" {
 		return usdPriceLookup{price: proxy.Price, sources: len(proxySources)}
 	}
