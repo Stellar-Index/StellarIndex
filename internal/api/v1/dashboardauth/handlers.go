@@ -840,17 +840,50 @@ func (h *Handlers) signupNewUser(ctx context.Context, email string) (platform.Us
 			if getErr != nil {
 				return platform.User{}, fmt.Errorf("create user conflict + reload: %w", getErr)
 			}
-			// Best-effort: the winner's login has already succeeded. The reason carries no address
-			// because it is copied into audit metadata.
-			if suspErr := h.cfg.Accounts.Suspend(ctx, acct.ID, "signup-race: orphan speculative account"); suspErr != nil {
-				h.cfg.Logger.Warn("signup race: failed to mark orphan account",
-					"err", suspErr, "speculative_account_id", acct.ID)
-			}
+			h.markOrphanSignupAccount(ctx, acct.ID)
 			return winner, nil
 		}
+		h.markUserlessSignupAccount(ctx, acct.ID, email)
 		return platform.User{}, fmt.Errorf("create user: %w", err)
 	}
 	return user, nil
+}
+
+// markOrphanSignupAccount hands a userless signup account to the reaper, which deletes only
+// suspended rows with this reason. It outlives the request: a dropped connection is the usual
+// cause, and an unmarked row keeps the address past the user's own erasure. The reason carries
+// no address because it is copied into audit metadata.
+func (h *Handlers) markOrphanSignupAccount(ctx context.Context, id uuid.UUID) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), orphanMarkTimeout)
+	defer cancel()
+	var err error
+	for range 2 {
+		if err = h.cfg.Accounts.Suspend(ctx, id, "signup-race: orphan speculative account"); err == nil {
+			return
+		}
+	}
+	h.cfg.Logger.Error("signup: failed to mark orphan account; it holds the address until removed by hand",
+		"err", err, "speculative_account_id", id)
+}
+
+const orphanMarkTimeout = 5 * time.Second
+
+// markUserlessSignupAccount marks the account only once the store confirms the failed insert left
+// no user on it: an insert can commit as its context ends, and suspending that account would lock
+// the new user out.
+func (h *Handlers) markUserlessSignupAccount(ctx context.Context, id uuid.UUID, email string) {
+	lookupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), orphanMarkTimeout)
+	defer cancel()
+	u, err := h.cfg.Users.GetUserByEmail(lookupCtx, email)
+	switch {
+	case err == nil && u.AccountID == id:
+		return
+	case err != nil && !errors.Is(err, platform.ErrNotFound):
+		h.cfg.Logger.Error("signup: could not confirm the account is userless; left unmarked",
+			"err", err, "speculative_account_id", id)
+		return
+	}
+	h.markOrphanSignupAccount(ctx, id)
 }
 
 // createSignupAccount inserts the account for a first-login email. Name and slug derive from the

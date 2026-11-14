@@ -450,6 +450,74 @@ func TestSignupNewUser_LongEmailFitsAccountConstraints(t *testing.T) {
 	}
 }
 
+// TestSignupNewUser_FailedUserCreateMarksTheAccountForReaping: the account is committed before
+// the user, so a CreateUser that fails (here: the client hung up) must not leave an active,
+// userless account holding the address.
+func TestSignupNewUser_FailedUserCreateMarksTheAccountForReaping(t *testing.T) {
+	r := newTestRig(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	r.h.cfg.Users = hangUpUserStore{UserStore: r.users, hangUp: cancel}
+	r.h.cfg.Accounts = ctxAccountStore{AccountStore: r.accounts}
+
+	if _, err := r.h.signupNewUser(ctx, "alice@example.com"); err == nil {
+		t.Fatal("signupNewUser succeeded with a failing CreateUser")
+	}
+	if len(r.accounts.byID) != 1 {
+		t.Fatalf("accounts = %d, want the one speculative account", len(r.accounts.byID))
+	}
+	for _, a := range r.accounts.byID {
+		if a.Status != platform.AccountSuspended || !strings.HasPrefix(a.SuspendedReason, "signup-race:") {
+			t.Errorf("orphan account status=%q reason=%q, want suspended with the reaper's reason", a.Status, a.SuspendedReason)
+		}
+	}
+}
+
+// TestSignupNewUser_InsertThatLandedIsNotSuspended: an insert can commit as the context ends; the
+// account then has its user and must stay active.
+func TestSignupNewUser_InsertThatLandedIsNotSuspended(t *testing.T) {
+	r := newTestRig(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	r.h.cfg.Users = hangUpUserStore{UserStore: r.users, hangUp: cancel, commit: true}
+	r.h.cfg.Accounts = ctxAccountStore{AccountStore: r.accounts}
+
+	if _, err := r.h.signupNewUser(ctx, "alice@example.com"); err == nil {
+		t.Fatal("signupNewUser succeeded with a failing CreateUser")
+	}
+	for _, a := range r.accounts.byID {
+		if a.Status != platform.AccountActive {
+			t.Errorf("account with a live user is %q, want active", a.Status)
+		}
+	}
+}
+
+// hangUpUserStore fails CreateUser the way a dropped connection does: the request context ends,
+// with the insert either lost or (commit) already landed.
+type hangUpUserStore struct {
+	platform.UserStore
+	hangUp context.CancelFunc
+	commit bool
+}
+
+func (s hangUpUserStore) CreateUser(ctx context.Context, u platform.User) (platform.User, error) {
+	if s.commit {
+		if _, err := s.UserStore.CreateUser(ctx, u); err != nil {
+			return platform.User{}, err
+		}
+	}
+	s.hangUp()
+	return platform.User{}, ctx.Err()
+}
+
+// ctxAccountStore refuses a write on a finished context, as the real store does.
+type ctxAccountStore struct{ platform.AccountStore }
+
+func (s ctxAccountStore) Suspend(ctx context.Context, id uuid.UUID, reason string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.AccountStore.Suspend(ctx, id, reason)
+}
+
 // TestSignupNewUser_SlugCollisionRetryFitsConstraint: the collision
 // retry appends "-xxxx"; on a maximum-length slug that suffix must not
 // push it past the CHECK bound.
