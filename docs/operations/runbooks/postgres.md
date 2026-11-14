@@ -91,12 +91,12 @@ Fix the cause: repo reachability (`pgbackrest check`), a heavy write job (pause 
 One repo down (ab1 or B2) holds WAL for both: the queue is shared, so a drop loses the healthy repo's WAL too. At ~300 GiB/day the cap is ~15 h away when this pages. If the down repo is not back 2 h after the page, switch it off in inventory and deploy, so WAL flows to the other repo alone:
 
 ```sh
-# from configs/ansible, with pgbackrest_repo1_enabled: false (ab1 down) or pgbackrest_repo2_enabled: false (B2 down) in inventory/r1.yml
+# from configs/ansible, with pgbackrest_repo1_enabled: false (ab1 down) or pgbackrest_repo2_enabled: false plus pgbackrest_offsite_ack: true (B2 down) in inventory/r1.yml
 ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml --tags pgbackrest --check --diff
 ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml --tags pgbackrest
 ```
 
-When it is back: set the flag true, deploy, take a full backup of that repo, and record the gap in its WAL.
+When it is back: set the flag true, remove `pgbackrest_offsite_ack`, deploy, take a full backup of that repo, and record the gap in its WAL.
 
 ## stellarindex_postgres_ping_failing
 

@@ -340,6 +340,29 @@ else
   bad "E: the tuning drop-in reported '${st:-<never ran>}' on the r1 shape"
 fi
 
+# ── F. the backup file's ClickHouse jobs carry the host gate ──
+# 18-pgbackrest-backup.yml runs on every Postgres host. A task enabled by a
+# ch_*_enabled flag alone installs a timer that can never pass where no
+# ClickHouse exists.
+ungated="$(python3 - "$ROLE_TASKS/18-pgbackrest-backup.yml" <<'PY'
+import sys, yaml
+flags = ("ch_schema_snapshot_enabled", "ch_schema_drift_enabled", "ch_lake_backup_enabled")
+for t in yaml.safe_load(open(sys.argv[1])):
+    name = str(t.get("name", ""))
+    when = str(t.get("when", ""))
+    if name.startswith("Remove ") or not any(f in when for f in flags):
+        continue
+    if "clickhouse_config_tasks_enabled" not in when:
+        print(name)
+PY
+)" || ungated="<could not parse 18-pgbackrest-backup.yml>"
+if [ -z "$ungated" ]; then
+  ok "F: every ch_*_enabled task in 18-pgbackrest-backup.yml also requires a ClickHouse host"
+else
+  bad "F: ClickHouse job tasks without clickhouse_config_tasks_enabled:"
+  printf '       %s\n' "${ungated//$'\n'/$'\n'       }"
+fi
+
 echo
 echo "ansible-clickhouse-host-gate-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

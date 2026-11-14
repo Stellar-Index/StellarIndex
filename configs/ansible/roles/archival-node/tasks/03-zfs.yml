@@ -166,16 +166,40 @@
   failed_when: false
   check_mode: false
 
-- name: "Fail if the target pool is importable-but-unimported (zpool create -f would destroy it)"
+# A pool on these devices under another name, or one the scan cannot list,
+# passes the name check above. `zdb -l` exits 0 only when it reads a label;
+# whole-disk vdevs carry theirs on the first partition.
+- name: Read the ZFS label on each data device and its first partition
+  ansible.builtin.command:
+    argv:
+      - zdb
+      - -l
+      - "{{ item.0 }}{{ item.1 }}"
+  loop: "{{ zfs_data_devices | product(['', '-part1']) | list }}"
+  loop_control:
+    label: "{{ item.0 }}{{ item.1 }}"
+  register: zfs_label_probe
+  when: zpool_list.rc != 0
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: "Fail if the data devices may hold a pool (zpool create -f would destroy it)"
   ansible.builtin.assert:
     that:
-      - "('pool: ' + zfs_data_pool_name not in zpool_import_scan.stdout) or (zfs_data_pool_recreate_ack | default(false) | bool)"
+      - >-
+        (zfs_data_pool_recreate_ack | default(false) | bool) or
+        (('pool: ' + zfs_data_pool_name not in zpool_import_scan.stdout)
+        and (zpool_import_scan.rc == 0
+        or 'no pools available' in (zpool_import_scan.stdout + zpool_import_scan.stderr))
+        and (zfs_label_probe.results | selectattr('rc', 'defined') | selectattr('rc', 'equalto', 0) | list | length == 0))
     fail_msg: >-
-      zpool import found an existing '{{ zfs_data_pool_name }}' pool on these devices that
-      is not currently imported. `zpool create -f` would silently overwrite it, destroying
-      Postgres, the ClickHouse lake and MinIO. Investigate with `zpool import` and `zdb -l
-      <device>` before proceeding. If this really is a fresh build and the name collision
-      is coincidental, re-run with -e zfs_data_pool_recreate_ack=true.
+      The data devices may already hold a ZFS pool: `zpool import` listed
+      '{{ zfs_data_pool_name }}', or its scan failed, or `zdb -l` read a label on
+      {{ zfs_label_probe.results | selectattr('rc', 'defined') | selectattr('rc', 'equalto', 0) | map(attribute='item') | map('join') | join(', ') | default('no device', true) }}.
+      `zpool create -f` would overwrite it, destroying Postgres, the ClickHouse lake and
+      MinIO. Investigate with `zpool import` and `zdb -l <device>` before proceeding. If
+      this really is a fresh build, re-run with -e zfs_data_pool_recreate_ack=true.
   when: zpool_list.rc != 0
 
 # -f bypasses zpool's refusal to create raidz across differently-

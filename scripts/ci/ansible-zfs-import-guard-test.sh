@@ -22,7 +22,10 @@
 #      on the unfixed file the range has no scan/assert task at all, so
 #      the play trivially succeeds and never refuses);
 #   B. same, with zfs_data_pool_recreate_ack=true                → succeeds;
-#   C. import scan reports no pools available                    → succeeds.
+#   C. import scan reports no pools available                    → succeeds;
+#   D/E. `zdb -l` reads a label on a device or its first partition → fails;
+#   F. the import scan exits non-zero                            → fails;
+#   G. label found, ack given                                    → succeeds.
 #
 # Needs ansible-playbook. Run: bash scripts/ci/ansible-zfs-import-guard-test.sh
 
@@ -67,12 +70,21 @@ cat > "$TMP/bin/zpool" <<'SH'
 #!/bin/sh
 case "$1" in
   list) exit 1 ;;
-  import) cat "ZFS_TEST_TMP/import-output"; exit 0 ;;
+  import) cat "ZFS_TEST_TMP/import-output"; exit "$(cat ZFS_TEST_TMP/import-rc)" ;;
   *) exit 0 ;;
 esac
 SH
-sed -i.bak "s#ZFS_TEST_TMP#$TMP#" "$TMP/bin/zpool" && rm -f "$TMP/bin/zpool.bak"
-chmod +x "$TMP/bin/zpool"
+# Stub zdb: `-l <dev>` exits 0 (label read) only for the device named in
+# $TMP/labelled, else 2 (no valid label).
+cat > "$TMP/bin/zdb" <<'SH'
+#!/bin/sh
+[ "$2" = "$(cat ZFS_TEST_TMP/labelled)" ] && exit 0
+exit 2
+SH
+for b in zpool zdb; do
+  sed -i.bak "s#ZFS_TEST_TMP#$TMP#" "$TMP/bin/$b" && rm -f "$TMP/bin/$b.bak"
+  chmod +x "$TMP/bin/$b"
+done
 
 echo "$RANGE" > "$TMP/range.yml"
 cat > "$TMP/fixture.yml" <<YML
@@ -82,6 +94,7 @@ cat > "$TMP/fixture.yml" <<YML
   gather_facts: false
   vars:
     zfs_data_pool_name: data
+    zfs_data_devices: [/dev/disk/by-id/a-part5, /dev/disk/by-id/b]
   tasks:
     - name: run extracted range
       ansible.builtin.include_tasks: "$TMP/range.yml"
@@ -90,6 +103,8 @@ YML
 run_case() {  # <desc> <import-output> <expect: succeeded|refused> [extra ansible args…]
   local desc="$1" import_output="$2" expect="$3"; shift 3
   printf '%s\n' "$import_output" > "$TMP/import-output"
+  printf '%s\n' "${IMPORT_RC:-0}" > "$TMP/import-rc"
+  printf '%s\n' "${LABELLED:-none}" > "$TMP/labelled"
   out="$(cd "$TMP" && PATH="$TMP/bin:$PATH" ANSIBLE_LOCALHOST_WARNING=false ANSIBLE_INVENTORY_UNPARSED_WARNING=false \
          ansible-playbook -i localhost, fixture.yml "$@" 2>&1)"
   rc=$?
@@ -111,6 +126,23 @@ run_case "importable 'data' pool found, ack given" "  pool: data
 
 # C. nothing importable → proceeds
 run_case "no importable pools" "no pools available to import" succeeded
+
+# D. a pool under another name: the scan does not list the target, but a
+# member device carries a label → must refuse
+LABELLED=/dev/disk/by-id/a-part5 run_case "foreign-named pool, label on a partition vdev" "  pool: tank-old
+    id: 99
+   state: ONLINE" refused
+
+# E. whole-disk vdev: the label is on its first partition
+LABELLED=/dev/disk/by-id/b-part1 run_case "label on a whole-disk vdev's first partition" \
+  "no pools available to import" refused
+
+# F. the scan itself failed → not evidence of empty disks
+IMPORT_RC=1 run_case "import scan errored" "cannot discover pools: permission denied" refused
+
+# G. labelled, acknowledged → proceeds
+LABELLED=/dev/disk/by-id/b-part1 run_case "label found, ack given" "no pools available to import" \
+  succeeded -e zfs_data_pool_recreate_ack=true
 
 echo
 echo "ansible-zfs-import-guard-test: $pass passed, $fail failed"

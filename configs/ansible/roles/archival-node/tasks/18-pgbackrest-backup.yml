@@ -28,10 +28,10 @@
 - name: Refuse to proceed without an offsite (repo2) backup or an explicit ack of the gap
   ansible.builtin.assert:
     that:
-      - (pgbackrest_repo2_s3_bucket | default('') != '') or (pgbackrest_offsite_ack | default(false) | bool)
+      - ((pgbackrest_repo2_s3_bucket | default('') != '') and (pgbackrest_repo2_enabled | bool)) or (pgbackrest_offsite_ack | default(false) | bool)
     fail_msg: >-
-      No pgBackRest offsite (repo2) backup is configured for this host, and
-      pgbackrest_offsite_ack is not set. repo1-only backups share the DB's
+      No pgBackRest offsite (repo2) backup is active for this host (no bucket,
+      or pgbackrest_repo2_enabled is false), and pgbackrest_offsite_ack is not set. repo1-only backups share the DB's
       failure domain (REL-DR). Either set pgbackrest_repo2_s3_bucket (+ the
       other repo2 vars) to provision an offsite copy, or set
       pgbackrest_offsite_ack: true to explicitly accept the gap (see
@@ -236,7 +236,9 @@
     # `ansible_run_tags` is ['all'] on an untagged run.
     ch_schema_snapshot_backup_surface_selected: >-
       {{ (ansible_run_tags | default(['all']) | intersect(['backup', 'pgbackrest']) | length) > 0 }}
-  when: ch_schema_snapshot_enabled | default(true)
+  when:
+    - ch_schema_snapshot_enabled | default(true)
+    - clickhouse_config_tasks_enabled | default(false) | bool
 
 - name: Refuse a local-only ClickHouse schema snapshot (pubnet requires an off-site target)
   ansible.builtin.assert:
@@ -262,6 +264,7 @@
     quiet: true
   when:
     - ch_schema_snapshot_enabled | default(true)
+    - clickhouse_config_tasks_enabled | default(false) | bool
     # Pubnet: only when the backup surface was selected by tag (see the
     # note above). Non-pubnet: on every run — the ack is the escape.
     - >-
@@ -280,6 +283,7 @@
       row 1.12.
   when:
     - ch_schema_snapshot_enabled | default(true)
+    - clickhouse_config_tasks_enabled | default(false) | bool
     - ch_schema_snapshot_local_only_pubnet | default(false) | bool
     - not (ch_schema_snapshot_backup_surface_selected | default(false) | bool)
 
@@ -290,7 +294,9 @@
     owner: root
     group: root
     mode: "0755"
-  when: ch_schema_snapshot_enabled | default(true)
+  when:
+    - ch_schema_snapshot_enabled | default(true)
+    - clickhouse_config_tasks_enabled | default(false) | bool
 
 - name: Ensure the ClickHouse schema-snapshot directory exists
   ansible.builtin.file:
@@ -299,7 +305,9 @@
     owner: root
     group: root
     mode: "0750"
-  when: ch_schema_snapshot_enabled | default(true)
+  when:
+    - ch_schema_snapshot_enabled | default(true)
+    - clickhouse_config_tasks_enabled | default(false) | bool
 
 - name: Install ClickHouse schema-snapshot systemd units
   ansible.builtin.template:
@@ -312,7 +320,9 @@
     - ch-schema-snapshot.service
     - ch-schema-snapshot.timer
   register: ch_schema_snapshot_units
-  when: ch_schema_snapshot_enabled | default(true)
+  when:
+    - ch_schema_snapshot_enabled | default(true)
+    - clickhouse_config_tasks_enabled | default(false) | bool
 
 # Enabled by default, unlike restore-drill.timer: seconds of metadata queries
 # and megabytes of output, so the Phase-A capacity argument does not apply
@@ -325,6 +335,7 @@
     daemon_reload: "{{ ch_schema_snapshot_units is changed }}"
   when:
     - ch_schema_snapshot_enabled | default(true)
+    - clickhouse_config_tasks_enabled | default(false) | bool
     # check-mode guard — see the pgBackRest timer note above.
     - not (ansible_check_mode and ch_schema_snapshot_units is changed)
 
@@ -597,7 +608,9 @@
     owner: root
     group: root
     mode: "0755"
-  when: ch_schema_drift_enabled | default(true)
+  when:
+    - ch_schema_drift_enabled | default(true)
+    - clickhouse_config_tasks_enabled | default(false) | bool
   tags: [ch-schema-drift]
 
 - name: Ensure the shared stellarindex data directory exists
@@ -607,7 +620,9 @@
     owner: root
     group: root
     mode: "0755"
-  when: ch_schema_drift_enabled | default(true)
+  when:
+    - ch_schema_drift_enabled | default(true)
+    - clickhouse_config_tasks_enabled | default(false) | bool
   tags: [ch-schema-drift]
 
 # INTENT PROVENANCE. The shipped copy of tier1_schema.sql is the drift
@@ -646,6 +661,9 @@
 # its verdict is unvouched.
 - name: Ship the stamped Tier-1 lake DDL as the drift check's intent side
   ansible.builtin.import_tasks: ../../../tasks/ship-ch-schema-intent.yml
+  when:
+    - ch_schema_drift_enabled | default(true)
+    - clickhouse_config_tasks_enabled | default(false) | bool
   tags: [ch-schema-drift]
 
 - name: Install ClickHouse schema-drift systemd units
@@ -659,7 +677,9 @@
     - ch-schema-drift.service
     - ch-schema-drift.timer
   register: ch_schema_drift_units
-  when: ch_schema_drift_enabled | default(true)
+  when:
+    - ch_schema_drift_enabled | default(true)
+    - clickhouse_config_tasks_enabled | default(false) | bool
   tags: [ch-schema-drift]
 
 - name: Enable + start the ClickHouse schema-drift timer
@@ -670,6 +690,7 @@
     daemon_reload: "{{ ch_schema_drift_units is changed }}"
   when:
     - ch_schema_drift_enabled | default(true)
+    - clickhouse_config_tasks_enabled | default(false) | bool
     # check-mode guard — see the pgBackRest timer note above.
     - not (ansible_check_mode and ch_schema_drift_units is changed)
   tags: [ch-schema-drift]

@@ -488,6 +488,7 @@
           }
         ]
       }
+  when: galexie_archive_trim_enabled | bool
 
 - name: Install / update stellarindex-archive-trimmer MinIO policy
   ansible.builtin.command:
@@ -500,6 +501,7 @@
       - stellarindex-archive-trimmer
       - /etc/minio/policies/stellarindex-archive-trimmer.json
   changed_when: false
+  when: galexie_archive_trim_enabled | bool
 
 - name: Create stellarindex-archive-trimmer MinIO user (vault-supplied creds)
   # SECRETKEY omitted from argv on purpose: `mc admin user add` reads it from
@@ -516,6 +518,7 @@
     stdin: "{{ stellarindex_archive_trimmer_secret_key }}"
   changed_when: false
   no_log: true
+  when: galexie_archive_trim_enabled | bool
 
 - name: Attach stellarindex-archive-trimmer policy to stellarindex-archive-trimmer user
   ansible.builtin.command:
@@ -530,6 +533,7 @@
       - "{{ stellarindex_archive_trimmer_access_key }}"
   changed_when: false
   failed_when: false   # mc returns non-zero if policy already attached
+  when: galexie_archive_trim_enabled | bool
 
 - name: Template /etc/default/stellarindex-ops (env vars for stellarindex-ops batch jobs)
   # Sourced by interactive `stellarindex-ops`, run-heavy-job.sh (which imports the
