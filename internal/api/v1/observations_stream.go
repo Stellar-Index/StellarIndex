@@ -128,6 +128,9 @@ func (s *Server) observationsStreamTick(
 			return nil, err
 		}
 		defer release()
+		// A detached scan has no deadline of its own; without one a hung read would hold a slot forever.
+		scanCtx, cancelScan := context.WithTimeout(scanCtx, priceReadFlightTimeout)
+		defer cancelScan()
 		trades, err := s.computeObservations(withFreshHistory(scanCtx), pair, source, aggregate)
 		if err != nil {
 			return nil, err

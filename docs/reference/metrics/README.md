@@ -807,6 +807,10 @@ Counter, label `reason` (`caller_quota` / `global_ceiling`).
 
 Producer mints refused. `caller_quota` means one client (IPv4 or IPv6 /64) is over `api.streaming.max_tip_producers_per_caller`; `global_ceiling` means the registry is full at `api.streaming.max_tip_producers`.
 
+### `stellarindex_api_observations_stream_ticks_shed_total`
+
+Counter. `/v1/observations/stream` ticks skipped because no scan slot freed within the subscriber's interval. Subscribers of one pair share a scan, so a sustained rate means many distinct pairs are subscribed at once; the subscriber gets its next tick, not an error.
+
 ### `stellarindex_api_stream_subscriber_drops_total`
 
 Counter. SSE subscribers disconnected because their queue was full, counted once per subscriber. A low rate is routine; clients reconnect.
