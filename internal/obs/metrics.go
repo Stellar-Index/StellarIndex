@@ -319,6 +319,8 @@ func registerAppMetricsTail() {
 
 		DEXTradeNonstandardDecimalsTotal,
 		DecimalsGuardSweepLastSuccessUnix,
+		DecimalsGuardPendingWrites,
+		DecimalsGuardUnresolvedAssets,
 		PriceServeDeclinedNonstandardDecimalsTotal,
 		NonstandardDecimalsCacheRefreshFailuresTotal,
 		NonstandardDecimalsPartialAliasFamilyTotal,
@@ -2793,6 +2795,22 @@ var DecimalsGuardSweepLastSuccessUnix = prometheus.NewGauge(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_decimals_guard_sweep_last_success_unix",
 		Help: "Unix seconds of the most recent successful decimals-guard Sweep pass, stamped whether or not an offender was found; seeded with the guard's enable time before the first pass, 0 when the guard is disabled (no lake). Staleness (vs the sweep interval) means the guard never armed or has wedged, not that no offenders exist.",
+	},
+)
+
+// DecimalsGuardPendingWrites is the number of confirmed non-7-decimal assets whose correction row has not been written.
+var DecimalsGuardPendingWrites = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_decimals_guard_pending_writes",
+		Help: "Confirmed non-7-decimal (source, asset) pairs whose nonstandard_decimals_assets write failed and is being retried every sweep tick. While nonzero, pairs of those assets are served uncorrected, skewed by 10^(7-decimals). Expected value is 0.",
+	},
+)
+
+// DecimalsGuardUnresolvedAssets is the number of traded Soroban assets whose decimals() the lake could not derive.
+var DecimalsGuardUnresolvedAssets = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_decimals_guard_unresolved_assets",
+		Help: "DEX-traded Soroban assets whose decimals() the decimals guard could not derive from the lake since process start. Their pairs are priced on the 7-decimals assumption, not on a reading; the aggregator log names each asset once.",
 	},
 )
 

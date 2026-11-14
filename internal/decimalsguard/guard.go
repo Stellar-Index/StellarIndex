@@ -7,7 +7,8 @@
 // This is the DETECTION half: a periodic sweep resolves decimals() of recently DEX-traded Soroban
 // tokens from the lake and raises obs.DEXTradeNonstandardDecimalsTotal when one is != 7. It is the
 // sole writer of nonstandard_decimals_assets; internal/aggregate.AdjustPrice only consumes it. The
-// 20m sweep misses dormant tokens; Guard.Backfill covers 90d at startup.
+// 20m sweep misses dormant and late-ingested tokens; Guard.Backfill covers 90d at startup and every
+// DefaultReenumerateInterval after.
 package decimalsguard
 
 import (
@@ -26,14 +27,18 @@ import (
 // StandardDecimals is the scale SACs and classic credits always carry; any other resolved value is the violation this guard catches.
 const StandardDecimals = 7
 
-// Default sweep cadence. The window is >= the interval so consecutive sweeps overlap and no trade
-// falls between them.
+// Default sweep cadence. The window is >= the interval so consecutive sweeps overlap in trade time.
+// A trade ingested later than the window after its ledger time is outside every sweep; the
+// re-enumeration below is what examines it.
 const (
 	DefaultInterval = 15 * time.Minute
 	DefaultWindow   = 20 * time.Minute
 )
 
-// DefaultBackfillWindow bounds the one-time startup Backfill lookback: 90 days catches a token that traded then went quiet while RecentSorobanDEXTrades stays a sargable range scan; longer-dormant tokens need the runbook's manual hand-seed.
+// DefaultReenumerateInterval is how often Run repeats the Backfill enumeration, which bounds a late-ingested trade's wait to hours.
+const DefaultReenumerateInterval = 6 * time.Hour
+
+// DefaultBackfillWindow bounds the Backfill lookback: 90 days catches a token that traded then went quiet while RecentSorobanDEXTrades stays a sargable range scan; longer-dormant tokens need the runbook's manual hand-seed.
 const DefaultBackfillWindow = 90 * 24 * time.Hour
 
 // DefaultBackfillThrottle paces Backfill's per-asset ClickHouse decimals() lookups so a large asset set doesn't hammer the lake; resolved-cache hits are not throttled.
@@ -78,6 +83,7 @@ type Guard struct {
 
 	backfillWindow   time.Duration
 	backfillThrottle time.Duration
+	reenumerateEvery time.Duration
 
 	mu sync.Mutex
 	// resolved caches CONFIRMED decimals per contract id (decimals() is effectively immutable).
@@ -87,10 +93,23 @@ type Guard struct {
 	// alarmed dedups the alarm (metric + ERROR log) to one per (source, asset) per process; the
 	// signal is "this landmine exists", not a per-trade rate.
 	alarmed map[string]struct{}
-	// persisted dedups the durable write. Unlike alarmed it latches ONLY after the write
-	// succeeds, so a transient failure is retried instead of stranding a skewed price until restart.
+	// persisted dedups the durable write. Unlike alarmed it latches ONLY after the write succeeds.
 	persisted map[string]struct{}
+	// pending holds confirmed offenders whose durable write failed. Every tick retries them, because
+	// a dormant token is not enumerated again and would otherwise serve a skewed price until restart.
+	pending map[string]pendingWrite
+	// unresolved holds enumerated assets whose decimals() the lake could not derive: priced on the
+	// 7-decimals assumption, not on a reading.
+	unresolved map[string]struct{}
 }
+
+type pendingWrite struct {
+	ref      timescale.SorobanDEXTradeRef
+	decimals uint32
+}
+
+// passTally counts one pass's lake reads, so a pass that could read nothing is not reported as a clean one.
+type passTally struct{ reads, failed int }
 
 // Options configures a Guard.
 type Options struct {
@@ -150,10 +169,13 @@ func New(reader TradeReader, resolver DecimalsResolver, opts Options) *Guard {
 		window:           window,
 		backfillWindow:   backfillWindow,
 		backfillThrottle: backfillThrottle,
+		reenumerateEvery: DefaultReenumerateInterval,
 		logger:           logger,
 		resolved:         make(map[string]uint32),
 		alarmed:          make(map[string]struct{}),
 		persisted:        make(map[string]struct{}),
+		pending:          make(map[string]pendingWrite),
+		unresolved:       make(map[string]struct{}),
 	}
 }
 
@@ -162,7 +184,7 @@ func MarkEnabled(now time.Time) {
 	obs.DecimalsGuardSweepLastSuccessUnix.Set(float64(now.Unix()))
 }
 
-// Run sweeps immediately, then every interval until ctx is cancelled; a failed sweep is logged and retried next tick.
+// Run sweeps immediately, then every interval until ctx is cancelled, and repeats the Backfill enumeration on its own slower ticker; a failed pass is logged and retried next tick.
 func (g *Guard) Run(ctx context.Context, interval time.Duration) error {
 	if interval <= 0 {
 		interval = DefaultInterval
@@ -173,20 +195,27 @@ func (g *Guard) Run(ctx context.Context, interval time.Duration) error {
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	reenumerate := time.NewTicker(g.reenumerateEvery)
+	defer reenumerate.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
 			g.tick(ctx, "periodic")
+		case <-reenumerate.C:
+			if err := g.Backfill(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				g.logger.Warn("decimals-guard: re-enumeration failed", "err", err)
+			}
 		}
 	}
 }
 
-// tick is one Run iteration: Sweep, then the lockstep Reconcile against the lake. They are
-// independent (a failed Sweep must not skip the reconcile, nor vice versa) and both are
-// logged and retried next tick, never fatal.
+// tick is one Run iteration: retry stranded writes, Sweep, then the lockstep Reconcile against the
+// lake. They are independent (a failed Sweep must not skip the reconcile, nor vice versa) and both
+// are logged and retried next tick, never fatal.
 func (g *Guard) tick(ctx context.Context, phase string) {
+	g.retryPending(ctx)
 	if err := g.Sweep(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		g.logger.Warn("decimals-guard: sweep failed", "phase", phase, "err", err)
 	}
@@ -195,24 +224,32 @@ func (g *Guard) tick(ctx context.Context, phase string) {
 	}
 }
 
-// Sweep resolves decimals for recently-DEX-traded Soroban tokens and raises the metric once per source+asset for a confirmed non-7 value. It errors only if trade enumeration fails; every completed pass stamps obs.DecimalsGuardSweepLastSuccessUnix so "found nothing" differs from "never armed".
+// Sweep resolves decimals for recently-DEX-traded Soroban tokens and raises the metric once per source+asset for a confirmed non-7 value. It errors if trade enumeration fails or if every lake read of the pass failed; any other pass stamps obs.DecimalsGuardSweepLastSuccessUnix so "found nothing" differs from "never armed" and from "could not look".
 func (g *Guard) Sweep(ctx context.Context) error {
 	refs, err := g.reader.RecentSorobanDEXTrades(ctx, time.Now().Add(-g.window))
 	if err != nil {
 		return err
 	}
+	var tally passTally
 	for _, ref := range refs {
-		decimals, confirmed := g.classify(ctx, ref.Asset)
+		decimals, confirmed := g.classify(ctx, ref.Asset, &tally)
 		if !confirmed || decimals == StandardDecimals {
 			continue
 		}
 		g.report(ctx, ref, decimals)
 	}
+	g.publishGauges()
+	if tally.failed > 0 && tally.failed == tally.reads {
+		return fmt.Errorf("decimals-guard: all %d lake decimals reads failed", tally.reads)
+	}
+	if tally.failed > 0 {
+		g.logger.Warn("decimals-guard: some lake decimals reads failed; retried next sweep", "failed", tally.failed, "reads", tally.reads)
+	}
 	obs.DecimalsGuardSweepLastSuccessUnix.Set(float64(time.Now().Unix()))
 	return nil
 }
 
-// Backfill is the one-time startup self-seed: every pair that traded within BackfillWindow goes through Sweep's classify+report path, via a time-windowed sargable scan, never an unbounded DISTINCT. Call once before Run; errors only if enumeration fails.
+// Backfill is the wide self-seed: every pair that traded within BackfillWindow goes through Sweep's classify+report path, via a time-windowed sargable scan, never an unbounded DISTINCT. Call once before Run, which repeats it; errors if enumeration fails or any lake read failed.
 func (g *Guard) Backfill(ctx context.Context) error {
 	since := time.Now().Add(-g.backfillWindow)
 	refs, err := g.reader.RecentSorobanDEXTrades(ctx, since)
@@ -221,6 +258,7 @@ func (g *Guard) Backfill(ctx context.Context) error {
 	}
 
 	confirmed := 0
+	var tally passTally
 	for _, ref := range refs {
 		// Throttle only calls that reach the resolver; a cache hit never queries ClickHouse.
 		if g.backfillThrottle > 0 && !g.isCached(ref.Asset) {
@@ -231,7 +269,7 @@ func (g *Guard) Backfill(ctx context.Context) error {
 			}
 		}
 
-		decimals, confirmedDecimals := g.classify(ctx, ref.Asset)
+		decimals, confirmedDecimals := g.classify(ctx, ref.Asset, &tally)
 		if !confirmedDecimals || decimals == StandardDecimals {
 			continue
 		}
@@ -239,9 +277,24 @@ func (g *Guard) Backfill(ctx context.Context) error {
 		g.report(ctx, ref, decimals)
 	}
 
-	g.logger.Info("decimals-guard: startup backfill complete",
-		"window", g.backfillWindow, "scanned_pairs", len(refs), "confirmed_offenders", confirmed)
+	unresolved := g.publishGauges()
+	g.logger.Info("decimals-guard: backfill complete",
+		"window", g.backfillWindow, "scanned_pairs", len(refs), "confirmed_offenders", confirmed,
+		"unresolved_assets", unresolved, "failed_reads", tally.failed)
+	if tally.failed > 0 {
+		return fmt.Errorf("decimals-guard: %d of %d lake decimals reads failed", tally.failed, tally.reads)
+	}
 	return nil
+}
+
+// publishGauges exports the stranded-write and unverified-asset counts and returns the latter.
+func (g *Guard) publishGauges() (unresolved int) {
+	g.mu.Lock()
+	pending, unresolved := len(g.pending), len(g.unresolved)
+	g.mu.Unlock()
+	obs.DecimalsGuardPendingWrites.Set(float64(pending))
+	obs.DecimalsGuardUnresolvedAssets.Set(float64(unresolved))
+	return unresolved
 }
 
 // isCached reports whether asset's decimals() is in the resolved cache, so Backfill skips
@@ -255,7 +308,7 @@ func (g *Guard) isCached(asset string) bool {
 
 // classify resolves and caches a contract's decimals. confirmed=false when the value could not be
 // established (resolution error, or not derivable); the caller must NOT alarm then.
-func (g *Guard) classify(ctx context.Context, asset string) (decimals uint32, confirmed bool) {
+func (g *Guard) classify(ctx context.Context, asset string, tally *passTally) (decimals uint32, confirmed bool) {
 	g.mu.Lock()
 	if d, ok := g.resolved[asset]; ok {
 		g.mu.Unlock()
@@ -263,20 +316,27 @@ func (g *Guard) classify(ctx context.Context, asset string) (decimals uint32, co
 	}
 	g.mu.Unlock()
 
+	tally.reads++
 	d, found, rerr := g.resolver.TokenDecimals(ctx, asset)
 	if rerr != nil {
 		// Transient lake error, or a key that isn't a valid contract strkey.
 		// Not cached — retried next sweep.
+		tally.failed++
 		g.logger.Debug("decimals-guard: decimals resolve failed; will retry", "asset", asset, "err", rerr)
 		return 0, false
 	}
 	if !found {
 		// Not derivable yet: not cached (a later-captured instance is re-checked), never an offender.
+		g.mu.Lock()
+		_, known := g.unresolved[asset]
+		g.unresolved[asset] = struct{}{}
+		g.mu.Unlock()
+		if !known {
+			g.logger.Warn("decimals-guard: decimals() not derivable from the lake; pairs of this asset are priced on the 7-decimals assumption (runbook: dex.md)", "asset", asset)
+		}
 		return 0, false
 	}
-	g.mu.Lock()
-	g.resolved[asset] = d
-	g.mu.Unlock()
+	g.remember(asset, d)
 	return d, true
 }
 
@@ -308,22 +368,45 @@ func (g *Guard) report(ctx context.Context, ref timescale.SorobanDEXTradeRef, de
 		)
 	}
 
-	// Durable write: retried until it succeeds, latched only on success.
 	if g.writer == nil || persisted {
 		return
 	}
-	if err := g.writer.UpsertNonstandardDecimalsAsset(ctx, ref.Asset, decimals, ref.Source); err != nil {
+	g.persist(ctx, ref, decimals)
+}
+
+// persist writes one confirmed offender. A failure parks it in pending, which every tick retries.
+func (g *Guard) persist(ctx context.Context, ref timescale.SorobanDEXTradeRef, decimals uint32) {
+	key := ref.Source + "\x00" + ref.Asset
+	err := g.writer.UpsertNonstandardDecimalsAsset(ctx, ref.Asset, decimals, ref.Source)
+	g.mu.Lock()
+	if err == nil {
+		delete(g.pending, key)
+		g.persisted[key] = struct{}{}
+	} else {
+		g.pending[key] = pendingWrite{ref: ref, decimals: decimals}
+	}
+	g.mu.Unlock()
+	if err != nil {
 		g.logger.Warn(
 			"decimals-guard: failed to persist confirmed nonstandard-decimals asset — "+
-				"leaving it UNLATCHED so the next sweep retries; the API read-time serving "+
-				"guard stays unfed until a write succeeds (metric + log alarm above are unaffected)",
+				"retried every tick; the API read-time serving guard stays unfed until a "+
+				"write succeeds (metric + log alarm above are unaffected)",
 			"source", ref.Source, "asset", ref.Asset, "decimals", decimals, "err", err,
 		)
-		return
 	}
+}
+
+// retryPending re-attempts every stranded durable write, whether or not its asset is enumerated again.
+func (g *Guard) retryPending(ctx context.Context) {
 	g.mu.Lock()
-	g.persisted[key] = struct{}{}
+	stranded := make([]pendingWrite, 0, len(g.pending))
+	for _, w := range g.pending {
+		stranded = append(stranded, w)
+	}
 	g.mu.Unlock()
+	for _, w := range stranded {
+		g.persist(ctx, w.ref, w.decimals)
+	}
 }
 
 // Reconcile re-reads every persisted `nonstandard_decimals_assets` row against the lake (bypassing the resolved cache): a read error or found=false leaves the row (hand-seeded rows must survive); a mismatch is counted, logged at ERROR and repaired toward the lake (upsert non-7, DELETE on 7). Errors only if the row load fails.
@@ -402,17 +485,24 @@ func (g *Guard) reconcileRow(ctx context.Context, row timescale.NonstandardDecim
 func (g *Guard) remember(asset string, decimals uint32) {
 	g.mu.Lock()
 	g.resolved[asset] = decimals
+	delete(g.unresolved, asset)
 	g.mu.Unlock()
 }
 
-// forgetPersisted clears the durable-write latch for every (source, asset) key of a row Reconcile
-// deleted, so a later confirmed non-7 reading is persisted again rather than treated as handled.
+// forgetPersisted clears the durable-write latch and any stranded write for every (source, asset)
+// key of a row Reconcile deleted, so a later confirmed non-7 reading is persisted again and a
+// stale one is not.
 func (g *Guard) forgetPersisted(asset string) {
 	suffix := "\x00" + asset
 	g.mu.Lock()
 	for key := range g.persisted {
 		if strings.HasSuffix(key, suffix) {
 			delete(g.persisted, key)
+		}
+	}
+	for key := range g.pending {
+		if strings.HasSuffix(key, suffix) {
+			delete(g.pending, key)
 		}
 	}
 	g.mu.Unlock()

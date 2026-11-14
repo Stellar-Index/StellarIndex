@@ -511,6 +511,35 @@ groups:
             Seed the missing spelling with the same decimals.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_nonstandard_decimals_partial_alias_family
 
+      # The offender counter fires only on a confirmed reading that was also
+      # written. These two gauges are the cases in between: confirmed but not
+      # written, and enumerated but not readable. Scoped to the aggregator job
+      # because every binary registers the gauges at zero.
+      - alert: stellarindex_decimals_guard_unconfirmed
+        expr: |
+          stellarindex_decimals_guard_pending_writes{job="stellarindex_aggregator"} > 0
+          or
+          stellarindex_decimals_guard_unresolved_assets{job="stellarindex_aggregator"} > 0
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: aggregator
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_decimals_guard_unconfirmed
+          summary: "Decimals guard holds an unwritten correction or an asset whose decimals() it could not read — pairs may be served on an unverified scale (P2)"
+          description: |
+            The aggregator's decimals guard (internal/decimalsguard) reports
+            either a confirmed non-7-decimal asset whose
+            nonstandard_decimals_assets write keeps failing
+            (stellarindex_decimals_guard_pending_writes; its pairs are served
+            uncorrected until the write lands) or a traded Soroban asset
+            whose decimals() the lake could not derive
+            (stellarindex_decimals_guard_unresolved_assets; its pairs are
+            priced on the 7-decimals assumption, not on a reading). The
+            aggregator log names the asset in both cases.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_decimals_guard_unconfirmed
+
       # ── Decimals-guard sweep heartbeat ──
       #
       # The offender counters above cannot tell "swept, found nothing" from
