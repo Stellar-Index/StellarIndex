@@ -384,6 +384,16 @@ func (s *Server) rwaContractListingRows(
 	return out, notObserved, decimalsCut || capsCut, nil
 }
 
+// rwaRowsUnanswered reports a row whose price gate or issuer-directory read did not answer: its figures are withheld, not refused.
+func rwaRowsUnanswered(rows map[string]AssetDetail) bool {
+	for _, d := range rows {
+		if d.priceUnmeasured || d.issuerDirectoryUnchecked {
+			return true
+		}
+	}
+	return false
+}
+
 // fillContractDecimals overlays each contract's real on-chain decimals; assetDetailFromAssetRow hardcodes 7, and market cap
 // divides supply by 10^decimals, so a 5-decimal fund read at 7 publishes one hundredth of its capitalisation. A token with no
 // readable metadata keeps 7 but may not be multiplied by it: the returned set holds addresses whose scale was READ, and a row

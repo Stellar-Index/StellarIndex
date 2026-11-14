@@ -306,6 +306,9 @@ type AssetDetail struct {
 	// issuerDirectoryUnchecked: the directory read for this issuer failed,
 	// so the absence of a scam tag proves nothing and pricing is withheld.
 	issuerDirectoryUnchecked bool
+	// priceUnmeasured: the substance gate could not measure this row, so its
+	// missing price is an unanswered read, not a market that produced none.
+	priceUnmeasured bool
 	// f2ReadFailed: a volume, 24h-change or supply read errored, so the
 	// fields it feeds (incl. market_cap_usd / fdv_usd) are missing, not absent.
 	f2ReadFailed bool
@@ -1065,6 +1068,7 @@ func (s *Server) applySubstanceGateToListing(ctx context.Context, rows []AssetDe
 			row.PriceUSD = nil
 		default:
 			unmeasured = true
+			row.priceUnmeasured = true
 			row.PriceUSD = nil
 		}
 		row.Change1hPct = nil

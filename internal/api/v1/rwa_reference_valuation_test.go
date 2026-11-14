@@ -587,6 +587,55 @@ func TestRWAAssets_FlaggedIssuerGetsNoReferenceValuationEither(t *testing.T) {
 		"a flagged issuer (a real instrument's valuation times its own float)")
 }
 
+// An unanswered directory read is not "no scam tag": the row keeps no dollar figure on either basis and the response says
+// it is degraded, so it is cached for the short TTL only.
+func TestRWAAssets_UncheckedIssuerGetsNoValuationAndDegradesTheResponse(t *testing.T) {
+	entry := timescale.DirectoryEntry{Address: rwaGoodIssuer, Name: "Etherfuse", Tags: []string{"issuer"}, Source: "stellar-expert"}
+	srv := v1.New(v1.Options{
+		Sep1Cache: &stubSep1BoundReader{bound: []timescale.Sep1BoundCurrency{
+			rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond"),
+		}},
+		Directory: &rwaSkewedDirectory{membership: entry, rowFill: entry, rowFillErr: errors.New("account_directory: statement timeout")},
+		Oracle:    rwaOracle(t, rwaOracleRow(t, "redstone", "rwa:USTRY", "fiat:USD", "1074182", 6)),
+		AssetsReader: &rwaListStub{
+			stubAssetsReaderExt: &stubAssetsReaderExt{},
+			byIssuer: map[string][]timescale.AssetRow{
+				rwaGoodIssuer: {rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 346312)},
+			},
+			supply: map[string]string{"USTRY-" + rwaGoodIssuer: rwaUSTRYSupply},
+		},
+	})
+	ts := httpTestServer(t, srv)
+	resp := mustGet(t, ts.URL+"/v1/rwa/assets")
+	var body struct {
+		Data  v1.RWAAssetsView `json:"data"`
+		Flags v1.Flags         `json:"flags"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	v := body.Data
+	if len(v.Assets) != 1 {
+		t.Fatalf("assets = %v", rwaAssetIDs(v))
+	}
+	a := v.Assets[0]
+	if a.Valuation.Status != v1.RWAValuationIssuerUnchecked || a.Valuation.PriceUSD != nil || a.Valuation.MarketCapUSD != nil {
+		t.Errorf("valuation = %+v, want %q with no figure", a.Valuation, v1.RWAValuationIssuerUnchecked)
+	}
+	if a.Premium.Status != v1.RWAPremiumIssuerUnchecked {
+		t.Errorf("premium status = %q, want %q", a.Premium.Status, v1.RWAPremiumIssuerUnchecked)
+	}
+	assertNoReferenceValue(t, v, a, v1.RWAPremiumIssuerUnchecked, "an issuer whose directory read failed")
+	// Degraded is not on the wire; it shows as a response no cache may keep.
+	if !body.Flags.Stale || resp.Header.Get("Cache-Control") != "no-store" {
+		t.Errorf("stale = %v, Cache-Control = %q; want a stale, uncacheable response: the build withheld figures on a failed read",
+			body.Flags.Stale, resp.Header.Get("Cache-Control"))
+	}
+	if !v.Summary.LowerBound || !v.Summary.ReferenceValuation.LowerBound {
+		t.Errorf("totals over a withheld row are not lower bounds: %+v", v.Summary)
+	}
+}
+
 // rwaValuationArm returns the funnel's valuation stages and fails if the arm is absent, since every published response
 // must account for the reference basis.
 func rwaValuationArm(t *testing.T, v v1.RWAAssetsView) []v1.RWAFunnelStage {
@@ -2254,12 +2303,17 @@ func recognisedIssuer(addr, name string) timescale.DirectoryEntry {
 type rwaSkewedDirectory struct {
 	membership timescale.DirectoryEntry
 	rowFill    timescale.DirectoryEntry
+	// rowFillErr fails every read after the membership batch.
+	rowFillErr error
 	batches    int
 }
 
 func (d *rwaSkewedDirectory) DirectoryEntryByAddress(
 	_ context.Context, address string,
 ) (timescale.DirectoryEntry, bool, error) {
+	if d.rowFillErr != nil {
+		return timescale.DirectoryEntry{}, false, d.rowFillErr
+	}
 	if address != rwaGoodIssuer {
 		return timescale.DirectoryEntry{}, false, nil
 	}
@@ -2273,6 +2327,8 @@ func (d *rwaSkewedDirectory) DirectoryEntriesByAddresses(
 	e := d.rowFill
 	if d.batches == 1 {
 		e = d.membership
+	} else if d.rowFillErr != nil {
+		return nil, d.rowFillErr
 	}
 	out := map[string]timescale.DirectoryEntry{}
 	for _, a := range addresses {

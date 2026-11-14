@@ -4,12 +4,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { IssuerPanel, ledgerAxis } from './IssuerPanel';
 
-// The Issuer-identity panel surfaces the issuer's SEP-1 org_name. That name is
-// only an authoritative organisation identity when SEP-1 VERIFIED
-// (bidirectional). Unverified it is self-declared metadata a scam issuer can
-// spoof (set home_domain to a reputable org's domain to borrow its ORG_NAME),
-// so it must not headline the panel or appear as the "Organisation" field
-//. The real on-chain home_domain still shows.
+// The issuer writes its SEP-1 org_name and controls the toml that links it, so
+// the panel never calls it the "Organisation": a linked domain shows it as a
+// self-declared name, an unlinked one not at all. The home_domain always shows.
 vi.mock('@/api/client', async () => {
   const actual =
     await vi.importActual<typeof import('@/api/client')>('@/api/client');
@@ -44,12 +41,13 @@ function renderPanel() {
 }
 
 describe('IssuerPanel org attribution gating (CS-100)', () => {
-  it('shows the Organisation field for a verified issuer', async () => {
+  it('labels a domain-linked issuer’s org name as self-declared', async () => {
     mockIssuer(true);
     renderPanel();
     await waitFor(() =>
-      expect(screen.getByText('Organisation')).toBeInTheDocument(),
+      expect(screen.getByText('Self-declared name')).toBeInTheDocument(),
     );
+    expect(screen.queryByText('Organisation')).not.toBeInTheDocument();
   });
 
   it('withholds the org name for an unverified issuer (shows home_domain instead)', async () => {
@@ -63,9 +61,8 @@ describe('IssuerPanel org attribution gating (CS-100)', () => {
       expect(screen.getByText('Home domain')).toBeInTheDocument(),
     );
 
-    // The unverified, borrowed org name must not appear anywhere — neither as
-    // the "Organisation" field nor as the panel's identity hint.
-    expect(screen.queryByText('Organisation')).not.toBeInTheDocument();
+    // The borrowed org name must not appear anywhere in the panel.
+    expect(screen.queryByText('Self-declared name')).not.toBeInTheDocument();
     expect(screen.queryByText('Circle')).not.toBeInTheDocument();
     // The real on-chain home_domain is still surfaced.
     expect(screen.getAllByText('circle.com').length).toBeGreaterThan(0);

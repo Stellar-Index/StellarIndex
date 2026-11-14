@@ -48,16 +48,17 @@ function renderCodeIssuer(
   code: string,
   issuer: string,
   issuerMap:
-    Record<string, { org_name?: string; org_verified?: boolean }> | undefined,
+    | Record<string, { home_domain?: string; org_verified?: boolean }>
+    | undefined,
   badge?: string,
 ) {
   const known = issuerMap?.[issuer];
-  // Only present "by {org_name}" when SEP-1 verified — see the
-  // classic-branch comment below for why org_name alone is spoofable.
+  // The linked home domain is the only thing the toml check proves; org_name
+  // is the issuer's own claim and never appears here.
   const subtitle =
-    known?.org_verified && known.org_name ? (
+    known?.org_verified && known.home_domain ? (
       <div className="text-ink-muted text-[11px]" title={issuer}>
-        by {known.org_name}
+        {known.home_domain}
       </div>
     ) : (
       <div className="text-ink-muted font-mono text-[11px]" title={issuer}>
@@ -212,9 +213,6 @@ export function AssetLabel({
   }
   const code = canonical.slice(0, dashIx);
   const issuer = canonical.slice(dashIx + 1);
-  // When we know the issuer's organisation, render the org name as the
-  // subtitle (e.g. "USDC / Circle") instead of the raw truncated G-strkey,
-  // gated on SEP-1 verification (org_name alone is spoofable).
   // Shared with the SAC-resolved branch above via renderCodeIssuer.
   return renderCodeIssuer(code, issuer, issuerMap);
 }

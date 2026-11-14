@@ -5,7 +5,10 @@
 #   2. seed stellar.supply_flows over [L,TO] (ch-supply-flows-seed.sh);
 #   3. projected-rebuild -from L per -projected source, behind the live
 #      projector's tail (its one-writer guard stays on);
-#   4. seed-entry-counts, so counters match the rebuilt tables.
+#   4. trades-cagg-refresh over [L, lake tip] when any source was rebuilt: the
+#      aggregates' own refresh policies never look back this far, so without it
+#      price history, OHLC and volume keep serving the pre-rebuild rows;
+#   5. seed-entry-counts, so counters match the rebuilt tables.
 # Workers pull windows newest-first from one queue, not fixed shards: recent
 # windows hold far more rows, so fixed shards wait on the worker owning the tip.
 #
@@ -13,7 +16,8 @@
 # only after ch-backfill exits 0 and each later stage leaves a done marker, so
 # re-running the same command skips finished work at any -workers. TO is
 # pinned on the first run (a moved end would leave the last window short).
-# Every step is idempotent (RMT lake, ON CONFLICT DO NOTHING served tier).
+# Every step can be re-run: the lake is ReplacingMergeTree and the served tier
+# upserts. The trades upsert CORRECTS an existing row, which is why step 4 exists.
 #
 # Memory scales with -workers x -parallel ch-backfill goroutines (per-goroutine
 # cost: ordinal-rederive-chunks.sh). Run under run-heavy-job.sh on r1:
@@ -79,6 +83,15 @@ OPS="${REDERIVE_OPS:-/usr/local/bin/stellarindex-ops}"
 log() { echo "$(date -u +%FT%TZ) [rederive] $*" >> "$LOG"; }
 die() { log "$1"; echo "rederive-from: $1" >&2; exit "${2:-1}"; }
 
+lake_tip() {
+  # Same ops-credential handover as ch-supply-flows-seed.sh: env, never argv.
+  if [ -n "${STELLARINDEX_CLICKHOUSE_OPS_USER:-}" ]; then
+    export CLICKHOUSE_USER="$STELLARINDEX_CLICKHOUSE_OPS_USER"
+    export CLICKHOUSE_PASSWORD="${STELLARINDEX_CLICKHOUSE_OPS_PASSWORD:-}"
+  fi
+  clickhouse-client --port 9300 -q "SELECT max(ledger_seq) FROM stellar.ledgers"
+}
+
 mkdir -p "$SDIR" || die "cannot create state dir $SDIR"
 # One run per state dir (a second doubles worker memory). A lock whose holder
 # is gone (kill -9) is taken over so a resume needs no hand cleanup.
@@ -101,12 +114,7 @@ if [ -s "$SDIR/to" ]; then
   [ -z "$TO" ] || [ "$TO" = "$pinned" ] || die "-to $TO differs from the pinned end $pinned in $SDIR/to; use a new -state-dir to change it" 2
   TO=$pinned
 elif [ -z "$TO" ]; then
-  # Same ops-credential handover as ch-supply-flows-seed.sh: env, never argv.
-  if [ -n "${STELLARINDEX_CLICKHOUSE_OPS_USER:-}" ]; then
-    export CLICKHOUSE_USER="$STELLARINDEX_CLICKHOUSE_OPS_USER"
-    export CLICKHOUSE_PASSWORD="${STELLARINDEX_CLICKHOUSE_OPS_PASSWORD:-}"
-  fi
-  TO="$(clickhouse-client --port 9300 -q "SELECT max(ledger_seq) FROM stellar.ledgers")" || die "could not read the lake tip to pin -to"
+  TO="$(lake_tip)" || die "could not read the lake tip to pin -to"
 fi
 posint "$TO" || die "end ledger '$TO' is not a positive integer" 2
 [ "$TO" -ge "$FROM" ] || die "end ledger $TO is below -from $FROM" 2
@@ -190,5 +198,14 @@ for src in ${SOURCES[@]+"${SOURCES[@]}"}; do
   # No -to: projected-rebuild then stops at the live projector's cursor.
   stage "projected.$src" "$OPS" projected-rebuild -config "$CONFIG" -source "$src" -from "$FROM" -workers "$WORKERS" -write
 done
+# Run for any rebuilt source rather than list the trade writers here: a refresh
+# over a range with no rewritten trades changes nothing. The rebuild ran to the
+# live cursor, past the pinned TO, so the range ends at the lake tip.
+if [ "${#SOURCES[@]}" -gt 0 ] && [ ! -e "$SDIR/done.trades-caggs" ]; then
+  cagg_to="$(lake_tip)" || cagg_to=""
+  posint "$cagg_to" || die "could not read the lake tip for the aggregate refresh — re-run to resume"
+  [ "$cagg_to" -ge "$TO" ] || cagg_to=$TO
+  stage trades-caggs "$OPS" trades-cagg-refresh -config "$CONFIG" -from "$FROM" -to "$cagg_to" -write
+fi
 stage entry-counts "$OPS" seed-entry-counts -config "$CONFIG" -write
 log "REDERIVE_COMPLETE [$FROM,$TO]"

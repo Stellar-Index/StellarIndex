@@ -118,8 +118,8 @@ export function useIssuerLookup() {
     // Shares useIssuers(ISSUER_LOOKUP_LIMIT)'s cache entry so a page using both sends one request.
     queryKey: issuersListKey(ISSUER_LOOKUP_LIMIT),
     queryFn: () => fetchIssuers(ISSUER_LOOKUP_LIMIT),
-    // Downstream renderers (AssetLabel) MUST gate authoritative "by {org_name}"
-    // attribution on org_verified: org_name alone is self-declared and spoofable.
+    // org_verified proves control of home_domain only. Renderers must never
+    // present org_name as a verified identity, whatever org_verified says.
     select: (rows) => {
       const out: Record<
         string,

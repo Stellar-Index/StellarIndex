@@ -4,13 +4,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { AssetLabel } from './AssetLabel';
 
-// AssetLabel resolves an issuer's SEP-1 org_name for the asset subtitle
-// ("by {org}") across the markets / dexes / exchanges / pools tables. That
-// attribution is only trustworthy when the org is SEP-1 VERIFIED
-// (bidirectional — the org's stellar.toml lists the issuer back). org_name
-// alone is self-declared: a scam issuer can point its on-chain home_domain
-// at a reputable org's domain to borrow that org's ORG_NAME. Rendering it
-// unqualified would launder the spoof.
+// AssetLabel's subtitle shows the issuer's home domain when the toml there
+// lists the issuer back, and never the SEP-1 org_name: the issuer writes that
+// name and controls both ends of the toml link, so a scam issuer with its own
+// domain can claim any organisation's name and still pass the check.
 vi.mock('@/api/client', async () => {
   const actual =
     await vi.importActual<typeof import('@/api/client')>('@/api/client');
@@ -23,8 +20,8 @@ const VERIFIED_ISSUER =
   'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
 const SPOOF_ISSUER = 'GBUYUAI75XXWDZEKLY66CFYKQPET5JR4EENXZBUZ3YXZ7ZLNK4RYNNKG';
 
-// Both issuers self-declare the SAME reputable ORG_NAME; only one is
-// bidirectionally verified. Exercises the exact spoof the audit describes.
+// Both issuers claim the same reputable ORG_NAME; only one home domain lists
+// its issuer back.
 function mockDirectory() {
   vi.mocked(apiGet).mockImplementation(async (path: string) => {
     if (path === '/v1/issuers') {
@@ -33,7 +30,7 @@ function mockDirectory() {
           {
             g_strkey: VERIFIED_ISSUER,
             org_name: 'Circle',
-            home_domain: 'circle.com',
+            home_domain: 'centre-usdc.example',
             org_verified: true,
           },
           {
@@ -66,26 +63,23 @@ function renderTree() {
   );
 }
 
-describe('AssetLabel org attribution gating (CS-100)', () => {
-  it('shows "by {org}" for a verified issuer but never for an unverified spoof', async () => {
+describe('AssetLabel issuer subtitle', () => {
+  it('shows the linked home domain, and the claimed org name for no issuer', async () => {
     mockDirectory();
     renderTree();
 
-    // Wait for the issuer directory to resolve — the VERIFIED label gaining
-    // its attribution is the signal that the map is loaded and re-rendered.
-    // (This makes the negative assertion below non-vacuous: it runs against
-    // a fully-resolved directory, not the empty loading state.)
+    // The linked label gaining its domain is the signal that the directory
+    // has loaded, so the negative assertions below are not vacuous.
+    const linked = within(screen.getByTestId('verified'));
     await waitFor(() =>
-      expect(
-        within(screen.getByTestId('verified')).getByText(/by Circle/),
-      ).toBeInTheDocument(),
+      expect(linked.getByText('centre-usdc.example')).toBeInTheDocument(),
     );
+    // A self-listing toml proves the domain, not the name it claims.
+    expect(linked.queryByText(/Circle/)).not.toBeInTheDocument();
 
-    // In that SAME resolved state, the unverified spoof must NOT present the
-    // borrowed org name as authoritative attribution.
     const spoof = within(screen.getByTestId('spoof'));
-    expect(spoof.queryByText(/by Circle/)).not.toBeInTheDocument();
     expect(spoof.queryByText(/Circle/)).not.toBeInTheDocument();
+    expect(spoof.queryByText(/circle\.com/)).not.toBeInTheDocument();
     // The asset code still renders for the spoof (only the attribution drops).
     expect(spoof.getByText('USDC')).toBeInTheDocument();
   });
