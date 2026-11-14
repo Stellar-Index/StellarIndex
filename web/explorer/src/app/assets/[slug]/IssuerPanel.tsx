@@ -80,11 +80,10 @@ export function IssuerPanel({ gStrkey }: { gStrkey: string }) {
         source={asExample(`/v1/issuers/${gStrkey}`)}
       >
         <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
-          {/* Only surface the "Organisation" attribution when verified;
-              otherwise home_domain (below) carries the real on-chain value
-              without laundering an unverified name as authoritative. */}
+          {/* The issuer writes org_name and controls the toml that links it,
+              so it is labelled as a claim; the domain below is what was proven. */}
           {data.org_verified && data.org_name && (
-            <Stat label="Organisation" value={data.org_name} />
+            <Stat label="Self-declared name" value={data.org_name} />
           )}
           <Stat label="G-strkey" mono value={data.g_strkey} />
           {data.home_domain && (

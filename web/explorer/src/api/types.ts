@@ -18115,10 +18115,12 @@ export interface operations {
                             /** Format: int64 */
                             total_observation_count: number;
                             /**
-                             * @description True only when SEP-1 verification is
-                             *     bidirectional (the issuer's toml lists this
-                             *     issuer back). When false, org_name
-                             *     is unverified self-declared metadata.
+                             * @description True when the stellar.toml served from this
+                             *     account's `home_domain` lists the account as
+                             *     an issuer. The account sets both ends of that
+                             *     link, so this proves control of `home_domain`
+                             *     and nothing about the organisation: `org_name`
+                             *     is self-declared whether this is true or false.
                              */
                             org_verified?: boolean;
                             /** @description Non-empty when this issuer is in the curated scam directory (issuers.go). Render as a warning. */
@@ -18217,19 +18219,21 @@ export interface operations {
                             /**
                              * @description Issuer's organisation name from SEP-1
                              *     `[DOCUMENTATION].ORG_NAME`. Same value the
-                             *     listing endpoint surfaces. SELF-DECLARED unless
-                             *     `org_verified` is true — do NOT render as
-                             *     authoritative without checking `org_verified`.
+                             *     listing endpoint surfaces. ALWAYS self-declared:
+                             *     the issuer writes it, and `org_verified` does not
+                             *     confirm it. Do NOT render it as a verified
+                             *     identity; show `home_domain` beside it.
                              */
                             org_name?: string;
                             /** @description Non-empty when this issuer is in the curated scam directory (issuers.go). Render as a warning. */
                             scam_reason?: string;
                             /**
-                             * @description True only when the issuer's SEP-1 toml lists this
-                             *     issuer back (bidirectional proof; one-way is
-                             *     spoofable). When false, `org_name` is unverified
-                             *     self-declared metadata — clients must present it
-                             *     as such, not as a verified identity.
+                             * @description True when the stellar.toml served from this
+                             *     account's `home_domain` lists the account as an
+                             *     issuer. The account sets both ends of that link,
+                             *     so this proves control of `home_domain` only. It
+                             *     does NOT verify `org_name`, which any issuer with
+                             *     a domain can set to another organisation's name.
                              */
                             org_verified: boolean;
                             auth_required?: boolean | null;
