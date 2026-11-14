@@ -66,6 +66,8 @@ func freshnessStatusFor(f StatusFreshness, err error) string {
 	switch {
 	case err != nil, f.ActiveSources == nil, f.TotalSources == nil:
 		return freshnessStatusUnknown
+	case *f.ActiveSources > *f.TotalSources:
+		return freshnessStatusUnknown
 	case *f.ActiveSources < *f.TotalSources:
 		return freshnessStatusDegraded
 	default:
@@ -244,14 +246,14 @@ func (p *PrometheusStatusBackend) Latency(ctx context.Context) (StatusLatency, e
 
 // activeSourcesQuery and totalSourcesQuery are the "Active sources" numerator and denominator. The numerator MUST join on
 // stellarindex_source_enabled, or the populations differ and the ratio can exceed 1; a feed with no gauge counts on NEITHER side.
-// Both assume one scrape target per source. TestStatusSourceCountQueries_MatchPromtoolFixture holds
+// Both count distinct sources: a source emitted by two binaries (ECB as the API's FX fallback) is one. TestStatusSourceCountQueries_MatchPromtoolFixture holds
 // deploy/monitoring/rule-tests/status-source-counts_test.yml to these exact strings.
-const activeSourcesQuery = `count(
+const activeSourcesQuery = `count(count by (source) (
 	(rate(stellarindex_source_events_total[7d]) > 0)
 	and on (source) (stellarindex_source_enabled == 1)
-)`
+))`
 
-const totalSourcesQuery = `count(stellarindex_source_enabled == 1)`
+const totalSourcesQuery = `count(count by (source) (stellarindex_source_enabled == 1))`
 
 // Freshness returns the first query error rather than a zero count so a blind probe trips the canary, and uses a 7-day active window because rozo, phoenix, ecb and band emit few events per day.
 func (p *PrometheusStatusBackend) Freshness(ctx context.Context) (StatusFreshness, error) {
