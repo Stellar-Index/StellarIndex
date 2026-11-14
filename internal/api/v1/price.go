@@ -727,7 +727,7 @@ func (s *Server) handlePriceTail(w http.ResponseWriter, r *http.Request, asset, 
 	if governing.IsZero() {
 		governing = asset
 	}
-	flags := Flags{Stale: stale, Triangulated: triangulated, ProxyDeviation: triangulated && s.proxyDeviation(r.Context(), time.Now().UTC())}
+	flags := s.withProxyDeviation(r.Context(), Flags{Stale: stale, Triangulated: triangulated}, time.Now().UTC())
 	// Composite-quality signals (diverged / rerouted) run whichever arm served, since the router
 	// tracks the chain even when a closed bucket wins.
 	if pairKeyed {
@@ -2460,7 +2460,7 @@ func (s *Server) lookupPriceBatch(w http.ResponseWriter, r *http.Request, ids []
 	}
 
 	env := batchEnvelope(ids, results)
-	env.Flags.ProxyDeviation = env.Flags.Triangulated && s.proxyDeviation(r.Context(), time.Now().UTC())
+	env.Flags = s.withProxyDeviation(r.Context(), env.Flags, time.Now().UTC())
 	env.Flags.Degraded = env.Flags.Degraded || batchDegraded(results)
 	writeEnvelope(w, env)
 }

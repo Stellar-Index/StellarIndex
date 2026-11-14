@@ -146,11 +146,7 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		Clamped:             clamped,
 		Breakdown:           s.vwapBreakdown(breakdown, pair, fetched, trades, from, to, pre == maxTrades),
 		Substance:           substance,
-	}, Flags{
-		Triangulated:   triangulated,
-		ProxyDeviation: triangulated && s.proxyDeviation(ctx, to),
-		ThinMarket:     substance != nil,
-	})
+	}, s.withProxyDeviation(ctx, Flags{Triangulated: triangulated, ThinMarket: substance != nil}, to))
 }
 
 // writeVWAPError maps an aggregate.VWAP failure to its problem+json.
