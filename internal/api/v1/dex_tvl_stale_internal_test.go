@@ -106,6 +106,31 @@ func TestProtocolTVLsAndTotal_StaleLakeRaisesTheFlag(t *testing.T) {
 	}
 }
 
+// TestDEXTVLCache_ReadFromStaleLakeKeepsTheMark: a figure read while the lake was behind stays
+// stale until the next refresh, even when the lake has caught up by the time it is served.
+func TestDEXTVLCache_ReadFromStaleLakeKeepsTheMark(t *testing.T) {
+	src := tvlTestSources()
+	src.LakeWatermark = &stubWatermark{ledger: 63_000_000, closedAt: time.Now().Add(-lakeStaleThreshold - time.Hour)}
+	c := NewDEXTVLCache(src)
+	if err := c.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	caughtUp := &Server{Options: Options{DEXTVL: c, LakeWatermark: &stubWatermark{ledger: 63_000_700, closedAt: time.Now()}}}
+	tvls, total, stale := caughtUp.protocolTVLsAndTotal(context.Background())
+	if !stale || !tvls["soroswap"].Stale || tvls["aquarius"].Stale || total == nil || !total.Stale {
+		t.Errorf("stale=%v soroswap=%v aquarius=%v total=%+v", stale, tvls["soroswap"].Stale, tvls["aquarius"].Stale, total)
+	}
+
+	src.LakeWatermark = &stubWatermark{err: context.DeadlineExceeded}
+	c = NewDEXTVLCache(src)
+	if err := c.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if v, _ := c.Protocol("soroswap"); !v.TVL.Stale {
+		t.Error("a figure read with no watermark answer was published as current")
+	}
+}
+
 // TestBuildProtocolView_UnreadEventsAreAbsent: no count map means no count, never a zero.
 func TestBuildProtocolView_UnreadEventsAreAbsent(t *testing.T) {
 	meta, ok := protocolByName("soroswap")

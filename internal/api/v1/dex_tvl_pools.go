@@ -243,7 +243,7 @@ func (s *Server) handleProtocolTVL(w http.ResponseWriter, r *http.Request) {
 	}
 	snap, ok := s.DEXTVL.Protocol(meta.Name)
 	if !ok {
-		if reason, down := s.DEXTVL.Unavailable(meta.Name); down {
+		if reason, down := s.DEXTVL.Unavailable(meta.Name); down && reason != dexTVLUnavailableNotWired {
 			writeProblem(w, r,
 				"https://api.stellarindex.io/errors/protocol-tvl-not-derived",
 				"No TVL figure for this protocol this cycle", http.StatusNotFound,

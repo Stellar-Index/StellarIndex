@@ -110,6 +110,8 @@ type DEXTVLSources struct {
 	CometPools []string
 	// CometReserves is the lake current-record-state reader.
 	CometReserves CometTVLReserveReader
+	// LakeWatermark lets a refresh record that it read from a lake that was behind. Optional.
+	LakeWatermark LakeWatermarkReader
 	// Pricer resolves reserve legs to USD; nil leaves every leg unpriced (and the snapshot says so).
 	Pricer TVLUSDPricer
 	// PegInfo short-circuits operator-declared USD pegs to $1 at their real decimals. Optional.
@@ -135,6 +137,15 @@ type DEXTVLCache struct {
 	total       *DEXTVLTotalView
 	fetchedAt   time.Time
 	src         DEXTVLSources
+}
+
+// lakeStaleAtRead reports whether the lake is behind as this cycle reads it; a failed watermark read counts as behind.
+func (c *DEXTVLCache) lakeStaleAtRead(ctx context.Context, now time.Time) bool {
+	if c.src.LakeWatermark == nil {
+		return false
+	}
+	ledger, closedAt, err := c.src.LakeWatermark.LakeWatermark(ctx)
+	return err != nil || ledger == 0 || now.Sub(closedAt) > lakeStaleThreshold
 }
 
 // NewDEXTVLCache constructs an empty cache; production calls Refresh at startup, then every DEXTVLRefreshInterval.
@@ -217,6 +228,8 @@ func (c *DEXTVLCache) Refresh(ctx context.Context) error {
 	next := make(map[string]ProtocolTVLView, 4)
 	nextPools := make(map[string][]DEXTVLPoolView, 4)
 	prev, _ := c.Snapshot()
+	// Read before the reserves, so a fresh verdict cannot cover reserves older than it.
+	lakeStale := c.lakeStaleAtRead(ctx, now)
 	var errs []error
 	// carried names protocols serving a PREVIOUS cycle's figure. It is tracked explicitly, not
 	// inferred from as_of: RFC3339 is second-resolution, so two refreshes can share a stamp.
@@ -244,6 +257,9 @@ func (c *DEXTVLCache) Refresh(ctx context.Context) error {
 			carriedSet[p.name] = true
 			nextPools[p.name] = c.prevPools(p.name)
 		case res != nil:
+			if lakeStale && dexTVLLakeDerived[p.name] {
+				res.view.Stale = true
+			}
 			next[p.name] = res.view
 			nextPools[p.name] = res.pools
 		default:

@@ -611,14 +611,22 @@ func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 	if stale {
 		view = staleProtocolDetail(view)
 	}
+	// The cached view predates a later failed reserve read or lake stall, so the figure and its
+	// stale mark are read per request.
+	if tvls, _, _ := s.protocolTVLsAndTotal(ctx); view.TVL != nil {
+		if t, ok := tvls[view.Name]; ok {
+			view.TVL = &t
+		}
+	}
+	tvlStale := view.TVL != nil && view.TVL.Stale
 	// The flag tracks the ANALYTICS status, not just entry age: analytics.status="stale" always
 	// travels with flags.stale (openapi contract).
-	staleFlag := stale || view.verdictsStale || (view.TVL != nil && view.TVL.Stale) ||
+	staleFlag := stale || view.verdictsStale || tvlStale ||
 		(view.Analytics != nil && view.Analytics.Status == protocolAnalyticsStale)
 
 	w.Header().Set("Cache-Control", "public, max-age=60")
 	// A stale or partial view is replaced by the next rebuild; verdictsStale alone stays cacheable.
-	degraded := stale || (view.Analytics != nil && view.Analytics.Status != protocolAnalyticsOK)
+	degraded := stale || tvlStale || (view.Analytics != nil && view.Analytics.Status != protocolAnalyticsOK)
 	// as_of is the build time, so a re-served entry replays byte-identical.
 	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(builtAt.UTC()), Flags: Flags{Stale: staleFlag, Degraded: degraded}})
 }
@@ -1074,7 +1082,8 @@ func (s *Server) protocolTVLsAndTotal(ctx context.Context) (tvls map[string]Prot
 }
 
 // markLakeStaleTVL returns copies (the cached snapshot is shared) with stale set on lake-derived
-// figures and on a total that sums one, and reports whether any figure is stale.
+// figures when the lake is behind now, and on a total that sums a stale figure (one read from a
+// lake that was behind keeps its mark); it reports whether any figure is stale.
 func markLakeStaleTVL(snap map[string]ProtocolTVLView, total *DEXTVLTotalView, lakeStale bool) (map[string]ProtocolTVLView, *DEXTVLTotalView, bool) {
 	anyStale := false
 	out := make(map[string]ProtocolTVLView, len(snap))
@@ -1085,11 +1094,11 @@ func markLakeStaleTVL(snap map[string]ProtocolTVLView, total *DEXTVLTotalView, l
 		anyStale = anyStale || v.Stale
 		out[name] = v
 	}
-	if total == nil || !lakeStale {
+	if total == nil {
 		return out, total, anyStale
 	}
 	for _, name := range total.Protocols {
-		if dexTVLLakeDerived[name] {
+		if out[name].Stale {
 			t := *total
 			t.Stale = true
 			return out, &t, true
