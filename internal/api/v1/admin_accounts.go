@@ -210,12 +210,11 @@ func (s *Server) handleAdminAccountOverrides(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	priorTier := beforeAcct.Tier
 	priorStatus := beforeAcct.Status
 	priorRateOverride := beforeAcct.RateLimitPerMinOverride
 	priorQuotaOverride := beforeAcct.MonthlyRequestQuotaOverride
 
-	clamped, clampFailed := s.clampKeysAfterTierChange(r.Context(), subject, priorTier, acct)
+	clamped, clampFailed := s.clampKeysAfterTierChange(r.Context(), subject, beforeAcct, acct)
 	evicted, evictFailed := s.evictKeyCacheOnEnforcementChange(
 		r.Context(), subject, priorStatus, priorRateOverride, priorQuotaOverride, acct)
 	revoked, revokeFailed := s.revokeKeysOnClosure(r.Context(), subject, acct)
@@ -335,18 +334,24 @@ func (s *Server) revokeSessionsOnClosure(ctx context.Context, acct platform.Acco
 	return users, failed
 }
 
-// clampKeysAfterTierChange lowers every key to the new tier's budgets when a PATCH LOWERED the tier, since the enforced rate
+// keyQuotaCeiling is the most any one key of a may be allowed per month: the tier's ceiling, or a larger staff override.
+func keyQuotaCeiling(a platform.Account) int64 {
+	return max(a.Tier.MaxMonthlyQuota(), a.MonthlyRequestQuotaOverride)
+}
+
+// clampKeysAfterTierChange lowers every key to the account's budgets when a PATCH LOWERED them, since the enforced rate
 // limit and monthly quota are read off the key record, not accounts.tier. Raises are not mirrored. The account-level
-// overrides are NOT clamped: they are explicit, audited fields of the same request, and a set quota override already
-// caps every key at auth time, so the per-key quota is left to it.
+// overrides are NOT clamped: they are explicit, audited fields of the same request. A quota override above the tier's
+// ceiling is honoured as the ceiling, so the clamp also runs when that override is lowered or cleared.
 func (s *Server) clampKeysAfterTierChange(
-	ctx context.Context, subject auth.Subject, priorTier platform.Tier, acct platform.Account,
+	ctx context.Context, subject auth.Subject, before, acct platform.Account,
 ) (lowered, failed int) {
+	priorTier := before.Tier
 	var ceiling keyCeilings
 	if rate := acct.Tier.MaxRateLimitPerMin(); rate < priorTier.MaxRateLimitPerMin() {
 		ceiling.rate = rate
 	}
-	if quota := acct.Tier.MaxMonthlyQuota(); quota < priorTier.MaxMonthlyQuota() && acct.MonthlyRequestQuotaOverride <= 0 {
+	if quota := keyQuotaCeiling(acct); quota < keyQuotaCeiling(before) {
 		ceiling.quota = quota
 	}
 	if ceiling == (keyCeilings{}) {

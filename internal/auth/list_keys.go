@@ -274,7 +274,7 @@ func (s *RedisAPIKeyStore) buildKeyIndexLocked(ctx context.Context, gen string) 
 // Deleting, not just clearing `ready`, is what reclaims the pointers of records that aged out: the hash has no TTL, so
 // nothing else ever frees them.
 func (s *RedisAPIKeyStore) InvalidateKeyIndex(ctx context.Context) error {
-	err := s.rdb.Del(ctx, cachekeys.APIKeyIndex().String()).Err()
+	err := s.rdb.Unlink(ctx, cachekeys.APIKeyIndex().String()).Err()
 	if err != nil && !isRedisNoPerm(err) {
 		return fmt.Errorf("auth: InvalidateKeyIndex: %w", err)
 	}
