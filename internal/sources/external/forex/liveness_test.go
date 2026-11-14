@@ -163,6 +163,8 @@ func TestPersistSnapshot_carriedHistoryWithoutCurrentDoesNotStamp(t *testing.T) 
 	w := &Worker{writer: fake, logger: discardLogger()}
 	now := time.Now().UTC()
 	history := map[string][]HistoryPoint{"EUR": {
+		{Date: now.AddDate(0, 0, -4), RateUSD: 0.918},
+		{Date: now.AddDate(0, 0, -3), RateUSD: 0.919},
 		{Date: now.AddDate(0, 0, -2), RateUSD: 0.92},
 		{Date: now.AddDate(0, 0, -1), RateUSD: 0.921},
 	}}
@@ -599,31 +601,34 @@ func TestPersistSnapshot_HistoryRowRejectsBadBar(t *testing.T) {
 	}
 }
 
-// TestPersistSnapshot_HistoryRowNoBaselineBootstraps pins that with no current-rate baseline the history band
-// bootstraps, as acceptRate does, rather than dropping legitimate history.
-func TestPersistSnapshot_HistoryRowNoBaselineBootstraps(t *testing.T) {
+// TestPersistSnapshot_HistoryNoBaselineIsBandedAgainstItsOwnSeries: a ticker off today's board has no current-rate baseline, and a
+// stored bar is never rewritten, so its history is banded against the series median and a series too short to have one is held.
+func TestPersistSnapshot_HistoryNoBaselineIsBandedAgainstItsOwnSeries(t *testing.T) {
 	w, cw := bandTestWorker(io.Discard)
-	ctx := context.Background()
-
 	today := time.Date(2026, 7, 26, 0, 0, 0, 0, time.UTC)
-	yesterday := today.Add(-24 * time.Hour)
+	day := func(n int) time.Time { return today.AddDate(0, 0, -n) }
 
-	// No current rate for MXN — only a history point.
 	snap := snapshotWithHistory(
 		map[string]float64{},
 		map[string][]HistoryPoint{
-			"MXN": {{Date: yesterday, RateUSD: 18.5}},
+			"MXN": {{Date: day(5), RateUSD: 18.4}, {Date: day(4), RateUSD: 18.5}, {Date: day(3), RateUSD: 1850}, {Date: day(2), RateUSD: 18.6}, {Date: day(1), RateUSD: 18.5}},
+			"ARS": {{Date: day(1), RateUSD: 1400}},
 		},
 	)
-	w.persistSnapshot(ctx, snap)
+	w.persistSnapshot(context.Background(), snap)
 
 	if len(cw.batches) != 1 {
 		t.Fatalf("expected 1 persisted batch, got %d", len(cw.batches))
 	}
-	if !hasHistoryRow(cw.batches[0], "MXN", yesterday, 18.5) {
-		t.Errorf("first-sighting history bar MXN@%s=18.5 was dropped, want it "+
-			"bootstrapped — no baseline must accept, not block",
-			yesterday.Format("2006-01-02"))
+	batch := cw.batches[0]
+	if !hasHistoryRow(batch, "MXN", day(4), 18.5) || !hasHistoryRow(batch, "MXN", day(1), 18.5) {
+		t.Errorf("in-band MXN bars were dropped; batch=%v", batch)
+	}
+	if hasHistoryRow(batch, "MXN", day(3), 1850) {
+		t.Error("decimal-shifted MXN bar was persisted with no baseline to refuse it")
+	}
+	if hasHistoryRow(batch, "ARS", day(1), 1400) {
+		t.Error("a lone bar with no reference at all was persisted")
 	}
 }
 

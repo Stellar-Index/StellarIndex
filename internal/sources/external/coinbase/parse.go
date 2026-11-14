@@ -18,7 +18,7 @@ const externalAmountDecimals = 8
 // on the wire: no float conversions.
 type matchPayload struct {
 	Type         string `json:"type"`
-	TradeID      int64  `json:"trade_id"`
+	TradeID      *int64 `json:"trade_id"` // a pointer so an absent field is not id 0
 	MakerOrderID string `json:"maker_order_id"`
 	TakerOrderID string `json:"taker_order_id"`
 	Side         string `json:"side"`       // "buy" | "sell"
@@ -108,10 +108,14 @@ func buildTrade(m matchPayload, pairMap map[string]canonical.Pair) (canonical.Tr
 		return canonical.Trade{}, fmt.Errorf("%w: time %q: %w", ErrMalformedFrame, m.Time, err)
 	}
 
+	if m.TradeID == nil {
+		return canonical.Trade{}, fmt.Errorf("%w: missing trade_id", ErrMalformedFrame)
+	}
+
 	return canonical.Trade{
 		Source:      SourceName,
 		Ledger:      0,
-		TxHash:      formatTxHash(m.ProductID, m.TradeID),
+		TxHash:      formatTxHash(m.ProductID, *m.TradeID),
 		OpIndex:     0,
 		Timestamp:   ts.UTC(),
 		Pair:        pair,

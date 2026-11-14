@@ -73,15 +73,19 @@ func backfillOHLC(ctx context.Context, endpoint, symbol string, pair canonical.P
 		if err != nil {
 			return nil, fmt.Errorf("bitstamp.Backfill: %w", err)
 		}
-		if len(candles) == 0 {
-			break
+		// A page is the window [start, start+limit*step), not the next `limit` candles: a short or
+		// empty page means candles are missing from that window (before listing, an outage), not
+		// that the data ended. Walk on from the window's end; only the present ends the walk.
+		windowEnd := startSec + limit*step
+		if len(candles) > 0 {
+			lastTs, err := appendPageTrades(&out, candles, symbol, pair, startSec, stepSec, time.Unix(endSec, 0), now)
+			if err != nil {
+				return nil, err
+			}
+			windowEnd = max(windowEnd, lastTs+step)
 		}
-		lastTs, err := appendPageTrades(&out, candles, symbol, pair, startSec, stepSec, time.Unix(endSec, 0), now)
-		if err != nil {
-			return nil, err
-		}
-		startSec = lastTs + step
-		if int64(len(candles)) < limit {
+		startSec = windowEnd
+		if startSec > now.Unix() {
 			break
 		}
 	}

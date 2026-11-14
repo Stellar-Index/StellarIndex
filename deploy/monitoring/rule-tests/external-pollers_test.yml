@@ -82,3 +82,83 @@ tests:
                 `non_finite` mean the feed is emitting garbage fields. Grep
                 the API logs for "forex: rejected upstream rate" (or
                 "pending confirmation refuted") to get the ticker(s).
+
+  # ── Primary down behind a healthy standby ────────────────────────
+  # The standby stamps the shared liveness gauge, so feed_stale stays
+  # quiet. The gauge holds a unix time: the standby's advances with the
+  # clock, the primary's froze at t=0. The gap passes 6h at 360m and has
+  # held for 2h by 481m.
+  - interval: 1m
+    name: a primary that stopped committing tickets while the standby serves
+    input_series:
+      - series: 'stellarindex_external_fx_last_quote_unix{job="stellarindex_api",instance="r1:3000",source="ecb"}'
+        values: '0+60x600'
+      - series: 'stellarindex_external_fx_last_quote_unix{job="stellarindex_api",instance="r1:3000",source="massive"}'
+        values: '0+0x600'
+    alert_rule_test:
+      - eval_time: 470m
+        alertname: stellarindex_external_fx_primary_down
+        exp_alerts: []
+      - eval_time: 490m
+        alertname: stellarindex_external_fx_feed_stale
+        exp_alerts: []
+      - eval_time: 490m
+        alertname: stellarindex_external_fx_primary_down
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: external-poller
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_external_fx_primary_down
+              summary: "(P3) fiat-FX is served from a standby; the primary feed has committed nothing for 6+ h"
+              description: |
+                A standby FX source has committed rates more than 6 h newer
+                than the primary (`massive`), for 2 h. Currencies the standby
+                publishes stay fresh. Currencies only the primary publishes
+                are served as held rates and leave the cache and the fx_quotes
+                snap after 7 days, when their fiat-quoted prices go dark.
+                Likely cause: a lapsed subscription or a bad MASSIVE_API_KEY
+                (401/403 on every refresh).
+
+  - interval: 1m
+    name: a primary committing alongside the standby is silent
+    input_series:
+      - series: 'stellarindex_external_fx_last_quote_unix{job="stellarindex_api",instance="r1:3000",source="ecb"}'
+        values: '0+60x600'
+      - series: 'stellarindex_external_fx_last_quote_unix{job="stellarindex_api",instance="r1:3000",source="massive"}'
+        values: '0+60x600'
+    alert_rule_test:
+      - eval_time: 590m
+        alertname: stellarindex_external_fx_primary_down
+        exp_alerts: []
+
+  # A primary that has not committed since the API started has no series
+  # at all; the standby's stamp is then compared with zero.
+  - interval: 1m
+    name: a primary that never committed since boot tickets after two hours
+    input_series:
+      - series: 'stellarindex_external_fx_last_quote_unix{job="stellarindex_api",instance="r1:3000",source="ecb"}'
+        values: '1000000+60x300'
+    alert_rule_test:
+      - eval_time: 110m
+        alertname: stellarindex_external_fx_primary_down
+        exp_alerts: []
+      - eval_time: 130m
+        alertname: stellarindex_external_fx_primary_down
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: external-poller
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_external_fx_primary_down
+              summary: "(P3) fiat-FX is served from a standby; the primary feed has committed nothing for 6+ h"
+              description: |
+                A standby FX source has committed rates more than 6 h newer
+                than the primary (`massive`), for 2 h. Currencies the standby
+                publishes stay fresh. Currencies only the primary publishes
+                are served as held rates and leave the cache and the fx_quotes
+                snap after 7 days, when their fiat-quoted prices go dark.
+                Likely cause: a lapsed subscription or a bad MASSIVE_API_KEY
+                (401/403 on every refresh).

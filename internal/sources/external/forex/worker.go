@@ -281,7 +281,13 @@ func (w *Worker) refreshOnce(ctx context.Context) {
 	// the confirm veto need the bars the band REFUSED, while the served snapshot carries only
 	// admitted ones.
 	if w.shouldRefreshHistory(w.rawHistory, publishedAt) {
-		w.rawHistory = w.fetchHistory(ctx, names, publishedAt)
+		// A refetch that returned nothing is a failed fetch: keep the held series, which the heal
+		// and the confirm veto read, and try again next refresh.
+		if fetched := w.fetchHistory(ctx, names, publishedAt); len(fetched) > 0 || len(w.rawHistory) == 0 {
+			w.rawHistory = fetched
+		} else {
+			w.logger.Warn("forex: history refetch returned nothing — keeping the held series", "tickers", len(w.rawHistory))
+		}
 	}
 
 	// GUARD FIRST, INSTALL SECOND: only what the band clears reaches the cache that /v1/price's fiat
@@ -453,8 +459,23 @@ func (w *Worker) guardSnapshot(snap *Snapshot) guardResult {
 		})
 	}
 	for ticker, points := range snap.History7d {
+		// With no accepted current rate the only reference for a past bar is its own series, and an
+		// fx_quotes row is never rewritten by a later refusal: band against the series median, and
+		// hold a series too short to have one until the ticker has a baseline.
+		ownMedian, hasBaseline := 0.0, true
+		if g, ok := w.guards[ticker]; !ok || g.lastAccepted <= 0 {
+			hasBaseline = false
+			if ownMedian, ok = historyMedian(points); !ok {
+				continue
+			}
+		}
 		var rejected []HistoryPoint
 		for _, p := range points {
+			if !hasBaseline && !withinBand(p.RateUSD, ownMedian) {
+				w.logger.Warn("forex: history bar refused against its own series — ticker has no current rate",
+					"ticker", ticker, "date", p.Date.Format("2006-01-02"), "rate", p.RateUSD, "series_median", ownMedian)
+				continue
+			}
 			if !w.acceptHistoryRate(ticker, p.RateUSD) {
 				rejected = append(rejected, p)
 				continue
@@ -719,6 +740,21 @@ func (w *Worker) rejectRate(ticker string, rate, previous float64, reason string
 // guarantees positive.
 func withinBand(rate, baseline float64) bool {
 	return math.Abs(rate-baseline)/baseline <= maxRateDeviation
+}
+
+// historyMedian is the median of a series' usable rates, and false below [historyHealMinBars] of them.
+func historyMedian(points []HistoryPoint) (float64, bool) {
+	rates := make([]float64, 0, len(points))
+	for _, p := range points {
+		if p.RateUSD > 0 && isFiniteFloat(p.RateUSD) {
+			rates = append(rates, p.RateUSD)
+		}
+	}
+	if len(rates) < historyHealMinBars {
+		return 0, false
+	}
+	sort.Float64s(rates)
+	return rates[len(rates)/2], true
 }
 
 // historyMajority reports the median of a rejected history series and whether it is heal-grade: at least [historyHealMinBars] bars, all
