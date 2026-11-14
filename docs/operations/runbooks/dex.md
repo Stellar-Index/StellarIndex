@@ -58,7 +58,7 @@ Raw skew: served = true * 10^(7-decimals) when the asset is the BASE leg, true *
 
 1. Cache failures: restore API-to-Postgres connectivity; refresh resumes from the last-good snapshot. Missing table: run the migrator.
 2. Decline regression: roll back or fix the call site; the counter stops rising.
-3. New token not corrected yet: restart the aggregator (the startup backfill scans 90 days, `decimalsguard.DefaultBackfillWindow`), or hand-seed (needed when the last trade is older than 90 days or ClickHouse was down at start; the API cache picks it up within 60 s, no restart):
+3. New token not corrected yet: wait for the next re-enumeration (every 6 h, and at aggregator start; it scans 90 days, `decimalsguard.DefaultBackfillWindow`), or hand-seed (needed when the last trade is older than 90 days or ClickHouse was down at start; the API cache picks it up within 60 s, no restart):
 
 ```sql
 INSERT INTO nonstandard_decimals_assets (asset, decimals, source, confirmed_at)
