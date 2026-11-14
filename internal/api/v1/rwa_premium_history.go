@@ -705,19 +705,29 @@ func rwaPremiumJoin(
 		// per the reference-only bound below.
 		return out
 	}
-	var trailing []*big.Rat // newest first: earlier days that cleared the floor
+	var (
+		trailing     []*big.Rat // newest first: earlier days that cleared the floor
+		trailingDays []time.Time
+	)
 	for _, d := range market {
 		if !rwaPremiumDayClears(d, floor) {
 			out.withheld = append(out.withheld, d.Day)
 			continue
 		}
+		// A market that last traded long ago says little about today's price; past the age bound the published value is the centre.
+		fresh := len(trailing)
+		for fresh > 0 && d.Day.Sub(trailingDays[fresh-1]) > rwaPremiumTrailingMaxAge {
+			fresh--
+		}
+		trailing, trailingDays = trailing[:fresh], trailingDays[:fresh]
 		price, priced := new(big.Rat).SetString(d.VWAP)
 		offMarket := priced && rwaPremiumDayOffMarket(price, trailing, ref.days[d.Day])
 		if priced && price.Sign() > 0 {
 			// Refused days stay in the baseline, so a lasting repricing becomes the centre instead of being refused forever.
 			trailing = append([]*big.Rat{price}, trailing...)
+			trailingDays = append([]time.Time{d.Day}, trailingDays...)
 			if len(trailing) > rwaPremiumTrailingDays {
-				trailing = trailing[:rwaPremiumTrailingDays]
+				trailing, trailingDays = trailing[:rwaPremiumTrailingDays], trailingDays[:rwaPremiumTrailingDays]
 			}
 		}
 		if offMarket {
@@ -745,6 +755,9 @@ func rwaPremiumJoin(
 
 // rwaPremiumTrailingDays is how many earlier floor-clearing days a day's price is judged against.
 const rwaPremiumTrailingDays = 14
+
+// rwaPremiumTrailingMaxAge is how old an earlier day may be and still count toward that baseline.
+const rwaPremiumTrailingMaxAge = 30 * 24 * time.Hour
 
 // rwaPremiumDayOffMarket judges a day's price with the served-price band ([robuststat.GuardServedVWAP]) against the market's own
 // earlier days, so a day the floor let through cannot publish a premium the live price path would refuse. With no earlier day the

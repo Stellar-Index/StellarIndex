@@ -263,3 +263,51 @@ func (r *pairKeyedMarketsReader) PairMarket(_ context.Context, base, quote canon
 	m, ok := r.byPair[base.String()+"/"+quote.String()]
 	return m, ok, nil
 }
+
+// TestPairs_NewestSpellingWithoutAPriceServesNone — the newest trade sets the timestamp, so an older spelling's price
+// beside it would be read as that trade's.
+func TestPairs_NewestSpellingWithoutAPriceServesNone(t *testing.T) {
+	usdc, err := canonical.ParseAsset(w2t2USDC)
+	if err != nil {
+		t.Fatalf("parse USDC: %v", err)
+	}
+	native, err := canonical.ParseAsset("native")
+	if err != nil {
+		t.Fatalf("parse native: %v", err)
+	}
+	xlm := canonical.AssetAliases(native)
+	sac := xlm[len(xlm)-1]
+	older := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	newer := older.Add(19 * time.Hour)
+	oldPx := "0.1600000000"
+	reader := &pairKeyedMarketsReader{
+		byPair: map[string]v1.Market{
+			"native/" + usdc.String(): {
+				Base: "native", Quote: usdc.String(), TradeCount24h: 7,
+				LastTradeAt: v1.WireTime(older), LastPrice: &oldPx,
+			},
+			sac.String() + "/" + usdc.String(): {
+				Base: sac.String(), Quote: usdc.String(), TradeCount24h: 3,
+				LastTradeAt: v1.WireTime(newer),
+			},
+		},
+	}
+	srv := v1.New(v1.Options{Markets: reader})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/pairs?base=native&quote="+usdc.String())
+	var body struct {
+		Data []v1.Market `json:"data"`
+	}
+	mustDecode(t, resp, &body)
+	if len(body.Data) != 1 {
+		t.Fatalf("want 1 market, got %d", len(body.Data))
+	}
+	got := body.Data[0]
+	if !got.LastTradeAt.Time().Equal(newer) || got.TradeCount24h != 10 {
+		t.Errorf("row = %d trades, last %s; want 10 trades, last %s", got.TradeCount24h, got.LastTradeAt, newer)
+	}
+	if got.LastPrice != nil {
+		t.Errorf("last price = %s beside a trade 19h newer than the one that set it", *got.LastPrice)
+	}
+}

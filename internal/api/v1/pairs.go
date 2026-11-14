@@ -148,17 +148,13 @@ func pairSeen(seen []canonical.Pair, p canonical.Pair) bool {
 }
 
 // foldPairSpelling adds another stored spelling of the same market into dst: counts and volume sum, and the newer trade's
-// timestamp and price win (an older spelling's price is kept only when the newer one has none).
+// timestamp and price win together. A newer trade with no usable price leaves the price absent: an older spelling's price
+// beside it would read as that trade's.
 func foldPairSpelling(dst *Market, m Market) {
 	dst.TradeCount24h += m.TradeCount24h
 	dst.Volume24hUSD = addDecimalStrings(dst.Volume24hUSD, m.Volume24hUSD)
 	dst.VolumeLowerBound = dst.VolumeLowerBound || m.VolumeLowerBound
 	if m.LastTradeAt.After(dst.LastTradeAt) {
-		dst.LastTradeAt, dst.BucketCloseAt = m.LastTradeAt, m.BucketCloseAt
-		if m.LastPrice != nil {
-			dst.LastPrice = m.LastPrice
-		}
-	} else if dst.LastPrice == nil {
-		dst.LastPrice = m.LastPrice
+		dst.LastTradeAt, dst.BucketCloseAt, dst.LastPrice = m.LastTradeAt, m.BucketCloseAt, m.LastPrice
 	}
 }

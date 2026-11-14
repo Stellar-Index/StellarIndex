@@ -3394,12 +3394,10 @@ export interface paths {
          *     silently dropped.
          *
          *     The floor measures substance, not price, so the price is held
-         *     to the served-price band as well. An hour priced more than 3x
-         *     off the day's median hour is left out of that day, along with
-         *     its volume. A day whose price falls outside the band around the
-         *     market's own preceding days (around the published value when
-         *     there is no preceding day) is counted in
-         *     `market_withheld_days` too.
+         *     to the served-price band as well. A day whose price falls
+         *     outside the band around the market's own days of the preceding
+         *     30 (around the published value when there is none) is counted
+         *     in `market_withheld_days` too.
          *
          *     The floor is not, and cannot be, the live gate: that one
          *     measures a trailing 24 hours ending now. So an asset may carry a

@@ -58,7 +58,7 @@ func TestMarketDayFamilies_BindsSACSpellingOntoMember(t *testing.T) {
 // double-count an hour traded under both.
 func TestDailyMarketDaysQueryGroupsByMember(t *testing.T) {
 	q := dailyMarketDaysQuery
-	if !strings.Contains(q, "GROUP BY hours.day, hours.member") {
+	if !strings.Contains(q, "GROUP BY day, member") {
 		t.Error("query must group by the alias family's member key")
 	}
 	if strings.Contains(q, "GROUP BY day, base_asset") {
@@ -81,22 +81,5 @@ func TestDailyMarketDaysQueryReadsBothOrientations(t *testing.T) {
 	}
 	if n := strings.Count(q, "bucket <= now() - INTERVAL '1 hour'"); n != 2 {
 		t.Errorf("closed-bucket guard appears %d time(s), want one per orientation", n)
-	}
-}
-
-// TestDailyMarketDaysQueryLeavesOutOffMarketHours: the day is built from hours inside the ratio band around its median hour, and the
-// centre stays exact (percentile_cont would make it a double).
-func TestDailyMarketDaysQueryLeavesOutOffMarketHours(t *testing.T) {
-	q := dailyMarketDaysQuery
-	for _, want := range []string{
-		"percentile_disc(0.5) WITHIN GROUP (ORDER BY usd_leg / asset_leg)",
-		"BETWEEN centre.mid / 3 AND centre.mid * 3",
-	} {
-		if !strings.Contains(q, want) {
-			t.Errorf("query lacks %q", want)
-		}
-	}
-	if strings.Contains(q, "percentile_cont") {
-		t.Error("percentile_cont returns double precision: the band centre must stay NUMERIC")
 	}
 }

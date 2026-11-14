@@ -125,3 +125,21 @@ func TestDailyMarketDaysHasOneGuardedCaller(t *testing.T) {
 		t.Fatal("found no DailyMarketDays caller: the scan is not reading the sources")
 	}
 }
+
+// TestRWAPremiumJoin_AStaleBaselineGivesWayToThePublishedValue: days older than the age bound are no centre for today, so a
+// market that comes back at the published value is not refused for being far from what it traded at two months ago.
+func TestRWAPremiumJoin_AStaleBaselineGivesWayToThePublishedValue(t *testing.T) {
+	market := []timescale.MarketDay{}
+	for d := 1; d <= 6; d++ {
+		market = append(market, premGoodDay(d, "0.30"))
+	}
+	market = append(market, premGoodDay(60, "1.08"), premGoodDay(61, "12.00"))
+
+	got := rwaPremiumJoin(premCand(), premRefDays(61), market, premDefaultFloor())
+	if !premPublished(got, 60) {
+		t.Errorf("day 60 at the published value was refused against days 54+ days old; withheld = %v", got.withheld)
+	}
+	if premPublished(got, 61) {
+		t.Error("day 61 published 11x off the only fresh day before it")
+	}
+}

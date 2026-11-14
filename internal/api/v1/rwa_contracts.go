@@ -433,6 +433,7 @@ func (s *Server) fillContractMarketCaps(
 			return true
 		}
 		if !ok {
+			row.MarketCapUSD = nil // no reading of this contract's own supply: a cap from another basis does not stand in
 			continue
 		}
 		_, isScaled := scaled[row.AssetID]
