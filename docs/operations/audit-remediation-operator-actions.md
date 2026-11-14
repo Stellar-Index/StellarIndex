@@ -56,7 +56,8 @@ of it; on the running host do the ownership flips in this order:
    - `chown root:stellarindex /var/lib/stellarindex && chmod 1770 /var/lib/stellarindex`, then
      `chown stellarindex:stellarindex` the service's own files there (`verify-archive-state.json`,
      `hashdb.bin`, `*.lock`). Never `-R`: root jobs keep state in the subdirectories.
-   - `chown -R stellarindex:stellarindex /var/lib/node_exporter/textfile_collector`
+   - `chown root:stellarindex /var/lib/node_exporter/textfile_collector && chmod 1775 /var/lib/node_exporter/textfile_collector`.
+     Never `-R`: each `.prom` stays owned by the unit that publishes it.
    - `chgrp stellarindex /etc/default/stellarindex /etc/default/stellarindex-ops && chmod 0640 /etc/default/stellarindex /etc/default/stellarindex-ops`
 4. Install the units (`--tags stellarindex`), `systemctl daemon-reload`.
 5. `systemctl start stellarindex-indexer stellarindex-aggregator stellarindex-api`; check
