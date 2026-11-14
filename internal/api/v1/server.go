@@ -1253,7 +1253,7 @@ func loopbackOnly(next http.Handler) http.Handler {
 			return
 		}
 		for _, h := range proxyForwardHeaders {
-			if r.Header.Get(h) != "" {
+			if len(r.Header.Values(h)) > 0 {
 				http.NotFound(w, r)
 				return
 			}

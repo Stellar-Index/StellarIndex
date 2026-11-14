@@ -110,6 +110,8 @@ func rightmostUntrustedForwardedFor(xff string) string {
 			// direct peer rather than trusting a guessed value.
 			return ""
 		}
+		// A proxy on a dual-stack socket reports an IPv4 hop as ::ffff:a.b.c.d, which no IPv4 CIDR contains.
+		addr = addr.Unmap()
 		if requestCameViaTrustedProxy(addr.String()) {
 			continue
 		}

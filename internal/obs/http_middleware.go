@@ -90,7 +90,7 @@ func IsSyntheticRequest(r *http.Request) bool {
 	if !IsSyntheticUA(r.UserAgent()) {
 		return false
 	}
-	if r.Header.Get("X-Forwarded-For") != "" {
+	if len(r.Header.Values("X-Forwarded-For")) > 0 {
 		return false
 	}
 	return isLoopbackRemoteAddr(r.RemoteAddr)
