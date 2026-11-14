@@ -411,6 +411,10 @@ type Orchestrator struct {
 	// In-memory is the working copy; the first evaluation after a restart re-hydrates from the marker so a deploy doesn't restart the escalation clock. Lock-free as prevVWAPs.
 	freezeStates map[string]freeze.State
 
+	// markerUnwritten holds the keys whose last marker write failed. An absent marker is the operator override only if a
+	// marker was written, so these keys skip that reading until a write lands. Lock-free as freezeStates.
+	markerUnwritten map[string]struct{}
+
 	// bootstrapReleased is each pair's last bootstrap-cap gate state (true once its score cleared the cap), the prior state for the hysteresis band ([confidence.BootstrapReengageDensityDays]).
 	// In-memory only, so a restart falls back to the stricter upper gate; same invariant as prevVWAPs.
 	bootstrapReleased map[string]bool
@@ -473,6 +477,7 @@ func New(store Store, cache Cache, cfg Config) *Orchestrator {
 		lastWriteAt:       make(map[string]time.Time, len(cfg.Pairs)),
 		lastComposites:    make(map[string]compositeSample, len(cfg.Triangulations)*max(len(cfg.Windows), 1)),
 		freezeStates:      make(map[string]freeze.State, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
+		markerUnwritten:   make(map[string]struct{}),
 		bootstrapReleased: make(map[string]bool, len(cfg.Pairs)),
 		decidedBuckets:    make(map[string]decidedBucket, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
 		refreshOrder:      refreshOrder(cfg),

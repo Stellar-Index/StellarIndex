@@ -922,10 +922,16 @@ type SupplyLockedSetConfig struct {
 
 // Validate reports supply-block inconsistencies: bad G-strkeys, a refresh cadence under 30s, empty entries, and FullyWrappedSACs or per-asset keys not resolving to exactly one watched asset (XLM rejected).
 func (sc SupplyConfig) Validate() error {
+	// A repeated reserve account would be subtracted from circulating supply once per entry.
+	seenReserve := make(map[string]int, len(sc.SDFReserveAccounts))
 	for i, acc := range sc.SDFReserveAccounts {
 		if !canonical.IsAccountID(acc) {
 			return fmt.Errorf("supply: sdf_reserve_accounts[%d] %q is not a valid G-strkey", i, acc)
 		}
+		if first, dup := seenReserve[acc]; dup {
+			return fmt.Errorf("supply: sdf_reserve_accounts[%d] %q repeats sdf_reserve_accounts[%d]", i, acc, first)
+		}
+		seenReserve[acc] = i
 	}
 	if sc.AggregatorRefreshEnabled && sc.AggregatorRefreshCadence < 30*time.Second {
 		return fmt.Errorf("supply: aggregator_refresh_cadence %v < 30s minimum", sc.AggregatorRefreshCadence)

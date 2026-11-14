@@ -266,7 +266,7 @@ func (o *Orchestrator) loadFreezeState(
 		return st, false, nil
 	}
 
-	if st.Active() {
+	if _, unwritten := o.markerUnwritten[stateKey]; st.Active() && !unwritten {
 		if _, ok, err := o.cfg.FreezeWriter.LoadState(ctx, pair.Base, pair.Quote); err == nil && !ok {
 			return st, true, nil
 		}
@@ -331,11 +331,14 @@ func (o *Orchestrator) engageFreeze(
 	// Record the ladder against the window that owns it: the marker is pair-scoped (its presence is the pair-wide flags.frozen) but the lifecycle in it is this window's alone, and a cold sibling would otherwise adopt it ([WindowedFreezeMarker]).
 	if err := o.markHoldForWindow(ctx, pair, window,
 		frozenValue, decision, out.State, out.MarkerTTL); err != nil {
+		o.markerUnwritten[stateKey] = struct{}{}
 		o.logger.Warn("freeze marker write failed",
 			"pair", pair.String(), "window", window, "err", err)
 		// Soft-fail: the anomaly was detected but the marker write failed, so the API won't see flags.frozen. Operators alert on
 		// AnomalyFreezeEngagedTotal vs the API-side flag rate (a sustained gap = broken writer). Don't fail the tick.
+		return
 	}
+	delete(o.markerUnwritten, stateKey)
 }
 
 // reseedValueWithCoverageLua sets KEYS[1] to ARGV[1] only if absent and, only
@@ -477,6 +480,7 @@ func (o *Orchestrator) releaseFreeze(
 	}
 
 	mode := "auto"
+	delete(o.markerUnwritten, stateKey)
 	o.freezeStates[stateKey] = freeze.State{}
 	if transition == freeze.TransitionOverridden {
 		mode = o.overrideMode(ctx, pair)

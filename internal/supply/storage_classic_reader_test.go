@@ -614,7 +614,7 @@ func (f *fakeLookup) LatestAccountObservationAtOrBefore(_ context.Context, accou
 	}
 	row, ok := f.rows[accountID]
 	if !ok {
-		return AccountObservationRow{}, errors.New("no observation")
+		return AccountObservationRow{}, ErrNoObservation
 	}
 	return row, nil
 }
@@ -671,16 +671,26 @@ func TestLCMReserveBalanceReader_RemovalCountsAsZero(t *testing.T) {
 	}
 }
 
-// TestLCMReserveBalanceReader_StoreError — a generic storage error (not "not found") still
-// returns wrapped in ErrNoObservation so the caller falls back to static config; the fallback
-// is the same for a transient DB error and a missing row.
-func TestLCMReserveBalanceReader_StoreError(t *testing.T) {
-	r := NewLCMReserveBalanceReader(&fakeLookup{
-		err: errors.New("connection refused"),
-	})
+// A failed read is not "no observation": the chain must not answer an outage from the operator's static balances.
+func TestLCMReserveBalanceReader_StoreErrorIsNotNoObservation(t *testing.T) {
+	down := errors.New("connection refused")
+	r := NewLCMReserveBalanceReader(&fakeLookup{err: down})
 	_, err := r.ReserveBalanceTotal(context.Background(), []string{"GA1"}, 100)
-	if !errors.Is(err, ErrNoObservation) {
-		t.Errorf("err=%v want wrapping ErrNoObservation", err)
+	if !errors.Is(err, down) || errors.Is(err, ErrNoObservation) {
+		t.Errorf("total: err=%v, want the store error and not ErrNoObservation", err)
+	}
+	_, err = r.MinReserveAccountLedger(context.Background(), []string{"GA1"}, 100)
+	if !errors.Is(err, down) || errors.Is(err, ErrNoObservation) {
+		t.Errorf("freshness: err=%v, want the store error and not ErrNoObservation", err)
+	}
+
+	static, serr := NewConfigReserveBalanceReader(map[string]string{"GA1": "7"}, time.Now(), time.Hour)
+	if serr != nil {
+		t.Fatal(serr)
+	}
+	chain := NewChainedReserveBalanceReader(r, static)
+	if got, src, cerr := chain.ReserveBalanceTotalSourced(context.Background(), []string{"GA1"}, 100); !errors.Is(cerr, down) {
+		t.Errorf("chain = (%v, %q, %v), want the store error and no static answer", got, src, cerr)
 	}
 }
 

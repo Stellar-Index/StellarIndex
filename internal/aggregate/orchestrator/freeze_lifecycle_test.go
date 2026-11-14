@@ -1254,3 +1254,34 @@ func assertStamp(t *testing.T, f *freezeFixture, key string, want time.Time, whe
 		t.Errorf("%s: stamp = %s, want %s (the held value's own bucket end)", when, got, want)
 	}
 }
+
+// A marker write that failed leaves no marker. The next bucket must not read that absence as the operator override:
+// the freeze holds, and the write is tried again.
+func TestFreezeLifecycle_FailedMarkerWriteIsNotAnOverride(t *testing.T) {
+	f := newFreezeFixture(t)
+	f.marker.err = errors.New("redis: connection reset")
+	f.feed(t, manipQuoteAmount, "soroswap")
+	f.tick(t, closedBucket)
+	if !f.state().Active() || f.marker.present {
+		t.Fatalf("setup: want a fired freeze with no marker; active=%v present=%v", f.state().Active(), f.marker.present)
+	}
+
+	f.marker.err = nil
+	f.tick(t, closedBucket)
+	if !f.state().Active() {
+		t.Fatal("the freeze was released as an operator override after its own marker write failed")
+	}
+	if got := f.served(t); got != lkgFormatted {
+		t.Errorf("served %q, want the held LKG %q", got, lkgFormatted)
+	}
+	if !f.marker.present {
+		t.Fatal("the marker write was not tried again")
+	}
+
+	// With the marker written, its removal is the operator override again.
+	f.marker.present = false
+	f.tick(t, closedBucket)
+	if f.state().Active() {
+		t.Error("an operator override after the marker landed did not release the freeze")
+	}
+}

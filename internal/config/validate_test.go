@@ -488,6 +488,10 @@ func TestValidate_RejectsWithoutSentinel(t *testing.T) {
 			func(c *config.Config) { c.Supply.SDFReserveAccounts = []string{testReserveAccount, flipped} },
 			"sdf_reserve_accounts[1]",
 		},
+		"sdf reserve account listed twice": {
+			func(c *config.Config) { c.Supply.SDFReserveAccounts = []string{testReserveAccount, testReserveAccount} },
+			"repeats sdf_reserve_accounts[0]",
+		},
 		"watched issuer account malformed": {
 			func(c *config.Config) {
 				c.Metadata.WatchedIssuerAccounts = []string{"GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2", "USDC"}
