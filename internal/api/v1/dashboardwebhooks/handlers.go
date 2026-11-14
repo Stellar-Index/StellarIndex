@@ -270,6 +270,34 @@ type updateRequest struct {
 	Enabled *bool    `json:"enabled,omitempty"`
 }
 
+// applyUpdate validates each supplied field and writes it onto current.
+func applyUpdate(ctx context.Context, req updateRequest, current *platform.CustomerWebhook) error {
+	if req.Name != nil {
+		name := strings.TrimSpace(*req.Name)
+		if err := validateWebhookName(name); err != nil {
+			return err
+		}
+		current.Name = name
+	}
+	if req.URL != nil {
+		u := strings.TrimSpace(*req.URL)
+		if err := validateWebhookURL(ctx, u); err != nil {
+			return err
+		}
+		current.URL = u
+	}
+	if len(req.Events) > 0 {
+		if err := validateEvents(req.Events); err != nil {
+			return err
+		}
+		current.Events = req.Events
+	}
+	if req.Enabled != nil {
+		current.Enabled = *req.Enabled
+	}
+	return nil
+}
+
 // HandleUpdate patches mutable fields; SigningKey and AccountID are immutable here (HandleRotateSecret replaces the key).
 func (h *Handlers) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	sc, ok := dashboardauth.SessionFromContext(r.Context())
@@ -305,31 +333,9 @@ func (h *Handlers) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Name != nil {
-		name := strings.TrimSpace(*req.Name)
-		if err := validateWebhookName(name); err != nil {
-			writeProblem(w, http.StatusBadRequest, err.Error(), r.URL.Path)
-			return
-		}
-		current.Name = name
-	}
-	if req.URL != nil {
-		u := strings.TrimSpace(*req.URL)
-		if err := validateWebhookURL(r.Context(), u); err != nil {
-			writeProblem(w, http.StatusBadRequest, err.Error(), r.URL.Path)
-			return
-		}
-		current.URL = u
-	}
-	if len(req.Events) > 0 {
-		if err := validateEvents(req.Events); err != nil {
-			writeProblem(w, http.StatusBadRequest, err.Error(), r.URL.Path)
-			return
-		}
-		current.Events = req.Events
-	}
-	if req.Enabled != nil {
-		current.Enabled = *req.Enabled
+	if err := applyUpdate(r.Context(), req, &current); err != nil {
+		writeProblem(w, http.StatusBadRequest, err.Error(), r.URL.Path)
+		return
 	}
 
 	if err := h.cfg.Webhooks.UpdateWebhook(r.Context(), current); err != nil {
