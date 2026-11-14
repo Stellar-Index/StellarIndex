@@ -197,15 +197,14 @@ func (s *Server) sep40Serve(ctx context.Context, asset, quote canonical.Asset, r
 		Credit:    creditForSources(rd.sources),
 	}
 	frozen := held.outcome == frozenServeHeld
-	flags := Flags{
-		Stale:          rd.stale,
-		Triangulated:   rd.triangulated,
-		ProxyDeviation: rd.triangulated && s.proxyDeviation(ctx, time.Now().UTC()),
-		Frozen:         frozen,
-		Degraded:       frozen,
-		FrozenChecked:  held.checked,
-		SingleSource:   frozen,
-	}
+	flags := s.withProxyDeviation(ctx, Flags{
+		Stale:         rd.stale,
+		Triangulated:  rd.triangulated,
+		Frozen:        frozen,
+		Degraded:      frozen,
+		FrozenChecked: held.checked,
+		SingleSource:  frozen,
+	}, time.Now().UTC())
 	return out, flags, rd.sources
 }
 

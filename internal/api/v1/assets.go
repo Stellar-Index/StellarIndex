@@ -313,6 +313,8 @@ type AssetDetail struct {
 	// f2ReadFailed: a volume, 24h-change or supply read errored, so the
 	// fields it feeds (incl. market_cap_usd / fdv_usd) are missing, not absent.
 	f2ReadFailed bool
+	// priceUnread: the USD price read failed; a null price_usd is then not "no market".
+	priceUnread bool
 
 	// VolumeCharacter classifies trailing-window volume by account structure: "market" (default),
 	// "operational" (an issuer-side mint/redeem wrap corridor: real, but not market activity) or

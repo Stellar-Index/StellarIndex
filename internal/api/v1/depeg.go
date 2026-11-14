@@ -54,17 +54,34 @@ func (s *Server) pegUSDObservationPairs() []canonical.Pair {
 	return out
 }
 
-// proxyDeviation reports whether any declared USD peg's observed price at `at` is outside the [depegBand]; false also covers
-// "no observation" (the flag is omitted, not asserted held).
-func (s *Server) proxyDeviation(ctx context.Context, at time.Time) bool {
+// proxyDeviationChecked reports whether any declared USD peg's observed price at `at` is outside the [depegBand]. unread: a peg's
+// read failed and none was seen outside the band, so false is not a verdict; "no observation" is neither.
+func (s *Server) proxyDeviationChecked(ctx context.Context, at time.Time) (deviated, unread bool) {
 	if s.PriceAt == nil {
-		return false
+		return false, false
 	}
 	for _, pair := range s.pegUSDObservationPairs() {
 		value, _, _, err := s.PriceAt.PriceAt(ctx, pair, at, priceAtMaxLookback)
-		if err == nil && outsideDepegBand(value) {
-			return true
+		switch {
+		case err == nil:
+			if outsideDepegBand(value) {
+				return true, false
+			}
+		case !isPriceAtMiss(err):
+			unread = true
 		}
 	}
-	return false
+	return false, unread
+}
+
+// withProxyDeviation stamps a triangulated answer's depeg flag; one whose peg check did not answer is degraded (no-store), so the
+// missing warning is not cached.
+func (s *Server) withProxyDeviation(ctx context.Context, f Flags, at time.Time) Flags {
+	if !f.Triangulated {
+		return f
+	}
+	deviated, unread := s.proxyDeviationChecked(ctx, at)
+	f.ProxyDeviation = deviated
+	f.Degraded = f.Degraded || unread
+	return f
 }

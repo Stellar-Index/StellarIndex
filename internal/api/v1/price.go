@@ -306,6 +306,8 @@ type PriceSnapshot struct {
 	// ProxyDeviation carries the proxy_deviation envelope flag from a
 	// reader that does not return Flags (the tip fallbacks); never on the wire.
 	ProxyDeviation bool `json:"-"`
+	// PegUnchecked: the peg check behind ProxyDeviation did not answer, so its false is not a verdict.
+	PegUnchecked bool `json:"-"`
 
 	// FXRate is the USD→quote fixing a closed USD-anchored cross converted
 	// at: the vendor bar's exact close, quote units per 1 USD.
@@ -727,7 +729,7 @@ func (s *Server) handlePriceTail(w http.ResponseWriter, r *http.Request, asset, 
 	if governing.IsZero() {
 		governing = asset
 	}
-	flags := Flags{Stale: stale, Triangulated: triangulated, ProxyDeviation: triangulated && s.proxyDeviation(r.Context(), time.Now().UTC())}
+	flags := s.withProxyDeviation(r.Context(), Flags{Stale: stale, Triangulated: triangulated}, time.Now().UTC())
 	// Composite-quality signals (diverged / rerouted) run whichever arm served, since the router
 	// tracks the chain even when a closed bucket wins.
 	if pairKeyed {
@@ -735,7 +737,7 @@ func (s *Server) handlePriceTail(w http.ResponseWriter, r *http.Request, asset, 
 	}
 	flags.Frozen = frozen
 	flags.FrozenChecked = frozenChecked
-	flags.Degraded = frozen
+	flags.Degraded = flags.Degraded || frozen
 	// SingleSource is forced true on the LKG fallback (a multi-source bucket couldn't have been
 	// frozen). If a WIRED freeze looker's read failed, freeze status is UNKNOWN, so deriving it
 	// would assert a fact the read never established.
@@ -2460,7 +2462,7 @@ func (s *Server) lookupPriceBatch(w http.ResponseWriter, r *http.Request, ids []
 	}
 
 	env := batchEnvelope(ids, results)
-	env.Flags.ProxyDeviation = env.Flags.Triangulated && s.proxyDeviation(r.Context(), time.Now().UTC())
+	env.Flags = s.withProxyDeviation(r.Context(), env.Flags, time.Now().UTC())
 	env.Flags.Degraded = env.Flags.Degraded || batchDegraded(results)
 	writeEnvelope(w, env)
 }

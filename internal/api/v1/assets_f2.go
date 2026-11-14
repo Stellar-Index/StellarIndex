@@ -121,7 +121,7 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 			supplyFailed = false
 		}
 	}
-	detail.f2ReadFailed = volFailed || changeFailed || supplyFailed
+	detail.f2ReadFailed = volFailed || changeFailed || supplyFailed || detail.priceUnread
 
 	// max_supply precedence step 2: an operator override already shows as a non-nil snap.MaxSupply;
 	// otherwise overlay the issuer's stellar.toml max_number / fixed_number (DISPLAY units, scaled
@@ -251,6 +251,7 @@ func (s *Server) populatePriceUSD(ctx context.Context, detail *AssetDetail, asse
 		return 0
 	}
 	l := s.lookupUSDPriceWithSources(ctx, asset)
+	detail.priceUnread = l.unread
 	if l.withheld != "" {
 		detail.PriceWithheldReason = l.withheld
 		return 0
@@ -407,6 +408,8 @@ type usdPriceLookup struct {
 	// stale is the reader's own verdict on a closed bucket (old, low-confidence or substituted);
 	// for a proxy price, an observation older than usdProxyFreshness.
 	stale bool
+	// unread: a price read failed, so an empty price is not "no market".
+	unread bool
 }
 
 // usdProxyFreshness matches the price reader's default closed-bucket freshness.
@@ -443,6 +446,10 @@ func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.
 		s.normalizeRawPriceSnapshot(&snap, asset, defaultPriceQuote)
 		return usdPriceLookup{price: snap.Price, sources: len(sources), stale: stale}
 	}
+	unread := err != nil && (isPriceReadFailure(err) || aliasUnread(err) != nil)
+	if unread && ctx.Err() == nil {
+		s.logger.Warn("usd price read failed", "err", err, "asset", asset.String())
+	}
 	// Stablecoin-fiat proxy fallback, already decimals-normalized inside tryStablecoinFiatProxy:
 	// do NOT re-apply.
 	proxy, proxySources, ok, withheld, err := s.tryStablecoinFiatProxy(ctx, asset, defaultPriceQuote)
@@ -451,19 +458,19 @@ func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.
 		if ctx.Err() == nil {
 			s.logger.Warn("usd price proxy read failed", "err", err, "asset", asset.String())
 		}
-		return usdPriceLookup{}
+		return usdPriceLookup{unread: true}
 	}
 	if ok && proxy.Price != "" {
 		// A declaration (no sources) is not an observation and has no age.
 		old := len(proxySources) > 0 && s.now().Sub(proxy.ObservedAt.Time()) > usdProxyFreshness
-		return usdPriceLookup{price: proxy.Price, sources: len(proxySources), stale: old}
+		return usdPriceLookup{price: proxy.Price, sources: len(proxySources), stale: old, unread: unread}
 	}
 	if withheld != "" {
 		// The walk's own verdict, so the detail agrees with the listing: this asset's thin market is
 		// `substance`; a refused XLM leg behind a declared peg is `upstream_leg`.
-		return usdPriceLookup{withheld: withheld}
+		return usdPriceLookup{withheld: withheld, unread: unread}
 	}
-	return usdPriceLookup{}
+	return usdPriceLookup{unread: unread}
 }
 
 // populateChange24h fills detail.Change24hPct via the [Change24hReader] and market-cap [PriceReader]; no current price or

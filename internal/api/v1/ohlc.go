@@ -187,7 +187,7 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 		TradeCount:          bar.TradeCount,
 		Truncated:           preFilter == maxTradesForOHLC,
 		Clamped:             clamped,
-	}, Flags{Triangulated: triangulated, ProxyDeviation: triangulated && s.proxyDeviation(ctx, to)})
+	}, s.withProxyDeviation(ctx, Flags{Triangulated: triangulated}, to))
 }
 
 // filterOHLCOutliers applies the single-bar outlier filter; a window with trades but none kept is a 422 (the filter withheld them), not
