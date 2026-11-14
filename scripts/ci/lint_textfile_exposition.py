@@ -198,6 +198,14 @@ def strip_sql_noise(sql: str) -> str:
             j = sql.find("*/", i + 2)
             i = n if j < 0 else j + 2
             continue
+        if ch == "$":
+            # a dollar-quoted body ($$…$$, $tag$…$tag$) is one literal
+            m = re.match(r"\$[A-Za-z_]*\$", sql[i:])
+            if m:
+                j = sql.find(m.group(0), i + m.end())
+                i = n if j < 0 else j + m.end()
+                out.append(" ")
+                continue
         if ch in "'\"":
             quote = ch
             i += 1

@@ -17,8 +17,8 @@ mkdir "$t/v"
 cat >"$t/psql" <<'FAKE'
 #!/usr/bin/env bash
 cc='' probe=0
+case "${PGOPTIONS:-}" in *pgchunkscan.cc=*) cc="${PGOPTIONS##*pgchunkscan.cc=}" ;; esac
 for a in "$@"; do case "$a" in
-  cc=*) cc="${a#cc=}" ;;
   -c) probe=1 ;;
 esac; done
 if [ "$probe" = 1 ]; then [ ! -e "$FAKE_DIR/down" ]; exit; fi

@@ -63,20 +63,25 @@ fail_run() {
   exit 1
 }
 
-# One short transaction: C|key|hypertable|chunk|compressed relation, then
-# B|hypertable|chunk|index bytes.
+# One statement: C|key|hypertable|chunk|compressed relation, then
+# B|hypertable|chunk|index bytes|.
 $PSQL -At -F'|' -f - >"$W/list" 2>"$W/err" <<'SQL' || fail_run "listing chunks: psql exited $?"
-SELECT 'C', cc.id || ':' || pg_relation_filenode(format('%I.%I', cc.schema_name, cc.table_name)::regclass),
-       h.table_name, c.table_name, format('%I.%I', cc.schema_name, cc.table_name)
-  FROM _timescaledb_catalog.chunk c
-  JOIN _timescaledb_catalog.hypertable h ON h.id = c.hypertable_id
-  JOIN _timescaledb_catalog.chunk cc ON cc.id = c.compressed_chunk_id
- ORDER BY c.id;
-SELECT 'B', h.table_name, c.table_name, pg_indexes_size(format('%I.%I', c.schema_name, c.table_name)::regclass)
-  FROM _timescaledb_catalog.chunk c
-  JOIN _timescaledb_catalog.hypertable h ON h.id = c.hypertable_id
- WHERE c.compressed_chunk_id IS NOT NULL AND c.status & 8 = 0
-   AND pg_indexes_size(format('%I.%I', c.schema_name, c.table_name)::regclass) > 1073741824;
+SELECT tag, f1, f2, f3, f4 FROM (
+  SELECT 'C' AS tag, c.id AS ord,
+         cc.id || ':' || pg_relation_filenode(format('%I.%I', cc.schema_name, cc.table_name)::regclass) AS f1,
+         h.table_name::text AS f2, c.table_name::text AS f3,
+         format('%I.%I', cc.schema_name, cc.table_name) AS f4
+    FROM _timescaledb_catalog.chunk c
+    JOIN _timescaledb_catalog.hypertable h ON h.id = c.hypertable_id
+    JOIN _timescaledb_catalog.chunk cc ON cc.id = c.compressed_chunk_id
+  UNION ALL
+  SELECT 'B', c.id, h.table_name::text, c.table_name::text,
+         pg_indexes_size(format('%I.%I', c.schema_name, c.table_name)::regclass)::text, ''
+    FROM _timescaledb_catalog.chunk c
+    JOIN _timescaledb_catalog.hypertable h ON h.id = c.hypertable_id
+   WHERE c.compressed_chunk_id IS NOT NULL AND c.status & 8 = 0
+     AND pg_indexes_size(format('%I.%I', c.schema_name, c.table_name)::regclass) > 1073741824
+) l ORDER BY tag DESC, ord;
 SQL
 
 # To decode: every listed chunk not yet verified, last run's unreadable first.
@@ -88,10 +93,10 @@ awk -F'|' -v badf="$BADF" -v skipf="$W/skip" '
 # Prints ok, skip, bad or lost. A caught error that says nothing about the
 # chunk's bytes (dropped mid-run, lock wait, out of resources) is a skip.
 decode() {
-  local rc=0 v
-  $PSQL -v cc="$1" -f - >/dev/null 2>"$W/err" <<'SQL' || rc=$?
-SET lock_timeout = '30s';
-SET pgchunkscan.cc = :'cc';
+  local rc=0 v cc=${1//\\/\\\\}
+  # Session settings ride in PGOPTIONS, which splits on unescaped spaces.
+  PGOPTIONS="-c lock_timeout=30s -c pgchunkscan.cc=${cc// /\\ }" \
+    $PSQL -f - >/dev/null 2>"$W/err" <<'SQL' || rc=$?
 DO $$
 DECLARE cc text := current_setting('pgchunkscan.cc'); cols text; n bigint;
 BEGIN
