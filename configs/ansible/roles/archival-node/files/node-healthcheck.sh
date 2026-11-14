@@ -132,11 +132,16 @@ if [ "$g_age" -gt "$GALEXIE_WARMUP_SEC" ]; then
     | jq -rs 'map(select(.key | test("--[0-9]+-[0-9]+/$")))
               | max_by(.key | capture("-(?<e>[0-9]+)/$").e | tonumber) | .key // empty' 2>/dev/null)
   top_rc=$?
-  mc ls --json --recursive "local/galexie-live/${newest_partition}" 2>/dev/null \
-    | jq -r 'select(.key | test("\\.xdr\\.zst$")) | .lastModified' 2>/dev/null \
-    | sort -r > /tmp/galexie-live-mtimes.txt
-  mc_rc=$?
-  [ "$top_rc" -ne 0 ] && mc_rc=$top_rc
+  # No partition named (empty bucket, or the listing failed): never fall back to the whole bucket.
+  : > /tmp/galexie-live-mtimes.txt
+  mc_rc=$top_rc
+  if [ -n "$newest_partition" ]; then
+    mc ls --json --recursive "local/galexie-live/${newest_partition}" 2>/dev/null \
+      | jq -r 'select(.key | test("\\.xdr\\.zst$")) | .lastModified' 2>/dev/null \
+      | sort -r > /tmp/galexie-live-mtimes.txt
+    mc_rc=$?
+    [ "$top_rc" -ne 0 ] && mc_rc=$top_rc
+  fi
   last_iso=$(head -1 /tmp/galexie-live-mtimes.txt)
   if [ -n "$last_iso" ]; then
     last_epoch=$(date -d "$last_iso" +%s 2>/dev/null || echo 0)

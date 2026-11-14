@@ -58,8 +58,10 @@ chmod +x "$TMP"/bin/*
 
 run_check() {  # run_check MC_RC MC_STDOUT
   local mc_rc="$1" mc_out="$2"
+  : > "$TMP/mc-calls"
   cat > "$TMP/bin/mc" <<EOF
 #!/usr/bin/env bash
+echo "\$*" >> "$TMP/mc-calls"
 printf '%s' '$mc_out'
 exit $mc_rc
 EOF
@@ -75,6 +77,12 @@ if grep -q "mc ls local/galexie-live/ failed" "$TMP/stderr"; then
   ok "mc failure is reported as a check failure"
 else
   bad "mc failure was swallowed — stderr: $(cat "$TMP/stderr")"
+fi
+# A failed top-level listing names no partition; the whole bucket must not be listed instead.
+if grep -q -- "--recursive" "$TMP/mc-calls"; then
+  bad "a failed listing fell back to listing the whole bucket"
+else
+  ok "a failed listing lists nothing recursively"
 fi
 
 # Scenario 2: mc works, bucket genuinely has no matching objects yet —
