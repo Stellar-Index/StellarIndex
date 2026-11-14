@@ -5,6 +5,8 @@ package timescale
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -88,6 +90,39 @@ const dailyMarketDaysQuery = `
          GROUP BY day, member
          ORDER BY day ASC, member ASC
     `
+
+// earliestMarketHourQuery applies DailyMarketDays' own row filter: a bucket of some other pair is
+// not evidence that a dollar trade would have been seen.
+const earliestMarketHourQuery = `
+        SELECT bucket
+          FROM prices_1h
+         WHERE (quote_asset = ANY($1) OR base_asset = ANY($1))
+           AND vwap IS NOT NULL
+           AND volume_priced > 0
+         ORDER BY bucket ASC
+         LIMIT 1`
+
+// EarliestMarketHour is the oldest hourly bucket the served tier holds for a trade against one of
+// `quotes`, in either stored orientation: where DailyMarketDays' history can begin. ok=false when
+// there is none.
+func (s *Store) EarliestMarketHour(ctx context.Context, quotes []canonical.Asset) (time.Time, bool, error) {
+	if len(quotes) == 0 {
+		return time.Time{}, false, nil
+	}
+	keys := make([]string, len(quotes))
+	for i, q := range quotes {
+		keys[i] = q.String()
+	}
+	var at time.Time
+	err := s.db.QueryRowContext(ctx, earliestMarketHourQuery, keys).Scan(&at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("timescale: EarliestMarketHour: %w", err)
+	}
+	return at.UTC(), true, nil
+}
 
 func (s *Store) DailyMarketDays(
 	ctx context.Context,

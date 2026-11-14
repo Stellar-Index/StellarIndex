@@ -36,6 +36,12 @@ type stubMarketHistory struct {
 	askedAssets []string
 	askedQuotes []string
 	askedFroms  []time.Time
+	earliest    time.Time
+	earliestErr error
+}
+
+func (s *stubMarketHistory) EarliestMarketHour(_ context.Context, _ []canonical.Asset) (time.Time, bool, error) {
+	return s.earliest, !s.earliest.IsZero(), s.earliestErr
 }
 
 func (s *stubMarketHistory) DailyMarketDays(
@@ -654,5 +660,29 @@ func TestRWAPremium_TheZeroDenominatorIsRefusedNotDividedBy(t *testing.T) {
 	}
 	if v.Series[0].Points[0].T.Time().Equal(histTime(1)) {
 		t.Fatal("a premium was computed against a zero published value")
+	}
+}
+
+// TestRWAPremium_NoMarketHistoryIsBoundedByTheServedFloor: "no market" is a claim about the served
+// history only, so the response says where that history begins and does not say "never".
+func TestRWAPremium_NoMarketHistoryIsBoundedByTheServedFloor(t *testing.T) {
+	bound, dir, rows := oneBoundMember()
+	oracle := &stubOracleHistory{rows: []timescale.OracleDayPoint{histOracle("redstone", "USTRY", 1, 107000000)}}
+	floor := time.Date(2026, 3, 9, 14, 0, 0, 0, time.UTC)
+
+	v := getRWAPremium(t, rwaPremiumServer(t, bound, dir, rows, oracle, &stubMarketHistory{earliest: floor}), "?timeframe=all")
+	if v.MarketObservedFrom == nil || !time.Time(*v.MarketObservedFrom).Equal(time.Date(2026, 3, 10, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("market_observed_from = %v, want the first full day held", v.MarketObservedFrom)
+	}
+	for _, e := range v.Excluded {
+		if e.Reason == "no_market_history" && (strings.Contains(e.Detail, "ever") || !strings.Contains(e.Detail, "market_observed_from")) {
+			t.Errorf("detail = %q, want a claim bounded by market_observed_from", e.Detail)
+		}
+	}
+
+	unread := &stubMarketHistory{earliestErr: errors.New("db down")}
+	v = getRWAPremium(t, rwaPremiumServer(t, bound, dir, rows, oracle, unread), "?timeframe=all")
+	if v.MarketObservedFrom != nil || premiumExcluded(v, "no_market_history") != 1 {
+		t.Errorf("unread floor: market_observed_from = %v excluded = %+v, want the field absent and the account kept", v.MarketObservedFrom, v.Excluded)
 	}
 }
