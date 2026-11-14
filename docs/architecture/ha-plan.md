@@ -554,7 +554,7 @@ Provider, cost and sequencing:
 on the first Saturday at 04:00 UTC
 (`configs/ansible/roles/archival-node/templates/systemd/restore-drill.timer.j2:27`);
 the enable task and its rationale are at
-`configs/ansible/roles/archival-node/tasks/18-pgbackrest-backup.yml:725-735`.
+`configs/ansible/roles/archival-node/tasks/18-pgbackrest-backup.yml:746-756`.
 The drill's precondition check refuses (exit 2, not counted) when free
 space is short. It emits only `last_success_unix` and `failures`, not
 throughput, so a lake-scale restore time is unmeasured. Evidence goes to
