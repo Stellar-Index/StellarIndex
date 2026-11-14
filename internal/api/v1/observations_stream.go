@@ -4,14 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
@@ -26,10 +30,126 @@ const (
 
 	// observationsStreamProducerQueueDepth is the per-connection producer-to-SSE-writer channel capacity; 4 lets the writer lag a tick.
 	observationsStreamProducerQueueDepth = 4
+
+	// defaultObservationsTickConcurrency caps tick scans running at once across every connection. A scan fans out over the pair's
+	// alias spellings (up to 9 for XLM against XLM-aliased quotes), so 2 keeps stream ticks to a minority of the request pool.
+	defaultObservationsTickConcurrency = 2
 )
 
+// errObservationsTickShed is a tick that found no scan slot within its interval; the subscriber skips that emit.
+var errObservationsTickShed = errors.New("observations stream tick shed: no scan slot")
+
+// observationsTick is one tick's scan result, shared by every subscriber of the same (pair, source, aggregate).
+type observationsTick struct {
+	trades []canonical.Trade
+	at     time.Time
+}
+
+// observationsTicks bounds what open streams cost the database: subscribers of one key share a scan, and scans of different
+// keys share [defaultObservationsTickConcurrency] slots. Connection caps alone do not bound it, since every connection ticks.
+type observationsTicks struct {
+	mu     sync.Mutex
+	last   map[string]observationsTick
+	slots  chan struct{}
+	flight singleflight.Group
+	// concurrency overrides defaultObservationsTickConcurrency when > 0 (tests).
+	concurrency int
+}
+
+// fresh returns the key's last result when it is younger than maxAge.
+func (t *observationsTicks) fresh(key string, maxAge time.Duration) (observationsTick, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	res, ok := t.last[key]
+	return res, ok && time.Since(res.at) < maxAge
+}
+
+// store records a result and drops every entry too old to be served, so the map holds at most maxAge worth of scans.
+func (t *observationsTicks) store(key string, res observationsTick, maxAge time.Duration) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.last == nil {
+		t.last = make(map[string]observationsTick)
+	}
+	for k, v := range t.last {
+		if time.Since(v.at) >= maxAge {
+			delete(t.last, k)
+		}
+	}
+	t.last[key] = res
+}
+
+func (t *observationsTicks) acquire(ctx context.Context) (release func(), err error) {
+	t.mu.Lock()
+	if t.slots == nil {
+		n := defaultObservationsTickConcurrency
+		if t.concurrency > 0 {
+			n = t.concurrency
+		}
+		t.slots = make(chan struct{}, n)
+	}
+	slots := t.slots
+	t.mu.Unlock()
+	select {
+	case slots <- struct{}{}:
+		return func() { <-slots }, nil
+	case <-ctx.Done():
+		return nil, errObservationsTickShed
+	}
+}
+
+// observationsStreamTick answers one subscriber's tick. A result under half a second old is reused, concurrent ticks on
+// one key join a single scan, and a scan waits at most one interval for a slot.
+func (s *Server) observationsStreamTick(
+	ctx context.Context, pair canonical.Pair, source, aggregate string, intervalSeconds int,
+) (observationsTick, error) {
+	t := &s.observationsTicks
+	// Half the fastest cadence: a 1s subscriber's own previous tick is never young enough to be re-served to it.
+	maxAge := s.streamCadence(minObservationsIntervalSeconds) / 2
+	key := pair.String() + "|" + source + "|" + aggregate
+	if res, ok := t.fresh(key, maxAge); ok {
+		return res, nil
+	}
+	ch := t.flight.DoChan(key, func() (res any, err error) {
+		// singleflight re-panics on a bare goroutine, which would take the process down.
+		defer func() {
+			if rec := recover(); rec != nil {
+				obs.WorkerPanicsTotal.WithLabelValues("observations-stream-tick").Inc()
+				err = fmt.Errorf("observations stream tick panic: %v", rec)
+			}
+		}()
+		// Detached from the leader: its disconnect must not fail the subscribers sharing this scan.
+		scanCtx := context.WithoutCancel(ctx)
+		waitCtx, cancel := context.WithTimeout(scanCtx, s.streamCadence(intervalSeconds))
+		release, err := t.acquire(waitCtx)
+		cancel()
+		if err != nil {
+			obs.APIObservationsStreamTicksShedTotal.Inc()
+			return nil, err
+		}
+		defer release()
+		trades, err := s.computeObservations(withFreshHistory(scanCtx), pair, source, aggregate)
+		if err != nil {
+			return nil, err
+		}
+		tick := observationsTick{trades: trades, at: time.Now().UTC()}
+		t.store(key, tick, maxAge)
+		return tick, nil
+	})
+	select {
+	case <-ctx.Done():
+		return observationsTick{}, ctx.Err()
+	case r := <-ch:
+		if r.Err != nil {
+			return observationsTick{}, r.Err
+		}
+		return r.Val.(observationsTick), nil
+	}
+}
+
 // handleObservationsStream serves GET /v1/observations/stream (SSE twin of /v1/observations, ADR-0018): an initial snapshot, then every
-// interval_seconds (default 5, clamp 1-60) an uncached scan and an unconditional observations_update (no dedupe).
+// interval_seconds (default 5, clamp 1-60) an unconditional observations_update (no dedupe) from a scan shared with the
+// other subscribers of that pair ([Server.observationsStreamTick]).
 // granularity/window_seconds give 400.
 func (s *Server) handleObservationsStream(w http.ResponseWriter, r *http.Request) {
 	// Admit against the concurrency caps FIRST, before the pre-flight computeObservations scan;
@@ -144,6 +264,14 @@ func (s *Server) computeObservations(
 	var wg sync.WaitGroup
 	for i, ap := range aliasPairs {
 		wg.Go(func() {
+			// No recoverer wraps this goroutine: an unrecovered panic here would end the process.
+			defer func() {
+				if rec := recover(); rec != nil {
+					obs.WorkerPanicsTotal.WithLabelValues("observations-alias-scan").Inc()
+					errs[i] = fmt.Errorf("observations alias scan panic: %v", rec)
+					cancel()
+				}
+			}()
 			results[i], errs[i] = s.History.LatestTradePerSource(scanCtx, ap, source)
 			if errs[i] != nil {
 				cancel()
@@ -229,7 +357,7 @@ func (s *Server) runObservationsStreamProducer(
 	defer s.recoverStreamProducer("observations")
 	defer close(ch)
 
-	if firstEv, ok := s.observationsStreamEvent(gen, pair, first); ok {
+	if firstEv, ok := s.observationsStreamEvent(gen, pair, first, time.Now().UTC()); ok {
 		select {
 		case <-ctx.Done():
 			return
@@ -245,15 +373,16 @@ func (s *Server) runObservationsStreamProducer(
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			trades, err := s.computeObservations(withFreshHistory(ctx), pair, source, aggregate)
+			tick, err := s.observationsStreamTick(ctx, pair, source, aggregate, intervalSeconds)
 			if err != nil {
-				if ctx.Err() == nil {
+				// A shed tick is counted, not logged: a flood would otherwise write a line per connection per tick.
+				if ctx.Err() == nil && !errors.Is(err, errObservationsTickShed) {
 					s.logger.Warn("computeObservations failed (stream tick) — skipping emit",
 						"err", err, "pair", pair.String(), "source", source)
 				}
 				continue
 			}
-			ev, ok := s.observationsStreamEvent(gen, pair, trades)
+			ev, ok := s.observationsStreamEvent(gen, pair, tick.trades, tick.at)
 			if !ok {
 				continue
 			}
@@ -269,7 +398,10 @@ func (s *Server) runObservationsStreamProducer(
 // observationsStreamEvent builds one SSE payload ((_, false) on marshal failure). stale, frozen and divergence_checked are false
 // BY DESIGN: raw per-source surface, nothing to vouch for, s.Divergence never consulted (FRESHNESS CONTRACT;
 // TestObservationsStream_DivergenceCheckedStructurallyFalse).
-func (s *Server) observationsStreamEvent(gen *streaming.Generator, pair canonical.Pair, trades []canonical.Trade) (streaming.Event, bool) {
+// asOf is when the scan ran, which for a shared tick is up to half a second before the emit.
+func (s *Server) observationsStreamEvent(
+	gen *streaming.Generator, pair canonical.Pair, trades []canonical.Trade, asOf time.Time,
+) (streaming.Event, bool) {
 	rows := make([]TradeRow, len(trades))
 	srcSet := make(map[string]struct{}, len(trades))
 	for i, t := range trades {
@@ -290,7 +422,7 @@ func (s *Server) observationsStreamEvent(gen *streaming.Generator, pair canonica
 
 	body, err := json.Marshal(observationsStreamPayload{
 		Data:    rows,
-		AsOf:    WireTime(time.Now().UTC()),
+		AsOf:    WireTime(asOf),
 		Sources: srcs,
 		Flags:   Flags{SingleSource: len(srcs) == 1},
 	})

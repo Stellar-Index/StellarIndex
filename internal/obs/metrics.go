@@ -179,6 +179,7 @@ func registerAPIServingMetrics() {
 		APICORSDecisionsTotal,
 		APITipProducers,
 		APITipProducersRefusedTotal,
+		APIObservationsStreamTicksShedTotal,
 		APIStreamSubscriberDropsTotal,
 		APISSEStreamsActive,
 		APISSEStreamsRejectedTotal,
@@ -2042,6 +2043,12 @@ var APITipProducersRefusedTotal = prometheus.NewCounterVec(
 	},
 	[]string{"reason"},
 )
+
+// APIObservationsStreamTicksShedTotal counts observations-stream ticks skipped because no scan slot freed within the tick's interval.
+var APIObservationsStreamTicksShedTotal = prometheus.NewCounter(prometheus.CounterOpts{
+	Name: "stellarindex_api_observations_stream_ticks_shed_total",
+	Help: "Observations-stream ticks skipped because every scan slot stayed busy for the tick's interval; sustained growth means stream demand exceeds the scan budget.",
+})
 
 // APIStreamSubscriberDropsTotal counts SSE subscribers the Hub disconnected because their queue was full on publish; a sustained rate means events are lost to slow consumers.
 var APIStreamSubscriberDropsTotal = prometheus.NewCounter(prometheus.CounterOpts{
