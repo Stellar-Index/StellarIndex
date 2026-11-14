@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"errors"
 	"math/big"
 	"net/http"
 	"sort"
@@ -239,6 +240,9 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 		if clientAborted(r, err) {
 			return
 		}
+		if marketsFillBusy(w, r, err) {
+			return
+		}
 		if handlerTimedOut(pCtx, err) {
 			s.logger.Warn("AllPools deadline exceeded", "limit", limit, "filter", filter)
 			writeProblem(w, r,
@@ -428,6 +432,9 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 		if clientAborted(r, err) {
 			return
 		}
+		if marketsFillBusy(w, r, err) {
+			return
+		}
 		if handlerTimedOut(mCtx, err) {
 			s.logger.Warn("DistinctPairs deadline exceeded",
 				"limit", limit, "source", source)
@@ -575,6 +582,20 @@ func (s *Server) expandSlugToAssetIDs(slug string) []string {
 		add("fiat:" + vc.Ticker)
 	}
 	return out
+}
+
+// marketsFillBusy answers a listing read refused because every background scan slot was taken: capacity, not a fault and
+// not an empty listing.
+func marketsFillBusy(w http.ResponseWriter, r *http.Request, err error) bool {
+	if !errors.Is(err, errMarketsFillBusy) {
+		return false
+	}
+	w.Header().Set("Retry-After", "5")
+	writeProblem(w, r,
+		"https://api.stellarindex.io/errors/markets-busy",
+		"Listing busy", http.StatusServiceUnavailable,
+		"this page is not cached and the server is already running its limit of listing scans; retry in a few seconds.")
+	return true
 }
 
 // assetMarketsLeg fetches one expanded asset_id's markets plus observedAt/stale when the reader is
