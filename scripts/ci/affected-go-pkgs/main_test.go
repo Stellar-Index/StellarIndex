@@ -53,6 +53,24 @@ m/d m/x`
 	}
 }
 
+func TestTouchesProductionGo(t *testing.T) {
+	for _, tc := range []struct {
+		files []string
+		want  bool
+	}{
+		{[]string{"internal/sources/blend/decode.go"}, true},
+		{[]string{"docs/a.md", "cmd/stellarindex-api/main.go"}, true},
+		{[]string{"pkg/client/types.go"}, true},
+		{[]string{"internal/sources/blend/decode_test.go"}, false},
+		{[]string{"scripts/ci/affected-go-pkgs/main.go", "web/explorer/a.ts"}, false},
+		{nil, false},
+	} {
+		if got := touchesProductionGo(tc.files); got != tc.want {
+			t.Errorf("touchesProductionGo(%v) = %v, want %v", tc.files, got, tc.want)
+		}
+	}
+}
+
 func TestCitationReaders(t *testing.T) {
 	index := map[string]map[string][]string{
 		"*.md": {

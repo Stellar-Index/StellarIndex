@@ -281,13 +281,14 @@ func MaxAccountMovementLedger(ctx context.Context, addr string, from, to uint32)
 		return 0, false, err
 	}
 	defer func() { _ = conn.Close() }()
-	var cnt, hi uint64
+	// max() over no rows is 0, which is not a ledger.
+	var hi uint64
 	if err := conn.QueryRow(ctx,
-		`SELECT toUInt64(count()), toUInt64(max(ledger)) FROM stellar.account_movements WHERE ledger BETWEEN ? AND ?`,
-		from, to).Scan(&cnt, &hi); err != nil {
+		`SELECT toUInt64(max(ledger)) FROM stellar.account_movements WHERE ledger BETWEEN ? AND ?`,
+		from, to).Scan(&hi); err != nil {
 		return 0, false, fmt.Errorf("clickhouse: max account_movements ledger [%d,%d]: %w", from, to, err)
 	}
-	if cnt == 0 {
+	if hi == 0 {
 		return 0, false, nil
 	}
 	return uint32(hi), true, nil
@@ -300,13 +301,13 @@ func MinAccountMovementLedger(ctx context.Context, addr string, from, to uint32)
 		return 0, false, err
 	}
 	defer func() { _ = conn.Close() }()
-	var cnt, lo uint64
+	var lo uint64
 	if err := conn.QueryRow(ctx,
-		`SELECT toUInt64(count()), toUInt64(min(ledger)) FROM stellar.account_movements WHERE ledger BETWEEN ? AND ?`,
-		from, to).Scan(&cnt, &lo); err != nil {
+		`SELECT toUInt64(min(ledger)) FROM stellar.account_movements WHERE ledger BETWEEN ? AND ?`,
+		from, to).Scan(&lo); err != nil {
 		return 0, false, fmt.Errorf("clickhouse: min account_movements ledger [%d,%d]: %w", from, to, err)
 	}
-	if cnt == 0 {
+	if lo == 0 {
 		return 0, false, nil
 	}
 	return uint32(lo), true, nil

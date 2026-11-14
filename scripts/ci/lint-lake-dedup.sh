@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # lint-lake-dedup.sh — an AGGREGATING read of a duplicate-bearing lake
-# table must collapse that table on its full identity first.
+# table must read it through FINAL, or sit above a subquery that collapses it.
 #
-# `stellar.transactions` and `stellar.operations` are
+# `stellar.transactions`, `stellar.operations` and the amount-carrying
+# `stellar.supply_flows`, `stellar.account_movements` and
+# `stellar.movements_by_asset` are
 # ReplacingMergeTree(ingested_at) archives whose duplicates are not merged away
 # in BULK: on r1 every `(ledger_seq, tx_index)` key in `stellar.transactions`
 # has carried more than one row, and `stellar.operations` runs at 2.0x. A
@@ -18,30 +20,31 @@
 #
 # ── THE RULE ──────────────────────────────────────────────────────────
 #
-# A read of either table is IN SCOPE only when its OWN select list applies a
-# MULTIPLICITY-SENSITIVE aggregate (value changes when a row is repeated):
+# A read of one of these tables is IN SCOPE only when its OWN select list
+# applies a MULTIPLICITY-SENSITIVE aggregate (value changes when a row is
+# repeated), matched in any letter case and with any combinator suffix
+# (`COUNT(*)`, `sumIf`, `countState`, `sumKahan`):
 #
-#     count countIf sum sumIf avg avgIf groupArray groupArrayIf
-#     topK sumMap avgWeighted corr covarPop covarSamp
-#     quantile* median* stddev* varPop varSamp
+#     count* sum* avg* groupArray* topK* corr* covarPop* covarSamp*
+#     quantile* median* stddev* varPop* varSamp*
 #
 # NOT in that set (idempotent under an exact duplicate, and the tree's own
 # collapse vocabulary): `min`, `max`, `any`, `anyIf`, `argMax`, `argMin`,
 # `uniq`, `uniqExact`, `uniqCombined`, `countDistinct`, `groupUniqArray`.
 #
-# An in-scope read must carry, in its own query block, one of:
+# An in-scope read must carry `FINAL` on the read itself. Nothing else in the
+# same SELECT collapses the rows the aggregate consumes:
 #
-#   * `FINAL` on the read itself                (engine-level collapse)
-#   * `GROUP BY` covering the table's identity  (collapse by grouping)
-#   * `LIMIT 1 BY` covering that identity       (collapse by pick-one)
-#   * a `uniqExact`/`countDistinct`-family call over that identity
-#   * `SELECT DISTINCT` governing the read      (collapse by projection)
+#   * a `GROUP BY` over the identity makes each group hold every version of
+#     one key, so `sum()` in that SELECT still adds each version;
+#   * `LIMIT 1 BY` and `SELECT DISTINCT` run after aggregation;
+#   * a `uniqExact` over the identity is exact itself and says nothing about
+#     the `sum()` beside it.
 #
-# Identities are the tables' full ORDER BY keys (deploy/clickhouse/tier1_schema.sql):
-#
-#     stellar.transactions  (ledger_seq, tx_index)
-#     stellar.operations    (ledger_seq, tx_index, op_index)
-#                        or (ledger_seq, tx_hash,  op_index)
+# The other honest form is two-level: an inner SELECT that picks one version
+# per key (`argMax(col, ingested_at) … GROUP BY <identity>`, no
+# multiplicity-sensitive aggregate) with the aggregate above it. That inner
+# read is out of scope by the rule above.
 #
 # ── WHAT THIS DELIBERATELY DOES NOT FLAG ─────────────────────────────
 #
@@ -64,6 +67,7 @@
 #   * a statement whose aggregate sits ABOVE a subquery that already collapses.
 #     The read belongs to the innermost select, so `count() FROM (SELECT … FROM
 #     stellar.operations GROUP BY ledger_seq, tx_index, op_index)` is out of scope.
+#     The gate does not check that the inner GROUP BY is the full key.
 #
 # ── ESCAPE HATCH ─────────────────────────────────────────────────────
 #
@@ -80,6 +84,9 @@ set -euo pipefail
 cd "${1:-$(dirname "$0")/../..}"
 
 BASELINE="scripts/ci/lint-lake-dedup.baseline"
+# Not every ReplacingMergeTree in the lake: these are the two the rule was
+# written for and the three that carry amounts.
+LAKE_TABLES="transactions|operations|supply_flows|account_movements|movements_by_asset"
 
 die() { echo "lint-lake-dedup: FAIL — $*" >&2; exit 1; }
 
@@ -101,14 +108,14 @@ done < <(
     | sed 's#^\./##' \
     | sort \
     | while IFS= read -r f; do
-        if grep -qF -e 'stellar.transactions' -e 'stellar.operations' "$f"; then
+        if grep -qiE "stellar\\.(${LAKE_TABLES})" "$f"; then
           echo "$f"
         fi
       done
 )
 
 if [ "${#subjects[@]}" -eq 0 ]; then
-  die "no .go/.sql file names stellar.transactions or stellar.operations.
+  die "no .go/.sql file names a watched lake table (stellar.{${LAKE_TABLES}}).
   A gate with an empty subject set passes forever. If the lake tables were
   renamed, rename them here too — do not delete the check."
 fi
@@ -116,7 +123,7 @@ fi
 # ── canary ───────────────────────────────────────────────────────────
 #
 # `examined == 0` below proves the FROM/JOIN extraction still matches, but not
-# that the AGGREGATE/collapse half works: a mult_agg() or covers_identity()
+# that the AGGREGATE half works: a mult_agg()
 # regression would report a clean "0 aggregating", indistinguishable from a tree
 # that aggregates nothing. One synthetic, guaranteed-uncollapsed aggregating
 # read goes through the SAME analyser and must come back flagged.
@@ -133,71 +140,32 @@ SQL
 # violating read plus a final `#counts <reads> <aggregating>` self-accounting
 # line, so a pattern that stopped matching reads as a fault, not a clean run.
 violations="$(
-  awk '
+  LC_ALL=C awk -v READ_RE="(from|join) stellar\\.(${LAKE_TABLES})([^a-z0-9_]|\$)" '
     # ── identity + vocabulary ────────────────────────────────────────
     function word(s, w) {
       return s ~ ("(^|[^A-Za-z0-9_])" w "([^A-Za-z0-9_]|$)")
     }
-    # covers_identity — does a column list name a full identity of tbl?
-    function covers_identity(list, tbl) {
-      if (tbl == "stellar.transactions")
-        return word(list, "ledger_seq") && word(list, "tx_index")
-      return word(list, "ledger_seq") && word(list, "op_index") &&
-             (word(list, "tx_index") || word(list, "tx_hash"))
-    }
     # A multiplicity-sensitive aggregate: its value changes when a row
     # is repeated. countDistinct/uniq*/argMax/min/max/any are absent on
     # purpose — each is idempotent under an exact duplicate.
+    # Takes lowercased text. The suffix admits combinators and variants
+    # (sumIf, countState, sumKahan); countDistinct is the one idempotent
+    # name the prefix would otherwise catch.
     function mult_agg(s) {
-      return s ~ /(^|[^A-Za-z0-9_])(count|countIf|sum|sumIf|avg|avgIf|groupArray|groupArrayIf|topK|sumMap|avgWeighted|corr|covarPop|covarSamp|quantile[A-Za-z0-9]*|median[A-Za-z0-9]*|stddev[A-Za-z]*|varPop|varSamp)[ ]*\(/
-    }
-    # clause_after — the column list following `kw`, cut at the next
-    # clause keyword. Capped: a column list is short, and an uncapped
-    # window would accept identity names belonging to another clause.
-    function clause_after(s, kw, from,    p, rest, cut, i, terms, n, t) {
-      p = index(substr(s, from), kw)
-      if (p == 0) return ""
-      rest = substr(s, from + p - 1 + length(kw), 200)
-      n = split(" HAVING | ORDER BY | LIMIT | SETTINGS | UNION | WINDOW | FORMAT |;", terms, "\\|")
-      cut = length(rest) + 1
-      for (i = 1; i <= n; i++) {
-        t = index(rest, terms[i])
-        if (t > 0 && t < cut) cut = t
-      }
-      return substr(rest, 1, cut - 1)
-    }
-    # any_clause_covers — true if ANY occurrence of `kw` in `blk` is
-    # followed by a list covering the identity. Per-occurrence, never a
-    # union across clauses: two half-lists do not make a collapse.
-    function any_clause_covers(blk, kw, tbl,    from, p, list) {
-      from = 1
-      while ((p = index(substr(blk, from), kw)) > 0) {
-        list = clause_after(blk, kw, from)
-        if (covers_identity(list, tbl)) return 1
-        from = from + p - 1 + length(kw)
-      }
-      return 0
-    }
-    # uniq_covers — a uniqExact/countDistinct-family call over the
-    # identity is the aggregate-side collapse (the form
-    # accountOpTypeCountsQuery uses instead of count()).
-    function uniq_covers(blk, tbl,    from, s, m, args) {
-      from = 1
-      while (1) {
-        s = substr(blk, from)
-        if (match(s, /(uniqExact|uniqCombined[0-9]*|uniqHLL12|uniqTheta|uniq|countDistinct)[ ]*\(/) == 0) return 0
-        m = from + RSTART - 1 + RLENGTH
-        args = substr(blk, m, 160)
-        if (index(args, ")") > 0) args = substr(args, 1, index(args, ")") - 1)
-        if (covers_identity(args, tbl)) return 1
-        from = m
-      }
+      gsub(/countdistinct[ ]*\(/, "", s)
+      gsub(/count[ ]*\([ ]*distinct[ ]/, "", s)
+      return s ~ /(^|[^a-z0-9_])(count|sum|avg|grouparray|topk|corr|covarpop|covarsamp|quantile|median|stddev|varpop|varsamp)[a-z0-9]*[ ]*\(/
     }
     # block_of — the query block owning a read: from its own SELECT to
     # the closing paren of its subquery, its terminating semicolon, or
     # the next depth-0 SELECT (a UNION arm). Nested selects sit at a
     # deeper paren depth and stay INSIDE the block, which is correct:
     # they are part of this query text.
+    function is_select(s, i) {
+      return substr(s, i, 6) == "select" &&
+             (i == 1 || substr(s, i - 1, 1) !~ /[a-z0-9_]/) &&
+             substr(s, i + 6, 1) !~ /[a-z0-9_]/
+    }
     function block_of(s, start,    i, depth, ch, n) {
       depth = 0
       n = length(s)
@@ -206,7 +174,7 @@ violations="$(
         if (ch == "(") depth++
         else if (ch == ")") { if (depth == 0) break; depth-- }
         else if (ch == ";") break
-        else if (depth == 0 && i > start && substr(s, i, 6) == "SELECT") break
+        else if (depth == 0 && i > start && is_select(s, i)) break
       }
       return substr(s, start, i - start)
     }
@@ -218,51 +186,49 @@ violations="$(
       U = U " " text
     }
     function flush() {
-      if (U != "" && (index(U, "stellar.transactions") || index(U, "stellar.operations")))
+      if (U != "" && index(U, "stellar."))
         analyse(U, Uline)
       reset_unit()
     }
 
     # ── the read-by-read verdict ─────────────────────────────────────
-    function analyse(raw, line,    N, from, s, pos, len, tbl, i,
+    function analyse(raw, line,    N, L, from, s, pos, len, tbl, i,
                      owner, clause, blk, tail, snip) {
       N = raw
       gsub(/[\n\t]/, " ", N)
       while (N ~ /  /) gsub(/  /, " ", N)
+      # SQL keywords and function names are case-insensitive, so every test
+      # runs on the lowercased copy; N is kept for the report.
+      L = tolower(N)
       from = 1
       while (1) {
-        s = substr(N, from)
-        if (match(s, /(FROM|JOIN) stellar\.(transactions|operations)([^A-Za-z0-9_]|$)/) == 0) return
+        s = substr(L, from)
+        if (match(s, READ_RE) == 0) return
         # RSTART/RLENGTH are globals that any later match() clobbers,
         # so take the extent of THIS read before calling anything else.
         pos = from + RSTART - 1
         len = RLENGTH
-        tbl = (substr(N, pos, len) ~ /transactions/) \
-              ? "stellar.transactions" : "stellar.operations"
+        tbl = substr(L, pos + 5, len - 5)
+        sub(/[^a-z0-9_.].*$/, "", tbl)
         from = pos + len - 1
         examined++
 
         # The owning SELECT: the last one before the read.
         owner = 0
         for (i = pos; i >= 1; i--)
-          if (substr(N, i, 6) == "SELECT") { owner = i; break }
+          if (is_select(L, i)) { owner = i; break }
         if (owner == 0) continue            # INSERT/ALTER target, not a read
 
-        clause = substr(N, owner, pos - owner)
-        if (clause ~ /^SELECT[ ]+DISTINCT([ ]|$)/) continue   # collapsed by projection
+        clause = substr(L, owner, pos - owner)
         if (!mult_agg(clause)) continue                       # not an aggregating read
         aggregating++
 
-        blk = block_of(N, owner)
-
         # FINAL attached to this read (optionally through an alias).
-        tail = substr(N, pos + len - 1)
-        if (tail ~ /^[ ]*(AS[ ]+[A-Za-z_][A-Za-z0-9_]*[ ]+|[A-Za-z_][A-Za-z0-9_]*[ ]+)?FINAL([^A-Za-z0-9_]|$)/) continue
-        if (any_clause_covers(blk, "GROUP BY", tbl)) continue
-        if (any_clause_covers(blk, "LIMIT 1 BY", tbl)) continue
-        if (uniq_covers(blk, tbl)) continue
+        tail = substr(L, pos + len - 1)
+        if (tail ~ /^[ ]*(as[ ]+[a-z_][a-z0-9_]*[ ]+|[a-z_][a-z0-9_]*[ ]+)?final([^a-z0-9_]|$)/) continue
 
-        snip = blk
+        blk = block_of(L, owner)
+        snip = substr(N, owner, length(blk))
         if (length(snip) > 220) snip = substr(snip, 1, 220) " …"
         printf "%s\t%d\t%s\t%s\n", FILENAME, line, tbl, snip
       }
@@ -381,11 +347,9 @@ canary_report="$(printf '%s\n' "$violations" | awk -F'\t' -v f="$canary_file" '$
 violations="$(printf '%s\n' "$violations" | awk -F'\t' -v f="$canary_file" '$1 != f')"
 if [ -z "$canary_report" ]; then
   die "the analyser did not flag its own canary aggregate
-  ($canary_file: a bare count() over stellar.transactions with no FINAL,
-  GROUP BY, LIMIT 1 BY, uniqExact or SELECT DISTINCT). The
-  aggregate/collapse classifier — mult_agg() or the covers_identity()
-  family — is broken silently, not merely quiet on this tree. Fix the
-  classifier, do not delete the check."
+  ($canary_file: a bare count() over stellar.transactions with no FINAL).
+  The aggregate classifier, mult_agg(), is broken silently, not merely
+  quiet on this tree. Fix the classifier, do not delete the check."
 fi
 examined=$((examined - 1))
 aggregating=$((aggregating - 1))
@@ -455,18 +419,12 @@ done
 if [ "$fail" -ne 0 ]; then
   cat >&2 <<'EOF'
 
-Collapse the table on its full identity before the aggregate reads it:
-
-    stellar.transactions  (ledger_seq, tx_index)
-    stellar.operations    (ledger_seq, tx_index, op_index)
-                       or (ledger_seq, tx_hash,  op_index)
-
-Any one of these satisfies the gate — FINAL on the read, a GROUP BY or
-LIMIT 1 BY over the identity, a uniqExact/countDistinct over it, or a
-SELECT DISTINCT governing the read. The shipped sponsors gate
+Read the table through FINAL, or aggregate above a subquery that picks one
+version per key (argMax(col, ingested_at) … GROUP BY the full ORDER BY key).
+A GROUP BY, LIMIT 1 BY, SELECT DISTINCT or uniqExact in the same SELECT does
+not collapse the rows a sum() or count() consumes. The shipped sponsors gate
 (internal/storage/clickhouse/account_sponsors_rollup.go) is the worked
-example: it groups on the operation identity and resolves the joined
-transaction's flag with argMax(t.successful, t.ingested_at).
+example of the two-level form.
 
 Over ledgers 63,000,000-63,099,999 on r1, EVERY distinct
 (ledger_seq, tx_index) key in stellar.transactions carries more than one
@@ -481,5 +439,5 @@ fi
 [ "$stale" -eq 0 ] || exit 1
 
 echo "lint-lake-dedup: OK — ${examined} lake-table read(s) across ${#subjects[@]} file(s)," \
-     "${aggregating} of them aggregating; every aggregating one collapses on its full" \
-     "identity (${#base_keys[@]} grandfathered)."
+     "${aggregating} of them aggregating; every aggregating one reads through FINAL" \
+     "(${#base_keys[@]} grandfathered)."

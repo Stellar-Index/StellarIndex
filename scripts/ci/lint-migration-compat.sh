@@ -18,6 +18,8 @@
 #   add-not-null-column   ADD COLUMN … NOT NULL with no DEFAULT
 #   drop-view             DROP [MATERIALIZED] VIEW
 #   add-constraint        ALTER TABLE … ADD CONSTRAINT (tightening)
+#   add-unique            CREATE UNIQUE INDEX, ADD PRIMARY KEY / UNIQUE / CHECK
+#                         (the same tightening without the keyword)
 #   dml                   DELETE FROM / TRUNCATE / UPDATE … SET, unguarded
 #                         (a bare DELETE with a `SELECT 1` down re-deletes
 #                         replay-repaired rows on a down/up)
@@ -87,6 +89,7 @@ CLASSES=(
   'add-not-null-column'
   'drop-view'
   'add-constraint'
+  'add-unique'
   'dml'
 )
 MATCH=(
@@ -98,6 +101,9 @@ MATCH=(
   'ADD[[:space:]]+(COLUMN[[:space:]]+)?(IF[[:space:]]+NOT[[:space:]]+EXISTS[[:space:]]+)?[a-zA-Z0-9_"]+[[:space:]]+[a-zA-Z0-9_()[:space:],]*NOT[[:space:]]+NULL'
   'DROP[[:space:]]+(MATERIALIZED[[:space:]]+)?VIEW'
   'ADD[[:space:]]+CONSTRAINT'
+  # Tightening without the CONSTRAINT keyword: a write the previous binary
+  # still makes can now be refused.
+  'CREATE[[:space:]]+UNIQUE[[:space:]]+INDEX|ADD[[:space:]]+(PRIMARY[[:space:]]+KEY|UNIQUE|CHECK)([[:space:]]|\()'
   # Anchored to the line start: a real DELETE/TRUNCATE/UPDATE always opens its
   # line, which keeps this off prose ("TRUNCATE of audit_log" in a COMMENT ON
   # string, a `BEFORE TRUNCATE ON t` trigger).
@@ -115,8 +121,10 @@ EXCLUDE=(
   ''
   ''
   ''
+  ''
 )
 GUARD=(
+  ''
   ''
   ''
   ''
@@ -197,7 +205,17 @@ for f in "$MIGRATIONS_DIR"/*.up.sql; do
     if [ -n "$guard" ]; then
       # Guarded classes (`dml`) get no inline-marker escape: a comment is not
       # proof. Only the guard or the baseline clears a hit.
-      if grep -qiE -- "$guard" "$f"; then
+      # The guard must be a statement that runs at migrate time: not prose in
+      # a comment, not the body of a function this file only defines.
+      ghits="$(grep_lines -nEi -- "$guard" "$f")"
+      if [ -n "$ghits" ]; then
+        ghits="$(printf '%s\n' "$ghits" | grep_lines -vE -- '^[0-9]+:[[:space:]]*--')"
+      fi
+      if [ -n "$ghits" ] && [ -n "$fnlines" ]; then
+        ghits="$(printf '%s\n' "$ghits" | awk -F: -v skip="$fnlines" \
+          'BEGIN { n = split(skip, a, " "); for (i = 1; i <= n; i++) in_fn[a[i]] = 1 } !($1 in in_fn)')"
+      fi
+      if [ -n "$ghits" ]; then
         continue
       fi
       if ! in_baseline "${base}:${class}"; then

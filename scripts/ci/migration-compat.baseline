@@ -55,3 +55,13 @@
 0137_disarm_comet_replay_doublecount.up.sql:dml
 0164_disarm_cctp_rozo_replay_doublecount.up.sql:dml
 0185_mev_drop_unproven_direction_sandwiches.up.sql:dml
+
+# `add-unique` joined the gate after these shipped. Each is applied on every
+# host; 0180 is the one that tightened a table a released binary wrote to.
+0005_create_asset_supply_history.up.sql:add-unique
+0027_platform_v1_schema.up.sql:add-unique
+0067_mev_arbitrage_dedup.up.sql:add-unique
+0140_webauthn_credentials.up.sql:add-unique
+0143_sessions_token_hash.up.sql:add-unique
+0169_price_source_contributions_window.up.sql:add-unique
+0180_customer_webhooks_account_url_unique.up.sql:add-unique

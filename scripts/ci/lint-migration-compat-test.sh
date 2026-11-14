@@ -69,6 +69,21 @@ expect 'drop-view fires' 1 'drop-view'
 run 'ALTER TABLE trades ADD CONSTRAINT trades_kind_check CHECK (kind IN (1));' ''
 expect 'add-constraint fires' 1 'add-constraint'
 
+run 'CREATE UNIQUE INDEX IF NOT EXISTS hooks_account_url ON hooks (account_id, url);' ''
+expect 'a unique index fires' 1 'add-unique'
+
+run 'ALTER TABLE hooks ADD UNIQUE (account_id, url);' ''
+expect 'ADD UNIQUE fires' 1 'add-unique'
+
+run 'ALTER TABLE hooks ADD PRIMARY KEY (id);' ''
+expect 'ADD PRIMARY KEY fires' 1 'add-unique'
+
+run 'ALTER TABLE hooks ADD CHECK (kind > 0);' ''
+expect 'ADD CHECK fires' 1 'add-unique'
+
+run 'CREATE INDEX hooks_account ON hooks (account_id);' ''
+expect 'a plain index is additive' 0 'passed'
+
 run 'ALTER TABLE trades ADD COLUMN venue text NOT NULL;' ''
 expect 'add-not-null-column (no default) fires' 1 'add-not-null-column'
 
@@ -139,6 +154,18 @@ expect 'RAISE EXCEPTION guard clears dml (no inline marker needed)' 0 'passed'
 
 run 'DELETE FROM comet_liquidity;' '0001_fixture.up.sql:dml'
 expect 'baselined dml entry passes' 0 'passed'
+
+run '-- a real guard would RAISE EXCEPTION on a large table
+DELETE FROM comet_liquidity;' ''
+expect 'a comment naming RAISE EXCEPTION is not a guard' 1 'dml'
+
+run 'CREATE FUNCTION refuse() RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION '"'"'no'"'"';
+END
+$$;
+DELETE FROM comet_liquidity;' ''
+expect 'a RAISE EXCEPTION inside a function body is not a guard' 1 'dml'
 
 run 'CREATE FUNCTION forget(p text) RETURNS void LANGUAGE plpgsql AS $$
 BEGIN

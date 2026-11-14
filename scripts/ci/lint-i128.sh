@@ -23,7 +23,9 @@ fail=0
 
 # Production code only (tests exempt). Comment lines are skipped: docstrings
 # mention int64(parts.Lo) to WARN against it.
-hits=$(grep -rnE '\bint(8|16|32|64)?\([A-Za-z_][A-Za-z0-9_.]*\.Lo\)' \
+# The receiver class admits calls and indexing (`v.MustI128().Lo`, `ps[0].Lo`)
+# but no comma or space, so the correct two-word call stays clean.
+hits=$(grep -rnE '\bint(8|16|32|64)?\([A-Za-z_][][A-Za-z0-9_.()]*\.Lo\)' \
   --include='*.go' internal/ cmd/ pkg/ 2>/dev/null \
   | grep -v '_test\.go' \
   | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' || true)
@@ -46,7 +48,7 @@ vhits=$(awk '
     {
       line = $0
       sub(/[[:space:]]\/\/.*$/, "", line)
-      if (match(line, /[A-Za-z_][A-Za-z0-9_]*[[:space:]]*:?=[[:space:]]*[A-Za-z_][A-Za-z0-9_.]*\.Lo([^A-Za-z0-9_]|$)/)) {
+      if (match(line, /[A-Za-z_][A-Za-z0-9_]*[[:space:]]*:?=[[:space:]]*[A-Za-z_][][A-Za-z0-9_.()]*\.Lo([^A-Za-z0-9_]|$)/)) {
         v = substr(line, RSTART, RLENGTH); sub(/[[:space:]]*:?=.*$/, "", v); bound[v] = 1
       }
       for (v in bound) {
