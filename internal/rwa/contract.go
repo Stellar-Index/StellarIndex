@@ -58,6 +58,9 @@ const (
 	RejectContractNoTag    = "contract_named_without_issuing_tag"
 	RejectContractScam     = "contract_scam_flagged"
 	RejectNoContractBasis  = "no_real_world_instrument_basis_for_contract"
+	// RejectContractIsClassicMemberSAC: the address is the SAC of an admitted classic member, the
+	// same asset in its contract spelling; a second row would count its supply twice.
+	RejectContractIsClassicMemberSAC = "contract_is_classic_member_sac"
 
 	// RejectContractListedNotCurated: listed, no curated binding (arm 2's second half). The
 	// commonest refusal by design: the listing holds stablecoins, wrapped BTC and the XLM SAC.

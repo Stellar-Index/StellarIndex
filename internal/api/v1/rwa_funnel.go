@@ -540,6 +540,7 @@ func rwaListingCandidateDrops(m rwaMembership) []RWAFunnelDrop {
 	}{
 		{rwa.RejectContractScam, rwaActorDefinition},
 		{rwa.RejectNoContractBasis, rwaActorDefinition},
+		{rwa.RejectContractIsClassicMemberSAC, rwaActorDefinition},
 	} {
 		if n := m.listingRefusals[d.reason]; n > 0 {
 			out = append(out, RWAFunnelDrop{Reason: d.reason, Count: n, Actor: d.actor})
@@ -557,9 +558,13 @@ func rwaContractCandidateDrops(m rwaMembership) []RWAFunnelDrop {
 			Reason: rwa.RejectNoContractBasis, Count: n, Actor: rwaActorDefinition,
 		})
 	}
-	return append(out, rwaDrops(RWAFunnelDrop{
-		Reason: rwaDropDuplicateContractEntry, Count: m.contractCensus.duplicates, Actor: rwaActorOperator,
-	})...)
+	return append(out, rwaDrops(
+		RWAFunnelDrop{
+			Reason: rwa.RejectContractIsClassicMemberSAC, Actor: rwaActorDefinition,
+			Count: m.contractRefusals[rwa.RejectContractIsClassicMemberSAC],
+		},
+		RWAFunnelDrop{Reason: rwaDropDuplicateContractEntry, Count: m.contractCensus.duplicates, Actor: rwaActorOperator},
+	)...)
 }
 
 // rwaCandidateDrops is what happened to candidates that reached the full ordered evaluation: requirement refusals in R1-R4 order, then
