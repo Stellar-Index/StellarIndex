@@ -79,6 +79,9 @@ Intent-keyed: *Need to X → use `package.Symbol`*. Every symbol verified presen
 - HTTP metrics/route → `obs.HTTPMetrics`, `obs.CaptureRoute` (already wired)
 - Logger → `obs.NewLogger(cfg, binary)`; assert metric children in tests → `obstest.HistogramSampleCount`
 
+## Files on disk — `internal/atomicfile`
+- Atomic write (random temp + rename, never follows a planted link) → `atomicfile.Write` / `WriteBytes`; lock file open → `atomicfile.OpenLock`. Textfile-collector writers and root jobs use these (`scripts/ci/lint-predictable-temp.sh`); shell: `mktemp "$out.tmp.XXXXXX"`.
+
 ## Storage connectors
 - Served tier (Timescale/PG) → `timescale.Open(ctx, dsn)` → `*Store`
 - One daemon per database → `Store.HoldInstanceLock(ctx, name, onLost, logger)` (session advisory lock, re-verified; indexer + aggregator use it)

@@ -29,7 +29,7 @@ set -uo pipefail
 
 TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
 OUT="$TEXTFILE_DIR/galexie_archive_contiguity.prom"
-TMP="$OUT.tmp.$$"
+TMP="$(mktemp "$OUT.tmp.XXXXXX")"
 trap 'rm -f "$TMP" "$TMP.checked"' EXIT
 
 BUCKET="${BUCKET:-local/galexie-archive}"

@@ -20,6 +20,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/Stellar-Index/StellarIndex/internal/atomicfile"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
@@ -609,15 +610,7 @@ func writeMirrorVerifyTextfile(path string, res mirrorVerifyResult, now time.Tim
 	fmt.Fprintf(&b, "# HELP galexie_archive_upstream_partitions_compared Partitions present on both the local mirror and upstream that the last completed run compared.\n# TYPE galexie_archive_upstream_partitions_compared gauge\ngalexie_archive_upstream_partitions_compared %d\n", res.partitionsCompared)
 	fmt.Fprintf(&b, "# HELP galexie_archive_upstream_last_success_unix Unix time the last galexie-mirror-verify run completed its comparison.\n# TYPE galexie_archive_upstream_last_success_unix gauge\ngalexie_archive_upstream_last_success_unix %d\n", now.Unix())
 
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(b.String()), 0o644); err != nil { //nolint:gosec // operator-supplied path; the collector reads world-readable files
-		return fmt.Errorf("write textfile %q: %w", tmp, err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("rename textfile %q → %q: %w", tmp, path, err)
-	}
-	return nil
+	return atomicfile.WriteBytes(path, 0o644, []byte(b.String()))
 }
 
 func parseMirrorVerifyFlags(args []string) (mirrorVerifyOpts, error) {

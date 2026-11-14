@@ -215,6 +215,8 @@ echo "=== Repo budget ===" && ./scripts/ci/lint-repo-budget.sh
 echo "=== Repo budget self-test ===" && ./scripts/ci/lint-repo-budget-test.sh
 echo "=== Remote /tmp staging ===" && ./scripts/ci/lint-remote-tmp-staging.sh
 echo "=== Remote /tmp staging self-test ===" && ./scripts/ci/lint-remote-tmp-staging-test.sh
+echo "=== Predictable temp names ===" && ./scripts/ci/lint-predictable-temp.sh
+echo "=== Predictable temp names self-test ===" && ./scripts/ci/lint-predictable-temp-test.sh
 echo "=== Actions pinning ===" && ./scripts/ci/lint-actions-pinning.sh
 echo "=== Actions pinning self-test ===" && ./scripts/ci/lint-actions-pinning-test.sh
 echo "=== pnpm version pin ===" && ./scripts/ci/lint-pnpm-version-pin.sh

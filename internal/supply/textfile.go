@@ -9,6 +9,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/atomicfile"
 )
 
 // metricLastSuccessTimestamp is the series the snapshot_stale (36 h) and _critical_stale (72 h)
@@ -314,27 +316,7 @@ func lastSuccessSamples(body []byte, metricName string) ([]string, error) {
 	return out, nil
 }
 
-// writeAtomic runs `body` against a `<path>.tmp` file then renames
-// into place. Mirrors the pattern in internal/archivecompleteness
-// and the SLA probe.
+// writeAtomic writes the collector file world-readable through an exclusive temp file.
 func writeAtomic(path string, body func(io.Writer) error) error {
-	tmp := path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644) //nolint:gosec // operator-supplied path; collector reads world-readable files
-	if err != nil {
-		return fmt.Errorf("create textfile %q: %w", tmp, err)
-	}
-	if err := body(f); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("rename textfile %q -> %q: %w", tmp, path, err)
-	}
-	return nil
+	return atomicfile.Write(path, 0o644, body)
 }

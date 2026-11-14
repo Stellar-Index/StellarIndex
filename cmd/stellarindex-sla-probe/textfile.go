@@ -3,9 +3,10 @@ package main
 import (
 	"fmt"
 	"io"
-	"os"
 	"sort"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/atomicfile"
 )
 
 // writeTextfile renders rep to w in Prometheus exposition format (node_exporter's textfile
@@ -199,27 +200,7 @@ func writeVerdict(w io.Writer, rep *report) error {
 	return nil
 }
 
-// writeTextfileAtomic writes rep to `<path>.tmp` and renames it into place, so node_exporter
-// never scrapes a partial file. It mirrors archivecompleteness.WriteTextfileAtomic without
-// importing it because the metric set is probe-specific.
+// writeTextfileAtomic replaces the collector file so node_exporter never scrapes a partial one.
 func writeTextfileAtomic(path string, rep *report) error {
-	tmp := path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644) //nolint:gosec // operator-supplied path; collector reads world-readable files
-	if err != nil {
-		return fmt.Errorf("create textfile %q: %w", tmp, err)
-	}
-	if err := writeTextfile(f, rep); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("rename textfile %q -> %q: %w", tmp, path, err)
-	}
-	return nil
+	return atomicfile.Write(path, 0o644, func(w io.Writer) error { return writeTextfile(w, rep) })
 }

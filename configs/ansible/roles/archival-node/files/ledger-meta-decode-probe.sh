@@ -22,7 +22,7 @@ set -uo pipefail
 # bytes (same seam as galexie-catchup-probe.sh); the service unit sets none.
 TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
 OUT="$TEXTFILE_DIR/ledger_meta_decode.prom"
-TMP="$OUT.tmp.$$"
+TMP="$(mktemp "$OUT.tmp.XXXXXX")"
 WINDOW="${DECODE_PROBE_WINDOW:-15min}"
 
 [ -d "$TEXTFILE_DIR" ] || exit 0

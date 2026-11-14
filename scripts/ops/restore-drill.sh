@@ -337,7 +337,8 @@ emit_metric() {
   fi
   local metric_out="$TEXTFILE_DIR/restore_drill.prom"
   [[ "$DRILL_REPO" == "1" ]] || metric_out="$TEXTFILE_DIR/restore_drill_repo${DRILL_REPO}.prom"
-  local metric_tmp="$metric_out.tmp.$$"
+  local metric_tmp
+  metric_tmp="$(mktemp "$metric_out.tmp.XXXXXX")"
   local metric_checked="$metric_tmp.checked"
   local lbl="{repo=\"${DRILL_REPO}\"}"
 

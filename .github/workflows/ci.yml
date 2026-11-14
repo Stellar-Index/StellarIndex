@@ -739,6 +739,12 @@ jobs:
         run: ./scripts/ci/lint-remote-tmp-staging.sh
       - name: lint-remote-tmp-staging self-test
         run: ./scripts/ci/lint-remote-tmp-staging-test.sh
+      - name: lint-predictable-temp
+        # A root job writing into a service-user directory must not stage
+        # output under a guessable name; the owner can pre-plant it as a link.
+        run: ./scripts/ci/lint-predictable-temp.sh
+      - name: lint-predictable-temp self-test
+        run: ./scripts/ci/lint-predictable-temp-test.sh
       - name: lint-doc-links
         # Every relative markdown link must resolve. A broken link in a
         # runbook is an operational defect: the operator follows the

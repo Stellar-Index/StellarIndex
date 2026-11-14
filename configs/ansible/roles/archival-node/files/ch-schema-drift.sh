@@ -390,7 +390,7 @@ emit_intent_metrics() {
   local verified="$1" converged="$2" out tmp
   mkdir -p "$TEXTFILE_DIR"
   out="$TEXTFILE_DIR/ch_schema_drift.prom"
-  tmp="$out.tmp.$$"
+  tmp="$(mktemp "$out.tmp.XXXXXX")"
   {
     echo "# HELP stellarindex_ch_schema_drift_last_run_unix Unix time of the most recent completed repo-vs-live ClickHouse schema comparison."
     echo "# TYPE stellarindex_ch_schema_drift_last_run_unix gauge"
@@ -753,7 +753,7 @@ note "compared $compared declared table(s) against $live_origin: $divergent_tabl
 if [[ "$TEXTFILE_DIR" != "/dev/null" ]]; then
   mkdir -p "$TEXTFILE_DIR"
   out="$TEXTFILE_DIR/ch_schema_drift.prom"
-  tmp="$out.tmp.$$"
+  tmp="$(mktemp "$out.tmp.XXXXXX")"
   {
     echo "# HELP stellarindex_ch_schema_drift_last_run_unix Unix time of the most recent completed repo-vs-live ClickHouse schema comparison."
     echo "# TYPE stellarindex_ch_schema_drift_last_run_unix gauge"

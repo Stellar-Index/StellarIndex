@@ -665,7 +665,7 @@
           local q="${SCHED_LOCK}.queue" t ticket
           [ -n "$LOCK_WAIT" ] || { flock -n -x 7; return; }
           if ! { [ -d "$q" ] || (umask 0; mkdir -m 1777 "$q") 2>/dev/null; } \
-            || ! (umask 022; : >"$q/.new-$$") 2>/dev/null || ! exec 6<"$q/.new-$$"; then
+            || ! (umask 022; set -C; : >"$q/.new-$$") 2>/dev/null || ! exec 6<"$q/.new-$$"; then
             echo "run-heavy-job: WARNING ${NAME} (scheduled) cannot queue in ${q} — waiting unordered" >&2
             flock -w "$(lock_left)" -x 7; return
           fi
@@ -776,11 +776,13 @@
       HELD_PROM="${HEAVY_JOB_TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}/heavy_job_${NAME//[^A-Za-z0-9_]/_}.prom"
       publish_hold() {
         [ -d "$(dirname "$HELD_PROM")" ] || return 0
+        local t
+        t="$(mktemp "${HELD_PROM}.XXXXXX" 2>/dev/null)" || return 0
         {
           echo "# HELP stellarindex_heavy_lock_held_since_unix Unix time this job took the host-wide heavy lock; present only while it is held."
           echo "# TYPE stellarindex_heavy_lock_held_since_unix gauge"
           echo "stellarindex_heavy_lock_held_since_unix{ops_job=\"${NAME}\"} $(date +%s)"
-        } > "${HELD_PROM}.$$" && mv "${HELD_PROM}.$$" "$HELD_PROM" || rm -f "${HELD_PROM}.$$"
+        } > "$t" && chmod 644 "$t" && mv "$t" "$HELD_PROM" || rm -f "$t"
       }
 
       if [ "$(id -u)" -ne 0 ]; then

@@ -13,6 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 
+	"github.com/Stellar-Index/StellarIndex/internal/atomicfile"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
@@ -87,25 +88,9 @@ func writeVerifyArchiveTextfile(path, tier string, runTotals map[string]uint64, 
 		lastSuccess = now.Unix()
 	}
 
-	tmp := path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644) //nolint:gosec // operator-supplied path; the collector reads world-readable files
-	if err != nil {
-		return fmt.Errorf("create textfile %q: %w", tmp, err)
-	}
-	if err := renderVerifyArchiveTextfile(f, tier, totals, lastSuccess); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("rename textfile %q → %q: %w", tmp, path, err)
-	}
-	return nil
+	return atomicfile.Write(path, 0o644, func(w io.Writer) error {
+		return renderVerifyArchiveTextfile(w, tier, totals, lastSuccess)
+	})
 }
 
 // renderVerifyArchiveTextfile writes the counter block in Prometheus exposition format. Every reason in verifyArchiveMismatchReasons is

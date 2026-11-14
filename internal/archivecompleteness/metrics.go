@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/atomicfile"
 )
 
 // MetricsSnapshot is the per-run metric set; field names match `deploy/monitoring/rules/archive-completeness.yml`, so renaming a field is a wire break against the alert rules.
@@ -182,30 +184,12 @@ func writeCounter(w io.Writer, name, help, labelKey string, samples map[string]i
 	return nil
 }
 
-// WriteTextfileAtomic folds the existing file's persistent state into snapshot (MUTATING it: last-success timestamp and both repair counters, since the rename replaces the file and drops un-re-emitted series), then writes `<path>.tmp` and renames; a missing or unparseable prior file means no prior state.
+// WriteTextfileAtomic folds the existing file's persistent state into snapshot (MUTATING it: last-success timestamp and both repair counters, since the rename replaces the file and drops un-re-emitted series), then replaces the file atomically; a missing or unparseable prior file means no prior state.
 func WriteTextfileAtomic(path string, snapshot *MetricsSnapshot) error {
 	if snapshot != nil {
 		snapshot.carryForward(readPriorTextfile(path))
 	}
-	tmp := path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644) //nolint:gosec // operator-supplied path; collector reads world-readable files
-	if err != nil {
-		return fmt.Errorf("create textfile %q: %w", tmp, err)
-	}
-	if err := WriteTextfile(f, snapshot); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("rename textfile %q → %q: %w", tmp, path, err)
-	}
-	return nil
+	return atomicfile.Write(path, 0o644, func(w io.Writer) error { return WriteTextfile(w, snapshot) })
 }
 
 // priorTextfileState is the part of a written textfile that must survive a rewrite: the last
