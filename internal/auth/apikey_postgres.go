@@ -168,7 +168,8 @@ func (v *PostgresAPIKeyValidator) cacheLookup(ctx context.Context, hexHash strin
 	if !rec.ExpiresAt.IsZero() && !v.now().Before(rec.ExpiresAt) {
 		return Subject{}, true, ErrTokenExpired
 	}
-	if _, _, err := v.status.check(ctx, rec.Identifier, v.now()); err != nil {
+	acct, isAccount, err := v.status.check(ctx, rec.Identifier, v.now())
+	if err != nil {
 		return Subject{}, true, err
 	}
 	sub, err := subjectFromRecord(rec)
@@ -176,6 +177,12 @@ func (v *PostgresAPIKeyValidator) cacheLookup(ctx context.Context, hexHash strin
 		// Corrupt cache entry — same degrade-not-fail rationale as
 		// Unmarshal failures upstream.
 		return Subject{}, false, nil //nolint:nilerr // deliberate degrade-not-fail
+	}
+	if isAccount {
+		// The canonical record never expires, so the account's current overrides are applied on
+		// the hit, as the Redis validator does.
+		sub.RateLimitPerMin = acct.ResolveKeyRateLimitPerMin(sub.RateLimitPerMin)
+		sub.MonthlyQuota = acct.ResolveKeyMonthlyQuota(sub.MonthlyQuota)
 	}
 	return sub, true, nil
 }
