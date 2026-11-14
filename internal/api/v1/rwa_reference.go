@@ -144,6 +144,9 @@ const (
 	// RWAPremiumIssuerFlagged — the issuer carries a scam-class directory tag. No valuation is
 	// published for it: an impersonator handed a real instrument's NAV is the claim the flag denies.
 	RWAPremiumIssuerFlagged = "withheld_issuer_flagged"
+	// RWAPremiumIssuerUnchecked — the issuer's directory read failed. An unanswered read is not
+	// "no scam tag", so the reference is withheld exactly as it is for a flagged issuer.
+	RWAPremiumIssuerUnchecked = "withheld_issuer_unchecked"
 	// RWAPremiumContractNotBound: the member is contract-issued and nothing binds a contract address
 	// to an oracle feed. The symbol join is refused: the contract authors its own SEP-41 symbol.
 	RWAPremiumContractNotBound = "reference_contract_not_bound"
@@ -434,8 +437,7 @@ func rwaApplyReference(
 ) {
 	// The scam-flag suppression comes first and covers the reference too: /v1/assets withholds this
 	// issuer's price, and handing it a real instrument's NAV instead would publish a larger claim.
-	if a.Valuation.Status == RWAValuationIssuerFlagged {
-		rwaRefuseReference(a, RWAPremiumIssuerFlagged)
+	if rwaRefuseWithheldIssuer(a) {
 		return
 	}
 	// A contract-issued member is answered before the oracle snapshot is consulted: it has no
@@ -695,6 +697,20 @@ func rwaApplyFundNAVReference(a *RWAAsset, snap rwaReferences, now time.Time) bo
 func rwaRefuseReference(a *RWAAsset, status string) {
 	a.Premium = RWAPremium{Status: status}
 	a.ReferenceValuation = RWAReferenceValuation{Status: status}
+}
+
+// rwaRefuseWithheldIssuer refuses every reference figure for a row whose issuer is scam-flagged or could not be checked,
+// and reports whether it did. Every arm that attaches a reference calls it first.
+func rwaRefuseWithheldIssuer(a *RWAAsset) bool {
+	switch a.Valuation.Status {
+	case RWAValuationIssuerFlagged:
+		rwaRefuseReference(a, RWAPremiumIssuerFlagged)
+	case RWAValuationIssuerUnchecked:
+		rwaRefuseReference(a, RWAPremiumIssuerUnchecked)
+	default:
+		return false
+	}
+	return true
 }
 
 // rwaReferenceValuationOf values one row's float at the reference price, or states why it cannot. It runs only on a row already carrying

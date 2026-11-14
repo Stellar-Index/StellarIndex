@@ -365,7 +365,7 @@ func (s *Server) rwaContractListingRows(
 	// still divide by the default 7 when its decimals read misses; fillContractMarketCaps below
 	// discards any such cap.
 	s.stampListingCollisions(details)
-	s.applySubstanceGateToListing(ctx, details, false)
+	unmeasured := s.applySubstanceGateToListing(ctx, details, false)
 	s.fillMarketCapsFromSupply(ctx, details, map[string]int{})
 	s.fillDeclaredPegPricesInListing(ctx, details)
 	s.fillIssuerDirectoryTags(ctx, details)
@@ -381,7 +381,7 @@ func (s *Server) rwaContractListingRows(
 	for _, d := range details {
 		out[d.AssetID] = d
 	}
-	return out, notObserved, decimalsCut || capsCut, nil
+	return out, notObserved, decimalsCut || capsCut || unmeasured || anyDirectoryUnchecked(details), nil
 }
 
 // fillContractDecimals overlays each contract's real on-chain decimals; assetDetailFromAssetRow hardcodes 7, and market cap

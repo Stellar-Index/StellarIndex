@@ -337,8 +337,7 @@ func (s *Server) rwaCuratedRows(
 // rwaApplyCuratorReference attaches the curator's price as the row's reference. No premium is published against it, for a stronger
 // version of the reason none is published against a listing price.
 func rwaApplyCuratorReference(a *RWAAsset, e timescale.CuratedRWAEntry, now time.Time) {
-	if a.Valuation.Status == RWAValuationIssuerFlagged {
-		rwaRefuseReference(a, RWAPremiumIssuerFlagged)
+	if rwaRefuseWithheldIssuer(a) {
 		return
 	}
 	entry := timescale.ListingEntry{
