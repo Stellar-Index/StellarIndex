@@ -737,6 +737,11 @@ func (h *Handlers) HandlePasskeyDelete(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
+	// A session the removed passkey opened must not outlive it. The delete is committed, so a
+	// failed revoke is logged, not a 500.
+	if err := h.cfg.Users.RevokeOtherUserSessions(r.Context(), sc.User.ID, sc.Session.ID); err != nil {
+		h.cfg.Logger.Error("revoke other sessions after passkey removal", "err", err, "user_id", sc.User.ID)
+	}
 	RecordSessionCredentialEvent(r, h.cfg.Audit, h.cfg.Logger, h.cfg.Now(), sc, CredentialEvent{
 		Action:     AuditActionPasskeyDelete,
 		TargetKind: auditTargetPasskey,

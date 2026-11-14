@@ -224,6 +224,63 @@ func TestPasskeyRegister_RevokesOtherSessionsKeepsPresented(t *testing.T) {
 	}
 }
 
+// TestPasskeyDelete_RevokesOtherSessionsKeepsPresented: removing a passkey is the remedy the
+// "passkey added" email gives, so it must end a session that passkey opened.
+func TestPasskeyDelete_RevokesOtherSessionsKeepsPresented(t *testing.T) {
+	rig := newPasskeyRig(t)
+	mint := func(userID uuid.UUID) (platform.Session, string) {
+		return mintTestSession(t, rig.users, platform.Session{UserID: userID, ExpiresAt: rig.now().Add(24 * time.Hour)})
+	}
+	presented, presentedToken := mint(rig.user.ID)
+	_, otherToken := mint(rig.user.ID)
+	stranger, err := rig.users.CreateUser(context.Background(), platform.User{
+		AccountID: rig.account.ID, Email: "stranger@example.com", Role: platform.RoleMember,
+	})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	_, strangerToken := mint(stranger.ID)
+	rig.sessionID = presented.ID
+	planted, err := rig.passkeys.CreateWebAuthnCredential(context.Background(), platform.WebAuthnCredential{
+		UserID: rig.user.ID, Name: "Not mine",
+		CredentialID: []byte("EXAMPLE-CRED-ID-PLACEHOLDER-09"), PublicKey: []byte("EXAMPLE-PUBKEY-PLACEHOLDER"),
+	})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	authenticates := func(token string) bool {
+		_, err := rig.users.GetSessionByTokenHash(context.Background(), HashSessionToken(token))
+		return err == nil
+	}
+
+	// A refused delete ends nothing.
+	missing := uuid.New()
+	req := rig.withSession(httptest.NewRequest(http.MethodDelete, "/v1/auth/passkey/credentials/"+missing.String(), nil))
+	req.SetPathValue("id", missing.String())
+	w := httptest.NewRecorder()
+	rig.h.HandlePasskeyDelete(w, req)
+	if w.Code != http.StatusNotFound || !authenticates(otherToken) {
+		t.Fatalf("404 delete: status %d, other session alive %v; want 404 and alive", w.Code, authenticates(otherToken))
+	}
+
+	req = rig.withSession(httptest.NewRequest(http.MethodDelete, "/v1/auth/passkey/credentials/"+planted.ID.String(), nil))
+	req.SetPathValue("id", planted.ID.String())
+	w = httptest.NewRecorder()
+	rig.h.HandlePasskeyDelete(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d, want 204", w.Code)
+	}
+	if !authenticates(presentedToken) {
+		t.Error("passkey removal revoked the session that performed it")
+	}
+	if authenticates(otherToken) {
+		t.Error("another session of the user survived the passkey's removal")
+	}
+	if !authenticates(strangerToken) {
+		t.Error("passkey removal revoked another user's session")
+	}
+}
+
 func TestHandleLogout_IdempotentWithoutCookie(t *testing.T) {
 	r := newTestRig(t)
 	req := httptest.NewRequest(http.MethodPost, "/v1/auth/logout", nil)
