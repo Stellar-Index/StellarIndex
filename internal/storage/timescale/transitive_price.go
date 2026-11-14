@@ -20,6 +20,10 @@ type TransitivePrice struct {
 	// market (the near leg) — the key candidates are ranked by. It says
 	// nothing about the hop's own USD/XLM market; the caller gates that.
 	HopVolume24hUSD string
+	// HopQuote is the asset_id the hop's own USD price was read against: a USD proxy, or the XLM
+	// form when the price is hop/XLM times the anchor. Empty when the hop is XLM itself. The caller
+	// gates exactly this market; one hop can appear once per route.
+	HopQuote string
 }
 
 // usdProxyQuotes are quotes whose VWAP is already a USD price; keep identical to the catalogue's direct_usd CTE and the coverage
@@ -28,9 +32,9 @@ const usdProxyQuotes = `'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34
 	'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
 	'fiat:USD'`
 
-// transitiveHopCandidates bounds ranked hops returned: enough that a thin top hop cannot hide a sound one, few enough to keep per-hop
-// gating cheap.
-const transitiveHopCandidates = 5
+// transitiveHopCandidates bounds ranked routes returned (a hop has up to two: direct USD and via XLM): enough that a thin top hop
+// cannot hide a sound one, few enough to keep per-route gating cheap.
+const transitiveHopCandidates = 10
 
 // TransitiveUSDPriceCandidates derives USD prices for `assetID` through each counterparty that itself has a USD price, best first; an
 // empty slice with nil error means no route exists.
@@ -43,7 +47,7 @@ func (s *Store) TransitiveUSDPriceCandidates(ctx context.Context, assetID string
 	var out []TransitivePrice
 	for rows.Next() {
 		var tp TransitivePrice
-		if err := rows.Scan(&tp.PriceUSD, &tp.Hop, &tp.HopVolume24hUSD); err != nil {
+		if err := rows.Scan(&tp.PriceUSD, &tp.Hop, &tp.HopVolume24hUSD, &tp.HopQuote); err != nil {
 			return nil, fmt.Errorf("timescale: TransitiveUSDPriceCandidates[%s]: scan: %w", assetID, err)
 		}
 		out = append(out, tp)
@@ -70,36 +74,35 @@ hops AS (
        AND bucket >= now() - INTERVAL '24 hours'
      GROUP BY 1
 ),
--- The hop's OWN USD price, in preference order:
---   1. the hop IS XLM (either identity form) — its price is xlm_usd, or
+-- The hop's OWN USD price, one row per ROUTE, each naming the market it was read from so the
+-- caller can substance-gate that market and no other:
+--   0. the hop IS XLM (either identity form) — its price is xlm_usd, or
 --      none: never a raw XLM/USD row older than the anchor's freshness.
 --      Without this arm an asset whose only market is against the XLM
 --      SAC had no route (r1 2026-08-28, CBIJ…).
---   2. direct against a USD proxy;
---   3. against XLM (hx), times the XLM/USD anchor as of hx's own minute
+--   1. direct against a USD proxy (d);
+--   2. against XLM (hx), times the XLM/USD anchor as of hx's own minute
 --      (hxa): the hop's latest bucket in EITHER stored direction (hop/XLM
 --      as is, XLM/hop inverted — the shape swap-direction sources such as
 --      aquarius write). A stale direction must not outrank a fresher one;
 --      the hop/XLM row wins a tied bucket.
+-- Routes 1 and 2 are both returned: one dust print on the hop's USD market must neither set
+-- the price nor hide the deep XLM route.
 hop_usd AS (
-    SELECT h.hop,
-           h.hop_vol,
-           CASE WHEN h.hop IN (` + xlmQuotesBound3 + `)
-                THEN (SELECT vwap FROM xlm_usd)
-           ELSE COALESCE(
-             (SELECT p.vwap FROM prices_1m p
-               WHERE p.base_asset = h.hop
-                 AND p.quote_asset IN (` + usdProxyQuotes + `)
-                 AND p.bucket <= now() - INTERVAL '1 minute'
-                 AND p.bucket >= now() - INTERVAL '24 hours'
-                 AND p.vwap IS NOT NULL
-               ORDER BY p.bucket DESC, ` + usdQuotePref + ` LIMIT 1),
-             hx.v * hxa.vwap
-           ) END AS hop_usd
+    SELECT h.hop, h.hop_vol, r.hop_usd, r.hop_quote, r.route
       FROM hops h
       LEFT JOIN LATERAL (
-        SELECT e.v, e.bucket FROM (
-          (SELECT p.vwap AS v, p.bucket, 1 AS pref FROM prices_1m p
+        SELECT p.vwap, p.quote_asset FROM prices_1m p
+         WHERE p.base_asset = h.hop
+           AND p.quote_asset IN (` + usdProxyQuotes + `)
+           AND p.bucket <= now() - INTERVAL '1 minute'
+           AND p.bucket >= now() - INTERVAL '24 hours'
+           AND p.vwap IS NOT NULL
+         ORDER BY p.bucket DESC, ` + usdQuotePref + ` LIMIT 1
+      ) d ON true
+      LEFT JOIN LATERAL (
+        SELECT e.v, e.bucket, e.form FROM (
+          (SELECT p.vwap AS v, p.bucket, p.quote_asset AS form, 1 AS pref FROM prices_1m p
             WHERE p.base_asset = h.hop
               AND p.quote_asset IN (` + xlmQuotesBound3 + `)
               AND p.bucket <= now() - INTERVAL '1 minute'
@@ -107,7 +110,7 @@ hop_usd AS (
               AND p.vwap IS NOT NULL
             ORDER BY p.bucket DESC, ` + xlmFormPrefOpenBound3 + `p.quote_asset) LIMIT 1)
           UNION ALL
-          (SELECT 1 / NULLIF(p.vwap, 0), p.bucket, 2 FROM prices_1m p
+          (SELECT 1 / NULLIF(p.vwap, 0), p.bucket, p.base_asset, 2 FROM prices_1m p
             WHERE p.base_asset IN (` + xlmQuotesBound3 + `)
               AND p.quote_asset = h.hop
               AND p.bucket <= now() - INTERVAL '1 minute'
@@ -119,6 +122,16 @@ hop_usd AS (
         ORDER BY e.bucket DESC, e.pref LIMIT 1
       ) hx ON true
       LEFT JOIN LATERAL (` + xlmUSDAnchorAt("hx.bucket", "$3::text") + `) hxa ON true
+      CROSS JOIN LATERAL (
+        SELECT (SELECT vwap FROM xlm_usd) AS hop_usd, '' AS hop_quote, 0 AS route
+         WHERE h.hop IN (` + xlmQuotesBound3 + `)
+        UNION ALL
+        SELECT d.vwap, d.quote_asset, 1
+         WHERE h.hop NOT IN (` + xlmQuotesBound3 + `)
+        UNION ALL
+        SELECT hx.v * hxa.vwap, hx.form, 2
+         WHERE h.hop NOT IN (` + xlmQuotesBound3 + `)
+      ) r
 ),
 -- This asset's price IN the hop: the latest bucket in either direction,
 -- (asset, hop) as is or (hop, asset) inverted, so a stale row in one
@@ -127,6 +140,8 @@ leg AS (
     SELECT hu.hop,
            hu.hop_vol,
            hu.hop_usd,
+           hu.hop_quote,
+           hu.route,
            (SELECT e.v FROM (
               (SELECT p.vwap AS v, p.bucket, 1 AS pref FROM prices_1m p
                 WHERE p.base_asset = $1 AND p.quote_asset = hu.hop
@@ -147,8 +162,8 @@ leg AS (
       FROM hop_usd hu
      WHERE hu.hop_usd IS NOT NULL AND hu.hop_usd > 0
 )
-SELECT (leg_vwap * hop_usd)::text, hop, COALESCE(hop_vol, 0)::text
+SELECT (leg_vwap * hop_usd)::text, hop, COALESCE(hop_vol, 0)::text, hop_quote
   FROM leg
  WHERE leg_vwap IS NOT NULL AND leg_vwap > 0
- ORDER BY hop_vol DESC NULLS LAST, hop
+ ORDER BY hop_vol DESC NULLS LAST, hop, route
  LIMIT $2`

@@ -1590,7 +1590,8 @@ func TestSubstanceGate_TellsAnUnvaluableMarketFromAThinOne(t *testing.T) {
 
 // The resolver returns EVERY priced hop ranked by near-leg (asset<->hop) USD volume, not just the deepest, because the
 // API gates each candidate and falls through to the next. Closed buckets in the trailing 24h: XLM/USDC 0.40; HOPA =
-// 0.80, HOPB = 0.20 USD via XLM; TGT = 0.80 via HOPA ($100) and via HOPB ($1000, inverted)
+// 0.80, HOPB = 0.20 USD via XLM; TGT = 0.80 via HOPA ($100) and via HOPB ($1000, inverted). HOPA also has one print
+// against USDC at 1000: that route is returned first for the hop, naming USDC, and the XLM route is still returned.
 func TestTransitiveUSDPriceCandidates_RankedHops(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1647,6 +1648,7 @@ func TestTransitiveUSDPriceCandidates_RankedHops(t *testing.T) {
 	insert(now.Add(-15*time.Minute), pair(tgt, hopA), 100_000_000, 100_000_000)
 	insert(now.Add(-15*time.Minute), pair(hopB, tgt), 400_000_000, 100_000_000)
 	insert(now.Add(-15*time.Minute), pair(tgt, nopx), 100_000_000, 100_000_000)
+	insert(now.Add(-5*time.Minute), pair(hopA, usdc), 10_000_000, 10_000_000_000)
 
 	stamp := func(base, quote c.Asset, usd int) {
 		t.Helper()
@@ -1669,16 +1671,17 @@ func TestTransitiveUSDPriceCandidates_RankedHops(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TransitiveUSDPriceCandidates: %v", err)
 	}
-	want := []struct{ hop, price string }{
-		{hopB.String(), "0.80"},
-		{hopA.String(), "0.80"},
+	want := []struct{ hop, price, hopQuote string }{
+		{hopB.String(), "0.80", "native"},
+		{hopA.String(), "1000", usdc.String()},
+		{hopA.String(), "0.80", "native"},
 	}
 	if len(got) != len(want) {
-		t.Fatalf("candidates = %+v, want hops %s then %s", got, hopB, hopA)
+		t.Fatalf("candidates = %+v, want hop %s, then %s by its USDC and XLM routes", got, hopB, hopA)
 	}
 	for i, w := range want {
-		if got[i].Hop != w.hop {
-			t.Errorf("candidate %d hop = %s, want %s", i, got[i].Hop, w.hop)
+		if got[i].Hop != w.hop || got[i].HopQuote != w.hopQuote {
+			t.Errorf("candidate %d = hop %s priced against %q, want %s against %q", i, got[i].Hop, got[i].HopQuote, w.hop, w.hopQuote)
 		}
 		a, ok1 := new(big.Rat).SetString(got[i].PriceUSD)
 		b, _ := new(big.Rat).SetString(w.price)

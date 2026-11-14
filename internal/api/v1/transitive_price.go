@@ -14,7 +14,7 @@ type TransitivePricer interface {
 }
 
 // transitivePriceFor returns a USD price through ONE intermediate hop: the first ranked candidate whose asset and hop are not
-// scam- withheld and whose two legs both clear the substance floors; a failing candidate falls through. Returns ("", false) when
+// scam-withheld and whose two legs both clear the substance floors; a failing candidate falls through. Returns ("", false) when
 // none may be served, errors included. Both legs are gated because a two-hop price inherits its weakest leg: a thin hop would
 // otherwise reprice everything quoted against it, the manipulation the floors stop.
 func (s *Server) transitivePriceFor(ctx context.Context, asset canonical.Asset, assetID string) (string, bool) {
@@ -60,9 +60,21 @@ func (s *Server) transitiveCandidateAllowed(ctx context.Context, asset canonical
 	if s.Substance == nil {
 		return false
 	}
-	// Far leg: the hop must stand on its own against the SAME quote set the catalogue prices
-	// through; reuse assetPriceAllowed, which encodes that policy. Counted as "transitive".
-	return s.assetPriceAllowed(ctx, hop, "transitive")
+	return s.transitiveFarLegAllowed(ctx, hop, tp.HopQuote)
+}
+
+// transitiveFarLegAllowed gates the market the hop's USD price was READ from, not any market the
+// hop has: a hop deep against XLM would otherwise carry a price set by one dust print against USD.
+func (s *Server) transitiveFarLegAllowed(ctx context.Context, hop canonical.Asset, hopQuote string) bool {
+	if hopQuote == "" {
+		// Priced as the XLM anchor itself; a non-XLM hop with no named market was never gated.
+		return sameAsset(hop, canonical.NativeAsset()) && s.assetPriceAllowed(ctx, hop, "transitive")
+	}
+	quote, err := canonical.ParseAsset(hopQuote)
+	if err != nil || sameAsset(hop, quote) {
+		return false
+	}
+	return pricingguard.PairSubstanceVerdict(ctx, s.Substance, hop, quote, "transitive")
 }
 
 // normalizeTransitiveUSD applies the dex-nonstandard-decimals normalisation to a chain of RAW prices_1m ratios. The hop's

@@ -247,6 +247,17 @@ func AssetSubstanceVerdict(
 	return allowed, measured
 }
 
+// PairSubstanceVerdict is the strict single-pair answer: allowed only when (base, quote) was measured and cleared the floor.
+// A refusal is counted on `surface`.
+func PairSubstanceVerdict(ctx context.Context, gate SubstanceVerdicter, base, quote canonical.Asset, surface string) bool {
+	allowed, measured, floor := gate.Probe(ctx, base, quote)
+	if allowed && measured {
+		return true
+	}
+	countVerdict(surface, false, measured, floor)
+	return false
+}
+
 // AssetSubstanceVerdictThinServed is [AssetSubstanceVerdict] for include_thin callers.
 func AssetSubstanceVerdictThinServed(
 	ctx context.Context, gate SubstanceVerdicter, asset canonical.Asset,
