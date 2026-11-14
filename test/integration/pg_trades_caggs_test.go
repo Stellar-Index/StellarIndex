@@ -1289,6 +1289,20 @@ func TestProtocolEventRollup_RoundTrip(t *testing.T) {
 		}
 	}
 
+	// One 3-token update_reserves event is three rows and one event.
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	for i := 0; i < 3; i++ {
+		if _, err := db.ExecContext(ctx, `INSERT INTO aquarius_reserves
+			(contract_id, ledger, ledger_close_time, tx_hash, op_index, event_index, token_index, reserve)
+			VALUES ('CPOOL', 10, $1, 'txfan', 0, 0, $2, 1000)`, recent, i); err != nil {
+			t.Fatalf("seed aquarius_reserves: %v", err)
+		}
+	}
+
 	if err := store.RefreshProtocolEventCounts(ctx); err != nil {
 		t.Fatalf("RefreshProtocolEventCounts: %v", err)
 	}
@@ -1297,16 +1311,14 @@ func TestProtocolEventRollup_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CountRecentEventsBySource: %v", err)
 	}
+	if counts["aquarius"] != 1 {
+		t.Errorf("aquarius = %d, want 1 (one fanned event, old trade excluded)", counts["aquarius"])
+	}
 	if counts["sdex"] != 3 {
 		t.Errorf("sdex = %d, want 3", counts["sdex"])
 	}
 	if counts["soroswap"] != 1 {
 		t.Errorf("soroswap = %d, want 1", counts["soroswap"])
-	}
-	// aquarius is summed from its non-trade tables too, so like blend it is
-	// always present; the > 24h-old trade must still not count.
-	if counts["aquarius"] != 0 {
-		t.Errorf("aquarius = %d, want 0 (trade is > 24h old)", counts["aquarius"])
 	}
 
 	// Idempotent: a second refresh yields identical counts.

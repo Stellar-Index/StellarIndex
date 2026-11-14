@@ -9,6 +9,7 @@ import (
 // every served table, each leg labelled with the API registry's source name. It runs only from
 // [Store.RefreshProtocolEventCounts] into protocol_events_24h; the handler reads the rollup. Several legs sum into one source;
 // the trades and oracle_updates legs GROUP BY source and also yield CEX/FX/oracle sources callers ignore.
+// A table that fans one event into a row per token or recipient is counted on index 0, so the figure is events, not rows.
 const countRecentEventsQuery = `
 	SELECT source, count(*) AS n
 	  FROM trades
@@ -31,7 +32,7 @@ const countRecentEventsQuery = `
 	 WHERE ledger_close_time >= now() - interval '24 hours'
 	UNION ALL
 	SELECT 'blend_emitter', count(*) FROM blend_emitter_events
-	 WHERE ledger_close_time >= now() - interval '24 hours'
+	 WHERE ledger_close_time >= now() - interval '24 hours' AND recipient_index = 0
 	UNION ALL
 	SELECT 'phoenix', count(*) FROM phoenix_liquidity
 	 WHERE ledger_close_time >= now() - interval '24 hours'
@@ -73,13 +74,13 @@ const countRecentEventsQuery = `
 	 WHERE ledger_close_time >= now() - interval '24 hours'
 	UNION ALL
 	SELECT 'aquarius', count(*) FROM aquarius_liquidity
-	 WHERE ledger_close_time >= now() - interval '24 hours'
+	 WHERE ledger_close_time >= now() - interval '24 hours' AND token_index = 0
 	UNION ALL
 	SELECT 'aquarius', count(*) FROM aquarius_reserves
-	 WHERE ledger_close_time >= now() - interval '24 hours'
+	 WHERE ledger_close_time >= now() - interval '24 hours' AND token_index = 0
 	UNION ALL
 	SELECT 'aquarius', count(*) FROM aquarius_reserves_sync
-	 WHERE ledger_close_time >= now() - interval '24 hours'
+	 WHERE ledger_close_time >= now() - interval '24 hours' AND token_index = 0
 	UNION ALL
 	SELECT 'aquarius', count(*) FROM aquarius_rewards_events
 	 WHERE ledger_close_time >= now() - interval '24 hours'
