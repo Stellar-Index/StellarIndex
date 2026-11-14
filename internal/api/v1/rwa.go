@@ -455,9 +455,14 @@ const (
 	// built. The row stays (nothing admitted is hidden) with its valuation withheld, as in
 	// /v1/assets.
 	RWAValuationIssuerFlagged = "withheld_issuer_flagged"
+	// RWAValuationIssuerUnchecked: the issuer's directory read failed, so the absence of a scam
+	// tag proves nothing. Every dollar figure is withheld until the read answers.
+	RWAValuationIssuerUnchecked = "withheld_issuer_unchecked"
 	// RWAValuationUnpriced: no USD price; the market produced none or the substance gate withheld
 	// it as too thin to aggregate.
 	RWAValuationUnpriced = "unpriced"
+	// RWAValuationUnmeasured: the substance gate could not be read, so whether a price exists is unknown.
+	RWAValuationUnmeasured = "price_unmeasured"
 	// RWAValuationLowLiquidity: a price exists but the dust guard refused a market cap.
 	RWAValuationLowLiquidity = "withheld_low_liquidity"
 	// RWAValuationNoSupply: a price exists but no circulating-supply reading does.
@@ -605,6 +610,9 @@ type RWAGroupTotal struct {
 	// different rows; one alone cannot show which class the totals' difference came from.
 	ReferenceValueUSD       *string `json:"reference_value_usd,omitempty"`
 	AssetsReferenceUnvalued int     `json:"assets_reference_unvalued"`
+	// Each total is a lower bound when it leaves a member out or sums a figure computed from a floor supply.
+	MarketCapLowerBound      bool `json:"market_cap_lower_bound"`
+	ReferenceValueLowerBound bool `json:"reference_value_lower_bound"`
 	// Note explains `unclassified`, which would read as a gap in our data when it reflects the
 	// issuers': these rows were admitted because an independent oracle prices the instrument,
 	// while the SEP-1 attestation declares no usable class. Publishing one would invent it.
@@ -622,6 +630,9 @@ type RWAIssuerTotal struct {
 	// The reference basis for this issuer, as in [RWAGroupTotal].
 	ReferenceValueUSD       *string `json:"reference_value_usd,omitempty"`
 	AssetsReferenceUnvalued int     `json:"assets_reference_unvalued"`
+	// As in [RWAGroupTotal].
+	MarketCapLowerBound      bool `json:"market_cap_lower_bound"`
+	ReferenceValueLowerBound bool `json:"reference_value_lower_bound"`
 }
 
 // RWARefusal counts the candidates one requirement turned away.
@@ -1157,6 +1168,7 @@ func (s *Server) buildRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error)
 	if err != nil {
 		return rwaAssetsBuild{}, err
 	}
+	degraded = degraded || rwaRowsUnanswered(contractRows)
 	// Attributed per C2 arm: the arms narrow separate populations and each must close its own
 	// arithmetic, which one combined count would prevent.
 	dirCounts, listingCounts := rwaContractArmSplit(m.contracts, contractRows)
@@ -1190,7 +1202,7 @@ func (s *Server) buildRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error)
 	// The curated arm runs LAST, over the finished verified view, so it can say which of its rows
 	// the verified set carries and never feeds a figure back into the totals above.
 	curatedDegraded := s.attachRWACurated(vctx, &view, now)
-	stale := degraded || curatedDegraded
+	stale := degraded || curatedDegraded || join.unanswered
 	return rwaAssetsBuild{view: view, flags: Flags{Stale: stale, Degraded: stale || m.readFailed || trunc.unread > 0}}, nil
 }
 
@@ -1268,6 +1280,9 @@ type rwaCatalogueJoin struct {
 	pagesTruncated int
 	// notObserved counts admitted members with no catalogue row: attested but never seen on chain.
 	notObserved int
+	// unanswered is true when a gate or directory read behind a row's figures failed: the rows are
+	// served with those figures withheld, and the response must say it is degraded.
+	unanswered bool
 }
 
 // rwaAssetsCost is the rate-limit price in tokens of one /v1/rwa/assets request: one per store listing read (per member issuer, plus one
@@ -1339,13 +1354,14 @@ func (s *Server) rwaListingRows(
 		// the directory stamp brings the scam suppression. All of it runs, or this page would
 		// drift from /v1/assets one omission at a time.
 		s.stampListingCollisions(details)
-		s.applySubstanceGateToListing(ctx, details, false)
+		unmeasured := s.applySubstanceGateToListing(ctx, details, false)
 		s.fillMarketCapsFromSupply(ctx, details, assetRowSourceCounts(keep))
 		// The fill above reads supply only to multiply by a price, so an unpriced asset keeps none;
 		// the reference basis here values a float that has never traded. Touches no price or gate.
 		s.rwaFillMissingSupply(ctx, details)
 		s.fillDeclaredPegPricesInListing(ctx, details)
 		s.fillIssuerDirectoryTags(ctx, details)
+		join.unanswered = join.unanswered || unmeasured || anyDirectoryUnchecked(details)
 		for i, d := range details {
 			out[rwaKey(memberCodes[i], issuer)] = d
 		}
@@ -1514,7 +1530,13 @@ func rwaValuationOf(d AssetDetail) RWAValuation {
 	if pricingguard.IsDirectoryScamFlagged(d.IssuerDirectoryTags) {
 		return RWAValuation{Status: RWAValuationIssuerFlagged}
 	}
+	if d.issuerDirectoryUnchecked {
+		return RWAValuation{Status: RWAValuationIssuerUnchecked}
+	}
 	if d.PriceUSD == nil {
+		if d.priceUnmeasured {
+			return RWAValuation{Status: RWAValuationUnmeasured}
+		}
 		return RWAValuation{Status: RWAValuationUnpriced}
 	}
 	if d.MarketCapUSD == nil {
@@ -1555,6 +1577,17 @@ func rwaSumMarketCaps(assets []RWAAsset) (*string, int) {
 	}
 	s := sum.FloatString(2)
 	return &s, valued
+}
+
+// rwaSumsAFloor reports whether any row contributing figure(a) to a total computed it from a supply that is only a provable
+// floor; such a total is a lower bound even when every row is valued.
+func rwaSumsAFloor(assets []RWAAsset, figure func(RWAAsset) *string) bool {
+	for _, a := range assets {
+		if a.CirculatingSupplyLowerBound && figure(a) != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // rwaSumReferenceValues is [rwaSumMarketCaps] on the reference basis. Nil when nothing was reference-valued, since zero would read as
@@ -1649,9 +1682,10 @@ func rwaSummariseReference(assets []RWAAsset) RWAReferenceSummary {
 		ValueUSD:       total,
 		AssetsValued:   valued,
 		AssetsUnvalued: len(assets) - valued,
-		LowerBound:     len(assets)-valued > 0,
-		Sources:        rwaReferenceSources(assets),
-		Basis:          rwaReferenceBasis(len(assets), valued, provenances),
+		LowerBound: len(assets)-valued > 0 ||
+			rwaSumsAFloor(assets, func(a RWAAsset) *string { return a.ReferenceValuation.ValueUSD }),
+		Sources: rwaReferenceSources(assets),
+		Basis:   rwaReferenceBasis(len(assets), valued, provenances),
 	}
 }
 
@@ -1766,12 +1800,13 @@ func rwaSummarise(assets []RWAAsset, trunc rwaTruncation) RWASummary {
 	ref := rwaSummariseReference(assets)
 	ref.LowerBound = ref.LowerBound || trunc.any()
 	return RWASummary{
-		Assets:                  len(assets),
-		Issuers:                 rwaAssetIssuerCount(assets),
-		MarketCapUSD:            total,
-		AssetsValued:            valued,
-		AssetsUnvalued:          len(assets) - valued,
-		LowerBound:              len(assets)-valued > 0 || trunc.any(),
+		Assets:         len(assets),
+		Issuers:        rwaAssetIssuerCount(assets),
+		MarketCapUSD:   total,
+		AssetsValued:   valued,
+		AssetsUnvalued: len(assets) - valued,
+		LowerBound: len(assets)-valued > 0 || trunc.any() ||
+			rwaSumsAFloor(assets, func(a RWAAsset) *string { return a.Valuation.MarketCapUSD }),
 		EarliestFirstSeenLedger: earliest,
 		AssetsWithReference:     referenced,
 		AssetsCompared:          compared,
@@ -1869,6 +1904,7 @@ func rwaByClass(assets []RWAAsset) []RWAGroupTotal {
 			ReferenceValueUSD:       refTotal,
 			AssetsReferenceUnvalued: len(group) - refValued,
 		}
+		row.MarketCapLowerBound, row.ReferenceValueLowerBound = rwaGroupLowerBounds(group, valued, refValued)
 		if c == rwaUnclassified {
 			row.Note = rwaUnclassifiedNote
 		}
@@ -1876,6 +1912,15 @@ func rwaByClass(assets []RWAAsset) []RWAGroupTotal {
 	}
 	sortRWAGroups(out)
 	return out
+}
+
+// rwaGroupLowerBounds reports, per basis, whether a group's published total leaves a member out or sums a floor supply.
+func rwaGroupLowerBounds(group []RWAAsset, valued, refValued int) (marketCap, reference bool) {
+	marketCap = valued > 0 && (valued < len(group) ||
+		rwaSumsAFloor(group, func(a RWAAsset) *string { return a.Valuation.MarketCapUSD }))
+	reference = refValued > 0 && (refValued < len(group) ||
+		rwaSumsAFloor(group, func(a RWAAsset) *string { return a.ReferenceValuation.ValueUSD }))
+	return marketCap, reference
 }
 
 func sortRWAGroups(out []RWAGroupTotal) {
@@ -1911,15 +1956,18 @@ func rwaByIssuer(assets []RWAAsset) []RWAIssuerTotal {
 		group := byIssuer[issuer]
 		total, valued := rwaSumMarketCaps(group)
 		refTotal, refValued := rwaSumReferenceValues(group)
+		capFloor, refFloor := rwaGroupLowerBounds(group, valued, refValued)
 		out = append(out, RWAIssuerTotal{
-			Issuer:                  issuer,
-			Name:                    group[0].IssuerDirectoryName,
-			HomeDomain:              group[0].HomeDomain,
-			Assets:                  len(group),
-			MarketCapUSD:            total,
-			AssetsUnvalued:          len(group) - valued,
-			ReferenceValueUSD:       refTotal,
-			AssetsReferenceUnvalued: len(group) - refValued,
+			Issuer:                   issuer,
+			Name:                     group[0].IssuerDirectoryName,
+			HomeDomain:               group[0].HomeDomain,
+			Assets:                   len(group),
+			MarketCapUSD:             total,
+			AssetsUnvalued:           len(group) - valued,
+			ReferenceValueUSD:        refTotal,
+			AssetsReferenceUnvalued:  len(group) - refValued,
+			MarketCapLowerBound:      capFloor,
+			ReferenceValueLowerBound: refFloor,
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool {

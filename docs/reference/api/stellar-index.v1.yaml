@@ -4607,10 +4607,12 @@ paths:
                             org_verified:
                               type: boolean
                               description: |
-                                True only when SEP-1 verification is
-                                bidirectional (the issuer's toml lists this
-                                issuer back). When false, org_name
-                                is unverified self-declared metadata.
+                                True when the stellar.toml served from this
+                                account's `home_domain` lists the account as
+                                an issuer. The account sets both ends of that
+                                link, so this proves control of `home_domain`
+                                and nothing about the organisation: `org_name`
+                                is self-declared whether this is true or false.
                             scam_reason:
                               type: string
                               description: "Non-empty when this issuer is in the curated scam directory (issuers.go). Render as a warning."
@@ -4707,20 +4709,22 @@ paths:
                             description: |
                               Issuer's organisation name from SEP-1
                               `[DOCUMENTATION].ORG_NAME`. Same value the
-                              listing endpoint surfaces. SELF-DECLARED unless
-                              `org_verified` is true — do NOT render as
-                              authoritative without checking `org_verified`.
+                              listing endpoint surfaces. ALWAYS self-declared:
+                              the issuer writes it, and `org_verified` does not
+                              confirm it. Do NOT render it as a verified
+                              identity; show `home_domain` beside it.
                           scam_reason:
                             type: string
                             description: "Non-empty when this issuer is in the curated scam directory (issuers.go). Render as a warning."
                           org_verified:
                             type: boolean
                             description: |
-                              True only when the issuer's SEP-1 toml lists this
-                              issuer back (bidirectional proof; one-way is
-                              spoofable). When false, `org_name` is unverified
-                              self-declared metadata — clients must present it
-                              as such, not as a verified identity.
+                              True when the stellar.toml served from this
+                              account's `home_domain` lists the account as an
+                              issuer. The account sets both ends of that link,
+                              so this proves control of `home_domain` only. It
+                              does NOT verify `org_name`, which any issuer with
+                              a domain can set to another organisation's name.
                           auth_required: { type: [boolean, "null"] }
                           auth_revocable: { type: [boolean, "null"] }
                           auth_immutable: { type: [boolean, "null"] }
@@ -18612,8 +18616,8 @@ components:
       properties:
         status:
           type: string
-          enum: [published, withheld_issuer_flagged, unpriced, withheld_low_liquidity, supply_unavailable,
-                 decimals_unavailable]
+          enum: [published, withheld_issuer_flagged, withheld_issuer_unchecked, unpriced, price_unmeasured,
+                 withheld_low_liquidity, supply_unavailable, decimals_unavailable]
           description: |
             `published` — price and supply both available, no gate
             withheld them.
@@ -18621,9 +18625,15 @@ components:
             directory tag, so the same suppression `/assets` applies
             withholds the price and market cap. The row stays: this
             surface hides nothing it admitted.
+            `withheld_issuer_unchecked` — the issuer's directory read
+            failed, so the absence of a scam tag proves nothing. Every
+            dollar figure is withheld until the read answers; retry.
             `unpriced` — no USD price, either because the market never
             produced one or because the substance gate withheld it as
             too thin to aggregate.
+            `price_unmeasured` — the substance gate could not be read,
+            so whether a servable price exists is unknown. Not a
+            statement about the market; retry.
             `withheld_low_liquidity` — a price exists but the
             dust-liquidity guard refused to turn it into a market cap.
             `supply_unavailable` — a price exists but no
@@ -18710,6 +18720,7 @@ components:
           enum:
             - published
             - withheld_issuer_flagged
+            - withheld_issuer_unchecked
             - reference_unavailable
             - reference_contract_not_bound
             - reference_not_instrument_scoped
@@ -19012,6 +19023,7 @@ components:
           enum:
             - published
             - withheld_issuer_flagged
+            - withheld_issuer_unchecked
             - reference_not_bound
             - reference_contract_not_bound
             - reference_isin_mismatch
@@ -19035,6 +19047,10 @@ components:
             `published` — both figures exist and are comparable.
             `withheld_issuer_flagged` — the issuer carries a scam-class
             directory tag; no valuation of any kind is published for it.
+            `withheld_issuer_unchecked` — the issuer's directory read
+            failed, so it could not be cleared of a scam-class tag. It is
+            treated as flagged until the read answers: no valuation of
+            any kind is published for it.
             `reference_not_bound` — no curated binding ties this exact
             `(code, issuer)` to a feed. Usually a code collision: a token
             wearing an instrument's ticker that no oracle has priced. See
@@ -19145,6 +19161,12 @@ components:
         assets_reference_unvalued:
           type: integer
           description: Members of this group with no reference valuation.
+        market_cap_lower_bound:
+          type: boolean
+          description: True when `market_cap_usd` leaves a member out or sums a market cap computed from a floor supply.
+        reference_value_lower_bound:
+          type: boolean
+          description: True when `reference_value_usd` leaves a member out or sums a valuation computed from a floor supply.
         note:
           type: string
           description: |
@@ -19235,6 +19257,12 @@ components:
         combined_value_usd:
           type: string
           description: The verified reference total plus `additional_value_usd`.
+        additional_value_lower_bound:
+          type: boolean
+          description: True when a curated row outside the verified set is unvalued or valued from a floor supply.
+        combined_value_lower_bound:
+          type: boolean
+          description: True when `additional_value_usd` or the verified reference total is a lower bound.
         verified_value_usd:
           type: string
           description: Repeats `summary.reference_valuation.value_usd` so the three figures read together.
@@ -19351,6 +19379,12 @@ components:
         assets_reference_unvalued:
           type: integer
           description: This issuer's members with no reference valuation.
+        market_cap_lower_bound:
+          type: boolean
+          description: True when `market_cap_usd` leaves a member out or sums a market cap computed from a floor supply.
+        reference_value_lower_bound:
+          type: boolean
+          description: True when `reference_value_usd` leaves a member out or sums a valuation computed from a floor supply.
 
     RWARefusal:
       type: object
@@ -19774,7 +19808,8 @@ components:
             under `RWAPremium.status`. `reference_contract_not_bound`,
             `no_reference_feed`, `reference_unavailable`,
             `reference_expired`, `reference_isin_mismatch` and
-            `supply_unavailable` are attributed to the `operator` — a
+            `supply_unavailable` and `withheld_issuer_unchecked` are
+            attributed to the `operator` — a
             source that could be enabled, an outage here, a supply
             pipeline that does not reach the asset, a curated contract
             binding a reviewer can add, or a constant-NAV binding that
@@ -19855,6 +19890,7 @@ components:
             - over_contract_scan_cap
             - issuer_asset_page_truncated
             - withheld_issuer_flagged
+            - withheld_issuer_unchecked
             - reference_unavailable
             - reference_contract_not_bound
             - reference_not_instrument_scoped

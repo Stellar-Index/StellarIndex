@@ -232,10 +232,12 @@ type rwaValueHistory struct {
 	// subset of.
 	setAssets  int
 	setIssuers int
-	members    []rwaHistoryMember
-	excluded   map[string]int
-	sources    []string
-	builtAt    time.Time
+	// setByIssuer sizes each issuer's part of the set, excluded members included: the denominator of an issuer group.
+	setByIssuer map[string]int
+	members     []rwaHistoryMember
+	excluded    map[string]int
+	sources     []string
+	builtAt     time.Time
 	// stale marks a cached assembly served past its TTL because the
 	// rebuild failed or has not answered; builtAt is then its real age.
 	stale bool
@@ -447,7 +449,8 @@ func rwaHistoryIssuerGroups(hist rwaValueHistory, from time.Time) []RWAHistoryGr
 	}
 	out := make([]RWAHistoryGroup, 0, len(byIssuer))
 	for issuer, ms := range byIssuer {
-		pts, _ := rwaHistoryTotal(ms, len(ms), from)
+		// Counted against every set member the issuer has, so a group missing an excluded member reads as a lower bound.
+		pts, _ := rwaHistoryTotal(ms, max(hist.setByIssuer[issuer], len(ms)), from)
 		if len(pts) == 0 {
 			continue
 		}
@@ -592,6 +595,10 @@ func (s *Server) buildRWAValueHistory(ctx context.Context) rwaValueHistory {
 		setIssuers: rwaHistoryIssuerCount(m),
 		excluded:   map[string]int{},
 		builtAt:    time.Now().UTC(),
+	}
+	out.setByIssuer = make(map[string]int, out.setIssuers)
+	for _, mem := range m.members {
+		out.setByIssuer[mem.issuer]++
 	}
 	out.excluded[RWAHistoryExcludedContract] = len(m.contracts)
 

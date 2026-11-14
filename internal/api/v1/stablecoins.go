@@ -196,7 +196,8 @@ func stablecoinAssetOf(m stablecoinMember, d AssetDetail, found bool) Stablecoin
 		bs := b.String()
 		a.SupplyBasis, a.CirculatingSupplyLowerBound = &bs, b.LowerBound()
 	}
-	withheld := d.MarketCapLowLiquidity || d.MarketCapDecimalsMismatch || d.DecimalsUnresolved || d.UnverifiedTickerCollision
+	withheld := d.MarketCapLowLiquidity || d.MarketCapDecimalsMismatch || d.DecimalsUnresolved || d.UnverifiedTickerCollision ||
+		d.issuerDirectoryUnchecked
 	switch {
 	case d.MarketCapUSD != nil:
 		a.SupplyUSD = d.MarketCapUSD
@@ -330,5 +331,5 @@ func (s *Server) handleStablecoins(w http.ResponseWriter, r *http.Request) {
 	}
 	stablecoinSortAssets(view.Assets)
 	view.Total, view.ByPeg = stablecoinSummarise(view.Assets, view.Excluded, join.pagesTruncated > 0)
-	writeEnvelope(w, Envelope{Data: view, Flags: Flags{}})
+	writeEnvelope(w, Envelope{Data: view, Flags: Flags{Stale: join.unanswered, Degraded: join.unanswered}})
 }

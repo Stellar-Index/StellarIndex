@@ -39,9 +39,10 @@ describe('IssuersTable', () => {
     expect(bar('1,000').style.width).toBe('25%');
   });
 
-  it('badges the bidirectionally verified issuer only', () => {
+  it('badges a domain-linked issuer as that, never as verified', () => {
     render(<IssuersTable />);
-    expect(screen.getAllByText('Verified')).toHaveLength(1);
+    expect(screen.getAllByText('Domain linked')).toHaveLength(1);
+    expect(screen.queryByText('Verified')).not.toBeInTheDocument();
   });
 
   it('links only a plain-hostname home domain', () => {

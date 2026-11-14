@@ -209,11 +209,10 @@ function IssuerRow({
           )}
           {row.org_verified && (
             <Badge
-              tone="ok"
-              dot
-              title="The organisation’s own stellar.toml lists this account as an issuer"
+              tone="neutral"
+              title="The stellar.toml at this account’s home domain lists it as an issuer. That proves control of the domain, not who the organisation is; the name is self-declared."
             >
-              Verified
+              Domain linked
             </Badge>
           )}
           {row.scam_reason && (
