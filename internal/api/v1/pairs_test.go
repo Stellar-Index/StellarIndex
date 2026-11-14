@@ -91,10 +91,9 @@ func TestPairs_NotFoundReturnsEmptyArray(t *testing.T) {
 
 func TestPairs_FoundReturnsSingleElement(t *testing.T) {
 	ts1 := time.Unix(1_772_000_000, 0).UTC()
-	reader := &stubMarketsReader{
-		pair:      v1.Market{Base: "native", Quote: "fiat:USD", LastTradeAt: v1.WireTime(ts1), TradeCount24h: 99},
-		pairFound: true,
-	}
+	reader := &pairKeyedMarketsReader{byPair: map[string]v1.Market{
+		"native/fiat:USD": {Base: "native", Quote: "fiat:USD", LastTradeAt: v1.WireTime(ts1), TradeCount24h: 99},
+	}}
 	srv := v1.New(v1.Options{Markets: reader})
 	ts := httpTestServer(t, srv)
 
@@ -163,6 +162,70 @@ func TestPairs_AliasFirstHit(t *testing.T) {
 	}
 	if env.Data[0].Base != "native" || env.Data[0].TradeCount24h != 7 {
 		t.Errorf("unexpected market row: %+v", env.Data[0])
+	}
+}
+
+// TestPairs_FoldsSACSpellings — one market stored under its classic and SAC spellings is one row, as on /v1/markets: counts
+// and volume sum and the newer trade's price wins. The crypto:XLM spelling is the CEX population and stays out.
+func TestPairs_FoldsSACSpellings(t *testing.T) {
+	usdc, err := canonical.ParseAsset(w2t2USDC)
+	if err != nil {
+		t.Fatalf("parse USDC: %v", err)
+	}
+	native, err := canonical.ParseAsset("native")
+	if err != nil {
+		t.Fatalf("parse native: %v", err)
+	}
+	xlm := canonical.AssetAliases(native)
+	sac := xlm[len(xlm)-1]
+	if sac.Type != canonical.AssetSoroban {
+		t.Fatalf("last XLM alias = %s, want the SAC", sac)
+	}
+	older := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	newer := older.Add(time.Hour)
+	classicPx, sacPx, cexPx := "0.1600000000", "0.1700000000", "9.0000000000"
+	classicVol, sacVol, cexVol := "100.5", "50.25", "1000000"
+	reader := &pairKeyedMarketsReader{
+		byPair: map[string]v1.Market{
+			"native/" + usdc.String(): {
+				Base: "native", Quote: usdc.String(), TradeCount24h: 7,
+				LastTradeAt: v1.WireTime(older), Volume24hUSD: &classicVol, LastPrice: &classicPx,
+			},
+			sac.String() + "/" + usdc.String(): {
+				Base: sac.String(), Quote: usdc.String(), TradeCount24h: 3,
+				LastTradeAt: v1.WireTime(newer), Volume24hUSD: &sacVol, LastPrice: &sacPx,
+			},
+			"crypto:XLM/" + usdc.String(): {
+				Base: "crypto:XLM", Quote: usdc.String(), TradeCount24h: 100,
+				LastTradeAt: v1.WireTime(newer.Add(time.Hour)), Volume24hUSD: &cexVol, LastPrice: &cexPx,
+			},
+		},
+	}
+	srv := v1.New(v1.Options{Markets: reader})
+	ts := httpTestServer(t, srv)
+
+	for _, base := range []string{"native", sac.String()} {
+		resp := mustGet(t, ts.URL+"/v1/pairs?base="+base+"&quote="+usdc.String())
+		var body struct {
+			Data []v1.Market `json:"data"`
+		}
+		mustDecode(t, resp, &body)
+		if len(body.Data) != 1 {
+			t.Fatalf("base=%s: want 1 market, got %d", base, len(body.Data))
+		}
+		got := body.Data[0]
+		if got.Base != "native" || got.TradeCount24h != 10 {
+			t.Errorf("base=%s: row = %s with %d trades, want native with 10", base, got.Base, got.TradeCount24h)
+		}
+		if got.Volume24hUSD == nil || *got.Volume24hUSD != "150.75" {
+			t.Errorf("base=%s: volume = %v, want 150.75", base, got.Volume24hUSD)
+		}
+		if got.LastPrice == nil || *got.LastPrice != sacPx {
+			t.Errorf("base=%s: last price = %v, want the newer SAC trade's %s", base, got.LastPrice, sacPx)
+		}
+		if !got.LastTradeAt.Time().Equal(newer) {
+			t.Errorf("base=%s: last trade = %s, want %s", base, got.LastTradeAt, newer)
+		}
 	}
 }
 
