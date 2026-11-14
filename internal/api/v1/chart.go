@@ -148,9 +148,9 @@ func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
 	var from time.Time
 	if tf.Duration > 0 {
 		from = s.now().Add(-tf.Duration).UTC()
-	} else if !middleware.ChargeRateLimit(w, r, sinceInceptionCost(gran)) {
+	} else if !middleware.ChargeRateLimit(w, r, sinceInceptionCost(chartServedGranularity(pair, priceType, gran))) {
 		// timeframe=all has no window to coarsen against, so its read is
-		// priced by grain like /v1/history/since-inception.
+		// priced by the grain it walks, like /v1/history/since-inception.
 		return
 	}
 
@@ -261,6 +261,20 @@ func (s *Server) dispatchSpecialisedChart(
 		return true
 	}
 	return false
+}
+
+// chartServedGranularity is the grain a since-inception read walks once the specialised paths
+// have snapped the requested one; the charge follows it, not the raw parameter.
+func chartServedGranularity(pair canonical.Pair, priceType, gran string) string {
+	switch {
+	case priceType == "market_cap":
+		return string(timescale.Granularity1d)
+	case pair.Base.Type == canonical.AssetFiat && pair.Quote.Type == canonical.AssetFiat:
+		return fiatChartGranularity(gran)
+	case priceType == "twap":
+		return twapChartGranularity(gran)
+	}
+	return gran
 }
 
 // fiatChartGranularity snaps any granularity to the one fx_quotes serves (daily); the SNAPPED value is stamped so
@@ -1557,7 +1571,10 @@ func (s *Server) handleChartMarketCapCrypto(
 		return
 	}
 
-	supplyKey, err := supply.AssetKey(pair.Base)
+	// Supply is recorded under the asset's canonical identity; crypto:XLM and a SAC spelling
+	// would otherwise read an empty series.
+	base := canonical.CanonicalAsset(normalizeXLMAliases(pair.Base))
+	supplyKey, err := supply.AssetKey(base)
 	if err != nil {
 		// Off-chain reference asset — no on-chain supply to multiply.
 		writeChartJSON(w, emptyMarketCapSeries(pair, tfRaw, gran, from), Flags{})
@@ -1591,7 +1608,7 @@ func (s *Server) handleChartMarketCapCrypto(
 	// LATENT: [NonstandardDecimalsCache.Lookup] does NOT fold aliases, so a table naming one
 	// spelling of an aliasing family but not another would put price and supply a power of ten
 	// apart. Unreachable while every row is a bare C... contract id.
-	baseDec := aggregate.ResolveDecimals(s.NonstandardDecimals, pair.Base)
+	baseDec := aggregate.ResolveDecimals(s.NonstandardDecimals, base)
 
 	// Daily circulating supply (forward-filled via the carry-in row).
 	to := s.now().UTC().Truncate(24 * time.Hour)
@@ -1611,7 +1628,7 @@ func (s *Server) handleChartMarketCapCrypto(
 	}
 
 	wire, supplyStale := marketCapPoints(pricePts, supPts, baseDec)
-	refused, lowLiquidity := s.marketCapSeriesRefused(ctx, pair.Base, wire)
+	refused, lowLiquidity := s.marketCapSeriesRefused(ctx, base, wire)
 	if refused {
 		wire = []HistoryPointWire{}
 	}
