@@ -105,9 +105,7 @@ func (i ohlcInterval) duration() time.Duration {
 	case ohlcInterval2w:
 		return 14 * 24 * time.Hour
 	case ohlcInterval1mo:
-		// Calendar months vary; 30d is only used for default-window
-		// sizing (N × interval), where approximation is harmless —
-		// the CAGG buckets themselves are true calendar months.
+		// Nominal width only; the default window is sized in calendar months (ohlcMonthWindow).
 		return 30 * 24 * time.Hour
 	}
 	return 0
@@ -294,6 +292,21 @@ func truncateToBucketOrigin(t time.Time, d time.Duration) time.Time {
 	return t.Add(-rem)
 }
 
+// ohlcMonthWindow sizes the default 1mo window in calendar months, the grid the buckets are on: a
+// 30-day grid falls between month starts and drops the newest closed month. A defaulted `to` snaps
+// to the current month start; an explicit one is kept and `from` is the start of the limit-th month
+// bucket before it.
+func ohlcMonthWindow(to time.Time, toExplicit bool, limit int) (from, toOut time.Time) {
+	monthStart := time.Date(to.Year(), to.Month(), 1, 0, 0, 0, 0, time.UTC)
+	if !toExplicit {
+		return monthStart.AddDate(0, -limit, 0), monthStart
+	}
+	if to.Equal(monthStart) {
+		return monthStart.AddDate(0, -limit, 0), to
+	}
+	return monthStart.AddDate(0, -(limit - 1), 0), to
+}
+
 // parseOHLCSeriesFromTo parses from/to with interval-aware defaults: `to` snaps DOWN to an interval boundary (ADR-0015), `from`
 // is to - limit*interval, explicit values are verbatim (UTC). ok=false after a problem+json on a parse error or from >= to.
 func parseOHLCSeriesFromTo(
@@ -314,11 +327,14 @@ func parseOHLCSeriesFromTo(
 		}
 		to = parsed.UTC()
 	}
-	if !toExplicit {
-		to = truncateToBucketOrigin(to, intervalDur)
+	if interval == ohlcInterval1mo {
+		from, to = ohlcMonthWindow(to, toExplicit, limit)
+	} else {
+		if !toExplicit {
+			to = truncateToBucketOrigin(to, intervalDur)
+		}
+		from = to.Add(-time.Duration(limit) * intervalDur)
 	}
-
-	from = to.Add(-time.Duration(limit) * intervalDur)
 	if raw := r.URL.Query().Get("from"); raw != "" {
 		parsed, err := time.Parse(time.RFC3339, raw)
 		if err != nil {

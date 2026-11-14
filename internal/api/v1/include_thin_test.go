@@ -889,7 +889,7 @@ func detailData(t *testing.T, ts *testServerImpl, id, query string) (map[string]
 func TestIncludeThinAssetDetailTransitiveThinIsFlagged(t *testing.T) {
 	reader := newChokepointReader(nil).thinPair(proxyTokenID, hopAID)
 	ts := detailServer(t, reader, func(o *v1.Options) {
-		o.TransitivePricer = transitiveCandidates{{PriceUSD: "0.42", Hop: hopAID, HopVolume24hUSD: "9.00"}}
+		o.TransitivePricer = transitiveCandidates{{PriceUSD: "0.42", Hop: hopAID, HopVolume24hUSD: "9.00", HopQuote: "native"}}
 	})
 	def, _ := detailData(t, ts, proxyTokenID, "")
 	if def["price_usd"] != nil || def["thin_market"] != nil {
@@ -906,8 +906,8 @@ func TestIncludeThinClearedTransitiveCandidateWins(t *testing.T) {
 	reader := newChokepointReader(nil).thinPair(proxyTokenID, hopAID)
 	ts := detailServer(t, reader, func(o *v1.Options) {
 		o.TransitivePricer = transitiveCandidates{
-			{PriceUSD: "0.42", Hop: hopAID, HopVolume24hUSD: "9.00"},
-			{PriceUSD: "0.43", Hop: hopBID, HopVolume24hUSD: "8.00"},
+			{PriceUSD: "0.42", Hop: hopAID, HopVolume24hUSD: "9.00", HopQuote: "native"},
+			{PriceUSD: "0.43", Hop: hopBID, HopVolume24hUSD: "8.00", HopQuote: "native"},
 		}
 	})
 	def, defBody := detailData(t, ts, proxyTokenID, "")

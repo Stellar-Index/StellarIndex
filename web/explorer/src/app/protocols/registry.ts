@@ -124,6 +124,13 @@ export const PROTOCOLS: ProtocolRegistryEntry[] = [
     description: 'Yield vaults and strategies across Soroban DeFi.',
   },
   {
+    name: 'spectra',
+    category: 'yield',
+    label: 'Spectra',
+    description:
+      'Yield tokenisation: interest-bearing tokens split into Principal and Yield Tokens.',
+  },
+  {
     name: 'cctp',
     links: {
       website: 'https://www.circle.com/cross-chain-transfer-protocol',

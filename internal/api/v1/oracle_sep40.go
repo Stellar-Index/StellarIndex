@@ -311,49 +311,94 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out, Flags{Stale: viaPeg, Triangulated: viaPeg})
 }
 
-// recentClosedWithStablecoinFallback wraps RecentClosedSnapshots with the X/fiat:USD -> X/<peg> retry (first non-empty, viaPeg=true so
-// the envelope marks stale and triangulated).
-// A withheld peg leg is not a miss: a later peg may still serve ([Server.walkUSDPegs]), else the first withheld verdict is returned, not
-// 200 []. Reads cover XLM aliases via [Server.recentClosedForAliases].
+// oracleLiveWindow: a series whose newest closed bucket is this recent is served without reading
+// the remaining spellings and pegs.
+const oracleLiveWindow = 10 * time.Minute
+
+// recentClosedWithStablecoinFallback reads the X/fiat:USD series and, when that is empty or
+// dormant, the X/<peg> series of every peg spelling, and serves whichever has the newest bucket
+// (viaPeg=true marks the envelope stale and triangulated). A dormant book is non-empty forever, so
+// "first non-empty" would serve months-old records beside a live series.
+// With nothing to serve, a withheld verdict wins, then the first read error: neither is 200 [].
 func (s *Server) recentClosedWithStablecoinFallback(
 	ctx context.Context, asset, quote canonical.Asset, n int,
 ) (snapshots []PriceSnapshot, viaPeg bool, err error) {
-	snapshots, err = s.recentClosedForAliases(ctx, asset, quote, n)
+	best, bestAt, err := s.recentClosedForAliases(ctx, asset, quote, n)
 	if err != nil {
 		return nil, false, err
 	}
-	if len(snapshots) > 0 {
-		return snapshots, false, nil
+	if quote.Type != canonical.AssetFiat || quote.Code != "USD" || s.oracleSeriesLive(best, bestAt) {
+		return best, false, nil
 	}
-	if quote.Type != canonical.AssetFiat || quote.Code != "USD" {
-		return snapshots, false, nil
-	}
-	var withheldErr error
-	for _, peg := range s.USDPeggedClassics {
+	var failed oracleLegErrors
+	for _, peg := range s.usdPegProxyQuotes() {
 		// A peg asked for under any of its spellings — the classic id or
 		// its SAC wrapper — is not a market against itself.
 		if sameAsset(peg, asset) {
 			continue
 		}
-		pegSnapshots, pegErr := s.recentClosedForAliases(ctx, asset, peg, n)
-		if errors.Is(pegErr, ErrPriceWithheld) && withheldErr == nil {
-			withheldErr = pegErr
-		}
+		pegSnapshots, pegAt, pegErr := s.recentClosedForAliases(ctx, asset, peg, n)
 		if pegErr != nil || len(pegSnapshots) == 0 {
+			failed.note(pegErr)
 			continue
 		}
-		return pegSnapshots, true, nil
+		if s.oracleSeriesSupersedes(best, bestAt, pegSnapshots, pegAt) {
+			best, bestAt, viaPeg = pegSnapshots, pegAt, true
+		}
+		if s.oracleSeriesLive(pegSnapshots, pegAt) {
+			break
+		}
 	}
-	if withheldErr != nil {
-		return nil, false, withheldErr
+	if len(best) > 0 {
+		return best, viaPeg, nil
 	}
-	return snapshots, false, nil
+	return nil, false, failed.err()
 }
 
-// recentClosedForAliases tries each XLM alias of asset (see [assetAliases]) against quote in priority order and returns the first non-
-// empty result.
-func (s *Server) recentClosedForAliases(ctx context.Context, asset, quote canonical.Asset, n int) ([]PriceSnapshot, error) {
-	var firstErr error
+// oracleLegErrors keeps what the peg walk's failed legs said: a withheld verdict outranks the
+// first read error.
+type oracleLegErrors struct{ withheld, first error }
+
+func (e *oracleLegErrors) note(err error) {
+	if errors.Is(err, ErrPriceWithheld) && e.withheld == nil {
+		e.withheld = err
+	}
+	if e.first == nil {
+		e.first = err
+	}
+}
+
+func (e oracleLegErrors) err() error {
+	if e.withheld != nil {
+		return e.withheld
+	}
+	return e.first
+}
+
+// oracleSeriesLive reports whether a series' newest bucket is inside oracleLiveWindow.
+func (s *Server) oracleSeriesLive(snapshots []PriceSnapshot, newest time.Time) bool {
+	return len(snapshots) > 0 && s.now().Sub(newest) <= oracleLiveWindow
+}
+
+// oracleSeriesSupersedes: a later leg replaces an earlier one only when it is live or newer by more
+// than oracleLiveWindow. The walk order is depth order (direct, classic pegs, SAC forms), so a thin
+// leg a minute newer must not displace it, nor the answer flip between requests.
+func (s *Server) oracleSeriesSupersedes(best []PriceSnapshot, bestAt time.Time, cand []PriceSnapshot, candAt time.Time) bool {
+	if len(best) == 0 {
+		return true
+	}
+	return s.oracleSeriesLive(cand, candAt) || candAt.Sub(bestAt) > oracleLiveWindow
+}
+
+// recentClosedForAliases reads asset under each of its spellings (see [assetAliases]) against
+// quote and returns the series with the newest bucket and that bucket's time; a live one ends the
+// walk. An error is returned only when no spelling served.
+func (s *Server) recentClosedForAliases(ctx context.Context, asset, quote canonical.Asset, n int) ([]PriceSnapshot, time.Time, error) {
+	var (
+		firstErr error
+		best     []PriceSnapshot
+		bestAt   time.Time
+	)
 	for _, a := range assetAliases(asset) {
 		snapshots, err := s.Prices.RecentClosedSnapshots(ctx, a, quote, n)
 		if err != nil {
@@ -362,11 +407,32 @@ func (s *Server) recentClosedForAliases(ctx context.Context, asset, quote canoni
 			}
 			continue
 		}
-		if len(snapshots) > 0 {
-			return snapshots, nil
+		if len(snapshots) == 0 {
+			continue
+		}
+		at := newestSnapshotTime(snapshots)
+		if s.oracleSeriesSupersedes(best, bestAt, snapshots, at) {
+			best, bestAt = snapshots, at
+		}
+		if s.oracleSeriesLive(snapshots, at) {
+			break
 		}
 	}
-	return nil, firstErr
+	if len(best) > 0 {
+		return best, bestAt, nil
+	}
+	return nil, time.Time{}, firstErr
+}
+
+// newestSnapshotTime is the latest observed_at in a series, whatever its order.
+func newestSnapshotTime(snapshots []PriceSnapshot) time.Time {
+	var newest time.Time
+	for i := range snapshots {
+		if t := time.Time(snapshots[i].ObservedAt); t.After(newest) {
+			newest = t
+		}
+	}
+	return newest
 }
 
 // oraclePricesDefault + Max mirror the OpenAPI bounds for the

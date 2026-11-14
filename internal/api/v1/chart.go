@@ -148,9 +148,9 @@ func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
 	var from time.Time
 	if tf.Duration > 0 {
 		from = s.now().Add(-tf.Duration).UTC()
-	} else if !middleware.ChargeRateLimit(w, r, sinceInceptionCost(gran)) {
+	} else if !middleware.ChargeRateLimit(w, r, sinceInceptionCost(chartServedGranularity(pair, priceType, gran))) {
 		// timeframe=all has no window to coarsen against, so its read is
-		// priced by grain like /v1/history/since-inception.
+		// priced by the grain it walks, like /v1/history/since-inception.
 		return
 	}
 
@@ -261,6 +261,20 @@ func (s *Server) dispatchSpecialisedChart(
 		return true
 	}
 	return false
+}
+
+// chartServedGranularity is the grain a since-inception read walks once the specialised paths
+// have snapped the requested one; the charge follows it, not the raw parameter.
+func chartServedGranularity(pair canonical.Pair, priceType, gran string) string {
+	switch {
+	case priceType == "market_cap":
+		return string(timescale.Granularity1d)
+	case pair.Base.Type == canonical.AssetFiat && pair.Quote.Type == canonical.AssetFiat:
+		return fiatChartGranularity(gran)
+	case priceType == "twap":
+		return twapChartGranularity(gran)
+	}
+	return gran
 }
 
 // fiatChartGranularity snaps any granularity to the one fx_quotes serves (daily); the SNAPPED value is stamped so
@@ -405,6 +419,19 @@ func (s *Server) handleChartTWAP(
 	writeChartJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded, Degraded: walk.degraded})
 }
 
+// fxClosedDayWindow is the fx_quotes read window for a chart: closed UTC days only, because the
+// forex worker rewrites today's row on every refresh and a served bucket is final. `from` is
+// floored to its day so a 24h window holds yesterday's bucket; a zero `from` (timeframe=all) reads
+// 25 years, back to ECB inception. The bounds are inclusive, as ListFXHistory reads them.
+func fxClosedDayWindow(now, from time.Time) (queryFrom, to time.Time) {
+	today := now.UTC().Truncate(24 * time.Hour)
+	to = today.Add(-time.Nanosecond)
+	if from.IsZero() {
+		return today.AddDate(-25, 0, 0), to
+	}
+	return from.UTC().Truncate(24 * time.Hour), to
+}
+
 // handleChartFiat serves fiat:fiat pairs from fx_quotes, one row per ticker per UTC day. The reader gives CCY-per-USD:
 // fiat:CCY/fiat:USD uses InverseUSD, fiat:USD/fiat:CCY RateUSD, and a cross goes to [Server.handleChartFiatCross].
 func (s *Server) handleChartFiat(
@@ -445,12 +472,7 @@ func (s *Server) handleChartFiat(
 		return
 	}
 
-	// Default window: trailing 25y (ECB inception) when timeframe=all.
-	to := s.now().UTC().Truncate(24 * time.Hour)
-	queryFrom := from
-	if queryFrom.IsZero() {
-		queryFrom = to.AddDate(-25, 0, 0) // ECB inception
-	}
+	queryFrom, to := fxClosedDayWindow(s.now(), from)
 
 	fxCtx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
@@ -511,13 +533,7 @@ func (s *Server) handleChartFiatCross(
 	gran string,
 	from time.Time,
 ) {
-	// Same default window as the direct fiat path: trailing 25y when
-	// timeframe=all (ECB inception).
-	to := s.now().UTC().Truncate(24 * time.Hour)
-	queryFrom := from
-	if queryFrom.IsZero() {
-		queryFrom = to.AddDate(-25, 0, 0)
-	}
+	queryFrom, to := fxClosedDayWindow(s.now(), from)
 
 	fxCtx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
@@ -1443,10 +1459,9 @@ func (s *Server) handleChartMarketCap(
 	// The catalogue's M2 is today's figure: multiplied by an older day's rate it invents a history.
 	// Only days it may be carried onto are read, and the response says where the series starts.
 	// The floor steps back over a weekend, when fx_quotes has no rows.
-	to := s.now().UTC().Truncate(24 * time.Hour)
-	queryFrom := to.Add(-marketCapSupplyMaxCarry - 48*time.Hour)
-	if from.After(queryFrom) {
-		queryFrom = from
+	queryFrom, to := fxClosedDayWindow(s.now(), from)
+	if floor := to.Add(-marketCapSupplyMaxCarry - 48*time.Hour).Truncate(24 * time.Hour); queryFrom.Before(floor) {
+		queryFrom = floor
 	}
 
 	fxCtx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
@@ -1562,7 +1577,10 @@ func (s *Server) handleChartMarketCapCrypto(
 		return
 	}
 
-	supplyKey, err := supply.AssetKey(pair.Base)
+	// Supply is recorded under the asset's canonical identity; crypto:XLM and a SAC spelling
+	// would otherwise read an empty series.
+	base := canonical.CanonicalAsset(normalizeXLMAliases(pair.Base))
+	supplyKey, err := supply.AssetKey(base)
 	if err != nil {
 		// Off-chain reference asset — no on-chain supply to multiply.
 		writeChartJSON(w, emptyMarketCapSeries(pair, tfRaw, gran, from), Flags{})
@@ -1596,7 +1614,7 @@ func (s *Server) handleChartMarketCapCrypto(
 	// LATENT: [NonstandardDecimalsCache.Lookup] does NOT fold aliases, so a table naming one
 	// spelling of an aliasing family but not another would put price and supply a power of ten
 	// apart. Unreachable while every row is a bare C... contract id.
-	baseDec := aggregate.ResolveDecimals(s.NonstandardDecimals, pair.Base)
+	baseDec := aggregate.ResolveDecimals(s.NonstandardDecimals, base)
 
 	// Daily circulating supply (forward-filled via the carry-in row).
 	to := s.now().UTC().Truncate(24 * time.Hour)
@@ -1616,7 +1634,7 @@ func (s *Server) handleChartMarketCapCrypto(
 	}
 
 	wire, supplyStale := marketCapPoints(pricePts, supPts, baseDec)
-	refused, lowLiquidity := s.marketCapSeriesRefused(ctx, pair.Base, wire)
+	refused, lowLiquidity := s.marketCapSeriesRefused(ctx, base, wire)
 	if refused {
 		wire = []HistoryPointWire{}
 	}

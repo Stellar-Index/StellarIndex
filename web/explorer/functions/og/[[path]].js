@@ -48,6 +48,7 @@ export const PROTOCOL_NAMES = new Set([
   'sorocredit',
   'upshift',
   'defindex',
+  'spectra',
   'cctp',
   'rozo',
   'soroswap-router',
