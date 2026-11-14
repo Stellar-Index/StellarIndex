@@ -53,6 +53,7 @@
   ansible.builtin.file:
     path: /var/lib/stellarindex/deployed-versions
     state: directory
+    follow: false
     owner: root
     group: root
     mode: "0755"

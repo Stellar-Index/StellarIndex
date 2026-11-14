@@ -89,19 +89,8 @@
          | rejectattr('stdout', 'equalto', 'same')
          | map(attribute='item.path') | list }}
 
-- name: Galexie inputs — restart only on effective (non-comment) change
-  # Reports changed (→ `Restart galexie`) iff some input's stripped
-  # checksum on disk differs from the stripped render, or the input is
-  # absent. Runs in check mode too, so the dry-run shows the handler.
-  ansible.builtin.debug:
-    msg: >-
-      {{ 'effective change in: ' ~ (galexie_effective_changed | join(', '))
-         if galexie_effective_changed | length > 0
-         else 'no effective change in galexie inputs (comment/whitespace-only edits do not restart)' }}
-  changed_when: galexie_effective_changed | length > 0
-  notify: Restart galexie
-
 - name: Galexie restart required but not acknowledged — refuse (fail-closed)
+  # Above the notifying task: the play sets force_handlers, which runs an already-notified restart on a failed host.
   ansible.builtin.fail:
     msg: >-
       A real galexie restart is required by an effective config change in
@@ -118,3 +107,15 @@
     - galexie_effective_changed | length > 0
     - galexie_active_probe.stdout | default('') not in ['inactive', 'failed']
     - not (galexie_restart_ack | bool)
+
+- name: Galexie inputs — restart only on effective (non-comment) change
+  # Reports changed (→ `Restart galexie`) iff some input's stripped
+  # checksum on disk differs from the stripped render, or the input is
+  # absent. Runs in check mode too, so the dry-run shows the handler.
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'effective change in: ' ~ (galexie_effective_changed | join(', '))
+         if galexie_effective_changed | length > 0
+         else 'no effective change in galexie inputs (comment/whitespace-only edits do not restart)' }}
+  changed_when: galexie_effective_changed | length > 0
+  notify: Restart galexie

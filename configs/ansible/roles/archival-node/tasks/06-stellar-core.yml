@@ -74,6 +74,7 @@
   ansible.builtin.file:
     path: /var/lib/stellar-core/buckets/.stellar-core-initialised
     state: touch
+    follow: false
     owner: stellar
     group: stellar
     mode: "0644"

@@ -11,6 +11,9 @@
 #     claimed env-based auth while passing the root password on argv);
 #   - a shipped .sh giving `mc alias set` the secret positionally (across a
 #     backslash continuation) is flagged; the stdin-piped form is not;
+#   - a file task whose literal path is inside a service-owned directory is
+#     flagged without `follow: false` (root chowned the target of a planted
+#     link); `state: absent`, the directory itself and root-owned trees are not;
 #   - baseline: a listed (rule, path) is reported but not counted; a listed
 #     pair with no live violation is STALE and fails (shrink-only);
 #   - the gate refuses to pass vacuously on an empty tree.
@@ -120,6 +123,36 @@ cat > "$T/secrets.yml" <<'YML'
   no_log: true
 YML
 
+cat > "$F/follow.yml" <<'YML'
+---
+- name: bad — root touches a path inside a service-owned dir
+  ansible.builtin.file:
+    path: /var/lib/stellar-core/buckets/.marker
+    state: touch
+    owner: stellar
+
+- name: good — same path, link not followed
+  ansible.builtin.file:
+    path: /var/lib/galexie/captive
+    state: directory
+    follow: false
+
+- name: good — absent never follows
+  ansible.builtin.file:
+    path: /tmp/ch-schema
+    state: absent
+
+- name: good — the service dir itself, and a root-owned tree
+  ansible.builtin.file:
+    path: /var/lib/galexie
+    state: directory
+
+- name: good — root-owned tree
+  ansible.builtin.file:
+    path: /etc/galexie/conf.d
+    state: directory
+YML
+
 cat > "$F/bad.sh" <<'SH'
 #!/bin/bash
 # mc alias set live "$URL" "$KEY" "$AWS_SECRET_ACCESS_KEY"   <- comment, ignored
@@ -140,7 +173,10 @@ run() { (cd "$ROOT" && BASELINE="${1:-/nonexistent}" bash scripts/ci/lint-ansibl
 
 echo "case: no baseline"
 out="$(run)"; rc=$?
-expect_rc 4 "exit code = 4 findings"
+expect_rc 5 "exit code = 5 findings"
+expect_hit 'follow.yml:4: follow-in-service-dir' "file task inside a service dir without follow: false flagged"
+expect_miss 'follow.yml:1[0-9]:' "follow: false and state: absent not flagged"
+expect_miss 'follow.yml:2[0-9]:' "service dir itself and root-owned tree not flagged"
 expect_hit 'pipefail.yml:2: pipefail-needs-bash' "bad pipefail task flagged"
 expect_miss 'pipefail.yml:9:' "cmd-form bash task not flagged"
 expect_miss 'pipefail.yml:17:' "args-form bash task not flagged"
@@ -152,13 +188,13 @@ expect_hit 'secrets.yml:37: secret-on-argv' "folded command body secret flagged"
 expect_hit 'bad.sh:3: secret-on-argv' "mc positional secret (continuation) flagged"
 expect_miss 'bad.sh:2:' "commented mc line not flagged"
 expect_miss 'good.sh' "stdin-piped mc not flagged"
-expect_hit 'scanned 2 task files + 2 shell scripts' "self-accounting line"
+expect_hit 'scanned 3 task files + 2 shell scripts' "self-accounting line"
 
 echo "case: baseline suppresses + stale entry fails"
 printf 'secret-on-argv\tconfigs/ansible/roles/fx/tasks/secrets.yml\npipefail-needs-bash\tconfigs/ansible/roles/fx/tasks/nolonger.yml\n' > "$TMP/baseline"
 out="$(run "$TMP/baseline")"; rc=$?
-# 4 live findings − 2 baselined (both secrets.yml) + 1 stale = 3
-expect_rc 3 "exit code = 3"
+# 5 live findings − 2 baselined (both secrets.yml) + 1 stale = 4
+expect_rc 4 "exit code = 4"
 expect_hit 'baselined (shrink-only' "baselined finding reported"
 expect_hit 'STALE baseline entry.*nolonger.yml' "stale entry flagged"
 

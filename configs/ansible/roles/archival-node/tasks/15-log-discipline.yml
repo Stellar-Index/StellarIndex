@@ -242,6 +242,7 @@
   ansible.builtin.file:
     path: /var/lib/clickhouse/logs
     state: directory
+    follow: false
     owner: clickhouse
     group: clickhouse
     mode: "0750"
