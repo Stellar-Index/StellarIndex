@@ -12,9 +12,12 @@
 # means "route broken", not "made-up id". Routes whose params cannot be filled
 # are reported SKIP, never silently dropped.
 #
-# Read-only. Exit code = unreachable + 5xx responses (capped 255). A route
-# curl could not connect to (DNS/TLS/connection/timeout → http_code 000) is a
-# FAILURE, never scored like a 2xx.
+# Read-only. Exit code = unreachable + 5xx + unexpected 404/405 responses
+# (capped 255). A route curl could not connect to (DNS/TLS/connection/timeout
+# → http_code 000) is a FAILURE, never scored like a 2xx. A 404 or 405 on a
+# real fixture is a FAILURE too (verdict MISSING): a dropped route registration
+# or an emptied served table answers 404, not 5xx. A 400 (the sweep sends no
+# query), 401/403 (no credentials) and 410 stay CLIENT.
 set -o pipefail  # NOT -u: fixture_for returns empty for unmapped params
 
 # Spec paths are relative to servers[].url, which already carries /v1, so the
@@ -93,6 +96,26 @@ PY
   return 0
 }
 
+# Routes that answer 404 for the fixture although the route works: the fixture is not that kind of entity.
+# A route listed here that starts answering 2xx is still ok; one that is not listed and answers 404 fails.
+expected_404() {
+  case "$1" in
+    '/issuers/{g_strkey}') return 0 ;;        # the fixture account has issued nothing
+    '/contracts/{contract_id}/wasm') return 0 ;; # the fixture contract has no stored WASM
+  esac
+  return 1
+}
+
+# verdict_for CODE ROUTE_TEMPLATE prints FAIL, MISSING, CLIENT or ok.
+verdict_for() {
+  case "$1" in
+    5*) echo FAIL ;;
+    404|405) if expected_404 "$2"; then echo CLIENT; else echo MISSING; fi ;;
+    4*) echo CLIENT ;;
+    *)  echo ok ;;
+  esac
+}
+
 route_sweep_main() {
 if ! generate_route_list "$SPEC" /tmp/route-sweep-paths.txt; then
   exit 2
@@ -101,10 +124,12 @@ fi
 printf '# route sweep — %s\n# api=%s\n\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$API"
 printf '%-6s %-8s %s\n' STATUS VERDICT ROUTE
 
-fivexx=0; skipped=0; ok=0; clienterr=0; unreach=0
+fivexx=0; skipped=0; ok=0; clienterr=0; unreach=0; missing=0
 while read -r route; do
   [ -z "$route" ] && continue
   filled="$route"
+  # The shared slug fixture is a Stellar asset, which this route answers 404 for by design; it needs a non-Stellar one.
+  [ "$route" = '/external/assets/{slug}' ] && filled='/external/assets/chinese-yuan'
   unresolved=0
   while [[ "$filled" =~ \{([a-zA-Z_]+)\} ]]; do
     key="${BASH_REMATCH[1]}"
@@ -125,20 +150,22 @@ while read -r route; do
     printf '%-6s %-8s %s\n' "${code:-000}" "UNREACH" "$filled (curl could not connect)"
     unreach=$((unreach+1)); sleep 0.15; continue
   fi
-  case "$code" in
-    5*) verdict="FAIL"; fivexx=$((fivexx+1)) ;;
-    4*) verdict="CLIENT"; clienterr=$((clienterr+1)) ;;
-    *)  verdict="ok"; ok=$((ok+1)) ;;
+  verdict="$(verdict_for "$code" "$route")"
+  case "$verdict" in
+    FAIL)    fivexx=$((fivexx+1)) ;;
+    MISSING) missing=$((missing+1)) ;;
+    CLIENT)  clienterr=$((clienterr+1)) ;;
+    *)       ok=$((ok+1)) ;;
   esac
   printf '%-6s %-8s %s\n' "$code" "$verdict" "$filled"
   sleep 0.15
 done < /tmp/route-sweep-paths.txt
 
 echo
-echo "ok=${ok} client_4xx=${clienterr} server_5xx=${fivexx} unreachable=${unreach} skipped=${skipped}"
-# Exit = failures the operator must act on: 5xx AND unreachable routes, so a
-# broken sweep and a total outage never both read as 0.
-failures=$((fivexx + unreach))
+echo "ok=${ok} client_4xx=${clienterr} missing_404=${missing} server_5xx=${fivexx} unreachable=${unreach} skipped=${skipped}"
+# Exit = failures the operator must act on: 5xx, unreachable and unexpectedly
+# missing routes, so a broken sweep and a dark subsystem never read as 0.
+failures=$((fivexx + unreach + missing))
 [ "$failures" -gt 255 ] && failures=255
 exit "$failures"
 }

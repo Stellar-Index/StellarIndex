@@ -59,7 +59,7 @@ API_BASE_URL=https://api.stellarindex.io bash scripts/dev/r1-smoke.sh   # throug
 # COVERAGE checks — the smoke above is 13 hand-picked routes and will
 # stay green while an entire subsystem is dark. Both exit non-zero on
 # failure; treat a regression in either as deploy-blocking.
-bash scripts/ops/route-sweep.sh                    # every OpenAPI GET; exit = 5xx count
+bash scripts/ops/route-sweep.sh                    # every OpenAPI GET; exit = 5xx + unreachable + unexpected 404
 bash scripts/ops/reconcile-supply-vs-horizon.sh    # served supply vs Horizon; exit = assets outside tolerance
 
 ssh root@136.243.90.96 'systemctl status stellarindex-indexer stellarindex-aggregator stellarindex-api | grep -E "Active|●"'
@@ -75,7 +75,7 @@ verified for months against the *trustline sum only*, which is exact and
 therefore blind to the claimable/LP/SAC components — hiding a 13.2%
 AQUA understatement. A check that only covers what already works
 manufactures confidence; these two are the antidote. Baselines to
-compare against: `route-sweep` server_5xx should be **0**;
+compare against: `route-sweep` server_5xx and missing_404 should be **0**;
 `reconcile-supply` outside-tolerance should be **0** (was 3).
 
 Then watch for 10–15 min: the freshness watchdog + verdict

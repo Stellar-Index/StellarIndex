@@ -144,5 +144,14 @@ case "$(cat "$TMP/mainout.txt")" in
   *) ok "…and never reaches the summary line at all" ;;
 esac
 
+# A 404 on a real fixture is a missing route, not a client error; only a listed route may answer 404.
+for c in "200 /assets ok" "503 /assets FAIL" "404 /accounts/{g_strkey} MISSING" "405 /assets MISSING" \
+         "404 /issuers/{g_strkey} CLIENT" "400 /chart CLIENT" "401 /account/me CLIENT"; do
+  # shellcheck disable=SC2086 # three space-separated fields
+  set -- $c
+  got="$(verdict_for "$1" "$2")"
+  if [ "$got" = "$3" ]; then ok "verdict_for $1 $2 = $3"; else bad "verdict_for $1 $2 = $got, want $3"; fi
+done
+
 echo "route-sweep-test: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]] || exit 1
