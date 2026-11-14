@@ -819,6 +819,9 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 		if sinkErr == nil {
 			return
 		}
+		if tracker.gaveUp(id) {
+			return // already counted and logged; only a sibling at this ledger keeps it in the window
+		}
 		// `id` was computed at closure entry for the duplicate guard.
 		faults := rowFaultsOf(sinkErr)
 		// Charged once per ROW: poison outputs and the held fault share one identity, so charging
@@ -940,7 +943,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 			break
 		}
 		r := poisoned[i]
-		tracker.forget(r.id)
+		tracker.giveUp(r.id)
 		poisoned = append(poisoned[:i], poisoned[i+1:]...)
 		p.logger.Error("projector: SKIPPING poison row — cursor advances past it; re-drive with `stellarindex-ops projector-replay` once the underlying defect is fixed",
 			"source", src.Name, "ledger", r.id.ledger, "tx", r.id.txHash,
@@ -955,7 +958,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	if i := quarantineCandidate(held, eventsEmitted > 0); i >= 0 {
 		h := held[i]
 		sinkQuarantined++
-		tracker.forget(h.id)
+		tracker.giveUp(h.id)
 		held = append(held[:i], held[i+1:]...)
 		p.logger.Error("projector: QUARANTINED un-processable row after exhausting the retry budget — cursor advances past it; re-drive with `stellarindex-ops projector-replay` once fixed",
 			"source", src.Name, "ledger", h.id.ledger, "tx", h.id.txHash,
@@ -1020,6 +1023,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	if !p.commitCursor(ctx, src.Name, read, commitTo) {
 		return
 	}
+	tracker.passed(commitTo)
 
 	wedge.advanced(src.Name)
 

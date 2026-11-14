@@ -1372,6 +1372,62 @@ func TestCycle_PoisonShedTakesTheLowestLedgerAndKeepsGoodRowsFlowing(t *testing.
 	}
 }
 
+// Two rows the sink rejects for good at ONE ledger: the cycle gives up on one and the other holds the ledger, so the first is
+// re-read. Counted afresh it took the one give-up per cycle every time and the cursor never passed the ledger.
+func TestCycle_TwoPoisonRowsAtOneLedgerDoNotWedge(t *testing.T) {
+	const source = "two-poison-one-ledger"
+	rows := []events.Event{lakeEvent(101, 1), lakeEvent(101, 2), lakeEvent(102, 3)}
+	permanentBefore := decodedCount(t, source, "sink_permanent")
+
+	h := newWedgeHarness(t, source, rows, 110, func(ev consumer.Event) error {
+		if ev.(ledgerEvent).ledger == 101 {
+			return notNullViolation()
+		}
+		return nil
+	})
+
+	h.cycle()
+	if got := h.store.cursor(); got != 100 {
+		t.Fatalf("cycle 1: cursor = %d, want 100 — one row is shed, its sibling still holds ledger 101", got)
+	}
+	h.cycle()
+	if got := h.store.cursor(); got != 110 {
+		t.Fatalf("cycle 2: cursor = %d, want 110 — the sibling is shed and nothing holds the ledger", got)
+	}
+	// The shed row counts once; its sibling counts in both cycles it was still a live failure.
+	if got := decodedCount(t, source, "sink_permanent") - permanentBefore; got != 3 {
+		t.Errorf("sink_permanent delta = %v, want 3 — a row already shed must not be counted again on its re-read", got)
+	}
+}
+
+// The same wedge through the quarantine arm: two unclassified rows at one ledger took turns exhausting the budget.
+func TestCycle_TwoUnclassifiedRowsAtOneLedgerQuarantineInTurn(t *testing.T) {
+	const source = "two-unclassified-one-ledger"
+	rows := []events.Event{lakeEvent(101, 1), lakeEvent(101, 2), lakeEvent(102, 3)}
+	quarantinedBefore := decodedCount(t, source, "sink_quarantined")
+
+	h := newWedgeHarness(t, source, rows, 110, func(ev consumer.Event) error {
+		if ev.(ledgerEvent).ledger == 101 {
+			return errors.New("timescale: InsertSEP41TransferBatch: row 0 transfer negative Amount -1")
+		}
+		return nil
+	})
+
+	for i := 1; i <= QuarantineAfterCycles; i++ {
+		h.cycle()
+		if got := h.store.cursor(); got != 100 {
+			t.Fatalf("cycle %d: cursor = %d, want 100 — at most one row is quarantined per cycle", i, got)
+		}
+	}
+	h.cycle()
+	if got := h.store.cursor(); got != 110 {
+		t.Fatalf("cursor = %d one cycle after the budget, want 110 — the second row is quarantined the cycle after the first", got)
+	}
+	if got := decodedCount(t, source, "sink_quarantined") - quarantinedBefore; got != 2 {
+		t.Errorf("sink_quarantined delta = %v, want 2", got)
+	}
+}
+
 // TestCycle_PoisonRowWithNoSinkHealthProofHoldsUntilTheNoProgressBudget: the per-cycle shed cap bounds the rate of a
 // global class-22/23 fault, not the fact of it. Without madeProgress (another event committed) the cursor holds for
 // QuarantineAfterCyclesNoProgress cycles so lag/sink_retry alerts fire, then sheds one row per cycle.
