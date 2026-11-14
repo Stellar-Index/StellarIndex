@@ -62,3 +62,38 @@ func TestRWA_ClassicMembersSACIsNotASecondAsset(t *testing.T) {
 		t.Errorf("refused = %+v, want contract_is_classic_member_sac: 1", view.Refused)
 	}
 }
+
+// TestRWACurated_ClassicMembersSACIsAlsoVerified: a curated row for a verified classic member's
+// SAC is the same asset, so it adds nothing to the curator's additional or combined value.
+func TestRWACurated_ClassicMembersSACIsAlsoVerified(t *testing.T) {
+	bound, dir, rows := oneBoundMember()
+	sac, err := canonical.Asset{Type: canonical.AssetClassic, Code: "USTRY", Issuer: rwaGoodIssuer}.SacContractID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := getRWA(t, v1.New(v1.Options{
+		Sep1Cache: &stubSep1BoundReader{bound: bound},
+		Directory: &stubDirectoryReader{entries: dir},
+		AssetsReader: &rwaListStub{
+			stubAssetsReaderExt: &stubAssetsReaderExt{},
+			byIssuer:            rows,
+			supply:              rwaSupplyFor(rows),
+		},
+		RWAContracts: &stubRWAContractReader{accounts: 18000},
+		RWACurated: &stubCuratedReader{
+			rows:   map[string]timescale.CuratedRWAEntry{sac: curatedEntry(sac, "Etherfuse", "US Government Debt", "1.0412")},
+			census: &timescale.CuratedRWACensus{Entries: 1, Contracts: 1, Priced: 1},
+		},
+		ContractCatalogue:     &stubContractCatalogue{rows: map[string]timescale.AssetRow{sac: rwaContractRow(sac, nil)}},
+		TokenSymbol:           &stubTokenSymbols{byID: map[string]string{sac: "USTRY"}},
+		TokenSupply:           &stubTokenSupplies{byID: map[string]string{sac: "3463120000000"}},
+		TokenDecimals:         &stubTokenDecimalsRdr{byID: map[string]uint32{sac: 7}},
+		MinMarketCapVolumeUSD: 1000,
+	}))
+	if view.Curated == nil || view.Curated.AlsoVerified != 1 {
+		t.Fatalf("curated = %+v, want the SAC row marked also verified", view.Curated)
+	}
+	if got := derefStr(view.Curated.AdditionalValueUSD); got != "" && got != "0.00" {
+		t.Errorf("additional_value_usd = %q: the classic member's supply is counted a second time", got)
+	}
+}
