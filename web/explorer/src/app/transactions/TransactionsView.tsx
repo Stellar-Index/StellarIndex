@@ -21,6 +21,7 @@ import {
 } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import { formatCompact, truncateMiddle } from '@/lib/format';
+import { memoLabel } from '@/lib/memo';
 import {
   type Envelope,
   type LedgersPage,
@@ -249,12 +250,10 @@ function TxTable({
                   {t.memo_type && t.memo_type !== 'none' ? (
                     <span
                       className="text-ink-muted font-mono text-xs"
-                      title={t.memo ?? ''}
+                      title={memoLabel(t.memo, t.memo_base64)}
                     >
                       {t.memo_type}
-                      {t.memo
-                        ? `: ${t.memo.length > 18 ? `${t.memo.slice(0, 18)}…` : t.memo}`
-                        : ''}
+                      {memoLabel(t.memo, t.memo_base64, 18, ': ')}
                     </span>
                   ) : (
                     <span className="text-ink-faint">—</span>

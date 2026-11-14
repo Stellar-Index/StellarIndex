@@ -8,11 +8,11 @@ import {
   changePct,
   compareDecimalStrings,
   formatPairPrice,
-  formatSubunitPrice,
 } from '@/lib/format';
 
 import { LivePrice } from '../../LivePrice';
 import { EmbedCurrencyPathView } from './EmbedCurrencyPathView';
+import { LiveUsdRate } from './LiveUsdRate';
 import { isCIStub } from '@/lib/buildFetch';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
@@ -241,11 +241,7 @@ export default async function EmbedCurrencyPage({
       )}
       <div className="text-ink-faint mt-auto flex items-center justify-between text-[11px]">
         <span>Powered by Stellar Index</span>
-        {cur.rate_usd > 0 && (
-          <span className="font-mono tabular-nums">
-            1 USD = {formatRate(cur.rate_usd)} {upper}
-          </span>
-        )}
+        <LiveUsdRate ticker={upper} initialInverseUsd={cur.inverse_usd} />
       </div>
     </div>
   );
@@ -321,10 +317,3 @@ function Sparkline({
   );
 }
 
-function formatRate(n: number): string {
-  if (!Number.isFinite(n) || n <= 0) return '—';
-  if (n >= 1000) return n.toLocaleString('en-US', { maximumFractionDigits: 2 });
-  if (n >= 1) return n.toFixed(4);
-  if (n >= 0.0001) return n.toFixed(6);
-  return formatSubunitPrice(n);
-}

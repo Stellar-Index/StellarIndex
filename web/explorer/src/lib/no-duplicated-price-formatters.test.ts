@@ -54,7 +54,6 @@ describe('no hand-rolled price-ladder forks exist outside lib/format.ts', () => 
   const KNOWN_UNMIGRATED = new Set([
     'app/assets/[slug]/page.tsx',
     'app/embed/asset/[slug]/page.tsx',
-    'app/embed/currency/[ticker]/page.tsx',
     'app/embed/pair/[pair]/page.tsx',
     'app/markets/[pair]/page.tsx',
     'app/markets/[pair]/DepthChart.tsx',

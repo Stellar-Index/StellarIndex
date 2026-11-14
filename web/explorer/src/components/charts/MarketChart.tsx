@@ -254,9 +254,11 @@ export function MarketChart({
   const overlayTrades = useHistory(
     overlaySource ? base : undefined,
     quote,
-    1000,
+    OVERLAY_LIMIT,
     { source: overlaySource, windowSec: win.spanSec },
   );
+  const overlayCut =
+    !!overlaySource && overlayIsCut(overlayTrades.data?.length ?? 0);
   const overlay = useMemo(
     () =>
       overlaySource && sourceOverlay
@@ -356,6 +358,7 @@ export function MarketChart({
             value={overlaySource}
             onChange={setOverlaySource}
             failed={!!overlaySource && overlayTrades.isError}
+            cut={overlayCut}
           />
         )}
         <span className="text-ink-faint ml-auto font-mono">
@@ -417,7 +420,7 @@ export function MarketChart({
             livePrice={livePrice}
             band={band}
             overlay={overlay}
-            ariaLabel={`${baseLabel}/${quoteLabel} OHLC candlestick chart with volume, ${activeGrain} candles${activeBand ? `, ${activeBand.key} high/low band` : ''}${overlaySource ? `, ${overlaySource} trades overlaid` : ''}`}
+            ariaLabel={`${baseLabel}/${quoteLabel} OHLC candlestick chart with volume, ${activeGrain} candles${activeBand ? `, ${activeBand.key} high/low band` : ''}${overlaySource ? `, ${overlaySource} trades overlaid${overlayCut ? ` (first ${OVERLAY_LIMIT} of the window only)` : ''}` : ''}`}
           />
           {coverageNote && (
             <p className="text-ink-faint text-xs">{coverageNote}</p>
@@ -429,6 +432,14 @@ export function MarketChart({
 }
 
 type HistoryTrade = NonNullable<ReturnType<typeof useHistory>['data']>[number];
+
+const OVERLAY_LIMIT = 1000;
+
+// /v1/history pages oldest-first from the window start, so a full page means
+// the later trades of the window were not fetched.
+export function overlayIsCut(rowCount: number): boolean {
+  return rowCount >= OVERLAY_LIMIT;
+}
 
 // Plots the served decimal price; rows without one (zero-amount legs) are skipped.
 export function overlayPoints(
@@ -459,10 +470,12 @@ function SourceOverlayPicker({
   value,
   onChange,
   failed,
+  cut,
 }: {
   value: string;
   onChange: (v: string) => void;
   failed: boolean;
+  cut: boolean;
 }) {
   const { data } = useSources();
   const options = selectableSources(data);
@@ -484,6 +497,14 @@ function SourceOverlayPicker({
         ))}
       </select>
       {failed && <span role="status">Overlay unavailable</span>}
+      {cut && !failed && (
+        <span
+          role="status"
+          title="The overlay reads the first 1,000 trades after the window start. Later trades from this source exist but are not plotted."
+        >
+          Earliest 1,000 trades only
+        </span>
+      )}
     </label>
   );
 }

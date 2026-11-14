@@ -12,21 +12,50 @@ afterEach(() => {
 // on-screen hint that it is stale — only a hover-only `title` tooltip,
 // invisible on the touch/iframe surfaces these widgets embed into.
 describe('LivePrice (RLT-386)', () => {
-  it('visibly marks the price as stale when the live price is withheld', async () => {
+  // /v1/price refuses, and the two answers /v1/assets/{id} can give.
+  function stubRefused(detail: { status: number; body?: unknown }) {
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue({
-        ok: false,
-        status: 404,
-        json: async () => ({}),
-      }),
+      vi.fn(async (input: RequestInfo | URL) =>
+        String(input).includes('/v1/assets/')
+          ? {
+              ok: detail.status === 200,
+              status: detail.status,
+              json: async () => detail.body ?? {},
+            }
+          : { ok: false, status: 404, json: async () => ({}) },
+      ),
     );
+  }
+
+  it('keeps the build-time price, marked stale, when the catalogue did not answer', async () => {
+    stubRefused({ status: 503 });
 
     render(<LivePrice assetId="native" initial="$0.1000" />);
 
     expect(await screen.findByRole('status')).toHaveTextContent(/stale/i);
-    // the build-time price is kept as a lower-confidence fallback, not blanked
     expect(screen.getByText('$0.1000')).toBeInTheDocument();
+  });
+
+  it('shows no price when neither endpoint publishes one', async () => {
+    stubRefused({ status: 200, body: { data: { price_usd: null } } });
+
+    render(<LivePrice assetId="native" initial="$0.1000" />);
+
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      /not published/i,
+    );
+    expect(screen.queryByText('$0.1000')).not.toBeInTheDocument();
+    expect(screen.getByText('—')).toBeInTheDocument();
+  });
+
+  it('shows the catalogue price, marked stale, when only the catalogue publishes one', async () => {
+    stubRefused({ status: 200, body: { data: { price_usd: '0.2500' } } });
+
+    render(<LivePrice assetId="native" initial="$0.1000" />);
+
+    expect(await screen.findByRole('status')).toHaveTextContent(/stale/i);
+    expect(screen.queryByText('$0.1000')).not.toBeInTheDocument();
   });
 
   it('shows no stale marker once a live price is fetched', async () => {
