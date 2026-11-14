@@ -17,6 +17,7 @@ import (
 // TestChildKeyRequest_InheritsEveryField: with every parent dimension set, no field of the mint request may be zero; a field added without an inheritance line would read as unlimited or never-expiring.
 func TestChildKeyRequest_InheritsEveryField(t *testing.T) {
 	parent := Subject{
+		KeyID:           "kid_parent",
 		Identifier:      "acct-parent",
 		Tier:            TierOperator,
 		Scopes:          []string{"read"},
@@ -33,6 +34,9 @@ func TestChildKeyRequest_InheritsEveryField(t *testing.T) {
 			t.Errorf("ChildKeyRequest left CreateAPIKeyRequest.%s zero for a parent that sets it; "+
 				"a delegated key must inherit every dimension of its parent", rv.Type().Field(i).Name)
 		}
+	}
+	if req.ParentKeyID != parent.KeyID {
+		t.Errorf("child ParentKeyID = %q, want the minting key %q", req.ParentKeyID, parent.KeyID)
 	}
 	if !req.ExpiresAt.Equal(parent.ExpiresAt) {
 		t.Errorf("child ExpiresAt = %v, want parent's %v", req.ExpiresAt, parent.ExpiresAt)

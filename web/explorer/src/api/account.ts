@@ -265,12 +265,15 @@ export type APIKey = components['schemas']['DashboardKey'];
 interface KeyListResponse {
   keys: APIKey[];
   max_active_keys?: number;
+  delegated_unavailable?: boolean;
 }
 
 /** The key list plus the cap POST enforces (null from an older API). */
 export interface KeyList {
   keys: APIKey[];
   maxActiveKeys: number | null;
+  /** Keys minted by other keys could not be read and may be missing. */
+  delegatedUnavailable: boolean;
 }
 
 export interface CreateKeyRequest {
@@ -299,7 +302,11 @@ export async function listKeysWithLimit(
   signal?: AbortSignal,
 ): Promise<KeyList> {
   const r = await accountFetch<KeyListResponse>('/dashboard/keys', { signal });
-  return { keys: r.keys ?? [], maxActiveKeys: r.max_active_keys ?? null };
+  return {
+    keys: r.keys ?? [],
+    maxActiveKeys: r.max_active_keys ?? null,
+    delegatedUnavailable: r.delegated_unavailable ?? false,
+  };
 }
 
 /** POST /v1/dashboard/keys — mint a key; plaintext returned once. */

@@ -65,6 +65,36 @@ async function createNamedKey(name: string, expires?: string) {
   fireEvent.click(screen.getByText('Create key'));
 }
 
+// A key minted by another key outlives it, so the owner has to be able to
+// see where it came from.
+describe('/dashboard/keys delegated keys', () => {
+  it('names the key that minted a delegated key', async () => {
+    serveKeys([
+      keyRow('key_1', 'Backend'),
+      keyRow('key_2', 'rotated', { delegated: true, parent_key_id: 'key_1' }),
+      keyRow('key_3', '', { delegated: true, parent_key_id: 'key_gone' }),
+    ]);
+    renderKeysPage();
+    expect(await screen.findByText('Minted by "Backend"')).toBeInTheDocument();
+    expect(
+      screen.getByText('Minted by a key that no longer exists'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Unnamed key')).toBeInTheDocument();
+  });
+
+  it('warns when delegated keys could not be loaded', async () => {
+    listKeysWithLimit.mockResolvedValue({
+      keys: [keyRow('key_1', 'Backend')],
+      maxActiveKeys: 10,
+      delegatedUnavailable: true,
+    });
+    renderKeysPage();
+    expect(
+      await screen.findByText('This list may be incomplete'),
+    ).toBeInTheDocument();
+  });
+});
+
 // A scoped key must be distinguishable from a full-access one.
 describe('/dashboard/keys scope display', () => {
   it('shows the confining scopes on a scoped key, and "Full access" on an unscoped one', async () => {
