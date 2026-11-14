@@ -513,6 +513,25 @@ export function ratioPct(
 }
 
 /**
+ * sharePct — `part / whole × 100` over two counts, rounded to nearest but
+ * never up to 100: only a complete share prints 100. Null when it is not a
+ * share of a positive whole.
+ */
+export function sharePct(
+  part: number,
+  whole: number,
+  places = 1,
+): string | null {
+  if (!Number.isSafeInteger(part) || !Number.isSafeInteger(whole)) return null;
+  if (whole <= 0 || part < 0) return null;
+  const scale = 10n ** BigInt(places);
+  const w = BigInt(whole);
+  let scaled = (BigInt(part) * 200n * scale + w) / (2n * w);
+  if (part < whole && scaled >= 100n * scale) scaled = 100n * scale - 1n;
+  return (Number(scaled) / Number(scale)).toFixed(places);
+}
+
+/**
  * changePct — `(to − from) / from × 100` over two decimal strings, exact
  * as {@link ratioPct}. Null for a non-decimal input or a zero `from`.
  */

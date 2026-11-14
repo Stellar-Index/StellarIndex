@@ -1,5 +1,6 @@
 'use client';
 
+import { txNotFoundDescription } from '@/lib/txNotFound';
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
@@ -112,15 +113,13 @@ export function OperationView() {
           title={status === 404 ? 'Transaction not found' : 'Lookup failed'}
           description={
             status === 404
-              ? 'No transaction with that hash in the served tier.'
+              ? txNotFoundDescription(q.error)
               : `Lookup failed: ${q.error instanceof Error ? q.error.message : 'unknown error'}.`
           }
           action={
-            status === 404 ? undefined : (
-              <Button variant="secondary" size="sm" onClick={() => q.refetch()}>
-                Retry
-              </Button>
-            )
+            <Button variant="secondary" size="sm" onClick={() => q.refetch()}>
+              Retry
+            </Button>
           }
         />
       </Shell>

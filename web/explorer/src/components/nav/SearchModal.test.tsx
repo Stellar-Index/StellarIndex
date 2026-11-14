@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
@@ -183,5 +183,26 @@ describe('SearchModal muxed accounts', () => {
     expect(link.getAttribute('href')).toBe(
       '/accounts/GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ/',
     );
+  });
+});
+
+// A failed /v1/assets?q= read is not "no such asset".
+describe('SearchModal failed asset search', () => {
+  it('says the directory could not be searched instead of "No matches"', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockRejectedValue(new Error('network down'));
+    renderOpen();
+    const input = screen.getByRole('textbox', {
+      name: /search coins, pairs, protocols/i,
+    });
+    fireEvent.change(input, { target: { value: 'zzznomatchxyz' } });
+    expect(
+      await screen.findByText(/could not be searched/, undefined, {
+        timeout: 3000,
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/^No matches across/)).toBeNull();
+    fetchMock.mockRestore();
   });
 });

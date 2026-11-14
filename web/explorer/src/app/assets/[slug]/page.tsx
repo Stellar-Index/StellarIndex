@@ -7,6 +7,7 @@ import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
 import type { components } from '@/api/types';
 import { marketCapNote, supplyAsOfNote } from './headerNotes';
+import { mergeDetailOverListing } from './mergeDetail';
 import {
   buildFetchData,
   buildFetchEnvelope,
@@ -478,7 +479,7 @@ async function resolveCoin(
       // row instead of failing the page.
       if (typeof hit.asset_id === 'string' && hit.asset_id) {
         const direct = await fetchCoinDirect(hit.asset_id).catch(() => null);
-        if (direct) return { ...hit, ...direct };
+        if (direct) return mergeDetailOverListing(hit, direct);
       }
       return hit;
     }
@@ -545,7 +546,7 @@ async function resolveVerifiedListingCoin(
       c.asset_id
     ) {
       const direct = await fetchCoinDirect(c.asset_id).catch(() => null);
-      return direct ? { ...c, ...direct } : c;
+      return direct ? mergeDetailOverListing(c, direct) : c;
     }
   }
   return null;
@@ -1213,7 +1214,7 @@ function OverviewBody({
           <dl className="border-line grid grid-cols-2 gap-3 border-t pt-3 text-sm sm:grid-cols-3 lg:grid-cols-5">
             <Stat
               label="Volume 24h"
-              value={fmtUsd(detail?.volume_24h_usd ?? coin.volume_24h_usd)}
+              value={fmtUsd((detail ?? coin).volume_24h_usd)}
               accent={
                 (detail ?? coin).volume_lower_bound ? 'lower bound' : undefined
               }
@@ -1229,7 +1230,7 @@ function OverviewBody({
             />
             <Stat
               label="Market cap"
-              value={fmtUsd(detail?.market_cap_usd ?? coin.market_cap_usd)}
+              value={fmtUsd((detail ?? coin).market_cap_usd)}
               accent={marketCapNote(detail ?? coin)}
               accentTone="amber"
             />

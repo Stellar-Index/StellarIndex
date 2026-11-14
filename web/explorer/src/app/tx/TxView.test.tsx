@@ -153,3 +153,25 @@ describe('TxView variants', () => {
     expect(screen.getByText('base64')).toBeInTheDocument();
   });
 });
+
+describe('TxView not found', () => {
+  it('keeps the lake-behind caveat and offers a retry', async () => {
+    vi.mocked(apiGet).mockRejectedValue(
+      new Error(
+        '404 Not Found on /v1/tx/x — Not found: no transaction with that hash in the indexed range, which ends at ledger 9 and is behind the network; a recent transaction may not be indexed yet',
+      ),
+    );
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <TxView hash={H} />
+      </QueryClientProvider>,
+    );
+    expect(
+      await screen.findByText(/does not mean it failed/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+  });
+});

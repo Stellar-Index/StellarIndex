@@ -28,6 +28,7 @@ export function SupplyComposition({
   maxDeclared,
   unlimited,
   floor,
+  derived,
 }: {
   circulating: string | null | undefined;
   total: string | null | undefined;
@@ -36,6 +37,8 @@ export function SupplyComposition({
   maxDeclared?: boolean;
   unlimited?: boolean;
   floor?: boolean;
+  /** The supply is a replayed-flows reading, not a certified total. */
+  derived?: boolean;
 }) {
   const c = big(circulating);
   const t = big(total);
@@ -111,6 +114,11 @@ export function SupplyComposition({
         ))}
         {floor && (
           <li className="text-warn-700">Circulating is a floor, not exact</li>
+        )}
+        {derived && (
+          <li className="text-warn-700">
+            Derived from replayed flows, not certified
+          </li>
         )}
         {unlimited && <li>No cap: issuer asserts unbounded supply</li>}
       </ul>

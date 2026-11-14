@@ -146,8 +146,8 @@ export function AssetSidebar({
   // market_cap / volume / fdv arrive already server-pre-scaled (USD) —
   // num() only, never divide. The supply fields (circulating / total /
   // max) are RAW smallest-unit integers, so scale them down 10^decimals.
-  const marketCap = num(detail?.market_cap_usd ?? coin.market_cap_usd);
-  const vol = num(detail?.volume_24h_usd ?? coin.volume_24h_usd);
+  const marketCap = num((detail ?? coin).market_cap_usd);
+  const vol = num((detail ?? coin).volume_24h_usd);
   const fdv = num(detail?.fdv_usd);
   const decimals = detail?.decimals ?? coin.decimals ?? 7;
   const circulating = supplyNum(

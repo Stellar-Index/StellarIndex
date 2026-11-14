@@ -95,6 +95,14 @@ describe('SacAssetPanel', () => {
     expect(screen.getByText(/View all on the asset page/)).toBeTruthy();
   });
 
+  it('marks a trustline-sum supply and its market cap as a floor', async () => {
+    route({ ...usdc, supply_basis: 'classic_trustline_sum' });
+    wrap(<SacAssetPanel contractId={USDC_SAC} />);
+    expect(await screen.findByText('≥ 123.46M')).toBeTruthy();
+    expect(screen.getByText('≥ $123.46M')).toBeTruthy();
+    expect(screen.getByText('223.46M')).toBeTruthy();
+  });
+
   it('renders native XLM without an issuer', async () => {
     route(xlm);
     wrap(<SacAssetPanel contractId={XLM_SAC} />);

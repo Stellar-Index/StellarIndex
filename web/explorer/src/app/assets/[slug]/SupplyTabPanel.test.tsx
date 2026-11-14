@@ -127,6 +127,23 @@ describe('SupplyTabPanel on-chain supply', () => {
     expect(screen.getByText('includes burned XLM')).toBeInTheDocument();
   });
 
+  it('marks a classic flows total as derived, not as an exact live figure', () => {
+    supplyQuery.data = {
+      data: {
+        asset_id: 'USDC-GA5ZSEJ',
+        total_supply: '120000000000000',
+        flow_count: 12,
+        source: 'mint_burn_flows',
+        supply_basis: 'classic_lake_flows',
+        decimals: 7,
+      },
+    };
+    renderPanel();
+    expect(screen.getByText('Total (derived)')).toBeInTheDocument();
+    expect(screen.getByText('Derived, not certified')).toBeInTheDocument();
+    expect(screen.queryByText(/no refresh lag/)).not.toBeInTheDocument();
+  });
+
   it('renders base units when the contract declares no scale', () => {
     supplyQuery.data = { data: storageSupply };
     renderPanel();

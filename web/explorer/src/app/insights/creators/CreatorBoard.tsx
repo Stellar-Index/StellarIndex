@@ -18,7 +18,7 @@ import {
 } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import type { CreatorRow, CreatorsResp } from '@/api/relationTypes';
-import { formatCompact, truncateMiddle } from '@/lib/format';
+import { formatCompact, sharePct, truncateMiddle } from '@/lib/format';
 import { PairedBars } from '@/components/charts/Bars';
 import { ConcentrationDonut } from '../ConcentrationDonut';
 import {
@@ -40,7 +40,8 @@ const BOARD_LIMIT = 50;
 // remain the auditable figures.
 function survivalPct(row: CreatorRow): string {
   if (row.accounts_created === 0) return '—';
-  return `${((row.live_accounts / row.accounts_created) * 100).toFixed(1)}%`;
+  const pct = sharePct(row.live_accounts, row.accounts_created, 1);
+  return pct == null ? '—' : `${pct}%`;
 }
 
 /**
