@@ -46,6 +46,9 @@ func TestRefreshPinnedPair_ReachesNoVerdict(t *testing.T) {
 	if !got.Pinned || got.Median != 1.00 || got.SuccessCount != 2 {
 		t.Errorf("entry = {pinned %v median %v success %d}, want {true 1 2}", got.Pinned, got.Median, got.SuccessCount)
 	}
+	if _, checked, _, err := svc.LookupCachedPairVerdict(ctx, pair); err != nil || checked {
+		t.Errorf("pinned entry verdict: checked=%v err=%v, want unchecked (a carried all-clear is not a live check)", checked, err)
+	}
 	if len(sink.records) != 6 || sink.records[0].OurPrice != "1.1" {
 		t.Errorf("pinned observations = %d (first our_price %q), want 6 against the pinned 1.1",
 			len(sink.records), firstOurPrice(sink.records))
@@ -69,6 +72,10 @@ func TestRefreshPinnedPair_ReachesNoVerdict(t *testing.T) {
 	}
 	if !got.Pinned {
 		t.Error("entry written by a pinned refresh is not marked pinned")
+	}
+	firing, checked, _, err := svc.LookupCachedPairVerdict(ctx, pair)
+	if err != nil || !firing || checked {
+		t.Errorf("carried warning verdict: firing=%v checked=%v err=%v, want firing and unchecked", firing, checked, err)
 	}
 }
 

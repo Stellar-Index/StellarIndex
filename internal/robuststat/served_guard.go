@@ -28,6 +28,7 @@ var (
 
 // GuardServedVWAP decides whether a candidate VWAP is sane against newest-first trailing VWAPs: accept=false gives lkgIdx of the newest in-band value; accept=true with lkgIdx=-1 may be an UNVALIDATED fail-open, so callers must check [ServedBaselineValidated].
 func GuardServedVWAP(candidate *big.Rat, trailing []*big.Rat) (accept bool, lkgIdx int) {
+	trailing = thinClean(trailing)
 	lo, hi, ok := robustBand(trailing)
 	if !ok || candidate == nil {
 		return true, -1
@@ -45,6 +46,35 @@ func GuardServedVWAP(candidate *big.Rat, trailing []*big.Rat) (accept bool, lkgI
 	// safe fallback is to serve the candidate rather than 404 a pair that
 	// demonstrably has data.
 	return true, -1
+}
+
+// thinClean returns a thin baseline (fewer than [guardMinSamples] usable values) with every member that fails the thin band of the
+// members older than it set to nil, indices kept. A median of 1-4 values has no outlier resistance, so without this a bucket the
+// guard refused one minute is the centre it judges the next minute against. A full baseline is returned as is.
+func thinClean(trailing []*big.Rat) []*big.Rat {
+	usable := 0
+	for _, v := range trailing {
+		if v != nil && v.Sign() > 0 {
+			usable++
+		}
+	}
+	if usable < 2 || usable >= guardMinSamples {
+		return trailing
+	}
+	out := make([]*big.Rat, len(trailing))
+	clean := make([]*big.Rat, 0, usable)
+	for i := len(trailing) - 1; i >= 0; i-- {
+		v := trailing[i]
+		if v == nil || v.Sign() <= 0 {
+			continue
+		}
+		if lo, hi, ok := robustBand(clean); ok && !withinBand(v, lo, hi) {
+			continue
+		}
+		out[i] = v
+		clean = append(clean, v)
+	}
+	return out
 }
 
 // ServedBaselineValidated reports whether trailing gives a usable centre to validate against; when false, surface an accepted value as low-confidence/stale, never a blackout.
