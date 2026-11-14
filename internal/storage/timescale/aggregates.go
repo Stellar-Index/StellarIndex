@@ -288,13 +288,13 @@ func (s *Store) HistoryPoints(ctx context.Context, p canonical.Pair, granularity
 		SELECT * FROM (
 		    (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text, volume_usd::text, sources
 		       FROM %[1]s
-		      WHERE base_asset = $1 AND quote_asset = $2
+		      WHERE base_asset = $1 AND quote_asset = $2 AND vwap IS NOT NULL
 		        AND bucket <= now() - INTERVAL '%[2]s'
 		      ORDER BY bucket ASC%[3]s)
 		    UNION ALL
 		    (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text, volume_usd::text, sources
 		       FROM %[1]s
-		      WHERE base_asset = $2 AND quote_asset = $1
+		      WHERE base_asset = $2 AND quote_asset = $1 AND vwap IS NOT NULL
 		        AND bucket <= now() - INTERVAL '%[2]s'
 		      ORDER BY bucket ASC%[3]s)
 		) AS both_directions
@@ -458,12 +458,12 @@ func (s *Store) HistoryPointsInRange(
 		SELECT * FROM (
 		    (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text, volume_usd::text, sources
 		       FROM %[1]s
-		      WHERE base_asset = $1 AND quote_asset = $2%[2]s
+		      WHERE base_asset = $1 AND quote_asset = $2 AND vwap IS NOT NULL%[2]s
 		      ORDER BY bucket ASC%[3]s)
 		    UNION ALL
 		    (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text, volume_usd::text, sources
 		       FROM %[1]s
-		      WHERE base_asset = $2 AND quote_asset = $1%[2]s
+		      WHERE base_asset = $2 AND quote_asset = $1 AND vwap IS NOT NULL%[2]s
 		      ORDER BY bucket ASC%[3]s)
 		) AS both_directions
 		 ORDER BY bucket ASC, base_asset%[3]s
@@ -530,12 +530,12 @@ func (s *Store) TWAPPointsInRange(
 		SELECT * FROM (
 		    (SELECT bucket, base_asset, twap::text, COALESCE(sample_count, 0), COALESCE(notional_sample_count, 0), volume_usd::text
 		       FROM %[1]s
-		      WHERE base_asset = $1 AND quote_asset = $2%[2]s
+		      WHERE base_asset = $1 AND quote_asset = $2 AND twap IS NOT NULL%[2]s
 		      ORDER BY bucket ASC%[3]s)
 		    UNION ALL
 		    (SELECT bucket, base_asset, twap::text, COALESCE(sample_count, 0), COALESCE(notional_sample_count, 0), volume_usd::text
 		       FROM %[1]s
-		      WHERE base_asset = $2 AND quote_asset = $1%[2]s
+		      WHERE base_asset = $2 AND quote_asset = $1 AND twap IS NOT NULL%[2]s
 		      ORDER BY bucket ASC%[3]s)
 		) AS both_directions
 		 ORDER BY bucket ASC, base_asset%[3]s
@@ -628,7 +628,7 @@ const recentClosedVWAP1mForPairQuery = `
             (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
                     COALESCE(trade_count, 0), sources
                FROM prices_1m
-              WHERE base_asset = $1 AND quote_asset = $2
+              WHERE base_asset = $1 AND quote_asset = $2 AND vwap IS NOT NULL
                 AND bucket <= now() - INTERVAL '1 minute'
               ORDER BY bucket DESC
               LIMIT $3)
@@ -636,7 +636,7 @@ const recentClosedVWAP1mForPairQuery = `
             (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
                     COALESCE(trade_count, 0), sources
                FROM prices_1m
-              WHERE base_asset = $2 AND quote_asset = $1
+              WHERE base_asset = $2 AND quote_asset = $1 AND vwap IS NOT NULL
                 AND bucket <= now() - INTERVAL '1 minute'
               ORDER BY bucket DESC
               LIMIT $3)
@@ -665,7 +665,7 @@ const recentClosedVWAP1mCombinedTemplate = `
             (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
                     COALESCE(trade_count, 0), sources
                FROM prices_1m
-              WHERE base_asset = $1 AND quote_asset = $2
+              WHERE base_asset = $1 AND quote_asset = $2 AND vwap IS NOT NULL
                 AND bucket <= now() - INTERVAL '1 minute'
                 %[1]s
               ORDER BY bucket DESC
@@ -674,7 +674,7 @@ const recentClosedVWAP1mCombinedTemplate = `
             (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
                     COALESCE(trade_count, 0), sources
                FROM prices_1m
-              WHERE base_asset = $2 AND quote_asset = $1
+              WHERE base_asset = $2 AND quote_asset = $1 AND vwap IS NOT NULL
                 AND bucket <= now() - INTERVAL '1 minute'
                 %[1]s
               ORDER BY bucket DESC
@@ -710,7 +710,7 @@ const closedVWAP1mCombinedBeforeTemplate = `
             (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
                     COALESCE(trade_count, 0), sources
                FROM prices_1m
-              WHERE base_asset = $1 AND quote_asset = $2
+              WHERE base_asset = $1 AND quote_asset = $2 AND vwap IS NOT NULL
                 AND bucket < $4::timestamptz
                 %[1]s
               ORDER BY bucket DESC
@@ -719,7 +719,7 @@ const closedVWAP1mCombinedBeforeTemplate = `
             (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
                     COALESCE(trade_count, 0), sources
                FROM prices_1m
-              WHERE base_asset = $2 AND quote_asset = $1
+              WHERE base_asset = $2 AND quote_asset = $1 AND vwap IS NOT NULL
                 AND bucket < $4::timestamptz
                 %[1]s
               ORDER BY bucket DESC
@@ -817,7 +817,7 @@ const closedVWAP1mAtOrBeforeQuery = `
             (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
                     COALESCE(trade_count, 0), sources
                FROM prices_1m
-              WHERE base_asset = $1 AND quote_asset = $2
+              WHERE base_asset = $1 AND quote_asset = $2 AND vwap IS NOT NULL
                 AND bucket <= $3::timestamptz - INTERVAL '1 minute'
               ORDER BY bucket DESC
               LIMIT 2)
@@ -825,7 +825,7 @@ const closedVWAP1mAtOrBeforeQuery = `
             (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
                     COALESCE(trade_count, 0), sources
                FROM prices_1m
-              WHERE base_asset = $2 AND quote_asset = $1
+              WHERE base_asset = $2 AND quote_asset = $1 AND vwap IS NOT NULL
                 AND bucket <= $3::timestamptz - INTERVAL '1 minute'
               ORDER BY bucket DESC
               LIMIT 2)
@@ -905,13 +905,13 @@ const closedVWAPAtOrBeforeQueryTemplate = `
     WITH latest AS (
         SELECT max(b) AS b FROM (
             SELECT max(bucket) AS b FROM %[1]s
-             WHERE base_asset = $1 AND quote_asset = $2
+             WHERE base_asset = $1 AND quote_asset = $2 AND vwap IS NOT NULL
                AND bucket <= TIMESTAMPTZ '%[2]s'
                AND bucket >= TIMESTAMPTZ '%[3]s'
                AND NOT COALESCE(sources <@ string_to_array($3, ','), false)
             UNION ALL
             SELECT max(bucket) AS b FROM %[1]s
-             WHERE base_asset = $2 AND quote_asset = $1
+             WHERE base_asset = $2 AND quote_asset = $1 AND vwap IS NOT NULL
                AND bucket <= TIMESTAMPTZ '%[2]s'
                AND bucket >= TIMESTAMPTZ '%[3]s'
                AND NOT COALESCE(sources <@ string_to_array($3, ','), false)
@@ -923,14 +923,14 @@ const closedVWAPAtOrBeforeQueryTemplate = `
          WHERE bucket = (SELECT b FROM latest)
            AND bucket >= TIMESTAMPTZ '%[3]s'
            AND NOT COALESCE(sources <@ string_to_array($3, ','), false)
-           AND base_asset = $1 AND quote_asset = $2
+           AND base_asset = $1 AND quote_asset = $2 AND vwap IS NOT NULL
         UNION ALL
         SELECT base_asset, vwap::text AS vwap, COALESCE(volume_priced, 0)::text AS volume_priced
           FROM %[1]s
          WHERE bucket = (SELECT b FROM latest)
            AND bucket >= TIMESTAMPTZ '%[3]s'
            AND NOT COALESCE(sources <@ string_to_array($3, ','), false)
-           AND base_asset = $2 AND quote_asset = $1
+           AND base_asset = $2 AND quote_asset = $1 AND vwap IS NOT NULL
     )
     SELECT (SELECT b FROM latest), base_asset, vwap, volume_priced
       FROM r
@@ -1021,13 +1021,13 @@ const latestVWAPGateWindow = 14 * 24 * time.Hour
 const recentClosedVWAP1mExistsTemplate = `
         SELECT 1 FROM (
             (SELECT 1 FROM prices_1m
-              WHERE base_asset = $1 AND quote_asset = $2
+              WHERE base_asset = $1 AND quote_asset = $2 AND vwap IS NOT NULL
                 AND bucket <= now() - INTERVAL '1 minute'
                 %[1]s
               LIMIT 1)
             UNION ALL
             (SELECT 1 FROM prices_1m
-              WHERE base_asset = $2 AND quote_asset = $1
+              WHERE base_asset = $2 AND quote_asset = $1 AND vwap IS NOT NULL
                 AND bucket <= now() - INTERVAL '1 minute'
                 %[1]s
               LIMIT 1)
@@ -1066,12 +1066,12 @@ const latestClosedVWAP1mTemplate = `
         WITH latest AS (
             SELECT max(b) AS b FROM (
                 SELECT max(bucket) AS b FROM prices_1m
-                 WHERE base_asset = $1 AND quote_asset = $2
+                 WHERE base_asset = $1 AND quote_asset = $2 AND vwap IS NOT NULL
                    AND bucket <= now() - INTERVAL '1 minute'
                    %[1]s
                 UNION ALL
                 SELECT max(bucket) AS b FROM prices_1m
-                 WHERE base_asset = $2 AND quote_asset = $1
+                 WHERE base_asset = $2 AND quote_asset = $1 AND vwap IS NOT NULL
                    AND bucket <= now() - INTERVAL '1 minute'
                    %[1]s
             ) u
@@ -1082,14 +1082,14 @@ const latestClosedVWAP1mTemplate = `
               FROM prices_1m
              WHERE bucket = (SELECT b FROM latest)
                %[1]s
-               AND base_asset = $1 AND quote_asset = $2
+               AND base_asset = $1 AND quote_asset = $2 AND vwap IS NOT NULL
             UNION ALL
             SELECT base_asset, vwap::text AS vwap, COALESCE(volume_priced, 0)::text AS volume_priced,
                    COALESCE(trade_count, 0) AS tc, sources
               FROM prices_1m
              WHERE bucket = (SELECT b FROM latest)
                %[1]s
-               AND base_asset = $2 AND quote_asset = $1
+               AND base_asset = $2 AND quote_asset = $1 AND vwap IS NOT NULL
         )
         SELECT (SELECT b FROM latest), base_asset, vwap, volume_priced, tc, sources
           FROM r
@@ -1144,13 +1144,13 @@ func (s *Store) TimedVWAPsForPair1m(ctx context.Context, p canonical.Pair, from,
           FROM (
             (SELECT bucket, base_asset, vwap, volume_priced, volume_usd
                FROM prices_1m
-              WHERE base_asset = $1 AND quote_asset = $2
+              WHERE base_asset = $1 AND quote_asset = $2 AND vwap IS NOT NULL
                 AND bucket >= $3::timestamptz
                 AND bucket <  $4::timestamptz)
             UNION ALL
             (SELECT bucket, base_asset, vwap, volume_priced, volume_usd
                FROM prices_1m
-              WHERE base_asset = $2 AND quote_asset = $1
+              WHERE base_asset = $2 AND quote_asset = $1 AND vwap IS NOT NULL
                 AND bucket >= $3::timestamptz
                 AND bucket <  $4::timestamptz)
           ) AS both_directions
@@ -1207,13 +1207,13 @@ func (s *Store) VWAPsForPair1m(ctx context.Context, p canonical.Pair, from, to t
           FROM (
             (SELECT bucket, base_asset, vwap, volume_priced
                FROM prices_1m
-              WHERE base_asset = $1 AND quote_asset = $2
+              WHERE base_asset = $1 AND quote_asset = $2 AND vwap IS NOT NULL
                 AND bucket >= $3
                 AND bucket <  $4)
             UNION ALL
             (SELECT bucket, base_asset, vwap, volume_priced
                FROM prices_1m
-              WHERE base_asset = $2 AND quote_asset = $1
+              WHERE base_asset = $2 AND quote_asset = $1 AND vwap IS NOT NULL
                 AND bucket >= $3
                 AND bucket <  $4)
           ) AS both_directions
@@ -1378,7 +1378,7 @@ func (s *Store) OHLCSeries(
 		        (SELECT bucket, base_asset, first_price, last_price, high_price, low_price,
 		                volume, volume_quote, trade_count, sources
 		           FROM %[1]s
-		          WHERE base_asset = $1 AND quote_asset = $2
+		          WHERE base_asset = $1 AND quote_asset = $2 AND first_price IS NOT NULL
 		            AND bucket >= $3
 		            AND bucket <  $4
 		            AND bucket <= now() - INTERVAL '%[2]s')
@@ -1386,7 +1386,7 @@ func (s *Store) OHLCSeries(
 		        (SELECT bucket, base_asset, first_price, last_price, high_price, low_price,
 		                volume, volume_quote, trade_count, sources
 		           FROM %[1]s
-		          WHERE base_asset = $2 AND quote_asset = $1
+		          WHERE base_asset = $2 AND quote_asset = $1 AND first_price IS NOT NULL
 		            AND bucket >= $3
 		            AND bucket <  $4
 		            AND bucket <= now() - INTERVAL '%[2]s')
@@ -1481,14 +1481,14 @@ func ohlcReBucketedQuery(table, outInterval string) string {
 		            (SELECT bucket, base_asset, first_price, last_price, high_price, low_price,
 		                    volume, volume_quote, trade_count, sources
 		               FROM %[1]s
-		              WHERE base_asset = $1 AND quote_asset = $2
+		              WHERE base_asset = $1 AND quote_asset = $2 AND first_price IS NOT NULL
 		                AND bucket >= $3
 		                AND bucket <  $4)
 		            UNION ALL
 		            (SELECT bucket, base_asset, first_price, last_price, high_price, low_price,
 		                    volume, volume_quote, trade_count, sources
 		               FROM %[1]s
-		              WHERE base_asset = $2 AND quote_asset = $1
+		              WHERE base_asset = $2 AND quote_asset = $1 AND first_price IS NOT NULL
 		                AND bucket >= $3
 		                AND bucket <  $4)
 		          ) AS both_directions
