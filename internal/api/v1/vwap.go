@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
@@ -85,6 +86,9 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 
 	sigma, breakdown, ok := parseVWAPParams(w, r)
 	if !ok {
+		return
+	}
+	if !middleware.ChargeRateLimit(w, r, tradeScanCost(from, to)) {
 		return
 	}
 
@@ -245,6 +249,20 @@ func (s *Server) fetchVWAPTrades(
 		"https://api.stellarindex.io/errors/internal",
 		"Internal error", http.StatusInternalServerError, "")
 	return aggregate.ScaledWindow{}, false, false
+}
+
+// tradeScanCostSpan is one `trades` chunk. A raw-trade window probes every chunk it spans, on up to nine alias pairs, so it is
+// priced one token per chunk: the window is the client's choice and so is the cost.
+const tradeScanCostSpan = 7 * 24 * time.Hour
+
+// tradeScanCost is the rate-limit price in tokens of one raw-trade read over [from, to).
+func tradeScanCost(from, to time.Time) int {
+	span := to.Sub(from)
+	n := span / tradeScanCostSpan
+	if span%tradeScanCostSpan > 0 {
+		n++
+	}
+	return int(max(1, min(n, math.MaxInt32)))
 }
 
 // tradesInRangeWithStablecoinFallback is the single raw-trade fetch behind /v1/vwap, /v1/twap and the single-bar /v1/ohlc: trades sorted
