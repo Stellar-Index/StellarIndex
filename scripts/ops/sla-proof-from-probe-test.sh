@@ -218,6 +218,22 @@ for key in ("p95_max", "avail_min", "samples_avg"):
     twohosts["series"][key].extend(extra)
 write("twohosts", twohosts)
 
+# `dupendpoint` — one endpoint carries a breaching and a passing series
+# (a label changed mid-window). The last row must not overwrite the first.
+dupendpoint = copy.deepcopy(clean)
+second = copy.deepcopy(dupendpoint["series"]["p95_max"][0])
+second["metric"]["instance"] = "localhost:9101"
+dupendpoint["series"]["p95_max"][0]["value"][1] = "9.9"
+dupendpoint["series"]["p95_max"].append(second)
+write("dupendpoint", dupendpoint)
+
+# `dupscalar` — a host-level series split in two by a label change.
+dupscalar = copy.deepcopy(clean)
+second = copy.deepcopy(dupscalar["series"]["no_pass_max_sec"][0])
+second["metric"]["instance"] = "localhost:9101"
+dupscalar["series"]["no_pass_max_sec"].append(second)
+write("dupscalar", dupscalar)
+
 # Headline series absent, one family at a time. k6's export could omit
 # p(99); this generator's equivalent is a quantile whose series never
 # made it into the window.
@@ -410,6 +426,11 @@ expect 'a missing descriptive breach-fraction cell still renders' 0 'wrote'
 DESCRMISSING="$TMP/out-descrmissing/$(ls "$TMP/out-descrmissing")"
 assert_absent 'the missing cell is not reported as a 0.000 % breach rate' \
   "$DESCRMISSING" "| \`assets\` | 8.0 ms | 12.0 ms | 20.0 ms | 1.0 ms | 0.000 % |"
+
+render "$TMP/dupendpoint.json" "$TMP/out-dupendpoint"
+expect 'two series for one endpoint → rc 2 REFUSED, not last-row-wins' 2 'more than one series for endpoint'
+render "$TMP/dupscalar.json" "$TMP/out-dupscalar"
+expect 'a host-level series split in two → rc 2 REFUSED' 2 'where one is expected'
 
 render "$TMP/twohosts.json" "$TMP/out-hosts"
 expect 'two hosts merged into one table → rc 2 REFUSED' 2 'span 2 hosts'

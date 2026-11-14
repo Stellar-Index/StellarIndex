@@ -138,7 +138,10 @@ jobs:
   deploy:
     name: Deploy ${{ inputs.version }} → ${{ inputs.region }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # Must cover the playbook's worst case, or GitHub kills ansible before
+    # its rescue runs: 15 min migrate + 3 services x (2 x grace + ~260 s of
+    # probe retries) + the whole-deploy rollback. Grace is capped at 120 s.
+    timeout-minutes: 60
     environment:
       name: ${{ inputs.region }}
       # Set this in the repo's Environments → r1 → Reviewers list to
@@ -265,6 +268,11 @@ jobs:
           # and silently skip the backup-freshness gate. Digits only.
           if ! [[ "$HEALTH_GRACE" =~ ^[0-9]{1,4}$ ]]; then
             echo "::error::health_grace_seconds '$HEALTH_GRACE' must be 1-4 digits (seconds); anything else could inject extra-vars into ansible-playbook -e"
+            exit 1
+          fi
+          # The job timeout is sized for a grace of at most 120 s.
+          if [ "$((10#$HEALTH_GRACE))" -gt 120 ]; then
+            echo "::error::health_grace_seconds '$HEALTH_GRACE' is over 120; the job would time out before the playbook's rollback could run"
             exit 1
           fi
           # Reject empty / whitespace-only binary list early
@@ -1254,6 +1262,11 @@ jobs:
             -e "migrations_skip=${MIGRATIONS_SKIP}" \
             -e "pgbackrest_backup_enabled=${BACKUP_GATE}" \
             configs/ansible/playbooks/deploy-binary.yml
+
+      - name: Warn that a cancelled deploy was not rolled back
+        if: cancelled()
+        run: |
+          echo "::error::Deploy cancelled or timed out. ansible was killed, so no rescue or whole-deploy rollback ran: a binary may be swapped and serving while the others are on the old version. Check each unit's version on the host before re-running."
 
       - name: Apply Prometheus rules (r1)
         # The one config surface a deploy applies ITSELF instead of

@@ -488,8 +488,16 @@ def rows(name):
 
 def by_endpoint(name):
     out = {}
+    seen = set()
     for r in rows(name):
         ep = (r.get("metric") or {}).get("endpoint")
+        # Keeping the last row would let a passing series overwrite a breaching one.
+        if ep in seen:
+            refuse("%s carries more than one series for endpoint %r (a second "
+                   "-pair, or a label that changed mid-window). One table row "
+                   "cannot describe both; narrow the probe or the window."
+                   % (name, ep))
+        seen.add(ep)
         try:
             out[ep] = float((r.get("value") or [None, None])[1])
         except (TypeError, ValueError):
@@ -498,6 +506,13 @@ def by_endpoint(name):
 
 
 def scalar(name, default=None):
+    # A host-level series must be one row. Extracts whose beat was a
+    # per-endpoint family carry one row per endpoint; those keep the first.
+    host_level = [r for r in rows(name) if "endpoint" not in (r.get("metric") or {})]
+    if len(host_level) > 1:
+        refuse("%s returned %d series where one is expected (a label changed "
+               "mid-window). Reading the first would hide the rest."
+               % (name, len(host_level)))
     for r in rows(name):
         try:
             v = float((r.get("value") or [None, None])[1])
