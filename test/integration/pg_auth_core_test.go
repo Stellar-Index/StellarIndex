@@ -1286,8 +1286,8 @@ func TestPriceAlertRearmAfterFailedFanOut(t *testing.T) {
 	})
 
 	w.Sweep(ctx)
-	if hooks.attempts != 1 {
-		t.Fatalf("fan-out attempts = %d, want 1", hooks.attempts)
+	if hooks.attempts != 2 {
+		t.Fatalf("fan-out attempts = %d, want 2 (the pass and its one retry)", hooks.attempts)
 	}
 	got, err := alerts.GetPriceAlert(ctx, a.ID)
 	if err != nil {
