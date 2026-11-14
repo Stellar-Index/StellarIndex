@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -579,17 +580,24 @@ const (
 	// assetListSurchargeSearch prices a q that reaches the store: three unindexed LOWER(col) LIKE predicates over the ~190K-row
 	// spine behind a cache keyed on q verbatim, so cycling values always misses. 5 tokens in total.
 	assetListSurchargeSearch = 4
+	// assetListSurchargeSparkline is charged per requested `include=sparkline*` series: each is one batch prices read over
+	// the page, keyed on a parameter the page cache separates.
+	assetListSurchargeSparkline = 2
 )
 
 // assetListCost is the rate-limit price of one /v1/assets request, decided by the PLAN: `order_by=volume_24h_usd_desc` and
 // `asset_class=all` hit the same volume-ranked read, so both pay. No AssetsReader, or class-scoped catalogue listings (which
 // ignore `q`), cost the base token.
-func assetListCost(f assetListFilters, order timescale.AssetsOrder, assetClass string, storeBacked bool) int {
+func assetListCost(f assetListFilters, order timescale.AssetsOrder, assetClass, include string, storeBacked bool) int {
 	const base = 1
-	if !storeBacked || (assetClass != "" && assetClass != "all") {
+	if !storeBacked {
 		return base
 	}
-	cost := base
+	// Sparklines attach in every phase, class-scoped catalogue listings included.
+	cost := base + assetListSurchargeSparkline*len(requestedSparklines(include))
+	if assetClass != "" && assetClass != "all" {
+		return cost
+	}
 	if assetClass == "all" || order == timescale.AssetsOrderVolume24hUSDDesc {
 		cost += assetListSurchargeVolumePlan
 	}
@@ -701,7 +709,7 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 
 	// Price the request by the plan it selected — after validation, so a
 	// 400 costs the base token only, and before any path reads.
-	if !middleware.ChargeRateLimit(w, r, assetListCost(filters, orderBy.order, assetClass, s.AssetsReader != nil)) {
+	if !middleware.ChargeRateLimit(w, r, assetListCost(filters, orderBy.order, assetClass, r.URL.Query().Get("include"), s.AssetsReader != nil)) {
 		return
 	}
 
@@ -908,6 +916,13 @@ func (s *Server) fillMarketCapsFromSupply(ctx context.Context, rows []AssetDetai
 	// tokens are held, so it alone sees claimable balances, LP reserves and SAC balances. It
 	// outranks the trustline sum but never falls below it; see classic_lake_supply.go.
 	lake := s.classicLakeSupply(ctx, rows)
+	// Every row, priced or not: `decimals` scales the row's own amounts for a client, so a confirmed
+	// nonstandard token must not publish the stamped 7 just because no cap is computed for it.
+	for i := range rows {
+		if confirmed, ok := s.NonstandardDecimals.Lookup(rows[i].AssetID); ok {
+			rows[i].Decimals = confirmed
+		}
+	}
 	if len(precise) == 0 && len(broad) == 0 && len(lake) == 0 {
 		return
 	}
@@ -2144,12 +2159,18 @@ func (s *Server) serveCatalogueUnifiedPage(
 	// Catalogue exhausted below the limit: fill the rest of the page from the classic stream, or
 	// page 1 would return only the short catalogue tail and present it as the whole asset universe.
 	if remaining := limit - len(page); remaining > 0 {
-		classicRows, nextInner, stale, ok := s.fetchClassicUnifiedRows(w, r, filters, remaining, "")
+		classic, ok := s.fetchClassicUnifiedRows(w, r, filters, remaining, "")
 		if !ok {
 			return
 		}
-		env.Data = append(page, classicRows...)
-		env.Flags.Stale = unmeasured || stale
+		nextInner := classic.next
+		env.Data = append(page, classic.rows...)
+		// A fill that added no row does not date or stale the catalogue rows above it.
+		if len(classic.rows) > 0 {
+			env.Flags.Stale = unmeasured || classic.stale()
+			env.Flags.Degraded = env.Flags.Degraded || classic.stale() || anyDirectoryUnchecked(classic.rows)
+			env.AsOf = classic.asOf()
+		}
 		if nextInner != "" {
 			env.Pagination = &Pagination{Next: "classic:" + nextInner}
 		} else {
@@ -2169,47 +2190,68 @@ func (s *Server) serveClassicUnifiedPage(
 	w http.ResponseWriter, r *http.Request,
 	filters assetListFilters, limit int, innerCursor string,
 ) {
-	out, nextInner, stale, ok := s.fetchClassicUnifiedRows(w, r, filters, limit, innerCursor)
+	classic, ok := s.fetchClassicUnifiedRows(w, r, filters, limit, innerCursor)
 	if !ok {
 		return
 	}
+	out, nextInner, stale := classic.rows, classic.next, classic.stale()
 	// Required-array guard: AssetListEnvelope.data is a required array, so a nil slice would serve
 	// `"data": null` on a 200. Every empty phase must reach the wire as [].
 	if out == nil {
 		out = []AssetDetail{}
 	}
-	env := Envelope{Data: out, Flags: Flags{Stale: stale, Degraded: stale || anyDirectoryUnchecked(out)}}
+	env := Envelope{Data: out, Flags: Flags{Stale: stale, Degraded: stale || anyDirectoryUnchecked(out)}, AsOf: classic.asOf()}
 	if nextInner != "" {
 		env.Pagination = &Pagination{Next: "classic:" + nextInner}
 	}
 	writeEnvelope(w, env)
 }
 
-// fetchClassicUnifiedRows reads one classic-phase page, shared with the page-1 fill. ok=false: a response was already written;
-// nextInner empty: exhausted. stale: the substance gate withheld an unmeasured price ([Server.applySubstanceGateToListing]);
-// the caller stamps it.
+// classicUnifiedRows is one classic-phase page with the freshness the envelope has to carry.
+type classicUnifiedRows struct {
+	rows []AssetDetail
+	// next is the inner cursor; empty means the phase is exhausted.
+	next string
+	// unmeasured: the substance gate withheld an unmeasured price ([Server.applySubstanceGateToListing]).
+	unmeasured bool
+	// cacheStale and observedAt come from the cached reader: rows served past their TTL, and when they were read.
+	cacheStale bool
+	observedAt time.Time
+}
+
+func (c classicUnifiedRows) stale() bool { return c.unmeasured || c.cacheStale }
+
+// asOf is the rows' observation time, never now() over a cached page; zero (the envelope default) for a live read.
+func (c classicUnifiedRows) asOf() WireTime {
+	if c.observedAt.IsZero() {
+		return WireTime{}
+	}
+	return WireTime(c.observedAt.UTC())
+}
+
+// fetchClassicUnifiedRows reads one classic-phase page, shared with the page-1 fill. ok=false: a response was already written.
 func (s *Server) fetchClassicUnifiedRows(
 	w http.ResponseWriter, r *http.Request,
 	filters assetListFilters, limit int, innerCursor string,
-) ([]AssetDetail, string, bool, bool) {
+) (classicUnifiedRows, bool) {
 	// Reject a malformed cursor (not the `<rank_tier>:<vol_or_blank>:<asset_id>` shape emitted
 	// below) with 400 rather than let it fall through to a keyset predicate that matches no rows.
 	if err := timescale.ValidateAssetsCursor(innerCursor, timescale.AssetsOrderVolume24hUSDDesc); err != nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-cursor",
 			"Invalid cursor", http.StatusBadRequest, err.Error())
-		return nil, "", false, false
+		return classicUnifiedRows{}, false
 	}
 	// A type this spine cannot carry (native / fiat) ends the phase before the reader: the
 	// catalogue phase serves those rows. ok=true because an empty classic phase is a legitimate
 	// result. The slice is non-nil because it becomes the envelope's required `data` array verbatim.
 	if !typeMatchesListingSpine(filters.typ) {
-		return []AssetDetail{}, "", false, true
+		return classicUnifiedRows{rows: []AssetDetail{}}, true
 	}
 	if s.AssetsReader == nil {
 		// No AssetsReader wired → empty terminator.
 		writeJSON(w, []AssetDetail{}, Flags{})
-		return nil, "", false, false
+		return classicUnifiedRows{}, false
 	}
 	opts := timescale.ListAssetsOptions{
 		Cursor: innerCursor,
@@ -2228,16 +2270,16 @@ func (s *Server) fetchClassicUnifiedRows(
 	// Overfetch-by-one (same shape as handleAssetListFromAssets) to
 	// drive the cursor advance.
 	opts.Limit = limit + AssetsListOverfetchBy
-	rows, err := s.AssetsReader.ListAssetsExt(r.Context(), opts)
+	rows, observedAt, cacheStale, err := s.listAssetsExtAt(r.Context(), opts)
 	if err != nil {
 		if clientAborted(r, err) {
-			return nil, "", false, false
+			return classicUnifiedRows{}, false
 		}
 		s.logger.Error("ListAssetsExt (unified) failed", "err", err)
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
-		return nil, "", false, false
+		return classicUnifiedRows{}, false
 	}
 	hasMore := len(rows) > limit
 	if hasMore {
@@ -2295,7 +2337,9 @@ func (s *Server) fetchClassicUnifiedRows(
 		// folds trimmed `out`.
 		nextInner = timescale.EncodeAssetsCursor(rows[len(rows)-1], timescale.AssetsOrderVolume24hUSDDesc)
 	}
-	return out, nextInner, unmeasured, true
+	return classicUnifiedRows{
+		rows: out, next: nextInner, unmeasured: unmeasured, cacheStale: cacheStale, observedAt: observedAt,
+	}, true
 }
 
 // computeAllCatalogueMarketCaps returns market_cap_usd parallel to entries; only fiat rows (M2 x FX rate) carry one.
@@ -3158,15 +3202,27 @@ func (s *Server) attachSparklinesIfRequested(r *http.Request, rows []AssetDetail
 	if s.AssetsReader == nil {
 		return
 	}
-	include := r.URL.Query().Get("include")
-	if strings.Contains(include, "sparkline24h") {
-		s.attachSparkline(r, rows, "sparkline24h", s.AssetsReader.GetAssetsPriceHistory24hBatch,
-			func(d *AssetDetail, w []AssetPricePoint) { d.PriceHistory24h = w })
+	for _, name := range requestedSparklines(r.URL.Query().Get("include")) {
+		switch name {
+		case "sparkline24h":
+			s.attachSparkline(r, rows, name, s.AssetsReader.GetAssetsPriceHistory24hBatch,
+				func(d *AssetDetail, w []AssetPricePoint) { d.PriceHistory24h = w })
+		case "sparkline7d":
+			s.attachSparkline(r, rows, name, s.AssetsReader.GetAssetsPriceHistory7dBatch,
+				func(d *AssetDetail, w []AssetPricePoint) { d.PriceHistory7d = w })
+		}
 	}
-	if strings.Contains(include, "sparkline7d") {
-		s.attachSparkline(r, rows, "sparkline7d", s.AssetsReader.GetAssetsPriceHistory7dBatch,
-			func(d *AssetDetail, w []AssetPricePoint) { d.PriceHistory7d = w })
+}
+
+// requestedSparklines names the listing series `include` asks for; the one reading the rate-limit price and the attach share.
+func requestedSparklines(include string) []string {
+	var out []string
+	for _, name := range []string{"sparkline24h", "sparkline7d"} {
+		if strings.Contains(include, name) {
+			out = append(out, name)
+		}
 	}
+	return out
 }
 
 // attachSparkline fills one listing series; only the 7d series feeds stellarindex_api_sparkline7d_rows_total.
@@ -3700,7 +3756,7 @@ func (s *Server) mergeContractArmVolume(ctx context.Context, dst *AssetDetail, a
 // the wrapper ids in skip, which the caller has already merged.
 func (s *Server) mergeContractArmVolumeExcept(ctx context.Context, dst *AssetDetail, assetID string, skip map[string]struct{}) {
 	asset, err := canonical.ParseAsset(assetID)
-	if err != nil || asset.Type != canonical.AssetClassic {
+	if err != nil || (asset.Type != canonical.AssetClassic && asset.Type != canonical.AssetNative) {
 		return
 	}
 	for _, alias := range canonical.AssetAliases(asset) {
@@ -3712,6 +3768,10 @@ func (s *Server) mergeContractArmVolumeExcept(ctx context.Context, dst *AssetDet
 		}
 		row, err := s.AssetsReader.GetAssetByAssetID(ctx, alias.String())
 		if err != nil {
+			// An untraded wrapper has no row; any other failure left an arm unread, so the figure is a floor.
+			if !errors.Is(err, sql.ErrNoRows) {
+				dst.VolumeLowerBound = true
+			}
 			continue
 		}
 		mergeAliasVolume(dst, assetDetailFromAssetRow(row))

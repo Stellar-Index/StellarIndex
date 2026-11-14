@@ -342,7 +342,7 @@ func TestBuildDashboardBundle_ExposesUserStoreForSessionRetention(t *testing.T) 
 func TestBuildWebhookHandlers_ConstructsAndReturnsItsStore(t *testing.T) {
 	t.Parallel()
 
-	store, h, err := buildWebhookHandlers((*sql.DB)(nil), nil, discardLogger())
+	store, h, err := buildWebhookHandlers((*sql.DB)(nil), nil, nil, discardLogger())
 	if err != nil {
 		t.Fatalf("buildWebhookHandlers: %v", err)
 	}
@@ -358,7 +358,7 @@ func TestBuildWebhookHandlers_ConstructsAndReturnsItsStore(t *testing.T) {
 func TestBuildPriceAlertHandlers_Constructs(t *testing.T) {
 	t.Parallel()
 
-	h, err := buildPriceAlertHandlers(nil, discardLogger())
+	h, err := buildPriceAlertHandlers(nil, nil, discardLogger())
 	if err != nil {
 		t.Fatalf("buildPriceAlertHandlers: %v", err)
 	}

@@ -531,6 +531,15 @@ func TestZeroSeed_BoundedCountersPreRegistered(t *testing.T) {
 		`stellarindex_admin_audit_write_failures_total{surface="passkey_delete"} 0`,
 		`stellarindex_admin_audit_write_failures_total{surface="passkey_clone_warning"} 0`,
 		`stellarindex_admin_audit_write_failures_total{surface="passkey_login_replay"} 0`,
+		`stellarindex_admin_audit_write_failures_total{surface="session_signin"} 0`,
+		`stellarindex_admin_audit_write_failures_total{surface="session_revoke"} 0`,
+		`stellarindex_admin_audit_write_failures_total{surface="webhook_create"} 0`,
+		`stellarindex_admin_audit_write_failures_total{surface="webhook_update"} 0`,
+		`stellarindex_admin_audit_write_failures_total{surface="webhook_delete"} 0`,
+		`stellarindex_admin_audit_write_failures_total{surface="webhook_rotate_secret"} 0`,
+		`stellarindex_admin_audit_write_failures_total{surface="price_alert_create"} 0`,
+		`stellarindex_admin_audit_write_failures_total{surface="price_alert_update"} 0`,
+		`stellarindex_admin_audit_write_failures_total{surface="price_alert_delete"} 0`,
 		// The clone-warning alert reads increase() of this series; absent
 		// and zero must be distinguishable before the first theft signal.
 		`stellarindex_passkey_login_refusals_total{reason="clone_warning"} 0`,

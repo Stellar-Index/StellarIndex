@@ -11284,6 +11284,8 @@ export interface components {
              * @enum {string}
              */
             supply_basis?: "lake_flows" | "served";
+            /** @description True when the supply behind `value_usd` was a provable floor (a trustline or contract-storage balance sum) because no fuller reading answered. `value_usd` is then a minimum, not the valuation. Omitted when false. */
+            value_lower_bound?: boolean;
         };
         /** @description Banded trust score with the factor breakdown behind it, on `/v1/assets/{asset_id}` only. Output-only: no price, rank or gate reads it. A factor with no evidence is `unknown` with null points and is excluded from the score; it is never scored as zero. A scam-class issuer directory flag forces score 0, and a ticker collision caps the score below the medium threshold (band `low`). The formula is versioned. */
         AssetTrust: {
@@ -14213,7 +14215,7 @@ export interface operations {
                  *     a catalogue slug in this version.
                  */
                 include_thin?: components["parameters"]["IncludeThin"];
-                /** @description Comma-separated row enrichments. Supported: `sparkline24h` (per-row 24-hour price history) and `sparkline7d` (per-row 7-day price history), for chart columns; one batch read per page each. */
+                /** @description Comma-separated row enrichments. Supported: `sparkline24h` (per-row 24-hour price history) and `sparkline7d` (per-row 7-day price history), for chart columns; one batch read per page each, and each series requested costs two further rate-limit tokens. */
                 include?: string;
                 /**
                  * @description Case-insensitive substring filter over code / asset id /

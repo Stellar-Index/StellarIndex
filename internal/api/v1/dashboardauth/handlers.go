@@ -483,7 +483,7 @@ func (h *Handlers) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.startSessionForEmail(w, r, tok.Email); err != nil {
+	if err := h.startSessionForEmail(w, r, tok.Email, SignInMethodMagicLink); err != nil {
 		h.cfg.Logger.Error("start session (callback)", "err", err, "email", maskEmail(tok.Email))
 		writeProblem(w, http.StatusInternalServerError, "internal error", "/v1/auth/callback")
 		return
@@ -585,7 +585,7 @@ func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.startSessionForEmail(w, r, email); err != nil {
+	if err := h.startSessionForEmail(w, r, email, SignInMethodEmailCode); err != nil {
 		h.cfg.Logger.Error("start session (verify-code)", "err", err, "email", maskEmail(email))
 		writeProblem(w, http.StatusInternalServerError, "internal error", "/v1/auth/verify-code")
 		return
@@ -659,7 +659,7 @@ func (h *Handlers) chargeLoginCodeAttempt(r *http.Request, email string) bool {
 
 // startSessionForEmail finds-or-creates the user for a just-verified email and mints a session. It writes only Set-Cookie;
 // the caller owns the response body.
-func (h *Handlers) startSessionForEmail(w http.ResponseWriter, r *http.Request, email string) error {
+func (h *Handlers) startSessionForEmail(w http.ResponseWriter, r *http.Request, email, method string) error {
 	user, err := h.cfg.Users.GetUserByEmail(r.Context(), email)
 	if err != nil {
 		if !errors.Is(err, platform.ErrNotFound) {
@@ -680,7 +680,7 @@ func (h *Handlers) startSessionForEmail(w http.ResponseWriter, r *http.Request, 
 	// set here, not in mintSession.
 	user.EmailVerifiedAt = h.cfg.Now()
 
-	return h.mintSession(w, r, user)
+	return h.mintSession(w, r, user, method)
 }
 
 // maxLiveSessionsPerUser is how many signed-in devices a user keeps;
@@ -689,7 +689,7 @@ const maxLiveSessionsPerUser = 10
 
 // mintSession is the single session issuance path (link, code and passkey) for an ALREADY-AUTHENTICATED user,
 // so every door issues an identical credential.
-func (h *Handlers) mintSession(w http.ResponseWriter, r *http.Request, user platform.User) error {
+func (h *Handlers) mintSession(w http.ResponseWriter, r *http.Request, user platform.User, method string) error {
 	// A failed last_login update (or caller-staged field like EmailVerifiedAt) is non-fatal: the
 	// session still issues.
 	now := h.cfg.Now()
@@ -724,6 +724,7 @@ func (h *Handlers) mintSession(w http.ResponseWriter, r *http.Request, user plat
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
 	}
+	h.recordSignIn(r, user, sess, method)
 	// Bounds live sessions per user however fast a door mints; best-effort.
 	if err := h.cfg.Users.CapUserSessions(r.Context(), user.ID, sess.ID, maxLiveSessionsPerUser); err != nil {
 		h.cfg.Logger.Warn("cap live sessions at login", "err", err, "user_id", user.ID)
@@ -782,9 +783,12 @@ func (h *Handlers) HandleLogout(w http.ResponseWriter, r *http.Request) {
 				writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 				return
 			}
+			h.recordLogout(r, sess, true)
 		case err == nil:
 			if err := h.cfg.Users.RevokeSession(r.Context(), sess.ID); err != nil {
 				h.cfg.Logger.Warn("revoke session at logout", "err", err)
+			} else {
+				h.recordLogout(r, sess, false)
 			}
 		case all && !errors.Is(err, platform.ErrNotFound):
 			// Keep the cookie so the caller can retry once the store is back.

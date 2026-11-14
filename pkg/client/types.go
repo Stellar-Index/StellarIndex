@@ -1142,14 +1142,13 @@ type ChangeSummary struct {
 
 // NetworkStats is the data shape of [Client.NetworkStats], the home-page aggregate snapshot; Volume24hUSD is a *string per ADR-0003, nil when the 24h window has no USD-equivalent trades.
 type NetworkStats struct {
-	Volume24hUSD *string `json:"volume_24h_usd,omitempty"`
-	// VolumeLowerBound is true when Volume24hUSD excludes unpriced trades.
-	VolumeLowerBound bool  `json:"volume_lower_bound,omitempty"`
-	MarketsCount24h  int64 `json:"markets_count_24h"`
-	AssetsIndexed    int64 `json:"assets_indexed"`
-	LatestLedger     int64 `json:"latest_ledger"`
-	ExchangeSources  int   `json:"exchange_sources"`
-	TotalSources     int   `json:"total_sources"`
+	Volume24hUSD     *string `json:"volume_24h_usd,omitempty"`
+	VolumeLowerBound bool    `json:"volume_lower_bound,omitempty"` // Volume24hUSD excludes unpriced trades
+	MarketsCount24h  int64   `json:"markets_count_24h"`
+	AssetsIndexed    int64   `json:"assets_indexed"`
+	LatestLedger     int64   `json:"latest_ledger"`
+	ExchangeSources  int     `json:"exchange_sources"`
+	TotalSources     int     `json:"total_sources"`
 }
 
 // Incident is one customer-facing incident post from [Client.Incidents]; Severity is SEV-1..SEV-4, Status is investigating/identified/monitoring/resolved, and BodyMarkdown is the full post.
@@ -1356,6 +1355,8 @@ type AssetListingValuation struct {
 	// material: USDT0's trustline-visible supply is 6,469 tokens against
 	// 2,581,052 by mint minus burn.
 	SupplyBasis string `json:"supply_basis,omitempty"`
+	// ValueLowerBound is true when the supply was a provable floor, so ValueUSD is a minimum, not the valuation.
+	ValueLowerBound bool `json:"value_lower_bound,omitempty"`
 }
 
 // AssetTrust is the output-only trust score on [AssetDetail]; a factor with no evidence is "unknown" with nil Points and is excluded from Score, which is nil when no factor has evidence.

@@ -441,7 +441,8 @@ paths:
             Comma-separated row enrichments. Supported: `sparkline24h`
             (per-row 24-hour price history) and `sparkline7d` (per-row
             7-day price history), for chart columns; one batch read per
-            page each.
+            page each, and each series requested costs two further
+            rate-limit tokens.
         - name: q
           in: query
           required: false
@@ -20628,6 +20629,13 @@ components:
             answer. The difference is material rather than cosmetic:
             USDT0's trustline-visible supply is 6,469 tokens against
             2,581,052 by mint-burn.
+        value_lower_bound:
+          type: boolean
+          description: >-
+            True when the supply behind `value_usd` was a provable floor
+            (a trustline or contract-storage balance sum) because no
+            fuller reading answered. `value_usd` is then a minimum, not
+            the valuation. Omitted when false.
       required: [status]
 
     AssetTrust:

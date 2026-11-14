@@ -156,7 +156,7 @@ func (h *Handlers) HandlePasskeyFinishSignup(w http.ResponseWriter, r *http.Requ
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
-	if err := h.mintSession(w, r, user); err != nil {
+	if err := h.mintSession(w, r, user, SignInMethodPasskeySignup); err != nil {
 		h.cfg.Logger.Error("start session (passkey signup)", "err", err, "user_id", user.ID)
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
