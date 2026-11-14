@@ -122,7 +122,9 @@ groups:
         # IS current — accepted, not an error) and `missing_baseline`
         # (a SAC-wrapper whose pre-Soroban opening
         # balance hasn't been seeded — a range-scoped condition fixed by
-        # `stellarindex-ops supply seed-sep41-genesis`, not corruption; a
+        # `stellarindex-ops supply seed-sep41-genesis`, or a watched contract
+        # whose Soroban-era events are not all in the served tier, fixed by
+        # `projector-replay -source sep41_supply`; neither is corruption. A
         # genuine post-seed negative still surfaces as `compute_error`).
         expr: |
           (

@@ -26,3 +26,21 @@ func TestSEP41TotalsMatch(t *testing.T) {
 		}
 	}
 }
+
+func TestSEP41CoverageUpTo(t *testing.T) {
+	for _, c := range []struct {
+		name                            string
+		boundary, tip, snap, proj, want uint32
+		ok                              bool
+	}{
+		{"projector behind bounds the range", 100, 10_000, 10_000, 5_000, 5_000, true},
+		{"settle margin below the slower tip", 100, 9_000, 10_000, 20_000, 8_880, true},
+		{"no projector cursor", 100, 10_000, 10_000, 0, 0, false},
+		{"tip inside the settle margin", 100, 150, 10_000, 10_000, 0, false},
+	} {
+		got, ok := sep41CoverageUpTo(c.boundary, c.tip, c.snap, c.proj)
+		if got != c.want && ok || ok != c.ok {
+			t.Errorf("%s: got %d/%v, want %d/%v", c.name, got, ok, c.want, c.ok)
+		}
+	}
+}

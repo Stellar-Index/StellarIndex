@@ -925,7 +925,7 @@ func TestGenesisSeedingComputer_UncoveredHistoryPublishesNothing(t *testing.T) {
 				t.Fatalf("coverage check for %q@%d", id, ledger)
 			}
 			if !replayed {
-				return errors.New("lake mint=900 served mint=0")
+				return fmt.Errorf("%w: lake mint=900 served mint=0", ErrSEP41HistoryNotCovered)
 			}
 			return nil
 		},
@@ -952,6 +952,26 @@ func TestGenesisSeedingComputer_UncoveredHistoryPublishesNothing(t *testing.T) {
 	}
 	if checks != 2 || inner.calls != 2 {
 		t.Fatalf("checks=%d computes=%d, want 2 / 2", checks, inner.calls)
+	}
+}
+
+// A coverage read that failed is a compute error, on the first pass and while backing off, so the error-dominant alert sees it.
+func TestGenesisSeedingComputer_CoverageReadFailureIsAComputeError(t *testing.T) {
+	seeded := true
+	inner := &seededComputer{seeded: &seeded}
+	g := NewGenesisSeedingComputer(inner, "C", GenesisSeedingOptions{
+		Covers:     func(context.Context, string, uint32) error { return errors.New("dial lake: connection refused") },
+		RetryAfter: time.Hour, Logger: discardLogger(),
+	})
+	ins := &stubInserter{}
+	r := NewRefresher(stubLedgers{ledger: 10, observedAt: time.Unix(1, 0)}, g, ins, discardLogger())
+	for i := 0; i < 2; i++ {
+		if out := r.Tick(context.Background()); out.Kind != OutcomeKindComputeError || errors.Is(out.Err, ErrSEP41HistoryNotCovered) {
+			t.Fatalf("pass %d: kind=%s err=%v, want %s", i, out.Kind, out.Err, OutcomeKindComputeError)
+		}
+	}
+	if inner.calls != 0 || ins.calls != 0 {
+		t.Fatalf("computes=%d rows=%d, want none", inner.calls, ins.calls)
 	}
 }
 

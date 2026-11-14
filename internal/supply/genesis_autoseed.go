@@ -3,7 +3,6 @@ package supply
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -32,6 +31,7 @@ type GenesisSeedingComputer struct {
 	mu          sync.Mutex
 	lastFailure time.Time
 	covered     bool
+	coverErr    error
 }
 
 // GenesisSeedingOptions configures [NewGenesisSeedingComputer].
@@ -88,15 +88,22 @@ func (g *GenesisSeedingComputer) ensureCovered(ctx context.Context, ledger uint3
 		return nil
 	}
 	if !g.mayAttempt() {
-		return ErrSEP41HistoryNotCovered
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		return g.coverErr
 	}
+	// The check itself wraps ErrSEP41HistoryNotCovered for a measured difference; a read that failed stays a compute error so it alerts.
 	if err := g.covers(ctx, g.contractID, ledger); err != nil {
 		g.recordFailure()
 		g.logger.Warn("supply: SEP-41 history coverage not shown; supply stays withheld", "contract", g.contractID, "err", err)
-		return fmt.Errorf("%w: %w", ErrSEP41HistoryNotCovered, err)
+		g.mu.Lock()
+		g.coverErr = err
+		g.mu.Unlock()
+		return err
 	}
 	g.mu.Lock()
 	g.covered = true
+	g.coverErr = nil
 	g.mu.Unlock()
 	return nil
 }

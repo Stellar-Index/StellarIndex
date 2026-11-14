@@ -590,6 +590,15 @@ const (
 	sep41SupplyCursorSub    = "sep41_supply"
 )
 
+// SEP41SupplyDurableLedger is the projector's durable sep41_supply cursor, 0 when it has none.
+func (s *Store) SEP41SupplyDurableLedger(ctx context.Context) (uint32, error) {
+	c, err := s.GetCursor(ctx, sep41SupplyCursorSource, sep41SupplyCursorSub)
+	if errors.Is(err, ErrNotFound) {
+		return 0, nil
+	}
+	return c.LastLedger, err
+}
+
 // SEP41RollupAdvance reports what one AdvanceSEP41SupplyRollup pass folded, for the worker's metrics + logging.
 type SEP41RollupAdvance struct {
 	ContractID string
