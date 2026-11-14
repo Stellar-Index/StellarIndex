@@ -314,6 +314,38 @@ tests:
                 nonstandard_decimals_assets table directly.
                 Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_nonstandard_decimals_correction_failing
 
+  # ══ stellarindex_nonstandard_decimals_partial_alias_family ════════
+  # The cache counts the half-flagged asset again on every refresh.
+  - interval: 1m
+    name: a half-flagged alias family tickets while the row is missing
+    input_series:
+      - series: 'stellarindex_nonstandard_decimals_partial_alias_family_total{job="stellarindex_api",instance="r1:9101"}'
+        values: '0+0x10 1+1x30'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: stellarindex_nonstandard_decimals_partial_alias_family
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: stellarindex_nonstandard_decimals_partial_alias_family
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_api
+              instance: r1:9101
+              severity: ticket
+              team: stellarindex
+              component: aggregator
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_nonstandard_decimals_partial_alias_family
+              summary: "A non-7-decimal asset is flagged under only some of its spellings — its price and supply can differ by a power of ten (P2)"
+              description: |
+                nonstandard_decimals_assets holds a row for one spelling of an
+                asset and not for another (classic id, SAC, or an XLM alias).
+                The decimals lookup does not alias-fold, so a figure read
+                under the unflagged spelling is not rescaled. The API log
+                names the pair: "flagged asset has an UNFLAGGED alias".
+                Seed the missing spelling with the same decimals.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_nonstandard_decimals_partial_alias_family
+
   # ── the decimals-lockstep arm ───────────────────────────
   # stellarindex_nonstandard_decimals_lockstep_mismatch_total is a
   # CounterVec whose {site,asset} children are born on first use, so

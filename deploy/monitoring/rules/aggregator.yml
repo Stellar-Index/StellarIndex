@@ -483,6 +483,34 @@ groups:
             nonstandard_decimals_assets table directly.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_nonstandard_decimals_correction_failing
 
+      # A flagged asset with an unflagged spelling is scaled on one leg and
+      # not the other. The cache re-counts it on every 60s refresh, so the
+      # alert holds while the table row is missing and clears once it is
+      # seeded. The `unless` arm covers a count that predates the first scrape.
+      - alert: stellarindex_nonstandard_decimals_partial_alias_family
+        expr: |
+          increase(stellarindex_nonstandard_decimals_partial_alias_family_total[15m]) > 0
+          or (
+            stellarindex_nonstandard_decimals_partial_alias_family_total > 0
+            unless stellarindex_nonstandard_decimals_partial_alias_family_total offset 15m
+          )
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: aggregator
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_nonstandard_decimals_partial_alias_family
+          summary: "A non-7-decimal asset is flagged under only some of its spellings — its price and supply can differ by a power of ten (P2)"
+          description: |
+            nonstandard_decimals_assets holds a row for one spelling of an
+            asset and not for another (classic id, SAC, or an XLM alias).
+            The decimals lookup does not alias-fold, so a figure read
+            under the unflagged spelling is not rescaled. The API log
+            names the pair: "flagged asset has an UNFLAGGED alias".
+            Seed the missing spelling with the same decimals.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_nonstandard_decimals_partial_alias_family
+
       # ── Decimals-guard sweep heartbeat ──
       #
       # The offender counters above cannot tell "swept, found nothing" from

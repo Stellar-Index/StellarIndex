@@ -1457,6 +1457,9 @@ export interface paths {
          *        `outlier_sigma` (default 4σ) drops dust before bar computation;
          *        `outlier_sigma=0` to opt into raw extremes.
          *
+         *        Rate-limit cost: one token per 7 days of window (rounded
+         *        up), so a wide window spends more of the minute's budget.
+         *
          *        Defaults: `from = to - 1h`, `to = now` (clamped to the
          *        previous 30 s closed-bucket boundary per ADR-0015).
          *
@@ -1577,6 +1580,9 @@ export interface paths {
          *     the window end. Narrow the window and retry for an exact
          *     VWAP.
          *
+         *     Rate-limit cost: one token per 7 days of window (rounded up),
+         *     so a wide window spends more of the minute's budget.
+         *
          *     `flags.divergence_checked` / `flags.divergence_warning` are
          *     always `false` here: the cross-reference verdict compares the
          *     aggregator's shortest-window VWAP now, never this value computed
@@ -1611,6 +1617,9 @@ export interface paths {
          *     unrelated to trade size: on a thin pair one dust print
          *     alone in its ledger would otherwise hold the price until
          *     the next ledger's trade.
+         *
+         *     Rate-limit cost: one token per 7 days of window (rounded up),
+         *     so a wide window spends more of the minute's budget.
          */
         get: operations["getTwap"];
         put?: never;
