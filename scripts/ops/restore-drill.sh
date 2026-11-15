@@ -549,7 +549,7 @@ CONF
 # primary's ("recovery aborted because of insufficient parameter settings"), so
 # these must MIRROR the live primary, not be downsized. Read them live so a
 # primary retune cannot re-break the drill.
-sudo -u postgres psql -d stellarindex -tA -F' = ' -c \
+sudo -u postgres psql -X -d postgres -tA -F' = ' -c \
   "SELECT name, setting FROM pg_settings WHERE name IN
    ('max_connections','max_worker_processes','max_wal_senders',
     'max_prepared_transactions','max_locks_per_transaction')" \
@@ -561,10 +561,13 @@ else
   abort_drill "pg_start"
 fi
 
-q() { sudo -u postgres psql -h 127.0.0.1 -p "$DRILL_PG_PORT" -d stellarindex -tA -c "$1"; }
+# Superuser sessions in the app-owned database search pg_catalog only, so the owner role cannot shadow a
+# catalog name; app tables are named with their schema.
+SU_PGOPTIONS='-c search_path=pg_catalog'
+q() { sudo -u postgres env PGOPTIONS="$SU_PGOPTIONS" psql -X -h 127.0.0.1 -p "$DRILL_PG_PORT" -d stellarindex -tA -c "$1"; }
 qlive() {
   if [[ -n "$LIVE_DSN" ]]; then psql "$LIVE_DSN" -tA -c "$1"
-  else sudo -u postgres psql -d stellarindex -tA -c "$1"; fi
+  else sudo -u postgres env PGOPTIONS="$SU_PGOPTIONS" psql -X -d stellarindex -tA -c "$1"; fi
 }
 
 # ─── phase 3: verification ──────────────────────────────────────────
@@ -626,8 +629,8 @@ wal_target=$(qlive "SELECT pg_current_wal_lsn()")
 wal_drain_wait "$wal_target"
 check "wal_drain" "$drained" "$drain_why"
 
-restored_tip=$(q "SELECT coalesce(max(ledger_seq),0) FROM ledger_ingest_log")
-live_tip=$(qlive "SELECT coalesce(max(ledger_seq),0) FROM ledger_ingest_log")
+restored_tip=$(q "SELECT coalesce(max(ledger_seq),0) FROM public.ledger_ingest_log")
+live_tip=$(qlive "SELECT coalesce(max(ledger_seq),0) FROM public.ledger_ingest_log")
 lag=$(( live_tip - restored_tip ))
 # With the stream drained, residual lag is only what the primary wrote DURING the
 # drain (minutes). One ledger is ~5-6s, so 5000 (~7h) is a generous ceiling that
@@ -641,7 +644,7 @@ breaks=$(q "
     SELECT ledger_seq, ledger_hash, prev_ledger_hash,
            lag(ledger_hash) OVER (ORDER BY ledger_seq) AS prior_hash,
            lag(ledger_seq)  OVER (ORDER BY ledger_seq) AS prior_seq
-    FROM ledger_ingest_log
+    FROM public.ledger_ingest_log
     WHERE ledger_seq > $restored_tip - 100000
   )
   SELECT count(*) FROM w
@@ -651,8 +654,8 @@ check "hash_chain_sample" "$([[ "$breaks" == "0" ]] && echo 1 || echo 0)" "$brea
 # 3d. Row-count spot agreement on an immutable window (well below tip
 # so live writes don't skew it).
 window_hi=$(( restored_tip - 50000 )); window_lo=$(( window_hi - 50000 ))
-restored_rows=$(q "SELECT count(*) FROM trades WHERE ledger BETWEEN $window_lo AND $window_hi")
-live_rows=$(qlive "SELECT count(*) FROM trades WHERE ledger BETWEEN $window_lo AND $window_hi")
+restored_rows=$(q "SELECT count(*) FROM public.trades WHERE ledger BETWEEN $window_lo AND $window_hi")
+live_rows=$(qlive "SELECT count(*) FROM public.trades WHERE ledger BETWEEN $window_lo AND $window_hi")
 check "trades_window_match" "$([[ "$restored_rows" == "$live_rows" ]] && echo 1 || echo 0)" "trades[$window_lo,$window_hi]: restored=$restored_rows live=$live_rows"
 
 # ─── phase 4 (optional): ClickHouse re-derive sample ────────────────

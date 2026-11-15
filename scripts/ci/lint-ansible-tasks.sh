@@ -27,6 +27,14 @@
 #   can create first, so root installs what that user put there. Stage in a
 #   root-only directory. `path:` (a removal of an old leftover) is not seen.
 #
+# Rule 5: superuser-db-unpinned. A Postgres superuser session in a database
+#   another role owns resolves names through that database's search_path, so
+#   the owner can shadow a catalog function or operator and have it run as
+#   superuser. A `psql -d stellarindex` command and a module task whose
+#   `login_db` is an app database MUST pin `search_path=pg_catalog` alone (or
+#   the task logs in as a named `login_user`): with public still on the path
+#   a closer-typed function there wins. A DSN connection is not seen.
+#
 # The rules are line-oriented (awk), deliberately conservative, and
 # self-tested by lint-ansible-tasks-test.sh. Exit code = number of findings.
 # Prints a self-accounting line so a scan of zero files cannot pass silently.
@@ -167,6 +175,33 @@ for f in ${sh_files[@]+"${sh_files[@]}"}; do
       buf = ""; ln = 0 }
     END { exit n }
   ' "$f")"
+  [ -n "$out" ] && report="${report}${out}"$'\n'
+done
+
+# ── Rule 5: superuser sessions in an app-owned database ─────────────────
+for f in "${yml_files[@]}" ${sh_files[@]+"${sh_files[@]}"}; do
+  out="$(awk -v file="$f" '
+    function flush_task() {
+      if (login_line && !pinned) {
+        printf("%s:%d: superuser-db-unpinned: module task connects to an app-owned database without PGOPTIONS search_path=pg_catalog or a login_user\n", file, login_line)
+        n++
+      }
+      login_line = 0; pinned = 0
+    }
+    FNR == NR { if ($0 ~ /^[ \t]*export PGOPTIONS=.*search_path=pg_catalog([^,]|$)/) file_pin = 1; next }
+    { if ($0 ~ /^[ \t]*- name:/) flush_task()
+      if ($0 ~ /^[ \t]*login_db:[ \t]*"?\{\{[ \t]*postgres_db_/) login_line = FNR
+      if ($0 ~ /PGOPTIONS:.*search_path=pg_catalog([^,]|$)/ || $0 ~ /^[ \t]*login_user:/) pinned = 1
+      buf = buf $0; ln = (ln ? ln : FNR)
+      if ($0 ~ /\\$/) { sub(/\\$/, "", buf); next }
+      if (buf !~ /^[ \t]*#/ && buf ~ /psql[ \t].*-d[ \t]+stellarindex/ \
+          && buf !~ /search_path=pg_catalog([^,]|$)/ && !file_pin) {
+        printf("%s:%d: superuser-db-unpinned: psql opens the app-owned database without search_path=pg_catalog\n", file, ln)
+        n++
+      }
+      buf = ""; ln = 0 }
+    END { flush_task(); exit n }
+  ' "$f" "$f")"
   [ -n "$out" ] && report="${report}${out}"$'\n'
 done
 

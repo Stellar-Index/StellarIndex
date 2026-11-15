@@ -75,7 +75,7 @@
       become_user: postgres
       become_flags: ""
       ansible.builtin.command:
-        cmd: psql -d stellarindex -c "DO $do$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'prometheus') THEN CREATE ROLE prometheus LOGIN; END IF; END $do$; GRANT pg_monitor TO prometheus;"
+        cmd: psql -X -d postgres -c "DO $do$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'prometheus') THEN CREATE ROLE prometheus LOGIN; END IF; END $do$; GRANT pg_monitor TO prometheus;"
       register: pgrole
       changed_when: "'GRANT ROLE' in pgrole.stdout"
       failed_when: pgrole.rc != 0

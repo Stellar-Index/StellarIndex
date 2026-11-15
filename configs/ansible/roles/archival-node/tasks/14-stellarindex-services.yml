@@ -253,14 +253,19 @@
 # play stops here before the env file below points the API at the role.
 - name: Apply the stellarindex_api role's grants
   when: postgres_pass_stellarindex_api | default('') | length > 0
+  # The owner role can redefine this function, so the session logs in AS the owner: no superuser session
+  # ever runs its body (SET ROLE would not do, the body could RESET it). The owner holds every grant it issues.
   community.postgresql.postgresql_query:
     login_db: "{{ postgres_db_stellarindex }}"
+    login_host: 127.0.0.1
+    login_user: "{{ postgres_user_stellarindex }}"
+    login_password: "{{ postgres_pass_stellarindex }}"
     query: >-
       DO $$ BEGIN IF to_regproc('public.apply_api_role_grants') IS NULL
       THEN RAISE EXCEPTION 'apply_api_role_grants() missing: apply migration 0213
       before setting postgres_pass_stellarindex_api'; END IF;
       PERFORM public.apply_api_role_grants(); END $$
-  become_user: postgres
+  no_log: true
   changed_when: false
 
 - name: Template /etc/default/stellarindex-api (API's own Postgres DSN)

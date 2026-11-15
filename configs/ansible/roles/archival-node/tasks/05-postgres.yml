@@ -188,8 +188,13 @@
   community.postgresql.postgresql_ext:
     login_db: "{{ postgres_db_core }}"
     name: "pg_stat_statements"
+    schema: public
     state: present
   become_user: postgres
+  # A superuser session in a database another role owns searches pg_catalog only, so the owner cannot shadow
+  # a catalog name from public; `schema` says where a fresh install lands now that the path has no public.
+  environment:
+    PGOPTIONS: "-c search_path=pg_catalog"
 
 # pg_stat_statements on the APPLICATION db is enabled after the db is created
 # (below); a duplicate task before CREATE DATABASE fails a FRESH build.
@@ -281,15 +286,25 @@
   community.postgresql.postgresql_ext:
     login_db: "{{ postgres_db_stellarindex }}"
     name: "timescaledb"
+    schema: public
     state: present
   become_user: postgres
+  # A superuser session in a database another role owns searches pg_catalog only, so the owner cannot shadow
+  # a catalog name from public; `schema` says where a fresh install lands now that the path has no public.
+  environment:
+    PGOPTIONS: "-c search_path=pg_catalog"
 
 - name: Enable pg_stat_statements on stellarindex db
   community.postgresql.postgresql_ext:
     login_db: "{{ postgres_db_stellarindex }}"
     name: "pg_stat_statements"
+    schema: public
     state: present
   become_user: postgres
+  # A superuser session in a database another role owns searches pg_catalog only, so the owner cannot shadow
+  # a catalog name from public; `schema` says where a fresh install lands now that the path has no public.
+  environment:
+    PGOPTIONS: "-c search_path=pg_catalog"
 
 - name: Disable JIT on the stellarindex db (2026-07-10 incident)
   # PG15's LLVM JIT allocates large per-query chunks; under
@@ -297,7 +312,7 @@
   # budget ("FATAL: out of memory / while in LLVM") and poisoned unrelated
   # backends. Timescale workloads see no JIT benefit; keep it off.
   community.postgresql.postgresql_query:
-    login_db: "{{ postgres_db_stellarindex }}"
+    login_db: postgres
     query: "ALTER DATABASE {{ postgres_db_stellarindex }} SET jit = off"
   become_user: postgres
   changed_when: false

@@ -169,7 +169,7 @@ query_pg() { # query_pg <sql>
     PGPASSWORD="$(cat "$PG_PASSWORD_FILE")" \
       psql -h 127.0.0.1 -U stellarindex -d stellarindex -tAc "$1" 2>/dev/null
   else
-    runuser -u postgres -- psql -d stellarindex -tAc "$1" 2>/dev/null
+    runuser -u postgres -- env PGOPTIONS='-c search_path=pg_catalog' psql -X -d stellarindex -tAc "$1" 2>/dev/null
   fi
 }
 assert_grep pg_max_worker_processes_codified \
@@ -210,7 +210,7 @@ assert_cmd caggs_have_refresh_policy caggs_have_refresh_policy
 # a missing policy fails too. Run by TestTradesCompressionScheduledAssertionSQL; no double quotes.
 TRADES_COMPRESSION_SCHEDULED_SQL="
 SELECT count(*) FROM timescaledb_information.jobs j
- WHERE j.proc_schema = current_schema()
+ WHERE j.proc_schema = 'public'
    AND j.proc_name = 'trades_compression_policy'
    AND (j.scheduled OR EXISTS (
      SELECT 1 FROM pg_locks l

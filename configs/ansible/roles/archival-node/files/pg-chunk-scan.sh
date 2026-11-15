@@ -30,6 +30,9 @@
 set -uo pipefail
 DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
 STATE="${PG_CHUNK_SCAN_STATE:-/var/lib/pg-chunk-scan/verified}"
+# A superuser session in the app-owned database: only pg_catalog is searched, whatever search_path the
+# database owner set. Keeping public on the path would not do: a closer-typed function there still wins.
+export PGOPTIONS="${PGOPTIONS:+$PGOPTIONS }-c search_path=pg_catalog"
 PSQL="${PG_CHUNK_SCAN_PSQL:-psql -X -q -d stellarindex -v ON_ERROR_STOP=1}"
 FULL="${PG_CHUNK_SCAN_FULL:-0}"
 BUDGET="${PG_CHUNK_SCAN_BUDGET:-10800}"
@@ -105,7 +108,7 @@ awk -F'|' -v badf="$BADF" -v skipf="$W/skip" -v crashf="$CRASHF" '
 decode() {
   local rc=0 v cc=${1//\\/\\\\}
   # Session settings ride in PGOPTIONS, which splits on unescaped spaces.
-  PGOPTIONS="-c lock_timeout=30s -c pgchunkscan.cc=${cc// /\\ }" \
+  PGOPTIONS="-c search_path=pg_catalog -c lock_timeout=30s -c pgchunkscan.cc=${cc// /\\ }" \
     $PSQL -f - >/dev/null 2>"$W/err" <<'SQL' || rc=$?
 DO $$
 DECLARE cc text := current_setting('pgchunkscan.cc'); cols text; n bigint;

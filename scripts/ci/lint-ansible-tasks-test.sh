@@ -177,6 +177,44 @@ cat > "$T/stage.yml" <<'YML'
     state: absent
 YML
 
+cat > "$T/pg.yml" <<'YML'
+- name: superuser module task in the app database, unpinned
+  community.postgresql.postgresql_ext:
+    login_db: "{{ postgres_db_stellarindex }}"
+    name: x
+  become_user: postgres
+- name: pinned module task
+  community.postgresql.postgresql_ext:
+    login_db: "{{ postgres_db_stellarindex }}"
+    name: x
+  environment:
+    PGOPTIONS: "-c search_path=pg_catalog"
+- name: owner login
+  community.postgresql.postgresql_query:
+    login_db: "{{ postgres_db_stellarindex }}"
+    login_user: owner
+- name: unpinned psql
+  ansible.builtin.command:
+    cmd: psql -d stellarindex -c "SELECT 1"
+- name: pinned psql over a continuation
+  ansible.builtin.shell: |
+    env PGOPTIONS='-c search_path=pg_catalog' \
+      psql -X -d stellarindex -c "SELECT 1"
+- name: pin that keeps public on the path
+  community.postgresql.postgresql_ext:
+    login_db: "{{ postgres_db_stellarindex }}"
+    name: x
+  environment:
+    PGOPTIONS: "-c search_path=pg_catalog,public"
+- name: cluster database
+  community.postgresql.postgresql_query:
+    login_db: postgres
+YML
+cat > "$F/pinned.sh" <<'SH'
+#!/usr/bin/env bash
+export PGOPTIONS="-c search_path=pg_catalog"
+PSQL="psql -X -d stellarindex"
+SH
 cat > "$F/bad.sh" <<'SH'
 #!/bin/bash
 # mc alias set live "$URL" "$KEY" "$AWS_SECRET_ACCESS_KEY"   <- comment, ignored
@@ -197,7 +235,7 @@ run() { (cd "$ROOT" && BASELINE="${1:-/nonexistent}" bash scripts/ci/lint-ansibl
 
 echo "case: no baseline"
 out="$(run)"; rc=$?
-expect_rc 7 "exit code = 7 findings"
+expect_rc 10 "exit code = 10 findings"
 expect_hit 'stage.yml:5: stage-in-tmp' "download into /tmp flagged"
 expect_hit 'stage.yml:9: stage-in-tmp' "quoted src under /tmp flagged"
 expect_miss 'stage.yml:1[0-9]:' "root-only scratch dir not flagged"
@@ -216,13 +254,21 @@ expect_hit 'secrets.yml:37: secret-on-argv' "folded command body secret flagged"
 expect_hit 'bad.sh:3: secret-on-argv' "mc positional secret (continuation) flagged"
 expect_miss 'bad.sh:2:' "commented mc line not flagged"
 expect_miss 'good.sh' "stdin-piped mc not flagged"
-expect_hit 'scanned 4 task files + 2 shell scripts' "self-accounting line"
+expect_hit 'pg.yml:3: superuser-db-unpinned' "unpinned superuser module task flagged"
+expect_miss 'pg.yml:8:' "PGOPTIONS-pinned module task not flagged"
+expect_miss 'pg.yml:14:' "owner-login module task not flagged"
+expect_hit 'pg.yml:18: superuser-db-unpinned' "unpinned psql flagged"
+expect_miss 'pg.yml:21:' "pinned psql over a continuation not flagged"
+expect_hit 'pg.yml:25: superuser-db-unpinned' "a pin that keeps public is flagged"
+expect_miss 'pg.yml:31:' "cluster-database task not flagged"
+expect_miss 'pinned.sh' "script that exports the pin not flagged"
+expect_hit 'scanned 5 task files + 3 shell scripts' "self-accounting line"
 
 echo "case: baseline suppresses + stale entry fails"
 printf 'secret-on-argv\tconfigs/ansible/roles/fx/tasks/secrets.yml\npipefail-needs-bash\tconfigs/ansible/roles/fx/tasks/nolonger.yml\n' > "$TMP/baseline"
 out="$(run "$TMP/baseline")"; rc=$?
-# 7 live findings − 2 baselined (both secrets.yml) + 1 stale = 6
-expect_rc 6 "exit code = 6"
+# 10 live findings − 2 baselined (both secrets.yml) + 1 stale = 9
+expect_rc 9 "exit code = 9"
 expect_hit 'baselined (shrink-only' "baselined finding reported"
 expect_hit 'STALE baseline entry.*nolonger.yml' "stale entry flagged"
 

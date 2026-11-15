@@ -1214,8 +1214,9 @@
         # prints a command tag into the reply (see is_num below). Five
         # queries x 10 s stays inside the unit's TimeoutStartSec=60.
         local rc=0
-        Q_OUT=$(runuser -u postgres -- env PGOPTIONS='-c statement_timeout=10s' \
-          psql -d stellarindex -At -F'|' -c "$1" 2>/dev/null) || rc=$?
+        # search_path is pg_catalog only: this is a superuser session in the app-owned database.
+        Q_OUT=$(runuser -u postgres -- env PGOPTIONS='-c statement_timeout=10s -c search_path=pg_catalog' \
+          psql -X -d stellarindex -At -F'|' -c "$1" 2>/dev/null) || rc=$?
         if [ "$rc" -eq 0 ]; then
           Q_OK=1
         else
