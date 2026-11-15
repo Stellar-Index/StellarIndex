@@ -2621,8 +2621,10 @@ func TestOHLCRebuiltVolumeIsTheIntegerSum(t *testing.T) {
 	}
 }
 
-// A folded bar is not served while the pair has trades in a source bucket the view has not materialised: the fold
-// would publish a closed bar whose close and volume change when the refresh policy catches up.
+// A folded bar is not served while there are trades in a source bucket the view has not materialised: the fold
+// would publish a closed bar whose close and volume change when the refresh policy catches up. The bound is one for
+// every pair, so a quiet pair's bar is withheld with a busy pair's: the fiat-combined routes merge both, and a bucket
+// built from the quiet one alone would be a wrong bar.
 func TestOHLCFoldWaitsForItsLastSourceBucket(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2644,24 +2646,35 @@ func TestOHLCFoldWaitsForItsLastSourceBucket(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	eurc, err := canonical.NewClassicAsset("EURC", "GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	quiet, err := canonical.NewPair(canonical.NativeAsset(), eurc)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	const fold = 4 * time.Hour
 	t0 := timeBucket(fold, time.Now().UTC().Add(-30*time.Hour))
 	for i, tr := range []canonical.Trade{
 		mkAPITrade(1, t0.Add(10*time.Minute), pair, 3_000_000, 1_000_000),
 		mkAPITrade(2, t0.Add(3*time.Hour+10*time.Minute), pair, 1_000_000, 1_000_000),
+		mkAPITrade(3, t0.Add(20*time.Minute), quiet, 2_000_000, 1_000_000),
 	} {
 		if err := store.InsertTrade(ctx, tr); err != nil {
 			t.Fatalf("InsertTrade %d: %v", i, err)
 		}
 	}
-	read := func() []timescale.OHLCBar {
+	readPair := func(p canonical.Pair) []timescale.OHLCBar {
 		t.Helper()
-		bars, err := store.OHLCSeriesReBucketed(ctx, pair, timescale.Granularity1h, "4 hours", t0, t0.Add(fold), 10)
+		bars, err := store.OHLCSeriesReBucketed(ctx, p, timescale.Granularity1h, "4 hours", t0, t0.Add(fold), 10)
 		if err != nil {
-			t.Fatalf("OHLCSeriesReBucketed: %v", err)
+			t.Fatalf("OHLCSeriesReBucketed(%s): %v", p, err)
 		}
 		return bars
 	}
+	read := func() []timescale.OHLCBar { return readPair(pair) }
 
 	// The policy has reached the bucket's first three hours only.
 	if _, err := store.DB().ExecContext(ctx,
@@ -2670,6 +2683,9 @@ func TestOHLCFoldWaitsForItsLastSourceBucket(t *testing.T) {
 	}
 	if bars := read(); len(bars) != 0 {
 		t.Fatalf("fold served %+v with its last hour unmaterialised, want no bar", bars)
+	}
+	if bars := readPair(quiet); len(bars) != 0 {
+		t.Fatalf("fold served the quiet pair's bar %+v while the same bucket is withheld for the other pair", bars)
 	}
 
 	if _, err := store.DB().ExecContext(ctx,
@@ -2682,6 +2698,9 @@ func TestOHLCFoldWaitsForItsLastSourceBucket(t *testing.T) {
 	}
 	if bars[0].BaseVolume != "4000000" || bars[0].TradeCount != 2 {
 		t.Fatalf("fold bar = %+v, want both trades (base_volume 4000000, 2 trades)", bars[0])
+	}
+	if bars := readPair(quiet); len(bars) != 1 || bars[0].TradeCount != 1 {
+		t.Fatalf("quiet pair's fold = %+v once materialised, want its one trade", bars)
 	}
 }
 

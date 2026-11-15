@@ -1555,7 +1555,7 @@ func (s *Store) OHLCSeriesReBucketed(
 	// over the unnested arrays, joined back on out_bucket; unioning at the pre-fold grain forces
 	// the row-level CTE to materialise.
 	// #nosec G201 — table comes from the validated enum, outInterval from the allow-list above.
-	through, err := s.foldClosedThrough(ctx, table, p)
+	through, err := s.foldClosedThrough(ctx, table)
 	if err != nil {
 		return nil, err
 	}
