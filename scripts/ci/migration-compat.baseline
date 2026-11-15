@@ -65,3 +65,36 @@
 0143_sessions_token_hash.up.sql:add-unique
 0169_price_source_contributions_window.up.sql:add-unique
 0180_customer_webhooks_account_url_unique.up.sql:add-unique
+# `drop-arbiter` joined the gate after these shipped. Each is applied on
+# every host; none can be re-judged against the binary it shipped with.
+0004_relax_trades_ledger_for_offchain.up.sql:drop-arbiter
+0029_drop_unused_blend_jsonb_gin_indexes.up.sql:drop-arbiter
+0030_asset_supply_history_unique_constraint.up.sql:drop-arbiter
+0053_blend_pk_granularity.up.sql:drop-arbiter
+0054_blend_positions_event_index.up.sql:drop-arbiter
+0055_defindex_flows_event_index.up.sql:drop-arbiter
+0056_soroswap_router_swaps_call_sig.up.sql:drop-arbiter
+0057_sep41_supply_events_event_index.up.sql:drop-arbiter
+0058_blend_auctions_event_index.up.sql:drop-arbiter
+0059_comet_liquidity_event_index.up.sql:drop-arbiter
+0060_phoenix_event_index.up.sql:drop-arbiter
+0067_mev_arbitrage_dedup.up.sql:drop-arbiter
+0070_cctp_mint_and_forward_check.up.sql:drop-arbiter
+0074_mev_new_kinds.up.sql:drop-arbiter
+0092_cctp_governance_events_check.up.sql:drop-arbiter
+0094_cctp_full_governance_events_check.up.sql:drop-arbiter
+0095_blend_backstop_rw_zone_events_check.up.sql:drop-arbiter
+0097_blend_v1_pool_factory_events_check.up.sql:drop-arbiter
+0098_phoenix_stake_reward_events.up.sql:drop-arbiter
+0103_discovery_oracle_broadening.up.sql:drop-arbiter
+0112_cctp_rozo_event_index.up.sql:drop-arbiter
+0148_divergence_observations_synthetic_cross.up.sql:drop-arbiter
+0152_drop_unwired_scaffold_tables.up.sql:drop-arbiter
+0170_account_directory_override_reason.up.sql:drop-arbiter
+0177_account_directory_override_by.up.sql:drop-arbiter
+0191_trades_drop_amount_checks.up.sql:drop-arbiter
+0195_phoenix_stake_lifecycle_and_config_events.up.sql:drop-arbiter
+0200_customer_webhooks_previous_secret.up.sql:drop-arbiter
+0204_customer_webhooks_signing_key_sealed.up.sql:drop-arbiter
+0207_price_source_contributions_window_not_null.up.sql:drop-arbiter
+0216_divergence_observations_chainlink_stellar.up.sql:drop-arbiter

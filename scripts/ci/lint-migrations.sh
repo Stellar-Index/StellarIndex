@@ -198,15 +198,25 @@ if [ -n "$base_sha" ] && git cat-file -e "${base_sha}^{commit}" 2>/dev/null; the
     | grep -E '^[0-9]+_.*\.up\.sql$' \
     | sed -E 's/^([0-9]+)_.*/\1/' | sed 's/^0*//' | sort -n | tail -1 || true)
   base_max="${base_max:-0}"
-  while IFS= read -r f; do
+  # A rename onto a different number is a new migration as far as an applied
+  # host can tell, so it is judged like an added file. A rename that keeps
+  # its number is not.
+  while IFS=$'\t' read -r st f to; do
     [ -n "$f" ] || continue
+    if [ -n "$to" ]; then
+      was="$(basename "$f" | sed -E 's/^([0-9]+)_.*/\1/' | sed 's/^0*//')"
+      f="$to"
+    else
+      was=""
+    fi
     n="$(basename "$f" | sed -E 's/^([0-9]+)_.*/\1/' | sed 's/^0*//')"
     [ -n "$n" ] || n=0
+    [ "${st#R}" != "$st" ] && [ "$was" = "$n" ] && continue
     if [ "$n" -le "$base_max" ]; then
       echo "lint-migrations ❌ ${f}: new migration numbered ${n} does not exceed the comparison base's head (${base_max}) — a migration back-numbered into a gap is invisible to any deployment already past it (GH-1164)" >&2
       fail=1
     fi
-  done < <(git diff --name-only --diff-filter=A "${base_sha}...HEAD" -- 'migrations/*.up.sql' 2>/dev/null || true)
+  done < <(git diff --name-status -M --diff-filter=AR "${base_sha}...HEAD" -- 'migrations/*.up.sql' 2>/dev/null || true)
 else
   echo "lint-migrations: no comparison base (BASE_SHA unset and origin/main unresolvable) — skipping the GH-1164 back-numbering guard." >&2
 fi

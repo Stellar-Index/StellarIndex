@@ -11,8 +11,8 @@
 #
 # Flagged (the mechanically detectable half of rule 9):
 #   drop-table            DROP TABLE
-#   drop-column           ALTER TABLE … DROP COLUMN
-#   rename                RENAME TO / RENAME COLUMN
+#   drop-column           ALTER TABLE … DROP [COLUMN] c
+#   rename                RENAME TO / RENAME [COLUMN] c TO d
 #   alter-type            ALTER [COLUMN] … [SET DATA] TYPE
 #   set-not-null          ALTER … SET NOT NULL
 #   add-not-null-column   ADD COLUMN … NOT NULL with no DEFAULT
@@ -20,11 +20,18 @@
 #   add-constraint        ALTER TABLE … ADD CONSTRAINT (tightening)
 #   add-unique            CREATE UNIQUE INDEX, ADD PRIMARY KEY / UNIQUE / CHECK
 #                         (the same tightening without the keyword)
+#   drop-arbiter          DROP CONSTRAINT / DROP INDEX / RENAME CONSTRAINT (the
+#                         previous binary's ON CONFLICT target may be gone)
+#   drop-default          ALTER … DROP DEFAULT (an INSERT omitting the column
+#                         now fails or writes NULL)
+#   drop-function         DROP FUNCTION / PROCEDURE / TYPE
+#   add-foreign-key       ADD FOREIGN KEY
 #   dml                   DELETE FROM / TRUNCATE / UPDATE … SET, unguarded
 #                         (a bare DELETE with a `SELECT 1` down re-deletes
 #                         replay-repaired rows on a down/up)
-# Loosening operations (DROP CONSTRAINT, DROP INDEX, nullable ADD COLUMN,
-# CREATE TABLE/INDEX/VIEW) are additive-safe and not flagged.
+# Nullable ADD COLUMN and CREATE TABLE/INDEX/VIEW are additive-safe and not
+# flagged. Matching is per line: a statement split so that its keywords sit
+# on different lines is not seen.
 #
 # Escape hatches:
 #   1. Inline, per statement (the rule-9 two-release dance):
@@ -90,12 +97,17 @@ CLASSES=(
   'drop-view'
   'add-constraint'
   'add-unique'
+  'drop-column'
+  'drop-arbiter'
+  'drop-default'
+  'drop-function'
+  'add-foreign-key'
   'dml'
 )
 MATCH=(
   'DROP[[:space:]]+TABLE'
   'DROP[[:space:]]+COLUMN'
-  'RENAME[[:space:]]+(TO|COLUMN)'
+  'RENAME[[:space:]]+(TO|COLUMN)|RENAME[[:space:]]+[a-zA-Z0-9_"]+[[:space:]]+TO'
   'ALTER[[:space:]]+(COLUMN[[:space:]]+)?[a-zA-Z0-9_"]+[[:space:]]+(SET[[:space:]]+DATA[[:space:]]+)?TYPE'
   'SET[[:space:]]+NOT[[:space:]]+NULL'
   'ADD[[:space:]]+(COLUMN[[:space:]]+)?(IF[[:space:]]+NOT[[:space:]]+EXISTS[[:space:]]+)?[a-zA-Z0-9_"]+[[:space:]]+[a-zA-Z0-9_()[:space:],]*NOT[[:space:]]+NULL'
@@ -104,6 +116,12 @@ MATCH=(
   # Tightening without the CONSTRAINT keyword: a write the previous binary
   # still makes can now be refused.
   'CREATE[[:space:]]+UNIQUE[[:space:]]+INDEX|ADD[[:space:]]+(PRIMARY[[:space:]]+KEY|UNIQUE|CHECK)([[:space:]]|\()'
+  # DROP with the COLUMN keyword left out; EXCLUDE clears the other DROP forms.
+  'ALTER[[:space:]]+TABLE.*[[:space:]]DROP[[:space:]]+(IF[[:space:]]+EXISTS[[:space:]]+)?[a-zA-Z0-9_"]+'
+  'DROP[[:space:]]+(CONSTRAINT|INDEX)|RENAME[[:space:]]+CONSTRAINT'
+  'DROP[[:space:]]+DEFAULT'
+  'DROP[[:space:]]+(FUNCTION|PROCEDURE|TYPE)'
+  'ADD[[:space:]]+FOREIGN[[:space:]]+KEY'
   # Anchored to the line start: a real DELETE/TRUNCATE/UPDATE always opens its
   # line, which keeps this off prose ("TRUNCATE of audit_log" in a COMMENT ON
   # string, a `BEFORE TRUNCATE ON t` trigger).
@@ -121,9 +139,19 @@ EXCLUDE=(
   ''
   ''
   ''
+  'DROP[[:space:]]+(COLUMN|CONSTRAINT|DEFAULT|NOT|EXPRESSION|IDENTITY)([[:space:]]|;|$)'
+  ''
+  ''
+  ''
+  ''
   ''
 )
 GUARD=(
+  ''
+  ''
+  ''
+  ''
+  ''
   ''
   ''
   ''
@@ -197,7 +225,10 @@ for f in "$MIGRATIONS_DIR"/*.up.sql; do
         'BEGIN { n = split(skip, a, " "); for (i = 1; i <= n; i++) in_fn[a[i]] = 1 } !($1 in in_fn)')"
     fi
     if [ -n "$exclude" ] && [ -n "$hits" ]; then
-      hits="$(printf '%s\n' "$hits" | grep_lines -viE -- "$exclude")"
+      # Judged on the statement, not on a trailing `--` comment.
+      hits="$(printf '%s\n' "$hits" | awk -v ex="$exclude" '
+        { l = toupper($0); cut = index(l, "--"); if (cut > 0) l = substr(l, 1, cut - 1) }
+        l !~ ex')"
     fi
     [ -z "$hits" ] && continue
     SEEN+=("${base}:${class}")
@@ -267,6 +298,14 @@ if [ "$STAGED" -eq 0 ]; then
     for s in "${SEEN[@]:-}"; do
       [ "$s" = "$e" ] && found=1 && break
     done
+    # An entry for a class this copy does not know is not stale: CI judges a
+    # PR with the base copy of this gate, and the PR's baseline may already
+    # name a class the PR adds.
+    known=0
+    for c in "${CLASSES[@]}"; do
+      [ "${e##*:}" = "$c" ] && known=1 && break
+    done
+    [ "$known" -eq 0 ] && found=1
     if [ "$found" -eq 0 ]; then
       echo "lint-migration-compat ❌ stale baseline entry (no longer matches): $e" >&2
       stale=1
