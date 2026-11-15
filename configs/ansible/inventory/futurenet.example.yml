@@ -141,6 +141,7 @@ all:
     # API binds 0.0.0.0:3000 so the host's Caddy can reach it over the NAT;
     # open ONLY 3000 to internal_cidrs. The VM has no public route.
     stellarindex_api_listen_addr: "0.0.0.0:3000"
+    stellarindex_api_trusted_proxy_cidrs: ["192.168.122.1/32"]
     internal_allow_ports:
       - { port: 3000, proto: "tcp", comment: "API — host Caddy reverse-proxies here" }
 

@@ -547,6 +547,7 @@ lane_d() { # everything else
     echo "=== Ansible nftables per-source SSH rate-limit self-test ===" && ./scripts/ci/ansible-ssh-rate-limit-test.sh
     echo "=== Ansible prometheus archival-host guard self-test ===" && ./scripts/ci/ansible-prometheus-host-guard-test.sh
     echo "=== Ansible exporter listen-address self-test ===" && ./scripts/ci/ansible-exporter-listen-address-test.sh
+    echo "=== Ansible API trusted-proxy self-test ===" && ./scripts/ci/ansible-api-trusted-proxy-test.sh
     echo "=== Ansible textfile-collector dir mode self-test ===" && ./scripts/ci/ansible-textfile-dir-mode-test.sh
     echo "=== Ansible ZFS ARC cap self-test ===" && ./scripts/ci/ansible-zfs-arc-cap-test.sh
     echo "=== Ansible Postgres log size-cap self-test ===" && ./scripts/ci/ansible-pg-logrotate-cap-test.sh

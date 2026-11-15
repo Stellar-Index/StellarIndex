@@ -387,7 +387,7 @@ signup_require_email_verification = false
 # Default "none". Freemium: anonymous callers get the anon limit below, a
 # valid key gets its tier's limit, an invalid key is a 401.
 auth_mode = "apikey_optional"
-trusted_proxy_cidrs = ["127.0.0.1/32"]
+trusted_proxy_cidrs = {{ stellarindex_api_trusted_proxy_cidrs | to_json }}
 prometheus_url = "http://localhost:9090"
 # Background services whose heartbeats /v1/status reports and rolls
 # `overall` up from. The lean test nets run no aggregator

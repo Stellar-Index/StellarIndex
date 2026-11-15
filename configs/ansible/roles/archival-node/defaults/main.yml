@@ -1199,6 +1199,12 @@ internal_cidrs:
 # source ∈ internal_cidrs).
 stellarindex_api_listen_addr: "127.0.0.1:3000"
 
+# Peers whose X-Forwarded-For the API believes. On r1 that is the Caddy on the
+# box. A test-net VM is reached from the KVM host's Caddy over the bridge, so it
+# sets the bridge address here; with loopback only, every client behind that
+# Caddy resolves to the bridge address and shares one rate-limit bucket.
+stellarindex_api_trusted_proxy_cidrs: ["127.0.0.1/32"]
+
 # page-latency-sweep.timer: loads per page per entity, and the account and contract cohorts each page is timed for
 # (pooled into each panel's p95).
 page_sweep_iters: 5
