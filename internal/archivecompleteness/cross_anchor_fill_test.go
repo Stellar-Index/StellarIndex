@@ -32,7 +32,7 @@ func goodGzipBody() []byte {
 }
 
 // checkpointGzipBody builds a real gzip'd, framed-XDR checkpoint body for ledger `seq`: one LedgerHeaderHistoryEntry
-// with Header.LedgerSeq = seq, as validateCheckpointContent requires. Real files hold 64 records but it stops at the
+// with Header.LedgerSeq = seq, as validateCheckpointStream requires. Real files hold 64 records but it stops at the
 // first match.
 func checkpointGzipBody(seq uint32) []byte {
 	entry := sdkxdr.LedgerHeaderHistoryEntry{
@@ -192,7 +192,7 @@ func TestFill_AllSourcesFail(t *testing.T) {
 
 // TestFill_RejectsWrongCheckpointContent: a source returns 200 and valid gzip, but the WRONG
 // checkpoint (a stale or misconfigured mirror). The filler must reject it via
-// validateCheckpointContent and fall through to the next source; gzip validity is not enough.
+// validateCheckpointStream and fall through to the next source; gzip validity is not enough.
 func TestFill_RejectsWrongCheckpointContent(t *testing.T) {
 	src1 := fakeSource(t, func(_ string) (int, []byte) {
 		// Always serves checkpoint 127's content, regardless of what
@@ -460,7 +460,7 @@ func TestFiller_ParentDirsAreTraversable(t *testing.T) {
 func TestFill_PerSourceFailuresUseRealSourceNames(t *testing.T) {
 	root := t.TempDir()
 
-	// Both sources fail here because a body validateCheckpointContent accepts is non-trivial to
+	// Both sources fail here because a body validateCheckpointStream accepts is non-trivial to
 	// synthesise; the label attribution under test is identical either way. The healthy-source
 	// case is covered by the other cross_anchor_fill tests.
 	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

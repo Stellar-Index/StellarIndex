@@ -101,7 +101,7 @@ func (c *CrossAnchorChecker) Check(from, to uint32) (CrossAnchorResult, error) {
 // Existence alone would certify a truncated file as Found, and the fill path only re-fetches
 // entries in Missing, so it would never be repaired.
 //
-// It does not decode the XDR or check the ledger sequence (validateCheckpointContent does, on
+// It does not decode the XDR or check the ledger sequence (validateCheckpointStream does, on
 // fresh fetches only): doing so for every file would make a Stat-bound walk over six-figure
 // checkpoint counts gzip-decode-bound.
 func probeCheckpointFile(path string, st os.FileInfo) bool {

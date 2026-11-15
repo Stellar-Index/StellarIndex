@@ -501,24 +501,14 @@ func validateGzipReader(f io.Reader) (int64, error) {
 	return n, nil
 }
 
-// maxCheckpointEntries bounds how many LedgerHeaderHistoryEntry records validateCheckpointContent
+// maxCheckpointEntries bounds how many LedgerHeaderHistoryEntry records validateCheckpointStream
 // reads. A real checkpoint holds exactly 64, so a hostile or corrupt stream never containing the
 // target seq cannot spin forever.
 const maxCheckpointEntries = 64
 
-// validateCheckpointContent confirms the gzip'd XDR file at path decodes to
-// LedgerHeaderHistoryEntry records including one whose LedgerSeq equals wantSeq. Valid gzip alone
-// does not prove the RIGHT checkpoint: a stale mirror can serve 200 plus valid gzip for the wrong
-// ledger range.
-func validateCheckpointContent(path string, wantSeq uint32) error {
-	f, err := os.Open(path) //nolint:gosec // path constructed from validated archiveRoot + checkpoint hex
-	if err != nil {
-		return fmt.Errorf("open: %w", err)
-	}
-	return validateCheckpointStream(f, wantSeq)
-}
-
-// validateCheckpointStream is [validateCheckpointContent] over an open stream, which it closes.
+// validateCheckpointStream confirms the gzip'd XDR stream decodes to LedgerHeaderHistoryEntry records
+// including one whose LedgerSeq equals wantSeq, and closes it. Valid gzip alone does not prove the RIGHT
+// checkpoint: a stale mirror can serve 200 plus valid gzip for the wrong ledger range.
 func validateCheckpointStream(f io.ReadCloser, wantSeq uint32) error {
 	stream, err := sdkxdr.NewGzStream(f)
 	if err != nil {
