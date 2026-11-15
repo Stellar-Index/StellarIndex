@@ -817,6 +817,10 @@ func run(cfgPath string, dryRun bool) error {
 	// enqueues ACCOUNT-scoped `price.alert` deliveries (via ListWebhooksForAccount, not the global
 	// fan-out). Lives here because this binary writes prices_1m; delivery is the API binary's job.
 	if cfg.PriceAlerts.Enabled {
+		priceAlertFreeze, err := freeze.NewLooker(rdb)
+		if err != nil {
+			return fmt.Errorf("price alerts: freeze looker: %w", err)
+		}
 		paStore := postgresstore.New(store.DB())
 		paWorker := pricealerts.New(
 			postgresstore.NewPriceAlertStore(paStore),
@@ -830,6 +834,7 @@ func run(cfgPath string, dryRun bool) error {
 				// Same decimals correction /v1/price applies before serving — without it a nonstandard-decimals asset's
 				// threshold (set from the corrected price) is compared against a raw ratio 10^k off.
 				decimals: decimalsLookup,
+				freeze:   priceAlertFreeze,
 			},
 			pricealerts.Options{
 				Logger: logger.With("component", "price-alerts"),
@@ -2102,10 +2107,42 @@ type priceAlertVWAPReader struct {
 	// decimals resolves a confirmed non-7dp scale as /v1/price does ([aggregate.ResolveDecimals]), so thresholds compare against corrected
 	// prices; nil means all legs are 7dp.
 	decimals aggregate.DecimalsLookup
+	// freeze answers whether the orchestrator is holding the pair's newest bucket back; nil checks nothing.
+	freeze pairFreezeLooker
+}
+
+// pairFreezeLooker is the freeze-marker read; *freeze.Looker satisfies it.
+type pairFreezeLooker interface {
+	FrozenForPair(ctx context.Context, asset, quote canonical.Asset) (bool, error)
+}
+
+// pairFrozen reports a live freeze marker under any spelling or orientation of the pair: the marker is keyed
+// by the stored pair, which the alert's own spelling need not be.
+func (r priceAlertVWAPReader) pairFrozen(ctx context.Context, base, quote canonical.Asset) (bool, error) {
+	if r.freeze == nil {
+		return false, nil
+	}
+	for _, b := range canonical.AssetAliases(base) {
+		for _, q := range canonical.AssetAliases(quote) {
+			for _, leg := range [2][2]canonical.Asset{{b, q}, {q, b}} {
+				frozen, err := r.freeze.FrozenForPair(ctx, leg[0], leg[1])
+				if err != nil || frozen {
+					return frozen, err
+				}
+			}
+		}
+	}
+	return false, nil
 }
 
 func (r priceAlertVWAPReader) LatestVWAP(ctx context.Context, base, quote canonical.Asset) (string, time.Time, bool, error) {
 	if _, err := canonical.NewPair(base, quote); err != nil {
+		return "", time.Time{}, false, err
+	}
+	// A frozen pair's newest bucket is the one /v1/price refuses to publish, and it usually sits inside the
+	// served-price band below, so the freeze is asked first. An unread marker fails the read: no alert fires
+	// on a bucket nobody could clear.
+	if frozen, err := r.pairFrozen(ctx, base, quote); err != nil || frozen {
 		return "", time.Time{}, false, err
 	}
 	// Walk every spelling of both legs, literal pair first and SAC forms last

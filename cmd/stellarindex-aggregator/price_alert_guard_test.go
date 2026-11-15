@@ -433,3 +433,46 @@ func TestPriceAlertReader_UnflaggedPairStillServes(t *testing.T) {
 		t.Fatalf("served price = %s, want the candidate 1.01 unchanged", price)
 	}
 }
+
+// fakePairFreeze answers frozen for the listed "asset|quote" keys, or err for every key.
+type fakePairFreeze struct {
+	frozen map[string]bool
+	err    error
+}
+
+func (f fakePairFreeze) FrozenForPair(_ context.Context, asset, quote canonical.Asset) (bool, error) {
+	return f.frozen[asset.String()+"|"+quote.String()], f.err
+}
+
+// A frozen pair's newest bucket is the one /v1/price refuses to publish; it sits inside the served-price band,
+// so only the marker keeps an alert from firing on it.
+func TestPriceAlertReader_FrozenPairFiresNothing(t *testing.T) {
+	base, quote := alertUSDAssets(t)
+	xlm, err := canonical.ParseAsset("crypto:XLM")
+	if err != nil {
+		t.Fatalf("ParseAsset: %v", err)
+	}
+	store := fakeAlertVWAPStore{latest: alertRow(0, "1.25"), trailing: steadyAlertRows(12)}
+	for name, key := range map[string]string{
+		"own spelling":     base.String() + "|" + quote.String(),
+		"alias spelling":   xlm.String() + "|" + quote.String(),
+		"stored the other": quote.String() + "|" + xlm.String(),
+	} {
+		reader := priceAlertVWAPReader{
+			store: store, logger: discardLogger(), freeze: fakePairFreeze{frozen: map[string]bool{key: true}},
+		}
+		if price, _, ok, err := reader.LatestVWAP(context.Background(), base, quote); err != nil || ok {
+			t.Errorf("%s frozen: price=%q ok=%v err=%v, want no price and no error", name, price, ok, err)
+		}
+	}
+
+	unread := priceAlertVWAPReader{store: store, logger: discardLogger(), freeze: fakePairFreeze{err: errors.New("redis down")}}
+	if _, _, ok, err := unread.LatestVWAP(context.Background(), base, quote); err == nil || ok {
+		t.Errorf("unread marker: ok=%v err=%v, want an error and no price", ok, err)
+	}
+
+	clear := priceAlertVWAPReader{store: store, logger: discardLogger(), freeze: fakePairFreeze{}}
+	if price, _, ok, err := clear.LatestVWAP(context.Background(), base, quote); err != nil || !ok || price != "1.25" {
+		t.Errorf("no marker: price=%q ok=%v err=%v, want 1.25 served", price, ok, err)
+	}
+}
