@@ -22,10 +22,10 @@ import (
 const SourceName = "comet"
 
 // MainnetBackstopPool is Blend's BLND/USDC backstop pool. The historical name is retained because
-// callers already use it; the curated set also includes the two canonical BLNT Comet V1.1 pools.
+// callers already use it; the curated set also includes the BLNT/USDC and BLNT/XLM Comet V1.1 pools.
 const MainnetBackstopPool = "CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVGRVEAM"
 
-// MainnetBLNTUSDCPool and MainnetBLNTXLMPool are BLNT's canonical Comet V1.1 liquidity pools.
+// MainnetBLNTUSDCPool and MainnetBLNTXLMPool are the BLNT/USDC and BLNT/XLM Comet V1.1 liquidity pools.
 const (
 	MainnetBLNTUSDCPool = "CDQMIKIHKA5UY3FQJ2UDTLNX3GOPD3GPNZWSPTOBVOHEUMQJQXOPC7Y3"
 	MainnetBLNTXLMPool  = "CA5HX3D47PQZWC2E7VWXCKH4534P2NOJEOIXAWU47MI4QV2FQUYY3FLC"

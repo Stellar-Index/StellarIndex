@@ -49,12 +49,12 @@ func TestBLNTProtocolRegistryIsIndependentFromBlend(t *testing.T) {
 	}
 	for _, factory := range blendMeta.Factories {
 		if factory == blntPoolFactory {
-			t.Fatal("BLNT factory is attributed to Blend")
+			t.Fatal("BLNT V3 factory is attributed to Blend")
 		}
 	}
 	for _, contract := range blendMeta.ExtraContracts {
 		if contract == blntBackstop || contract == blntEmitter || contract == blntBackfill || contract == blntLockupBackfill {
-			t.Fatalf("BLNT module %s is attributed to Blend", contract)
+			t.Fatalf("BLNT V3 module %s is attributed to Blend", contract)
 		}
 	}
 }
@@ -79,7 +79,7 @@ func TestBLNTStaticRosterAndContractIndex(t *testing.T) {
 	for _, row := range roster {
 		kind, ok := want[row.ContractID]
 		if !ok {
-			t.Fatalf("unexpected BLNT roster contract %s", row.ContractID)
+			t.Fatalf("unexpected BLNT V3 roster contract %s", row.ContractID)
 		}
 		if row.Kind != kind {
 			t.Errorf("%s kind = %q, want %q", row.ContractID, row.Kind, kind)
@@ -87,7 +87,7 @@ func TestBLNTStaticRosterAndContractIndex(t *testing.T) {
 		delete(want, row.ContractID)
 	}
 	if len(want) != 0 {
-		t.Fatalf("BLNT roster missing contracts: %v", want)
+		t.Fatalf("BLNT V3 roster missing contracts: %v", want)
 	}
 
 	byID, complete, failed := s.buildContractProtocolIndex(context.Background())

@@ -64,7 +64,7 @@ tell us if a contract is missing or mis-attributed.
 |---|---|---|---|
 | Soroswap | lake deploy-graph | ✅ Gated (4 factories) | [soroswap.md](soroswap.md) |
 | Blend | lake deploy-graph | ✅ Gated (2 factories, 27 pools) — lending, excluded from VWAP | [blend.md](blend.md) |
-| BLNT V3 | canonical deployment records | 🔎 Enumerated (1 factory, 2 pools, 4 modules); dedicated decoder pending — lending, excluded from VWAP | [blnt.md](blnt.md) |
+| BLNT V3 | published deployment records | 🔎 Enumerated (1 factory, 2 pools, 4 modules); dedicated decoder pending — lending, excluded from VWAP | [blnt.md](blnt.md) |
 | Blend Emitter | lake topic census (single contract) | ✅ Gated (curated 1-contract allowlist, 2026-07-09) — BLND emissions plumbing, `Lending` class, excluded from VWAP | [blend_emitter.md](blend_emitter.md) |
 | SoroCredit | single trust-root | ✅ Gated (1 contract + child collateral positions) — consumer USDC credit/CDP, no pricing signal | [sorocredit.md](sorocredit.md) |
 | Aquarius | router-anchored | ✅ Gated (router + 332 pools, 2026-07-05) | [aquarius.md](aquarius.md) |
@@ -91,7 +91,7 @@ tell us if a contract is missing or mis-attributed.
 > **Comet closed the last gap (CS-026) on 2026-07-08.** It has no known
 > deployed mainnet factory, so it cannot be factory-anchored; instead the
 > decoder gates on a curated allowlist seeded in code
-> (`comet.MainnetGatedSet`, the Blend BLND/USDC backstop plus the canonical
+> (`comet.MainnetGatedSet`, the Blend BLND/USDC backstop plus the
 > BLNT/USDC and BLNT/XLM pools) and
 > its `Matches` returns `d.reg.Has(ev.ContractID)`
 > (`internal/sources/comet/dispatcher_adapter.go`). A future genuine Comet

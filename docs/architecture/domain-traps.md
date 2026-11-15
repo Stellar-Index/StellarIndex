@@ -36,7 +36,7 @@ linked design doc has the full detail.
   TestDecode_factoryCreate_doesNotSeedFromBody) and `comet` (curated three-pool allowlist —
   no KNOWN DEPLOYED mainnet factory; upstream ships a factory contract
   emitting `("LOG","NEW_POOL")`, so factory anchoring becomes available
-  if one ever deploys; the Blend BLND/USDC backstop and canonical BLNT/USDC and
+  if one ever deploys; the Blend BLND/USDC backstop and BLNT/USDC and
   BLNT/XLM pools are seeded in-code via `comet.MainnetGatedSet`; 2026-07-08, closes
   CS-026) all gate `Matches()` on contract identity. A future genuine
   comet pool must be operator-admitted (`seed-protocol-contracts -source

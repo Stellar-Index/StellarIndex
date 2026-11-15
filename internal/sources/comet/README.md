@@ -11,8 +11,8 @@ tokens is a function of their reserves AND their weights. Pools
 are N-token (up to 8 in Balancer-v1; Stellar limit unconfirmed).
 
 The curated pubnet set contains Blend's BLND/USDC backstop and the
-canonical BLNT/USDC and BLNT/XLM Comet V1.1 pools. Blend uses its
-pool as the backstop LP; BLNT V3 uses the two V1.1 LPs as canonical
+BLNT/USDC and BLNT/XLM Comet V1.1 pools. Blend uses its
+pool as the backstop LP; BLNT V3 uses the two V1.1 LPs as
 liquidity and backstop assets.
 
 ## Topic shape — shared, not per-protocol

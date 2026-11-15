@@ -12,7 +12,7 @@ v2_audit: blend.md
 Audit log for the `comet` source's `BackfillSafe` flag. See
 `README.md` for the full procedure.
 
-> **2026-11-15 update:** the curated set now also includes BLNT's canonical BLNT/USDC and
+> **2026-11-15 update:** the curated set now also includes BLNT/USDC and
 > BLNT/XLM pools. Both run the released Comet V1.1 artifact, whose SHA-256 and event interface
 > were verified against the v1.1.0 source release. The historical Blend pool remains on its
 > separately audited `8abc2891…` lineage.
@@ -24,7 +24,7 @@ Audit log for the `comet` source's `BackfillSafe` flag. See
 
 **Ratified 2026-04-29; extended 2026-11-15.** `BackfillSafe` is `true` in
 `internal/sources/external/registry.go`. Blend's historical backstop pool has WASM hash
-`8abc28913035c074...`; the two canonical BLNT pools have released Comet V1.1 hash
+`8abc28913035c074...`; the BLNT/USDC and BLNT/XLM pools have released Comet V1.1 hash
 `d735c3395f595101...`. Decoder compatibility for both lineages was confirmed through interface
 inspection and artifact/source verification.
 
@@ -52,8 +52,8 @@ correctly.
 | role | contract | WASM hash |
 | --- | --- | --- |
 | Blend BLND/USDC backstop | `CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVGRVEAM` | `8abc28913035c07411ed5d134e6bfeab4723d97ddd4d1a22a0605d35c94d1a36` |
-| Canonical BLNT/USDC V1.1 pool | `CDQMIKIHKA5UY3FQJ2UDTLNX3GOPD3GPNZWSPTOBVOHEUMQJQXOPC7Y3` | `d735c3395f59510172cf5cf838823a1389b97cfec6bf24e580e9bd77d2b3e687` |
-| Canonical BLNT/XLM V1.1 pool | `CA5HX3D47PQZWC2E7VWXCKH4534P2NOJEOIXAWU47MI4QV2FQUYY3FLC` | `d735c3395f59510172cf5cf838823a1389b97cfec6bf24e580e9bd77d2b3e687` |
+| BLNT/USDC Comet V1.1 pool | `CDQMIKIHKA5UY3FQJ2UDTLNX3GOPD3GPNZWSPTOBVOHEUMQJQXOPC7Y3` | `d735c3395f59510172cf5cf838823a1389b97cfec6bf24e580e9bd77d2b3e687` |
+| BLNT/XLM Comet V1.1 pool | `CA5HX3D47PQZWC2E7VWXCKH4534P2NOJEOIXAWU47MI4QV2FQUYY3FLC` | `d735c3395f59510172cf5cf838823a1389b97cfec6bf24e580e9bd77d2b3e687` |
 
 For the historical Blend pool:
 
@@ -156,20 +156,22 @@ Two verified lineages are active in the curated set:
 - **Pool contract**: `CAS3FL6T...` (deployed by the Blend backstop-bootstrapper in Blend's mainnet rollout).
 - **WASM hash**: `8abc28913035c074...` in the L55,261,759 Blend mainnet snapshot; the pool's contract-data entry was last modified at L51,499,546 (first instantiated by Blend's deploy).
 - **Current state (2026-04-29)**: `stellar contract fetch --id` returns the same hash → no `update_current_contract_wasm` events between L51,499,546 and r1's current tip.
-- **BLNT V1.1 pools**: `CDQMIKIH…` and `CA5HX3D4…` were created at ledgers
+- **BLNT/USDC and BLNT/XLM Comet V1.1 pools**: `CDQMIKIH…` and `CA5HX3D4…` were created at ledgers
   65,134,030 and 65,134,032 with released V1.1 hash `d735c339…`.
 
 The original wasm-history walk did not watch this contract (Comet wasn't in
 the original 13-contract list; no factory known). It was audited via
-`stellar contract fetch --id`. The BLNT V1.1 lineage was added from exact released artifact,
+`stellar contract fetch --id`. The Comet V1.1 lineage was added from the exact released artifact,
 deployment-record, and interface evidence.
 
 ## Per-hash review findings
 
+Rows are per unique WASM hash, so deployments sharing the same hash are grouped.
+
 | hash (first 16) | role | active range | reviewer | finding |
 | --- | --- | --- | --- | --- |
 | `8abc28913035c074` | Blend backstop pool (CAS3FL6T...) | L51,499,546 (first deploy) → r1 current tip (no upgrade) | maintainer@2026-04-29 | matches current decoder |
-| `d735c3395f595101` | BLNT/USDC and BLNT/XLM V1.1 pools | L65,134,030 / L65,134,032 → current | maintainer@2026-11-15 | exact V1.1 release artifact; event ABI matches current decoder |
+| `d735c3395f595101` | BLNT/USDC and BLNT/XLM Comet V1.1 pools | L65,134,030 / L65,134,032 → current | maintainer@2026-11-15 | exact V1.1 release artifact; event ABI matches current decoder |
 
 ### `8abc28913035c074` — Blend backstop pool, single hash
 
@@ -188,7 +190,7 @@ deployment-record, and interface evidence.
    the WASM); `swap` likewise. Both match the decoder's pre-computed
    `TopicSymbolPool` / `TopicSymbolSwap` constants (verified 2026-04-23 via fixture capture).
 
-### `d735c3395f595101` — canonical BLNT Comet V1.1 pools
+### `d735c3395f595101` — BLNT/USDC and BLNT/XLM Comet V1.1 pools
 
 1. **Artifact identity:** the deployed artifact's SHA-256 is
    `d735c3395f59510172cf5cf838823a1389b97cfec6bf24e580e9bd77d2b3e687`, matching the
@@ -224,7 +226,7 @@ Rationale:
 - Every curated deployment runs one of two audited hashes: historical Blend `8abc2891…` or
   released Comet V1.1 `d735c339…`.
 - WASM bytes and interfaces preserve all five decoded event schemas.
-- No upgrade was observed for the historical pool; the BLNT deployments were bound to the exact
+- No upgrade was observed for the historical pool; the BLNT/USDC and BLNT/XLM pool deployments were bound to the exact
   V1.1 artifact at creation.
 - The topic-based decoder is robust to future pools using the canonical WASM; a non-canonical contract emitting `("POOL", "swap")` with a different body fails extraction (`ErrMalformedPayload`) rather than mis-attributing.
 - Live ingest health: 0 `ErrMalformedPayload` rate spikes against the comet source.

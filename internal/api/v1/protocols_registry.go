@@ -114,7 +114,7 @@ var protocolRegistry = withVerificationPages([]ProtocolMeta{
 	{
 		Name:          "comet",
 		Category:      "amm",
-		Description:   "Comet — Balancer-v1-style weighted pools on Soroban, including the Blend BLND/USDC and canonical BLNT liquidity pools.",
+		Description:   "Comet — Balancer-v1-style weighted pools on Soroban, including the Blend BLND/USDC pool and the BLNT/USDC and BLNT/XLM Comet V1.1 pools.",
 		GenesisLedger: 51_499_546,
 		EventKinds:    []string{"comet.trade", "comet.liquidity"},
 	},
@@ -161,8 +161,8 @@ var protocolRegistry = withVerificationPages([]ProtocolMeta{
 			{ContractID: blntYieldBlentPool, FactoryID: blntPoolFactory, FirstLedger: 65_327_498},
 		},
 		// The backstop, emitter, primary backfill, and supplemental lockup-backfill contracts have
-		// their own event surfaces but are BLNT modules. EventKinds remains empty until a dedicated
-		// BLNT decoder lands; raw lake activity is still scoped to this verified roster.
+		// their own event surfaces but are BLNT V3 modules. EventKinds remains empty until a dedicated
+		// BLNT V3 decoder lands; raw lake activity is still scoped to this verified roster.
 		ExtraContracts: []string{blntBackstop, blntEmitter, blntBackfill, blntLockupBackfill},
 	},
 	{

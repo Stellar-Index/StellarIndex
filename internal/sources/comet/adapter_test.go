@@ -392,7 +392,7 @@ func TestDecoder_GateRejectsForeignContract(t *testing.T) {
 	}
 }
 
-func TestMainnetGatedSetIncludesCanonicalPools(t *testing.T) {
+func TestMainnetGatedSetIncludesBLNTPools(t *testing.T) {
 	want := map[string]bool{
 		MainnetBackstopPool: false,
 		MainnetBLNTUSDCPool: false,
@@ -423,7 +423,7 @@ func TestMainnetGatedSetIncludesCanonicalPools(t *testing.T) {
 	for _, contractID := range []string{MainnetBLNTUSDCPool, MainnetBLNTXLMPool} {
 		ev := events.Event{ContractID: contractID, Topic: []string{TopicSymbolPool, TopicSymbolSwap}}
 		if !d.Matches(ev) {
-			t.Errorf("production decoder does not admit canonical BLNT Comet pool %s", contractID)
+			t.Errorf("production decoder does not admit BLNT/USDC or BLNT/XLM Comet V1.1 pool %s", contractID)
 		}
 	}
 }

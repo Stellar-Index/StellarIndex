@@ -360,7 +360,7 @@ blend:
 
 comet:
   provenance: |
-    Hand-curated: Blend BLND/USDC backstop plus BLNT's canonical BLNT/USDC and BLNT/XLM V1.1 pools. Add verified deployments as discovered.
+    Hand-curated: Blend BLND/USDC backstop plus BLNT/USDC and BLNT/XLM V1.1 pools. Add verified deployments as discovered.
   notes: |
     Comet is Balancer-v1; (POOL, swap) topic is shared per AGENTS.md.
   contracts:  # 3 total

@@ -35,15 +35,15 @@ configurable weight, and the spot price between any two tokens is a
 function of both their reserves and their weights (up to 8 tokens per
 pool in Balancer-v1; the Stellar-side limit is unconfirmed).
 
-The positively identified mainnet set contains Blend's BLND/USDC backstop and BLNT's canonical
-BLNT/USDC and BLNT/XLM Comet V1.1 pools. Blend uses its pool as a backstop LP; BLNT V3 uses the
-two V1.1 pools as canonical liquidity and backstop assets.
+The positively identified mainnet set contains Blend's BLND/USDC backstop and the BLNT/USDC and
+BLNT/XLM Comet V1.1 pools. Blend uses its pool as a backstop LP; BLNT V3 uses the two V1.1 pools
+as liquidity and backstop assets.
 
 | Role | Contract | WASM hash |
 |---|---|---|
 | Blend BLND/USDC backstop | `CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVGRVEAM` | `8abc28913035c07411ed5d134e6bfeab4723d97ddd4d1a22a0605d35c94d1a36` |
-| Canonical BLNT/USDC V1.1 pool | `CDQMIKIHKA5UY3FQJ2UDTLNX3GOPD3GPNZWSPTOBVOHEUMQJQXOPC7Y3` | `d735c3395f59510172cf5cf838823a1389b97cfec6bf24e580e9bd77d2b3e687` |
-| Canonical BLNT/XLM V1.1 pool | `CA5HX3D47PQZWC2E7VWXCKH4534P2NOJEOIXAWU47MI4QV2FQUYY3FLC` | `d735c3395f59510172cf5cf838823a1389b97cfec6bf24e580e9bd77d2b3e687` |
+| BLNT/USDC Comet V1.1 pool | `CDQMIKIHKA5UY3FQJ2UDTLNX3GOPD3GPNZWSPTOBVOHEUMQJQXOPC7Y3` | `d735c3395f59510172cf5cf838823a1389b97cfec6bf24e580e9bd77d2b3e687` |
+| BLNT/XLM Comet V1.1 pool | `CA5HX3D47PQZWC2E7VWXCKH4534P2NOJEOIXAWU47MI4QV2FQUYY3FLC` | `d735c3395f59510172cf5cf838823a1389b97cfec6bf24e580e9bd77d2b3e687` |
 
 ## Topic shape — shared, not per-protocol
 
