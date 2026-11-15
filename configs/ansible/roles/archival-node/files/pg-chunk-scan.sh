@@ -35,15 +35,18 @@ FULL="${PG_CHUNK_SCAN_FULL:-0}"
 BUDGET="${PG_CHUNK_SCAN_BUDGET:-10800}"
 RECOVER_WAIT="${PG_CHUNK_SCAN_RECOVER_WAIT:-180}"
 BADF="$STATE.bad"
+# Chunks that ended their backend when decoded. A backend death restarts the whole cluster, so such a chunk is never
+# decoded again; it stays counted unreadable while it exists. Delete its line to have it tried once more.
+CRASHF="$STATE.crash"
 OUT="$DIR/pg_chunk_scan.prom"
 mkdir -p "$DIR" "$(dirname "$STATE")"
 [ -s "$STATE" ] || FULL=1
-touch "$STATE" "$BADF"
+touch "$STATE" "$BADF" "$CRASHF"
 
 W=$(mktemp -d "${TMPDIR:-/tmp}/pg-chunk-scan.XXXXXX")
 TMP=$(mktemp "$DIR/.pg_chunk_scan.prom.XXXXXX")
 trap 'rm -rf "$W" "$TMP"' EXIT
-: >"$W/skip"; : >"$W/bad"; : >"$W/rescanned"; : >"$W/err"
+: >"$W/skip"; : >"$W/bad"; : >"$W/rescanned"; : >"$W/err"; : >"$W/crash"
 [ "$FULL" = 1 ] || cp "$STATE" "$W/skip"
 
 # Keeps the previous verdicts and publishes only the failure, so the stale
@@ -85,9 +88,16 @@ SELECT tag, f1, f2, f3, f4 FROM (
 SQL
 
 # To decode: every listed chunk not yet verified, last run's unreadable first.
-awk -F'|' -v badf="$BADF" -v skipf="$W/skip" '
-  BEGIN { while ((getline l < badf) > 0) b[l]; while ((getline l < skipf) > 0) v[l] }
-  $1 == "C" && !($2 in v) { print (($2 in b) ? 0 : 1) "|" $2 "|" $3 "|" $4 "|" $5 }
+# A known backend-killer is not decoded: it goes straight to the unreadable list.
+awk -F'|' -v crashf="$CRASHF" '
+  BEGIN { while ((getline l < crashf) > 0) c[l] }
+  $1 == "C" && ($2 in c) { print $2 "|" $3 "|" $4 }
+' "$W/list" >"$W/crashers"
+cat "$W/crashers" >>"$W/bad"
+cut -d'|' -f1 "$W/crashers" >>"$W/rescanned"
+awk -F'|' -v badf="$BADF" -v skipf="$W/skip" -v crashf="$CRASHF" '
+  BEGIN { while ((getline l < badf) > 0) b[l]; while ((getline l < skipf) > 0) v[l]; while ((getline l < crashf) > 0) c[l] }
+  $1 == "C" && !($2 in v) && !($2 in c) { print (($2 in b) ? 0 : 1) "|" $2 "|" $3 "|" $4 "|" $5 }
 ' "$W/list" | sort -s -t'|' -k1,1n | cut -d'|' -f2- >"$W/todo"
 
 # Prints ok, skip, bad or lost. A caught error that says nothing about the
@@ -147,7 +157,8 @@ while IFS='|' read -r key ht chunk cc; do
     v=$(decode "$cc")
     if [ "$v" = lost ]; then
       server_back || fail_run "server unreachable while decoding $ht/$chunk"
-      echo "pg-chunk-scan: $ht/$chunk ends its backend when decoded; counted unreadable" >&2
+      echo "pg-chunk-scan: $ht/$chunk ends its backend when decoded; counted unreadable and not decoded again" >&2
+      echo "$key" >>"$W/crash"
       v=bad
     fi
   fi
@@ -170,6 +181,8 @@ awk -F'|' -v donef="$W/rescanned" -v badf="$BADF" '
 ' "$W/list" >>"$W/bad"
 sort -u "$W/bad" -o "$W/bad"
 cut -d'|' -f1 "$W/bad" >"$BADF.new" && mv "$BADF.new" "$BADF"
+# Crashers that still exist carry over; one that was dropped or rewritten falls out with its key.
+{ cut -d'|' -f1 "$W/crashers"; cat "$W/crash"; } | sort -u >"$CRASHF.new" && mv "$CRASHF.new" "$CRASHF"
 bad=$(cut -d'|' -f2,3 "$W/bad")
 nbad=$(wc -l <"$W/bad" | tr -d ' ')
 bloat=$(sed -n 's/^B|//p' "$W/list")

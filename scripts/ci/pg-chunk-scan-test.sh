@@ -99,6 +99,13 @@ check "undecided chunk not verified" "! grep -q '105:5006' '$t/state'"
 check "undecided chunk not counted"  "grep -qx 'stellarindex_pg_compressed_chunks_unreadable 1' '$prom'"
 check "complete run not partial"     "grep -qx 'stellarindex_pg_chunk_scan_partial 0' '$prom'"
 
+# The next night, and a forced full scan, must not decode the backend-killer again: each decode restarts the cluster.
+run
+check "crasher not decoded again"    "! grep -qx 'i.c104' '$t/decoded'"
+check "crasher still counted"        "grep -q 'chunk_unreadable{hypertable=\"trades\",chunk=\"_hyper_1_3_chunk\"} 1' '$prom'"
+PG_CHUNK_SCAN_FULL=1 run
+check "full scan spares the crasher" "! grep -qx 'i.c104' '$t/decoded'"
+
 # A lost connection with the server still down fails the run; it does not
 # blame the chunk.
 echo lost >"$t/v/i.c105"; touch "$t/down"
