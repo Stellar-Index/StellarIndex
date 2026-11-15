@@ -86,7 +86,13 @@ else
   bad "RLT-335: missing unauthenticated-probe warning when no key is configured"
 fi
 
-# A keyless run that fails must not report an SLA outage.
+if [ -s "$TMP/argv.log" ]; then
+  bad "keyless fire ran the probe binary (it writes failing gauges the availability alert pages on): $(cat "$TMP/argv.log")"
+else
+  ok "keyless fire does not run the probe binary"
+fi
+
+# A keyless fire must not report an SLA outage.
 : > "$TMP/curl.log"
 HC_URL="https://hc.invalid/ping/x" STUB_RC=1 run_probe ""
 if grep -q '/fail$' "$TMP/curl.log"; then

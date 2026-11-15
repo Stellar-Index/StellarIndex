@@ -57,6 +57,18 @@ if [ -n "$TEXTFILE_OUTPUT" ]; then
   TEXTFILE_FLAG=(-textfile-output "$TEXTFILE_OUTPUT")
 fi
 
+# An unauthenticated probe measures our rate limiter, not our SLA. Without a
+# key the probe does not run: the binary would write its failing gauges to the
+# textfile, and the availability alert pages on those. /log records the fire
+# without moving the check's state: no phantom outage, and no success either,
+# so the check goes late and the missing key is seen.
+if [ -z "${STELLARINDEX_PROBE_API_KEY:-}" ]; then
+  MSG="sla-probe: WARNING no STELLARINDEX_PROBE_API_KEY — probe not run (it would measure the anonymous rate limit, not the SLA); no verdict reported"
+  echo "$MSG" >&2
+  hc_ping sla-probe "${URL:+${URL}/log}" --data-binary "$MSG"
+  exit 0
+fi
+
 # Run the probe. JSON report on stdout; pass=0, fail=1 on exit.
 #
 # The probe's auth variable is deliberately NOT passed as a flag: argv is
@@ -73,17 +85,6 @@ OUT="$(
     "${TEXTFILE_FLAG[@]}" 2>&1
 )"
 RC=$?
-
-# An unauthenticated probe measures our rate limiter, not our SLA, so it has no
-# verdict to report. /log records the run without moving the check's state:
-# no phantom outage, and no success either, so the check goes late and the
-# missing key is seen.
-if [ -z "${STELLARINDEX_PROBE_API_KEY:-}" ]; then
-  MSG="sla-probe: WARNING no STELLARINDEX_PROBE_API_KEY — this run measured the anonymous rate limit, not the SLA; no verdict reported"
-  echo "$MSG" >&2
-  hc_ping sla-probe "${URL:+${URL}/log}" --data-binary "$MSG"
-  exit 0
-fi
 
 # A failing run pings /fail only after HC_FAIL_AFTER (default 2) consecutive
 # failures; /fail bypasses the grace period, so one run caught by a restart
