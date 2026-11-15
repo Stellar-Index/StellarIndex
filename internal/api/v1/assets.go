@@ -2995,7 +2995,7 @@ func (s *Server) handleAssetMetadata(w http.ResponseWriter, r *http.Request) {
 
 		Sep1CurrencyAuthority: detail.Sep1CurrencyAuthority,
 	}
-	writeJSON(w, out, Flags{Stale: homeDomainDegraded})
+	writeJSON(w, out, Flags{Stale: homeDomainDegraded || detail.issuerDirectoryUnchecked, Degraded: detail.issuerDirectoryUnchecked})
 }
 
 // sep1StatusForNoPayload separates two opposite findings for an issuer with no SEP-1 payload: `not_fetched` is ours (nothing has run, or
@@ -3521,33 +3521,6 @@ func derivedSAC(assetID string) (string, bool) {
 	}
 	sac, err := a.SacContractID()
 	return sac, err == nil
-}
-
-// sacNotWrappedTTL bounds how long a "not a SAC" answer is reused; a contract instance can land in the lake after first sight.
-const sacNotWrappedTTL = 10 * time.Minute
-
-// sacWrappedAssetID is [Server.resolveSACToClassic] as an asset_id. A success is memoised for good (the address fixes the
-// wrapped asset), a definite "not a SAC" for sacNotWrappedTTL; a read error is not cached.
-func (s *Server) sacWrappedAssetID(ctx context.Context, contractID string) (string, bool) {
-	if v, ok := s.sacWrapped.Load(contractID); ok {
-		return v.(string), true
-	}
-	if v, ok := s.sacNotWrapped.Load(contractID); ok {
-		if time.Now().Before(v.(time.Time)) {
-			return "", false
-		}
-		s.sacNotWrapped.Delete(contractID)
-	}
-	asset, ok, err := s.resolveSAC(ctx, contractID)
-	if !ok {
-		if err == nil {
-			s.sacNotWrapped.Store(contractID, time.Now().Add(sacNotWrappedTTL))
-		}
-		return "", false
-	}
-	id := asset.String()
-	s.sacWrapped.Store(contractID, id)
-	return id, true
 }
 
 // restoreOffPageContractArms adds, onto each classic row of an unfiltered page, the 24h volume of its SAC rows foldAliasTwins
