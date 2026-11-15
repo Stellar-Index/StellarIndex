@@ -120,13 +120,3 @@ No migrations. No `pkg/*` break. No config change. Run `stellarindex-ops project
 
 - **chainlink-stellar:** the USPC NAV feed (data_id `016e0640…`) is recorded as `raw:USPC` instead of an unknown `raw:<hex>` id, clearing the unknown-symbol alert (#3847).
 - **explorer:** `/icon` stores successful issuer-icon responses in the Cloudflare edge cache, so a cold visitor no longer waits on the issuer's host (#3848).
-
-## [v0.116.49] - 2026-10-25
-
-No migrations. No `pkg/*` break. No config change. The weekly `compute-completeness-sep41` unit gains a second run for `sep41_supply`; the deploy's ansible step installs it.
-
-### Fixed
-
-- **completeness:** `sep41_supply` is re-proved weekly beside `sep41_transfers` instead of in the nightly pass, where its from-genesis re-derive hit the per-source timeout (#3843).
-- **explorer:** a read the API sheds with `Retry-After` of 8 s or less is retried once, so account panels no longer show "warming or failed" for a busy cold read; the site crawl judges each API URL by its last response (#3844).
-- **explorer:** links only to asset pages that exist (#3842).
