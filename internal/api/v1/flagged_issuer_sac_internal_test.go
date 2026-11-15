@@ -120,3 +120,17 @@ func TestSuppressFlaggedIssuerIdentity_ClearsBackingClaimsAndFailsClosed(t *test
 		t.Errorf("unflagged row lost its declarations: %+v", clean)
 	}
 }
+
+// A lake error on the wrapper lookup must not hide the flag the directory gave the contract's own address.
+func TestFillIssuerDirectoryTags_UnreadSACLookupKeepsTheContractsOwnFlag(t *testing.T) {
+	dir := fixedDirectory{flaggedContractToken: {Address: flaggedContractToken, Tags: []string{"malicious"}, Source: "stellar-expert"}}
+	srv := New(Options{Directory: dir, Explorer: errSACReader{}})
+	rows := []AssetDetail{pricedContractRow(flaggedContractToken)}
+
+	srv.fillIssuerDirectoryTags(t.Context(), rows)
+
+	if len(rows[0].IssuerDirectoryTags) != 1 || rows[0].PriceWithheldReason != PriceWithheldScamIssuer || rows[0].PriceUSD != nil {
+		t.Errorf("tags=%v reason=%q price=%v, want the malicious tag, scam_issuer and no price",
+			rows[0].IssuerDirectoryTags, rows[0].PriceWithheldReason, rows[0].PriceUSD)
+	}
+}

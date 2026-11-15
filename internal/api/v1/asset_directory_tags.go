@@ -95,21 +95,29 @@ func (s *Server) fillIssuerDirectoryTags(ctx context.Context, rows []AssetDetail
 			"n", len(addrs), "err", err)
 	}
 	for i := range rows {
-		addr := directoryAddress(&rows[i])
-		if addr == "" {
-			continue
-		}
-		if err != nil || wrappedUnread[i] {
-			withholdUncheckedIssuerPricing(&rows[i])
-			continue
-		}
-		if e, ok := found[addr]; ok {
-			stampIssuerDirectory(&rows[i], e)
-		}
-		stampWrappedIssuerFlags(&rows[i], wrapped[i], found)
-		// Every row, not only directory hits: the curated list flags an issuer the directory may not hold.
-		suppressScamIssuerPricing(&rows[i])
+		stampListingRowIssuer(&rows[i], wrapped[i], found, err != nil, wrappedUnread[i])
 	}
+}
+
+// stampListingRowIssuer applies the page's directory answer to one row. dirUnread: the batch read failed; wrapperUnread:
+// the lake did not say whether the row is a SAC.
+func stampListingRowIssuer(row *AssetDetail, wrappedIssuer string, found map[string]timescale.DirectoryEntry, dirUnread, wrapperUnread bool) {
+	addr := directoryAddress(row)
+	if addr == "" {
+		return
+	}
+	e, ok := found[addr]
+	if ok && !dirUnread {
+		// Stamped even when the wrapper is unread: an unread wrapper hides no verdict the directory gave.
+		stampIssuerDirectory(row, e)
+	}
+	if dirUnread || wrapperUnread {
+		withholdUncheckedIssuerPricing(row)
+		return
+	}
+	stampWrappedIssuerFlags(row, wrappedIssuer, found)
+	// Every row, not only directory hits: the curated list flags an issuer the directory may not hold.
+	suppressScamIssuerPricing(row)
 }
 
 // stampWrappedIssuerFlags carries a wrapped asset's issuer flags onto its SAC row: the curated scam reason, and the
@@ -150,11 +158,13 @@ func (s *Server) sacWrappedIssuers(ctx context.Context, rows []AssetDetail) (iss
 	defer cancel()
 	forEachBounded(s.logger, len(lookup), readFanoutConcurrency, func(j int) {
 		i := lookup[j]
+		// Unread until the lookup answers, so a panic inside it withholds the row.
+		unread[i] = true
 		id, ok, err := s.sacWrappedAssetIDErr(lookupCtx, rows[i].AssetID)
 		if err != nil {
-			unread[i] = true
 			return
 		}
+		unread[i] = false
 		if !ok {
 			return
 		}

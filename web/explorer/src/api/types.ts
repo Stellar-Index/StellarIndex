@@ -11432,7 +11432,7 @@ export interface components {
             /** @description Vendor to credit when this value comes from one licensed off-chain feed (CoinGecko, CoinMarketCap, CCData, Tiingo, the ECB reference series, Massive FX); omitted for on-chain venues and oracles. The value is the vendor name, not attribution text; a vendor's required wording (Powered by CoinGecko, Data sourced by Tiingo) still applies wherever the number is displayed. Set when price_sources names exactly one such vendor. */
             price_credit?: string;
             /**
-             * @description Present ONLY when price_usd is null because the price was WITHHELD — the market exists and the server declines to publish it — rather than never observed. `/v1/price` answers the same pair with a `price-withheld` 404, and the values are the `reason` vocabulary of `/v1/price/tip/stream`'s `price_withheld` event: `substance` (trailing market activity below the serve floor), `scam_issuer` (a directory-flagged issuer), `upstream_leg` (a leg beyond the asset's own market is withheld — the stablecoin leg a token's USD price derives through, or the XLM/USD pivot behind a declared peg; the asset's own market below the floor, for a declared peg its own XLM book, reports `substance`, as the listing does), `unattributed` (withheld for a cause the server could not attribute, e.g. the issuer-directory check did not complete). market_cap_usd and fdv_usd are null with it. Absent beside a null price_usd means no price exists, or (listing rows, with flags.stale true) the thin-market gate could not measure the row.
+             * @description Present ONLY when price_usd is null because the price was WITHHELD — the market exists and the server declines to publish it — rather than never observed. `/v1/price` answers the same pair with a `price-withheld` 404, and the values are the `reason` vocabulary of `/v1/price/tip/stream`'s `price_withheld` event: `substance` (trailing market activity below the serve floor), `scam_issuer` (an issuer flagged in the directory or the curated scam list; for a Stellar Asset Contract row, the issuer of the asset it wraps counts too), `upstream_leg` (a leg beyond the asset's own market is withheld — the stablecoin leg a token's USD price derives through, or the XLM/USD pivot behind a declared peg; the asset's own market below the floor, for a declared peg its own XLM book, reports `substance`, as the listing does), `unattributed` (withheld for a cause the server could not attribute, e.g. the issuer-directory check did not complete). market_cap_usd and fdv_usd are null with it. Absent beside a null price_usd means no price exists, or (listing rows, with flags.stale true) the thin-market gate could not measure the row.
              * @enum {string}
              */
             price_withheld_reason?: "substance" | "scam_issuer" | "upstream_leg" | "unattributed";
@@ -11614,7 +11614,7 @@ export interface components {
                 volume_24h_usd?: string | null;
                 trade_count_24h: number;
             }[] | null;
-            /** @description Non-empty when this asset's issuer appears in the curated scam directory. */
+            /** @description Non-empty when this asset's issuer appears in the curated scam directory. On a Stellar Asset Contract row it is the issuer of the asset the contract wraps. */
             issuer_scam_reason?: string;
             /**
              * @description Curated third-party labels the account_directory table
@@ -11622,12 +11622,15 @@ export interface components {
              *     stellar-expert/public-directory) carries for this asset's
              *     ISSUER G-address. Tags follow the upstream registry
              *     (#exchange, #anchor, #issuer, #malicious, #unsafe, …).
-             *     DISPLAY-ONLY, third-party attribution — NEVER an input to
-             *     verification, scam-suppression, or pricing (they do not
-             *     alter `price_usd`, verified status, or any gate). Clients
-             *     should surface `malicious`/`unsafe`/`fraud`/`scam`/`hack`/
-             *     `phishing` as prominent warnings. Omitted when the issuer
-             *     isn't listed.
+             *     Third-party attribution, never an input to verified
+             *     status. A scam-class tag (`malicious`/`unsafe`/`fraud`/
+             *     `scam`/`hack`/`phishing`) withholds the row's dollar figures
+             *     (`price_withheld_reason: scam_issuer`) and its issuer-written
+             *     identity; other tags are display-only. Clients should
+             *     surface the scam-class tags as prominent warnings. On a
+             *     Stellar Asset Contract row the tags may be those of the
+             *     wrapped asset's issuer. Omitted when the issuer isn't
+             *     listed.
              */
             issuer_directory_tags?: string[];
             /** @description Domain the account_directory carries for the issuer (e.g. audrev-stellar.com). Display-only attribution; omitted when unlisted. */
