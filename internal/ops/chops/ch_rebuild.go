@@ -783,7 +783,8 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 			}
 			var ng int
 			for _, tgt := range targets {
-				gaps, gerr := store.FindPerSourceLedgerGaps(ctx, tgt, int64(lo), int64(hi), 1, 0)
+				// Both edges bracketed: a span dropped whole holds no served row and is itself the gap.
+				gaps, gerr := store.FindLedgerGapsInRange(ctx, tgt, int64(lo), int64(hi), 1)
 				if gerr != nil {
 					return fmt.Errorf("ch-rebuild: find sdex gaps: %w", gerr)
 				}

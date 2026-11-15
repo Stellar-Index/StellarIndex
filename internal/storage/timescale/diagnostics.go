@@ -167,13 +167,10 @@ var CAGGsLiveForever = func() []CAGGSpec {
 	return out
 }()
 
-// PadRefreshWindow expands [from, to] to span at least minWindow, centered on the original midpoint, to satisfy the two-bucket minimum.
+// PadRefreshWindow widens [from, to] by half the view's MinWindow per side: Timescale refreshes only buckets wholly inside the
+// window, so the buckets holding from and to need the padding, which also clears the two-bucket minimum.
 func PadRefreshWindow(from, to time.Time, minWindow time.Duration) (time.Time, time.Time) {
-	span := to.Sub(from)
-	if span >= minWindow {
-		return from, to
-	}
-	pad := (minWindow - span) / 2
+	pad := minWindow / 2
 	return from.Add(-pad), to.Add(pad)
 }
 

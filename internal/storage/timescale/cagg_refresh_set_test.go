@@ -149,6 +149,32 @@ func TestPadRefreshWindowCoversTheChunkAtEveryRung(t *testing.T) {
 	}
 }
 
+// A refresh materialises only buckets wholly inside its window, so a range longer than MinWindow still needs the padding: without it
+// the buckets holding the range's first and last row keep their old values.
+func TestPadRefreshWindowHoldsTheEdgeBucketsOfALongRange(t *testing.T) {
+	t.Parallel()
+	from := time.Date(2024, 3, 12, 9, 17, 31, 0, time.UTC)
+	to := from.Add(200 * 24 * time.Hour) // longer than every MinWindow
+	all := append(append([]CAGGSpec{}, TradesCAGGs...), OracleCAGGs...)
+	for _, spec := range all {
+		widest := spec.Bucket
+		if spec.Bucket == MonthBucket {
+			widest = 31 * 24 * time.Hour
+		}
+		if widest <= 0 {
+			t.Fatalf("%s has no bucket width", spec.Name)
+		}
+		padFrom, padTo := PadRefreshWindow(from, to, spec.MinWindow)
+		// The bucket holding from starts less than one bucket before it; the one holding to ends at most one bucket after it.
+		if padFrom.After(from.Add(-widest)) {
+			t.Errorf("%s window starts %s, inside the bucket holding the first row (%s)", spec.Name, padFrom, from)
+		}
+		if padTo.Before(to.Add(widest)) {
+			t.Errorf("%s window ends %s, inside the bucket holding the last row (%s)", spec.Name, padTo, to)
+		}
+	}
+}
+
 // TestHistoryGranularityListMatchesTheServedSet pins the generated enumeration to the slice. The
 // 400 bodies for /v1/chart and /v1/history/since-inception render it, so a list that omits a
 // served grain (or advertises one Validate rejects) tells callers the wrong contract.
