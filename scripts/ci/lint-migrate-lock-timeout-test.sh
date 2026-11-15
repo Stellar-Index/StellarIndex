@@ -60,7 +60,7 @@ case "$out" in
     ;;
 esac
 
-# ── 14-stellarindex-services.yml: ansible.builtin.command task ──
+# ── 14-stellarindex-services.yml: ansible.builtin.shell task (the DSN arrives on stdin) ──
 out="$(python3 - <<'PY'
 import yaml, sys
 with open("configs/ansible/roles/archival-node/tasks/14-stellarindex-services.yml") as f:
@@ -70,10 +70,10 @@ for task in tasks:
     if task.get("name") == "Run pending migrations against the stellarindex database":
         found = True
         env = task.get("environment", {})
-        argv = task.get("ansible.builtin.command", {}).get("argv", [])
+        cmd = task.get("ansible.builtin.shell", {}).get("cmd", "")
         opts = env.get("PGOPTIONS", "")
         print("PGOPTIONS=" + opts)
-        print("HAS_TIMEOUT_WRAP=" + str(argv[:2] == ["timeout", "900"]))
+        print("HAS_TIMEOUT_WRAP=" + str("exec timeout 900 /usr/local/bin/stellarindex-migrate " in cmd))
 if not found:
     print("TASK_NOT_FOUND")
 PY

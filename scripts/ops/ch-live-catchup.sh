@@ -84,7 +84,9 @@ case "$LIVE_ERA_FROM" in
 esac
 
 CH_MAX=$(CH -q "SELECT max(ledger_seq) FROM stellar.ledgers" 2>/dev/null)
-TIP=$(psql "$DSN" -tAc "SELECT last_ledger FROM ingestion_cursors WHERE source = 'ledgerstream' AND sub_source = ''" 2>/dev/null | tr -d '[:space:]')
+# The DSN goes to psql in the environment, never on its command line, where any local user could read it.
+PSQL_DSN="$(command -v psql-dsn || echo "$(dirname "$0")/psql-dsn.sh")"
+TIP=$(PGDSN="$DSN" "$PSQL_DSN" -tAc "SELECT last_ledger FROM ingestion_cursors WHERE source = 'ledgerstream' AND sub_source = ''" 2>/dev/null | tr -d '[:space:]')
 if [ -z "${CH_MAX:-}" ] || [ -z "${TIP:-}" ]; then
   echo "$(date -u) ch-live-catchup: could not resolve CH_MAX=$CH_MAX / TIP=$TIP" >&2
   exit 1

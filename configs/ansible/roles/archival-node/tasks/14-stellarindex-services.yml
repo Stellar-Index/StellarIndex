@@ -192,19 +192,19 @@
   # stellarindex_apply_migrations=true explicitly (greenfield bringup /
   # deliberate out-of-band apply) to run it.
   when: stellarindex_apply_migrations | default(false) | bool
-  ansible.builtin.command:
-    argv:
-      # `timeout` (belt-and-braces alongside PGOPTIONS below — bounds a
-      # hang that isn't a Postgres lock wait too; ansible.builtin.command
-      # has no task-level timeout keyword of its own).
-      - timeout
-      - "900"
-      - /usr/local/bin/stellarindex-migrate
-      - -migrations
-      - /usr/local/share/stellarindex/migrations
-      - up
+  # The DSN travels on stdin. Ansible writes `environment:` values as a NAME=value prefix on the remote command,
+  # where any local user reads them from /proc/<pid>/cmdline for the length of the migrate.
+  ansible.builtin.shell:
+    # `timeout` (belt-and-braces alongside PGOPTIONS below — bounds a
+    # hang that isn't a Postgres lock wait too; the module has no
+    # task-level timeout keyword of its own).
+    cmd: |
+      set -eu
+      IFS= read -r STELLARINDEX_POSTGRES_DSN
+      export STELLARINDEX_POSTGRES_DSN
+      exec timeout 900 /usr/local/bin/stellarindex-migrate -migrations /usr/local/share/stellarindex/migrations up
+    stdin: "{{ postgres_dsn_stellarindex }}"
   environment:
-    STELLARINDEX_POSTGRES_DSN: "{{ postgres_dsn_stellarindex }}"
     # Same DDL-lock-convoy mitigation as deploy-binary.yml's
     # "Apply outstanding migrations" task. stellarindex-migrate's
     # golang-migrate postgres driver is lib/pq, which reads PGOPTIONS as
@@ -217,7 +217,7 @@
   # cmd/stellarindex-migrate/ansible_changed_when_test.go.
   changed_when: "'migrated to version' in migrate_result.stdout"
   failed_when: migrate_result.rc != 0
-  # The environment carries the DSN password; the version is reported below.
+  # The module arguments carry the DSN password; the version is reported below.
   no_log: true
 
 - name: Report the schema version the migrate step left

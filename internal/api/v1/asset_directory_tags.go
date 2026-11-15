@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
@@ -64,23 +65,26 @@ func (s *Server) applyIssuerDirectoryTags(ctx context.Context, detail *AssetDeta
 }
 
 // fillIssuerDirectoryTags resolves the page's issuer set in ONE batch query (no N+1) and stamps each row; rows with no
-// directoryAddress are skipped.
+// directoryAddress are skipped. A contract row that is the SAC of a classic asset is also judged on that asset's issuer:
+// the SAC is the same token under another address, and a flag on the issuer must not be shed by listing the wrapper.
 func (s *Server) fillIssuerDirectoryTags(ctx context.Context, rows []AssetDetail) {
 	if s.Directory == nil || len(rows) == 0 {
 		return
 	}
+	wrapped, wrappedUnread := s.sacWrappedIssuers(ctx, rows)
 	seen := make(map[string]struct{}, len(rows))
 	addrs := make([]string, 0, len(rows))
 	for i := range rows {
-		addr := directoryAddress(&rows[i])
-		if addr == "" {
-			continue
+		for _, addr := range []string{directoryAddress(&rows[i]), wrapped[i]} {
+			if addr == "" {
+				continue
+			}
+			if _, dup := seen[addr]; dup {
+				continue
+			}
+			seen[addr] = struct{}{}
+			addrs = append(addrs, addr)
 		}
-		if _, dup := seen[addr]; dup {
-			continue
-		}
-		seen[addr] = struct{}{}
-		addrs = append(addrs, addr)
 	}
 	if len(addrs) == 0 {
 		return
@@ -91,19 +95,84 @@ func (s *Server) fillIssuerDirectoryTags(ctx context.Context, rows []AssetDetail
 			"n", len(addrs), "err", err)
 	}
 	for i := range rows {
-		addr := directoryAddress(&rows[i])
-		if addr == "" {
-			continue
-		}
-		if err != nil {
-			withholdUncheckedIssuerPricing(&rows[i])
-			continue
-		}
-		if e, ok := found[addr]; ok {
-			stampIssuerDirectory(&rows[i], e)
-			suppressScamIssuerPricing(&rows[i])
+		stampListingRowIssuer(&rows[i], wrapped[i], found, err != nil, wrappedUnread[i])
+	}
+}
+
+// stampListingRowIssuer applies the page's directory answer to one row. dirUnread: the batch read failed; wrapperUnread:
+// the lake did not say whether the row is a SAC.
+func stampListingRowIssuer(row *AssetDetail, wrappedIssuer string, found map[string]timescale.DirectoryEntry, dirUnread, wrapperUnread bool) {
+	addr := directoryAddress(row)
+	if addr == "" {
+		return
+	}
+	e, ok := found[addr]
+	if ok && !dirUnread {
+		// Stamped even when the wrapper is unread: an unread wrapper hides no verdict the directory gave.
+		stampIssuerDirectory(row, e)
+	}
+	if dirUnread || wrapperUnread {
+		withholdUncheckedIssuerPricing(row)
+		return
+	}
+	stampWrappedIssuerFlags(row, wrappedIssuer, found)
+	// Every row, not only directory hits: the curated list flags an issuer the directory may not hold.
+	suppressScamIssuerPricing(row)
+}
+
+// stampWrappedIssuerFlags carries a wrapped asset's issuer flags onto its SAC row: the curated scam reason, and the
+// issuer's directory entry when the SAC has none of its own or the issuer's is the flagged one.
+func stampWrappedIssuerFlags(row *AssetDetail, issuer string, found map[string]timescale.DirectoryEntry) {
+	if issuer == "" {
+		return
+	}
+	if row.IssuerScamReason == "" {
+		row.IssuerScamReason = scamReason(issuer)
+	}
+	e, ok := found[issuer]
+	if !ok {
+		return
+	}
+	if len(row.IssuerDirectoryTags) == 0 || pricingguard.IsDirectoryScamFlagged(e.Tags) {
+		stampIssuerDirectory(row, e)
+	}
+}
+
+// sacWrappedIssuers returns, per row, the issuer of the classic asset a contract row is the SAC of ("" for any other row),
+// and whether that lookup failed: an unread wrapper is not "not a SAC".
+func (s *Server) sacWrappedIssuers(ctx context.Context, rows []AssetDetail) (issuers []string, unread []bool) {
+	issuers, unread = make([]string, len(rows)), make([]bool, len(rows))
+	if s.Explorer == nil {
+		return issuers, unread
+	}
+	var lookup []int
+	for i := range rows {
+		if rows[i].Type == string(canonical.AssetSoroban) && canonical.IsContractID(rows[i].AssetID) {
+			lookup = append(lookup, i)
 		}
 	}
+	if len(lookup) == 0 {
+		return issuers, unread
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	forEachBounded(s.logger, len(lookup), readFanoutConcurrency, func(j int) {
+		i := lookup[j]
+		// Unread until the lookup answers, so a panic inside it withholds the row.
+		unread[i] = true
+		id, ok, err := s.sacWrappedAssetIDErr(lookupCtx, rows[i].AssetID)
+		if err != nil {
+			return
+		}
+		unread[i] = false
+		if !ok {
+			return
+		}
+		if asset, perr := canonical.ParseAsset(id); perr == nil && asset.Type == canonical.AssetClassic {
+			issuers[i] = asset.Issuer
+		}
+	})
+	return issuers, unread
 }
 
 // anyDirectoryUnchecked reports whether any row's pricing was withheld because
@@ -127,17 +196,23 @@ func withholdUncheckedIssuerPricing(d *AssetDetail) {
 // issuerPricingWithheld reports whether the row may publish no dollar
 // figure because its issuer is scam-flagged or could not be checked.
 func issuerPricingWithheld(d *AssetDetail) bool {
-	return d.issuerDirectoryUnchecked || pricingguard.IsDirectoryScamFlagged(d.IssuerDirectoryTags)
+	return d.issuerDirectoryUnchecked || issuerScamFlagged(d)
+}
+
+// issuerScamFlagged reports a flag from either source: the curated list or a scam-class directory tag. The curated list
+// exists so a verdict does not depend on the directory holding a row for the issuer.
+func issuerScamFlagged(d *AssetDetail) bool {
+	return d.IssuerScamReason != "" || pricingguard.IsDirectoryScamFlagged(d.IssuerDirectoryTags)
 }
 
 // suppressScamIssuerPricing nulls every dollar claim (price, market cap, FDV, change_*, price_history_*, listing valuation)
-// when the issuer has a scam-class directory tag or its lookup failed (issuerDirectoryUnchecked); supply and warnings stay.
+// when the issuer is flagged (curated list or scam-class directory tag) or its lookup failed (issuerDirectoryUnchecked); supply and warnings stay.
 // Payload-side twin of pricingguard.ScamGate. Idempotent, nil-safe.
 func suppressScamIssuerPricing(d *AssetDetail) {
 	if d == nil || !issuerPricingWithheld(d) {
 		return
 	}
-	flagged := pricingguard.IsDirectoryScamFlagged(d.IssuerDirectoryTags)
+	flagged := issuerScamFlagged(d)
 	switch {
 	case flagged && (d.PriceUSD != nil || d.PriceWithheldReason != ""):
 		// The flag is this asset's own cause and overrides what a reader-side walk said: a

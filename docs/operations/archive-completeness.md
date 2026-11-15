@@ -86,7 +86,7 @@ Required before the daily timer enforces anything on a node.
    [Tool reference](#tool-reference)):
 
    ```sh
-   TO=$(psql "$STELLARINDEX_POSTGRES_DSN" -tA \
+   TO=$(PGDSN="$STELLARINDEX_POSTGRES_DSN" psql-dsn -tA \
      -c 'SELECT GREATEST(MAX(last_ledger) - 64, 2) FROM ingestion_cursors WHERE last_ledger > 0')
    /usr/local/sbin/run-heavy-job.sh archive-completeness-manual \
      /usr/local/bin/stellarindex-ops archive-completeness verify \

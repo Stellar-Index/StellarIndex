@@ -49,7 +49,7 @@ CH_ADDR="${CH_ADDR:-127.0.0.1:9300}"
 CONFIG="${CONFIG_PATH:-/etc/stellarindex.toml}"
 OPS=/usr/local/bin/stellarindex-ops
 
-TIP=$("$PSQL" "$DSN" -tA -c \
+TIP=$(PGDSN="$DSN" PSQL_BIN="$PSQL" psql-dsn -tA -c \
   "SELECT last_ledger FROM ingestion_cursors WHERE source='ledgerstream'" 2>/dev/null | tr -d '[:space:]')
 if [ -z "$TIP" ] || [ "$TIP" = "0" ]; then
   echo "compute-completeness: ledgerstream tip unresolved; bailing" >&2

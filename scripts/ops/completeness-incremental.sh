@@ -37,13 +37,15 @@ load_env_file() {
 }
 load_env_file /etc/default/stellarindex-ops export
 
-PSQL=(psql "$STELLARINDEX_POSTGRES_DSN" -tAc)
+# The DSN goes to psql in the environment, never on its command line, where any local user could read it.
+PSQL_DSN="$(command -v psql-dsn || echo "$(dirname "$0")/psql-dsn.sh")"
+pq() { PGDSN="$STELLARINDEX_POSTGRES_DSN" "$PSQL_DSN" -tAc "$1"; }
 OPS=/usr/local/bin/stellarindex-ops
 CFG=/etc/stellarindex.toml
 
 # from = lowest verified watermark across real sources (not the "recognition"
 # pseudo-row). 0 (no snapshots yet) => full verify.
-FROM=$("${PSQL[@]}" "SELECT COALESCE(min(watermark),0) FROM completeness_snapshots WHERE source <> 'recognition'")
+FROM=$(pq "SELECT COALESCE(min(watermark),0) FROM completeness_snapshots WHERE source <> 'recognition'")
 FROM=${FROM:-0}
 echo "$(date -u +%FT%TZ) completeness: incremental verify from=${FROM} (0=full)"
 
@@ -56,7 +58,7 @@ fi
 
 # Surface any still-incomplete source (real gap, reconcile artifact or
 # regression) with its failing range.
-FAILED=$("${PSQL[@]}" "SELECT string_agg(source || ' (' || detail || ')', E'\n  ') FROM completeness_snapshots WHERE NOT complete AND source <> 'recognition'")
+FAILED=$(pq "SELECT string_agg(source || ' (' || detail || ')', E'\n  ') FROM completeness_snapshots WHERE NOT complete AND source <> 'recognition'")
 if [ -n "$FAILED" ]; then
 	echo "$(date -u +%FT%TZ) completeness: INCOMPLETE sources — verify + (if a real gap) re-derive the failing range:" >&2
 	echo "  $FAILED" >&2

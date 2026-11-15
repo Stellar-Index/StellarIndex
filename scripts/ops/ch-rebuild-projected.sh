@@ -345,7 +345,8 @@ run_window() {
   # COMMIT and the open transaction rolls back. The dirty marker stays
   # regardless: a failure ON the COMMIT is ambiguous, and redoing an intact
   # window costs only time.
-  out=$(psql "$DSN" -v ON_ERROR_STOP=1 -At <<<"$sql") || rc=$?
+  # The DSN goes to psql in the environment, never on its command line, where any local user could read it.
+  out=$(PGDSN="$DSN" "$(command -v psql-dsn || echo "$(dirname "$0")/psql-dsn.sh")" -v ON_ERROR_STOP=1 -At <<<"$sql") || rc=$?
   printf '%s\n' "$out"
   # A source whose window held rows must get rows back: none (empty registry,
   # lake gap) is a loss, not a quiet window.

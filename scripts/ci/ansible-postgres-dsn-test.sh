@@ -51,7 +51,7 @@ else
   printf '%s\n' "$inline"
 fi
 for f in templates/stellarindex.env.j2 tasks/09-minio.yml tasks/14-stellarindex-services.yml; do
-  if grep -qE 'STELLARINDEX_POSTGRES_DSN(=|: ")\{\{ postgres_dsn_stellarindex \}\}' "$ROLE/$f"; then
+  if grep -qE '(STELLARINDEX_POSTGRES_DSN(=|: ")|stdin: ")\{\{ postgres_dsn_stellarindex \}\}' "$ROLE/$f"; then
     ok "$f renders postgres_dsn_stellarindex"
   else
     bad "$f does not render STELLARINDEX_POSTGRES_DSN from postgres_dsn_stellarindex"

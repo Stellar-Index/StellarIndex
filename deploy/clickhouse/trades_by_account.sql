@@ -64,7 +64,7 @@ ALTER TABLE stellar.trades_by_account_windows ADD COLUMN IF NOT EXISTS sources S
 -- compression horizon (the archive only has to reach it) and never above the
 -- lake's contiguous watermark:
 --
---   HORIZON=$(psql "$PG" -Atc "SELECT max(range_end) FROM timescaledb_information.chunks
+--   HORIZON=$(PGDSN="$PG" psql-dsn -Atc "SELECT max(range_end) FROM timescaledb_information.chunks
 --             WHERE hypertable_name = 'trades' AND is_compressed")
 --   STOP=$(clickhouse-client --port 9300 -q "SELECT min(ledger_seq) FROM stellar.ledgers
 --          WHERE close_time >= parseDateTimeBestEffort('$HORIZON')")

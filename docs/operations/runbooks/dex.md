@@ -37,11 +37,11 @@ journalctl -u stellarindex-aggregator | grep decimals-guard | tail
 For a flagged token, find affected pairs and confirm the row and the served price:
 
 ```sh
-psql "$PG" -c "SELECT DISTINCT base_asset, quote_asset, source
+PGDSN="$PG" psql-dsn -c "SELECT DISTINCT base_asset, quote_asset, source
                FROM trades
                WHERE (base_asset = '<asset>' OR quote_asset = '<asset>')
                  AND ts >= now() - interval '24 hours';"
-psql "$PG" -c "SELECT * FROM nonstandard_decimals_assets WHERE asset = '<asset>';"
+PGDSN="$PG" psql-dsn -c "SELECT * FROM nonstandard_decimals_assets WHERE asset = '<asset>';"
 curl -s "$API_BASE_URL/v1/price?asset=<asset>&quote=fiat:USD" | jq .data.price
 ```
 
@@ -78,13 +78,13 @@ P2 (ticket). Rule: `deploy/monitoring/rules/ingestion.yml` (twin `configs/promet
 
 ```sh
 # Systemic (every trade 1:1) or a few genuine equal-value fills?
-psql "$PG" -c \
+PGDSN="$PG" psql-dsn -c \
   "SELECT base_asset, quote_asset, base_amount, quote_amount, ts
      FROM trades
     WHERE source = '<source>'
       AND ts > now() - interval '30 minutes'
     ORDER BY ts DESC LIMIT 50;"
-psql "$PG" -c \
+PGDSN="$PG" psql-dsn -c \
   "SELECT count(*) FILTER (WHERE base_amount = quote_amount) AS unit_ratio,
           count(*) AS total
      FROM trades

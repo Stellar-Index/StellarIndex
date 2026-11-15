@@ -981,6 +981,10 @@ jobs:
         # window backfilled once, the seed/rebuild chain gated on a complete
         # lake, and a failed or killed run resuming without redoing work.
         run: bash scripts/ops/rederive-from-test.sh
+      - name: psql-dsn wrapper tests
+        # Root jobs hand psql its DSN through this wrapper so the password is
+        # never on a command line; a fake psql shows what it was given.
+        run: bash scripts/ops/psql-dsn-test.sh
       - name: pre-launch-check heartbeat-URL tests
         # Every Healthchecks.io URL wire-paging.md has the operator create
         # must FAIL pre-launch-check.sh when missing: "0 failures" is that

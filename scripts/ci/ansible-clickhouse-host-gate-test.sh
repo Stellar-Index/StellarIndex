@@ -199,12 +199,13 @@ task_status() {
 
 # run_play <logfile> <extra-var>... — tag-select the three CH-config files
 # (plus the `always`-tagged detect tasks) and skip preflight, whose tasks
-# are `always` and assume a real archival node.
+# are `always` and assume a real archival node, and psql-dsn, an `always`
+# install into /usr/local/bin.
 run_play() {
   local log="$1"; shift
   ansible-playbook -i "$TMP/inventory" "$TMP/play.yml" \
     --tags clickhouse-serving-profile,clickhouse-drop-guard,clickhouse-exporter \
-    --skip-tags preflight \
+    --skip-tags preflight,psql-dsn \
     "$@" > "$log" 2>&1
 }
 
@@ -274,7 +275,7 @@ fi
 run_play_ch() {
   local log="$1"; shift
   ansible-playbook -i "$TMP/inventory" "$TMP/play.yml" --check \
-    --tags clickhouse --skip-tags preflight,clickhouse-install \
+    --tags clickhouse --skip-tags preflight,psql-dsn,clickhouse-install \
     "$@" > "$log" 2>&1
 }
 

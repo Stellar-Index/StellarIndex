@@ -11,8 +11,10 @@
 # Rule 2: secret-on-argv. A vault secret interpolated into `argv:` / `cmd:` of
 #   a command/shell task is visible to every local uid in /proc/<pid>/cmdline
 #   (+ ps, + auditd execve records) for the life of the process; `no_log: true`
-#   hides it from Ansible's OWN output only. Feed secrets via `stdin:` or
-#   `environment:`. Same for shipped shell scripts: `mc alias set` /
+#   hides it from Ansible's OWN output only. Feed secrets via `stdin:`. A
+#   task-level `environment:` is not a way out: ansible writes each value as
+#   a NAME=value prefix on the remote command, which is a command line too.
+#   Same for shipped shell scripts: `mc alias set` /
 #   `mc admin user add` must take the secret on stdin, not as an argument.
 #
 # Rule 3: follow-in-service-dir. `ansible.builtin.file` follows a symlink at
@@ -150,7 +152,13 @@ for f in "${yml_files[@]}"; do
       }
       if ((is_shell || is_cmd) && in_body \
           && line ~ /\{\{[^}]*(password|secret|_pass\b|token|api_key)[^}]*\}\}/) {
-        printf("%s:%d: secret-on-argv: vault value interpolated into the command body (visible in /proc/<pid>/cmdline; no_log hides it from Ansible output only) — feed it via `stdin:` or `environment:` (task: %s)\n",
+        printf("%s:%d: secret-on-argv: vault value interpolated into the command body (visible in /proc/<pid>/cmdline; no_log hides it from Ansible output only) — feed it via `stdin:` (task: %s)\n",
+               file, NR, task_name)
+        n++
+      }
+      if (key == "environment" && indent > key_indent \
+          && line ~ /\{\{[^}]*(password|secret|_pass[^a-z]|token|api_key|dsn)[^}]*\}\}/) {
+        printf("%s:%d: secret-on-argv: vault value in `environment:` — ansible writes it as a NAME=value prefix on the remote command (visible in /proc/<pid>/cmdline) — feed it via `stdin:` (task: %s)\n",
                file, NR, task_name)
         n++
       }

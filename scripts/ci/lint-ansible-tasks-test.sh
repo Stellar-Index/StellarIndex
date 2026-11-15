@@ -107,7 +107,7 @@ cat > "$T/secrets.yml" <<'YML'
     stdin: "{{ galexie_s3_secret_key }}"
   no_log: true
 
-- name: good — secret in environment
+- name: bad — secret in environment (ansible writes it onto the remote command line)
   ansible.builtin.command:
     argv:
       - /usr/local/bin/stellarindex-migrate
@@ -245,7 +245,7 @@ run() { (cd "$ROOT" && BASELINE="${1:-/nonexistent}" bash scripts/ci/lint-ansibl
 
 echo "case: no baseline"
 out="$(run)"; rc=$?
-expect_rc 12 "exit code = 12 findings"
+expect_rc 13 "exit code = 13 findings"
 expect_hit 'stage.yml:5: stage-in-tmp' "download into /tmp flagged"
 expect_hit 'stage.yml:9: stage-in-tmp' "quoted src under /tmp flagged"
 expect_miss 'stage.yml:1[0-9]:' "root-only scratch dir not flagged"
@@ -259,7 +259,7 @@ expect_miss 'pipefail.yml:17:' "args-form bash task not flagged"
 expect_miss 'pipefail.yml:25:' "copy:content script not flagged"
 expect_hit 'secrets.yml:10: secret-on-argv' "secret on argv flagged"
 expect_miss 'secrets.yml:21:' "stdin secret not flagged"
-expect_miss 'secrets.yml:31:' "environment secret not flagged"
+expect_hit 'secrets.yml:31: secret-on-argv' "environment secret flagged"
 expect_hit 'secrets.yml:37: secret-on-argv' "folded command body secret flagged"
 expect_hit 'bad.sh:3: secret-on-argv' "mc positional secret (continuation) flagged"
 expect_miss 'bad.sh:2:' "commented mc line not flagged"
@@ -279,7 +279,7 @@ expect_hit 'scanned 5 task files + 4 shell scripts' "self-accounting line"
 echo "case: baseline suppresses + stale entry fails"
 printf 'secret-on-argv\tconfigs/ansible/roles/fx/tasks/secrets.yml\npipefail-needs-bash\tconfigs/ansible/roles/fx/tasks/nolonger.yml\n' > "$TMP/baseline"
 out="$(run "$TMP/baseline")"; rc=$?
-# 12 live findings − 2 baselined (both secrets.yml) + 1 stale = 11
+# 13 live findings − 3 baselined (all secrets.yml) + 1 stale = 11
 expect_rc 11 "exit code = 11"
 expect_hit 'baselined (shrink-only' "baselined finding reported"
 expect_hit 'STALE baseline entry.*nolonger.yml' "stale entry flagged"

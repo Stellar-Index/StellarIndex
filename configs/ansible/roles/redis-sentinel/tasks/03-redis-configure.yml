@@ -14,11 +14,12 @@
   changed_when: false
 
 - name: detect current primary via Sentinel (skip on first run)
-  command: >-
-    redis-cli -h {{ ansible_host }} -p {{ redis_sentinel_port }}
-    SENTINEL get-master-addr-by-name {{ redis_sentinel_master_name }}
-  environment:
-    REDISCLI_AUTH: "{{ redis_password }}"
+  # The password travels on stdin: ansible writes `environment:` values onto the remote command line.
+  shell:
+    cmd: |
+      IFS= read -r REDISCLI_AUTH; export REDISCLI_AUTH
+      exec redis-cli -h {{ ansible_host }} -p {{ redis_sentinel_port }} SENTINEL get-master-addr-by-name {{ redis_sentinel_master_name }}
+    stdin: "{{ redis_password }}"
   register: redis_sentinel_state
   failed_when: false
   changed_when: false
@@ -33,18 +34,18 @@
     redis_sentinel_answered: "{{ redis_sentinel_state.rc == 0 and redis_sentinel_state.stdout_lines | length >= 1 }}"
 
 - name: ask the other Sentinels when the local one does not answer
-  shell: |
-    for h in {{ groups['redis_cluster'] | difference([inventory_hostname]) | map('extract', hostvars, 'ansible_host') | join(' ') }}; do
-      out=$(redis-cli -h "$h" -p {{ redis_sentinel_port }} SENTINEL get-master-addr-by-name {{ redis_sentinel_master_name }} 2>/dev/null | sed -n 1p) || continue
-      [ -n "$out" ] || continue
-      echo "$out"
-      exit 0
-    done
-    exit 1
-  args:
+  shell:
+    cmd: |
+      IFS= read -r REDISCLI_AUTH; export REDISCLI_AUTH
+      for h in {{ groups['redis_cluster'] | difference([inventory_hostname]) | map('extract', hostvars, 'ansible_host') | join(' ') }}; do
+        out=$(redis-cli -h "$h" -p {{ redis_sentinel_port }} SENTINEL get-master-addr-by-name {{ redis_sentinel_master_name }} 2>/dev/null < /dev/null | sed -n 1p) || continue
+        [ -n "$out" ] || continue
+        echo "$out"
+        exit 0
+      done
+      exit 1
+    stdin: "{{ redis_password }}"
     executable: /bin/bash
-  environment:
-    REDISCLI_AUTH: "{{ redis_password }}"
   register: redis_sentinel_peer_state
   failed_when: false
   changed_when: false
@@ -125,26 +126,26 @@
 # credential records. Under ACL lockdown only the sentinel
 # user holds CONFIG SET/REWRITE.
 - name: enforce maxmemory-policy on the running instance
-  shell: |
-    set -eu
-    cli() {
-      redis-cli -h {{ ansible_host }} -p {{ redis_port }} \
-        {{ ('--user ' ~ redis_sentinel_auth_user) if (redis_acl_lockdown | bool) else '' }} \
-        "$@"
-    }
-    current=$(cli CONFIG GET maxmemory-policy | sed -n 2p)
-    if [ "$current" = "{{ redis_maxmemory_policy }}" ]; then
-      echo unchanged
-      exit 0
-    fi
-    [ "$(cli CONFIG SET maxmemory-policy {{ redis_maxmemory_policy }})" = OK ]
-    [ "$(cli CONFIG REWRITE)" = OK ]
-    echo changed
-  args:
+  shell:
+    cmd: |
+      set -eu
+      IFS= read -r REDISCLI_AUTH; export REDISCLI_AUTH
+      cli() {
+        redis-cli -h {{ ansible_host }} -p {{ redis_port }} \
+          {{ ('--user ' ~ redis_sentinel_auth_user) if (redis_acl_lockdown | bool) else '' }} \
+          "$@" < /dev/null
+      }
+      current=$(cli CONFIG GET maxmemory-policy | sed -n 2p)
+      if [ "$current" = "{{ redis_maxmemory_policy }}" ]; then
+        echo unchanged
+        exit 0
+      fi
+      [ "$(cli CONFIG SET maxmemory-policy {{ redis_maxmemory_policy }})" = OK ]
+      [ "$(cli CONFIG REWRITE)" = OK ]
+      echo changed
+    # redis-cli reads the password from REDISCLI_AUTH, which the script takes from stdin.
+    stdin: "{{ redis_password }}"
     executable: /bin/bash
-  environment:
-    # redis-cli reads the password from here, keeping it off argv.
-    REDISCLI_AUTH: "{{ redis_password }}"
   register: redis_policy_enforce
   changed_when: redis_policy_enforce.stdout == 'changed'
   when: redis_sentinel_state.rc == 0
