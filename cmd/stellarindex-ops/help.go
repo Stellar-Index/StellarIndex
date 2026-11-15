@@ -889,7 +889,10 @@ Subcommands:
                           resumable (-resume, default true;
                           checkpoints into ingestion_cursors as
                           source="projected-rebuild",
-                          sub_source="<name>:<wlo>-<whi>" per window).
+                          sub_source="<name>:<wlo>-<whi>@<build>" per
+                          window; a resume skips only windows this
+                          build checkpointed, so a re-derive after a
+                          decoder fix re-walks them all).
                           Idempotent (every per-source table's ON
                           CONFLICT DO NOTHING) — safe to re-run or to
                           overlap with a retried window. Defaults to
