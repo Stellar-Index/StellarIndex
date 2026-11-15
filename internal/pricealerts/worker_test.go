@@ -126,6 +126,25 @@ func (s *fakeAlertStore) RearmPriceAlert(_ context.Context, id uuid.UUID, lastFi
 	return true, nil
 }
 
+// AbandonPriceAlertFire models the compare-and-swap UPDATE that undoes a claim.
+func (s *fakeAlertStore) AbandonPriceAlertFire(_ context.Context, id uuid.UUID, claimedAt, previous time.Time) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.dbDisarmed[id] || !s.dbLastFired[id].Equal(claimedAt) {
+		return false, nil
+	}
+	s.dbDisarmed[id] = false
+	s.dbLastFired[id] = previous
+	s.rearms++
+	for i := range s.enabled {
+		if s.enabled[i].ID == id {
+			s.enabled[i].Disarmed = false
+			s.enabled[i].LastFiredAt = previous
+		}
+	}
+	return true, nil
+}
+
 // sameRule mirrors the claim's rule predicate; thresholds compare as
 // NUMERIC values, so "0.15" equals "0.150".
 func sameRule(a, b platform.PriceAlert) bool {
@@ -854,18 +873,58 @@ func TestSweep_FanOutFailedCompletely_RearmsAndRetries(t *testing.T) {
 	if alerts.rearms != 1 || alerts.dbDisarmed[alert.ID] {
 		t.Fatalf("after a fully failed fan-out: rearms=%d disarmed=%v, want re-armed", alerts.rearms, alerts.dbDisarmed[alert.ID])
 	}
-	if got := alerts.dbLastFired[alert.ID]; !got.Equal(now) {
-		t.Errorf("last_fired_at = %v, want the claim's stamp %v kept for the cooldown", got, now)
+	if got := alerts.dbLastFired[alert.ID]; !got.IsZero() {
+		t.Errorf("last_fired_at = %v, want it back to never-fired: nothing was delivered", got)
 	}
 
+	// The next sweep retries: no delivery happened, so no cooldown runs.
 	hooks.enqErr = nil
-	sweepAfter(time.Minute) // inside the 300 s cooldown
-	if len(hooks.enqueued) != 0 {
-		t.Fatalf("enqueued %d inside the cooldown, want 0", len(hooks.enqueued))
-	}
-	sweepAfter(10 * time.Minute)
+	sweepAfter(time.Minute)
 	if len(hooks.enqueued) != 1 {
-		t.Fatalf("enqueued %d after the cooldown, want the retried crossing delivered once", len(hooks.enqueued))
+		t.Fatalf("enqueued %d on the sweep after a failed fan-out, want the crossing delivered", len(hooks.enqueued))
+	}
+	delivered := now
+	if got := alerts.dbLastFired[alert.ID]; !got.Equal(delivered) {
+		t.Errorf("last_fired_at = %v, want the delivering claim's stamp %v", got, delivered)
+	}
+	// A delivered fire does start the cooldown.
+	sweepAfter(time.Minute)
+	if len(hooks.enqueued) != 1 {
+		t.Fatalf("enqueued %d inside the cooldown of a delivered fire, want 1", len(hooks.enqueued))
+	}
+}
+
+// TestSweep_FanOutFailedCompletely_RestoresThePreviousFire: an alert that has fired before gets its
+// earlier stamp back, not NULL and not the failed claim's.
+func TestSweep_FanOutFailedCompletely_RestoresThePreviousFire(t *testing.T) {
+	acct := uuid.New()
+	now := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
+	earlier := now.Add(-24 * time.Hour)
+	alert := platform.PriceAlert{
+		ID: uuid.New(), AccountID: acct,
+		BaseAsset: "native", QuoteAsset: "fiat:USD",
+		Condition: platform.AlertAbove, Threshold: "0.15", Enabled: true,
+		CooldownSeconds: platform.MinAlertCooldownSeconds, LastFiredAt: earlier,
+	}
+	alerts := &fakeAlertStore{
+		enabled:     []platform.PriceAlert{alert},
+		dbLastFired: map[uuid.UUID]time.Time{alert.ID: earlier},
+	}
+	hooks := &fakeWebhooks{
+		byAcct: map[uuid.UUID][]platform.CustomerWebhook{
+			acct: {priceAlertWebhook(acct, true, string(platform.WebhookEventPriceAlert))},
+		},
+		enqErr: errors.New("delivery queue down"),
+	}
+	prices := &stepPrices{price: "0.20", bucket: now.Add(-time.Minute)}
+	w := New(alerts, hooks, prices, Options{
+		Interval: time.Second,
+		Logger:   quietLogger(),
+		Clock:    func() time.Time { return now },
+	})
+	w.Sweep(context.Background())
+	if got := alerts.dbLastFired[alert.ID]; !got.Equal(earlier) || alerts.dbDisarmed[alert.ID] {
+		t.Errorf("last_fired_at = %v disarmed = %v, want the earlier fire %v and re-armed", got, alerts.dbDisarmed[alert.ID], earlier)
 	}
 }
 

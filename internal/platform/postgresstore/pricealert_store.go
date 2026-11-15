@@ -229,6 +229,31 @@ func (c *PriceAlertStore) RearmPriceAlert(ctx context.Context, id uuid.UUID, las
 	return n == 1, nil
 }
 
+// AbandonPriceAlertFire re-arms and restores the pre-claim last_fired_at, compare-and-swap on the claim's own stamp.
+func (c *PriceAlertStore) AbandonPriceAlertFire(ctx context.Context, id uuid.UUID, claimedAt, previous time.Time) (bool, error) {
+	var prev any
+	if !previous.IsZero() {
+		prev = previous.UTC()
+	}
+	const q = `
+		UPDATE price_alerts
+		   SET disarmed      = false,
+		       last_fired_at = $3::timestamptz
+		 WHERE id = $1
+		   AND disarmed
+		   AND last_fired_at = $2::timestamptz
+	`
+	res, err := c.s.db.ExecContext(ctx, q, id, claimedAt.UTC(), prev)
+	if err != nil {
+		return false, fmt.Errorf("postgresstore: AbandonPriceAlertFire %s: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("postgresstore: AbandonPriceAlertFire %s rows affected: %w", id, err)
+	}
+	return n == 1, nil
+}
+
 // ─── helpers ────────────────────────────────────────────────────
 
 func (c *PriceAlertStore) queryAlerts(ctx context.Context, op, q string, args ...any) ([]platform.PriceAlert, error) {

@@ -2003,6 +2003,24 @@ func TestPlatformPostgresStores(t *testing.T) {
 			t.Error("refused a claim exactly at the cooldown boundary; want claimed")
 		}
 
+		// A claim whose fan-out delivered nothing is undone: re-armed, and the stamp back to the
+		// last fire that did deliver. A caller holding another stamp undoes nothing.
+		if ok, err := alerts.AbandonPriceAlertFire(ctx, created.ID, after.Add(time.Second), time.Time{}); err != nil || ok {
+			t.Fatalf("abandon with a stamp that is not the row's: abandoned=%v err=%v, want refused", ok, err)
+		}
+		if ok, err := alerts.AbandonPriceAlertFire(ctx, created.ID, after, firedAt); err != nil || !ok {
+			t.Fatalf("abandon the claim: abandoned=%v err=%v", ok, err)
+		}
+		if got, err = alerts.GetPriceAlert(ctx, created.ID); err != nil {
+			t.Fatalf("get after abandon: %v", err)
+		}
+		if got.Disarmed || !got.LastFiredAt.Equal(firedAt) {
+			t.Errorf("after abandon: disarmed=%v last_fired_at=%v, want armed at %v", got.Disarmed, got.LastFiredAt, firedAt)
+		}
+		if claimed, err := alerts.ClaimPriceAlertFire(ctx, created, after.Add(time.Minute)); err != nil || !claimed {
+			t.Errorf("claim a minute after an abandoned claim: claimed=%v err=%v, want claimed (no delivery, no cooldown)", claimed, err)
+		}
+
 		// A deleted alert claims nothing and is not an error — the
 		// evaluator treats it identically to losing the race.
 		if err := alerts.DeletePriceAlert(ctx, created.ID); err != nil {

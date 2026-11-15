@@ -109,4 +109,9 @@ type PriceAlertStore interface {
 	// last_fired_at still equals lastFiredAt, so a newer fire claimed by another evaluator stays
 	// disarmed. rearmed=false is not an error.
 	RearmPriceAlert(ctx context.Context, id uuid.UUID, lastFiredAt time.Time) (rearmed bool, err error)
+
+	// AbandonPriceAlertFire undoes a claim whose fan-out enqueued nothing: it re-arms and puts
+	// last_fired_at back to previous (zero = never fired), but only while the row still carries
+	// claimedAt. A fire that reached no webhook must not start a cooldown or be served as a fire.
+	AbandonPriceAlertFire(ctx context.Context, id uuid.UUID, claimedAt, previous time.Time) (abandoned bool, err error)
 }

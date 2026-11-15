@@ -138,6 +138,19 @@ func (s *fakeStore) RearmPriceAlert(_ context.Context, id uuid.UUID, lastFiredAt
 	return true, nil
 }
 
+// AbandonPriceAlertFire mirrors the store's undo of a claim. Unused by the dashboard handlers.
+func (s *fakeStore) AbandonPriceAlertFire(_ context.Context, id uuid.UUID, claimedAt, previous time.Time) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.alerts[id]
+	if !ok || !a.Disarmed || !a.LastFiredAt.Equal(claimedAt) {
+		return false, nil
+	}
+	a.Disarmed, a.LastFiredAt = false, previous
+	s.alerts[id] = a
+	return true, nil
+}
+
 func newTestRig(t *testing.T, quotas map[platform.Tier]int) (*Handlers, *fakeStore, dashboardauth.SessionContext) {
 	t.Helper()
 	store := newFakeStore()

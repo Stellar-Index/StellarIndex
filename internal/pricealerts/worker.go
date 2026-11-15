@@ -54,6 +54,7 @@ type AlertStore interface {
 	ListEnabledPriceAlerts(ctx context.Context) ([]platform.PriceAlert, error)
 	ClaimPriceAlertFire(ctx context.Context, a platform.PriceAlert, firedAt time.Time) (bool, error)
 	RearmPriceAlert(ctx context.Context, id uuid.UUID, lastFiredAt time.Time) (bool, error)
+	AbandonPriceAlertFire(ctx context.Context, id uuid.UUID, claimedAt, previous time.Time) (bool, error)
 }
 
 // WebhookEnqueuer is the account-scoped delivery seam: the evaluator lists the owning account's webhooks, filters to those subscribed to `price.alert`, and enqueues one delivery each (postgresstore.WebhookStore).
@@ -301,7 +302,7 @@ func (w *Worker) fire(ctx context.Context, a platform.PriceAlert, now time.Time,
 		return "", fmt.Errorf("build payload: %w", err)
 	}
 	// Claim the crossing BEFORE enqueuing: the claim disarms the alert, so a mid-fan-out failure
-	// never re-notifies a webhook. A fan-out that enqueued nothing re-arms below and retries.
+	// never re-notifies a webhook. A fan-out that enqueued nothing abandons the claim below and retries.
 	//
 	// The claim is CONDITIONAL in SQL, which makes coolingDown an optimisation, not the guarantee:
 	// it reads the LastFiredAt snapshot from the top of the sweep, so two evaluators (second
@@ -332,18 +333,21 @@ func (w *Worker) fire(ctx context.Context, a platform.PriceAlert, now time.Time,
 		enqueued += again
 	}
 	if enqueued == 0 {
-		// CAS on the stamp the claim just wrote, on a fresh budget: the usual
-		// cause is the fan-out exhausting ctx, which would sink the re-arm too.
+		// Nothing was delivered, so the claim is undone: re-armed, and last_fired_at back to what it was, or
+		// the retry would wait a cooldown no delivery started. The claim only succeeds past the cooldown, so
+		// the snapshot's stamp is the row's pre-claim one. CAS on the stamp the claim just wrote, on a fresh
+		// budget: the usual cause is the fan-out exhausting ctx, which would sink this too.
 		rearmCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), w.alertTimeout)
 		defer cancel()
-		_, rerr := w.alerts.RearmPriceAlert(rearmCtx, a.ID, now)
+		_, rerr := w.alerts.AbandonPriceAlertFire(rearmCtx, a.ID, now, a.LastFiredAt)
 		if rerr != nil {
-			err = errors.Join(err, fmt.Errorf("re-arm after failed fan-out: %w", rerr))
+			err = errors.Join(err, fmt.Errorf("abandon claim after failed fan-out: %w", rerr))
 		}
 		if err == nil {
 			// Every target belongs to a suspended or closed account. Not a failure, and the alert is armed again:
 			// a suspension is reversible, and a reinstated customer is owed a crossing that still holds.
-			w.logger.Info("price alert crossed but every delivery is withheld by account status",
+			// Debug: with no cooldown started this repeats every sweep while the crossing holds.
+			w.logger.Debug("price alert crossed but every delivery is withheld by account status",
 				"alert_id", a.ID, "account_id", a.AccountID, "targets", len(c.hooks))
 			return outcomeSuppressed, nil
 		}
