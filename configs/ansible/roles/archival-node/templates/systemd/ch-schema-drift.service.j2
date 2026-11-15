@@ -33,7 +33,6 @@
 Description=Stellar Index — ClickHouse schema drift check (repo intent vs {{ 'live' if drift_live else 'the newest daily snapshot' }})
 Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/adr/0043-backup-and-restore-strategy.md
 After=clickhouse-server.service ch-schema-snapshot.service network-online.target
-Wants=clickhouse-server.service
 
 # Restart-storm limit — matches the sibling oneshots (systemd >=230
 # ignores StartLimit* under [Service]).

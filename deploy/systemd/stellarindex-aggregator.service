@@ -15,7 +15,12 @@
 # Configuration:
 #   /etc/stellarindex.toml — [aggregate] + [anomaly] sections
 #
-# Dependencies (must be running BEFORE the aggregator starts):
+# Ordering only (After=, no Requires=), as the deployed templates: a
+# Requires= on a unit the host does not have (Postgres in a container
+# or managed) refuses to start, and a datastore stop leaves this unit
+# stopped, not failed, so nothing restarts it or alerts. The binary
+# retries its connections at boot.
+# Dependencies:
 #   - postgresql.service — reads trade rows
 #   - redis-server.service — writes VWAP + confidence cache
 #   - stellarindex-indexer.service — supplies the trades the
@@ -29,7 +34,6 @@ Description=Stellar Index — aggregator (VWAP / TWAP / confidence per ADR-0019)
 Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/adr/0019-anomaly-response-and-confidence-scoring.md
 After=network-online.target postgresql.service redis-server.service stellarindex-indexer.service
 Wants=network-online.target
-Requires=postgresql.service redis-server.service
 
 # Restart-storm limit — [Unit] directives per systemd.unit(5). systemd
 # >=230 (the Ubuntu 22.04/24.04 deploy targets) IGNORES StartLimit* if

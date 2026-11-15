@@ -2,7 +2,6 @@
 Description=pgBackRest scheduled backup (stellarindex stanza)
 Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/infra.md#stellarindex_timescale_backup_none_24h
 After=postgresql.service network-online.target
-Wants=postgresql.service
 
 [Service]
 Type=oneshot

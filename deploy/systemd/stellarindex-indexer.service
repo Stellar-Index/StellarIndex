@@ -18,7 +18,12 @@
 #   /etc/stellarindex.toml — global config (region, sources, storage)
 #   /etc/default/stellarindex-ops — AWS_ACCESS_KEY_ID + secret for MinIO read
 #
-# Dependencies (must be running BEFORE the indexer starts):
+# Ordering only (After=, no Requires=), as the deployed templates: a
+# Requires= on a unit the host does not have (Postgres in a container
+# or managed) refuses to start, and a datastore stop leaves this unit
+# stopped, not failed, so nothing restarts it or alerts. The binary
+# retries its connections at boot.
+# Dependencies:
 #   - minio.service (the source of ledger meta)
 #   - postgresql.service (the trade-row destination)
 #   - The `stellarindex` DB must exist + be migrated
@@ -38,7 +43,6 @@ Description=Stellar Index — indexer (decoder pipeline → canonical trades)
 Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/architecture/ingest-pipeline.md
 After=network-online.target minio.service postgresql.service redis-server.service
 Wants=network-online.target
-Requires=postgresql.service
 
 # Restart-storm limit — [Unit] directives per systemd.unit(5). systemd
 # >=230 (the Ubuntu 22.04/24.04 deploy targets) IGNORES StartLimit* if

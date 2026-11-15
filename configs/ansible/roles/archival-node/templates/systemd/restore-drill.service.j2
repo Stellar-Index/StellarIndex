@@ -18,7 +18,6 @@
 Description=Stellar Index — pgBackRest restore-drill (ADR-0043 / CS-110)
 Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/adr/0043-backup-and-restore-strategy.md
 After=postgresql.service network-online.target
-Wants=postgresql.service
 
 # Restart-storm limit — matches the stellarindex-*.service.j2 pattern
 # (systemd >=230 ignores StartLimit* under [Service]).

@@ -17,13 +17,17 @@
 #                                  secret env vars when SEP-10 is
 #                                  configured
 #
-# Dependencies (must be running BEFORE the api starts):
+# Ordering only (After=, no Requires=), as the deployed templates: a
+# Requires= on a unit the host does not have (Postgres in a container
+# or managed) refuses to start, and a datastore stop leaves this unit
+# stopped, not failed, so nothing restarts it or alerts. The binary
+# retries its connections at boot.
+# Dependencies:
 #   - postgresql.service — fallback path when Redis is empty
 #   - redis-server.service — primary read path for VWAP +
 #     confidence
-#   - clickhouse-server.service — ordering only (After=, not
-#     Requires=): a no-op when the lake is remote or absent. The
-#     binary retries its lake dials for a bounded window at boot.
+#   - clickhouse-server.service — a no-op when the lake is remote
+#     or absent.
 #
 # Notes:
 #   - The api binary listens on cfg.API.ListenAddr (default
@@ -40,7 +44,6 @@ Description=Stellar Index — public API (REST + SSE)
 Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/reference/api/index.html
 After=network-online.target postgresql.service redis-server.service clickhouse-server.service
 Wants=network-online.target
-Requires=postgresql.service redis-server.service
 
 # Restart-storm limit — [Unit] directives per systemd.unit(5). systemd
 # >=230 (the Ubuntu 22.04/24.04 deploy targets) IGNORES StartLimit* if

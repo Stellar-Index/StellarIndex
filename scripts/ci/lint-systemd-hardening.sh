@@ -12,6 +12,11 @@
 #                   ProtectKernelModules ProtectControlGroups set and not
 #                   disabled. DynamicUser=yes implies the first two.
 #   *.timer.j2    — an OnCalendar= with a fixed hour ends in " UTC".
+#   *.service.j2 with a *.timer.j2 beside it — no Wants=, Requires=,
+#                   BindsTo= or Requisite= on ClickHouse, MinIO, Postgres
+#                   or Redis: every tick would start a datastore an
+#                   operator stopped for maintenance. After= orders
+#                   without starting.
 #
 # A unit that cannot take a directive is declared in
 # $ROLE/templates/systemd/HARDENING-EXCEPTIONS as <unit>:<directive> with
@@ -62,6 +67,12 @@ for f in "$DIR"/*.service.j2; do
     fi
     enabled "$(value_of "$f" "$d")" || missing="$missing $d"
   done
+  if [ -f "${f%.service.j2}.timer.j2" ]; then
+    while IFS= read -r dep; do
+      echo "  STARTS-DATASTORE: $f is timer-driven and has '$dep' — each tick starts a stopped datastore; keep After= only"
+      fail=$((fail + 1))
+    done < <(grep -E '^[[:space:]]*(Wants|Requires|BindsTo|Requisite)[[:space:]]*=.*(clickhouse-server|minio|postgresql|redis)' "$f")
+  fi
   for d in $missing; do
     grep -qxF "$unit:$d" <<<"$declared" && continue
     echo "  UNHARDENED: $f does not set $d, and $unit:$d is not declared in $EXCEPTIONS"

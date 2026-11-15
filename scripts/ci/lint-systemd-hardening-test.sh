@@ -116,7 +116,24 @@ printf '[Timer]\nOnCalendar={{ backup_on_calendar }}\n' > "$UNITS/backup.timer.j
 run
 expect 'a templated calendar is left to its default' 0 'OK'
 
-# ── 7. An empty scan is a broken scan, not a pass ───────────────────
+# ── 7. A timer-driven unit must not start a datastore ───────────────
+{ printf '[Unit]\nAfter=clickhouse-server.service\nWants=clickhouse-server.service\n'; hardened; } > "$UNITS/backup.service.j2"
+printf '[Timer]\nOnCalendar=hourly\n' > "$UNITS/backup.timer.j2"
+run
+expect 'a timer-driven unit that Wants= a datastore fails' 1 "backup.service.j2 is timer-driven and has 'Wants=clickhouse-server.service'"
+{ printf '[Unit]\nAfter=postgresql.service\nRequires=postgresql@15-main.service\n'; hardened; } > "$UNITS/backup.service.j2"
+run
+expect 'Requires= on a datastore instance fails too' 1 'STARTS-DATASTORE'
+{ printf '[Unit]\nAfter=clickhouse-server.service minio.service\nWants=network-online.target\n'; hardened; } > "$UNITS/backup.service.j2"
+run
+expect 'After= on a datastore and Wants= on the network pass' 0 'OK'
+rm "$UNITS/backup.timer.j2"
+{ printf '[Unit]\nRequires=postgresql.service\n'; hardened; } > "$UNITS/backup.service.j2"
+run
+expect 'a long-running unit with no timer is not judged' 0 'OK'
+rm "$UNITS/backup.service.j2"
+
+# ── 8. An empty scan is a broken scan, not a pass ───────────────────
 rm -f "$UNITS"/*.j2
 run
 expect 'no templates found fails loudly' 2 'the scan is broken'

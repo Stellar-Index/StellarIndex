@@ -11,7 +11,6 @@
 Description=Stellar Index — ClickHouse lake data backup (ADR-0043 §2.4)
 Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-lake-backup.md
 After=clickhouse-server.service network-online.target
-Wants=clickhouse-server.service
 
 StartLimitIntervalSec=1h
 StartLimitBurst=3
