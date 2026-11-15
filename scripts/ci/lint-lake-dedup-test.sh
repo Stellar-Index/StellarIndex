@@ -608,6 +608,10 @@ catches "a join after a closed subquery belongs to the outer aggregate" \
   "$(shape closedsub 'SELECT count() FROM (SELECT account FROM stellar.account_activity) a JOIN stellar.operations o ON o.source_account = a.account')" \
   stellar.operations
 
+catches "a count() over contract_events is caught" \
+  "$(shape events 'SELECT contract_id, count() FROM stellar.contract_events WHERE ledger_seq > 5 GROUP BY contract_id')" \
+  stellar.contract_events
+
 check "a scalar subquery aggregate in the select list is not this read" 0 \
   "$(shape scalar 'SELECT ledger_seq, (SELECT count() FROM stellar.ledgers) AS n FROM stellar.operations WHERE ledger_seq = 5')"
 

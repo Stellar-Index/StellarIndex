@@ -3,8 +3,8 @@
 # table must read it through FINAL, or sit above a subquery that collapses it.
 #
 # `stellar.transactions`, `stellar.operations` and the amount-carrying
-# `stellar.supply_flows`, `stellar.account_movements` and
-# `stellar.movements_by_asset` are
+# `stellar.supply_flows`, `stellar.account_movements`,
+# `stellar.movements_by_asset` and `stellar.contract_events` are
 # ReplacingMergeTree(ingested_at) archives whose duplicates are not merged away
 # in BULK: on r1 every `(ledger_seq, tx_index)` key in `stellar.transactions`
 # has carried more than one row, and `stellar.operations` runs at 2.0x. A
@@ -85,9 +85,10 @@ set -euo pipefail
 cd "${1:-$(dirname "$0")/../..}"
 
 BASELINE="scripts/ci/lint-lake-dedup.baseline"
-# Not every ReplacingMergeTree in the lake: these are the two the rule was
-# written for and the three that carry amounts.
-LAKE_TABLES="transactions|operations|supply_flows|account_movements|movements_by_asset"
+# Not every ReplacingMergeTree in the lake: the two the rule was written for,
+# the three that carry amounts, and contract_events, which every protocol
+# count is taken from.
+LAKE_TABLES="transactions|operations|supply_flows|account_movements|movements_by_asset|contract_events"
 
 die() { echo "lint-lake-dedup: FAIL — $*" >&2; exit 1; }
 
