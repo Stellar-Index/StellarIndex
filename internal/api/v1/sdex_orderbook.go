@@ -195,7 +195,8 @@ func partitionLoadedBook(book, trusted map[string]clickhouse.LiveOffer) (served,
 			continue
 		}
 		if prev, ok := trusted[k]; ok && prev.Version == o.Version {
-			served[k] = o
+			// prev, not o: the loaded row at a tied version may be the pre-image the verify replaced.
+			served[k] = prev
 			continue
 		}
 		pending[k] = o
@@ -249,7 +250,7 @@ func (c *SDEXOrderBookCache) VerifyPending(ctx context.Context, limit int) (err 
 			continue // superseded by an Advance since the refs were drawn
 		}
 		res := resolved[ref.KeyXDR]
-		if !res.Removed && !res.HasPost {
+		if !res.Removed && !res.HasPost && !res.Loaded {
 			continue // the log cannot say which image is current: stays withheld
 		}
 		c.dropPendingLocked(ref.KeyXDR)
@@ -257,8 +258,11 @@ func (c *SDEXOrderBookCache) VerifyPending(ctx context.Context, limit int) (err 
 			continue // proven dead — never serve, never re-check
 		}
 		// Serve the post-image, never the tied survivor: that row may be the pre-image of this update.
-		post := res.Post
-		post.KeyXDR, post.Ledger, post.Version = o.KeyXDR, o.Ledger, o.Version
+		post := o
+		if res.HasPost {
+			post = res.Post
+			post.KeyXDR, post.Ledger, post.Version = o.KeyXDR, o.Ledger, o.Version
+		}
 		if post.Amount <= 0 || post.PriceN <= 0 || post.PriceD <= 0 {
 			continue
 		}

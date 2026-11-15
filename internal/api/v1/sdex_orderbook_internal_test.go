@@ -58,12 +58,8 @@ func (s *stubOfferBookReader) ResolveTiedOffers(_ context.Context, refs []clickh
 			out[ref.KeyXDR] = clickhouse.TiedOffer{Post: post, HasPost: true}
 			continue
 		}
-		// By default the loaded row is the post-image.
-		for _, o := range s.offers {
-			if o.KeyXDR == ref.KeyXDR {
-				out[ref.KeyXDR] = clickhouse.TiedOffer{Post: o, HasPost: true}
-			}
-		}
+		// By default nothing changed the offer at that ledger and the loaded row stands.
+		out[ref.KeyXDR] = clickhouse.TiedOffer{Loaded: true}
 	}
 	return out, nil
 }
@@ -301,6 +297,15 @@ func TestSDEXOrderBookCache_TiedSurvivorIsNotServedAsLoaded(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(obs.SDEXOrderBookPendingOffers); got != 1 {
 		t.Errorf("pending gauge = %v, want 1 (the unsettled offer stays withheld)", got)
+	}
+
+	// A reload reads the tied row again at the same version: the verified image stays, not the loaded one.
+	if err := c.Load(context.Background()); err != nil {
+		t.Fatalf("re-Load: %v", err)
+	}
+	snap, _ = c.snapshotMarket("native", usdc)
+	if len(snap.bids) != 1 || snap.bids[0].Amount != 10 {
+		t.Errorf("after reload bids = %+v, want the verified amount 10", snap.bids)
 	}
 }
 
