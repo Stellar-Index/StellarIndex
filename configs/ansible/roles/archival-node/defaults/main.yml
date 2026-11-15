@@ -140,9 +140,11 @@ zfs_datasets:
     compression: "zstd"
     atime: "off"
     mountpoint: "/var/lib/stellarindex"
-    # Must agree with 04-users.yml "Ownership — stellarindex data dir" (0750), or
-    # every apply ping-pongs and the drift check stays red.
-    dir_mode: "0750"
+    # Must agree with 04-users.yml "Ownership — stellarindex data dir", or
+    # every apply flips the mode twice and the drift check stays red
+    # (ansible-archival-datadirs-ownership-test.sh).
+    # Mode only: the stellarindex group does not exist yet when this runs.
+    dir_mode: "1770"
     # Holds hashdb.bin (ADR-0016 drift detector). Deliberately not in
     # zfs_snapshot_datasets or docs/operations/off-site-backup-plan.md's streams
     # (disposable; see that doc's §3 note).
