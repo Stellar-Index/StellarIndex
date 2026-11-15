@@ -5,7 +5,7 @@
 # enumeration command listed below — re-run periodically (after
 # every detected new pool / factory upgrade) to refresh.
 #
-# Total: 540 contracts across 8 sources, derived from an r1 walk
+# Total: 542 contracts across 8 sources, derived from an r1 walk
 # cross-checked via Soroban-RPC.
 # See docs/operations/wasm-audits/r1-walk-2026-05-01.md for the
 # audit synthesis that produced this list.
@@ -360,11 +360,13 @@ blend:
 
 comet:
   provenance: |
-    Hand-curated; only one known mainnet pool (Blend backstop). Add as discovered.
+    Hand-curated: Blend BLND/USDC backstop plus BLNT's canonical BLNT/USDC and BLNT/XLM V1.1 pools. Add verified deployments as discovered.
   notes: |
     Comet is Balancer-v1; (POOL, swap) topic is shared per AGENTS.md.
-  contracts:  # 1 total
+  contracts:  # 3 total
+    - CA5HX3D47PQZWC2E7VWXCKH4534P2NOJEOIXAWU47MI4QV2FQUYY3FLC
     - CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVGRVEAM
+    - CDQMIKIHKA5UY3FQJ2UDTLNX3GOPD3GPNZWSPTOBVOHEUMQJQXOPC7Y3
 
 phoenix:
   provenance: |

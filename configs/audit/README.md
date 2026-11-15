@@ -15,8 +15,9 @@ ContractInstance entries were TTL-evicted from RPC; that block was
 intentionally removed in the 2026-05-01 testnet-address cleanup —
 F-1269, 2026-05-13.)
 
-**Total: 540 contracts across 8 sources** (derived from the 2026-04-30
-r1 walk + 2026-05-01 cross-check).
+**Total: 542 contracts across 8 sources** (derived from the 2026-04-30
+r1 walk + 2026-05-01 cross-check, with the two canonical BLNT Comet V1.1 pools added on
+2026-11-15).
 
 To re-run a walk for a single source:
 

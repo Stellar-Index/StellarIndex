@@ -31,6 +31,12 @@ type ProtocolMeta struct {
 	// (C-strkeys) the decoder anchors on (ADR-0035). Empty when the
 	// source has no factory model (oracles, sdex, bridges).
 	Factories []string
+	// StaticInstances lists verified protocol contracts that are not yet populated by a live
+	// protocol_contracts decoder. They are rendered as ordinary instances (not modules), included
+	// in lake analytics, and labelled by the contract-to-protocol index. Factory-anchored sources
+	// should prefer the dynamic registry once their decoder is wired; this field is the honest
+	// bridge for directory-first coverage of an already-deployed protocol.
+	StaticInstances []StaticProtocolContract
 	// EventKinds lists the EventKind() discriminators this source's
 	// decoder emits — the wire vocabulary of its decoded output.
 	EventKinds []string
@@ -49,6 +55,28 @@ type ProtocolMeta struct {
 	// source.
 	ExtraEventSources []string
 }
+
+// StaticProtocolContract is one verified, non-factory protocol instance carried in the static
+// directory until a decoder-backed protocol_contracts row supersedes it. FirstLedger is the
+// contract-creation ledger; FactoryID records its verified deployment anchor.
+type StaticProtocolContract struct {
+	ContractID  string
+	FactoryID   string
+	FirstLedger uint32
+}
+
+const (
+	blntGenesisLedger uint32 = 65_134_154
+
+	blntPoolFactory    = "CAKLFWAHB2RIYRBSPUL6EH43AIQ5ILBEM7HTMWYSJRL7PHZQ676KMCV5"
+	blntBackstop       = "CAHCUKBPTW5DR5RNXOHCTJD5U76A6EEZXYZAQFRQEEQRXQ3CRUZ6Z3MO"
+	blntEmitter        = "CDSO6FQSBJ3U3AJHBNNLHHKSMKTTDDN3GLGF3KZTMXBFV7SVB43ZJERT"
+	blntBackfill       = "CANIE64BDFKLHROLOIY2KTQVBWUZNUKZP75DLXC272QM7TIN5N3M4LVA"
+	blntLockupBackfill = "CBNRUFL5KYTT7TQMYKRMHQU5KY4LDQEUVXLI6ECKJU7OJGHC3OLGJFBV"
+
+	blntFixedPool      = "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7"
+	blntYieldBlentPool = "CAUTPSQDAJEUV5XEU3EXFVYRGDJLEJGVTFJCFZCSPTDCREAMZ573VF4D"
+)
 
 // protocolRegistry is the static protocol directory served by
 // GET /v1/protocols. Ordering here is the wire ordering.
@@ -86,7 +114,7 @@ var protocolRegistry = withVerificationPages([]ProtocolMeta{
 	{
 		Name:          "comet",
 		Category:      "amm",
-		Description:   "Comet — Balancer-v1-style weighted pools on Soroban (home of the BLND/USDC pool).",
+		Description:   "Comet — Balancer-v1-style weighted pools on Soroban, including the Blend BLND/USDC and canonical BLNT liquidity pools.",
 		GenesisLedger: 51_499_546,
 		EventKinds:    []string{"comet.trade", "comet.liquidity"},
 	},
@@ -121,6 +149,21 @@ var protocolRegistry = withVerificationPages([]ProtocolMeta{
 		// event count).
 		ExtraContracts:    []string{blend_backstop.MainnetBackstopV1, blend_backstop.MainnetBackstopV2, blend_emitter.MainnetEmitter},
 		ExtraEventSources: []string{blend_backstop.SourceName, blend_emitter.SourceName},
+	},
+	{
+		Name:          "blnt",
+		Category:      "lending",
+		Description:   "BLNT V3 — a Blend-derived lending protocol on Soroban with RWA support and tiered backstops.",
+		GenesisLedger: blntGenesisLedger,
+		Factories:     []string{blntPoolFactory},
+		StaticInstances: []StaticProtocolContract{
+			{ContractID: blntFixedPool, FactoryID: blntPoolFactory, FirstLedger: 65_134_362},
+			{ContractID: blntYieldBlentPool, FactoryID: blntPoolFactory, FirstLedger: 65_327_498},
+		},
+		// The backstop, emitter, primary backfill, and supplemental lockup-backfill contracts have
+		// their own event surfaces but are BLNT modules. EventKinds remains empty until a dedicated
+		// BLNT decoder lands; raw lake activity is still scoped to this verified roster.
+		ExtraContracts: []string{blntBackstop, blntEmitter, blntBackfill, blntLockupBackfill},
 	},
 	{
 		Name:          "sorocredit",

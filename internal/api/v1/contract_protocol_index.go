@@ -131,6 +131,11 @@ func (s *Server) buildContractProtocolIndex(ctx context.Context) (byID map[strin
 		for _, id := range meta.Factories {
 			out[id] = meta.Name
 		}
+		for _, instance := range meta.StaticInstances {
+			if instance.ContractID != "" {
+				out[instance.ContractID] = meta.Name
+			}
+		}
 		for _, id := range meta.ExtraContracts {
 			out[id] = meta.Name
 		}

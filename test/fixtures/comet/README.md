@@ -11,9 +11,10 @@ curated allowlisted pool, `internal/sources/comet/events.go`'s
 `MainnetBackstopPool` (Blend's BLND/USDC backstop,
 `CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVGRVEAM`, WASM
 `8abc28913035c07411ed5d134e6bfeab4723d97ddd4d1a22a0605d35c94d1a36`).
-Comet has exactly one deployed pool (`docs/operations/wasm-audits/comet.md`),
-so this single capture covers the whole allowlist per GH-932's fix
-direction.
+This fixture verifies the historical Blend pool and its `8abc2891…` WASM lineage. The curated
+allowlist also contains two canonical BLNT Comet V1.1 pools; identity-gate tests pin those
+contracts, while the audited V1.1 interface establishes event compatibility. A future real-event
+fixture from the V1.1 pools would strengthen byte-level coverage but is not implied by this file.
 
 ## Self-pair swaps
 

@@ -392,6 +392,42 @@ func TestDecoder_GateRejectsForeignContract(t *testing.T) {
 	}
 }
 
+func TestMainnetGatedSetIncludesCanonicalPools(t *testing.T) {
+	want := map[string]bool{
+		MainnetBackstopPool: false,
+		MainnetBLNTUSDCPool: false,
+		MainnetBLNTXLMPool:  false,
+	}
+	got := MainnetGatedSet()
+	if len(got) != len(want) {
+		t.Fatalf("MainnetGatedSet length = %d, want %d: %v", len(got), len(want), got)
+	}
+	for _, contractID := range got {
+		seen, ok := want[contractID]
+		if !ok {
+			t.Errorf("unexpected mainnet Comet pool %s", contractID)
+			continue
+		}
+		if seen {
+			t.Errorf("duplicate mainnet Comet pool %s", contractID)
+		}
+		want[contractID] = true
+	}
+	for contractID, seen := range want {
+		if !seen {
+			t.Errorf("missing mainnet Comet pool %s", contractID)
+		}
+	}
+
+	d := NewDecoder()
+	for _, contractID := range []string{MainnetBLNTUSDCPool, MainnetBLNTXLMPool} {
+		ev := events.Event{ContractID: contractID, Topic: []string{TopicSymbolPool, TopicSymbolSwap}}
+		if !d.Matches(ev) {
+			t.Errorf("production decoder does not admit canonical BLNT Comet pool %s", contractID)
+		}
+	}
+}
+
 func TestDecoder_Decode_FailsClosedOnMissingClosedAt(t *testing.T) {
 	// With LedgerClosedAt empty the adapter must FAIL CLOSED (return the error), not substitute
 	// time.Now(), which would stamp backfill replays with the replay run's time. Matches the

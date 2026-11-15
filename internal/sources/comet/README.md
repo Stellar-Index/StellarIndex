@@ -10,14 +10,10 @@ pool has a configurable weight, and the spot price between any two
 tokens is a function of their reserves AND their weights. Pools
 are N-token (up to 8 in Balancer-v1; Stellar limit unconfirmed).
 
-**The most visible Comet pool on pubnet is Blend's BLND/USDC
-backstop** — a `comet.wasm` is vendored at the root of
-`blend-contracts/`. Blend uses the Comet pool as its backstop LP,
-so even a pubnet without a standalone Comet DEX gives us BLND
-pricing for free once this decoder runs.
-
-Whether there is a *separate* Comet DEX with public trading pools
-beyond Blend's backstop is an open question.
+The curated pubnet set contains Blend's BLND/USDC backstop and the
+canonical BLNT/USDC and BLNT/XLM Comet V1.1 pools. Blend uses its
+pool as the backstop LP; BLNT V3 uses the two V1.1 LPs as canonical
+liquidity and backstop assets.
 
 ## Topic shape — shared, not per-protocol
 
@@ -30,8 +26,8 @@ The decoder ROUTES on topic-bytes match (`Topic[0] == "POOL"`
 plus topic[1] ∈ {swap, join_pool, exit_pool, deposit, withdraw}) but
 ATTRIBUTES on contract identity (ADR-0035/0040, since 2026-07-08):
 `Matches()` requires the emitting contract to be in the curated
-registry — `MainnetGatedSet()` (today exactly one pool, Blend's
-BLND/USDC backstop) plus the `protocol_contracts` DB warm. A
+registry — `MainnetGatedSet()` (the three verified pools above) plus
+the `protocol_contracts` DB warm. A
 comet-shaped event from an unregistered contract is not attributed;
 it surfaces in the recognition audit instead (fail-closed, CS-026
 closed).

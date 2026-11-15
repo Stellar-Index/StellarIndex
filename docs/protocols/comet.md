@@ -1,6 +1,6 @@
 ---
 title: Comet — contract & event verification
-last_verified: 2026-07-08
+last_verified: 2026-11-15
 status: current
 ---
 
@@ -9,21 +9,20 @@ status: current
 > **For the Comet / Blend teams:** this documents how Stellar Index
 > attributes Comet weighted-AMM trades and liquidity flow. As of
 > 2026-07-08 Comet is **gated on contract identity** (a curated
-> one-pool allowlist — see "Gate status" below); before that date it
+> allowlist — see "Gate status" below); before that date it
 > was the one integrated on-chain source not yet gated, and rows
 > captured before the gate shipped were not retroactively re-verified.
 > If you can send us further live Comet pool contracts beyond the
-> known Blend backstop (or point us at a factory / WASM-hash we can
+> verified set (or point us at a factory / WASM-hash we can
 > enumerate from), we can grow the curated set.
 >
 > - **Enumeration method:** curated allowlist (ADR-0040 §1 mechanism 3) —
->   the WASM-audit census found exactly ONE Comet pool on mainnet
->   (Blend's BLND/USDC backstop), and the decoder's `MainnetGatedSet`
->   seeds it as the trust root. The WASM-hash sweep is the registered
->   upkeep loop for discovering future byte-identical deployments.
-> - **Last verified:** 2026-07-08 (source: `internal/sources/comet`;
->   WASM audit `docs/operations/wasm-audits/comet.md`, 2026-05-26).
-> - **Gate status:** ✅ **GATED (curated one-pool allowlist, 2026-07-08 —
+>   the decoder's `MainnetGatedSet` seeds the verified Blend BLND/USDC,
+>   BLNT/USDC, and BLNT/XLM pools as trust roots. Manual contract, artifact, and interface
+>   verification is the upkeep loop for admitting future deployments.
+> - **Last verified:** 2026-11-15 (source: `internal/sources/comet`;
+>   WASM audit `docs/operations/wasm-audits/comet.md`).
+> - **Gate status:** ✅ **GATED (curated three-pool allowlist; gate shipped 2026-07-08 —
 >   CS-026 closed; comet was the last ungated source). Rows captured
 >   before 2026-07-08 predate the gate and were not retroactively
 >   re-verified.**
@@ -36,15 +35,15 @@ configurable weight, and the spot price between any two tokens is a
 function of both their reserves and their weights (up to 8 tokens per
 pool in Balancer-v1; the Stellar-side limit is unconfirmed).
 
-The **only positively-identified Comet pool on mainnet is Blend's
-BLND/USDC backstop** — Blend vendors `comet.wasm` and uses a Comet pool
-as its backstop LP. That single pool is what gives us BLND pricing.
-Whether a standalone Comet DEX with independent public pools exists
-beyond Blend's backstop is an open question.
+The positively identified mainnet set contains Blend's BLND/USDC backstop and BLNT's canonical
+BLNT/USDC and BLNT/XLM Comet V1.1 pools. Blend uses its pool as a backstop LP; BLNT V3 uses the
+two V1.1 pools as canonical liquidity and backstop assets.
 
 | Role | Contract | WASM hash |
 |---|---|---|
-| Blend backstop Comet pool (only known mainnet pool) | `CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVGRVEAM` | `8abc28913035c07411ed5d134e6bfeab4723d97ddd4d1a22a0605d35c94d1a36` |
+| Blend BLND/USDC backstop | `CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVGRVEAM` | `8abc28913035c07411ed5d134e6bfeab4723d97ddd4d1a22a0605d35c94d1a36` |
+| Canonical BLNT/USDC V1.1 pool | `CDQMIKIHKA5UY3FQJ2UDTLNX3GOPD3GPNZWSPTOBVOHEUMQJQXOPC7Y3` | `d735c3395f59510172cf5cf838823a1389b97cfec6bf24e580e9bd77d2b3e687` |
+| Canonical BLNT/XLM V1.1 pool | `CA5HX3D47PQZWC2E7VWXCKH4534P2NOJEOIXAWU47MI4QV2FQUYY3FLC` | `d735c3395f59510172cf5cf838823a1389b97cfec6bf24e580e9bd77d2b3e687` |
 
 ## Topic shape — shared, not per-protocol
 
@@ -120,8 +119,8 @@ populates and nothing alerts on it.
 `Decoder.Matches` gates on **contract identity** (ADR-0035/0040):
 an event is attributed to comet only when it carries a recognised
 `("POOL", <event>)` topic **and** was emitted by a pool in the curated
-registry — the in-code `comet.MainnetGatedSet()` (today exactly one
-pool, Blend's BLND/USDC backstop `CAS3FL6T…`) plus the
+registry — the in-code `comet.MainnetGatedSet()` (the three verified
+pools in the table above) plus the
 `protocol_contracts` DB warm. Comet has **no factory namespace** to
 anchor a deploy-graph gate on (the enumeration methods that gate
 Soroswap/Blend/Aquarius don't apply), so this is the ADR-0040 §1
@@ -146,9 +145,9 @@ attributed as comet once admitted. → also
 
 ## Backfill safety
 
-`BackfillSafe = true` in `internal/sources/external/registry.go` (audited
-2026-04-29; the only known mainnet pool is the Blend backstop, WASM
-`8abc2891…`, no mid-life upgrade observed). Note the distinction:
+`BackfillSafe = true` in `internal/sources/external/registry.go`. The historical Blend pool's
+`8abc2891…` lineage was audited in 2026-04; the two BLNT pools' released Comet V1.1
+`d735c339…` lineage was verified on 2026-11-15. Note the distinction:
 **backfill-safety** (the current decoder is trusted against every WASM
 version that ran over the replay range) is orthogonal to **gating** (which
 contracts are attributed to `comet`). Comet is backfill-safe **and**
@@ -168,5 +167,5 @@ dropped by the gate and surfaced by the recognition audit.
 Class `Exchange` / `IncludeInVWAP=true` (`external.Registry`) — Comet
 swaps are genuine executed trades and contribute to VWAP. With the
 2026-07-08 identity gate, everything attributed to `comet` comes from
-the curated pool set (today: the Blend backstop pool), so the CS-026
+the curated pool set, so the CS-026
 integrity caveat that previously applied here is closed.

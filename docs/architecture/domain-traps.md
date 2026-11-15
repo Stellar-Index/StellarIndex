@@ -33,11 +33,11 @@ linked design doc has the full detail.
   Strategies are now admitted exactly like vaults: curated seed or an
   operator `protocol_contracts` row. The extraction survives only as a
   one-off audit tool. See docs/protocols/defindex.md and
-  TestDecode_factoryCreate_doesNotSeedFromBody) and `comet` (curated one-pool allowlist —
+  TestDecode_factoryCreate_doesNotSeedFromBody) and `comet` (curated three-pool allowlist —
   no KNOWN DEPLOYED mainnet factory; upstream ships a factory contract
   emitting `("LOG","NEW_POOL")`, so factory anchoring becomes available
-  if one ever deploys; the only mainnet pool is Blend's BLND/USDC
-  backstop, seeded in-code via `comet.MainnetGatedSet`; 2026-07-08, closes
+  if one ever deploys; the Blend BLND/USDC backstop and canonical BLNT/USDC and
+  BLNT/XLM pools are seeded in-code via `comet.MainnetGatedSet`; 2026-07-08, closes
   CS-026) all gate `Matches()` on contract identity. A future genuine
   comet pool must be operator-admitted (`seed-protocol-contracts -source
   comet` / a `protocol_contracts` row) before its events attribute —

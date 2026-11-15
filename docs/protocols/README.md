@@ -1,6 +1,6 @@
 ---
 title: Protocol verification pages
-last_verified: 2026-09-02
+last_verified: 2026-11-15
 status: current
 ---
 
@@ -64,12 +64,13 @@ tell us if a contract is missing or mis-attributed.
 |---|---|---|---|
 | Soroswap | lake deploy-graph | ✅ Gated (4 factories) | [soroswap.md](soroswap.md) |
 | Blend | lake deploy-graph | ✅ Gated (2 factories, 27 pools) — lending, excluded from VWAP | [blend.md](blend.md) |
+| BLNT V3 | canonical deployment records | 🔎 Enumerated (1 factory, 2 pools, 4 modules); dedicated decoder pending — lending, excluded from VWAP | [blnt.md](blnt.md) |
 | Blend Emitter | lake topic census (single contract) | ✅ Gated (curated 1-contract allowlist, 2026-07-09) — BLND emissions plumbing, `Lending` class, excluded from VWAP | [blend_emitter.md](blend_emitter.md) |
 | SoroCredit | single trust-root | ✅ Gated (1 contract + child collateral positions) — consumer USDC credit/CDP, no pricing signal | [sorocredit.md](sorocredit.md) |
 | Aquarius | router-anchored | ✅ Gated (router + 332 pools, 2026-07-05) | [aquarius.md](aquarius.md) |
 | Phoenix | RPC view (pre-lake) | ✅ Gated code-side (curated set, 2026-07-02); operator rollout pending | [phoenix.md](phoenix.md) |
 | DeFindex | multi-proof classification | ✅ Gated (curated 85 vaults + 16 strategies, 4 factories, 2026-07-05) | [defindex.md](defindex.md) |
-| Comet | curated allowlist (no deployed factory) | ✅ Gated (1 pool, 2026-07-08 — CS-026 closed) | [comet.md](comet.md) |
+| Comet | curated allowlist (no deployed factory) | ✅ Gated (3 pools, verified 2026-11-15 — CS-026 closed) | [comet.md](comet.md) |
 | SushiSwap V3 | lake deploy-graph (factory `pool_created` carries the pool AND its tokens) | ✅ Gated (1 factory, 58 pools, 2026-09-05) — concentrated liquidity, no reserve-derived TVL | [sushiswap_v3.md](sushiswap_v3.md) |
 | Upshift | lake bespoke-symbol census (no factory) | ✅ Gated (curated 2-vault allowlist, 2026-09-09) — tokenized yield vaults, no price, excluded from VWAP | [upshift.md](upshift.md) |
 | Spectra | factory deploy-graph (factory trust root; registry, router and order engines curated) | ✅ Gated (events only, no price or TVL) — yield tokenisation, trades via limit orders, never added to RWA totals | [spectra.md](spectra.md) |
@@ -90,7 +91,8 @@ tell us if a contract is missing or mis-attributed.
 > **Comet closed the last gap (CS-026) on 2026-07-08.** It has no known
 > deployed mainnet factory, so it cannot be factory-anchored; instead the
 > decoder gates on a curated allowlist seeded in code
-> (`comet.MainnetGatedSet`, today exactly the BLND/USDC backstop pool) and
+> (`comet.MainnetGatedSet`, the Blend BLND/USDC backstop plus the canonical
+> BLNT/USDC and BLNT/XLM pools) and
 > its `Matches` returns `d.reg.Has(ev.ContractID)`
 > (`internal/sources/comet/dispatcher_adapter.go`). A future genuine Comet
 > pool must be operator-admitted before its events attribute — fail-closed,

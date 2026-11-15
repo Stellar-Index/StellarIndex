@@ -21,11 +21,20 @@ import (
 // SourceName is the canonical string stamped on every event this package emits.
 const SourceName = "comet"
 
-// MainnetBackstopPool is the single known Comet pool on mainnet, Blend's BLND/USDC backstop (the wasm-audit census, docs/operations/wasm-audits/comet.md, found exactly one).
+// MainnetBackstopPool is Blend's BLND/USDC backstop pool. The historical name is retained because
+// callers already use it; the curated set also includes the two canonical BLNT Comet V1.1 pools.
 const MainnetBackstopPool = "CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVGRVEAM"
 
+// MainnetBLNTUSDCPool and MainnetBLNTXLMPool are BLNT's canonical Comet V1.1 liquidity pools.
+const (
+	MainnetBLNTUSDCPool = "CDQMIKIHKA5UY3FQJ2UDTLNX3GOPD3GPNZWSPTOBVOHEUMQJQXOPC7Y3"
+	MainnetBLNTXLMPool  = "CA5HX3D47PQZWC2E7VWXCKH4534P2NOJEOIXAWU47MI4QV2FQUYY3FLC"
+)
+
 // MainnetGatedSet is the curated Comet pool allowlist, the ADR-0040 trust root (no factory event to anchor on); a new pool must be operator-admitted, until then it fails closed as a visible ADR-0033 recognition gap.
-func MainnetGatedSet() []string { return []string{MainnetBackstopPool} }
+func MainnetGatedSet() []string {
+	return []string{MainnetBackstopPool, MainnetBLNTUSDCPool, MainnetBLNTXLMPool}
+}
 
 // cometTopicArity is the minimum topic count on every Comet event: [Symbol("POOL"),
 // Symbol("<event_name>")]. classify checks a floor, not equality, so an event with extra trailing

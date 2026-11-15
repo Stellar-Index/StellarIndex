@@ -336,6 +336,18 @@ verified_currencies:
         issuer: GDJEHTBE6ZHUXSWFI642DCGLUOECLHPF3KSXHPXTSTJ7E3JF6MQ5EZYY
         asset_id: BLND-GDJEHTBE6ZHUXSWFI642DCGLUOECLHPF3KSXHPXTSTJ7E3JF6MQ5EZYY
 
+  - ticker: BLNT
+    slug: blnt
+    name: BLNT Protocol
+    description: Utility token for BLNT V3, an immutable lending protocol derived from Blend and designed to support real-world assets.
+    class: crypto
+    verified_issuer_label: BLNT Protocol (blnt.trade)
+    networks:
+      - network: stellar
+        code: BLNT
+        issuer: GAP2ACGH3O6TRFAERGM4USJ6XWU3U2BFIK224JPV6NI3CUNEEEGTBTFB
+        asset_id: BLNT-GAP2ACGH3O6TRFAERGM4USJ6XWU3U2BFIK224JPV6NI3CUNEEEGTBTFB
+
   - ticker: PHO
     slug: pho
     name: Phoenix
