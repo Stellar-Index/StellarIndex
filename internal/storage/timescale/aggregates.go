@@ -900,21 +900,37 @@ func (s *Store) ClosedVWAPAtOrBefore(ctx context.Context, p canonical.Pair, ts t
 
 // closedVWAPAtOrBeforeQueryTemplate returns the nearest closed bucket's RAW per-direction rows at-or-before an instant.
 // %[1]s table, %[2]s/%[3]s upper/lower bound literals (not binds), so chunks prune at plan time. $3 is the non-VWAP source
-// set: a bucket fed only by those sources is neither the latest nor served.
+// set: a bucket fed only by those sources is neither the latest nor served. %[4]s is the notional predicate of the
+// preferred arms: a bucket with a direction that clears it wins over a newer one with none, and when nothing in the
+// window clears it the newest bucket is served as before.
 const closedVWAPAtOrBeforeQueryTemplate = `
     WITH latest AS (
-        SELECT max(b) AS b FROM (
-            SELECT max(bucket) AS b FROM %[1]s
+        SELECT COALESCE(max(b) FILTER (WHERE substantive), max(b)) AS b FROM (
+            SELECT max(bucket) AS b, false AS substantive FROM %[1]s
              WHERE base_asset = $1 AND quote_asset = $2 AND vwap IS NOT NULL
                AND bucket <= TIMESTAMPTZ '%[2]s'
                AND bucket >= TIMESTAMPTZ '%[3]s'
                AND NOT COALESCE(sources <@ string_to_array($3, ','), false)
             UNION ALL
-            SELECT max(bucket) AS b FROM %[1]s
+            SELECT max(bucket) AS b, false AS substantive FROM %[1]s
              WHERE base_asset = $2 AND quote_asset = $1 AND vwap IS NOT NULL
                AND bucket <= TIMESTAMPTZ '%[2]s'
                AND bucket >= TIMESTAMPTZ '%[3]s'
                AND NOT COALESCE(sources <@ string_to_array($3, ','), false)
+            UNION ALL
+            SELECT max(bucket) AS b, true AS substantive FROM %[1]s
+             WHERE base_asset = $1 AND quote_asset = $2 AND vwap IS NOT NULL
+               AND bucket <= TIMESTAMPTZ '%[2]s'
+               AND bucket >= TIMESTAMPTZ '%[3]s'
+               AND NOT COALESCE(sources <@ string_to_array($3, ','), false)
+               AND %[4]s
+            UNION ALL
+            SELECT max(bucket) AS b, true AS substantive FROM %[1]s
+             WHERE base_asset = $2 AND quote_asset = $1 AND vwap IS NOT NULL
+               AND bucket <= TIMESTAMPTZ '%[2]s'
+               AND bucket >= TIMESTAMPTZ '%[3]s'
+               AND NOT COALESCE(sources <@ string_to_array($3, ','), false)
+               AND %[4]s
         ) u
     ),
     r AS (
@@ -953,10 +969,16 @@ func (s *Store) closedVWAPAtOrBeforeRes(
 	lower := ts.Add(-(maxStaleness + 2*res))
 	const layout = "2006-01-02 15:04:05-07"
 	table := "prices_" + string(g)
+	// The 1m rung has the trailing-baseline guard above it. A coarser bar has none, so a bucket holding only
+	// sub-cent prints (the OHLC dust floor) does not stand in for an older bucket that traded for real.
+	substantive := "volume_usd >= 0.01"
+	if g == Granularity1m {
+		substantive = "false"
+	}
 	// #nosec G201 — only `table` (from the validated enum) and two of our own time.Time bounds in
 	// a fixed layout are interpolated. Pair strings bind as $1/$2, the non-VWAP source set as $3.
 	q := fmt.Sprintf(closedVWAPAtOrBeforeQueryTemplate,
-		table, upper.UTC().Format(layout), lower.UTC().Format(layout))
+		table, upper.UTC().Format(layout), lower.UTC().Format(layout), substantive)
 
 	rows, err := s.db.QueryContext(ctx, q, p.Base.String(), p.Quote.String(), nonVWAPSourcesArg())
 	if err != nil {

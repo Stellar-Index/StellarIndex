@@ -1587,6 +1587,67 @@ func TestClosedVWAPAtOrBefore_SkipsVendorOnlyBuckets(t *testing.T) {
 	}
 }
 
+// Past the minute rung nothing judges a bar, so a quiet hour holding only a sub-cent print must not stand in for
+// the last hour that traded for real; a market with nothing but such prints still serves its newest bucket.
+func TestClosedVWAPAtOrBefore_DustOnlyCoarseBucketDoesNotWin(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	db := store.DB()
+
+	const issuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	mkPair := func(code string) canonical.Pair {
+		t.Helper()
+		a, err := canonical.NewClassicAsset(code, issuer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err := canonical.NewPair(canonical.NativeAsset(), a)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	real, dustOnly := mkPair("USDC"), mkPair("EURC")
+
+	hour := time.Now().UTC().Truncate(time.Hour)
+	realTS, dustTS, unpricedTS, asOf := hour.Add(-80*time.Hour), hour.Add(-76*time.Hour), hour.Add(-74*time.Hour), hour.Add(-70*time.Hour)
+	// A real hour at 0.5, then two later hours each holding one crumb at 100x: one priced under a cent, stored
+	// the other way round, and one with no USD stamp at all.
+	seedGrainTrade(t, ctx, db, 901, "sdex", realTS, real.Base.String(), real.Quote.String(), "10000000000", "5000000000", "500")
+	seedGrainTrade(t, ctx, db, 902, "sdex", dustTS, real.Quote.String(), real.Base.String(), "50", "1", "0.000005")
+	seedGrainTrade(t, ctx, db, 903, "sdex", unpricedTS, real.Base.String(), real.Quote.String(), "1", "50", "0")
+	seedGrainTrade(t, ctx, db, 904, "sdex", dustTS, dustOnly.Base.String(), dustOnly.Quote.String(), "1", "50", "0.000005")
+	for _, v := range []string{"prices_1m", "prices_15m", "prices_1h", "prices_4h", "prices_1d"} {
+		if _, err := db.ExecContext(ctx, `CALL refresh_continuous_aggregate('`+v+`', NULL, NULL)`); err != nil {
+			t.Fatalf("refresh %s: %v", v, err)
+		}
+	}
+
+	at, err := store.ClosedVWAPAtOrBefore(ctx, real, asOf, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("ClosedVWAPAtOrBefore: %v", err)
+	}
+	got := new(big.Rat)
+	if _, ok := got.SetString(at.VWAP); !ok || got.Cmp(big.NewRat(1, 2)) != 0 || !at.Bucket.Equal(realTS) {
+		t.Errorf("served %q from %s (%s), want 0.5 from the real hour %s", at.VWAP, at.Bucket, at.Resolution, realTS)
+	}
+
+	lone, err := store.ClosedVWAPAtOrBefore(ctx, dustOnly, asOf, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("ClosedVWAPAtOrBefore(dust-only market): %v", err)
+	}
+	if _, ok := got.SetString(lone.VWAP); !ok || got.Cmp(big.NewRat(50, 1)) != 0 {
+		t.Errorf("dust-only market served %q, want its own 50", lone.VWAP)
+	}
+}
+
 func TestTradesInRange_SkipsVendorRows(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

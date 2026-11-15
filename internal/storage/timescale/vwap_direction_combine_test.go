@@ -468,8 +468,8 @@ func TestClosedVWAPAtOrBefore_BindsNonVWAPSources(t *testing.T) {
 	}
 	stmt := conn.stmts[0]
 	const pred = "NOT COALESCE(sources <@ string_to_array($3, ','), false)"
-	if n := strings.Count(stmt.sql, pred); n != 4 {
-		t.Errorf("predicate appears %d times, want 4 (both latest arms and both row arms)\nSQL: %s", n, stmt.sql)
+	if n := strings.Count(stmt.sql, pred); n != 6 {
+		t.Errorf("predicate appears %d times, want 6 (the four latest arms and both row arms)\nSQL: %s", n, stmt.sql)
 	}
 	if got := stmt.arg(t, 3); got != nonVWAPSourcesArg() {
 		t.Errorf("$3 = %v, want the non-VWAP source set", got)

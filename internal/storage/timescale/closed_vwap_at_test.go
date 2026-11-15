@@ -121,7 +121,7 @@ func assertLiteralCount(t *testing.T, q, literal string, want int) {
 
 func TestClosedVWAPAtOrBeforeQueryShape(t *testing.T) {
 	q := fmt.Sprintf(closedVWAPAtOrBeforeQueryTemplate,
-		"prices_1m", "2024-01-01 00:00:00+00", "2023-12-01 00:00:00+00")
+		"prices_1h", "2024-01-01 00:00:00+00", "2023-12-01 00:00:00+00", "volume_usd >= 0.01")
 
 	// Sargable closed-bucket guard: the interval lives on the RHS as a
 	// literal bound, NEVER as a function on the indexed bucket column.
@@ -131,11 +131,17 @@ func TestClosedVWAPAtOrBeforeQueryShape(t *testing.T) {
 	if strings.Contains(q, "bucket + INTERVAL") {
 		t.Error("query uses non-sargable `bucket + INTERVAL` form (function on indexed column)")
 	}
-	// The upper bound (%[2]s) sits in both `latest` max(bucket) branches (2 occurrences); the
-	// lower bound (%[3]s) sits in those same two plus both `r` point-read branches (4), because
-	// every branch prunes chunks on its own bound.
-	assertLiteralCount(t, q, "2024-01-01 00:00:00+00", 2)
-	assertLiteralCount(t, q, "2023-12-01 00:00:00+00", 4)
+	// The upper bound (%[2]s) sits in all four `latest` max(bucket) branches (the newest bucket and the
+	// newest with real notional, per direction); the lower bound (%[3]s) sits in those four plus both
+	// `r` point-read branches (6), because every branch prunes chunks on its own bound.
+	assertLiteralCount(t, q, "2024-01-01 00:00:00+00", 4)
+	assertLiteralCount(t, q, "2023-12-01 00:00:00+00", 6)
+	// The notional preference sits on the two preferred branches only: on all four, a market with no
+	// USD stamp would lose every answer.
+	assertLiteralCount(t, q, "AND volume_usd >= 0.01", 2)
+	if !strings.Contains(q, "COALESCE(max(b) FILTER (WHERE substantive), max(b))") {
+		t.Error("query does not fall back to the newest bucket when none clears the notional floor")
+	}
 	// Both stored directions of the market are read.
 	if !strings.Contains(q, "base_asset = $1 AND quote_asset = $2") ||
 		!strings.Contains(q, "base_asset = $2 AND quote_asset = $1") {
