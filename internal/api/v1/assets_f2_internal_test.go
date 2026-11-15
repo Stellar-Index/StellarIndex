@@ -215,6 +215,49 @@ func TestApplyF2Fields_SEP41FlowlessContractIsNotZeroSupply(t *testing.T) {
 	}
 }
 
+// With no flows the detail reads held balances, as /v1/assets/{id}/supply and the RWA rows do, under that
+// reading's own basis.
+func TestApplyF2Fields_SEP41FlowlessContractReadsStorageBalances(t *testing.T) {
+	asset, err := canonical.NewSorobanAsset(supplyContractID)
+	if err != nil {
+		t.Fatalf("build soroban asset: %v", err)
+	}
+	s := &Server{Options: Options{
+		TokenSupply: &fakeTokenSupply{supply: clickhouse.TokenSupply{
+			ContractID: supplyContractID,
+			Total:      big.NewInt(0), Mint: big.NewInt(0), Burn: big.NewInt(0), Clawback: big.NewInt(0),
+		}},
+		ContractStorageSupply: &fakeStorageSupply{out: clickhouse.ContractStorageSupply{Total: big.NewInt(500), BalanceEntries: 3}},
+	}, logger: slog.Default()}
+	detail := &AssetDetail{Decimals: 7}
+	s.applyF2Fields(context.Background(), detail, asset)
+	if detail.TotalSupply == nil || *detail.TotalSupply != "500" {
+		t.Errorf("total_supply = %v, want \"500\" from held balances", detail.TotalSupply)
+	}
+	if detail.SupplyBasis == nil || *detail.SupplyBasis != "contract_storage_balances" {
+		t.Errorf("supply_basis = %v, want \"contract_storage_balances\"", detail.SupplyBasis)
+	}
+}
+
+// A token whose flows net to zero has a measured supply of zero and is still served.
+func TestApplyF2Fields_SEP41FlowsNettingToZeroAreServed(t *testing.T) {
+	asset, err := canonical.NewSorobanAsset(supplyContractID)
+	if err != nil {
+		t.Fatalf("build soroban asset: %v", err)
+	}
+	burned := &fakeTokenSupply{supply: clickhouse.TokenSupply{
+		ContractID: supplyContractID,
+		Total:      big.NewInt(0), Mint: big.NewInt(100), Burn: big.NewInt(100), Clawback: big.NewInt(0),
+		FlowCount: 2,
+	}}
+	s := &Server{Options: Options{TokenSupply: burned}, logger: slog.Default()}
+	detail := &AssetDetail{Decimals: 7}
+	s.applyF2Fields(context.Background(), detail, asset)
+	if detail.TotalSupply == nil || *detail.TotalSupply != "0" {
+		t.Errorf("total_supply = %v, want \"0\" for flows that net to zero", detail.TotalSupply)
+	}
+}
+
 func mustBigIntInternal(s string) *big.Int {
 	v, ok := new(big.Int).SetString(s, 10)
 	if !ok {

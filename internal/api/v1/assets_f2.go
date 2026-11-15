@@ -46,6 +46,27 @@ type SorobanVolumeReader interface {
 	SorobanVolume24hUSDForAsset(ctx context.Context, assetKey string) (usd string, lowerBound bool, err error)
 }
 
+// contractSupplySnapshot is the detail's supply for a Soroban token with no fresh observer snapshot, by the
+// one preference order [Server.contractSupplyReading] owns: the lake's flow sum, or held balances for a
+// contract with no flows. ok=false leaves the supply fields absent: an incomplete flow sum is not negative
+// supply, and "no event seen" is not zero (ADR-0003).
+//
+// Bounded by tokenMetadataReadTimeout: it runs on the handler goroutine after the parallel reads, so an
+// unbounded slow sum would extend /v1/assets/{id} for a mere null field.
+func (s *Server) contractSupplySnapshot(ctx context.Context, contractID string) (supply.Supply, bool) {
+	sctx, cancel := context.WithTimeout(ctx, tokenMetadataReadTimeout)
+	defer cancel()
+	figure, basis, ok := s.contractSupplyReading(sctx, contractID)
+	if !ok {
+		return supply.Supply{}, false
+	}
+	total, parsed := new(big.Int).SetString(figure, 10)
+	if !parsed {
+		return supply.Supply{}, false
+	}
+	return supply.Supply{AssetKey: contractID, TotalSupply: total, CirculatingSupply: total, Basis: basis}, true
+}
+
 // applyF2Fields fills the F2 supply/market-cap/FDV fields best-effort; nothing is fabricated (ADR-0011): no max_supply means no
 // fdv_usd, no USD price means no market_cap_usd/fdv_usd, no supply snapshot leaves all six nil.
 func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset canonical.Asset) {
@@ -101,27 +122,8 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	// The ClickHouse read is Soroban-only; a stale snapshot yields to the lake reading.
 	now := time.Now()
 	if (!haveSnap || supplyObservationStale(snap, now)) && s.TokenSupply != nil && asset.Type == canonical.AssetSoroban && asset.ContractID != "" {
-		// ts.Incomplete means burns exceed mints: supply_flows are incompletely seeded, NOT that
-		// supply is negative. Treat it as UNAVAILABLE so total_supply/circulating_supply stay
-		// null, as SEP41Computer.Compute does. Never clamp to 0: that would read as a real
-		// "fully burned" supply (ADR-0003).
-		//
-		// FlowCount == 0 is "no mint, burn or clawback event seen", not "supply is zero": a token that mints
-		// without those events would be served as fully burned. /v1/assets/{id}/supply gates on it too.
-		//
-		// Bounded by tokenMetadataReadTimeout: this runs AFTER the wg.Wait barrier on the handler
-		// goroutine, so an unbounded slow sum would extend /v1/assets/{id} for a mere null field.
-		sctx, scancel := context.WithTimeout(ctx, tokenMetadataReadTimeout)
-		defer scancel()
-		if ts, terr := s.TokenSupply.TokenSupply(sctx, asset.ContractID); terr == nil && ts.Total != nil && !ts.Incomplete && ts.FlowCount > 0 {
-			snap = supply.Supply{
-				AssetKey:          asset.ContractID,
-				TotalSupply:       ts.Total,
-				CirculatingSupply: ts.Total,
-				Basis:             supply.BasisSEP41LakeFlows,
-			}
-			haveSnap = true
-			supplyFailed = false
+		if lake, ok := s.contractSupplySnapshot(ctx, asset.ContractID); ok {
+			snap, haveSnap, supplyFailed = lake, true, false
 		}
 	}
 	detail.f2ReadFailed = volFailed || changeFailed || supplyFailed || detail.priceUnread
