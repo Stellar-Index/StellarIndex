@@ -20,10 +20,15 @@ type Summary = Schemas['RWASummary'];
 const apiGetData = vi.hoisted(() => vi.fn());
 // useAssets (the stablecoin arm) reads through apiGet, not apiGetData.
 const apiGet = vi.hoisted(() => vi.fn());
+const rwaGet = vi.hoisted(() => vi.fn());
 vi.mock('@/api/client', async () => {
   const actual =
     await vi.importActual<typeof import('@/api/client')>('@/api/client');
-  return { ...actual, apiGetData, apiGet };
+  // The page reads its own endpoint as an envelope through apiGet; the
+  // stablecoin arm keeps the plain mock.
+  const routed = (path: string, params?: unknown) =>
+    path === '/v1/rwa/assets' ? rwaGet(path) : apiGet(path, params);
+  return { ...actual, apiGetData, apiGet: routed };
 });
 
 function stablecoinPage(
@@ -227,7 +232,12 @@ function stage(
 
 // History and premium answer from their own endpoints; a rejection keeps
 // those panels out of the way without feeding them the wrong payload.
-function show(v: View | Error) {
+function show(v: View | Error, flags?: Record<string, boolean>) {
+  rwaGet.mockImplementation(() =>
+    v instanceof Error
+      ? Promise.reject(v)
+      : Promise.resolve({ data: v, flags }),
+  );
   apiGetData.mockImplementation((path: string) =>
     v instanceof Error ||
     path === '/v1/rwa/history' ||
@@ -261,10 +271,61 @@ const absent = (...texts: (string | RegExp)[]) => {
 beforeEach(() => {
   apiGetData.mockReset();
   apiGet.mockReset();
+  rwaGet.mockReset();
   apiGet.mockResolvedValue(stablecoinPage());
 });
 
 describe('RWAView', () => {
+  it('says so when the API marks the answer degraded', async () => {
+    show(view(), { stale: true });
+    await screen.findByText('Some reads behind this page did not answer');
+    present(/can be missing or lower than the true figure/);
+  });
+
+  it('names a failed rebuild and the age of the set', async () => {
+    show(
+      view({
+        membership: {
+          built_at: '2026-11-14T06:00:12Z',
+          stale: true,
+          rebuild_failed_at: '2026-11-15T09:30:00Z',
+        },
+      } as Partial<View>),
+    );
+    await screen.findByText('This page may be out of date');
+    present(
+      /as of 2026-11-14 06:00 UTC; the latest rebuild failed at 2026-11-15 09:30 UTC/,
+    );
+  });
+
+  it('does not call an unanswered census an empty sector', async () => {
+    show(
+      view({
+        assets: [],
+        funnel: { stages: [], balanced: false, basis: 'x' },
+        summary: {
+          ...view().summary,
+          basis: 'Membership could not be established: no set is published.',
+        },
+      } as Partial<View>),
+    );
+    await screen.findByText(
+      'The set of real-world assets could not be established',
+    );
+    present('The set could not be established');
+    absent('No asset currently meets the definition');
+  });
+
+  it('shows no notice for a clean answer', async () => {
+    show(view(), { stale: false });
+    await screen.findAllByText('$1.28M');
+    absent(
+      'Some reads behind this page did not answer',
+      'This page may be out of date',
+      'The set of real-world assets could not be established',
+    );
+  });
+
   it('rounds 24h volume above 2^53 from the exact decimal', async () => {
     show(one({ volume_24h_usd: '1000000004999999999' }));
     await screen.findByText('$1,000,000T');
