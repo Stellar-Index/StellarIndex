@@ -1,7 +1,9 @@
 // Browser crawl of one explorer: fails on any page that renders "Not found" (HTTP 404 or the
 // client-rendered not-found shell, which curl cannot see) and on any API call a page makes that
 // answers 4xx/5xx or gets no answer the page may read (CORS, TLS, DNS, refused). Catches a network calling an endpoint it does not serve and an endpoint a host
-// never built, neither of which site-crawl-check.sh's curl pass can see.
+// never built, neither of which site-crawl-check.sh's curl pass can see. Also fails when a page
+// calls /v1/ on any origin other than <api>, or when no page calls <api> at all: the explorer's
+// API origin is fixed at build time, and a build pointed elsewhere would otherwise crawl clean.
 //
 // Usage: (npm ci here first) node scripts/ci/site-crawl-browser/crawl.cjs <site> <api> [maxPages]
 //   e.g. https://testnet.stellarindex.io https://api.testnet.stellarindex.io 300
@@ -51,6 +53,19 @@ async function visit(ctx, path) {
   // query once, so a shed 503 that the retry answers is not a finding.
   const lastSeq = new Map();
   let seq = 0;
+  let apiCalls = 0;
+  const wrongOrigin = new Set();
+  page.on('request', (req) => {
+    const url = req.url();
+    if (url.startsWith(API)) { apiCalls++; return; }
+    if (!['fetch', 'xhr', 'eventsource'].includes(req.resourceType())) return;
+    try {
+      const u = new URL(url);
+      if (u.pathname.startsWith('/v1/')) wrongOrigin.add(u.origin + u.pathname);
+    } catch {
+      // not a URL
+    }
+  });
   page.on('response', (r) => {
     const url = r.url();
     if (!url.startsWith(API)) return;
@@ -103,7 +118,8 @@ async function visit(ctx, path) {
     }
   }
   return { status, // A client-rendered empty state answers HTTP 200, so its heading is the only signal.
-    notFound: status === 404 || /^Not found/i.test(title) || /not found$/i.test(heading), error, apiErrors, links: [...links] };
+    notFound: status === 404 || /^Not found/i.test(title) || /not found$/i.test(heading), error, apiErrors, links: [...links],
+    apiCalls, wrongOrigin: [...wrongOrigin] };
 }
 
 (async () => {
@@ -114,6 +130,7 @@ async function visit(ctx, path) {
   const queue = SEEDS.map((p) => [p, 'seed']);
   const failures = [];
   let pages = 0;
+  let apiCalls = 0;
   while (queue.length && pages < MAX_PAGES) {
     const batch = [];
     // The API runs one account-trades scan per caller; parallel account pages from one crawler would
@@ -136,6 +153,8 @@ async function visit(ctx, path) {
         if (r.error) failures.push(`${path} (linked from ${from}): ${r.error}`);
         if (r.notFound) failures.push(`${path} (linked from ${from}): renders Not found (HTTP ${r.status})`);
         for (const e of r.apiErrors) failures.push(`${path} (linked from ${from}): API ${e}`);
+        for (const w of r.wrongOrigin) failures.push(`${path} (linked from ${from}): calls the wrong API origin ${w} (this crawl judges ${API})`);
+        apiCalls += r.apiCalls;
         for (const l of r.links) if (!seen.has(l)) queue.push([l, path]);
       }));
     }
@@ -143,6 +162,7 @@ async function visit(ctx, path) {
     await Promise.all(batch);
   }
   await browser.close();
+  if (pages > 0 && apiCalls === 0) failures.push(`no page called the API at ${API}: nothing was judged`);
   for (const f of failures) console.log(`FAIL: ${f}`);
   console.log(`${SITE}: ${pages} pages, ${failures.length} finding(s)`);
   process.exit(failures.length ? 1 : 0);
