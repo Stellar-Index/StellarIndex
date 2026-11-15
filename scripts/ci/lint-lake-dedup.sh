@@ -180,19 +180,21 @@ violations="$(
     }
 
     # ── unit accumulation ────────────────────────────────────────────
-    function reset_unit() { U = ""; Uline = 0 }
+    # A unit is flushed when the NEXT file starts, so it carries the file
+    # it began in: FILENAME at flush time is the wrong one.
+    function reset_unit() { U = ""; Uline = 0; Ufile = "" }
     function add(text) {
-      if (U == "") Uline = FNR
+      if (U == "") { Uline = FNR; Ufile = FILENAME }
       U = U " " text
     }
     function flush() {
       if (U != "" && index(U, "stellar."))
-        analyse(U, Uline)
+        analyse(U, Uline, Ufile)
       reset_unit()
     }
 
     # ── the read-by-read verdict ─────────────────────────────────────
-    function analyse(raw, line,    N, L, from, s, pos, len, tbl, i,
+    function analyse(raw, line, file,    N, L, from, s, pos, len, tbl, i,
                      owner, clause, blk, tail, snip) {
       N = raw
       gsub(/[\n\t]/, " ", N)
@@ -230,7 +232,7 @@ violations="$(
         blk = block_of(L, owner)
         snip = substr(N, owner, length(blk))
         if (length(snip) > 220) snip = substr(snip, 1, 220) " …"
-        printf "%s\t%d\t%s\t%s\n", FILENAME, line, tbl, snip
+        printf "%s\t%d\t%s\t%s\n", file, line, tbl, snip
       }
     }
 
@@ -239,12 +241,39 @@ violations="$(
     # Go: raw-string literals only, spliced across `+ ident +` glue so a
     # query assembled from constants is analysed as one statement.
     # Interpreted strings and // comments are not SQL carriers here.
+    # Blanks interpreted strings and rune literals and drops a trailing
+    # // comment, so every backtick left delimits a raw literal. A lone
+    # backtick in "`" or in a rune would otherwise invert the raw state for
+    # the rest of the file. raw is the state at the start of the line.
+    function go_mask(l, raw,    out, i, n, c, j) {
+      out = ""; n = length(l); i = 1
+      while (i <= n) {
+        if (raw) {
+          j = index(substr(l, i), "`")
+          if (j == 0) return out substr(l, i)
+          out = out substr(l, i, j); i += j; raw = 0
+          continue
+        }
+        c = substr(l, i, 1)
+        if (c == "`") { raw = 1; out = out c; i++; continue }
+        if (c == "/" && substr(l, i, 2) == "//") return out
+        if (c == "\"" || c == "\047") {
+          j = i + 1
+          while (j <= n && substr(l, j, 1) != c) { if (substr(l, j, 1) == "\\") j++; j++ }
+          out = out " "; i = j + 1
+          continue
+        }
+        out = out c; i++
+      }
+      return out
+    }
+
     function go_line(l,    n, p, i, inside, part, cut) {
-      if (!in_raw) {
+      if (index(l, "`") > 0) {
+        l = go_mask(l, in_raw)
+      } else if (!in_raw) {
         cut = index(l, "//")
-        # A // outside a raw string starts a comment; a backtick before
-        # it means the literal is still open and the marker is content.
-        if (cut > 0 && index(substr(l, 1, cut), "`") == 0) l = substr(l, 1, cut - 1)
+        if (cut > 0) l = substr(l, 1, cut - 1)
       }
       n = split(l, p, "`")
       inside = in_raw

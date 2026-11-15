@@ -493,6 +493,63 @@ else
 fi
 check "the same aggregates-nothing tree still passes on the real gate" 0 "$blind"
 
+# ── which file a read belongs to, and where a raw literal ends ───────
+# A file's last literal is analysed when the next file starts. Charged to
+# that next file, its baseline entry would absorb the violation.
+lastlit="$(mk lastlit)"
+cat > "$lastlit/$GODIR/aaa_last.go" <<'GO'
+package clickhouse
+
+const entriesTotalSQL = `SELECT sum(amount) FROM stellar.account_movements WHERE address = ?`
+GO
+cat > "$lastlit/$GODIR/bbb_next.go" <<'GO'
+package clickhouse
+
+const nothing = 1
+GO
+out="$(bash "$LINT" "$lastlit" 2>&1)"
+if grep -q 'aaa_last.go' <<<"$out" && ! grep -q 'bbb_next.go' <<<"$out"; then
+  echo "  ok   a file's last literal is charged to that file"
+  pass=$((pass + 1))
+else
+  echo "  FAIL a file's last literal is charged to that file"
+  fail=$((fail + 1))
+fi
+
+# One lone backtick inside an interpreted string must not turn the rest
+# of the file inside out.
+tick="$(mk tick)"
+cat > "$tick/$GODIR/quote.go" <<'GO'
+package clickhouse
+
+import "strings"
+
+func quoteIdent(s string) string { return "`" + strings.ReplaceAll(s, "`", "``") + "`" }
+
+const feeBoard = `SELECT source_account, sum(fee_charged) AS fees
+		FROM stellar.transactions GROUP BY source_account ORDER BY fees DESC`
+GO
+catches "a backtick in an interpreted string does not hide the next literal" "$tick" stellar.transactions
+
+runetick="$(mk runetick)"
+cat > "$runetick/$GODIR/rune.go" <<'GO'
+package clickhouse
+
+func isTick(r rune) bool { return r == '`' }
+
+const opCount = `SELECT count() FROM stellar.operations WHERE ledger_seq > ?`
+GO
+catches "a backtick rune literal does not hide the next literal" "$runetick" stellar.operations
+
+strquiet="$(mk strquiet)"
+cat > "$strquiet/$GODIR/prose.go" <<'GO'
+package clickhouse
+
+// Help text that quotes a query is prose, not a read.
+const help = "use `SELECT count() FROM stellar.operations` only with FINAL"
+GO
+check "a quoted query inside an interpreted string is not a read" 0 "$strquiet"
+
 # ── baseline mechanics ───────────────────────────────────────────────
 based="$(mk based)"
 cp "$naive/$GODIR/sponsors.go" "$based/$GODIR/sponsors.go"
