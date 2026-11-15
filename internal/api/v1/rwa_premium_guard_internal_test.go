@@ -70,8 +70,8 @@ func TestRWAPremiumJoin_FirstDayIsJudgedAgainstThePublishedValue(t *testing.T) {
 	}
 }
 
-// TestRWAPremiumJoin_ALastingRepricingBecomesTheCentre: refused days stay in the baseline, so a market that moves and stays
-// there is published again once it is the majority of the recent days, rather than refused forever.
+// TestRWAPremiumJoin_ALastingRepricingBecomesTheCentre: a market that moves and stays there is published again once
+// enough refused days in a row agree with each other, rather than refused forever.
 func TestRWAPremiumJoin_ALastingRepricingBecomesTheCentre(t *testing.T) {
 	market := []timescale.MarketDay{}
 	for d := 1; d <= 5; d++ {
@@ -86,6 +86,53 @@ func TestRWAPremiumJoin_ALastingRepricingBecomesTheCentre(t *testing.T) {
 	}
 	if !premPublished(got, 13) {
 		t.Errorf("day 13 still refused after eight days at the new price: withheld = %v", got.withheld)
+	}
+}
+
+// TestRWAPremiumJoin_ARefusedPrintIsNotTheNextDaysBaseline: a refused day never becomes the centre, so the same print on
+// the following days is refused too, for as long as the history is thin. That holds when the first day had no published
+// value to be judged against, and after a weekend.
+func TestRWAPremiumJoin_ARefusedPrintIsNotTheNextDaysBaseline(t *testing.T) {
+	withoutDay := func(n, missing int) *rwaFeedSeries {
+		ref := premRefDays(n)
+		delete(ref.days, premDay(missing))
+		return ref
+	}
+	for _, vwap := range []string{"12.00", "0.09"} {
+		for days := 1; days < rwaPremiumRecentreDays; days++ {
+			market := []timescale.MarketDay{}
+			for d := 1; d <= days; d++ {
+				market = append(market, premGoodDay(d, vwap))
+			}
+			for name, ref := range map[string]*rwaFeedSeries{
+				"every day published":   premRefDays(days),
+				"first day unpublished": withoutDay(days, 1),
+			} {
+				got := rwaPremiumJoin(premCand(), ref, market, premDefaultFloor())
+				if len(got.published) != 0 {
+					t.Errorf("%d day(s) at %s, %s: published %v, want none", days, vwap, name, got.published)
+				}
+			}
+		}
+	}
+
+	// Two honest days, a weekend with no published value, then the print: Friday's value still anchors it.
+	market := []timescale.MarketDay{premGoodDay(1, "1.08"), premGoodDay(2, "1.08"), premGoodDay(3, "12.00"), premGoodDay(4, "12.00")}
+	got := rwaPremiumJoin(premCand(), withoutDay(4, 3), market, premDefaultFloor())
+	if premPublished(got, 3) || premPublished(got, 4) {
+		t.Errorf("published = %v, want days 3 and 4 refused", got.published)
+	}
+}
+
+// TestRWAPremiumJoin_AFatFingerDayDoesNotRefuseTheNextHonestDay: the mirror of the case above.
+func TestRWAPremiumJoin_AFatFingerDayDoesNotRefuseTheNextHonestDay(t *testing.T) {
+	market := []timescale.MarketDay{premGoodDay(1, "12.00"), premGoodDay(2, "1.08"), premGoodDay(3, "1.09")}
+	got := rwaPremiumJoin(premCand(), premRefDays(3), market, premDefaultFloor())
+	if premPublished(got, 1) || !premPublished(got, 2) || !premPublished(got, 3) {
+		t.Errorf("published = %v, want days 2 and 3 only", got.published)
+	}
+	if len(got.withheld) != 1 || !got.withheld[0].Equal(premDay(1)) {
+		t.Errorf("withheld = %v, want day 1 only", got.withheld)
 	}
 }
 
@@ -113,7 +160,7 @@ func TestDailyMarketDaysHasOneGuardedCaller(t *testing.T) {
 				return err
 			}
 			if !guarded[rel] {
-				t.Errorf("%s calls DailyMarketDays: judge its days with rwaPremiumDayOffMarket (or an equal guard) and list it here", rel)
+				t.Errorf("%s calls DailyMarketDays: judge its days with rwaPremiumBaseline.offMarket (or an equal guard) and list it here", rel)
 			}
 			return nil
 		})
