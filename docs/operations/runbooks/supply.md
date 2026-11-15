@@ -17,6 +17,7 @@ Supply alerts: cross-check, divergence, refresh, snapshot and verify-rollup.
 - [`stellarindex_aggregator_supply_refresh_stalled`](#stellarindex_aggregator_supply_refresh_stalled)
 - [`stellarindex_aggregator_supply_refresh_never_initialized`](#stellarindex_aggregator_supply_refresh_never_initialized)
 - [`stellarindex_aggregator_supply_refresh_error_dominant`](#stellarindex_aggregator_supply_refresh_error_dominant)
+- [`stellarindex_aggregator_supply_refresh_withheld`](#stellarindex_aggregator_supply_refresh_withheld)
 - [`stellarindex_aggregator_supply_refresh_dormant_fleet`](#stellarindex_aggregator_supply_refresh_dormant_fleet)
 - [`stellarindex_sep41_supply_rollup_no_cursor`](#stellarindex_sep41_supply_rollup_no_cursor)
 - [`stellarindex_ch_supply_gapfill_failed`](#stellarindex_ch_supply_gapfill_failed)
@@ -349,6 +350,23 @@ A key that does not parse, is outside the watched lists, or duplicates another s
 1. Identify the dominant outcome and apply the matching cause above.
 2. `no_observation` during bootstrap is expected; a new `watched_classic_assets` entry ticks `no_observation` until its locked-set members have rows.
 3. Verify the `ok` rate exceeds the error rate; the alert clears within 30 min.
+
+## stellarindex_aggregator_supply_refresh_withheld
+
+P3 (`ticket`), `for: 6h`. Expr: per asset, `increase(..._supply_refresh_total{outcome="missing_baseline"}[1h]) > 0` with no `ok` increase for the same asset in the hour. The asset's supply is withheld and its last published figure is ageing. `missing_baseline` is excluded from [error_dominant](#stellarindex_aggregator_supply_refresh_error_dominant) because it is benign for the length of a seed or a replay; this is the ticket for one that never clears.
+
+### Check
+
+1. Which cause: `sudo journalctl -u stellarindex-aggregator --since "2 hours ago" | grep -E "auto-seed failed|coverage not shown|not shown to be replayed" | tail -5`. The line names the contract and, for a coverage failure, the ledger range and the per-kind sums that differ.
+2. Baseline: is `genesis_baseline_ledger` set on the contract's `sep41_supply_rollup` row?
+3. Projector: is the `projector/sep41_supply` cursor advancing (shared commands)?
+
+### Fix
+
+- No baseline and the auto-seed fails: `stellarindex-ops supply seed-sep41-genesis` for the contract; the log line carries the seed error.
+- Served tier differs from the lake: `stellarindex-ops projector-replay -source sep41_supply` over the range the log names (decompress the chunks first).
+
+Escalate: the sums still differ after a clean replay. Then the lake and the decoder disagree on an event, which a replay cannot fix; compare per-kind counts for the contract in `stellar.supply_flows FINAL` and `sep41_supply_events`.
 
 ## stellarindex_aggregator_supply_refresh_dormant_fleet
 

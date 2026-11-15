@@ -187,3 +187,91 @@ tests:
       - eval_time: 90m
         alertname: stellarindex_sep41_supply_rollup_no_cursor
         exp_alerts: []
+
+  # ── one failing asset at the real cadence ────────────────────────
+  # The refresher ticks every 5m. Over a [5m] window the failing counter
+  # holds one increment or none by alignment, so the ratio flapped and
+  # `for: 30m` could reset for good. At [15m] it holds steadily.
+  - interval: 5m
+    name: an asset failing every 5m tick trips error_dominant
+    input_series:
+      - series: 'stellarindex_aggregator_supply_refresh_total{asset_key="aaa",outcome="compute_error"}'
+        values: '0+1x24'
+      - series: 'stellarindex_aggregator_supply_refresh_total{asset_key="bbb",outcome="ok"}'
+        values: '0+1x24'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: stellarindex_aggregator_supply_refresh_error_dominant
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: supply
+              asset_key: aaa
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply.md#stellarindex_aggregator_supply_refresh_error_dominant
+              summary: "supply refresher: > 50% of ticks non-ok for asset aaa for ≥ 30m"
+              description: |
+                More than half of the supply refresher's ticks for
+                asset aaa are failing — outcome ∈
+                {no_ledger, no_observation, compute_error, write_error,
+                stale_component, missing_freshness, static_reserve} (the
+                last is XLM published from the dated static reserve map
+                because the live account observer could not answer; the benign `dormant`
+                and `missing_baseline` outcomes are excluded). Steady-state
+                should be mostly `ok`; a single asset stuck here is usually a
+                stalled freshness producer (sustained `stale_component`) or
+                operator config drift (watched_classic_assets parse errors,
+                sac_wrappers map missing entries). A SAC-wrapper stuck on
+                `missing_baseline` (visible in the per-asset series, not this
+                alert) needs `stellarindex-ops supply seed-sep41-genesis`.
+                Runbook: split by outcome, inspect the dominant kind; for
+                sustained `stale_component` on one asset, see
+                WithStaleComponentLedgersFor.
+
+  # ── a contract withheld with no ok tick ──────────────────────────
+  - interval: 5m
+    name: an asset reporting only missing_baseline for 6h trips withheld
+    input_series:
+      - series: 'stellarindex_aggregator_supply_refresh_total{asset_key="aaa",outcome="missing_baseline"}'
+        values: '0+1x100'
+      - series: 'stellarindex_aggregator_supply_refresh_total{asset_key="bbb",outcome="ok"}'
+        values: '0+1x100'
+    alert_rule_test:
+      - eval_time: 5h
+        alertname: stellarindex_aggregator_supply_refresh_withheld
+        exp_alerts: []
+      - eval_time: 7h30m
+        alertname: stellarindex_aggregator_supply_refresh_withheld
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: supply
+              asset_key: aaa
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply.md#stellarindex_aggregator_supply_refresh_withheld
+              summary: "supply refresher: aaa has been withheld for 6h with no ok tick"
+              description: |
+                Asset aaa has reported only
+                `missing_baseline` for 6 h: its supply is withheld and the
+                last published figure is ageing. Either its genesis baseline
+                is not seeded (and the auto-seed is failing), or its
+                Soroban-era events in the served tier do not match the lake.
+                The aggregator log names which. Fix: `stellarindex-ops supply
+                seed-sep41-genesis`, or `projector-replay -source
+                sep41_supply` over the range the log names.
+
+  # ── a seed that lands inside the window ──────────────────────────
+  # missing_baseline for two hours, then ok: a seed or replay finished.
+  - interval: 5m
+    name: an asset that recovers after a seed never trips withheld
+    input_series:
+      - series: 'stellarindex_aggregator_supply_refresh_total{asset_key="aaa",outcome="missing_baseline"}'
+        values: '0+1x24 24+0x80'
+      - series: 'stellarindex_aggregator_supply_refresh_total{asset_key="aaa",outcome="ok"}'
+        values: '0+0x24 0+1x80'
+    alert_rule_test:
+      - eval_time: 8h
+        alertname: stellarindex_aggregator_supply_refresh_withheld
+        exp_alerts: []

@@ -126,11 +126,13 @@ groups:
         # whose Soroban-era events are not all in the served tier, fixed by
         # `projector-replay -source sep41_supply`; neither is corruption. A
         # genuine post-seed negative still surfaces as `compute_error`).
+        # 15m spans three 5m refresh ticks: a window of one cadence holds
+        # an increment or not by alignment, and the ratio flaps under `for`.
         expr: |
           (
-            sum by (asset_key) (rate(stellarindex_aggregator_supply_refresh_total{outcome!~"ok|dormant|missing_baseline"}[5m]))
+            sum by (asset_key) (rate(stellarindex_aggregator_supply_refresh_total{outcome!~"ok|dormant|missing_baseline"}[15m]))
             /
-            (sum by (asset_key) (rate(stellarindex_aggregator_supply_refresh_total[5m])) > 0)
+            (sum by (asset_key) (rate(stellarindex_aggregator_supply_refresh_total[15m])) > 0)
           ) > 0.5
         for: 30m
         labels:
@@ -157,6 +159,35 @@ groups:
             Runbook: split by outcome, inspect the dominant kind; for
             sustained `stale_component` on one asset, see
             WithStaleComponentLedgersFor.
+
+      # `missing_baseline` is excluded from _error_dominant as benign, and it
+      # is the outcome of every watched contract whose supply is withheld:
+      # an unseeded baseline, a failed auto-seed, or history the served tier
+      # is not shown to hold. It is benign for the length of a seed or a
+      # replay. An asset that reports it for 6h with no ok tick is a supply
+      # that has stopped refreshing, and no other rule says so.
+      - alert: stellarindex_aggregator_supply_refresh_withheld
+        expr: |
+          sum by (asset_key) (increase(stellarindex_aggregator_supply_refresh_total{outcome="missing_baseline"}[1h])) > 0
+          unless on (asset_key)
+          sum by (asset_key) (increase(stellarindex_aggregator_supply_refresh_total{outcome="ok"}[1h])) > 0
+        for: 6h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: supply
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply.md#stellarindex_aggregator_supply_refresh_withheld
+          summary: "supply refresher: {{ $labels.asset_key }} has been withheld for 6h with no ok tick"
+          description: |
+            Asset {{ $labels.asset_key }} has reported only
+            `missing_baseline` for 6 h: its supply is withheld and the
+            last published figure is ageing. Either its genesis baseline
+            is not seeded (and the auto-seed is failing), or its
+            Soroban-era events in the served tier do not match the lake.
+            The aggregator log names which. Fix: `stellarindex-ops supply
+            seed-sep41-genesis`, or `projector-replay -source
+            sep41_supply` over the range the log names.
 
       - alert: stellarindex_aggregator_supply_refresh_dormant_fleet
         # MinComponentLedger is the producer's watermark (MAX(ledger) over the

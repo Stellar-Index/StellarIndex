@@ -1,0 +1,80 @@
+---
+# promtool unit tests for two API alerts on counters nothing else reads:
+#
+#   stellarindex_ratelimit_inprocess_overflow
+#   stellarindex_api_observations_stream_ticks_shed
+#
+#   promtool test rules deploy/monitoring/rule-tests/api-limiter-stream_test.yml
+
+rule_files:
+  - ../rules/api.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── the limiter's key map is full ────────────────────────────────
+  - interval: 1m
+    name: sustained overflow takes trip inprocess_overflow
+    input_series:
+      - series: 'stellarindex_ratelimit_inprocess_overflow_total'
+        values: '0+0x10 0+5x30'
+      - series: 'prometheus_tsdb_lowest_timestamp_seconds'
+        values: '0+0x60'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: stellarindex_ratelimit_inprocess_overflow
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: stellarindex_ratelimit_inprocess_overflow
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_ratelimit_inprocess_overflow
+              summary: "An in-process rate limiter's key map is full; callers share region buckets"
+              description: |
+                An in-process limiter has more distinct callers than it keeps
+                counters for, so new callers are counted against a shared
+                bucket for their network region. Sign-in and sign-up attempts
+                from a flooded region can be refused for real users. Usually a
+                flood of distinct source addresses against the passkey or
+                sign-up endpoints.
+
+  # ── skipped stream ticks ─────────────────────────────────────────
+  # 12 skips a minute is 0.2/s, over the 0.1/s line.
+  - interval: 1m
+    name: a sustained shed rate trips ticks_shed
+    input_series:
+      - series: 'stellarindex_api_observations_stream_ticks_shed_total'
+        values: '0+12x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_api_observations_stream_ticks_shed
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_api_observations_stream_ticks_shed
+              summary: "Observations-stream ticks are being skipped: scan slots stay busy"
+              description: |
+                More than one observations-stream tick every 10 s has been
+                skipped for 15 min because every scan slot stayed busy for the
+                tick's interval. Subscribers receive updates late or not at
+                all. Either scans are slow (database load) or stream demand
+                exceeds the slot budget (many subscriptions, possibly from
+                one client).
+
+  # One skip a minute is routine contention, under the line.
+  - interval: 1m
+    name: an occasional skipped tick stays quiet
+    input_series:
+      - series: 'stellarindex_api_observations_stream_ticks_shed_total'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_api_observations_stream_ticks_shed
+        exp_alerts: []

@@ -725,6 +725,18 @@ ORDER BY ts DESC;
 
 **Check / Likely causes / Fix.** As [ratelimit_fail_open](#stellarindex_ratelimit_fail_open); Redis recovery is urgent. Do NOT disable fail-closed (a negative `WithDwellTime`): degrading Redis would then give an attacker unlimited volume. **Escalate:** page; [redis-master-down](cache.md#stellarindex_redis_master_down).
 
+## stellarindex_ratelimit_inprocess_overflow
+
+**Trigger.** `sum(increase(stellarindex_ratelimit_inprocess_overflow_total[10m])) > 0` for 5m, P3. An in-process limiter (`internal/ratelimit/inprocess.go`; the passkey sign-in and sign-up caps) holds one counter per caller up to 100k keys. Past that, a caller shares a bucket with its IPv4 /16 or IPv6 /32, and past 10 000 region buckets, one overflow bucket. The counter counts tokens charged to a shared bucket.
+
+**Check.** Request rate by route and status on the passkey and sign-up endpoints; distinct client addresses in the API log over the window. **Likely causes.** A flood of distinct source addresses (rotating IPv6 /48s is the cheap form). **Fix.** Block or rate-limit the source ranges at the edge; the map empties as entries expire. **Escalate:** real users report refused sign-ins while it fires.
+
+## stellarindex_api_observations_stream_ticks_shed
+
+**Trigger.** `sum(rate(stellarindex_api_observations_stream_ticks_shed_total[10m])) > 0.1` for 15m, P3. Each observations-stream tick runs its scan under a two-slot budget (`internal/api/v1/observations_stream.go`) and is skipped when no slot frees within the tick's interval. Subscribers get updates late or not at all; request traffic is unaffected.
+
+**Check.** Open stream count and subscribers per pair; scan latency on the serving pool. **Likely causes.** Slow scans under database load, or one client holding many streams on distinct pairs (subscribers of one pair share a scan). **Fix.** Relieve the database, or limit the client at the edge. **Escalate:** none.
+
 ## stellarindex_ratelimit_fail_open
 
 **Trigger.** `sum(increase(stellarindex_ratelimit_fail_open_total[15m])) > 100`, `for: 0m`, P3. The Redis fixed-window limiter (`internal/ratelimit`; `internal/api/v1/middleware/ratelimit.go`) fails open on Redis errors, then closed after `ratelimit.DefaultDwellTime` (30s; [fail_closed](#stellarindex_ratelimit_fail_closed)), so this alert sees only repeated short episodes (hence `increase`). Per-key limits are not enforced meanwhile; usage still meters.

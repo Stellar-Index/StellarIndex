@@ -457,6 +457,59 @@ groups:
             state for 2h53m and served 2.03M 503s. Clears once Redis has
             answered without error for the same dwell time.
 
+      # An in-process limiter (passkey sign-in and sign-up caps) keeps one
+      # counter per caller until its key map is full, then counts callers
+      # against a shared region or overflow bucket. A full map means a
+      # flood of distinct addresses, and real users inside a flooded
+      # region share its budget. The counter is unseeded, so the second
+      # arm catches the first burst after a restart.
+      - alert: stellarindex_ratelimit_inprocess_overflow
+        expr: |
+          sum(increase(stellarindex_ratelimit_inprocess_overflow_total[10m])) > 0
+          or sum (
+            stellarindex_ratelimit_inprocess_overflow_total
+            unless max_over_time(stellarindex_ratelimit_inprocess_overflow_total[1d] offset 10m)
+          ) > 0 and on() (time() - prometheus_tsdb_lowest_timestamp_seconds > 87000)
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_ratelimit_inprocess_overflow
+          summary: "An in-process rate limiter's key map is full; callers share region buckets"
+          description: |
+            An in-process limiter has more distinct callers than it keeps
+            counters for, so new callers are counted against a shared
+            bucket for their network region. Sign-in and sign-up attempts
+            from a flooded region can be refused for real users. Usually a
+            flood of distinct source addresses against the passkey or
+            sign-up endpoints.
+
+      # The observations stream runs each subscriber tick's scan under a
+      # small slot budget and skips a tick when no slot frees in time.
+      # Skips are counted and nothing else shows them: subscribers just
+      # see fewer updates. A sustained rate means stream demand exceeds
+      # the budget, which one client holding many streams can cause.
+      - alert: stellarindex_api_observations_stream_ticks_shed
+        expr: |
+          sum(rate(stellarindex_api_observations_stream_ticks_shed_total[10m])) > 0.1
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_api_observations_stream_ticks_shed
+          summary: "Observations-stream ticks are being skipped: scan slots stay busy"
+          description: |
+            More than one observations-stream tick every 10 s has been
+            skipped for 15 min because every scan slot stayed busy for the
+            tick's interval. Subscribers receive updates late or not at
+            all. Either scans are slow (database load) or stream demand
+            exceeds the slot budget (many subscriptions, possibly from
+            one client).
+
       # The monthly-quota middleware fails OPEN on a backing-store error (the
       # cap is billing fairness, not a security boundary, so a Redis blip must
       # not 429 paying customers). Revenue-side twin of
