@@ -576,6 +576,12 @@ printf '%s\n' \
   > "$stale/scripts/ci/lint-lake-dedup.baseline"
 check "a stale baseline entry fails until it is deleted" 1 "$stale"
 
+unwatched="$(mk unwatched)"
+mkdir -p "$unwatched/scripts/ci"
+printf '%s\n' "$GODIR/detail_reader.go:stellar.not_a_watched_table  the base copy of the gate does not watch this table yet" \
+  > "$unwatched/scripts/ci/lint-lake-dedup.baseline"
+check "a baseline entry for a table this copy does not watch is not stale" 0 "$unwatched"
+
 # ── non-vacuity ──────────────────────────────────────────────────────
 # Reads the first version of the gate did not attribute to their own select.
 shape() { # shape <name> <sql> — a fixture tree whose extra read is <sql>

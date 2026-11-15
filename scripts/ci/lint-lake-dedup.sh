@@ -467,6 +467,10 @@ done <<<"$violations"
 
 stale=0
 for b in ${base_keys+"${base_keys[@]}"}; do
+  # An entry for a table this copy does not watch is not stale: CI judges a PR
+  # with the base branch's copy, which must accept the entries of the PR that
+  # adds the table.
+  [[ "${b##*:stellar.}" =~ ^(${LAKE_TABLES})$ ]] || continue
   case "$observed" in
     *"|$b|"*) : ;;
     *) echo "lint-lake-dedup: baseline stale: $b no longer violates — remove it from $BASELINE." >&2
