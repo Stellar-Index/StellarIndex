@@ -133,9 +133,9 @@ func loadAccountActivityRunbook(t *testing.T) accountActivityRunbook {
 	for _, m := range f112InsertRE.FindAllStringSubmatch(text, -1) {
 		rb.inserts = append(rb.inserts, m[1])
 	}
-	if len(rb.inserts) != 3 {
-		t.Fatalf("runbook Step 2 carries %d backfill INSERTs, want 3 (operations, transactions, "+
-			"operation_participants)", len(rb.inserts))
+	if len(rb.inserts) != 4 {
+		t.Fatalf("runbook Step 2 carries %d backfill INSERTs, want 4 (operations, transactions, "+
+			"fee payers, operation_participants)", len(rb.inserts))
 	}
 	v := f112VerifyRE.FindAllStringSubmatch(text, -1)
 	if len(v) != 1 {

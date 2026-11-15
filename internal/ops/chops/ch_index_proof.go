@@ -46,7 +46,7 @@ var (
 )
 
 // runOpsBySourceProof checks [from, top] and stops at the first mismatching window. It records the watermark only
-// when every window matched from genesis to the contiguous tip, and both feeding views existed before and after, so
+// when every window matched from genesis to the contiguous tip, and every feeding view existed before and after, so
 // ledgers past the proof are covered as they land. write=false checks and reports without recording.
 func runOpsBySourceProof(ctx context.Context, addr string, from, toFlag, window uint32, write bool, logf func(string, ...any)) error {
 	mvBefore, err := opsMVsExist(ctx, addr)

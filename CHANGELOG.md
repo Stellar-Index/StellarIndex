@@ -32,6 +32,7 @@ Tested against Stellar protocol 27. No migrations. No `pkg/*` break; `pkg/client
 - **explorer:** `/rwa` says when its answer is stale or the set is unknown; figures the API flags as floors carry "≥" on `/assets`, the embed and `/rwa`.
 - **alerts:** new rules for rule evaluation, the retention reaper, the fail-open price guard, a withheld supply, a full limiter map, shed stream ticks, unreadable tokens, email-code guessing and registration growth. A price alert does not fire on a bucket the freeze is holding back.
 - **ansible:** a secret reaches a task on stdin, never through `environment:`. A superuser session in an app-owned database searches `pg_catalog` only.
+- **explorer:** a fee bump is listed in the account history of the account that paid its fee (from the ledger the payer was first recorded). Host step: create `ops_by_source_feepayer_mv` and `account_activity_feepayer_mv` and run the fee-payer backfills in `deploy/clickhouse/ops_by_source.sql`; `ch-index-proof` now requires the first.
 
 ### Fixed
 
@@ -39,6 +40,9 @@ Tested against Stellar protocol 27. No migrations. No `pkg/*` break; `pkg/client
 - **ops:** the chunk scan decodes a backend-killing chunk at most twice and decodes a chunk recompressed in place again. Root jobs keep scratch files and the drill's Postgres private and hand psql the owner DSN in the environment. The root archive filler writes only inside the archive root. Projected-rebuild resumes only over checkpoints its own build wrote. `rederive-from` and `ch-rebuild` writes refresh the aggregates over the range they rewrote.
 - **clickhouse:** the cap67 event census counts events, not rows.
 - **ci:** PR tests include every tree-walking guard and a PR cannot scope its own tests; the migration gates see a dropped arbiter, keyword-less DROP/RENAME and a renamed-down migration.
+- **rwa:** the premium history judges a day against the days accepted before it, never a refused one; a thin history stays within 10x of the published value, and a repricing needs an agreeing run at least as long as the accepted days.
+- **ops:** the chunk scan decompresses every value, not only the column headers, and re-verifies every chunk once. A host with no probe key does not run the SLA probe. The os dataset's mode agrees with its ownership task.
+- **ci:** the migration-compat gate reads a multi-line `ALTER` as one statement and a function the migration calls as migrate-time code; the lake-dedup gate charges a read to its own file and query block and reads a comma join.
 
 ## [v0.117.0] - 2026-11-14
 

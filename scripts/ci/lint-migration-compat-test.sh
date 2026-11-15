@@ -235,6 +235,71 @@ BEGIN
 END $$;' ''
 expect 'a tag-quoted function does not hide a later DO block' 1 'dml'
 
+# A statement split over lines is still one statement.
+run 'ALTER TABLE trades
+    DROP COLUMN legacy_price;' ''
+expect 'a multi-line ALTER fires' 1 'drop-column'
+
+run 'ALTER TABLE trades
+    ADD COLUMN note text,
+    ALTER COLUMN source SET NOT NULL;' ''
+expect 'a later clause of a multi-line ALTER fires' 1 'set-not-null'
+
+run 'ALTER TABLE trades
+    DROP COLUMN legacy_price;  -- migration-compat:ok added in 0104, no released binary reads it' ''
+expect 'a marker on a continuation line clears the statement' 0 'passed'
+
+run 'ALTER TABLE trades
+    -- we used to DROP COLUMN legacy_price here
+    ADD COLUMN note text;' ''
+expect 'a comment inside a multi-line ALTER is not the statement' 0 'passed'
+
+run 'ALTER TABLE trades
+    ADD COLUMN note text;
+ALTER TABLE hooks ADD COLUMN x int;
+DROP TABLE classic_movements;' ''
+expect 'joining stops at the semicolon' 1 'drop-table'
+
+# A function the file calls runs at migrate time.
+run 'CREATE FUNCTION pg_temp.purge() RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+    DELETE FROM trades;
+END $$;
+SELECT pg_temp.purge();' ''
+expect 'DML in a function the file calls fires' 1 'dml'
+
+run 'CREATE OR REPLACE FUNCTION purge() RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+    ALTER TABLE trades DROP COLUMN usd_volume;
+END $$;
+DO $$ BEGIN PERFORM purge(); END $$;' ''
+expect 'DDL in a function a DO block performs fires' 1 'drop-column'
+
+run 'CREATE FUNCTION purge() RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+    DELETE FROM trades;
+END $$;
+-- SELECT purge(); is run by the operator
+CREATE TRIGGER t AFTER INSERT ON marks EXECUTE FUNCTION purge();' ''
+expect 'a function only named in a comment or a trigger is not called' 0 'passed'
+
+# Tightening with no DDL keyword the older classes know.
+run 'REVOKE SELECT ON trades FROM stellarindex_api;' ''
+expect 'revoke fires' 1 'revoke'
+
+run 'REVOKE SELECT ON trades FROM stellarindex_api; -- migration-compat:ok role created in this release' ''
+expect 'revoke with a marker and reason passes' 0 'passed'
+
+run 'CREATE TRIGGER marks_guard
+    BEFORE INSERT OR UPDATE ON marks
+    FOR EACH ROW EXECUTE FUNCTION refuse_negative();' ''
+expect 'a BEFORE trigger fires' 1 'before-trigger'
+
+run 'CREATE TRIGGER marks_track
+    AFTER INSERT ON marks
+    FOR EACH ROW EXECUTE FUNCTION track();' ''
+expect 'an AFTER trigger is not flagged' 0 'passed'
+
 echo
 echo "lint-migration-compat-test: ${pass} passed, ${fail} failed"
 [ "$fail" -eq 0 ] || exit 1

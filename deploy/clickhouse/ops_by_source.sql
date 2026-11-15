@@ -25,10 +25,15 @@
 --   * rows from stellar.operations carry the OP-EFFECTIVE source (an op
 --     can override its tx's source) with the real op_index → the
 --     OPERATIONS arm reads them (op_index != sentinel);
---   * rows from stellar.transactions carry the TX source (fee payer) with
+--   * rows from stellar.transactions carry the TX source with
 --     op_index = 4294967295 (the sentinel) → the TRANSACTIONS arm reads
 --     DISTINCT (ledger_seq, tx_index) over ALL rows, so a tx is found
---     whether the account sourced the tx itself or any single op in it.
+--     whether the account sourced the tx itself or any single op in it;
+--   * a fee bump adds a second sentinel row for its PAYER (fee_account;
+--     source_account is the inner source). fee_account is populated
+--     go-forward only (transactions_fee_bump.sql), so a fee bump ingested
+--     before that column is in the inner source's history only, until its
+--     range is re-derived.
 -- Both streams preserve the readers' semantics: a tx sourced by A whose every
 -- op overrides to another source is still A's; an op sourced by B inside A's
 -- tx is still B's.
@@ -67,6 +72,17 @@ SELECT source_account, ledger_seq, tx_index, 4294967295 AS op_index
 FROM stellar.transactions
 WHERE source_account != '';
 
+-- A fee bump's payer is in fee_account, not source_account (that is the
+-- inner source). The payer gets the same tx-sentinel row, so the
+-- transaction it paid for is in its history. No `!= source_account`
+-- filter: the alias below shadows that column in WHERE, and a payer that
+-- is also the inner source writes a row the engine collapses.
+CREATE MATERIALIZED VIEW IF NOT EXISTS stellar.ops_by_source_feepayer_mv
+TO stellar.ops_by_source AS
+SELECT fee_account AS source_account, ledger_seq, tx_index, 4294967295 AS op_index
+FROM stellar.transactions
+WHERE fee_account != '';
+
 -- ── Step 2: windowed historical backfill ────────────────────────────────────
 -- ***Heavy op.*** run-heavy-job.sh, ONE window at a time, 2M-ledger windows
 -- (both source tables are PARTITION BY intDiv(ledger_seq, 1000000); the
@@ -89,6 +105,17 @@ WHERE source_account != '';
 --       WHERE source_account != '' AND ledger_seq >= $W AND ledger_seq < $((W + 2000000))
 --       SETTINGS max_threads = 4, max_memory_usage = 8000000000"
 --   done
+--
+-- Fee payers, over the range where fee_account is populated (one statement;
+-- the filter leaves a few rows per ledger):
+--
+--   /usr/local/sbin/run-heavy-job.sh obs-backfill-feepayer clickhouse-client --port 9300 -q "
+--     INSERT INTO stellar.ops_by_source
+--     SELECT fee_account, ledger_seq, tx_index, 4294967295
+--     FROM stellar.transactions
+--     WHERE fee_account != ''
+--       AND ledger_seq >= (SELECT min(ledger_seq) FROM stellar.transactions WHERE fee_account != '')
+--     SETTINGS max_threads = 4, max_memory_usage = 8000000000"
 --
 -- ── Step 3: verify ──────────────────────────────────────────────────────────
 -- Spot-check N accounts: the projection's per-account key set must equal the
@@ -114,4 +141,5 @@ WHERE source_account != '';
 -- rolling the binaries back to a pre-projection build:
 --   DROP TABLE IF EXISTS stellar.ops_by_source_ops_mv;
 --   DROP TABLE IF EXISTS stellar.ops_by_source_tx_mv;
+--   DROP TABLE IF EXISTS stellar.ops_by_source_feepayer_mv;
 --   DROP TABLE IF EXISTS stellar.ops_by_source SYNC;

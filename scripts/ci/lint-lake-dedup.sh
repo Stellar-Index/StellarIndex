@@ -3,8 +3,8 @@
 # table must read it through FINAL, or sit above a subquery that collapses it.
 #
 # `stellar.transactions`, `stellar.operations` and the amount-carrying
-# `stellar.supply_flows`, `stellar.account_movements` and
-# `stellar.movements_by_asset` are
+# `stellar.supply_flows`, `stellar.account_movements`,
+# `stellar.movements_by_asset` and `stellar.contract_events` are
 # ReplacingMergeTree(ingested_at) archives whose duplicates are not merged away
 # in BULK: on r1 every `(ledger_seq, tx_index)` key in `stellar.transactions`
 # has carried more than one row, and `stellar.operations` runs at 2.0x. A
@@ -20,8 +20,9 @@
 #
 # ── THE RULE ──────────────────────────────────────────────────────────
 #
-# A read of one of these tables is IN SCOPE only when its OWN select list
-# applies a MULTIPLICITY-SENSITIVE aggregate (value changes when a row is
+# A read of one of these tables (after FROM, JOIN or a comma) is IN SCOPE only
+# when its OWN query block (select list, HAVING, ORDER BY; nested selects
+# excluded) applies a MULTIPLICITY-SENSITIVE aggregate (value changes when a row is
 # repeated), matched in any letter case and with any combinator suffix
 # (`COUNT(*)`, `sumIf`, `countState`, `sumKahan`):
 #
@@ -84,9 +85,10 @@ set -euo pipefail
 cd "${1:-$(dirname "$0")/../..}"
 
 BASELINE="scripts/ci/lint-lake-dedup.baseline"
-# Not every ReplacingMergeTree in the lake: these are the two the rule was
-# written for and the three that carry amounts.
-LAKE_TABLES="transactions|operations|supply_flows|account_movements|movements_by_asset"
+# Not every ReplacingMergeTree in the lake: the two the rule was written for,
+# the three that carry amounts, and contract_events, which every protocol
+# count is taken from.
+LAKE_TABLES="transactions|operations|supply_flows|account_movements|movements_by_asset|contract_events"
 
 die() { echo "lint-lake-dedup: FAIL — $*" >&2; exit 1; }
 
@@ -140,7 +142,7 @@ SQL
 # violating read plus a final `#counts <reads> <aggregating>` self-accounting
 # line, so a pattern that stopped matching reads as a fault, not a clean run.
 violations="$(
-  LC_ALL=C awk -v READ_RE="(from|join) stellar\\.(${LAKE_TABLES})([^a-z0-9_]|\$)" '
+  LC_ALL=C awk -v READ_RE="(from|join|,) ?stellar\\.(${LAKE_TABLES})([^a-z0-9_]|\$)" '
     # ── identity + vocabulary ────────────────────────────────────────
     function word(s, w) {
       return s ~ ("(^|[^A-Za-z0-9_])" w "([^A-Za-z0-9_]|$)")
@@ -179,21 +181,43 @@ violations="$(
       return substr(s, start, i - start)
     }
 
+    # own_text — a block with every parenthesised nested select blanked, so
+    # a scalar subquery in the select list is not read as this block.
+    function own_text(b,    i, j, n, depth, ch, out, inner) {
+      n = length(b); out = ""
+      for (i = 1; i <= n; i++) {
+        ch = substr(b, i, 1)
+        if (ch != "(") { out = out ch; continue }
+        depth = 1
+        for (j = i + 1; j <= n && depth > 0; j++) {
+          ch = substr(b, j, 1)
+          if (ch == "(") depth++; else if (ch == ")") depth--
+        }
+        inner = substr(b, i, j - i)
+        if (inner ~ /^\([ ]*select[^a-z0-9_]/) out = out "()"
+        else out = out "(" own_text(substr(inner, 2, length(inner) - 2)) ")"
+        i = j - 1
+      }
+      return out
+    }
+
     # ── unit accumulation ────────────────────────────────────────────
-    function reset_unit() { U = ""; Uline = 0 }
+    # A unit is flushed when the NEXT file starts, so it carries the file
+    # it began in: FILENAME at flush time is the wrong one.
+    function reset_unit() { U = ""; Uline = 0; Ufile = "" }
     function add(text) {
-      if (U == "") Uline = FNR
+      if (U == "") { Uline = FNR; Ufile = FILENAME }
       U = U " " text
     }
     function flush() {
       if (U != "" && index(U, "stellar."))
-        analyse(U, Uline)
+        analyse(U, Uline, Ufile)
       reset_unit()
     }
 
     # ── the read-by-read verdict ─────────────────────────────────────
-    function analyse(raw, line,    N, L, from, s, pos, len, tbl, i,
-                     owner, clause, blk, tail, snip) {
+    function analyse(raw, line, file,    N, L, from, s, pos, len, tbl, i,
+                     owner, clause, blk, tail, snip, depth, ch) {
       N = raw
       gsub(/[\n\t]/, " ", N)
       while (N ~ /  /) gsub(/  /, " ", N)
@@ -208,18 +232,26 @@ violations="$(
         # so take the extent of THIS read before calling anything else.
         pos = from + RSTART - 1
         len = RLENGTH
-        tbl = substr(L, pos + 5, len - 5)
+        tbl = substr(L, pos, len)
+        sub(/^.*stellar\./, "stellar.", tbl)
         sub(/[^a-z0-9_.].*$/, "", tbl)
         from = pos + len - 1
         examined++
 
-        # The owning SELECT: the last one before the read.
-        owner = 0
-        for (i = pos; i >= 1; i--)
-          if (is_select(L, i)) { owner = i; break }
+        # The owning SELECT: the last one before the read at the same
+        # paren depth. A subquery that closed before the read is not it.
+        owner = 0; depth = 0
+        for (i = pos; i >= 1; i--) {
+          ch = substr(L, i, 1)
+          if (ch == ")") depth++
+          else if (ch == "(") { if (depth == 0) break; depth-- }
+          else if (depth == 0 && is_select(L, i)) { owner = i; break }
+        }
         if (owner == 0) continue            # INSERT/ALTER target, not a read
 
-        clause = substr(L, owner, pos - owner)
+        # Its whole block, minus nested selects: an aggregate in HAVING or
+        # ORDER BY consumes the same rows as one in the select list.
+        clause = own_text(block_of(L, owner))
         if (!mult_agg(clause)) continue                       # not an aggregating read
         aggregating++
 
@@ -230,7 +262,7 @@ violations="$(
         blk = block_of(L, owner)
         snip = substr(N, owner, length(blk))
         if (length(snip) > 220) snip = substr(snip, 1, 220) " …"
-        printf "%s\t%d\t%s\t%s\n", FILENAME, line, tbl, snip
+        printf "%s\t%d\t%s\t%s\n", file, line, tbl, snip
       }
     }
 
@@ -239,12 +271,39 @@ violations="$(
     # Go: raw-string literals only, spliced across `+ ident +` glue so a
     # query assembled from constants is analysed as one statement.
     # Interpreted strings and // comments are not SQL carriers here.
+    # Blanks interpreted strings and rune literals and drops a trailing
+    # // comment, so every backtick left delimits a raw literal. A lone
+    # backtick in "`" or in a rune would otherwise invert the raw state for
+    # the rest of the file. raw is the state at the start of the line.
+    function go_mask(l, raw,    out, i, n, c, j) {
+      out = ""; n = length(l); i = 1
+      while (i <= n) {
+        if (raw) {
+          j = index(substr(l, i), "`")
+          if (j == 0) return out substr(l, i)
+          out = out substr(l, i, j); i += j; raw = 0
+          continue
+        }
+        c = substr(l, i, 1)
+        if (c == "`") { raw = 1; out = out c; i++; continue }
+        if (c == "/" && substr(l, i, 2) == "//") return out
+        if (c == "\"" || c == "\047") {
+          j = i + 1
+          while (j <= n && substr(l, j, 1) != c) { if (substr(l, j, 1) == "\\") j++; j++ }
+          out = out " "; i = j + 1
+          continue
+        }
+        out = out c; i++
+      }
+      return out
+    }
+
     function go_line(l,    n, p, i, inside, part, cut) {
-      if (!in_raw) {
+      if (index(l, "`") > 0) {
+        l = go_mask(l, in_raw)
+      } else if (!in_raw) {
         cut = index(l, "//")
-        # A // outside a raw string starts a comment; a backtick before
-        # it means the literal is still open and the marker is content.
-        if (cut > 0 && index(substr(l, 1, cut), "`") == 0) l = substr(l, 1, cut - 1)
+        if (cut > 0) l = substr(l, 1, cut - 1)
       }
       n = split(l, p, "`")
       inside = in_raw
@@ -409,6 +468,10 @@ done <<<"$violations"
 
 stale=0
 for b in ${base_keys+"${base_keys[@]}"}; do
+  # An entry for a table this copy does not watch is not stale: CI judges a PR
+  # with the base branch's copy, which must accept the entries of the PR that
+  # adds the table.
+  [[ "${b##*:stellar.}" =~ ^(${LAKE_TABLES})$ ]] || continue
   case "$observed" in
     *"|$b|"*) : ;;
     *) echo "lint-lake-dedup: baseline stale: $b no longer violates — remove it from $BASELINE." >&2

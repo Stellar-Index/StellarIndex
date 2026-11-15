@@ -54,5 +54,35 @@ else
   fi
 fi
 
+# A dataset mountpoint that 04-users.yml also manages must carry the same
+# mode in both places. 03-zfs.yml applies the dataset's dir_mode, 04-users.yml
+# then applies its own: a mismatch changes the directory twice on every apply.
+DEFAULTS="${DEFAULTS:-configs/ansible/roles/archival-node/defaults/main.yml}"
+USERS="${USERS:-configs/ansible/roles/archival-node/tasks/04-users.yml}"
+pairs() {  # <file> <path-key> <mode-key> → "<path> <mode>" per uncommented pair
+  awk -v pk="$2" -v mk="$3" '
+    /^[ \t]*#/ { next }
+    /^[ \t]*- / { p = "" }
+    { l = $0; sub(/[ \t]+#.*$/, "", l); gsub(/"/, "", l) }
+    l ~ "^[ \t]*(- )?" pk ":[ \t]*/" { p = l; sub(/^.*:[ \t]*/, "", p) }
+    p != "" && l ~ "^[ \t]*" mk ":[ \t]*[0-7]+[ \t]*$" { m = l; sub(/^.*:[ \t]*0*/, "", m); print p, m; p = "" }
+  ' "$1"
+}
+dataset_modes="$(pairs "$DEFAULTS" mountpoint dir_mode)"
+user_modes="$(pairs "$USERS" path mode)"
+compared=0
+while read -r path mode; do
+  [ -n "$path" ] || continue
+  want="$(awk -v p="$path" '$1 == p { print $2; exit }' <<<"$dataset_modes")"
+  [ -n "$want" ] || continue
+  compared=$((compared + 1))
+  if [ "$want" = "$mode" ]; then
+    ok "$path: dataset dir_mode and 04-users.yml agree ($mode)"
+  else
+    bad "$path: zfs_datasets dir_mode is $want but 04-users.yml sets $mode — every apply changes it twice"
+  fi
+done <<<"$user_modes"
+[ "$compared" -ge 3 ] || bad "compared $compared mountpoint(s) between $DEFAULTS and $USERS, want at least 3 — the parser, not the role, is broken"
+
 echo "ansible-archival-datadirs-ownership-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

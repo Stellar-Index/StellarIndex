@@ -13128,9 +13128,12 @@ paths:
         `next_cursor` is absent.
 
         SCOPE: `scope: "all"` (ADR-0038 Phase B) — both transactions the
-        account SOURCED (source/fee-payer) AND those where it's a non-source
+        account SOURCED AND those where it's a non-source
         PARTICIPANT in any operation (payment destination, trustor, merge
         target, clawback victim, …), via the operation-participant index.
+        A fee bump is listed for its inner source and for the account that
+        paid its fee; a fee bump ingested before the payer was recorded is
+        listed for the inner source only.
         Incoming coverage tracks the participant-index capture + historical
         backfill — a transaction whose only link to the account predates
         participant capture surfaces once the re-derive lands.

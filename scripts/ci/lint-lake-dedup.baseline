@@ -21,3 +21,7 @@ test/integration/clickhouse_accounts_test.go:stellar.transactions  counts the ph
 test/integration/clickhouse_accounts_test.go:stellar.operations  counts the physical versions of each key: the precondition that both versions exist before FINAL is tested
 test/integration/clickhouse_lake_test.go:stellar.account_movements  asserts the physical rows one fixture insert wrote; FINAL would hide a writer that emits a row twice
 test/integration/clickhouse_rollups_test.go:stellar.movements_by_asset  asserts the catch-up wrote no physical row for a stale key
+deploy/clickhouse/contract_event_shapes.sql:stellar.contract_events  the shape table's cnt is a discovery weight, stated in the file as only ever raised by overlap; a materialized view cannot read FINAL
+deploy/clickhouse/tier1_schema.sql:stellar.contract_events  the same contract_event_shapes view as contract_event_shapes.sql
+internal/storage/clickhouse/recognition.go:stellar.contract_events  cnt only orders shapes for recognition and is never served as a count; FINAL over the whole window would more than double a bounded discovery scan
+test/integration/clickhouse_reads_test.go:stellar.contract_events  an EXPLAIN of the planner's granule pruning, not a count that is read

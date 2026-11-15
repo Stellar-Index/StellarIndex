@@ -60,7 +60,7 @@ func proveOpsBySourceWindow(ctx context.Context, conn driver.Conn, from, to uint
 	return w, nil
 }
 
-// OpsBySourceMVsExist reports whether both feeding views exist, the condition for a proof through ledger N to hold
+// OpsBySourceMVsExist reports whether every feeding view exists, the condition for a proof through ledger N to hold
 // for every ledger after it too.
 func OpsBySourceMVsExist(ctx context.Context, addr string) (bool, error) {
 	conn, err := openRead(ctx, addr)
@@ -69,11 +69,12 @@ func OpsBySourceMVsExist(ctx context.Context, addr string) (bool, error) {
 	}
 	defer func() { _ = conn.Close() }()
 	var n uint64
-	const q = `SELECT count() FROM system.tables WHERE database = 'stellar' AND name IN ('ops_by_source_ops_mv', 'ops_by_source_tx_mv')`
+	const q = `SELECT count() FROM system.tables WHERE database = 'stellar'
+		AND name IN ('ops_by_source_ops_mv', 'ops_by_source_tx_mv', 'ops_by_source_feepayer_mv')`
 	if err := conn.QueryRow(ctx, q).Scan(&n); err != nil {
 		return false, fmt.Errorf("clickhouse: ops_by_source views: %w", err)
 	}
-	return n == 2, nil
+	return n == 3, nil
 }
 
 // SetOpsBySourceProofWatermark records a genesis-to-thru proof; a value at or below the stored one is a no-op.

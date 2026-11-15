@@ -4,13 +4,17 @@
 #
 # WHY. On r1 merge_chunks left 4 compressed chunks unreadable.
 # count(*) answers from chunk metadata, so it reported nothing wrong; only a
-# read of the compressed_data columns fails. This reads them.
+# read of the compressed_data columns fails. This reads them twice: each
+# column's header through compressed_data_info(), which detoasts the datum, then
+# every row of the chunk through its parent, which decompresses the values. A
+# header can be intact above a payload that is not.
 #
 # Cost: a chunk is decoded once per (compressed chunk id, relfilenode, rows
 # written to the compressed relation). A rewrite gets a new relfilenode; a
 # recompression that writes batches in place moves the write count. A
 # statistics reset moves every count and costs one more pass. Verified keys
-# (key@writes) live in $STATE, appended as each chunk passes and pruned to
+# (key@writes+v; a key without +v was verified by header only and is decoded
+# again) live in $STATE, appended as each chunk passes and pruned to
 # the chunks that still exist. The unreadable and backend-killer lists keep
 # the bare key, so a statistics reset after a crash cannot put a killer back
 # in the queue. An unreadable chunk is never recorded, so it stays counted until it is
@@ -25,7 +29,8 @@
 # (161 GB) after a writer deleted the heap rows without rebuilding them.
 #
 # A run stops starting chunks after PG_CHUNK_SCAN_BUDGET seconds (a full r1
-# pass is ~5.5h, past the unit's 4h timeout); the next night continues. Last
+# pass is hours: the value read alone is ~35 s per 2 GB of compressed chunk,
+# ~2.3h over 467 GB); the next night continues. Last
 # run's unreadable chunks are decoded first, so a partial run cannot drop them
 # from the count.
 #
@@ -82,7 +87,7 @@ SELECT tag, f1, f2, f3, f4, f5 FROM (
          h.table_name::text AS f2, c.table_name::text AS f3,
          format('%I.%I', cc.schema_name, cc.table_name) AS f4,
          coalesce((SELECT s.n_tup_ins + s.n_tup_upd + s.n_tup_del FROM pg_stat_all_tables s
-                    WHERE s.relid = format('%I.%I', cc.schema_name, cc.table_name)::regclass), 0)::text AS f5
+                    WHERE s.relid = format('%I.%I', cc.schema_name, cc.table_name)::regclass), 0)::text || '+v' AS f5
     FROM _timescaledb_catalog.chunk c
     JOIN _timescaledb_catalog.hypertable h ON h.id = c.hypertable_id
     JOIN _timescaledb_catalog.chunk cc ON cc.id = c.compressed_chunk_id
@@ -117,7 +122,7 @@ decode() {
   PGOPTIONS="-c search_path=pg_catalog -c lock_timeout=30s -c pgchunkscan.cc=${cc// /\\ }" \
     $PSQL -f - >/dev/null 2>"$W/err" <<'SQL' || rc=$?
 DO $$
-DECLARE cc text := current_setting('pgchunkscan.cc'); cols text; n bigint;
+DECLARE cc text := current_setting('pgchunkscan.cc'); cols text; parent text; n bigint;
 BEGIN
   SELECT string_agg(format('(SELECT count(*) FROM %s t, LATERAL _timescaledb_functions.compressed_data_info(t.%I) i)', cc, attname), '+')
     INTO cols
@@ -125,6 +130,14 @@ BEGIN
    WHERE attrelid = cc::regclass AND attnum > 0 AND NOT attisdropped
      AND atttypid = '_timescaledb_internal.compressed_data'::regtype;
   IF cols IS NOT NULL THEN EXECUTE 'SELECT ' || cols INTO n; END IF;
+  -- The whole-row test makes the planner decompress every column; OFFSET 0 keeps it from pruning them.
+  SELECT format('%I.%I', c.schema_name, c.table_name) INTO parent
+    FROM _timescaledb_catalog.chunk c
+    JOIN _timescaledb_catalog.chunk k ON k.id = c.compressed_chunk_id
+   WHERE format('%I.%I', k.schema_name, k.table_name)::regclass = cc::regclass;
+  IF parent IS NOT NULL THEN
+    EXECUTE format('SELECT count(*) FROM (SELECT t FROM %s t OFFSET 0) s WHERE s.t IS NOT NULL', parent) INTO n;
+  END IF;
   RAISE NOTICE 'CHUNK|ok';
 EXCEPTION
   WHEN undefined_table OR lock_not_available OR deadlock_detected OR insufficient_resources THEN
