@@ -142,7 +142,12 @@ export function AssetTrustFacts({
       ? `ledger ${holders.as_of_ledger.toLocaleString('en-US')}`
       : NOT_REPORTED;
   const holderCount = holders?.holder_count;
-  if (holders && holderCount === 0) {
+  // The holders board counts trustlines. A contract token has none, so its
+  // zero is "not indexed", not a count.
+  const contractToken = /^C[A-Z2-7]{55}$/.test(assetID);
+  if (contractToken) {
+    // Listed under "Not yet captured" below.
+  } else if (holders && holderCount === 0) {
     facts.push({
       label: 'Holders',
       value: '0',
@@ -202,7 +207,9 @@ export function AssetTrustFacts({
 
   const pending: string[] = [];
   if (issuer && issuerQ.isError) pending.push('issuer facts (read failed)');
-  if (holdersQ.isError) pending.push('holder facts (read failed)');
+  if (contractToken)
+    pending.push('holders (contract-token balances are not indexed)');
+  else if (holdersQ.isError) pending.push('holder facts (read failed)');
   else if (holders && holderCount == null) {
     pending.push('holder count (not reported)');
   }

@@ -55,6 +55,7 @@ import { headlinePriceProvenance } from './priceProvenance';
 import { SourceBreakdown } from '../../markets/[pair]/SourceBreakdown';
 import { AssetTabs, ActiveTabSlot } from './AssetTabs';
 import { AssetAbout } from './AssetAbout';
+import { homeDomainLabel, lookAlikeMeta } from './identityClaims';
 import { assetFaqFor } from './AssetFAQ';
 import { ChartPanel } from './ChartPanel';
 import { PriceSparklines } from './PriceSparklines';
@@ -739,14 +740,24 @@ export async function generateMetadata({
   const classLabel = globalView?.class
     ? globalView.class.charAt(0).toUpperCase() + globalView.class.slice(1)
     : null;
-  const title = globalView
-    ? `${code}${suffix} — ${classLabel ?? 'Verified asset'}`
-    : `${code}${suffix} — Stellar asset`;
-  const description = globalView
-    ? `${globalView.name}: live prices and markets on Stellar.`
-    : priceStr !== '—'
-      ? `${code} on Stellar:${suffix} · live VWAP across on-chain DEXes, classic SDEX, and major exchanges.`
-      : `Live price, markets, and issuer detail for ${code} on Stellar — VWAP'd across on-chain DEXes, classic SDEX, and major exchanges.`;
+  // A look-alike borrows a verified asset's ticker: its preview names
+  // the issuer, carries no price, and stays out of the index.
+  const lookAlike =
+    !globalView && coin?.unverified_ticker_collision
+      ? lookAlikeMeta(code, coin.issuer)
+      : null;
+  const title = lookAlike
+    ? lookAlike.title
+    : globalView
+      ? `${code}${suffix} — ${classLabel ?? 'Verified asset'}`
+      : `${code}${suffix} — Stellar asset`;
+  const description = lookAlike
+    ? lookAlike.description
+    : globalView
+      ? `${globalView.name}: live prices and markets on Stellar.`
+      : priceStr !== '—'
+        ? `${code} on Stellar:${suffix} · live VWAP across on-chain DEXes, classic SDEX, and major exchanges.`
+        : `Live price, markets, and issuer detail for ${code} on Stellar — VWAP'd across on-chain DEXes, classic SDEX, and major exchanges.`;
 
   // Canonical URL: catalogue lowercase slug wins (cross-chain
   // identity is the canonical entity), then API-returned slug
@@ -770,9 +781,11 @@ export async function generateMetadata({
     // Numeric-only asset codes ("9", "818") are legal on Stellar but
     // read as junk results in a search index — serve the page, keep
     // it out of the index (the sitemap also skips them).
-    ...(/^\d+$/.test(canonicalSlug)
-      ? { robots: { index: false, follow: true } }
-      : {}),
+    ...(lookAlike
+      ? { robots: { index: false, follow: false } }
+      : /^\d+$/.test(canonicalSlug)
+        ? { robots: { index: false, follow: true } }
+        : {}),
     openGraph: {
       title,
       description,
@@ -1008,8 +1021,15 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
         )}
         {!globalView?.verified_issuer && detail?.home_domain && (
           <p className="text-ink-body text-sm">
-            Issuer home domain:{' '}
+            {homeDomainLabel(detail.sep1_status)}:{' '}
             <code className="font-mono">{detail.home_domain}</code>
+            {detail.sep1_status !== 'verified' && (
+              <span className="text-ink-muted">
+                {' '}
+                (set by the issuer; its stellar.toml does not confirm this
+                asset)
+              </span>
+            )}
           </p>
         )}
         {/* One consolidated scam/malicious banner (Callout sets role=alert):
@@ -1428,13 +1448,17 @@ function OverviewBody({
               </dd>
             </div>
             {detail?.home_domain && (
-              <Stat label="Home domain" mono value={detail.home_domain} />
+              <Stat
+                label={homeDomainLabel(detail.sep1_status)}
+                mono
+                value={detail.home_domain}
+              />
             )}
           </dl>
         </Panel>
       )}
 
-      <AssetAbout symbol={assetSymbol(coin)} />
+      <AssetAbout assetId={coin.asset_id} symbol={assetSymbol(coin)} />
     </div>
   );
 }

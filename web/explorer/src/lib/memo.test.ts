@@ -17,6 +17,22 @@ describe('memoDisplay', () => {
     });
   });
 
+  it('shows the base64 copy when the text carries a direction override', () => {
+    // Renders as "123456" while the bytes say 654321 after the override.
+    expect(memoDisplay('\u202E654321', '4oCuNjU0MzIx')).toEqual({
+      value: '4oCuNjU0MzIx',
+      base64: true,
+    });
+    expect(memoDisplay('pay\u200Bme', 'cGF54oCLbWU=').base64).toBe(true);
+  });
+
+  it('writes hidden characters out when there is no base64 copy', () => {
+    expect(memoDisplay('\u202E654321', null)).toEqual({
+      value: '\\u202E654321',
+      base64: false,
+    });
+  });
+
   it('has nothing to show for a memo-less transaction', () => {
     expect(memoDisplay(null, null).value).toBeUndefined();
   });

@@ -110,7 +110,9 @@ export function HoldersTabPanel({
               // a backfill gap. The old copy blamed "trustline state …
               // backfill" for XLM, which was simply false.
               'XLM holder data is not available right now — the account-balance ranking may still be warming; retry shortly.'
-            : 'No holders in the captured ledger window yet — asset trustline state fills in as the entry-change backfill progresses.'}
+            : /^C[A-Z2-7]{55}$/.test(assetID)
+              ? 'Holders of a contract token are not indexed: this board counts trustlines, and a contract token keeps balances in its own storage.'
+              : 'No holders in the captured ledger window yet — asset trustline state fills in as the entry-change backfill progresses.'}
         </p>
       ) : (
         <div className="overflow-x-auto">
