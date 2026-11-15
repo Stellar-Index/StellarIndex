@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# lint-ansible-tasks.sh — three structural guards over configs/ansible/**.
+# lint-ansible-tasks.sh — structural guards over configs/ansible/**.
 #
 # Rule 1: pipefail-needs-bash. `ansible.builtin.shell` runs its body via
 #   /bin/sh, which is dash on every target host (Ubuntu noble). dash < 0.5.13
@@ -32,8 +32,10 @@
 #   the owner can shadow a catalog function or operator and have it run as
 #   superuser. A `psql -d stellarindex` command and a module task whose
 #   `login_db` is an app database MUST pin `search_path=pg_catalog` alone (or
-#   the task logs in as a named `login_user`): with public still on the path
-#   a closer-typed function there wins. A DSN connection is not seen.
+#   the task logs in as a named non-superuser `login_user`): with public still
+#   on the path a closer-typed function there wins. In a script that opens
+#   the app database every `PGOPTIONS=` assignment must carry the pin, since
+#   an assignment replaces an exported one. A DSN connection is not seen.
 #
 # The rules are line-oriented (awk), deliberately conservative, and
 # self-tested by lint-ansible-tasks-test.sh. Exit code = number of findings.
@@ -188,13 +190,21 @@ for f in "${yml_files[@]}" ${sh_files[@]+"${sh_files[@]}"}; do
       }
       login_line = 0; pinned = 0
     }
-    FNR == NR { if ($0 ~ /^[ \t]*export PGOPTIONS=.*search_path=pg_catalog([^,]|$)/) file_pin = 1; next }
+    FNR == NR {
+      if ($0 ~ /^[ \t]*export PGOPTIONS=.*search_path=pg_catalog([^,]|$)/) file_pin = 1
+      if ($0 !~ /^[ \t]*#/ && $0 ~ /psql[ \t].*(-d[ \t]*|--dbname[= \t])"?(stellarindex|\{\{[ \t]*postgres_db_)/) opens_app = 1
+      next }
     { if ($0 ~ /^[ \t]*- name:/) flush_task()
-      if ($0 ~ /^[ \t]*login_db:[ \t]*"?\{\{[ \t]*postgres_db_/) login_line = FNR
-      if ($0 ~ /PGOPTIONS:.*search_path=pg_catalog([^,]|$)/ || $0 ~ /^[ \t]*login_user:/) pinned = 1
+      if ($0 ~ /^[ \t]*(login_db|db|database):[ \t]*"?\{\{[ \t]*postgres_db_/) login_line = FNR
+      if ($0 ~ /PGOPTIONS:.*search_path=pg_catalog([^,]|$)/) pinned = 1
+      if ($0 ~ /^[ \t]*login_user:/ && $0 !~ /^[ \t]*login_user:[ \t]*"?postgres"?[ \t]*$/) pinned = 1
+      if (opens_app && $0 !~ /^[ \t]*#/ && $0 ~ /(^|[ \t;])PGOPTIONS="/ && $0 !~ /search_path=pg_catalog([^,]|$)/) {
+        printf("%s:%d: superuser-db-unpinned: PGOPTIONS assignment in a script that opens the app-owned database drops search_path=pg_catalog\n", file, FNR)
+        n++
+      }
       buf = buf $0; ln = (ln ? ln : FNR)
       if ($0 ~ /\\$/) { sub(/\\$/, "", buf); next }
-      if (buf !~ /^[ \t]*#/ && buf ~ /psql[ \t].*-d[ \t]+stellarindex/ \
+      if (buf !~ /^[ \t]*#/ && buf ~ /psql[ \t].*(-d[ \t]*|--dbname[= \t])"?(stellarindex|\{\{[ \t]*postgres_db_)/ \
           && buf !~ /search_path=pg_catalog([^,]|$)/ && !file_pin) {
         printf("%s:%d: superuser-db-unpinned: psql opens the app-owned database without search_path=pg_catalog\n", file, ln)
         n++

@@ -16,6 +16,8 @@ check() { if eval "$2"; then echo "ok: $1"; else echo "FAIL: $1"; fail=1; fi; }
 mkdir "$t/v"
 cat >"$t/psql" <<'FAKE'
 #!/usr/bin/env bash
+# Every session must search pg_catalog only: the scan runs as the superuser in an app-owned database.
+case "${PGOPTIONS:-}" in *"search_path=pg_catalog"*) ;; *) echo "psql: PGOPTIONS lacks search_path=pg_catalog" >&2; exit 2 ;; esac
 cc='' probe=0
 case "${PGOPTIONS:-}" in *pgchunkscan.cc=*) cc="${PGOPTIONS##*pgchunkscan.cc=}" ;; esac
 for a in "$@"; do case "$a" in

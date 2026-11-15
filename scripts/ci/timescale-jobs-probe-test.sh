@@ -587,10 +587,10 @@ export PSQL_ENV_LOG="$TMP/psql-env.log"
 run "" ""
 unset PSQL_ENV_LOG
 ENV_LOG="$TMP/psql-env.log"
-want_opts=$'\t-c statement_timeout=10s'
+want_opts=$'\t-c statement_timeout=10s -c search_path=pg_catalog'
 eq 0 "$RC" "the probe runs clean with the environment logged"
 for kind in lock_convoy cagg compression jobs job_errors; do
-  holds "the $kind query reaches psql with PGOPTIONS='-c statement_timeout=10s'" \
+  holds "the $kind query reaches psql with the timeout and the pg_catalog-only search path" \
     grep -qFx "$kind$want_opts" "$ENV_LOG"
 done
 refutes "no query reaches psql without the timeout" \

@@ -206,6 +206,10 @@ cat > "$T/pg.yml" <<'YML'
     name: x
   environment:
     PGOPTIONS: "-c search_path=pg_catalog,public"
+- name: superuser named outright
+  community.postgresql.postgresql_query:
+    db: "{{ postgres_db_stellarindex }}"
+    login_user: postgres
 - name: cluster database
   community.postgresql.postgresql_query:
     login_db: postgres
@@ -214,6 +218,12 @@ cat > "$F/pinned.sh" <<'SH'
 #!/usr/bin/env bash
 export PGOPTIONS="-c search_path=pg_catalog"
 PSQL="psql -X -d stellarindex"
+SH
+cat > "$F/override.sh" <<'SH'
+#!/usr/bin/env bash
+export PGOPTIONS="-c search_path=pg_catalog"
+PSQL="psql -X --dbname=stellarindex"
+PGOPTIONS="-c lock_timeout=30s" $PSQL -f -
 SH
 cat > "$F/bad.sh" <<'SH'
 #!/bin/bash
@@ -235,7 +245,7 @@ run() { (cd "$ROOT" && BASELINE="${1:-/nonexistent}" bash scripts/ci/lint-ansibl
 
 echo "case: no baseline"
 out="$(run)"; rc=$?
-expect_rc 10 "exit code = 10 findings"
+expect_rc 12 "exit code = 12 findings"
 expect_hit 'stage.yml:5: stage-in-tmp' "download into /tmp flagged"
 expect_hit 'stage.yml:9: stage-in-tmp' "quoted src under /tmp flagged"
 expect_miss 'stage.yml:1[0-9]:' "root-only scratch dir not flagged"
@@ -260,15 +270,17 @@ expect_miss 'pg.yml:14:' "owner-login module task not flagged"
 expect_hit 'pg.yml:18: superuser-db-unpinned' "unpinned psql flagged"
 expect_miss 'pg.yml:21:' "pinned psql over a continuation not flagged"
 expect_hit 'pg.yml:25: superuser-db-unpinned' "a pin that keeps public is flagged"
-expect_miss 'pg.yml:31:' "cluster-database task not flagged"
+expect_hit 'pg.yml:31: superuser-db-unpinned' "login_user postgres is not an exemption"
+expect_miss 'pg.yml:35:' "cluster-database task not flagged"
+expect_hit 'override.sh:4: superuser-db-unpinned' "a PGOPTIONS assignment that drops the pin is flagged"
 expect_miss 'pinned.sh' "script that exports the pin not flagged"
-expect_hit 'scanned 5 task files + 3 shell scripts' "self-accounting line"
+expect_hit 'scanned 5 task files + 4 shell scripts' "self-accounting line"
 
 echo "case: baseline suppresses + stale entry fails"
 printf 'secret-on-argv\tconfigs/ansible/roles/fx/tasks/secrets.yml\npipefail-needs-bash\tconfigs/ansible/roles/fx/tasks/nolonger.yml\n' > "$TMP/baseline"
 out="$(run "$TMP/baseline")"; rc=$?
-# 10 live findings − 2 baselined (both secrets.yml) + 1 stale = 9
-expect_rc 9 "exit code = 9"
+# 12 live findings − 2 baselined (both secrets.yml) + 1 stale = 11
+expect_rc 11 "exit code = 11"
 expect_hit 'baselined (shrink-only' "baselined finding reported"
 expect_hit 'STALE baseline entry.*nolonger.yml' "stale entry flagged"
 

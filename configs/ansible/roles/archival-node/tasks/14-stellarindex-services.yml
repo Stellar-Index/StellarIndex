@@ -258,6 +258,7 @@
   community.postgresql.postgresql_query:
     login_db: "{{ postgres_db_stellarindex }}"
     login_host: 127.0.0.1
+    login_port: "{{ postgres_port }}"
     login_user: "{{ postgres_user_stellarindex }}"
     login_password: "{{ postgres_pass_stellarindex }}"
     query: >-
@@ -265,7 +266,6 @@
       THEN RAISE EXCEPTION 'apply_api_role_grants() missing: apply migration 0213
       before setting postgres_pass_stellarindex_api'; END IF;
       PERFORM public.apply_api_role_grants(); END $$
-  no_log: true
   changed_when: false
 
 - name: Template /etc/default/stellarindex-api (API's own Postgres DSN)
