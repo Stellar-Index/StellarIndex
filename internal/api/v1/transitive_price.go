@@ -17,9 +17,9 @@ type TransitivePricer interface {
 // scam-withheld and whose two legs both clear the substance floors; a failing candidate falls through. Returns ("", false) when
 // none may be served, errors included. Both legs are gated because a two-hop price inherits its weakest leg: a thin hop would
 // otherwise reprice everything quoted against it, the manipulation the floors stop.
-func (s *Server) transitivePriceFor(ctx context.Context, asset canonical.Asset, assetID string) (string, bool) {
+func (s *Server) transitivePriceFor(ctx context.Context, asset canonical.Asset, assetID string) (price string, ok, unread bool) {
 	if s.TransitivePricer == nil {
-		return "", false
+		return "", false, false
 	}
 	candidates, err := s.TransitivePricer.TransitiveUSDPriceCandidates(ctx, assetID)
 	if err != nil {
@@ -27,14 +27,14 @@ func (s *Server) transitivePriceFor(ctx context.Context, asset canonical.Asset, 
 			s.logger.Debug("transitive price lookup failed",
 				"asset_id", assetID, "err", err)
 		}
-		return "", false
+		return "", false, true
 	}
 	for _, tp := range candidates {
 		if s.transitiveCandidateAllowed(ctx, asset, tp) {
-			return s.normalizeTransitiveUSD(tp.PriceUSD, asset), true
+			return s.normalizeTransitiveUSD(tp.PriceUSD, asset), true, false
 		}
 	}
-	return "", false
+	return "", false, false
 }
 
 // transitiveCandidateAllowed reports whether one candidate hop's price

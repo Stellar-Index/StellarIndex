@@ -152,6 +152,9 @@ type AssetDetail struct {
 	// data"; price_usd still serves, only the valuation is guarded.
 	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
 
+	// MarketCapLowerBound: on a listing row, market_cap_usd rests on a floor supply, so the cap is a floor too.
+	MarketCapLowerBound bool `json:"market_cap_lower_bound,omitempty"`
+
 	// MarketCapDecimalsMismatch is true when market_cap_usd and fdv_usd were refused because the
 	// lake's on-chain decimals() disagrees with the nonstandard_decimals_assets projection that
 	// price paths normalise through. Price and supply would sit on different scales, so their
@@ -322,6 +325,8 @@ type AssetDetail struct {
 	extensionStale bool
 	// priceUnread: the USD price read failed; a null price_usd is then not "no market".
 	priceUnread bool
+	// priceStale: the price reader served price_usd with its own stale verdict (e.g. a held prior bucket).
+	priceStale bool
 
 	// VolumeCharacter classifies trailing-window volume by account structure: "market" (default),
 	// "operational" (an issuer-side mint/redeem wrap corridor: real, but not market activity) or
@@ -1045,6 +1050,7 @@ func (s *Server) fillRowMarketCap(
 		return
 	}
 	row.MarketCapUSD = &mc
+	row.MarketCapLowerBound = basis.LowerBound()
 	stampCirculatingSupply(row, circ, basis)
 }
 
@@ -1128,18 +1134,6 @@ func settleListingThinRows(rows []AssetDetail) {
 		}
 		obs.PriceServeThinAdmittedTotal.WithLabelValues("listing", string(row.thinFloor)).Inc()
 	}
-}
-
-// listingPriceAllowed is [Server.listingSubstanceVerdict] reduced to yes/no; it fails CLOSED (unmeasured is not allowed).
-func (s *Server) listingPriceAllowed(ctx context.Context, asset canonical.Asset) bool {
-	return s.assetPriceAllowed(ctx, asset, "listing")
-}
-
-// assetPriceAllowed is [Server.listingPriceAllowed] for a caller that is
-// not the listing, counted under its own `surface`.
-func (s *Server) assetPriceAllowed(ctx context.Context, asset canonical.Asset, surface string) bool {
-	allowed, _ := pricingguard.AssetSubstanceVerdict(ctx, s.Substance, asset, s.USDPeggedClassics, surface)
-	return allowed
 }
 
 // listingSubstanceVerdict is the listing's per-row [pricingguard.AssetSubstanceVerdict] over the operator's USD pegs.
@@ -2568,7 +2562,7 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 // assetDetailStale reports whether detail rests on a failed, cut-short or
 // carried-forward read.
 func assetDetailStale(detail *AssetDetail, homeDomainDegraded, ctxDead bool) bool {
-	return homeDomainDegraded || detail.DecimalsUnresolved || detail.SupplyStale || detail.f2ReadFailed || detail.extensionUnread || detail.extensionStale || ctxDead
+	return homeDomainDegraded || detail.DecimalsUnresolved || detail.SupplyStale || detail.priceStale || detail.f2ReadFailed || detail.extensionUnread || detail.extensionStale || ctxDead
 }
 
 // transientlyDegraded reports whether detail rests on a read that failed or
@@ -3841,14 +3835,14 @@ func mergeTwinStats(dst *AssetDetail, twin AssetDetail) {
 		dst.Decimals = twin.Decimals
 	}
 	if dst.MarketCapUSD == nil {
-		dst.MarketCapUSD = twin.MarketCapUSD
+		dst.MarketCapUSD, dst.MarketCapLowerBound = twin.MarketCapUSD, twin.MarketCapLowerBound
 	}
 	// The dust-liquidity flag must ride along with the (absent) cap, or the catalogue row would
 	// show nothing where the twin shows market_cap_low_liquidity. When suppressed, null cap and
 	// FDV too so a stale value never coexists with the flag, as in populateMarketCap.
 	if twin.MarketCapLowLiquidity {
 		dst.MarketCapLowLiquidity = true
-		dst.MarketCapUSD = nil
+		dst.MarketCapUSD, dst.MarketCapLowerBound = nil, false
 		dst.FDVUSD = nil
 	}
 	// The listing valuation ran on the twin, which carries the asset_id, price and gate outcome it

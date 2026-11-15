@@ -11,6 +11,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
@@ -120,7 +121,15 @@ func (s *Server) applyAssetRowToDetail(ctx context.Context, detail *AssetDetail,
 	// verdict as the listing (listingPriceAllowed, cached ~60s). The change pills derive from that
 	// price so a gated-out row loses them too; the declared-peg fill downstream (nil PriceUSD only)
 	// can still supply the operator-declared basis.
-	priceAllowed := s.Substance == nil || s.listingPriceAllowed(ctx, asset)
+	priceAllowed := true
+	if s.Substance != nil {
+		var measured bool
+		priceAllowed, measured, _ = s.listingSubstanceVerdict(ctx, asset, false)
+		if !priceAllowed && !measured {
+			// The gate did not rule: the row price is withheld, and the answer is not a clean "no price".
+			detail.extensionUnread = true
+		}
+	}
 	// Fill PriceUSD from the row only when the canonical price path left it nil, so
 	// /v1/assets/native agrees with /v1/price. The row price is a raw prices_1m ratio, so it is
 	// decimals-normalised first (normalizeCatalogueReadUSD); a withheld price leaves PriceUSD nil
@@ -313,7 +322,12 @@ func (s *Server) fillTransitivePrice(ctx context.Context, detail *AssetDetail, a
 	if detail == nil || detail.PriceUSD != nil {
 		return
 	}
-	if p, ok := s.transitivePriceFor(ctx, asset, assetID); ok {
+	p, ok, unread := s.transitivePriceFor(ctx, asset, assetID)
+	if unread {
+		// The candidates were not read: a null price_usd is then not "no route".
+		detail.extensionUnread = true
+	}
+	if ok {
 		detail.PriceUSD = &p
 		detail.PriceBasis = priceBasisTransitive
 		detail.PriceWithheldReason = ""
@@ -349,4 +363,16 @@ func (s *Server) lookupCatalogueTwin(ctx context.Context, assetID string) (row *
 		}
 	}
 	return nil, false
+}
+
+// listingPriceAllowed is [Server.listingSubstanceVerdict] reduced to yes/no; it fails CLOSED (unmeasured is not allowed).
+func (s *Server) listingPriceAllowed(ctx context.Context, asset canonical.Asset) bool {
+	return s.assetPriceAllowed(ctx, asset, "listing")
+}
+
+// assetPriceAllowed is [Server.listingPriceAllowed] for a caller that is
+// not the listing, counted under its own `surface`.
+func (s *Server) assetPriceAllowed(ctx context.Context, asset canonical.Asset, surface string) bool {
+	allowed, _ := pricingguard.AssetSubstanceVerdict(ctx, s.Substance, asset, s.USDPeggedClassics, surface)
+	return allowed
 }

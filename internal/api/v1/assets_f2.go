@@ -278,6 +278,7 @@ func (s *Server) populatePriceUSD(ctx context.Context, detail *AssetDetail, asse
 	}
 	priceCopy := l.price
 	detail.PriceUSD = &priceCopy
+	detail.priceStale = l.stale
 	return l.sources
 }
 
@@ -321,6 +322,7 @@ func (s *Server) thinDetailPricePass(ctx context.Context, detail *AssetDetail, a
 	}
 	detail.PriceUSD = trial.PriceUSD
 	detail.PriceBasis = trial.PriceBasis
+	detail.priceStale = trial.priceStale
 	detail.PriceWithheldReason = ""
 	if on.Admitted() {
 		detail.ThinMarket = true

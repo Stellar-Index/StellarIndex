@@ -85,7 +85,7 @@ func TestTransitivePriceFor_FallsBackToNextHopWhenTopHopGated(t *testing.T) {
 			s := &Server{
 				Options: Options{TransitivePricer: tc.pricer, Substance: gate, Scam: transitiveScamGate{flagged: map[string]bool{flagHop: true}}},
 			}
-			got, ok := s.transitivePriceFor(context.Background(), asset, assetID)
+			got, ok, _ := s.transitivePriceFor(context.Background(), asset, assetID)
 			if got != tc.want || ok != (tc.want != wantNone) {
 				t.Fatalf("transitivePriceFor = (%q, %v), want %q", got, ok, tc.want)
 			}
@@ -212,7 +212,7 @@ func TestTransitivePriceFor_GateMatrix(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &Server{Options: Options{TransitivePricer: tc.pricer, Substance: tc.gate}}
-			got, ok := s.transitivePriceFor(context.Background(), asset, assetID)
+			got, ok, _ := s.transitivePriceFor(context.Background(), asset, assetID)
 			if ok != tc.wantOK {
 				t.Fatalf("ok = %v, want %v (price=%q)", ok, tc.wantOK, got)
 			}
@@ -264,7 +264,7 @@ func TestTransitivePriceFor_ScamGateOnBothLegs(t *testing.T) {
 			s := &Server{
 				Options: Options{TransitivePricer: &stubPricer{tp: timescale.TransitivePrice{PriceUSD: "7934.40", Hop: hopID, HopQuote: "native"}, ok: true}, Substance: substance, Scam: transitiveScamGate{flagged: tc.flagged}},
 			}
-			got, ok := s.transitivePriceFor(context.Background(), asset, assetID)
+			got, ok, _ := s.transitivePriceFor(context.Background(), asset, assetID)
 			if ok != tc.wantOK {
 				t.Fatalf("ok = %v (price=%q), want %v", ok, got, tc.wantOK)
 			}
@@ -287,7 +287,7 @@ func TestTransitivePriceFor_NilPricerDoesNotConsultGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := s.transitivePriceFor(context.Background(), asset, asset.String()); ok {
+	if _, ok, _ := s.transitivePriceFor(context.Background(), asset, asset.String()); ok {
 		t.Fatal("served a price with no pricer wired")
 	}
 }
@@ -308,7 +308,7 @@ func TestTransitivePriceFor_ResolverCalledOnce(t *testing.T) {
 			hopID + "|native":     true,
 		}}},
 	}
-	if _, ok := s.transitivePriceFor(context.Background(), asset, assetID); !ok {
+	if _, ok, _ := s.transitivePriceFor(context.Background(), asset, assetID); !ok {
 		t.Fatal("expected a served price")
 	}
 	if p.calls != 1 {
@@ -443,7 +443,7 @@ func TestTransitivePriceFor_NormalisesNonstandardDecimals(t *testing.T) {
 					hopID + "|native":        true,
 				}}, NonstandardDecimals: decimalsCacheFlagging(t, tc.flagged)},
 			}
-			got, ok := s.transitivePriceFor(context.Background(), asset, tc.assetID)
+			got, ok, _ := s.transitivePriceFor(context.Background(), asset, tc.assetID)
 			if !ok {
 				t.Fatal("expected a served price")
 			}

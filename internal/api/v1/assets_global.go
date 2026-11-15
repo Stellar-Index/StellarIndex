@@ -154,6 +154,10 @@ func (s *Server) populateGlobalCryptoPrice(ctx context.Context, view GlobalAsset
 		return view
 	}
 
+	// The VWAP tier serves a bucket past its freshness ceiling when no lower tier answered.
+	if res.Authority == aggregate.AuthorityVWAPNative && opts.MaxVWAPAge > 0 && time.Since(res.AsOf) > opts.MaxVWAPAge {
+		reportStaleRead(ctx)
+	}
 	price := res.Price
 	view.PriceUSD = &price
 	view.PriceAuthority = res.Authority

@@ -392,10 +392,10 @@ type AssetDetail struct {
 	//     volume), or
 	//   - the ceiling: the figure exceeds the server's maximum multiple of the asset's own trailing-24h USD
 	//     volume. FDV can breach it alone, leaving market_cap_usd served.
-	//
-	// Distinguishes "suppressed on purpose" from "no supply/price data"; price_usd still serves. Omitted (false)
-	// when neither figure was suppressed.
+	// Distinguishes "suppressed on purpose" from "no supply/price data"; price_usd still serves.
 	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
+	// MarketCapLowerBound is true on a listing row whose market_cap_usd rests on a floor supply.
+	MarketCapLowerBound bool `json:"market_cap_lower_bound,omitempty"`
 
 	// MarketCapDecimalsMismatch is true when market_cap_usd (and fdv_usd) were refused (served
 	// null) because the server's two decimals resolvers disagreed for this Soroban token, so supply
