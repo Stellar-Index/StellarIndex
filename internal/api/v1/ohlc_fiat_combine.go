@@ -51,7 +51,13 @@ func (s *Server) ohlcSeriesFiatCombined(
 
 	out := make([]OHLCSeriesBar, 0, len(acc))
 	for t, a := range acc {
-		out = append(out, a.finalize(t))
+		bar := a.finalize(t)
+		// Every constituent shares the base token, so its leg follows the same rule as the plain series; the
+		// quote leg sums 7-decimal USD pegs.
+		if bar.VBaseDecimals != nil {
+			bar.VBaseDecimals = wireScaleDecimals(legScaleDecimals(s.NonstandardDecimals, pair.Base, *bar.VBaseDecimals, bar.Sources))
+		}
+		out = append(out, bar)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].T.Time().Before(out[j].T.Time()) })
 	return newestCombinedBars(out, limit), estProxied || heldBackProxied, nil

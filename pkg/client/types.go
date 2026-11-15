@@ -640,10 +640,10 @@ type OHLCBar struct {
 	Close       string    `json:"close"`
 	BaseVolume  string    `json:"base_volume"`
 	QuoteVolume string    `json:"quote_volume"`
-	// BaseVolumeDecimals / QuoteVolumeDecimals are the decimal exponent of the two sums above. Equal today (a
-	// source stamps both legs at one scale) but carried separately because a scale belongs to an amount, not a
-	// pair. Nil when a contributing trade's source is unrecognised: the sums are then not convertible to asset
-	// units.
+	// BaseVolumeDecimals / QuoteVolumeDecimals are the decimal exponent of the two sums above. They differ
+	// when one leg is a token with nonstandard decimals. Nil when a contributing trade's source is
+	// unrecognised, or when such a token's leg includes an off-chain venue: the sum is then not convertible
+	// to asset units.
 	BaseVolumeDecimals  *int `json:"base_volume_decimals"`
 	QuoteVolumeDecimals *int `json:"quote_volume_decimals"`
 	TradeCount          int  `json:"trade_count"`
