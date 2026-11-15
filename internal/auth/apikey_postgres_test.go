@@ -956,6 +956,34 @@ func TestPostgresValidator_ClearedOverrideDoesNotUnmeterInheritingKeys(t *testin
 	}
 }
 
+// TestPostgresValidator_InheritedQuotaUsesTheAccountsOwnTier: the account-status cache fronts every
+// record hit, so it must carry the tier. Without it a partner key resolves to the free ceiling on
+// every lookup after the first.
+func TestPostgresValidator_InheritedQuotaUsesTheAccountsOwnTier(t *testing.T) {
+	keys, accounts, rdb := newStubs()
+	v, _ := auth.NewPostgresAPIKeyValidator(auth.PostgresValidatorOptions{Keys: keys, Accounts: accounts, Cache: rdb})
+	acct := seedActiveAccount(accounts, "partner")
+	acct.Tier = platform.TierPartner
+	accounts.byID[acct.ID] = acct
+
+	const plaintext = "sip_partner_inherits"
+	body, _ := json.Marshal(auth.APIKeyRecord{
+		KeyID: "kid_partner", Identifier: auth.AccountIdentifier(acct.Slug), Tier: auth.TierAPIKey, RateLimitPerMin: 6000,
+	})
+	if err := rdb.Set(context.Background(), cachekeys.APIKey(hexHashOf(plaintext)).String(), body, 0).Err(); err != nil {
+		t.Fatalf("seed canonical record: %v", err)
+	}
+	for i := range 3 {
+		sub, err := v.Lookup(context.Background(), plaintext)
+		if err != nil {
+			t.Fatalf("lookup %d: %v", i, err)
+		}
+		if sub.MonthlyQuota != platform.TierPartner.MaxMonthlyQuota() {
+			t.Errorf("lookup %d: quota %d, want the partner ceiling %d", i, sub.MonthlyQuota, platform.TierPartner.MaxMonthlyQuota())
+		}
+	}
+}
+
 // TestPostgresValidator_CanonicalHitRenewsIdleWindow: self-service and register-mirrored records carry
 // a sliding idle TTL and have no api_keys row, so the validator that serves them must renew it. A
 // persistent record stays persistent, and the derived cache row keeps its own TTL.

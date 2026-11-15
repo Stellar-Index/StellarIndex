@@ -327,8 +327,8 @@ func (r *recordingKeyCacheInvalidator) InvalidateCachedKey(_ context.Context, he
 }
 
 // TestAdminKeysRevoke_EvictsThePostgresAuthCache: under auth_backend=postgres the validator serves a
-// derived cache row for up to an hour. The staff kill switch must evict it, and a revoke whose eviction
-// failed must not answer 204.
+// derived cache row for up to an hour. The staff kill switch must evict it. A failed eviction fails the
+// call before the row is revoked, so the retry is a whole revoke rather than a 404.
 func TestAdminKeysRevoke_EvictsThePostgresAuthCache(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -360,6 +360,9 @@ func TestAdminKeysRevoke_EvictsThePostgresAuthCache(t *testing.T) {
 			}
 			if len(inv.evicted) != 1 || inv.evicted[0] != "deadbeef" {
 				t.Errorf("evicted = %v, want [deadbeef]: the revoked key keeps authenticating from its cache row", inv.evicted)
+			}
+			if revoked := len(platformKeys.revokedIDs) == 1; revoked != (tc.evictErr == nil) {
+				t.Errorf("row revoked = %v with eviction error %v: the row and its cache row must go together", revoked, tc.evictErr)
 			}
 		})
 	}

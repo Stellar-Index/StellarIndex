@@ -357,6 +357,7 @@ func (g *accountStatusGate) storeStatus(slug string, acct platform.Account, at t
 	defer g.mu.Unlock()
 	// Keep only what the gate and the cascade read; no PII in the cache.
 	g.cache[slug] = cachedAccountStatus{acct: platform.Account{
+		Tier:                        acct.Tier, // an inheriting key's quota is the tier ceiling
 		Status:                      acct.Status,
 		RateLimitPerMinOverride:     acct.RateLimitPerMinOverride,
 		MonthlyRequestQuotaOverride: acct.MonthlyRequestQuotaOverride,
