@@ -308,6 +308,11 @@ func (h *Handlers) HandlePasskeyBeginRegister(w http.ResponseWriter, r *http.Req
 		writeProblem(w, http.StatusUnauthorized, "authentication required", r.URL.Path)
 		return
 	}
+	// A passkey is a way to sign in, so enrolling one needs a recent sign-in: otherwise an old stolen cookie
+	// could enrol its own key, sign in with it and pass every recent-session gate.
+	if !h.recentSession(w, sc, r.URL.Path) {
+		return
+	}
 	wa, err := h.webAuthn()
 	if err != nil {
 		h.cfg.Logger.Error("webauthn config", "err", err)
@@ -379,6 +384,9 @@ func (h *Handlers) HandlePasskeyFinishRegister(w http.ResponseWriter, r *http.Re
 	sc, ok := SessionFromContext(r.Context())
 	if !ok {
 		writeProblem(w, http.StatusUnauthorized, "authentication required", r.URL.Path)
+		return
+	}
+	if !h.recentSession(w, sc, r.URL.Path) {
 		return
 	}
 	// MaxBytesReader, not LimitReader: LimitReader truncates silently at its cap, which would make

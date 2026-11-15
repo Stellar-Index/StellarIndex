@@ -29,8 +29,9 @@ type AccountExporter interface {
 }
 
 const (
-	// accountReauthWindow is how recently the session must have been minted for an erasure or export:
-	// a session stolen days ago must not be enough to destroy or download an account.
+	// accountReauthWindow is how recently the session must have been minted for an erasure, an export or a
+	// new passkey: a session stolen days ago must not be enough to destroy or download an account, nor to
+	// enrol the credential that would mint a recent session.
 	accountReauthWindow = 10 * time.Minute
 	// accountActionWindow, maxAccountErasures and maxAccountExports bound
 	// attempts per user per instance.
@@ -130,9 +131,7 @@ func (h *Handlers) accountActionGate(
 		writeProblem(w, http.StatusForbidden, "only an account owner can do this", route)
 		return SessionContext{}, false
 	}
-	if h.cfg.Now().Sub(sc.Session.CreatedAt) > accountReauthWindow {
-		httpx.WriteProblem(w, "https://api.stellarindex.io/errors/reauth-required",
-			http.StatusUnauthorized, "sign in again, then retry within 10 minutes", route)
+	if !h.recentSession(w, sc, route) {
 		return SessionContext{}, false
 	}
 	if !h.cfg.accountActions.Allow(action+":"+sc.User.ID.String(), limit) {
@@ -141,6 +140,16 @@ func (h *Handlers) accountActionGate(
 		return SessionContext{}, false
 	}
 	return sc, true
+}
+
+// recentSession reports whether the session was minted inside accountReauthWindow, writing reauth-required otherwise.
+func (h *Handlers) recentSession(w http.ResponseWriter, sc SessionContext, route string) bool {
+	if h.cfg.Now().Sub(sc.Session.CreatedAt) > accountReauthWindow {
+		httpx.WriteProblem(w, "https://api.stellarindex.io/errors/reauth-required",
+			http.StatusUnauthorized, "sign in again, then retry within 10 minutes", route)
+		return false
+	}
+	return true
 }
 
 // notifyAccountErased mails each owner address captured before the

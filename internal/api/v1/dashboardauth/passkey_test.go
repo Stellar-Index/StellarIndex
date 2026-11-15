@@ -139,10 +139,48 @@ func (r *passkeyRig) withSession(req *http.Request) *http.Request {
 		id = uuid.New()
 	}
 	return req.WithContext(WithSession(req.Context(), SessionContext{
-		Session: platform.Session{ID: id, UserID: r.user.ID},
+		Session: platform.Session{ID: id, UserID: r.user.ID, CreatedAt: r.now()},
 		User:    r.user,
 		Account: r.account,
 	}))
+}
+
+// withOldSession plants a session minted just outside the re-auth window.
+func (r *passkeyRig) withOldSession(req *http.Request) *http.Request {
+	return req.WithContext(WithSession(req.Context(), SessionContext{
+		Session: platform.Session{
+			ID: uuid.New(), UserID: r.user.ID, CreatedAt: r.now().Add(-accountReauthWindow - time.Second),
+		},
+		User:    r.user,
+		Account: r.account,
+	}))
+}
+
+// An old cookie must not be able to enrol a passkey: that key would sign in and mint the recent session
+// the erasure and export gates ask for.
+func TestPasskeyRegister_RefusesASessionOutsideTheReauthWindow(t *testing.T) {
+	rig := newPasskeyRig(t)
+	for _, tc := range []struct {
+		path   string
+		handle http.HandlerFunc
+		body   string
+	}{
+		{"/v1/auth/passkey/begin-register", rig.h.HandlePasskeyBeginRegister, ""},
+		{"/v1/auth/passkey/finish-register", rig.h.HandlePasskeyFinishRegister, `{"name":"k","credential":{}}`},
+	} {
+		w := httptest.NewRecorder()
+		tc.handle(w, rig.withOldSession(httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(tc.body))))
+		if w.Code != http.StatusUnauthorized || !strings.Contains(w.Body.String(), "errors/reauth-required") {
+			t.Errorf("%s with an old session: status = %d body = %s, want 401 reauth-required", tc.path, w.Code, w.Body.String())
+		}
+		if len(w.Result().Cookies()) != 0 {
+			t.Errorf("%s with an old session set a cookie", tc.path)
+		}
+	}
+	creds, err := rig.passkeys.ListWebAuthnCredentialsForUser(context.Background(), rig.user.ID)
+	if err != nil || len(creds) != 0 {
+		t.Fatalf("credentials after refused enrolment = %d (err %v), want 0", len(creds), err)
+	}
 }
 
 func ceremonyCookie(t *testing.T, w *httptest.ResponseRecorder) *http.Cookie {

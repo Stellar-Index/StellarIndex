@@ -41422,7 +41422,7 @@
                   "request": {
                     "name": "Customer dashboard — begin adding a passkey to the signed-in account.",
                     "description": {
-                      "content": "Session-gated. Returns the WebAuthn credential-creation\noptions for `navigator.credentials.create()` — resident\n(discoverable) key required, so the resulting passkey can\nlater sign in usernameless, and `userVerification: required`,\nsince that credential is a passwordless first factor and must\ncarry a biometric/PIN of its own. An authenticator that\ncannot verify the user (a PIN-less security key) therefore\ncannot be enrolled. Already-registered credentials are\nexcluded so an authenticator refuses to double-register.\n\nSets the same signed ceremony cookie the login pair uses\n(purpose-bound: a registration challenge cannot finish a\nlogin, nor vice versa), with the same server-enforced\n5-minute, single-use challenge.\n",
+                      "content": "Session-gated, and the session must have been minted within the\nlast 10 minutes (`reauth-required`, 401, otherwise: sign in\nagain, then retry). A passkey is a way to sign in, so an old\nsession cannot add one. Returns the WebAuthn credential-creation\noptions for `navigator.credentials.create()` — resident\n(discoverable) key required, so the resulting passkey can\nlater sign in usernameless, and `userVerification: required`,\nsince that credential is a passwordless first factor and must\ncarry a biometric/PIN of its own. An authenticator that\ncannot verify the user (a PIN-less security key) therefore\ncannot be enrolled. Already-registered credentials are\nexcluded so an authenticator refuses to double-register.\n\nSets the same signed ceremony cookie the login pair uses\n(purpose-bound: a registration challenge cannot finish a\nlogin, nor vice versa), with the same server-enforced\n5-minute, single-use challenge.\n",
                       "type": "text/plain"
                     },
                     "url": {
@@ -41622,7 +41622,7 @@
                   "request": {
                     "name": "Customer dashboard — finish adding a passkey; stores the credential.",
                     "description": {
-                      "content": "Session-gated. Verifies the attestation response against the\nceremony cookie's challenge (which must have been minted for\nTHIS user, be within its 5-minute lifetime, and not already\nhave been used) and stores the credential's public key. The\nprivate key never leaves the user's authenticator.\n\nOn success every other session of the user is revoked; the\nsession that registered the passkey stays signed in.\n\nA label longer than 100 characters is truncated to 100\ncharacters (not bytes — multi-byte names keep their full\ncharacter budget).\n",
+                      "content": "Session-gated, with the same 10-minute recent-session rule as\nbegin-register (`reauth-required`, 401). Verifies the\nattestation response against the\nceremony cookie's challenge (which must have been minted for\nTHIS user, be within its 5-minute lifetime, and not already\nhave been used) and stores the credential's public key. The\nprivate key never leaves the user's authenticator.\n\nOn success every other session of the user is revoked; the\nsession that registered the passkey stays signed in.\n\nA label longer than 100 characters is truncated to 100\ncharacters (not bytes — multi-byte names keep their full\ncharacter budget).\n",
                       "type": "text/plain"
                     },
                     "url": {

@@ -114,7 +114,7 @@ func TestPasskeyFinishRegister_WritesAuditRow(t *testing.T) {
 	sessionID := uuid.New()
 	withSess := func(req *http.Request) *http.Request {
 		return req.WithContext(WithSession(req.Context(), SessionContext{
-			Session: platform.Session{ID: sessionID, UserID: rig.user.ID},
+			Session: platform.Session{ID: sessionID, UserID: rig.user.ID, CreatedAt: rig.now()},
 			User:    rig.user,
 			Account: rig.account,
 		}))

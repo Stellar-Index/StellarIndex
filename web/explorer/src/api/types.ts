@@ -4700,7 +4700,10 @@ export interface paths {
         put?: never;
         /**
          * Customer dashboard — begin adding a passkey to the signed-in account.
-         * @description Session-gated. Returns the WebAuthn credential-creation
+         * @description Session-gated, and the session must have been minted within the
+         *     last 10 minutes (`reauth-required`, 401, otherwise: sign in
+         *     again, then retry). A passkey is a way to sign in, so an old
+         *     session cannot add one. Returns the WebAuthn credential-creation
          *     options for `navigator.credentials.create()` — resident
          *     (discoverable) key required, so the resulting passkey can
          *     later sign in usernameless, and `userVerification: required`,
@@ -4733,7 +4736,9 @@ export interface paths {
         put?: never;
         /**
          * Customer dashboard — finish adding a passkey; stores the credential.
-         * @description Session-gated. Verifies the attestation response against the
+         * @description Session-gated, with the same 10-minute recent-session rule as
+         *     begin-register (`reauth-required`, 401). Verifies the
+         *     attestation response against the
          *     ceremony cookie's challenge (which must have been minted for
          *     THIS user, be within its 5-minute lifetime, and not already
          *     have been used) and stores the credential's public key. The
