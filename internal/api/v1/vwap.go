@@ -108,6 +108,7 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 	// Over the fetched window: an unregistered source among the trades the
 	// filter drops still leaves the survivors lifted against its guessed scale.
 	volumeDecimals := commonAmountScaleDecimals(window)
+	sources := tradeSources(window.Trades())
 
 	pre := window.Len()
 	fetched := window.Trades()
@@ -138,8 +139,8 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		Price:               ratToDecimal(price, ohlcPriceDigits),
 		BaseVolume:          aggregate.TotalBaseVolume(trades).String(),
 		QuoteVolume:         aggregate.TotalQuoteVolume(trades).String(),
-		BaseVolumeDecimals:  wireScaleDecimals(volumeDecimals),
-		QuoteVolumeDecimals: wireScaleDecimals(volumeDecimals),
+		BaseVolumeDecimals:  wireScaleDecimals(legScaleDecimals(s.NonstandardDecimals, base, volumeDecimals, sources)),
+		QuoteVolumeDecimals: wireScaleDecimals(legScaleDecimals(s.NonstandardDecimals, quote, volumeDecimals, sources)),
 		TradeCount:          len(trades),
 		OutliersFiltered:    outliersFiltered,
 		Truncated:           pre == maxTrades,
