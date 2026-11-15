@@ -32,10 +32,10 @@ func TestOHLCSeriesReBucketedServesEveryDeclaredFold(t *testing.T) {
 		}
 		folded++
 		t.Run(route.Interval, func(t *testing.T) {
-			store, conn := newScriptedStore(t, scriptedResult{
+			store, conn := newScriptedStore(t, foldBoundScript(foldReader, scriptedResult{
 				cols: ohlcSourcesCols,
 				rows: [][]driver.Value{row},
-			})
+			})...)
 			bars, err := store.OHLCSeriesReBucketed(context.Background(), ohlcSourcesPair(t),
 				route.Source, route.Fold, bucket, bucket.Add(28*24*time.Hour), 10)
 			if err != nil {
@@ -46,7 +46,7 @@ func TestOHLCSeriesReBucketedServesEveryDeclaredFold(t *testing.T) {
 			if len(bars) != 1 || bars[0].TradeCount != 2100 {
 				t.Fatalf("%s: got %d bars %+v, want the one scripted row", route.Interval, len(bars), bars)
 			}
-			stmt := conn.only(t).sql
+			stmt := barStatement(t, conn, foldReader)
 			for _, want := range []string{
 				"INTERVAL '" + route.Fold + "'",
 				"FROM prices_" + string(route.Source),

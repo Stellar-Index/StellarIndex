@@ -71,10 +71,10 @@ func TestOHLCBarCarriesContributingSources(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			store, _ := newScriptedStore(t, scriptedResult{
+			store, _ := newScriptedStore(t, foldBoundScript(tc.name, scriptedResult{
 				cols: ohlcSourcesCols,
 				rows: [][]driver.Value{row},
-			})
+			})...)
 			bars, err := tc.run(store)
 			if err != nil {
 				t.Fatalf("%s: %v", tc.name, err)
@@ -132,15 +132,11 @@ func TestOHLCBarSourcesSpanBothStoredDirections(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			store, conn := newScriptedStore(t, scriptedResult{cols: ohlcSourcesCols})
+			store, conn := newScriptedStore(t, foldBoundScript(tc.name, scriptedResult{cols: ohlcSourcesCols})...)
 			if err := tc.run(store); err != nil {
 				t.Fatalf("%s: %v", tc.name, err)
 			}
-			stmts := conn.statements()
-			if len(stmts) != 1 {
-				t.Fatalf("%s issued %d statements, want 1", tc.name, len(stmts))
-			}
-			sql := stmts[0]
+			sql := barStatement(t, conn, tc.name)
 			if !strings.Contains(sql, "sources") {
 				t.Fatalf("%s never selects the CAGG sources column:\n%s", tc.name, sql)
 			}
@@ -183,11 +179,11 @@ func TestOHLCVolumeLegsReadVolumeQuote(t *testing.T) {
 			return err
 		},
 	} {
-		store, conn := newScriptedStore(t, scriptedResult{cols: ohlcSourcesCols})
+		store, conn := newScriptedStore(t, foldBoundScript(name, scriptedResult{cols: ohlcSourcesCols})...)
 		if err := run(store); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		sql := conn.statements()[0]
+		sql := barStatement(t, conn, name)
 		// One stored leg per direction: the requested row's quote, the
 		// flipped row's base.
 		if n := strings.Count(sql, "ELSE volume_quote END"); n != 1 {
@@ -230,4 +226,32 @@ func TestListDivergenceLatest_DaysFilterUsesMakeInterval(t *testing.T) {
 		t.Errorf("days window must NOT use the ($1 || ' days') text-concat form — "+
 			"it types $1 as text and pgx cannot encode the int arg; got:\n%s", q)
 	}
+}
+
+// The fold reads its closed-through bound first (the view's watermark, then the pair's first unmaterialised trade), so
+// a scripted fold answers those two statements before the bars.
+const foldReader = "OHLCSeriesReBucketed"
+
+func foldBoundScript(reader string, bars ...scriptedResult) []scriptedResult {
+	if reader != foldReader {
+		return bars
+	}
+	return append([]scriptedResult{
+		{cols: []string{"watermark"}, rows: [][]driver.Value{{time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)}}},
+		{cols: []string{"first_unmaterialised"}, rows: [][]driver.Value{{nil}}},
+	}, bars...)
+}
+
+// barStatement returns the statement that read the bars, after checking the reader issued nothing else.
+func barStatement(t *testing.T, conn *scriptedConn, reader string) string {
+	t.Helper()
+	stmts := conn.statements()
+	want := 1
+	if reader == foldReader {
+		want = 3
+	}
+	if len(stmts) != want {
+		t.Fatalf("%s issued %d statements, want %d: %v", reader, len(stmts), want, stmts)
+	}
+	return stmts[want-1]
 }

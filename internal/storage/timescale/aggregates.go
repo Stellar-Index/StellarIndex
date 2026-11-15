@@ -1523,6 +1523,7 @@ func ohlcReBucketedQuery(table, outInterval string) string {
 		  LEFT JOIN src sc ON sc.ob = time_bucket(INTERVAL '%[2]s', n.bucket)
 		 GROUP BY time_bucket(INTERVAL '%[2]s', n.bucket), sc.sources
 		 HAVING time_bucket(INTERVAL '%[2]s', n.bucket) <= now() - INTERVAL '%[2]s'
+		    AND ($5::timestamptz IS NULL OR time_bucket(INTERVAL '%[2]s', n.bucket) <= $5::timestamptz - INTERVAL '%[2]s')
 	`, table, outInterval)
 }
 
@@ -1554,8 +1555,12 @@ func (s *Store) OHLCSeriesReBucketed(
 	// over the unnested arrays, joined back on out_bucket; unioning at the pre-fold grain forces
 	// the row-level CTE to materialise.
 	// #nosec G201 — table comes from the validated enum, outInterval from the allow-list above.
+	through, err := s.foldClosedThrough(ctx, table, p)
+	if err != nil {
+		return nil, err
+	}
 	q := ohlcReBucketedQuery(table, outInterval)
-	args := []any{p.Base.String(), p.Quote.String(), from.UTC(), to.UTC()}
+	args := []any{p.Base.String(), p.Quote.String(), from.UTC(), to.UTC(), through}
 	if limit > 0 {
 		// DESC + LIMIT keeps the NEWEST `limit` out-buckets, as in [Store.OHLCSeries]; an
 		// `ORDER BY out_bucket ASC LIMIT` would keep the OLDEST.
