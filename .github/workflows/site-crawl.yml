@@ -105,7 +105,9 @@ jobs:
           done
 
   browser:
-    runs-on: ubuntu-latest
+    # Pinned: the locked Playwright has no Chromium build for the image
+    # ubuntu-latest now resolves to, and the install step fails before the crawl.
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       issues: write
