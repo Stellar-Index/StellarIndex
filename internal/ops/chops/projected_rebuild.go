@@ -515,15 +515,11 @@ func RunProjectedRebuild(ctx context.Context, opts ProjectedRebuildOptions) (Pro
 		return result, nil
 	}
 
-	pending := plan
-	if opts.Resume {
-		done, derr := loadDoneWindows(ctx, opts.Store, opts.Source.Name)
-		if derr != nil {
-			return result, fmt.Errorf("projected-rebuild: load resume checkpoints: %w", derr)
-		}
-		pending = pendingWindows(plan, opts.Source.Name, done)
-		result.WindowsOtherBuild = otherBuildWindows(pending, opts.Source.Name, done)
+	pending, otherBuild, err := resumePending(ctx, opts, plan)
+	if err != nil {
+		return result, err
 	}
+	result.WindowsOtherBuild = otherBuild
 	result.WindowsSkipped = len(plan) - len(pending)
 	if len(pending) == 0 {
 		return result, nil
@@ -777,6 +773,19 @@ func loadDoneWindows(ctx context.Context, store *timescale.Store, name string) (
 		out[c.Sub] = c.LastLedger
 	}
 	return out, nil
+}
+
+// resumePending returns the windows still to walk and how many of them another build had checkpointed.
+func resumePending(ctx context.Context, opts ProjectedRebuildOptions, plan []opsutil.RangeChunk) ([]opsutil.RangeChunk, int, error) {
+	if !opts.Resume {
+		return plan, 0, nil
+	}
+	done, err := loadDoneWindows(ctx, opts.Store, opts.Source.Name)
+	if err != nil {
+		return nil, 0, fmt.Errorf("projected-rebuild: load resume checkpoints: %w", err)
+	}
+	pending := pendingWindows(plan, opts.Source.Name, done)
+	return pending, otherBuildWindows(pending, opts.Source.Name, done), nil
 }
 
 // pendingWindows filters plan to windows not fully checkpointed in done. A window is done only
