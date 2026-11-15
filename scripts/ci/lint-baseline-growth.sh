@@ -2,7 +2,8 @@
 # lint-baseline-growth.sh - anti-self-bypass tripwire for self-editable lint escape hatches:
 #   scripts/ci/*.baseline, the KNOWN_INERT array in lint-metric-refs.sh, .gitleaksignore,
 #   .gitleaks.toml allowlists, scripts/ci/govulncheck-allow.txt, .golangci.yml exclusions,
-#   configs/ansible/.ansible-lint skip_list, deploy/systemd/ORPHANS, and (mutations only,
+#   configs/ansible/.ansible-lint skip_list, deploy/systemd/ORPHANS, the waiver maps in
+#   lint-pk-discriminators and lint-derive-generation-guard, and (mutations only,
 #   since new migrations append freely) scripts/ci/migration-immutability.sha256.
 #
 # Linters fail on stale entries, but nothing stopped one commit from growing an allowlist while
@@ -159,6 +160,14 @@ detect_growth() {
   while IFS= read -r line; do
     [[ -n "$line" ]] && printf '%s\t%s\n' scripts/ci/migration-immutability.sha256 "$line"
   done <<<"$added"
+
+  # 10) The in-source waiver maps of the two Go lints: each `"table": "reason"` line exempts a table.
+  for f in scripts/ci/lint-pk-discriminators/main.go scripts/ci/lint-derive-generation-guard/main.go; do
+    added="$(added_entries "$base" "$head" "$f" '^\s*"[a-z0-9_]+":\s*"')"
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && printf '%s\t%s\n' "$f" "$line"
+    done <<<"$added"
+  done
 }
 
 # has_scoped_trailer <watched-file> <log-body>: true iff a Baseline-Growth trailer names the file.

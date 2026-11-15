@@ -430,6 +430,22 @@ grow_orphans "chore: declare an orphan unit"
 runGate
 expect "ORPHANS growth fails undeclared" 1 "UNDECLARED GROWTH: deploy/systemd/ORPHANS"
 
+# --- 14b. a waiver added to a Go lint's in-source map is caught ---
+mkrepo 0
+(
+  cd "$TMP/repo" || exit 1
+  mkdir -p scripts/ci/lint-pk-discriminators
+  printf 'package main\n\nvar allow = map[string]string{\n\t"trades": "OK: fanned op_index",\n}\n' \
+    > scripts/ci/lint-pk-discriminators/main.go
+  git add -A && git commit -qm "chore: add the lint"
+  git rev-parse HEAD > "$TMP/base"
+  printf 'package main\n\nvar allow = map[string]string{\n\t"trades": "OK: fanned op_index",\n\t"new_events": "OK: trust me",\n}\n' \
+    > scripts/ci/lint-pk-discriminators/main.go
+  git add -A && git commit -qm "chore: waive a table"
+)
+runGate
+expect "a pk-discriminators waiver fails undeclared" 1 "UNDECLARED GROWTH: scripts/ci/lint-pk-discriminators/main.go"
+
 # --- 15. configs/ansible/.ansible-lint skip_list growth is caught
 mkrepo 0
 grow_ansible_lint "chore: grandfather another ansible-lint rule"
