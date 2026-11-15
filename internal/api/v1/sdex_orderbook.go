@@ -245,35 +245,39 @@ func (c *SDEXOrderBookCache) VerifyPending(ctx context.Context, limit int) (err 
 	}
 	c.mu.Lock()
 	for _, ref := range refs {
-		o, ok := c.pending[ref.KeyXDR]
-		if !ok || o.Ledger != ref.Ledger {
-			continue // superseded by an Advance since the refs were drawn
-		}
-		res := resolved[ref.KeyXDR]
-		if !res.Removed && !res.HasPost && !res.Loaded {
-			continue // the log cannot say which image is current: stays withheld
-		}
-		c.dropPendingLocked(ref.KeyXDR)
-		if res.Removed {
-			continue // proven dead — never serve, never re-check
-		}
-		// Serve the post-image, never the tied survivor: that row may be the pre-image of this update.
-		post := o
-		if res.HasPost {
-			post = res.Post
-			post.KeyXDR, post.Ledger, post.Version = o.KeyXDR, o.Ledger, o.Version
-		}
-		if post.Amount <= 0 || post.PriceN <= 0 || post.PriceD <= 0 {
-			continue
-		}
-		if prev, dup := c.offers[ref.KeyXDR]; dup && prev.Version >= post.Version {
-			continue
-		}
-		c.offers[ref.KeyXDR] = post
+		c.settlePendingLocked(ref, resolved[ref.KeyXDR])
 	}
 	c.updateHealthGaugesLocked()
 	c.mu.Unlock()
 	return nil
+}
+
+// settlePendingLocked moves one pending offer to the book, drops it, or leaves it withheld, by what the change log resolved.
+func (c *SDEXOrderBookCache) settlePendingLocked(ref clickhouse.OfferRemovalRef, res clickhouse.TiedOffer) {
+	o, ok := c.pending[ref.KeyXDR]
+	if !ok || o.Ledger != ref.Ledger {
+		return // superseded by an Advance since the refs were drawn
+	}
+	if !res.Removed && !res.HasPost && !res.Loaded {
+		return // the log cannot say which image is current: stays withheld
+	}
+	c.dropPendingLocked(ref.KeyXDR)
+	if res.Removed {
+		return // proven dead — never serve, never re-check
+	}
+	// Serve the post-image, never the tied survivor: that row may be the pre-image of this update.
+	post := o
+	if res.HasPost {
+		post = res.Post
+		post.KeyXDR, post.Ledger, post.Version = o.KeyXDR, o.Ledger, o.Version
+	}
+	if post.Amount <= 0 || post.PriceN <= 0 || post.PriceD <= 0 {
+		return
+	}
+	if prev, dup := c.offers[ref.KeyXDR]; dup && prev.Version >= post.Version {
+		return
+	}
+	c.offers[ref.KeyXDR] = post
 }
 
 // Advance applies offer changes since the cursor by version (>= wins), so duplicated rows are idempotent; a tick with zero cursor progress records "advance_held".

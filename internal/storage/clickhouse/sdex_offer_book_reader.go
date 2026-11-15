@@ -347,22 +347,8 @@ func (r *ExplorerReader) ResolveTiedOffers(ctx context.Context, refs []OfferRemo
 	}
 
 	// Apply order between transactions, for the offers more than one of them changed.
-	var txRefs []tiedOfferRef
+	txRefs := multiTxOfferRefs(changes, ledgerOf)
 	txIndex := make(map[tiedOfferRef]uint32)
-	for key, cs := range changes {
-		seen := make(map[string]struct{}, 2)
-		for i := range cs {
-			if cs[i].changeType != "state" && cs[i].changeType != "removed" {
-				seen[cs[i].txHash] = struct{}{}
-			}
-		}
-		if len(seen) < 2 {
-			continue
-		}
-		for tx := range seen {
-			txRefs = append(txRefs, tiedOfferRef{ledger: ledgerOf[key], value: tx})
-		}
-	}
 	err = r.probeTiedBatches(ctx, `SELECT ledger_seq, tx_hash, tx_index
 			FROM stellar.transactions
 			WHERE (ledger_seq, tx_hash)`, "tied offer tx order", txRefs,
@@ -390,6 +376,26 @@ func (r *ExplorerReader) ResolveTiedOffers(ctx context.Context, refs []OfferRemo
 		out[key] = resolveTiedOffer(cs, order)
 	}
 	return out, nil
+}
+
+// multiTxOfferRefs names the transactions whose apply order matters: those of an offer more than one transaction changed.
+func multiTxOfferRefs(changes map[string][]tiedOfferChange, ledgerOf map[string]uint32) []tiedOfferRef {
+	var txRefs []tiedOfferRef
+	for key, cs := range changes {
+		seen := make(map[string]struct{}, 2)
+		for i := range cs {
+			if cs[i].changeType != "state" && cs[i].changeType != "removed" {
+				seen[cs[i].txHash] = struct{}{}
+			}
+		}
+		if len(seen) < 2 {
+			continue
+		}
+		for tx := range seen {
+			txRefs = append(txRefs, tiedOfferRef{ledger: ledgerOf[key], value: tx})
+		}
+	}
+	return txRefs
 }
 
 // offerFromEntryXDR decodes one offer LedgerEntry; ok=false for undecodable bytes or
