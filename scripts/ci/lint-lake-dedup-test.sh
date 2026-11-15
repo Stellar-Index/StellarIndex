@@ -577,6 +577,37 @@ printf '%s\n' \
 check "a stale baseline entry fails until it is deleted" 1 "$stale"
 
 # ── non-vacuity ──────────────────────────────────────────────────────
+# Reads the first version of the gate did not attribute to their own select.
+shape() { # shape <name> <sql> — a fixture tree whose extra read is <sql>
+  local r
+  r="$(mk "$1")"
+  # shellcheck disable=SC2016 # a Go raw-literal backtick, not a shell expansion
+  printf 'package clickhouse\n\nconst q = `%s`\n' "$2" > "$r/$GODIR/shape.go"
+  echo "$r"
+}
+
+catches "a lake table after a comma (implicit cross join) is caught" \
+  "$(shape comma 'SELECT sum(t.fee_charged) FROM stellar.ledgers l, stellar.transactions t WHERE t.ledger_seq = l.ledger_seq')" \
+  stellar.transactions
+
+catches "an aggregate in HAVING, after the read, is caught" \
+  "$(shape having 'SELECT source_account FROM stellar.operations GROUP BY source_account HAVING count() > 5')" \
+  stellar.operations
+
+catches "an aggregate in ORDER BY, after the read, is caught" \
+  "$(shape orderby 'SELECT source_account FROM stellar.operations GROUP BY source_account ORDER BY sum(op_index) DESC')" \
+  stellar.operations
+
+catches "a join after a closed subquery belongs to the outer aggregate" \
+  "$(shape closedsub 'SELECT count() FROM (SELECT account FROM stellar.account_activity) a JOIN stellar.operations o ON o.source_account = a.account')" \
+  stellar.operations
+
+check "a scalar subquery aggregate in the select list is not this read" 0 \
+  "$(shape scalar 'SELECT ledger_seq, (SELECT count() FROM stellar.ledgers) AS n FROM stellar.operations WHERE ledger_seq = 5')"
+
+check "a count() above a collapsing subquery still passes" 0 \
+  "$(shape above 'SELECT count() FROM (SELECT ledger_seq, tx_index, op_index FROM stellar.operations GROUP BY ledger_seq, tx_index, op_index)')"
+
 empty="$TMP/empty"
 mkdir -p "$empty/$GODIR"
 cat > "$empty/$GODIR/nothing.go" <<'GO'

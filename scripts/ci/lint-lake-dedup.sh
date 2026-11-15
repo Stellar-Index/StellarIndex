@@ -20,8 +20,9 @@
 #
 # ── THE RULE ──────────────────────────────────────────────────────────
 #
-# A read of one of these tables is IN SCOPE only when its OWN select list
-# applies a MULTIPLICITY-SENSITIVE aggregate (value changes when a row is
+# A read of one of these tables (after FROM, JOIN or a comma) is IN SCOPE only
+# when its OWN query block (select list, HAVING, ORDER BY; nested selects
+# excluded) applies a MULTIPLICITY-SENSITIVE aggregate (value changes when a row is
 # repeated), matched in any letter case and with any combinator suffix
 # (`COUNT(*)`, `sumIf`, `countState`, `sumKahan`):
 #
@@ -140,7 +141,7 @@ SQL
 # violating read plus a final `#counts <reads> <aggregating>` self-accounting
 # line, so a pattern that stopped matching reads as a fault, not a clean run.
 violations="$(
-  LC_ALL=C awk -v READ_RE="(from|join) stellar\\.(${LAKE_TABLES})([^a-z0-9_]|\$)" '
+  LC_ALL=C awk -v READ_RE="(from|join|,) ?stellar\\.(${LAKE_TABLES})([^a-z0-9_]|\$)" '
     # ── identity + vocabulary ────────────────────────────────────────
     function word(s, w) {
       return s ~ ("(^|[^A-Za-z0-9_])" w "([^A-Za-z0-9_]|$)")
@@ -179,6 +180,26 @@ violations="$(
       return substr(s, start, i - start)
     }
 
+    # own_text — a block with every parenthesised nested select blanked, so
+    # a scalar subquery in the select list is not read as this block.
+    function own_text(b,    i, j, n, depth, ch, out, inner) {
+      n = length(b); out = ""
+      for (i = 1; i <= n; i++) {
+        ch = substr(b, i, 1)
+        if (ch != "(") { out = out ch; continue }
+        depth = 1
+        for (j = i + 1; j <= n && depth > 0; j++) {
+          ch = substr(b, j, 1)
+          if (ch == "(") depth++; else if (ch == ")") depth--
+        }
+        inner = substr(b, i, j - i)
+        if (inner ~ /^\([ ]*select[^a-z0-9_]/) out = out "()"
+        else out = out "(" own_text(substr(inner, 2, length(inner) - 2)) ")"
+        i = j - 1
+      }
+      return out
+    }
+
     # ── unit accumulation ────────────────────────────────────────────
     # A unit is flushed when the NEXT file starts, so it carries the file
     # it began in: FILENAME at flush time is the wrong one.
@@ -195,7 +216,7 @@ violations="$(
 
     # ── the read-by-read verdict ─────────────────────────────────────
     function analyse(raw, line, file,    N, L, from, s, pos, len, tbl, i,
-                     owner, clause, blk, tail, snip) {
+                     owner, clause, blk, tail, snip, depth, ch) {
       N = raw
       gsub(/[\n\t]/, " ", N)
       while (N ~ /  /) gsub(/  /, " ", N)
@@ -210,18 +231,26 @@ violations="$(
         # so take the extent of THIS read before calling anything else.
         pos = from + RSTART - 1
         len = RLENGTH
-        tbl = substr(L, pos + 5, len - 5)
+        tbl = substr(L, pos, len)
+        sub(/^.*stellar\./, "stellar.", tbl)
         sub(/[^a-z0-9_.].*$/, "", tbl)
         from = pos + len - 1
         examined++
 
-        # The owning SELECT: the last one before the read.
-        owner = 0
-        for (i = pos; i >= 1; i--)
-          if (is_select(L, i)) { owner = i; break }
+        # The owning SELECT: the last one before the read at the same
+        # paren depth. A subquery that closed before the read is not it.
+        owner = 0; depth = 0
+        for (i = pos; i >= 1; i--) {
+          ch = substr(L, i, 1)
+          if (ch == ")") depth++
+          else if (ch == "(") { if (depth == 0) break; depth-- }
+          else if (depth == 0 && is_select(L, i)) { owner = i; break }
+        }
         if (owner == 0) continue            # INSERT/ALTER target, not a read
 
-        clause = substr(L, owner, pos - owner)
+        # Its whole block, minus nested selects: an aggregate in HAVING or
+        # ORDER BY consumes the same rows as one in the select list.
+        clause = own_text(block_of(L, owner))
         if (!mult_agg(clause)) continue                       # not an aggregating read
         aggregating++
 
