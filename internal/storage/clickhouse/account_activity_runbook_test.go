@@ -1,6 +1,7 @@
 package clickhouse
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -418,6 +419,53 @@ func TestAccountActivityRunbook_Step3IsBounded(t *testing.T) {
 	for _, w := range []string{"SETTINGS max_threads = 4, max_memory_usage = 8000000000", "cityHash64(account_id) % $AA_MOD = 0"} {
 		if !strings.Contains(section, w) {
 			t.Errorf("Step-3 verify lacks %q", w)
+		}
+	}
+}
+
+// TestBackfillRunbooks_FailClosed holds the same contract for the other two pasted backfill loops: a window the
+// wrapper refused or that failed stops the loop, and COMPLETE prints only when every job ran, because the next
+// step writes a coverage marker the readers trust.
+func TestBackfillRunbooks_FailClosed(t *testing.T) {
+	dir := filepath.Dir(accountActivitySQLPath(t))
+	for _, rb := range []struct {
+		file, start, end, table, t0 string
+		jobs                        int
+	}{
+		{"account_op_types.sql", "Step 3: windowed historical backfill", "Step 4: verify", "account_op_types", "390000", 4},
+		{"contract_event_shapes.sql", "Step 2: windowed historical backfill", "Step 3: verify", "contract_event_shapes", "51000000", 2},
+	} {
+		section := extractRunbookSection(t, filepath.Join(dir, rb.file), rb.start, rb.end)
+		done := rb.table + " backfill: COMPLETE"
+		insert := "INSERT INTO stellar." + rb.table
+		for _, tc := range []struct {
+			name    string
+			env     []string
+			wantOK  bool
+			want    string
+			inserts int
+		}{
+			{"complete run", []string{"T0=" + rb.t0}, true, fmt.Sprintf("%d of %d jobs ran to success", rb.jobs, rb.jobs), rb.jobs},
+			{"per-job lock held", []string{"T0=" + rb.t0, "AA_FLOCK_FAIL_ON=9:2"}, false, "DID NOT RUN (the wrapper exited 75", 1},
+			{"host-wide lock held", []string{"T0=" + rb.t0, "AA_FLOCK_FAIL_ON=8:2"}, false, "DID NOT RUN (the wrapper exited 75", 1},
+			{"a job fails", []string{"T0=" + rb.t0, "AA_FAIL_MATCH=" + insert}, false, "FAILED - aborting", 1},
+			{"T0 not set", []string{"T0="}, false, "is not a ledger number", 0},
+		} {
+			t.Run(rb.table+"/"+tc.name, func(t *testing.T) {
+				for _, uid := range []string{"1000", "0"} {
+					res := runRunbook(t, section, false, append([]string{"AA_UID=" + uid}, tc.env...)...)
+					if res.ok != tc.wantOK || strings.Contains(res.out, done) != tc.wantOK {
+						t.Errorf("uid %s: exit ok = %v, COMPLETE printed = %v, want both %v\n%s",
+							uid, res.ok, strings.Contains(res.out, done), tc.wantOK, res.out)
+					}
+					if !strings.Contains(res.out, tc.want) {
+						t.Errorf("uid %s: output lacks %q\n%s", uid, tc.want, res.out)
+					}
+					if got := runbookQueryCount(res.queries, insert); got != tc.inserts {
+						t.Errorf("uid %s: %d backfill INSERTs reached clickhouse-client, want %d\n%s", uid, got, tc.inserts, res.out)
+					}
+				}
+			})
 		}
 	}
 }

@@ -96,7 +96,8 @@ ORDER BY (account, movement_kind)
 SETTINGS index_granularity = 1024;
 
 -- ── Step 3: windowed historical backfill ────────────────────────────────────
--- ***Heavy op.*** run-heavy-job.sh, one window at a time. Duplicate source rows
+-- ***Heavy op.*** run-heavy-job.sh, one window at a time; the loop stops at the first window that did not run to
+-- success and prints COMPLETE only when every one did. Re-run it whole after an abort. Duplicate source rows
 -- (operations and transactions are RMTs holding rows twice) collapse in the
 -- target RMT, so no dedup is needed on the read side. The participant arm keeps
 -- the participants window on the JOIN's build side and pre-filters
@@ -104,37 +105,57 @@ SETTINGS index_granularity = 1024;
 -- Measured on r1: the participant arm over a dense 10k-ledger window (60.0M) read
 -- 4.7M participant rows, kept 3.3M visible, in 9.3 s; budget ~16 h for history.
 --
---   W=200000
---   for S in $(seq 2 "$W" "$((T0 + 10000))"); do E=$((S + W))
---     /usr/local/sbin/run-heavy-job.sh "aot-source-$S" clickhouse-client --port 9300 -q "
---       INSERT INTO stellar.account_op_types (account, ledger_seq, tx_index, op_index, op_type)
---       SELECT source_account, ledger_seq, tx_index, op_index, op_type
---       FROM stellar.operations
---       WHERE source_account != '' AND ledger_seq >= $S AND ledger_seq < $E
---       SETTINGS max_threads = 4, max_memory_usage = 8000000000"
---     /usr/local/sbin/run-heavy-job.sh "aot-participant-$S" clickhouse-client --port 9300 -q "
---       INSERT INTO stellar.account_op_types (account, ledger_seq, tx_index, op_index, op_type)
---       SELECT p.account, o.ledger_seq, o.tx_index, o.op_index, o.op_type
---       FROM stellar.operations AS o
---       INNER JOIN (
---         SELECT p.account, p.ledger_seq, p.tx_index, p.op_index
---         FROM (SELECT DISTINCT account, ledger_seq, tx_index, op_index
---               FROM stellar.operation_participants
---               WHERE ledger_seq >= $S AND ledger_seq < $E) AS p
+--   (
+--     case "$T0" in ''|*[^0-9]*|0*)
+--       echo "account_op_types backfill: T0='$T0' is not a ledger number - aborting, NOTHING was backfilled" >&2; exit 1 ;;
+--     esac
+--     AOT_MARKS=$(mktemp -d) || exit 1
+--     AOT_DONE=0; AOT_WANT=0
+--     aot_job() {
+--       AOT_MARK="$AOT_MARKS/$1-$2.ok"
+--       /usr/local/sbin/run-heavy-job.sh "aot-$1-$2" bash -c 'clickhouse-client --port 9300 -q "$1" && : > "$2"' aot-job "$3" "$AOT_MARK" </dev/null \
+--         || { if [ $? -eq 75 ]; then echo "account_op_types backfill: $1 window $2 DID NOT RUN (the wrapper exited 75 - a lock was held (this job's, or the host-wide one another heavy job holds) and it did not run) - aborting, the table is INCOMPLETE from window $2 up"; else echo "account_op_types backfill: $1 window $2 FAILED - aborting, the table is INCOMPLETE from window $2 up"; fi >&2; exit 1; }
+--       [ -e "$AOT_MARK" ] \
+--         || { echo "account_op_types backfill: $1 window $2 DID NOT RUN (the wrapper exited 0 with no success marker) - aborting, the table is INCOMPLETE from window $2 up" >&2; exit 1; }
+--       AOT_DONE=$((AOT_DONE + 1))
+--     }
+--     W=200000
+--     for S in $(seq 2 "$W" "$((T0 + 10000))"); do E=$((S + W))
+--       AOT_WANT=$((AOT_WANT + 2))
+--       aot_job source "$S" "
+--         INSERT INTO stellar.account_op_types (account, ledger_seq, tx_index, op_index, op_type)
+--         SELECT source_account, ledger_seq, tx_index, op_index, op_type
+--         FROM stellar.operations
+--         WHERE source_account != '' AND ledger_seq >= $S AND ledger_seq < $E
+--         SETTINGS max_threads = 4, max_memory_usage = 8000000000"
+--       aot_job participant "$S" "
+--         INSERT INTO stellar.account_op_types (account, ledger_seq, tx_index, op_index, op_type)
+--         SELECT p.account, o.ledger_seq, o.tx_index, o.op_index, o.op_type
+--         FROM stellar.operations AS o
 --         INNER JOIN (
---           SELECT ledger_seq, tx_index, any(successful) AS ok, any(source_account) AS src
---           FROM stellar.transactions
---           WHERE ledger_seq >= $S AND ledger_seq < $E
---             AND (ledger_seq, tx_index) IN (
---                 SELECT ledger_seq, tx_index FROM stellar.operation_participants
---                 WHERE ledger_seq >= $S AND ledger_seq < $E)
---           GROUP BY ledger_seq, tx_index) AS t
---         ON p.ledger_seq = t.ledger_seq AND p.tx_index = t.tx_index
---         WHERE t.ok = 1 OR t.src = p.account) AS p
---       ON o.ledger_seq = p.ledger_seq AND o.tx_index = p.tx_index AND o.op_index = p.op_index
---       WHERE o.ledger_seq >= $S AND o.ledger_seq < $E
---       SETTINGS max_threads = 4, max_memory_usage = 8000000000, join_algorithm = 'grace_hash'"
---   done
+--           SELECT p.account, p.ledger_seq, p.tx_index, p.op_index
+--           FROM (SELECT DISTINCT account, ledger_seq, tx_index, op_index
+--                 FROM stellar.operation_participants
+--                 WHERE ledger_seq >= $S AND ledger_seq < $E) AS p
+--           INNER JOIN (
+--             SELECT ledger_seq, tx_index, any(successful) AS ok, any(source_account) AS src
+--             FROM stellar.transactions
+--             WHERE ledger_seq >= $S AND ledger_seq < $E
+--               AND (ledger_seq, tx_index) IN (
+--                   SELECT ledger_seq, tx_index FROM stellar.operation_participants
+--                   WHERE ledger_seq >= $S AND ledger_seq < $E)
+--             GROUP BY ledger_seq, tx_index) AS t
+--           ON p.ledger_seq = t.ledger_seq AND p.tx_index = t.tx_index
+--           WHERE t.ok = 1 OR t.src = p.account) AS p
+--         ON o.ledger_seq = p.ledger_seq AND o.tx_index = p.tx_index AND o.op_index = p.op_index
+--         WHERE o.ledger_seq >= $S AND o.ledger_seq < $E
+--         SETTINGS max_threads = 4, max_memory_usage = 8000000000, join_algorithm = 'grace_hash'"
+--     done
+--     echo "account_op_types backfill: $AOT_DONE of $AOT_WANT jobs ran to success"
+--     [ "$AOT_WANT" -gt 0 ] && [ "$AOT_DONE" -eq "$AOT_WANT" ] \
+--       || { echo "account_op_types backfill: NOT every job ran (or T0=$T0 yields no window) - aborting" >&2; exit 1; }
+--     rm -rf "$AOT_MARKS"
+--   ) && echo "account_op_types backfill: COMPLETE - every window 2..$((T0 + 10000)) covered"
 --
 -- ── Step 4: verify ──────────────────────────────────────────────────────────
 -- For 20 accounts (include the USDC issuer and a multi-million-op account),
@@ -146,6 +167,8 @@ SETTINGS index_granularity = 1024;
 -- same account. Expect every row equal.
 --
 -- ── Step 5: coverage marker ─────────────────────────────────────────────────
+-- Only after Step 3 printed COMPLETE: a window the wrapper refused (exit 75) or that failed aborts the loop without
+-- that line, and a marker written over a skipped window makes the readers trust rows that are not there.
 --   INSERT INTO stellar.account_op_types_coverage (covered_from, covered_to)
 --   VALUES (2, <T0 + 10000>);
 -- Then restart the api: a probe that found the marker absent latches for the
