@@ -1196,8 +1196,8 @@ func (s *Server) buildRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error)
 	}
 	trunc := rwaTruncationOf(m, join)
 	view.Summary = rwaSummarise(view.Assets, trunc)
-	view.ByClass = rwaByClass(view.Assets)
-	view.ByIssuer = rwaByIssuer(view.Assets)
+	view.ByClass = rwaByClass(view.Assets, trunc)
+	view.ByIssuer = rwaByIssuer(view.Assets, trunc)
 	view.Funnel = rwaFunnelOf(m, join, len(classicAssets), dirCounts.served, listingCounts.served, view.Assets)
 	// The curated arm runs LAST, over the finished verified view, so it can say which of its rows
 	// the verified set carries and never feeds a figure back into the totals above.
@@ -1877,7 +1877,7 @@ const rwaUnclassifiedNote = "Admitted because an independent oracle prices the i
 	"says `other`, another declares no anchor type at all. A class here would contradict the first issuer on their own asset " +
 	"and invent one for the second, so the group is named rather than filled."
 
-func rwaByClass(assets []RWAAsset) []RWAGroupTotal {
+func rwaByClass(assets []RWAAsset, trunc rwaTruncation) []RWAGroupTotal {
 	byClass := map[string][]RWAAsset{}
 	for _, a := range assets {
 		c := a.AnchorClass
@@ -1898,7 +1898,8 @@ func rwaByClass(assets []RWAAsset) []RWAGroupTotal {
 			ReferenceValueUSD:       refTotal,
 			AssetsReferenceUnvalued: len(group) - refValued,
 		}
-		row.MarketCapLowerBound, row.ReferenceValueLowerBound = rwaGroupLowerBounds(group, valued, refValued)
+		// A member a cap or a failed read left out is in no row, and its class is unknown: every class total may be missing it.
+		row.MarketCapLowerBound, row.ReferenceValueLowerBound = rwaGroupLowerBounds(group, valued, refValued, trunc.any())
 		if c == rwaUnclassified {
 			row.Note = rwaUnclassifiedNote
 		}
@@ -1909,10 +1910,10 @@ func rwaByClass(assets []RWAAsset) []RWAGroupTotal {
 }
 
 // rwaGroupLowerBounds reports, per basis, whether a group's published total leaves a member out or sums a floor supply.
-func rwaGroupLowerBounds(group []RWAAsset, valued, refValued int) (marketCap, reference bool) {
-	marketCap = valued > 0 && (valued < len(group) ||
+func rwaGroupLowerBounds(group []RWAAsset, valued, refValued int, membersUnread bool) (marketCap, reference bool) {
+	marketCap = valued > 0 && (membersUnread || valued < len(group) ||
 		rwaSumsAFloor(group, func(a RWAAsset) *string { return a.Valuation.MarketCapUSD }))
-	reference = refValued > 0 && (refValued < len(group) ||
+	reference = refValued > 0 && (membersUnread || refValued < len(group) ||
 		rwaSumsAFloor(group, func(a RWAAsset) *string { return a.ReferenceValuation.ValueUSD }))
 	return marketCap, reference
 }
@@ -1932,7 +1933,7 @@ func sortRWAGroups(out []RWAGroupTotal) {
 	})
 }
 
-func rwaByIssuer(assets []RWAAsset) []RWAIssuerTotal {
+func rwaByIssuer(assets []RWAAsset, trunc rwaTruncation) []RWAIssuerTotal {
 	order := make([]string, 0, 8)
 	byIssuer := map[string][]RWAAsset{}
 	for _, a := range assets {
@@ -1950,7 +1951,9 @@ func rwaByIssuer(assets []RWAAsset) []RWAIssuerTotal {
 		group := byIssuer[issuer]
 		total, valued := rwaSumMarketCaps(group)
 		refTotal, refValued := rwaSumReferenceValues(group)
-		capFloor, refFloor := rwaGroupLowerBounds(group, valued, refValued)
+		// Only a full issuer page can hide a member of an issuer that is present: contract rows carry no issuer,
+		// and an issuer over the cap has no group at all.
+		capFloor, refFloor := rwaGroupLowerBounds(group, valued, refValued, trunc.issuerPagesFull > 0)
 		out = append(out, RWAIssuerTotal{
 			Issuer:                   issuer,
 			Name:                     group[0].IssuerDirectoryName,

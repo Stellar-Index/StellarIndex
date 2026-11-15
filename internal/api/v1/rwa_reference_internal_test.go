@@ -682,7 +682,7 @@ func TestRWAIdentity_ByIssuerSkipsContractRows(t *testing.T) {
 		{AssetID: "CA2", ContractID: "CA2", IssuerDirectoryName: "Entity Two", IssuerDirectoryDomain: "two.example", Valuation: mcap("40.00")},
 	}
 
-	got := rwaByIssuer(assets)
+	got := rwaByIssuer(assets, rwaTruncation{})
 	if len(got) != 2 {
 		t.Fatalf("by_issuer = %+v, want exactly the 2 classic issuers", got)
 	}

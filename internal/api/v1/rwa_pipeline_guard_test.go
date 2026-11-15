@@ -330,7 +330,7 @@ func TestUnclassifiedGroupCarriesItsReason(t *testing.T) {
 		{Code: "BENJI", AnchorClass: ""},
 		{Code: "USDY", AnchorClass: ""},
 		{Code: "EUTBL", AnchorClass: "bond"},
-	})
+	}, rwaTruncation{})
 
 	var unclassified, bond *RWAGroupTotal
 	for i := range groups {

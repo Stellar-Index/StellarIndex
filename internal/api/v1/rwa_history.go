@@ -237,10 +237,12 @@ type rwaValueHistory struct {
 	setIssuers int
 	// setByIssuer sizes each issuer's part of the set, excluded members included: the denominator of an issuer group.
 	setByIssuer map[string]int
-	members     []rwaHistoryMember
-	excluded    map[string]int
-	sources     []string
-	builtAt     time.Time
+	// setIncomplete: a cap or a failed read left members out of the set, so setAssets undercounts it.
+	setIncomplete bool
+	members       []rwaHistoryMember
+	excluded      map[string]int
+	sources       []string
+	builtAt       time.Time
 	// stale marks a cached assembly served past its TTL because the
 	// rebuild failed or has not answered; builtAt is then its real age.
 	stale bool
@@ -290,7 +292,7 @@ func (s *Server) handleRWAHistory(w http.ResponseWriter, r *http.Request) {
 	view.MembershipAsOf = WireTime(hist.builtAt)
 	view.Excluded = rwaHistoryExcludedRows(hist.excluded)
 	view.Sources = hist.sources
-	view.Points, view.Truncated = rwaHistoryTotal(hist.members, hist.setAssets, from)
+	view.Points, view.Truncated = hist.totalPoints(from)
 	view.Groups = rwaHistoryGroups(hist, groupBy, from)
 	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(hist.builtAt), Flags: Flags{Stale: hist.stale, Degraded: hist.stale}})
 }
@@ -417,6 +419,16 @@ func rwaHistoryGroups(hist rwaValueHistory, groupBy string, from time.Time) []RW
 	default:
 		return nil
 	}
+}
+
+// totalPoints is the whole-set series. A set that lost members to a cap or a failed read makes every point a lower bound:
+// those members are in no count, so assets_unvalued cannot show them.
+func (h rwaValueHistory) totalPoints(from time.Time) ([]RWAHistoryPoint, bool) {
+	pts, truncated := rwaHistoryTotal(h.members, h.setAssets, from)
+	for i := range pts {
+		pts[i].LowerBound = pts[i].LowerBound || h.setIncomplete
+	}
+	return pts, truncated
 }
 
 func rwaHistoryAssetGroups(hist rwaValueHistory, from time.Time) []RWAHistoryGroup {
@@ -595,10 +607,12 @@ func (s *Server) buildRWAValueHistory(ctx context.Context) rwaValueHistory {
 		return rwaValueHistory{}
 	}
 	out := rwaValueHistory{
-		setAssets:  len(m.members) + len(m.contracts),
-		setIssuers: rwaHistoryIssuerCount(m),
-		excluded:   map[string]int{},
-		builtAt:    time.Now().UTC(),
+		setAssets: len(m.members) + len(m.contracts),
+		// No catalogue join here, so a full issuer page is not seen; the membership's own caps and failed reads are.
+		setIncomplete: rwaTruncationOf(m, rwaCatalogueJoin{}).any(),
+		setIssuers:    rwaHistoryIssuerCount(m),
+		excluded:      map[string]int{},
+		builtAt:       time.Now().UTC(),
 	}
 	out.setByIssuer = make(map[string]int, out.setIssuers)
 	for _, mem := range m.members {
