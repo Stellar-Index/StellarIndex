@@ -124,6 +124,60 @@ func TestRWAPremiumJoin_ARefusedPrintIsNotTheNextDaysBaseline(t *testing.T) {
 	}
 }
 
+// TestRWAPremiumJoin_AMixedRefusedRunIsNotARepricing: refused days re-centre only when they agree with each other and
+// are at least as many as the accepted days they replace.
+func TestRWAPremiumJoin_AMixedRefusedRunIsNotARepricing(t *testing.T) {
+	for _, seq := range [][]string{
+		{"50", "0.05", "50", "0.05", "50", "50"},
+		{"12.00", "12.00", "12.00", "0.09", "0.09", "12.00"},
+	} {
+		market := []timescale.MarketDay{}
+		for d := 1; d <= 6; d++ {
+			market = append(market, premGoodDay(d, "1.08"))
+		}
+		for i, v := range seq {
+			market = append(market, premGoodDay(7+i, v))
+		}
+		got := rwaPremiumJoin(premCand(), premRefDays(12), market, premDefaultFloor())
+		for d := 7; d <= 12; d++ {
+			if premPublished(got, d) {
+				t.Errorf("%v: day %d published", seq, d)
+			}
+		}
+	}
+}
+
+// TestRWAPremiumJoin_AThinHistoryCannotRatchetAwayFromThePublishedValue: while the published value anchors the centre,
+// each day must sit inside the band around the published value alone, not only around a median the prints have moved.
+func TestRWAPremiumJoin_AThinHistoryCannotRatchetAwayFromThePublishedValue(t *testing.T) {
+	market := []timescale.MarketDay{}
+	for i, v := range []string{"9.00", "40.00", "85.00", "240.00", "600.00"} {
+		market = append(market, premGoodDay(1+i, v))
+	}
+	got := rwaPremiumJoin(premCand(), premRefDays(5), market, premDefaultFloor())
+	for d := 2; d <= 5; d++ {
+		if premPublished(got, d) {
+			t.Errorf("day %d published, more than 10x the published value", d)
+		}
+	}
+}
+
+// TestRWAPremiumJoin_ARepricingSurvivesAPrintAtTheOldLevel: an accepted day in between does not reset the refused run.
+func TestRWAPremiumJoin_ARepricingSurvivesAPrintAtTheOldLevel(t *testing.T) {
+	market := []timescale.MarketDay{}
+	for d := 1; d <= 25; d++ {
+		v := "4.00"
+		if d <= 5 || d%5 == 0 {
+			v = "1.00"
+		}
+		market = append(market, premGoodDay(d, v))
+	}
+	got := rwaPremiumJoin(premCand(), premRefDays(25), market, premDefaultFloor())
+	if premPublished(got, 6) || !premPublished(got, 24) {
+		t.Errorf("published = %v, want day 6 refused and day 24 published", got.published)
+	}
+}
+
 // TestRWAPremiumJoin_AFatFingerDayDoesNotRefuseTheNextHonestDay: the mirror of the case above.
 func TestRWAPremiumJoin_AFatFingerDayDoesNotRefuseTheNextHonestDay(t *testing.T) {
 	market := []timescale.MarketDay{premGoodDay(1, "12.00"), premGoodDay(2, "1.08"), premGoodDay(3, "1.09")}

@@ -763,7 +763,7 @@ const rwaPremiumTrailingMaxAge = 30 * 24 * time.Hour
 // served-price guard's own thin-history bound: below it the band is drawn around a median of one to four values.
 const rwaPremiumAnchoredBelow = 5
 
-// rwaPremiumRecentreDays is how many refused days in a row, agreeing with each other, make a repricing the new centre.
+// rwaPremiumRecentreDays is the least number of refused days, agreeing with each other, that make a repricing the new centre.
 const rwaPremiumRecentreDays = 5
 
 // rwaPremiumBaseline is what a day's market price is judged against ([rwaPremiumBaseline.offMarket]). Both lists are
@@ -793,35 +793,66 @@ func (b *rwaPremiumBaseline) expire(day time.Time) {
 //
 // The centre is the days ACCEPTED before it. A refused day never joins it: otherwise a refused print is the next day's
 // only baseline and the same print publishes a day later. While fewer than [rwaPremiumAnchoredBelow] days are accepted the
-// published value (`anchor`) joins the centre, so a thin history cannot be re-centred by one or two prints. A market that
-// moves and stays is refused for [rwaPremiumRecentreDays] days, then those days become the centre. A day with nothing to
-// be judged against is accepted and joins neither list.
+// published value (`anchor`) joins the centre and the price must also sit inside the band around the anchor alone, so a
+// thin history cannot ratchet away from it. A market that moves and stays is refused until [rwaPremiumBaseline.repriced],
+// then those days become the centre. A day with nothing to be judged against is accepted and joins neither list.
 func (b *rwaPremiumBaseline) offMarket(day time.Time, price, anchor *big.Rat) bool {
 	centre := b.accepted
+	accept := true
 	if len(centre) < rwaPremiumAnchoredBelow && anchor != nil && anchor.Sign() > 0 {
 		centre = append(append(make([]*big.Rat, 0, len(centre)+1), centre...), anchor)
+		accept, _ = robuststat.GuardServedVWAP(price, []*big.Rat{anchor})
 	}
-	accept, _ := robuststat.GuardServedVWAP(price, centre)
-	if !accept && len(b.refused) >= rwaPremiumRecentreDays {
-		if repriced, _ := robuststat.GuardServedVWAP(price, b.refused); repriced {
-			b.accepted, b.acceptedDays = b.refused, b.refusedDays
-			accept = true
-		}
+	if accept {
+		accept, _ = robuststat.GuardServedVWAP(price, centre)
+	}
+	if !accept && b.repriced(price) {
+		n := b.recentreRun()
+		b.accepted, b.acceptedDays = b.refused[:n], b.refusedDays[:n]
+		b.refused, b.refusedDays = nil, nil
+		accept = true
 	}
 	switch {
 	case price.Sign() <= 0:
 	case !accept:
-		b.refused = append([]*big.Rat{price}, b.refused...)
-		b.refusedDays = append([]time.Time{day}, b.refusedDays...)
+		b.refused, b.refusedDays = rwaPremiumPush(b.refused, b.refusedDays, price, day)
 	case len(centre) > 0:
-		b.refused, b.refusedDays = nil, nil
-		b.accepted = append([]*big.Rat{price}, b.accepted...)
-		b.acceptedDays = append([]time.Time{day}, b.acceptedDays...)
-		if len(b.accepted) > rwaPremiumTrailingDays {
-			b.accepted, b.acceptedDays = b.accepted[:rwaPremiumTrailingDays], b.acceptedDays[:rwaPremiumTrailingDays]
-		}
+		b.accepted, b.acceptedDays = rwaPremiumPush(b.accepted, b.acceptedDays, price, day)
 	}
 	return !accept
+}
+
+// recentreRun is how many refused days a repricing needs: at least as many as the accepted days they replace.
+func (b *rwaPremiumBaseline) recentreRun() int {
+	return max(rwaPremiumRecentreDays, len(b.accepted))
+}
+
+// repriced reports whether the newest [rwaPremiumBaseline.recentreRun] refused days each sit inside the band around
+// that run, and `price` does too. A run of mixed junk never agrees with itself; an older stray refused day is not in the
+// run. An accepted day in between does not reset it: a market that reprices with the odd print at the old level is still
+// a repricing.
+func (b *rwaPremiumBaseline) repriced(price *big.Rat) bool {
+	n := b.recentreRun()
+	if len(b.refused) < n {
+		return false
+	}
+	run := b.refused[:n]
+	for _, v := range append([]*big.Rat{price}, run...) {
+		if ok, _ := robuststat.GuardServedVWAP(v, run); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// rwaPremiumPush prepends a day to a newest-first list, capped at [rwaPremiumTrailingDays].
+func rwaPremiumPush(vals []*big.Rat, days []time.Time, price *big.Rat, day time.Time) ([]*big.Rat, []time.Time) {
+	vals = append([]*big.Rat{price}, vals...)
+	days = append([]time.Time{day}, days...)
+	if len(vals) > rwaPremiumTrailingDays {
+		vals, days = vals[:rwaPremiumTrailingDays], days[:rwaPremiumTrailingDays]
+	}
+	return vals, days
 }
 
 // rwaPremiumRefDays returns the days the reference published a value on, oldest first.
