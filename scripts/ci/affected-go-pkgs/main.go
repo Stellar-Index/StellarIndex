@@ -58,26 +58,7 @@ var guardMarkers = [][]byte{
 func guardDirs(root string) ([]string, error) {
 	seen := map[string]bool{}
 	for _, tree := range []string{"internal", "cmd", "pkg"} {
-		err := filepath.WalkDir(filepath.Join(root, tree), func(p string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() {
-				if d.Name() == "testdata" {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			if !strings.HasSuffix(p, "_test.go") || !isGuardTest(p) {
-				return nil
-			}
-			rel, err := filepath.Rel(root, filepath.Dir(p))
-			if err != nil {
-				return err
-			}
-			seen[filepath.ToSlash(rel)] = true
-			return nil
-		})
+		err := filepath.WalkDir(filepath.Join(root, tree), guardVisit(root, seen))
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return nil, err
 		}
@@ -88,6 +69,30 @@ func guardDirs(root string) ([]string, error) {
 	}
 	sort.Strings(dirs)
 	return dirs, nil
+}
+
+// guardVisit records, relative to root, the directory of each guard test.
+func guardVisit(root string, seen map[string]bool) fs.WalkDirFunc {
+	return func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == "testdata" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(p, "_test.go") || !isGuardTest(p) {
+			return nil
+		}
+		rel, err := filepath.Rel(root, filepath.Dir(p))
+		if err != nil {
+			return err
+		}
+		seen[filepath.ToSlash(rel)] = true
+		return nil
+	}
 }
 
 func isGuardTest(file string) bool {
