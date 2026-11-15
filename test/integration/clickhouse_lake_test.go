@@ -1007,10 +1007,12 @@ func TestSetCap67MovementsWatermark_RefusesAnEventShortfall(t *testing.T) {
 		}
 	}
 
-	// Ledger base+2 declares two events that contract_events does not hold.
+	// Ledger base+2 declares two events that contract_events does not hold. Ledger base+1's two events are
+	// written twice, so a bare row count (4) would equal the declared total (4) and hide the hole.
 	shortfall := ledger(base+2, 2)
 	shortfall.Events = nil
-	flush(ledger(base, 0), ledger(base+1, 0), shortfall, ledger(base+3, 0))
+	flush(ledger(base, 0), ledger(base+1, 2), shortfall, ledger(base+3, 0))
+	flush(ledger(base+1, 2))
 
 	err = chstore.SetCap67MovementsWatermark(ctx, addr, base, base+3)
 	if !errors.Is(err, chstore.ErrCap67MovementsEventShortfall) {

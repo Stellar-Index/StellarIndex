@@ -199,9 +199,8 @@ func windowLedgersPresent(ctx context.Context, conn driver.Conn, from, thru uint
 	return present, err
 }
 
-// cap67WindowEventsPresent errors (wrapping ErrCap67MovementsEventShortfall) when contract_events holds fewer rows in [from, thru] than
-// ledgers declares via soroban_event_count (contiguity alone misses a dropped events partition). Unmerged RMT duplicates only raise
-// present.
+// cap67WindowEventsPresent errors (wrapping ErrCap67MovementsEventShortfall) when contract_events holds fewer distinct events in
+// [from, thru] than ledgers declares via soroban_event_count (contiguity alone misses a dropped events partition).
 func cap67WindowEventsPresent(ctx context.Context, conn driver.Conn, from, thru uint32) error {
 	var expected, present uint64
 	if err := conn.QueryRow(ctx, cap67WindowEventCensusQuery, from, thru, from, thru).Scan(&expected, &present); err != nil {
@@ -214,8 +213,8 @@ func cap67WindowEventsPresent(ctx context.Context, conn driver.Conn, from, thru 
 	return nil
 }
 
-// cap67WindowEventCensusQuery dedupes soroban_event_count per ledger as
-// eventCensusExpected does. Binds: from, thru, from, thru.
+// cap67WindowEventCensusQuery dedupes soroban_event_count per ledger as eventCensusExpected does, and counts events by identity:
+// a re-ingested ledger's unmerged duplicates must not stand in for another ledger's missing events. Binds: from, thru, from, thru.
 const cap67WindowEventCensusQuery = `
 	SELECT
 		(SELECT toUInt64(sum(cnt)) FROM (
@@ -223,7 +222,8 @@ const cap67WindowEventCensusQuery = `
 			FROM stellar.ledgers WHERE ledger_seq BETWEEN ? AND ?
 			GROUP BY ledger_seq
 		)),
-		(SELECT toUInt64(count()) FROM stellar.contract_events WHERE ledger_seq BETWEEN ? AND ?)`
+		(SELECT toUInt64(uniqExact((ledger_seq, tx_hash, op_index, event_index)))
+			FROM stellar.contract_events WHERE ledger_seq BETWEEN ? AND ?)`
 
 // Supply-kind coverage rows in stellar.cap67_movements_watermark: mint/burn/clawback joined later, so they form their own range. from only
 // moves down (min) and thru only up (max), so unmerged RMT rows never misreport it.

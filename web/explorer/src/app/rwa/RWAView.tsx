@@ -7,7 +7,8 @@ import { Panel } from '@/components/reveal';
 import { RWAHistoryPanel } from './RWAHistoryPanel';
 import { RWAPremiumPanel } from './RWAPremiumPanel';
 import { PremiumBars, ShareBars } from './RWACharts';
-import { apiGetData, asExample } from '@/api/client';
+import { apiGet, asExample } from '@/api/client';
+import type { Envelope } from '@/api/client';
 import { useAssets } from '@/api/hooks';
 import type { components } from '@/api/types';
 import {
@@ -286,13 +287,55 @@ const UNIT_PROSE: Record<string, string> = {
   contracts: 'contracts',
 };
 
+// The envelope, not just `data`: its flags say when a read behind the
+// set did not answer, which an unwrapped payload cannot.
 function useRWAAssets() {
-  return useQuery<RWAAssetsView>({
+  return useQuery<Envelope<RWAAssetsView>>({
     queryKey: [ENDPOINT],
-    queryFn: () => apiGetData<RWAAssetsView>(ENDPOINT),
+    queryFn: () => apiGet<Envelope<RWAAssetsView>>(ENDPOINT),
     staleTime: 60_000,
     placeholderData: (prev) => prev,
   });
+}
+
+const utc = (iso: string) => `${iso.slice(0, 16).replace('T', ' ')} UTC`;
+
+/**
+ * What the API said about its own answer. `degraded` never reaches the
+ * body (it is a cache header), so the page reads the three signals that
+ * do: the stale flag, a failed rebuild, and a census that did not answer.
+ */
+function Availability({
+  stale,
+  unavailable,
+  membership,
+}: {
+  stale: boolean;
+  unavailable: boolean;
+  membership: RWAAssetsView['membership'];
+}) {
+  const failedAt = membership?.stale ? membership.rebuild_failed_at : undefined;
+  if (!stale && !unavailable && !failedAt) return null;
+  return (
+    <Callout
+      tone="warn"
+      title={
+        unavailable
+          ? 'The set of real-world assets could not be established'
+          : stale
+            ? 'Some reads behind this page did not answer'
+            : 'This page may be out of date'
+      }
+    >
+      {unavailable
+        ? 'The reads that decide membership did not answer, so no set is shown. This is not a finding that the network holds no real-world assets. '
+        : stale &&
+          'Members, valuations or totals can be missing or lower than the true figure until the next build. '}
+      {failedAt &&
+        membership &&
+        `The set of assets is as of ${utc(membership.built_at)}; the latest rebuild failed at ${utc(failedAt)}, so assets admitted or removed since then are not reflected.`}
+    </Callout>
+  );
 }
 
 /**
@@ -313,7 +356,8 @@ function usd(value: string | null | undefined): string | null {
  * unpublishable. None of them is allowed to render as a zero.
  */
 export function RWAView() {
-  const { data, isLoading, isError, error } = useRWAAssets();
+  const { data: env, isLoading, isError, error } = useRWAAssets();
+  const data = env?.data;
   // The stablecoin arm, from the served catalogue. Its own query, so a
   // slow or failed stablecoin read degrades one tile instead of holding
   // the whole page — the real-world-asset set is a complete answer to
@@ -338,6 +382,9 @@ export function RWAView() {
     by_issuer: byIssuer,
     refused,
   } = data;
+  // An empty stage list is the API's statement that the census did not
+  // answer: the set is unknown, not empty.
+  const unavailable = data.funnel?.stages.length === 0;
   const total = usd(summary.market_cap_usd);
   const referenceTotal = usd(summary.reference_valuation?.value_usd);
 
@@ -353,6 +400,11 @@ export function RWAView() {
 
   return (
     <div className="space-y-6">
+      <Availability
+        stale={env?.flags?.stale === true}
+        unavailable={unavailable}
+        membership={data.membership}
+      />
       <HeadlineStats
         summary={summary}
         assets={assets}
@@ -427,6 +479,10 @@ export function RWAView() {
           <EmptyState
             headingLevel={3}
             title="No asset currently meets the definition"
+            {...(unavailable && {
+              title: 'The set could not be established',
+              description: summary.basis,
+            })}
             description="An asset qualifies only when its issuer both declares the real-world anchor in its own SEP-1 file and is independently recognised. Nothing on this network clears both today — which is a statement about the evidence available, not about what issuers claim."
           />
         ) : (
@@ -493,6 +549,7 @@ export function RWAView() {
       )}
 
       <DefinitionPanel
+        builtAt={data.membership?.built_at}
         definition={data.definition}
         refused={refused}
         provenances={summary.reference_valuation?.provenances}
@@ -2009,10 +2066,12 @@ function DefinitionPanel({
   definition,
   refused,
   provenances,
+  builtAt,
 }: {
   definition: Schemas['RWADefinition'];
   refused: Schemas['RWARefusal'][];
   provenances: ReferenceProvenances;
+  builtAt?: string;
 }) {
   const refusedTotal = refused.reduce((n, r) => n + r.assets, 0);
   return (
@@ -2106,8 +2165,9 @@ function DefinitionPanel({
           </p>
         </div>
         <p className="text-ink-muted mt-3 text-[11px] leading-relaxed">
-          Live data from <span className="font-mono">{ENDPOINT}</span>. Full
-          definition in the{' '}
+          Live data from <span className="font-mono">{ENDPOINT}</span>
+          {builtAt && `, asset set built ${utc(builtAt)}`}. Full definition in
+          the{' '}
           <Link href="/methodology" className="hover:text-brand-600 underline">
             methodology
           </Link>

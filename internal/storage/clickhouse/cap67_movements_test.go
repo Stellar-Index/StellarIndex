@@ -74,6 +74,7 @@ func TestCap67WindowEventCensusQuery_Shape(t *testing.T) {
 		"GROUP BY ledger_seq",
 		"FROM stellar.ledgers WHERE ledger_seq BETWEEN ? AND ?",
 		"FROM stellar.contract_events WHERE ledger_seq BETWEEN ? AND ?",
+		"uniqExact((ledger_seq, tx_hash, op_index, event_index))",
 	} {
 		if !strings.Contains(cap67WindowEventCensusQuery, want) {
 			t.Errorf("cap67WindowEventCensusQuery missing %q", want)
