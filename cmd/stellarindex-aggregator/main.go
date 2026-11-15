@@ -2170,27 +2170,22 @@ func (r priceAlertVWAPReader) LatestVWAP(ctx context.Context, base, quote canoni
 			if r.gate.PriceWithheld(ctx, base, quote, "price_alert") {
 				return "", time.Time{}, false, nil
 			}
-			return r.guardedServe(ctx, pair, row)
+			// Serving-sanity guard, in this body so the raw read and its guard cannot drift apart.
+			served, lowConfidence, _ := pricingguard.GuardServedVWAP1mConfidence(ctx, r.store, r.logger, pair, row)
+			return r.adjustServed(pair.Base, pair.Quote, served, lowConfidence)
 		}
 	}
 	return "", time.Time{}, false, nil
 }
 
-// guardedServe applies the serving-sanity guard the API raw-bucket paths use: a bare closed bucket bypasses
-// the orchestrator's outlier and min-volume filters, so a fat-finger print would fire a SPURIOUS alert. The
-// guard serves last-known-good off the pair's trailing baseline and is byte-identical on a healthy bucket. An
-// unvalidated bucket is the guard's fail-open case; an alert has no stale flag to carry that doubt, so it
-// does not fire (sticky).
-func (r priceAlertVWAPReader) guardedServe(ctx context.Context, pair canonical.Pair, row timescale.Vwap1mRow) (string, time.Time, bool, error) {
-	served, lowConfidence, _ := pricingguard.GuardServedVWAP1mConfidence(ctx, r.store, r.logger, pair, row)
+// adjustServed applies the /v1/price decimals correction to a guarded bucket. A bare closed bucket bypasses
+// the orchestrator's outlier and min-volume filters; the guard serves last-known-good off the pair's
+// trailing baseline. An unvalidated bucket is the guard's fail-open case; an alert has no stale flag to
+// carry that doubt, so it does not fire (sticky).
+func (r priceAlertVWAPReader) adjustServed(b, q canonical.Asset, served timescale.Vwap1mRow, lowConfidence bool) (string, time.Time, bool, error) {
 	if lowConfidence {
 		return "", time.Time{}, false, nil
 	}
-	return r.adjustServed(pair.Base, pair.Quote, served)
-}
-
-// adjustServed applies the /v1/price decimals correction to a guarded bucket.
-func (r priceAlertVWAPReader) adjustServed(b, q canonical.Asset, served timescale.Vwap1mRow) (string, time.Time, bool, error) {
 	// The guard's VWAP is the raw quote/base CAGG ratio, as /v1/price reads it before AdjustPrice.
 	// Apply the same correction: the threshold was set from the corrected value, so an uncorrected
 	// comparison is wrong by the pair's decimals skew.
