@@ -25,6 +25,15 @@ fail() {
 }
 
 fetch() { curl -sfL --max-time 30 "$1"; }
+# Unauthenticated GitHub API calls share one small hourly budget per runner
+# address; with the job token the call has the repository's own.
+fetch_github() {
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    curl -sfL --max-time 30 -H "Authorization: Bearer ${GITHUB_TOKEN}" "$1"
+  else
+    fetch "$1"
+  fi
+}
 status_of() { curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$1"; }
 # A page as a visitor lands on it: the explorer links /assets/<slug> and the
 # host 308s to the trailing-slash form.
@@ -146,8 +155,8 @@ esac
 echo "== 9. deployed build freshness (BUILD_SHA vs main, wall-clock age)"
 # Deployed build vs main, and its age. The explorer footer (BuildBadge,
 # components/nav/Footer.tsx) stamps `title="Built <ISO time> from commit
-# <sha>"`; check the commit is an ancestor of main (GitHub compare API,
-# unauthenticated) and the build is inside the freshness budget. Catches
+# <sha>"`; check the commit is an ancestor of main (GitHub compare API)
+# and the build is inside the freshness budget. Catches
 # "CF git integration paused" silently freezing the live site
 # (explorer-deploy.yml's stated reason to exist).
 HOME_HTML=$(fetch "$SITE/" || true)
@@ -160,7 +169,7 @@ else
   if [ -z "$DEPLOY_SHA" ]; then
     fail "build badge present but no parseable 40-char commit SHA: $BADGE"
   else
-    COMPARE=$(fetch "https://api.github.com/repos/Stellar-Index/StellarIndex/compare/$DEPLOY_SHA...main" || true)
+    COMPARE=$(fetch_github "https://api.github.com/repos/Stellar-Index/StellarIndex/compare/$DEPLOY_SHA...main" || true)
     read -r CMP_STATUS CMP_AHEAD <<<"$(python3 -c '
 import json, sys
 try:

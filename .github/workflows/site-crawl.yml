@@ -51,6 +51,8 @@ jobs:
 
       - name: Run the site crawl battery
         id: crawl
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -uo pipefail
           # Capture the exit code directly. Piping this into tee or sed
