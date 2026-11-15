@@ -160,7 +160,7 @@ GROUP BY account_id;
 --     }
 --     W=$((2 + (TIP - 2) / 2000000 * 2000000))
 --     while [ "$W" -ge 2 ] && [ "$W" -le "$TIP" ]; do
---       AA_WANT=$((AA_WANT + 3))
+--       AA_WANT=$((AA_WANT + 4))
 --       aa_job ops "$W" "
 --         INSERT INTO stellar.account_activity
 --         SELECT source_account, max(ledger_seq), max(close_time)
@@ -174,6 +174,13 @@ GROUP BY account_id;
 --         FROM stellar.transactions
 --         WHERE source_account != '' AND ledger_seq >= $W AND ledger_seq < $((W + 2000000))
 --         GROUP BY source_account
+--         SETTINGS max_threads = 4, max_memory_usage = 8000000000"
+--       aa_job feepayer "$W" "
+--         INSERT INTO stellar.account_activity
+--         SELECT fee_account, max(ledger_seq), max(close_time)
+--         FROM stellar.transactions
+--         WHERE fee_account != '' AND ledger_seq >= $W AND ledger_seq < $((W + 2000000))
+--         GROUP BY fee_account
 --         SETTINGS max_threads = 4, max_memory_usage = 8000000000"
 --       aa_job part "$W" "
 --         INSERT INTO stellar.account_activity

@@ -275,13 +275,13 @@ func assertRunbookCase(t *testing.T, section, doneLine string, tc runbookCase) {
 }
 
 // TestAccountActivityRunbook_Step2FailsClosed: TIP 4000001 is two windows
-// (2000002, then 2) of three jobs each.
+// (2000002, then 2) of four jobs each.
 func TestAccountActivityRunbook_Step2FailsClosed(t *testing.T) {
 	section := extractRunbookSection(t, accountActivitySQLPath(t),
 		"Step 2: windowed historical backfill", "Step 3: verify")
 	const tip = "AA_TIP_OUT=4000001"
 	cases := []runbookCase{
-		{name: "complete run", env: []string{tip}, wantOK: true, inserts: 6, want: []string{"6 of 6 jobs ran to success"}},
+		{name: "complete run", env: []string{tip}, wantOK: true, inserts: 8, want: []string{"8 of 8 jobs ran to success"}},
 		{
 			name: "one job of a window fails", env: []string{tip, "AA_FAIL_MATCH=FROM stellar.transactions"},
 			inserts: 2, want: []string{"tx window 2000002 FAILED"},
@@ -338,7 +338,7 @@ func TestAccountActivityRunbook_Step2RunsNewestWindowFirst(t *testing.T) {
 			got = append(got, m[1])
 		}
 	}
-	want := []string{"4000002", "4000002", "4000002", "2000002", "2000002", "2000002", "2", "2", "2"}
+	want := []string{"4000002", "4000002", "4000002", "4000002", "2000002", "2000002", "2000002", "2000002", "2", "2", "2", "2"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("backfill window order = %v, want %v (newest first)", got, want)
 	}

@@ -1382,6 +1382,11 @@ func TestClickHouseFeeBumpRoundTrip(t *testing.T) {
 		t.Fatalf("account_activity(payer) last_ledger = %d (err %v), want %d", lastLedger, err, ledger)
 	}
 
+	// The index proof holds forward only while every view the schema ships is in place, the payer's included.
+	if ok, err := chstore.OpsBySourceMVsExist(ctx, addr); err != nil || !ok {
+		t.Fatalf("OpsBySourceMVsExist = %v (err %v), want true on the shipped schema", ok, err)
+	}
+
 	// Index-path authority needs the coverage marker; without it the reader
 	// answers from the bloom scan and these assertions would not test the index.
 	t.Cleanup(func() { _ = conn.Exec(context.Background(), `TRUNCATE TABLE stellar.tx_hash_index_coverage`) })
