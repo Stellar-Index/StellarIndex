@@ -322,6 +322,7 @@ func registerAppMetricsTail() {
 		DecimalsGuardSweepLastSuccessUnix,
 		DecimalsGuardPendingWrites,
 		DecimalsGuardUnresolvedAssets,
+		DecimalsGuardUnresolvedAsset,
 		PriceServeDeclinedNonstandardDecimalsTotal,
 		NonstandardDecimalsCacheRefreshFailuresTotal,
 		NonstandardDecimalsPartialAliasFamilyTotal,
@@ -407,6 +408,7 @@ func registerAuthReaperMetrics() {
 		LoginCodeLockoutRows,
 		LoginCodeLockoutRowsDeletedTotal,
 		LoginCodeLockoutErrorsTotal,
+		LoginCodeFailuresTotal,
 
 		MagicLinkTokenRows,
 		MagicLinkTokenRowsDeletedTotal,
@@ -477,6 +479,11 @@ func seedBoundedLabelSeries() {
 		LoginCodeLockoutOpStatusCheck, LoginCodeLockoutOpRegister, LoginCodeLockoutOpSweep,
 	} {
 		LoginCodeLockoutErrorsTotal.WithLabelValues(op)
+	}
+	for _, outcome := range []string{
+		LoginCodeFailureWrongCode, LoginCodeFailureLockedOut, LoginCodeFailureLockoutEngaged,
+	} {
+		LoginCodeFailuresTotal.WithLabelValues(outcome)
 	}
 	// The magic-link retention sweep's single fail-soft path, seeded so a janitor that has never
 	// failed is distinguishable from one emitting no series.
@@ -1704,6 +1711,22 @@ var LoginCodeLockoutRowsDeletedTotal = prometheus.NewCounter(
 	},
 )
 
+// Outcome labels on [LoginCodeFailuresTotal].
+const (
+	LoginCodeFailureWrongCode      = "wrong_code"
+	LoginCodeFailureLockedOut      = "locked_out"
+	LoginCodeFailureLockoutEngaged = "lockout_engaged"
+)
+
+// LoginCodeFailuresTotal counts refused email-code sign-ins; the API-key failed-auth counter never sees them. Pre-seeded.
+var LoginCodeFailuresTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_login_code_failures_total",
+		Help: "Refused dashboard email-code sign-ins by outcome (wrong_code = a guess did not match; locked_out = refused because the address is locked; lockout_engaged = the guess that locked an address).",
+	},
+	[]string{"outcome"},
+)
+
 // LoginCodeLockoutErrorsTotal counts durable login-code lockout failures by `op`, all silent at the HTTP layer; op="status_check" means the lockout is not enforced. Pre-seeded.
 var LoginCodeLockoutErrorsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
@@ -2816,6 +2839,15 @@ var DecimalsGuardPendingWrites = prometheus.NewGauge(
 		Name: "stellarindex_decimals_guard_pending_writes",
 		Help: "Confirmed non-7-decimal (source, asset) pairs whose nonstandard_decimals_assets write failed and is being retried every sweep tick. While nonzero, pairs of those assets are served uncorrected, skewed by 10^(7-decimals). Expected value is 0.",
 	},
+)
+
+// DecimalsGuardUnresolvedAsset names each unresolved asset, so an alert can tell an arrival from a departure the count nets out.
+var DecimalsGuardUnresolvedAsset = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_decimals_guard_unresolved_asset",
+		Help: "1 for each DEX-traded Soroban asset whose decimals() the decimals guard could not derive from the lake; the series is removed once the asset is read or seeded. The members of stellarindex_decimals_guard_unresolved_assets.",
+	},
+	[]string{"asset"},
 )
 
 // DecimalsGuardUnresolvedAssets is the number of traded Soroban assets whose decimals() the lake could not derive.

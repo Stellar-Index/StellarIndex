@@ -1062,6 +1062,12 @@ Counter, unlabelled.
 
 Settled lockout rows removed by the sweep. Read next to `stellarindex_login_code_lockout_rows`.
 
+### `stellarindex_login_code_failures_total`
+
+Counter, label `outcome` (`wrong_code` / `locked_out` / `lockout_engaged`).
+
+Refused dashboard email-code sign-ins. `wrong_code`: a guess did not match. `locked_out`: refused because the address is locked. `lockout_engaged`: the guess that locked an address. Pre-seeded. Alert `stellarindex_login_code_guessing`.
+
 ### `stellarindex_login_code_lockout_errors_total`
 
 Counter, label `op` (`status_check` / `register` / `sweep`).
@@ -1710,7 +1716,13 @@ Gauge, no labels.
 
 DEX-traded Soroban assets whose `decimals()` the lake could not derive since process start. They are priced on the 7-decimals assumption, not on a reading.
 
-Alert `stellarindex_decimals_guard_unconfirmed` (either gauge > 0 for 1 h), scoped to the aggregator job.
+### `stellarindex_decimals_guard_unresolved_asset`
+
+Gauge, label `asset`.
+
+1 for each member of the unresolved set; the series is removed once the asset is read or seeded.
+
+Alert `stellarindex_decimals_guard_unconfirmed` (a pending write, or an unresolved asset that was not in the set a day earlier, for 1 h), scoped to the aggregator job.
 
 ## Nonstandard-decimals serving guard (API binary)
 
@@ -1952,6 +1964,7 @@ Gauge. Unix time the last completed comparison wrote the file.
 
 ## Changelog
 
+- 2026-11-15 — added `stellarindex_decimals_guard_unresolved_asset`, `stellarindex_login_code_failures_total` and the `stellarindex_login_code_guessing` and `stellarindex_registration_table_growing` alerts.
 - 2026-11-14 — added `stellarindex_decimals_guard_pending_writes`, `stellarindex_decimals_guard_unresolved_assets` and `stellarindex_decimals_guard_unconfirmed` alert.
 - 2026-10-03 — added `stellarindex_change_summary_passes_total`, `stellarindex_change_summary_last_success_unix`, `stellarindex_change_summary_stale` alert.
 - 2026-09-27 — added `stellarindex_ch_live_sink_read_undercount_total` and `stellarindex_ingestion_ch_live_sink_read_undercount` alert.

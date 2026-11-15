@@ -246,6 +246,31 @@ func TestLockout_StoreFailureFailsOpen(t *testing.T) {
 	}
 }
 
+// A guessing run against one address is otherwise invisible: it is not API-key auth, so the
+// failed-auth counter does not move.
+func TestLockout_GuessingIsCounted(t *testing.T) {
+	const email = "counted@example.com"
+	lr := newLockoutRig(t)
+	read := func(outcome string) float64 {
+		return testutil.ToFloat64(obs.LoginCodeFailuresTotal.WithLabelValues(outcome))
+	}
+	wrong, engaged, locked := read(obs.LoginCodeFailureWrongCode),
+		read(obs.LoginCodeFailureLockoutEngaged), read(obs.LoginCodeFailureLockedOut)
+
+	lr.grind(t, email, maxDurableCodeFailures)
+	if got := read(obs.LoginCodeFailureWrongCode) - wrong; got != maxDurableCodeFailures {
+		t.Errorf("wrong_code moved by %v, want %d", got, maxDurableCodeFailures)
+	}
+	if got := read(obs.LoginCodeFailureLockoutEngaged) - engaged; got != 1 {
+		t.Errorf("lockout_engaged moved by %v, want 1", got)
+	}
+
+	lr.postVerifyCode(t, email, lr.loginAndCode(t, email))
+	if got := read(obs.LoginCodeFailureLockedOut) - locked; got != 1 {
+		t.Errorf("locked_out moved by %v, want 1 for a refusal while locked", got)
+	}
+}
+
 func lockoutErrors(t *testing.T, op string) float64 {
 	t.Helper()
 	return testutil.ToFloat64(obs.LoginCodeLockoutErrorsTotal.WithLabelValues(op))

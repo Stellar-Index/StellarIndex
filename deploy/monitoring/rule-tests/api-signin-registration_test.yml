@@ -1,0 +1,103 @@
+# promtool unit tests for two API alerts on unauthenticated sign-in paths:
+#
+#   stellarindex_login_code_guessing
+#   stellarindex_registration_table_growing
+#
+#   promtool test rules deploy/monitoring/rule-tests/api-signin-registration_test.yml
+
+rule_files:
+  - ../rules/api.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── one address locked out by wrong codes ────────────────────────
+  - interval: 1m
+    name: a lockout engaged by guessing tickets; a few typos do not
+    input_series:
+      - series: 'stellarindex_login_code_failures_total{outcome="lockout_engaged"}'
+        values: '0+0x60 1+0x60'
+      - series: 'stellarindex_login_code_failures_total{outcome="wrong_code"}'
+        values: '0+0x30 3+0x30 13+0x60'
+    alert_rule_test:
+      - eval_time: 55m
+        alertname: stellarindex_login_code_guessing
+        exp_alerts: []
+      - eval_time: 70m
+        alertname: stellarindex_login_code_guessing
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_login_code_guessing
+              summary: "Dashboard email codes are being guessed: an address was locked out, or over 50 wrong codes in an hour"
+              description: |
+                Wrong 6-digit sign-in codes locked an address out, or more
+                than 50 wrong codes were entered across all addresses in an
+                hour. The lockout slows a guesser and does not stop a long
+                campaign. The API log names the masked address and the
+                client IP of each lockout.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_login_code_guessing
+
+  # ── guessing spread under every address's budget ─────────────────
+  - interval: 1m
+    name: many wrong codes with no lockout still ticket
+    input_series:
+      - series: 'stellarindex_login_code_failures_total{outcome="lockout_engaged"}'
+        values: '0+0x120'
+      - series: 'stellarindex_login_code_failures_total{outcome="wrong_code"}'
+        values: '0+0x10 0+2x110'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_login_code_guessing
+        exp_alerts: []
+      - eval_time: 60m
+        alertname: stellarindex_login_code_guessing
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_login_code_guessing
+              summary: "Dashboard email codes are being guessed: an address was locked out, or over 50 wrong codes in an hour"
+              description: |
+                Wrong 6-digit sign-in codes locked an address out, or more
+                than 50 wrong codes were entered across all addresses in an
+                hour. The lockout slows a guesser and does not stop a long
+                campaign. The API log names the masked address and the
+                client IP of each lockout.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_login_code_guessing
+
+  # ── registration growth, and a restart that is not growth ────────
+  - interval: 5m
+    name: 600 new accounts in six hours ticket; a restart's zero does not
+    input_series:
+      # 100k rows, a restart reporting 0 for two samples, then growth.
+      - series: 'stellarindex_accounts_rows{job="stellarindex_api"}'
+        values: '100000+0x60 0 0 100000+0x40 100000+10x80'
+      - series: 'stellarindex_accounts_rows{job="stellarindex_aggregator"}'
+        values: '0+0x200'
+    alert_rule_test:
+      - eval_time: 6h
+        alertname: stellarindex_registration_table_growing
+        exp_alerts: []
+      - eval_time: 14h
+        alertname: stellarindex_registration_table_growing
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_registration_table_growing
+              summary: "accounts grew by 640 rows in 6 hours"
+              description: |
+                `accounts` gained more than 500 rows in six hours. Each row
+                from POST /v1/register is permanent and carries a live
+                free-tier key with its own quota, so sustained growth
+                outside expected sign-ups is abuse of the open registration
+                path, not a table that cleans itself up.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_registration_table_growing

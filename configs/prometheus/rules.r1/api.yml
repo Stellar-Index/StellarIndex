@@ -733,7 +733,7 @@ groups:
 
       # The failed-auth throttle caps each client IP and API-key prefix at
       # failed_auth_rate_limit_per_min (20/min), so guessing spread over many
-      # of both never 429s; this fleet-wide rate is the only place that shows.
+      # of both never 429s; this fleet-wide rate is where API-key guessing shows.
       # Counts outcome="rejected" only (throttled attempts are already
       # capped); the per-IP cap holds one source to 0.33/s, so >1/s for 15m
       # needs more than three sources at their cap, or many under it.
@@ -798,6 +798,58 @@ groups:
             disk-full page that names the wrong subsystem, and the
             fail-open ends at an account takeover with no trace.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_login_code_lockout_table_growing
+
+      # Email-code sign-in is not API-key auth, so failed_auth_total never
+      # moves for it. One arm is any address locked by wrong guesses in the
+      # hour; the other is guessing spread over many addresses, each kept
+      # under its own budget of 10.
+      - alert: stellarindex_login_code_guessing
+        expr: |
+          sum(increase(stellarindex_login_code_failures_total{outcome="lockout_engaged"}[1h])) > 0
+          or
+          sum(increase(stellarindex_login_code_failures_total{outcome="wrong_code"}[1h])) > 50
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_login_code_guessing
+          summary: "Dashboard email codes are being guessed: an address was locked out, or over 50 wrong codes in an hour"
+          description: |
+            Wrong 6-digit sign-in codes locked an address out, or more
+            than 50 wrong codes were entered across all addresses in an
+            hour. The lockout slows a guesser and does not stop a long
+            campaign. The API log names the masked address and the
+            client IP of each lockout.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_login_code_guessing
+
+      # POST /v1/register is unauthenticated and every call leaves a
+      # permanent accounts row and a live key. The reaper removes only
+      # userless sign-up orphans, so nothing bounds this table. The
+      # subquery drops the zero a restarted process reports before its
+      # first sweep. 500 in 6h is far above today's rate (single digits
+      # a month); revisit it when sign-ups are real traffic.
+      - alert: stellarindex_registration_table_growing
+        expr: |
+          max(stellarindex_accounts_rows)
+            - min(min_over_time((stellarindex_accounts_rows > 0)[6h:5m]))
+            > 500
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_registration_table_growing
+          summary: "accounts grew by {{ $value | humanize }} rows in 6 hours"
+          description: |
+            `accounts` gained more than 500 rows in six hours. Each row
+            from POST /v1/register is permanent and carries a live
+            free-tier key with its own quota, so sustained growth
+            outside expected sign-ups is abuse of the open registration
+            path, not a table that cleans itself up.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_registration_table_growing
 
       # magic_link_tokens is keyed on an address an unauthenticated caller
       # chooses, so sustained growth is a remote table-fill. Same bound as

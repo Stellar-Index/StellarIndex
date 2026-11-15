@@ -83,12 +83,19 @@ func TestUnresolvedAssets_CountedUntilConfirmed(t *testing.T) {
 	if got := testutil.ToFloat64(obs.DecimalsGuardUnresolvedAssets); got != 1 {
 		t.Fatalf("unresolved gauge = %v, want 1", got)
 	}
+	// The member is exported by name: a count alone lets a departure hide an arrival.
+	if got := testutil.ToFloat64(obs.DecimalsGuardUnresolvedAsset.WithLabelValues(asset)); got != 1 {
+		t.Fatalf("unresolved_asset{asset=%q} = %v, want 1", asset, got)
+	}
 	resolver.decimals[asset] = 7
 	if err := g.Sweep(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if got := testutil.ToFloat64(obs.DecimalsGuardUnresolvedAssets); got != 0 {
 		t.Errorf("unresolved gauge = %v, want 0 once confirmed", got)
+	}
+	if n := testutil.CollectAndCount(obs.DecimalsGuardUnresolvedAsset); n != 0 {
+		t.Errorf("unresolved_asset series = %d, want 0 once confirmed", n)
 	}
 }
 

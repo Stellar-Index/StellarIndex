@@ -617,6 +617,18 @@ journalctl -u stellarindex-api --since '30 min ago' --no-pager -o cat \
 
 **Escalate:** none; the throttle shares Redis with [ratelimit_fail_closed](#stellarindex_ratelimit_fail_closed).
 
+## stellarindex_login_code_guessing
+
+**Trigger.** `for: 5m`, P3. Either `sum(increase(stellarindex_login_code_failures_total{outcome="lockout_engaged"}[1h])) > 0` (ten wrong codes locked one address for 24 h) or `sum(increase(...{outcome="wrong_code"}[1h])) > 50` (guessing spread over many addresses). Email-code sign-in is not API-key auth, so `stellarindex_failed_auth_total` does not move.
+
+**Check.** `journalctl -u stellarindex-api --since '-2h' | grep -E 'locked out of code sign-in|verification refused'` gives the masked address and client IP. Compare the IPs with the address's earlier `session.signin` rows in `audit_log`. **Likely causes.** One user mistyping repeatedly (one lockout, their usual IP), or a guessing campaign (several IPs, repeats daily as the lockout expires). **Fix.** Block the source addresses at the edge; tell the account owner and point them at a passkey. **Escalate:** a `session.signin` row for the address from one of the guessing IPs.
+
+## stellarindex_registration_table_growing
+
+**Trigger.** `max(stellarindex_accounts_rows) - min(min_over_time((stellarindex_accounts_rows > 0)[6h:5m])) > 500` for 30m, P3. `POST /v1/register` is unauthenticated; each call leaves a permanent `accounts` row and a live free-tier key. The signup reaper removes only userless sign-up orphans.
+
+**Check.** `stellarindex_api_keys_rows` moves in step; request rate and distinct client addresses on `/v1/register` in the API log. **Likely causes.** Rotating addresses (IPv6 /48s, proxy pools) each staying under the per-IP sign-up cap; or a real traffic spike. **Fix.** Limit the source ranges at the edge. Deleting the rows is a judgement call per account: they are real accounts with live keys. **Escalate:** growth continues past an edge block.
+
 ## stellarindex_login_code_lockout_table_growing
 
 **Trigger.** Two arms, `for: 30m`, P3: rows `stellarindex_login_code_lockout_rows > 10000` (healthy is low tens), or fail-open `increase(stellarindex_login_code_lockout_errors_total{op="status_check"}[1h]) > 0` (the pre-match lockout read errored and the handler failed open; the 6-digit code brute-force bound is silently off). Table `login_code_lockouts` (migration 0122) is filled by unauthenticated `POST /v1/auth/verify-code`; `internal/logincodereaper` (hourly, 48 h retention) bounds it.

@@ -418,7 +418,7 @@ Seed the missing spelling with the flagged row's decimals: [dex.md#dex-nonstanda
 P3 ticket, `for: 1h`. A correction write is stranded, or the count of unreadable assets rose over the last day.
 
 - `stellarindex_decimals_guard_pending_writes`: a token's `decimals()` was confirmed non-7 and the `nonstandard_decimals_assets` write keeps failing. Its pairs are served uncorrected. The guard retries every 15 minutes.
-- `stellarindex_decimals_guard_unresolved_assets`: the lake could not derive `decimals()` for a traded Soroban asset. Its pairs are priced on the 7-decimals assumption. The alert compares the count with a day earlier, so a standing count does not ticket and a new asset tickets for one day.
+- `stellarindex_decimals_guard_unresolved_assets`: the lake could not derive `decimals()` for a traded Soroban asset. Its pairs are priced on the 7-decimals assumption. The alert reads the per-asset series `stellarindex_decimals_guard_unresolved_asset` and fires for an asset that was not in the set a day earlier, so a standing member does not ticket and a new one tickets for one day, named in the `asset` label.
 
 ### Check
 

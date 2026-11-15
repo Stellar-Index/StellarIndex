@@ -568,6 +568,7 @@ func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil || subtle.ConstantTimeCompare([]byte(h.cfg.Generator.CodeForHash(cand.TokenHash)), []byte(code)) != 1 {
 		// Wrong (or no) code. Both counters were already charged above.
+		obs.LoginCodeFailuresTotal.WithLabelValues(obs.LoginCodeFailureWrongCode).Inc()
 		writeProblem(w, http.StatusBadRequest, "invalid or expired code — request a new one", "/v1/auth/verify-code")
 		return
 	}
@@ -610,6 +611,7 @@ func (h *Handlers) loginCodeLocked(r *http.Request, email string) bool {
 	if !state.Locked(h.cfg.Now()) {
 		return false
 	}
+	obs.LoginCodeFailuresTotal.WithLabelValues(obs.LoginCodeFailureLockedOut).Inc()
 	h.cfg.Logger.Warn("login code verification refused: email is locked out",
 		"email", maskEmail(email), "failed_count", state.FailedCount,
 		"locked_until", state.LockedUntil, "ip", clientIP(r).String())
@@ -650,6 +652,11 @@ func (h *Handlers) chargeLoginCodeAttempt(r *http.Request, email string) bool {
 		return true
 	}
 	if state.Locked(h.cfg.Now()) {
+		outcome := obs.LoginCodeFailureLockedOut
+		if state.FailedCount == maxDurableCodeFailures {
+			outcome = obs.LoginCodeFailureLockoutEngaged
+		}
+		obs.LoginCodeFailuresTotal.WithLabelValues(outcome).Inc()
 		h.cfg.Logger.Warn("email locked out of code sign-in after repeated failures",
 			"email", maskEmail(email), "failed_count", state.FailedCount,
 			"locked_until", state.LockedUntil, "ip", clientIP(r).String())

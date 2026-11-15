@@ -101,6 +101,8 @@ type Guard struct {
 	// unresolved holds enumerated assets whose decimals() the lake could not derive: priced on the
 	// 7-decimals assumption, not on a reading.
 	unresolved map[string]struct{}
+	// published is the unresolved set as last exported, so a member that left has its series removed.
+	published map[string]struct{}
 	// seeded holds every asset with a persisted row: an operator or the guard already ruled on it,
 	// so an underivable reading for it is not counted as unresolved.
 	seeded map[string]struct{}
@@ -179,6 +181,7 @@ func New(reader TradeReader, resolver DecimalsResolver, opts Options) *Guard {
 		persisted:        make(map[string]struct{}),
 		pending:          make(map[string]pendingWrite),
 		unresolved:       make(map[string]struct{}),
+		published:        make(map[string]struct{}),
 	}
 }
 
@@ -296,7 +299,21 @@ func (g *Guard) Backfill(ctx context.Context) error {
 func (g *Guard) publishGauges() (unresolved int) {
 	g.mu.Lock()
 	pending, unresolved := len(g.pending), len(g.unresolved)
+	var left []string
+	for asset := range g.published {
+		if _, still := g.unresolved[asset]; !still {
+			left = append(left, asset)
+			delete(g.published, asset)
+		}
+	}
+	for asset := range g.unresolved {
+		g.published[asset] = struct{}{}
+		obs.DecimalsGuardUnresolvedAsset.WithLabelValues(asset).Set(1)
+	}
 	g.mu.Unlock()
+	for _, asset := range left {
+		obs.DecimalsGuardUnresolvedAsset.DeleteLabelValues(asset)
+	}
 	obs.DecimalsGuardPendingWrites.Set(float64(pending))
 	obs.DecimalsGuardUnresolvedAssets.Set(float64(unresolved))
 	return unresolved
