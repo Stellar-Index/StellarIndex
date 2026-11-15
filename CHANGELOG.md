@@ -20,6 +20,26 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.118.0] - 2026-11-15
+
+Tested against Stellar protocol 27. No migrations. No `pkg/*` break; `pkg/client` gains `market_cap_lower_bound`. No config change. Host payload changed: the archival-node and redis-sentinel roles, role scripts and the r1 Prometheus rule trees; apply the roles after the binaries. No replay.
+
+### Changed
+
+- **api:** the asset detail carries a stale price and an unread gate; a listing cap on a floor is flagged, and every markets listing carries its volume floor flag. A flagged issuer's SAC row, curated flag and SEP-1 claims are withheld.
+- **api:** a nonstandard-decimals token's volume is stated in its own decimals. A dust-only direction sets no OHLC price. A contract with no supply event is not a zero supply on the asset detail.
+- **auth:** adding or removing a passkey needs a recent sign-in.
+- **explorer:** `/rwa` says when its answer is stale or the set is unknown; figures the API flags as floors carry "≥" on `/assets`, the embed and `/rwa`.
+- **alerts:** new rules for rule evaluation, the retention reaper, the fail-open price guard, a withheld supply, a full limiter map, shed stream ticks, unreadable tokens, email-code guessing and registration growth. A price alert does not fire on a bucket the freeze is holding back.
+- **ansible:** a secret reaches a task on stdin, never through `environment:`. A superuser session in an app-owned database searches `pg_catalog` only.
+
+### Fixed
+
+- **orderbook:** a tied offer is served from its post-image, never the row that won the tie.
+- **ops:** the chunk scan decodes a backend-killing chunk at most twice and decodes a chunk recompressed in place again. Root jobs keep scratch files and the drill's Postgres private and hand psql the owner DSN in the environment. The root archive filler writes only inside the archive root. Projected-rebuild resumes only over checkpoints its own build wrote. `rederive-from` and `ch-rebuild` writes refresh the aggregates over the range they rewrote.
+- **clickhouse:** the cap67 event census counts events, not rows.
+- **ci:** PR tests include every tree-walking guard and a PR cannot scope its own tests; the migration gates see a dropped arbiter, keyword-less DROP/RENAME and a renamed-down migration.
+
 ## [v0.117.0] - 2026-11-14
 
 Tested against Stellar protocol 27. No migrations. No `pkg/*` break; `pkg/client` gains lower-bound, `parent_key_id` and flag fields. Config: a repeated `supply.sdf_reserve_accounts` entry now fails validation. Host payload changed: the archival-node and HA roles, role scripts, systemd units and both Prometheus rule trees; apply the roles after the binaries. No replay.
@@ -96,23 +116,3 @@ No migrations. No `pkg/*` break. No config change. The weekly `compute-completen
 - **completeness:** `sep41_supply` is re-proved weekly beside `sep41_transfers` instead of in the nightly pass, where its from-genesis re-derive hit the per-source timeout (#3843).
 - **explorer:** a read the API sheds with `Retry-After` of 8 s or less is retried once, so account panels no longer show "warming or failed" for a busy cold read; the site crawl judges each API URL by its last response (#3844).
 - **explorer:** links only to asset pages that exist (#3842).
-
-## [v0.116.48] - 2026-10-25
-
-No migrations. No `pkg/*` break (`LendingPool` gains `Summary`, `SummaryPending`, `SummaryError`). No config change. New ClickHouse tables (`account_op_type_counts`, `account_movement_counts`, `account_claimables`, `claimable_removals`, `sponsorship_totals_buckets`) and the holders rollup's `circulating` column are applied on every host before deploy; backfills follow their `deploy/clickhouse/*.sql` steps.
-
-### Fixed
-
-- **explorer:** dead links found by a browser crawl of all three sites are gone: ticker links render as text when no page exists, unregistered sources show an empty state, incident docs link correctly; the crawl runs daily (#3840).
-- **api, explorer:** testnet serves its own Circle USDC and asset catalogue, so `/assets/usdc` and `/assets/xlm` resolve there (#3839).
-- **xdrjson:** muxed auth-credential addresses render instead of an empty string (#3779).
-- **timescale:** no-op trade replays stay off compressed chunks (#3825).
-
-### Changed
-
-- **explorer:** first visits are faster: API preconnect, first-wave preloads on `/markets/` and `/accounts/{G}`, fewer duplicate calls on account and home (#3831, #3834, #3838).
-- **api:** the lending pools list carries each pool's summary; lending pools, reserves and the markets sparkline batch are cached (#3832, #3833, #3836).
-- **explorer:** account pages read per-account indexes and rollups (claimables, op-type counts, sponsorship buckets, movement partitions) instead of scanning the lake (#3780, #3781, #3807-#3812).
-- **perf:** contract, ledger, supply and protocol reads memoised or bounded (#3793, #3794, #3813-#3824, #3826).
-- **ops:** G6 page-panel sweep every 30 min, derived-index and fallback alerts, chunk-destroying-call guards, pgBackRest repo options, heavy-job pool floors (#3768-#3778, #3783-#3806).
-
