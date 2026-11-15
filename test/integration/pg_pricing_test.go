@@ -2687,6 +2687,11 @@ func TestOHLCFoldWaitsForItsLastSourceBucket(t *testing.T) {
 	if bars := readPair(quiet); len(bars) != 0 {
 		t.Fatalf("fold served the quiet pair's bar %+v while the same bucket is withheld for the other pair", bars)
 	}
+	// A request reads its pairs one after another; a refresh landing in between must not split them.
+	req := timescale.WithFoldBounds(ctx)
+	if bars, err := store.OHLCSeriesReBucketed(req, pair, timescale.Granularity1h, "4 hours", t0, t0.Add(fold), 10); err != nil || len(bars) != 0 {
+		t.Fatalf("first read of the request = %+v (err %v), want no bar", bars, err)
+	}
 
 	if _, err := store.DB().ExecContext(ctx,
 		`CALL refresh_continuous_aggregate('prices_1h', NULL, NULL)`); err != nil {
@@ -2698,6 +2703,9 @@ func TestOHLCFoldWaitsForItsLastSourceBucket(t *testing.T) {
 	}
 	if bars[0].BaseVolume != "4000000" || bars[0].TradeCount != 2 {
 		t.Fatalf("fold bar = %+v, want both trades (base_volume 4000000, 2 trades)", bars[0])
+	}
+	if bars, err := store.OHLCSeriesReBucketed(req, quiet, timescale.Granularity1h, "4 hours", t0, t0.Add(fold), 10); err != nil || len(bars) != 0 {
+		t.Fatalf("second read of the same request = %+v (err %v) after a refresh, want the first read's bound and no bar", bars, err)
 	}
 	if bars := readPair(quiet); len(bars) != 1 || bars[0].TradeCount != 1 {
 		t.Fatalf("quiet pair's fold = %+v once materialised, want its one trade", bars)

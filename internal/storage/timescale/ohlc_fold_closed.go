@@ -4,8 +4,23 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sync"
 	"time"
 )
+
+type foldBoundsKey struct{}
+
+type foldBounds struct {
+	mu     sync.Mutex
+	byView map[string]sql.NullTime
+}
+
+// WithFoldBounds returns a context under which every folded read of one view uses the bound the first of them read. A
+// request that merges several pairs needs it: a refresh committing between two reads would otherwise serve a bucket
+// for the later pair that was withheld for the earlier one.
+func WithFoldBounds(ctx context.Context) context.Context {
+	return context.WithValue(ctx, foldBoundsKey{}, &foldBounds{byView: map[string]sql.NullTime{}})
+}
 
 // foldClosedThrough returns the first trade of ANY pair that `view` has not materialised; a fold may serve only
 // out-buckets ending at or before it. Not valid means there is none.
@@ -21,6 +36,22 @@ import (
 //
 // Two statements, so the trades probe plans against a constant lower bound and touches only the newest chunks.
 func (s *Store) foldClosedThrough(ctx context.Context, view string) (sql.NullTime, error) {
+	shared, _ := ctx.Value(foldBoundsKey{}).(*foldBounds)
+	if shared != nil {
+		shared.mu.Lock()
+		defer shared.mu.Unlock()
+		if through, ok := shared.byView[view]; ok {
+			return through, nil
+		}
+	}
+	through, err := s.readFoldClosedThrough(ctx, view)
+	if err == nil && shared != nil {
+		shared.byView[view] = through
+	}
+	return through, err
+}
+
+func (s *Store) readFoldClosedThrough(ctx context.Context, view string) (sql.NullTime, error) {
 	var through sql.NullTime
 	var watermark time.Time
 	err := s.db.QueryRowContext(ctx, `

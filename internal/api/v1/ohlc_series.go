@@ -164,7 +164,8 @@ func (s *Server) handleOHLCSeries(
 	defer hCancel()
 	// One row past the cap: the only way to KNOW the window held more
 	// than `limit` buckets. See [capOHLCSeriesNewest].
-	bars, proxied, err := s.ohlcSeriesWithAliases(hCtx, pair, interval, from, to, limit+1)
+	// One closed-through bound for every pair this request reads, so merged constituents agree on which buckets exist.
+	bars, proxied, err := s.ohlcSeriesWithAliases(timescale.WithFoldBounds(hCtx), pair, interval, from, to, limit+1)
 	if errors.Is(err, ErrUnknownGranularity) {
 		// Shouldn't fire — handler validated the interval — but guard
 		// against a future code path that wires the storage layer
