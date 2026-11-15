@@ -199,13 +199,61 @@ type OfferRemovalRef struct {
 	Ledger uint32
 }
 
-// offerRemovalProbeBatch bounds one OfferRemovedAt query; each ref prunes to its
+// offerRemovalProbeBatch bounds one ResolveTiedOffers query; each ref prunes to its
 // ledger's granules, so cost is ~linear in refs.
 const offerRemovalProbeBatch = 500
 
-// OfferRemovedAt reports which offers have a `removed` change row at the SAME ledger as their winning current-state row, catching phantom live offers when backfilled intra_ledger_seq ties let the wrong RMT row win; refs without change rows are "not removed".
-func (r *ExplorerReader) OfferRemovedAt(ctx context.Context, refs []OfferRemovalRef) (map[string]struct{}, error) {
-	removed := make(map[string]struct{})
+// TiedOffer is what the change log says about an offer whose winning current-state row is a version tie.
+// Neither field set means the log could not settle it, and the offer stays unserved.
+type TiedOffer struct {
+	// Removed: a `removed` row exists at that ledger. Offer ids are never reused, so the offer is dead.
+	Removed bool
+	// Post is the offer's last post-image in that ledger; HasPost is false when there is none or more than
+	// one transaction changed the offer there (their apply order is not in the lake).
+	Post    LiveOffer
+	HasPost bool
+}
+
+// tiedOfferChange is one non-`state` change row of a tied offer.
+type tiedOfferChange struct {
+	txHash      string
+	opIndex     int32
+	changeIndex uint32
+	removed     bool
+	entryXDR    string
+}
+
+// resolveTiedOffer settles one offer from its change rows at the tied ledger. A `state` row is the pre-image
+// and is never a candidate: the tie can leave it as the current-state survivor with the old amount or price.
+func resolveTiedOffer(changes []tiedOfferChange) TiedOffer {
+	var last *tiedOfferChange
+	for i := range changes {
+		c := &changes[i]
+		if c.removed {
+			return TiedOffer{Removed: true}
+		}
+		if last != nil && c.txHash != last.txHash {
+			return TiedOffer{}
+		}
+		if last == nil || c.opIndex > last.opIndex || (c.opIndex == last.opIndex && c.changeIndex > last.changeIndex) {
+			last = c
+		}
+	}
+	if last == nil {
+		return TiedOffer{}
+	}
+	post, ok := offerFromEntryXDR(last.entryXDR)
+	if !ok {
+		return TiedOffer{}
+	}
+	return TiedOffer{Post: post, HasPost: true}
+}
+
+// ResolveTiedOffers reads the change log at the SAME ledger as each offer's winning current-state row, where
+// backfilled intra_ledger_seq ties let ReplacingMergeTree keep the wrong survivor: a removed offer shown live,
+// or a pre-image shown in place of the update that followed it.
+func (r *ExplorerReader) ResolveTiedOffers(ctx context.Context, refs []OfferRemovalRef) (map[string]TiedOffer, error) {
+	changes := make(map[string][]tiedOfferChange, len(refs))
 	for start := 0; start < len(refs); start += offerRemovalProbeBatch {
 		batch := refs[start:min(start+offerRemovalProbeBatch, len(refs))]
 		var b strings.Builder
@@ -217,30 +265,37 @@ func (r *ExplorerReader) OfferRemovedAt(ctx context.Context, refs []OfferRemoval
 			b.WriteString("(?,?)")
 			args = append(args, ref.Ledger, ref.KeyXDR)
 		}
-		q := `SELECT DISTINCT key_xdr
+		// Row read, not an aggregate: a duplicated row resolves to the same answer.
+		q := `SELECT key_xdr, tx_hash, op_index, change_index, change_type, entry_xdr
 			FROM stellar.ledger_entry_changes
-			WHERE entry_type = 'offer' AND change_type = 'removed'
+			WHERE entry_type = 'offer' AND change_type != 'state'
 			  AND (ledger_seq, key_xdr) IN (` + b.String() + `)
 			SETTINGS max_threads = 2, max_memory_usage = 4294967296`
 		rows, err := r.conn.Query(ctx, q, args...)
 		if err != nil {
-			return nil, fmt.Errorf("clickhouse: offer removal probe: %w", err)
+			return nil, fmt.Errorf("clickhouse: tied offer probe: %w", err)
 		}
 		for rows.Next() {
-			var key string
-			if err := rows.Scan(&key); err != nil {
+			var key, changeType string
+			var c tiedOfferChange
+			if err := rows.Scan(&key, &c.txHash, &c.opIndex, &c.changeIndex, &changeType, &c.entryXDR); err != nil {
 				_ = rows.Close()
-				return nil, fmt.Errorf("clickhouse: scan offer removal: %w", err)
+				return nil, fmt.Errorf("clickhouse: scan tied offer change: %w", err)
 			}
-			removed[key] = struct{}{}
+			c.removed = changeType == "removed"
+			changes[key] = append(changes[key], c)
 		}
 		err = rows.Err()
 		_ = rows.Close()
 		if err != nil {
-			return nil, fmt.Errorf("clickhouse: offer removal rows: %w", err)
+			return nil, fmt.Errorf("clickhouse: tied offer rows: %w", err)
 		}
 	}
-	return removed, nil
+	out := make(map[string]TiedOffer, len(changes))
+	for key, cs := range changes {
+		out[key] = resolveTiedOffer(cs)
+	}
+	return out, nil
 }
 
 // offerFromEntryXDR decodes one offer LedgerEntry; ok=false for undecodable bytes or

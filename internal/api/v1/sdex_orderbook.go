@@ -64,10 +64,9 @@ const (
 type SDEXOfferBookReader interface {
 	LoadLiveOffers(ctx context.Context) ([]clickhouse.LiveOffer, uint32, error)
 	OfferChangesSince(ctx context.Context, fromLedger uint32) ([]clickhouse.OfferChange, uint32, error)
-	// OfferRemovedAt reports which refs have a `removed` change row at
-	// their own winning ledger — the version-tie zombie probe (the
-	// clickhouse implementation's doc explains the tie).
-	OfferRemovedAt(ctx context.Context, refs []clickhouse.OfferRemovalRef) (map[string]struct{}, error)
+	// ResolveTiedOffers settles each ref from the change log at its ledger: removed, its last post-image,
+	// or neither when the log cannot say.
+	ResolveTiedOffers(ctx context.Context, refs []clickhouse.OfferRemovalRef) (map[string]clickhouse.TiedOffer, error)
 }
 
 // SDEXOrderBookCache is the in-process live offer book (Load, Advance, MaintainTick); offers with intra_ledger_seq==0 are AMBIGUOUS and quarantined until VerifyPending proves no removal, and before the first Load the handler serves 503.
@@ -236,7 +235,7 @@ func (c *SDEXOrderBookCache) VerifyPending(ctx context.Context, limit int) (err 
 	}
 	start := time.Now()
 	defer func() { observeMaintain("verify", start, err) }()
-	dead, err := c.reader.OfferRemovedAt(ctx, refs)
+	resolved, err := c.reader.ResolveTiedOffers(ctx, refs)
 	if err != nil {
 		if c.logger != nil {
 			c.logger.Warn("sdex order book verify", "err", err)
@@ -249,14 +248,24 @@ func (c *SDEXOrderBookCache) VerifyPending(ctx context.Context, limit int) (err 
 		if !ok || o.Ledger != ref.Ledger {
 			continue // superseded by an Advance since the refs were drawn
 		}
+		res := resolved[ref.KeyXDR]
+		if !res.Removed && !res.HasPost {
+			continue // the log cannot say which image is current: stays withheld
+		}
 		c.dropPendingLocked(ref.KeyXDR)
-		if _, gone := dead[ref.KeyXDR]; gone {
+		if res.Removed {
 			continue // proven dead — never serve, never re-check
 		}
-		if prev, dup := c.offers[ref.KeyXDR]; dup && prev.Version >= o.Version {
+		// Serve the post-image, never the tied survivor: that row may be the pre-image of this update.
+		post := res.Post
+		post.KeyXDR, post.Ledger, post.Version = o.KeyXDR, o.Ledger, o.Version
+		if post.Amount <= 0 || post.PriceN <= 0 || post.PriceD <= 0 {
 			continue
 		}
-		c.offers[ref.KeyXDR] = o
+		if prev, dup := c.offers[ref.KeyXDR]; dup && prev.Version >= post.Version {
+			continue
+		}
+		c.offers[ref.KeyXDR] = post
 	}
 	c.updateHealthGaugesLocked()
 	c.mu.Unlock()
