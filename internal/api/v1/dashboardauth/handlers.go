@@ -555,7 +555,8 @@ func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 
 	// The lockout check is a cheap early refusal that a concurrent burst can all pass; the charge
 	// is what bounds the burst, so it must precede the comparison.
-	if !h.chargeLoginCodeAttempt(r, lockKey) {
+	charged, lastAttempt := h.chargeLoginCodeAttempt(r, lockKey)
+	if !charged {
 		writeProblem(w, http.StatusBadRequest, "invalid or expired code — request a new one", "/v1/auth/verify-code")
 		return
 	}
@@ -569,6 +570,9 @@ func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 	if err != nil || subtle.ConstantTimeCompare([]byte(h.cfg.Generator.CodeForHash(cand.TokenHash)), []byte(code)) != 1 {
 		// Wrong (or no) code. Both counters were already charged above.
 		obs.LoginCodeFailuresTotal.WithLabelValues(obs.LoginCodeFailureWrongCode).Inc()
+		if lastAttempt {
+			obs.LoginCodeFailuresTotal.WithLabelValues(obs.LoginCodeFailureLockoutEngaged).Inc()
+		}
 		writeProblem(w, http.StatusBadRequest, "invalid or expired code — request a new one", "/v1/auth/verify-code")
 		return
 	}
@@ -641,27 +645,26 @@ func (h *Handlers) loginCodeLive(r *http.Request, email string) bool {
 }
 
 // chargeLoginCodeAttempt charges the attempt against the email's durable budget BEFORE any code is compared; a sign-in clears it.
-// The upsert serialises per email row, so at most [maxDurableCodeFailures] pass (hence <=). Fails OPEN.
-func (h *Handlers) chargeLoginCodeAttempt(r *http.Request, email string) bool {
+// The upsert serialises per email row, so at most [maxDurableCodeFailures] pass (hence <=) and exactly one request per window
+// is the last attempt, whichever request arms the lock. Fails OPEN.
+func (h *Handlers) chargeLoginCodeAttempt(r *http.Request, email string) (pass, lastAttempt bool) {
 	state, err := h.cfg.Tokens.RegisterFailedLoginCode(
 		r.Context(), email, maxDurableCodeFailures, durableCodeFailureWindow, durableCodeLockout)
 	if err != nil {
 		// Fails open: nothing durable recorded the attempt; same counter as the status-check path.
 		obs.LoginCodeLockoutErrorsTotal.WithLabelValues(obs.LoginCodeLockoutOpRegister).Inc()
 		h.cfg.Logger.Warn("register failed login code", "err", err, "email", maskEmail(email))
-		return true
+		return true, false
+	}
+	if state.FailedCount > maxDurableCodeFailures {
+		obs.LoginCodeFailuresTotal.WithLabelValues(obs.LoginCodeFailureLockedOut).Inc()
 	}
 	if state.Locked(h.cfg.Now()) {
-		outcome := obs.LoginCodeFailureLockedOut
-		if state.FailedCount == maxDurableCodeFailures {
-			outcome = obs.LoginCodeFailureLockoutEngaged
-		}
-		obs.LoginCodeFailuresTotal.WithLabelValues(outcome).Inc()
 		h.cfg.Logger.Warn("email locked out of code sign-in after repeated failures",
 			"email", maskEmail(email), "failed_count", state.FailedCount,
 			"locked_until", state.LockedUntil, "ip", clientIP(r).String())
 	}
-	return state.FailedCount <= maxDurableCodeFailures
+	return state.FailedCount <= maxDurableCodeFailures, state.FailedCount == maxDurableCodeFailures
 }
 
 // startSessionForEmail finds-or-creates the user for a just-verified email and mints a session. It writes only Set-Cookie;

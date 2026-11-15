@@ -514,7 +514,10 @@ groups:
       # The offender counter fires only on a confirmed reading that was also
       # written. These two gauges are the cases in between: confirmed but not
       # written, and enumerated but not readable. Scoped to the aggregator job
-      # because every binary registers the gauges at zero.
+      # because every binary registers the gauges at zero. The unresolved arm
+      # looks back over the whole previous day, not one instant, so a gap in
+      # the series (a restart's backfill, a scrape outage) does not ticket
+      # every standing member a day later.
       - alert: stellarindex_decimals_guard_unconfirmed
         expr: |
           stellarindex_decimals_guard_pending_writes{job="stellarindex_aggregator"} > 0
@@ -522,7 +525,7 @@ groups:
           (
             stellarindex_decimals_guard_unresolved_asset{job="stellarindex_aggregator"}
             unless
-            stellarindex_decimals_guard_unresolved_asset{job="stellarindex_aggregator"} offset 1d
+            max_over_time(stellarindex_decimals_guard_unresolved_asset{job="stellarindex_aggregator"}[1d] offset 1d)
           )
         for: 1h
         labels:

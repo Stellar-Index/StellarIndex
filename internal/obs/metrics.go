@@ -1722,7 +1722,7 @@ const (
 var LoginCodeFailuresTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_login_code_failures_total",
-		Help: "Refused dashboard email-code sign-ins by outcome (wrong_code = a guess did not match; locked_out = refused because the address is locked; lockout_engaged = the guess that locked an address).",
+		Help: "Refused dashboard email-code sign-ins by outcome (wrong_code = a guess did not match; locked_out = refused because the address is locked or out of attempts; lockout_engaged = a wrong_code that used the address's last attempt, counted under both).",
 	},
 	[]string{"outcome"},
 )

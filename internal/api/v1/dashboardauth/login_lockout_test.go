@@ -271,6 +271,21 @@ func TestLockout_GuessingIsCounted(t *testing.T) {
 	}
 }
 
+// An owner who mistypes nine times and then signs in on their last attempt was not locked out.
+func TestLockout_CorrectLastAttemptIsNotALockout(t *testing.T) {
+	const email = "ninth@example.com"
+	lr := newLockoutRig(t)
+	engaged := testutil.ToFloat64(obs.LoginCodeFailuresTotal.WithLabelValues(obs.LoginCodeFailureLockoutEngaged))
+
+	lr.grind(t, email, maxDurableCodeFailures-1)
+	if w := lr.postVerifyCode(t, email, lr.loginAndCode(t, email)); w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 on the last attempt", w.Code)
+	}
+	if got := testutil.ToFloat64(obs.LoginCodeFailuresTotal.WithLabelValues(obs.LoginCodeFailureLockoutEngaged)) - engaged; got != 0 {
+		t.Errorf("lockout_engaged moved by %v, want 0: the sign-in succeeded", got)
+	}
+}
+
 func lockoutErrors(t *testing.T, op string) float64 {
 	t.Helper()
 	return testutil.ToFloat64(obs.LoginCodeLockoutErrorsTotal.WithLabelValues(op))
