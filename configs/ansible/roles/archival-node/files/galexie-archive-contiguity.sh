@@ -30,7 +30,9 @@ set -uo pipefail
 TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
 OUT="$TEXTFILE_DIR/galexie_archive_contiguity.prom"
 TMP="$(mktemp "$OUT.tmp.XXXXXX")"
-trap 'rm -f "$TMP" "$TMP.checked"' EXIT
+# Its own mktemp, never a name derived from TMP: a group member of the directory could plant that name as a link.
+CHECKED="$(mktemp "$OUT.chk.XXXXXX")"
+trap 'rm -f "$TMP" "$CHECKED"' EXIT
 
 BUCKET="${BUCKET:-local/galexie-archive}"
 # Ledger range NOT expected in the archive (the ADR capacity trim): first and last missing
@@ -171,7 +173,6 @@ EOF
 # ERE a bare brace opens an interval expression (escape undefined by POSIX), so the bracket
 # form means the same under mawk, gawk and BWK awk. No apostrophe in the awk program: it is
 # a single-quoted shell word.
-CHECKED="$TMP.checked"
 if ! DROPPED=$(awk -v keep="$CHECKED" '
   /^[ \t]*$/ || /^#/ { print > keep; next }
   {

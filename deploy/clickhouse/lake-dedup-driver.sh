@@ -56,7 +56,10 @@ OUT="${OUT:-/var/log/lake-dedup-${T}.log}"
 STOP="${STOP:-/tmp/lake-dedup.stop}"
 TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
 METRICS_OUT="$TEXTFILE_DIR/lake_dedup_${T}.prom"
-PROGRESS_FILE="$METRICS_OUT.progress"
+# Root-private, never in the group-writable textfile directory: a member of that group could link a fixed name there
+# and have root write through it or read back a file of its choosing.
+PROGRESS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/lake-dedup.XXXXXX")" || { echo "lake-dedup-driver: cannot create a progress directory" >&2; exit 1; }
+PROGRESS_FILE="$PROGRESS_DIR/progress"
 
 log() { echo "$(date -Iseconds) $*" | tee -a "$OUT"; }
 
@@ -112,7 +115,7 @@ finish_metrics() {
     wait "$hb_pid" 2>/dev/null
   fi
   if [ "$rc" -eq 0 ]; then emit_metrics 0 1; else emit_metrics 0 0; fi
-  rm -f "$PROGRESS_FILE" 2>/dev/null
+  rm -rf "$PROGRESS_DIR" 2>/dev/null
 }
 # On a signal the EXIT trap alone sees the last command's status (often 0), so
 # each signal exits 128+signo explicitly and reads as a failure.

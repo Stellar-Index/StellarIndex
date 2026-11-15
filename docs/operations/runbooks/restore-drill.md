@@ -94,7 +94,7 @@ sudo -u postgres pgbackrest --stanza=stellarindex info --repo=2
 
 - Timer not on the host (`could not be found`; units ship with `--tags ops-jobs`, gated on `pgbackrest_repo2_s3_bucket`), or disabled (`inactive`).
 - S3 failure (rotated credentials, endpoint/TLS, missing cipher pass): `pgbackrest info --repo=2` errors (`403`, `AccessDenied`, `unable to resolve`, cipher); the drill records `ABORTED at pg_restore` and `stellarindex_restore_drill_failed{repo="2"}` also fires.
-- Refusal on free space, `/run/lock/restore-drill.lock` held, or a postgres already on scratch port 5499 (orphan of a killed drill; the log prints the `pg_ctl -D ... stop -m immediate` for each directory under `/srv/restore-drill`).
+- Refusal on free space, `/run/lock/restore-drill.lock` held, or a scratch postgres still running (orphan of a killed drill, found by the pidfile in its datadir or, for one started by an older script, on port 5499; the log prints the `pg_ctl -D ... stop -m immediate` for each directory under `/srv/restore-drill`).
 - No repo2 on this host (no `repo2-*` lines in `/etc/pgbackrest/pgbackrest.conf`), or a pre-`repo`-label script wrote an un-labelled series into `restore_drill.prom`.
 
 **Fix**

@@ -190,6 +190,17 @@ if [[ -x "$PG_BIN/pg_isready" ]]; then
     exit 2
   fi
 fi
+# The scratch instance listens on a private socket only, so the port probe cannot see one left by a killed drill: read
+# each kept datadir's pidfile.
+for pidfile in "$DRILL_ROOT"/pgdata-*/postmaster.pid; do
+  [[ -f "$pidfile" ]] || continue
+  orphan_pid="$(head -n 1 "$pidfile" 2>/dev/null | tr -dc '0-9')"
+  if [[ -n "$orphan_pid" ]] && kill -0 "$orphan_pid" 2>/dev/null; then
+    note "a scratch postgres (pid $orphan_pid) is still running from ${pidfile%/postmaster.pid} — an earlier drill was killed before its cleanup ran; refusing (one scratch instance at a time)"
+    note "  stop it: sudo -u postgres $PG_BIN/pg_ctl -D ${pidfile%/postmaster.pid} stop -m immediate  (then remove that directory)"
+    exit 2
+  fi
+done
 
 # Wait out a running backup before choosing what to restore. A oneshot reads
 # "activating" while it runs. Still running at the deadline is a refusal.
@@ -237,6 +248,9 @@ DATA_DIR="$DRILL_ROOT/pgdata-$(date +%Y%m%d-%H%M%S)"
 # restore wipes its spool-path's archive dir; the default one holds the live
 # cluster's archive-push acks, and losing them stalls its archiver.
 SPOOL_DIR="$DATA_DIR.spool"
+# The scratch instance's only door: a 0700 postgres-owned socket directory. It takes no TCP connection and the shared
+# /var/run/postgresql never sees it, so no other local user can reach a superuser that holds the restored data.
+SOCK_DIR="$DATA_DIR.sock"
 # 1 while `pgbackrest restore` is writing DATA_DIR. A restore that dies part-way
 # (ENOSPC, repo corruption, kill) leaves a multi-hundred-GB partial copy with NO
 # diagnostic value (the pgbackrest output is the diagnosis) that must not linger
@@ -263,6 +277,7 @@ cleanup() {
   if [[ -f "$DATA_DIR/postmaster.pid" ]]; then
     sudo -u postgres "$PG_BIN/pg_ctl" -D "$DATA_DIR" stop -m immediate || true
   fi
+  rm -rf "$SOCK_DIR"
   if [[ "$restore_in_progress" -eq 1 ]]; then
     echo "restore-drill: removing PARTIAL restore $DATA_DIR (pgbackrest restore did not complete; its output above is the diagnostic)" >&2
     rm -rf "$DATA_DIR" "$SPOOL_DIR"
@@ -339,7 +354,9 @@ emit_metric() {
   [[ "$DRILL_REPO" == "1" ]] || metric_out="$TEXTFILE_DIR/restore_drill_repo${DRILL_REPO}.prom"
   local metric_tmp
   metric_tmp="$(mktemp "$metric_out.tmp.XXXXXX")"
-  local metric_checked="$metric_tmp.checked"
+  # Its own mktemp, never a name derived from metric_tmp: a group member of the directory could plant that name as a link.
+  local metric_checked
+  metric_checked="$(mktemp "$metric_out.chk.XXXXXX")"
   local lbl="{repo=\"${DRILL_REPO}\"}"
 
   # Throughput is the ONLY non-integer value in this file and comes from `bc`,
@@ -490,7 +507,7 @@ abort_drill() {
 # ─── phase 1: restore ───────────────────────────────────────────────
 drill_stage="pg_restore"
 note "restoring stanza=$STANZA repo=$DRILL_REPO into $DATA_DIR …"
-mkdir -p "$DATA_DIR" "$SPOOL_DIR" && chown postgres:postgres "$DATA_DIR" "$SPOOL_DIR" && chmod 700 "$DATA_DIR" "$SPOOL_DIR"
+mkdir -p "$DATA_DIR" "$SPOOL_DIR" "$SOCK_DIR" && chown postgres:postgres "$DATA_DIR" "$SPOOL_DIR" "$SOCK_DIR" && chmod 700 "$DATA_DIR" "$SPOOL_DIR" "$SOCK_DIR"
 restore_started=$(date +%s)
 restore_in_progress=1
 if sudo -u postgres pgbackrest --stanza="$STANZA" --repo="$DRILL_REPO" \
@@ -507,22 +524,20 @@ fi
 # ─── phase 2: start scratch instance + recover ──────────────────────
 drill_stage="pg_start"
 # Recovery target: end of archived WAL. Disposable instance: no archive_command,
-# loopback only, alternate port. Debian keeps the live postgresql.conf and
+# private socket only, alternate port. Debian keeps the live postgresql.conf and
 # pg_hba.conf under /etc/postgresql, NOT in PGDATA, so the restored datadir has
-# neither; synthesize minimal ones (config includes the auto file; hba is
-# loopback-trust for the postgres OS user only).
+# neither; synthesize minimal ones (config includes the auto file; hba admits
+# the postgres OS user over the private socket and nothing else).
 if [[ ! -f "$DATA_DIR/postgresql.conf" ]]; then
   sudo -u postgres tee "$DATA_DIR/postgresql.conf" >/dev/null <<CONF
 # synthesized by restore-drill.sh — Debian keeps the real config in /etc
 include_if_exists = 'postgresql.auto.conf'
 CONF
 fi
-if [[ ! -f "$DATA_DIR/pg_hba.conf" ]]; then
-  sudo -u postgres tee "$DATA_DIR/pg_hba.conf" >/dev/null <<CONF
-local   all  postgres                trust
-host    all  postgres  127.0.0.1/32  trust
+# Written whether or not the restore brought one: a restored hba is the production one and may admit more.
+sudo -u postgres tee "$DATA_DIR/pg_hba.conf" >/dev/null <<CONF
+local   all  postgres  peer
 CONF
-fi
 if [[ ! -f "$DATA_DIR/pg_ident.conf" ]]; then
   sudo -u postgres touch "$DATA_DIR/pg_ident.conf"
 fi
@@ -533,7 +548,8 @@ fi
 # recovery needs (timescaledb preload + a lock table big enough for the chunks).
 sudo -u postgres tee -a "$DATA_DIR/postgresql.auto.conf" >/dev/null <<CONF
 port = $DRILL_PG_PORT
-listen_addresses = '127.0.0.1'
+listen_addresses = ''
+unix_socket_directories = '$SOCK_DIR'
 archive_mode = off
 shared_preload_libraries = 'timescaledb'
 shared_buffers = 2GB
@@ -555,7 +571,7 @@ sudo -u postgres psql -X -d postgres -tA -F' = ' -c \
     'max_prepared_transactions','max_locks_per_transaction')" \
   | sudo -u postgres tee -a "$DATA_DIR/postgresql.auto.conf" >/dev/null
 if sudo -u postgres "$PG_BIN/pg_ctl" -D "$DATA_DIR" -w -t "$PG_START_TIMEOUT" start; then
-  check "pg_start" 1 "scratch instance up on :$DRILL_PG_PORT (recovery complete)"
+  check "pg_start" 1 "scratch instance up on $SOCK_DIR (recovery complete)"
 else
   check "pg_start" 0 "scratch instance failed to reach consistency"
   abort_drill "pg_start"
@@ -564,7 +580,7 @@ fi
 # Superuser sessions in the app-owned database search pg_catalog only, so the owner role cannot shadow a
 # catalog name; app tables are named with their schema.
 SU_PGOPTIONS='-c search_path=pg_catalog'
-q() { sudo -u postgres env PGOPTIONS="$SU_PGOPTIONS" psql -X -h 127.0.0.1 -p "$DRILL_PG_PORT" -d stellarindex -tA -c "$1"; }
+q() { sudo -u postgres env PGOPTIONS="$SU_PGOPTIONS" psql -X -h "$SOCK_DIR" -p "$DRILL_PG_PORT" -d stellarindex -tA -c "$1"; }
 qlive() {
   if [[ -n "$LIVE_DSN" ]]; then psql "$LIVE_DSN" -tA -c "$1"
   else sudo -u postgres env PGOPTIONS="$SU_PGOPTIONS" psql -X -d stellarindex -tA -c "$1"; fi

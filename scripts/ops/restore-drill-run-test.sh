@@ -416,6 +416,49 @@ else
   bad "the port refusal ran past the pre-flight: $(ls "$c/root" 2>/dev/null)"
 fi
 
+# ─── 8b. a socket-only scratch instance left by a killed drill ──────
+# The scratch instance takes no TCP connection, so the port probe cannot
+# see one. Its pidfile under DRILL_ROOT can: a live pid there is the same
+# refusal, a dead one is wreckage that does not block the drill.
+c="$work/c8b"; mkdir -p "$c/root/pgdata-20260101-000000"; seed_stale_pass "$c"
+tail -f /dev/null & orphan=$!
+echo "$orphan" > "$c/root/pgdata-20260101-000000/postmaster.pid"
+FAKE_DF_AVAIL_G=5000 FAKE_BACKUP_BYTES=$((300 * 1073741824)) FAKE_RESTORE_RC=0 run_drill "$c"
+kill "$orphan" 2>/dev/null; wait "$orphan" 2>/dev/null
+rc="$(cat "$c/rc")"
+if [[ "$rc" == "2" ]] && grep -q "scratch postgres (pid $orphan) is still running" "$c/out" && [[ ! -e "$c/log/restore-drills.md" ]]; then
+  ok "a live scratch instance found by its pidfile is a precondition refusal (exit 2)"
+else
+  bad "an orphaned socket-only instance: expected exit 2 + 'still running', got exit $rc:
+$(tail -n 5 "$c/out")"
+fi
+c="$work/c8c"; mkdir -p "$c/root/pgdata-20260101-000000"; seed_stale_pass "$c"
+echo "$orphan" > "$c/root/pgdata-20260101-000000/postmaster.pid"
+FAKE_DF_AVAIL_G=5000 FAKE_BACKUP_BYTES=$((300 * 1073741824)) FAKE_RESTORE_RC=0 FAKE_PG_START_RC=1 run_drill "$c"
+if ! grep -q "is still running" "$c/out"; then
+  ok "a pidfile naming a dead process does not block the drill"
+else
+  bad "a stale pidfile refused the drill:
+$(tail -n 5 "$c/out")"
+fi
+# That run reached pg_start and failed, so its datadir is kept: the scratch config must admit the postgres OS user over
+# a private socket and nothing else.
+kept=""
+for d in "$c"/root/pgdata-*; do
+  case "$d" in *20260101*|*.spool|*.sock) continue ;; esac
+  [[ -d "$d" ]] && kept="$d"
+done
+if [[ -n "$kept" ]] && [[ "$(grep -cv '^[[:space:]]*$' "$kept/pg_hba.conf")" == "1" ]] \
+     && grep -qE '^local +all +postgres +peer$' "$kept/pg_hba.conf" \
+     && grep -qx "listen_addresses = ''" "$kept/postgresql.auto.conf" \
+     && grep -qx "unix_socket_directories = '$kept.sock'" "$kept/postgresql.auto.conf" \
+     && [[ ! -e "$kept.sock" ]]; then
+  ok "the scratch instance takes no TCP connection, peer-authenticates one user on a private socket, and the socket directory is removed"
+else
+  bad "scratch instance config is not private (datadir: ${kept:-none}):
+$(cat "$kept/pg_hba.conf" 2>/dev/null; grep -n 'listen_addresses\|unix_socket' "$kept/postgresql.auto.conf" 2>/dev/null; ls -d "$kept.sock" 2>/dev/null)"
+fi
+
 # ─── 9. emit_metric: no rendered line may lack a value ──────────────
 #
 # THE DEFECT. The throughput series was once
