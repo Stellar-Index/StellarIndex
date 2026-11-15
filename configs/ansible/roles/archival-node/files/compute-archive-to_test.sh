@@ -23,6 +23,8 @@ cat > "$FAKEBIN/psql" <<'EOF'
 echo "${FAKE_CURSOR_TO:-0}"
 EOF
 chmod +x "$FAKEBIN/psql"
+# The shipped wrapper, as the role installs it: the script hands psql its DSN through it.
+cp "$PWD/../../../../../scripts/ops/psql-dsn.sh" "$FAKEBIN/psql-dsn"; chmod +x "$FAKEBIN/psql-dsn"
 
 echo "STELLARINDEX_POSTGRES_DSN=postgres://fake" > "$TMP/stellarindex.env"
 

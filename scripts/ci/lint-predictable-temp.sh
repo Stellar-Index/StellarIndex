@@ -5,6 +5,10 @@
 # user can pre-plant the name as a symlink and have root truncate its target.
 # Use `mktemp "$out.tmp.XXXXXX"` in shell and internal/atomicfile in Go.
 #
+# Second rule, same threat (another local user on the host): no script may hand
+# psql a DSN as an argument, where /proc/<pid>/cmdline shows it, password
+# included, to every local user. Use `PGDSN="$DSN" psql-dsn …`.
+#
 # Usage: lint-predictable-temp.sh [FILE_OR_DIR ...]
 #        (default configs/ansible deploy scripts/ops scripts/dev internal cmd)
 set -euo pipefail
@@ -44,6 +48,12 @@ hits="$(
 if [ -n "$hits" ]; then
   echo "lint-predictable-temp: FAIL — predictable temp-file name (use mktemp \"\$out.tmp.XXXXXX\" / internal/atomicfile):" >&2
   echo "$hits" >&2
+  exit 1
+fi
+dsn_hits="$(grep -nE '(psql|PSQL\}?|pg_dump)"?[[:space:]]+([^|;]*[[:space:]"=])?"?\$\{?[A-Za-z_]*(DSN|DATABASE_URL)' ${shfiles[@]+"${shfiles[@]}"} /dev/null || true)"
+if [ -n "$dsn_hits" ]; then
+  echo "lint-predictable-temp: FAIL — a DSN passed to psql as an argument is readable by every local user (use PGDSN=\"\$DSN\" psql-dsn …):" >&2
+  echo "$dsn_hits" >&2
   exit 1
 fi
 echo "lint-predictable-temp: OK (${#files[@]} file(s))"

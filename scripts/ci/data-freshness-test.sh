@@ -120,6 +120,8 @@ fi
 exit "${CURL_RC:-0}"
 SH
 chmod +x "$WORK/bin/curl"
+# The shipped wrapper, as the role installs it: the script hands psql its DSN through it.
+cp "$PWD/scripts/ops/psql-dsn.sh" "$WORK/bin/psql-dsn"; chmod +x "$WORK/bin/psql-dsn"
 export PATH="$WORK/bin:$PATH"
 
 # run <rc> <body> → rc in $RC, stderr in $ERR, textfile content in $PROM
@@ -425,11 +427,10 @@ QSRC="$WORK/queries.sh"
 {
   printf '%s\n' "${STRICT:-set -euo pipefail}"
   # shellcheck disable=SC2016  # emitted into the harness verbatim; must not expand here
-  printf 'PSQL="$1"\nSTELLARINDEX_POSTGRES_DSN="dummy"\nTMP="$2"\n'
+  printf 'PSQL="$1"\nSTELLARINDEX_POSTGRES_DSN="postgres://dummy"\nTMP="$2"\n'
   awk '/^# shellcheck disable=SC2129/ { p = 1; next } /^SF_AGE=""$/ { p = 0 } p' "$SRC"
 } > "$QSRC"
-# shellcheck disable=SC2016  # the literal $PSQL is the pattern being searched for
-guarded_count="$(grep -c '^if ! "\$PSQL"' "$QSRC")"
+guarded_count="$(grep -c '^if ! PGDSN=' "$QSRC")"
 if [[ "$guarded_count" == 7 ]]; then
   ok "extracted region carries all 7 guarded psql invocations"
 else

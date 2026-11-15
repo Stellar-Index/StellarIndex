@@ -26,6 +26,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/rozo"
 	sep41supply "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_supply"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
+	"github.com/Stellar-Index/StellarIndex/internal/version"
 )
 
 // ─── buildWindowPlan: gap-free, overlap-free, exact coverage ──────────────
@@ -162,9 +163,28 @@ func TestWindowScheduler_EmptyPlanClaimsNothing(t *testing.T) {
 
 func TestWindowCursorSub_Format(t *testing.T) {
 	got := windowCursorSub("blend_backstop", opsutil.RangeChunk{From: 51_499_546, To: 51_549_545})
-	want := "blend_backstop:51499546-51549545"
+	want := "blend_backstop:51499546-51549545@" + version.Version
 	if got != want {
 		t.Errorf("windowCursorSub = %q, want %q", got, want)
+	}
+}
+
+// A re-derive after a decoder fix runs a new build. Windows an earlier build checkpointed, under the old key with no
+// build or under another build's, must stay pending; only this build's own checkpoints are a resume.
+func TestPendingWindows_TrustsOnlyThisBuildsCheckpoints(t *testing.T) {
+	plan := buildWindowPlan(100, 499, 100)
+	done := map[string]uint32{
+		"phoenix:100-199":                    199, // written before the build was part of the key
+		"phoenix:200-299@v0.0.1-other-build": 299,
+		windowCursorSub("phoenix", plan[2]):  399, // this build's
+	}
+	got := pendingWindows(plan, "phoenix", done)
+	want := []opsutil.RangeChunk{plan[0], plan[1], plan[3]}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("pendingWindows = %v, want %v: another build's checkpoint was trusted", got, want)
+	}
+	if n := otherBuildWindows(got, "phoenix", done); n != 2 {
+		t.Errorf("otherBuildWindows = %d, want 2 (the two windows re-walked over another build's checkpoint)", n)
 	}
 }
 

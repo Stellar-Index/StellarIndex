@@ -69,6 +69,19 @@
          or (clickhouse_server_config.stat.isdir | default(false) | bool) }}
   tags: [always]
 
+# Always, and before every task file: scripts installed under several tags (backup, stellarindex, ch-live-catchup)
+# call it, and a tagged apply that installed a caller without it would leave that job unable to read Postgres.
+- name: Install psql-dsn (psql with its DSN in the environment, not on the command line)
+  # An argument is readable by any local user in /proc/<pid>/cmdline, password included.
+  # Relative to this role, not playbook_dir: the task runs under every tag, also when a playbook elsewhere imports this file.
+  ansible.builtin.copy:
+    src: ../../../../../scripts/ops/psql-dsn.sh
+    dest: /usr/local/bin/psql-dsn
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [always, psql-dsn]
+
 - name: "Kernel + sysctl tuning"
   ansible.builtin.import_tasks: 02-kernel.yml
   tags: [kernel]

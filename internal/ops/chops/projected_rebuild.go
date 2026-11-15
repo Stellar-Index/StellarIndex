@@ -29,6 +29,7 @@ import (
 	sep41supply "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_supply"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/version"
 	"github.com/Stellar-Index/StellarIndex/internal/wasmaudit"
 )
 
@@ -45,7 +46,7 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	window := fs.Uint("window", projectedRebuildDefaultWindow, "ledger-window size per checkpoint/scheduling unit — smaller gives finer resume granularity and better load balance across workers on uneven-density ranges (e.g. aquarius rewards); does NOT bound memory (this tool streams, never buffers a window)")
 	workers := fs.Int("workers", projectedRebuildDefaultWorkers, "concurrent ledger-window workers; capped at 3 so workers x 2 ClickHouse queries stay inside the ops_batch limit of 8")
-	resume := fs.Bool("resume", true, "skip windows already checkpointed by a prior -write run for this source")
+	resume := fs.Bool("resume", true, "skip windows already checkpointed by a prior -write run of THIS build for this source; another build's checkpoints are never trusted")
 	heartbeat := fs.String("heartbeat", "", "node_exporter textfile path for the liveness/last-exit gauges. Empty = "+opsutil.DefaultTextfileDir+"/ops_job_projected_rebuild_<source>.prom when that directory exists (r1), otherwise no heartbeat at all")
 	allowLiveOverlap := fs.Bool("allow-live-overlap", false, "DANGEROUS: bypass the live-cursor guard and run even though the live projector's cursor is inside [-from,-to]. Only pass this if you have independently verified the live projector will not process this range concurrently — see the ADR-0048 D3 one-writer contract in this command's doc comment.")
 	if err := fs.Parse(args); err != nil {
@@ -453,13 +454,15 @@ func checkpointWindow(
 
 // ProjectedRebuildResult summarises one RunProjectedRebuild call.
 type ProjectedRebuildResult struct {
-	WindowsPlanned   int
-	WindowsSkipped   int // already checkpointed by a prior -write run (resume)
-	WindowsProcessed int
-	LedgersCovered   int64 // sum of processed windows' ledger spans, THIS run
-	EventsRead       int64
-	EventsEmitted    int64
-	DecodeErrors     int64
+	WindowsPlanned int
+	WindowsSkipped int // already checkpointed by a prior -write run of this build (resume)
+	// WindowsOtherBuild counts pending windows a different build had checkpointed: re-walked, never skipped.
+	WindowsOtherBuild int
+	WindowsProcessed  int
+	LedgersCovered    int64 // sum of processed windows' ledger spans, THIS run
+	EventsRead        int64
+	EventsEmitted     int64
+	DecodeErrors      int64
 	// InsertErrors counts HandleEvent failures a re-run can still land (see
 	// [applyProjectedEvent]) and WindowsHeld the windows left un-checkpointed because of them.
 	// Non-zero means the range is not covered; re-run, as writes are idempotent.
@@ -512,14 +515,11 @@ func RunProjectedRebuild(ctx context.Context, opts ProjectedRebuildOptions) (Pro
 		return result, nil
 	}
 
-	pending := plan
-	if opts.Resume {
-		done, derr := loadDoneWindows(ctx, opts.Store, opts.Source.Name)
-		if derr != nil {
-			return result, fmt.Errorf("projected-rebuild: load resume checkpoints: %w", derr)
-		}
-		pending = pendingWindows(plan, opts.Source.Name, done)
+	pending, otherBuild, err := resumePending(ctx, opts, plan)
+	if err != nil {
+		return result, err
 	}
+	result.WindowsOtherBuild = otherBuild
 	result.WindowsSkipped = len(plan) - len(pending)
 	if len(pending) == 0 {
 		return result, nil
@@ -729,10 +729,32 @@ func buildWindowPlan(from, to, window uint32) []opsutil.RangeChunk {
 	return out
 }
 
-// windowCursorSub is the per-window ingestion_cursors sub_source key "<source>:<wlo>-<whi>", independent of -from/-to:
-// a changed -window leaves old checkpoints unmatched, safe because ON CONFLICT DO NOTHING absorbs reprocessing.
+// windowCursorSub is the per-window ingestion_cursors sub_source key "<source>:<wlo>-<whi>@<build>", independent of
+// -from/-to. The build is part of the key so a resume trusts only windows THIS build wrote: a re-derive after a decoder
+// fix runs a new build, matches nothing and re-walks every window instead of skipping the history it was run to correct.
 func windowCursorSub(name string, w opsutil.RangeChunk) string {
-	return fmt.Sprintf("%s:%d-%d", name, w.From, w.To)
+	return windowCursorPrefix(name, w) + version.Version
+}
+
+func windowCursorPrefix(name string, w opsutil.RangeChunk) string {
+	return fmt.Sprintf("%s:%d-%d@", name, w.From, w.To)
+}
+
+// otherBuildWindows counts the planned windows another build checkpointed in full (or a build that predates the build in
+// the key): they are re-walked, and the summary says so.
+func otherBuildWindows(plan []opsutil.RangeChunk, name string, done map[string]uint32) int {
+	n := 0
+	for _, w := range plan {
+		prefix := windowCursorPrefix(name, w)
+		own := prefix + version.Version
+		for sub, last := range done {
+			if sub != own && last >= w.To && (strings.HasPrefix(sub, prefix) || sub+"@" == prefix) {
+				n++
+				break
+			}
+		}
+	}
+	return n
 }
 
 // loadDoneWindows returns this source's checkpointed window sub_source keys mapped to last_ledger, reading
@@ -751,6 +773,19 @@ func loadDoneWindows(ctx context.Context, store *timescale.Store, name string) (
 		out[c.Sub] = c.LastLedger
 	}
 	return out, nil
+}
+
+// resumePending returns the windows still to walk and how many of them another build had checkpointed.
+func resumePending(ctx context.Context, opts ProjectedRebuildOptions, plan []opsutil.RangeChunk) ([]opsutil.RangeChunk, int, error) {
+	if !opts.Resume {
+		return plan, 0, nil
+	}
+	done, err := loadDoneWindows(ctx, opts.Store, opts.Source.Name)
+	if err != nil {
+		return nil, 0, fmt.Errorf("projected-rebuild: load resume checkpoints: %w", err)
+	}
+	pending := pendingWindows(plan, opts.Source.Name, done)
+	return pending, otherBuildWindows(pending, opts.Source.Name, done), nil
 }
 
 // pendingWindows filters plan to windows not fully checkpointed in done. A window is done only
@@ -847,6 +882,10 @@ func projectedRebuildLossLines(r ProjectedRebuildResult) []string {
 func printProjectedRebuildSummary(name string, from, to uint32, write bool, r ProjectedRebuildResult) {
 	fmt.Printf("\n=== projected-rebuild %s [%d,%d] %s ===\n", name, from, to, writeModeLabel(write))
 	fmt.Printf("windows: planned=%d skipped(resume)=%d processed=%d\n", r.WindowsPlanned, r.WindowsSkipped, r.WindowsProcessed)
+	if r.WindowsOtherBuild > 0 {
+		fmt.Printf("windows: %d were checkpointed by another build and were not skipped (resume trusts only build %s)\n",
+			r.WindowsOtherBuild, version.Version)
+	}
 	fmt.Printf("ledgers covered this run: %d\n", r.LedgersCovered)
 	fmt.Printf("events read: %d   emitted: %d   decode errors: %d\n", r.EventsRead, r.EventsEmitted, r.DecodeErrors)
 	for _, line := range projectedRebuildLossLines(r) {

@@ -85,7 +85,7 @@ trap 'rm -f "$TMP"' EXIT
 # means deleting its rows or excluding it here in the same change.
 #
 # shellcheck disable=SC2129  # the appends below are separate on purpose: each is a distinct query with its own reasoning between them, and a single `{ … } >> $TMP` would bury that
-if ! "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
+if ! PGDSN="$STELLARINDEX_POSTGRES_DSN" PSQL_BIN="$PSQL" psql-dsn -tA -F$'\t' >> "$TMP" <<'SQL'
 WITH f AS (
   -- Crypto oracles (reflector/redstone/band/coingecko) update every
   -- few minutes → 3h threshold. ECB is the exception: a DAILY FX reference
@@ -196,7 +196,7 @@ fi
 # frozen set stays in view and keeps aging, while a truly retired asset still ages out.
 # go on climbing, while an asset genuinely retired 30 days before the last
 # publication still ages out of the watched set as intended.
-if ! "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
+if ! PGDSN="$STELLARINDEX_POSTGRES_DSN" PSQL_BIN="$PSQL" psql-dsn -tA -F$'\t' >> "$TMP" <<'SQL'
 WITH newest AS (SELECT max(time) AS t FROM asset_supply_history),
      per_asset AS (
   SELECT asset_key, extract(epoch FROM now()-max(time)) AS age
@@ -220,7 +220,7 @@ fi
 # state, not a served<>lake gap; including it would keep the ticket alert firing. Real
 # silent drops show in each source's OWN recognition axis, which flips that source's row
 # here. The system row is exported below as a COUNT so a registry regression shows as a step.
-if ! "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
+if ! PGDSN="$STELLARINDEX_POSTGRES_DSN" PSQL_BIN="$PSQL" psql-dsn -tA -F$'\t' >> "$TMP" <<'SQL'
 SELECT 'stellarindex_completeness_incomplete{source="'||source||'"} '||(NOT complete)::int::text
   FROM (SELECT DISTINCT ON (source) source, complete
           FROM completeness_snapshots ORDER BY source, computed_at DESC) s
@@ -238,7 +238,7 @@ fi
 # false by construction.
 # and its recognition_ok is false permanently by construction (it can only be
 # true if no un-indexed Soroban contract exists anywhere on the network).
-if ! "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
+if ! PGDSN="$STELLARINDEX_POSTGRES_DSN" PSQL_BIN="$PSQL" psql-dsn -tA -F$'\t' >> "$TMP" <<'SQL'
 SELECT 'stellarindex_recognition_ok{source="'||source||'"} '||recognition_ok::int::text
   FROM (SELECT DISTINCT ON (source) source, recognition_ok
           FROM completeness_snapshots ORDER BY source, computed_at DESC) s
@@ -253,7 +253,7 @@ fi
 # contract is OWNED by completeness.FormatRecognitionDetail (internal/completeness/audit_axis.go)
 # and pinned by TestFormatRecognitionDetail_leadsWithTheShapeCount: a reword dropping the
 # numeric prefix would make this report 0 silently. COALESCE is a fallback for older rows.
-if ! "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
+if ! PGDSN="$STELLARINDEX_POSTGRES_DSN" PSQL_BIN="$PSQL" psql-dsn -tA -F$'\t' >> "$TMP" <<'SQL'
 SELECT 'stellarindex_recognition_unattributed_shapes '||
        COALESCE(substring(detail FROM '^[0-9]+'), '0')
   FROM (SELECT detail FROM completeness_snapshots
@@ -281,7 +281,7 @@ fi
 # Cheap: min(bucket)/min(ts) ride the time indexes. The 1-day slack absorbs time_bucket
 # rounding down; the 2-day gate keeps a fresh deploy's initial materialization quiet.
 # window from false-firing.
-if ! "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
+if ! PGDSN="$STELLARINDEX_POSTGRES_DSN" PSQL_BIN="$PSQL" psql-dsn -tA -F$'\t' >> "$TMP" <<'SQL'
 WITH base AS (SELECT min(ts) AS tmin FROM trades),
      ret AS (
        SELECT hypertable_name AS view_name,
@@ -328,7 +328,7 @@ fi
 # A verdict can read complete=true while its watermark lags the network head (mid-walk stall,
 # small manual -to). Emit per-source lag (ingest cursor tip - verdict watermark) so that is
 # alertable rather than a green "N/N complete" badge.
-if ! "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
+if ! PGDSN="$STELLARINDEX_POSTGRES_DSN" PSQL_BIN="$PSQL" psql-dsn -tA -F$'\t' >> "$TMP" <<'SQL'
 WITH tip AS (SELECT last_ledger AS t FROM ingestion_cursors WHERE source = 'ledgerstream' AND sub_source = '')
 SELECT 'stellarindex_completeness_watermark_lag_ledgers{source="'||s.source||'"} '
        ||greatest(0, (SELECT t FROM tip) - s.watermark_ledger)::text

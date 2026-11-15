@@ -4,12 +4,12 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io"
 	"math"
 	"os"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/archivecompleteness"
+	"github.com/Stellar-Index/StellarIndex/internal/atomicfile"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
@@ -351,16 +351,11 @@ func archiveCompletenessFix(args []string) error {
 
 // writeReport encodes the Report to outputFile (or stdout when empty).
 func writeReport(report *archivecompleteness.Report, outputFile string) error {
-	var w io.Writer = os.Stdout
-	if outputFile != "" {
-		f, err := os.Create(outputFile) //nolint:gosec // operator-supplied path
-		if err != nil {
-			return fmt.Errorf("create output file: %w", err)
-		}
-		defer func() { _ = f.Close() }()
-		w = f
+	if outputFile == "" {
+		return report.WriteJSON(os.Stdout)
 	}
-	return report.WriteJSON(w)
+	// Exclusive temp + rename: the report directory may be writable by a service user.
+	return atomicfile.Write(outputFile, 0o644, report.WriteJSON)
 }
 
 // archiveCompletenessCheck is the read-only `check` mode: walks the cross-anchor archive and emits a JSON [archivecompleteness.Report].

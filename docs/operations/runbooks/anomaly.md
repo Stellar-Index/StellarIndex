@@ -21,7 +21,7 @@ P3 (ticket). Expr: `sum by (source) (increase(stellarindex_amm_self_pair_swap_to
 ```sh
 curl -s http://127.0.0.1:9090/api/v1/query \
   --data-urlencode 'query=increase(stellarindex_amm_self_pair_swap_total[15m])'
-psql "$STELLARINDEX_POSTGRES_DSN" -c \
+PGDSN="$STELLARINDEX_POSTGRES_DSN" psql-dsn -c \
   "SELECT tx_hash, op_index, ledger, ledger_close_time
      FROM soroban_events
     WHERE contract_id = '<pool-contract>'

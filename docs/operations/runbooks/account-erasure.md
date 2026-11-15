@@ -82,7 +82,7 @@ Until repo2 WAL expiry is applied, never say backups expire.
 A restore to before an erasure brings the account back. Before restoring, save the erased ids from the database being replaced:
 
 ```sh
-psql "$STELLARINDEX_POSTGRES_DSN" -At -c "SELECT target_id FROM audit_log WHERE action = 'account.erase'" > erased-accounts.txt
+PGDSN="$STELLARINDEX_POSTGRES_DSN" psql-dsn -At -c "SELECT target_id FROM audit_log WHERE action = 'account.erase'" > erased-accounts.txt
 ```
 
 If that database is gone, take ids from the `account erased` log lines in Loki (`account_id`). After the restore, before the API serves, run `stellarindex-ops account-erase -config /etc/stellarindex.toml -account-id <uuid> -write` for each id that exists again. Redis is not restored with Postgres.

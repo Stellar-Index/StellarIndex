@@ -464,7 +464,7 @@ curl -fs "https://api.stellarindex.io/v1/assets/<asset_id>" | jq '.data.price_us
 # Count BOTH stored directions — a pair is written as (A,B) AND (B,A), each
 # holding only PART of the market; grouping on base_asset alone under-reports
 # buckets by roughly half and sends you after a thin-market theory that is not real.
-psql "$STELLARINDEX_POSTGRES_DSN" -c \
+PGDSN="$STELLARINDEX_POSTGRES_DSN" psql-dsn -c \
   "SELECT CASE WHEN base_asset = '<asset_id>' THEN quote_asset ELSE base_asset END AS counterparty,
           count(*) AS buckets, sum(trade_count) AS trades, max(bucket) AS last_seen
      FROM prices_1m
@@ -474,14 +474,14 @@ psql "$STELLARINDEX_POSTGRES_DSN" -c \
 
 # Is the asset in a catalogue spine? Classic assets via classic_assets;
 # Soroban-native contracts via discovered_assets + an asset_volume_24h row.
-psql "$STELLARINDEX_POSTGRES_DSN" -c \
+PGDSN="$STELLARINDEX_POSTGRES_DSN" psql-dsn -c \
   "SELECT (SELECT count(*) FROM classic_assets   WHERE asset_id = '<asset_id>') AS classic,
           (SELECT count(*) FROM discovered_assets WHERE contract_id = '<asset_id>') AS discovered,
           (SELECT count(*) FROM asset_volume_24h  WHERE asset_id = '<asset_id>') AS vol_rollup;"
 
 # Which DIRECTION is the XLM leg stored in? Only (CAS3J…/native, <id>)
 # rows == the SAC-as-base class (see the table below).
-psql "$STELLARINDEX_POSTGRES_DSN" -c \
+PGDSN="$STELLARINDEX_POSTGRES_DSN" psql-dsn -c \
   "SELECT base_asset, quote_asset, count(*) AS buckets, max(bucket) AS last_seen
      FROM prices_1m
     WHERE (base_asset = '<asset_id>' OR quote_asset = '<asset_id>')

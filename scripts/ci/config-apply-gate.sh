@@ -222,6 +222,8 @@ SURFACES=(
   'scripts/ops/config-assertions.sh'
   'scripts/ops/ch-schema-snapshot.sh'
   'scripts/ops/restore-drill.sh'
+  'scripts/ops/psql-dsn.sh'
+  'scripts/ops/ch-live-catchup.sh'
   'scripts/dev/r1-smoke.sh'
 )
 

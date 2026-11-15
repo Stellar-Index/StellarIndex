@@ -109,7 +109,15 @@ func runCHSupplyScript(t *testing.T, env map[string]string) chSupplyRun {
 	if err := os.MkdirAll(bin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	stubs := map[string]string{"curl": stubCHSupplyCurl, "psql": stubCHSupplyPsql, "stellarindex-ops": stubCHSupplyOps, "sleep": stubCHSupplySleep}
+	// The shipped wrapper, as the role installs it: the script hands psql its DSN through it.
+	wrapper, err := os.ReadFile("../../../scripts/ops/psql-dsn.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stubs := map[string]string{
+		"curl": stubCHSupplyCurl, "psql": stubCHSupplyPsql, "stellarindex-ops": stubCHSupplyOps, "sleep": stubCHSupplySleep,
+		"psql-dsn": string(wrapper),
+	}
 	for name, body := range stubs {
 		if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0o755); err != nil { //nolint:gosec // an executable test stub
 			t.Fatal(err)
