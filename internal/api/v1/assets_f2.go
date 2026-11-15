@@ -67,6 +67,16 @@ func (s *Server) contractSupplySnapshot(ctx context.Context, contractID string) 
 	return supply.Supply{AssetKey: contractID, TotalSupply: total, CirculatingSupply: total, Basis: basis}, true, false
 }
 
+// withContractSupply replaces a missing or stale observer snapshot with the contract's own reading when there
+// is one, and counts a reading that did not answer as a failed supply read.
+func (s *Server) withContractSupply(ctx context.Context, contractID string, snap supply.Supply, haveSnap, supplyFailed bool) (supply.Supply, bool, bool) {
+	lake, ok, unread := s.contractSupplySnapshot(ctx, contractID)
+	if ok {
+		return lake, true, false
+	}
+	return snap, haveSnap, supplyFailed || unread
+}
+
 // applyF2Fields fills the F2 supply/market-cap/FDV fields best-effort; nothing is fabricated (ADR-0011): no max_supply means no
 // fdv_usd, no USD price means no market_cap_usd/fdv_usd, no supply snapshot leaves all six nil.
 func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset canonical.Asset) {
@@ -122,11 +132,7 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	// The ClickHouse read is Soroban-only; a stale snapshot yields to the lake reading.
 	now := time.Now()
 	if (!haveSnap || supplyObservationStale(snap, now)) && s.TokenSupply != nil && asset.Type == canonical.AssetSoroban && asset.ContractID != "" {
-		lake, ok, unread := s.contractSupplySnapshot(ctx, asset.ContractID)
-		if ok {
-			snap, haveSnap, supplyFailed = lake, true, false
-		}
-		supplyFailed = supplyFailed || unread
+		snap, haveSnap, supplyFailed = s.withContractSupply(ctx, asset.ContractID, snap, haveSnap, supplyFailed)
 	}
 	detail.f2ReadFailed = volFailed || changeFailed || supplyFailed || detail.priceUnread
 
