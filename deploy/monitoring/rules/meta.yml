@@ -29,6 +29,33 @@ groups:
             into that subsystem's health until it returns. Doesn't mean the
             subsystem is down — often the exporter is the problem.
 
+      # Every other alert depends on rule evaluation. A rule that loaded
+      # healthy and later errors on the data (a many-to-many match after a
+      # new label value, a duplicate labelset) stops firing without a trace.
+      - alert: stellarindex_prometheus_rules_failing
+        expr: |
+          sum by (rule_group) (increase(prometheus_rule_evaluation_failures_total[15m])) > 0
+          or
+          sum by (rule_group) (increase(prometheus_rule_group_iterations_missed_total[15m])) > 0
+          or
+          prometheus_config_last_reload_successful == 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: meta
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_prometheus_rules_failing
+          summary: "Prometheus is failing or skipping rule evaluations, or its last config reload failed"
+          description: |
+            Prometheus failed to evaluate a rule, skipped a rule group's
+            evaluation, or is running on an old config because its last
+            reload failed. A rule that errors does not fire, so every alert
+            in the affected group is off while this one is the only signal.
+            The deadman's switch does not cover this: it proves the
+            notification path, not rule evaluation.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_prometheus_rules_failing
+
       - alert: stellarindex_alertmanager_config_bad
         expr: alertmanager_config_last_reload_successful == 0
         for: 5m

@@ -851,6 +851,43 @@ groups:
             path, not a table that cleans itself up.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_registration_table_growing
 
+      # Two counters whose Help says "fails open" or "not being bounded"
+      # and that no rule read. Both are pre-seeded.
+      - alert: stellarindex_retention_reaper_failing
+        expr: sum by (reaper) (increase(stellarindex_retention_reaper_errors_total[3h])) > 0
+        for: 2h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_retention_reaper_failing
+          summary: "Retention reaper {{ $labels.reaper }} sweeps are failing; its table is not being bounded"
+          description: |
+            A retention reaper's sweep has been failing for hours. The
+            `registration` reaper erases abandoned sign-ups' personal data;
+            `session` and `webhook_delivery` bound their tables. The
+            liveness alert stays green because a failed sweep still counts
+            as a run.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_retention_reaper_failing
+
+      - alert: stellarindex_pricingguard_failing_open
+        expr: sum by (path) (increase(stellarindex_pricingguard_trailing_fetch_failed_total[30m])) > 0
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_pricingguard_failing_open
+          summary: "Served-price guard is failing open on path {{ $labels.path }}: prices are served without the manipulation band"
+          description: |
+            The served-price guard could not read its trailing baseline and
+            served the candidate bucket unchecked. While this lasts, an
+            off-market 1m print reaches /v1/price, /v1/price/at, SEP-40
+            readers and price alerts as published, with only a log line.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_pricingguard_failing_open
+
       # magic_link_tokens is keyed on an address an unauthenticated caller
       # chooses, so sustained growth is a remote table-fill. Same bound as
       # login_code_lockout_table_growing; the reaper-stalled alert cannot

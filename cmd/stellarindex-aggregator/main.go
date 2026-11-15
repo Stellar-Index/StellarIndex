@@ -485,6 +485,7 @@ func run(cfgPath string, dryRun bool) error {
 	var supplyRefresherBindings []supplyRefresherBinding
 	var ccRefresher *supply.CrossCheckRefresher
 	if cfg.Supply.AggregatorRefreshEnabled {
+		obs.AggregatorSupplyRefreshEnabled.Set(1)
 		// Each refresh stamps the snapshot's ObservedAt with the ledger's REAL close_time from the
 		// ClickHouse lake, never wall-clock write time. Without an authoritative close-time source
 		// a re-derive would corrupt point-in-time supply queries, so fail closed rather than fall

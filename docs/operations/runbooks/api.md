@@ -617,6 +617,18 @@ journalctl -u stellarindex-api --since '30 min ago' --no-pager -o cat \
 
 **Escalate:** none; the throttle shares Redis with [ratelimit_fail_closed](#stellarindex_ratelimit_fail_closed).
 
+## stellarindex_retention_reaper_failing
+
+**Trigger.** `sum by (reaper) (increase(stellarindex_retention_reaper_errors_total[3h])) > 0` for 2h, P3. The `registration` reaper erases abandoned sign-ups' personal data; `session` and `webhook_delivery` bound their tables. [auth_reaper_stalled](#stellarindex_auth_reaper_stalled) cannot see this: a failed sweep still stamps the last-sweep gauge.
+
+**Check.** `journalctl -u stellarindex-api --since '-6h' | grep -i 'retention reaper'` carries the error. **Likely causes.** A permission or schema regression on the reaper's table after a migration; a lock or statement timeout. **Fix.** Per the error; the next sweep catches up by itself. **Escalate:** the `registration` reaper failing for more than a day (personal data is kept past its retention).
+
+## stellarindex_pricingguard_failing_open
+
+**Trigger.** `sum by (path) (increase(stellarindex_pricingguard_trailing_fetch_failed_total[30m])) > 0` for 15m, P3. The served-price guard (`internal/pricingguard`) could not read its trailing baseline and served the candidate bucket unchecked. `path` is `latest` (`/v1/price`) or `at` (`/v1/price/at`).
+
+**Check.** `journalctl -u stellarindex-api --since '-1h' | grep -i 'trailing'` for the read error; Postgres statement timeouts and pool saturation over the same window. **Likely causes.** Database load; a missing index or view after a migration. **Fix.** Relieve the database or restore the object. While it fires, treat an unusual served price as unchecked. **Escalate:** an anomaly or divergence alert firing in the same window.
+
 ## stellarindex_login_code_guessing
 
 **Trigger.** `for: 5m`, P3. Either `sum(increase(stellarindex_login_code_failures_total{outcome="lockout_engaged"}[1h])) > 0` (ten wrong codes locked one address for 24 h) or `sum(increase(...{outcome="wrong_code"}[1h])) > 50` (guessing spread over many addresses). Email-code sign-in is not API-key auth, so `stellarindex_failed_auth_total` does not move.

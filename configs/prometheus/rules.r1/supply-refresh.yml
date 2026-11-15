@@ -52,9 +52,18 @@ groups:
         # time()-timestamp(...) form evaluates to ≈0 and never fires.
         # Fleet-wide sum() (not per-asset): a single healthy asset means the
         # goroutine is alive; per-asset failure is _error_dominant's job. The
-        # "never ticked at all" case (series absent) is _never_initialized's.
+        # A restarted process has no `ok` series at all, so the first arm has
+        # no data; the second arm is that case: refresher enabled, process up
+        # over 40m, no `ok` series. _never_initialized stays as the 36h net
+        # for a binary without the enabled gauge.
         expr: |
           sum(changes(stellarindex_aggregator_supply_refresh_total{outcome="ok"}[30m])) == 0
+          or
+          (
+            max(stellarindex_aggregator_supply_refresh_enabled{job="stellarindex-aggregator"}) == 1
+            and (time() - max(process_start_time_seconds{job="stellarindex-aggregator"})) > 2400
+            unless count(stellarindex_aggregator_supply_refresh_total{outcome="ok"})
+          )
         for: 5m
         labels:
           severity: page
