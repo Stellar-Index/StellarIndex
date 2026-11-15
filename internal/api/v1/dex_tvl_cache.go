@@ -112,8 +112,10 @@ type DEXTVLSources struct {
 	CometReserves CometTVLReserveReader
 	// LakeWatermark lets a refresh record that it read from a lake that was behind. Optional.
 	LakeWatermark LakeWatermarkReader
-	// ProjectorCursor lets a refresh record that a projected source's table was behind the lake. Optional.
-	ProjectorCursor TVLProjectorCursorReader
+	// Cursors and AquariusWriters let a refresh record that aquarius_reserves was behind the lake: the table is
+	// current while ANY of its writers is. Optional; both must be set.
+	Cursors         TVLCursorReader
+	AquariusWriters []TVLWriterCursor
 	// Pricer resolves reserve legs to USD; nil leaves every leg unpriced (and the snapshot says so).
 	Pricer TVLUSDPricer
 	// PegInfo short-circuits operator-declared USD pegs to $1 at their real decimals. Optional.
@@ -141,13 +143,16 @@ type DEXTVLCache struct {
 	src         DEXTVLSources
 }
 
-// TVLProjectorCursorReader reads an ingestion cursor; the projector keeps one per projected source.
-type TVLProjectorCursorReader interface {
+// TVLCursorReader reads an ingestion cursor.
+type TVLCursorReader interface {
 	GetCursor(ctx context.Context, source, sub string) (timescale.Cursor, error)
 }
 
-// dexTVLProjectorLagLedgers is how far a projected source may trail the lake: lakeStaleThreshold at a 5 s close.
-const dexTVLProjectorLagLedgers = 60
+// TVLWriterCursor names the ingestion cursor of one writer of a served-tier table.
+type TVLWriterCursor struct{ Source, Sub string }
+
+// dexTVLWriterLagLedgers is how far a table's writer may trail the lake: lakeStaleThreshold at a 5 s close.
+const dexTVLWriterLagLedgers = 60
 
 // lakeStaleAtRead returns the lake watermark ledger and whether the lake is behind as this cycle reads it; a failed
 // watermark read counts as behind.
@@ -162,19 +167,25 @@ func (c *DEXTVLCache) lakeStaleAtRead(ctx context.Context, now time.Time) (uint3
 	return ledger, ledger == 0 || now.Sub(closedAt) > lakeStaleThreshold
 }
 
-// projectorBehind reports whether the projector that writes `sub`'s table has stopped or trails the lake, so the table's
+// writersBehind reports whether EVERY writer of a served-tier table has stopped or trails the lake, so the table's
 // newest rows are not the chain's. A failed or missing cursor counts as behind. False for a derivation that reads the
 // lake itself, and when no cursor reader is wired.
-func (c *DEXTVLCache) projectorBehind(ctx context.Context, sub string, lakeLedger uint32, now time.Time) bool {
-	if sub == "" || c.src.ProjectorCursor == nil {
+func (c *DEXTVLCache) writersBehind(ctx context.Context, writers []TVLWriterCursor, lakeLedger uint32, now time.Time) bool {
+	if len(writers) == 0 || c.src.Cursors == nil {
 		return false
 	}
-	cur, err := c.src.ProjectorCursor.GetCursor(ctx, "projector", sub)
-	if err != nil {
-		return true
+	for _, w := range writers {
+		cur, err := c.src.Cursors.GetCursor(ctx, w.Source, w.Sub)
+		if err != nil {
+			continue
+		}
+		stopped := now.Sub(cur.UpdatedAt) > lakeStaleThreshold
+		trailing := lakeLedger > cur.LastLedger && lakeLedger-cur.LastLedger > dexTVLWriterLagLedgers
+		if !stopped && !trailing {
+			return false
+		}
 	}
-	return now.Sub(cur.UpdatedAt) > lakeStaleThreshold ||
-		(lakeLedger > cur.LastLedger && lakeLedger-cur.LastLedger > dexTVLProjectorLagLedgers)
+	return true
 }
 
 // NewDEXTVLCache constructs an empty cache; production calls Refresh at startup, then every DEXTVLRefreshInterval.
@@ -231,12 +242,12 @@ type tvlProtocolResult struct {
 	pools []DEXTVLPoolView
 }
 
-// dexTVLDerivation pairs a protocol name with the refresh that computes its figure. projected names the projector
-// cursor behind a served-tier table; empty for a derivation that reads lake state itself.
+// dexTVLDerivation pairs a protocol name with the refresh that computes its figure. writers names the cursors behind
+// a served-tier table; nil for a derivation that reads lake state itself.
 type dexTVLDerivation struct {
-	name      string
-	refresh   func(context.Context, *tvlValuer, time.Time) (*tvlProtocolResult, error)
-	projected string
+	name    string
+	refresh func(context.Context, *tvlValuer, time.Time) (*tvlProtocolResult, error)
+	writers []TVLWriterCursor
 }
 
 // derivations is the CLOSED set of protocols the snapshot derives TVL for; a pooled protocol not here must be named in
@@ -244,10 +255,10 @@ type dexTVLDerivation struct {
 // silently.
 func (c *DEXTVLCache) derivations() []dexTVLDerivation {
 	return []dexTVLDerivation{
-		{"soroswap", c.refreshSoroswap, ""},
-		{"aquarius", c.refreshAquarius, "aquarius"},
-		{"phoenix", c.refreshPhoenix, ""},
-		{"comet", c.refreshComet, ""},
+		{"soroswap", c.refreshSoroswap, nil},
+		{"aquarius", c.refreshAquarius, c.src.AquariusWriters},
+		{"phoenix", c.refreshPhoenix, nil},
+		{"comet", c.refreshComet, nil},
 	}
 }
 
@@ -273,7 +284,7 @@ func (c *DEXTVLCache) Refresh(ctx context.Context) error {
 	for _, p := range c.derivations() {
 		// A price-read failure is judged per protocol — see beginPass.
 		valuer.beginPass()
-		behind := (lakeStale && dexTVLLakeDerived[p.name]) || c.projectorBehind(ctx, p.projected, lakeLedger, now)
+		behind := (lakeStale && dexTVLLakeDerived[p.name]) || c.writersBehind(ctx, p.writers, lakeLedger, now)
 		res, err := p.refresh(ctx, valuer, now)
 		switch {
 		case errors.Is(err, errTVLNoObservedPools):

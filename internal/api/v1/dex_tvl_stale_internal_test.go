@@ -133,36 +133,46 @@ func TestDEXTVLCache_ReadFromStaleLakeKeepsTheMark(t *testing.T) {
 	}
 }
 
-type stubProjectorCursor struct {
-	cur timescale.Cursor
-	err error
+// stubCursors answers GetCursor per source; a source with no entry is not found.
+type stubCursors map[string]timescale.Cursor
+
+func (s stubCursors) GetCursor(_ context.Context, source, _ string) (timescale.Cursor, error) {
+	cur, ok := s[source]
+	if !ok {
+		return timescale.Cursor{}, timescale.ErrNotFound
+	}
+	return cur, nil
 }
 
-func (s stubProjectorCursor) GetCursor(context.Context, string, string) (timescale.Cursor, error) {
-	return s.cur, s.err
-}
-
-// TestDEXTVLCache_AquariusBehindItsProjectorIsStale: aquarius_reserves is written by the projector, so a projector
-// that stopped or trails the lake leaves old reserves under a refresh that still succeeds.
-func TestDEXTVLCache_AquariusBehindItsProjectorIsStale(t *testing.T) {
+// TestDEXTVLCache_AquariusBehindItsWritersIsStale: aquarius_reserves is written by the projector, the dispatcher or
+// both. When every writer has stopped or trails the lake, a refresh still succeeds, on old reserves.
+func TestDEXTVLCache_AquariusBehindItsWritersIsStale(t *testing.T) {
 	const lakeLedger = 63_000_000
 	now := time.Now()
+	level := timescale.Cursor{LastLedger: lakeLedger, UpdatedAt: now}
+	trailing := timescale.Cursor{LastLedger: lakeLedger - dexTVLWriterLagLedgers - 1, UpdatedAt: now}
+	stopped := timescale.Cursor{LastLedger: lakeLedger, UpdatedAt: now.Add(-lakeStaleThreshold - time.Minute)}
+	both := []TVLWriterCursor{{Source: "projector", Sub: "aquarius"}, {Source: "ledgerstream"}}
 	cases := []struct {
-		name string
-		cur  stubProjectorCursor
-		want bool
+		name    string
+		writers []TVLWriterCursor
+		cur     stubCursors
+		want    bool
 	}{
-		{"level with the lake", stubProjectorCursor{cur: timescale.Cursor{LastLedger: lakeLedger, UpdatedAt: now}}, false},
-		{"a few ledgers behind", stubProjectorCursor{cur: timescale.Cursor{LastLedger: lakeLedger - dexTVLProjectorLagLedgers, UpdatedAt: now}}, false},
-		{"trailing the lake", stubProjectorCursor{cur: timescale.Cursor{LastLedger: lakeLedger - dexTVLProjectorLagLedgers - 1, UpdatedAt: now}}, true},
-		{"stopped", stubProjectorCursor{cur: timescale.Cursor{LastLedger: lakeLedger, UpdatedAt: now.Add(-lakeStaleThreshold - time.Minute)}}, true},
-		{"cursor unread", stubProjectorCursor{err: context.DeadlineExceeded}, true},
-		{"no cursor", stubProjectorCursor{err: timescale.ErrNotFound}, true},
+		{"level with the lake", both[:1], stubCursors{"projector": level}, false},
+		{"a few ledgers behind", both[:1], stubCursors{"projector": {LastLedger: lakeLedger - dexTVLWriterLagLedgers, UpdatedAt: now}}, false},
+		{"trailing the lake", both[:1], stubCursors{"projector": trailing}, true},
+		{"stopped", both[:1], stubCursors{"projector": stopped}, true},
+		{"no cursor", both[:1], stubCursors{}, true},
+		{"projector replaying, dispatcher writing", both, stubCursors{"projector": trailing, "ledgerstream": level}, false},
+		{"projector off, dispatcher writing", both[1:], stubCursors{"ledgerstream": level}, false},
+		{"both stopped", both, stubCursors{"projector": stopped, "ledgerstream": stopped}, true},
+		{"no writers named", nil, stubCursors{}, false},
 	}
 	for _, tc := range cases {
 		src := tvlTestSources()
 		src.LakeWatermark = &stubWatermark{ledger: lakeLedger, closedAt: now}
-		src.ProjectorCursor = tc.cur
+		src.Cursors, src.AquariusWriters = tc.cur, tc.writers
 		c := NewDEXTVLCache(src)
 		if err := c.Refresh(context.Background()); err != nil {
 			t.Fatalf("%s: Refresh: %v", tc.name, err)
