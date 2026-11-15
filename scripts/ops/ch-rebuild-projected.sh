@@ -365,7 +365,8 @@ run_window() {
   fi
 
   echo "--- window [$lo,$hi] REBUILD sources=$rederive require-rows=$occupied $(date -u) ---"
-  $OPS ch-rebuild -config "$CFG" -from "$lo" -to "$hi" -sources "$rederive" -require-rows="$occupied" -write \
+  # -refresh-caggs=false: refresh_window below owns the refresh and its stale-window record.
+  $OPS ch-rebuild -config "$CFG" -from "$lo" -to "$hi" -sources "$rederive" -require-rows="$occupied" -refresh-caggs=false -write \
     || { echo "REBUILD FAILED [$lo,$hi] — WINDOW LEFT EMPTIED for sources=$rederive. Recorded in $DIRTY. Re-run this script: it rebuilds this window first, for exactly these sources, whatever SRC/FROM/TO it is given. Do not hand-edit $STATE or $DIRTY."
          file_dirty_window "$lo" "$hi" "$rederive"
          exit 1; }

@@ -230,7 +230,7 @@ set.
 |---|---|
 | **Projected**, rewind ≲ 1M ledgers over gen-0 rows | `stellarindex-ops projector-replay -config PATH -source <name> -from <ledger>` |
 | **Projected**, bulk (≳ 1M ledgers) or correcting stored rows | `stellarindex-ops projected-rebuild -config PATH -source <name> -from <l> [-to <l>] -write` |
-| **Non-projected** lake re-derive (`sdex`, `band` / `soroswap_router` contract calls) | `stellarindex-ops ch-rebuild -config PATH -from <l> -to <l> -write` with the pass flag `-sdex` / `-contract-calls` |
+| **Non-projected** lake re-derive (`sdex`, `band` / `soroswap_router` contract calls) | `stellarindex-ops ch-rebuild -config PATH -from <l> -to <l> -write` with the pass flag `-sdex` / `-contract-calls`. The run then refreshes the trade and oracle aggregates over the range; with `-refresh-caggs=false` it prints the refresh as owed |
 | `sep41` lake re-derive (`ch-rebuild -sep41 -write`) | `sep41_*` is PROJECTED, so this pass is a second writer, which is why `-write` refuses a range the live projector is still inside. Prefer `projector-replay` unless you need the lake re-derive specifically. |
 | Entry index re-derive (`stellar.account_entry_ledgers` / `asset_entry_ledgers`) | `stellarindex-ops ch-entry-index -ch-addr ADDR -from <l> -to <l> -write` (a re-sent window collapses on merge; the watermark never moves down); signer role history alone: `ch-entry-index -signers-only -write` walks set_options from the lake floor to the entry_index watermark; claimable balances alone (`stellar.account_claimables` / `claimable_removals`): `ch-entry-index -claimables-only -write` does the same walk |
 | Anything else | ask first; do not invent a third path |
