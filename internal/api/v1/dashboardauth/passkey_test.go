@@ -145,15 +145,55 @@ func (r *passkeyRig) withSession(req *http.Request) *http.Request {
 	}))
 }
 
-// withOldSession plants a session minted just outside the re-auth window.
+// withOldSession plants a session minted outside the re-auth window, past the grace a finishing ceremony gets.
 func (r *passkeyRig) withOldSession(req *http.Request) *http.Request {
 	return req.WithContext(WithSession(req.Context(), SessionContext{
 		Session: platform.Session{
-			ID: uuid.New(), UserID: r.user.ID, CreatedAt: r.now().Add(-accountReauthWindow - time.Second),
+			ID: uuid.New(), UserID: r.user.ID,
+			CreatedAt: r.now().Add(-accountReauthWindow - passkeyCeremonyTTL - time.Second),
 		},
 		User:    r.user,
 		Account: r.account,
 	}))
+}
+
+// An old cookie must not be able to remove the owner's passkeys either: on a passkey-only account that
+// locks the owner out, and the removal signs every other session out.
+func TestPasskeyDelete_RefusesASessionOutsideTheReauthWindow(t *testing.T) {
+	rig := newPasskeyRig(t)
+	cred, err := rig.passkeys.CreateWebAuthnCredential(context.Background(), platform.WebAuthnCredential{
+		UserID: rig.user.ID, CredentialID: []byte("EXAMPLE-CRED-ID-PLACEHOLDER-02"), PublicKey: []byte("EXAMPLE-PUBKEY-PLACEHOLDER"),
+	})
+	if err != nil {
+		t.Fatalf("seed credential: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodDelete, "/v1/auth/passkey/credentials/"+cred.ID.String(), nil)
+	req.SetPathValue("id", cred.ID.String())
+	w := httptest.NewRecorder()
+	rig.h.HandlePasskeyDelete(w, rig.withOldSession(req))
+	if w.Code != http.StatusUnauthorized || !strings.Contains(w.Body.String(), "errors/reauth-required") {
+		t.Fatalf("delete with an old session: status = %d body = %s, want 401 reauth-required", w.Code, w.Body.String())
+	}
+	left, err := rig.passkeys.ListWebAuthnCredentialsForUser(context.Background(), rig.user.ID)
+	if err != nil || len(left) != 1 {
+		t.Fatalf("credentials after refused delete = %d (err %v), want 1", len(left), err)
+	}
+}
+
+// A ceremony begun at the edge of the window may finish: the device has already created the key by then.
+func TestPasskeyFinishRegister_AllowsACeremonyBegunInsideTheWindow(t *testing.T) {
+	rig := newPasskeyRig(t)
+	sc := SessionContext{
+		Session: platform.Session{ID: uuid.New(), UserID: rig.user.ID, CreatedAt: rig.now().Add(-accountReauthWindow - time.Minute)},
+		User:    rig.user, Account: rig.account,
+	}
+	w := httptest.NewRecorder()
+	if !rig.h.recentSession(w, sc, "/x", passkeyCeremonyTTL) {
+		t.Fatalf("a session one minute past the window was refused at finish: %s", w.Body.String())
+	}
+	if rig.h.recentSession(httptest.NewRecorder(), sc, "/x", 0) {
+		t.Fatal("the same session was admitted at begin")
+	}
 }
 
 // An old cookie must not be able to enrol a passkey: that key would sign in and mint the recent session

@@ -41622,7 +41622,7 @@
                   "request": {
                     "name": "Customer dashboard — finish adding a passkey; stores the credential.",
                     "description": {
-                      "content": "Session-gated, with the same 10-minute recent-session rule as\nbegin-register (`reauth-required`, 401). Verifies the\nattestation response against the\nceremony cookie's challenge (which must have been minted for\nTHIS user, be within its 5-minute lifetime, and not already\nhave been used) and stores the credential's public key. The\nprivate key never leaves the user's authenticator.\n\nOn success every other session of the user is revoked; the\nsession that registered the passkey stays signed in.\n\nA label longer than 100 characters is truncated to 100\ncharacters (not bytes — multi-byte names keep their full\ncharacter budget).\n",
+                      "content": "Session-gated, with the recent-session rule of begin-register\nplus the ceremony's 5 minutes, so a ceremony begun in time can\nfinish (`reauth-required`, 401, otherwise). Verifies the\nattestation response against the\nceremony cookie's challenge (which must have been minted for\nTHIS user, be within its 5-minute lifetime, and not already\nhave been used) and stores the credential's public key. The\nprivate key never leaves the user's authenticator.\n\nOn success every other session of the user is revoked; the\nsession that registered the passkey stays signed in.\n\nA label longer than 100 characters is truncated to 100\ncharacters (not bytes — multi-byte names keep their full\ncharacter budget).\n",
                       "type": "text/plain"
                     },
                     "url": {
@@ -42225,7 +42225,7 @@
                       "request": {
                         "name": "Customer dashboard — remove one of the signed-in user's passkeys.",
                         "description": {
-                          "content": "Session-gated and owner-scoped: a credential belonging to\nanother user is indistinguishable from a nonexistent one\n(404 either way). Email-code sign-in always remains, so\nremoving the last passkey cannot lock the account out.\n\nA successful removal signs the user out of every other\nsession, including any the removed passkey opened. The session\nthat made the call stays signed in.\n",
+                          "content": "Session-gated, with the same 10-minute recent-session rule as\nbegin-register (`reauth-required`, 401), and owner-scoped: a\ncredential belonging to\nanother user is indistinguishable from a nonexistent one\n(404 either way). Email-code sign-in always remains, so\nremoving the last passkey cannot lock the account out.\n\nA successful removal signs the user out of every other\nsession, including any the removed passkey opened. The session\nthat made the call stays signed in.\n",
                           "type": "text/plain"
                         },
                         "url": {

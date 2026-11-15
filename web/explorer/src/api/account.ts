@@ -55,22 +55,25 @@ async function accountFetch<T>(
     signal: timeoutSignal(undefined, opts.signal),
   });
 
-  if (res.status === 401) {
+  if (!res.ok) {
+    let detail: string | undefined;
+    let type: string | undefined;
+    try {
+      const errBody = (await res.json()) as { detail?: string; type?: string };
+      detail = errBody.detail;
+      type = errBody.type;
+    } catch {
+      // problem+json bodies are best-effort; some 5xx come without one.
+    }
     // Mid-session expiry/revocation — the same signal `useMe`'s probe
     // acts on (hooks.ts). Drop the hint so every `useMe()` observer
     // (the queryKey includes it) re-reads as signed out and the
     // dashboard bounces to sign-in instead of rendering this call's
-    // error as a page-level "Something went wrong" box.
-    clearSessionHint();
-  }
-
-  if (!res.ok) {
-    let detail: string | undefined;
-    try {
-      const errBody = (await res.json()) as { detail?: string };
-      detail = errBody.detail;
-    } catch {
-      // problem+json bodies are best-effort; some 5xx come without one.
+    // error as a page-level "Something went wrong" box. A
+    // `reauth-required` 401 is not that: the session is live but too
+    // old for this one action, and the caller shows why.
+    if (res.status === 401 && !type?.endsWith('/reauth-required')) {
+      clearSessionHint();
     }
     throw new ApiError(res.status, res.statusText, detail);
   }

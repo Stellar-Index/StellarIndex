@@ -39,6 +39,14 @@ import {
  * is safe because email-code sign-in always remains as the fallback
  * door.
  */
+// Changing passkeys needs a sign-in from the last 10 minutes; the API answers 401 for an older session.
+function passkeyErrorMessage(err: unknown, fallback: string): string {
+  if (!(err instanceof ApiError)) return fallback;
+  if (err.status === 401)
+    return 'Your sign-in is too old to change passkeys. Sign out, sign in again, then retry within 10 minutes.';
+  return err.detail ?? fallback;
+}
+
 export function Passkeys() {
   const queryClient = useQueryClient();
   const query = useQuery<PasskeyCredential[], Error>({
@@ -67,9 +75,7 @@ export function Passkeys() {
     } catch (err) {
       if (!isCeremonyCancelled(err)) {
         setError(
-          err instanceof ApiError
-            ? (err.detail ?? 'Adding the passkey failed — try again.')
-            : 'Adding the passkey failed — try again.',
+          passkeyErrorMessage(err, 'Adding the passkey failed — try again.'),
         );
       }
     } finally {
@@ -85,9 +91,7 @@ export function Passkeys() {
       await invalidate();
     } catch (err) {
       setError(
-        err instanceof ApiError
-          ? (err.detail ?? 'Removing the passkey failed — try again.')
-          : 'Removing the passkey failed — try again.',
+        passkeyErrorMessage(err, 'Removing the passkey failed — try again.'),
       );
     } finally {
       setRemovingId(null);

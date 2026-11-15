@@ -4736,8 +4736,9 @@ export interface paths {
         put?: never;
         /**
          * Customer dashboard — finish adding a passkey; stores the credential.
-         * @description Session-gated, with the same 10-minute recent-session rule as
-         *     begin-register (`reauth-required`, 401). Verifies the
+         * @description Session-gated, with the recent-session rule of begin-register
+         *     plus the ceremony's 5 minutes, so a ceremony begun in time can
+         *     finish (`reauth-required`, 401, otherwise). Verifies the
          *     attestation response against the
          *     ceremony cookie's challenge (which must have been minted for
          *     THIS user, be within its 5-minute lifetime, and not already
@@ -4791,7 +4792,9 @@ export interface paths {
         post?: never;
         /**
          * Customer dashboard — remove one of the signed-in user's passkeys.
-         * @description Session-gated and owner-scoped: a credential belonging to
+         * @description Session-gated, with the same 10-minute recent-session rule as
+         *     begin-register (`reauth-required`, 401), and owner-scoped: a
+         *     credential belonging to
          *     another user is indistinguishable from a nonexistent one
          *     (404 either way). Email-code sign-in always remains, so
          *     removing the last passkey cannot lock the account out.

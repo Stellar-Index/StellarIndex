@@ -53,6 +53,25 @@ describe('a 401 response', () => {
     expect(sessionHintPresent()).toBe(false);
   });
 
+  it('keeps the session on reauth-required: the session is live, only too old for the action', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        statusText: 'Unauthorized',
+        json: async () => ({
+          type: 'https://api.stellarindex.io/errors/reauth-required',
+          detail: 'sign in again, then retry within 10 minutes',
+        }),
+      } as Response),
+    );
+
+    await expect(createKey({ name: 'prod' })).rejects.toThrow(ApiError);
+
+    expect(sessionHintPresent()).toBe(true);
+  });
+
   it('leaves the session hint alone on a non-401 error', async () => {
     vi.stubGlobal(
       'fetch',

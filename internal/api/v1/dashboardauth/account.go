@@ -131,7 +131,7 @@ func (h *Handlers) accountActionGate(
 		writeProblem(w, http.StatusForbidden, "only an account owner can do this", route)
 		return SessionContext{}, false
 	}
-	if !h.recentSession(w, sc, route) {
+	if !h.recentSession(w, sc, route, 0) {
 		return SessionContext{}, false
 	}
 	if !h.cfg.accountActions.Allow(action+":"+sc.User.ID.String(), limit) {
@@ -142,9 +142,10 @@ func (h *Handlers) accountActionGate(
 	return sc, true
 }
 
-// recentSession reports whether the session was minted inside accountReauthWindow, writing reauth-required otherwise.
-func (h *Handlers) recentSession(w http.ResponseWriter, sc SessionContext, route string) bool {
-	if h.cfg.Now().Sub(sc.Session.CreatedAt) > accountReauthWindow {
+// recentSession reports whether the session was minted inside accountReauthWindow plus grace, writing
+// reauth-required otherwise.
+func (h *Handlers) recentSession(w http.ResponseWriter, sc SessionContext, route string, grace time.Duration) bool {
+	if h.cfg.Now().Sub(sc.Session.CreatedAt) > accountReauthWindow+grace {
 		httpx.WriteProblem(w, "https://api.stellarindex.io/errors/reauth-required",
 			http.StatusUnauthorized, "sign in again, then retry within 10 minutes", route)
 		return false
