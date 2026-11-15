@@ -931,14 +931,16 @@ func (s *Server) readPriceWithAliasesServedOnce(ctx context.Context, reader Pric
 	var firstServed canonical.Asset
 	var errs aliasReadErrors
 	freshFound := false
+	unreadEstablished := false
 	for _, a := range aliases {
+		if unreadEstablished && a.Type == canonical.AssetSoroban {
+			// The SAC spelling is the thinner market: it does not stand in for an established one that could not be read.
+			continue
+		}
 		snap, srcs, stale, err := reader.LatestPrice(ctx, a, quote)
 		if err != nil {
 			errs.note(err)
-			if isPriceReadFailure(err) {
-				// A later spelling is a thinner market: serving it because this one could not be read is not priority order.
-				break
-			}
+			unreadEstablished = unreadEstablished || (isPriceReadFailure(err) && a.Type != canonical.AssetSoroban)
 			continue
 		}
 		if !stale {

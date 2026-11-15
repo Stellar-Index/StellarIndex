@@ -251,18 +251,23 @@ func batchDegraded(results []batchRowResult) bool {
 	return false
 }
 
-// batchUnanswered reports a batch that must not be answered 200: a row the deadline never let start, or failed reads
-// with no row served at all.
+// batchUnanswered reports a batch that must not be answered 200: a row the deadline never let start, or no row with a
+// known answer (a price, a miss or a withheld verdict) beside the ones that were lost.
 func batchUnanswered(results []batchRowResult) bool {
-	served, failed := false, false
+	answered, lost := false, false
 	for i := range results {
-		if results[i].unstarted {
+		r := &results[i]
+		if r.unstarted {
 			return true
 		}
-		served = served || results[i].ok
-		failed = failed || results[i].readFailed
+		// Lost: a failed read, or a row a recovered panic left zero.
+		if r.readFailed || (!r.ok && !r.skip && r.fail == nil) {
+			lost = true
+		} else {
+			answered = true
+		}
 	}
-	return failed && !served
+	return lost && !answered
 }
 
 // batchEnvelope folds the per-id results (index-aligned with ids) into the envelope; each flag is

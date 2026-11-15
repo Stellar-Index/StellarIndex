@@ -604,6 +604,24 @@ func TestPriceTip_ThinPoolThirdAlias_AnUnreadClosedBookIsNotAMiss(t *testing.T) 
 	assertNoSACPairConsulted(t, hist.pairs)
 }
 
+// TestPrice_AnUnreadSpellingStillFallsToAnEstablishedOne: `native` and `crypto:XLM` are both established spellings of
+// one deep market, so a failed read of the first does not stop the walk. Only the SAC spelling is held back.
+func TestPrice_AnUnreadSpellingStillFallsToAnEstablishedOne(t *testing.T) {
+	now := time.Now().UTC()
+	prices := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{
+			"crypto:XLM/fiat:USD": {AssetID: "crypto:XLM", Quote: "fiat:USD", Price: "0.2000", PriceType: "vwap", ObservedAt: v1.WireTime(now)},
+		},
+		errByPair: map[string]error{"native/fiat:USD": errors.New("canceling statement due to statement timeout")},
+	}
+	ts := startHTTPTest(t, v1.New(v1.Options{Prices: prices}).Handler())
+	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
+	body, _ := readAll(resp)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `"0.2000`) {
+		t.Errorf("status = %d, want 200 with the crypto:XLM price: %s", resp.StatusCode, body)
+	}
+}
+
 // TestPriceTip_ThinPoolThirdAlias_XLMMergesEstablishedFormsOnly: for XLM the established forms (`native`, `crypto:XLM`)
 // still merge, but the XLM SAC pool is left out of a classic-quoted window even if it printed inside it.
 // RED before tipMergePairs: the SAC print is blended in, price 0.7100000000 with sources [sdex soroswap].

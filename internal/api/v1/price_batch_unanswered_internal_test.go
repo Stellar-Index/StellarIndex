@@ -2,8 +2,8 @@ package v1
 
 import "testing"
 
-// A batch is answered 200 only when the ids left out are known: a row the deadline never let start, or failed reads
-// with nothing served, would read as "no price".
+// A batch is answered 200 when at least one id has a known answer and every lost one is named: a row the deadline never
+// let start, or nothing but lost rows, is a 503.
 func TestBatchUnanswered(t *testing.T) {
 	ok := batchRowResult{ok: true}
 	miss := batchRowResult{skip: true}
@@ -18,7 +18,9 @@ func TestBatchUnanswered(t *testing.T) {
 		{"a miss beside a served row", []batchRowResult{ok, miss}, false},
 		{"only misses", []batchRowResult{miss, miss}, false},
 		{"a failed read beside a served row", []batchRowResult{ok, failed}, false},
-		{"failed reads and nothing served", []batchRowResult{failed, miss}, true},
+		{"a failed read beside a known miss", []batchRowResult{failed, miss}, false},
+		{"only failed reads", []batchRowResult{failed, failed}, true},
+		{"only rows lost to a panic", []batchRowResult{{}, {}}, true},
 		{"a row the deadline cut off", []batchRowResult{ok, unstarted}, true},
 	}
 	for _, c := range cases {
