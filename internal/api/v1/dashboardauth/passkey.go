@@ -300,17 +300,23 @@ func passkeyRegistrationOptions(exclusions []protocol.CredentialDescriptor) []we
 	}
 }
 
-// HandlePasskeyBeginRegister returns credential-creation options for navigator.credentials.create(); session-gated, since adding a
-// passkey needs an authenticated user.
-func (h *Handlers) HandlePasskeyBeginRegister(w http.ResponseWriter, r *http.Request) {
+// enrolSession admits a signed-in user whose session is recent, writing the refusal otherwise. A passkey is a
+// way to sign in, so enrolling one needs a recent sign-in: otherwise an old stolen cookie could enrol its own
+// key, sign in with it and pass every recent-session gate.
+func (h *Handlers) enrolSession(w http.ResponseWriter, r *http.Request) (SessionContext, bool) {
 	sc, ok := SessionFromContext(r.Context())
 	if !ok {
 		writeProblem(w, http.StatusUnauthorized, "authentication required", r.URL.Path)
-		return
+		return SessionContext{}, false
 	}
-	// A passkey is a way to sign in, so enrolling one needs a recent sign-in: otherwise an old stolen cookie
-	// could enrol its own key, sign in with it and pass every recent-session gate.
-	if !h.recentSession(w, sc, r.URL.Path) {
+	return sc, h.recentSession(w, sc, r.URL.Path)
+}
+
+// HandlePasskeyBeginRegister returns credential-creation options for navigator.credentials.create(); session-gated, since adding a
+// passkey needs an authenticated user.
+func (h *Handlers) HandlePasskeyBeginRegister(w http.ResponseWriter, r *http.Request) {
+	sc, ok := h.enrolSession(w, r)
+	if !ok {
 		return
 	}
 	wa, err := h.webAuthn()
@@ -381,12 +387,8 @@ type finishRegisterRequest struct {
 
 // HandlePasskeyFinishRegister verifies the attestation against the ceremony cookie's challenge and stores the credential.
 func (h *Handlers) HandlePasskeyFinishRegister(w http.ResponseWriter, r *http.Request) {
-	sc, ok := SessionFromContext(r.Context())
+	sc, ok := h.enrolSession(w, r)
 	if !ok {
-		writeProblem(w, http.StatusUnauthorized, "authentication required", r.URL.Path)
-		return
-	}
-	if !h.recentSession(w, sc, r.URL.Path) {
 		return
 	}
 	// MaxBytesReader, not LimitReader: LimitReader truncates silently at its cap, which would make
