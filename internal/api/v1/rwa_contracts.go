@@ -443,7 +443,7 @@ func (s *Server) fillContractMarketCaps(
 			return true
 		}
 		if !ok {
-			row.MarketCapUSD = nil // no reading of this contract's own supply: a cap from another basis does not stand in
+			row.MarketCapUSD, row.MarketCapLowerBound = nil, false // no reading of this contract's own supply: a cap from another basis does not stand in
 			continue
 		}
 		_, isScaled := scaled[row.AssetID]
@@ -463,7 +463,7 @@ func (s *Server) applyContractMarketCap(
 ) {
 	// This reading owns the cap: a figure the generic fill derived from a different supply must not
 	// survive a refusal below.
-	row.MarketCapUSD = nil
+	row.MarketCapUSD, row.MarketCapLowerBound = nil, false
 	b := basis.String()
 	row.SupplyBasis = &b
 	// Supply is a raw chain fact and is served either way. The CAP divides by 10^decimals, and an

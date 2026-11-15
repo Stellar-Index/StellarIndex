@@ -317,6 +317,9 @@ func (s *Server) thinDetailPricePass(ctx context.Context, detail *AssetDetail, a
 	trial.PriceWithheldReason = ""
 	s.populatePriceUSD(onCtx, &trial, asset)
 	s.fillTransitivePrice(onCtx, &trial, asset, asset.String())
+	// A read the trial could not make is not "no thin price": the null must not be cached as clean.
+	detail.f2ReadFailed = detail.f2ReadFailed || trial.priceUnread
+	detail.extensionUnread = detail.extensionUnread || trial.extensionUnread
 	if trial.PriceUSD == nil {
 		return
 	}
@@ -635,4 +638,11 @@ func usdMarketValue(amountStroops *big.Int, usdPriceStr string, decimals int) (s
 	}
 
 	return valueRat.FloatString(2), nil
+}
+
+// detailFreshness folds the detail's read outcomes into the envelope's stale and degraded flags. A price the reader called
+// stale marks the answer stale only: it is the newest price there is, so the answer stays cacheable.
+func detailFreshness(stale bool, detail *AssetDetail, homeDomainDegraded, ctxDead bool) (staleOut, degraded bool) {
+	stale = stale || assetDetailStale(detail, homeDomainDegraded, ctxDead)
+	return stale || detail.priceStale, stale || detail.issuerDirectoryUnchecked
 }

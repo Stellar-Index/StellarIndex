@@ -1885,10 +1885,9 @@ func (s *Server) writeCataloguePage(
 	// this writer and neither applies the row filters (stated on all four
 	// parameters in the spec), so no arm has been selected away and the
 	// cross-arm total is the only figure a row here can honestly carry.
-	if s.fillAndRankCatalogueRows(r.Context(), rows, assetListFilters{}) {
-		flags.Stale = true
-		flags.Degraded = true
-	}
+	unmeasured, stale := s.fillAndRankCatalogueRows(r.Context(), rows, assetListFilters{})
+	flags.Stale = flags.Stale || unmeasured || stale
+	flags.Degraded = flags.Degraded || unmeasured
 	end := min(limit, len(rows))
 	page := rows[:end]
 	s.attachSparklinesIfRequested(r, page)
@@ -1948,13 +1947,13 @@ func dropServedCatalogueRows(rows []AssetDetail, served []string) []AssetDetail 
 
 // fillAndRankCatalogueRows fills each row's served money (own price, then the twin merge) and only then ranks by market cap, so
 // order follows published figures; ranking first would rank Stellar-issued rows on nil caps. unmeasured is
-// fillCatalogueStatsForPage's.
-func (s *Server) fillAndRankCatalogueRows(ctx context.Context, rows []AssetDetail, filters assetListFilters) (unmeasured bool) {
+// fillCatalogueStatsForPage's; stale: a row was priced from a read past its freshness ceiling.
+func (s *Server) fillAndRankCatalogueRows(ctx context.Context, rows []AssetDetail, filters assetListFilters) (unmeasured, stale bool) {
 	ctx, rep := withReadReport(ctx)
 	s.fillCataloguePricesForPage(ctx, rows)
 	unmeasured = s.fillCatalogueStatsForPage(ctx, rows, filters)
 	sortAssetDetailsByMarketCapDesc(rows)
-	return unmeasured || rep.unread.Load()
+	return unmeasured || rep.unread.Load(), rep.stale.Load()
 }
 
 // fillCataloguePricesForPage resolves each row's headline USD price through buildGlobalAssetView's fallback chain so listing
@@ -2162,11 +2161,11 @@ func (s *Server) serveCatalogueUnifiedPage(
 	}
 	// Price + twin-stats merge, then the rank, over every catalogue
 	// row BEFORE the slice — writeCataloguePage makes the same call.
-	unmeasured := s.fillAndRankCatalogueRows(r.Context(), rows, filters)
+	unmeasured, stale := s.fillAndRankCatalogueRows(r.Context(), rows, filters)
 	end := min(limit, len(rows))
 	page := rows[:end]
 	s.attachSparklinesIfRequested(r, page)
-	env := Envelope{Data: page, Flags: Flags{Stale: unmeasured, Degraded: unmeasured || anyDirectoryUnchecked(page)}}
+	env := Envelope{Data: page, Flags: Flags{Stale: unmeasured || stale, Degraded: unmeasured || anyDirectoryUnchecked(page)}}
 	if end < len(rows) {
 		for _, row := range page {
 			served = append(served, row.Slug)
@@ -2539,8 +2538,7 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// slow read) yields a numbers-free body with no other signal. Caching it would replay that
 	// degraded snapshot as a fresh 200 for the full TTL, so stamp it stale and skip the cache write.
 	ctxDead := ctx.Err() != nil
-	flags.Stale = flags.Stale || assetDetailStale(&detail, homeDomainDegraded, ctxDead)
-	flags.Degraded = flags.Stale || detail.issuerDirectoryUnchecked
+	flags.Stale, flags.Degraded = detailFreshness(flags.Stale, &detail, homeDomainDegraded, ctxDead)
 
 	// Render once, cache, write; see [assetDetailResponseCache].
 	body, err := renderAssetDetailEnvelope(detail, flags)
@@ -2562,7 +2560,7 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 // assetDetailStale reports whether detail rests on a failed, cut-short or
 // carried-forward read.
 func assetDetailStale(detail *AssetDetail, homeDomainDegraded, ctxDead bool) bool {
-	return homeDomainDegraded || detail.DecimalsUnresolved || detail.SupplyStale || detail.priceStale || detail.f2ReadFailed || detail.extensionUnread || detail.extensionStale || ctxDead
+	return homeDomainDegraded || detail.DecimalsUnresolved || detail.SupplyStale || detail.f2ReadFailed || detail.extensionUnread || detail.extensionStale || ctxDead
 }
 
 // transientlyDegraded reports whether detail rests on a read that failed or

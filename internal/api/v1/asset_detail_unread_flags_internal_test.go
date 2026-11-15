@@ -9,6 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -86,8 +87,9 @@ func TestPopulatePriceUSD_ReaderStaleVerdictMarksTheDetailStale(t *testing.T) {
 	if detail.PriceUSD == nil {
 		t.Fatal("price_usd not served")
 	}
-	if stale := assetDetailStale(&detail, false, false); !detail.priceStale || !stale {
-		t.Errorf("priceStale = %v, assetDetailStale = %v, want both true", detail.priceStale, stale)
+	// Stale, and still cacheable: an old price is not a failed read.
+	if stale, degraded := detailFreshness(false, &detail, false, false); !detail.priceStale || !stale || degraded {
+		t.Errorf("priceStale = %v, stale = %v, degraded = %v, want true, true, false", detail.priceStale, stale, degraded)
 	}
 }
 
@@ -129,5 +131,73 @@ func TestPopulateGlobalCryptoPrice_OldVWAPIsReportedStale(t *testing.T) {
 				t.Errorf("stale reported = %v, want %v", rep.stale.Load(), tc.want)
 			}
 		})
+	}
+}
+
+// A suppressed price takes its stale mark with it.
+func TestSuppressScamIssuerPricing_ClearsThePriceStaleMark(t *testing.T) {
+	price := "0.25"
+	d := AssetDetail{PriceUSD: &price, priceStale: true, IssuerDirectoryTags: []string{"malicious"}}
+	suppressScamIssuerPricing(&d)
+	if d.PriceUSD != nil || d.priceStale {
+		t.Errorf("price = %v, priceStale = %v, want neither", d.PriceUSD, d.priceStale)
+	}
+}
+
+// unmeasuredGate never rules: every probe fails to measure.
+type unmeasuredGate struct{ stubListingGate }
+
+func (*unmeasuredGate) Probe(context.Context, canonical.Asset, canonical.Asset) (allowed, measured bool, floor pricingguard.SubstanceFloor) {
+	return false, false, pricingguard.FloorNone
+}
+
+// A gate that did not rule withholds the row price, and the null is not a clean "no price".
+func TestApplyAssetRowToDetail_UnmeasuredGateMarksTheDetailUnread(t *testing.T) {
+	asset, err := canonical.ParseAsset(withheldTestAsset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	price := "0.25"
+	for name, tc := range map[string]struct {
+		gate PriceSubstanceGate
+		want bool
+	}{
+		"gate did not rule": {&unmeasuredGate{}, true},
+		"gate refused":      {&stubListingGate{allow: map[string]bool{}}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := New(Options{Substance: tc.gate})
+			var detail AssetDetail
+			s.applyAssetRowToDetail(context.Background(), &detail, asset, timescale.AssetRow{PriceUSD: &price}, nil, asset.String())
+			if detail.PriceUSD != nil {
+				t.Errorf("price_usd = %q, want withheld", *detail.PriceUSD)
+			}
+			if detail.extensionUnread != tc.want {
+				t.Errorf("extensionUnread = %v, want %v", detail.extensionUnread, tc.want)
+			}
+		})
+	}
+}
+
+// The catalogue listing reports a row priced from an old VWAP as stale, not as unmeasured.
+func TestFillAndRankCatalogueRows_OldVWAPIsReportedStale(t *testing.T) {
+	cat, err := currency.LoadEmbedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	vc, ok := cat.LookupByTicker("XLM")
+	if !ok {
+		t.Fatal("no XLM in the embedded catalogue")
+	}
+	s := New(Options{VerifiedCurrencies: cat})
+	s.globalPrice = oldVWAPReader{age: 3 * time.Hour}
+	s.globalPriceOpts = aggregate.GlobalPriceOptions{MaxVWAPAge: 10 * time.Minute}
+	rows := []AssetDetail{{Slug: vc.Slug}}
+	unmeasured, stale := s.fillAndRankCatalogueRows(context.Background(), rows, assetListFilters{})
+	if rows[0].PriceUSD == nil {
+		t.Fatal("row not priced")
+	}
+	if unmeasured || !stale {
+		t.Errorf("unmeasured = %v, stale = %v, want false, true", unmeasured, stale)
 	}
 }
