@@ -510,3 +510,68 @@ func TestFill_PerSourceFailuresUseRealSourceNames(t *testing.T) {
 		t.Errorf("synthetic label leaked into the snapshot: %v", snap.RepairFailures)
 	}
 }
+
+// TestFill_NeverWritesThroughAPlantedLink: the archive tree belongs to the archive's own user while the filler runs as
+// root, so neither a link planted where the temp file used to be created nor a prefix directory swapped for a link may
+// carry a write outside the archive root.
+func TestFill_NeverWritesThroughAPlantedLink(t *testing.T) {
+	ts := fakeSource(t, func(relPath string) (int, []byte) {
+		return http.StatusOK, checkpointGzipBody(seqFromRelPath(t, relPath))
+	})
+	f, root := makeFiller(t, []archivecompleteness.Source{{Name: "test-source", URL: ts.URL}})
+	outside := t.TempDir()
+
+	// Seq 63 → ledger/00/00/00/ledger-0000003f.xdr.gz, with a link at the predictable temp name.
+	victim := filepath.Join(outside, "victim")
+	if err := os.WriteFile(victim, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "ledger", "00", "00", "00")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	final := filepath.Join(dir, "ledger-0000003f.xdr.gz")
+	if err := os.Symlink(victim, final+".new"); err != nil {
+		t.Fatal(err)
+	}
+	// Seq 0x0100003f → ledger/01/00/00/…, with the 01 prefix swapped for a link out of the archive.
+	escape := filepath.Join(outside, "escape")
+	if err := os.Mkdir(escape, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(escape, filepath.Join(root, "ledger", "01")); err != nil {
+		t.Fatal(err)
+	}
+
+	res := f.Fill(context.Background(), []uint32{63, 0x0100003f})
+
+	if got, err := os.ReadFile(victim); err != nil || string(got) != "keep" {
+		t.Errorf("file behind the planted temp link = %q, %v; want it untouched", got, err)
+	}
+	if fi, err := os.Lstat(final); err != nil || !fi.Mode().IsRegular() {
+		t.Errorf("checkpoint 63 not placed as a regular file: %v", err)
+	}
+	if entries, err := os.ReadDir(escape); err != nil || len(entries) != 0 {
+		t.Errorf("wrote %d entries through the swapped prefix directory (err %v); want none", len(entries), err)
+	}
+	if res.Filled != 1 || len(res.Failed) != 1 || res.Failed[0].Seq != 0x0100003f {
+		t.Errorf("Filled = %d, Failed = %v; want 1 filled and the escaping checkpoint failed", res.Filled, res.Failed)
+	}
+}
+
+// TestFill_LeavesNoTempBehind: a body every source gets wrong must not leave its staging file in the archive.
+func TestFill_LeavesNoTempBehind(t *testing.T) {
+	ts := fakeSource(t, func(string) (int, []byte) { return http.StatusOK, []byte("not gzip") })
+	f, root := makeFiller(t, []archivecompleteness.Source{{Name: "test-source", URL: ts.URL}})
+
+	if res := f.Fill(context.Background(), []uint32{63}); res.Filled != 0 {
+		t.Fatalf("Filled = %d, want 0", res.Filled)
+	}
+	entries, err := os.ReadDir(filepath.Join(root, "ledger", "00", "00", "00"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("%d file(s) left beside the checkpoint, first %q; want none", len(entries), entries[0].Name())
+	}
+}
