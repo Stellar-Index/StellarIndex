@@ -678,6 +678,17 @@ SELECT source_account, ledger_seq, tx_index, 4294967295 AS op_index
 FROM stellar.transactions
 WHERE source_account != '';
 
+-- A fee bump's payer is in fee_account, not source_account (that is the
+-- inner source). The payer gets the same tx-sentinel row, so the
+-- transaction it paid for is in its history. No `!= source_account`
+-- filter: the alias below shadows that column in WHERE, and a payer that
+-- is also the inner source writes a row the engine collapses.
+CREATE MATERIALIZED VIEW IF NOT EXISTS stellar.ops_by_source_feepayer_mv
+TO stellar.ops_by_source AS
+SELECT fee_account AS source_account, ledger_seq, tx_index, 4294967295 AS op_index
+FROM stellar.transactions
+WHERE fee_account != '';
+
 -- ── account_op_types — see deploy/clickhouse/account_op_types.sql ──
 -- (account -> op key, op_type) for every op an account's history shows: ops it
 -- sourced (the MV below) and ops it took part in as a non-source participant whose
@@ -844,6 +855,13 @@ TO stellar.account_activity AS
 SELECT source_account AS account_id, max(ledger_seq) AS last_ledger, max(close_time) AS last_seen
 FROM stellar.transactions
 WHERE source_account != ''
+GROUP BY account_id;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS stellar.account_activity_feepayer_mv
+TO stellar.account_activity AS
+SELECT fee_account AS account_id, max(ledger_seq) AS last_ledger, max(close_time) AS last_seen
+FROM stellar.transactions
+WHERE fee_account != ''
 GROUP BY account_id;
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS stellar.account_activity_participants_mv

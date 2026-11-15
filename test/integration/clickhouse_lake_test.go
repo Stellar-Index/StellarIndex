@@ -1362,6 +1362,26 @@ func TestClickHouseFeeBumpRoundTrip(t *testing.T) {
 		}
 	}
 
+	// The payer sourced nothing, yet paid for this transaction: it is in the
+	// payer's history.
+	payerReader, err := chstore.NewExplorerReader(ctx, addr)
+	if err != nil {
+		t.Fatalf("new explorer reader (payer history): %v", err)
+	}
+	t.Cleanup(func() { _ = payerReader.Close() })
+	paid, _, err := payerReader.AccountTransactions(ctx, payerAccount, 50, chstore.ExplorerCursor{})
+	if err != nil {
+		t.Fatalf("AccountTransactions(payer): %v", err)
+	}
+	if len(paid) != 1 || paid[0].TxHash != outerHash {
+		t.Fatalf("AccountTransactions(payer) = %+v, want the fee bump it paid for", paid)
+	}
+	var lastLedger uint32
+	if err := conn.QueryRow(ctx, `SELECT max(last_ledger) FROM stellar.account_activity WHERE account_id = ?`,
+		payerAccount).Scan(&lastLedger); err != nil || lastLedger != ledger {
+		t.Fatalf("account_activity(payer) last_ledger = %d (err %v), want %d", lastLedger, err, ledger)
+	}
+
 	// Index-path authority needs the coverage marker; without it the reader
 	// answers from the bloom scan and these assertions would not test the index.
 	t.Cleanup(func() { _ = conn.Exec(context.Background(), `TRUNCATE TABLE stellar.tx_hash_index_coverage`) })

@@ -83,6 +83,13 @@ FROM stellar.transactions
 WHERE source_account != ''
 GROUP BY account_id;
 
+CREATE MATERIALIZED VIEW IF NOT EXISTS stellar.account_activity_feepayer_mv
+TO stellar.account_activity AS
+SELECT fee_account AS account_id, max(ledger_seq) AS last_ledger, max(close_time) AS last_seen
+FROM stellar.transactions
+WHERE fee_account != ''
+GROUP BY account_id;
+
 CREATE MATERIALIZED VIEW IF NOT EXISTS stellar.account_activity_participants_mv
 TO stellar.account_activity AS
 SELECT account AS account_id, max(ledger_seq) AS last_ledger, max(close_time) AS last_seen
