@@ -136,6 +136,14 @@ run
 check "in-place rewrite decoded"     "grep -qx 'i.c103' '$t/decoded'"
 check "rewrite key replaces old"     "grep -qx '103:5004@9' '$t/state' && ! grep -q '103:5004@7' '$t/state'"
 
+# A key recorded before the value read (no +v) does not count as verified.
+echo '103:5004@9' >"$t/state"
+printf '%s\n' 'C|103:5004|trades|_hyper_1_2_chunk|i.c103|9+v' >"$t/list"
+run
+check "header-only key decoded again" "grep -qx 'i.c103' '$t/decoded' && grep -qx '103:5004@9+v' '$t/state' && ! grep -qx '103:5004@9' '$t/state'"
+# The fake psql cannot see the SQL: pin the two statements the claim rests on.
+check "scan reads values and marks it" "grep -qF 'OFFSET 0) s WHERE s.t IS NOT NULL' '$probe' && grep -qF \"|| '+v' AS f5\" '$probe'"
+
 check "no stray series when clean"   "! grep -q '^stellarindex_pg_compressed_chunk_unreadable{' '$prom' && grep -qx 'stellarindex_pg_compressed_chunks_unreadable 0' '$prom'"
 check "no bloat series when clean"   "! grep -q '^stellarindex_pg_compressed_chunk_index_bytes{' '$prom' && grep -qx 'stellarindex_pg_compressed_chunks_index_bloated 0' '$prom'"
 exit "$fail"

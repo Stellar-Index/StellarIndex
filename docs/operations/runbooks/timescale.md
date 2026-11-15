@@ -306,7 +306,7 @@ The floor is `prices_1m`'s earliest materialised bucket. Below it, or on the fir
 
 ## stellarindex_pg_compressed_chunks_unreadable
 
-`pg-chunk-scan.timer` (04:20 UTC) decodes every `compressed_data` column of every compressed chunk with `compressed_data_info()`. A chunk that fails is listed in `stellarindex_pg_compressed_chunk_unreadable{hypertable,chunk}`. `count(*)` and `chunks_detailed_size` stay normal on such a chunk; a read that touches it errors or crashes the backend, and a crash loop restarts Postgres.
+`pg-chunk-scan.timer` (04:20 UTC) reads every `compressed_data` column of every compressed chunk: its header with `compressed_data_info()`, then every row through the parent chunk, which decompresses the values. A chunk that fails is listed in `stellarindex_pg_compressed_chunk_unreadable{hypertable,chunk}`. `count(*)` and `chunks_detailed_size` stay normal on such a chunk; a read that touches it errors or crashes the backend, and a crash loop restarts Postgres.
 
 The known cause is `merge_chunks()` on a compressed chunk (r1, TimescaleDB 2.26.4). `scripts/ci/lint-chunk-functions.sh` keeps it and `drop_chunks()` out of the tree.
 
