@@ -771,6 +771,8 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		SoroswapPairs:    store,
 		SoroswapReserves: soroswapTVLReserves,
 		AquariusReserves: store,
+		Cursors:          store,
+		AquariusWriters:  aquariusReserveWriters(cfg.Ingestion.Projector),
 		// Curated pool sets only (ADR-0035). Phoenix stake contracts are excluded because they
 		// hold LP shares and would double-count the underlying.
 		PhoenixPools:    phoenix.MainnetTVLPools(),

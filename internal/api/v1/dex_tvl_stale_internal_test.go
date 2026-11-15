@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // TestCarryPrev_MarksStaleAndExpires: a carried figure is labelled stale, and one past the carry
@@ -58,8 +60,8 @@ func TestDEXTVLCache_UnwiredProtocolIsNamed(t *testing.T) {
 	}
 }
 
-// TestMarkLakeStaleTVL: a stale lake marks the lake-derived figures and a total that sums one,
-// on copies; the served-tier figure and the cached values stay as they were.
+// TestMarkLakeStaleTVL: a stale lake marks every figure whose reserves come from the lake (aquarius through the
+// projector) and a total that sums one, on copies; the cached values stay as they were.
 func TestMarkLakeStaleTVL(t *testing.T) {
 	snap := map[string]ProtocolTVLView{
 		"soroswap": {TVLUSD: "10.00"},
@@ -68,7 +70,7 @@ func TestMarkLakeStaleTVL(t *testing.T) {
 	total := &DEXTVLTotalView{TVLUSD: "15.00", Protocols: []string{"aquarius", "soroswap"}}
 
 	out, outTotal, stale := markLakeStaleTVL(snap, total, true)
-	if !stale || !out["soroswap"].Stale || out["aquarius"].Stale || !outTotal.Stale {
+	if !stale || !out["soroswap"].Stale || !out["aquarius"].Stale || !outTotal.Stale {
 		t.Errorf("stale lake: stale=%v soroswap=%v aquarius=%v total=%v", stale, out["soroswap"].Stale, out["aquarius"].Stale, outTotal.Stale)
 	}
 	if snap["soroswap"].Stale || total.Stale {
@@ -96,7 +98,7 @@ func TestProtocolTVLsAndTotal_StaleLakeRaisesTheFlag(t *testing.T) {
 	old := &stubWatermark{ledger: 63_000_000, closedAt: time.Now().Add(-lakeStaleThreshold - time.Hour)}
 	srv := &Server{Options: Options{DEXTVL: c, LakeWatermark: old}}
 	tvls, total, stale := srv.protocolTVLsAndTotal(context.Background())
-	if !stale || !tvls["soroswap"].Stale || tvls["aquarius"].Stale || total == nil || !total.Stale {
+	if !stale || !tvls["soroswap"].Stale || !tvls["aquarius"].Stale || total == nil || !total.Stale {
 		t.Errorf("stale=%v soroswap=%+v aquarius=%+v total=%+v", stale, tvls["soroswap"].Stale, tvls["aquarius"].Stale, total)
 	}
 
@@ -117,7 +119,7 @@ func TestDEXTVLCache_ReadFromStaleLakeKeepsTheMark(t *testing.T) {
 	}
 	caughtUp := &Server{Options: Options{DEXTVL: c, LakeWatermark: &stubWatermark{ledger: 63_000_700, closedAt: time.Now()}}}
 	tvls, total, stale := caughtUp.protocolTVLsAndTotal(context.Background())
-	if !stale || !tvls["soroswap"].Stale || tvls["aquarius"].Stale || total == nil || !total.Stale {
+	if !stale || !tvls["soroswap"].Stale || !tvls["aquarius"].Stale || total == nil || !total.Stale {
 		t.Errorf("stale=%v soroswap=%v aquarius=%v total=%+v", stale, tvls["soroswap"].Stale, tvls["aquarius"].Stale, total)
 	}
 
@@ -128,6 +130,111 @@ func TestDEXTVLCache_ReadFromStaleLakeKeepsTheMark(t *testing.T) {
 	}
 	if v, _ := c.Protocol("soroswap"); !v.TVL.Stale {
 		t.Error("a figure read with no watermark answer was published as current")
+	}
+}
+
+// stubCursors answers GetCursor per source; a source with no entry is not found.
+type stubCursors map[string]timescale.Cursor
+
+func (s stubCursors) GetCursor(_ context.Context, source, _ string) (timescale.Cursor, error) {
+	cur, ok := s[source]
+	if !ok {
+		return timescale.Cursor{}, timescale.ErrNotFound
+	}
+	return cur, nil
+}
+
+// TestDEXTVLCache_AquariusBehindItsWritersIsStale: aquarius_reserves is written by the projector, the dispatcher or
+// both. When every writer has stopped or trails the lake, a refresh still succeeds, on old reserves.
+func TestDEXTVLCache_AquariusBehindItsWritersIsStale(t *testing.T) {
+	const lakeLedger = 63_000_000
+	now := time.Now()
+	level := timescale.Cursor{LastLedger: lakeLedger, UpdatedAt: now}
+	trailing := timescale.Cursor{LastLedger: lakeLedger - dexTVLWriterLagLedgers - 1, UpdatedAt: now}
+	stopped := timescale.Cursor{LastLedger: lakeLedger, UpdatedAt: now.Add(-lakeStaleThreshold - time.Minute)}
+	both := []TVLWriterCursor{{Source: "projector", Sub: "aquarius"}, {Source: "ledgerstream"}}
+	cases := []struct {
+		name    string
+		writers []TVLWriterCursor
+		cur     stubCursors
+		want    bool
+	}{
+		{"level with the lake", both[:1], stubCursors{"projector": level}, false},
+		{"a few ledgers behind", both[:1], stubCursors{"projector": {LastLedger: lakeLedger - dexTVLWriterLagLedgers, UpdatedAt: now}}, false},
+		{"trailing the lake", both[:1], stubCursors{"projector": trailing}, true},
+		{"stopped", both[:1], stubCursors{"projector": stopped}, true},
+		{"no cursor", both[:1], stubCursors{}, true},
+		{"projector replaying, dispatcher writing", both, stubCursors{"projector": trailing, "ledgerstream": level}, false},
+		{"projector off, dispatcher writing", both[1:], stubCursors{"ledgerstream": level}, false},
+		{"both stopped", both, stubCursors{"projector": stopped, "ledgerstream": stopped}, true},
+		{"no writers named", nil, stubCursors{}, false},
+	}
+	for _, tc := range cases {
+		src := tvlTestSources()
+		src.LakeWatermark = &stubWatermark{ledger: lakeLedger, closedAt: now}
+		src.Cursors, src.AquariusWriters = tc.cur, tc.writers
+		c := NewDEXTVLCache(src)
+		if err := c.Refresh(context.Background()); err != nil {
+			t.Fatalf("%s: Refresh: %v", tc.name, err)
+		}
+		aq, _ := c.Protocol("aquarius")
+		if aq.TVL.Stale != tc.want {
+			t.Errorf("%s: aquarius stale = %v, want %v", tc.name, aq.TVL.Stale, tc.want)
+		}
+		if sw, _ := c.Protocol("soroswap"); sw.TVL.Stale {
+			t.Errorf("%s: soroswap reads the lake itself and was marked stale", tc.name)
+		}
+		// The served total inherits the mark from the figure it sums.
+		srv := &Server{Options: Options{DEXTVL: c, LakeWatermark: &stubWatermark{ledger: lakeLedger, closedAt: now}}}
+		if _, total, stale := srv.protocolTVLsAndTotal(context.Background()); total == nil || total.Stale != tc.want || stale != tc.want {
+			t.Errorf("%s: served total stale = %v, flag = %v, want %v", tc.name, total != nil && total.Stale, stale, tc.want)
+		}
+	}
+}
+
+// TestDEXTVLCache_CuratedPoolWithNoLakeStateIsCountedUnpriced: a curated pool the reader returned nothing for is in
+// the pool count and the breakdown, not dropped from both.
+func TestDEXTVLCache_CuratedPoolWithNoLakeStateIsCountedUnpriced(t *testing.T) {
+	const missing = "CMISSINGPOOL"
+	src := tvlTestSources()
+	src.PhoenixPools = append(src.PhoenixPools, missing)
+	src.CometPools = append(src.CometPools, missing)
+	c := NewDEXTVLCache(src)
+	if err := c.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	base := NewDEXTVLCache(tvlTestSources())
+	if err := base.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh (baseline): %v", err)
+	}
+	for _, name := range []string{"phoenix", "comet"} {
+		got, _ := c.Protocol(name)
+		want, _ := base.Protocol(name)
+		if got.TVL.PoolsTotal != want.TVL.PoolsTotal+1 || got.TVL.UnpricedPools != want.TVL.UnpricedPools+1 {
+			t.Errorf("%s: pools_total/unpriced = %d/%d, want %d/%d", name, got.TVL.PoolsTotal, got.TVL.UnpricedPools,
+				want.TVL.PoolsTotal+1, want.TVL.UnpricedPools+1)
+		}
+		if got.TVL.TVLUSD != want.TVL.TVLUSD {
+			t.Errorf("%s: tvl_usd = %s, want %s unchanged", name, got.TVL.TVLUSD, want.TVL.TVLUSD)
+		}
+		found := false
+		for _, p := range got.Pools {
+			found = found || (p.Pool == missing && p.Excluded == DEXTVLPoolUnavailable && p.TVLUSD == "0.00")
+		}
+		if !found {
+			t.Errorf("%s: the missing pool is not in the breakdown: %+v", name, got.Pools)
+		}
+	}
+
+	// A reader that returned no pool at all still publishes no figure.
+	src = tvlTestSources()
+	src.PhoenixReserves = stubPhoenixReserveReader{}
+	c = NewDEXTVLCache(src)
+	if err := c.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if _, ok := c.Protocol("phoenix"); ok {
+		t.Error("phoenix published a figure from a read that returned no pool")
 	}
 }
 

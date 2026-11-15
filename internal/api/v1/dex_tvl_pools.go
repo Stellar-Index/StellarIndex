@@ -34,6 +34,9 @@ const (
 	// its legs are unknown. Counted (pools_total + unpriced_pools), published with no legs and
 	// tvl_usd "0.00", never guessed.
 	DEXTVLPoolUndecodable = "undecodable_storage"
+	// DEXTVLPoolUnavailable is the POOL-level exclusion for a curated pool the lake returned no current state for
+	// (absent or TTL-archived): its reserves are unknown, not zero.
+	DEXTVLPoolUnavailable = "unavailable_state"
 )
 
 // Per-leg valuation bases: how a valued leg's usd figure was derived. Exactly one of basis/usd
@@ -197,6 +200,28 @@ func (a *tvlProtocolAccumulator) addUndecodable(pools []string) {
 			Pool:     pool,
 			TVLUSD:   "0.00",
 			Excluded: DEXTVLPoolUndecodable,
+			Legs:     []DEXTVLLegView{},
+		})
+	}
+}
+
+// addUnavailable files every requested pool the reader returned nothing for as an unpriced pool, so a curated pool
+// cannot leave the figure uncounted. A pass that observed no pool at all stays empty (errTVLNoObservedPools).
+func (a *tvlProtocolAccumulator) addUnavailable(requested []string) {
+	if a.view.PoolsTotal == 0 {
+		return
+	}
+	for _, pool := range requested {
+		if _, seen := a.sums[pool]; seen {
+			continue
+		}
+		a.view.PoolsTotal++
+		a.view.UnpricedPools++
+		a.sums[pool] = new(big.Rat)
+		a.pools = append(a.pools, DEXTVLPoolView{
+			Pool:     pool,
+			TVLUSD:   "0.00",
+			Excluded: DEXTVLPoolUnavailable,
 			Legs:     []DEXTVLLegView{},
 		})
 	}

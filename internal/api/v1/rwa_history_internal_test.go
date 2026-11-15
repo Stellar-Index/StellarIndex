@@ -137,6 +137,29 @@ func TestRWAHistoryTotal_DayNobodyCouldBeValuedIsAbsent(t *testing.T) {
 	}
 }
 
+// TestRWAHistoryTotalPoints_AnIncompleteSetIsALowerBound: a member the rebuild left out is not in setAssets, so a fully
+// valued day would otherwise read as the whole set's value.
+func TestRWAHistoryTotalPoints_AnIncompleteSetIsALowerBound(t *testing.T) {
+	h := rwaValueHistory{
+		setAssets: 1,
+		members:   []rwaHistoryMember{{days: []rwaHistoryDay{{day: histDay(1), valueUSD: "10.00"}}}},
+	}
+	if pts, _ := h.totalPoints(time.Time{}); len(pts) != 1 || pts[0].LowerBound {
+		t.Fatalf("complete set: points = %+v, want one exact point", pts)
+	}
+	h.setIncomplete = true
+	if pts, _ := h.totalPoints(time.Time{}); len(pts) != 1 || !pts[0].LowerBound {
+		t.Fatalf("incomplete set: points = %+v, want one lower-bound point", pts)
+	}
+
+	if rwaHistorySetOf(rwaMembership{}, time.Time{}).setIncomplete {
+		t.Error("a membership with nothing left out reads as incomplete")
+	}
+	if !rwaHistorySetOf(rwaMembership{overIssuerCap: 1}, time.Time{}).setIncomplete {
+		t.Error("a membership over the issuer cap reads as complete")
+	}
+}
+
 // TestRWAHistoryTotal_CountsAgainstTheWholeSet: a point's coverage is stated against the size of the set, not the readable
 // members, else every point would claim full coverage of whatever it summed.
 func TestRWAHistoryTotal_CountsAgainstTheWholeSet(t *testing.T) {

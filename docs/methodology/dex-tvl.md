@@ -27,7 +27,7 @@ reserves come from the source that actually holds absolute state:
 | Protocol | Reserve source |
 |---|---|
 | soroswap | Current pair reserves from each pair's instance storage in the certified lake, scoped to the `soroswap_pairs` registry |
-| aquarius | Each pool's latest post-state reserve snapshot from `aquarius_reserves` (trailing 90 days). Token identities are recovered by position from the pool's deposit/withdraw events (`update_reserves` carries none), and the table records no transaction application order, so a pool touched by two transactions at the same operation and event index in its latest ledger reads either one's post-state |
+| aquarius | Each pool's latest post-state reserve snapshot from `aquarius_reserves` (trailing 90 days). Token identities are recovered by position from the pool's deposit/withdraw events (`update_reserves` carries none), and the table records no transaction application order, so a pool touched by more than one transaction in its latest ledger reads one of their post-states, not always the last |
 | phoenix | Current `ReserveA`/`ReserveB` persistent entries in the lake, with token identities from the pool's CONFIG entry, scoped to the ADR-0035 curated pool set |
 | comet | Current per-token pool balance records in the lake, scoped to the curated allowlist |
 
@@ -83,7 +83,9 @@ Exactly one of `basis`/`usd` or `excluded` is present on a leg: a leg
 that contributed nothing says why on the wire and is never a silent
 zero. A pool whose captured storage did not decode (rule 4) is
 published with `excluded: undecodable_storage`, no legs and
-`tvl_usd: "0.00"`.
+`tvl_usd: "0.00"`. A curated Phoenix or Comet pool the lake holds no
+current state for (absent or archived) is published the same way with
+`excluded: unavailable_state`; both count in `unpriced_pools`.
 
 **Money is rounded once, at the leaf.** Each valued leg's `usd` is
 published to the cent; a pool's `tvl_usd` is the exact sum of its legs'

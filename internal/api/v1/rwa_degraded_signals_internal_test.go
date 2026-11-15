@@ -153,12 +153,43 @@ func TestRWAGroups_LowerBoundPerBasis(t *testing.T) {
 		{"nothing valued", []RWAAsset{{Issuer: "GISSUER", AnchorClass: "bond"}}, false, false},
 	}
 	for _, c := range cases {
-		class, issuer := rwaByClass(c.rows)[0], rwaByIssuer(c.rows)[0]
+		class, issuer := rwaByClass(c.rows, rwaTruncation{})[0], rwaByIssuer(c.rows, rwaTruncation{})[0]
 		if class.MarketCapLowerBound != c.wantCap || class.ReferenceValueLowerBound != c.wantRef {
 			t.Errorf("%s: class bounds = %v/%v, want %v/%v", c.name, class.MarketCapLowerBound, class.ReferenceValueLowerBound, c.wantCap, c.wantRef)
 		}
 		if issuer.MarketCapLowerBound != c.wantCap || issuer.ReferenceValueLowerBound != c.wantRef {
 			t.Errorf("%s: issuer bounds = %v/%v, want %v/%v", c.name, issuer.MarketCapLowerBound, issuer.ReferenceValueLowerBound, c.wantCap, c.wantRef)
+		}
+	}
+}
+
+// A member the rebuild left out is in no row, so only the truncation can tell a group its total is partial.
+func TestRWAGroups_TruncationMakesAGroupALowerBound(t *testing.T) {
+	capUSD, refUSD := "100.00", "120.00"
+	rows := []RWAAsset{{
+		Issuer: "GISSUER", AnchorClass: "bond",
+		Valuation:          RWAValuation{Status: RWAValuationPublished, MarketCapUSD: &capUSD},
+		ReferenceValuation: RWAReferenceValuation{Status: RWAReferenceValuationPublished, ValueUSD: &refUSD},
+	}}
+	cases := []struct {
+		name                  string
+		trunc                 rwaTruncation
+		wantClass, wantIssuer bool
+	}{
+		{"nothing left out", rwaTruncation{}, false, false},
+		{"a failed listing read", rwaTruncation{unread: 1}, true, false},
+		{"contracts over the cap", rwaTruncation{overContractCap: 1}, true, false},
+		{"issuers over the cap", rwaTruncation{overIssuerCap: 1}, true, false},
+		{"this issuer's page is full", rwaTruncation{issuerPagesFull: 1, fullPageIssuers: map[string]bool{"GISSUER": true}}, true, true},
+		{"another issuer's page is full", rwaTruncation{issuerPagesFull: 1, fullPageIssuers: map[string]bool{"GOTHER": true}}, true, false},
+	}
+	for _, c := range cases {
+		class, issuer := rwaByClass(rows, c.trunc)[0], rwaByIssuer(rows, c.trunc)[0]
+		if class.MarketCapLowerBound != c.wantClass || class.ReferenceValueLowerBound != c.wantClass {
+			t.Errorf("%s: class bounds = %v/%v, want %v", c.name, class.MarketCapLowerBound, class.ReferenceValueLowerBound, c.wantClass)
+		}
+		if issuer.MarketCapLowerBound != c.wantIssuer || issuer.ReferenceValueLowerBound != c.wantIssuer {
+			t.Errorf("%s: issuer bounds = %v/%v, want %v", c.name, issuer.MarketCapLowerBound, issuer.ReferenceValueLowerBound, c.wantIssuer)
 		}
 	}
 }

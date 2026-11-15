@@ -612,10 +612,13 @@ func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 		view = staleProtocolDetail(view)
 	}
 	// The cached view predates a later failed reserve read or lake stall, so the figure and its
-	// stale mark are read per request.
-	if tvls, _, _ := s.protocolTVLsAndTotal(ctx); view.TVL != nil {
+	// stale mark are read per request, and a figure the snapshot withdrew is not served.
+	if s.DEXTVL != nil {
+		tvls, _, _ := s.protocolTVLsAndTotal(ctx)
 		if t, ok := tvls[view.Name]; ok {
 			view.TVL = &t
+		} else {
+			view.TVL = nil
 		}
 	}
 	tvlStale := view.TVL != nil && view.TVL.Stale
@@ -1057,9 +1060,9 @@ func buildProtocolView(meta ProtocolMeta, contractCount int, events map[string]i
 	return v
 }
 
-// dexTVLLakeDerived names the protocols whose reserves are read from the lake: when the lake stops
-// advancing their refresh still succeeds, on old reserves.
-var dexTVLLakeDerived = map[string]bool{"soroswap": true, "phoenix": true, "comet": true}
+// dexTVLLakeDerived names the protocols whose reserves come from the lake, read directly or (aquarius) through the
+// projector: when the lake stops advancing their refresh still succeeds, on old reserves.
+var dexTVLLakeDerived = map[string]bool{"soroswap": true, "aquarius": true, "phoenix": true, "comet": true}
 
 // lakeStale reports whether the lake watermark is past its freshness threshold (false when no watermark reader is wired).
 func (s *Server) lakeStale(ctx context.Context) bool {

@@ -392,6 +392,8 @@ type rwaTruncation struct {
 	overIssuerCap   int
 	overContractCap int
 	issuerPagesFull int
+	// fullPageIssuers names the issuers behind issuerPagesFull.
+	fullPageIssuers map[string]bool
 	// unread counts contract candidates refused because the listing, curated-tag or symbol read
 	// did not answer: an outage, not a finding about the candidate.
 	unread int
@@ -409,6 +411,7 @@ func rwaTruncationOf(m rwaMembership, join rwaCatalogueJoin) rwaTruncation {
 		overIssuerCap:   m.overIssuerCap,
 		overContractCap: m.contractCensus.overCap,
 		issuerPagesFull: join.pagesTruncated,
+		fullPageIssuers: join.fullPageIssuers,
 		unread: m.listingCensus.listingUnavailable + m.listingCensus.tagsUnavailable +
 			m.listingCensus.symbolsUnread + m.contractCensus.symbolsUnread,
 	}
@@ -1196,8 +1199,8 @@ func (s *Server) buildRWAAssetsView(ctx context.Context) (rwaAssetsBuild, error)
 	}
 	trunc := rwaTruncationOf(m, join)
 	view.Summary = rwaSummarise(view.Assets, trunc)
-	view.ByClass = rwaByClass(view.Assets)
-	view.ByIssuer = rwaByIssuer(view.Assets)
+	view.ByClass = rwaByClass(view.Assets, trunc)
+	view.ByIssuer = rwaByIssuer(view.Assets, trunc)
 	view.Funnel = rwaFunnelOf(m, join, len(classicAssets), dirCounts.served, listingCounts.served, view.Assets)
 	// The curated arm runs LAST, over the finished verified view, so it can say which of its rows
 	// the verified set carries and never feeds a figure back into the totals above.
@@ -1278,6 +1281,8 @@ type rwaCatalogueJoin struct {
 	// pagesTruncated counts member issuers whose listing page filled to rwaAssetsPerIssuer, so a
 	// member in the unread tail cannot be found.
 	pagesTruncated int
+	// fullPageIssuers names those issuers: only their own totals can be missing such a member.
+	fullPageIssuers map[string]bool
 	// notObserved counts admitted members with no catalogue row: attested but never seen on chain.
 	notObserved int
 	// unanswered is true when a gate or directory read behind a row's figures failed: the rows are
@@ -1340,6 +1345,10 @@ func (s *Server) rwaListingRows(
 		// truncation so it is reported.
 		if len(rows) >= rwaAssetsPerIssuer {
 			join.pagesTruncated++
+			if join.fullPageIssuers == nil {
+				join.fullPageIssuers = map[string]bool{}
+			}
+			join.fullPageIssuers[issuer] = true
 		}
 		keep, memberCodes := rwaMatchMemberRows(codesByIssuer[issuer], rows)
 		if len(keep) == 0 {
@@ -1864,119 +1873,6 @@ func rwaWriteTruncation(b *strings.Builder, t rwaTruncation) {
 	if t.unread > 0 {
 		b.WriteString(" " + strconv.Itoa(t.unread) + " contract candidate(s) went unevaluated because a read the definition depends on did not answer (the funnel names which), so members may be missing and the total is a LOWER BOUND on the value of the set.")
 	}
-}
-
-// rwaUnclassified groups the oracle-basis assets, which declare no anchor class; inventing one
-// would be wrong.
-const rwaUnclassified = "unclassified"
-
-// rwaUnclassifiedNote travels with the group so the word is not read as a gap in this index's
-// data: the classic arm classifies only on what the ISSUERS declared.
-const rwaUnclassifiedNote = "Admitted because an independent oracle prices the instrument, not because an issuer declared a class. " +
-	"No class is published for these rows because none was declared in the SEP-1 vocabulary — one issuer's own attestation " +
-	"says `other`, another declares no anchor type at all. A class here would contradict the first issuer on their own asset " +
-	"and invent one for the second, so the group is named rather than filled."
-
-func rwaByClass(assets []RWAAsset) []RWAGroupTotal {
-	byClass := map[string][]RWAAsset{}
-	for _, a := range assets {
-		c := a.AnchorClass
-		if c == "" {
-			c = rwaUnclassified
-		}
-		byClass[c] = append(byClass[c], a)
-	}
-	out := make([]RWAGroupTotal, 0, len(byClass))
-	for c, group := range byClass {
-		total, valued := rwaSumMarketCaps(group)
-		refTotal, refValued := rwaSumReferenceValues(group)
-		row := RWAGroupTotal{
-			Class:                   c,
-			Assets:                  len(group),
-			MarketCapUSD:            total,
-			AssetsUnvalued:          len(group) - valued,
-			ReferenceValueUSD:       refTotal,
-			AssetsReferenceUnvalued: len(group) - refValued,
-		}
-		row.MarketCapLowerBound, row.ReferenceValueLowerBound = rwaGroupLowerBounds(group, valued, refValued)
-		if c == rwaUnclassified {
-			row.Note = rwaUnclassifiedNote
-		}
-		out = append(out, row)
-	}
-	sortRWAGroups(out)
-	return out
-}
-
-// rwaGroupLowerBounds reports, per basis, whether a group's published total leaves a member out or sums a floor supply.
-func rwaGroupLowerBounds(group []RWAAsset, valued, refValued int) (marketCap, reference bool) {
-	marketCap = valued > 0 && (valued < len(group) ||
-		rwaSumsAFloor(group, func(a RWAAsset) *string { return a.Valuation.MarketCapUSD }))
-	reference = refValued > 0 && (refValued < len(group) ||
-		rwaSumsAFloor(group, func(a RWAAsset) *string { return a.ReferenceValuation.ValueUSD }))
-	return marketCap, reference
-}
-
-func sortRWAGroups(out []RWAGroupTotal) {
-	sort.SliceStable(out, func(i, j int) bool {
-		li, lj := ratFromOptionalString(out[i].MarketCapUSD), ratFromOptionalString(out[j].MarketCapUSD)
-		switch {
-		case li != nil && lj == nil:
-			return true
-		case li == nil && lj != nil:
-			return false
-		case li != nil && lj != nil && li.Cmp(lj) != 0:
-			return li.Cmp(lj) > 0
-		}
-		return out[i].Class < out[j].Class
-	})
-}
-
-func rwaByIssuer(assets []RWAAsset) []RWAIssuerTotal {
-	order := make([]string, 0, 8)
-	byIssuer := map[string][]RWAAsset{}
-	for _, a := range assets {
-		// A contract row's empty Issuer is not a key, or all contract assets merge into one.
-		if a.Issuer == "" {
-			continue
-		}
-		if _, ok := byIssuer[a.Issuer]; !ok {
-			order = append(order, a.Issuer)
-		}
-		byIssuer[a.Issuer] = append(byIssuer[a.Issuer], a)
-	}
-	out := make([]RWAIssuerTotal, 0, len(order))
-	for _, issuer := range order {
-		group := byIssuer[issuer]
-		total, valued := rwaSumMarketCaps(group)
-		refTotal, refValued := rwaSumReferenceValues(group)
-		capFloor, refFloor := rwaGroupLowerBounds(group, valued, refValued)
-		out = append(out, RWAIssuerTotal{
-			Issuer:                   issuer,
-			Name:                     group[0].IssuerDirectoryName,
-			HomeDomain:               group[0].HomeDomain,
-			Assets:                   len(group),
-			MarketCapUSD:             total,
-			AssetsUnvalued:           len(group) - valued,
-			ReferenceValueUSD:        refTotal,
-			AssetsReferenceUnvalued:  len(group) - refValued,
-			MarketCapLowerBound:      capFloor,
-			ReferenceValueLowerBound: refFloor,
-		})
-	}
-	sort.SliceStable(out, func(i, j int) bool {
-		li, lj := ratFromOptionalString(out[i].MarketCapUSD), ratFromOptionalString(out[j].MarketCapUSD)
-		switch {
-		case li != nil && lj == nil:
-			return true
-		case li == nil && lj != nil:
-			return false
-		case li != nil && lj != nil && li.Cmp(lj) != 0:
-			return li.Cmp(lj) > 0
-		}
-		return out[i].Issuer < out[j].Issuer
-	})
-	return out
 }
 
 func rwaRefusalRows(refusals map[string]int) []RWARefusal {

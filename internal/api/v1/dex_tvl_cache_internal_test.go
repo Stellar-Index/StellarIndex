@@ -809,7 +809,7 @@ func TestDEXTVLCache_AquariusBasisStatesItsIdentityLimits(t *testing.T) {
 	if !ok {
 		t.Fatal("aquarius missing")
 	}
-	for _, want := range []string{"recovered by position", "either one's post-state"} {
+	for _, want := range []string{"recovered by position", "not always the last"} {
 		if !strings.Contains(snap.TVL.Basis, want) {
 			t.Errorf("aquarius basis = %q, want it to state %q", snap.TVL.Basis, want)
 		}
