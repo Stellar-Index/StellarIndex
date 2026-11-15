@@ -536,9 +536,21 @@ func refuseUnscaledContractCaps(rows []AssetDetail, scaled map[string]struct{}) 
 func (s *Server) contractSupplyReading(
 	ctx context.Context, assetID string,
 ) (string, supply.Basis, bool) {
+	figure, basis, ok, _ := s.contractSupplyReadingChecked(ctx, assetID)
+	return figure, basis, ok
+}
+
+// contractSupplyReadingChecked is [Server.contractSupplyReading] plus unread: the flow read did not answer,
+// which is not "no defensible figure" and must not be cached as one.
+func (s *Server) contractSupplyReadingChecked(
+	ctx context.Context, assetID string,
+) (figure string, basis supply.Basis, ok, unread bool) {
 	sup, err := s.TokenSupply.TokenSupply(ctx, assetID)
-	if err != nil || sup.Total == nil || sup.Incomplete {
-		return "", "", false
+	if err != nil {
+		return "", "", false, true
+	}
+	if sup.Total == nil || sup.Incomplete {
+		return "", "", false, false
 	}
 	// A token emitting no SEP-41 events is ABSENT from the event reader and sums to a confident zero.
 	// With no log at all, read held balances; if storage declines too there is no figure, as on
@@ -546,12 +558,13 @@ func (s *Server) contractSupplyReading(
 	if sup.FlowCount == 0 {
 		st, ok := s.contractStorageCirculating(ctx, assetID)
 		if !ok {
-			return "", "", false
+			// A SAC declines by design, so only a spent deadline is counted as unread here.
+			return "", "", false, ctx.Err() != nil
 		}
-		return st, supply.BasisContractStorageBalances, true
+		return st, supply.BasisContractStorageBalances, true, false
 	}
 	// The lake's event-flow sum over the contract's own mint/burn/clawback log.
-	return sup.Total.String(), supply.BasisSEP41LakeFlows, true
+	return sup.Total.String(), supply.BasisSEP41LakeFlows, true, false
 }
 
 // contractStorageCirculating reads supply from per-holder balance entries in contract storage, for a contract that emits no

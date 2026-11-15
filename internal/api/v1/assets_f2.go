@@ -49,22 +49,22 @@ type SorobanVolumeReader interface {
 // contractSupplySnapshot is the detail's supply for a Soroban token with no fresh observer snapshot, by the
 // one preference order [Server.contractSupplyReading] owns: the lake's flow sum, or held balances for a
 // contract with no flows. ok=false leaves the supply fields absent: an incomplete flow sum is not negative
-// supply, and "no event seen" is not zero (ADR-0003).
+// supply, and "no event seen" is not zero (ADR-0003). unread means the read did not answer.
 //
 // Bounded by tokenMetadataReadTimeout: it runs on the handler goroutine after the parallel reads, so an
 // unbounded slow sum would extend /v1/assets/{id} for a mere null field.
-func (s *Server) contractSupplySnapshot(ctx context.Context, contractID string) (supply.Supply, bool) {
+func (s *Server) contractSupplySnapshot(ctx context.Context, contractID string) (snap supply.Supply, ok, unread bool) {
 	sctx, cancel := context.WithTimeout(ctx, tokenMetadataReadTimeout)
 	defer cancel()
-	figure, basis, ok := s.contractSupplyReading(sctx, contractID)
+	figure, basis, ok, unread := s.contractSupplyReadingChecked(sctx, contractID)
 	if !ok {
-		return supply.Supply{}, false
+		return supply.Supply{}, false, unread
 	}
 	total, parsed := new(big.Int).SetString(figure, 10)
 	if !parsed {
-		return supply.Supply{}, false
+		return supply.Supply{}, false, false
 	}
-	return supply.Supply{AssetKey: contractID, TotalSupply: total, CirculatingSupply: total, Basis: basis}, true
+	return supply.Supply{AssetKey: contractID, TotalSupply: total, CirculatingSupply: total, Basis: basis}, true, false
 }
 
 // applyF2Fields fills the F2 supply/market-cap/FDV fields best-effort; nothing is fabricated (ADR-0011): no max_supply means no
@@ -122,9 +122,11 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	// The ClickHouse read is Soroban-only; a stale snapshot yields to the lake reading.
 	now := time.Now()
 	if (!haveSnap || supplyObservationStale(snap, now)) && s.TokenSupply != nil && asset.Type == canonical.AssetSoroban && asset.ContractID != "" {
-		if lake, ok := s.contractSupplySnapshot(ctx, asset.ContractID); ok {
+		lake, ok, unread := s.contractSupplySnapshot(ctx, asset.ContractID)
+		if ok {
 			snap, haveSnap, supplyFailed = lake, true, false
 		}
+		supplyFailed = supplyFailed || unread
 	}
 	detail.f2ReadFailed = volFailed || changeFailed || supplyFailed || detail.priceUnread
 
@@ -146,7 +148,11 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	if haveSnap {
 		detail.SupplyStale = supplyObservationStale(snap, now)
 		populateSupplyFields(detail, snap)
-		s.populateMarketCap(ctx, detail, asset, snap, key, priceSourceCount)
+		// Held balances are a floor, and the detail has no lower-bound flag for a cap: the supply serves
+		// under its basis and no cap is built on it.
+		if snap.Basis != supply.BasisContractStorageBalances {
+			s.populateMarketCap(ctx, detail, asset, snap, key, priceSourceCount)
+		}
 	}
 }
 

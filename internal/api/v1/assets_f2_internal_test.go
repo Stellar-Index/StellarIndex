@@ -239,6 +239,59 @@ func TestApplyF2Fields_SEP41FlowlessContractReadsStorageBalances(t *testing.T) {
 	}
 }
 
+// Held balances are a floor: the supply serves under its basis and no market cap is built on it, while a
+// flow-sum supply at the same price still gets one.
+func TestApplyF2Fields_NoMarketCapOnHeldBalances(t *testing.T) {
+	asset, err := canonical.NewSorobanAsset(supplyContractID)
+	if err != nil {
+		t.Fatalf("build soroban asset: %v", err)
+	}
+	price := "2"
+	run := func(flows int64, storage ContractStorageSupplyReader) *AssetDetail {
+		s := &Server{Options: Options{
+			TokenSupply: &fakeTokenSupply{supply: clickhouse.TokenSupply{
+				ContractID: supplyContractID,
+				Total:      big.NewInt(flows), Mint: big.NewInt(flows), Burn: big.NewInt(0), Clawback: big.NewInt(0),
+				FlowCount: uint64(flows),
+			}},
+			ContractStorageSupply: storage,
+		}, logger: slog.Default()}
+		detail := &AssetDetail{Decimals: 7, PriceUSD: &price}
+		s.applyF2Fields(context.Background(), detail, asset)
+		return detail
+	}
+	floor := run(0, &fakeStorageSupply{out: clickhouse.ContractStorageSupply{Total: big.NewInt(50_000_000), BalanceEntries: 3}})
+	if floor.TotalSupply == nil || floor.MarketCapUSD != nil {
+		t.Errorf("held balances: total=%v market_cap=%v, want a supply and no cap", floor.TotalSupply, floor.MarketCapUSD)
+	}
+	measured := run(50_000_000, nil)
+	if measured.MarketCapUSD == nil {
+		t.Errorf("flow sum: market_cap_usd is nil, want a cap (the control)")
+	}
+}
+
+// A flow read that did not answer is a failed read, so the detail is not cached as "no supply".
+func TestApplyF2Fields_UnreadContractSupplyIsAFailedRead(t *testing.T) {
+	asset, err := canonical.NewSorobanAsset(supplyContractID)
+	if err != nil {
+		t.Fatalf("build soroban asset: %v", err)
+	}
+	s := &Server{Options: Options{TokenSupply: &fakeTokenSupply{supplyErr: context.DeadlineExceeded}}, logger: slog.Default()}
+	detail := &AssetDetail{Decimals: 7}
+	s.applyF2Fields(context.Background(), detail, asset)
+	if detail.TotalSupply != nil || !detail.f2ReadFailed {
+		t.Errorf("unread supply: total=%v f2ReadFailed=%v, want nil and true", detail.TotalSupply, detail.f2ReadFailed)
+	}
+	flowless := &Server{Options: Options{TokenSupply: &fakeTokenSupply{supply: clickhouse.TokenSupply{
+		ContractID: supplyContractID, Total: big.NewInt(0), Mint: big.NewInt(0), Burn: big.NewInt(0), Clawback: big.NewInt(0),
+	}}}, logger: slog.Default()}
+	answered := &AssetDetail{Decimals: 7}
+	flowless.applyF2Fields(context.Background(), answered, asset)
+	if answered.f2ReadFailed {
+		t.Errorf("an answered read with no figure is not a failed read")
+	}
+}
+
 // A token whose flows net to zero has a measured supply of zero and is still served.
 func TestApplyF2Fields_SEP41FlowsNettingToZeroAreServed(t *testing.T) {
 	asset, err := canonical.NewSorobanAsset(supplyContractID)
