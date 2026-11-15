@@ -116,7 +116,7 @@ type PriceBatchQuery struct {
 	Quote    string // optional; server defaults to fiat:USD
 }
 
-// PriceBatch fetches the current closed-bucket VWAP for many assets in one round-trip (ADR-0015); an id absent from Data is either listed in [Envelope.Withheld] (price withheld) or has no data, and flags.stale is the OR over rows.
+// PriceBatch fetches the current closed-bucket VWAP for many assets in one round-trip (ADR-0015); an id absent from Data is listed in [Envelope.Withheld] (price withheld) or [Envelope.Unread] (read failed), or has no data, and flags.stale is the OR over rows.
 func (c *Client) PriceBatch(ctx context.Context, q PriceBatchQuery) (*Envelope[[]PriceSnapshot], error) {
 	if len(q.AssetIDs) == 0 {
 		return nil, &APIError{Status: 400, Title: "asset_ids required"}

@@ -13,11 +13,11 @@ type Envelope[T any] struct {
 	// windowed surfaces (History, Chart, OHLC) when the server could establish it. Nil means UNKNOWN, never "from the
 	// beginning of time"; a consumer needs it to tell a dead market from a window that predates the server's data.
 	CoverageFrom *time.Time `json:"coverage_from,omitempty"`
-	// Withheld names the requested ids [Client.PriceBatch] omitted from
-	// Data because the server declined to publish their price (thin
-	// market, flagged issuer, withheld upstream leg). An id in neither
-	// Data nor Withheld has no price data. Only the batch surface sets it.
+	// Withheld names the ids [Client.PriceBatch] omitted from Data because the server declined to publish their price (thin market,
+	// flagged issuer, withheld upstream leg). An id in none of Data, Withheld and Unread has no price data. Batch only.
 	Withheld []string `json:"withheld,omitempty"`
+	// Unread names the ids [Client.PriceBatch] omitted from Data because their price could not be read: unknown, not absent.
+	Unread []string `json:"unread,omitempty"`
 	// Thin names the ids in Data served from a market below the
 	// substance floor under the include_thin opt-in (batch only).
 	Thin []string `json:"thin,omitempty"`
