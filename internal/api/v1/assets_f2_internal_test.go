@@ -192,6 +192,29 @@ func TestApplyF2Fields_SEP41LakeFlowsIncompleteOmitted(t *testing.T) {
 	}
 }
 
+// A contract with no supply event has no measured supply: the detail must not publish "0" (a fully burned
+// token) with a market cap built on it.
+func TestApplyF2Fields_SEP41FlowlessContractIsNotZeroSupply(t *testing.T) {
+	asset, err := canonical.NewSorobanAsset(supplyContractID)
+	if err != nil {
+		t.Fatalf("build soroban asset: %v", err)
+	}
+	flowless := &fakeTokenSupply{supply: clickhouse.TokenSupply{
+		ContractID: supplyContractID,
+		Total:      big.NewInt(0), Mint: big.NewInt(0), Burn: big.NewInt(0), Clawback: big.NewInt(0),
+	}}
+	s := &Server{Options: Options{TokenSupply: flowless}, logger: slog.Default()}
+	detail := &AssetDetail{Decimals: 7}
+	s.applyF2Fields(context.Background(), detail, asset)
+	if detail.TotalSupply != nil || detail.CirculatingSupply != nil || detail.SupplyBasis != nil {
+		t.Errorf("flowless contract: total=%v circulating=%v basis=%v, want all nil",
+			detail.TotalSupply, detail.CirculatingSupply, detail.SupplyBasis)
+	}
+	if detail.MarketCapUSD != nil {
+		t.Errorf("flowless contract: market_cap_usd = %q, want nil", *detail.MarketCapUSD)
+	}
+}
+
 func mustBigIntInternal(s string) *big.Int {
 	v, ok := new(big.Int).SetString(s, 10)
 	if !ok {

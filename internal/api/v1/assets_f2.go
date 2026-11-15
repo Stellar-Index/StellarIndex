@@ -106,11 +106,14 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 		// null, as SEP41Computer.Compute does. Never clamp to 0: that would read as a real
 		// "fully burned" supply (ADR-0003).
 		//
+		// FlowCount == 0 is "no mint, burn or clawback event seen", not "supply is zero": a token that mints
+		// without those events would be served as fully burned. /v1/assets/{id}/supply gates on it too.
+		//
 		// Bounded by tokenMetadataReadTimeout: this runs AFTER the wg.Wait barrier on the handler
 		// goroutine, so an unbounded slow sum would extend /v1/assets/{id} for a mere null field.
 		sctx, scancel := context.WithTimeout(ctx, tokenMetadataReadTimeout)
 		defer scancel()
-		if ts, terr := s.TokenSupply.TokenSupply(sctx, asset.ContractID); terr == nil && ts.Total != nil && !ts.Incomplete {
+		if ts, terr := s.TokenSupply.TokenSupply(sctx, asset.ContractID); terr == nil && ts.Total != nil && !ts.Incomplete && ts.FlowCount > 0 {
 			snap = supply.Supply{
 				AssetKey:          asset.ContractID,
 				TotalSupply:       ts.Total,
