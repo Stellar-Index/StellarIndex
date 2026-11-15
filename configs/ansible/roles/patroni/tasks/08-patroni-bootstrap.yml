@@ -68,8 +68,10 @@
         group: postgres
         state: directory
         recurse: yes
+        follow: false
       when:
         - patroni_bootstrap_method == "pgbackrest"
+        - not _pg_data_present.stat.exists
   when:
     - patroni_bootstrap_method == "pgbackrest"
 

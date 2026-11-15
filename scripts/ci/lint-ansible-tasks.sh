@@ -22,7 +22,10 @@
 #   directory a service user owns, that user can plant the link and have root
 #   chown or chmod any file. A file task whose literal path is inside such a
 #   directory MUST set `follow: false` (`state: absent` never follows). A
-#   templated path (`{{ item }}`) is not seen.
+#   templated path (`{{ item }}`) is not seen, except with `recurse:`: that
+#   walks a whole tree, follows every link in it and recurses into a linked
+#   directory, so a recursing file task MUST set `follow: false` whatever
+#   its path.
 #
 # Rule 4: stage-in-tmp. A task that downloads, unpacks or copies through a
 #   literal path under /tmp or /var/tmp runs as root on a name any local user
@@ -102,7 +105,12 @@ for f in "${yml_files[@]}"; do
                file, file_path_line, task_name)
         n++
       }
-      file_path_line = 0; file_absent = 0; follow_false = 0
+      if (recurse_line && !file_path_line && !file_absent && !follow_false) {
+        printf("%s:%d: follow-in-service-dir: recursing file task has no `follow: false` — root would chown/chmod the target of every link in the tree (task: %s)\n",
+               file, recurse_line, task_name)
+        n++
+      }
+      file_path_line = 0; file_absent = 0; follow_false = 0; recurse_line = 0
       is_shell = 0; is_cmd = 0; pipefail_line = 0; bash_exec = 0; task_line = 0; task_name = ""
       key = ""; subkey = ""; key_indent = -1
     }
@@ -142,6 +150,7 @@ for f in "${yml_files[@]}"; do
       if (line ~ /^[ \t]*executable:[ \t]*\/bin\/bash[ \t]*$/) bash_exec = 1
       if (key == "ansible.builtin.file" || key == "file") {
         if (line ~ /^[ \t]*(path|dest|name):[ \t]*"?\/(var\/lib\/(stellar-core|galexie|minio|clickhouse|promtail|postgresql|stellarindex)|srv\/history-archive|tmp|var\/tmp)\/[^ \t"]/) file_path_line = NR
+        if (line ~ /^[ \t]*recurse:[ \t]*(yes|true)[ \t]*$/) recurse_line = NR
         if (line ~ /^[ \t]*state:[ \t]*absent[ \t]*$/) file_absent = 1
         if (line ~ /^[ \t]*follow:[ \t]*(false|no)[ \t]*$/) follow_false = 1
       }

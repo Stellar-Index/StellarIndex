@@ -151,6 +151,20 @@ cat > "$F/follow.yml" <<'YML'
   ansible.builtin.file:
     path: /etc/galexie/conf.d
     state: directory
+
+- name: bad — recursing chown through a templated path
+  file:
+    path: "{{ patroni_data_dir }}"
+    owner: postgres
+    state: directory
+    recurse: yes
+
+- name: good — recursing, links not followed
+  file:
+    path: "{{ patroni_data_dir }}"
+    owner: postgres
+    recurse: true
+    follow: false
 YML
 
 cat > "$T/stage.yml" <<'YML'
@@ -245,7 +259,7 @@ run() { (cd "$ROOT" && BASELINE="${1:-/nonexistent}" bash scripts/ci/lint-ansibl
 
 echo "case: no baseline"
 out="$(run)"; rc=$?
-expect_rc 13 "exit code = 13 findings"
+expect_rc 14 "exit code = 14 findings"
 expect_hit 'stage.yml:5: stage-in-tmp' "download into /tmp flagged"
 expect_hit 'stage.yml:9: stage-in-tmp' "quoted src under /tmp flagged"
 expect_miss 'stage.yml:1[0-9]:' "root-only scratch dir not flagged"
@@ -253,6 +267,8 @@ expect_miss 'stage.yml:2[0-9]:' "removal of a /tmp leftover not flagged"
 expect_hit 'follow.yml:4: follow-in-service-dir' "file task inside a service dir without follow: false flagged"
 expect_miss 'follow.yml:1[0-9]:' "follow: false and state: absent not flagged"
 expect_miss 'follow.yml:2[0-9]:' "service dir itself and root-owned tree not flagged"
+expect_hit 'follow.yml:34: follow-in-service-dir' "recursing file task on a templated path without follow: false flagged"
+expect_miss 'follow.yml:4[0-9]:' "recursing file task with follow: false not flagged"
 expect_hit 'pipefail.yml:2: pipefail-needs-bash' "bad pipefail task flagged"
 expect_miss 'pipefail.yml:9:' "cmd-form bash task not flagged"
 expect_miss 'pipefail.yml:17:' "args-form bash task not flagged"
@@ -279,8 +295,8 @@ expect_hit 'scanned 5 task files + 4 shell scripts' "self-accounting line"
 echo "case: baseline suppresses + stale entry fails"
 printf 'secret-on-argv\tconfigs/ansible/roles/fx/tasks/secrets.yml\npipefail-needs-bash\tconfigs/ansible/roles/fx/tasks/nolonger.yml\n' > "$TMP/baseline"
 out="$(run "$TMP/baseline")"; rc=$?
-# 13 live findings − 3 baselined (all secrets.yml) + 1 stale = 11
-expect_rc 11 "exit code = 11"
+# 14 live findings − 3 baselined (all secrets.yml) + 1 stale = 12
+expect_rc 12 "exit code = 12"
 expect_hit 'baselined (shrink-only' "baselined finding reported"
 expect_hit 'STALE baseline entry.*nolonger.yml' "stale entry flagged"
 

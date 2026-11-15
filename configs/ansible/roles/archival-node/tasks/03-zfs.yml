@@ -167,17 +167,33 @@
   check_mode: false
 
 # A pool on these devices under another name, or one the scan cannot list,
-# passes the name check above. `zdb -l` exits 0 only when it reads a label;
-# whole-disk vdevs carry theirs on the first partition.
-- name: Read the ZFS label on each data device and its first partition
+# passes the name check above. A whole-disk vdev carries its label on a
+# partition, named differently per path style (-part1, p1, 1), so the
+# kernel lists them. `zdb -l` exits 2 for "no label"; only that clears a
+# device: 0 is a label and anything else is "could not tell".
+- name: List each data device and its partitions
+  ansible.builtin.command:
+    argv:
+      - lsblk
+      - -nrpo
+      - NAME
+      - "{{ item }}"
+  loop: "{{ zfs_data_devices }}"
+  register: zfs_device_tree
+  when: zpool_list.rc != 0
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Read the ZFS label on each data device and every partition of it
   ansible.builtin.command:
     argv:
       - zdb
       - -l
-      - "{{ item.0 }}{{ item.1 }}"
-  loop: "{{ zfs_data_devices | product(['', '-part1']) | list }}"
-  loop_control:
-    label: "{{ item.0 }}{{ item.1 }}"
+      - "{{ item }}"
+  loop: >-
+    {{ zfs_device_tree.results | selectattr('stdout_lines', 'defined')
+       | map(attribute='stdout_lines') | flatten | unique | list }}
   register: zfs_label_probe
   when: zpool_list.rc != 0
   changed_when: false
@@ -192,11 +208,15 @@
         (('pool: ' + zfs_data_pool_name not in zpool_import_scan.stdout)
         and (zpool_import_scan.rc == 0
         or 'no pools available' in (zpool_import_scan.stdout + zpool_import_scan.stderr))
-        and (zfs_label_probe.results | selectattr('rc', 'defined') | selectattr('rc', 'equalto', 0) | list | length == 0))
+        and (zfs_device_tree.results | selectattr('rc', 'defined') | selectattr('rc', 'equalto', 0)
+             | selectattr('stdout') | list | length == zfs_data_devices | length)
+        and (zfs_label_probe.results | rejectattr('rc', 'defined') | list | length == 0)
+        and (zfs_label_probe.results | selectattr('rc', 'defined') | rejectattr('rc', 'equalto', 2) | list | length == 0))
     fail_msg: >-
       The data devices may already hold a ZFS pool: `zpool import` listed
-      '{{ zfs_data_pool_name }}', or its scan failed, or `zdb -l` read a label on
-      {{ zfs_label_probe.results | selectattr('rc', 'defined') | selectattr('rc', 'equalto', 0) | map(attribute='item') | map('join') | join(', ') | default('no device', true) }}.
+      '{{ zfs_data_pool_name }}', or its scan failed, or `lsblk` could not list a
+      device, or `zdb -l` did not report "no label" (exit 2) on
+      {{ zfs_label_probe.results | selectattr('rc', 'defined') | rejectattr('rc', 'equalto', 2) | map(attribute='item') | join(', ') | default('no device', true) }}.
       `zpool create -f` would overwrite it, destroying Postgres, the ClickHouse lake and
       MinIO. Investigate with `zpool import` and `zdb -l <device>` before proceeding. If
       this really is a fresh build, re-run with -e zfs_data_pool_recreate_ack=true.

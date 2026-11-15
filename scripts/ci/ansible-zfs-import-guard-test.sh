@@ -74,14 +74,29 @@ case "$1" in
   *) exit 0 ;;
 esac
 SH
-# Stub zdb: `-l <dev>` exits 0 (label read) only for the device named in
-# $TMP/labelled, else 2 (no valid label).
+# Stub zdb: `-l <dev>` exits 0 (label read) for the device named in
+# $TMP/labelled, 1 (could not open) for the one in $TMP/unreadable, else 2
+# (no valid label).
 cat > "$TMP/bin/zdb" <<'SH'
 #!/bin/sh
 [ "$2" = "$(cat ZFS_TEST_TMP/labelled)" ] && exit 0
+[ "$2" = "$(cat ZFS_TEST_TMP/unreadable)" ] && exit 1
 exit 2
 SH
-for b in zpool zdb; do
+# Stub lsblk: `-nrpo NAME <dev>` prints the kernel name of the device and of
+# each partition, as the real one does for a by-id link or a kernel path.
+cat > "$TMP/bin/lsblk" <<'SH'
+#!/bin/sh
+[ "$3" = "$(cat ZFS_TEST_TMP/unlistable)" ] && exit 32
+case "$3" in
+  /dev/disk/by-id/a-part5) echo /dev/sda5 ;;
+  /dev/disk/by-id/b) echo /dev/sdb; echo /dev/sdb1; echo /dev/sdb9 ;;
+  /dev/nvme0n1) echo /dev/nvme0n1; echo /dev/nvme0n1p1; echo /dev/nvme0n1p9 ;;
+  /dev/nvme1n1) echo /dev/nvme1n1; echo /dev/nvme1n1p1; echo /dev/nvme1n1p9 ;;
+  *) exit 32 ;;
+esac
+SH
+for b in zpool zdb lsblk; do
   sed -i.bak "s#ZFS_TEST_TMP#$TMP#" "$TMP/bin/$b" && rm -f "$TMP/bin/$b.bak"
   chmod +x "$TMP/bin/$b"
 done
@@ -105,6 +120,8 @@ run_case() {  # <desc> <import-output> <expect: succeeded|refused> [extra ansibl
   printf '%s\n' "$import_output" > "$TMP/import-output"
   printf '%s\n' "${IMPORT_RC:-0}" > "$TMP/import-rc"
   printf '%s\n' "${LABELLED:-none}" > "$TMP/labelled"
+  printf '%s\n' "${UNREADABLE:-none}" > "$TMP/unreadable"
+  printf '%s\n' "${UNLISTABLE:-none}" > "$TMP/unlistable"
   out="$(cd "$TMP" && PATH="$TMP/bin:$PATH" ANSIBLE_LOCALHOST_WARNING=false ANSIBLE_INVENTORY_UNPARSED_WARNING=false \
          ansible-playbook -i localhost, fixture.yml "$@" 2>&1)"
   rc=$?
@@ -129,20 +146,37 @@ run_case "no importable pools" "no pools available to import" succeeded
 
 # D. a pool under another name: the scan does not list the target, but a
 # member device carries a label → must refuse
-LABELLED=/dev/disk/by-id/a-part5 run_case "foreign-named pool, label on a partition vdev" "  pool: tank-old
+LABELLED=/dev/sda5 run_case "foreign-named pool, label on a partition vdev" "  pool: tank-old
     id: 99
    state: ONLINE" refused
 
 # E. whole-disk vdev: the label is on its first partition
-LABELLED=/dev/disk/by-id/b-part1 run_case "label on a whole-disk vdev's first partition" \
+LABELLED=/dev/sdb1 run_case "label on a whole-disk vdev's first partition" \
   "no pools available to import" refused
 
 # F. the scan itself failed → not evidence of empty disks
 IMPORT_RC=1 run_case "import scan errored" "cannot discover pools: permission denied" refused
 
 # G. labelled, acknowledged → proceeds
-LABELLED=/dev/disk/by-id/b-part1 run_case "label found, ack given" "no pools available to import" \
+LABELLED=/dev/sdb1 run_case "label found, ack given" "no pools available to import" \
   succeeded -e zfs_data_pool_recreate_ack=true
+
+KERNEL_DEVICES='{"zfs_data_devices": ["/dev/nvme0n1", "/dev/nvme1n1"]}'
+
+# H. whole disks named by kernel path: the label partition is nvme0n1p1,
+# which no `-part1` suffix reaches
+LABELLED=/dev/nvme1n1p1 run_case "label on a kernel-named whole disk's partition" \
+  "no pools available to import" refused -e "$KERNEL_DEVICES"
+
+# I. kernel-named and clean → proceeds
+run_case "kernel-named whole disks, no label" "no pools available to import" \
+  succeeded -e "$KERNEL_DEVICES"
+
+# J. zdb could not open a device → not evidence of an empty disk
+UNREADABLE=/dev/sdb1 run_case "zdb cannot read a partition" "no pools available to import" refused
+
+# K. a device the kernel cannot list → nothing was probed on it
+UNLISTABLE=/dev/disk/by-id/b run_case "lsblk cannot list a device" "no pools available to import" refused
 
 echo
 echo "ansible-zfs-import-guard-test: $pass passed, $fail failed"
