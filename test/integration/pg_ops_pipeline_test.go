@@ -1203,6 +1203,36 @@ func TestFindPerSourceLedgerGapsSeedClosesWindowBoundary(t *testing.T) {
 	if want := int64(81004 - 1006 + 1); g.Size != want {
 		t.Errorf("gap size = %d; want %d", g.Size, want)
 	}
+
+	// A caller repairing exactly [from, to] needs both edges bracketed: a range holding no row is one gap, and a gap that
+	// touches either end is returned.
+	for _, tc := range []struct {
+		name               string
+		from, to           int64
+		wantStart, wantEnd int64
+	}{
+		{"no row in the range", 2000, 3000, 2000, 3000},
+		{"gap runs to the end", 1003, 1010, 1006, 1010},
+		{"gap runs from the start", 990, 1002, 990, 999},
+	} {
+		got, err := store.FindLedgerGapsInRange(ctx, target, tc.from, tc.to, 1)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if len(got) != 1 || got[0].Start != tc.wantStart || got[0].End != tc.wantEnd {
+			t.Errorf("%s: FindLedgerGapsInRange(%d,%d) = %+v; want one gap [%d,%d]", tc.name, tc.from, tc.to, got, tc.wantStart, tc.wantEnd)
+		}
+		open, err := store.FindPerSourceLedgerGaps(ctx, target, tc.from, tc.to, 1, 0)
+		if err != nil {
+			t.Fatalf("%s unbracketed: %v", tc.name, err)
+		}
+		if len(open) != 0 {
+			t.Errorf("%s: the unbracketed scan found %+v; this case no longer shows what the bracketing adds", tc.name, open)
+		}
+	}
+	if got, err := store.FindLedgerGapsInRange(ctx, target, 1000, 1005, 1); err != nil || len(got) != 0 {
+		t.Errorf("FindLedgerGapsInRange over a full range = %+v, %v; want no gap", got, err)
+	}
 }
 
 // soroban_events is partitioned by ledger_close_time, so the gap scan bounds that column by close times from

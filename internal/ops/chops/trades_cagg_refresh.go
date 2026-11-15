@@ -148,7 +148,7 @@ func sizeTradesCAGGBacklog(ctx context.Context, s tradesCAGGSizer, now time.Time
 	below, catchUp := splitTradesCAGGBacklogs(backlogs, noFloor)
 	if !catchUp.lo.IsZero() {
 		plan := timescale.PlanCAGGRefresh(timescale.TradesCAGGs, func(c timescale.CAGGSpec) (time.Time, time.Time) {
-			return tradesCAGGRefreshWindow(catchUp.lo, catchUp.hi, c.MinWindow)
+			return timescale.PadRefreshWindow(catchUp.lo, catchUp.hi, c.MinWindow)
 		})
 		gap, _, ok, err := newestUncoveredTwapRead(ctx, s, plan, now.Add(-prices1mSettle))
 		if err != nil {
@@ -263,7 +263,7 @@ func printTradesCAGGCatchUp(ctx context.Context, s tradesCAGGSizer, out io.Write
 }
 
 // tradesCAGGNonForcedFloor is the earliest trade time a -force=false run may start at, so every planned twap window
-// ([tradesCAGGRefreshWindow]) starts at or after prices_1m's earliest materialised bucket.
+// ([timescale.PadRefreshWindow]) starts at or after prices_1m's earliest materialised bucket.
 func tradesCAGGNonForcedFloor(prices1mEarliest time.Time) time.Time {
 	var pad time.Duration
 	for _, c := range timescale.TradesCAGGs {
@@ -341,7 +341,7 @@ func planTradesCAGGRefresh(ctx context.Context, s tradesCAGGStore, from, to uint
 		return time.Time{}, time.Time{}, nil, fmt.Errorf("time span of ledgers [%d,%d]: %w", from, to, err)
 	}
 	plan := timescale.PlanCAGGRefresh(timescale.TradesCAGGs, func(c timescale.CAGGSpec) (time.Time, time.Time) {
-		return tradesCAGGRefreshWindow(tsFrom, tsTo, c.MinWindow)
+		return timescale.PadRefreshWindow(tsFrom, tsTo, c.MinWindow)
 	})
 	if !force {
 		if err := refuseTwapsBelowPrices1mFloor(ctx, s, plan, from, to); err != nil {
@@ -368,11 +368,4 @@ func previewTradesCAGGRefresh(ctx context.Context, s tradesCAGGStore, from, to u
 		}
 	}
 	return nil
-}
-
-// tradesCAGGRefreshWindow widens [from, to] by half the view's MinWindow per side: Timescale refreshes only buckets wholly inside the
-// window, so edge buckets need the padding, which also clears the two-bucket minimum.
-func tradesCAGGRefreshWindow(from, to time.Time, minWindow time.Duration) (time.Time, time.Time) {
-	pad := minWindow / 2
-	return from.Add(-pad), to.Add(pad)
 }

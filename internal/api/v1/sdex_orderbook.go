@@ -64,10 +64,9 @@ const (
 type SDEXOfferBookReader interface {
 	LoadLiveOffers(ctx context.Context) ([]clickhouse.LiveOffer, uint32, error)
 	OfferChangesSince(ctx context.Context, fromLedger uint32) ([]clickhouse.OfferChange, uint32, error)
-	// OfferRemovedAt reports which refs have a `removed` change row at
-	// their own winning ledger — the version-tie zombie probe (the
-	// clickhouse implementation's doc explains the tie).
-	OfferRemovedAt(ctx context.Context, refs []clickhouse.OfferRemovalRef) (map[string]struct{}, error)
+	// ResolveTiedOffers settles each ref from the change log at its ledger: removed, its last post-image,
+	// or neither when the log cannot say.
+	ResolveTiedOffers(ctx context.Context, refs []clickhouse.OfferRemovalRef) (map[string]clickhouse.TiedOffer, error)
 }
 
 // SDEXOrderBookCache is the in-process live offer book (Load, Advance, MaintainTick); offers with intra_ledger_seq==0 are AMBIGUOUS and quarantined until VerifyPending proves no removal, and before the first Load the handler serves 503.
@@ -196,7 +195,8 @@ func partitionLoadedBook(book, trusted map[string]clickhouse.LiveOffer) (served,
 			continue
 		}
 		if prev, ok := trusted[k]; ok && prev.Version == o.Version {
-			served[k] = o
+			// prev, not o: the loaded row at a tied version may be the pre-image the verify replaced.
+			served[k] = prev
 			continue
 		}
 		pending[k] = o
@@ -236,7 +236,7 @@ func (c *SDEXOrderBookCache) VerifyPending(ctx context.Context, limit int) (err 
 	}
 	start := time.Now()
 	defer func() { observeMaintain("verify", start, err) }()
-	dead, err := c.reader.OfferRemovedAt(ctx, refs)
+	resolved, err := c.reader.ResolveTiedOffers(ctx, refs)
 	if err != nil {
 		if c.logger != nil {
 			c.logger.Warn("sdex order book verify", "err", err)
@@ -245,22 +245,39 @@ func (c *SDEXOrderBookCache) VerifyPending(ctx context.Context, limit int) (err 
 	}
 	c.mu.Lock()
 	for _, ref := range refs {
-		o, ok := c.pending[ref.KeyXDR]
-		if !ok || o.Ledger != ref.Ledger {
-			continue // superseded by an Advance since the refs were drawn
-		}
-		c.dropPendingLocked(ref.KeyXDR)
-		if _, gone := dead[ref.KeyXDR]; gone {
-			continue // proven dead — never serve, never re-check
-		}
-		if prev, dup := c.offers[ref.KeyXDR]; dup && prev.Version >= o.Version {
-			continue
-		}
-		c.offers[ref.KeyXDR] = o
+		c.settlePendingLocked(ref, resolved[ref.KeyXDR])
 	}
 	c.updateHealthGaugesLocked()
 	c.mu.Unlock()
 	return nil
+}
+
+// settlePendingLocked moves one pending offer to the book, drops it, or leaves it withheld, by what the change log resolved.
+func (c *SDEXOrderBookCache) settlePendingLocked(ref clickhouse.OfferRemovalRef, res clickhouse.TiedOffer) {
+	o, ok := c.pending[ref.KeyXDR]
+	if !ok || o.Ledger != ref.Ledger {
+		return // superseded by an Advance since the refs were drawn
+	}
+	if !res.Removed && !res.HasPost && !res.Loaded {
+		return // the log cannot say which image is current: stays withheld
+	}
+	c.dropPendingLocked(ref.KeyXDR)
+	if res.Removed {
+		return // proven dead — never serve, never re-check
+	}
+	// Serve the post-image, never the tied survivor: that row may be the pre-image of this update.
+	post := o
+	if res.HasPost {
+		post = res.Post
+		post.KeyXDR, post.Ledger, post.Version = o.KeyXDR, o.Ledger, o.Version
+	}
+	if post.Amount <= 0 || post.PriceN <= 0 || post.PriceD <= 0 {
+		return
+	}
+	if prev, dup := c.offers[ref.KeyXDR]; dup && prev.Version >= post.Version {
+		return
+	}
+	c.offers[ref.KeyXDR] = post
 }
 
 // Advance applies offer changes since the cursor by version (>= wins), so duplicated rows are idempotent; a tick with zero cursor progress records "advance_held".

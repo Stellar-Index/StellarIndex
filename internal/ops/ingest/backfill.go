@@ -623,6 +623,12 @@ func refreshCAGGsForChunk(ctx context.Context, logger *slog.Logger, store caggRe
 	return nil
 }
 
+// RefreshCAGGsForRange is the post-write refresh for a writer outside this package (ch-rebuild): every
+// aggregate rooted on trades or oracle_updates is re-materialised over the rows [from, to] holds.
+func RefreshCAGGsForRange(ctx context.Context, logger *slog.Logger, store *timescale.Store, from, to uint32) error {
+	return refreshCAGGsForChunk(ctx, logger, store, chunkRange{from: from, to: to})
+}
+
 // caggRoot is a hypertable backfill writes, how to find the time span a
 // ledger range wrote to it, and the aggregates rooted on it.
 type caggRoot struct {

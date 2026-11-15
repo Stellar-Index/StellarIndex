@@ -371,6 +371,7 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	includeSEP41 := fs.Bool("sep41", false, "also re-derive the SEP-41 watched-contract sources (sep41_transfers, sep41_supply) from the lake via a contract_id-prefiltered event pass (their topics are the CAP-67 firehose the main pass excludes). FULL re-derive contract: for a whole-history rebuild run this as part of the truncate+re-derive procedure — TRUNCATE sep41_transfers + sep41_supply_events FIRST (historical rows predate the migration-0057 event_index PK, so multiple same-op events sit COLLAPSED on disk; the idempotent ON CONFLICT writes cannot un-collapse them — recover-into-existing is accepted only if you accept that residue). ROLLUP: when the SUPPLY source is re-derived, -write AUTO-RESETS the sep41_supply_rollup fold checkpoint after the events land (a FULL re-derive resets every watched contract's fold columns) and re-folds it from zero in place instead of double-counting the re-derived history (the KALE 2× served-value bug, incident 2026-07-06); the seeded migration-0088 genesis baseline is PRESERVED, so no manual TRUNCATE sep41_supply_rollup + re-seed is needed. After a full-history -write re-derive the two sources become eligible for the ADR-0033 projection reconcile — DONE (2026-07-11, windows 50.0M-63.42M, rc=0): buildReconciliationCatalogue now promotes them into the default catalogue unconditionally whenever [supply] watched_sep41_contracts is configured (no further code change needed), so verify-reconciliation/ch-reproject/compute-completeness all see them. Because that promotion is config-gated, not re-derive-state-gated, a FUTURE full truncate+re-derive will show the two sources as reconcile-red for the DURATION of the rebuild (truncated table vs. lake expectation) exactly like any other source mid-rebuild — expected, not a regression. For a SCOPED dropped-rows recovery (a decoder bug that lost a handful of rows from post-0057-clean data), use -contracts to narrow to the affected contracts instead — no truncate needed, the additive ON CONFLICT write only ADDS the missing rows (docs/operations/sep41-mint-recovery.md). Requires [supply] watched_sep41_contracts. Respects -sources.")
 	contractsCSV := fs.String("contracts", "", "comma-separated contract C-strkeys to SCOPE the read to (default: no scope). For -sep41 this REPLACES [supply] watched_sep41_contracts as the contract_id READ prefilter, so a scoped recovery does an indexed scan of ONLY these contracts' events (far cheaper than all watched contracts) and idempotently ADDS their missing rows — the leanest way to recover dropped rows without a full re-derive. With -sep41 -write on the SUPPLY source, ONLY these contracts' sep41_supply_rollup fold rows are reset afterwards (genesis baseline preserved) and re-folded from zero in place over their recovered below-checkpoint rows — a scoped recovery is safe by default, no manual rollup surgery. Must be a SUBSET of the watched set: the sep41 decoders still gate Matches() on the full watched set, so a contract outside it is read but decoded to nothing (a warning is printed). For the general event pass it is an extra decode-time contract gate. See docs/operations/sep41-mint-recovery.md.")
 	sep41SupplyOnly := fs.Bool("sep41-supply-only", false, "with -sep41 -sources sep41_supply: narrow the CH read to the supply-affecting topics (mint/burn/clawback) via the topic_0_sym prefilter, skipping the transfer firehose at the SQL layer — so recovering a high-transfer-volume contract's few mints does not re-read millions of transfer events. Invalid unless sep41_transfers is disabled (via -sources sep41_supply): the topic prefilter would otherwise silently drop transfer recovery.")
+	refreshCAGGs := fs.Bool("refresh-caggs", true, "after a -write that landed trade or oracle rows, re-materialise the price and volume aggregates over [from,to]; without it the served OHLC, VWAP and volume keep the pre-rebuild figures. Leave on unless a wrapper refreshes afterwards")
 	bulkTrades := fs.Bool("bulk-trades", false, "with -write: land trade rows through the BULK backfill writer (timescale.Store.BulkBackfillTrades) instead of the per-batch upsert. Opt-in and BACKFILL-ONLY. It proves - per source, scoped by ledger AND ts - that the target range holds no stored rows, then resolves usd_volume for the whole buffer through a worker pool and streams the rows in over parallel binary COPY connections. Rows are identical to the upsert path's (same storability gate, same intra-batch PK dedupe, same tradeUSDVolume waterfall, same derive_generation, same source_entry_counts / registry / sentinel side effects); the difference is that a latency-bound workload stops being serial. If the range is NOT empty - or a COPY hits a unique violation because something wrote underneath it - the buffer is handed to the ordinary generation-guarded upsert instead and the run says so. Worth it for a historical re-derive below the source's floor; pointless (and it will just fall back) for a recovery into populated ledgers.")
 	allowLiveOverlap := fs.Bool("allow-live-overlap", false, "DANGEROUS: bypass the live-cursor guard and -write a range the live projector's cursor for a PROJECTED source is still inside. Only pass this if you have independently verified the live projector will not process this range concurrently — see the ADR-0048 D3 one-writer contract on checkCHRebuildLiveOverlap.")
 	preflight := fs.Bool("preflight", false, "with -write: run the refusals this exact -write invocation would hit BEFORE it reads the lake — the BackfillSafe gate (both legs), the live-cursor one-writer guard, and the buffered-range ceiling — then print one line naming the sources it would re-derive (`"+chRebuildPreflightPrefix+" [from,to] rederive=a,b,c`) on stdout and exit 0 WITHOUT reading the lake or writing a row (the per-WASM replay gate does read the ClickHouse instance index). A refusal exits non-zero exactly as the real run would. It exists for a caller that must do something destructive before the re-derive (scripts/ops/ch-rebuild-projected.sh DELETEs the window first): ask here, and delete only what this prints. Runtime failures (a lake stream error, a failed write) are by nature not covered.")
@@ -782,7 +783,8 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 			}
 			var ng int
 			for _, tgt := range targets {
-				gaps, gerr := store.FindPerSourceLedgerGaps(ctx, tgt, int64(lo), int64(hi), 1, 0)
+				// Both edges bracketed: a span dropped whole holds no served row and is itself the gap.
+				gaps, gerr := store.FindLedgerGapsInRange(ctx, tgt, int64(lo), int64(hi), 1)
 				if gerr != nil {
 					return fmt.Errorf("ch-rebuild: find sdex gaps: %w", gerr)
 				}
@@ -926,7 +928,42 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	if !write {
 		fmt.Printf("\n(dry-run — re-run with -write to persist to Postgres)\n")
 	}
-	return errors.Join(rerr, serr)
+	return errors.Join(rerr, serr, refreshAfterCHRebuild(ctx, os.Stderr, write, *refreshCAGGs, written, lo, hi,
+		func(rctx context.Context) error { return ingest.RefreshCAGGsForRange(rctx, logger, store, lo, hi) }))
+}
+
+// chRebuildFeedsAggregates reports whether the run wrote a row that a continuous aggregate is built on.
+// SEP-41, lending and bridge rows feed none; an unregistered source is assumed to.
+func chRebuildFeedsAggregates(written map[string]int) bool {
+	for name, n := range written {
+		if n == 0 || name == sep41transfers.SourceName || name == sep41supply.SourceName {
+			continue
+		}
+		if c := external.Lookup(name).Class; c == external.ClassLending || c == external.ClassBridge {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// refreshAfterCHRebuild re-materialises the aggregates over a range this run rewrote. No refresh policy reaches
+// back to a historical range and the views serve materialised buckets only, so without it the served OHLC,
+// VWAP and volume keep the pre-rebuild figures while the run reports success. Not cancelled with the run: the
+// rows are already written.
+func refreshAfterCHRebuild(ctx context.Context, w io.Writer, write, refresh bool, written map[string]int, lo, hi uint32, run func(context.Context) error) error {
+	if !write || !chRebuildFeedsAggregates(written) {
+		return nil
+	}
+	if !refresh {
+		_, _ = fmt.Fprintf(w, "ch-rebuild: FOLLOW-UP OWED: the trade and oracle aggregates over [%d,%d] are NOT refreshed (-refresh-caggs=false); served OHLC, VWAP and volume keep the old figures until `stellarindex-ops %s` covers the range\n", lo, hi, tradesCAGGRefreshVerb)
+		return nil
+	}
+	_, _ = fmt.Fprintf(w, "ch-rebuild: refreshing the aggregates over [%d,%d]\n", lo, hi)
+	if err := run(context.WithoutCancel(ctx)); err != nil {
+		return fmt.Errorf("ch-rebuild: rows are written but the aggregates over [%d,%d] are not refreshed (served OHLC, VWAP and volume are stale; re-run, or run `stellarindex-ops %s`): %w", lo, hi, tradesCAGGRefreshVerb, err)
+	}
+	return nil
 }
 
 // reportCHRebuildCounts prints a row per source that wrote or failed anything, and per re-derived source even at zero, so an empty

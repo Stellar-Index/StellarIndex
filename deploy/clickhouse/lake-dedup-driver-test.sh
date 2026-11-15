@@ -350,7 +350,15 @@ fi
 # ── 8. an enumeration ABORT overwrites a previous clean run's state ───
 # Case 7's .prom says last_exit_ok=1; an abort before the candidate count is
 # known must replace it with 0, or the failure is invisible.
-run metrics_enum_fail ENUM_FAIL=1 TEXTFILE_DIR="$PROMDIR" -- operations
+# A group member of the textfile directory plants the old fixed progress name as a link: root must not write through it.
+PRIV_TMP="$TMP/privtmp"; mkdir -p "$PRIV_TMP"
+ln -s "$TMP/planted-victim" "$PROM_FILE.progress"
+run metrics_enum_fail ENUM_FAIL=1 TEXTFILE_DIR="$PROMDIR" TMPDIR="$PRIV_TMP" -- operations
+if [ -e "$TMP/planted-victim" ]; then
+  bad "metrics enum-fail run: the driver wrote through a link planted at the progress name"
+else
+  ok "metrics enum-fail run: a link planted at the old progress name is not written through"
+fi
 if [ "$RC" -ne 0 ] && grep -q 'ABORT: partition-enumeration query FAILED' "$LOG"; then
   ok "metrics enum-fail run: aborts non-zero"
 else
@@ -379,6 +387,11 @@ if [ -e "$PROM_FILE.progress" ]; then
   bad "metrics enum-fail run: progress state file left behind"
 else
   ok "metrics enum-fail run: progress state file removed"
+fi
+if ls "$PRIV_TMP"/lake-dedup.* >/dev/null 2>&1; then
+  bad "metrics enum-fail run: private progress directory left behind"
+else
+  ok "metrics enum-fail run: private progress directory removed"
 fi
 
 # ── 9. SIGTERM mid-OPTIMIZE is a failed run, not a clean one ─────────

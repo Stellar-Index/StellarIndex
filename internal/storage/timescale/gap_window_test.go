@@ -65,6 +65,11 @@ func TestCloseTimeBoundPredicate(t *testing.T) {
 	pred, _ := closeTimeBoundPredicate(soroban.CloseTimeColumn, lo, hi, base())
 	if q := perSourceLedgerGapsQuery(soroban, pred); !strings.Contains(q, "BETWEEN $1 AND $2 AND ledger_close_time >= $5 AND ledger_close_time <= $6") {
 		t.Errorf("soroban_events scan does not bound the partition column:\n%s", q)
+	} else if strings.Contains(q, "$7") {
+		t.Errorf("the detector's query names a trailing sentinel it binds no value for:\n%s", q)
+	}
+	if q := perSourceLedgerGapsQueryTrailing(soroban, pred, 7); !strings.Contains(q, "SELECT $7::bigint") {
+		t.Errorf("the range form does not add its trailing sentinel row:\n%s", q)
 	}
 }
 

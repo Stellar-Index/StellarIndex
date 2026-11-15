@@ -160,6 +160,7 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 	// window as fetched: an unregistered source the filter drops still set the scale its survivors
 	// were lifted to.
 	volumeDecimals := commonAmountScaleDecimals(window)
+	sources := tradeSources(window.Trades())
 
 	// Capture the pre-filter length so Truncated reflects whether the window hit the cap; computed
 	// after FilterOutliers it would be a false negative whenever the filter dropped a trade.
@@ -182,8 +183,8 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 		Close:               ratToDecimal(bar.Close, ohlcPriceDigits),
 		BaseVolume:          bar.BaseVolume.String(),
 		QuoteVolume:         bar.QuoteVolume.String(),
-		BaseVolumeDecimals:  wireScaleDecimals(volumeDecimals),
-		QuoteVolumeDecimals: wireScaleDecimals(volumeDecimals),
+		BaseVolumeDecimals:  wireScaleDecimals(legScaleDecimals(s.NonstandardDecimals, pair.Base, volumeDecimals, sources)),
+		QuoteVolumeDecimals: wireScaleDecimals(legScaleDecimals(s.NonstandardDecimals, pair.Quote, volumeDecimals, sources)),
 		TradeCount:          bar.TradeCount,
 		Truncated:           preFilter == maxTradesForOHLC,
 		Clamped:             clamped,

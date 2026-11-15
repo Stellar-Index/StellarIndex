@@ -380,7 +380,7 @@ func (s *Server) ohlcSeriesWithAliases(
 			}
 			bars, err := s.History.OHLCSeries(ctx, ap, string(interval), from, to, limit)
 			if err != nil || len(bars) > 0 {
-				annotateOHLCSeriesBarScale(bars)
+				annotateOHLCSeriesBarScale(bars, s.NonstandardDecimals, ap)
 				normalizeOHLCSeriesVolumes(bars)
 				return bars, false, err
 			}
@@ -392,11 +392,11 @@ func (s *Server) ohlcSeriesWithAliases(
 // annotateOHLCSeriesBarScale fills VBaseDecimals/VQuoteDecimals from each bar's Sources via [barScaleDecimals]. It must not share
 // a path with [ohlcBucketAcc.finalize]: a combined bucket's scale is its constituents' lift target, not a lookup on the union of
 // their venues.
-func annotateOHLCSeriesBarScale(bars []OHLCSeriesBar) {
+func annotateOHLCSeriesBarScale(bars []OHLCSeriesBar, lookup aggregate.DecimalsLookup, pair canonical.Pair) {
 	for i := range bars {
 		d := barScaleDecimals(bars[i].Sources)
-		bars[i].VBaseDecimals = wireScaleDecimals(d)
-		bars[i].VQuoteDecimals = wireScaleDecimals(d)
+		bars[i].VBaseDecimals = wireScaleDecimals(legScaleDecimals(lookup, pair.Base, d, bars[i].Sources))
+		bars[i].VQuoteDecimals = wireScaleDecimals(legScaleDecimals(lookup, pair.Quote, d, bars[i].Sources))
 	}
 }
 

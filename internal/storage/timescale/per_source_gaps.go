@@ -241,6 +241,18 @@ func ApplicableGapDetectorTargets(targets []GapDetectorTarget, network string, l
 // perSourceLedgerGapsQuery builds the LAG()-over-DISTINCT gap query. The `seeded` CTE adds a synthetic row at $4 (last ledger the previous
 // cycle saw) when positive and below $1, else a gap spanning a window boundary is invisible. timeBound comes from [closeTimeBoundPredicate].
 func perSourceLedgerGapsQuery(target GapDetectorTarget, timeBound string) string {
+	return perSourceLedgerGapsQueryTrailing(target, timeBound, 0)
+}
+
+// perSourceLedgerGapsQueryTrailing is [perSourceLedgerGapsQuery] with a second synthetic row at placeholder trailArg (0 = none), the
+// ledger after the window, so a gap that runs to the window's end, or a window with no row at all, is still bracketed.
+func perSourceLedgerGapsQueryTrailing(target GapDetectorTarget, timeBound string, trailArg int) string {
+	trail := ""
+	if trailArg > 0 {
+		trail = fmt.Sprintf(`
+		    UNION ALL
+		    SELECT $%d::bigint`, trailArg)
+	}
 	filter := timeBound
 	if target.WhereFilter != "" {
 		filter += " AND (" + target.WhereFilter + ")"
@@ -255,7 +267,7 @@ func perSourceLedgerGapsQuery(target GapDetectorTarget, timeBound string) string
 		seeded AS (
 		    SELECT ledger FROM ledgers
 		    UNION ALL
-		    SELECT $4::bigint WHERE $4::bigint > 0 AND $4::bigint < $1
+		    SELECT $4::bigint WHERE $4::bigint > 0 AND $4::bigint < $1%[4]s
 		),
 		ordered AS (
 		    SELECT ledger, LAG(ledger) OVER (ORDER BY ledger) AS prev_l
@@ -268,7 +280,7 @@ func perSourceLedgerGapsQuery(target GapDetectorTarget, timeBound string) string
 		WHERE prev_l IS NOT NULL
 		  AND ledger - prev_l - 1 >= $3
 		ORDER BY gap_size DESC
-	`, target.LedgerColumn, target.Table, filter)
+	`, target.LedgerColumn, target.Table, filter, trail)
 }
 
 // closeTimeBoundPredicate appends the open-ended close-time bounds lo/hi (an invalid side stays unbounded) to args and returns the
@@ -318,6 +330,16 @@ func (s *Store) MaxLedgerInWindow(ctx context.Context, target GapDetectorTarget,
 
 // FindPerSourceLedgerGaps finds ledger gaps >= minGapSize in the target's hypertable within [from, to], seeding a synthetic prior row from `seedLedger`; target.Table and LedgerColumn are interpolated unvalidated, so MUST come from [DefaultGapDetectorTargets].
 func (s *Store) FindPerSourceLedgerGaps(ctx context.Context, target GapDetectorTarget, from, to, minGapSize, seedLedger int64) ([]LedgerGap, error) {
+	return s.findPerSourceLedgerGaps(ctx, target, from, to, minGapSize, seedLedger, false)
+}
+
+// FindLedgerGapsInRange is [Store.FindPerSourceLedgerGaps] for a caller repairing exactly [from, to]: both edges are bracketed, so a
+// gap touching either end is returned and a range holding no row is one gap. Ledger 1 cannot be bracketed (no ledger 0 seed).
+func (s *Store) FindLedgerGapsInRange(ctx context.Context, target GapDetectorTarget, from, to, minGapSize int64) ([]LedgerGap, error) {
+	return s.findPerSourceLedgerGaps(ctx, target, from, to, minGapSize, from-1, true)
+}
+
+func (s *Store) findPerSourceLedgerGaps(ctx context.Context, target GapDetectorTarget, from, to, minGapSize, seedLedger int64, trailing bool) ([]LedgerGap, error) {
 	if from < 0 || to < from {
 		return nil, fmt.Errorf("timescale: FindPerSourceLedgerGaps invalid range [%d,%d]", from, to)
 	}
@@ -346,7 +368,12 @@ func (s *Store) FindPerSourceLedgerGaps(ctx context.Context, target GapDetectorT
 		}
 		timeBound, args = closeTimeBoundPredicate(target.CloseTimeColumn, lo, hi, args)
 	}
-	rows, err := tx.QueryContext(ctx, perSourceLedgerGapsQuery(target, timeBound), args...)
+	trailArg := 0
+	if trailing {
+		args = append(args, to+1)
+		trailArg = len(args)
+	}
+	rows, err := tx.QueryContext(ctx, perSourceLedgerGapsQueryTrailing(target, timeBound, trailArg), args...)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: FindPerSourceLedgerGaps %s [%d,%d, min %d]: %w",
 			target.Table, from, to, minGapSize, err)

@@ -25,8 +25,13 @@ func (s *stubSDEXOfferBookReader) OfferChangesSince(_ context.Context, from uint
 	return nil, from, nil
 }
 
-func (s *stubSDEXOfferBookReader) OfferRemovedAt(context.Context, []clickhouse.OfferRemovalRef) (map[string]struct{}, error) {
-	return nil, nil
+// Nothing changed any offer at its ledger: every loaded row stands.
+func (s *stubSDEXOfferBookReader) ResolveTiedOffers(context.Context, []clickhouse.OfferRemovalRef) (map[string]clickhouse.TiedOffer, error) {
+	out := make(map[string]clickhouse.TiedOffer, len(s.offers))
+	for _, o := range s.offers {
+		out[o.KeyXDR] = clickhouse.TiedOffer{Loaded: true}
+	}
+	return out, nil
 }
 
 func orderBookServer(t *testing.T, load bool) *testServer {

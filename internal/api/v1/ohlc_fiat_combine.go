@@ -51,7 +51,13 @@ func (s *Server) ohlcSeriesFiatCombined(
 
 	out := make([]OHLCSeriesBar, 0, len(acc))
 	for t, a := range acc {
-		out = append(out, a.finalize(t))
+		bar := a.finalize(t)
+		// Every constituent shares the base token, so its leg follows the same rule as the plain series; the
+		// quote leg sums 7-decimal USD pegs.
+		if bar.VBaseDecimals != nil {
+			bar.VBaseDecimals = wireScaleDecimals(legScaleDecimals(s.NonstandardDecimals, pair.Base, *bar.VBaseDecimals, bar.Sources))
+		}
+		out = append(out, bar)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].T.Time().Before(out[j].T.Time()) })
 	return newestCombinedBars(out, limit), estProxied || heldBackProxied, nil
@@ -281,6 +287,39 @@ func barScaleDecimals(sources []string) int {
 		}
 	}
 	return scale
+}
+
+// legScaleDecimals states the scale of ONE leg's volume sum. A venue's scale describes standard 7-decimal
+// on-chain amounts; a token recorded with other decimals trades on chain in its own units, so its leg is
+// stated in those. It is unknown when a venue of the sum is not an on-chain DEX: those amounts were lifted
+// as if the leg had 7 decimals, and no single scale describes the sum.
+func legScaleDecimals(lookup aggregate.DecimalsLookup, leg canonical.Asset, stated int, sources []string) int {
+	if stated == ohlcBarScaleUnknown {
+		return stated
+	}
+	d := aggregate.ResolveDecimals(lookup, leg)
+	if d == aggregate.StandardDecimals {
+		return stated
+	}
+	for _, src := range sources {
+		if external.Lookup(src).Subclass != external.SubclassDEX {
+			return ohlcBarScaleUnknown
+		}
+	}
+	return d
+}
+
+// tradeSources is the distinct venues of a trade set, for [legScaleDecimals].
+func tradeSources(trades []canonical.Trade) []string {
+	seen := make(map[string]struct{}, 4)
+	out := make([]string, 0, 4)
+	for i := range trades {
+		if _, ok := seen[trades[i].Source]; !ok {
+			seen[trades[i].Source] = struct{}{}
+			out = append(out, trades[i].Source)
+		}
+	}
+	return out
 }
 
 // ohlcScaleFactor is the exact integer multiplier lifting a bar at `scale` to `common`. The common

@@ -62,6 +62,7 @@ STUB
 cat > "$TMP/bin/fake-ops" <<'STUB'
 #!/usr/bin/env bash
 cmd=$1; shift; from=; to=; src=; mode=
+[ "$cmd" = projected-rebuild ] && echo "$*" >> "$OPS_LOG.argv"
 while [ $# -gt 0 ]; do
   case "$1" in -from) from=$2; shift 2 ;; -to) to=$2; shift 2 ;; -source) src=$2; shift 2 ;; -write|-dry-run) mode=$1; shift ;; *) shift ;; esac
 done
@@ -124,6 +125,7 @@ check 'grep -qx "ch-backfill 4001000 4500999 -" "$OPSL"' "the last window stops 
 check '[ "$(sort -n "$TMP/running.seen" | tail -1)" -ge 2 ]' "workers ran ch-backfills concurrently"
 check 'grep -qx "ch-supply 1000 1000999 -" "$OPSL" && [ "$(calls ch-supply)" -eq 5 ]' "supply_flows seeded over [L,TO]"
 check 'grep -qx "projected-rebuild 1000 - soroswap" "$OPSL" && grep -qx "projected-rebuild 1000 - aquarius" "$OPSL"' "each -projected source rebuilt from L behind the live tail (no -to)"
+check '[ "$(grep -c -- "-resume=false" "$OPSL.argv")" -eq 2 ] && [ "$(wc -l < "$OPSL.argv" | tr -d " ")" -eq 2 ]' "every projected rebuild ignores checkpoints an earlier rebuild left (-resume=false)"
 check 'awk "/^ch-backfill/ { b = NR } /^ch-supply/ && !s { s = NR } END { exit !(b && s && b < s) }" "$OPSL"' "seeding starts only after the last window"
 check '[ "$(awk "/^projected-rebuild/ { p = NR } /^trades-cagg-refresh 1000 4500999 -\$/ { c = NR } END { print (p && c > p) }" "$OPSL")" = 1 ] && [ "$(calls trades-cagg-refresh)" -eq 1 ]' "aggregates over trades refreshed over [L,TO] after the last rebuild"
 check '[ "$(tail -1 "$OPSL")" = "seed-entry-counts - - -" ] && [ "$(calls seed-entry-counts)" -eq 1 ]' "entry counts recomputed once, last"

@@ -22,8 +22,10 @@ type stubOfferBookReader struct {
 	nextCursor uint32
 	changesErr error
 
-	removed   map[string]struct{} // keys OfferRemovedAt reports dead
-	verifyErr error
+	removed    map[string]struct{}             // keys the change log reports removed
+	posts      map[string]clickhouse.LiveOffer // keys whose post-image differs from the loaded row
+	unresolved map[string]struct{}             // keys the change log cannot settle
+	verifyErr  error
 
 	lastFrom uint32
 	lastRefs []clickhouse.OfferRemovalRef
@@ -38,18 +40,28 @@ func (s *stubOfferBookReader) OfferChangesSince(_ context.Context, from uint32) 
 	return s.changes, s.nextCursor, s.changesErr
 }
 
-func (s *stubOfferBookReader) OfferRemovedAt(_ context.Context, refs []clickhouse.OfferRemovalRef) (map[string]struct{}, error) {
+func (s *stubOfferBookReader) ResolveTiedOffers(_ context.Context, refs []clickhouse.OfferRemovalRef) (map[string]clickhouse.TiedOffer, error) {
 	s.lastRefs = refs
 	if s.verifyErr != nil {
 		return nil, s.verifyErr
 	}
-	dead := map[string]struct{}{}
+	out := map[string]clickhouse.TiedOffer{}
 	for _, ref := range refs {
-		if _, ok := s.removed[ref.KeyXDR]; ok {
-			dead[ref.KeyXDR] = struct{}{}
+		if _, ok := s.unresolved[ref.KeyXDR]; ok {
+			continue
 		}
+		if _, ok := s.removed[ref.KeyXDR]; ok {
+			out[ref.KeyXDR] = clickhouse.TiedOffer{Removed: true}
+			continue
+		}
+		if post, ok := s.posts[ref.KeyXDR]; ok {
+			out[ref.KeyXDR] = clickhouse.TiedOffer{Post: post, HasPost: true}
+			continue
+		}
+		// By default nothing changed the offer at that ledger and the loaded row stands.
+		out[ref.KeyXDR] = clickhouse.TiedOffer{Loaded: true}
 	}
-	return dead, nil
+	return out, nil
 }
 
 func bookOffer(key string, id, amount int64, selling, buying string, n, d int32, version uint64) clickhouse.LiveOffer {
@@ -251,6 +263,49 @@ func TestSDEXOrderBookCache_MaintainObservesMetrics(t *testing.T) {
 	}
 	if got := count("advance_error"); got != advErr+1 {
 		t.Errorf("advance_error observations = %d, want %d", got, advErr+1)
+	}
+}
+
+// A tie can leave the pre-image as the current-state survivor: the offer is served from the change log's
+// post-image, and one the log cannot settle stays withheld.
+func TestSDEXOrderBookCache_TiedSurvivorIsNotServedAsLoaded(t *testing.T) {
+	const usdc = "USDC-GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
+	reader := &stubOfferBookReader{
+		offers: []clickhouse.LiveOffer{
+			// The pre-image of a partial fill: 1000 loaded, 10 after the update in the same ledger.
+			bookOffer("filled", 1, 1000, usdc, "native", 4, 1, 55_000_000<<32),
+			// Two transactions changed this one in its ledger; their order is not in the lake.
+			bookOffer("ambiguous", 2, 300, usdc, "native", 5, 1, 55_000_001<<32),
+		},
+		cursor:     63_000_001,
+		posts:      map[string]clickhouse.LiveOffer{"filled": bookOffer("", 1, 10, usdc, "native", 4, 1, 0)},
+		unresolved: map[string]struct{}{"ambiguous": {}},
+	}
+	c := NewSDEXOrderBookCache(reader, nil)
+	if err := c.Load(context.Background()); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if err := c.VerifyPending(context.Background(), 10); err != nil {
+		t.Fatalf("VerifyPending: %v", err)
+	}
+	snap, _ := c.snapshotMarket("native", usdc)
+	if len(snap.bids) != 1 || snap.bids[0].KeyXDR != "filled" {
+		t.Fatalf("served bids = %+v, want only the settled offer", snap.bids)
+	}
+	if got := snap.bids[0]; got.Amount != 10 || got.Version != 55_000_000<<32 {
+		t.Errorf("served amount %d at version %d, want the post-image's 10 at the tied version", got.Amount, got.Version)
+	}
+	if got := testutil.ToFloat64(obs.SDEXOrderBookPendingOffers); got != 1 {
+		t.Errorf("pending gauge = %v, want 1 (the unsettled offer stays withheld)", got)
+	}
+
+	// A reload reads the tied row again at the same version: the verified image stays, not the loaded one.
+	if err := c.Load(context.Background()); err != nil {
+		t.Fatalf("re-Load: %v", err)
+	}
+	snap, _ = c.snapshotMarket("native", usdc)
+	if len(snap.bids) != 1 || snap.bids[0].Amount != 10 {
+		t.Errorf("after reload bids = %+v, want the verified amount 10", snap.bids)
 	}
 }
 

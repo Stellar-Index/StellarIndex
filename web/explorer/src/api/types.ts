@@ -12597,13 +12597,17 @@ export interface components {
              *     set it. `null` when a contributing trade's source has no
              *     registry entry: `base_volume` is then not convertible to
              *     asset units and must not be divided by a guessed scale.
+             *     A token recorded with nonstandard decimals trades on chain
+             *     in its own units, so its leg states those decimals; that
+             *     leg is `null` when an off-chain venue contributed, because
+             *     no single scale then describes the sum.
              */
             base_volume_decimals: number | null;
             /**
              * @description Decimal exponent of `quote_volume` — see
-             *     `base_volume_decimals`. Equal to it today (a source stamps
-             *     both legs of a trade at one scale); carried separately because
-             *     a scale belongs to an amount, not to a pair.
+             *     `base_volume_decimals`. The two differ when one leg is a
+             *     token with nonstandard decimals: a scale belongs to an
+             *     amount, not to a pair.
              */
             quote_volume_decimals: number | null;
             trade_count: number;
@@ -12657,13 +12661,16 @@ export interface components {
              *     `null` when the bucket's scale is unknown (a contributing
              *     venue was not recorded): `v_base` is then not convertible
              *     to asset units and must not be divided by a guessed 1e7.
+             *     A token recorded with nonstandard decimals trades on chain
+             *     in its own units, so its leg states those decimals; that
+             *     leg is `null` when an off-chain venue contributed, because
+             *     no single scale then describes the sum.
              */
             v_base_decimals: number | null;
             /**
-             * @description Decimal exponent of `v_quote` — see `v_base_decimals`.
-             *     Equal to it today (a source stamps both legs of a trade at
-             *     one scale); carried separately because a scale belongs to
-             *     an amount, not to a pair.
+             * @description Decimal exponent of `v_quote` — see `v_base_decimals`. The
+             *     two differ when one leg is a token with nonstandard
+             *     decimals: a scale belongs to an amount, not to a pair.
              */
             v_quote_decimals: number | null;
             /**
@@ -12763,13 +12770,17 @@ export interface components {
              *     contributing trade's source has no registry entry:
              *     `base_volume` is then not convertible to asset units and must
              *     not be divided by a guessed scale.
+             *     A token recorded with nonstandard decimals trades on chain
+             *     in its own units, so its leg states those decimals; that
+             *     leg is `null` when an off-chain venue contributed, because
+             *     no single scale then describes the sum.
              */
             base_volume_decimals: number | null;
             /**
              * @description Decimal exponent of `quote_volume` — see
-             *     `base_volume_decimals`. Equal to it today (a source stamps
-             *     both legs of a trade at one scale); carried separately because
-             *     a scale belongs to an amount, not to a pair.
+             *     `base_volume_decimals`. The two differ when one leg is a
+             *     token with nonstandard decimals: a scale belongs to an
+             *     amount, not to a pair.
              */
             quote_volume_decimals: number | null;
             trade_count: number;
