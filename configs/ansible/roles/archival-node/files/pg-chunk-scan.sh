@@ -6,10 +6,14 @@
 # count(*) answers from chunk metadata, so it reported nothing wrong; only a
 # read of the compressed_data columns fails. This reads them.
 #
-# Cost: a chunk is decoded once per (compressed chunk id, relfilenode); a
-# rewrite gets a new relfilenode and is decoded again. Verified keys live in
-# $STATE, appended as each chunk passes and pruned to the chunks that still
-# exist. An unreadable chunk is never recorded, so it stays counted until it is
+# Cost: a chunk is decoded once per (compressed chunk id, relfilenode, rows
+# written to the compressed relation). A rewrite gets a new relfilenode; a
+# recompression that writes batches in place moves the write count. A
+# statistics reset moves every count and costs one more pass. Verified keys
+# (key@writes) live in $STATE, appended as each chunk passes and pruned to
+# the chunks that still exist. The unreadable and backend-killer lists keep
+# the bare key, so a statistics reset after a crash cannot put a killer back
+# in the queue. An unreadable chunk is never recorded, so it stays counted until it is
 # repaired. PG_CHUNK_SCAN_FULL=1 (or a missing state file) decodes everything.
 #
 # Each chunk is decoded on its own connection and transaction: the scan holds a
@@ -69,20 +73,22 @@ fail_run() {
   exit 1
 }
 
-# One statement: C|key|hypertable|chunk|compressed relation, then
-# B|hypertable|chunk|index bytes|.
+# One statement: C|key|hypertable|chunk|compressed relation|writes, then
+# B|hypertable|chunk|index bytes||.
 $PSQL -At -F'|' -f - >"$W/list" 2>"$W/err" <<'SQL' || fail_run "listing chunks: psql exited $?"
-SELECT tag, f1, f2, f3, f4 FROM (
+SELECT tag, f1, f2, f3, f4, f5 FROM (
   SELECT 'C' AS tag, c.id AS ord,
          cc.id || ':' || pg_relation_filenode(format('%I.%I', cc.schema_name, cc.table_name)::regclass) AS f1,
          h.table_name::text AS f2, c.table_name::text AS f3,
-         format('%I.%I', cc.schema_name, cc.table_name) AS f4
+         format('%I.%I', cc.schema_name, cc.table_name) AS f4,
+         coalesce((SELECT s.n_tup_ins + s.n_tup_upd + s.n_tup_del FROM pg_stat_all_tables s
+                    WHERE s.relid = format('%I.%I', cc.schema_name, cc.table_name)::regclass), 0)::text AS f5
     FROM _timescaledb_catalog.chunk c
     JOIN _timescaledb_catalog.hypertable h ON h.id = c.hypertable_id
     JOIN _timescaledb_catalog.chunk cc ON cc.id = c.compressed_chunk_id
   UNION ALL
   SELECT 'B', c.id, h.table_name::text, c.table_name::text,
-         pg_indexes_size(format('%I.%I', c.schema_name, c.table_name)::regclass)::text, ''
+         pg_indexes_size(format('%I.%I', c.schema_name, c.table_name)::regclass)::text, '', ''
     FROM _timescaledb_catalog.chunk c
     JOIN _timescaledb_catalog.hypertable h ON h.id = c.hypertable_id
    WHERE c.compressed_chunk_id IS NOT NULL AND c.status & 8 = 0
@@ -100,7 +106,7 @@ cat "$W/crashers" >>"$W/bad"
 cut -d'|' -f1 "$W/crashers" >>"$W/rescanned"
 awk -F'|' -v badf="$BADF" -v skipf="$W/skip" -v crashf="$CRASHF" '
   BEGIN { while ((getline l < badf) > 0) b[l]; while ((getline l < skipf) > 0) v[l]; while ((getline l < crashf) > 0) c[l] }
-  $1 == "C" && !($2 in v) && !($2 in c) { print (($2 in b) ? 0 : 1) "|" $2 "|" $3 "|" $4 "|" $5 }
+  $1 == "C" && !(($2 "@" $6) in v) && !($2 in c) { print (($2 in b) ? 0 : 1) "|" $2 "|" $3 "|" $4 "|" $5 "|" $6 }
 ' "$W/list" | sort -s -t'|' -k1,1n | cut -d'|' -f2- >"$W/todo"
 
 # Prints ok, skip, bad or lost. A caught error that says nothing about the
@@ -147,7 +153,7 @@ server_back() {
 
 start=$(date +%s)
 partial=0 scanned=0 skipped=0
-while IFS='|' read -r key ht chunk cc; do
+while IFS='|' read -r key ht chunk cc writes; do
   if [ $(($(date +%s) - start)) -ge "$BUDGET" ]; then
     partial=1
     break
@@ -166,7 +172,7 @@ while IFS='|' read -r key ht chunk cc; do
     fi
   fi
   case "$v" in
-    ok) echo "$key" >>"$STATE"; scanned=$((scanned + 1)) ;;
+    ok) echo "$key@$writes" >>"$STATE"; scanned=$((scanned + 1)) ;;
     bad)
       echo "$key|$ht|$chunk" >>"$W/bad"; scanned=$((scanned + 1))
       echo "pg-chunk-scan: $ht/$chunk unreadable: $(grep -m1 'CHUNK|bad' "$W/err")" >&2
@@ -194,7 +200,7 @@ nbloat=0; [ -n "$bloat" ] && nbloat=$(printf '%s\n' "$bloat" | wc -l | tr -d ' '
 # Verified keys of chunks that no longer exist fall out on every run.
 awk -F'|' -v statef="$STATE" '
   BEGIN { while ((getline l < statef) > 0) s[l] }
-  $1 == "C" && ($2 in s) && !seen[$2]++ { print $2 }
+  $1 == "C" && (($2 "@" $6) in s) && !seen[$2]++ { print $2 "@" $6 }
 ' "$W/list" >"$STATE.new" && mv "$STATE.new" "$STATE"
 now=$(date +%s)
 

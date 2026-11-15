@@ -92,10 +92,8 @@ run 'ALTER TABLE trades ADD COLUMN venue text NOT NULL DEFAULT '"'"'sdex'"'"';' 
 expect 'NOT NULL DEFAULT is additive-safe' 0 'passed'
 
 run 'ALTER TABLE trades ADD COLUMN venue text;
-CREATE INDEX trades_venue_idx ON trades (venue);
-ALTER TABLE trades DROP CONSTRAINT trades_ledger_check;
-DROP INDEX IF EXISTS trades_unused_idx;' ''
-expect 'add-column / create-index / loosening not flagged' 0 'passed'
+CREATE INDEX trades_venue_idx ON trades (venue);' ''
+expect 'add-column / create-index not flagged' 0 'passed'
 
 run '-- Historically we would DROP COLUMN legacy_price here.
 CREATE TABLE t (id bigint);' ''
@@ -108,6 +106,46 @@ expect 'inline marker + reason passes' 0 'passed'
 run 'ALTER TABLE trades DROP COLUMN legacy_price;  -- migration-compat:ok' ''
 expect 'inline marker without a reason still fails' 1 'drop-column'
 
+# 1b. Forms the first eight classes read past.
+run 'ALTER TABLE trades DROP legacy_price;' ''
+expect 'DROP without the COLUMN keyword fires' 1 'drop-column'
+
+run 'ALTER TABLE trades DROP IF EXISTS legacy_price;' ''
+expect 'DROP IF EXISTS without COLUMN fires' 1 'drop-column'
+
+run 'ALTER TABLE trades RENAME price TO px;' ''
+expect 'RENAME without the COLUMN keyword fires' 1 'rename'
+
+run 'ALTER TABLE hooks DROP CONSTRAINT hooks_account_url_key;' ''
+expect 'DROP CONSTRAINT fires' 1 'drop-arbiter'
+
+run 'DROP INDEX IF EXISTS hooks_account_url;' ''
+expect 'DROP INDEX fires' 1 'drop-arbiter'
+
+run 'ALTER TABLE hooks RENAME CONSTRAINT hooks_key TO hooks_account_url_key;' ''
+expect 'RENAME CONSTRAINT fires' 1 'drop-arbiter'
+
+run 'ALTER TABLE hooks DROP CONSTRAINT hooks_old_check; -- migration-compat:ok no binary names it' ''
+expect 'a marked DROP CONSTRAINT passes' 0 'passed'
+
+run 'ALTER TABLE trades ALTER COLUMN source DROP DEFAULT;' ''
+expect 'DROP DEFAULT fires' 1 'drop-default'
+
+run 'DROP FUNCTION IF EXISTS forget(text);' ''
+expect 'DROP FUNCTION fires' 1 'drop-function'
+
+run 'DROP TYPE trade_kind;' ''
+expect 'DROP TYPE fires' 1 'drop-function'
+
+run 'ALTER TABLE hooks ADD FOREIGN KEY (account_id) REFERENCES accounts (id);' ''
+expect 'ADD FOREIGN KEY fires' 1 'add-foreign-key'
+
+run 'ALTER TABLE trades ALTER COLUMN source DROP NOT NULL;' ''
+expect 'DROP NOT NULL stays additive-safe' 0 'passed'
+
+run 'ALTER TABLE trades ADD COLUMN venue text NOT NULL; -- no DEFAULT yet' ''
+expect 'a trailing comment naming DEFAULT does not clear a bare NOT NULL column' 1 'not-null'
+
 # 4. Baseline grandfathering + shrink-only.
 run 'ALTER TABLE trades DROP COLUMN legacy_price;' '0001_fixture.up.sql:drop-column'
 expect 'baselined violation passes' 0 'passed'
@@ -117,6 +155,9 @@ expect 'baseline entry for a different class does not grandfather' 1 'drop-colum
 
 run 'CREATE TABLE t (id bigint);' '0099_gone.up.sql:drop-table'
 expect 'stale baseline entry fails in repo mode' 1 'stale baseline entry'
+
+run 'CREATE TABLE t (id bigint);' '0099_gone.up.sql:some-later-class'
+expect 'an entry for a class this copy does not know is not stale' 0 'passed'
 
 run 'CREATE TABLE t (id bigint);' '0099_gone.up.sql:drop-table' --staged
 expect 'stale baseline entry tolerated under --staged' 0 'passed'

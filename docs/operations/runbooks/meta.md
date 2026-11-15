@@ -51,6 +51,18 @@ systemctl status <exporter-unit> --no-pager | head -15
 
 **Escalate:** none (ticket).
 
+## stellarindex_prometheus_rules_failing
+
+**Symptom.** A rule group reports evaluation failures or missed iterations in the last 15 min, or `prometheus_config_last_reload_successful == 0`, for 5 min (ticket). Alerts in the named `rule_group` are not being evaluated, so they cannot fire.
+
+**Check.** `curl -s localhost:9090/api/v1/rules | jq '.data.groups[] | select(any(.rules[]; .health != "ok")) | {name, rules: [.rules[] | select(.health != "ok") | {name, lastError}]}'` names the rule and its error. For the reload arm: `journalctl -u prometheus -n 100 --no-pager | grep -iE 'reload|error'`.
+
+**Likely causes.** A many-to-many match or duplicate labelset after a new label value appeared; a rule group too slow for its interval (missed iterations); a hand edit of `prometheus.yml` that failed to load.
+
+**Fix.** Correct the rule in both trees and apply (`bash configs/prometheus/apply-rules.sh`); for a failed reload, `promtool check config /etc/prometheus/prometheus.yml`, fix, reload.
+
+**Escalate:** none.
+
 ## stellarindex_alertmanager_config_bad
 
 **Symptom.** `alertmanager_config_last_reload_successful == 0` for 5 min (ticket). Changes since the last good load are NOT live; existing routes keep working, new routes go nowhere. Log shows `error loading config: ...`.

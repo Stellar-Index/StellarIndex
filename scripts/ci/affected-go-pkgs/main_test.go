@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -51,6 +53,56 @@ m/d m/x`
 	want := []string{"m/a", "m/b", "m/c"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("affected = %v, want %v", got, want)
+	}
+}
+
+// The guards PR CI must not skip: each walks production source that the
+// import graph does not connect to its own package.
+func TestGuardDirsFindsTheTreeWalkingGuards(t *testing.T) {
+	dirs, err := guardDirs("../../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	have := map[string]bool{}
+	for _, d := range dirs {
+		have[d] = true
+	}
+	for _, want := range []string{
+		"internal/canonical",         // i128 and wire-money guards
+		"internal/storage/timescale", // trades-retention census
+		"internal/pipeline",          // source-spec lockstep
+		"internal/api/v1",            // premium and SLO guards
+		"cmd/stellarindex-api",       // price-withholding wiring
+	} {
+		if !have[want] {
+			t.Errorf("guardDirs misses %s; found %v", want, dirs)
+		}
+	}
+}
+
+func TestGuardDirsReadsTestFilesOnly(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, src string) {
+		t.Helper()
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(src), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("internal/a/guard_test.go", "package a\nimport \"go/parser\"\n")
+	write("internal/b/b.go", "package b\nimport \"go/parser\"\n")
+	write("internal/c/c_test.go", "package c\n")
+	write("cmd/d/testdata/x_test.go", "package x\nimport \"go/ast\"\n")
+	write("cmd/e/load_test.go", "package e\nimport \"golang.org/x/tools/go/packages\"\n")
+	got, err := guardDirs(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"cmd/e", "internal/a"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("guardDirs = %v, want %v", got, want)
 	}
 }
 

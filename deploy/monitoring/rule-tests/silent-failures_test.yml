@@ -1,0 +1,182 @@
+# promtool unit tests for alerts on failures that were silent:
+#
+#   stellarindex_prometheus_rules_failing        (meta.yml)
+#   stellarindex_retention_reaper_failing        (api.yml)
+#   stellarindex_pricingguard_failing_open       (api.yml)
+#   stellarindex_aggregator_supply_refresh_stalled, the restart arm
+#
+#   promtool test rules deploy/monitoring/rule-tests/silent-failures_test.yml
+
+rule_files:
+  - ../rules/meta.yml
+  - ../rules/api.yml
+  - ../rules/supply-refresh.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    name: a rule group that starts erroring tickets; a clean one does not
+    input_series:
+      - series: 'prometheus_rule_evaluation_failures_total{rule_group="/etc/prometheus/rules/api.yml;stellarindex.api"}'
+        values: '0+0x20 0+1x40'
+      - series: 'prometheus_rule_evaluation_failures_total{rule_group="/etc/prometheus/rules/meta.yml;stellarindex.meta"}'
+        values: '0+0x60'
+      - series: 'prometheus_config_last_reload_successful'
+        values: '1+0x60'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_prometheus_rules_failing
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: stellarindex_prometheus_rules_failing
+        exp_alerts:
+          - exp_labels:
+              rule_group: /etc/prometheus/rules/api.yml;stellarindex.api
+              severity: ticket
+              team: stellarindex
+              component: meta
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_prometheus_rules_failing
+              summary: "Prometheus is failing or skipping rule evaluations, or its last config reload failed"
+              description: |
+                Prometheus failed to evaluate a rule, skipped a rule group's
+                evaluation, or is running on an old config because its last
+                reload failed. A rule that errors does not fire, so every alert
+                in the affected group is off while this one is the only signal.
+                The deadman's switch does not cover this: it proves the
+                notification path, not rule evaluation.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_prometheus_rules_failing
+
+  - interval: 1m
+    name: a failed config reload tickets
+    input_series:
+      - series: 'prometheus_config_last_reload_successful{instance="r1:9090"}'
+        values: '1+0x10 0+0x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_prometheus_rules_failing
+        exp_alerts:
+          - exp_labels:
+              instance: r1:9090
+              severity: ticket
+              team: stellarindex
+              component: meta
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_prometheus_rules_failing
+              summary: "Prometheus is failing or skipping rule evaluations, or its last config reload failed"
+              description: |
+                Prometheus failed to evaluate a rule, skipped a rule group's
+                evaluation, or is running on an old config because its last
+                reload failed. A rule that errors does not fire, so every alert
+                in the affected group is off while this one is the only signal.
+                The deadman's switch does not cover this: it proves the
+                notification path, not rule evaluation.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/meta.md#stellarindex_prometheus_rules_failing
+
+  - interval: 5m
+    name: a reaper failing every sweep tickets; one failed sweep does not
+    input_series:
+      - series: 'stellarindex_retention_reaper_errors_total{reaper="registration"}'
+        values: '0+0x12 0+1x60'
+      - series: 'stellarindex_retention_reaper_errors_total{reaper="session"}'
+        values: '0+0x12 1+0x60'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: stellarindex_retention_reaper_failing
+        exp_alerts: []
+      - eval_time: 5h
+        alertname: stellarindex_retention_reaper_failing
+        exp_alerts:
+          - exp_labels:
+              reaper: registration
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_retention_reaper_failing
+              summary: "Retention reaper registration sweeps are failing; its table is not being bounded"
+              description: |
+                A retention reaper's sweep has been failing for hours. The
+                `registration` reaper erases abandoned sign-ups' personal data;
+                `session` and `webhook_delivery` bound their tables. The
+                liveness alert stays green because a failed sweep still counts
+                as a run.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_retention_reaper_failing
+
+  - interval: 1m
+    name: a guard that keeps failing open tickets
+    input_series:
+      - series: 'stellarindex_pricingguard_trailing_fetch_failed_total{path="latest"}'
+        values: '0+0x10 0+2x60'
+      - series: 'stellarindex_pricingguard_trailing_fetch_failed_total{path="at"}'
+        values: '0+0x70'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: stellarindex_pricingguard_failing_open
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: stellarindex_pricingguard_failing_open
+        exp_alerts:
+          - exp_labels:
+              path: latest
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_pricingguard_failing_open
+              summary: "Served-price guard is failing open on path latest: prices are served without the manipulation band"
+              description: |
+                The served-price guard could not read its trailing baseline and
+                served the candidate bucket unchecked. While this lasts, an
+                off-market 1m print reaches /v1/price, /v1/price/at, SEP-40
+                readers and price alerts as published, with only a log line.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_pricingguard_failing_open
+
+  # A restarted aggregator whose refresher never ticks: no `ok` series
+  # exists, so the changes() arm has no data.
+  - interval: 1m
+    name: no ok tick 40m after a restart trips stalled; a disabled refresher does not
+    input_series:
+      - series: 'stellarindex_aggregator_supply_refresh_enabled{job="stellarindex_aggregator"}'
+        values: '1+0x70'
+      - series: 'process_start_time_seconds{job="stellarindex_aggregator"}'
+        values: '0+0x70'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_aggregator_supply_refresh_stalled
+        exp_alerts: []
+      - eval_time: 50m
+        alertname: stellarindex_aggregator_supply_refresh_stalled
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: supply
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply.md#stellarindex_aggregator_supply_refresh_stalled
+              summary: "supply refresher has recorded no successful tick across any watched asset in the last 30m (cadence 5m)"
+              description: |
+                The aggregator-resident supply refresher emits
+                stellarindex_aggregator_supply_refresh_total{outcome="ok"}
+                on every successful per-asset tick. No `ok` increments
+                in 30+ minutes means either the goroutine is wedged
+                (aggregator deadlock), the orchestrator hasn't started,
+                or every recent tick across every watched asset has
+                failed. /v1/assets/{id}'s F2 fields go increasingly
+                stale. Runbook: check aggregator process health first;
+                inspect logs for recurring outcome labels; route to the
+                error_dominant runbook if every tick is genuinely
+                failing.
+
+  - interval: 1m
+    name: a disabled refresher never trips the restart arm
+    input_series:
+      - series: 'stellarindex_aggregator_supply_refresh_enabled{job="stellarindex_aggregator"}'
+        values: '0+0x70'
+      - series: 'process_start_time_seconds{job="stellarindex_aggregator"}'
+        values: '0+0x70'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_aggregator_supply_refresh_stalled
+        exp_alerts: []

@@ -119,7 +119,9 @@ migrate -path migrations -database "${STELLARINDEX_POSTGRES_DSN}" down 1
    new schema — a new nullable column, a new table, a new index are
    fine; dropping/renaming a column, narrowing a type, or tightening a
    constraint in the same release the code stops using the old shape
-   is not, because the deploy pipeline applies `migrate up` BEFORE the
+   is not (nor is dropping an index or constraint the old binary's
+   `ON CONFLICT` names, a column default it relies on, or a function it
+   calls), because the deploy pipeline applies `migrate up` BEFORE the
    new binary installs (`docs/operations/deploy-workflow.md`), and if
    that binary then fails its health probe the rollback restores only
    the **binary** — never the schema (CS-099,

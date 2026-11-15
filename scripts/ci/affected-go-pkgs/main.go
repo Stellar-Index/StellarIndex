@@ -18,9 +18,11 @@ import (
 	"fmt"
 	"go/scanner"
 	"go/token"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -39,30 +41,107 @@ var fullPrefixes = []string{"migrations/", "deploy/", "openapi/", "configs/", "t
 // they agree, so any change outside a Go package runs it.
 const wiringPkg = "test/controlwiring"
 
-// moneyGuardPkg holds the tree-wide money guards: its tests load every
-// package, so a narrowing in any production file is theirs to catch.
-const moneyGuardPkg = "internal/canonical"
+// guardMarkers identify a test that reads other packages' source (the
+// money guards, the trades-retention census, the wiring guards): any
+// production file can change its verdict, whatever the import graph says.
+var guardMarkers = [][]byte{
+	[]byte(`"go/parser"`),
+	[]byte(`"go/ast"`),
+	[]byte(`"golang.org/x/tools/go/packages"`),
+	[]byte("filepath.WalkDir("),
+	[]byte("filepath.Walk("),
+}
 
-// withMoneyGuards adds the guard package alone: marking it touched would
-// select every package that imports it.
-func withMoneyGuards(pkgs []string) ([]string, error) {
-	out, err := cmdOutput("go", "list", "./"+moneyGuardPkg)
+// guardDirs lists the package directories under root's production trees
+// that hold a test carrying a guard marker. Found by scan, not listed, so a
+// new guard test is selected without an edit here.
+func guardDirs(root string) ([]string, error) {
+	seen := map[string]bool{}
+	for _, tree := range []string{"internal", "cmd", "pkg"} {
+		err := filepath.WalkDir(filepath.Join(root, tree), guardVisit(root, seen))
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return nil, err
+		}
+	}
+	dirs := make([]string, 0, len(seen))
+	for d := range seen {
+		dirs = append(dirs, d)
+	}
+	sort.Strings(dirs)
+	return dirs, nil
+}
+
+// guardVisit records, relative to root, the directory of each guard test.
+func guardVisit(root string, seen map[string]bool) fs.WalkDirFunc {
+	return func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == "testdata" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(p, "_test.go") || !isGuardTest(p) {
+			return nil
+		}
+		rel, err := filepath.Rel(root, filepath.Dir(p))
+		if err != nil {
+			return err
+		}
+		seen[filepath.ToSlash(rel)] = true
+		return nil
+	}
+}
+
+func isGuardTest(file string) bool {
+	src, err := os.ReadFile(file) //nolint:gosec // a path the walk produced
+	if err != nil {
+		return false
+	}
+	for _, m := range guardMarkers {
+		if bytes.Contains(src, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// withGuards adds the guard packages alone: marking them touched would
+// select every package that imports them.
+func withGuards(pkgs []string) ([]string, error) {
+	dirs, err := guardDirs(".")
 	if err != nil {
 		return nil, err
 	}
-	guard := strings.TrimSpace(out)
+	if len(dirs) == 0 {
+		return pkgs, nil
+	}
+	args := []string{"list"}
+	for _, d := range dirs {
+		args = append(args, "./"+d)
+	}
+	out, err := cmdOutput("go", args...)
+	if err != nil {
+		return nil, err
+	}
+	have := map[string]bool{}
 	for _, p := range pkgs {
-		if p == guard {
-			return pkgs, nil
+		have[p] = true
+	}
+	for _, g := range strings.Fields(out) {
+		if !have[g] {
+			have[g] = true
+			pkgs = append(pkgs, g)
 		}
 	}
-	pkgs = append(pkgs, guard)
 	sort.Strings(pkgs)
 	return pkgs, nil
 }
 
 // touchesProductionGo reports whether any file is non-test Go under the
-// trees the money guards walk.
+// trees the guard tests walk.
 func touchesProductionGo(files []string) bool {
 	for _, f := range files {
 		if !strings.HasSuffix(f, ".go") || strings.HasSuffix(f, "_test.go") {
@@ -121,7 +200,7 @@ func run(base string, filesMode, worktree bool) error {
 		return err
 	}
 	if touchesProductionGo(substantive) {
-		if pkgs, err = withMoneyGuards(pkgs); err != nil {
+		if pkgs, err = withGuards(pkgs); err != nil {
 			return err
 		}
 	}

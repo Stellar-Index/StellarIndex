@@ -240,7 +240,7 @@ PromQL: `sum by (asset_key, outcome) (rate(stellarindex_aggregator_supply_refres
 
 ## stellarindex_aggregator_supply_refresh_stalled
 
-P2 (`page`), `for: 5m`. Expr: `sum(changes(stellarindex_aggregator_supply_refresh_total{outcome="ok"}[30m])) == 0`. No `ok` tick anywhere in the fleet for 30 min; F2 fields go stale across all watched assets. One healthy asset means per-asset failure: [error_dominant](#stellarindex_aggregator_supply_refresh_error_dominant).
+P2 (`page`), `for: 5m`. Expr: `sum(changes(stellarindex_aggregator_supply_refresh_total{outcome="ok"}[30m])) == 0`, or the restart arm: `stellarindex_aggregator_supply_refresh_enabled == 1`, the process up over 40 min, and no `ok` series at all (a refresher that never ticked after a deploy). No `ok` tick anywhere in the fleet for 30 min; F2 fields go stale across all watched assets. One healthy asset means per-asset failure: [error_dominant](#stellarindex_aggregator_supply_refresh_error_dominant).
 
 ### Check
 

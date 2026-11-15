@@ -1413,6 +1413,10 @@ The baseline trains on USD-volume bars, so dust adds only its USD share of a poi
 
 Gauge, no labels. How far the `ledgerstream` cursor leads the newest landed `stellar.ledgers` row at snapshot time. One or two ledgers is normal. The resolver refuses past 512 ledgers (about 45 minutes), so a rising series warns supply is about to stop; beyond that the gauge stops updating and `no_ledger` in `stellarindex_aggregator_supply_refresh_total` is the signal.
 
+### `stellarindex_aggregator_supply_refresh_enabled`
+
+Gauge, no labels. 1 when the in-aggregator supply refresher is enabled in this process, else 0. Read by the restart arm of `stellarindex_aggregator_supply_refresh_stalled`.
+
 ### `stellarindex_aggregator_supply_refresh_total`
 
 Counter, labels `asset_key` + `outcome`. `outcome` ∈ (`ok` /
@@ -1964,6 +1968,7 @@ Gauge. Unix time the last completed comparison wrote the file.
 
 ## Changelog
 
+- 2026-11-15 — added `stellarindex_aggregator_supply_refresh_enabled` and the `stellarindex_prometheus_rules_failing`, `stellarindex_retention_reaper_failing` and `stellarindex_pricingguard_failing_open` alerts.
 - 2026-11-15 — added `stellarindex_decimals_guard_unresolved_asset`, `stellarindex_login_code_failures_total` and the `stellarindex_login_code_guessing` and `stellarindex_registration_table_growing` alerts.
 - 2026-11-14 — added `stellarindex_decimals_guard_pending_writes`, `stellarindex_decimals_guard_unresolved_assets` and `stellarindex_decimals_guard_unconfirmed` alert.
 - 2026-10-03 — added `stellarindex_change_summary_passes_total`, `stellarindex_change_summary_last_success_unix`, `stellarindex_change_summary_stale` alert.

@@ -130,5 +130,63 @@ else
   pass=$((pass + 1))
 fi
 
+# ─── case 3: an existing migration renamed down into the gap — FATAL ───
+git -C "$TMP" reset -q --hard "$base_sha"
+mkfixture 0006 late
+{
+  printf '# fixture register\n\n| Number | Adds |\n| --- | --- |\n'
+  register_row 0001
+  register_row 0005
+  register_row 0006
+} >"$TMP/migrations/README.md"
+git -C "$TMP" add -A
+git -C "$TMP" -c user.email=t@example.com -c user.name=t commit -q -m "base with 0006"
+base2_sha="$(git -C "$TMP" rev-parse HEAD)"
+git -C "$TMP" mv migrations/0006_late.up.sql migrations/0003_late.up.sql
+git -C "$TMP" mv migrations/0006_late.down.sql migrations/0003_late.down.sql
+{
+  printf '# fixture register\n\n| Number | Adds |\n| --- | --- |\n'
+  register_row 0001
+  register_row 0003
+  register_row 0005
+} >"$TMP/migrations/README.md"
+git -C "$TMP" add -A
+git -C "$TMP" -c user.email=t@example.com -c user.name=t commit -q -m "renamed into the gap"
+
+out="$(cd "$TMP" && BASE_SHA="$base2_sha" ./scripts/ci/lint-migrations.sh 2>&1)"
+got=$?
+case "$got:$out" in
+  0:*)
+    echo "  FAIL a migration renamed down into a gap is fatal (exit 0, want non-zero)"
+    fail=$((fail + 1))
+    ;;
+  *"0003_late.up.sql: new migration numbered 3 does not exceed"*)
+    echo "  ok   a migration renamed down into a gap is fatal"
+    pass=$((pass + 1))
+    ;;
+  *)
+    echo "  FAIL a migration renamed down into a gap is fatal (failed, but no matching finding)"
+    indent "$out"
+    fail=$((fail + 1))
+    ;;
+esac
+
+# ─── case 4: a rename that keeps its number — passes ───
+git -C "$TMP" reset -q --hard "$base2_sha"
+git -C "$TMP" mv migrations/0006_late.up.sql migrations/0006_later.up.sql
+git -C "$TMP" mv migrations/0006_late.down.sql migrations/0006_later.down.sql
+git -C "$TMP" -c user.email=t@example.com -c user.name=t commit -q -m "renamed, same number"
+
+out="$(cd "$TMP" && BASE_SHA="$base2_sha" ./scripts/ci/lint-migrations.sh 2>&1)"
+got=$?
+if [ "$got" -ne 0 ]; then
+  echo "  FAIL a rename that keeps its number still passes (exit $got, want 0)"
+  indent "$out"
+  fail=$((fail + 1))
+else
+  echo "  ok   a rename that keeps its number still passes"
+  pass=$((pass + 1))
+fi
+
 echo "lint-migrations-backnumber-test: ${pass} passed, ${fail} failed"
 [ "$fail" -eq 0 ]

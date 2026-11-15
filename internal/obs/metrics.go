@@ -139,6 +139,7 @@ func registerPricingMetrics() {
 		AggregatorBaselineRefreshTotal,
 		AggregatorSupplyLakeClampLedgers,
 		AggregatorSupplyRefreshTotal,
+		AggregatorSupplyRefreshEnabled,
 		SupplyWriteBandBreachTotal,
 		SEP41SupplyRollupAdvancesTotal,
 		AggregatorConfidenceComputeTotal,
@@ -2546,6 +2547,14 @@ var AggregatorSupplyLakeClampLedgers = prometheus.NewGauge(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_aggregator_supply_lake_clamp_ledgers",
 		Help: "Ledgers the ingestion cursor leads the landed lake tip by when a supply snapshot is resolved. Rising toward the resolver's stalled-lake bound means supply is about to stop publishing.",
+	},
+)
+
+// AggregatorSupplyRefreshEnabled is 1 when this process runs the supply refresher, so "no ok tick since start" is told from "disabled".
+var AggregatorSupplyRefreshEnabled = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_aggregator_supply_refresh_enabled",
+		Help: "1 when the in-aggregator supply refresher is enabled in this process ([supply] aggregator_refresh_enabled), else 0.",
 	},
 )
 

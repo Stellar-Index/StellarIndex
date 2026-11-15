@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 71 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 284 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 287 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -500,6 +500,8 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | `stellarindex_login_code_lockout_table_growing` | `login_code_lockout_rows`, `login_code_lockout_errors_total{op="status_check"}` | rows > 10000 or any fail-open, 30 min | ticket | [login-code-lockout-table-growing](runbooks/api.md#stellarindex_login_code_lockout_table_growing) |
 | `stellarindex_login_code_guessing` | `increase(login_code_failures_total{outcome}[1h])` | any `lockout_engaged`, or > 50 `wrong_code`, for 5 min (email-code guessing, which `failed_auth_total` never sees) | ticket | [login-code-guessing](runbooks/api.md#stellarindex_login_code_guessing) |
 | `stellarindex_registration_table_growing` | `accounts_rows` now minus its lowest non-zero value in 6 h | > 500 for 30 min (open registration leaves permanent rows and live keys) | ticket | [registration-table-growing](runbooks/api.md#stellarindex_registration_table_growing) |
+| `stellarindex_retention_reaper_failing` | `increase(retention_reaper_errors_total[3h])` by reaper | > 0 for 2 h (a failed sweep still counts as a run for the liveness alert) | ticket | [retention-reaper-failing](runbooks/api.md#stellarindex_retention_reaper_failing) |
+| `stellarindex_pricingguard_failing_open` | `increase(pricingguard_trailing_fetch_failed_total[30m])` by path | > 0 for 15 min (prices served without the manipulation band) | ticket | [pricingguard-failing-open](runbooks/api.md#stellarindex_pricingguard_failing_open) |
 | `stellarindex_auth_reaper_stalled` | `time() - auth_reaper_last_sweep_unix` per reaper | > 3x `auth_reaper_interval_seconds`, 15 min (rows gauge frozen) | ticket | [auth-reaper-stalled](runbooks/api.md#stellarindex_auth_reaper_stalled) |
 | `stellarindex_tls_cert_expiring_soon` | `stellarindex_tls_cert_not_after_unix - time()` per host | < 14 days for ≥ 1 h | ticket | [tls-cert-expiring-soon](runbooks/api.md#stellarindex_tls_cert_expiring_soon) |
 
@@ -518,7 +520,7 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | `stellarindex_supply_verify_rollup_unit_failed_alert` | `supply_verify_rollup_unit_failed` | > 0 for 30 min (drift, watched contract with no checkpoint, 0 checked, or error) | ticket | [supply-verify-rollup-unit-failed](runbooks/supply.md#stellarindex_supply_verify_rollup_unit_failed_alert) |
 | `stellarindex_supply_verify_rollup_stale` | `time() - stellarindex_supply_verify_rollup_last_success_timestamp` | > 36 h for ≥ 5 min | ticket | [supply-verify-rollup-stale](runbooks/supply.md#stellarindex_supply_verify_rollup_stale) |
 | `stellarindex_supply_verify_rollup_never_initialized` | `absent_over_time(stellarindex_supply_verify_rollup_last_success_timestamp[36h])` | == 1 for ≥ 5 min | ticket | [supply-verify-rollup-stale](runbooks/supply.md#stellarindex_supply_verify_rollup_stale) |
-| `stellarindex_aggregator_supply_refresh_stalled` | `time() - max(timestamp(aggregator_supply_refresh_total{outcome="ok"}))` | > 30 min, 5 min | page | [supply-refresh-stalled](runbooks/supply.md#stellarindex_aggregator_supply_refresh_stalled) |
+| `stellarindex_aggregator_supply_refresh_stalled` | no `ok` change in `aggregator_supply_refresh_total` for 30 min, or refresher enabled, process up > 40 min and no `ok` series | 5 min | page | [supply-refresh-stalled](runbooks/supply.md#stellarindex_aggregator_supply_refresh_stalled) |
 | `stellarindex_aggregator_supply_refresh_error_dominant` | error share of `aggregator_supply_refresh_total` | > 50% for 30 min | ticket | [supply-refresh-error-dominant](runbooks/supply.md#stellarindex_aggregator_supply_refresh_error_dominant) |
 | `stellarindex_aggregator_supply_refresh_withheld` | per asset, `increase(aggregator_supply_refresh_total{outcome="missing_baseline"}[1h])` with no `ok` in the same hour | > 0 for 6 h (a withheld supply that no seed or replay cleared) | ticket | [supply-refresh-withheld](runbooks/supply.md#stellarindex_aggregator_supply_refresh_withheld) |
 | `stellarindex_aggregator_supply_refresh_dormant_fleet` | assets with non-zero `outcome="dormant"` rate | > 1 for 30 min | ticket | [supply-refresh-error-dominant](runbooks/supply.md#stellarindex_aggregator_supply_refresh_dormant_fleet) |
@@ -565,6 +567,7 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_prometheus_scrape_failing` | `up{job=~"api\|indexer\|aggregator"}` | == 0 for any target > 2 min | ticket | [scrape-failing](runbooks/meta.md#stellarindex_prometheus_scrape_failing) |
 | `stellarindex_alertmanager_config_bad` | `alertmanager_config_last_reload_successful` | == 0 | ticket | [alertmanager-bad-config](runbooks/meta.md#stellarindex_alertmanager_config_bad) |
+| `stellarindex_prometheus_rules_failing` | `prometheus_rule_evaluation_failures_total`, `prometheus_rule_group_iterations_missed_total`, `prometheus_config_last_reload_successful` | any failure or missed iteration in 15 min, or reload == 0, for 5 min | ticket | [prometheus-rules-failing](runbooks/meta.md#stellarindex_prometheus_rules_failing) |
 | `stellarindex_deadmansswitch` | `vector(1)` constant | MUST fire every minute | informational | [deadmansswitch](runbooks/meta.md#stellarindex_deadmansswitch) |
 | `stellarindex_alertmanager_down` | `up{job="alertmanager"}` | == 0 for > 5 min OR series absent for 10 min | page | [alertmanager-down](runbooks/meta.md#stellarindex_alertmanager_down) |
 | `stellarindex_alertmanager_not_notifying` | `alertmanager_notifications_total{integration="webhook"}` | no increase 15 min (deadman alone gives ~30/h) | page | [alertmanager-not-notifying](runbooks/meta.md#stellarindex_alertmanager_not_notifying) |
