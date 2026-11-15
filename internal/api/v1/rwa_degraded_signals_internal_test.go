@@ -180,7 +180,8 @@ func TestRWAGroups_TruncationMakesAGroupALowerBound(t *testing.T) {
 		{"a failed listing read", rwaTruncation{unread: 1}, true, false},
 		{"contracts over the cap", rwaTruncation{overContractCap: 1}, true, false},
 		{"issuers over the cap", rwaTruncation{overIssuerCap: 1}, true, false},
-		{"a full issuer page", rwaTruncation{issuerPagesFull: 1}, true, true},
+		{"this issuer's page is full", rwaTruncation{issuerPagesFull: 1, fullPageIssuers: map[string]bool{"GISSUER": true}}, true, true},
+		{"another issuer's page is full", rwaTruncation{issuerPagesFull: 1, fullPageIssuers: map[string]bool{"GOTHER": true}}, true, false},
 	}
 	for _, c := range cases {
 		class, issuer := rwaByClass(rows, c.trunc)[0], rwaByIssuer(rows, c.trunc)[0]

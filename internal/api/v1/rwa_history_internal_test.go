@@ -151,6 +151,13 @@ func TestRWAHistoryTotalPoints_AnIncompleteSetIsALowerBound(t *testing.T) {
 	if pts, _ := h.totalPoints(time.Time{}); len(pts) != 1 || !pts[0].LowerBound {
 		t.Fatalf("incomplete set: points = %+v, want one lower-bound point", pts)
 	}
+
+	if rwaHistorySetOf(rwaMembership{}, time.Time{}).setIncomplete {
+		t.Error("a membership with nothing left out reads as incomplete")
+	}
+	if !rwaHistorySetOf(rwaMembership{overIssuerCap: 1}, time.Time{}).setIncomplete {
+		t.Error("a membership over the issuer cap reads as complete")
+	}
 }
 
 // TestRWAHistoryTotal_CountsAgainstTheWholeSet: a point's coverage is stated against the size of the set, not the readable

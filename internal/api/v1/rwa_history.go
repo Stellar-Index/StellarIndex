@@ -592,6 +592,24 @@ func (s *Server) lastRWAValueHistory() rwaValueHistory {
 	return h
 }
 
+// rwaHistorySetOf sizes the set a history is a subset of, straight from the membership.
+func rwaHistorySetOf(m rwaMembership, now time.Time) rwaValueHistory {
+	out := rwaValueHistory{
+		setAssets: len(m.members) + len(m.contracts),
+		// The set is counted from the membership, so only its own caps and failed reads can leave a member out.
+		setIncomplete: rwaTruncationOf(m, rwaCatalogueJoin{}).any(),
+		setIssuers:    rwaHistoryIssuerCount(m),
+		excluded:      map[string]int{},
+		builtAt:       now,
+	}
+	out.setByIssuer = make(map[string]int, out.setIssuers)
+	for _, mem := range m.members {
+		out.setByIssuer[mem.issuer]++
+	}
+	out.excluded[RWAHistoryExcludedContract] = len(m.contracts)
+	return out
+}
+
 // buildRWAValueHistory assembles one history: today's membership, the members' supply levels reconstructed from the flow log, and the day
 // buckets the oracles published for their bound instruments.
 func (s *Server) buildRWAValueHistory(ctx context.Context) rwaValueHistory {
@@ -606,19 +624,7 @@ func (s *Server) buildRWAValueHistory(ctx context.Context) rwaValueHistory {
 		len(m.members) == 0 && len(m.contracts) == 0 {
 		return rwaValueHistory{}
 	}
-	out := rwaValueHistory{
-		setAssets: len(m.members) + len(m.contracts),
-		// No catalogue join here, so a full issuer page is not seen; the membership's own caps and failed reads are.
-		setIncomplete: rwaTruncationOf(m, rwaCatalogueJoin{}).any(),
-		setIssuers:    rwaHistoryIssuerCount(m),
-		excluded:      map[string]int{},
-		builtAt:       time.Now().UTC(),
-	}
-	out.setByIssuer = make(map[string]int, out.setIssuers)
-	for _, mem := range m.members {
-		out.setByIssuer[mem.issuer]++
-	}
-	out.excluded[RWAHistoryExcludedContract] = len(m.contracts)
+	out := rwaHistorySetOf(m, time.Now().UTC())
 
 	cands := rwaHistoryCandidates(m, out.excluded)
 	if len(cands) == 0 {
