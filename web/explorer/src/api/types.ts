@@ -8478,12 +8478,15 @@ export interface components {
              */
             as_of_ledger?: number;
             /**
-             * @description Pool-level exclusion: the captured storage did not decode to
-             *     the recognised shape, so the legs are unknown. `legs` is then
-             *     empty and `tvl_usd` is "0.00" — counted, never guessed.
+             * @description Pool-level exclusion. `undecodable_storage`: the captured
+             *     storage did not decode to the recognised shape.
+             *     `unavailable_state`: a curated pool with no current state in
+             *     the lake (absent or archived). Either way the legs are
+             *     unknown: `legs` is empty and `tvl_usd` is "0.00" — counted,
+             *     never guessed.
              * @enum {string}
              */
-            excluded?: "undecodable_storage";
+            excluded?: "undecodable_storage" | "unavailable_state";
             /** @description The pool's reserve legs in the reader's order; `[]` for an excluded pool. */
             legs: components["schemas"]["DEXTVLLeg"][];
         };

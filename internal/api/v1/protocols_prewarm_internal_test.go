@@ -161,6 +161,29 @@ func TestHandleProtocolDetail_StaleServeNeverBlanks(t *testing.T) {
 	}
 }
 
+// TestHandleProtocolDetail_WithdrawnTVLFigureIsNotServed: the detail view is cached for minutes, the TVL snapshot is
+// not. A protocol the snapshot stopped publishing loses its figure on the detail page too.
+func TestHandleProtocolDetail_WithdrawnTVLFigureIsNotServed(t *testing.T) {
+	c := NewDEXTVLCache(tvlTestSources())
+	if err := c.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	srv := New(Options{ProtocolActivity: prewarmActivityStub{}, ProtocolBespoke: &prewarmBespokeStub{}, DEXTVL: c})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	if code, env := getProtoDetail(t, ts.URL, "phoenix"); code != http.StatusOK || env.Data.TVL == nil {
+		t.Fatalf("first read: status %d tvl %+v, want a figure", code, env.Data.TVL)
+	}
+	c.src.PhoenixReserves = stubPhoenixReserveReader{}
+	if err := c.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if code, env := getProtoDetail(t, ts.URL, "phoenix"); code != http.StatusOK || env.Data.TVL != nil {
+		t.Fatalf("after the snapshot withdrew phoenix: status %d tvl %+v, want no figure", code, env.Data.TVL)
+	}
+}
+
 func TestHandleProtocolDetail_StaleServeIsNoStore(t *testing.T) {
 	srv := New(Options{ProtocolActivity: prewarmActivityStub{}, ProtocolBespoke: &prewarmBespokeStub{}})
 	ts := httptest.NewServer(srv.Handler())

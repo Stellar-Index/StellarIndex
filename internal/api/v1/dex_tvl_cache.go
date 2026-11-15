@@ -112,6 +112,8 @@ type DEXTVLSources struct {
 	CometReserves CometTVLReserveReader
 	// LakeWatermark lets a refresh record that it read from a lake that was behind. Optional.
 	LakeWatermark LakeWatermarkReader
+	// ProjectorCursor lets a refresh record that a projected source's table was behind the lake. Optional.
+	ProjectorCursor TVLProjectorCursorReader
 	// Pricer resolves reserve legs to USD; nil leaves every leg unpriced (and the snapshot says so).
 	Pricer TVLUSDPricer
 	// PegInfo short-circuits operator-declared USD pegs to $1 at their real decimals. Optional.
@@ -139,13 +141,40 @@ type DEXTVLCache struct {
 	src         DEXTVLSources
 }
 
-// lakeStaleAtRead reports whether the lake is behind as this cycle reads it; a failed watermark read counts as behind.
-func (c *DEXTVLCache) lakeStaleAtRead(ctx context.Context, now time.Time) bool {
+// TVLProjectorCursorReader reads an ingestion cursor; the projector keeps one per projected source.
+type TVLProjectorCursorReader interface {
+	GetCursor(ctx context.Context, source, sub string) (timescale.Cursor, error)
+}
+
+// dexTVLProjectorLagLedgers is how far a projected source may trail the lake: lakeStaleThreshold at a 5 s close.
+const dexTVLProjectorLagLedgers = 60
+
+// lakeStaleAtRead returns the lake watermark ledger and whether the lake is behind as this cycle reads it; a failed
+// watermark read counts as behind.
+func (c *DEXTVLCache) lakeStaleAtRead(ctx context.Context, now time.Time) (uint32, bool) {
 	if c.src.LakeWatermark == nil {
-		return false
+		return 0, false
 	}
 	ledger, closedAt, err := c.src.LakeWatermark.LakeWatermark(ctx)
-	return err != nil || ledger == 0 || now.Sub(closedAt) > lakeStaleThreshold
+	if err != nil {
+		return 0, true
+	}
+	return ledger, ledger == 0 || now.Sub(closedAt) > lakeStaleThreshold
+}
+
+// projectorBehind reports whether the projector that writes `sub`'s table has stopped or trails the lake, so the table's
+// newest rows are not the chain's. A failed or missing cursor counts as behind. False for a derivation that reads the
+// lake itself, and when no cursor reader is wired.
+func (c *DEXTVLCache) projectorBehind(ctx context.Context, sub string, lakeLedger uint32, now time.Time) bool {
+	if sub == "" || c.src.ProjectorCursor == nil {
+		return false
+	}
+	cur, err := c.src.ProjectorCursor.GetCursor(ctx, "projector", sub)
+	if err != nil {
+		return true
+	}
+	return now.Sub(cur.UpdatedAt) > lakeStaleThreshold ||
+		(lakeLedger > cur.LastLedger && lakeLedger-cur.LastLedger > dexTVLProjectorLagLedgers)
 }
 
 // NewDEXTVLCache constructs an empty cache; production calls Refresh at startup, then every DEXTVLRefreshInterval.
@@ -202,10 +231,12 @@ type tvlProtocolResult struct {
 	pools []DEXTVLPoolView
 }
 
-// dexTVLDerivation pairs a protocol name with the refresh that computes its figure.
+// dexTVLDerivation pairs a protocol name with the refresh that computes its figure. projected names the projector
+// cursor behind a served-tier table; empty for a derivation that reads lake state itself.
 type dexTVLDerivation struct {
-	name    string
-	refresh func(context.Context, *tvlValuer, time.Time) (*tvlProtocolResult, error)
+	name      string
+	refresh   func(context.Context, *tvlValuer, time.Time) (*tvlProtocolResult, error)
+	projected string
 }
 
 // derivations is the CLOSED set of protocols the snapshot derives TVL for; a pooled protocol not here must be named in
@@ -213,10 +244,10 @@ type dexTVLDerivation struct {
 // silently.
 func (c *DEXTVLCache) derivations() []dexTVLDerivation {
 	return []dexTVLDerivation{
-		{"soroswap", c.refreshSoroswap},
-		{"aquarius", c.refreshAquarius},
-		{"phoenix", c.refreshPhoenix},
-		{"comet", c.refreshComet},
+		{"soroswap", c.refreshSoroswap, ""},
+		{"aquarius", c.refreshAquarius, "aquarius"},
+		{"phoenix", c.refreshPhoenix, ""},
+		{"comet", c.refreshComet, ""},
 	}
 }
 
@@ -229,7 +260,7 @@ func (c *DEXTVLCache) Refresh(ctx context.Context) error {
 	nextPools := make(map[string][]DEXTVLPoolView, 4)
 	prev, _ := c.Snapshot()
 	// Read before the reserves, so a fresh verdict cannot cover reserves older than it.
-	lakeStale := c.lakeStaleAtRead(ctx, now)
+	lakeLedger, lakeStale := c.lakeStaleAtRead(ctx, now)
 	var errs []error
 	// carried names protocols serving a PREVIOUS cycle's figure. It is tracked explicitly, not
 	// inferred from as_of: RFC3339 is second-resolution, so two refreshes can share a stamp.
@@ -242,6 +273,7 @@ func (c *DEXTVLCache) Refresh(ctx context.Context) error {
 	for _, p := range c.derivations() {
 		// A price-read failure is judged per protocol — see beginPass.
 		valuer.beginPass()
+		behind := (lakeStale && dexTVLLakeDerived[p.name]) || c.projectorBehind(ctx, p.projected, lakeLedger, now)
 		res, err := p.refresh(ctx, valuer, now)
 		switch {
 		case errors.Is(err, errTVLNoObservedPools):
@@ -257,7 +289,7 @@ func (c *DEXTVLCache) Refresh(ctx context.Context) error {
 			carriedSet[p.name] = true
 			nextPools[p.name] = c.prevPools(p.name)
 		case res != nil:
-			if lakeStale && dexTVLLakeDerived[p.name] {
+			if behind {
 				res.view.Stale = true
 			}
 			next[p.name] = res.view
@@ -417,8 +449,8 @@ func (c *DEXTVLCache) refreshAquarius(ctx context.Context, valuer *tvlValuer, no
 	acc := newTVLProtocolAccumulator(valuer, now.Format(time.RFC3339),
 		fmt.Sprintf("sum of each pool's latest post-state reserve snapshot (aquarius_reserves, trailing %dd; "+
 			"token identities recovered by position from the pool's deposit/withdraw events, and a pool "+
-			"touched by two transactions at the same operation and event index in its latest ledger "+
-			"reads either one's post-state), valued through the served USD price tiers%s",
+			"touched by more than one transaction in its latest ledger reads one of their post-states, "+
+			"not always the last), valued through the served USD price tiers%s",
 			aquariusTVLWindowDays, c.basisTail()))
 	for _, p := range pools {
 		legs := make([]tvlLegInput, 0, len(p.Legs))
@@ -431,8 +463,8 @@ func (c *DEXTVLCache) refreshAquarius(ctx context.Context, valuer *tvlValuer, no
 	return finishTVLProtocol(acc)
 }
 
-// refreshPhoenix computes TVL from CURRENT pool reserves, scoped to the curated pool set. Absent pools are excluded (not zero);
-// undecodable storage shapes contribute 0 and are counted (countUndecodablePools).
+// refreshPhoenix computes TVL from CURRENT pool reserves, scoped to the curated pool set. Absent pools and undecodable
+// storage shapes contribute 0 and are counted unpriced.
 func (c *DEXTVLCache) refreshPhoenix(ctx context.Context, valuer *tvlValuer, now time.Time) (*tvlProtocolResult, error) {
 	if c.src.PhoenixReserves == nil || len(c.src.PhoenixPools) == 0 {
 		return nil, nil
@@ -443,7 +475,7 @@ func (c *DEXTVLCache) refreshPhoenix(ctx context.Context, valuer *tvlValuer, now
 	}
 
 	acc := newTVLProtocolAccumulator(valuer, now.Format(time.RFC3339),
-		"sum of current pool reserves (lake persistent storage; archived pools excluded, "+
+		"sum of current pool reserves (lake persistent storage; archived or absent pools and "+
 			"unrecognised storage shapes counted unpriced), valued through the served USD price tiers"+
 			c.basisTail())
 	for _, st := range states {
@@ -453,6 +485,7 @@ func (c *DEXTVLCache) refreshPhoenix(ctx context.Context, valuer *tvlValuer, now
 		})
 	}
 	acc.addUndecodable(undecodable)
+	acc.addUnavailable(c.src.PhoenixPools)
 	c.warnUndecodablePools("phoenix", undecodable)
 	return finishTVLProtocol(acc)
 }
@@ -469,8 +502,8 @@ func (c *DEXTVLCache) refreshComet(ctx context.Context, valuer *tvlValuer, now t
 	}
 
 	acc := newTVLProtocolAccumulator(valuer, now.Format(time.RFC3339),
-		"sum of current per-token pool balance records (lake persistent storage; archived pools "+
-			"excluded, unrecognised storage shapes counted unpriced), valued through the served USD "+
+		"sum of current per-token pool balance records (lake persistent storage; archived or absent pools "+
+			"and unrecognised storage shapes counted unpriced), valued through the served USD "+
 			"price tiers"+c.basisTail())
 	for _, st := range states {
 		legs := make([]tvlLegInput, 0, len(st.Legs))
@@ -480,6 +513,7 @@ func (c *DEXTVLCache) refreshComet(ctx context.Context, valuer *tvlValuer, now t
 		acc.addPool(ctx, st.Pool, st.Ledger, legs)
 	}
 	acc.addUndecodable(undecodable)
+	acc.addUnavailable(c.src.CometPools)
 	c.warnUndecodablePools("comet", undecodable)
 	return finishTVLProtocol(acc)
 }

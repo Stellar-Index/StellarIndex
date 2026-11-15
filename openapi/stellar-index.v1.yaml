@@ -17347,11 +17347,14 @@ components:
             of it and unchanged since. Absent when the reader carried none.
         excluded:
           type: string
-          enum: [undecodable_storage]
+          enum: [undecodable_storage, unavailable_state]
           description: |
-            Pool-level exclusion: the captured storage did not decode to
-            the recognised shape, so the legs are unknown. `legs` is then
-            empty and `tvl_usd` is "0.00" — counted, never guessed.
+            Pool-level exclusion. `undecodable_storage`: the captured
+            storage did not decode to the recognised shape.
+            `unavailable_state`: a curated pool with no current state in
+            the lake (absent or archived). Either way the legs are
+            unknown: `legs` is empty and `tvl_usd` is "0.00" — counted,
+            never guessed.
         legs:
           type: array
           description: The pool's reserve legs in the reader's order; `[]` for an excluded pool.
