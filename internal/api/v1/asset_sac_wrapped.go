@@ -3,6 +3,8 @@ package v1
 import (
 	"context"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // sacNotWrappedTTL bounds how long a "not a SAC" answer is reused; a contract instance can land in the lake after first sight.
@@ -36,4 +38,17 @@ func (s *Server) sacWrappedAssetIDErr(ctx context.Context, contractID string) (s
 	id := asset.String()
 	s.sacWrapped.Store(contractID, id)
 	return id, true, nil
+}
+
+// unwrapSAC returns the classic asset a SAC address wraps, or asset unchanged. unread: the lake did not say whether the
+// contract is a SAC, so its wrapped issuer was not checked.
+func (s *Server) unwrapSAC(ctx context.Context, asset canonical.Asset) (out canonical.Asset, unread bool) {
+	if asset.Type != canonical.AssetSoroban || s.Explorer == nil {
+		return asset, false
+	}
+	classic, ok, err := s.resolveSAC(ctx, asset.ContractID)
+	if ok {
+		return classic, false
+	}
+	return asset, err != nil
 }

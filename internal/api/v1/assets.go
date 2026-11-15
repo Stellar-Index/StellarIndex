@@ -2420,15 +2420,7 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	// A C-address that is a Stellar Asset Contract resolves to the classic asset it wraps. The trust
 	// anchor is the lake instance's StellarAsset executable (only stellar-core mints it); as a
 	// belt-and-braces check the classic asset must re-derive to the queried address.
-	// wrapperUnread: the lake did not say whether this contract is a SAC, so its wrapped issuer was not checked.
-	wrapperUnread := false
-	if parsed.Type == canonical.AssetSoroban && s.Explorer != nil {
-		classic, ok, err := s.resolveSAC(r.Context(), parsed.ContractID)
-		if ok {
-			parsed = classic
-		}
-		wrapperUnread = err != nil
-	}
+	parsed, wrapperUnread := s.unwrapSAC(r.Context(), parsed)
 
 	// Response cache, drift-safe because the entry came from this same handler within 30s. It
 	// covers the whole F2 chain and the overlays, which cost ~50-200ms each warm and dominate the
