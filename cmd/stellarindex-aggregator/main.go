@@ -2170,19 +2170,23 @@ func (r priceAlertVWAPReader) LatestVWAP(ctx context.Context, base, quote canoni
 			if r.gate.PriceWithheld(ctx, base, quote, "price_alert") {
 				return "", time.Time{}, false, nil
 			}
-			// Same serving-sanity guard as the API raw-bucket paths: a bare closed bucket bypasses the
-			// orchestrator's outlier / min-volume / freeze filters, so a fat-finger print would fire a
-			// SPURIOUS alert. The guard serves last-known-good off the pair's trailing baseline and is
-			// byte-identical on a healthy bucket. An unvalidated bucket is the guard's fail-open case;
-			// an alert has no stale flag to carry that doubt, so it does not fire (sticky).
-			served, lowConfidence, _ := pricingguard.GuardServedVWAP1mConfidence(ctx, r.store, r.logger, pair, row)
-			if lowConfidence {
-				return "", time.Time{}, false, nil
-			}
-			return r.adjustServed(b, q, served)
+			return r.guardedServe(ctx, pair, row)
 		}
 	}
 	return "", time.Time{}, false, nil
+}
+
+// guardedServe applies the serving-sanity guard the API raw-bucket paths use: a bare closed bucket bypasses
+// the orchestrator's outlier and min-volume filters, so a fat-finger print would fire a SPURIOUS alert. The
+// guard serves last-known-good off the pair's trailing baseline and is byte-identical on a healthy bucket. An
+// unvalidated bucket is the guard's fail-open case; an alert has no stale flag to carry that doubt, so it
+// does not fire (sticky).
+func (r priceAlertVWAPReader) guardedServe(ctx context.Context, pair canonical.Pair, row timescale.Vwap1mRow) (string, time.Time, bool, error) {
+	served, lowConfidence, _ := pricingguard.GuardServedVWAP1mConfidence(ctx, r.store, r.logger, pair, row)
+	if lowConfidence {
+		return "", time.Time{}, false, nil
+	}
+	return r.adjustServed(pair.Base, pair.Quote, served)
 }
 
 // adjustServed applies the /v1/price decimals correction to a guarded bucket.

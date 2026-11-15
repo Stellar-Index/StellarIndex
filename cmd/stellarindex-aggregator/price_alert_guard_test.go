@@ -471,8 +471,8 @@ func TestPriceAlertReader_FrozenPairFiresNothing(t *testing.T) {
 		t.Errorf("unread marker: ok=%v err=%v, want an error and no price", ok, err)
 	}
 
-	clear := priceAlertVWAPReader{store: store, logger: discardLogger(), freeze: fakePairFreeze{}}
-	if price, _, ok, err := clear.LatestVWAP(context.Background(), base, quote); err != nil || !ok || price != "1.25" {
+	unfrozen := priceAlertVWAPReader{store: store, logger: discardLogger(), freeze: fakePairFreeze{}}
+	if price, _, ok, err := unfrozen.LatestVWAP(context.Background(), base, quote); err != nil || !ok || price != "1.25" {
 		t.Errorf("no marker: price=%q ok=%v err=%v, want 1.25 served", price, ok, err)
 	}
 }
