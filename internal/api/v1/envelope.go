@@ -24,6 +24,8 @@ type Envelope struct {
 	// Withheld names ids /v1/price/batch omitted because a serving gate declined to publish their
 	// price, as distinct from ids with no data.
 	Withheld []string `json:"withheld,omitempty"`
+	// Unread names ids /v1/price/batch omitted because their price could not be read: unknown, not absent.
+	Unread []string `json:"unread,omitempty"`
 	// Thin names ids /v1/price/batch served under `include_thin=true` from a sub-floor market.
 	Thin []string `json:"thin,omitempty"`
 	// Stale and Triangulated name the /v1/price/batch rows behind the OR-ed flags of the same name,

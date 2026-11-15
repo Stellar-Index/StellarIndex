@@ -304,14 +304,52 @@ func TestPriceBatch_StaleFlagOR(t *testing.T) {
 	}
 }
 
-func TestPriceBatch_ReaderError500(t *testing.T) {
+// A batch in which no id could be read is a retryable 503: an empty 200 would say the ids have no price.
+func TestPriceBatch_NothingReadIs503(t *testing.T) {
 	reader := &stubPriceReader{err: errors.New("boom")}
 	srv := v1.New(v1.Options{Prices: reader})
 	ts := startHTTPTest(t, srv.Handler())
 
 	resp := mustGet(t, ts.URL+"/v1/price/batch?asset_ids=native&quote=fiat:USD")
-	if resp.StatusCode != http.StatusInternalServerError {
-		t.Errorf("status = %d, want 500", resp.StatusCode)
+	if resp.StatusCode != http.StatusServiceUnavailable || resp.Header.Get("Retry-After") == "" {
+		t.Errorf("status = %d Retry-After = %q, want a 503 with Retry-After", resp.StatusCode, resp.Header.Get("Retry-After"))
+	}
+}
+
+// One id's failed read is that row's, whichever spelling failed: the other rows are served and the failed id is
+// named on `unread`, not left to read as "no price".
+func TestPriceBatch_AFailedReadIsNamedUnread(t *testing.T) {
+	reader := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{"fiat:EUR/fiat:USD": {AssetID: "fiat:EUR", Quote: "fiat:USD", Price: "1.08", PriceType: "vwap"}},
+		errByPair: map[string]error{"native/fiat:USD": errors.New("canceling statement due to statement timeout")},
+	}
+	ts := startHTTPTest(t, v1.New(v1.Options{Prices: reader}).Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/price/batch?asset_ids=fiat:EUR,native&quote=fiat:USD")
+	body, _ := readAll(resp)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(resp.Header.Get("Cache-Control"), "no-store") {
+		t.Fatalf("status = %d Cache-Control = %q, want a 200 marked no-store: %s", resp.StatusCode, resp.Header.Get("Cache-Control"), body)
+	}
+	if !strings.Contains(body, `"unread":["native"]`) || !strings.Contains(body, `"1.08`) {
+		t.Errorf("want fiat:EUR served and native on unread: %s", body)
+	}
+}
+
+// A raw:<symbol> id records an unmapped oracle symbol and is never a pair leg: a 400, not a 500.
+func TestPriceRoutes_RawSymbolIsABadRequest(t *testing.T) {
+	ts := startHTTPTest(t, v1.New(v1.Options{Prices: &stubPriceReader{err: v1.ErrPriceNotFound}, History: &stubHistoryReader{}}).Handler())
+	for _, path := range []string{
+		"/v1/price?asset=raw:BTC",
+		"/v1/price?asset=native&quote=raw:BTC",
+		"/v1/price/tip?asset=raw:BTC",
+		"/v1/price/tip?asset=native&quote=raw:BTC",
+		"/v1/price/batch?asset_ids=native,raw:BTC",
+		"/v1/price/batch?asset_ids=native&quote=raw:BTC",
+	} {
+		resp := mustGet(t, ts.URL+path)
+		if body, _ := readAll(resp); resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("%s: status = %d, want 400: %s", path, resp.StatusCode, body)
+		}
 	}
 }
 

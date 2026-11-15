@@ -96,16 +96,22 @@ func TestPriceFallback_CacheFailureDoesNotHideALowerLayer(t *testing.T) {
 	}
 }
 
-// TestPriceBatch_FallbackReadFailureIsDegraded: the row is omitted and the response is not cacheable.
+// TestPriceBatch_FallbackReadFailureIsDegraded: the row is omitted and named unread, and the response is not cacheable.
 func TestPriceBatch_FallbackReadFailureIsDegraded(t *testing.T) {
 	usdc, usdt := oraclePegsForFallback(t)
 	foo := "FOO-GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
-	reader := &stubPriceReader{errByPair: map[string]error{foo + "/" + usdc.String(): errors.New("pool acquire timeout")}}
+	reader := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{"fiat:EUR/fiat:USD": {AssetID: "fiat:EUR", Quote: "fiat:USD", Price: "1.08", PriceType: "vwap"}},
+		errByPair: map[string]error{foo + "/" + usdc.String(): errors.New("pool acquire timeout")},
+	}
 	ts := startHTTPTest(t, v1.New(v1.Options{Prices: reader, USDPeggedClassics: []canonical.Asset{usdc, usdt}}).Handler())
-	resp := mustGet(t, ts.URL+"/v1/price/batch?asset_ids="+foo+"&quote=fiat:USD")
+	resp := mustGet(t, ts.URL+"/v1/price/batch?asset_ids=fiat:EUR,"+foo+"&quote=fiat:USD")
 	body, _ := readAll(resp)
 	if cc := resp.Header.Get("Cache-Control"); resp.StatusCode != http.StatusOK || !strings.Contains(cc, "no-store") {
 		t.Errorf("status = %d Cache-Control = %q, want a 200 marked no-store. Body: %s", resp.StatusCode, cc, body)
+	}
+	if !strings.Contains(body, `"unread":["`+foo+`"]`) {
+		t.Errorf("want the failed id on unread: %s", body)
 	}
 }
 

@@ -141,12 +141,7 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 	}
 	snap, sources, ok, err := s.tipFallback(ctx, asset, quote)
 	if err != nil {
-		// An unread layer does not stop the SAC-last walk below from serving; a refusal does.
-		if !errors.Is(err, ErrPriceWithheld) {
-			if sacSnap, sacSources, sacOK := s.tipWindowEscalating(ctx, asset, quote, windowSeconds, last); sacOK {
-				return sacSnap, sacSources, nil
-			}
-		}
+		// An unread layer has not missed: the SAC-last walk below is for a miss only.
 		return PriceSnapshot{}, nil, err
 	}
 	if ok {
@@ -219,6 +214,8 @@ func (s *Server) tipFallback(ctx context.Context, asset, quote canonical.Asset) 
 	fxSnap, fxSources, ok, withheld, err := s.tryUSDAnchoredFiatCross(ctx, asset, quote)
 	switch {
 	case ok:
+		// The cross's USD leg can be the stablecoin proxy or the triangulated cache value.
+		fxSnap.ProxyDeviation, fxSnap.PegUnchecked = s.proxyDeviationChecked(ctx, time.Now().UTC())
 		return fxSnap, fxSources, true, nil
 	case err != nil:
 		return PriceSnapshot{}, nil, false, err
@@ -248,7 +245,7 @@ func (s *Server) parseTipAssetQuote(w http.ResponseWriter, r *http.Request) (can
 			"asset query parameter is required")
 		return canonical.Asset{}, canonical.Asset{}, false
 	}
-	asset, err := canonical.ParseAsset(rawAsset)
+	asset, err := parsePriceLeg(rawAsset)
 	if err != nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-asset-id",
@@ -258,7 +255,7 @@ func (s *Server) parseTipAssetQuote(w http.ResponseWriter, r *http.Request) (can
 
 	quote := defaultPriceQuote
 	if raw := r.URL.Query().Get("quote"); raw != "" {
-		q, err := canonical.ParseAsset(raw)
+		q, err := parsePriceLeg(raw)
 		if err != nil {
 			writeProblem(w, r,
 				"https://api.stellarindex.io/errors/invalid-quote",

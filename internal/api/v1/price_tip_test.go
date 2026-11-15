@@ -580,6 +580,30 @@ func TestPriceTip_ThinPoolThirdAlias_ClassicQuoteFallsToTheClosedBook(t *testing
 	}
 }
 
+// TestPriceTip_ThinPoolThirdAlias_AnUnreadClosedBookIsNotAMiss: when the closed SDEX bucket could not be read, the
+// fresh SAC/SAC print does not stand in for it. The answer is unknown, so the tip is an error, and /v1/price agrees.
+func TestPriceTip_ThinPoolThirdAlias_AnUnreadClosedBookIsNotAMiss(t *testing.T) {
+	installPegAliasRegistry(t)
+	now := time.Now().UTC()
+	hist := &recordingHistoryReader{stubHistoryReader: &stubHistoryReader{trades: []canonical.Trade{
+		mkPairTrade(t, pegAliasAquaSAC, pegAliasUSDCSAC, now.Add(-2*time.Second), 10_000_000, 50_000, "soroswap"),
+	}}}
+	sacSnap := v1.PriceSnapshot{AssetID: pegAliasAquaSAC, Quote: pegAliasUSDCClassic, Price: "0.0050", PriceType: "vwap", ObservedAt: v1.WireTime(now)}
+	prices := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{pegAliasAquaSAC + "/" + pegAliasUSDCClassic: sacSnap},
+		errByPair: map[string]error{pegAliasAquaClassic + "/" + pegAliasUSDCClassic: errors.New("canceling statement due to statement timeout")},
+	}
+	ts := startHTTPTest(t, v1.New(v1.Options{Prices: prices, History: hist}).Handler())
+
+	for _, path := range []string{"/v1/price/tip", "/v1/price"} {
+		resp := mustGet(t, ts.URL+path+"?asset="+pegAliasAquaClassic+"&quote="+pegAliasUSDCClassic)
+		if body, _ := readAll(resp); resp.StatusCode < 500 {
+			t.Errorf("%s: status = %d, want a 5xx: a failed read of the deep book is not a miss: %s", path, resp.StatusCode, body)
+		}
+	}
+	assertNoSACPairConsulted(t, hist.pairs)
+}
+
 // TestPriceTip_ThinPoolThirdAlias_XLMMergesEstablishedFormsOnly: for XLM the established forms (`native`, `crypto:XLM`)
 // still merge, but the XLM SAC pool is left out of a classic-quoted window even if it printed inside it.
 // RED before tipMergePairs: the SAC print is blended in, price 0.7100000000 with sources [sdex soroswap].
@@ -768,6 +792,30 @@ func TestPriceTip_FallbackBranchesOmitWindowSeconds(t *testing.T) {
 					"computed over the caller's [1,60] rolling window: %s", body)
 			}
 		})
+	}
+}
+
+// The USD-anchored cross multiplies a USD leg that can be the stablecoin proxy, so its tip carries the depeg flag
+// /v1/price puts on the same derivation.
+func TestPriceTip_USDAnchoredCrossCarriesProxyDeviation(t *testing.T) {
+	usdc, _ := oraclePegsForFallback(t)
+	for usdcUSD, want := range map[string]bool{"0.90": true, "1.001": false} {
+		ts := startHTTPTest(t, v1.New(v1.Options{
+			Prices:            &stubPriceReader{err: v1.ErrPriceNotFound},
+			History:           &stubHistoryReader{},
+			Triangulated:      usdOnlyVWAPLooker{value: "0.2"},
+			Currencies:        brlCurrencies(),
+			PriceAt:           devPriceAtStub(map[string]string{"crypto:USDC/fiat:USD": usdcUSD}),
+			USDPeggedClassics: []canonical.Asset{usdc},
+		}).Handler())
+		resp := mustGet(t, ts.URL+"/v1/price/tip?asset=native&quote=fiat:BRL")
+		body, _ := readAll(resp)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("USDC at %s: status = %d, want 200: %s", usdcUSD, resp.StatusCode, body)
+		}
+		if got := strings.Contains(body, `"proxy_deviation":true`); got != want {
+			t.Errorf("USDC at %s: proxy_deviation present = %v, want %v: %s", usdcUSD, got, want, body)
+		}
 	}
 }
 

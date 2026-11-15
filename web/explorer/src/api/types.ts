@@ -961,8 +961,10 @@ export interface paths {
          *     max 100; duplicates de-duplicated server-side). Assets
          *     without a served price are OMITTED from `data` rather than
          *     failing the batch; those whose price is withheld by a serving
-         *     gate are named in the envelope's `withheld` list, and the rest
-         *     of the omitted ids have no price data. The
+         *     gate are named in the envelope's `withheld` list, those whose
+         *     price could not be read are named in `unread`, and the rest
+         *     of the omitted ids have no price data. A batch in which no id
+         *     could be read, or which ran out of time, is a 503. The
          *     envelope's `flags.stale` is the OR over per-row staleness.
          *     Above 100 ids, use the POST form (up to 1000 in the body).
          *
@@ -12140,11 +12142,18 @@ export interface components {
              *     WITHHELD their price (thin market, flagged issuer, withheld
              *     upstream leg): the pair is observed but no price is
              *     published, the batch form of the single-asset
-             *     `price-withheld` 404. An id in neither `data` nor
-             *     `withheld` has no price data. Input order; absent when
+             *     `price-withheld` 404. An id in none of `data`, `withheld`
+             *     and `unread` has no price data. Input order; absent when
              *     nothing was withheld.
              */
             withheld?: string[];
+            /**
+             * @description Requested ids omitted from `data` because their price
+             *     could not be read (a source timed out or errored): the
+             *     answer is unknown, not "no price". Retry those ids.
+             *     Input order; absent when every id was read.
+             */
+            unread?: string[];
             /**
              * @description Requested ids in `data` whose price comes from a market
              *     below the substance floor, served because the request opted

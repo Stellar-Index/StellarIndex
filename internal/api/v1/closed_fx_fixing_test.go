@@ -157,7 +157,7 @@ func TestPriceClosedFXReadFailureIsNotAMiss(t *testing.T) {
 		t.Errorf("/v1/price: want 503 price-unavailable, got %d: %s", status, body)
 	}
 	status, body = getBody(t, ts.URL+"/v1/price/batch?asset_ids=native&quote=fiat:BRL")
-	if status != http.StatusOK || strings.Contains(body, `"withheld"`) || !strings.Contains(body, `"data":[]`) {
-		t.Errorf("batch: want the row omitted and not listed as withheld, got %d: %s", status, body)
+	if status != http.StatusServiceUnavailable || !strings.Contains(body, "errors/price-unavailable") {
+		t.Errorf("batch: no id could be read, want 503 price-unavailable, got %d: %s", status, body)
 	}
 }
