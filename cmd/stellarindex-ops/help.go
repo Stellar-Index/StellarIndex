@@ -728,7 +728,7 @@ Subcommands:
                           to the USD credibility budget in -write's upsert
                           batch order and prints how many token/token
                           prints it would refuse and their USD total.
-  trades-cagg-refresh -config PATH -from N -to N [-force=false] -write | -config PATH -size
+  trades-cagg-refresh -config PATH -from N -to N [-force=false] [-oracle] -write | -config PATH -size
                           Refresh every continuous aggregate over trades
                           (prices_1m first, twap_1h/twap_1d last) over the
                           time span of the trades now in ledgers

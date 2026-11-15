@@ -52,6 +52,7 @@ type tradesCAGGRefreshArgs struct {
 	from, to uint32
 	force    bool
 	size     bool
+	oracle   bool
 	write    bool
 }
 
@@ -61,6 +62,7 @@ func parseTradesCAGGRefreshArgs(args []string) (tradesCAGGRefreshArgs, error) {
 	from := fs.Uint("from", 0, "first ledger of the rewritten range (inclusive, required)")
 	to := fs.Uint("to", 0, "last ledger of the rewritten range (inclusive, required)")
 	force := fs.Bool("force", true, "recompute every bucket in the window; false re-materialises only the buckets Timescale's invalidation log names")
+	oracle := fs.Bool("oracle", false, "also refresh the oracle_prices_* aggregates over the span oracle_updates holds for the range; their policies reach back five minutes, so a re-derived oracle source stays stale in every bar until this runs")
 	size := fs.Bool("size", false, "read-only: print each view's pending invalidation ranges and the ledgers to pass for a -force=false catch-up")
 	if err := fs.Parse(args); err != nil {
 		return tradesCAGGRefreshArgs{}, err
@@ -91,7 +93,7 @@ func parseTradesCAGGRefreshArgs(args []string) (tradesCAGGRefreshArgs, error) {
 	if err := gate.RequireStatedMode(); err != nil {
 		return tradesCAGGRefreshArgs{}, err
 	}
-	return tradesCAGGRefreshArgs{cfgPath: *cfgPath, from: uint32(*from), to: uint32(*to), force: *force, write: gate.Enabled()}, nil
+	return tradesCAGGRefreshArgs{cfgPath: *cfgPath, from: uint32(*from), to: uint32(*to), force: *force, oracle: *oracle, write: gate.Enabled()}, nil
 }
 
 func tradesCAGGRefresh(args []string) error {
@@ -114,9 +116,56 @@ func tradesCAGGRefresh(args []string) error {
 		return sizeTradesCAGGBacklog(ctx, store, time.Now(), os.Stdout)
 	}
 	if !opsutil.PrintWriteBanner(a.write) {
-		return previewTradesCAGGRefresh(ctx, store, a.from, a.to, a.force, time.Now(), os.Stdout)
+		if err := previewTradesCAGGRefresh(ctx, store, a.from, a.to, a.force, time.Now(), os.Stdout); err != nil || !a.oracle {
+			return err
+		}
+		return refreshOracleCAGGsOverLedgers(ctx, store, a.from, a.to, a.force, false, os.Stdout)
 	}
-	return refreshTradesCAGGsOverLedgers(ctx, store, a.from, a.to, a.force, time.Now(), os.Stdout)
+	if err := refreshTradesCAGGsOverLedgers(ctx, store, a.from, a.to, a.force, time.Now(), os.Stdout); err != nil || !a.oracle {
+		return err
+	}
+	return refreshOracleCAGGsOverLedgers(ctx, store, a.from, a.to, a.force, true, os.Stdout)
+}
+
+// oracleCAGGStore is the storage seam of the -oracle arm; *timescale.Store satisfies it.
+type oracleCAGGStore interface {
+	LedgerRangeToOracleTimeRange(ctx context.Context, fromLedger, toLedger uint32) (time.Time, time.Time, error)
+	timescale.CAGGStepRefresher
+}
+
+// refreshOracleCAGGsOverLedgers refreshes every [timescale.OracleCAGGs] view over the span oracle_updates holds for
+// [from, to]; write=false prints the plan. A range with no oracle row has nothing to refresh and says so.
+func refreshOracleCAGGsOverLedgers(ctx context.Context, s oracleCAGGStore, from, to uint32, force, write bool, out io.Writer) error {
+	tsFrom, tsTo, err := s.LedgerRangeToOracleTimeRange(ctx, from, to)
+	if errors.Is(err, timescale.ErrNotFound) {
+		_, err = fmt.Fprintf(out, "trades-cagg-refresh: no oracle_updates row in ledgers [%d,%d]; the oracle aggregates were not refreshed\n", from, to)
+		return err
+	}
+	if err != nil {
+		return fmt.Errorf("oracle time span of ledgers [%d,%d]: %w", from, to, err)
+	}
+	plan := timescale.PlanCAGGRefresh(timescale.OracleCAGGs, func(c timescale.CAGGSpec) (time.Time, time.Time) {
+		return timescale.PadRefreshWindow(tsFrom, tsTo, c.MinWindow)
+	})
+	for _, st := range plan {
+		st.Force = force
+		if !write {
+			if _, err := fmt.Fprintf(out, "trades-cagg-refresh: would refresh %s [%s,%s) forced=%t\n", st.View,
+				st.From.UTC().Format(time.RFC3339), st.To.UTC().Format(time.RFC3339), force); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := timescale.RunCAGGRefreshStep(ctx, s, st, false); err != nil {
+			return fmt.Errorf("refresh %s over ledgers [%d,%d]: %w", st.View, from, to, err)
+		}
+	}
+	if !write {
+		return nil
+	}
+	_, err = fmt.Fprintf(out, "trades-cagg-refresh: oracle aggregates refreshed [%d,%d] ts=[%s,%s] views=%d forced=%t\n",
+		from, to, tsFrom.UTC().Format(time.RFC3339), tsTo.UTC().Format(time.RFC3339), len(plan), force)
+	return err
 }
 
 // sizeTradesCAGGBacklog prints, per [timescale.TradesCAGGs] view, the invalidation ranges a non-forced refresh would re-materialise and

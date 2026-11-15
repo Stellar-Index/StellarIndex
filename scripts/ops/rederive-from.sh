@@ -5,9 +5,10 @@
 #   2. seed stellar.supply_flows over [L,TO] (ch-supply-flows-seed.sh);
 #   3. projected-rebuild -from L per -projected source, behind the live
 #      projector's tail (its one-writer guard stays on);
-#   4. trades-cagg-refresh over [L, lake tip] when any source was rebuilt: the
-#      aggregates' own refresh policies never look back this far, so without it
-#      price history, OHLC and volume keep serving the pre-rebuild rows;
+#   4. trades-cagg-refresh -oracle over [L, lake tip] when any source was rebuilt:
+#      the trades and oracle aggregates' own refresh policies never look back this
+#      far, so without it price history, OHLC, volume and oracle prices keep
+#      serving the pre-rebuild rows;
 #   5. seed-entry-counts, so counters match the rebuilt tables.
 # Workers pull windows newest-first from one queue, not fixed shards: recent
 # windows hold far more rows, so fixed shards wait on the worker owning the tip.
@@ -185,6 +186,8 @@ log "LAKE DONE [$FROM,$TO]"
 stage() {
   local name=$1; shift
   if [ -e "$SDIR/done.$name" ]; then log "$name already done — skipped"; return 0; fi
+  # A source rebuilt now makes an earlier aggregate refresh and entry count stale, whatever run wrote their markers.
+  case "$name" in projected.*) rm -f "$SDIR/done.trades-caggs" "$SDIR/done.entry-counts" ;; esac
   log "$name START"
   local rc
   "$@" >> "$LOG" 2>&1 || { rc=$?; die "$name FAILED (exit $rc) — re-run to resume" "$rc"; }
@@ -203,11 +206,12 @@ done
 # Run for any rebuilt source rather than list the trade writers here: a refresh
 # over a range with no rewritten trades changes nothing. The rebuild ran to the
 # live cursor, past the pinned TO, so the range ends at the lake tip.
-if [ "${#SOURCES[@]}" -gt 0 ] && [ ! -e "$SDIR/done.trades-caggs" ]; then
+# -oracle: a rebuilt oracle source rewrites oracle_updates, and the oracle price aggregates are read from those rows.
+if compgen -G "$SDIR/done.projected.*" > /dev/null && [ ! -e "$SDIR/done.trades-caggs" ]; then
   cagg_to="$(lake_tip)" || cagg_to=""
   posint "$cagg_to" || die "could not read the lake tip for the aggregate refresh — re-run to resume"
   [ "$cagg_to" -ge "$TO" ] || cagg_to=$TO
-  stage trades-caggs "$OPS" trades-cagg-refresh -config "$CONFIG" -from "$FROM" -to "$cagg_to" -write
+  stage trades-caggs "$OPS" trades-cagg-refresh -config "$CONFIG" -from "$FROM" -to "$cagg_to" -oracle -write
 fi
 stage entry-counts "$OPS" seed-entry-counts -config "$CONFIG" -write
 log "REDERIVE_COMPLETE [$FROM,$TO]"

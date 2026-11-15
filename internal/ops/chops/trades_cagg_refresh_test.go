@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"slices"
 	"strings"
 	"testing"
@@ -765,6 +766,104 @@ func TestTradesDriftSampleWindows(t *testing.T) {
 		}
 		if got := tradesDriftSampleWindows(minute(1, 0, 0), minute(1, 2, 0), minute(1, 0, 0)); len(got) != 0 {
 			t.Errorf("windows = %v for a span wholly past the cutoff, want none", got)
+		}
+	})
+}
+
+type fakeOracleCAGGStore struct {
+	from, to  time.Time
+	spanErr   error
+	failView  string
+	refreshed []string
+	forced    map[string]bool
+	windows   map[string][2]time.Time
+}
+
+func (f *fakeOracleCAGGStore) LedgerRangeToOracleTimeRange(context.Context, uint32, uint32) (time.Time, time.Time, error) {
+	return f.from, f.to, f.spanErr
+}
+
+func (f *fakeOracleCAGGStore) record(view string, from, to time.Time, forced bool) error {
+	if view == f.failView {
+		return errors.New("refresh failed")
+	}
+	if f.forced == nil {
+		f.forced, f.windows = map[string]bool{}, map[string][2]time.Time{}
+	}
+	if _, seen := f.windows[view]; !seen {
+		f.refreshed = append(f.refreshed, view)
+		f.windows[view] = [2]time.Time{from, to}
+	}
+	w := f.windows[view]
+	if from.Before(w[0]) {
+		w[0] = from
+	}
+	if to.After(w[1]) {
+		w[1] = to
+	}
+	f.windows[view], f.forced[view] = w, forced
+	return nil
+}
+
+func (f *fakeOracleCAGGStore) RefreshContinuousAggregate(_ context.Context, view string, from, to time.Time) error {
+	return f.record(view, from, to, false)
+}
+
+func (f *fakeOracleCAGGStore) RefreshContinuousAggregateForced(_ context.Context, view string, from, to time.Time) error {
+	return f.record(view, from, to, true)
+}
+
+// A re-derived oracle source rewrites oracle_updates; the oracle_prices_* policies reach back five minutes, so every
+// view must be refreshed over the whole span, edge buckets included.
+func TestRefreshOracleCAGGsOverLedgers(t *testing.T) {
+	from := time.Date(2026, 3, 4, 10, 17, 0, 0, time.UTC)
+	to := from.Add(40 * 24 * time.Hour)
+	t.Run("write refreshes every oracle view over the padded span", func(t *testing.T) {
+		s := &fakeOracleCAGGStore{from: from, to: to}
+		var out strings.Builder
+		if err := refreshOracleCAGGsOverLedgers(context.Background(), s, 100, 200, true, true, &out); err != nil {
+			t.Fatal(err)
+		}
+		if len(s.refreshed) != len(timescale.OracleCAGGs) {
+			t.Fatalf("refreshed %v, want all %d oracle views", s.refreshed, len(timescale.OracleCAGGs))
+		}
+		for _, c := range timescale.OracleCAGGs {
+			w, ok := s.windows[c.Name]
+			if !ok || !s.forced[c.Name] {
+				t.Errorf("%s: refreshed=%v forced=%v, want a forced refresh", c.Name, ok, s.forced[c.Name])
+			}
+			if w[0].After(from.Add(-c.MinWindow/2)) || w[1].Before(to.Add(c.MinWindow/2)) {
+				t.Errorf("%s window [%s,%s] does not hold the edge buckets of [%s,%s]", c.Name, w[0], w[1], from, to)
+			}
+		}
+		if !strings.Contains(out.String(), "oracle aggregates refreshed [100,200]") {
+			t.Errorf("no completion line:\n%s", out.String())
+		}
+	})
+	t.Run("a dry run refreshes nothing and prints the plan", func(t *testing.T) {
+		s := &fakeOracleCAGGStore{from: from, to: to}
+		var out strings.Builder
+		if err := refreshOracleCAGGsOverLedgers(context.Background(), s, 100, 200, true, false, &out); err != nil {
+			t.Fatal(err)
+		}
+		if len(s.refreshed) != 0 || strings.Count(out.String(), "would refresh oracle_prices_") != len(timescale.OracleCAGGs) {
+			t.Errorf("dry run refreshed %v; output:\n%s", s.refreshed, out.String())
+		}
+	})
+	t.Run("a failed view is an error", func(t *testing.T) {
+		s := &fakeOracleCAGGStore{from: from, to: to, failView: "oracle_prices_1h"}
+		if err := refreshOracleCAGGsOverLedgers(context.Background(), s, 100, 200, true, true, io.Discard); err == nil {
+			t.Fatal("a failed oracle view refresh returned nil")
+		}
+	})
+	t.Run("no oracle row in the range is said, not failed", func(t *testing.T) {
+		s := &fakeOracleCAGGStore{spanErr: timescale.ErrNotFound}
+		var out strings.Builder
+		if err := refreshOracleCAGGsOverLedgers(context.Background(), s, 100, 200, true, true, &out); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out.String(), "no oracle_updates row") || len(s.refreshed) != 0 {
+			t.Errorf("output: %s refreshed: %v", out.String(), s.refreshed)
 		}
 	})
 }

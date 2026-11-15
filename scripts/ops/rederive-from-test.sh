@@ -63,6 +63,7 @@ cat > "$TMP/bin/fake-ops" <<'STUB'
 #!/usr/bin/env bash
 cmd=$1; shift; from=; to=; src=; mode=
 [ "$cmd" = projected-rebuild ] && echo "$*" >> "$OPS_LOG.argv"
+[ "$cmd" = trades-cagg-refresh ] && echo "$*" >> "$OPS_LOG.cagg-argv"
 while [ $# -gt 0 ]; do
   case "$1" in -from) from=$2; shift 2 ;; -to) to=$2; shift 2 ;; -source) src=$2; shift 2 ;; -write|-dry-run) mode=$1; shift ;; *) shift ;; esac
 done
@@ -198,6 +199,13 @@ check '[ "$RC" -eq 0 ] && [ "$(cat "$OPSL" | tr "\n" "|")" = "trades-cagg-refres
 fresh nocagg
 run -- "${RANGE[@]}" -workers 2
 check '[ "$RC" -eq 0 ] && [ "$(calls trades-cagg-refresh)" -eq 0 ]' "no -projected source ⇒ no refresh"
+fresh addsrc
+run -- "${RANGE[@]}" -workers 2 -projected soroswap
+check '[ "$RC" -eq 0 ] && [ "$(grep -c -- " -oracle " "$OPSL.cagg-argv")" -eq 1 ]' "the refresh also covers the oracle aggregates (-oracle)"
+run -- "${RANGE[@]}" -workers 2 -projected soroswap,redstone
+check '[ "$RC" -eq 0 ] && [ "$(cat "$OPSL" | tr "\n" "|")" = "projected-rebuild 1000 - redstone|trades-cagg-refresh 1000 4500999 -|seed-entry-counts - - -|" ]' "a source added on a later run re-runs the refresh and the entry counts"
+run -- "${RANGE[@]}" -workers 2
+check '[ "$RC" -eq 0 ] && [ ! -s "$OPSL" ]' "a finished state dir re-run with no source runs nothing again"
 
 echo "rederive-from-test: one run per state dir"
 fresh locked
