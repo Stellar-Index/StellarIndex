@@ -169,7 +169,8 @@
     - name: Apply outstanding migrations
       # Source the host's env (STELLARINDEX_POSTGRES_DSN, the real password-bearing
       # DSN); a hardcoded passwordless DSN fails auth (28P01). -e migrate_dsn=…
-      # overrides.
+      # overrides, and reaches the script on stdin: written into the shell text
+      # it would be on a command line any local user can read.
       #
       # The env file is read VERBATIM, not `.`-sourced: it is systemd
       # EnvironmentFile syntax (unquoted), so sourcing lets sh expand `$`, split on
@@ -192,16 +193,18 @@
       ansible.builtin.shell:
         cmd: |
           set -eu
-          {% if migrate_dsn is defined and migrate_dsn | length > 0 %}
-          export STELLARINDEX_POSTGRES_DSN={{ migrate_dsn | quote }}
-          {% else %}
-          while IFS= read -r line || [ -n "$line" ]; do
-            case "$line" in
-              [A-Za-z_]*=*) export "$line" ;;
-            esac
-          done < /etc/default/stellarindex
-          {% endif %}
+          IFS= read -r STELLARINDEX_POSTGRES_DSN || true
+          if [ -z "${STELLARINDEX_POSTGRES_DSN:-}" ]; then
+            while IFS= read -r line || [ -n "$line" ]; do
+              case "$line" in
+                [A-Za-z_]*=*) export "$line" ;;
+              esac
+            done < /etc/default/stellarindex
+          fi
+          export STELLARINDEX_POSTGRES_DSN
           timeout 900 /usr/local/bin/stellarindex-migrate -migrations /usr/local/share/stellarindex/migrations up
+        stdin: "{{ migrate_dsn | default('') }}"
+      no_log: true
       register: migrate_result
       # `migrated to version` is what cmdUp prints on success (its only other output
       # is "already at latest version"). "migrations applied" exists only in
