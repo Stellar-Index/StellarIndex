@@ -283,6 +283,23 @@ END $$;
 CREATE TRIGGER t AFTER INSERT ON marks EXECUTE FUNCTION purge();' ''
 expect 'a function only named in a comment or a trigger is not called' 0 'passed'
 
+# Tightening with no DDL keyword the older classes know.
+run 'REVOKE SELECT ON trades FROM stellarindex_api;' ''
+expect 'revoke fires' 1 'revoke'
+
+run 'REVOKE SELECT ON trades FROM stellarindex_api; -- migration-compat:ok role created in this release' ''
+expect 'revoke with a marker and reason passes' 0 'passed'
+
+run 'CREATE TRIGGER marks_guard
+    BEFORE INSERT OR UPDATE ON marks
+    FOR EACH ROW EXECUTE FUNCTION refuse_negative();' ''
+expect 'a BEFORE trigger fires' 1 'before-trigger'
+
+run 'CREATE TRIGGER marks_track
+    AFTER INSERT ON marks
+    FOR EACH ROW EXECUTE FUNCTION track();' ''
+expect 'an AFTER trigger is not flagged' 0 'passed'
+
 echo
 echo "lint-migration-compat-test: ${pass} passed, ${fail} failed"
 [ "$fail" -eq 0 ] || exit 1

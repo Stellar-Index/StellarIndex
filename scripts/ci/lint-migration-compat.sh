@@ -26,6 +26,8 @@
 #                         now fails or writes NULL)
 #   drop-function         DROP FUNCTION / PROCEDURE / TYPE
 #   add-foreign-key       ADD FOREIGN KEY
+#   revoke                REVOKE
+#   before-trigger        CREATE TRIGGER … BEFORE …
 #   dml                   DELETE FROM / TRUNCATE / UPDATE … SET, unguarded
 #                         (a bare DELETE with a `SELECT 1` down re-deletes
 #                         replay-repaired rows on a down/up)
@@ -102,6 +104,8 @@ CLASSES=(
   'drop-default'
   'drop-function'
   'add-foreign-key'
+  'revoke'
+  'before-trigger'
   'dml'
 )
 MATCH=(
@@ -122,6 +126,10 @@ MATCH=(
   'DROP[[:space:]]+DEFAULT'
   'DROP[[:space:]]+(FUNCTION|PROCEDURE|TYPE)'
   'ADD[[:space:]]+FOREIGN[[:space:]]+KEY'
+  # A privilege the previous binary still uses can be gone after this.
+  '^[[:space:]]*REVOKE[[:space:]]'
+  # A BEFORE trigger can refuse or rewrite a write the previous binary makes.
+  'CREATE[[:space:]].*TRIGGER[[:space:]].*[[:space:]]BEFORE[[:space:]]'
   # Anchored to the line start: a real DELETE/TRUNCATE/UPDATE always opens its
   # line, which keeps this off prose ("TRUNCATE of audit_log" in a COMMENT ON
   # string, a `BEFORE TRUNCATE ON t` trigger).
@@ -145,8 +153,12 @@ EXCLUDE=(
   ''
   ''
   ''
+  ''
+  ''
 )
 GUARD=(
+  ''
+  ''
   ''
   ''
   ''
@@ -221,7 +233,7 @@ fn_body_lines() {
     }' "$1"
 }
 
-# flatten <file>: the file with each multi-line ALTER statement joined onto its
+# flatten <file>: the file with each multi-line ALTER or CREATE TRIGGER statement joined onto its
 # first line, so a class regex sees `ALTER TABLE t` and a `DROP COLUMN c` two
 # lines down as one statement. Continuation lines become empty, so line numbers
 # hold; an inline marker anywhere in the statement is kept.
@@ -239,7 +251,7 @@ flatten() {
         if (t ~ /;$/ || held > 80) flush()
         next
       }
-      if (raw ~ /^[ \t]*[Aa][Ll][Tt][Ee][Rr][ \t]/ && t !~ /;$/) { open = 1; held = 0; buf = t; marker = m; next }
+      if ((raw ~ /^[ \t]*[Aa][Ll][Tt][Ee][Rr][ \t]/ || tolower(raw) ~ /^[ \t]*create[ \t]+(or[ \t]+replace[ \t]+)?(constraint[ \t]+)?trigger[ \t]/) && t !~ /;$/) { open = 1; held = 0; buf = t; marker = m; next }
       print raw
     }
     END { if (open) flush() }' "$1"

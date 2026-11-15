@@ -98,3 +98,9 @@
 0204_customer_webhooks_signing_key_sealed.up.sql:drop-arbiter
 0207_price_source_contributions_window_not_null.up.sql:drop-arbiter
 0216_divergence_observations_chainlink_stellar.up.sql:drop-arbiter
+
+# `revoke` / `before-trigger`, classes added after these shipped. 0213 strips
+# the API role to nothing and re-grants in the same transaction; 0179's
+# triggers refuse UPDATE/DELETE/TRUNCATE on audit_log, which no binary issues.
+0179_audit_log_append_only.up.sql:before-trigger
+0213_api_role_grants.up.sql:revoke
