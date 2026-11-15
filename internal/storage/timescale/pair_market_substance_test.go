@@ -463,13 +463,13 @@ func TestPairMarketQueryShape(t *testing.T) {
 			"Bind the 24-hour predicate into the scan itself so the planner reads " +
 			"only the last day's chunks")
 	}
-	// Every non-$1 branch (count_24h x2, vol_24h_usd x2, last_price x2, vol_lower_bound x2) must carry
-	// its own 24-hour bound. The $1/$2/$3 checks above prove the $1 branches are the ONLY 14-day reads;
-	// this proves none of the other eight reads unbounded or rides the 14-day window back in.
-	if n := strings.Count(q, "NOW() - INTERVAL '24 hours'"); n != 8 {
+	// Every non-$1 branch (count_24h x2, vol_24h_usd x2, last_price x2, vol_lower_bound's hourly read) must carry
+	// its own 24-hour bound; vol_lower_bound's two trades reads cover the two newest hours only. The $1/$2/$3 checks above prove the $1 branches are the ONLY 14-day reads;
+	// this proves none of the other reads unbounded or rides the 14-day window back in.
+	if n := strings.Count(q, "NOW() - INTERVAL '24 hours'"); n != 7 {
 		t.Errorf("pairMarketQuery has %d \"NOW() - INTERVAL '24 hours'\" bounds, want "+
-			"8 — one on each of count_24h's two directions, vol_24h_usd's two "+
-			"directions, last_price's two directions and vol_lower_bound's two directions. Fewer means a branch lost "+
+			"7 — one on each of count_24h's two directions, vol_24h_usd's two "+
+			"directions, last_price's two directions and vol_lower_bound's hourly read. Fewer means a branch lost "+
 			"its bound (an unbounded prices_1m/trades walk); more means a bound was "+
 			"duplicated onto a branch that should stay a $1 recency-window probe."+
 			"\n\nquery:\n%s", n, q)

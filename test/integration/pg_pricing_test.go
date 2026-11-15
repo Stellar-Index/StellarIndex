@@ -2177,6 +2177,30 @@ func TestOHLCDustFloor_CrumbInTheOtherStoredDirection(t *testing.T) {
 	from, to := t0.Add(-time.Hour), t0.Add(time.Hour)
 	const lo, hi, open = 1 / 5.4885, 1 / 5.42, 1 / 5.4885
 
+	// A bucket where nothing clears the floor keeps its prices: the rule drops a crumb only beside a real fill.
+	eurcID := "EURC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	eurc, err := canonical.NewClassicAsset("EURC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed(t, db, ctx, ohlcDustPair{base: eurcID, quote: "native"}, []seedTrade{
+		{off: 1 * time.Second, base: "2", quote: "15", usd: "0.00000027"},
+	}, t0)
+	refreshPriceCAGGs(t, db, ctx)
+	xlmEURC, err := canonical.NewPair(canonical.NativeAsset(), eurc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lone, err := store.OHLCSeries(ctx, xlmEURC, timescale.HistoryGranularity("1h"), from, to, 0)
+	if err != nil || len(lone) != 1 {
+		t.Fatalf("lone crumb: %d bars, err %v; want 1 bar", len(lone), err)
+	}
+	for name, v := range map[string]string{"open": lone[0].Open, "high": lone[0].High, "low": lone[0].Low, "close": lone[0].Close} {
+		if got := mustFloat(t, v); !closeTo(got, 2.0/15, 1e-9) {
+			t.Errorf("lone crumb %s = %s, want ~0.13333333", name, v)
+		}
+	}
+
 	bars, err := store.OHLCSeries(ctx, xlmUSDC, timescale.HistoryGranularity("1h"), from, to, 0)
 	check("OHLCSeries XLM/USDC", bars, err, lo, hi, open)
 	// Requested the other way round the crumb's row is the requested direction; it must still not win.
@@ -2220,16 +2244,36 @@ func TestPairMarket_VolumeLowerBound(t *testing.T) {
 	if m.VolumeLowerBound {
 		t.Error("every trade priced: volume_lower_bound = true, want false")
 	}
-	// An unpriced trade stored the other way round still belongs to this market.
+	// An unpriced trade in the newest hour, stored the other way round: read from trades.
 	seed(t, db, ctx, ohlcDustPair{base: usdcIssuer, quote: "native"}, []seedTrade{
-		{off: 20 * time.Second, base: "10000000000", quote: "54885000000", usd: ""},
-	}, t0)
+		{off: 0, base: "10000000000", quote: "54885000000", usd: ""},
+	}, time.Now().UTC().Add(-time.Minute))
 	m, ok, err = store.PairMarket(ctx, canonical.NativeAsset(), usdc)
 	if err != nil || !ok {
 		t.Fatalf("PairMarket: ok=%v err=%v", ok, err)
 	}
 	if !m.VolumeLowerBound {
-		t.Error("one unpriced trade in the window: volume_lower_bound = false, want true")
+		t.Error("one unpriced trade in the newest hour: volume_lower_bound = false, want true")
+	}
+
+	// An unpriced trade five hours back is past the trades tail: the hourly view carries it.
+	eurcID := "EURC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	eurc, err := canonical.NewClassicAsset("EURC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed(t, db, ctx, ohlcDustPair{base: eurcID, quote: "native"}, []seedTrade{
+		{off: 0, base: "10000000000", quote: "54885000000", usd: ""},
+	}, time.Now().UTC().Add(-5*time.Hour))
+	if _, err := db.ExecContext(ctx, "CALL refresh_continuous_aggregate('pools_per_source_1h', NULL, NULL)"); err != nil {
+		t.Fatalf("refresh pools_per_source_1h: %v", err)
+	}
+	m, ok, err = store.PairMarket(ctx, canonical.NativeAsset(), eurc)
+	if err != nil || !ok {
+		t.Fatalf("PairMarket(EURC): ok=%v err=%v", ok, err)
+	}
+	if !m.VolumeLowerBound {
+		t.Error("one unpriced trade five hours back: volume_lower_bound = false, want true")
 	}
 }
 
