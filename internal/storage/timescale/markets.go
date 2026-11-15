@@ -840,9 +840,13 @@ const pairMarketQuery = `
                  ORDER BY bucket DESC, base_asset LIMIT 1) AS last_price,
                -- The listing's rule (CTE u): the hourly view up to the last closed hour, trades for the two newest.
                (EXISTS (SELECT 1 FROM pools_per_source_1h r
-                         WHERE r.bucket >= date_trunc('hour', NOW() - INTERVAL '24 hours')
-                           AND r.sum_base_unpriced IS NOT NULL
-                           AND ((r.base_asset = $2 AND r.quote_asset = $3) OR (r.base_asset = $3 AND r.quote_asset = $2)))
+                         WHERE r.base_asset = $2 AND r.quote_asset = $3
+                           AND r.bucket >= date_trunc('hour', NOW() - INTERVAL '24 hours')
+                           AND r.sum_base_unpriced IS NOT NULL)
+             OR EXISTS (SELECT 1 FROM pools_per_source_1h r
+                         WHERE r.base_asset = $3 AND r.quote_asset = $2
+                           AND r.bucket >= date_trunc('hour', NOW() - INTERVAL '24 hours')
+                           AND r.sum_base_unpriced IS NOT NULL)
              OR EXISTS (SELECT 1 FROM trades t
                          WHERE t.base_asset = $2 AND t.quote_asset = $3
                            AND t.ts >= date_trunc('hour', NOW()) - INTERVAL '1 hour' AND t.usd_volume IS NULL)
