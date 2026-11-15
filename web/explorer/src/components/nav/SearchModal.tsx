@@ -425,6 +425,13 @@ export function SearchModal({ shortcut = true }: { shortcut?: boolean }) {
     isServerSearched &&
     (searchedCoins.isPending || searchedCoins.isPlaceholderData);
   const coinsFailed = isServerSearched && searchedCoins.isError;
+  // The entity lookup is its own read: until it settles, a hash, ledger or
+  // address has not been looked up, and a failure is not "no such entity".
+  const entityLookup =
+    looksLikeExplorerEntity(debouncedQ) &&
+    muxedBaseAccount(debouncedQ.trim()) == null;
+  const explorerPending = entityLookup && explorer.isPending;
+  const explorerFailed = entityLookup && explorer.isError;
 
   const results = useMemo(() => {
     const sourceCoins = isServerSearched
@@ -514,13 +521,15 @@ export function SearchModal({ shortcut = true }: { shortcut?: boolean }) {
               <div className="sr-only" role="status" aria-live="polite">
                 {q.trim() === ''
                   ? ''
-                  : coinsPending
+                  : coinsPending || explorerPending
                     ? 'Searching.'
                     : coinsFailed
                       ? 'Asset search is unavailable.'
-                      : results.length === 0
-                        ? 'No matches.'
-                    : `${results.length} result${results.length === 1 ? '' : 's'}.`}
+                      : explorerFailed
+                        ? 'The explorer lookup is unavailable.'
+                        : results.length === 0
+                          ? 'No matches.'
+                          : `${results.length} result${results.length === 1 ? '' : 's'}.`}
               </div>
               {/* Empty query → orient the user with the searchable scopes
                   before showing the top-assets starter list below. */}
@@ -579,9 +588,29 @@ export function SearchModal({ shortcut = true }: { shortcut?: boolean }) {
                     pages below are still matched; try again for assets.
                   </li>
                 )}
+                {q.trim() !== '' && explorerPending && (
+                  <li className="text-ink-muted px-3 py-2 text-xs">
+                    Looking up that transaction, ledger, account or contract…
+                  </li>
+                )}
+                {q.trim() !== '' && explorerFailed && (
+                  <li className="text-warn-700 px-3 py-2 text-xs">
+                    The transaction, ledger, account and contract lookup failed,
+                    so this is not a &ldquo;no such entry&rdquo;.{' '}
+                    <button
+                      type="button"
+                      className="underline"
+                      onClick={() => void explorer.refetch()}
+                    >
+                      Try again
+                    </button>
+                  </li>
+                )}
                 {q.trim() !== '' &&
                   !coinsPending &&
                   !coinsFailed &&
+                  !explorerPending &&
+                  !explorerFailed &&
                   results.length === 0 && (
                     <li className="text-ink-muted px-3 py-2 text-xs">
                       No matches across the asset directory, protocols, or

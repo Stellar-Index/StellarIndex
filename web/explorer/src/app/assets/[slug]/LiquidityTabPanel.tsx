@@ -39,7 +39,9 @@ const BUILD_FETCH_TIMEOUT_MS = 8_000;
  * that would otherwise be BAKED INTO THE STATIC EXPORT off a transport
  * blip (the incident class src/lib/buildFetch.ts's header documents).
  */
-async function fetchPoolsForAsset(assetID: string): Promise<PoolRow[] | null> {
+async function fetchPoolsForAsset(
+  assetID: string,
+): Promise<{ rows: PoolRow[]; truncated: boolean } | null> {
   if (isCIStub) return null;
   try {
     const url = `${API_BASE_URL}/v1/pools?asset=${encodeURIComponent(assetID)}&limit=100&order_by=volume_24h_usd_desc`;
@@ -48,8 +50,12 @@ async function fetchPoolsForAsset(assetID: string): Promise<PoolRow[] | null> {
       signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
     });
     if (!res.ok) return null;
-    const env = (await res.json()) as { data?: PoolRow[] };
-    return env.data ?? [];
+    const env = (await res.json()) as {
+      data?: PoolRow[];
+      pagination?: { next?: string | null };
+    };
+    // A next cursor means more pools exist than this one page holds.
+    return { rows: env.data ?? [], truncated: Boolean(env.pagination?.next) };
   } catch {
     return null;
   }
@@ -73,7 +79,9 @@ export async function LiquidityTabPanel({
   assetID: string;
   code: string;
 }) {
-  const rows = await fetchPoolsForAsset(assetID);
+  const page = await fetchPoolsForAsset(assetID);
+  const rows = page?.rows ?? null;
+  const truncated = page?.truncated === true;
   // Defensive client-side filter: older API versions silently
   // ignore unknown query params, so on a pre-`?asset=` deployment
   // the response would be the global top pools (every asset
@@ -90,7 +98,11 @@ export async function LiquidityTabPanel({
   return (
     <Panel
       headingLevel={2}
-      title={`Liquidity — every DEX pool that touches ${code}`}
+      title={
+        truncated
+          ? `Liquidity — the ${merged.length} most active DEX pools touching ${code}`
+          : `Liquidity — every DEX pool that touches ${code}`
+      }
       hint="Per-source breakdown across DEXes. Backed by /v1/pools?asset= (base OR quote)."
       source={asExample('/v1/pools', {
         asset: assetID,
@@ -114,7 +126,7 @@ export async function LiquidityTabPanel({
         </p>
       ) : (
         <div className="overflow-x-auto">
-          <LiquidityVenueBars pools={merged} />
+          <LiquidityVenueBars pools={merged} truncated={truncated} />
           <Table>
             <THead>
               <tr>

@@ -5,6 +5,7 @@ import { Skeleton } from '@/components/ui';
 import { asExample } from '@/api/client';
 import { MarketChart } from '@/components/charts/MarketChart';
 import { LineChart } from '@/components/charts/LineChart';
+import { priceFormatForValues } from '@/components/charts/pricePrecision';
 import { useFiatUsdSeries } from '@/api/hooks';
 import { shortAssetText } from '@/lib/asset-label';
 import { USDC_ASSET_ID } from '@/lib/networks';
@@ -121,6 +122,7 @@ function FiatUsdChartPanel({ assetID }: { assetID: string }) {
           data={data}
           height={340}
           area
+          priceFormat={priceFormatForValues(data.map((p) => p.value))}
           positive={data[data.length - 1].value >= data[0].value}
           ariaLabel={`${shortAssetText(assetID)} USD price, trailing week`}
         />

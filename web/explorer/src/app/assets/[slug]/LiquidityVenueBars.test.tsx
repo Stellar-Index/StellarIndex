@@ -40,6 +40,22 @@ describe('LiquidityVenueBars', () => {
     );
     expect(container.firstChild).toBeNull();
   });
+  it('marks every venue as a lower bound when the pool list was cut off', () => {
+    const rows = buildVenueRows(
+      [
+        { source: 'sdex', volume_24h_usd: '100' },
+        { source: 'soroswap', volume_24h_usd: '40' },
+      ],
+      true,
+    );
+    for (const row of rows) {
+      expect(row.display).toMatch(/^≥ /);
+      expect(row.hatchTail).toBe(true);
+      expect(row.title).toMatch(/only the most active pools are listed/);
+      expect(row.annotation).toBe('1+ pools');
+    }
+  });
+
   it('marks a venue with an unvalued pool as a lower bound', () => {
     const [row] = buildVenueRows([
       { source: 'amm', volume_24h_usd: '100' },

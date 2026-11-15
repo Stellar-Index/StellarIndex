@@ -317,10 +317,16 @@ function Coverage({
       )}
       <p>
         Valued at {data.sources?.join(', ') || 'an independent oracle'}
-        &rsquo;s published value for each instrument, times the tokens in
-        circulation. Not a market capitalisation — nobody was observed paying
-        it. Membership is today&rsquo;s set applied backwards.
+        &rsquo;s published value for each instrument.{' '}
+        {data.basis ??
+          'Not a market capitalisation: nobody was observed paying it. Membership is the set of today applied backwards.'}
       </p>
+      {data.truncated && (
+        <p>
+          A cap cut this series short, so the line and the change figure cover
+          less than the selected window.
+        </p>
+      )}
     </div>
   );
 }

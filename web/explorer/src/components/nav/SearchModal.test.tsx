@@ -186,6 +186,53 @@ describe('SearchModal muxed accounts', () => {
   });
 });
 
+// A failed or unsettled /v1/search read is not "no such transaction".
+describe('SearchModal entity lookup', () => {
+  const hash = 'a'.repeat(64);
+  const typeHash = () => {
+    renderOpen();
+    fireEvent.change(
+      screen.getByRole('textbox', { name: /search coins, pairs, protocols/i }),
+      { target: { value: hash } },
+    );
+  };
+  const respond = (url: string) =>
+    new Response(JSON.stringify({ data: [] }), {
+      status: url.includes('/v1/search') ? 503 : 200,
+      headers: { 'content-type': 'application/json' },
+    });
+
+  it('says the lookup failed instead of "No matches"', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(async (input) => respond(String(input)));
+    typeHash();
+    expect(
+      await screen.findByText(/lookup failed/, undefined, { timeout: 3000 }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/^No matches across/)).toBeNull();
+    fetchMock.mockRestore();
+  });
+
+  it('says it is still looking while the lookup is in flight', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation((input) =>
+        String(input).includes('/v1/search')
+          ? new Promise<Response>(() => {})
+          : Promise.resolve(respond(String(input))),
+      );
+    typeHash();
+    expect(
+      await screen.findByText(/Looking up that transaction/, undefined, {
+        timeout: 3000,
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/^No matches across/)).toBeNull();
+    fetchMock.mockRestore();
+  });
+});
+
 // A failed /v1/assets?q= read is not "no such asset".
 describe('SearchModal failed asset search', () => {
   it('says the directory could not be searched instead of "No matches"', async () => {

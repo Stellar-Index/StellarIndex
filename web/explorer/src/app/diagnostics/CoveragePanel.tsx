@@ -69,6 +69,12 @@ export function CoveragePanel() {
     !data.stale && data.lake_complete_sources === data.total_sources;
   const unverified = data.unverified_sources ?? [];
   const lagging = data.lagging_sources ?? [];
+  // A stale audit, or a source verified by an earlier run, is not a current claim on any row.
+  const staleSources = new Set(
+    data.stale
+      ? data.sources.map((v) => v.source)
+      : lagging.map((l) => l.source),
+  );
 
   return (
     <section className="border-line bg-surface rounded-lg border p-4">
@@ -117,7 +123,7 @@ export function CoveragePanel() {
       >
         Served tier (retention window) vs archive lake (genesis to tip)
       </p>
-      <CoverageGrid sources={data.sources} />
+      <CoverageGrid sources={data.sources} staleSources={staleSources} />
       <div className="-mx-4 overflow-x-auto">
         <table className="divide-line min-w-full divide-y text-sm">
           <thead>
@@ -143,7 +149,11 @@ export function CoveragePanel() {
           </thead>
           <tbody className="divide-line-subtle divide-y">
             {data.sources.map((v) => (
-              <VerdictRow key={v.source} v={v} />
+              <VerdictRow
+                key={v.source}
+                v={v}
+                stale={staleSources.has(v.source)}
+              />
             ))}
           </tbody>
         </table>
@@ -272,7 +282,13 @@ function RecognitionAxisCard({ rec }: { rec: RecognitionAxis }) {
   );
 }
 
-function VerdictRow({ v }: { v: CoverageVerdict }) {
+// A passing verdict from an older tip is amber and says so; a failing one stays red.
+function verdictTone(ok: boolean, stale: boolean): string {
+  if (!ok) return 'bg-down-subtle text-down';
+  return stale ? 'bg-warn-50 text-warn-700' : 'bg-up-subtle text-up';
+}
+
+function VerdictRow({ v, stale }: { v: CoverageVerdict; stale: boolean }) {
   return (
     <tr className="hover:bg-surface-muted" title={v.detail ?? undefined}>
       <td className="px-4 py-2 font-mono text-xs">
@@ -285,24 +301,32 @@ function VerdictRow({ v }: { v: CoverageVerdict }) {
       </td>
       <td className="px-4 py-2">
         <span
-          className={`inline-flex items-center rounded-sm px-2 py-0.5 font-mono text-xs ${
-            v.complete ? 'bg-up-subtle text-up' : 'bg-down-subtle text-down'
-          }`}
+          className={`inline-flex items-center rounded-sm px-2 py-0.5 font-mono text-xs ${verdictTone(
+            v.complete,
+            stale,
+          )}`}
           title="Served tier: substrate + recognition + projection, retention-scoped."
         >
-          {v.complete ? 'complete' : 'incomplete'}
+          {v.complete
+            ? stale
+              ? 'complete (stale)'
+              : 'complete'
+            : 'incomplete'}
         </span>
       </td>
       <td className="px-4 py-2">
         <span
-          className={`inline-flex items-center rounded-sm px-2 py-0.5 font-mono text-xs ${
-            v.lake_complete
-              ? 'bg-up-subtle text-up'
-              : 'bg-down-subtle text-down'
-          }`}
+          className={`inline-flex items-center rounded-sm px-2 py-0.5 font-mono text-xs ${verdictTone(
+            v.lake_complete,
+            stale,
+          )}`}
           title="Archive (lake): substrate + recognition, genesis-to-tip — independent of served-tier retention."
         >
-          {v.lake_complete ? 'genesis-complete' : 'partial'}
+          {v.lake_complete
+            ? stale
+              ? 'genesis-complete (stale)'
+              : 'genesis-complete'
+            : 'partial'}
         </span>
       </td>
       <td className="px-4 py-2">

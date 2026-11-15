@@ -26,7 +26,11 @@ import {
   baseChartOptions,
   type ChartTheme,
 } from './chartTheme';
-import { formatSubunitPrice } from '@/lib/format';
+import {
+  MAX_FIXED_DECIMALS,
+  precisionForMax,
+  priceFormatForMax,
+} from './pricePrecision';
 
 export type CandlePoint = {
   /** Unix epoch seconds */
@@ -308,27 +312,14 @@ function maxPrice(points: CandlePoint[]): number {
   return max;
 }
 
-// lightweight-charts' PriceFormatter throws on more than 16 fractional digits.
-export const MAX_FIXED_DECIMALS = 16;
-// Below this, 16 fixed decimals keep fewer than 5 significant digits
-// (and print 0 under 1e-16), so priceFormatFor switches to a custom formatter.
-const MIN_FIXED_PRICE = 1e-12;
+export { MAX_FIXED_DECIMALS };
 
 // pricePrecisionFor picks the axis decimal count from the series'
 // magnitude: enough significant digits that intraday movement is
 // visible (XLM at ~$0.17 gets 6 decimals, not "0.17"), without
 // rendering BTC-scale values with absurd tails. Exported for tests.
 export function pricePrecisionFor(points: CandlePoint[]): number {
-  const max = maxPrice(points);
-  if (max === 0) return 2;
-  if (max >= 1000) return 2;
-  if (max >= 10) return 4;
-  if (max >= 0.01) return 6;
-  if (max >= 0.0001) return 8;
-  if (max >= 1e-6) return 10;
-  if (max >= 1e-8) return 12;
-  if (max >= 1e-10) return 14;
-  return MAX_FIXED_DECIMALS;
+  return precisionForMax(maxPrice(points));
 }
 
 // priceFormatFor is the series priceFormat: fixed decimals from
@@ -336,18 +327,7 @@ export function pricePrecisionFor(points: CandlePoint[]): number {
 // sub-1e-12 series so a non-zero price never renders as zero (and never
 // in scientific notation).
 export function priceFormatFor(points: CandlePoint[]): PriceFormat {
-  const max = maxPrice(points);
-  if (max === 0 || max >= MIN_FIXED_PRICE) {
-    const precision = pricePrecisionFor(points);
-    return { type: 'price', precision, minMove: 10 ** -precision };
-  }
-  const decimals = Math.ceil(-Math.log10(max)) + 4;
-  return {
-    type: 'custom',
-    formatter: (price: number) => formatSubunitPrice(price),
-    minMove: 10 ** -decimals,
-    base: 10 ** decimals,
-  };
+  return priceFormatForMax(maxPrice(points));
 }
 
 function toSeries(points: CandlePoint[]): CandlestickData<Time>[] {

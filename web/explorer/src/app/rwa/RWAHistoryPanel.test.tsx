@@ -46,7 +46,8 @@ const ends = (a: string, b: string, over: Partial<Point> = {}) => [
 function view(over: Partial<View> = {}): View {
   return {
     basis:
-      'Circulating supply times the day’s closing value published by an independent oracle.',
+      'Total issued supply per the lake’s mint/burn record, times the day’s closing value published by an independent oracle. It is NOT a market capitalisation. The supply is NOT net of balances the issuer or a locked account holds. Membership is today’s set applied backwards.',
+    supply_basis: 'classic_lake_flows',
     granularity: '1d',
     timeframe: '1y',
     quote: 'fiat:USD',
@@ -102,9 +103,13 @@ describe('RWAHistoryPanel', () => {
       /A floor, not a total/,
       /redstone/,
     );
-    shows(/6 of 11 assets in the set carried/, /Not a market capitalisation/);
+    shows(/6 of 11 assets in the set carried/, /NOT a market capitalisation/);
     shows(/is a gap in the line rather than a zero/);
-    shows(/Membership is today’s set applied backwards/);
+    // The supply leg is stated in the server's words, not a client paraphrase.
+    shows(/Total issued supply per the lake’s mint\/burn record/);
+    shows(/NOT net of balances the issuer or a locked account holds/);
+    expect(screen.queryByText(/tokens in circulation/)).toBeNull();
+    expect(screen.queryByText(/cut this series short/)).toBeNull();
     expect(screen.getByRole('img')).toHaveAttribute(
       'aria-label',
       expect.stringMatching(/across 6 of 11 assets, a lower bound/),
@@ -115,6 +120,14 @@ describe('RWAHistoryPanel', () => {
     for (const name of ['All', 'By asset']) {
       expect(screen.getByRole('button', { name })).toBeInTheDocument();
     }
+  });
+
+  it('says so when a cap cut the series short', async () => {
+    apiGetData.mockResolvedValue(view({ truncated: true }));
+    renderPanel();
+    expect(
+      await screen.findByText(/A cap cut this series short/),
+    ).toBeInTheDocument();
   });
 
   it('formats window ends from the exact decimal above 2^53', async () => {

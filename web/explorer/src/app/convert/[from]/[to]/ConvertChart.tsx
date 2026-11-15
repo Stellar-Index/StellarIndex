@@ -7,6 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { Badge, Segmented } from '@/components/ui';
 import { changePct, compareDecimalStrings, formatPrice } from '@/lib/format';
+import { priceFormatForValues } from '@/components/charts/pricePrecision';
 import { API_BASE_URL, asExample, timeoutSignal } from '@/api/client';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import { convertQuery } from '@/lib/convert-params';
@@ -148,6 +149,7 @@ export function ConvertChart({ from, to }: { from: string; to: string }) {
         <LineChart
           data={data}
           height={260}
+          priceFormat={priceFormatForValues(data.map((p) => p.value))}
           ariaLabel={`${from} to ${to} exchange rate over the ${tf} window`}
         />
       )}

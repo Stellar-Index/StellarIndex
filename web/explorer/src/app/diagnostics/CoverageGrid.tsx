@@ -35,10 +35,14 @@ export function coverageCells(
  */
 export function CoverageGrid({
   sources,
+  staleSources,
 }: {
   sources: readonly CoverageVerdict[];
+  /** Sources whose verdict describes an older tip: a pass there is not a current claim. */
+  staleSources?: ReadonlySet<string>;
 }) {
   if (sources.length === 0) return null;
+  const anyStale = sources.some((v) => staleSources?.has(v.source));
   return (
     <div className="mb-4 space-y-2" data-testid="coverage-grid">
       <div
@@ -64,14 +68,20 @@ export function CoverageGrid({
                 const label = COVERAGE_AXES.find(
                   (a) => a.key === c.axis,
                 )!.label;
+                const stale = c.ok && staleSources?.has(v.source) === true;
+                const state = stale
+                  ? 'verified at an older tip (stale)'
+                  : c.ok
+                    ? 'verified'
+                    : 'failed';
                 return (
                   <span
                     key={c.axis}
                     role="cell"
-                    aria-label={`${label} ${c.ok ? 'verified' : 'failed'}`}
-                    title={`${v.source}: ${label} ${c.ok ? 'verified' : 'failed'}`}
+                    aria-label={`${label} ${state}`}
+                    title={`${v.source}: ${label} ${state}`}
                     className={`inline-block h-3.5 w-3.5 rounded-xs ${
-                      c.ok ? 'bg-up' : 'bg-down'
+                      stale ? 'bg-warn-500' : c.ok ? 'bg-up' : 'bg-down'
                     } ${c.axis === 'served' ? 'ml-1' : ''}`}
                   />
                 );
@@ -82,7 +92,8 @@ export function CoverageGrid({
       </div>
       <p className="text-ink-faint text-[11px]">
         Cells: {COVERAGE_AXES.map((a) => a.label.toLowerCase()).join(', ')}.
-        Green verified, red failed.
+        Green verified, red failed
+        {anyStale ? ', amber verified at an older tip' : ''}.
       </p>
     </div>
   );

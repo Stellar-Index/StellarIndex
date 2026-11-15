@@ -141,8 +141,40 @@ describe('CoveragePanel', () => {
 
     expect(screen.getByText('Stale')).toBeInTheDocument();
     expect(screen.getByText(/comet \(older run\)/)).toBeInTheDocument();
-    expect(screen.getByTitle(/^Served tier: substrate \+ recognition \+ projection verified/).className).not.toContain(
+    expect(
+      screen.getByTitle(
+        /^Served tier: substrate \+ recognition \+ projection verified/,
+      ).className,
+    ).not.toContain('text-up');
+    // No row badge or grid cell may read green either.
+    expect(screen.getByText('complete (stale)').className).not.toContain(
       'text-up',
     );
+    expect(
+      screen.getByText('genesis-complete (stale)').className,
+    ).not.toContain('text-up');
+    const cells = screen.getAllByRole('cell', { name: /older tip/ });
+    expect(cells).toHaveLength(5);
+    for (const c of cells) expect(c.className).not.toContain('bg-up');
+    expect(document.querySelector('.bg-up')).toBeNull();
+  });
+
+  it('marks only the lagging source when the audit itself is current', () => {
+    renderWith({
+      sources: [blend],
+      recognition,
+      complete_sources: 1,
+      lake_complete_sources: 1,
+      total_sources: 1,
+      network: 'pubnet',
+      not_applicable_sources: [],
+      unverified_sources: [],
+      lagging_sources: [
+        { source: blend.source, tip_ledger: 64000000, reason: 'older run' },
+      ],
+      stale: false,
+    });
+    expect(screen.getByText('complete (stale)')).toBeInTheDocument();
+    expect(screen.getAllByRole('cell', { name: /older tip/ })).toHaveLength(5);
   });
 });
