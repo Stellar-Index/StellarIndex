@@ -194,14 +194,59 @@ grep_lines() {
 }
 
 # fn_body_lines <file>: line numbers inside CREATE FUNCTION $$ bodies, which run
-# when called, not at migrate time. Other body quoting is left to the DML checks.
+# when called, not at migrate time. A function the same file calls at top level
+# (SELECT/PERFORM/CALL name(...)) does run at migrate time, so its body is kept.
+# Other body quoting is left to the DML checks.
 fn_body_lines() {
-  awk '{ l = tolower($0) }
-    infn { print NR; if (gsub(/\$\$/, "&", l) % 2) infn = 0; next }
-    l ~ /^[ \t]*create (or replace )?function / { pend = 1 }
+  awk '
+    function fname(l,    n) {
+      n = l; sub(/^[ \t]*create (or replace )?function[ \t]+/, "", n); sub(/[ \t(].*$/, "", n); return n
+    }
+    { l = tolower($0) }
+    infn { body[cur] = body[cur] " " NR; if (gsub(/\$\$/, "&", l) % 2) infn = 0; next }
+    l ~ /^[ \t]*create (or replace )?function / { pend = 1; cur = fname(l) }
     pend && (c = gsub(/\$\$/, "&", l)) { pend = 0; if (c % 2) infn = 1; next }
-    pend && l ~ /;/ { pend = 0 }' "$1"
+    pend && l ~ /;/ { pend = 0 }
+    l !~ /^[ \t]*--/ && l ~ /(^|[^a-z_])(select|perform|call)[ \t]/ { top[++nt] = l }
+    END {
+      for (name in body) {
+        bare = name; sub(/^.*\./, "", bare)
+        called = 0
+        for (i = 1; i <= nt && !called; i++)
+          if (index(top[i], name "(") || index(top[i], name " (") || index(top[i], "." bare "(") ||
+              top[i] ~ ("(select|perform|call)[ \t]+" bare "[ \t]*\\("))
+            called = 1
+        if (!called) { n = split(body[name], a, " "); for (j = 1; j <= n; j++) print a[j] }
+      }
+    }' "$1"
 }
+
+# flatten <file>: the file with each multi-line ALTER statement joined onto its
+# first line, so a class regex sees `ALTER TABLE t` and a `DROP COLUMN c` two
+# lines down as one statement. Continuation lines become empty, so line numbers
+# hold; an inline marker anywhere in the statement is kept.
+flatten() {
+  awk '
+    function strip(l,    c) { c = index(l, "--"); return c > 0 ? substr(l, 1, c - 1) : l }
+    function flush(    i) { print buf (marker != "" ? " " marker : ""); for (i = 0; i < held; i++) print ""; open = 0 }
+    {
+      raw = $0
+      if (match(raw, /--[ \t]*migration-compat:ok[ \t]+[^ \t].*$/)) m = substr(raw, RSTART); else m = ""
+      t = strip(raw); sub(/[ \t]+$/, "", t)
+      if (open) {
+        buf = buf " " t; held++
+        if (m != "") marker = m
+        if (t ~ /;$/ || held > 80) flush()
+        next
+      }
+      if (raw ~ /^[ \t]*[Aa][Ll][Tt][Ee][Rr][ \t]/ && t !~ /;$/) { open = 1; held = 0; buf = t; marker = m; next }
+      print raw
+    }
+    END { if (open) flush() }' "$1"
+}
+
+FLAT="$(mktemp)"
+trap 'rm -f "$FLAT"' EXIT
 
 fail=0
 SEEN=()   # `<file>:<class>` actually observed this run
@@ -209,14 +254,15 @@ SEEN=()   # `<file>:<class>` actually observed this run
 for f in "$MIGRATIONS_DIR"/*.up.sql; do
   [ -e "$f" ] || continue
   base="$(basename "$f")"
-  fnlines="$(fn_body_lines "$f" | tr '\n' ' ')"
+  flatten "$f" > "$FLAT"
+  fnlines="$(fn_body_lines "$FLAT" | tr '\n' ' ')"
   for i in "${!CLASSES[@]}"; do
     class="${CLASSES[$i]}"
     re="${MATCH[$i]}"
     exclude="${EXCLUDE[$i]}"
     # Whole-line SQL comments are dropped below so a `-- we used to DROP
     # COLUMN here` note never trips the gate.
-    hits="$(grep_lines -nEi -- "$re" "$f")"
+    hits="$(grep_lines -nEi -- "$re" "$FLAT")"
     if [ -n "$hits" ]; then
       hits="$(printf '%s\n' "$hits" | grep_lines -vE -- '^[0-9]+:[[:space:]]*--')"
     fi
@@ -238,7 +284,7 @@ for f in "$MIGRATIONS_DIR"/*.up.sql; do
       # proof. Only the guard or the baseline clears a hit.
       # The guard must be a statement that runs at migrate time: not prose in
       # a comment, not the body of a function this file only defines.
-      ghits="$(grep_lines -nEi -- "$guard" "$f")"
+      ghits="$(grep_lines -nEi -- "$guard" "$FLAT")"
       if [ -n "$ghits" ]; then
         ghits="$(printf '%s\n' "$ghits" | grep_lines -vE -- '^[0-9]+:[[:space:]]*--')"
       fi
