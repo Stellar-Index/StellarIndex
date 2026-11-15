@@ -566,7 +566,7 @@ fi
 SU_PGOPTIONS='-c search_path=pg_catalog'
 q() { sudo -u postgres env PGOPTIONS="$SU_PGOPTIONS" psql -X -h 127.0.0.1 -p "$DRILL_PG_PORT" -d stellarindex -tA -c "$1"; }
 qlive() {
-  if [[ -n "$LIVE_DSN" ]]; then psql "$LIVE_DSN" -tA -c "$1"
+  if [[ -n "$LIVE_DSN" ]]; then PGDSN="$LIVE_DSN" "$(command -v psql-dsn || echo "$(dirname "$0")/psql-dsn.sh")" -tA -c "$1"
   else sudo -u postgres env PGOPTIONS="$SU_PGOPTIONS" psql -X -d stellarindex -tA -c "$1"; fi
 }
 

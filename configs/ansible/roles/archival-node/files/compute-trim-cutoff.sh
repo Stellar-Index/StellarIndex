@@ -57,7 +57,7 @@ load_env_file /etc/default/stellarindex
 HOT_WINDOW_LEDGERS=1555200
 
 # The live ingest cursor only: a job cursor (tag-signer -to past the tip) must not move the permanent hot floor.
-TIP=$(psql "$STELLARINDEX_POSTGRES_DSN" -tA -c \
+TIP=$(PGDSN="$STELLARINDEX_POSTGRES_DSN" psql-dsn -tA -c \
   "SELECT COALESCE((SELECT last_ledger FROM ingestion_cursors WHERE source = 'ledgerstream' AND sub_source = ''), 0)" \
   2>/dev/null | tr -d '[:space:]')
 

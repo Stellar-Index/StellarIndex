@@ -49,6 +49,8 @@ func newFillHarness(t *testing.T) *fillHarness {
 		t.Fatal(err)
 	}
 	writeStub(t, h.bin, "psql", "#!/usr/bin/env bash\necho \"$STUB_TIP\"\n")
+	// The shipped wrapper, as the role installs it: the cutoff script hands psql its DSN through it.
+	writeStub(t, h.bin, "psql-dsn", readRepoFile(t, "scripts/ops/psql-dsn.sh"))
 	writeStub(t, h.bin, "mc", `#!/usr/bin/env bash
 echo "$*" >> "$STUB_MC_CALLS"
 target="${*: -1}"

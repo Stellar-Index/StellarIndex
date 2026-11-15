@@ -32,6 +32,9 @@ check 'a redirect to "${OUT}.$$" is rejected' red "$(fixture b.yml '        } > 
 check 'Go path + ".tmp" is rejected' red "$(fixture c.go '	tmp := path + ".tmp"')"
 check 'mktemp passes' ok "$(fixture d.sh 'tmp="$(mktemp "$out.tmp.XXXXXX")"')"
 check 'a pid in a unit name passes' ok "$(fixture e.sh 'UNIT="heavy-${NAME}-$$"')"
+check 'psql "$DSN" is rejected' red "$(fixture f.sh 'TIP=$(psql "$DSN" -tAc "SELECT 1")')"
+check '"$PSQL" "$STELLARINDEX_POSTGRES_DSN" is rejected' red "$(fixture g.sh 'if ! "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA <<SQL')"
+check 'PGDSN="$DSN" psql-dsn passes' ok "$(fixture h.sh 'TIP=$(PGDSN="$DSN" psql-dsn -tAc "SELECT 1")')"
 check "a missing path is rejected" red "$TMP/does-not-exist"
 
 mkdir "$TMP/empty"

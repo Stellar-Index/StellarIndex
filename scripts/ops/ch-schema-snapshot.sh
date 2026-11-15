@@ -160,7 +160,8 @@ fi
 # covers that table, but a CH-side rebuild should not need a full Postgres
 # restore to learn where the live sink got to.
 if [[ -n "$PG_DSN" ]] && command -v psql >/dev/null 2>&1; then
-  psql "$PG_DSN" -tAF$'\t' -c \
+  # The DSN goes to psql in the environment, never on its command line, where any local user could read it.
+  PGDSN="$PG_DSN" "$(command -v psql-dsn || echo "$(dirname "$0")/psql-dsn.sh")" -tAF$'\t' -c \
     "SELECT source, sub_source, last_ledger, last_updated FROM ingestion_cursors ORDER BY source, sub_source" \
     > "$work/ingestion-cursors.tsv" 2>/dev/null || {
       note "ingestion_cursors read failed — continuing (pgBackRest covers this table)"

@@ -39,7 +39,8 @@ failed=0
 for src in "${SOURCES[@]}"; do
     # One scan per source. The range runs from the first trade to yesterday
     # (UTC), so a source that went dark and stayed dark is a trailing hole.
-    if ! out="$(psql "$DSN" -X -v ON_ERROR_STOP=1 -tAF'|' <<SQL
+    # The DSN goes to psql in the environment, never on its command line, where any local user could read it.
+    if ! out="$(PGDSN="$DSN" "$(command -v psql-dsn || echo "$(dirname "$0")/psql-dsn.sh")" -X -v ON_ERROR_STOP=1 -tAF'|' <<SQL
 WITH bounds AS (
     SELECT min(ts)::date AS lo, max(ts)::date AS hi
     FROM trades WHERE source = '${src}'

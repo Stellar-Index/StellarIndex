@@ -63,7 +63,7 @@ CH() { curl -sSf --max-time 3600 --netrc-file "$CH_NETRC" http://localhost:8123/
 # Digits only — the same guard data-freshness.sh puts on its supply_flows read.
 is_uint() { case "$1" in '' | *[!0-9]*) return 1 ;; esac; }
 
-TIP=$("$PSQL" "$DSN" -tA -c "SELECT last_ledger FROM ingestion_cursors WHERE source='ledgerstream'" 2>/dev/null | tr -d '[:space:]')
+TIP=$(PGDSN="$DSN" PSQL_BIN="$PSQL" psql-dsn -tA -c "SELECT last_ledger FROM ingestion_cursors WHERE source='ledgerstream'" 2>/dev/null | tr -d '[:space:]')
 if ! is_uint "$TIP" || [ "$TIP" = "0" ]; then
   echo "$(date -u) ch-supply: tip unresolved" >&2
   exit 1
