@@ -497,7 +497,7 @@ func accountMovementsSQL(filter AccountMovementFilter, hasCursor, exactDedup boo
 	if !exactDedup {
 		cols += ", ingested_at"
 	}
-	sb.WriteString("SELECT " + cols + " FROM stellar.account_movements WHERE address = ?" + filter.partitions)
+	sb.WriteString(`SELECT ` + cols + ` FROM stellar.account_movements WHERE address = ?` + filter.partitions)
 	if filter.Kind != "" {
 		sb.WriteString(" AND movement_kind = ?")
 	}

@@ -612,6 +612,14 @@ catches "a count() over contract_events is caught" \
   "$(shape events 'SELECT contract_id, count() FROM stellar.contract_events WHERE ledger_seq > 5 GROUP BY contract_id')" \
   stellar.contract_events
 
+interp="$(mk interp)"
+printf 'package clickhouse\n\nconst q = "SELECT sum(fee_charged) FROM stellar.transactions"\n' > "$interp/$GODIR/interp.go"
+check "a lake read in a double-quoted Go string fails: the gate cannot examine it" 1 "$interp"
+
+interptest="$(mk interptest)"
+printf 'package clickhouse\n\nconst want = "FROM stellar.transactions FINAL"\n' > "$interptest/$GODIR/interp_test.go"
+check "a quoted fragment in a test file is not a read" 0 "$interptest"
+
 check "a scalar subquery aggregate in the select list is not this read" 0 \
   "$(shape scalar 'SELECT ledger_seq, (SELECT count() FROM stellar.ledgers) AS n FROM stellar.operations WHERE ledger_seq = 5')"
 

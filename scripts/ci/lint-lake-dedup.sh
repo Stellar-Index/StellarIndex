@@ -58,6 +58,9 @@
 #
 # Also not flagged, each a decision:
 #
+#   * SQL in a double-quoted Go string is not analysed; production Go that
+#     writes a lake read that way FAILS (use a raw literal). Test files are
+#     exempt: they quote fragments in assertions.
 #   * Go `//` comments: prose ABOUT the query beside them, constantly quoting
 #     fragments. Operator recipes live in `.sql` headers, which ARE read (see
 #     deploy/clickhouse/ops_by_source.sql Step 3, whose
@@ -142,7 +145,8 @@ SQL
 # violating read plus a final `#counts <reads> <aggregating>` self-accounting
 # line, so a pattern that stopped matching reads as a fault, not a clean run.
 violations="$(
-  LC_ALL=C awk -v READ_RE="(from|join|,) ?stellar\\.(${LAKE_TABLES})([^a-z0-9_]|\$)" '
+  LC_ALL=C awk -v READ_RE="(from|join|,) ?stellar\\.(${LAKE_TABLES})([^a-z0-9_]|\$)" \
+               -v INTERP_RE="\"[^\"]*(from|join) stellar\\.(${LAKE_TABLES})([^a-z0-9_]|\$)" '
     # ── identity + vocabulary ────────────────────────────────────────
     function word(s, w) {
       return s ~ ("(^|[^A-Za-z0-9_])" w "([^A-Za-z0-9_]|$)")
@@ -299,6 +303,12 @@ violations="$(
     }
 
     function go_line(l,    n, p, i, inside, part, cut) {
+      # Only raw literals are analysed. A read in a double-quoted string in
+      # production Go would never be examined, so it is reported instead.
+      if (!in_raw && index(l, "`") == 0 && FILENAME !~ /_test\.go$/) {
+        part = l; cut = index(part, "//"); if (cut > 0) part = substr(part, 1, cut - 1)
+        if (tolower(part) ~ INTERP_RE) printf "#interp\t%s:%d\n", FILENAME, FNR
+      }
       if (index(l, "`") > 0) {
         l = go_mask(l, in_raw)
       } else if (!in_raw) {
@@ -392,7 +402,13 @@ violations="$(
 
 examined="$(printf '%s\n' "$violations" | awk '/^#counts /{print $2}')"
 aggregating="$(printf '%s\n' "$violations" | awk '/^#counts /{print $3}')"
-violations="$(printf '%s\n' "$violations" | grep -v '^#counts ' || true)"
+interpreted="$(printf '%s\n' "$violations" | sed -n 's/^#interp\t/  /p')"
+violations="$(printf '%s\n' "$violations" | grep -v '^#counts \|^#interp' || true)"
+if [ -n "$interpreted" ]; then
+  echo "lint-lake-dedup: FAIL — a lake-table read in a double-quoted Go string is not examined by this gate; write the SQL as a raw (backtick) literal:" >&2
+  printf '%s\n' "$interpreted" >&2
+  exit 1
+fi
 
 if [ -z "${examined:-}" ] || [ -z "${aggregating:-}" ]; then
   die "the analyser produced no #counts line — a gate reporting clean over

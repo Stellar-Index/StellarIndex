@@ -42,7 +42,7 @@ const assetMovementCols = `address, ledger, ledger_close_time, tx_hash, op_index
 // ClickHouse can stop reading in key order (`native` spans billions of rows); exactDedup keeps only the newest row per movement.
 func assetMovementsSQL(hasCursor, exactDedup bool) string {
 	var sb strings.Builder
-	sb.WriteString("SELECT " + assetMovementCols + " FROM stellar.movements_by_asset WHERE asset = ? AND ledger <= ?")
+	sb.WriteString(`SELECT ` + assetMovementCols + ` FROM stellar.movements_by_asset WHERE asset = ? AND ledger <= ?`)
 	if hasCursor {
 		// The bare `ledger <= ?` lets the primary index cut the range; the tuple alone is not pruned.
 		sb.WriteString(" AND ledger <= ? AND (ledger, tx_hash, op_index, leg_index) < (?, ?, ?, ?)")
