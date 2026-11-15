@@ -285,10 +285,15 @@ func recordFromSubject(sub Subject) APIKeyRecord {
 // a no-op on persistent (operator-seeded) records. Errors are swallowed: the worst case is an idle key
 // expiring on its existing TTL.
 func (v *RedisAPIKeyValidator) refreshIdleTTL(ctx context.Context, hash string) {
-	if v.mirroredKeyIdleTTL <= 0 {
+	refreshIdleTTL(ctx, v.rdb, hash, v.mirroredKeyIdleTTL)
+}
+
+// refreshIdleTTL is the one idle-window refresh both validators run after serving a canonical `apikey:` record.
+func refreshIdleTTL(ctx context.Context, rdb redis.Cmdable, hash string, ttl time.Duration) {
+	if ttl <= 0 {
 		return
 	}
-	_ = v.rdb.ExpireXX(ctx, cachekeys.APIKey(hash).String(), v.mirroredKeyIdleTTL).Err()
+	_ = rdb.ExpireXX(ctx, cachekeys.APIKey(hash).String(), ttl).Err()
 }
 
 // check enforces the account kill switch for a record naming a platform account and returns the

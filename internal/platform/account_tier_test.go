@@ -169,7 +169,14 @@ func TestAccountResolveKeyLimits(t *testing.T) {
 			t.Errorf("ResolveKeyMonthlyQuota(%d) = %d, want %d", keyQuota, got, want)
 		}
 	}
-	if got := (Account{}).ResolveKeyMonthlyQuota(0); got != 0 {
-		t.Errorf("no override, key 0: ResolveKeyMonthlyQuota = %d, want 0 (unmetered)", got)
+	// A key at 0 with no override to inherit is metered at the tier ceiling, never unmetered: clearing an
+	// override must not lift the cap off the keys minted under it.
+	for tier, want := range map[Tier]int64{TierFree: 1_000_000, TierPartner: 1_000_000_000, "": 1_000_000, TierAnon: 0} {
+		if got := (Account{Tier: tier}).ResolveKeyMonthlyQuota(0); got != want {
+			t.Errorf("tier %q, no override, key 0: ResolveKeyMonthlyQuota = %d, want %d", tier, got, want)
+		}
+	}
+	if got := (Account{Tier: TierFree}).ResolveKeyMonthlyQuota(5_000_000); got != 5_000_000 {
+		t.Errorf("a key's own quota is the clamp's to lower, not the resolver's: got %d", got)
 	}
 }

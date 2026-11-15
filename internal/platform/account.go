@@ -163,10 +163,16 @@ func (a Account) ResolveKeyRateLimitPerMin(keyRate int) int {
 	return keyRate
 }
 
-// ResolveKeyMonthlyQuota is the monthly quota auth enforces for a key (0 = unmetered): a key at 0 inherits the account override, a set override is a CEILING.
+// ResolveKeyMonthlyQuota is the monthly quota auth enforces for one of the account's keys (0 = unmetered). A key at 0 inherits the
+// account override, else the tier ceiling: an account key is unmetered only on a tier that has no ceiling. A set override is a CEILING.
 func (a Account) ResolveKeyMonthlyQuota(keyQuota int64) int64 {
 	override := a.MonthlyRequestQuotaOverride
-	if keyQuota == 0 || (override > 0 && override < keyQuota) {
+	switch {
+	case keyQuota <= 0 && override > 0:
+		return override
+	case keyQuota <= 0:
+		return a.Tier.MaxMonthlyQuota()
+	case override > 0 && override < keyQuota:
 		return override
 	}
 	return keyQuota
@@ -178,13 +184,9 @@ func (a Account) EffectiveRateLimitPerMin() int {
 	return a.ResolveKeyRateLimitPerMin(minted)
 }
 
-// EffectiveMonthlyQuota is what auth enforces on a key minted at the dashboard defaults: 0 (inherit) under an override, else the tier ceiling.
+// EffectiveMonthlyQuota is what auth enforces on a key minted at the dashboard defaults: the override, else the tier ceiling.
 func (a Account) EffectiveMonthlyQuota() int64 {
-	var minted int64
-	if a.MonthlyRequestQuotaOverride <= 0 {
-		minted = a.Tier.MaxMonthlyQuota()
-	}
-	return a.ResolveKeyMonthlyQuota(minted)
+	return a.ResolveKeyMonthlyQuota(0)
 }
 
 // AccountStore is the persistence boundary for [Account].

@@ -403,11 +403,12 @@ func TestHandleList_ServesEnforcedMonthlyQuota(t *testing.T) {
 		{"override caps a higher key", 100_000, 5_000_000, 100_000},
 		{"key below override", 100_000, 50_000, 50_000},
 		{"no override honours key", 0, 75_000, 75_000},
-		{"no override, unset key is unmetered", 0, 0, 0},
+		{"no override, unset key meters at the tier ceiling", 0, 0, platform.TierFree.MaxMonthlyQuota()},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h, store, sc := newTestRig(t)
+			sc.Account.Tier = platform.TierFree
 			sc.Account.MonthlyRequestQuotaOverride = tc.override
 			store.byID["k"] = platform.APIKey{ID: "k", AccountID: sc.Account.ID, MonthlyQuota: tc.stored}
 

@@ -5,6 +5,7 @@ package v1
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -229,7 +230,17 @@ func (s *Server) revokeOwnedPlatformKey(ctx context.Context, identifier, keyID, 
 	if auth.AccountIdentifier(owner.Slug) != identifier {
 		return platform.ErrNotFound
 	}
-	return keys.Revoke(ctx, k.AccountID, keyID, uuid.Nil, reason)
+	if err := keys.Revoke(ctx, k.AccountID, keyID, uuid.Nil, reason); err != nil {
+		return err
+	}
+	// The postgres validator serves a derived `apikey-cache:` row for up to its TTL; a revoke that
+	// leaves it is not a revoke. A failed eviction is an error, not a logged success.
+	if inv := s.APIKeyBudgets.CacheInvalidator; inv != nil {
+		if err := inv.InvalidateCachedKey(ctx, hex.EncodeToString(k.KeyHash)); err != nil {
+			return fmt.Errorf("revoke: key %s revoked in postgres but its auth cache row was not evicted: %w", keyID, err)
+		}
+	}
+	return nil
 }
 
 // handleAdminKeysRevoke serves DELETE /v1/admin/keys/{keyID}?identifier=<owner>, staff's only way to kill an arbitrary key. identifier is

@@ -108,7 +108,7 @@ func TestPostgresValidator_NoOverride_UsesPerKey(t *testing.T) {
 }
 
 // TestPostgresValidator_MonthlyQuotaOverride_IsCeiling: the account monthly_request_quota_override is a hard CEILING (opposite of the rate-limit FLOOR): a larger per-key quota is clamped to it,
-// a per-key 0 falls back to it, and both 0 stays unmetered.
+// a per-key 0 falls back to it, and with no override to inherit a per-key 0 is metered at the tier ceiling.
 func TestPostgresValidator_MonthlyQuotaOverride_IsCeiling(t *testing.T) {
 	cases := []struct {
 		name         string
@@ -120,7 +120,7 @@ func TestPostgresValidator_MonthlyQuotaOverride_IsCeiling(t *testing.T) {
 		{"per-key below override honored", 1_000_000, 5_000_000, 1_000_000},
 		{"per-key equal override honored", 5_000_000, 5_000_000, 5_000_000},
 		{"per-key 0 falls back to override", 0, 5_000_000, 5_000_000},
-		{"both 0 stays unmetered", 0, 0, 0},
+		{"both 0 meters at the free-tier ceiling", 0, 0, 1_000_000},
 		{"per-key honored when no override", 2_000_000, 0, 2_000_000},
 	}
 	for _, tc := range cases {
@@ -909,6 +909,94 @@ func TestPostgresValidator_CanonicalRecordAppliesAccountOverrides(t *testing.T) 
 	}
 	if sub.RateLimitPerMin != 60000 || sub.MonthlyQuota != 100_000 {
 		t.Errorf("rate %d quota %d, want the account's 60000 floor and 100000 ceiling", sub.RateLimitPerMin, sub.MonthlyQuota)
+	}
+}
+
+// TestPostgresValidator_ClearedOverrideDoesNotUnmeterInheritingKeys: a dashboard key minted under an
+// override stores 0 (inherit). Clearing the override must leave it capped, on the Postgres read, the
+// derived cache hit and the canonical record hit alike.
+func TestPostgresValidator_ClearedOverrideDoesNotUnmeterInheritingKeys(t *testing.T) {
+	keys, accounts, rdb := newStubs()
+	v, _ := auth.NewPostgresAPIKeyValidator(auth.PostgresValidatorOptions{Keys: keys, Accounts: accounts, Cache: rdb})
+	acct := seedActiveAccount(accounts, "was-comped")
+	acct.MonthlyRequestQuotaOverride = 50_000_000
+	accounts.byID[acct.ID] = acct
+
+	const plaintext = "sip_inherits_override"
+	seedKey(keys, plaintext, acct.ID, platform.APIKeyTierAPIKey, 1000) // MonthlyQuota 0
+	if sub, err := v.Lookup(context.Background(), plaintext); err != nil || sub.MonthlyQuota != 50_000_000 {
+		t.Fatalf("under the override: quota %d err %v, want 50000000", sub.MonthlyQuota, err)
+	}
+
+	acct.MonthlyRequestQuotaOverride = 0
+	accounts.byID[acct.ID] = acct
+	if err := v.InvalidateCachedKey(context.Background(), hexHashOf(plaintext)); err != nil {
+		t.Fatalf("invalidate: %v", err)
+	}
+	for _, path := range []string{"postgres read", "cache hit"} {
+		sub, err := v.Lookup(context.Background(), plaintext)
+		if err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		if sub.MonthlyQuota != platform.TierFree.MaxMonthlyQuota() {
+			t.Errorf("%s: quota %d after the override was cleared, want the tier ceiling %d (0 is unmetered)",
+				path, sub.MonthlyQuota, platform.TierFree.MaxMonthlyQuota())
+		}
+	}
+
+	const mirrored = "sip_inherits_override_mirror"
+	body, _ := json.Marshal(auth.APIKeyRecord{
+		KeyID: "kid_inherit", Identifier: auth.AccountIdentifier(acct.Slug), Tier: auth.TierAPIKey, RateLimitPerMin: 6000,
+	})
+	if err := rdb.Set(context.Background(), cachekeys.APIKey(hexHashOf(mirrored)).String(), body, 0).Err(); err != nil {
+		t.Fatalf("seed canonical record: %v", err)
+	}
+	if sub, err := v.Lookup(context.Background(), mirrored); err != nil || sub.MonthlyQuota != platform.TierFree.MaxMonthlyQuota() {
+		t.Errorf("canonical record: quota %d err %v, want the tier ceiling", sub.MonthlyQuota, err)
+	}
+}
+
+// TestPostgresValidator_CanonicalHitRenewsIdleWindow: self-service and register-mirrored records carry
+// a sliding idle TTL and have no api_keys row, so the validator that serves them must renew it. A
+// persistent record stays persistent, and the derived cache row keeps its own TTL.
+func TestPostgresValidator_CanonicalHitRenewsIdleWindow(t *testing.T) {
+	keys, accounts, rdb := newStubs()
+	v, _ := auth.NewPostgresAPIKeyValidator(auth.PostgresValidatorOptions{Keys: keys, Accounts: accounts, Cache: rdb})
+	ctx := context.Background()
+
+	const child = "sip_self_service_child"
+	seedRecord(t, rdb, child, time.Time{}, time.Time{}) // written with a 1h TTL
+	childKey := cachekeys.APIKey(hexHashOf(child)).String()
+	if _, err := v.Lookup(ctx, child); err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if ttl := rdb.TTL(ctx, childKey).Val(); ttl < auth.MirroredKeyIdleTTL-time.Minute {
+		t.Errorf("idle window after a served lookup = %v, want it renewed to %v", ttl, auth.MirroredKeyIdleTTL)
+	}
+
+	const operator = "sip_operator_persistent"
+	seedRecord(t, rdb, operator, time.Time{}, time.Time{})
+	operatorKey := cachekeys.APIKey(hexHashOf(operator)).String()
+	if err := rdb.Persist(ctx, operatorKey).Err(); err != nil {
+		t.Fatalf("persist: %v", err)
+	}
+	if _, err := v.Lookup(ctx, operator); err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if ttl := rdb.TTL(ctx, operatorKey).Val(); ttl >= 0 {
+		t.Errorf("a persistent record gained a TTL of %v", ttl)
+	}
+
+	acct := seedActiveAccount(accounts, "cached")
+	const dashboard = "sip_dashboard_cached"
+	seedKey(keys, dashboard, acct.ID, platform.APIKeyTierAPIKey, 1000)
+	for range 2 { // Postgres read, then the derived-row hit
+		if _, err := v.Lookup(ctx, dashboard); err != nil {
+			t.Fatalf("lookup: %v", err)
+		}
+	}
+	if ttl := rdb.TTL(ctx, cachekeys.APIKeyCache(hexHashOf(dashboard)).String()).Val(); ttl > time.Hour {
+		t.Errorf("derived cache row TTL = %v, want at most its 1h cache TTL", ttl)
 	}
 }
 

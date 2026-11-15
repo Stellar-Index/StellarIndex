@@ -24,8 +24,8 @@ type keyCeilings struct {
 	quota int64
 }
 
-// over reports which of a key's two budgets exceed the ceilings. A quota of 0 is an inherit/unmetered key, not an
-// over-ceiling one, and is left alone.
+// over reports which of a key's two budgets exceed the ceilings. A quota of 0 inherits the override or the tier
+// ceiling at auth time ([platform.Account.ResolveKeyMonthlyQuota]), so it is never over and is left alone.
 func (c keyCeilings) over(rate int, quota int64) (rateOver, quotaOver bool) {
 	return c.rate > 0 && rate > c.rate, c.quota > 0 && quota > c.quota
 }

@@ -315,6 +315,56 @@ func TestAdminKeysRevoke_RevokesPostgresManagementRowToo(t *testing.T) {
 	}
 }
 
+// recordingKeyCacheInvalidator records the hashes it is asked to evict; err, when set, is what it returns.
+type recordingKeyCacheInvalidator struct {
+	evicted []string
+	err     error
+}
+
+func (r *recordingKeyCacheInvalidator) InvalidateCachedKey(_ context.Context, hexHash string) error {
+	r.evicted = append(r.evicted, hexHash)
+	return r.err
+}
+
+// TestAdminKeysRevoke_EvictsThePostgresAuthCache: under auth_backend=postgres the validator serves a
+// derived cache row for up to an hour. The staff kill switch must evict it, and a revoke whose eviction
+// failed must not answer 204.
+func TestAdminKeysRevoke_EvictsThePostgresAuthCache(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		evictErr   error
+		wantStatus int
+	}{
+		{"evicted", nil, http.StatusNoContent},
+		{"eviction failed", errors.New("redis down"), http.StatusInternalServerError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			platformKeys, accts := seedOwnedPlatformKey("reg-abc123", "kid_shared01")
+			k := platformKeys.byID["kid_shared01"]
+			k.KeyHash = []byte{0xde, 0xad, 0xbe, 0xef}
+			platformKeys.byID["kid_shared01"] = k
+			inv := &recordingKeyCacheInvalidator{err: tc.evictErr}
+			srv := v1.New(v1.Options{
+				Auth:             fakeAuthMiddleware(operatorSubject()),
+				Accounts:         &fakeAccountStore{},
+				APIKeyBudgets:    v1.APIKeyBudgetStores{Platform: platformKeys, CacheInvalidator: inv},
+				PlatformAccounts: accts,
+			})
+			ts := httptest.NewServer(srv.Handler())
+			t.Cleanup(ts.Close)
+
+			resp := doWithReason(t, http.MethodDelete,
+				ts.URL+"/v1/admin/keys/kid_shared01?identifier=acct:reg-abc123", "leaked key", "")
+			if resp.StatusCode != tc.wantStatus {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tc.wantStatus)
+			}
+			if len(inv.evicted) != 1 || inv.evicted[0] != "deadbeef" {
+				t.Errorf("evicted = %v, want [deadbeef]: the revoked key keeps authenticating from its cache row", inv.evicted)
+			}
+		})
+	}
+}
+
 // TestAdminKeysRevoke_NonOwnerIdentifierLeavesPostgresRowLive: Revoke is keyed by id alone, so naming the wrong owner must not
 // reach another account's row. It answers 204 either way so key ids cannot be enumerated.
 func TestAdminKeysRevoke_NonOwnerIdentifierLeavesPostgresRowLive(t *testing.T) {

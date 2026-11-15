@@ -117,7 +117,7 @@ func (v *PostgresAPIKeyValidator) Lookup(ctx context.Context, key string) (Subje
 	}
 
 	// Monthly-quota cascade: the account override (accounts.monthly_request_quota_override) is a hard CEILING the customer can only lower beneath, the opposite of the rate-limit FLOOR below.
-	// Per-key 0 falls back to the override (both 0 = unmetered); per-key > 0 with override > 0 uses min(); per-key > 0 with override 0 is honoured. The cascade lives on platform.Account so account views report what is enforced.
+	// Per-key 0 falls back to the override, else the tier ceiling; per-key > 0 with override > 0 uses min(); per-key > 0 with override 0 is honoured. The cascade lives on platform.Account so account views report what is enforced.
 	monthlyQuota := acct.ResolveKeyMonthlyQuota(pgKey.MonthlyQuota)
 
 	// Account rate-limit override (rate_limit_per_min_override): the per-key column is NOT NULL CHECK (> 0), so there is no unset sentinel and the override acts as an account-wide FLOOR that raises lower keys,
@@ -155,7 +155,8 @@ func (v *PostgresAPIKeyValidator) Lookup(ctx context.Context, key string) (Subje
 // cacheLookup returns (Subject, hit, sentinelErr): hit=false means miss or transient failure (fall through to Postgres); on hit the error is the sentinel to propagate or nil.
 // The canonical `apikey:` record is read before the `apikey-cache:` row because it can carry revoked_at, so a derived cache row never shadows it.
 func (v *PostgresAPIKeyValidator) cacheLookup(ctx context.Context, hexHash string) (Subject, bool, error) {
-	rec, ok := v.readRecord(ctx, cachekeys.APIKey(hexHash).String())
+	rec, canonical := v.readRecord(ctx, cachekeys.APIKey(hexHash).String())
+	ok := canonical
 	if !ok {
 		rec, ok = v.readRecord(ctx, cachekeys.APIKeyCache(hexHash).String())
 	}
@@ -183,6 +184,11 @@ func (v *PostgresAPIKeyValidator) cacheLookup(ctx context.Context, hexHash strin
 		// the hit, as the Redis validator does.
 		sub.RateLimitPerMin = acct.ResolveKeyRateLimitPerMin(sub.RateLimitPerMin)
 		sub.MonthlyQuota = acct.ResolveKeyMonthlyQuota(sub.MonthlyQuota)
+	}
+	if canonical {
+		// Self-service and register-mirrored records have no api_keys row to fall back to: without the
+		// refresh a key in daily use dies when its idle window lapses.
+		refreshIdleTTL(ctx, v.cache, hexHash, MirroredKeyIdleTTL)
 	}
 	return sub, true, nil
 }
