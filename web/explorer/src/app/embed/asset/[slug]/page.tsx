@@ -17,6 +17,7 @@ import {
 } from '@/lib/format';
 import { isCIStub } from '@/lib/buildFetch';
 import { CURRENT_NETWORK } from '@/lib/networks';
+import { VOLUME_FLOOR_HINT } from '@/lib/supplyFloor';
 
 const BUILD_FETCH_TIMEOUT_MS = 8_000;
 
@@ -386,7 +387,12 @@ export default async function EmbedAssetPage({ params }: { params: Params }) {
       <div className="text-ink-faint mt-auto flex items-center justify-between text-[11px]">
         <span>Powered by Stellar Index</span>
         {showVolume && (
-          <span className="font-mono tabular-nums">${volumeText} 24h vol</span>
+          <span
+            className="font-mono tabular-nums"
+            title={coin.volume_lower_bound ? VOLUME_FLOOR_HINT : undefined}
+          >
+            {coin.volume_lower_bound ? '≥ ' : ''}${volumeText} 24h vol
+          </span>
         )}
       </div>
     </div>

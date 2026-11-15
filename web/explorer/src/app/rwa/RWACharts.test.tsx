@@ -23,6 +23,28 @@ describe('ShareBars', () => {
     expect(items[1]).not.toHaveTextContent('≥');
   });
 
+  it('marks a fully valued group as a floor when the API flags it', () => {
+    render(
+      <ShareBars
+        ariaLabel="by class"
+        rows={[
+          {
+            key: 'a',
+            label: 'Bonds',
+            usd: '100.00',
+            unvalued: 0,
+            lowerBound: true,
+          },
+          { key: 'b', label: 'Funds', usd: '900.00', unvalued: 0 },
+        ]}
+      />,
+    );
+    const items = screen.getAllByRole('listitem');
+    expect(items[0]).not.toHaveTextContent('≥');
+    expect(items[1]).toHaveTextContent('≥ $100');
+    expect(items[1]).toHaveTextContent('floor supply');
+  });
+
   it('shows a value above 2^53 without rounding', () => {
     render(
       <ShareBars

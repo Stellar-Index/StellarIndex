@@ -304,6 +304,28 @@ describe('RWAView', () => {
     present(/No asset in the set publishes a market valuation/);
   });
 
+  // Every member is valued, but one supply is a floor: the API flags the
+  // group and the row, and the page printed both as exact.
+  it('marks a fully valued group and row as floors when the API flags them', async () => {
+    const groups = rollups(true, true);
+    show(
+      view({
+        assets: [asset({ circulating_supply_lower_bound: true })],
+        by_class: groups.by_class.map((c) => ({
+          ...c,
+          market_cap_lower_bound: true,
+          reference_value_lower_bound: true,
+        })),
+        by_issuer: groups.by_issuer,
+      }),
+    );
+
+    await screen.findAllByText('$1.28M');
+    // By-class cells (market and reference) and the row's two money cells.
+    atLeast(/includes a floor supply/, 2);
+    atLeast(/≥/, 4);
+  });
+
   it('marks a partly-valued total as a lower bound', async () => {
     show(
       view({

@@ -20,6 +20,7 @@ import {
 import { hasDirectoryScamFlag } from '@/lib/directory-tags';
 import { assetHref } from '@/lib/fiat-slugs';
 import { truncateMiddle } from '@/components/ui/Mono';
+import { SUPPLY_FLOOR_HINT } from '@/lib/supplyFloor';
 import {
   Badge,
   Callout,
@@ -212,8 +213,7 @@ const FUNNEL_DROP_PROSE: Record<string, string> = {
     'Named, but as infrastructure rather than an issuer',
   no_real_world_instrument_basis_for_contract:
     'Declares no real-world instrument',
-  contract_is_classic_member_sac:
-    'Contract form of an asset already counted',
+  contract_is_classic_member_sac: 'Contract form of an asset already counted',
   duplicate_directory_entry_for_contract: 'Same contract named twice',
   over_contract_scan_cap: 'Beyond the per-rebuild contract cap',
   // The valuation arm's drops are the statuses the rows carry, so the
@@ -379,6 +379,7 @@ export function RWAView() {
                 label: CLASS_LABEL[c.class] ?? c.class,
                 usd: c.market_cap_usd ?? null,
                 unvalued: c.assets_unvalued,
+                lowerBound: c.market_cap_lower_bound,
               }))}
             />
           </Panel>
@@ -391,6 +392,7 @@ export function RWAView() {
                   i.name || i.home_domain || truncateMiddle(i.issuer, 6, 6),
                 usd: i.market_cap_usd ?? null,
                 unvalued: i.assets_unvalued,
+                lowerBound: i.market_cap_lower_bound,
               }))}
             />
           </Panel>
@@ -456,6 +458,8 @@ export function RWAView() {
                   usd: usd(c.market_cap_usd),
                   referenceUsd: usd(c.reference_value_usd),
                   referenceUnvalued: c.assets_reference_unvalued,
+                  floor: c.market_cap_lower_bound === true,
+                  referenceFloor: c.reference_value_lower_bound === true,
                 }))}
                 firstHeading="Class"
               />
@@ -474,6 +478,8 @@ export function RWAView() {
                   usd: usd(i.market_cap_usd),
                   referenceUsd: usd(i.reference_value_usd),
                   referenceUnvalued: i.assets_reference_unvalued,
+                  floor: i.market_cap_lower_bound === true,
+                  referenceFloor: i.reference_value_lower_bound === true,
                 }))}
                 firstHeading="Issuer"
               />
@@ -566,7 +572,9 @@ function CuratedPanel({
                   Counted by the curator, not verified here
                 </div>
                 <div className="tnum text-ink mt-1 text-2xl font-semibold tracking-tight">
-                  {additional ?? '—'}
+                  {additional != null && curated.additional_value_lower_bound
+                    ? `≥ ${additional}`
+                    : (additional ?? '—')}
                 </div>
                 <div className="text-ink-muted mt-0.5 text-xs">
                   {curated.assets - curated.also_verified} row
@@ -579,7 +587,9 @@ function CuratedPanel({
                   Combined, the way the curator counts
                 </div>
                 <div className="tnum text-ink mt-1 text-2xl font-semibold tracking-tight">
-                  {combined ?? '—'}
+                  {combined != null && curated.combined_value_lower_bound
+                    ? `≥ ${combined}`
+                    : (combined ?? '—')}
                 </div>
                 <div className="text-ink-muted mt-0.5 text-xs">
                   published for comparison, not vouched for
@@ -1697,7 +1707,15 @@ function AssetRow({ asset }: { asset: RWAAsset }) {
       <Td align="right">
         <ReferenceValueCell asset={asset} />
       </Td>
-      <Td align="right">{cap ?? <Withheld reason={reason} />}</Td>
+      <Td align="right">
+        {cap == null ? (
+          <Withheld reason={reason} />
+        ) : asset.circulating_supply_lower_bound ? (
+          <span title={SUPPLY_FLOOR_HINT}>≥ {cap}</span>
+        ) : (
+          cap
+        )}
+      </Td>
       <Td align="right">{price ?? <Withheld reason={reason} />}</Td>
       <Td align="right">
         <ReferenceCell asset={asset} />
@@ -1774,8 +1792,9 @@ function ReferenceValueCell({ asset }: { asset: RWAAsset }) {
     <div>
       <div
         className="tnum"
-        title={`Circulating supply times ${referenceValueWhose(asset.reference)}. Not a market capitalisation: nobody was observed paying this, and the liquidity and price gates behind the market-cap column cannot check it.`}
+        title={`Circulating supply times ${referenceValueWhose(asset.reference)}. Not a market capitalisation: nobody was observed paying this, and the liquidity and price gates behind the market-cap column cannot check it.${asset.circulating_supply_lower_bound ? ` ${SUPPLY_FLOOR_HINT}` : ''}`}
       >
+        {asset.circulating_supply_lower_bound ? '≥ ' : ''}
         {value}
       </div>
       <div className="text-ink-faint text-[11px]">at reference price</div>
@@ -1897,6 +1916,9 @@ function GroupTable({
     usd: string | null;
     referenceUsd: string | null;
     referenceUnvalued: number;
+    /** The API's lower-bound flags: set by unvalued members or a floor supply. */
+    floor: boolean;
+    referenceFloor: boolean;
   }[];
   firstHeading: string;
 }) {
@@ -1928,18 +1950,23 @@ function GroupTable({
                 <Withheld reason="No asset in this group carries an independent valuation of its instrument." />
               ) : (
                 <>
-                  {r.referenceUnvalued > 0 && (
-                    <span className="text-ink-muted" aria-hidden>
-                      ≥{' '}
-                    </span>
+                  {(r.referenceFloor || r.referenceUnvalued > 0) && (
+                    <span className="text-ink-muted">≥ </span>
                   )}
                   {r.referenceUsd}
                 </>
               )}
-              {r.referenceUnvalued > 0 && (
+              {r.referenceUnvalued > 0 ? (
                 <div className="text-ink-muted text-[11px]">
                   {r.referenceUnvalued} unvalued
                 </div>
+              ) : (
+                r.referenceFloor &&
+                r.referenceUsd != null && (
+                  <div className="text-ink-muted text-[11px]">
+                    includes a floor supply
+                  </div>
+                )
               )}
             </Td>
             <Td align="right">
@@ -1947,18 +1974,23 @@ function GroupTable({
                 <Withheld reason="No asset in this group publishes a market valuation." />
               ) : (
                 <>
-                  {r.unvalued > 0 && (
-                    <span className="text-ink-muted" aria-hidden>
-                      ≥{' '}
-                    </span>
+                  {(r.floor || r.unvalued > 0) && (
+                    <span className="text-ink-muted">≥ </span>
                   )}
                   {r.usd}
                 </>
               )}
-              {r.unvalued > 0 && (
+              {r.unvalued > 0 ? (
                 <div className="text-ink-muted text-[11px]">
                   {r.unvalued} unvalued
                 </div>
+              ) : (
+                r.floor &&
+                r.usd != null && (
+                  <div className="text-ink-muted text-[11px]">
+                    includes a floor supply
+                  </div>
+                )
               )}
             </Td>
           </TR>

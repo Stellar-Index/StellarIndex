@@ -11,6 +11,11 @@ import { AssetSwap } from './AssetSwap';
 import { ChangeSummaryStrip } from './ChangeSummaryStrip';
 import { LiveAssetPrice, type PriceProvenance } from './LiveAssetPrice';
 import { SidebarAssetIcon } from './SidebarAssetIcon';
+import {
+  SUPPLY_FLOOR_HINT,
+  VOLUME_FLOOR_HINT,
+  supplyIsFloor,
+} from '@/lib/supplyFloor';
 
 // Loosely-typed mirror of the page's fetched shapes — only the fields
 // the sidebar renders. Keeps this component decoupled from page.tsx's
@@ -32,8 +37,11 @@ export interface SidebarCoin {
   issuer?: string | null;
   price_usd?: string | null;
   volume_24h_usd?: string | null;
+  volume_lower_bound?: boolean;
   market_cap_usd?: string | null;
   circulating_supply?: string | null;
+  supply_basis?: string | null;
+  value_lower_bound?: boolean;
   change_24h_pct?: string | null;
   trade_count_24h?: number | null;
   observation_count: number;
@@ -50,6 +58,8 @@ export interface SidebarDetail {
   market_cap_usd?: string | null;
   fdv_usd?: string | null;
   volume_24h_usd?: string | null;
+  volume_lower_bound?: boolean;
+  supply_basis?: string | null;
   home_domain?: string | null;
 }
 
@@ -158,6 +168,16 @@ export function AssetSidebar({
   const max = supplyNum(detail?.max_supply, decimals);
   const volMktCap =
     vol != null && marketCap != null && marketCap > 0 ? vol / marketCap : null;
+  // Floors come from the same payload as the figure they qualify.
+  const volFloor = (detail ?? coin).volume_lower_bound === true;
+  const capFloor = supplyIsFloor(detail ?? coin);
+  const circFloor = supplyIsFloor(
+    detail?.circulating_supply != null ? detail : coin,
+  );
+  // A floor over an exact cap is "at least", an exact volume over a floor
+  // cap is "at most"; with both floors the ratio is bounded on neither side.
+  const ratioMark =
+    volFloor && capFloor ? null : volFloor ? '≥ ' : capFloor ? '≤ ' : '';
   const code = coin.code || coin.slug || '—';
   const source = asExample(`/v1/assets/${coin.asset_id}`);
 
@@ -177,11 +197,23 @@ export function AssetSidebar({
         headingLevel={2}
         bodyClassName="divide-line -mx-4 -mb-4 divide-y"
       >
-        <StatRow label="Market cap" value={usd(marketCap)} />
-        <StatRow label="Volume (24h)" value={usd(vol)} />
+        <StatRow
+          label="Market cap"
+          value={floorMark(usd(marketCap), capFloor)}
+          title={capFloor ? SUPPLY_FLOOR_HINT : undefined}
+        />
+        <StatRow
+          label="Volume (24h)"
+          value={floorMark(usd(vol), volFloor)}
+          title={volFloor ? VOLUME_FLOOR_HINT : undefined}
+        />
         <StatRow
           label="Vol / Mkt Cap"
-          value={volMktCap != null ? `${(volMktCap * 100).toFixed(2)}%` : '—'}
+          value={
+            volMktCap != null && ratioMark != null
+              ? `${ratioMark}${(volMktCap * 100).toFixed(2)}%`
+              : '—'
+          }
         />
         <StatRow label="FDV" value={usd(fdv)} />
         <StatRow label="Total supply" value={supply(total, code)} />
@@ -192,8 +224,11 @@ export function AssetSidebar({
         <div className="px-4 py-2.5">
           <div className="flex items-center justify-between gap-3">
             <span className={PANEL_LABEL_CLASS}>Circulating supply</span>
-            <span className="text-ink min-w-0 text-right font-mono text-sm tabular-nums">
-              {supply(circulating, code)}
+            <span
+              className="text-ink min-w-0 text-right font-mono text-sm tabular-nums"
+              title={circFloor ? SUPPLY_FLOOR_HINT : undefined}
+            >
+              {floorMark(supply(circulating, code), circFloor)}
             </span>
           </div>
           {circPct != null && (
@@ -300,11 +335,27 @@ export function AssetSidebar({
   );
 }
 
-function StatRow({ label, value }: { label: string; value: React.ReactNode }) {
+/** floorMark prefixes "≥" to a figure the server flagged as a floor. */
+function floorMark(text: string, floor: boolean): string {
+  return floor && text !== '—' ? `≥ ${text}` : text;
+}
+
+function StatRow({
+  label,
+  value,
+  title,
+}: {
+  label: string;
+  value: React.ReactNode;
+  title?: string;
+}) {
   return (
     <div className="flex items-center justify-between gap-3 px-4 py-2.5">
       <span className={PANEL_LABEL_CLASS}>{label}</span>
-      <span className="text-ink min-w-0 text-right font-mono text-sm tabular-nums">
+      <span
+        className="text-ink min-w-0 text-right font-mono text-sm tabular-nums"
+        title={title}
+      >
         {value}
       </span>
     </div>

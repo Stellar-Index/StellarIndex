@@ -7,12 +7,19 @@ vi.mock('../../LiveChangeChip', () => ({ LiveChangeChip: () => null }));
 
 import EmbedAssetPage from './page';
 
-function stubAsset(volume: string) {
+function stubAsset(volume: string, lowerBound = false) {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string) => {
       const body = /\/v1\/assets\/USDC$/.test(url)
-        ? { data: { code: 'USDC', price_usd: '1', volume_24h_usd: volume } }
+        ? {
+            data: {
+              code: 'USDC',
+              price_usd: '1',
+              volume_24h_usd: volume,
+              volume_lower_bound: lowerBound,
+            },
+          }
         : { data: [] };
       return new Response(JSON.stringify(body), { status: 200 });
     }),
@@ -33,6 +40,12 @@ describe('EmbedAssetPage 24h volume', () => {
     stubAsset(volume);
     await renderEmbed();
     expect(screen.getByText(shown)).toBeInTheDocument();
+  });
+
+  it('marks a volume the API flagged as a lower bound', async () => {
+    stubAsset('1500000000', true);
+    await renderEmbed();
+    expect(screen.getByText('≥ $1.5B 24h vol')).toBeInTheDocument();
   });
 
   it.each(['1e9', '0', '-5'])('omits a volume of %s', async (volume) => {

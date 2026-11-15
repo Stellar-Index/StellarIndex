@@ -12,11 +12,13 @@ export type ShareRow = {
   usd: string | null;
   /** Members without a valuation: any > 0 makes the figure a floor. */
   unvalued: number;
+  /** The API's own flag: also set when a counted member's supply is a floor. */
+  lowerBound?: boolean;
 };
 
 /**
- * Market cap per group as ranked bars. A group with unvalued members is
- * a floor, so it carries the "≥" in its label and the hatched tail;
+ * Market cap per group as ranked bars. A group the API flags as a lower
+ * bound carries the "≥" in its label and the hatched tail;
  * groups with no valuation are counted in a note, never drawn as zero.
  */
 export function ShareBars({
@@ -29,18 +31,27 @@ export function ShareBars({
   const valued = rows.filter((r) => r.usd != null && Number(r.usd) > 0);
   const omitted = rows.length - valued.length;
   const items: HBarItem[] = valued
-    .map((r) => ({
-      id: r.key,
-      label: r.label,
-      value: Number(r.usd),
-      display: `${r.unvalued > 0 ? '≥ ' : ''}${formatReadable(r.usd, true)}`,
-      annotation: r.unvalued > 0 ? `${r.unvalued} unvalued` : undefined,
-      hatchTail: r.unvalued > 0,
-      title:
-        r.unvalued > 0
-          ? `≥ $${r.usd}. A floor: members without a valuation are not counted.`
-          : `$${r.usd}`,
-    }))
+    .map((r) => {
+      const floor = r.lowerBound === true || r.unvalued > 0;
+      return {
+        id: r.key,
+        label: r.label,
+        value: Number(r.usd),
+        display: `${floor ? '≥ ' : ''}${formatReadable(r.usd, true)}`,
+        annotation:
+          r.unvalued > 0
+            ? `${r.unvalued} unvalued`
+            : floor
+              ? 'floor supply'
+              : undefined,
+        hatchTail: floor,
+        title: !floor
+          ? `$${r.usd}`
+          : r.unvalued > 0
+            ? `≥ $${r.usd}. A floor: members without a valuation are not counted.`
+            : `≥ $${r.usd}. A floor: a member's supply is a lower bound.`,
+      };
+    })
     .sort((a, b) => b.value - a.value);
   if (items.length === 0) return null;
   return (

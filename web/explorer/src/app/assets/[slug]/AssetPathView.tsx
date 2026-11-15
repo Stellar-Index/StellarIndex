@@ -17,6 +17,7 @@ import { LiveAssetPrice } from './LiveAssetPrice';
 import { SacRedirect } from './SacRedirect';
 import { type PriceBasis, provenanceFromBasis } from './priceProvenance';
 import { formatCompactUnits } from '@/lib/format';
+import { VOLUME_FLOOR_HINT } from '@/lib/supplyFloor';
 
 interface AssetShellDetail {
   /** 'catalogue' = a verified-currency view, which carries no Stellar id. */
@@ -29,6 +30,7 @@ interface AssetShellDetail {
   home_domain?: string | null;
   decimals?: number;
   volume_24h_usd?: string | null;
+  volume_lower_bound?: boolean;
   /** Fixed-precision decimal string (ADR-0003), or null when undrivable. */
   price_usd?: string | null;
   /** Absent = direct market. See the OpenAPI enum for the other values. */
@@ -214,8 +216,12 @@ export function AssetPathView() {
           {d.volume_24h_usd && (
             <div>
               <dt className="text-ink-muted">Volume (24h)</dt>
-              <dd className="font-mono">
-                ${formatCompactUnits(d.volume_24h_usd)}
+              <dd
+                className="font-mono"
+                title={d.volume_lower_bound ? VOLUME_FLOOR_HINT : undefined}
+              >
+                {d.volume_lower_bound ? '≥ ' : ''}$
+                {formatCompactUnits(d.volume_24h_usd)}
               </dd>
             </div>
           )}

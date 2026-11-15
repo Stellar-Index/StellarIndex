@@ -47,6 +47,11 @@ import {
 } from '@/components/ui';
 import { useDebouncedValue } from '@/lib/useDebouncedValue';
 import { cn } from '@/lib/cn';
+import {
+  SUPPLY_FLOOR_HINT,
+  VOLUME_FLOOR_HINT,
+  supplyIsFloor,
+} from '@/lib/supplyFloor';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
 /**
@@ -629,6 +634,9 @@ function AssetRow({
   // in market_cap_low_liquidity. Render its verdict; never re-decide it.
   const marketCap = parseDec(coin.market_cap_usd);
   const volume = coin.volume_24h_usd;
+  // The server flags a floor; a floor is never shown as a total.
+  const supplyFloor = supplyIsFloor(coin);
+  const volumeFloor = coin.volume_lower_bound === true;
   // circulating_supply is a RAW smallest-unit integer string; render it
   // in whole asset units by scaling down 10^decimals (7 for classic /
   // native, 0 for catalogue / fiat rows). market_cap / volume / price are
@@ -758,8 +766,12 @@ function AssetRow({
       {pricing && (
         <Td align="right" className={COL.md}>
           {marketCap != null ? (
-            <span className="text-ink-body font-mono tabular-nums">
-              ${formatCompactUnits(coin.market_cap_usd)}
+            <span
+              className="text-ink-body font-mono tabular-nums"
+              title={supplyFloor ? SUPPLY_FLOOR_HINT : undefined}
+            >
+              {supplyFloor ? '≥ ' : ''}$
+              {formatCompactUnits(coin.market_cap_usd)}
             </span>
           ) : coin.market_cap_decimals_mismatch ? (
             <Dash title="Refused: the on-chain decimals() and the price projection disagree (self-clearing)" />
@@ -773,8 +785,11 @@ function AssetRow({
       {pricing && (
         <Td align="right" className={COL.sm}>
           {volume != null && parseDec(volume) != null ? (
-            <span className="text-ink-body font-mono tabular-nums">
-              ${formatCompactUnits(volume)}
+            <span
+              className="text-ink-body font-mono tabular-nums"
+              title={volumeFloor ? VOLUME_FLOOR_HINT : undefined}
+            >
+              {volumeFloor ? '≥ ' : ''}${formatCompactUnits(volume)}
             </span>
           ) : (
             <Dash />
@@ -783,7 +798,13 @@ function AssetRow({
       )}
       <Td align="right" className={COL.md}>
         {supply !== '—' ? (
-          <span className="text-ink-body font-mono tabular-nums">{supply}</span>
+          <span
+            className="text-ink-body font-mono tabular-nums"
+            title={supplyFloor ? SUPPLY_FLOOR_HINT : undefined}
+          >
+            {supplyFloor ? '≥ ' : ''}
+            {supply}
+          </span>
         ) : (
           <Dash title="Awaiting issuer SEP-1 fixed_number / on-chain mint observer" />
         )}

@@ -15,3 +15,6 @@ export function supplyIsFloor(a: {
 
 export const SUPPLY_FLOOR_HINT =
   'At least: claimable, liquidity-pool and contract-held balances are not counted.';
+
+export const VOLUME_FLOOR_HINT =
+  'At least: trades without a trade-time USD value are not counted.';

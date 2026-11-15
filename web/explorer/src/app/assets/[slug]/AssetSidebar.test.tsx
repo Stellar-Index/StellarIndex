@@ -3,7 +3,11 @@ import { render } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactElement } from 'react';
 
-import { AssetIdentityCard, type SidebarCoin } from './AssetSidebar';
+import {
+  AssetIdentityCard,
+  AssetSidebar,
+  type SidebarCoin,
+} from './AssetSidebar';
 
 // AssetIdentityCard embeds ChangeSummaryStrip (a TanStack Query consumer),
 // so renders need a QueryClient. Retries off — a test must not poll.
@@ -79,5 +83,48 @@ describe('AssetIdentityCard price provenance caption', () => {
     );
     expect(container.textContent).not.toContain('VWAP');
     expect(container.textContent).not.toContain('listing snapshot');
+  });
+});
+
+// The detail carries the floor flags beside the figures; the rail printed
+// a trustline-sum cap and a partly valued volume as exact.
+describe('AssetSidebar floor marks', () => {
+  const figures = {
+    market_cap_usd: '5000000',
+    volume_24h_usd: '1200',
+    circulating_supply: '50000000000000',
+    decimals: 7,
+  };
+
+  it('prefixes ≥ on a floor cap, volume and supply', () => {
+    const { getByText, getAllByText } = renderWithQuery(
+      <AssetSidebar
+        coin={coin}
+        detail={{
+          ...figures,
+          volume_lower_bound: true,
+          supply_basis: 'classic_trustline_sum',
+        }}
+        priceUSD="0.9998"
+      />,
+    );
+    expect(getByText('≥ $5M')).toBeTruthy();
+    expect(getByText('≥ $1.2K')).toBeTruthy();
+    expect(getByText('≥ 5M USDC')).toBeTruthy();
+    // Both sides are floors, so the ratio is bounded on neither.
+    expect(getAllByText('—').length).toBeGreaterThan(0);
+  });
+
+  it('leaves exact figures unmarked', () => {
+    const { getByText, queryByText } = renderWithQuery(
+      <AssetSidebar
+        coin={coin}
+        detail={{ ...figures, supply_basis: 'issuer_exclusion' }}
+        priceUSD="0.9998"
+      />,
+    );
+    expect(getByText('$5M')).toBeTruthy();
+    expect(getByText('0.02%')).toBeTruthy();
+    expect(queryByText(/≥/)).toBeNull();
   });
 });
