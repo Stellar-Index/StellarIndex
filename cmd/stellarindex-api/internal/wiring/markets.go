@@ -17,24 +17,31 @@ import (
 // StoreMarketsReader adapts *timescale.Store to v1.MarketsReader.
 type StoreMarketsReader struct{ S *timescale.Store }
 
+// wireMarkets is the one store-to-wire mapping for every /v1/markets listing: a field copied in one
+// listing's adapter and not another's is served on one path and silently dropped on the rest.
+func wireMarkets(rows []timescale.Market) []v1.Market {
+	out := make([]v1.Market, len(rows))
+	for i, m := range rows {
+		out[i] = v1.Market{
+			Base:             m.Pair.Base.String(),
+			Quote:            m.Pair.Quote.String(),
+			LastTradeAt:      v1.WireTime(m.LastTradeAt),
+			BucketCloseAt:    v1.WireTime(m.BucketCloseAt),
+			TradeCount24h:    m.TradeCount24h,
+			Volume24hUSD:     m.Volume24hUSD,
+			LastPrice:        m.LastPrice,
+			VolumeLowerBound: m.VolumeLowerBound,
+		}
+	}
+	return out
+}
+
 func (r StoreMarketsReader) DistinctPairsExt(ctx context.Context, cursor string, limit int, order timescale.MarketsOrder) ([]v1.Market, string, error) {
 	rows, next, err := r.S.DistinctPairsExt(ctx, cursor, limit, order)
 	if err != nil {
 		return nil, "", err
 	}
-	out := make([]v1.Market, len(rows))
-	for i, m := range rows {
-		out[i] = v1.Market{
-			Base:          m.Pair.Base.String(),
-			Quote:         m.Pair.Quote.String(),
-			LastTradeAt:   v1.WireTime(m.LastTradeAt),
-			BucketCloseAt: v1.WireTime(m.BucketCloseAt),
-			TradeCount24h: m.TradeCount24h,
-			Volume24hUSD:  m.Volume24hUSD,
-			LastPrice:     m.LastPrice,
-		}
-	}
-	return out, next, nil
+	return wireMarkets(rows), next, nil
 }
 
 func (r StoreMarketsReader) SourceMarkets(ctx context.Context, source, cursor string, limit int, order timescale.MarketsOrder) ([]v1.Market, string, error) {
@@ -42,21 +49,7 @@ func (r StoreMarketsReader) SourceMarkets(ctx context.Context, source, cursor st
 	if err != nil {
 		return nil, "", err
 	}
-	out := make([]v1.Market, len(rows))
-	for i, m := range rows {
-		out[i] = v1.Market{
-			Base:          m.Pair.Base.String(),
-			Quote:         m.Pair.Quote.String(),
-			LastTradeAt:   v1.WireTime(m.LastTradeAt),
-			BucketCloseAt: v1.WireTime(m.BucketCloseAt),
-			TradeCount24h: m.TradeCount24h,
-			Volume24hUSD:  m.Volume24hUSD,
-			LastPrice:     m.LastPrice,
-
-			VolumeLowerBound: m.VolumeLowerBound,
-		}
-	}
-	return out, next, nil
+	return wireMarkets(rows), next, nil
 }
 
 func (r StoreMarketsReader) AssetMarkets(ctx context.Context, asset, cursor string, limit int, order timescale.MarketsOrder) ([]v1.Market, string, error) {
@@ -64,19 +57,7 @@ func (r StoreMarketsReader) AssetMarkets(ctx context.Context, asset, cursor stri
 	if err != nil {
 		return nil, "", err
 	}
-	out := make([]v1.Market, len(rows))
-	for i, m := range rows {
-		out[i] = v1.Market{
-			Base:          m.Pair.Base.String(),
-			Quote:         m.Pair.Quote.String(),
-			LastTradeAt:   v1.WireTime(m.LastTradeAt),
-			BucketCloseAt: v1.WireTime(m.BucketCloseAt),
-			TradeCount24h: m.TradeCount24h,
-			Volume24hUSD:  m.Volume24hUSD,
-			LastPrice:     m.LastPrice,
-		}
-	}
-	return out, next, nil
+	return wireMarkets(rows), next, nil
 }
 
 func (r StoreMarketsReader) AllPools(ctx context.Context, filter timescale.PoolsFilter, cursor string, limit int, order timescale.MarketsOrder) ([]v1.Pool, string, error) {
@@ -106,15 +87,7 @@ func (r StoreMarketsReader) PairMarket(ctx context.Context, base, quote canonica
 	if err != nil || !ok {
 		return v1.Market{}, ok, err
 	}
-	return v1.Market{
-		Base:          m.Pair.Base.String(),
-		Quote:         m.Pair.Quote.String(),
-		LastTradeAt:   v1.WireTime(m.LastTradeAt),
-		BucketCloseAt: v1.WireTime(m.BucketCloseAt),
-		TradeCount24h: m.TradeCount24h,
-		Volume24hUSD:  m.Volume24hUSD,
-		LastPrice:     m.LastPrice,
-	}, true, nil
+	return wireMarkets([]timescale.Market{m})[0], true, nil
 }
 
 func (r StoreMarketsReader) GetPairsVolumeHistory24hBatch(ctx context.Context, pairs [][2]string) (map[string][]timescale.PairVolumePoint, error) {

@@ -20,8 +20,7 @@ type Market struct {
 	BucketCloseAt time.Time
 	TradeCount24h int64
 	Volume24hUSD  *string
-	// VolumeLowerBound: Volume24hUSD excludes trades with no trade-time
-	// usd_volume. Computed only for the per-source listing.
+	// VolumeLowerBound: Volume24hUSD excludes trades with no trade-time usd_volume.
 	VolumeLowerBound bool
 	// LastPrice is the last quote-per-base price: the newest prices_1m close within 24h, else the
 	// newest prices_1d close in the recency window. Under a source filter it is that VENUE's own
@@ -838,7 +837,13 @@ const pairMarketQuery = `
                         AND last_price IS NOT NULL
                       ORDER BY bucket DESC LIMIT 1)
                 ) AS both_directions
-                 ORDER BY bucket DESC, base_asset LIMIT 1) AS last_price
+                 ORDER BY bucket DESC, base_asset LIMIT 1) AS last_price,
+               (EXISTS (SELECT 1 FROM trades t
+                         WHERE t.base_asset = $2 AND t.quote_asset = $3
+                           AND t.ts > NOW() - INTERVAL '24 hours' AND t.usd_volume IS NULL)
+             OR EXISTS (SELECT 1 FROM trades t
+                         WHERE t.base_asset = $3 AND t.quote_asset = $2
+                           AND t.ts > NOW() - INTERVAL '24 hours' AND t.usd_volume IS NULL)) AS vol_lower_bound
           FROM last_trade lt
     `
 
@@ -850,8 +855,10 @@ func (s *Store) PairMarket(ctx context.Context, base, quote canonical.Asset) (Ma
 		count24h  *int64
 		vol24hUSD sql.NullString
 		lastPx    sql.NullString
+		// lowerBound: a trade in the window has no trade-time usd_volume, so the sum leaves it out.
+		lowerBound bool
 	)
-	if err := s.db.QueryRowContext(ctx, pairMarketQuery, since, base.String(), quote.String()).Scan(&lastAt, &count24h, &vol24hUSD, &lastPx); err != nil {
+	if err := s.db.QueryRowContext(ctx, pairMarketQuery, since, base.String(), quote.String()).Scan(&lastAt, &count24h, &vol24hUSD, &lastPx, &lowerBound); err != nil {
 		return Market{}, false, fmt.Errorf("timescale: PairMarket: %w", err)
 	}
 	if lastAt == nil {
@@ -872,6 +879,8 @@ func (s *Store) PairMarket(ctx context.Context, base, quote canonical.Asset) (Ma
 		LastTradeAt:   lastAtUTC,
 		BucketCloseAt: bucketClose,
 		TradeCount24h: n,
+
+		VolumeLowerBound: lowerBound,
 	}
 	if vol24hUSD.Valid && vol24hUSD.String != "" && vol24hUSD.String != "0" {
 		v := vol24hUSD.String

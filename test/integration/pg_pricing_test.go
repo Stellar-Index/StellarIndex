@@ -2106,6 +2106,133 @@ func TestOHLCDustFloor_ServedSeriesReproducesTheWick(t *testing.T) {
 	}
 }
 
+// TestOHLCDustFloor_CrumbInTheOtherStoredDirection: real fills are stored one way round and a lone sub-cent
+// crumb the other. The crumb's row carries the unfloored fallback, so folding both directions served the
+// wick again; a direction under the floor must not set a bar's prices when the other one cleared it.
+func TestOHLCDustFloor_CrumbInTheOtherStoredDirection(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	t0 := time.Now().UTC().Add(-3 * time.Hour).Truncate(time.Hour)
+	// Real fills, stored XLM/USDC: 0.1822 .. 0.1845.
+	seed(t, db, ctx, ohlcDustPair{base: "native", quote: usdcIssuer}, []seedTrade{
+		{off: 10 * time.Second, base: "54885000000", quote: "10000000000", usd: "1000"},
+		{off: 20 * time.Second, base: "54200000000", quote: "10000000000", usd: "1000"},
+		{off: 30 * time.Second, base: "54500000000", quote: "10000000000", usd: "1000"},
+	}, t0)
+	// One crumb, stored USDC/XLM at 7.5 (0.1333 inverted), first and last in the hour's other row.
+	seed(t, db, ctx, ohlcDustPair{base: usdcIssuer, quote: "native"}, []seedTrade{
+		{off: 1 * time.Second, base: "2", quote: "15", usd: "0.00000027"},
+	}, t0)
+	refreshPriceCAGGs(t, db, ctx)
+
+	usdc, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	xlmUSDC, err := canonical.NewPair(canonical.NativeAsset(), usdc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usdcXLM, err := canonical.NewPair(usdc, canonical.NativeAsset())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	check := func(name string, bars []timescale.OHLCBar, err error, wantLow, wantHigh, wantOpen float64) {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if len(bars) != 1 {
+			t.Fatalf("%s returned %d bars, want 1", name, len(bars))
+		}
+		b := bars[0]
+		if got := mustFloat(t, b.Low); !closeTo(got, wantLow, 1e-9) {
+			t.Errorf("%s low = %s, want ~%.8f; the crumb's direction set it", name, b.Low, wantLow)
+		}
+		if got := mustFloat(t, b.High); !closeTo(got, wantHigh, 1e-9) {
+			t.Errorf("%s high = %s, want ~%.8f; the crumb's direction set it", name, b.High, wantHigh)
+		}
+		if got := mustFloat(t, b.Open); !closeTo(got, wantOpen, 1e-9) {
+			t.Errorf("%s open = %s, want ~%.8f; the crumb's direction set it", name, b.Open, wantOpen)
+		}
+		if b.TradeCount != 4 {
+			t.Errorf("%s trade_count = %d, want 4 (the crumb still counts as a trade)", name, b.TradeCount)
+		}
+	}
+	from, to := t0.Add(-time.Hour), t0.Add(time.Hour)
+	const lo, hi, open = 1 / 5.4885, 1 / 5.42, 1 / 5.4885
+
+	bars, err := store.OHLCSeries(ctx, xlmUSDC, timescale.HistoryGranularity("1h"), from, to, 0)
+	check("OHLCSeries XLM/USDC", bars, err, lo, hi, open)
+	// Requested the other way round the crumb's row is the requested direction; it must still not win.
+	bars, err = store.OHLCSeries(ctx, usdcXLM, timescale.HistoryGranularity("1h"), from, to, 0)
+	check("OHLCSeries USDC/XLM", bars, err, 5.42, 5.4885, 5.4885)
+	bars, err = store.OHLCSeriesReBucketed(ctx, xlmUSDC, timescale.HistoryGranularity("1m"), "5 minutes", from, to, 0)
+	check("OHLCSeriesReBucketed XLM/USDC", bars, err, lo, hi, open)
+}
+
+// TestPairMarket_VolumeLowerBound: a trade with no trade-time usd_volume is left out of the 24h sum, so the
+// single-pair read behind /v1/markets?base=&quote= and /v1/pairs must say the figure is a floor.
+func TestPairMarket_VolumeLowerBound(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	usdc, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t0 := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Minute)
+	seed(t, db, ctx, ohlcDustPair{base: "native", quote: usdcIssuer}, []seedTrade{
+		{off: 10 * time.Second, base: "54885000000", quote: "10000000000", usd: "1000"},
+	}, t0)
+	m, ok, err := store.PairMarket(ctx, canonical.NativeAsset(), usdc)
+	if err != nil || !ok {
+		t.Fatalf("PairMarket: ok=%v err=%v", ok, err)
+	}
+	if m.VolumeLowerBound {
+		t.Error("every trade priced: volume_lower_bound = true, want false")
+	}
+	// An unpriced trade stored the other way round still belongs to this market.
+	seed(t, db, ctx, ohlcDustPair{base: usdcIssuer, quote: "native"}, []seedTrade{
+		{off: 20 * time.Second, base: "10000000000", quote: "54885000000", usd: ""},
+	}, t0)
+	m, ok, err = store.PairMarket(ctx, canonical.NativeAsset(), usdc)
+	if err != nil || !ok {
+		t.Fatalf("PairMarket: ok=%v err=%v", ok, err)
+	}
+	if !m.VolumeLowerBound {
+		t.Error("one unpriced trade in the window: volume_lower_bound = false, want true")
+	}
+}
+
 // ─── helpers ──────────────────────────────────────────────────────────
 
 // seedTrade is one row to write into `trades`: `off` from the bucket start,

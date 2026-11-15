@@ -1373,10 +1373,11 @@ func (s *Store) OHLCSeries(
 		        CASE WHEN base_asset = $1 THEN volume       ELSE volume_quote END AS base_vol,
 		        CASE WHEN base_asset = $1 THEN volume_quote ELSE volume       END AS quote_vol,
 		        trade_count AS tc,
-		        sources     AS srcs
+		        sources     AS srcs,
+		        `+ohlcDirectionKeepSQL+`
 		      FROM (
 		        (SELECT bucket, base_asset, first_price, last_price, high_price, low_price,
-		                volume, volume_quote, trade_count, sources
+		                volume, volume_quote, trade_count, sources, volume_usd
 		           FROM %[1]s
 		          WHERE base_asset = $1 AND quote_asset = $2 AND first_price IS NOT NULL
 		            AND bucket >= $3
@@ -1384,7 +1385,7 @@ func (s *Store) OHLCSeries(
 		            AND bucket <= now() - INTERVAL '%[2]s')
 		        UNION ALL
 		        (SELECT bucket, base_asset, first_price, last_price, high_price, low_price,
-		                volume, volume_quote, trade_count, sources
+		                volume, volume_quote, trade_count, sources, volume_usd
 		           FROM %[1]s
 		          WHERE base_asset = $2 AND quote_asset = $1 AND first_price IS NOT NULL
 		            AND bucket >= $3
@@ -1394,10 +1395,10 @@ func (s *Store) OHLCSeries(
 		)
 		SELECT
 		    bucket,
-		    COALESCE((array_agg(o) FILTER (WHERE req))[1], (array_agg(o))[1])::text AS open,
-		    max(hi)::text                                                           AS high,
-		    min(lo)::text                                                           AS low,
-		    COALESCE((array_agg(c) FILTER (WHERE req))[1], (array_agg(c))[1])::text AS close,
+		    COALESCE((array_agg(o) FILTER (WHERE req AND keep))[1], (array_agg(o) FILTER (WHERE keep))[1])::text AS open,
+		    (max(hi) FILTER (WHERE keep))::text                                     AS high,
+		    (min(lo) FILTER (WHERE keep))::text                                     AS low,
+		    COALESCE((array_agg(c) FILTER (WHERE req AND keep))[1], (array_agg(c) FILTER (WHERE keep))[1])::text AS close,
 		    sum(base_vol)::text                                                     AS base_volume,
 		    sum(quote_vol)::text                                                    AS quote_volume,
 		    sum(tc)::bigint                                                         AS trade_count,
@@ -1450,6 +1451,12 @@ func (s *Store) OHLCSeries(
 	return out, nil
 }
 
+// ohlcDirectionKeepSQL marks which stored direction of a pair may set a bar's prices. A CAGG row whose trades are
+// all under the $0.01 notional floor carries the unfloored fallback as its open/high/low/close, so a lone crumb
+// stored the other way round would set the wick the floor exists to remove. A direction under the floor is dropped
+// whenever the other direction of the same bucket cleared it; volumes and counts still sum both.
+const ohlcDirectionKeepSQL = `(volume_usd >= 0.01 OR NOT bool_or(volume_usd >= 0.01) OVER (PARTITION BY bucket)) AS keep`
+
 // ohlcReBucketedQuery builds [Store.OHLCSeriesReBucketed]'s statement; `table` comes from the
 // validated granularity enum and `outInterval` from the allow-list, so neither is user input.
 func ohlcReBucketedQuery(table, outInterval string) string {
@@ -1458,10 +1465,10 @@ func ohlcReBucketedQuery(table, outInterval string) string {
 	return fmt.Sprintf(`
 		WITH norm AS (
 		    SELECT bucket,
-		           COALESCE((array_agg(o) FILTER (WHERE req))[1], (array_agg(o))[1]) AS open,
-		           max(hi) AS high,
-		           min(lo) AS low,
-		           COALESCE((array_agg(c) FILTER (WHERE req))[1], (array_agg(c))[1]) AS close,
+		           COALESCE((array_agg(o) FILTER (WHERE req AND keep))[1], (array_agg(o) FILTER (WHERE keep))[1]) AS open,
+		           max(hi) FILTER (WHERE keep) AS high,
+		           min(lo) FILTER (WHERE keep) AS low,
+		           COALESCE((array_agg(c) FILTER (WHERE req AND keep))[1], (array_agg(c) FILTER (WHERE keep))[1]) AS close,
 		           sum(base_vol)  AS base_vol,
 		           sum(quote_vol) AS quote_vol,
 		           sum(tc)        AS tc,
@@ -1476,17 +1483,18 @@ func ohlcReBucketedQuery(table, outInterval string) string {
 		               CASE WHEN base_asset = $1 THEN volume       ELSE volume_quote END AS base_vol,
 		               CASE WHEN base_asset = $1 THEN volume_quote ELSE volume       END AS quote_vol,
 		               trade_count AS tc,
-		               sources     AS srcs
+		               sources     AS srcs,
+		               `+ohlcDirectionKeepSQL+`
 		          FROM (
 		            (SELECT bucket, base_asset, first_price, last_price, high_price, low_price,
-		                    volume, volume_quote, trade_count, sources
+		                    volume, volume_quote, trade_count, sources, volume_usd
 		               FROM %[1]s
 		              WHERE base_asset = $1 AND quote_asset = $2 AND first_price IS NOT NULL
 		                AND bucket >= $3
 		                AND bucket <  $4)
 		            UNION ALL
 		            (SELECT bucket, base_asset, first_price, last_price, high_price, low_price,
-		                    volume, volume_quote, trade_count, sources
+		                    volume, volume_quote, trade_count, sources, volume_usd
 		               FROM %[1]s
 		              WHERE base_asset = $2 AND quote_asset = $1 AND first_price IS NOT NULL
 		                AND bucket >= $3
