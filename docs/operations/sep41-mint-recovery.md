@@ -65,7 +65,7 @@ The dominant-burn guard fires exactly when a contract's rollup shows
 `burn_total > mint_total`:
 
 ```sh
-psql "$STELLARINDEX_POSTGRES_DSN" -At -F, -c "
+PGDSN="$STELLARINDEX_POSTGRES_DSN" psql-dsn -At -F, -c "
   SELECT contract_id
     FROM sep41_supply_rollup
    WHERE burn_total > mint_total
@@ -111,7 +111,7 @@ run-heavy-job.sh sep41-mint-recover \
 Loop the windows (dry-run first: omit `-write` to see buffered counts):
 
 ```sh
-TIP=$(psql "$STELLARINDEX_POSTGRES_DSN" -At -c "SELECT max(ledger) FROM sep41_supply_events;")
+TIP=$(PGDSN="$STELLARINDEX_POSTGRES_DSN" psql-dsn -At -c "SELECT max(ledger) FROM sep41_supply_events;")
 for FROM in $(seq 50457424 2000000 "$TIP"); do
   TO=$(( FROM + 1999999 )); [ "$TO" -gt "$TIP" ] && TO=$TIP
   run-heavy-job.sh sep41-mint-recover \
@@ -186,7 +186,7 @@ step 2.
 The affected contracts read `mint_total > 0` and `mint_total ≥ burn_total`:
 
 ```sh
-psql "$STELLARINDEX_POSTGRES_DSN" -c "
+PGDSN="$STELLARINDEX_POSTGRES_DSN" psql-dsn -c "
   SELECT contract_id, mint_total, burn_total, clawback_total, last_ledger
     FROM sep41_supply_rollup
    WHERE contract_id IN ('CBH4M45T...OCKF','CDLZFC3S...YSC','CCW67TSZ...MI75')
@@ -196,7 +196,7 @@ psql "$STELLARINDEX_POSTGRES_DSN" -c "
 The rows were written:
 
 ```sh
-psql "$STELLARINDEX_POSTGRES_DSN" -At -c "
+PGDSN="$STELLARINDEX_POSTGRES_DSN" psql-dsn -At -c "
   SELECT contract_id, count(*)
     FROM sep41_supply_events
    WHERE event_kind = 'mint'

@@ -26,7 +26,7 @@ range. Run it after the raw window widens; the policies cover everything forward
 
 `NULL, NULL` = every chunk older than the CAGG's `end_offset`. One call per grain,
 not one transaction; each can take minutes to hours. As the `stellarindex` role
-(`psql "$STELLARINDEX_POSTGRES_DSN"`):
+(`PGDSN="$STELLARINDEX_POSTGRES_DSN" psql-dsn`):
 
 ```sql
 -- trades (migration 0002)

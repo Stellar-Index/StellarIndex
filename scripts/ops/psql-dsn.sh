@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# psql-dsn: run psql with the connection taken from $PGDSN, never from an argument.
+# psql-dsn: run psql with its connection read from the PGDSN variable, never from an argument.
 #
 #   PGDSN="$STELLARINDEX_POSTGRES_DSN" psql-dsn -tAc "SELECT 1"
 #   PSQL_BIN=/usr/lib/postgresql/15/bin/psql names a psql other than the one on PATH.
@@ -21,7 +21,7 @@ command -v python3 >/dev/null 2>&1 || { echo "psql-dsn: python3 not found (neede
 # The DSN reaches python in its environment; only the program text is on python's command line.
 read -r -d '' PARSER <<'PY' || true
 import os, shlex, sys
-from urllib.parse import parse_qsl, unquote
+from urllib.parse import unquote
 
 ENV = {
     "host": "PGHOST", "hostaddr": "PGHOSTADDR", "port": "PGPORT", "user": "PGUSER", "password": "PGPASSWORD",
@@ -29,6 +29,10 @@ ENV = {
     "sslkey": "PGSSLKEY", "connect_timeout": "PGCONNECT_TIMEOUT", "application_name": "PGAPPNAME",
     "options": "PGOPTIONS", "target_session_attrs": "PGTARGETSESSIONATTRS", "channel_binding": "PGCHANNELBINDING",
     "passfile": "PGPASSFILE", "service": "PGSERVICE", "gssencmode": "PGGSSENCMODE",
+    "client_encoding": "PGCLIENTENCODING", "sslcrl": "PGSSLCRL", "sslcrldir": "PGSSLCRLDIR", "sslsni": "PGSSLSNI",
+    "requirepeer": "PGREQUIREPEER", "require_auth": "PGREQUIREAUTH", "load_balance_hosts": "PGLOADBALANCEHOSTS",
+    "ssl_min_protocol_version": "PGSSLMINPROTOCOLVERSION", "ssl_max_protocol_version": "PGSSLMAXPROTOCOLVERSION",
+    "krbsrvname": "PGKRBSRVNAME", "gsslib": "PGGSSLIB",
 }
 
 
@@ -63,8 +67,10 @@ def from_uri(rest):
         out["port"] = ",".join(ports)
     if path:
         out["dbname"] = unquote(path)
-    for key, value in parse_qsl(query, keep_blank_values=True):
-        out[key] = value
+    # Not parse_qsl: it reads "+" as a space, and libpq does not.
+    for pair in query.split("&") if query else []:
+        key, _, value = pair.partition("=")
+        out[unquote(key)] = unquote(value)
     return out
 
 

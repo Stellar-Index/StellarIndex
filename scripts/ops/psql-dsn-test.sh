@@ -55,6 +55,14 @@ else
 $OUT"
 fi
 
+run 'postgres://owner@db/stellarindex?application_name=a+b&client_encoding=UTF8' -c 'SELECT 5'
+if [[ "$RC" -eq 0 ]] && has "PGAPPNAME=a+b" && has "PGCLIENTENCODING=UTF8"; then
+  ok "a plus sign in a URI parameter stays a plus, as in libpq"
+else
+  bad "plus in a parameter: rc=$RC
+$OUT"
+fi
+
 run 'postgres://owner:hunter2@db/stellarindex?pool_max_conns=4' -c 'SELECT 4'
 if [[ "$RC" -eq 2 ]] && grep -q "parameter 'pool_max_conns' has no PG\* environment variable" <<<"$OUT" \
      && ! grep -q 'ARGV:' <<<"$OUT" && ! grep -q 'hunter2' <<<"$OUT"; then

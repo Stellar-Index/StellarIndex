@@ -50,7 +50,7 @@ if [ -n "$hits" ]; then
   echo "$hits" >&2
   exit 1
 fi
-dsn_hits="$(grep -nE '(psql|\$\{?PSQL\}?"?) +"\$\{?[A-Za-z_]*DSN[A-Za-z_]*\}?"' ${shfiles[@]+"${shfiles[@]}"} /dev/null || true)"
+dsn_hits="$(grep -nE '(psql|PSQL\}?|pg_dump)"?[[:space:]]+([^|;]*[[:space:]"=])?"?\$\{?[A-Za-z_]*(DSN|DATABASE_URL)' ${shfiles[@]+"${shfiles[@]}"} /dev/null || true)"
 if [ -n "$dsn_hits" ]; then
   echo "lint-predictable-temp: FAIL — a DSN passed to psql as an argument is readable by every local user (use PGDSN=\"\$DSN\" psql-dsn …):" >&2
   echo "$dsn_hits" >&2
