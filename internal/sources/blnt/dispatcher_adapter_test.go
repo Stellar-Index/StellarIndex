@@ -53,10 +53,10 @@ func TestDecoderMatchesOnlyRoleSpecificCanonicalEvents(t *testing.T) {
 	}
 }
 
-func TestRoleEventCatalogueClassifiesEveryDeclaredKind(t *testing.T) {
+func TestABIClassifiesEveryDeclaredKind(t *testing.T) {
 	t.Parallel()
-	for role, kinds := range roleEvents {
-		for _, kind := range kinds {
+	for role, kinds := range abi {
+		for kind := range kinds {
 			ev := testEvent(MainnetFixedPool, kind)
 			if got := classify(role, &ev); got != kind {
 				t.Errorf("classify(%s, %s) = %q", role, kind, got)
@@ -65,36 +65,124 @@ func TestRoleEventCatalogueClassifiesEveryDeclaredKind(t *testing.T) {
 	}
 }
 
-func TestDecoderDecodePreservesWireAndRole(t *testing.T) {
+// The kinds below have no chain event yet, so their specs rest on the contract source alone; these
+// pin the three body shapes (vec with attribute amounts, unit, optional trailing topic) by hand.
+func TestDecodeSourceOnlyShapes(t *testing.T) {
 	t.Parallel()
 	d := NewDecoder()
-	ev := testEvent(MainnetBackstop, "claim")
-	ev.Topic = append(ev.Topic, scval.MustEncodeSymbol("FirstLoss"))
-	out, err := d.Decode(ev)
-	if err != nil {
-		t.Fatalf("Decode: %v", err)
+	asset, assetKey := encodedContractAddress(t, 0x11)
+	from, fromKey := encodedContractAddress(t, 0x22)
+	// 2^100: an amount an int64 cannot hold (invariant 1).
+	big := sdkxdr.Int128Parts{Hi: 1 << 36, Lo: 0}
+
+	claw := testEvent(MainnetFixedPool, "clawback")
+	claw.Topic = append(claw.Topic, asset, from)
+	claw.Value = encodeVec(t, i128(big), i128(sdkxdr.Int128Parts{Lo: 7}), i128(sdkxdr.Int128Parts{Lo: 9}))
+	got := mustDecode(t, d, claw)
+	if got.Pool != MainnetFixedPool || got.Asset != assetKey || got.UserAddress != fromKey ||
+		got.Amount != "1267650600228229401496703205376" ||
+		got.Attributes["supply_burned"] != "7" || got.Attributes["collateral_burned"] != "9" {
+		t.Errorf("clawback decoded to %+v", got)
 	}
-	if len(out) != 1 {
-		t.Fatalf("Decode outputs = %d, want 1", len(out))
+
+	del := testEvent(MainnetFixedPool, "delete_auction")
+	del.Topic = append(del.Topic, encode(t, u32(3)), from)
+	del.Value = encode(t, sdkxdr.ScVal{Type: sdkxdr.ScValTypeScvVoid})
+	got = mustDecode(t, d, del)
+	if got.UserAddress != fromKey || got.Attributes["auction_type"] != uint32(3) {
+		t.Errorf("delete_auction decoded to %+v", got)
 	}
-	got := out[0].(Event)
-	if got.Role != RoleBackstop || got.EventType != "claim" || got.EventKind() != BackstopEventKind {
-		t.Fatalf("decoded identity = role %q type %q kind %q", got.Role, got.EventType, got.EventKind())
-	}
-	if len(got.TopicsXDR) != len(ev.Topic) || got.TopicsXDR[1] != ev.Topic[1] || got.ValueXDR != ev.Value {
-		t.Fatal("Decode did not preserve the complete event wire")
+
+	status := testEvent(MainnetFixedPool, "set_status")
+	status.Value = encode(t, u32(1))
+	got = mustDecode(t, d, status)
+	if _, hasAdmin := got.Attributes["admin"]; hasAdmin || got.Attributes["status"] != uint32(1) {
+		t.Errorf("admin-less set_status decoded to %+v", got)
 	}
 }
 
-func TestDecoderRejectsMalformedXDR(t *testing.T) {
+// A shape the ABI does not declare must fail, never land a partial row.
+func TestDecodeRejectsUndeclaredShapes(t *testing.T) {
 	t.Parallel()
 	d := NewDecoder()
-	ev := testEvent(MainnetFixedPool, "supply")
-	ev.Value = "not-base64"
-	_, err := d.Decode(ev)
-	if !errors.Is(err, ErrMalformedEvent) {
-		t.Fatalf("Decode error = %v, want ErrMalformedEvent", err)
+	asset, _ := encodedContractAddress(t, 0x11)
+	from, _ := encodedContractAddress(t, 0x22)
+	one := i128(sdkxdr.Int128Parts{Lo: 1})
+
+	supply := func() events.Event {
+		ev := testEvent(MainnetFixedPool, "supply")
+		ev.Topic = append(ev.Topic, asset, from)
+		ev.Value = encodeVec(t, one, one)
+		return ev
 	}
+	mustDecode(t, d, supply())
+
+	cases := map[string]func(*events.Event){
+		"missing topic":   func(ev *events.Event) { ev.Topic = ev.Topic[:2] },
+		"extra topic":     func(ev *events.Event) { ev.Topic = append(ev.Topic, from) },
+		"short body":      func(ev *events.Event) { ev.Value = encodeVec(t, one) },
+		"long body":       func(ev *events.Event) { ev.Value = encodeVec(t, one, one, one) },
+		"wrong type":      func(ev *events.Event) { ev.Value = encodeVec(t, one, u32(1)) },
+		"topic not addr":  func(ev *events.Event) { ev.Topic[1] = encode(t, u32(1)) },
+		"body not base64": func(ev *events.Event) { ev.Value = "not-base64" },
+	}
+	for name, mutate := range cases {
+		ev := supply()
+		mutate(&ev)
+		if _, err := d.Decode(ev); !errors.Is(err, ErrMalformedEvent) {
+			t.Errorf("%s: Decode error = %v, want ErrMalformedEvent", name, err)
+		}
+	}
+
+	tier := testEvent(MainnetBackstop, "donate")
+	pool, _ := encodedContractAddress(t, 0x33)
+	tier.Topic = append(tier.Topic, encodeVec(t, sym("FourthLoss")), pool, from)
+	tier.Value = encode(t, one)
+	if _, err := d.Decode(tier); !errors.Is(err, ErrMalformedEvent) {
+		t.Errorf("unknown tier: Decode error = %v, want ErrMalformedEvent", err)
+	}
+}
+
+func mustDecode(t *testing.T, d *Decoder, ev events.Event) Event {
+	t.Helper()
+	out, err := d.Decode(ev)
+	if err != nil {
+		t.Fatalf("Decode(%s): %v", ev.Topic[0], err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("Decode emitted %d events, want 1", len(out))
+	}
+	return out[0].(Event)
+}
+
+func i128(p sdkxdr.Int128Parts) sdkxdr.ScVal {
+	return sdkxdr.ScVal{Type: sdkxdr.ScValTypeScvI128, I128: &p}
+}
+
+func u32(n uint32) sdkxdr.ScVal {
+	v := sdkxdr.Uint32(n)
+	return sdkxdr.ScVal{Type: sdkxdr.ScValTypeScvU32, U32: &v}
+}
+
+func sym(s string) sdkxdr.ScVal {
+	v := sdkxdr.ScSymbol(s)
+	return sdkxdr.ScVal{Type: sdkxdr.ScValTypeScvSymbol, Sym: &v}
+}
+
+func encodeVec(t *testing.T, vals ...sdkxdr.ScVal) string {
+	t.Helper()
+	vec := sdkxdr.ScVec(vals)
+	pv := &vec
+	return encode(t, sdkxdr.ScVal{Type: sdkxdr.ScValTypeScvVec, Vec: &pv})
+}
+
+func encode(t *testing.T, sv sdkxdr.ScVal) string {
+	t.Helper()
+	raw, err := sv.MarshalBinary()
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return base64.StdEncoding.EncodeToString(raw)
 }
 
 func TestFactoryDeployAdmitsChildPool(t *testing.T) {

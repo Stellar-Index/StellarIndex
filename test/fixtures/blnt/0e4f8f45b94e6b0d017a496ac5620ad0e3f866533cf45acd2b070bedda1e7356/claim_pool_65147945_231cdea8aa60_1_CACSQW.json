@@ -1,0 +1,16 @@
+{
+  "contract_id": "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7",
+  "role": "pool",
+  "wasm_hash": "0e4f8f45b94e6b0d017a496ac5620ad0e3f866533cf45acd2b070bedda1e7356",
+  "ledger": 65147945,
+  "tx_hash": "231cdea8aa6074fe0970f3f7b577e006a3261365bd17972d95b77b0cbeb14924",
+  "op_index": 0,
+  "event_index": 1,
+  "ledger_closed_at": "2026-10-26T14:38:28Z",
+  "topics": [
+    "AAAADwAAAAVjbGFpbQAAAA==",
+    "AAAAEgAAAAAAAAAAcahri2Op3Ln1t/0ozI13s58ylaM4BDjKSVFkY909clg="
+  ],
+  "value": "AAAAEAAAAAEAAAACAAAAEAAAAAEAAAADAAAAAwAAAAEAAAADAAAAAgAAAAMAAAAEAAAACgAAAAAAAAAAAAAAAC3G32A=",
+  "event_name": "claim"
+}

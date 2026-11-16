@@ -1,0 +1,18 @@
+{
+  "contract_id": "CAHCUKBPTW5DR5RNXOHCTJD5U76A6EEZXYZAQFRQEEQRXQ3CRUZ6Z3MO",
+  "role": "backstop",
+  "wasm_hash": "0469cfb445bedd87478274f265c8776b32cde1e8840fca4684ffa1dc4d5a750f",
+  "ledger": 65148565,
+  "tx_hash": "6d99f3207cf6a1d06ca592ef7d5016f4cbf038e17ce9e4dbe2b29cdb0dea4bb7",
+  "op_index": 0,
+  "event_index": 4,
+  "ledger_closed_at": "2026-10-26T15:30:08Z",
+  "topics": [
+    "AAAADwAAAAVjbGFpbQAAAA==",
+    "AAAAEAAAAAEAAAABAAAADwAAAAlGaXJzdExvc3MAAAA=",
+    "AAAAEgAAAAAAAAAAyA1ZjrYhuffA0/J+wxgkAgdG2gUonF+FKPphvJICBTI=",
+    "AAAAEgAAAAEFKFhMUbnZ0OKG13O4P8EIk/Lb/7J4PufSM7mTjUnLlg=="
+  ],
+  "value": "AAAAEAAAAAEAAAADAAAACgAAAAAAAAAAAAAAAD2a+7kAAAAKAAAAAAAAAAAAAAAABQekiQAAAAoAAAAAAAAAAAAAAAAFB6SJ",
+  "event_name": "claim"
+}

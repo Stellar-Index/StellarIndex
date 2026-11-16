@@ -4,9 +4,8 @@
 // event surface is not wire-compatible with every Blend V1/V2 table. In
 // particular, V3 adds tiered backstops, a fourth auction type, clawback and
 // reserve-loss events, and two distinct backfill contracts. This package keeps
-// BLNT V3 under its own source identity and persists the complete event XDR so
-// later, narrower state projections can be reproduced without borrowing V2
-// semantics.
+// BLNT V3 under its own source identity and decodes every event against its
+// own ABI (abi.go); it shares no decoder or table with Blend.
 package blnt
 
 import (
@@ -79,29 +78,11 @@ func MainnetGatedSet() []string {
 	return out
 }
 
-var roleEvents = map[Role][]string{
-	RolePool: {
-		"set_admin", "update_pool", "queue_set_reserve", "cancel_set_reserve", "set_reserve", "set_status",
-		"reserve_emission_update", "gulp_emissions", "claim", "bad_debt", "defaulted_debt",
-		"supply", "withdraw", "supply_collateral", "withdraw_collateral", "borrow", "repay", "flash_loan",
-		"clawback", "gulp", "reconcile_loss", "protocol_credit_loss",
-		"new_auction", "fill_auction", "delete_auction",
-	},
-	RoleFactory: {"deploy"},
-	RoleBackstop: {
-		"migration_activated", "backfill_funded", "deposit", "queue_withdrawal", "dequeue_withdrawal", "withdraw",
-		"distribute", "gulp_emissions", "rw_zone_add", "rw_zone_remove", "claim", "draw", "donate",
-	},
-	RoleEmitter:        {"distribute", "q_swap", "del_swap", "swap", "drop"},
-	RoleBackfill:       {"claim", "claim_grant", "swap_blnd", "burn_expired"},
-	RoleLockupBackfill: {"fund", "claim", "claim_fund", "expire"},
-}
-
 var encodedRoleEvents = func() map[Role]map[string]string {
-	out := make(map[Role]map[string]string, len(roleEvents))
-	for role, kinds := range roleEvents {
+	out := make(map[Role]map[string]string, len(abi))
+	for role, kinds := range abi {
 		byEncoded := make(map[string]string, len(kinds))
-		for _, kind := range kinds {
+		for kind := range kinds {
 			byEncoded[scval.MustEncodeSymbol(kind)] = kind
 		}
 		out[role] = byEncoded
@@ -109,9 +90,9 @@ var encodedRoleEvents = func() map[Role]map[string]string {
 	return out
 }()
 
-// Event is one lossless BLNT V3 contract event. EventType is the decoded
-// topic[0] symbol; TopicsXDR and ValueXDR retain the complete base64 SCVal wire
-// values. This is deliberately not a canonical.Trade and never enters VWAP.
+// Event is one decoded BLNT V3 contract event. The fields every reader filters or sums on are
+// promoted; the rest of the payload is in Attributes under the contract's own field names. Amounts
+// are decimal i128 strings ("" when the event carries none). Never a canonical.Trade, never in VWAP.
 type Event struct {
 	ContractID string
 	Ledger     uint32
@@ -121,8 +102,14 @@ type Event struct {
 	ObservedAt time.Time
 	Role       Role
 	EventType  string
-	TopicsXDR  []string
-	ValueXDR   string
+
+	Pool        string // the pool the event concerns: the emitter itself for RolePool
+	UserAddress string
+	Asset       string
+	Tier        string // backstop loss tier, as emitted: FirstLoss, SecondLoss, ThirdLoss
+	Amount      string
+	Amount2     string
+	Attributes  map[string]any
 }
 
 // EventKind implements consumer.Event with a distinct kind per contract ABI.

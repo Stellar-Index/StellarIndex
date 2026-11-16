@@ -12,8 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// persistBLNTEvent lands one identity-gated BLNT V3 event. It is a lossless event catalogue,
-// never a Blend table row or a spot-price observation.
+// persistBLNTEvent lands one decoded BLNT V3 event: never a Blend table row or a spot-price observation.
 func persistBLNTEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blnt.Event) error {
 	if err := store.InsertBLNTEvent(ctx, timescale.BLNTEvent{
 		ContractID:      e.ContractID,
@@ -24,8 +23,13 @@ func persistBLNTEvent(ctx context.Context, logger *slog.Logger, store *timescale
 		EventIndex:      e.EventIndex,
 		ContractRole:    string(e.Role),
 		EventKind:       e.EventType,
-		TopicsXDR:       e.TopicsXDR,
-		ValueXDR:        e.ValueXDR,
+		Pool:            e.Pool,
+		UserAddress:     e.UserAddress,
+		Asset:           e.Asset,
+		Tier:            e.Tier,
+		Amount:          e.Amount,
+		Amount2:         e.Amount2,
+		Attributes:      e.Attributes,
 	}); err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(blnt.SourceName, "blnt_events").Inc()
 		logger.Error("insert BLNT V3 event failed",

@@ -13,7 +13,7 @@ official `blend` protocol.
 - **Enumeration method:** deployment records published by BLNT Protocol, cross-checked
   against the contracts' mainnet creation transactions.
 - **Last verified:** 2026-11-15.
-- **Coverage status:** directory, contract roster, raw-lake activity, and a dedicated lossless
+- **Coverage status:** directory, contract roster, raw-lake activity, and a dedicated typed
   BLNT V3 event decoder/projector. Typed lending-position analytics remain deferred, so no Blend
   V1/V2 lending totals are borrowed from incompatible tables.
 
@@ -79,7 +79,7 @@ operational dependencies, not immutable BLNT V3 core contracts and not part of t
 
 `GET /v1/protocols/blnt` returns this verified roster and scopes its activity series and event
 breakdown to these contracts plus the factory. Individual raw event history remains available at
-`GET /v1/contracts/{contract_id}`. The dedicated `blnt` source writes the complete event XDR to
+`GET /v1/contracts/{contract_id}`. The dedicated `blnt` source decodes every event into typed columns in
 `blnt_events`, separately from Blend's `blend_*` tables. Typed lending-position totals remain
 deferred rather than presenting Blend-derived values as BLNT V3 data.
 

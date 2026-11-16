@@ -7,6 +7,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
+// Tier names exactly as the contract emits them; stored verbatim.
+var tiers = map[string]bool{"FirstLoss": true, "SecondLoss": true, "ThirdLoss": true}
+
 // classify resolves topic[0] only within the ABI selected by contract role.
 // Contract identity is established by Decoder.roleOf before this is called.
 func classify(role Role, ev *events.Event) string {
@@ -16,30 +19,21 @@ func classify(role Role, ev *events.Event) string {
 	return encodedRoleEvents[role][ev.Topic[0]]
 }
 
+// decodeEvent decodes one event strictly against its spec: a topic count, body arity or field type
+// the ABI does not declare is an error, never a partial row.
 func decodeEvent(role Role, kind string, ev *events.Event) (Event, error) {
-	if role == "" || kind == "" {
+	sp, ok := abi[role][kind]
+	if !ok {
 		return Event{}, ErrNotBLNTEvent
+	}
+	fail := func(what string, err error) (Event, error) {
+		return Event{}, fmt.Errorf("%w: %s/%s %s: %w", ErrMalformedEvent, role, kind, what, err)
 	}
 	observedAt, err := ev.EventClosedAt()
 	if err != nil {
-		return Event{}, fmt.Errorf("%w: %s/%s close time: %w", ErrMalformedEvent, role, kind, err)
+		return fail("close time", err)
 	}
-	// Parse every topic and the body once. The projection intentionally stores
-	// their exact base64 wire form, but corrupt XDR must fail loud rather than
-	// become an apparently valid semantic event row.
-	for i, topic := range ev.Topic {
-		if _, err := scval.Parse(topic); err != nil {
-			return Event{}, fmt.Errorf("%w: %s/%s topic[%d]: %w", ErrMalformedEvent, role, kind, i, err)
-		}
-	}
-	if ev.Value == "" {
-		return Event{}, fmt.Errorf("%w: %s/%s has empty value", ErrMalformedEvent, role, kind)
-	}
-	if _, err := scval.Parse(ev.Value); err != nil {
-		return Event{}, fmt.Errorf("%w: %s/%s body: %w", ErrMalformedEvent, role, kind, err)
-	}
-
-	return Event{
+	out := Event{
 		ContractID: ev.ContractID,
 		Ledger:     ev.Ledger,
 		TxHash:     ev.TxHash,
@@ -48,22 +42,112 @@ func decodeEvent(role Role, kind string, ev *events.Event) (Event, error) {
 		ObservedAt: observedAt,
 		Role:       role,
 		EventType:  kind,
-		TopicsXDR:  append([]string(nil), ev.Topic...),
-		ValueXDR:   ev.Value,
-	}, nil
-}
+		Attributes: map[string]any{},
+	}
+	if role == RolePool {
+		out.Pool = ev.ContractID
+	}
 
-func decodeDeployTarget(ev *events.Event) (string, error) {
-	if len(ev.Topic) != 1 {
-		return "", fmt.Errorf("%w: factory/deploy expected 1 topic, got %d", ErrMalformedEvent, len(ev.Topic))
+	got := ev.Topic[1:]
+	if len(got) > len(sp.topics) || (len(got) < len(sp.topics) && !sp.topics[len(got)].optional) {
+		return fail("topics", fmt.Errorf("got %d after the symbol, ABI declares %d", len(got), len(sp.topics)))
+	}
+	for i, b64 := range got {
+		sv, err := scval.Parse(b64)
+		if err != nil {
+			return fail("topic "+sp.topics[i].name, err)
+		}
+		if err := out.set(sp.topics[i], sv); err != nil {
+			return fail("topic "+sp.topics[i].name, err)
+		}
+	}
+
+	if sp.body == bodyUnit {
+		return out, nil
 	}
 	body, err := scval.Parse(ev.Value)
 	if err != nil {
-		return "", fmt.Errorf("%w: factory/deploy body: %w", ErrMalformedEvent, err)
+		return fail("body", err)
 	}
-	target, err := scval.AsAddressStrkey(body)
+	values := []scval.ScVal{body}
+	if sp.body == bodyVec {
+		if values, err = scval.AsTupleN(body, len(sp.data)); err != nil {
+			return fail("body", err)
+		}
+	}
+	for i, f := range sp.data {
+		if err := out.set(f, values[i]); err != nil {
+			return fail("field "+f.name, err)
+		}
+	}
+	return out, nil
+}
+
+// set decodes sv as f's declared type into f's column.
+func (e *Event) set(f field, sv scval.ScVal) error {
+	var v any
+	var err error
+	switch f.typ {
+	case tAddr:
+		v, err = scval.AsAddressStrkey(sv)
+	case tOptAddr:
+		var s string
+		if s, err = scval.AsAddressOrVoid(sv); err == nil && s != "" {
+			v = s
+		}
+	case tI128:
+		a, aerr := scval.AsAmountFromI128(sv)
+		v, err = a.String(), aerr
+	case tU32:
+		v, err = scval.AsU32(sv)
+	case tU64:
+		n, nerr := scval.AsU64(sv)
+		v, err = fmt.Sprintf("%d", n), nerr
+	case tTier:
+		v, err = decodeTier(sv)
+	case tAny:
+		v, err = scval.ToJSON(sv)
+	}
 	if err != nil {
-		return "", fmt.Errorf("%w: factory/deploy target: %w", ErrMalformedEvent, err)
+		return err
 	}
-	return target, nil
+	if f.col == cAttr {
+		e.Attributes[f.name] = v
+		return nil
+	}
+	s, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("promoted field decoded to %T, want string", v)
+	}
+	switch f.col {
+	case cPool:
+		e.Pool = s
+	case cUser:
+		e.UserAddress = s
+	case cAsset:
+		e.Asset = s
+	case cTier:
+		e.Tier = s
+	case cAmount:
+		e.Amount = s
+	case cAmount2:
+		e.Amount2 = s
+	case cAttr:
+	}
+	return nil
+}
+
+func decodeTier(sv scval.ScVal) (string, error) {
+	parts, err := scval.AsTupleN(sv, 1)
+	if err != nil {
+		return "", err
+	}
+	name, err := scval.AsSymbol(parts[0])
+	if err != nil {
+		return "", err
+	}
+	if !tiers[name] {
+		return "", fmt.Errorf("unknown backstop tier %q", name)
+	}
+	return name, nil
 }

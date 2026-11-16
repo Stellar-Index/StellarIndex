@@ -47,39 +47,32 @@ The machine-readable roster is
 
 ## Decoder review
 
-The decoder stores a lossless envelope: exact topic and value XDR plus contract,
-ledger, transaction, operation, event index, close time, role and topic-0 event
-name. It does not interpret amounts or project these events into Blend V2
-tables. Consequently, the per-hash review is limited to identity gating and
-the event-name catalogue; body-shape changes remain preserved rather than
-silently reinterpreted.
+The decoder is typed and strict. `internal/sources/blnt/abi.go` declares, for
+every role and event, each topic and body field in wire order with its type and
+the `blnt_events` column it lands in. A topic count, body arity or field type
+the ABI does not declare fails the event rather than landing a partial row.
+Amounts are decoded as i128 into decimal strings and `NUMERIC` columns
+(ADR-0003). Nothing is projected into Blend V1/V2 tables.
 
-The source at each deployed commit was checked against `roleEvents`:
-
-| role | accepted topic-0 symbols |
-| --- | --- |
-| pool | `set_admin`, `update_pool`, `queue_set_reserve`, `cancel_set_reserve`, `set_reserve`, `set_status`, `reserve_emission_update`, `gulp_emissions`, `claim`, `bad_debt`, `defaulted_debt`, `supply`, `withdraw`, `supply_collateral`, `withdraw_collateral`, `borrow`, `repay`, `flash_loan`, `clawback`, `gulp`, `reconcile_loss`, `protocol_credit_loss`, `new_auction`, `fill_auction`, `delete_auction` |
-| factory | `deploy` |
-| backstop | `migration_activated`, `backfill_funded`, `deposit`, `queue_withdrawal`, `dequeue_withdrawal`, `withdraw`, `distribute`, `gulp_emissions`, `rw_zone_add`, `rw_zone_remove`, `claim`, `draw`, `donate` |
-| emitter | `distribute`, `q_swap`, `del_swap`, `swap`, `drop` |
-| primary backfill | `claim`, `claim_grant`, `swap_blnd`, `burn_expired` |
-| lockup backfill | `fund`, `claim`, `claim_fund`, `expire` |
-
-Factory `deploy` is additionally shape-checked as a single address body before
-the announced child is admitted. All other accepted events parse every topic
-and body SCVal, then preserve the original bytes.
+The ABI was transcribed from each contract's `events.rs` at the audited commit
+and then checked against chain bytes: one real event of every kind the
+deployment had emitted by ledger 65,512,176 (33 of the 52 declared kinds) is a
+fixture, and `testdata/decoded.golden.json` pins what each decodes to. The 19
+kinds not yet emitted on chain are listed in `sourceOnly` in
+`real_fixture_test.go`; their specs rest on the source alone until a real event
+exists, at which point the test forces a fixture.
 
 ## Galexie replay fixtures
 
-`test/fixtures/blnt/<wasm_hash>/` contains raw successful-event XDR exported
-from the AWS public Galexie archive. The set covers all six hashes and roles,
-including a factory deployment, tiered backstop deposit, emitter distribution,
-primary-backfill claim and swap, lockup funding and claim-funding, and pool
-supply/flash-loan/repay events. `TestRealFixturesDecodeEveryAuditedRole`
-requires every fixture directory to be audited for `blnt`, verifies topic-0
-bytes and lossless identity, and fails if any role loses real-lake coverage.
+`test/fixtures/blnt/<wasm_hash>/` contains real successful events: ten
+exported from the AWS public Galexie archive and 23 read from the archival
+lake. The set covers all six hashes and roles and every event kind seen on
+chain. `TestRealFixturesDecodeEveryAuditedRole` requires every fixture
+directory to be audited for `blnt`, decodes each event, compares the typed
+result with the golden file, and fails if a role loses real coverage or an ABI
+kind has neither a fixture nor a `sourceOnly` entry.
 
-Observed fixture range: ledgers 65,134,362 through 65,387,356. Fixtures are
+Observed fixture range: ledgers 65,134,362 through 65,509,066. Fixtures are
 regression evidence, not the lineage authority; the production replay gate
 queries contract instance history for the requested range.
 

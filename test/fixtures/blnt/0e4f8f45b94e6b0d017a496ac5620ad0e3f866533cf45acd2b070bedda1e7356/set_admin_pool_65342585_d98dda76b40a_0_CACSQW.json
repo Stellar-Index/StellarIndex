@@ -1,0 +1,16 @@
+{
+  "contract_id": "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7",
+  "role": "pool",
+  "wasm_hash": "0e4f8f45b94e6b0d017a496ac5620ad0e3f866533cf45acd2b070bedda1e7356",
+  "ledger": 65342585,
+  "tx_hash": "d98dda76b40abd6ff9f221e00aaa9cf9c583d035a7d44622153d4cb46795fee6",
+  "op_index": 0,
+  "event_index": 0,
+  "ledger_closed_at": "2026-11-06T21:02:47Z",
+  "topics": [
+    "AAAADwAAAAlzZXRfYWRtaW4AAAA=",
+    "AAAAEgAAAAAAAAAAyA1ZjrYhuffA0/J+wxgkAgdG2gUonF+FKPphvJICBTI="
+  ],
+  "value": "AAAAEgAAAAEJXgFHqylduUqqQsHEvEyhLgu5CitrvBKAtwrlNUDI9g==",
+  "event_name": "set_admin"
+}

@@ -1,0 +1,18 @@
+{
+  "contract_id": "CAHCUKBPTW5DR5RNXOHCTJD5U76A6EEZXYZAQFRQEEQRXQ3CRUZ6Z3MO",
+  "role": "backstop",
+  "wasm_hash": "0469cfb445bedd87478274f265c8776b32cde1e8840fca4684ffa1dc4d5a750f",
+  "ledger": 65250308,
+  "tx_hash": "9213d6b67058ee23d278b18e6b89cbba0c10f6b60e8aa450e6c85f9eef0661d4",
+  "op_index": 0,
+  "event_index": 4,
+  "ledger_closed_at": "2026-11-01T12:48:44Z",
+  "topics": [
+    "AAAADwAAAAZkb25hdGUAAA==",
+    "AAAAEAAAAAEAAAABAAAADwAAAAlGaXJzdExvc3MAAAA=",
+    "AAAAEgAAAAEFKFhMUbnZ0OKG13O4P8EIk/Lb/7J4PufSM7mTjUnLlg==",
+    "AAAAEgAAAAAAAAAAKm24eeSBVWrJXsu4z17sV/f6DXMB5q93GCJFSvt1rMs="
+  ],
+  "value": "AAAACgAAAAAAAAAAAAAAAIhdp+Y=",
+  "event_name": "donate"
+}

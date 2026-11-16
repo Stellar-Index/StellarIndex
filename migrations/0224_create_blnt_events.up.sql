@@ -1,12 +1,15 @@
--- 0224 up — lossless BLNT V3 event catalogue.
+-- 0224 up — decoded BLNT V3 event history.
 --
 -- One row per event accepted by the contract-identity-gated BLNT V3 decoder.
 -- BLNT V3 is Blend-derived but has its own pool, tiered-backstop, emitter and
 -- backfill ABIs; these rows intentionally do not enter the blend_* tables.
--- The topic-zero symbol is promoted to event_kind while every topic and the
--- body remain as exact base64 SCVal XDR. This keeps the initial projection
--- lossless and lets later typed lending-state projections be derived without
--- inventing V2-compatible semantics.
+-- Every event is decoded against its ABI at ingest: the fields readers filter
+-- or sum on are columns, the rest of the payload is `attributes` under the
+-- contract's own field names. The raw XDR is not copied here; it stays in the
+-- ClickHouse lake, the replay source (ADR-0034).
+--
+-- Amounts are i128 on chain: NUMERIC columns, decimal strings inside
+-- `attributes` (ADR-0003). Signed, so no non-negative CHECK.
 --
 -- No retention policy: granular protocol history is kept indefinitely.
 -- Historical replay is fail-closed through the per-WASM audit documented in
@@ -25,9 +28,14 @@ CREATE TABLE blnt_events (
     contract_role text NOT NULL CHECK (contract_role IN (
         'pool', 'factory', 'backstop', 'emitter', 'backfill', 'lockup_backfill'
     )),
-    event_kind text   NOT NULL CHECK (event_kind <> ''),
-    topics_xdr text[] NOT NULL CHECK (cardinality(topics_xdr) >= 1),
-    value_xdr  text   NOT NULL CHECK (value_xdr <> ''),
+    event_kind   text NOT NULL CHECK (event_kind <> ''),
+    pool         text,
+    user_address text,
+    asset        text,
+    tier         text CHECK (tier IN ('FirstLoss', 'SecondLoss', 'ThirdLoss')),
+    amount       numeric,
+    amount2      numeric,
+    attributes   jsonb NOT NULL DEFAULT '{}'::jsonb,
 
     derive_generation bigint      NOT NULL DEFAULT 0,
     ingested_at       timestamptz NOT NULL DEFAULT now(),
@@ -37,10 +45,12 @@ CREATE TABLE blnt_events (
 );
 
 COMMENT ON TABLE blnt_events IS
-    'Lossless, identity-gated BLNT V3 event catalogue. contract_role selects '
-    'the immutable ABI; event_kind is topic[0]; topics_xdr/value_xdr preserve '
-    'the complete base64 SCVal wire values. Not a Blend V1/V2 table and not a '
-    'spot-price source.';
+    'Decoded, identity-gated BLNT V3 event history. contract_role selects '
+    'the ABI; event_kind is topic[0]. pool is the pool the event concerns '
+    '(the emitting contract for role pool). amount/amount2 are the event''s '
+    'primary and secondary i128 (internal/sources/blnt/abi.go names them per '
+    'kind); attributes holds every other decoded field. Not a Blend V1/V2 '
+    'table and not a spot-price source.';
 
 SELECT create_hypertable(
     'blnt_events',

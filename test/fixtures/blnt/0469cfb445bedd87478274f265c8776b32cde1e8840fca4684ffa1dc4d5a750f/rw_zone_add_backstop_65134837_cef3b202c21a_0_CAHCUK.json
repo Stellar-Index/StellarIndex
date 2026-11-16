@@ -1,0 +1,15 @@
+{
+  "contract_id": "CAHCUKBPTW5DR5RNXOHCTJD5U76A6EEZXYZAQFRQEEQRXQ3CRUZ6Z3MO",
+  "role": "backstop",
+  "wasm_hash": "0469cfb445bedd87478274f265c8776b32cde1e8840fca4684ffa1dc4d5a750f",
+  "ledger": 65134837,
+  "tx_hash": "cef3b202c21a288a6d7b0338e857dfcfcc647112ffae8c3e00357476d0d36132",
+  "op_index": 0,
+  "event_index": 0,
+  "ledger_closed_at": "2026-10-25T20:26:08Z",
+  "topics": [
+    "AAAADwAAAAtyd196b25lX2FkZAA="
+  ],
+  "value": "AAAAEAAAAAEAAAACAAAAEgAAAAEFKFhMUbnZ0OKG13O4P8EIk/Lb/7J4PufSM7mTjUnLlgAAAAE=",
+  "event_name": "rw_zone_add"
+}

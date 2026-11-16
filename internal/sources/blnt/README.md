@@ -13,13 +13,22 @@ contracts. Every accepted event becomes one `blnt_events` row carrying:
 
 - canonical ledger, transaction, operation and event identity;
 - the emitting contract's verified role;
-- decoded topic-zero event type; and
-- the complete topic and value SCVal XDR, losslessly preserved as base64.
+- decoded topic-zero event type;
+- the fields readers filter or sum on, as columns: `pool`, `user_address`,
+  `asset`, `tier`, `amount`, `amount2`; and
+- every other decoded field in `attributes`, under the contract's own names.
 
-The projection is an event catalogue, not a spot-price source and not yet a
-derived lending-position index. It never emits `canonical.Trade` and never
-enters VWAP. Keeping the complete XDR makes future typed position, tier and
-auction projections reproducible without incorrectly reusing Blend V2 schemas.
+`abi.go` is the whole ABI as data: one spec per role and event naming each
+topic and body field, its type and its column. The decoder is strict: a topic
+count, body arity or field type the spec does not declare is an error, never a
+partial row. Amounts are i128 decimal strings end to end (ADR-0003).
+
+The raw XDR is not copied into Postgres. It stays in the ClickHouse lake, which
+is the replay source (ADR-0034); `projector-replay` rebuilds this table from it.
+
+The table is an event history, not a spot-price source and not yet a derived
+lending-position index. It never emits `canonical.Trade` and never enters
+VWAP. It shares no decoder or table with Blend.
 
 ## Identity gate
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -56,9 +57,11 @@ func readRealFixture(t *testing.T, path string) realFixture {
 func TestRealFixturesDecodeEveryAuditedRole(t *testing.T) {
 	t.Parallel()
 	files, err := filepath.Glob(filepath.Join(fixtureRoot, "*", "*.json"))
-	if err != nil || len(files) < 10 {
-		t.Fatalf("fixtures = %d (err %v), want at least 10 Galexie records", len(files), err)
+	if err != nil || len(files) < 33 {
+		t.Fatalf("fixtures = %d (err %v), want at least 33 lake records", len(files), err)
 	}
+	decoded := make(map[string]decodedRow, len(files))
+	covered := map[Role]map[string]bool{}
 	wantHashes := map[string]Role{
 		"4fa7d99dee6fe99cad5d07a46ee39e437dc287e53e3ab1f3ccc0aacf7e6cd6c5": RoleEmitter,
 		"dcdc0b1860799629c7c88804955dd7373cb6febaf069e2ba863e98ebbaa95c27": RoleBackfill,
@@ -103,10 +106,17 @@ func TestRealFixturesDecodeEveryAuditedRole(t *testing.T) {
 			got := out[0].(Event)
 			if got.Role != f.Role || got.EventType != f.EventName || got.ContractID != f.ContractID ||
 				got.Ledger != f.Ledger || got.TxHash != f.TxHash || int(got.OpIndex) != f.OpIndex ||
-				int(got.EventIndex) != f.EventIndex || got.ValueXDR != f.Value ||
-				strings.Join(got.TopicsXDR, ",") != strings.Join(f.Topics, ",") {
-				t.Fatalf("decoded envelope differs from Galexie fixture: %+v", got)
+				int(got.EventIndex) != f.EventIndex {
+				t.Fatalf("decoded envelope differs from the lake fixture: %+v", got)
 			}
+			decoded[filepath.Base(path)] = decodedRow{
+				Pool: got.Pool, User: got.UserAddress, Asset: got.Asset, Tier: got.Tier,
+				Amount: got.Amount, Amount2: got.Amount2, Attributes: got.Attributes,
+			}
+			if covered[f.Role] == nil {
+				covered[f.Role] = map[string]bool{}
+			}
+			covered[f.Role][f.EventName] = true
 			if got.ObservedAt.UTC().Format("2006-01-02T15:04:05Z") != f.LedgerClosedAt {
 				t.Fatalf("close time = %s, want %s", got.ObservedAt, f.LedgerClosedAt)
 			}
@@ -115,6 +125,81 @@ func TestRealFixturesDecodeEveryAuditedRole(t *testing.T) {
 	for hash, role := range wantHashes {
 		if !seen[hash] {
 			t.Errorf("no real fixture for %s WASM %s", role, hash)
+		}
+	}
+	checkGolden(t, decoded)
+	checkCoverage(t, covered)
+}
+
+// decodedRow is the typed payload the golden file pins for each real event.
+type decodedRow struct {
+	Pool       string         `json:"pool,omitempty"`
+	User       string         `json:"user_address,omitempty"`
+	Asset      string         `json:"asset,omitempty"`
+	Tier       string         `json:"tier,omitempty"`
+	Amount     string         `json:"amount,omitempty"`
+	Amount2    string         `json:"amount2,omitempty"`
+	Attributes map[string]any `json:"attributes"`
+}
+
+const goldenPath = "testdata/decoded.golden.json"
+
+// checkGolden pins what every real event decodes to. Regenerate with UPDATE_GOLDEN=1 and read the diff.
+func checkGolden(t *testing.T, decoded map[string]decodedRow) {
+	t.Helper()
+	got, err := json.MarshalIndent(decoded, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = append(got, '\n')
+	if os.Getenv("UPDATE_GOLDEN") != "" {
+		if err := os.WriteFile(goldenPath, got, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	want, err := os.ReadFile(goldenPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("decoded rows differ from %s; rerun with UPDATE_GOLDEN=1 and review the diff", goldenPath)
+	}
+}
+
+// sourceOnly lists the ABI kinds no deployed contract had emitted when the fixtures were cut
+// (lake read at ledger 65,512,176). Their specs come from the contract source alone. A kind
+// leaves this list the moment a real fixture for it is added.
+var sourceOnly = map[Role][]string{
+	RolePool: {
+		"update_pool", "cancel_set_reserve", "bad_debt", "defaulted_debt", "supply", "withdraw",
+		"clawback", "gulp", "reconcile_loss", "protocol_credit_loss", "delete_auction",
+	},
+	RoleBackstop:       {"rw_zone_remove", "draw"},
+	RoleEmitter:        {"q_swap", "del_swap", "swap"},
+	RoleBackfill:       {"burn_expired"},
+	RoleLockupBackfill: {"claim", "expire"},
+}
+
+// checkCoverage requires every ABI kind to be either proven on real bytes or listed as source-only.
+func checkCoverage(t *testing.T, covered map[Role]map[string]bool) {
+	t.Helper()
+	for role, kinds := range abi {
+		for kind := range kinds {
+			real, listed := covered[role][kind], slices.Contains(sourceOnly[role], kind)
+			switch {
+			case real && listed:
+				t.Errorf("%s/%s has a real fixture; remove it from sourceOnly", role, kind)
+			case !real && !listed:
+				t.Errorf("%s/%s has neither a real fixture nor a sourceOnly entry", role, kind)
+			}
+		}
+	}
+	for role, kinds := range sourceOnly {
+		for _, kind := range kinds {
+			if _, ok := abi[role][kind]; !ok {
+				t.Errorf("sourceOnly names %s/%s, which the ABI does not declare", role, kind)
+			}
 		}
 	}
 }

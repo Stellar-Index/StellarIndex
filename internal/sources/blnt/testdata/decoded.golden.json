@@ -1,0 +1,279 @@
+{
+  "backfill_funded_backstop_65134177_55e2765e5089_2_CAHCUK.json": {
+    "amount": "0",
+    "attributes": {}
+  },
+  "borrow_pool_65134821_92c4cc165949_0_CACSQW.json": {
+    "pool": "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7",
+    "user_address": "GDEA2WMOWYQ3T56A2PZH5QYYEQBAORW2AUUJYX4FFD5GDPESAICTFTAL",
+    "asset": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+    "amount": "10000000000",
+    "amount2": "10000000000",
+    "attributes": {}
+  },
+  "claim_backfill_65380474_fca1f7fb71d7_1_CANIE6.json": {
+    "user_address": "GAXOCT452OQUY6KFQOIP4RCHOPZGLLRGRFEDAZMK7A2SSY7REWF7QX2C",
+    "amount": "25886331576",
+    "attributes": {}
+  },
+  "claim_backstop_65148565_6d99f3207cf6_4_CAHCUK.json": {
+    "pool": "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7",
+    "user_address": "GDEA2WMOWYQ3T56A2PZH5QYYEQBAORW2AUUJYX4FFD5GDPESAICTFTAL",
+    "tier": "FirstLoss",
+    "amount": "1033567161",
+    "amount2": "84386953",
+    "attributes": {
+      "shares": "84386953"
+    }
+  },
+  "claim_fund_lockup_backfill_65370095_eb458ac1b13f_4_CBNRUF.json": {
+    "attributes": {
+      "details": {
+        "grant_claimed": "17457561728",
+        "lockup_funded": "884779072",
+        "manager_funded": "5819187242",
+        "owner_retained": "10753595414"
+      }
+    }
+  },
+  "claim_grant_backfill_65138552_c005e5fdb244_1_CANIE6.json": {
+    "user_address": "GBSAWC6ZHQMIBRKBHSKL3XGKKJYAPKPFWFTQ4PIIHF6LTAINRLN4FMEG",
+    "amount": "35268775720",
+    "attributes": {}
+  },
+  "claim_pool_65147945_231cdea8aa60_1_CACSQW.json": {
+    "pool": "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7",
+    "user_address": "GBY2Q24LMOU5ZOPVW76SRTENO6ZZ6MUVUM4AIOGKJFIWIY65HVZFRPHI",
+    "amount": "768008032",
+    "attributes": {
+      "reserve_token_ids": [
+        1,
+        2,
+        4
+      ]
+    }
+  },
+  "deploy_factory_65134362_db1ff1407551_0_CAKLFW.json": {
+    "pool": "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7",
+    "attributes": {}
+  },
+  "deposit_backstop_65379171_5859bfb31336_1_CAHCUK.json": {
+    "pool": "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7",
+    "user_address": "GDLI5PY2ONAYPWCRBM3GRLIXQ66P2V57HJXN77WSEZSLSKOUOHEMCOPK",
+    "tier": "SecondLoss",
+    "amount": "14677030112",
+    "amount2": "14677030112",
+    "attributes": {}
+  },
+  "dequeue_withdrawal_backstop_65219848_a80f9ba56d17_0_CAHCUK.json": {
+    "pool": "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7",
+    "user_address": "GCOTFUPCJTKRQBPQC5ZHWAPE4JWOFD5A5436QOO63KCF6YAJITEZD7SS",
+    "tier": "ThirdLoss",
+    "amount": "7405379944",
+    "attributes": {}
+  },
+  "distribute_backstop_65134176_5d32b49e7276_1_CAHCUK.json": {
+    "amount": "0",
+    "attributes": {}
+  },
+  "distribute_emitter_65378929_5374b84a9a51_1_CDSO6F.json": {
+    "amount": "36350000000",
+    "attributes": {
+      "backstop": "CAHCUKBPTW5DR5RNXOHCTJD5U76A6EEZXYZAQFRQEEQRXQ3CRUZ6Z3MO"
+    }
+  },
+  "donate_backstop_65250308_9213d6b67058_4_CAHCUK.json": {
+    "pool": "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7",
+    "user_address": "GAVG3ODZ4SAVK2WJL3F3RT265RL7P6QNOMA6NL3XDAREKSX3OWWMXF4R",
+    "tier": "FirstLoss",
+    "amount": "2287839206",
+    "attributes": {}
+  },
+  "drop_emitter_65134177_55e2765e5089_1_CDSO6F.json": {
+    "attributes": {
+      "list": [
+        [
+          "CANIE64BDFKLHROLOIY2KTQVBWUZNUKZP75DLXC272QM7TIN5N3M4LVA",
+          "1500000000000000"
+        ]
+      ]
+    }
+  },
+  "fill_auction_pool_65225244_e90acf3a6cb0_3_CACSQW.json": {
+    "pool": "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7",
+    "user_address": "CAHCUKBPTW5DR5RNXOHCTJD5U76A6EEZXYZAQFRQEEQRXQ3CRUZ6Z3MO",
+    "attributes": {
+      "auction_data": {
+        "bid": {},
+        "block": 65224844,
+        "lot": {
+          "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA": "20241787",
+          "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75": "62201350",
+          "CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV": "120688134"
+        }
+      },
+      "auction_type": 2,
+      "fill_percent": "100",
+      "filler": "GAVG3ODZ4SAVK2WJL3F3RT265RL7P6QNOMA6NL3XDAREKSX3OWWMXF4R"
+    }
+  },
+  "flash_loan_pool_65387356_6e65760b29ac_1_CACSQW.json": {
+    "pool": "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7",
+    "user_address": "CBLJ6FNASZ2WMYZA3CJFGVUJRBMNAPGXRYJH4JBBI55VCPP3MREH3TFG",
+    "asset": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+    "amount": "626312175",
+    "amount2": "625243763",
+    "attributes": {
+      "contract": "CBNVK5PE7JCL773P5SHWE3YUCHQVVVPVOG72SKCEFVTZOLLQWVTCPLZ3"
+    }
+  },
+  "fund_lockup_backfill_65369979_a2428c4ced1e_1_CBNRUF.json": {
+    "user_address": "GDMCUWYGHGOM2AIWVFJVW6PW3Y77CL5BSIF67BKHOMDEZMCXHFQW7VTK",
+    "amount": "1419473335665",
+    "attributes": {
+      "balance": "1419473335665"
+    }
+  },
+  "gulp_emissions_backstop_65135638_f13dec850038_1_CAHCUK.json": {
+    "pool": "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7",
+    "amount": "51240000000",
+    "amount2": "21960000000",
+    "attributes": {}
+  },
+  "gulp_emissions_pool_65135638_f13dec850038_5_CACSQW.json": {
+    "pool": "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7",
+    "amount": "21960000000",
+    "attributes": {}
+  },
+  "migration_activated_backstop_65134176_5d32b49e7276_0_CAHCUK.json": {
+    "attributes": {
+      "activated_at": "1792956663",
+      "backfill_end": "1792956643"
+    }
+  },
+  "new_auction_pool_65224843_08c3e3566636_0_CACSQW.json": {
+    "pool": "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7",
+    "user_address": "CAHCUKBPTW5DR5RNXOHCTJD5U76A6EEZXYZAQFRQEEQRXQ3CRUZ6Z3MO",
+    "attributes": {
+      "auction_data": {
+        "bid": {
+          "CA5HX3D47PQZWC2E7VWXCKH4534P2NOJEOIXAWU47MI4QV2FQUYY3FLC": "3073138401"
+        },
+        "block": 65224844,
+        "lot": {
+          "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA": "20241787",
+          "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75": "62201350",
+          "CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV": "120688134"
+        }
+      },
+      "auction_type": 2,
+      "percent": 100
+    }
+  },
+  "queue_set_reserve_pool_65134364_b0706bf9b92a_0_CACSQW.json": {
+    "pool": "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7",
+    "asset": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+    "attributes": {
+      "admin": "GDEA2WMOWYQ3T56A2PZH5QYYEQBAORW2AUUJYX4FFD5GDPESAICTFTAL",
+      "metadata": {
+        "c_factor": 7500000,
+        "decimals": 7,
+        "enabled": true,
+        "index": 0,
+        "l_factor": 7500000,
+        "max_util": 7000000,
+        "r_base": 100000,
+        "r_one": 300000,
+        "r_three": 50000000,
+        "r_two": 3000000,
+        "reactivity": 50,
+        "supply_cap": "100000000000000000",
+        "util": 4000000
+      }
+    }
+  },
+  "queue_withdrawal_backstop_65211281_2fd7d5b98b61_0_CAHCUK.json": {
+    "pool": "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7",
+    "user_address": "GDG7PTG6J62HPE74BVWNSQWTPSZKBXN6RRUKJRDEEXPSC2OTXXVLIANW",
+    "tier": "ThirdLoss",
+    "amount": "1000000000",
+    "attributes": {
+      "expiration": "1794810989"
+    }
+  },
+  "repay_pool_65387356_6e65760b29ac_2_CACSQW.json": {
+    "pool": "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7",
+    "user_address": "CBLJ6FNASZ2WMYZA3CJFGVUJRBMNAPGXRYJH4JBBI55VCPP3MREH3TFG",
+    "asset": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+    "amount": "626312176",
+    "amount2": "625243763",
+    "attributes": {}
+  },
+  "reserve_emission_update_pool_65135638_f13dec850038_2_CACSQW.json": {
+    "pool": "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7",
+    "attributes": {
+      "eps": "72619047619",
+      "expiration": "1793568773",
+      "res_token_id": 1
+    }
+  },
+  "rw_zone_add_backstop_65134837_cef3b202c21a_0_CAHCUK.json": {
+    "pool": "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7",
+    "attributes": {
+      "to_remove": null
+    }
+  },
+  "set_admin_pool_65342585_d98dda76b40a_0_CACSQW.json": {
+    "pool": "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7",
+    "attributes": {
+      "admin": "GDEA2WMOWYQ3T56A2PZH5QYYEQBAORW2AUUJYX4FFD5GDPESAICTFTAL",
+      "new_admin": "CAEV4AKHVMUV3OKKVJBMDRF4JSQS4C5ZBIVWXPASQC3QVZJVIDEPMTEE"
+    }
+  },
+  "set_reserve_pool_65134366_b35916d7ba3d_0_CACSQW.json": {
+    "pool": "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7",
+    "asset": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+    "attributes": {
+      "index": 0
+    }
+  },
+  "set_status_pool_65134693_11843018fe6c_0_CACSQW.json": {
+    "pool": "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7",
+    "attributes": {
+      "admin": "GDEA2WMOWYQ3T56A2PZH5QYYEQBAORW2AUUJYX4FFD5GDPESAICTFTAL",
+      "status": 2
+    }
+  },
+  "supply_collateral_pool_65379697_015319e61308_0_CACSQW.json": {
+    "pool": "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7",
+    "user_address": "GCOTFUPCJTKRQBPQC5ZHWAPE4JWOFD5A5436QOO63KCF6YAJITEZD7SS",
+    "asset": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+    "amount": "250000000",
+    "amount2": "249988124",
+    "attributes": {}
+  },
+  "swap_blnd_backfill_65378616_8c45877af3b5_11_CANIE6.json": {
+    "user_address": "CBNVK5PE7JCL773P5SHWE3YUCHQVVVPVOG72SKCEFVTZOLLQWVTCPLZ3",
+    "amount": "3988382399",
+    "amount2": "3988382399",
+    "attributes": {
+      "total_blnt_swapped": "11443787614240"
+    }
+  },
+  "withdraw_backstop_65509066_eac36b516e48_1_CAHCUK.json": {
+    "pool": "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7",
+    "user_address": "GDG7PTG6J62HPE74BVWNSQWTPSZKBXN6RRUKJRDEEXPSC2OTXXVLIANW",
+    "tier": "ThirdLoss",
+    "amount": "1000000000",
+    "amount2": "1000000000",
+    "attributes": {}
+  },
+  "withdraw_collateral_pool_65201019_a882f953429f_0_CACSQW.json": {
+    "pool": "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7",
+    "user_address": "GBVD2JSGI3ZVG4GEZMCRKKL5G5MR5VJPK4XMZL34MJR77EUPUHHXEXAU",
+    "asset": "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
+    "amount": "1000000000",
+    "amount2": "1000000000",
+    "attributes": {}
+  }
+}

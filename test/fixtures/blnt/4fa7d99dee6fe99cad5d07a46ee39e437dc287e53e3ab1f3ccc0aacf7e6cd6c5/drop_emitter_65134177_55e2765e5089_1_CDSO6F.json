@@ -1,0 +1,15 @@
+{
+  "contract_id": "CDSO6FQSBJ3U3AJHBNNLHHKSMKTTDDN3GLGF3KZTMXBFV7SVB43ZJERT",
+  "role": "emitter",
+  "wasm_hash": "4fa7d99dee6fe99cad5d07a46ee39e437dc287e53e3ab1f3ccc0aacf7e6cd6c5",
+  "ledger": 65134177,
+  "tx_hash": "55e2765e50898a15f96825e918fa144910702c91d3f9fa1a0a0b5fb629cdb5a2",
+  "op_index": 0,
+  "event_index": 1,
+  "ledger_closed_at": "2026-10-25T19:31:08Z",
+  "topics": [
+    "AAAADwAAAARkcm9w"
+  ],
+  "value": "AAAAEAAAAAEAAAABAAAAEAAAAAEAAAACAAAAEgAAAAEagnuBGVSzxctyMaVOFQ2pltFZf/o13Fr+oM/NDet2zgAAAAoAAAAAAAAAAAAFVD33KcAA",
+  "event_name": "drop"
+}

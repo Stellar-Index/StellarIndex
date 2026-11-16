@@ -2,15 +2,16 @@ package timescale
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
 	"time"
 )
 
-// BLNTEvent is one lossless row in blnt_events. TopicsXDR and ValueXDR are
-// base64-encoded SCVals; validation and semantic classification happen in the
-// source decoder before this writer is called.
+// BLNTEvent is one blnt_events row. "" writes SQL NULL for Pool, UserAddress, Asset, Tier and the
+// amounts; Amount and Amount2 are decimal i128 strings (never int64); Attributes is the rest of the
+// decoded payload.
 type BLNTEvent struct {
 	ContractID      string
 	Ledger          uint32
@@ -20,8 +21,13 @@ type BLNTEvent struct {
 	EventIndex      uint32
 	ContractRole    string
 	EventKind       string
-	TopicsXDR       []string
-	ValueXDR        string
+	Pool            string
+	UserAddress     string
+	Asset           string
+	Tier            string
+	Amount          string
+	Amount2         string
+	Attributes      map[string]any
 }
 
 var blntContractRoles = []string{
@@ -44,37 +50,47 @@ func (s *Store) InsertBLNTEvent(ctx context.Context, e BLNTEvent) error {
 	if e.EventKind == "" {
 		return errors.New("timescale: InsertBLNTEvent: EventKind is empty")
 	}
-	if len(e.TopicsXDR) == 0 {
-		return errors.New("timescale: InsertBLNTEvent: TopicsXDR is empty")
-	}
-	if e.ValueXDR == "" {
-		return errors.New("timescale: InsertBLNTEvent: ValueXDR is empty")
-	}
 	if e.LedgerCloseTime.IsZero() {
 		return errors.New("timescale: InsertBLNTEvent: LedgerCloseTime is zero")
+	}
+	attrs := []byte("{}")
+	if len(e.Attributes) > 0 {
+		marshaled, err := json.Marshal(e.Attributes)
+		if err != nil {
+			return fmt.Errorf("timescale: InsertBLNTEvent: marshal attributes: %w", err)
+		}
+		attrs = marshaled
 	}
 
 	const q = `
         INSERT INTO blnt_events (
             contract_id, ledger, ledger_close_time, tx_hash, op_index, event_index,
-            contract_role, event_kind, topics_xdr, value_xdr, derive_generation
+            contract_role, event_kind, pool, user_address, asset, tier,
+            amount, amount2, attributes, derive_generation
         ) VALUES (
             $1, $2, $3, $4, $5, $6,
-            $7, $8, $9, $10, $11
+            $7, $8, $9, $10, $11, $12,
+            $13, $14, $15, $16
         )
         ON CONFLICT (ledger_close_time, contract_id, ledger, tx_hash,
                      op_index, event_index) DO UPDATE SET
             contract_role     = EXCLUDED.contract_role,
             event_kind        = EXCLUDED.event_kind,
-            topics_xdr        = EXCLUDED.topics_xdr,
-            value_xdr         = EXCLUDED.value_xdr,
+            pool              = EXCLUDED.pool,
+            user_address      = EXCLUDED.user_address,
+            asset             = EXCLUDED.asset,
+            tier              = EXCLUDED.tier,
+            amount            = EXCLUDED.amount,
+            amount2           = EXCLUDED.amount2,
+            attributes        = EXCLUDED.attributes,
             derive_generation = EXCLUDED.derive_generation
           WHERE blnt_events.derive_generation <= EXCLUDED.derive_generation
     `
 	_, err := s.db.ExecContext(ctx, q,
 		e.ContractID, int(e.Ledger), e.LedgerCloseTime.UTC(), e.TxHash,
 		int(e.OpIndex), int(e.EventIndex), e.ContractRole, e.EventKind,
-		e.TopicsXDR, e.ValueXDR, s.deriveGeneration,
+		nullString(e.Pool), nullString(e.UserAddress), nullString(e.Asset), nullString(e.Tier),
+		nullNumeric(e.Amount), nullNumeric(e.Amount2), attrs, s.deriveGeneration,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertBLNTEvent %s@%d: %w", e.ContractID, e.Ledger, err)
