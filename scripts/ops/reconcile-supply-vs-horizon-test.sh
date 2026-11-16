@@ -97,8 +97,8 @@ else
   bad "no SKIP(no-data) line for AQUA; output was:\n$(cat "$OUT")"
 fi
 
-if grep -q '^assets=8 outside_tolerance=0 inconclusive=0$' "$OUT"; then
-  ok "the documented summary line is printed and the run completes for all 8 assets"
+if grep -q '^assets=9 outside_tolerance=0 inconclusive=0$' "$OUT"; then
+  ok "the documented summary line is printed and the run completes for all 9 assets"
 else
   bad "summary line missing or wrong; output was:\n$(cat "$OUT")"
 fi

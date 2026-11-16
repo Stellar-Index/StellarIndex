@@ -45,6 +45,7 @@ export const PROTOCOL_NAMES = new Set([
   'sushiswap_v3',
   'comet',
   'blend',
+  'blnt',
   'sorocredit',
   'upshift',
   'defindex',
