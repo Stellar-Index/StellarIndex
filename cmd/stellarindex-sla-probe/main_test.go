@@ -968,3 +968,50 @@ func TestProbeIdentifiesItselfAsSynthetic(t *testing.T) {
 			"customer-facing availability ratio and latency histogram", got)
 	}
 }
+
+// The probe's numbers are the SLA evidence, so they describe the whole answer: latency runs to the last body
+// byte, a body cut off mid-stream is a failure, and one slower than the timeout is a timeout.
+func TestHitMeasuresTheWholeBody(t *testing.T) {
+	const bodyDelay = 300 * time.Millisecond
+	flush := func(w http.ResponseWriter) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/slow", func(w http.ResponseWriter, _ *http.Request) {
+		flush(w)
+		time.Sleep(bodyDelay)
+		_, _ = w.Write([]byte(`{"data":{"x":1}}`))
+	})
+	mux.HandleFunc("/cut", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "1000")
+		flush(w)
+		_, _ = w.Write([]byte(`{"data":`))
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err == nil {
+			_ = conn.Close()
+		}
+	})
+	mux.HandleFunc("/stall", func(w http.ResponseWriter, r *http.Request) {
+		flush(w)
+		<-r.Context().Done()
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	lat, failure, _, _ := hit(context.Background(), &http.Client{Timeout: 5 * time.Second}, srv.URL, "", endpoint{Path: "/slow"})
+	if failure != "" {
+		t.Fatalf("slow body: failure %q, want a success", failure)
+	}
+	if lat < bodyDelay {
+		t.Errorf("slow body: latency %s, want at least the %s the body took to arrive", lat, bodyDelay)
+	}
+
+	if _, failure, _, _ := hit(context.Background(), &http.Client{Timeout: 5 * time.Second}, srv.URL, "", endpoint{Path: "/cut"}); failure != "body" {
+		t.Errorf("body cut off mid-stream: failure %q, want \"body\"", failure)
+	}
+	if _, failure, _, _ := hit(context.Background(), &http.Client{Timeout: 200 * time.Millisecond}, srv.URL, "", endpoint{Path: "/stall"}); failure != "timeout" {
+		t.Errorf("body slower than the timeout: failure %q, want \"timeout\"", failure)
+	}
+}

@@ -125,8 +125,18 @@ func verifyArchiveSDFSample(cfg config.Config, bucketOverride string, from, to u
 			f.key, f.cause, f.local.etag, f.local.size, f.upstream.etag, f.upstream.size)
 		obs.VerifyArchiveMismatchesTotal.WithLabelValues(sdfSampleReason, sdfSampleReason).Inc()
 	}
+	return sdfSampleOutcome(res)
+}
+
+// sdfSampleOutcome fails a sample that differs, and one that checked nothing: every ledger missing upstream or
+// unverifiable is no evidence, not a pass.
+func sdfSampleOutcome(res sdfSampleResult) error {
 	if len(res.findings) > 0 {
 		return fmt.Errorf("sdf-sample: %d of %d sampled ledgers differ from SDF's dataset", len(res.findings), res.sampled)
+	}
+	if res.matched == 0 {
+		return fmt.Errorf("sdf-sample: no sampled ledger could be checked against SDF's dataset (missing upstream: %d, unverifiable: %d) — "+
+			"check the upstream bucket and prefix; nothing was proven", res.missingUpstream, res.unverifiable)
 	}
 	return nil
 }

@@ -90,6 +90,16 @@ Run the shared log grep and decode the latest error:
 
 `(time() - stellarindex_external_poller_last_success_unix{source="exchangeratesapi"}) > 7200` (2 h), `for: 10m`, P3. Poll interval is 1 h, the plan's refresh; the plan's 10,000 calls a month are shared with another service, so never poll faster. Causes: API down or throttling, access key expired, monthly quota exhausted, or lost outbound HTTPS. Check and fix as [`stellarindex_external_poller_stale`](#stellarindex_external_poller_stale) with `<source>` = `exchangeratesapi`.
 
+## stellarindex_external_poller_never_succeeded
+
+`stellarindex_external_poller_started_unix` older than the source's staleness budget (30 min; 2 h for `tiingo` and `exchangeratesapi`; 12 h for `ecb`) with no `stellarindex_external_poller_last_success_unix` series, `for: 10m`, ticket. The poller has run since the process started without one successful poll, so the staleness alerts have nothing to judge.
+
+`sum by (outcome) (increase(stellarindex_external_poller_polls_total{source="<source>"}[1h]))` says why:
+
+- `error`: upstream or auth failure. Check and fix as [`stellarindex_external_poller_stale`](#stellarindex_external_poller_stale).
+- `empty`: the upstream answers with no rows, usually a plan or symbol change. Compare the configured pairs with what the plan returns.
+- `idle`: no configured pair applies to this source. Remove the source from the config or give it a pair it serves.
+
 ## stellarindex_external_poller_error_rate_high
 
 `for: 15m`, informational (escalation is `stellarindex_external_poller_stale`):

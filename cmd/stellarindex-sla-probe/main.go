@@ -607,6 +607,14 @@ func failureClass(code int) string {
 	return fmt.Sprintf("%dxx", code/100)
 }
 
+// bodyReadFailure names a 2xx whose body did not fully arrive: cut off mid-stream, or slower than the timeout.
+func bodyReadFailure(err error) string {
+	if transportFailure(err) == "timeout" {
+		return "timeout"
+	}
+	return "body"
+}
+
 // transportFailure names a request that got no HTTP response.
 func transportFailure(err error) string {
 	var ne net.Error
@@ -616,7 +624,7 @@ func transportFailure(err error) string {
 	return "conn"
 }
 
-// hit issues one GET to `<baseURL><path>?<query>` and returns the latency, the failure cause ("" on a 2xx meeting ep's body contract) and
+// hit issues one GET to `<baseURL><path>?<query>` and returns the latency to the last body byte, the failure cause ("" on a 2xx meeting ep's body contract) and
 // the parsed observed_at when present. A non-empty apiKey is sent as a Bearer token.
 func hit(ctx context.Context, c *http.Client, baseURL, apiKey string, ep endpoint) (time.Duration, string, time.Time, bool) {
 	u := baseURL + ep.Path
@@ -643,14 +651,18 @@ func hit(ctx context.Context, c *http.Client, baseURL, apiKey string, ep endpoin
 	}
 	start := time.Now()
 	resp, err := c.Do(req)
-	lat := time.Since(start)
 	if err != nil {
-		return lat, transportFailure(err), time.Time{}, false
+		return time.Since(start), transportFailure(err), time.Time{}, false
 	}
 	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(resp.Body)
+	// The clock stops when the body has arrived, not the headers: a client waits for the whole answer.
+	body, readErr := io.ReadAll(resp.Body)
+	lat := time.Since(start)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return lat, failureClass(resp.StatusCode), time.Time{}, false
+	}
+	if readErr != nil {
+		return lat, bodyReadFailure(readErr), time.Time{}, false
 	}
 	observedAt, fallback, ok := checkBody(ep, body)
 	if !ok {

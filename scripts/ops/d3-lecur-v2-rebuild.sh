@@ -88,6 +88,32 @@ coverage_of() {
   q "SELECT count(), min(ledger_seq), max(ledger_seq) FROM stellar.$1 FORMAT TSV"
 }
 
+# quiesce_below_tip_writers: nothing may write ledger_entry_changes below the
+# tip across the cutover's DROP MV … CREATE MV gap. A row inserted there reaches
+# no current-state table, and the catch-up INSERT covers only ledger_seq >= the
+# pre-cutover tip. ch-live-catchup heals holes below the tip on a timer, and
+# stellarindex-ops ch-backfill (Phase D, rederive) writes history. The timer is
+# stopped for the cutover and started again on exit; a writer still running
+# after D3_QUIESCE_WAIT_SECONDS refuses the cutover before anything is dropped.
+SYSTEMCTL="${D3_SYSTEMCTL:-systemctl}"
+quiesce_below_tip_writers() {
+  if $SYSTEMCTL is-active --quiet ch-live-catchup.timer; then
+    # shellcheck disable=SC2064 # expand now: the trap must not depend on later state
+    trap "$SYSTEMCTL start ch-live-catchup.timer" EXIT
+    $SYSTEMCTL stop ch-live-catchup.timer
+    log "ch-live-catchup.timer stopped for the cutover (started again on exit)"
+  fi
+  local waited=0 limit="${D3_QUIESCE_WAIT_SECONDS:-1800}"
+  while $SYSTEMCTL is-active --quiet ch-live-catchup.service || pgrep -f 'stellarindex-ops ch-backfill' > /dev/null; do
+    if [ "$waited" -ge "$limit" ]; then
+      log "refusing cutover: a lake writer below the tip is still running after ${waited}s (ch-live-catchup.service or stellarindex-ops ch-backfill). Nothing was dropped or renamed."
+      exit 1
+    fi
+    sleep 10
+    waited=$(( waited + 10 ))
+  done
+}
+
 BASE_COLS="entry_type, key_xdr, account_id, asset, balance, change_type, ledger_seq, close_time, entry_xdr, intra_ledger_seq"
 
 phase="${1:?phase: probe-ordinals|setup|reproject|verify|cutover|finalize|rollback-precutover}"
@@ -260,6 +286,7 @@ cutover)
     fi
     log "D3_FORCE_CUTOVER=yes — proceeding over $NVIOL coverage violation(s)"
   fi
+  quiesce_below_tip_writers
   # Capture the tip BEFORE dropping the MVs (the DDL gap loses MV inserts; the
   # catch-up below re-covers from this ledger).
   q "SELECT max(ledger_seq) FROM stellar.ledger_entry_changes" > "$STATE_DIR/pre-cutover-tip"
