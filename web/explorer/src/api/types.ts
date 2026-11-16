@@ -1891,6 +1891,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/lending/pools/{pool}/config-history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Lending pool — reserve-config and pool-level admin history.
+         * @description Every reserve-config step (`queue_set_reserve`,
+         *     `cancel_set_reserve`, `set_reserve`) and pool-level admin event
+         *     (`update_pool`, `set_status`, `set_admin`) of a Blend or BLNT
+         *     pool, newest first. A queued config takes effect only through
+         *     `set_reserve`: `applied` marks a `queue_set_reserve` whose next
+         *     step for that asset was `set_reserve` (not a cancel or a
+         *     re-queue), and a `set_reserve` carries the config it applied in
+         *     `config`. Pool-level items carry only the `pool_config` fields
+         *     their event set. Fractions are raw contract integers at
+         *     `config_decimals`.
+         *
+         *     Pagination: pass `pagination.next` back as `cursor`;
+         *     `pagination` is omitted on the last page.
+         */
+        get: operations["getLendingPoolConfigHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/mev": {
         parameters: {
             query?: never;
@@ -6230,6 +6262,57 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * @description A lending reserve's ReserveConfig. The fractions are the contract's
+         *     raw fixed-point integers as decimal strings at `config_decimals`
+         *     (7: '9500000' = 0.95).
+         */
+        LendingReserveConfig: {
+            /** @description Reserve index in the pool. */
+            index: number;
+            /** @description The underlying token's decimals as configured. */
+            decimals: number;
+            collateral_factor: string;
+            liability_factor: string;
+            target_utilization: string;
+            max_utilization: string;
+            /** @description Base borrow rate. */
+            r_base: string;
+            /** @description Rate slope below target utilisation. */
+            r_one: string;
+            /** @description Rate slope from target to 95% utilisation. */
+            r_two: string;
+            /** @description Rate slope above 95% utilisation. */
+            r_three: string;
+            /** @description How fast ir_mod moves. */
+            reactivity: string;
+            /** @description Supply cap, underlying token base units. Null on a Blend V1 pool, which has none. */
+            supply_cap: string | null;
+            enabled: boolean;
+        };
+        /**
+         * @description A lending pool's PoolConfig and admin. On the reserves view every
+         *     known field is present; on a config-history item only the fields
+         *     its event set.
+         */
+        LendingPoolConfig: {
+            /** @description Price oracle contract C-strkey. */
+            oracle?: string;
+            /** @description Pool admin address (on `set_admin`, the new admin). */
+            admin?: string;
+            /** @description Backstop's share of accrued interest, raw integer at `config_decimals`. */
+            backstop_take_rate?: string;
+            max_positions?: number;
+            /** @description Minimum collateral: the contract's raw i128 as a decimal string. */
+            min_collateral?: string;
+            /** @description The contract's pool status code. */
+            status?: number;
+            /**
+             * @description Name of `status` (0..6) per the Blend V2 and BLNT pool contracts. Omitted on a Blend V1 pool and for an unknown code.
+             * @enum {string}
+             */
+            status_label?: "admin_active" | "active" | "admin_on_ice" | "on_ice" | "admin_frozen" | "frozen" | "setup";
+        };
         /**
          * @description How many trades in a fixed 24h window (hour-aligned, refreshed in the
          *     background every 15 minutes) carry a `usd_volume`. This is VALUATION
@@ -17551,13 +17634,137 @@ export interface operations {
                                 borrow_apr?: number | null;
                                 /** @description Supply APR as a fraction. Null when the rate-model config is uncaptured. */
                                 supply_apr?: number | null;
+                                /** @description USD price per whole token that `supplied_usd` / `borrowed_usd` use, decimal string. Null whenever they are. */
+                                price_usd?: string | null;
+                                /** @description True when `price_usd` comes from a price the reader marked stale. False when `price_usd` is null. */
+                                price_stale?: boolean;
+                                /** @description The reserve's applied ReserveConfig. Null when it is not known (no applied queue_set_reserve event). */
+                                config?: components["schemas"]["LendingReserveConfig"] | null;
+                                /** @description Live interest-rate curve modifier (ReserveData.ir_mod), the contract's raw integer as a decimal string at `ir_mod_decimals`. With the config's r_base..r_three and utilisation targets it gives the borrow-rate curve. */
+                                ir_mod?: string | null;
+                                /** @description Fixed-point scale of `ir_mod`: 9 on a Blend V1 pool, 7 on Blend V2 and BLNT. */
+                                ir_mod_decimals?: number;
+                                /** @description Underlying owed to the backstop (ReserveData.backstop_credit), token base units. */
+                                backstop_credit?: string | null;
+                                /**
+                                 * Format: date-time
+                                 * @description Ledger close time of the reserve's last interest accrual (ReserveData.last_time). Null when unset.
+                                 */
+                                last_update?: string | null;
                             }[];
+                            /** @description The pool's instance-storage PoolConfig and admin. Null when the instance entry is missing or no reserve has decoded state. */
+                            pool_config?: components["schemas"]["LendingPoolConfig"] | null;
+                            /** @description Fixed-point scale of every reserve-config fraction (`collateral_factor`, `liability_factor`, `target_utilization`, `max_utilization`, `r_base`, `r_one`, `r_two`, `r_three`, `reactivity`) and of `pool_config.backstop_take_rate`. Always 7: 10000000 = 1.0 (pool storage.rs). */
+                            config_decimals?: number;
                             /**
                              * Format: int64
                              * @description Lake watermark this current-state read is fresh to (ADR-0041) — the highest captured ledger at serve time. Omitted when no watermark reader is wired. Pairs with flags.stale.
                              */
                             as_of_ledger?: number;
                         };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getLendingPoolConfigHistory: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1..200 (default 50). */
+                limit?: number;
+                /** @description Opaque cursor from a prior `pagination.next`. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Pool contract C-strkey. */
+                pool: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Config changes, newest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "pool": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
+                     *         "config_decimals": 7,
+                     *         "changes": [
+                     *           {
+                     *             "ledger": 63340102,
+                     *             "close_time": "2026-07-03T22:38:00Z",
+                     *             "tx_hash": "4f1c7e0d9a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5",
+                     *             "kind": "set_reserve",
+                     *             "asset": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                     *             "config": {
+                     *               "index": 0,
+                     *               "decimals": 7,
+                     *               "collateral_factor": "9500000",
+                     *               "liability_factor": "9500000",
+                     *               "target_utilization": "8000000",
+                     *               "max_utilization": "9500000",
+                     *               "r_base": "300000",
+                     *               "r_one": "400000",
+                     *               "r_two": "1200000",
+                     *               "r_three": "50000000",
+                     *               "reactivity": "20",
+                     *               "supply_cap": "10000000000000000",
+                     *               "enabled": true
+                     *             }
+                     *           },
+                     *           {
+                     *             "ledger": 63340001,
+                     *             "close_time": "2026-07-03T22:28:30Z",
+                     *             "tx_hash": "9e8d7c6b5a49382716051f2e3d4c5b6a79881f2e3d4c5b6a79881f2e3d4c5b6a",
+                     *             "kind": "set_status",
+                     *             "asset": null,
+                     *             "pool_config": {
+                     *               "status": 1,
+                     *               "status_label": "active"
+                     *             }
+                     *           }
+                     *         ]
+                     *       },
+                     *       "as_of": "2026-07-03T22:38:00.032774886Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: {
+                            pool?: string;
+                            /** @description Fixed-point scale of the config fractions and `backstop_take_rate`; always 7. */
+                            config_decimals?: number;
+                            changes?: {
+                                /** Format: int64 */
+                                ledger: number;
+                                /** Format: date-time */
+                                close_time: string;
+                                tx_hash: string;
+                                /** @enum {string} */
+                                kind: "queue_set_reserve" | "cancel_set_reserve" | "set_reserve" | "update_pool" | "set_status" | "set_admin";
+                                /** @description Reserve asset C-strkey for a reserve-config step; null for a pool-level event. */
+                                asset: string | null;
+                                /** @description On `queue_set_reserve` only: whether the asset's next step was `set_reserve`. */
+                                applied?: boolean;
+                                config?: components["schemas"]["LendingReserveConfig"];
+                                pool_config?: components["schemas"]["LendingPoolConfig"];
+                            }[];
+                        };
+                        pagination?: components["schemas"]["Pagination"];
                     };
                 };
             };
