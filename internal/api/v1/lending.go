@@ -331,6 +331,10 @@ type LendingPoolReservesView struct {
 	Reserves   []ReserveView `json:"reserves"`
 	// OmittedReserves are the pool's reserve assets with no decoded state in the lake; TVLUSD leaves them out.
 	OmittedReserves []string `json:"omitted_reserves,omitempty"`
+	// PoolConfig is the pool's instance-storage config; null when that entry, or every reserve's state, is missing.
+	PoolConfig *LendingPoolConfigView `json:"pool_config"`
+	// ConfigDecimals is the fixed-point scale of the config fractions and backstop_take_rate.
+	ConfigDecimals int `json:"config_decimals"`
 	// AsOfLedger is the highest ledger the lake had captured at serve time (ADR-0041 Decision 4).
 	// Reserve state is decoded from lake storage, so a wedged sink makes it stale; pairs with
 	// `flags.stale`. Omitted when no watermark reader is wired.
@@ -353,6 +357,15 @@ type ReserveView struct {
 	BorrowAPR *float64 `json:"borrow_apr"`
 	//floatmoney:ok a yield rate/fraction (like BorrowAPR above), not a principal amount
 	SupplyAPR *float64 `json:"supply_apr"`
+	// PriceUSD is the USD price per whole token the USD values use; null whenever they are.
+	PriceUSD   *string                   `json:"price_usd"`
+	PriceStale bool                      `json:"price_stale"`
+	Config     *LendingReserveConfigView `json:"config"`
+	IRMod      *string                   `json:"ir_mod"` // raw interest-rate modifier at ir_mod_decimals
+	// IRModDecimals is 9 on a Blend V1 pool, else 7.
+	IRModDecimals  int       `json:"ir_mod_decimals"`
+	BackstopCredit *string   `json:"backstop_credit"` // underlying base units owed to the backstop
+	LastUpdate     *WireTime `json:"last_update"`
 }
 
 // handleLendingPoolReserves serves GET /v1/lending/pools/{pool}/reserves: current-state TVL, utilization and APY per reserve
@@ -453,7 +466,10 @@ func (s *Server) buildPoolReserves(ctx context.Context, pool string) (poolReserv
 		views[i], suppliedUSD[i], stalePrice[i] = s.buildReserveView(ctx, states[i]) // distinct indices — no mutex needed
 	})
 
-	out := LendingPoolReservesView{Pool: pool, Reserves: views, OmittedReserves: reservesWithoutState(assets, states)}
+	out := LendingPoolReservesView{
+		Pool: pool, Reserves: views, OmittedReserves: reservesWithoutState(assets, states),
+		PoolConfig: poolConfigView(poolInstanceOf(states), version), ConfigDecimals: lendingConfigDecimals,
+	}
 	out.TVLUSD, out.LowerBound = reservesTVLUSD(suppliedUSD)
 	out.LowerBound = out.LowerBound || (out.TVLUSD != nil && len(out.OmittedReserves) > 0)
 	// ADR-0041 Decision 4: stamp the lake watermark this current-state
@@ -594,6 +610,11 @@ func (s *Server) buildReserveView(ctx context.Context, st clickhouse.BlendReserv
 		Supplied:       st.Metrics.SuppliedUnderlying.String(),
 		Borrowed:       st.Metrics.BorrowedUnderlying.String(),
 		UtilizationPct: round2(st.Metrics.UtilizationPct),
+		Config:         reserveConfigView(st.Config),
+		IRMod:          bigString(st.Data.IRMod),
+		IRModDecimals:  irModDecimals(st.Data.Version),
+		BackstopCredit: bigString(st.Data.BackstopCredit),
+		LastUpdate:     reserveLastUpdate(st.Data.LastTime),
 	}
 	if st.Metrics.HasAPR {
 		b := round4(st.Metrics.BorrowAPR)
@@ -618,6 +639,7 @@ func (s *Server) buildReserveView(ctx context.Context, st clickhouse.BlendReserv
 		obs.NonstandardDecimalsLockstepMismatchTotal.WithLabelValues("lending_reserve", "").Inc()
 		return rv, nil, false
 	}
+	rv.PriceUSD, rv.PriceStale = &price, stale
 	var suppliedContrib *big.Rat
 	if usd, err := usdMarketValue(st.Metrics.SuppliedUnderlying, price, dec); err == nil {
 		rv.SuppliedUSD = &usd

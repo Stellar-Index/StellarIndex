@@ -59,6 +59,14 @@ func (c *CachedLendingReader) BlendReserveConfigs(ctx context.Context, pool stri
 	return c.upstream.BlendReserveConfigs(ctx, pool)
 }
 
+// LendingConfigHistory is a pass-through; empty when the upstream has no history.
+func (c *CachedLendingReader) LendingConfigHistory(ctx context.Context, pool string, limit int, cur timescale.LendingConfigCursor) ([]timescale.LendingConfigChange, error) {
+	if up, ok := c.upstream.(lendingConfigHistoryReader); ok {
+		return up.LendingConfigHistory(ctx, pool, limit, cur)
+	}
+	return nil, nil
+}
+
 // ListBLNTPools is ListBLNTPoolsAt without the fill time.
 func (c *CachedLendingReader) ListBLNTPools(ctx context.Context) ([]timescale.BlendPoolSummary, error) {
 	rows, _, _, err := c.ListBLNTPoolsAt(ctx)

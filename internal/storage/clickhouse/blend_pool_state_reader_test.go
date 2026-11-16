@@ -254,15 +254,15 @@ func TestScanBlendReserveParts_IgnoresUnrequestedKeys(t *testing.T) {
 	rows := &stubRows{data: [][]any{
 		{"some-other-key", "AAAA"},
 	}}
-	byAsset, bstop, matched, err := scanBlendReserveParts(rows, refByKey, blend.PoolV2)
+	byAsset, bstop, matched, err := scanReserveParts(rows, refByKey, blendModel(blend.PoolV2).decode)
 	if err != nil {
-		t.Fatalf("scanBlendReserveParts: %v", err)
+		t.Fatalf("scanReserveParts: %v", err)
 	}
 	if len(byAsset) != 0 {
 		t.Errorf("unrequested key produced %v, want nothing", byAsset)
 	}
 	if bstop != nil {
-		t.Errorf("bstop = %d, want nil", *bstop)
+		t.Errorf("pool instance = %+v, want nil", *bstop)
 	}
 	// `matched` scopes the TTL-liveness filter. A key we did not ask about
 	// must not enter it: classifying it could only ever DROP reserves on the
@@ -286,9 +286,9 @@ func TestScanBlendReserveParts_MatchedTracksOnlyReportedEntries(t *testing.T) {
 		{blendTestResDataKey, resDataEntryFixture(t)},
 		{"resdata-undecodable", "!!!not-base64!!!"},
 	}}
-	byAsset, _, matched, err := scanBlendReserveParts(rows, refByKey, blend.PoolV2)
+	byAsset, _, matched, err := scanReserveParts(rows, refByKey, blendModel(blend.PoolV2).decode)
 	if err != nil {
-		t.Fatalf("scanBlendReserveParts: %v", err)
+		t.Fatalf("scanReserveParts: %v", err)
 	}
 	if len(byAsset) != 1 {
 		t.Fatalf("byAsset = %v, want only the decodable reserve", byAsset)
@@ -305,7 +305,7 @@ func TestScanBlendReserveParts_MatchedTracksOnlyReportedEntries(t *testing.T) {
 func TestScanBlendReserveParts_UndecodableEntryIsSkippedNotFatal(t *testing.T) {
 	refByKey := map[string]keyRef{blendTestResDataKey: {asset: blendTestAssetSAC, kind: "ResData"}}
 	rows := &stubRows{data: [][]any{{blendTestResDataKey, "!!!not-base64!!!"}}}
-	byAsset, _, _, err := scanBlendReserveParts(rows, refByKey, blend.PoolV2)
+	byAsset, _, _, err := scanReserveParts(rows, refByKey, blendModel(blend.PoolV2).decode)
 	if err != nil {
 		t.Fatalf("one undecodable entry aborted the pool read: %v", err)
 	}
@@ -320,7 +320,7 @@ func TestScanBlendReserveParts_UndecodableEntryIsSkippedNotFatal(t *testing.T) {
 func TestScanBlendReserveParts_TruncatedStreamIsAnError(t *testing.T) {
 	truncated := errors.New("stream truncated")
 	rows := &stubRows{streamErr: truncated}
-	if _, _, _, err := scanBlendReserveParts(rows, nil, blend.PoolV2); !errors.Is(err, truncated) {
+	if _, _, _, err := scanReserveParts(rows, nil, blendModel(blend.PoolV2).decode); !errors.Is(err, truncated) {
 		t.Fatalf("err = %v, want it to wrap %v", err, truncated)
 	}
 }
@@ -407,34 +407,34 @@ func TestDropArchivedBlendReserves_NilCacheKeepsEverything(t *testing.T) {
 	}
 }
 
-// TestBackstopRateFromInstance_MissesReportNotOK — a miss is not a 0%
+// TestPoolInstanceFromStorage_MissesReportNotOK — a miss is not a 0%
 // backstop take: callers must withhold the APR, and the miss paths must not
 // panic on a non-instance ScVal or an instance with no Config entry.
-func TestBackstopRateFromInstance_MissesReportNotOK(t *testing.T) {
+func TestPoolInstanceFromStorage_MissesReportNotOK(t *testing.T) {
 	// Not an instance at all.
 	i := xdr.Int64(5)
-	if got, ok := backstopRateFromInstance(xdr.ScVal{Type: xdr.ScValTypeScvI64, I64: &i}); ok || got != 0 {
-		t.Errorf("non-instance ScVal gave (%d, %v), want (0, false)", got, ok)
+	if got, ok := poolInstanceFromStorage(xdr.ScVal{Type: xdr.ScValTypeScvI64, I64: &i}); ok || got != (PoolInstance{}) {
+		t.Errorf("non-instance ScVal gave (%+v, %v), want (zero, false)", got, ok)
 	}
 	// An instance with no storage map.
-	if got, ok := backstopRateFromInstance(xdr.ScVal{
+	if got, ok := poolInstanceFromStorage(xdr.ScVal{
 		Type:     xdr.ScValTypeScvContractInstance,
 		Instance: &xdr.ScContractInstance{Executable: xdr.ContractExecutable{Type: xdr.ContractExecutableTypeContractExecutableStellarAsset}},
-	}); ok || got != 0 {
-		t.Errorf("instance without storage gave (%d, %v), want (0, false)", got, ok)
+	}); ok || got != (PoolInstance{}) {
+		t.Errorf("instance without storage gave (%+v, %v), want (zero, false)", got, ok)
 	}
 	// An instance whose storage holds no "Config" key.
 	other := xdr.ScSymbol("Something")
 	v := xdr.Int64(1)
 	storage := xdr.ScMap{{Key: xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &other}, Val: xdr.ScVal{Type: xdr.ScValTypeScvI64, I64: &v}}}
-	if got, ok := backstopRateFromInstance(xdr.ScVal{
+	if got, ok := poolInstanceFromStorage(xdr.ScVal{
 		Type: xdr.ScValTypeScvContractInstance,
 		Instance: &xdr.ScContractInstance{
 			Executable: xdr.ContractExecutable{Type: xdr.ContractExecutableTypeContractExecutableStellarAsset},
 			Storage:    &storage,
 		},
-	}); ok || got != 0 {
-		t.Errorf("instance without a Config entry gave (%d, %v), want (0, false)", got, ok)
+	}); ok || got != (PoolInstance{}) {
+		t.Errorf("instance without a Config entry gave (%+v, %v), want (zero, false)", got, ok)
 	}
 }
 
@@ -481,9 +481,71 @@ func TestAssembleBlendReserveStates_MissingBackstopRateWithholdsAPR(t *testing.T
 		t.Errorf("decimals should still come from the reserve config, got %d found=%v", got[0].Decimals, got[0].DecimalsFound)
 	}
 
-	zero := uint32(0)
-	got = assembleBlendReserveStates(blendTestPool, assets, data, cfgs, &zero)
+	got = assembleBlendReserveStates(blendTestPool, assets, data, cfgs, &PoolInstance{})
 	if !got[0].Metrics.HasAPR {
 		t.Errorf("a known 0%% backstop rate must still serve APR")
+	}
+}
+
+// TestAssembleBlendReserveStates_CarriesConfigAndPoolInstance — the decoded config rides on its reserve, a reserve with
+// no config carries nil, and every reserve carries the pool instance.
+func TestAssembleBlendReserveStates_CarriesConfigAndPoolInstance(t *testing.T) {
+	one := func() *big.Int { return big.NewInt(1_000_000_000_000) }
+	rd := blend.ReserveData{
+		Version: blend.PoolV2, DRate: one(), BRate: one(), IRMod: big.NewInt(10_000_000),
+		BSupply: big.NewInt(100), DSupply: big.NewInt(50), BackstopCredit: big.NewInt(0),
+	}
+	const other = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+	data := map[string]*blend.ReserveData{blendTestAssetSAC: &rd, other: &rd}
+	cfgs := map[string]blend.ReserveConfig{blendTestAssetSAC: {Decimals: 6, CFactor: 9_000_000}}
+	inst := &PoolInstance{Config: blend.PoolConfig{BstopRate: 2_000_000, Status: 1}, Admin: blendTestPool}
+
+	got := assembleBlendReserveStates(blendTestPool, []string{blendTestAssetSAC, other}, data, cfgs, inst)
+	if len(got) != 2 || got[0].Config == nil || got[0].Config.CFactor != 9_000_000 || got[1].Config != nil {
+		t.Fatalf("states = %+v, want the first reserve's config and nil for the second", got)
+	}
+	if got[0].PoolInstance != inst || got[1].PoolInstance != inst {
+		t.Errorf("pool instance not carried on every reserve: %+v", got)
+	}
+}
+
+// TestPoolInstanceFromStorage_DecodesConfigAndAdmin — the whole PoolConfig and the admin come from one walk.
+func TestPoolInstanceFromStorage_DecodesConfigAndAdmin(t *testing.T) {
+	sym := func(s string) xdr.ScVal {
+		v := xdr.ScSymbol(s)
+		return xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &v}
+	}
+	u32 := func(n uint32) xdr.ScVal { v := xdr.Uint32(n); return xdr.ScVal{Type: xdr.ScValTypeScvU32, U32: &v} }
+	addr := func(c string) xdr.ScVal {
+		id, err := contractIDFromStrkey(c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		a := xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &id}
+		return xdr.ScVal{Type: xdr.ScValTypeScvAddress, Address: &a}
+	}
+	minCol := xdr.Int128Parts{Hi: 1, Lo: 5} // 2^64 + 5
+	cfg := xdr.ScMap{
+		{Key: sym("bstop_rate"), Val: u32(2_000_000)},
+		{Key: sym("max_positions"), Val: u32(8)},
+		{Key: sym("min_collateral"), Val: xdr.ScVal{Type: xdr.ScValTypeScvI128, I128: &minCol}},
+		{Key: sym("oracle"), Val: addr(blendTestAssetSAC)},
+		{Key: sym("status"), Val: u32(1)},
+	}
+	cfgPtr := &cfg
+	storage := xdr.ScMap{
+		{Key: sym("Admin"), Val: addr(blendTestPool)},
+		{Key: sym("Config"), Val: xdr.ScVal{Type: xdr.ScValTypeScvMap, Map: &cfgPtr}},
+	}
+	got, ok := poolInstanceFromStorage(xdr.ScVal{
+		Type: xdr.ScValTypeScvContractInstance,
+		Instance: &xdr.ScContractInstance{
+			Executable: xdr.ContractExecutable{Type: xdr.ContractExecutableTypeContractExecutableStellarAsset},
+			Storage:    &storage,
+		},
+	})
+	if !ok || got.Admin != blendTestPool || got.Config.Oracle != blendTestAssetSAC || got.Config.BstopRate != 2_000_000 ||
+		got.Config.MaxPositions != 8 || got.Config.Status != 1 || got.Config.MinCollateral.String() != "18446744073709551621" {
+		t.Fatalf("instance = %+v (ok=%v)", got, ok)
 	}
 }

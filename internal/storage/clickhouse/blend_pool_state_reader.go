@@ -7,6 +7,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
 )
@@ -19,6 +20,15 @@ type BlendReserveState struct {
 	DecimalsFound bool
 	Data          blend.ReserveData
 	Metrics       blend.ReserveMetrics
+	Config        *blend.ReserveConfig // nil when the reserve's config is not known
+	// PoolInstance is the pool's instance-storage config, the same on every reserve; nil when the entry is missing.
+	PoolInstance *PoolInstance
+}
+
+// PoolInstance is a lending pool's decoded instance storage: its PoolConfig and admin ("" when absent).
+type PoolInstance struct {
+	Config blend.PoolConfig
+	Admin  string
 }
 
 // blendReserveStateQuery is a batched PK-prefix probe of ledger_entries_current's (entry_type, key_xdr) key; do not fold the latest entry
@@ -77,7 +87,7 @@ func (r *ExplorerReader) poolReserves(ctx context.Context, pool string, assets [
 	}
 	defer func() { _ = rows.Close() }()
 
-	dataByAsset, bstop, matched, err := scanReserveParts(rows, refByKey, model.decode)
+	dataByAsset, inst, matched, err := scanReserveParts(rows, refByKey, model.decode)
 	if err != nil {
 		return nil, err
 	}
@@ -88,25 +98,25 @@ func (r *ExplorerReader) poolReserves(ctx context.Context, pool string, assets [
 		return nil, fmt.Errorf("clickhouse: blend reserves ttl liveness: %w", err)
 	}
 
-	return assembleReserveStates(pool, assets, dataByAsset, configs, bstop, model.metrics), nil
+	return assembleReserveStates(pool, assets, dataByAsset, configs, inst, model.metrics), nil
 }
 
 // assembleBlendReserveStates builds states in the caller's asset order. Without the config: config-free metrics and placeholder decimals 7
-// (DecimalsFound=false). A nil bstop withholds APR (HasAPR=false) rather than serving the gross rate as the supply APR.
+// (DecimalsFound=false). A nil inst withholds APR (HasAPR=false) rather than serving the gross rate as the supply APR.
 func assembleBlendReserveStates(
 	pool string, assets []string,
 	dataByAsset map[string]*blend.ReserveData,
 	configs map[string]blend.ReserveConfig,
-	bstop *uint32,
+	inst *PoolInstance,
 ) []BlendReserveState {
-	return assembleReserveStates(pool, assets, dataByAsset, configs, bstop, blend.Metrics)
+	return assembleReserveStates(pool, assets, dataByAsset, configs, inst, blend.Metrics)
 }
 
 func assembleReserveStates(
 	pool string, assets []string,
 	dataByAsset map[string]*blend.ReserveData,
 	configs map[string]blend.ReserveConfig,
-	bstop *uint32,
+	inst *PoolInstance,
 	metricsFn func(blend.ReserveData, blend.ReserveConfig, uint32) blend.ReserveMetrics,
 ) []BlendReserveState {
 	out := make([]BlendReserveState, 0, len(assets))
@@ -118,11 +128,13 @@ func assembleReserveStates(
 		decimals := uint32(7)
 		decimalsFound := false
 		metrics := blend.BaseMetrics(*rd)
+		var config *blend.ReserveConfig
 		if cfg, ok := configs[asset]; ok {
 			decimals = cfg.Decimals
 			decimalsFound = true
-			if bstop != nil {
-				metrics = metricsFn(*rd, cfg, *bstop)
+			config = &cfg
+			if inst != nil {
+				metrics = metricsFn(*rd, cfg, inst.Config.BstopRate)
 			}
 		}
 		out = append(out, BlendReserveState{
@@ -132,6 +144,8 @@ func assembleReserveStates(
 			DecimalsFound: decimalsFound,
 			Data:          *rd,
 			Metrics:       metrics,
+			Config:        config,
+			PoolInstance:  inst,
 		})
 	}
 	return out
@@ -169,21 +183,16 @@ func blendReserveKeys(poolID xdr.ContractId, assets []string) ([]string, map[str
 	return keys, refByKey
 }
 
-// scanBlendReserveParts decodes rows into per-asset ResData and the backstop rate, and reports the keys that produced a row (matched). The
-// TTL filter is scoped to matched: judging keys the lake never returned could over-drop reserves we would have served.
-func scanBlendReserveParts(rows reserveRows, refByKey map[string]keyRef, version blend.PoolVersion,
-) (dataByAsset map[string]*blend.ReserveData, bstop *uint32, matched []string, err error) {
-	return scanReserveParts(rows, refByKey, blendModel(version).decode)
-}
-
 type reserveRows interface {
 	Next() bool
 	Scan(...any) error
 	Err() error
 }
 
+// scanReserveParts decodes rows into per-asset ResData and the pool instance, and reports the keys that produced a row (matched). The
+// TTL filter is scoped to matched: judging keys the lake never returned could over-drop reserves we would have served.
 func scanReserveParts(rows reserveRows, refByKey map[string]keyRef, decode func(xdr.ScVal) (blend.ReserveData, error),
-) (dataByAsset map[string]*blend.ReserveData, bstop *uint32, matched []string, err error) {
+) (dataByAsset map[string]*blend.ReserveData, inst *PoolInstance, matched []string, err error) {
 	dataByAsset = make(map[string]*blend.ReserveData)
 	for rows.Next() {
 		var keyXDR, b64 string
@@ -200,8 +209,8 @@ func scanReserveParts(rows reserveRows, refByKey map[string]keyRef, decode func(
 		}
 		switch ref.kind {
 		case "Instance":
-			if rate, ok := backstopRateFromInstance(val); ok {
-				bstop = &rate
+			if pi, ok := poolInstanceFromStorage(val); ok {
+				inst = &pi
 			}
 			matched = append(matched, keyXDR)
 		case "ResData":
@@ -215,7 +224,7 @@ func scanReserveParts(rows reserveRows, refByKey map[string]keyRef, decode func(
 	if err := rows.Err(); err != nil {
 		return nil, nil, nil, fmt.Errorf("clickhouse: blend reserves rows: %w", err)
 	}
-	return dataByAsset, bstop, matched, nil
+	return dataByAsset, inst, matched, nil
 }
 
 // dropArchivedBlendReserves removes reserve state whose entry is TTL-archived: ledger_entries_current keeps the last value after Soroban
@@ -263,23 +272,33 @@ func contractDataValue(b64 string) (xdr.ScVal, bool) {
 	return cd.Val, true
 }
 
-// backstopRateFromInstance pulls PoolConfig.bstop_rate (7 decimals) from the instance storage map. ok=false on a missing Config: 0 is a
-// legal rate, so a miss must not read as 0 (that serves the gross rate as supply APR).
-func backstopRateFromInstance(val xdr.ScVal) (rate uint32, ok bool) {
+// poolInstanceFromStorage decodes the instance storage's "Config" PoolConfig and "Admin" address. ok=false on a missing or
+// undecodable Config: 0 is a legal backstop rate, so a miss must not read as 0 (that serves the gross rate as supply APR).
+func poolInstanceFromStorage(val xdr.ScVal) (PoolInstance, bool) {
 	inst, isInst := val.GetInstance()
 	if !isInst || inst.Storage == nil {
-		return 0, false
+		return PoolInstance{}, false
 	}
+	var out PoolInstance
+	found := false
 	for _, e := range *inst.Storage {
-		if e.Key.Type == xdr.ScValTypeScvSymbol && e.Key.Sym != nil && string(*e.Key.Sym) == "Config" {
+		if e.Key.Type != xdr.ScValTypeScvSymbol || e.Key.Sym == nil {
+			continue
+		}
+		switch string(*e.Key.Sym) {
+		case "Config":
 			pc, err := blend.DecodePoolConfig(e.Val)
 			if err != nil {
-				return 0, false
+				return PoolInstance{}, false
 			}
-			return pc.BstopRate, true
+			out.Config, found = pc, true
+		case "Admin":
+			if a, err := scval.AsAddressStrkey(e.Val); err == nil {
+				out.Admin = a
+			}
 		}
 	}
-	return 0, false
+	return out, found
 }
 
 // poolDataKeyXDR builds the base64 LedgerKey of a persistent PoolDataKey::<variant>

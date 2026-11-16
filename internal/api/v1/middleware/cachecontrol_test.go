@@ -462,6 +462,7 @@ func TestPolicyForPath_PublicRoutesOffTheDefault(t *testing.T) {
 		{"/v1/contracts/" + cid + "/transfers", short},
 		{"/v1/status/notices", short},
 		{"/v1/lending/pools/" + cid + "/reserves", current},
+		{"/v1/lending/pools/" + cid + "/config-history", current},
 		{"/v1/external/assets", current},
 		{"/v1/external/assets/bitcoin", current},
 		{"/v1/markets/sources", catalogue},
