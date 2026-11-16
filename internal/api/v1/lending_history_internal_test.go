@@ -11,8 +11,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// TestReserveHistoryPoint_MatchesLiveReserveView pins that a history point serves the live reserve view's own strings and floats.
-func TestReserveHistoryPoint_MatchesLiveReserveView(t *testing.T) {
+// TestReserveHistoryPoint_UsesLiveReserveViewMapping pins that a history point serves a state through the live reserve view's
+// own mapping: the same strings and floats for the same state.
+func TestReserveHistoryPoint_UsesLiveReserveViewMapping(t *testing.T) {
 	big64, _ := new(big.Int).SetString("18446744073709551617", 10)
 	cfg := blend.ReserveConfig{CFactor: 9_000_000, LFactor: 9_500_000, SupplyCap: big.NewInt(5), Decimals: 7, Enabled: true}
 	st := clickhouse.BlendReserveState{
@@ -47,6 +48,13 @@ func TestReserveHistoryPoint_MatchesLiveReserveView(t *testing.T) {
 	}})
 	if noCfg.ConfigLedger != nil || noCfg.BorrowAPR != nil || noCfg.SupplyAPR != nil || noCfg.CollateralFactor != nil {
 		t.Fatalf("a point with no config in force must carry no APR or config: %+v", noCfg)
+	}
+	poolUnknown := reserveHistoryPoint(clickhouse.LendingReservePoint{StateLedger: 12, ConfigLedger: 8, PoolConfigUncertain: true, State: st})
+	if !poolUnknown.ConfigUncertain || poolUnknown.SupplyAPR != nil || poolUnknown.BorrowAPR == nil || poolUnknown.CollateralFactor == nil {
+		t.Fatalf("an unknown pool instance withholds only supply_apr: %+v", poolUnknown)
+	}
+	if p.ConfigUncertain || noCfg.ConfigUncertain {
+		t.Fatalf("config_uncertain set without cause: %+v %+v", p, noCfg)
 	}
 }
 

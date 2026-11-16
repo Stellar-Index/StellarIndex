@@ -16996,7 +16996,7 @@
                               "request": {
                                 "name": "Lending pool — one reserve's state history.",
                                 "description": {
-                                  "content": "One reserve's on-chain state (Blend V1/V2, BLNT V3) at the close\nof every hour (`interval=1h`) or UTC day (`interval=1d`, the\nday's last hourly state) in which it changed, read from the\nlake's hourly record of the pool's storage and decoded exactly\nas `/v1/lending/pools/{pool}/reserves` decodes current state, so\nthe last point equals the live figures. Buckets with no change\nhave no point: carry the previous point forward. The first point\nis the state in force at `from` when one is recorded;\n`before_first_state` is true when nothing is recorded at or\nbefore `from`.\n\nEach point pairs the reserve state with the `ResConfig` and pool\ninstance in force at that moment (the newest entry at or before\nthe state's ledger and transaction; an entry written by the same\ntransaction is in force). `config_ledger` is null when no config\nis in force, and then the APRs and config fields are null.\n`supplied`, `borrowed` and `backstop_credit` are underlying base\nunits; `b_rate` / `d_rate` are raw contract integers at\n`rate_decimals` (9 on a Blend V1 pool, else 12) and `ir_mod` at\n`ir_mod_decimals`; `collateral_factor` / `liability_factor` are\nraw integers at `config_decimals`. `removed` points mark a\ndeleted state entry and carry null figures.\n\nDefaults: `interval=1d`, the last 90 days. `interval=1h` allows\nat most a 90-day window. A series of more than 2,000 points is a\n400 (ask for `interval=1d` or a narrower window), never a\ntruncated series. `history_through_ledger` is the ledger the\nhistory is complete through; `flags.stale` is set when it trails\nthe lake tip by more than 1,000 ledgers or the lake is stale.\n`dropped_points` counts points whose entries failed to decode;\nthey are left out, never zero-filled, and the response is not\ncached. 503 `history-unavailable` when this deployment has not\nderived the history. No USD values.\n",
+                                  "content": "One reserve's on-chain state (Blend V1/V2, BLNT V3) at the close\nof every hour (`interval=1h`) or UTC day (`interval=1d`, the\nday's last hourly state) in which it changed, computed from the\nlake's hourly record of the pool's on-chain storage with the\nsame rate model as `/v1/lending/pools/{pool}/reserves`, through\n`history_through_ledger`. The live endpoint reads the reserve\nconfig from event projections and runs ahead of the history, so\nthe two can differ. Buckets with no change have no point: carry\nthe previous point forward. `from` is rounded down to the start\nof its hour (`1h`) or UTC day (`1d`) and echoed; the first point\nis the state in force then when one is recorded, and\n`before_first_state` is true when nothing is recorded at or\nbefore it.\n\nEach point pairs the reserve state with the `ResConfig` and pool\ninstance in force at that moment (the newest entry at or before\nthe state's ledger and transaction; an entry written by the same\ntransaction is in force). `config_ledger` is null when no config\nis in force, and then the APRs and config fields are null. Only\neach hour's last `ResConfig` and instance are recorded, so when\neither changed later in the same hour as the state, the one in\nforce at the state is not known: `config_uncertain` is true and\nwhat depends on it is null (`config_ledger`, both APRs and the\nconfig fields for the reserve config; `supply_apr` alone for the\npool instance, which sets the backstop's share of interest). The\nstate itself is exact either way.\n`supplied`, `borrowed` and `backstop_credit` are underlying base\nunits; `b_rate` / `d_rate` are raw contract integers at\n`rate_decimals` (9 on a Blend V1 pool, else 12) and `ir_mod` at\n`ir_mod_decimals`; `collateral_factor` / `liability_factor` are\nraw integers at `config_decimals`. `removed` points mark a\ndeleted state entry and carry null figures.\n\nDefaults: `interval=1d`, the last 90 days; `interval=1h`, the\nlast 83 days. The widest window is 83 days at `interval=1h` and\n1,998 days at `interval=1d`, so a series stays within the\n2,000-point cap; a wider window is a 400 `invalid-window`, never\na truncated series. `history_through_ledger` is the derive\nwatermark; points cover only the hours before the hour that\ncontains it, which is served once the derive passes its end.\n`flags.stale` is set when it trails the lake tip by more than\n1,000 ledgers or the lake is stale. `dropped_points` counts\npoints whose entries failed to decode; they are left out, never\nzero-filled, and the response is not cached. 404 `not-found`\nwhen no lending source knows the pool, or nothing was ever\nrecorded for this reserve in it (a window with no change is a\n200 with no points). 503 `history-unavailable` when this\ndeployment has not derived the history. No USD values.\n",
                                   "type": "text/plain"
                                 },
                                 "url": {
@@ -17024,7 +17024,7 @@
                                     {
                                       "disabled": false,
                                       "description": {
-                                        "content": "RFC 3339; default `to` - 90 days.",
+                                        "content": "RFC 3339, rounded down to the start of its hour (`1h`) or UTC day (`1d`); default `to` - 90 days (`1d`) or 83 days (`1h`).",
                                         "type": "text/plain"
                                       },
                                       "key": "from",
@@ -17111,7 +17111,7 @@
                                         {
                                           "disabled": false,
                                           "description": {
-                                            "content": "RFC 3339; default `to` - 90 days.",
+                                            "content": "RFC 3339, rounded down to the start of its hour (`1h`) or UTC day (`1d`); default `to` - 90 days (`1d`) or 83 days (`1h`).",
                                             "type": "text/plain"
                                           },
                                           "key": "from",
@@ -17176,7 +17176,7 @@
                                       "value": "application/json"
                                     }
                                   ],
-                                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"pool\": \"<string>\",\n    \"asset\": \"<string>\",\n    \"protocol\": null,\n    \"interval\": \"1d\",\n    \"from\": \"<dateTime>\",\n    \"to\": \"<dateTime>\",\n    \"decimals\": \"<integer,null>\",\n    \"rate_decimals\": \"<integer,null>\",\n    \"ir_mod_decimals\": \"<integer,null>\",\n    \"config_decimals\": \"<integer>\",\n    \"history_through_ledger\": \"<long>\",\n    \"history_through_time\": \"<string,null-date-time>\",\n    \"dropped_points\": \"<integer>\",\n    \"before_first_state\": \"<boolean>\",\n    \"points\": [\n      {\n        \"t\": \"<dateTime>\",\n        \"state_ledger\": \"<long>\",\n        \"config_ledger\": \"<integer,null-int64>\",\n        \"removed\": \"<boolean>\",\n        \"supplied\": \"<string,null>\",\n        \"borrowed\": \"<string,null>\",\n        \"b_rate\": \"<string,null>\",\n        \"d_rate\": \"<string,null>\",\n        \"ir_mod\": \"<string,null>\",\n        \"backstop_credit\": \"<string,null>\",\n        \"utilization_pct\": \"<number,null>\",\n        \"borrow_apr\": \"<number,null>\",\n        \"supply_apr\": \"<number,null>\",\n        \"collateral_factor\": \"<string,null>\",\n        \"liability_factor\": \"<string,null>\",\n        \"supply_cap\": \"<string,null>\"\n      },\n      {\n        \"t\": \"<dateTime>\",\n        \"state_ledger\": \"<long>\",\n        \"config_ledger\": \"<integer,null-int64>\",\n        \"removed\": \"<boolean>\",\n        \"supplied\": \"<string,null>\",\n        \"borrowed\": \"<string,null>\",\n        \"b_rate\": \"<string,null>\",\n        \"d_rate\": \"<string,null>\",\n        \"ir_mod\": \"<string,null>\",\n        \"backstop_credit\": \"<string,null>\",\n        \"utilization_pct\": \"<number,null>\",\n        \"borrow_apr\": \"<number,null>\",\n        \"supply_apr\": \"<number,null>\",\n        \"collateral_factor\": \"<string,null>\",\n        \"liability_factor\": \"<string,null>\",\n        \"supply_cap\": \"<string,null>\"\n      }\n    ]\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"proxy_deviation\": false,\n    \"unverified_ticker_collision\": false,\n    \"truncated\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"includes_unread\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false,\n    \"under_review\": false,\n    \"detectors_partial\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"under_review_reason\": \"<string>\"\n}",
+                                  "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"pool\": \"<string>\",\n    \"asset\": \"<string>\",\n    \"protocol\": null,\n    \"interval\": \"1d\",\n    \"from\": \"<dateTime>\",\n    \"to\": \"<dateTime>\",\n    \"decimals\": \"<integer,null>\",\n    \"rate_decimals\": \"<integer,null>\",\n    \"ir_mod_decimals\": \"<integer,null>\",\n    \"config_decimals\": \"<integer>\",\n    \"history_through_ledger\": \"<long>\",\n    \"history_through_time\": \"<string,null-date-time>\",\n    \"dropped_points\": \"<integer>\",\n    \"before_first_state\": \"<boolean>\",\n    \"points\": [\n      {\n        \"t\": \"<dateTime>\",\n        \"state_ledger\": \"<long>\",\n        \"config_ledger\": \"<integer,null-int64>\",\n        \"removed\": \"<boolean>\",\n        \"supplied\": \"<string,null>\",\n        \"borrowed\": \"<string,null>\",\n        \"b_rate\": \"<string,null>\",\n        \"d_rate\": \"<string,null>\",\n        \"ir_mod\": \"<string,null>\",\n        \"backstop_credit\": \"<string,null>\",\n        \"utilization_pct\": \"<number,null>\",\n        \"borrow_apr\": \"<number,null>\",\n        \"supply_apr\": \"<number,null>\",\n        \"collateral_factor\": \"<string,null>\",\n        \"liability_factor\": \"<string,null>\",\n        \"supply_cap\": \"<string,null>\",\n        \"config_uncertain\": \"<boolean>\"\n      },\n      {\n        \"t\": \"<dateTime>\",\n        \"state_ledger\": \"<long>\",\n        \"config_ledger\": \"<integer,null-int64>\",\n        \"removed\": \"<boolean>\",\n        \"supplied\": \"<string,null>\",\n        \"borrowed\": \"<string,null>\",\n        \"b_rate\": \"<string,null>\",\n        \"d_rate\": \"<string,null>\",\n        \"ir_mod\": \"<string,null>\",\n        \"backstop_credit\": \"<string,null>\",\n        \"utilization_pct\": \"<number,null>\",\n        \"borrow_apr\": \"<number,null>\",\n        \"supply_apr\": \"<number,null>\",\n        \"collateral_factor\": \"<string,null>\",\n        \"liability_factor\": \"<string,null>\",\n        \"supply_cap\": \"<string,null>\",\n        \"config_uncertain\": \"<boolean>\"\n      }\n    ]\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"proxy_deviation\": false,\n    \"unverified_ticker_collision\": false,\n    \"truncated\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"includes_unread\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false,\n    \"under_review\": false,\n    \"detectors_partial\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"under_review_reason\": \"<string>\"\n}",
                                   "cookie": [],
                                   "_postman_previewlanguage": "json"
                                 },
@@ -17208,7 +17208,7 @@
                                         {
                                           "disabled": false,
                                           "description": {
-                                            "content": "RFC 3339; default `to` - 90 days.",
+                                            "content": "RFC 3339, rounded down to the start of its hour (`1h`) or UTC day (`1d`); default `to` - 90 days (`1d`) or 83 days (`1h`).",
                                             "type": "text/plain"
                                           },
                                           "key": "from",
@@ -17278,6 +17278,103 @@
                                   "_postman_previewlanguage": "json"
                                 },
                                 {
+                                  "name": "Not found.",
+                                  "originalRequest": {
+                                    "url": {
+                                      "path": [
+                                        "lending",
+                                        "pools",
+                                        ":pool",
+                                        "reserves",
+                                        ":asset",
+                                        "history"
+                                      ],
+                                      "host": [
+                                        "{{baseUrl}}"
+                                      ],
+                                      "query": [
+                                        {
+                                          "disabled": false,
+                                          "description": {
+                                            "content": " (This can only be one of 1h,1d)",
+                                            "type": "text/plain"
+                                          },
+                                          "key": "interval",
+                                          "value": "1d"
+                                        },
+                                        {
+                                          "disabled": false,
+                                          "description": {
+                                            "content": "RFC 3339, rounded down to the start of its hour (`1h`) or UTC day (`1d`); default `to` - 90 days (`1d`) or 83 days (`1h`).",
+                                            "type": "text/plain"
+                                          },
+                                          "key": "from",
+                                          "value": "<dateTime>"
+                                        },
+                                        {
+                                          "disabled": false,
+                                          "description": {
+                                            "content": "RFC 3339; default now.",
+                                            "type": "text/plain"
+                                          },
+                                          "key": "to",
+                                          "value": "<dateTime>"
+                                        },
+                                        {
+                                          "disabled": false,
+                                          "description": {
+                                            "content": "Duration (`30d`, `72h`); sets from = to - window. Exclusive with `from`.",
+                                            "type": "text/plain"
+                                          },
+                                          "key": "window",
+                                          "value": "<string>"
+                                        }
+                                      ],
+                                      "variable": [
+                                        {
+                                          "disabled": false,
+                                          "description": {
+                                            "content": "(Required) Pool contract C-strkey.",
+                                            "type": "text/plain"
+                                          },
+                                          "type": "any",
+                                          "value": "<string>",
+                                          "key": "pool"
+                                        },
+                                        {
+                                          "disabled": false,
+                                          "description": {
+                                            "content": "(Required) Reserve token contract C-strkey.",
+                                            "type": "text/plain"
+                                          },
+                                          "type": "any",
+                                          "value": "<string>",
+                                          "key": "asset"
+                                        }
+                                      ]
+                                    },
+                                    "header": [
+                                      {
+                                        "key": "Accept",
+                                        "value": "application/problem+json"
+                                      }
+                                    ],
+                                    "method": "GET",
+                                    "body": {}
+                                  },
+                                  "status": "Not Found",
+                                  "code": 404,
+                                  "header": [
+                                    {
+                                      "key": "Content-Type",
+                                      "value": "application/problem+json"
+                                    }
+                                  ],
+                                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\",\n  \"monthly_quota\": \"<long>\",\n  \"month_to_date\": \"<long>\",\n  \"substance\": {\n    \"base\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"window_seconds\": \"<long>\",\n    \"measured_at\": \"<dateTime>\",\n    \"volume_usd\": \"<string>\",\n    \"buckets\": \"<long>\",\n    \"valued_buckets\": \"<long>\",\n    \"span_seconds\": \"<long>\",\n    \"floor\": {\n      \"min_volume_usd\": \"<string>\",\n      \"min_buckets\": \"<long>\",\n      \"min_span_seconds\": \"<long>\"\n    },\n    \"failed\": \"buckets\",\n    \"window_end\": \"<dateTime>\"\n  },\n  \"reason\": \"substance\"\n}",
+                                  "cookie": [],
+                                  "_postman_previewlanguage": "json"
+                                },
+                                {
                                   "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                                   "originalRequest": {
                                     "url": {
@@ -17305,7 +17402,7 @@
                                         {
                                           "disabled": false,
                                           "description": {
-                                            "content": "RFC 3339; default `to` - 90 days.",
+                                            "content": "RFC 3339, rounded down to the start of its hour (`1h`) or UTC day (`1d`); default `to` - 90 days (`1d`) or 83 days (`1h`).",
                                             "type": "text/plain"
                                           },
                                           "key": "from",
@@ -17515,7 +17612,7 @@
                               "value": "application/json"
                             }
                           ],
-                          "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"pool\": \"<string>\",\n    \"config_decimals\": \"<integer>\",\n    \"changes\": [\n      {\n        \"ledger\": \"<long>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"kind\": \"set_reserve\",\n        \"asset\": \"<string,null>\",\n        \"applied\": \"<boolean>\",\n        \"config\": {\n          \"index\": \"<integer>\",\n          \"decimals\": \"<integer>\",\n          \"collateral_factor\": \"<string>\",\n          \"liability_factor\": \"<string>\",\n          \"target_utilization\": \"<string>\",\n          \"max_utilization\": \"<string>\",\n          \"r_base\": \"<string>\",\n          \"r_one\": \"<string>\",\n          \"r_two\": \"<string>\",\n          \"r_three\": \"<string>\",\n          \"reactivity\": \"<string>\",\n          \"supply_cap\": \"<string,null>\",\n          \"enabled\": \"<boolean>\"\n        },\n        \"pool_config\": {\n          \"oracle\": \"<string>\",\n          \"admin\": \"<string>\",\n          \"backstop_take_rate\": \"<string>\",\n          \"max_positions\": \"<integer>\",\n          \"min_collateral\": \"<string>\",\n          \"status\": \"<integer>\",\n          \"status_label\": \"on_ice\"\n        }\n      },\n      {\n        \"ledger\": \"<long>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"kind\": \"cancel_set_reserve\",\n        \"asset\": \"<string,null>\",\n        \"applied\": \"<boolean>\",\n        \"config\": {\n          \"index\": \"<integer>\",\n          \"decimals\": \"<integer>\",\n          \"collateral_factor\": \"<string>\",\n          \"liability_factor\": \"<string>\",\n          \"target_utilization\": \"<string>\",\n          \"max_utilization\": \"<string>\",\n          \"r_base\": \"<string>\",\n          \"r_one\": \"<string>\",\n          \"r_two\": \"<string>\",\n          \"r_three\": \"<string>\",\n          \"reactivity\": \"<string>\",\n          \"supply_cap\": \"<string,null>\",\n          \"enabled\": \"<boolean>\"\n        },\n        \"pool_config\": {\n          \"oracle\": \"<string>\",\n          \"admin\": \"<string>\",\n          \"backstop_take_rate\": \"<string>\",\n          \"max_positions\": \"<integer>\",\n          \"min_collateral\": \"<string>\",\n          \"status\": \"<integer>\",\n          \"status_label\": \"admin_frozen\"\n        }\n      }\n    ]\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"proxy_deviation\": false,\n    \"unverified_ticker_collision\": false,\n    \"truncated\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"includes_unread\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false,\n    \"under_review\": false,\n    \"detectors_partial\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"under_review_reason\": \"<string>\",\n  \"pagination\": {\n    \"next\": \"<string>\"\n  }\n}",
+                          "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"pool\": \"<string>\",\n    \"config_decimals\": \"<integer>\",\n    \"changes\": [\n      {\n        \"ledger\": \"<long>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"kind\": \"queue_set_reserve\",\n        \"asset\": \"<string,null>\",\n        \"applied\": \"<boolean>\",\n        \"config\": {\n          \"index\": \"<integer>\",\n          \"decimals\": \"<integer>\",\n          \"collateral_factor\": \"<string>\",\n          \"liability_factor\": \"<string>\",\n          \"target_utilization\": \"<string>\",\n          \"max_utilization\": \"<string>\",\n          \"r_base\": \"<string>\",\n          \"r_one\": \"<string>\",\n          \"r_two\": \"<string>\",\n          \"r_three\": \"<string>\",\n          \"reactivity\": \"<string>\",\n          \"supply_cap\": \"<string,null>\",\n          \"enabled\": \"<boolean>\"\n        },\n        \"pool_config\": {\n          \"oracle\": \"<string>\",\n          \"admin\": \"<string>\",\n          \"backstop_take_rate\": \"<string>\",\n          \"max_positions\": \"<integer>\",\n          \"min_collateral\": \"<string>\",\n          \"status\": \"<integer>\",\n          \"status_label\": \"frozen\"\n        }\n      },\n      {\n        \"ledger\": \"<long>\",\n        \"close_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"kind\": \"set_status\",\n        \"asset\": \"<string,null>\",\n        \"applied\": \"<boolean>\",\n        \"config\": {\n          \"index\": \"<integer>\",\n          \"decimals\": \"<integer>\",\n          \"collateral_factor\": \"<string>\",\n          \"liability_factor\": \"<string>\",\n          \"target_utilization\": \"<string>\",\n          \"max_utilization\": \"<string>\",\n          \"r_base\": \"<string>\",\n          \"r_one\": \"<string>\",\n          \"r_two\": \"<string>\",\n          \"r_three\": \"<string>\",\n          \"reactivity\": \"<string>\",\n          \"supply_cap\": \"<string,null>\",\n          \"enabled\": \"<boolean>\"\n        },\n        \"pool_config\": {\n          \"oracle\": \"<string>\",\n          \"admin\": \"<string>\",\n          \"backstop_take_rate\": \"<string>\",\n          \"max_positions\": \"<integer>\",\n          \"min_collateral\": \"<string>\",\n          \"status\": \"<integer>\",\n          \"status_label\": \"setup\"\n        }\n      }\n    ]\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"proxy_deviation\": false,\n    \"unverified_ticker_collision\": false,\n    \"truncated\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"includes_unread\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false,\n    \"under_review\": false,\n    \"detectors_partial\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"under_review_reason\": \"<string>\",\n  \"pagination\": {\n    \"next\": \"<string>\"\n  }\n}",
                           "cookie": [],
                           "_postman_previewlanguage": "json"
                         },
@@ -17752,7 +17849,7 @@
                               "value": "application/json"
                             }
                           ],
-                          "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"pool\": \"<string>\",\n    \"protocol\": null,\n    \"available\": \"<boolean>\",\n    \"backstop\": \"<string,null>\",\n    \"backstop_token\": \"<string,null>\",\n    \"take_rate\": \"<string,null>\",\n    \"config_decimals\": \"<integer>\",\n    \"tiers\": [\n      {\n        \"tier\": \"ThirdLoss\",\n        \"tokens\": \"<string,null>\",\n        \"shares\": \"<string,null>\",\n        \"queued_shares\": \"<string,null>\",\n        \"queued_pct\": \"<number,null>\",\n        \"backstop_asset\": \"BlntUsdc\",\n        \"backstop_token\": \"<string,null>\",\n        \"take_rate_weight\": \"<integer,null>\"\n      },\n      {\n        \"tier\": \"SecondLoss\",\n        \"tokens\": \"<string,null>\",\n        \"shares\": \"<string,null>\",\n        \"queued_shares\": \"<string,null>\",\n        \"queued_pct\": \"<number,null>\",\n        \"backstop_asset\": \"BlntXlm\",\n        \"backstop_token\": \"<string,null>\",\n        \"take_rate_weight\": \"<integer,null>\"\n      }\n    ],\n    \"unavailable_reason\": \"pool_instance_unavailable\",\n    \"as_of_ledger\": \"<long>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"proxy_deviation\": false,\n    \"unverified_ticker_collision\": false,\n    \"truncated\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"includes_unread\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false,\n    \"under_review\": false,\n    \"detectors_partial\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"under_review_reason\": \"<string>\"\n}",
+                          "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"pool\": \"<string>\",\n    \"protocol\": null,\n    \"available\": \"<boolean>\",\n    \"backstop\": \"<string,null>\",\n    \"backstop_token\": \"<string,null>\",\n    \"take_rate\": \"<string,null>\",\n    \"config_decimals\": \"<integer>\",\n    \"tiers\": [\n      {\n        \"tier\": null,\n        \"tokens\": \"<string,null>\",\n        \"shares\": \"<string,null>\",\n        \"queued_shares\": \"<string,null>\",\n        \"queued_pct\": \"<number,null>\",\n        \"backstop_asset\": null,\n        \"backstop_token\": \"<string,null>\",\n        \"take_rate_weight\": \"<integer,null>\"\n      },\n      {\n        \"tier\": \"FirstLoss\",\n        \"tokens\": \"<string,null>\",\n        \"shares\": \"<string,null>\",\n        \"queued_shares\": \"<string,null>\",\n        \"queued_pct\": \"<number,null>\",\n        \"backstop_asset\": \"BlntXlm\",\n        \"backstop_token\": \"<string,null>\",\n        \"take_rate_weight\": \"<integer,null>\"\n      }\n    ],\n    \"unavailable_reason\": \"pool_instance_unavailable\",\n    \"as_of_ledger\": \"<long>\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"proxy_deviation\": false,\n    \"unverified_ticker_collision\": false,\n    \"truncated\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"includes_unread\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false,\n    \"under_review\": false,\n    \"detectors_partial\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"under_review_reason\": \"<string>\"\n}",
                           "cookie": [],
                           "_postman_previewlanguage": "json"
                         },
@@ -17867,7 +17964,7 @@
                           "request": {
                             "name": "Lending pool — backstop balance history per tier.",
                             "description": {
-                              "content": "Each backstop tier's `PoolBalance` at the close of every hour\n(`interval=1h`) or UTC day (`interval=1d`) in which it changed,\nfrom the lake's hourly record of the backstop's storage, decoded\nas `/v1/lending/pools/{pool}/backstop` decodes it. Blend V2: one\ntier (`tier: null`). BLNT V3: `FirstLoss`, `SecondLoss` and\n`ThirdLoss` (`SecondLoss` is the pre-tier `PoolBalance(pool)`\nkey, the others `TierPoolBalance{pool, tier}`). Buckets with no\nchange have no point; the first point of a tier is its state in\nforce at `from`, and `before_first_state` is true when none is\nrecorded. `tokens`, `shares` and `queued_shares` are base-unit\ndecimal strings, `queued_pct` is queued_shares / shares as a\npercentage; a `removed` point carries nulls.\n\nWindow, interval, point cap, `history_through_ledger`,\n`flags.stale`, `dropped_points` and the 503 are as on\n`/v1/lending/pools/{pool}/reserves/{asset}/history`.\n`available` is false with `unavailable_reason`, as on the live\nbackstop endpoint, for a Blend V1 pool, a pool of unknown\nlineage, or one whose instance names no backstop.\n",
+                              "content": "Each backstop tier's `PoolBalance` at the close of every hour\n(`interval=1h`) or UTC day (`interval=1d`) in which it changed,\nfrom the lake's hourly record of the backstop's storage, decoded\nas `/v1/lending/pools/{pool}/backstop` decodes it. Blend V2: one\ntier (`tier: null`). BLNT V3: `FirstLoss`, `SecondLoss` and\n`ThirdLoss` (`SecondLoss` is the pre-tier `PoolBalance(pool)`\nkey, the others `TierPoolBalance{pool, tier}`). Buckets with no\nchange have no point; the first point of a tier is its state in\nforce at `from`, and `before_first_state` is true when none is\nrecorded. `tokens`, `shares` and `queued_shares` are base-unit\ndecimal strings, `queued_pct` is queued_shares / shares as a\npercentage; a `removed` point carries nulls.\n\nWindow, interval, point cap, `history_through_ledger`,\n`flags.stale`, `dropped_points` and the 503 are as on\n`/v1/lending/pools/{pool}/reserves/{asset}/history`.\n`available` is false with `unavailable_reason`, as on the live\nbackstop endpoint, for a Blend V1 pool or one whose instance\nnames no backstop. 404 `not-found` when no lending source knows\nthe pool.\n",
                               "type": "text/plain"
                             },
                             "url": {
@@ -17894,7 +17991,7 @@
                                 {
                                   "disabled": false,
                                   "description": {
-                                    "content": "RFC 3339; default `to` - 90 days.",
+                                    "content": "RFC 3339, rounded down to the start of its hour (`1h`) or UTC day (`1d`); default `to` - 90 days (`1d`) or 83 days (`1h`).",
                                     "type": "text/plain"
                                   },
                                   "key": "from",
@@ -17970,7 +18067,7 @@
                                     {
                                       "disabled": false,
                                       "description": {
-                                        "content": "RFC 3339; default `to` - 90 days.",
+                                        "content": "RFC 3339, rounded down to the start of its hour (`1h`) or UTC day (`1d`); default `to` - 90 days (`1d`) or 83 days (`1h`).",
                                         "type": "text/plain"
                                       },
                                       "key": "from",
@@ -18025,7 +18122,7 @@
                                   "value": "application/json"
                                 }
                               ],
-                              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"pool\": \"<string>\",\n    \"protocol\": \"blend\",\n    \"available\": \"<boolean>\",\n    \"backstop\": \"<string,null>\",\n    \"interval\": \"1h\",\n    \"from\": \"<dateTime>\",\n    \"to\": \"<dateTime>\",\n    \"history_through_ledger\": \"<long>\",\n    \"history_through_time\": \"<string,null-date-time>\",\n    \"dropped_points\": \"<integer>\",\n    \"tiers\": [\n      {\n        \"tier\": \"SecondLoss\",\n        \"before_first_state\": \"<boolean>\",\n        \"points\": [\n          {\n            \"t\": \"<dateTime>\",\n            \"ledger\": \"<long>\",\n            \"removed\": \"<boolean>\",\n            \"tokens\": \"<string,null>\",\n            \"shares\": \"<string,null>\",\n            \"queued_shares\": \"<string,null>\",\n            \"queued_pct\": \"<number,null>\"\n          },\n          {\n            \"t\": \"<dateTime>\",\n            \"ledger\": \"<long>\",\n            \"removed\": \"<boolean>\",\n            \"tokens\": \"<string,null>\",\n            \"shares\": \"<string,null>\",\n            \"queued_shares\": \"<string,null>\",\n            \"queued_pct\": \"<number,null>\"\n          }\n        ]\n      },\n      {\n        \"tier\": \"ThirdLoss\",\n        \"before_first_state\": \"<boolean>\",\n        \"points\": [\n          {\n            \"t\": \"<dateTime>\",\n            \"ledger\": \"<long>\",\n            \"removed\": \"<boolean>\",\n            \"tokens\": \"<string,null>\",\n            \"shares\": \"<string,null>\",\n            \"queued_shares\": \"<string,null>\",\n            \"queued_pct\": \"<number,null>\"\n          },\n          {\n            \"t\": \"<dateTime>\",\n            \"ledger\": \"<long>\",\n            \"removed\": \"<boolean>\",\n            \"tokens\": \"<string,null>\",\n            \"shares\": \"<string,null>\",\n            \"queued_shares\": \"<string,null>\",\n            \"queued_pct\": \"<number,null>\"\n          }\n        ]\n      }\n    ],\n    \"unavailable_reason\": \"pool_instance_unavailable\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"proxy_deviation\": false,\n    \"unverified_ticker_collision\": false,\n    \"truncated\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"includes_unread\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false,\n    \"under_review\": false,\n    \"detectors_partial\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"under_review_reason\": \"<string>\"\n}",
+                              "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"pool\": \"<string>\",\n    \"protocol\": null,\n    \"available\": \"<boolean>\",\n    \"backstop\": \"<string,null>\",\n    \"interval\": \"1h\",\n    \"from\": \"<dateTime>\",\n    \"to\": \"<dateTime>\",\n    \"history_through_ledger\": \"<long>\",\n    \"history_through_time\": \"<string,null-date-time>\",\n    \"dropped_points\": \"<integer>\",\n    \"tiers\": [\n      {\n        \"tier\": \"FirstLoss\",\n        \"before_first_state\": \"<boolean>\",\n        \"points\": [\n          {\n            \"t\": \"<dateTime>\",\n            \"ledger\": \"<long>\",\n            \"removed\": \"<boolean>\",\n            \"tokens\": \"<string,null>\",\n            \"shares\": \"<string,null>\",\n            \"queued_shares\": \"<string,null>\",\n            \"queued_pct\": \"<number,null>\"\n          },\n          {\n            \"t\": \"<dateTime>\",\n            \"ledger\": \"<long>\",\n            \"removed\": \"<boolean>\",\n            \"tokens\": \"<string,null>\",\n            \"shares\": \"<string,null>\",\n            \"queued_shares\": \"<string,null>\",\n            \"queued_pct\": \"<number,null>\"\n          }\n        ]\n      },\n      {\n        \"tier\": \"SecondLoss\",\n        \"before_first_state\": \"<boolean>\",\n        \"points\": [\n          {\n            \"t\": \"<dateTime>\",\n            \"ledger\": \"<long>\",\n            \"removed\": \"<boolean>\",\n            \"tokens\": \"<string,null>\",\n            \"shares\": \"<string,null>\",\n            \"queued_shares\": \"<string,null>\",\n            \"queued_pct\": \"<number,null>\"\n          },\n          {\n            \"t\": \"<dateTime>\",\n            \"ledger\": \"<long>\",\n            \"removed\": \"<boolean>\",\n            \"tokens\": \"<string,null>\",\n            \"shares\": \"<string,null>\",\n            \"queued_shares\": \"<string,null>\",\n            \"queued_pct\": \"<number,null>\"\n          }\n        ]\n      }\n    ],\n    \"unavailable_reason\": \"pool_lineage_unknown\"\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"proxy_deviation\": false,\n    \"unverified_ticker_collision\": false,\n    \"truncated\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"includes_unread\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false,\n    \"under_review\": false,\n    \"detectors_partial\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"under_review_reason\": \"<string>\"\n}",
                               "cookie": [],
                               "_postman_previewlanguage": "json"
                             },
@@ -18056,7 +18153,7 @@
                                     {
                                       "disabled": false,
                                       "description": {
-                                        "content": "RFC 3339; default `to` - 90 days.",
+                                        "content": "RFC 3339, rounded down to the start of its hour (`1h`) or UTC day (`1d`); default `to` - 90 days (`1d`) or 83 days (`1h`).",
                                         "type": "text/plain"
                                       },
                                       "key": "from",
@@ -18116,6 +18213,92 @@
                               "_postman_previewlanguage": "json"
                             },
                             {
+                              "name": "Not found.",
+                              "originalRequest": {
+                                "url": {
+                                  "path": [
+                                    "lending",
+                                    "pools",
+                                    ":pool",
+                                    "backstop",
+                                    "history"
+                                  ],
+                                  "host": [
+                                    "{{baseUrl}}"
+                                  ],
+                                  "query": [
+                                    {
+                                      "disabled": false,
+                                      "description": {
+                                        "content": " (This can only be one of 1h,1d)",
+                                        "type": "text/plain"
+                                      },
+                                      "key": "interval",
+                                      "value": "1d"
+                                    },
+                                    {
+                                      "disabled": false,
+                                      "description": {
+                                        "content": "RFC 3339, rounded down to the start of its hour (`1h`) or UTC day (`1d`); default `to` - 90 days (`1d`) or 83 days (`1h`).",
+                                        "type": "text/plain"
+                                      },
+                                      "key": "from",
+                                      "value": "<dateTime>"
+                                    },
+                                    {
+                                      "disabled": false,
+                                      "description": {
+                                        "content": "RFC 3339; default now.",
+                                        "type": "text/plain"
+                                      },
+                                      "key": "to",
+                                      "value": "<dateTime>"
+                                    },
+                                    {
+                                      "disabled": false,
+                                      "description": {
+                                        "content": "Duration (`30d`, `72h`); sets from = to - window. Exclusive with `from`.",
+                                        "type": "text/plain"
+                                      },
+                                      "key": "window",
+                                      "value": "<string>"
+                                    }
+                                  ],
+                                  "variable": [
+                                    {
+                                      "disabled": false,
+                                      "description": {
+                                        "content": "(Required) Pool contract C-strkey.",
+                                        "type": "text/plain"
+                                      },
+                                      "type": "any",
+                                      "value": "<string>",
+                                      "key": "pool"
+                                    }
+                                  ]
+                                },
+                                "header": [
+                                  {
+                                    "key": "Accept",
+                                    "value": "application/problem+json"
+                                  }
+                                ],
+                                "method": "GET",
+                                "body": {}
+                              },
+                              "status": "Not Found",
+                              "code": 404,
+                              "header": [
+                                {
+                                  "key": "Content-Type",
+                                  "value": "application/problem+json"
+                                }
+                              ],
+                              "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\",\n  \"monthly_quota\": \"<long>\",\n  \"month_to_date\": \"<long>\",\n  \"substance\": {\n    \"base\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"window_seconds\": \"<long>\",\n    \"measured_at\": \"<dateTime>\",\n    \"volume_usd\": \"<string>\",\n    \"buckets\": \"<long>\",\n    \"valued_buckets\": \"<long>\",\n    \"span_seconds\": \"<long>\",\n    \"floor\": {\n      \"min_volume_usd\": \"<string>\",\n      \"min_buckets\": \"<long>\",\n      \"min_span_seconds\": \"<long>\"\n    },\n    \"failed\": \"buckets\",\n    \"window_end\": \"<dateTime>\"\n  },\n  \"reason\": \"substance\"\n}",
+                              "cookie": [],
+                              "_postman_previewlanguage": "json"
+                            },
+                            {
                               "name": "Server is degraded (dependency outage, rate limiter unavailable, startup, shutdown).",
                               "originalRequest": {
                                 "url": {
@@ -18142,7 +18325,7 @@
                                     {
                                       "disabled": false,
                                       "description": {
-                                        "content": "RFC 3339; default `to` - 90 days.",
+                                        "content": "RFC 3339, rounded down to the start of its hour (`1h`) or UTC day (`1d`); default `to` - 90 days (`1d`) or 83 days (`1h`).",
                                         "type": "text/plain"
                                       },
                                       "key": "from",
@@ -18340,7 +18523,7 @@
                               "value": "application/json"
                             }
                           ],
-                          "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"pool\": \"<string>\",\n    \"auctions\": [\n      {\n        \"auction_type\": \"<integer>\",\n        \"auction_type_label\": \"<string>\",\n        \"user\": \"<string>\",\n        \"start_ledger\": \"<long>\",\n        \"start_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"percent\": \"<integer,null>\",\n        \"block\": \"<integer,null>\",\n        \"bid\": {\n          \"key_0\": \"<string>\",\n          \"key_1\": \"<string>\",\n          \"key_2\": \"<string>\",\n          \"key_3\": \"<string>\"\n        },\n        \"lot\": {\n          \"key_0\": \"<string>\",\n          \"key_1\": \"<string>\"\n        },\n        \"fills\": [\n          {\n            \"filler\": \"<string>\",\n            \"fill_percent\": \"<string>\",\n            \"ledger\": \"<long>\",\n            \"time\": \"<dateTime>\",\n            \"tx_hash\": \"<string>\"\n          },\n          {\n            \"filler\": \"<string>\",\n            \"fill_percent\": \"<string>\",\n            \"ledger\": \"<long>\",\n            \"time\": \"<dateTime>\",\n            \"tx_hash\": \"<string>\"\n          }\n        ],\n        \"deleted\": \"<boolean>\",\n        \"deleted_ledger\": \"<long>\",\n        \"deleted_time\": \"<dateTime>\"\n      },\n      {\n        \"auction_type\": \"<integer>\",\n        \"auction_type_label\": \"<string>\",\n        \"user\": \"<string>\",\n        \"start_ledger\": \"<long>\",\n        \"start_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"percent\": \"<integer,null>\",\n        \"block\": \"<integer,null>\",\n        \"bid\": {\n          \"key_0\": \"<string>\",\n          \"key_1\": \"<string>\",\n          \"key_2\": \"<string>\",\n          \"key_3\": \"<string>\"\n        },\n        \"lot\": {\n          \"key_0\": \"<string>\",\n          \"key_1\": \"<string>\"\n        },\n        \"fills\": [\n          {\n            \"filler\": \"<string>\",\n            \"fill_percent\": \"<string>\",\n            \"ledger\": \"<long>\",\n            \"time\": \"<dateTime>\",\n            \"tx_hash\": \"<string>\"\n          },\n          {\n            \"filler\": \"<string>\",\n            \"fill_percent\": \"<string>\",\n            \"ledger\": \"<long>\",\n            \"time\": \"<dateTime>\",\n            \"tx_hash\": \"<string>\"\n          }\n        ],\n        \"deleted\": \"<boolean>\",\n        \"deleted_ledger\": \"<long>\",\n        \"deleted_time\": \"<dateTime>\"\n      }\n    ]\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"proxy_deviation\": false,\n    \"unverified_ticker_collision\": false,\n    \"truncated\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"includes_unread\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false,\n    \"under_review\": false,\n    \"detectors_partial\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"under_review_reason\": \"<string>\",\n  \"pagination\": {\n    \"next\": \"<string>\"\n  }\n}",
+                          "body": "{\n  \"as_of\": \"<dateTime>\",\n  \"data\": {\n    \"pool\": \"<string>\",\n    \"auctions\": [\n      {\n        \"auction_type\": \"<integer>\",\n        \"auction_type_label\": \"<string>\",\n        \"user\": \"<string>\",\n        \"start_ledger\": \"<long>\",\n        \"start_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"percent\": \"<integer,null>\",\n        \"block\": \"<integer,null>\",\n        \"bid\": {\n          \"key_0\": \"<string>\",\n          \"key_1\": \"<string>\",\n          \"key_2\": \"<string>\"\n        },\n        \"lot\": {\n          \"key_0\": \"<string>\"\n        },\n        \"fills\": [\n          {\n            \"filler\": \"<string>\",\n            \"fill_percent\": \"<string>\",\n            \"ledger\": \"<long>\",\n            \"time\": \"<dateTime>\",\n            \"tx_hash\": \"<string>\"\n          },\n          {\n            \"filler\": \"<string>\",\n            \"fill_percent\": \"<string>\",\n            \"ledger\": \"<long>\",\n            \"time\": \"<dateTime>\",\n            \"tx_hash\": \"<string>\"\n          }\n        ],\n        \"deleted\": \"<boolean>\",\n        \"deleted_ledger\": \"<long>\",\n        \"deleted_time\": \"<dateTime>\"\n      },\n      {\n        \"auction_type\": \"<integer>\",\n        \"auction_type_label\": \"<string>\",\n        \"user\": \"<string>\",\n        \"start_ledger\": \"<long>\",\n        \"start_time\": \"<dateTime>\",\n        \"tx_hash\": \"<string>\",\n        \"percent\": \"<integer,null>\",\n        \"block\": \"<integer,null>\",\n        \"bid\": {\n          \"key_0\": \"<string>\",\n          \"key_1\": \"<string>\",\n          \"key_2\": \"<string>\",\n          \"key_3\": \"<string>\"\n        },\n        \"lot\": {\n          \"key_0\": \"<string>\",\n          \"key_1\": \"<string>\"\n        },\n        \"fills\": [\n          {\n            \"filler\": \"<string>\",\n            \"fill_percent\": \"<string>\",\n            \"ledger\": \"<long>\",\n            \"time\": \"<dateTime>\",\n            \"tx_hash\": \"<string>\"\n          },\n          {\n            \"filler\": \"<string>\",\n            \"fill_percent\": \"<string>\",\n            \"ledger\": \"<long>\",\n            \"time\": \"<dateTime>\",\n            \"tx_hash\": \"<string>\"\n          }\n        ],\n        \"deleted\": \"<boolean>\",\n        \"deleted_ledger\": \"<long>\",\n        \"deleted_time\": \"<dateTime>\"\n      }\n    ]\n  },\n  \"flags\": {\n    \"stale\": false,\n    \"reduced_redundancy\": false,\n    \"triangulated\": false,\n    \"divergence_warning\": false,\n    \"divergence_checked\": false,\n    \"frozen\": false,\n    \"frozen_checked\": false,\n    \"single_source\": false,\n    \"thin_market\": false,\n    \"diverged\": false,\n    \"rerouted\": false,\n    \"pivot_unverified\": false,\n    \"proxy_deviation\": false,\n    \"unverified_ticker_collision\": false,\n    \"truncated\": false,\n    \"filters_ignored\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"includes_unread\": [\n      \"<string>\",\n      \"<string>\"\n    ],\n    \"outside_coverage\": false,\n    \"under_review\": false,\n    \"detectors_partial\": false\n  },\n  \"coverage_from\": \"<dateTime>\",\n  \"sources\": [\n    \"<string>\",\n    \"<string>\"\n  ],\n  \"under_review_reason\": \"<string>\",\n  \"pagination\": {\n    \"next\": \"<string>\"\n  }\n}",
                           "cookie": [],
                           "_postman_previewlanguage": "json"
                         },

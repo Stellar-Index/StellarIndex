@@ -23,9 +23,11 @@ var _ lendingHistoryReader = (*clickhouse.ExplorerReader)(nil)
 
 const (
 	// lendingHistoryMaxPoints caps one series; a request past it is a 400, never a truncated series.
-	lendingHistoryMaxPoints       = 2000
-	lendingHistoryDefaultWindow   = 90 * 24 * time.Hour
-	lendingHistoryMaxHourlyWindow = 90 * 24 * time.Hour
+	lendingHistoryMaxPoints = 2000
+	// The widest windows leave room within the cap for the partial bucket at each end: whole days of hours (83), and days.
+	lendingHistoryMaxHourlyWindow    = lendingHistoryMaxPoints / 24 * 24 * time.Hour
+	lendingHistoryMaxDailyWindow     = (lendingHistoryMaxPoints - 2) * 24 * time.Hour
+	lendingHistoryDefaultDailyWindow = 90 * 24 * time.Hour
 	// lendingHistoryLagLedgers is how far the history may trail the lake tip before it is flagged stale.
 	lendingHistoryLagLedgers = 1000
 )
@@ -76,6 +78,8 @@ type LendingReserveHistoryPoint struct {
 	CollateralFactor *string  `json:"collateral_factor"`
 	LiabilityFactor  *string  `json:"liability_factor"`
 	SupplyCap        *string  `json:"supply_cap"`
+	// ConfigUncertain: the reserve config or pool instance changed later in this state's hour; what depends on it is null.
+	ConfigUncertain bool `json:"config_uncertain"`
 }
 
 // LendingBackstopHistoryView is the GET /v1/lending/pools/{pool}/backstop/history body.
@@ -110,7 +114,8 @@ type LendingBackstopHistoryPoint struct {
 	QueuedPct    *float64 `json:"queued_pct"`
 }
 
-// parseLendingHistoryQuery reads interval (1h|1d, default 1d) and from/to (default the last 90 days).
+// parseLendingHistoryQuery reads interval (1h|1d, default 1d) and from/to (default the last 90 days, 83 at 1h), with from
+// rounded down to its bucket.
 func parseLendingHistoryQuery(w http.ResponseWriter, r *http.Request) (clickhouse.LendingHistoryQuery, string, bool) {
 	interval := r.URL.Query().Get("interval")
 	if interval == "" {
@@ -125,15 +130,22 @@ func parseLendingHistoryQuery(w http.ResponseWriter, r *http.Request) (clickhous
 	if !ok {
 		return clickhouse.LendingHistoryQuery{}, "", false
 	}
-	if r.URL.Query().Get("from") == "" && r.URL.Query().Get("window") == "" {
-		from = to.Add(-lendingHistoryDefaultWindow)
+	daily := interval == "1d"
+	maxWindow, defWindow := lendingHistoryMaxHourlyWindow, lendingHistoryMaxHourlyWindow
+	if daily {
+		maxWindow, defWindow = lendingHistoryMaxDailyWindow, lendingHistoryDefaultDailyWindow
 	}
-	if interval == "1h" && to.Sub(from) > lendingHistoryMaxHourlyWindow {
+	if r.URL.Query().Get("from") == "" && r.URL.Query().Get("window") == "" {
+		from = to.Add(-defWindow)
+	}
+	if to.Sub(from) > maxWindow {
 		writeProblem(w, r, "https://api.stellarindex.io/errors/invalid-window",
-			"Window too wide for interval=1h", http.StatusBadRequest, "interval=1h allows at most a 90-day window; use interval=1d")
+			"Window too wide for interval="+interval, http.StatusBadRequest,
+			"interval="+interval+" allows at most a "+strconv.Itoa(int(maxWindow/(24*time.Hour)))+"-day window")
 		return clickhouse.LendingHistoryQuery{}, "", false
 	}
-	return clickhouse.LendingHistoryQuery{From: from, To: to, Daily: interval == "1d", MaxPoints: lendingHistoryMaxPoints}, interval, true
+	q := clickhouse.LendingHistoryQuery{From: from, To: to, Daily: daily, MaxPoints: lendingHistoryMaxPoints}
+	return q.Aligned(), interval, true
 }
 
 // lendingHistoryReaderFor returns the history reader, having written the 503 when this deployment has none.
@@ -159,6 +171,8 @@ func (s *Server) writeLendingHistoryError(ctx context.Context, w http.ResponseWr
 	switch {
 	case errors.Is(err, clickhouse.ErrLendingHistoryNotReady):
 		writeLendingHistoryNotReady(w, r)
+	case errors.Is(err, clickhouse.ErrLendingReserveNotFound):
+		writeLendingHistoryNotFound(w, r, "nothing is recorded for this reserve asset in this pool")
 	case errors.Is(err, clickhouse.ErrLendingHistoryTooManyPoints):
 		writeProblem(w, r, "https://api.stellarindex.io/errors/invalid-window",
 			"Too many points", http.StatusBadRequest,
@@ -166,6 +180,29 @@ func (s *Server) writeLendingHistoryError(ctx context.Context, w http.ResponseWr
 	default:
 		s.writeLendingLookupError(ctx, w, r, stage, pool, err)
 	}
+}
+
+func writeLendingHistoryNotFound(w http.ResponseWriter, r *http.Request, detail string) {
+	writeProblem(w, r, "https://api.stellarindex.io/errors/not-found", "Not found", http.StatusNotFound, detail)
+}
+
+// lendingHistoryLineage is the pool's protocol and backstop unavailable reason as the live backstop route resolves them,
+// having written the 404 for a pool no lending source knows, or the 503 when this deployment has no lending reader.
+func (s *Server) lendingHistoryLineage(ctx context.Context, w http.ResponseWriter, r *http.Request, pool string) (protocol, reason string, ok bool) {
+	if s.Lending == nil {
+		writeLendingHistoryNotReady(w, r)
+		return "", "", false
+	}
+	protocol, reason, err := s.backstopLineage(ctx, pool)
+	if err != nil {
+		s.writeLendingLookupError(ctx, w, r, "lending history lineage", pool, err)
+		return "", "", false
+	}
+	if reason == backstopReasonUnknown {
+		writeLendingHistoryNotFound(w, r, "no lending pool with this id is known")
+		return "", "", false
+	}
+	return protocol, reason, true
 }
 
 // lendingHistoryFlags is stale when the lake is, or the history trails the lake tip; degraded when a point was dropped.
@@ -186,8 +223,8 @@ func coverageView(c clickhouse.LendingHistoryCoverage, dropped int) lendingHisto
 	return v
 }
 
-// handleLendingReserveHistory serves GET /v1/lending/pools/{pool}/reserves/{asset}/history: the reserve's state at each
-// bucket in which it changed, decoded as the live reserves endpoint decodes it; clients carry a point forward.
+// handleLendingReserveHistory serves GET /v1/lending/pools/{pool}/reserves/{asset}/history: the reserve's on-chain state at
+// each bucket in which it changed, with the live reserves endpoint's rate model; clients carry a point forward.
 func (s *Server) handleLendingReserveHistory(w http.ResponseWriter, r *http.Request) {
 	pool, asset := r.PathValue("pool"), r.PathValue("asset")
 	if !canonical.IsContractID(pool) {
@@ -210,6 +247,9 @@ func (s *Server) handleLendingReserveHistory(w http.ResponseWriter, r *http.Requ
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), maxHandlerBudget)
 	defer cancel()
+	if _, _, ok := s.lendingHistoryLineage(ctx, w, r, pool); !ok {
+		return
+	}
 	h, err := hr.LendingReserveHistory(ctx, pool, asset, q)
 	if err != nil {
 		s.writeLendingHistoryError(ctx, w, r, "LendingReserveHistory", pool, err)
@@ -259,9 +299,12 @@ func reserveHistoryView(pool, asset, interval string, q clickhouse.LendingHistor
 	return v
 }
 
-// reserveHistoryPoint maps a point through reserveStateView, the live endpoint's own mapping, so the figures match it.
+// reserveHistoryPoint maps a point through reserveStateView, the live endpoint's own wire mapping.
 func reserveHistoryPoint(p clickhouse.LendingReservePoint) LendingReserveHistoryPoint {
-	out := LendingReserveHistoryPoint{T: WireTime(p.CloseTime), StateLedger: p.StateLedger, Removed: p.Removed}
+	out := LendingReserveHistoryPoint{
+		T: WireTime(p.CloseTime), StateLedger: p.StateLedger, Removed: p.Removed,
+		ConfigUncertain: p.ConfigUncertain || p.PoolConfigUncertain,
+	}
 	if p.ConfigLedger != 0 {
 		cl := p.ConfigLedger
 		out.ConfigLedger = &cl
@@ -275,6 +318,9 @@ func reserveHistoryPoint(p clickhouse.LendingReservePoint) LendingReserveHistory
 	out.BRate, out.DRate = bigString(p.State.Data.BRate), bigString(p.State.Data.DRate)
 	out.IRMod, out.BackstopCredit = rv.IRMod, rv.BackstopCredit
 	out.BorrowAPR, out.SupplyAPR = rv.BorrowAPR, rv.SupplyAPR
+	if p.PoolConfigUncertain {
+		out.SupplyAPR = nil
+	}
 	if c := rv.Config; c != nil {
 		out.CollateralFactor, out.LiabilityFactor, out.SupplyCap = &c.CollateralFactor, &c.LiabilityFactor, c.SupplyCap
 	}
@@ -282,7 +328,7 @@ func reserveHistoryPoint(p clickhouse.LendingReservePoint) LendingReserveHistory
 }
 
 // handleLendingBackstopHistory serves GET /v1/lending/pools/{pool}/backstop/history: each tier's PoolBalance at each bucket in
-// which it changed. Blend V1 and unknown-lineage pools get the live backstop endpoint's unavailable shape.
+// which it changed. A Blend V1 pool gets the live backstop endpoint's unavailable shape; an unknown pool is a 404.
 func (s *Server) handleLendingBackstopHistory(w http.ResponseWriter, r *http.Request) {
 	pool := r.PathValue("pool")
 	if !canonical.IsContractID(pool) {
@@ -302,16 +348,10 @@ func (s *Server) handleLendingBackstopHistory(w http.ResponseWriter, r *http.Req
 		Pool: pool, Interval: interval, From: WireTime(q.From.UTC()), To: WireTime(q.To.UTC()),
 		Tiers: []LendingBackstopHistoryTier{},
 	}
-	if s.Lending == nil {
-		view.UnavailableReason = strRef(backstopReasonUnknown)
-		writeJSON(w, view, Flags{})
-		return
-	}
 	ctx, cancel := context.WithTimeout(r.Context(), maxHandlerBudget)
 	defer cancel()
-	protocol, reason, err := s.backstopLineage(ctx, pool)
-	if err != nil {
-		s.writeLendingLookupError(ctx, w, r, "lending backstop lineage", pool, err)
+	protocol, reason, ok := s.lendingHistoryLineage(ctx, w, r, pool)
+	if !ok {
 		return
 	}
 	view.Protocol = nonEmptyPtr(protocol)
