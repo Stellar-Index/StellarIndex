@@ -147,8 +147,8 @@ ch "SELECT version(), uptime() FORMAT TabSeparatedWithNames" > "$work/server.tsv
 
 # ─── 3. the cursor state (ADR-0043 §2.1's second half) ──────────────
 # ch-full-backfill.sh banks a window as done ONLY on ch-backfill exit 0 and
-# never revisits it, so this file IS the record of what was backfilled; losing
-# it means re-walking 60M ledgers.
+# skips it afterwards while the lake still holds it, so this file IS the record
+# of what was backfilled; losing it means re-walking 60M ledgers.
 if [[ -r "$BACKFILL_STATE" ]]; then
   cp "$BACKFILL_STATE" "$work/ch-backfill-done-windows.txt"
 else

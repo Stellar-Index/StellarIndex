@@ -46,7 +46,7 @@ The other two exprs ARE guarded by `running == 1` so a cleanly finished job (fro
 
 1. Kill a hung process: `kill -QUIT` first, then stop it, BY SCOPE under the heavy-job wrapper ([Stopping a wrapped job](#stopping-a-wrapped-job)).
 2. Re-run the same window. Backfills are idempotent (`ReplacingMergeTree`, `ON CONFLICT`); `ch-backfill` and `backfill` fail closed on a short walk (`backfillCoverage`).
-3. If the driver was `scripts/ops/ch-full-backfill.sh`, its resume state file appends a window only on exit 0, so an interrupted window is retried.
+3. If the driver was `scripts/ops/ch-full-backfill.sh`, its resume state file appends a window, with its end, only on exit 0, so an interrupted window is retried. A recorded window is skipped only while the lake still holds every ledger in it.
 4. Confirm with `stellarindex-ops verify-contiguity` / `compute-completeness` over the range.
 
 ## Stopping a wrapped job

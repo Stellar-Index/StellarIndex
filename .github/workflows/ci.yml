@@ -996,6 +996,11 @@ jobs:
         # window backfilled once, the seed/rebuild chain gated on a complete
         # lake, and a failed or killed run resuming without redoing work.
         run: bash scripts/ops/rederive-from-test.sh
+      - name: backfill window-state tests
+        # Drives ch-full-backfill.sh and ch-supply-flows-seed.sh with a fake
+        # ops binary and clickhouse-client: a later TO refills the window it
+        # lengthened, and a state file that outlived the lake skips nothing.
+        run: bash scripts/ops/ch-backfill-window-state-test.sh
       - name: psql-dsn wrapper tests
         # Root jobs hand psql its DSN through this wrapper so the password is
         # never on a command line; a fake psql shows what it was given.

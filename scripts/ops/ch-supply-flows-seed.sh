@@ -11,7 +11,9 @@
 # not a clean [2,X] prefix. Windowing bounds each read well under the timeout.
 # Idempotent (supply_flows ReplacingMergeTree dedups by event identity, so re-runs
 # and dup-partition reads with -final=false are safe) and resumable via a
-# done-windows file.
+# done-windows file. A window is skipped only when its recorded end reaches the
+# window's end now and supply_flows still holds rows in it; a recorded window
+# with no rows (lost, or genuinely empty and cheap) is seeded again.
 set -uo pipefail
 # Read a systemd EnvironmentFile VERBATIM — never `.`/source it. Its
 # values are unquoted (that is what systemd wants), so the shell would
@@ -56,16 +58,33 @@ if [ -z "${TO:-}" ]; then echo "$(date -u) could not resolve TO" >&2; exit 1; fi
 mkdir -p "$(dirname "$STATE")"; touch "$STATE"
 echo "$(date -u) ch-supply-flows-seed: [$FROM,$TO] window=$WINDOW state=$STATE"
 
+# window_recorded LO HI: $STATE holds LO with an end at or past HI. A line is
+# "LO HI". A bare "LO" from an older run names no end, so it counts only for a
+# full-width window whose successor is recorded too: that proves it ran to HI.
+window_recorded() {
+  awk -v lo="$1" -v hi="$2" -v nxt="$(($1 + WINDOW))" '
+    $1 == lo && NF >= 2 && $2 + 0 >= hi + 0 { ok = 1 }
+    $1 == lo && NF == 1 { bare = 1 }
+    $1 == nxt { succ = 1 }
+    END { exit !(ok || (bare && succ && hi + 0 == nxt - 1)) }' "$STATE"
+}
+
 w=$FROM
 rc=0
 while [ "$w" -le "$TO" ]; do
   end=$((w + WINDOW - 1)); [ "$end" -gt "$TO" ] && end=$TO
-  if grep -qx "$w" "$STATE"; then
-    w=$((end + 1)); continue
+  if window_recorded "$w" "$end"; then
+    if ! have=$(clickhouse-client --port "$CH_PORT" -q "SELECT count() FROM stellar.supply_flows WHERE ledger_seq BETWEEN $w AND $end") ||
+      ! [[ "$have" =~ ^[0-9]+$ ]]; then
+      echo "$(date -u) cannot read supply_flows to confirm [$w,$end]" >&2; rc=1; break
+    fi
+    if [ "$have" -gt 0 ]; then
+      w=$((end + 1)); continue
+    fi
   fi
   echo "$(date -u) seed [$w,$end]"
   if "$OPS" ch-supply -config "$CFG" -from "$w" -to "$end" -seed-flows -write -final=false >/dev/null; then
-    echo "$w" >> "$STATE"
+    echo "$w $end" >> "$STATE"
   else
     echo "$(date -u) FAILED [$w,$end]" >&2; rc=1; break
   fi

@@ -45,7 +45,7 @@ Schedule: `restore-drill.timer` (repo1, first Saturday of the month, 04:00 UTC) 
 | ----- | ---------------- | ------- |
 | Postgres (served tier) | `pgbackrest restore` into a scratch datadir, `scripts/ops/restore-drill.sh` phases 1-3 | `runbooks/infra.md#stellarindex_timescale_backup_none_24h` |
 | ClickHouse **schema + state** | replay `schema.sql` from the daily §2.1 snapshot, then re-derive the data | `runbooks/ch-schema-restore.md` |
-| ClickHouse **data** | `ch-full-backfill.sh` against `galexie-archive`, bounded by `ch-backfill-done-windows.txt` from the same snapshot | `runbooks/ch-schema-restore.md` §"Restore path" |
+| ClickHouse **data** | `ch-full-backfill.sh` against `galexie-archive`, with `ch-backfill-done-windows.txt` from the same snapshot; a recorded window is skipped only if the lake holds all of it, so an empty lake is walked in full | `runbooks/ch-schema-restore.md` §"Restore path" |
 
 Schema comes first and from the daily snapshot (`scripts/ops/ch-schema-snapshot.sh`, ADR-0043 §2.1), not from
 `deploy/clickhouse/tier1_schema.sql` (founding DDL, outgrown by indexes, MVs and compression policies).
