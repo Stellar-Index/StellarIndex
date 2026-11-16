@@ -19,6 +19,7 @@ import (
 const seedIntraLedgerSeq = uint32(0xFFFFFFFF) // math.MaxUint32
 
 // SnapshotEntryRow builds a ledger_entry_changes row from a live snapshot entry using the indexer's own helpers; ok=false on a marshal error (skip the entry, never abort the backfill).
+// closeTime must be the close time of the entry's last-modified ledger, never the time of the run: readers serve it as the entry's date.
 func SnapshotEntryRow(post *xdr.LedgerEntry, closeTime time.Time) (LedgerEntryChangeRow, bool) {
 	key, err := post.LedgerKey()
 	if err != nil {
