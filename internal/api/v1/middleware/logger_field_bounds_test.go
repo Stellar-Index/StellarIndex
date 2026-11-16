@@ -78,3 +78,21 @@ func TestLoggerRedactsAKeySecretInThePath(t *testing.T) {
 		t.Errorf("access log lost the route: %s", buf.String())
 	}
 }
+
+func TestRequestInstanceRedactsAKeySecret(t *testing.T) {
+	const secret = "sip_0123456789abcdef0123456789abcdef"
+	for target, want := range map[string]string{
+		"/v1/account/keys/" + secret:                     "/v1/account/keys/sip_[redacted]",
+		"/v1/account/keys/sip%5F" + secret[4:]:           "/v1/account/keys/sip_[redacted]",
+		"/v1/admin/keys/" + secret + "?identifier=a%3Ab": "/v1/admin/keys/sip_[redacted]?identifier=a%3Ab",
+		"/v1/assets/USDC%2FG?limit=5":                    "/v1/assets/USDC%2FG?limit=5",
+	} {
+		r := httptest.NewRequest(http.MethodDelete, target, nil)
+		if got := RequestInstance(r); got != want {
+			t.Errorf("RequestInstance(%s) = %q, want %q", target, got, want)
+		}
+		if got := RedactedPath(r); strings.Contains(got, secret[8:]) {
+			t.Errorf("RedactedPath(%s) = %q carries the key", target, got)
+		}
+	}
+}

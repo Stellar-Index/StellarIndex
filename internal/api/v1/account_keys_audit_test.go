@@ -130,6 +130,11 @@ func TestKeyRevoke_RefusesAPlaintextKeyAsTheID(t *testing.T) {
 	}{
 		"self-service": {subject: auth.Subject{Identifier: "owner-42", Tier: auth.TierAPIKey, KeyID: "kid_owner"}, path: "/v1/account/keys/" + secret},
 		"operator":     {subject: operatorSelfSubject(), path: "/v1/admin/keys/" + secret + "?identifier=signup-victim"},
+		// The escaped spelling decodes to the same path value and must not slip past the body's redaction.
+		"self-service, percent-encoded": {
+			subject: auth.Subject{Identifier: "owner-42", Tier: auth.TierAPIKey, KeyID: "kid_owner"},
+			path:    "/v1/account/keys/sip%5F" + secret[4:],
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			store := &fakeAccountStore{}
