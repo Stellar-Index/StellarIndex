@@ -84,8 +84,8 @@ const (
 // PoolConfig is the pool-wide config (instance storage, Symbol "Config"); BstopRate is the backstop's cut of accrued debt interest (7 decimals), needed for supply APR.
 type PoolConfig struct {
 	Oracle        string
-	MinCollateral *big.Int
-	BstopRate     uint32 // backstop take rate, 7 decimals
+	MinCollateral *big.Int // nil when the config has no min_collateral (V2 added it)
+	BstopRate     uint32   // backstop take rate, 7 decimals
 	Status        uint32
 	MaxPositions  uint32
 }
@@ -116,9 +116,9 @@ func ParseReserveConfigMetadata(b []byte) (ReserveConfig, error) {
 	}
 	var supplyCap *big.Int
 	if m.SupplyCap != nil {
-		var ok bool
-		if supplyCap, ok = new(big.Int).SetString(*m.SupplyCap, 10); !ok {
-			supplyCap = big.NewInt(0)
+		// Unparseable reads as unknown (nil), never as a 0 cap.
+		if c, ok := new(big.Int).SetString(*m.SupplyCap, 10); ok {
+			supplyCap = c
 		}
 	}
 	enabled := m.Enabled == nil || *m.Enabled
@@ -208,7 +208,7 @@ func DecodeReserveConfig(v scval.ScVal) (ReserveConfig, error) {
 	return rc, nil
 }
 
-// DecodePoolConfig decodes a PoolConfig ScVal (instance storage, Symbol "Config").
+// DecodePoolConfig decodes a PoolConfig ScVal (instance storage, Symbol "Config"); min_collateral is optional so a V1 config decodes.
 func DecodePoolConfig(v scval.ScVal) (PoolConfig, error) {
 	m, err := scval.AsMap(v)
 	if err != nil {
@@ -222,8 +222,10 @@ func DecodePoolConfig(v scval.ScVal) (PoolConfig, error) {
 	if pc.Oracle, err = scval.AsAddressStrkey(oracleV); err != nil {
 		return PoolConfig{}, fmt.Errorf("blend: pool config oracle: %w", err)
 	}
-	if pc.MinCollateral, err = i128Field(m, "min_collateral"); err != nil {
-		return PoolConfig{}, err
+	if _, ok := scval.MapField(m, "min_collateral"); ok {
+		if pc.MinCollateral, err = i128Field(m, "min_collateral"); err != nil {
+			return PoolConfig{}, err
+		}
 	}
 	if pc.BstopRate, err = u32Field(m, "bstop_rate"); err != nil {
 		return PoolConfig{}, err

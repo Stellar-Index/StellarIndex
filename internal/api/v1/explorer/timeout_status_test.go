@@ -88,8 +88,8 @@ func (r *timeoutReader) AccountMovements(context.Context, string, int, clickhous
 	return nil, context.DeadlineExceeded
 }
 
-func (r *timeoutReader) BlendPoolReserves(context.Context, string, blend.PoolVersion, []string, map[string]blend.ReserveConfig) ([]clickhouse.BlendReserveState, error) {
-	return nil, context.DeadlineExceeded
+func (r *timeoutReader) BlendPoolReserves(context.Context, string, blend.PoolVersion, []string, map[string]blend.ReserveConfig) (clickhouse.BlendPoolState, error) {
+	return clickhouse.BlendPoolState{}, context.DeadlineExceeded
 }
 
 // problemRecord is the problem+json a handler asked WriteProblem to emit.

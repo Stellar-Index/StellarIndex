@@ -41,5 +41,8 @@ func TestLendingPoolReserves_StalePriceMarksTheResponseStale(t *testing.T) {
 		if strOrNil(body.Data.TVLUSD) != "6.00" || body.Flags.Stale != stale {
 			t.Errorf("%s: tvl=%s flags.stale=%v, want 6.00 and stale=%v", name, strOrNil(body.Data.TVLUSD), body.Flags.Stale, stale)
 		}
+		if r := body.Data.Reserves; len(r) != 1 || r[0].PriceUSD == nil || r[0].PriceStale != stale {
+			t.Errorf("%s: reserves = %+v, want one priced reserve with price_stale=%v", name, r, stale)
+		}
 	}
 }

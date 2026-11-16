@@ -7,6 +7,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
 )
@@ -19,6 +20,19 @@ type BlendReserveState struct {
 	DecimalsFound bool
 	Data          blend.ReserveData
 	Metrics       blend.ReserveMetrics
+	Config        *blend.ReserveConfig // nil when the reserve's config is not known
+}
+
+// BlendPoolState is a lending pool's current state: its instance config, read even when the pool has no reserve state, and its reserves.
+type BlendPoolState struct {
+	Instance *PoolInstance // nil when the instance entry is missing, undecodable or archived
+	Reserves []BlendReserveState
+}
+
+// PoolInstance is a lending pool's decoded instance storage: its PoolConfig and admin ("" when absent).
+type PoolInstance struct {
+	Config blend.PoolConfig
+	Admin  string
 }
 
 // blendReserveStateQuery is a batched PK-prefix probe of ledger_entries_current's (entry_type, key_xdr) key; do not fold the latest entry
@@ -32,19 +46,19 @@ const blendReserveStateQuery = `SELECT key_xdr, entry_xdr
 	SETTINGS max_threads = 4, max_memory_usage = 8000000000, optimize_move_to_prewhere_if_final = 0`
 
 // BlendPoolReserves reads a pool's CURRENT reserve state (ADR-0039) in one batched query; absence (no ResData, final removal, TTL-archived) means "unavailable", never zero.
-func (r *ExplorerReader) BlendPoolReserves(ctx context.Context, pool string, version blend.PoolVersion, assets []string, configs map[string]blend.ReserveConfig) ([]BlendReserveState, error) {
+func (r *ExplorerReader) BlendPoolReserves(ctx context.Context, pool string, version blend.PoolVersion, assets []string, configs map[string]blend.ReserveConfig) (BlendPoolState, error) {
 	// V1 and V2 ResData share field names but not rate scales (off by 10^3 if guessed).
 	if version != blend.PoolV1 && version != blend.PoolV2 {
 		if _, err := contractIDFromStrkey(pool); err != nil {
-			return nil, fmt.Errorf("clickhouse: blend pool id %q: %w", pool, err)
+			return BlendPoolState{}, fmt.Errorf("clickhouse: blend pool id %q: %w", pool, err)
 		}
-		return nil, fmt.Errorf("clickhouse: blend pool %s: unknown pool version %d", pool, version)
+		return BlendPoolState{}, fmt.Errorf("clickhouse: blend pool %s: unknown pool version %d", pool, version)
 	}
 	return r.poolReserves(ctx, pool, assets, configs, blendModel(version))
 }
 
 // BLNTPoolReserves is BlendPoolReserves for a BLNT V3 pool: the same storage layout, BLNT's supply rate.
-func (r *ExplorerReader) BLNTPoolReserves(ctx context.Context, pool string, assets []string, configs map[string]blnt.ReserveConfig) ([]BlendReserveState, error) {
+func (r *ExplorerReader) BLNTPoolReserves(ctx context.Context, pool string, assets []string, configs map[string]blnt.ReserveConfig) (BlendPoolState, error) {
 	return r.poolReserves(ctx, pool, assets, configs, reserveModel{decode: blnt.DecodeReserveData, metrics: blnt.Metrics})
 }
 
@@ -61,52 +75,55 @@ func blendModel(version blend.PoolVersion) reserveModel {
 	}
 }
 
-func (r *ExplorerReader) poolReserves(ctx context.Context, pool string, assets []string, configs map[string]blend.ReserveConfig, model reserveModel) ([]BlendReserveState, error) {
+func (r *ExplorerReader) poolReserves(ctx context.Context, pool string, assets []string, configs map[string]blend.ReserveConfig, model reserveModel) (BlendPoolState, error) {
 	poolID, err := contractIDFromStrkey(pool)
 	if err != nil {
-		return nil, fmt.Errorf("clickhouse: lending pool id %q: %w", pool, err)
+		return BlendPoolState{}, fmt.Errorf("clickhouse: lending pool id %q: %w", pool, err)
 	}
-	keys, refByKey := blendReserveKeys(poolID, assets)
-	if len(keys) == 0 {
-		return nil, nil
+	keys, refByKey, err := blendReserveKeys(poolID, assets)
+	if err != nil {
+		return BlendPoolState{}, err
 	}
 
 	rows, err := r.conn.Query(ctx, blendReserveStateQuery, keys)
 	if err != nil {
-		return nil, fmt.Errorf("clickhouse: blend reserves lookup: %w", err)
+		return BlendPoolState{}, fmt.Errorf("clickhouse: blend reserves lookup: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	dataByAsset, bstop, matched, err := scanReserveParts(rows, refByKey, model.decode)
+	dataByAsset, inst, matched, err := scanReserveParts(rows, refByKey, model.decode)
 	if err != nil {
-		return nil, err
+		return BlendPoolState{}, err
 	}
 	// Drop archived entries before anything is reported: the projection keeps a lapsed
 	// entry's last value. Verdicts come from the shared SWR cache, so no per-request scan;
 	// only a cold cache waits, on the caller's deadline (handler maps it to a 503).
-	if err := dropArchivedBlendReserves(ctx, r.ttlVerdicts, dataByAsset, refByKey, matched); err != nil {
-		return nil, fmt.Errorf("clickhouse: blend reserves ttl liveness: %w", err)
+	instArchived, err := dropArchivedBlendReserves(ctx, r.ttlVerdicts, dataByAsset, refByKey, matched)
+	if err != nil {
+		return BlendPoolState{}, fmt.Errorf("clickhouse: blend reserves ttl liveness: %w", err)
 	}
-
-	return assembleReserveStates(pool, assets, dataByAsset, configs, bstop, model.metrics), nil
+	if instArchived {
+		inst = nil
+	}
+	return BlendPoolState{Instance: inst, Reserves: assembleReserveStates(pool, assets, dataByAsset, configs, inst, model.metrics)}, nil
 }
 
 // assembleBlendReserveStates builds states in the caller's asset order. Without the config: config-free metrics and placeholder decimals 7
-// (DecimalsFound=false). A nil bstop withholds APR (HasAPR=false) rather than serving the gross rate as the supply APR.
+// (DecimalsFound=false). A nil inst withholds APR (HasAPR=false) rather than serving the gross rate as the supply APR.
 func assembleBlendReserveStates(
 	pool string, assets []string,
 	dataByAsset map[string]*blend.ReserveData,
 	configs map[string]blend.ReserveConfig,
-	bstop *uint32,
+	inst *PoolInstance,
 ) []BlendReserveState {
-	return assembleReserveStates(pool, assets, dataByAsset, configs, bstop, blend.Metrics)
+	return assembleReserveStates(pool, assets, dataByAsset, configs, inst, blend.Metrics)
 }
 
 func assembleReserveStates(
 	pool string, assets []string,
 	dataByAsset map[string]*blend.ReserveData,
 	configs map[string]blend.ReserveConfig,
-	bstop *uint32,
+	inst *PoolInstance,
 	metricsFn func(blend.ReserveData, blend.ReserveConfig, uint32) blend.ReserveMetrics,
 ) []BlendReserveState {
 	out := make([]BlendReserveState, 0, len(assets))
@@ -118,11 +135,13 @@ func assembleReserveStates(
 		decimals := uint32(7)
 		decimalsFound := false
 		metrics := blend.BaseMetrics(*rd)
+		var config *blend.ReserveConfig
 		if cfg, ok := configs[asset]; ok {
 			decimals = cfg.Decimals
 			decimalsFound = true
-			if bstop != nil {
-				metrics = metricsFn(*rd, cfg, *bstop)
+			config = &cfg
+			if inst != nil {
+				metrics = metricsFn(*rd, cfg, inst.Config.BstopRate)
 			}
 		}
 		out = append(out, BlendReserveState{
@@ -132,6 +151,7 @@ func assembleReserveStates(
 			DecimalsFound: decimalsFound,
 			Data:          *rd,
 			Metrics:       metrics,
+			Config:        config,
 		})
 	}
 	return out
@@ -145,14 +165,16 @@ type keyRef struct {
 
 // blendReserveKeys builds the keys to fetch (instance entry plus ResData per asset)
 // and a key -> (asset, kind) index. ResConfig is not fetched.
-func blendReserveKeys(poolID xdr.ContractId, assets []string) ([]string, map[string]keyRef) {
+func blendReserveKeys(poolID xdr.ContractId, assets []string) ([]string, map[string]keyRef, error) {
 	refByKey := make(map[string]keyRef)
 	keys := make([]string, 0, len(assets)+2)
-	if instanceKeys, err := instanceKeyXDR(xdr.Hash(poolID)); err == nil {
-		for _, k := range instanceKeys {
-			refByKey[k] = keyRef{kind: "Instance"}
-			keys = append(keys, k)
-		}
+	instanceKeys, err := instanceKeyXDR(xdr.Hash(poolID))
+	if err != nil {
+		return nil, nil, fmt.Errorf("clickhouse: lending pool instance key: %w", err)
+	}
+	for _, k := range instanceKeys {
+		refByKey[k] = keyRef{kind: "Instance"}
+		keys = append(keys, k)
 	}
 	for _, asset := range assets {
 		assetID, err := contractIDFromStrkey(asset)
@@ -166,7 +188,7 @@ func blendReserveKeys(poolID xdr.ContractId, assets []string) ([]string, map[str
 		refByKey[k] = keyRef{asset: asset, kind: "ResData"}
 		keys = append(keys, k)
 	}
-	return keys, refByKey
+	return keys, refByKey, nil
 }
 
 type reserveRows interface {
@@ -175,10 +197,10 @@ type reserveRows interface {
 	Err() error
 }
 
-// scanReserveParts decodes rows into per-asset ResData and the backstop rate, and reports the keys that produced a row (matched). The
+// scanReserveParts decodes rows into per-asset ResData and the pool instance, and reports the keys that produced a row (matched). The
 // TTL filter is scoped to matched: judging keys the lake never returned could over-drop reserves we would have served.
 func scanReserveParts(rows reserveRows, refByKey map[string]keyRef, decode func(xdr.ScVal) (blend.ReserveData, error),
-) (dataByAsset map[string]*blend.ReserveData, bstop *uint32, matched []string, err error) {
+) (dataByAsset map[string]*blend.ReserveData, inst *PoolInstance, matched []string, err error) {
 	dataByAsset = make(map[string]*blend.ReserveData)
 	for rows.Next() {
 		var keyXDR, b64 string
@@ -195,8 +217,8 @@ func scanReserveParts(rows reserveRows, refByKey map[string]keyRef, decode func(
 		}
 		switch ref.kind {
 		case "Instance":
-			if rate, ok := backstopRateFromInstance(val); ok {
-				bstop = &rate
+			if pi, ok := poolInstanceFromStorage(val); ok {
+				inst = &pi
 			}
 			matched = append(matched, keyXDR)
 		case "ResData":
@@ -210,25 +232,25 @@ func scanReserveParts(rows reserveRows, refByKey map[string]keyRef, decode func(
 	if err := rows.Err(); err != nil {
 		return nil, nil, nil, fmt.Errorf("clickhouse: blend reserves rows: %w", err)
 	}
-	return dataByAsset, bstop, matched, nil
+	return dataByAsset, inst, matched, nil
 }
 
 // dropArchivedBlendReserves removes reserve state whose entry is TTL-archived: ledger_entries_current keeps the last value after Soroban
 // evicts, which would price phantom liquidity into tvl_usd. FAIL-OPEN: only a positively lapsed liveUntilLedgerSeq drops; TTLUnknown KEEPS
-// the reserve. An archived pool INSTANCE drops every reserve under it.
+// the reserve. An archived pool INSTANCE drops every reserve under it and is reported (instArchived).
 func dropArchivedBlendReserves(
 	ctx context.Context,
 	verdicts *ttlLivenessCache,
 	dataByAsset map[string]*blend.ReserveData,
 	refByKey map[string]keyRef,
 	matched []string,
-) error {
-	if len(dataByAsset) == 0 || len(matched) == 0 {
-		return nil
+) (instArchived bool, err error) {
+	if len(matched) == 0 {
+		return false, nil
 	}
 	liveness, err := verdicts.resolve(ctx, matched)
 	if err != nil {
-		return err
+		return false, err
 	}
 	for _, k := range matched {
 		if liveness[k] != TTLArchived {
@@ -237,12 +259,12 @@ func dropArchivedBlendReserves(
 		switch refByKey[k].kind {
 		case "Instance":
 			clear(dataByAsset)
-			return nil
+			return true, nil
 		case "ResData":
 			delete(dataByAsset, refByKey[k].asset)
 		}
 	}
-	return nil
+	return false, nil
 }
 
 // contractDataValue returns the ContractData value ScVal of a base64 LedgerEntry.
@@ -258,23 +280,33 @@ func contractDataValue(b64 string) (xdr.ScVal, bool) {
 	return cd.Val, true
 }
 
-// backstopRateFromInstance pulls PoolConfig.bstop_rate (7 decimals) from the instance storage map. ok=false on a missing Config: 0 is a
-// legal rate, so a miss must not read as 0 (that serves the gross rate as supply APR).
-func backstopRateFromInstance(val xdr.ScVal) (rate uint32, ok bool) {
+// poolInstanceFromStorage decodes the instance storage's "Config" PoolConfig and "Admin" address. ok=false on a missing or
+// undecodable Config: 0 is a legal backstop rate, so a miss must not read as 0 (that serves the gross rate as supply APR).
+func poolInstanceFromStorage(val xdr.ScVal) (PoolInstance, bool) {
 	inst, isInst := val.GetInstance()
 	if !isInst || inst.Storage == nil {
-		return 0, false
+		return PoolInstance{}, false
 	}
+	var out PoolInstance
+	found := false
 	for _, e := range *inst.Storage {
-		if e.Key.Type == xdr.ScValTypeScvSymbol && e.Key.Sym != nil && string(*e.Key.Sym) == "Config" {
+		if e.Key.Type != xdr.ScValTypeScvSymbol || e.Key.Sym == nil {
+			continue
+		}
+		switch string(*e.Key.Sym) {
+		case "Config":
 			pc, err := blend.DecodePoolConfig(e.Val)
 			if err != nil {
-				return 0, false
+				return PoolInstance{}, false
 			}
-			return pc.BstopRate, true
+			out.Config, found = pc, true
+		case "Admin":
+			if a, err := scval.AsAddressStrkey(e.Val); err == nil {
+				out.Admin = a
+			}
 		}
 	}
-	return 0, false
+	return out, found
 }
 
 // poolDataKeyXDR builds the base64 LedgerKey of a persistent PoolDataKey::<variant>

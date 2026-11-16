@@ -42,7 +42,7 @@ type stubBLNTExplorer struct {
 	bstop uint32
 }
 
-func (e *stubBLNTExplorer) BLNTPoolReserves(_ context.Context, pool string, assets []string, configs map[string]blnt.ReserveConfig) ([]clickhouse.BlendReserveState, error) {
+func (e *stubBLNTExplorer) BLNTPoolReserves(_ context.Context, pool string, assets []string, configs map[string]blnt.ReserveConfig) (clickhouse.BlendPoolState, error) {
 	var out []clickhouse.BlendReserveState
 	for _, a := range assets {
 		cfg, ok := configs[a]
@@ -56,7 +56,7 @@ func (e *stubBLNTExplorer) BLNTPoolReserves(_ context.Context, pool string, asse
 			Data: rd, Metrics: blnt.Metrics(rd, cfg, e.bstop),
 		})
 	}
-	return out, nil
+	return clickhouse.BlendPoolState{Reserves: out}, nil
 }
 
 func bigInt(t *testing.T, s string) *big.Int {

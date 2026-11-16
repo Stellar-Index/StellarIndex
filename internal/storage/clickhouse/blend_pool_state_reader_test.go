@@ -141,7 +141,10 @@ func TestBlendReserveKeys_CoversInstanceAndEveryResolvableAsset(t *testing.T) {
 		"not-a-contract-strkey", // skipped
 		"GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", // a G-address is not a contract: skipped
 	}
-	keys, refByKey := blendReserveKeys(mustContractID(t, blendTestPool), assets)
+	keys, refByKey, err := blendReserveKeys(mustContractID(t, blendTestPool), assets)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	want := []string{blendTestInstanceKeyPersistent, blendTestInstanceKeyTemporary, blendTestResDataKey}
 	if !reflect.DeepEqual(keys, want) {
@@ -166,10 +169,10 @@ func TestBlendReserveKeys_CoversInstanceAndEveryResolvableAsset(t *testing.T) {
 }
 
 // TestBlendReserveKeys_EmptyAssetListStillProbesTheInstance: an empty asset list is not an empty key list,
-// since the instance key is still built (the caller short-circuits only on an empty key list).
+// since the pool config is read from the instance whether or not the pool has reserves.
 func TestBlendReserveKeys_EmptyAssetListStillProbesTheInstance(t *testing.T) {
-	keys, _ := blendReserveKeys(mustContractID(t, blendTestPool), nil)
-	if len(keys) != 2 {
+	keys, _, err := blendReserveKeys(mustContractID(t, blendTestPool), nil)
+	if err != nil || len(keys) != 2 {
 		t.Fatalf("keys = %v, want the two instance-durability keys", keys)
 	}
 }
@@ -262,7 +265,7 @@ func TestScanBlendReserveParts_IgnoresUnrequestedKeys(t *testing.T) {
 		t.Errorf("unrequested key produced %v, want nothing", byAsset)
 	}
 	if bstop != nil {
-		t.Errorf("bstop = %d, want nil", *bstop)
+		t.Errorf("pool instance = %+v, want nil", *bstop)
 	}
 	// `matched` scopes the TTL-liveness filter. A key we did not ask about
 	// must not enter it: classifying it could only ever DROP reserves on the
@@ -365,7 +368,7 @@ func TestDropArchivedBlendReserves_DropsOnlyPositivelyArchived(t *testing.T) {
 		"resdata-key-b": TTLUnknown, // unresolved — must be KEPT
 		"instance-key":  TTLLive,
 	})
-	if err := dropArchivedBlendReserves(t.Context(), cache, data, refs, matched); err != nil {
+	if _, err := dropArchivedBlendReserves(t.Context(), cache, data, refs, matched); err != nil {
 		t.Fatalf("dropArchivedBlendReserves: %v", err)
 	}
 	if _, present := data["assetA"]; present {
@@ -386,8 +389,9 @@ func TestDropArchivedBlendReserves_ArchivedInstanceSinksThePool(t *testing.T) {
 		"resdata-key-a": TTLLive, // individually live, but the POOL is dead
 		"resdata-key-b": TTLLive,
 	})
-	if err := dropArchivedBlendReserves(t.Context(), cache, data, refs, matched); err != nil {
-		t.Fatalf("dropArchivedBlendReserves: %v", err)
+	archived, err := dropArchivedBlendReserves(t.Context(), cache, data, refs, matched)
+	if err != nil || !archived {
+		t.Fatalf("dropArchivedBlendReserves: archived=%v err=%v, want the instance reported archived", archived, err)
 	}
 	if len(data) != 0 {
 		t.Errorf("reserves %v survived an ARCHIVED pool instance — a dead pool's reserves are not current liquidity", data)
@@ -399,7 +403,7 @@ func TestDropArchivedBlendReserves_ArchivedInstanceSinksThePool(t *testing.T) {
 // silently blank every pool. Nil degrades to TTLUnknown, i.e. keep.
 func TestDropArchivedBlendReserves_NilCacheKeepsEverything(t *testing.T) {
 	data, refs, matched := blendDropFixture()
-	if err := dropArchivedBlendReserves(t.Context(), nil, data, refs, matched); err != nil {
+	if _, err := dropArchivedBlendReserves(t.Context(), nil, data, refs, matched); err != nil {
 		t.Fatalf("dropArchivedBlendReserves(nil cache): %v", err)
 	}
 	if len(data) != 2 {
@@ -407,34 +411,34 @@ func TestDropArchivedBlendReserves_NilCacheKeepsEverything(t *testing.T) {
 	}
 }
 
-// TestBackstopRateFromInstance_MissesReportNotOK — a miss is not a 0%
+// TestPoolInstanceFromStorage_MissesReportNotOK — a miss is not a 0%
 // backstop take: callers must withhold the APR, and the miss paths must not
 // panic on a non-instance ScVal or an instance with no Config entry.
-func TestBackstopRateFromInstance_MissesReportNotOK(t *testing.T) {
+func TestPoolInstanceFromStorage_MissesReportNotOK(t *testing.T) {
 	// Not an instance at all.
 	i := xdr.Int64(5)
-	if got, ok := backstopRateFromInstance(xdr.ScVal{Type: xdr.ScValTypeScvI64, I64: &i}); ok || got != 0 {
-		t.Errorf("non-instance ScVal gave (%d, %v), want (0, false)", got, ok)
+	if got, ok := poolInstanceFromStorage(xdr.ScVal{Type: xdr.ScValTypeScvI64, I64: &i}); ok || got != (PoolInstance{}) {
+		t.Errorf("non-instance ScVal gave (%+v, %v), want (zero, false)", got, ok)
 	}
 	// An instance with no storage map.
-	if got, ok := backstopRateFromInstance(xdr.ScVal{
+	if got, ok := poolInstanceFromStorage(xdr.ScVal{
 		Type:     xdr.ScValTypeScvContractInstance,
 		Instance: &xdr.ScContractInstance{Executable: xdr.ContractExecutable{Type: xdr.ContractExecutableTypeContractExecutableStellarAsset}},
-	}); ok || got != 0 {
-		t.Errorf("instance without storage gave (%d, %v), want (0, false)", got, ok)
+	}); ok || got != (PoolInstance{}) {
+		t.Errorf("instance without storage gave (%+v, %v), want (zero, false)", got, ok)
 	}
 	// An instance whose storage holds no "Config" key.
 	other := xdr.ScSymbol("Something")
 	v := xdr.Int64(1)
 	storage := xdr.ScMap{{Key: xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &other}, Val: xdr.ScVal{Type: xdr.ScValTypeScvI64, I64: &v}}}
-	if got, ok := backstopRateFromInstance(xdr.ScVal{
+	if got, ok := poolInstanceFromStorage(xdr.ScVal{
 		Type: xdr.ScValTypeScvContractInstance,
 		Instance: &xdr.ScContractInstance{
 			Executable: xdr.ContractExecutable{Type: xdr.ContractExecutableTypeContractExecutableStellarAsset},
 			Storage:    &storage,
 		},
-	}); ok || got != 0 {
-		t.Errorf("instance without a Config entry gave (%d, %v), want (0, false)", got, ok)
+	}); ok || got != (PoolInstance{}) {
+		t.Errorf("instance without a Config entry gave (%+v, %v), want (zero, false)", got, ok)
 	}
 }
 
@@ -481,9 +485,112 @@ func TestAssembleBlendReserveStates_MissingBackstopRateWithholdsAPR(t *testing.T
 		t.Errorf("decimals should still come from the reserve config, got %d found=%v", got[0].Decimals, got[0].DecimalsFound)
 	}
 
-	zero := uint32(0)
-	got = assembleBlendReserveStates(blendTestPool, assets, data, cfgs, &zero)
+	got = assembleBlendReserveStates(blendTestPool, assets, data, cfgs, &PoolInstance{})
 	if !got[0].Metrics.HasAPR {
 		t.Errorf("a known 0%% backstop rate must still serve APR")
+	}
+}
+
+// TestAssembleBlendReserveStates_CarriesConfig — the decoded config rides on its reserve and a reserve with no config carries nil.
+func TestAssembleBlendReserveStates_CarriesConfig(t *testing.T) {
+	one := func() *big.Int { return big.NewInt(1_000_000_000_000) }
+	rd := blend.ReserveData{
+		Version: blend.PoolV2, DRate: one(), BRate: one(), IRMod: big.NewInt(10_000_000),
+		BSupply: big.NewInt(100), DSupply: big.NewInt(50), BackstopCredit: big.NewInt(0),
+	}
+	const other = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+	data := map[string]*blend.ReserveData{blendTestAssetSAC: &rd, other: &rd}
+	cfgs := map[string]blend.ReserveConfig{blendTestAssetSAC: {Decimals: 6, CFactor: 9_000_000}}
+	inst := &PoolInstance{Config: blend.PoolConfig{BstopRate: 2_000_000, Status: 1}, Admin: blendTestPool}
+
+	got := assembleBlendReserveStates(blendTestPool, []string{blendTestAssetSAC, other}, data, cfgs, inst)
+	if len(got) != 2 || got[0].Config == nil || got[0].Config.CFactor != 9_000_000 || got[1].Config != nil {
+		t.Fatalf("states = %+v, want the first reserve's config and nil for the second", got)
+	}
+}
+
+// poolInstanceVal is a pool contract instance holding Admin and a Config map with cfg's entries.
+func poolInstanceVal(t *testing.T, cfg xdr.ScMap) xdr.ScVal {
+	t.Helper()
+	cfgPtr := &cfg
+	storage := xdr.ScMap{
+		{Key: testSym("Admin"), Val: testContractAddr(t, blendTestPool)},
+		{Key: testSym("Config"), Val: xdr.ScVal{Type: xdr.ScValTypeScvMap, Map: &cfgPtr}},
+	}
+	return xdr.ScVal{
+		Type: xdr.ScValTypeScvContractInstance,
+		Instance: &xdr.ScContractInstance{
+			Executable: xdr.ContractExecutable{Type: xdr.ContractExecutableTypeContractExecutableStellarAsset},
+			Storage:    &storage,
+		},
+	}
+}
+
+func testSym(s string) xdr.ScVal {
+	v := xdr.ScSymbol(s)
+	return xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &v}
+}
+
+func testU32(n uint32) xdr.ScVal {
+	v := xdr.Uint32(n)
+	return xdr.ScVal{Type: xdr.ScValTypeScvU32, U32: &v}
+}
+
+func testContractAddr(t *testing.T, c string) xdr.ScVal {
+	t.Helper()
+	id := mustContractID(t, c)
+	a := xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &id}
+	return xdr.ScVal{Type: xdr.ScValTypeScvAddress, Address: &a}
+}
+
+// v2PoolConfigMap is a V2 PoolConfig: min_collateral 2^64 + 5, status setup (6).
+func v2PoolConfigMap(t *testing.T) xdr.ScMap {
+	minCol := xdr.Int128Parts{Hi: 1, Lo: 5}
+	return xdr.ScMap{
+		{Key: testSym("bstop_rate"), Val: testU32(2_000_000)},
+		{Key: testSym("max_positions"), Val: testU32(8)},
+		{Key: testSym("min_collateral"), Val: xdr.ScVal{Type: xdr.ScValTypeScvI128, I128: &minCol}},
+		{Key: testSym("oracle"), Val: testContractAddr(t, blendTestAssetSAC)},
+		{Key: testSym("status"), Val: testU32(6)},
+	}
+}
+
+// TestPoolInstanceFromStorage_DecodesConfigAndAdmin — the whole PoolConfig and the admin come from one walk.
+func TestPoolInstanceFromStorage_DecodesConfigAndAdmin(t *testing.T) {
+	got, ok := poolInstanceFromStorage(poolInstanceVal(t, v2PoolConfigMap(t)))
+	if !ok || got.Admin != blendTestPool || got.Config.Oracle != blendTestAssetSAC || got.Config.BstopRate != 2_000_000 ||
+		got.Config.MaxPositions != 8 || got.Config.Status != 6 || got.Config.MinCollateral.String() != "18446744073709551621" {
+		t.Fatalf("instance = %+v (ok=%v)", got, ok)
+	}
+}
+
+// TestBlendPoolReserves_ServesInstanceWithoutReserves — a pool with no reserve state (none listed, or none in the lake) still
+// reports its instance config; a pool in setup status has exactly this shape.
+func TestBlendPoolReserves_ServesInstanceWithoutReserves(t *testing.T) {
+	pid := mustContractID(t, blendTestPool)
+	entry, err := xdr.MarshalBase64(xdr.LedgerEntry{Data: xdr.LedgerEntryData{
+		Type: xdr.LedgerEntryTypeContractData,
+		ContractData: &xdr.ContractDataEntry{
+			Contract:   xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &pid},
+			Key:        xdr.ScVal{Type: xdr.ScValTypeScvLedgerKeyContractInstance},
+			Durability: xdr.ContractDataDurabilityPersistent,
+			Val:        poolInstanceVal(t, v2PoolConfigMap(t)),
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, assets := range [][]string{nil, {blendTestAssetSAC}} {
+		conn := &stubConn{respond: func(string) (driver.Rows, error) {
+			return &stubRows{data: [][]any{{blendTestInstanceKeyPersistent, entry}}}, nil
+		}}
+		r := &ExplorerReader{conn: conn, ttlVerdicts: fixedTTLCache(nil)}
+		got, err := r.BlendPoolReserves(t.Context(), blendTestPool, blend.PoolV2, assets, nil)
+		if err != nil {
+			t.Fatalf("assets %v: %v", assets, err)
+		}
+		if len(conn.queries) != 1 || got.Instance == nil || got.Instance.Config.Status != 6 || len(got.Reserves) != 0 {
+			t.Errorf("assets %v: queries=%d state=%+v, want the instance and no reserves", assets, len(conn.queries), got)
+		}
 	}
 }
