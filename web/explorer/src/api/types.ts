@@ -1923,6 +1923,81 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/lending/pools/{pool}/backstop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Lending pool — current backstop balances.
+         * @description The pool's backstop as the backstop contract's storage holds it
+         *     now, read from the lake (not folded from events). Blend V2: one
+         *     unnamed tier (`tier: null`) from `PoolBalance(pool)`, plus the
+         *     backstop token from the backstop's instance. BLNT V3: three
+         *     loss tiers in waterfall order; `SecondLoss` is stored under the
+         *     pre-tier `PoolBalance(pool)` key and the others under
+         *     `TierPoolBalance{pool, tier}`, so no entry is a pool total and
+         *     none is served. A BLNT tier's token is not in these entries, so
+         *     `backstop_token` is null for BLNT.
+         *
+         *     `tokens` are backstop tokens held, `shares` the shares issued and
+         *     `queued_shares` the shares queued for withdrawal, as base-unit
+         *     decimal strings; `queued_pct` is `queued_shares / shares` as a
+         *     percentage. A tier whose entry is missing or archived serves
+         *     null amounts (unavailable, never zero). `take_rate` is the pool's
+         *     backstop take rate, a raw contract integer at `config_decimals`.
+         *     No USD values.
+         *
+         *     `available` is false, with `unavailable_reason`, for a Blend V1
+         *     pool (`blend_v1_unsupported`: its backstop storage keys are not
+         *     verified, so none is guessed), a pool of unknown lineage
+         *     (`pool_lineage_unknown`), or a pool whose instance or backstop
+         *     address the lake does not hold (`pool_instance_unavailable`).
+         */
+        get: operations["getLendingPoolBackstop"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/lending/pools/{pool}/auctions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Lending pool — auctions with their fills.
+         * @description A Blend or BLNT pool's auctions, newest first by start. Each
+         *     carries `auction_type` (0 user_liquidation, 1 bad_debt,
+         *     2 interest, 3 protocol_fee — BLNT only), the auctioned `user`,
+         *     `percent`, the starting `bid` and `lot` (asset C-strkey to
+         *     base-unit decimal string), its fills and whether it was deleted.
+         *
+         *     A fill or delete belongs to the latest auction of the same
+         *     (pool, auction_type, user) before it; an auction starts at the
+         *     next ledger, so a same-ledger fill or delete belongs to the
+         *     earlier one. `flags.degraded` means the fill read hit its cap and
+         *     the newest auctions may miss fills.
+         *
+         *     Pagination: pass `pagination.next` back as `cursor`;
+         *     `pagination` is omitted on the last page.
+         */
+        get: operations["listLendingPoolAuctions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/mev": {
         parameters: {
             query?: never;
@@ -6848,7 +6923,7 @@ export interface components {
             /**
              * @description lending_supply/lending_borrow: Blend money-market, independent
              *     supply-side and borrow-side legs of the same (pool, asset).
-             *     backstop_shares: Blend Backstop LP-share stake. stake: Phoenix
+             *     backstop_shares: Blend or BLNT Backstop share stake. stake: Phoenix
              *     per-pool LP-share bond. vault_shares: DeFindex vault df-token
              *     share. credit: sorocredit CDP-style credit position. gauge:
              *     Aquarius rewards-gauge staked position.
@@ -6940,6 +7015,27 @@ export interface components {
                 /** Format: date-time */
                 time?: string;
             };
+            /**
+             * @description BLNT backstop_shares only — the backstop loss tier the shares are in; absent elsewhere.
+             * @enum {string}
+             */
+            tier?: "FirstLoss" | "SecondLoss" | "ThirdLoss";
+            /**
+             * @description BLNT backstop_shares only — the shares queued for withdrawal,
+             *     oldest first, replayed from the account's queue, dequeue
+             *     (newest first) and withdraw (oldest first) events. They are
+             *     included in `amount`, which is every share the account owns
+             *     in that tier; `amount` is "" when the history cannot be
+             *     replayed consistently.
+             */
+            queued_withdrawals?: {
+                shares: string;
+                /**
+                 * Format: date-time
+                 * @description When the queued shares can be withdrawn.
+                 */
+                expiration: string;
+            }[];
             /**
              * @description event_derived: computed by this endpoint by summing the
              *     fold's own event log. stateful: read from a field the
@@ -17762,6 +17858,203 @@ export interface operations {
                                 applied?: boolean;
                                 config?: components["schemas"]["LendingReserveConfig"];
                                 pool_config?: components["schemas"]["LendingPoolConfig"];
+                            }[];
+                        };
+                        pagination?: components["schemas"]["Pagination"];
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getLendingPoolBackstop: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Pool contract C-strkey. */
+                pool: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Backstop balances. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "pool": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
+                     *         "protocol": "blend",
+                     *         "available": true,
+                     *         "backstop": "CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7",
+                     *         "backstop_token": "CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVGRVEAM",
+                     *         "take_rate": "2000000",
+                     *         "config_decimals": 7,
+                     *         "tiers": [
+                     *           {
+                     *             "tier": null,
+                     *             "tokens": "50000000000000",
+                     *             "shares": "45000000000000",
+                     *             "queued_shares": "9000000000000",
+                     *             "queued_pct": 20
+                     *           }
+                     *         ],
+                     *         "as_of_ledger": 63340102
+                     *       },
+                     *       "as_of": "2026-07-03T22:38:00.032774886Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: {
+                            pool: string;
+                            /** @enum {string|null} */
+                            protocol: "blend" | "blnt" | null;
+                            available: boolean;
+                            /** @enum {string} */
+                            unavailable_reason?: "blend_v1_unsupported" | "pool_lineage_unknown" | "pool_instance_unavailable";
+                            /** @description Backstop contract C-strkey, from the pool's instance storage. */
+                            backstop: string | null;
+                            /** @description Blend backstop token (instance `BToken`); null for BLNT and when unread. */
+                            backstop_token: string | null;
+                            /** @description Backstop take rate, raw contract integer at `config_decimals`. */
+                            take_rate: string | null;
+                            config_decimals: number;
+                            /**
+                             * Format: int64
+                             * @description Highest ledger the lake had captured at serve time.
+                             */
+                            as_of_ledger?: number;
+                            tiers: {
+                                /** @enum {string|null} */
+                                tier: "FirstLoss" | "SecondLoss" | "ThirdLoss" | null;
+                                tokens: string | null;
+                                shares: string | null;
+                                queued_shares: string | null;
+                                queued_pct: number | null;
+                            }[];
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    listLendingPoolAuctions: {
+        parameters: {
+            query?: {
+                /** @description Page size, 1..200 (default 50). */
+                limit?: number;
+                /** @description Opaque cursor from a prior `pagination.next`. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Pool contract C-strkey. */
+                pool: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Auctions, newest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "pool": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
+                     *         "auctions": [
+                     *           {
+                     *             "auction_type": 0,
+                     *             "auction_type_label": "user_liquidation",
+                     *             "user": "GDEA2WMOWYQ3T56A2PZH5QYYEQBAORW2AUUJYX4FFD5GDPESAICTFTAL",
+                     *             "start_ledger": 63340102,
+                     *             "start_time": "2026-07-03T22:38:00Z",
+                     *             "tx_hash": "4f1c7e0d9a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5",
+                     *             "percent": 60,
+                     *             "block": 63340103,
+                     *             "bid": {
+                     *               "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75": "1200000000"
+                     *             },
+                     *             "lot": {
+                     *               "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA": "9000000000"
+                     *             },
+                     *             "fills": [
+                     *               {
+                     *                 "filler": "GAVG3ODZ4SAVK2WJL3F3RT265RL7P6QNOMA6NL3XDAREKSX3OWWMXF4R",
+                     *                 "fill_percent": "100",
+                     *                 "ledger": 63340300,
+                     *                 "time": "2026-07-03T22:57:00Z",
+                     *                 "tx_hash": "9e8d7c6b5a49382716051f2e3d4c5b6a79881f2e3d4c5b6a79881f2e3d4c5b6a"
+                     *               }
+                     *             ],
+                     *             "deleted": false
+                     *           }
+                     *         ]
+                     *       },
+                     *       "as_of": "2026-07-03T22:58:00.032774886Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: {
+                            pool: string;
+                            auctions: {
+                                auction_type: number;
+                                /** @description user_liquidation, bad_debt, interest, protocol_fee; unknown_<n> otherwise. */
+                                auction_type_label: string;
+                                user: string;
+                                /** Format: int64 */
+                                start_ledger: number;
+                                /** Format: date-time */
+                                start_time: string;
+                                tx_hash: string;
+                                percent: number | null;
+                                /** @description Ledger the auction's pricing starts from. */
+                                block: number | null;
+                                bid: {
+                                    [key: string]: string;
+                                };
+                                lot: {
+                                    [key: string]: string;
+                                };
+                                fills: {
+                                    filler: string;
+                                    fill_percent: string;
+                                    /** Format: int64 */
+                                    ledger: number;
+                                    /** Format: date-time */
+                                    time: string;
+                                    tx_hash: string;
+                                }[];
+                                deleted: boolean;
+                                /** Format: int64 */
+                                deleted_ledger?: number;
+                                /** Format: date-time */
+                                deleted_time?: string;
                             }[];
                         };
                         pagination?: components["schemas"]["Pagination"];

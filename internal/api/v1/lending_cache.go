@@ -59,6 +59,14 @@ func (c *CachedLendingReader) BlendReserveConfigs(ctx context.Context, pool stri
 	return c.upstream.BlendReserveConfigs(ctx, pool)
 }
 
+// LendingAuctions is a pass-through; empty when the upstream has no auction history.
+func (c *CachedLendingReader) LendingAuctions(ctx context.Context, pool string, limit int, cur timescale.LendingConfigCursor) ([]timescale.LendingAuction, bool, error) {
+	if up, ok := c.upstream.(lendingAuctionReader); ok {
+		return up.LendingAuctions(ctx, pool, limit, cur)
+	}
+	return nil, false, nil
+}
+
 // LendingConfigHistory is a pass-through; empty when the upstream has no history.
 func (c *CachedLendingReader) LendingConfigHistory(ctx context.Context, pool string, limit int, cur timescale.LendingConfigCursor) ([]timescale.LendingConfigChange, error) {
 	if up, ok := c.upstream.(lendingConfigHistoryReader); ok {

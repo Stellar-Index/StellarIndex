@@ -37,6 +37,13 @@ type BLNTPositionsReader interface {
 
 var _ BLNTPositionsReader = (*timescale.Store)(nil)
 
+// BLNTBackstopReader is the optional BLNT backstop fold, per (pool, tier).
+type BLNTBackstopReader interface {
+	BLNTBackstopByUser(ctx context.Context, address string) ([]timescale.BLNTBackstopFold, error)
+}
+
+var _ BLNTBackstopReader = (*timescale.Store)(nil)
+
 // PoolTokensReader mirrors v1's ProtocolPoolTokensReader (a copy, since v1 imports explorer); nil degrades venue_label to absent and
 // never fails the endpoint.
 type PoolTokensReader interface {
@@ -100,6 +107,12 @@ type PositionLastActivity struct {
 	Time   string `json:"time"`
 }
 
+// QueuedWithdrawal is one queued backstop withdrawal: its shares and the time they can be withdrawn.
+type QueuedWithdrawal struct {
+	Shares     string `json:"shares"`
+	Expiration string `json:"expiration"`
+}
+
 // PositionEntry is one row in the wire response for GET /v1/accounts/{g_strkey}/positions.
 type PositionEntry struct {
 	Protocol        string   `json:"protocol"`
@@ -114,6 +127,10 @@ type PositionEntry struct {
 	Decimals     *int                 `json:"decimals,omitempty"`
 	LastActivity PositionLastActivity `json:"last_activity"`
 	Basis        string               `json:"basis"`
+	// Tier is the BLNT backstop loss tier (FirstLoss | SecondLoss | ThirdLoss); absent elsewhere.
+	Tier string `json:"tier,omitempty"`
+	// QueuedWithdrawals are a BLNT backstop position's shares queued for withdrawal, oldest first; they are part of Amount.
+	QueuedWithdrawals []QueuedWithdrawal `json:"queued_withdrawals,omitempty"`
 
 	// closed is this fold's own net-zero/closed verdict — never
 	// marshaled. Default include_closed=false drops these rows.
@@ -189,6 +206,9 @@ func (h *Handler) collectPositions(ctx context.Context, g string, resolve positi
 	}
 	if br, ok := h.Positions.(BLNTPositionsReader); ok {
 		folds = append(folds, func(c *positionsCoverage) []PositionEntry { return h.buildBLNTPositions(ctx, br, g, resolve, c) })
+	}
+	if bb, ok := h.Positions.(BLNTBackstopReader); ok {
+		folds = append(folds, func(c *positionsCoverage) []PositionEntry { return h.buildBLNTBackstopPositions(ctx, bb, g, c) })
 	}
 	cov.folds = len(folds)
 	slots := make([][]PositionEntry, len(folds))
@@ -516,6 +536,36 @@ func (h *Handler) buildBlendBackstopPositions(ctx context.Context, address strin
 			Basis:           BasisEventDerived,
 			closed:          isZeroDecimal(row.SharesNet),
 		})
+	}
+	return out
+}
+
+// buildBLNTBackstopPositions maps BLNT backstop folds to backstop_shares entries, one per (pool, tier). The tier's token is not
+// on the events, so assets is absent; amount is "" when the event history could not be replayed consistently.
+func (h *Handler) buildBLNTBackstopPositions(ctx context.Context, r BLNTBackstopReader, address string, cov *positionsCoverage) []PositionEntry {
+	rows, err := r.BLNTBackstopByUser(ctx, address)
+	if err != nil {
+		h.Logger.Error("positions: blnt_backstop read failed", "err", err, "account", address)
+		cov.fail("blnt_backstop")
+		return nil
+	}
+	out := make([]PositionEntry, 0, len(rows))
+	for _, row := range rows {
+		e := PositionEntry{
+			Protocol:        "blnt",
+			PositionKind:    PositionKindBackstopShares,
+			Venue:           row.Pool,
+			Tier:            row.Tier,
+			Amount:          row.Shares,
+			AmountSemantics: AmountSemanticsShares,
+			LastActivity:    fmtActivity(row.LastLedger, row.LastActivity),
+			Basis:           BasisEventDerived,
+			closed:          row.Shares == "0", // "" is unknown, not closed
+		}
+		for _, q := range row.Queued {
+			e.QueuedWithdrawals = append(e.QueuedWithdrawals, QueuedWithdrawal{Shares: q.Shares, Expiration: q.Expiration.Format(time.RFC3339)})
+		}
+		out = append(out, e)
 	}
 	return out
 }
