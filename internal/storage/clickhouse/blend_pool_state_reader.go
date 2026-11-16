@@ -60,7 +60,7 @@ func (r *ExplorerReader) BlendPoolReserves(ctx context.Context, pool string, ver
 
 // BLNTPoolReserves is BlendPoolReserves for a BLNT V3 pool: the same storage layout, BLNT's supply rate.
 func (r *ExplorerReader) BLNTPoolReserves(ctx context.Context, pool string, assets []string, configs map[string]blnt.ReserveConfig) (BlendPoolState, error) {
-	return r.poolReserves(ctx, pool, assets, configs, reserveModel{decode: blnt.DecodeReserveData, metrics: blnt.Metrics})
+	return r.poolReserves(ctx, pool, assets, configs, blntModel)
 }
 
 // reserveModel is how one protocol decodes ResData and derives APRs from the shared pool storage layout.
@@ -68,6 +68,9 @@ type reserveModel struct {
 	decode  func(xdr.ScVal) (blend.ReserveData, error)
 	metrics func(blend.ReserveData, blend.ReserveConfig, uint32) blend.ReserveMetrics
 }
+
+// blntModel is BLNT V3's reserve model: V2-scaled rates, the fee-adjusted supply rate.
+var blntModel = reserveModel{decode: blnt.DecodeReserveData, metrics: blnt.Metrics}
 
 func blendModel(version blend.PoolVersion) reserveModel {
 	return reserveModel{
@@ -349,4 +352,62 @@ func contractIDFromStrkey(c string) (xdr.ContractId, error) {
 	var id xdr.ContractId
 	copy(id[:], raw)
 	return id, nil
+}
+
+// historyModel is the live endpoint's reserve model for a row's protocol.
+func historyModel(protocol string) (reserveModel, bool) {
+	switch protocol {
+	case LendingBlendV1:
+		return blendModel(blend.PoolV1), true
+	case LendingBlendV2:
+		return blendModel(blend.PoolV2), true
+	case LendingBLNT:
+		return blntModel, true
+	}
+	return reserveModel{}, false
+}
+
+// point decodes one ResData row with the config and instance in force; ok=false when any entry it needs fails to decode.
+func (in reserveHistoryIn) point(pool, asset string, row stateRow) (LendingReservePoint, bool) {
+	p := LendingReservePoint{CloseTime: row.close.UTC(), StateLedger: row.ledger, Removed: row.entry == ""}
+	if p.Removed {
+		return p, true
+	}
+	model, ok := historyModel(row.protocol)
+	if !ok {
+		return p, false
+	}
+	val, ok := contractDataValue(row.entry)
+	if !ok {
+		return p, false
+	}
+	rd, err := model.decode(val)
+	if err != nil {
+		return p, false
+	}
+	var configs map[string]blend.ReserveConfig
+	if c := inForce(in.cfg, row); c != nil && c.entry != "" {
+		v, ok := contractDataValue(c.entry)
+		if !ok {
+			return p, false
+		}
+		cfg, err := blend.DecodeReserveConfig(v)
+		if err != nil {
+			return p, false
+		}
+		configs, p.ConfigLedger = map[string]blend.ReserveConfig{asset: cfg}, c.ledger
+	}
+	var inst *PoolInstance
+	if i := inForce(in.inst, row); i != nil && i.entry != "" {
+		v, ok := contractDataValue(i.entry)
+		if !ok {
+			return p, false
+		}
+		if pi, ok := poolInstanceFromStorage(v); ok {
+			inst = &pi
+		}
+	}
+	st := assembleReserveStates(pool, []string{asset}, map[string]*blend.ReserveData{asset: &rd}, configs, inst, model.metrics)
+	p.State = st[0]
+	return p, true
 }
