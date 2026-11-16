@@ -192,6 +192,8 @@ func shortBandPolicy(path string, cdnEnabled bool) (string, bool) {
 		lendingAccountEarningsPath.MatchString(path),
 		// The pool list carries each pool's summary from that same reserves view.
 		path == "/v1/lending/pools",
+		// Every pool's reserves from that same per-pool view.
+		path == "/v1/lending/rates",
 		// The non-Stellar half of /v1/assets: same live valuations, so the same band.
 		path == "/v1/external/assets",
 		strings.HasPrefix(path, "/v1/external/assets/"),
