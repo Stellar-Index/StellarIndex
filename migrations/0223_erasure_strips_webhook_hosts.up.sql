@@ -1,4 +1,5 @@
--- 0223 up — account erasure also strips webhook receiver hosts.
+-- 0223 up — account erasure also strips webhook receiver hosts, the
+-- account slug on a staff key mint, and passkey names on refused sign-ins.
 --
 -- Webhook audit rows (webhook.create / update / delete / rotate_secret)
 -- record the receiver's hostname as `url_host`, and an update that moves
@@ -9,15 +10,20 @@
 -- could not strip them either: an erased account's hostnames stayed in
 -- the permanent audit log.
 --
--- This replaces the function with the two keys added. Its signature and
+-- Two more writers had the same gap. A staff key mint records the bare
+-- account slug as `target_account`, the value erased_account_slugs exists
+-- to keep unrecoverable. A refused passkey sign-in records the passkey's
+-- user-chosen name as `credential_name`; only `name` was stripped.
+--
+-- This replaces the function with the four keys added. Its signature and
 -- the trigger are unchanged.
 --
 -- No back-fill. A row scrubbed before this migration belongs to an account
 -- that no longer exists, so the trigger refuses a second scrub of it. The
 -- reference deployment held no webhook audit row when this was written.
--- On another deployment such a row has a null account_id and still
--- carries one of the two keys; clearing it takes the table owner with the
--- trigger disabled.
+-- On another deployment such a row still carries one of the four keys
+-- and names an account that is gone; clearing it takes the table owner
+-- with the trigger disabled.
 --
 -- Old-binary-safe (rule 9): the previous binary calls the function on
 -- both sides of its scrub, so it strips the wider list too. Runtime:
@@ -40,7 +46,8 @@ AS $$
     END
     FROM (SELECT ARRAY['account_slug', 'target_identifier', 'actor_identifier',
                        'label', 'name', 'suspended_reason', 'email',
-                       'url_host', 'previous_url_host']::text[] AS k) keys
+                       'url_host', 'previous_url_host',
+                       'target_account', 'credential_name']::text[] AS k) keys
 $$;
 
 COMMENT ON FUNCTION audit_log_erase_metadata(jsonb) IS

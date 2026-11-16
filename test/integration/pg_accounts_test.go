@@ -793,6 +793,14 @@ func TestAccountErasureTrigger(t *testing.T) {
 	if hookMeta != `{"events": ["price.alert"], "enabled": true, "url_changed": true}` {
 		t.Errorf("webhook row after scrub = %s, want both receiver hosts removed", hookMeta)
 	}
+
+	// A staff key mint carries the bare slug; a refused passkey sign-in carries the passkey's name.
+	var others string
+	mustScan(t, ctx, db, &others, `SELECT audit_log_erase_metadata(
+		'{"target_account":"trig","tier":"pro","credential_name":"Jo''s phone","stored_sign_count":3}')::text`)
+	if others != `{"tier": "pro", "stored_sign_count": 3}` {
+		t.Errorf("erase function left %s, want the slug and the passkey name removed", others)
+	}
 }
 
 func mustExec(t *testing.T, ctx context.Context, db *sql.DB, q string, args ...any) {

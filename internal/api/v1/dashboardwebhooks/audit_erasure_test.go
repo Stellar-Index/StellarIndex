@@ -5,16 +5,16 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strings"
 	"testing"
 )
 
 // webhookAuditKeysKept are the webhook audit metadata keys that say nothing about who the customer is, so an account erasure may
 // leave them. Every other key the handlers write must be one audit_log_erase_metadata strips.
 var webhookAuditKeysKept = map[string]bool{
-	"events":      true,
-	"enabled":     true,
-	"url_changed": true,
+	"events":                     true,
+	"enabled":                    true,
+	"url_changed":                true,
+	"previous_secret_expires_at": true,
 }
 
 // An erasure can only rewrite audit metadata through audit_log_erase_metadata, which removes a fixed key list. A key added to
@@ -24,20 +24,17 @@ func TestWebhookAuditMetadataKeysAreClassifiedForErasure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Every string key of a map literal in the file, and every key assigned into one. The DTOs are structs, so the only
+	// map literals here are audit metadata.
 	body := string(src)
-	start := strings.Index(body, "func webhookAuditMeta(")
-	if start < 0 {
-		t.Fatal("webhookAuditMeta not found in handlers.go")
-	}
-	literal := body[start : start+strings.Index(body[start:], "\n}\n")]
 	written := map[string]bool{}
-	for _, m := range regexp.MustCompile(`(?m)^\s*"([a-z_]+)":`).FindAllStringSubmatch(literal, -1) {
+	for _, m := range regexp.MustCompile(`"([a-z0-9_]+)":\s`).FindAllStringSubmatch(body, -1) {
 		written[m[1]] = true
 	}
-	for _, m := range regexp.MustCompile(`meta\["([a-z_]+)"\]\s*=`).FindAllStringSubmatch(body, -1) {
+	for _, m := range regexp.MustCompile(`\w+\["([a-z0-9_]+)"\]\s*=[^=]`).FindAllStringSubmatch(body, -1) {
 		written[m[1]] = true
 	}
-	if !written["url_host"] || !written["previous_url_host"] {
+	if !written["url_host"] || !written["previous_url_host"] || !written["previous_secret_expires_at"] {
 		t.Fatalf("scan found keys %v; it no longer sees the keys the handlers write", written)
 	}
 
@@ -63,7 +60,7 @@ func erasureStrippedKeys(t *testing.T) map[string]bool {
 		t.Fatalf("no migrations found: %v", err)
 	}
 	sort.Strings(files)
-	list := regexp.MustCompile(`(?s)FUNCTION audit_log_erase_metadata\(m jsonb\).*?ARRAY\[(.*?)\]::text\[\]`)
+	list := regexp.MustCompile(`(?s)\nCREATE (?:OR REPLACE )?FUNCTION audit_log_erase_metadata\(\w+ jsonb\).*?ARRAY\[(.*?)\]::text\[\]`)
 	for i := len(files) - 1; i >= 0; i-- {
 		sql, err := os.ReadFile(files[i])
 		if err != nil {
