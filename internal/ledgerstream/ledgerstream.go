@@ -482,6 +482,45 @@ func bufferedConfig(cfg Config) ledgerbackend.BufferedStorageBackendConfig {
 	return ingest.DefaultBufferedStorageBackendConfig(lpf)
 }
 
+// clampToGenesis raises a range's start to genesis ledger 2, so PrepareRange and the walk agree on the bounds.
+func clampToGenesis(r ledgerbackend.Range) (ledgerbackend.Range, error) {
+	from := r.From()
+	if from >= 2 {
+		return r, nil
+	}
+	from = 2
+	if !r.Bounded() {
+		return ledgerbackend.UnboundedRange(from), nil
+	}
+	// A bounded request entirely below genesis (e.g. from=0, to=1) would deliver ZERO ledgers and return nil,
+	// indistinguishable from a deliberately empty range. Refuse loudly instead.
+	if from > r.To() {
+		return r, fmt.Errorf("ledgerstream: requested range [%d,%d] is entirely before genesis ledger 2", r.From(), r.To())
+	}
+	return ledgerbackend.BoundedRange(from, r.To()), nil
+}
+
+// watchForHole starts a [holeWatch] for an unbounded walk and returns the context the walk must read under. stop ends
+// the watch and waits for it. A bounded walk gets ctx back and a nil watch: a missing object already fails it.
+func watchForHole(
+	ctx context.Context, store datastore.DataStore, schema datastore.DataStoreSchema, r ledgerbackend.Range,
+) (context.Context, *holeWatch, func()) {
+	if r.Bounded() {
+		return ctx, nil, func() {}
+	}
+	walkCtx, cancel := context.WithCancelCause(ctx)
+	watch := &holeWatch{store: store, schema: schema}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		watch.run(walkCtx, cancel)
+	}()
+	return walkCtx, watch, func() {
+		cancel(nil)
+		<-done
+	}
+}
+
 // walkDataStore builds the buffered storage backend over store and runs the GetLedger walk, the shared tail of every Stream path.
 // It bounds each read with [storeReadTimeout], so a hung request fails and spends a retry instead of holding the walk.
 // It closes store on every return path because the SDK's BufferedStorageBackend.Close does not (connection leak).
@@ -515,32 +554,27 @@ func walkDataStore(
 		return err
 	}
 
+	ledgerRange, err = clampToGenesis(ledgerRange)
+	if err != nil {
+		return err
+	}
 	from := ledgerRange.From()
-	if from < 2 {
-		from = 2
-	}
-	// A bounded request entirely below genesis (e.g. from=0, to=1) leaves clamped-from > To, so the
-	// walk would deliver ZERO ledgers and return nil, indistinguishable from a deliberately empty
-	// range. Refuse loudly instead.
-	if ledgerRange.Bounded() && from > ledgerRange.To() {
-		return fmt.Errorf("ledgerstream: requested range [%d,%d] is entirely before genesis ledger 2",
-			ledgerRange.From(), ledgerRange.To())
-	}
-	// Rebuild the range from the CLAMPED from so PrepareRange and the walk agree on the bounds.
-	if from != ledgerRange.From() {
-		if ledgerRange.Bounded() {
-			ledgerRange = ledgerbackend.BoundedRange(from, ledgerRange.To())
-		} else {
-			ledgerRange = ledgerbackend.UnboundedRange(from)
-		}
-	}
 	if err := backend.PrepareRange(ctx, ledgerRange); err != nil {
 		return fmt.Errorf("ledgerstream: prepare range: %w", err)
 	}
 
+	walkCtx, watch, stop := watchForHole(ctx, store, schema, ledgerRange)
+	defer stop()
+
 	for seq := from; seq <= ledgerRange.To() || !ledgerRange.Bounded(); seq++ {
-		lcm, err := backend.GetLedger(ctx, seq)
+		watch.begin(seq)
+		lcm, err := backend.GetLedger(walkCtx, seq)
+		watch.end()
 		if err != nil {
+			// The watch cancelled the walk: report why, not the bare cancellation.
+			if cause := context.Cause(walkCtx); cause != nil && ctx.Err() == nil {
+				err = cause
+			}
 			return fmt.Errorf("ledgerstream: get ledger %d: %w", seq, err)
 		}
 		if err := callback(lcm); err != nil {
