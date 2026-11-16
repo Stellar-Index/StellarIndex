@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
 import {
+  Badge,
   Button,
   CopyButton,
   Skeleton,
@@ -21,65 +22,13 @@ import { apiGet, asExample } from '@/api/client';
 import { formatRelative } from '@/lib/format';
 import type { paths } from '@/api/types';
 
+import { LENDING_POOL_META, lendingProtocol } from './poolMeta';
+
 // One /v1/lending/pools row, derived from the generated OpenAPI
 // contract (src/api/types.ts, `make web-generate-api`).
 type LendingPool = NonNullable<
   paths['/lending/pools']['get']['responses'][200]['content']['application/json']['data']
 >[number];
-
-// Curated metadata for every Blend mainnet contract we know of.
-// Sourced from docs/operations/wasm-audits/blend.md (Phase 4 walk).
-interface PoolMeta {
-  label: string;
-  deployedAt?: string;
-}
-
-const BLEND_POOL_META: Record<string, PoolMeta> = {
-  CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7: {
-    label: 'Backstop V2',
-    deployedAt: '2025-04-14',
-  },
-  CDSYOAVXFY7SM5S64IZPPPYB4GVGGLMQVFREPSQQEZVIWXX5R23G4QSU: {
-    label: 'Pool Factory V2',
-    deployedAt: '2025-04-14',
-  },
-  CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD: {
-    label: 'Pool #1 (genesis)',
-    deployedAt: '2025-04-14',
-  },
-  CBNR7PYFY775UG7W37B4OJG2OBBUKLFW6VIBHFDKKLR2HECPRMRZMDK3: {
-    label: 'Pool #2',
-    deployedAt: '2025-04-15',
-  },
-  CCCCIQSDILITHMM7PBSLVDT5MISSY7R26MNZXCX4H7J5JQ5FPIYOGYFS: {
-    label: 'Pool #3',
-    deployedAt: '2025-04-17',
-  },
-  CB4OFHAY2TAEYUVPOJS36S657C6NYMSIFUNCCA5AHYT46Y5XUID3O2ED: {
-    label: 'Pool #4',
-    deployedAt: '2025-05-01',
-  },
-  CAE7QVOMBLZ53CDRGK3UNRRHG5EZ5NQA7HHTFASEMYBWHG6MDFZTYHXC: {
-    label: 'Pool #5',
-    deployedAt: '2025-05-01',
-  },
-  CBYOBT7ZCCLQCBUYYIABZLSEGDPEUWXCUXQTZYOG3YBDR7U357D5ZIRF: {
-    label: 'Pool #6',
-    deployedAt: '2025-07-13',
-  },
-  CALRF5I2OCJCU577R6MZBCY5IIXNMAAG6PNMN7GUKEYIXBJCJN2FJRVI: {
-    label: 'Pool #7',
-    deployedAt: '2025-11-22',
-  },
-  CADR6Q2UOCDJAGXMAB2E6SRT35STLZ2IGLZUCXJQG7TC2LNKCU5RTQVY: {
-    label: 'Pool #8',
-    deployedAt: '2025-11-25',
-  },
-  CDMAVJPFXPADND3YRL4BSM3AKZWCTFMX27GLLXCML3PD62HEQS5FPVAI: {
-    label: 'Pool #9',
-    deployedAt: '2025-11-25',
-  },
-};
 
 type PoolSummary = NonNullable<LendingPool['summary']>;
 
@@ -223,19 +172,19 @@ export function LendingPoolsTable() {
       {auctionRows.length > 0 && (
         <Panel
           title="Liquidation auctions by pool — all time"
-          hint="Auction events from the indexed Blend event stream; the risk view of which pools actually liquidate."
+          hint="Auction events from the indexed lending event stream; the risk view of which pools actually liquidate."
           source={asExample('/v1/lending/pools', {})}
         >
           <HBarList
             ariaLabel={`All-time liquidation auctions per pool: ${auctionRows
               .map(
                 (p) =>
-                  `${BLEND_POOL_META[p.pool ?? '']?.label ?? p.pool} ${(p.auctions_total ?? 0).toLocaleString('en-US')}`,
+                  `${LENDING_POOL_META[p.pool ?? '']?.name ?? p.pool} ${(p.auctions_total ?? 0).toLocaleString('en-US')}`,
               )
               .join(', ')}`}
             items={auctionRows.map((p) => ({
               label:
-                BLEND_POOL_META[p.pool ?? '']?.label ??
+                LENDING_POOL_META[p.pool ?? '']?.name ??
                 `${(p.pool ?? '').slice(0, 6)}…${(p.pool ?? '').slice(-4)}`,
               value: p.auctions_total ?? 0,
               display: (p.auctions_total ?? 0).toLocaleString('en-US'),
@@ -260,6 +209,7 @@ export function LendingPoolsTable() {
             <THead>
               <tr>
                 <Th>Pool</Th>
+                <Th>Protocol</Th>
                 <Th className="hidden xl:table-cell">Deployed</Th>
                 <Th align="right" className="hidden xl:table-cell">
                   Auctions 24h
@@ -311,13 +261,14 @@ export function LendingPoolsTable() {
               {!q.isLoading && !q.isError && rows.length === 0 && (
                 <TR className="hover:bg-transparent">
                   <Td colSpan={COLS} className="text-ink-muted py-4">
-                    No Blend pools have emitted auction events yet.
+                    No lending pools have emitted auction events yet.
                   </Td>
                 </TR>
               )}
               {rows.map((p) => {
                 const poolId = p.pool ?? '';
-                const meta = BLEND_POOL_META[poolId];
+                const meta = LENDING_POOL_META[poolId];
+                const protocol = lendingProtocol(meta?.protocol ?? p.protocol);
                 return (
                   <LinkRow href={`/lending/${poolId}`} key={poolId}>
                     <Td>
@@ -333,8 +284,15 @@ export function LendingPoolsTable() {
                       </div>
                       {/* Curated label where we have one; we don't invent pool names. */}
                       <div className="text-ink-muted text-xs whitespace-nowrap">
-                        {meta?.label ?? 'Blend pool'}
+                        {meta?.name ?? `${protocol?.name ?? 'Lending'} pool`}
                       </div>
+                    </Td>
+                    <Td>
+                      {protocol ? (
+                        <Badge>{protocol.name}</Badge>
+                      ) : (
+                        <span className="text-ink-faint">—</span>
+                      )}
                     </Td>
                     <Td className="hidden font-mono text-xs whitespace-nowrap xl:table-cell">
                       {meta?.deployedAt ?? (
@@ -374,4 +332,4 @@ export function LendingPoolsTable() {
   );
 }
 
-const COLS = 10;
+const COLS = 11;

@@ -19,6 +19,7 @@ import LendingPoolPage from './page';
 // A curated Blend contract that carries a label but never appears in the
 // auction listing.
 const BACKSTOP = 'CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7';
+const BLNT_POOL = 'CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7';
 const POOL_1 = 'CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD';
 
 async function renderPool(pool: string) {
@@ -86,5 +87,32 @@ describe('LendingPoolPage auction stats', () => {
     expect(
       screen.queryByText(/Auction statistics are unavailable for this build/),
     ).not.toBeInTheDocument();
+  });
+
+  it('shows the BLNT badge and protocol link for a BLNT pool, never Blend', async () => {
+    vi.mocked(buildFetchData).mockResolvedValue([
+      { protocol: 'blnt', pool: BLNT_POOL, auctions_total: 2 },
+    ]);
+    await renderPool(BLNT_POOL);
+
+    expect(screen.getAllByText('BLNT V3').length).toBeGreaterThan(0);
+    expect(
+      screen.getByRole('link', { name: 'BLNT V3 protocol' }),
+    ).toHaveAttribute('href', '/protocols/blnt');
+    expect(screen.getByRole('link', { name: /blnt\.trade/ })).toHaveAttribute(
+      'href',
+      'https://blnt.trade',
+    );
+    expect(screen.queryByText(/Blend/)).toBeNull();
+  });
+
+  it('takes the protocol of an uncurated pool from its listing row', async () => {
+    vi.mocked(buildFetchData).mockResolvedValue([
+      { protocol: 'blnt', pool: 'CNEWPOOL', auctions_total: 1 },
+    ]);
+    await renderPool('CNEWPOOL');
+    expect(
+      screen.getByRole('link', { name: 'BLNT V3 protocol' }),
+    ).toBeInTheDocument();
   });
 });
