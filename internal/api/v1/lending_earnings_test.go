@@ -155,7 +155,7 @@ func TestLendingAccountEarnings_ExactAndWithheld(t *testing.T) {
 }
 
 // TestLendingAccountEarnings_UnknownAndInvalidAccount: an account with no lending history is a 200 with empty lists, as the
-// account positions endpoint serves it; a malformed account is a 400.
+// account positions endpoint serves it; a contract (C-strkey) account is accepted; a malformed account is a 400.
 func TestLendingAccountEarnings_UnknownAndInvalidAccount(t *testing.T) {
 	srv := v1.New(v1.Options{
 		Explorer:  &stubEarningsExplorer{stubExplorerReader: &stubExplorerReader{}},
@@ -167,6 +167,10 @@ func TestLendingAccountEarnings_UnknownAndInvalidAccount(t *testing.T) {
 		t.Fatalf("view = %+v", got)
 	}
 	getEarnings(t, srv, "not-an-account", http.StatusBadRequest)
+	contract := mkCStrkey(t, 9)
+	if got := getEarnings(t, srv, contract, http.StatusOK); got.Account != contract {
+		t.Fatalf("contract account view = %+v", got)
+	}
 }
 
 // TestLendingAccountEarnings_ProjectionBehind: a pool entry or backstop balance the lake shows modified after the newest folded

@@ -164,9 +164,10 @@ func (s *Server) handleLendingAccountEarnings(w http.ResponseWriter, r *http.Req
 			account = base
 		}
 	}
-	if !canonical.IsAccountID(account) {
+	// Smart wallets and vaults supply into these pools as contract addresses.
+	if !canonical.IsAccountID(account) && !canonical.IsContractID(account) {
 		writeProblem(w, r, "https://api.stellarindex.io/errors/invalid-account",
-			"Invalid account", http.StatusBadRequest, "the account must be a valid G-strkey or M-strkey")
+			"Invalid account", http.StatusBadRequest, "the account must be a valid G-, M- or C-strkey")
 		return
 	}
 	er, okE := s.Positions.(lendingEarningsReader)
