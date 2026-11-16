@@ -70,6 +70,7 @@ bytes=0
 chain_len=0
 last_error=""
 orphans_removed=""
+adopted=""
 
 note() { echo "ch-lake-backup: $*" >&2; }
 ch() { curl -sSf --max-time 120 --netrc-file "$CH_NETRC" "$CH_HTTP" --data-binary "$1"; }
@@ -152,7 +153,7 @@ plan_next() {
 BACKUP_MEMORY_SETTINGS="max_memory_usage = 0, s3_strict_upload_part_size = 33554432, s3_max_inflight_parts_for_one_file = 4"
 
 run_backup() {
-  local path="$1" base="${2:-}" settings="max_backup_bandwidth = $MAX_BANDWIDTH, $BACKUP_MEMORY_SETTINGS" id row status
+  local path="$1" base="${2:-}" settings="max_backup_bandwidth = $MAX_BANDWIDTH, $BACKUP_MEMORY_SETTINGS" id row status poll_failures=0
   [[ -n "$base" ]] && settings="$settings, base_backup = $(disk_ref "$base")"
   id="$(ch "BACKUP DATABASE \`$CH_DATABASE\` TO $(disk_ref "$path") SETTINGS $settings ASYNC FORMAT TabSeparated" | cut -f1)" || {
     note "BACKUP was refused for $(disk_ref "$path")"
@@ -160,7 +161,19 @@ run_backup() {
   }
   [[ -n "$id" ]] || { note "BACKUP returned no operation id"; return 1; }
   while :; do
-    row="$(ch "SELECT status, compressed_size, num_files, replaceRegexpOne(replaceAll(error, '\n', ' '), ',? Stack trace.*', '') FROM system.backups WHERE id = '$id' FORMAT TabSeparated")" || row=""
+    row="$(ch "SELECT status, compressed_size, num_files, replaceRegexpOne(replaceAll(error, '\n', ' '), ',? Stack trace.*', '') FROM system.backups WHERE id = '$id' FORMAT TabSeparated")" || {
+      # One failed poll says nothing about a backup that runs on the server for
+      # days. 30 in a row (30-90 min) is an outage: stop watching, and a later
+      # run adopts the full if it completes (adopt_lost_full).
+      poll_failures=$((poll_failures + 1))
+      if (( poll_failures >= 30 )); then
+        note "status of backup $id unreadable $poll_failures polls in a row — no longer watching it"
+        return 1
+      fi
+      sleep "$POLL_SECONDS"
+      continue
+    }
+    poll_failures=0
     status="$(cut -f1 <<<"$row")"
     case "$status" in
       CREATING_BACKUP) sleep "$POLL_SECONDS" ;;
@@ -182,10 +195,45 @@ run_backup() {
   done
 }
 
+# RETAIN_CHAINS=0, empty or a typo makes `tail -n` keep nothing, and the
+# prune would then delete every chain including the full just confirmed.
+retain_valid() { [[ "$RETAIN_CHAINS" =~ ^[1-9][0-9]*$ ]]; }
+
+# A full that completed on the server after this script stopped watching it
+# (its polls failed, or the run was killed) is still listed in $started_file.
+# Recorded here as the chain; left alone, the next full's sweep would delete
+# it as an orphan. Only one newer than the recorded chain is taken.
+# system.backups is in-memory, so nothing is found after a server restart.
+adopt_lost_full() {
+  local id row start path current=""
+  [[ -s "$chain_file" ]] && current="$(head -n1 "$chain_file" | cut -f2 | cut -d/ -f2)"
+  while IFS= read -r id; do
+    [[ "$id" =~ ^[0-9]{8}T[0-9]{6}Z$ && "$id" > "$current" ]] || continue
+    path="$CH_DATABASE/$id/$id-full"
+    row="$(ch "SELECT toUnixTimestamp(start_time), num_files FROM system.backups WHERE status = 'BACKUP_CREATED' AND startsWith(name, 'Disk(\\'$BACKUP_DISK\\'') AND endsWith(name, '\\'$path\\')') ORDER BY start_time DESC LIMIT 1 FORMAT TabSeparated")" || return 1
+    start="$(cut -f1 <<<"$row")"
+    [[ "$start" =~ ^[0-9]+$ && "$(cut -f2 <<<"$row")" =~ ^[1-9][0-9]*$ ]] || continue
+    printf '%s\t%s\n' "$start" "$path" > "$chain_file"
+    echo "$id" >> "$chains_file"
+    grep -vxF "$id" "$started_file" > "$started_file.tmp"; mv "$started_file.tmp" "$started_file"
+    note "adopted full $path: it completed after an earlier run stopped watching it"
+    adopted="$id"
+    current="$id"
+  done < <(sort "$started_file" 2>/dev/null)
+}
+
 # Removes every chain but the newest RETAIN_CHAINS. Called only after a
-# full has been confirmed, so the chain being removed is never the last.
+# full has been confirmed, and deletes nothing unless the newest chain is
+# visible on the backup disk, so the chain being removed is never the last.
 prune_chains() {
-  local keep old failed=0
+  local keep old failed=0 newest listing
+  retain_valid || { note "PRUNE SKIPPED: RETAIN_CHAINS='$RETAIN_CHAINS' is not a positive integer — nothing deleted"; return 1; }
+  newest="$(tail -n1 "$chains_file")"
+  # shellcheck disable=SC2086 # CH_DISKS_CMD is a command line by design
+  if [[ -z "$newest" ]] || ! listing="$($CH_DISKS_CMD --disk "$BACKUP_DISK" --query "ls $CH_DATABASE/$newest")" || [[ -z "$listing" ]]; then
+    note "PRUNE SKIPPED: chain $newest is not visible on $BACKUP_DISK — nothing deleted"
+    return 1
+  fi
   keep="$(tail -n "$RETAIN_CHAINS" "$chains_file")"
   while IFS= read -r old; do
     [[ -z "$old" ]] && continue
@@ -269,6 +317,11 @@ main() {
     write_metrics
     return 1
   fi
+  if ! retain_valid; then
+    note "RETAIN_CHAINS='$RETAIN_CHAINS' is not a positive integer — not starting (the prune would delete every chain)"
+    write_metrics
+    return 1
+  fi
   mkdir -p "$STATE_DIR" || { note "cannot create $STATE_DIR"; write_metrics; return 1; }
   # Serialises runs: the sweep is only safe with no other run mid-upload.
   exec 9>"$STATE_DIR/lock" || { note "cannot open $STATE_DIR/lock"; write_metrics; return 1; }
@@ -305,6 +358,11 @@ main() {
     write_metrics keep_success
     return 1
   fi
+  if ! adopt_lost_full; then
+    note "cannot read system.backups — not starting"
+    write_metrics
+    return 1
+  fi
   plan="$(plan_next)"
   if [[ "$plan" == full ]]; then
     chain_id="$stamp"
@@ -332,11 +390,14 @@ main() {
     printf '%s\t%s\n' "$now" "$path" > "$chain_file"
     echo "$chain_id" >> "$chains_file"
     grep -vxF "$chain_id" "$started_file" > "$started_file.tmp"; mv "$started_file.tmp" "$started_file"
-    prune_chains || rc=2
   else
     printf '%s\t%s\n' "$now" "$path" >> "$chain_file"
   fi
-  if [[ "$plan" == full || ! -e "$swept_file" ]]; then
+  # An adopted full retires the older chains as a new one does.
+  if [[ "$plan" == full || -n "$adopted" ]]; then
+    prune_chains || rc=2
+  fi
+  if [[ "$plan" == full || -n "$adopted" || ! -e "$swept_file" ]]; then
     sweep_orphans "$chain_id" || rc=2
   fi
   chain_len="$(grep -c . "$chain_file")"

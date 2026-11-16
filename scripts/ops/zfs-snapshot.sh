@@ -82,6 +82,7 @@ set -euo pipefail
 ZFS_SNAPSHOT_POOL="${ZFS_SNAPSHOT_POOL:-data}"
 ZFS_SNAPSHOT_DATASETS="${ZFS_SNAPSHOT_DATASETS:-data/clickhouse:1 data/postgres:1 data/minio:7}"
 ZFS_SNAPSHOT_MIN_FREE_BYTES="${ZFS_SNAPSHOT_MIN_FREE_BYTES:-2199023255552}"  # 2 TiB
+ZFS_SNAPSHOT_FREE_WAIT_SECONDS="${ZFS_SNAPSHOT_FREE_WAIT_SECONDS:-1800}"  # per destroy, for its space to come back
 TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
 
 # The ONLY name shape this script will ever destroy. Anchored on both ends:
@@ -166,6 +167,21 @@ read_pool_free() {
     die "available for $ZFS_SNAPSHOT_POOL is not a number: '$v' — refusing to prune or snapshot"
   fi
   POOL_FREE="$v"
+}
+
+# ZFS returns a destroyed snapshot's space over later txgs (the pool's
+# `freeing` property counts what is still pending; hours for a TiB). Waits for
+# it to reach 0, up to ZFS_SNAPSHOT_FREE_WAIT_SECONDS; non-zero means the
+# free-space reading is still stale.
+wait_for_frees() {
+  local pending waited=0
+  while :; do
+    pending="$(zpool get -Hp -o value freeing "$ZFS_SNAPSHOT_POOL")" || return 1
+    [[ "$pending" == 0 ]] && return 0
+    (( waited >= ZFS_SNAPSHOT_FREE_WAIT_SECONDS )) && return 1
+    sleep 5
+    waited=$(( waited + 5 ))
+  done
 }
 
 # Written INSTEAD of the main textfile when free space is unreadable, so the
@@ -278,6 +294,17 @@ enforce_min_free() {
   fi
   log "pool $ZFS_SNAPSHOT_POOL free ${free} < floor ${ZFS_SNAPSHOT_MIN_FREE_BYTES}: pruning auto snapshots oldest-first"
   while (( free < ZFS_SNAPSHOT_MIN_FREE_BYTES )); do
+    # `available` sees none of the space an earlier destroy (this loop's, or a
+    # previous pass's) is still returning; pruning on it destroyed every
+    # prunable snapshot on a pool near the floor. Wait for the frees, and if
+    # they outlast the wait, stop rather than prune on a stale number.
+    if ! wait_for_frees; then
+      log "guard: frees still pending after ${ZFS_SNAPSHOT_FREE_WAIT_SECONDS}s — not pruning on a stale free-space reading"
+      return 1
+    fi
+    read_pool_free; free="$POOL_FREE"
+    [[ -n "$free" && "$free" =~ ^[0-9]+$ ]] || die "internal: pool free unreadable ('$free')"
+    (( free >= ZFS_SNAPSHOT_MIN_FREE_BYTES )) && break
     # Prunable = every auto snapshot except each dataset's newest one
     # (`sed '$d'` drops the last, i.e. newest, line of the oldest-first list).
     candidates=""
@@ -301,11 +328,6 @@ enforce_min_free() {
     # `set -euo pipefail`. Read the already-sorted list instead of re-piping.
     created="$(awk -F'\t' -v n="$name" '$1==n{print $2; exit}' <<<"$sorted_candidates")"
     destroy_auto_snapshot "$name" "min-free guard, created $created"
-    # ZFS reclaims space asynchronously; a re-read right after destroy can lag by
-    # a txg. Worst case this over-prunes by one snapshot, never below the
-    # newest-per-dataset floor.
-    read_pool_free; free="$POOL_FREE"
-    [[ -n "$free" && "$free" =~ ^[0-9]+$ ]] || die "internal: pool free unreadable ('$free')"
   done
   log "guard: pool free ${free} >= floor after pruning"
   return 0

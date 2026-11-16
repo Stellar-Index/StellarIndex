@@ -127,7 +127,12 @@ case "$cmd" in
       used="$(printf '%s' "$line" | cut -f3)"
       grep -v "^${d}@${snap}"$'\t' "$P/snapshots" > "$P/snapshots.new" || true
       mv "$P/snapshots.new" "$P/snapshots"
-      echo $(( $(cat "$P/free") + used )) > "$P/free"
+      if [[ -e "$P/async-polls" ]]; then
+        # Async frees: the space comes back only once `zpool get freeing` has been polled that many times.
+        echo $(( $(cat "$P/pending" 2>/dev/null || echo 0) + used )) > "$P/pending"
+      else
+        echo $(( $(cat "$P/free") + used )) > "$P/free"
+      fi
       echo "$d@$snap" >> "$P/destroyed"
     done
     exit 0 ;;
@@ -151,6 +156,23 @@ case "$cmd" in
     grep "^${ds}@" "$P/snapshots" 2>/dev/null | awk -F'\t' '{s+=$3} END{print s+0}'; exit 0 ;;
   *) echo "zfs stub: unsupported: $cmd $*" >&2; exit 99 ;;
 esac
+STUB
+# zpool get -Hp -o value freeing <pool>: 0 unless a case armed async frees ($P/async-polls = polls until they land).
+cat > "$TMP/bin/zpool" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+P="$FAKE_POOL"
+[[ "${1:-}" == get && "${*: -2:1}" == freeing ]] || { echo "zpool stub: unsupported: $*" >&2; exit 99; }
+pending="$(cat "$P/pending" 2>/dev/null || echo 0)"
+left="$(cat "$P/async-polls" 2>/dev/null || echo 0)"
+if (( pending > 0 && left > 0 )); then
+  echo $(( left - 1 )) > "$P/async-polls"
+  echo "$pending"
+  exit 0
+fi
+echo $(( $(cat "$P/free") + pending )) > "$P/free"
+echo 0 > "$P/pending"
+echo 0
 STUB
 # `logger` must not reach the real journal from a test run.
 printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/bin/logger"
@@ -182,7 +204,7 @@ else
   "$real" -r "$FAKE_DATE_EPOCH" "$fmt" 2>/dev/null || "$real" -d "@$FAKE_DATE_EPOCH" "$fmt"
 fi
 STUB
-chmod +x "$TMP/bin/zfs" "$TMP/bin/logger" "$TMP/bin/date"
+chmod +x "$TMP/bin/zfs" "$TMP/bin/zpool" "$TMP/bin/logger" "$TMP/bin/date"
 export PATH="$TMP/bin:$PATH"
 
 export TEXTFILE_DIR="$TMP/textfile"
@@ -325,6 +347,36 @@ t "$rc" -eq 0 -a "$(n_destroyed)" -eq 1 -a "$(cat "$FAKE_POOL/destroyed")" = "da
 res $? "guard stops as soon as the floor is met (1 destroy, not 2)" "rc=$rc destroyed=[$(destroyed_list)]"
 t "$(n_created)" -eq 2
 res $? "snapshots taken after the guard freed space" "created=[$(created_list)]"
+
+echo "zfs-snapshot-test: the guard waits for a destroy's space before pruning again"
+# Same pool as above, but the 250 GB comes back one poll later. Destroying on
+# the stale reading would also take postgres@2d and end with no snapshot taken.
+async_pool() {
+  printf '%s\n' data/clickhouse data/postgres > "$FAKE_POOL/datasets"
+  : > "$FAKE_POOL/snapshots"; : > "$FAKE_POOL/destroyed"; : > "$FAKE_POOL/created"; : > "$FAKE_POOL/pinned"
+  echo $(( 19 * TIB / 10 )) > "$FAKE_POOL/free"
+  echo 0 > "$FAKE_POOL/pending"; echo "$1" > "$FAKE_POOL/async-polls"
+  for d in 2 1; do
+    add_snap "data/clickhouse@auto-$(stamp_days_ago "$d")" "$(days_ago "$d")" $(( 250 * GB ))
+    add_snap "data/postgres@auto-$(stamp_days_ago "$d")"   "$(days_ago "$d")" $(( 2 * GB ))
+  done
+}
+async_pool 1
+"$SCRIPT" rotate 2>"$TMP/log4a"; rc=$?
+t "$rc" -eq 0 -a "$(n_destroyed)" -eq 1 -a "$(cat "$FAKE_POOL/destroyed")" = "data/clickhouse@auto-$(stamp_days_ago 2)"
+res $? "one destroy, then the guard waits for its space (1 destroy, not 2)" "rc=$rc destroyed=[$(destroyed_list)]"
+t "$(n_created)" -eq 2
+res $? "snapshots taken once the space is back" "created=[$(created_list)]"
+# Frees that outlast the wait: stop pruning, skip the snapshot, keep postgres@2d.
+async_pool 1000
+ZFS_SNAPSHOT_FREE_WAIT_SECONDS=0 "$SCRIPT" rotate 2>"$TMP/log4b"; rc=$?
+t "$rc" -eq 0 -a "$(n_destroyed)" -eq 1
+res $? "frees still pending at the deadline stop the pruning at one destroy" "rc=$rc destroyed=[$(destroyed_list)]"
+t "$(n_created)" -eq 0 -a "$(metric 'stellarindex_zfs_snapshot_guard_skipped{dataset="data/clickhouse"}')" = 1
+res $? "the snapshot is skipped and reported while the reading is stale" "created=[$(created_list)]"
+grep -q "not pruning on a stale free-space reading" "$TMP/log4b"
+res $? "the stop is logged"
+rm -f "$FAKE_POOL/async-polls" "$FAKE_POOL/pending"
 
 echo "zfs-snapshot-test: now / --keep / unmanaged"
 reset_pool $(( 5 * TIB ))

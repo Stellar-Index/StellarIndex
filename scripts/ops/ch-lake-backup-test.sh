@@ -69,7 +69,16 @@ case "$q" in
     printf '%s\n' "$q" >> "$MOCK_LOG"
     mkdir -p "$MOCK_DISK/$(sed -E "s/.* TO Disk\('[^']*', '([^']*)'\).*/\1/" <<<"$q")"
     printf 'op-1\tCREATING_BACKUP\n' ;;
-  *"FROM system.backups WHERE id"*) printf '%b\n' "${MOCK_STATUS-BACKUP_CREATED\t4096\t12\t}" ;;
+  *"FROM system.backups WHERE id"*)
+    # MOCK_POLL_FAILS=n makes the first n status polls fail like a dropped connection.
+    p=$(( $(cat "$MOCK_DISK.polls" 2>/dev/null || echo 0) + 1 )); echo "$p" > "$MOCK_DISK.polls"
+    if [[ "$p" -le "${MOCK_POLL_FAILS:-0}" ]]; then exit 22; fi
+    printf '%b\n' "${MOCK_STATUS-BACKUP_CREATED\t4096\t12\t}" ;;
+  *"status = 'BACKUP_CREATED'"*)
+    # The adoption lookup: MOCK_ADOPT is the row for a finished full, "fail" an unreachable server.
+    printf '%s\n' "$q" >> "$MOCK_DISK.adopts"
+    if [[ "${MOCK_ADOPT:-}" == fail ]]; then exit 22; fi
+    printf '%b\n' "${MOCK_ADOPT:-}" ;;
   *) echo "" ;;
 esac
 STUB
@@ -103,7 +112,7 @@ STUB
 chmod +x "$TMP/bin/curl" "$TMP/bin/disks" "$TMP/bin/flock"
 
 run() {
-  rm -f "$TMP/disk.calls"
+  rm -f "$TMP/disk.calls" "$TMP/disk.polls" "$TMP/disk.adopts"
   PATH="$TMP/bin:$PATH" MOCK_LOG="$TMP/queries" MOCK_PRUNE_LOG="$TMP/prunes" \
     MOCK_LS_LOG="$TMP/lists" MOCK_DISK="$TMP/disk" MOCK_FLOCK_LOG="$TMP/flocks" \
     HEAVY_JOB_LOCK_DIR="$TMP/locks" HEAVY_LOCK_WAIT_SECONDS="${HEAVY_WAIT-}" \
@@ -379,6 +388,85 @@ MOCK_LOCK_HELD=1 run; rc=$?
 [[ -n "$holder" ]] && { kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null; }
 if [[ "$rc" -eq 0 ]]; then bad "a run-lock overlap exits non-zero (the lock was not held)"; fi
 if [[ -n "$before" ]] && [[ "$(grep '^stellarindex_ch_lake_backup_last_success_unix ' "$PROM")" == "$before" ]]; then ok "a run-lock overlap keeps the previous last-success stamp"; else bad "a run-lock overlap keeps the previous last-success stamp"; fi
+
+echo "13. RETAIN_CHAINS that would keep nothing refuses to run"
+for bad_retain in 0 abc -1 1.5; do
+  reset
+  run; rc=$?
+  first="$(cat "$TMP/state/chains")"
+  age_chain 40
+  : > "$TMP/queries"
+  RETAIN_CHAINS="$bad_retain" run; rc=$?
+  expect_rc 1 "RETAIN_CHAINS='$bad_retain' exits 1"
+  file_empty "$TMP/queries" "RETAIN_CHAINS='$bad_retain' issues no BACKUP"
+  file_empty "$TMP/prunes" "RETAIN_CHAINS='$bad_retain' deletes nothing"
+  on_disk "stellar/$first" "RETAIN_CHAINS='$bad_retain' leaves the existing chain on the disk"
+done
+
+echo "14. a failed status poll is retried; a backup the script cannot watch is not recorded"
+reset
+MOCK_POLL_FAILS=5 run; rc=$?
+expect_rc 0 "five dropped polls do not abandon the backup"
+chains_count 1 "the full is recorded once its status is readable again"
+prom_stamped "a backup that outlived dropped polls stamps success"
+reset
+MOCK_POLL_FAILS=1000 run; rc=$?
+expect_rc 1 "a status unreadable 30 polls in a row exits 1"
+if [[ "$(cat "$TMP/disk.polls")" -eq 30 ]]; then ok "the script stops watching after 30 failed polls"; else bad "the script stops watching after 30 failed polls ($(cat "$TMP/disk.polls"))"; fi
+file_empty "$TMP/state/chains" "an unwatched full is not on the chain record"
+lost="$(cat "$TMP/state/started")"
+if [[ "$lost" =~ ^[0-9]{8}T[0-9]{6}Z$ ]]; then ok "the unwatched full stays in the started record"; else bad "the unwatched full stays in the started record"; fi
+prom_unstamped "an unwatched full stamps nothing"
+
+echo "15. a full that completed unwatched is adopted, not swept"
+server_start="$(( $(date -u +%s) - 86400 ))" # system.backups.start_time of the lost full
+sleep 1
+MOCK_ADOPT="$server_start\t12" run; rc=$?
+expect_rc 0 "the run after an unwatched full succeeds"
+on_record "$lost" "the completed full is on the chain record"
+file_empty "$TMP/state/started" "an adopted full leaves the started record"
+if [[ "$(head -n1 "$TMP/state/chain")" == "$server_start"$'\t'"stellar/$lost/$lost-full" ]]; then ok "the chain starts at the adopted full, dated by the server"; else bad "the chain starts at the adopted full, dated by the server"; fi
+last_base_is "stellar/$lost/$lost-full" "the run extends the adopted full instead of starting another"
+on_disk "stellar/$lost" "the adopted full is still on the disk"
+if grep -q "endsWith(name, '\\\\'stellar/$lost/$lost-full\\\\')')" "$TMP/disk.adopts"; then ok "the lookup names this disk's full by its path"; else bad "the lookup names this disk's full by its path"; fi
+reset
+run; rc=$?
+old="$(cat "$TMP/state/chains")"
+age_chain 40
+sleep 1
+MOCK_POLL_FAILS=1000 run; rc=$?
+lost="$(cat "$TMP/state/started")"
+sleep 1
+MOCK_ADOPT="$server_start\t12" run; rc=$?
+expect_rc 0 "adopting a full over an older chain succeeds"
+off_disk "stellar/$old" "the adopted full retires the older chain"
+off_record "$old" "the retired chain leaves the record"
+on_disk "stellar/$lost" "the adopted full is kept"
+reset
+MOCK_POLL_FAILS=1000 run; rc=$?
+lost="$(cat "$TMP/state/started")"
+: > "$TMP/queries"
+MOCK_ADOPT=fail run; rc=$?
+expect_rc 1 "an unreadable adoption lookup exits 1"
+file_empty "$TMP/queries" "an unreadable adoption lookup issues no BACKUP"
+on_disk "stellar/$lost" "an unreadable adoption lookup deletes nothing"
+sleep 1
+run; rc=$?
+expect_rc 0 "with the server restarted (nothing to adopt) the run takes a new full"
+off_record "$lost" "a full the server no longer knows is not adopted"
+off_disk "stellar/$lost" "and is swept as the orphan it is"
+
+echo "16. nothing is pruned unless the new chain is visible on the disk"
+reset
+run; rc=$?
+old="$(cat "$TMP/state/chains")"
+age_chain 40
+sleep 1
+MOCK_LS="" run; rc=$?
+expect_rc 2 "a new full the disk does not list exits 2"
+on_disk "stellar/$old" "the older chain is kept while the new one cannot be seen"
+on_record "$old" "and stays on the record"
+file_empty "$TMP/prunes" "no remove is issued"
 
 echo
 echo "ch-lake-backup-test: $pass passed, $fail failed"
