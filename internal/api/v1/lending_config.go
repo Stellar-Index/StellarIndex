@@ -201,7 +201,7 @@ func (s *Server) handleLendingConfigHistory(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	cur, ok := parseLendingConfigCursor(w, r)
+	cur, ok := parseLendingCursor(w, r, lendingConfigHistoryKinds)
 	if !ok {
 		return
 	}
@@ -245,13 +245,13 @@ func encodeLendingConfigCursor(c timescale.LendingConfigChange) string {
 		u32String(c.OpIndex) + "." + u32String(c.EventIndex) + "." + c.Kind + "." + strconv.FormatInt(c.TxOrder, 10)
 }
 
-// parseLendingConfigCursor decodes ?cursor=; ok=false after a problem+json on a malformed value.
-func parseLendingConfigCursor(w http.ResponseWriter, r *http.Request) (timescale.LendingConfigCursor, bool) {
+// parseLendingCursor decodes ?cursor= naming one of kinds; ok=false after a problem+json on a malformed value.
+func parseLendingCursor(w http.ResponseWriter, r *http.Request, kinds map[string]bool) (timescale.LendingConfigCursor, bool) {
 	raw := r.URL.Query().Get("cursor")
 	if raw == "" {
 		return timescale.LendingConfigCursor{}, true
 	}
-	if c, ok := decodeLendingConfigCursor(raw); ok {
+	if c, ok := decodeLendingConfigCursor(raw, kinds); ok {
 		return c, true
 	}
 	writeProblem(w, r, "https://api.stellarindex.io/errors/invalid-cursor",
@@ -259,9 +259,9 @@ func parseLendingConfigCursor(w http.ResponseWriter, r *http.Request) (timescale
 	return timescale.LendingConfigCursor{}, false
 }
 
-func decodeLendingConfigCursor(raw string) (timescale.LendingConfigCursor, bool) {
+func decodeLendingConfigCursor(raw string, kinds map[string]bool) (timescale.LendingConfigCursor, bool) {
 	parts := strings.Split(raw, ".")
-	if len(parts) != 7 || len(parts[2]) != 64 || !lendingConfigHistoryKinds[parts[5]] {
+	if len(parts) != 7 || len(parts[2]) != 64 || !kinds[parts[5]] {
 		return timescale.LendingConfigCursor{}, false
 	}
 	txOrder, err := strconv.ParseInt(parts[6], 10, 32)

@@ -69,3 +69,44 @@ func TestExplorer_AccountPositions_BLNTLegs(t *testing.T) {
 		t.Errorf("coverage_note = %q, want all 7 folds named failed", note)
 	}
 }
+
+type stubBLNTBackstopReader struct {
+	stubPositionsReader
+	folds []timescale.BLNTBackstopFold
+}
+
+func (s *stubBLNTBackstopReader) BLNTBackstopByUser(context.Context, string) ([]timescale.BLNTBackstopFold, error) {
+	return s.folds, nil
+}
+
+// TestExplorer_AccountPositions_BLNTBackstopUnknowns — an inconsistent share history serves amount "" under shares_unknown, never
+// "shares"; a position whose queue composition is unknown serves the queued total and the marker, no per-entry expirations.
+func TestExplorer_AccountPositions_BLNTBackstopUnknowns(t *testing.T) {
+	now := time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC)
+	reader := &stubBLNTBackstopReader{folds: []timescale.BLNTBackstopFold{
+		{Pool: "CPOOL1", Tier: "FirstLoss", LastActivity: now, LastLedger: 10},
+		{
+			Pool: "CPOOL1", Tier: "SecondLoss", Shares: "18446744073709551616", ExpirationsUnknown: true, QueuedShares: "9223372036854775808",
+			LastActivity: now, LastLedger: 11,
+		},
+	}}
+	base := httpTestServer(t, v1.New(v1.Options{Positions: reader})).URL
+	resp := mustGet(t, base+"/v1/accounts/"+testG+"/positions?include_closed=true")
+	var body struct {
+		Data struct {
+			Positions []map[string]any `json:"positions"`
+		} `json:"data"`
+	}
+	mustDecode(t, resp, &body)
+	if len(body.Data.Positions) != 2 {
+		t.Fatalf("positions = %+v", body.Data.Positions)
+	}
+	unknown, ambiguous := body.Data.Positions[0], body.Data.Positions[1]
+	if unknown["amount"] != "" || unknown["amount_semantics"] != "shares_unknown" {
+		t.Errorf("inconsistent position = %+v", unknown)
+	}
+	if ambiguous["amount_semantics"] != "shares" || ambiguous["queued_expirations_unknown"] != true ||
+		ambiguous["queued_shares"] != "9223372036854775808" || ambiguous["queued_withdrawals"] != nil {
+		t.Errorf("ambiguous queue position = %+v", ambiguous)
+	}
+}
