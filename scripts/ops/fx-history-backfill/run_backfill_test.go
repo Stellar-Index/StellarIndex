@@ -93,6 +93,13 @@ func TestRunBackfill_LeavesTheLiveWorkersWindow(t *testing.T) {
 		t.Fatalf("quotesLiveFrom = %s, want %s", liveFrom, want)
 	}
 
+	if to, lf := clampToLiveWindow(discardLogger(), seriesQuotes, now, now); !lf.Equal(liveFrom) || !to.Equal(liveFrom.AddDate(0, 0, -1)) {
+		t.Fatalf("clamp of today = to %s, liveFrom %s; want the day before %s", to, lf, liveFrom)
+	}
+	if to, lf := clampToLiveWindow(discardLogger(), seriesFixings, now, now); !lf.IsZero() || !to.Equal(now) {
+		t.Fatalf("fixings clamp = to %s, liveFrom %s; want untouched", to, lf)
+	}
+
 	// The stub answers each chunk with one day: the chunk's start. One chunk starts before the window, one inside it.
 	cfg := backfillConfig{
 		from:         liveFrom.AddDate(0, 0, -1),

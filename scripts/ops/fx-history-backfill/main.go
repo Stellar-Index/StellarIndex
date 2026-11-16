@@ -133,6 +133,22 @@ func quotesLiveFrom(now time.Time) time.Time {
 	return now.UTC().Truncate(24*time.Hour).AddDate(0, 0, -liveWindowDays)
 }
 
+// clampToLiveWindow pulls a quotes window's end back to the day before the live worker's window. Other series pass through
+// with no live window.
+func clampToLiveWindow(logger *slog.Logger, series string, to, now time.Time) (clamped, liveFrom time.Time) {
+	if series != seriesQuotes {
+		return to, time.Time{}
+	}
+	liveFrom = quotesLiveFrom(now)
+	if to.Before(liveFrom) {
+		return to, liveFrom
+	}
+	clamped = liveFrom.AddDate(0, 0, -1)
+	logger.Warn("--to reaches into the live forex worker's window; stopping the day before it",
+		"to", to.Format("2006-01-02"), "clamped_to", clamped.Format("2006-01-02"))
+	return clamped, liveFrom
+}
+
 type backfillConfig struct {
 	dsn  string
 	from time.Time
@@ -191,16 +207,7 @@ func parseFlags() (backfillConfig, *slog.Logger) {
 		}
 		to = t.UTC()
 	}
-	var liveFrom time.Time
-	if series == seriesQuotes {
-		liveFrom = quotesLiveFrom(time.Now())
-		if !to.Before(liveFrom) {
-			clamped := liveFrom.AddDate(0, 0, -1)
-			logger.Warn("--to reaches into the live forex worker's window; stopping the day before it",
-				"to", to.Format("2006-01-02"), "clamped_to", clamped.Format("2006-01-02"))
-			to = clamped
-		}
-	}
+	to, liveFrom := clampToLiveWindow(logger, series, to, time.Now())
 	from := to.AddDate(-years, 0, 0)
 	if fromStr != "" {
 		f, err := time.Parse("2006-01-02", fromStr)
@@ -287,6 +294,15 @@ func (r backfillResult) report(logger *slog.Logger) int {
 	return code
 }
 
+// wantsTicker reports whether the ticker filter, when set, admits ticker.
+func (c backfillConfig) wantsTicker(ticker string) bool {
+	if len(c.tickerFilter) == 0 {
+		return true
+	}
+	_, ok := c.tickerFilter[ticker]
+	return ok
+}
+
 // runBackfill walks the window in chunkYears-sized segments. Sequential,
 // not parallel — Frankfurter is a free service and one operator-side
 // backfill doesn't justify hammering it. Each chunk is one HTTP
@@ -356,14 +372,9 @@ func fetchAndPersist(
 		bucket := day.Date.UTC().Truncate(24 * time.Hour)
 		live := !cfg.liveFrom.IsZero() && !bucket.Before(cfg.liveFrom)
 		for code, rate := range day.Rates {
-			if rate <= 0 {
-				continue
-			}
 			ticker := strings.ToUpper(code)
-			if len(cfg.tickerFilter) > 0 {
-				if _, ok := cfg.tickerFilter[ticker]; !ok {
-					continue
-				}
+			if rate <= 0 || !cfg.wantsTicker(ticker) {
+				continue
 			}
 			if live {
 				skippedLive++
