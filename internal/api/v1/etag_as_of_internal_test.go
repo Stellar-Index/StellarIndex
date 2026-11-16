@@ -2,6 +2,8 @@ package v1
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -103,6 +105,55 @@ func TestOracle_UnchangedCacheAnswers304(t *testing.T) {
 			s := New(Options{Oracle: NewCachedOracleReader(&fakeOracleUpstream{}, time.Minute)})
 			assertUnchangedPayloadAnswers304(t, s.Handler(), target)
 		})
+	}
+}
+
+// A cached read filled at hh:58 and served after the hour turned ends at the hour it was read in. Anchored on the
+// clock, the series gained an hour newer than its own as_of holding a made-up zero.
+func TestBuildSourceVolumeHistory_EndsAtTheHourTheBucketsWereReadIn(t *testing.T) {
+	filled := time.Now().UTC().Truncate(time.Hour).Add(-2 * time.Minute) // hh:58 of the hour before this one
+	readHour := filled.Truncate(time.Hour)
+	series := buildSourceVolumeHistory([]timescale.SourceVolumeBucket{
+		{Source: "binance", Hour: readHour, VolumeUSD: "12.5", TradeCount: 3},
+	}, 24, filled)["binance"]
+
+	if len(series) != 24 {
+		t.Fatalf("series length = %d, want 24", len(series))
+	}
+	newest := series[len(series)-1]
+	if !time.Time(newest.Hour).Equal(readHour) || newest.VolumeUSD != "12.5" || newest.TradeCount != 3 {
+		t.Fatalf("newest bucket = %+v, want the read hour %s with the filled value: no hour later than the read exists in it", newest, readHour)
+	}
+}
+
+// A failed include read drops its fields from every row, which is the same body as sources with no trades. The
+// envelope names the sections that were asked for and not read.
+func TestSources_FailedIncludeIsNamedOnTheWire(t *testing.T) {
+	flagsOf := func(target string, up *fakeUpstream) (map[string]any, string) {
+		rec := serveThrough(t, New(Options{SourcesStats: up}).Handler(), target, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s: status %d: %s", target, rec.Code, rec.Body.String())
+		}
+		var env struct {
+			Flags map[string]any `json:"flags"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return env.Flags, rec.Header().Get("Cache-Control")
+	}
+
+	flags, cc := flagsOf("/v1/sources?include=stats,sparkline", &fakeUpstream{statsErr: errors.New("statement timeout")})
+	if got := fmt.Sprint(flags["includes_unread"]); got != "[stats]" {
+		t.Errorf("flags.includes_unread = %s, want [stats]: the sparkline read succeeded, the stats read did not", got)
+	}
+	if cc != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store on a listing missing a section", cc)
+	}
+
+	flags, _ = flagsOf("/v1/sources?include=stats", &fakeUpstream{})
+	if _, present := flags["includes_unread"]; present {
+		t.Errorf("flags.includes_unread present on a fully read listing: %v", flags["includes_unread"])
 	}
 }
 

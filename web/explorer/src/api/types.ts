@@ -8228,6 +8228,8 @@ export interface components {
             truncated: boolean;
             /** @description Names of the row-narrowing query parameters this response did NOT apply, spelled as the caller sent them (`type`, `code`, `issuer`, `q`). Absent when the response applied every filter it was given — an ignored filter and a matched one otherwise produce the same 200 over the same shape, so a client re-filtering the page has nothing else to key on. Set by `/v1/assets` on the listings whose rows come from a source that cannot narrow: the class-scoped catalogue listings (`asset_class=fiat|stablecoin|crypto`), and the lean asset-catalog fallback served when no listing store is configured. */
             filters_ignored?: string[];
+            /** @description Names of the `include` sections this response was asked for and could not read (a failed or timed-out read). The fields of a named section are absent from every row, which is otherwise the same body as rows with nothing to report: on `/v1/sources`, a source whose stats were not read and a source with no trades in 24h. Absent when every requested section was read. A response carrying it is sent `Cache-Control: no-store`; the next request retries. */
+            includes_unread?: string[];
             /**
              * @description Set on an EMPTY response from /v1/ohlc, /v1/history, /v1/chart or /v1/price/at when the requested range ends at or before the envelope's `coverage_from` — the window predates the history this deployment holds for the pair, so nothing was there to return. Never set on a range that straddles the floor, and never set when the floor could not be established. Omitted when false.
              * @default false
@@ -20685,6 +20687,14 @@ export interface operations {
                  *     `sparkline7d` adds `volume_history_7d` (168 hourly
                  *     buckets); each implies `stats`. Absent the param the
                  *     response stays the all-static-registry projection.
+                 *
+                 *     Each section is read on its own and may fail on its own. A
+                 *     section that could not be read is left out of every row and
+                 *     named in `flags.includes_unread`; without that entry an
+                 *     absent `trade_count_24h` means no trades. A sparkline ends
+                 *     at the hour its buckets were read in, which is the hour of
+                 *     `as_of`; that newest bucket is still open, so it is a
+                 *     partial sum.
                  * @example stats,sparkline
                  */
                 include?: string;

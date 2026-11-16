@@ -75,8 +75,10 @@ func parseSourcesInclude(raw string) (stats, sparkline, sparkline7d bool) {
 	return stats, sparkline, sparkline7d
 }
 
-// buildSourceVolumeHistory projects per-(source, hour) buckets into a per-source trailing-24h series, zero-filling missing hours.
-func buildSourceVolumeHistory(buckets []timescale.SourceVolumeBucket, hours int) map[string][]VolumeBucket {
+// buildSourceVolumeHistory projects per-(source, hour) buckets into a per-source trailing series ending at the hour
+// the buckets were read in, zero-filling missing hours. Anchored on the clock instead, a cached read served after
+// the hour turned would gain an invented zero hour newer than its own as_of. A zero `at` is an uncached read: now.
+func buildSourceVolumeHistory(buckets []timescale.SourceVolumeBucket, hours int, at time.Time) map[string][]VolumeBucket {
 	type hourRaw struct {
 		vol   string
 		count int64
@@ -89,7 +91,10 @@ func buildSourceVolumeHistory(buckets []timescale.SourceVolumeBucket, hours int)
 		rawBySource[b.Source][b.Hour.UTC()] = hourRaw{vol: b.VolumeUSD, count: b.TradeCount}
 	}
 	out := map[string][]VolumeBucket{}
-	now := time.Now().UTC().Truncate(time.Hour)
+	if at.IsZero() {
+		at = time.Now()
+	}
+	now := at.UTC().Truncate(time.Hour)
 	for src, raw := range rawBySource {
 		series := make([]VolumeBucket, 0, hours)
 		for i := hours - 1; i >= 0; i-- {
@@ -209,8 +214,9 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 		markets int64
 	}
 	statsBySource := map[string]stats{}
-	// Any soft-failed read below ships a partial listing the next request fills.
-	partial := false
+	// A soft-failed read ships the listing without that section; unread names it on the wire, since a source
+	// whose stats were not read is otherwise the same row as one with no trades.
+	var unread []string
 	historyBySource := map[string][]VolumeBucket{}
 	lowerBound := map[string]bool{}
 	history7dBySource := map[string][]VolumeBucket{}
@@ -227,7 +233,7 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 		cancel()
 		if err != nil {
 			s.logger.Warn("source stats", "err", err)
-			partial = true
+			unread = append(unread, "stats")
 			// Soft-fail: serve the registry without stats.
 		} else {
 			vintage.note(at)
@@ -251,13 +257,17 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 		var failed bool
 		historyBySource, failed = s.sourceVolumeHistory(r.Context(), reads.GetSourceVolumeHistory24hAt, 24,
 			"source volume history", &vintage, lowerBound)
-		partial = partial || failed
+		if failed {
+			unread = append(unread, "sparkline")
+		}
 	}
 	if includeSparkline7d && reads != nil {
 		var failed bool
 		history7dBySource, failed = s.sourceVolumeHistory(r.Context(), reads.GetSourceVolumeHistory7dAt, 24*7,
 			"source volume history 7d", &vintage, lowerBound)
-		partial = partial || failed
+		if failed {
+			unread = append(unread, "sparkline7d")
+		}
 	}
 
 	out := make([]Source, 0, len(external.Registry))
@@ -292,7 +302,7 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	writeEnvelope(w, Envelope{Data: out, AsOf: vintage.asOf(), Flags: Flags{Degraded: partial}})
+	writeEnvelope(w, Envelope{Data: out, AsOf: vintage.asOf(), Flags: Flags{Degraded: len(unread) > 0, IncludesUnread: unread}})
 }
 
 // sourceVolumeHistory loads one sparkline series under the same 8s ceiling
@@ -314,5 +324,5 @@ func (s *Server) sourceVolumeHistory(
 	}
 	vintage.note(at)
 	markXLMUnpriced(lowerBound, buckets)
-	return buildSourceVolumeHistory(buckets, hours), false
+	return buildSourceVolumeHistory(buckets, hours, at), false
 }

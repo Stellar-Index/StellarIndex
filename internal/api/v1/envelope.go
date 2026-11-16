@@ -86,6 +86,9 @@ type Flags struct {
 	// FiltersIgnored names the row-narrowing query parameters the response did NOT apply, spelled
 	// as sent; a listing that dropped a filter is otherwise the same 200 as one that matched.
 	FiltersIgnored []string `json:"filters_ignored,omitempty"`
+	// IncludesUnread names the `include` sections the response asked for and could not read. Their fields are
+	// absent from every row, which without this is the same body as rows that have nothing to report.
+	IncludesUnread []string `json:"includes_unread,omitempty"`
 	// Degraded marks a 200 whose body is carried forward or partial (stale-while-revalidate past
 	// TTL, last-good after a failed refresh, a held frozen price, a dropped best-effort section).
 	// Never on the wire: writeEnvelopeStatus turns it into `Cache-Control: no-store` so a shared

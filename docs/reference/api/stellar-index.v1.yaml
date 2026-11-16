@@ -7272,6 +7272,14 @@ paths:
             `sparkline7d` adds `volume_history_7d` (168 hourly
             buckets); each implies `stats`. Absent the param the
             response stays the all-static-registry projection.
+
+            Each section is read on its own and may fail on its own. A
+            section that could not be read is left out of every row and
+            named in `flags.includes_unread`; without that entry an
+            absent `trade_count_24h` means no trades. A sparkline ends
+            at the hour its buckets were read in, which is the hour of
+            `as_of`; that newest bucket is still open, so it is a
+            partial sum.
           schema:
             type: string
             pattern: '^(stats|sparkline|sparkline7d)(,(stats|sparkline|sparkline7d))*$'
@@ -16985,6 +16993,17 @@ components:
             from a source that cannot narrow: the class-scoped catalogue
             listings (`asset_class=fiat|stablecoin|crypto`), and the lean
             asset-catalog fallback served when no listing store is configured.
+        includes_unread:
+          type: array
+          items: { type: string }
+          description: >
+            Names of the `include` sections this response was asked for and
+            could not read (a failed or timed-out read). The fields of a named
+            section are absent from every row, which is otherwise the same
+            body as rows with nothing to report: on `/v1/sources`, a source
+            whose stats were not read and a source with no trades in 24h.
+            Absent when every requested section was read. A response carrying
+            it is sent `Cache-Control: no-store`; the next request retries.
         outside_coverage:
           type: boolean
           default: false

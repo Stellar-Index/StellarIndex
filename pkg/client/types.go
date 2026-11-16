@@ -96,11 +96,11 @@ type Flags struct {
 	// Truncated: the list was capped and no cursor continues it, so its length is a lower bound.
 	Truncated bool `json:"truncated,omitempty"`
 	// FiltersIgnored names the row-narrowing query parameters the response did NOT apply, spelled as the caller
-	// sent them ("type", "code", "issuer", "q"). Empty, and omitted, when everything supplied was applied.
-	// `/v1/assets` sets it on listings whose rows come from a source that cannot narrow (the class-scoped listings
-	// and the lean asset-catalog fallback). A page that dropped a filter looks identical to one that matched, so a
-	// consumer re-filtering the page keys on this.
+	// sent them ("type", "code", "issuer", "q"); omitted when everything supplied was applied. `/v1/assets` sets it
+	// on listings that cannot narrow. A page that dropped a filter otherwise looks identical to one that matched.
 	FiltersIgnored []string `json:"filters_ignored,omitempty"`
+	// IncludesUnread names the `include` sections asked for and not read; their fields are absent, not zero (`/v1/sources`).
+	IncludesUnread []string `json:"includes_unread,omitempty"`
 }
 
 // Pagination is present on list endpoints when more results than the limit exist, and nil on the terminal page.
