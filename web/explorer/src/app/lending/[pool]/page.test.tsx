@@ -14,6 +14,8 @@ vi.mock('@/lib/buildFetch', async () => {
 vi.mock('./PoolReserves', () => ({ PoolReserves: () => <div /> }));
 vi.mock('./PoolDetails', () => ({ PoolDetails: () => <div /> }));
 vi.mock('./ConfigHistory', () => ({ ConfigHistory: () => <div /> }));
+vi.mock('./BackstopPanel', () => ({ BackstopPanel: () => <div /> }));
+vi.mock('./AuctionsPanel', () => ({ AuctionsPanel: () => <div /> }));
 
 import { buildFetchData } from '@/lib/buildFetch';
 import LendingPoolPage from './page';

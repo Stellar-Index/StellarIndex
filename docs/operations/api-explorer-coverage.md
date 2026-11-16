@@ -20,10 +20,10 @@ Every path in `openapi/stellar-index.v1.yaml` against what `web/explorer` calls 
 
 | | Count |
 |---|---:|
-| Paths in the OpenAPI contract | **152** |
-| Level 3 — reachable | **116** |
+| Paths in the OpenAPI contract | **155** |
+| Level 3 — reachable | **120** |
 | Level 2 — consumed but unreachable | **0** |
-| Level 1 — not consumed | **32** |
+| Level 1 — not consumed | **31** |
 | Deliberately excluded (operational) | **4** |
 
 Level 2 is enforced empty: `src/lib/route-reachability.test.ts` fails on any page without a click path from `/`. Level 1 is a product decision, untested.
@@ -85,8 +85,11 @@ Level `ex` = deliberately excluded. "Consumed in" is the first call site.
 | `/lending/pools` | GET | 3 | app/HomeTryAPI.tsx |
 | `/lending/pools/{pool}/config-history` | GET | 3 | app/lending/[pool]/ConfigHistory.tsx |
 | `/lending/pools/{pool}/reserves` | GET | 3 | app/lending/LendingPoolsTable.tsx |
-| `/lending/pools/{pool}/backstop` | GET | 1 | — |
-| `/lending/pools/{pool}/auctions` | GET | 1 | — |
+| `/lending/pools/{pool}/reserves/{asset}/history` | GET | 3 | app/lending/[pool]/ReserveHistory.tsx |
+| `/lending/pools/{pool}/backstop` | GET | 3 | app/lending/[pool]/BackstopPanel.tsx |
+| `/lending/pools/{pool}/backstop/history` | GET | 3 | app/lending/[pool]/BackstopPanel.tsx |
+| `/lending/pools/{pool}/auctions` | GET | 3 | app/lending/[pool]/AuctionsPanel.tsx |
+| `/lending/pools/{pool}/emissions` | GET | 1 | — |
 | `/lending/accounts/{account}/earnings` | GET | 1 | — |
 | `/mev` | GET | 3 | app/docs/page.tsx |
 | `/anomalies` | GET | 3 | app/anomalies/AnomaliesFeed.tsx |

@@ -1503,7 +1503,10 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/reserves", s.handleLendingPoolReserves)
 	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/config-history", s.handleLendingConfigHistory)
 	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/backstop", s.handleLendingPoolBackstop)
+	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/reserves/{asset}/history", s.handleLendingReserveHistory)
+	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/backstop/history", s.handleLendingBackstopHistory)
 	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/auctions", s.handleLendingPoolAuctions)
+	s.mux.HandleFunc("GET /v1/lending/pools/{pool}/emissions", s.handleLendingPoolEmissions)
 	s.mux.HandleFunc("GET /v1/lending/accounts/{account}/earnings", s.handleLendingAccountEarnings)
 
 	// MEV — auto-flagged MEV-event feed (arbitrage cycles today).

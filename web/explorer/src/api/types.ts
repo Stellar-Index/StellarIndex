@@ -1891,6 +1891,73 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/lending/pools/{pool}/reserves/{asset}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Lending pool — one reserve's state history.
+         * @description One reserve's on-chain state (Blend V1/V2, BLNT V3) at the close
+         *     of every hour (`interval=1h`) or UTC day (`interval=1d`, the
+         *     day's last hourly state) in which it changed, computed from the
+         *     lake's hourly record of the pool's on-chain storage with the
+         *     same rate model as `/v1/lending/pools/{pool}/reserves`, through
+         *     `history_through_ledger`. The live endpoint reads the reserve
+         *     config from event projections and runs ahead of the history, so
+         *     the two can differ. Buckets with no change have no point: carry
+         *     the previous point forward. `from` is rounded down to the start
+         *     of its hour (`1h`) or UTC day (`1d`) and echoed; the first point
+         *     is the state in force then when one is recorded, and
+         *     `before_first_state` is true when nothing is recorded at or
+         *     before it.
+         *
+         *     Each point pairs the reserve state with the `ResConfig` and pool
+         *     instance in force at that moment (the newest entry at or before
+         *     the state's ledger and transaction; an entry written by the same
+         *     transaction is in force). `config_ledger` is null when no config
+         *     is in force, and then the APRs and config fields are null. Only
+         *     each hour's last `ResConfig` and instance are recorded, so when
+         *     either changed later in the same hour as the state, the one in
+         *     force at the state is not known: `config_uncertain` is true and
+         *     what depends on it is null (`config_ledger`, both APRs and the
+         *     config fields for the reserve config; `supply_apr` alone for the
+         *     pool instance, which sets the backstop's share of interest). The
+         *     state itself is exact either way.
+         *     `supplied`, `borrowed` and `backstop_credit` are underlying base
+         *     units; `b_rate` / `d_rate` are raw contract integers at
+         *     `rate_decimals` (9 on a Blend V1 pool, else 12) and `ir_mod` at
+         *     `ir_mod_decimals`; `collateral_factor` / `liability_factor` are
+         *     raw integers at `config_decimals`. `removed` points mark a
+         *     deleted state entry and carry null figures.
+         *
+         *     Defaults: `interval=1d`, the last 90 days; `interval=1h`, the
+         *     last 83 days. The widest window is 83 days at `interval=1h` and
+         *     1,998 days at `interval=1d`, so a series stays within the
+         *     2,000-point cap; a wider window is a 400 `invalid-window`, never
+         *     a truncated series. `history_through_ledger` is the derive
+         *     watermark; points cover only the hours before the hour that
+         *     contains it, which is served once the derive passes its end.
+         *     `flags.stale` is set when it trails the lake tip by more than
+         *     1,000 ledgers or the lake is stale. `dropped_points` counts
+         *     points whose entries failed to decode; they are left out, never
+         *     zero-filled, and the response is not cached. 404 `not-found`
+         *     when no lending source knows the pool, or nothing was ever
+         *     recorded for this reserve in it (a window with no change is a
+         *     200 with no points). 503 `history-unavailable` when this
+         *     deployment has not derived the history. No USD values.
+         */
+        get: operations["getLendingReserveHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/lending/pools/{pool}/config-history": {
         parameters: {
             query?: never;
@@ -1963,6 +2030,45 @@ export interface paths {
          *     address the lake does not hold (`pool_instance_unavailable`).
          */
         get: operations["getLendingPoolBackstop"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/lending/pools/{pool}/backstop/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Lending pool — backstop balance history per tier.
+         * @description Each backstop tier's `PoolBalance` at the close of every hour
+         *     (`interval=1h`) or UTC day (`interval=1d`) in which it changed,
+         *     from the lake's hourly record of the backstop's storage, decoded
+         *     as `/v1/lending/pools/{pool}/backstop` decodes it. Blend V2: one
+         *     tier (`tier: null`). BLNT V3: `FirstLoss`, `SecondLoss` and
+         *     `ThirdLoss` (`SecondLoss` is the pre-tier `PoolBalance(pool)`
+         *     key, the others `TierPoolBalance{pool, tier}`). Buckets with no
+         *     change have no point; the first point of a tier is its state in
+         *     force at `from`, and `before_first_state` is true when none is
+         *     recorded. `tokens`, `shares` and `queued_shares` are base-unit
+         *     decimal strings, `queued_pct` is queued_shares / shares as a
+         *     percentage; a `removed` point carries nulls.
+         *
+         *     Window, interval, point cap, `history_through_ledger`,
+         *     `flags.stale`, `dropped_points` and the 503 are as on
+         *     `/v1/lending/pools/{pool}/reserves/{asset}/history`.
+         *     `available` is false with `unavailable_reason`, as on the live
+         *     backstop endpoint, for a Blend V1 pool or one whose instance
+         *     names no backstop. 404 `not-found` when no lending source knows
+         *     the pool.
+         */
+        get: operations["getLendingBackstopHistory"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2056,6 +2162,60 @@ export interface paths {
          *     `pagination` is omitted on the last page.
          */
         get: operations["listLendingPoolAuctions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/lending/pools/{pool}/emissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Lending pool — emission streams and claim totals.
+         * @description The pool's emission configuration as contract storage holds it
+         *     now, read from the lake, and its claim totals from decoded events.
+         *     No APR and no USD values.
+         *
+         *     `reserves` lists every `EmisData(token_id)` entry of the pool's
+         *     reserves in `ResList` order: `token_id` is `reserve_index * 2` for
+         *     the dToken (`side: borrow`) and `reserve_index * 2 + 1` for the
+         *     bToken (`side: supply`). A side with no entry has no emissions and
+         *     is not listed. `backstop` is the pool's stream in its backstop:
+         *     Blend's single `BEmisData(pool)` (`tier: null`), or BLNT's
+         *     `BEmisData{pool, tier}` per loss tier. `eps` is a raw u64:
+         *     `eps / 10^eps_decimals` is `emission_token` base units per second,
+         *     and `emission_token_decimals` scales base units to whole tokens.
+         *     `live` is `expiration > as_of_time`. `archived` marks a
+         *     TTL-archived entry, served with its last written value.
+         *
+         *     `storage_available` is false, with `storage_unavailable_reason`,
+         *     for a Blend V1 pool (`blend_v1_emission_storage_unverified`: its
+         *     emission storage layout is not verified, so none is guessed), a
+         *     pool whose instance the lake does not hold
+         *     (`pool_instance_unavailable`), or a deployment without the lake
+         *     reader (`emission_storage_reader_unavailable`).
+         *
+         *     `claims` totals claim events up to `as_of_time`, lifetime and over
+         *     the 30 days ending there, as base-unit decimal strings, with claim
+         *     and distinct-claimer counts. `claims.pool` is the pool's `claim`
+         *     events (`amount_claimed`, in the emission token). Blend's backstop
+         *     `claim` event names no pool, so `claims.backstop` is null with
+         *     `backstop_unavailable_reason: blend_backstop_claim_names_no_pool`.
+         *     A BLNT backstop claim is per pool and tier: `amount` is the BLNT
+         *     claimed, `lp_tokens` the backstop tokens it bought and
+         *     `shares_minted` the tier shares minted to the claimer; it is not a
+         *     token payout.
+         *
+         *     404 when no Blend or BLNT pool is known at the contract id.
+         */
+        get: operations["getLendingPoolEmissions"];
         put?: never;
         post?: never;
         delete?: never;
@@ -8528,6 +8688,22 @@ export interface components {
              * @default false
              */
             detectors_partial: boolean;
+        };
+        /** @description One claim stream's totals up to `as_of_time`, lifetime and over the 30 days ending there; amounts are base-unit decimal strings. */
+        LendingClaimTotals: {
+            /** Format: int64 */
+            claims: number;
+            /** Format: int64 */
+            claims_30d: number;
+            /**
+             * Format: int64
+             * @description Distinct claiming addresses.
+             */
+            claimers: number;
+            /** Format: int64 */
+            claimers_30d: number;
+            amount: string;
+            amount_30d: string;
         };
         /**
          * @description Present on list endpoints when more rows exist beyond the
@@ -17848,6 +18024,155 @@ export interface operations {
             503: components["responses"]["ServiceUnavailable"];
         };
     };
+    getLendingReserveHistory: {
+        parameters: {
+            query?: {
+                interval?: "1h" | "1d";
+                /** @description RFC 3339, rounded down to the start of its hour (`1h`) or UTC day (`1d`); default `to` - 90 days (`1d`) or 83 days (`1h`). */
+                from?: string;
+                /** @description RFC 3339; default now. */
+                to?: string;
+                /** @description Duration (`30d`, `72h`); sets from = to - window. Exclusive with `from`. */
+                window?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Pool contract C-strkey. */
+                pool: string;
+                /** @description Reserve token contract C-strkey. */
+                asset: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Reserve state history. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "pool": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
+                     *         "asset": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                     *         "protocol": "blend_v2",
+                     *         "interval": "1d",
+                     *         "from": "2026-08-18T00:00:00Z",
+                     *         "to": "2026-11-16T00:00:00Z",
+                     *         "decimals": 7,
+                     *         "rate_decimals": 12,
+                     *         "ir_mod_decimals": 7,
+                     *         "config_decimals": 7,
+                     *         "history_through_ledger": 63340102,
+                     *         "history_through_time": "2026-11-15T23:59:58Z",
+                     *         "dropped_points": 0,
+                     *         "before_first_state": false,
+                     *         "points": [
+                     *           {
+                     *             "t": "2026-08-17T23:59:41Z",
+                     *             "state_ledger": 61800001,
+                     *             "config_ledger": 60000000,
+                     *             "removed": false,
+                     *             "supplied": "12000000000000",
+                     *             "borrowed": "9000000000000",
+                     *             "b_rate": "1012345678901",
+                     *             "d_rate": "1023456789012",
+                     *             "ir_mod": "10000000",
+                     *             "backstop_credit": "1000000",
+                     *             "utilization_pct": 75,
+                     *             "borrow_apr": 0.0612,
+                     *             "supply_apr": 0.0413,
+                     *             "collateral_factor": "9000000",
+                     *             "liability_factor": "9500000",
+                     *             "supply_cap": "100000000000000",
+                     *             "config_uncertain": false
+                     *           }
+                     *         ]
+                     *       },
+                     *       "as_of": "2026-11-16T00:00:01Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: {
+                            pool: string;
+                            asset: string;
+                            /**
+                             * @description Null when no state is recorded.
+                             * @enum {string|null}
+                             */
+                            protocol: "blend_v1" | "blend_v2" | "blnt" | null;
+                            /** @enum {string} */
+                            interval: "1h" | "1d";
+                            /** Format: date-time */
+                            from: string;
+                            /** Format: date-time */
+                            to: string;
+                            /** @description Reserve token decimals as the live reserves endpoint resolves them; null when not established. */
+                            decimals: number | null;
+                            /** @description Scale of b_rate and d_rate: 9 on Blend V1, else 12. */
+                            rate_decimals: number | null;
+                            /** @description Scale of ir_mod: 9 on Blend V1, else 7. */
+                            ir_mod_decimals: number | null;
+                            config_decimals: number;
+                            /**
+                             * Format: int64
+                             * @description Derive watermark. Points cover only the hours before the hour containing this ledger; that hour is served once the derive passes its end.
+                             */
+                            history_through_ledger: number;
+                            /**
+                             * Format: date-time
+                             * @description Close time of history_through_ledger.
+                             */
+                            history_through_time: string | null;
+                            /** @description Points left out because an entry failed to decode. */
+                            dropped_points: number;
+                            /** @description True when no state is recorded at or before the echoed `from`. */
+                            before_first_state: boolean;
+                            points: {
+                                /**
+                                 * Format: date-time
+                                 * @description Close time of the ledger the state was observed at.
+                                 */
+                                t: string;
+                                /** Format: int64 */
+                                state_ledger: number;
+                                /** Format: int64 */
+                                config_ledger: number | null;
+                                removed: boolean;
+                                supplied: string | null;
+                                borrowed: string | null;
+                                b_rate: string | null;
+                                d_rate: string | null;
+                                ir_mod: string | null;
+                                backstop_credit: string | null;
+                                utilization_pct: number | null;
+                                borrow_apr: number | null;
+                                supply_apr: number | null;
+                                collateral_factor: string | null;
+                                liability_factor: string | null;
+                                /** @description Base units; null on Blend V1 and when no config is in force. */
+                                supply_cap: string | null;
+                                /** @description True when the reserve config or the pool instance changed later in this state's hour, so the one in force at this state is not known; the fields that depend on it are null. */
+                                config_uncertain: boolean;
+                            }[];
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
     getLendingPoolConfigHistory: {
         parameters: {
             query?: {
@@ -18045,6 +18370,121 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getLendingBackstopHistory: {
+        parameters: {
+            query?: {
+                interval?: "1h" | "1d";
+                /** @description RFC 3339, rounded down to the start of its hour (`1h`) or UTC day (`1d`); default `to` - 90 days (`1d`) or 83 days (`1h`). */
+                from?: string;
+                /** @description RFC 3339; default now. */
+                to?: string;
+                /** @description Duration (`30d`, `72h`); sets from = to - window. Exclusive with `from`. */
+                window?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Pool contract C-strkey. */
+                pool: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Backstop balance history. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "pool": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
+                     *         "protocol": "blend",
+                     *         "available": true,
+                     *         "backstop": "CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7",
+                     *         "interval": "1d",
+                     *         "from": "2026-08-18T00:00:00Z",
+                     *         "to": "2026-11-16T00:00:00Z",
+                     *         "history_through_ledger": 63340102,
+                     *         "history_through_time": "2026-11-15T23:59:58Z",
+                     *         "dropped_points": 0,
+                     *         "tiers": [
+                     *           {
+                     *             "tier": null,
+                     *             "before_first_state": false,
+                     *             "points": [
+                     *               {
+                     *                 "t": "2026-08-17T22:10:05Z",
+                     *                 "ledger": 61799001,
+                     *                 "removed": false,
+                     *                 "tokens": "50000000000000",
+                     *                 "shares": "45000000000000",
+                     *                 "queued_shares": "9000000000000",
+                     *                 "queued_pct": 20
+                     *               }
+                     *             ]
+                     *           }
+                     *         ]
+                     *       },
+                     *       "as_of": "2026-11-16T00:00:01Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: {
+                            pool: string;
+                            /** @enum {string|null} */
+                            protocol: "blend" | "blnt" | null;
+                            available: boolean;
+                            /** @enum {string} */
+                            unavailable_reason?: "blend_v1_unsupported" | "pool_lineage_unknown" | "pool_instance_unavailable";
+                            backstop: string | null;
+                            /** @enum {string} */
+                            interval: "1h" | "1d";
+                            /** Format: date-time */
+                            from: string;
+                            /** Format: date-time */
+                            to: string;
+                            /**
+                             * Format: int64
+                             * @description As on the reserve history: points cover only the hours before the hour containing this ledger.
+                             */
+                            history_through_ledger: number;
+                            /** Format: date-time */
+                            history_through_time: string | null;
+                            dropped_points: number;
+                            tiers: {
+                                /** @enum {string|null} */
+                                tier: "FirstLoss" | "SecondLoss" | "ThirdLoss" | null;
+                                before_first_state: boolean;
+                                points: {
+                                    /** Format: date-time */
+                                    t: string;
+                                    /** Format: int64 */
+                                    ledger: number;
+                                    removed: boolean;
+                                    tokens: string | null;
+                                    shares: string | null;
+                                    queued_shares: string | null;
+                                    queued_pct: number | null;
+                                }[];
+                            }[];
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
             503: components["responses"]["ServiceUnavailable"];
         };
     };
@@ -18267,6 +18707,152 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getLendingPoolEmissions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Pool contract C-strkey. */
+                pool: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Emission streams and claim totals. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "pool": "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD",
+                     *         "protocol": "blend",
+                     *         "emission_token": "CD25MNVTZDL4Y3XBCPCJXGXATV5WUHHOWMYFF4YBEGU5FCPGMYTVG5JY",
+                     *         "emission_token_decimals": 7,
+                     *         "eps_decimals": 7,
+                     *         "storage_available": true,
+                     *         "reserves": [
+                     *           {
+                     *             "token_id": 1,
+                     *             "asset": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+                     *             "side": "supply",
+                     *             "eps": "2066115702479",
+                     *             "expiration": "2026-11-20T00:00:00Z",
+                     *             "last_update": "2026-11-13T00:00:00Z",
+                     *             "live": true,
+                     *             "archived": false
+                     *           }
+                     *         ],
+                     *         "backstop": [
+                     *           {
+                     *             "tier": null,
+                     *             "eps": "4132231404958",
+                     *             "expiration": "2026-11-20T00:00:00Z",
+                     *             "last_update": "2026-11-13T00:00:00Z",
+                     *             "live": true,
+                     *             "archived": false
+                     *           }
+                     *         ],
+                     *         "claims": {
+                     *           "available": true,
+                     *           "pool": {
+                     *             "claims": 1200,
+                     *             "claims_30d": 85,
+                     *             "claimers": 310,
+                     *             "claimers_30d": 60,
+                     *             "amount": "125000000000000",
+                     *             "amount_30d": "9000000000000"
+                     *           },
+                     *           "backstop": null,
+                     *           "backstop_unavailable_reason": "blend_backstop_claim_names_no_pool"
+                     *         },
+                     *         "as_of_ledger": 63340102,
+                     *         "as_of_time": "2026-11-16T12:00:00Z"
+                     *       },
+                     *       "as_of": "2026-11-16T12:00:00Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false,
+                     *         "divergence_checked": false
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["EnvelopeMeta"] & {
+                        data: {
+                            pool: string;
+                            /** @enum {string} */
+                            protocol: "blend" | "blnt";
+                            /** @description Emitted token contract: the pool instance's `BLNDTkn` (Blend) or `BLNTTkn` (BLNT); null when unread. */
+                            emission_token: string | null;
+                            /** @description The emission token's decimals(); null when it could not be read. */
+                            emission_token_decimals: number | null;
+                            /** @description Fixed-point scale of every `eps`: `eps / 10^eps_decimals` is emission-token base units per second. */
+                            eps_decimals: number;
+                            storage_available: boolean;
+                            /** @enum {string} */
+                            storage_unavailable_reason?: "blend_v1_emission_storage_unverified" | "pool_instance_unavailable" | "emission_storage_reader_unavailable";
+                            reserves: {
+                                token_id: number;
+                                /** @description Reserve underlying token; null when token_id is past the pool's reserve list. */
+                                asset: string | null;
+                                /** @enum {string} */
+                                side: "supply" | "borrow";
+                                eps: string;
+                                /** Format: date-time */
+                                expiration: string;
+                                /** Format: date-time */
+                                last_update: string;
+                                live: boolean;
+                                archived: boolean;
+                            }[];
+                            backstop: {
+                                /** @enum {string|null} */
+                                tier: "FirstLoss" | "SecondLoss" | "ThirdLoss" | null;
+                                eps: string;
+                                /** Format: date-time */
+                                expiration: string;
+                                /** Format: date-time */
+                                last_update: string;
+                                live: boolean;
+                                archived: boolean;
+                            }[];
+                            claims: {
+                                available: boolean;
+                                /** @enum {string} */
+                                unavailable_reason?: "claim_reader_unavailable";
+                                pool: null | components["schemas"]["LendingClaimTotals"];
+                                backstop: (components["schemas"]["LendingClaimTotals"] & {
+                                    /** @enum {string} */
+                                    tier: "FirstLoss" | "SecondLoss" | "ThirdLoss";
+                                    lp_tokens: string;
+                                    lp_tokens_30d: string;
+                                    shares_minted: string;
+                                    shares_minted_30d: string;
+                                })[] | null;
+                                /** @enum {string} */
+                                backstop_unavailable_reason?: "blend_backstop_claim_names_no_pool";
+                            };
+                            /**
+                             * Format: int64
+                             * @description Highest ledger the lake had captured at serve time.
+                             */
+                            as_of_ledger?: number;
+                            /** Format: date-time */
+                            as_of_time: string;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
             503: components["responses"]["ServiceUnavailable"];
         };
     };
