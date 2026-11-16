@@ -129,7 +129,7 @@ func (h *Handler) AccountActivity(w http.ResponseWriter, r *http.Request) {
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
-	h.writeJSONAt(w, out, degraded, degraded || out.CoverageNote != "", asOf)
+	h.writeCachedJSON(ctx, w, out, degraded, degraded || out.CoverageNote != "", asOf)
 }
 
 // computeAccountActivity runs the four segment reads. Each degrades independently (absent and named in coverage_note, never mistaken for

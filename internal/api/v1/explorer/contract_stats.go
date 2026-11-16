@@ -139,7 +139,7 @@ func (h *Handler) ContractStats(w http.ResponseWriter, r *http.Request) {
 		if !fresh {
 			h.refreshContractStats() //nolint:contextcheck // intentional detach — see refreshContractStats
 		}
-		h.writeJSONAt(w, e.view, !fresh, !fresh, e.cachedAt)
+		h.writeCachedJSON(r.Context(), w, e.view, !fresh, !fresh, e.cachedAt)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
@@ -149,7 +149,7 @@ func (h *Handler) ContractStats(w http.ResponseWriter, r *http.Request) {
 	select {
 	case <-fl.done:
 		if e, ok, _ := h.contractStats.get(); ok {
-			h.writeJSONAt(w, e.view, false, false, e.cachedAt)
+			h.writeCachedJSON(ctx, w, e.view, false, false, e.cachedAt)
 			return
 		}
 		if err = fl.err; err == nil {
