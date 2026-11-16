@@ -410,6 +410,12 @@ def build_extract(prom_url, window_text, host):
         "samples_min": "min_over_time(%s[%s])" % (samples, rng),
         "samples_max": "max_over_time(%s[%s])" % (samples, rng),
         "scrape_count": "count_over_time(%s[%s])" % (beat, rng),
+        # Coverage per endpoint. The beat has no endpoint label, and every
+        # aggregate above describes only the samples that exist, so an
+        # endpoint whose series spans two hours of the week would
+        # otherwise be judged on those two hours under the week's label.
+        # Availability is the family every run writes for every endpoint.
+        "endpoint_scrape_count": "count_over_time(%s[%s])" % (avail, rng),
         "scrape_count_1h": "count_over_time(%s[1h])" % beat,
         "fresh_max": "max_over_time(%s[%s])" % (fresh, rng),
         "fresh_typ": "quantile_over_time(0.5, %s[%s])" % (fresh, rng),
@@ -657,6 +663,36 @@ avail_window = by_endpoint("avail_time_weighted")
 # availability for must appear in the table with its cells empty, not
 # vanish from it.
 endpoints = sorted(set(p95_max) | set(p99_max) | set(avail_min) | set(samples_avg))
+
+# The window's coverage above is the HOST's: the beat series carries no
+# endpoint label. An endpoint added, renamed or dropped mid-window has a
+# series covering part of it, and max/min/avg over a range describe only
+# the samples that exist, so its cells would be judged on that part and
+# published under the whole window's label. Each endpoint's own scrape
+# count is held to the same floor; below it (or with no count at all, as
+# in an extract that predates the query) its cells read NOT PROVEN.
+endpoint_scrapes = by_endpoint("endpoint_scrape_count")
+uncovered = {}
+for ep in endpoints:
+    n = endpoint_scrapes.get(ep)
+    cov = (n / expected_scrapes) if (evaluable(n) and expected_scrapes > 0) else None
+    if cov is None or cov < min_coverage:
+        uncovered[ep] = cov
+
+
+def cell_verdict(ep, value, target, lower_is_better=True):
+    if ep in uncovered:
+        return "NOT PROVEN"
+    return bound_verdict(value, target, lower_is_better)
+
+
+def uncovered_text(ep):
+    cov = uncovered[ep]
+    if cov is None:
+        return "`%s` (no scrape count in the extract)" % ep
+    return "`%s` (%.1f %% of the window's scrapes)" % (ep, cov * 100.0)
+
+
 not_proven = []
 unevaluated = []
 for ep in endpoints:
@@ -666,7 +702,7 @@ for ep in endpoints:
             ("availability", avail_window.get(ep), AVAILABILITY_TARGET_PCT, False)):
         if not evaluable(value):
             unevaluated.append("%s %s" % (ep, family))
-        if bound_verdict(value, target, lower_is_better) == "NOT PROVEN":
+        if cell_verdict(ep, value, target, lower_is_better) == "NOT PROVEN":
             not_proven.append("%s %s" % (ep, family))
 
 overall = "PROVEN" if (not not_proven and window_clean) else "NOT PROVEN"
@@ -899,10 +935,10 @@ for ep in endpoints:
       % (ep,
          "%.0f" % samples_avg[ep]
          if ep in samples_avg and evaluable(samples_avg[ep]) else "n/a",
-         ms(p95_max.get(ep)), bound_verdict(p95_max.get(ep), P95_TARGET_MS),
-         ms(p99_max.get(ep)), bound_verdict(p99_max.get(ep), P99_TARGET_MS),
+         ms(p95_max.get(ep)), cell_verdict(ep, p95_max.get(ep), P95_TARGET_MS),
+         ms(p99_max.get(ep)), cell_verdict(ep, p99_max.get(ep), P99_TARGET_MS),
          pct(avail_window.get(ep)),
-         bound_verdict(avail_window.get(ep), AVAILABILITY_TARGET_PCT, False),
+         cell_verdict(ep, avail_window.get(ep), AVAILABILITY_TARGET_PCT, False),
          pct(avail_min.get(ep))))
 w("")
 w("The two latency columns are **bounds**; the availability column is an")
@@ -923,6 +959,14 @@ if unevaluated:
     w("no finite value for that endpoint in that family, so the cell reads")
     w("n/a beside NOT PROVEN: an unmeasured cell is not a pass, and the")
     w("verdict is NOT PROVEN for the window while any such cell stands.")
+    w("")
+if uncovered:
+    w("**%d endpoint(s) were not measured across the window** — %s. The"
+      % (len(uncovered), ", ".join(uncovered_text(ep) for ep in sorted(uncovered))))
+    w("figures in those rows describe only the part of the window the")
+    w("endpoint's series covers, below the %.0f %% floor, so every cell in"
+      % (min_coverage * 100.0))
+    w("them reads NOT PROVEN whatever the number beside it says.")
     w("")
 # A NaN/Inf sample count is not zero and must not be summed or truncated
 # as one — filter every samples_* family through evaluable() before any
@@ -1099,6 +1143,9 @@ if unevaluated:
     print("sla-proof-from-probe: unevaluable headline cell(s) — %s (no finite "
           "value in the series; an unmeasured cell is not a pass)"
           % ", ".join(unevaluated))
+if uncovered:
+    print("sla-proof-from-probe: endpoint(s) not measured across the window — %s"
+          % ", ".join(uncovered_text(ep) for ep in sorted(uncovered)))
 if not window_clean:
     print("sla-proof-from-probe: window not clean — coverage %.4f, %d gap(s)"
           % (coverage, len(gaps)))

@@ -166,6 +166,13 @@ clean["series"]["avail_time_weighted"] = [
     {"metric": copy.deepcopy(r["metric"]), "value": [r["value"][0], "100.0"]}
     for r in clean["series"]["avail_min"]
 ]
+# The real capture also predates the per-endpoint scrape count; every
+# endpoint was scraped as often as the host beat.
+clean["series"]["endpoint_scrape_count"] = [
+    {"metric": copy.deepcopy(r["metric"]),
+     "value": [r["value"][0], clean["series"]["scrape_count"][0]["value"][1]]}
+    for r in clean["series"]["avail_min"]
+]
 clean["series_gaps"] = []
 # One build, so the multi-build caveat must switch to its singular form.
 clean["series"]["api_versions"] = [
@@ -197,6 +204,20 @@ write("masked", masked)
 thin = copy.deepcopy(clean)
 each(thin, "scrape_count", lambda v, m: 5000.0)
 write("thin", thin)
+
+# `endpoint_partial` — byte-identical numbers to `clean`, but one
+# endpoint's series spans two hours of the week. The host beat is whole,
+# so the window's own coverage sees nothing wrong.
+endpoint_partial = copy.deepcopy(clean)
+each(endpoint_partial, "endpoint_scrape_count",
+     lambda v, m: v * 2.0 / 168.0 if m.get("endpoint") == "assets" else v)
+write("endpoint_partial", endpoint_partial)
+
+# `endpoint_uncounted` — `clean` as an extract written before the
+# per-endpoint count existed.
+endpoint_uncounted = copy.deepcopy(clean)
+del endpoint_uncounted["series"]["endpoint_scrape_count"]
+write("endpoint_uncounted", endpoint_uncounted)
 
 # `short` — the retention case. Prometheus here keeps the 15-day default
 # and has been restarted, so a requested week is not necessarily a
@@ -579,6 +600,31 @@ THIN="$TMP/out-thin/$(ls "$TMP/out-thin")"
 assert_contains 'the thin report reports its coverage' "$THIN" \
   'Scrapes of the probe series in the window'
 
+# ── An endpoint measured for part of the window is not proven ───────────
+render "$TMP/endpoint_partial.json" "$TMP/out-endpoint_partial"
+expect 'one endpoint covering 2 h of the week → rc 1, NOT PROVEN' 1 \
+  'NOT PROVEN — wrote'
+expect 'the log names the endpoint and its share of the window' 1 \
+  "endpoint(s) not measured across the window — \`assets\` (1.2 % of the window"
+PARTIAL="$TMP/out-endpoint_partial/$(ls "$TMP/out-endpoint_partial")"
+assert_contains 'the partial endpoint: the report refuses the PASS' "$PARTIAL" \
+  '**Verdict: NOT PROVEN.**'
+assert_contains 'the partial endpoint: every cell in its row reads NOT PROVEN' "$PARTIAL" \
+  "| \`assets\` | 814 | 42.0 ms | NOT PROVEN | 120.0 ms | NOT PROVEN | 100.000 % | NOT PROVEN |"
+assert_contains 'the partial endpoint: the report says why' "$PARTIAL" \
+  'were not measured across the window'
+if [ "$(grep -c '| 42.0 ms | PROVEN | 120.0 ms | PROVEN | 100.000 % | PROVEN |' "$PARTIAL")" -eq 9 ]; then
+  echo "ok: the other nine endpoints keep their PROVEN cells"
+  pass=$((pass + 1))
+else
+  echo "FAIL: one partial endpoint changed the others' cells" >&2
+  fail=$((fail + 1))
+fi
+
+render "$TMP/endpoint_uncounted.json" "$TMP/out-endpoint_uncounted"
+expect 'an extract with no per-endpoint scrape count is not certified → rc 1' 1 \
+  'no scrape count in the extract'
+
 # ── A masked timer is not a clean window either ────────────────
 # `masked` carries byte-identical numbers and full scrape coverage to
 # `clean` — the only difference is the probe-liveness facts, which say the
@@ -717,6 +763,8 @@ def answer(expr):
     # path, not the arithmetic, which the extract cases already cover.
     if expr.startswith("count_over_time") and "[1h]" in expr:
         return [{"metric": {}, "value": [NOW, "180" if has_hole(expr) and mode != "gap" else "240"]}]
+    if "count_over_time" in expr and "availability_pct" in expr:
+        return vec(40000)
     if "count_over_time" in expr:
         return [{"metric": {}, "value": [NOW, "38000" if has_hole(expr) and mode != "gap" else "40000"]}]
     if "availability_pct" in expr and "bool" in expr:
