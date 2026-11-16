@@ -613,23 +613,7 @@ func (s *Server) writeLendingReservesTimeout(w http.ResponseWriter, r *http.Requ
 // buildReserveView maps one decoded reserve state to its wire shape, pricing it in USD best-effort; returns the supplied-USD
 // contribution (nil when unpriced) for the pool TVL sum, and whether a served USD figure rests on a stale price.
 func (s *Server) buildReserveView(ctx context.Context, st clickhouse.BlendReserveState) (ReserveView, *big.Rat, bool) {
-	rv := ReserveView{
-		Asset:          st.Asset,
-		Supplied:       st.Metrics.SuppliedUnderlying.String(),
-		Borrowed:       st.Metrics.BorrowedUnderlying.String(),
-		UtilizationPct: round2(st.Metrics.UtilizationPct),
-		Config:         reserveConfigView(st.Config),
-		IRMod:          bigString(st.Data.IRMod),
-		IRModDecimals:  irModDecimals(st.Data.Version),
-		BackstopCredit: bigString(st.Data.BackstopCredit),
-		LastUpdate:     reserveLastUpdate(st.Data.LastTime),
-	}
-	if st.Metrics.HasAPR {
-		b := round4(st.Metrics.BorrowAPR)
-		sup := round4(st.Metrics.SupplyAPR)
-		rv.BorrowAPR = &b
-		rv.SupplyAPR = &sup
-	}
+	rv := reserveStateView(st)
 	dec, decKnown := s.reserveDecimals(ctx, st)
 	if decKnown {
 		d := uint32(dec)
@@ -662,6 +646,28 @@ func (s *Server) buildReserveView(ctx context.Context, st clickhouse.BlendReserv
 		rv.PriceUSD, rv.PriceStale = &price, stale
 	}
 	return rv, suppliedContrib, stale && valued
+}
+
+// reserveStateView is a reserve's wire shape without decimals and USD values: everything decoded from contract storage.
+func reserveStateView(st clickhouse.BlendReserveState) ReserveView {
+	rv := ReserveView{
+		Asset:          st.Asset,
+		Supplied:       st.Metrics.SuppliedUnderlying.String(),
+		Borrowed:       st.Metrics.BorrowedUnderlying.String(),
+		UtilizationPct: round2(st.Metrics.UtilizationPct),
+		Config:         reserveConfigView(st.Config),
+		IRMod:          bigString(st.Data.IRMod),
+		IRModDecimals:  irModDecimals(st.Data.Version),
+		BackstopCredit: bigString(st.Data.BackstopCredit),
+		LastUpdate:     reserveLastUpdate(st.Data.LastTime),
+	}
+	if st.Metrics.HasAPR {
+		b := round4(st.Metrics.BorrowAPR)
+		sup := round4(st.Metrics.SupplyAPR)
+		rv.BorrowAPR = &b
+		rv.SupplyAPR = &sup
+	}
+	return rv
 }
 
 // reserveDecimals returns the reserve token's real decimal exponent: the pool's reserve config when captured, else 7 for a

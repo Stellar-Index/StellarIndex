@@ -3832,6 +3832,148 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /lending/pools/{pool}/reserves/{asset}/history:
+    get:
+      operationId: getLendingReserveHistory
+      tags: [protocols]
+      summary: Lending pool — one reserve's state history.
+      description: |
+        One reserve's on-chain state (Blend V1/V2, BLNT V3) at the close
+        of every hour (`interval=1h`) or UTC day (`interval=1d`, the
+        day's last hourly state) in which it changed, computed from the
+        lake's hourly record of the pool's on-chain storage with the
+        same rate model as `/v1/lending/pools/{pool}/reserves`, through
+        `history_through_ledger`. The live endpoint reads the reserve
+        config from event projections and runs ahead of the history, so
+        the two can differ. Buckets with no change have no point: carry
+        the previous point forward. `from` is rounded down to the start
+        of its hour (`1h`) or UTC day (`1d`) and echoed; the first point
+        is the state in force then when one is recorded, and
+        `before_first_state` is true when nothing is recorded at or
+        before it.
+
+        Each point pairs the reserve state with the `ResConfig` and pool
+        instance in force at that moment (the newest entry at or before
+        the state's ledger and transaction; an entry written by the same
+        transaction is in force). `config_ledger` is null when no config
+        is in force, and then the APRs and config fields are null. Only
+        each hour's last `ResConfig` and instance are recorded, so when
+        either changed later in the same hour as the state, the one in
+        force at the state is not known: `config_uncertain` is true and
+        what depends on it is null (`config_ledger`, both APRs and the
+        config fields for the reserve config; `supply_apr` alone for the
+        pool instance, which sets the backstop's share of interest). The
+        state itself is exact either way.
+        `supplied`, `borrowed` and `backstop_credit` are underlying base
+        units; `b_rate` / `d_rate` are raw contract integers at
+        `rate_decimals` (9 on a Blend V1 pool, else 12) and `ir_mod` at
+        `ir_mod_decimals`; `collateral_factor` / `liability_factor` are
+        raw integers at `config_decimals`. `removed` points mark a
+        deleted state entry and carry null figures.
+
+        Defaults: `interval=1d`, the last 90 days; `interval=1h`, the
+        last 83 days. The widest window is 83 days at `interval=1h` and
+        1,998 days at `interval=1d`, so a series stays within the
+        2,000-point cap; a wider window is a 400 `invalid-window`, never
+        a truncated series. `history_through_ledger` is the derive
+        watermark; points cover only the hours before the hour that
+        contains it, which is served once the derive passes its end.
+        `flags.stale` is set when it trails the lake tip by more than
+        1,000 ledgers or the lake is stale. `dropped_points` counts
+        points whose entries failed to decode; they are left out, never
+        zero-filled, and the response is not cached. 404 `not-found`
+        when no lending source knows the pool, or nothing was ever
+        recorded for this reserve in it (a window with no change is a
+        200 with no points). 503 `history-unavailable` when this
+        deployment has not derived the history. No USD values.
+      parameters:
+        - { name: pool, in: path, required: true, description: Pool contract C-strkey., schema: { type: string } }
+        - { name: asset, in: path, required: true, description: Reserve token contract C-strkey., schema: { type: string } }
+        - { name: interval, in: query, required: false, schema: { type: string, enum: ["1h", "1d"], default: "1d" } }
+        - { name: from, in: query, required: false, description: "RFC 3339, rounded down to the start of its hour (`1h`) or UTC day (`1d`); default `to` - 90 days (`1d`) or 83 days (`1h`).", schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: false, description: "RFC 3339; default now.", schema: { type: string, format: date-time } }
+        - { name: window, in: query, required: false, description: "Duration (`30d`, `72h`); sets from = to - window. Exclusive with `from`.", schema: { type: string } }
+      responses:
+        "200":
+          description: Reserve state history.
+          content:
+            application/json:
+              example:
+                data:
+                  pool: CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD
+                  asset: CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75
+                  protocol: blend_v2
+                  interval: 1d
+                  from: '2026-08-18T00:00:00Z'
+                  to: '2026-11-16T00:00:00Z'
+                  decimals: 7
+                  rate_decimals: 12
+                  ir_mod_decimals: 7
+                  config_decimals: 7
+                  history_through_ledger: 63340102
+                  history_through_time: '2026-11-15T23:59:58Z'
+                  dropped_points: 0
+                  before_first_state: false
+                  points:
+                  - { t: '2026-08-17T23:59:41Z', state_ledger: 61800001, config_ledger: 60000000, removed: false, supplied: '12000000000000', borrowed: '9000000000000', b_rate: '1012345678901', d_rate: '1023456789012', ir_mod: '10000000', backstop_credit: '1000000', utilization_pct: 75, borrow_apr: 0.0612, supply_apr: 0.0413, collateral_factor: '9000000', liability_factor: '9500000', supply_cap: '100000000000000', config_uncertain: false }
+                as_of: '2026-11-16T00:00:01Z'
+                flags:
+                  stale: false
+                  reduced_redundancy: false
+                  triangulated: false
+                  divergence_warning: false
+                  divergence_checked: false
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          pool: { type: string }
+                          asset: { type: string }
+                          protocol: { type: [string, "null"], enum: [blend_v1, blend_v2, blnt, null], description: "Null when no state is recorded." }
+                          interval: { type: string, enum: ["1h", "1d"] }
+                          from: { type: string, format: date-time }
+                          to: { type: string, format: date-time }
+                          decimals: { type: [integer, "null"], description: "Reserve token decimals as the live reserves endpoint resolves them; null when not established." }
+                          rate_decimals: { type: [integer, "null"], description: "Scale of b_rate and d_rate: 9 on Blend V1, else 12." }
+                          ir_mod_decimals: { type: [integer, "null"], description: "Scale of ir_mod: 9 on Blend V1, else 7." }
+                          config_decimals: { type: integer }
+                          history_through_ledger: { type: integer, format: int64, description: "Derive watermark. Points cover only the hours before the hour containing this ledger; that hour is served once the derive passes its end." }
+                          history_through_time: { type: [string, "null"], format: date-time, description: "Close time of history_through_ledger." }
+                          dropped_points: { type: integer, description: "Points left out because an entry failed to decode." }
+                          before_first_state: { type: boolean, description: "True when no state is recorded at or before the echoed `from`." }
+                          points:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                t: { type: string, format: date-time, description: "Close time of the ledger the state was observed at." }
+                                state_ledger: { type: integer, format: int64 }
+                                config_ledger: { type: [integer, "null"], format: int64 }
+                                removed: { type: boolean }
+                                supplied: { type: [string, "null"] }
+                                borrowed: { type: [string, "null"] }
+                                b_rate: { type: [string, "null"] }
+                                d_rate: { type: [string, "null"] }
+                                ir_mod: { type: [string, "null"] }
+                                backstop_credit: { type: [string, "null"] }
+                                utilization_pct: { type: [number, "null"] }
+                                borrow_apr: { type: [number, "null"] }
+                                supply_apr: { type: [number, "null"] }
+                                collateral_factor: { type: [string, "null"] }
+                                liability_factor: { type: [string, "null"] }
+                                supply_cap: { type: [string, "null"], description: "Base units; null on Blend V1 and when no config is in force." }
+                                config_uncertain: { type: boolean, description: "True when the reserve config or the pool instance changed later in this state's hour, so the one in force at this state is not known; the fields that depend on it are null." }
+                              required: [t, state_ledger, config_ledger, removed, supplied, borrowed, b_rate, d_rate, ir_mod, backstop_credit, utilization_pct, borrow_apr, supply_apr, collateral_factor, liability_factor, supply_cap, config_uncertain]
+                        required: [pool, asset, protocol, interval, from, to, decimals, rate_decimals, ir_mod_decimals, config_decimals, history_through_ledger, history_through_time, dropped_points, before_first_state, points]
+                    required: [data]
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /lending/pools/{pool}/config-history:
     get:
       operationId: getLendingPoolConfigHistory
@@ -4021,6 +4163,113 @@ paths:
                         required: [pool, protocol, available, backstop, backstop_token, take_rate, config_decimals, tiers]
                     required: [data]
         "400": { $ref: "#/components/responses/BadRequest" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /lending/pools/{pool}/backstop/history:
+    get:
+      operationId: getLendingBackstopHistory
+      tags: [protocols]
+      summary: Lending pool — backstop balance history per tier.
+      description: |
+        Each backstop tier's `PoolBalance` at the close of every hour
+        (`interval=1h`) or UTC day (`interval=1d`) in which it changed,
+        from the lake's hourly record of the backstop's storage, decoded
+        as `/v1/lending/pools/{pool}/backstop` decodes it. Blend V2: one
+        tier (`tier: null`). BLNT V3: `FirstLoss`, `SecondLoss` and
+        `ThirdLoss` (`SecondLoss` is the pre-tier `PoolBalance(pool)`
+        key, the others `TierPoolBalance{pool, tier}`). Buckets with no
+        change have no point; the first point of a tier is its state in
+        force at `from`, and `before_first_state` is true when none is
+        recorded. `tokens`, `shares` and `queued_shares` are base-unit
+        decimal strings, `queued_pct` is queued_shares / shares as a
+        percentage; a `removed` point carries nulls.
+
+        Window, interval, point cap, `history_through_ledger`,
+        `flags.stale`, `dropped_points` and the 503 are as on
+        `/v1/lending/pools/{pool}/reserves/{asset}/history`.
+        `available` is false with `unavailable_reason`, as on the live
+        backstop endpoint, for a Blend V1 pool or one whose instance
+        names no backstop. 404 `not-found` when no lending source knows
+        the pool.
+      parameters:
+        - { name: pool, in: path, required: true, description: Pool contract C-strkey., schema: { type: string } }
+        - { name: interval, in: query, required: false, schema: { type: string, enum: ["1h", "1d"], default: "1d" } }
+        - { name: from, in: query, required: false, description: "RFC 3339, rounded down to the start of its hour (`1h`) or UTC day (`1d`); default `to` - 90 days (`1d`) or 83 days (`1h`).", schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: false, description: "RFC 3339; default now.", schema: { type: string, format: date-time } }
+        - { name: window, in: query, required: false, description: "Duration (`30d`, `72h`); sets from = to - window. Exclusive with `from`.", schema: { type: string } }
+      responses:
+        "200":
+          description: Backstop balance history.
+          content:
+            application/json:
+              example:
+                data:
+                  pool: CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD
+                  protocol: blend
+                  available: true
+                  backstop: CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7
+                  interval: 1d
+                  from: '2026-08-18T00:00:00Z'
+                  to: '2026-11-16T00:00:00Z'
+                  history_through_ledger: 63340102
+                  history_through_time: '2026-11-15T23:59:58Z'
+                  dropped_points: 0
+                  tiers:
+                  - tier: null
+                    before_first_state: false
+                    points:
+                    - { t: '2026-08-17T22:10:05Z', ledger: 61799001, removed: false, tokens: '50000000000000', shares: '45000000000000', queued_shares: '9000000000000', queued_pct: 20 }
+                as_of: '2026-11-16T00:00:01Z'
+                flags:
+                  stale: false
+                  reduced_redundancy: false
+                  triangulated: false
+                  divergence_warning: false
+                  divergence_checked: false
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          pool: { type: string }
+                          protocol: { type: [string, "null"], enum: [blend, blnt, null] }
+                          available: { type: boolean }
+                          unavailable_reason: { type: string, enum: [blend_v1_unsupported, pool_lineage_unknown, pool_instance_unavailable] }
+                          backstop: { type: [string, "null"] }
+                          interval: { type: string, enum: ["1h", "1d"] }
+                          from: { type: string, format: date-time }
+                          to: { type: string, format: date-time }
+                          history_through_ledger: { type: integer, format: int64, description: "As on the reserve history: points cover only the hours before the hour containing this ledger." }
+                          history_through_time: { type: [string, "null"], format: date-time }
+                          dropped_points: { type: integer }
+                          tiers:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                tier: { type: [string, "null"], enum: [FirstLoss, SecondLoss, ThirdLoss, null] }
+                                before_first_state: { type: boolean }
+                                points:
+                                  type: array
+                                  items:
+                                    type: object
+                                    properties:
+                                      t: { type: string, format: date-time }
+                                      ledger: { type: integer, format: int64 }
+                                      removed: { type: boolean }
+                                      tokens: { type: [string, "null"] }
+                                      shares: { type: [string, "null"] }
+                                      queued_shares: { type: [string, "null"] }
+                                      queued_pct: { type: [number, "null"] }
+                                    required: [t, ledger, removed, tokens, shares, queued_shares, queued_pct]
+                              required: [tier, before_first_state, points]
+                        required: [pool, protocol, available, backstop, interval, from, to, history_through_ledger, history_through_time, dropped_points, tiers]
+                    required: [data]
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /lending/pools/{pool}/auctions:

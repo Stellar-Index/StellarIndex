@@ -369,6 +369,7 @@ export function PoolReserves({ pool }: { pool: string }) {
                       <TR key={`${rv.asset}-detail`}>
                         <Td colSpan={11}>
                           <ReserveDetail
+                            pool={pool}
                             reserve={rv}
                             configDecimals={configDecimals}
                           />
