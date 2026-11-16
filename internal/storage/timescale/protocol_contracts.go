@@ -207,6 +207,47 @@ func (s *Store) listContractsFilteredBySource(ctx context.Context, table, column
 	return out, nil
 }
 
+// staleProtocolContractsWhere selects source's rows of one provenance whose contract is not in the keep list.
+const staleProtocolContractsWhere = `source = $1 AND factory_id = $2 AND NOT (contract_id = ANY($3))`
+
+// StaleProtocolContracts returns source's contracts recorded with provenance factoryID that are not in keep: for the
+// in-code curated provenance, the contracts a release has stopped trusting.
+func (s *Store) StaleProtocolContracts(ctx context.Context, source, factoryID string, keep []string) ([]string, error) {
+	return s.staleProtocolContracts(ctx, `SELECT contract_id FROM protocol_contracts WHERE `+staleProtocolContractsWhere, source, factoryID, keep)
+}
+
+// DeleteStaleProtocolContracts deletes the rows [StaleProtocolContracts] selects and returns their contracts. Rows of
+// any other provenance (factory children, operator admissions) are never touched.
+func (s *Store) DeleteStaleProtocolContracts(ctx context.Context, source, factoryID string, keep []string) ([]string, error) {
+	return s.staleProtocolContracts(ctx, `DELETE FROM protocol_contracts WHERE `+staleProtocolContractsWhere+` RETURNING contract_id`, source, factoryID, keep)
+}
+
+func (s *Store) staleProtocolContracts(ctx context.Context, q, source, factoryID string, keep []string) ([]string, error) {
+	if source == "" || factoryID == "" {
+		return nil, errors.New("timescale: stale protocol contracts: empty source or factory_id")
+	}
+	if keep == nil {
+		keep = []string{} // a NULL array would match no row; an empty one means every row of this provenance is stale
+	}
+	rows, err := s.db.QueryContext(ctx, q, source, factoryID, keep)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: stale protocol contracts %s: %w", source, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("timescale: stale protocol contracts %s scan: %w", source, err)
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: stale protocol contracts %s rows: %w", source, err)
+	}
+	return out, nil
+}
+
 // LoadProtocolContracts returns every registered child contract C-strkey for source as a flat slice to warm a gated decoder's
 // contractid.Registry at startup; empty (not an error) when the source has no rows.
 func (s *Store) LoadProtocolContracts(ctx context.Context, source string) ([]string, error) {

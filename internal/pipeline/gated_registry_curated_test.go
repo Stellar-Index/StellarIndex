@@ -29,6 +29,8 @@ import (
 // assert BOTH what was written and that nothing was.
 type fakeProtocolContractStore struct {
 	rows    map[string][]string // source → contract ids the table already holds
+	curated map[string][]string // source → the subset of rows recorded with curated provenance
+	deleted []string
 	upserts []upsertCall
 	loadErr error
 	failOn  string // contract id whose upsert returns an error
@@ -55,6 +57,51 @@ func (f *fakeProtocolContractStore) UpsertProtocolContract(_ context.Context, so
 	f.upserts = append(f.upserts, upsertCall{source, contractID, factoryID, firstLedger})
 	f.rows[source] = append(f.rows[source], contractID)
 	return nil
+}
+
+func (f *fakeProtocolContractStore) StaleProtocolContracts(_ context.Context, source, _ string, keep []string) ([]string, error) {
+	return withoutContracts(f.curated[source], keep), nil
+}
+
+func (f *fakeProtocolContractStore) DeleteStaleProtocolContracts(ctx context.Context, source, factoryID string, keep []string) ([]string, error) {
+	stale, _ := f.StaleProtocolContracts(ctx, source, factoryID, keep)
+	f.rows[source] = withoutContracts(f.rows[source], stale)
+	f.curated[source] = withoutContracts(f.curated[source], stale)
+	f.deleted = append(f.deleted, stale...)
+	return stale, nil
+}
+
+// Taking a contract out of the in-code curated set must withdraw its trust even though its row is already in
+// protocol_contracts: the warm gates it out, and the indexer (the table's writer) deletes the row. A row of any other
+// provenance and the contracts still in the set are untouched; a read-only consumer deletes nothing.
+func TestGatedRegistryOptions_contractRemovedFromCuratedSetIsUntrusted(t *testing.T) {
+	const removed = "CDREMOVEDFROMCURATEDSETAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	const admitted = "CDADMITTEDBYOPERATORAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	name, meta := anyCuratedSource(t)
+	for _, writer := range []bool{false, true} {
+		store := &fakeProtocolContractStore{
+			rows:    map[string][]string{name: append([]string{removed, admitted}, meta.CuratedSet...)},
+			curated: map[string][]string{name: append([]string{removed}, meta.CuratedSet...)},
+		}
+		opts, err := gatedRegistryOptions(context.Background(), store, quietLogger(), context.Background(), writer)
+		if err != nil {
+			t.Fatalf("gatedRegistryOptions: %v", err)
+		}
+		reg := contractid.New(opts[name]...)
+		if reg.Has(removed) {
+			t.Errorf("writer=%v: %s is still gated in after leaving the curated set", writer, removed)
+		}
+		if !reg.Has(admitted) || !reg.Has(meta.CuratedSet[0]) {
+			t.Errorf("writer=%v: the warm dropped a contract that is still trusted", writer)
+		}
+		wantDeleted := 0
+		if writer {
+			wantDeleted = 1
+		}
+		if len(store.deleted) != wantDeleted || (writer && store.deleted[0] != removed) {
+			t.Errorf("writer=%v: deleted %v, want %d row(s) and only %s", writer, store.deleted, wantDeleted, removed)
+		}
+	}
 }
 
 func quietLogger() *slog.Logger {

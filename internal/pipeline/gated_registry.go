@@ -150,6 +150,8 @@ const curatedReconcileTimeout = 10 * time.Second
 // protocolContractStore is the protocol_contracts seam the gated-registry warm needs (read to warm, write to record a child), faked in unit tests.
 type protocolContractStore interface {
 	LoadProtocolContracts(ctx context.Context, source string) ([]string, error)
+	StaleProtocolContracts(ctx context.Context, source, factoryID string, keep []string) ([]string, error)
+	DeleteStaleProtocolContracts(ctx context.Context, source, factoryID string, keep []string) ([]string, error)
 	ProtocolContractUpserter
 }
 
@@ -235,6 +237,14 @@ func gatedRegistryOptions(
 			return nil, fmt.Errorf("gated registry warm %s: %w", source, err)
 		}
 
+		// A curated row whose contract has left the in-code set is no longer trusted: taking a
+		// misattributed contract out of the set is how its attribution is withdrawn.
+		untrusted, err := store.StaleProtocolContracts(ctx, source, CuratedFactoryID, meta.CuratedSet)
+		if err != nil {
+			return nil, fmt.Errorf("gated registry warm %s: %w", source, err)
+		}
+		ids = withoutContracts(ids, untrusted)
+
 		// The in-code curated set is part of the gate, not an optional
 		// warm: a curated-only source has no other trust root at all.
 		seed := make([]string, 0, len(ids)+len(meta.CuratedSet))
@@ -252,7 +262,14 @@ func gatedRegistryOptions(
 		}
 
 		// Reconcile the curated set into the table (indexer path) so roster reads agree with the gate.
-		// Best-effort: the gate is already complete, so a failed upsert degrades the roster, never ingestion.
+		// Best-effort: the gate is already complete, so a failed write degrades the roster, never ingestion.
+		if withHook && len(untrusted) > 0 {
+			warmCtx, cancel := context.WithTimeout(ctx, curatedReconcileTimeout)
+			deleted, derr := store.DeleteStaleProtocolContracts(warmCtx, source, CuratedFactoryID, meta.CuratedSet)
+			cancel()
+			logger.Warn("contracts no longer in the curated set are un-trusted: gated out, and their protocol_contracts rows deleted",
+				"source", source, "untrusted", untrusted, "deleted", len(deleted), "err", derr)
+		}
 		reconciled := 0
 		if withHook && len(meta.CuratedSet) > 0 {
 			warmCtx, cancel := context.WithTimeout(ctx, curatedReconcileTimeout)
@@ -284,6 +301,24 @@ func gatedRegistryOptions(
 		out[source] = opts
 	}
 	return out, nil
+}
+
+// withoutContracts returns ids minus drop, in order.
+func withoutContracts(ids, drop []string) []string {
+	if len(drop) == 0 {
+		return ids
+	}
+	gone := make(map[string]struct{}, len(drop))
+	for _, id := range drop {
+		gone[id] = struct{}{}
+	}
+	kept := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := gone[id]; !ok {
+			kept = append(kept, id)
+		}
+	}
+	return kept
 }
 
 func spectraCuratedSet() []string {
