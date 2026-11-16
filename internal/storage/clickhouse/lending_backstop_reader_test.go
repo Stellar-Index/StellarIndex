@@ -200,6 +200,15 @@ func TestAssembleBackstop_ServesOnlyConfiguredTiers(t *testing.T) {
 	if tiers[0].Balance != nil || tiers[0].Asset != "Usdc" {
 		t.Fatalf("archived FirstLoss = %+v, want unavailable", tiers[0])
 	}
+	// An undecodable entry is reported unusable with no value; it must not read as the zero of a missing entry.
+	for k, ref := range refs {
+		if ref.asset == "SecondLoss" {
+			_, tiers = assembleBackstop(vals, map[string]bool{k: true}, refs, true)
+		}
+	}
+	if tiers[1].Balance != nil {
+		t.Fatalf("undecodable SecondLoss = %+v, want unavailable", tiers[1])
+	}
 }
 
 func TestDecodeBLNTBackstopConfig_RejectsUnknownShapes(t *testing.T) {

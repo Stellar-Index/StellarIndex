@@ -109,6 +109,11 @@ func assembleBackstop(vals map[string]xdr.ScVal, archived map[string]bool, refBy
 	for k, v := range vals {
 		rd.add(refByKey[k], v, archived[k])
 	}
+	for k := range archived {
+		if _, ok := vals[k]; !ok {
+			rd.add(refByKey[k], xdr.ScVal{}, true)
+		}
+	}
 	if !tiered {
 		token := ""
 		if rd.instance != nil {
@@ -315,16 +320,17 @@ const contractDataVersionQuery = `SELECT key_xdr, entry_xdr, ledger_seq
 	WHERE entry_type = 'contract_data' AND key_xdr IN (?)
 	SETTINGS max_threads = 4, max_memory_usage = 8000000000, optimize_move_to_prewhere_if_final = 0`
 
-// contractEntries is one batched contract_data read. ledger is a present entry's last-modified ledger or a removed entry's
-// removal ledger; a key the lake never saw is in no map.
+// contractEntries is one batched contract_data read. archived marks a TTL-archived entry, or an undecodable one (no value);
+// either is unreadable, never zero. ledger is a present entry's last-modified ledger or a removed entry's removal ledger; a
+// key the lake never saw is in no map.
 type contractEntries struct {
 	vals     map[string]xdr.ScVal
 	archived map[string]bool
 	ledger   map[string]uint32
 }
 
-// contractData reads current contract_data values by key and reports the TTL-archived ones (the projection keeps a lapsed
-// entry's last value); a key with no row is absent from the result.
+// contractData reads current contract_data values by key and reports the TTL-archived or undecodable ones (the projection keeps
+// a lapsed entry's last value); a key with no row is absent from both.
 func (r *ExplorerReader) contractData(ctx context.Context, keys []string) (map[string]xdr.ScVal, map[string]bool, error) {
 	ce, err := r.readContractData(ctx, keys)
 	return ce.vals, ce.archived, err
@@ -349,10 +355,13 @@ func (r *ExplorerReader) readContractData(ctx context.Context, keys []string) (c
 			out.ledger[keyXDR] = ledger
 			continue
 		}
-		if v, modified, ok := contractDataEntry(b64); ok {
-			out.vals[keyXDR], out.ledger[keyXDR] = v, modified
-			matched = append(matched, keyXDR)
+		v, modified, ok := contractDataEntry(b64)
+		if !ok {
+			out.archived[keyXDR], out.ledger[keyXDR] = true, ledger
+			continue
 		}
+		out.vals[keyXDR], out.ledger[keyXDR] = v, modified
+		matched = append(matched, keyXDR)
 	}
 	if err := rows.Err(); err != nil {
 		return contractEntries{}, fmt.Errorf("clickhouse: contract data rows: %w", err)
