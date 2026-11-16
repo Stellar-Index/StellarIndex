@@ -1245,8 +1245,9 @@ func TestPriceAlertsDisarmed(t *testing.T) {
 	applyMigrations(t, dsn)
 }
 
-// Evaluator against the real store with a nanosecond clock: claim and re-arm CAS both bind the untruncated now, and
-// timestamptz keeps microseconds, so the CAS matches only if both writes reduce the instant identically.
+// Evaluator against the real store with a nanosecond clock: the claim and the CAS that undoes it both bind the
+// untruncated now, and timestamptz keeps microseconds, so the CAS matches only if both writes reduce the instant
+// identically. A fan-out that enqueued nothing leaves no fire behind: armed, last_fired_at back to never, no cooldown.
 func TestPriceAlertRearmAfterFailedFanOut(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1293,18 +1294,19 @@ func TestPriceAlertRearmAfterFailedFanOut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.LastFiredAt.IsZero() || got.LastFiredAt.Sub(now).Abs() >= time.Microsecond {
-		t.Fatalf("last_fired_at = %s, want the claim's stamp %s at microsecond precision", got.LastFiredAt, now)
-	}
 	if got.Disarmed {
-		t.Fatal("alert still disarmed after a fan-out that enqueued nothing — the re-arm CAS missed the claim's stamp")
+		t.Fatal("alert still disarmed after a fan-out that enqueued nothing — the undo CAS missed the claim's stamp")
+	}
+	if !got.LastFiredAt.IsZero() {
+		t.Fatalf("last_fired_at = %s after a fan-out that enqueued nothing, want never fired", got.LastFiredAt)
 	}
 
+	// Well inside the 300 s cooldown: nothing was delivered, so nothing is cooling down.
 	hooks.fail = false
-	now = now.Add(301 * time.Second)
+	now = now.Add(30 * time.Second)
 	w.Sweep(ctx)
 	if hooks.enqueued != 1 {
-		t.Fatalf("deliveries enqueued after the cooldown = %d, want 1 (the re-armed crossing retries)", hooks.enqueued)
+		t.Fatalf("deliveries enqueued on the next sweep = %d, want 1 (the crossing retries without a cooldown)", hooks.enqueued)
 	}
 	got, err = alerts.GetPriceAlert(ctx, a.ID)
 	if err != nil {
@@ -1312,6 +1314,9 @@ func TestPriceAlertRearmAfterFailedFanOut(t *testing.T) {
 	}
 	if !got.Disarmed {
 		t.Error("a delivered crossing left the alert armed")
+	}
+	if got.LastFiredAt.Sub(now).Abs() >= time.Microsecond {
+		t.Errorf("last_fired_at = %s, want the delivering claim's stamp %s at microsecond precision", got.LastFiredAt, now)
 	}
 }
 
