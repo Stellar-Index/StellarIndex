@@ -82,6 +82,10 @@ type topicState struct {
 	// every user re-checks it under mu (see Hub.withTopic).
 	lastUsed time.Time
 	evicted  bool
+
+	// lossID is the ID drawn when a producer last reported events lost before they reached the Hub
+	// ([Hub.PublishGap]). A resume cursor below it predates that loss.
+	lossID string
 }
 
 // replayAfter is [ring.snapshotAfter] over a ring that may not exist yet (nothing to replay).
@@ -106,6 +110,14 @@ func (t *topicState) oldestBufferedID() string {
 		return ""
 	}
 	return t.buffer.oldestID()
+}
+
+// newestBufferedID is the newest replayable ID, "" when nothing is buffered. Caller holds t.mu.
+func (t *topicState) newestBufferedID() string {
+	if t.buffer == nil {
+		return ""
+	}
+	return t.buffer.newestID()
 }
 
 // hasEvictedBuffered is [ring.hasEvicted] over a topic whose ring may
@@ -221,6 +233,64 @@ func (h *Hub) Publish(topic, eventType string, data []byte) string {
 	return ev.ID
 }
 
+// PublishGap tells the Hub that events were lost BEFORE reaching it on every live topic match accepts: a
+// producer reconnected, dropped a message, or skipped ahead. Hub IDs are minted here per Publish, so they stay
+// contiguous across such a loss and nothing else can show it. Each subscriber gets one [EventTypeStreamGap]
+// marker (no ID, so its resume cursor does not move), and a later resume from before the loss gets one too.
+// It returns the number of topics marked.
+func (h *Hub) PublishGap(match func(topic string) bool) int {
+	h.mu.RLock()
+	var names []string
+	for name := range h.topics {
+		if match(name) {
+			names = append(names, name)
+		}
+	}
+	h.mu.RUnlock()
+	sort.Strings(names)
+
+	type pending struct {
+		sub   *subscription
+		topic string
+		ev    Event
+	}
+	var sends []pending
+	told := map[*subscription]struct{}{}
+	marked := 0
+	for _, name := range names {
+		h.mu.RLock()
+		t, ok := h.topics[name]
+		h.mu.RUnlock()
+		if !ok {
+			continue
+		}
+		t.mu.Lock()
+		if t.evicted {
+			t.mu.Unlock()
+			continue
+		}
+		// Drawn inside the topic lock, like Publish: every ID already in the ring is below it.
+		t.lossID = h.gen.Next()
+		marked++
+		ev := newStreamGapEvent(name, t.newestBufferedID(), "")
+		for s := range t.subs {
+			// One marker per connection: a connection following nine alias topics has one series.
+			if _, done := told[s]; done {
+				continue
+			}
+			told[s] = struct{}{}
+			sends = append(sends, pending{sub: s, topic: name, ev: ev})
+		}
+		t.mu.Unlock()
+	}
+	for _, p := range sends {
+		if full := p.sub.trySend(p.ev); full && h.dropSubscriber(p.topic, p.sub) {
+			obs.APIStreamSubscriberDropsTotal.Inc()
+		}
+	}
+	return marked
+}
+
 // Subscribe registers a subscriber across topics with an optional Last-Event-ID resume cursor, yielding [EventTypeStreamGap] markers, then replay in ID order across topics, then live events; it returns [ErrTopicCapacity] with no registration when a new topic does not fit, and cancel() unsubscribes.
 func (h *Hub) Subscribe(topics []string, lastEventID string) (<-chan Event, func(), error) {
 	sub := &subscription{
@@ -300,14 +370,16 @@ func (h *Hub) Subscribe(topics []string, lastEventID string) (<-chan Event, func
 }
 
 // resumeGap reports whether a resume at lastEventID lost events on t: the ring evicted past the
-// cursor, the cursor predates this process, or it is from a foreign ID space. Caller holds t.mu.
+// cursor, the cursor predates this process or a loss a producer reported, or it is from a foreign
+// ID space. Caller holds t.mu.
 func (h *Hub) resumeGap(t *topicState, lastEventID, oldestHeld string) bool {
 	if lastEventID == "" {
 		return false
 	}
 	evictedPast := oldestHeld != "" && oldestHeld > lastEventID && t.hasEvictedBuffered()
 	beforeBoot := wellFormedID(lastEventID) && lastEventID < h.bootID
-	return evictedPast || beforeBoot || h.gen.Ahead(lastEventID)
+	beforeLoss := t.lossID != "" && wellFormedID(lastEventID) && lastEventID < t.lossID
+	return evictedPast || beforeBoot || beforeLoss || h.gen.Ahead(lastEventID)
 }
 
 // newStreamGapEvent builds the marker Subscribe sends ahead of a replay that could not cover the

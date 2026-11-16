@@ -44,6 +44,8 @@ type Publisher struct {
 	lastPublished map[string]time.Time
 	// withheld is the reason last put on the wire for a withheld topic.
 	withheld map[string]v1.PriceWithheldReason
+	// missed marks a topic whose poll failed or stalled since its last publish.
+	missed map[string]bool
 }
 
 // Options holds Publisher's optional knobs (trailing-struct constructor convention, docs/engineering-standards.md 14.2); the zero value is a valid, fully-functional Publisher.
@@ -85,6 +87,7 @@ func New(hub *streaming.Hub, reader PriceReader, interval time.Duration, logger 
 		frozen:        opts.Frozen,
 		lastPublished: map[string]time.Time{},
 		withheld:      map[string]v1.PriceWithheldReason{},
+		missed:        map[string]bool{},
 	}
 }
 
@@ -161,6 +164,7 @@ func (p *Publisher) tickOnce(ctx context.Context, pair canonical.Pair, topic str
 		if ctx.Err() != nil || errors.Is(err, context.Canceled) {
 			return
 		}
+		p.markMissed(topic)
 		if errors.Is(err, context.DeadlineExceeded) {
 			obs.StreamPublishStallTotal.WithLabelValues("price_stream").Inc()
 			p.logger.Warn("streampublish: reader missed poll deadline",
@@ -171,8 +175,15 @@ func (p *Publisher) tickOnce(ctx context.Context, pair canonical.Pair, topic str
 			"err", err, "pair", pair.String())
 		return
 	}
-	if !p.shouldPublish(topic, snap.ObservedAt.Time()) {
+	publish, skipped := p.shouldPublish(topic, snap.ObservedAt.Time())
+	if !publish {
 		return
+	}
+	if skipped {
+		// Only the latest bucket is read, so buckets that closed while polls were failing are never
+		// published. Say so ahead of the bucket that is.
+		p.hub.PublishGap(func(name string) bool { return name == topic })
+		p.logger.Warn("streampublish: buckets skipped after failed polls; stream_gap published", "pair", pair.String())
 	}
 
 	frozen, frozenChecked := p.frozenVerdict(pollCtx, pair)
@@ -308,14 +319,25 @@ func (p *Publisher) publishWithheld(pair canonical.Pair, topic string, reason v1
 // shouldPublish records the latest observed timestamp for the topic and returns true on advance;
 // false is the common case, as the reader repeats the same bucket until a new one closes. A served
 // read also ends any withholding recorded for the topic.
-func (p *Publisher) shouldPublish(topic string, observedAt time.Time) bool {
+func (p *Publisher) shouldPublish(topic string, observedAt time.Time) (publish, skipped bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	delete(p.withheld, topic)
 	prev, seen := p.lastPublished[topic]
 	if seen && !observedAt.After(prev) {
-		return false
+		return false, false
 	}
+	// skipped: polls failed since the last publish and the new bucket is not the next one. A quiet market
+	// also jumps buckets, so without a failed poll the jump says nothing.
+	skipped = seen && p.missed[topic] && observedAt.Sub(prev) > WindowSeconds*time.Second
+	delete(p.missed, topic)
 	p.lastPublished[topic] = observedAt
-	return true
+	return true, skipped
+}
+
+// markMissed records that a poll for topic failed, so the next publish can tell a skip from a quiet market.
+func (p *Publisher) markMissed(topic string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.missed[topic] = true
 }
