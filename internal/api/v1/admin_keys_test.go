@@ -315,6 +315,68 @@ func TestAdminKeysRevoke_RevokesPostgresManagementRowToo(t *testing.T) {
 	}
 }
 
+// revokingMirror is the Redis mirror store as the kill switch sees it under auth_backend=postgres.
+type revokingMirror struct {
+	revoked []string
+	err     error
+}
+
+func (*revokingMirror) CreateWithSecret(context.Context, auth.MirroredKey) error { return nil }
+
+func (m *revokingMirror) RevokeKeyByID(_ context.Context, identifier, keyID string) error {
+	if m.err != nil {
+		return m.err
+	}
+	m.revoked = append(m.revoked, identifier+"/"+keyID)
+	return nil
+}
+
+// TestAdminKeysRevoke_WorksWithoutTheSelfServiceStore: auth_backend=postgres leaves Accounts nil to turn
+// /v1/account/keys off. The staff kill switch must still revoke: an operator key is a Redis-only record
+// that validator serves, and a dashboard key has a Postgres row.
+func TestAdminKeysRevoke_WorksWithoutTheSelfServiceStore(t *testing.T) {
+	del := func(t *testing.T, stores v1.APIKeyBudgetStores, accts v1.PlatformAccountStore, identifier string) int {
+		t.Helper()
+		srv := v1.New(v1.Options{
+			Auth:             fakeAuthMiddleware(operatorSubject()),
+			APIKeyBudgets:    stores,
+			PlatformAccounts: accts,
+		})
+		ts := httptest.NewServer(srv.Handler())
+		t.Cleanup(ts.Close)
+		return doWithReason(t, http.MethodDelete,
+			ts.URL+"/v1/admin/keys/kid_shared01?identifier="+identifier, "leaked key", "").StatusCode
+	}
+
+	t.Run("redis-only operator key", func(t *testing.T) {
+		mirror := &revokingMirror{}
+		if got := del(t, v1.APIKeyBudgetStores{RedisMirror: mirror}, nil, "ops-oncall"); got != http.StatusNoContent {
+			t.Fatalf("status = %d, want 204", got)
+		}
+		if len(mirror.revoked) != 1 || mirror.revoked[0] != "ops-oncall/kid_shared01" {
+			t.Errorf("redis revokes = %v, want [ops-oncall/kid_shared01]", mirror.revoked)
+		}
+	})
+
+	t.Run("postgres dashboard key", func(t *testing.T) {
+		platformKeys, accts := seedOwnedPlatformKey("reg-abc123", "kid_shared01")
+		mirror := &revokingMirror{err: auth.ErrKeyNotFound}
+		stores := v1.APIKeyBudgetStores{Platform: platformKeys, RedisMirror: mirror}
+		if got := del(t, stores, accts, "acct:reg-abc123"); got != http.StatusNoContent {
+			t.Fatalf("status = %d, want 204", got)
+		}
+		if len(platformKeys.revokedIDs) != 1 {
+			t.Errorf("postgres row revokes = %v, want [kid_shared01]", platformKeys.revokedIDs)
+		}
+	})
+
+	t.Run("no key store at all", func(t *testing.T) {
+		if got := del(t, v1.APIKeyBudgetStores{}, nil, "ops-oncall"); got != http.StatusServiceUnavailable {
+			t.Errorf("status = %d, want 503", got)
+		}
+	})
+}
+
 // recordingKeyCacheInvalidator records the hashes it is asked to evict; err, when set, is what it returns.
 type recordingKeyCacheInvalidator struct {
 	evicted []string

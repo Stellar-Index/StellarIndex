@@ -184,7 +184,10 @@ func (s *Server) clampMintToCaller(
 // NULL and the row keeps counting toward the cap). Both legs are scoped to identifier and treat "no such key" and "another
 // owner's key" alike. Returns [auth.ErrKeyNotFound] only when NEITHER leg revoked anything.
 func (s *Server) revokeKeyEverywhere(ctx context.Context, identifier, keyID, reason string) error {
-	err := s.Accounts.RevokeKeyByID(ctx, identifier, keyID)
+	err := auth.ErrKeyNotFound
+	if redisKeys := s.redisKeyRevoker(); redisKeys != nil {
+		err = redisKeys.RevokeKeyByID(ctx, identifier, keyID)
+	}
 	revoked := err == nil
 	if errors.Is(err, auth.ErrKeyNotFound) {
 		err = nil
@@ -204,6 +207,24 @@ func (s *Server) revokeKeyEverywhere(ctx context.Context, identifier, keyID, rea
 		return auth.ErrKeyNotFound
 	}
 	return err
+}
+
+// keyRevoker removes one Redis credential record by key id, scoped to its owner.
+type keyRevoker interface {
+	RevokeKeyByID(ctx context.Context, identifier, keyID string) error
+}
+
+// redisKeyRevoker is the Redis credential store a revoke reaches. Accounts is nil under auth_backend=postgres (the
+// self-service surface is off there), but that validator still serves Redis `apikey:` records first, operator keys
+// among them, so the kill switch falls back to the mirror store, which is wired whenever Redis is.
+func (s *Server) redisKeyRevoker() keyRevoker {
+	if s.Accounts != nil {
+		return s.Accounts
+	}
+	if s.APIKeyBudgets.RedisMirror != nil {
+		return s.APIKeyBudgets.RedisMirror
+	}
+	return nil
 }
 
 // revokeOwnedPlatformKey revokes keyID's Postgres row only if its account is the one identifier names (the store scopes by
@@ -250,11 +271,13 @@ func (s *Server) handleAdminKeysRevoke(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if s.Accounts == nil {
+	// The kill switch needs a store to revoke in, not the self-service surface: under
+	// auth_backend=postgres Accounts is nil and the revoke still has to work.
+	if s.redisKeyRevoker() == nil && s.APIKeyBudgets.Platform == nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/account-store-unavailable",
-			"Account store not configured", http.StatusServiceUnavailable,
-			"this deployment has no AccountStore wired — typically because Redis is unavailable")
+			"Key store not configured", http.StatusServiceUnavailable,
+			"this deployment has neither a Redis nor a Postgres key store wired, so there is nothing to revoke in")
 		return
 	}
 	reason, ok := s.requireReason(w, r)
