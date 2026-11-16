@@ -90,7 +90,7 @@ curated map supplies the home-domain:
 watched_issuer_accounts = ["GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"]
 
 [metadata.issuer_home_domains]
-"GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN" = "centre.io"
+"GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN" = "circle.com"
 ```
 
 An observation always wins over the curated map, including one showing no

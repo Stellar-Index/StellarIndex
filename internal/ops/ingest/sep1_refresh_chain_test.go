@@ -167,13 +167,25 @@ func TestSep1RefreshClassifiesAFailedWrite(t *testing.T) {
 	}
 }
 
-// TestSep1FetchDomain pins that the override redirects the FETCH while the on-chain value stays authoritative for identity.
-func TestSep1FetchDomain(t *testing.T) {
-	if got := sep1FetchDomain("GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", "circle.com"); got != "centre.io" {
-		t.Errorf("USDC issuer fetch domain = %q, want centre.io", got)
-	}
-	if got := sep1FetchDomain("GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA", "aqua.network"); got != "aqua.network" {
-		t.Errorf("non-overridden issuer = %q, want on-chain domain", got)
+// The USDC and EURC issuers were once fetched from a hardcoded domain their keys do not declare, and the result was
+// stored as org-verified. Every issuer, those two included, is fetched from the domain the chain declares and no other.
+func TestSep1RefreshFetchesOnlyTheChainsDomain(t *testing.T) {
+	for _, issuer := range []string{
+		"GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+		"GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2",
+	} {
+		log := &sep1CallLog{}
+		srv, declared := sep1TestDomain(t, log, "declared", tomlListing("Declared Org", issuer))
+		cand := timescale.IssuerSep1Candidate{GStrkey: issuer, HomeDomain: declared}
+
+		stats, failed, _ := sep1RefreshLoop(context.Background(), log, sep1ChainFor(cand), sep1TestResolver(srv),
+			[]timescale.IssuerSep1Candidate{cand}, false)
+		if stats.stored != 1 || len(failed) != 0 {
+			t.Fatalf("%s: sep1RefreshLoop = (%d, %v); want (1, []) from the declared domain", issuer, stats.stored, failed)
+		}
+		if got := fmt.Sprint(log.steps()); !strings.Contains(got, "fetch declared") {
+			t.Errorf("%s: call order = %s; want the declared domain fetched", issuer, got)
+		}
 	}
 }
 
