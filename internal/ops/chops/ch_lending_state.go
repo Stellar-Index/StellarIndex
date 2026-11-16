@@ -56,7 +56,7 @@ func (r lendingRun) run() error {
 	case r.printPrefixes:
 		return printLendingPrefixes(ctx, r.chAddr, os.Stdout)
 	case r.prove:
-		return proveLendingState(ctx, r.chAddr, os.Stdout)
+		return r.proveLendingState(ctx, os.Stdout)
 	case r.dryRun:
 		return r.exec(ctx, nil)
 	}
@@ -82,6 +82,8 @@ func (r lendingRun) exec(ctx context.Context, hb *opsutil.JobHeartbeat) error {
 	if err != nil {
 		return err
 	}
+	// The lagging alert reads the cursor, so a run with nothing to do still reports the watermark.
+	hb.Progress(0, uint64(start-1))
 	if last < start {
 		fmt.Fprintf(os.Stderr, "%s: nothing to derive (start %d, contiguous tip %d)\n", lendingJob, start, last)
 		return nil
@@ -153,16 +155,18 @@ func printLendingPrefixes(ctx context.Context, chAddr string, out io.Writer) err
 	return err
 }
 
-// proveLendingState checks every prefixed key's latest history row against the lake's state at the watermark.
-func proveLendingState(ctx context.Context, chAddr string, out io.Writer) error {
-	wm, err := clickhouse.LendingStateWatermark(ctx, chAddr)
+// proveLendingState checks every prefixed key's latest history row against the lake at the watermark, that every
+// registered contract has its keys in the table, and that each window of [-from, -to] (bounded by the watermark) holds
+// one row per changed (key, hour).
+func (r lendingRun) proveLendingState(ctx context.Context, out io.Writer) error {
+	wm, err := clickhouse.LendingStateWatermark(ctx, r.chAddr)
 	if err != nil {
 		return err
 	}
 	if wm == 0 {
 		return fmt.Errorf("%s: no lending_state watermark; nothing derived to prove", lendingJob)
 	}
-	reg, err := lendingRegistry(ctx, chAddr, wm)
+	reg, err := lendingRegistry(ctx, r.chAddr, wm)
 	if err != nil {
 		return err
 	}
@@ -170,7 +174,7 @@ func proveLendingState(ctx context.Context, chAddr string, out io.Writer) error 
 	if err != nil {
 		return err
 	}
-	p, err := clickhouse.ProveLendingState(ctx, chAddr, ps, wm)
+	p, err := clickhouse.ProveLendingState(ctx, r.chAddr, ps, wm)
 	if err != nil {
 		return err
 	}
@@ -179,6 +183,77 @@ func proveLendingState(ctx context.Context, chAddr string, out io.Writer) error 
 	}
 	if p.Mismatched > 0 {
 		return fmt.Errorf("%s: %d of %d keys disagree with the lake at %d", lendingJob, p.Mismatched, p.Keys, wm)
+	}
+	if err := proveLendingKeys(ctx, r.chAddr, reg, ps, out); err != nil {
+		return err
+	}
+	return r.proveLendingCounts(ctx, ps, wm, out)
+}
+
+// proveLendingKeys fails a registered pool missing a ResData, ResConfig or instance key in the table, or a backstop
+// with no balance key, unless the current table holds no reserve (balance) for it either: that contract is empty.
+func proveLendingKeys(ctx context.Context, chAddr string, reg []clickhouse.LendingContract, ps []clickhouse.LendingPrefix, out io.Writer) error {
+	counts, err := clickhouse.LendingKeyCounts(ctx, chAddr, ps)
+	if err != nil {
+		return err
+	}
+	type kc struct{ table, current uint64 }
+	by := map[string]kc{}
+	for _, k := range counts {
+		by[k.Contract+"/"+k.Key] = kc{k.Table, k.Current}
+	}
+	var failed []string
+	for _, c := range reg {
+		need, live := []string{"ResData", "ResConfig", "Instance"}, by[c.ID+"/ResData"].current
+		if c.Backstop {
+			need, live = []string{"PoolBalance"}, by[c.ID+"/PoolBalance"].current+by[c.ID+"/TierPoolBalance"].current
+		}
+		if live == 0 {
+			if _, err := fmt.Fprintf(out, "lending_state: %s %s is empty (no live reserve or balance key)\n", c.Protocol, c.ID); err != nil {
+				return err
+			}
+			continue
+		}
+		for _, k := range need {
+			if by[c.ID+"/"+k].table == 0 && (k != "PoolBalance" || by[c.ID+"/TierPoolBalance"].table == 0) {
+				failed = append(failed, fmt.Sprintf("%s %s has no %s key in lending_state_hourly", c.Protocol, c.ID, k))
+			}
+		}
+	}
+	if len(failed) > 0 {
+		return fmt.Errorf("%s: %q", lendingJob, failed)
+	}
+	return nil
+}
+
+// proveLendingCounts runs the per-contract row-count proof over partition-aligned windows of [-from, -to].
+func (r lendingRun) proveLendingCounts(ctx context.Context, ps []clickhouse.LendingPrefix, wm uint32, out io.Writer) error {
+	lo, last := r.from, wm
+	if lo == 0 {
+		lo = max(r.floor, blend.FactoryGenesisLedger)
+	}
+	if r.to != 0 {
+		last = min(r.to, wm)
+	}
+	var bad []string
+	for ; lo <= last; lo = lendingWindowEnd(lo, last) + 1 {
+		hi := lendingWindowEnd(lo, last)
+		ms, err := clickhouse.ProveLendingCounts(ctx, r.chAddr, ps, lo, hi, wm)
+		if err != nil {
+			return err
+		}
+		for _, m := range ms {
+			bad = append(bad, fmt.Sprintf("[%d,%d] %s: %d (key, hour) pairs in the lake, %d rows", lo, hi, m.Contract, m.Lake, m.Table))
+		}
+		if hi >= last {
+			break
+		}
+	}
+	if _, err := fmt.Fprintf(out, "lending_state rows per (key, hour) through %d: %d window mismatches\n", last, len(bad)); err != nil {
+		return err
+	}
+	if len(bad) > 0 {
+		return fmt.Errorf("%s: row counts disagree with the lake: %q", lendingJob, bad)
 	}
 	return nil
 }
@@ -195,6 +270,36 @@ var lendingFactories = map[string]string{
 	blend.MainnetPoolFactoryV1: clickhouse.LendingBlendV1,
 	blend.MainnetPoolFactory:   clickhouse.LendingBlendV2,
 	blnt.MainnetPoolFactory:    clickhouse.LendingBLNT,
+}
+
+// lendingKnownPools are the pools the code already names, with their deploy ledgers; a registry through a later
+// ledger that lacks one is missing a factory `deploy` row and would silently drop the pool.
+var lendingKnownPools = []struct {
+	id, protocol string
+	deployed     uint32
+}{
+	{blnt.MainnetFixedPool, clickhouse.LendingBLNT, 65_134_362},
+	{blnt.MainnetYieldBlentPool, clickhouse.LendingBLNT, 65_327_498},
+}
+
+// checkLendingRegistry refuses a registry through thru that lacks a known pool deployed by then.
+func checkLendingRegistry(reg []clickhouse.LendingContract, thru uint32) error {
+	have := map[string]string{}
+	for _, c := range reg {
+		if !c.Backstop {
+			have[c.ID] = c.Protocol
+		}
+	}
+	var missing []string
+	for _, k := range lendingKnownPools {
+		if thru >= k.deployed && have[k.id] != k.protocol {
+			missing = append(missing, k.protocol+" "+k.id)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("lending registry through %d lacks known pools %v: the lake is missing their factory deploy events", thru, missing)
+	}
+	return nil
 }
 
 // lendingRegistry lists every lending contract as of ledger thru: the pools the three factories' `deploy` events
@@ -225,6 +330,9 @@ func lendingRegistry(ctx context.Context, addr string, thru uint32) ([]clickhous
 		out = append(out, clickhouse.LendingContract{ID: id, Protocol: p})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	if err := checkLendingRegistry(out, thru); err != nil {
+		return nil, err
+	}
 	return append(out, lendingBackstops...), nil
 }
 

@@ -20,9 +20,14 @@
 --   4. stellarindex-ops ch-entry-history -lending-only -prove
 --   5. systemctl enable --now lending-state.timer
 --
--- An hour's row is its last change by (ledger_seq, intra_ledger_seq). Legacy
--- rows carry intra_ledger_seq 0, so two transactions touching one key in one
--- such ledger tie, and tx_hash (not apply order) picks the winner.
+-- An hour's row is its last change by (ledger_seq, intra_ledger_seq). A window
+-- where that last ledger holds several transactions without intra-ledger order
+-- (intra_ledger_seq 0) is refused rather than stored by tx_hash.
+--
+-- After a lake re-derive of ledger_entry_changes over [lo, hi], delete the
+-- range before replaying it (ingest-pipeline.md, the replay decision rule):
+--   ALTER TABLE stellar.lending_state_hourly
+--     DELETE WHERE ledger_seq BETWEEN {lo} AND {hi};
 
 CREATE TABLE IF NOT EXISTS stellar.lending_state_hourly
 (

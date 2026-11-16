@@ -34,7 +34,7 @@ type LendingPrefix struct {
 }
 
 // LendingPrefixes builds the key_xdr prefixes for a registry: per pool ResData, ResConfig and the instance (exact
-// keys), per backstop PoolBalance, plus TierPoolBalance on the BLNT backstop.
+// keys), plus ProtocolFees (exact) on BLNT pools; per backstop PoolBalance, plus TierPoolBalance on the BLNT backstop.
 func LendingPrefixes(reg []LendingContract) ([]LendingPrefix, error) {
 	var out []LendingPrefix
 	for _, c := range reg {
@@ -86,7 +86,33 @@ func lendingContractPrefixes(c LendingContract) ([]LendingPrefix, error) {
 	for _, k := range inst {
 		out = append(out, LendingPrefix{Prefix: k, Contract: c.ID, Protocol: c.Protocol, Key: "Instance"})
 	}
+	if c.Protocol == LendingBLNT {
+		// BLNT keeps protocol-fee credit outside ReserveData, in the unit-variant key PoolDataKey::ProtocolFees.
+		fees, err := lendingUnitKey(id, "ProtocolFees")
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, LendingPrefix{Prefix: fees, Contract: c.ID, Protocol: c.Protocol, Key: "ProtocolFees"})
+	}
 	return out, nil
+}
+
+// lendingUnitKey is the exact base64 key_xdr of a contract's persistent unit-variant key Vec[Symbol(sym)].
+func lendingUnitKey(contract xdr.ContractId, sym string) (string, error) {
+	s := xdr.ScSymbol(sym)
+	vec := &xdr.ScVec{{Type: xdr.ScValTypeScvSymbol, Sym: &s}}
+	k, err := xdr.MarshalBase64(xdr.LedgerKey{
+		Type: xdr.LedgerEntryTypeContractData,
+		ContractData: &xdr.LedgerKeyContractData{
+			Contract:   xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &contract},
+			Key:        xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &vec},
+			Durability: xdr.ContractDataDurabilityPersistent,
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("clickhouse: marshal %s key: %w", sym, err)
+	}
+	return k, nil
 }
 
 // lendingKeyPrefix is the base64 prefix shared by every persistent key Vec[Symbol(sym), <arg of type arg>] of a
@@ -148,6 +174,21 @@ const lendingStateInsert = `INSERT INTO stellar.lending_state_hourly
 		GROUP BY key_xdr, i, hour
 	)`
 
+// lendingAmbiguousOrderQuery counts the (key, hour) pairs whose last-changed ledger has rows without intra-ledger
+// order (intra_ledger_seq 0) from more than one transaction: there tx_hash, not apply order, would pick the hour's row.
+const lendingAmbiguousOrderQuery = `SELECT count(), groupArray(5)(concat(toString(last.1), ' ', substring(key_xdr, 1, 100)))
+	FROM (
+		SELECT key_xdr, argMax((ledger_seq, ambiguous), ledger_seq) AS last
+		FROM (
+			SELECT key_xdr, toStartOfHour(close_time) AS hour, ledger_seq,
+			       countIf(intra_ledger_seq = 0) > 0 AND uniqExact(tx_hash) > 1 AS ambiguous
+			` + lendingMatchedChanges + `
+			GROUP BY key_xdr, hour, ledger_seq
+		)
+		GROUP BY key_xdr, hour
+	)
+	WHERE last.2 = 1`
+
 // DeriveLendingWindow writes stellar.lending_state_hourly for [lo, hi] in one INSERT … SELECT and returns the
 // tx-bearing ledgers that held entry changes when it started, the coverage SetLendingStateWatermark proves.
 func DeriveLendingWindow(ctx context.Context, addr string, lo, hi uint32, ps []LendingPrefix) (uint64, error) {
@@ -167,6 +208,15 @@ func DeriveLendingWindow(ctx context.Context, addr string, lo, hi uint32, ps []L
 		return 0, fmt.Errorf("clickhouse: lending window [%d,%d] entry-change ledgers: %w", lo, hi, err)
 	}
 	prefixes, contracts, protocols, heads := lendingPrefixArgs(ps)
+	var ambiguous uint64
+	var samples []string
+	if err := conn.QueryRow(ctx, lendingAmbiguousOrderQuery, lo, hi, heads, prefixes).Scan(&ambiguous, &samples); err != nil {
+		return 0, fmt.Errorf("clickhouse: lending window [%d,%d] same-ledger order check: %w", lo, hi, err)
+	}
+	if ambiguous > 0 {
+		return 0, fmt.Errorf("clickhouse: lending window [%d,%d]: %d keys have several transactions without intra-ledger order "+
+			"in their hour's last ledger (ledger key_xdr-prefix: %q); re-derive the lake range's intra_ledger_seq first", lo, hi, ambiguous, samples)
+	}
 	if err := conn.Exec(ctx, lendingStateInsert, contracts, protocols, prefixes, lo, hi, heads, prefixes); err != nil {
 		return 0, fmt.Errorf("clickhouse: derive lending state [%d,%d]: %w", lo, hi, err)
 	}
@@ -234,4 +284,103 @@ func ProveLendingState(ctx context.Context, addr string, ps []LendingPrefix, wm 
 		return LendingProof{}, fmt.Errorf("clickhouse: lending proof at %d: %w", wm, err)
 	}
 	return p, nil
+}
+
+// lendingHourSpan bounds the ledgers one hour can span (closes are at least 5 s apart, so at most 720): the count
+// proof reads this far past a window so an hour split across its end is attributed to the window holding its last change.
+const lendingHourSpan = 2000
+
+// LendingCountMismatch is one contract whose (key, hour) pairs in the lake differ from its history rows in a window.
+type LendingCountMismatch struct {
+	Contract    string
+	Lake, Table uint64
+}
+
+// lendingProofCountQuery compares, per contract, the matched (key, hour) pairs whose last change falls in [lo, hi]
+// with the history rows (under FINAL) whose ledger falls there.
+const lendingProofCountQuery = `SELECT c, sum(lake), sum(tbl) FROM (
+		SELECT arrayElement(?, i) AS c, count() AS lake, toUInt64(0) AS tbl FROM (
+			SELECT key_xdr, arrayFirstIndex(p -> startsWith(key_xdr, p), ?) AS i, toStartOfHour(close_time) AS hour,
+			       max(ledger_seq) AS last
+			` + lendingMatchedChanges + `
+			GROUP BY key_xdr, i, hour
+		) WHERE last BETWEEN ? AND ? GROUP BY c
+		UNION ALL
+		SELECT contract_id AS c, toUInt64(0) AS lake, count() AS tbl
+		FROM stellar.lending_state_hourly FINAL WHERE ledger_seq BETWEEN ? AND ? GROUP BY c
+	) GROUP BY c HAVING sum(lake) != sum(tbl) ORDER BY c`
+
+// ProveLendingCounts checks that window [lo, hi] (at most the watermark wm) holds one history row per matched
+// (key, hour) pair, per contract, and returns the contracts that differ.
+func ProveLendingCounts(ctx context.Context, addr string, ps []LendingPrefix, lo, hi, wm uint32) ([]LendingCountMismatch, error) {
+	conn, err := openRead(ctx, addr)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = conn.Close() }()
+	prefixes, contracts, _, heads := lendingPrefixArgs(ps)
+	readHi := min(uint64(hi)+lendingHourSpan, uint64(wm))
+	rows, err := conn.Query(ctx, lendingProofCountQuery, contracts, prefixes, lo, readHi, heads, prefixes, lo, hi, lo, hi)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: lending count proof [%d,%d]: %w", lo, hi, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []LendingCountMismatch
+	for rows.Next() {
+		var m LendingCountMismatch
+		if err := rows.Scan(&m.Contract, &m.Lake, &m.Table); err != nil {
+			return nil, fmt.Errorf("clickhouse: lending count proof [%d,%d]: %w", lo, hi, err)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// LendingKeyCount is how many distinct keys of one kind a contract has in the history table and, live, in
+// ledger_entries_current.
+type LendingKeyCount struct {
+	Contract, Key  string
+	Table, Current uint64
+}
+
+// lendingKeyCountQuery counts distinct keys per (contract, key kind) in the history table and in the current table
+// (live entries only).
+const lendingKeyCountQuery = `SELECT arrayElement(?, i) AS c, arrayElement(?, i) AS kind,
+		uniqExactIf(key_xdr, src = 'table'), uniqExactIf(key_xdr, src = 'current')
+	FROM (
+		SELECT key_xdr, arrayFirstIndex(p -> startsWith(key_xdr, p), ?) AS i, 'table' AS src
+		FROM stellar.lending_state_hourly FINAL
+		UNION ALL
+		SELECT key_xdr, arrayFirstIndex(p -> startsWith(key_xdr, p), ?) AS i, 'current' AS src
+		FROM stellar.ledger_entries_current FINAL
+		WHERE entry_type = 'contract_data' AND entry_xdr != '' AND has(?, substring(key_xdr, 1, 52))
+	)
+	WHERE i > 0 GROUP BY c, kind ORDER BY c, kind`
+
+// LendingKeyCounts lists, per contract and key kind, the distinct keys in the history and current tables.
+func LendingKeyCounts(ctx context.Context, addr string, ps []LendingPrefix) ([]LendingKeyCount, error) {
+	conn, err := openRead(ctx, addr)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = conn.Close() }()
+	prefixes, contracts, _, heads := lendingPrefixArgs(ps)
+	kinds := make([]string, len(ps))
+	for i, p := range ps {
+		kinds[i] = p.Key
+	}
+	rows, err := conn.Query(ctx, lendingKeyCountQuery, contracts, kinds, prefixes, prefixes, heads)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: lending key counts: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []LendingKeyCount
+	for rows.Next() {
+		var k LendingKeyCount
+		if err := rows.Scan(&k.Contract, &k.Key, &k.Table, &k.Current); err != nil {
+			return nil, fmt.Errorf("clickhouse: lending key counts: %w", err)
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
 }

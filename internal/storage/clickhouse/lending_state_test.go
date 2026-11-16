@@ -2,6 +2,8 @@ package clickhouse
 
 import (
 	"encoding/base64"
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -72,6 +74,12 @@ func testEnumKey(sym string, arg xdr.ScVal) xdr.ScVal {
 	return xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &vec}
 }
 
+// testUnitKey is a #[contracttype] enum's unit variant: a one-element vec.
+func testUnitKey(sym string) xdr.ScVal {
+	vec := &xdr.ScVec{testSym(sym)}
+	return xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &vec}
+}
+
 func matchingKeys(ps []LendingPrefix, key string) []string {
 	var out []string
 	for _, p := range ps {
@@ -97,6 +105,7 @@ func TestLendingPrefixes_MatchCapturedKeysOnly(t *testing.T) {
 		instance: pool + "/Instance",
 		testDataKey(t, bstop, testEnumKey("PoolBalance", testAddrVal(t, pool))): bstop + "/PoolBalance",
 		testDataKey(t, bstop, testEnumKey("TierPoolBalance", poolTier)):         bstop + "/TierPoolBalance",
+		testDataKey(t, pool, testUnitKey("ProtocolFees")):                       pool + "/ProtocolFees",
 	}
 	for key, want := range captured {
 		if got := matchingKeys(ps, key); len(got) != 1 || got[0] != want {
@@ -122,7 +131,7 @@ func TestLendingPrefixes_MatchCapturedKeysOnly(t *testing.T) {
 		}
 	}
 	for _, p := range ps {
-		if p.Key != "Instance" && (len(p.Prefix)%4 != 0 || strings.Contains(p.Prefix, "=")) {
+		if p.Key != "Instance" && p.Key != "ProtocolFees" && (len(p.Prefix)%4 != 0 || strings.Contains(p.Prefix, "=")) {
 			t.Errorf("%s prefix %q is not an exact base64 run of whole bytes", p.Key, p.Prefix)
 		}
 	}
@@ -167,6 +176,20 @@ func TestLendingSQL_Shape(t *testing.T) {
 			"(ledger_seq, intra_ledger_seq, tx_hash, op_index, change_index)",
 			"GROUP BY key_xdr, i, hour",
 		}},
+		"ambiguous order": {lendingAmbiguousOrderQuery, 4, []string{
+			"change_type != 'state'",
+			"countIf(intra_ledger_seq = 0) > 0 AND uniqExact(tx_hash) > 1",
+			"GROUP BY key_xdr, hour, ledger_seq",
+		}},
+		"count proof": {lendingProofCountQuery, 10, []string{
+			"change_type != 'state'",
+			"stellar.lending_state_hourly FINAL WHERE ledger_seq BETWEEN ? AND ?",
+			"HAVING sum(lake) != sum(tbl)",
+		}},
+		"key counts": {lendingKeyCountQuery, 5, []string{
+			"stellar.lending_state_hourly FINAL",
+			"stellar.ledger_entries_current FINAL",
+		}},
 		"proof": {lendingProofQuery, 5, []string{
 			"stellar.ledger_entries_current FINAL",
 			"stellar.lending_state_hourly FINAL",
@@ -184,5 +207,35 @@ func TestLendingSQL_Shape(t *testing.T) {
 	}
 	if !strings.Contains(lendingStateInsert, "substring(key_xdr, 1, 52)") || lendingContractHeadLen != 52 {
 		t.Error("the SQL contract-head length drifted from lendingContractHeadLen")
+	}
+}
+
+// Real BLNT fixed-pool keys from the lake: each must match exactly the prefix of its own kind.
+func TestLendingPrefixes_MatchRealKeys(t *testing.T) {
+	raw, err := os.ReadFile("../../../test/fixtures/blnt_storage/reserve_entries.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entries []struct {
+		Pool   string `json:"pool"`
+		Kind   string `json:"kind"`
+		KeyXDR string `json:"key_xdr"`
+	}
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[string]bool{}
+	for _, e := range entries {
+		ps, err := LendingPrefixes([]LendingContract{{ID: e.Pool, Protocol: LendingBLNT}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := matchingKeys(ps, e.KeyXDR); len(got) != 1 || got[0] != e.Pool+"/"+e.Kind {
+			t.Errorf("real %s key %s matched %v", e.Kind, e.KeyXDR, got)
+		}
+		kinds[e.Kind] = true
+	}
+	if !kinds["ResData"] || !kinds["ResConfig"] || !kinds["Instance"] {
+		t.Fatalf("fixture kinds = %v, want ResData, ResConfig and Instance", kinds)
 	}
 }
