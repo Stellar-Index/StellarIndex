@@ -6,13 +6,16 @@ import { NoteBadge } from '@/components/NoteBadge';
 import { Panel } from '@/components/reveal';
 import { LendingPoolsTable } from './LendingPoolsTable';
 import { Badge, Container, PageHeader } from '@/components/ui';
+import { protocolMeta } from '@/app/protocols/registry';
 
 export const metadata: Metadata = {
   alternates: { canonical: '/lending' },
   title: 'Lending — collateralised lending on Stellar',
   description:
-    'Blend is the primary collateralised-lending protocol on Stellar. Backstop pools, Reflector dependency, MEV-relevant liquidations.',
+    'Collateralised lending on Stellar: Blend and BLNT V3 pools, backstops, reserves and liquidation auctions.',
 };
+
+const blnt = protocolMeta('blnt');
 
 export default function LendingPage() {
   return (
@@ -20,7 +23,7 @@ export default function LendingPage() {
       <PageHeader
         breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Lending' }]}
         title="Lending"
-        meta="Collateralised lending on Stellar"
+        meta="Collateralised lending on Stellar. Blend and BLNT V3 pools, side by side."
       />
       <Panel
         headingLevel={2}
@@ -87,6 +90,30 @@ export default function LendingPage() {
           Contracts source
           <ExternalLink className="h-3 w-3" aria-hidden="true" />
         </a>
+      </Panel>
+      <Panel
+        headingLevel={2}
+        title="BLNT V3"
+        hint="Blend-derived pools with RWA support and tiered backstops"
+        bodyClassName="space-y-3"
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            href="/protocols/blnt"
+            className="text-brand-600 text-xs hover:underline"
+          >
+            Protocol page
+          </Link>
+          <a
+            href={blnt?.links?.website}
+            className="text-ink-muted inline-flex items-center gap-1 text-xs hover:underline"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Website
+            <ExternalLink className="h-3 w-3" aria-hidden="true" />
+          </a>
+        </div>
       </Panel>
       <LendingPoolsTable />
       <NoteBadge label="partial: pools with auctions only">
