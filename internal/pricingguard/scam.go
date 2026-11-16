@@ -137,6 +137,8 @@ type Verdict struct {
 	Substance *SubstanceEvidence
 	// ThinAdmitted: the pair measured thin and was served under AdmitThin.
 	ThinAdmitted bool
+	// Unmeasured: the substance read failed, so the verdict is the fail-open default, not a measurement.
+	Unmeasured bool
 }
 
 // Fold is the one fold of both halves; a scam flag wins and carries no evidence, and an unmeasured pair fails open.
@@ -152,7 +154,7 @@ func Fold(scamFlagged bool, v SubstanceVerdict, admitThin bool, surface string) 
 	case !v.Allowed:
 		obs.PriceServeSubstanceWithheldTotal.WithLabelValues(surface, string(v.Floor)).Inc()
 	}
-	out := Verdict{Substance: v.Evidence}
+	out := Verdict{Substance: v.Evidence, Unmeasured: !v.Measured}
 	switch {
 	case v.Measured && !v.Allowed && admitThin:
 		out.ThinAdmitted = true

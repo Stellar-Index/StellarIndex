@@ -205,28 +205,77 @@ func TestPriceWithheldReleasesThinUnderAdmission(t *testing.T) {
 	}
 }
 
-// The 24h-ago anchor is a served price's divisor, so it is read behind the same gates as the price. A thin market,
-// a flagged issuer and a caller's include_thin opt-in all end with no anchor. The reader has no store here: a
-// withheld market must be refused before any bucket is read.
+// anchorStore is a change24hStore holding one bucket for every market; its trailing read fails, which the
+// serving-sanity guard treats as "serve the candidate".
+type anchorStore struct{ reads int }
+
+func (a *anchorStore) ClosedVWAP1mAtOrBefore(_ context.Context, _ canonical.Pair, at time.Time) (timescale.Vwap1mRow, error) {
+	a.reads++
+	return timescale.Vwap1mRow{Bucket: at.Truncate(time.Minute), VWAP: "0.5"}, nil
+}
+
+func (*anchorStore) ClosedVWAP1mCombinedBefore(context.Context, canonical.Pair, time.Time, int) ([]timescale.Vwap1mRow, error) {
+	return nil, errors.New("no trailing rows in this test")
+}
+
+// failingSubstance is a substance store whose point-in-time read fails.
+type failingSubstance struct{ historyAwareSubstance }
+
+func (*failingSubstance) PairMarketSubstanceAt(
+	context.Context, []canonical.Asset, []canonical.Asset, time.Time, time.Duration, timescale.HistoryGranularity,
+) (timescale.MarketSubstance, error) {
+	return timescale.MarketSubstance{}, errors.New("statement timeout")
+}
+
+// The 24h-ago anchor is a served price's divisor, so a bucket found for it is judged by the same gates as the price,
+// as of the anchor instant. A market thin then (however healthy now), a flagged issuer, a caller's include_thin
+// opt-in and a measurement that failed all end with no anchor; a healthy market keeps its anchor.
 func TestChange24hAnchorIsWithheldLikeAPrice(t *testing.T) {
 	dust := timescale.MarketSubstance{VolumeUSD: "8.57", Buckets: 1}
+	deep := timescale.MarketSubstance{VolumeUSD: "5000000", Buckets: 1440, SpanSeconds: 86400, ValuedBuckets: 1440}
 	pair := thinMarketTestPair(t)
-	thin := pricingguard.NewSubstanceGate(&historyAwareSubstance{trailing: dust, atInstant: dust}, pricingguard.SubstanceGateOptions{})
+	thinThen := &historyAwareSubstance{trailing: deep, atInstant: dust}
+	thin := pricingguard.NewSubstanceGate(thinThen, pricingguard.SubstanceGateOptions{})
+	healthy := pricingguard.NewSubstanceGate(&historyAwareSubstance{trailing: deep, atInstant: deep}, pricingguard.SubstanceGateOptions{})
+	unreadable := pricingguard.NewSubstanceGate(&failingSubstance{}, pricingguard.SubstanceGateOptions{})
 	flagged := pricingguard.NewScamGate(&flaggingScamDirectory{flagged: map[string]bool{pair.Base.Issuer: true}}, pricingguard.ScamGateOptions{})
 	optedIn, _ := v1.WithThinAdmission(context.Background(), pair.Base, usdQuoteAsset, true)
 
 	for name, tc := range map[string]struct {
-		ctx    context.Context
-		reader storeChange24hReader
+		ctx       context.Context
+		substance *pricingguard.SubstanceGate
+		scam      *pricingguard.ScamGate
+		served    bool
 	}{
-		"thin market":                {context.Background(), storeChange24hReader{substance: thin, pegs: []canonical.Asset{pair.Quote}}},
-		"flagged issuer":             {context.Background(), storeChange24hReader{scam: flagged, pegs: []canonical.Asset{pair.Quote}}},
-		"thin market, caller opt-in": {optedIn, storeChange24hReader{substance: thin, pegs: []canonical.Asset{pair.Quote}}},
+		"thin at the anchor instant":           {ctx: context.Background(), substance: thin},
+		"flagged issuer":                       {ctx: context.Background(), substance: healthy, scam: flagged},
+		"thin, caller opted in":                {ctx: optedIn, substance: thin},
+		"substance could not be measured":      {ctx: context.Background(), substance: unreadable},
+		"healthy market at the anchor instant": {ctx: context.Background(), substance: healthy, served: true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := tc.reader.USDPrice24hAgo(tc.ctx, pair.Base); !errors.Is(err, v1.ErrChange24hUnavailable) {
-				t.Fatalf("err = %v, want ErrChange24hUnavailable: no anchor from a market the gate refuses", err)
+			store := &anchorStore{}
+			r := storeChange24hReader{s: store, substance: tc.substance, scam: tc.scam, pegs: []canonical.Asset{pair.Quote}}
+			got, err := r.USDPrice24hAgo(tc.ctx, pair.Base)
+			if store.reads == 0 {
+				t.Fatal("no bucket was read: the gates must be asked about a bucket that exists")
+			}
+			if tc.served {
+				if err != nil || got != "0.5" {
+					t.Fatalf("anchor = %q, %v; want the bucket 0.5 from a market the gates admit", got, err)
+				}
+				return
+			}
+			if !errors.Is(err, v1.ErrChange24hUnavailable) {
+				t.Fatalf("anchor = %q, %v; want ErrChange24hUnavailable: no anchor from a market the gates refuse", got, err)
 			}
 		})
+	}
+
+	if len(thinThen.askedAt) == 0 {
+		t.Fatal("the substance gate was never asked about an instant")
+	}
+	if age := time.Since(thinThen.askedAt[0]); age < 23*time.Hour || age > 25*time.Hour {
+		t.Errorf("substance was measured as of %s ago, want the anchor instant 24h ago", age.Round(time.Minute))
 	}
 }

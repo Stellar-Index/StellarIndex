@@ -184,6 +184,10 @@ func PriceWithheld(
 		AdmitThin:   adm.Requested() && adm.Covers(base, quote),
 	})
 	adm.Record(base, quote, v)
+	if q.shared && v.Unmeasured && v.Withholding == pricingguard.NotWithheld {
+		// One caller's read may fail open; an answer kept for every caller may not.
+		return pricingguard.WithheldThinMarket
+	}
 	return v.Withholding
 }
 
@@ -207,7 +211,8 @@ func AsOfInstant(ts time.Time) WithholdingOption {
 }
 
 // ForSharedRead marks a read whose answer is kept for every caller: the calling request's `include_thin` opt-in
-// does not admit it, and its verdict is not recorded as that request's evidence.
+// does not admit it, its verdict is not recorded as that request's evidence, and a market the gate could not
+// measure is withheld.
 func ForSharedRead() WithholdingOption {
 	return func(q *withholdingQuery) { q.shared = true }
 }
