@@ -332,6 +332,13 @@ func writeAuthError(w http.ResponseWriter, err error) {
 			"https://api.stellarindex.io/errors/auth-status-unavailable",
 			"Account status check unavailable",
 			"The account-status service is temporarily unavailable; retry shortly.")
+	case errors.Is(err, auth.ErrKeyStoreUnavailable):
+		// The key record could not be read: the credential was not judged, so a 401 would be a lie.
+		w.Header().Set("Retry-After", "30")
+		writeAuthProblem(w, http.StatusServiceUnavailable,
+			"https://api.stellarindex.io/errors/auth-key-store-unavailable",
+			"Key store unavailable",
+			"The API key store is temporarily unavailable; retry shortly.")
 	default:
 		// ErrUnauthorized + everything else fall here.
 		w.Header().Set("WWW-Authenticate", `Bearer realm="stellarindex"`)

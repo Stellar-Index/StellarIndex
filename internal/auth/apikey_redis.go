@@ -186,7 +186,7 @@ func (v *RedisAPIKeyValidator) Lookup(ctx context.Context, key string) (Subject,
 		return Subject{}, ErrUnauthorized
 	}
 	if err != nil {
-		return Subject{}, fmt.Errorf("auth: apikey redis get: %w", err)
+		return Subject{}, fmt.Errorf("auth: apikey redis get: %w: %w", ErrKeyStoreUnavailable, err)
 	}
 
 	var rec APIKeyRecord

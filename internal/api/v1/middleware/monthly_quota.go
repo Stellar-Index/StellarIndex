@@ -229,6 +229,8 @@ func WithGateOutage(ctx context.Context) (context.Context, *GateOutage) {
 // Seen reports whether a gate refused for want of an answer.
 func (g *GateOutage) Seen() bool { return g != nil && g.seen }
 
+// markGateOutage is for a refusal path only: a gate that marks and then calls next would turn a later gate's
+// refusal into a pass.
 func markGateOutage(r *http.Request) {
 	if g, ok := r.Context().Value(gateOutageKey{}).(*GateOutage); ok {
 		g.seen = true

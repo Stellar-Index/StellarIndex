@@ -2090,6 +2090,7 @@ var knownErrorSlugs = map[string]struct{}{
 	"asset-is-stellar":                {},
 	"asset-not-found":                 {},
 	"auth":                            {},
+	"auth-key-store-unavailable":      {},
 	"auth-not-configured":             {},
 	"auth-status-unavailable":         {},
 	"backups-unavailable":             {},

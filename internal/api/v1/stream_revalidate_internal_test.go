@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -15,11 +16,15 @@ import (
 
 // revocableKeys is an API-key validator whose single key can be revoked
 // mid-test, the way a dashboard revocation lands in the key store.
-type revocableKeys struct{ revoked, storeDown atomic.Bool }
+type revocableKeys struct {
+	revoked atomic.Bool
+	// down, when set, is the outage every lookup fails with.
+	down atomic.Pointer[error]
+}
 
 func (k *revocableKeys) Lookup(_ context.Context, key string) (auth.Subject, error) {
-	if k.storeDown.Load() {
-		return auth.Subject{}, auth.ErrAccountStatusUnavailable
+	if down := k.down.Load(); down != nil {
+		return auth.Subject{}, *down
 	}
 	if key != "stream-test-key" || k.revoked.Load() {
 		return auth.Subject{}, auth.ErrUnauthorized
@@ -87,13 +92,16 @@ func TestStreamRevalidate_RevokedKeyAndExhaustedQuotaFailTheCheck(t *testing.T) 
 }
 
 // downCounter is a month-to-date reader whose store can go down.
-type downCounter struct{ down *atomic.Bool }
+type downCounter struct {
+	down *atomic.Bool
+	used *atomic.Int64
+}
 
 func (c downCounter) MonthToDate(context.Context, string) (int64, error) {
 	if c.down.Load() {
 		return 0, errors.New("redis: connection refused")
 	}
-	return 0, nil
+	return c.used.Load(), nil
 }
 
 // An outage is not a revocation. While the account-status store is down the Auth gate answers 503, and while the
@@ -102,20 +110,26 @@ func (c downCounter) MonthToDate(context.Context, string) (int64, error) {
 func TestStreamRevalidate_AnOutageDoesNotEndTheStream(t *testing.T) {
 	keys := &revocableKeys{}
 	var counterDown atomic.Bool
+	var used atomic.Int64
 	clock := time.Unix(1_700_000_000, 0)
 	s := New(Options{
 		Auth: middleware.Auth(middleware.AuthOptions{Mode: middleware.AuthModeAPIKey, APIKey: keys}),
-		MonthlyQuota: middleware.MonthlyQuota(downCounter{&counterDown}, nil,
+		MonthlyQuota: middleware.MonthlyQuota(downCounter{&counterDown, &used}, nil,
 			middleware.WithMonthlyQuotaDwellTime(time.Minute),
 			middleware.WithMonthlyQuotaClock(func() time.Time { clock = clock.Add(2 * time.Minute); return clock })),
 	})
 	revalidate := s.streamOptions().Revalidate
 
-	keys.storeDown.Store(true)
-	if !revalidate(streamRequest()) {
-		t.Error("Revalidate = false while the account-status store is down: a 503 is not a revoked key")
+	for name, outage := range map[string]error{
+		"account-status store": auth.ErrAccountStatusUnavailable,
+		"key store":            fmt.Errorf("auth: apikey redis get: %w: %w", auth.ErrKeyStoreUnavailable, errors.New("dial tcp: connection refused")),
+	} {
+		keys.down.Store(&outage)
+		if !revalidate(streamRequest()) {
+			t.Errorf("Revalidate = false while the %s is down: an unread credential is not a revoked key", name)
+		}
 	}
-	keys.storeDown.Store(false)
+	keys.down.Store(nil)
 
 	counterDown.Store(true)
 	revalidate(streamRequest()) // the first failed read starts the dwell clock and fails open
@@ -123,6 +137,13 @@ func TestStreamRevalidate_AnOutageDoesNotEndTheStream(t *testing.T) {
 		t.Error("Revalidate = false while the usage counter is down past its dwell window: quota-unavailable is not quota-exhausted")
 	}
 	counterDown.Store(false)
+
+	// The real gate's exhausted answer is still a refusal: the outage mark must never reach it.
+	used.Store(1000)
+	if revalidate(streamRequest()) {
+		t.Error("Revalidate = true with the monthly quota used up")
+	}
+	used.Store(0)
 
 	keys.revoked.Store(true)
 	if revalidate(streamRequest()) {

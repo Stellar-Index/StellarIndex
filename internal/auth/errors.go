@@ -39,4 +39,8 @@ var (
 	// A short-TTL status cache rides blips out; this is returned only when nothing within the staleness bound is cached.
 	// Distinct from [ErrUnauthorized] so [isCredentialRejection] does not count it against the per-IP failed-auth budget.
 	ErrAccountStatusUnavailable = errors.New("auth: account status layer unavailable (kill-switch read degraded)")
+
+	// ErrKeyStoreUnavailable: the key record could not be read (store down or timed out), so the credential was not
+	// judged. 503 + Retry-After, NOT 401, for the reasons [ErrAccountStatusUnavailable] gives; still failing closed.
+	ErrKeyStoreUnavailable = errors.New("auth: key store unavailable")
 )
