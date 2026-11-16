@@ -3,9 +3,11 @@ package v1_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -39,10 +41,11 @@ type stubEarningsExplorer struct {
 	positions clickhouse.LendingAccountPositions
 	backstop  clickhouse.LendingBackstopState
 	held      clickhouse.LendingAccountBackstop
+	posErr    error
 }
 
 func (e *stubEarningsExplorer) LendingAccountPositions(context.Context, string, string) (clickhouse.LendingAccountPositions, error) {
-	return e.positions, nil
+	return e.positions, e.posErr
 }
 
 func (e *stubEarningsExplorer) LendingBackstop(context.Context, string, bool) (clickhouse.LendingBackstopState, error) {
@@ -210,5 +213,41 @@ func TestLendingAccountEarnings_ProjectionBehind(t *testing.T) {
 		if !leg.Reconciled {
 			t.Fatalf("caught-up leg = %+v", leg)
 		}
+	}
+}
+
+// TestLendingAccountEarnings_PoolReadFailureDegrades: a failed lake read withholds that pool's legs as onchain_unread and sets
+// marks the response degraded (no-store); it is still a 200. A backstop fold with a NULL amount is withheld as fold_inconsistent.
+func TestLendingAccountEarnings_PoolReadFailureDegrades(t *testing.T) {
+	pool, asset := mkCStrkey(t, 1), mkCStrkey(t, 2)
+	ex := &stubEarningsExplorer{
+		stubExplorerReader: &stubExplorerReader{},
+		posErr:             errors.New("lake down"),
+		backstop: clickhouse.LendingBackstopState{
+			Instance: &clickhouse.PoolInstance{Backstop: mkCStrkey(t, 4)}, Token: mkCStrkey(t, 3),
+			Tiers: []clickhouse.BackstopTierState{{Balance: &clickhouse.BackstopBalance{Shares: big.NewInt(100), Tokens: big.NewInt(100), Q4W: new(big.Int)}}},
+		},
+		held: clickhouse.LendingAccountBackstop{Held: map[string]*big.Int{"": big.NewInt(10)}},
+	}
+	pr := &stubEarningsPositions{
+		stubPositionsReader: &stubPositionsReader{
+			blend:    []timescale.BlendPositionFold{{Pool: pool, Asset: asset, HasSupplyLeg: true, SupplyNet: "90", SupplyTokens: "100"}},
+			backstop: []timescale.BlendBackstopFold{{Pool: pool, SharesNet: "10"}},
+		},
+		flows: timescale.LendingAccountFlows{BlendBackstop: []timescale.LendingBackstopTokenFold{{Pool: pool, NetDeposited: "8", NullAmounts: 1}}},
+	}
+	srv := v1.New(v1.Options{Explorer: ex, Positions: pr, Lending: &stubLendingReader{assets: []string{asset}}})
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/lending/accounts/"+earningsAccount+"/earnings", nil))
+	var body struct{ Data v1.LendingEarningsView }
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &body) != nil || len(body.Data.Legs) != 2 ||
+		!strings.Contains(rec.Header().Get("Cache-Control"), "no-store") {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body)
+	}
+	if supply := body.Data.Legs[0]; supply.Reconciled || strOrNull(supply.Reason) != "onchain_unread" || supply.NetFlow != "90" {
+		t.Fatalf("supply = %+v", supply)
+	}
+	if bstop := body.Data.Legs[1]; bstop.Reconciled || strOrNull(bstop.Reason) != "fold_inconsistent" {
+		t.Fatalf("backstop = %+v", bstop)
 	}
 }

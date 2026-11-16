@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"errors"
 	"math/big"
 	"net/http"
 	"slices"
@@ -176,80 +177,104 @@ func (s *Server) handleLendingAccountEarnings(w http.ResponseWriter, r *http.Req
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), maxHandlerBudget)
 	defer cancel()
-	view, err := s.buildLendingEarnings(ctx, er, sr, account)
+	view, degraded, err := s.buildLendingEarnings(ctx, er, sr, account)
 	if err != nil {
 		s.writeLendingLookupError(ctx, w, r, "lending earnings", account, err)
 		return
 	}
 	wm, stale, _ := s.lakeWatermark(ctx)
 	view.AsOfLedger = wm
-	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(time.Now().UTC()), Flags: Flags{Stale: stale}})
+	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(time.Now().UTC()), Flags: Flags{Stale: stale, Degraded: degraded}})
 }
 
-func (s *Server) buildLendingEarnings(ctx context.Context, er lendingEarningsReader, sr lendingAccountStateReader, account string) (LendingEarningsView, error) {
+// buildLendingEarnings reads the account's folds, then each pool's lake state; a pool whose lake read fails withholds its legs
+// as unread and sets degraded instead of failing the response.
+func (s *Server) buildLendingEarnings(ctx context.Context, er lendingEarningsReader, sr lendingAccountStateReader, account string) (LendingEarningsView, bool, error) {
 	view := LendingEarningsView{Account: account, Legs: []LendingEarningsLeg{}, Emissions: []LendingEmissionsClaim{}, Note: lendingEarningsNote}
 	blendFolds, err := er.BlendPositionsByUser(ctx, account)
 	if err != nil {
-		return view, err
+		return view, false, err
 	}
 	blntFolds, err := er.BLNTPositionsByUser(ctx, account)
 	if err != nil {
-		return view, err
+		return view, false, err
 	}
 	flows, err := er.LendingAccountFlows(ctx, account)
 	if err != nil {
-		return view, err
+		return view, false, err
 	}
-	for _, p := range []struct {
-		protocol string
-		folds    []timescale.BlendPositionFold
-	}{{"blend", blendFolds}, {blnt.SourceName, blntFolds}} {
-		legs, err := s.poolEarningsLegs(ctx, sr, p.protocol, account, p.folds)
-		if err != nil {
-			return view, err
-		}
-		view.Legs = append(view.Legs, legs...)
-	}
-	backstopLegs, err := s.backstopEarningsLegs(ctx, er, sr, account, flows)
+	backstop, err := s.backstopEarningsJobs(ctx, er, account, flows)
 	if err != nil {
-		return view, err
+		return view, false, err
 	}
-	view.Legs = append(view.Legs, backstopLegs...)
+	jobs := append(poolEarningsJobs("blend", blendFolds), poolEarningsJobs(blnt.SourceName, blntFolds)...)
+	jobs = append(jobs, backstop...)
+	legs := make([][]LendingEarningsLeg, len(jobs))
+	failed := make([]bool, len(jobs))
+	forEachBounded(s.logger, len(jobs), readFanoutConcurrency, func(i int) {
+		failed[i] = true // stays set if the read panics
+		legs[i], failed[i] = s.earningsJobLegs(ctx, sr, account, jobs[i])
+	})
+	view.Legs = append(view.Legs, slices.Concat(legs...)...)
 	for _, c := range flows.BlendClaims {
 		view.Emissions = append(view.Emissions, LendingEmissionsClaim{Protocol: "blend", Pool: c.Pool, Claimed: c.Claimed, LowerBound: true})
 	}
 	for _, c := range flows.BLNTClaims {
 		view.Emissions = append(view.Emissions, LendingEmissionsClaim{Protocol: blnt.SourceName, Pool: c.Pool, Claimed: c.Claimed, LowerBound: true})
 	}
-	return view, nil
+	return view, slices.Contains(failed, true), nil
 }
 
-// poolEarningsLegs builds the supply and borrow legs of one protocol's folds, reading each pool's state once.
-func (s *Server) poolEarningsLegs(ctx context.Context, sr lendingAccountStateReader, protocol, account string, folds []timescale.BlendPositionFold) ([]LendingEarningsLeg, error) {
-	var out []LendingEarningsLeg
-	byPool := map[string][]timescale.BlendPositionFold{}
-	var pools []string
+// earningsJob is one pool's legs to build: its supply/borrow folds, or its backstop tiers.
+type earningsJob struct {
+	protocol, pool string
+	folds          []timescale.BlendPositionFold
+	backstop       []timescale.LendingBackstopTokenFold
+	shares         map[[2]string]*big.Int
+}
+
+// poolEarningsJobs groups one protocol's folds by pool, in first-seen order.
+func poolEarningsJobs(protocol string, folds []timescale.BlendPositionFold) []earningsJob {
+	var jobs []earningsJob
+	at := map[string]int{}
 	for _, f := range folds {
-		if _, seen := byPool[f.Pool]; !seen {
-			pools = append(pools, f.Pool)
+		i, seen := at[f.Pool]
+		if !seen {
+			i = len(jobs)
+			at[f.Pool] = i
+			jobs = append(jobs, earningsJob{protocol: protocol, pool: f.Pool})
 		}
-		byPool[f.Pool] = append(byPool[f.Pool], f)
+		jobs[i].folds = append(jobs[i].folds, f)
 	}
-	for _, pool := range pools {
-		reserves, err := s.earningsReserveStates(ctx, protocol, pool)
-		if err != nil {
-			return nil, err
-		}
-		pos, err := sr.LendingAccountPositions(ctx, pool, account)
-		if err != nil {
-			return nil, err
-		}
-		behind := pos.Ledger > newestFoldedLedger(byPool[pool])
-		for _, f := range byPool[pool] {
-			out = append(out, poolFoldLegs(protocol, f, reserves[f.Asset], pos, behind)...)
-		}
+	return jobs
+}
+
+func (s *Server) earningsJobLegs(ctx context.Context, sr lendingAccountStateReader, account string, job earningsJob) ([]LendingEarningsLeg, bool) {
+	if job.backstop != nil {
+		return s.poolBackstopLegs(ctx, sr, job, account)
 	}
-	return out, nil
+	return s.poolEarningsLegs(ctx, sr, job, account)
+}
+
+// poolEarningsLegs builds one pool's supply and borrow legs from its cached reserve state and the account's Positions entry.
+func (s *Server) poolEarningsLegs(ctx context.Context, sr lendingAccountStateReader, job earningsJob, account string) ([]LendingEarningsLeg, bool) {
+	failed := false
+	reserves, err := s.earningsReserveStates(ctx, job.pool)
+	if err != nil {
+		s.logger.Warn("lending earnings: reserve read failed", "err", err, "pool", job.pool)
+		failed = true
+	}
+	pos, err := sr.LendingAccountPositions(ctx, job.pool, account)
+	if err != nil {
+		s.logger.Warn("lending earnings: positions read failed", "err", err, "pool", job.pool)
+		pos, failed = clickhouse.LendingAccountPositions{}, true
+	}
+	behind := pos.Ledger > newestFoldedLedger(job.folds)
+	var out []LendingEarningsLeg
+	for _, f := range job.folds {
+		out = append(out, poolFoldLegs(job.protocol, f, reserves[f.Asset], pos, behind)...)
+	}
+	return out, failed
 }
 
 // newestFoldedLedger is the newest event ledger folded into a pool's legs. Every transaction that changes an account's
@@ -262,26 +287,18 @@ func newestFoldedLedger(folds []timescale.BlendPositionFold) uint32 {
 	return newest
 }
 
-// earningsReserveStates reads a pool's reserve state through the reserves endpoint's own read path, by asset.
-func (s *Server) earningsReserveStates(ctx context.Context, protocol, pool string) (map[string]clickhouse.BlendReserveState, error) {
-	read := s.readBLNTPoolReserves
-	version := blend.PoolVersionUnknown
-	if protocol == "blend" {
-		v, err := s.Lending.BlendPoolVersion(ctx, pool)
-		if err != nil {
-			return nil, err
-		}
-		if v == blend.PoolVersionUnknown {
-			return map[string]clickhouse.BlendReserveState{}, nil
-		}
-		version, read = v, s.readBlendPoolReserves
+// earningsReserveStates reads a pool's reserve state through the reserves endpoint's cache, by asset; a pool of unknown lineage
+// has none.
+func (s *Server) earningsReserveStates(ctx context.Context, pool string) (map[string]clickhouse.BlendReserveState, error) {
+	res, _, _, err := s.lendingReserves.get(ctx, "pool_reserves", pool, s.fillPoolReserves(pool))
+	if errors.Is(err, errPoolLineageUnknown) {
+		return map[string]clickhouse.BlendReserveState{}, nil
 	}
-	pr, err := read(ctx, pool, version)
 	if err != nil {
 		return nil, err
 	}
-	out := make(map[string]clickhouse.BlendReserveState, len(pr.state.Reserves))
-	for _, st := range pr.state.Reserves {
+	out := make(map[string]clickhouse.BlendReserveState, len(res.states))
+	for _, st := range res.states {
 		out[st.Asset] = st
 	}
 	return out, nil
@@ -337,8 +354,8 @@ func poolFoldLegs(protocol string, f timescale.BlendPositionFold, st clickhouse.
 	return out
 }
 
-// backstopEarningsLegs builds one leg per (pool, tier) the account has backstop history in.
-func (s *Server) backstopEarningsLegs(ctx context.Context, er lendingEarningsReader, sr lendingAccountStateReader, account string, flows timescale.LendingAccountFlows) ([]LendingEarningsLeg, error) {
+// backstopEarningsJobs groups the account's backstop flows into one job per (protocol, pool).
+func (s *Server) backstopEarningsJobs(ctx context.Context, er lendingEarningsReader, account string, flows timescale.LendingAccountFlows) ([]earningsJob, error) {
 	blendShares, err := er.BlendBackstopSharesByUser(ctx, account)
 	if err != nil {
 		return nil, err
@@ -354,67 +371,67 @@ func (s *Server) backstopEarningsLegs(ctx context.Context, er lendingEarningsRea
 	for _, f := range blntShares {
 		folded[[2]string{f.Pool, f.Tier}], _ = parseBig(f.Shares)
 	}
-	var out []LendingEarningsLeg
+	var jobs []earningsJob
 	for _, p := range []struct {
 		protocol string
 		flows    []timescale.LendingBackstopTokenFold
 	}{{"blend", flows.BlendBackstop}, {blnt.SourceName, flows.BLNTBackstop}} {
-		pools := map[string][]timescale.LendingBackstopTokenFold{}
-		var order []string
+		at := map[string]int{}
 		for _, f := range p.flows {
-			if _, seen := pools[f.Pool]; !seen {
-				order = append(order, f.Pool)
+			i, seen := at[f.Pool]
+			if !seen {
+				i = len(jobs)
+				at[f.Pool] = i
+				jobs = append(jobs, earningsJob{protocol: p.protocol, pool: f.Pool, shares: folded})
 			}
-			pools[f.Pool] = append(pools[f.Pool], f)
-		}
-		for _, pool := range order {
-			legs, err := s.poolBackstopLegs(ctx, sr, p.protocol, pool, account, pools[pool], folded)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, legs...)
+			jobs[i].backstop = append(jobs[i].backstop, f)
 		}
 	}
-	return out, nil
+	return jobs, nil
 }
 
-// poolBackstopLegs reads one pool's backstop and the account's balance in it, then reconciles each tier.
-func (s *Server) poolBackstopLegs(ctx context.Context, sr lendingAccountStateReader, protocol, pool, account string,
-	flows []timescale.LendingBackstopTokenFold, folded map[[2]string]*big.Int,
-) ([]LendingEarningsLeg, error) {
-	tiers := make([]string, 0, len(flows))
-	for _, f := range flows {
+// poolBackstopLegs reads one pool's backstop and the account's balance in it, then reconciles each tier; a failed read
+// withholds every tier as unread.
+func (s *Server) poolBackstopLegs(ctx context.Context, sr lendingAccountStateReader, job earningsJob, account string) ([]LendingEarningsLeg, bool) {
+	tiers := make([]string, 0, len(job.backstop))
+	for _, f := range job.backstop {
 		tiers = append(tiers, f.Tier)
 	}
-	st, held, reason, err := s.readAccountBackstop(ctx, sr, protocol, pool, account, tiers)
-	if err != nil {
-		return nil, err
+	st, held, reason, err := s.readAccountBackstop(ctx, sr, job.protocol, job.pool, account, tiers)
+	failed := err != nil
+	if failed {
+		s.logger.Warn("lending earnings: backstop read failed", "err", err, "pool", job.pool)
+		st, held, reason = clickhouse.LendingBackstopState{}, clickhouse.LendingAccountBackstop{}, ""
 	}
-	out := make([]LendingEarningsLeg, 0, len(flows))
-	for _, f := range flows {
-		leg := LendingEarningsLeg{Protocol: protocol, Pool: pool, Side: earningsSideBackstop, Tier: nonEmptyPtr(f.Tier)}
-		tier := backstopTier(st, f.Tier)
-		token := st.Token
-		if tier != nil && tier.Token != "" {
-			token = tier.Token
-		}
-		leg.Asset = nonEmptyPtr(token)
-		shares := folded[[2]string{pool, f.Tier}]
-		net, ok := parseBig(f.NetDeposited)
-		if !ok {
-			net, shares = new(big.Int), nil
-		}
-		// Every backstop action of the account rewrites its UserBalance entry, as for pool Positions.
-		reconcileLeg(&leg, legInputs{
-			netFlow: net, folded: shares, onchain: held.Held[f.Tier], behind: held.Ledger[f.Tier] > f.LastLedger,
-			value: func(n *big.Int) (*big.Int, bool) { return backstopShareValue(tier, n) },
-		})
-		if reason != "" && leg.Reason != nil && *leg.Reason == earningsReasonOnchainUnread {
-			leg.Reason = strRef(reason)
-		}
-		out = append(out, leg)
+	out := make([]LendingEarningsLeg, 0, len(job.backstop))
+	for _, f := range job.backstop {
+		out = append(out, backstopLeg(job, f, st, held, reason))
 	}
-	return out, nil
+	return out, failed
+}
+
+func backstopLeg(job earningsJob, f timescale.LendingBackstopTokenFold, st clickhouse.LendingBackstopState, held clickhouse.LendingAccountBackstop, reason string) LendingEarningsLeg {
+	leg := LendingEarningsLeg{Protocol: job.protocol, Pool: job.pool, Side: earningsSideBackstop, Tier: nonEmptyPtr(f.Tier)}
+	tier := backstopTier(st, f.Tier)
+	token := st.Token
+	if tier != nil && tier.Token != "" {
+		token = tier.Token
+	}
+	leg.Asset = nonEmptyPtr(token)
+	shares := job.shares[[2]string{job.pool, f.Tier}]
+	net, ok := parseBig(f.NetDeposited)
+	if !ok || f.NullAmounts > 0 {
+		net, shares = new(big.Int), nil
+	}
+	// Every backstop action of the account rewrites its UserBalance entry, as for pool Positions.
+	reconcileLeg(&leg, legInputs{
+		netFlow: net, folded: shares, onchain: held.Held[f.Tier], behind: held.Ledger[f.Tier] > f.LastLedger,
+		value: func(n *big.Int) (*big.Int, bool) { return backstopShareValue(tier, n) },
+	})
+	if reason != "" && leg.Reason != nil && *leg.Reason == earningsReasonOnchainUnread {
+		leg.Reason = strRef(reason)
+	}
+	return leg
 }
 
 // readAccountBackstop reads a pool's backstop and the account's held shares per tier; reason is the lineage's unavailable
