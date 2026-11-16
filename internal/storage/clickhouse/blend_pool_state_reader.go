@@ -169,19 +169,14 @@ func blendReserveKeys(poolID xdr.ContractId, assets []string) ([]string, map[str
 	return keys, refByKey
 }
 
-// scanBlendReserveParts decodes rows into per-asset ResData and the backstop rate, and reports the keys that produced a row (matched). The
-// TTL filter is scoped to matched: judging keys the lake never returned could over-drop reserves we would have served.
-func scanBlendReserveParts(rows reserveRows, refByKey map[string]keyRef, version blend.PoolVersion,
-) (dataByAsset map[string]*blend.ReserveData, bstop *uint32, matched []string, err error) {
-	return scanReserveParts(rows, refByKey, blendModel(version).decode)
-}
-
 type reserveRows interface {
 	Next() bool
 	Scan(...any) error
 	Err() error
 }
 
+// scanReserveParts decodes rows into per-asset ResData and the backstop rate, and reports the keys that produced a row (matched). The
+// TTL filter is scoped to matched: judging keys the lake never returned could over-drop reserves we would have served.
 func scanReserveParts(rows reserveRows, refByKey map[string]keyRef, decode func(xdr.ScVal) (blend.ReserveData, error),
 ) (dataByAsset map[string]*blend.ReserveData, bstop *uint32, matched []string, err error) {
 	dataByAsset = make(map[string]*blend.ReserveData)
