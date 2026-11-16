@@ -409,6 +409,35 @@ func KeyPrefix(plaintext string) string {
 	return plaintext[:prefixLen]
 }
 
+// keySecretPrefix starts every plaintext API key.
+const keySecretPrefix = "sip_"
+
+// IsKeySecret reports whether s is shaped like a plaintext API key, as opposed to a key id.
+func IsKeySecret(s string) bool { return strings.HasPrefix(s, keySecretPrefix) }
+
+// RedactKeySecrets replaces each plaintext-key-shaped run in s (a request path, a log field) with a marker, so a
+// key pasted where an id belongs is not copied into logs or error bodies.
+func RedactKeySecrets(s string) string {
+	if !strings.Contains(s, keySecretPrefix) {
+		return s
+	}
+	var b strings.Builder
+	for {
+		i := strings.Index(s, keySecretPrefix)
+		if i < 0 {
+			b.WriteString(s)
+			return b.String()
+		}
+		b.WriteString(s[:i])
+		b.WriteString(keySecretPrefix + "[redacted]")
+		j := i + len(keySecretPrefix)
+		for j < len(s) && (s[j] >= '0' && s[j] <= '9' || s[j] >= 'a' && s[j] <= 'z' || s[j] >= 'A' && s[j] <= 'Z') {
+			j++
+		}
+		s = s[j:]
+	}
+}
+
 // generateID reads n bytes from rnd and returns prefix + hex(bytes).
 func generateID(rnd func([]byte) (int, error), prefix string, n int) (string, error) {
 	buf := make([]byte, n)

@@ -2201,6 +2201,7 @@ var knownErrorSlugs = map[string]struct{}{
 	"issuers-timeout":                 {},
 	"issuers-transient":               {},
 	"issuers-unavailable":             {},
+	"key-id-is-a-secret":              {},
 	"key-mint-not-available":          {},
 	"key-not-found":                   {},
 	"key-quota-exceeded":              {},

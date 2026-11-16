@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
+	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
 // Envelope is the shape of every 2xx JSON response (docs/reference/api-design.md section 4).
@@ -206,7 +207,7 @@ func writeProblemCoverage(
 		Title:           title,
 		Status:          status,
 		Detail:          detail,
-		Instance:        r.URL.RequestURI(),
+		Instance:        auth.RedactKeySecrets(r.URL.RequestURI()),
 		RequestID:       middleware.RequestIDFrom(r),
 		CoverageFrom:    wireTimePtr(coverageFrom),
 		OutsideCoverage: outsideCoverage,

@@ -60,3 +60,21 @@ func TestLoggerCapsPathAndUserAgentLength(t *testing.T) {
 			"not reach the journal verbatim (want <= %d)", len(ua), wantMaxLen)
 	}
 }
+
+// A plaintext API key in the request path (pasted where a key id belongs) must not reach the journal.
+func TestLoggerRedactsAKeySecretInThePath(t *testing.T) {
+	buf := &bytes.Buffer{}
+	logger := slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	h := Logger(logger)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	const secret = "sip_0123456789abcdef0123456789abcdef"
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodDelete, "/v1/account/keys/"+secret, nil))
+
+	if strings.Contains(buf.String(), secret[8:]) {
+		t.Errorf("access log carries the plaintext key: %s", buf.String())
+	}
+	if !strings.Contains(buf.String(), "/v1/account/keys/sip_[redacted]") {
+		t.Errorf("access log lost the route: %s", buf.String())
+	}
+}

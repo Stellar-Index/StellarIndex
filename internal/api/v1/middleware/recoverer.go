@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+
+	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
 // Recoverer turns a panicking handler into a 500 with a stack-trace log; the body is generic problem+json and the panic value and stack
@@ -30,7 +32,7 @@ func Recoverer(logger *slog.Logger) Middleware {
 				logger.Error("handler panic",
 					"request_id", RequestIDFrom(r),
 					"method", r.Method,
-					"path", r.URL.Path,
+					"path", auth.RedactKeySecrets(r.URL.Path),
 					"remote_ip", RemoteIPFrom(r),
 					"panic", rec,
 					"stack", string(debug.Stack()),

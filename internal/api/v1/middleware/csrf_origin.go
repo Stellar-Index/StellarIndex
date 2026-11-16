@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
 // OriginPolicy is the operator's cross-origin allow-list, published on the request context by [CORS] so downstream guards reuse it
@@ -59,7 +61,7 @@ func RequireSameSiteWrite(logger *slog.Logger) Middleware {
 			}
 			logger.Warn("cross-site write blocked",
 				"reason", reason, "origin", origin,
-				"method", r.Method, "path", r.URL.Path,
+				"method", r.Method, "path", auth.RedactKeySecrets(r.URL.Path),
 				"remote_ip", RemoteIPFrom(r))
 			writeCrossSiteDenied(w, r)
 		})

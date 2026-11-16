@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
@@ -45,7 +46,7 @@ func Logger(logger *slog.Logger) Middleware {
 			latency := time.Since(start)
 			attrs := []any{
 				"method", r.Method,
-				"path", boundedLogField(r.URL.Path, maxLoggedPathLen),
+				"path", boundedLogField(auth.RedactKeySecrets(r.URL.Path), maxLoggedPathLen),
 				"status", rec.status,
 				"bytes", rec.bytes,
 				"latency_ms", float64(latency.Microseconds()) / 1000.0,
