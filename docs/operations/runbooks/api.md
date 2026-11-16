@@ -488,6 +488,22 @@ ssh r1 'curl -s http://localhost:3000/metrics | grep stellarindex_customer_webho
 
 **Fix.** The row stays in `webhook_deliveries` for forensics and there is no automatic retry. Cleanest: ask the customer to `PATCH` the webhook URL or trigger a fresh event; re-enqueue manually only by operator decision. **Escalate:** none.
 
+## stellarindex_customer_webhook_delivery_stalled
+
+**Trigger.** `sum by (outcome) (increase(stellarindex_customer_webhook_delivery_attempts_total{outcome=~"list_error|lookup_error"}[15m])) > 0` for 30m, P3. `list_error`: the worker cannot read pending deliveries, so nothing is delivered. `lookup_error`: it cannot read a webhook, its signing key or the owning account's status; the row waits on its claim lease with `attempt_count` unchanged, so it never reaches the retry budget and `exhausted` never fires.
+
+**Check.** Postgres health and the API journal (`journalctl -u stellarindex-api | grep -i webhook`). For `lookup_error` with Postgres healthy, confirm the webhook seal key is loaded (the journal names a missing key at start).
+
+**Fix.** Restore the failing store or key; pending rows are picked up on the next poll with their budget intact. **Escalate:** none.
+
+## stellarindex_customer_webhook_delivery_dropped
+
+**Trigger.** `sum by (outcome) (increase(stellarindex_customer_webhook_delivery_attempts_total{outcome=~"no_secret|build_error"}[1h])) > 0`, `for: 0m`, P3. A delivery was marked terminally failed before any POST: `no_secret` (signing secret empty or not unsealable with the configured key) or `build_error` (stored URL is not a valid request target). The customer never got the event.
+
+**Check.** `SELECT webhook_id, last_error, COUNT(*) FROM webhook_deliveries WHERE status = 'failed' AND updated_at > now() - interval '2 hours' GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 10`.
+
+**Fix.** `no_secret` across many webhooks means the seal key changed: restore the key the secrets were sealed with. For one webhook, ask the customer to rotate its secret or correct its URL. Terminal rows are not retried; re-enqueue only by operator decision. **Escalate:** none.
+
 ## stellarindex_customer_webhook_mark_errors
 
 **Trigger.** `increase(stellarindex_customer_webhook_delivery_attempts_total{outcome="mark_error"}[30m]) > 0` for 15m, P3. Read this first when it fires with the other two. The POST decided an outcome but the store write failed; only that write advances `attempt_count`, so the 5-minute claim lease repeats and the SAME payload is re-POSTed indefinitely (customer sees duplicates). Sites: `classifyResponse`, `handleFailure`, `markTerminal` in `internal/customerwebhook/worker.go`; each logs a WARN with `delivery_id`.

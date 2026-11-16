@@ -1,0 +1,132 @@
+# promtool unit tests for the customer-webhook outcomes that stall or drop a
+# delivery without ever reaching the retry budget:
+#
+#   stellarindex_customer_webhook_delivery_stalled
+#   stellarindex_customer_webhook_delivery_dropped
+#
+#   promtool test rules deploy/monitoring/rule-tests/api-webhook-stall_test.yml
+
+rule_files:
+  - ../rules/api.yml
+  - ../../../configs/prometheus/rules.r1/api.yml
+
+evaluation_interval: 1m
+
+tests:
+  # The webhook store cannot be read: lookup_error on every poll. Both trees fire.
+  - interval: 1m
+    name: delivery_stalled — a lookup failure that keeps recurring tickets
+    input_series:
+      - series: 'stellarindex_customer_webhook_delivery_attempts_total{job="stellarindex_api",instance="r1:8080",outcome="lookup_error"}'
+        values: '0x10 1+1x120'
+      - series: 'stellarindex_customer_webhook_delivery_attempts_total{job="stellarindex_api",instance="r1:8080",outcome="list_error"}'
+        values: '0x130'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_customer_webhook_delivery_stalled
+        exp_alerts: []
+      - eval_time: 50m
+        alertname: stellarindex_customer_webhook_delivery_stalled
+        exp_alerts: &stalled
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+              outcome: lookup_error
+            exp_annotations:
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_customer_webhook_delivery_stalled"
+              summary: "Customer webhook deliveries are stalled (lookup_error)"
+              description: |
+                The delivery worker has recorded lookup_error in every
+                15-minute window for 30+ minutes. list_error: it cannot
+                read pending deliveries, so nothing is being delivered.
+                lookup_error: it cannot read a webhook, its signing key
+                or the owning account's status, so those rows wait on
+                their claim lease with attempt_count unchanged and never
+                reach the retry budget or the exhausted alert. Check
+                Postgres first, then that the webhook seal key is loaded.
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+              outcome: lookup_error
+            exp_annotations:
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_customer_webhook_delivery_stalled"
+              summary: "Customer webhook deliveries are stalled (lookup_error)"
+              description: |
+                The delivery worker has recorded lookup_error in every
+                15-minute window for 30+ minutes. list_error: it cannot
+                read pending deliveries, so nothing is being delivered.
+                lookup_error: it cannot read a webhook, its signing key
+                or the owning account's status, so those rows wait on
+                their claim lease with attempt_count unchanged and never
+                reach the retry budget or the exhausted alert. Check
+                Postgres first, then that the webhook seal key is loaded.
+
+  # A store blip: three failed polls, then healthy. Never 30 minutes of recurrence.
+  - interval: 1m
+    name: delivery_stalled — a short blip stays silent
+    input_series:
+      - series: 'stellarindex_customer_webhook_delivery_attempts_total{job="stellarindex_api",instance="r1:8080",outcome="list_error"}'
+        values: '0x10 1 2 3x120'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_customer_webhook_delivery_stalled
+        exp_alerts: []
+      - eval_time: 45m
+        alertname: stellarindex_customer_webhook_delivery_stalled
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: stellarindex_customer_webhook_delivery_stalled
+        exp_alerts: []
+
+  # One delivery ended as no_secret: it tickets at once and does not latch.
+  - interval: 1m
+    name: delivery_dropped — one delivery dropped before any POST tickets
+    input_series:
+      - series: 'stellarindex_customer_webhook_delivery_attempts_total{job="stellarindex_api",instance="r1:8080",outcome="no_secret"}'
+        values: '0x3 1x200'
+      - series: 'stellarindex_customer_webhook_delivery_attempts_total{job="stellarindex_api",instance="r1:8080",outcome="build_error"}'
+        values: '0x204'
+      - series: 'stellarindex_customer_webhook_delivery_attempts_total{job="stellarindex_api",instance="r1:8080",outcome="delivered"}'
+        values: '0+5x204'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: stellarindex_customer_webhook_delivery_dropped
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: stellarindex_customer_webhook_delivery_dropped
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+              outcome: no_secret
+            exp_annotations:
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_customer_webhook_delivery_dropped"
+              summary: "Customer webhook deliveries dropped without an attempt (no_secret)"
+              description: |
+                A delivery ended as no_secret in the last hour:
+                it was marked terminally failed without a single POST and
+                will not be retried. no_secret: the webhook's signing
+                secret is empty or cannot be unsealed with the configured
+                key. build_error: the stored webhook URL is not a valid
+                request target. The customer has not received the event.
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+              outcome: no_secret
+            exp_annotations:
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_customer_webhook_delivery_dropped"
+              summary: "Customer webhook deliveries dropped without an attempt (no_secret)"
+              description: |
+                A delivery ended as no_secret in the last hour:
+                it was marked terminally failed without a single POST and
+                will not be retried. no_secret: the webhook's signing
+                secret is empty or cannot be unsealed with the configured
+                key. build_error: the stored webhook URL is not a valid
+                request target. The customer has not received the event.
+      - eval_time: 120m
+        alertname: stellarindex_customer_webhook_delivery_dropped
+        exp_alerts: []

@@ -343,6 +343,53 @@ groups:
             write succeeds — a duplicate-delivery loop with no retry
             budget to end it. Check Postgres health first.
 
+      # `list_error` and `lookup_error` do not advance attempt_count, so a
+      # delivery stuck behind one never exhausts its budget and none of the
+      # rules above can see it. A short store blip clears inside one window;
+      # `for: 30m` over a 15-minute window needs the failure to keep recurring.
+      - alert: stellarindex_customer_webhook_delivery_stalled
+        expr: |
+          sum by (outcome) (increase(stellarindex_customer_webhook_delivery_attempts_total{outcome=~"list_error|lookup_error"}[15m])) > 0
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_customer_webhook_delivery_stalled
+          summary: "Customer webhook deliveries are stalled ({{ $labels.outcome }})"
+          description: |
+            The delivery worker has recorded {{ $labels.outcome }} in every
+            15-minute window for 30+ minutes. list_error: it cannot
+            read pending deliveries, so nothing is being delivered.
+            lookup_error: it cannot read a webhook, its signing key
+            or the owning account's status, so those rows wait on
+            their claim lease with attempt_count unchanged and never
+            reach the retry budget or the exhausted alert. Check
+            Postgres first, then that the webhook seal key is loaded.
+
+      # `no_secret` and `build_error` end a delivery terminally before any
+      # POST: the same loss as `exhausted`, without the 8 hours of retries.
+      # One is an event, so no `for:`; the children are pre-seeded at 0.
+      - alert: stellarindex_customer_webhook_delivery_dropped
+        expr: |
+          sum by (outcome) (increase(stellarindex_customer_webhook_delivery_attempts_total{outcome=~"no_secret|build_error"}[1h])) > 0
+        for: 0m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_customer_webhook_delivery_dropped
+          summary: "Customer webhook deliveries dropped without an attempt ({{ $labels.outcome }})"
+          description: |
+            A delivery ended as {{ $labels.outcome }} in the last hour:
+            it was marked terminally failed without a single POST and
+            will not be retried. no_secret: the webhook's signing
+            secret is empty or cannot be unsealed with the configured
+            key. build_error: the stored webhook URL is not a valid
+            request target. The customer has not received the event.
+
       # Caddy auto-renews 30 days before expiry; this catches stuck renewal
       # (rate limit, DNS, ACME quota). The self-probe dials each host every 6
       # h and emits leaf NotAfter; <14 days leaves a fortnight to renew
