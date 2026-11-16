@@ -132,7 +132,8 @@ groups:
             The freshest stellarindex_external_fx_last_quote_unix across
             all FX sources is > 6 h stale for > 15 min. The active feed
             (`massive`, the internal/sources/external/forex worker in the API
-            binary) has stopped committing fresh upstream rates. The
+            binary) has stopped committing fresh upstream rates, or
+            keeps answering with a bar a weekday session old. The
             gauge ignores the synthetic USD=1.0 anchor row and
             carried-forward history bars, which are rewritten every
             refresh even when the upstream gave nothing usable (all

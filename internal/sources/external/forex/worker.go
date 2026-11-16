@@ -3,6 +3,7 @@ package forex
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"sort"
@@ -114,6 +115,8 @@ type Worker struct {
 	// rawHistory is the trailing-7d series as fetched, including bars the band refuses. Never published: the heal and confirm veto must
 	// re-see refused bars each refresh, while [Snapshot.History7d] carries only admitted bars.
 	rawHistory map[string][]HistoryPoint
+	// rawHistoryFetchedAt is when rawHistory was fetched. A bar whose day was still open then is a first-fetch value, not a close.
+	rawHistoryFetchedAt time.Time
 
 	// fallbacks are tried IN ORDER when the primary cannot serve rates, so an outage degrades
 	// coverage instead of ending it.
@@ -212,31 +215,57 @@ func (w *Worker) sourceLabel() string {
 	return w.activeSource
 }
 
-// fetchRates returns rates from the first source that can serve them (primary, then fallbacks in registration order). Context
-// cancellation short-circuits rather than burning through every fallback.
+// publicationStale reports whether rates published on pub's UTC day have missed a whole weekday session by now: a Mon-Fri day lies
+// strictly between the two. The weekend and the day in progress are not a miss, so a Friday bar is current until Tuesday. The
+// primary walks back to its newest bar and answers without error, so only this tells a feed that stopped publishing from a live one.
+func publicationStale(pub, now time.Time) bool {
+	today := now.UTC().Truncate(24 * time.Hour)
+	for day := pub.UTC().Truncate(24*time.Hour).AddDate(0, 0, 1); day.Before(today); day = day.AddDate(0, 0, 1) {
+		if wd := day.Weekday(); wd != time.Saturday && wd != time.Sunday {
+			return true
+		}
+	}
+	return false
+}
+
+// fetchRates returns rates from the first source that can serve them (primary, then fallbacks in registration order). A primary
+// whose publication is stale ([publicationStale]) is treated as failed, but is still served when no standby has a newer one.
+// Context cancellation short-circuits rather than burning through every fallback.
 func (w *Worker) fetchRates(ctx context.Context) (map[string]float64, time.Time, string, error) {
 	rates, publishedAt, err := w.client.LatestUSDRates(ctx)
-	if err == nil {
+	stale := err == nil && publicationStale(publishedAt, w.clock())
+	if err == nil && !stale {
 		return rates, publishedAt, fxSource, nil
 	}
 	if errors.Is(err, context.Canceled) {
 		return nil, time.Time{}, "", err
 	}
 	primaryErr := err
+	if stale {
+		primaryErr = fmt.Errorf("newest publication is %s, a weekday session behind", publishedAt.Format("2006-01-02"))
+	}
 
 	for _, fb := range w.fallbacks {
-		rates, publishedAt, err = fb.LatestUSDRates(ctx)
-		if err == nil {
+		fbRates, fbPublishedAt, fbErr := fb.LatestUSDRates(ctx)
+		switch {
+		case errors.Is(fbErr, context.Canceled):
+			return nil, time.Time{}, "", fbErr
+		case fbErr != nil:
+			w.logger.Warn("forex: fallback failed", "fallback", fb.Name(), "err", fbErr)
+		case stale && !fbPublishedAt.UTC().Truncate(24*time.Hour).After(publishedAt):
+			w.logger.Warn("forex: fallback is no newer than the stale primary", "fallback", fb.Name(), "published_at", fbPublishedAt)
+		default:
 			// Loud on purpose: serving from a standby is a degraded state, not a silent swap.
 			w.logger.Warn("forex: primary failed — serving from fallback",
 				"primary", fxSource, "primary_err", primaryErr,
-				"fallback", fb.Name(), "currencies", len(rates))
-			return rates, publishedAt, fb.Name(), nil
+				"fallback", fb.Name(), "currencies", len(fbRates))
+			return fbRates, fbPublishedAt, fb.Name(), nil
 		}
-		if errors.Is(err, context.Canceled) {
-			return nil, time.Time{}, "", err
-		}
-		w.logger.Warn("forex: fallback failed", "fallback", fb.Name(), "err", err)
+	}
+	if stale {
+		w.logger.Warn("forex: primary publication is stale and no standby is newer — serving it, liveness is not stamped",
+			"published_at", publishedAt)
+		return rates, publishedAt, fxSource, nil
 	}
 	return nil, time.Time{}, "", primaryErr
 }
@@ -323,6 +352,8 @@ type guardResult struct {
 	refuted map[string]bool
 	// history is the dated bars the band admitted, per ticker.
 	history map[string][]HistoryPoint
+	// publishedAt is the upstream publication the current rows carry.
+	publishedAt time.Time
 }
 
 // freshQuotes counts the upstream current rates this refresh committed. The synthetic anchor and
@@ -429,10 +460,11 @@ func (w *Worker) refreshRawHistory(ctx context.Context, names map[string]string,
 	// A refetch that returned nothing is a failed fetch: keep the held series, which the heal
 	// and the confirm veto read, and try again next refresh.
 	// A held series past the 7-day window describes another week, so it is dropped, not kept.
+	fetchedAt := w.clock().UTC()
 	fetched := w.fetchHistory(ctx, names, publishedAt)
 	switch {
 	case len(fetched) > 0 || len(w.rawHistory) == 0:
-		w.rawHistory = fetched
+		w.rawHistory, w.rawHistoryFetchedAt = fetched, fetchedAt
 	case publishedAt.Sub(newestHistoryBar(w.rawHistory)) > heldHistoryMaxAge:
 		w.logger.Warn("forex: history refetch returned nothing and the held series is past its window — dropping it", "tickers", len(w.rawHistory))
 		w.rawHistory = nil
@@ -472,9 +504,10 @@ func (w *Worker) guardSnapshot(snap *Snapshot) guardResult {
 	defer func() { w.historyVeto, w.streakCounted = nil, nil }()
 
 	res := guardResult{
-		current: make(map[string]bool, len(snap.Currencies)),
-		refuted: map[string]bool{},
-		history: make(map[string][]HistoryPoint, len(snap.History7d)),
+		current:     make(map[string]bool, len(snap.Currencies)),
+		refuted:     map[string]bool{},
+		history:     make(map[string][]HistoryPoint, len(snap.History7d)),
+		publishedAt: snap.PublishedAt,
 	}
 	batch := make([]FXQuote, 0, len(snap.Currencies)+len(snap.History7d)*7)
 	// currentRowIx lets the history-majority heal scrub a poisoned bootstrap row (RateUSD set to 0,
@@ -508,8 +541,9 @@ func (w *Worker) guardSnapshot(snap *Snapshot) guardResult {
 			}
 			res.history[ticker] = append(res.history[ticker], p)
 			bucket := p.Date.UTC().Truncate(24 * time.Hour)
-			// Today's history bar is stale from the day's first fetch; the current row owns today.
-			if bucket.Equal(today) {
+			// Today's history bar is stale from the day's first fetch; the current row owns today. So is the bar of any day that
+			// was open when a series held across a day roll was fetched: written, it would replace that day's last current rate.
+			if bucket.Equal(today) || w.openWhenFetched(bucket) {
 				continue
 			}
 			batch = append(batch, FXQuote{
@@ -544,6 +578,11 @@ func (w *Worker) guardSnapshot(snap *Snapshot) guardResult {
 	return res
 }
 
+// openWhenFetched reports whether the UTC day starting at bucket had not ended when the raw history was fetched.
+func (w *Worker) openWhenFetched(bucket time.Time) bool {
+	return !w.rawHistoryFetchedAt.IsZero() && bucket.Add(24*time.Hour).After(w.rawHistoryFetchedAt)
+}
+
 // writeBatch persists one guarded batch to fx_quotes and stamps the feed's liveness metrics.
 func (w *Worker) writeBatch(ctx context.Context, res guardResult) {
 	if w.writer == nil {
@@ -568,11 +607,12 @@ func (w *Worker) writeBatch(ctx context.Context, res guardResult) {
 		obs.SourceEventsTotal.WithLabelValues(w.sourceLabel()).Add(float64(fresh))
 	}
 
-	// Stamp the liveness gauge ONLY when the write carried an upstream current rate, else the
-	// anchor and carried history would keep a dead feed looking fresh. The feed_stale alert keys
-	// off it, firing before the 7-day fx_snap lookback expires.
-	if fresh > 0 {
-		obs.ExternalFXLastQuoteUnix.WithLabelValues(w.sourceLabel()).Set(float64(time.Now().Unix()))
+	// Stamp the liveness gauge ONLY when the write carried an upstream current rate whose publication is current, else the
+	// anchor, carried history or a feed re-serving an old bar would keep a dead feed looking fresh. The feed_stale alert
+	// keys off it, firing before the 7-day fx_snap lookback expires.
+	now := w.clock()
+	if fresh > 0 && !publicationStale(res.publishedAt, now) {
+		obs.ExternalFXLastQuoteUnix.WithLabelValues(w.sourceLabel()).Set(float64(now.Unix()))
 	}
 }
 

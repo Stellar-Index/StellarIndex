@@ -1124,7 +1124,7 @@ var ExternalPollerLastSuccessUnix = prometheus.NewGaugeVec(
 	[]string{"source"},
 )
 
-// ExternalFXLastQuoteUnix stamps the latest non-empty committed fx_quotes write from the forex worker (not a poller); alert stellarindex_external_fx_feed_stale.
+// ExternalFXLastQuoteUnix stamps the forex worker's latest committed fx_quotes write that carried a current upstream publication; alert stellarindex_external_fx_feed_stale.
 var ExternalFXLastQuoteUnix = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_external_fx_last_quote_unix",

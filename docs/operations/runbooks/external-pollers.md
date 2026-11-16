@@ -153,7 +153,7 @@ journalctl -u stellarindex-indexer -n 500 --no-pager | \
 
 ## stellarindex_external_fx_feed_stale
 
-`(time() - max(stellarindex_external_fx_last_quote_unix)) > 21600` (6 h), `for: 15m`, P2. The hourly `massive` forex worker (API binary) stopped committing fresh rates. The gauge advances only on a committed `fx_quotes` write with a fresh upstream rate. No immediate impact: fiat-quoted pairs price off the last-good `fx_quotes` row (7-day lookback), then break silently.
+`(time() - max(stellarindex_external_fx_last_quote_unix)) > 21600` (6 h), `for: 15m`, P2. The hourly `massive` forex worker (API binary) stopped committing fresh rates. The gauge advances only on a committed `fx_quotes` write with an upstream rate whose publication day has not missed a weekday session (a Friday bar counts until Tuesday 00:00 UTC), so a feed that keeps answering with an old bar goes stale too. No immediate impact: fiat-quoted pairs price off the last-good `fx_quotes` row (7-day lookback), then break silently.
 
 ### Check
 
