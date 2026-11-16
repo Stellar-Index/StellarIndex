@@ -104,7 +104,7 @@ func decodeReserveList(v xdr.ScVal) ([]string, error) {
 func decodePositions(v xdr.ScVal, list []string, out *LendingAccountPositions) error {
 	entries, err := scval.AsMap(v)
 	if err != nil {
-		return fmt.Errorf("Positions shape: %w", err)
+		return fmt.Errorf("positions entry shape: %w", err)
 	}
 	for _, f := range []struct {
 		name string
@@ -112,10 +112,10 @@ func decodePositions(v xdr.ScVal, list []string, out *LendingAccountPositions) e
 	}{{"collateral", out.Supply}, {"supply", out.Supply}, {"liabilities", out.Borrow}} {
 		mv, ok := scval.MapField(entries, f.name)
 		if !ok {
-			return fmt.Errorf("Positions missing %q", f.name)
+			return fmt.Errorf("positions entry missing %q", f.name)
 		}
 		if err := addIndexedBalances(mv, list, f.dst); err != nil {
-			return fmt.Errorf("Positions %s: %w", f.name, err)
+			return fmt.Errorf("positions entry %s: %w", f.name, err)
 		}
 	}
 	return nil
