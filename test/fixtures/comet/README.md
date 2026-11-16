@@ -11,10 +11,15 @@ curated allowlisted pool, `internal/sources/comet/events.go`'s
 `MainnetBackstopPool` (Blend's BLND/USDC backstop,
 `CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVGRVEAM`, WASM
 `8abc28913035c07411ed5d134e6bfeab4723d97ddd4d1a22a0605d35c94d1a36`).
-This fixture verifies the historical Blend pool and its `8abc2891…` WASM lineage. The curated
-allowlist also contains the BLNT/USDC and BLNT/XLM Comet V1.1 pools; identity-gate tests pin those
-contracts, while the audited V1.1 interface establishes event compatibility. A future real-event
-fixture from the V1.1 pools would strengthen byte-level coverage but is not implied by this file.
+This fixture verifies the historical Blend pool and its `8abc2891…` WASM lineage.
+
+## Comet V1.1 pools
+
+`d735c339…/` holds the first real swap of each BLNT pool (BLNT/XLM
+`CA5HX3D4…` and BLNT/USDC `CDQMIKIH…`, both at ledger 65,137,110), read from
+the archival lake (`stellar.contract_events`). Both pools have run WASM
+`d735c339…` since creation (`stellar.contract_instance_changes`).
+`TestRealMainnetFixtures_comet` replays them like the `8abc2891…` capture.
 
 ## Self-pair swaps
 
