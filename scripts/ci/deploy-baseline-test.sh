@@ -229,6 +229,29 @@ else
   bad "lagging binary under a current marker: config='$cfg' log='$out'"
 fi
 
+# SemVer puts a pre-release below its release; `sort -V` alone has it above,
+# which raised the baseline past config a pre-release deploy still owed.
+fake_ssh 0 $'stellarindex-api\tv0.58.0\nstellarindex-indexer\tv0.58.0\n.config-applied\tv0.58.0-rc.1'
+if run_baseline && [ "$gh" = "live=v0.58.0" ] && [ "$cfg" = "config=v0.58.0-rc.1" ]; then
+  ok "a pre-release marker under its final release keeps the config baseline at the pre-release"
+else
+  bad "pre-release marker: live='$gh' config='$cfg' log='$out'"
+fi
+
+fake_ssh 0 $'stellarindex-api\tv0.58.0-rc.1\nstellarindex-indexer\tv0.58.0'
+if run_baseline && [ "$gh" = "live=v0.58.0-rc.1" ]; then
+  ok "a binary still on the pre-release is the lowest live version"
+else
+  bad "pre-release binary: live='$gh' log='$out'"
+fi
+
+fake_ssh 0 $'stellarindex-api\tv0.58.0-rc-1+build.5\n.config-applied\tv0.58.0-rc-1+build.5'
+if run_baseline && [ "$cfg" = "config=v0.58.0-rc-1+build.5" ]; then
+  ok "every version the deploy input accepts is a readable sidecar and marker"
+else
+  bad "full SemVer grammar: live='$gh' config='$cfg' log='$out'"
+fi
+
 fake_ssh 0 $'stellarindex-api\tv0.58.0\n.config-applied\tgarbage'
 if run_baseline; then
   bad "a marker that is not a version passed: config='$cfg' log='$out'"

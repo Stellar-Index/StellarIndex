@@ -103,6 +103,9 @@ if [ -z "$REGION" ] || [ -z "$VERSION" ]; then usage; exit 2; fi
 
 rule() { printf '\n── %s\n' "$1"; }
 block() { BLOCKERS+=("$1"); }
+# The SemVer-lowest of the versions on stdin, as deploy.yml computes it: `sort -V` alone ranks v1.2.3 below
+# v1.2.3-rc.1, and `~` sorts before the end of a string.
+lowest_version() { sed 's/-/~/' | sort -V | sed -n '1p' | sed 's/~/-/'; }
 note()  { NOTES+=("$1"); }
 
 # ── 0. Inputs ────────────────────────────────────────────────────────────
@@ -396,14 +399,13 @@ done"
         candidates=""
         while IFS= read -r ver; do
             [ -n "$ver" ] || continue
-            grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' <<<"$ver" && candidates="${candidates}${ver}"$'\n'
+            grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?(\+[A-Za-z0-9.-]+)?$' <<<"$ver" && candidates="${candidates}${ver}"$'\n'
         done <<<"$(tr -d '\r' <<<"$baseline_raw")"
         if [ -n "$candidates" ]; then
             # printf '%s', not a here-string: <<< appends a newline of its
             # own, and the resulting blank line sorts FIRST under -V, so the
             # baseline came back empty and silently fell through to ancestry.
-            sorted="$(printf '%s' "$candidates" | sort -V)"
-            BASELINE="$(sed -n '1p' <<<"$sorted")"
+            BASELINE="$(printf '%s' "$candidates" | lowest_version)"
             baseline_source="host sidecars (lowest across every deployed binary and the .config-applied marker, migrate excluded)"
         fi
     else
@@ -418,7 +420,7 @@ if [ ${#live_pairs[@]} -gt 0 ]; then
         elif [ "$ver" = "-" ]; then verdict="NO SIDECAR — never deployed here"
         elif ! grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+' <<<"$ver"; then verdict="NOT A RELEASE TAG — deployed off a working tree"
         else
-            older="$(sort -V <<<"${ver}"$'\n'"${VERSION}" | sed -n '1p')"
+            older="$(printf '%s\n%s\n' "$ver" "$VERSION" | lowest_version)"
             if [ "$older" = "$ver" ]; then
                 verdict="behind"
             else

@@ -1127,7 +1127,13 @@ jobs:
             fi
             versions="${versions}${ver}"$'\n'
           done < <(printf '%s\n' "$raw" | tr -d '\r')
-          live=$(printf '%s' "$versions" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' | sort -V | sed -n '1p' || true)
+          # The grammar the version input is held to, so a deployed version is never an unreadable sidecar.
+          version_re='^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?(\+[A-Za-z0-9.-]+)?$'
+          # `sort -V` alone ranks v1.2.3 below v1.2.3-rc.1, the reverse of SemVer, and the lowest version here is
+          # the config baseline: ranked that way, a re-run after a pre-release skips config still owed. `~` sorts
+          # before the end of a string, so the pre-release is compared written as v1.2.3~rc.1.
+          lowest_version() { sed 's/-/~/' | sort -V | sed -n '1p' | sed 's/~/-/'; }
+          live=$(printf '%s' "$versions" | grep -E "$version_re" | lowest_version || true)
           if [ -n "$live" ]; then
             echo "host live version (lowest across the region's manifest binaries, migrate excluded): $live"
             echo "live=$live" >> "$GITHUB_OUTPUT"
@@ -1141,11 +1147,11 @@ jobs:
           # the config that is owed.
           config="$live"
           if [ "$has_marker" -eq 1 ]; then
-            if ! grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' <<<"$applied"; then
+            if ! grep -qE "$version_re" <<<"$applied"; then
               echo "::error::config-apply gate: ${DEPLOY_HOST}'s .config-applied marker holds '${applied}', which is not a version. Refusing to continue: ignoring it would raise the baseline past config that may still be owed. Write the version whose config is known applied into /var/lib/stellarindex/deployed-versions/.config-applied and re-run."
               exit 1
             fi
-            config=$(printf '%s\n%s\n' "$live" "$applied" | grep . | sort -V | sed -n '1p')
+            config=$(printf '%s\n%s\n' "$live" "$applied" | grep . | lowest_version)
             echo "config applied through: $applied (baseline for the config-apply gate: $config)"
           fi
           echo "config=$config" >> "$GITHUB_OUTPUT"
@@ -1174,7 +1180,7 @@ jobs:
             echo "no baseline resolves (first release); nothing to record."
             exit 0
           fi
-          if ! grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' <<<"$seed"; then
+          if ! grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?(\+[A-Za-z0-9.-]+)?$' <<<"$seed"; then
             echo "::error::config-apply gate: baseline '${seed}' is not a release version; refusing to record it."
             exit 1
           fi
