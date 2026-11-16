@@ -169,6 +169,7 @@ var uncoveredOperations = map[string]string{
 	"GET /protocols/{name}/tvl":                   "per-pool DEX TVL drill-down — explorer surface",
 	"GET /sdex/orderbook":                         "order-book depth — explorer surface; SDK is pricing-first",
 	"GET /lending/pools/{pool}/reserves":          "lending drill-down — explorer surface",
+	"GET /lending/pools/{pool}/config-history":    "lending drill-down — explorer surface",
 	"GET /pools/reserves":                         "AMM reserve/depth drill-down — explorer surface",
 	"GET /liquidity-pools":                        "native (CAP-38) pool reserve/depth drill-down — explorer surface",
 	"GET /mev":                                    "MEV feed — explorer surface",
