@@ -360,25 +360,13 @@ func (s *Server) backstopEarningsLegs(ctx context.Context, er lendingEarningsRea
 func (s *Server) poolBackstopLegs(ctx context.Context, sr lendingAccountStateReader, protocol, pool, account string,
 	flows []timescale.LendingBackstopTokenFold, folded map[[2]string]*big.Int,
 ) ([]LendingEarningsLeg, error) {
-	var st clickhouse.LendingBackstopState
-	held := map[string]*big.Int{}
-	lineage, reason, err := s.backstopLineage(ctx, pool)
+	tiers := make([]string, 0, len(flows))
+	for _, f := range flows {
+		tiers = append(tiers, f.Tier)
+	}
+	st, held, reason, err := s.readAccountBackstop(ctx, sr, protocol, pool, account, tiers)
 	if err != nil {
 		return nil, err
-	}
-	if reason == "" && lineage == protocol {
-		if st, err = sr.LendingBackstop(ctx, pool, protocol == blnt.SourceName); err != nil {
-			return nil, err
-		}
-		if st.Instance != nil && st.Instance.Backstop != "" {
-			tiers := make([]string, 0, len(flows))
-			for _, f := range flows {
-				tiers = append(tiers, f.Tier)
-			}
-			if held, err = sr.LendingAccountBackstop(ctx, st.Instance.Backstop, pool, account, tiers); err != nil {
-				return nil, err
-			}
-		}
 	}
 	out := make([]LendingEarningsLeg, 0, len(flows))
 	for _, f := range flows {
@@ -404,6 +392,25 @@ func (s *Server) poolBackstopLegs(ctx context.Context, sr lendingAccountStateRea
 		out = append(out, leg)
 	}
 	return out, nil
+}
+
+// readAccountBackstop reads a pool's backstop and the account's held shares per tier; reason is the lineage's unavailable
+// reason, when there is one.
+func (s *Server) readAccountBackstop(ctx context.Context, sr lendingAccountStateReader, protocol, pool, account string, tiers []string,
+) (st clickhouse.LendingBackstopState, held map[string]*big.Int, reason string, err error) {
+	held = map[string]*big.Int{}
+	lineage, reason, err := s.backstopLineage(ctx, pool)
+	if err != nil || reason != "" || lineage != protocol {
+		return st, held, reason, err
+	}
+	if st, err = sr.LendingBackstop(ctx, pool, protocol == blnt.SourceName); err != nil {
+		return st, held, reason, err
+	}
+	if st.Instance == nil || st.Instance.Backstop == "" {
+		return st, held, reason, nil
+	}
+	held, err = sr.LendingAccountBackstop(ctx, st.Instance.Backstop, pool, account, tiers)
+	return st, held, reason, err
 }
 
 func backstopTier(st clickhouse.LendingBackstopState, tier string) *clickhouse.BackstopTierState {
