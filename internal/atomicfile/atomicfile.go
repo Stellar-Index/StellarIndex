@@ -5,6 +5,7 @@
 package atomicfile
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -53,11 +54,36 @@ func WriteBytes(path string, mode os.FileMode, data []byte) error {
 	})
 }
 
+// openFile is os.OpenFile; a variable so a test can see the flags each open carries.
+var openFile = os.OpenFile
+
+// openLockFile opens an existing lock file WITHOUT O_CREAT and creates it only when it is absent. In a sticky,
+// group-writable directory Linux (fs.protected_regular) refuses an O_CREAT open of a file owned by neither the caller
+// nor the directory's owner, root included, so a root run could not take a lock the service user had created.
+func openLockFile(path string, mode os.FileMode) (*os.File, error) {
+	const base = syscall.O_NOFOLLOW | syscall.O_CLOEXEC
+	for range 3 {
+		f, err := openFile(path, os.O_RDWR|base, 0) //nolint:gosec // caller-supplied lock path; O_NOFOLLOW plus OpenLock's checks bound what it can reach
+		if errors.Is(err, os.ErrPermission) {
+			// flock needs no write access.
+			f, err = openFile(path, os.O_RDONLY|base, 0) //nolint:gosec // as above
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return f, err
+		}
+		f, err = openFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR|base, mode) //nolint:gosec // as above
+		if !errors.Is(err, os.ErrExist) {
+			return f, err
+		}
+	}
+	return nil, fmt.Errorf("lock file %q kept appearing and vanishing", path)
+}
+
 // OpenLock opens (creating if absent) a lock file without following a symlink, and refuses anything
 // that is not a singly linked regular file: a caller that chowns or truncates the handle would
 // otherwise act on whatever a planted link names.
 func OpenLock(path string, mode os.FileMode) (*os.File, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, mode) //nolint:gosec // caller-supplied lock path; O_NOFOLLOW plus the checks below bound what it can reach
+	f, err := openLockFile(path, mode)
 	if err != nil {
 		return nil, err
 	}
