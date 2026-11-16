@@ -122,7 +122,7 @@ export function LivePairPrice({
           <span className="text-ink-muted text-xs">
             as of {formatTimestamp(observedAt)}
             {!polled && ' (at build)'}
-            {stale && ' · stale'}
+            {(stale || poll.unrefreshed) && ' · stale'}
           </span>
         )
       )}

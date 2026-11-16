@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { usePriceFlash, usePricePoll } from './hooks';
@@ -10,6 +10,7 @@ import { usePriceFlash, usePricePoll } from './hooks';
 describe('usePricePoll', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   it('bounds the /v1/price fetch with an AbortSignal', async () => {
@@ -116,6 +117,51 @@ describe('usePricePoll', () => {
     );
     await vi.advanceTimersByTimeAsync(1000);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    vi.useRealTimers();
+  });
+
+  // A poll that stops succeeding keeps the last price on screen. The hook
+  // must say so, or a two-hour-old number reads as a current one.
+  it('marks the price unrefreshed once polls have failed for three intervals', async () => {
+    vi.useFakeTimers();
+    let failing = false;
+    const fetchMock = vi.fn(async () => {
+      if (failing) throw new TypeError('network down');
+      return new Response(
+        JSON.stringify({
+          data: { price: '0.5', observed_at: '2026-01-01T00:00:00Z' },
+          flags: {},
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const advance = (ms: number) =>
+      act(async () => {
+        await vi.advanceTimersByTimeAsync(ms);
+      });
+
+    const { result } = renderHook(() =>
+      usePricePoll({ asset: 'native', quote: 'fiat:USD', intervalMs: 20_000 }),
+    );
+    await advance(0);
+    expect(result.current.polled).toBe(true);
+
+    // Healthy: each poll refreshes, so the mark never appears.
+    await advance(100_000);
+    expect(result.current.unrefreshed).toBe(false);
+
+    failing = true;
+    await advance(50_000);
+    expect(result.current.unrefreshed).toBe(false);
+    await advance(30_000);
+    expect(result.current.price).toBe('0.5');
+    expect(result.current.unrefreshed).toBe(true);
+
+    failing = false;
+    await advance(20_000);
+    expect(result.current.unrefreshed).toBe(false);
 
     vi.useRealTimers();
   });

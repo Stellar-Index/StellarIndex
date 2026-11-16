@@ -407,7 +407,8 @@ export function useObservationsFollow(
  * whose problem type ends in /price-withheld REPLACES the baked price
  * with the withheld verdict (the server deliberately refused to
  * aggregate; a lower-trust snapshot must not stand in). A plain 404 /
- * non-OK / network blip keeps whatever we have — never a blank flash.
+ * non-OK / network blip keeps whatever we have — never a blank flash —
+ * and `unrefreshed` turns true once that has lasted three intervals.
  */
 export function usePricePoll({
   asset,
@@ -443,6 +444,9 @@ export function usePricePoll({
   substance: SubstanceEvidence | null;
   /** True after the first successful poll (including a withheld verdict). */
   polled: boolean;
+  /** No poll has succeeded for three intervals: the value shown is the
+   * last one fetched, not a current one. */
+  unrefreshed: boolean;
 } {
   const [state, setState] = useState({
     price: positiveDecimal(initialPrice),
@@ -455,6 +459,7 @@ export function usePricePoll({
     thin: false,
     substance: null as SubstanceEvidence | null,
     polled: false,
+    refreshedAt: 0,
   });
   // Reset during render when the asset/quote pair changes (mirrors
   // useStreamJSON's prevUrl pattern above) — a stale price from the OLD
@@ -475,6 +480,7 @@ export function usePricePoll({
       thin: false,
       substance: null,
       polled: false,
+      refreshedAt: 0,
     });
   }
 
@@ -518,6 +524,7 @@ export function usePricePoll({
               thin: false,
               substance: null,
               polled: true,
+              refreshedAt: Date.now(),
             }));
           }
           return; // plain not-found: keep the baked value + caption
@@ -548,6 +555,7 @@ export function usePricePoll({
           thin: Boolean(body.flags?.thin_market),
           substance: body.data?.substance ?? null,
           polled: true,
+          refreshedAt: Date.now(),
         });
       } catch {
         // Network blip, timeout, or unmount/dep-change abort — keep whatever we have.
@@ -571,5 +579,11 @@ export function usePricePoll({
     };
   }, [asset, quote, intervalMs, includeThin]);
 
-  return state;
+  const clock = useLiveClock();
+  const { refreshedAt, ...poll } = state;
+  return {
+    ...poll,
+    unrefreshed:
+      poll.polled && isFrameStale(clock, refreshedAt, 3 * intervalMs),
+  };
 }

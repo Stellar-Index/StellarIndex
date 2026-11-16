@@ -148,7 +148,7 @@ export function LiveAssetPrice({
   const stale = reread
     ? Boolean(detail.data?.flags?.stale)
     : poll.polled
-      ? poll.stale
+      ? poll.stale || poll.unrefreshed
       : Boolean(initialStale);
   const provenance: PriceProvenance = reread
     ? detailPrice != null
