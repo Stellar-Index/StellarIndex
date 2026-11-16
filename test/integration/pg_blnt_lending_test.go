@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/domain"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -221,5 +223,105 @@ func TestBLNTLendingReads_EventArms(t *testing.T) {
 	}
 	if len(cfgs) != 2 {
 		t.Errorf("configs = %d assets, want 2", len(cfgs))
+	}
+}
+
+// TestLendingConfigHistory_LifecycleAcrossBothTables runs the config-history read on real rows: a BLNT queue → cancel →
+// queue → set shows the cancel and only the second queue as applied, the set carries the config it applied, pool-level
+// events keep their attributes, a Blend pool reads from blend_admin, and the keyset cursor pages without overlap.
+func TestLendingConfigHistory_LifecycleAcrossBothTables(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const pool = blnt.MainnetFixedPool
+	asset := mustContractStrkey(t, 21)
+	admin := mustAccountStrkey(t, 22)
+	meta := func(cFactor int) map[string]any {
+		return map[string]any{
+			"index": 0, "decimals": 7, "c_factor": cFactor, "l_factor": 9_500_000, "util": 8_000_000,
+			"max_util": 9_500_000, "r_base": 100_000, "r_one": 500_000, "r_two": 1_500_000, "r_three": 30_000_000,
+			"reactivity": 20, "supply_cap": "18446744073709551623", "enabled": true,
+		}
+	}
+	ts := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	n := uint32(0)
+	ev := func(kind, asset string, attrs map[string]any) timescale.BLNTEvent {
+		n++
+		return timescale.BLNTEvent{
+			ContractID: pool, Ledger: 65_700_000 + n, LedgerCloseTime: ts.Add(time.Duration(n) * time.Second),
+			TxHash: pad64("b19", int(n)), ContractRole: string(blnt.RolePool), EventKind: kind, Pool: pool,
+			Asset: asset, Attributes: attrs,
+		}
+	}
+	for _, e := range []timescale.BLNTEvent{
+		ev("queue_set_reserve", asset, map[string]any{"admin": admin, "metadata": meta(8_000_000)}),
+		ev("cancel_set_reserve", asset, map[string]any{"admin": admin}),
+		ev("queue_set_reserve", asset, map[string]any{"admin": admin, "metadata": meta(9_000_000)}),
+		ev("set_reserve", asset, map[string]any{"index": 0}),
+		ev("update_pool", "", map[string]any{"admin": admin, "backstop_take_rate": 1_500_000, "max_positions": 4, "min_collateral": "18446744073709551621"}),
+		ev("set_status", "", map[string]any{"status": 3}),
+		ev("supply", asset, nil), // not a config event
+	} {
+		if err := store.InsertBLNTEvent(ctx, e); err != nil {
+			t.Fatalf("InsertBLNTEvent %s: %v", e.EventKind, err)
+		}
+	}
+
+	got, err := store.LendingConfigHistory(ctx, pool, 50, timescale.LendingConfigCursor{})
+	if err != nil {
+		t.Fatalf("LendingConfigHistory: %v", err)
+	}
+	kinds := make([]string, len(got))
+	for i, c := range got {
+		kinds[i] = c.Kind
+	}
+	if want := []string{"set_status", "update_pool", "set_reserve", "queue_set_reserve", "cancel_set_reserve", "queue_set_reserve"}; !reflect.DeepEqual(kinds, want) {
+		t.Fatalf("kinds = %v, want %v", kinds, want)
+	}
+	if !got[3].Applied || got[5].Applied {
+		t.Errorf("applied = second queue %v, first queue %v; want only the second", got[3].Applied, got[5].Applied)
+	}
+	applied, err := blnt.ParseReserveConfigMetadata(got[2].Metadata)
+	if err != nil || applied.CFactor != 9_000_000 || applied.SupplyCap.String() != "18446744073709551623" {
+		t.Errorf("set_reserve config = %+v (%v), want the second queue's", applied, err)
+	}
+	var up map[string]any
+	if err := json.Unmarshal(got[1].Attributes, &up); err != nil || up["min_collateral"] != "18446744073709551621" || got[1].Asset != "" {
+		t.Errorf("update_pool attributes = %s (%v)", got[1].Attributes, err)
+	}
+
+	page, err := store.LendingConfigHistory(ctx, pool, 2, timescale.LendingConfigCursor{})
+	if err != nil || len(page) != 2 {
+		t.Fatalf("page 1 = %d rows (%v)", len(page), err)
+	}
+	last := page[1]
+	rest, err := store.LendingConfigHistory(ctx, pool, 50, timescale.LendingConfigCursor{
+		Ts: last.Ts, Ledger: last.Ledger, TxHash: last.TxHash, OpIndex: last.OpIndex, EventIndex: last.EventIndex,
+	})
+	if err != nil || len(rest) != 4 || rest[0].Kind != "set_reserve" {
+		t.Fatalf("page 2 = %+v (%v), want the 4 older rows", rest, err)
+	}
+
+	blendPool := mustContractStrkey(t, 23)
+	for i, e := range []domain.BlendAdminEvent{
+		{Kind: blend.EventQueueSetReserve, Asset: asset, Admin: admin, ReserveConfig: meta(7_000_000)},
+		{Kind: blend.EventSetReserve, Asset: asset, ReserveIndex: 0},
+		{Kind: blend.EventSetAdmin, Admin: admin, Target: mustAccountStrkey(t, 24)},
+	} {
+		e.ContractID, e.Ledger, e.TxHash, e.Timestamp = blendPool, uint32(3000+i), pad64("bd", i), ts.Add(time.Duration(i)*time.Second)
+		if err := store.InsertBlendAdminEvent(ctx, e); err != nil {
+			t.Fatalf("InsertBlendAdminEvent %s: %v", e.Kind, err)
+		}
+	}
+	bl, err := store.LendingConfigHistory(ctx, blendPool, 50, timescale.LendingConfigCursor{})
+	if err != nil || len(bl) != 3 || bl[0].Kind != "set_admin" || bl[0].NewAdmin != mustAccountStrkey(t, 24) || !bl[2].Applied || bl[1].Metadata == nil {
+		t.Fatalf("blend history = %+v (%v)", bl, err)
 	}
 }
