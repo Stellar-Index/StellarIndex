@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"math"
@@ -13,6 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
@@ -26,12 +28,36 @@ type LendingReader interface {
 	BlendReserveConfigs(ctx context.Context, pool string) (map[string]blend.ReserveConfig, error)
 }
 
+// blntLendingReader is the BLNT V3 half of the lending seam, optional so a Blend-only reader still serves.
+type blntLendingReader interface {
+	ListBLNTPools(ctx context.Context) ([]timescale.BlendPoolSummary, error)
+	BLNTPoolAssets(ctx context.Context, pool string) ([]string, error)
+	BLNTReserveConfigMetadata(ctx context.Context, pool string) (map[string][]byte, error)
+}
+
+// blntLendingAtReader is ListBLNTPools with the cache fill time, as lendingAtReader is for Blend.
+type blntLendingAtReader interface {
+	ListBLNTPoolsAt(ctx context.Context) ([]timescale.BlendPoolSummary, time.Time, bool, error)
+}
+
+// blntReserveReader is the lake read of a BLNT pool's reserve state.
+type blntReserveReader interface {
+	BLNTPoolReserves(ctx context.Context, pool string, assets []string, configs map[string]blnt.ReserveConfig) ([]clickhouse.BlendReserveState, error)
+}
+
+var (
+	_ blntLendingReader   = (*timescale.Store)(nil)
+	_ blntLendingAtReader = (*CachedLendingReader)(nil)
+	_ blntLendingReader   = (*CachedLendingReader)(nil)
+	_ blntReserveReader   = (*clickhouse.ExplorerReader)(nil)
+)
+
 // lendingAtReader is the optional fill-time read a cached LendingReader offers, so the envelope dates a cached list.
 type lendingAtReader interface {
 	ListBlendPoolsAt(ctx context.Context) ([]timescale.BlendPoolSummary, time.Time, bool, error)
 }
 
-// LendingPool is a /v1/lending/pools entry (Blend-only); net_supplied_30d/net_borrowed_30d are a 30-day NET-FLOW proxy, NOT TVL, and null across more than one reserve asset.
+// LendingPool is a /v1/lending/pools entry (Blend or BLNT, named by protocol); net_supplied_30d/net_borrowed_30d are a 30-day NET-FLOW proxy, NOT TVL, and null across more than one reserve asset.
 type LendingPool struct {
 	Protocol          string   `json:"protocol"`
 	Pool              string   `json:"pool"`
@@ -112,25 +138,58 @@ func (s *Server) handleLendingPools(w http.ResponseWriter, r *http.Request) {
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
-	out := make([]LendingPool, len(rows))
-	for i, p := range rows {
-		out[i] = LendingPool{
-			Protocol:          "blend",
-			Pool:              p.Pool,
-			Auctions24h:       p.Auctions24h,
-			AuctionsTotal:     p.AuctionsTotal,
-			UniqueUsers30d:    p.UniqueUsers30d,
-			LastSeen:          WireTime(p.LastSeen),
-			NetSupplied30d:    p.NetSupplied30d,
-			NetBorrowed30d:    p.NetBorrowed30d,
-			Utilization30dPct: utilizationPct(p.NetSupplied30d, p.NetBorrowed30d),
-		}
+	out := make([]LendingPool, 0, len(rows))
+	for _, p := range rows {
+		out = append(out, lendingPoolRow("blend", p))
 	}
-	flags := Flags{Stale: stale}
+	blntRows, blntStale, blntFailed := s.listBLNTPools(lpCtx, reader, &vintage)
+	for _, p := range blntRows {
+		out = append(out, lendingPoolRow(blnt.SourceName, p))
+	}
+	slices.SortStableFunc(out, func(a, b LendingPool) int { return cmp.Compare(b.AuctionsTotal, a.AuctionsTotal) })
+	flags := Flags{Stale: stale || blntStale, Degraded: blntFailed}
 	if s.attachLendingSummaries(out, &vintage, &flags) {
 		w.Header().Set("Cache-Control", "no-store")
 	}
 	writeEnvelope(w, Envelope{Data: out, AsOf: vintage.asOf(), Flags: flags})
+}
+
+func lendingPoolRow(protocol string, p timescale.BlendPoolSummary) LendingPool {
+	return LendingPool{
+		Protocol:          protocol,
+		Pool:              p.Pool,
+		Auctions24h:       p.Auctions24h,
+		AuctionsTotal:     p.AuctionsTotal,
+		UniqueUsers30d:    p.UniqueUsers30d,
+		LastSeen:          WireTime(p.LastSeen),
+		NetSupplied30d:    p.NetSupplied30d,
+		NetBorrowed30d:    p.NetBorrowed30d,
+		Utilization30dPct: utilizationPct(p.NetSupplied30d, p.NetBorrowed30d),
+	}
+}
+
+// listBLNTPools reads the BLNT pool rows when the reader serves them. A failed read leaves them out and
+// reports failed, which the list serves as flags.degraded rather than failing the Blend rows with it.
+func (s *Server) listBLNTPools(ctx context.Context, reader LendingReader, vintage *dataVintage) (rows []timescale.BlendPoolSummary, stale, failed bool) {
+	br, ok := reader.(blntLendingReader)
+	if !ok {
+		return nil, false, false
+	}
+	var err error
+	var filled time.Time
+	if at, ok := reader.(blntLendingAtReader); ok {
+		rows, filled, stale, err = at.ListBLNTPoolsAt(ctx)
+	} else {
+		rows, err = br.ListBLNTPools(ctx)
+	}
+	if err != nil {
+		s.logger.Warn("ListBLNTPools failed; BLNT pools omitted", "err", err)
+		return nil, false, true
+	}
+	if len(rows) > 0 { // an empty list serves no BLNT data, so it must not date the envelope
+		vintage.note(filled)
+	}
+	return rows, stale, false
 }
 
 // lendingSummaryRetry is how long the list holds off rebuilding a pool whose first reserves build failed: one failing pool must
@@ -364,7 +423,7 @@ func (e *lendingStageErr) Unwrap() error { return e.err }
 
 // errPoolLineageUnknown withholds a pool's reserves without caching the empty view: any C-strkey reaches this path, and a cached
 // success per junk key would evict the listed pools.
-var errPoolLineageUnknown = errors.New("blend pool lineage unknown")
+var errPoolLineageUnknown = errors.New("lending pool lineage unknown")
 
 // buildPoolReserves reads and prices one pool's reserves; as_of_ledger and flags.stale are the lake watermark at build time.
 func (s *Server) buildPoolReserves(ctx context.Context, pool string) (poolReserves, error) {
@@ -372,27 +431,13 @@ func (s *Server) buildPoolReserves(ctx context.Context, pool string) (poolReserv
 	if err != nil {
 		return poolReserves{}, &lendingStageErr{"BlendPoolVersion", err}
 	}
+	read := s.readBlendPoolReserves
 	if version == blend.PoolVersionUnknown {
-		s.logger.Warn("blend pool lineage unknown; reserves withheld", "pool", pool)
-		return poolReserves{}, errPoolLineageUnknown
+		read = s.readBLNTPoolReserves
 	}
-	assets, err := s.Lending.BlendPoolAssets(ctx, pool)
+	assets, states, configsFailed, err := read(ctx, pool, version)
 	if err != nil {
-		return poolReserves{}, &lendingStageErr{"BlendPoolAssets", err}
-	}
-	// Rate-model configs (for APY) come from blend_admin events — the
-	// on-chain ResConfig storage entry is usually uncaptured. Best-effort:
-	// a failure here just means APY is omitted, not a failed response.
-	configs, err := s.Lending.BlendReserveConfigs(ctx, pool)
-	var configsFailed bool
-	if err != nil {
-		s.logger.Warn("BlendReserveConfigs failed", "err", err, "pool", pool)
-		configsFailed = true
-		configs = nil
-	}
-	states, err := s.Explorer.BlendPoolReserves(ctx, pool, version, assets, configs)
-	if err != nil {
-		return poolReserves{}, &lendingStageErr{"BlendPoolReserves", err}
+		return poolReserves{}, err
 	}
 
 	// Price reserves with a BOUNDED fan-out, not serially: each USD price resolution can cost
@@ -420,6 +465,63 @@ func (s *Server) buildPoolReserves(ctx context.Context, pool string) (poolReserv
 	// A USD figure valued at a stale price is stale whatever the lake's own freshness.
 	stale = stale || slices.Contains(stalePrice, true)
 	return poolReserves{view: out, flags: Flags{Stale: stale, Degraded: configsFailed}}, nil
+}
+
+// readBlendPoolReserves reads a Blend pool's reserve assets, configs and lake state; configsFailed means APRs are withheld.
+func (s *Server) readBlendPoolReserves(ctx context.Context, pool string, version blend.PoolVersion) ([]string, []clickhouse.BlendReserveState, bool, error) {
+	assets, err := s.Lending.BlendPoolAssets(ctx, pool)
+	if err != nil {
+		return nil, nil, false, &lendingStageErr{"BlendPoolAssets", err}
+	}
+	// Rate-model configs (for APY) come from blend_admin events — the
+	// on-chain ResConfig storage entry is usually uncaptured. Best-effort:
+	// a failure here just means APY is omitted, not a failed response.
+	configs, err := s.Lending.BlendReserveConfigs(ctx, pool)
+	var configsFailed bool
+	if err != nil {
+		s.logger.Warn("BlendReserveConfigs failed", "err", err, "pool", pool)
+		configsFailed = true
+		configs = nil
+	}
+	states, err := s.Explorer.BlendPoolReserves(ctx, pool, version, assets, configs)
+	if err != nil {
+		return nil, nil, false, &lendingStageErr{"BlendPoolReserves", err}
+	}
+	return assets, states, configsFailed, nil
+}
+
+// readBLNTPoolReserves serves a pool with no Blend lineage when blnt_events knows it as a BLNT pool; anything else is
+// errPoolLineageUnknown. Configs are best-effort as on the Blend path.
+func (s *Server) readBLNTPoolReserves(ctx context.Context, pool string, _ blend.PoolVersion) ([]string, []clickhouse.BlendReserveState, bool, error) {
+	lr, okL := s.Lending.(blntLendingReader)
+	rr, okR := s.Explorer.(blntReserveReader)
+	var assets []string
+	if okL && okR {
+		var err error
+		if assets, err = lr.BLNTPoolAssets(ctx, pool); err != nil {
+			return nil, nil, false, &lendingStageErr{"BLNTPoolAssets", err}
+		}
+	}
+	if len(assets) == 0 {
+		s.logger.Warn("lending pool lineage unknown; reserves withheld", "pool", pool)
+		return nil, nil, false, errPoolLineageUnknown
+	}
+	meta, err := lr.BLNTReserveConfigMetadata(ctx, pool)
+	configsFailed := err != nil
+	if configsFailed {
+		s.logger.Warn("BLNTReserveConfigMetadata failed", "err", err, "pool", pool)
+	}
+	configs := make(map[string]blnt.ReserveConfig, len(meta))
+	for asset, b := range meta {
+		if cfg, err := blnt.ParseReserveConfigMetadata(b); err == nil {
+			configs[asset] = cfg
+		}
+	}
+	states, err := rr.BLNTPoolReserves(ctx, pool, assets, configs)
+	if err != nil {
+		return nil, nil, false, &lendingStageErr{"BLNTPoolReserves", err}
+	}
+	return assets, states, configsFailed, nil
 }
 
 // reservesWithoutState lists the pool's reserve assets the lake returned no state for, in pool order.

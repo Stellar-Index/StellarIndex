@@ -30,6 +30,13 @@ type PositionsReader interface {
 	AquariusGaugeByUser(ctx context.Context, address string) ([]timescale.AquariusGaugeFold, error)
 }
 
+// BLNTPositionsReader is the optional BLNT V3 fold; a PositionsReader that offers it gets one more fold.
+type BLNTPositionsReader interface {
+	BLNTPositionsByUser(ctx context.Context, address string) ([]timescale.BlendPositionFold, error)
+}
+
+var _ BLNTPositionsReader = (*timescale.Store)(nil)
+
 // PoolTokensReader mirrors v1's ProtocolPoolTokensReader (a copy, since v1 imports explorer); nil degrades venue_label to absent and
 // never fails the endpoint.
 type PoolTokensReader interface {
@@ -130,6 +137,7 @@ type AccountPositionsView struct {
 // their absence off as an empty position set.
 type positionsCoverage struct {
 	degraded []string
+	folds    int // folds run, the coverage_note denominator
 	// labelsUnresolved: a pool-token read failed, so some rows lack their
 	// venue/asset labels — the positions are complete, the display is not.
 	labelsUnresolved bool
@@ -150,14 +158,10 @@ func (c *positionsCoverage) note() string {
 		return ""
 	}
 	return "INCOMPLETE: " + strconv.Itoa(len(c.degraded)) + " of " +
-		strconv.Itoa(positionsProtocolFolds) + " protocol reads failed (" +
+		strconv.Itoa(c.folds) + " protocol reads failed (" +
 		strings.Join(c.degraded, ", ") + "); positions from those protocols are MISSING " +
 		"from this response, not proven absent on-chain — retry before treating this list as complete."
 }
-
-// positionsProtocolFolds is the number of per-protocol folds AccountPositions runs, the denominator in coverage_note. Adding a fold
-// means bumping it: TestExplorer_AccountPositions_TotalReadFailureIsNotAnEmptyAccount fails on the mismatch.
-const positionsProtocolFolds = 6
 
 // positionsUnavailable writes this endpoint's 503, worded apart from unavailable() (which names the ClickHouse reader): the hard dependency
 // here is the Postgres PositionsReader.
@@ -183,6 +187,10 @@ func (h *Handler) collectPositions(ctx context.Context, g string, resolve positi
 		func(c *positionsCoverage) []PositionEntry { return h.buildCreditPositions(ctx, g, c) },
 		func(c *positionsCoverage) []PositionEntry { return h.buildAquariusGaugePositions(ctx, g, resolve, c) },
 	}
+	if br, ok := h.Positions.(BLNTPositionsReader); ok {
+		folds = append(folds, func(c *positionsCoverage) []PositionEntry { return h.buildBLNTPositions(ctx, br, g, resolve, c) })
+	}
+	cov.folds = len(folds)
 	slots := make([][]PositionEntry, len(folds))
 	covs := make([]positionsCoverage, len(folds))
 	var wg sync.WaitGroup
@@ -400,7 +408,23 @@ func (h *Handler) buildBlendPositions(ctx context.Context, address string, resol
 		cov.fail("blend")
 		return nil
 	}
-	poolTokens := h.poolTokensFor(ctx, "blend", cov)
+	return h.lendingLegEntries(ctx, "blend", rows, h.poolTokensFor(ctx, "blend", cov), resolve)
+}
+
+// buildBLNTPositions maps BLNT folds exactly as Blend's: the same leg semantics over blnt_events. No pool-token
+// source exists for BLNT yet, so venue_label is absent.
+func (h *Handler) buildBLNTPositions(ctx context.Context, r BLNTPositionsReader, address string, resolve func(string) string, cov *positionsCoverage) []PositionEntry {
+	rows, err := r.BLNTPositionsByUser(ctx, address)
+	if err != nil {
+		h.Logger.Error("positions: blnt read failed", "err", err, "account", address)
+		cov.fail("blnt")
+		return nil
+	}
+	return h.lendingLegEntries(ctx, "blnt", rows, nil, resolve)
+}
+
+// lendingLegEntries maps Blend-shaped (pool, asset) folds to their lending_supply / lending_borrow entries.
+func (h *Handler) lendingLegEntries(ctx context.Context, protocol string, rows []timescale.BlendPositionFold, poolTokens map[string][]string, resolve func(string) string) []PositionEntry {
 	dctx, cancel := context.WithTimeout(ctx, movementDecimalsBudget)
 	defer cancel()
 	scale := h.assetScales(dctx)
@@ -421,7 +445,7 @@ func (h *Handler) buildBlendPositions(ctx context.Context, address string, resol
 		}
 		if row.HasSupplyLeg {
 			out = append(out, withScale(blendLegEntry(PositionEntry{
-				Protocol:     "blend",
+				Protocol:     protocol,
 				PositionKind: PositionKindLendingSupply,
 				Venue:        row.Pool,
 				VenueLabel:   venueLabel,
@@ -432,7 +456,7 @@ func (h *Handler) buildBlendPositions(ctx context.Context, address string, resol
 		}
 		if row.HasBorrowLeg {
 			out = append(out, withScale(blendLegEntry(PositionEntry{
-				Protocol:     "blend",
+				Protocol:     protocol,
 				PositionKind: PositionKindLendingBorrow,
 				Venue:        row.Pool,
 				VenueLabel:   venueLabel,

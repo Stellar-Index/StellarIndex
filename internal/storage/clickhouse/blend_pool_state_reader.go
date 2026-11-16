@@ -8,6 +8,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
 )
 
 // BlendReserveState is one reserve's decoded current state and derived metrics (ADR-0039); when DecimalsFound is false the exponent is a placeholder and must never feed a published money figure.
@@ -32,15 +33,39 @@ const blendReserveStateQuery = `SELECT key_xdr, entry_xdr
 
 // BlendPoolReserves reads a pool's CURRENT reserve state (ADR-0039) in one batched query; absence (no ResData, final removal, TTL-archived) means "unavailable", never zero.
 func (r *ExplorerReader) BlendPoolReserves(ctx context.Context, pool string, version blend.PoolVersion, assets []string, configs map[string]blend.ReserveConfig) ([]BlendReserveState, error) {
-	poolID, err := contractIDFromStrkey(pool)
-	if err != nil {
-		return nil, fmt.Errorf("clickhouse: blend pool id %q: %w", pool, err)
-	}
 	// V1 and V2 ResData share field names but not rate scales (off by 10^3 if guessed).
 	if version != blend.PoolV1 && version != blend.PoolV2 {
+		if _, err := contractIDFromStrkey(pool); err != nil {
+			return nil, fmt.Errorf("clickhouse: blend pool id %q: %w", pool, err)
+		}
 		return nil, fmt.Errorf("clickhouse: blend pool %s: unknown pool version %d", pool, version)
 	}
+	return r.poolReserves(ctx, pool, assets, configs, blendModel(version))
+}
 
+// BLNTPoolReserves is BlendPoolReserves for a BLNT V3 pool: the same storage layout, BLNT's supply rate.
+func (r *ExplorerReader) BLNTPoolReserves(ctx context.Context, pool string, assets []string, configs map[string]blnt.ReserveConfig) ([]BlendReserveState, error) {
+	return r.poolReserves(ctx, pool, assets, configs, reserveModel{decode: blnt.DecodeReserveData, metrics: blnt.Metrics})
+}
+
+// reserveModel is how one protocol decodes ResData and derives APRs from the shared pool storage layout.
+type reserveModel struct {
+	decode  func(xdr.ScVal) (blend.ReserveData, error)
+	metrics func(blend.ReserveData, blend.ReserveConfig, uint32) blend.ReserveMetrics
+}
+
+func blendModel(version blend.PoolVersion) reserveModel {
+	return reserveModel{
+		decode:  func(v xdr.ScVal) (blend.ReserveData, error) { return blend.DecodeReserveData(v, version) },
+		metrics: blend.Metrics,
+	}
+}
+
+func (r *ExplorerReader) poolReserves(ctx context.Context, pool string, assets []string, configs map[string]blend.ReserveConfig, model reserveModel) ([]BlendReserveState, error) {
+	poolID, err := contractIDFromStrkey(pool)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: lending pool id %q: %w", pool, err)
+	}
 	keys, refByKey := blendReserveKeys(poolID, assets)
 	if len(keys) == 0 {
 		return nil, nil
@@ -52,7 +77,7 @@ func (r *ExplorerReader) BlendPoolReserves(ctx context.Context, pool string, ver
 	}
 	defer func() { _ = rows.Close() }()
 
-	dataByAsset, bstop, matched, err := scanBlendReserveParts(rows, refByKey, version)
+	dataByAsset, bstop, matched, err := scanReserveParts(rows, refByKey, model.decode)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +88,7 @@ func (r *ExplorerReader) BlendPoolReserves(ctx context.Context, pool string, ver
 		return nil, fmt.Errorf("clickhouse: blend reserves ttl liveness: %w", err)
 	}
 
-	return assembleBlendReserveStates(pool, assets, dataByAsset, configs, bstop), nil
+	return assembleReserveStates(pool, assets, dataByAsset, configs, bstop, model.metrics), nil
 }
 
 // assembleBlendReserveStates builds states in the caller's asset order. Without the config: config-free metrics and placeholder decimals 7
@@ -73,6 +98,16 @@ func assembleBlendReserveStates(
 	dataByAsset map[string]*blend.ReserveData,
 	configs map[string]blend.ReserveConfig,
 	bstop *uint32,
+) []BlendReserveState {
+	return assembleReserveStates(pool, assets, dataByAsset, configs, bstop, blend.Metrics)
+}
+
+func assembleReserveStates(
+	pool string, assets []string,
+	dataByAsset map[string]*blend.ReserveData,
+	configs map[string]blend.ReserveConfig,
+	bstop *uint32,
+	metricsFn func(blend.ReserveData, blend.ReserveConfig, uint32) blend.ReserveMetrics,
 ) []BlendReserveState {
 	out := make([]BlendReserveState, 0, len(assets))
 	for _, asset := range assets {
@@ -87,7 +122,7 @@ func assembleBlendReserveStates(
 			decimals = cfg.Decimals
 			decimalsFound = true
 			if bstop != nil {
-				metrics = blend.Metrics(*rd, cfg, *bstop)
+				metrics = metricsFn(*rd, cfg, *bstop)
 			}
 		}
 		out = append(out, BlendReserveState{
@@ -136,11 +171,18 @@ func blendReserveKeys(poolID xdr.ContractId, assets []string) ([]string, map[str
 
 // scanBlendReserveParts decodes rows into per-asset ResData and the backstop rate, and reports the keys that produced a row (matched). The
 // TTL filter is scoped to matched: judging keys the lake never returned could over-drop reserves we would have served.
-func scanBlendReserveParts(rows interface {
+func scanBlendReserveParts(rows reserveRows, refByKey map[string]keyRef, version blend.PoolVersion,
+) (dataByAsset map[string]*blend.ReserveData, bstop *uint32, matched []string, err error) {
+	return scanReserveParts(rows, refByKey, blendModel(version).decode)
+}
+
+type reserveRows interface {
 	Next() bool
 	Scan(...any) error
 	Err() error
-}, refByKey map[string]keyRef, version blend.PoolVersion,
+}
+
+func scanReserveParts(rows reserveRows, refByKey map[string]keyRef, decode func(xdr.ScVal) (blend.ReserveData, error),
 ) (dataByAsset map[string]*blend.ReserveData, bstop *uint32, matched []string, err error) {
 	dataByAsset = make(map[string]*blend.ReserveData)
 	for rows.Next() {
@@ -163,7 +205,7 @@ func scanBlendReserveParts(rows interface {
 			}
 			matched = append(matched, keyXDR)
 		case "ResData":
-			if rd, err := blend.DecodeReserveData(val, version); err == nil {
+			if rd, err := decode(val); err == nil {
 				rdCopy := rd
 				dataByAsset[ref.asset] = &rdCopy
 				matched = append(matched, keyXDR)

@@ -14,6 +14,7 @@ type CachedLendingReader struct {
 	upstream LendingReader
 	ttl      time.Duration
 	pools    *swrCache[[]timescale.BlendPoolSummary]
+	blnt     *swrCache[[]timescale.BlendPoolSummary]
 }
 
 // NewCachedLendingReader wraps upstream; ttl=0 disables caching.
@@ -22,6 +23,7 @@ func NewCachedLendingReader(upstream LendingReader, ttl time.Duration) *CachedLe
 		upstream: upstream,
 		ttl:      ttl,
 		pools:    newSWRCache[[]timescale.BlendPoolSummary](nil, "lending_pools", "api-lending-pools-fill", ttl, 0),
+		blnt:     newSWRCache[[]timescale.BlendPoolSummary](nil, "lending_pools_blnt", "api-lending-pools-blnt-fill", ttl, 0),
 	}
 }
 
@@ -55,4 +57,40 @@ func (c *CachedLendingReader) BlendPoolVersion(ctx context.Context, pool string)
 // BlendReserveConfigs is a pass-through.
 func (c *CachedLendingReader) BlendReserveConfigs(ctx context.Context, pool string) (map[string]blend.ReserveConfig, error) {
 	return c.upstream.BlendReserveConfigs(ctx, pool)
+}
+
+// ListBLNTPools is ListBLNTPoolsAt without the fill time.
+func (c *CachedLendingReader) ListBLNTPools(ctx context.Context) ([]timescale.BlendPoolSummary, error) {
+	rows, _, _, err := c.ListBLNTPoolsAt(ctx)
+	return rows, err
+}
+
+// ListBLNTPoolsAt caches the BLNT pool list like ListBlendPoolsAt; an upstream without BLNT reads lists none.
+func (c *CachedLendingReader) ListBLNTPoolsAt(ctx context.Context) ([]timescale.BlendPoolSummary, time.Time, bool, error) {
+	up, ok := c.upstream.(blntLendingReader)
+	if !ok {
+		return nil, time.Time{}, false, nil
+	}
+	if c.ttl <= 0 {
+		rows, err := up.ListBLNTPools(ctx)
+		return rows, time.Time{}, false, err
+	}
+	rows, at, stale, err := c.blnt.get(ctx, "list_blnt_pools", "ListBLNTPools", up.ListBLNTPools)
+	return rows[:len(rows):len(rows)], at, stale, err
+}
+
+// BLNTPoolAssets is a pass-through; an upstream without BLNT reads knows no BLNT pool.
+func (c *CachedLendingReader) BLNTPoolAssets(ctx context.Context, pool string) ([]string, error) {
+	if up, ok := c.upstream.(blntLendingReader); ok {
+		return up.BLNTPoolAssets(ctx, pool)
+	}
+	return nil, nil
+}
+
+// BLNTReserveConfigMetadata is a pass-through.
+func (c *CachedLendingReader) BLNTReserveConfigMetadata(ctx context.Context, pool string) (map[string][]byte, error) {
+	if up, ok := c.upstream.(blntLendingReader); ok {
+		return up.BLNTReserveConfigMetadata(ctx, pool)
+	}
+	return nil, nil
 }

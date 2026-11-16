@@ -3615,9 +3615,11 @@ paths:
     get:
       operationId: listLendingPools
       tags: [protocols]
-      summary: Lending pools (Blend) with auction + net-flow stats.
+      summary: Lending pools (Blend and BLNT) with auction + net-flow stats.
       description: |
-        One row per distinct Blend pool contract observed in EITHER
+        One row per distinct Blend or BLNT V3 pool contract (`protocol`
+        says which; BLNT is a separate protocol, never reported as
+        Blend) observed in EITHER
         the auction stream OR the position-event stream, with 24h /
         all-time auction counts, 30d unique users, last-seen, plus a
         30-day net-flow proxy for supply/borrow.
@@ -15524,7 +15526,7 @@ components:
       properties:
         protocol:
           type: string
-          enum: [blend, phoenix, defindex, sorocredit, aquarius]
+          enum: [blend, blnt, phoenix, defindex, sorocredit, aquarius]
         position_kind:
           type: string
           enum: [lending_supply, lending_borrow, backstop_shares, stake, vault_shares, credit, gauge]
