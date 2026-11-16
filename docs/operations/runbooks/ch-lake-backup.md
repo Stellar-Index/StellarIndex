@@ -13,6 +13,8 @@ P3. Rules: `deploy/monitoring/rules/storage.yml`, `configs/prometheus/rules.r1/s
 
 `stellarindex_ch_lake_backup_configured{instance="<host>:9100"}` is `0` (no off-site disk; every run fails on purpose with `no BACKUP_DISK configured`) or `1`. Hosts with no off-site target by design set `ch_lake_backup_enabled: false`.
 
+On r1 the alert also fires, with no `instance` label, when no run has written the textfile at all for 96 h: the timer never ran. `systemctl status ch-lake-backup.timer`; if the unit is missing or disabled, re-apply the role with `--tags backup`.
+
 ## Check
 
 ```bash

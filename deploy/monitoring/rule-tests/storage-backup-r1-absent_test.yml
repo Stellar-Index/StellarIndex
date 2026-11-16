@@ -1,0 +1,57 @@
+# promtool unit tests for the arm of stellarindex_ch_lake_backup_stale that
+# only r1's rule tree carries: no lake-backup textfile at all.
+#
+#   promtool test rules deploy/monitoring/rule-tests/storage-backup-r1-absent_test.yml
+
+rule_files:
+  - ../../../configs/prometheus/rules.r1/storage.yml
+
+evaluation_interval: 1h
+
+tests:
+  # The timer never ran (not enabled, unit removed): no ch_lake_backup series
+  # exists, so every per-host arm is empty. Only the absent arm can fire.
+  - interval: 1h
+    name: r1 lake backup never ran — no textfile — stale ticket fires
+    input_series:
+      - series: 'stellarindex_ch_schema_snapshot_last_success_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+3600x200'
+    alert_rule_test:
+      - eval_time: 100h
+        alertname: stellarindex_ch_lake_backup_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-lake-backup.md
+              summary: "ClickHouse lake has no current off-site backup on "
+              description: |
+                No ch-lake-backup run has completed on this host in 96 h (or
+                none ever has), no confirmed full has been on record for 72 h,
+                or the recorded full is older than FULL_INTERVAL_DAYS + 4 d.
+                Without a current chain the lake's only recovery path is a
+                re-derive from the Galexie archive (~1–2 weeks) instead of a
+                restore (hours). `stellarindex_ch_lake_backup_configured`
+                splits the cases: 0 = no off-site disk configured (set
+                ch_lake_backup_s3_endpoint + the vault key pair and re-apply
+                the role), 1 = configured but failing —
+                `journalctl -u ch-lake-backup.service -n 100`.
+
+  # A healthy chain: the textfile is there, backups and fulls are current.
+  - interval: 1h
+    name: r1 lake backup healthy — silent
+    input_series:
+      - series: 'stellarindex_ch_lake_backup_configured{job="node_exporter", instance="r1:9100"}'
+        values: '1x200'
+      - series: 'stellarindex_ch_lake_backup_last_success_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+3600x200'
+      - series: 'stellarindex_ch_lake_backup_last_full_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+3600x200'
+      - series: 'stellarindex_ch_lake_backup_full_interval_days{job="node_exporter", instance="r1:9100"}'
+        values: '7x200'
+    alert_rule_test:
+      - eval_time: 150h
+        alertname: stellarindex_ch_lake_backup_stale
+        exp_alerts: []
