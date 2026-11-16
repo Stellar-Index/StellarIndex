@@ -2094,7 +2094,7 @@ func (r storeChange24hReader) USDPrice24hAgo(ctx context.Context, asset canonica
 	// market moves on to the next, so neither a withheld market nor a manipulated minute is the divisor of a
 	// percentage. The anchor is kept for every caller (minuteChange24hReader), hence the shared read.
 	guardedAnchor24h := func(ctx context.Context, pair canonical.Pair, at time.Time) (timescale.Vwap1mRow, error) {
-		if wiring.PriceWithheld(ctx, r.substance, r.scam, pair.Base, pair.Quote, "change_24h",
+		if wiring.PriceWithheld(ctx, r.substance, r.scam, pair.Base, pair.Quote, "change_anchor",
 			wiring.AsOfInstant(at), wiring.ForSharedRead()) != pricingguard.NotWithheld {
 			return timescale.Vwap1mRow{}, errChange24hAnchorGuarded
 		}

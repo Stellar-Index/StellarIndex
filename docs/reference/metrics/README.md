@@ -1165,6 +1165,7 @@ The `surface` values are shared by all four price-serve gate counters (this one,
 |---|---|---|
 | `anomalies` | both | `/v1/anomalies` rows |
 | `asset_headline` | both | the asset headline price (GlobalAssetView) |
+| `change_anchor` | both | the 24h-ago anchor `change_24h_pct` divides by (`/v1/assets/{id}`, `/v1/price/batch`), judged as of that instant |
 | `change_summary` | both | `/v1/changes` summary |
 | `chart` | scam | `/v1/chart` series |
 | `dex_tvl` | both | DEX TVL snapshot refresh valuing pool reserve legs (background) |
