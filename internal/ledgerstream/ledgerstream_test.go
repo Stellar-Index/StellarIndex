@@ -58,8 +58,7 @@ func TestStream_boundedRange_filesystemDatastore(t *testing.T) {
 		Compression:       "zstd",
 	}
 
-	// Publish the datastore manifest so LoadSchema (called inside
-	// ApplyLedgerMetadata) can find it.
+	// Publish the datastore manifest so LoadSchema can find it.
 	if _, _, err := datastore.PublishConfig(ctx, store, cfg); err != nil {
 		t.Fatalf("publish config: %v", err)
 	}
@@ -489,8 +488,7 @@ func TestStream_ColdSchemaMismatch_ReturnsError(t *testing.T) {
 }
 
 // TestStream_ColdTierInitFailure_SingleLedgerRange covers the other half of the cold-init-failure
-// branch: a single-ledger range reuses the open hot store via the in-house walk, since
-// ApplyLedgerMetadata rejects it. Both branches must degrade to hot-only.
+// branch: a single-ledger range. Both branches must degrade to hot-only.
 func TestStream_ColdTierInitFailure_SingleLedgerRange(t *testing.T) {
 	tmp := t.TempDir()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -1126,7 +1124,7 @@ func TestStream_CountsReadPath(t *testing.T) {
 		cfg        func() ledgerstream.Config
 		from, to   uint32
 	}{
-		{"multi-ledger hot-only", "sdk", func() ledgerstream.Config { return cfg }, 5, 6},
+		{"multi-ledger hot-only", "hot", func() ledgerstream.Config { return cfg }, 5, 6},
 		{"single ledger hot-only", "hot_single_ledger", func() ledgerstream.Config { return cfg }, 6, 6},
 		{"cold tier fails to open", "cold_degraded", func() ledgerstream.Config {
 			c := cfg

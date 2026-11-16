@@ -170,6 +170,137 @@ func (f *faultingStore) GetFile(ctx context.Context, path string) (io.ReadCloser
 	return f.DataStore.GetFile(ctx, path)
 }
 
+// hangingStore never answers the first `hangs` reads of key: each blocks until its context ends, as a stalled S3
+// connection does. It records what each such read was cancelled with.
+type hangingStore struct {
+	datastore.DataStore
+
+	mu    sync.Mutex
+	key   string
+	hangs int
+	ended []error
+}
+
+func (h *hangingStore) GetFile(ctx context.Context, path string) (io.ReadCloser, int64, error) {
+	h.mu.Lock()
+	hang := path == h.key && h.hangs > 0
+	if hang {
+		h.hangs--
+	}
+	h.mu.Unlock()
+	if !hang {
+		return h.DataStore.GetFile(ctx, path)
+	}
+	<-ctx.Done()
+	h.mu.Lock()
+	h.ended = append(h.ended, ctx.Err())
+	h.mu.Unlock()
+	return nil, 0, ctx.Err()
+}
+
+// A read that hangs must come back as an error the SDK's fetch worker retries. With no deadline the worker waits on
+// the first hung GetFile forever and its retry budget never starts; this walk would end only at the test's own timeout.
+func TestWalkDataStore_HungReadTimesOutAndIsRetried(t *testing.T) {
+	storeReadTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { storeReadTimeout = 60 * time.Second })
+
+	tmp := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	fsStore, err := datastore.NewFilesystemDataStoreWithPath(tmp)
+	if err != nil {
+		t.Fatalf("open filesystem datastore: %v", err)
+	}
+	dsCfg := datastore.DataStoreConfig{
+		Type:              "Filesystem",
+		Params:            map[string]string{"destination_path": tmp},
+		Schema:            datastore.DataStoreSchema{LedgersPerFile: 1, FilesPerPartition: 1},
+		NetworkPassphrase: "Test SDF Network ; September 2015",
+		Compression:       "zstd",
+	}
+	if _, _, err := datastore.PublishConfig(ctx, fsStore, dsCfg); err != nil {
+		t.Fatalf("publish config: %v", err)
+	}
+	putLedger(t, ctx, fsStore, dsCfg.Schema, 5)
+	putLedger(t, ctx, fsStore, dsCfg.Schema, 6)
+
+	const hangs = 3
+	hanging := &hangingStore{DataStore: fsStore, key: dsCfg.Schema.GetObjectKeyFromSequenceNumber(5), hangs: hangs}
+	cfg := Config{DataStore: dsCfg, LiveRetryWait: 10 * time.Millisecond, LiveRetryBudget: 2 * time.Second}
+	buffered := ingest.DefaultBufferedStorageBackendConfig(dsCfg.Schema.LedgersPerFile)
+	applyLiveRetryPolicy(cfg, &buffered)
+
+	var got []uint32
+	err = walkDataStore(ctx, cfg, hanging, ledgerbackend.BoundedRange(5, 6), buffered,
+		func(lcm xdr.LedgerCloseMeta) error {
+			got = append(got, lcm.LedgerSequence())
+			return nil
+		})
+	if err != nil {
+		t.Fatalf("walkDataStore: %v", err)
+	}
+	if len(got) != 2 || got[0] != 5 || got[1] != 6 {
+		t.Fatalf("delivered %v, want [5 6]", got)
+	}
+	hanging.mu.Lock()
+	defer hanging.mu.Unlock()
+	if len(hanging.ended) != hangs {
+		t.Fatalf("%d hung reads ended, want %d", len(hanging.ended), hangs)
+	}
+	for i, e := range hanging.ended {
+		// Canceled would make the SDK's worker exit silently instead of retrying.
+		if !errors.Is(e, context.DeadlineExceeded) {
+			t.Errorf("hung read %d ended with %v, want context.DeadlineExceeded", i, e)
+		}
+	}
+}
+
+// ctxBody fails a read once the context its GetFile was given has ended, as an HTTP response body does.
+type ctxBody struct {
+	ctx  context.Context
+	data *strings.Reader
+}
+
+func (b *ctxBody) Read(p []byte) (int, error) {
+	if err := b.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return b.data.Read(p)
+}
+func (b *ctxBody) Close() error { return nil }
+
+type ctxBodyStore struct{ datastore.DataStore }
+
+func (ctxBodyStore) GetFile(ctx context.Context, _ string) (io.ReadCloser, int64, error) {
+	return &ctxBody{ctx: ctx, data: strings.NewReader("ledger bytes")}, 12, nil
+}
+
+// The deadline covers the body: it stays open after GetFile returns, expires a body that is still being read, and is
+// released only by Close.
+func TestDeadlineStore_DeadlineCoversTheBody(t *testing.T) {
+	store := withReadDeadline(ctxBodyStore{}, 80*time.Millisecond)
+
+	body, _, err := store.GetFile(context.Background(), "k")
+	if err != nil {
+		t.Fatalf("GetFile: %v", err)
+	}
+	got, err := io.ReadAll(body)
+	if err != nil || string(got) != "ledger bytes" {
+		t.Fatalf("body after GetFile returned = %q, %v; the deadline must not end with the call", got, err)
+	}
+	_ = body.Close()
+
+	body, _, err = store.GetFile(context.Background(), "k")
+	if err != nil {
+		t.Fatalf("GetFile: %v", err)
+	}
+	defer func() { _ = body.Close() }()
+	time.Sleep(150 * time.Millisecond)
+	if _, err := io.ReadAll(body); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("stalled body read = %v, want context.DeadlineExceeded", err)
+	}
+}
+
 func (f *faultingStore) faults() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()

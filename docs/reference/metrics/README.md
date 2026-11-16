@@ -451,7 +451,7 @@ Tiered reads by serving tier: `hot` = local `galexie-archive` MinIO, `cold` = `a
 
 ### `stellarindex_ledgerstream_stream_path_total`
 
-Counter, label `path` (`tiered` / `cold_degraded` / `hot_single_ledger` / `sdk`).
+Counter, label `path` (`tiered` / `cold_degraded` / `hot_single_ledger` / `hot`).
 
 One increment per `ledgerstream.Stream` walk, by read path. `cold_degraded` = cold tier configured but failed to open, so the walk ran hot-only; a nonzero rate means archive reads will stall on the first trimmed ledger. Seeded at boot.
 

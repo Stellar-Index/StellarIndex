@@ -8,7 +8,7 @@ import (
 )
 
 // TestLedgerstreamConfig_NoColdTier verifies that without the cold-tier opt-in (ADR-0027) ColdDataStore stays zero-
-// valued, so ledgerstream.Stream takes the SDK's ApplyLedgerMetadata path.
+// valued, so ledgerstream.Stream takes the hot-only path.
 func TestLedgerstreamConfig_NoColdTier(t *testing.T) {
 	t.Parallel()
 	cfg := config.Config{

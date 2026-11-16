@@ -77,7 +77,7 @@ Removed from r1 on 2026-04-23 (see
   without changing the data path. Re-add when validating
   Phase-3 Tier-1 validator work (ADR-0004).
 - **stellar-rpc** — our indexer reads MinIO directly via
-  `go-stellar-sdk/ingest.ApplyLedgerMetadata`; the JSON-RPC
+  `go-stellar-sdk`'s buffered storage backend; the JSON-RPC
   surface isn't on the data path. Source removed from r1; the
   binary is retained only for the `stellarindex-ops rpc-probe`
   operator diagnostic, which dials a remote public endpoint.

@@ -181,7 +181,7 @@ linked design doc has the full detail.
   (`/usr/bin/stellar-core … --metadata-output-stream fd:3`) — which
   is the supported Galexie deployment shape per ADR-0002. The
   indexer reads Galexie's MinIO output directly via
-  `go-stellar-sdk/ingest.ApplyLedgerMetadata`. If you catch yourself
+  `go-stellar-sdk`'s buffered storage backend. If you catch yourself
   writing `rpc.GetEvents` for ingest, stop and read
   [docs/architecture/ingest-pipeline.md](../../docs/architecture/ingest-pipeline.md). →
   [docs/operations/r1-deployment-state.md](../../docs/operations/r1-deployment-state.md)

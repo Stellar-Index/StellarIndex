@@ -661,7 +661,7 @@ func seedLedgerstreamTierSeries() {
 	for _, outcome := range []string{"hot", "cold", "both_missing"} {
 		LedgerstreamTierReadTotal.WithLabelValues(outcome)
 	}
-	for _, path := range []string{"tiered", "cold_degraded", "hot_single_ledger", "sdk"} {
+	for _, path := range []string{"tiered", "cold_degraded", "hot_single_ledger", "hot"} {
 		LedgerstreamStreamPathTotal.WithLabelValues(path)
 	}
 }
@@ -1267,7 +1267,7 @@ var LedgerstreamTierReadTotal = prometheus.NewCounterVec(
 var LedgerstreamStreamPathTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_ledgerstream_stream_path_total",
-		Help: "ledgerstream.Stream walks by read path: tiered, cold_degraded (configured cold tier failed to open; hot-only), hot_single_ledger, sdk.",
+		Help: "ledgerstream.Stream walks by read path: tiered, cold_degraded (configured cold tier failed to open; hot-only), hot_single_ledger, hot.",
 	},
 	[]string{"path"},
 )

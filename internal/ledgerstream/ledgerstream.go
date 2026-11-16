@@ -4,8 +4,9 @@
 //
 // It is the only production path into the ingest pipeline: every source decoder receives its
 // events via this package, never via stellar-rpc (lint-imports.sh rule A/no-rpc-in-ingest). It
-// wraps the SDK's ingest.ApplyLedgerMetadata as one import boundary and test seam, and centralizes
-// logger and Prometheus wiring.
+// runs the SDK's buffered storage backend behind one import boundary and test seam, and centralizes
+// logger and Prometheus wiring. Every walk goes through [walkDataStore], which puts a deadline on
+// each datastore read; the SDK's own ApplyLedgerMetadata opens a client with none.
 package ledgerstream
 
 import (
@@ -151,25 +152,12 @@ func Stream(
 		case cfg.tieringEnabled():
 			return streamTiered(ctx, cfg, ledgerRange, buffered, countingCallback)
 		case ledgerRange.Bounded() && ledgerRange.To() == ledgerRange.From():
-			// The SDK's ApplyLedgerMetadata rejects a bounded range of exactly one ledger
-			// (To() <= From()), so walk it with our own backend loop; ch-live-catchup hits this
-			// whenever it fires one ledger behind the tip.
+			// ch-live-catchup hits this whenever it fires one ledger behind the tip.
 			obs.LedgerstreamStreamPathTotal.WithLabelValues("hot_single_ledger").Inc()
 			return streamHot(ctx, cfg, ledgerRange, buffered, countingCallback)
 		default:
-			obs.LedgerstreamStreamPathTotal.WithLabelValues("sdk").Inc()
-			return ingest.ApplyLedgerMetadata(
-				ledgerRange,
-				ingest.PublisherConfig{
-					Registry:              cfg.Registry,
-					RegistryNamespace:     cfg.RegistryNamespace,
-					BufferedStorageConfig: buffered,
-					DataStoreConfig:       cfg.DataStore,
-					Log:                   cfg.Logger,
-				},
-				ctx,
-				countingCallback,
-			)
+			obs.LedgerstreamStreamPathTotal.WithLabelValues("hot").Inc()
+			return streamHot(ctx, cfg, ledgerRange, buffered, countingCallback)
 		}
 	}
 
@@ -189,7 +177,7 @@ func latestLedger(ctx context.Context, dsCfg datastore.DataStoreConfig) (uint32,
 		return 0, fmt.Errorf("open datastore: %w", err)
 	}
 	defer func() { _ = ds.Close() }()
-	return datastore.FindLatestLedgerSequence(ctx, ds)
+	return datastore.FindLatestLedgerSequence(ctx, withReadDeadline(ds, storeReadTimeout))
 }
 
 // retryLiveStart re-runs a live tail that failed WITHOUT EVER DELIVERING A LEDGER, until Config.LiveRetryBudget is
@@ -386,9 +374,8 @@ func parseTrailingMissingSeq(err error) (uint32, bool) {
 	return uint32(n), true
 }
 
-// streamTiered is the hot+cold branch of [Stream]. It mirrors the SDK's ApplyLedgerMetadata loop
-// (same validation, from-clamp and error wrapping) but injects a [TieredDataStore] built from
-// cfg.DataStore and cfg.ColdDataStore as the BufferedStorageBackend's store.
+// streamTiered is the hot+cold branch of [Stream]: it walks a [TieredDataStore] built from
+// cfg.DataStore and cfg.ColdDataStore.
 func streamTiered(
 	ctx context.Context,
 	cfg Config,
@@ -409,35 +396,19 @@ func streamTiered(
 		if cfg.Logger != nil {
 			cfg.Logger.WithField("err", err).Warn("ledgerstream: cold datastore init failed; falling back to hot-only single-source path")
 		}
-		if ledgerRange.Bounded() && ledgerRange.To() == ledgerRange.From() {
-			// ApplyLedgerMetadata rejects single-ledger ranges; reuse the open hot store.
-			return walkDataStore(ctx, cfg, hot, ledgerRange, buffered, callback)
-		}
-		_ = hot.Close()
-		return ingest.ApplyLedgerMetadata(
-			ledgerRange,
-			ingest.PublisherConfig{
-				Registry:              cfg.Registry,
-				RegistryNamespace:     cfg.RegistryNamespace,
-				BufferedStorageConfig: buffered,
-				DataStoreConfig:       cfg.DataStore,
-				Log:                   cfg.Logger,
-			},
-			ctx,
-			callback,
-		)
+		return walkDataStore(ctx, cfg, hot, ledgerRange, buffered, callback)
 	}
 	// Every tiered read computes object keys from ONE schema, hot's (TieredDataStore prefers hot).
 	// If cold's export used a different LedgersPerFile/FilesPerPartition/FileExtension, hot-shaped
 	// keys 404 on cold and the fallback silently never fires. Hard-fail on a mismatch now: it is a
 	// config bug, not a transient condition to route around.
-	hotSchema, err := datastore.LoadSchema(ctx, hot, cfg.DataStore)
+	hotSchema, err := datastore.LoadSchema(ctx, withReadDeadline(hot, storeReadTimeout), cfg.DataStore)
 	if err != nil {
 		_ = hot.Close()
 		_ = cold.Close()
 		return fmt.Errorf("ledgerstream: load hot schema: %w", err)
 	}
-	coldSchema, err := datastore.LoadSchema(ctx, cold, cfg.ColdDataStore)
+	coldSchema, err := datastore.LoadSchema(ctx, withReadDeadline(cold, storeReadTimeout), cfg.ColdDataStore)
 	if err != nil {
 		_ = hot.Close()
 		_ = cold.Close()
@@ -469,8 +440,7 @@ func openColdDataStore(ctx context.Context, cfg Config) (datastore.DataStore, er
 	return datastore.NewDataStore(ctx, cfg.ColdDataStore)
 }
 
-// streamHot is the hot-only counterpart of [streamTiered], over cfg.DataStore alone. [Stream]
-// routes single-ledger non-tiered requests here because the SDK's ApplyLedgerMetadata rejects them.
+// streamHot is the hot-only counterpart of [streamTiered], over cfg.DataStore alone.
 func streamHot(
 	ctx context.Context,
 	cfg Config,
@@ -512,8 +482,9 @@ func bufferedConfig(cfg Config) ledgerbackend.BufferedStorageBackendConfig {
 	return ingest.DefaultBufferedStorageBackendConfig(lpf)
 }
 
-// walkDataStore builds the buffered storage backend over store and runs the GetLedger walk, the shared tail of [streamTiered] and
-// [streamHot]. It closes store on every return path because the SDK's BufferedStorageBackend.Close does not (connection leak).
+// walkDataStore builds the buffered storage backend over store and runs the GetLedger walk, the shared tail of every Stream path.
+// It bounds each read with [storeReadTimeout], so a hung request fails and spends a retry instead of holding the walk.
+// It closes store on every return path because the SDK's BufferedStorageBackend.Close does not (connection leak).
 func walkDataStore(
 	ctx context.Context,
 	cfg Config,
@@ -523,10 +494,11 @@ func walkDataStore(
 	callback func(xdr.LedgerCloseMeta) error,
 ) error {
 	defer func() { _ = store.Close() }()
+	store = withReadDeadline(store, storeReadTimeout)
 
 	schema, err := datastore.LoadSchema(ctx, store, cfg.DataStore)
 	if err != nil {
-		return fmt.Errorf("ledgerstream: load schema: %w", err)
+		return fmt.Errorf("ledgerstream: load datastore schema: %w", err)
 	}
 
 	var backend ledgerbackend.LedgerBackend
