@@ -49,42 +49,54 @@ func decodeEvent(role Role, kind string, ev *events.Event) (Event, error) {
 		out.Pool = ev.ContractID
 	}
 
-	got := ev.Topic[1:]
-	if len(got) > len(sp.topics) || (len(got) < len(sp.topics) && !sp.topics[len(got)].optional) {
-		return fail("topics", fmt.Errorf("got %d after the symbol, ABI declares %d", len(got), len(sp.topics)))
+	if err := out.setTopics(sp.topics, ev.Topic[1:]); err != nil {
+		return fail("topics", err)
+	}
+	if err := out.setBody(sp, ev.Value); err != nil {
+		return fail("body", err)
+	}
+	return out, nil
+}
+
+func (e *Event) setTopics(declared []field, got []string) error {
+	if len(got) > len(declared) || (len(got) < len(declared) && !declared[len(got)].optional) {
+		return fmt.Errorf("got %d after the symbol, ABI declares %d", len(got), len(declared))
 	}
 	for i, b64 := range got {
 		sv, err := scval.Parse(b64)
-		if err != nil {
-			return fail("topic "+sp.topics[i].name, err)
+		if err == nil {
+			err = e.set(declared[i], sv)
 		}
-		if err := out.set(sp.topics[i], sv); err != nil {
-			return fail("topic "+sp.topics[i].name, err)
+		if err != nil {
+			return fmt.Errorf("%s: %w", declared[i].name, err)
 		}
 	}
+	return nil
+}
 
-	body, err := scval.Parse(ev.Value)
+func (e *Event) setBody(sp spec, b64 string) error {
+	body, err := scval.Parse(b64)
 	if err != nil {
-		return fail("body", err)
+		return err
 	}
 	if sp.body == bodyUnit {
 		if !scval.IsVoid(body) {
-			return fail("body", errors.New("ABI declares no payload, got one"))
+			return errors.New("ABI declares no payload, got one")
 		}
-		return out, nil
+		return nil
 	}
 	values := []scval.ScVal{body}
 	if sp.body == bodyVec {
 		if values, err = scval.AsTupleN(body, len(sp.data)); err != nil {
-			return fail("body", err)
+			return err
 		}
 	}
 	for i, f := range sp.data {
-		if err := out.set(f, values[i]); err != nil {
-			return fail("field "+f.name, err)
+		if err := e.set(f, values[i]); err != nil {
+			return fmt.Errorf("%s: %w", f.name, err)
 		}
 	}
-	return out, nil
+	return nil
 }
 
 // set decodes sv as f's declared type into f's column.

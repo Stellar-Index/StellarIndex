@@ -32,43 +32,51 @@ func toJSON(v xdr.ScVal, depth int) (any, error) {
 	}
 	switch v.Type {
 	case xdr.ScValTypeScvVec:
-		vec, err := AsVec(v)
-		if err != nil {
-			return nil, err
-		}
-		out := make([]any, 0, len(vec))
-		for i := range vec {
-			e, err := toJSON(vec[i], depth+1)
-			if err != nil {
-				return nil, fmt.Errorf("[%d]: %w", i, err)
-			}
-			out = append(out, e)
-		}
-		return out, nil
+		return jsonVec(v, depth)
 	case xdr.ScValTypeScvMap:
-		entries, err := AsMap(v)
-		if err != nil {
-			return nil, err
-		}
-		out := make(map[string]any, len(entries))
-		for i := range entries {
-			k, err := jsonKey(entries[i].Key)
-			if err != nil {
-				return nil, fmt.Errorf("key[%d]: %w", i, err)
-			}
-			if _, dup := out[k]; dup {
-				return nil, fmt.Errorf("%w: duplicate map key %q", ErrNotJSONable, k)
-			}
-			val, err := toJSON(entries[i].Val, depth+1)
-			if err != nil {
-				return nil, fmt.Errorf("%s: %w", k, err)
-			}
-			out[k] = val
-		}
-		return out, nil
+		return jsonMap(v, depth)
 	default:
 		return jsonScalar(v)
 	}
+}
+
+func jsonVec(v xdr.ScVal, depth int) (any, error) {
+	vec, err := AsVec(v)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]any, 0, len(vec))
+	for i := range vec {
+		e, err := toJSON(vec[i], depth+1)
+		if err != nil {
+			return nil, fmt.Errorf("[%d]: %w", i, err)
+		}
+		out = append(out, e)
+	}
+	return out, nil
+}
+
+func jsonMap(v xdr.ScVal, depth int) (any, error) {
+	entries, err := AsMap(v)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]any, len(entries))
+	for i := range entries {
+		k, err := jsonKey(entries[i].Key)
+		if err != nil {
+			return nil, fmt.Errorf("key[%d]: %w", i, err)
+		}
+		if _, dup := out[k]; dup {
+			return nil, fmt.Errorf("%w: duplicate map key %q", ErrNotJSONable, k)
+		}
+		val, err := toJSON(entries[i].Val, depth+1)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", k, err)
+		}
+		out[k] = val
+	}
+	return out, nil
 }
 
 // jsonKey renders a map key; only the scalar kinds contracts key maps on are accepted.

@@ -186,11 +186,11 @@ func checkCoverage(t *testing.T, covered map[Role]map[string]bool) {
 	t.Helper()
 	for role, kinds := range abi {
 		for kind := range kinds {
-			real, listed := covered[role][kind], slices.Contains(sourceOnly[role], kind)
+			onChain, listed := covered[role][kind], slices.Contains(sourceOnly[role], kind)
 			switch {
-			case real && listed:
+			case onChain && listed:
 				t.Errorf("%s/%s has a real fixture; remove it from sourceOnly", role, kind)
-			case !real && !listed:
+			case !onChain && !listed:
 				t.Errorf("%s/%s has neither a real fixture nor a sourceOnly entry", role, kind)
 			}
 		}

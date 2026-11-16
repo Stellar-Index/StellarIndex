@@ -139,7 +139,7 @@ var protocolRegistry = withVerificationPages([]ProtocolMeta{
 		ExtraEventSources: []string{blend_backstop.SourceName, blend_emitter.SourceName},
 	},
 	{
-		Name:          blnt.SourceName,
+		Name:          "blnt",
 		Category:      "lending",
 		Description:   "BLNT V3 — a Blend-derived lending protocol on Soroban with RWA support and tiered backstops.",
 		GenesisLedger: blnt.GenesisLedger,
