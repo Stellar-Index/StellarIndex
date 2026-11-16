@@ -1590,6 +1590,23 @@ CREATE TABLE IF NOT EXISTS stellar.entry_history_watermark
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY name;
 
+-- ── lending_state_hourly — see deploy/clickhouse/lending_state.sql ──
+CREATE TABLE IF NOT EXISTS stellar.lending_state_hourly
+(
+    contract_id      String,
+    protocol         LowCardinality(String),
+    key_xdr          String CODEC(ZSTD(3)),
+    hour             DateTime('UTC'),
+    ledger_seq       UInt32,
+    intra_ledger_seq UInt32,
+    close_time       DateTime('UTC'),
+    entry_xdr        String CODEC(ZSTD(3)),
+    version          UInt64 MATERIALIZED bitShiftLeft(toUInt64(ledger_seq), 32) + intra_ledger_seq
+)
+ENGINE = ReplacingMergeTree(version)
+PARTITION BY toYYYYMM(hour)
+ORDER BY (contract_id, key_xdr, hour);
+
 -- ── account_entry_ledgers / asset_entry_ledgers — the entry index: which ledgers an account
 -- (by role) or an asset has classic-entry activity in; no payload. Built by
 -- `stellarindex-ops ch-entry-index` (deploy/clickhouse/entry_index.sql carries the runbook).

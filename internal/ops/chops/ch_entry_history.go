@@ -17,7 +17,7 @@ import (
 
 // ch-entry-history derives the sponsorship lifecycle (stellar.sponsorship_events) from the paired pre/post images of
 // the entry changes that can carry a transition, windowed and resumable via its watermark and never written past the
-// entry_index watermark; without -write it only counts.
+// entry_index watermark; without -write it only counts. -lending-only derives lending_state_hourly instead.
 func chEntryHistory(args []string) error {
 	fs := flag.NewFlagSet("ch-entry-history", flag.ContinueOnError)
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
@@ -28,9 +28,19 @@ func chEntryHistory(args []string) error {
 	maxDecodeErrs := registerDecodeBudget(fs)
 	totalsOnly := fs.Bool("totals-only", false, "refresh only stellar.sponsorship_totals_buckets from the derived events, from its watermark (or -from) through the sponsorship_events watermark (or -to)")
 	proof := fs.String("proof", "", "comma-separated accounts: print each one's sponsorship counters against the derived in-force reserves and exit (reads only)")
+	lendingOnly := fs.Bool("lending-only", false, "derive only stellar.lending_state_hourly (Blend and BLNT pool and backstop storage, last change per key per hour) from its lending_state watermark, or the Blend factory genesis on first run, to the contiguous tip in partition-aligned windows; -window does not apply")
+	printPrefixes := fs.Bool("print-prefixes", false, "with -lending-only: print the lending registry and key prefixes and exit (reads only)")
+	prove := fs.Bool("prove", false, "with -lending-only: check the history against the lake at the watermark (latest row per key, every registered contract's keys, one row per changed key and hour over [-from, -to]) and exit (reads only)")
+	lockFile := fs.String("lock-file", lendingLockPath, "with -lending-only: flock serialising concurrent -write runs")
+	heartbeat := fs.String("heartbeat", "", "with -lending-only: ops-job heartbeat textfile path. Empty = "+opsutil.DefaultTextfileDir+"/ops_job_"+lendingJob+".prom when that directory exists")
 	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *lendingOnly || *printPrefixes || *prove {
+		r := lendingRun{chAddr: *chAddr, from: uint32(*from), to: uint32(*to), floor: uint32(*floorLedger), dryRun: gate.DryRun(), //nolint:gosec // ledger numbers fit uint32
+			lockFile: *lockFile, heartbeat: *heartbeat, printPrefixes: *printPrefixes, prove: *prove}
+		return r.start(*lendingOnly, gate)
 	}
 	if *window == 0 {
 		return fmt.Errorf("-window must be > 0")

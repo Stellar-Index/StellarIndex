@@ -1,0 +1,60 @@
+# systemd unit: lending state history catch-up.
+#
+# Rendered by Ansible. Writes stellar.lending_state_hourly — the verbatim
+# last change per hour of every Blend and BLNT pool and backstop key the
+# derive captures — from stellar.ledger_entry_changes
+# (deploy/clickhouse/lending_state.sql).
+#
+# Each run resumes from the lending_state watermark (the Blend factory
+# genesis on first run) and walks forward in partition-aligned windows to
+# the lake's contiguous tip, advancing the watermark only for a window it
+# proved complete. A second firing while one runs exits at once on the flock.
+
+[Unit]
+Description=Stellar Index — lending state history catch-up
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/deploy/clickhouse/lending_state.sql
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/lending-state
+EnvironmentFile=-/etc/default/stellarindex
+EnvironmentFile=-/etc/default/stellarindex-ops
+
+Environment=CH_ADDR=127.0.0.1:9300
+Environment=EXTRA_FLAGS=
+
+ExecStart=/usr/local/bin/stellarindex-ops ch-entry-history \
+  -lending-only \
+  -ch-addr ${CH_ADDR} \
+  -write \
+  $EXTRA_FLAGS
+
+User=stellarindex
+Group=stellarindex
+
+ProtectSystem=strict
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+# The flock and the heartbeat textfile; ProtectSystem=strict leaves both
+# directories read-only unless they are listed here.
+ReadWritePaths=/var/lib/stellarindex /var/lib/node_exporter/textfile_collector
+
+# A steady-state run covers a few thousand ledgers in seconds; the ceiling is
+# sized for the initial walk from the factory genesis. The heartbeat keeps the
+# stall alerts armed throughout.
+TimeoutStartSec=12h
+
+# Rows never pass through the client; the GROUP BY memory is the server's.
+MemoryMax=1G
+MemorySwapMax=0
+# Batch-class weights: this must never starve galexie's captive core.
+CPUWeight=25
+IOWeight=25
+
+[Install]
+WantedBy=multi-user.target
