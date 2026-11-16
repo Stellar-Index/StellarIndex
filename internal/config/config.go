@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/url"
+	"path"
 	"sort"
 	"strings"
 	"time"
@@ -601,10 +604,29 @@ func (s StorageConfig) ColdTieringEnabled() bool {
 // ColdTierIsHotTier reports whether the cold tier names the hot archive itself: a cold tier that is the hot tier holds no second copy,
 // so a hot read that misses has no fallback and a trim would let each file vouch for its own deletion.
 func (s StorageConfig) ColdTierIsHotTier() bool {
-	norm := func(v string) string { return strings.ToLower(strings.Trim(strings.TrimSpace(v), "/")) }
+	bucketPath := func(v string) string { return path.Clean("/" + strings.ToLower(strings.TrimSpace(v))) }
 	return s.ColdTieringEnabled() &&
-		norm(s.S3ColdEndpoint) == norm(s.S3Endpoint) &&
-		norm(s.S3ColdBucketArchive) == norm(s.S3BucketArchive)
+		storeAuthority(s.S3ColdEndpoint) == storeAuthority(s.S3Endpoint) &&
+		bucketPath(s.S3ColdBucketArchive) == bucketPath(s.S3BucketArchive)
+}
+
+// storeAuthority is an endpoint's host:port with the scheme's default port filled in and every loopback spelling folded into one, so
+// http://localhost:9000 and http://127.0.0.1:9000/ name the same store. Two DNS names for one host are not detected.
+func storeAuthority(endpoint string) string {
+	endpoint = strings.TrimSpace(endpoint)
+	u, err := url.Parse(endpoint)
+	if err != nil || u.Host == "" {
+		return strings.ToLower(strings.Trim(endpoint, "/"))
+	}
+	host := strings.ToLower(u.Hostname())
+	if ip := net.ParseIP(host); host == "localhost" || (ip != nil && ip.IsLoopback()) {
+		host = "loopback"
+	}
+	port := u.Port()
+	if port == "" {
+		port = map[string]string{"http": "80", "https": "443"}[strings.ToLower(u.Scheme)]
+	}
+	return net.JoinHostPort(host, port)
 }
 
 // IngestionConfig controls the indexer's source fleet.

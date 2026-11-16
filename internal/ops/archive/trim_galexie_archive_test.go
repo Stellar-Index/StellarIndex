@@ -382,6 +382,16 @@ func TestS3ColdProver_ProvesTheSameBytesNotTheKey(t *testing.T) {
 			cold: fakeTier{objects: map[string]types.Object{"v1/pubnet/" + file: tierObject("0cc175b9c0f1b6a831c399e269772661-2", 1200)}},
 			want: coldCopyDiffers,
 		},
+		"the same multipart ETag on both sides": {
+			hot:  fakeTier{objects: map[string]types.Object{"mirror/" + file: tierObject("0cc175b9c0f1b6a831c399e269772661-2", 1200)}},
+			cold: fakeTier{objects: map[string]types.Object{"v1/pubnet/" + file: tierObject("0cc175b9c0f1b6a831c399e269772661-2", 1200)}},
+			want: coldCopyDiffers,
+		},
+		"no ETag on either side": {
+			hot:  fakeTier{objects: map[string]types.Object{"mirror/" + file: tierObject("", 1200)}},
+			cold: fakeTier{objects: map[string]types.Object{"v1/pubnet/" + file: tierObject("", 1200)}},
+			want: coldCopyDiffers,
+		},
 		"both empty": {
 			hot:  fakeTier{objects: map[string]types.Object{"mirror/" + file: tierObject("d41d8cd98f00b204e9800998ecf8427e", 0)}},
 			cold: fakeTier{objects: map[string]types.Object{"v1/pubnet/" + file: tierObject("d41d8cd98f00b204e9800998ecf8427e", 0)}},
@@ -955,7 +965,7 @@ func TestDeleteTrimCandidates_DeletesTheListedObject(t *testing.T) {
 		t.Run(bucketPath, func(t *testing.T) {
 			t.Parallel()
 			b, bucket, prefix := newPrefixedHotBucket(t, bucketPath)
-			deleted, errs, err := deleteTrimCandidates(context.Background(), discardLogger(), b, fakeHotView{b, prefix}, bucket, prefix, trimDeleteCandidates)
+			deleted, errs, err := deleteTrimCandidates(context.Background(), discardLogger(), b, fakeHotView{b, prefix}, nil, bucket, prefix, trimDeleteCandidates)
 			if err != nil || errs != 0 {
 				t.Fatalf("deleteTrimCandidates: deleted=%d errs=%d err=%v", deleted, errs, err)
 			}
@@ -969,12 +979,34 @@ func TestDeleteTrimCandidates_DeletesTheListedObject(t *testing.T) {
 	}
 }
 
+// A file whose cold copy is no longer proven when its turn to be deleted comes (rewritten or lost since the plan) is kept and counted
+// as an error; the rest are deleted.
+func TestDeleteTrimCandidates_ReprovesTheColdCopyBeforeEachDelete(t *testing.T) {
+	t.Parallel()
+	b, bucket, prefix := newPrefixedHotBucket(t, "galexie-archive/archive")
+	rewritten, lost := trimDeleteCandidates[0], trimDeleteCandidates[1]
+	cold := &fakeCold{
+		differs: map[string]bool{rewritten: true},
+		errOn:   map[string]error{lost: errors.New("cold listing timeout")},
+	}
+	deleted, errs, err := deleteTrimCandidates(context.Background(), discardLogger(), b, fakeHotView{b, prefix}, cold, bucket, prefix, trimDeleteCandidates)
+	if err != nil {
+		t.Fatalf("deleteTrimCandidates: %v", err)
+	}
+	if !b.objects[path.Join(prefix, rewritten)] || !b.objects[path.Join(prefix, lost)] {
+		t.Fatal("a hot file was deleted without a proven cold copy at delete time")
+	}
+	if want := len(trimDeleteCandidates) - 2; deleted != want || errs != 2 || len(b.objects) != 2 {
+		t.Errorf("deleted = %d, errs = %d, left = %d; want %d, 2, 2", deleted, errs, len(b.objects), want)
+	}
+}
+
 // TestDeleteTrimCandidates_UnverifiedDeleteFails: a DeleteObject that succeeds while the object still resolves is not a deletion and must fail the run.
 func TestDeleteTrimCandidates_UnverifiedDeleteFails(t *testing.T) {
 	t.Parallel()
 	b, bucket, prefix := newPrefixedHotBucket(t, "galexie-archive/archive")
 	b.swallow = true
-	deleted, _, err := deleteTrimCandidates(context.Background(), discardLogger(), b, fakeHotView{b, prefix}, bucket, prefix, trimDeleteCandidates)
+	deleted, _, err := deleteTrimCandidates(context.Background(), discardLogger(), b, fakeHotView{b, prefix}, nil, bucket, prefix, trimDeleteCandidates)
 	if err == nil || !strings.Contains(err.Error(), "still resolves") {
 		t.Fatalf("err = %v, want the unverified delete to abort the run", err)
 	}

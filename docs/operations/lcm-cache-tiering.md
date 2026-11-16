@@ -183,8 +183,13 @@ Until then, re-run Step 4's chunked loop monthly.
 ## Common failure modes
 
 - **`s3_cold_bucket_archive` missing**: trim refuses to run. Fix the TOML.
-- **Cold tier names the hot archive** (same endpoint and bucket path):
-  config load and the trim both refuse. The cold tier must be a second copy.
+- **Cold tier names the hot archive** (same endpoint and bucket path,
+  loopback spellings and default ports included): config load and the trim
+  both refuse. The cold tier must be a second copy. Two DNS names for one
+  host are not detected.
+- **`cold copy no longer proven at delete time`**: each file is proven
+  again just before its delete; one that changed since the plan is kept
+  and the run exits non-zero. Re-run.
 - **`cold copy check failed` warnings**: AWS blip; trim skips those files
   (safety posture). Re-run.
 - **Pool capacity rises during trim**: ZFS writes metadata before

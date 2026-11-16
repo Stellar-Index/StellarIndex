@@ -214,7 +214,7 @@ func trimGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,funlen 
 	}
 
 	start := time.Now()
-	deleted, delErrs, err := deleteTrimCandidates(rootCtx, logger, s3Client, hot, hotBucket, hotKeyPrefix, candidates)
+	deleted, delErrs, err := deleteTrimCandidates(rootCtx, logger, s3Client, hot, cold, hotBucket, hotKeyPrefix, candidates)
 	errs += delErrs
 	logger.Info("trim complete",
 		"deleted", deleted,
@@ -251,10 +251,19 @@ type s3ObjectDeleter interface {
 
 // deleteTrimCandidates deletes one object per call so a partial failure leaves a clear position. S3/MinIO succeed for absent keys, so a deletion
 // counts only once hot.Exists (same key space as the listing) stops resolving the path; a path that still resolves aborts the run.
-func deleteTrimCandidates(ctx context.Context, logger *slog.Logger, del s3ObjectDeleter, hot trimColdChecker, bucket, keyPrefix string, candidates []string) (deleted, errs int, err error) {
+// Planning can run for hours, so with a prover (nil under --no-verify-upstream) each file is proven again just before its delete: a hot
+// file rewritten since the plan keeps its new bytes.
+func deleteTrimCandidates(ctx context.Context, logger *slog.Logger, del s3ObjectDeleter, hot trimColdChecker, cold trimColdProver, bucket, keyPrefix string, candidates []string) (deleted, errs int, err error) {
 	for _, p := range candidates {
 		if err := ctx.Err(); err != nil {
 			return deleted, errs, fmt.Errorf("trim aborted at %d/%d: %w", deleted, len(candidates), err)
+		}
+		if cold != nil {
+			if copied, cerr := cold.ColdCopy(ctx, p); cerr != nil || copied != coldCopySame {
+				logger.Warn("cold copy no longer proven at delete time; keeping the hot file", "path", p, "err", cerr)
+				errs++
+				continue
+			}
 		}
 		key := path.Join(keyPrefix, p)
 		if _, derr := del.DeleteObject(ctx, &s3.DeleteObjectInput{
@@ -288,7 +297,8 @@ func deleteTrimCandidates(ctx context.Context, logger *slog.Logger, del s3Object
 // block exists to avoid.
 const trimListPageSize = 1000
 
-// trimFileLister and trimColdChecker are the slices of datastore.DataStore the planner calls, so tests can fake the SDK's 1000-key clamp.
+// trimFileLister is the slice of datastore.DataStore the planner calls, so tests can fake the SDK's 1000-key clamp; trimColdChecker is
+// the slice the deletion loop confirms each removal with.
 type trimFileLister interface {
 	ListFilePaths(ctx context.Context, options datastore.ListFileOptions) ([]string, error)
 }
@@ -340,11 +350,15 @@ func (p s3ColdProver) ColdCopy(ctx context.Context, path string) (coldCopy, erro
 	if !ok {
 		return coldCopyAbsent, nil
 	}
-	// compareMirrorObject's "unverifiable" (a multipart ETag, sizes equal) is not proof either.
-	if cold.size == 0 || compareMirrorObject(hot, cold) != "" {
+	// Only a single-part ETag is a body MD5: a missing or multipart one on either side proves nothing about the bytes.
+	if cold.size == 0 || !singlePartETag(hot.etag) || !singlePartETag(cold.etag) || compareMirrorObject(hot, cold) != "" {
 		return coldCopyDiffers, nil
 	}
 	return coldCopySame, nil
+}
+
+func singlePartETag(etag string) bool {
+	return etag != "" && !strings.Contains(etag, "-")
 }
 
 // statTierObject reads one object's size and ETag from a listing of its exact key.
@@ -633,7 +647,7 @@ func parseTrimFlags(args []string) (trimOpts, error) {
 	fs.Int64Var(&olderThan, "older-than-ledger", 0, "REQUIRED. Files whose entire ledger range is below this sequence become deletion candidates. No default to prevent unintentional trims.")
 	fs.Int64Var(&newerThan, "newer-than-ledger", 0, "Optional lower bound: files starting below this sequence are kept, so a middle band can be trimmed without touching older ranges. 0 means no bound.")
 	fs.BoolVar(&opts.commit, "commit", false, "Actually delete: an alias for -write. Requires explicit opt-in (default behaviour is dry-run).")
-	fs.BoolVar(&noVerify, "no-verify-upstream", false, "Skip the HEAD-against-cold check. NOT RECOMMENDED — disables the primary safety primitive. Requires --i-have-verified-cold-out-of-band too.")
+	fs.BoolVar(&noVerify, "no-verify-upstream", false, "Skip the same-bytes-in-cold check. NOT RECOMMENDED — disables the primary safety primitive. Requires --i-have-verified-cold-out-of-band too.")
 	fs.BoolVar(&opts.iHaveVerifiedOutOfBand, "i-have-verified-cold-out-of-band", false, "Required alongside --no-verify-upstream: an explicit second acknowledgement that you have confirmed the cold tier holds these files by some other means. --no-verify-upstream alone is refused.")
 	fs.IntVar(&opts.maxFiles, "max-files", 100000, fmt.Sprintf("Hard cap on candidates per run, at most %d.", trimMaxFilesCeiling))
 	if err := fs.Parse(args); err != nil {
