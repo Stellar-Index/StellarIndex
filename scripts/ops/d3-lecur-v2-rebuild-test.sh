@@ -40,6 +40,12 @@
 #      "[FROM,tip) done", not tip itself — r1's shape, where the reproject
 #      used TO=mv-created-at-tip and that one ledger never reached v2 (221
 #      contract_data, 221 ttl, 6 stale offers). A mark of tip+1 passes.
+#   9. cutover pauses the lake writers that insert below the tip. A row
+#      ch-live-catchup or a ch-backfill writes between DROP MV and CREATE MV
+#      reaches no current-state table, and the catch-up INSERT covers only
+#      ledger_seq >= the pre-cutover tip. The timer is stopped before the
+#      first DROP and started again on exit; a writer that does not finish
+#      refuses the cutover with nothing dropped.
 #
 # Run: bash scripts/ops/d3-lecur-v2-rebuild-test.sh
 set -uo pipefail
@@ -90,7 +96,32 @@ case "$sql" in
 esac
 exit 0
 STUB
-chmod +x "$TMP/bin/fake-ch"
+# systemctl, pgrep and sleep shims. systemctl appends what it is asked to do to
+# the SAME log as fake-ch, so "the timer stopped before the first DROP" is an
+# ordering of log lines. TIMER_ACTIVE: the catch-up timer is enabled.
+# SERVICE_BUSY_POLLS: is-active says the catch-up service is running that many
+# times, then idle. BACKFILL_RUNNING: pgrep finds a ch-backfill, always.
+cat > "$TMP/bin/fake-systemctl" <<'STUB'
+#!/usr/bin/env bash
+case "$1 ${*: -1}" in
+  "is-active ch-live-catchup.timer") [ -n "${TIMER_ACTIVE:-}" ] && exit 0; exit 3 ;;
+  "is-active ch-live-catchup.service")
+    n=$(( $(cat "$CH_LOG.polls" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$CH_LOG.polls"
+    [ "$n" -le "${SERVICE_BUSY_POLLS:-0}" ] && exit 0; exit 3 ;;
+  "stop ch-live-catchup.timer"|"start ch-live-catchup.timer") echo "systemctl $*" >> "$CH_LOG" ;;
+esac
+exit 0
+STUB
+cat > "$TMP/bin/pgrep" <<'STUB'
+#!/usr/bin/env bash
+[ -n "${BACKFILL_RUNNING:-}" ] && exit 0
+exit 1
+STUB
+cat > "$TMP/bin/sleep" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+chmod +x "$TMP/bin/fake-ch" "$TMP/bin/fake-systemctl" "$TMP/bin/pgrep" "$TMP/bin/sleep"
 
 # d3 <case-name> [ENV=VAL …] -- <phase args…>
 # Leaves the statement log in $CH_LOG, stdout+stderr in $OUT, status in $RC.
@@ -101,7 +132,9 @@ d3() {
   shift   # the --
   CH_LOG="$TMP/ch.$name.log"; : > "$CH_LOG"
   OUT="$TMP/out.$name"
-  env -u D3_FORCE_CUTOVER -u CH_FAIL_V2 \
+  rm -f "$CH_LOG.polls"
+  env -u D3_FORCE_CUTOVER -u CH_FAIL_V2 -u TIMER_ACTIVE -u SERVICE_BUSY_POLLS -u BACKFILL_RUNNING \
+      PATH="$TMP/bin:$PATH" D3_SYSTEMCTL="$TMP/bin/fake-systemctl" \
       CH_LOG="$CH_LOG" CH="$TMP/bin/fake-ch" \
       D3_STATE="$TMP/state.$name" CH_FLAGS_DIR="$TMP/flags" \
       V1_COV="0\t0\t0" V2_COV="0\t0\t0" TIP=63700000 \
@@ -334,6 +367,47 @@ if [ "$RC" -eq 0 ] && grep -q 'RENAME TABLE' "$TMP/ch.mvok.log"; then
 else
   bad "reproject mark == mv-created-at-tip + 1 was refused (rc=$RC)"
   sed 's/^/       /' "$OUT"
+fi
+
+# ─── 9. cutover pauses the below-tip lake writers ───────────────────
+GOOD=(V1_COV='900000000\t2\t63700000' V2_COV='900000001\t2\t63700000')
+line_of() { grep -n -m1 -- "$1" "$CH_LOG" | cut -d: -f1; }
+
+d3 quiesce "${GOOD[@]}" TIMER_ACTIVE=1 SERVICE_BUSY_POLLS=2 -- cutover
+stop_at="$(line_of 'systemctl stop ch-live-catchup.timer')"
+drop_at="$(line_of 'DROP TABLE')"
+insert_at="$(line_of 'INSERT INTO stellar.ledger_entries_current')"
+start_at="$(line_of 'systemctl start ch-live-catchup.timer')"
+if [ "$RC" -eq 0 ] && [ -n "$stop_at" ] && [ -n "$drop_at" ] && [ "$stop_at" -lt "$drop_at" ]; then
+  ok "catch-up timer stopped before the first DROP, after waiting out a running catch-up"
+else
+  bad "catch-up timer not stopped before the first DROP (rc=$RC stop=$stop_at drop=$drop_at)"
+  sed 's/^/       /' "$OUT"
+fi
+if [ -n "$insert_at" ] && [ -n "$start_at" ] && [ "$start_at" -gt "$insert_at" ]; then
+  ok "catch-up timer started again after the catch-up INSERT"
+else
+  bad "catch-up timer not restarted after the cutover (insert=$insert_at start=$start_at)"
+fi
+
+d3 quiesce_busy "${GOOD[@]}" TIMER_ACTIVE=1 BACKFILL_RUNNING=1 D3_QUIESCE_WAIT_SECONDS=30 -- cutover
+if [ "$RC" -ne 0 ]; then
+  ok "a ch-backfill that never finishes ⇒ non-zero exit"
+else
+  bad "cutover ran with a below-tip lake writer still running"
+fi
+no_ddl quiesce_busy "running ch-backfill"
+if grep -q 'systemctl start ch-live-catchup.timer' "$CH_LOG"; then
+  ok "refused cutover still restarts the catch-up timer"
+else
+  bad "refused cutover left the catch-up timer stopped"
+fi
+
+d3 quiesce_off "${GOOD[@]}" -- cutover
+if [ "$RC" -eq 0 ] && ! grep -q 'systemctl' "$CH_LOG"; then
+  ok "no catch-up timer on this host ⇒ cutover proceeds and starts nothing"
+else
+  bad "cutover touched a timer that was not active (rc=$RC)"
 fi
 
 echo "d3-lecur-v2-rebuild-test: $pass passed, $fail failed"
