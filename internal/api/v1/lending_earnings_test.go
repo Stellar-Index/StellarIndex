@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
@@ -95,6 +96,7 @@ func TestLendingAccountEarnings_ExactAndWithheld(t *testing.T) {
 			Data: blend.ReserveData{
 				BRate: big.NewInt(1_100_000_000_000), DRate: big.NewInt(1_500_000_000_000),
 				IRMod: new(big.Int), BSupply: new(big.Int), DSupply: new(big.Int), BackstopCredit: new(big.Int), Version: blend.PoolV2,
+				LastTime: 1_700_000_000,
 			},
 		}}},
 		positions: clickhouse.LendingAccountPositions{
@@ -131,6 +133,9 @@ func TestLendingAccountEarnings_ExactAndWithheld(t *testing.T) {
 	if supply.Side != "supply" || !supply.Reconciled || strOrNull(supply.CurrentValue) != "20291418481080506777" ||
 		strOrNull(supply.Accrued) != "1844674407370955161" || supply.Decimals == nil || *supply.Decimals != 7 {
 		t.Fatalf("supply = %+v", supply)
+	}
+	if supply.RateAsOf == nil || time.Time(*supply.RateAsOf).Unix() != 1_700_000_000 {
+		t.Fatalf("supply rate_as_of = %v", supply.RateAsOf)
 	}
 	if borrow.Side != "borrow" || borrow.Reconciled || borrow.Accrued != nil || strOrNull(borrow.Reason) != "balance_mismatch" ||
 		borrow.NetFlow != "500" || strOrNull(borrow.FoldedTokens) != "400" || strOrNull(borrow.OnchainTokens) != "401" ||

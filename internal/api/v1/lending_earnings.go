@@ -50,7 +50,8 @@ const (
 )
 
 const lendingEarningsNote = "accrued is current_value - net_flow, served only when the token balance folded from this account's " +
-	"events equals its current on-chain balance (reconciled); otherwise it is null and reason names why. net_flow is " +
+	"events equals its current on-chain balance (reconciled); otherwise it is null and reason names why. A pool leg is valued at " +
+	"the reserve's last on-chain rate update (rate_as_of). net_flow is " +
 	"underlying deposited minus withdrawn (supply), borrowed minus repaid (borrow), or backstop tokens deposited minus " +
 	"withdrawn (backstop); a backstop's accrued includes emissions claimed into it. Emission claims are sums of the " +
 	"claim events projected so far and are a lower bound."
@@ -75,10 +76,13 @@ type LendingEarningsLeg struct {
 	NetFlow       string  `json:"net_flow"`
 	FoldedTokens  *string `json:"folded_tokens"`  // b-, d- or backstop share tokens folded from events
 	OnchainTokens *string `json:"onchain_tokens"` // the same balance read from contract storage
-	CurrentValue  *string `json:"current_value"`  // onchain_tokens in the asset at the current rate or share price
-	Accrued       *string `json:"accrued"`        // interest earned (supply), interest paid (borrow), earned (backstop)
-	Reconciled    bool    `json:"reconciled"`
-	Reason        *string `json:"reason"`
+	CurrentValue  *string `json:"current_value"`  // onchain_tokens in the asset at the stored rate or share price
+	// RateAsOf is when the reserve's stored b_rate/d_rate was last updated on chain; current_value and accrued are true as of
+	// then (the rate moves only when the reserve is touched). Null for a backstop leg or an unread rate.
+	RateAsOf   *WireTime `json:"rate_as_of"`
+	Accrued    *string   `json:"accrued"` // interest earned (supply), interest paid (borrow), earned (backstop)
+	Reconciled bool      `json:"reconciled"`
+	Reason     *string   `json:"reason"`
 }
 
 // LendingEmissionsClaim is the pool emissions one account claimed from one pool, in the pool's emission token.
@@ -308,6 +312,9 @@ func poolFoldLegs(protocol string, f timescale.BlendPositionFold, st clickhouse.
 			continue
 		}
 		leg := LendingEarningsLeg{Protocol: protocol, Pool: f.Pool, Side: sd.side, Asset: strRef(f.Asset), Decimals: decimals}
+		if haveRate {
+			leg.RateAsOf = reserveLastUpdate(st.Data.LastTime)
+		}
 		in := legInputs{moved: sd.moved, behind: behind, value: func(n *big.Int) (*big.Int, bool) {
 			if !haveRate {
 				return nil, false
