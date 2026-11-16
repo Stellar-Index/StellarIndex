@@ -459,3 +459,24 @@ func TestSponsorshipTotalsFollower_GapStopsAtTheEventsWatermark(t *testing.T) {
 		t.Fatalf("refreshed %v, want %v", c.refreshed, want)
 	}
 }
+
+// A lake has no ledger 1, so a first totals refresh that starts there is refused as a hole forever.
+func TestTotalsRange_FirstRunStartsAtTheLakeFloor(t *testing.T) {
+	cases := []struct {
+		name                      string
+		wm, ev, from, to, lakeMin uint32
+		wantLo, wantLast          uint32
+	}{
+		{name: "first run starts at the lake's first ledger", ev: 65_155_190, lakeMin: 2, wantLo: 2, wantLast: 65_155_190},
+		{name: "resume ignores the lake floor", wm: 500, ev: 900, lakeMin: 2, wantLo: 501, wantLast: 900},
+		{name: "explicit from wins", ev: 900, from: 40, lakeMin: 2, wantLo: 40, wantLast: 900},
+		{name: "to below the events watermark clamps", wm: 500, ev: 900, to: 700, lakeMin: 2, wantLo: 501, wantLast: 700},
+		{name: "to above the events watermark does not extend", wm: 500, ev: 900, to: 5000, lakeMin: 2, wantLo: 501, wantLast: 900},
+	}
+	for _, tc := range cases {
+		lo, last := totalsRange(tc.wm, tc.ev, tc.from, tc.to, tc.lakeMin)
+		if lo != tc.wantLo || last != tc.wantLast {
+			t.Errorf("%s: totalsRange = [%d,%d], want [%d,%d]", tc.name, lo, last, tc.wantLo, tc.wantLast)
+		}
+	}
+}
