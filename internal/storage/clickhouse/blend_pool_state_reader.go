@@ -29,10 +29,11 @@ type BlendPoolState struct {
 	Reserves []BlendReserveState
 }
 
-// PoolInstance is a lending pool's decoded instance storage: its PoolConfig and admin ("" when absent).
+// PoolInstance is a lending pool's decoded instance storage: its PoolConfig, admin and backstop ("" when absent).
 type PoolInstance struct {
-	Config blend.PoolConfig
-	Admin  string
+	Config   blend.PoolConfig
+	Admin    string
+	Backstop string
 }
 
 // blendReserveStateQuery is a batched PK-prefix probe of ledger_entries_current's (entry_type, key_xdr) key; do not fold the latest entry
@@ -304,31 +305,39 @@ func poolInstanceFromStorage(val xdr.ScVal) (PoolInstance, bool) {
 			if a, err := scval.AsAddressStrkey(e.Val); err == nil {
 				out.Admin = a
 			}
+		case "Backstop":
+			if a, err := scval.AsAddressStrkey(e.Val); err == nil {
+				out.Backstop = a
+			}
 		}
 	}
 	return out, found
 }
 
-// poolDataKeyXDR builds the base64 LedgerKey of a persistent PoolDataKey::<variant>
-// (asset) entry, matching key_xdr verbatim: Vec[Symbol(variant), Address(asset)].
+// poolDataKeyXDR builds the base64 LedgerKey of a persistent PoolDataKey::<variant>(asset) entry: Vec[Symbol(variant), Address(asset)].
 func poolDataKeyXDR(poolID xdr.ContractId, variant string, assetID xdr.ContractId) (string, error) {
-	pid := poolID
+	return contractDataKeyXDR(poolID, variant, contractAddressVal(assetID))
+}
+
+// contractDataKeyXDR builds the base64 LedgerKey of a persistent `<variant>(arg)` enum key, matching key_xdr verbatim:
+// Vec[Symbol(variant), arg].
+func contractDataKeyXDR(contract xdr.ContractId, variant string, arg xdr.ScVal) (string, error) {
 	sym := xdr.ScSymbol(variant)
-	assetAddr := xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &assetID}
-	vec := &xdr.ScVec{
-		{Type: xdr.ScValTypeScvSymbol, Sym: &sym},
-		{Type: xdr.ScValTypeScvAddress, Address: &assetAddr},
-	}
-	key := xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &vec}
+	vec := &xdr.ScVec{{Type: xdr.ScValTypeScvSymbol, Sym: &sym}, arg}
 	lk := xdr.LedgerKey{
 		Type: xdr.LedgerEntryTypeContractData,
 		ContractData: &xdr.LedgerKeyContractData{
-			Contract:   xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &pid},
-			Key:        key,
+			Contract:   xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &contract},
+			Key:        xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &vec},
 			Durability: xdr.ContractDataDurabilityPersistent,
 		},
 	}
 	return xdr.MarshalBase64(lk)
+}
+
+func contractAddressVal(id xdr.ContractId) xdr.ScVal {
+	addr := xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &id}
+	return xdr.ScVal{Type: xdr.ScValTypeScvAddress, Address: &addr}
 }
 
 // contractIDFromStrkey decodes a C-strkey into an xdr.ContractId.
