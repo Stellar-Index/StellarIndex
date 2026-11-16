@@ -33,7 +33,7 @@ const reconcileStreamWindow = 250_000
 func (s ReconcileEventStreamer) StreamContractEvents(ctx context.Context, from, to uint32, contractIDs, topic0Syms []string, fn func(events.Event) error) error {
 	where := s.filterWhere(contractIDs, topic0Syms)
 	return forEachLedgerWindow(from, to, reconcileStreamWindow, func(lo, hi uint32) error {
-		return streamContractEventsWhere(ctx, s.Addr, lo, hi, contractIDs, where, false, s.NeedOpArgs, s.NeedStateWriteKeys, fn)
+		return streamContractEventsWhere(ctx, s.Addr, lo, hi, contractIDs, where, false, s.NeedOpArgs, s.NeedStateWriteKeys, false, fn)
 	})
 }
 

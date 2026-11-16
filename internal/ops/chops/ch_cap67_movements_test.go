@@ -289,7 +289,7 @@ func TestFollowTick(t *testing.T) {
 func TestDeriveCap67MovementsWindow_DryRunCountsFannedOutRows(t *testing.T) {
 	orig := streamCap67TransferEvents
 	t.Cleanup(func() { streamCap67TransferEvents = orig })
-	streamCap67TransferEvents = func(_ context.Context, _ string, _, _ uint32, _, _, _ []string, _, _, _ bool, fn func(events.Event) error) error {
+	streamCap67TransferEvents = func(_ context.Context, _ string, _, _ uint32, _, _, _ []string, _, _, _, _ bool, fn func(events.Event) error) error {
 		for _, sep0011 := range []string{"native", ""} {
 			if err := fn(cap67TransferEvent(t, sep0011)); err != nil {
 				return err
@@ -326,7 +326,7 @@ func TestDeriveCap67MovementsWindow_IncludesSupplyKinds(t *testing.T) {
 		{"burn", cap67SupplyEvent(t, "burn", cap67USDCSAC, cap67USDCName, scI128(1))},
 		{"clawback", cap67SupplyEvent(t, "clawback", cap67USDCSAC, cap67USDCName, scI128(1))},
 	}
-	streamCap67TransferEvents = func(_ context.Context, _ string, _, _ uint32, _, topic0Syms, _ []string, _, _, _ bool, fn func(events.Event) error) error {
+	streamCap67TransferEvents = func(_ context.Context, _ string, _, _ uint32, _, topic0Syms, _ []string, _, _, _, _ bool, fn func(events.Event) error) error {
 		for _, l := range lake {
 			if !slices.Contains(topic0Syms, l.sym) {
 				continue

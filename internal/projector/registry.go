@@ -75,6 +75,7 @@ func buildSource(name string, oracle config.OracleConfig, watchedSEP41 []string,
 		Topic0Syms:          p.Topic0Syms,
 		ExcludeTopic0Syms:   p.ExcludeTopic0Syms,
 		NeedsStateWriteKeys: p.NeedsStateWriteKeys,
+		NeedsTxIndex:        p.NeedsTxIndex,
 		Genesis:             p.Genesis,
 	}
 	if p.ContractIDs != nil {

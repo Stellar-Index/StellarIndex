@@ -312,7 +312,7 @@ func lendingRegistry(ctx context.Context, addr string, thru uint32) ([]clickhous
 	sort.Strings(factories)
 	pools := map[string]string{}
 	if thru >= blend.FactoryGenesisLedger {
-		err := clickhouse.StreamContractEventsFiltered(ctx, addr, blend.FactoryGenesisLedger, thru, factories, []string{blend.EventDeploy}, nil, false, false, false,
+		err := clickhouse.StreamContractEventsFiltered(ctx, addr, blend.FactoryGenesisLedger, thru, factories, []string{blend.EventDeploy}, nil, false, false, false, false,
 			func(ev events.Event) error {
 				c, err := lendingPoolFromDeploy(ev)
 				if err != nil {

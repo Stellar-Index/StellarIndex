@@ -319,3 +319,23 @@ func encodedContractAddress(t *testing.T, fill byte) (string, string) {
 	}
 	return b64, strkey
 }
+
+// TxIndex is the event's 0-based apply position, and an event without one (0 = unknown) stays nil, never position 0.
+func TestDecodeCarriesTxIndex(t *testing.T) {
+	t.Parallel()
+	d := NewDecoder()
+	ev := testEvent(MainnetFixedPool, "set_status")
+	ev.Value = encode(t, u32(1))
+	if got := mustDecode(t, d, ev); got.TxIndex != nil {
+		t.Errorf("TxIndex without an apply order = %d, want nil", *got.TxIndex)
+	}
+	for _, tc := range []struct {
+		in   int
+		want uint32
+	}{{1, 0}, {7, 6}} {
+		ev.TransactionIndex = tc.in
+		if got := mustDecode(t, d, ev); got.TxIndex == nil || *got.TxIndex != tc.want {
+			t.Errorf("TransactionIndex %d decoded to TxIndex %v, want %d", tc.in, got.TxIndex, tc.want)
+		}
+	}
+}

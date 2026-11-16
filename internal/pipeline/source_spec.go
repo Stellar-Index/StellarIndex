@@ -82,7 +82,9 @@ type ProjectorSpec struct {
 	// built decoder, for gate sets that grow in-stream.
 	LiveContractIDs     func(dispatcher.Decoder) func() []string
 	NeedsStateWriteKeys bool
-	Genesis             uint32
+	// NeedsTxIndex: the source persists each event's transaction apply position (events.Event.TransactionIndex).
+	NeedsTxIndex bool
+	Genesis      uint32
 	// SoleWriter: the projector owns the write even in Phase-3 parallel mode, so the dispatcher skips it. Set only after the source's full-history re-derive landed and it is in the ADR-0033 reconcile catalogue;
 	// VerifySoleWriterCAGGCoverage then gates the aggregates over its tables.
 	SoleWriter bool
@@ -329,7 +331,7 @@ var specs = []SourceSpec{
 		NewDecoder: gatedDecoder(blnt.SourceName, blnt.NewDecoder),
 		// A contract-id prefilter is required instead of firehoseExcludeSyms: BLNT V3's pool-level
 		// clawback event intentionally shares a CAP-67 symbol that the global firehose filter removes.
-		Projector: &ProjectorSpec{LiveContractIDs: liveGatedSet, Genesis: blnt.GenesisLedger},
+		Projector: &ProjectorSpec{LiveContractIDs: liveGatedSet, Genesis: blnt.GenesisLedger, NeedsTxIndex: true},
 	},
 	{
 		Name:       cctp.SourceName,

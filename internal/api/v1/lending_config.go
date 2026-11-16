@@ -239,10 +239,10 @@ var lendingConfigHistoryKinds = map[string]bool{
 	"queue_set_reserve": true, "cancel_set_reserve": true, "set_reserve": true, "update_pool": true, "set_status": true, "set_admin": true,
 }
 
-// encodeLendingConfigCursor renders a row's keyset position as "<ts unixnano>.<ledger>.<tx_hash>.<op_index>.<event_index>.<kind>".
+// encodeLendingConfigCursor renders a row's keyset position as "<ts unixnano>.<ledger>.<tx_hash>.<op_index>.<event_index>.<kind>.<tx_order>".
 func encodeLendingConfigCursor(c timescale.LendingConfigChange) string {
 	return strconv.FormatInt(c.Ts.UTC().UnixNano(), 10) + "." + u32String(c.Ledger) + "." + c.TxHash + "." +
-		u32String(c.OpIndex) + "." + u32String(c.EventIndex) + "." + c.Kind
+		u32String(c.OpIndex) + "." + u32String(c.EventIndex) + "." + c.Kind + "." + strconv.FormatInt(c.TxOrder, 10)
 }
 
 // parseLendingCursor decodes ?cursor= naming one of kinds; ok=false after a problem+json on a malformed value.
@@ -261,7 +261,11 @@ func parseLendingCursor(w http.ResponseWriter, r *http.Request, kinds map[string
 
 func decodeLendingConfigCursor(raw string, kinds map[string]bool) (timescale.LendingConfigCursor, bool) {
 	parts := strings.Split(raw, ".")
-	if len(parts) != 6 || len(parts[2]) != 64 || !kinds[parts[5]] {
+	if len(parts) != 7 || len(parts[2]) != 64 || !kinds[parts[5]] {
+		return timescale.LendingConfigCursor{}, false
+	}
+	txOrder, err := strconv.ParseInt(parts[6], 10, 32)
+	if err != nil || txOrder < -1 {
 		return timescale.LendingConfigCursor{}, false
 	}
 	nanos, err := strconv.ParseInt(parts[0], 10, 64)
@@ -277,6 +281,6 @@ func decodeLendingConfigCursor(raw string, kinds map[string]bool) (timescale.Len
 		n[i] = uint32(v)
 	}
 	return timescale.LendingConfigCursor{
-		Ts: time.Unix(0, nanos).UTC(), Ledger: n[0], TxHash: parts[2], OpIndex: n[1], EventIndex: n[2], Kind: parts[5],
+		Ts: time.Unix(0, nanos).UTC(), Ledger: n[0], TxHash: parts[2], OpIndex: n[1], EventIndex: n[2], Kind: parts[5], TxOrder: txOrder,
 	}, true
 }

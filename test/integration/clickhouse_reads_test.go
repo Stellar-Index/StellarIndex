@@ -977,7 +977,7 @@ func TestClickHouseStringTopicPrefilterAdmitsPhoenixPool(t *testing.T) {
 	var streamed []events.Event
 	if err := chstore.StreamContractEventsFiltered(ctx, addr, lo, hi,
 		[]string{factoryContract}, []string{phoenix.EventActionCreate}, nil,
-		true, false, false,
+		true, false, false, false,
 		func(ev events.Event) error {
 			streamed = append(streamed, ev)
 			return nil
