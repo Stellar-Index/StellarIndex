@@ -378,6 +378,19 @@ func (f *sponsorshipTotalsFollower) run(ctx context.Context, lo, last, window ui
 	}
 }
 
+// totalsRange is the ledger range a totals refresh covers: from its own watermark (see resolveStart for the first run) through the
+// events watermark, with -from and a lower -to overriding either end.
+func totalsRange(wm, ev, from, to, lakeMin uint32) (lo, last uint32) {
+	lo, last = resolveStart(wm, 1, lakeMin), ev
+	if from > 0 {
+		lo = from
+	}
+	if to > 0 && to < last {
+		last = to
+	}
+	return lo, last
+}
+
 // runTotalsOnly fills the totals buckets from already-derived events, resumable from their watermark.
 func runTotalsOnly(ctx context.Context, addr string, from, to, window uint32, dryRun bool) error {
 	ev, err := sponsorshipEventsWatermark(ctx, addr)
@@ -388,13 +401,13 @@ func runTotalsOnly(ctx context.Context, addr string, from, to, window uint32, dr
 	if err != nil {
 		return fmt.Errorf("read sponsorship_totals watermark: %w", err)
 	}
-	lo, last := wm+1, ev
-	if from > 0 {
-		lo = from
+	var lakeMin uint32
+	if wm == 0 && from == 0 {
+		if lakeMin, err = clickhouse.LakeMinLedger(ctx, addr); err != nil {
+			return fmt.Errorf("read lake min ledger: %w", err)
+		}
 	}
-	if to > 0 && to < last {
-		last = to
-	}
+	lo, last := totalsRange(wm, ev, from, to, lakeMin)
 	if last < lo {
 		fmt.Fprintf(os.Stderr, "ch-entry-history: totals: nothing to refresh (from %d, events watermark %d)\n", lo, ev)
 		return nil
