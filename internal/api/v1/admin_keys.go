@@ -292,6 +292,9 @@ func (s *Server) handleAdminKeysRevoke(w http.ResponseWriter, r *http.Request) {
 			"path must be /v1/admin/keys/{keyID}")
 		return
 	}
+	if refuseSecretAsKeyID(w, r, keyID) {
+		return
+	}
 	identifier := r.URL.Query().Get("identifier")
 	if identifier == "" {
 		writeProblem(w, r,

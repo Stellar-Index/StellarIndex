@@ -14,6 +14,7 @@ Rules: `configs/prometheus/rules.r1/ingestion.yml` and `ledgerstream-tier.yml` (
 - [`stellarindex_ingestion_all_sources_stopped`](#stellarindex_ingestion_all_sources_stopped)
 - [`stellarindex_ingestion_source_stopped`](#stellarindex_ingestion_source_stopped)
 - [`stellarindex_ingestion_decode_error`](#stellarindex_ingestion_decode_error)
+- [`stellarindex_ingestion_decode_error_ratio_high`](#stellarindex_ingestion_decode_error_ratio_high)
 - [`stellarindex_decoder_panicked`](#stellarindex_decoder_panicked)
 - [`stellarindex_ingestion_lag_high`](#stellarindex_ingestion_lag_high)
 - [`stellarindex_ledgerstream_tier_both_missing`](#stellarindex_ledgerstream_tier_both_missing)
@@ -158,6 +159,12 @@ Fix:
 4. Verify `rate(stellarindex_source_events_total{source=...}[5m]) > 0` within 2 min.
 
 Immediately after a deploy a restart shows zero events briefly; every tier's sustain covers it. Escalate: several sources stop ([all_sources_stopped](#stellarindex_ingestion_all_sources_stopped)).
+
+## stellarindex_ingestion_decode_error_ratio_high
+
+P3: per source, `increase(stellarindex_source_decode_errors_total[1h]) / increase(stellarindex_source_matched_events_total[1h]) > 0.005` with at least 10 failures in the hour, for 15 min. It catches what the rate alert below cannot: a decoder rejecting one shape of input on a busy source (SDEX claim atoms after a protocol upgrade) or everything on a quiet one. For `sdex`, `band` and `soroswap_router` no projector alert covers the loss, and the SDEX reconcile mirrors the same reject, so it reads zero.
+
+Check, causes and fix are those of [`stellarindex_ingestion_decode_error`](#stellarindex_ingestion_decode_error). After the decoder is fixed, re-drive the affected range: `ch-rebuild` (`-sdex`) for a source the dispatcher writes alone, `stellarindex-ops projector-replay -source <source>` for a projected one.
 
 ## stellarindex_ingestion_decode_error
 

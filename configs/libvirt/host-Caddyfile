@@ -31,7 +31,11 @@
 		format filter {
 			wrap json
 			fields {
-				request>uri regexp "[?].*" "?<redacted>"
+				request>uri multi_regexp {
+					regexp "[?].*" "?<redacted>"
+					# An API key pasted where a key id belongs (DELETE /v1/account/keys/sip_…).
+					regexp "sip_[0-9A-Za-z]+" "sip_<redacted>"
+				}
 				request>headers>X-Api-Key delete
 				request>headers>Referer delete
 				request>headers>X-Reason delete
@@ -57,7 +61,11 @@
 		format filter {
 			wrap json
 			fields {
-				request>uri regexp "[?].*" "?<redacted>"
+				request>uri multi_regexp {
+					regexp "[?].*" "?<redacted>"
+					# An API key pasted where a key id belongs (DELETE /v1/account/keys/sip_…).
+					regexp "sip_[0-9A-Za-z]+" "sip_<redacted>"
+				}
 				request>headers>X-Api-Key delete
 				request>headers>Referer delete
 				request>headers>X-Reason delete

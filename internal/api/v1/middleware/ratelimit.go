@@ -273,7 +273,7 @@ func writeThrottleUnavailableProblem(w http.ResponseWriter, r *http.Request) {
 		Title:    "Throttle layer unavailable",
 		Status:   http.StatusServiceUnavailable,
 		Detail:   "the abuse-prevention layer has been unreachable for an extended period; retry in a moment",
-		Instance: r.URL.RequestURI(),
+		Instance: RequestInstance(r),
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.Header().Set("Cache-Control", "no-store")
@@ -289,7 +289,7 @@ func writeRateLimitProblem(w http.ResponseWriter, r *http.Request, retryAfter in
 		Title:    "Rate limit exceeded",
 		Status:   http.StatusTooManyRequests,
 		Detail:   "Retry after " + strconv.Itoa(retryAfter) + "s",
-		Instance: r.URL.RequestURI(),
+		Instance: RequestInstance(r),
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	// Override the per-route cache directive: a cached 429 would replay the denial to other

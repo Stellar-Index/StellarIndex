@@ -72,3 +72,59 @@ tests:
                 whole cycle. Either the API is down or throttling (4xx/5xx),
                 the access key expired, the monthly quota ran out, or the
                 indexer host lost outbound HTTPS.
+
+  # coinmarketcap answers every poll with zero rows from process start: no
+  # last_success series ever exists, so only the never-succeeded rule can fire.
+  - interval: 1m
+    input_series:
+      - series: 'stellarindex_external_poller_started_unix{source="coinmarketcap"}'
+        values: '0+0x60'
+      - series: 'stellarindex_external_poller_polls_total{source="coinmarketcap",outcome="empty"}'
+        values: '0+1x60'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: stellarindex_external_poller_never_succeeded
+        exp_alerts: []
+      - eval_time: 45m
+        alertname: stellarindex_external_poller_stale
+        exp_alerts: []
+      - eval_time: 45m
+        alertname: stellarindex_external_poller_never_succeeded
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: external-poller
+              source: coinmarketcap
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_external_poller_never_succeeded
+              summary: "external poller coinmarketcap has not succeeded once since the process started"
+              description: |
+                Poller coinmarketcap has been running past its
+                staleness budget with no successful poll at all, so the
+                staleness alerts have no series to judge. It is contributing
+                nothing. stellarindex_external_poller_polls_total by outcome
+                says why: error (upstream or auth), empty (upstream answers
+                with no rows), idle (no configured pair applies).
+
+  # A poller that has succeeded is the staleness rules' business, however old the start stamp.
+  - interval: 1m
+    input_series:
+      - series: 'stellarindex_external_poller_started_unix{source="coingecko"}'
+        values: '0+0x200'
+      - series: 'stellarindex_external_poller_last_success_unix{source="coingecko"}'
+        values: '0+60x200'
+    alert_rule_test:
+      - eval_time: 180m
+        alertname: stellarindex_external_poller_never_succeeded
+        exp_alerts: []
+
+  # An hourly poller two failed polls in is inside its 2 h budget.
+  - interval: 1m
+    input_series:
+      - series: 'stellarindex_external_poller_started_unix{source="tiingo"}'
+        values: '0+0x200'
+    alert_rule_test:
+      - eval_time: 100m
+        alertname: stellarindex_external_poller_never_succeeded
+        exp_alerts: []

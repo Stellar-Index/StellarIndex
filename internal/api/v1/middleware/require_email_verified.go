@@ -41,7 +41,7 @@ func writeEmailUnverified(w http.ResponseWriter, r *http.Request) {
 		"title":    "Email verification required",
 		"status":   http.StatusForbidden,
 		"detail":   "this API key was minted via /v1/signup but the post-signup verification email hasn't been confirmed yet. Click the link in the email we sent, or contact support if you didn't receive it.",
-		"instance": r.URL.Path,
+		"instance": RedactedPath(r),
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {

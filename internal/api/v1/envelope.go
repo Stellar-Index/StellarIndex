@@ -206,7 +206,7 @@ func writeProblemCoverage(
 		Title:           title,
 		Status:          status,
 		Detail:          detail,
-		Instance:        r.URL.RequestURI(),
+		Instance:        middleware.RequestInstance(r),
 		RequestID:       middleware.RequestIDFrom(r),
 		CoverageFrom:    wireTimePtr(coverageFrom),
 		OutsideCoverage: outsideCoverage,

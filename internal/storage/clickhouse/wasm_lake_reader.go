@@ -115,8 +115,19 @@ func (r *ExplorerReader) wasmModuleView(ctx context.Context, wasmHash xdr.Hash) 
 	}
 }
 
+// wasmFillClass is the refresh-gate class of a cold per-hash fill.
+const wasmFillClass = "contract_wasm"
+
 func (r *ExplorerReader) fillWasmModule(ctx context.Context, wasmHash xdr.Hash, key string) (ContractWasmInfo, error) {
 	mod, ok := r.moduleCache.get(key)
+	if _, disassembled := r.disasmCache.get(key); !ok || !disassembled {
+		// A cold fill is a lake read plus two wabt processes, detached from every caller, on a route anyone can call with
+		// any contract: without a slot, distinct hashes would each start one.
+		if !r.refreshGate.TryAcquireClass(wasmFillClass) {
+			return ContractWasmInfo{}, ErrRefreshSaturated
+		}
+		defer r.refreshGate.ReleaseClass(wasmFillClass)
+	}
 	if !ok {
 		code, found, err := r.wasmCodeByHash(ctx, wasmHash)
 		if err != nil {

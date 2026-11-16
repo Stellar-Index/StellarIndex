@@ -696,6 +696,20 @@ func (s *Server) handleAccountKeysList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out, Flags{})
 }
 
+// refuseSecretAsKeyID answers 400 when the path carries a plaintext key where a key id belongs. The caller is
+// trying to kill a leaked key; a 204 or a 404 would read as "done" or "already gone" while the key stays live.
+func refuseSecretAsKeyID(w http.ResponseWriter, r *http.Request, keyID string) bool {
+	if !auth.IsKeySecret(keyID) {
+		return false
+	}
+	writeProblem(w, r,
+		"https://api.stellarindex.io/errors/key-id-is-a-secret",
+		"That is the key, not its id", http.StatusBadRequest,
+		"the path takes the key's public id (kid_…, listed by GET /v1/account/keys), not the key or its prefix. "+
+			"Nothing was revoked. If you sent the whole key it has now travelled in a URL: revoke it by its id and mint a replacement")
+	return true
+}
+
 // handleAccountKeysRevoke serves DELETE /v1/account/keys/{keyID}, scoped to the caller's Identifier. Missing key returns 204
 // too, so another account's keyIDs do not leak; revoking the key the request used is 409. Operator audit row only when a key
 // was actually revoked.
@@ -714,6 +728,9 @@ func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request)
 			"https://api.stellarindex.io/errors/missing-key-id",
 			"Missing key id", http.StatusBadRequest,
 			"path must be /v1/account/keys/{keyID}")
+		return
+	}
+	if refuseSecretAsKeyID(w, r, keyID) {
 		return
 	}
 	if subject.KeyID == keyID {

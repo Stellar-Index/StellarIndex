@@ -590,6 +590,10 @@ func (c *Client) RevokeKey(ctx context.Context, keyID string) error {
 	if keyID == "" {
 		return &APIError{Status: 400, Title: "keyID required"}
 	}
+	// A plaintext key here would be sent in a URL and revoke nothing; refuse before any request is made.
+	if strings.HasPrefix(keyID, "sip_") {
+		return &APIError{Status: 400, Title: "keyID is an API key, not a key id (kid_…); nothing was sent or revoked"}
+	}
 	// Server returns 204 No Content on success — no envelope to
 	// decode. Pass nil for the response struct so doJSON skips the
 	// JSON-decode step. PathEscape the keyID so a value containing

@@ -4,6 +4,7 @@
 package v1_test
 
 import (
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -116,5 +117,46 @@ func TestAccountKeysRevoke_OwnerRevokesPostgresRow(t *testing.T) {
 	}
 	if len(platformKeys.revokedIDs) != 1 || platformKeys.revokedIDs[0] != "kid_shared01" {
 		t.Errorf("owner's postgres management row not revoked: revokedIDs = %v, want [kid_shared01]", platformKeys.revokedIDs)
+	}
+}
+
+// A plaintext key pasted where a key id belongs is refused on both revoke routes: nothing is looked up, the answer
+// says nothing was revoked, and the secret is not echoed back.
+func TestKeyRevoke_RefusesAPlaintextKeyAsTheID(t *testing.T) {
+	secret := "sip_" + strings.Repeat("ab", 32)
+	for name, tc := range map[string]struct {
+		subject auth.Subject
+		path    string
+	}{
+		"self-service": {subject: auth.Subject{Identifier: "owner-42", Tier: auth.TierAPIKey, KeyID: "kid_owner"}, path: "/v1/account/keys/" + secret},
+		"operator":     {subject: operatorSelfSubject(), path: "/v1/admin/keys/" + secret + "?identifier=signup-victim"},
+		// The escaped spelling decodes to the same path value and must not slip past the body's redaction.
+		"self-service, percent-encoded": {
+			subject: auth.Subject{Identifier: "owner-42", Tier: auth.TierAPIKey, KeyID: "kid_owner"},
+			path:    "/v1/account/keys/sip%5F" + secret[4:],
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := &fakeAccountStore{}
+			sink := &recordingAuditSink{}
+			ts := newAdminTestServer(t, tc.subject, store, sink)
+			resp := doWithReason(t, http.MethodDelete, ts.URL+tc.path, "leaked", "")
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400: a 204 or 404 reads as revoked or already gone", resp.StatusCode)
+			}
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(body), "key-id-is-a-secret") {
+				t.Errorf("problem does not name the mistake: %s", body)
+			}
+			if strings.Contains(string(body), secret[8:]) {
+				t.Errorf("the answer echoes the plaintext key: %s", body)
+			}
+			if store.revokeCalls != 0 || len(sink.entries) != 0 {
+				t.Errorf("revoke calls = %d, audit rows = %d; want none", store.revokeCalls, len(sink.entries))
+			}
+		})
 	}
 }
