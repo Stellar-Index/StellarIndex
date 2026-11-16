@@ -1669,6 +1669,7 @@ jobs:
           bash configs/ansible/roles/archival-node/files/compute-archive-to_test.sh
           bash configs/ansible/roles/archival-node/files/galexie-append_test.sh
           bash scripts/ops/route-sweep-test.sh
+          bash scripts/ops/dns-perimeter-check-test.sh
           bash scripts/ops/reconcile-supply-vs-horizon-test.sh
       - name: API-smoke textfile self-test
         # stellarindex-smoke.timer ran a 34-GET API smoke with jq shape
