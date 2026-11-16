@@ -93,6 +93,17 @@ export const PROTOCOLS: ProtocolRegistryEntry[] = [
     description: 'Isolated lending pools on Soroban.',
   },
   {
+    name: 'blnt',
+    links: {
+      website: 'https://blnt.trade',
+      source: 'https://github.com/BLNT-Protocol/blnt-contracts-v3',
+    },
+    category: 'lending',
+    label: 'BLNT V3',
+    description:
+      'Blend-derived lending protocol with RWA support and tiered backstops.',
+  },
+  {
     name: 'sorocredit',
     category: 'lending',
     label: 'SoroCredit',

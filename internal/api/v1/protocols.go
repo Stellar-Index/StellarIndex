@@ -727,8 +727,8 @@ func classifyContractKinds(contracts []ProtocolContractView, factories []string)
 	}
 }
 
-// protocolRoster returns meta's full roster plus any ExtraContracts from a sub-module source (the Blend Backstop), tagged Kind="module"
-// and deduped, so their events join the counts.
+// protocolRoster returns meta's full roster plus verified static instances and any ExtraContracts
+// from a sub-module source (the Blend Backstop), deduped so their events join the counts.
 // ok=false means the read failed and the empty roster is not a true empty: the caller must fold it into analytics.status, or the SWR
 // cache overwrites a healthy entry with contract_count 0.
 func (s *Server) protocolRoster(ctx context.Context, meta ProtocolMeta) ([]ProtocolContractView, bool) {
@@ -750,12 +750,26 @@ func (s *Server) rosterErr(ctx context.Context, meta ProtocolMeta) ([]ProtocolCo
 	if err != nil {
 		return nil, err
 	}
-	if len(meta.ExtraContracts) == 0 {
+	if len(meta.StaticInstances) == 0 && len(meta.ExtraContracts) == 0 {
 		return rows, nil
 	}
-	seen := make(map[string]struct{}, len(rows))
+	seen := make(map[string]struct{}, len(rows)+len(meta.StaticInstances)+len(meta.ExtraContracts))
 	for _, c := range rows {
 		seen[c.ContractID] = struct{}{}
+	}
+	for _, c := range meta.StaticInstances {
+		if c.ContractID == "" {
+			continue
+		}
+		if _, dup := seen[c.ContractID]; dup {
+			continue
+		}
+		seen[c.ContractID] = struct{}{}
+		rows = append(rows, ProtocolContractView{
+			ContractID:  c.ContractID,
+			FactoryID:   c.FactoryID,
+			FirstLedger: c.FirstLedger,
+		})
 	}
 	for _, id := range meta.ExtraContracts {
 		if id == "" {
@@ -773,6 +787,11 @@ func (s *Server) rosterErr(ctx context.Context, meta ProtocolMeta) ([]ProtocolCo
 // countedContractTotal resolves meta's contract_count WITHOUT enumerating a roster ([protocolContractCounter]); ok=false means no counter
 // is wired. An error is surfaced: an unreadable count is not a zero.
 func (s *Server) countedContractTotal(ctx context.Context, meta ProtocolMeta) (int, bool, error) {
+	// The counter cannot reveal whether a decoder-discovered row duplicates a static instance.
+	// Use the merged, deduplicated roster whenever static instances are present.
+	if len(meta.StaticInstances) != 0 {
+		return 0, false, nil
+	}
 	counter, has := s.ProtocolContracts.(protocolContractCounter)
 	if !has {
 		return 0, false, nil

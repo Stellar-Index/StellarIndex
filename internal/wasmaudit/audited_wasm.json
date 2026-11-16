@@ -488,6 +488,14 @@
     "audited": "2026-09-30",
     "doc": "docs/operations/wasm-audits/phoenix.md"
   },
+  "d735c3395f59510172cf5cf838823a1389b97cfec6bf24e580e9bd77d2b3e687": {
+    "sources": [
+      "comet"
+    ],
+    "role": "pool",
+    "audited": "2026-11-15",
+    "doc": "docs/operations/wasm-audits/comet.md"
+  },
   "daeb931b9507440b6dc4f73256ac33c6089964f5d035f7eec5fcedc10e732c8e": {
     "sources": [
       "spectra"

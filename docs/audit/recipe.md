@@ -186,7 +186,7 @@ Stellar Index moves no *user* money, but **served prices/amounts/supply/market-c
 - **Tier: RT** (closed-bucket) / **W+DB+RT with convention gaps** (decimals). Closed-bucket via sargable `bucket <= now()-interval` everywhere; no failure-case test found. AdjustPrice applied at most endpoints but **NOT** `/v1/price/at`, `/v1/price/changes` prices, or market-cap `10^7` hardcodes (§7 trap 7).
 
 ### INV-8 — contract identity gating (no attribution on topic bytes alone) (ADR-0035/0040)
-- **Tier: RT + T.** All Soroban decoders gate `Matches()` on contract identity (factory/childgate/curated); comet is a one-pool allowlist. A new `Matches()` on topic bytes alone is forbidden. Re-verify each gate + its foreign-contract-reject test (prior CS-026 was this class).
+- **Tier: RT + T.** All Soroban decoders gate `Matches()` on contract identity (factory/childgate/curated); Comet uses a curated pool allowlist. A new `Matches()` on topic bytes alone is forbidden. Re-verify each gate + its foreign-contract-reject test (prior CS-026 was this class).
 
 ### INV-9 — no Horizon / no stellar-rpc in prod ingest; xdr scoped to scval
 - **Tier: CI** (lint-imports.sh, 4 rule families, baseline shrink-only + growth-guard). Verified live (exit 0, 6 grandfathered).

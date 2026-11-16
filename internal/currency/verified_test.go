@@ -28,6 +28,7 @@ func TestLoadEmbedded(t *testing.T) {
 		{"xlm", "XLM", false},
 		{"btc", "BTC", false},
 		{"aqua", "AQUA", true},
+		{"blnt", "BLNT", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.slug, func(t *testing.T) {
@@ -54,6 +55,22 @@ func TestLoadEmbedded(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestBLNTVerifiedAsset(t *testing.T) {
+	cat, err := LoadEmbedded()
+	if err != nil {
+		t.Fatalf("LoadEmbedded: %v", err)
+	}
+
+	const assetID = "BLNT-GAP2ACGH3O6TRFAERGM4USJ6XWU3U2BFIK224JPV6NI3CUNEEEGTBTFB"
+	v, ok := cat.LookupByStellarAssetID(assetID)
+	if !ok {
+		t.Fatalf("LookupByStellarAssetID(%s): not found", assetID)
+	}
+	if v.Slug != "blnt" || v.Name != "BLNT Protocol" {
+		t.Errorf("BLNT metadata = slug %q name %q", v.Slug, v.Name)
 	}
 }
 

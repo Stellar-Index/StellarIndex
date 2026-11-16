@@ -143,8 +143,8 @@ func TestHandleProtocolsList_Happy(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	d := env.Data
-	if d.TotalProtocols != 20 || len(d.Protocols) != 20 {
-		t.Fatalf("total = %d (len %d), want 20", d.TotalProtocols, len(d.Protocols))
+	if d.TotalProtocols != 21 || len(d.Protocols) != 21 {
+		t.Fatalf("total = %d (len %d), want 21", d.TotalProtocols, len(d.Protocols))
 	}
 
 	blend := protocolRow(t, d.Protocols, "blend")
@@ -401,8 +401,8 @@ func TestHandleProtocols_NilReaderDegradation(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if env.Data.TotalProtocols != 20 {
-		t.Fatalf("total = %d, want 20", env.Data.TotalProtocols)
+	if env.Data.TotalProtocols != 21 {
+		t.Fatalf("total = %d, want 21", env.Data.TotalProtocols)
 	}
 	for _, p := range env.Data.Protocols {
 		// blend carries statically-known Backstop + Emitter module contracts (ExtraContracts);
@@ -411,6 +411,8 @@ func TestHandleProtocols_NilReaderDegradation(t *testing.T) {
 		wantContracts := 0
 		if p.Name == "blend" {
 			wantContracts = 3
+		} else if p.Name == "blnt" {
+			wantContracts = 6
 		}
 		if p.ContractCount != wantContracts || p.Events24h != nil || p.Completeness != nil {
 			t.Errorf("%s should degrade to zero contracts and absent joins: %+v", p.Name, p)
