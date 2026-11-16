@@ -65,16 +65,25 @@ func (h *holeWatch) run(ctx context.Context, cancel context.CancelCauseFunc) {
 // store that cannot be read proves nothing and is left to the read deadline and the retry budget.
 func (h *holeWatch) hole(ctx context.Context, seq uint32) error {
 	key := h.schema.GetObjectKeyFromSequenceNumber(seq)
-	if exists, err := h.store.Exists(ctx, key); err != nil || exists {
+	if !h.absent(ctx, key) {
 		return nil
 	}
-	tip, err := datastore.FindLatestLedgerSequence(ctx, h.store)
-	if err != nil || tip <= seq {
-		return nil
-	}
-	// The object may have landed between the two reads above.
-	if exists, err := h.store.Exists(ctx, key); err != nil || exists {
+	tip, ok := h.tip(ctx)
+	// The object may have landed between the two reads above, so ask again.
+	if !ok || tip <= seq || !h.absent(ctx, key) {
 		return nil
 	}
 	return fmt.Errorf("ledger %d is absent from the datastore, whose latest ledger is %d: a hole below the tip, not a ledger still to be written", seq, tip)
+}
+
+// absent reports that the store answered and holds no object at key; an unreadable store is not an absent object.
+func (h *holeWatch) absent(ctx context.Context, key string) bool {
+	exists, err := h.store.Exists(ctx, key)
+	return err == nil && !exists
+}
+
+// tip is the store's latest ledger; ok is false when it could not be read.
+func (h *holeWatch) tip(ctx context.Context) (uint32, bool) {
+	tip, err := datastore.FindLatestLedgerSequence(ctx, h.store)
+	return tip, err == nil
 }
