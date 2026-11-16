@@ -14,9 +14,12 @@
 #   DOMAIN=stellarindex.io bash scripts/ops/dns-perimeter-check.sh
 #
 # Design notes for whoever changes a record:
-#   * SPF is an EXACT string, not a substring: a second apex SPF record is a
-#     permerror that silently disables SPF everywhere, and a substring match
-#     would not see it. The apex record must stay singular.
+#   * Records are read tag by tag, never by substring: `p=none; sp=reject`
+#     contains "p=reject", a revoked DKIM key is `p=` with nothing after it,
+#     and `+all` ahead of `-all` passes everything. A substring match accepts
+#     all three.
+#   * The apex SPF record must stay singular: a second one is a permerror
+#     that silently disables SPF everywhere.
 #   * CAA is a SUPERSET check: Cloudflare injects its own CAs (comodoca.com,
 #     digicert.com), so equality goes red when it rotates a partner. What
 #     matters is letsencrypt.org: r1's Caddy renews through it, and without
@@ -41,6 +44,13 @@ pass() { printf '  \033[32mok\033[0m   %s\n' "$1"; }
 fail() { printf '  \033[31mFAIL\033[0m %s\n' "$1"; FAILURES=$((FAILURES + 1)); }
 
 q() { dig +short @"$NS" "$1" "$2" 2>/dev/null; }
+
+# tag <record> <name>: the value of one `name=value` tag in a `;`-separated
+# record, whitespace removed. Prints nothing when the tag is absent. The awk
+# reads to the end: an early exit under pipefail SIGPIPEs the writers.
+tag() {
+  printf '%s' "$1" | tr ';' '\n' | tr -d ' \t' | awk -F= -v k="$2" '$1 == k && !seen { seen = 1; sub(/^[^=]*=/, ""); print }'
+}
 
 echo "DNS perimeter check: $DOMAIN (authoritative: $NS)"
 echo
@@ -72,8 +82,15 @@ elif [ -z "$spf" ]; then
   fail "apex SPF: absent — receivers have no instruction and cannot reject a spoof"
 else
   pass "apex SPF: $spf"
+  # The first `all` decides every sender no earlier mechanism matched, so it
+  # must be the only one, the last term, and a hard fail.
+  spf_alls="$(printf '%s\n' "$spf" | tr ' ' '\n' | grep -E '^[-+~?]?all$' | tr '\n' ' ')"
   case "$spf" in
-    *" -all") pass "apex SPF ends in -all (hard fail)" ;;
+    *" -all") if [ "$spf_alls" = "-all " ]; then
+                pass "apex SPF ends in -all (hard fail)"
+              else
+                fail "apex SPF has an earlier all mechanism (${spf_alls% }) that overrides -all: $spf"
+              fi ;;
     *)        fail "apex SPF does not end in -all: $spf" ;;
   esac
   # Resend rides SES; Google Workspace rides its own include.
@@ -100,29 +117,46 @@ if [ -z "$dmarc" ]; then
   fail "_dmarc: absent — a spoof passes with no policy to reject it"
 else
   pass "_dmarc: $dmarc"
-  case "$dmarc" in
-    *"p=quarantine"*|*"p=reject"*) pass "DMARC policy is enforcing" ;;
-    *"p=none"*) fail "DMARC p=none — reporting only, nothing is rejected" ;;
-    *)          fail "DMARC has no p= tag" ;;
+  case "$(tag "$dmarc" p)" in
+    quarantine|reject) pass "DMARC policy is enforcing" ;;
+    none) fail "DMARC p=none — reporting only, nothing is rejected" ;;
+    "")   fail "DMARC has no p= tag" ;;
+    *)    fail "DMARC p=$(tag "$dmarc" p) is not a policy" ;;
   esac
-  case "$dmarc" in
-    *"rua="*) pass "DMARC has an aggregate-report address" ;;
-    *)        fail "DMARC has no rua= — policy cannot be tuned from evidence" ;;
+  # pct below 100 applies the policy to that share of mail only; pct=0 is none.
+  case "$(tag "$dmarc" pct)" in
+    ""|100) pass "DMARC policy applies to all mail" ;;
+    *)      fail "DMARC pct=$(tag "$dmarc" pct) — the policy is applied to only part of the mail" ;;
   esac
+  if [ -n "$(tag "$dmarc" rua)" ]; then
+    pass "DMARC has an aggregate-report address"
+  else
+    fail "DMARC has no rua= — policy cannot be tuned from evidence"
+  fi
   # See the header note: strict alignment breaks Resend's subdomain Return-Path.
-  case "$dmarc" in
-    *"aspf=s"*) fail "DMARC aspf=s — breaks SPF alignment for send.$DOMAIN Return-Path" ;;
-    *)          pass "DMARC SPF alignment is relaxed (correct for this topology)" ;;
-  esac
+  if [ "$(tag "$dmarc" aspf)" = "s" ]; then
+    fail "DMARC aspf=s — breaks SPF alignment for send.$DOMAIN Return-Path"
+  else
+    pass "DMARC SPF alignment is relaxed (correct for this topology)"
+  fi
 fi
 
 # --- 4. DKIM -----------------------------------------------------------------
 echo "dkim"
+# dig splits a long key over several quoted strings; join them before reading
+# p=. An empty p= is the revocation form (RFC 6376 3.6.1), and the shortest
+# real key (Ed25519) is 44 base64 characters.
 for sel in resend google; do
-  if grep -q 'p=' <<<"$(q TXT "${sel}._domainkey.$DOMAIN")"; then
+  dkim="$(q TXT "${sel}._domainkey.$DOMAIN" | tr -d '" \n')"
+  dkim_key="$(tag "$dkim" p)"
+  if [ -z "$dkim" ]; then
+    fail "DKIM selector ${sel}: absent"
+  elif [ -z "$dkim_key" ]; then
+    fail "DKIM selector ${sel}: p= is empty — the key is revoked, every signature fails"
+  elif grep -Eq '^[A-Za-z0-9+/]{43,}=*$' <<<"$dkim_key"; then
     pass "DKIM selector ${sel}: published"
   else
-    fail "DKIM selector ${sel}: absent"
+    fail "DKIM selector ${sel}: p= is not a public key"
   fi
 done
 
