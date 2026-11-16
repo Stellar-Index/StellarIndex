@@ -52,6 +52,16 @@ Subcommands:
                           transition. Resumes from its sponsorship_events
                           watermark and never writes past the entry_index
                           watermark. Without -write it counts events.
+  ch-entry-history -lending-only -ch-addr ADDR [-from N] [-to N] [-floor-ledger N] [-lock-file PATH] [-heartbeat PATH] [-print-prefixes | -prove] [-write]
+                          Derive stellar.lending_state_hourly: the verbatim
+                          last change per hour of every Blend and BLNT pool
+                          ResData / ResConfig / instance and backstop
+                          PoolBalance / TierPoolBalance key. Resumes from its
+                          lending_state watermark (the Blend factory genesis
+                          on first run) in partition-aligned windows.
+                          -print-prefixes lists the registry and key
+                          prefixes; -prove checks the history against the
+                          lake at the watermark. Both only read.
   ch-entry-index -ch-addr ADDR [-from N] [-to N] [-window N] [-floor-ledger N] [-lock-file PATH] [-heartbeat PATH] [-max-decode-errors N] [-write]
                           Build the ledger index of classic-entry activity:
                           stellar.account_entry_ledgers (account, role,

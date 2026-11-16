@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -13,6 +14,9 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/Stellar-Index/StellarIndex/internal/entryhistory"
+	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
@@ -478,5 +482,59 @@ func TestTotalsRange_FirstRunStartsAtTheLakeFloor(t *testing.T) {
 		if lo != tc.wantLo || last != tc.wantLast {
 			t.Errorf("%s: totalsRange = [%d,%d], want [%d,%d]", tc.name, lo, last, tc.wantLo, tc.wantLast)
 		}
+	}
+}
+
+func TestLendingWindowEnd_StopsAtPartitionsAndLast(t *testing.T) {
+	for _, tc := range []struct{ lo, last, want uint32 }{
+		{51_499_546, 70_000_000, 51_999_999},
+		{52_000_000, 70_000_000, 52_999_999},
+		{69_999_999, 70_000_000, 69_999_999},
+		{70_000_000, 70_000_123, 70_000_123},
+		{4_294_000_000, 4_294_967_295, 4_294_967_295},
+	} {
+		if got := lendingWindowEnd(tc.lo, tc.last); got != tc.want {
+			t.Errorf("lendingWindowEnd(%d, %d) = %d, want %d", tc.lo, tc.last, got, tc.want)
+		}
+	}
+}
+
+func TestLendingPoolFromDeploy_RealBLNTEvent(t *testing.T) {
+	raw, err := os.ReadFile("../../../test/fixtures/blnt/985d7eda4b610f28103edcb28faa52408169f455ac9a880c4a39f58ecc0c2135/deploy_factory_65134362_db1ff1407551_0_CAKLFW.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f struct {
+		ContractID string   `json:"contract_id"`
+		Ledger     uint32   `json:"ledger"`
+		TxHash     string   `json:"tx_hash"`
+		Topics     []string `json:"topics"`
+		Value      string   `json:"value"`
+	}
+	if err := json.Unmarshal(raw, &f); err != nil {
+		t.Fatal(err)
+	}
+	ev := events.Event{
+		Type: "contract", ContractID: f.ContractID, Ledger: f.Ledger, TxHash: f.TxHash,
+		LedgerClosedAt: "2026-10-25T19:46:33Z", Topic: f.Topics, Value: f.Value, InSuccessfulContractCall: true,
+	}
+	got, err := lendingPoolFromDeploy(ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Protocol != clickhouse.LendingBLNT || got.Backstop || !slices.Contains(blnt.MainnetGatedSet(), got.ID) {
+		t.Fatalf("BLNT deploy = %+v, want a known BLNT pool", got)
+	}
+	// The Blend factories emit the same deploy shape; the factory alone fixes the protocol.
+	for factory, want := range map[string]string{blend.MainnetPoolFactoryV1: clickhouse.LendingBlendV1, blend.MainnetPoolFactory: clickhouse.LendingBlendV2} {
+		ev.ContractID = factory
+		c, err := lendingPoolFromDeploy(ev)
+		if err != nil || c.Protocol != want || c.ID != got.ID {
+			t.Errorf("%s deploy = %+v, %v; want %s %s", factory, c, err, want, got.ID)
+		}
+	}
+	ev.ContractID = blnt.MainnetBackstop
+	if _, err := lendingPoolFromDeploy(ev); err == nil {
+		t.Error("a deploy from a non-factory contract was accepted")
 	}
 }
