@@ -16140,7 +16140,7 @@ export interface operations {
                  * @example fiat:USD
                  */
                 quote?: components["parameters"]["Quote"];
-                /** @description Which closed-bucket window series to follow, in seconds. The standard aggregator windows are 300, 3600, and 86400; a window the aggregator doesn't publish yields a silent (heartbeat-only) stream. */
+                /** @description Which closed-bucket window series to follow, in seconds. The standard aggregator windows are 300, 3600, and 86400, plus 60 for operator-configured pairs. A window this deployment does not publish is a 400 `invalid-window` whose detail lists the published windows. */
                 window_seconds?: number;
             };
             header?: {

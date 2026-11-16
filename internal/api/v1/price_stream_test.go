@@ -57,6 +57,44 @@ func TestPriceStream_RejectsBadRequests(t *testing.T) {
 	}
 }
 
+// A window nothing publishes would mint Hub topics that stay empty and hold shared topic slots, so a server that
+// knows its published windows refuses every other one before a topic exists.
+func TestPriceStream_RefusesAWindowNothingPublishes(t *testing.T) {
+	hub := streaming.NewHub(0)
+	ts := httptest.NewServer(v1.New(v1.Options{Hub: hub, ClosedStreamWindows: []int{60, 300, 3600}}).Handler())
+	defer ts.Close()
+
+	for _, window := range []string{"61", "86400", "7"} {
+		resp, err := http.Get(ts.URL + "/v1/price/stream?asset=native&quote=fiat:USD&window_seconds=" + window)
+		if err != nil {
+			t.Fatalf("GET: %v", err)
+		}
+		body, _ := readAll(resp)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest || !strings.Contains(body, "invalid-window") {
+			t.Errorf("window_seconds=%s: status %d, body %s; want 400 invalid-window", window, resp.StatusCode, body)
+		}
+		if !strings.Contains(body, "60, 300, 3600") {
+			t.Errorf("window_seconds=%s: the refusal does not name the published windows: %s", window, body)
+		}
+	}
+	if n := hub.TopicCount(); n != 0 {
+		t.Errorf("refused windows minted %d Hub topics, want 0", n)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/v1/price/stream?asset=native&quote=fiat:USD&window_seconds=3600", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET published window: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("published window: status %d, want 200", resp.StatusCode)
+	}
+}
+
 // TestPriceStream_HubPublishReachesSubscriber — drive the full path:
 // connect, publish into the Hub on the right topic, observe the
 // SSE frame on the wire.
