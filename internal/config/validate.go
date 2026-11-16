@@ -294,6 +294,10 @@ func (s StorageConfig) validate() error { //nolint:gocognit,gocyclo // dispatch-
 			return fmt.Errorf("%w: storage.s3_cold_endpoint required when s3_cold_bucket_archive is set",
 				ErrInvalidConfig)
 		}
+		if s.ColdTierIsHotTier() {
+			return fmt.Errorf("%w: storage.s3_cold_bucket_archive at storage.s3_cold_endpoint is the hot archive "+
+				"(s3_bucket_archive at s3_endpoint) — the cold tier must be a second copy", ErrInvalidConfig)
+		}
 	}
 	// ClickHouse feed-switch dependency (ADR-0041): the projector reads forward events from the CH lake, which
 	// is only kept current when the real-time dual-sink is on. projector_source=true with live_sink=false

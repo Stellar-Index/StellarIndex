@@ -293,20 +293,155 @@ func (f *fakeHotArchive) ListObjectsV2(_ context.Context, in *s3.ListObjectsV2In
 	return out, nil
 }
 
-// fakeCold answers the --verify-upstream HEAD. Default: cold holds
-// everything (the healthy production case).
+// fakeCold answers the --verify-upstream check. Default: cold holds
+// the same bytes for everything (the healthy production case).
 type fakeCold struct {
 	missing map[string]bool
+	differs map[string]bool
 	errOn   map[string]error
 	calls   int
 }
 
-func (c *fakeCold) Exists(_ context.Context, path string) (bool, error) {
+func (c *fakeCold) ColdCopy(_ context.Context, path string) (coldCopy, error) {
 	c.calls++
 	if err, ok := c.errOn[path]; ok {
-		return false, err
+		return coldCopyAbsent, err
 	}
-	return !c.missing[path], nil
+	switch {
+	case c.missing[path]:
+		return coldCopyAbsent, nil
+	case c.differs[path]:
+		return coldCopyDiffers, nil
+	}
+	return coldCopySame, nil
+}
+
+// fakeTier is one tier's listing for the cold-copy proof: key → object, or a listing error.
+type fakeTier struct {
+	objects map[string]types.Object
+	err     error
+}
+
+func (f fakeTier) ListObjectsV2(_ context.Context, in *s3.ListObjectsV2Input, _ ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	var keys []string
+	for k := range f.objects {
+		if strings.HasPrefix(k, aws.ToString(in.Prefix)) {
+			keys = append(keys, k)
+		}
+	}
+	slices.Sort(keys)
+	out := &s3.ListObjectsV2Output{}
+	for _, k := range keys[:min(len(keys), int(aws.ToInt32(in.MaxKeys)))] {
+		o := f.objects[k]
+		o.Key = aws.String(k)
+		out.Contents = append(out.Contents, o)
+	}
+	return out, nil
+}
+
+func tierObject(etag string, size int64) types.Object {
+	return types.Object{ETag: aws.String(`"` + etag + `"`), Size: aws.Int64(size)}
+}
+
+// A hot file may be deleted only when the cold tier holds the same bytes: the same size and the same single-part ETag (a body MD5).
+// A key that merely exists (truncated, empty, re-exported, or only a longer key sharing the prefix) proves no copy.
+func TestS3ColdProver_ProvesTheSameBytesNotTheKey(t *testing.T) {
+	t.Parallel()
+	const file = "FFFFFFFF--0-63999/FFFFFFFE--1.xdr.zst"
+	hotObject := tierObject("0cc175b9c0f1b6a831c399e269772661", 1200)
+	listErr := errors.New("503 SlowDown")
+	for name, tc := range map[string]struct {
+		hot, cold fakeTier
+		want      coldCopy
+		wantErr   bool
+	}{
+		"same size and ETag": {
+			cold: fakeTier{objects: map[string]types.Object{"v1/pubnet/" + file: tierObject("0CC175B9C0F1B6A831C399E269772661", 1200)}},
+			want: coldCopySame,
+		},
+		"no object at the key": {
+			cold: fakeTier{objects: map[string]types.Object{}},
+			want: coldCopyAbsent,
+		},
+		"only a longer key shares the prefix": {
+			cold: fakeTier{objects: map[string]types.Object{"v1/pubnet/" + file + ".partial": hotObject}},
+			want: coldCopyAbsent,
+		},
+		"truncated cold object": {
+			cold: fakeTier{objects: map[string]types.Object{"v1/pubnet/" + file: tierObject("92eb5ffee6ae2fec3ad71c777531578f", 300)}},
+			want: coldCopyDiffers,
+		},
+		"same size, different bytes": {
+			cold: fakeTier{objects: map[string]types.Object{"v1/pubnet/" + file: tierObject("92eb5ffee6ae2fec3ad71c777531578f", 1200)}},
+			want: coldCopyDiffers,
+		},
+		"multipart ETag proves nothing beyond the size": {
+			cold: fakeTier{objects: map[string]types.Object{"v1/pubnet/" + file: tierObject("0cc175b9c0f1b6a831c399e269772661-2", 1200)}},
+			want: coldCopyDiffers,
+		},
+		"both empty": {
+			hot:  fakeTier{objects: map[string]types.Object{"mirror/" + file: tierObject("d41d8cd98f00b204e9800998ecf8427e", 0)}},
+			cold: fakeTier{objects: map[string]types.Object{"v1/pubnet/" + file: tierObject("d41d8cd98f00b204e9800998ecf8427e", 0)}},
+			want: coldCopyDiffers,
+		},
+		"cold listing fails": {
+			cold:    fakeTier{err: listErr},
+			wantErr: true,
+		},
+		"hot object no longer listed": {
+			hot:     fakeTier{objects: map[string]types.Object{}},
+			cold:    fakeTier{objects: map[string]types.Object{"v1/pubnet/" + file: hotObject}},
+			wantErr: true,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			hot := tc.hot
+			if hot.objects == nil {
+				hot.objects = map[string]types.Object{"mirror/" + file: hotObject}
+			}
+			prover := s3ColdProver{
+				hot:  trimTier{api: hot, bucket: "galexie-archive", prefix: "mirror"},
+				cold: trimTier{api: tc.cold, bucket: "aws-public-blockchain", prefix: "v1/pubnet"},
+			}
+			got, err := prover.ColdCopy(context.Background(), file)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("ColdCopy error = %v, wantErr %v", err, tc.wantErr)
+			}
+			if err == nil && got != tc.want {
+				t.Errorf("ColdCopy = %d, want %d", got, tc.want)
+			}
+			if err != nil && got == coldCopySame {
+				t.Error("an unreadable tier was reported as holding the same bytes")
+			}
+		})
+	}
+}
+
+// A cold object that is not the hot object's bytes keeps the hot file: it is never a deletion candidate, and the plan counts and names it.
+func TestPlanTrim_DifferingColdCopyIsNeverACandidate(t *testing.T) {
+	t.Parallel()
+	hot := newFakeArchive(t, 500, 1500)
+	schema := datastore.DataStoreSchema{LedgersPerFile: 1, FilesPerPartition: 500, FileExtension: "zst"}
+	truncated := schema.GetObjectKeyFromSequenceNumber(11)
+	cold := &fakeCold{differs: map[string]bool{truncated: true}}
+	plan, err := planTrim(context.Background(), discardLogger(), hot, cold, hot.partitionsOf(t), trimTestOpts(1000, 100000))
+	if err != nil {
+		t.Fatalf("planTrim: %v", err)
+	}
+	if slices.Contains(plan.candidates, truncated) {
+		t.Fatal("a hot file whose cold object differs reached the deletion candidate list")
+	}
+	if len(plan.candidates) != 999 || plan.skippedColdDiffers != 1 || plan.skippedNotInCold != 0 {
+		t.Errorf("candidates = %d, skippedColdDiffers = %d, skippedNotInCold = %d; want 999, 1, 0",
+			len(plan.candidates), plan.skippedColdDiffers, plan.skippedNotInCold)
+	}
+	if !slices.Equal(plan.coldDiffersSample, []string{truncated}) {
+		t.Errorf("coldDiffersSample = %v, want the differing path", plan.coldDiffersSample)
+	}
 }
 
 // ledgerOf extracts the (single) ledger a fake archive key holds.
@@ -485,7 +620,7 @@ func TestPlanTrim_LowerBoundTrimsOnlyTheBand(t *testing.T) {
 	}
 }
 
-// TestPlanTrim_VerifyUpstreamStillGatesEveryCandidate: a file the cold tier lacks, or that errors on HEAD, is never a deletion candidate.
+// TestPlanTrim_VerifyUpstreamStillGatesEveryCandidate: a file the cold tier lacks, or whose check errors, is never a deletion candidate.
 func TestPlanTrim_VerifyUpstreamStillGatesEveryCandidate(t *testing.T) {
 	t.Parallel()
 	hot := newFakeArchive(t, 500, 1500)
@@ -511,7 +646,7 @@ func TestPlanTrim_VerifyUpstreamStillGatesEveryCandidate(t *testing.T) {
 		t.Error("a file unverified in cold reached the deletion candidate list")
 	}
 	if cold.calls != 1000 {
-		t.Errorf("cold.Exists calls = %d, want 1000 (one HEAD per sub-cutoff file)", cold.calls)
+		t.Errorf("cold checks = %d, want 1000 (one per sub-cutoff file)", cold.calls)
 	}
 }
 

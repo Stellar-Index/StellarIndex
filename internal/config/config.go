@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -595,6 +596,15 @@ type StorageConfig struct {
 // ColdTieringEnabled reports whether the cold-tier read path is wired: the presence of the cold-bucket field is the flag, so unset is the safe default.
 func (s StorageConfig) ColdTieringEnabled() bool {
 	return s.S3ColdBucketArchive != ""
+}
+
+// ColdTierIsHotTier reports whether the cold tier names the hot archive itself: a cold tier that is the hot tier holds no second copy,
+// so a hot read that misses has no fallback and a trim would let each file vouch for its own deletion.
+func (s StorageConfig) ColdTierIsHotTier() bool {
+	norm := func(v string) string { return strings.ToLower(strings.Trim(strings.TrimSpace(v), "/")) }
+	return s.ColdTieringEnabled() &&
+		norm(s.S3ColdEndpoint) == norm(s.S3Endpoint) &&
+		norm(s.S3ColdBucketArchive) == norm(s.S3BucketArchive)
 }
 
 // IngestionConfig controls the indexer's source fleet.
