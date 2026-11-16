@@ -69,7 +69,7 @@
     "pool": "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7",
     "user_address": "GCOTFUPCJTKRQBPQC5ZHWAPE4JWOFD5A5436QOO63KCF6YAJITEZD7SS",
     "tier": "ThirdLoss",
-    "amount": "7405379944",
+    "amount2": "7405379944",
     "attributes": {}
   },
   "distribute_backstop_65134176_5d32b49e7276_1_CAHCUK.json": {
@@ -103,7 +103,9 @@
     "pool": "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7",
     "user_address": "CAHCUKBPTW5DR5RNXOHCTJD5U76A6EEZXYZAQFRQEEQRXQ3CRUZ6Z3MO",
     "attributes": {
-      "auction_data": {
+      "auction_type": 2,
+      "fill_percent": "100",
+      "filled_auction_data": {
         "bid": {},
         "block": 65224844,
         "lot": {
@@ -112,8 +114,6 @@
           "CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV": "120688134"
         }
       },
-      "auction_type": 2,
-      "fill_percent": "100",
       "filler": "GAVG3ODZ4SAVK2WJL3F3RT265RL7P6QNOMA6NL3XDAREKSX3OWWMXF4R"
     }
   },
@@ -196,7 +196,7 @@
     "pool": "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7",
     "user_address": "GDG7PTG6J62HPE74BVWNSQWTPSZKBXN6RRUKJRDEEXPSC2OTXXVLIANW",
     "tier": "ThirdLoss",
-    "amount": "1000000000",
+    "amount2": "1000000000",
     "attributes": {
       "expiration": "1794810989"
     }

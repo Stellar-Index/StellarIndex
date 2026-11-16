@@ -3,6 +3,7 @@ package blnt
 import (
 	"encoding/base64"
 	"errors"
+	"reflect"
 	"testing"
 
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
@@ -101,6 +102,95 @@ func TestDecodeSourceOnlyShapes(t *testing.T) {
 	}
 }
 
+// One hand-encoded event for each remaining source-only shape, with a distinct value per field so a
+// swapped or renamed field fails. Kinds that only repeat the position shape are left to the real fixtures.
+func TestDecodeSourceOnlyFieldOrder(t *testing.T) {
+	t.Parallel()
+	d := NewDecoder()
+	asset, assetKey := encodedContractAddress(t, 0x11)
+	who, whoKey := encodedContractAddress(t, 0x22)
+	pool, poolKey := encodedContractAddress(t, 0x33)
+	n := func(v uint64) sdkxdr.ScVal { return i128(sdkxdr.Int128Parts{Lo: sdkxdr.Uint64(v)}) }
+	tier := encodeVec(t, sym("SecondLoss"))
+
+	cases := []struct {
+		contract, kind string
+		topics         []string
+		body           string
+		want           Event
+	}{
+		{
+			MainnetFixedPool, "update_pool",
+			[]string{who},
+			encodeVec(t, u32(1), u32(2), n(3)),
+			Event{Pool: MainnetFixedPool, Attributes: map[string]any{"admin": whoKey, "backstop_take_rate": uint32(1), "max_positions": uint32(2), "min_collateral": "3"}},
+		},
+		{
+			MainnetFixedPool, "reconcile_loss",
+			[]string{asset},
+			encodeVec(t, n(1), n(2), n(3), n(4)),
+			Event{Pool: MainnetFixedPool, Asset: assetKey, Amount: "1", Attributes: map[string]any{"supplier_loss": "2", "backstop_credit_loss": "3", "b_rate_loss": "4"}},
+		},
+		{
+			MainnetFixedPool, "bad_debt",
+			[]string{who, asset},
+			encode(t, n(5)),
+			Event{Pool: MainnetFixedPool, UserAddress: whoKey, Asset: assetKey, Amount: "5", Attributes: map[string]any{}},
+		},
+		{
+			MainnetBackstop, "draw",
+			[]string{tier, pool},
+			encodeVec(t, mustAddr(t, 0x22), n(6)),
+			Event{Pool: poolKey, Tier: "SecondLoss", Amount: "6", Attributes: map[string]any{"to": whoKey}},
+		},
+		{
+			MainnetBackstop, "withdraw",
+			[]string{tier, pool, who},
+			encodeVec(t, n(7), n(8)),
+			Event{Pool: poolKey, UserAddress: whoKey, Tier: "SecondLoss", Amount: "8", Amount2: "7", Attributes: map[string]any{}},
+		},
+		{
+			MainnetBackfill, "burn_expired", nil, encodeVec(t, n(9), n(10)),
+			Event{Amount: "9", Attributes: map[string]any{"total_blnt_burned": "10"}},
+		},
+		{
+			MainnetLockupBackfill, "claim",
+			[]string{who},
+			encodeVec(t, n(11), n(12)),
+			Event{UserAddress: whoKey, Amount: "11", Attributes: map[string]any{"total_claimed": "12"}},
+		},
+		{
+			MainnetLockupBackfill, "expire",
+			[]string{who},
+			encodeVec(t, n(13), n(14)),
+			Event{UserAddress: whoKey, Amount: "13", Attributes: map[string]any{"total_claimed": "14"}},
+		},
+	}
+	for _, tc := range cases {
+		ev := testEvent(tc.contract, tc.kind)
+		ev.Topic = append(ev.Topic, tc.topics...)
+		ev.Value = tc.body
+		got := mustDecode(t, d, ev)
+		got = Event{
+			Pool: got.Pool, UserAddress: got.UserAddress, Asset: got.Asset, Tier: got.Tier,
+			Amount: got.Amount, Amount2: got.Amount2, Attributes: got.Attributes,
+		}
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s:\n got %+v\nwant %+v", tc.kind, got, tc.want)
+		}
+	}
+}
+
+func mustAddr(t *testing.T, fill byte) sdkxdr.ScVal {
+	t.Helper()
+	b64, _ := encodedContractAddress(t, fill)
+	sv, err := scval.Parse(b64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sv
+}
+
 // A shape the ABI does not declare must fail, never land a partial row.
 func TestDecodeRejectsUndeclaredShapes(t *testing.T) {
 	t.Parallel()
@@ -132,6 +222,13 @@ func TestDecodeRejectsUndeclaredShapes(t *testing.T) {
 		if _, err := d.Decode(ev); !errors.Is(err, ErrMalformedEvent) {
 			t.Errorf("%s: Decode error = %v, want ErrMalformedEvent", name, err)
 		}
+	}
+
+	del := testEvent(MainnetFixedPool, "delete_auction")
+	del.Topic = append(del.Topic, encode(t, u32(0)), from)
+	del.Value = encodeVec(t, one)
+	if _, err := d.Decode(del); !errors.Is(err, ErrMalformedEvent) {
+		t.Errorf("unit event with a payload: Decode error = %v, want ErrMalformedEvent", err)
 	}
 
 	tier := testEvent(MainnetBackstop, "donate")

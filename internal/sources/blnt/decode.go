@@ -1,6 +1,7 @@
 package blnt
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/Stellar-Index/StellarIndex/internal/events"
@@ -62,12 +63,15 @@ func decodeEvent(role Role, kind string, ev *events.Event) (Event, error) {
 		}
 	}
 
-	if sp.body == bodyUnit {
-		return out, nil
-	}
 	body, err := scval.Parse(ev.Value)
 	if err != nil {
 		return fail("body", err)
+	}
+	if sp.body == bodyUnit {
+		if !scval.IsVoid(body) {
+			return fail("body", errors.New("ABI declares no payload, got one"))
+		}
+		return out, nil
 	}
 	values := []scval.ScVal{body}
 	if sp.body == bodyVec {

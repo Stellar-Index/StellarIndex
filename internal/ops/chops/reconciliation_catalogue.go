@@ -351,7 +351,7 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 		},
 		{
 			// BLNT V3 is identity-gated on immutable modules plus pools announced by its factory.
-			// The lossless envelope is one decoder output to one blnt_events row, so all six
+			// Each event is one decoder output and one blnt_events row, so all six
 			// role-specific EventKinds reconcile strictly per ledger.
 			name:        blnt.SourceName,
 			genesis:     blnt.GenesisLedger,

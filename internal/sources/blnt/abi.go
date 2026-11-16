@@ -39,7 +39,7 @@ type field struct {
 type bodyShape uint8
 
 const (
-	bodyUnit   bodyShape = iota // no payload
+	bodyUnit   bodyShape = iota // no payload: Void on the wire
 	bodySingle                  // the body IS the one data field
 	bodyVec                     // the body is a Vec of the data fields
 )
@@ -88,7 +88,8 @@ var abi = map[Role]map[string]spec{
 		"queue_set_reserve":  vec(topics(fAdmin), fAsset, attr("metadata", tAny)),
 		"cancel_set_reserve": single(fAsset, fAdmin),
 		"set_reserve":        vec(nil, fAsset, attr("index", tU32)),
-		// Two emit sites: the permissionless status update has no admin topic.
+		// Two emit sites: the permissionless status update has no admin topic. The source calls the body
+		// new_status at one and pool_status at the other; both land as `status`.
 		"set_status":              single(attr("status", tU32), field{name: "admin", typ: tAddr, optional: true}),
 		"reserve_emission_update": vec(nil, attr("res_token_id", tU32), attr("eps", tU64), attr("expiration", tU64)),
 		"gulp_emissions":          single(amount("emissions")),
@@ -107,19 +108,21 @@ var abi = map[Role]map[string]spec{
 		"reconcile_loss":          vec(topics(fAsset), amount("loss"), attr("supplier_loss", tI128), attr("backstop_credit_loss", tI128), attr("b_rate_loss", tI128)),
 		"protocol_credit_loss":    single(amount("amount"), fAsset),
 		"new_auction":             vec(auctionTopics, attr("percent", tU32), attr("auction_data", tAny)),
-		"fill_auction":            vec(auctionTopics, attr("filler", tAddr), attr("fill_percent", tI128), attr("auction_data", tAny)),
+		"fill_auction":            vec(auctionTopics, attr("filler", tAddr), attr("fill_percent", tI128), attr("filled_auction_data", tAny)),
 		"delete_auction":          {topics: auctionTopics, body: bodyUnit},
 	},
 	RoleFactory: {
 		"deploy": single(pool("pool_address")),
 	},
+	// Backstop deposits and withdrawals keep one convention whatever the wire order: amount is backstop
+	// tokens, amount2 is shares. The contract's `amount` on the three withdrawal events is a share count.
 	RoleBackstop: {
 		"migration_activated": vec(nil, attr("activated_at", tU64), attr("backfill_end", tU64)),
 		"backfill_funded":     single(amount("amount")),
 		"deposit":             vec(topics(fTier, pool("pool_address"), user("from")), amount("tokens_in"), amount2("shares_minted")),
-		"queue_withdrawal":    vec(topics(fTier, pool("pool_address"), user("from")), amount("amount"), attr("expiration", tU64)),
-		"dequeue_withdrawal":  single(amount("amount"), fTier, pool("pool_address"), user("from")),
-		"withdraw":            vec(topics(fTier, pool("pool_address"), user("from")), amount("amount"), amount2("tokens_out")),
+		"queue_withdrawal":    vec(topics(fTier, pool("pool_address"), user("from")), amount2("amount"), attr("expiration", tU64)),
+		"dequeue_withdrawal":  single(amount2("amount"), fTier, pool("pool_address"), user("from")),
+		"withdraw":            vec(topics(fTier, pool("pool_address"), user("from")), amount2("amount"), amount("tokens_out")),
 		"distribute":          single(amount("new_tokens_emitted")),
 		"gulp_emissions":      vec(topics(pool("pool_address")), amount("new_backstop_emissions"), amount2("new_pool_emissions")),
 		"rw_zone_add":         vec(nil, pool("to_add"), attr("to_remove", tOptAddr)),
