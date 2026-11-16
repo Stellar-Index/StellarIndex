@@ -32,7 +32,9 @@ type fakeAccountStore struct {
 	listed    map[string][]auth.APIKeyRecord // identifier → keys
 	listErr   error
 	listCalls int
-	revokeErr error
+	// revokeCalls counts RevokeKeyByID calls.
+	revokeCalls int
+	revokeErr   error
 }
 
 func (f *fakeAccountStore) Create(_ context.Context, req auth.CreateAPIKeyRequest) (auth.APIKeyRecord, string, error) {
@@ -80,6 +82,7 @@ func (f *fakeAccountStore) ListKeysForIdentifier(_ context.Context, identifier s
 }
 
 func (f *fakeAccountStore) RevokeKeyByID(_ context.Context, _ string, _ string) error {
+	f.revokeCalls++
 	if f.revokeErr != nil {
 		return f.revokeErr
 	}

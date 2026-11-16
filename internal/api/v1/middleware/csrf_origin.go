@@ -59,7 +59,7 @@ func RequireSameSiteWrite(logger *slog.Logger) Middleware {
 			}
 			logger.Warn("cross-site write blocked",
 				"reason", reason, "origin", origin,
-				"method", r.Method, "path", r.URL.Path,
+				"method", r.Method, "path", RedactedPath(r),
 				"remote_ip", RemoteIPFrom(r))
 			writeCrossSiteDenied(w, r)
 		})
@@ -148,7 +148,7 @@ func writeCrossSiteDenied(w http.ResponseWriter, r *http.Request) {
 		"status": http.StatusForbidden,
 		"detail": "state-changing dashboard requests must carry an Origin (or Referer) " +
 			"matching this API or an allow-listed site",
-		"instance": r.URL.Path,
+		"instance": RedactedPath(r),
 	})
 	_, _ = w.Write(body)
 }

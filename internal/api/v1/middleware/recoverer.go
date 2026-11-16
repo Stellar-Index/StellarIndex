@@ -30,7 +30,7 @@ func Recoverer(logger *slog.Logger) Middleware {
 				logger.Error("handler panic",
 					"request_id", RequestIDFrom(r),
 					"method", r.Method,
-					"path", r.URL.Path,
+					"path", RedactedPath(r),
 					"remote_ip", RemoteIPFrom(r),
 					"panic", rec,
 					"stack", string(debug.Stack()),
@@ -57,7 +57,7 @@ func writeProblem(w http.ResponseWriter, r *http.Request, _ any) {
 		"type":     "https://api.stellarindex.io/errors/internal",
 		"title":    "Internal error",
 		"status":   http.StatusInternalServerError,
-		"instance": r.URL.RequestURI(),
+		"instance": RequestInstance(r),
 	}
 	if id := RequestIDFrom(r); id != "" {
 		body["request_id"] = id

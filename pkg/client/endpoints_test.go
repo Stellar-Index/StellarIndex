@@ -826,6 +826,17 @@ func TestKeys_HappyPath(t *testing.T) {
 	}
 }
 
+// A plaintext key passed as the id is refused before any request: it would travel in a URL and revoke nothing.
+func TestRevokeKey_RefusesAPlaintextKey(t *testing.T) {
+	_, c := newTestServer(t, func(http.ResponseWriter, *http.Request) {
+		t.Error("a request was sent carrying the plaintext key")
+	})
+	var apiErr *client.APIError
+	if err := c.RevokeKey(context.Background(), "sip_0123456789abcdef"); !errors.As(err, &apiErr) || apiErr.Status != 400 {
+		t.Fatalf("RevokeKey(plaintext key) = %v, want a 400 APIError", err)
+	}
+}
+
 // TestRevokeKey_HappyPath — DELETE returns 204 No Content; the
 // SDK call returns nil error.
 func TestRevokeKey_HappyPath(t *testing.T) {
