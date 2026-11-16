@@ -1776,6 +1776,39 @@ func TestQueryLedgerRangeCoverage_SeesUnmergedDuplicates(t *testing.T) {
 	}
 }
 
+// LedgerCloseTimes dates exactly the ledgers asked for that the lake holds: a ledger held twice (re-ingested, not yet
+// merged) is one answer, an unasked ledger inside the span is left out, and a ledger the lake lacks is absent.
+func TestLedgerCloseTimes_DatesOnlyHeldLedgers(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+	raw := dialClickHouse(t, ctx, "stellar")
+
+	const base = uint32(7_330_000)
+	closed := func(seq uint32) time.Time {
+		return time.Date(2019, 3, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(seq-base) * 5 * time.Second)
+	}
+	for _, seq := range []uint32{base, base + 1, base + 2, base + 2} {
+		if err := raw.Exec(ctx, `INSERT INTO stellar.ledgers (ledger_seq, close_time, ledger_hash, prev_hash, protocol_version)
+			VALUES (?, ?, ?, '00', 24)`, seq, closed(seq), fmt.Sprintf("%064d", seq)); err != nil {
+			t.Fatalf("insert ledger %d: %v", seq, err)
+		}
+	}
+
+	got, err := chstore.LedgerCloseTimes(ctx, addr, []uint32{base, base + 2, base + 5})
+	if err != nil {
+		t.Fatalf("LedgerCloseTimes: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("dated %d ledgers (%v), want the 2 held ones that were asked for", len(got), got)
+	}
+	for _, seq := range []uint32{base, base + 2} {
+		if at, ok := got[seq]; !ok || !at.Equal(closed(seq)) {
+			t.Errorf("ledger %d dated %s (held=%v), want %s", seq, at, ok, closed(seq))
+		}
+	}
+}
+
 // A tx-bearing ledger whose only entry-change row is a state-snapshot seed counts as uncovered: the seed proves the
 // entry's state, not that the ledger's tx meta was captured.
 func TestQueryECWindowCoverage_SeedOnlyLedgerIsAGap(t *testing.T) {

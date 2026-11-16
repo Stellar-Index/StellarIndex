@@ -34,12 +34,12 @@ type snapTally struct {
 	elapsed       time.Duration
 	partial       bool
 
-	// collect accumulates rows for InsertEntryChanges; scope widens the set (contracts, all, storage) and closeTime is metadata only.
+	// collect accumulates rows for InsertEntryChanges; scope widens the set (contracts, all, storage). Rows are collected
+	// with no close time: writeSnapshot stamps each with its own ledger's before the insert.
 	// A non-zero maxModLedger restricts collection to entries last modified BELOW it, the dormant tail live capture never saw.
 	collect      bool
 	scope        snapScope
 	maxModLedger uint32
-	closeTime    time.Time
 	rows         []clickhouse.LedgerEntryChangeRow
 }
 
@@ -103,7 +103,7 @@ func stateSnapshot(args []string) error {
 	}
 
 	if o.write {
-		return writeSnapshot(ctx, clickhouse.InsertEntryChanges, t, o.limit, o.scopeName, o.chAddr, o.throttle)
+		return writeSnapshot(ctx, clickhouse.InsertEntryChanges, clickhouse.LedgerCloseTimes, t, o.limit, o.scopeName, o.chAddr, o.throttle)
 	}
 	if o.collect {
 		fmt.Printf("\n─── DRY RUN ─── %d entries would be written (scope=%s); nothing written.\n", len(t.rows), o.scopeName)
@@ -153,12 +153,50 @@ func parseStateSnapshotFlags(args []string) (stateSnapshotOpts, error) {
 // writeSnapshot's refusal is testable without ClickHouse.
 type entryChangeInserter func(ctx context.Context, addr string, rows []clickhouse.LedgerEntryChangeRow, throttle time.Duration) (int, error)
 
+// closeTimeLookup is clickhouse.LedgerCloseTimes' shape.
+type closeTimeLookup func(ctx context.Context, addr string, seqs []uint32) (map[uint32]time.Time, error)
+
+// stampCloseTimes gives each row the close time of the ledger that last modified its entry. The explorer serves that
+// date, so a row whose ledger the lake cannot date is refused, never stamped with the time of the run.
+func stampCloseTimes(ctx context.Context, lookup closeTimeLookup, addr string, rows []clickhouse.LedgerEntryChangeRow) error {
+	seen := make(map[uint32]struct{})
+	var seqs []uint32
+	for i := range rows {
+		if _, ok := seen[rows[i].LedgerSeq]; !ok {
+			seen[rows[i].LedgerSeq] = struct{}{}
+			seqs = append(seqs, rows[i].LedgerSeq)
+		}
+	}
+	times, err := lookup(ctx, addr, seqs)
+	if err != nil {
+		return fmt.Errorf("resolve ledger close times: %w", err)
+	}
+	var undated []uint32
+	for _, seq := range seqs {
+		if _, ok := times[seq]; !ok {
+			undated = append(undated, seq)
+		}
+	}
+	if len(undated) > 0 {
+		sort.Slice(undated, func(i, j int) bool { return undated[i] < undated[j] })
+		return fmt.Errorf("refusing -write: stellar.ledgers holds no close time for %d of the %d ledgers the write set was last modified in (lowest %d) — backfill those ledgers into the lake first",
+			len(undated), len(seqs), undated[0])
+	}
+	for i := range rows {
+		rows[i].CloseTime = times[rows[i].LedgerSeq]
+	}
+	return nil
+}
+
 // writeSnapshot inserts the collected write set. A partial read is refused: -limit stops the bucket-list walk at an arbitrary prefix,
 // and writing it would publish a fraction of the checkpoint (2M of ~48M entries at the default) as the whole.
-func writeSnapshot(ctx context.Context, insert entryChangeInserter, t *snapTally, limit uint64, scope, chAddr string, throttle time.Duration) error {
+func writeSnapshot(ctx context.Context, insert entryChangeInserter, lookup closeTimeLookup, t *snapTally, limit uint64, scope, chAddr string, throttle time.Duration) error {
 	if t.partial {
 		return fmt.Errorf("refusing -write: -limit %d stopped the checkpoint read after %d entries, so the %d collected rows are a bucket-list-order prefix, not the snapshot — re-run with -limit 0 (-dry-run sizes a bounded read without writing)",
 			limit, t.total, len(t.rows))
+	}
+	if err := stampCloseTimes(ctx, lookup, chAddr, t.rows); err != nil {
+		return err
 	}
 	fmt.Fprintf(os.Stderr, "state-snapshot: writing %d entries (scope=%s) → %s ledger_entry_changes ...\n",
 		len(t.rows), scope, chAddr)
@@ -238,7 +276,7 @@ func tallyCheckpoint(ctx context.Context, arch *historyarchive.Archive, seq uint
 	}
 	defer func() { _ = reader.Close() }()
 
-	t := &snapTally{byType: map[xdr.LedgerEntryType]uint64{}, collect: collect, scope: scope, maxModLedger: maxModLedger, closeTime: time.Now().UTC()}
+	t := &snapTally{byType: map[xdr.LedgerEntryType]uint64{}, collect: collect, scope: scope, maxModLedger: maxModLedger}
 	start := time.Now()
 	for {
 		ch, rerr := reader.Read()
@@ -288,7 +326,7 @@ func (t *snapTally) observe(typ xdr.LedgerEntryType, post *xdr.LedgerEntry) {
 		}
 	}
 	if t.collect && t.withinModWindow(uint32(post.LastModifiedLedgerSeq)) && t.shouldCollect(typ, isInstance) { //nolint:gosec // ledger seq fits uint32
-		if row, ok := clickhouse.SnapshotEntryRow(post, t.closeTime); ok {
+		if row, ok := clickhouse.SnapshotEntryRow(post, time.Time{}); ok {
 			t.rows = append(t.rows, row)
 		}
 	}

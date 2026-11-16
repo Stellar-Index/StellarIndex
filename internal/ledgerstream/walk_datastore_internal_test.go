@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -252,6 +253,101 @@ func TestWalkDataStore_HungReadTimesOutAndIsRetried(t *testing.T) {
 		if !errors.Is(e, context.DeadlineExceeded) {
 			t.Errorf("hung read %d ended with %v, want context.DeadlineExceeded", i, e)
 		}
+	}
+}
+
+// liveStore is a filesystem lake holding the given ledgers, with a schema of one ledger per file.
+func liveStore(t *testing.T, ctx context.Context, seqs ...uint32) (datastore.DataStore, datastore.DataStoreConfig) {
+	t.Helper()
+	tmp := t.TempDir()
+	fsStore, err := datastore.NewFilesystemDataStoreWithPath(tmp)
+	if err != nil {
+		t.Fatalf("open filesystem datastore: %v", err)
+	}
+	dsCfg := datastore.DataStoreConfig{
+		Type:              "Filesystem",
+		Params:            map[string]string{"destination_path": tmp},
+		Schema:            datastore.DataStoreSchema{LedgersPerFile: 1, FilesPerPartition: 1},
+		NetworkPassphrase: "Test SDF Network ; September 2015",
+		Compression:       "zstd",
+	}
+	if _, _, err := datastore.PublishConfig(ctx, fsStore, dsCfg); err != nil {
+		t.Fatalf("publish config: %v", err)
+	}
+	for _, seq := range seqs {
+		putLedger(t, ctx, fsStore, dsCfg.Schema, seq)
+	}
+	return fsStore, dsCfg
+}
+
+// An unbounded walk waiting on a ledger the lake skipped must end with an error that names the hole. The SDK retries
+// a missing object forever on an unbounded range, so without the watch this walk delivers 5 and 6 and then waits on 7
+// until the test's own timeout, with no error at all.
+func TestWalkDataStore_LiveTailNamesAHoleBelowTheTip(t *testing.T) {
+	liveHoleCheckAfter = 200 * time.Millisecond
+	t.Cleanup(func() { liveHoleCheckAfter = 2 * time.Minute })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	store, dsCfg := liveStore(t, ctx, 5, 6, 8, 9, 10)
+
+	cfg := Config{DataStore: dsCfg, LiveRetryWait: 10 * time.Millisecond}
+	buffered := ingest.DefaultBufferedStorageBackendConfig(dsCfg.Schema.LedgersPerFile)
+	applyLiveRetryPolicy(cfg, &buffered)
+
+	var got []uint32
+	err := walkDataStore(ctx, cfg, store, ledgerbackend.UnboundedRange(5), buffered,
+		func(lcm xdr.LedgerCloseMeta) error {
+			got = append(got, lcm.LedgerSequence())
+			return nil
+		})
+	if err == nil {
+		t.Fatal("walk over a lake with a hole returned nil")
+	}
+	if len(got) != 2 || got[0] != 5 || got[1] != 6 {
+		t.Errorf("delivered %v before the hole, want [5 6]", got)
+	}
+	for _, want := range []string{"get ledger 7", "ledger 7 is absent", "latest ledger is 10"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not say %q", err, want)
+		}
+	}
+}
+
+// At the tip the next ledger is simply not written yet. The watch must leave that walk alone however long it waits,
+// and a slow callback is not a stalled read.
+func TestWalkDataStore_LiveTailAtTheTipKeepsWaiting(t *testing.T) {
+	liveHoleCheckAfter = 100 * time.Millisecond
+	t.Cleanup(func() { liveHoleCheckAfter = 2 * time.Minute })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	store, dsCfg := liveStore(t, ctx, 5, 6)
+
+	cfg := Config{DataStore: dsCfg, LiveRetryWait: 10 * time.Millisecond}
+	buffered := ingest.DefaultBufferedStorageBackendConfig(dsCfg.Schema.LedgersPerFile)
+	applyLiveRetryPolicy(cfg, &buffered)
+
+	walkCtx, stop := context.WithCancel(ctx)
+	defer stop()
+	var delivered atomic.Int32
+	go func() {
+		// Six check intervals at the tip, then shut down.
+		time.Sleep(600 * time.Millisecond)
+		stop()
+	}()
+	err := walkDataStore(walkCtx, cfg, store, ledgerbackend.UnboundedRange(5), buffered,
+		func(xdr.LedgerCloseMeta) error {
+			if delivered.Add(1) == 1 {
+				time.Sleep(300 * time.Millisecond) // a slow callback while 6 sits ready
+			}
+			return nil
+		})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("walk at the tip ended with %v, want only the shutdown", err)
+	}
+	if n := delivered.Load(); n != 2 {
+		t.Errorf("delivered %d ledgers, want 2", n)
 	}
 }
 

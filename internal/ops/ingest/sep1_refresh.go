@@ -15,14 +15,6 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// sep1DomainOverrides maps issuers whose on-chain home_domain no longer serves a stellar.toml to the domain that does; the on-chain value stays authoritative for identity.
-// The refresh loop is sequential on purpose: TOML parsing is superlinear on hostile input and the unit runs under MemoryMax=2G.
-var sep1DomainOverrides = map[string]string{
-	// USDC / EURC issuers — Circle (Centre) toml.
-	"GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN": "centre.io",
-	"GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2": "centre.io",
-}
-
 func sep1RefreshCmd(args []string) error {
 	fs := flag.NewFlagSet("sep1-refresh", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -186,7 +178,8 @@ func refreshOneSep1Issuer(
 	// the run context, which outlives it.
 	fetchCtx, cancel := context.WithTimeout(ctx, sep1PerIssuerBudget)
 	defer cancel()
-	sep, err := resolver.Resolve(fetchCtx, sep1FetchDomain(c.GStrkey, c.HomeDomain))
+	// Only the domain the chain declares is fetched: the issuer-listed-back check proves nothing against any other.
+	sep, err := resolver.Resolve(fetchCtx, c.HomeDomain)
 	if err != nil {
 		fmt.Printf("FAIL  %s  %s  %v\n", c.GStrkey, c.HomeDomain, err)
 		return sep1Failed, sep1FailureReason(err)
@@ -415,12 +408,4 @@ func marshalSep1Payload(sep *metadata.SEP1, orgVerified bool) ([]byte, error) {
 		out["RecoveredSections"] = skipped
 	}
 	return json.Marshal(out)
-}
-
-// sep1FetchDomain returns the domain to fetch an issuer's TOML from: the curated override if any, else the on-chain home_domain.
-func sep1FetchDomain(gStrkey, homeDomain string) string {
-	if override, ok := sep1DomainOverrides[gStrkey]; ok {
-		return override
-	}
-	return homeDomain
 }
