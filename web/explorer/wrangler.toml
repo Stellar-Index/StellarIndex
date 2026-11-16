@@ -1,13 +1,9 @@
 # Cloudflare Pages config for the Stellar Index explorer.
 #
-# Recommended deploy path is the dashboard's git integration —
-# every push to main rebuilds + deploys without hitting our GitHub
-# Actions budget. See docs/operations/explorer-deployment.md.
-#
-# This file exists for the manual-deploy fallback path
-# (.github/workflows/explorer-deploy.yml + Wrangler CLI). When the
-# git integration is the sole publisher this file is harmless
-# scaffolding.
+# Read by the direct-upload path (.github/workflows/explorer-deploy.yml
+# + Wrangler CLI) and by the dashboard's git integration, whose root
+# directory must be web/explorer so Pages finds functions/ beside it.
+# See docs/operations/explorer-deployment.md.
 #
 # `name` must be the MAINNET Pages project. CI always passes an
 # explicit --project-name (explorer-deploy.yml), so it only binds a

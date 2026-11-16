@@ -3,17 +3,19 @@
 // server build consumed by @opennextjs/cloudflare (Workers SSR).
 // The static-export path stays the default — nothing changes unless
 // the env var is set. See docs/adr/0044-explorer-edge-rendering.md.
+import { buildApiOrigin } from './build-api-origin.mjs';
+
 const openNext = process.env.OPEN_NEXT === '1';
 
 // A rejected build key gets a 401, never the anonymous fallback, and the raw prerender fetches read a 401 as "no data": check the
 // key once up front so a revoked or wrong-network key fails the build instead of exporting empty pages.
 const buildKey = process.env.STELLARINDEX_BUILD_API_KEY;
-const buildApi = process.env.NEXT_PUBLIC_API_BASE_URL ?? '';
+const buildApi = buildApiOrigin();
 const offlineBuild =
   process.env.EXPLORER_BUILD_OFFLINE === '1' ||
   buildApi.includes('.invalid') ||
   buildApi.includes('local-stub');
-if (buildKey && buildApi && !offlineBuild) {
+if (buildKey && !offlineBuild) {
   const res = await fetch(`${buildApi}/v1/sources`, {
     headers: { Accept: 'application/json', 'X-API-Key': buildKey },
   });

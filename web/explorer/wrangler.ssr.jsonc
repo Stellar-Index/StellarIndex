@@ -7,7 +7,9 @@
 // `--config wrangler.ssr.jsonc` explicitly (see package.json
 // build:worker / preview:worker scripts).
 //
-// LOCAL ONLY for the spike — never `wrangler deploy` this.
+// Deployed only by cf-ssr-shadow.yml, which deletes the Worker when its
+// crawl ends: a live Worker draws on the account-wide request quota
+// production's Pages Functions share.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "stellarindex-explorer-ssr",
@@ -15,6 +17,9 @@
   "compatibility_date": "2026-06-01",
   // nodejs_compat is required by the OpenNext runtime shim.
   "compatibility_flags": ["nodejs_compat"],
+  // The crawl needs the workers.dev hostname; per-version preview URLs
+  // would be extra public entry points nothing uses.
+  "preview_urls": false,
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS",

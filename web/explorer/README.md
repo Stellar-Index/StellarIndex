@@ -109,10 +109,12 @@ fails if the regen would produce a diff. **Never hand-edit
 Static export only — `next build` produces an `out/` directory of
 HTML + JS + CSS, no Node runtime needed at the edge.
 
-**v1 target: Cloudflare Pages.** Connect the repo, set the build
-output dir to `web/explorer/out`, set the build command to
-`pnpm --filter @stellarindex/explorer build`. Cloudflare auto-deploys
-on every push to `main` + creates per-PR previews. Free tier covers
+**v1 target: Cloudflare Pages.** Connect the repo, set the root
+directory to `web/explorer` (Pages looks for `functions/` there, not in
+the output dir), the build command to
+`pnpm install --frozen-lockfile && pnpm build` and the output dir to
+`out`. Cloudflare auto-deploys on every push to `main` + creates per-PR
+previews. Free tier covers
 unmetered requests on Pages-served static assets.
 
 **v1 fallback: rsync → r1.** `make web-build` produces `out/`; rsync

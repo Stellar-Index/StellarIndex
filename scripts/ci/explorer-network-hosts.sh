@@ -7,13 +7,17 @@
 # agent reading llms.txt that mainnet is this network's API.
 #
 # Usage: scripts/ci/explorer-network-hosts.sh [out-dir]
-# Reads NEXT_PUBLIC_API_BASE_URL (unset or the mainnet host: no rewrite).
+# The target is NEXT_PUBLIC_API_BASE_URL, else the API of NEXT_PUBLIC_NETWORK
+# (web/explorer/build-api-origin.mjs, the resolver the build itself uses).
+# The mainnet host means no rewrite.
 set -uo pipefail
 
 OUT="${1:-web/explorer/out}"
 MAINNET="https://api.stellarindex.io"
-API="${NEXT_PUBLIC_API_BASE_URL:-$MAINNET}"
-API="${API%/}"
+if ! API="$(node "$(dirname "$0")/../../web/explorer/build-api-origin.mjs")" || [ -z "$API" ]; then
+  echo "explorer-network-hosts: could not resolve this build's API origin." >&2
+  exit 2
+fi
 
 if [ ! -d "$OUT" ]; then
   echo "explorer-network-hosts: '$OUT' not found — build the explorer first." >&2
@@ -24,7 +28,7 @@ if [ "$API" = "$MAINNET" ]; then
   exit 0
 fi
 if ! [[ "$API" =~ ^https?://[A-Za-z0-9.:-]+$ ]]; then
-  echo "explorer-network-hosts: NEXT_PUBLIC_API_BASE_URL '$API' is not a bare origin." >&2
+  echo "explorer-network-hosts: API origin '$API' is not a bare origin." >&2
   exit 1
 fi
 

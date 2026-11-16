@@ -38,10 +38,12 @@ Settings, Builds & deployments tab for which one a zone uses.
 Git-integration setup:
 1. Workers & Pages → Create application → Pages → Connect to Git →
    `Stellar-Index/StellarIndex`.
-2. Preset `Next.js (Static HTML Export)`; command
-   `cd web/explorer && pnpm install --frozen-lockfile && pnpm build`; output
-   `web/explorer/out`; root directory = repo root; Node 24; production branch
-   `main`, PR previews on. No compatibility flags.
+2. Preset `Next.js (Static HTML Export)`; root directory = `web/explorer`;
+   command `pnpm install --frozen-lockfile && pnpm build`; output `out`;
+   Node 24; production branch `main`, PR previews on. No compatibility flags.
+   The root directory is not optional: Pages looks for `functions/` under it,
+   and a project rooted at the repo root deploys without `/icon`, `/og/*`,
+   `/client-errors` and every detail-route fallback, with no failing check.
 3. Env `NEXT_PUBLIC_API_BASE_URL` = `https://api.stellarindex.io` (override per
    preview environment if wanted).
    Secret `STELLARINDEX_BUILD_API_KEY` (Production environment only, so PR
