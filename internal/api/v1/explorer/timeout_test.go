@@ -140,9 +140,9 @@ func (r *capReader) NetworkThroughput(ctx context.Context, _ int) ([]clickhouse.
 	return nil, nil
 }
 
-func (r *capReader) BlendPoolReserves(ctx context.Context, _ string, _ blend.PoolVersion, _ []string, _ map[string]blend.ReserveConfig) ([]clickhouse.BlendReserveState, error) {
+func (r *capReader) BlendPoolReserves(ctx context.Context, _ string, _ blend.PoolVersion, _ []string, _ map[string]blend.ReserveConfig) (clickhouse.BlendPoolState, error) {
 	r.probe.record(ctx)
-	return nil, nil
+	return clickhouse.BlendPoolState{}, nil
 }
 
 func (r *capReader) TransactionByHash(ctx context.Context, _ string) (clickhouse.TxSummary, bool, error) {

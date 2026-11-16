@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -303,7 +304,7 @@ func TestLendingConfigHistory_LifecycleAcrossBothTables(t *testing.T) {
 	}
 	last := page[1]
 	rest, err := store.LendingConfigHistory(ctx, pool, 50, timescale.LendingConfigCursor{
-		Ts: last.Ts, Ledger: last.Ledger, TxHash: last.TxHash, OpIndex: last.OpIndex, EventIndex: last.EventIndex,
+		Ts: last.Ts, Ledger: last.Ledger, TxHash: last.TxHash, OpIndex: last.OpIndex, EventIndex: last.EventIndex, Kind: last.Kind,
 	})
 	if err != nil || len(rest) != 4 || rest[0].Kind != "set_reserve" {
 		t.Fatalf("page 2 = %+v (%v), want the 4 older rows", rest, err)
@@ -323,5 +324,66 @@ func TestLendingConfigHistory_LifecycleAcrossBothTables(t *testing.T) {
 	bl, err := store.LendingConfigHistory(ctx, blendPool, 50, timescale.LendingConfigCursor{})
 	if err != nil || len(bl) != 3 || bl[0].Kind != "set_admin" || bl[0].NewAdmin != mustAccountStrkey(t, 24) || !bl[2].Applied || bl[1].Metadata == nil {
 		t.Fatalf("blend history = %+v (%v)", bl, err)
+	}
+}
+
+// TestLendingConfigHistory_SameLedgerQueueThenSet — a pool in setup status queues and sets a reserve in two transactions of ONE
+// ledger, both at op_index 0 and event_index 0, with tx hashes that sort opposite to execution. The lifecycle rank must still
+// read the queue as applied, the set as carrying its config, list the set above the queue, and serve that config.
+func TestLendingConfigHistory_SameLedgerQueueThenSet(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const pool = blnt.MainnetFixedPool
+	asset := mustContractStrkey(t, 31)
+	admin := mustAccountStrkey(t, 32)
+	meta := map[string]any{
+		"index": 0, "decimals": 7, "c_factor": 9_100_000, "l_factor": 9_500_000, "util": 8_000_000,
+		"max_util": 9_500_000, "r_base": 100_000, "r_one": 500_000, "r_two": 1_500_000, "r_three": 30_000_000,
+		"reactivity": 20, "supply_cap": "1000", "enabled": true,
+	}
+	ts := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	queueTx, setTx := strings.Repeat("f", 64), strings.Repeat("0", 64) // tx_hash order is the reverse of execution order
+	for _, e := range []timescale.BLNTEvent{
+		{TxHash: queueTx, EventKind: "queue_set_reserve", Attributes: map[string]any{"admin": admin, "metadata": meta}},
+		{TxHash: setTx, EventKind: "set_reserve", Attributes: map[string]any{"index": 0}},
+	} {
+		e.ContractID, e.Pool, e.ContractRole, e.Asset = pool, pool, string(blnt.RolePool), asset
+		e.Ledger, e.LedgerCloseTime = 65_800_000, ts
+		if err := store.InsertBLNTEvent(ctx, e); err != nil {
+			t.Fatalf("InsertBLNTEvent %s: %v", e.EventKind, err)
+		}
+	}
+
+	got, err := store.LendingConfigHistory(ctx, pool, 50, timescale.LendingConfigCursor{})
+	if err != nil || len(got) != 2 || got[0].Kind != "set_reserve" || got[1].Kind != "queue_set_reserve" {
+		t.Fatalf("history = %+v (%v), want set above queue", got, err)
+	}
+	if !got[1].Applied {
+		t.Errorf("queue applied = false, want true")
+	}
+	if cfg, err := blnt.ParseReserveConfigMetadata(got[0].Metadata); err != nil || cfg.CFactor != 9_100_000 {
+		t.Errorf("set_reserve config = %+v (%v), want the queue's", cfg, err)
+	}
+	rest, err := store.LendingConfigHistory(ctx, pool, 50, timescale.LendingConfigCursor{
+		Ts: got[0].Ts, Ledger: got[0].Ledger, TxHash: got[0].TxHash, OpIndex: got[0].OpIndex, EventIndex: got[0].EventIndex, Kind: got[0].Kind,
+	})
+	if err != nil || len(rest) != 1 || rest[0].Kind != "queue_set_reserve" {
+		t.Fatalf("page after the set = %+v (%v), want the queue", rest, err)
+	}
+
+	metas, err := store.BLNTReserveConfigMetadata(ctx, pool)
+	if err != nil {
+		t.Fatalf("BLNTReserveConfigMetadata: %v", err)
+	}
+	if cfg, err := blnt.ParseReserveConfigMetadata(metas[asset]); err != nil || cfg.CFactor != 9_100_000 {
+		t.Errorf("served config = %+v (%v), want the same-ledger queue's", cfg, err)
 	}
 }

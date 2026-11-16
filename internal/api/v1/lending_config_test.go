@@ -16,8 +16,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// configuredReserves is one reserve with a config whose supply cap is above 2^63 and one with no config.
-func configuredReserves(t *testing.T, pool string) []clickhouse.BlendReserveState {
+// configuredPool is a pool instance, one reserve with a config whose supply cap is above 2^63 and one with no config.
+func configuredPool(t *testing.T, pool string) *stubExplorerReader {
 	t.Helper()
 	inst := &clickhouse.PoolInstance{
 		Config: blend.PoolConfig{Oracle: mkCStrkey(t, 9), MinCollateral: bigInt(t, "18446744073709551621"), BstopRate: 2_000_000, Status: 1, MaxPositions: 6},
@@ -31,8 +31,7 @@ func configuredReserves(t *testing.T, pool string) []clickhouse.BlendReserveStat
 	}
 	withCfg.Data = blend.ReserveData{IRMod: big.NewInt(5_169_744), BackstopCredit: bigInt(t, "9223372036854775817"), LastTime: 1_700_000_000, Version: blend.PoolV2}
 	noCfg := reserveState(pool, mkCStrkey(t, 4), 7, false, big.NewInt(10), big.NewInt(0))
-	withCfg.PoolInstance, noCfg.PoolInstance = inst, inst
-	return []clickhouse.BlendReserveState{withCfg, noCfg}
+	return &stubExplorerReader{poolInstance: inst, reserves: []clickhouse.BlendReserveState{withCfg, noCfg}}
 }
 
 // TestLendingPoolReserves_ServesReserveAndPoolConfig — config fields are raw contract integers as exact strings, a reserve
@@ -40,7 +39,7 @@ func configuredReserves(t *testing.T, pool string) []clickhouse.BlendReserveStat
 func TestLendingPoolReserves_ServesReserveAndPoolConfig(t *testing.T) {
 	pool := mkCStrkey(t, 8)
 	srv := v1.New(v1.Options{
-		Explorer: &stubExplorerReader{reserves: configuredReserves(t, pool)},
+		Explorer: configuredPool(t, pool),
 		Lending:  &stubLendingReader{assets: []string{mkCStrkey(t, 3), mkCStrkey(t, 4)}},
 	})
 	resp := mustGet(t, httpTestServer(t, srv).URL+"/v1/lending/pools/"+pool+"/reserves")
@@ -81,16 +80,33 @@ func TestLendingPoolReserves_ServesReserveAndPoolConfig(t *testing.T) {
 // TestLendingPoolReserves_V1PoolServesStatusUnlabelled — V1 status codes are served as the integer only, and its ir_mod is 9-decimal.
 func TestLendingPoolReserves_V1PoolServesStatusUnlabelled(t *testing.T) {
 	pool := mkCStrkey(t, 8)
-	states := configuredReserves(t, pool)
-	states[0].Data.Version = blend.PoolV1
+	explorer := configuredPool(t, pool)
+	explorer.reserves[0].Data.Version = blend.PoolV1
 	v1Version := blend.PoolV1
 	srv := v1.New(v1.Options{
-		Explorer: &stubExplorerReader{reserves: states},
+		Explorer: explorer,
 		Lending:  &stubLendingReader{assets: []string{mkCStrkey(t, 3)}, version: &v1Version},
 	})
 	got := getReserves(t, srv, pool)
 	if got.PoolConfig == nil || got.PoolConfig.Status == nil || got.PoolConfig.StatusLabel != nil || got.Reserves[0].IRModDecimals != 9 {
 		t.Fatalf("pool config = %+v reserve = %+v", got.PoolConfig, got.Reserves[0])
+	}
+}
+
+// TestLendingPoolReserves_ServesPoolConfigWithoutReserves — a pool with no reserve state still serves its pool config; a pool in
+// setup status has exactly this shape.
+func TestLendingPoolReserves_ServesPoolConfigWithoutReserves(t *testing.T) {
+	pool := mkCStrkey(t, 8)
+	inst := &clickhouse.PoolInstance{Config: blend.PoolConfig{Oracle: mkCStrkey(t, 9), BstopRate: 1_000_000, Status: 6, MaxPositions: 4}}
+	srv := v1.New(v1.Options{
+		Explorer: &stubExplorerReader{poolInstance: inst},
+		Lending:  &stubLendingReader{},
+	})
+	got := getReserves(t, srv, pool)
+	pc := got.PoolConfig
+	if got.Reserves == nil || len(got.Reserves) != 0 || pc == nil || pc.Status == nil || *pc.Status != 6 ||
+		strOrNil(pc.StatusLabel) != "setup" || pc.MinCollateral != nil {
+		t.Fatalf("reserves = %v pool config = %+v", got.Reserves, pc)
 	}
 }
 
@@ -101,9 +117,21 @@ type stubConfigHistoryReader struct {
 	gotCursor timescale.LendingConfigCursor
 }
 
+// LendingConfigHistory serves the rows after the one the cursor names exactly; a cursor naming no row serves nothing.
 func (r *stubConfigHistoryReader) LendingConfigHistory(_ context.Context, _ string, limit int, cur timescale.LendingConfigCursor) ([]timescale.LendingConfigChange, error) {
 	r.gotLimit, r.gotCursor = limit, cur
-	return r.rows[:min(limit, len(r.rows))], nil
+	rows := r.rows
+	if cur.IsSet() {
+		rows = nil
+		for i, c := range r.rows {
+			if c.Ts.Equal(cur.Ts) && c.Ledger == cur.Ledger && c.TxHash == cur.TxHash && c.OpIndex == cur.OpIndex &&
+				c.EventIndex == cur.EventIndex && c.Kind == cur.Kind {
+				rows = r.rows[i+1:]
+				break
+			}
+		}
+	}
+	return rows[:min(limit, len(rows))], nil
 }
 
 const configMeta = `{"index":0,"decimals":7,"c_factor":9000000,"l_factor":9500000,"util":8000000,"max_util":9500000,` +
@@ -116,7 +144,7 @@ func historyRows(t *testing.T) []timescale.LendingConfigChange {
 	row := func(i int, kind, asset, attrs, meta string, applied bool) timescale.LendingConfigChange {
 		c := timescale.LendingConfigChange{
 			Ts: ts.Add(-time.Duration(i) * time.Minute), Ledger: uint32(100 - i), TxHash: strings.Repeat(string(rune('a'+i)), 64),
-			Kind: kind, Asset: asset, Attributes: []byte(attrs), Applied: applied,
+			OpIndex: uint32(10 + i), EventIndex: uint32(20 + i), Kind: kind, Asset: asset, Attributes: []byte(attrs), Applied: applied,
 		}
 		if meta != "" {
 			c.Metadata = []byte(meta)
@@ -180,14 +208,22 @@ func TestLendingConfigHistory_PaginatesWithAKeysetCursor(t *testing.T) {
 	if code != http.StatusOK || len(got.Changes) != 2 || next == nil || next.Next == "" {
 		t.Fatalf("code=%d changes=%d next=%v", code, len(got.Changes), next)
 	}
-	if code, _, _ = getConfigHistory(t, srv, "?limit=2&cursor="+next.Next); code != http.StatusOK {
-		t.Fatalf("cursor page status = %d", code)
+	code, got, _ = getConfigHistory(t, srv, "?limit=2&cursor="+next.Next)
+	if code != http.StatusOK || len(got.Changes) != 2 || got.Changes[0].Kind != rows[2].Kind || got.Changes[1].Kind != rows[3].Kind {
+		t.Fatalf("cursor page status = %d changes = %+v, want rows 2 and 3", code, got.Changes)
 	}
-	want := timescale.LendingConfigCursor{Ts: rows[1].Ts, Ledger: rows[1].Ledger, TxHash: rows[1].TxHash}
-	if stub.gotCursor != want {
+	want := timescale.LendingConfigCursor{
+		Ts: rows[1].Ts, Ledger: rows[1].Ledger, TxHash: rows[1].TxHash, OpIndex: 11, EventIndex: 21, Kind: "update_pool",
+	}
+	if !stub.gotCursor.Ts.Equal(want.Ts) || stub.gotCursor.Ledger != want.Ledger || stub.gotCursor.TxHash != want.TxHash ||
+		stub.gotCursor.OpIndex != want.OpIndex || stub.gotCursor.EventIndex != want.EventIndex || stub.gotCursor.Kind != want.Kind {
 		t.Errorf("cursor = %+v, want %+v", stub.gotCursor, want)
 	}
-	for _, q := range []string{"?cursor=junk", "?cursor=1.2.abc.3.4", "?limit=0", "?limit=201"} {
+	tx := strings.Repeat("b", 64)
+	for _, q := range []string{
+		"?cursor=junk", "?cursor=1.2.abc.3.4.set_reserve", "?cursor=1.2." + tx + ".3.4", "?cursor=1.2." + tx + ".3.4.transfer",
+		"?limit=0", "?limit=201",
+	} {
 		if code, _, _ := getConfigHistory(t, srv, q); code != http.StatusBadRequest {
 			t.Errorf("%s: status = %d, want 400", q, code)
 		}

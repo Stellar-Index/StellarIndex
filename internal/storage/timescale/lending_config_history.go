@@ -29,10 +29,15 @@ type LendingConfigCursor struct {
 	TxHash     string
 	OpIndex    uint32
 	EventIndex uint32
+	Kind       string
 }
 
 // IsSet reports whether the cursor points past an already served row.
 func (c LendingConfigCursor) IsSet() bool { return !c.Ts.IsZero() }
+
+// lifecycleRankWhens orders one ledger's reserve-config steps queue < cancel < set, since op_index and event_index restart in every
+// transaction. Neither table stores a transaction index, so a ledger that sets an older queue and then queues anew is misordered.
+const lifecycleRankWhens = ` WHEN 'cancel_set_reserve' THEN 1 WHEN 'set_reserve' THEN 2 ELSE 0 END`
 
 // lendingConfigHistorySQL reads both admin tables (a pool lives in one) through their kind indexes. The window runs over the
 // pool's whole admin history before the keyset cut, so a queue on one page is judged by a step on another.
@@ -47,14 +52,16 @@ const lendingConfigHistorySQL = `
                    asset, attributes->>'new_admin', attributes
               FROM blnt_events
              WHERE contract_id = $1 AND contract_role = 'pool' AND event_kind IN (` + lendingConfigKinds + `)
+        ), ranked AS (
+            SELECT ev.*, CASE event_kind` + lifecycleRankWhens + ` AS lifecycle_rank FROM ev
         ), chained AS (
-            SELECT ev.*,
+            SELECT ranked.*,
                    LEAD(event_kind) OVER w AS next_kind,
                    LAG(event_kind) OVER w AS prev_kind,
                    LAG(attributes->'metadata') OVER w AS prev_metadata
-              FROM ev
+              FROM ranked
             WINDOW w AS (PARTITION BY CASE WHEN event_kind IN (` + reserveConfigKinds + `) THEN asset END
-                         ORDER BY ledger_close_time, ledger, op_index, event_index)
+                         ORDER BY ledger_close_time, ledger, lifecycle_rank, tx_hash, op_index, event_index, event_kind)
         )
         SELECT ledger_close_time, ledger, tx_hash, op_index, event_index, event_kind,
                COALESCE(asset, ''), COALESCE(new_admin, ''), COALESCE(attributes::text, '{}'),
@@ -63,9 +70,10 @@ const lendingConfigHistorySQL = `
                         END::text, ''),
                event_kind = 'queue_set_reserve' AND next_kind IS NOT DISTINCT FROM 'set_reserve'
           FROM chained
-         WHERE (ledger_close_time, ledger, tx_hash, op_index, event_index) < ($2::timestamptz, $3::integer, $4::text, $5::integer, $6::integer)
-         ORDER BY ledger_close_time DESC, ledger DESC, tx_hash DESC, op_index DESC, event_index DESC
-         LIMIT $7`
+         WHERE (ledger_close_time, ledger, lifecycle_rank, tx_hash, op_index, event_index, event_kind)
+             < ($2::timestamptz, $3::integer, CASE $7::text` + lifecycleRankWhens + `, $4::text, $5::integer, $6::integer, $7::text)
+         ORDER BY ledger_close_time DESC, ledger DESC, lifecycle_rank DESC, tx_hash DESC, op_index DESC, event_index DESC, event_kind DESC
+         LIMIT $8`
 
 const (
 	reserveConfigKinds = `'queue_set_reserve','cancel_set_reserve','set_reserve'`
@@ -81,7 +89,7 @@ func (s *Store) LendingConfigHistory(ctx context.Context, pool string, limit int
 	if cur.IsSet() {
 		after = cur
 	}
-	args := []any{pool, after.Ts.UTC(), int64(after.Ledger), after.TxHash, int64(after.OpIndex), int64(after.EventIndex), limit}
+	args := []any{pool, after.Ts.UTC(), int64(after.Ledger), after.TxHash, int64(after.OpIndex), int64(after.EventIndex), after.Kind, limit}
 	return queryFold(ctx, s.db, "LendingConfigHistory", lendingConfigHistorySQL, args, func(rows *sql.Rows) (LendingConfigChange, error) {
 		var c LendingConfigChange
 		var attrs, meta string

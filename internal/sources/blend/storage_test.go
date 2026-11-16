@@ -191,6 +191,40 @@ func TestDecodePoolConfig(t *testing.T) {
 	}
 }
 
+// A Config map without min_collateral (the V1 PoolConfig shape) decodes every other field, MinCollateral unknown, and its
+// backstop rate still feeds a supply APR.
+func TestDecodePoolConfig_WithoutMinCollateral(t *testing.T) {
+	const oracle = "CCYHURAC5VTN2ZU663UUS5F24S4GURDPO4FHZ75JLN5DMLRTLCG44H44"
+	pc, err := DecodePoolConfig(mapScVal([]xdr.ScMapEntry{
+		{Key: symbolScVal("bstop_rate"), Val: u32ScVal(1_000_000)},
+		{Key: symbolScVal("max_positions"), Val: u32ScVal(4)},
+		{Key: symbolScVal("oracle"), Val: addressScVal(t, oracle)},
+		{Key: symbolScVal("status"), Val: u32ScVal(2)},
+	}))
+	if err != nil {
+		t.Fatalf("DecodePoolConfig: %v", err)
+	}
+	if pc.Oracle != oracle || pc.BstopRate != 1_000_000 || pc.Status != 2 || pc.MaxPositions != 4 || pc.MinCollateral != nil {
+		t.Fatalf("pool config = %+v", pc)
+	}
+	rate := big.NewInt(1_000_000_000_000)
+	rd := ReserveData{
+		BSupply: big.NewInt(2_000_000_0000000), BRate: rate, DSupply: big.NewInt(1_000_000_0000000), DRate: rate,
+		IRMod: big.NewInt(1_0000000), Version: PoolV2,
+	}
+	if m := Metrics(rd, interestRefConfig(), pc.BstopRate); !m.HasAPR || m.SupplyAPR <= 0 {
+		t.Errorf("metrics = %+v, want a supply APR", m)
+	}
+}
+
+// An unparseable supply_cap is unknown, not a 0 cap.
+func TestParseReserveConfigMetadata_UnparseableSupplyCapIsUnknown(t *testing.T) {
+	cfg, err := ParseReserveConfigMetadata([]byte(`{"util":1,"supply_cap":"1e9"}`))
+	if err != nil || cfg.SupplyCap != nil {
+		t.Fatalf("cfg = %+v err = %v, want SupplyCap nil", cfg, err)
+	}
+}
+
 // Metrics ties it together: a 50%-utilized reserve at the reference
 // config, 10% backstop.
 func TestMetrics(t *testing.T) {

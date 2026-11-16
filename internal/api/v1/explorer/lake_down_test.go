@@ -57,8 +57,8 @@ func (downReader) NetworkThroughput(context.Context, int) ([]clickhouse.Throughp
 	return nil, errLakeDown
 }
 
-func (downReader) BlendPoolReserves(context.Context, string, blend.PoolVersion, []string, map[string]blend.ReserveConfig) ([]clickhouse.BlendReserveState, error) {
-	return nil, errLakeDown
+func (downReader) BlendPoolReserves(context.Context, string, blend.PoolVersion, []string, map[string]blend.ReserveConfig) (clickhouse.BlendPoolState, error) {
+	return clickhouse.BlendPoolState{}, errLakeDown
 }
 
 func (downReader) TransactionByHash(context.Context, string) (clickhouse.TxSummary, bool, error) {

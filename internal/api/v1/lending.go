@@ -42,7 +42,7 @@ type blntLendingAtReader interface {
 
 // blntReserveReader is the lake read of a BLNT pool's reserve state.
 type blntReserveReader interface {
-	BLNTPoolReserves(ctx context.Context, pool string, assets []string, configs map[string]blnt.ReserveConfig) ([]clickhouse.BlendReserveState, error)
+	BLNTPoolReserves(ctx context.Context, pool string, assets []string, configs map[string]blnt.ReserveConfig) (clickhouse.BlendPoolState, error)
 }
 
 var (
@@ -448,10 +448,11 @@ func (s *Server) buildPoolReserves(ctx context.Context, pool string) (poolReserv
 	if version == blend.PoolVersionUnknown {
 		read = s.readBLNTPoolReserves
 	}
-	assets, states, configsFailed, err := read(ctx, pool, version)
+	pr, err := read(ctx, pool, version)
 	if err != nil {
 		return poolReserves{}, err
 	}
+	states := pr.state.Reserves
 
 	// Price reserves with a BOUNDED fan-out, not serially: each USD price resolution can cost
 	// several round-trips (alias walk, then peg probes), and serial cost scales with the reserve
@@ -467,8 +468,8 @@ func (s *Server) buildPoolReserves(ctx context.Context, pool string) (poolReserv
 	})
 
 	out := LendingPoolReservesView{
-		Pool: pool, Reserves: views, OmittedReserves: reservesWithoutState(assets, states),
-		PoolConfig: poolConfigView(poolInstanceOf(states), version), ConfigDecimals: lendingConfigDecimals,
+		Pool: pool, Reserves: views, OmittedReserves: reservesWithoutState(pr.assets, states),
+		PoolConfig: poolConfigView(pr.state.Instance, version), ConfigDecimals: lendingConfigDecimals,
 	}
 	out.TVLUSD, out.LowerBound = reservesTVLUSD(suppliedUSD)
 	out.LowerBound = out.LowerBound || (out.TVLUSD != nil && len(out.OmittedReserves) > 0)
@@ -480,14 +481,21 @@ func (s *Server) buildPoolReserves(ctx context.Context, pool string) (poolReserv
 	out.AsOfLedger = wmLedger
 	// A USD figure valued at a stale price is stale whatever the lake's own freshness.
 	stale = stale || slices.Contains(stalePrice, true)
-	return poolReserves{view: out, flags: Flags{Stale: stale, Degraded: configsFailed}}, nil
+	return poolReserves{view: out, flags: Flags{Stale: stale, Degraded: pr.configsFailed}}, nil
 }
 
-// readBlendPoolReserves reads a Blend pool's reserve assets, configs and lake state; configsFailed means APRs are withheld.
-func (s *Server) readBlendPoolReserves(ctx context.Context, pool string, version blend.PoolVersion) ([]string, []clickhouse.BlendReserveState, bool, error) {
+// poolRead is one pool's reserve assets and lake state; configsFailed means APRs are withheld.
+type poolRead struct {
+	assets        []string
+	state         clickhouse.BlendPoolState
+	configsFailed bool
+}
+
+// readBlendPoolReserves reads a Blend pool's reserve assets, configs and lake state.
+func (s *Server) readBlendPoolReserves(ctx context.Context, pool string, version blend.PoolVersion) (poolRead, error) {
 	assets, err := s.Lending.BlendPoolAssets(ctx, pool)
 	if err != nil {
-		return nil, nil, false, &lendingStageErr{"BlendPoolAssets", err}
+		return poolRead{}, &lendingStageErr{"BlendPoolAssets", err}
 	}
 	// Rate-model configs (for APY) come from blend_admin events — the
 	// on-chain ResConfig storage entry is usually uncaptured. Best-effort:
@@ -499,28 +507,28 @@ func (s *Server) readBlendPoolReserves(ctx context.Context, pool string, version
 		configsFailed = true
 		configs = nil
 	}
-	states, err := s.Explorer.BlendPoolReserves(ctx, pool, version, assets, configs)
+	state, err := s.Explorer.BlendPoolReserves(ctx, pool, version, assets, configs)
 	if err != nil {
-		return nil, nil, false, &lendingStageErr{"BlendPoolReserves", err}
+		return poolRead{}, &lendingStageErr{"BlendPoolReserves", err}
 	}
-	return assets, states, configsFailed, nil
+	return poolRead{assets: assets, state: state, configsFailed: configsFailed}, nil
 }
 
 // readBLNTPoolReserves serves a pool with no Blend lineage when blnt_events knows it as a BLNT pool; anything else is
 // errPoolLineageUnknown. Configs are best-effort as on the Blend path.
-func (s *Server) readBLNTPoolReserves(ctx context.Context, pool string, _ blend.PoolVersion) ([]string, []clickhouse.BlendReserveState, bool, error) {
+func (s *Server) readBLNTPoolReserves(ctx context.Context, pool string, _ blend.PoolVersion) (poolRead, error) {
 	lr, okL := s.Lending.(blntLendingReader)
 	rr, okR := s.Explorer.(blntReserveReader)
 	var assets []string
 	if okL && okR {
 		var err error
 		if assets, err = lr.BLNTPoolAssets(ctx, pool); err != nil {
-			return nil, nil, false, &lendingStageErr{"BLNTPoolAssets", err}
+			return poolRead{}, &lendingStageErr{"BLNTPoolAssets", err}
 		}
 	}
 	if len(assets) == 0 {
 		s.logger.Warn("lending pool lineage unknown; reserves withheld", "pool", pool)
-		return nil, nil, false, errPoolLineageUnknown
+		return poolRead{}, errPoolLineageUnknown
 	}
 	meta, err := lr.BLNTReserveConfigMetadata(ctx, pool)
 	configsFailed := err != nil
@@ -537,11 +545,11 @@ func (s *Server) readBLNTPoolReserves(ctx context.Context, pool string, _ blend.
 		}
 		configs[asset] = cfg
 	}
-	states, err := rr.BLNTPoolReserves(ctx, pool, assets, configs)
+	state, err := rr.BLNTPoolReserves(ctx, pool, assets, configs)
 	if err != nil {
-		return nil, nil, false, &lendingStageErr{"BLNTPoolReserves", err}
+		return poolRead{}, &lendingStageErr{"BLNTPoolReserves", err}
 	}
-	return assets, states, configsFailed, nil
+	return poolRead{assets: assets, state: state, configsFailed: configsFailed}, nil
 }
 
 // reservesWithoutState lists the pool's reserve assets the lake returned no state for, in pool order.
@@ -639,7 +647,6 @@ func (s *Server) buildReserveView(ctx context.Context, st clickhouse.BlendReserv
 		obs.NonstandardDecimalsLockstepMismatchTotal.WithLabelValues("lending_reserve", "").Inc()
 		return rv, nil, false
 	}
-	rv.PriceUSD, rv.PriceStale = &price, stale
 	var suppliedContrib *big.Rat
 	if usd, err := usdMarketValue(st.Metrics.SuppliedUnderlying, price, dec); err == nil {
 		rv.SuppliedUSD = &usd
@@ -650,7 +657,11 @@ func (s *Server) buildReserveView(ctx context.Context, st clickhouse.BlendReserv
 	if usd, err := usdMarketValue(st.Metrics.BorrowedUnderlying, price, dec); err == nil {
 		rv.BorrowedUSD = &usd
 	}
-	return rv, suppliedContrib, stale && (rv.SuppliedUSD != nil || rv.BorrowedUSD != nil)
+	valued := rv.SuppliedUSD != nil || rv.BorrowedUSD != nil
+	if valued {
+		rv.PriceUSD, rv.PriceStale = &price, stale
+	}
+	return rv, suppliedContrib, stale && valued
 }
 
 // reserveDecimals returns the reserve token's real decimal exponent: the pool's reserve config when captured, else 7 for a

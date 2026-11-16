@@ -6286,7 +6286,7 @@ export interface components {
             r_three: string;
             /** @description How fast ir_mod moves. */
             reactivity: string;
-            /** @description Supply cap, underlying token base units. Null on a Blend V1 pool, which has none. */
+            /** @description Supply cap, underlying token base units. Null on a Blend V1 pool, which has none, and when the recorded value does not parse. */
             supply_cap: string | null;
             enabled: boolean;
         };
@@ -6303,7 +6303,7 @@ export interface components {
             /** @description Backstop's share of accrued interest, raw integer at `config_decimals`. */
             backstop_take_rate?: string;
             max_positions?: number;
-            /** @description Minimum collateral: the contract's raw i128 as a decimal string. */
+            /** @description Minimum collateral: the contract's raw i128 as a decimal string. Omitted when the pool's PoolConfig has no min_collateral (Blend V1), never served as 0. */
             min_collateral?: string;
             /** @description The contract's pool status code. */
             status?: number;
@@ -17652,7 +17652,7 @@ export interface operations {
                                  */
                                 last_update?: string | null;
                             }[];
-                            /** @description The pool's instance-storage PoolConfig and admin. Null when the instance entry is missing or no reserve has decoded state. */
+                            /** @description The pool's instance-storage PoolConfig and admin, served whether or not the pool has reserves. Null when the instance entry is missing, undecodable or archived. */
                             pool_config?: components["schemas"]["LendingPoolConfig"] | null;
                             /** @description Fixed-point scale of every reserve-config fraction (`collateral_factor`, `liability_factor`, `target_utilization`, `max_utilization`, `r_base`, `r_one`, `r_two`, `r_three`, `reactivity`) and of `pool_config.backstop_take_rate`. Always 7: 10000000 = 1.0 (pool storage.rs). */
                             config_decimals?: number;

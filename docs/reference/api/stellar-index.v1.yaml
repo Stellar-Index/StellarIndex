@@ -3826,7 +3826,7 @@ paths:
                             oneOf:
                               - { $ref: "#/components/schemas/LendingPoolConfig" }
                               - { type: "null" }
-                            description: "The pool's instance-storage PoolConfig and admin. Null when the instance entry is missing or no reserve has decoded state."
+                            description: "The pool's instance-storage PoolConfig and admin, served whether or not the pool has reserves. Null when the instance entry is missing, undecodable or archived."
                           config_decimals: { type: integer, description: "Fixed-point scale of every reserve-config fraction (`collateral_factor`, `liability_factor`, `target_utilization`, `max_utilization`, `r_base`, `r_one`, `r_two`, `r_three`, `reactivity`) and of `pool_config.backstop_take_rate`. Always 7: 10000000 = 1.0 (pool storage.rs)." }
                           as_of_ledger: { type: integer, format: int64, description: "Lake watermark this current-state read is fresh to (ADR-0041) — the highest captured ledger at serve time. Omitted when no watermark reader is wired. Pairs with flags.stale." }
         "400": { $ref: "#/components/responses/BadRequest" }
@@ -15154,7 +15154,7 @@ components:
         r_two:              { type: string, description: Rate slope from target to 95% utilisation. }
         r_three:            { type: string, description: Rate slope above 95% utilisation. }
         reactivity:         { type: string, description: How fast ir_mod moves. }
-        supply_cap:         { type: [string, "null"], description: "Supply cap, underlying token base units. Null on a Blend V1 pool, which has none." }
+        supply_cap:         { type: [string, "null"], description: "Supply cap, underlying token base units. Null on a Blend V1 pool, which has none, and when the recorded value does not parse." }
         enabled:            { type: boolean }
       required: [index, decimals, collateral_factor, liability_factor, target_utilization, max_utilization, r_base, r_one, r_two, r_three, reactivity, supply_cap, enabled]
     LendingPoolConfig:
@@ -15168,7 +15168,7 @@ components:
         admin:              { type: string, description: "Pool admin address (on `set_admin`, the new admin)." }
         backstop_take_rate: { type: string, description: "Backstop's share of accrued interest, raw integer at `config_decimals`." }
         max_positions:      { type: integer }
-        min_collateral:     { type: string, description: "Minimum collateral: the contract's raw i128 as a decimal string." }
+        min_collateral:     { type: string, description: "Minimum collateral: the contract's raw i128 as a decimal string. Omitted when the pool's PoolConfig has no min_collateral (Blend V1), never served as 0." }
         status:             { type: integer, description: The contract's pool status code. }
         status_label:       { type: string, enum: [admin_active, active, admin_on_ice, on_ice, admin_frozen, frozen, setup], description: "Name of `status` (0..6) per the Blend V2 and BLNT pool contracts. Omitted on a Blend V1 pool and for an unknown code." }
     UsdVolumePricingAxis:
