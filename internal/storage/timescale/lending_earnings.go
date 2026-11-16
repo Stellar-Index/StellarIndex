@@ -21,6 +21,9 @@ type LendingBackstopTokenFold struct {
 	// LastLedger is the newest ledger of any of the account's backstop events for the (pool, tier), queueing included: every
 	// one of them rewrites the account's backstop balance entry.
 	LastLedger uint32
+	// NullAmounts counts deposit/withdraw rows with a NULL token or share amount: SUM skips them, so NetDeposited (or the
+	// share fold beside it) is short and must not be served.
+	NullAmounts int64
 }
 
 // LendingAccountFlows is the claim and backstop-token history of one account, per protocol.
@@ -49,7 +52,8 @@ const (
 		SELECT pool, '',
 		       COALESCE(SUM(CASE WHEN event_kind = 'deposit' THEN amount
 		                         WHEN event_kind = 'withdraw' THEN -amount END),0)::text,
-		       MAX(ledger)
+		       MAX(ledger),
+		       COUNT(*) FILTER (WHERE event_kind IN ('deposit','withdraw') AND (amount IS NULL OR amount2 IS NULL))
 		  FROM blend_backstop_events
 		 WHERE user_address = $1 AND pool IS NOT NULL
 		 GROUP BY pool
@@ -60,7 +64,8 @@ const (
 		SELECT pool, tier,
 		       COALESCE(SUM(CASE WHEN event_kind = 'deposit' THEN amount
 		                         WHEN event_kind = 'withdraw' THEN -amount END),0)::text,
-		       MAX(ledger)
+		       MAX(ledger),
+		       COUNT(*) FILTER (WHERE event_kind IN ('deposit','withdraw') AND (amount IS NULL OR amount2 IS NULL))
 		  FROM blnt_events
 		 WHERE user_address = $1 AND contract_role = 'backstop' AND pool IS NOT NULL AND tier IS NOT NULL
 		 GROUP BY pool, tier
@@ -99,7 +104,7 @@ func scanClaimFold(rows *sql.Rows) (LendingClaimFold, error) {
 func scanBackstopTokenFold(rows *sql.Rows) (LendingBackstopTokenFold, error) {
 	var f LendingBackstopTokenFold
 	var ledger int64
-	if err := rows.Scan(&f.Pool, &f.Tier, &f.NetDeposited, &ledger); err != nil {
+	if err := rows.Scan(&f.Pool, &f.Tier, &f.NetDeposited, &ledger, &f.NullAmounts); err != nil {
 		return f, fmt.Errorf("backstop token fold: %w", err)
 	}
 	f.LastLedger = uint32(ledger) //nolint:gosec // ledger seq fits uint32
