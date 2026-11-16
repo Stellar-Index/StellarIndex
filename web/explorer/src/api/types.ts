@@ -1814,8 +1814,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Lending pools (Blend) with auction + net-flow stats.
-         * @description One row per distinct Blend pool contract observed in EITHER
+         * Lending pools (Blend and BLNT) with auction + net-flow stats.
+         * @description One row per distinct Blend or BLNT V3 pool contract (`protocol`
+         *     says which; BLNT is a separate protocol, never reported as
+         *     Blend) observed in EITHER
          *     the auction stream OR the position-event stream, with 24h /
          *     all-time auction counts, 30d unique users, last-seen, plus a
          *     30-day net-flow proxy for supply/borrow.
@@ -6759,7 +6761,7 @@ export interface components {
         /** @description One folded DeFi position — a net position in a single venue for a single protocol. */
         AccountPosition: {
             /** @enum {string} */
-            protocol: "blend" | "phoenix" | "defindex" | "sorocredit" | "aquarius";
+            protocol: "blend" | "blnt" | "phoenix" | "defindex" | "sorocredit" | "aquarius";
             /**
              * @description lending_supply/lending_borrow: Blend money-market, independent
              *     supply-side and borrow-side legs of the same (pool, asset).

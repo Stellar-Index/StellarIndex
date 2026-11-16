@@ -149,31 +149,34 @@ const blendPositionsByUserSQL = `
 
 // BlendPositionsByUser folds blend_positions into one row per (pool, asset) the user touched, with independent supply and borrow nets (see BlendPositionFold); sargable on `user_address = $1`.
 func (s *Store) BlendPositionsByUser(ctx context.Context, address string) ([]BlendPositionFold, error) {
-	return queryFold(ctx, s.db, "BlendPositionsByUser", blendPositionsByUserSQL, []any{address, positionsVenueLimit}, func(rows *sql.Rows) (BlendPositionFold, error) {
-		var (
-			f                              BlendPositionFold
-			supplyActivity, borrowActivity sql.NullTime
-			supplyLedger, borrowLedger     sql.NullInt64
-		)
-		if err := rows.Scan(&f.Pool, &f.Asset, &f.HasSupplyLeg, &f.SupplyNet, &f.SupplySuperseded, &f.SupplyTokens,
-			&supplyActivity, &supplyLedger, &f.HasBorrowLeg, &f.BorrowNet, &f.BorrowSuperseded, &f.BorrowTokens,
-			&borrowActivity, &borrowLedger); err != nil {
-			return f, err
-		}
-		if supplyActivity.Valid {
-			f.SupplyLastActivity = supplyActivity.Time.UTC()
-		}
-		if supplyLedger.Valid {
-			f.SupplyLastLedger = uint32(supplyLedger.Int64) //nolint:gosec // ledger seq fits uint32
-		}
-		if borrowActivity.Valid {
-			f.BorrowLastActivity = borrowActivity.Time.UTC()
-		}
-		if borrowLedger.Valid {
-			f.BorrowLastLedger = uint32(borrowLedger.Int64) //nolint:gosec // ledger seq fits uint32
-		}
-		return f, nil
-	})
+	return queryFold(ctx, s.db, "BlendPositionsByUser", blendPositionsByUserSQL, []any{address, positionsVenueLimit}, scanLendingPositionFold)
+}
+
+// scanLendingPositionFold reads one Blend-shaped (pool, asset) supply/borrow fold row.
+func scanLendingPositionFold(rows *sql.Rows) (BlendPositionFold, error) {
+	var (
+		f                              BlendPositionFold
+		supplyActivity, borrowActivity sql.NullTime
+		supplyLedger, borrowLedger     sql.NullInt64
+	)
+	if err := rows.Scan(&f.Pool, &f.Asset, &f.HasSupplyLeg, &f.SupplyNet, &f.SupplySuperseded, &f.SupplyTokens,
+		&supplyActivity, &supplyLedger, &f.HasBorrowLeg, &f.BorrowNet, &f.BorrowSuperseded, &f.BorrowTokens,
+		&borrowActivity, &borrowLedger); err != nil {
+		return f, err
+	}
+	if supplyActivity.Valid {
+		f.SupplyLastActivity = supplyActivity.Time.UTC()
+	}
+	if supplyLedger.Valid {
+		f.SupplyLastLedger = uint32(supplyLedger.Int64) //nolint:gosec // ledger seq fits uint32
+	}
+	if borrowActivity.Valid {
+		f.BorrowLastActivity = borrowActivity.Time.UTC()
+	}
+	if borrowLedger.Valid {
+		f.BorrowLastLedger = uint32(borrowLedger.Int64) //nolint:gosec // ledger seq fits uint32
+	}
+	return f, nil
 }
 
 // BlendBackstopFold is one pool's backstop-share fold for a user from blend_backstop_events; SharesNet sums `amount2` signed +deposit/-withdraw, an exact current share count.
