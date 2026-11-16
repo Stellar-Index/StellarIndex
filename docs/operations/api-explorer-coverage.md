@@ -20,8 +20,8 @@ Every path in `openapi/stellar-index.v1.yaml` against what `web/explorer` calls 
 
 | | Count |
 |---|---:|
-| Paths in the OpenAPI contract | **148** |
-| Level 3 — reachable | **115** |
+| Paths in the OpenAPI contract | **149** |
+| Level 3 — reachable | **116** |
 | Level 2 — consumed but unreachable | **0** |
 | Level 1 — not consumed | **29** |
 | Deliberately excluded (operational) | **4** |
@@ -83,6 +83,7 @@ Level `ex` = deliberately excluded. "Consumed in" is the first call site.
 | `/pools/reserves` | GET | 3 | app/dexes/[source]/PairReservesPanel.tsx |
 | `/liquidity-pools` | GET | 3 | app/liquidity-pools/NativePoolsPanel.tsx |
 | `/lending/pools` | GET | 3 | app/HomeTryAPI.tsx |
+| `/lending/pools/{pool}/config-history` | GET | 3 | app/lending/[pool]/ConfigHistory.tsx |
 | `/lending/pools/{pool}/reserves` | GET | 3 | app/lending/LendingPoolsTable.tsx |
 | `/mev` | GET | 3 | app/docs/page.tsx |
 | `/anomalies` | GET | 3 | app/anomalies/AnomaliesFeed.tsx |
