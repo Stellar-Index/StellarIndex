@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
@@ -71,6 +72,7 @@ func (h *Handler) TxDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	// A fee bump found by its inner hash: its rows are keyed on the outer one.
 	hash = tx.TxHash
+	_, uncommitted := h.ledgerCommit(ctx, tx.Seq)
 
 	ops, err := h.Reader.OperationsByTx(ctx, tx.Seq, hash)
 	if err != nil {
@@ -113,8 +115,8 @@ func (h *Handler) TxDetail(w http.ResponseWriter, r *http.Request) {
 		TxSummaryView: txSummaryView(tx),
 		Operations:    buildTxOpViews(ops, results, tx.Successful, tx.ResultCode),
 		Events:        buildTxEventViews(events),
-		CoverageNote:  txCoverageNote(resultsPartial, eventsPartial),
-	}, stale, resultsPartial || eventsPartial, time.Time{})
+		CoverageNote:  joinCoverageNotes(uncommitted, txCoverageNote(resultsPartial, eventsPartial)),
+	}, stale, uncommitted != "" || resultsPartial || eventsPartial, time.Time{})
 }
 
 // txNotFoundDetail keeps a behind-the-network lake from making a recent
@@ -159,6 +161,16 @@ func txCoverageNote(resultsFailed, eventsFailed bool) string {
 			"incomplete, not genuinely empty"
 	}
 	return ""
+}
+
+func joinCoverageNotes(notes ...string) string {
+	var kept []string
+	for _, n := range notes {
+		if n != "" {
+			kept = append(kept, n)
+		}
+	}
+	return strings.Join(kept, "; ")
 }
 
 // buildTxOpViews decodes a transaction's operations, stamps each with its parent tx's success (so a failed tx's ops are not mistaken

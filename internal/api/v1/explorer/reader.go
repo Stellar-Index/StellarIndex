@@ -9,6 +9,7 @@ package explorer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -382,6 +383,21 @@ func (h *Handler) writeJSONAt(w http.ResponseWriter, data any, stale, degraded b
 		return
 	}
 	h.WriteJSON(w, data, stale)
+}
+
+// ledgerCommit reads ledger seq's stellar.ledgers row, which the lake sink writes after every child table as the
+// ledger's commit marker, and returns a note when the row is absent or unreadable. Call it BEFORE the child reads: a
+// marker present then means every child row was already written; checked after, a flush can land in between.
+func (h *Handler) ledgerCommit(ctx context.Context, seq uint32) (hdr clickhouse.LedgerHeader, uncommittedNote string) {
+	hdr, found, err := h.Reader.LedgerBySeq(ctx, seq)
+	if err != nil {
+		h.Logger.Warn("explorer LedgerBySeq (commit marker) failed", "err", err, "seq", seq)
+	}
+	if err != nil || !found {
+		return clickhouse.LedgerHeader{}, fmt.Sprintf("ledger %d has no commit record in the index: it is not indexed yet or is "+
+			"still being written, so the rows shown may be incomplete", seq)
+	}
+	return hdr, ""
 }
 
 // lakeTip is LakeWatermark with an unwired func reading as no lake to judge

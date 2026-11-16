@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +25,24 @@ type txCoverageReader struct {
 	*capReader
 	resultsErr error
 	eventsErr  error
+	// uncommitted: the tx's ledger has no stellar.ledgers row yet (the sink writes it last).
+	uncommitted bool
+	calls       []string
+}
+
+func (r *txCoverageReader) LedgerBySeq(context.Context, uint32) (clickhouse.LedgerHeader, bool, error) {
+	r.calls = append(r.calls, "LedgerBySeq")
+	return clickhouse.LedgerHeader{TxCount: 1, OpCount: 1}, !r.uncommitted, nil
+}
+
+func (r *txCoverageReader) LedgerTransactions(context.Context, uint32, int) ([]clickhouse.TxSummary, error) {
+	r.calls = append(r.calls, "LedgerTransactions")
+	return nil, nil
+}
+
+func (r *txCoverageReader) OperationsByLedger(context.Context, uint32, int) ([]clickhouse.OpRow, error) {
+	r.calls = append(r.calls, "OperationsByLedger")
+	return nil, nil
 }
 
 func (r *txCoverageReader) TransactionByHash(context.Context, string) (clickhouse.TxSummary, bool, error) {
@@ -30,6 +50,7 @@ func (r *txCoverageReader) TransactionByHash(context.Context, string) (clickhous
 }
 
 func (r *txCoverageReader) OperationsByTx(context.Context, uint32, string) ([]clickhouse.OpRow, error) {
+	r.calls = append(r.calls, "OperationsByTx")
 	return nil, nil
 }
 
@@ -367,4 +388,75 @@ func (r *feeBumpReader) OperationResultsByTx(_ context.Context, _ uint32, hash s
 
 func (r *feeBumpReader) EventsByTx(context.Context, uint32, string) ([]clickhouse.EventSummary, error) {
 	return nil, nil
+}
+
+// The sink writes a ledger's stellar.ledgers row after every child table. A read of a ledger without that row may see
+// child tables that are not written yet, so its empties are not real empties: the response says so and leaves the
+// closed-ledger cache band. The marker is read BEFORE the child tables; read after, a flush could land in between.
+func TestLedgerChildReads_DiscloseAnUncommittedLedger(t *testing.T) {
+	const band = "public, max-age=60, s-maxage=300"
+	for _, tc := range []struct {
+		name      string
+		serve     func(*Handler, http.ResponseWriter, *http.Request)
+		target    string
+		path      map[string]string
+		childRead string
+		hasNote   bool
+	}{
+		{"tx detail", (*Handler).TxDetail, "/v1/tx/" + validTestTxHash, map[string]string{"hash": validTestTxHash}, "OperationsByTx", true},
+		{"ledger operations", (*Handler).LedgerOperations, "/v1/ledgers/42/operations", map[string]string{"seq": "42"}, "OperationsByLedger", true},
+		{"ledger transactions", (*Handler).LedgerTransactions, "/v1/ledgers/42/transactions", map[string]string{"seq": "42"}, "LedgerTransactions", false},
+	} {
+		for _, uncommitted := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/uncommitted=%t", tc.name, uncommitted), func(t *testing.T) {
+				reader := &txCoverageReader{capReader: &capReader{probe: &deadlineProbe{}}, uncommitted: uncommitted}
+				var body []byte
+				h := newProbeHandler(reader, nil)
+				h.WriteJSON = func(w http.ResponseWriter, data any, _ bool) {
+					body, _ = json.Marshal(data)
+					w.WriteHeader(http.StatusOK)
+				}
+				h.WriteJSONAt = func(w http.ResponseWriter, data any, _, degraded bool, _ time.Time) {
+					body, _ = json.Marshal(data)
+					if degraded {
+						w.Header().Set("Cache-Control", "no-store")
+					}
+					w.WriteHeader(http.StatusOK)
+				}
+				r := httptest.NewRequest(http.MethodGet, tc.target, nil)
+				for k, v := range tc.path {
+					r.SetPathValue(k, v)
+				}
+				rec := httptest.NewRecorder()
+				rec.Header().Set("Cache-Control", band)
+				tc.serve(h, rec, r)
+				if rec.Code != http.StatusOK {
+					t.Fatalf("status = %d, want 200", rec.Code)
+				}
+
+				marker, child := slices.Index(reader.calls, "LedgerBySeq"), slices.Index(reader.calls, tc.childRead)
+				if marker < 0 || child < 0 || marker > child {
+					t.Fatalf("reads = %v: the commit marker must be read before %s", reader.calls, tc.childRead)
+				}
+				wantCache := band
+				if uncommitted {
+					wantCache = "no-store"
+				}
+				if got := rec.Header().Get("Cache-Control"); got != wantCache {
+					t.Errorf("Cache-Control = %q, want %q", got, wantCache)
+				}
+				var view map[string]any
+				if err := json.Unmarshal(body, &view); err != nil {
+					t.Fatalf("decode: %v", err)
+				}
+				note, _ := view["coverage_note"].(string)
+				if want := uncommitted && tc.hasNote; (note != "") != want {
+					t.Errorf("coverage_note = %q, want present=%t", note, want)
+				}
+				if uncommitted && tc.hasNote && !strings.Contains(note, "ledger 42 has no commit record") {
+					t.Errorf("coverage_note = %q, want it to name the uncommitted ledger", note)
+				}
+			})
+		}
+	}
 }

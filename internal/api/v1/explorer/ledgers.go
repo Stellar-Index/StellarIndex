@@ -253,6 +253,7 @@ func (h *Handler) LedgerTransactions(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
+	hdr, uncommitted := h.ledgerCommit(ctx, seq)
 	rows, err := h.Reader.LedgerTransactions(ctx, seq, limit)
 	if err != nil {
 		if h.ClientAborted(r, err) {
@@ -273,16 +274,12 @@ func (h *Handler) LedgerTransactions(w http.ResponseWriter, r *http.Request) {
 	for i, t := range rows {
 		out.Transactions[i] = txSummaryView(t)
 	}
-	// Total/Truncated come from the ledger header, not the tx query, so a
-	// header-read hiccup only loses this metadata (both fields stay zero)
-	// rather than failing a request the transaction fetch already served.
-	hdr, found, herr := h.Reader.LedgerBySeq(ctx, seq)
-	if herr != nil {
-		h.Logger.Warn("explorer LedgerBySeq (transactions total) failed", "err", herr, "seq", seq)
-	} else if found {
+	// Total/Truncated come from the ledger header, not the tx query. Without a committed header both stay zero
+	// and the list is served degraded (uncached): it may be a ledger the lake is still writing.
+	if uncommitted == "" {
 		out.Total = hdr.TxCount
 		out.Truncated = hdr.TxCount > uint32(len(rows))
 	}
 	_, stale, _ := h.LakeWatermark(ctx)
-	h.writeJSONAt(w, out, stale, herr != nil, time.Time{})
+	h.writeJSONAt(w, out, stale, uncommitted != "", time.Time{})
 }

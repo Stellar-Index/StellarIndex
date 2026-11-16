@@ -372,6 +372,7 @@ func (h *Handler) ledgerOperations(w http.ResponseWriter, r *http.Request, seq u
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
+	hdr, uncommitted := h.ledgerCommit(ctx, seq)
 	rows, err := h.Reader.OperationsByLedger(ctx, seq, limit)
 	if err != nil {
 		if h.ClientAborted(r, err) {
@@ -402,18 +403,15 @@ func (h *Handler) ledgerOperations(w http.ResponseWriter, r *http.Request, seq u
 		decodedBytes += len(o.BodyXDR)
 		out.Operations[i] = opView(o)
 	}
-	out.CoverageNote = h.stampTxOutcomes(ctx, out.Operations, rows)
-	// len(rows)==limit can't distinguish "exactly limit ops" from "truncated", so read the
-	// ledger header's exact op count. A header-read failure only loses this metadata.
-	hdr, found, herr := h.Reader.LedgerBySeq(ctx, seq)
-	if herr != nil {
-		h.Logger.Warn("explorer LedgerBySeq (operations total) failed", "err", herr, "seq", seq)
-	} else if found {
+	out.CoverageNote = joinCoverageNotes(uncommitted, h.stampTxOutcomes(ctx, out.Operations, rows))
+	// len(rows)==limit can't distinguish "exactly limit ops" from "truncated", so the exact op count comes from
+	// the ledger header; without a committed header it stays zero.
+	if uncommitted == "" {
 		out.Total = hdr.OpCount
 		out.Truncated = hdr.OpCount > uint32(len(rows))
 	}
 	_, stale, _ := h.lakeTip(ctx)
-	h.writeJSONAt(w, out, stale, out.CoverageNote != "" || herr != nil, time.Time{})
+	h.writeJSONAt(w, out, stale, out.CoverageNote != "", time.Time{})
 }
 
 // operationsResponseByteBudget is a conservative, fail-closed ceiling on the raw XDR bytes one per-ledger response will decode.
