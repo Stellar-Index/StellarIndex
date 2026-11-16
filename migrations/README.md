@@ -525,6 +525,7 @@ rejects a row that is not.
 | 0220 | Adds `lp_reserve_current` and `lp_reserve_current_seeded`, kept by a trigger on `lp_reserve_observations`, so LP reserve sums read the current row per asset and pool. Same design as 0215. |
 | 0221 | Adds nullable `trades.usd_basis text`, the valuation route behind `usd_volume` (`quote_pegged`, `base_pegged`, `xlm_base`, `xlm_quote`, `fiat_peg`, `fx_quote`, `fx_base`), plus `prior_usd_basis` and `usd_basis` on `usd_volume_restamp_log` for undo. |
 | 0222 | Adds `sac_balance_current` and `sac_balance_current_seeded`, kept by a trigger on `sac_balance_observations`, so SAC balance sums read the current row per holder. Same design as 0215. |
+| 0223 | Replaces `audit_log_erase_metadata(jsonb)` so an account erasure also strips `url_host` and `previous_url_host` (webhook receiver hosts) from kept audit rows. No back-fill. |
 
 ## References
 

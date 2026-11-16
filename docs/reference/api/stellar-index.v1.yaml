@@ -9774,7 +9774,8 @@ paths:
         session, passkey, API key (Postgres and Redis), webhook and its
         deliveries, price alert, invite, sign-in token and lockout.
         Audit rows about the account are kept with the customer's
-        address, agent, slug and names removed; usage counts are kept
+        address, agent, slug, names and webhook receiver hosts removed;
+        usage counts are kept
         for up to 12 months under an identifier unlinked from the
         account. The account slug can never be reissued.
 

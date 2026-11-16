@@ -499,14 +499,15 @@ export default function PrivacyPage() {
           owner a confirmation; an erasure we carry out on an emailed request
           does not.
         </p>
-        {/* source: migrations/0188_account_erasure.up.sql (audit_log_erase_metadata), internal/platform/postgresstore/account_erasure.go, docs/operations/runbooks/account-erasure.md */}
+        {/* source: migrations/0188_account_erasure.up.sql and 0223_erasure_strips_webhook_hosts.up.sql (audit_log_erase_metadata), internal/platform/postgresstore/account_erasure.go, docs/operations/runbooks/account-erasure.md */}
         <p>
           Some records are kept after an erasure, pseudonymised so they are no
           longer linked to you. Audit-log entries are kept indefinitely with
           their IP address and user agent removed (entries recording an action
           by our staff keep the staff member&rsquo;s), and with the account
-          name, email address, account identifiers, key labels, passkey names
-          and suspension reasons stripped from their details; daily usage counts
+          name, email address, account identifiers, key labels, passkey names,
+          webhook receiver hostnames and suspension reasons stripped from their
+          details; daily usage counts
           are re-labelled with a random identifier and age out after 12 months;
           and a hash of the account name is kept so the name cannot be reused.
           An erasure does not reach database backups and snapshots, which are
