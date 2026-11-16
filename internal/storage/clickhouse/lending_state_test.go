@@ -37,16 +37,6 @@ func testAddrVal(t *testing.T, s string) xdr.ScVal {
 	return xdr.ScVal{Type: xdr.ScValTypeScvAddress, Address: &a}
 }
 
-func testSym(s string) xdr.ScVal {
-	sym := xdr.ScSymbol(s)
-	return xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &sym}
-}
-
-func testU32(v uint32) xdr.ScVal {
-	u := xdr.Uint32(v)
-	return xdr.ScVal{Type: xdr.ScValTypeScvU32, U32: &u}
-}
-
 // testStruct is a #[contracttype] struct: a map keyed by field name.
 func testStruct(fields ...any) xdr.ScVal {
 	m := &xdr.ScMap{}
