@@ -39,6 +39,17 @@ for f in /etc/default/stellarindex-ops /etc/default/stellarindex; do
 done
 OPS="${PHASED_OPS:-/usr/local/bin/stellarindex-ops}"
 
+# window_recorded LO HI: $STATE holds LO with an end at or past HI. A line is
+# "LO HI". A bare "LO" from an older run names no end, so it counts only for a
+# full-width window whose successor is recorded too: that proves it ran to HI.
+window_recorded() {
+  awk -v lo="$1" -v hi="$2" -v nxt="$(($1 + 1000000))" '
+    $1 == lo && NF >= 2 && $2 + 0 >= hi + 0 { ok = 1 }
+    $1 == lo && NF == 1 { bare = 1 }
+    $1 == nxt { succ = 1 }
+    END { exit !(ok || (bare && succ && hi + 0 == nxt - 1)) }' "$STATE"
+}
+
 echo "$(date -u +%FT%TZ) PHASED_START ranges [54000000,63050000] then [2,38000000]; state=$STATE" >> "$LOG"
 for range in "54000000 63050000" "2 38000000"; do
   read -r RFROM RTO <<< "$range"
@@ -47,13 +58,13 @@ for range in "54000000 63050000" "2 38000000"; do
   attempts=0
   while [ "$w" -le "$RTO" ]; do
     wto=$((w + 999999)); [ "$wto" -gt "$RTO" ] && wto=$RTO
-    if grep -qx "$w" "$STATE"; then w=$((wto + 1)); continue; fi
+    if window_recorded "$w" "$wto"; then w=$((wto + 1)); continue; fi
     avail=$(df --output=avail -k /var/lib/clickhouse | tail -1 | tr -d ' ')
     case "$avail" in ''|*[!0-9]*) sleep 60; continue ;; esac
     if [ "$avail" -lt "$FLOOR_KB" ]; then echo "$(date -u +%FT%TZ) PAUSE <500G (${avail}KiB) before $w" >> "$LOG"; sleep 300; continue; fi
     echo "$(date -u +%FT%TZ) window $w-$wto START avail=${avail}KiB" >> "$LOG"
     if "$OPS" ch-backfill -write -config /etc/stellarindex.toml -bucket galexie-archive -parallel 8 -flush-every 200 -from "$w" -to "$wto" >> "$LOG" 2>&1; then
-      echo "$w" >> "$STATE"
+      echo "$w $wto" >> "$STATE"
       echo "$(date -u +%FT%TZ) window $w-$wto DONE (avail now $(df --output=avail -k /var/lib/clickhouse | tail -1 | tr -d ' ')KiB, tip $(curl -sS --max-time 15 localhost:8123/ --data-binary 'SELECT max(ledger_seq) FROM stellar.ledgers'))" >> "$LOG"
     else
       rc=$?; attempts=$((attempts + 1))

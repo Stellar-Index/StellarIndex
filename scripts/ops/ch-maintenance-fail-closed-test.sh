@@ -202,6 +202,23 @@ n="$(wc -l < "$STATEF" | tr -d ' ')"
 if [ "$n" -eq 3 ]; then ok "transient failure: all three windows recorded done"; else bad "transient failure: $n windows recorded, want 3"; fi
 expect_count "$LOG" "RANGE [0,2999999] COMPLETE" 1 "transient failure: RANGE COMPLETE logged"
 
+# A window is done only up to the end it ran to: a run that stopped short at 1499999 must not make a longer run
+# skip 1500000-1999999.
+run rng_short phaseD-range.sh -- 0 1499999 "$TMP/rng_grow.state"
+expect_rc_zero "a range ending inside a window"
+run rng_grown phaseD-range.sh -- 0 2999999 "$TMP/rng_grow.state"
+expect_rc_zero "the same state file, a longer range"
+if ! grep -qx 0 "$OPSL"; then ok "longer range: the full first window is skipped"; else bad "longer range: the full first window is skipped"; fi
+expect_count "$OPSL" "1000000" 1 "longer range: the window that ended short runs again"
+expect_count "$OPSL" "2000000" 1 "longer range: the new window runs"
+
+# An older run recorded bare starts. A bare start is trusted only when its successor is recorded.
+printf '0\n1000000\n' > "$TMP/rng_bare.state"
+run rng_legacy phaseD-range.sh -- 0 2999999 "$TMP/rng_bare.state"
+expect_rc_zero "a state file of bare starts"
+if ! grep -qx 0 "$OPSL"; then ok "bare starts: a window with a recorded successor is skipped"; else bad "bare starts: a window with a recorded successor is skipped"; fi
+expect_count "$OPSL" "1000000" 1 "bare starts: the last recorded window, whose end is unknown, runs again"
+
 echo "ch-maintenance-fail-closed-test: phaseD-backfill.sh"
 
 run bf_stuck phaseD-backfill.sh OPS_FAIL_FROM=55000000 --
