@@ -216,7 +216,8 @@ func gatedRegistryOptions(
 	withHook bool,
 ) (map[string][]contractid.Option, error) {
 	out := make(map[string][]contractid.Option, len(gatedSources))
-	sushiOpts, err := sushiswapPoolOptions(ctx, store, logger, hookCtx, withHook)
+	admissions := newGateAdmissions(hookCtx, logger)
+	sushiOpts, err := sushiswapPoolOptions(ctx, store, logger, admissions, withHook)
 	if err != nil {
 		return nil, err
 	}
@@ -244,12 +245,9 @@ func gatedRegistryOptions(
 		if withHook {
 			src := source // capture per iteration
 			opts = append(opts, contractid.WithHook(func(childID, factoryID string, firstLedger uint32) {
-				hookTimeout, cancel := context.WithTimeout(hookCtx, upsertHookTimeout)
-				defer cancel()
-				if err := store.UpsertProtocolContract(hookTimeout, src, childID, factoryID, firstLedger); err != nil {
-					logger.Warn("protocol_contracts upsert (live factory creation)",
-						"source", src, "child", childID, "factory", factoryID, "ledger", firstLedger, "err", err)
-				}
+				admissions.persist(src, childID, func(wctx context.Context) error {
+					return store.UpsertProtocolContract(wctx, src, childID, factoryID, firstLedger)
+				})
 			}))
 		}
 
@@ -335,7 +333,7 @@ func sushiswapPoolOptions(
 	ctx context.Context,
 	store protocolContractStore,
 	logger *slog.Logger,
-	hookCtx context.Context,
+	admissions *gateAdmissions,
 	withHook bool,
 ) ([]contractid.Option, error) {
 	ps, ok := store.(sushiswapPoolStore)
@@ -364,16 +362,14 @@ func sushiswapPoolOptions(
 					"pool", pool, "ledger", ledger, "fee_err", ferr, "tick_err", terr)
 				return
 			}
-			hookTimeout, cancel := context.WithTimeout(hookCtx, upsertHookTimeout)
-			defer cancel()
-			if err := ps.UpsertSushiswapV3Pool(hookTimeout, timescale.SushiswapV3Pool{
+			row := timescale.SushiswapV3Pool{
 				PoolID: pool, FactoryID: factoryID,
 				Token0: a[sushiswap_v3.AttrToken0], Token1: a[sushiswap_v3.AttrToken1],
 				FeePips: int32(fee), TickSpacing: int32(tick), CreationLedger: ledger,
-			}); err != nil {
-				logger.Warn("sushiswap_v3_pools upsert (live pool_created)",
-					"pool", pool, "factory", factoryID, "ledger", ledger, "err", err)
 			}
+			admissions.persist(sushiswap_v3.SourceName+"_pools", pool, func(wctx context.Context) error {
+				return ps.UpsertSushiswapV3Pool(wctx, row)
+			})
 		}))
 	}
 	return opts, nil

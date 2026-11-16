@@ -477,6 +477,18 @@ Look at it first in `runbooks/ledger-ingest.md#stellarindex_ingestion_ledger_sta
 
 No `exhausted` counterpart exists; exhaustion is covered by `stellarindex_ingestion_ledger_stalled` and `stellarindex_minio_exporter_down`.
 
+### `stellarindex_gate_admissions_unpersisted`
+
+Gauge, label `source`.
+
+Factory children admitted to a decoder gate whose row (`protocol_contracts`, `soroswap_pairs`, `sushiswap_v3_pools`) has not been written: the write failed and is retried every 5 s. Above 0, a restart loses the child. Alerted by `stellarindex_gate_admission_unpersisted`.
+
+### `stellarindex_gate_admission_persist_failures_total`
+
+Counter, label `source`.
+
+Failed writes of a live gate admission, first attempts and retries.
+
 ### `stellarindex_source_insert_errors_total`
 
 Counter, labels `source`, `kind` (`trade` / `trade_abandoned` /

@@ -19,6 +19,7 @@ Infrastructure faults on a write are NOT lost: the sink retries with backpressur
 | [`stellarindex_ingestion_trade_insert_backpressure`](#stellarindex_ingestion_trade_insert_backpressure) | P3 ticket, 10 min | trade sink retrying: Postgres unreachable, ingest intentionally stalled |
 | [`stellarindex_ingestion_duplicate_flood`](#stellarindex_ingestion_duplicate_flood) | P2 ticket, `for: 10m` | trades stop landing new rows though cursor and decoder look healthy |
 | [`stellarindex_ingestion_sink_undrained_rows`](#stellarindex_ingestion_sink_undrained_rows) | ticket, `for: 0m` | shutdown drain abandoned buffered rows the cursor had already passed |
+| [`stellarindex_gate_admission_unpersisted`](#stellarindex_gate_admission_unpersisted) | ticket, `for: 5m` | a factory child is gated in memory only; a restart would lose it |
 
 ## stellarindex_ingestion_insert_errors
 
@@ -237,6 +238,24 @@ Resolution B: `consumer.Event` carries no ledger; take the window from the `drai
 Resolution C: external trades have no ledger and no lake copy; record venue and window in the incident record. The next poll refills the feed.
 
 Resolution D: find out why Postgres could not absorb a few hundred rows in 20 s (autovacuum on `trades`, a [lock convoy](postgres.md#stellarindex_pg_lock_convoy), or the deploy stopping Postgres before the indexer). If it was genuinely down, the loss was the designed outcome and the re-derive is the whole remedy.
+
+## stellarindex_gate_admission_unpersisted
+
+Symptom: `stellarindex_gate_admissions_unpersisted{source=...}` above 0 for 5 minutes. A factory created a child (a Blend pool, a Soroswap pair, a SushiSwap pool) and the row that records it (`protocol_contracts`, `soroswap_pairs`, `sushiswap_v3_pools`) was not written. The indexer holds the child in memory and retries the write every 5 s.
+
+Do NOT restart or deploy the indexer while this fires. After a restart the creation event is behind the cursor, so only the row re-admits the child; without it every later event of that contract is dropped as foreign, with no error counter.
+
+Check:
+
+```sh
+ssh root@136.243.90.96 'curl -s localhost:9464/metrics | grep stellarindex_gate_admission'
+ssh root@136.243.90.96 'journalctl -u stellarindex-indexer --since "-30 min" | grep "gate admission"'
+```
+
+Fix:
+
+1. The journal line names the contract and the error. It is almost always Postgres: see [postgres.md](postgres.md). The gauge returns to 0 by itself once a retry lands (`gate admission persisted on retry`).
+2. If the indexer was restarted while the gauge was above 0 (journal: `gate admission LOST at shutdown`), re-walk the factory: `stellarindex-ops seed-protocol-contracts -source <source>`, then restart the indexer so the gate warms from the table, and re-derive the affected range ([replay decision rule](../../architecture/ingest-pipeline.md#the-replay-decision-rule)).
 
 ## Related
 

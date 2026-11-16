@@ -11,8 +11,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// upsertHookTimeout caps how long the live new_pair upsert may block the dispatcher's ledger goroutine (sub-millisecond normally; 2s covers failover).
-// A timeout beats a silent drop because the in-memory registry already has the pair and only future backfills or restarts miss it.
+// upsertHookTimeout caps how long one live admission write may block the dispatcher's ledger goroutine (sub-millisecond normally; 2s covers
+// failover). A write that misses it is retried off that goroutine ([gateAdmissions]).
 const upsertHookTimeout = 2 * time.Second
 
 // SoroswapPersistenceOptions returns the soroswap.DecoderOption slice for [BuildDispatcher] (pair tokens seeded from soroswap_pairs plus a live new_pair upsert hook), since the in-memory registry is invisible to parallel backfill workers and restarts; hookCtx parents every upsert.
@@ -45,13 +45,11 @@ func SoroswapPersistenceOptions(
 	}
 	logger.Info("soroswap pair registry loaded", "pairs", len(seed))
 
+	admissions := newGateAdmissions(hookCtx, logger)
 	hook := func(pair, t0, t1 string) {
-		hookTimeout, cancel := context.WithTimeout(hookCtx, upsertHookTimeout)
-		defer cancel()
-		if err := store.UpsertSoroswapPair(hookTimeout, pair, t0, t1); err != nil {
-			logger.Warn("soroswap pair upsert (live new_pair)",
-				"pair", pair, "token0", t0, "token1", t1, "err", err)
-		}
+		admissions.persist(soroswap.SourceName, pair, func(wctx context.Context) error {
+			return store.UpsertSoroswapPair(wctx, pair, t0, t1)
+		})
 	}
 
 	return []soroswap.DecoderOption{

@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 71 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 287 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 288 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -77,6 +77,7 @@ its first link must be the rule's `runbook_url` page
 | `stellarindex_ingestion_ch_live_sink_errors` | `increase(stellarindex_ch_live_sink_ledgers_total{outcome="errored"}[30m])` | > 0 sustained 15 min | ticket | [ch-live-sink-errors](runbooks/clickhouse.md#stellarindex_ingestion_ch_live_sink_errors) |
 | `stellarindex_ingestion_ch_live_sink_read_undercount` | `increase(ch_live_sink_read_undercount_total[30m])` per kind | > 0 for 15 min (ledger written short of txs/events/changes) | ticket | [ch-live-sink-read-undercount](runbooks/clickhouse.md#stellarindex_ingestion_ch_live_sink_read_undercount) |
 | `stellarindex_ingestion_sink_undrained_rows` | `increase(sink_undrained_rows_total[1h])` | > 0, `for: 0m` (shutdown drain abandoned rows past the cursor) | ticket | [sink-undrained-rows](runbooks/ingestion-sink.md#stellarindex_ingestion_sink_undrained_rows) |
+| `stellarindex_gate_admission_unpersisted` | `max by (source) (gate_admissions_unpersisted)` | > 0, `for: 5m` (a factory child is gated in memory only; a restart loses it) | ticket | [gate-admission-unpersisted](runbooks/ingestion-sink.md#stellarindex_gate_admission_unpersisted) |
 | `stellarindex_ingestion_trade_insert_backpressure` | `sum(rate(stellarindex_trade_insert_retries_total{outcome="retry"}[5m]))` | > 0 sustained 10 min | ticket | [trade-insert-backpressure](runbooks/ingestion-sink.md#stellarindex_ingestion_trade_insert_backpressure) |
 | `stellarindex_ingestion_insert_errors` | `rate(source_insert_errors_total[5m])` | > 0.1/s for 5 min | ticket | [insert-errors](runbooks/ingestion-sink.md#stellarindex_ingestion_insert_errors) |
 | `stellarindex_ingestion_persist_drop` | `increase(source_insert_errors_total{kind=~"trade\|soroswap_router_swap\|defindex_flow_strategy\|defindex_flow_vault"}[15m])` | > 0, `for: 0m` (`trade_abandoned` excluded: re-derivable) | ticket | [insert-errors](runbooks/ingestion-sink.md#stellarindex_ingestion_insert_errors) |

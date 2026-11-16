@@ -411,6 +411,29 @@ groups:
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_ingestion_insert_errors
 
+      # A factory child admitted to a decoder gate whose row has not been
+      # written. The gate holds it in memory, so ingest looks healthy; a
+      # restart in this state loses the child and every later event of that
+      # pool is rejected as foreign. A gauge of current state, held for 5m so
+      # a failover the retry rides out stays quiet.
+      - alert: stellarindex_gate_admission_unpersisted
+        expr: max by (source) (stellarindex_gate_admissions_unpersisted) > 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_gate_admission_unpersisted
+          summary: "Gate admission for {{ $labels.source }} is not persisted"
+          description: |
+            {{ $value }} contract(s) admitted to the {{ $labels.source }}
+            decoder gate have no row yet: the write failed and has been
+            retried for 5 minutes. Ingest is unaffected while the indexer
+            runs. Do NOT restart the indexer until this clears: after a
+            restart the creation event is behind the cursor, the contract
+            is no longer gated in, and its events are dropped as foreign.
+
       # Recorder.Record failures in the async sink; without this a recorder outage
       # silently stops discovered_assets growing. Informational posture as
       # discovery_drops (the contract re-appears on a later event).

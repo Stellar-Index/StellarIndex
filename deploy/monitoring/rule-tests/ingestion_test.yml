@@ -564,3 +564,32 @@ tests:
   - eval_time: 60m
     alertname: stellarindex_ingestion_oracle_unknown_symbols
     exp_alerts: []
+- interval: 1m
+  name: a gate admission still unpersisted after 5m tickets; one the retry lands stays quiet
+  input_series:
+  - series: stellarindex_gate_admissions_unpersisted{source="blend"}
+    values: 0x5 1x30
+  - series: stellarindex_gate_admissions_unpersisted{source="soroswap"}
+    values: 0x5 1x3 0x30
+  alert_rule_test:
+  - eval_time: 9m
+    alertname: stellarindex_gate_admission_unpersisted
+    exp_alerts: []
+  - eval_time: 14m
+    alertname: stellarindex_gate_admission_unpersisted
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        team: stellarindex
+        component: ingestion
+        source: blend
+      exp_annotations:
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion-sink.md#stellarindex_gate_admission_unpersisted
+        summary: "Gate admission for blend is not persisted"
+        description: |
+          1 contract(s) admitted to the blend
+          decoder gate have no row yet: the write failed and has been
+          retried for 5 minutes. Ingest is unaffected while the indexer
+          runs. Do NOT restart the indexer until this clears: after a
+          restart the creation event is behind the cursor, the contract
+          is no longer gated in, and its events are dropped as foreign.

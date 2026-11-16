@@ -72,6 +72,8 @@ func registerAppMetrics() {
 		DiscoveryRecordFailuresTotal,
 		MetricsRegistryPresent,
 		SourceInsertErrorsTotal,
+		GateAdmissionPersistFailuresTotal,
+		GateAdmissionsUnpersisted,
 		TradesZeroLegAdmittedTotal,
 		RateLimitFailOpenTotal,
 		RateLimitInProcessOverflowTotal,
@@ -1364,6 +1366,24 @@ var MonthlyQuotaFailClosedTotal = prometheus.NewCounter(
 		Name: "stellarindex_monthly_quota_fail_closed_total",
 		Help: "Requests rejected (429) because the month-to-date read stayed unavailable past the fail-open dwell window.",
 	},
+)
+
+// GateAdmissionPersistFailuresTotal counts failed writes of a live factory-child gate admission, first attempts and retries.
+var GateAdmissionPersistFailuresTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_gate_admission_persist_failures_total",
+		Help: "Failed writes of a live factory-child gate admission (protocol_contracts, soroswap_pairs, sushiswap_v3_pools), per source.",
+	},
+	[]string{"source"},
+)
+
+// GateAdmissionsUnpersisted is the number of admitted children whose write has not landed yet; a restart while it is above zero loses them.
+var GateAdmissionsUnpersisted = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_gate_admissions_unpersisted",
+		Help: "Gate admissions held in memory only because their write failed and is being retried, per source.",
+	},
+	[]string{"source"},
 )
 
 // SourceInsertErrorsTotal counts persistence failures per source by kind (trade, trade_abandoned, oracle, panic, unhandled), separate from decode errors.
