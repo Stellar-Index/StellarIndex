@@ -1192,7 +1192,7 @@ function LatencyStrip({ latency }: { latency: StatusResponse['latency'] }) {
       <SectionHead
         aside={
           measured
-            ? `${Math.round((latency?.window_secs ?? 0) / 60)}-min window`
+            ? `${Math.round((latency?.window_secs ?? 0) / 60)}-min window, price routes`
             : 'not measured'
         }
       >

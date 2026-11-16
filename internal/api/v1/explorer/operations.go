@@ -517,7 +517,7 @@ func (h *Handler) NetworkThroughput(w http.ResponseWriter, r *http.Request) {
 			out.Buckets[i].FeePoolAdjustment = feePoolAdjustment(out.Buckets[i].Day, buckets[i-1].ProtocolVersion, b.ProtocolVersion)
 		}
 	}
-	h.writeJSONAt(w, out, degraded, degraded, asOf)
+	h.writeCachedJSON(ctx, w, out, degraded, degraded, asOf)
 }
 
 // operationsDirectory serves GET /v1/operations: network-wide
@@ -569,7 +569,7 @@ func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 				"Internal error", http.StatusInternalServerError, "")
 			return
 		}
-		h.writeJSONAt(w, sliceOperationsView(view, limit), degraded, degraded || view.opTypeStatsStale || view.CoverageNote != "", asOf)
+		h.writeCachedJSON(ctx, w, sliceOperationsView(view, limit), degraded, degraded || view.opTypeStatsStale || view.CoverageNote != "", asOf)
 		return
 	}
 

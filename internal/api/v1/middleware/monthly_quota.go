@@ -213,9 +213,34 @@ func writeMonthlyQuotaDenied(w http.ResponseWriter, r *http.Request, quota, used
 	_, _ = w.Write(body)
 }
 
+// gateOutageKey carries a [GateOutage] on a request replayed through the gates.
+type gateOutageKey struct{}
+
+// GateOutage records that a gate refused a replayed request because it could not decide (its store is down), not
+// because the credential or quota fails. A 429 says both, so the status alone cannot tell them apart.
+type GateOutage struct{ seen bool }
+
+// WithGateOutage installs a fresh record for one replay.
+func WithGateOutage(ctx context.Context) (context.Context, *GateOutage) {
+	g := &GateOutage{}
+	return context.WithValue(ctx, gateOutageKey{}, g), g
+}
+
+// Seen reports whether a gate refused for want of an answer.
+func (g *GateOutage) Seen() bool { return g != nil && g.seen }
+
+// markGateOutage is for a refusal path only: a gate that marks and then calls next would turn a later gate's
+// refusal into a pass.
+func markGateOutage(r *http.Request) {
+	if g, ok := r.Context().Value(gateOutageKey{}).(*GateOutage); ok {
+		g.seen = true
+	}
+}
+
 // writeMonthlyQuotaUnavailable is the fail-CLOSED response for a counter unreadable past the dwell window. A DISTINCT type/title (it
 // must not claim the quota was exceeded); omits `month_to_date`. Retry-After is set BEFORE WriteHeader.
 func writeMonthlyQuotaUnavailable(w http.ResponseWriter, r *http.Request, quota int64, retryAfter int) {
+	markGateOutage(r)
 	payload := map[string]any{
 		"type":          "https://api.stellarindex.io/errors/monthly-quota-unavailable",
 		"title":         "Monthly quota temporarily unavailable",

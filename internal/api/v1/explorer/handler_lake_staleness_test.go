@@ -77,6 +77,26 @@ func TestLakeBackedHandlers_ReflectLakeStaleness(t *testing.T) {
 			"account graph history", nil, (*Handler).AccountGraphHistory, "/v1/accounts/x/graph/history",
 			map[string]string{"g_strkey": validTestAccount},
 		},
+		{"operations first page (cached)", nil, (*Handler).Operations, "/v1/operations", nil},
+		{"network throughput (cached)", nil, (*Handler).NetworkThroughput, "/v1/network/throughput", nil},
+		{"contract stats (cached)", nil, (*Handler).ContractStats, "/v1/contracts/stats", nil},
+		{"contracts list (cached)", nil, (*Handler).ContractsList, "/v1/contracts", nil},
+		{
+			"contract interactions (cached)", nil, (*Handler).ContractInteractions, "/v1/contracts/x/interactions",
+			map[string]string{"contract_id": validTestContract},
+		},
+		{
+			"contract code history (cached)", nil, (*Handler).ContractCodeHistory, "/v1/contracts/x/code-history",
+			map[string]string{"contract_id": validTestContract},
+		},
+		{
+			"contract events first page (cached)", nil, (*Handler).ContractDetail, "/v1/contracts/x",
+			map[string]string{"contract_id": validTestContract},
+		},
+		{
+			"account activity (cached)", nil, (*Handler).AccountActivity, "/v1/accounts/x/activity",
+			map[string]string{"g_strkey": validTestAccount},
+		},
 		{
 			"tx detail", &txCoverageReader{capReader: &capReader{probe: &deadlineProbe{}}}, (*Handler).TxDetail,
 			"/v1/tx/x",

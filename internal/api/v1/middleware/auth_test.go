@@ -329,6 +329,44 @@ func TestAuth_ModeSEP10_RejectsXAPIKey(t *testing.T) {
 	}
 }
 
+// A key record that could not be read was not judged: 503 + Retry-After, never 401, and the handler never runs.
+func TestAuth_KeyStoreUnavailableIs503Retryable(t *testing.T) {
+	mw := middleware.Auth(middleware.AuthOptions{
+		Mode: middleware.AuthModeAPIKey,
+		APIKey: stubAPIKeyValidator{
+			knownKey: "k1",
+			err: fmt.Errorf("auth: apikey redis get: %w: %w",
+				auth.ErrKeyStoreUnavailable, errors.New("dial tcp: connection refused")),
+		},
+	})
+	ran := false
+	h := mw(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { ran = true }))
+
+	r := httptest.NewRequest(http.MethodGet, "/v1/price", nil)
+	r.Header.Set("Authorization", "Bearer k1")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if ran {
+		t.Fatal("the handler ran with the key store unread: admission must still fail closed")
+	}
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503: an unread key store is an outage, not a bad credential", w.Code)
+	}
+	if got := w.Header().Get("Retry-After"); got != "30" {
+		t.Errorf("Retry-After = %q, want 30", got)
+	}
+	var body struct {
+		Type string `json:"type"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Type != "https://api.stellarindex.io/errors/auth-key-store-unavailable" {
+		t.Errorf("type = %q, want .../errors/auth-key-store-unavailable", body.Type)
+	}
+}
+
 // TestAuth_AccountStatusUnavailableIs503Retryable pins that auth.ErrAccountStatusUnavailable
 // answers 503 + Retry-After, not 401, so a server-side blip does not read as an invalid
 // credential and drive clients to rotate keys.

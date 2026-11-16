@@ -400,6 +400,13 @@ func (h *Handler) ledgerCommit(ctx context.Context, seq uint32) (hdr clickhouse.
 	return hdr, ""
 }
 
+// writeCachedJSON writes a cache-served lake read. cacheStale is the cache's own age verdict; a refresh that
+// succeeds against a stalled lake keeps the entry young, so the lake's staleness is ORed in here.
+func (h *Handler) writeCachedJSON(ctx context.Context, w http.ResponseWriter, data any, cacheStale, degraded bool, asOf time.Time) {
+	_, lakeStale, _ := h.lakeTip(ctx)
+	h.writeJSONAt(w, data, cacheStale || lakeStale, degraded, asOf)
+}
+
 // lakeTip is LakeWatermark with an unwired func reading as no lake to judge
 // (not stale, no ledger), the same verdict the server gives an unwired reader.
 func (h *Handler) lakeTip(ctx context.Context) (ledger uint32, stale, ok bool) {

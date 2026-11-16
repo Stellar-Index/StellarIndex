@@ -95,7 +95,7 @@ func (v *PostgresAPIKeyValidator) Lookup(ctx context.Context, key string) (Subje
 		if errors.Is(err, platform.ErrNotFound) {
 			return Subject{}, ErrUnauthorized
 		}
-		return Subject{}, fmt.Errorf("auth: postgres lookup: %w", err)
+		return Subject{}, fmt.Errorf("auth: postgres lookup: %w: %w", ErrKeyStoreUnavailable, err)
 	}
 	// platform.APIKey.IsActive is the single source of truth for "may this key authenticate"; re-implementing the revoked/expired predicate here would leave a stale copy on the path where being wrong authenticates a dead credential.
 	// The field checks below only classify an already-made rejection into a sentinel.

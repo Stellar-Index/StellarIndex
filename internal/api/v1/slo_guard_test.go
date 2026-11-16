@@ -73,17 +73,8 @@ func TestSLORoutesMatchTheCacheBand(t *testing.T) {
 		inBand[p] = true
 	}
 
-	// The route each sloHandlers entry above answers, kept in lockstep
-	// with that map's comments.
-	sloRoutes := []string{
-		"/v1/price",
-		"/v1/price/batch",
-		"/v1/oracle/latest",
-		"/v1/oracle/lastprice",
-		"/v1/oracle/prices",
-		"/v1/oracle/x_last_price",
-	}
-	for _, route := range sloRoutes {
+	// sloLatencyRoutes is the route each sloHandlers entry above answers, and what /v1/status measures.
+	for _, route := range sloLatencyRoutes {
 		if !inBand[route] {
 			t.Errorf("SLO'd route %s is not in middleware.SLOPriceRoutes — TestPolicyForPath_PriceSharedTTLIsBoundedByTheProbe will not bound it", route)
 		}
@@ -104,6 +95,23 @@ func TestSLORoutesMatchTheCacheBand(t *testing.T) {
 	for _, route := range strings.Split(string(m[1]), "|") {
 		if !inBand[route] {
 			t.Errorf("slo.yml route %s is not in middleware.SLOPriceRoutes", route)
+		}
+	}
+	if want := strings.Join(sloLatencyRoutes, "|"); string(m[1]) != want {
+		t.Errorf("slo.yml matches routes %q but /v1/status measures %q — the status page and the burn-rate alert must judge one route set", m[1], want)
+	}
+}
+
+// The 200/500 ms targets /v1/status judges against are set for the price routes. Its percentiles must be taken over
+// those routes' successful requests, as the burn-rate rules are, not over every route the API serves.
+func TestStatusLatencyIsMeasuredOverTheSLORoutes(t *testing.T) {
+	for _, q := range []string{"0.5", "0.95", "0.99"} {
+		expr := statusLatencyQuery(q)
+		if !strings.Contains(expr, `http_request_success_duration_seconds_bucket{job="stellarindex-api",route=~"`+strings.Join(sloLatencyRoutes, "|")+`"}`) {
+			t.Errorf("latency query %s is not restricted to the SLO routes' successful requests", expr)
+		}
+		if !strings.HasPrefix(expr, "histogram_quantile("+q+", sum by (le) (rate(") {
+			t.Errorf("latency query %s does not take quantile %s", expr, q)
 		}
 	}
 }

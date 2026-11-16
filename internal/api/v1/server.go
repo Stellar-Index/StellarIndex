@@ -1093,8 +1093,9 @@ var streamRevalidationGates = map[string]bool{
 	"MonthlyQuota":         true,
 }
 
-// buildStreamRevalidator returns the Revalidate hook: replays the request through the gates in stack order and fails if any answers 401,
-// 403 or 429. Nil with no gate.
+// buildStreamRevalidator returns the Revalidate hook: replays the request through the gates in stack order and fails when one refuses it
+// (401, 403, 429). A gate that could not decide (a 5xx, or a refusal it marks as an outage) does not fail the check: ending the
+// stream there would tell the client its key is revoked, and it would not reconnect. The next heartbeat asks again. Nil with no gate.
 func (s *Server) buildStreamRevalidator() func(*http.Request) bool {
 	var gates []middleware.Middleware
 	for _, e := range s.middlewareStack() {
@@ -1111,17 +1112,26 @@ func (s *Server) buildStreamRevalidator() func(*http.Request) bool {
 		for i := len(gates) - 1; i >= 0; i-- {
 			h = gates[i](h)
 		}
-		h.ServeHTTP(discardResponseWriter{header: http.Header{}}, r)
-		return admitted
+		ctx, outage := middleware.WithGateOutage(r.Context())
+		w := &discardResponseWriter{header: http.Header{}}
+		h.ServeHTTP(w, r.WithContext(ctx))
+		return admitted || outage.Seen() || w.status >= http.StatusInternalServerError
 	}
 }
 
-// discardResponseWriter swallows a revalidation gate's rejection body.
-type discardResponseWriter struct{ header http.Header }
+// discardResponseWriter swallows a revalidation gate's rejection body and keeps its status.
+type discardResponseWriter struct {
+	header http.Header
+	status int
+}
 
-func (d discardResponseWriter) Header() http.Header         { return d.header }
-func (d discardResponseWriter) Write(b []byte) (int, error) { return len(b), nil }
-func (d discardResponseWriter) WriteHeader(int)             {}
+func (d *discardResponseWriter) Header() http.Header         { return d.header }
+func (d *discardResponseWriter) Write(b []byte) (int, error) { return len(b), nil }
+func (d *discardResponseWriter) WriteHeader(status int) {
+	if d.status == 0 {
+		d.status = status
+	}
+}
 
 // Handler returns the mux wrapped in [Server.middlewareStack], outermost first.
 func (s *Server) Handler() http.Handler {
@@ -2080,6 +2090,7 @@ var knownErrorSlugs = map[string]struct{}{
 	"asset-is-stellar":                {},
 	"asset-not-found":                 {},
 	"auth":                            {},
+	"auth-key-store-unavailable":      {},
 	"auth-not-configured":             {},
 	"auth-status-unavailable":         {},
 	"backups-unavailable":             {},
