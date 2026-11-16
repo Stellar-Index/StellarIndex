@@ -4378,6 +4378,153 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /lending/pools/{pool}/emissions:
+    get:
+      operationId: getLendingPoolEmissions
+      tags: [protocols]
+      summary: Lending pool — emission streams and claim totals.
+      description: |
+        The pool's emission configuration as contract storage holds it
+        now, read from the lake, and its claim totals from decoded events.
+        No APR and no USD values.
+
+        `reserves` lists every `EmisData(token_id)` entry of the pool's
+        reserves in `ResList` order: `token_id` is `reserve_index * 2` for
+        the dToken (`side: borrow`) and `reserve_index * 2 + 1` for the
+        bToken (`side: supply`). A side with no entry has no emissions and
+        is not listed. `backstop` is the pool's stream in its backstop:
+        Blend's single `BEmisData(pool)` (`tier: null`), or BLNT's
+        `BEmisData{pool, tier}` per loss tier. `eps` is a raw u64:
+        `eps / 10^eps_decimals` is `emission_token` base units per second,
+        and `emission_token_decimals` scales base units to whole tokens.
+        `live` is `expiration > as_of_time`. `archived` marks a
+        TTL-archived entry, served with its last written value.
+
+        `storage_available` is false, with `storage_unavailable_reason`,
+        for a Blend V1 pool (`blend_v1_emission_storage_unverified`: its
+        emission storage layout is not verified, so none is guessed), a
+        pool whose instance the lake does not hold
+        (`pool_instance_unavailable`), or a deployment without the lake
+        reader (`emission_storage_reader_unavailable`).
+
+        `claims` totals claim events up to `as_of_time`, lifetime and over
+        the 30 days ending there, as base-unit decimal strings, with claim
+        and distinct-claimer counts. `claims.pool` is the pool's `claim`
+        events (`amount_claimed`, in the emission token). Blend's backstop
+        `claim` event names no pool, so `claims.backstop` is null with
+        `backstop_unavailable_reason: blend_backstop_claim_names_no_pool`.
+        A BLNT backstop claim is per pool and tier: `amount` is the BLNT
+        claimed, `lp_tokens` the backstop tokens it bought and
+        `shares_minted` the tier shares minted to the claimer; it is not a
+        token payout.
+
+        404 when no Blend or BLNT pool is known at the contract id.
+      parameters:
+        - { name: pool, in: path, required: true, description: Pool contract C-strkey., schema: { type: string } }
+      responses:
+        "200":
+          description: Emission streams and claim totals.
+          content:
+            application/json:
+              example:
+                data:
+                  pool: CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD
+                  protocol: blend
+                  emission_token: CD25MNVTZDL4Y3XBCPCJXGXATV5WUHHOWMYFF4YBEGU5FCPGMYTVG5JY
+                  emission_token_decimals: 7
+                  eps_decimals: 7
+                  storage_available: true
+                  reserves:
+                  - { token_id: 1, asset: CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75, side: supply, eps: '2066115702479', expiration: '2026-11-20T00:00:00Z', last_update: '2026-11-13T00:00:00Z', live: true, archived: false }
+                  backstop:
+                  - { tier: null, eps: '4132231404958', expiration: '2026-11-20T00:00:00Z', last_update: '2026-11-13T00:00:00Z', live: true, archived: false }
+                  claims:
+                    available: true
+                    pool: { claims: 1200, claims_30d: 85, claimers: 310, claimers_30d: 60, amount: '125000000000000', amount_30d: '9000000000000' }
+                    backstop: null
+                    backstop_unavailable_reason: blend_backstop_claim_names_no_pool
+                  as_of_ledger: 63340102
+                  as_of_time: '2026-11-16T12:00:00Z'
+                as_of: '2026-11-16T12:00:00Z'
+                flags:
+                  stale: false
+                  reduced_redundancy: false
+                  triangulated: false
+                  divergence_warning: false
+                  divergence_checked: false
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          pool: { type: string }
+                          protocol: { type: string, enum: [blend, blnt] }
+                          emission_token: { type: [string, "null"], description: "Emitted token contract: the pool instance's `BLNDTkn` (Blend) or `BLNTTkn` (BLNT); null when unread." }
+                          emission_token_decimals: { type: [integer, "null"], description: "The emission token's decimals(); null when it could not be read." }
+                          eps_decimals: { type: integer, description: "Fixed-point scale of every `eps`: `eps / 10^eps_decimals` is emission-token base units per second." }
+                          storage_available: { type: boolean }
+                          storage_unavailable_reason: { type: string, enum: [blend_v1_emission_storage_unverified, pool_instance_unavailable, emission_storage_reader_unavailable] }
+                          reserves:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                token_id: { type: integer }
+                                asset: { type: [string, "null"], description: "Reserve underlying token; null when token_id is past the pool's reserve list." }
+                                side: { type: string, enum: [supply, borrow] }
+                                eps: { type: string }
+                                expiration: { type: string, format: date-time }
+                                last_update: { type: string, format: date-time }
+                                live: { type: boolean }
+                                archived: { type: boolean }
+                              required: [token_id, asset, side, eps, expiration, last_update, live, archived]
+                          backstop:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                tier: { type: [string, "null"], enum: [FirstLoss, SecondLoss, ThirdLoss, null] }
+                                eps: { type: string }
+                                expiration: { type: string, format: date-time }
+                                last_update: { type: string, format: date-time }
+                                live: { type: boolean }
+                                archived: { type: boolean }
+                              required: [tier, eps, expiration, last_update, live, archived]
+                          claims:
+                            type: object
+                            properties:
+                              available: { type: boolean }
+                              unavailable_reason: { type: string, enum: [claim_reader_unavailable] }
+                              pool:
+                                oneOf:
+                                  - { type: "null" }
+                                  - { $ref: "#/components/schemas/LendingClaimTotals" }
+                              backstop:
+                                type: [array, "null"]
+                                items:
+                                  allOf:
+                                    - { $ref: "#/components/schemas/LendingClaimTotals" }
+                                    - type: object
+                                      properties:
+                                        tier: { type: string, enum: [FirstLoss, SecondLoss, ThirdLoss] }
+                                        lp_tokens: { type: string }
+                                        lp_tokens_30d: { type: string }
+                                        shares_minted: { type: string }
+                                        shares_minted_30d: { type: string }
+                                      required: [tier, lp_tokens, lp_tokens_30d, shares_minted, shares_minted_30d]
+                              backstop_unavailable_reason: { type: string, enum: [blend_backstop_claim_names_no_pool] }
+                            required: [available, pool, backstop]
+                          as_of_ledger: { type: integer, format: int64, description: "Highest ledger the lake had captured at serve time." }
+                          as_of_time: { type: string, format: date-time }
+                        required: [pool, protocol, emission_token, emission_token_decimals, eps_decimals, storage_available, reserves, backstop, claims, as_of_time]
+                    required: [data]
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /mev:
     get:
       operationId: listMevEvents
@@ -17701,6 +17848,18 @@ components:
             or short feed under this flag is a detection gap, not a quiet
             network. Omitted when false.
       required: [stale, reduced_redundancy, triangulated, divergence_warning]
+
+    LendingClaimTotals:
+      type: object
+      description: One claim stream's totals up to `as_of_time`, lifetime and over the 30 days ending there; amounts are base-unit decimal strings.
+      properties:
+        claims: { type: integer, format: int64 }
+        claims_30d: { type: integer, format: int64 }
+        claimers: { type: integer, format: int64, description: Distinct claiming addresses. }
+        claimers_30d: { type: integer, format: int64 }
+        amount: { type: string }
+        amount_30d: { type: string }
+      required: [claims, claims_30d, claimers, claimers_30d, amount, amount_30d]
 
     Pagination:
       type: object

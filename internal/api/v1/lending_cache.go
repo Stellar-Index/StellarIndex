@@ -67,6 +67,14 @@ func (c *CachedLendingReader) LendingAuctions(ctx context.Context, pool string, 
 	return nil, false, errNoAuctionReader
 }
 
+// LendingEmissionClaims is a pass-through; errNoEmissionClaimReader when the upstream has no claim totals.
+func (c *CachedLendingReader) LendingEmissionClaims(ctx context.Context, pool string, isBLNT bool, asOf time.Time) (timescale.LendingEmissionClaims, error) {
+	if up, ok := c.upstream.(lendingEmissionClaimReader); ok {
+		return up.LendingEmissionClaims(ctx, pool, isBLNT, asOf)
+	}
+	return timescale.LendingEmissionClaims{}, errNoEmissionClaimReader
+}
+
 // LendingConfigHistory is a pass-through; empty when the upstream has no history.
 func (c *CachedLendingReader) LendingConfigHistory(ctx context.Context, pool string, limit int, cur timescale.LendingConfigCursor) ([]timescale.LendingConfigChange, error) {
 	if up, ok := c.upstream.(lendingConfigHistoryReader); ok {

@@ -106,8 +106,8 @@ var (
 	// contractDetailPath is /v1/contracts/{id} and its /interactions, /code-history and
 	// /transfers children. /wasm is excluded: its handler sets its own directive.
 	contractDetailPath = regexp.MustCompile(`^/v1/contracts/[^/]+(/interactions|/code-history|/transfers)?$`)
-	// lendingReservesPath is /v1/lending/pools/{pool}/reserves and its /config-history, /backstop, /auctions and history siblings.
-	lendingReservesPath = regexp.MustCompile(`^/v1/lending/pools/[^/]+/(reserves|reserves/[^/]+/history|config-history|backstop|backstop/history|auctions)$`)
+	// lendingReservesPath is /v1/lending/pools/{pool}/reserves and its /config-history, /backstop, /auctions, /emissions and history siblings.
+	lendingReservesPath = regexp.MustCompile(`^/v1/lending/pools/[^/]+/(reserves|reserves/[^/]+/history|config-history|backstop|backstop/history|auctions|emissions)$`)
 )
 
 // ledgerPolicy classifies the operator probes and the explorer's ledger/tx surface; ok=false means fall through to the main switch.
