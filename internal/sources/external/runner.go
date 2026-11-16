@@ -256,8 +256,8 @@ func drainUntilClosed(ch <-chan canonical.Trade) {
 	}
 }
 
-// maxTradeFutureSkew absorbs host/venue clock skew; minTradeTime is the Stellar network's genesis. A trade outside [minTradeTime,
-// now+skew] comes from a unit mismatch or vendor fault and would corrupt time-ordered data.
+// maxTradeFutureSkew absorbs host/venue clock skew; minTradeTime is the Stellar network's genesis. A trade or polled price
+// update outside [minTradeTime, now+skew] comes from a unit mismatch or vendor fault and would corrupt time-ordered data.
 const maxTradeFutureSkew = 5 * time.Minute
 
 var minTradeTime = time.Date(2015, 9, 30, 0, 0, 0, 0, time.UTC)
@@ -388,6 +388,12 @@ func emitPollResults(ctx context.Context, source string, sink chan<- consumer.Ev
 		}
 	}
 	for _, u := range updates {
+		// The latest-price read orders by this timestamp, so one future-dated row would be served as the vendor's
+		// latest price until deleted by hand.
+		if !plausibleTradeTime(u.Timestamp, time.Now()) {
+			obs.ExternalBadTimestampDroppedTotal.WithLabelValues(source).Inc()
+			continue
+		}
 		select {
 		case <-ctx.Done():
 			return

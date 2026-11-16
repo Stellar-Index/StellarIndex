@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
@@ -565,6 +567,35 @@ func TestEmitPollResults_DropsImplausibleTimestamp(t *testing.T) {
 
 	if len(sink) != 1 {
 		t.Fatalf("emitted %d trades, want 1 (the plausible one)", len(sink))
+	}
+}
+
+// A polled price update is ordered by its vendor timestamp on the latest-price read, so a future-dated or
+// pre-network one is dropped and counted like a trade.
+func TestEmitPollResults_DropsImplausibleUpdateTimestamp(t *testing.T) {
+	const source = "ts-poller"
+	before := testutil.ToFloat64(obs.ExternalBadTimestampDroppedTotal.WithLabelValues(source))
+	now := time.Now()
+	updates := []canonical.OracleUpdate{
+		{Source: source, Timestamp: now.AddDate(1, 0, 0)},                              // a bad future date
+		{Source: source, Timestamp: time.UnixMilli(now.Unix())},                        // seconds read as milliseconds: 1970
+		{Source: source, Timestamp: now.Add(-24 * time.Hour).Truncate(24 * time.Hour)}, // a daily FX fix
+		{Source: source, Timestamp: now},
+	}
+
+	sink := make(chan consumer.Event, len(updates))
+	emitPollResults(context.Background(), source, sink, nil, updates)
+
+	if len(sink) != 2 {
+		t.Fatalf("emitted %d updates, want the 2 plausible ones", len(sink))
+	}
+	for len(sink) > 0 {
+		if ts := (<-sink).(UpdateEvent).Update.Timestamp; !plausibleTradeTime(ts, now) {
+			t.Errorf("emitted an update dated %s", ts)
+		}
+	}
+	if got := testutil.ToFloat64(obs.ExternalBadTimestampDroppedTotal.WithLabelValues(source)) - before; got != 2 {
+		t.Errorf("bad-timestamp drops counted = %v, want 2", got)
 	}
 }
 

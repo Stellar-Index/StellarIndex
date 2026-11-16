@@ -409,7 +409,7 @@ A non-trivial rate is healthy; a drop to zero on a dusty venue (e.g. `coinbase`)
 
 Counter, label `source`.
 
-CEX trades (streamed and polled) dropped for an implausible vendor timestamp: over 5 minutes ahead of the local clock, or before 2015-09-30. Non-zero means a venue changed format.
+CEX trades (streamed and polled) and polled price updates dropped for an implausible vendor timestamp: over 5 minutes ahead of the local clock, or before 2015-09-30. Non-zero means a venue changed format (seconds against milliseconds, a bad date).
 
 ### `stellarindex_external_poller_refused_entries_total`
 

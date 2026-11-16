@@ -1028,11 +1028,11 @@ var ExternalDustDroppedTotal = prometheus.NewCounterVec(
 	[]string{"source"},
 )
 
-// ExternalBadTimestampDroppedTotal counts CEX trades per source dropped for an implausible vendor timestamp (future-dated beyond skew, or before Stellar existed).
+// ExternalBadTimestampDroppedTotal counts CEX trades and polled price updates per source dropped for an implausible vendor timestamp (future-dated beyond skew, or before Stellar existed).
 var ExternalBadTimestampDroppedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_external_bad_timestamp_dropped_total",
-		Help: "CEX trades dropped at ingest for an implausible vendor timestamp, by source.",
+		Help: "CEX trades and polled price updates dropped at ingest for an implausible vendor timestamp, by source.",
 	},
 	[]string{"source"},
 )
