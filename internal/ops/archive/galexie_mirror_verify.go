@@ -136,6 +136,10 @@ func galexieMirrorVerify(args []string) error {
 		return err
 	}
 	reportMirrorVerify(os.Stdout, res, opts.maxReport)
+	// Before the textfile: a run that proved nothing must not stamp last_success.
+	if err := refuseEmptyMirrorVerify(res); err != nil {
+		return err
+	}
 	if opts.textfile != "" {
 		if err := writeMirrorVerifyTextfile(opts.textfile, res, time.Now()); err != nil {
 			return err
@@ -145,6 +149,17 @@ func galexieMirrorVerify(args []string) error {
 		return fmt.Errorf("galexie mirror differs from upstream on %d object(s) — see MISMATCH lines above", n)
 	}
 	return nil
+}
+
+// refuseEmptyMirrorVerify fails a run that found no difference only because it verified nothing: a wrong upstream
+// prefix or an empty bucket shares no partition with the mirror, and would otherwise read as a clean pass.
+func refuseEmptyMirrorVerify(res mirrorVerifyResult) error {
+	if len(res.findings) > 0 || res.objectsMatched+res.equivalent > 0 {
+		return nil
+	}
+	return fmt.Errorf("galexie-mirror-verify verified no object against upstream (partitions compared: %d, local-only: %d, "+
+		"upstream-only: %d, unverifiable objects: %d) — check the upstream bucket and prefix; nothing was proven",
+		res.partitionsCompared, res.partitionsLocalOnly, res.partitionsUpstreamOnly, res.unverifiable)
 }
 
 // buildMirrorStores resolves the local mirror (MinIO, the hot S3 block) and the upstream dataset (cold block, with its own isolated

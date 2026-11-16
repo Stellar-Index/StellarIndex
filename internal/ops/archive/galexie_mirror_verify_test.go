@@ -481,3 +481,39 @@ func TestGalexieMirrorVerify_DecodeEquivalentObjectNotAFinding(t *testing.T) {
 		t.Fatal("a failed fetch must fail the run, not read as a difference")
 	}
 }
+
+// A run that compared nothing has proven nothing: it must fail, so the textfile's last_success is not stamped and
+// its age raises the alarm.
+func TestRefuseEmptyMirrorVerify(t *testing.T) {
+	for name, tc := range map[string]struct {
+		res     mirrorVerifyResult
+		refused bool
+	}{
+		"no shared partition (wrong prefix or empty bucket)": {res: mirrorVerifyResult{partitionsLocalOnly: 40}, refused: true},
+		"shared partitions, every object unverifiable":       {res: mirrorVerifyResult{partitionsCompared: 3, unverifiable: 9}, refused: true},
+		"only objects the fill has yet to copy":              {res: mirrorVerifyResult{partitionsCompared: 1, missing: []mirrorFinding{{key: "k"}}}, refused: true},
+		"objects matched":                                    {res: mirrorVerifyResult{partitionsCompared: 3, objectsMatched: 9}},
+		"objects equivalent after decode":                    {res: mirrorVerifyResult{partitionsCompared: 1, equivalent: 1}},
+		"a difference is reported as a difference":           {res: mirrorVerifyResult{partitionsCompared: 1, findings: []mirrorFinding{{key: "k"}}}},
+	} {
+		if err := refuseEmptyMirrorVerify(tc.res); (err != nil) != tc.refused {
+			t.Errorf("%s: refused = %v (%v), want %v", name, err != nil, err, tc.refused)
+		}
+	}
+}
+
+func TestSDFSampleOutcome(t *testing.T) {
+	for name, tc := range map[string]struct {
+		res  sdfSampleResult
+		fail bool
+	}{
+		"every sample missing upstream": {res: sdfSampleResult{missingUpstream: 20}, fail: true},
+		"every sample unverifiable":     {res: sdfSampleResult{sampled: 20, unverifiable: 20}, fail: true},
+		"a mismatch":                    {res: sdfSampleResult{sampled: 20, matched: 19, findings: []mirrorFinding{{key: "k"}}}, fail: true},
+		"some matched, some missing":    {res: sdfSampleResult{sampled: 5, matched: 5, missingUpstream: 15}},
+	} {
+		if err := sdfSampleOutcome(tc.res); (err != nil) != tc.fail {
+			t.Errorf("%s: failed = %v (%v), want %v", name, err != nil, err, tc.fail)
+		}
+	}
+}
