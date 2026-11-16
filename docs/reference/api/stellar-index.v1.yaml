@@ -3714,6 +3714,152 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /lending/rates:
+    get:
+      operationId: getLendingRates
+      tags: [protocols]
+      summary: Lending markets — compare supply and borrow rates across every pool.
+      description: |
+        One row per (pool, reserve) across every lending pool that
+        `/v1/lending/pools` lists (Blend V1/V2 and BLNT V3), to compare
+        where an asset earns the most or borrows cheapest. Every figure
+        is copied from the same per-pool view
+        `/v1/lending/pools/{pool}/reserves` serves, so the two never
+        disagree; see that endpoint for how amounts, APRs, USD values
+        and `price_stale` are derived.
+
+        Rows are INCLUDED but marked `obtainable: false` when their APR
+        is not a yield a new position can earn or pay: the pool is not
+        active (`pool_not_active`, e.g. on ice or frozen), its status is
+        not known (`pool_status_unknown`, every Blend V1 pool, whose
+        status codes are not verified), the reserve is disabled
+        (`reserve_disabled`), its config is not known
+        (`reserve_config_unknown`), or its APRs are withheld
+        (`rate_unavailable`). Exclude them for a "best rate" answer.
+
+        A pool whose reserves cannot be read is named in
+        `omitted_pools` with a reason and its rows are absent; `partial`
+        is then true and the response is sent `Cache-Control: no-store`.
+        `partial` is also true when the BLNT pool list could not be
+        read. Asset identity is the reserve token contract plus, for a
+        SAC, the classic or native asset it wraps (`asset_id`), never
+        the code alone. At most 2,000 rows are served; `truncated` is
+        true when that cap cut the list.
+      parameters:
+        - name: asset
+          in: query
+          required: false
+          description: "Only this asset's reserves: a token contract C-strkey or a canonical asset id. Every alias matches, so `native`, `crypto:XLM` and the XLM SAC select the same rows."
+          schema: { type: string }
+        - name: protocol
+          in: query
+          required: false
+          schema: { type: string, enum: [blend, blnt] }
+        - name: sort
+          in: query
+          required: false
+          description: "`supply_apr` (default, highest first), `borrow_apr` (lowest first) or `supplied_usd` (largest first). Rows without the key sort last; ties by pool then asset."
+          schema: { type: string, enum: [supply_apr, borrow_apr, supplied_usd], default: supply_apr }
+      responses:
+        "200":
+          description: Rate rows.
+          content:
+            application/json:
+              example:
+                data:
+                  rates:
+                  - protocol: blend
+                    pool_version: v2
+                    pool: CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD
+                    pool_status: active
+                    pool_status_code: 1
+                    asset: CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75
+                    asset_id: USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+                    asset_code: USDC
+                    asset_issuer: GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+                    supply_apr: 0.0819
+                    borrow_apr: 0.1091
+                    utilization_pct: 75.07
+                    decimals: 7
+                    supplied: '589262319356640'
+                    borrowed: '442359640330233'
+                    supplied_usd: '58926231.94'
+                    borrowed_usd: '44235964.03'
+                    price_usd: '1'
+                    price_stale: false
+                    collateral_factor: '9500000'
+                    liability_factor: '9500000'
+                    supply_cap: '10000000000000000'
+                    enabled: true
+                    last_update: '2026-07-03T22:37:51Z'
+                    obtainable: true
+                    exclusions: []
+                  omitted_pools: []
+                  partial: false
+                  truncated: false
+                  config_decimals: 7
+                as_of: '2026-07-03T22:38:00.032774886Z'
+                flags:
+                  stale: false
+                  reduced_redundancy: false
+                  triangulated: false
+                  divergence_warning: false
+                  divergence_checked: false
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/EnvelopeMeta" }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          rates:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                protocol:          { type: string, enum: [blend, blnt] }
+                                pool_version:      { type: [string, "null"], enum: [v1, v2, v3, null], description: "Blend V1 or V2, or v3 for BLNT. Null when the Blend lineage is not known." }
+                                pool:              { type: string, description: Pool contract C-strkey. }
+                                pool_status:       { type: [string, "null"], description: "Pool status label (`admin_active`, `active`, `admin_on_ice`, `on_ice`, `admin_frozen`, `frozen`, `setup`). Null for a Blend V1 pool or when the pool config is not known." }
+                                pool_status_code:  { type: [integer, "null"], description: Raw PoolConfig status code. Null when the pool config is not known. }
+                                asset:             { type: string, description: Reserve token contract C-strkey. }
+                                asset_id:          { type: [string, "null"], description: "Canonical id of the classic or native asset a SAC reserve wraps. Null when the token is not a known SAC." }
+                                asset_code:        { type: [string, "null"], description: Classic asset code; null for native and non-SAC tokens. }
+                                asset_issuer:      { type: [string, "null"], description: Classic asset issuer; null for native and non-SAC tokens. }
+                                supply_apr:        { type: [number, "null"], description: "Supply APR as a fraction (0.05 = 5%). Null when the rate-model config is not known." }
+                                borrow_apr:        { type: [number, "null"], description: Borrow APR as a fraction. Null when the rate-model config is not known. }
+                                utilization_pct:   { type: number, description: "Borrowed/supplied, 0..100." }
+                                decimals:          { type: [integer, "null"], description: "The token's decimal exponent; null when not established." }
+                                supplied:          { type: string, description: "Total supplied, underlying token base units." }
+                                borrowed:          { type: string, description: "Total borrowed, underlying token base units." }
+                                supplied_usd:      { type: [string, "null"] }
+                                borrowed_usd:      { type: [string, "null"] }
+                                price_usd:         { type: [string, "null"], description: "USD price per whole token the USD values use; null whenever they are." }
+                                price_stale:       { type: boolean }
+                                collateral_factor: { type: [string, "null"], description: "Raw integer at `config_decimals`; null when the reserve config is not known." }
+                                liability_factor:  { type: [string, "null"], description: "Raw integer at `config_decimals`; null when the reserve config is not known." }
+                                supply_cap:        { type: [string, "null"], description: "Base units; null on a V1 pool, which has no cap, or when the config is not known." }
+                                enabled:           { type: [boolean, "null"], description: Null when the reserve config is not known. }
+                                last_update:       { type: [string, "null"], format: date-time, description: "Ledger close time of the reserve's last interest accrual." }
+                                obtainable:        { type: boolean, description: "False when `exclusions` is non-empty." }
+                                exclusions:
+                                  type: array
+                                  items: { type: string, enum: [pool_not_active, pool_status_unknown, reserve_disabled, reserve_config_unknown, rate_unavailable] }
+                          omitted_pools:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                protocol: { type: string, enum: [blend, blnt] }
+                                pool:     { type: string }
+                                reason:   { type: string }
+                          partial:         { type: boolean, description: "True when a listed pool, or the BLNT pool list, is missing from `rates`." }
+                          truncated:       { type: boolean, description: True when `rates` was cut at 2,000 rows. }
+                          config_decimals: { type: integer, description: "Fixed-point scale of `collateral_factor` and `liability_factor`. Always 7." }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /lending/pools/{pool}/reserves:
     get:
       operationId: getLendingPoolReserves
