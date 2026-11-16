@@ -54,7 +54,8 @@ const lendingEarningsNote = "accrued is current_value - net_flow, served only wh
 	"events equals its current on-chain balance (reconciled); otherwise it is null and reason names why. A pool leg is valued at " +
 	"the reserve's last on-chain rate update (rate_as_of). net_flow is " +
 	"underlying deposited minus withdrawn (supply), borrowed minus repaid (borrow), or backstop tokens deposited minus " +
-	"withdrawn (backstop); a backstop's accrued includes emissions claimed into it. Emission claims are sums of the " +
+	"withdrawn (backstop); a backstop's accrued includes emissions claimed into it. A BLNT clawback counts as a withdrawal, so " +
+	"accrued does not include the clawed-back amount as a loss. Emission claims are sums of the " +
 	"claim events projected so far and are a lower bound."
 
 // LendingEarningsView is the GET /v1/lending/accounts/{account}/earnings body.

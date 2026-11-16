@@ -1991,18 +1991,25 @@ export interface paths {
          *     backstop-share balance those events imply; `onchain_tokens`, the
          *     same balance read from the pool's `Positions` or the backstop's
          *     `UserBalance` storage in the lake (queued shares included);
-         *     `current_value`, `onchain_tokens` in the asset at the reserve's
-         *     current b_rate/d_rate or the backstop's share price; and
+         *     `current_value`, `onchain_tokens` in the asset valued at the
+         *     reserve's last on-chain rate update (b_rate/d_rate move only when
+         *     the reserve is touched; `rate_as_of` is that update's time) or at
+         *     the backstop's share price; and
          *     `accrued = current_value - net_flow` (interest earned, interest
-         *     paid, or backstop earnings including emissions claimed into it).
+         *     paid, or backstop earnings including emissions claimed into it),
+         *     true as of `rate_as_of`. A BLNT clawback counts as a withdrawal,
+         *     so `accrued` does not include the clawed-back amount as a loss.
          *
          *     `accrued` is served only when `folded_tokens` equals
          *     `onchain_tokens` and no auction moved the leg (`reconciled:
          *     true`). Otherwise it is null and `reason` names why:
          *     `auction_moved` (a liquidation, bad-debt fill or write-off moved
-         *     the position without an underlying flow), `balance_mismatch`
-         *     (an event the fold does not cover, or history not yet projected),
-         *     `onchain_unread`, `fold_inconsistent`, `rate_unread`, or for a
+         *     the position without an underlying flow), `projection_behind`
+         *     (the on-chain entry changed after the newest projected event),
+         *     `balance_mismatch` (an event the fold does not cover, or history
+         *     not yet projected), `onchain_unread` (also when one pool's lake
+         *     read failed; the response is then marked degraded),
+         *     `fold_inconsistent`, `rate_unread`, or for a
          *     Blend V1 backstop `blend_v1_unsupported`. Amounts are base-unit
          *     decimal strings; `decimals` is the reserve's, null when unread or
          *     for a backstop. Emission claims are sums of the claim events
@@ -18044,7 +18051,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Account G-strkey (an M-strkey resolves to its base account). */
+                /** @description Account G-strkey or contract C-strkey (an M-strkey resolves to its base account). */
                 account: string;
             };
             cookie?: never;
@@ -18073,6 +18080,7 @@ export interface operations {
                      *             "folded_tokens": "950000000",
                      *             "onchain_tokens": "950000000",
                      *             "current_value": "1045000000",
+                     *             "rate_as_of": "2026-07-03T22:31:05Z",
                      *             "accrued": "45000000",
                      *             "reconciled": true,
                      *             "reason": null
@@ -18123,10 +18131,15 @@ export interface operations {
                                 folded_tokens: string | null;
                                 onchain_tokens: string | null;
                                 current_value: string | null;
+                                /**
+                                 * Format: date-time
+                                 * @description When the reserve's stored rate was last updated on chain; current_value and accrued are valued at the reserve's last on-chain rate update. Null for a backstop leg or an unread rate.
+                                 */
+                                rate_as_of: string | null;
                                 accrued: string | null;
                                 reconciled: boolean;
                                 /** @enum {string|null} */
-                                reason: "auction_moved" | "balance_mismatch" | "onchain_unread" | "fold_inconsistent" | "rate_unread" | "blend_v1_unsupported" | "pool_lineage_unknown" | null;
+                                reason: "auction_moved" | "projection_behind" | "balance_mismatch" | "onchain_unread" | "fold_inconsistent" | "rate_unread" | "blend_v1_unsupported" | "pool_lineage_unknown" | null;
                             }[];
                             emissions: {
                                 /** @enum {string} */
