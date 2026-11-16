@@ -13,10 +13,9 @@ official `blend` protocol.
 - **Enumeration method:** deployment records published by BLNT Protocol, cross-checked
   against the contracts' mainnet creation transactions.
 - **Last verified:** 2026-11-15.
-- **Coverage status:** directory, contract roster, and raw-lake activity. A dedicated BLNT V3 event
-  decoder and lending-state projection are not yet present, so decoded `event_kinds`, lending
-  position analytics, and completeness verdicts are intentionally absent rather than borrowed
-  from Blend's incompatible tables.
+- **Coverage status:** directory, contract roster, raw-lake activity, and a dedicated lossless
+  BLNT V3 event decoder/projector. Typed lending-position analytics remain deferred, so no Blend
+  V1/V2 lending totals are borrowed from incompatible tables.
 
 ## Core contracts
 
@@ -80,8 +79,13 @@ operational dependencies, not immutable BLNT V3 core contracts and not part of t
 
 `GET /v1/protocols/blnt` returns this verified roster and scopes its activity series and event
 breakdown to these contracts plus the factory. Individual raw event history remains available at
-`GET /v1/contracts/{contract_id}`. Until a dedicated decoder is added, BLNT V3 events are not written
-to Blend's `blend_*` tables and the API does not present Blend-derived lending totals as BLNT V3 data.
+`GET /v1/contracts/{contract_id}`. The dedicated `blnt` source writes the complete event XDR to
+`blnt_events`, separately from Blend's `blend_*` tables. Typed lending-position totals remain
+deferred rather than presenting Blend-derived values as BLNT V3 data.
+
+The source is production-enabled from ledger 65,134,154. Replay is gated by the
+[six-lineage WASM audit](../operations/wasm-audits/blnt.md), and real Galexie
+fixtures cover the pool, factory, backstop, emitter and both backfill roles.
 
 ## Primary evidence
 

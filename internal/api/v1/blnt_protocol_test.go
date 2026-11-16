@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -33,14 +34,14 @@ func TestBLNTProtocolRegistryIsIndependentFromBlend(t *testing.T) {
 	if meta.Category != "lending" {
 		t.Fatalf("blnt category = %q, want lending", meta.Category)
 	}
-	if meta.GenesisLedger != blntGenesisLedger {
-		t.Fatalf("blnt genesis = %d, want %d", meta.GenesisLedger, blntGenesisLedger)
+	if meta.GenesisLedger != blnt.GenesisLedger {
+		t.Fatalf("blnt genesis = %d, want %d", meta.GenesisLedger, blnt.GenesisLedger)
 	}
-	if len(meta.Factories) != 1 || meta.Factories[0] != blntPoolFactory {
-		t.Fatalf("blnt factories = %v, want [%s]", meta.Factories, blntPoolFactory)
+	if len(meta.Factories) != 1 || meta.Factories[0] != blnt.MainnetPoolFactory {
+		t.Fatalf("blnt factories = %v, want [%s]", meta.Factories, blnt.MainnetPoolFactory)
 	}
-	if len(meta.EventKinds) != 0 {
-		t.Fatalf("blnt event kinds = %v, want none until a dedicated decoder lands", meta.EventKinds)
+	if len(meta.EventKinds) != 6 {
+		t.Fatalf("blnt event kinds = %v, want six role-specific decoder kinds", meta.EventKinds)
 	}
 
 	blendMeta, ok := protocolByName("blend")
@@ -48,12 +49,12 @@ func TestBLNTProtocolRegistryIsIndependentFromBlend(t *testing.T) {
 		t.Fatal("blend is absent from protocolRegistry")
 	}
 	for _, factory := range blendMeta.Factories {
-		if factory == blntPoolFactory {
+		if factory == blnt.MainnetPoolFactory {
 			t.Fatal("BLNT V3 factory is attributed to Blend")
 		}
 	}
 	for _, contract := range blendMeta.ExtraContracts {
-		if contract == blntBackstop || contract == blntEmitter || contract == blntBackfill || contract == blntLockupBackfill {
+		if contract == blnt.MainnetBackstop || contract == blnt.MainnetEmitter || contract == blnt.MainnetBackfill || contract == blnt.MainnetLockupBackfill {
 			t.Fatalf("BLNT V3 module %s is attributed to Blend", contract)
 		}
 	}
@@ -68,12 +69,12 @@ func TestBLNTStaticRosterAndContractIndex(t *testing.T) {
 		t.Fatalf("rosterErr: %v", err)
 	}
 	want := map[string]string{
-		blntFixedPool:      "instance",
-		blntYieldBlentPool: "instance",
-		blntBackstop:       "module",
-		blntEmitter:        "module",
-		blntBackfill:       "module",
-		blntLockupBackfill: "module",
+		blnt.MainnetFixedPool:      "instance",
+		blnt.MainnetYieldBlentPool: "instance",
+		blnt.MainnetBackstop:       "module",
+		blnt.MainnetEmitter:        "module",
+		blnt.MainnetBackfill:       "module",
+		blnt.MainnetLockupBackfill: "module",
 	}
 	classifyContractKinds(roster, meta.Factories)
 	for _, row := range roster {
@@ -94,7 +95,7 @@ func TestBLNTStaticRosterAndContractIndex(t *testing.T) {
 	if !complete || len(failed) != 0 {
 		t.Fatalf("contract index complete=%v failed=%v", complete, failed)
 	}
-	for _, id := range []string{blntPoolFactory, blntFixedPool, blntYieldBlentPool, blntBackstop, blntEmitter, blntBackfill, blntLockupBackfill} {
+	for _, id := range []string{blnt.MainnetPoolFactory, blnt.MainnetFixedPool, blnt.MainnetYieldBlentPool, blnt.MainnetBackstop, blnt.MainnetEmitter, blnt.MainnetBackfill, blnt.MainnetLockupBackfill} {
 		if got := byID[id]; got != "blnt" {
 			t.Errorf("contract index[%s] = %q, want blnt", id, got)
 		}

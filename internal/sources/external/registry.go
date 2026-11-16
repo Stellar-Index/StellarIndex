@@ -44,6 +44,9 @@ var Registry = map[string]Metadata{
 	// blend_emitter is BLND emissions plumbing: no price, never VWAP. Audited against the lake
 	// (docs/operations/wasm-audits/blend_emitter.md).
 	"blend_emitter": {Class: ClassLending, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited; see docs/operations/wasm-audits/blend_emitter.md */},
+	// BLNT V3 is independently deployed lending infrastructure. It publishes no spot price;
+	// historical replay is guarded by its dedicated per-WASM audit and real-lake fixtures.
+	"blnt": {Class: ClassLending, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM},
 	// sorocredit is a consumer-USDC credit protocol with no published price, never VWAP. Its
 	// "Liquidation" events are scheduled settlements, not distress.
 	"sorocredit": {Class: ClassLending, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited lake-direct: one instance WASM since deploy, all 7 event types keep one on-wire schema; safe from genesis 61,620,822. See docs/operations/wasm-audits/sorocredit.md */},

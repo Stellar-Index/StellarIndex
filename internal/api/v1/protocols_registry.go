@@ -5,6 +5,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	blend_backstop "github.com/Stellar-Index/StellarIndex/internal/sources/blend_backstop"
 	blend_emitter "github.com/Stellar-Index/StellarIndex/internal/sources/blend_emitter"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/cctp"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/rozo"
@@ -64,19 +65,6 @@ type StaticProtocolContract struct {
 	FactoryID   string
 	FirstLedger uint32
 }
-
-const (
-	blntGenesisLedger uint32 = 65_134_154
-
-	blntPoolFactory    = "CAKLFWAHB2RIYRBSPUL6EH43AIQ5ILBEM7HTMWYSJRL7PHZQ676KMCV5"
-	blntBackstop       = "CAHCUKBPTW5DR5RNXOHCTJD5U76A6EEZXYZAQFRQEEQRXQ3CRUZ6Z3MO"
-	blntEmitter        = "CDSO6FQSBJ3U3AJHBNNLHHKSMKTTDDN3GLGF3KZTMXBFV7SVB43ZJERT"
-	blntBackfill       = "CANIE64BDFKLHROLOIY2KTQVBWUZNUKZP75DLXC272QM7TIN5N3M4LVA"
-	blntLockupBackfill = "CBNRUFL5KYTT7TQMYKRMHQU5KY4LDQEUVXLI6ECKJU7OJGHC3OLGJFBV"
-
-	blntFixedPool      = "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7"
-	blntYieldBlentPool = "CAUTPSQDAJEUV5XEU3EXFVYRGDJLEJGVTFJCFZCSPTDCREAMZ573VF4D"
-)
 
 // protocolRegistry is the static protocol directory served by
 // GET /v1/protocols. Ordering here is the wire ordering.
@@ -151,19 +139,22 @@ var protocolRegistry = withVerificationPages([]ProtocolMeta{
 		ExtraEventSources: []string{blend_backstop.SourceName, blend_emitter.SourceName},
 	},
 	{
-		Name:          "blnt",
+		Name:          blnt.SourceName,
 		Category:      "lending",
 		Description:   "BLNT V3 — a Blend-derived lending protocol on Soroban with RWA support and tiered backstops.",
-		GenesisLedger: blntGenesisLedger,
-		Factories:     []string{blntPoolFactory},
+		GenesisLedger: blnt.GenesisLedger,
+		Factories:     []string{blnt.MainnetPoolFactory},
 		StaticInstances: []StaticProtocolContract{
-			{ContractID: blntFixedPool, FactoryID: blntPoolFactory, FirstLedger: 65_134_362},
-			{ContractID: blntYieldBlentPool, FactoryID: blntPoolFactory, FirstLedger: 65_327_498},
+			{ContractID: blnt.MainnetFixedPool, FactoryID: blnt.MainnetPoolFactory, FirstLedger: 65_134_362},
+			{ContractID: blnt.MainnetYieldBlentPool, FactoryID: blnt.MainnetPoolFactory, FirstLedger: 65_327_498},
 		},
-		// The backstop, emitter, primary backfill, and supplemental lockup-backfill contracts have
-		// their own event surfaces but are BLNT V3 modules. EventKinds remains empty until a dedicated
-		// BLNT V3 decoder lands; raw lake activity is still scoped to this verified roster.
-		ExtraContracts: []string{blntBackstop, blntEmitter, blntBackfill, blntLockupBackfill},
+		EventKinds: []string{
+			blnt.PoolEventKind, blnt.FactoryEventKind, blnt.BackstopEventKind,
+			blnt.EmitterEventKind, blnt.BackfillEventKind, blnt.LockupBackfillEventKind,
+		},
+		ExtraContracts: []string{
+			blnt.MainnetBackstop, blnt.MainnetEmitter, blnt.MainnetBackfill, blnt.MainnetLockupBackfill,
+		},
 	},
 	{
 		Name:          "sorocredit",

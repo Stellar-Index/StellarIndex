@@ -1,0 +1,16 @@
+{
+  "contract_id": "CANIE64BDFKLHROLOIY2KTQVBWUZNUKZP75DLXC272QM7TIN5N3M4LVA",
+  "role": "backfill",
+  "wasm_hash": "dcdc0b1860799629c7c88804955dd7373cb6febaf069e2ba863e98ebbaa95c27",
+  "ledger": 65380474,
+  "tx_hash": "fca1f7fb71d71ea1807cac8dc157b5a06531ff435f1407375da2efd409654819",
+  "op_index": 0,
+  "event_index": 1,
+  "ledger_closed_at": "2026-11-09T01:40:12Z",
+  "topics": [
+    "AAAADwAAAAVjbGFpbQAAAA==",
+    "AAAAEgAAAAAAAAAALuFPndOhTHlFg5D+REdz8mWuJolIMGWK+DUpY/Eli/g="
+  ],
+  "value": "AAAACgAAAAAAAAAAAAAABgbyErg=",
+  "event_name": "claim"
+}

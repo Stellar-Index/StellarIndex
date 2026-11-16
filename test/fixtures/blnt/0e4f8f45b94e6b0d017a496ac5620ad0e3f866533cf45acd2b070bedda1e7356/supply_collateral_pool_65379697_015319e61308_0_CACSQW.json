@@ -1,0 +1,17 @@
+{
+  "contract_id": "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7",
+  "role": "pool",
+  "wasm_hash": "0e4f8f45b94e6b0d017a496ac5620ad0e3f866533cf45acd2b070bedda1e7356",
+  "ledger": 65379697,
+  "tx_hash": "015319e613088d8d6b2b18401317f98c76444ef3d7adddec41c89f045965d8dc",
+  "op_index": 0,
+  "event_index": 0,
+  "ledger_closed_at": "2026-11-09T00:35:27Z",
+  "topics": [
+    "AAAADwAAABFzdXBwbHlfY29sbGF0ZXJhbAAAAA==",
+    "AAAAEgAAAAEltPzYWa7C+mNIQ4xImzw8EMmLbSG+T9PLMMtolT75dw==",
+    "AAAAEgAAAAAAAAAAnTLR4kzVGAXwF3J7AeTibOKPoO836Dne2oRfYAlEyZE="
+  ],
+  "value": "AAAAEAAAAAEAAAACAAAACgAAAAAAAAAAAAAAAA7msoAAAAAKAAAAAAAAAAAAAAAADuaEHA==",
+  "event_name": "supply_collateral"
+}

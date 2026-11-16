@@ -30,6 +30,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	blend_backstop "github.com/Stellar-Index/StellarIndex/internal/sources/blend_backstop"
 	blend_emitter "github.com/Stellar-Index/StellarIndex/internal/sources/blend_emitter"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/cctp"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/chainlink_stellar"
 	claimable_balances "github.com/Stellar-Index/StellarIndex/internal/sources/claimable_balances"
@@ -54,7 +55,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
 
-// goldenProjectedEvents is IsProjectedEvent's true set (42 types), keyed by
+// goldenProjectedEvents is IsProjectedEvent's true set (44 types), keyed by
 // the spelling used in pipeline/sink.go so the AST check can compare it.
 var goldenProjectedEvents = map[string]consumer.Event{
 	"soroswap.TradeEvent":           soroswap.TradeEvent{},
@@ -89,6 +90,7 @@ var goldenProjectedEvents = map[string]consumer.Event{
 	"blend_emitter.DistributeEvent": blend_emitter.DistributeEvent{},
 	"blend_emitter.DropEvent":       blend_emitter.DropEvent{},
 	"blend_emitter.SwapConfigEvent": blend_emitter.SwapConfigEvent{},
+	"blnt.Event":                    blnt.Event{},
 	"cctp.Event":                    cctp.Event{},
 	"rozo.Event":                    rozo.Event{},
 	"sorocredit.Event":              sorocredit.Event{},
@@ -122,7 +124,7 @@ var goldenSoleWriterEvents = []string{"rozo.Event", "sep41_supply.Event", "sep41
 
 // goldenProjectorSources is projector.KnownProjectorSources, i.e. buildSource's cases.
 var goldenProjectorSources = []string{
-	"aquarius", "blend", "blend_backstop", "blend_emitter", "cctp", "chainlink-stellar", "comet", "defindex",
+	"aquarius", "blend", "blend_backstop", "blend_emitter", "blnt", "cctp", "chainlink-stellar", "comet", "defindex",
 	"phoenix", "redstone", "reflector-cex", "reflector-dex", "reflector-fx", "rozo",
 	"sep41_supply", "sep41_transfers", "sorocredit", "soroswap", "spectra",
 	"sushiswap_v3", "upshift",
@@ -130,7 +132,7 @@ var goldenProjectorSources = []string{
 
 // goldenDispatcherSources is every name BuildDispatcher accepts.
 var goldenDispatcherSources = []string{
-	"aquarius", "band", "blend", "blend_backstop", "blend_emitter", "cctp", "chainlink-stellar", "comet", "defindex",
+	"aquarius", "band", "blend", "blend_backstop", "blend_emitter", "blnt", "cctp", "chainlink-stellar", "comet", "defindex",
 	"phoenix", "redstone", "reflector-cex", "reflector-dex", "reflector-fx", "rozo", "sdex",
 	"sorocredit", "soroswap", "soroswap-router", "spectra", "sushiswap_v3", "upshift",
 }
@@ -138,7 +140,7 @@ var goldenDispatcherSources = []string{
 // goldenSorobanSourceNames is pipeline.SorobanSourceNames: the dispatcher
 // names minus sdex (classic ops, not soroban_events).
 var goldenSorobanSourceNames = []string{
-	"aquarius", "band", "blend", "blend_backstop", "blend_emitter", "cctp", "chainlink-stellar", "comet", "defindex",
+	"aquarius", "band", "blend", "blend_backstop", "blend_emitter", "blnt", "cctp", "chainlink-stellar", "comet", "defindex",
 	"phoenix", "redstone", "reflector-cex", "reflector-dex", "reflector-fx", "rozo",
 	"sorocredit", "soroswap", "soroswap-router", "spectra", "sushiswap_v3", "upshift",
 }
@@ -246,8 +248,8 @@ func registryNames(r projector.Registry) []string {
 }
 
 func TestProjectedEventSet_Golden(t *testing.T) {
-	if len(goldenProjectedEvents) != 43 {
-		t.Fatalf("golden projected table has %d entries, want 43", len(goldenProjectedEvents))
+	if len(goldenProjectedEvents) != 44 {
+		t.Fatalf("golden projected table has %d entries, want 44", len(goldenProjectedEvents))
 	}
 	for name, ev := range goldenProjectedEvents {
 		if !pipeline.IsProjectedEvent(ev) {

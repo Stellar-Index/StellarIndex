@@ -526,6 +526,7 @@ rejects a row that is not.
 | 0221 | Adds nullable `trades.usd_basis text`, the valuation route behind `usd_volume` (`quote_pegged`, `base_pegged`, `xlm_base`, `xlm_quote`, `fiat_peg`, `fx_quote`, `fx_base`), plus `prior_usd_basis` and `usd_basis` on `usd_volume_restamp_log` for undo. |
 | 0222 | Adds `sac_balance_current` and `sac_balance_current_seeded`, kept by a trigger on `sac_balance_observations`, so SAC balance sums read the current row per holder. Same design as 0215. |
 | 0223 | Replaces `audit_log_erase_metadata(jsonb)` so an account erasure also strips `url_host` and `previous_url_host` (webhook receiver hosts), `target_account` (the slug on a staff key mint) and `credential_name` (a passkey's name) from kept audit rows. No back-fill. |
+| 0224 | Adds `blnt_events`, the lossless role-aware event envelope for the separately gated BLNT V3 source. |
 
 ## References
 

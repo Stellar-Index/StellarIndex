@@ -1,0 +1,15 @@
+{
+  "contract_id": "CDSO6FQSBJ3U3AJHBNNLHHKSMKTTDDN3GLGF3KZTMXBFV7SVB43ZJERT",
+  "role": "emitter",
+  "wasm_hash": "4fa7d99dee6fe99cad5d07a46ee39e437dc287e53e3ab1f3ccc0aacf7e6cd6c5",
+  "ledger": 65378929,
+  "tx_hash": "5374b84a9a51d761bd25ba97fecddc43bc2f2da38cc0855e3ea1a07e0788a140",
+  "op_index": 0,
+  "event_index": 1,
+  "ledger_closed_at": "2026-11-08T23:31:27Z",
+  "topics": [
+    "AAAADwAAAApkaXN0cmlidXRlAAA="
+  ],
+  "value": "AAAAEAAAAAEAAAACAAAAEgAAAAEOKigvnbo49i27jimkfaf8DxCZvjIIFjAhIRvDYo0z7AAAAAoAAAAAAAAAAAAAAAh2oPuA",
+  "event_name": "distribute"
+}

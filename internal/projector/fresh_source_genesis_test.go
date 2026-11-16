@@ -11,6 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sourcenet"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	blend_backstop "github.com/Stellar-Index/StellarIndex/internal/sources/blend_backstop"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
 	chainlink_stellar "github.com/Stellar-Index/StellarIndex/internal/sources/chainlink_stellar"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorocredit"
@@ -105,6 +106,7 @@ func TestProjectedSourcesDeclareGenesis(t *testing.T) {
 		sorocredit.SourceName:        sorocredit.GenesisLedger,
 		blend.SourceName:             blend.FactoryGenesisLedger,
 		blend_backstop.SourceName:    blend_backstop.BackstopGenesisLedger,
+		blnt.SourceName:              blnt.GenesisLedger,
 		chainlink_stellar.SourceName: chainlink_stellar.GenesisLedger,
 	}
 	contractID := sorocredit.MainnetContract

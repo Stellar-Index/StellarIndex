@@ -14,6 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	blend_emitter "github.com/Stellar-Index/StellarIndex/internal/sources/blend_emitter"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/spectra"
@@ -71,6 +72,16 @@ var gatedSources = map[string]GatedMeta{
 		CreationSym: blend.EventDeploy,
 		Genesis:     blend.FactoryGenesisLedger,
 		NewDecoder:  func(opts ...contractid.Option) dispatcher.Decoder { return blend.NewDecoder(opts...) },
+	},
+	blnt.SourceName: {
+		// The canonical factory announces pool children. Core modules and the two pools already
+		// deployed when this adapter shipped form the cold-start curated set; exact module identity
+		// selects the role-specific ABI in blnt.Decoder.
+		Factories:   []string{blnt.MainnetPoolFactory},
+		CreationSym: "deploy",
+		Genesis:     blnt.GenesisLedger,
+		CuratedSet:  blnt.MainnetGatedSet(),
+		NewDecoder:  func(opts ...contractid.Option) dispatcher.Decoder { return blnt.NewDecoder(opts...) },
 	},
 	aquarius.SourceName: {
 		// Router-anchored gate (ADR-0040): the router is the registry, its add_pool events announcing the pool set the public API serves.

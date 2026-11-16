@@ -596,6 +596,10 @@ stellarindex_enabled_sources:
   # hand-kept set; all eight WASM hashes audited
   # (docs/operations/wasm-audits/spectra.md). Starts at genesis 63,778,088.
   - "spectra"
+
+  # BLNT V3 — immutable core modules plus factory-discovered pools and the
+  # supplemental lockup backfill. All six WASM lineages are replay-audited.
+  - "blnt"
 # The declared counterpart of the list above: every source whose decoder has shipped
 # (in internal/config/validate.go's KnownSources) but which we deliberately do NOT
 # run yet.

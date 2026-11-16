@@ -299,7 +299,10 @@ func TestProjectedSourcesNameTheirTables(t *testing.T) {
 		named[target.SourceNetKey()] = true
 	}
 	for _, spec := range Specs() {
-		if spec.Projector != nil && !named[spec.Name] {
+		if spec.Projector == nil {
+			continue
+		}
+		if !named[spec.Name] {
 			t.Errorf("projected source %s has no gap-detector target", spec.Name)
 		}
 	}

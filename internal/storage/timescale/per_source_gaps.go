@@ -168,6 +168,10 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// Genesis is blend_backstop.BackstopGenesisLedger; V1 events start at 51_499_926, so a later
 	// floor would hide that era.
 	{Source: "blend-backstop", CanonicalSource: "blend_backstop", Table: "blend_backstop_events", LedgerColumn: "ledger", Genesis: 51_499_546, MinGapSizeOverride: 100000},
+	// blnt: one lossless row per accepted event across pools, factory, backstop, emitter and
+	// backfills. Hourly emissions and active pools make 100K a conservative liveness threshold;
+	// completeness reconciliation distinguishes genuine quiet from omitted rows.
+	{Source: "blnt", Table: "blnt_events", LedgerColumn: "ledger", Genesis: 65_134_154, MinGapSizeOverride: 100000},
 	// sorocredit: four tables, Genesis is the main contract's first event. Wide override because
 	// the historical back-window fills only via projector-replay, so a large threshold avoids
 	// paging on the empty pre-fill range. See internal/sources/sorocredit/README.md.

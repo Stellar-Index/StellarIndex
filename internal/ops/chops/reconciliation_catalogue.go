@@ -23,6 +23,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	blend_backstop "github.com/Stellar-Index/StellarIndex/internal/sources/blend_backstop"
 	blend_emitter "github.com/Stellar-Index/StellarIndex/internal/sources/blend_emitter"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/cctp"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/chainlink_stellar"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/claimable_balances"
@@ -347,6 +348,21 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			targets: []reconTarget{
 				{"spectra_events", "", []string{spectra.EventKind}},
 			},
+		},
+		{
+			// BLNT V3 is identity-gated on immutable modules plus pools announced by its factory.
+			// The lossless envelope is one decoder output to one blnt_events row, so all six
+			// role-specific EventKinds reconcile strictly per ledger.
+			name:        blnt.SourceName,
+			genesis:     blnt.GenesisLedger,
+			dec:         blnt.NewDecoder(),
+			factories:   []string{blnt.MainnetPoolFactory},
+			creationSym: "deploy",
+			newGatedDec: func() gatedDecoder { return blnt.NewDecoder() },
+			targets: []reconTarget{{"blnt_events", "", []string{
+				blnt.PoolEventKind, blnt.FactoryEventKind, blnt.BackstopEventKind,
+				blnt.EmitterEventKind, blnt.BackfillEventKind, blnt.LockupBackfillEventKind,
+			}}},
 		},
 		{
 			// blend_emitter: contract-gated on one curated contract. contractIDs pins recognition
