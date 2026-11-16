@@ -727,7 +727,8 @@ func (h *Handlers) HandlePasskeyList(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandlePasskeyDelete removes one of the signed-in user's passkeys; owner-scoped in the store query, so another user's credential ID is
-// a 404 like a nonexistent one.
+// a 404 like a nonexistent one. A user who signed up with a passkey and gave no email has no other way in, so their
+// last passkey is kept (409).
 func (h *Handlers) HandlePasskeyDelete(w http.ResponseWriter, r *http.Request) {
 	sc, ok := h.credentialSession(w, r, 0)
 	if !ok {
@@ -738,9 +739,16 @@ func (h *Handlers) HandlePasskeyDelete(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusBadRequest, "invalid passkey id", r.URL.Path)
 		return
 	}
-	if err := h.cfg.Passkeys.DeleteWebAuthnCredential(r.Context(), id, sc.User.ID); err != nil {
+	keepLast := platform.IsPlaceholderEmail(sc.User.Email)
+	if err := h.cfg.Passkeys.DeleteWebAuthnCredential(r.Context(), id, sc.User.ID, keepLast); err != nil {
 		if errors.Is(err, platform.ErrNotFound) {
 			writeProblem(w, http.StatusNotFound, "passkey not found", r.URL.Path)
+			return
+		}
+		if errors.Is(err, platform.ErrLastCredential) {
+			writeProblem(w, http.StatusConflict,
+				"This is the only way to sign in to this account, and it has no email to fall back on. Add another passkey first, then remove this one.",
+				r.URL.Path)
 			return
 		}
 		h.cfg.Logger.Error("delete passkey", "err", err, "user_id", sc.User.ID)

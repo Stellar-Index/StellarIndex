@@ -4807,8 +4807,10 @@ export interface paths {
          *     begin-register (`reauth-required`, 401), and owner-scoped: a
          *     credential belonging to
          *     another user is indistinguishable from a nonexistent one
-         *     (404 either way). Email-code sign-in always remains, so
-         *     removing the last passkey cannot lock the account out.
+         *     (404 either way). An account with an email keeps email-code
+         *     sign-in, so its last passkey may be removed. An account that
+         *     signed up with a passkey and has no email has no other way
+         *     in, so removing its last passkey is refused (409).
          *
          *     A successful removal signs the user out of every other
          *     session, including any the removed passkey opened. The session
@@ -24832,6 +24834,15 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             /** @description No such passkey on this account. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The passkey is the only way to sign in to an account with no email. Add another passkey first. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -42225,7 +42225,7 @@
                       "request": {
                         "name": "Customer dashboard — remove one of the signed-in user's passkeys.",
                         "description": {
-                          "content": "Session-gated, with the same 10-minute recent-session rule as\nbegin-register (`reauth-required`, 401), and owner-scoped: a\ncredential belonging to\nanother user is indistinguishable from a nonexistent one\n(404 either way). Email-code sign-in always remains, so\nremoving the last passkey cannot lock the account out.\n\nA successful removal signs the user out of every other\nsession, including any the removed passkey opened. The session\nthat made the call stays signed in.\n",
+                          "content": "Session-gated, with the same 10-minute recent-session rule as\nbegin-register (`reauth-required`, 401), and owner-scoped: a\ncredential belonging to\nanother user is indistinguishable from a nonexistent one\n(404 either way). An account with an email keeps email-code\nsign-in, so its last passkey may be removed. An account that\nsigned up with a passkey and has no email has no other way\nin, so removing its last passkey is refused (409).\n\nA successful removal signs the user out of every other\nsession, including any the removed passkey opened. The session\nthat made the call stays signed in.\n",
                           "type": "text/plain"
                         },
                         "url": {
@@ -42483,6 +42483,62 @@
                           },
                           "status": "Not Found",
                           "code": 404,
+                          "header": [
+                            {
+                              "key": "Content-Type",
+                              "value": "application/problem+json"
+                            }
+                          ],
+                          "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\",\n  \"monthly_quota\": \"<long>\",\n  \"month_to_date\": \"<long>\",\n  \"substance\": {\n    \"base\": \"<string>\",\n    \"quote\": \"<string>\",\n    \"window_seconds\": \"<long>\",\n    \"measured_at\": \"<dateTime>\",\n    \"volume_usd\": \"<string>\",\n    \"buckets\": \"<long>\",\n    \"valued_buckets\": \"<long>\",\n    \"span_seconds\": \"<long>\",\n    \"floor\": {\n      \"min_volume_usd\": \"<string>\",\n      \"min_buckets\": \"<long>\",\n      \"min_span_seconds\": \"<long>\"\n    },\n    \"failed\": \"buckets\",\n    \"window_end\": \"<dateTime>\"\n  },\n  \"reason\": \"substance\"\n}",
+                          "cookie": [],
+                          "_postman_previewlanguage": "json"
+                        },
+                        {
+                          "name": "The passkey is the only way to sign in to an account with no email. Add another passkey first.",
+                          "originalRequest": {
+                            "url": {
+                              "path": [
+                                "auth",
+                                "passkey",
+                                "credentials",
+                                ":id"
+                              ],
+                              "host": [
+                                "{{baseUrl}}"
+                              ],
+                              "query": [],
+                              "variable": [
+                                {
+                                  "disabled": false,
+                                  "description": {
+                                    "content": "(Required) The passkey's server-side id (from the list endpoint).",
+                                    "type": "text/plain"
+                                  },
+                                  "type": "any",
+                                  "value": "<uuid>",
+                                  "key": "id"
+                                }
+                              ]
+                            },
+                            "header": [
+                              {
+                                "key": "Accept",
+                                "value": "application/problem+json"
+                              },
+                              {
+                                "description": {
+                                  "content": "Added as a part of security scheme: apikey",
+                                  "type": "text/plain"
+                                },
+                                "key": "__Host-stellarindex_session",
+                                "value": "<API Key>"
+                              }
+                            ],
+                            "method": "DELETE",
+                            "body": {}
+                          },
+                          "status": "Conflict",
+                          "code": 409,
                           "header": [
                             {
                               "key": "Content-Type",

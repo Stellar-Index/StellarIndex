@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -139,9 +140,26 @@ func (r *WebAuthnCredentialStore) UpdateWebAuthnCredentialSignCount(
 }
 
 func (r *WebAuthnCredentialStore) DeleteWebAuthnCredential(
-	ctx context.Context, id, userID uuid.UUID,
+	ctx context.Context, id, userID uuid.UUID, keepLast bool,
 ) error {
-	res, err := r.s.db.ExecContext(ctx, `
+	tx, err := r.s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("delete webauthn credential: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	// Lock every passkey the user has: two removals racing on a two-passkey user would otherwise each
+	// count the other's row as the survivor. The second waits here and then sees one row.
+	held, err := lockedCredentialIDs(ctx, tx, userID)
+	if err != nil {
+		return err
+	}
+	if !slices.Contains(held, id) {
+		return fmt.Errorf("delete webauthn credential: %w", platform.ErrNotFound)
+	}
+	if keepLast && len(held) == 1 {
+		return fmt.Errorf("delete webauthn credential: %w", platform.ErrLastCredential)
+	}
+	res, err := tx.ExecContext(ctx, `
 		DELETE FROM webauthn_credentials
 		WHERE id = $1 AND user_id = $2`, id, userID)
 	if err != nil {
@@ -154,5 +172,30 @@ func (r *WebAuthnCredentialStore) DeleteWebAuthnCredential(
 	if n == 0 {
 		return fmt.Errorf("delete webauthn credential: %w", platform.ErrNotFound)
 	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("delete webauthn credential: commit: %w", err)
+	}
 	return nil
+}
+
+// lockedCredentialIDs returns the user's passkey ids, row-locked until tx ends.
+func lockedCredentialIDs(ctx context.Context, tx *sql.Tx, userID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id FROM webauthn_credentials WHERE user_id = $1 ORDER BY id FOR UPDATE`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("delete webauthn credential: lock: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("delete webauthn credential: lock: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("delete webauthn credential: lock: %w", err)
+	}
+	return ids, nil
 }

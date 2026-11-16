@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -86,12 +87,21 @@ func (f *fakeWebAuthnStore) UpdateWebAuthnCredentialSignCount(_ context.Context,
 	return nil
 }
 
-func (f *fakeWebAuthnStore) DeleteWebAuthnCredential(_ context.Context, id, userID uuid.UUID) error {
+func (f *fakeWebAuthnStore) DeleteWebAuthnCredential(_ context.Context, id, userID uuid.UUID, keepLast bool) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	c, ok := f.rows[id]
 	if !ok || c.UserID != userID {
 		return platform.ErrNotFound
+	}
+	held := 0
+	for _, row := range f.rows {
+		if row.UserID == userID {
+			held++
+		}
+	}
+	if keepLast && held == 1 {
+		return platform.ErrLastCredential
 	}
 	delete(f.rows, id)
 	return nil
@@ -178,6 +188,68 @@ func TestPasskeyDelete_RefusesASessionOutsideTheReauthWindow(t *testing.T) {
 	if err != nil || len(left) != 1 {
 		t.Fatalf("credentials after refused delete = %d (err %v), want 1", len(left), err)
 	}
+}
+
+// A user who signed up with a passkey and gave no email has no other way to sign in: removing their last
+// passkey would lose the account for good, while its API keys keep working with nobody able to revoke them.
+// An account with an email keeps email-code sign-in, so its last passkey may go.
+func TestPasskeyDelete_KeepsTheLastPasskeyOfAnAccountWithNoEmail(t *testing.T) {
+	seed := func(t *testing.T, rig *passkeyRig, n int) []platform.WebAuthnCredential {
+		t.Helper()
+		var out []platform.WebAuthnCredential
+		for i := range n {
+			c, err := rig.passkeys.CreateWebAuthnCredential(context.Background(), platform.WebAuthnCredential{
+				UserID: rig.user.ID, CredentialID: fmt.Appendf(nil, "EXAMPLE-CRED-ID-PLACEHOLDER-1%d", i), PublicKey: []byte("EXAMPLE-PUBKEY-PLACEHOLDER"),
+			})
+			if err != nil {
+				t.Fatalf("seed credential: %v", err)
+			}
+			out = append(out, c)
+		}
+		return out
+	}
+	remove := func(rig *passkeyRig, id uuid.UUID) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodDelete, "/v1/auth/passkey/credentials/"+id.String(), nil)
+		req.SetPathValue("id", id.String())
+		w := httptest.NewRecorder()
+		rig.h.HandlePasskeyDelete(w, rig.withSession(req))
+		return w
+	}
+	left := func(t *testing.T, rig *passkeyRig) int {
+		t.Helper()
+		rows, err := rig.passkeys.ListWebAuthnCredentialsForUser(context.Background(), rig.user.ID)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		return len(rows)
+	}
+
+	t.Run("no email: the last passkey stays", func(t *testing.T) {
+		rig := newPasskeyRig(t)
+		rig.user.Email = platform.PlaceholderEmail(rig.user.ID)
+		creds := seed(t, rig, 2)
+		if w := remove(rig, creds[0].ID); w.Code != http.StatusNoContent {
+			t.Fatalf("removing one of two: status = %d body = %s, want 204", w.Code, w.Body.String())
+		}
+		w := remove(rig, creds[1].ID)
+		if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "only way to sign in") {
+			t.Fatalf("removing the last: status = %d body = %s, want 409 naming the lockout", w.Code, w.Body.String())
+		}
+		if n := left(t, rig); n != 1 {
+			t.Fatalf("passkeys left = %d, want 1", n)
+		}
+	})
+
+	t.Run("with an email: the last passkey may go", func(t *testing.T) {
+		rig := newPasskeyRig(t)
+		creds := seed(t, rig, 1)
+		if w := remove(rig, creds[0].ID); w.Code != http.StatusNoContent {
+			t.Fatalf("status = %d body = %s, want 204", w.Code, w.Body.String())
+		}
+		if n := left(t, rig); n != 0 {
+			t.Fatalf("passkeys left = %d, want 0", n)
+		}
+	})
 }
 
 // A ceremony begun at the edge of the window may finish: the device has already created the key by then.
