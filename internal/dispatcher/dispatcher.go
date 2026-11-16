@@ -509,6 +509,8 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 					if ev == nil {
 						continue
 					}
+					// tx.Index, not the loop index: txs omits unreadable transactions.
+					ev.TransactionIndex = int(tx.Index)
 					// OpArgs provenance gate: top-level args belong to the invoked contract only. For a
 					// sub-invoked contract they are attacker-chosen, so an args-requiring decoder
 					// refuses (ErrMissingOpArgs, counted). The lake extractor applies the same rule.

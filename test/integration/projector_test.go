@@ -826,7 +826,7 @@ func TestFirstContractEventLedgerFiltered_MatchesStream(t *testing.T) {
 			var streamFirst uint32
 			streamFound := false
 			if err := chstore.StreamContractEventsFiltered(ctx, chAddr, tc.from, tc.to, tc.contracts, tc.topics, tc.excludes,
-				false, false, false, func(ev events.Event) error {
+				false, false, false, false, func(ev events.Event) error {
 					if !streamFound || ev.Ledger < streamFirst {
 						streamFirst, streamFound = ev.Ledger, true
 					}

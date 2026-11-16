@@ -89,6 +89,9 @@ func TestEvent_JSONRoundTrip(t *testing.T) {
 	if len(got.OpArgs) != 2 || got.OpArgs[1] != "EEE=" {
 		t.Errorf("OpArgs round-trip: %v", got.OpArgs)
 	}
+	if got.TransactionIndex != 0 || strings.Contains(string(body), "transactionIndex") {
+		t.Errorf("TransactionIndex must stay out of the wire shape: got %d in %s", got.TransactionIndex, body)
+	}
 }
 
 // TestEvent_OpArgsOmittedWhenEmpty — events from stellar-rpc

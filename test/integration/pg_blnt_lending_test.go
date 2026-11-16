@@ -305,6 +305,7 @@ func TestLendingConfigHistory_LifecycleAcrossBothTables(t *testing.T) {
 	last := page[1]
 	rest, err := store.LendingConfigHistory(ctx, pool, 50, timescale.LendingConfigCursor{
 		Ts: last.Ts, Ledger: last.Ledger, TxHash: last.TxHash, OpIndex: last.OpIndex, EventIndex: last.EventIndex, Kind: last.Kind,
+		TxOrder: last.TxOrder,
 	})
 	if err != nil || len(rest) != 4 || rest[0].Kind != "set_reserve" {
 		t.Fatalf("page 2 = %+v (%v), want the 4 older rows", rest, err)
@@ -374,6 +375,7 @@ func TestLendingConfigHistory_SameLedgerQueueThenSet(t *testing.T) {
 	}
 	rest, err := store.LendingConfigHistory(ctx, pool, 50, timescale.LendingConfigCursor{
 		Ts: got[0].Ts, Ledger: got[0].Ledger, TxHash: got[0].TxHash, OpIndex: got[0].OpIndex, EventIndex: got[0].EventIndex, Kind: got[0].Kind,
+		TxOrder: got[0].TxOrder,
 	})
 	if err != nil || len(rest) != 1 || rest[0].Kind != "queue_set_reserve" {
 		t.Fatalf("page after the set = %+v (%v), want the queue", rest, err)
@@ -385,5 +387,84 @@ func TestLendingConfigHistory_SameLedgerQueueThenSet(t *testing.T) {
 	}
 	if cfg, err := blnt.ParseReserveConfigMetadata(metas[asset]); err != nil || cfg.CFactor != 9_100_000 {
 		t.Errorf("served config = %+v (%v), want the same-ledger queue's", cfg, err)
+	}
+}
+
+// TestLendingConfigHistory_SameLedgerFollowsApplyOrder: one ledger applies an earlier queue (set_reserve, tx 0) and then queues anew
+// (tx 1), with tx_hash order the reverse of apply order. Both tx_hash and the lifecycle rank would put the new queue first and serve
+// it as applied; tx_index must win, in the history, its keyset pages and BLNTReserveConfigMetadata.
+func TestLendingConfigHistory_SameLedgerFollowsApplyOrder(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const pool = blnt.MainnetFixedPool
+	asset := mustContractStrkey(t, 41)
+	admin := mustAccountStrkey(t, 42)
+	meta := func(cFactor int) map[string]any {
+		return map[string]any{
+			"index": 0, "decimals": 7, "c_factor": cFactor, "l_factor": 9_500_000, "util": 8_000_000,
+			"max_util": 9_500_000, "r_base": 100_000, "r_one": 500_000, "r_two": 1_500_000, "r_three": 30_000_000,
+			"reactivity": 20, "supply_cap": "1000", "enabled": true,
+		}
+	}
+	ts := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	zero, one := uint32(0), uint32(1)
+	for _, e := range []timescale.BLNTEvent{
+		{
+			Ledger: 65_799_000, LedgerCloseTime: ts.Add(-time.Hour), TxHash: strings.Repeat("a", 64), TxIndex: &zero,
+			EventKind: "queue_set_reserve", Attributes: map[string]any{"admin": admin, "metadata": meta(8_000_000)},
+		},
+		{
+			Ledger: 65_800_000, LedgerCloseTime: ts, TxHash: strings.Repeat("f", 64), TxIndex: &zero,
+			EventKind: "set_reserve", Attributes: map[string]any{"index": 0},
+		},
+		{
+			Ledger: 65_800_000, LedgerCloseTime: ts, TxHash: strings.Repeat("0", 64), TxIndex: &one,
+			EventKind: "queue_set_reserve", Attributes: map[string]any{"admin": admin, "metadata": meta(9_100_000)},
+		},
+	} {
+		e.ContractID, e.Pool, e.ContractRole, e.Asset = pool, pool, string(blnt.RolePool), asset
+		if err := store.InsertBLNTEvent(ctx, e); err != nil {
+			t.Fatalf("InsertBLNTEvent %s: %v", e.EventKind, err)
+		}
+	}
+
+	got, err := store.LendingConfigHistory(ctx, pool, 50, timescale.LendingConfigCursor{})
+	if err != nil || len(got) != 3 {
+		t.Fatalf("history = %+v (%v), want 3 rows", got, err)
+	}
+	if got[0].Kind != "queue_set_reserve" || got[0].TxOrder != 1 || got[0].Applied ||
+		got[1].Kind != "set_reserve" || got[1].TxOrder != 0 || !got[2].Applied {
+		t.Fatalf("history = %+v, want new queue (pending) above the set above the applied old queue", got)
+	}
+	if cfg, err := blnt.ParseReserveConfigMetadata(got[1].Metadata); err != nil || cfg.CFactor != 8_000_000 {
+		t.Errorf("set_reserve config = %+v (%v), want the earlier queue's", cfg, err)
+	}
+	cur := timescale.LendingConfigCursor{}
+	for i := range got {
+		page, err := store.LendingConfigHistory(ctx, pool, 1, cur)
+		if err != nil || len(page) != 1 || page[0].Kind != got[i].Kind || page[0].TxHash != got[i].TxHash {
+			t.Fatalf("keyset page %d = %+v (%v), want %s %s", i, page, err, got[i].Kind, got[i].TxHash)
+		}
+		p := page[0]
+		cur = timescale.LendingConfigCursor{
+			Ts: p.Ts, Ledger: p.Ledger, TxHash: p.TxHash, OpIndex: p.OpIndex, EventIndex: p.EventIndex,
+			Kind: p.Kind, TxOrder: p.TxOrder,
+		}
+	}
+
+	metas, err := store.BLNTReserveConfigMetadata(ctx, pool)
+	if err != nil {
+		t.Fatalf("BLNTReserveConfigMetadata: %v", err)
+	}
+	if cfg, err := blnt.ParseReserveConfigMetadata(metas[asset]); err != nil || cfg.CFactor != 8_000_000 {
+		t.Errorf("served config = %+v (%v), want the applied earlier queue's, not the pending same-ledger one", cfg, err)
 	}
 }

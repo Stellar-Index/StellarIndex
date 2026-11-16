@@ -21,6 +21,7 @@ func persistBLNTEvent(ctx context.Context, logger *slog.Logger, store *timescale
 		TxHash:          e.TxHash,
 		OpIndex:         e.OpIndex,
 		EventIndex:      e.EventIndex,
+		TxIndex:         e.TxIndex,
 		ContractRole:    string(e.Role),
 		EventKind:       e.EventType,
 		Pool:            e.Pool,

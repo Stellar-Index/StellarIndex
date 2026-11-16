@@ -99,6 +99,7 @@ type Event struct {
 	TxHash     string
 	OpIndex    uint32
 	EventIndex uint32
+	TxIndex    *uint32 // 0-based apply position of the transaction in its ledger; nil = unknown
 	ObservedAt time.Time
 	Role       Role
 	EventType  string

@@ -107,6 +107,10 @@ type Source struct {
 	// should pay for it.
 	NeedsStateWriteKeys bool
 
+	// NeedsTxIndex stamps events.Event.TransactionIndex on the CH read path, which looks up every ledger's transactions;
+	// only sources that persist the apply position should pay for it.
+	NeedsTxIndex bool
+
 	// Genesis is the first ledger a source can have an event (0 when undeclared); a cursor-less
 	// source starts here, not at the lake floor, to avoid crawling empty ledgers. It must never be
 	// ABOVE the true first event, which would skip it.
@@ -554,7 +558,7 @@ type lakeReader interface {
 // [chEventSource].
 type eventSource interface {
 	StreamEvents(ctx context.Context, from, to uint32, contractIDs, topic0Syms, excludeTopic0Syms []string,
-		withStateWriteKeys bool, fn func(events.Event) error) error
+		withStateWriteKeys, withTxIndex bool, fn func(events.Event) error) error
 	FirstEventLedger(ctx context.Context, from, to uint32,
 		contractIDs, topic0Syms, excludeTopic0Syms []string) (uint32, bool, error)
 	OpenLake(ctx context.Context) (lakeReader, error)
@@ -565,13 +569,14 @@ type chEventSource struct{ addr string }
 
 // StreamEvents reads contract_events directly without FINAL: the forward window is BatchLimit-small and downstream writes are idempotent, so a duplicate is absorbed.
 func (s chEventSource) StreamEvents(ctx context.Context, from, to uint32, contractIDs, topic0Syms, excludeTopic0Syms []string,
-	withStateWriteKeys bool, fn func(events.Event) error,
+	withStateWriteKeys, withTxIndex bool, fn func(events.Event) error,
 ) error {
 	return clickhouse.StreamContractEventsFiltered(ctx, s.addr, from, to,
 		contractIDs, topic0Syms, excludeTopic0Syms,
 		false,              // no FINAL: idempotent writes absorb dups
 		true,               // withOpArgs: the projector routes every source, incl. OpArgs consumers (redstone)
 		withStateWriteKeys, // per-source: only redstone reads written contract-data keys
+		withTxIndex,        // per-source: only blnt persists the apply position
 		fn)
 }
 
@@ -879,7 +884,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	if p.lakeEvents != nil {
 		// CH feed-switch (ADR-0041): read contract_events (see chEventSource).
 		err = p.lakeEvents.StreamEvents(cycleCtx, fromLedger, toLedger,
-			prefilter, src.Topic0Syms, src.ExcludeTopic0Syms, src.NeedsStateWriteKeys,
+			prefilter, src.Topic0Syms, src.ExcludeTopic0Syms, src.NeedsStateWriteKeys, src.NeedsTxIndex,
 			func(ev events.Event) error {
 				rowsScanned++
 				if ev.Ledger > lastSeenLedger {
