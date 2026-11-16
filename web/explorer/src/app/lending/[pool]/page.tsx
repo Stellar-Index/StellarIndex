@@ -17,6 +17,8 @@ import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES, shellMetadata } from '@/lib/seo';
 import type { paths } from '@/api/types';
 
 import { LendingPoolPathView } from './LendingPoolPathView';
+import { ConfigHistory } from './ConfigHistory';
+import { PoolDetails } from './PoolDetails';
 import { PoolReserves } from './PoolReserves';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import { LENDING_POOL_META, poolProtocol } from '../poolMeta';
@@ -263,7 +265,9 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
           Auction statistics are unavailable for this build.
         </p>
       )}
+      <PoolDetails pool={pool} />
       <PoolReserves pool={pool} />
+      <ConfigHistory pool={pool} />
     </Container>
   );
 }

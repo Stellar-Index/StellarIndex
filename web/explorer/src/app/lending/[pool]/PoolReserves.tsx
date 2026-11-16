@@ -1,14 +1,13 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
-import { useLedgerFollow } from '@/lib/live/hooks';
+import { useState } from 'react';
 
 import { Panel } from '@/components/reveal';
 import { Button, TBody, TR, Table, Td, Th, THead } from '@/components/ui';
 import { AssetLink } from '@/components/AssetLink';
 import { DonutChart } from '@/components/charts/DonutChart';
 import { HBarList, PairedBars } from '@/components/charts/Bars';
-import { apiGet, asExample } from '@/api/client';
+import { asExample } from '@/api/client';
 import {
   decimalOrNull,
   compareDecimalStrings,
@@ -18,27 +17,10 @@ import {
   sumDecimalStrings,
 } from '@/lib/format';
 import { scaledUnits } from '../../explorer-shared';
+import { fixedPct, supplyCapText } from '../poolConfig';
+import { ReserveDetail } from './ReserveDetail';
+import { usePoolReserves } from './usePoolReserves';
 import { shortAssetText } from '@/lib/asset-label';
-
-interface ReserveRow {
-  asset: string;
-  decimals: number | null;
-  supplied: string;
-  borrowed: string;
-  supplied_usd: string | null;
-  borrowed_usd: string | null;
-  utilization_pct: number;
-  borrow_apr: number | null;
-  supply_apr: number | null;
-}
-
-interface ReservesResp {
-  pool: string;
-  tvl_usd: string | null;
-  lower_bound?: boolean;
-  omitted_reserves?: string[];
-  reserves: ReserveRow[];
-}
 
 const usdFmt = new Intl.NumberFormat('en-US', {
   style: 'currency',
@@ -65,20 +47,9 @@ function pct(f: number | null): string {
 }
 
 export function PoolReserves({ pool }: { pool: string }) {
-  // Live (RT-2): refresh lending-pool reserves on each ledger close.
-  useLedgerFollow(['/v1/lending/pools/{pool}/reserves']);
-  const q = useQuery<ReservesResp>({
-    queryKey: ['/v1/lending/pools/{pool}/reserves', pool],
-    retry: false,
-    queryFn: async () => {
-      const env = await apiGet<{ data: ReservesResp }>(
-        `/v1/lending/pools/${encodeURIComponent(pool)}/reserves`,
-        {},
-      );
-      return env.data;
-    },
-    staleTime: 60_000,
-  });
+  const q = usePoolReserves(pool);
+  const [open, setOpen] = useState<string | null>(null);
+  const configDecimals = q.data?.config_decimals;
 
   const reserves = q.data?.reserves ?? [];
   const priced = reserves
@@ -289,10 +260,25 @@ export function PoolReserves({ pool }: { pool: string }) {
                 <Th align="right" className="hidden sm:table-cell">
                   Borrow APR
                 </Th>
+                <Th align="right" className="hidden md:table-cell">
+                  Collateral factor
+                </Th>
+                <Th align="right" className="hidden md:table-cell">
+                  Liability factor
+                </Th>
+                <Th align="right" className="hidden md:table-cell">
+                  Price
+                </Th>
+                <Th align="right" className="hidden lg:table-cell">
+                  Supply cap
+                </Th>
+                <Th align="right">
+                  <span className="sr-only">Details</span>
+                </Th>
               </tr>
             </THead>
             <TBody>
-              {reserves.map((rv) => (
+              {reserves.flatMap((rv) => [
                 <TR key={rv.asset}>
                   <Td className="whitespace-nowrap" title={rv.asset}>
                     <AssetLink canonical={rv.asset} />
@@ -331,8 +317,66 @@ export function PoolReserves({ pool }: { pool: string }) {
                   >
                     {pct(rv.borrow_apr)}
                   </Td>
-                </TR>
-              ))}
+                  <Td
+                    align="right"
+                    className="hidden font-mono tabular-nums md:table-cell"
+                    title={rv.config?.collateral_factor}
+                  >
+                    {fixedPct(rv.config?.collateral_factor, configDecimals)}
+                  </Td>
+                  <Td
+                    align="right"
+                    className="hidden font-mono tabular-nums md:table-cell"
+                    title={rv.config?.liability_factor}
+                  >
+                    {fixedPct(rv.config?.liability_factor, configDecimals)}
+                  </Td>
+                  <Td
+                    align="right"
+                    className="hidden font-mono tabular-nums md:table-cell"
+                    title={rv.price_usd ?? undefined}
+                  >
+                    {formatReadable(rv.price_usd, true) ?? '—'}
+                    {rv.price_usd != null && rv.price_stale && (
+                      <span className="text-warn-500 ml-1 text-xs">stale</span>
+                    )}
+                  </Td>
+                  <Td
+                    align="right"
+                    className="hidden font-mono tabular-nums lg:table-cell"
+                    title={rv.config?.supply_cap ?? undefined}
+                  >
+                    {supplyCapText(
+                      rv.config?.supply_cap,
+                      rv.decimals ?? rv.config?.decimals,
+                    )}
+                  </Td>
+                  <Td align="right">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      aria-expanded={open === rv.asset}
+                      onClick={() =>
+                        setOpen(open === rv.asset ? null : rv.asset)
+                      }
+                    >
+                      {open === rv.asset ? 'Hide' : 'Details'}
+                    </Button>
+                  </Td>
+                </TR>,
+                ...(open === rv.asset
+                  ? [
+                      <TR key={`${rv.asset}-detail`}>
+                        <Td colSpan={11}>
+                          <ReserveDetail
+                            reserve={rv}
+                            configDecimals={configDecimals}
+                          />
+                        </Td>
+                      </TR>,
+                    ]
+                  : []),
+              ])}
             </TBody>
           </Table>
         </div>

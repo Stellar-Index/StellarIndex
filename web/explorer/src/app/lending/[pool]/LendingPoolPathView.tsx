@@ -6,6 +6,8 @@ import { PageHeader } from '@/components/ui';
 import { useLastPathSegment } from '@/lib/useLastPathSegment';
 
 import { poolProtocol } from '../poolMeta';
+import { ConfigHistory } from './ConfigHistory';
+import { PoolDetails } from './PoolDetails';
 import { PoolReserves } from './PoolReserves';
 
 /**
@@ -45,7 +47,9 @@ export function LendingPoolPathView() {
           {protocol.name} protocol
         </Link>
       )}
+      {pool && <PoolDetails pool={pool} />}
       {pool && <PoolReserves pool={pool} />}
+      {pool && <ConfigHistory pool={pool} />}
     </div>
   );
 }
