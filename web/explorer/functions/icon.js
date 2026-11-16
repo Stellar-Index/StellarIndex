@@ -96,13 +96,19 @@ async function readCapped(res) {
 export async function onRequest(context) {
   const { request } = context;
   if (request.method !== 'GET' && request.method !== 'HEAD') return fail(405);
-  const target = new URL(request.url).searchParams.get('u');
+  const url = new URL(request.url);
+  const target = url.searchParams.get('u');
   if (!isProxyableUrl(target)) return fail(400);
 
   // CF Pages does not edge-cache a Function response from Cache-Control alone,
   // so without this every cold visitor refetches from the issuer's host.
+  // The key is the icon alone: keyed on the request URL, any extra parameter
+  // (?u=<same>&z=<random>) missed the cache and fetched the issuer again.
   const cache = globalThis.caches?.default;
-  const cacheKey = new Request(request.url, { method: 'GET' });
+  const cacheKey = new Request(
+    `${url.origin}/icon?u=${encodeURIComponent(new URL(target).toString())}`,
+    { method: 'GET' },
+  );
   const cached = cache && (await cache.match(cacheKey));
   if (cached) return request.method === 'HEAD' ? headOf(cached) : cached;
 

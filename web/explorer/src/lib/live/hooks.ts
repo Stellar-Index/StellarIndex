@@ -169,6 +169,31 @@ export function tipCaveat(
   return null;
 }
 
+/** The server's warnings that a composed price may be wrong. */
+export interface PriceIntegrityFlags {
+  diverged?: boolean;
+  rerouted?: boolean;
+  pivot_unverified?: boolean;
+  proxy_deviation?: boolean;
+}
+
+/**
+ * priceIntegrityCaveats — one phrase per integrity flag the server set, for
+ * a price surface to show beside the figure. Empty when none is set.
+ */
+export function priceIntegrityCaveats(
+  flags?: PriceIntegrityFlags | null,
+): string[] {
+  const out: string[] = [];
+  if (flags?.proxy_deviation)
+    out.push('assumes a USD peg that is more than 2% off $1');
+  if (flags?.diverged) out.push('price routes disagree');
+  if (flags?.rerouted) out.push('rerouted around a market with no trades');
+  if (flags?.pivot_unverified)
+    out.push('stablecoin leg taken at par, de-peg not checked');
+  return out;
+}
+
 /**
  * useTipStream — live tip price for a pair. Pass `asset: null` to
  * disable (e.g. while the pair is unknown). Quote defaults to USD.
@@ -407,7 +432,8 @@ export function useObservationsFollow(
  * whose problem type ends in /price-withheld REPLACES the baked price
  * with the withheld verdict (the server deliberately refused to
  * aggregate; a lower-trust snapshot must not stand in). A plain 404 /
- * non-OK / network blip keeps whatever we have — never a blank flash.
+ * non-OK / network blip keeps whatever we have — never a blank flash —
+ * and `unrefreshed` turns true once that has lasted three intervals.
  */
 export function usePricePoll({
   asset,
@@ -441,8 +467,13 @@ export function usePricePoll({
   /** The price comes from a market below the substance floor. */
   thin: boolean;
   substance: SubstanceEvidence | null;
+  /** Integrity warnings the server set on this price ([priceIntegrityCaveats]). */
+  caveats: string[];
   /** True after the first successful poll (including a withheld verdict). */
   polled: boolean;
+  /** No poll has succeeded for three intervals: the value shown is the
+   * last one fetched, not a current one. */
+  unrefreshed: boolean;
 } {
   const [state, setState] = useState({
     price: positiveDecimal(initialPrice),
@@ -454,7 +485,9 @@ export function usePricePoll({
     withheldDetail: null as string | null,
     thin: false,
     substance: null as SubstanceEvidence | null,
+    caveats: [] as string[],
     polled: false,
+    refreshedAt: 0,
   });
   // Reset during render when the asset/quote pair changes (mirrors
   // useStreamJSON's prevUrl pattern above) — a stale price from the OLD
@@ -474,7 +507,9 @@ export function usePricePoll({
       withheldDetail: null,
       thin: false,
       substance: null,
+      caveats: [],
       polled: false,
+      refreshedAt: 0,
     });
   }
 
@@ -517,7 +552,9 @@ export function usePricePoll({
               withheldDetail: body.detail ?? null,
               thin: false,
               substance: null,
+              caveats: [],
               polled: true,
+              refreshedAt: Date.now(),
             }));
           }
           return; // plain not-found: keep the baked value + caption
@@ -529,7 +566,7 @@ export function usePricePoll({
             observed_at?: string;
             substance?: SubstanceEvidence;
           };
-          flags?: {
+          flags?: PriceIntegrityFlags & {
             stale?: boolean;
             triangulated?: boolean;
             thin_market?: boolean;
@@ -547,7 +584,9 @@ export function usePricePoll({
           withheldDetail: null,
           thin: Boolean(body.flags?.thin_market),
           substance: body.data?.substance ?? null,
+          caveats: priceIntegrityCaveats(body.flags),
           polled: true,
+          refreshedAt: Date.now(),
         });
       } catch {
         // Network blip, timeout, or unmount/dep-change abort — keep whatever we have.
@@ -571,5 +610,11 @@ export function usePricePoll({
     };
   }, [asset, quote, intervalMs, includeThin]);
 
-  return state;
+  const clock = useLiveClock();
+  const { refreshedAt, ...poll } = state;
+  return {
+    ...poll,
+    unrefreshed:
+      poll.polled && isFrameStale(clock, refreshedAt, 3 * intervalMs),
+  };
 }

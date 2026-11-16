@@ -71,6 +71,34 @@ describe('MevFeed', () => {
   });
 });
 
+describe('MevFeed with incomplete detection', () => {
+  const renderFeed = () =>
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MevFeed />
+      </QueryClientProvider>,
+    );
+
+  it('does not call an empty list a quiet window when a detector did not finish', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: [],
+      flags: { detectors_partial: true },
+    });
+    renderFeed();
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      /detection is incomplete/i,
+    );
+    expect(screen.queryByText(/No MEV events/)).not.toBeInTheDocument();
+  });
+
+  it('says a quiet window is quiet when every detector finished', async () => {
+    vi.mocked(apiGet).mockResolvedValue({ data: [], flags: {} });
+    renderFeed();
+    expect(await screen.findByText(/No MEV events/)).toBeInTheDocument();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+});
+
 describe('mevCsvRow', () => {
   it('keeps money as strings and joins the pair and lists', () => {
     expect(
@@ -121,6 +149,8 @@ describe('mevCsvRow', () => {
     expect(header).toBe(
       'event_id,detected_at,detected_at_ledger,kind,assets,sources,notional_usd,notional_usd_lower_bound,notional_usd_estimated,profit_usd,accounts,tx_hashes',
     );
-    expect(row).toBe('e4,2026-09-10T00:00:00Z,9,arbitrage,,,1234,true,true,,GB,t9');
+    expect(row).toBe(
+      'e4,2026-09-10T00:00:00Z,9,arbitrage,,,1234,true,true,,GB,t9',
+    );
   });
 });

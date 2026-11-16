@@ -2419,9 +2419,10 @@ paths:
           schema: { type: integer, minimum: 1, default: 300 }
           description: >-
             Which closed-bucket window series to follow, in seconds.
-            The standard aggregator windows are 300, 3600, and 86400;
-            a window the aggregator doesn't publish yields a silent
-            (heartbeat-only) stream.
+            The standard aggregator windows are 300, 3600, and 86400,
+            plus 60 for operator-configured pairs. A window this
+            deployment does not publish is a 400 `invalid-window` whose
+            detail lists the published windows.
         - name: Last-Event-ID
           in: header
           required: false
@@ -9052,12 +9053,12 @@ paths:
           in: path
           required: true
           schema: { type: string }
-          description: "Public-safe `kid_<hex>` identifier from /v1/account/keys."
+          description: "Public-safe `kid_<hex>` identifier from /v1/account/keys. Never the key itself: a `sip_…` value is refused with 400 and revokes nothing."
       responses:
         "204":
           description: Revoked (or no-op when the key didn't belong to the caller).
         "400":
-          description: Missing keyID.
+          description: Missing keyID, or the path carries a plaintext key (`key-id-is-a-secret`) instead of its id.
         "401":
           description: Unauthenticated.
         "409":

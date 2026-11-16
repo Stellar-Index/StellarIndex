@@ -189,7 +189,7 @@ func writeMonthlyQuotaDenied(w http.ResponseWriter, r *http.Request, quota, used
 		"title":         "Monthly quota exceeded",
 		"status":        429,
 		"detail":        "The account's monthly request quota has been reached (every API key on the account shares it). Reset on the 1st UTC.",
-		"instance":      r.URL.Path,
+		"instance":      RedactedPath(r),
 		"monthly_quota": quota,
 		"month_to_date": used,
 	}
@@ -246,7 +246,7 @@ func writeMonthlyQuotaUnavailable(w http.ResponseWriter, r *http.Request, quota 
 		"title":         "Monthly quota temporarily unavailable",
 		"status":        429,
 		"detail":        "The monthly usage counter is temporarily unavailable and the cap cannot be verified; retry after the indicated delay.",
-		"instance":      r.URL.Path,
+		"instance":      RedactedPath(r),
 		"monthly_quota": quota,
 	}
 	body, err := json.Marshal(payload)

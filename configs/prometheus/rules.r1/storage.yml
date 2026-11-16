@@ -908,6 +908,10 @@ groups:
       # watch the FULL: last_full_unix is absent only while no confirmed full
       # exists, and age past FULL_INTERVAL_DAYS + 4 d (a ~2-day full plus one
       # retry) means new fulls keep failing.
+      # The last arm is this tree's alone: r1 always backs up its lake, so no
+      # textfile for 96 h means the timer never ran (not enabled, unit gone).
+      # Every other arm is empty then. The shared tree cannot carry it: a host
+      # with ch_lake_backup_enabled: false has no textfile by design.
       - alert: stellarindex_ch_lake_backup_stale
         expr: |
           (time() - stellarindex_ch_lake_backup_last_success_unix) > 96 * 3600
@@ -929,6 +933,8 @@ groups:
             unless on (instance)
             max_over_time(stellarindex_ch_lake_backup_last_full_unix[72h])
           )
+          or
+          absent_over_time(stellarindex_ch_lake_backup_configured[96h])
         for: 1h
         labels:
           severity: ticket

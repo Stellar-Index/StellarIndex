@@ -413,6 +413,8 @@ func runPoller(
 	name := spec.Poller.Name()
 	interval := spec.Poller.PollInterval()
 	warnedIdle := false
+	// last_success_unix has no series until a poll succeeds; this one lets an alert see a poller that never has.
+	obs.ExternalPollerStartedUnix.WithLabelValues(name).Set(float64(time.Now().Unix()))
 
 	doPoll := func() {
 		trades, updates, err := spec.Poller.PollOnce(ctx, spec.Pairs)

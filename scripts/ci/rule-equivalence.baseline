@@ -7,6 +7,7 @@
 # a `Baseline-Growth:` commit trailer (lint-baseline-growth.sh).
 
 cache.yml:stellarindex_redis_replication_broken:expr  # multi-host asserts >=2 replicas; single-host r1 compares against its own redis_expected_slaves recording (0 on one box)
+storage.yml:stellarindex_ch_lake_backup_stale:expr  # r1 always backs up its lake, so its tree also fires when no run has written the textfile at all; the shared tree stays silent for hosts with ch_lake_backup_enabled: false
 meta.yml:stellarindex_prometheus_scrape_failing:expr  # the job list mirrors each deployment's scrape config: r1 scrapes prometheus/caddy/galexie directly and its exporter set differs from the ansible multi-host template
 meta.yml:stellarindex_alertmanager_down:expr  # same cause as scrape_failing above: r1's self-scrape job is `alertmanager`, the multi-host template's is `alertmanager_pair`
 meta.yml:stellarindex_alertmanager_not_notifying:expr  # same cause: the job selector tracks each deployment's scrape config

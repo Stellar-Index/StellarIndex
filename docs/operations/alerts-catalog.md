@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 71 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 292 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 296 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -58,6 +58,7 @@ its first link must be the rule's `runbook_url` page
 | `stellarindex_ingestion_cursor_stuck` | `increase(cursor_last_ledger[5m])` per source | == 0 while source live | ticket | [cursor-stuck](runbooks/ledger-ingest.md#stellarindex_ingestion_cursor_stuck) |
 | `stellarindex_ingestion_orphan_events` | `rate(stellarindex_source_orphan_events_total[10m])` | > 10/min per source | ticket | [orphan-events](runbooks/ingestion-events.md#stellarindex_ingestion_orphan_events) |
 | `stellarindex_ingestion_decode_error` | `rate(stellarindex_source_decode_errors_total[5m])` | > 1/s sustained 5 min | ticket | [decode-errors](runbooks/ingestion.md#stellarindex_ingestion_decode_error) |
+| `stellarindex_ingestion_decode_error_ratio_high` | `increase(source_decode_errors_total[1h]) / increase(source_matched_events_total[1h])` per source | > 0.5% with ≥ 10 failures in the hour, for 15 min | ticket | [decode-errors](runbooks/ingestion.md#stellarindex_ingestion_decode_error_ratio_high) |
 | `stellarindex_decoder_panicked` | `decoder_panics_total` (raw value) | > 0; that event shape drops until a fixed binary ships | page | [decoder-panicked](runbooks/ingestion.md#stellarindex_decoder_panicked) |
 | `stellarindex_ingestion_oracle_unknown_symbols` | `increase(source_unknown_symbols_total[25h])` | > 0 for 30 min (kept as `raw:`) | informational | [oracle-unknown-symbols](runbooks/ingestion-events.md#stellarindex_ingestion_oracle_unknown_symbols) |
 | `stellarindex_ingestion_oracle_unrepresentable_symbols` | `increase(source_unrepresentable_symbols_total[25h])` | > 0 for 30 min (slot dropped, no row) | ticket | [oracle-unknown-symbols](runbooks/ingestion-events.md#stellarindex_ingestion_oracle_unrepresentable_symbols) |
@@ -108,6 +109,7 @@ its first link must be the rule's `runbook_url` page
 | `stellarindex_external_poller_stale_ecb` | same, `source="ecb"` | > 43200 s (12h) for 10 min | ticket | [external-pollers](runbooks/external-pollers.md#stellarindex_external_poller_stale_ecb) |
 | `stellarindex_external_poller_stale_tiingo` | same, `source="tiingo"` | > 7200 s (2h) for 10 min | ticket | [external-pollers](runbooks/external-pollers.md#stellarindex_external_poller_stale_tiingo) |
 | `stellarindex_external_poller_stale_exchangeratesapi` | same, `source="exchangeratesapi"` | > 7200 s (2h) for 10 min | ticket | [external-pollers](runbooks/external-pollers.md#stellarindex_external_poller_stale_exchangeratesapi) |
+| `stellarindex_external_poller_never_succeeded` | `time() - external_poller_started_unix` per source, with no `external_poller_last_success_unix` series | past the source's staleness budget for 10 min | ticket | [external-pollers](runbooks/external-pollers.md#stellarindex_external_poller_never_succeeded) |
 | `stellarindex_cex_stream_subscription_rejected` | `cex_stream_subscription_rejected` per (source, symbol) | == 1 for 5 min (one symbol refused; socket healthy) | ticket | [external-pollers](runbooks/external-pollers.md#stellarindex_cex_stream_subscription_rejected) |
 | `stellarindex_cex_stream_entry_skips` | `rate(cex_stream_entry_skips_total[15m])` | > 0 for 30 min (entries dropped: symbol rename or re-encoding) | ticket | [external-pollers](runbooks/external-pollers.md#stellarindex_cex_stream_entry_skips) |
 | `stellarindex_cex_stream_stalled` | `increase(cex_stream_disconnect_total{reason="stall"}[15m])` | > 0 for 5 min (half-open socket) | ticket | [external-pollers](runbooks/external-pollers.md#stellarindex_cex_stream_stalled) |
@@ -454,6 +456,8 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | `stellarindex_customer_webhook_delivery_failing` | `rate(stellarindex_customer_webhook_delivery_attempts_total{outcome=~"server_error\|network_error"}[5m])` | > 0.05/s for ≥ 15 min | ticket | [customer-webhook-delivery-failing](runbooks/api.md#stellarindex_customer_webhook_delivery_failing) |
 | `stellarindex_customer_webhook_delivery_exhausted` | `customer_webhook_delivery_attempts_total{outcome="exhausted"}` | > 0, `for: 0m` | ticket | [customer-webhook-delivery-failing](runbooks/api.md#stellarindex_customer_webhook_delivery_exhausted) |
 | `stellarindex_customer_webhook_mark_errors` | `increase(...{outcome="mark_error"}[30m])` | > 0 for 15 min (POST done, result not saved; re-POSTs each lease) | ticket | [customer-webhook-delivery-failing](runbooks/api.md#stellarindex_customer_webhook_mark_errors) |
+| `stellarindex_customer_webhook_delivery_stalled` | `increase(...{outcome=~"list_error\|lookup_error"}[15m])` per outcome | > 0 for 30 min (pending rows not read, or stuck with their budget unspent) | ticket | [customer-webhook](runbooks/api.md#stellarindex_customer_webhook_delivery_stalled) |
+| `stellarindex_customer_webhook_delivery_dropped` | `increase(...{outcome=~"no_secret\|build_error"}[1h])` per outcome | > 0, `for: 0m` (terminal before any POST) | ticket | [customer-webhook](runbooks/api.md#stellarindex_customer_webhook_delivery_dropped) |
 | `stellarindex_customer_webhook_fanout_failing` | `increase(customer_webhook_fanout_failures_total[1h])` per (event_type, reason) | > 0 for 5 min (no delivery row; no retry) | ticket | [customer-webhook-fanout-failing](runbooks/aggregator.md#stellarindex_customer_webhook_fanout_failing) |
 | `stellarindex_usage_rollup_failing` | `rate(stellarindex_usage_rollup_sweeps_total{outcome=~"scan_error\|sink_error"}[15m])` | > 0 for ≥ 30 min | ticket | [usage-rollup-failing](runbooks/api.md#stellarindex_usage_rollup_failing) |
 | `stellarindex_dex_tvl_refresh_failing` | `dex_tvl_refresh_total` errors > 0 and ok == 0 | 30 min (served TVL silently aging) | ticket | [dex-tvl-refresh-failing](runbooks/api.md#stellarindex_dex_tvl_refresh_failing) |

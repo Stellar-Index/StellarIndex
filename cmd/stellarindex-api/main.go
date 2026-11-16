@@ -881,6 +881,11 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	}
 	apiKeyBudgets := v1.NewAPIKeyBudgetStores(platformKeys, budgetsRedis, cfg.API.AuthBackend)
 
+	streamWindows, err := closedStreamWindows(cfg)
+	if err != nil {
+		return fmt.Errorf("aggregate.windows: %w", err)
+	}
+
 	apiSrv := v1.New(v1.Options{
 		Network:     cfg.Stellar.Network,
 		Logger:      logger.With("component", "api"),
@@ -986,15 +991,16 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		Currencies:              wiring.NewForexAdapter(forexCache),
 		// The in-memory forex cache never expires on its own, so the cross-rate fallbacks need a
 		// staleness budget.
-		FXCrossMaxAgeHours: cfg.PricingGuard.FXCrossMaxAgeHours,
-		DisableFiatBasis:   cfg.PricingGuard.DisableFiatBasis,
-		FXFixings:          store,
-		FXHistory:          &wiring.FXHistoryReader{Store: store},
-		SEP10:              sep10Validator,
-		Hub:                hub,
-		CORS:               cors,
-		Auth:               authMW,
-		KeyPolicy:          middleware.KeyPolicy(),
+		FXCrossMaxAgeHours:  cfg.PricingGuard.FXCrossMaxAgeHours,
+		DisableFiatBasis:    cfg.PricingGuard.DisableFiatBasis,
+		FXFixings:           store,
+		FXHistory:           &wiring.FXHistoryReader{Store: store},
+		SEP10:               sep10Validator,
+		Hub:                 hub,
+		ClosedStreamWindows: streamWindows,
+		CORS:                cors,
+		Auth:                authMW,
+		KeyPolicy:           middleware.KeyPolicy(),
 		// Reads the counters the UsageTracker writes. Both validators map MonthlyQuota onto the
 		// Subject; a validator that leaves it 0 makes the middleware skip the request.
 		MonthlyQuota: middleware.MonthlyQuota(usageCounter, logger.With("component", "monthly-quota"),

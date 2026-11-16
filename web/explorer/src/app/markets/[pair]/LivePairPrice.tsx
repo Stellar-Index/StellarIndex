@@ -122,7 +122,13 @@ export function LivePairPrice({
           <span className="text-ink-muted text-xs">
             as of {formatTimestamp(observedAt)}
             {!polled && ' (at build)'}
-            {stale && ' · stale'}
+            {(stale || poll.unrefreshed) && ' · stale'}
+            {poll.caveats.map((c) => (
+              <span key={c} className="text-warn-500">
+                {' '}
+                · {c}
+              </span>
+            ))}
           </span>
         )
       )}

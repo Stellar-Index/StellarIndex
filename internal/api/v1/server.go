@@ -811,6 +811,10 @@ type Options struct {
 	// streams replay from it.
 	Hub *streaming.Hub
 
+	// ClosedStreamWindows is the set of window_seconds values a publisher feeds on /v1/price/stream. Non-empty,
+	// any other window is a 400; empty accepts any sane window.
+	ClosedStreamWindows []int
+
 	// Confidence, when non-nil, populates the confidence + factors fields on `/v1/price`
 	// (ADR-0019), read from the Redis cache the aggregator writes. Nil, or a cache miss at lookup,
 	// leaves the field unset while the rest of the envelope serves.
@@ -2201,6 +2205,7 @@ var knownErrorSlugs = map[string]struct{}{
 	"issuers-timeout":                 {},
 	"issuers-transient":               {},
 	"issuers-unavailable":             {},
+	"key-id-is-a-secret":              {},
 	"key-mint-not-available":          {},
 	"key-not-found":                   {},
 	"key-quota-exceeded":              {},

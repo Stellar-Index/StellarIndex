@@ -45,7 +45,7 @@ func Logger(logger *slog.Logger) Middleware {
 			latency := time.Since(start)
 			attrs := []any{
 				"method", r.Method,
-				"path", boundedLogField(r.URL.Path, maxLoggedPathLen),
+				"path", boundedLogField(RedactedPath(r), maxLoggedPathLen),
 				"status", rec.status,
 				"bytes", rec.bytes,
 				"latency_ms", float64(latency.Microseconds()) / 1000.0,

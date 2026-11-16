@@ -16140,7 +16140,7 @@ export interface operations {
                  * @example fiat:USD
                  */
                 quote?: components["parameters"]["Quote"];
-                /** @description Which closed-bucket window series to follow, in seconds. The standard aggregator windows are 300, 3600, and 86400; a window the aggregator doesn't publish yields a silent (heartbeat-only) stream. */
+                /** @description Which closed-bucket window series to follow, in seconds. The standard aggregator windows are 300, 3600, and 86400, plus 60 for operator-configured pairs. A window this deployment does not publish is a 400 `invalid-window` whose detail lists the published windows. */
                 window_seconds?: number;
             };
             header?: {
@@ -22348,7 +22348,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Public-safe `kid_<hex>` identifier from /v1/account/keys. */
+                /** @description Public-safe `kid_<hex>` identifier from /v1/account/keys. Never the key itself: a `sip_…` value is refused with 400 and revokes nothing. */
                 keyID: string;
             };
             cookie?: never;
@@ -22362,7 +22362,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Missing keyID. */
+            /** @description Missing keyID, or the path carries a plaintext key (`key-id-is-a-secret`) instead of its id. */
             400: {
                 headers: {
                     [name: string]: unknown;

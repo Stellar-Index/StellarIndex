@@ -86,7 +86,7 @@ func (e *envelope404Recorder) writeProblem(status int) {
 		"title":      title,
 		"status":     status,
 		"detail":     detail,
-		"instance":   e.r.URL.RequestURI(),
+		"instance":   RequestInstance(e.r),
 		"request_id": RequestIDFrom(e.r),
 	})
 }

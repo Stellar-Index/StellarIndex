@@ -60,3 +60,39 @@ func TestLoggerCapsPathAndUserAgentLength(t *testing.T) {
 			"not reach the journal verbatim (want <= %d)", len(ua), wantMaxLen)
 	}
 }
+
+// A plaintext API key in the request path (pasted where a key id belongs) must not reach the journal.
+func TestLoggerRedactsAKeySecretInThePath(t *testing.T) {
+	buf := &bytes.Buffer{}
+	logger := slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	h := Logger(logger)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	secret := "sip_" + strings.Repeat("ab", 32)
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodDelete, "/v1/account/keys/"+secret, nil))
+
+	if strings.Contains(buf.String(), secret[8:]) {
+		t.Errorf("access log carries the plaintext key: %s", buf.String())
+	}
+	if !strings.Contains(buf.String(), "/v1/account/keys/sip_[redacted]") {
+		t.Errorf("access log lost the route: %s", buf.String())
+	}
+}
+
+func TestRequestInstanceRedactsAKeySecret(t *testing.T) {
+	secret := "sip_" + strings.Repeat("ab", 32)
+	for target, want := range map[string]string{
+		"/v1/account/keys/" + secret:                     "/v1/account/keys/sip_[redacted]",
+		"/v1/account/keys/sip%5F" + secret[4:]:           "/v1/account/keys/sip_[redacted]",
+		"/v1/admin/keys/" + secret + "?identifier=a%3Ab": "/v1/admin/keys/sip_[redacted]?identifier=a%3Ab",
+		"/v1/assets/USDC%2FG?limit=5":                    "/v1/assets/USDC%2FG?limit=5",
+	} {
+		r := httptest.NewRequest(http.MethodDelete, target, nil)
+		if got := RequestInstance(r); got != want {
+			t.Errorf("RequestInstance(%s) = %q, want %q", target, got, want)
+		}
+		if got := RedactedPath(r); strings.Contains(got, secret[8:]) {
+			t.Errorf("RedactedPath(%s) = %q carries the key", target, got)
+		}
+	}
+}

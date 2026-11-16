@@ -28,9 +28,13 @@ var caddyfiles = []string{
 	filepath.Join("..", "..", "configs", "ansible", "roles", "archival-node", "templates", "Caddyfile.j2"),
 }
 
-// caddyURIFilterPattern extracts the `request>uri regexp` pattern and replacement from a Caddyfile. Caddy's regexp
-// filter uses Go's regexp, so applying the pattern here exercises production behaviour rather than a re-implementation.
-var caddyURIFilterPattern = regexp.MustCompile(`request>uri regexp "([^"]*)" "([^"]*)"`)
+// caddyURIFilterBlock finds a Caddyfile's `request>uri multi_regexp` block and caddyURIFilterOp each pattern and
+// replacement in it. Caddy's regexp filters use Go's regexp and apply in order, so applying them here exercises
+// production behaviour rather than a re-implementation.
+var (
+	caddyURIFilterBlock = regexp.MustCompile(`request>uri multi_regexp \{([^}]*)\}`)
+	caddyURIFilterOp    = regexp.MustCompile(`regexp "([^"]*)" "([^"]*)"`)
+)
 
 func readCaddyfile(t *testing.T, path string) string {
 	t.Helper()
@@ -41,17 +45,34 @@ func readCaddyfile(t *testing.T, path string) string {
 	return string(src)
 }
 
-func caddyURIFilter(t *testing.T, path string) (*regexp.Regexp, string) {
+// caddyURIFilter returns the access-log filter a Caddyfile applies to `request>uri`.
+func caddyURIFilter(t *testing.T, path string) func(string) string {
 	t.Helper()
-	m := caddyURIFilterPattern.FindStringSubmatch(readCaddyfile(t, path))
-	if m == nil {
-		t.Fatalf("%s: no `request>uri regexp` access-log filter — the edge is logging query strings verbatim", path)
+	block := caddyURIFilterBlock.FindStringSubmatch(readCaddyfile(t, path))
+	if block == nil {
+		t.Fatalf("%s: no `request>uri multi_regexp` access-log filter — the edge is logging query strings verbatim", path)
 	}
-	re, err := regexp.Compile(m[1])
-	if err != nil {
-		t.Fatalf("%s: access-log filter pattern does not compile: %v", path, err)
+	type op struct {
+		re   *regexp.Regexp
+		repl string
 	}
-	return re, m[2]
+	var ops []op
+	for _, m := range caddyURIFilterOp.FindAllStringSubmatch(block[1], -1) {
+		re, err := regexp.Compile(m[1])
+		if err != nil {
+			t.Fatalf("%s: access-log filter pattern %q does not compile: %v", path, m[1], err)
+		}
+		ops = append(ops, op{re, m[2]})
+	}
+	if len(ops) == 0 {
+		t.Fatalf("%s: the `request>uri` filter block holds no pattern", path)
+	}
+	return func(uri string) string {
+		for _, o := range ops {
+			uri = o.re.ReplaceAllString(uri, o.repl)
+		}
+		return uri
+	}
 }
 
 // TestCaddyAccessLogRedactsEveryQueryValue: a parameter nobody thought of when writing the filter must be redacted
@@ -59,7 +80,7 @@ func caddyURIFilter(t *testing.T, path string) (*regexp.Regexp, string) {
 func TestCaddyAccessLogRedactsEveryQueryValue(t *testing.T) {
 	for _, path := range caddyfiles {
 		t.Run(filepath.Base(path), func(t *testing.T) {
-			re, repl := caddyURIFilter(t, path)
+			redact := caddyURIFilter(t, path)
 
 			// Every value here is a credential or PII; the last few are shapes a per-parameter pattern gets wrong:
 			// an unencoded `&` (legal in an email local-part) or `?` inside a value, and a `&` in the path rather than the query.
@@ -77,7 +98,7 @@ func TestCaddyAccessLogRedactsEveryQueryValue(t *testing.T) {
 				"/v1/account/admin/lookup?email=a?" + secret,
 				"/some&path=weird/v1/assets?email=" + secret,
 			} {
-				got := re.ReplaceAllString(uri, repl)
+				got := redact(uri)
 				if strings.Contains(got, secret) {
 					t.Errorf("query value survived redaction\n  in:  %s\n  out: %s", uri, got)
 				}
@@ -91,8 +112,19 @@ func TestCaddyAccessLogRedactsEveryQueryValue(t *testing.T) {
 			// A request with no query string must pass through
 			// untouched — most of the log is these.
 			for _, uri := range []string{"/v1/healthz", "/v1/assets/native"} {
-				if got := re.ReplaceAllString(uri, repl); got != uri {
+				if got := redact(uri); got != uri {
 					t.Errorf("query-less uri rewritten: %q -> %q", uri, got)
+				}
+			}
+
+			// An API key pasted where a key id belongs travels in the path, which the query filter never sees.
+			key := "sip_" + strings.Repeat("ab", 32)
+			for uri, want := range map[string]string{
+				"/v1/account/keys/" + key:                      "/v1/account/keys/sip_<redacted>",
+				"/v1/admin/keys/" + key + "?identifier=acct:x": "/v1/admin/keys/sip_<redacted>?<redacted>",
+			} {
+				if got := redact(uri); got != want {
+					t.Errorf("key in the path: %q -> %q, want %q", uri, got, want)
 				}
 			}
 		})
@@ -176,7 +208,7 @@ func TestCaddyAccessLogFilterIsGlobalNotJustTheSite(t *testing.T) {
 		}
 		body := string(src)
 
-		if got := strings.Count(body, `request>uri regexp`); got < 2 {
+		if got := strings.Count(body, `request>uri multi_regexp`); got < 2 {
 			t.Errorf("%s has %d uri-redaction line(s), want >= 2 (one in the global options block, one in the site block) — the global logger is what covers reverse_proxy warnings and the catch-all :80 access log", path, got)
 		}
 
@@ -188,7 +220,8 @@ func TestCaddyAccessLogFilterIsGlobalNotJustTheSite(t *testing.T) {
 		}
 		global := body[:globalEnd]
 		for _, want := range []string{
-			`request>uri regexp "[?].*" "?<redacted>"`,
+			`regexp "[?].*" "?<redacted>"`,
+			`regexp "sip_[0-9A-Za-z]+" "sip_<redacted>"`,
 			"request>headers>X-Api-Key delete",
 			"request>headers>Referer delete",
 			"request>headers>X-Reason delete",
@@ -424,7 +457,8 @@ func TestCaddyReferrerPolicyDoesNotOverrideTheAPI(t *testing.T) {
 var hostCaddyfile = filepath.Join("..", "..", "configs", "libvirt", "host-Caddyfile")
 
 var hostLogFilterFields = []string{
-	`request>uri regexp "[?].*" "?<redacted>"`,
+	`regexp "[?].*" "?<redacted>"`,
+	`regexp "sip_[0-9A-Za-z]+" "sip_<redacted>"`,
 	"request>headers>X-Api-Key delete",
 	"request>headers>Referer delete",
 	"request>headers>X-Reason delete",
@@ -463,9 +497,12 @@ func TestHostCaddyfileLogsAreRedacted(t *testing.T) {
 		}
 	}
 
-	re, repl := caddyURIFilter(t, hostCaddyfile)
-	if got := re.ReplaceAllString("/v1/auth/callback?token=SECRET", repl); strings.Contains(got, "SECRET") {
+	redact := caddyURIFilter(t, hostCaddyfile)
+	if got := redact("/v1/auth/callback?token=SECRET"); strings.Contains(got, "SECRET") {
 		t.Errorf("query value survived redaction: %s", got)
+	}
+	if got := redact("/v1/account/keys/sip_0123456789abcdef"); got != "/v1/account/keys/sip_<redacted>" {
+		t.Errorf("key in the path survived redaction: %s", got)
 	}
 }
 

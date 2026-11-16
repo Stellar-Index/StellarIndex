@@ -103,7 +103,7 @@ func checkScopes(r *http.Request, subject auth.Subject) error {
 		return nil
 	}
 	return fmt.Errorf("this key's scopes (%s) do not include %q, required for %s %s",
-		strings.Join(subject.Scopes, ", "), need, r.Method, r.URL.Path)
+		strings.Join(subject.Scopes, ", "), need, r.Method, RedactedPath(r))
 }
 
 // ClampMintScopes is the scope half of [auth.ClampToMinter] as a problem string for handlers; not the enforcement point,
@@ -118,7 +118,7 @@ func ClampMintScopes(caller auth.Subject, requested []string) ([]string, string)
 
 func checkPermissions(r *http.Request, subject auth.Subject) error {
 	if len(subject.DenyPermissions) > 0 && permissionMatches(r, subject.DenyPermissions) {
-		return fmt.Errorf("this key is denied access to %s %s", r.Method, r.URL.Path)
+		return fmt.Errorf("this key is denied access to %s %s", r.Method, RedactedPath(r))
 	}
 	if subject.AllowAllPermissions {
 		return nil
@@ -133,7 +133,7 @@ func checkPermissions(r *http.Request, subject auth.Subject) error {
 	if permissionMatches(r, subject.AllowPermissions) {
 		return nil
 	}
-	return fmt.Errorf("this key is not permitted on %s %s", r.Method, r.URL.Path)
+	return fmt.Errorf("this key is not permitted on %s %s", r.Method, RedactedPath(r))
 }
 
 func permissionMatches(r *http.Request, entries []auth.SubjectPermissionEntry) bool {
@@ -175,7 +175,7 @@ func writeKeyPolicyDenied(w http.ResponseWriter, r *http.Request, slug, detail s
 		"title":    "Forbidden",
 		"status":   http.StatusForbidden,
 		"detail":   detail,
-		"instance": r.URL.Path,
+		"instance": RedactedPath(r),
 	})
 	_, _ = w.Write(body)
 }

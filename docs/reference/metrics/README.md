@@ -197,7 +197,7 @@ With `stellarindex_source_last_event_unix` it exposes a stuck cursor or duplicat
 
 Counter, label `source`.
 
-Inputs the decoder's `Matches()` claimed: the denominator of error rate, `rate(stellarindex_source_decode_errors_total[5m]) / rate(stellarindex_source_matched_events_total[5m])`. Bumped before decode. Unlike `source_events_total` (decoder output).
+Inputs the decoder's `Matches()` claimed: the denominator of error rate, `rate(stellarindex_source_decode_errors_total[5m]) / rate(stellarindex_source_matched_events_total[5m])`. Bumped before decode. Unlike `source_events_total` (decoder output). Alerted as a 1h ratio by `stellarindex_ingestion_decode_error_ratio_high`.
 
 ### `stellarindex_source_decode_errors_total`
 
@@ -313,6 +313,12 @@ Gauge, labels `source`, `symbol`.
 Gauge, label `source`.
 
 Unix-seconds timestamp of the latest successful `PollOnce` per external source. Zero/unset if never succeeded since start. Staleness is `time() - <gauge>` (see `stellarindex_external_poller_stale`, `stellarindex_external_poller_polls_total`).
+### `stellarindex_external_poller_started_unix`
+
+Gauge, label `source`.
+
+Unix-seconds timestamp at which the poller loop for a source started in this process. `stellarindex_external_poller_last_success_unix` has no series until the first success, so this is what lets `stellarindex_external_poller_never_succeeded` see a poller that has only ever answered `error`, `empty` or `idle`.
+
 ### `stellarindex_external_fx_last_quote_unix`
 
 Gauge, label `source`.
@@ -1852,7 +1858,7 @@ Detached stale-while-revalidate refresh outcomes for the explorer's snapshot cac
 
 ### `stellarindex_explorer_refresh_gate_saturated_total`
 
-Counter. Labels: `class` (the class passed to `RefreshGate.TryAcquireClass`: `account_state` | `asset_holders` |
+Counter. Labels: `class` (the class passed to `RefreshGate.TryAcquireClass`: `account_state` | `asset_holders` | `contract_wasm` |
 `contracts_dir` | `network_throughput` | `ops_directory` |
 `protocol_bespoke` | `contract_detail` / `contract_detail_<key prefix>`;
 `unclassed` for a bare `TryAcquire`), `bound` (`class` = the per-class

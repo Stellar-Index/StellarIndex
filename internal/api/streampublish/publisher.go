@@ -116,14 +116,14 @@ func (p *Publisher) Run(ctx context.Context, pairs []canonical.Pair) error {
 	return ctx.Err()
 }
 
-// publishWindowSeconds is the window part of this publisher's Hub topics: /v1/price's 1-minute
+// WindowSeconds is the window part of this publisher's Hub topics: /v1/price's 1-minute
 // buckets are the 60-second series, distinct from the aggregator windows the redispub bridge
 // publishes.
-const publishWindowSeconds = 60
+const WindowSeconds = 60
 
 // pollLoop is the per-pair ticker. Returns when ctx is cancelled.
 func (p *Publisher) pollLoop(ctx context.Context, pair canonical.Pair) {
-	topic := v1.PriceStreamTopic(pair.Base, pair.Quote, publishWindowSeconds)
+	topic := v1.PriceStreamTopic(pair.Base, pair.Quote, WindowSeconds)
 	t := time.NewTicker(p.interval)
 	defer t.Stop()
 

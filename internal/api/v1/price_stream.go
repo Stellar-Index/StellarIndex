@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
@@ -18,9 +20,9 @@ func PriceStreamTopic(asset, quote canonical.Asset, windowSeconds int) string {
 	return "closed:" + asset.String() + "/" + quote.String() + "/" + strconv.Itoa(windowSeconds)
 }
 
-// Closed-bucket stream window bounds. The ceiling is a sanity bound, not an allowlist: operators
-// can reconfigure `[aggregate].windows` and the API cannot see that, so an unknown-but-sane window
-// just subscribes to a topic that may stay quiet.
+// Closed-bucket stream window bounds. The ceiling is a sanity bound for a server built without
+// [Options.ClosedStreamWindows]; with it, only a published window is accepted, because every other value mints
+// a Hub topic nothing will ever publish to, and the Hub's topic slots are shared by all callers.
 const (
 	defaultClosedWindowSeconds = 300
 	maxClosedWindowSeconds     = 366 * 24 * 60 * 60
@@ -28,17 +30,27 @@ const (
 
 // parseClosedWindowSeconds reads the optional window_seconds param for /v1/price/stream. Unlike
 // tip windows, it names which aggregator bucket series to follow.
-func parseClosedWindowSeconds(w http.ResponseWriter, r *http.Request) (int, bool) {
-	raw := r.URL.Query().Get("window_seconds")
-	if raw == "" {
-		return defaultClosedWindowSeconds, true
+func (s *Server) parseClosedWindowSeconds(w http.ResponseWriter, r *http.Request) (int, bool) {
+	n := defaultClosedWindowSeconds
+	if raw := r.URL.Query().Get("window_seconds"); raw != "" {
+		var err error
+		if n, err = strconv.Atoi(raw); err != nil || n <= 0 || n > maxClosedWindowSeconds {
+			writeProblem(w, r,
+				"https://api.stellarindex.io/errors/invalid-window",
+				"Invalid window_seconds", http.StatusBadRequest,
+				"window_seconds must be a positive integer naming an aggregation window (default 300; the standard windows are 300, 3600, and 86400)")
+			return 0, false
+		}
 	}
-	n, err := strconv.Atoi(raw)
-	if err != nil || n <= 0 || n > maxClosedWindowSeconds {
+	if len(s.ClosedStreamWindows) > 0 && !slices.Contains(s.ClosedStreamWindows, n) {
+		published := make([]string, len(s.ClosedStreamWindows))
+		for i, v := range s.ClosedStreamWindows {
+			published[i] = strconv.Itoa(v)
+		}
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-window",
 			"Invalid window_seconds", http.StatusBadRequest,
-			"window_seconds must be a positive integer naming an aggregation window (default 300; the standard windows are 300, 3600, and 86400)")
+			"window_seconds must name a window this deployment publishes: "+strings.Join(published, ", "))
 		return 0, false
 	}
 	return n, true
@@ -270,7 +282,7 @@ func (s *Server) handlePriceStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	window, ok := parseClosedWindowSeconds(w, r)
+	window, ok := s.parseClosedWindowSeconds(w, r)
 	if !ok {
 		return
 	}

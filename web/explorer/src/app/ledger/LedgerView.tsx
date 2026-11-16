@@ -49,6 +49,9 @@ import {
  * Client view for /ledgers/[seq] (and the legacy /ledger?seq=). Fetches the
  * ledger header and its transactions in parallel.
  */
+/** The route's maximum page: a ledger with more is shown as its first part. */
+const LEDGER_TX_LIMIT = 1000;
+
 export function LedgerView({ seq: seqProp }: { seq?: string } = {}) {
   // Path route /ledgers/[seq] passes `seq` as a prop; legacy /ledger?seq= reads
   // it from the query string (kept for redirect compatibility). Prop wins.
@@ -67,11 +70,13 @@ export function LedgerView({ seq: seqProp }: { seq?: string } = {}) {
     retry: false,
   });
   const txQ = useQuery<LedgerTransactionsResp>({
-    queryKey: ['/v1/ledgers/{seq}/transactions', seq],
+    // Tagged: the transactions page caches the default page under the bare key.
+    queryKey: ['/v1/ledgers/{seq}/transactions', seq, 'full'],
     enabled: seq != null,
     queryFn: async () => {
       const env = await apiGet<Envelope<LedgerTransactionsResp>>(
         `/v1/ledgers/${seq}/transactions`,
+        { limit: LEDGER_TX_LIMIT },
       );
       return env.data;
     },
@@ -342,12 +347,20 @@ function TransactionsPanel({
     );
   }
   const okCount = transactions.filter((t) => t.successful).length;
+  // The route caps a page; past the cap every figure below is for the first part only.
+  const total = q.data.total ?? transactions.length;
+  const capped = Boolean(q.data.truncated) || total > transactions.length;
+  const part = `the first ${transactions.length} of ${total}`;
   return (
     <>
       <Panel
         headingLevel={2}
         title="Transaction mix"
-        hint="Outcome and operations per transaction across the tx set"
+        hint={
+          capped
+            ? `Outcome and operations per transaction across ${part} in the tx set`
+            : 'Outcome and operations per transaction across the tx set'
+        }
         source={source}
       >
         <div className="grid gap-6 sm:grid-cols-2">
@@ -360,10 +373,16 @@ function TransactionsPanel({
       <Panel
         headingLevel={2}
         title="Transactions"
-        hint={`${transactions.length} in the tx set, failed included`}
+        hint={
+          capped
+            ? `${part} in the tx set, failed included`
+            : `${transactions.length} in the tx set, failed included`
+        }
         source={source}
         download={{
-          name: `ledger-${seq}-transactions`,
+          name: capped
+            ? `ledger-${seq}-transactions-first-${transactions.length}`
+            : `ledger-${seq}-transactions`,
           columns: TX_CSV_COLUMNS,
           rows: transactions.map((t) => ({
             hash: t.hash,
