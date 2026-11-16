@@ -77,7 +77,7 @@ func (s *Store) BLNTPoolAssets(ctx context.Context, pool string) ([]string, erro
 func (s *Store) BLNTReserveConfigMetadata(ctx context.Context, pool string) (map[string][]byte, error) {
 	const q = `
         WITH chained AS (
-            SELECT asset, event_kind, ledger_close_time, attributes->'metadata' AS metadata,
+            SELECT asset, event_kind, ledger_close_time, ledger, op_index, event_index, attributes->'metadata' AS metadata,
                    LEAD(event_kind) OVER (PARTITION BY asset ORDER BY ledger_close_time, ledger, op_index, event_index) AS next_kind
               FROM blnt_events
              WHERE contract_id = $1 AND contract_role = 'pool' AND asset IS NOT NULL
@@ -86,7 +86,7 @@ func (s *Store) BLNTReserveConfigMetadata(ctx context.Context, pool string) (map
         SELECT DISTINCT ON (asset) asset, metadata::text
           FROM chained
          WHERE event_kind = 'queue_set_reserve' AND metadata IS NOT NULL AND next_kind = 'set_reserve'
-         ORDER BY asset, ledger_close_time DESC`
+         ORDER BY asset, ledger_close_time DESC, ledger DESC, op_index DESC, event_index DESC`
 	rows, err := s.db.QueryContext(ctx, q, pool)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: BLNTReserveConfigMetadata: %w", err)

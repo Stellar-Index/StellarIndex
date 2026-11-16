@@ -59,6 +59,11 @@ func SupplyRate(borrowRate, util *big.Int, bstopRate uint32) *big.Int {
 // Metrics derives the full per-reserve metrics: Blend V2's borrow APR with BLNT's fee-adjusted supply APR.
 func Metrics(rd ReserveData, rc ReserveConfig, bstopRate uint32) ReserveMetrics {
 	m := blend.Metrics(rd, rc, bstopRate)
+	if rd.BSupply.Sign() == 0 {
+		// With no b-tokens the contract credits all remaining interest to the backstop.
+		m.SupplyAPR = 0
+		return m
+	}
 	util := rd.Utilization()
 	m.SupplyAPR = rate7ToFloat(SupplyRate(rc.BorrowRate(util, rd.IRMod), util, bstopRate))
 	return m

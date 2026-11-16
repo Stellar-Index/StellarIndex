@@ -152,8 +152,8 @@ func TestSupplyRate_ProtocolFeeBeforeBackstop(t *testing.T) {
 	}{
 		// fee 2000, remaining 998000, backstop 199600.
 		{"round", big.NewInt(1_000_000), full, 2_000_000, 798_400, 800_000},
-		// fee floor(1075.422)=1075, remaining 536636, backstop floor(53663.6)=53663 -> 482973. One
-		// multiply by (1-bstop) after the fee would floor to 482972: the order and rounding are the contract's.
+		// Pins the contract's order (fee first, then backstop share). The contract floors token amounts and carries
+		// the fee remainder while this floors a 7-decimal rate, so the two can differ by about 1e-7.
 		{"rounding", big.NewInt(537_711), full, 1_000_000, 482_973, 483_939},
 		{"no backstop", big.NewInt(1_000_000), full, 0, 998_000, 1_000_000},
 		{"idle", big.NewInt(100_000), big.NewInt(0), 2_000_000, 0, 0},
@@ -166,5 +166,20 @@ func TestSupplyRate_ProtocolFeeBeforeBackstop(t *testing.T) {
 				t.Errorf("blend.SupplyRate = %s, want %d", got, c.blendSR)
 			}
 		})
+	}
+}
+
+func TestMetrics_NoSuppliersMeansNoSupplyAPR(t *testing.T) {
+	rd := ReserveData{
+		DRate: big.NewInt(1_000_000_000_000), BRate: big.NewInt(1_000_000_000_000), IRMod: big.NewInt(10_000_000),
+		BSupply: big.NewInt(0), DSupply: big.NewInt(1_000), BackstopCredit: big.NewInt(0), Version: blend.PoolV2,
+	}
+	rc := ReserveConfig{Decimals: 7, Util: 8_000_000, RBase: 300_000, ROne: 400_000, RTwo: 1_200_000, RThree: 5_000_000, Enabled: true}
+	m := Metrics(rd, rc, 2_000_000)
+	if want := blend.Metrics(rd, rc, 2_000_000).BorrowAPR; !m.HasAPR || m.BorrowAPR != want || m.BorrowAPR <= 0 {
+		t.Errorf("BorrowAPR = %v (HasAPR %v), want %v > 0", m.BorrowAPR, m.HasAPR, want)
+	}
+	if m.SupplyAPR != 0 {
+		t.Errorf("SupplyAPR = %v, want 0 with no b-tokens", m.SupplyAPR)
 	}
 }

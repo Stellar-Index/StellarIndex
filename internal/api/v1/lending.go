@@ -513,9 +513,13 @@ func (s *Server) readBLNTPoolReserves(ctx context.Context, pool string, _ blend.
 	}
 	configs := make(map[string]blnt.ReserveConfig, len(meta))
 	for asset, b := range meta {
-		if cfg, err := blnt.ParseReserveConfigMetadata(b); err == nil {
-			configs[asset] = cfg
+		cfg, err := blnt.ParseReserveConfigMetadata(b)
+		if err != nil {
+			s.logger.Warn("BLNT reserve config metadata unparseable", "err", err, "pool", pool, "asset", asset)
+			configsFailed = true
+			continue
 		}
+		configs[asset] = cfg
 	}
 	states, err := rr.BLNTPoolReserves(ctx, pool, assets, configs)
 	if err != nil {

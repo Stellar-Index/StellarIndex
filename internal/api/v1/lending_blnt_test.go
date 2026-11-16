@@ -47,7 +47,8 @@ func (e *stubBLNTExplorer) BLNTPoolReserves(_ context.Context, pool string, asse
 	for _, a := range assets {
 		cfg, ok := configs[a]
 		rd := e.data[a]
-		if !ok {
+		if !ok { // as the lake reader: config-free metrics, no APR
+			out = append(out, clickhouse.BlendReserveState{Pool: pool, Asset: a, Decimals: 7, Data: rd, Metrics: blnt.BaseMetrics(rd)})
 			continue
 		}
 		out = append(out, clickhouse.BlendReserveState{
@@ -119,5 +120,39 @@ func TestLendingPoolReserves_ServesABLNTPoolWithTheFeeAdjustedSupplyAPR(t *testi
 	if r.Supplied != "1985903398374" || r.Borrowed != "1599586439842" || r.UtilizationPct != 80.55 ||
 		r.BorrowAPR == nil || *r.BorrowAPR != 0.0385 || r.SupplyAPR == nil || *r.SupplyAPR != 0.0247 {
 		t.Fatalf("reserve = %+v borrow=%v supply=%v", r, r.BorrowAPR, r.SupplyAPR)
+	}
+}
+
+// TestLendingPoolReserves_UnparseableBLNTConfigIsDegraded — metadata that does not parse withholds the APRs and marks
+// the response degraded (sent as no-store), the same as a failed config read.
+func TestLendingPoolReserves_UnparseableBLNTConfigIsDegraded(t *testing.T) {
+	const usdc = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
+	unknown := blend.PoolVersionUnknown
+	rd := blnt.ReserveData{
+		DRate: bigInt(t, "1002460888445"), BRate: bigInt(t, "1001344855663"), IRMod: bigInt(t, "5169744"),
+		BSupply: bigInt(t, "1983236231897"), DSupply: bigInt(t, "1595659699325"), BackstopCredit: bigInt(t, "122270395"),
+		Version: blend.PoolV2,
+	}
+	srv := v1.New(v1.Options{
+		Explorer: &stubBLNTExplorer{stubExplorerReader: &stubExplorerReader{}, data: map[string]blnt.ReserveData{usdc: rd}, bstop: 2_000_000},
+		Lending: &stubBLNTLendingReader{
+			stubLendingReader: stubLendingReader{version: &unknown},
+			blntAssets:        []string{usdc},
+			blntMeta:          map[string][]byte{usdc: []byte(`{bad`)},
+		},
+	})
+	resp := mustGet(t, httpTestServer(t, srv).URL+"/v1/lending/pools/"+blnt.MainnetFixedPool+"/reserves")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store (flags.degraded)", cc)
+	}
+	var body struct {
+		Data v1.LendingPoolReservesView `json:"data"`
+	}
+	mustDecode(t, resp, &body)
+	if r := body.Data.Reserves; len(r) != 1 || r[0].BorrowAPR != nil || r[0].SupplyAPR != nil {
+		t.Fatalf("reserves = %+v, want one reserve with null APRs", r)
 	}
 }
