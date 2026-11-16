@@ -458,7 +458,7 @@ func (c *WebhookStore) WebhookAccountStatus(ctx context.Context, webhookID uuid.
 const maxClaimPerWebhook = 5
 
 // ListPendingDeliveries atomically claims up to limit due deliveries (FOR UPDATE SKIP LOCKED, fair-shared per endpoint, 5-minute lease); rows of non-ACTIVE accounts are parked, and the EXISTS must not join `accounts`.
-func (c *WebhookStore) ListPendingDeliveries(ctx context.Context, limit int) ([]platform.WebhookDelivery, error) {
+func (c *WebhookStore) ListPendingDeliveries(ctx context.Context, limit int, busy []uuid.UUID) ([]platform.WebhookDelivery, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -478,6 +478,7 @@ func (c *WebhookStore) ListPendingDeliveries(ctx context.Context, limit int) ([]
 		     WHERE delivered_at IS NULL
 		       AND next_attempt_at IS NOT NULL
 		       AND next_attempt_at <= now()
+		       AND webhook_id <> ALL($3::uuid[])
 		       AND EXISTS (SELECT 1
 		                     FROM customer_webhooks cw
 		                     JOIN accounts a ON a.id = cw.account_id
@@ -509,7 +510,7 @@ func (c *WebhookStore) ListPendingDeliveries(ctx context.Context, limit int) ([]
 		          COALESCE(webhook_deliveries.last_response_status, 0),
 		          webhook_deliveries.created_at
 	`
-	rows, err := c.s.db.QueryContext(ctx, q, limit, maxClaimPerWebhook)
+	rows, err := c.s.db.QueryContext(ctx, q, limit, maxClaimPerWebhook, uuidStrings(busy))
 	if err != nil {
 		return nil, fmt.Errorf("postgresstore: ListPendingDeliveries: %w", err)
 	}

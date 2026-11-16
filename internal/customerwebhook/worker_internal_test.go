@@ -28,7 +28,7 @@ import (
 // Options defaults.
 type nopStore struct{}
 
-func (nopStore) ListPendingDeliveries(context.Context, int) ([]platform.WebhookDelivery, error) {
+func (nopStore) ListPendingDeliveries(context.Context, int, []uuid.UUID) ([]platform.WebhookDelivery, error) {
 	return nil, nil
 }
 
@@ -276,8 +276,10 @@ type panicOnOneStore struct {
 	delivered []uuid.UUID
 }
 
-func (s *panicOnOneStore) ListPendingDeliveries(context.Context, int) ([]platform.WebhookDelivery, error) {
-	return s.pending, nil
+func (s *panicOnOneStore) ListPendingDeliveries(context.Context, int, []uuid.UUID) ([]platform.WebhookDelivery, error) {
+	out := s.pending
+	s.pending = nil
+	return out, nil
 }
 
 func (s *panicOnOneStore) GetWebhook(_ context.Context, id uuid.UUID) (platform.CustomerWebhook, error) {
@@ -326,7 +328,8 @@ func TestTick_PanicInOneDeliveryDoesNotStopTheBatch(t *testing.T) {
 	}
 	w := newWorker(store, Options{HTTPClient: &http.Client{Timeout: 5 * time.Second}}, unguardedClient)
 
-	w.tick(context.Background())
+	w.dispatch(context.Background())
+	w.lanes.Wait()
 
 	if len(store.delivered) != 1 || store.delivered[0] != goodDeliveryID {
 		t.Fatalf("delivered = %v, want exactly the good delivery (%s) delivered despite the first row panicking", store.delivered, goodDeliveryID)
@@ -366,7 +369,7 @@ type markBudget struct {
 	bounded   bool
 }
 
-func (s *ctxHonouringStore) ListPendingDeliveries(context.Context, int) ([]platform.WebhookDelivery, error) {
+func (s *ctxHonouringStore) ListPendingDeliveries(context.Context, int, []uuid.UUID) ([]platform.WebhookDelivery, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := s.pending
@@ -453,7 +456,8 @@ func TestTick_TimedOutPOSTStillRecordsTheAttempt(t *testing.T) {
 	markErrBefore := testutil.ToFloat64(obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues("mark_error"))
 	netErrBefore := testutil.ToFloat64(obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues("network_error"))
 	start := time.Now()
-	w.tick(context.Background())
+	w.dispatch(context.Background())
+	w.lanes.Wait()
 
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -513,7 +517,8 @@ func TestTick_ShutdownDuringDeliveryStillRecordsIt(t *testing.T) {
 	}}, unguardedClient)
 
 	markErrBefore := testutil.ToFloat64(obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues("mark_error"))
-	w.tick(ctx)
+	w.dispatch(ctx)
+	w.lanes.Wait()
 	if ctx.Err() == nil {
 		t.Fatal("precondition: the transport never ran, so nothing cancelled the worker context")
 	}

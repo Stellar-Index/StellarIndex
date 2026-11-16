@@ -927,7 +927,7 @@ func TestPlatformPostgresStores(t *testing.T) {
 		if err != nil {
 			t.Fatalf("EnqueueDelivery: %v", err)
 		}
-		pending, err := webhooks.ListPendingDeliveries(ctx, 10)
+		pending, err := webhooks.ListPendingDeliveries(ctx, 10, nil)
 		if err != nil {
 			t.Fatalf("ListPendingDeliveries: %v", err)
 		}
@@ -947,7 +947,7 @@ func TestPlatformPostgresStores(t *testing.T) {
 			t.Fatalf("MarkAttemptFailed: %v", err)
 		}
 		// Should no longer be in the due-now list.
-		pending, err = webhooks.ListPendingDeliveries(ctx, 10)
+		pending, err = webhooks.ListPendingDeliveries(ctx, 10, nil)
 		if err != nil {
 			t.Fatalf("ListPendingDeliveries after retry: %v", err)
 		}
@@ -966,7 +966,7 @@ func TestPlatformPostgresStores(t *testing.T) {
 		if err != nil {
 			t.Fatalf("EnqueueDelivery #2: %v", err)
 		}
-		pending, err = webhooks.ListPendingDeliveries(ctx, 10)
+		pending, err = webhooks.ListPendingDeliveries(ctx, 10, nil)
 		if err != nil {
 			t.Fatalf("ListPendingDeliveries (fresh): %v", err)
 		}

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -74,15 +75,20 @@ func (s *fakeStore) enqueue(d platform.WebhookDelivery) {
 	s.pending = append(s.pending, d)
 }
 
-func (s *fakeStore) ListPendingDeliveries(_ context.Context, limit int) ([]platform.WebhookDelivery, error) {
+// ListPendingDeliveries models the claim: at most limit rows, none for a busy endpoint. Claimed
+// rows leave the queue; the rest stay for a later claim.
+func (s *fakeStore) ListPendingDeliveries(_ context.Context, limit int, busy []uuid.UUID) ([]platform.WebhookDelivery, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := s.pending
-	if limit > 0 && len(out) > limit {
-		out = out[:limit]
+	var out, rest []platform.WebhookDelivery
+	for _, d := range s.pending {
+		if slices.Contains(busy, d.WebhookID) || (limit > 0 && len(out) >= limit) {
+			rest = append(rest, d)
+			continue
+		}
+		out = append(out, d)
 	}
-	// Drain so subsequent ticks don't re-fire on the same row.
-	s.pending = nil
+	s.pending = rest
 	return out, nil
 }
 
@@ -924,7 +930,7 @@ func TestWorker_ActiveAccountStillDelivers(t *testing.T) {
 // cannot answer the account kill switch.
 type storeWithoutAccountGate struct{}
 
-func (storeWithoutAccountGate) ListPendingDeliveries(context.Context, int) ([]platform.WebhookDelivery, error) {
+func (storeWithoutAccountGate) ListPendingDeliveries(context.Context, int, []uuid.UUID) ([]platform.WebhookDelivery, error) {
 	return nil, nil
 }
 
@@ -1132,6 +1138,99 @@ func TestWorker_ExpiredPreviousKeyStopsSigning(t *testing.T) {
 	}
 	if hdr.Get("X-StellarIndex-Signature") == "" {
 		t.Error("current-key signature missing")
+	}
+}
+
+// TestWorker_StalledEndpointDoesNotDelayLaterWork: with a barrier between batches, nothing new is
+// claimed until the slowest lane ends. Endpoint A stalls on a claimed row; rows enqueued AFTER that
+// claim, for B and for A itself, arrive while it is stalled. B's must be delivered at once. A's
+// must wait: an endpoint never has two POSTs in flight.
+func TestWorker_StalledEndpointDoesNotDelayLaterWork(t *testing.T) {
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unstall := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(unstall)
+
+	aStarted := make(chan struct{}, 4)
+	var aInFlight, aMaxInFlight atomic.Int32
+	stalled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := aInFlight.Add(1)
+		defer aInFlight.Add(-1)
+		for {
+			m := aMaxInFlight.Load()
+			if n <= m || aMaxInFlight.CompareAndSwap(m, n) {
+				break
+			}
+		}
+		aStarted <- struct{}{}
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer stalled.Close()
+
+	bDelivered := make(chan struct{}, 4)
+	healthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		bDelivered <- struct{}{}
+	}))
+	defer healthy.Close()
+
+	store := newFakeStore()
+	secret := []byte("test-secret-bytes")
+	a := platform.CustomerWebhook{ID: uuid.New(), URL: stalled.URL, SigningKey: secret, Enabled: true}
+	b := platform.CustomerWebhook{ID: uuid.New(), URL: healthy.URL, SigningKey: secret, Enabled: true}
+	store.addWebhook(a)
+	store.addWebhook(b)
+	enqueue := func(hook uuid.UUID) {
+		store.enqueue(platform.WebhookDelivery{
+			ID: uuid.New(), WebhookID: hook, EventType: string(platform.WebhookEventIncidentSEV1),
+			Payload: []byte(`{}`), NextAttemptAt: time.Now().Add(-time.Second),
+		})
+	}
+	enqueue(a.ID)
+
+	w := customerwebhook.NewUnguardedForTest(store, customerwebhook.Options{
+		PollInterval: 20 * time.Millisecond,
+		HTTPClient:   &http.Client{Timeout: 10 * time.Second},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = w.Run(ctx); close(done) }()
+
+	select {
+	case <-aStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("endpoint A's first row was never attempted")
+	}
+	// A's lane is now stalled. This work arrives after its claim.
+	enqueue(b.ID)
+	enqueue(a.ID)
+	select {
+	case <-bDelivered:
+	case <-time.After(3 * time.Second):
+		t.Error("a row enqueued for endpoint B after A stalled was not delivered: the worker waits for its slowest lane before it claims again")
+	}
+	// Several polls pass; A's second row must stay queued behind its stalled first.
+	time.Sleep(150 * time.Millisecond)
+	if got := aMaxInFlight.Load(); got != 1 {
+		t.Errorf("endpoint A had %d POSTs in flight at once, want 1", got)
+	}
+
+	unstall()
+	deadline := time.Now().Add(5 * time.Second)
+	for deliveredCount(store) < 3 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	if got := deliveredCount(store); got != 3 {
+		t.Errorf("delivered %d of 3 rows after A recovered", got)
+	}
+	if got := aMaxInFlight.Load(); got != 1 {
+		t.Errorf("endpoint A had %d POSTs in flight at once, want 1", got)
 	}
 }
 

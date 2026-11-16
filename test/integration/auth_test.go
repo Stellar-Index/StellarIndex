@@ -566,7 +566,7 @@ func exerciseAPIWritePaths(t *testing.T, ctx context.Context, api *sql.DB, apiDS
 	check("EnqueueDelivery", hooks.EnqueueDelivery(ctx, platform.WebhookDelivery{
 		WebhookID: hookID, EventType: "price.alert", Payload: json.RawMessage(`{"a":"1"}`),
 	}))
-	pending, err := hooks.ListPendingDeliveries(ctx, 10)
+	pending, err := hooks.ListPendingDeliveries(ctx, 10, nil)
 	check("ListPendingDeliveries", err)
 	for _, d := range pending {
 		check("MarkDelivered", hooks.MarkDelivered(ctx, d.ID, 200))

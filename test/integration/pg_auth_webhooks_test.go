@@ -753,7 +753,7 @@ func assertSuspensionParksBacklog(
 	}
 	suspendAccount(t, ctx, accounts, acct)
 
-	claimed, err := webhooks.ListPendingDeliveries(ctx, 100)
+	claimed, err := webhooks.ListPendingDeliveries(ctx, 100, nil)
 	if err != nil {
 		t.Fatalf("ListPendingDeliveries: %v", err)
 	}
@@ -1003,9 +1003,24 @@ func TestCustomerWebhookClaimIsFairAcrossEndpoints(t *testing.T) {
 		t.Fatalf("enqueue other: %v", err)
 	}
 
+	// An endpoint the worker is still delivering to is left alone: its rows are neither returned
+	// nor leased. Naming only the backlogged one leaves exactly the other's row claimable.
+	if busyBoth, err := webhooks.ListPendingDeliveries(ctx, 25, []uuid.UUID{backlogged, other}); err != nil || len(busyBoth) != 0 {
+		t.Fatalf("claim with both endpoints busy = %d rows, err %v; want none", len(busyBoth), err)
+	}
+	busyOne, err := webhooks.ListPendingDeliveries(ctx, 25, []uuid.UUID{backlogged})
+	if err != nil || len(busyOne) != 1 || busyOne[0].WebhookID != other {
+		t.Fatalf("claim with the backlogged endpoint busy = %d rows, err %v; want the other endpoint's one row", len(busyOne), err)
+	}
+	// Put that row back so the fairness checks below see it due again.
+	if _, err := db.ExecContext(ctx,
+		`UPDATE webhook_deliveries SET next_attempt_at = now() - interval '1 minute' WHERE id = $1`, busyOne[0].ID); err != nil {
+		t.Fatalf("release the claimed row: %v", err)
+	}
+
 	// A batch smaller than the backlog: FIFO would hand it only the
 	// backlogged endpoint's rows.
-	first, err := webhooks.ListPendingDeliveries(ctx, 4)
+	first, err := webhooks.ListPendingDeliveries(ctx, 4, nil)
 	if err != nil {
 		t.Fatalf("first claim: %v", err)
 	}
@@ -1017,21 +1032,21 @@ func TestCustomerWebhookClaimIsFairAcrossEndpoints(t *testing.T) {
 		t.Errorf("first claim (limit 4) = %d other + %d backlogged, want 1 + 3", counts[other], counts[backlogged])
 	}
 
-	second, err := webhooks.ListPendingDeliveries(ctx, 25)
+	second, err := webhooks.ListPendingDeliveries(ctx, 25, nil)
 	if err != nil {
 		t.Fatalf("second claim: %v", err)
 	}
 	if len(second) != 5 {
 		t.Errorf("second claim returned %d rows, want 5 (the per-endpoint cap, with 6 still due)", len(second))
 	}
-	third, err := webhooks.ListPendingDeliveries(ctx, 25)
+	third, err := webhooks.ListPendingDeliveries(ctx, 25, nil)
 	if err != nil {
 		t.Fatalf("third claim: %v", err)
 	}
 	if len(third) != 1 {
 		t.Errorf("third claim returned %d rows, want the 1 left", len(third))
 	}
-	fourth, err := webhooks.ListPendingDeliveries(ctx, 25)
+	fourth, err := webhooks.ListPendingDeliveries(ctx, 25, nil)
 	if err != nil {
 		t.Fatalf("fourth claim: %v", err)
 	}

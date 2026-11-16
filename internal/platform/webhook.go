@@ -147,7 +147,8 @@ type WebhookStore interface {
 	EnqueueDelivery(ctx context.Context, d WebhookDelivery) error
 
 	// ListPendingDeliveries claims up to `limit` due deliveries, FIFO per webhook with every webhook's oldest row ahead of any second, so one backlog cannot fill the batch.
-	ListPendingDeliveries(ctx context.Context, limit int) ([]WebhookDelivery, error)
+	// Rows of a webhook named in busy are left unclaimed: the caller is still delivering to it.
+	ListPendingDeliveries(ctx context.Context, limit int, busy []uuid.UUID) ([]WebhookDelivery, error)
 
 	// MarkDelivered records a successful POST (delivered_at=now, next_attempt_at cleared,
 	// response_status). Idempotent.

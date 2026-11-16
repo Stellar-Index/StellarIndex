@@ -176,7 +176,7 @@ func (s *fakeStore) EnqueueDelivery(_ context.Context, _ platform.WebhookDeliver
 	return nil
 }
 
-func (s *fakeStore) ListPendingDeliveries(_ context.Context, _ int) ([]platform.WebhookDelivery, error) {
+func (s *fakeStore) ListPendingDeliveries(_ context.Context, _ int, _ []uuid.UUID) ([]platform.WebhookDelivery, error) {
 	return nil, nil
 }
 

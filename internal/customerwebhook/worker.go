@@ -36,7 +36,7 @@ import (
 
 // DeliveryStore is the worker's subset of [platform.WebhookStore]; ListPendingDeliveries MUST claim rows atomically with a lease, GetWebhook MUST return [platform.ErrNotFound] and ONLY that for an absent row (terminal; other errors retry, so flattening would discard deliveries); it MUST also implement [AccountStatusReader].
 type DeliveryStore interface {
-	ListPendingDeliveries(ctx context.Context, limit int) ([]platform.WebhookDelivery, error)
+	ListPendingDeliveries(ctx context.Context, limit int, busy []uuid.UUID) ([]platform.WebhookDelivery, error)
 	GetWebhook(ctx context.Context, id uuid.UUID) (platform.CustomerWebhook, error)
 	MarkDelivered(ctx context.Context, id uuid.UUID, responseStatus int) error
 	MarkAttemptFailed(ctx context.Context, id uuid.UUID, errMsg string, responseStatus int, nextAttemptAt time.Time) error
@@ -94,15 +94,16 @@ type Options struct {
 	// PollInterval between queue drains. Default 5s.
 	PollInterval time.Duration
 
-	// BatchLimit caps how many deliveries each poll drains. Default 25.
+	// BatchLimit caps how many deliveries one claim takes. Default 25. A claim also never takes
+	// more rows than there are free lanes, so every claimed row's lane starts at once.
 	// INVARIANT: BatchLimit × (HTTPClient.Timeout + markWriteTimeout) MUST stay under the 5-minute
 	// store lease, or a row not reached in time is re-claimed and DOUBLE-delivered. Concurrency
 	// does not relax it (a batch can be all one endpoint's serial rows). New panics if it breaks.
 	BatchLimit int
 
-	// Concurrency caps how many ENDPOINTS a batch delivers to in parallel (default 8). An
-	// endpoint's rows run serially in claim order, so it never has two POSTs in flight, and a
-	// stalled endpoint holds one slot instead of the whole queue.
+	// Concurrency caps how many ENDPOINTS are delivered to in parallel (default 8). An endpoint's
+	// rows run serially in claim order, so it never has two POSTs in flight. A stalled endpoint
+	// holds its own lane only: rows for other endpoints are claimed as soon as a lane is free.
 	Concurrency int
 
 	// MaxAttempts before a delivery is marked permanently failed. Default 15: with backoffCeiling's
@@ -135,6 +136,15 @@ type Worker struct {
 	// running latches true on the first Run call and never resets, so
 	// Run is one-shot for the Worker's lifetime (see Run's doc comment).
 	running atomic.Bool
+
+	// slots holds one token per running lane; lanes tracks them for shutdown; wake asks Run for
+	// another claim when a lane ends. busy is the endpoints with a lane running: the claim
+	// leaves their rows alone, which is what keeps an endpoint at one POST at a time.
+	slots chan struct{}
+	lanes sync.WaitGroup
+	wake  chan struct{}
+	mu    sync.Mutex
+	busy  map[uuid.UUID]struct{}
 }
 
 // New constructs a Worker; store must be non-nil and implement [AccountStatusReader], and opts gets production defaults for every zero field.
@@ -194,6 +204,9 @@ func newWorker(store DeliveryStore, opts Options, clientFor func(*http.Client) *
 		stopCh:   make(chan struct{}),
 		doneCh:   make(chan struct{}),
 		signFn:   signHMACSHA256,
+		slots:    make(chan struct{}, opts.Concurrency),
+		wake:     make(chan struct{}, 1),
+		busy:     map[uuid.UUID]struct{}{},
 	}
 }
 
@@ -231,9 +244,12 @@ func (w *Worker) Run(ctx context.Context) error {
 	defer ticker.Stop()
 	defer close(w.doneCh)
 
-	// Drain once immediately so a fresh worker doesn't wait one
+	// In-flight lanes finish before Run returns, as Stop promises.
+	defer w.lanes.Wait()
+
+	// Claim once immediately so a fresh worker doesn't wait one
 	// full PollInterval before processing the existing backlog.
-	w.tick(ctx)
+	w.dispatch(ctx)
 
 	for {
 		select {
@@ -242,12 +258,14 @@ func (w *Worker) Run(ctx context.Context) error {
 		case <-w.stopCh:
 			return nil
 		case <-ticker.C:
-			w.tick(ctx)
+			w.dispatch(ctx)
+		case <-w.wake:
+			w.dispatch(ctx)
 		}
 	}
 }
 
-// Stop signals Run to exit and returns after the in-flight tick completes; safe before Run, since doneCh is only closed by Run's defer.
+// Stop signals Run to exit and returns after the in-flight lanes complete; safe before Run, since doneCh is only closed by Run's defer.
 func (w *Worker) Stop() {
 	select {
 	case <-w.stopCh:
@@ -261,39 +279,72 @@ func (w *Worker) Stop() {
 	<-w.doneCh
 }
 
-// tick drains one batch: one lane per endpoint, up to Options.Concurrency lanes at once, each
-// serial in claim order, so one bad row or slow endpoint delays only its own lane. It returns
-// when every lane has finished.
-func (w *Worker) tick(ctx context.Context) {
-	pending, err := w.store.ListPendingDeliveries(ctx, w.opts.BatchLimit)
+// dispatch claims due rows for the free lanes and starts one lane per endpoint. It never waits
+// for a lane: a stalled endpoint keeps its own slot busy while later claims serve the others.
+// Only Run calls it, so the free count can only be an undercount.
+//
+// A claim takes at most as many rows as there are free lanes, and none for an endpoint whose lane
+// is still running. Every claimed row therefore starts at once in a lane of at most that many
+// rows, well inside the store lease (see Options.BatchLimit).
+func (w *Worker) dispatch(ctx context.Context) {
+	free := cap(w.slots) - len(w.slots)
+	if free == 0 {
+		return
+	}
+	pending, err := w.store.ListPendingDeliveries(ctx, min(w.opts.BatchLimit, free), w.busyEndpoints())
 	if err != nil {
 		w.opts.Logger.Warn("customer-webhook: ListPendingDeliveries failed",
 			"err", err)
 		obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues("list_error").Inc()
 		return
 	}
-	slots := make(chan struct{}, w.opts.Concurrency)
-	var wg sync.WaitGroup
 	for _, lane := range lanesByWebhook(pending) {
-		slots <- struct{}{}
-		wg.Add(1)
+		endpoint := lane[0].WebhookID
+		w.slots <- struct{}{}
+		w.setBusy(endpoint, true)
+		w.lanes.Add(1)
 		go func() {
-			// Release the slot and WaitGroup even on a panic, or tick blocks forever.
+			// Release the lane even on a panic, or its slot and endpoint stay taken for good.
 			defer func() {
 				if r := recover(); r != nil {
 					worker.Report(w.opts.Logger, "customer-webhook-lane", r)
 				}
-				<-slots
-				wg.Done()
+				w.setBusy(endpoint, false)
+				<-w.slots
+				w.lanes.Done()
+				// The endpoint may have more due rows, and a lane is free again.
+				select {
+				case w.wake <- struct{}{}:
+				default:
+				}
 			}()
 			w.deliverLane(ctx, lane)
 		}()
 	}
-	wg.Wait()
 }
 
-// deliverLane delivers one endpoint's rows in order. Each attempt's deadline bounds the batch at
-// BatchLimit × (Timeout + markWriteTimeout), the basis for the lease invariant (see
+func (w *Worker) setBusy(endpoint uuid.UUID, busy bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if busy {
+		w.busy[endpoint] = struct{}{}
+		return
+	}
+	delete(w.busy, endpoint)
+}
+
+func (w *Worker) busyEndpoints() []uuid.UUID {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	out := make([]uuid.UUID, 0, len(w.busy))
+	for id := range w.busy {
+		out = append(out, id)
+	}
+	return out
+}
+
+// deliverLane delivers one endpoint's rows in order. Each attempt's deadline bounds the lane at
+// its row count × (Timeout + markWriteTimeout), the basis for the lease invariant (see
 // Options.BatchLimit). It covers the lookup and POST only; the outcome write has its own (see
 // Worker.mark) because this one is already spent exactly when the POST timed out.
 func (w *Worker) deliverLane(ctx context.Context, lane []platform.WebhookDelivery) {
