@@ -243,8 +243,8 @@ func gatedRegistryOptions(
 
 		opts := []contractid.Option{contractid.WithSeed(seed)}
 		if withHook {
-			src := source // capture per iteration
-			opts = append(opts, contractid.WithHook(func(childID, factoryID string, firstLedger uint32) {
+			src := source                                                                                 // capture per iteration
+			opts = append(opts, contractid.WithHook(func(childID, factoryID string, firstLedger uint32) { //nolint:contextcheck // the hook carries no context; the retrier holds the hook context it was built with
 				admissions.persist(src, childID, func(wctx context.Context) error {
 					return store.UpsertProtocolContract(wctx, src, childID, factoryID, firstLedger)
 				})
@@ -354,7 +354,7 @@ func sushiswapPoolOptions(
 	logger.Info("sushiswap_v3 pool table loaded", "pools", len(seed))
 	opts := []contractid.Option{contractid.WithAttrSeed(seed)}
 	if withHook {
-		opts = append(opts, contractid.WithAttrHook(func(pool, factoryID string, ledger uint32, a contractid.Attrs) {
+		opts = append(opts, contractid.WithAttrHook(func(pool, factoryID string, ledger uint32, a contractid.Attrs) { //nolint:contextcheck // the hook carries no context; the retrier holds the hook context it was built with
 			fee, ferr := strconv.ParseInt(a[sushiswap_v3.AttrFeePips], 10, 32)
 			tick, terr := strconv.ParseInt(a[sushiswap_v3.AttrTickSpacing], 10, 32)
 			if ferr != nil || terr != nil {

@@ -46,7 +46,7 @@ func SoroswapPersistenceOptions(
 	logger.Info("soroswap pair registry loaded", "pairs", len(seed))
 
 	admissions := newGateAdmissions(hookCtx, logger)
-	hook := func(pair, t0, t1 string) {
+	hook := func(pair, t0, t1 string) { //nolint:contextcheck // the hook carries no context; the retrier holds the hook context it was built with
 		admissions.persist(soroswap.SourceName, pair, func(wctx context.Context) error {
 			return store.UpsertSoroswapPair(wctx, pair, t0, t1)
 		})
