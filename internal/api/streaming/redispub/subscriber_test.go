@@ -28,6 +28,9 @@ import (
 type fakeHub struct {
 	mu    sync.Mutex
 	calls []hubCall
+	// gaps counts PublishGap calls; gapMatches is whether the last one matched closed-bucket topics only.
+	gaps       int
+	gapMatches bool
 }
 
 type hubCall struct {
@@ -41,6 +44,20 @@ func (h *fakeHub) Publish(topic, eventType string, data []byte) string {
 	defer h.mu.Unlock()
 	h.calls = append(h.calls, hubCall{topic: topic, eventType: eventType, data: data})
 	return "fake-id"
+}
+
+func (h *fakeHub) PublishGap(match func(string) bool) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.gaps++
+	h.gapMatches = match("closed:native/fiat:USD/300") && !match("tip:native/fiat:USD")
+	return 0
+}
+
+func (h *fakeHub) Gaps() (int, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.gaps, h.gapMatches
 }
 
 func (h *fakeHub) Calls() []hubCall {
@@ -71,6 +88,44 @@ func TestNewSubscriber_RequiresInputs(t *testing.T) {
 	if _, err := redispub.NewSubscriber(rdb, "", nil, nil); err == nil {
 		t.Error("expected error for nil hub")
 	}
+}
+
+// Redis pub/sub keeps nothing for an absent subscriber, and go-redis reconnects without telling its caller.
+// Whatever the aggregator published while the connection was down never reaches the Hub, so the reconnect
+// itself must be reported as a gap on the closed-bucket topics. The first subscribe is not a reconnect.
+func TestSubscriber_RedisReconnectPublishesAStreamGap(t *testing.T) {
+	mr, rdb := newRedis(t)
+	hub := &fakeHub{}
+	sub, err := redispub.NewSubscriber(rdb, "test:closed", hub, nil)
+	if err != nil {
+		t.Fatalf("NewSubscriber: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = sub.Run(ctx) }()
+
+	time.Sleep(200 * time.Millisecond) // let SUBSCRIBE bind and its confirmation arrive
+	if n, _ := hub.Gaps(); n != 0 {
+		t.Fatalf("the first subscribe published %d gap(s), want 0", n)
+	}
+
+	mr.Close()
+	time.Sleep(300 * time.Millisecond)
+	if err := mr.Restart(); err != nil {
+		t.Fatalf("restart miniredis: %v", err)
+	}
+
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if n, closedOnly := hub.Gaps(); n > 0 {
+			if !closedOnly {
+				t.Fatal("the gap did not match closed-bucket topics only")
+			}
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("no stream gap was published after Redis came back")
 }
 
 // TestSubscriber_RoundTrip — the canonical happy path: a Publisher

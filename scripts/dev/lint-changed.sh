@@ -128,6 +128,7 @@ done
 # Paths are NUL-separated so a name with a space cannot split in two.
 changed=()
 chunkfn=0
+openapi_compat=0
 how=""
 if [ "$mode" = files ]; then
     for f in ${explicit[@]+"${explicit[@]}"}; do
@@ -196,6 +197,9 @@ for f in "${changed[@]}"; do
     esac
     case "$f" in
         *.go|*.md|scripts/ci/lint-repo-budget.baseline|*/scripts/ci/lint-repo-budget.baseline) budget=1 ;;
+    esac
+    case "$f" in
+        openapi/stellar-index.v1.yaml|scripts/ci/lint-openapi-compat*) openapi_compat=1; hit=1 ;;
     esac
     # lint-migration-commands also reads these for a NULL-start refresh.
     case "$f" in docs/*|deploy/*|configs/*|scripts/ops/*|scripts/dev/*) op_corpus=1 ;; esac
@@ -415,6 +419,18 @@ if [ "${#baseline_files[@]}" -gt 0 ]; then
             add_step "lint-baseline-growth" "BASE_SHA=${mb:0:12}" env "BASE_SHA=$mb" "$ci_dir/lint-baseline-growth.sh" ;;
         *)
             defer "lint-baseline-growth" "reads the Baseline-Growth commit trailer, so it runs over a commit range (--base), not over staged edits" ;;
+    esac
+fi
+
+# 6a. OpenAPI compatibility: the spec against the range's base.
+if [ "$openapi_compat" -eq 1 ]; then
+    add_step "lint-openapi-compat self-test" "" "$ci_dir/lint-openapi-compat-test.sh"
+    case "$mode" in
+        base)
+            mb="$(git merge-base "$base_rev" HEAD 2>/dev/null || true)"
+            add_step "lint-openapi-compat" "BASE_SHA=${mb:0:12}" env "BASE_SHA=$mb" python3 "$ci_dir/lint-openapi-compat.py" ;;
+        *)
+            defer "lint-openapi-compat" "compares the spec with a base revision and reads the OpenAPI-Break commit trailer, so it runs over a commit range (--base), not over staged edits" ;;
     esac
 fi
 

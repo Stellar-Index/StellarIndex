@@ -55,6 +55,7 @@ const {
   TYPE_LABEL,
   PROTOCOL_NAMES,
   resetOgGatesForTest,
+  rateLimitKey,
 } = await import('./[[path]].js');
 
 // Isolate each test from the rate limiter/circuit breaker's module-scope
@@ -177,6 +178,47 @@ describe('og function — per-IP rate limit (K067)', () => {
     }
     const res = await onRequest(makeContext('/og/assets/usdc', {}, other));
     expect(res.status).toBe(200);
+  });
+});
+
+describe('og function — rate limit key and eviction', () => {
+  it('keys an IPv6 client on its /64, an IPv4 client on its address', () => {
+    expect(rateLimitKey('203.0.113.9')).toBe('203.0.113.9');
+    expect(rateLimitKey('2001:db8:1:2:aaaa:bbbb:cccc:dddd')).toBe(
+      '2001:db8:1:2',
+    );
+    expect(rateLimitKey('2001:0db8:0001:0002::1')).toBe('2001:db8:1:2');
+    expect(rateLimitKey('2001:db8::1')).toBe('2001:db8:0:0');
+    expect(rateLimitKey('::1')).toBe('0:0:0:0');
+    expect(rateLimitKey('2001:DB8:1:2::9')).toBe('2001:db8:1:2');
+  });
+
+  it('429s one IPv6 /64 that changes its address on every request', async () => {
+    let lastRes;
+    for (let i = 0; i < 21; i += 1) {
+      const headers = { 'cf-connecting-ip': `2001:db8:1:2::${i.toString(16)}` };
+      lastRes = await onRequest(makeContext('/og/assets/usdc', {}, headers));
+    }
+    expect(lastRes.status).toBe(429);
+
+    const other = { 'cf-connecting-ip': '2001:db8:1:3::1' };
+    const res = await onRequest(makeContext('/og/assets/usdc', {}, other));
+    expect(res.status).toBe(200);
+  });
+
+  it('keeps a limited client limited while thousands of new keys arrive', async () => {
+    const flooded = { 'cf-connecting-ip': '203.0.113.9' };
+    for (let i = 0; i < 21; i += 1) {
+      await onRequest(makeContext('/og/assets/usdc', {}, flooded));
+    }
+    for (let i = 0; i < 5200; i += 1) {
+      const headers = {
+        'cf-connecting-ip': `2001:db8:${(i >> 8).toString(16)}:${(i & 255).toString(16)}::1`,
+      };
+      await onRequest(makeContext('/og/assets/usdc', {}, headers));
+    }
+    const res = await onRequest(makeContext('/og/assets/usdc', {}, flooded));
+    expect(res.status).toBe(429);
   });
 });
 

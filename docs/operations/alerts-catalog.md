@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 71 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 293 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 296 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -122,6 +122,9 @@ its first link must be the rule's `runbook_url` page
 | `stellarindex_fx_fixings_refresh_stale` | `time() - max(fx_fixings_last_refresh_unix)` | > 10800 s (3h) for 15 min | ticket | [external-pollers](runbooks/external-pollers.md#stellarindex_fx_fixings_refresh_stale) |
 | `stellarindex_fx_fixings_series_stale` | `time() - max(fx_fixings_newest_bar_end_unix)` | > 14400 s (4h) while FX trades (Mon 02:00-Fri 22:00 UTC), for 15 min | ticket | [external-pollers](runbooks/external-pollers.md#stellarindex_fx_fixings_series_stale) |
 | `stellarindex_fx_fixings_quote_disagreement` | `fx_fixings_quote_disagrees` per ticker | == 1 for 2 h (hourly bars outside [0.5, 1.5] of daily rate) | ticket | [external-pollers](runbooks/external-pollers.md#stellarindex_fx_fixings_quote_disagreement) |
+| `stellarindex_fx_fixings_ticker_fetch_failing` | `increase(fx_fixings_fetch_errors_total[6h])` per ticker | >= 4 for 30 min (one ticker's hourly fetch fails most cycles) | ticket | [external-pollers](runbooks/external-pollers.md#stellarindex_fx_fixings_ticker_fetch_failing) |
+| `stellarindex_fx_fixings_ticker_bars_refused` | `increase(fx_fixings_bars_refused_total[6h])` per ticker | >= 4 for 30 min (the gate refuses a bar every cycle) | ticket | [external-pollers](runbooks/external-pollers.md#stellarindex_fx_fixings_ticker_bars_refused) |
+| `stellarindex_fx_fixings_write_failing` | `increase(fx_fixings_write_errors_total[3h])` | >= 2 for 30 min (accepted bars not stored) | ticket | [external-pollers](runbooks/external-pollers.md#stellarindex_fx_fixings_write_failing) |
 
 ## Storage alerts
 

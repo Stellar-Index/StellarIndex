@@ -290,6 +290,18 @@ Grep API logs for `fx_fixings bar disagrees` (ticker, `bar_start`, close, guarde
 1. Wrong daily rate: see [rate_rejections](#stellarindex_external_fx_rate_rejections).
 2. Wrong hourly bar: INSERT the right close for the same `(ticker, grain, bar_start)` at generation `max + 1` (readers take the highest). Never `UPDATE` or `DELETE` an `fx_fixings` row: it is the record of what every served closed cross converted at.
 
+## stellarindex_fx_fixings_ticker_fetch_failing
+
+`sum by (ticker) (increase(stellarindex_fx_fixings_fetch_errors_total[6h])) >= 4`, `for: 30m`, ticket. The hourly bar fetch for one ticker fails in most cycles. The fleet-wide freshness alerts read one stamp for all tickers and stay green; this ticker's closed fiat-cross buckets are withheld or fall back to the daily arm. Grep API logs for `fx_fixings bar fetch failed`. Many tickers at once is the vendor or the key: see [fx_feed_stale](#stellarindex_external_fx_feed_stale). One ticker is usually a symbol the plan stopped serving.
+
+## stellarindex_fx_fixings_ticker_bars_refused
+
+`sum by (ticker) (increase(stellarindex_fx_fixings_bars_refused_total[6h])) >= 4`, `for: 30m`, ticket. The fixing gate refuses a bar for this ticker on every cycle (each cycle re-offers 48 h of bars). A refused bar is never stored. Grep API logs for `fx_fixings gate refused bar` (ticker, `bar_start`, close) and compare with an independent source. If the vendor's bar is wrong, wait for it to be corrected or insert the right close as in [quote_disagreement](#stellarindex_fx_fixings_quote_disagreement) Fix step 2.
+
+## stellarindex_fx_fixings_write_failing
+
+`sum(increase(stellarindex_fx_fixings_write_errors_total[3h])) >= 2`, `for: 30m`, ticket. Accepted bars are not being stored. Grep API logs for `fx_fixings insert failed`; check Postgres health and that the `fx_fixings` migration is applied. The next healthy cycle re-offers the last 48 h, so a short outage heals itself.
+
 ## stellarindex_cex_stream_subscription_rejected
 
 `max by (source, symbol) (stellarindex_cex_stream_subscription_rejected) == 1`, `for: 5m`, P2. The venue refused our subscribe for `symbol`: that pair delivers no trades while the socket looks healthy.

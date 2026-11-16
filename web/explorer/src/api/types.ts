@@ -1145,6 +1145,13 @@ export interface paths {
          *       `resumed_from` is the oldest id still available (empty when
          *       nothing is buffered yet); events between the two are gone. `stream_gap` carries no `id:` line
          *       of its own and does not advance the client's resume cursor.
+         *       The same event is sent on an open stream when the server
+         *       knows events were lost before they reached it: its link to
+         *       the aggregator reconnected or dropped a message, or its own
+         *       polls failed while buckets closed. There `requested_after`
+         *       is the last id sent before the loss (empty if none) and
+         *       `resumed_from` is empty; treat the series as incomplete and
+         *       re-read it over REST.
          *     - Events carry the `/v1/price` envelope shape (`data` +
          *       `as_of`); `flags` / `sources` are present only when the
          *       publishing path evaluated them — absent flags mean "not

@@ -721,6 +721,48 @@ func TestHub_CursorFromBeforeThisProcessEmitsStreamGap(t *testing.T) {
 	}
 }
 
+// Hub IDs are minted per Publish, so they stay contiguous when a producer loses events before the Hub. The
+// producer reports the loss; an open subscriber and a later resume from before it must both see a marker.
+func TestHub_PublishGapMarksOpenSubscribersAndLaterResumes(t *testing.T) {
+	hub := streaming.NewHub(8)
+	before := hub.Publish("closed:a/b/300", "x", []byte("before the loss"))
+	hub.Publish("other:topic", "x", []byte("unrelated"))
+
+	open := mustSubscribe(t, hub, []string{"closed:a/b/300", "closed:a2/b/300"}, "")
+	bystander := mustSubscribe(t, hub, []string{"other:topic"}, "")
+
+	marked := hub.PublishGap(func(topic string) bool { return strings.HasPrefix(topic, "closed:") })
+	if marked != 2 {
+		t.Fatalf("PublishGap marked %d topic(s), want the 2 closed ones", marked)
+	}
+	after := hub.Publish("closed:a/b/300", "x", []byte("after the loss"))
+
+	// One marker per connection, not one per alias topic, with no ID, ahead of the next event.
+	got := drainNonblocking(t, open, 2, time.Second)
+	if len(got) != 2 || got[0].Type != streaming.EventTypeStreamGap || got[0].ID != "" || got[1].ID != after {
+		t.Fatalf("open subscriber got %+v, want one %q marker then the next event", got, streaming.EventTypeStreamGap)
+	}
+	if !strings.Contains(string(got[0].Data), `"requested_after":"`+before+`"`) {
+		t.Errorf("marker data = %s, want requested_after = the last event before the loss", got[0].Data)
+	}
+	if got := drainNonblocking(t, bystander, 1, 100*time.Millisecond); len(got) != 0 {
+		t.Fatalf("a subscriber on an unmatched topic got %+v", got)
+	}
+
+	// A client that was disconnected across the loss resumes from before it.
+	resumed := mustSubscribe(t, hub, []string{"closed:a/b/300"}, before)
+	got = drainNonblocking(t, resumed, 2, time.Second)
+	if len(got) != 2 || got[0].Type != streaming.EventTypeStreamGap || got[1].ID != after {
+		t.Fatalf("resume from before the loss got %+v, want a marker then the event after it", got)
+	}
+
+	// A cursor from after the loss lost nothing.
+	clean := mustSubscribe(t, hub, []string{"closed:a/b/300"}, after)
+	if got := drainNonblocking(t, clean, 1, 100*time.Millisecond); len(got) != 0 {
+		t.Fatalf("resume from after the loss got %+v, want nothing", got)
+	}
+}
+
 func TestHub_OwnCursorEmitsNoStreamGap(t *testing.T) {
 	hub := streaming.NewHub(8)
 	cursor := hub.Publish("topic", "x", []byte("one"))

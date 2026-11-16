@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -388,6 +389,72 @@ func TestPublisher_PollTimeoutIsNotShutdown(t *testing.T) {
 	}
 	if !strings.Contains(logBuf.String(), "reader missed poll deadline") {
 		t.Errorf("expected a poll-deadline WARN log, got: %s", logBuf.String())
+	}
+}
+
+// The publisher reads only the latest bucket. When polls fail for a while, buckets that closed meanwhile are
+// never published, and Hub IDs stay contiguous, so the publisher must say so. A quiet market also jumps
+// buckets; without a failed poll that is not a gap.
+func TestPublisher_SkippedBucketsAfterFailedPollsPublishAStreamGap(t *testing.T) {
+	for name, tc := range map[string]struct {
+		pollsFail bool
+		want      []string
+	}{
+		"polls failed across the jump": {pollsFail: true, want: []string{"price_update", streaming.EventTypeStreamGap, "price_update"}},
+		"quiet market, polls fine":     {pollsFail: false, want: []string{"price_update", "price_update"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			hub := streaming.NewHub(0)
+			reader := &fakeReader{}
+			asset, quote := mustParse(t, "native"), mustParse(t, "fiat:USD")
+			topic := v1.PriceStreamTopic(asset, quote, 60)
+			bucket := time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)
+			set := func(at time.Time) {
+				reader.SetSnapshot(asset, quote, v1.PriceSnapshot{
+					AssetID: "native", Quote: "fiat:USD", Price: "0.07",
+					PriceType: "vwap", ObservedAt: v1.WireTime(at), WindowSeconds: 60,
+				})
+			}
+			set(bucket)
+
+			ch, cancel, err := hub.Subscribe([]string{topic}, "")
+			if err != nil {
+				t.Fatalf("Subscribe: %v", err)
+			}
+			defer cancel()
+			ctx, cancelRun := context.WithCancel(context.Background())
+			defer cancelRun()
+			pub := streampublish.New(hub, reader, time.Second, nil, streampublish.Options{})
+			go func() { _ = pub.Run(ctx, []canonical.Pair{{Base: asset, Quote: quote}}) }()
+
+			next := func() string {
+				select {
+				case ev := <-ch:
+					return ev.Type
+				case <-time.After(5 * time.Second):
+					t.Fatal("no event within 5s")
+					return ""
+				}
+			}
+			got := []string{next()}
+
+			if tc.pollsFail {
+				reader.mu.Lock()
+				reader.err = errors.New("db down")
+				reader.mu.Unlock()
+				time.Sleep(1500 * time.Millisecond) // at least one failed poll
+				reader.mu.Lock()
+				reader.err = nil
+				reader.mu.Unlock()
+			}
+			set(bucket.Add(5 * time.Minute))
+			for len(got) < len(tc.want) {
+				got = append(got, next())
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("events = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

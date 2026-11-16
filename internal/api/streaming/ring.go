@@ -42,6 +42,14 @@ func (r *ring) oldestID() string {
 	return r.events[0].ID
 }
 
+// newestID is the ID of the newest buffered event, "" when empty.
+func (r *ring) newestID() string {
+	if len(r.events) == 0 {
+		return ""
+	}
+	return r.events[len(r.events)-1].ID
+}
+
 // hasEvicted reports whether this ring has ever discarded an event. A cursor older than [ring.oldestID] is a genuine gap only
 // then; otherwise the oldest event is the topic's first-ever publish, which a stale or synthetic cursor can predate with nothing
 // lost.

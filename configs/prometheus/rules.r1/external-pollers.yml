@@ -346,6 +346,63 @@ groups:
             of the guarded daily rate for its day. Grep the API logs for
             "fx_fixings bar disagrees" to find the bar.
 
+      # The two freshness rules above read one stamp for all tickers, so one
+      # healthy ticker keeps them green. These three watch what a single
+      # ticker (or the store) loses. A cycle is hourly and re-offers 48 h of
+      # bars, so a ticker that keeps failing counts once a cycle.
+      - alert: stellarindex_fx_fixings_ticker_fetch_failing
+        expr: |
+          sum by (ticker) (increase(stellarindex_fx_fixings_fetch_errors_total[6h])) >= 4
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: external-poller
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_fx_fixings_ticker_fetch_failing
+          summary: "fx_fixings bar fetch keeps failing for {{ $labels.ticker }}"
+          description: |
+            The hourly fx_fixings bar fetch for {{ $labels.ticker }} has failed in
+            most cycles of the last 6 h. Its closed fiat-cross buckets
+            past the last stored bar are withheld (fx_leg_unavailable) or
+            fall back to the daily arm, while the fleet-wide freshness
+            alerts stay green on the other tickers. Grep the API logs for
+            "fx_fixings bar fetch failed" for the vendor's answer.
+
+      - alert: stellarindex_fx_fixings_ticker_bars_refused
+        expr: |
+          sum by (ticker) (increase(stellarindex_fx_fixings_bars_refused_total[6h])) >= 4
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: external-poller
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_fx_fixings_ticker_bars_refused
+          summary: "fx_fixings bars for {{ $labels.ticker }} keep being refused by the gate"
+          description: |
+            The fixing gate has refused bars for {{ $labels.ticker }} in most cycles
+            of the last 6 h. A refused bar is never stored, so the buckets
+            it would bind are withheld. Grep the API logs for
+            "fx_fixings gate refused bar" for the bar and its close.
+
+      - alert: stellarindex_fx_fixings_write_failing
+        expr: |
+          sum(increase(stellarindex_fx_fixings_write_errors_total[3h])) >= 2
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: external-poller
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_fx_fixings_write_failing
+          summary: "fx_fixings inserts are failing"
+          description: |
+            Two or more fx_fixings inserts failed in the last 3 h. The
+            bars of the tickers in those batches were fetched and accepted
+            but not stored. Grep the API logs for "fx_fixings insert
+            failed"; check Postgres health first.
+
       # Sustained error rate over 15 min — catches the case where
       # the poller is hitting the venue successfully sometimes but
       # >50% of attempts return non-nil err. Lower severity than

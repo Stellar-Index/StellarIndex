@@ -184,6 +184,18 @@ jobs:
         run: ./scripts/ci/lint-repo-budget.sh
       - name: lint-repo-budget self-test
         run: ./scripts/ci/lint-repo-budget-test.sh
+      # The published spec against the PR base: a removed path, schema,
+      # property or enum value, or a new required input, needs an
+      # `OpenAPI-Break:` commit trailer. Here for the full-history checkout.
+      - name: lint-openapi-compat
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          # PyYAML is not guaranteed on the runner image.
+          python3 -m pip install --quiet 'PyYAML==6.0.2'
+          ./scripts/ci/lint-openapi-compat-test.sh
+          python3 ./scripts/ci/lint-openapi-compat.py
       # §D (govulncheck toolchain parity) durability guard: every
       # actions/setup-go step must resolve its Go version from go.mod,
       # never a hardcoded pin — see the script header for why this is a

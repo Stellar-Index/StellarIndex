@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -174,12 +175,22 @@ func writeEnvelopeStatus(w http.ResponseWriter, status int, env Envelope) {
 	if env.AsOf.IsZero() {
 		env.AsOf = WireTime(time.Now().UTC())
 	}
+	// Encoded before the status line goes out: a value JSON cannot carry (NaN, Inf) must be a 500, not an empty 200.
+	body, err := json.Marshal(env)
+	if err != nil {
+		slog.Default().Error("api: response body not encodable", "err", err)
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"type":"https://api.stellarindex.io/errors/internal","title":"Internal error","status":500}` + "\n"))
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	if env.Flags.Degraded {
 		w.Header().Set("Cache-Control", "no-store")
 	}
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(env)
+	_, _ = w.Write(append(body, '\n'))
 }
 
 // writeProblem writes an RFC 9457 error; typeURL is the stable error-type URL (https://api.stellarindex.io/errors/<name>). A

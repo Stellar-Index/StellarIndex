@@ -34,6 +34,16 @@ installimage installs only the Hetzner-Robot-registered key. Add the CI/deploy
 key (`si_deploy`) to `/root/.ssh/authorized_keys` on the host so ansible/CI can
 reach it.
 
+Then turn password logins off. Confirm a key login works first:
+
+```sh
+install -m 0644 host-sshd-keys-only.conf /etc/ssh/sshd_config.d/00-keys-only.conf
+sshd -t && systemctl reload ssh
+sshd -T | grep -E '^(passwordauthentication|maxstartups) '   # want: no, 60:30:200
+```
+
+The host is not converged by the archival-node role, so nothing else sets this.
+
 ## 3. VMs (libvirt + cloud-init)
 On the host:
 ```sh

@@ -9,7 +9,9 @@ import (
 	"math/big"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -27,6 +29,8 @@ type RedisSubscriber interface {
 // Hub is the subset of [streaming.Hub] the subscriber needs, so tests can substitute a recorder.
 type Hub interface {
 	Publish(topic, eventType string, data []byte) string
+	// PublishGap marks every live topic match accepts as having lost events before the Hub.
+	PublishGap(match func(topic string) bool) int
 }
 
 // Subscriber listens on the [Publisher]'s channel ([DefaultChannel]) and republishes each [ClosedBucketEvent] on the Hub under the `internal/api/v1.PriceStreamTopic` key. Per-topic dedupe state is mutex-guarded; other fields are read-only after construction.
@@ -135,6 +139,9 @@ const (
 // [installChannelDropCounter] matches on it; a wording change only loses the count (fails safe).
 const channelFullLogFormat = "redis: %v channel is full for %s (message is dropped)"
 
+// channelDrops counts go-redis channel drops for [Subscriber.Run], which turns a change into a stream gap.
+var channelDrops atomic.Uint64
+
 // channelDropCounterOnce guards [installChannelDropCounter]: go-redis's logger is one package-global var and there is one Subscriber
 // per binary, so a second install would only replace an identical wrapper.
 var channelDropCounterOnce sync.Once
@@ -155,6 +162,7 @@ type channelDropCountingLogger struct{}
 func (channelDropCountingLogger) Printf(_ context.Context, format string, v ...interface{}) {
 	if format == channelFullLogFormat {
 		obs.APIStreamSubscribeTotal.WithLabelValues(outcomeDroppedSlowConsumer).Inc()
+		channelDrops.Add(1)
 	}
 	slog.Default().Warn(fmt.Sprintf(format, v...))
 }
@@ -190,25 +198,59 @@ func (s *Subscriber) Run(ctx context.Context) error {
 		}
 	}()
 
-	ch := pubsub.Channel(
+	// With subscriptions: go-redis reconnects silently and re-sends SUBSCRIBE, and that confirmation is the
+	// only sign of it. Redis pub/sub keeps nothing for an absent subscriber, so whatever was published while
+	// the connection was down is gone.
+	ch := pubsub.ChannelWithSubscriptions(
 		redis.WithChannelSize(subscribeChannelSize),
 		redis.WithChannelSendTimeout(subscribeChannelSendTimeout),
 	)
 	s.logger.Info("redispub: subscriber listening", "channel", s.channel)
 
+	subscribed := false
+	drops := channelDrops.Load()
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case msg, ok := <-ch:
+		case raw, ok := <-ch:
 			if !ok {
 				// Only a closed PubSub closes the channel (see the doc
 				// above); surface it so the supervisor can restart.
 				return errors.New("redispub: subscribe channel closed unexpectedly")
 			}
-			s.handleMessage([]byte(msg.Payload))
+			if now := channelDrops.Load(); now != drops {
+				drops = now
+				s.reportLoss("go-redis dropped a message on a full channel")
+			}
+			subscribed = s.receive(raw, subscribed)
 		}
 	}
+}
+
+// receive handles one item off the PubSub channel and returns whether the channel is subscribed. A second
+// subscribe confirmation means go-redis reconnected.
+func (s *Subscriber) receive(raw interface{}, subscribed bool) bool {
+	switch msg := raw.(type) {
+	case *redis.Subscription:
+		if msg.Kind != "subscribe" {
+			return subscribed
+		}
+		if subscribed {
+			s.reportLoss("resubscribed after a Redis reconnect")
+		}
+		return true
+	case *redis.Message:
+		s.handleMessage([]byte(msg.Payload))
+	}
+	return subscribed
+}
+
+// reportLoss tells the Hub that closed-bucket events were lost before reaching it, so open streams and later
+// resumes get a stream_gap marker instead of a series that looks complete.
+func (s *Subscriber) reportLoss(why string) {
+	n := s.hub.PublishGap(func(topic string) bool { return strings.HasPrefix(topic, closedTopicPrefix) })
+	s.logger.Warn("redispub: events lost before the Hub; stream_gap published", "reason", why, "topics", n)
 }
 
 // handleMessage decodes and validates one wire payload and republishes the canonical re-marshalled event on the Hub; failures log and
@@ -454,5 +496,8 @@ func parseValueDecimal(s string) (*big.Rat, error) {
 // test keeps them in sync);
 // the window is in the key so per-window publishes don't interleave on one topic.
 func topicForPair(asset, quote string, windowSeconds int64) string {
-	return "closed:" + asset + "/" + quote + "/" + strconv.FormatInt(windowSeconds, 10)
+	return closedTopicPrefix + asset + "/" + quote + "/" + strconv.FormatInt(windowSeconds, 10)
 }
+
+// closedTopicPrefix starts every closed-bucket Hub topic.
+const closedTopicPrefix = "closed:"
