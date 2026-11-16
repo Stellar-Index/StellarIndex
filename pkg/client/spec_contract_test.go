@@ -172,6 +172,7 @@ var uncoveredOperations = map[string]string{
 	"GET /lending/pools/{pool}/config-history":    "lending drill-down — explorer surface",
 	"GET /lending/pools/{pool}/backstop":          "lending drill-down — explorer surface",
 	"GET /lending/pools/{pool}/auctions":          "lending drill-down — explorer surface",
+	"GET /lending/accounts/{account}/earnings":    "lending drill-down — explorer surface",
 	"GET /pools/reserves":                         "AMM reserve/depth drill-down — explorer surface",
 	"GET /liquidity-pools":                        "native (CAP-38) pool reserve/depth drill-down — explorer surface",
 	"GET /mev":                                    "MEV feed — explorer surface",
