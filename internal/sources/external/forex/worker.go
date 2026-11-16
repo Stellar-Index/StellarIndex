@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
@@ -128,9 +129,9 @@ type Worker struct {
 	// activeSource is the feed behind the CURRENT snapshot, stamped into fx_quotes.source and the
 	// `source` metric label so the metric shows the live feed. Single-goroutine, like guards.
 	activeSource string
-	// stalePrimaryRates is the primary's answer when this refresh served a standby over it for age, else nil. The vendor is
-	// up, so its hourly bars (fx_fixings) are still fetched for these tickers.
-	stalePrimaryRates map[string]float64
+	// stalePrimaryCodes is the currency codes the primary answered with when this refresh served a standby over it for age,
+	// else nil. The vendor is up, so its hourly bars (fx_fixings) are still fetched for them.
+	stalePrimaryCodes []string
 
 	// fixingWriter, when set, receives the vendor-time hourly bars after every refresh
 	// (fx_fixings); fixingNewest is the newest committed bar_end. Only touched from refreshOnce.
@@ -240,12 +241,12 @@ func fxSessionDay(day time.Time) bool {
 	return (m != time.December || d != 25) && (m != time.January || d != 1)
 }
 
-// namedTickers is the upper-case tickers of rates that names knows, less the anchor, sorted.
-func namedTickers(rates map[string]float64, names map[string]string) []string {
+// namedTickers is the upper-case tickers of the codes that names knows, less the anchor, sorted.
+func namedTickers(codes []string, names map[string]string) []string {
 	names = lowerKeyed(names)
-	out := make([]string, 0, len(rates))
-	for code := range lowerKeyed(rates) {
-		if _, named := names[code]; named && upper(code) != anchorTicker {
+	out := make([]string, 0, len(codes))
+	for _, code := range codes {
+		if _, named := names[strings.ToLower(code)]; named && upper(code) != anchorTicker {
 			out = append(out, upper(code))
 		}
 	}
@@ -257,7 +258,7 @@ func namedTickers(rates map[string]float64, names map[string]string) []string {
 // whose publication is stale ([publicationStale]) is treated as failed, but is still served when no standby has a newer one and
 // the cache holds nothing newer. Context cancellation short-circuits rather than burning through every fallback.
 func (w *Worker) fetchRates(ctx context.Context) (map[string]float64, time.Time, string, error) {
-	w.stalePrimaryRates = nil
+	w.stalePrimaryCodes = nil
 	rates, publishedAt, err := w.client.LatestUSDRates(ctx)
 	stale := err == nil && publicationStale(publishedAt, w.clock())
 	if err == nil && !stale {
@@ -286,7 +287,9 @@ func (w *Worker) fetchRates(ctx context.Context) (map[string]float64, time.Time,
 				"primary", fxSource, "primary_err", primaryErr,
 				"fallback", fb.Name(), "currencies", len(fbRates))
 			if stale {
-				w.stalePrimaryRates = rates
+				for code := range rates {
+					w.stalePrimaryCodes = append(w.stalePrimaryCodes, code)
+				}
 			}
 			return fbRates, fbPublishedAt, fb.Name(), nil
 		}
@@ -373,8 +376,8 @@ func (w *Worker) refreshOnce(ctx context.Context) {
 
 	w.writeBatch(ctx, res)
 	fixingTickers := massiveTickers(raw, source)
-	if w.stalePrimaryRates != nil {
-		fixingTickers = namedTickers(w.stalePrimaryRates, names)
+	if w.stalePrimaryCodes != nil {
+		fixingTickers = namedTickers(w.stalePrimaryCodes, names)
 	}
 	w.appendFixings(ctx, fixingTickers, snap)
 }

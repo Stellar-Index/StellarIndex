@@ -84,7 +84,7 @@ func TestFetchRates_StalePrimaryHandsOffToANewerStandby(t *testing.T) {
 		t.Fatalf("got source %q EUR %v published %v, want the newer standby", source, rates["EUR"], publishedAt)
 	}
 	// The vendor answered, so its hourly bars are still fetched for what it lists.
-	if got := namedTickers(w.stalePrimaryRates, guardedNames); len(got) != 1 || got[0] != "EUR" {
+	if got := namedTickers(w.stalePrimaryCodes, guardedNames); len(got) != 1 || got[0] != "EUR" {
 		t.Errorf("fixing tickers behind the standby = %v, want [EUR]", got)
 	}
 }
