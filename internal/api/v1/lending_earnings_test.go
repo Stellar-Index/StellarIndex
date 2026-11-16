@@ -175,9 +175,10 @@ func TestLendingAccountEarnings_UnknownAndInvalidAccount(t *testing.T) {
 
 // verifiedLendingHistory is a verdict set whose Blend projections are verified from their genesis.
 func verifiedLendingHistory() *stubCompletenessReader {
+	now := time.Now().UTC()
 	return &stubCompletenessReader{snaps: []timescale.CompletenessSnapshot{
-		{Source: "blend", Genesis: 100, ProjectionOK: true, ProjectionVerifiedFrom: 100},
-		{Source: "blend_backstop", Genesis: 100, ProjectionOK: true, ProjectionVerifiedFrom: 100},
+		{Source: "blend", Genesis: 100, ProjectionOK: true, ProjectionVerifiedFrom: 100, ComputedAt: now, ProjectionEvidencedAt: now},
+		{Source: "blend_backstop", Genesis: 100, ProjectionOK: true, ProjectionVerifiedFrom: 100, ComputedAt: now, ProjectionEvidencedAt: now},
 	}}
 }
 
@@ -198,20 +199,24 @@ func TestLendingAccountEarnings_HistoryUnverified(t *testing.T) {
 	pr := &stubEarningsPositions{stubPositionsReader: &stubPositionsReader{blend: []timescale.BlendPositionFold{{
 		Pool: pool, Asset: asset, HasSupplyLeg: true, SupplyNet: "90", SupplyTokens: "100", SupplyLastLedger: 500,
 	}}}}
-	snap := func(ok bool, from uint32) *stubCompletenessReader {
-		return &stubCompletenessReader{snaps: []timescale.CompletenessSnapshot{{Source: "blend", Genesis: 100, ProjectionOK: ok, ProjectionVerifiedFrom: from}}}
+	snap := func(ok bool, from uint32, computed time.Time) *stubCompletenessReader {
+		return &stubCompletenessReader{snaps: []timescale.CompletenessSnapshot{{
+			Source: "blend", Genesis: 100, ProjectionOK: ok, ProjectionVerifiedFrom: from, ComputedAt: computed, ProjectionEvidencedAt: computed,
+		}}}
 	}
+	now := time.Now().UTC()
 	cases := []struct {
 		name        string
 		reader      *stubCompletenessReader
 		exact, fail bool
 	}{
-		{name: "verified from genesis", reader: snap(true, 100), exact: true},
+		{name: "verified from genesis", reader: snap(true, 100, now), exact: true},
+		{name: "verdict past its freshness gate", reader: snap(true, 100, time.Time{})},
 		{name: "no reader"},
 		{name: "no verdict for the source", reader: &stubCompletenessReader{}},
-		{name: "floor after genesis", reader: snap(true, 101)},
-		{name: "floor unknown", reader: snap(true, 0)},
-		{name: "projection not ok", reader: snap(false, 100)},
+		{name: "floor after genesis", reader: snap(true, 101, now)},
+		{name: "floor unknown", reader: snap(true, 0, now)},
+		{name: "projection not ok", reader: snap(false, 100, now)},
 		{name: "verdict read fails", reader: &stubCompletenessReader{err: errors.New("pg down")}, fail: true},
 	}
 	for _, tc := range cases {

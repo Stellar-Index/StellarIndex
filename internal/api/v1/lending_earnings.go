@@ -248,10 +248,13 @@ func earningsLegSource(leg LendingEarningsLeg) string {
 func (s *Server) withholdUnverifiedHistory(ctx context.Context, legs []LendingEarningsLeg) (failed bool) {
 	verified := map[string]bool{}
 	if s.CompletenessReader != nil {
-		snaps, err := s.CompletenessReader.ListCompletenessSnapshots(ctx)
+		snaps, stale, err := s.completenessVerdicts(ctx)
 		if err != nil {
 			s.logger.Warn("lending earnings: completeness read failed", "err", err)
 			failed = true
+		}
+		if stale {
+			snaps = nil // a verdict past its freshness gate verifies nothing
 		}
 		for _, sn := range snaps {
 			verified[sn.Source] = sn.ProjectionOK && sn.ProjectionVerifiedFrom != 0 && sn.ProjectionVerifiedFrom <= sn.Genesis
