@@ -386,7 +386,9 @@ func (in reserveHistoryIn) point(pool, asset string, row stateRow) (LendingReser
 		return p, false
 	}
 	var configs map[string]blend.ReserveConfig
-	if c := inForce(in.cfg, row); c != nil && c.entry != "" {
+	c, cfgUncertain := inForce(in.cfg, row)
+	p.ConfigUncertain = cfgUncertain
+	if c != nil && c.entry != "" && !cfgUncertain {
 		v, ok := contractDataValue(c.entry)
 		if !ok {
 			return p, false
@@ -397,17 +399,32 @@ func (in reserveHistoryIn) point(pool, asset string, row stateRow) (LendingReser
 		}
 		configs, p.ConfigLedger = map[string]blend.ReserveConfig{asset: cfg}, c.ledger
 	}
-	var inst *PoolInstance
-	if i := inForce(in.inst, row); i != nil && i.entry != "" {
-		v, ok := contractDataValue(i.entry)
-		if !ok {
-			return p, false
-		}
-		if pi, ok := poolInstanceFromStorage(v); ok {
-			inst = &pi
-		}
+	inst, ok := in.instance(row)
+	if !ok {
+		return p, false
+	}
+	if _, instUncertain := inForce(in.inst, row); instUncertain && configs != nil {
+		// The borrow rate needs no pool config; the instance only sets the backstop's share of it, so only SupplyAPR is unknown.
+		p.PoolConfigUncertain = true
 	}
 	st := assembleReserveStates(pool, []string{asset}, map[string]*blend.ReserveData{asset: &rd}, configs, inst, model.metrics)
 	p.State = st[0]
 	return p, true
+}
+
+// instance decodes the pool instance in force at row; nil when none is or it does not decode as a pool, ok=false when its
+// entry is not contract data.
+func (in reserveHistoryIn) instance(row stateRow) (*PoolInstance, bool) {
+	i, _ := inForce(in.inst, row)
+	if i == nil || i.entry == "" {
+		return nil, true
+	}
+	v, ok := contractDataValue(i.entry)
+	if !ok {
+		return nil, false
+	}
+	if pi, ok := poolInstanceFromStorage(v); ok {
+		return &pi, true
+	}
+	return nil, true
 }

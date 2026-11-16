@@ -1902,20 +1902,30 @@ export interface paths {
          * Lending pool — one reserve's state history.
          * @description One reserve's on-chain state (Blend V1/V2, BLNT V3) at the close
          *     of every hour (`interval=1h`) or UTC day (`interval=1d`, the
-         *     day's last hourly state) in which it changed, read from the
-         *     lake's hourly record of the pool's storage and decoded exactly
-         *     as `/v1/lending/pools/{pool}/reserves` decodes current state, so
-         *     the last point equals the live figures. Buckets with no change
-         *     have no point: carry the previous point forward. The first point
-         *     is the state in force at `from` when one is recorded;
+         *     day's last hourly state) in which it changed, computed from the
+         *     lake's hourly record of the pool's on-chain storage with the
+         *     same rate model as `/v1/lending/pools/{pool}/reserves`, through
+         *     `history_through_ledger`. The live endpoint reads the reserve
+         *     config from event projections and runs ahead of the history, so
+         *     the two can differ. Buckets with no change have no point: carry
+         *     the previous point forward. `from` is rounded down to the start
+         *     of its hour (`1h`) or UTC day (`1d`) and echoed; the first point
+         *     is the state in force then when one is recorded, and
          *     `before_first_state` is true when nothing is recorded at or
-         *     before `from`.
+         *     before it.
          *
          *     Each point pairs the reserve state with the `ResConfig` and pool
          *     instance in force at that moment (the newest entry at or before
          *     the state's ledger and transaction; an entry written by the same
          *     transaction is in force). `config_ledger` is null when no config
-         *     is in force, and then the APRs and config fields are null.
+         *     is in force, and then the APRs and config fields are null. Only
+         *     each hour's last `ResConfig` and instance are recorded, so when
+         *     either changed later in the same hour as the state, the one in
+         *     force at the state is not known: `config_uncertain` is true and
+         *     what depends on it is null (`config_ledger`, both APRs and the
+         *     config fields for the reserve config; `supply_apr` alone for the
+         *     pool instance, which sets the backstop's share of interest). The
+         *     state itself is exact either way.
          *     `supplied`, `borrowed` and `backstop_credit` are underlying base
          *     units; `b_rate` / `d_rate` are raw contract integers at
          *     `rate_decimals` (9 on a Blend V1 pool, else 12) and `ir_mod` at
@@ -1923,16 +1933,21 @@ export interface paths {
          *     raw integers at `config_decimals`. `removed` points mark a
          *     deleted state entry and carry null figures.
          *
-         *     Defaults: `interval=1d`, the last 90 days. `interval=1h` allows
-         *     at most a 90-day window. A series of more than 2,000 points is a
-         *     400 (ask for `interval=1d` or a narrower window), never a
-         *     truncated series. `history_through_ledger` is the ledger the
-         *     history is complete through; `flags.stale` is set when it trails
-         *     the lake tip by more than 1,000 ledgers or the lake is stale.
-         *     `dropped_points` counts points whose entries failed to decode;
-         *     they are left out, never zero-filled, and the response is not
-         *     cached. 503 `history-unavailable` when this deployment has not
-         *     derived the history. No USD values.
+         *     Defaults: `interval=1d`, the last 90 days; `interval=1h`, the
+         *     last 83 days. The widest window is 83 days at `interval=1h` and
+         *     1,998 days at `interval=1d`, so a series stays within the
+         *     2,000-point cap; a wider window is a 400 `invalid-window`, never
+         *     a truncated series. `history_through_ledger` is the derive
+         *     watermark; points cover only the hours before the hour that
+         *     contains it, which is served once the derive passes its end.
+         *     `flags.stale` is set when it trails the lake tip by more than
+         *     1,000 ledgers or the lake is stale. `dropped_points` counts
+         *     points whose entries failed to decode; they are left out, never
+         *     zero-filled, and the response is not cached. 404 `not-found`
+         *     when no lending source knows the pool, or nothing was ever
+         *     recorded for this reserve in it (a window with no change is a
+         *     200 with no points). 503 `history-unavailable` when this
+         *     deployment has not derived the history. No USD values.
          */
         get: operations["getLendingReserveHistory"];
         put?: never;
@@ -2049,8 +2064,9 @@ export interface paths {
          *     `flags.stale`, `dropped_points` and the 503 are as on
          *     `/v1/lending/pools/{pool}/reserves/{asset}/history`.
          *     `available` is false with `unavailable_reason`, as on the live
-         *     backstop endpoint, for a Blend V1 pool, a pool of unknown
-         *     lineage, or one whose instance names no backstop.
+         *     backstop endpoint, for a Blend V1 pool or one whose instance
+         *     names no backstop. 404 `not-found` when no lending source knows
+         *     the pool.
          */
         get: operations["getLendingBackstopHistory"];
         put?: never;
@@ -17886,7 +17902,7 @@ export interface operations {
         parameters: {
             query?: {
                 interval?: "1h" | "1d";
-                /** @description RFC 3339; default `to` - 90 days. */
+                /** @description RFC 3339, rounded down to the start of its hour (`1h`) or UTC day (`1d`); default `to` - 90 days (`1d`) or 83 days (`1h`). */
                 from?: string;
                 /** @description RFC 3339; default now. */
                 to?: string;
@@ -17944,7 +17960,8 @@ export interface operations {
                      *             "supply_apr": 0.0413,
                      *             "collateral_factor": "9000000",
                      *             "liability_factor": "9500000",
-                     *             "supply_cap": "100000000000000"
+                     *             "supply_cap": "100000000000000",
+                     *             "config_uncertain": false
                      *           }
                      *         ]
                      *       },
@@ -17982,7 +17999,7 @@ export interface operations {
                             config_decimals: number;
                             /**
                              * Format: int64
-                             * @description Ledger the stored history is complete through.
+                             * @description Derive watermark. Points cover only the hours before the hour containing this ledger; that hour is served once the derive passes its end.
                              */
                             history_through_ledger: number;
                             /**
@@ -17992,7 +18009,7 @@ export interface operations {
                             history_through_time: string | null;
                             /** @description Points left out because an entry failed to decode. */
                             dropped_points: number;
-                            /** @description True when no state is recorded at or before `from`. */
+                            /** @description True when no state is recorded at or before the echoed `from`. */
                             before_first_state: boolean;
                             points: {
                                 /**
@@ -18018,12 +18035,15 @@ export interface operations {
                                 liability_factor: string | null;
                                 /** @description Base units; null on Blend V1 and when no config is in force. */
                                 supply_cap: string | null;
+                                /** @description True when the reserve config or the pool instance changed later in this state's hour, so the one in force at this state is not known; the fields that depend on it are null. */
+                                config_uncertain: boolean;
                             }[];
                         };
                     };
                 };
             };
             400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
             503: components["responses"]["ServiceUnavailable"];
         };
     };
@@ -18231,7 +18251,7 @@ export interface operations {
         parameters: {
             query?: {
                 interval?: "1h" | "1d";
-                /** @description RFC 3339; default `to` - 90 days. */
+                /** @description RFC 3339, rounded down to the start of its hour (`1h`) or UTC day (`1d`); default `to` - 90 days (`1d`) or 83 days (`1h`). */
                 from?: string;
                 /** @description RFC 3339; default now. */
                 to?: string;
@@ -18309,7 +18329,10 @@ export interface operations {
                             from: string;
                             /** Format: date-time */
                             to: string;
-                            /** Format: int64 */
+                            /**
+                             * Format: int64
+                             * @description As on the reserve history: points cover only the hours before the hour containing this ledger.
+                             */
                             history_through_ledger: number;
                             /** Format: date-time */
                             history_through_time: string | null;
@@ -18335,6 +18358,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
             503: components["responses"]["ServiceUnavailable"];
         };
     };

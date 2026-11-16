@@ -14,6 +14,9 @@ import (
 // ErrLendingHistoryNotReady means lending_state_hourly has no watermark: the derive has never run on this host.
 var ErrLendingHistoryNotReady = errors.New("clickhouse: lending state history not derived yet")
 
+// ErrLendingReserveNotFound means the pool has no ResData row for the asset at all: no such reserve, as far as the history knows.
+var ErrLendingReserveNotFound = errors.New("clickhouse: no lending reserve state recorded")
+
 // ErrLendingHistoryTooManyPoints means one series holds more than LendingHistoryQuery.MaxPoints points.
 var ErrLendingHistoryTooManyPoints = errors.New("clickhouse: lending history exceeds the point cap")
 
@@ -24,26 +27,47 @@ type LendingHistoryQuery struct {
 	MaxPoints int  // per series, excluding the seed
 }
 
+// Aligned rounds From down to the start of its bucket (UTC hour or day), so the seed is the state in force when the first
+// bucket opens: a bucket stores only its last change, never the state at a time inside it.
+func (q LendingHistoryQuery) Aligned() LendingHistoryQuery {
+	f := q.From.UTC()
+	if q.Daily {
+		q.From = time.Date(f.Year(), f.Month(), f.Day(), 0, 0, 0, 0, time.UTC)
+	} else {
+		q.From = f.Truncate(time.Hour)
+	}
+	return q
+}
+
 // LendingHistoryCoverage is how far lending_state_hourly is complete.
 type LendingHistoryCoverage struct {
 	ThroughLedger uint32
-	ThroughTime   time.Time // zero when the lake has no row for that ledger
+	ThroughTime   time.Time
+}
+
+// servedBefore is the start of the watermark's hour; only hours before it are read.
+func (c LendingHistoryCoverage) servedBefore() int64 {
+	return c.ThroughTime.UTC().Truncate(time.Hour).Unix()
 }
 
 // LendingReservePoint is a reserve's state at the close of a bucket in which it changed.
 type LendingReservePoint struct {
 	CloseTime    time.Time
 	StateLedger  uint32
-	ConfigLedger uint32 // ledger of the ResConfig in force; 0 when none is
+	ConfigLedger uint32 // ledger of the ResConfig in force; 0 when none is or it is unknown
 	Removed      bool   // the ResData entry was removed; State is zero
-	State        BlendReserveState
+	// ConfigUncertain: the ResConfig changed later in this state's hour, so the one in force is unknown; State has no config.
+	ConfigUncertain bool
+	// PoolConfigUncertain: the pool instance changed later in this state's hour; State's SupplyAPR is not valid.
+	PoolConfigUncertain bool
+	State               BlendReserveState
 }
 
 // LendingReserveHistory is one reserve's state series.
 type LendingReserveHistory struct {
 	Coverage LendingHistoryCoverage
 	Protocol string // of the newest row read; "" when none
-	// BeforeFirstState is true when no state is recorded at or before From.
+	// BeforeFirstState is true when no state is recorded at or before the aligned From.
 	BeforeFirstState bool
 	Points           []LendingReservePoint
 	Undecodable      int // rows dropped because an entry in them failed to decode
@@ -88,12 +112,15 @@ func compareVersion(a, b stateRow) int {
 
 // lendingHistoryRangeQuery reads (from, to] of some keys, one row per bucket. Filters on non-key columns sit outside
 // the FINAL subquery and prewhere is off so they apply after the collapse: an older version must not resurface.
+// Only hours before the watermark's hour are read: a derive in flight may already hold a newer version of that hour, which
+// FINAL would keep over the served one; every earlier hour holds only ledgers at or below the watermark.
 const lendingHistoryRangeQuery = `SELECT key_xdr, protocol, ledger_seq, intra_ledger_seq, close_time, entry_xdr FROM (
 		SELECT key_xdr, protocol, hour, ledger_seq, intra_ledger_seq, close_time, entry_xdr FROM (
 			SELECT key_xdr, protocol, hour, ledger_seq, intra_ledger_seq, close_time, entry_xdr
 			FROM stellar.lending_state_hourly FINAL
 			WHERE contract_id = ? AND key_xdr IN (?) AND hour >= toStartOfHour(toDateTime(?, 'UTC')) AND hour <= toDateTime(?, 'UTC')
-		) WHERE ledger_seq <= ? AND close_time > toDateTime(?, 'UTC') AND close_time <= toDateTime(?, 'UTC')
+				AND hour < toDateTime(?, 'UTC')
+		) WHERE close_time > toDateTime(?, 'UTC') AND close_time <= toDateTime(?, 'UTC')
 		ORDER BY key_xdr, hour DESC
 		LIMIT 1 BY key_xdr, if(? = 1, toStartOfDay(hour), hour)
 	)
@@ -101,17 +128,23 @@ const lendingHistoryRangeQuery = `SELECT key_xdr, protocol, ledger_seq, intra_le
 	LIMIT ? BY key_xdr
 	SETTINGS optimize_move_to_prewhere_if_final = 0`
 
-// lendingHistorySeedQuery is each key's last row at or before from: the state in force when the window opens.
+// lendingHistorySeedQuery is each key's last row at or before from: the state in force when the window opens. The same
+// watermark-hour bound as lendingHistoryRangeQuery applies.
 const lendingHistorySeedQuery = `SELECT key_xdr, protocol, ledger_seq, intra_ledger_seq, close_time, entry_xdr FROM (
 		SELECT key_xdr, protocol, hour, ledger_seq, intra_ledger_seq, close_time, entry_xdr
 		FROM stellar.lending_state_hourly FINAL
-		WHERE contract_id = ? AND key_xdr IN (?) AND hour <= toDateTime(?, 'UTC')
-	) WHERE ledger_seq <= ? AND close_time <= toDateTime(?, 'UTC')
+		WHERE contract_id = ? AND key_xdr IN (?) AND hour <= toDateTime(?, 'UTC') AND hour < toDateTime(?, 'UTC')
+	) WHERE close_time <= toDateTime(?, 'UTC')
 	ORDER BY key_xdr, hour DESC
 	LIMIT 1 BY key_xdr
 	SETTINGS optimize_move_to_prewhere_if_final = 0`
 
-// lendingHistoryCoverage reads the derive watermark; ErrLendingHistoryNotReady when it never ran.
+// lendingHistoryKeyRowsQuery counts a key's rows of any version in the served hours.
+const lendingHistoryKeyRowsQuery = `SELECT count() FROM stellar.lending_state_hourly
+	WHERE contract_id = ? AND key_xdr = ? AND hour < toDateTime(?, 'UTC')`
+
+// lendingHistoryCoverage reads the derive watermark; ErrLendingHistoryNotReady when it never ran or the lake has no close time
+// for it, since the served hours are bounded by that time.
 func (r *ExplorerReader) lendingHistoryCoverage(ctx context.Context) (LendingHistoryCoverage, error) {
 	wm, err := entryWatermarkOn(ctx, r.conn, lendingStateWatermarkName)
 	if err != nil {
@@ -120,9 +153,12 @@ func (r *ExplorerReader) lendingHistoryCoverage(ctx context.Context) (LendingHis
 	if wm == 0 {
 		return LendingHistoryCoverage{}, ErrLendingHistoryNotReady
 	}
-	at, _, err := r.CloseTimeForLedger(ctx, wm)
+	at, found, err := r.CloseTimeForLedger(ctx, wm)
 	if err != nil {
 		return LendingHistoryCoverage{}, err
+	}
+	if !found {
+		return LendingHistoryCoverage{}, ErrLendingHistoryNotReady
 	}
 	return LendingHistoryCoverage{ThroughLedger: wm, ThroughTime: at}, nil
 }
@@ -147,10 +183,11 @@ func (r *ExplorerReader) lendingStateRows(ctx context.Context, query string, arg
 	return out, nil
 }
 
-// readSeries reads the seed and the bucketed range of keys under one contract, capped at the watermark.
-func (r *ExplorerReader) readSeries(ctx context.Context, contract string, keys []string, q LendingHistoryQuery, wm uint32) (seed, rng []stateRow, err error) {
-	from, to := q.From.Unix(), q.To.Unix()
-	seed, err = r.lendingStateRows(ctx, lendingHistorySeedQuery, contract, keys, from, wm, from)
+// readSeries reads the seed and the bucketed range of keys under one contract, capped at the watermark's hour.
+func (r *ExplorerReader) readSeries(ctx context.Context, contract string, keys []string, q LendingHistoryQuery, cov LendingHistoryCoverage) (seed, rng []stateRow, err error) {
+	q = q.Aligned()
+	from, to, before := q.From.Unix(), q.To.Unix(), cov.servedBefore()
+	seed, err = r.lendingStateRows(ctx, lendingHistorySeedQuery, contract, keys, from, before, from)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -158,7 +195,7 @@ func (r *ExplorerReader) readSeries(ctx context.Context, contract string, keys [
 	if q.Daily {
 		daily = 1
 	}
-	rng, err = r.lendingStateRows(ctx, lendingHistoryRangeQuery, contract, keys, from, to, wm, from, to, daily, q.MaxPoints+1)
+	rng, err = r.lendingStateRows(ctx, lendingHistoryRangeQuery, contract, keys, from, to, before, from, to, daily, q.MaxPoints+1)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -172,8 +209,8 @@ func (r *ExplorerReader) readSeries(ctx context.Context, contract string, keys [
 }
 
 // readInForce reads every row of keys up to To: the reserve config and instance versions a point pairs with.
-func (r *ExplorerReader) readInForce(ctx context.Context, contract string, keys []string, to time.Time, wm uint32) ([]stateRow, error) {
-	rows, err := r.lendingStateRows(ctx, lendingHistoryRangeQuery, contract, keys, int64(0), to.Unix(), wm, int64(0), to.Unix(), uint8(0), uint64(1)<<32)
+func (r *ExplorerReader) readInForce(ctx context.Context, contract string, keys []string, to time.Time, cov LendingHistoryCoverage) ([]stateRow, error) {
+	rows, err := r.lendingStateRows(ctx, lendingHistoryRangeQuery, contract, keys, int64(0), to.Unix(), cov.servedBefore(), int64(0), to.Unix(), uint8(0), uint64(1)<<32)
 	if err != nil {
 		return nil, err
 	}
@@ -208,11 +245,16 @@ func (r *ExplorerReader) LendingReserveHistory(ctx context.Context, pool, asset 
 	if err != nil {
 		return LendingReserveHistory{}, err
 	}
-	seed, rng, err := r.readSeries(ctx, pool, []string{dataKey}, q, cov.ThroughLedger)
+	seed, rng, err := r.readSeries(ctx, pool, []string{dataKey}, q, cov)
 	if err != nil {
 		return LendingReserveHistory{}, err
 	}
-	inForce, err := r.readInForce(ctx, pool, append([]string{cfgKey}, instKeys...), q.To, cov.ThroughLedger)
+	if len(seed) == 0 && len(rng) == 0 {
+		if err := r.requireKeyRows(ctx, pool, dataKey, cov); err != nil {
+			return LendingReserveHistory{}, err
+		}
+	}
+	inForce, err := r.readInForce(ctx, pool, append([]string{cfgKey}, instKeys...), q.To, cov)
 	if err != nil {
 		return LendingReserveHistory{}, err
 	}
@@ -220,6 +262,18 @@ func (r *ExplorerReader) LendingReserveHistory(ctx context.Context, pool, asset 
 	out := assembleReserveHistory(pool, asset, append(seed, rng...), cfgRows, instRows)
 	out.Coverage, out.BeforeFirstState = cov, len(seed) == 0
 	return out, nil
+}
+
+// requireKeyRows returns ErrLendingReserveNotFound when key has no row in the served hours.
+func (r *ExplorerReader) requireKeyRows(ctx context.Context, contract, key string, cov LendingHistoryCoverage) error {
+	var n uint64
+	if err := r.conn.QueryRow(ctx, lendingHistoryKeyRowsQuery, contract, key, cov.servedBefore()).Scan(&n); err != nil {
+		return fmt.Errorf("clickhouse: lending reserve rows: %w", err)
+	}
+	if n == 0 {
+		return ErrLendingReserveNotFound
+	}
+	return nil
 }
 
 // splitByKey separates the in-force rows into the ResConfig rows and the instance rows, each in version order.
@@ -235,17 +289,19 @@ func splitByKey(rows []stateRow, cfgKey string) (cfg, inst []stateRow) {
 }
 
 // inForce returns the newest row whose version is at or below at's; a tie is the same transaction, whose end state holds both.
-func inForce(rows []stateRow, at stateRow) *stateRow {
+// uncertain is true when a later row falls in at's hour: only an hour's last row is kept, so the one in force at at is unknown.
+func inForce(rows []stateRow, at stateRow) (row *stateRow, uncertain bool) {
 	i, _ := slices.BinarySearchFunc(rows, at, func(e, t stateRow) int {
 		if compareVersion(e, t) <= 0 {
 			return -1
 		}
 		return 1
 	})
+	uncertain = i < len(rows) && rows[i].close.Truncate(time.Hour).Equal(at.close.Truncate(time.Hour))
 	if i == 0 {
-		return nil
+		return nil, uncertain
 	}
-	return &rows[i-1]
+	return &rows[i-1], uncertain
 }
 
 // reserveHistoryIn is the ResConfig and instance versions a reserve's points pair with, in version order.
@@ -283,7 +339,7 @@ func (r *ExplorerReader) LendingBackstopHistory(ctx context.Context, pool string
 	if err != nil {
 		return LendingBackstopHistory{}, err
 	}
-	insts, err := r.lendingStateRows(ctx, lendingHistorySeedQuery, pool, instKeys, q.To.Unix(), cov.ThroughLedger, q.To.Unix())
+	insts, err := r.lendingStateRows(ctx, lendingHistorySeedQuery, pool, instKeys, q.To.Unix(), cov.servedBefore(), q.To.Unix())
 	if err != nil {
 		return LendingBackstopHistory{}, err
 	}
@@ -316,7 +372,7 @@ func (r *ExplorerReader) LendingBackstopHistory(ctx context.Context, pool string
 	for _, k := range tierKey {
 		keys = append(keys, k)
 	}
-	seed, rng, err := r.readSeries(ctx, out.Backstop, keys, q, cov.ThroughLedger)
+	seed, rng, err := r.readSeries(ctx, out.Backstop, keys, q, cov)
 	if err != nil {
 		return LendingBackstopHistory{}, err
 	}

@@ -79,8 +79,15 @@ func histInstance(t *testing.T) string {
 	return histEntry(t, poolInstanceVal(t, v2PoolConfigMap(t)))
 }
 
+// histRow is a row closing in its own hour (ledger N closes at hour N), so only rows of one ledger share an hour.
 func histRow(protocol string, ledger, intra uint32, entry string) stateRow {
-	return stateRow{protocol: protocol, ledger: ledger, intra: intra, close: time.Unix(int64(ledger)*5, 0).UTC(), entry: entry}
+	return stateRow{protocol: protocol, ledger: ledger, intra: intra, close: time.Unix(int64(ledger)*3600, 0).UTC(), entry: entry}
+}
+
+func histRowAt(protocol string, ledger uint32, at time.Time, entry string) stateRow {
+	r := histRow(protocol, ledger, 1, entry)
+	r.close = at
+	return r
 }
 
 const (
@@ -97,7 +104,7 @@ func TestAssembleReserveHistory_ConfigInForcePairing(t *testing.T) {
 	rows := []stateRow{
 		histRow(LendingBlendV2, 40, 1, data),  // before any config
 		histRow(LendingBlendV2, 150, 1, data), // old config
-		histRow(LendingBlendV2, 200, 3, data), // same ledger, earlier transaction: still the old config
+		histRow(LendingBlendV2, 200, 3, data), // same hour, earlier transaction: the config in force is unknown
 		histRow(LendingBlendV2, 200, 4, data), // the transaction that wrote the new config
 		histRow(LendingBlendV2, 250, 1, data), // new config
 	}
@@ -108,11 +115,12 @@ func TestAssembleReserveHistory_ConfigInForcePairing(t *testing.T) {
 	want := []struct {
 		cfgLedger uint32
 		cFactor   uint32
-	}{{0, 0}, {100, 9_000_000}, {100, 9_000_000}, {200, 8_000_000}, {200, 8_000_000}}
+		uncertain bool
+	}{{0, 0, false}, {100, 9_000_000, false}, {0, 0, true}, {200, 8_000_000, false}, {200, 8_000_000, false}}
 	for i, w := range want {
 		p := h.Points[i]
-		if p.ConfigLedger != w.cfgLedger {
-			t.Fatalf("point %d config ledger = %d, want %d", i, p.ConfigLedger, w.cfgLedger)
+		if p.ConfigLedger != w.cfgLedger || p.ConfigUncertain != w.uncertain {
+			t.Fatalf("point %d config ledger = %d uncertain %v, want %d %v", i, p.ConfigLedger, p.ConfigUncertain, w.cfgLedger, w.uncertain)
 		}
 		if w.cfgLedger == 0 {
 			if p.State.Config != nil || p.State.Metrics.HasAPR {
@@ -122,6 +130,44 @@ func TestAssembleReserveHistory_ConfigInForcePairing(t *testing.T) {
 		}
 		if p.State.Config == nil || p.State.Config.CFactor != w.cFactor || !p.State.Metrics.HasAPR {
 			t.Fatalf("point %d config = %+v", i, p.State.Config)
+		}
+	}
+}
+
+// TestAssembleReserveHistory_ConfigChangedLaterInTheSameHourIsUncertain: only an hour's last ResConfig and instance rows are
+// kept, so a change later in a state row's hour leaves the version in force at that row unknown.
+func TestAssembleReserveHistory_ConfigChangedLaterInTheSameHourIsUncertain(t *testing.T) {
+	data, instEntry := histResData(t, histBRate, histDRate, histBSupply, histDSupply), histInstance(t)
+	h10 := time.Date(2027, 3, 1, 10, 0, 0, 0, time.UTC)
+	cfg := []stateRow{
+		histRowAt(LendingBlendV2, 100, h10.Add(-time.Hour), histResConfig(t, 9_000_000)),
+		histRowAt(LendingBlendV2, 300, h10.Add(50*time.Minute), histResConfig(t, 8_000_000)),
+	}
+	inst := []stateRow{
+		histRowAt(LendingBlendV2, 50, h10.Add(-2*time.Hour), instEntry),
+		histRowAt(LendingBlendV2, 310, h10.Add(55*time.Minute), instEntry),
+	}
+	rows := []stateRow{
+		histRowAt(LendingBlendV2, 150, h10.Add(-30*time.Minute), data), // config from an earlier hour: in force
+		histRowAt(LendingBlendV2, 200, h10.Add(10*time.Minute), data),  // config changed later in this hour: unknown
+		histRowAt(LendingBlendV2, 300, h10.Add(50*time.Minute), data),  // same transaction as the config; instance later this hour
+		histRowAt(LendingBlendV2, 400, h10.Add(70*time.Minute), data),  // next hour: both in force
+	}
+	h := assembleReserveHistory(blendTestPool, blendTestAssetSAC, rows, cfg, inst)
+	if h.Undecodable != 0 || len(h.Points) != 4 {
+		t.Fatalf("history = %+v", h)
+	}
+	want := []struct {
+		cfgLedger               uint32
+		cfgUnknown, poolUnknown bool
+	}{{100, false, false}, {0, true, false}, {300, false, true}, {300, false, false}}
+	for i, w := range want {
+		p := h.Points[i]
+		if p.ConfigLedger != w.cfgLedger || p.ConfigUncertain != w.cfgUnknown || p.PoolConfigUncertain != w.poolUnknown {
+			t.Fatalf("point %d = ledger %d uncertain %v/%v, want %+v", i, p.ConfigLedger, p.ConfigUncertain, p.PoolConfigUncertain, w)
+		}
+		if p.State.Metrics.SuppliedUnderlying == nil || (p.State.Config == nil) != w.cfgUnknown || p.State.Metrics.HasAPR == w.cfgUnknown {
+			t.Fatalf("point %d state = %+v", i, p.State)
 		}
 	}
 }
@@ -182,6 +228,16 @@ func TestAssembleReserveHistory_BLNTSupplyRate(t *testing.T) {
 	}
 }
 
+func TestLendingHistoryQuery_AlignedRoundsFromDownToItsBucket(t *testing.T) {
+	from := time.Date(2027, 3, 1, 10, 30, 15, 0, time.UTC)
+	if got := (LendingHistoryQuery{From: from}).Aligned().From; !got.Equal(time.Date(2027, 3, 1, 10, 0, 0, 0, time.UTC)) {
+		t.Fatalf("hourly from = %v", got)
+	}
+	if got := (LendingHistoryQuery{From: from, Daily: true}).Aligned().From; !got.Equal(time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("daily from = %v", got)
+	}
+}
+
 func mustValue(t *testing.T, b64 string) xdr.ScVal {
 	t.Helper()
 	v, ok := contractDataValue(b64)
@@ -207,9 +263,9 @@ func TestAssembleReserveHistory_DecodeFailureIsDroppedAndCounted(t *testing.T) {
 	}
 }
 
-// TestReserveHistory_LastPointEqualsLiveState decodes the same entries through the live endpoint's read path
+// TestReserveHistory_SameModelAsLiveOnSameInputs decodes the same entries through the live endpoint's read path
 // (scanReserveParts, assembleReserveStates) and the history, and requires identical state and metrics.
-func TestReserveHistory_LastPointEqualsLiveState(t *testing.T) {
+func TestReserveHistory_SameModelAsLiveOnSameInputs(t *testing.T) {
 	for _, protocol := range []string{LendingBlendV1, LendingBlendV2, LendingBLNT} {
 		data := histResData(t, histBRate, histDRate, histBSupply, histDSupply)
 		cfgEntry, instEntry := histResConfig(t, 9_000_000), histInstance(t)
