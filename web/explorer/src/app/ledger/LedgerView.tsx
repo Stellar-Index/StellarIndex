@@ -70,7 +70,8 @@ export function LedgerView({ seq: seqProp }: { seq?: string } = {}) {
     retry: false,
   });
   const txQ = useQuery<LedgerTransactionsResp>({
-    queryKey: ['/v1/ledgers/{seq}/transactions', seq],
+    // Tagged: the transactions page caches the default page under the bare key.
+    queryKey: ['/v1/ledgers/{seq}/transactions', seq, 'full'],
     enabled: seq != null,
     queryFn: async () => {
       const env = await apiGet<Envelope<LedgerTransactionsResp>>(
