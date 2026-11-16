@@ -107,14 +107,8 @@ func runEntryHistory(ctx context.Context, chAddr string, start, last, window uin
 			return fmt.Errorf("window [%d,%d]: %w — %s", lo, hi, err, sweep.resumeHint(lo))
 		}
 		if !dryRun {
-			if err := sweep.window(ctx, lo, hi); err != nil {
-				return fmt.Errorf("window [%d,%d]: %w — %s", lo, hi, err, sweep.resumeHint(lo))
-			}
-			if err := setSponsorshipWatermark(ctx, chAddr, lo, hi); err != nil {
-				return fmt.Errorf("advance watermark to %d: %w", hi, err)
-			}
-			if err := totals.follow(ctx, lo, hi); err != nil {
-				return fmt.Errorf("window [%d,%d] totals: %w", lo, hi, err)
+			if err := landSponsorshipWindow(ctx, chAddr, sweep, &totals, lo, hi); err != nil {
+				return err
 			}
 		}
 		fmt.Fprintf(os.Stderr, "ch-entry-history: window [%d,%d] done — %d sponsorship events (elapsed %s)\n",
@@ -124,6 +118,20 @@ func runEntryHistory(ctx context.Context, chAddr string, start, last, window uin
 		}
 		lo = hi + 1
 	}
+}
+
+// landSponsorshipWindow finishes a written window: sweep what it replaced, advance the watermark, refresh its totals.
+func landSponsorshipWindow(ctx context.Context, chAddr string, sweep *supersededSweep, totals *sponsorshipTotalsFollower, lo, hi uint32) error {
+	if err := sweep.window(ctx, lo, hi); err != nil {
+		return fmt.Errorf("window [%d,%d]: %w — %s", lo, hi, err, sweep.resumeHint(lo))
+	}
+	if err := setSponsorshipWatermark(ctx, chAddr, lo, hi); err != nil {
+		return fmt.Errorf("advance watermark to %d: %w", hi, err)
+	}
+	if err := totals.follow(ctx, lo, hi); err != nil {
+		return fmt.Errorf("window [%d,%d] totals: %w", lo, hi, err)
+	}
+	return nil
 }
 
 // Seams so a window's derive is testable without a live lake.
