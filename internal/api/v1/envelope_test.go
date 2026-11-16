@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -603,5 +604,19 @@ func TestBareEnvelopeResponsesWalk(t *testing.T) {
 	}
 	if checked != 5 {
 		t.Errorf("checked = %d, want 5 (the 204 and the text/plain response must be skipped)", checked)
+	}
+}
+
+func TestWriteEnvelope_UnencodableBodyIsA500NotAnEmpty200(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeJSON(rec, map[string]float64{"p95_ms": math.NaN()}, Flags{})
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/problem+json" {
+		t.Errorf("Content-Type = %q, want application/problem+json", ct)
+	}
+	if !json.Valid(rec.Body.Bytes()) {
+		t.Errorf("body %q is not JSON", rec.Body.String())
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -390,7 +391,9 @@ func (s promSample) Float() (float64, bool) {
 		return 0, false
 	}
 	f, err := strconv.ParseFloat(str, 64)
-	if err != nil {
+	// Prometheus answers "NaN" for a quantile over a histogram with no observations in the window. That is no
+	// measurement, and JSON cannot carry it.
+	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
 		return 0, false
 	}
 	return f, true

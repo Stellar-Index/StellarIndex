@@ -1111,3 +1111,26 @@ func repoRootForClaims(t *testing.T) string {
 	t.Fatal("could not locate the repo root (go.mod) from cwd")
 	return ""
 }
+
+// A quiet host has price-route histograms with no observations in the window, and Prometheus answers the quantile
+// with "NaN". That is no measurement: it must not reach the response, where it made /v1/status an empty 200.
+func TestPrometheusStatusBackend_LatencyIgnoresNaNQuantiles(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1730000000,"NaN"]}]}}`))
+	}))
+	defer ts.Close()
+
+	lat, err := (&PrometheusStatusBackend{URL: ts.URL}).Latency(context.Background())
+	if err != nil {
+		t.Fatalf("Latency: %v", err)
+	}
+	if lat.P50Ms != 0 || lat.P95Ms != 0 || lat.P99Ms != 0 {
+		t.Errorf("latency = %+v, want zero percentiles for NaN quantiles", lat)
+	}
+	rec := httptest.NewRecorder()
+	writeJSON(rec, lat, Flags{})
+	if rec.Code != http.StatusOK || !json.Valid(rec.Body.Bytes()) {
+		t.Errorf("status %d, body %q: want a 200 with a JSON body", rec.Code, rec.Body.String())
+	}
+}
