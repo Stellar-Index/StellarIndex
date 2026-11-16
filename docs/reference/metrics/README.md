@@ -1852,7 +1852,7 @@ Detached stale-while-revalidate refresh outcomes for the explorer's snapshot cac
 
 ### `stellarindex_explorer_refresh_gate_saturated_total`
 
-Counter. Labels: `class` (the class passed to `RefreshGate.TryAcquireClass`: `account_state` | `asset_holders` |
+Counter. Labels: `class` (the class passed to `RefreshGate.TryAcquireClass`: `account_state` | `asset_holders` | `contract_wasm` |
 `contracts_dir` | `network_throughput` | `ops_directory` |
 `protocol_bespoke` | `contract_detail` / `contract_detail_<key prefix>`;
 `unclassed` for a bare `TryAcquire`), `bound` (`class` = the per-class
