@@ -700,7 +700,10 @@ else
   # And the version regex must be anchored at BOTH ends, so a mashed or
   # otherwise malformed sidecar is rejected rather than passed through
   # as if it were a version.
-  if grep -qE "grep -E '\^v\[0-9\]\+\\\.\[0-9\]\+\\\.\[0-9\]\+\(-\[0-9A-Za-z\.\]\+\)\?\\\$'" "$WF"; then
+  # shellcheck disable=SC2016 # literal workflow text, not an expansion
+  if grep -qE "^ *version_re='\^v.*\\\$'\$" "$WF" \
+     && grep -qF 'grep -E "$version_re" | lowest_version' "$WF" \
+     && grep -qF 'grep -qE "$version_re" <<<"$applied"' "$WF"; then
     check_caller "deploy.yml's version filter is end-anchored" "ok"
   else
     check_caller "deploy.yml's version filter is end-anchored (a '^'-only anchor matches a concatenation like v0.1.0v0.2.0)" "no"
