@@ -25,7 +25,7 @@ func TestMainWiringRules(t *testing.T) {
 		{name: "run_gates_phase4_on_cagg_coverage", check: ruleRunGatesPhase4OnCAGGCoverage},
 		{name: "shutdown_select_never_returns_before_drain", check: ruleShutdownSelectNeverReturnsBeforeTheDrain},
 		{name: "indexer_acts_on_sink_shutdown_loss", check: ruleIndexerActsOnSinkShutdownLoss},
-		{name: "off_chain_connectors_have_their_own_sink_lane", check: ruleOffChainConnectorsHaveTheirOwnSinkLane},
+		{name: "venue_streamers_have_their_own_sink_lane", check: ruleVenueStreamersHaveTheirOwnSinkLane},
 		{name: "no_return_between_shutdown_select_and_drain", check: ruleNoReturnBetweenShutdownSelectAndDrain},
 		{name: "shutdown_cancels_root_before_draining", check: ruleShutdownCancelsRootBeforeDraining},
 		{name: "metrics_server_shuts_down_after_the_drain_not_before_it", check: ruleMetricsServerShutsDownAfterTheDrainNotBeforeIt},
@@ -350,10 +350,11 @@ func ruleIndexerActsOnSinkShutdownLoss(t *testing.T) {
 	}
 }
 
-// The off-chain connectors must not send on the channel the ledger dispatcher feeds: on-chain writes block-retry a
-// Postgres fault by design, and on a shared channel that stops every venue stream being read. The behaviour is pinned
-// by pipeline's TestExternalLaneDrainsWhileOnChainLaneRetries; this pins that main.go wires the two lanes apart.
-func ruleOffChainConnectorsHaveTheirOwnSinkLane(t *testing.T) {
+// The venue streamers must not send on the channel the ledger dispatcher feeds: on-chain writes block-retry a Postgres
+// fault by design, and on a shared channel that stops every venue stream being read. The behaviour is pinned by
+// pipeline's TestExternalLaneDrainsWhileOnChainLaneRetries; this pins that main.go wires the two lanes apart.
+// startExternalConnectors' fourth argument is the streamers' channel.
+func ruleVenueStreamersHaveTheirOwnSinkLane(t *testing.T) {
 	_, file := astguard.ParseFile(t, "main.go")
 	channelArg := func(call *ast.CallExpr, i int) string {
 		if i < len(call.Args) {
@@ -389,9 +390,9 @@ func ruleOffChainConnectorsHaveTheirOwnSinkLane(t *testing.T) {
 			connectors, onChainLane, offChainLane)
 	}
 	if connectors != offChainLane {
-		t.Errorf("startExternalConnectors sends on %q but PersistExternalEvents drains %q", connectors, offChainLane)
+		t.Errorf("the streamers send on %q but PersistExternalEvents drains %q", connectors, offChainLane)
 	}
 	if connectors == onChainLane {
-		t.Errorf("startExternalConnectors sends on %q, the channel the on-chain sink drains: a Postgres fault would stop the venue streams being read", connectors)
+		t.Errorf("the streamers send on %q, the channel the on-chain sink drains: a Postgres fault would stop the venue streams being read", connectors)
 	}
 }

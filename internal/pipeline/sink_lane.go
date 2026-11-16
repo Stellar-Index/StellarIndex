@@ -2,51 +2,77 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
+	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
-	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// ExternalPersistWorkers is the off-chain lane's worker count: two batch writers clear every venue's feed and leave the pool to the on-chain lane.
+// ExternalPersistWorkers is the venue-stream lane's worker count: two batch writers clear every venue's feed and leave the pool to the on-chain lane.
 const ExternalPersistWorkers = 2
 
-// PersistExternalEvents drains the off-chain connectors' own channel on [ExternalPersistWorkers] workers. Sharing the on-chain
-// channel let a write block-retrying a Postgres fault stop every venue stream being read, and those trades have no cursor to
-// replay from. Nothing in this lane waits on Postgres: a trade goes to the bounded retry buffer, a poll result is skipped.
+// externalWriteTimeout bounds one write on the venue-stream lane, whose ctx carries no deadline: a Postgres that hangs
+// instead of refusing would otherwise hold a worker for the TCP timeout while the venue streams go unread.
+const externalWriteTimeout = 5 * time.Second
+
+// PersistExternalEvents drains the venue streamers' own channel on [ExternalPersistWorkers] workers. On the on-chain
+// channel, writes block-retrying a Postgres fault stopped every venue stream being read, and those trades have no cursor
+// to replay from. A trade this lane cannot write goes to the bounded retry buffer; no worker waits on Postgres past
+// [externalWriteTimeout].
 func PersistExternalEvents(ctx context.Context, logger *slog.Logger, store *timescale.Store, in <-chan consumer.Event, late *LateTradeRefresher) ShutdownLoss {
-	ep := offChainEventPersister(logger, storeEventPersister(logger, store))
-	return runSinkLane(ctx, logger, ep, late.writer(store), in, SinkModeAll, ExternalPersistWorkers, store != nil)
-}
-
-// offChainEventPersister makes an infra fault on an off-chain poll result a counted skip instead of a blocking retry:
-// the next poll supersedes it, and a worker held in retry would stop the venue streams being read.
-func offChainEventPersister(logger *slog.Logger, ep eventPersister) eventPersister {
-	return func(ctx context.Context, ev consumer.Event, countEvent bool) error {
-		err := ep(ctx, ev, countEvent)
-		if err == nil || classifyFault(err) != faultInfra {
-			return err
-		}
-		obs.SourceInsertErrorsTotal.WithLabelValues(eventSource(ev), "dropped").Inc()
-		logger.Warn("off-chain event not written (infrastructure fault) — skipped, the next poll supersedes it",
-			"kind", ev.EventKind(), "source", eventSource(ev), "err", err)
-		return nil
-	}
-}
-
-// runSinkLane runs one sink lane: workers drain goroutines over in, plus the external retry buffer when buffered.
-// ep and tw are the two write seams (see persistWorker).
-func runSinkLane(ctx context.Context, logger *slog.Logger, ep eventPersister, tw tradeWriter, in <-chan consumer.Event, mode SinkMode, workers int, buffered bool) ShutdownLoss {
-	lt := &lossTracker{}
-	// Bounded async retry buffer for external (CEX/FX) trades on infra faults (ADR-0041): they have no cursor to gate,
-	// so they drop-oldest on overflow rather than block. A nil store skips the buffer.
+	tw := late.writer(store)
 	var extBuf *externalRetryBuffer
+	if store != nil {
+		// The buffer writes unbounded: its batch after an outage is the whole ring, and it holds no worker.
+		extBuf = newExternalRetryBuffer(tw, logger, externalRetryBufferMaxDepth)
+	}
+	return runSinkLane(ctx, logger, storeEventPersister(logger, store), boundedTradeWriter{tw, externalWriteTimeout}, in, SinkModeAll, ExternalPersistWorkers, extBuf)
+}
+
+// boundedTradeWriter gives each write its own deadline.
+type boundedTradeWriter struct {
+	tradeWriter
+	timeout time.Duration
+}
+
+func (w boundedTradeWriter) BatchInsertTrades(ctx context.Context, trades []canonical.Trade) error {
+	return w.bounded(ctx, func(c context.Context) error { return w.tradeWriter.BatchInsertTrades(c, trades) })
+}
+
+func (w boundedTradeWriter) InsertTrade(ctx context.Context, t canonical.Trade) error {
+	return w.bounded(ctx, func(c context.Context) error { return w.tradeWriter.InsertTrade(c, t) })
+}
+
+// bounded reports the write's own deadline as [writeTimeoutError] while the caller's ctx is still live: left as a ctx
+// error the sink would read it as shutdown and carry the batch instead of buffering it.
+func (w boundedTradeWriter) bounded(ctx context.Context, write func(context.Context) error) error {
+	wctx, cancel := context.WithTimeout(ctx, w.timeout)
+	defer cancel()
+	err := write(wctx)
+	if err != nil && ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+		return writeTimeoutError{}
+	}
+	return err
+}
+
+// writeTimeoutError is a net.Error so [timescale.IsInfraError] classes it with the other unreachable-database faults.
+type writeTimeoutError struct{}
+
+func (writeTimeoutError) Error() string   { return "venue-stream write timed out" }
+func (writeTimeoutError) Timeout() bool   { return true }
+func (writeTimeoutError) Temporary() bool { return true }
+
+// runSinkLane runs one sink lane: workers drain goroutines over in, plus extBuf's retrier when it is non-nil.
+// ep and tw are the two write seams (see persistWorker).
+func runSinkLane(ctx context.Context, logger *slog.Logger, ep eventPersister, tw tradeWriter, in <-chan consumer.Event, mode SinkMode, workers int, extBuf *externalRetryBuffer) ShutdownLoss {
+	lt := &lossTracker{}
 	var bufWG sync.WaitGroup
 	var bufCancel context.CancelFunc
-	if buffered {
-		extBuf = newExternalRetryBuffer(tw, logger, externalRetryBufferMaxDepth)
+	if extBuf != nil {
 		// Derived ctx tied to worker lifetime, not ctx: a backfill's ctx is never canceled, so run() would spin and bufWG.Wait() hang.
 		// Cancelling it after the workers drain lets run() exit via its fresh-context finalDrain without losing buffered trades.
 		var bufCtx context.Context

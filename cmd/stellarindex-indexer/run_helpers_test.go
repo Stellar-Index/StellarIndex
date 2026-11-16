@@ -114,7 +114,7 @@ func TestStartExternalConnectors_NothingEnabledStartsNothing(t *testing.T) {
 		context.Background(),
 		config.ExternalConfig{},
 		mustCatalogue(t),
-		make(chan consumer.Event, 1),
+		make(chan consumer.Event, 1), make(chan consumer.Event, 1),
 		discardIndexerLogger(),
 	)
 	if err != nil {
@@ -156,7 +156,7 @@ func TestStartExternalConnectors_EveryEnabledNameIsRegistered(t *testing.T) {
 
 			wait, enabled, err := startExternalConnectors(
 				ctx, tc.cfg, mustCatalogue(t),
-				make(chan consumer.Event, 1), discardIndexerLogger(),
+				make(chan consumer.Event, 1), make(chan consumer.Event, 1), discardIndexerLogger(),
 			)
 			if err != nil {
 				t.Fatalf("startExternalConnectors: %v", err)

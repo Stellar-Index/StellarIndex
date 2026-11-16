@@ -562,9 +562,10 @@ func run(cfgPath string, dryRun bool) error {
 		defer close(sinkDone)
 		sinkLoss = pipeline.PersistEvents(rootCtx, logger, store, events, sinkMode, lateTrades)
 	}()
-	// Off-chain connectors get their own channel and sink lane. On the shared channel, on-chain
+	// Venue streamers get their own channel and sink lane. On the shared channel, on-chain
 	// writes block-retrying a Postgres fault stopped every venue stream being read, and those
-	// trades have no cursor to replay from.
+	// trades have no cursor to replay from. Pollers stay on `events`: a blocked poll loses
+	// nothing a venue pushes, and its rows keep the block-and-retry write.
 	externalEvents := make(chan consumer.Event, 256)
 	externalSinkDone := make(chan struct{})
 	var externalSinkLoss pipeline.ShutdownLoss // read only after <-externalSinkDone
@@ -631,9 +632,9 @@ func run(cfgPath string, dryRun bool) error {
 	logger.Info("verified-currency catalogue loaded", "entries", len(verifiedCurrencies.All()))
 
 	// ─── External streamers (off-chain CEX/FX/aggregators) ──────
-	// Parallel to the Galexie path on their own sink lane; per-venue goroutines live in
-	// external.Run and we keep its wait func for the drain.
-	externalWait, externalSources, err := startExternalConnectors(rootCtx, cfg.External, verifiedCurrencies, externalEvents, logger)
+	// Parallel to the Galexie path, streamers on their own sink lane; per-venue goroutines live
+	// in external.Run and we keep its wait func for the drain.
+	externalWait, externalSources, err := startExternalConnectors(rootCtx, cfg.External, verifiedCurrencies, externalEvents, events, logger)
 	if err != nil {
 		return fmt.Errorf("external connectors: %w", err)
 	}
@@ -798,17 +799,19 @@ func run(cfgPath string, dryRun bool) error {
 		}
 	}
 
-	// Connectors must drain before their channel closes, or an in-flight send panics. The wait is
-	// bounded because one wedged connector would otherwise hold the binary until systemd's
-	// SIGKILL, the one shutdown that skips the sink drain. On timeout do NOT close the channel: a
-	// running connector is a live sender.
+	// Connectors must drain before either channel closes (streamers send on externalEvents,
+	// pollers on events), or an in-flight send panics. The wait is bounded because one wedged
+	// connector would otherwise hold the binary until systemd's SIGKILL, the one shutdown that
+	// skips the sink drain. On timeout close NEITHER: a running connector is a live sender.
 	if waitBounded(shutdownCtx, logger, "external-connectors-drain", externalWait) {
 		close(externalEvents)
 	} else {
-		logger.Warn("external connectors did not drain before deadline — leaving their events channel open to avoid send-on-closed panic")
+		safeToClose = false
+		logger.Warn("external connectors did not drain before deadline — leaving the events channels open to avoid send-on-closed panic")
 	}
 
-	// Close events so the sink returns after draining; safe only once the producer has exited.
+	// Close events so the sink returns after draining; safe only once the producer has exited and
+	// the connectors have drained.
 	if safeToClose {
 		close(events)
 	}
@@ -863,8 +866,8 @@ func run(cfgPath string, dryRun bool) error {
 	return errors.Join(fatalErr, instanceLock.Lost())
 }
 
-// awaitExternalSink waits for the off-chain sink lane and reports whether it stopped inside the drain budget.
-// Its loss feeds no cursor rewind: off-chain rows carry no ledger.
+// awaitExternalSink waits for the venue-stream sink lane and reports whether it stopped inside the drain budget.
+// Its loss feeds no cursor rewind: venue trades carry no ledger.
 func awaitExternalSink(ctx context.Context, done <-chan struct{}, loss *pipeline.ShutdownLoss, logger *slog.Logger) bool {
 	select {
 	case <-done:
@@ -948,7 +951,7 @@ func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy
 	ctx context.Context,
 	cfg config.ExternalConfig,
 	catalogue *currency.Catalogue,
-	events chan<- consumer.Event,
+	streamEvents, pollEvents chan<- consumer.Event,
 	logger *slog.Logger,
 ) (func(), []string, error) {
 	var streamers []external.StreamerSpec
@@ -1168,11 +1171,25 @@ func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy
 		return func() {}, nil, nil
 	}
 
-	wait, err := external.Run(ctx, streamers, pollers, events, logger)
+	// Two runs so each kind sends on its own channel. The derived ctx lets a poller the second run
+	// rejects stop the streamers the first one already started.
+	ctx, cancel := context.WithCancel(ctx)
+	waitStreamers, err := external.Run(ctx, streamers, nil, streamEvents, logger)
 	if err != nil {
+		cancel()
 		return nil, nil, err
 	}
-	return wait, enabled, nil
+	waitPollers, err := external.Run(ctx, nil, pollers, pollEvents, logger)
+	if err != nil {
+		cancel()
+		waitStreamers()
+		return nil, nil, err
+	}
+	return func() {
+		waitStreamers()
+		waitPollers()
+		cancel()
+	}, enabled, nil
 }
 
 // routerEnabled reports whether the soroswap-router source is enabled: the gate for the routed-via attribution sweeper.

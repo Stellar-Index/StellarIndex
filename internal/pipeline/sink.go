@@ -112,7 +112,14 @@ func countReceived(source string) {
 
 // PersistEvents launches [PersistWorkers] concurrent drain goroutines over in, writing each event via the store until ctx is canceled and in is drained, or in closes.
 func PersistEvents(ctx context.Context, logger *slog.Logger, store *timescale.Store, in <-chan consumer.Event, mode SinkMode, late *LateTradeRefresher) ShutdownLoss {
-	return runSinkLane(ctx, logger, storeEventPersister(logger, store), late.writer(store), in, mode, PersistWorkers, store != nil)
+	tw := late.writer(store)
+	// Bounded async retry buffer for external (CEX/FX) trades on infra faults (ADR-0041): they have no cursor to gate,
+	// so they drop-oldest on overflow rather than block. A nil store skips the buffer.
+	var extBuf *externalRetryBuffer
+	if store != nil {
+		extBuf = newExternalRetryBuffer(tw, logger, externalRetryBufferMaxDepth)
+	}
+	return runSinkLane(ctx, logger, storeEventPersister(logger, store), tw, in, mode, PersistWorkers, extBuf)
 }
 
 // PersistWorkers is the count of concurrent drain goroutines; 8 keeps ingest above the network ledger rate within the 25-conn PG pool.
