@@ -33,6 +33,9 @@ export function LivePrice({
   const [asOf, setAsOf] = useState<string | null>(null);
   const [withheld, setWithheld] = useState(false);
   const [unpublished, setUnpublished] = useState(false);
+  // The API flagged the price stale or frozen, or the last fetch failed: the
+  // figure shown is not confirmed current.
+  const [unconfirmed, setUnconfirmed] = useState(false);
 
   useEffect(() => {
     if (!assetId || !CURRENT_NETWORK.pricing) return; // test nets have no /v1/price
@@ -69,6 +72,7 @@ export function LivePrice({
         }
         const body = (await res.json()) as {
           data?: { price?: string; observed_at?: string };
+          flags?: { stale?: boolean; frozen?: boolean };
         };
         if (
           !cancelled &&
@@ -79,10 +83,13 @@ export function LivePrice({
           setAsOf(body.data.observed_at ?? null);
           setWithheld(false);
           setUnpublished(false);
+          setUnconfirmed(Boolean(body.flags?.stale || body.flags?.frozen));
           publishLivePrice(assetId, quote, body.data.price);
         }
       } catch {
-        // keep the last known price — the widget must never blank
+        // Keep the last known price (the widget must never blank), but say
+        // it could not be refreshed.
+        if (!cancelled) setUnconfirmed(true);
       }
     }
     void tick();
@@ -102,14 +109,16 @@ export function LivePrice({
             ? 'the API publishes no price for this asset right now'
             : withheld
               ? 'live price unavailable — showing the last catalogue price'
-            : asOf
-              ? `live VWAP · observed ${asOf}`
-              : 'as baked at deploy'
+              : unconfirmed
+                ? 'the live price is stale or could not be refreshed — showing the last known price'
+                : asOf
+                  ? `live VWAP · observed ${asOf}`
+                  : 'as baked at deploy'
         }
       >
         {price}
       </span>
-      {(withheld || unpublished) && (
+      {(withheld || unpublished || unconfirmed) && (
         <span className="text-ink-faint font-mono text-[11px]" role="status">
           {unpublished ? 'not published' : 'stale'}
         </span>
@@ -142,7 +151,11 @@ type LivePriceListener = () => void;
 const livePrices = new Map<string, string | null>();
 const livePriceListeners = new Set<LivePriceListener>();
 
-function publishLivePrice(assetId: string, quote: string, price: string | null) {
+function publishLivePrice(
+  assetId: string,
+  quote: string,
+  price: string | null,
+) {
   livePrices.set(`${assetId}|${quote}`, price);
   livePriceListeners.forEach((l) => l());
 }

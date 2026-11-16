@@ -11,6 +11,7 @@ vi.mock('@/api/client', async (importOriginal) => ({
 }));
 vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
+  useRouter: () => ({ push: vi.fn(), prefetch: vi.fn() }),
 }));
 
 // CURRENT_NETWORK_ID is resolved at module load; the caption helper reads it
@@ -115,6 +116,50 @@ describe('LedgerView count basis captions', () => {
       'tx set · incl. ops of failed txs',
     );
     expect(await basisFor('Soroban events')).toBe('successful txs only');
+  });
+});
+
+describe('LedgerView transaction cap', () => {
+  const tx = (i: number) => ({
+    hash: i.toString(16).padStart(64, '0'),
+    source_account: 'G' + 'A'.repeat(55),
+    operation_count: 1,
+    successful: true,
+    fee_charged: '100',
+  });
+
+  function routeTxs(body: Record<string, unknown>) {
+    apiGet.mockImplementation(async (path: string) => {
+      if (path === `/v1/ledgers/${LEDGER.sequence}`) return { data: LEDGER };
+      if (path === `/v1/ledgers/${LEDGER.sequence}/transactions`)
+        return { data: body };
+      throw new Error(`unexpected ${path}`);
+    });
+  }
+
+  it('asks for the largest page the route serves', async () => {
+    routeTxs({ transactions: [tx(1)], total: 1 });
+    renderView();
+    await screen.findByText('1 in the tx set, failed included');
+    const call = apiGet.mock.calls.find((c) =>
+      String(c[0]).endsWith('/transactions'),
+    )!;
+    expect(call[1]).toEqual({ limit: 1000 });
+  });
+
+  it('says the list and the mix cover only the first part of a capped ledger', async () => {
+    routeTxs({ transactions: [tx(1), tx(2)], total: 5, truncated: true });
+    renderView();
+    expect(
+      await screen.findByText(
+        'the first 2 of 5 in the tx set, failed included',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Outcome and operations per transaction across the first 2 of 5 in the tx set',
+      ),
+    ).toBeInTheDocument();
   });
 });
 

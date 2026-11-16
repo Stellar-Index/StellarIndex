@@ -150,17 +150,26 @@ function evidenceCount(e: MevEvent): string {
 }
 
 export function MevFeed() {
-  const q = useQuery<MevEvent[]>({
+  const q = useQuery<{ rows: MevEvent[]; partial: boolean }>({
     queryKey: ['/v1/mev'],
     queryFn: async () => {
-      const env = await apiGet<{ data: MevEvent[] }>('/v1/mev', { limit: 50 });
-      return env.data ?? [];
+      const env = await apiGet<{
+        data: MevEvent[];
+        flags?: { detectors_partial?: boolean };
+      }>('/v1/mev', { limit: 50 });
+      return {
+        rows: env.data ?? [],
+        partial: Boolean(env.flags?.detectors_partial),
+      };
     },
     staleTime: 60_000,
     refetchInterval: 30_000,
   });
 
-  const rows = q.data ?? [];
+  const rows = q.data?.rows ?? [];
+  // The server sets this when a detector did not finish its last run: an
+  // empty or short list is then not evidence of a quiet window.
+  const partial = q.data?.partial ?? false;
 
   return (
     <Panel
@@ -171,7 +180,7 @@ export function MevFeed() {
       download={
         rows.length > 0
           ? {
-              name: 'mev-events',
+              name: partial ? 'mev-events-partial' : 'mev-events',
               columns: MEV_CSV_COLUMNS,
               rows: rows.map(mevCsvRow),
             }
@@ -185,7 +194,13 @@ export function MevFeed() {
           The MEV feed is unavailable right now.
         </p>
       )}
-      {!q.isLoading && !q.isError && rows.length === 0 && (
+      {partial && (
+        <p className="text-warn-500 text-sm" role="status">
+          Detection is incomplete for the recent window: a detector did not
+          finish its last run, so events may be missing from this list.
+        </p>
+      )}
+      {!q.isLoading && !q.isError && rows.length === 0 && !partial && (
         <p className="text-ink-muted text-sm">
           No MEV events in the recent window.
         </p>

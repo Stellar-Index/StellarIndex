@@ -76,6 +76,39 @@ describe('LivePrice (RLT-386)', () => {
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
+  it('marks a price the API flags stale or frozen', async () => {
+    for (const flags of [{ stale: true }, { frozen: true }]) {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: { price: '0.2500', observed_at: '2026-09-22T00:00:00Z' },
+            flags,
+          }),
+        }),
+      );
+
+      const { unmount } = render(
+        <LivePrice assetId="native" initial="$0.1000" />,
+      );
+
+      expect(await screen.findByRole('status')).toHaveTextContent(/stale/i);
+      expect(screen.getByText('$0.250000')).toBeInTheDocument();
+      unmount();
+    }
+  });
+
+  it('marks the last known price stale when the request fails', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
+
+    render(<LivePrice assetId="native" initial="$0.1000" />);
+
+    expect(await screen.findByRole('status')).toHaveTextContent(/stale/i);
+    expect(screen.getByText('$0.1000')).toBeInTheDocument();
+  });
+
   it('bounds the live price request with an abort signal', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: false,
