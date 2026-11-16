@@ -226,28 +226,44 @@ func ServerNow(ctx context.Context, addr string) (time.Time, error) {
 		return time.Time{}, err
 	}
 	defer func() { _ = conn.Close() }()
-	var now time.Time
-	if err := conn.QueryRow(ctx, `SELECT now()`).Scan(&now); err != nil {
+	// Epoch seconds, not a DateTime: a wall-clock value is ambiguous in a server timezone's repeated hour.
+	var now uint32
+	if err := conn.QueryRow(ctx, `SELECT toUnixTimestamp(now())`).Scan(&now); err != nil {
 		return time.Time{}, fmt.Errorf("clickhouse: server time: %w", err)
 	}
-	return now, nil
+	return time.Unix(int64(now), 0).UTC(), nil
 }
 
-// DeleteSupersededSponsorshipEvents removes the sponsorship_events rows of ledgers [lo, hi] written before `before`.
+// DeleteSupersededSponsorshipEvents removes, from ledgers [lo, hi], each sponsorship_events row written before
+// `before` whose arrangement and operation (ledger, tx_hash, op_index, kind, key_id) also has a row written since.
 // The table's key holds the derived sponsor and a walk position, so a re-derive that attributes or numbers an event
-// differently does not replace the old row; called after the re-derive wrote the window, this leaves only its rows.
+// differently does not replace the old row. An earlier row with no rewritten counterpart is never deleted: kept counts
+// those arrangements, which a re-derive that read less than the earlier one did would otherwise lose.
 // It waits for the delete to apply.
-func DeleteSupersededSponsorshipEvents(ctx context.Context, addr string, lo, hi uint32, before time.Time) error {
+func DeleteSupersededSponsorshipEvents(ctx context.Context, addr string, lo, hi uint32, before time.Time) (kept uint64, err error) {
 	conn, err := openAccountMovementsWrite(ctx, addr)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer func() { _ = conn.Close() }()
-	ctx = clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{"lightweight_deletes_sync": 2}))
-	if err := conn.Exec(ctx, `DELETE FROM stellar.sponsorship_events WHERE ledger BETWEEN ? AND ? AND ingested_at < ?`, lo, hi, before); err != nil {
-		return fmt.Errorf("clickhouse: delete superseded sponsorship_events [%d,%d]: %w", lo, hi, err)
+	cutoff := before.Unix()
+	// The mutation reads the whole partition; the connection's 300s would abandon the wait, not the delete.
+	ctx = clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{"lightweight_deletes_sync": 2, "max_execution_time": 3600}))
+	if err := conn.Exec(ctx, `DELETE FROM stellar.sponsorship_events
+		WHERE ledger BETWEEN ? AND ? AND ingested_at < fromUnixTimestamp(?)
+		  AND (ledger, tx_hash, op_index, kind, key_id) IN (
+			SELECT ledger, tx_hash, op_index, kind, key_id FROM stellar.sponsorship_events
+			WHERE ledger BETWEEN ? AND ? AND ingested_at >= fromUnixTimestamp(?))`,
+		lo, hi, cutoff, lo, hi, cutoff); err != nil {
+		return 0, fmt.Errorf("clickhouse: delete superseded sponsorship_events [%d,%d]: %w", lo, hi, err)
 	}
-	return nil
+	if err := conn.QueryRow(ctx, `SELECT count() FROM (
+			SELECT 1 FROM stellar.sponsorship_events WHERE ledger BETWEEN ? AND ?
+			GROUP BY ledger, tx_hash, op_index, kind, key_id
+			HAVING max(ingested_at) < fromUnixTimestamp(?))`, lo, hi, cutoff).Scan(&kept); err != nil {
+		return 0, fmt.Errorf("clickhouse: count unreplaced sponsorship_events [%d,%d]: %w", lo, hi, err)
+	}
+	return kept, nil
 }
 
 // SponsorshipWatermark returns the highest ledger ch-entry-history has derived sponsorship events through (0 = never

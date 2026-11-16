@@ -34,7 +34,8 @@ import (
 )
 
 // A re-derive that numbers or attributes an event differently writes a new key, so the earlier row is not replaced.
-// The sweep removes the rows written before the re-derive, inside the window only, and leaves the re-derive's own.
+// The sweep removes an earlier row only when the re-derive rewrote its event, inside the window only: an earlier
+// event the re-derive did not produce again is kept and counted, never lost.
 func TestDeleteSupersededSponsorshipEvents_LeavesOnlyTheReDerivesRows(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -44,11 +45,15 @@ func TestDeleteSupersededSponsorshipEvents_LeavesOnlyTheReDerivesRows(t *testing
 	const base = uint32(161_500_000)
 	sponsor := strkey.MustEncode(strkey.VersionByteAccountID, []byte(strings.Repeat("\x7a", 32)))
 	earlier := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	// What an earlier run wrote: the event at the old walk position, and one just outside the window.
-	for _, r := range []struct{ ledger, change uint32 }{{base, 7}, {base + 5, 7}} {
+	// What an earlier run wrote: the event at the old walk position, an event of another operation the re-derive
+	// will not produce again, and one just outside the window.
+	for _, r := range []struct {
+		ledger, change uint32
+		op             int32
+	}{{base, 7, 0}, {base + 1, 7, 3}, {base + 5, 7, 0}} {
 		if err := conn.Exec(ctx, `INSERT INTO stellar.sponsorship_events
 			(sponsor, sponsored, kind, key_id, ledger, close_time, tx_hash, op_index, change_index, intra_ledger_seq, reserves, event, ingested_at)
-			VALUES (?, '', 'claimable_balance', 'k', ?, ?, 'aa', 0, ?, 0, 1, 'started', ?)`, sponsor, r.ledger, earlier, r.change, earlier); err != nil {
+			VALUES (?, '', 'claimable_balance', 'k', ?, ?, 'aa', ?, ?, 0, 1, 'started', ?)`, sponsor, r.ledger, earlier, r.op, r.change, earlier); err != nil {
 			t.Fatalf("seed earlier row: %v", err)
 		}
 	}
@@ -63,8 +68,12 @@ func TestDeleteSupersededSponsorshipEvents_LeavesOnlyTheReDerivesRows(t *testing
 	}}); err != nil {
 		t.Fatalf("insert re-derived row: %v", err)
 	}
-	if err := chstore.DeleteSupersededSponsorshipEvents(ctx, addr, base, base+1, before); err != nil {
+	kept, err := chstore.DeleteSupersededSponsorshipEvents(ctx, addr, base, base+1, before)
+	if err != nil {
 		t.Fatalf("DeleteSupersededSponsorshipEvents: %v", err)
+	}
+	if kept != 1 {
+		t.Errorf("kept = %d, want 1: the one earlier event the re-derive did not rewrite", kept)
 	}
 
 	rows, err := conn.Query(ctx, `SELECT ledger, change_index FROM stellar.sponsorship_events FINAL WHERE sponsor = ? ORDER BY ledger`, sponsor)
@@ -80,8 +89,8 @@ func TestDeleteSupersededSponsorshipEvents_LeavesOnlyTheReDerivesRows(t *testing
 		}
 		got = append(got, [2]uint32{ledger, change})
 	}
-	if want := [][2]uint32{{base, 2}, {base + 5, 7}}; !slices.Equal(got, want) {
-		t.Fatalf("rows (ledger, change_index) = %v, want %v: the renumbered row alone in the window, the row outside it untouched", got, want)
+	if want := [][2]uint32{{base, 2}, {base + 1, 7}, {base + 5, 7}}; !slices.Equal(got, want) {
+		t.Fatalf("rows (ledger, change_index) = %v, want %v: the renumbered row replaces its earlier one; the unrewritten event and the row outside the window stay", got, want)
 	}
 }
 

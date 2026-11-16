@@ -102,14 +102,13 @@ func runEntryHistory(ctx context.Context, chAddr string, start, last, window uin
 		if last-lo >= window {
 			hi = lo + window - 1
 		}
-		skippedBefore := st.skipped
 		n, err := deriveSponsorshipWindow(ctx, chAddr, lo, hi, dryRun, st)
 		if err != nil {
-			return fmt.Errorf("window [%d,%d]: %w — resume with -from %d (or no -from: the watermark holds)", lo, hi, err, lo)
+			return fmt.Errorf("window [%d,%d]: %w — %s", lo, hi, err, sweep.resumeHint(lo))
 		}
 		if !dryRun {
-			if err := sweep.window(ctx, lo, hi, st.skipped-skippedBefore); err != nil {
-				return fmt.Errorf("window [%d,%d]: %w — resume with -from %d", lo, hi, err, lo)
+			if err := sweep.window(ctx, lo, hi); err != nil {
+				return fmt.Errorf("window [%d,%d]: %w — %s", lo, hi, err, sweep.resumeHint(lo))
 			}
 			if err := setSponsorshipWatermark(ctx, chAddr, lo, hi); err != nil {
 				return fmt.Errorf("advance watermark to %d: %w", hi, err)
@@ -143,8 +142,8 @@ var (
 
 // supersededSweep makes a re-derive corrective. An event's row key holds the derived sponsor and a walk position, so
 // a re-derive that attributes or numbers it differently leaves the earlier row served beside the new one. After each
-// re-derived window is written, the rows an earlier run wrote for those ledgers are deleted. A nil sweep is a run that
-// only extends the watermark: nothing was derived there before.
+// re-derived window is written, the earlier rows it replaced are deleted. A nil sweep is a run that starts above the
+// watermark: it deletes nothing, rows a failed run left above the watermark included.
 type supersededSweep struct {
 	addr string
 	// thru is the watermark when the run began: ledgers above it hold no earlier rows, and a tail run may be writing them.
@@ -165,24 +164,32 @@ func newSupersededSweep(ctx context.Context, addr string, start uint32) (*supers
 	if err != nil {
 		return nil, err
 	}
-	fmt.Fprintf(os.Stderr, "ch-entry-history: re-deriving at or below the watermark %d — rows earlier runs wrote for each window are deleted once it is rewritten\n", wm)
+	fmt.Fprintf(os.Stderr, "ch-entry-history: re-deriving at or below the watermark %d — each earlier row is deleted once this run has rewritten its event\n", wm)
 	return &supersededSweep{addr: addr, thru: wm, before: now}, nil
 }
 
-// window deletes the earlier rows of [lo, hi]. A window with skipped changes keeps them: the rewrite is not known to
-// be whole, and an event the earlier run did derive must not be lost to a decode failure in this one.
-func (s *supersededSweep) window(ctx context.Context, lo, hi uint32, skipped uint64) error {
+// window deletes the earlier rows of [lo, hi] that this run rewrote, and reports the ones it did not.
+func (s *supersededSweep) window(ctx context.Context, lo, hi uint32) error {
 	if s == nil || lo > s.thru {
 		return nil
 	}
-	if skipped > 0 {
-		fmt.Fprintf(os.Stderr, "ch-entry-history: window [%d,%d]: %d changes skipped, so earlier rows are KEPT beside the rewritten ones — re-derive this window once the decode failure is fixed\n", lo, hi, skipped)
-		return nil
-	}
-	if err := deleteSupersededSponsorship(ctx, s.addr, lo, min(hi, s.thru), s.before); err != nil {
+	kept, err := deleteSupersededSponsorship(ctx, s.addr, lo, min(hi, s.thru), s.before)
+	if err != nil {
 		return fmt.Errorf("delete superseded events: %w", err)
 	}
+	if kept > 0 {
+		fmt.Fprintf(os.Stderr, "ch-entry-history: window [%d,%d]: %d earlier events have no rewritten counterpart and are KEPT — either this run read less of the lake than the earlier one, or the earlier one derived events that do not exist; check before deleting them by hand\n", lo, hi, kept)
+	}
 	return nil
+}
+
+// resumeHint says how to resume after a failed window. A re-derive's watermark is already past the window, so only
+// -from re-runs it.
+func (s *supersededSweep) resumeHint(lo uint32) string {
+	if s == nil {
+		return fmt.Sprintf("resume with -from %d (or no -from: the watermark holds)", lo)
+	}
+	return fmt.Sprintf("resume with -from %d (a run without -from starts above the watermark and leaves this window half rewritten)", lo)
 }
 
 // deriveSponsorshipWindow projects one window, returning the events written (or that would be).
