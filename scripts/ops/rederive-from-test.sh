@@ -102,9 +102,10 @@ run() {
 calls() { grep -c "^$1" "$OPSL"; }
 # 5 windows: 1000, 1001000, 2001000, 3001000 and the short [4001000,4500999].
 RANGE=(-from 1000 -to 4500999)
-WIN="1000 1001000 2001000 3001000 4001000"
+# windows.txt lines are "LO HI", sorted as text.
+WIN_STATE="1000 1000999 1001000 2000999 2001000 3000999 3001000 4000999 4001000 4500999"
 all_windows_once() {
-  [ "$(sort "$SD/windows.txt" | tr '\n' ' ')" = "$WIN " ]
+  [ "$(sort "$SD/windows.txt" | tr '\n' ' ')" = "$WIN_STATE " ]
 }
 
 echo "rederive-from-test: arguments"
@@ -155,7 +156,7 @@ run FAIL_FROM=2001000 -- "${RANGE[@]}" -workers 2 -projected soroswap
 check '[ "$RC" -eq 7 ]' "always-failing window ⇒ the window's exit code (7)"
 check '[ "$(grep -c "^ch-backfill 2001000" "$OPSL")" -eq 3 ]' "the failing window tried PHASED_MAX_ATTEMPTS=3 times"
 check '[ "$(calls ch-supply)" -eq 0 ] && [ "$(calls projected-rebuild)" -eq 0 ] && [ "$(calls seed-entry-counts)" -eq 0 ]' "no seed or rebuild over an incomplete lake"
-check '! grep -q "LAKE DONE\|REDERIVE_COMPLETE" "$LOG" && ! grep -qx 2001000 "$SD/windows.txt"' "neither LAKE DONE nor REDERIVE_COMPLETE logged"
+check '! grep -q "LAKE DONE\|REDERIVE_COMPLETE" "$LOG" && ! grep -q "^2001000 " "$SD/windows.txt"' "neither LAKE DONE nor REDERIVE_COMPLETE logged"
 done_before="$(wc -l < "$SD/windows.txt" | tr -d ' ')"
 run -- "${RANGE[@]}" -workers 2 -projected soroswap
 check '[ "$RC" -eq 0 ] && all_windows_once' "re-run completes every window exactly once"
@@ -177,7 +178,7 @@ check '[ -n "$hung" ] && [ "$RC" -eq 143 ]' "SIGTERM mid-window ⇒ exit 143"
 check '! kill -0 "$hung" 2>/dev/null' "the in-flight ch-backfill is killed with the run"
 /bin/sleep 0.5
 check '! pgrep -f -- "$SD/" >/dev/null' "no worker of the killed run survives it"
-check '! grep -q "LAKE DONE\|REDERIVE_COMPLETE" "$LOG" && [ ! -e "$SD/lock" ] && ! grep -qx 3001000 "$SD/windows.txt"' "killed run: no completion logged, window not recorded, lock released"
+check '! grep -q "LAKE DONE\|REDERIVE_COMPLETE" "$LOG" && [ ! -e "$SD/lock" ] && ! grep -q "^3001000 " "$SD/windows.txt"' "killed run: no completion logged, window not recorded, lock released"
 kill -9 "$hung" 2>/dev/null
 done_before="$(wc -l < "$SD/windows.txt" | tr -d ' ')"
 run -- "${RANGE[@]}" -workers 2

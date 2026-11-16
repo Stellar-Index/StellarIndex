@@ -126,13 +126,18 @@ WINDOWS=()
 for (( w=FROM; w<=TO; w+=WINDOW )); do WINDOWS=("$w" ${WINDOWS[@]+"${WINDOWS[@]}"}); done
 CLAIMS="$LOCK/claims"; mkdir -p "$CLAIMS"
 
+# window_done LO: phaseD-range.sh recorded window LO ("LO HI"; a bare "LO" from
+# an older run). The start is enough here: TO is pinned, so a window's end
+# never moves within one state dir.
+window_done() { awk -v lo="$1" '$1 == lo { ok = 1 } END { exit !ok }' "$WSTATE"; }
+
 # worker: claim the next undone window (excl is the atomic claim) until the
 # queue is empty or another worker has failed.
 worker() {
   local w wto rc
   for w in "${WINDOWS[@]}"; do
     [ -e "$LOCK/failed" ] && return 0
-    grep -qx "$w" "$WSTATE" && continue
+    window_done "$w" && continue
     excl "$CLAIMS/$w" || continue
     wto=$((w + WINDOW - 1)); [ "$wto" -gt "$TO" ] && wto=$TO
     PHASED_LOG="$LOG" PHASED_OPS="$OPS" bash "$HERE/phaseD-range.sh" "$w" "$wto" "$WSTATE" "$PAR" || {
@@ -178,7 +183,7 @@ if [ -e "$LOCK/failed" ] || [ "$lake_rc" -ne 0 ]; then
   die "LAKE FAILED (window rc: $(tr '\n' ' ' < "$LOCK/failed" 2>/dev/null)) — re-run to resume" "$lake_rc"
 fi
 missing=0
-for w in "${WINDOWS[@]}"; do grep -qx "$w" "$WSTATE" || missing=$((missing + 1)); done
+for w in "${WINDOWS[@]}"; do window_done "$w" || missing=$((missing + 1)); done
 [ "$missing" -eq 0 ] || die "LAKE INCOMPLETE: $missing window(s) not recorded done — re-run to resume"
 log "LAKE DONE [$FROM,$TO]"
 
