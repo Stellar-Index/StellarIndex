@@ -1,0 +1,16 @@
+{
+  "contract_id": "CAHCUKBPTW5DR5RNXOHCTJD5U76A6EEZXYZAQFRQEEQRXQ3CRUZ6Z3MO",
+  "role": "backstop",
+  "wasm_hash": "0469cfb445bedd87478274f265c8776b32cde1e8840fca4684ffa1dc4d5a750f",
+  "ledger": 65135638,
+  "tx_hash": "f13dec8500383be9dbec89f27280c14aa289fe6224b3e49288b1b8e12e86727f",
+  "op_index": 0,
+  "event_index": 1,
+  "ledger_closed_at": "2026-10-25T21:32:53Z",
+  "topics": [
+    "AAAADwAAAA5ndWxwX2VtaXNzaW9ucwAA",
+    "AAAAEgAAAAEFKFhMUbnZ0OKG13O4P8EIk/Lb/7J4PufSM7mTjUnLlg=="
+  ],
+  "value": "AAAAEAAAAAEAAAACAAAACgAAAAAAAAAAAAAAC+4kWgAAAAAKAAAAAAAAAAAAAAAFHOsCAA==",
+  "event_name": "gulp_emissions"
+}

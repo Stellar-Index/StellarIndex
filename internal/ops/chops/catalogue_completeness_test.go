@@ -23,6 +23,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	blend_backstop "github.com/Stellar-Index/StellarIndex/internal/sources/blend_backstop"
 	blend_emitter "github.com/Stellar-Index/StellarIndex/internal/sources/blend_emitter"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/phoenix"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/rozo"
@@ -154,6 +155,7 @@ var projRoutes = []projRoute{
 	{typeName: "blend_emitter.SwapConfigEvent", table: "blend_emitter_events", kind: "blend_emitter.swap_config", disp: reconciledByKind},
 
 	// ── cctp / rozo / sorocredit ──
+	{typeName: "blnt.Event", table: "blnt_events", disp: reconciledByKind},
 	{typeName: "cctp.Event", table: "cctp_events", disp: reconciledByKind},
 	{typeName: "rozo.Event", table: "rozo_events", disp: reconciledByKind},
 	{typeName: "sorocredit.Event", table: "credit_positions", disp: reconciledByKind},
@@ -466,6 +468,13 @@ func TestCatalogue_DeclaredKindsMatchDecoderOutput(t *testing.T) {
 		// strings stay welded to the decoder that emits them.
 		{blend_emitter.DistributeEvent{}, "blend_emitter.distribute", "blend_emitter_events"},
 		{blend_emitter.SwapConfigEvent{}, "blend_emitter.swap_config", "blend_emitter_events"},
+		// BLNT's single envelope type branches by immutable contract role.
+		{blnt.Event{Role: blnt.RolePool}, blnt.PoolEventKind, "blnt_events"},
+		{blnt.Event{Role: blnt.RoleFactory}, blnt.FactoryEventKind, "blnt_events"},
+		{blnt.Event{Role: blnt.RoleBackstop}, blnt.BackstopEventKind, "blnt_events"},
+		{blnt.Event{Role: blnt.RoleEmitter}, blnt.EmitterEventKind, "blnt_events"},
+		{blnt.Event{Role: blnt.RoleBackfill}, blnt.BackfillEventKind, "blnt_events"},
+		{blnt.Event{Role: blnt.RoleLockupBackfill}, blnt.LockupBackfillEventKind, "blnt_events"},
 		// defindex, enumerated per Direction — the harvest-regression guard.
 		// Both layers land in defindex_flows; strategy.harvest MUST be a
 		// reconciled kind.
@@ -552,7 +561,7 @@ func TestCatalogue_GatedPrefilterOptIn(t *testing.T) {
 			optedIn[src.name] = true
 		}
 	}
-	for _, name := range []string{"aquarius", "phoenix", "soroswap", "sushiswap_v3", "blend", "sorocredit"} {
+	for _, name := range []string{"aquarius", "phoenix", "soroswap", "sushiswap_v3", "blend", "blnt", "sorocredit"} {
 		if !optedIn[name] {
 			t.Errorf("source %q must opt into the -ch gated prefilter (it streams the whole lake otherwise)", name)
 		}
@@ -562,8 +571,8 @@ func TestCatalogue_GatedPrefilterOptIn(t *testing.T) {
 	}
 	// Sanity: the opt-in stays narrow — exactly the identity-gated
 	// factory-child sources (sorocredit decodes each event on its own).
-	if len(optedIn) != 6 {
-		t.Errorf("gated-prefilter opt-in set = %v, want exactly {aquarius, phoenix, soroswap, sushiswap_v3, blend, sorocredit}", optedIn)
+	if len(optedIn) != 7 {
+		t.Errorf("gated-prefilter opt-in set = %v, want exactly {aquarius, phoenix, soroswap, sushiswap_v3, blend, blnt, sorocredit}", optedIn)
 	}
 }
 

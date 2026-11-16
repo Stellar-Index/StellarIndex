@@ -1,0 +1,15 @@
+{
+  "contract_id": "CAHCUKBPTW5DR5RNXOHCTJD5U76A6EEZXYZAQFRQEEQRXQ3CRUZ6Z3MO",
+  "role": "backstop",
+  "wasm_hash": "0469cfb445bedd87478274f265c8776b32cde1e8840fca4684ffa1dc4d5a750f",
+  "ledger": 65134176,
+  "tx_hash": "5d32b49e72767751a18ef13dd23f38f7b6e550292f1c5427774134871004a2aa",
+  "op_index": 0,
+  "event_index": 1,
+  "ledger_closed_at": "2026-10-25T19:31:03Z",
+  "topics": [
+    "AAAADwAAAApkaXN0cmlidXRlAAA="
+  ],
+  "value": "AAAACgAAAAAAAAAAAAAAAAAAAAA=",
+  "event_name": "distribute"
+}

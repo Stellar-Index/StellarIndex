@@ -34,6 +34,9 @@ const countRecentEventsQuery = `
 	SELECT 'blend_emitter', count(*) FROM blend_emitter_events
 	 WHERE ledger_close_time >= now() - interval '24 hours' AND recipient_index = 0
 	UNION ALL
+	SELECT 'blnt', count(*) FROM blnt_events
+	 WHERE ledger_close_time >= now() - interval '24 hours'
+	UNION ALL
 	SELECT 'phoenix', count(*) FROM phoenix_liquidity
 	 WHERE ledger_close_time >= now() - interval '24 hours'
 	UNION ALL

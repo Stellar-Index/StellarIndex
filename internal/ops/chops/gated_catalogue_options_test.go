@@ -13,6 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	blend_emitter "github.com/Stellar-Index/StellarIndex/internal/sources/blend_emitter"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/phoenix"
@@ -34,6 +35,7 @@ var gatedProbeTopics = map[string][]string{
 	blend_emitter.SourceName: {blend_emitter.TopicSymbolDistribute},
 	phoenix.SourceName:       {phoenix.TopicSymbolSwap, phoenix.TopicSymbolSender},
 	blend.SourceName:         {blend.TopicSymbolSupply},
+	blnt.SourceName:          {scval.MustEncodeSymbol("supply")},
 	aquarius.SourceName:      {aquarius.TopicSymbolTrade},
 	sushiswap_v3.SourceName:  {sushiswap_v3.TopicSymbolSwap},
 	upshift.SourceName:       {upshift.TopicSymbolDeposit},

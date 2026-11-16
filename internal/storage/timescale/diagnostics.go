@@ -489,6 +489,8 @@ const seedSourceEntryCountsSQL = `
             -- is authoritative on its own.
             SELECT 'blend_backstop'     AS source, count(*) AS c FROM blend_backstop_events
             UNION ALL
+			SELECT 'blnt'               AS source, count(*) AS c FROM blnt_events
+			UNION ALL
             SELECT 'cctp'               AS source, count(*) AS c FROM cctp_events
             UNION ALL
             SELECT 'rozo'               AS source, count(*) AS c FROM rozo_events

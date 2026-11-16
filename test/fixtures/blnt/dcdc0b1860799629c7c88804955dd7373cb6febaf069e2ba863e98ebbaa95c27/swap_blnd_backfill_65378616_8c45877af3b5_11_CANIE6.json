@@ -1,0 +1,16 @@
+{
+  "contract_id": "CANIE64BDFKLHROLOIY2KTQVBWUZNUKZP75DLXC272QM7TIN5N3M4LVA",
+  "role": "backfill",
+  "wasm_hash": "dcdc0b1860799629c7c88804955dd7373cb6febaf069e2ba863e98ebbaa95c27",
+  "ledger": 65378616,
+  "tx_hash": "8c45877af3b56ade44ae509843ddd22b2fe1c83564c3694de6f5e67891cae587",
+  "op_index": 0,
+  "event_index": 11,
+  "ledger_closed_at": "2026-11-08T23:05:22Z",
+  "topics": [
+    "AAAADwAAAAlzd2FwX2JsbmQAAAA=",
+    "AAAAEgAAAAFbVXXk+kS//2/sj2JvFBHhWtX1cb+pKEQtZ5ctcLVmJw=="
+  ],
+  "value": "AAAAEAAAAAEAAAADAAAACgAAAAAAAAAAAAAAAO254r8AAAAKAAAAAAAAAAAAAAAA7bnivwAAAAoAAAAAAAAAAAAACmh25Ugg",
+  "event_name": "swap_blnd"
+}

@@ -64,7 +64,7 @@ tell us if a contract is missing or mis-attributed.
 |---|---|---|---|
 | Soroswap | lake deploy-graph | ✅ Gated (4 factories) | [soroswap.md](soroswap.md) |
 | Blend | lake deploy-graph | ✅ Gated (2 factories, 27 pools) — lending, excluded from VWAP | [blend.md](blend.md) |
-| BLNT V3 | published deployment records | 🔎 Enumerated (1 factory, 2 pools, 4 modules); dedicated decoder pending — lending, excluded from VWAP | [blnt.md](blnt.md) |
+| BLNT V3 | published deployment records + factory deploy graph | ✅ Gated (1 factory, 2 seeded pools, 4 modules; future factory pools admitted in-stream; 6 WASM lineages audited 2026-11-15) — lending, excluded from VWAP | [blnt.md](blnt.md) |
 | Blend Emitter | lake topic census (single contract) | ✅ Gated (curated 1-contract allowlist, 2026-07-09) — BLND emissions plumbing, `Lending` class, excluded from VWAP | [blend_emitter.md](blend_emitter.md) |
 | SoroCredit | single trust-root | ✅ Gated (1 contract + child collateral positions) — consumer USDC credit/CDP, no pricing signal | [sorocredit.md](sorocredit.md) |
 | Aquarius | router-anchored | ✅ Gated (router + 332 pools, 2026-07-05) | [aquarius.md](aquarius.md) |

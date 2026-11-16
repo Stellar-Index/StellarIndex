@@ -1,0 +1,15 @@
+{
+  "contract_id": "CAKLFWAHB2RIYRBSPUL6EH43AIQ5ILBEM7HTMWYSJRL7PHZQ676KMCV5",
+  "role": "factory",
+  "wasm_hash": "985d7eda4b610f28103edcb28faa52408169f455ac9a880c4a39f58ecc0c2135",
+  "ledger": 65134362,
+  "tx_hash": "db1ff1407551e7f1f09f78e5547d41145e57bd6ad09978449c4e89e187782f62",
+  "op_index": 0,
+  "event_index": 0,
+  "ledger_closed_at": "2026-10-25T19:46:33Z",
+  "topics": [
+    "AAAADwAAAAZkZXBsb3kAAA=="
+  ],
+  "value": "AAAAEgAAAAEFKFhMUbnZ0OKG13O4P8EIk/Lb/7J4PufSM7mTjUnLlg==",
+  "event_name": "deploy"
+}

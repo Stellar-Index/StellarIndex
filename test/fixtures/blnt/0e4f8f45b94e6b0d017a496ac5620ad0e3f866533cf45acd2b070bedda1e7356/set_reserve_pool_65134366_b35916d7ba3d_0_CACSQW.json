@@ -1,0 +1,15 @@
+{
+  "contract_id": "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7",
+  "role": "pool",
+  "wasm_hash": "0e4f8f45b94e6b0d017a496ac5620ad0e3f866533cf45acd2b070bedda1e7356",
+  "ledger": 65134366,
+  "tx_hash": "b35916d7ba3d40bfb512197fa4fb5443d97b17e5e0fc01e7db5015d4b4423c5a",
+  "op_index": 0,
+  "event_index": 0,
+  "ledger_closed_at": "2026-10-25T19:46:53Z",
+  "topics": [
+    "AAAADwAAAAtzZXRfcmVzZXJ2ZQA="
+  ],
+  "value": "AAAAEAAAAAEAAAACAAAAEgAAAAEltPzYWa7C+mNIQ4xImzw8EMmLbSG+T9PLMMtolT75dwAAAAMAAAAA",
+  "event_name": "set_reserve"
+}

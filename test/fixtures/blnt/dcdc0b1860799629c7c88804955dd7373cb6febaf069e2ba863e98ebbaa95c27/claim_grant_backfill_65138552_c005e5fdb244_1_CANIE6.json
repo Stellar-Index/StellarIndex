@@ -1,0 +1,16 @@
+{
+  "contract_id": "CANIE64BDFKLHROLOIY2KTQVBWUZNUKZP75DLXC272QM7TIN5N3M4LVA",
+  "role": "backfill",
+  "wasm_hash": "dcdc0b1860799629c7c88804955dd7373cb6febaf069e2ba863e98ebbaa95c27",
+  "ledger": 65138552,
+  "tx_hash": "c005e5fdb244f999ae9ce50fa3de11dbc4cd7dc0bc688525fbd8316a2a1fe1b3",
+  "op_index": 0,
+  "event_index": 1,
+  "ledger_closed_at": "2026-10-26T01:35:43Z",
+  "topics": [
+    "AAAADwAAAAtjbGFpbV9ncmFudAA=",
+    "AAAAEgAAAAAAAAAAZAsL2TwYgMVBPJS93MpScAep5bFnDj0IOXy5gQ2K28I="
+  ],
+  "value": "AAAACgAAAAAAAAAAAAAACDYuzyg=",
+  "event_name": "claim_grant"
+}

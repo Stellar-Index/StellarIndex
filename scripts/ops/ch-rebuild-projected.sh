@@ -126,7 +126,7 @@ exec >>"$LOG" 2>&1
 # internal/ops/chops/ch_rebuild_projected_script_scope_test.go and the projector
 # registry by TestScriptKnownSources_Golden: a projected source left out must be
 # named, with its reason, in that test's knownScriptOmitsProjected.
-KNOWN_SOURCES="aquarius soroswap phoenix comet blend cctp rozo defindex blend_backstop sorocredit upshift"
+KNOWN_SOURCES="aquarius soroswap phoenix comet blend blnt cctp rozo defindex blend_backstop sorocredit upshift"
 TRADE_SOURCES="aquarius soroswap phoenix comet"
 
 refuse() { echo "REFUSED: $* — nothing was touched"; exit 2; }
@@ -187,6 +187,7 @@ source_delete_sql() {
       echo "DELETE FROM blend_positions WHERE ledger BETWEEN $lo AND $hi;"
       echo "DELETE FROM blend_emissions WHERE ledger BETWEEN $lo AND $hi;"
       echo "DELETE FROM blend_admin WHERE ledger BETWEEN $lo AND $hi;" ;;
+    blnt) echo "DELETE FROM blnt_events WHERE ledger BETWEEN $lo AND $hi;" ;;
   esac
 }
 

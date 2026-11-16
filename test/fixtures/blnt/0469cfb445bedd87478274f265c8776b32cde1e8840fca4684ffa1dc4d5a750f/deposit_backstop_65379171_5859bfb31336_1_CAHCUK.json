@@ -1,0 +1,18 @@
+{
+  "contract_id": "CAHCUKBPTW5DR5RNXOHCTJD5U76A6EEZXYZAQFRQEEQRXQ3CRUZ6Z3MO",
+  "role": "backstop",
+  "wasm_hash": "0469cfb445bedd87478274f265c8776b32cde1e8840fca4684ffa1dc4d5a750f",
+  "ledger": 65379171,
+  "tx_hash": "5859bfb31336e8f7b98f15d5fac82893953e043393c17b7e9baf465274ce1ed1",
+  "op_index": 0,
+  "event_index": 1,
+  "ledger_closed_at": "2026-11-08T23:51:37Z",
+  "topics": [
+    "AAAADwAAAAdkZXBvc2l0AA==",
+    "AAAAEAAAAAEAAAABAAAADwAAAApTZWNvbmRMb3NzAAA=",
+    "AAAAEgAAAAEFKFhMUbnZ0OKG13O4P8EIk/Lb/7J4PufSM7mTjUnLlg==",
+    "AAAAEgAAAAAAAAAA1o6/GnNBh9hRCzZorReHvP1Xvzpu3/7SJmS5KdRxyME="
+  ],
+  "value": "AAAAEAAAAAEAAAACAAAACgAAAAAAAAAAAAAAA2rRtOAAAAAKAAAAAAAAAAAAAAADatG04A==",
+  "event_name": "deposit"
+}

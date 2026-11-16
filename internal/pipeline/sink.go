@@ -18,6 +18,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	blend_backstop "github.com/Stellar-Index/StellarIndex/internal/sources/blend_backstop"
 	blend_emitter "github.com/Stellar-Index/StellarIndex/internal/sources/blend_emitter"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/cctp"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/chainlink_stellar"
 	claimable_balances "github.com/Stellar-Index/StellarIndex/internal/sources/claimable_balances"
@@ -720,6 +721,8 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 		return persistBlendEmitterDrop(ctx, logger, store, e)
 	case blend_emitter.SwapConfigEvent:
 		return persistBlendEmitterSwapConfig(ctx, logger, store, e)
+	case blnt.Event:
+		return persistBLNTEvent(ctx, logger, store, e)
 	case cctp.Event:
 		return persistCCTPEvent(ctx, logger, store, e)
 	case rozo.Event:

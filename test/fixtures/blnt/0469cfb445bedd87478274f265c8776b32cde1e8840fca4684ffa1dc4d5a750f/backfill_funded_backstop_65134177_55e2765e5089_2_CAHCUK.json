@@ -1,0 +1,15 @@
+{
+  "contract_id": "CAHCUKBPTW5DR5RNXOHCTJD5U76A6EEZXYZAQFRQEEQRXQ3CRUZ6Z3MO",
+  "role": "backstop",
+  "wasm_hash": "0469cfb445bedd87478274f265c8776b32cde1e8840fca4684ffa1dc4d5a750f",
+  "ledger": 65134177,
+  "tx_hash": "55e2765e50898a15f96825e918fa144910702c91d3f9fa1a0a0b5fb629cdb5a2",
+  "op_index": 0,
+  "event_index": 2,
+  "ledger_closed_at": "2026-10-25T19:31:08Z",
+  "topics": [
+    "AAAADwAAAA9iYWNrZmlsbF9mdW5kZWQA"
+  ],
+  "value": "AAAACgAAAAAAAAAAAAAAAAAAAAA=",
+  "event_name": "backfill_funded"
+}

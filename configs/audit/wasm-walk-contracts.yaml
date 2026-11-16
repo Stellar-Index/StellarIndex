@@ -5,7 +5,7 @@
 # enumeration command listed below — re-run periodically (after
 # every detected new pool / factory upgrade) to refresh.
 #
-# Total: 542 contracts across 8 sources, derived from an r1 walk
+# Total: 549 contracts across 9 sources, derived from an r1 walk
 # cross-checked via Soroban-RPC.
 # See docs/operations/wasm-audits/r1-walk-2026-05-01.md for the
 # audit synthesis that produced this list.
@@ -357,6 +357,20 @@ blend:
     - CCCCIQSDILITHMM7PBSLVDT5MISSY7R26MNZXCX4H7J5JQ5FPIYOGYFS
     - CDMAVJPFXPADND3YRL4BSM3AKZWCTFMX27GLLXCML3PD62HEQS5FPVAI
     - CDSYOAVXFY7SM5S64IZPPPYB4GVGGLMQVFREPSQQEZVIWXX5R23G4QSU
+
+blnt:
+  provenance: |
+    Published immutable mainnet deployment records in BLNT-Protocol/blnt-contracts-v3; pools are factory-deployed from the constructor-bound pool WASM hash.
+  notes: |
+    Six WASM lineages across seven contracts: emitter, factory, primary backfill, tiered backstop, two pools sharing one hash, and supplemental lockup backfill. Factory children are also discovered dynamically by the replay gate.
+  contracts:  # 7 currently deployed
+    - CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7
+    - CAHCUKBPTW5DR5RNXOHCTJD5U76A6EEZXYZAQFRQEEQRXQ3CRUZ6Z3MO
+    - CAKLFWAHB2RIYRBSPUL6EH43AIQ5ILBEM7HTMWYSJRL7PHZQ676KMCV5
+    - CANIE64BDFKLHROLOIY2KTQVBWUZNUKZP75DLXC272QM7TIN5N3M4LVA
+    - CAUTPSQDAJEUV5XEU3EXFVYRGDJLEJGVTFJCFZCSPTDCREAMZ573VF4D
+    - CBNRUFL5KYTT7TQMYKRMHQU5KY4LDQEUVXLI6ECKJU7OJGHC3OLGJFBV
+    - CDSO6FQSBJ3U3AJHBNNLHHKSMKTTDDN3GLGF3KZTMXBFV7SVB43ZJERT
 
 comet:
   provenance: |

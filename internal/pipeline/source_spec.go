@@ -18,6 +18,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	blend_backstop "github.com/Stellar-Index/StellarIndex/internal/sources/blend_backstop"
 	blend_emitter "github.com/Stellar-Index/StellarIndex/internal/sources/blend_emitter"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blnt"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/cctp"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/chainlink_stellar"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
@@ -321,6 +322,14 @@ var specs = []SourceSpec{
 		Events:     []consumer.Event{blend_emitter.DistributeEvent{}, blend_emitter.DropEvent{}, blend_emitter.SwapConfigEvent{}},
 		NewDecoder: gatedDecoder(blend_emitter.SourceName, blend_emitter.NewDecoder),
 		Projector:  excludeFirehose(),
+	},
+	{
+		Name:       blnt.SourceName,
+		Events:     []consumer.Event{blnt.Event{}},
+		NewDecoder: gatedDecoder(blnt.SourceName, blnt.NewDecoder),
+		// A contract-id prefilter is required instead of firehoseExcludeSyms: BLNT V3's pool-level
+		// clawback event intentionally shares a CAP-67 symbol that the global firehose filter removes.
+		Projector: &ProjectorSpec{LiveContractIDs: liveGatedSet, Genesis: blnt.GenesisLedger},
 	},
 	{
 		Name:       cctp.SourceName,

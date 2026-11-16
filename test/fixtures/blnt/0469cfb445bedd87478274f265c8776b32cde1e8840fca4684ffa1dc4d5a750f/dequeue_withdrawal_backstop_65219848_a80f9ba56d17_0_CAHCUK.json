@@ -1,0 +1,18 @@
+{
+  "contract_id": "CAHCUKBPTW5DR5RNXOHCTJD5U76A6EEZXYZAQFRQEEQRXQ3CRUZ6Z3MO",
+  "role": "backstop",
+  "wasm_hash": "0469cfb445bedd87478274f265c8776b32cde1e8840fca4684ffa1dc4d5a750f",
+  "ledger": 65219848,
+  "tx_hash": "a80f9ba56d177285aec5c8e7dd33a8577c76f27a1b04c3caf65769aeac33f539",
+  "op_index": 0,
+  "event_index": 0,
+  "ledger_closed_at": "2026-10-30T18:30:24Z",
+  "topics": [
+    "AAAADwAAABJkZXF1ZXVlX3dpdGhkcmF3YWwAAA==",
+    "AAAAEAAAAAEAAAABAAAADwAAAAlUaGlyZExvc3MAAAA=",
+    "AAAAEgAAAAEFKFhMUbnZ0OKG13O4P8EIk/Lb/7J4PufSM7mTjUnLlg==",
+    "AAAAEgAAAAAAAAAAnTLR4kzVGAXwF3J7AeTibOKPoO836Dne2oRfYAlEyZE="
+  ],
+  "value": "AAAACgAAAAAAAAAAAAAAAbllIWg=",
+  "event_name": "dequeue_withdrawal"
+}

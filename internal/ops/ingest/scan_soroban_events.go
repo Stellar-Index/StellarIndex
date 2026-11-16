@@ -135,12 +135,16 @@ func (c *scanCollector) Decode(ev events.Event) ([]consumer.Event, error) {
 		topics = append(topics, renderB64SCVal(t, 3))
 	}
 	rec := map[string]any{
-		"ledger":      ev.Ledger,
-		"contract_id": ev.ContractID,
-		"tx_hash":     ev.TxHash,
-		"op_index":    ev.OperationIndex,
-		"topics":      topics,
-		"body":        renderB64SCVal(ev.Value, 3),
+		"ledger":           ev.Ledger,
+		"ledger_closed_at": ev.LedgerClosedAt,
+		"contract_id":      ev.ContractID,
+		"tx_hash":          ev.TxHash,
+		"op_index":         ev.OperationIndex,
+		"event_index":      ev.EventIndex,
+		"topics":           topics,
+		"body":             renderB64SCVal(ev.Value, 3),
+		"topics_xdr":       ev.Topic,
+		"data_xdr":         ev.Value,
 	}
 	if err := c.out.Encode(rec); err != nil && c.firstErr == nil {
 		c.firstErr = err

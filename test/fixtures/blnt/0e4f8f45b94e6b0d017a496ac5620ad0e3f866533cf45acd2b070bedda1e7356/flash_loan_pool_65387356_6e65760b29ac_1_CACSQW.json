@@ -1,0 +1,18 @@
+{
+  "contract_id": "CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7",
+  "role": "pool",
+  "wasm_hash": "0e4f8f45b94e6b0d017a496ac5620ad0e3f866533cf45acd2b070bedda1e7356",
+  "ledger": 65387356,
+  "tx_hash": "6e65760b29ac32147d3287e8c9960501ee5f2441fe49a669c9782896a5ecf093",
+  "op_index": 0,
+  "event_index": 1,
+  "ledger_closed_at": "2026-11-09T11:13:42Z",
+  "topics": [
+    "AAAADwAAAApmbGFzaF9sb2FuAAA=",
+    "AAAAEgAAAAGt785ZruUpaPdgYdSUwlJbdWWfpClqZfSZ7ynlZHfklg==",
+    "AAAAEgAAAAFWnxWglnVmYyDYklNWiYhY0DzXjhJ+JCFHe1E9+2RIfQ==",
+    "AAAAEgAAAAFbVXXk+kS//2/sj2JvFBHhWtX1cb+pKEQtZ5ctcLVmJw=="
+  ],
+  "value": "AAAAEAAAAAEAAAACAAAACgAAAAAAAAAAAAAAACVUw+8AAAAKAAAAAAAAAAAAAAAAJUR2cw==",
+  "event_name": "flash_loan"
+}

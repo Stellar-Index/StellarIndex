@@ -1,0 +1,16 @@
+{
+  "contract_id": "CBNRUFL5KYTT7TQMYKRMHQU5KY4LDQEUVXLI6ECKJU7OJGHC3OLGJFBV",
+  "role": "lockup_backfill",
+  "wasm_hash": "7c3d3591b6227827c21a0fe0da5df402bd55394fa5ed38c0bbace0400a823ddb",
+  "ledger": 65369979,
+  "tx_hash": "a2428c4ced1e324a4c539e09c633b3edf2d4c41f4fb0293ef6c62805f14e72a3",
+  "op_index": 0,
+  "event_index": 1,
+  "ledger_closed_at": "2026-11-08T11:05:37Z",
+  "topics": [
+    "AAAADwAAAARmdW5k",
+    "AAAAEgAAAAAAAAAA2CpbBjmczQEWqVNbefbeP/EvoZIL74VHcwZMsFc5YW8="
+  ],
+  "value": "AAAAEAAAAAEAAAACAAAACgAAAAAAAAAAAAABSn80NXEAAAAKAAAAAAAAAAAAAAFKfzQ1cQ==",
+  "event_name": "fund"
+}

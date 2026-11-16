@@ -32,6 +32,7 @@ var KnownSources = map[string]struct{}{
 	"blend":             {},
 	"blend_backstop":    {},
 	"blend_emitter":     {},
+	"blnt":              {},
 	"reflector-dex":     {},
 	"reflector-cex":     {},
 	"reflector-fx":      {},
