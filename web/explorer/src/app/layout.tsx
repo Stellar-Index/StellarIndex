@@ -3,6 +3,7 @@ import { Geist_Mono, Lora, Onest } from 'next/font/google';
 import './globals.css';
 import { ConsoleShell } from '@/components/nav/ConsoleShell';
 import { QueryProvider } from './QueryProvider';
+import { ClientErrorListener } from '@/components/ClientErrorListener';
 import { serializeJsonLd } from '@/lib/seo';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import { API_BASE_URL } from '@/api/client';
@@ -221,6 +222,7 @@ export default function RootLayout({
         >
           Skip to main content
         </a>
+        <ClientErrorListener />
         <QueryProvider>
           <ConsoleShell>{children}</ConsoleShell>
         </QueryProvider>
