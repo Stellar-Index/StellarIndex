@@ -704,9 +704,11 @@ if [[ -n "${DRILL_CH_WINDOW:-}" ]]; then
     full_days=$(echo "scale=1; $per_ledger * $live_tip / 86400" | bc)
     check "ch_rederive" 1 "window in ${ch_secs}s (${per_ledger}s/ledger → full rebuild ≈ ${full_days} days single-threaded, fetch+decode only — parallelism divides this)"
     # Reconcile against the live lake (ADR-0043 §2.2): the window just proved
-    # re-derivable must already be complete in ClickHouse.
+    # re-derivable must already be complete in ClickHouse. Distinct ledgers, not
+    # rows: stellar.ledgers is a ReplacingMergeTree and holds a re-inserted
+    # ledger twice until parts merge.
     ch_rows=$(curl -sf --netrc-file "$CH_NETRC" "$CH_HTTP" --data-binary \
-      "SELECT count() FROM stellar.ledgers WHERE ledger_seq BETWEEN $lo AND $hi" | tr -dc '0-9')
+      "SELECT uniqExact(ledger_seq) FROM stellar.ledgers WHERE ledger_seq BETWEEN $lo AND $hi" | tr -dc '0-9')
     check "ch_lake_window_complete" "$([[ "$ch_rows" == "$DRILL_CH_WINDOW" ]] && echo 1 || echo 0)" \
       "stellar.ledgers[$lo,$hi]: lake=${ch_rows:-?} expected=$DRILL_CH_WINDOW"
   else
