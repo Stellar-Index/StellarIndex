@@ -562,6 +562,17 @@ func run(cfgPath string, dryRun bool) error {
 		defer close(sinkDone)
 		sinkLoss = pipeline.PersistEvents(rootCtx, logger, store, events, sinkMode, lateTrades)
 	}()
+	// Off-chain connectors get their own channel and sink lane. On the shared channel, on-chain
+	// writes block-retrying a Postgres fault stopped every venue stream being read, and those
+	// trades have no cursor to replay from.
+	externalEvents := make(chan consumer.Event, 256)
+	externalSinkDone := make(chan struct{})
+	var externalSinkLoss pipeline.ShutdownLoss // read only after <-externalSinkDone
+	go func() {
+		// CRASH, unguarded for the reason the sink goroutine above gives.
+		defer close(externalSinkDone)
+		externalSinkLoss = pipeline.PersistExternalEvents(rootCtx, logger, store, externalEvents, lateTrades)
+	}()
 
 	// ─── Projector (ADR-0032) ──────────────────────────────────
 	// Phase 3 (persist_per_source=true): projector and dispatcher both write Soroban-derived
@@ -620,9 +631,9 @@ func run(cfgPath string, dryRun bool) error {
 	logger.Info("verified-currency catalogue loaded", "entries", len(verifiedCurrencies.All()))
 
 	// ─── External streamers (off-chain CEX/FX/aggregators) ──────
-	// Parallel to the Galexie path, same sink; per-venue goroutines live in external.Run and we
-	// keep its wait func for the drain.
-	externalWait, externalSources, err := startExternalConnectors(rootCtx, cfg.External, verifiedCurrencies, events, logger)
+	// Parallel to the Galexie path on their own sink lane; per-venue goroutines live in
+	// external.Run and we keep its wait func for the drain.
+	externalWait, externalSources, err := startExternalConnectors(rootCtx, cfg.External, verifiedCurrencies, externalEvents, logger)
 	if err != nil {
 		return fmt.Errorf("external connectors: %w", err)
 	}
@@ -787,21 +798,21 @@ func run(cfgPath string, dryRun bool) error {
 		}
 	}
 
-	// Connectors must drain before the shared events channel closes, or an in-flight send panics.
-	// The wait is bounded because one wedged connector would otherwise hold the binary until
-	// systemd's SIGKILL, the one shutdown that skips the sink drain. On timeout do NOT
-	// close(events): a running connector is a live sender.
-	if !waitBounded(shutdownCtx, logger, "external-connectors-drain", externalWait) {
-		safeToClose = false
-		logger.Warn("external connectors did not drain before deadline — leaving events channel open to avoid send-on-closed panic")
+	// Connectors must drain before their channel closes, or an in-flight send panics. The wait is
+	// bounded because one wedged connector would otherwise hold the binary until systemd's
+	// SIGKILL, the one shutdown that skips the sink drain. On timeout do NOT close the channel: a
+	// running connector is a live sender.
+	if waitBounded(shutdownCtx, logger, "external-connectors-drain", externalWait) {
+		close(externalEvents)
+	} else {
+		logger.Warn("external connectors did not drain before deadline — leaving their events channel open to avoid send-on-closed panic")
 	}
 
-	// Close events so the sink returns after draining; safe only once the producer has exited and
-	// the connectors have drained.
+	// Close events so the sink returns after draining; safe only once the producer has exited.
 	if safeToClose {
 		close(events)
 	}
-	writersStopped := true // both live trade writers; read by the late-trade flush below
+	writersStopped := true // every live trade writer; read by the late-trade flush below
 	select {
 	case <-sinkDone:
 		logger.Info("clean shutdown")
@@ -813,6 +824,9 @@ func run(cfgPath string, dryRun bool) error {
 	case <-shutdownCtx.Done():
 		writersStopped = false
 		logger.Warn("drain timeout exceeded — hard exit")
+	}
+	if !awaitExternalSink(shutdownCtx, externalSinkDone, &externalSinkLoss, logger) {
+		writersStopped = false
 	}
 
 	// Each projector cycle is bounded by PerSourceTimeout (60s), so this returns promptly on cancel.
@@ -847,6 +861,22 @@ func run(cfgPath string, dryRun bool) error {
 
 	// Surface the producer's failure only after everything it produced has been persisted.
 	return errors.Join(fatalErr, instanceLock.Lost())
+}
+
+// awaitExternalSink waits for the off-chain sink lane and reports whether it stopped inside the drain budget.
+// Its loss feeds no cursor rewind: off-chain rows carry no ledger.
+func awaitExternalSink(ctx context.Context, done <-chan struct{}, loss *pipeline.ShutdownLoss, logger *slog.Logger) bool {
+	select {
+	case <-done:
+		if loss.Rows > 0 {
+			logger.Error("external sink abandoned rows on exit — off-chain rows have no cursor, refetch the window from the venues",
+				"rows", loss.Rows)
+		}
+		return true
+	case <-ctx.Done():
+		logger.Warn("external sink drain timeout — hard exit")
+		return false
+	}
 }
 
 // instanceLockRefusal names the other indexer as the reason not to start.

@@ -112,43 +112,7 @@ func countReceived(source string) {
 
 // PersistEvents launches [PersistWorkers] concurrent drain goroutines over in, writing each event via the store until ctx is canceled and in is drained, or in closes.
 func PersistEvents(ctx context.Context, logger *slog.Logger, store *timescale.Store, in <-chan consumer.Event, mode SinkMode, late *LateTradeRefresher) ShutdownLoss {
-	lt := &lossTracker{}
-	// Bounded async retry buffer for external (CEX/FX) trades on infra faults (ADR-0041): they have no cursor to gate,
-	// so they drop-oldest on overflow rather than block. A nil store skips the buffer.
-	var extBuf *externalRetryBuffer
-	var bufWG sync.WaitGroup
-	var bufCancel context.CancelFunc
-	if store != nil {
-		extBuf = newExternalRetryBuffer(late.writer(store), logger, externalRetryBufferMaxDepth)
-		// Derived ctx tied to worker lifetime, not ctx: a backfill's ctx is never canceled, so run() would spin and bufWG.Wait() hang.
-		// Cancelling it after the workers drain lets run() exit via its fresh-context finalDrain without losing buffered trades.
-		var bufCtx context.Context
-		bufCtx, bufCancel = context.WithCancel(ctx)
-		bufWG.Add(1)
-		go func() {
-			defer bufWG.Done()
-			extBuf.run(bufCtx)
-		}()
-	}
-
-	var wg sync.WaitGroup
-	for i := 0; i < PersistWorkers; i++ {
-		wg.Add(1)
-		go func(workerID int) {
-			defer wg.Done()
-			// store doubles as the trade writer and, bound to the logger by storeEventPersister, the non-trade event persister. Both seams let
-			// the shutdown-race tests intercept a write with a fake.
-			persistWorker(ctx, logger, storeEventPersister(logger, store), late.writer(store), in, mode, workerID, extBuf, lt)
-		}(i)
-	}
-	wg.Wait()
-	// Workers have drained + block-retried their buffers; signal the external
-	// buffer to finish its final drain and exit (see bufCtx above), then wait.
-	if bufCancel != nil {
-		bufCancel()
-	}
-	bufWG.Wait()
-	return lt.snapshot()
+	return runSinkLane(ctx, logger, storeEventPersister(logger, store), late.writer(store), in, mode, PersistWorkers, store != nil)
 }
 
 // PersistWorkers is the count of concurrent drain goroutines; 8 keeps ingest above the network ledger rate within the 25-conn PG pool.

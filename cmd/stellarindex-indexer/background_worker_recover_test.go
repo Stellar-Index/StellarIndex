@@ -37,12 +37,12 @@ func TestBackgroundWorkersRecover(t *testing.T) {
 			}
 			continue
 		}
-		if s.Calls("pipeline.PersistEvents") {
+		if s.Calls("pipeline.PersistEvents") || s.Calls("pipeline.PersistExternalEvents") {
 			exemptSink++
 			if s.Recovers {
 				t.Errorf("the sink goroutine at main.go:%d registers a worker guard. It must not: "+
-					"the guard cannot reach the persist workers PersistEvents fans out, and if "+
-					"this frame unwinds nothing drains `events` while the process keeps "+
+					"the guard cannot reach the persist workers the lane fans out, and if "+
+					"this frame unwinds nothing drains its channel while the process keeps "+
 					"reporting healthy", s.Line)
 			}
 			continue
@@ -68,8 +68,8 @@ func TestBackgroundWorkersRecover(t *testing.T) {
 	if exemptListener != 1 {
 		t.Errorf("found %d metrics-listener goroutine(s), want exactly 1", exemptListener)
 	}
-	if exemptSink != 1 {
-		t.Errorf("found %d sink goroutine(s), want exactly 1 — if PersistEvents moved, "+
+	if exemptSink != 2 {
+		t.Errorf("found %d sink goroutine(s), want exactly 2 (on-chain and off-chain lanes) — if one moved, "+
 			"re-derive whether the crash-by-design argument still holds", exemptSink)
 	}
 }
