@@ -8214,7 +8214,7 @@ export interface components {
             /** @default false */
             unverified_ticker_collision: boolean;
             /**
-             * @description The list was capped and no cursor continues it, so its length is a lower bound. Set by `/v1/markets?asset=<slug>`. Omitted when false.
+             * @description The list was capped with no cursor to continue it, or part of it could not be read, so its length is a lower bound. Set by `/v1/markets?asset=<slug>`. Omitted when false.
              * @default false
              */
             truncated: boolean;
@@ -18049,9 +18049,10 @@ export interface operations {
                  *     A catalogue slug (`xlm`, `usdc`) is also accepted and
                  *     expands to every asset_id of that currency. The merged
                  *     list is capped at `limit` and has no cursor; when it was
-                 *     capped, `flags.truncated` is true and the list is a
-                 *     lower bound. Page through one canonical asset_id for
-                 *     the full set.
+                 *     capped, or one of the asset_ids could not be read,
+                 *     `flags.truncated` is true and the list is a lower bound
+                 *     (an unread asset_id also sets `flags.stale`). Page
+                 *     through one canonical asset_id for the full set.
                  */
                 asset?: string;
                 /**

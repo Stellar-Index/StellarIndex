@@ -108,10 +108,13 @@ func TestFanOutAssetMarketsSurfacesPartialFailure(t *testing.T) {
 	}
 	s := quietServer()
 
-	merged, _, stale, _, err := s.fanOutAssetMarkets(context.Background(), reader,
+	merged, _, stale, truncated, err := s.fanOutAssetMarkets(context.Background(), reader,
 		[]string{"native", "crypto:XLM"}, 100, timescale.MarketsOrderVolume24hDesc)
 	if err != nil {
 		t.Fatalf("fanOutAssetMarkets returned error %v, want nil (partial success)", err)
+	}
+	if !truncated {
+		t.Error("truncated = false with a failed leg: its rows are missing, so the list is a lower bound")
 	}
 	if len(merged) != 1 {
 		t.Fatalf("merged rows = %d, want 1 (the surviving leg)", len(merged))

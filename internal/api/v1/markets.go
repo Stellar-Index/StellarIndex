@@ -626,7 +626,7 @@ func assetMarketsLeg(ctx context.Context, reader MarketsReader, asset string, li
 // fanOutAssetMarkets runs AssetMarkets per expanded asset_id, dedupes on (base, quote), sorts and caps at limit; no pagination (cursors
 // don't compose).
 // Freshness is conservative: observedAt is the oldest leg, stale the OR of legs; zero/false when the reader cannot report them.
-// truncated is true when the merge was capped or a leg held more rows than it returned.
+// truncated is true when the merge was capped, a leg held more rows than it returned, or a leg could not be read.
 func (s *Server) fanOutAssetMarkets(ctx context.Context, reader MarketsReader, assets []string, limit int, order timescale.MarketsOrder) (rows []Market, observedAt time.Time, stale, truncated bool, err error) {
 	type result struct {
 		rows       []Market
@@ -650,8 +650,8 @@ func (s *Server) fanOutAssetMarkets(ctx context.Context, reader MarketsReader, a
 			if firstErr == nil {
 				firstErr = r.err
 			}
-			// A failed leg leaves the composite incomplete, which is what `stale` signals.
-			stale = true
+			// A failed leg's rows are missing: the list is a lower bound (truncated) as well as not current (stale).
+			stale, truncated = true, true
 			continue
 		}
 		// Oldest observed-at across legs; any stale leg makes the composite stale.
