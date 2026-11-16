@@ -28,7 +28,7 @@ type countingExplorerReader struct {
 	lastSince     uint32
 }
 
-func (c *countingExplorerReader) AssetHolders(ctx context.Context, asset string, limit int) ([]clickhouse.AssetHolder, int64, error) {
+func (c *countingExplorerReader) AssetHolders(ctx context.Context, asset string, limit int) ([]clickhouse.AssetHolder, int64, time.Time, error) {
 	c.mu.Lock()
 	c.holderCalls++
 	c.mu.Unlock()

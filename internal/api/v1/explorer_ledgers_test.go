@@ -67,10 +67,12 @@ type stubExplorerReader struct {
 	contractActivity clickhouse.ContractActivitySummary
 	holders          []clickhouse.AssetHolder
 	holderCount      int64
-	wealth           []clickhouse.AccountWealth
-	wealthLedger     uint32 // the cached ranking snapshot's AsOfLedger
-	pairStates       map[string]clickhouse.SoroswapPairState
-	tokenDisplays    map[string]clickhouse.TokenDisplayMeta
+	// holdersComputedAt, when set, makes the holders board read as precomputed at that time.
+	holdersComputedAt time.Time
+	wealth            []clickhouse.AccountWealth
+	wealthLedger      uint32 // the cached ranking snapshot's AsOfLedger
+	pairStates        map[string]clickhouse.SoroswapPairState
+	tokenDisplays     map[string]clickhouse.TokenDisplayMeta
 	// tokenDisplaysErr fails ONLY TokenDisplays, so tests can exercise a
 	// display-lookup outage while the reserve read itself succeeds.
 	tokenDisplaysErr error
@@ -269,8 +271,8 @@ func (s *stubExplorerReader) AccountStateCached(_ context.Context, _ string) (cl
 	return s.accountState, false, s.err
 }
 
-func (s *stubExplorerReader) AssetHolders(_ context.Context, _ string, _ int) ([]clickhouse.AssetHolder, int64, error) {
-	return s.holders, s.holderCount, s.err
+func (s *stubExplorerReader) AssetHolders(_ context.Context, _ string, _ int) ([]clickhouse.AssetHolder, int64, time.Time, error) {
+	return s.holders, s.holderCount, s.holdersComputedAt, s.err
 }
 
 // sacName lets SAC-resolution tests inject a wrapped-asset name;

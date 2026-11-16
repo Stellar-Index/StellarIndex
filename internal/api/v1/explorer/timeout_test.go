@@ -222,9 +222,9 @@ func (r *capReader) AccountStateCached(ctx context.Context, _ string) (clickhous
 	return clickhouse.AccountState{}, false, nil
 }
 
-func (r *capReader) AssetHolders(ctx context.Context, _ string, _ int) ([]clickhouse.AssetHolder, int64, error) {
+func (r *capReader) AssetHolders(ctx context.Context, _ string, _ int) ([]clickhouse.AssetHolder, int64, time.Time, error) {
 	r.probe.record(ctx)
-	return nil, 0, nil
+	return nil, 0, time.Time{}, nil
 }
 
 func (r *capReader) AccountsByWealth(ctx context.Context, _, _ []string, _ int) ([]clickhouse.AccountWealth, error) {

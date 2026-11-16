@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
+	"time"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 
@@ -300,19 +301,22 @@ const (
 )
 
 // AssetHolders returns the top holders by current balance plus the count of positive balances; callers pass the canonical board key (XLM alias forms folded to "native").
-func (r *ExplorerReader) AssetHolders(ctx context.Context, asset string, limit int) ([]AssetHolder, int64, error) {
+// computedAt is when a precomputed board was built; zero means the board was scanned by this call.
+func (r *ExplorerReader) AssetHolders(ctx context.Context, asset string, limit int) (holders []AssetHolder, total int64, computedAt time.Time, err error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
 	// Precomputed rollup first; a read error falls through to the live scans
 	// (availability over speed), ok=false means the rollup is not usable.
-	if out, total, ok, err := r.holdersRollupBoard(ctx, asset, limit); err == nil && ok {
-		return out, total, nil
+	if out, n, at, ok, rerr := r.holdersRollupBoard(ctx, asset, limit); rerr == nil && ok {
+		return out, n, at, nil
 	}
 	if asset == "native" {
-		return r.holdersBoard(ctx, nativeHoldersQuery, []any{limit}, nativeHoldersCountQuery, nil)
+		holders, total, err = r.holdersBoard(ctx, nativeHoldersQuery, []any{limit}, nativeHoldersCountQuery, nil)
+		return holders, total, time.Time{}, err
 	}
-	return r.holdersBoard(ctx, assetHoldersQuery, []any{asset, limit}, assetHoldersCountQuery, []any{asset})
+	holders, total, err = r.holdersBoard(ctx, assetHoldersQuery, []any{asset, limit}, assetHoldersCountQuery, []any{asset})
+	return holders, total, time.Time{}, err
 }
 
 // holdersBoard runs one (ranking, count) query pair.

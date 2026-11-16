@@ -67,6 +67,10 @@ func (f *perKeyFlight) end(key string, fl *keyFlight, err error) {
 // FINAL scans of the large current-state table. Double the 30s AccountStateCacheTTL: twice the scans, slower-changing.
 const assetHoldersTTL = 60 * time.Second
 
+// assetHoldersStaleAfter matches lakeStaleThreshold: a board whose balances are older than this is served with
+// flags.stale, whether the age comes from the lake, this cache or the precomputed rollup's cycle.
+const assetHoldersStaleAfter = 300 * time.Second
+
 // assetHoldersCacheMax bounds resident entries: boards are long-tail (a few hot assets plus
 // one-off lookups), so a modest cap holds the hot set. On overflow the oldest entry is evicted.
 const assetHoldersCacheMax = 512
@@ -80,8 +84,11 @@ const assetHoldersMaxLimit = 500
 const assetHoldersRefreshTimeout = 90 * time.Second
 
 type assetHoldersEntry struct {
-	holders    []clickhouse.AssetHolder
-	total      int64
+	holders []clickhouse.AssetHolder
+	total   int64
+	// computedAt is set when the board came from a precomputed store: the balances are that old, however recently
+	// this entry was cached.
+	computedAt time.Time
 	cachedAt   time.Time
 	asOfLedger uint32
 }
@@ -91,6 +98,15 @@ type assetHoldersEntry struct {
 type snapshotVintage struct {
 	at     time.Time
 	ledger uint32
+}
+
+// vintage is what the board is fresh to. A precomputed board answers with its own build time and no ledger: the
+// watermark read at cache time says nothing about balances scanned earlier.
+func (e assetHoldersEntry) vintage() snapshotVintage {
+	if !e.computedAt.IsZero() {
+		return snapshotVintage{at: e.computedAt}
+	}
+	return snapshotVintage{at: e.cachedAt, ledger: e.asOfLedger}
 }
 
 // vintageLedger reads the lake watermark BEFORE the scan, so it never names a ledger later than
@@ -186,14 +202,14 @@ func (h *Handler) refreshAssetHolders(asset string) *keyFlight {
 		rctx, cancel := context.WithTimeout(context.Background(), assetHoldersRefreshTimeout)
 		defer cancel()
 		ledger := h.vintageLedger(rctx)
-		holders, total, err := h.Reader.AssetHolders(rctx, asset, assetHoldersMaxLimit)
+		holders, total, computedAt, err := h.Reader.AssetHolders(rctx, asset, assetHoldersMaxLimit)
 		obs.ObserveExplorerSWRRefresh("asset_holders", start, err)
 		if err != nil {
 			// Keep the previous entry (if any) — old-but-real beats blank.
 			h.Logger.Warn("asset holders detached refresh failed", "asset", asset, "err", err)
 			return
 		}
-		h.assetHolders.put(asset, assetHoldersEntry{holders: holders, total: total, cachedAt: time.Now(), asOfLedger: ledger})
+		h.assetHolders.put(asset, assetHoldersEntry{holders: holders, total: total, computedAt: computedAt, cachedAt: time.Now(), asOfLedger: ledger})
 	}()
 	return fl
 }
@@ -205,7 +221,7 @@ func (h *Handler) assetHoldersCached(ctx context.Context, asset string, limit in
 		if !fresh {
 			h.refreshAssetHolders(asset) //nolint:contextcheck // intentional detach — the rescan must outlive this request (see refreshAssetHolders)
 		}
-		return sliceHolders(e.holders, limit), e.total, snapshotVintage{e.cachedAt, e.asOfLedger}, !fresh, nil
+		return sliceHolders(e.holders, limit), e.total, e.vintage(), !fresh, nil
 	}
 	// Stone-cold: wait for the detached compute, bounded by OUR deadline
 	// only — the compute itself is not.
@@ -213,7 +229,7 @@ func (h *Handler) assetHoldersCached(ctx context.Context, asset string, limit in
 	select {
 	case <-fl.done:
 		if e, ok, _ := h.assetHolders.get(asset); ok {
-			return sliceHolders(e.holders, limit), e.total, snapshotVintage{e.cachedAt, e.asOfLedger}, false, nil
+			return sliceHolders(e.holders, limit), e.total, e.vintage(), false, nil
 		}
 		if fl.err != nil {
 			return nil, 0, snapshotVintage{}, false, fl.err

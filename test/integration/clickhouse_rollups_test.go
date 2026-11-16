@@ -500,26 +500,33 @@ func TestHoldersRollupFreshness_ExecutesAgainstServer(t *testing.T) {
 		t.Fatalf("cycle stamp %s is %s from now — the writer's stamp did not round-trip as the true instant", stamp, age)
 	}
 
-	holders := func(asset string) int64 {
+	holders := func(asset string, fromRollup bool) int64 {
 		t.Helper()
 		r, err := chstore.NewExplorerReader(ctx, addr)
 		if err != nil {
 			t.Fatalf("NewExplorerReader: %v", err)
 		}
 		defer func() { _ = r.Close() }()
-		_, total, err := r.AssetHolders(ctx, asset, 5)
+		_, total, at, err := r.AssetHolders(ctx, asset, 5)
 		if err != nil {
 			t.Fatalf("AssetHolders(%s): %v", asset, err)
+		}
+		// A board answered by the rollup says when the rollup built it; a scanned one carries no earlier time.
+		if fromRollup && !at.Equal(stamp) {
+			t.Errorf("AssetHolders(%s) computed at %s, want the cycle stamp %s", asset, at, stamp)
+		}
+		if !fromRollup && !at.IsZero() {
+			t.Errorf("AssetHolders(%s) from a live scan computed at %s, want the zero time", asset, at)
 		}
 		return total
 	}
 
-	if got := holders(listedAsset); got != 1 {
+	if got := holders(listedAsset, true); got != 1 {
 		t.Errorf("fresh cycle, listed asset: total = %d, want 1", got)
 	}
 	// Fresh cycle: the rollup is authoritative, so the late asset reads as
 	// zero holders — the live scan would have found one.
-	if got := holders(lateAsset); got != 0 {
+	if got := holders(lateAsset, true); got != 0 {
 		t.Errorf("fresh cycle, late asset: total = %d, want 0 served from the rollup", got)
 	}
 	circulating := func() map[string]string {
@@ -548,7 +555,7 @@ func TestHoldersRollupFreshness_ExecutesAgainstServer(t *testing.T) {
 	}
 	// Stale cycle: the rollup must no longer answer; the live scan finds the
 	// late asset's holder.
-	if got := holders(lateAsset); got != 1 {
+	if got := holders(lateAsset, false); got != 1 {
 		t.Errorf("stale cycle, late asset: total = %d, want 1 from the live scan — a 3h-old rollup was served as current", got)
 	}
 	if m := circulating(); m[listedAsset] != "42" || m[lateAsset] != "42" {

@@ -125,8 +125,8 @@ func (downReader) AccountStateCached(context.Context, string) (clickhouse.Accoun
 	return clickhouse.AccountState{}, false, errLakeDown
 }
 
-func (downReader) AssetHolders(context.Context, string, int) ([]clickhouse.AssetHolder, int64, error) {
-	return nil, 0, errLakeDown
+func (downReader) AssetHolders(context.Context, string, int) ([]clickhouse.AssetHolder, int64, time.Time, error) {
+	return nil, 0, time.Time{}, errLakeDown
 }
 
 func (downReader) AccountsByWealth(context.Context, []string, []string, int) ([]clickhouse.AccountWealth, error) {

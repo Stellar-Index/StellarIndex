@@ -27,12 +27,12 @@ type swrReader struct {
 	fail           atomic.Bool
 }
 
-func (r *swrReader) AssetHolders(context.Context, string, int) ([]clickhouse.AssetHolder, int64, error) {
+func (r *swrReader) AssetHolders(context.Context, string, int) ([]clickhouse.AssetHolder, int64, time.Time, error) {
 	r.holdersCalls.Add(1)
 	if r.fail.Load() {
-		return nil, 0, errors.New("boom")
+		return nil, 0, time.Time{}, errors.New("boom")
 	}
-	return []clickhouse.AssetHolder{{AccountID: validTestAccount, Balance: 7}}, 1, nil
+	return []clickhouse.AssetHolder{{AccountID: validTestAccount, Balance: 7}}, 1, time.Time{}, nil
 }
 
 func (r *swrReader) RecentContracts(context.Context, int, uint32) ([]clickhouse.ContractDirectoryRow, error) {

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
@@ -56,11 +57,11 @@ type holdersKeyReader struct {
 	assets []string
 }
 
-func (r *holdersKeyReader) AssetHolders(_ context.Context, asset string, _ int) ([]clickhouse.AssetHolder, int64, error) {
+func (r *holdersKeyReader) AssetHolders(_ context.Context, asset string, _ int) ([]clickhouse.AssetHolder, int64, time.Time, error) {
 	r.mu.Lock()
 	r.assets = append(r.assets, asset)
 	r.mu.Unlock()
-	return []clickhouse.AssetHolder{{AccountID: validTestAccount, Balance: 554421152474348098}}, 9915982, nil
+	return []clickhouse.AssetHolder{{AccountID: validTestAccount, Balance: 554421152474348098}}, 9915982, time.Time{}, nil
 }
 
 func (r *holdersKeyReader) seen() []string {

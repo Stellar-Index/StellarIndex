@@ -512,9 +512,13 @@ export interface paths {
          *     `asset: "native"`). Balances are strings (ADR-0003). Coverage tracks
          *     the entry-change capture.
          *
-         *     Freshness (ADR-0041): `as_of_ledger` is the lake watermark the read
-         *     is fresh to; `flags.stale` fires when the watermark's close time
-         *     trails now by more than 300s.
+         *     Freshness (ADR-0041): the board is either scanned on demand or
+         *     read from a rollup rebuilt about every 30 minutes. The envelope
+         *     `as_of` is when the balances were read: the scan time, or the
+         *     rollup cycle's time. `as_of_ledger` is the lake watermark a scanned
+         *     board is fresh to, and is omitted for a rollup board. `flags.stale`
+         *     fires when `as_of` or the watermark's close time trails now by
+         *     more than 300s, so a rollup board is usually flagged.
          *
          *     CSV: send `Accept: text/csv` for the same board as CSV with a header
          *     row (`asset,account_id,balance`, same `limit` cap). `balance` is the
@@ -15056,7 +15060,7 @@ export interface operations {
                             }[];
                             /**
                              * Format: int64
-                             * @description The board snapshot's vintage (ADR-0041): the lake watermark read immediately before the snapshot's scan, paired with the envelope as_of. Omitted when no watermark was available. Pairs with flags.stale.
+                             * @description The board snapshot's vintage (ADR-0041): the lake watermark read immediately before the snapshot's scan, paired with the envelope as_of. Omitted when no watermark was available, and when the board came from the precomputed rollup (the envelope as_of is then the rollup cycle's time). Pairs with flags.stale.
                              */
                             as_of_ledger?: number;
                         };

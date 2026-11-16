@@ -27,14 +27,14 @@ type panickingHoldersReader struct {
 
 func (r *panickingHoldersReader) AssetHolders(
 	context.Context, string, int,
-) ([]clickhouse.AssetHolder, int64, error) {
+) ([]clickhouse.AssetHolder, int64, time.Time, error) {
 	if r.calls.Add(1) <= r.panicUpTo {
 		// The shape the finding names: an index into an empty slice
 		// returned by a degraded read.
 		var degraded []clickhouse.AssetHolder
-		return []clickhouse.AssetHolder{degraded[0]}, 0, nil
+		return []clickhouse.AssetHolder{degraded[0]}, 0, time.Time{}, nil
 	}
-	return []clickhouse.AssetHolder{{AccountID: validTestAccount, Balance: 7}}, 1, nil
+	return []clickhouse.AssetHolder{{AccountID: validTestAccount, Balance: 7}}, 1, time.Time{}, nil
 }
 
 // TestAssetHoldersRefreshPanic_EndsFlightAndStaysRetryable pins what happens AFTER a panicking

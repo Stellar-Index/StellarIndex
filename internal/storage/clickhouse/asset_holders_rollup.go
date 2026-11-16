@@ -267,27 +267,27 @@ const holdersRollupMaxAge = 2 * time.Hour
 
 // holdersRollupBoard is AssetHolders' precomputed fast path; ok=false when the rollup is unavailable or older than holdersRollupMaxAge,
 // and the caller falls back to scans (honest slow over fast stale). Board and count are read in two trips, so a swap between them could
-// pair different cycles; a computed_at mismatch retries once.
-func (r *ExplorerReader) holdersRollupBoard(ctx context.Context, asset string, limit int) ([]AssetHolder, int64, bool, error) {
+// pair different cycles; a computed_at mismatch retries once. The returned time is the cycle's stamp: the board is that old.
+func (r *ExplorerReader) holdersRollupBoard(ctx context.Context, asset string, limit int) ([]AssetHolder, int64, time.Time, bool, error) {
 	if !r.probeSchema(ctx, &r.holdersRollupProbe,
 		`SELECT rank FROM stellar.asset_holders_rollup LIMIT 1`, true) {
-		return nil, 0, false, nil
+		return nil, 0, time.Time{}, false, nil
 	}
 	out, total, at, consistent, err := r.readHoldersRollupCycle(ctx, asset, limit)
 	if err != nil {
-		return nil, 0, false, err
+		return nil, 0, time.Time{}, false, err
 	}
 	if !consistent {
 		out, total, at, _, err = r.readHoldersRollupCycle(ctx, asset, limit)
 		if err != nil {
-			return nil, 0, false, err
+			return nil, 0, time.Time{}, false, err
 		}
 	}
-	fresh, err := r.holdersRollupFresh(ctx, at)
+	at, fresh, err := r.holdersRollupFresh(ctx, at)
 	if err != nil || !fresh {
-		return nil, 0, false, err
+		return nil, 0, time.Time{}, false, err
 	}
-	return out, total, true, nil
+	return out, total, at, true, nil
 }
 
 // readHoldersRollupCycle reads the board, its count and each side's computed_at, and reports whether both landed in the same cycle. The
@@ -314,16 +314,16 @@ func holdersRollupStamped(at time.Time) bool {
 	return at.Unix() > 0
 }
 
-// holdersRollupFresh reports whether a board's cycle is young enough to serve. "No row" is authoritative only for a current cycle, so an
-// asset in neither table is judged by the live table's stamp, which every row of one cycle shares.
-func (r *ExplorerReader) holdersRollupFresh(ctx context.Context, at time.Time) (bool, error) {
+// holdersRollupFresh reports whether a board's cycle is young enough to serve, and the stamp it judged. "No row" is authoritative only
+// for a current cycle, so an asset in neither table is judged by the live table's stamp, which every row of one cycle shares.
+func (r *ExplorerReader) holdersRollupFresh(ctx context.Context, at time.Time) (time.Time, bool, error) {
 	if !holdersRollupStamped(at) {
 		if err := r.conn.QueryRow(ctx, `
 			SELECT max(computed_at) FROM (SELECT computed_at FROM stellar.asset_holders_rollup LIMIT 1)`).Scan(&at); err != nil {
-			return false, fmt.Errorf("clickhouse: holders rollup cycle stamp: %w", err)
+			return time.Time{}, false, fmt.Errorf("clickhouse: holders rollup cycle stamp: %w", err)
 		}
 	}
-	return holdersRollupStamped(at) && time.Since(at) <= holdersRollupMaxAge, nil
+	return at, holdersRollupStamped(at) && time.Since(at) <= holdersRollupMaxAge, nil
 }
 
 func (r *ExplorerReader) readHoldersRollupRows(ctx context.Context, asset string, limit int) ([]AssetHolder, time.Time, error) {

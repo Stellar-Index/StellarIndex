@@ -163,7 +163,7 @@ type ExplorerReader interface {
 	// DETACHED fill bounded by the caller's deadline; an EXPIRED entry is served at once with
 	// stale=true while one detached refresh runs. Pair stale with flags.stale in the envelope.
 	AccountStateCached(ctx context.Context, account string) (clickhouse.AccountState, bool, error)
-	AssetHolders(ctx context.Context, asset string, limit int) ([]clickhouse.AssetHolder, int64, error)
+	AssetHolders(ctx context.Context, asset string, limit int) (holders []clickhouse.AssetHolder, total int64, computedAt time.Time, err error)
 	AccountsByWealth(ctx context.Context, assets, prices []string, limit int) ([]clickhouse.AccountWealth, error)
 	// AccountsByWealthCached serves the ranking from a background-refreshed cache and NEVER runs
 	// the FINAL scan on the caller's deadline. An entry past its TTL is still served (flagged

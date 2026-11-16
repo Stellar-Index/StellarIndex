@@ -183,6 +183,55 @@ func TestExplorer_AssetHolders(t *testing.T) {
 	}
 }
 
+// A holders board served from the precomputed rollup is as old as the rollup's cycle. The envelope's as_of must be that
+// cycle time, as_of_ledger must not name the watermark read at cache time, and a cycle past the freshness bound is stale.
+func TestExplorer_AssetHolders_PrecomputedBoardCarriesItsOwnAge(t *testing.T) {
+	cases := []struct {
+		name       string
+		computedAt time.Time
+		wantStale  bool
+		wantLedger uint32
+	}{
+		{"live scan", time.Time{}, false, 63_888_999},
+		{"rollup cycle 2 minutes old", time.Now().Add(-2 * time.Minute), false, 0},
+		{"rollup cycle 40 minutes old", time.Now().Add(-40 * time.Minute), true, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reader := &stubExplorerReader{
+				holders:           []clickhouse.AssetHolder{{AccountID: testG, Balance: 5}},
+				holderCount:       1,
+				holdersComputedAt: tc.computedAt,
+			}
+			srv := v1.New(v1.Options{
+				Explorer:      reader,
+				Prices:        &stubPriceReader{},
+				LakeWatermark: &wmStub{ledger: 63_888_999, closedAt: time.Now()},
+			})
+			resp := mustGet(t, httpTestServer(t, srv).URL+"/v1/assets/USDC-"+testG+"/holders")
+			var body struct {
+				Data  v1.AssetHoldersView `json:"data"`
+				AsOf  time.Time           `json:"as_of"`
+				Flags struct {
+					Stale bool `json:"stale"`
+				} `json:"flags"`
+			}
+			mustDecode(t, resp, &body)
+			if body.Flags.Stale != tc.wantStale {
+				t.Errorf("flags.stale = %v, want %v", body.Flags.Stale, tc.wantStale)
+			}
+			if body.Data.AsOfLedger != tc.wantLedger {
+				t.Errorf("as_of_ledger = %d, want %d", body.Data.AsOfLedger, tc.wantLedger)
+			}
+			if !tc.computedAt.IsZero() {
+				if d := body.AsOf.Sub(tc.computedAt); d < -time.Second || d > time.Second {
+					t.Errorf("as_of = %s, want the cycle time %s", body.AsOf, tc.computedAt)
+				}
+			}
+		})
+	}
+}
+
 // TestExplorer_AccountsList_Watermark pins ADR-0041 Decision 4 on the /v1/accounts wealth ranking: `as_of_ledger` is the
 // ranking snapshot's own ledger, not the serve-time watermark, and `flags.stale` fires when the watermark trails now.
 func TestExplorer_AccountsList_Watermark(t *testing.T) {

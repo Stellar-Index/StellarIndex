@@ -132,7 +132,7 @@ func TestHoldersRollupBoard_RefusesAStaleCycle(t *testing.T) {
 	stale := time.Now().UTC().Truncate(time.Second).Add(-3 * time.Hour)
 	r := &ExplorerReader{conn: holdersRollupLake(t, true, stale, stale)}
 
-	out, total, ok, err := r.holdersRollupBoard(t.Context(), "USDC-"+testIssuer, 100)
+	out, total, _, ok, err := r.holdersRollupBoard(t.Context(), "USDC-"+testIssuer, 100)
 	if err != nil {
 		t.Fatalf("holdersRollupBoard: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestHoldersRollupBoard_RefusesAStaleCycleForAnUnlistedAsset(t *testing.T) {
 	stale := time.Now().UTC().Truncate(time.Second).Add(-3 * time.Hour)
 	r := &ExplorerReader{conn: holdersRollupLake(t, false, time.Time{}, stale)}
 
-	_, total, ok, err := r.holdersRollupBoard(t.Context(), "NEW-"+testIssuer, 100)
+	_, total, _, ok, err := r.holdersRollupBoard(t.Context(), "NEW-"+testIssuer, 100)
 	if err != nil {
 		t.Fatalf("holdersRollupBoard: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestHoldersRollupBoard_ServesAFreshCycle(t *testing.T) {
 	fresh := time.Now().UTC().Truncate(time.Second).Add(-40 * time.Minute)
 
 	r := &ExplorerReader{conn: holdersRollupLake(t, true, fresh, fresh)}
-	out, total, ok, err := r.holdersRollupBoard(t.Context(), "USDC-"+testIssuer, 100)
+	out, total, _, ok, err := r.holdersRollupBoard(t.Context(), "USDC-"+testIssuer, 100)
 	if err != nil || !ok {
 		t.Fatalf("listed asset, fresh cycle: ok=%v err=%v, want served", ok, err)
 	}
@@ -175,7 +175,7 @@ func TestHoldersRollupBoard_ServesAFreshCycle(t *testing.T) {
 	}
 
 	r = &ExplorerReader{conn: holdersRollupLake(t, false, time.Time{}, fresh)}
-	out, total, ok, err = r.holdersRollupBoard(t.Context(), "NEW-"+testIssuer, 100)
+	out, total, _, ok, err = r.holdersRollupBoard(t.Context(), "NEW-"+testIssuer, 100)
 	if err != nil || !ok {
 		t.Fatalf("unlisted asset, fresh cycle: ok=%v err=%v, want served as zero holders", ok, err)
 	}
@@ -213,7 +213,7 @@ func TestHoldersRollupBoard_RetriesOnceWhenACycleSwapsMidRead(t *testing.T) {
 	}
 	r := &ExplorerReader{conn: conn}
 
-	out, total, ok, err := r.holdersRollupBoard(t.Context(), "USDC-"+testIssuer, 100)
+	out, total, _, ok, err := r.holdersRollupBoard(t.Context(), "USDC-"+testIssuer, 100)
 	if err != nil {
 		t.Fatalf("holdersRollupBoard: %v", err)
 	}

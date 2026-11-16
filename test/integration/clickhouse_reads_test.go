@@ -1461,7 +1461,7 @@ func TestExplorerScanQueries_ExecuteAgainstServer(t *testing.T) {
 			return err
 		},
 		"AssetHolders": func() error {
-			_, _, err := r.AssetHolders(ctx, assetID, 5)
+			_, _, _, err := r.AssetHolders(ctx, assetID, 5)
 			return err
 		},
 		"AccountsByWealth": func() error {
@@ -1503,7 +1503,7 @@ func TestExplorerScanQueries_ExecuteAgainstServer(t *testing.T) {
 	}
 
 	// The seeded trustline also proves the holders board end to end.
-	holders, total, err := r.AssetHolders(ctx, assetID, 5)
+	holders, total, _, err := r.AssetHolders(ctx, assetID, 5)
 	if err != nil || total != 1 || len(holders) != 1 || holders[0].Balance != 42 {
 		t.Errorf("AssetHolders = %v total=%d err=%v, want the one seeded holder", holders, total, err)
 	}

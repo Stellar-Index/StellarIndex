@@ -80,8 +80,8 @@ func (r *timeoutReader) AccountStateCached(context.Context, string) (clickhouse.
 	return clickhouse.AccountState{}, false, context.DeadlineExceeded
 }
 
-func (r *timeoutReader) AssetHolders(context.Context, string, int) ([]clickhouse.AssetHolder, int64, error) {
-	return nil, 0, context.DeadlineExceeded
+func (r *timeoutReader) AssetHolders(context.Context, string, int) ([]clickhouse.AssetHolder, int64, time.Time, error) {
+	return nil, 0, time.Time{}, context.DeadlineExceeded
 }
 
 func (r *timeoutReader) AccountMovements(context.Context, string, int, clickhouse.AccountMovementCursor, clickhouse.AccountMovementFilter) ([]clickhouse.AccountMovementRow, error) {
