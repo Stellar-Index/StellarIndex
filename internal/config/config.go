@@ -738,6 +738,10 @@ type APIConfig struct {
 	// correct guess. Only when auth_mode != none; 0 disables.
 	FailedAuthRateLimitPerMin int `toml:"failed_auth_rate_limit_per_min" doc:"Cap on rejected-credential (failed-auth) answers per minute, counted inside the Auth middleware because auth rejects before the main rate limiter (C3-5). Counted independently per resolved client IP and, in the apikey / apikey_optional modes, per presented key prefix (the 12-char display prefix). Once a source is past the cap, each further rejection answers 429 with Retry-After instead of 401. Every credential is still checked before the cap is consulted: a valid key is never throttled by it, so the cap does not stop a correct guess and does not save the lookup a rejected one costs. Key length, not this cap, is what makes guessing infeasible. Only active when auth_mode != none. Redis-backed when available, in-process fixed-window fallback otherwise. 0 disables the failed-auth throttle." default:"20"`
 
+	// RegisterDisabled switches POST /v1/register off; RegisterMaxPerHour caps what it creates across every caller.
+	RegisterDisabled   bool `toml:"register_disabled" doc:"Switch off POST /v1/register (anonymous account and API-key issuance): every call answers 503 registration-unavailable. The lever for an abuse wave; read at start, so restart the API after changing it." default:"false"`
+	RegisterMaxPerHour int  `toml:"register_max_per_hour" doc:"Cap on registrations POST /v1/register accepts per hour across ALL callers. The per-IP throttle cannot bound a registrant that rotates addresses, and every account gets its own full free-tier budget. Past the cap the route answers 503 registration-unavailable until the hour rolls over. 0 removes the cap." default:"60"`
+
 	HoldsFile string `toml:"holds_file" doc:"Path to a TOML file of [[hold]] entries (asset, contract_id, ledger_from, ledger_to, reason) that mark matching supply, balance and holder responses as under review. Polled every 15s; a missing file means no holds; an invalid or zero-byte file keeps the previous list, so delete the file to lift every hold. Empty disables the feature." default:""`
 
 	// SingleInstance asserts exactly ONE API instance, unlocking per-process fallbacks for the auth throttles
@@ -1210,6 +1214,7 @@ func defaultAPIConfig() APIConfig {
 		AnonRateLimitPerMin:       60,
 		KeyRateLimitPerMin:        1000,
 		FailedAuthRateLimitPerMin: 20,
+		RegisterMaxPerHour:        60,
 		RateLimitDwell:            30 * time.Second,
 		MonthlyQuotaDwell:         30 * time.Second,
 		// DoS chokepoint: the 15s app deadline is the primary bound; the 30s serving-pool

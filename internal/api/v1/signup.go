@@ -48,18 +48,9 @@ func (s *Server) signupIPThrottleOK(w http.ResponseWriter, r *http.Request) bool
 		return false
 	}
 	if errors.Is(err, auth.ErrThrottleUnavailable) {
-		// Sustained Redis outage: fail CLOSED rather than disable abuse prevention. Retry-After
-		// MUST be set BEFORE writeProblem, which writes the header; later additions are dropped
-		// by net/http. The 30s hint matches [auth.DefaultSignupThrottleDwellTime], enough to
-		// ride out a typical Redis fail-over.
-		w.Header().Set("Retry-After", "30")
 		s.logger.Warn("signup IP throttle unavailable; failing closed (sustained Redis errors)",
 			"err", err, "ip", ip)
-		obs.RateLimitFailClosedTotal.WithLabelValues(obs.RateLimiterSignupIP).Inc()
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/throttle-unavailable",
-			"Throttle layer unavailable", http.StatusServiceUnavailable,
-			"the abuse-prevention layer has been unreachable for an extended period; retry in a moment")
+		writeThrottleUnavailable(w, r)
 		return false
 	}
 	s.logger.Warn("signup IP throttle check failed; falling open",
@@ -67,4 +58,16 @@ func (s *Server) signupIPThrottleOK(w http.ResponseWriter, r *http.Request) bool
 	// Fall open — Redis blip shouldn't take signup offline, and the
 	// global rate limit still applies.
 	return true
+}
+
+// writeThrottleUnavailable answers a sustained Redis outage on a signup throttle: fail CLOSED rather than disable abuse
+// prevention. Retry-After is set BEFORE writeProblem (net/http drops later additions); 30s matches
+// [auth.DefaultSignupThrottleDwellTime], enough to ride out a typical Redis fail-over.
+func writeThrottleUnavailable(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Retry-After", "30")
+	obs.RateLimitFailClosedTotal.WithLabelValues(obs.RateLimiterSignupIP).Inc()
+	writeProblem(w, r,
+		"https://api.stellarindex.io/errors/throttle-unavailable",
+		"Throttle layer unavailable", http.StatusServiceUnavailable,
+		"the abuse-prevention layer has been unreachable for an extended period; retry in a moment")
 }

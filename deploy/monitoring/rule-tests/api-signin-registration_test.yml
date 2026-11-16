@@ -101,3 +101,35 @@ tests:
                 outside expected sign-ups is abuse of the open registration
                 path, not a table that cleans itself up.
                 Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_registration_table_growing
+
+  # ── the hourly registration cap is spent ─────────────────────────
+  - interval: 1m
+    name: registrations refused at the hourly cap ticket; accepted ones do not
+    input_series:
+      - series: 'stellarindex_registrations_total{job="stellarindex_api",outcome="created"}'
+        values: '0+1x60'
+      - series: 'stellarindex_registrations_total{job="stellarindex_api",outcome="budget_exhausted"}'
+        values: '0+0x30 0+1x7 7+0x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_registration_budget_exhausted
+        exp_alerts: []
+      - eval_time: 38m
+        alertname: stellarindex_registration_budget_exhausted
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_registration_budget_exhausted
+              summary: "7 registration(s) refused in 15 minutes: the hourly cap is spent"
+              description: |
+                POST /v1/register reached its hourly all-caller cap and is
+                answering 503. Either open registration is being farmed
+                from many addresses, or real sign-ups now exceed the cap
+                and are being turned away.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_registration_budget_exhausted
+      - eval_time: 60m
+        alertname: stellarindex_registration_budget_exhausted
+        exp_alerts: []

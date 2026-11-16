@@ -80,6 +80,7 @@ func registerAppMetrics() {
 		MonthlyQuotaFailOpenTotal,
 		MonthlyQuotaFailClosedTotal,
 		AdminAuditWriteFailuresTotal,
+		RegistrationsTotal,
 		AdminKeyBudgetClampsTotal,
 		MintScopeClampRefusedTotal,
 		CursorLastLedger,
@@ -540,7 +541,7 @@ func seedBoundedLabelSeries() {
 		"passkey_clone_warning", "passkey_login_replay",
 		"session_signin", "session_revoke",
 		"webhook_create", "webhook_update", "webhook_delete", "webhook_rotate_secret",
-		"price_alert_create", "price_alert_update", "price_alert_delete",
+		"price_alert_create", "price_alert_update", "price_alert_delete", "register",
 	} {
 		AdminAuditWriteFailuresTotal.WithLabelValues(surface)
 	}
@@ -553,6 +554,9 @@ func seedBoundedLabelSeries() {
 	// distinguishable from "nothing has been clamped yet".
 	for _, outcome := range []string{"lowered", "failed"} {
 		AdminKeyBudgetClampsTotal.WithLabelValues(outcome)
+	}
+	for _, outcome := range []string{RegistrationCreated, RegistrationBudgetExhausted, RegistrationDisabled} {
+		RegistrationsTotal.WithLabelValues(outcome)
 	}
 	// The two mint routes that funnel through clampMintToCaller.
 	// Unrolled rather than looped: the loop tipped seedBoundedLabelSeries
@@ -2733,6 +2737,22 @@ var TLSCertProbeTotal = prometheus.NewCounterVec(
 		Help: "TLS cert self-probe outcomes per host. outcome ∈ {ok, dial_error, no_cert, timeout}. F-0051.",
 	},
 	[]string{"host", "outcome"},
+)
+
+// RegistrationsTotal counts POST /v1/register by the outcomes an operator acts on.
+var RegistrationsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_registrations_total",
+		Help: "POST /v1/register outcomes: created (an account and key were issued), budget_exhausted (refused, the hourly all-caller cap is spent), disabled (refused, the route is switched off).",
+	},
+	[]string{"outcome"},
+)
+
+// RegistrationsTotal outcome label values.
+const (
+	RegistrationCreated         = "created"
+	RegistrationBudgetExhausted = "budget_exhausted"
+	RegistrationDisabled        = "disabled"
 )
 
 // AdminAuditWriteFailuresTotal counts privileged mutations and PII reads that completed but whose audit row did not land (best-effort after commit); reconstruct from logs before retention closes. `surface` is bounded and pre-seeded.

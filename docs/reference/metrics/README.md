@@ -727,9 +727,15 @@ Requests rejected with `429` once the counter has been unreadable longer than th
 
 ### `stellarindex_admin_audit_write_failures_total`
 
-Counter, label `surface` (`account_override` / `key_mint` / `key_revoke` / `status_notice` / `staff_customer_lookup` / `admin_account_read` / `passkey_register` / `passkey_delete` / `passkey_clone_warning` / `passkey_login_replay` / `webhook_create` / `webhook_update` / `webhook_delete` / `webhook_rotate_secret` / `price_alert_create` / `price_alert_update` / `price_alert_delete` / `session_signin` / `session_revoke`). The `session_*` surfaces are dashboard sign-ins and logouts. The `webhook_*` and `price_alert_*` surfaces are dashboard-session changes to customer webhooks and price alerts. The `passkey_*` surfaces cover add/remove and the refusals counted by `stellarindex_passkey_login_refusals_total`.
+Counter, label `surface` (`account_override` / `key_mint` / `key_revoke` / `status_notice` / `staff_customer_lookup` / `admin_account_read` / `passkey_register` / `passkey_delete` / `passkey_clone_warning` / `passkey_login_replay` / `webhook_create` / `webhook_update` / `webhook_delete` / `webhook_rotate_secret` / `price_alert_create` / `price_alert_update` / `price_alert_delete` / `register` / `session_signin` / `session_revoke`). The `session_*` surfaces are dashboard sign-ins and logouts. The `webhook_*` and `price_alert_*` surfaces are dashboard-session changes to customer webhooks and price alerts. The `passkey_*` surfaces cover add/remove and the refusals counted by `stellarindex_passkey_login_refusals_total`.
 
 Privileged mutations that completed but whose audit row failed to append (logged and swallowed). `staff_customer_lookup` and `admin_account_read` are reads: the audit row is the only evidence of PII access. Non-zero means audit holes to rebuild from logs. Pre-seeded at zero. Alert: `stellarindex_admin_audit_write_failing`.
+
+### `stellarindex_registrations_total`
+
+Counter, label `outcome` (`created` / `budget_exhausted` / `disabled`).
+
+`POST /v1/register` outcomes an operator acts on. `created`: an account and key were issued. `budget_exhausted`: refused with 503 because the hourly all-caller cap (`api.register_max_per_hour`) is spent. `disabled`: refused because `api.register_disabled` is set. Pre-seeded at zero. Alert: `stellarindex_registration_budget_exhausted`.
 
 ### `stellarindex_passkey_login_refusals_total`
 

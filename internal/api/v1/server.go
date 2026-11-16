@@ -472,6 +472,13 @@ type Options struct {
 	// bucket (60/min) would let one IP mint ~3,600 keys an hour. Typically 5/hour per IP in Redis.
 	SignupIPThrottle SignupIPThrottle
 
+	// RegisterBudget, when non-nil, caps /v1/register across every caller: the same throttle counted under one
+	// key. The per-IP cap cannot bound a registrant that rotates addresses, and each account gets a full budget.
+	RegisterBudget SignupIPThrottle
+
+	// RegisterDisabled switches /v1/register off (503); the operator's lever during an abuse wave.
+	RegisterDisabled bool
+
 	// APIKeyBudgets are the credential stores a tier change must clamp: the enforced budget lives
 	// on the key record, so a tier-only write would leave a demoted account's keys at the old limit.
 	// Zero value disables the clamp; the endpoint then reports keys_clamped=0.
@@ -2258,6 +2265,7 @@ var knownErrorSlugs = map[string]struct{}{
 	"protocol-not-found":              {},
 	"protocol-tvl-not-derived":        {},
 	"rate-limited":                    {},
+	"registration-unavailable":        {},
 	"request-timeout":                 {},
 	"scope-exceeds-caller":            {},
 	"sep10-challenge-expired":         {},

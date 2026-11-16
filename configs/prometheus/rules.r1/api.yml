@@ -851,6 +851,29 @@ groups:
             path, not a table that cleans itself up.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_registration_table_growing
 
+      # The hourly all-caller cap on POST /v1/register
+      # (api.register_max_per_hour) is the bound the per-IP throttle
+      # cannot give against rotating addresses. Reaching it means either
+      # a wave, or real sign-ups being turned away; both need a person.
+      # With the default cap of 60 the table-growth rule above cannot
+      # reach its 500, so this is the wave's signal.
+      - alert: stellarindex_registration_budget_exhausted
+        expr: sum(increase(stellarindex_registrations_total{outcome="budget_exhausted"}[15m])) > 0
+        for: 0m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_registration_budget_exhausted
+          summary: "{{ $value | humanize }} registration(s) refused in 15 minutes: the hourly cap is spent"
+          description: |
+            POST /v1/register reached its hourly all-caller cap and is
+            answering 503. Either open registration is being farmed
+            from many addresses, or real sign-ups now exceed the cap
+            and are being turned away.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api.md#stellarindex_registration_budget_exhausted
+
       # Two counters whose Help says "fails open" or "not being bounded"
       # and that no rule read. Both are pre-seeded.
       - alert: stellarindex_retention_reaper_failing

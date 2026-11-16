@@ -862,3 +862,19 @@ func TestClickhouseReadyChecks_UnconfiguredPublishesNothing(t *testing.T) {
 		t.Fatalf("an unconfigured ClickHouse registered %d readiness check(s), want 0", len(got))
 	}
 }
+
+// The Redis-less all-caller registration budget is one bucket whatever key it is asked under, and 0 means no cap.
+func TestNewRegisterBudget_InProcess(t *testing.T) {
+	if newRegisterBudget(nil, 0) != nil {
+		t.Fatal("register_max_per_hour = 0 must build no budget")
+	}
+	budget := newRegisterBudget(nil, 2)
+	for i := 0; i < 2; i++ {
+		if err := budget.CheckIP(context.Background(), "all"); err != nil {
+			t.Fatalf("registration %d refused under a cap of 2: %v", i+1, err)
+		}
+	}
+	if err := budget.CheckIP(context.Background(), "all"); !errors.Is(err, auth.ErrSignupRateLimited) {
+		t.Fatalf("third registration = %v, want ErrSignupRateLimited", err)
+	}
+}

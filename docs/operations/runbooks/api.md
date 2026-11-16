@@ -641,6 +641,22 @@ journalctl -u stellarindex-api --since '30 min ago' --no-pager -o cat \
 
 **Check.** `stellarindex_api_keys_rows` moves in step; request rate and distinct client addresses on `/v1/register` in the API log. **Likely causes.** Rotating addresses (IPv6 /48s, proxy pools) each staying under the per-IP sign-up cap; or a real traffic spike. **Fix.** Limit the source ranges at the edge. Deleting the rows is a judgement call per account: they are real accounts with live keys. **Escalate:** growth continues past an edge block.
 
+## stellarindex_registration_budget_exhausted
+
+**Trigger.** `sum(increase(stellarindex_registrations_total{outcome="budget_exhausted"}[15m])) > 0`, P3. `POST /v1/register` accepts `api.register_max_per_hour` registrations an hour (default 60) across every caller, because the per-IP throttle (5 an hour per IPv4 address or IPv6 /64) cannot bound a registrant that rotates addresses. Past the cap the route answers 503 `registration-unavailable` until the hour rolls over.
+
+**Check.** A wave or real demand? `sum by (outcome) (increase(stellarindex_registrations_total[1h]))`, and where the accepted ones came from:
+
+```sh
+ssh r1 'sudo -u postgres psql stellarindex' <<'SQL'
+SELECT set_masklen(ip::cidr, CASE family(ip) WHEN 4 THEN 24 ELSE 48 END) AS net, count(*)
+  FROM audit_log WHERE action = 'account.register' AND ts > now() - interval '6 hours'
+ GROUP BY 1 ORDER BY 2 DESC LIMIT 10;
+SQL
+```
+
+**Fix.** A wave: set `register_disabled = true` under `[api]` in `/etc/stellarindex.toml` and restart `stellarindex-api`; the route answers 503 and nothing else changes. Revoke the wave's keys from the `account_id`s the query's rows name (`PATCH /v1/admin/accounts/{id}`); an account whose key is never used is erased on its own. Real demand: raise `register_max_per_hour` and restart.
+
 ## stellarindex_login_code_lockout_table_growing
 
 **Trigger.** Two arms, `for: 30m`, P3: rows `stellarindex_login_code_lockout_rows > 10000` (healthy is low tens), or fail-open `increase(stellarindex_login_code_lockout_errors_total{op="status_check"}[1h]) > 0` (the pre-match lockout read errored and the handler failed open; the 6-digit code brute-force bound is silently off). Table `login_code_lockouts` (migration 0122) is filled by unauthenticated `POST /v1/auth/verify-code`; `internal/logincodereaper` (hourly, 48 h retention) bounds it.

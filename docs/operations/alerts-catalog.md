@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 71 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 288 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 289 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -501,6 +501,7 @@ Alerts on how freezes END. A freeze holds a minimum duration, extends 30 min at 
 | `stellarindex_login_code_lockout_table_growing` | `login_code_lockout_rows`, `login_code_lockout_errors_total{op="status_check"}` | rows > 10000 or any fail-open, 30 min | ticket | [login-code-lockout-table-growing](runbooks/api.md#stellarindex_login_code_lockout_table_growing) |
 | `stellarindex_login_code_guessing` | `increase(login_code_failures_total{outcome}[1h])` | any `lockout_engaged`, or > 50 `wrong_code`, for 5 min (email-code guessing, which `failed_auth_total` never sees) | ticket | [login-code-guessing](runbooks/api.md#stellarindex_login_code_guessing) |
 | `stellarindex_registration_table_growing` | `accounts_rows` now minus its lowest non-zero value in 6 h | > 500 for 30 min (open registration leaves permanent rows and live keys) | ticket | [registration-table-growing](runbooks/api.md#stellarindex_registration_table_growing) |
+| `stellarindex_registration_budget_exhausted` | `increase(registrations_total{outcome="budget_exhausted"}[15m])` | > 0, `for: 0m` (the hourly all-caller cap on `/v1/register` is spent) | ticket | [registration-budget-exhausted](runbooks/api.md#stellarindex_registration_budget_exhausted) |
 | `stellarindex_retention_reaper_failing` | `increase(retention_reaper_errors_total[3h])` by reaper | > 0 for 2 h (a failed sweep still counts as a run for the liveness alert) | ticket | [retention-reaper-failing](runbooks/api.md#stellarindex_retention_reaper_failing) |
 | `stellarindex_pricingguard_failing_open` | `increase(pricingguard_trailing_fetch_failed_total[30m])` by path | > 0 for 15 min (prices served without the manipulation band) | ticket | [pricingguard-failing-open](runbooks/api.md#stellarindex_pricingguard_failing_open) |
 | `stellarindex_auth_reaper_stalled` | `time() - auth_reaper_last_sweep_unix` per reaper | > 3x `auth_reaper_interval_seconds`, 15 min (rows gauge frozen) | ticket | [auth-reaper-stalled](runbooks/api.md#stellarindex_auth_reaper_stalled) |

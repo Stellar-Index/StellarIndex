@@ -358,6 +358,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		logger.Warn("signup IP throttle is in-process (single-instance fallback — no Redis); " +
 			"the per-IP signup cap is NOT shared across instances")
 	}
+	if cfg.API.RegisterDisabled {
+		logger.Warn("POST /v1/register is switched off (api.register_disabled)")
+	}
 
 	// The aggregator's divergence results live in Redis. The API only calls LookupCached and
 	// builds no References; the aggregator is the sole RefreshPair caller.
@@ -908,6 +911,8 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		StatusNotices:        statusNoticeStore,
 		Audit:                adminAudit,
 		SignupIPThrottle:     signupIPThrottle,
+		RegisterBudget:       newRegisterBudget(rdb, cfg.API.RegisterMaxPerHour),
+		RegisterDisabled:     cfg.API.RegisterDisabled,
 		RequireEmailVerified: requireEmailVerifiedOrNil(cfg.API.SignupRequireEmailVerification),
 		Divergence:           divergenceLooker,
 		Substance:            substanceGate,
@@ -1651,6 +1656,18 @@ func newInProcessSignupIPThrottle() *inProcessSignupIPThrottle {
 	return &inProcessSignupIPThrottle{
 		bucket: ratelimit.New(nil, inProcessSignupIPThrottleMaxPerHour, time.Hour),
 	}
+}
+
+// newRegisterBudget is the all-caller hourly cap on /v1/register: a signup throttle the handler counts under one key,
+// in its own Redis namespace. nil when maxPerHour is 0 (no cap).
+func newRegisterBudget(rdb redis.UniversalClient, maxPerHour int) v1.SignupIPThrottle {
+	switch {
+	case maxPerHour <= 0:
+		return nil
+	case rdb == nil:
+		return &inProcessSignupIPThrottle{bucket: ratelimit.New(nil, maxPerHour, time.Hour)}
+	}
+	return auth.NewRedisSignupIPThrottle(rdb, auth.SignupIPThrottleOptions{Max: maxPerHour, KeyPrefix: "register-all:"})
 }
 
 // CheckIP implements v1.SignupIPThrottle; the only error is auth.ErrSignupRateLimited.

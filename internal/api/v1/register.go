@@ -21,6 +21,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/notify"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 	"github.com/Stellar-Index/StellarIndex/internal/signupreaper"
 )
@@ -72,12 +73,17 @@ const registerBodyMaxBytes = 4 * 1024
 // preflight catches (a body-less POST is fine); an account whose key is never used is erased once its validator record expires
 // ([accounterasure.AbandonedRegistrationRetention]).
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
+	if s.RegisterDisabled {
+		writeRegistrationUnavailable(w, r, obs.RegistrationDisabled, "registration is switched off on this deployment")
+		return
+	}
 	req, ok := s.parseAndValidateRegister(w, r)
 	if !ok {
 		return
 	}
 
-	if !s.signupIPThrottleOK(w, r) {
+	// Per-IP first: a request it refuses must not spend the budget every other caller shares.
+	if !s.signupIPThrottleOK(w, r) || !s.registerBudgetOK(w, r) {
 		return
 	}
 
@@ -105,6 +111,18 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	obs.RegistrationsTotal.WithLabelValues(obs.RegistrationCreated).Inc()
+	if s.Audit != nil {
+		// The row carries the caller's IP: it is what an operator selects on to revoke one wave's keys.
+		s.appendKeyAudit(r, platform.AuditEntry{
+			AccountID:  acct.ID,
+			ActorKind:  platform.ActorUser,
+			Action:     "account.register",
+			TargetKind: "api_key",
+			TargetID:   rec.ID,
+		}, "register", "register")
+	}
+
 	tier := acct.Tier.Canonical()
 	writeJSON(w, RegisterResult{
 		AccountID: acct.ID.String(),
@@ -120,6 +138,42 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 			MaxPriceAlerts:  tier.MaxPriceAlerts(),
 		},
 	}, Flags{})
+}
+
+// registerBudgetKey is the one key the all-caller registration budget counts under.
+const registerBudgetKey = "all"
+
+// registerBudgetOK spends one unit of the hourly all-caller budget; false means the response is written. It fails
+// like the per-IP throttle: open on a Redis blip, closed once the outage outlasts the dwell time.
+func (s *Server) registerBudgetOK(w http.ResponseWriter, r *http.Request) bool {
+	if s.RegisterBudget == nil {
+		return true
+	}
+	err := s.RegisterBudget.CheckIP(r.Context(), registerBudgetKey)
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, auth.ErrSignupRateLimited):
+		w.Header().Set("Retry-After", "3600")
+		writeRegistrationUnavailable(w, r, obs.RegistrationBudgetExhausted,
+			"registration is at its hourly capacity on this deployment; retry within the hour")
+		return false
+	case errors.Is(err, auth.ErrThrottleUnavailable):
+		s.logger.Warn("registration budget unavailable; failing closed (sustained Redis errors)", "err", err)
+		writeThrottleUnavailable(w, r)
+		return false
+	}
+	s.logger.Warn("registration budget check failed; falling open", "err", err)
+	return true
+}
+
+// writeRegistrationUnavailable answers a registration the deployment refused for its own reasons (switched off, hourly
+// budget spent) and counts it: a 503, since nothing about the request was wrong.
+func writeRegistrationUnavailable(w http.ResponseWriter, r *http.Request, outcome, detail string) {
+	obs.RegistrationsTotal.WithLabelValues(outcome).Inc()
+	writeProblem(w, r,
+		"https://api.stellarindex.io/errors/registration-unavailable",
+		"Registration unavailable", http.StatusServiceUnavailable, detail)
 }
 
 // createRegisteredAccount inserts the free-tier account row, retrying once on a slug collision (mirrors dashboardauth.signupNewUser).
