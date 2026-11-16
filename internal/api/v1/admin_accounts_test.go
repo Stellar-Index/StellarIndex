@@ -638,6 +638,45 @@ func TestAdminAccountOverrides_RateOverrideLoweringClampsKeyBudgets(t *testing.T
 	}
 }
 
+// The clamp follows the account's ceiling, not the override alone: an override cut that leaves the ceiling where it was,
+// or that a tier raise in the same request outweighs, lowers nothing.
+func TestAdminAccountOverrides_RateOverrideCutThatKeepsTheCeilingTouchesNoKey(t *testing.T) {
+	cases := []struct {
+		name     string
+		override int
+		patch    string
+	}{
+		{"override below the tier cleared", 3000, `{"rate_limit_per_min_override":0}`},
+		{"tier raised past the cleared override", 60_000, `{"tier":"partner","rate_limit_per_min_override":0}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			acctID := uuid.MustParse("22222222-2222-2222-2222-222222222224")
+			accounts := newFakePlatformAccountStore(platform.Account{
+				ID: acctID, Slug: "steady", Tier: platform.TierFree,
+				Status: platform.AccountActive, RateLimitPerMinOverride: tc.override,
+			})
+			pgKeys := &fakePlatformAPIKeysForBridge{byAcct: map[uuid.UUID][]platform.APIKey{
+				acctID: {{ID: "pg_key", AccountID: acctID, RateLimitPerMin: 6000, KeyHash: []byte{0xac}}},
+			}}
+			ident := auth.AccountIdentifier("steady")
+			redisKeys := &fakeSelfServiceKeyManager{keys: map[string][]auth.APIKeyRecord{
+				ident: {{KeyID: "rk_key", Identifier: ident, RateLimitPerMin: 60_000}},
+			}}
+			ts := newAdminClampServer(t, accounts, v1.APIKeyBudgetStores{Platform: pgKeys, Redis: redisKeys}, &recordingAuditSink{})
+
+			resp := patchJSON(t, ts.URL+"/v1/admin/accounts/"+acctID.String(), "tidy", tc.patch)
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				t.Fatalf("status = %d, want 200; body=%s", resp.StatusCode, body)
+			}
+			if len(pgKeys.updates) != 0 || len(redisKeys.updates) != 0 {
+				t.Errorf("updates = %+v / %+v, want none: the ceiling did not fall", pgKeys.updates, redisKeys.updates)
+			}
+		})
+	}
+}
+
 // TestAdminAccountOverrides_TierRaiseDoesNotTouchKeys: the clamp is one-directional on purpose; budgets are raised at mint
 // time, and silently lifting existing keys on a comp would grant throughput nobody asked for.
 func TestAdminAccountOverrides_TierRaiseDoesNotTouchKeys(t *testing.T) {
