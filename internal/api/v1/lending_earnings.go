@@ -48,6 +48,8 @@ const (
 	earningsReasonOnchainUnread    = "onchain_unread"
 	earningsReasonBalanceMismatch  = "balance_mismatch"
 	earningsReasonRateUnread       = "rate_unread"
+	// earningsReasonHistoryUnverified withholds a leg whose event history is not verified back to its protocol's first ledger.
+	earningsReasonHistoryUnverified = "history_unverified"
 )
 
 const lendingEarningsNote = "accrued is current_value - net_flow, served only when the token balance folded from this account's " +
@@ -218,13 +220,50 @@ func (s *Server) buildLendingEarnings(ctx context.Context, er lendingEarningsRea
 		legs[i], failed[i] = s.earningsJobLegs(ctx, sr, account, jobs[i])
 	})
 	view.Legs = append(view.Legs, slices.Concat(legs...)...)
+	historyFailed := s.withholdUnverifiedHistory(ctx, view.Legs)
 	for _, c := range flows.BlendClaims {
 		view.Emissions = append(view.Emissions, LendingEmissionsClaim{Protocol: "blend", Pool: c.Pool, Claimed: c.Claimed, LowerBound: true})
 	}
 	for _, c := range flows.BLNTClaims {
 		view.Emissions = append(view.Emissions, LendingEmissionsClaim{Protocol: blnt.SourceName, Pool: c.Pool, Claimed: c.Claimed, LowerBound: true})
 	}
-	return view, slices.Contains(failed, true), nil
+	return view, historyFailed || slices.Contains(failed, true), nil
+}
+
+// earningsLegSource names the completeness source whose projection wrote a leg's events.
+func earningsLegSource(leg LendingEarningsLeg) string {
+	switch {
+	case leg.Protocol == blnt.SourceName:
+		return blnt.SourceName
+	case leg.Side == earningsSideBackstop:
+		return "blend_backstop"
+	default:
+		return "blend"
+	}
+}
+
+// withholdUnverifiedHistory withholds every otherwise-exact leg whose source is not verified from its genesis: events
+// before the projected range would be missing from net_flow while the token balances still match. failed reports an
+// errored verdict read.
+func (s *Server) withholdUnverifiedHistory(ctx context.Context, legs []LendingEarningsLeg) (failed bool) {
+	verified := map[string]bool{}
+	if s.CompletenessReader != nil {
+		snaps, err := s.CompletenessReader.ListCompletenessSnapshots(ctx)
+		if err != nil {
+			s.logger.Warn("lending earnings: completeness read failed", "err", err)
+			failed = true
+		}
+		for _, sn := range snaps {
+			verified[sn.Source] = sn.ProjectionOK && sn.ProjectionVerifiedFrom != 0 && sn.ProjectionVerifiedFrom <= sn.Genesis
+		}
+	}
+	for i := range legs {
+		if legs[i].Reconciled && !verified[earningsLegSource(legs[i])] {
+			legs[i].Reconciled, legs[i].Accrued = false, nil
+			legs[i].Reason = strRef(earningsReasonHistoryUnverified)
+		}
+	}
+	return failed
 }
 
 // earningsJob is one pool's legs to build: its supply/borrow folds, or its backstop tiers.

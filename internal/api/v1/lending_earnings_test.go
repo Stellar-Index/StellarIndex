@@ -127,7 +127,7 @@ func TestLendingAccountEarnings_ExactAndWithheld(t *testing.T) {
 			BlendBackstop: []timescale.LendingBackstopTokenFold{{Pool: pool, NetDeposited: "120"}},
 		},
 	}
-	srv := v1.New(v1.Options{Explorer: ex, Positions: pr, Lending: &stubLendingReader{assets: []string{asset}}})
+	srv := v1.New(v1.Options{Explorer: ex, Positions: pr, Lending: &stubLendingReader{assets: []string{asset}}, CompletenessReader: verifiedLendingHistory()})
 	got := getEarnings(t, srv, earningsAccount, http.StatusOK)
 	if len(got.Legs) != 3 {
 		t.Fatalf("legs = %+v", got.Legs)
@@ -173,6 +173,76 @@ func TestLendingAccountEarnings_UnknownAndInvalidAccount(t *testing.T) {
 	}
 }
 
+// verifiedLendingHistory is a verdict set whose Blend projections are verified from their genesis.
+func verifiedLendingHistory() *stubCompletenessReader {
+	return &stubCompletenessReader{snaps: []timescale.CompletenessSnapshot{
+		{Source: "blend", Genesis: 100, ProjectionOK: true, ProjectionVerifiedFrom: 100},
+		{Source: "blend_backstop", Genesis: 100, ProjectionOK: true, ProjectionVerifiedFrom: 100},
+	}}
+}
+
+// TestLendingAccountEarnings_HistoryUnverified: a leg that reconciles is still withheld unless its source's projection is
+// verified from genesis; an unknown floor is never read as "from genesis", and a failed verdict read degrades the response.
+func TestLendingAccountEarnings_HistoryUnverified(t *testing.T) {
+	pool, asset := mkCStrkey(t, 1), mkCStrkey(t, 2)
+	ex := &stubEarningsExplorer{
+		stubExplorerReader: &stubExplorerReader{reserves: []clickhouse.BlendReserveState{{
+			Pool: pool, Asset: asset,
+			Data: blend.ReserveData{
+				BRate: big.NewInt(1_000_000_000_000), DRate: big.NewInt(1_000_000_000_000),
+				IRMod: new(big.Int), BSupply: new(big.Int), DSupply: new(big.Int), BackstopCredit: new(big.Int), Version: blend.PoolV2,
+			},
+		}}},
+		positions: clickhouse.LendingAccountPositions{Readable: true, Supply: map[string]*big.Int{asset: big.NewInt(100)}, Ledger: 500},
+	}
+	pr := &stubEarningsPositions{stubPositionsReader: &stubPositionsReader{blend: []timescale.BlendPositionFold{{
+		Pool: pool, Asset: asset, HasSupplyLeg: true, SupplyNet: "90", SupplyTokens: "100", SupplyLastLedger: 500,
+	}}}}
+	snap := func(ok bool, from uint32) *stubCompletenessReader {
+		return &stubCompletenessReader{snaps: []timescale.CompletenessSnapshot{{Source: "blend", Genesis: 100, ProjectionOK: ok, ProjectionVerifiedFrom: from}}}
+	}
+	cases := []struct {
+		name        string
+		reader      *stubCompletenessReader
+		exact, fail bool
+	}{
+		{name: "verified from genesis", reader: snap(true, 100), exact: true},
+		{name: "no reader"},
+		{name: "no verdict for the source", reader: &stubCompletenessReader{}},
+		{name: "floor after genesis", reader: snap(true, 101)},
+		{name: "floor unknown", reader: snap(true, 0)},
+		{name: "projection not ok", reader: snap(false, 100)},
+		{name: "verdict read fails", reader: &stubCompletenessReader{err: errors.New("pg down")}, fail: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := v1.Options{Explorer: ex, Positions: pr, Lending: &stubLendingReader{assets: []string{asset}}}
+			if tc.reader != nil {
+				opts.CompletenessReader = tc.reader
+			}
+			rec := httptest.NewRecorder()
+			v1.New(opts).Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/lending/accounts/"+earningsAccount+"/earnings", nil))
+			var body struct{ Data v1.LendingEarningsView }
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || rec.Code != http.StatusOK || len(body.Data.Legs) != 1 {
+				t.Fatalf("status %d err %v body %s", rec.Code, err, rec.Body)
+			}
+			leg := body.Data.Legs[0]
+			if tc.exact {
+				if !leg.Reconciled || strOrNull(leg.Accrued) != "10" {
+					t.Fatalf("leg = %+v", leg)
+				}
+				return
+			}
+			if leg.Reconciled || leg.Accrued != nil || strOrNull(leg.Reason) != "history_unverified" || strOrNull(leg.CurrentValue) != "100" || leg.NetFlow != "90" {
+				t.Fatalf("leg = %+v", leg)
+			}
+			if noStore := strings.Contains(rec.Header().Get("Cache-Control"), "no-store"); noStore != tc.fail {
+				t.Fatalf("no-store = %v, want %v", noStore, tc.fail)
+			}
+		})
+	}
+}
+
 // TestLendingAccountEarnings_ProjectionBehind: a pool entry or backstop balance the lake shows modified after the newest folded
 // event is withheld even though the token counts agree; the raw components stay.
 func TestLendingAccountEarnings_ProjectionBehind(t *testing.T) {
@@ -201,7 +271,7 @@ func TestLendingAccountEarnings_ProjectionBehind(t *testing.T) {
 		},
 		flows: timescale.LendingAccountFlows{BlendBackstop: []timescale.LendingBackstopTokenFold{{Pool: pool, NetDeposited: "8", LastLedger: 699}}},
 	}
-	srv := v1.New(v1.Options{Explorer: ex, Positions: pr, Lending: &stubLendingReader{assets: []string{asset}}})
+	srv := v1.New(v1.Options{Explorer: ex, Positions: pr, Lending: &stubLendingReader{assets: []string{asset}}, CompletenessReader: verifiedLendingHistory()})
 	got := getEarnings(t, srv, earningsAccount, http.StatusOK)
 	if len(got.Legs) != 2 {
 		t.Fatalf("legs = %+v", got.Legs)
@@ -240,7 +310,7 @@ func TestLendingAccountEarnings_PoolReadFailureDegrades(t *testing.T) {
 		},
 		flows: timescale.LendingAccountFlows{BlendBackstop: []timescale.LendingBackstopTokenFold{{Pool: pool, NetDeposited: "8", NullAmounts: 1}}},
 	}
-	srv := v1.New(v1.Options{Explorer: ex, Positions: pr, Lending: &stubLendingReader{assets: []string{asset}}})
+	srv := v1.New(v1.Options{Explorer: ex, Positions: pr, Lending: &stubLendingReader{assets: []string{asset}}, CompletenessReader: verifiedLendingHistory()})
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/lending/accounts/"+earningsAccount+"/earnings", nil))
 	var body struct{ Data v1.LendingEarningsView }

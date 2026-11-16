@@ -2009,7 +2009,9 @@ export interface paths {
          *     `balance_mismatch` (an event the fold does not cover, or history
          *     not yet projected), `onchain_unread` (also when one pool's lake
          *     read failed; the response is then marked degraded),
-         *     `fold_inconsistent`, `rate_unread`, or for a
+         *     `fold_inconsistent`, `rate_unread`, `history_unverified` (the
+         *     protocol's event history is not verified back to its first
+         *     ledger, so earlier flows could be missing), or for a
          *     Blend V1 backstop `blend_v1_unsupported`. Amounts are base-unit
          *     decimal strings; `decimals` is the reserve's, null when unread or
          *     for a backstop. Emission claims are sums of the claim events
@@ -18139,7 +18141,7 @@ export interface operations {
                                 accrued: string | null;
                                 reconciled: boolean;
                                 /** @enum {string|null} */
-                                reason: "auction_moved" | "projection_behind" | "balance_mismatch" | "onchain_unread" | "fold_inconsistent" | "rate_unread" | "blend_v1_unsupported" | "pool_lineage_unknown" | null;
+                                reason: "auction_moved" | "projection_behind" | "balance_mismatch" | "onchain_unread" | "fold_inconsistent" | "rate_unread" | "history_unverified" | "blend_v1_unsupported" | "pool_lineage_unknown" | null;
                             }[];
                             emissions: {
                                 /** @enum {string} */
