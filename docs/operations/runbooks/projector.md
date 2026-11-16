@@ -231,10 +231,12 @@ Response:
 
 ## stellarindex_projector_decode_error_rate_high
 
-Trips: `sum by (source) (rate(stellarindex_projector_events_decoded_total{outcome=~"decode_error|reconstruct_error"}[10m])) > 0.1` for `15m`, P3. Every event of the affected class is silently dropped from the served tier while the cursor advances (raw events stay in the lake). The projector uses the SAME per-source decoders as live ingest; a decoder regression breaks a whole class of valid events (the phoenix orphaned-swap class). The cycle is marked `runs_total{outcome="decode_degraded"}` yet still advances, so lag looks HEALTHY.
+Trips: `sum by (source) (rate(stellarindex_projector_events_decoded_total{outcome=~"decode_error|reconstruct_error|orphan_evicted|unknown_contract_drop"}[10m])) > 0.1` for `15m`, P3. Every event of the affected class is silently dropped from the served tier while the cursor advances (raw events stay in the lake). The projector uses the SAME per-source decoders as live ingest; a decoder regression breaks a whole class of valid events (the phoenix orphaned-swap class). The cycle is marked `runs_total{outcome="decode_degraded"}` yet still advances, so lag looks HEALTHY.
 
 - `decode_error`: the decoder returned an error or panicked.
 - `reconstruct_error`: the landing-zone row could not be rebuilt (missing or unparseable `topic_0_xdr`); points at the lake writer or a landing-zone schema change, not a decoder.
+- `orphan_evicted`: a multi-event group (a Phoenix swap's 8 events, a Soroswap swap and its sync) aged out incomplete, so no row was written for it. A sustained count means the contract's event order or shape changed.
+- `unknown_contract_drop`: the decoder's contract gate (ADR-0035) refused the event. Expected for a foreign deployment sharing a topic; for a contract that should be ours, the curated or discovered set is missing it (check `protocol_contracts`).
 
 Check:
 

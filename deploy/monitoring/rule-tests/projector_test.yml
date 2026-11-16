@@ -237,7 +237,7 @@ tests:
               summary: "Projector source blend_emitter is dropping 100% of its events at decode"
               description: |
                 Over the last hour the ADR-0032 projector for blend_emitter
-                failed to decode or reconstruct 100% of
+                dropped (decode failure, incomplete group or gate refusal) 100% of
                 the events it read (at least 10 events). Each failure SKIPS the row
                 and advances the cursor, so those events are missing from the served
                 tier. This fires below the absolute-rate rule's threshold, so it is
@@ -256,7 +256,7 @@ tests:
               summary: "Projector source rozo is dropping 100% of its events at decode"
               description: |
                 Over the last hour the ADR-0032 projector for rozo
-                failed to decode or reconstruct 100% of
+                dropped (decode failure, incomplete group or gate refusal) 100% of
                 the events it read (at least 10 events). Each failure SKIPS the row
                 and advances the cursor, so those events are missing from the served
                 tier. This fires below the absolute-rate rule's threshold, so it is
@@ -266,6 +266,64 @@ tests:
 
                 Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_decode_error_rate_high
 
+  # Two sources losing events with no decode error: Phoenix groups evicted
+  # incomplete at 2/min, and a third of Blend events refused by the gate.
+  - interval: 1m
+    name: groups evicted incomplete and gate drops count as loss
+    input_series:
+      - series: 'stellarindex_projector_events_decoded_total{job="stellarindex_indexer",instance="r1:9100",source="phoenix",outcome="ok"}'
+        values: '40+0x120'
+      - series: 'stellarindex_projector_events_decoded_total{job="stellarindex_indexer",instance="r1:9100",source="phoenix",outcome="orphan_evicted"}'
+        values: '0+2x120'
+      - series: 'stellarindex_projector_events_decoded_total{job="stellarindex_indexer",instance="r1:9100",source="blend",outcome="ok"}'
+        values: '0+10x120'
+      - series: 'stellarindex_projector_events_decoded_total{job="stellarindex_indexer",instance="r1:9100",source="blend",outcome="unknown_contract_drop"}'
+        values: '0+5x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: stellarindex_projector_decode_error_rate_high
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: stellarindex_projector_decode_error_ratio_high
+        exp_alerts:
+          - exp_labels:
+              source: phoenix
+              severity: ticket
+              team: stellarindex
+              component: projector
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector.md#stellarindex_projector_decode_error_ratio_high
+              summary: "Projector source phoenix is dropping 100% of its events at decode"
+              description: |
+                Over the last hour the ADR-0032 projector for phoenix
+                dropped (decode failure, incomplete group or gate refusal) 100% of
+                the events it read (at least 10 events). Each failure SKIPS the row
+                and advances the cursor, so those events are missing from the served
+                tier. This fires below the absolute-rate rule's threshold, so it is
+                usually a quiet source whose decoder broke on a whole event class.
+                Fix the decoder, then re-drive with `stellarindex-ops
+                projector-replay -source phoenix`.
+
+                Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_decode_error_rate_high
+          - exp_labels:
+              source: blend
+              severity: ticket
+              team: stellarindex
+              component: projector
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector.md#stellarindex_projector_decode_error_ratio_high
+              summary: "Projector source blend is dropping 33.33% of its events at decode"
+              description: |
+                Over the last hour the ADR-0032 projector for blend
+                dropped (decode failure, incomplete group or gate refusal) 33.33% of
+                the events it read (at least 10 events). Each failure SKIPS the row
+                and advances the cursor, so those events are missing from the served
+                tier. This fires below the absolute-rate rule's threshold, so it is
+                usually a quiet source whose decoder broke on a whole event class.
+                Fix the decoder, then re-drive with `stellarindex-ops
+                projector-replay -source blend`.
+
+                Runbook: docs/operations/runbooks/projector.md#stellarindex_projector_decode_error_rate_high
   # ══ 6. decode-error ratio: scattered poison rows stay quiet ════════
   # A busy source dropping 6 rows/hour is 0.1% of its volume; a quiet source
   # dropping 3 rows/hour is a high ratio but under the 10-event floor.
