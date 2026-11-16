@@ -145,13 +145,41 @@ case "$(cat "$TMP/mainout.txt")" in
 esac
 
 # A 404 on a real fixture is a missing route, not a client error; only a listed route may answer 404.
-for c in "200 /assets ok" "503 /assets FAIL" "404 /accounts/{g_strkey} MISSING" "405 /assets MISSING" \
-         "404 /issuers/{g_strkey} CLIENT" "400 /chart CLIENT" "401 /account/me CLIENT"; do
+# Only 2xx is ok. 401/403 is a client error only where the spec requires credentials; on a
+# public route it is an outage for anonymous callers. A redirect, a 429 and any other
+# unclassified status fail.
+ROUTE_SWEEP_SECURED="$TMP/secured.txt"
+printf '%s\n' /account/me '/admin/accounts/{id}' > "$ROUTE_SWEEP_SECURED"
+for c in "200 /assets ok" "204 /assets ok" "503 /assets FAIL" "404 /accounts/{g_strkey} MISSING" "405 /assets MISSING" \
+         "404 /issuers/{g_strkey} CLIENT" "400 /chart CLIENT" "401 /account/me CLIENT" \
+         "403 /admin/accounts/{id} CLIENT" "401 /ledgers DENIED" "403 /accounts/{g_strkey} DENIED" \
+         "429 /contracts LIMITED" "301 /ledgers ODD" "302 /tx/{hash} ODD" "100 /assets ODD"; do
   # shellcheck disable=SC2086 # three space-separated fields
   set -- $c
   got="$(verdict_for "$1" "$2")"
   if [ "$got" = "$3" ]; then ok "verdict_for $1 $2 = $3"; else bad "verdict_for $1 $2 = $got, want $3"; fi
 done
+
+# The generator's secured list comes from the real spec: the account, admin and dashboard
+# surfaces are on it, the explorer routes are not.
+if generate_route_list "$PWD/openapi/stellar-index.v1.yaml" "$TMP/real-paths.txt" 2> "$TMP/real-gen.err"; then
+  if grep -qxF /ledgers "$TMP/real-paths.txt.secured"; then bad "/ledgers is public but was listed as secured"; else ok "/ledgers is not on the secured list"; fi
+  if grep -q '^/admin/' "$TMP/real-paths.txt.secured"; then ok "the /admin routes are on the secured list"; else bad "no /admin route on the secured list"; fi
+else
+  bad "generate_route_list failed on the real spec: $(cat "$TMP/real-gen.err")"
+fi
+
+# contract-page-audit.py against a closed port: every panel is a transport failure, which is
+# not a loaded panel.
+set +e
+BASE=http://127.0.0.1:1/v1 PACE=0 RUNS=1 python3 "$PWD/scripts/ops/contract-page-audit.py" --type home > "$TMP/cpa.out" 2>&1
+rc=$?
+set -e
+res "$(t "$rc" -ne 0; echo $?)" "contract-page-audit.py exits non-zero when the API is unreachable" "rc=$rc"
+case "$(cat "$TMP/cpa.out")" in
+  *UNLOADED=*) ok "…and names the panels as UNLOADED" ;;
+  *) bad "…and must name the panels as UNLOADED" ;;
+esac
 
 echo "route-sweep-test: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]] || exit 1

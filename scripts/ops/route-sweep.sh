@@ -12,12 +12,14 @@
 # means "route broken", not "made-up id". Routes whose params cannot be filled
 # are reported SKIP, never silently dropped.
 #
-# Read-only. Exit code = unreachable + 5xx + unexpected 404/405 responses
-# (capped 255). A route curl could not connect to (DNS/TLS/connection/timeout
-# → http_code 000) is a FAILURE, never scored like a 2xx. A 404 or 405 on a
-# real fixture is a FAILURE too (verdict MISSING): a dropped route registration
-# or an emptied served table answers 404, not 5xx. A 400 (the sweep sends no
-# query), 401/403 (no credentials) and 410 stay CLIENT.
+# Read-only. Only a 2xx is ok. Exit code (capped 255) = every route that:
+# curl could not connect to (DNS/TLS/connection/timeout → http_code 000);
+# answered 5xx; answered 404 or 405 on a real fixture (MISSING: a dropped
+# route registration or an emptied served table answers 404, not 5xx);
+# answered 401/403 although the spec lets anonymous callers in (DENIED);
+# answered 429, so it was not tested (LIMITED); or answered anything nobody
+# classified, a redirect included (ODD). A 400 (the sweep sends no query),
+# a 410, and a 401/403 on a route the spec secures stay CLIENT.
 set -o pipefail  # NOT -u: fixture_for returns empty for unmapped params
 
 # Spec paths are relative to servers[].url, which already carries /v1, so the
@@ -67,16 +69,24 @@ ROUTE_SWEEP_MIN_ROUTES="${ROUTE_SWEEP_MIN_ROUTES:-50}"
 ROUTE_SWEEP_KNOWN_ROUTES=(/ledgers /contracts "/accounts/{g_strkey}")
 
 # generate_route_list SPEC OUT — writes every GET path from SPEC into OUT, one
-# per line. Non-zero (message on stderr) if the parser failed or the result
-# does not look like a real spec.
+# per line, and the ones that require credentials into OUT.secured. Non-zero
+# (message on stderr) if the parser failed or the result does not look like a
+# real spec.
 generate_route_list() {
   local spec="$1" out="$2" n known
-  if ! python3 - "$spec" > "$out" <<'PY'
+  if ! python3 - "$spec" "$out.secured" > "$out" <<'PY'
 import sys, yaml
 spec = yaml.safe_load(open(sys.argv[1]))
+secured = []
 for p, ops in spec.get('paths', {}).items():
     if 'get' in ops:
         print(p)
+        # A route is secured when every alternative names a scheme; the
+        # global default carries an empty `{}`, which is anonymous access.
+        sec = ops['get'].get('security', spec.get('security') or [])
+        if sec and all(sec):
+            secured.append(p)
+open(sys.argv[2], 'w').write(''.join(p + '\n' for p in secured))
 PY
   then
     echo "route-sweep: spec parser failed on '$spec' (python3 exited non-zero — see its stderr above); refusing to report a clean sweep" >&2
@@ -106,13 +116,26 @@ expected_404() {
   return 1
 }
 
-# verdict_for CODE ROUTE_TEMPLATE prints FAIL, MISSING, CLIENT or ok.
+# The list generate_route_list wrote of routes whose spec entry requires credentials.
+ROUTE_SWEEP_SECURED="${ROUTE_SWEEP_SECURED:-/tmp/route-sweep-paths.txt.secured}"
+
+route_is_secured() {
+  [ -f "$ROUTE_SWEEP_SECURED" ] && grep -qxF "$1" "$ROUTE_SWEEP_SECURED"
+}
+
+# verdict_for CODE ROUTE_TEMPLATE prints ok, CLIENT, or a failure: FAIL (5xx),
+# MISSING (404/405 on a route that should answer), DENIED (401/403 on a public
+# route), LIMITED (429: the route was not tested) or ODD (anything else, a
+# redirect included). Only 2xx is ok; a status nobody classified fails.
 verdict_for() {
   case "$1" in
+    2*) echo ok ;;
     5*) echo FAIL ;;
     404|405) if expected_404 "$2"; then echo CLIENT; else echo MISSING; fi ;;
+    401|403) if route_is_secured "$2"; then echo CLIENT; else echo DENIED; fi ;;
+    429) echo LIMITED ;;
     4*) echo CLIENT ;;
-    *)  echo ok ;;
+    *)  echo ODD ;;
   esac
 }
 
@@ -124,7 +147,7 @@ fi
 printf '# route sweep — %s\n# api=%s\n\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$API"
 printf '%-6s %-8s %s\n' STATUS VERDICT ROUTE
 
-fivexx=0; skipped=0; ok=0; clienterr=0; unreach=0; missing=0
+fivexx=0; skipped=0; ok=0; clienterr=0; unreach=0; missing=0; denied=0; limited=0; odd=0
 while read -r route; do
   [ -z "$route" ] && continue
   filled="$route"
@@ -154,6 +177,9 @@ while read -r route; do
   case "$verdict" in
     FAIL)    fivexx=$((fivexx+1)) ;;
     MISSING) missing=$((missing+1)) ;;
+    DENIED)  denied=$((denied+1)) ;;
+    LIMITED) limited=$((limited+1)) ;;
+    ODD)     odd=$((odd+1)) ;;
     CLIENT)  clienterr=$((clienterr+1)) ;;
     *)       ok=$((ok+1)) ;;
   esac
@@ -162,10 +188,12 @@ while read -r route; do
 done < /tmp/route-sweep-paths.txt
 
 echo
-echo "ok=${ok} client_4xx=${clienterr} missing_404=${missing} server_5xx=${fivexx} unreachable=${unreach} skipped=${skipped}"
-# Exit = failures the operator must act on: 5xx, unreachable and unexpectedly
-# missing routes, so a broken sweep and a dark subsystem never read as 0.
-failures=$((fivexx + unreach + missing))
+echo "ok=${ok} client_4xx=${clienterr} missing_404=${missing} denied_public=${denied} rate_limited=${limited} unclassified=${odd} server_5xx=${fivexx} unreachable=${unreach} skipped=${skipped}"
+# Exit = failures the operator must act on: 5xx, unreachable, unexpectedly
+# missing, a public route refusing anonymous callers, a route the limiter kept
+# the sweep from testing, and any status nobody classified. A broken sweep and
+# a dark subsystem never read as 0.
+failures=$((fivexx + unreach + missing + denied + limited + odd))
 [ "$failures" -gt 255 ] && failures=255
 exit "$failures"
 }

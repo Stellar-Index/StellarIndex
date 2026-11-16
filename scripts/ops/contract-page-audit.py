@@ -296,8 +296,12 @@ def _norm(panel):
 # or a spinner, so counting it as loaded would score a broken page as a
 # fast one. That mistake is why the first version of this harness
 # reported pages "ok" at 0.10s while three of five panels were failing.
+#
+# Loaded needs positive evidence. fetch() reports a transport failure
+# (refused, DNS, TLS, timeout) as status 0, and an unreachable API must
+# not pass as every panel loaded in 0.00s.
 def loaded(status, ok404=True):
-    return status < 400 or (status == 404 and ok404)
+    return 200 <= status < 400 or (status == 404 and ok404)
 
 
 def fetch(path):
@@ -428,7 +432,8 @@ def main():
                 by_panel[n] = by_panel.get(n, 0) + 1
         for n, k in sorted(by_panel.items(), key=lambda kv: -kv[1]):
             print(f"   unloaded {k:3d}x  {n}")
-    return len(breaches) + len(unloaded)
+    # Capped: an exit status is one byte, so 256 failures would read as 0.
+    return min(len(breaches) + len(unloaded), 125)
 
 
 if __name__ == "__main__":

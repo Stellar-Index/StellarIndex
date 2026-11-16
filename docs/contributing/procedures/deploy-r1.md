@@ -59,7 +59,7 @@ API_BASE_URL=https://api.stellarindex.io bash scripts/dev/r1-smoke.sh   # throug
 # COVERAGE checks — the smoke above is 13 hand-picked routes and will
 # stay green while an entire subsystem is dark. Both exit non-zero on
 # failure; treat a regression in either as deploy-blocking.
-bash scripts/ops/route-sweep.sh                    # every OpenAPI GET; exit = 5xx + unreachable + unexpected 404
+bash scripts/ops/route-sweep.sh                    # every OpenAPI GET; exit = 5xx + unreachable + unexpected 404 + 401/403 on a public route + 429 + redirects
 bash scripts/ops/reconcile-supply-vs-horizon.sh    # served supply vs Horizon; exit = assets outside tolerance
 
 ssh root@136.243.90.96 'systemctl status stellarindex-indexer stellarindex-aggregator stellarindex-api | grep -E "Active|●"'
