@@ -407,6 +407,7 @@ func deriveCap67Window(ctx context.Context, addr string, lo, hi uint32, topics [
 		false, // no FINAL — RMT dups collapse in the idempotent target
 		false, // no OpArgs
 		false, // no state-write keys
+		false, // no tx index: the movements table has no apply-order column
 		func(ev events.Event) error {
 			m, ok := cap67EventMovement(dec, sup, &ev)
 			if !ok {

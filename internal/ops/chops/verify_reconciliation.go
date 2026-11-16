@@ -178,7 +178,7 @@ func seedSoroswapForRecon(ctx context.Context, cfg config.Config, chAddr string,
 		return fmt.Errorf("lake tip: %w", err)
 	}
 	n, err := seedSoroswapPairs(dec, func(fn func(events.Event) error) error {
-		return clickhouse.StreamContractEventsFiltered(ctx, chAddr, 1, tip, soroswap.MainnetFactories, nil, nil, false, false, false, fn)
+		return clickhouse.StreamContractEventsFiltered(ctx, chAddr, 1, tip, soroswap.MainnetFactories, nil, nil, false, false, false, false, fn)
 	})
 	if err != nil {
 		return fmt.Errorf("after %d new_pair event(s): %w", n, err)

@@ -81,14 +81,15 @@ func forEachLedgerWindow(from, to, stride uint32, fn func(lo, hi uint32) error) 
 }
 
 // StreamContractEventsFiltered is the projector's forward read of contract_events for [from,to] filtered by contract_id/topic_0_sym, in apply order; useFinal=false lets duplicates through, so a COUNTING consumer must pass true or dedup adjacent rows.
-func StreamContractEventsFiltered(ctx context.Context, addr string, from, to uint32, contractIDs, topic0Syms, excludeTopic0Syms []string, useFinal, withOpArgs, withStateWriteKeys bool, fn func(events.Event) error) error {
+// withTxIndex sets each event's TransactionIndex at the cost of a stellar.transactions read for every ledger, not only multi-transaction ones.
+func StreamContractEventsFiltered(ctx context.Context, addr string, from, to uint32, contractIDs, topic0Syms, excludeTopic0Syms []string, useFinal, withOpArgs, withStateWriteKeys, withTxIndex bool, fn func(events.Event) error) error {
 	where := contractEventsFilterWhere(contractIDs, topic0Syms, excludeTopic0Syms)
-	return streamContractEventsWhere(ctx, addr, from, to, contractIDs, where, useFinal, withOpArgs, withStateWriteKeys, fn)
+	return streamContractEventsWhere(ctx, addr, from, to, contractIDs, where, useFinal, withOpArgs, withStateWriteKeys, withTxIndex, fn)
 }
 
 // streamContractEventsWhere runs the stream for a prebuilt WHERE clause, which
 // must come from contractEventsWhere over the same contractIDs.
-func streamContractEventsWhere(ctx context.Context, addr string, from, to uint32, contractIDs []string, where string, useFinal, withOpArgs, withStateWriteKeys bool, fn func(events.Event) error) error {
+func streamContractEventsWhere(ctx context.Context, addr string, from, to uint32, contractIDs []string, where string, useFinal, withOpArgs, withStateWriteKeys, withTxIndex bool, fn func(events.Event) error) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
 		return err
@@ -113,7 +114,7 @@ func streamContractEventsWhere(ctx context.Context, addr string, from, to uint32
 		return fmt.Errorf("clickhouse: query contract_events filtered [%d,%d]: %w", from, to, err)
 	}
 	defer func() { _ = rows.Close() }()
-	if err := scanInApplyOrder(ctx, conn, rows, withOpArgs, emit); err != nil {
+	if err := scanInApplyOrder(ctx, conn, rows, withOpArgs, withTxIndex, emit); err != nil {
 		return err
 	}
 	if enricher != nil {
@@ -289,13 +290,14 @@ func StreamContractEvents(ctx context.Context, addr string, from, to uint32, exc
 		return fmt.Errorf("clickhouse: query contract_events [%d,%d]: %w", from, to, err)
 	}
 	defer func() { _ = rows.Close() }()
-	return scanInApplyOrder(ctx, conn, rows, true, fn)
+	return scanInApplyOrder(ctx, conn, rows, true, false, fn)
 }
 
 // scanInApplyOrder scans rows through an [applyOrderer] so fn sees each ledger's events in apply order, not the table's tx_hash sort. The
 // lookups use the pool's second connection while rows holds the first.
-func scanInApplyOrder(ctx context.Context, conn driver.Conn, rows driver.Rows, withOpArgs bool, fn func(events.Event) error) error {
+func scanInApplyOrder(ctx context.Context, conn driver.Conn, rows driver.Rows, withOpArgs, withTxIndex bool, fn func(events.Event) error) error {
 	o := newApplyOrderer(ctx, connTxIndexLookup(conn), fn)
+	o.stampTxIndex = withTxIndex
 	if err := scanContractEvents(rows, withOpArgs, o.add); err != nil {
 		return err
 	}

@@ -19,6 +19,7 @@ type BLNTEvent struct {
 	TxHash          string
 	OpIndex         uint32
 	EventIndex      uint32
+	TxIndex         *uint32 // 0-based apply position in the ledger; nil writes NULL and never clears a stored value
 	ContractRole    string
 	EventKind       string
 	Pool            string
@@ -62,15 +63,20 @@ func (s *Store) InsertBLNTEvent(ctx context.Context, e BLNTEvent) error {
 		attrs = marshaled
 	}
 
+	var txIndex any
+	if e.TxIndex != nil {
+		txIndex = int64(*e.TxIndex)
+	}
+
 	const q = `
         INSERT INTO blnt_events (
             contract_id, ledger, ledger_close_time, tx_hash, op_index, event_index,
             contract_role, event_kind, pool, user_address, asset, tier,
-            amount, amount2, attributes, derive_generation
+            amount, amount2, attributes, derive_generation, tx_index
         ) VALUES (
             $1, $2, $3, $4, $5, $6,
             $7, $8, $9, $10, $11, $12,
-            $13, $14, $15, $16
+            $13, $14, $15, $16, $17
         )
         ON CONFLICT (ledger_close_time, contract_id, ledger, tx_hash,
                      op_index, event_index) DO UPDATE SET
@@ -83,14 +89,15 @@ func (s *Store) InsertBLNTEvent(ctx context.Context, e BLNTEvent) error {
             amount            = EXCLUDED.amount,
             amount2           = EXCLUDED.amount2,
             attributes        = EXCLUDED.attributes,
-            derive_generation = EXCLUDED.derive_generation
+            derive_generation = EXCLUDED.derive_generation,
+            tx_index          = COALESCE(EXCLUDED.tx_index, blnt_events.tx_index)
           WHERE blnt_events.derive_generation <= EXCLUDED.derive_generation
     `
 	_, err := s.db.ExecContext(ctx, q,
 		e.ContractID, int(e.Ledger), e.LedgerCloseTime.UTC(), e.TxHash,
 		int(e.OpIndex), int(e.EventIndex), e.ContractRole, e.EventKind,
 		nullString(e.Pool), nullString(e.UserAddress), nullString(e.Asset), nullString(e.Tier),
-		nullNumeric(e.Amount), nullNumeric(e.Amount2), attrs, s.deriveGeneration,
+		nullNumeric(e.Amount), nullNumeric(e.Amount2), attrs, s.deriveGeneration, txIndex,
 	)
 	if err != nil {
 		return fmt.Errorf("timescale: InsertBLNTEvent %s@%d: %w", e.ContractID, e.Ledger, err)

@@ -14,13 +14,15 @@ import (
 
 // Event is a single Soroban contract event; JSON tags follow the stellar-rpc getEvents response shape, which the RPC client and fixture replays still populate.
 type Event struct {
-	Type                     string `json:"type"` // contract | system | diagnostic
-	Ledger                   uint32 `json:"ledger"`
-	LedgerClosedAt           string `json:"ledgerClosedAt"` // RFC 3339
-	ContractID               string `json:"contractId"`
-	ID                       string `json:"id"`
-	OperationIndex           int    `json:"operationIndex"`
-	TransactionIndex         int    `json:"transactionIndex"`
+	Type           string `json:"type"` // contract | system | diagnostic
+	Ledger         uint32 `json:"ledger"`
+	LedgerClosedAt string `json:"ledgerClosedAt"` // RFC 3339
+	ContractID     string `json:"contractId"`
+	ID             string `json:"id"`
+	OperationIndex int    `json:"operationIndex"`
+	// TransactionIndex is the 1-based position of the event's transaction in the ledger's apply (TxProcessing) order; 0 = unknown.
+	// Only the dispatcher and the lake feed set it; `json:"-"` keeps RPC fixtures and replays from supplying a value of another meaning.
+	TransactionIndex         int    `json:"-"`
 	TxHash                   string `json:"txHash"`
 	InSuccessfulContractCall bool   `json:"inSuccessfulContractCall"`
 

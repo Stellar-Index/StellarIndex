@@ -703,6 +703,7 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 				true,  // FINAL: the dry-run COUNTS (see above)
 				false, // no op_args_xdr: the sep41 decoders decode from topics+data, never OpArgs
 				false, // no state-write keys: sep41 decoders never read them
+				false, // no tx index: the sep41 tables have no apply-order column
 				func(ev events.Event) error {
 					for _, src := range sep41Cat {
 						if !enabled(src.name) || !src.dec.Matches(ev) {
@@ -1334,7 +1335,7 @@ func chRebuildLakeReads(addr string) chRebuildEventReads {
 		},
 		scoped: func(ctx context.Context, from, to uint32, contractIDs []string, withOpArgs bool, fn func(events.Event) error) error {
 			// FINAL: the dry-run counts, so un-merged duplicate parts must collapse.
-			return clickhouse.StreamContractEventsFiltered(ctx, addr, from, to, contractIDs, nil, nil, true, withOpArgs, false, fn)
+			return clickhouse.StreamContractEventsFiltered(ctx, addr, from, to, contractIDs, nil, nil, true, withOpArgs, false, false, fn)
 		},
 	}
 }
