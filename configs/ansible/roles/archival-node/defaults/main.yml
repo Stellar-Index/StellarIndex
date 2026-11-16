@@ -793,6 +793,10 @@ archive_completeness_enabled: "{{ (stellar_network | default('pubnet')) == 'pubn
 # correct before anyone writes an inventory line.
 verify_served_values_enabled: "{{ (stellar_network | default('pubnet')) == 'pubnet' }}"
 
+# wasm-drift compares the hashes gated contracts run with the audited set in
+# internal/wasmaudit, which holds pubnet hashes only.
+wasm_drift_enabled: "{{ (stellar_network | default('pubnet')) == 'pubnet' }}"
+
 # galexie-mirror-verify compares the local mirror with the upstream dataset
 # named by storage.s3_cold_*; with no upstream configured there is nothing
 # to compare against and every run would fail.

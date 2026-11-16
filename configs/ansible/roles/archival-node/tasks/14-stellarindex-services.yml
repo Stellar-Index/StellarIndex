@@ -1528,6 +1528,58 @@
       changed_when: false
       failed_when: false
 
+# ── wasm-drift — the detector of an unaudited in-place contract upgrade ──
+# The command and its two alerts shipped without a schedule, so no textfile
+# was ever written and neither alert could fire. Same tag and paired removal
+# as verify-served-values above.
+- name: Install + enable wasm-drift (networks whose hashes the audit set holds)
+  tags: [ops-jobs]
+  when: wasm_drift_enabled | bool
+  block:
+    - name: Install wasm-drift unit + timer
+      ansible.builtin.template:
+        src: "systemd/{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+      loop:
+        - wasm-drift.service
+        - wasm-drift.timer
+      notify: Reload systemd
+      register: wasm_drift_units
+
+    - name: Enable + start wasm-drift.timer
+      ansible.builtin.systemd:
+        name: wasm-drift.timer
+        state: started
+        enabled: true
+        daemon_reload: true
+      when:
+        # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml.
+        - not (ansible_check_mode and wasm_drift_units is changed)
+
+- name: Remove wasm-drift where the audit set does not cover the network
+  tags: [ops-jobs]
+  when: not (wasm_drift_enabled | bool)
+  block:
+    - name: Stop + disable wasm-drift timer and service
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - wasm-drift.timer
+        - wasm-drift.service
+      failed_when: false
+
+    - name: Remove wasm-drift unit files
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ item }}"
+        state: absent
+      loop:
+        - wasm-drift.timer
+        - wasm-drift.service
+      notify: Reload systemd
+
 # ── galexie-archive-trim — pubnet only ────────────────────────────────
 # See galexie_archive_trim_enabled in defaults/main.yml. The timer is
 # never enabled by the role (ADR-0027 §Decision, above).

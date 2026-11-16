@@ -1,0 +1,46 @@
+# systemd unit: WASM hash drift check.
+#
+# Rendered by Ansible. Runs `stellarindex-ops wasm-drift`, which resolves the
+# WASM hash every gated contract runs today and compares it with the hashes
+# the decoder audit logs string-checked (internal/wasmaudit). Contracts
+# upgrade in place, so this is the only detector of a decoder parsing bytes
+# nobody has read. Read-only against ClickHouse; writes
+# stellarindex_wasm_drift* to the node_exporter textfile collector.
+#
+# The exit code is the number of drifting contracts, so a drift fails the
+# unit as well as raising stellarindex_wasm_drift.
+
+[Unit]
+Description=Stellar Index — WASM hash drift check (daily)
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/wasm-drift.md
+After=network-online.target clickhouse-server.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/stellarindex
+EnvironmentFile=-/etc/default/stellarindex-ops
+
+Environment=TEXTFILE=/var/lib/node_exporter/textfile_collector/wasm_drift.prom
+Environment=CONFIG=/etc/stellarindex.toml
+
+ExecStart=/usr/local/bin/stellarindex-ops wasm-drift \
+  -config ${CONFIG} \
+  -textfile ${TEXTFILE}
+
+User=stellarindex
+Group=stellarindex
+
+ProtectSystem=strict
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/node_exporter/textfile_collector
+
+# A run takes about 3 minutes on mainnet (654 contracts, 2026-11).
+TimeoutStartSec=30min
+
+[Install]
+WantedBy=multi-user.target

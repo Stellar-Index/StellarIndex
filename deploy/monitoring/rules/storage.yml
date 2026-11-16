@@ -1025,8 +1025,8 @@ groups:
             holds the MISMATCH sample and the lumen residual of the last run.
 
       # wasm-drift (internal/ops/chops/wasm_drift.go): a gated contract
-      # running a hash its audit log never string-checked. No never-ran
-      # arm: the timer is not deployed everywhere yet.
+      # running a hash its audit log never string-checked. Run daily by
+      # wasm-drift.timer (archival-node role).
       - alert: stellarindex_wasm_drift
         expr: max by (source, contract) (stellarindex_wasm_drift) > 0
         for: 1h
@@ -1042,8 +1042,13 @@ groups:
             hash, record it in the source's audit log, then add it to
             internal/wasmaudit/audited_wasm.json.
 
+      # The absent arm covers a run that has never written the textfile: the
+      # first arm measures only a series that exists.
       - alert: stellarindex_wasm_drift_stale
-        expr: (time() - stellarindex_wasm_drift_last_run_unix) > 172800
+        expr: |
+          (time() - stellarindex_wasm_drift_last_run_unix) > 172800
+          or
+          absent_over_time(stellarindex_wasm_drift_last_run_unix[2d])
         for: 1h
         labels:
           severity: ticket
@@ -1051,10 +1056,12 @@ groups:
           component: storage
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/wasm-drift.md
-          summary: "wasm-drift has not completed a run on {{ $labels.instance }} in 2 days"
+          summary: "wasm-drift has not completed a run in 2 days"
           description: |
-            A run that errors writes no textfile — check the unit's journal
-            for the wasm-drift error line.
+            A run that errors writes no textfile, and so does a host where
+            wasm-drift.timer was never installed. Check `systemctl status
+            wasm-drift.timer` and the unit's journal for the wasm-drift
+            error line.
 
       # Same never-succeeded anchoring as ch_lake_backup_stale
       # (off-site-backup-plan.md §1): the `configured` gauge is emitted on every

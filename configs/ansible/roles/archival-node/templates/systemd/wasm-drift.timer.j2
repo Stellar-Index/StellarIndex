@@ -1,0 +1,18 @@
+# systemd timer: daily WASM hash drift check.
+#
+# Rendered by Ansible. Companion to wasm-drift.service. Daily because
+# stellarindex_wasm_drift_stale tickets at 48h without a completed run.
+# 07:10 UTC sits clear of the supply and completeness jobs (04:42 to 06:53).
+
+[Unit]
+Description=Daily WASM hash drift check
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/wasm-drift.md
+
+[Timer]
+OnCalendar=*-*-* 07:10:00 UTC
+RandomizedDelaySec=300
+Persistent=true
+Unit=wasm-drift.service
+
+[Install]
+WantedBy=timers.target

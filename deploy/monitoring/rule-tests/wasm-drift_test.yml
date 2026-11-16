@@ -91,7 +91,37 @@ tests:
               component: storage
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/wasm-drift.md
-              summary: "wasm-drift has not completed a run on r1:9100 in 2 days"
+              summary: "wasm-drift has not completed a run in 2 days"
               description: |
-                A run that errors writes no textfile — check the unit's journal
-                for the wasm-drift error line.
+                A run that errors writes no textfile, and so does a host where
+                wasm-drift.timer was never installed. Check `systemctl status
+                wasm-drift.timer` and the unit's journal for the wasm-drift
+                error line.
+
+  # (RED) the textfile has never been written: no timer on the host, or
+  # every run so far errored. The age arm cannot see a series that does not
+  # exist; the absent arm does.
+  - interval: 1m
+    name: a host where wasm-drift never ran tickets stale
+    input_series:
+      - series: 'up{job="node_exporter", instance="r1:9100"}'
+        values: '1x180'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_wasm_drift_stale
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: stellarindex_wasm_drift_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/wasm-drift.md
+              summary: "wasm-drift has not completed a run in 2 days"
+              description: |
+                A run that errors writes no textfile, and so does a host where
+                wasm-drift.timer was never installed. Check `systemctl status
+                wasm-drift.timer` and the unit's journal for the wasm-drift
+                error line.

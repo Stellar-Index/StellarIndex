@@ -31,7 +31,7 @@ P3 (`severity: ticket`). Rules: `configs/prometheus/rules.r1/storage.yml` (twin 
 
 ## `stellarindex_wasm_drift_stale` — no completed run in 2 days
 
-Fires only after a run has written the textfile. Read the scheduling unit's journal for the `wasm-drift:` error line (ClickHouse unreachable, or a factory walk returning zero children).
+`wasm-drift.timer` runs the check daily at 07:10 UTC on a pubnet node (`wasm_drift_enabled`, archival-node role); a run takes about 3 minutes. The alert also fires when the textfile has never been written, so start with `systemctl status wasm-drift.timer`. Then read `journalctl -u wasm-drift -n 100` for the `wasm-drift:` error line (ClickHouse unreachable, or a factory walk returning zero children).
 
 ## Promoting an unaudited source
 

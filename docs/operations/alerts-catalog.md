@@ -166,7 +166,7 @@ its first link must be the rule's `runbook_url` page
 | `stellarindex_network_state_verify_stale` | `time() - network_state_verify_last_run_unix` | > 48 h, 1 h | ticket | [network-state-verify](runbooks/network-state-verify.md) |
 | `stellarindex_network_state_verify_failed` | `max by (instance, check)(network_state_verify_failures)` | > 0 (hot_archive diff or lumens residual) | ticket | [network-state-verify](runbooks/network-state-verify.md) |
 | `stellarindex_wasm_drift` | `max by (source, contract)(wasm_drift)` | > 0 for 1 h (gated contract runs a WASM hash not in `audited_wasm.json`) | ticket | [wasm-drift](runbooks/wasm-drift.md) |
-| `stellarindex_wasm_drift_stale` | `time() - wasm_drift_last_run_unix` | > 48 h, 1 h | ticket | [wasm-drift](runbooks/wasm-drift.md) |
+| `stellarindex_wasm_drift_stale` | `time() - wasm_drift_last_run_unix`, or the series absent for 2 d | > 48 h, 1 h | ticket | [wasm-drift](runbooks/wasm-drift.md) |
 | `stellarindex_galexie_archive_mirror_stale` | `time() - galexie_archive_mirror_last_success_timestamp` | > 48 h, 1 h. Metric absent (cannot fire) when the mirror is disabled | ticket | [galexie-archive-mirror](runbooks/archive.md#stellarindex_galexie_archive_mirror_stale) |
 | `stellarindex_ch_schema_snapshot_unit_failed` | `node_systemd_unit_state{name="ch-schema-snapshot.service",state="failed"}` | == 1 for 5 min | ticket | [ch-schema-restore](runbooks/ch-schema-restore.md) |
 | `stellarindex_ch_schema_drift_detected` | `stellarindex_ch_schema_drift_divergent` | > 0 for ≥ 30 min | ticket | [ch-schema-restore](runbooks/ch-schema-restore.md) |
