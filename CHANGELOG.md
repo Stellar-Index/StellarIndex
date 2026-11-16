@@ -20,6 +20,30 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.120.0] - 2026-11-16
+
+Tested against Stellar protocol 27. Migration 0223 (replaces the audit-erasure function; catalog only, no table rewrite). No `pkg/*` break; `pkg/client` gains `unread` on the price batch envelope. No config change. Host payload changed: the API, indexer and aggregator units and eight archival-node job units (a timer tick no longer starts a stopped datastore), and the r1 Prometheus rule tree (two alert descriptions).
+
+### Changed
+
+- **api:** a failed price read is no longer a miss: `/v1/price` and the tip answer an error, and `/v1/price/batch` lists the ids it could not read under `unread`. A markets list missing a failed leg is flagged `truncated`.
+- **api:** an RWA class or issuer total that is missing members is flagged as a lower bound. Aquarius DEX TVL is marked stale when its source stops, curated pools the lake cannot read are counted as missing, and a withdrawn figure is not served from cache.
+- **api:** a holders board read from the rollup carries the rollup cycle's time as `as_of`, omits `as_of_ledger`, and is flagged `stale` once that time is more than 300s old.
+- **auth:** the staff kill switch revokes keys under `auth_backend=postgres`. An inherited monthly quota is never unmetered, and a revoke evicts the Postgres key cache. Lowering or clearing a rate-limit override lowers the keys minted under it.
+- **privacy:** erasing an account also removes its webhook hosts, minted-key slug and passkey names from the audit log.
+- **ingest:** every lake read has a 60s deadline, so a hung storage request fails and is retried instead of holding the live tail or a backfill. `stream_path_total` reports `hot` where it reported `sdk`.
+- **explorer:** the asset page states identity only where it is proven, and five panels no longer state more than the data behind them.
+
+### Fixed
+
+- **forex:** a feed that keeps re-serving an old bar is not treated as live, and a held series does not rewrite the day it was fetched on.
+- **coinbase:** a product the venue refuses raises the rejected-subscription gauge. **bitstamp:** the history backfill walks from an off-grid start and refuses a body with no candles.
+- **alerts:** a price alert that delivered nothing does not start a cooldown. A stalled customer webhook endpoint holds its own lane, not the queue.
+- **ops:** a backfill window counts as done only through its recorded end and only while the lake still holds it. `fx-history-backfill` leaves the live worker's last 7 days alone. The SLA proof holds each endpoint to the window's coverage floor, the DNS perimeter check reads records tag by tag, and two deploy checks stop passing on no evidence.
+- **clickhouse:** two side-by-side rebuild runbooks cover the MV-creation ledger, catch up with a margin after cutover, and close the gap on a post-cutover rollback.
+- **docs:** the config reference says what the failed-auth limit does: past the cap a rejection answers 429 instead of 401; it does not stop a lookup or a correct guess.
+- **ci:** a lake read in a double-quoted Go string fails `lint-lake-dedup`.
+
 ## [v0.119.0] - 2026-11-15
 
 Tested against Stellar protocol 27. No migrations. No `pkg/*` break. No config change on r1. Host payload changed: the archival-node role's API config template (a test-net inventory sets `stellarindex_api_trusted_proxy_cidrs`; r1 renders the same file as before).
@@ -111,12 +135,3 @@ No migrations. No `pkg/*` break. Config: `[api].anon_rate_limit_per_min` is 1000
 ### Security
 
 - **deps:** `klauspost/compress` 1.20.2 (GO-2026-6865) and `andybalholm/brotli` 1.2.7 (GO-2026-6888).
-
-## [v0.116.50] - 2026-10-25
-
-No migrations. No `pkg/*` break. No config change. Run `stellarindex-ops projector-replay -source chainlink-stellar -from 65079956` after the deploy to re-key the three USPC NAV oracle rows.
-
-### Fixed
-
-- **chainlink-stellar:** the USPC NAV feed (data_id `016e0640…`) is recorded as `raw:USPC` instead of an unknown `raw:<hex>` id, clearing the unknown-symbol alert (#3847).
-- **explorer:** `/icon` stores successful issuer-icon responses in the Cloudflare edge cache, so a cold visitor no longer waits on the issuer's host (#3848).
