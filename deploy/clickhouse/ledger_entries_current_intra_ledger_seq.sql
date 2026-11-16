@@ -102,9 +102,12 @@ FROM stellar.ledger_entry_changes;
 -- partitions instead of scanning the whole append-log. version is MATERIALIZED,
 -- so the SELECT lists only the base columns and never mentions version. RMT
 -- dedups on merge/FINAL to the highest version per (entry_type, key_xdr), so
--- re-running an overlapping window is SAFE/idempotent. Cap the upper bound at
--- the ledger_seq that was live when the v2 MV was created (Step 1) — the MV
--- already captured everything above it — though re-covering it is harmless.
+-- re-running an overlapping window is SAFE/idempotent. Read the tip AFTER the
+-- v2 MV exists (SELECT max(ledger_seq) FROM stellar.ledger_entry_changes; call
+-- it mv_created_tip) and end the last window at mv_created_tip + 1. The bound
+-- is exclusive, and that ledger's rows may have been inserted before the MV
+-- existed: a window ending AT the tip leaves them in neither the MV nor the
+-- reproject. Re-covering ledgers the MV already captured is harmless.
 -- Choose {window_start} to match the coverage you want: the min(ledger_seq)
 -- currently in stellar.ledger_entries_current preserves today's coverage floor;
 -- going lower additionally closes that floor (see StreamSACBalanceSeedsFullHistory
@@ -147,11 +150,19 @@ FROM stellar.ledger_entry_changes;
 --   WHERE v1.change_type != v2.change_type
 --   LIMIT 50;
 --
--- ── Step 4: cutover (drop both MVs first — a renamed table does NOT drag its
--- MV's stored target reference along, so the MV would error INSERTs with
--- "Target table doesn't exist" otherwise), atomically double-RENAME, recreate
--- the MV under the canonical name/target, then run ONE small overlapping
--- catch-up reproject for the brief DDL gap (capture the pre-cutover tip first):
+-- ── Step 4: cutover. Preconditions:
+--   * a Step 2 window has run with window_start <= mv_created_tip < window_end;
+--   * ch-live-catchup.timer is stopped (systemctl stop ch-live-catchup.timer,
+--     and no ch-live-catchup run in flight). A heal writes ledgers BELOW the tip
+--     into ledger_entry_changes; one landing while no MV exists reaches neither
+--     table, and a catch-up bounded at the tip does not reach it either.
+-- Then capture the pre-cutover tip, drop both MVs (a renamed table does NOT
+-- drag its MV's stored target reference along, so the MV would error INSERTs
+-- with "Target table doesn't exist" otherwise), atomically double-RENAME and
+-- recreate the MV under the canonical name/target. Wait 10 minutes, then run
+-- the catch-up from 1000 ledgers below the pre-cutover tip, with FINAL (the
+-- source is a ReplacingMergeTree and holds re-ingested rows twice). Restart the
+-- timer after the catch-up finishes:
 --
 --   DROP TABLE IF EXISTS stellar.ledger_entries_current_mv;
 --   DROP TABLE IF EXISTS stellar.ledger_entries_current_v2_mv;
@@ -162,14 +173,14 @@ FROM stellar.ledger_entry_changes;
 --     SELECT entry_type, key_xdr, account_id, asset, balance, change_type,
 --            ledger_seq, close_time, entry_xdr, intra_ledger_seq
 --     FROM stellar.ledger_entry_changes;
---   -- catch-up for [pre_cutover_tip, now]:
+--   -- catch-up for [pre_cutover_tip - 1000, now], after the 10-minute wait:
 --   INSERT INTO stellar.ledger_entries_current
 --       (entry_type, key_xdr, account_id, asset, balance, change_type,
 --        ledger_seq, close_time, entry_xdr, intra_ledger_seq)
 --   SELECT entry_type, key_xdr, account_id, asset, balance, change_type,
 --          ledger_seq, close_time, entry_xdr, intra_ledger_seq
---   FROM stellar.ledger_entry_changes
---   WHERE ledger_seq >= {pre_cutover_tip};
+--   FROM stellar.ledger_entry_changes FINAL
+--   WHERE ledger_seq >= {pre_cutover_tip} - 1000;
 --
 -- ── Step 5: DROP TABLE stellar.ledger_entries_current_old SYNC — only after
 -- Step 3 confirms v2 is correct and reads have been served from the canonical
@@ -187,7 +198,10 @@ FROM stellar.ledger_entry_changes;
 --   * AFTER Step 4 (cutover done): recreate the original ledger_seq-versioned
 --     shape as _v1restore, reproject, and RENAME-swap back (the inverse of
 --     Steps 1-4), OR — if Step 5 has not run — RENAME the retained _old table
---     back to canonical:
+--     back to canonical. _old stopped receiving rows at Step 4, so the rename
+--     alone serves a table frozen at the cutover: stop ch-live-catchup.timer,
+--     run the DDL, wait 10 minutes, then close the gap from 1000 ledgers below
+--     Step 4's pre-cutover tip:
 --       DROP TABLE IF EXISTS stellar.ledger_entries_current_mv;
 --       RENAME TABLE stellar.ledger_entries_current     TO stellar.ledger_entries_current_v2,
 --                    stellar.ledger_entries_current_old TO stellar.ledger_entries_current;
@@ -196,6 +210,13 @@ FROM stellar.ledger_entry_changes;
 --         SELECT entry_type, key_xdr, account_id, asset, balance, change_type,
 --                ledger_seq, close_time, entry_xdr
 --         FROM stellar.ledger_entry_changes;
+--       INSERT INTO stellar.ledger_entries_current
+--           (entry_type, key_xdr, account_id, asset, balance, change_type,
+--            ledger_seq, close_time, entry_xdr)
+--       SELECT entry_type, key_xdr, account_id, asset, balance, change_type,
+--              ledger_seq, close_time, entry_xdr
+--       FROM stellar.ledger_entry_changes FINAL
+--       WHERE ledger_seq >= {pre_cutover_tip} - 1000;
 --   * The Step-0 column add reverses with
 --       ALTER TABLE stellar.ledger_entry_changes DROP COLUMN IF EXISTS intra_ledger_seq;
 --     (only after the binary is rolled back to a version that does not name it).

@@ -79,12 +79,14 @@ GROUP BY day, contract_id, event_type, topic_0_sym, t1_xdr, t0_xdr;
 -- clickhouse-client --query ...`; resumable). Bound
 -- every window by ledger_seq (contract_events is PARTITION BY
 -- intDiv(ledger_seq,1000000), so a bounded window prunes partitions
--- instead of scanning the full ~12B-row table) and cap the upper bound
--- at the ledger_seq that was live at v2-MV-creation time (<swap_ledger>;
--- read it back from stellar.contract_events before step 1) — no need to
--- re-cover ledgers the v2 MV already captured live, though doing so is
--- SAFE (uniqCombinedMerge is a set-union merge: re-inserting an
--- overlapping/duplicate window does not inflate the estimate). Example window:
+-- instead of scanning the full ~12B-row table). Read the tip from
+-- stellar.contract_events AFTER step 1's MV exists (<mv_created_tip>) and
+-- end the last window at <mv_created_tip> + 1: the bound is exclusive, and
+-- a tip read before the MV was created leaves the ledgers inserted in
+-- between in neither the MV nor the backfill. Re-covering ledgers the v2
+-- MV already captured is SAFE (uniqCombinedMerge is a set-union merge:
+-- re-inserting an overlapping/duplicate window does not inflate the
+-- estimate). Example window:
 --
 --   INSERT INTO stellar.contract_events_daily_v2
 --   SELECT toDate(close_time) AS day, contract_id, event_type,
@@ -108,13 +110,16 @@ GROUP BY day, contract_id, event_type, topic_0_sym, t1_xdr, t0_xdr;
 --     USING (contract_id, day)
 --   ORDER BY v1_exact DESC LIMIT 20;
 --
--- ── Step 4: cutover. Capture the ledger_seq tip first (<swap_ledger>).
--- Drop both MVs (a renamed table does NOT drag its MV's stored target
--- reference along — verified; the MV would error INSERTs with "Target
--- table ... doesn't exist" otherwise), atomically double-RENAME
--- (v1 → _old, v2 → canonical), recreate the MV under the canonical
--- name/target, then run ONE small overlapping catch-up backfill for the
--- brief DDL gap (safe if the gap was zero-width):
+-- ── Step 4: cutover. Stop ch-live-catchup.timer first (a heal writes
+-- ledgers below the tip into contract_events; one landing while no MV
+-- exists reaches neither table). Capture the ledger_seq tip
+-- (<swap_ledger>). Drop both MVs (a renamed table does NOT drag its MV's
+-- stored target reference along — verified; the MV would error INSERTs
+-- with "Target table ... doesn't exist" otherwise), atomically
+-- double-RENAME (v1 → _old, v2 → canonical) and recreate the MV under the
+-- canonical name/target. Wait 10 minutes, then run ONE overlapping
+-- catch-up backfill from 1000 ledgers below the tip (safe: set-union),
+-- and restart the timer:
 --
 --   DROP VIEW stellar.contract_events_daily_v2_mv;
 --   DROP VIEW stellar.contract_events_daily_mv;
@@ -124,7 +129,7 @@ GROUP BY day, contract_id, event_type, topic_0_sym, t1_xdr, t0_xdr;
 --   CREATE MATERIALIZED VIEW stellar.contract_events_daily_mv
 --   TO stellar.contract_events_daily AS <the step-1 v2 MV SELECT>;
 --   INSERT INTO stellar.contract_events_daily <the step-2 SELECT>
---   WHERE ledger_seq >= <swap_ledger> GROUP BY ...;
+--   WHERE ledger_seq >= <swap_ledger> - 1000 GROUP BY ...;
 --
 -- Then restart stellarindex-api (its DailyActivityAvailable probe is a
 -- sync.Once) and confirm GET /v1/protocols/{name} still returns
@@ -132,8 +137,12 @@ GROUP BY day, contract_id, event_type, topic_0_sym, t1_xdr, t0_xdr;
 --
 -- Rollback: up to step 3, DROP TABLE contract_events_daily_v2_mv,
 -- contract_events_daily_v2 (v1 never stopped serving). After step 4 and
--- before step 5, re-run the drop/rename/create in reverse (_old is
--- untouched data, so this is lossless).
+-- before step 5, re-run the drop/rename/create in reverse with the timer
+-- stopped. _old stopped receiving rows at step 4, so it is frozen at
+-- <swap_ledger>: wait 10 minutes, then close the gap with the old MV's
+-- uniqExact SELECT (the one the reverse step recreates) WHERE ledger_seq >=
+-- <swap_ledger> - 1000. A uniqExact state is a set, so the overlap does not
+-- double count.
 --
 -- Step 5: DROP TABLE stellar.contract_events_daily_old SYNC. A merge-park
 -- (max_bytes_to_merge_at_max_space_in_pool=1) applied to the OLD table goes
