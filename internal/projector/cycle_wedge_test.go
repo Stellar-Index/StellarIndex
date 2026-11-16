@@ -1400,6 +1400,59 @@ func TestCycle_TwoPoisonRowsAtOneLedgerDoNotWedge(t *testing.T) {
 	}
 }
 
+// A projector-replay rewind asks for the ledgers again. A row shed on the earlier pass and still failing must be
+// counted and shed again, not passed in silence because the tracker remembered giving up on it.
+func TestCycle_ReplayRewindVoidsGiveUps(t *testing.T) {
+	const source = "rewind-voids-give-ups"
+	rows := []events.Event{lakeEvent(101, 1), lakeEvent(101, 2), lakeEvent(102, 3)}
+	h := newWedgeHarness(t, source, rows, 110, func(ev consumer.Event) error {
+		if ev.(ledgerEvent).ledger == 101 {
+			return notNullViolation()
+		}
+		return nil
+	})
+
+	h.cycle() // sheds the first row; the second holds the cursor at 100, so the first stays given up
+	if got := h.store.cursor(); got != 100 || len(h.tracker.givenUp) != 1 {
+		t.Fatalf("cycle 1: cursor = %d, given up = %d; want 100 and 1", got, len(h.tracker.givenUp))
+	}
+	h.store.rewind(t, 90)
+
+	before := decodedCount(t, source, "sink_permanent")
+	h.cycle()
+	if got := decodedCount(t, source, "sink_permanent") - before; got != 2 {
+		t.Errorf("sink_permanent delta after the rewind = %v, want 2: both rows are re-driven and both rejections counted", got)
+	}
+}
+
+// A row given up on a permanent fault that now fails on a retryable one is held like any other row: the sink is
+// what is failing, and the row is not passed on a fault that may heal.
+func TestCycle_GivenUpRowWithARetryableFaultIsHeld(t *testing.T) {
+	const source = "given-up-then-transient"
+	rows := []events.Event{lakeEvent(101, 1), lakeEvent(101, 2), lakeEvent(102, 3)}
+	sinkDown := false
+	h := newWedgeHarness(t, source, rows, 110, func(ev consumer.Event) error {
+		if sinkDown {
+			return context.DeadlineExceeded
+		}
+		if ev.(ledgerEvent).ledger == 101 {
+			return notNullViolation()
+		}
+		return nil
+	})
+
+	h.cycle() // sheds the first row; the second holds the cursor at 100
+	sinkDown = true
+	before := decodedCount(t, source, "sink_retry")
+	h.cycle()
+	if got := decodedCount(t, source, "sink_retry") - before; got != 3 {
+		t.Errorf("sink_retry delta = %v, want 3: the given-up row's retryable fault is held and counted with the other two", got)
+	}
+	if got := h.store.cursor(); got != 100 {
+		t.Errorf("cursor = %d, want 100 while the sink is down", got)
+	}
+}
+
 // The same wedge through the quarantine arm: two unclassified rows at one ledger took turns exhausting the budget.
 func TestCycle_TwoUnclassifiedRowsAtOneLedgerQuarantineInTurn(t *testing.T) {
 	const source = "two-unclassified-one-ledger"

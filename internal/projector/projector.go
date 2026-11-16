@@ -742,6 +742,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 		// commit, so a held cursor keeps reporting its true position to the replay-window watcher.
 		fromLedger = cursor.LastLedger + 1
 		p.recordCursor(src.Name, cursor.LastLedger)
+		tracker.sawCursor(cursor.LastLedger)
 	} else {
 		fromLedger = p.seedFromLedger(cycleCtx, src, lake)
 	}
@@ -824,11 +825,11 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 		if sinkErr == nil {
 			return
 		}
-		if tracker.gaveUp(id) {
-			return // already counted and logged; only a sibling at this ledger keeps it in the window
-		}
 		// `id` was computed at closure entry for the duplicate guard.
 		faults := rowFaultsOf(sinkErr)
+		if tracker.skips(id, faults) {
+			return // already counted and logged; only a sibling at this ledger keeps it in the window
+		}
 		// Charged once per ROW: poison outputs and the held fault share one identity, so charging
 		// twice would halve every budget.
 		failedThisCycle[id] = true

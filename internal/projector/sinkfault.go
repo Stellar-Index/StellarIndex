@@ -137,6 +137,27 @@ type poisonTracker struct {
 	// givenUp holds rows already shed or quarantined whose ledger the cursor has not passed: a sibling held at the same
 	// ledger makes them be re-read, and re-counting them there would take the one give-up per cycle forever.
 	givenUp map[rowIdentity]struct{}
+	// cursor is the position the last cycle read or committed; a lower read means a replay rewound the source.
+	cursor uint32
+}
+
+// sawCursor is told the cursor each cycle read. A position below the last one is a projector-replay rewind: the
+// operator asked for those ledgers again, so every give-up verdict from the earlier pass is void.
+func (t *poisonTracker) sawCursor(at uint32) {
+	if at < t.cursor {
+		clear(t.givenUp)
+	}
+	t.cursor = at
+}
+
+// skips reports whether a failing row is one already given up whose failure needs no second count. A given-up row
+// that now fails on a retryable fault is not skipped: that fault is the sink's, and passing the row on it would lose
+// whatever a healed sink could still land.
+func (t *poisonTracker) skips(id rowIdentity, faults *rowSinkFaults) bool {
+	if !t.gaveUp(id) {
+		return false
+	}
+	return faults.held == nil || classifySinkFault(faults.held) != dispositionRetry
 }
 
 // fail records one more consecutive failing cycle for id and returns the new
@@ -164,8 +185,9 @@ func (t *poisonTracker) gaveUp(id rowIdentity) bool {
 	return ok
 }
 
-// passed drops the given-up rows at or below ledger once the cursor committed there: they are never read again.
+// passed drops the given-up rows at or below ledger once the cursor committed there: they are not read again unless a replay rewinds.
 func (t *poisonTracker) passed(ledger uint32) {
+	t.cursor = ledger
 	for id := range t.givenUp {
 		if id.ledger <= ledger {
 			delete(t.givenUp, id)
