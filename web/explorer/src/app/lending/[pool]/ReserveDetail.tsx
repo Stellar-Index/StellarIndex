@@ -2,6 +2,7 @@ import { FactList, Fact } from '@/components/ui/Facts';
 import { rateCurve, type CurvePoint, type RateModel } from '@/lib/blendRate';
 import { formatReadable } from '@/lib/format';
 import { fixedDecimal, fixedPct, supplyCapText } from '../poolConfig';
+import { ReserveHistory } from './ReserveHistory';
 import type { ReserveRow } from './usePoolReserves';
 
 const RATE_DECIMALS = 7;
@@ -107,9 +108,11 @@ function RateChart({
 
 export function ReserveDetail({
   reserve: rv,
+  pool,
   configDecimals,
 }: {
   reserve: ReserveRow;
+  pool: string;
   configDecimals: number | null | undefined;
 }) {
   const c = rv.config;
@@ -176,6 +179,7 @@ export function ReserveDetail({
           </p>
         )}
       </div>
+      <ReserveHistory pool={pool} asset={rv.asset} />
     </div>
   );
 }
