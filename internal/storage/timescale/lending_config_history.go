@@ -30,7 +30,7 @@ type LendingConfigCursor struct {
 	TxHash     string
 	OpIndex    uint32
 	EventIndex uint32
-	TxOrder    int64 // -1 = unknown, also what a cursor issued before the apply position existed decodes to
+	TxOrder    int64 // -1 = unknown
 	Kind       string
 }
 
@@ -82,6 +82,8 @@ const lendingConfigHistorySQL = `
              < ($2::timestamptz, $3::integer, $9::integer,
                 CASE WHEN $9::integer < 0 THEN CASE $7::text` + lifecycleRankWhens + ` ELSE 0 END,
                 $4::text, $5::integer, $6::integer, $7::text)
+         -- A ledger mixing indexed and unindexed rows (only the legacy Postgres feed writes the latter) sorts the unknown (-1) ones
+         -- first in apply order, whatever their real position.
          ORDER BY ledger_close_time DESC, ledger DESC, tx_order DESC, lifecycle_rank DESC, tx_hash DESC, op_index DESC, event_index DESC,
                   event_kind DESC
          LIMIT $8`

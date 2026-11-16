@@ -222,12 +222,9 @@ func TestLendingConfigHistory_PaginatesWithAKeysetCursor(t *testing.T) {
 		t.Errorf("cursor = %+v, want %+v", stub.gotCursor, want)
 	}
 	tx := strings.Repeat("b", 64)
-	// A six-part cursor from before the apply position still resumes, as an unknown position.
-	if code, _, _ := getConfigHistory(t, srv, "?cursor=1.2."+tx+".3.4.set_reserve"); code != http.StatusOK || stub.gotCursor.TxOrder != -1 {
-		t.Errorf("six-part cursor: status = %d tx_order = %d, want 200 and -1", code, stub.gotCursor.TxOrder)
-	}
 	for _, q := range []string{
-		"?cursor=junk", "?cursor=1.2.abc.3.4.set_reserve", "?cursor=1.2." + tx + ".3.4", "?cursor=1.2." + tx + ".3.4.transfer",
+		"?cursor=junk", "?cursor=1.2.abc.3.4.set_reserve.0", "?cursor=1.2." + tx + ".3.4", "?cursor=1.2." + tx + ".3.4.transfer.0",
+		"?cursor=1.2." + tx + ".3.4.set_reserve",
 		"?cursor=1.2." + tx + ".3.4.set_reserve.-2", "?cursor=1.2." + tx + ".3.4.set_reserve.x", "?limit=0", "?limit=201",
 	} {
 		if code, _, _ := getConfigHistory(t, srv, q); code != http.StatusBadRequest {

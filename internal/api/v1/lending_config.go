@@ -261,17 +261,12 @@ func parseLendingConfigCursor(w http.ResponseWriter, r *http.Request) (timescale
 
 func decodeLendingConfigCursor(raw string) (timescale.LendingConfigCursor, bool) {
 	parts := strings.Split(raw, ".")
-	if (len(parts) != 6 && len(parts) != 7) || len(parts[2]) != 64 || !lendingConfigHistoryKinds[parts[5]] {
+	if len(parts) != 7 || len(parts[2]) != 64 || !lendingConfigHistoryKinds[parts[5]] {
 		return timescale.LendingConfigCursor{}, false
 	}
-	// A six-part cursor predates the apply position and resumes as unknown.
-	txOrder := int64(-1)
-	if len(parts) == 7 {
-		v, err := strconv.ParseInt(parts[6], 10, 32)
-		if err != nil || v < -1 {
-			return timescale.LendingConfigCursor{}, false
-		}
-		txOrder = v
+	txOrder, err := strconv.ParseInt(parts[6], 10, 32)
+	if err != nil || txOrder < -1 {
+		return timescale.LendingConfigCursor{}, false
 	}
 	nanos, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil || nanos <= 0 {
