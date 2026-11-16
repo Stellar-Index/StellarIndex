@@ -21,9 +21,9 @@ Every path in `openapi/stellar-index.v1.yaml` against what `web/explorer` calls 
 | | Count |
 |---|---:|
 | Paths in the OpenAPI contract | **153** |
-| Level 3 — reachable | **115** |
+| Level 3 — reachable | **116** |
 | Level 2 — consumed but unreachable | **0** |
-| Level 1 — not consumed | **34** |
+| Level 1 — not consumed | **33** |
 | Deliberately excluded (operational) | **4** |
 
 Level 2 is enforced empty: `src/lib/route-reachability.test.ts` fails on any page without a click path from `/`. Level 1 is a product decision, untested.
@@ -83,9 +83,9 @@ Level `ex` = deliberately excluded. "Consumed in" is the first call site.
 | `/pools/reserves` | GET | 3 | app/dexes/[source]/PairReservesPanel.tsx |
 | `/liquidity-pools` | GET | 3 | app/liquidity-pools/NativePoolsPanel.tsx |
 | `/lending/pools` | GET | 3 | app/HomeTryAPI.tsx |
+| `/lending/pools/{pool}/config-history` | GET | 3 | app/lending/[pool]/ConfigHistory.tsx |
 | `/lending/pools/{pool}/reserves` | GET | 3 | app/lending/LendingPoolsTable.tsx |
 | `/lending/pools/{pool}/reserves/{asset}/history` | GET | 1 | — |
-| `/lending/pools/{pool}/config-history` | GET | 1 | — |
 | `/lending/pools/{pool}/backstop` | GET | 1 | — |
 | `/lending/pools/{pool}/backstop/history` | GET | 1 | — |
 | `/lending/pools/{pool}/auctions` | GET | 1 | — |
