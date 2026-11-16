@@ -254,9 +254,9 @@ func TestScanBlendReserveParts_IgnoresUnrequestedKeys(t *testing.T) {
 	rows := &stubRows{data: [][]any{
 		{"some-other-key", "AAAA"},
 	}}
-	byAsset, bstop, matched, err := scanBlendReserveParts(rows, refByKey, blend.PoolV2)
+	byAsset, bstop, matched, err := scanReserveParts(rows, refByKey, blendModel(blend.PoolV2).decode)
 	if err != nil {
-		t.Fatalf("scanBlendReserveParts: %v", err)
+		t.Fatalf("scanReserveParts: %v", err)
 	}
 	if len(byAsset) != 0 {
 		t.Errorf("unrequested key produced %v, want nothing", byAsset)
@@ -286,9 +286,9 @@ func TestScanBlendReserveParts_MatchedTracksOnlyReportedEntries(t *testing.T) {
 		{blendTestResDataKey, resDataEntryFixture(t)},
 		{"resdata-undecodable", "!!!not-base64!!!"},
 	}}
-	byAsset, _, matched, err := scanBlendReserveParts(rows, refByKey, blend.PoolV2)
+	byAsset, _, matched, err := scanReserveParts(rows, refByKey, blendModel(blend.PoolV2).decode)
 	if err != nil {
-		t.Fatalf("scanBlendReserveParts: %v", err)
+		t.Fatalf("scanReserveParts: %v", err)
 	}
 	if len(byAsset) != 1 {
 		t.Fatalf("byAsset = %v, want only the decodable reserve", byAsset)
@@ -305,7 +305,7 @@ func TestScanBlendReserveParts_MatchedTracksOnlyReportedEntries(t *testing.T) {
 func TestScanBlendReserveParts_UndecodableEntryIsSkippedNotFatal(t *testing.T) {
 	refByKey := map[string]keyRef{blendTestResDataKey: {asset: blendTestAssetSAC, kind: "ResData"}}
 	rows := &stubRows{data: [][]any{{blendTestResDataKey, "!!!not-base64!!!"}}}
-	byAsset, _, _, err := scanBlendReserveParts(rows, refByKey, blend.PoolV2)
+	byAsset, _, _, err := scanReserveParts(rows, refByKey, blendModel(blend.PoolV2).decode)
 	if err != nil {
 		t.Fatalf("one undecodable entry aborted the pool read: %v", err)
 	}
@@ -320,7 +320,7 @@ func TestScanBlendReserveParts_UndecodableEntryIsSkippedNotFatal(t *testing.T) {
 func TestScanBlendReserveParts_TruncatedStreamIsAnError(t *testing.T) {
 	truncated := errors.New("stream truncated")
 	rows := &stubRows{streamErr: truncated}
-	if _, _, _, err := scanBlendReserveParts(rows, nil, blend.PoolV2); !errors.Is(err, truncated) {
+	if _, _, _, err := scanReserveParts(rows, nil, blendModel(blend.PoolV2).decode); !errors.Is(err, truncated) {
 		t.Fatalf("err = %v, want it to wrap %v", err, truncated)
 	}
 }
