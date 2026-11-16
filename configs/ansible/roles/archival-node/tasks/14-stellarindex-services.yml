@@ -1279,6 +1279,8 @@
     - sponsors-rollup.timer
     - entry-index.service
     - entry-index.timer
+    - lending-state.service
+    - lending-state.timer
     - cohort-rollup.service
     - cohort-rollup.timer
     - census-rollup.service
@@ -1344,6 +1346,8 @@
     # entry-index.timer is INTENTIONALLY OMITTED: its tables and the
     # ec-floor flag are operator steps (deploy/clickhouse/entry_index.sql
     # runbook); enabled by hand as that runbook's last step.
+    # lending-state.timer is enabled by hand as the last step of
+    # deploy/clickhouse/lending_state.sql, after its table exists.
     - cohort-rollup.timer
     - census-rollup.timer
     # optype-rollup.timer is enabled by hand as the last step of
