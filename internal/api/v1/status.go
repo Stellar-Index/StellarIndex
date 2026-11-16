@@ -125,6 +125,26 @@ const (
 	statusLatencyP99TargetMs = 500
 )
 
+// sloLatencyRoutes are the routes the latency targets are set for: the set slo.yml's burn-rate rules match
+// (TestSLORoutesMatchTheCacheBand). The targets say nothing about any other route, so the status percentiles
+// are taken over these alone.
+var sloLatencyRoutes = []string{
+	"/v1/price",
+	"/v1/price/batch",
+	"/v1/oracle/latest",
+	"/v1/oracle/lastprice",
+	"/v1/oracle/prices",
+	"/v1/oracle/x_last_price",
+}
+
+// statusLatencyQuery is the percentile /v1/status reports and judges: successful requests on the SLO routes,
+// the histogram and matcher the burn-rate rules use. Over every route, a slow explorer read inside its own
+// budget read as a breach and fast traffic could hide a slow price route.
+func statusLatencyQuery(quantile string) string {
+	return `histogram_quantile(` + quantile + `, sum by (le) (rate(http_request_success_duration_seconds_bucket{job="stellarindex-api",route=~"` +
+		strings.Join(sloLatencyRoutes, "|") + `"}[5m])))`
+}
+
 // breached reports whether either percentile is over target. WindowSecs == 0 means nothing was
 // measurable, which is not a breach; absence of data is handled by the backendErr path.
 func (l StatusLatency) breached() bool {
@@ -218,18 +238,9 @@ func (p *PrometheusStatusBackend) Latency(ctx context.Context) (StatusLatency, e
 		expr   string
 		target *float64
 	}{
-		{
-			`histogram_quantile(0.5, sum by (le) (rate(http_request_duration_seconds_bucket{job="stellarindex-api"}[5m])))`,
-			&out.P50Ms,
-		},
-		{
-			`histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job="stellarindex-api"}[5m])))`,
-			&out.P95Ms,
-		},
-		{
-			`histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{job="stellarindex-api"}[5m])))`,
-			&out.P99Ms,
-		},
+		{statusLatencyQuery("0.5"), &out.P50Ms},
+		{statusLatencyQuery("0.95"), &out.P95Ms},
+		{statusLatencyQuery("0.99"), &out.P99Ms},
 	} {
 		res, err := p.queryVector(ctx, q.expr)
 		if err != nil {

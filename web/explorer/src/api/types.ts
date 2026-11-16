@@ -11108,7 +11108,7 @@ export interface components {
                 p95_ms?: number;
                 p99_ms?: number;
                 window_secs?: number;
-                /** @description p95 latency SLO target in milliseconds. Echoed so callers (and the status page) judge against the same threshold the `overall` roll-up uses — a breach of either target rolls `overall` to "degraded". */
+                /** @description p95 latency SLO target in milliseconds. Echoed so callers (and the status page) judge against the same threshold the `overall` roll-up uses — a breach of either target rolls `overall` to "degraded". The targets are set for the price routes (`/v1/price`, `/v1/price/batch` and the `/v1/oracle/latest|lastprice|prices|x_last_price` reads), and `p50_ms`, `p95_ms` and `p99_ms` are measured over successful requests to those routes only, not over every route. */
                 p95_target_ms?: number;
                 /** @description p99 latency SLO target in milliseconds. See p95_target_ms. */
                 p99_target_ms?: number;
