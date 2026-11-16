@@ -997,13 +997,13 @@ tests:
               summary: "persist_events sink abandoned trade rows at shutdown — served-tier gap to re-derive"
               description: |
                 The persist_events sink's bounded shutdown drain gave up
-                with trade rows still unwritten while the ledger
-                cursor had already advanced past them: a served-tier gap the
-                indexer will never revisit on its own. The indexer journal
-                carries the authoritative ERROR line ("abandoned on shutdown
-                — re-derive") with the exact ledger range (trades) or source
-                (events); re-derive it from the CH lake (ADR-0034) per the
-                runbook. Usually Postgres was slow or down during a deploy.
+                with trade rows still unwritten. On-chain rows
+                name their ledger and the indexer moves its cursor below the
+                lowest one, so the next start re-walks them (journal:
+                "rewound ledgerstream cursor"); nothing to do then. A journal
+                line ending "re-derive manually" means the rewind did not
+                happen or the rows had no ledger: re-derive per the runbook.
+                Usually Postgres was slow or down during a deploy.
       # Still visible half an hour later — the deploy's operator has time
       # to read it — and only the kind that lost rows fires.
       - eval_time: 36m
@@ -1022,13 +1022,13 @@ tests:
               summary: "persist_events sink abandoned trade rows at shutdown — served-tier gap to re-derive"
               description: |
                 The persist_events sink's bounded shutdown drain gave up
-                with trade rows still unwritten while the ledger
-                cursor had already advanced past them: a served-tier gap the
-                indexer will never revisit on its own. The indexer journal
-                carries the authoritative ERROR line ("abandoned on shutdown
-                — re-derive") with the exact ledger range (trades) or source
-                (events); re-derive it from the CH lake (ADR-0034) per the
-                runbook. Usually Postgres was slow or down during a deploy.
+                with trade rows still unwritten. On-chain rows
+                name their ledger and the indexer moves its cursor below the
+                lowest one, so the next start re-walks them (journal:
+                "rewound ledgerstream cursor"); nothing to do then. A journal
+                line ending "re-derive manually" means the rewind did not
+                happen or the rows had no ledger: re-derive per the runbook.
+                Usually Postgres was slow or down during a deploy.
       # Resolved once the step has left the trailing 1h window.
       - eval_time: 70m
         alertname: stellarindex_ingestion_sink_undrained_rows

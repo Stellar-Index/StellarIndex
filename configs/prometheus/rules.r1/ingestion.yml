@@ -596,7 +596,7 @@ groups:
 
       # Served-tier twin of the ch_live_sink rules. The Postgres sink's shutdown drain
       # is bounded and the cursor is upserted before the sink writes, so an abandoned
-      # row is a served-tier gap the cursor never revisits.
+      # row is a served-tier gap unless the exit rewinds the cursor below it.
       # `for: 0m` with a 1h range: the loss is a completed event (the process exits
       # within seconds), so a `for:` could only let it resolve before firing. 1h keeps
       # the ticket readable after a deploy and increase() carries the pre-restart value
@@ -619,13 +619,13 @@ groups:
           summary: "{{ $labels.sink }} sink abandoned {{ $labels.kind }} rows at shutdown — served-tier gap to re-derive"
           description: |
             The {{ $labels.sink }} sink's bounded shutdown drain gave up
-            with {{ $labels.kind }} rows still unwritten while the ledger
-            cursor had already advanced past them: a served-tier gap the
-            indexer will never revisit on its own. The indexer journal
-            carries the authoritative ERROR line ("abandoned on shutdown
-            — re-derive") with the exact ledger range (trades) or source
-            (events); re-derive it from the CH lake (ADR-0034) per the
-            runbook. Usually Postgres was slow or down during a deploy.
+            with {{ $labels.kind }} rows still unwritten. On-chain rows
+            name their ledger and the indexer moves its cursor below the
+            lowest one, so the next start re-walks them (journal:
+            "rewound ledgerstream cursor"); nothing to do then. A journal
+            line ending "re-derive manually" means the rewind did not
+            happen or the rows had no ledger: re-derive per the runbook.
+            Usually Postgres was slow or down during a deploy.
 
       # Mirror of the rule in deploy/monitoring/rules/ingestion.yml (pair lint keeps both in sync).
       # ADR-0041: infra insert failures retry with backpressure instead of dropping.

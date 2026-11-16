@@ -44,7 +44,7 @@ func ProcessLedger(
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case events <- ev:
+		case events <- withLedger(ev, lcm.LedgerSequence()):
 		}
 	}
 	return nil

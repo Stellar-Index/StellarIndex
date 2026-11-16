@@ -108,7 +108,7 @@ func ruleMetricsServerShutsDownAfterTheDrainNotBeforeIt(t *testing.T) {
 		if sinkDoneIdx < 0 && strings.Contains(line, "case <-sinkDone:") {
 			sinkDoneIdx = i
 		}
-		if strings.Contains(line, "metricsSrv.Shutdown(") {
+		if strings.Contains(line, "stopMetricsServer(metricsSrv,") {
 			metricsShutdownIdx = i
 		}
 	}
@@ -116,10 +116,10 @@ func ruleMetricsServerShutsDownAfterTheDrainNotBeforeIt(t *testing.T) {
 		t.Fatalf("could not locate the sinkDone wait in main.go")
 	}
 	if metricsShutdownIdx < 0 {
-		t.Fatalf("could not locate metricsSrv.Shutdown( in main.go")
+		t.Fatalf("could not locate stopMetricsServer(metricsSrv, in main.go")
 	}
 	if metricsShutdownIdx < sinkDoneIdx {
-		t.Errorf("metricsSrv.Shutdown (line %d) runs BEFORE the sinkDone wait (line %d) — "+
+		t.Errorf("stopMetricsServer (line %d) runs BEFORE the sinkDone wait (line %d) — "+
 			"the metrics endpoint goes down before the producer/connector/sink drain sequence runs, "+
 			"making /metrics unscrapable for the whole drain window (Q106). Move the metrics shutdown "+
 			"to after the drain completes.", metricsShutdownIdx+1, sinkDoneIdx+1)

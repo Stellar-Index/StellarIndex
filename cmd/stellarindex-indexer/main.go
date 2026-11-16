@@ -816,21 +816,22 @@ func run(cfgPath string, dryRun bool) error {
 		close(events)
 	}
 	writersStopped := true // every live trade writer; read by the late-trade flush below
+	lossCovered := false   // no row was abandoned that the next start will not re-walk
 	select {
 	case <-sinkDone:
 		logger.Info("clean shutdown")
 		// Fresh ctx: shutdownCtx may be spent by a drain that ran to its deadline, and the rewind is
 		// the loss's only fix.
 		rctx, rcancel := context.WithTimeout(context.Background(), 10*time.Second)
-		rewindCursorForSinkLoss(rctx, store, sinkLoss, streamExited, logger) //nolint:contextcheck // deliberate fresh ctx, see above
+		lossCovered = rewindCursorForSinkLoss(rctx, store, sinkLoss, streamExited, logger) //nolint:contextcheck // deliberate fresh ctx, see above
 		rcancel()
 	case <-shutdownCtx.Done():
 		writersStopped = false
 		logger.Warn("drain timeout exceeded — hard exit")
 	}
-	if !awaitExternalSink(shutdownCtx, externalSinkDone, &externalSinkLoss, logger) {
-		writersStopped = false
-	}
+	externalStopped := awaitExternalSink(shutdownCtx, externalSinkDone, &externalSinkLoss, logger)
+	writersStopped = writersStopped && externalStopped
+	lossCovered = lossCovered && externalStopped && externalSinkLoss.Rows == 0
 
 	// Each projector cycle is bounded by PerSourceTimeout (60s), so this returns promptly on cancel.
 	if projectorDone != nil {
@@ -856,14 +857,31 @@ func run(cfgPath string, dryRun bool) error {
 	// Shut the metrics server down last, after the drain completes or times out: stopping it
 	// earlier would make /metrics unscrapable for the whole drain, exactly when an operator needs
 	// to see drain progress.
-	if metricsSrv != nil {
-		if err := metricsSrv.Shutdown(shutdownCtx); err != nil {
-			logger.Warn("metrics server shutdown", "err", err)
-		}
-	}
+	stopMetricsServer(metricsSrv, lossCovered, metricsLossLinger, logger)
 
 	// Surface the producer's failure only after everything it produced has been persisted.
 	return errors.Join(fatalErr, instanceLock.Lost())
+}
+
+// metricsLossLinger is longer than one scrape interval (15 s on the reference host).
+const metricsLossLinger = 20 * time.Second
+
+// stopMetricsServer shuts /metrics down. After a loss the next start will not re-walk, the undrained-rows counter
+// is the only alertable record and it dies with the process, so the server first stays up for one more scrape.
+func stopMetricsServer(srv *http.Server, lossCovered bool, linger time.Duration, logger *slog.Logger) {
+	if srv == nil {
+		return
+	}
+	if !lossCovered {
+		logger.Warn("rows were abandoned that the next start will not re-walk — keeping /metrics up for one scrape", "linger", linger.String())
+		time.Sleep(linger)
+	}
+	// Fresh ctx: the shutdown budget may be spent by a drain that ran to its deadline.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		logger.Warn("metrics server shutdown", "err", err)
+	}
 }
 
 // awaitExternalSink waits for the venue-stream sink lane and reports whether it stopped inside the drain budget.
@@ -1823,48 +1841,48 @@ type cursorRewinder interface {
 	RewindCursor(ctx context.Context, source, sub string, lastLedger uint32) (uint32, error)
 }
 
-// rewindCursorForSinkLoss moves the cursor below the lowest on-chain trade the sink abandoned, so the next start re-walks it
-// (served-tier writes are ON CONFLICT idempotent). Only safe once the producer has stopped: a live producer's next UpsertCursor
-// would carry the cursor over the rewind.
+// rewindCursorForSinkLoss moves the cursor below the lowest on-chain row (trade or event) the sink abandoned, so the next
+// start re-walks it (served-tier writes are ON CONFLICT idempotent). Only safe once the producer has stopped: a live
+// producer's next UpsertCursor would carry the cursor over the rewind. It reports whether the next start re-walks every
+// abandoned row; false leaves a loss that only this process's counters and journal record.
 func rewindCursorForSinkLoss(ctx context.Context, store cursorRewinder, loss pipeline.ShutdownLoss, producerStopped bool, logger *slog.Logger) bool {
 	if loss.Rows == 0 {
-		return false
+		return true
 	}
 	if loss.MinLedger == 0 {
-		// Only ledger-less rows (non-trade events, off-chain trades): no
-		// safe rewind target, so the undrained counter + ERROR stay the record.
+		// Only ledger-less rows (off-chain trades and events): no cursor position covers them.
 		logger.Error("sink abandoned rows on exit with no ledger to rewind to — re-derive manually",
 			"rows", loss.Rows)
 		return false
 	}
 	target := loss.MinLedger - 1
 	if !producerStopped {
-		logger.Error("sink abandoned trades on exit but the ledgerstream producer is still running — cursor NOT rewound, re-derive manually",
+		logger.Error("sink abandoned rows on exit but the ledgerstream producer is still running — cursor NOT rewound, re-derive manually",
 			"rows", loss.Rows, "min_ledger", loss.MinLedger)
 		return false
 	}
 	c, err := store.GetCursor(ctx, cursorSource, "")
 	if err != nil {
-		logger.Error("sink abandoned trades on exit; reading the cursor to rewind it failed — re-derive manually",
+		logger.Error("sink abandoned rows on exit; reading the cursor to rewind it failed — re-derive manually",
 			"rows", loss.Rows, "min_ledger", loss.MinLedger, "err", err)
 		return false
 	}
 	if c.LastLedger <= target {
 		// The abandoned ledger was never checkpointed; the next start re-walks it anyway.
-		logger.Warn("sink abandoned trades on exit at or past the cursor — no rewind needed",
+		logger.Warn("sink abandoned rows on exit at or past the cursor — no rewind needed",
 			"rows", loss.Rows, "min_ledger", loss.MinLedger, "cursor", c.LastLedger)
-		return false
+		return !loss.LedgerUnknown
 	}
 	prior, err := store.RewindCursor(ctx, cursorSource, "", target)
 	if err != nil {
-		logger.Error("sink abandoned trades on exit; cursor rewind failed — re-derive manually",
+		logger.Error("sink abandoned rows on exit; cursor rewind failed — re-derive manually",
 			"rows", loss.Rows, "min_ledger", loss.MinLedger, "err", err)
 		return false
 	}
-	logger.Warn("rewound ledgerstream cursor below trades the sink abandoned on exit",
+	logger.Warn("rewound ledgerstream cursor below rows the sink abandoned on exit",
 		"rows", loss.Rows, "prior_ledger", prior, "new_ledger", target,
 		"ledger_unknown", loss.LedgerUnknown)
-	return true
+	return !loss.LedgerUnknown
 }
 
 // processAndPersistCursor wraps pipeline.ProcessLedger with the cursor upsert and metric so a restart resumes at cursor+1.

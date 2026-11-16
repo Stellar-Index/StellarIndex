@@ -608,7 +608,7 @@ Rows a sink's shutdown drain could not land in budget; the Postgres twin of `ste
 - `kind="trade"`: per row; recover with `stellarindex-ops ch-rebuild -sdex-gaps`.
 - `kind="event"`: non-trade writes; no ledger is carried, so use the source's gap detector.
 
-Pre-seeded at zero; it should be 0 across clean deploys. A scrape can miss it; the journal ERROR line is authoritative. Alert `stellarindex_ingestion_sink_undrained_rows`.
+Pre-seeded at zero; it should be 0 across clean deploys. On-chain rows are re-walked after the exit rewinds the cursor; the journal says which. A scrape can miss it; the journal ERROR line is authoritative. Alert `stellarindex_ingestion_sink_undrained_rows`.
 
 ### `stellarindex_hashdb_append_total`
 

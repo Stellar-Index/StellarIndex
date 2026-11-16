@@ -335,7 +335,7 @@ func ruleIndexerActsOnSinkShutdownLoss(t *testing.T) {
 				return true
 			}
 			for _, st := range s.Body {
-				if es, ok := st.(*ast.ExprStmt); ok && isCall(es.X, "rewindCursorForSinkLoss") {
+				if as, ok := st.(*ast.AssignStmt); ok && len(as.Rhs) == 1 && isCall(as.Rhs[0], "rewindCursorForSinkLoss") {
 					rewoundOnSinkDone = true
 				}
 			}

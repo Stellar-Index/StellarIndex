@@ -197,15 +197,17 @@ The alert clears after `for: 10m` with healthy `outcome=new`. Metric emitted in 
 
 ## stellarindex_ingestion_sink_undrained_rows
 
-Symptom: `increase(stellarindex_sink_undrained_rows_total[1h]) > 0` (ticket, `for: 0m`). The sink (`sink="persist_events"`) shut down with rows still buffered; its bounded drain (20 s drain + 5 s final pass inside `pipeline.ShutdownDeadline` = 30 s) could not land them and the cursor had ALREADY advanced past them: a served-tier gap the indexer never revisits. `kind` is `trade` or `event`. The counter increments only in `reportAbandonedTrades`, `reportAbandonedEvent` and the external retry buffer's `finalDrain`.
+Symptom: `increase(stellarindex_sink_undrained_rows_total[1h]) > 0` (ticket, `for: 0m`). The sink (`sink="persist_events"`) shut down with rows still buffered; its bounded drain (20 s drain + 5 s final pass inside `pipeline.ShutdownDeadline` = 30 s) could not land them and the cursor had already advanced past them. `kind` is `trade` or `event`. The counter increments only in `reportAbandonedTrades`, `reportAbandonedEvent` and the external retry buffer's `finalDrain`.
 
-Caveat: the increment lands 20-25 s after SIGTERM and r1 scrapes every 15 s, so a single loss can fall between scrapes. The journal ERROR line is authoritative; after any deploy during which Postgres was unhealthy, run the check below even if nothing fired.
+On exit the indexer moves its cursor below the lowest abandoned on-chain row (trade or event), so the next start re-walks it. The journal then carries `rewound ledgerstream cursor below rows the sink abandoned on exit` (or `no rewind needed`) and there is nothing to re-derive. A line ending `re-derive manually` means the rewind did not happen (Postgres unreachable, producer still running) or the rows had no ledger (external trades): follow the resolutions below.
+
+Caveat: the increment lands 20-25 s after SIGTERM and r1 scrapes every 15 s. After a loss the rewind does not cover, the indexer keeps `/metrics` up for 20 s so one scrape sees it; a process killed before that still leaves only the journal. The journal ERROR line is authoritative; after any deploy during which Postgres was unhealthy, run the check below even if nothing fired.
 
 Check:
 
 ```sh
 # The authoritative record: what was abandoned, and the range / source to re-derive.
-ssh root@136.243.90.96 'journalctl -u stellarindex-indexer --since "-3h" --no-pager | grep -E "abandoned on shutdown|drain deadline exceeded|retry buffer not fully drained"'
+ssh root@136.243.90.96 'journalctl -u stellarindex-indexer --since "-3h" --no-pager | grep -E "abandoned on shutdown|abandoned rows on exit|rewound ledgerstream cursor|drain deadline exceeded|retry buffer not fully drained"'
 
 # What the counter saw (may be smaller than the journal).
 ssh root@136.243.90.96 'curl -s "http://localhost:9090/api/v1/query?query=increase(stellarindex_sink_undrained_rows_total%5B1h%5D)" | python3 -m json.tool | grep -E "\"sink\"|\"kind\"|value"'
@@ -214,7 +216,9 @@ ssh root@136.243.90.96 'curl -s "http://localhost:9090/api/v1/query?query=increa
 ssh root@136.243.90.96 'journalctl -u postgresql -u stellarindex-indexer --since "-3h" --no-pager | grep -iE "shutting down|ready to accept|connection refused|infrastructure fault" | tail -40'
 ```
 
-Record per ERROR line: `ledger_from`/`ledger_to` (trades) or `source` (events), and the restart time. Triage:
+Record per ERROR line: `ledger_from`/`ledger_to` (trades) or `source` and `ledger` (events), and the restart time. Triage:
+
+- Journal shows `rewound ledgerstream cursor` or `no rewind needed` with `ledger_unknown=false`: the next start re-walked the rows. Confirm with the gap detector and close.
 
 - `kind="trade"` with a non-zero ledger range (SDEX and Soroban DEXes): Resolution A.
 - `kind="event"` (oracle, supply, blend / cctp / rozo): Resolution B; the line names `source`.
@@ -233,7 +237,7 @@ stellarindex-ops compute-completeness -config /etc/stellarindex.toml -ch -skip-r
 
 For wide ranges see [sdex-gap-detected](ingest-gap.md#sdex-gap-detected).
 
-Resolution B: `consumer.Event` carries no ledger; take the window from the `drain deadline exceeded` line or the cursor at the restart minus a margin. Oracle / ContractCall sources (band, soroswap-router): `stellarindex-ops ch-rebuild -config /etc/stellarindex.toml -from <from> -to <to> -contract-calls -sources <source>` (dry-run, then `-write`; see [oracle-unknown-symbols](ingestion-events.md#stellarindex_ingestion_oracle_unknown_symbols)). Event-based sources: the same without `-contract-calls`. Confirm with the per-source [gap detector](ingest-gap.md#stellarindex_ingest_gap_detected) and the completeness verdict.
+Resolution B: take the window from the `ledger` on each `served-tier event abandoned on shutdown` line (0 for an off-chain event: use the cursor at the restart minus a margin). Oracle / ContractCall sources (band, soroswap-router): `stellarindex-ops ch-rebuild -config /etc/stellarindex.toml -from <from> -to <to> -contract-calls -sources <source>` (dry-run, then `-write`; see [oracle-unknown-symbols](ingestion-events.md#stellarindex_ingestion_oracle_unknown_symbols)). Event-based sources: the same without `-contract-calls`. Confirm with the per-source [gap detector](ingest-gap.md#stellarindex_ingest_gap_detected) and the completeness verdict.
 
 Resolution C: external trades have no ledger and no lake copy; record venue and window in the incident record. The next poll refills the feed.
 

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
-	"sync"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -206,6 +205,7 @@ func persistWorker(ctx context.Context, logger *slog.Logger, ep eventPersister, 
 				flushShutdown(deadline)
 				return
 			}
+			ev, ledger := eventLedger(ev)
 			if skipInSink(ev, mode) {
 				continue
 			}
@@ -228,9 +228,9 @@ func persistWorker(ctx context.Context, logger *slog.Logger, ep eventPersister, 
 			if err := persistEventResilient(fctx, logger, ep, ev); err != nil {
 				// Same carry rule as flush: only the parent-ctx case is carried; an abandon under a fresh bounded ctx is a genuine loss.
 				if fctx == ctx {
-					carried = append(carried, ev)
+					carried = append(carried, withLedger(ev, ledger))
 				} else {
-					reportAbandonedEvent(logger, lt, ev, err)
+					reportAbandonedEvent(logger, lt, ev, ledger, err)
 				}
 			}
 			fcancel()
@@ -247,6 +247,7 @@ func drainInFlightNow(ctx context.Context, in <-chan consumer.Event, logger *slo
 			if !ok {
 				return tradeBuf
 			}
+			ev, ledger := eventLedger(ev)
 			if skipInSink(ev, mode) {
 				continue
 			}
@@ -255,7 +256,7 @@ func drainInFlightNow(ctx context.Context, in <-chan consumer.Event, logger *slo
 				continue
 			}
 			if err := persistEventResilient(ctx, logger, ep, ev); err != nil {
-				reportAbandonedEvent(logger, lt, ev, err)
+				reportAbandonedEvent(logger, lt, ev, ledger, err)
 			}
 		default:
 			return tradeBuf
@@ -273,9 +274,10 @@ func persistCarried(carried []consumer.Event, logger *slog.Logger, ep eventPersi
 	}
 	cctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
-	for _, ev := range carried {
+	for _, tagged := range carried {
+		ev, ledger := eventLedger(tagged)
 		if err := persistEventResilient(cctx, logger, ep, ev); err != nil {
-			reportAbandonedEvent(logger, lt, ev, err)
+			reportAbandonedEvent(logger, lt, ev, ledger, err)
 		}
 	}
 }
@@ -363,6 +365,7 @@ func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, ep event
 				flushTrades()
 				return
 			}
+			ev, ledger := eventLedger(ev)
 			if skipInSink(ev, mode) {
 				continue
 			}
@@ -376,7 +379,7 @@ func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, ep event
 			// Bounded by the shared drain deadline; an abandon here is a
 			// genuine loss (there is no later pass to carry it to).
 			if err := persistEventResilient(drainCtx, logger, ep, ev); err != nil {
-				reportAbandonedEvent(logger, lt, ev, err)
+				reportAbandonedEvent(logger, lt, ev, ledger, err)
 			}
 		case <-drainCtx.Done():
 			flushTrades()
@@ -418,6 +421,7 @@ drainRemainder:
 			if !ok {
 				break drainRemainder
 			}
+			ev, ledger := eventLedger(ev)
 			// Skip-check first: a projector-owned event was never going to be persisted here, so it must not inflate the undrained counts or the re-derive range.
 			if skipInSink(ev, mode) {
 				continue
@@ -431,7 +435,7 @@ drainRemainder:
 				continue
 			}
 			if err := persistEventResilient(finalCtx, logger, ep, ev); err != nil {
-				reportAbandonedEvent(logger, lt, ev, err)
+				reportAbandonedEvent(logger, lt, ev, ledger, err)
 			}
 		default:
 			break drainRemainder
@@ -779,67 +783,16 @@ func persistEventResilient(ctx context.Context, logger *slog.Logger, ep eventPer
 }
 
 // reportAbandonedEvent counts and logs a non-trade event no drain pass could land; call it only where the event has nowhere left to go.
-// consumer.Event carries no ledger, so the re-derive hint is the source's gap detector.
-func reportAbandonedEvent(logger *slog.Logger, lt *lossTracker, ev consumer.Event, err error) {
-	lt.event()
+// ledger is the one the event was decoded from, 0 for an off-chain event.
+func reportAbandonedEvent(logger *slog.Logger, lt *lossTracker, ev consumer.Event, ledger uint32, err error) {
+	lt.event(ledger)
 	obs.SourceInsertErrorsTotal.WithLabelValues(eventSource(ev), "dropped").Inc()
 	// The per-source `dropped` counter above feeds a RATE alert (≥ 0.1/s
 	// for 5 min) that a handful of rows lost at shutdown never trips;
 	// this one is the shutdown-loss signal in its own right.
 	obs.SinkUndrainedRowsTotal.WithLabelValues(obs.SinkPersistEvents, "event").Inc()
 	logger.Error("served-tier event abandoned on shutdown — re-derive this source's tail (per-source gap detector / completeness verdict will show it)",
-		"kind", ev.EventKind(), "source", eventSource(ev), "err", err)
-}
-
-// ShutdownLoss is what one [PersistEvents] run abandoned (rows no drain pass landed); a caller checkpointing a resume cursor (backfill) MUST NOT move it past them.
-type ShutdownLoss struct {
-	// Rows is the number of abandoned rows.
-	Rows int
-	// MinLedger is the lowest ledger among abandoned trades; 0 when none.
-	MinLedger uint32
-	// LedgerUnknown is set when an abandoned row was a non-trade event,
-	// which carries no ledger, so no safe cursor cap can be derived.
-	LedgerUnknown bool
-}
-
-// lossTracker accumulates one PersistEvents run's [ShutdownLoss] across
-// its workers. Nil-safe so the drain helpers' direct unit tests can pass nil.
-type lossTracker struct {
-	mu   sync.Mutex
-	loss ShutdownLoss
-}
-
-func (l *lossTracker) trades(abandoned []canonical.Trade) {
-	if l == nil || len(abandoned) == 0 {
-		return
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.loss.Rows += len(abandoned)
-	for _, t := range abandoned {
-		switch {
-		case t.Ledger == 0: // off-chain trade: no ledger to cap on
-			l.loss.LedgerUnknown = true
-		case l.loss.MinLedger == 0 || t.Ledger < l.loss.MinLedger:
-			l.loss.MinLedger = t.Ledger
-		}
-	}
-}
-
-func (l *lossTracker) event() {
-	if l == nil {
-		return
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.loss.Rows++
-	l.loss.LedgerUnknown = true
-}
-
-func (l *lossTracker) snapshot() ShutdownLoss {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.loss
+		"kind", ev.EventKind(), "source", eventSource(ev), "ledger", ledger, "err", err)
 }
 
 // eventPersister writes ONE non-trade served-tier event: handleEvent on the real store in production, a fake in the shutdown-race tests.
