@@ -935,7 +935,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		IssuerAuthFlags:    issuerAuthFlagsReader,
 		StaticHomeDomain:   homeDomainLookup.static,
 		Volume:             wiring.StoreVolumeReader{S: store},
-		Change24h:          newMinuteChange24hReader(storeChange24hReader{s: store, pegs: usdPegs, decimals: nonstandardDecimalsCache, logger: logger}),
+		Change24h:          newMinuteChange24hReader(storeChange24hReader{s: store, pegs: usdPegs, decimals: nonstandardDecimalsCache, substance: substanceGate, scam: scamGate, logger: logger}),
 		PriceAt:            storePriceAtReader{s: store, substance: substanceGate, scam: scamGate, logger: logger.With("component", "price-at-guard")},
 		ChangeSummary:      store,
 		AssetsReader:       cachedAssetsReader,
@@ -2074,10 +2074,12 @@ var usdQuoteAsset = func() canonical.Asset {
 // On a literal miss it tries asset/<peg> from the operator-declared USD-pegged set (nothing on-chain quotes fiat:USD); decimals
 // normalises the anchor (see normalizeChange24hAnchor).
 type storeChange24hReader struct {
-	s        *timescale.Store
-	pegs     []canonical.Asset
-	decimals aggregate.DecimalsLookup
-	logger   *slog.Logger // nil → guard logging disabled
+	s         *timescale.Store
+	pegs      []canonical.Asset
+	decimals  aggregate.DecimalsLookup
+	substance *pricingguard.SubstanceGate // nil → no thin-market gate
+	scam      *pricingguard.ScamGate      // nil → no scam-issuer gate
+	logger    *slog.Logger                // nil → guard logging disabled
 }
 
 // change24hAnchorMaxStaleness is unbounded because ClosedVWAP1mAtOrBefore bounds nothing either.
@@ -2088,9 +2090,14 @@ var errChange24hAnchorGuarded = errors.New("change_24h anchor refused by the ser
 
 func (r storeChange24hReader) USDPrice24hAgo(ctx context.Context, asset canonical.Asset) (string, error) {
 	at := time.Now().Add(-24 * time.Hour)
-	// Each anchor passes the serving-sanity guard; a refused bucket moves on to the next market,
-	// so a manipulated minute is never the divisor of a percentage.
+	// Each anchor passes the withholding gates as of its instant and then the serving-sanity guard; a refused
+	// market moves on to the next, so neither a withheld market nor a manipulated minute is the divisor of a
+	// percentage. The anchor is kept for every caller (minuteChange24hReader), hence the shared read.
 	guardedAnchor24h := func(ctx context.Context, pair canonical.Pair, at time.Time) (timescale.Vwap1mRow, error) {
+		if wiring.PriceWithheld(ctx, r.substance, r.scam, pair.Base, pair.Quote, "change_24h",
+			wiring.AsOfInstant(at), wiring.ForSharedRead()) != pricingguard.NotWithheld {
+			return timescale.Vwap1mRow{}, errChange24hAnchorGuarded
+		}
 		row, err := r.s.ClosedVWAP1mAtOrBefore(ctx, pair, at)
 		if err != nil {
 			return timescale.Vwap1mRow{}, err

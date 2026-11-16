@@ -35,8 +35,6 @@ func rulePriceServingSeamsAreGated(t *testing.T) {
 	// the reason it is safe. An exemption is a deliberate, reviewed decision, not a way to silence this test.
 	exempt := map[string]string{
 		wiringDir + ":StorePriceReader.RecentClosedVWAP1mExists": "existence probe: returns a bool, never a price or a bucket value",
-		".:storeChange24hReader.USDPrice24hAgo": "gated upstream — populateChange24h early-returns unless the GATED " +
-			"lookupUSDPrice succeeds first, and scam suppression nulls the change pills regardless",
 	}
 
 	var ungated []string

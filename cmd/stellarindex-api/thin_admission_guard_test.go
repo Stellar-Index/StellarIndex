@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -193,5 +194,39 @@ func TestPriceWithheldReleasesThinUnderAdmission(t *testing.T) {
 	scam := pricingguard.NewScamGate(&flaggingScamDirectory{flagged: map[string]bool{pair.Base.Issuer: true}}, pricingguard.ScamGateOptions{})
 	if got := wiring.PriceWithheld(onCtx, substance, scam, pair.Base, pair.Quote, "price_read"); got != pricingguard.WithheldFlaggedIssuer {
 		t.Errorf("flagged issuer: %v, want WithheldFlaggedIssuer — the opt-in releases substance only", got)
+	}
+
+	sharedCtx, shared := v1.WithThinAdmission(context.Background(), pair.Base, pair.Quote, true)
+	if got := wiring.PriceWithheld(sharedCtx, substance, nil, pair.Base, pair.Quote, "price_read", wiring.ForSharedRead()); got != pricingguard.WithheldThinMarket {
+		t.Errorf("shared read under an opt-in: %v, want withheld — one caller's opt-in must not admit an answer kept for all", got)
+	}
+	if shared.Admitted() || shared.Evidence() != nil {
+		t.Error("shared read: the caller's record must be left untouched")
+	}
+}
+
+// The 24h-ago anchor is a served price's divisor, so it is read behind the same gates as the price. A thin market,
+// a flagged issuer and a caller's include_thin opt-in all end with no anchor. The reader has no store here: a
+// withheld market must be refused before any bucket is read.
+func TestChange24hAnchorIsWithheldLikeAPrice(t *testing.T) {
+	dust := timescale.MarketSubstance{VolumeUSD: "8.57", Buckets: 1}
+	pair := thinMarketTestPair(t)
+	thin := pricingguard.NewSubstanceGate(&historyAwareSubstance{trailing: dust, atInstant: dust}, pricingguard.SubstanceGateOptions{})
+	flagged := pricingguard.NewScamGate(&flaggingScamDirectory{flagged: map[string]bool{pair.Base.Issuer: true}}, pricingguard.ScamGateOptions{})
+	optedIn, _ := v1.WithThinAdmission(context.Background(), pair.Base, usdQuoteAsset, true)
+
+	for name, tc := range map[string]struct {
+		ctx    context.Context
+		reader storeChange24hReader
+	}{
+		"thin market":                {context.Background(), storeChange24hReader{substance: thin, pegs: []canonical.Asset{pair.Quote}}},
+		"flagged issuer":             {context.Background(), storeChange24hReader{scam: flagged, pegs: []canonical.Asset{pair.Quote}}},
+		"thin market, caller opt-in": {optedIn, storeChange24hReader{substance: thin, pegs: []canonical.Asset{pair.Quote}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := tc.reader.USDPrice24hAgo(tc.ctx, pair.Base); !errors.Is(err, v1.ErrChange24hUnavailable) {
+				t.Fatalf("err = %v, want ErrChange24hUnavailable: no anchor from a market the gate refuses", err)
+			}
+		})
 	}
 }
