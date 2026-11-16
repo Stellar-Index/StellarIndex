@@ -72,27 +72,27 @@ func (s *Store) BLNTPoolAssets(ctx context.Context, pool string) ([]string, erro
 	})
 }
 
-// BLNTReserveConfigMetadata returns the latest APPLIED queue_set_reserve metadata JSON per asset (the same
-// lifecycle rule as BlendReserveConfigs, same-ledger steps ordered by [lifecycleRankWhens]); the caller parses it with
-// blnt.ParseReserveConfigMetadata.
+// BLNTReserveConfigMetadata returns the latest APPLIED queue_set_reserve metadata JSON per asset (the same lifecycle rule as
+// BlendReserveConfigs, same-ledger steps in apply order, by [lifecycleRankExpr] where it is unknown); parse with blnt.ParseReserveConfigMetadata.
 func (s *Store) BLNTReserveConfigMetadata(ctx context.Context, pool string) (map[string][]byte, error) {
 	const q = `
         WITH ranked AS (
             SELECT asset, event_kind, ledger_close_time, ledger, tx_hash, op_index, event_index, attributes->'metadata' AS metadata,
-                   CASE event_kind` + lifecycleRankWhens + ` AS lifecycle_rank
+                   ` + txOrderExpr + ` AS tx_order, ` + lifecycleRankExpr + ` AS lifecycle_rank
               FROM blnt_events
              WHERE contract_id = $1 AND contract_role = 'pool' AND asset IS NOT NULL
                AND event_kind IN (` + reserveConfigKinds + `)
         ), chained AS (
             SELECT ranked.*,
                    LEAD(event_kind) OVER (PARTITION BY asset
-                                          ORDER BY ledger_close_time, ledger, lifecycle_rank, tx_hash, op_index, event_index) AS next_kind
+                                          ORDER BY ledger_close_time, ledger, tx_order, lifecycle_rank, tx_hash, op_index, event_index) AS next_kind
               FROM ranked
         )
         SELECT DISTINCT ON (asset) asset, metadata::text
           FROM chained
          WHERE event_kind = 'queue_set_reserve' AND metadata IS NOT NULL AND next_kind = 'set_reserve'
-         ORDER BY asset, ledger_close_time DESC, ledger DESC, lifecycle_rank DESC, tx_hash DESC, op_index DESC, event_index DESC`
+         ORDER BY asset, ledger_close_time DESC, ledger DESC, tx_order DESC, lifecycle_rank DESC, tx_hash DESC, op_index DESC,
+                  event_index DESC`
 	rows, err := s.db.QueryContext(ctx, q, pool)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: BLNTReserveConfigMetadata: %w", err)
