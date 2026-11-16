@@ -223,20 +223,27 @@ func (s *Subscriber) Run(ctx context.Context) error {
 				drops = now
 				s.reportLoss("go-redis dropped a message on a full channel")
 			}
-			switch msg := raw.(type) {
-			case *redis.Subscription:
-				if msg.Kind != "subscribe" {
-					continue
-				}
-				if subscribed {
-					s.reportLoss("resubscribed after a Redis reconnect")
-				}
-				subscribed = true
-			case *redis.Message:
-				s.handleMessage([]byte(msg.Payload))
-			}
+			subscribed = s.receive(raw, subscribed)
 		}
 	}
+}
+
+// receive handles one item off the PubSub channel and returns whether the channel is subscribed. A second
+// subscribe confirmation means go-redis reconnected.
+func (s *Subscriber) receive(raw interface{}, subscribed bool) bool {
+	switch msg := raw.(type) {
+	case *redis.Subscription:
+		if msg.Kind != "subscribe" {
+			return subscribed
+		}
+		if subscribed {
+			s.reportLoss("resubscribed after a Redis reconnect")
+		}
+		return true
+	case *redis.Message:
+		s.handleMessage([]byte(msg.Payload))
+	}
+	return subscribed
 }
 
 // reportLoss tells the Hub that closed-bucket events were lost before reaching it, so open streams and later
