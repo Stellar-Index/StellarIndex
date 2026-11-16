@@ -20,6 +20,26 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.122.0] - 2026-11-16
+
+Tested against Stellar protocol 27. One migration (0224, a new table; nothing existing is altered). No `pkg/*` change, no OpenAPI change. Host payload: the default source list gains `blnt`, and the supply observers and asset map gain the BLNT asset and its SAC, so apply the role after the binary. After deploying, replay two sources: `projector-replay -source comet -from 65134000` (two newly gated Comet V1.1 pools) and `projector-replay -source blnt -from 65134154`.
+
+### Added
+
+- **protocols:** BLNT V3, a Blend-derived lending protocol, is listed as its own protocol (`blnt`) with its factory, pools, backstop, emitter and two backfill contracts. Contributed by @levinson.
+- **sources:** a `blnt` source decodes every BLNT V3 event into typed columns in a new `blnt_events` table: pool, user, asset, backstop tier and i128 amounts, with the rest of each payload under the contract's own field names. The 52-event ABI is declared as data and checked against one real event of every kind seen on chain.
+- **sources:** the BLNT/USDC and BLNT/XLM Comet V1.1 pools are in the Comet identity gate and WASM audit, with real-event fixtures.
+- **assets:** the BLNT classic asset and its SAC are in the verified currency list and the supply observers.
+
+### Fixed
+
+- **ops:** `ch-entry-history -totals-only` starts a first run at the lake's first ledger. It asked for ledger 1, which no lake holds, so the sponsorship totals could never begin.
+- **ops:** the restore drill counts distinct ledgers in its lake window. It counted rows, so a freshly re-derived window read as twice its size and failed a sound restore.
+
+### Changed
+
+- **ops:** the test-net KVM host accepts SSH keys only.
+
 ## [v0.121.1] - 2026-11-16
 
 Tested against Stellar protocol 27. No migrations, no config keys, no host payload, no `pkg/*` change.
@@ -88,26 +108,3 @@ Tested against Stellar protocol 27. No migrations. No `pkg/*` break. No config c
 - **ansible:** a test-net API trusts the host proxy's address, so clients behind it no longer share one rate-limit bucket.
 - **ci:** the migration-compat gate knows `REVOKE` and a `BEFORE` trigger; the lake-dedup gate watches `stellar.contract_events`; the baseline-growth tripwire watches the waiver maps of the two Go lints.
 
-## [v0.118.0] - 2026-11-15
-
-Tested against Stellar protocol 27. No migrations. No `pkg/*` break; `pkg/client` gains `market_cap_lower_bound`. No config change. Host payload changed: the archival-node and redis-sentinel roles, role scripts and the r1 Prometheus rule trees; apply the roles after the binaries. No replay.
-
-### Changed
-
-- **api:** the asset detail carries a stale price and an unread gate; a listing cap on a floor is flagged, and every markets listing carries its volume floor flag. A flagged issuer's SAC row, curated flag and SEP-1 claims are withheld.
-- **api:** a nonstandard-decimals token's volume is stated in its own decimals. A dust-only direction sets no OHLC price. A contract with no supply event is not a zero supply on the asset detail.
-- **auth:** adding or removing a passkey needs a recent sign-in.
-- **explorer:** `/rwa` says when its answer is stale or the set is unknown; figures the API flags as floors carry "≥" on `/assets`, the embed and `/rwa`.
-- **alerts:** new rules for rule evaluation, the retention reaper, the fail-open price guard, a withheld supply, a full limiter map, shed stream ticks, unreadable tokens, email-code guessing and registration growth. A price alert does not fire on a bucket the freeze is holding back.
-- **ansible:** a secret reaches a task on stdin, never through `environment:`. A superuser session in an app-owned database searches `pg_catalog` only.
-- **explorer:** a fee bump is listed in the account history of the account that paid its fee (from the ledger the payer was first recorded). Host step: create `ops_by_source_feepayer_mv` and `account_activity_feepayer_mv` and run the fee-payer backfills in `deploy/clickhouse/ops_by_source.sql`; `ch-index-proof` now requires the first.
-
-### Fixed
-
-- **orderbook:** a tied offer is served from its post-image, never the row that won the tie.
-- **ops:** the chunk scan decodes a backend-killing chunk at most twice and decodes a chunk recompressed in place again. Root jobs keep scratch files and the drill's Postgres private and hand psql the owner DSN in the environment. The root archive filler writes only inside the archive root. Projected-rebuild resumes only over checkpoints its own build wrote. `rederive-from` and `ch-rebuild` writes refresh the aggregates over the range they rewrote.
-- **clickhouse:** the cap67 event census counts events, not rows.
-- **ci:** PR tests include every tree-walking guard and a PR cannot scope its own tests; the migration gates see a dropped arbiter, keyword-less DROP/RENAME and a renamed-down migration.
-- **rwa:** the premium history judges a day against the days accepted before it, never a refused one; a thin history stays within 10x of the published value, and a repricing needs an agreeing run at least as long as the accepted days.
-- **ops:** the chunk scan decompresses every value, not only the column headers, and re-verifies every chunk once. A host with no probe key does not run the SLA probe. The os dataset's mode agrees with its ownership task.
-- **ci:** the migration-compat gate reads a multi-line `ALTER` as one statement and a function the migration calls as migrate-time code; the lake-dedup gate charges a read to its own file and query block and reads a comma join.
