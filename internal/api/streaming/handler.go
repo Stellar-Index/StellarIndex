@@ -110,7 +110,8 @@ type StreamOptions struct {
 
 	// Revalidate, when wired, re-runs the credential, key policy and quota checks at every
 	// heartbeat; false ends the stream. Those checks are per-request middleware, so without this a
-	// key revoked (or quota exhausted, tier downgraded) after admission keeps streaming.
+	// key revoked (or quota exhausted, tier downgraded) after admission keeps streaming. It must
+	// return false only for a refusal: a check that could not be made is true, and is made again.
 	Revalidate func(*http.Request) bool
 
 	// MaxLifetime ends the stream after this long (plus jitter). Zero =
