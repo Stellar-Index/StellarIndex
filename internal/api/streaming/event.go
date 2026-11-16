@@ -42,13 +42,24 @@ type Generator struct {
 	state atomic.Uint64
 }
 
-// Ahead reports whether id is a well-formed ID newer than anything this generator could have issued (a cursor from a process with a faster clock), which a resume would otherwise replay as nothing; malformed IDs return false.
-func (g *Generator) Ahead(id string) bool {
+// parseID reads a generated event ID.
+func parseID(id string) (uint64, bool) {
 	if len(id) != idLen {
-		return false
+		return 0, false
 	}
 	v, err := strconv.ParseUint(id, 16, 64)
-	if err != nil {
+	return v, err == nil
+}
+
+func wellFormedID(id string) bool {
+	_, ok := parseID(id)
+	return ok
+}
+
+// Ahead reports whether id is a well-formed ID newer than anything this generator could have issued (a cursor from a process with a faster clock), which a resume would otherwise replay as nothing; malformed IDs return false.
+func (g *Generator) Ahead(id string) bool {
+	v, ok := parseID(id)
+	if !ok {
 		return false
 	}
 	ceiling := max(g.state.Load(), uint64(time.Now().UnixMilli())<<16|0xFFFF) //nolint:gosec // wall-clock millis are positive

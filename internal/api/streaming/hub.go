@@ -43,7 +43,10 @@ const (
 
 // Hub is the goroutine-safe pub/sub primitive backing the SSE stream handlers, shared across all stream endpoints.
 type Hub struct {
-	gen        Generator
+	gen Generator
+	// bootID is the first ID this hub's generator issued: a well-formed cursor below it was minted by an earlier
+	// process, whose events this hub never held.
+	bootID     string
 	bufferSize int
 
 	mu     sync.RWMutex
@@ -116,13 +119,15 @@ func NewHub(bufferSize int) *Hub {
 	if bufferSize <= 0 {
 		bufferSize = DefaultBufferSize
 	}
-	return &Hub{
+	h := &Hub{
 		bufferSize: bufferSize,
 		topics:     make(map[string]*topicState),
 		idleTTL:    DefaultTopicIdleTTL,
 		maxTopics:  DefaultMaxTopics,
 		lastSweep:  time.Now(),
 	}
+	h.bootID = h.gen.Next()
+	return h
 }
 
 // SetTopicIdleTTL overrides how long a subscriber-less topic keeps its replay buffer; <= 0 restores [DefaultTopicIdleTTL]. Call at startup or from tests.
@@ -264,7 +269,8 @@ func (h *Hub) Subscribe(topics []string, lastEventID string) (<-chan Event, func
 			// held, NOT when this subscription's replay budget trimmed a deep backlog (that is the
 			// ordinary "newest N" resume and would flag nearly every large resume). A cursor from a
 			// foreign ID space (another region whose clock is ahead) sorts above the whole ring, so
-			// replay is empty and would otherwise look like a clean resume.
+			// replay is empty and would otherwise look like a clean resume. So would a cursor from
+			// before this process started: the ring is new and has evicted nothing.
 			if h.resumeGap(t, lastEventID, oldestHeld) {
 				gaps = append(gaps, newStreamGapEvent(topic, lastEventID, oldestHeld))
 			}
@@ -294,13 +300,14 @@ func (h *Hub) Subscribe(topics []string, lastEventID string) (<-chan Event, func
 }
 
 // resumeGap reports whether a resume at lastEventID lost events on t: the ring evicted past the
-// cursor, or the cursor is from a foreign ID space. Caller holds t.mu.
+// cursor, the cursor predates this process, or it is from a foreign ID space. Caller holds t.mu.
 func (h *Hub) resumeGap(t *topicState, lastEventID, oldestHeld string) bool {
 	if lastEventID == "" {
 		return false
 	}
 	evictedPast := oldestHeld != "" && oldestHeld > lastEventID && t.hasEvictedBuffered()
-	return evictedPast || h.gen.Ahead(lastEventID)
+	beforeBoot := wellFormedID(lastEventID) && lastEventID < h.bootID
+	return evictedPast || beforeBoot || h.gen.Ahead(lastEventID)
 }
 
 // newStreamGapEvent builds the marker Subscribe sends ahead of a replay that could not cover the

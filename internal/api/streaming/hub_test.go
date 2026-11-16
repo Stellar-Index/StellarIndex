@@ -690,6 +690,37 @@ func TestHub_ForeignFutureCursorEmitsStreamGap(t *testing.T) {
 	}
 }
 
+// A cursor minted before this hub existed (the API restarted while the client was away) cannot be covered: the new
+// ring never held those events and has evicted nothing, so without a marker the resume looks clean.
+func TestHub_CursorFromBeforeThisProcessEmitsStreamGap(t *testing.T) {
+	old := streaming.NewHub(8)
+	cursor := old.Publish("topic", "x", []byte("before the restart"))
+	time.Sleep(2 * time.Millisecond)
+
+	for name, publish := range map[string]bool{"nothing published since": false, "events published since": true} {
+		t.Run(name, func(t *testing.T) {
+			hub := streaming.NewHub(8)
+			want := 1
+			if publish {
+				hub.Publish("topic", "x", []byte("after the restart"))
+				want = 2
+			}
+			sub := mustSubscribe(t, hub, []string{"topic"}, cursor)
+			got := drainNonblocking(t, sub, want, time.Second)
+			if len(got) != want || got[0].Type != streaming.EventTypeStreamGap {
+				t.Fatalf("want a %q marker ahead of %d replayed event(s), got %+v", streaming.EventTypeStreamGap, want-1, got)
+			}
+		})
+	}
+
+	// A cursor that is not one of our IDs keeps its existing treatment: no marker.
+	hub := streaming.NewHub(8)
+	sub := mustSubscribe(t, hub, []string{"topic"}, "not-an-id")
+	if got := drainNonblocking(t, sub, 1, 100*time.Millisecond); len(got) != 0 {
+		t.Fatalf("malformed cursor produced events: %+v", got)
+	}
+}
+
 func TestHub_OwnCursorEmitsNoStreamGap(t *testing.T) {
 	hub := streaming.NewHub(8)
 	cursor := hub.Publish("topic", "x", []byte("one"))
