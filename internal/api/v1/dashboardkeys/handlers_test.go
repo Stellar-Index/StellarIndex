@@ -389,6 +389,21 @@ func TestHandleList_OnlyOwnAccount(t *testing.T) {
 	}
 }
 
+// A key minted by another key is resolved by the validator through the same account cascade as a managed one, so the
+// quota listed for it must be the resolved one: the stored value can be higher than the one that answers 429.
+func TestDelegatedDTO_ServesEnforcedMonthlyQuota(t *testing.T) {
+	acct := platform.Account{Tier: platform.TierFree, MonthlyRequestQuotaOverride: 100_000}
+	for stored, want := range map[int64]int64{0: 100_000, 5_000_000: 100_000, 50_000: 50_000} {
+		got := delegatedDTO(auth.APIKeyRecord{MonthlyQuota: stored}, acct)
+		if got.EffectiveMonthlyQuota != want || want != acct.ResolveKeyMonthlyQuota(stored) {
+			t.Errorf("stored %d: effective_monthly_quota = %d, want %d (what auth enforces)", stored, got.EffectiveMonthlyQuota, want)
+		}
+		if got.MonthlyQuota != stored {
+			t.Errorf("stored %d: monthly_quota = %d, want the stored value", stored, got.MonthlyQuota)
+		}
+	}
+}
+
 // TestHandleList_ServesEnforcedMonthlyQuota: the list must carry the quota
 // auth enforces, not the stored column, so the dashboard never shows an
 // inheriting key as unlimited or a key above the override at its stored cap.

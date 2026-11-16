@@ -144,7 +144,7 @@ type keyDTO struct {
 	ParentKeyID string `json:"parent_key_id,omitempty"`
 }
 
-func delegatedDTO(rec auth.APIKeyRecord) keyDTO {
+func delegatedDTO(rec auth.APIKeyRecord, acct platform.Account) keyDTO {
 	return keyDTO{
 		ID:              rec.KeyID,
 		Name:            rec.Label,
@@ -152,8 +152,8 @@ func delegatedDTO(rec auth.APIKeyRecord) keyDTO {
 		Tier:            string(rec.Tier),
 		RateLimitPerMin: rec.RateLimitPerMin,
 		MonthlyQuota:    rec.MonthlyQuota,
-		// The validator enforces the stored value as is; an account override set later does not reach this key.
-		EffectiveMonthlyQuota: rec.MonthlyQuota,
+		// The validator resolves a delegated key through the account cascade like any other.
+		EffectiveMonthlyQuota: acct.ResolveKeyMonthlyQuota(rec.MonthlyQuota),
 		Scopes:                rec.Scopes,
 		ExpiresAt:             wiretime.NilIfZero(rec.ExpiresAt),
 		CreatedAt:             wiretime.Time(rec.CreatedAt),
@@ -253,7 +253,7 @@ func (h *Handlers) delegatedKeys(ctx context.Context, acct platform.Account, man
 	var out []keyDTO
 	for _, rec := range recs {
 		if _, ok := managed[rec.KeyID]; !ok {
-			out = append(out, delegatedDTO(rec))
+			out = append(out, delegatedDTO(rec, acct))
 		}
 	}
 	return out, nil
