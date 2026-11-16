@@ -408,6 +408,9 @@ func processEventSafely(src Source, ev events.Event, sink func(consumer.Event) e
 		if classifySinkFault(err) == dispositionSkip {
 			// This OUTPUT can never land; its siblings still can, so record the drop and go on.
 			faults.dropped = append(faults.dropped, err)
+			if l := outputLedger(out, ev.Ledger); faults.droppedLedger == 0 || l < faults.droppedLedger {
+				faults.droppedLedger = l
+			}
 			continue
 		}
 		// Retryable or unclassified: stop here. The caller holds the cursor below this output's ledger
@@ -423,8 +426,10 @@ func processEventSafely(src Source, ev events.Event, sink func(consumer.Event) e
 // halves stay apart because the caller reacts to them differently.
 type rowSinkFaults struct {
 	// dropped holds one error per output the sink PERMANENTLY rejected ([dispositionSkip]); each
-	// counts as outcome="sink_permanent" per OUTPUT and none holds the cursor.
+	// counts as outcome="sink_permanent" per OUTPUT; they hold the cursor only on a row with no held fault.
 	dropped []error
+	// droppedLedger is the lowest own ledger among the dropped outputs, as heldLedger is for the held one.
+	droppedLedger uint32
 	// held is the first retryable or unclassified fault, which stopped the row and holds the cursor.
 	held error
 	// heldLedger is the held output's own ledger: a buffered decoder can emit an earlier ledger's
@@ -863,7 +868,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 		// only a shed CANDIDATE; [permanentSkipCandidate] releases at most [PermanentSkipPerCycle].
 		if len(faults.dropped) > 0 {
 			poisoned = append(poisoned, heldRow{
-				id: id, disposition: dispositionSkip, fails: fails,
+				id: id, holdLedger: faults.droppedLedger, disposition: dispositionSkip, fails: fails,
 				err: errors.Join(faults.dropped...),
 			})
 		}

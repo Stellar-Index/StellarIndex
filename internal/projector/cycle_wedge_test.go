@@ -1466,6 +1466,28 @@ func TestCycle_PoisonRowWithNoSinkHealthProofHoldsUntilTheNoProgressBudget(t *te
 	}
 }
 
+// A permanently rejected output that belongs to ledger 101 but was scanned at ledger 103 holds the cursor below 101,
+// as a retryable one does. Held only below 103, the cursor passed 101 on the first cycle with no health proof, the
+// row was never re-read, and the output was lost without waiting out the no-progress budget.
+func TestCycle_CarriedPoisonOutputHoldsBelowItsOwnLedger(t *testing.T) {
+	const source = "carry-poison"
+	h := newWedgeHarness(t, source, []events.Event{lakeEvent(103, 3)}, 105, func(consumer.Event) error {
+		return notNullViolation()
+	})
+	h.src.Decoder = &carryDecoder{carryAt: 103}
+
+	for i := 1; i < QuarantineAfterCyclesNoProgress; i++ {
+		h.cycle()
+		if got := h.store.cursor(); got != 100 {
+			t.Fatalf("cycle %d: cursor = %d, want 100 (below the carried output's ledger 101 until the no-progress budget is spent)", i, got)
+		}
+	}
+	h.cycle()
+	if got := h.store.cursor(); got != 105 {
+		t.Fatalf("cursor = %d, want 105 once the budget sheds the row", got)
+	}
+}
+
 // TestCycle_PoisonRowWithSinkHealthProofShedsOnCycleOne is the other side of the same rail,
 // and why the proof is a DISCRIMINATOR rather than a blanket delay: a scattered poison row
 // sits beside rows that commit, so the proof is present and the row costs exactly one cycle.
