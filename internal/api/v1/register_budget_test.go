@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -85,8 +86,9 @@ func TestRegister_AllCallerBudget(t *testing.T) {
 		before := registrationOutcome(obs.RegistrationBudgetExhausted)
 
 		resp := postRegister(t, ts.URL, "application/json", "")
-		if resp.StatusCode != http.StatusServiceUnavailable || resp.Header.Get("Retry-After") != "3600" {
-			t.Fatalf("status = %d, Retry-After = %q; want 503 and 3600", resp.StatusCode, resp.Header.Get("Retry-After"))
+		wait, err := strconv.Atoi(resp.Header.Get("Retry-After"))
+		if resp.StatusCode != http.StatusServiceUnavailable || err != nil || wait < 1 || wait > 3600 {
+			t.Fatalf("status = %d, Retry-After = %q; want 503 and the seconds left in the clock hour", resp.StatusCode, resp.Header.Get("Retry-After"))
 		}
 		if got := problemType(t, resp); !strings.HasSuffix(got, "/registration-unavailable") {
 			t.Errorf("problem type = %q, want registration-unavailable", got)
@@ -117,9 +119,14 @@ func TestRegister_AllCallerBudget(t *testing.T) {
 
 	t.Run("a sustained throttle outage fails closed", func(t *testing.T) {
 		ts, accounts := registerControlsServer(t, v1.Options{RegisterBudget: &fakeRegisterIPThrottle{err: auth.ErrThrottleUnavailable}})
+		closed := obs.RateLimitFailClosedTotal.WithLabelValues(obs.RateLimiterRegisterBudget)
+		before := testutil.ToFloat64(closed)
 		resp := postRegister(t, ts.URL, "application/json", "")
 		if resp.StatusCode != http.StatusServiceUnavailable || len(accounts.created) != 0 {
 			t.Fatalf("status = %d with %d account(s) created; want 503 and none", resp.StatusCode, len(accounts.created))
+		}
+		if got := testutil.ToFloat64(closed) - before; got != 1 {
+			t.Errorf("fail-closed counter for the budget moved by %v, want 1", got)
 		}
 	})
 }

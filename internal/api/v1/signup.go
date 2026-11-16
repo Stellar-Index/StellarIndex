@@ -50,7 +50,7 @@ func (s *Server) signupIPThrottleOK(w http.ResponseWriter, r *http.Request) bool
 	if errors.Is(err, auth.ErrThrottleUnavailable) {
 		s.logger.Warn("signup IP throttle unavailable; failing closed (sustained Redis errors)",
 			"err", err, "ip", ip)
-		writeThrottleUnavailable(w, r)
+		writeThrottleUnavailable(w, r, obs.RateLimiterSignupIP)
 		return false
 	}
 	s.logger.Warn("signup IP throttle check failed; falling open",
@@ -63,9 +63,9 @@ func (s *Server) signupIPThrottleOK(w http.ResponseWriter, r *http.Request) bool
 // writeThrottleUnavailable answers a sustained Redis outage on a signup throttle: fail CLOSED rather than disable abuse
 // prevention. Retry-After is set BEFORE writeProblem (net/http drops later additions); 30s matches
 // [auth.DefaultSignupThrottleDwellTime], enough to ride out a typical Redis fail-over.
-func writeThrottleUnavailable(w http.ResponseWriter, r *http.Request) {
+func writeThrottleUnavailable(w http.ResponseWriter, r *http.Request, limiter string) {
 	w.Header().Set("Retry-After", "30")
-	obs.RateLimitFailClosedTotal.WithLabelValues(obs.RateLimiterSignupIP).Inc()
+	obs.RateLimitFailClosedTotal.WithLabelValues(limiter).Inc()
 	writeProblem(w, r,
 		"https://api.stellarindex.io/errors/throttle-unavailable",
 		"Throttle layer unavailable", http.StatusServiceUnavailable,

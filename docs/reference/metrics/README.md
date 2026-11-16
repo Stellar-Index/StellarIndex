@@ -697,13 +697,14 @@ Takes (one per token charged) an in-process limiter (the passkey begin-login and
 
 ### `stellarindex_ratelimit_fail_closed_total`
 
-Counter, label `limiter` (`api` / `failed_auth` / `signup_ip`). Pre-seeded at zero.
+Counter, label `limiter` (`api` / `failed_auth` / `signup_ip` / `register_budget`). Pre-seeded at zero.
 
 Requests rejected after a Redis-backed throttle erred longer than its 30s dwell-time; the limiter then fails **closed** and `stellarindex_ratelimit_fail_open_total` stops moving.
 
 - `api` — 503 to every request on the bucket; sustained means a whole-API outage.
 - `failed_auth` — 429 to bad credentials.
 - `signup_ip` — 503 on signup and register.
+- `register_budget` — 503 on register: the all-caller hourly cap could not be counted.
 
 `stellarindex_redis_command_errors_total{class}` names it.
 

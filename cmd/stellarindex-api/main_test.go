@@ -878,3 +878,18 @@ func TestNewRegisterBudget_InProcess(t *testing.T) {
 		t.Fatalf("third registration = %v, want ErrSignupRateLimited", err)
 	}
 }
+
+// The budget's Redis key must fall under a pattern the locked-down ACL grants the API user: a refused INCR reads as a
+// Redis outage and, past the dwell time, closes registration for good.
+func TestRegisterBudgetKeyIsInsideTheRedisACL(t *testing.T) {
+	acl, err := os.ReadFile("../../configs/ansible/roles/redis-sentinel/templates/users.acl.j2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(acl), "~signup-ip:*") {
+		t.Fatal("users.acl.j2 no longer grants ~signup-ip:* — re-derive which pattern covers the registration budget key")
+	}
+	if !strings.HasPrefix(registerBudgetKeyPrefix, "signup-ip:") {
+		t.Errorf("registerBudgetKeyPrefix = %q is outside the ~signup-ip:* ACL pattern", registerBudgetKeyPrefix)
+	}
+}

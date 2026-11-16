@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -154,13 +155,14 @@ func (s *Server) registerBudgetOK(w http.ResponseWriter, r *http.Request) bool {
 	case err == nil:
 		return true
 	case errors.Is(err, auth.ErrSignupRateLimited):
-		w.Header().Set("Retry-After", "3600")
+		// The budget is a clock-hour window, so it reopens at the top of the hour.
+		w.Header().Set("Retry-After", strconv.FormatInt(3600-time.Now().Unix()%3600, 10))
 		writeRegistrationUnavailable(w, r, obs.RegistrationBudgetExhausted,
-			"registration is at its hourly capacity on this deployment; retry within the hour")
+			"registration is at its hourly capacity on this deployment; it reopens at the top of the hour")
 		return false
 	case errors.Is(err, auth.ErrThrottleUnavailable):
 		s.logger.Warn("registration budget unavailable; failing closed (sustained Redis errors)", "err", err)
-		writeThrottleUnavailable(w, r)
+		writeThrottleUnavailable(w, r, obs.RateLimiterRegisterBudget)
 		return false
 	}
 	s.logger.Warn("registration budget check failed; falling open", "err", err)

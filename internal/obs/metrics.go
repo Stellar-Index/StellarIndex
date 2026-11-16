@@ -388,7 +388,7 @@ func registerFailedAuthMetrics() {
 // increase() rather than the silent first sample of a new child.
 func registerRedisFailureMetrics() {
 	Registry.MustRegister(RateLimitFailClosedTotal, RedisCommandErrorsTotal, UsageUnitsDroppedTotal)
-	for _, limiter := range []string{RateLimiterAPI, RateLimiterFailedAuth, RateLimiterSignupIP} {
+	for _, limiter := range []string{RateLimiterAPI, RateLimiterFailedAuth, RateLimiterSignupIP, RateLimiterRegisterBudget} {
 		RateLimitFailClosedTotal.WithLabelValues(limiter)
 	}
 	for _, class := range RedisErrorClasses {
@@ -1337,6 +1337,8 @@ const (
 	RateLimiterAPI        = "api"
 	RateLimiterFailedAuth = "failed_auth"
 	RateLimiterSignupIP   = "signup_ip"
+	// RateLimiterRegisterBudget is the all-caller hourly cap on /v1/register.
+	RateLimiterRegisterBudget = "register_budget"
 )
 
 // RedisCommandErrorsTotal counts failed Redis commands from every redisclient-built client, by error class; covers best-effort write paths that otherwise fail silently.

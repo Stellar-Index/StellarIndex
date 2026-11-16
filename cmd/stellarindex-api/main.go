@@ -1658,8 +1658,12 @@ func newInProcessSignupIPThrottle() *inProcessSignupIPThrottle {
 	}
 }
 
-// newRegisterBudget is the all-caller hourly cap on /v1/register: a signup throttle the handler counts under one key,
-// in its own Redis namespace. nil when maxPerHour is 0 (no cap).
+// registerBudgetKeyPrefix sits inside the per-IP throttle's `signup-ip:` namespace because that is the pattern the
+// locked-down Redis ACL grants the API (users.acl.j2); no IP key can equal it.
+const registerBudgetKeyPrefix = "signup-ip:register-all:"
+
+// newRegisterBudget is the all-caller hourly cap on /v1/register: a signup throttle the handler counts under one key.
+// nil when maxPerHour is 0 (no cap).
 func newRegisterBudget(rdb redis.UniversalClient, maxPerHour int) v1.SignupIPThrottle {
 	switch {
 	case maxPerHour <= 0:
@@ -1667,7 +1671,7 @@ func newRegisterBudget(rdb redis.UniversalClient, maxPerHour int) v1.SignupIPThr
 	case rdb == nil:
 		return &inProcessSignupIPThrottle{bucket: ratelimit.New(nil, maxPerHour, time.Hour)}
 	}
-	return auth.NewRedisSignupIPThrottle(rdb, auth.SignupIPThrottleOptions{Max: maxPerHour, KeyPrefix: "register-all:"})
+	return auth.NewRedisSignupIPThrottle(rdb, auth.SignupIPThrottleOptions{Max: maxPerHour, KeyPrefix: registerBudgetKeyPrefix})
 }
 
 // CheckIP implements v1.SignupIPThrottle; the only error is auth.ErrSignupRateLimited.
