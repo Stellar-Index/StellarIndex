@@ -183,6 +183,45 @@ describe('LivePairPrice — withheld wording + tip flags (GH-772)', () => {
   });
 });
 
+describe('LivePairPrice — integrity warnings', () => {
+  it('shows a peg-deviation warning beside the polled price', async () => {
+    useTipStream.mockReturnValue(null);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((input: string | URL) =>
+        Promise.resolve(
+          String(input).includes('/v1/price?')
+            ? {
+                ok: true,
+                status: 200,
+                json: async () => ({
+                  data: {
+                    price: '2.5',
+                    observed_at: '2026-09-22T00:00:00Z',
+                  },
+                  flags: { triangulated: true, proxy_deviation: true },
+                }),
+              }
+            : { ok: false, status: 404, json: async () => ({}) },
+        ),
+      ),
+    );
+    renderPrice(
+      <LivePairPrice
+        base="crypto:XLM"
+        quote="fiat:USD"
+        initialPrice="0.17"
+        initialObservedAt={null}
+        quoteIsUsd
+        quoteSuffix="USD"
+      />,
+    );
+    expect(
+      await screen.findByText(/assumes a USD peg that is more than 2% off \$1/),
+    ).toBeInTheDocument();
+  });
+});
+
 describe('LivePairPrice — exact rounding', () => {
   it('rounds the polled price from its wire string, not a float', async () => {
     useTipStream.mockReturnValue(null);

@@ -78,7 +78,7 @@ function stubDerived(detail: unknown) {
   vi.stubGlobal('fetch', vi.fn().mockImplementation(reply));
 }
 
-const fetchSettled =() => vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+const fetchSettled = () => vi.waitFor(() => expect(fetch).toHaveBeenCalled());
 
 beforeEach(() => {
   useTipStream.mockReturnValue(null);
@@ -286,6 +286,45 @@ describe('LiveAssetPrice — 24h change pill', () => {
     renderPrice({ assetID: AUDD, initialPrice: null, initialProvenance: null });
     expect(await screen.findByText(/1\.0001/)).toBeInTheDocument();
     expect(useTipStream.mock.calls.every(([id]) => id === null)).toBe(true);
+  });
+
+  it('shows every integrity warning the server set on a triangulated price', async () => {
+    useTipStream.mockReturnValue(null);
+    stubFetch(
+      200,
+      {
+        data: { price: '1.0001' },
+        flags: {
+          triangulated: true,
+          proxy_deviation: true,
+          diverged: true,
+          rerouted: true,
+          pivot_unverified: true,
+        },
+      },
+      '/v1/price',
+    );
+    renderPrice({ assetID: AUDD, initialPrice: null, initialProvenance: null });
+    expect(await screen.findByText(/1\.0001/)).toBeInTheDocument();
+    shows(
+      /triangulated via XLM/i,
+      /assumes a USD peg that is more than 2% off \$1/,
+      /price routes disagree/,
+      /rerouted around a market with no trades/,
+      /de-peg not checked/,
+    );
+  });
+
+  it('shows no integrity warning on a price with none set', async () => {
+    useTipStream.mockReturnValue(null);
+    stubFetch(
+      200,
+      { data: { price: '1.0001' }, flags: { triangulated: true } },
+      '/v1/price',
+    );
+    renderPrice({ assetID: AUDD, initialPrice: null, initialProvenance: null });
+    expect(await screen.findByText(/1\.0001/)).toBeInTheDocument();
+    hides(/USD peg/, /routes disagree/, /rerouted/, /de-peg/);
   });
 
   it('overrides a stale baked UP pill with the live DOWN figure', async () => {

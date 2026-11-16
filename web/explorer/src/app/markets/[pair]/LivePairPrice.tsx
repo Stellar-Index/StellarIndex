@@ -123,6 +123,12 @@ export function LivePairPrice({
             as of {formatTimestamp(observedAt)}
             {!polled && ' (at build)'}
             {(stale || poll.unrefreshed) && ' · stale'}
+            {poll.caveats.map((c) => (
+              <span key={c} className="text-warn-500">
+                {' '}
+                · {c}
+              </span>
+            ))}
           </span>
         )
       )}

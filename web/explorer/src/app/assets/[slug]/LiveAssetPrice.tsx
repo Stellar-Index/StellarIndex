@@ -261,6 +261,16 @@ export function LiveAssetPrice({
         {!withheld && !tipActive && shown != null && stale && (
           <span className="text-warn-500"> · stale</span>
         )}
+        {!withheld &&
+          !tipActive &&
+          shown != null &&
+          !fromAssets &&
+          poll.caveats.map((c) => (
+            <span key={c} className="text-warn-500">
+              {' '}
+              · {c}
+            </span>
+          ))}
         {/* A listing snapshot's caption already says it is not live. */}
         {!withheld &&
           !tipActive &&
