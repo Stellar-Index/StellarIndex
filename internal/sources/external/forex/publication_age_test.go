@@ -2,6 +2,7 @@ package forex
 
 import (
 	"context"
+	"errors"
 	"io"
 	"testing"
 	"time"
@@ -48,6 +49,10 @@ func TestPublicationStale(t *testing.T) {
 		{"sunday bar on tuesday", utcDate(2026, 11, 15, 0), utcDate(2026, 11, 17, 0), true},
 		{"publication ahead of the clock", utcDate(2026, 11, 18, 0), utcDate(2026, 11, 17, 0), false},
 		{"no publication", time.Time{}, utcDate(2026, 11, 17, 0), true},
+		{"thursday bar the day after a friday christmas", utcDate(2026, 12, 24, 0), utcDate(2026, 12, 26, 12), false},
+		{"thursday bar the monday after a friday christmas", utcDate(2026, 12, 24, 0), utcDate(2026, 12, 28, 12), false},
+		{"thursday bar the tuesday after a friday christmas", utcDate(2026, 12, 24, 0), utcDate(2026, 12, 29, 0), true},
+		{"new year's eve bar on the second", utcDate(2026, 12, 31, 0), utcDate(2027, 1, 2, 12), false},
 	} {
 		if got := publicationStale(tc.pub, tc.now); got != tc.stale {
 			t.Errorf("%s: publicationStale = %v, want %v", tc.name, got, tc.stale)
@@ -77,6 +82,21 @@ func TestFetchRates_StalePrimaryHandsOffToANewerStandby(t *testing.T) {
 	}
 	if source != "ecb" || !closeTo(rates["EUR"], 0.8) || !publishedAt.Equal(fb.publishedAt) {
 		t.Fatalf("got source %q EUR %v published %v, want the newer standby", source, rates["EUR"], publishedAt)
+	}
+	// The vendor answered, so its hourly bars are still fetched for what it lists.
+	if got := namedTickers(w.stalePrimaryRates, guardedNames); len(got) != 1 || got[0] != "EUR" {
+		t.Errorf("fixing tickers behind the standby = %v, want [EUR]", got)
+	}
+}
+
+// A standby that answered last refresh and fails this one must not move the served rates back to the primary's older bar.
+func TestFetchRates_StalePrimaryDoesNotReplaceANewerServedSnapshot(t *testing.T) {
+	w := stalePrimary(t, nil)
+	w.cache.Set(&Snapshot{PublishedAt: w.clock().UTC().Truncate(24 * time.Hour)})
+	w.fallbacks = []RateProvider{&stubProvider{name: "ecb", err: errors.New("standby down")}}
+
+	if rates, _, source, err := w.fetchRates(context.Background()); err == nil {
+		t.Fatalf("got source %q rates %v, want an error so the cache keeps the newer snapshot", source, rates)
 	}
 }
 

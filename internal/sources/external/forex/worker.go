@@ -128,6 +128,9 @@ type Worker struct {
 	// activeSource is the feed behind the CURRENT snapshot, stamped into fx_quotes.source and the
 	// `source` metric label so the metric shows the live feed. Single-goroutine, like guards.
 	activeSource string
+	// stalePrimaryRates is the primary's answer when this refresh served a standby over it for age, else nil. The vendor is
+	// up, so its hourly bars (fx_fixings) are still fetched for these tickers.
+	stalePrimaryRates map[string]float64
 
 	// fixingWriter, when set, receives the vendor-time hourly bars after every refresh
 	// (fx_fixings); fixingNewest is the newest committed bar_end. Only touched from refreshOnce.
@@ -215,23 +218,46 @@ func (w *Worker) sourceLabel() string {
 	return w.activeSource
 }
 
-// publicationStale reports whether rates published on pub's UTC day have missed a whole weekday session by now: a Mon-Fri day lies
+// publicationStale reports whether rates published on pub's UTC day have missed a whole session by now: a session day lies
 // strictly between the two. The weekend and the day in progress are not a miss, so a Friday bar is current until Tuesday. The
 // primary walks back to its newest bar and answers without error, so only this tells a feed that stopped publishing from a live one.
 func publicationStale(pub, now time.Time) bool {
 	today := now.UTC().Truncate(24 * time.Hour)
 	for day := pub.UTC().Truncate(24*time.Hour).AddDate(0, 0, 1); day.Before(today); day = day.AddDate(0, 0, 1) {
-		if wd := day.Weekday(); wd != time.Saturday && wd != time.Sunday {
+		if fxSessionDay(day) {
 			return true
 		}
 	}
 	return false
 }
 
+// fxSessionDay reports whether the FX market publishes a daily bar on day: Mon-Fri, less the two days it closes worldwide.
+func fxSessionDay(day time.Time) bool {
+	if wd := day.Weekday(); wd == time.Saturday || wd == time.Sunday {
+		return false
+	}
+	_, m, d := day.Date()
+	return (m != time.December || d != 25) && (m != time.January || d != 1)
+}
+
+// namedTickers is the upper-case tickers of rates that names knows, less the anchor, sorted.
+func namedTickers(rates map[string]float64, names map[string]string) []string {
+	names = lowerKeyed(names)
+	out := make([]string, 0, len(rates))
+	for code := range lowerKeyed(rates) {
+		if _, named := names[code]; named && upper(code) != anchorTicker {
+			out = append(out, upper(code))
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // fetchRates returns rates from the first source that can serve them (primary, then fallbacks in registration order). A primary
-// whose publication is stale ([publicationStale]) is treated as failed, but is still served when no standby has a newer one.
-// Context cancellation short-circuits rather than burning through every fallback.
+// whose publication is stale ([publicationStale]) is treated as failed, but is still served when no standby has a newer one and
+// the cache holds nothing newer. Context cancellation short-circuits rather than burning through every fallback.
 func (w *Worker) fetchRates(ctx context.Context) (map[string]float64, time.Time, string, error) {
+	w.stalePrimaryRates = nil
 	rates, publishedAt, err := w.client.LatestUSDRates(ctx)
 	stale := err == nil && publicationStale(publishedAt, w.clock())
 	if err == nil && !stale {
@@ -259,15 +285,28 @@ func (w *Worker) fetchRates(ctx context.Context) (map[string]float64, time.Time,
 			w.logger.Warn("forex: primary failed — serving from fallback",
 				"primary", fxSource, "primary_err", primaryErr,
 				"fallback", fb.Name(), "currencies", len(fbRates))
+			if stale {
+				w.stalePrimaryRates = rates
+			}
 			return fbRates, fbPublishedAt, fb.Name(), nil
 		}
 	}
-	if stale {
+	// A standby that answered last refresh and failed this one must not move the served rates back to the older bar.
+	if stale && !w.cachedPublicationAfter(publishedAt) {
 		w.logger.Warn("forex: primary publication is stale and no standby is newer — serving it, liveness is not stamped",
 			"published_at", publishedAt)
 		return rates, publishedAt, fxSource, nil
 	}
 	return nil, time.Time{}, "", primaryErr
+}
+
+// cachedPublicationAfter reports whether the served snapshot was published after t.
+func (w *Worker) cachedPublicationAfter(t time.Time) bool {
+	if w.cache == nil {
+		return false
+	}
+	prev := w.cache.Latest()
+	return prev != nil && prev.PublishedAt.After(t)
 }
 
 func (w *Worker) refreshOnce(ctx context.Context) {
@@ -333,7 +372,11 @@ func (w *Worker) refreshOnce(ctx context.Context) {
 	)
 
 	w.writeBatch(ctx, res)
-	w.appendFixings(ctx, massiveTickers(raw, source), snap)
+	fixingTickers := massiveTickers(raw, source)
+	if w.stalePrimaryRates != nil {
+		fixingTickers = namedTickers(w.stalePrimaryRates, names)
+	}
+	w.appendFixings(ctx, fixingTickers, snap)
 }
 
 // maxHeldRateAge bounds how long [servedSnapshot] serves a rate no refresh has re-confirmed; it mirrors fxQuotesSnapLookback in
