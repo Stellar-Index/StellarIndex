@@ -12,6 +12,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/wsclient"
 )
@@ -71,6 +72,10 @@ func (s *Streamer) Start(ctx context.Context, pairs []canonical.Pair) (<-chan ca
 	// Touched only from the Loop's connection goroutine (Subscribe and
 	// HandleFrame never run concurrently).
 	active := products
+	// Every product is tried again from here, so none is known rejected yet.
+	for _, id := range products {
+		obs.CEXStreamSubscriptionRejected.WithLabelValues(SourceName, id).Set(0)
+	}
 	if s.Endpoint == "" {
 		s.Endpoint = WSEndpoint
 	}
@@ -143,8 +148,13 @@ func classifyDisconnect(err error) string {
 	return wsclient.ClassifyDisconnect(err)
 }
 
+// dropAndLog drops the products a rejection names and flags each on the rejected-subscription gauge: a dropped product is not
+// subscribed again in this process, and the venue's other products keep the source looking live.
 func dropAndLog(logger *slog.Logger, active []string, err error) []string {
 	remaining, dropped := dropRejectedProducts(active, err.Error())
+	for _, id := range dropped {
+		obs.CEXStreamSubscriptionRejected.WithLabelValues(SourceName, id).Set(1)
+	}
 	if len(dropped) > 0 {
 		logger.Error("coinbase rejected products — dropping them and resubscribing without",
 			"source", SourceName, "products", dropped, "remaining", len(remaining))

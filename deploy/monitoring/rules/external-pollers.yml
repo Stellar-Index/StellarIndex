@@ -378,11 +378,12 @@ groups:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_cex_stream_subscription_rejected
           summary: "{{ $labels.source }} rejected the trade subscription for {{ $labels.symbol }}"
           description: |
-            The venue answered our subscribe request for
-            {{ $labels.symbol }} with success:false, so that pair
-            delivers no trades while the connection looks healthy. The
-            venue's own error text is on the indexer's ERROR log line
-            "kraken rejected the trade subscription".
+            The venue refused our subscribe request for
+            {{ $labels.symbol }}, so that pair delivers no trades while
+            the connection looks healthy. The venue's own error text
+            is on the indexer's ERROR log line "kraken rejected the
+            trade subscription" (bitstamp likewise; coinbase:
+            "coinbase rejected products").
 
       # Trade entries inside well-formed frames are being skipped — the
       # shape a venue symbol rename or field re-encoding produces. The

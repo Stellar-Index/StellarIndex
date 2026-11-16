@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
@@ -166,6 +168,13 @@ func TestStreamer_RejectedProductDroppedOnResubscribe(t *testing.T) {
 	defer mu.Unlock()
 	if len(subs) < 2 || len(subs[0]) != 2 || !reflect.DeepEqual(subs[1], []string{"XLM-USD"}) {
 		t.Fatalf("subscriptions = %v, want 2 then [XLM-USD]", subs)
+	}
+	// The dropped product stays silent for the life of the process; the gauge is the only signal that says so.
+	if v := testutil.ToFloat64(obs.CEXStreamSubscriptionRejected.WithLabelValues(SourceName, "BTC-USD")); v != 1 {
+		t.Errorf("rejected gauge for BTC-USD = %v, want 1", v)
+	}
+	if v := testutil.ToFloat64(obs.CEXStreamSubscriptionRejected.WithLabelValues(SourceName, "XLM-USD")); v != 0 {
+		t.Errorf("rejected gauge for XLM-USD = %v, want 0", v)
 	}
 }
 

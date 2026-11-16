@@ -282,15 +282,15 @@ Grep API logs for `fx_fixings bar disagrees` (ticker, `bar_start`, close, guarde
 
 ## stellarindex_cex_stream_subscription_rejected
 
-`max by (source, symbol) (stellarindex_cex_stream_subscription_rejected) == 1`, `for: 5m`, P2. The venue answered our subscribe for `symbol` with `success:false`: that pair delivers no trades while the socket looks healthy.
+`max by (source, symbol) (stellarindex_cex_stream_subscription_rejected) == 1`, `for: 5m`, P2. The venue refused our subscribe for `symbol`: that pair delivers no trades while the socket looks healthy.
 
 ### Check
 
-Indexer log `kraken rejected the trade subscription` (or `bitstamp ...`); `venue_error` holds the venue text (e.g. `Currency pair not supported XLM/GBP`).
+Indexer log `kraken rejected the trade subscription` (or `bitstamp ...`); `venue_error` holds the venue text (e.g. `Currency pair not supported XLM/GBP`). Coinbase logs `coinbase rejected products` with the dropped `products`, and `coinbase subscription rejected` carries the venue text.
 
 ### Fix
 
-Update `DefaultPairList` in `internal/sources/external/kraken/pairs.go` (bitstamp: `bitstamp/pairs.go`) and deploy. The gauge clears when the venue next acknowledges the symbol; a symbol removed from config keeps its last value until the indexer restarts.
+Update `DefaultPairList` in `internal/sources/external/kraken/pairs.go` (bitstamp: `bitstamp/pairs.go`, coinbase: `coinbase/pairs.go`) and deploy. The gauge clears when the venue next acknowledges the symbol; a symbol removed from config keeps its last value until the indexer restarts. Coinbase drops a refused product for the life of the process, so its gauge clears only on a restart, which retries it.
 
 ## stellarindex_cex_stream_entry_skips
 
