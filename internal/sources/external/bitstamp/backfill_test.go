@@ -306,7 +306,9 @@ func TestBitstampBackfill_UnparseableCandleFailsPage(t *testing.T) {
 	}
 }
 
-// newWindowedOHLC answers as production does for `start` alone: the candles inside [start, start+limit*step), however few.
+// newWindowedOHLC answers as production does for `start` alone: the bucket containing `start`, on a grid of epoch multiples of
+// `step`, and the candles in the `limit` buckets from there, however few. Checked against the venue: step=3600 start=1704069000
+// (00:30) returns 1704067200 first; step=259200 start=1704067200 returns 1703980800 first.
 func newWindowedOHLC(t *testing.T, series []bitstampCandle) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -314,6 +316,7 @@ func newWindowedOHLC(t *testing.T, series []bitstampCandle) *httptest.Server {
 		start, _ := strconv.ParseInt(q.Get("start"), 10, 64)
 		limit, _ := strconv.ParseInt(q.Get("limit"), 10, 64)
 		step, _ := strconv.ParseInt(q.Get("step"), 10, 64)
+		start -= start % step
 		body := ohlcResponse{}
 		body.Data.Pair = "XLM/USD"
 		body.Data.OHLC = []bitstampCandle{}
@@ -325,6 +328,97 @@ func newWindowedOHLC(t *testing.T, series []bitstampCandle) *httptest.Server {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(body)
 	}))
+}
+
+// The venue returns the bucket that contains `start`. A `from` that is not on the step grid must walk, without the bucket that
+// opens before it; a 3-day step from a calendar midnight is off the grid by a day.
+func TestBitstampBackfill_FromOffTheStepGrid(t *testing.T) {
+	m, err := DefaultPairs()
+	if err != nil {
+		t.Fatalf("DefaultPairs: %v", err)
+	}
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	usd, _ := canonical.NewFiatAsset("USD")
+	pair, _ := canonical.NewPair(xlm, usd)
+	const midnight = int64(1_704_067_200) // a calendar midnight one day past a 3-day bucket's open
+
+	for _, tc := range []struct {
+		name      string
+		step      time.Duration
+		from      int64
+		firstOpen int64 // the first candle that opens at or after from
+		buckets   int64
+	}{
+		{"half past the hour", time.Hour, midnight + 1800, midnight + 3600, 10},
+		{"3-day step from a calendar midnight", 72 * time.Hour, midnight, midnight + 2*86400, 5},
+		{"on the grid", time.Hour, midnight, midnight, 10},
+	} {
+		stepSec := int64(tc.step / time.Second)
+		gridStart := tc.from - tc.from%stepSec
+		srv := newWindowedOHLC(t, synthesiseBitstampCandles(int(tc.buckets)+2, gridStart, stepSec))
+		s := NewStreamer(m)
+		s.Endpoint = srv.URL
+		to := time.Unix(gridStart+tc.buckets*stepSec, 0).UTC()
+		trades, err := s.Backfill(context.Background(), pair, time.Unix(tc.from, 0).UTC(), to, tc.step)
+		srv.Close()
+		if err != nil {
+			t.Errorf("%s: Backfill: %v", tc.name, err)
+			continue
+		}
+		want := (to.Unix() - tc.firstOpen) / stepSec
+		if int64(len(trades)) != want {
+			t.Errorf("%s: got %d trades, want %d", tc.name, len(trades), want)
+		}
+		for _, tr := range trades {
+			if tr.Timestamp.Unix() < tc.from {
+				t.Errorf("%s: emitted a trade at %d, before from %d", tc.name, tr.Timestamp.Unix(), tc.from)
+			}
+		}
+	}
+}
+
+// A 200 body with no candle array is not an empty window: the walk steps past empty windows, so it must fail instead.
+func TestBitstampBackfill_BodyWithoutCandlesFailsTheWalk(t *testing.T) {
+	m, err := DefaultPairs()
+	if err != nil {
+		t.Fatalf("DefaultPairs: %v", err)
+	}
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	usd, _ := canonical.NewFiatAsset("USD")
+	pair, _ := canonical.NewPair(xlm, usd)
+	const startSec = int64(1_577_836_800)
+
+	for name, body := range map[string]string{
+		"error envelope": `{"status":"error","reason":"rate limited"}`,
+		"empty data":     `{"data":{}}`,
+		"null candles":   `{"data":{"pair":"XLM/USD","ohlc":null}}`,
+		"renamed key":    `{"data":{"pair":"XLM/USD","candles":[]}}`,
+		"another pair":   `{"data":{"pair":"BTC/USD","ohlc":[]}}`,
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(body))
+		}))
+		s := NewStreamer(m)
+		s.Endpoint = srv.URL
+		trades, err := s.Backfill(context.Background(), pair, time.Unix(startSec, 0), time.Unix(startSec+10*3600, 0), time.Hour)
+		srv.Close()
+		if err == nil {
+			t.Errorf("%s: got %d trades and no error, want the walk to fail", name, len(trades))
+		}
+	}
+
+	// The venue affirming an empty window is still walked past.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"pair":"XLM/USD","ohlc":[]}}`))
+	}))
+	defer srv.Close()
+	s := NewStreamer(m)
+	s.Endpoint = srv.URL
+	if trades, err := s.Backfill(context.Background(), pair, time.Unix(startSec, 0), time.Unix(startSec+10*3600, 0), time.Hour); err != nil || len(trades) != 0 {
+		t.Errorf("affirmed empty window: %d trades, err %v; want none and no error", len(trades), err)
+	}
 }
 
 // A short or empty page is a hole in that window, not the end of the data: the walk must reach `to`.

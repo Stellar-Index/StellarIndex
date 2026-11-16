@@ -57,10 +57,15 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 	return backfillOHLC(ctx, endpoint, symbol, pair, from.Unix(), to.Unix(), stepSec, time.Now())
 }
 
-// backfillOHLC walks [startSec, endSec) one page at a time. Only `start` is sent: Bitstamp honours `end` over `start` when both are
+// backfillOHLC walks [fromSec, endSec) one page at a time. Only `start` is sent: Bitstamp honours `end` over `start` when both are
 // present, so a pinned `end` would return the same last page every request.
-func backfillOHLC(ctx context.Context, endpoint, symbol string, pair canonical.Pair, startSec, endSec int64, stepSec int, now time.Time) ([]canonical.Trade, error) {
+//
+// Bitstamp answers `start` with the bucket that CONTAINS it, on a grid of epoch multiples of `step`. So the cursor is floored to
+// that grid first: sent as given, an off-grid `from` (any 3-day walk from a calendar midnight) gets a candle that opens before it,
+// which is indistinguishable from the venue ignoring the cursor. The bucket that opens before `from` is dropped, not emitted.
+func backfillOHLC(ctx context.Context, endpoint, symbol string, pair canonical.Pair, fromSec, endSec int64, stepSec int, now time.Time) ([]canonical.Trade, error) {
 	step := int64(stepSec)
+	startSec := fromSec - ((fromSec%step)+step)%step
 	var out []canonical.Trade
 	for startSec < endSec {
 		limit := min(int64(bitstampMaxLimit), (endSec-startSec+step-1)/step)
@@ -69,7 +74,7 @@ func backfillOHLC(ctx context.Context, endpoint, symbol string, pair canonical.P
 		q.Set("limit", strconv.FormatInt(limit, 10))
 		q.Set("start", strconv.FormatInt(startSec, 10))
 
-		candles, err := fetchBitstampOHLC(ctx, endpoint, q)
+		candles, err := fetchBitstampOHLC(ctx, endpoint, symbol, q)
 		if err != nil {
 			return nil, fmt.Errorf("bitstamp.Backfill: %w", err)
 		}
@@ -78,7 +83,7 @@ func backfillOHLC(ctx context.Context, endpoint, symbol string, pair canonical.P
 		// that the data ended. Walk on from the window's end; only the present ends the walk.
 		windowEnd := startSec + limit*step
 		if len(candles) > 0 {
-			lastTs, err := appendPageTrades(&out, candles, symbol, pair, startSec, stepSec, time.Unix(endSec, 0), now)
+			lastTs, err := appendPageTrades(&out, candles, symbol, pair, startSec, fromSec, stepSec, time.Unix(endSec, 0), now)
 			if err != nil {
 				return nil, err
 			}
@@ -92,9 +97,10 @@ func backfillOHLC(ctx context.Context, endpoint, symbol string, pair canonical.P
 	return out, nil
 }
 
-// appendPageTrades converts the page's in-range candles and returns the last candle's open time. A candle before the requested start
-// means the venue ignored the cursor and fails loudly. A candle not closed by min(to, now) is dropped; see scale.CandleClosed.
-func appendPageTrades(out *[]canonical.Trade, candles []bitstampCandle, symbol string, pair canonical.Pair, startSec int64, stepSec int, to, now time.Time) (int64, error) {
+// appendPageTrades converts the page's in-range candles and returns the last candle's open time. A candle before the grid-aligned
+// cursor means the venue ignored it and fails loudly. A candle that opens before fromSec (the partial first bucket) or is not
+// closed by min(to, now) is dropped; see scale.CandleClosed.
+func appendPageTrades(out *[]canonical.Trade, candles []bitstampCandle, symbol string, pair canonical.Pair, startSec, fromSec int64, stepSec int, to, now time.Time) (int64, error) {
 	var lastTs int64
 	for _, c := range candles {
 		ts, err := strconv.ParseInt(c.Timestamp, 10, 64)
@@ -105,7 +111,7 @@ func appendPageTrades(out *[]canonical.Trade, candles []bitstampCandle, symbol s
 			return 0, fmt.Errorf("bitstamp.Backfill: venue returned candle %d before requested start %d; pagination cursor not honoured", ts, startSec)
 		}
 		lastTs = ts
-		if !scale.CandleClosed(time.Unix(ts+int64(stepSec), 0), to, now) {
+		if ts < fromSec || !scale.CandleClosed(time.Unix(ts+int64(stepSec), 0), to, now) {
 			continue
 		}
 		trade, err := bitstampCandleToTrade(c, symbol, pair, stepSec)
@@ -148,7 +154,12 @@ type ohlcResponse struct {
 	} `json:"data"`
 }
 
-func fetchBitstampOHLC(ctx context.Context, endpoint string, q url.Values) ([]bitstampCandle, error) {
+// pairSymbol reduces the envelope's pair ("XLM/USD") to the path symbol ("xlmusd").
+func pairSymbol(pair string) string {
+	return strings.ToLower(strings.ReplaceAll(pair, "/", ""))
+}
+
+func fetchBitstampOHLC(ctx context.Context, endpoint, symbol string, q url.Values) ([]bitstampCandle, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"?"+q.Encode(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
@@ -169,11 +180,25 @@ func fetchBitstampOHLC(ctx context.Context, endpoint string, q url.Values) ([]bi
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("http %d: %s", resp.StatusCode, string(body))
 	}
-	var r ohlcResponse
+	// [ohlcResponse] with both levels as pointers, so a body without them is told apart from an empty window.
+	var r struct {
+		Data *struct {
+			Pair string            `json:"pair"`
+			OHLC *[]bitstampCandle `json:"ohlc"`
+		} `json:"data"`
+	}
 	if err := json.Unmarshal(body, &r); err != nil {
 		return nil, fmt.Errorf("decode: %w", err)
 	}
-	return r.Data.OHLC, nil
+	// The walk steps past an empty window, so "no candles here" must be the venue's statement. An error envelope or a
+	// renamed key decodes to nothing too, and would skip the window with exit 0.
+	if r.Data == nil || r.Data.OHLC == nil {
+		return nil, fmt.Errorf("200 body carries no data.ohlc array: %.200s", body)
+	}
+	if got := pairSymbol(r.Data.Pair); got != symbol {
+		return nil, fmt.Errorf("200 body is for pair %q, requested %q", r.Data.Pair, symbol)
+	}
+	return *r.Data.OHLC, nil
 }
 
 // errZeroVolume marks an empty candle, an expected skip.
