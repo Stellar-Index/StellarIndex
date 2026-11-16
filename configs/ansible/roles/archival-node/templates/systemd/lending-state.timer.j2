@@ -1,0 +1,22 @@
+# systemd timer: lending state history catch-up — every 10 minutes.
+#
+# Rendered by Ansible. Companion to lending-state.service.
+#
+# Each run derives only the ledgers above the lending_state watermark, so a
+# quiet cycle is one small INSERT ... SELECT. OnUnitInactiveSec measures from
+# the previous run's end, so a long initial walk never stacks a second run
+# behind the flock.
+
+[Unit]
+Description=lending state history catch-up, every 10 minutes
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/deploy/clickhouse/lending_state.sql
+
+[Timer]
+OnBootSec=45min
+OnUnitInactiveSec=10min
+RandomizedDelaySec=120
+Persistent=true
+Unit=lending-state.service
+
+[Install]
+WantedBy=timers.target

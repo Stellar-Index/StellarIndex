@@ -1140,6 +1140,26 @@ groups:
             refusing a window (lake hole, or no account_id below the
             ec-floor), or the initial build is still catching up.
 
+      # The lending state history (stellar.lending_state_hourly) backs supplied, borrowed, APR and backstop
+      # history; a stalled derive leaves those series ending early while the lake is complete. Unlike the entry
+      # index there is no `or vector(0)`: a host whose lending-state timer never ran has no series and stays quiet.
+      - alert: stellarindex_lending_state_lagging
+        expr: max(stellarindex_cursor_last_ledger{source="ledgerstream"}) - max(stellarindex_ops_job_progress_cursor{ops_job="ch-entry-history-lending"}) > 20000
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md#lending-state-lagging
+          summary: "lending state history trails the ledgerstream cursor by more than 20000 ledgers"
+          description: |
+            stellar.lending_state_hourly, derived by lending-state.timer,
+            is more than 20000 ledgers behind the ledgerstream cursor for
+            30 min. Either the timer is silent, the derive is refusing a
+            window (lake hole, or same-ledger changes without intra-ledger
+            order), or the initial catch-up is still running.
+
       # Whole-transaction skip counters (tx_read_errors, tx_event_read_errors,
       # entry_meta_unsupported) plus evicted_keys_unreadable (a ledger's evictions): each
       # means events or an entry walk vanished, indistinguishable downstream from an

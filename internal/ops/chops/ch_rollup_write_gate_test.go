@@ -103,6 +103,7 @@ func TestBoardRollupUnitsPassWrite(t *testing.T) {
 		"sponsors-rollup.service.j2",
 		"cohort-rollup.service.j2",
 		"entry-index.service.j2",
+		"lending-state.service.j2",
 	} {
 		body := readRepoFile(t, "configs/ansible/roles/archival-node/templates/systemd/"+unit)
 		start := strings.Index(body, "ExecStart=")
@@ -237,6 +238,7 @@ func TestRollupUnitsCanWriteTheirLock(t *testing.T) {
 		{"sponsors-rollup.service.j2", sponsorsRollupLockPath},
 		{"cohort-rollup.service.j2", cohortRollupLockPath},
 		{"entry-index.service.j2", entryIndexLockPath},
+		{"lending-state.service.j2", lendingLockPath},
 	} {
 		t.Run(tc.unit, func(t *testing.T) {
 			unit := readRepoFile(t, "configs/ansible/roles/archival-node/templates/systemd/"+tc.unit)

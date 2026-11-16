@@ -425,7 +425,7 @@ Fix:
 
 **What.** `stellar.entry_history_watermark` has no row for the index (or the table is missing). Reads gated on it (contract activity walk, contract stats, sponsorships, entry and signer history) serve their scan or lower-bound fallback.
 
-**Fix.** Run the job that proves the index and stamps its row: `contract_active_ledgers` → `ch-contract-ledgers-backfill -genesis -full`; `contract_instance_changes` → `ch-instance-backfill`; `entry_index`/`signer_index` → entry-index.timer; `sponsorship_events` → `ch-entry-history`. The gauge updates on the next gated read. **Escalate:** [clickhouse](clickhouse.md); metrics in the [reference](../../reference/metrics/README.md).
+**Fix.** Run the job that proves the index and stamps its row: `contract_active_ledgers` → `ch-contract-ledgers-backfill -genesis -full`; `contract_instance_changes` → `ch-instance-backfill`; `entry_index`/`signer_index` → entry-index.timer; `sponsorship_events` → `ch-entry-history`; `lending_state` → lending-state.timer (`ch-entry-history -lending-only`). The gauge updates on the next gated read. **Escalate:** [clickhouse](clickhouse.md); metrics in the [reference](../../reference/metrics/README.md).
 
 ## stellarindex_customer_webhook_delivery_failing
 
