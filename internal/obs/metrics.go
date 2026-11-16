@@ -555,9 +555,10 @@ func seedBoundedLabelSeries() {
 	for _, outcome := range []string{"lowered", "failed"} {
 		AdminKeyBudgetClampsTotal.WithLabelValues(outcome)
 	}
-	for _, outcome := range []string{RegistrationCreated, RegistrationBudgetExhausted, RegistrationDisabled} {
-		RegistrationsTotal.WithLabelValues(outcome)
-	}
+	// Unrolled, as above: a loop tips this function over the gocognit ceiling.
+	RegistrationsTotal.WithLabelValues(RegistrationCreated)
+	RegistrationsTotal.WithLabelValues(RegistrationBudgetExhausted)
+	RegistrationsTotal.WithLabelValues(RegistrationDisabled)
 	// The two mint routes that funnel through clampMintToCaller.
 	// Unrolled rather than looped: the loop tipped seedBoundedLabelSeries
 	// over the gocognit ceiling, and two literal routes read no worse.
