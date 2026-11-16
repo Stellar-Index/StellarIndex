@@ -198,8 +198,11 @@ func decodeBLNTBackstopConfig(v xdr.ScVal) ([]blntTierConfig, error) {
 // unitVariant decodes a contracttype unit enum variant, encoded as Vec[Symbol].
 func unitVariant(v xdr.ScVal) (string, error) {
 	vec, err := scval.AsVec(v)
-	if err != nil || len(vec) != 1 {
-		return "", fmt.Errorf("enum variant shape: %v", err)
+	if err != nil {
+		return "", fmt.Errorf("enum variant shape: %w", err)
+	}
+	if len(vec) != 1 {
+		return "", fmt.Errorf("enum variant shape: %d elements, want 1", len(vec))
 	}
 	return scval.AsSymbol(vec[0])
 }

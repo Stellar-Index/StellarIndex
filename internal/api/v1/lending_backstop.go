@@ -119,6 +119,7 @@ func (s *Server) backstopLineage(ctx context.Context, pool string) (protocol, re
 		return "blend", "", nil
 	case blend.PoolV1:
 		return "blend", backstopReasonV1, nil
+	case blend.PoolVersionUnknown:
 	}
 	if lr, ok := s.Lending.(blntLendingReader); ok {
 		assets, err := lr.BLNTPoolAssets(ctx, pool)
