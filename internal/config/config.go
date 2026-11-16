@@ -732,10 +732,11 @@ type APIConfig struct {
 	// Mirrors RateLimitDwell for the monthly-quota gate.
 	MonthlyQuotaDwell time.Duration `toml:"monthly_quota_dwell" doc:"Fail-open dwell window for the monthly-quota middleware before month-to-date read errors flip it to fail-CLOSED (429 + Retry-After). Mirrors middleware.DefaultMonthlyQuotaDwellTime. Negative disables the inversion (legacy fail-open-always)." default:"30s"`
 
-	// FailedAuthRateLimitPerMin caps invalid-credential attempts, which are rejected (401) before the main
-	// limiter. The cap applies independently per client IP and, in API-key modes, per presented key prefix,
-	// so rotating IPs does not reset the budget against one key. Only when auth_mode != none; 0 disables.
-	FailedAuthRateLimitPerMin int `toml:"failed_auth_rate_limit_per_min" doc:"Cap on INVALID-credential (failed-auth) attempts per minute, enforced inside the Auth middleware so credential-stuffing / API-key guessing is throttled even though auth rejects before the main rate limiter (C3-5). Only active when auth_mode != none. Applied independently per resolved client IP and, in the apikey / apikey_optional modes, per presented key prefix (the 12-char display prefix), so guessing aimed at one key from many IPs is still capped; a valid key is never throttled by it. Redis-backed when available, in-process fixed-window fallback otherwise. 0 disables the failed-auth throttle." default:"20"`
+	// FailedAuthRateLimitPerMin caps rejected-credential answers, which leave before the main limiter. Past
+	// the cap a rejection answers 429 instead of 401. It is counted per client IP and, in API-key modes, per
+	// presented key prefix. The credential is always checked first, so the cap sheds no lookup and stops no
+	// correct guess. Only when auth_mode != none; 0 disables.
+	FailedAuthRateLimitPerMin int `toml:"failed_auth_rate_limit_per_min" doc:"Cap on rejected-credential (failed-auth) answers per minute, counted inside the Auth middleware because auth rejects before the main rate limiter (C3-5). Counted independently per resolved client IP and, in the apikey / apikey_optional modes, per presented key prefix (the 12-char display prefix). Once a source is past the cap, each further rejection answers 429 with Retry-After instead of 401. Every credential is still checked before the cap is consulted: a valid key is never throttled by it, so the cap does not stop a correct guess and does not save the lookup a rejected one costs. Key length, not this cap, is what makes guessing infeasible. Only active when auth_mode != none. Redis-backed when available, in-process fixed-window fallback otherwise. 0 disables the failed-auth throttle." default:"20"`
 
 	HoldsFile string `toml:"holds_file" doc:"Path to a TOML file of [[hold]] entries (asset, contract_id, ledger_from, ledger_to, reason) that mark matching supply, balance and holder responses as under review. Polled every 15s; a missing file means no holds; an invalid or zero-byte file keeps the previous list, so delete the file to lift every hold. Empty disables the feature." default:""`
 

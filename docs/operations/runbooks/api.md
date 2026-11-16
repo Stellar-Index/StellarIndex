@@ -595,7 +595,7 @@ After an API restart no reconciliation has run and the alert cannot fire. **Esca
 
 ## stellarindex_failed_auth_rate_high
 
-**Trigger.** `sum(rate(stellarindex_failed_auth_total{outcome="rejected"}[5m])) > 1` for 15m, P3. Credential guessing may be underway; nothing got through. The throttle caps failures per IP and key prefix at `api.failed_auth_rate_limit_per_min` (default 20/min), so a sustained 1/s means more than three sources at cap or many under it.
+**Trigger.** `sum(rate(stellarindex_failed_auth_total{outcome="rejected"}[5m])) > 1` for 15m, P3. Credential guessing may be underway; nothing got through. Past `api.failed_auth_rate_limit_per_min` (default 20/min) per IP and key prefix, a rejection answers 429 and is counted as `throttled`, so a sustained 1/s of `rejected` means more than three sources at cap or many under it. The cap changes the answer only: every credential is still looked up.
 
 **Check.**
 

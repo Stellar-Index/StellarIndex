@@ -510,9 +510,12 @@ trusted_proxy_cidrs      = []
 # rollback cutover procedure before flipping this on a live API.
 # auth_backend = "redis"
 
-# failed_auth_rate_limit_per_min (C3-5) caps INVALID-credential
-# attempts per minute, independent of the main rate limiter (auth
-# rejects before it). Only active when auth_mode != none. 0 disables.
+# failed_auth_rate_limit_per_min (C3-5) caps rejected-credential
+# answers per minute, per client IP and per presented key prefix,
+# independent of the main rate limiter (auth rejects before it). Past
+# the cap a rejection answers 429 instead of 401; the credential is
+# still checked first, so a valid key is never throttled by it. Only
+# active when auth_mode != none. 0 disables.
 # failed_auth_rate_limit_per_min = 20
 
 # rate_limit_dwell / monthly_quota_dwell: how long the

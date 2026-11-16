@@ -54,9 +54,10 @@ type AuthOptions struct {
 	// Ignored otherwise.
 	SEP10 auth.SEP10Validator
 
-	// FailedAuthLimiter, when non-nil, throttles INVALID-credential attempts per client IP and per
-	// API-key prefix. Auth runs before RateLimit, so without it key-guessing would go unthrottled.
-	// Valid and anonymous requests never touch it.
+	// FailedAuthLimiter, when non-nil, counts REJECTED credentials per client IP and per API-key prefix,
+	// and past its budget turns the 401 into a 429. Auth runs before RateLimit, so nothing else bounds
+	// them. It is consulted only after the validator has rejected: valid and anonymous requests never
+	// touch it, and it saves no lookup.
 	FailedAuthLimiter *ratelimit.Bucket
 }
 
@@ -84,8 +85,8 @@ func Auth(opts AuthOptions) Middleware {
 	}
 }
 
-// rejectAuth writes the response for a failed authenticate call, throttling a CREDENTIAL FAILURE so
-// a bad key/token cannot be retried without bound. Server-misconfig 503s do not count.
+// rejectAuth writes the response for a failed authenticate call. A CREDENTIAL FAILURE spends a failed-auth
+// token and answers 429 once the budget is gone. Server-misconfig 503s do not count.
 func rejectAuth(w http.ResponseWriter, r *http.Request, mode AuthMode, opts AuthOptions, err error) {
 	rejected := isCredentialRejection(err)
 	if opts.FailedAuthLimiter != nil && rejected {
