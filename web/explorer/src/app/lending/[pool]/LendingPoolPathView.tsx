@@ -9,6 +9,7 @@ import { poolProtocol } from '../poolMeta';
 import { ConfigHistory } from './ConfigHistory';
 import { PoolDetails } from './PoolDetails';
 import { PoolReserves } from './PoolReserves';
+import { hrefFor } from '@/lib/hrefFor';
 
 /**
  * LendingPoolPathView — the runtime fallback for /lending/[pool] outside
@@ -41,7 +42,7 @@ export function LendingPoolPathView() {
       />
       {protocol && (
         <Link
-          href={`/protocols/${protocol.slug}`}
+          href={hrefFor.protocol(protocol.slug)}
           className="text-brand-600 inline-block text-xs hover:underline"
         >
           {protocol.name} protocol

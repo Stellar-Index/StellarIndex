@@ -109,16 +109,6 @@ func poolConfigView(inst *clickhouse.PoolInstance, version blend.PoolVersion) *L
 	}
 }
 
-// poolInstanceOf returns the pool instance the reserve states carry; nil when none does.
-func poolInstanceOf(states []clickhouse.BlendReserveState) *clickhouse.PoolInstance {
-	for _, st := range states {
-		if st.PoolInstance != nil {
-			return st.PoolInstance
-		}
-	}
-	return nil
-}
-
 // irModDecimals is ReserveData.ir_mod's scale: 9 on a V1 pool, 7 on V2 and BLNT.
 func irModDecimals(v blend.PoolVersion) int {
 	if v == blend.PoolV1 {
@@ -244,10 +234,15 @@ func (s *Server) handleLendingConfigHistory(w http.ResponseWriter, r *http.Reque
 	writeEnvelope(w, env)
 }
 
-// encodeLendingConfigCursor renders a row's keyset position as "<ts unixnano>.<ledger>.<tx_hash>.<op_index>.<event_index>".
+// lendingConfigHistoryKinds are the event kinds the config history serves; a cursor naming any other is malformed.
+var lendingConfigHistoryKinds = map[string]bool{
+	"queue_set_reserve": true, "cancel_set_reserve": true, "set_reserve": true, "update_pool": true, "set_status": true, "set_admin": true,
+}
+
+// encodeLendingConfigCursor renders a row's keyset position as "<ts unixnano>.<ledger>.<tx_hash>.<op_index>.<event_index>.<kind>".
 func encodeLendingConfigCursor(c timescale.LendingConfigChange) string {
 	return strconv.FormatInt(c.Ts.UTC().UnixNano(), 10) + "." + u32String(c.Ledger) + "." + c.TxHash + "." +
-		u32String(c.OpIndex) + "." + u32String(c.EventIndex)
+		u32String(c.OpIndex) + "." + u32String(c.EventIndex) + "." + c.Kind
 }
 
 // parseLendingConfigCursor decodes ?cursor=; ok=false after a problem+json on a malformed value.
@@ -266,7 +261,7 @@ func parseLendingConfigCursor(w http.ResponseWriter, r *http.Request) (timescale
 
 func decodeLendingConfigCursor(raw string) (timescale.LendingConfigCursor, bool) {
 	parts := strings.Split(raw, ".")
-	if len(parts) != 5 || len(parts[2]) != 64 {
+	if len(parts) != 6 || len(parts[2]) != 64 || !lendingConfigHistoryKinds[parts[5]] {
 		return timescale.LendingConfigCursor{}, false
 	}
 	nanos, err := strconv.ParseInt(parts[0], 10, 64)
@@ -281,5 +276,7 @@ func decodeLendingConfigCursor(raw string) (timescale.LendingConfigCursor, bool)
 		}
 		n[i] = uint32(v)
 	}
-	return timescale.LendingConfigCursor{Ts: time.Unix(0, nanos).UTC(), Ledger: n[0], TxHash: parts[2], OpIndex: n[1], EventIndex: n[2]}, true
+	return timescale.LendingConfigCursor{
+		Ts: time.Unix(0, nanos).UTC(), Ledger: n[0], TxHash: parts[2], OpIndex: n[1], EventIndex: n[2], Kind: parts[5],
+	}, true
 }

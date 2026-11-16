@@ -25,7 +25,7 @@ type gatedExplorer struct {
 	builds int
 }
 
-func (g *gatedExplorer) BlendPoolReserves(ctx context.Context, _ string, _ blend.PoolVersion, _ []string, _ map[string]blend.ReserveConfig) ([]clickhouse.BlendReserveState, error) {
+func (g *gatedExplorer) BlendPoolReserves(ctx context.Context, _ string, _ blend.PoolVersion, _ []string, _ map[string]blend.ReserveConfig) (clickhouse.BlendPoolState, error) {
 	g.mu.Lock()
 	g.builds++
 	g.mu.Unlock()
@@ -33,16 +33,16 @@ func (g *gatedExplorer) BlendPoolReserves(ctx context.Context, _ string, _ blend
 		select {
 		case <-g.gate:
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return clickhouse.BlendPoolState{}, ctx.Err()
 		}
 	}
 	if g.panics.Load() {
 		panic("decoder bug")
 	}
 	if g.fail.Load() {
-		return nil, errors.New("lake down")
+		return clickhouse.BlendPoolState{}, errors.New("lake down")
 	}
-	return nil, nil
+	return clickhouse.BlendPoolState{}, nil
 }
 
 func (g *gatedExplorer) buildCount() int {

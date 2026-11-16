@@ -2162,10 +2162,11 @@ func TestBlendPoolReserves_CurrentStateProjectionBoundsTheRead(t *testing.T) {
 
 	// (1) Differential.
 	legacy := legacyWinners(ctx)
-	states, err := reader.BlendPoolReserves(ctx, poolStr, blend.PoolV2, assets, nil)
+	state, err := reader.BlendPoolReserves(ctx, poolStr, blend.PoolV2, assets, nil)
 	if err != nil {
 		t.Fatalf("BlendPoolReserves: %v", err)
 	}
+	states := state.Reserves
 	byAsset := make(map[string]chstore.BlendReserveState, len(states))
 	for _, s := range states {
 		byAsset[s.Asset] = s
@@ -2534,10 +2535,11 @@ func TestBlendPoolReserves_SameLedgerLastChangeWins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewExplorerReader: %v", err)
 	}
-	states, err := reader.BlendPoolReserves(ctx, poolStr, blend.PoolV2, []string{assetValStr, assetGoneStr}, nil)
+	state, err := reader.BlendPoolReserves(ctx, poolStr, blend.PoolV2, []string{assetValStr, assetGoneStr}, nil)
 	if err != nil {
 		t.Fatalf("BlendPoolReserves: %v", err)
 	}
+	states := state.Reserves
 
 	byAsset := make(map[string]chstore.BlendReserveState, len(states))
 	for _, s := range states {

@@ -52,10 +52,11 @@ func TestBLNTPoolReserves_RealStorageEntries(t *testing.T) {
 	conn := &stubConn{respond: func(string) (driver.Rows, error) { return &stubRows{data: rows}, nil }}
 	r := &ExplorerReader{conn: conn, ttlVerdicts: fixedTTLCache(nil)}
 
-	states, err := r.BLNTPoolReserves(t.Context(), blnt.MainnetFixedPool, assets, configs)
+	got, err := r.BLNTPoolReserves(t.Context(), blnt.MainnetFixedPool, assets, configs)
 	if err != nil {
 		t.Fatalf("BLNTPoolReserves: %v", err)
 	}
+	states := got.Reserves
 	requested, _ := conn.args[0][0].([]string)
 	for _, row := range rows {
 		if !slices.Contains(requested, row[0].(string)) {
