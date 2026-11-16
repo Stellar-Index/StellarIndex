@@ -197,7 +197,7 @@ With `stellarindex_source_last_event_unix` it exposes a stuck cursor or duplicat
 
 Counter, label `source`.
 
-Inputs the decoder's `Matches()` claimed: the denominator of error rate, `rate(stellarindex_source_decode_errors_total[5m]) / rate(stellarindex_source_matched_events_total[5m])`. Bumped before decode. Unlike `source_events_total` (decoder output).
+Inputs the decoder's `Matches()` claimed: the denominator of error rate, `rate(stellarindex_source_decode_errors_total[5m]) / rate(stellarindex_source_matched_events_total[5m])`. Bumped before decode. Unlike `source_events_total` (decoder output). Alerted as a 1h ratio by `stellarindex_ingestion_decode_error_ratio_high`.
 
 ### `stellarindex_source_decode_errors_total`
 

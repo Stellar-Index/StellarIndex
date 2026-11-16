@@ -248,6 +248,40 @@ groups:
             minutes. Usually a contract-event-schema change or a regression
             in the decoder.
 
+      # The rate rule above needs 1 failure/s. A decoder that rejects one
+      # shape of input on a busy source (5% of SDEX claims) or everything
+      # on a quiet one stays under it, and for sources the dispatcher
+      # writes alone no projector rule sees the loss. This compares each
+      # source's failures with the inputs its decoder claimed, with a
+      # floor so the odd poison input does not ticket.
+      - alert: stellarindex_ingestion_decode_error_ratio_high
+        expr: |
+          (
+            sum by (source) (increase(stellarindex_source_decode_errors_total[1h]))
+            /
+            sum by (source) (increase(stellarindex_source_matched_events_total[1h]))
+          ) > 0.005
+          and
+          sum by (source) (increase(stellarindex_source_decode_errors_total[1h])) >= 10
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ingestion.md#stellarindex_ingestion_decode_error_ratio_high
+          summary: "Source {{ $labels.source }} fails to decode {{ $value | humanizePercentage }} of its inputs"
+          description: |
+            Source {{ $labels.source }} lost {{ $value | humanizePercentage }} of the
+            inputs its decoder claimed over the last hour. Each one is an
+            observation that never reached the served tier. A share this
+            steady is a decoder that rejects one whole shape of valid
+            input (a protocol or contract upgrade, or a regression), below
+            the 1/s the rate alert needs. Fix the decoder, then re-drive
+            the range: ch-rebuild for a source the dispatcher writes
+            alone (sdex, band, soroswap_router), projector-replay for a
+            projected one.
+
       # The dispatcher recovers a decoder panic and skips that input, which is only
       # sound if the skip is LOUD, so this pages on the FIRST occurrence.
       # Raw value, not increase(): a poison input usually panics once, so the series is

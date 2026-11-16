@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 71 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 289 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 290 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -58,6 +58,7 @@ its first link must be the rule's `runbook_url` page
 | `stellarindex_ingestion_cursor_stuck` | `increase(cursor_last_ledger[5m])` per source | == 0 while source live | ticket | [cursor-stuck](runbooks/ledger-ingest.md#stellarindex_ingestion_cursor_stuck) |
 | `stellarindex_ingestion_orphan_events` | `rate(stellarindex_source_orphan_events_total[10m])` | > 10/min per source | ticket | [orphan-events](runbooks/ingestion-events.md#stellarindex_ingestion_orphan_events) |
 | `stellarindex_ingestion_decode_error` | `rate(stellarindex_source_decode_errors_total[5m])` | > 1/s sustained 5 min | ticket | [decode-errors](runbooks/ingestion.md#stellarindex_ingestion_decode_error) |
+| `stellarindex_ingestion_decode_error_ratio_high` | `increase(source_decode_errors_total[1h]) / increase(source_matched_events_total[1h])` per source | > 0.5% with ≥ 10 failures in the hour, for 15 min | ticket | [decode-errors](runbooks/ingestion.md#stellarindex_ingestion_decode_error_ratio_high) |
 | `stellarindex_decoder_panicked` | `decoder_panics_total` (raw value) | > 0; that event shape drops until a fixed binary ships | page | [decoder-panicked](runbooks/ingestion.md#stellarindex_decoder_panicked) |
 | `stellarindex_ingestion_oracle_unknown_symbols` | `increase(source_unknown_symbols_total[25h])` | > 0 for 30 min (kept as `raw:`) | informational | [oracle-unknown-symbols](runbooks/ingestion-events.md#stellarindex_ingestion_oracle_unknown_symbols) |
 | `stellarindex_ingestion_oracle_unrepresentable_symbols` | `increase(source_unrepresentable_symbols_total[25h])` | > 0 for 30 min (slot dropped, no row) | ticket | [oracle-unknown-symbols](runbooks/ingestion-events.md#stellarindex_ingestion_oracle_unrepresentable_symbols) |
