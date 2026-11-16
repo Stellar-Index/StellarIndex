@@ -587,9 +587,7 @@ func (w *Worker) guardSnapshot(snap *Snapshot) guardResult {
 			}
 			res.history[ticker] = append(res.history[ticker], p)
 			bucket := p.Date.UTC().Truncate(24 * time.Hour)
-			// Today's history bar is stale from the day's first fetch; the current row owns today. So is the bar of any day that
-			// was open when a series held across a day roll was fetched: written, it would replace that day's last current rate.
-			if bucket.Equal(today) || w.openWhenFetched(bucket) {
+			if w.firstFetchBar(bucket, today) {
 				continue
 			}
 			batch = append(batch, FXQuote{
@@ -624,9 +622,11 @@ func (w *Worker) guardSnapshot(snap *Snapshot) guardResult {
 	return res
 }
 
-// openWhenFetched reports whether the UTC day starting at bucket had not ended when the raw history was fetched.
-func (w *Worker) openWhenFetched(bucket time.Time) bool {
-	return !w.rawHistoryFetchedAt.IsZero() && bucket.Add(24*time.Hour).After(w.rawHistoryFetchedAt)
+// firstFetchBar reports whether a history bar holds a day's first-fetch value rather than its close, and so must not be
+// written. Today's bar is one, and the current row owns today. So is the bar of any day still open when a series held across
+// a day roll was fetched: written, it would replace that day's last current rate.
+func (w *Worker) firstFetchBar(bucket, today time.Time) bool {
+	return bucket.Equal(today) || (!w.rawHistoryFetchedAt.IsZero() && bucket.Add(24*time.Hour).After(w.rawHistoryFetchedAt))
 }
 
 // writeBatch persists one guarded batch to fx_quotes and stamps the feed's liveness metrics.
