@@ -1465,13 +1465,13 @@ func TestPlatformPostgresStores(t *testing.T) {
 
 		// 7. Owner delete removes the row; the credential can no longer
 		// resolve a login assertion. Re-delete → ErrNotFound.
-		if err := passkeys.DeleteWebAuthnCredential(ctx, created.ID, alice.ID); err != nil {
+		if err := passkeys.DeleteWebAuthnCredential(ctx, created.ID, alice.ID, false); err != nil {
 			t.Fatalf("delete: %v", err)
 		}
 		if _, err := passkeys.GetWebAuthnCredentialByCredentialID(ctx, credID); !errors.Is(err, platform.ErrNotFound) {
 			t.Errorf("deleted credential still resolves by credential id: %v", err)
 		}
-		if err := passkeys.DeleteWebAuthnCredential(ctx, created.ID, alice.ID); !errors.Is(err, platform.ErrNotFound) {
+		if err := passkeys.DeleteWebAuthnCredential(ctx, created.ID, alice.ID, false); !errors.Is(err, platform.ErrNotFound) {
 			t.Errorf("re-delete: expected ErrNotFound, got %v", err)
 		}
 	})
@@ -1559,11 +1559,77 @@ func TestPlatformPostgresStores(t *testing.T) {
 
 		// Delete is owner-scoped: bob deleting alice's row by its real
 		// ID gets ErrNotFound (no probe oracle) and the row survives.
-		if err := passkeys.DeleteWebAuthnCredential(ctx, aliceCred.ID, bob.ID); !errors.Is(err, platform.ErrNotFound) {
+		if err := passkeys.DeleteWebAuthnCredential(ctx, aliceCred.ID, bob.ID, true); !errors.Is(err, platform.ErrNotFound) {
 			t.Errorf("cross-user delete: expected ErrNotFound, got %v", err)
 		}
 		if _, err := passkeys.GetWebAuthnCredentialByCredentialID(ctx, aliceCredID); err != nil {
 			t.Errorf("alice's credential vanished after bob's delete attempt: %v", err)
+		}
+	})
+
+	// Two removals racing on a two-passkey user must not both win: each would otherwise count the
+	// other's row as the survivor and the user would end with none.
+	t.Run("WebAuthnStore/KeepLastUnderConcurrentDeletes", func(t *testing.T) {
+		passkeys := postgresstore.NewWebAuthnCredentialStore(store)
+		acct, err := accounts.Create(ctx, platform.Account{
+			Name: "Race Co", Slug: "race-" + strings.ToLower(uuid.New().String()[:8]),
+			BillingEmail: "race-" + uuid.New().String() + "@p.example",
+			Tier:         platform.TierFree, Status: platform.AccountActive,
+		})
+		if err != nil {
+			t.Fatalf("create account: %v", err)
+		}
+		for round := range 10 {
+			user, err := users.CreateUser(ctx, platform.User{
+				AccountID: acct.ID, Email: "race-" + uuid.New().String() + "@p.example", Role: platform.RoleMember,
+			})
+			if err != nil {
+				t.Fatalf("create user: %v", err)
+			}
+			var ids [2]uuid.UUID
+			for i := range ids {
+				c, err := passkeys.CreateWebAuthnCredential(ctx, platform.WebAuthnCredential{
+					UserID: user.ID, Name: "key", CredentialID: []byte("race-cred-" + uuid.New().String()),
+					PublicKey: []byte{0x0C}, Transports: []string{},
+				})
+				if err != nil {
+					t.Fatalf("create cred: %v", err)
+				}
+				ids[i] = c.ID
+			}
+			var errs [2]error
+			var wg sync.WaitGroup
+			for i := range ids {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					errs[i] = passkeys.DeleteWebAuthnCredential(ctx, ids[i], user.ID, true)
+				}()
+			}
+			wg.Wait()
+			refused := 0
+			for _, err := range errs {
+				switch {
+				case errors.Is(err, platform.ErrLastCredential):
+					refused++
+				case err != nil:
+					t.Fatalf("round %d: delete: %v", round, err)
+				}
+			}
+			left, err := passkeys.ListWebAuthnCredentialsForUser(ctx, user.ID)
+			if err != nil {
+				t.Fatalf("list: %v", err)
+			}
+			if refused != 1 || len(left) != 1 {
+				t.Fatalf("round %d: %d removal(s) refused, %d passkey(s) left; want 1 and 1", round, refused, len(left))
+			}
+			// The survivor is refused again with keepLast and goes without it.
+			if err := passkeys.DeleteWebAuthnCredential(ctx, left[0].ID, user.ID, true); !errors.Is(err, platform.ErrLastCredential) {
+				t.Fatalf("round %d: keepLast delete of the only passkey: expected ErrLastCredential, got %v", round, err)
+			}
+			if err := passkeys.DeleteWebAuthnCredential(ctx, left[0].ID, user.ID, false); err != nil {
+				t.Fatalf("round %d: delete without keepLast: %v", round, err)
+			}
 		}
 	})
 

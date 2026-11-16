@@ -188,6 +188,28 @@ func (s StellarConfig) validate() error {
 	return nil
 }
 
+// validateColdTier: cold tiering's enable flag is the bucket field alone, so a bucket set without region and
+// endpoint would reach pipeline.NewColdDataStore with a zero Region and silently resolve to the AWS default
+// endpoint. Require all three together, and a cold tier that is not the hot archive itself.
+func (s StorageConfig) validateColdTier() error {
+	if s.S3ColdBucketArchive == "" {
+		return nil
+	}
+	if s.S3ColdRegion == "" {
+		return fmt.Errorf("%w: storage.s3_cold_region required when s3_cold_bucket_archive is set",
+			ErrInvalidConfig)
+	}
+	if s.S3ColdEndpoint == "" {
+		return fmt.Errorf("%w: storage.s3_cold_endpoint required when s3_cold_bucket_archive is set",
+			ErrInvalidConfig)
+	}
+	if s.ColdTierIsHotTier() {
+		return fmt.Errorf("%w: storage.s3_cold_bucket_archive at storage.s3_cold_endpoint is the hot archive "+
+			"(s3_bucket_archive at s3_endpoint) — the cold tier must be a second copy", ErrInvalidConfig)
+	}
+	return nil
+}
+
 func (s StorageConfig) validate() error { //nolint:gocognit,gocyclo // dispatch-heavy; splitting would reduce linearity
 	if s.PostgresDSN == "" {
 		return fmt.Errorf("%w: storage.postgres_dsn required", ErrInvalidConfig)
@@ -282,18 +304,8 @@ func (s StorageConfig) validate() error { //nolint:gocognit,gocyclo // dispatch-
 	if s.S3ColdSecretKeyEnv != "" && !envVarNameShapePattern.MatchString(s.S3ColdSecretKeyEnv) {
 		return errEnvNameShape("s3_cold_secret_key_env")
 	}
-	// Cold tiering's enable flag is the bucket field alone, so a bucket set without region and endpoint would
-	// reach pipeline.NewColdDataStore with a zero Region (no meaningful SigV4 signature) and silently resolve to
-	// the AWS default endpoint. Require all three together, like the hot tier's S3Endpoint block.
-	if s.S3ColdBucketArchive != "" {
-		if s.S3ColdRegion == "" {
-			return fmt.Errorf("%w: storage.s3_cold_region required when s3_cold_bucket_archive is set",
-				ErrInvalidConfig)
-		}
-		if s.S3ColdEndpoint == "" {
-			return fmt.Errorf("%w: storage.s3_cold_endpoint required when s3_cold_bucket_archive is set",
-				ErrInvalidConfig)
-		}
+	if err := s.validateColdTier(); err != nil {
+		return err
 	}
 	// ClickHouse feed-switch dependency (ADR-0041): the projector reads forward events from the CH lake, which
 	// is only kept current when the real-time dual-sink is on. projector_source=true with live_sink=false

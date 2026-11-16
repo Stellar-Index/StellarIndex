@@ -55,6 +55,7 @@ type WebAuthnCredentialStore interface {
 	UpdateWebAuthnCredentialSignCount(ctx context.Context, id uuid.UUID, signCount int64, lastUsedAt time.Time) error
 
 	// DeleteWebAuthnCredential removes a passkey. A row owned by another user is ErrNotFound, so
-	// there is no cross-user probe oracle.
-	DeleteWebAuthnCredential(ctx context.Context, id, userID uuid.UUID) error
+	// there is no cross-user probe oracle. With keepLast, removing the user's only passkey is
+	// ErrLastCredential, decided atomically with the delete.
+	DeleteWebAuthnCredential(ctx context.Context, id, userID uuid.UUID, keepLast bool) error
 }

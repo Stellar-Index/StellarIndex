@@ -96,9 +96,14 @@ One-shot, not on a timer. Reclaims ~3-4 TB.
    ```
 
    Expect JSON on stderr: `{"msg":"trim plan ready","candidates":<N>,
-   "skipped_too_fresh":<M>,"skipped_not_in_cold":0,"verify_errors":0,
-   "dry_run":true,...}`. Non-zero `skipped_not_in_cold` means local files
-   absent from aws-public-blockchain: investigate before committing.
+   "skipped_too_fresh":<M>,"skipped_not_in_cold":0,"skipped_cold_differs":0,
+   "verify_errors":0,"dry_run":true,...}`. Non-zero `skipped_not_in_cold`
+   means local files absent from aws-public-blockchain. Non-zero
+   `skipped_cold_differs` means the cold object at the key is not the same
+   bytes (size or ETag differs, or it is empty); `cold_differs_sample`
+   names the first five. Neither kind is ever deleted. Investigate before
+   committing: `galexie-mirror-verify` over the range says whether a
+   differing object is an equivalent re-export or a real mismatch.
 
    To keep older ranges hot (a replay still reads them), add
    `-newer-than-ledger <floor>`: files starting below the floor are kept
@@ -110,8 +115,9 @@ One-shot, not on a timer. Reclaims ~3-4 TB.
    - A chunk is done only at `enumeration_complete=true`: `-max-files
      100000` caps each pass at ~10% of a 1M-object chunk, so the inner
      loop is load-bearing.
-   - `--verify-upstream` cold HEADs run ~7/s serial (2,000 candidates =
-     4m47s on r1): ~40 h per 1M chunk, ~80 days for ~50M objects. Use this
+   - `--verify-upstream` checks run serially, one key listed in each tier
+     per file. Cold HEADs alone measured ~7/s (2,000 candidates = 4m47s on
+     r1): ~40 h per 1M chunk, ~80 days for ~50M objects. Use this
      loop for surgical trims and the partition straddling the cutoff. For
      bulk reclaim, verify per partition (local vs cold object-count parity
      plus sampled md5) and delete verified partitions wholesale.
@@ -177,7 +183,14 @@ Until then, re-run Step 4's chunked loop monthly.
 ## Common failure modes
 
 - **`s3_cold_bucket_archive` missing**: trim refuses to run. Fix the TOML.
-- **`cold.Exists failed` warnings**: AWS blip; trim skips those files
+- **Cold tier names the hot archive** (same endpoint and bucket path,
+  loopback spellings and default ports included): config load and the trim
+  both refuse. The cold tier must be a second copy. Two DNS names for one
+  host are not detected.
+- **`cold copy no longer proven at delete time`**: each file is proven
+  again just before its delete; one that changed since the plan is kept
+  and the run exits non-zero. Re-run.
+- **`cold copy check failed` warnings**: AWS blip; trim skips those files
   (safety posture). Re-run.
 - **Pool capacity rises during trim**: ZFS writes metadata before
   reclaiming. If it persists past the chunk, pause and `zpool scrub data`.

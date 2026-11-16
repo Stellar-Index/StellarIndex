@@ -656,11 +656,18 @@ clients get `instance` + `request_id` to open a support ticket.
 
 ## 13. Versioning discipline
 
-Rules enforced in CI (`scripts/ci/lint-openapi.sh`):
+Rules enforced in CI (`scripts/ci/lint-openapi-compat.py`, which compares
+the spec with the PR base):
 
-- No `required: true` field added to an existing response schema
-  (add-only optional).
-- No enum value *removed* from a response schema.
+- No path or method removed from `/v1`.
+- No named schema removed, and no property removed from a schema.
+- No enum value removed.
+- No new required parameter, request body or request field on an
+  existing operation (add-only optional).
+
+A deliberate break needs an `OpenAPI-Break: <reason>` commit trailer.
+Two more rules are checked in review, not by the script:
+
 - No path removed from `/v1` without a matching `/v2` and a
   migration guide in the release notes.
 - `deprecated: true` precedes removal by at least 6 months.

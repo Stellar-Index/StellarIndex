@@ -358,6 +358,14 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 		// ADR-0027 cold tier: the *_key_env pair is all-or-nothing because empty means anonymous reads on the public aws-public-
 		// blockchain bucket. A half pair would make NewColdDataStore guess, and guessing anonymous against a private bucket is a
 		// silent downgrade.
+		"cold tier names the hot archive": {
+			func(c *config.Config) {
+				c.Storage.S3ColdEndpoint = c.Storage.S3Endpoint + "/"
+				c.Storage.S3ColdRegion = c.Storage.S3Region
+				c.Storage.S3ColdBucketArchive = strings.ToUpper(c.Storage.S3BucketArchive) + "/"
+			},
+			"the cold tier must be a second copy",
+		},
 		"cold access key env without secret": {
 			func(c *config.Config) { c.Storage.S3ColdAccessKeyEnv = "STELLARINDEX_S3_COLD_ACCESS_KEY" },
 			"s3_cold_access_key_env",

@@ -357,6 +357,8 @@ if [ -z "${BASE_SHA:-}" ] && git rev-parse -q --verify origin/main >/dev/null 2>
     [ -n "$BASE_SHA" ] && export BASE_SHA && echo "verify: BASE_SHA=${BASE_SHA} (merge-base with origin/main)"
 fi
 echo "=== Baseline-growth tripwire ===" && ./scripts/ci/lint-baseline-growth.sh
+echo "=== OpenAPI compatibility self-test ===" && ./scripts/ci/lint-openapi-compat-test.sh
+echo "=== OpenAPI compatibility ===" && python3 ./scripts/ci/lint-openapi-compat.py
 echo "=== Restore-drill contract + abort-path tests ===" && bash scripts/ops/restore-drill-test.sh && bash scripts/ops/restore-drill-run-test.sh
 echo "=== config-assertions live-guard tests ===" && bash scripts/ops/config-assertions_test.sh
 echo "=== rederive-from driver tests ===" && bash scripts/ops/rederive-from-test.sh

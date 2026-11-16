@@ -22,6 +22,9 @@ var (
 	// both refuse rather than orphan the account.
 	ErrLastOwner = errors.New("platform: cannot remove the last owner")
 
+	// ErrLastCredential: the removal would leave a user with no way to sign in.
+	ErrLastCredential = errors.New("platform: cannot remove the last sign-in credential")
+
 	// ErrWebhookQuotaExceeded: the per-account cap is met; enforced atomically in one CTE-gated INSERT so concurrent requests cannot slip past.
 	ErrWebhookQuotaExceeded = errors.New("platform: webhook quota exceeded")
 

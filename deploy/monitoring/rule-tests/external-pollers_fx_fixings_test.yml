@@ -115,3 +115,95 @@ tests:
                 An hourly fixing for UZS sits outside [0.5, 1.5]
                 of the guarded daily rate for its day. Grep the API logs for
                 "fx_fixings bar disagrees" to find the bar.
+
+  # One ticker's fetch fails every hourly cycle while the fleet stamps stay
+  # fresh: only the per-ticker rule can see it. A ticker with one failed
+  # cycle stays silent.
+  - interval: 1m
+    name: one ticker failing its fetch every cycle tickets for that ticker
+    input_series:
+      - series: 'stellarindex_fx_fixings_fetch_errors_total{job="stellarindex_api",instance="r1:3000",ticker="UZS"}'
+        values: '0x59 1x59 2x59 3x59 4x59 5x59 6x59 7x59 8x59'
+      - series: 'stellarindex_fx_fixings_fetch_errors_total{job="stellarindex_api",instance="r1:3000",ticker="EUR"}'
+        values: '0x59 1x480'
+      - series: 'stellarindex_fx_fixings_last_refresh_unix{job="stellarindex_api",instance="r1:3000"}'
+        values: '0+60x540'
+      - series: 'stellarindex_fx_fixings_newest_bar_end_unix{job="stellarindex_api",instance="r1:3000"}'
+        values: '0+60x540'
+    alert_rule_test:
+      - eval_time: 150m
+        alertname: stellarindex_fx_fixings_ticker_fetch_failing
+        exp_alerts: []
+      - eval_time: 330m
+        alertname: stellarindex_fx_fixings_refresh_stale
+        exp_alerts: []
+      - eval_time: 330m
+        alertname: stellarindex_fx_fixings_series_stale
+        exp_alerts: []
+      - eval_time: 330m
+        alertname: stellarindex_fx_fixings_ticker_fetch_failing
+        exp_alerts:
+          - exp_labels:
+              ticker: UZS
+              severity: ticket
+              team: stellarindex
+              component: external-poller
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_fx_fixings_ticker_fetch_failing
+              summary: "fx_fixings bar fetch keeps failing for UZS"
+              description: |
+                The hourly fx_fixings bar fetch for UZS has failed in
+                most cycles of the last 6 h. Its closed fiat-cross buckets
+                past the last stored bar are withheld (fx_leg_unavailable) or
+                fall back to the daily arm, while the fleet-wide freshness
+                alerts stay green on the other tickers. Grep the API logs for
+                "fx_fixings bar fetch failed" for the vendor's answer.
+
+  - interval: 1m
+    name: a bar refused on every cycle tickets for its ticker
+    input_series:
+      - series: 'stellarindex_fx_fixings_bars_refused_total{job="stellarindex_api",instance="r1:3000",ticker="TRY"}'
+        values: '0x59 1x59 2x59 3x59 4x59 5x59 6x59 7x59 8x59'
+    alert_rule_test:
+      - eval_time: 330m
+        alertname: stellarindex_fx_fixings_ticker_bars_refused
+        exp_alerts:
+          - exp_labels:
+              ticker: TRY
+              severity: ticket
+              team: stellarindex
+              component: external-poller
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_fx_fixings_ticker_bars_refused
+              summary: "fx_fixings bars for TRY keep being refused by the gate"
+              description: |
+                The fixing gate has refused bars for TRY in most cycles
+                of the last 6 h. A refused bar is never stored, so the buckets
+                it would bind are withheld. Grep the API logs for
+                "fx_fixings gate refused bar" for the bar and its close.
+
+  # One failed insert is retried by the next cycle; two in 3 h ticket.
+  - interval: 1m
+    name: repeated insert failures ticket, a single one does not
+    input_series:
+      - series: 'stellarindex_fx_fixings_write_errors_total{job="stellarindex_api",instance="r1:3000"}'
+        values: '0x59 1x239 2x59 3x200'
+    alert_rule_test:
+      - eval_time: 200m
+        alertname: stellarindex_fx_fixings_write_failing
+        exp_alerts: []
+      - eval_time: 400m
+        alertname: stellarindex_fx_fixings_write_failing
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: external-poller
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_fx_fixings_write_failing
+              summary: "fx_fixings inserts are failing"
+              description: |
+                Two or more fx_fixings inserts failed in the last 3 h. The
+                bars of the tickers in those batches were fetched and accepted
+                but not stored. Grep the API logs for "fx_fixings insert
+                failed"; check Postgres health first.

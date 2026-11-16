@@ -107,23 +107,63 @@ const MAX_ID_LENGTH = 160;
 // arbitrary attacker-controlled text (markup, whitespace, path traversal).
 const ASSET_LEG_RE = /^[A-Za-z0-9_:-]{1,80}$/;
 
-// A per-IP token bucket. This is deliberately module-scope state, not
+// A per-client token bucket. This is deliberately module-scope state, not
 // KV — CF Pages Functions reuse an isolate across many requests, so this is
 // a real (if best-effort, per-isolate) gate against a single client hammering
 // the render path, layered on top of (not replacing) the OG_DISABLED
 // dashboard kill-switch for a sustained/distributed flood.
 const RATE_LIMIT_WINDOW_MS = 10_000;
 const RATE_LIMIT_MAX_PER_WINDOW = 20;
-let rateLimitBuckets = new Map(); // ip -> { count, windowStart }
+const RATE_LIMIT_MAX_BUCKETS = 5000;
+let rateLimitBuckets = new Map(); // rateLimitKey(ip) -> { count, windowStart }
+
+// One IPv6 subscriber holds a whole /64, so the address itself is a key the
+// client picks: the bucket is the /64. IPv4 keeps the full address.
+export function rateLimitKey(ip) {
+  if (!ip.includes(':')) return ip;
+  const [head, tail = ''] = ip.split('%')[0].toLowerCase().split('::');
+  const left = head ? head.split(':') : [];
+  const right = tail ? tail.split(':') : [];
+  const groups = ip.includes('::')
+    ? [
+        ...left,
+        ...Array(Math.max(0, 8 - left.length - right.length)).fill('0'),
+        ...right,
+      ]
+    : left;
+  return groups
+    .slice(0, 4)
+    .map((g) => g.replace(/^0+(?=.)/, ''))
+    .join(':');
+}
+
+// Bounds the map within one isolate's lifetime. Keys still under budget go
+// before keys that are being refused, so a stream of new keys cannot reset a
+// client that is already limited (clearing the whole map did exactly that).
+function evictRateLimitBuckets(now) {
+  for (const [key, b] of rateLimitBuckets) {
+    if (now - b.windowStart >= RATE_LIMIT_WINDOW_MS)
+      rateLimitBuckets.delete(key);
+  }
+  const target = RATE_LIMIT_MAX_BUCKETS * 0.9;
+  for (const [key, b] of rateLimitBuckets) {
+    if (rateLimitBuckets.size <= target) return;
+    if (b.count <= RATE_LIMIT_MAX_PER_WINDOW) rateLimitBuckets.delete(key);
+  }
+  for (const key of rateLimitBuckets.keys()) {
+    if (rateLimitBuckets.size <= target) return;
+    rateLimitBuckets.delete(key);
+  }
+}
 
 function isRateLimited(ip) {
   const now = Date.now();
-  const bucket = rateLimitBuckets.get(ip);
+  const key = rateLimitKey(ip);
+  const bucket = rateLimitBuckets.get(key);
   if (!bucket || now - bucket.windowStart >= RATE_LIMIT_WINDOW_MS) {
-    rateLimitBuckets.set(ip, { count: 1, windowStart: now });
-    // Opportunistic eviction so an unbounded stream of distinct IPs can't
-    // grow this map forever within one isolate's lifetime.
-    if (rateLimitBuckets.size > 5000) rateLimitBuckets.clear();
+    rateLimitBuckets.set(key, { count: 1, windowStart: now });
+    if (rateLimitBuckets.size > RATE_LIMIT_MAX_BUCKETS)
+      evictRateLimitBuckets(now);
     return false;
   }
   bucket.count += 1;

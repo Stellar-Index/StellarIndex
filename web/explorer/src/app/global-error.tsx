@@ -1,5 +1,9 @@
 'use client';
 
+import { useEffect } from 'react';
+
+import { reportClientError } from '@/lib/client-errors';
+
 /**
  * global-error — the boundary of last resort. Renders only when the
  * root layout itself (or something above every segment boundary)
@@ -15,6 +19,15 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  // The shell crashing is the failure every visitor sees, so it is reported.
+  useEffect(() => {
+    reportClientError({
+      message: error?.message ?? '',
+      digest: error?.digest,
+      section: 'global',
+    });
+  }, [error]);
+
   return (
     <html lang="en" style={{ colorScheme: 'dark' }}>
       <body
