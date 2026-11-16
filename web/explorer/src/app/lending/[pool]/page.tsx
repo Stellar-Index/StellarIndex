@@ -17,6 +17,8 @@ import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES, shellMetadata } from '@/lib/seo';
 import type { paths } from '@/api/types';
 
 import { LendingPoolPathView } from './LendingPoolPathView';
+import { AuctionsPanel } from './AuctionsPanel';
+import { BackstopPanel } from './BackstopPanel';
 import { ConfigHistory } from './ConfigHistory';
 import { PoolDetails } from './PoolDetails';
 import { PoolReserves } from './PoolReserves';
@@ -268,6 +270,8 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
       )}
       <PoolDetails pool={pool} />
       <PoolReserves pool={pool} />
+      <BackstopPanel pool={pool} />
+      <AuctionsPanel pool={pool} />
       <ConfigHistory pool={pool} />
     </Container>
   );
