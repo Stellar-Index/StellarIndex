@@ -339,16 +339,22 @@ func keyQuotaCeiling(a platform.Account) int64 {
 	return max(a.Tier.MaxMonthlyQuota(), a.MonthlyRequestQuotaOverride)
 }
 
+// keyRateCeiling is the most any one key of a may be allowed per minute: the tier's ceiling, or a larger staff override.
+// A key minted through POST /v1/account/keys copies its parent's resolved rate, so it can hold the override's value as its own.
+func keyRateCeiling(a platform.Account) int {
+	return max(a.Tier.MaxRateLimitPerMin(), a.RateLimitPerMinOverride)
+}
+
 // clampKeysAfterTierChange lowers every key to the account's budgets when a PATCH LOWERED them, since the enforced rate
 // limit and monthly quota are read off the key record, not accounts.tier. Raises are not mirrored. The account-level
-// overrides are NOT clamped: they are explicit, audited fields of the same request. A quota override above the tier's
+// overrides are NOT clamped: they are explicit, audited fields of the same request. An override above the tier's
 // ceiling is honoured as the ceiling, so the clamp also runs when that override is lowered or cleared.
 func (s *Server) clampKeysAfterTierChange(
 	ctx context.Context, subject auth.Subject, before, acct platform.Account,
 ) (lowered, failed int) {
 	priorTier := before.Tier
 	var ceiling keyCeilings
-	if rate := acct.Tier.MaxRateLimitPerMin(); rate < priorTier.MaxRateLimitPerMin() {
+	if rate := keyRateCeiling(acct); rate < keyRateCeiling(before) {
 		ceiling.rate = rate
 	}
 	if quota := keyQuotaCeiling(acct); quota < keyQuotaCeiling(before) {

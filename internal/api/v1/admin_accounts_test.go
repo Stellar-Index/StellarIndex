@@ -590,6 +590,54 @@ func TestAdminAccountOverrides_TierLoweringClampsKeyBudgets(t *testing.T) {
 	}
 }
 
+// A key minted through POST /v1/account/keys copies its parent's resolved rate, so under a rate override it stores the
+// override's value as its own. Lowering or clearing the override must lower those keys; the floor alone never would.
+func TestAdminAccountOverrides_RateOverrideLoweringClampsKeyBudgets(t *testing.T) {
+	const freeCeiling = 6000
+	cases := []struct {
+		name, patch string
+		want        int
+	}{
+		{"cleared", `{"rate_limit_per_min_override":0}`, freeCeiling},
+		{"lowered above the tier", `{"rate_limit_per_min_override":30000}`, 30_000},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			acctID := uuid.MustParse("22222222-2222-2222-2222-222222222223")
+			accounts := newFakePlatformAccountStore(platform.Account{
+				ID: acctID, Name: "Boosted", Slug: "boosted", Tier: platform.TierFree,
+				Status: platform.AccountActive, RateLimitPerMinOverride: 60_000,
+			})
+			pgKeys := &fakePlatformAPIKeysForBridge{byAcct: map[uuid.UUID][]platform.APIKey{
+				acctID: {
+					{ID: "pg_minted_high", AccountID: acctID, RateLimitPerMin: 60_000, KeyHash: []byte{0xab}},
+					{ID: "pg_low", AccountID: acctID, RateLimitPerMin: 30},
+				},
+			}}
+			ident := auth.AccountIdentifier("boosted")
+			redisKeys := &fakeSelfServiceKeyManager{keys: map[string][]auth.APIKeyRecord{
+				ident: {
+					{KeyID: "rk_child", Identifier: ident, RateLimitPerMin: 60_000},
+					{KeyID: "rk_low", Identifier: ident, RateLimitPerMin: 60},
+				},
+			}}
+			ts := newAdminClampServer(t, accounts, v1.APIKeyBudgetStores{Platform: pgKeys, Redis: redisKeys}, &recordingAuditSink{})
+
+			resp := patchJSON(t, ts.URL+"/v1/admin/accounts/"+acctID.String(), "boost over", tc.patch)
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				t.Fatalf("status = %d, want 200; body=%s", resp.StatusCode, body)
+			}
+			if len(pgKeys.updates) != 1 || pgKeys.updates[0].ID != "pg_minted_high" || pgKeys.updates[0].RateLimitPerMin != tc.want {
+				t.Errorf("platform key updates = %+v, want only pg_minted_high lowered to %d", pgKeys.updates, tc.want)
+			}
+			if len(redisKeys.updates) != 1 || redisKeys.updates[0].keyID != "rk_child" || redisKeys.updates[0].rateLimit != tc.want {
+				t.Errorf("redis key updates = %+v, want only rk_child lowered to %d — a key minted under the override keeps the raised budget", redisKeys.updates, tc.want)
+			}
+		})
+	}
+}
+
 // TestAdminAccountOverrides_TierRaiseDoesNotTouchKeys: the clamp is one-directional on purpose; budgets are raised at mint
 // time, and silently lifting existing keys on a comp would grant throughput nobody asked for.
 func TestAdminAccountOverrides_TierRaiseDoesNotTouchKeys(t *testing.T) {

@@ -3919,7 +3919,10 @@ export interface paths {
          *     as an account-wide floor and the quota override as a ceiling,
          *     applied by the API-key validator on either auth backend (within
          *     30 seconds on the Redis backend's account cache) — the floor raises
-         *     keys budgeted below it, never lowers a key budgeted above.
+         *     keys budgeted below it, never lowers a key budgeted above. Lowering
+         *     or clearing either override lowers every key that was minted above
+         *     the account's new ceiling (the tier's, or the remaining override
+         *     if larger) down to it.
          *
          *     `status` is the account-level KILL SWITCH. Moving an account to
          *     `suspended` or `closed` stops its API keys authenticating and
