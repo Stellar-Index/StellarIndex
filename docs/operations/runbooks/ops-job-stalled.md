@@ -5,7 +5,7 @@ status: draft
 severity: P3
 ---
 
-# Runbook — `stellarindex_ops_job_heartbeat_stale` / `stellarindex_ops_job_no_progress` / `stellarindex_ops_job_run_failed` / `stellarindex_entry_index_lagging`
+# Runbook — `stellarindex_ops_job_heartbeat_stale` / `stellarindex_ops_job_no_progress` / `stellarindex_ops_job_run_failed` / `stellarindex_entry_index_lagging` / `stellarindex_lending_state_lagging`
 
 ## At a glance
 
@@ -140,6 +140,16 @@ Check and fix:
 3. The initial build fires this alert until it catches up; that is progress while `progress_cursor` keeps rising.
 4. Re-derive one window by hand after a lake repair (rows collapse on merge; the watermark never moves down):
    `stellarindex-ops ch-entry-index -ch-addr 127.0.0.1:9300 -from <l> -to <l> -write`.
+
+## Lending state lagging
+
+`stellarindex_lending_state_lagging` fires when the ledger `ch-entry-history-lending` has derived through (its heartbeat's `progress_cursor`) trails the ledgerstream cursor by more than 20,000 ledgers for 30 minutes. A host where the job never reported stays quiet. The table backs lending supplied, borrowed, APR and backstop history; a stall ends those series early while the lake stays complete.
+
+Check and fix:
+
+1. Timer alive: `systemctl list-timers lending-state.timer` and `journalctl -u lending-state.service -n 50`. The timer is enabled by hand as the last step of the runbook in `deploy/clickhouse/lending_state.sql`.
+2. A refused window names its reason: `is not contiguous` (lake hole; wait for `ch-backfill`), `lacks known pools` (the lake is missing a factory `deploy` event), or `without intra-ledger order` (the lake range's `intra_ledger_seq` must be re-derived first, then the range deleted and replayed per the replay decision rule in `docs/architecture/ingest-pipeline.md`).
+3. The initial catch-up fires this alert until it reaches the tip; that is progress while `progress_cursor` keeps rising.
 
 ## stellarindex_catchup_lane_failed
 
