@@ -34,21 +34,19 @@ type LendingEmissionClaims struct {
 // claimWindow is the 30-day window (asOf - 30 days, asOf]; $2 is the as-of time.
 const claimWindow = `ledger_close_time > $2::timestamptz - INTERVAL '30 days'`
 
-// claimTotalsCols selects the LendingClaimTotals columns in scan order; amount is the claimed-amount expression.
-func claimTotalsCols(amount string) string {
-	return `count(*), count(*) FILTER (WHERE ` + claimWindow + `),
+// claimTotalsCols selects the LendingClaimTotals columns in scan order.
+const claimTotalsCols = `count(*), count(*) FILTER (WHERE ` + claimWindow + `),
 		count(DISTINCT user_address), count(DISTINCT user_address) FILTER (WHERE ` + claimWindow + `),
-		COALESCE(sum(` + amount + `), 0)::text, COALESCE(sum(` + amount + `) FILTER (WHERE ` + claimWindow + `), 0)::text`
-}
+		COALESCE(sum(amount), 0)::text, COALESCE(sum(amount) FILTER (WHERE ` + claimWindow + `), 0)::text`
 
-var (
-	blendPoolClaimsSQL = `SELECT ` + claimTotalsCols("amount") + `
+const (
+	blendPoolClaimsSQL = `SELECT ` + claimTotalsCols + `
 		  FROM blend_emissions
 		 WHERE pool = $1 AND event_kind = 'claim' AND ledger_close_time <= $2::timestamptz`
-	blntPoolClaimsSQL = `SELECT ` + claimTotalsCols("amount") + `
+	blntPoolClaimsSQL = `SELECT ` + claimTotalsCols + `
 		  FROM blnt_events
 		 WHERE contract_id = $1 AND contract_role = 'pool' AND event_kind = 'claim' AND ledger_close_time <= $2::timestamptz`
-	blntBackstopClaimsSQL = `SELECT tier, ` + claimTotalsCols("amount") + `,
+	blntBackstopClaimsSQL = `SELECT tier, ` + claimTotalsCols + `,
 		       COALESCE(sum(amount2), 0)::text, COALESCE(sum(amount2) FILTER (WHERE ` + claimWindow + `), 0)::text,
 		       COALESCE(sum((attributes->>'shares')::numeric), 0)::text,
 		       COALESCE(sum((attributes->>'shares')::numeric) FILTER (WHERE ` + claimWindow + `), 0)::text
