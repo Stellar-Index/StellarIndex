@@ -180,7 +180,7 @@ type fakeEvents struct {
 }
 
 func (f *fakeEvents) StreamEvents(_ context.Context, from, to uint32, contractIDs, _, _ []string,
-	_ bool, fn func(events.Event) error,
+	_, _ bool, fn func(events.Event) error,
 ) error {
 	f.mu.Lock()
 	f.filters = append(f.filters, slices.Clone(contractIDs))

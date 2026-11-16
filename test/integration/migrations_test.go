@@ -227,6 +227,9 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	// 0196 — trades.tx_index, the post-insert apply-order tag.
 	assertColumnType(t, db, ctx, "trades", "tx_index", "integer")
 
+	// 0226 — blnt_events.tx_index, the transaction's apply position.
+	assertColumnType(t, db, ctx, "blnt_events", "tx_index", "integer")
+
 	// 0203 — sushiswap_v3_position_events: hypertable, compression, no
 	// retention, bigint generation from creation.
 	assertHypertableExists(t, db, ctx, "sushiswap_v3_position_events")

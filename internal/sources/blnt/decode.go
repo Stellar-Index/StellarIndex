@@ -45,6 +45,10 @@ func decodeEvent(role Role, kind string, ev *events.Event) (Event, error) {
 		EventType:  kind,
 		Attributes: map[string]any{},
 	}
+	if ev.TransactionIndex > 0 {
+		ti := uint32(ev.TransactionIndex - 1) //nolint:gosec // bounded by a ledger's transaction count.
+		out.TxIndex = &ti
+	}
 	if role == RolePool {
 		out.Pool = ev.ContractID
 	}

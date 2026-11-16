@@ -34,6 +34,8 @@ type applyOrderer struct {
 	fn      func(events.Event) error
 	buf     []events.Event
 	ledgers []uint32
+	// stampTxIndex looks up every ledger, single-transaction ones too, and sets each event's TransactionIndex (1-based).
+	stampTxIndex bool
 }
 
 func newApplyOrderer(ctx context.Context, lookup txIndexLookup, fn func(events.Event) error) *applyOrderer {
@@ -57,12 +59,13 @@ func (o *applyOrderer) add(ev events.Event) error {
 
 // flush resolves the batch's tx_index values, stable-sorts by (ledger, tx_index) and forwards every event. A transaction missing from
 // stellar.transactions fails the stream: guessing its apply order is the bug this type exists to remove. A ledger whose buffered events
-// all share one transaction has no order to resolve, so it is not looked up; a sparse contract's ledgers are mostly that case.
+// all share one transaction has no order to resolve, so it is not looked up unless stampTxIndex; a sparse contract's ledgers are mostly
+// that case.
 func (o *applyOrderer) flush() error {
 	if len(o.buf) == 0 {
 		return nil
 	}
-	multi := o.multiTxLedgers()
+	multi := o.ledgersToResolve()
 	var idx map[ledgerTx]uint32
 	needed := make(map[uint32]bool, len(multi))
 	if len(multi) > 0 {
@@ -85,6 +88,9 @@ func (o *applyOrderer) flush() error {
 			return fmt.Errorf("clickhouse: apply order unresolved: tx %s in ledger %d has contract_events but no stellar.transactions row", k.TxHash, k.Ledger)
 		}
 		order[i] = ti
+		if o.stampTxIndex {
+			o.buf[i].TransactionIndex = int(ti) + 1
+		}
 	}
 	perm := make([]int, len(o.buf))
 	for i := range perm {
@@ -105,6 +111,14 @@ func (o *applyOrderer) flush() error {
 	o.buf = o.buf[:0]
 	o.ledgers = o.ledgers[:0]
 	return nil
+}
+
+// ledgersToResolve returns every buffered ledger when stamping, else only the multi-transaction ones.
+func (o *applyOrderer) ledgersToResolve() []uint32 {
+	if o.stampTxIndex {
+		return o.ledgers
+	}
+	return o.multiTxLedgers()
 }
 
 // multiTxLedgers returns the buffered ledgers whose events span more than one transaction, ascending.

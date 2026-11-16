@@ -246,7 +246,7 @@ func TestCap67SupplyFill_DrainsToTheFloor(t *testing.T) {
 		return nil
 	}
 	cap67LakeMinLedger = func(context.Context, string) (uint32, error) { return 400, nil }
-	streamCap67TransferEvents = func(_ context.Context, _ string, _, _ uint32, _, topic0Syms, _ []string, _, _, _ bool, _ func(events.Event) error) error {
+	streamCap67TransferEvents = func(_ context.Context, _ string, _, _ uint32, _, topic0Syms, _ []string, _, _, _, _ bool, _ func(events.Event) error) error {
 		if !slices.Equal(topic0Syms, cap67SupplyTopics) {
 			t.Errorf("fill streamed topics %v, want the supply topics %v only", topic0Syms, cap67SupplyTopics)
 		}

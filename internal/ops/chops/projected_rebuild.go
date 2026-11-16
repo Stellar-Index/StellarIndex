@@ -649,6 +649,7 @@ func runProjectedRebuildWorker(ctx context.Context, sched *windowScheduler, opts
 			false,                           // no FINAL: idempotent downstream writes absorb any duplicate (matches the live projector's CH feed-switch mode)
 			true,                            // withOpArgs: mirrors the live projector, which routes every source uniformly (redstone needs it; the window is bounded so the wide column is cheap)
 			opts.Source.NeedsStateWriteKeys, // mirrors the live projector: redstone's exact subset attribution reads written contract-data keys
+			opts.Source.NeedsTxIndex,        // mirrors the live projector: blnt persists each event's apply position
 			func(ev events.Event) error {
 				windowRead++
 				emitted, insertErrs := applyProjectedEvent(ctx, opts, logger, counters, ev)

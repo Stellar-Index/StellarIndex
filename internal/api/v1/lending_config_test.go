@@ -202,6 +202,7 @@ func TestLendingConfigHistory_MapsEveryKind(t *testing.T) {
 // TestLendingConfigHistory_PaginatesWithAKeysetCursor — a full page returns the last row's position, which round-trips.
 func TestLendingConfigHistory_PaginatesWithAKeysetCursor(t *testing.T) {
 	rows := historyRows(t)
+	rows[1].TxOrder = 4
 	stub := &stubConfigHistoryReader{rows: rows}
 	srv := v1.New(v1.Options{Lending: stub})
 	code, got, next := getConfigHistory(t, srv, "?limit=2")
@@ -213,16 +214,18 @@ func TestLendingConfigHistory_PaginatesWithAKeysetCursor(t *testing.T) {
 		t.Fatalf("cursor page status = %d changes = %+v, want rows 2 and 3", code, got.Changes)
 	}
 	want := timescale.LendingConfigCursor{
-		Ts: rows[1].Ts, Ledger: rows[1].Ledger, TxHash: rows[1].TxHash, OpIndex: 11, EventIndex: 21, Kind: "update_pool",
+		Ts: rows[1].Ts, Ledger: rows[1].Ledger, TxHash: rows[1].TxHash, OpIndex: 11, EventIndex: 21, Kind: "update_pool", TxOrder: 4,
 	}
 	if !stub.gotCursor.Ts.Equal(want.Ts) || stub.gotCursor.Ledger != want.Ledger || stub.gotCursor.TxHash != want.TxHash ||
-		stub.gotCursor.OpIndex != want.OpIndex || stub.gotCursor.EventIndex != want.EventIndex || stub.gotCursor.Kind != want.Kind {
+		stub.gotCursor.OpIndex != want.OpIndex || stub.gotCursor.EventIndex != want.EventIndex || stub.gotCursor.Kind != want.Kind ||
+		stub.gotCursor.TxOrder != want.TxOrder {
 		t.Errorf("cursor = %+v, want %+v", stub.gotCursor, want)
 	}
 	tx := strings.Repeat("b", 64)
 	for _, q := range []string{
-		"?cursor=junk", "?cursor=1.2.abc.3.4.set_reserve", "?cursor=1.2." + tx + ".3.4", "?cursor=1.2." + tx + ".3.4.transfer",
-		"?limit=0", "?limit=201",
+		"?cursor=junk", "?cursor=1.2.abc.3.4.set_reserve.0", "?cursor=1.2." + tx + ".3.4", "?cursor=1.2." + tx + ".3.4.transfer.0",
+		"?cursor=1.2." + tx + ".3.4.set_reserve",
+		"?cursor=1.2." + tx + ".3.4.set_reserve.-2", "?cursor=1.2." + tx + ".3.4.set_reserve.x", "?limit=0", "?limit=201",
 	} {
 		if code, _, _ := getConfigHistory(t, srv, q); code != http.StatusBadRequest {
 			t.Errorf("%s: status = %d, want 400", q, code)
