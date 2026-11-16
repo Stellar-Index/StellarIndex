@@ -5,6 +5,7 @@ package integration_test
 import (
 	"context"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -179,5 +180,111 @@ func TestBLNTBackstopByUser_ReplaysTheWithdrawalQueue(t *testing.T) {
 	if f.Shares != "18446744073709551517" || len(f.Queued) != 2 || f.Queued[0].Shares != "6" || f.Queued[0].Expiration.Unix() != 2_000 ||
 		f.Queued[1].Shares != "7" || f.Queued[1].Expiration.Unix() != 3_000 {
 		t.Errorf("SecondLoss = %+v, want 2^64+5-104 shares with queue [6@2000, 7@3000]", f)
+	}
+}
+
+// TestLendingAuctions_SameLedgerDeleteAfterAClosedAuction — an auction filled to 100%, then a new auction and its delete in one
+// ledger: the delete is the new auction's (the earlier one is already closed), never a false deletion of the earlier one.
+func TestLendingAuctions_SameLedgerDeleteAfterAClosedAuction(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	store := openLendingStore(t, ctx)
+
+	const pool = blnt.MainnetFixedPool
+	user := mustAccountStrkey(t, 61)
+	ts := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	ev := func(ledger uint32, tx, kind string, attrs map[string]any) timescale.BLNTEvent {
+		return timescale.BLNTEvent{
+			ContractID: pool, Ledger: ledger, LedgerCloseTime: ts.Add(time.Duration(ledger-66_000_000) * time.Second),
+			TxHash: strings.Repeat(tx, 64), ContractRole: string(blnt.RolePool), EventKind: kind, Pool: pool, UserAddress: user, Attributes: attrs,
+		}
+	}
+	newAuction := map[string]any{"auction_type": 0, "percent": 50, "auction_data": map[string]any{"bid": map[string]any{}, "lot": map[string]any{}, "block": 1}}
+	for _, e := range []timescale.BLNTEvent{
+		ev(66_000_001, "1", "new_auction", newAuction),
+		ev(66_000_002, "2", "fill_auction", map[string]any{"auction_type": 0, "filler": user, "fill_percent": "100"}),
+		ev(66_000_003, "f", "new_auction", newAuction),
+		ev(66_000_003, "0", "delete_auction", map[string]any{"auction_type": 0}),
+	} {
+		if err := store.InsertBLNTEvent(ctx, e); err != nil {
+			t.Fatalf("InsertBLNTEvent %s: %v", e.EventKind, err)
+		}
+	}
+	got, _, err := store.LendingAuctions(ctx, pool, 10, timescale.LendingConfigCursor{})
+	if err != nil || len(got) != 2 {
+		t.Fatalf("auctions = %+v (%v)", got, err)
+	}
+	if got[0].Deleted == nil || got[0].Deleted.Ledger != 66_000_003 || got[1].Deleted != nil || len(got[1].Fills) != 1 {
+		t.Fatalf("new = %+v earlier = %+v, want the delete on the new auction", got[0], got[1])
+	}
+}
+
+// TestLendingAuctions_DeepPageReadStopsAtTheNextAuction — a BLNT interest auction's user is the backstop, so every later auction
+// shares its key; an old page reads only up to that key's next auction and is not degraded by thousands of later events.
+func TestLendingAuctions_DeepPageReadStopsAtTheNextAuction(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	store := openLendingStore(t, ctx)
+
+	const pool, later = blnt.MainnetFixedPool, 5_000
+	ts := time.Now().UTC().Add(-24 * time.Hour).Truncate(time.Second)
+	ev := func(i int, kind string, attrs map[string]any) timescale.BLNTEvent {
+		return timescale.BLNTEvent{
+			ContractID: pool, Ledger: 66_100_000 + uint32(i), LedgerCloseTime: ts.Add(time.Duration(i) * time.Second), //nolint:gosec // small test index
+			TxHash: pad64("d1", i), ContractRole: string(blnt.RolePool), EventKind: kind, Pool: pool, UserAddress: blnt.MainnetBackstop, Attributes: attrs,
+		}
+	}
+	newAuction := map[string]any{"auction_type": 2, "auction_data": map[string]any{"bid": map[string]any{}, "lot": map[string]any{}, "block": 1}}
+	events := []timescale.BLNTEvent{ev(1, "new_auction", newAuction), ev(2, "fill_auction", map[string]any{"auction_type": 2, "filler": blnt.MainnetBackstop, "fill_percent": "100"})}
+	for i := range later {
+		events = append(events, ev(3+i, "new_auction", newAuction))
+	}
+	for _, e := range events {
+		if err := store.InsertBLNTEvent(ctx, e); err != nil {
+			t.Fatalf("InsertBLNTEvent: %v", err)
+		}
+	}
+	next := events[2]
+	got, truncated, err := store.LendingAuctions(ctx, pool, 1, timescale.LendingConfigCursor{
+		Ts: next.LedgerCloseTime, Ledger: next.Ledger, TxHash: next.TxHash,
+	})
+	if err != nil || truncated || len(got) != 1 || got[0].Ledger != events[0].Ledger || len(got[0].Fills) != 1 {
+		t.Fatalf("deep page = %+v truncated=%v (%v)", got, truncated, err)
+	}
+}
+
+// TestBLNTBackstopByUser_SameLedgerQueueThenDequeue — a queue and its dequeue execute in that order in two transactions of one
+// ledger whose hashes sort the dequeue first: the position is not poisoned, the totals are exact and the queue's expirations are
+// marked unknown.
+func TestBLNTBackstopByUser_SameLedgerQueueThenDequeue(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	store := openLendingStore(t, ctx)
+
+	const pool = blnt.MainnetFixedPool
+	user := mustAccountStrkey(t, 62)
+	ts := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	ev := func(ledger uint32, tx, kind, amount2 string, attrs map[string]any) timescale.BLNTEvent {
+		return timescale.BLNTEvent{
+			ContractID: blnt.MainnetBackstop, Ledger: ledger, LedgerCloseTime: ts.Add(time.Duration(ledger-66_200_000) * time.Second),
+			TxHash: strings.Repeat(tx, 64), ContractRole: string(blnt.RoleBackstop), EventKind: kind, Pool: pool, UserAddress: user,
+			Tier: "FirstLoss", Amount2: amount2, Attributes: attrs,
+		}
+	}
+	for _, e := range []timescale.BLNTEvent{
+		ev(66_200_001, "1", "deposit", "18446744073709551621", nil),
+		ev(66_200_002, "f", "queue_withdrawal", "100", map[string]any{"expiration": 5_000}), // executed first
+		ev(66_200_002, "0", "dequeue_withdrawal", "60", nil),
+	} {
+		if err := store.InsertBLNTEvent(ctx, e); err != nil {
+			t.Fatalf("InsertBLNTEvent %s: %v", e.EventKind, err)
+		}
+	}
+	folds, err := store.BLNTBackstopByUser(ctx, user)
+	if err != nil || len(folds) != 1 {
+		t.Fatalf("folds = %+v (%v)", folds, err)
+	}
+	if f := folds[0]; f.Shares != "18446744073709551621" || !f.ExpirationsUnknown || f.QueuedShares != "40" || f.Queued != nil {
+		t.Fatalf("fold = %+v, want 2^64+5 shares, 40 queued, expirations unknown", f)
 	}
 }

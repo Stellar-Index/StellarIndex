@@ -17,26 +17,35 @@ type BackstopBalance struct {
 	Q4W    *big.Int
 }
 
-// BackstopTierState is one backstop tier's balance; Balance is nil when the lake holds no live entry (unavailable, never zero).
+// BackstopTierState is one backstop tier's balance; Balance is nil when it cannot be read (unavailable, never a guessed zero).
 type BackstopTierState struct {
 	Tier    string // "" for Blend's single, unnamed tier
 	Balance *BackstopBalance
+	// Asset, Token and TakeRateWeight are a BLNT tier's PoolBackstopConfig entry; zero when the configuration is unread.
+	Asset          string // BackstopAsset: BlntXlm | BlntUsdc | Usdc | Xlm
+	Token          string // that asset's token, from the backstop instance
+	TakeRateWeight *uint32
 }
 
 // LendingBackstopState is a lending pool's backstop as contract storage holds it.
 type LendingBackstopState struct {
 	Instance *PoolInstance // nil when the pool instance is missing, undecodable or archived; then nothing else is read
-	Token    string        // Blend backstop instance "BToken"; "" when unread, and always for BLNT, whose tiers hold different tokens
+	Token    string        // Blend backstop instance "BToken"; "" when unread, and always for BLNT, whose tiers carry their own
 	Tiers    []BackstopTierState
 }
 
-// blntBackstopTiers are BLNT's loss tiers in waterfall order. SecondLoss lives under the pre-tier PoolBalance(pool) key and the
-// others under TierPoolBalance(PoolTierKey{pool, tier}) (backstop storage.rs get_pool_balance_for_tier), so no key holds a total.
+// blntBackstopTiers are BLNT's loss tiers in waterfall order, which is also their index in PoolBackstopConfig. SecondLoss lives
+// under the pre-tier PoolBalance(pool) key and the others under TierPoolBalance(PoolTierKey{pool, tier}) (backstop storage.rs
+// get_pool_balance_for_tier), so no key holds a total.
 var blntBackstopTiers = []string{"FirstLoss", "SecondLoss", "ThirdLoss"}
+
+// blntAssetTokenKey is the backstop instance key holding each BackstopAsset's token (backstop pool.rs asset_token).
+var blntAssetTokenKey = map[string]string{"BlntXlm": "BXLMTkn", "BlntUsdc": "BToken", "Usdc": "USDCTkn", "Xlm": "XLMTkn"}
 
 const (
 	backstopKindBalance  = "PoolBalance"
 	backstopKindInstance = "Instance"
+	backstopKindConfig   = "PoolBackstopConfig"
 )
 
 // LendingBackstop reads a pool's current backstop balances from the backstop contract its instance names: Blend's one
@@ -71,72 +80,162 @@ func (r *ExplorerReader) LendingBackstop(ctx context.Context, pool string, tiere
 	if err != nil {
 		return LendingBackstopState{}, err
 	}
-	if vals, err = r.liveContractData(ctx, keys); err != nil {
+	vals, archived, err := r.contractData(ctx, keys)
+	if err != nil {
 		return LendingBackstopState{}, err
 	}
-	out.Token, out.Tiers = assembleBackstop(vals, refByKey, tiered)
+	out.Token, out.Tiers = assembleBackstop(vals, archived, refByKey, tiered)
 	return out, nil
 }
 
-// assembleBackstop decodes the read entries into tiers in waterfall order; an undecodable entry is unavailable, not zero.
-func assembleBackstop(vals map[string]xdr.ScVal, refByKey map[string]keyRef, tiered bool) (string, []BackstopTierState) {
-	tiers := []string{""}
-	if tiered {
-		tiers = blntBackstopTiers
-	}
-	byTier := make(map[string]*BackstopBalance, len(tiers))
-	var token string
+// backstopRead is the decoded backstop entries of one read.
+type backstopRead struct {
+	instance *xdr.ScVal
+	config   []blntTierConfig // nil when unread
+	balances map[string]*BackstopBalance
+	unusable map[string]bool // tier's entry exists but is archived or undecodable
+}
+
+type blntTierConfig struct {
+	asset  string
+	weight uint32
+}
+
+// assembleBackstop decodes the read entries into tiers in waterfall order. A BLNT pool with a configuration serves only its
+// configured tiers, and a configured tier with no entry as zero: the contract reads a missing balance as zero
+// (get_persistent_default). An archived or undecodable entry is unavailable, never zero.
+func assembleBackstop(vals map[string]xdr.ScVal, archived map[string]bool, refByKey map[string]keyRef, tiered bool) (string, []BackstopTierState) {
+	rd := backstopRead{balances: map[string]*BackstopBalance{}, unusable: map[string]bool{}}
 	for k, v := range vals {
-		ref := refByKey[k]
-		if ref.kind == backstopKindInstance {
-			token = instanceAddress(v, "BToken")
-			continue
-		}
-		if b, err := decodeBackstopBalance(v); err == nil {
-			byTier[ref.asset] = &b
-		}
+		rd.add(refByKey[k], v, archived[k])
 	}
-	out := make([]BackstopTierState, 0, len(tiers))
-	for _, t := range tiers {
-		out = append(out, BackstopTierState{Tier: t, Balance: byTier[t]})
+	if !tiered {
+		token := ""
+		if rd.instance != nil {
+			token = instanceAddress(*rd.instance, "BToken")
+		}
+		return token, []BackstopTierState{{Balance: rd.balances[""]}}
 	}
-	return token, out
+	if rd.config == nil {
+		out := make([]BackstopTierState, 0, len(blntBackstopTiers))
+		for _, t := range blntBackstopTiers {
+			out = append(out, BackstopTierState{Tier: t, Balance: rd.balances[t]})
+		}
+		return "", out
+	}
+	out := make([]BackstopTierState, 0, len(rd.config))
+	for i, c := range rd.config {
+		t := blntBackstopTiers[i]
+		st := BackstopTierState{Tier: t, Balance: rd.balances[t], Asset: c.asset, TakeRateWeight: &c.weight}
+		if st.Balance == nil && !rd.unusable[t] {
+			st.Balance = &BackstopBalance{Shares: new(big.Int), Tokens: new(big.Int), Q4W: new(big.Int)}
+		}
+		if rd.instance != nil {
+			st.Token = instanceAddress(*rd.instance, blntAssetTokenKey[c.asset])
+		}
+		out = append(out, st)
+	}
+	return "", out
+}
+
+func (rd *backstopRead) add(ref keyRef, v xdr.ScVal, archived bool) {
+	switch ref.kind {
+	case backstopKindInstance:
+		if !archived {
+			rd.instance = &v
+		}
+	case backstopKindConfig:
+		// Immutable once cached (storage.rs get_pool_backstop_config), so an archived entry's value is still the configuration.
+		if cfg, err := decodeBLNTBackstopConfig(v); err == nil {
+			rd.config = cfg
+		}
+	default:
+		b, err := decodeBackstopBalance(v)
+		if archived || err != nil {
+			rd.unusable[ref.asset] = true
+			return
+		}
+		rd.balances[ref.asset] = &b
+	}
+}
+
+// decodeBLNTBackstopConfig decodes Vec<BackstopTierConfig{asset: BackstopAsset, take_rate_weight: u32}>, indexed by tier.
+func decodeBLNTBackstopConfig(v xdr.ScVal) ([]blntTierConfig, error) {
+	vec, err := scval.AsVec(v)
+	if err != nil {
+		return nil, fmt.Errorf("PoolBackstopConfig shape: %w", err)
+	}
+	if len(vec) == 0 || len(vec) > len(blntBackstopTiers) {
+		return nil, fmt.Errorf("PoolBackstopConfig has %d tiers", len(vec))
+	}
+	out := make([]blntTierConfig, 0, len(vec))
+	for _, tv := range vec {
+		entries, err := scval.AsMap(tv)
+		if err != nil {
+			return nil, fmt.Errorf("BackstopTierConfig shape: %w", err)
+		}
+		av, okA := scval.MapField(entries, "asset")
+		wv, okW := scval.MapField(entries, "take_rate_weight")
+		if !okA || !okW {
+			return nil, fmt.Errorf("BackstopTierConfig missing a field")
+		}
+		asset, err := unitVariant(av)
+		if err != nil {
+			return nil, err
+		}
+		if _, known := blntAssetTokenKey[asset]; !known {
+			return nil, fmt.Errorf("BackstopAsset %q unknown", asset)
+		}
+		w, err := scval.AsU32(wv)
+		if err != nil {
+			return nil, fmt.Errorf("take_rate_weight: %w", err)
+		}
+		out = append(out, blntTierConfig{asset: asset, weight: w})
+	}
+	return out, nil
+}
+
+// unitVariant decodes a contracttype unit enum variant, encoded as Vec[Symbol].
+func unitVariant(v xdr.ScVal) (string, error) {
+	vec, err := scval.AsVec(v)
+	if err != nil || len(vec) != 1 {
+		return "", fmt.Errorf("enum variant shape: %v", err)
+	}
+	return scval.AsSymbol(vec[0])
 }
 
 // backstopKeys builds the backstop entries to fetch; keyRef.asset carries the tier name.
 func backstopKeys(backstopID, poolID xdr.ContractId, tiered bool) ([]string, map[string]keyRef, error) {
-	refByKey := map[string]keyRef{}
-	add := func(variant string, arg xdr.ScVal, tier string) error {
-		k, err := contractDataKeyXDR(backstopID, variant, arg)
-		if err != nil {
-			return fmt.Errorf("clickhouse: backstop %s key: %w", variant, err)
-		}
-		refByKey[k] = keyRef{asset: tier, kind: backstopKindBalance}
-		return nil
+	type spec struct {
+		variant string
+		arg     xdr.ScVal
+		ref     keyRef
 	}
-	var err error
+	specs := []spec{{"PoolBalance", contractAddressVal(poolID), keyRef{kind: backstopKindBalance}}}
 	if tiered {
+		specs = []spec{{"PoolBackstopConfig", contractAddressVal(poolID), keyRef{kind: backstopKindConfig}}}
 		for _, tier := range blntBackstopTiers {
+			s := spec{"TierPoolBalance", poolTierKeyVal(poolID, tier), keyRef{asset: tier, kind: backstopKindBalance}}
 			if tier == "SecondLoss" {
-				err = add("PoolBalance", contractAddressVal(poolID), tier)
-			} else {
-				err = add("TierPoolBalance", poolTierKeyVal(poolID, tier), tier)
+				s.variant, s.arg = "PoolBalance", contractAddressVal(poolID)
 			}
-			if err != nil {
-				return nil, nil, err
-			}
+			specs = append(specs, s)
 		}
-	} else {
-		if err = add("PoolBalance", contractAddressVal(poolID), ""); err != nil {
-			return nil, nil, err
-		}
-		instKeys, err := instanceKeyXDR(xdr.Hash(backstopID))
+	}
+	refByKey := map[string]keyRef{}
+	for _, sp := range specs {
+		k, err := contractDataKeyXDR(backstopID, sp.variant, sp.arg)
 		if err != nil {
-			return nil, nil, fmt.Errorf("clickhouse: backstop instance key: %w", err)
+			return nil, nil, fmt.Errorf("clickhouse: backstop %s key: %w", sp.variant, err)
 		}
-		for _, k := range instKeys {
-			refByKey[k] = keyRef{kind: backstopKindInstance}
-		}
+		refByKey[k] = sp.ref
+	}
+	instKeys, err := instanceKeyXDR(xdr.Hash(backstopID))
+	if err != nil {
+		return nil, nil, fmt.Errorf("clickhouse: backstop instance key: %w", err)
+	}
+	for _, k := range instKeys {
+		refByKey[k] = keyRef{kind: backstopKindInstance}
 	}
 	keys := make([]string, 0, len(refByKey))
 	for k := range refByKey {
@@ -197,12 +296,21 @@ func instanceAddress(v xdr.ScVal, key string) string {
 	return ""
 }
 
-// liveContractData reads current contract_data values by key and drops TTL-archived ones (the projection keeps a lapsed
-// entry's last value); a key with no row is absent from the result.
+// liveContractData is contractData without the TTL-archived entries.
 func (r *ExplorerReader) liveContractData(ctx context.Context, keys []string) (map[string]xdr.ScVal, error) {
+	vals, archived, err := r.contractData(ctx, keys)
+	for k := range archived {
+		delete(vals, k)
+	}
+	return vals, err
+}
+
+// contractData reads current contract_data values by key and reports the TTL-archived ones (the projection keeps a lapsed
+// entry's last value); a key with no row is absent from the result.
+func (r *ExplorerReader) contractData(ctx context.Context, keys []string) (map[string]xdr.ScVal, map[string]bool, error) {
 	rows, err := r.conn.Query(ctx, blendReserveStateQuery, keys)
 	if err != nil {
-		return nil, fmt.Errorf("clickhouse: contract data lookup: %w", err)
+		return nil, nil, fmt.Errorf("clickhouse: contract data lookup: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	out := map[string]xdr.ScVal{}
@@ -210,7 +318,7 @@ func (r *ExplorerReader) liveContractData(ctx context.Context, keys []string) (m
 	for rows.Next() {
 		var keyXDR, b64 string
 		if err := rows.Scan(&keyXDR, &b64); err != nil {
-			return nil, fmt.Errorf("clickhouse: scan contract data: %w", err)
+			return nil, nil, fmt.Errorf("clickhouse: scan contract data: %w", err)
 		}
 		if v, ok := contractDataValue(b64); ok {
 			out[keyXDR] = v
@@ -218,19 +326,20 @@ func (r *ExplorerReader) liveContractData(ctx context.Context, keys []string) (m
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("clickhouse: contract data rows: %w", err)
+		return nil, nil, fmt.Errorf("clickhouse: contract data rows: %w", err)
 	}
+	archived := map[string]bool{}
 	if len(matched) == 0 {
-		return out, nil
+		return out, archived, nil
 	}
 	liveness, err := r.ttlVerdicts.resolve(ctx, matched)
 	if err != nil {
-		return nil, fmt.Errorf("clickhouse: contract data ttl liveness: %w", err)
+		return nil, nil, fmt.Errorf("clickhouse: contract data ttl liveness: %w", err)
 	}
 	for _, k := range matched {
 		if liveness[k] == TTLArchived {
-			delete(out, k)
+			archived[k] = true
 		}
 	}
-	return out, nil
+	return out, archived, nil
 }

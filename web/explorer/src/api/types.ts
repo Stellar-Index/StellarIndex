@@ -1935,18 +1935,24 @@ export interface paths {
          * @description The pool's backstop as the backstop contract's storage holds it
          *     now, read from the lake (not folded from events). Blend V2: one
          *     unnamed tier (`tier: null`) from `PoolBalance(pool)`, plus the
-         *     backstop token from the backstop's instance. BLNT V3: three
-         *     loss tiers in waterfall order; `SecondLoss` is stored under the
-         *     pre-tier `PoolBalance(pool)` key and the others under
+         *     backstop token from the backstop's instance. BLNT V3: the loss
+         *     tiers the pool's `PoolBackstopConfig` configures, in waterfall
+         *     order, each with its `backstop_asset`, that asset's
+         *     `backstop_token` (from the backstop's instance) and its
+         *     `take_rate_weight`; the top-level `backstop_token` is null for
+         *     BLNT. `SecondLoss` is stored under the pre-tier
+         *     `PoolBalance(pool)` key and the others under
          *     `TierPoolBalance{pool, tier}`, so no entry is a pool total and
-         *     none is served. A BLNT tier's token is not in these entries, so
-         *     `backstop_token` is null for BLNT.
+         *     none is served. A configured tier with no balance entry is zero,
+         *     as the contract reads it. When the lake holds no configuration,
+         *     all three tiers are served with null tier configuration.
          *
          *     `tokens` are backstop tokens held, `shares` the shares issued and
          *     `queued_shares` the shares queued for withdrawal, as base-unit
          *     decimal strings; `queued_pct` is `queued_shares / shares` as a
-         *     percentage. A tier whose entry is missing or archived serves
-         *     null amounts (unavailable, never zero). `take_rate` is the pool's
+         *     percentage. A tier whose entry is archived or undecodable, or
+         *     missing on a pool whose configuration is unread, serves null
+         *     amounts (unavailable, never zero). `take_rate` is the pool's
          *     backstop take rate, a raw contract integer at `config_decimals`.
          *     No USD values.
          *
@@ -1983,8 +1989,12 @@ export interface paths {
          *     A fill or delete belongs to the latest auction of the same
          *     (pool, auction_type, user) before it; an auction starts at the
          *     next ledger, so a same-ledger fill or delete belongs to the
-         *     earlier one. `flags.degraded` means the fill read hit its cap and
-         *     the newest auctions may miss fills.
+         *     earlier one, unless that one is already closed (deleted or filled
+         *     to 100%): transaction order within a ledger is not stored, so
+         *     such a delete belongs to the auction started in that ledger.
+         *     `flags.degraded` means the fill read hit its cap and the newest
+         *     auctions may miss fills. 503 when the deployment has no auction
+         *     history reader.
          *
          *     Pagination: pass `pagination.next` back as `cursor`;
          *     `pagination` is omitted on the last page.
@@ -6953,8 +6963,8 @@ export interface components {
              * @description Decimal string (ADR-0003) — see amount_semantics for exactly
              *     what this number represents. The empty string means the
              *     quantity is unknown (superseded_by_auction,
-             *     not_yet_published, a negative net_share_flows), never a
-             *     verified zero.
+             *     not_yet_published, shares_unknown, a negative
+             *     net_share_flows), never a verified zero.
              */
             amount: string;
             /**
@@ -6999,9 +7009,13 @@ export interface components {
              *       - not_yet_published: a stateful position the protocol has
              *         published no figure for yet (a just-opened sorocredit
              *         position); amount is "".
+             *       - shares_unknown: a share position whose event history
+             *         does not replay consistently (BLNT backstop: a dequeue or
+             *         withdraw larger than the reconstructed queue under every
+             *         ordering); amount is "".
              * @enum {string}
              */
-            amount_semantics: "net_underlying_at_event_time" | "shares" | "net_share_flows" | "stateful_current_unconfirmed_unit" | "signed_delta_sum_unconfirmed_unit" | "superseded_by_auction" | "not_yet_published";
+            amount_semantics: "net_underlying_at_event_time" | "shares" | "net_share_flows" | "stateful_current_unconfirmed_unit" | "signed_delta_sum_unconfirmed_unit" | "superseded_by_auction" | "not_yet_published" | "shares_unknown";
             /**
              * @description Scale of `amount` to whole token units. Set only for
              *     net_underlying_at_event_time legs whose token scale was read,
@@ -7025,8 +7039,9 @@ export interface components {
              *     oldest first, replayed from the account's queue, dequeue
              *     (newest first) and withdraw (oldest first) events. They are
              *     included in `amount`, which is every share the account owns
-             *     in that tier; `amount` is "" when the history cannot be
-             *     replayed consistently.
+             *     in that tier; `amount` is "" (shares_unknown) when the
+             *     history cannot be replayed consistently. Absent when
+             *     `queued_expirations_unknown` is true.
              */
             queued_withdrawals?: {
                 shares: string;
@@ -7036,6 +7051,18 @@ export interface components {
                  */
                 expiration: string;
             }[];
+            /**
+             * @description BLNT backstop_shares only — true when a ledger mixed queueing
+             *     with dequeueing or withdrawing in different transactions.
+             *     Their order within a ledger is not stored, so which queued
+             *     entries remain (and when they unlock) is unknown until the
+             *     queue empties: `queued_withdrawals` is absent and
+             *     `queued_shares` carries the exact queued total. `amount` is
+             *     exact either way. Absent when false.
+             */
+            queued_expirations_unknown?: boolean;
+            /** @description BLNT backstop_shares only — the total shares queued for withdrawal, set with `queued_expirations_unknown`. */
+            queued_shares?: string;
             /**
              * @description event_derived: computed by this endpoint by summing the
              *     fold's own event log. stateful: read from a field the
@@ -17902,7 +17929,10 @@ export interface operations {
                      *             "tokens": "50000000000000",
                      *             "shares": "45000000000000",
                      *             "queued_shares": "9000000000000",
-                     *             "queued_pct": 20
+                     *             "queued_pct": 20,
+                     *             "backstop_asset": null,
+                     *             "backstop_token": null,
+                     *             "take_rate_weight": null
                      *           }
                      *         ],
                      *         "as_of_ledger": 63340102
@@ -17927,7 +17957,7 @@ export interface operations {
                             unavailable_reason?: "blend_v1_unsupported" | "pool_lineage_unknown" | "pool_instance_unavailable";
                             /** @description Backstop contract C-strkey, from the pool's instance storage. */
                             backstop: string | null;
-                            /** @description Blend backstop token (instance `BToken`); null for BLNT and when unread. */
+                            /** @description Blend backstop token (instance `BToken`); null for BLNT, whose tiers carry their own, and when unread. */
                             backstop_token: string | null;
                             /** @description Backstop take rate, raw contract integer at `config_decimals`. */
                             take_rate: string | null;
@@ -17944,6 +17974,15 @@ export interface operations {
                                 shares: string | null;
                                 queued_shares: string | null;
                                 queued_pct: number | null;
+                                /**
+                                 * @description BLNT tier's configured BackstopAsset; null for Blend and when the configuration is unread.
+                                 * @enum {string|null}
+                                 */
+                                backstop_asset: "BlntXlm" | "BlntUsdc" | "Usdc" | "Xlm" | null;
+                                /** @description Token contract of the tier's backstop_asset, from the backstop's instance; null for Blend and when unread. */
+                                backstop_token: string | null;
+                                /** @description BLNT tier's configured take-rate weight (1..100, raw contract integer); null for Blend and when unread. */
+                                take_rate_weight: number | null;
                             }[];
                         };
                     };

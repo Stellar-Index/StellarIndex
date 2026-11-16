@@ -59,14 +59,14 @@ func getBackstop(t *testing.T, srv *v1.Server, pool string) v1.LendingBackstopVi
 // TestLendingPoolBackstop_BLNTTiersExactAndUnavailableTierIsNull — a BLNT pool reads the tiered backstop; amounts above
 // 2^63 are exact strings, queued_pct is q4w/shares, and a tier with no entry serves nulls rather than zeros.
 func TestLendingPoolBackstop_BLNTTiersExactAndUnavailableTierIsNull(t *testing.T) {
-	unknown := blend.PoolVersionUnknown
+	unknown, weight := blend.PoolVersionUnknown, uint32(40)
 	shares, _ := new(big.Int).SetString("18446744073709551616", 10) // 2^64
 	tokens, _ := new(big.Int).SetString("9223372036854775819", 10)
 	q4w, _ := new(big.Int).SetString("4611686018427387904", 10) // 2^62 → 25%
 	ex := &stubBackstopExplorer{stubExplorerReader: &stubExplorerReader{}, state: clickhouse.LendingBackstopState{
 		Instance: &clickhouse.PoolInstance{Config: blend.PoolConfig{BstopRate: 2_000_000}, Backstop: blnt.MainnetBackstop},
 		Tiers: []clickhouse.BackstopTierState{
-			{Tier: "FirstLoss", Balance: &clickhouse.BackstopBalance{Shares: shares, Tokens: tokens, Q4W: q4w}},
+			{Tier: "FirstLoss", Balance: &clickhouse.BackstopBalance{Shares: shares, Tokens: tokens, Q4W: q4w}, Asset: "Usdc", Token: "CUSDC", TakeRateWeight: &weight},
 			{Tier: "SecondLoss"},
 		},
 	}}
@@ -80,10 +80,11 @@ func TestLendingPoolBackstop_BLNTTiersExactAndUnavailableTierIsNull(t *testing.T
 	}
 	ft := got.Tiers[0]
 	if *ft.Tier != "FirstLoss" || *ft.Shares != "18446744073709551616" || *ft.Tokens != "9223372036854775819" ||
-		*ft.QueuedShares != "4611686018427387904" || ft.QueuedPct == nil || *ft.QueuedPct != 25 {
+		*ft.QueuedShares != "4611686018427387904" || ft.QueuedPct == nil || *ft.QueuedPct != 25 || *ft.BackstopAsset != "Usdc" ||
+		*ft.BackstopToken != "CUSDC" || *ft.TakeRateWeight != 40 {
 		t.Fatalf("FirstLoss = %+v", ft)
 	}
-	if st := got.Tiers[1]; st.Shares != nil || st.Tokens != nil || st.QueuedPct != nil {
+	if st := got.Tiers[1]; st.Shares != nil || st.Tokens != nil || st.QueuedPct != nil || st.BackstopAsset != nil || st.TakeRateWeight != nil {
 		t.Fatalf("SecondLoss = %+v, want nulls", st)
 	}
 }
@@ -144,4 +145,19 @@ func pad64hex(n uint32) string {
 	}
 	b[63] = hex[n%16]
 	return string(b)
+}
+
+// TestLendingPoolAuctions_NoReaderIs503 — a lending reader without auction history, bare or behind the cache, is a 503, never an
+// empty list that reads as "no auctions".
+func TestLendingPoolAuctions_NoReaderIs503(t *testing.T) {
+	for name, lr := range map[string]v1.LendingReader{
+		"bare":   &stubLendingReader{},
+		"cached": v1.NewCachedLendingReader(&stubLendingReader{}, 0),
+	} {
+		rec := httptest.NewRecorder()
+		v1.New(v1.Options{Lending: lr}).Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/lending/pools/"+mkCStrkey(t, 5)+"/auctions", nil))
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Errorf("%s: status = %d, want 503: %s", name, rec.Code, rec.Body)
+		}
+	}
 }

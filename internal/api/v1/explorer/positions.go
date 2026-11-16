@@ -86,6 +86,9 @@ const (
 	// AmountSemanticsNotYetPublished is a stateful position with no published figure yet: amount
 	// is "" (unknown, not a verified zero). sorocredit.
 	AmountSemanticsNotYetPublished = "not_yet_published"
+	// AmountSemanticsSharesUnknown is a share position whose event history does not replay consistently: amount is "" (unknown,
+	// not a verified zero). BLNT backstop.
+	AmountSemanticsSharesUnknown = "shares_unknown"
 
 	// BasisEventDerived is computed here by summing the fold's own event log.
 	BasisEventDerived = "event_derived"
@@ -131,6 +134,9 @@ type PositionEntry struct {
 	Tier string `json:"tier,omitempty"`
 	// QueuedWithdrawals are a BLNT backstop position's shares queued for withdrawal, oldest first; they are part of Amount.
 	QueuedWithdrawals []QueuedWithdrawal `json:"queued_withdrawals,omitempty"`
+	// QueuedExpirationsUnknown: which queued entries remain is unknown, so QueuedWithdrawals is absent and QueuedShares is the total.
+	QueuedExpirationsUnknown bool   `json:"queued_expirations_unknown,omitempty"`
+	QueuedShares             string `json:"queued_shares,omitempty"`
 
 	// closed is this fold's own net-zero/closed verdict — never
 	// marshaled. Default include_closed=false drops these rows.
@@ -562,6 +568,10 @@ func (h *Handler) buildBLNTBackstopPositions(ctx context.Context, r BLNTBackstop
 			Basis:           BasisEventDerived,
 			closed:          row.Shares == "0", // "" is unknown, not closed
 		}
+		if row.Shares == "" {
+			e.AmountSemantics = AmountSemanticsSharesUnknown
+		}
+		e.QueuedExpirationsUnknown, e.QueuedShares = row.ExpirationsUnknown, row.QueuedShares
 		for _, q := range row.Queued {
 			e.QueuedWithdrawals = append(e.QueuedWithdrawals, QueuedWithdrawal{Shares: q.Shares, Expiration: q.Expiration.Format(time.RFC3339)})
 		}

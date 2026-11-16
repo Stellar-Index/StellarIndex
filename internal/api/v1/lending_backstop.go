@@ -37,7 +37,7 @@ type LendingBackstopView struct {
 	Available         bool                      `json:"available"`
 	UnavailableReason *string                   `json:"unavailable_reason,omitempty"`
 	Backstop          *string                   `json:"backstop"`       // backstop contract C-strkey, from the pool's instance
-	BackstopToken     *string                   `json:"backstop_token"` // Blend only; a BLNT tier's token is not in the read entries
+	BackstopToken     *string                   `json:"backstop_token"` // Blend only; a BLNT tier carries its own
 	TakeRate          *string                   `json:"take_rate"`      // raw contract integer at config_decimals
 	ConfigDecimals    int                       `json:"config_decimals"`
 	Tiers             []LendingBackstopTierView `json:"tiers"`
@@ -51,6 +51,10 @@ type LendingBackstopTierView struct {
 	Shares       *string  `json:"shares"`
 	QueuedShares *string  `json:"queued_shares"`
 	QueuedPct    *float64 `json:"queued_pct"`
+	// BackstopAsset, BackstopToken and TakeRateWeight are a BLNT tier's configuration; null for Blend and when unread.
+	BackstopAsset  *string `json:"backstop_asset"`
+	BackstopToken  *string `json:"backstop_token"`
+	TakeRateWeight *uint32 `json:"take_rate_weight"`
 }
 
 const (
@@ -138,7 +142,10 @@ func fillBackstopView(view *LendingBackstopView, st clickhouse.LendingBackstopSt
 	view.BackstopToken = nonEmptyPtr(st.Token)
 	view.TakeRate = strRef(u32String(st.Instance.Config.BstopRate))
 	for _, t := range st.Tiers {
-		tv := LendingBackstopTierView{Tier: nonEmptyPtr(t.Tier)}
+		tv := LendingBackstopTierView{
+			Tier: nonEmptyPtr(t.Tier), BackstopAsset: nonEmptyPtr(t.Asset), BackstopToken: nonEmptyPtr(t.Token),
+			TakeRateWeight: t.TakeRateWeight,
+		}
 		if b := t.Balance; b != nil {
 			tv.Tokens, tv.Shares, tv.QueuedShares = strRef(b.Tokens.String()), strRef(b.Shares.String()), strRef(b.Q4W.String())
 			tv.QueuedPct = sharePct(b.Q4W, b.Shares)

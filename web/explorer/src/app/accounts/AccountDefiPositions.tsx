@@ -42,6 +42,7 @@ const SEMANTICS_LABEL: Record<string, string> = {
   signed_delta_sum_unconfirmed_unit: 'signed delta sum (unit unconfirmed)',
   superseded_by_auction: 'moved by a liquidation auction (amount unknown)',
   not_yet_published: 'no figure published yet',
+  shares_unknown: 'shares (history inconsistent, amount unknown)',
 };
 
 const POSITION_KIND_LABEL: Record<string, string> = {

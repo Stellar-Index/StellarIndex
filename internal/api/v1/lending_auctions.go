@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -68,12 +69,16 @@ func (s *Server) handleLendingPoolAuctions(w http.ResponseWriter, r *http.Reques
 	view := LendingAuctionsView{Pool: pool, Auctions: []LendingAuctionView{}}
 	ar, ok := s.Lending.(lendingAuctionReader)
 	if !ok {
-		writeJSON(w, view, Flags{})
+		writeLendingAuctionsUnavailable(w, r)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), maxHandlerBudget)
 	defer cancel()
 	rows, truncated, err := ar.LendingAuctions(ctx, pool, limit+1, cur)
+	if errors.Is(err, errNoAuctionReader) {
+		writeLendingAuctionsUnavailable(w, r)
+		return
+	}
 	if err != nil {
 		s.writeLendingLookupError(ctx, w, r, "LendingAuctions", pool, err)
 		return
@@ -90,6 +95,15 @@ func (s *Server) handleLendingPoolAuctions(w http.ResponseWriter, r *http.Reques
 		view.Auctions = append(view.Auctions, auctionView(a))
 	}
 	writeEnvelope(w, env)
+}
+
+// errNoAuctionReader is a lending reader wired without auction history; an empty list would read as "no auctions".
+var errNoAuctionReader = errors.New("lending: auction history reader not wired")
+
+func writeLendingAuctionsUnavailable(w http.ResponseWriter, r *http.Request) {
+	writeProblem(w, r, "https://api.stellarindex.io/errors/lending-unavailable",
+		"Lending auctions unavailable", http.StatusServiceUnavailable,
+		"This deployment hasn't wired the lending auction history reader.")
 }
 
 func auctionView(a timescale.LendingAuction) LendingAuctionView {

@@ -17,10 +17,14 @@ type BLNTBackstopFold struct {
 	Tier string
 	// Shares is every share the user owns, queued ones included; "" when the history is inconsistent (a dequeue or withdraw
 	// larger than the reconstructed queue), never a guessed number.
-	Shares       string
-	Queued       []BLNTQueuedWithdrawal // oldest first; nil when Shares is ""
-	LastActivity time.Time
-	LastLedger   uint32
+	Shares string
+	Queued []BLNTQueuedWithdrawal // oldest first; nil when Shares is "" or ExpirationsUnknown
+	// ExpirationsUnknown: a ledger mixed queueing with dequeueing or withdrawing across transactions, whose order within a ledger is
+	// not stored, so which entries remain is unknown until the queue empties; QueuedShares is the exact queued total.
+	ExpirationsUnknown bool
+	QueuedShares       string
+	LastActivity       time.Time
+	LastLedger         uint32
 }
 
 // BLNTQueuedWithdrawal is one queued backstop withdrawal: its shares and when they unlock.
@@ -36,7 +40,7 @@ const blntBackstopEventLimit = 5000
 // donate change tokens per share, not a user's shares, so they are not read.
 const blntBackstopEventsSQL = `
         SELECT pool, tier, event_kind, COALESCE(amount2::text, ''), COALESCE(attributes->>'expiration', ''),
-               COALESCE(attributes->>'shares', ''), ledger_close_time, ledger
+               COALESCE(attributes->>'shares', ''), ledger_close_time, ledger, tx_hash::text
           FROM blnt_events
          WHERE user_address = $1 AND contract_role = 'backstop'
            AND event_kind IN ('deposit', 'queue_withdrawal', 'dequeue_withdrawal', 'withdraw', 'claim')
@@ -45,9 +49,9 @@ const blntBackstopEventsSQL = `
          LIMIT $2`
 
 type blntBackstopEvent struct {
-	pool, tier, kind, amount2, expiration, claimShares string
-	ts                                                 time.Time
-	ledger                                             int64
+	pool, tier, kind, amount2, expiration, claimShares, txHash string
+	ts                                                         time.Time
+	ledger                                                     int64
 }
 
 // BLNTBackstopByUser folds a user's BLNT backstop events into one row per (pool, tier), ordered by pool then tier.
@@ -55,7 +59,7 @@ func (s *Store) BLNTBackstopByUser(ctx context.Context, address string) ([]BLNTB
 	events, err := queryFold(ctx, s.db, "BLNTBackstopByUser", blntBackstopEventsSQL, []any{address, blntBackstopEventLimit},
 		func(rows *sql.Rows) (blntBackstopEvent, error) {
 			var e blntBackstopEvent
-			err := rows.Scan(&e.pool, &e.tier, &e.kind, &e.amount2, &e.expiration, &e.claimShares, &e.ts, &e.ledger)
+			err := rows.Scan(&e.pool, &e.tier, &e.kind, &e.amount2, &e.expiration, &e.claimShares, &e.ts, &e.ledger, &e.txHash)
 			return e, err
 		})
 	if err != nil {
@@ -77,34 +81,113 @@ type blntBackstopAcc struct {
 	shares     *big.Int // owned shares, queued included
 	queue      []blntQueueEntry
 	broken     bool
+	ambiguous  bool // queue composition unknown; see BLNTBackstopFold.ExpirationsUnknown
 	last       time.Time
 	lastLedger int64
 }
 
 // foldBLNTBackstop replays the contract's UserBalance: deposit and claim mint shares; queue moves shares into a FIFO queue entry,
-// dequeue takes back from the newest entry, withdraw burns from the oldest (backstop/user.rs).
+// dequeue takes back from the newest entry, withdraw burns from the oldest (backstop/user.rs). Each ledger's events of one
+// (pool, tier) are applied as a group, since their stored order is by tx hash, not execution.
 func foldBLNTBackstop(events []blntBackstopEvent) []BLNTBackstopFold {
-	accs := map[[2]string]*blntBackstopAcc{}
+	byKey := map[[2]string][]blntBackstopEvent{}
 	var order [][2]string
 	for _, e := range events {
 		k := [2]string{e.pool, e.tier}
-		acc := accs[k]
-		if acc == nil {
-			acc = &blntBackstopAcc{pool: e.pool, tier: e.tier, shares: new(big.Int)}
-			accs[k] = acc
+		if _, ok := byKey[k]; !ok {
 			order = append(order, k)
 		}
-		acc.apply(e)
-		acc.last, acc.lastLedger = e.ts.UTC(), e.ledger
+		byKey[k] = append(byKey[k], e)
 	}
 	slices.SortFunc(order, func(x, y [2]string) int {
 		return cmp.Or(cmp.Compare(x[0], y[0]), cmp.Compare(blntTierRank[x[1]], blntTierRank[y[1]]))
 	})
 	out := make([]BLNTBackstopFold, 0, len(order))
 	for _, k := range order {
-		out = append(out, accs[k].fold())
+		acc := &blntBackstopAcc{pool: k[0], tier: k[1], shares: new(big.Int)}
+		evs := byKey[k]
+		for len(evs) > 0 {
+			n := 1
+			for n < len(evs) && evs[n].ledger == evs[0].ledger {
+				n++
+			}
+			acc.applyLedger(evs[:n])
+			evs = evs[n:]
+		}
+		out = append(out, acc.fold())
 	}
 	return out
+}
+
+// applyLedger applies one ledger's events. Share totals are order-independent sums; only the queue's composition and an apparent
+// underflow depend on order. When transactions mix queueing with taking, an as-stored underflow is replayed queues-first (the
+// order that keeps the queue largest, so if it still underflows no order fits), and the composition is marked unknown.
+func (a *blntBackstopAcc) applyLedger(group []blntBackstopEvent) {
+	if mixesQueueAndTake(group) {
+		a.ambiguous = true
+		if a.underflows(group) {
+			group = slices.Clone(group)
+			slices.SortStableFunc(group, func(x, y blntBackstopEvent) int {
+				return cmp.Compare(boolRank(x.kind != "queue_withdrawal"), boolRank(y.kind != "queue_withdrawal"))
+			})
+		}
+	}
+	for _, e := range group {
+		a.apply(e)
+	}
+	if len(a.queue) == 0 {
+		a.ambiguous = false
+	}
+	last := group[len(group)-1]
+	a.last, a.lastLedger = last.ts.UTC(), last.ledger
+}
+
+// mixesQueueAndTake reports a queue and a dequeue or withdraw in different transactions; within one transaction order is known.
+func mixesQueueAndTake(group []blntBackstopEvent) bool {
+	queueTx, takeTx := map[string]bool{}, map[string]bool{}
+	for _, e := range group {
+		switch e.kind {
+		case "queue_withdrawal":
+			queueTx[e.txHash] = true
+		case "dequeue_withdrawal", "withdraw":
+			takeTx[e.txHash] = true
+		}
+	}
+	for q := range queueTx {
+		for t := range takeTx {
+			if q != t {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// underflows reports whether the group, as stored, takes more from the queue than it holds at some point.
+func (a *blntBackstopAcc) underflows(group []blntBackstopEvent) bool {
+	total := queueTotal(a.queue)
+	for _, e := range group {
+		n, ok := new(big.Int).SetString(e.amount2, 10)
+		if !ok {
+			continue
+		}
+		switch e.kind {
+		case "queue_withdrawal":
+			total.Add(total, n)
+		case "dequeue_withdrawal", "withdraw":
+			if total.Sub(total, n).Sign() < 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func boolRank(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func (a *blntBackstopAcc) apply(e blntBackstopEvent) {
@@ -135,11 +218,15 @@ func (a *blntBackstopAcc) apply(e blntBackstopEvent) {
 }
 
 func queueCovers(q []blntQueueEntry, n *big.Int) bool {
+	return queueTotal(q).Cmp(n) >= 0
+}
+
+func queueTotal(q []blntQueueEntry) *big.Int {
 	total := new(big.Int)
 	for _, e := range q {
 		total.Add(total, e.shares)
 	}
-	return total.Cmp(n) >= 0
+	return total
 }
 
 // takeFromQueue removes n shares from the front (withdraw) or the back (dequeue), splitting the last entry it touches.
@@ -170,6 +257,10 @@ func (a *blntBackstopAcc) fold() BLNTBackstopFold {
 		return f
 	}
 	f.Shares = a.shares.String()
+	if a.ambiguous {
+		f.ExpirationsUnknown, f.QueuedShares = true, queueTotal(a.queue).String()
+		return f
+	}
 	for _, e := range a.queue {
 		f.Queued = append(f.Queued, BLNTQueuedWithdrawal{Shares: e.shares.String(), Expiration: e.exp})
 	}

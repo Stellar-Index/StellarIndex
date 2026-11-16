@@ -63,23 +63,36 @@ const lendingAuctionsSQL = `
         ORDER BY 1 DESC, 2 DESC, 3 DESC, 4 DESC, 5 DESC
         LIMIT $7`
 
-// lendingAuctionLifecycleSQL reads every auction event of the page's users from its oldest auction on, oldest first. A new auction
-// starts at the next ledger (block = sequence + 1), so a same-ledger fill or delete belongs to the earlier auction: new sorts last.
+// lendingAuctionLifecycleSQL reads the auction events of the page's (auction_type, user) keys from its oldest auction on, oldest
+// first, each key bounded at its next new auction after the page's newest one: later events belong to auctions off the page. A new
+// auction starts at the next ledger (block = sequence + 1), so a same-ledger fill or delete belongs to the earlier auction: new
+// sorts last.
 const lendingAuctionLifecycleSQL = `
+        WITH bounds AS (
+            SELECT k.typ, k.usr, COALESCE(LEAST(
+                       (SELECT min(ledger) FROM blend_auctions
+                         WHERE pool = $1 AND event_kind = 'new' AND auction_type = k.typ AND user_address = k.usr AND ledger > $5),
+                       (SELECT min(ledger) FROM blnt_events
+                         WHERE contract_id = $1 AND contract_role = 'pool' AND event_kind = 'new_auction' AND user_address = k.usr
+                           AND (attributes->>'auction_type')::bigint = k.typ AND ledger > $5)), 2147483647) AS max_ledger
+              FROM unnest($2::bigint[], $3::text[]) AS k(typ, usr)
+        )
         SELECT kind, ts, ledger, tx_hash, op_index, event_index, auction_type, user_address, filler, fill_percent FROM (
-            SELECT event_kind AS kind, ts, ledger, tx_hash::text AS tx_hash, op_index, event_index, auction_type::bigint AS auction_type,
-                   user_address, COALESCE(filler, '') AS filler, COALESCE(fill_percent::text, '') AS fill_percent
-              FROM blend_auctions
-             WHERE pool = $1 AND user_address = ANY($2::text[]) AND ts >= $3
+            SELECT a.event_kind AS kind, a.ts, a.ledger, a.tx_hash::text AS tx_hash, a.op_index, a.event_index,
+                   a.auction_type::bigint AS auction_type, a.user_address, COALESCE(a.filler, '') AS filler,
+                   COALESCE(a.fill_percent::text, '') AS fill_percent
+              FROM blend_auctions a JOIN bounds b ON a.auction_type = b.typ AND a.user_address = b.usr
+             WHERE a.pool = $1 AND a.ts >= $4 AND a.ledger <= b.max_ledger
             UNION ALL
-            SELECT split_part(event_kind, '_', 1), ledger_close_time, ledger, tx_hash::text, op_index, event_index,
-                   (attributes->>'auction_type')::bigint, user_address, COALESCE(attributes->>'filler', ''), COALESCE(attributes->>'fill_percent', '')
-              FROM blnt_events
-             WHERE contract_id = $1 AND contract_role = 'pool' AND event_kind IN ('new_auction', 'fill_auction', 'delete_auction')
-               AND user_address = ANY($2::text[]) AND ledger_close_time >= $3
+            SELECT split_part(e.event_kind, '_', 1), e.ledger_close_time, e.ledger, e.tx_hash::text, e.op_index, e.event_index,
+                   (e.attributes->>'auction_type')::bigint, e.user_address, COALESCE(e.attributes->>'filler', ''),
+                   COALESCE(e.attributes->>'fill_percent', '')
+              FROM blnt_events e JOIN bounds b ON (e.attributes->>'auction_type')::bigint = b.typ AND e.user_address = b.usr
+             WHERE e.contract_id = $1 AND e.contract_role = 'pool' AND e.event_kind IN ('new_auction', 'fill_auction', 'delete_auction')
+               AND e.ledger_close_time >= $4 AND e.ledger <= b.max_ledger
         ) e
         ORDER BY ts, ledger, CASE kind WHEN 'new' THEN 1 ELSE 0 END, tx_hash, op_index, event_index
-        LIMIT $4`
+        LIMIT $6`
 
 // LendingAuctions returns a pool's auctions newest first, at most limit after cur (Kind is ignored), each with its fills and
 // delete; truncated reports that the lifecycle read hit its cap, so the newest auctions may miss fills.
@@ -93,13 +106,18 @@ func (s *Store) LendingAuctions(ctx context.Context, pool string, limit int, cur
 	if err != nil || len(auctions) == 0 {
 		return auctions, false, err
 	}
-	users := make([]string, 0, len(auctions))
-	oldest := auctions[len(auctions)-1].Ts
+	seen := map[auctionKey]bool{}
+	var types []int64
+	var users []string
 	for _, a := range auctions {
-		users = append(users, a.User)
+		if k := (auctionKey{a.AuctionType, a.User}); !seen[k] {
+			seen[k] = true
+			types, users = append(types, int64(a.AuctionType)), append(users, a.User)
+		}
 	}
+	oldest, newest := auctions[len(auctions)-1].Ts, auctions[0].Ledger
 	events, err := queryFold(ctx, s.db, "LendingAuctionLifecycle", lendingAuctionLifecycleSQL,
-		[]any{pool, users, oldest.UTC(), lendingAuctionLifecycleLimit}, scanAuctionLifecycle)
+		[]any{pool, types, users, oldest.UTC(), int64(newest), lendingAuctionLifecycleLimit}, scanAuctionLifecycle)
 	if err != nil {
 		return nil, false, err
 	}
@@ -127,22 +145,41 @@ func pairAuctionLifecycle(auctions []LendingAuction, events []auctionLifecycleEv
 	for i := range auctions {
 		byPos[auctions[i].LendingEventPos] = &auctions[i]
 	}
+	type ledgerKey struct {
+		ledger uint32
+		key    auctionKey
+	}
+	newIn := map[ledgerKey]LendingEventPos{}
+	for _, e := range events {
+		if e.kind == "new" {
+			newIn[ledgerKey{e.Ledger, auctionKey{e.auctionType, e.user}}] = e.LendingEventPos
+		}
+	}
 	open := map[auctionKey]*LendingAuction{} // nil: the open auction is not on this page
+	closed := map[auctionKey]bool{}          // the open auction was deleted or filled to 100%
+	deletedEarly := map[LendingEventPos]bool{}
 	for _, e := range events {
 		k := auctionKey{e.auctionType, e.user}
 		a := open[k]
 		switch e.kind {
 		case "new":
-			open[k] = byPos[e.LendingEventPos]
+			open[k], closed[k] = byPos[e.LendingEventPos], deletedEarly[e.LendingEventPos]
 		case "fill":
 			if a != nil {
 				a.Fills = append(a.Fills, LendingAuctionFill{LendingEventPos: e.LendingEventPos, Filler: e.filler, FillPercent: e.fillPercent})
 			}
+			closed[k] = closed[k] || e.fillPercent == "100"
 		case "delete":
+			pos := e.LendingEventPos
+			// Transaction order within a ledger is unknown: a delete after the open auction closed belongs to this ledger's new one.
+			if next, ok := newIn[ledgerKey{e.Ledger, k}]; ok && closed[k] {
+				deletedEarly[next] = true
+				a = byPos[next]
+			}
 			if a != nil {
-				pos := e.LendingEventPos
 				a.Deleted = &pos
 			}
+			closed[k] = true
 		}
 	}
 }
