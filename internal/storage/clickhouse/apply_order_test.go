@@ -122,14 +122,14 @@ func TestApplyOrderer_UnresolvedTxFailsStream(t *testing.T) {
 	}
 }
 
-// A ledger whose events all come from one transaction has no apply order to resolve: it must not cost a stellar.transactions read,
-// while a multi-tx ledger in the same batch is still looked up and reordered.
-func TestApplyOrderer_SkipsLookupForSingleTxLedgers(t *testing.T) {
-	idx := map[ledgerTx]uint32{{9, "b"}: 0, {9, "a"}: 1}
+// Every ledger is looked up and every event carries its 1-based apply index, a single-transaction ledger included; a two-transaction
+// ledger whose hash order is the reverse of its apply order comes out in apply order.
+func TestApplyOrderer_StampsTransactionIndex(t *testing.T) {
+	idx := map[ledgerTx]uint32{{7, "only"}: 4, {9, "b"}: 0, {9, "a"}: 1, {11, "solo"}: 0}
 	var calls [][]uint32
-	var got []string
+	var got []events.Event
 	o := newApplyOrderer(context.Background(), fakeLookup(idx, &calls), func(ev events.Event) error {
-		got = append(got, ev.TxHash)
+		got = append(got, ev)
 		return nil
 	})
 	collect(t, o, []events.Event{
@@ -139,16 +139,20 @@ func TestApplyOrderer_SkipsLookupForSingleTxLedgers(t *testing.T) {
 		{Ledger: 9, TxHash: "b"},
 		{Ledger: 11, TxHash: "solo"},
 	})
-	if strings.Join(got, ",") != "only,only,b,a,solo" {
-		t.Fatalf("delivery order = %v", got)
+	want := []struct {
+		h  string
+		ti int
+	}{{"only", 5}, {"only", 5}, {"b", 1}, {"a", 2}, {"solo", 1}}
+	if len(got) != len(want) {
+		t.Fatalf("delivered %d events, want %d", len(got), len(want))
 	}
-	if len(calls) != 1 || len(calls[0]) != 1 || calls[0][0] != 9 {
-		t.Fatalf("lookups = %v, want one call for ledger 9 only", calls)
+	for i, w := range want {
+		if got[i].TxHash != w.h || got[i].TransactionIndex != w.ti {
+			t.Errorf("event %d = (%s, %d), want (%s, %d)", i, got[i].TxHash, got[i].TransactionIndex, w.h, w.ti)
+		}
 	}
-	calls = nil
-	collect(t, o, []events.Event{{Ledger: 12, TxHash: "x"}, {Ledger: 13, TxHash: "y"}})
-	if len(calls) != 0 {
-		t.Fatalf("all-single-tx batch made lookups %v", calls)
+	if len(calls) != 1 || len(calls[0]) != 3 || calls[0][0] != 7 || calls[0][1] != 9 || calls[0][2] != 11 {
+		t.Fatalf("lookups = %v, want one call for ledgers 7, 9 and 11", calls)
 	}
 }
 
