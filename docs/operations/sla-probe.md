@@ -28,6 +28,9 @@ flags override them for a deployment with a different contract.
   violation.
 - Freshness is measured when each response is received, and the per-run
   figure is the **stalest** response, not the median.
+- Latency runs from sending the request to the last byte of the body,
+  not to the response headers. A 2xx whose body is cut off fails as
+  `body`; one slower than the request timeout fails as `timeout`.
 - A 2xx is a success only if the body carries the measurement: `/price`
   and `/price/tip` need a parseable `data.observed_at`; `/oracle/latest`
   needs non-empty `data`. Otherwise the sample fails (`unit_failed`, then
@@ -92,7 +95,8 @@ room for the smoke runner. `-max-rps 0` removes the cap; unpaced, a 30 s
 run crosses 6,000 and the 429s fail availability.
 
 Each endpoint's `failed_by_status` counts failures by `429`, `4xx`,
-`5xx`, `timeout`, `conn` or `body` (2xx that broke the contract); the
+`5xx`, `timeout`, `conn` or `body` (2xx that broke the contract or did
+not arrive whole); the
 availability reason names the dominant one, e.g.
 `price: availability=51.80% < target 99.90% (429 x 848)`.
 
