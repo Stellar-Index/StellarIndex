@@ -29208,7 +29208,7 @@
                           "key": "keyID",
                           "disabled": false,
                           "description": {
-                            "content": "(Required) Public-safe `kid_<hex>` identifier from /v1/account/keys.",
+                            "content": "(Required) Public-safe `kid_<hex>` identifier from /v1/account/keys. Never the key itself: a `sip_…` value is refused with 400 and revokes nothing.",
                             "type": "text/plain"
                           }
                         }
@@ -29244,7 +29244,7 @@
                             {
                               "disabled": false,
                               "description": {
-                                "content": "(Required) Public-safe `kid_<hex>` identifier from /v1/account/keys.",
+                                "content": "(Required) Public-safe `kid_<hex>` identifier from /v1/account/keys. Never the key itself: a `sip_…` value is refused with 400 and revokes nothing.",
                                 "type": "text/plain"
                               },
                               "type": "any",
@@ -29273,7 +29273,7 @@
                       "_postman_previewlanguage": "text"
                     },
                     {
-                      "name": "Missing keyID.",
+                      "name": "Missing keyID, or the path carries a plaintext key (`key-id-is-a-secret`) instead of its id.",
                       "originalRequest": {
                         "url": {
                           "path": [
@@ -29289,7 +29289,7 @@
                             {
                               "disabled": false,
                               "description": {
-                                "content": "(Required) Public-safe `kid_<hex>` identifier from /v1/account/keys.",
+                                "content": "(Required) Public-safe `kid_<hex>` identifier from /v1/account/keys. Never the key itself: a `sip_…` value is refused with 400 and revokes nothing.",
                                 "type": "text/plain"
                               },
                               "type": "any",
@@ -29334,7 +29334,7 @@
                             {
                               "disabled": false,
                               "description": {
-                                "content": "(Required) Public-safe `kid_<hex>` identifier from /v1/account/keys.",
+                                "content": "(Required) Public-safe `kid_<hex>` identifier from /v1/account/keys. Never the key itself: a `sip_…` value is refused with 400 and revokes nothing.",
                                 "type": "text/plain"
                               },
                               "type": "any",
@@ -29379,7 +29379,7 @@
                             {
                               "disabled": false,
                               "description": {
-                                "content": "(Required) Public-safe `kid_<hex>` identifier from /v1/account/keys.",
+                                "content": "(Required) Public-safe `kid_<hex>` identifier from /v1/account/keys. Never the key itself: a `sip_…` value is refused with 400 and revokes nothing.",
                                 "type": "text/plain"
                               },
                               "type": "any",
@@ -29424,7 +29424,7 @@
                             {
                               "disabled": false,
                               "description": {
-                                "content": "(Required) Public-safe `kid_<hex>` identifier from /v1/account/keys.",
+                                "content": "(Required) Public-safe `kid_<hex>` identifier from /v1/account/keys. Never the key itself: a `sip_…` value is refused with 400 and revokes nothing.",
                                 "type": "text/plain"
                               },
                               "type": "any",
