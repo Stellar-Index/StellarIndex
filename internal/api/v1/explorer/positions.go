@@ -52,8 +52,13 @@ const (
 	// supply/borrow.
 	AmountSemanticsNetUnderlying = "net_underlying_at_event_time"
 	// AmountSemanticsShares is an exact current count of a protocol's own share/LP token (Blend
-	// backstop, Phoenix stake, DeFindex vault), with no accrual ambiguity.
+	// backstop, Phoenix stake), with no accrual ambiguity: the shares cannot leave the account
+	// except through the events summed.
 	AmountSemanticsShares = "shares"
+	// AmountSemanticsNetShareFlows is shares minted by the account's deposits minus shares burned
+	// by its withdrawals. The share token is transferable and transfers are not counted, so this is
+	// not a balance; a negative net is served as "" (unknown). DeFindex vault.
+	AmountSemanticsNetShareFlows = "net_share_flows"
 	// AmountSemanticsStatefulCurrent is the protocol's own last PUBLISHED figure (sorocredit).
 	// Its unit is not contract-source-confirmed, so it is served raw, never rescaled or valued.
 	AmountSemanticsStatefulCurrent = "stateful_current_unconfirmed_unit"
@@ -540,17 +545,23 @@ func (h *Handler) buildDefindexPositions(ctx context.Context, address string, co
 	out := make([]PositionEntry, 0, len(rows))
 	for _, row := range rows {
 		vd := displays[row.ContractID]
+		amount := row.SharesNet
+		if strings.HasPrefix(amount, "-") {
+			// More burned than this account's deposits minted: it received shares by transfer, so the
+			// fold cannot say what it holds.
+			amount = ""
+		}
 		out = append(out, PositionEntry{
 			Protocol:        "defindex",
 			PositionKind:    PositionKindVaultShares,
 			Venue:           row.ContractID,
 			VenueLabel:      vd.Label,
 			Decimals:        vd.Decimals,
-			Amount:          row.SharesNet,
-			AmountSemantics: AmountSemanticsShares,
+			Amount:          amount,
+			AmountSemantics: AmountSemanticsNetShareFlows,
 			LastActivity:    fmtActivity(row.LastLedger, row.LastActivity),
 			Basis:           BasisEventDerived,
-			closed:          isZeroDecimal(row.SharesNet),
+			closed:          row.SharesNet == "0",
 		})
 	}
 	return out

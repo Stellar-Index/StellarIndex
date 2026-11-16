@@ -225,7 +225,7 @@ func TestExplorer_AccountPositions_Fold(t *testing.T) {
 	}
 
 	vault, ok := byKindVenue["defindex/vault_shares/CVAULT1"]
-	if !ok || vault.Amount != "400000" || vault.AmountSemantics != "shares" {
+	if !ok || vault.Amount != "400000" || vault.AmountSemantics != "net_share_flows" {
 		t.Errorf("defindex vault = %+v (ok=%v)", vault, ok)
 	}
 
@@ -327,6 +327,25 @@ func TestExplorer_AccountPositions_AuctionSupersededBlendLeg(t *testing.T) {
 	}
 	assertPositions(t, servePositions(t, reader, false), open)
 	open["blend/lending_supply/CPOOLLIQ"] = positionWant{"0", "superseded_by_auction"}
+	assertPositions(t, servePositions(t, reader, true), open)
+}
+
+// A DeFindex vault share is a transferable token, and the fold sees only the account's own deposits and withdrawals. The
+// figure is served as net flows, never as a share count; an account that burned more than it minted (it was sent
+// shares) has an unknown amount and stays open, and only an exact zero net is closed.
+func TestExplorer_AccountPositions_DefindexSharesAreNetFlows(t *testing.T) {
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	reader := &stubPositionsReader{defindex: []timescale.DefindexVaultFold{
+		{ContractID: "CVAULTHELD", SharesNet: "400000", LastActivity: now, LastLedger: 101},
+		{ContractID: "CVAULTRECEIVED", SharesNet: "-250", LastActivity: now, LastLedger: 102},
+		{ContractID: "CVAULTEXITED", SharesNet: "0", LastActivity: now, LastLedger: 103},
+	}}
+	open := map[string]positionWant{
+		"defindex/vault_shares/CVAULTHELD":     {"400000", "net_share_flows"},
+		"defindex/vault_shares/CVAULTRECEIVED": {"", "net_share_flows"},
+	}
+	assertPositions(t, servePositions(t, reader, false), open)
+	open["defindex/vault_shares/CVAULTEXITED"] = positionWant{"0", "net_share_flows"}
 	assertPositions(t, servePositions(t, reader, true), open)
 }
 

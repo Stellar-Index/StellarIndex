@@ -6783,7 +6783,8 @@ export interface components {
              * @description Decimal string (ADR-0003) — see amount_semantics for exactly
              *     what this number represents. The empty string means the
              *     quantity is unknown (superseded_by_auction,
-             *     not_yet_published), never a verified zero.
+             *     not_yet_published, a negative net_share_flows), never a
+             *     verified zero.
              */
             amount: string;
             /**
@@ -6797,7 +6798,15 @@ export interface components {
              *         amount.
              *       - shares: an exact current count of a protocol's own
              *         share/LP token, minted/burned 1:1 with the summed events
-             *         (Blend Backstop, Phoenix stake, DeFindex vault shares).
+             *         (Blend Backstop, Phoenix stake). These shares cannot
+             *         leave the account except through those events.
+             *       - net_share_flows: shares minted by the account's deposits
+             *         minus shares burned by its withdrawals (DeFindex vault
+             *         shares). The vault's share token is transferable and
+             *         transfers are NOT counted, so this is not a balance: an
+             *         account that sent shares away still shows them, and one
+             *         that received shares shows none. When the account burned
+             *         more than its deposits minted, amount is "".
              *       - stateful_current_unconfirmed_unit: the protocol's own
              *         most-recently PUBLISHED figure (sorocredit's latest
              *         statement amount), not a delta sum this endpoint computed.
@@ -6822,7 +6831,7 @@ export interface components {
              *         position); amount is "".
              * @enum {string}
              */
-            amount_semantics: "net_underlying_at_event_time" | "shares" | "stateful_current_unconfirmed_unit" | "signed_delta_sum_unconfirmed_unit" | "superseded_by_auction" | "not_yet_published";
+            amount_semantics: "net_underlying_at_event_time" | "shares" | "net_share_flows" | "stateful_current_unconfirmed_unit" | "signed_delta_sum_unconfirmed_unit" | "superseded_by_auction" | "not_yet_published";
             /**
              * @description Scale of `amount` to whole token units. Set only for
              *     net_underlying_at_event_time legs whose token scale was read,

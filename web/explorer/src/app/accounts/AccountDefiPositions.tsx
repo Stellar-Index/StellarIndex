@@ -36,6 +36,7 @@ type AccountPosition = components['schemas']['AccountPosition'];
 const SEMANTICS_LABEL: Record<string, string> = {
   net_underlying_at_event_time: 'net of underlying, at event time (no accrual)',
   shares: 'share/LP-token count',
+  net_share_flows: 'shares deposited minus withdrawn (transfers not counted)',
   stateful_current_unconfirmed_unit:
     "protocol's latest published figure (unit unconfirmed)",
   signed_delta_sum_unconfirmed_unit: 'signed delta sum (unit unconfirmed)',
