@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
@@ -214,6 +215,37 @@ func entryHistoryWindowCovered(ctx context.Context, conn driver.Conn, name strin
 	if missing := cov.Missing(); missing > 0 {
 		return fmt.Errorf("%w: %s [%d,%d] read entry changes for %d of %d tx-bearing ledgers",
 			ErrEntryHistoryEntryChangeShortfall, name, from, thru, readTxLedgers, cov.TxLedgers)
+	}
+	return nil
+}
+
+// ServerNow returns the ClickHouse server's clock, the one that stamps a DEFAULT now() column.
+func ServerNow(ctx context.Context, addr string) (time.Time, error) {
+	conn, err := openRead(ctx, addr)
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer func() { _ = conn.Close() }()
+	var now time.Time
+	if err := conn.QueryRow(ctx, `SELECT now()`).Scan(&now); err != nil {
+		return time.Time{}, fmt.Errorf("clickhouse: server time: %w", err)
+	}
+	return now, nil
+}
+
+// DeleteSupersededSponsorshipEvents removes the sponsorship_events rows of ledgers [lo, hi] written before `before`.
+// The table's key holds the derived sponsor and a walk position, so a re-derive that attributes or numbers an event
+// differently does not replace the old row; called after the re-derive wrote the window, this leaves only its rows.
+// It waits for the delete to apply.
+func DeleteSupersededSponsorshipEvents(ctx context.Context, addr string, lo, hi uint32, before time.Time) error {
+	conn, err := openAccountMovementsWrite(ctx, addr)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	ctx = clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{"lightweight_deletes_sync": 2}))
+	if err := conn.Exec(ctx, `DELETE FROM stellar.sponsorship_events WHERE ledger BETWEEN ? AND ? AND ingested_at < ?`, lo, hi, before); err != nil {
+		return fmt.Errorf("clickhouse: delete superseded sponsorship_events [%d,%d]: %w", lo, hi, err)
 	}
 	return nil
 }
