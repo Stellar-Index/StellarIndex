@@ -12,6 +12,8 @@ vi.mock('@/lib/buildFetch', async () => {
 // PoolReserves is a 'use client' TanStack-Query component; the bake-time
 // assertions below only care about the stat tiles above it.
 vi.mock('./PoolReserves', () => ({ PoolReserves: () => <div /> }));
+vi.mock('./PoolDetails', () => ({ PoolDetails: () => <div /> }));
+vi.mock('./ConfigHistory', () => ({ ConfigHistory: () => <div /> }));
 
 import { buildFetchData } from '@/lib/buildFetch';
 import LendingPoolPage from './page';
