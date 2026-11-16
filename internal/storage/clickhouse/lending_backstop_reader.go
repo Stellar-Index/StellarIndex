@@ -308,41 +308,66 @@ func (r *ExplorerReader) liveContractData(ctx context.Context, keys []string) (m
 	return vals, err
 }
 
+// contractDataVersionQuery is blendReserveStateQuery that also returns a removed key's winning row (empty entry_xdr), so the
+// removal ledger is known; the empty-entry filter moves to the caller, still after the FINAL collapse.
+const contractDataVersionQuery = `SELECT key_xdr, entry_xdr, ledger_seq
+	FROM stellar.ledger_entries_current FINAL
+	WHERE entry_type = 'contract_data' AND key_xdr IN (?)
+	SETTINGS max_threads = 4, max_memory_usage = 8000000000, optimize_move_to_prewhere_if_final = 0`
+
+// contractEntries is one batched contract_data read. ledger is a present entry's last-modified ledger or a removed entry's
+// removal ledger; a key the lake never saw is in no map.
+type contractEntries struct {
+	vals     map[string]xdr.ScVal
+	archived map[string]bool
+	ledger   map[string]uint32
+}
+
 // contractData reads current contract_data values by key and reports the TTL-archived ones (the projection keeps a lapsed
 // entry's last value); a key with no row is absent from the result.
 func (r *ExplorerReader) contractData(ctx context.Context, keys []string) (map[string]xdr.ScVal, map[string]bool, error) {
-	rows, err := r.conn.Query(ctx, blendReserveStateQuery, keys)
+	ce, err := r.readContractData(ctx, keys)
+	return ce.vals, ce.archived, err
+}
+
+// readContractData is contractData with each key's last-modified or removal ledger.
+func (r *ExplorerReader) readContractData(ctx context.Context, keys []string) (contractEntries, error) {
+	rows, err := r.conn.Query(ctx, contractDataVersionQuery, keys)
 	if err != nil {
-		return nil, nil, fmt.Errorf("clickhouse: contract data lookup: %w", err)
+		return contractEntries{}, fmt.Errorf("clickhouse: contract data lookup: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	out := map[string]xdr.ScVal{}
+	out := contractEntries{vals: map[string]xdr.ScVal{}, archived: map[string]bool{}, ledger: map[string]uint32{}}
 	matched := make([]string, 0, len(keys))
 	for rows.Next() {
 		var keyXDR, b64 string
-		if err := rows.Scan(&keyXDR, &b64); err != nil {
-			return nil, nil, fmt.Errorf("clickhouse: scan contract data: %w", err)
+		var ledger uint32
+		if err := rows.Scan(&keyXDR, &b64, &ledger); err != nil {
+			return contractEntries{}, fmt.Errorf("clickhouse: scan contract data: %w", err)
 		}
-		if v, ok := contractDataValue(b64); ok {
-			out[keyXDR] = v
+		if b64 == "" {
+			out.ledger[keyXDR] = ledger
+			continue
+		}
+		if v, modified, ok := contractDataEntry(b64); ok {
+			out.vals[keyXDR], out.ledger[keyXDR] = v, modified
 			matched = append(matched, keyXDR)
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, nil, fmt.Errorf("clickhouse: contract data rows: %w", err)
+		return contractEntries{}, fmt.Errorf("clickhouse: contract data rows: %w", err)
 	}
-	archived := map[string]bool{}
 	if len(matched) == 0 {
-		return out, archived, nil
+		return out, nil
 	}
 	liveness, err := r.ttlVerdicts.resolve(ctx, matched)
 	if err != nil {
-		return nil, nil, fmt.Errorf("clickhouse: contract data ttl liveness: %w", err)
+		return contractEntries{}, fmt.Errorf("clickhouse: contract data ttl liveness: %w", err)
 	}
 	for _, k := range matched {
 		if liveness[k] == TTLArchived {
-			archived[k] = true
+			out.archived[k] = true
 		}
 	}
-	return out, archived, nil
+	return out, nil
 }

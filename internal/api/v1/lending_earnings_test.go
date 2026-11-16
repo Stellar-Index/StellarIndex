@@ -37,7 +37,7 @@ type stubEarningsExplorer struct {
 	*stubExplorerReader
 	positions clickhouse.LendingAccountPositions
 	backstop  clickhouse.LendingBackstopState
-	held      map[string]*big.Int
+	held      clickhouse.LendingAccountBackstop
 }
 
 func (e *stubEarningsExplorer) LendingAccountPositions(context.Context, string, string) (clickhouse.LendingAccountPositions, error) {
@@ -48,7 +48,7 @@ func (e *stubEarningsExplorer) LendingBackstop(context.Context, string, bool) (c
 	return e.backstop, nil
 }
 
-func (e *stubEarningsExplorer) LendingAccountBackstop(context.Context, string, string, string, []string) (map[string]*big.Int, error) {
+func (e *stubEarningsExplorer) LendingAccountBackstop(context.Context, string, string, string, []string) (clickhouse.LendingAccountBackstop, error) {
 	return e.held, nil
 }
 
@@ -106,7 +106,7 @@ func TestLendingAccountEarnings_ExactAndWithheld(t *testing.T) {
 			Instance: &clickhouse.PoolInstance{Backstop: mkCStrkey(t, 4)}, Token: token,
 			Tiers: []clickhouse.BackstopTierState{{Balance: &clickhouse.BackstopBalance{Shares: big.NewInt(200), Tokens: big.NewInt(300), Q4W: new(big.Int)}}},
 		},
-		held: map[string]*big.Int{"": big.NewInt(100)},
+		held: clickhouse.LendingAccountBackstop{Held: map[string]*big.Int{"": big.NewInt(100)}},
 	}
 	pr := &stubEarningsPositions{
 		stubPositionsReader: &stubPositionsReader{
@@ -159,4 +159,51 @@ func TestLendingAccountEarnings_UnknownAndInvalidAccount(t *testing.T) {
 		t.Fatalf("view = %+v", got)
 	}
 	getEarnings(t, srv, "not-an-account", http.StatusBadRequest)
+}
+
+// TestLendingAccountEarnings_ProjectionBehind: a pool entry or backstop balance the lake shows modified after the newest folded
+// event is withheld even though the token counts agree; the raw components stay.
+func TestLendingAccountEarnings_ProjectionBehind(t *testing.T) {
+	pool, asset := mkCStrkey(t, 1), mkCStrkey(t, 2)
+	ex := &stubEarningsExplorer{
+		stubExplorerReader: &stubExplorerReader{reserves: []clickhouse.BlendReserveState{{
+			Pool: pool, Asset: asset,
+			Data: blend.ReserveData{
+				BRate: big.NewInt(1_000_000_000_000), DRate: big.NewInt(1_000_000_000_000),
+				IRMod: new(big.Int), BSupply: new(big.Int), DSupply: new(big.Int), BackstopCredit: new(big.Int), Version: blend.PoolV2,
+			},
+		}}},
+		positions: clickhouse.LendingAccountPositions{Readable: true, Supply: map[string]*big.Int{asset: big.NewInt(100)}, Ledger: 501},
+		backstop: clickhouse.LendingBackstopState{
+			Instance: &clickhouse.PoolInstance{Backstop: mkCStrkey(t, 4)}, Token: mkCStrkey(t, 3),
+			Tiers: []clickhouse.BackstopTierState{{Balance: &clickhouse.BackstopBalance{Shares: big.NewInt(100), Tokens: big.NewInt(100), Q4W: new(big.Int)}}},
+		},
+		held: clickhouse.LendingAccountBackstop{Held: map[string]*big.Int{"": big.NewInt(10)}, Ledger: map[string]uint32{"": 700}},
+	}
+	pr := &stubEarningsPositions{
+		stubPositionsReader: &stubPositionsReader{
+			blend: []timescale.BlendPositionFold{{
+				Pool: pool, Asset: asset, HasSupplyLeg: true, SupplyNet: "90", SupplyTokens: "100", SupplyLastLedger: 500,
+			}},
+			backstop: []timescale.BlendBackstopFold{{Pool: pool, SharesNet: "10"}},
+		},
+		flows: timescale.LendingAccountFlows{BlendBackstop: []timescale.LendingBackstopTokenFold{{Pool: pool, NetDeposited: "8", LastLedger: 699}}},
+	}
+	srv := v1.New(v1.Options{Explorer: ex, Positions: pr, Lending: &stubLendingReader{assets: []string{asset}}})
+	got := getEarnings(t, srv, earningsAccount, http.StatusOK)
+	if len(got.Legs) != 2 {
+		t.Fatalf("legs = %+v", got.Legs)
+	}
+	for _, leg := range got.Legs {
+		if leg.Reconciled || leg.Accrued != nil || strOrNull(leg.Reason) != "projection_behind" || leg.FoldedTokens == nil || leg.OnchainTokens == nil {
+			t.Fatalf("leg = %+v", leg)
+		}
+	}
+	ex.positions.Ledger, ex.held.Ledger[""] = 500, 699
+	got = getEarnings(t, srv, earningsAccount, http.StatusOK)
+	for _, leg := range got.Legs {
+		if !leg.Reconciled {
+			t.Fatalf("caught-up leg = %+v", leg)
+		}
+	}
 }

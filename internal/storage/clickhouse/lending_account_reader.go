@@ -19,6 +19,15 @@ type LendingAccountPositions struct {
 	Readable bool
 	Supply   map[string]*big.Int // b-tokens, collateral and non-collateral summed
 	Borrow   map[string]*big.Int // d-tokens
+	// Ledger is the entry's last-modified ledger, or its removal ledger; 0 when the lake never saw the key.
+	Ledger uint32
+}
+
+// LendingAccountBackstop is an account's backstop shares for one pool per tier, and each tier entry's last-modified or
+// removal ledger (absent when the lake never saw the key).
+type LendingAccountBackstop struct {
+	Held   map[string]*big.Int
+	Ledger map[string]uint32
 }
 
 var errReserveIndex = errors.New("reserve index outside the pool's reserve list")
@@ -41,11 +50,13 @@ func (r *ExplorerReader) LendingAccountPositions(ctx context.Context, pool, acco
 	if err != nil {
 		return LendingAccountPositions{}, fmt.Errorf("clickhouse: reserve list key: %w", err)
 	}
-	vals, archived, err := r.contractData(ctx, []string{posKey, listKey})
+	ce, err := r.readContractData(ctx, []string{posKey, listKey})
 	if err != nil {
 		return LendingAccountPositions{}, err
 	}
-	return assembleAccountPositions(vals, archived, posKey, listKey), nil
+	out := assembleAccountPositions(ce.vals, ce.archived, posKey, listKey)
+	out.Ledger = ce.ledger[posKey]
+	return out, nil
 }
 
 func assembleAccountPositions(vals map[string]xdr.ScVal, archived map[string]bool, posKey, listKey string) LendingAccountPositions {
@@ -138,48 +149,55 @@ func addIndexedBalances(v xdr.ScVal, list []string, dst map[string]*big.Int) err
 
 // LendingAccountBackstop reads an account's backstop shares for one pool per tier ("" is Blend's single tier), queued
 // shares included. A tier whose entry is archived or undecodable is absent; a missing entry is zero, as the contract reads it.
-func (r *ExplorerReader) LendingAccountBackstop(ctx context.Context, backstop, pool, account string, tiers []string) (map[string]*big.Int, error) {
+func (r *ExplorerReader) LendingAccountBackstop(ctx context.Context, backstop, pool, account string, tiers []string) (LendingAccountBackstop, error) {
 	backstopID, err := contractIDFromStrkey(backstop)
 	if err != nil {
-		return nil, fmt.Errorf("clickhouse: backstop id %q: %w", backstop, err)
+		return LendingAccountBackstop{}, fmt.Errorf("clickhouse: backstop id %q: %w", backstop, err)
 	}
 	poolID, err := contractIDFromStrkey(pool)
 	if err != nil {
-		return nil, fmt.Errorf("clickhouse: lending pool id %q: %w", pool, err)
+		return LendingAccountBackstop{}, fmt.Errorf("clickhouse: lending pool id %q: %w", pool, err)
 	}
 	user, err := addressScVal(account)
 	if err != nil {
-		return nil, err
+		return LendingAccountBackstop{}, err
 	}
 	tierByKey := make(map[string]string, len(tiers))
 	keys := make([]string, 0, len(tiers))
 	for _, tier := range tiers {
 		k, err := userBalanceKeyXDR(backstopID, poolID, user, tier)
 		if err != nil {
-			return nil, fmt.Errorf("clickhouse: backstop user key: %w", err)
+			return LendingAccountBackstop{}, fmt.Errorf("clickhouse: backstop user key: %w", err)
 		}
 		tierByKey[k] = tier
 		keys = append(keys, k)
 	}
-	vals, archived, err := r.contractData(ctx, keys)
+	ce, err := r.readContractData(ctx, keys)
 	if err != nil {
-		return nil, err
+		return LendingAccountBackstop{}, err
 	}
-	out := make(map[string]*big.Int, len(tiers))
+	return assembleAccountBackstop(ce, tierByKey), nil
+}
+
+func assembleAccountBackstop(ce contractEntries, tierByKey map[string]string) LendingAccountBackstop {
+	out := LendingAccountBackstop{Held: make(map[string]*big.Int, len(tierByKey)), Ledger: map[string]uint32{}}
 	for k, tier := range tierByKey {
-		if archived[k] {
+		if l, ok := ce.ledger[k]; ok {
+			out.Ledger[tier] = l
+		}
+		if ce.archived[k] {
 			continue
 		}
-		v, ok := vals[k]
+		v, ok := ce.vals[k]
 		if !ok {
-			out[tier] = new(big.Int)
+			out.Held[tier] = new(big.Int)
 			continue
 		}
 		if held, err := decodeUserBalance(v); err == nil {
-			out[tier] = held
+			out.Held[tier] = held
 		}
 	}
-	return out, nil
+	return out
 }
 
 // userBalanceKeyXDR is UserBalance(PoolUserKey{pool, user}), or for a BLNT tier other than SecondLoss

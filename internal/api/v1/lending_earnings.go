@@ -27,7 +27,7 @@ type lendingEarningsReader interface {
 type lendingAccountStateReader interface {
 	lendingBackstopReader
 	LendingAccountPositions(ctx context.Context, pool, account string) (clickhouse.LendingAccountPositions, error)
-	LendingAccountBackstop(ctx context.Context, backstop, pool, account string, tiers []string) (map[string]*big.Int, error)
+	LendingAccountBackstop(ctx context.Context, backstop, pool, account string, tiers []string) (clickhouse.LendingAccountBackstop, error)
 }
 
 var (
@@ -42,6 +42,7 @@ const (
 	earningsSideBackstop = "backstop"
 
 	earningsReasonAuctionMoved     = "auction_moved"
+	earningsReasonProjectionBehind = "projection_behind"
 	earningsReasonFoldInconsistent = "fold_inconsistent"
 	earningsReasonOnchainUnread    = "onchain_unread"
 	earningsReasonBalanceMismatch  = "balance_mismatch"
@@ -94,6 +95,7 @@ type legInputs struct {
 	folded  *big.Int
 	onchain *big.Int
 	moved   bool
+	behind  bool                            // the lake entry changed after the newest folded event
 	value   func(*big.Int) (*big.Int, bool) // tokens to asset amount; false when the rate or price is unread
 }
 
@@ -116,6 +118,8 @@ func reconcileLeg(leg *LendingEarningsLeg, in legInputs) {
 	switch {
 	case in.moved:
 		reason = earningsReasonAuctionMoved
+	case in.behind:
+		reason = earningsReasonProjectionBehind
 	case in.folded == nil:
 		reason = earningsReasonFoldInconsistent
 	case in.onchain == nil:
@@ -236,11 +240,22 @@ func (s *Server) poolEarningsLegs(ctx context.Context, sr lendingAccountStateRea
 		if err != nil {
 			return nil, err
 		}
+		behind := pos.Ledger > newestFoldedLedger(byPool[pool])
 		for _, f := range byPool[pool] {
-			out = append(out, poolFoldLegs(protocol, f, reserves[f.Asset], pos)...)
+			out = append(out, poolFoldLegs(protocol, f, reserves[f.Asset], pos, behind)...)
 		}
 	}
 	return out, nil
+}
+
+// newestFoldedLedger is the newest event ledger folded into a pool's legs. Every transaction that changes an account's
+// positions rewrites its Positions entry, so an entry modified (or removed) after this ledger has events the fold lacks.
+func newestFoldedLedger(folds []timescale.BlendPositionFold) uint32 {
+	var newest uint32
+	for _, f := range folds {
+		newest = max(newest, f.SupplyLastLedger, f.BorrowLastLedger)
+	}
+	return newest
 }
 
 // earningsReserveStates reads a pool's reserve state through the reserves endpoint's own read path, by asset.
@@ -269,7 +284,7 @@ func (s *Server) earningsReserveStates(ctx context.Context, protocol, pool strin
 }
 
 // poolFoldLegs turns one (pool, asset) fold into its supply and borrow legs.
-func poolFoldLegs(protocol string, f timescale.BlendPositionFold, st clickhouse.BlendReserveState, pos clickhouse.LendingAccountPositions) []LendingEarningsLeg {
+func poolFoldLegs(protocol string, f timescale.BlendPositionFold, st clickhouse.BlendReserveState, pos clickhouse.LendingAccountPositions, behind bool) []LendingEarningsLeg {
 	haveRate := st.Asset != ""
 	var decimals *int
 	if haveRate && st.DecimalsFound {
@@ -293,7 +308,7 @@ func poolFoldLegs(protocol string, f timescale.BlendPositionFold, st clickhouse.
 			continue
 		}
 		leg := LendingEarningsLeg{Protocol: protocol, Pool: f.Pool, Side: sd.side, Asset: strRef(f.Asset), Decimals: decimals}
-		in := legInputs{moved: sd.moved, value: func(n *big.Int) (*big.Int, bool) {
+		in := legInputs{moved: sd.moved, behind: behind, value: func(n *big.Int) (*big.Int, bool) {
 			if !haveRate {
 				return nil, false
 			}
@@ -382,8 +397,9 @@ func (s *Server) poolBackstopLegs(ctx context.Context, sr lendingAccountStateRea
 		if !ok {
 			net, shares = new(big.Int), nil
 		}
+		// Every backstop action of the account rewrites its UserBalance entry, as for pool Positions.
 		reconcileLeg(&leg, legInputs{
-			netFlow: net, folded: shares, onchain: held[f.Tier],
+			netFlow: net, folded: shares, onchain: held.Held[f.Tier], behind: held.Ledger[f.Tier] > f.LastLedger,
 			value: func(n *big.Int) (*big.Int, bool) { return backstopShareValue(tier, n) },
 		})
 		if reason != "" && leg.Reason != nil && *leg.Reason == earningsReasonOnchainUnread {
@@ -397,8 +413,7 @@ func (s *Server) poolBackstopLegs(ctx context.Context, sr lendingAccountStateRea
 // readAccountBackstop reads a pool's backstop and the account's held shares per tier; reason is the lineage's unavailable
 // reason, when there is one.
 func (s *Server) readAccountBackstop(ctx context.Context, sr lendingAccountStateReader, protocol, pool, account string, tiers []string,
-) (st clickhouse.LendingBackstopState, held map[string]*big.Int, reason string, err error) {
-	held = map[string]*big.Int{}
+) (st clickhouse.LendingBackstopState, held clickhouse.LendingAccountBackstop, reason string, err error) {
 	lineage, reason, err := s.backstopLineage(ctx, pool)
 	if err != nil || reason != "" || lineage != protocol {
 		return st, held, reason, err
