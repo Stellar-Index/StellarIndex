@@ -20,6 +20,7 @@ import { LendingPoolPathView } from './LendingPoolPathView';
 import { PoolReserves } from './PoolReserves';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import { LENDING_POOL_META, poolProtocol } from '../poolMeta';
+import { hrefFor } from '@/lib/hrefFor';
 
 type Params = Promise<{ pool: string }>;
 
@@ -195,7 +196,7 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
         <div className="flex flex-wrap gap-3">
           {protocol && (
             <Link
-              href={`/protocols/${protocol.slug}`}
+              href={hrefFor.protocol(protocol.slug)}
               className="text-brand-600 hover:underline"
             >
               {protocol.name} protocol
