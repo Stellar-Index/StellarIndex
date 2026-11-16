@@ -321,6 +321,64 @@ func TestRunEntryHistory_WritesOnlySponsorshipEvents(t *testing.T) {
 	}
 }
 
+// A re-derive sweeps each window after rewriting it and only up to the watermark the run started from, with the
+// server clock it read before its first insert. A run that starts above the watermark sweeps nothing.
+func TestRunEntryHistory_ReDeriveDeletesSupersededRows(t *testing.T) {
+	cutoff := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	type del struct {
+		lo, hi   uint32
+		inserted int
+	}
+	for name, tc := range map[string]struct {
+		watermark  uint32
+		start      uint32
+		wantSweeps []del
+	}{
+		"re-derive below the watermark": {watermark: 14, start: 10, wantSweeps: []del{{10, 12, 1}, {13, 14, 2}}},
+		"tail run above the watermark":  {watermark: 9, start: 10},
+	} {
+		t.Run(name, func(t *testing.T) {
+			tl := ehSponsored(ehTrustline(ehBob, 5), ehAlice)
+			row := ehRow(t, 0, 0, "created", tl, &tl)
+			origStream, origInsert, origSet, origNow, origDel := streamSponsorshipCandidates, insertSponsorshipEvents, setSponsorshipWatermark, sponsorshipServerNow, deleteSupersededSponsorship
+			t.Cleanup(func() {
+				streamSponsorshipCandidates, insertSponsorshipEvents, setSponsorshipWatermark, sponsorshipServerNow, deleteSupersededSponsorship = origStream, origInsert, origSet, origNow, origDel
+			})
+			streamSponsorshipCandidates = func(_ context.Context, _ string, _, _ uint32, fn func(clickhouse.EntryHistorySourceRow) error) error {
+				return fn(row)
+			}
+			inserted := 0
+			insertSponsorshipEvents = func(_ context.Context, _ string, rows []clickhouse.SponsorshipEvent) (int64, error) {
+				inserted += len(rows)
+				return int64(len(rows)), nil
+			}
+			setSponsorshipWatermark = func(context.Context, string, uint32, uint32) error { return nil }
+			sponsorshipServerNow = func(context.Context, string) (time.Time, error) {
+				if inserted != 0 {
+					t.Errorf("server clock read after %d rows were inserted; a cutoff later than this run's first row deletes its own rows", inserted)
+				}
+				return cutoff, nil
+			}
+			var sweeps []del
+			deleteSupersededSponsorship = func(_ context.Context, _ string, lo, hi uint32, before time.Time) (uint64, error) {
+				if !before.Equal(cutoff) {
+					t.Errorf("delete before %s, want the clock read before the run's first insert %s", before, cutoff)
+				}
+				sweeps = append(sweeps, del{lo, hi, inserted})
+				return 0, nil
+			}
+			stubSponsorshipTotals(t, 0, nil).events = tc.watermark
+
+			if err := runEntryHistory(context.Background(), "unused", tc.start, 16, 3, false, newEntryHistoryStats()); err != nil {
+				t.Fatalf("runEntryHistory: %v", err)
+			}
+			if !slices.Equal(sweeps, tc.wantSweeps) {
+				t.Fatalf("deletes (lo, hi, rows inserted so far) = %v, want %v", sweeps, tc.wantSweeps)
+			}
+		})
+	}
+}
+
 type totalsCalls struct {
 	refreshed, advanced [][2]uint32
 	events              uint32

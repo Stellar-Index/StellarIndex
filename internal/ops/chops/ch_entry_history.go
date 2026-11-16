@@ -87,7 +87,12 @@ func chEntryHistory(args []string) error {
 func runEntryHistory(ctx context.Context, chAddr string, start, last, window uint32, dryRun bool, st *entryHistoryStats) error {
 	runStart := time.Now()
 	totals := sponsorshipTotalsFollower{addr: chAddr}
+	var sweep *supersededSweep
 	if !dryRun {
+		var err error
+		if sweep, err = newSupersededSweep(ctx, chAddr, start); err != nil {
+			return err
+		}
 		if err := totals.start(ctx, start, window); err != nil {
 			return err
 		}
@@ -99,14 +104,11 @@ func runEntryHistory(ctx context.Context, chAddr string, start, last, window uin
 		}
 		n, err := deriveSponsorshipWindow(ctx, chAddr, lo, hi, dryRun, st)
 		if err != nil {
-			return fmt.Errorf("window [%d,%d]: %w — resume with -from %d (or no -from: the watermark holds)", lo, hi, err, lo)
+			return fmt.Errorf("window [%d,%d]: %w — %s", lo, hi, err, sweep.resumeHint(lo))
 		}
 		if !dryRun {
-			if err := setSponsorshipWatermark(ctx, chAddr, lo, hi); err != nil {
-				return fmt.Errorf("advance watermark to %d: %w", hi, err)
-			}
-			if err := totals.follow(ctx, lo, hi); err != nil {
-				return fmt.Errorf("window [%d,%d] totals: %w", lo, hi, err)
+			if err := landSponsorshipWindow(ctx, chAddr, sweep, &totals, lo, hi); err != nil {
+				return err
 			}
 		}
 		fmt.Fprintf(os.Stderr, "ch-entry-history: window [%d,%d] done — %d sponsorship events (elapsed %s)\n",
@@ -118,6 +120,20 @@ func runEntryHistory(ctx context.Context, chAddr string, start, last, window uin
 	}
 }
 
+// landSponsorshipWindow finishes a written window: sweep what it replaced, advance the watermark, refresh its totals.
+func landSponsorshipWindow(ctx context.Context, chAddr string, sweep *supersededSweep, totals *sponsorshipTotalsFollower, lo, hi uint32) error {
+	if err := sweep.window(ctx, lo, hi); err != nil {
+		return fmt.Errorf("window [%d,%d]: %w — %s", lo, hi, err, sweep.resumeHint(lo))
+	}
+	if err := setSponsorshipWatermark(ctx, chAddr, lo, hi); err != nil {
+		return fmt.Errorf("advance watermark to %d: %w", hi, err)
+	}
+	if err := totals.follow(ctx, lo, hi); err != nil {
+		return fmt.Errorf("window [%d,%d] totals: %w", lo, hi, err)
+	}
+	return nil
+}
+
 // Seams so a window's derive is testable without a live lake.
 var (
 	streamSponsorshipCandidates = clickhouse.StreamSponsorshipCandidates
@@ -125,10 +141,64 @@ var (
 	setSponsorshipWatermark     = clickhouse.SetSponsorshipWatermark
 	sponsorshipTotalsWatermark  = clickhouse.SponsorshipTotalsWatermark
 	sponsorshipEventsWatermark  = clickhouse.SponsorshipWatermark
+	sponsorshipServerNow        = clickhouse.ServerNow
+	deleteSupersededSponsorship = clickhouse.DeleteSupersededSponsorshipEvents
 	refreshSponsorshipTotals    = clickhouse.RefreshSponsorshipTotals
 	setSponsorshipTotalsWM      = clickhouse.SetSponsorshipTotalsWatermark
 	entryHistoryFlushRowCount   = 50_000
 )
+
+// supersededSweep makes a re-derive corrective. An event's row key holds the derived sponsor and a walk position, so
+// a re-derive that attributes or numbers it differently leaves the earlier row served beside the new one. After each
+// re-derived window is written, the earlier rows it replaced are deleted. A nil sweep is a run that starts above the
+// watermark: it deletes nothing, rows a failed run left above the watermark included.
+type supersededSweep struct {
+	addr string
+	// thru is the watermark when the run began: ledgers above it hold no earlier rows, and a tail run may be writing them.
+	thru uint32
+	// before is the server clock read before this run's first insert; every row this run writes is stamped at or after it.
+	before time.Time
+}
+
+func newSupersededSweep(ctx context.Context, addr string, start uint32) (*supersededSweep, error) {
+	wm, err := sponsorshipEventsWatermark(ctx, addr)
+	if err != nil {
+		return nil, fmt.Errorf("read sponsorship watermark: %w", err)
+	}
+	if start > wm {
+		return nil, nil //nolint:nilnil // nil is the no-sweep run; every method accepts it
+	}
+	now, err := sponsorshipServerNow(ctx, addr)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Fprintf(os.Stderr, "ch-entry-history: re-deriving at or below the watermark %d — each earlier row is deleted once this run has rewritten its event\n", wm)
+	return &supersededSweep{addr: addr, thru: wm, before: now}, nil
+}
+
+// window deletes the earlier rows of [lo, hi] that this run rewrote, and reports the ones it did not.
+func (s *supersededSweep) window(ctx context.Context, lo, hi uint32) error {
+	if s == nil || lo > s.thru {
+		return nil
+	}
+	kept, err := deleteSupersededSponsorship(ctx, s.addr, lo, min(hi, s.thru), s.before)
+	if err != nil {
+		return fmt.Errorf("delete superseded events: %w", err)
+	}
+	if kept > 0 {
+		fmt.Fprintf(os.Stderr, "ch-entry-history: window [%d,%d]: %d earlier events have no rewritten counterpart and are KEPT — either this run read less of the lake than the earlier one, or the earlier one derived events that do not exist; check before deleting them by hand\n", lo, hi, kept)
+	}
+	return nil
+}
+
+// resumeHint says how to resume after a failed window. A re-derive's watermark is already past the window, so only
+// -from re-runs it.
+func (s *supersededSweep) resumeHint(lo uint32) string {
+	if s == nil {
+		return fmt.Sprintf("resume with -from %d (or no -from: the watermark holds)", lo)
+	}
+	return fmt.Sprintf("resume with -from %d (a run without -from starts above the watermark and leaves this window half rewritten)", lo)
+}
 
 // deriveSponsorshipWindow projects one window, returning the events written (or that would be).
 func deriveSponsorshipWindow(ctx context.Context, addr string, lo, hi uint32, dryRun bool, st *entryHistoryStats) (int64, error) {

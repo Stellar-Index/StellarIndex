@@ -90,6 +90,7 @@ Views fed by every re-extract:
 | `ttl_live_until` | RMT(`version`), `key_hash` | windowed delete on the version range + reproject |
 | `contract_instance_changes` | RMT(`ingested_at`), `(contract_hash, ledger_seq, tx_hash, change_index)` | delete the old rows (orphans) |
 | `contract_instance_changes_old` | RMT(`ingested_at`), `(contract_hash, ledger_seq, change_index)` | same delete |
+| `sponsorship_events` | RMT(`ingested_at`), `(sponsor, sponsored, kind, key_id, ledger, tx_hash, op_index, change_index)` | only after step 6 passed (run earlier, it re-reads the old-numbered rows too): `ch-entry-history -from <lo> -write` rewrites each window, then deletes each earlier row it rewrote and reports the ones it did not |
 
 For the two `contract_instance_changes*` deletes exclude the 07-03 rows (`tx_hash = ''` and `ingested_at` on 07-03); `_old` has no `tx_hash`, so exclude by `ingested_at` date alone.
 

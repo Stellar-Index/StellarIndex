@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
@@ -216,6 +217,53 @@ func entryHistoryWindowCovered(ctx context.Context, conn driver.Conn, name strin
 			ErrEntryHistoryEntryChangeShortfall, name, from, thru, readTxLedgers, cov.TxLedgers)
 	}
 	return nil
+}
+
+// ServerNow returns the ClickHouse server's clock, the one that stamps a DEFAULT now() column.
+func ServerNow(ctx context.Context, addr string) (time.Time, error) {
+	conn, err := openRead(ctx, addr)
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer func() { _ = conn.Close() }()
+	// Epoch seconds, not a DateTime: a wall-clock value is ambiguous in a server timezone's repeated hour.
+	var now uint32
+	if err := conn.QueryRow(ctx, `SELECT toUnixTimestamp(now())`).Scan(&now); err != nil {
+		return time.Time{}, fmt.Errorf("clickhouse: server time: %w", err)
+	}
+	return time.Unix(int64(now), 0).UTC(), nil
+}
+
+// DeleteSupersededSponsorshipEvents removes, from ledgers [lo, hi], each sponsorship_events row written before
+// `before` whose arrangement and operation (ledger, tx_hash, op_index, kind, key_id) also has a row written since.
+// The table's key holds the derived sponsor and a walk position, so a re-derive that attributes or numbers an event
+// differently does not replace the old row. An earlier row with no rewritten counterpart is never deleted: kept counts
+// those arrangements, which a re-derive that read less than the earlier one did would otherwise lose.
+// It waits for the delete to apply.
+func DeleteSupersededSponsorshipEvents(ctx context.Context, addr string, lo, hi uint32, before time.Time) (kept uint64, err error) {
+	conn, err := openAccountMovementsWrite(ctx, addr)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = conn.Close() }()
+	cutoff := before.Unix()
+	// The mutation reads the whole partition; the connection's 300s would abandon the wait, not the delete.
+	ctx = clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{"lightweight_deletes_sync": 2, "max_execution_time": 3600}))
+	if err := conn.Exec(ctx, `DELETE FROM stellar.sponsorship_events
+		WHERE ledger BETWEEN ? AND ? AND ingested_at < fromUnixTimestamp(?)
+		  AND (ledger, tx_hash, op_index, kind, key_id) IN (
+			SELECT ledger, tx_hash, op_index, kind, key_id FROM stellar.sponsorship_events
+			WHERE ledger BETWEEN ? AND ? AND ingested_at >= fromUnixTimestamp(?))`,
+		lo, hi, cutoff, lo, hi, cutoff); err != nil {
+		return 0, fmt.Errorf("clickhouse: delete superseded sponsorship_events [%d,%d]: %w", lo, hi, err)
+	}
+	if err := conn.QueryRow(ctx, `SELECT count() FROM (
+			SELECT 1 FROM stellar.sponsorship_events WHERE ledger BETWEEN ? AND ?
+			GROUP BY ledger, tx_hash, op_index, kind, key_id
+			HAVING max(ingested_at) < fromUnixTimestamp(?))`, lo, hi, cutoff).Scan(&kept); err != nil {
+		return 0, fmt.Errorf("clickhouse: count unreplaced sponsorship_events [%d,%d]: %w", lo, hi, err)
+	}
+	return kept, nil
 }
 
 // SponsorshipWatermark returns the highest ledger ch-entry-history has derived sponsorship events through (0 = never
