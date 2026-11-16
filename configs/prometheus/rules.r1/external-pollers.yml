@@ -99,6 +99,39 @@ groups:
             the access key expired, the monthly quota ran out, or the
             indexer host lost outbound HTTPS.
 
+      # The staleness rules above subtract from last_success_unix, which
+      # has no series until the first success: a poller that has answered
+      # only errors, zero rows or "no applicable pairs" since the process
+      # started is invisible to all of them. The runner stamps
+      # started_unix before the first poll, and the first poll runs at
+      # once, so a healthy poller has both series within seconds. Each
+      # threshold is the matching staleness rule's.
+      - alert: stellarindex_external_poller_never_succeeded
+        expr: |
+          (
+              (time() - stellarindex_external_poller_started_unix{source!~"ecb|tiingo|exchangeratesapi"}) > 1800
+            or
+              (time() - stellarindex_external_poller_started_unix{source=~"tiingo|exchangeratesapi"}) > 7200
+            or
+              (time() - stellarindex_external_poller_started_unix{source="ecb"}) > 43200
+          )
+          unless stellarindex_external_poller_last_success_unix
+        for: 10m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: external-poller
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/external-pollers.md#stellarindex_external_poller_never_succeeded
+          summary: "external poller {{ $labels.source }} has not succeeded once since the process started"
+          description: |
+            Poller {{ $labels.source }} has been running past its
+            staleness budget with no successful poll at all, so the
+            staleness alerts have no series to judge. It is contributing
+            nothing. stellarindex_external_poller_polls_total by outcome
+            says why: error (upstream or auth), empty (upstream answers
+            with no rows), idle (no configured pair applies).
+
       # Active fiat-FX feed (`massive`, the internal/sources/external/forex
       # worker) has gone dry. Distinct from the poller-staleness alert
       # above: `massive` does NOT run under the external.Connector

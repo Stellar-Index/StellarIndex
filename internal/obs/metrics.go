@@ -53,6 +53,7 @@ func registerAppMetrics() {
 		AMMNonPositiveSwapTotal,
 		ExternalPollerPollsTotal,
 		ExternalPollerLastSuccessUnix,
+		ExternalPollerStartedUnix,
 		ExternalFXLastQuoteUnix,
 		ExternalFXRateRejectedTotal,
 		ExternalFXBaselineHealedTotal,
@@ -1127,6 +1128,15 @@ var ExternalPollerLastSuccessUnix = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_external_poller_last_success_unix",
 		Help: "UNIX seconds of the most recent successful PollOnce, per source. Zero = never succeeded since startup.",
+	},
+	[]string{"source"},
+)
+
+// ExternalPollerStartedUnix stamps when a poller's loop began; with no last-success series beside it, the poller has never succeeded.
+var ExternalPollerStartedUnix = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_external_poller_started_unix",
+		Help: "UNIX seconds at which the poller loop for a source started in this process.",
 	},
 	[]string{"source"},
 )

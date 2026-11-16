@@ -313,6 +313,12 @@ Gauge, labels `source`, `symbol`.
 Gauge, label `source`.
 
 Unix-seconds timestamp of the latest successful `PollOnce` per external source. Zero/unset if never succeeded since start. Staleness is `time() - <gauge>` (see `stellarindex_external_poller_stale`, `stellarindex_external_poller_polls_total`).
+### `stellarindex_external_poller_started_unix`
+
+Gauge, label `source`.
+
+Unix-seconds timestamp at which the poller loop for a source started in this process. `stellarindex_external_poller_last_success_unix` has no series until the first success, so this is what lets `stellarindex_external_poller_never_succeeded` see a poller that has only ever answered `error`, `empty` or `idle`.
+
 ### `stellarindex_external_fx_last_quote_unix`
 
 Gauge, label `source`.

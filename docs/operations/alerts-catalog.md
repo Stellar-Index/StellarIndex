@@ -21,7 +21,7 @@ its first link must be the rule's `runbook_url` page
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 71 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg: nothing wakes anyone up. |
-  | `ticket` | 289 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 290 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a quiet channel kept apart so a notice cannot bury a ticket. `send_resolved: false`. With `DISCORD_WEBHOOK_URL_INFORMATIONAL` unset it degrades to the `silent` stub: delivered to nobody. |
 
   **`informational` is not a low-priority ticket.** Nothing files a
@@ -108,6 +108,7 @@ its first link must be the rule's `runbook_url` page
 | `stellarindex_external_poller_stale_ecb` | same, `source="ecb"` | > 43200 s (12h) for 10 min | ticket | [external-pollers](runbooks/external-pollers.md#stellarindex_external_poller_stale_ecb) |
 | `stellarindex_external_poller_stale_tiingo` | same, `source="tiingo"` | > 7200 s (2h) for 10 min | ticket | [external-pollers](runbooks/external-pollers.md#stellarindex_external_poller_stale_tiingo) |
 | `stellarindex_external_poller_stale_exchangeratesapi` | same, `source="exchangeratesapi"` | > 7200 s (2h) for 10 min | ticket | [external-pollers](runbooks/external-pollers.md#stellarindex_external_poller_stale_exchangeratesapi) |
+| `stellarindex_external_poller_never_succeeded` | `time() - external_poller_started_unix` per source, with no `external_poller_last_success_unix` series | past the source's staleness budget for 10 min | ticket | [external-pollers](runbooks/external-pollers.md#stellarindex_external_poller_never_succeeded) |
 | `stellarindex_cex_stream_subscription_rejected` | `cex_stream_subscription_rejected` per (source, symbol) | == 1 for 5 min (one symbol refused; socket healthy) | ticket | [external-pollers](runbooks/external-pollers.md#stellarindex_cex_stream_subscription_rejected) |
 | `stellarindex_cex_stream_entry_skips` | `rate(cex_stream_entry_skips_total[15m])` | > 0 for 30 min (entries dropped: symbol rename or re-encoding) | ticket | [external-pollers](runbooks/external-pollers.md#stellarindex_cex_stream_entry_skips) |
 | `stellarindex_cex_stream_stalled` | `increase(cex_stream_disconnect_total{reason="stall"}[15m])` | > 0 for 5 min (half-open socket) | ticket | [external-pollers](runbooks/external-pollers.md#stellarindex_cex_stream_stalled) |

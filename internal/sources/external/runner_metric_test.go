@@ -116,6 +116,14 @@ func TestRunPoller_EmptyResultIsNotSuccess(t *testing.T) {
 	if v := pb.GetGauge().GetValue(); v != 0 {
 		t.Errorf("last_success_unix = %v, want 0 (a zero-row poll is not fresh)", v)
 	}
+	// The never-succeeded alert needs the start stamp from a poller that has produced nothing.
+	var started dto.Metric
+	if err := obs.ExternalPollerStartedUnix.WithLabelValues(source).Write(&started); err != nil {
+		t.Fatalf("write gauge: %v", err)
+	}
+	if v := started.GetGauge().GetValue(); v == 0 {
+		t.Error("started_unix = 0: a poller that never succeeds would leave no series for an alert to judge")
+	}
 }
 
 // A skip while the poller is backing off a throttle proves nothing about the
