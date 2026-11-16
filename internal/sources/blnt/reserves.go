@@ -24,7 +24,9 @@ type (
 // accrued borrower interest before the backstop's share.
 const ProtocolInterestFeeRate = 20_000
 
-var scalar7 = big.NewInt(10_000_000)
+const scalar7Int = 10_000_000
+
+var scalar7 = big.NewInt(scalar7Int)
 
 // DecodeReserveData decodes a ResData(asset) entry; BLNT rates are Blend V2-scaled (12-decimal b/d_rate).
 func DecodeReserveData(v scval.ScVal) (ReserveData, error) {
@@ -50,9 +52,7 @@ func BaseMetrics(rd ReserveData) ReserveMetrics { return blend.BaseMetrics(rd) }
 func SupplyRate(borrowRate, util *big.Int, bstopRate uint32) *big.Int {
 	gross := mulFloor(borrowRate, util)
 	remaining := new(big.Int).Sub(gross, mulFloor(gross, big.NewInt(ProtocolInterestFeeRate)))
-	if bstopRate > uint32(scalar7.Int64()) {
-		bstopRate = uint32(scalar7.Int64())
-	}
+	bstopRate = min(bstopRate, scalar7Int)
 	return remaining.Sub(remaining, mulFloor(remaining, big.NewInt(int64(bstopRate))))
 }
 
