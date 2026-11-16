@@ -29,9 +29,20 @@ var oracleStaleness = struct {
 	bySource map[string]float64
 	// byAsset holds operator overrides, which win over the default.
 	byAsset map[oracleStalenessKey]float64
+	// published holds every pair with an age series, so a budget declared or overridden after the pair's last
+	// update still reaches its gauge.
+	published map[oracleStalenessKey]struct{}
 }{
-	bySource: map[string]float64{},
-	byAsset:  map[oracleStalenessKey]float64{},
+	bySource:  map[string]float64{},
+	byAsset:   map[oracleStalenessKey]float64{},
+	published: map[oracleStalenessKey]struct{}{},
+}
+
+// republishBudgetsLocked re-emits the budget gauge of every published pair; callers hold the write lock.
+func republishBudgetsLocked() {
+	for k := range oracleStaleness.published {
+		OracleStalenessBudgetSeconds.WithLabelValues(k.source, k.asset).Set(budgetLocked(k.source, k.asset))
+	}
 }
 
 // DeclareOracleResolution publishes a source's cadence and derives its default budget together, so no published age lacks a budget.
@@ -41,6 +52,7 @@ func DeclareOracleResolution(source string, resolutionSeconds float64) {
 	oracleStaleness.mu.Lock()
 	defer oracleStaleness.mu.Unlock()
 	oracleStaleness.bySource[source] = OracleStaleBudgetMultiplier * resolutionSeconds
+	republishBudgetsLocked()
 }
 
 // OracleHeartbeatGrace is the slack added to a heartbeat-driven source's heartbeat before a silent asset tickets.
@@ -53,9 +65,10 @@ func DeclareOracleHeartbeat(source string, heartbeatSeconds float64) {
 	oracleStaleness.mu.Lock()
 	defer oracleStaleness.mu.Unlock()
 	oracleStaleness.bySource[source] = heartbeatSeconds + OracleHeartbeatGrace
+	republishBudgetsLocked()
 }
 
-// SetOracleStalenessOverrides REPLACES the override set; call before the first update, since a later install reaches a pair only on its next publication.
+// SetOracleStalenessOverrides REPLACES the override set and re-emits the budget of every pair already published.
 func SetOracleStalenessOverrides(overrides []OracleStalenessOverride) {
 	next := make(map[oracleStalenessKey]float64, len(overrides))
 	for _, o := range overrides {
@@ -65,13 +78,17 @@ func SetOracleStalenessOverrides(overrides []OracleStalenessOverride) {
 	oracleStaleness.mu.Lock()
 	defer oracleStaleness.mu.Unlock()
 	oracleStaleness.byAsset = next
+	republishBudgetsLocked()
 }
 
 // OracleStalenessBudget returns the override, else the source default, else +Inf: an undeclared source cannot alert but still emits a series.
 func OracleStalenessBudget(source, asset string) float64 {
 	oracleStaleness.mu.RLock()
 	defer oracleStaleness.mu.RUnlock()
+	return budgetLocked(source, asset)
+}
 
+func budgetLocked(source, asset string) float64 {
 	if b, ok := oracleStaleness.byAsset[oracleStalenessKey{source: source, asset: asset}]; ok {
 		return b
 	}
@@ -84,6 +101,9 @@ func OracleStalenessBudget(source, asset string) float64 {
 // RecordOracleUpdate emits the age and its budget from one call, so Prometheus's label-matched comparison always has both sides.
 func RecordOracleUpdate(source, asset string, updatedAtUnix float64) {
 	OracleLastUpdateUnix.WithLabelValues(source, asset).Set(updatedAtUnix)
-	OracleStalenessBudgetSeconds.WithLabelValues(source, asset).
-		Set(OracleStalenessBudget(source, asset))
+
+	oracleStaleness.mu.Lock()
+	defer oracleStaleness.mu.Unlock()
+	oracleStaleness.published[oracleStalenessKey{source: source, asset: asset}] = struct{}{}
+	OracleStalenessBudgetSeconds.WithLabelValues(source, asset).Set(budgetLocked(source, asset))
 }

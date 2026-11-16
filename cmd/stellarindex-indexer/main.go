@@ -288,6 +288,13 @@ func run(cfgPath string, dryRun bool) error {
 	// runbook needs, so give it the configured logger instead of slog.Default().
 	disp.SetLogger(logger)
 
+	// Not fatal: without the seed, an oracle asset already silent stays unalerted until it publishes again.
+	if n, err := pipeline.SeedOracleStaleness(rootCtx, store); err != nil {
+		logger.Error("oracle staleness series not seeded from stored observations", "err", err)
+	} else {
+		logger.Info("oracle staleness series seeded", "pairs", n)
+	}
+
 	// ─── Supply observers (opt-in via [supply] watched-sets) ──────
 	// Wires accounts (Algorithm 1, XLM), trustlines / claimable / liquidity_pools / sac_balances
 	// (Algorithm 2, LCM-based) and sep41_supply (Algorithm 3, event stream). An empty watched-set

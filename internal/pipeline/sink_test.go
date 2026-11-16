@@ -634,3 +634,42 @@ func TestSourceShapeRules(t *testing.T) {
 		t.Run(r.name, r.run)
 	}
 }
+
+type storedOracleStreams []canonical.OracleUpdate
+
+func (s storedOracleStreams) LatestOracleStreams(context.Context) ([]canonical.OracleUpdate, error) {
+	return s, nil
+}
+
+// An oracle asset that went silent before a restart must still have its staleness series afterwards: the series
+// come from stored observations at startup, not only from the next publication. The newest quote wins, a raw
+// symbol gets no series, and the budget is the declared one so the alert can fire at once.
+func TestSeedOracleStaleness_PublishesStoredStreams(t *testing.T) {
+	const source = "seed-staleness-test"
+	obs.DeclareOracleResolution(source, 300)
+	raw, err := canonical.NewOracleRawAsset("SEEDUNMAPPEDSYMBOL")
+	if err != nil {
+		t.Fatalf("NewOracleRawAsset: %v", err)
+	}
+	xlm := canonical.NativeAsset()
+	silentSince := time.Unix(1_700_000_000, 0)
+
+	before := testutil.CollectAndCount(obs.OracleLastUpdateUnix)
+	n, err := SeedOracleStaleness(context.Background(), storedOracleStreams{
+		{Source: source, Asset: xlm, Timestamp: silentSince.Add(-time.Hour)},
+		{Source: source, Asset: xlm, Timestamp: silentSince},
+		{Source: source, Asset: raw, Timestamp: silentSince},
+	})
+	if err != nil || n != 1 {
+		t.Fatalf("SeedOracleStaleness = %d, %v; want 1 pair", n, err)
+	}
+	if got := testutil.CollectAndCount(obs.OracleLastUpdateUnix); got != before+1 {
+		t.Fatalf("series count = %d, want %d: one for the mapped asset, none for the raw symbol", got, before+1)
+	}
+	if got := testutil.ToFloat64(obs.OracleLastUpdateUnix.WithLabelValues(source, xlm.String())); got != float64(silentSince.Unix()) {
+		t.Errorf("last_update_unix = %v, want the newest stored observation %d", got, silentSince.Unix())
+	}
+	if got := testutil.ToFloat64(obs.OracleStalenessBudgetSeconds.WithLabelValues(source, xlm.String())); got != 3000 {
+		t.Errorf("staleness budget = %v, want the declared 3000", got)
+	}
+}

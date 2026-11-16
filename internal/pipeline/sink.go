@@ -949,6 +949,37 @@ func recordOracleMetricIfMapped(source string, asset canonical.Asset, updatedAtU
 	obs.RecordOracleUpdate(source, asset.String(), updatedAtUnix)
 }
 
+// OracleStreamReader is the stored-observation read SeedOracleStaleness needs.
+type OracleStreamReader interface {
+	LatestOracleStreams(ctx context.Context) ([]canonical.OracleUpdate, error)
+}
+
+// SeedOracleStaleness publishes the staleness series of every stored oracle stream at startup. The series are
+// otherwise created by an asset's next publication, so an asset that went silent before a restart had no series
+// and stellarindex_oracle_stale could not fire for it. Streams silent for longer than the reader's window (7 days)
+// are not seeded. Returns the number of pairs seeded.
+func SeedOracleStaleness(ctx context.Context, r OracleStreamReader) (int, error) {
+	streams, err := r.LatestOracleStreams(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("seed oracle staleness: %w", err)
+	}
+	type pair struct{ source, asset string }
+	newest := map[pair]int64{}
+	for _, u := range streams {
+		if !u.Asset.IsMapped() {
+			continue
+		}
+		k := pair{u.Source, u.Asset.String()}
+		if ts := u.Timestamp.Unix(); ts > newest[k] {
+			newest[k] = ts
+		}
+	}
+	for k, ts := range newest {
+		obs.RecordOracleUpdate(k.source, k.asset, float64(ts))
+	}
+	return len(newest), nil
+}
+
 func persistOracle(ctx context.Context, logger *slog.Logger, store *timescale.Store, u canonical.OracleUpdate) error {
 	if err := store.InsertOracleUpdate(ctx, u); err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(u.Source, "oracle").Inc()

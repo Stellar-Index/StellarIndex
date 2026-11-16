@@ -753,6 +753,34 @@ func TestOracleStalenessBudget_UndeclaredSourceCannotAlert(t *testing.T) {
 	}
 }
 
+// A budget declared or overridden after a pair was published must reach that pair's gauge at once. Left to the
+// pair's next publication, a source declared after the startup seed keeps an infinite budget for exactly the
+// assets that have stopped publishing.
+func TestOracleStalenessBudget_ALateDeclarationReachesPublishedPairs(t *testing.T) {
+	const source = "test-late-declare"
+	obs.RecordOracleUpdate(source, "crypto:XLM", 1_700_000_000)
+	budget := func() float64 {
+		return testutil.ToFloat64(obs.OracleStalenessBudgetSeconds.WithLabelValues(source, "crypto:XLM"))
+	}
+	if got := budget(); !math.IsInf(got, 1) {
+		t.Fatalf("budget before the source is declared = %v, want +Inf", got)
+	}
+	obs.DeclareOracleResolution(source, 300)
+	if got := budget(); got != 3000 {
+		t.Errorf("budget after DeclareOracleResolution = %v, want 3000", got)
+	}
+	obs.SetOracleStalenessOverrides([]obs.OracleStalenessOverride{{Source: source, Asset: "crypto:XLM", BudgetSeconds: 900}})
+	t.Cleanup(func() { obs.SetOracleStalenessOverrides(nil) })
+	if got := budget(); got != 900 {
+		t.Errorf("budget after an override = %v, want 900", got)
+	}
+	obs.DeclareOracleHeartbeat(source, 3600)
+	obs.SetOracleStalenessOverrides(nil)
+	if got := budget(); got != 3600+obs.OracleHeartbeatGrace {
+		t.Errorf("budget after DeclareOracleHeartbeat = %v, want heartbeat + grace", got)
+	}
+}
+
 // TestRecordOracleUpdate_EveryAgeHasABudget is the "no asset silently loses its alert" guard,
 // written over the REGISTRY rather than one call.
 //
