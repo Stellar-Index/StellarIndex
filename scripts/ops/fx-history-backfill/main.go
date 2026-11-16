@@ -26,7 +26,9 @@
 //	--years=N              window depth (default 25 — covers ECB
 //	                       inception in 1999)
 //	--from=YYYY-MM-DD      override window start (overrides --years)
-//	--to=YYYY-MM-DD        override window end (default today UTC)
+//	--to=YYYY-MM-DD        override window end (default and latest: the
+//	                       day before the live forex worker's window,
+//	                       which is today and the 7 days before it)
 //	--chunk-years=N        split the fetch into N-year chunks
 //	                       (default 5; reduces peak memory + lets the
 //	                       operator see progress every chunk)
@@ -120,10 +122,23 @@ func openBackfillStore(ctx context.Context, dsn string) (*timescale.Store, error
 	return store, nil
 }
 
+// liveWindowDays is how many days before today the live forex worker rewrites on each refresh (today's rate plus its
+// trailing daily bars, with a day's margin).
+const liveWindowDays = 7
+
+// quotesLiveFrom is the first day the live forex worker owns in fx_quotes. This tool writes at a positive generation, and
+// the worker's generation-0 refresh never replaces such a row, so a row written on or after this day would freeze a rate
+// the worker is still correcting.
+func quotesLiveFrom(now time.Time) time.Time {
+	return now.UTC().Truncate(24*time.Hour).AddDate(0, 0, -liveWindowDays)
+}
+
 type backfillConfig struct {
-	dsn          string
-	from         time.Time
-	to           time.Time
+	dsn  string
+	from time.Time
+	to   time.Time
+	// liveFrom, when set, is the first day the quotes series must not write.
+	liveFrom     time.Time
 	chunkYears   int
 	dryRun       bool
 	tickerFilter map[string]struct{}
@@ -151,7 +166,7 @@ func parseFlags() (backfillConfig, *slog.Logger) {
 	)
 	flag.IntVar(&years, "years", 25, "trailing window depth in years (default 25)")
 	flag.StringVar(&fromStr, "from", "", "window start date YYYY-MM-DD (overrides --years)")
-	flag.StringVar(&toStr, "to", "", "window end date YYYY-MM-DD (default: today UTC)")
+	flag.StringVar(&toStr, "to", "", "window end date YYYY-MM-DD (default: today UTC; quotes stop the day before the live worker's 7-day window)")
 	flag.IntVar(&chunkYears, "chunk-years", 5, "split the fetch into N-year chunks (default 5)")
 	flag.BoolVar(&dryRun, "dry-run", false, "skip DB writes; report row counts only")
 	flag.StringVar(&tickerCSV, "ticker", "", "comma-separated ticker subset (default: all)")
@@ -175,6 +190,16 @@ func parseFlags() (backfillConfig, *slog.Logger) {
 			os.Exit(1)
 		}
 		to = t.UTC()
+	}
+	var liveFrom time.Time
+	if series == seriesQuotes {
+		liveFrom = quotesLiveFrom(time.Now())
+		if !to.Before(liveFrom) {
+			clamped := liveFrom.AddDate(0, 0, -1)
+			logger.Warn("--to reaches into the live forex worker's window; stopping the day before it",
+				"to", to.Format("2006-01-02"), "clamped_to", clamped.Format("2006-01-02"))
+			to = clamped
+		}
 	}
 	from := to.AddDate(-years, 0, 0)
 	if fromStr != "" {
@@ -212,6 +237,7 @@ func parseFlags() (backfillConfig, *slog.Logger) {
 		dsn:          dsn,
 		from:         from,
 		to:           to,
+		liveFrom:     liveFrom,
 		chunkYears:   chunkYears,
 		dryRun:       dryRun,
 		tickerFilter: tickerFilter,
@@ -223,7 +249,9 @@ func parseFlags() (backfillConfig, *slog.Logger) {
 // backfillResult summarises a run. A failed chunk or an interrupted walk
 // leaves a hole in fx_quotes history, so either makes the run unsuccessful.
 type backfillResult struct {
-	totalRows    int
+	totalRows int
+	// skippedLive counts rows the upstream returned for a day the live worker owns; they are never written.
+	skippedLive  int
 	chunks       int
 	failedChunks int
 	interrupted  bool
@@ -247,6 +275,7 @@ func (r backfillResult) report(logger *slog.Logger) int {
 		"failed_chunks", r.failedChunks,
 		"interrupted", r.interrupted,
 		"rows", r.totalRows,
+		"skipped_live_window_rows", r.skippedLive,
 		"elapsed", r.elapsed,
 	}
 	code := r.exitCode()
@@ -281,7 +310,8 @@ func runBackfill(
 		if chunkEnd.After(cfg.to) {
 			chunkEnd = cfg.to
 		}
-		rows, err := fetchAndPersist(ctx, client, store, chunkStart, chunkEnd, cfg.tickerFilter, cfg.dryRun)
+		rows, skipped, err := fetchAndPersist(ctx, client, store, chunkStart, chunkEnd, cfg)
+		res.skippedLive += skipped
 		if err != nil {
 			res.failedChunks++
 			logger.Error("chunk failed",
@@ -303,35 +333,41 @@ func runBackfill(
 }
 
 // fetchAndPersist pulls one chunk of daily snapshots and projects each
-// (date × ticker × rate) tuple into an fx_quotes row.
+// (date × ticker × rate) tuple into an fx_quotes row. A day on or after
+// cfg.liveFrom is counted and skipped: the upstream answers a range with
+// whatever days it holds, and those belong to the live worker.
 func fetchAndPersist(
 	ctx context.Context,
 	client *frankfurter.Client,
 	store *timescale.Store,
 	from, to time.Time,
-	tickerFilter map[string]struct{},
-	dryRun bool,
-) (int, error) {
+	cfg backfillConfig,
+) (written, skippedLive int, err error) {
 	days, err := client.RangeUSDRates(ctx, from, to)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	if len(days) == 0 {
-		return 0, nil
+		return 0, 0, nil
 	}
 
 	rows := make([]timescale.FXQuote, 0, len(days)*16)
 	for _, day := range days {
 		bucket := day.Date.UTC().Truncate(24 * time.Hour)
+		live := !cfg.liveFrom.IsZero() && !bucket.Before(cfg.liveFrom)
 		for code, rate := range day.Rates {
 			if rate <= 0 {
 				continue
 			}
 			ticker := strings.ToUpper(code)
-			if len(tickerFilter) > 0 {
-				if _, ok := tickerFilter[ticker]; !ok {
+			if len(cfg.tickerFilter) > 0 {
+				if _, ok := cfg.tickerFilter[ticker]; !ok {
 					continue
 				}
+			}
+			if live {
+				skippedLive++
+				continue
 			}
 			rows = append(rows, timescale.FXQuote{
 				Bucket:  bucket,
@@ -341,11 +377,11 @@ func fetchAndPersist(
 			})
 		}
 	}
-	if dryRun || store == nil {
-		return len(rows), nil
+	if cfg.dryRun || store == nil {
+		return len(rows), skippedLive, nil
 	}
 	if err := store.InsertFXQuoteBatch(ctx, rows); err != nil {
-		return 0, fmt.Errorf("insert %s..%s: %w", from.Format("2006-01-02"), to.Format("2006-01-02"), err)
+		return 0, skippedLive, fmt.Errorf("insert %s..%s: %w", from.Format("2006-01-02"), to.Format("2006-01-02"), err)
 	}
-	return len(rows), nil
+	return len(rows), skippedLive, nil
 }

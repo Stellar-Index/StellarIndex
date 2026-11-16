@@ -84,6 +84,43 @@ func TestRunBackfill_InterruptedExitsNonZero(t *testing.T) {
 	}
 }
 
+// The live forex worker rewrites today and the days just before it at generation 0, and never replaces a row this tool
+// wrote at a positive generation. A day inside that window must be skipped, not written.
+func TestRunBackfill_LeavesTheLiveWorkersWindow(t *testing.T) {
+	now := time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC)
+	liveFrom := quotesLiveFrom(now)
+	if want := time.Date(2026, 11, 9, 0, 0, 0, 0, time.UTC); !liveFrom.Equal(want) {
+		t.Fatalf("quotesLiveFrom = %s, want %s", liveFrom, want)
+	}
+
+	// The stub answers each chunk with one day: the chunk's start. One chunk starts before the window, one inside it.
+	cfg := backfillConfig{
+		from:         liveFrom.AddDate(0, 0, -1),
+		to:           liveFrom.AddDate(0, 0, 1),
+		liveFrom:     liveFrom,
+		chunkYears:   5,
+		dryRun:       true,
+		tickerFilter: map[string]struct{}{},
+	}
+	res := runBackfill(context.Background(), discardLogger(), frankfurterStub(t, ""), nil, cfg)
+	if res.totalRows != 2 || res.skippedLive != 0 {
+		t.Fatalf("day before the window: rows=%d skipped=%d, want 2 written and none skipped", res.totalRows, res.skippedLive)
+	}
+
+	cfg.from = liveFrom
+	res = runBackfill(context.Background(), discardLogger(), frankfurterStub(t, ""), nil, cfg)
+	if res.totalRows != 0 || res.skippedLive != 2 {
+		t.Fatalf("first day of the window: rows=%d skipped=%d, want none written and 2 skipped", res.totalRows, res.skippedLive)
+	}
+
+	// Without a live window (the fixings series) nothing is skipped.
+	cfg.liveFrom = time.Time{}
+	res = runBackfill(context.Background(), discardLogger(), frankfurterStub(t, ""), nil, cfg)
+	if res.totalRows != 2 || res.skippedLive != 0 {
+		t.Fatalf("no live window: rows=%d skipped=%d, want 2 written", res.totalRows, res.skippedLive)
+	}
+}
+
 func TestRunBackfill_CompleteRunExitsZero(t *testing.T) {
 	res := runBackfill(context.Background(), discardLogger(), frankfurterStub(t, ""), nil, twoChunkConfig())
 
