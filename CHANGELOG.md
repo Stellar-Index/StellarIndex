@@ -20,6 +20,14 @@ subjects, not per PR — see CONTRIBUTING.md §Changelog.
 
 ## [Unreleased]
 
+## [v0.121.1] - 2026-11-16
+
+Tested against Stellar protocol 27. No migrations, no config keys, no host payload, no `pkg/*` change.
+
+### Fixed
+
+- **api:** `/v1/status` answered 200 with an empty body on a host whose price routes had no successful request in five minutes (seen on testnet and futurenet at v0.121.0). A latency quantile with no observations is now treated as no measurement. A response body that cannot be encoded is a 500 problem document, never an empty 200.
+
 ## [v0.121.0] - 2026-11-16
 
 Tested against Stellar protocol 27. No migrations. No `pkg/*` break; `pkg/client` gains `includes_unread` on the envelope flags. New config keys, both with safe defaults: `api.register_max_per_hour` (60) and `api.register_disabled` (false). Host payload changed: the archival-node role (Caddy access-log redaction, the `wasm-drift` service and timer), alert rules in both rule trees, and scripts under `scripts/ops`; these reach a host with the role converge, not with the binary. After the converge on r1, start `wasm-drift.service` once. The explorer deploy's shadow-Worker delete step has not run yet; it first runs on the next manual explorer deploy.
@@ -103,43 +111,3 @@ Tested against Stellar protocol 27. No migrations. No `pkg/*` break; `pkg/client
 - **rwa:** the premium history judges a day against the days accepted before it, never a refused one; a thin history stays within 10x of the published value, and a repricing needs an agreeing run at least as long as the accepted days.
 - **ops:** the chunk scan decompresses every value, not only the column headers, and re-verifies every chunk once. A host with no probe key does not run the SLA probe. The os dataset's mode agrees with its ownership task.
 - **ci:** the migration-compat gate reads a multi-line `ALTER` as one statement and a function the migration calls as migrate-time code; the lake-dedup gate charges a read to its own file and query block and reads a comma join.
-
-## [v0.117.0] - 2026-11-14
-
-Tested against Stellar protocol 27. No migrations. No `pkg/*` break; `pkg/client` gains lower-bound, `parent_key_id` and flag fields. Config: a repeated `supply.sdf_reserve_accounts` entry now fails validation. Host payload changed: the archival-node and HA roles, role scripts, systemd units and both Prometheus rule trees; apply the roles after the binaries. No replay.
-
-### Changed
-
-- **api:** partial totals carry a lower-bound flag: RWA and stablecoin totals, lending TVL, `/v1/protocols` TVL, 24h USD volumes on `/v1/assets`, `/v1/markets`, `/v1/network/stats` and `/v1/aggregators`, and listing valuations built on a floor supply.
-- **api:** a read that failed is no longer a clean answer. Price, peg, supply, catalogue, guard, oracle and breakdown read failures now return an error or a stale, degraded, uncached response instead of a 404, an empty series, a zero or a declared 1.0.
-- **api:** cached and carried figures are dated by when they were read: DEX TVL, catalogue rows, lending reserve valuations and fiat charts carry `stale` when the source is old.
-- **api:** wide or filtered reads cost more rate-limit tokens: `/v1/vwap`, `/v1/twap`, single-bar `/v1/ohlc`, windowed `/v1/chart`, sparkline includes, address-filtered transfers and `/v1/markets?include=inception`. `/v1/divergence` rejects `window_days` above 30.
-- **api:** `org_verified` is described as a domain link. A flagged issuer's self-written name, logo and anchor fields are cleared on asset surfaces.
-- **api:** Spectra joins the protocol directory. An RWA classic member's SAC is no longer a second row. `/v1/rwa/history` names its supply basis. DeFindex deposit and withdraw volume is valued in USD.
-- **auth:** a key records the key that minted it and shows in the owner's dashboard. A tier lowering clamps key quotas. Dashboard-minted keys no longer age out.
-- **dashboard:** sign-ins, logouts, webhook and price-alert changes write audit rows.
-- **explorer:** renders the flags the API serves (under review, stale, degraded, lower bound, derived supply), keeps withheld figures withheld, and labels the org badge "Domain linked".
-- **ansible:** `/var/lib/stellarindex` and the textfile directory are root-owned with root-created subdirectories. Root stages installs outside `/tmp`. The Redis lockdown ACL covers what the binaries use.
-
-### Fixed
-
-- **pricing:** a lone leg minute prices no trade; `/v1/changes` ignores a bucket the served price refused; the transitive far-leg gate checks the market the hop was priced from; a pinned divergence entry reads as unchecked.
-- **supply:** no SEP-41 supply is published until the contract's Soroban-era events are shown to be in the served tier. A failed reserve read is an error, not a static figure. A flowless contract with no reading is unmeasured, not zero.
-- **freeze:** a failed marker write no longer releases the freeze; an operator release lands and is not undone by a retried write. `anomaly.freeze` fan-out runs off the price tick.
-- **decimals-guard:** re-enumerates every six hours, retries failed corrections and reports scales it could not read.
-- **auth:** passkey removal ends other sessions. A denied IP spends no other address's sign-in budget. A failed sign-up leaves no account holding the address. A full limiter map throttles the flooding regions only. Every `X-Forwarded-For` line is read.
-- **alerts:** a missed webhook delivery is retried once; a webhook URL's path is never logged.
-- **mev:** a detector that could not read is flagged partial; a sandwich victim must trade on the front leg's venue and direction.
-- **projector:** two rejected rows in one ledger no longer wedge a source.
-- **protocols:** a fanned event is counted once; breakdown reads carry an "other" bucket.
-- **blend:** V1 user-liquidation auctions count on the account and protocol pages.
-- **external:** id-less CEX trades are refused; the Bitstamp backfill walks past short pages; a baseline-less FX history is banded or held.
-- **ops:** root writers use exclusive temp files and never follow a planted link. `pg-chunk-scan` decodes one chunk per transaction. Snapshot rotation survives a pinned snapshot. Tip readers use the live cursor. `rederive-from` refreshes the trades aggregates. Archive-fill retries unconfirmed partitions. The schema snapshot restores in order. The gap finder fails loudly. The node healthcheck lists one partition. `stellarindex-migrate force` takes a migration number that exists, or `none`. The route sweep fails on an unexpected 404. A failed migration names its recovery step.
-- **deploy:** the config-apply gate diffs from the config the host has. The deploy job outlasts its rollback.
-- **ansible:** refuses a pool create over a labelled disk, an un-acked disabled off-site repo and an un-acked galexie change before notifying. Redis re-applies keep the live topology. Promtail ships to an address Loki listens on.
-- **ci:** the lake-dedup, i128 and migration gates catch what they let through; monitors report what they measured.
-- **explorer:** per-network API host in built redirects, a live derived price, one verified identity per asset, and no Function call per RSC prefetch.
-
-### Security
-
-- **go:** toolchain 1.27.4 (GO-2026-6859).
