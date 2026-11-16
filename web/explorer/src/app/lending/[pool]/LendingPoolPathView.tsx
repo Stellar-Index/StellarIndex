@@ -5,7 +5,9 @@ import Link from 'next/link';
 import { PageHeader } from '@/components/ui';
 import { useLastPathSegment } from '@/lib/useLastPathSegment';
 
+import { poolProtocol } from '../poolMeta';
 import { PoolReserves } from './PoolReserves';
+import { hrefFor } from '@/lib/hrefFor';
 
 /**
  * LendingPoolPathView — the runtime fallback for /lending/[pool] outside
@@ -13,7 +15,7 @@ import { PoolReserves } from './PoolReserves';
  * /assets and /markets — see AssetPathView / PairPathView).
  *
  * generateStaticParams enumerates every pool /v1/lending/pools currently
- * lists plus the curated factory/backstop contracts, so a pool the Blend
+ * lists plus the curated factory/backstop contracts, so a pool a lending
  * factory spawns between builds hard-404'd on the static host until
  * functions/lending/[[path]].js existed to serve this shell. The real
  * pool id is read from the URL (not a build-time param) — PoolReserves is
@@ -21,6 +23,8 @@ import { PoolReserves } from './PoolReserves';
  */
 export function LendingPoolPathView() {
   const pool = useLastPathSegment();
+  // Only curated pools resolve a protocol here; the shell has no listing row.
+  const protocol = pool ? poolProtocol(pool) : null;
 
   return (
     <div className="space-y-6">
@@ -34,12 +38,14 @@ export function LendingPoolPathView() {
           <span className="font-mono break-all">{pool || 'Loading…'}</span>
         }
       />
-      <Link
-        href="/protocols/blend"
-        className="text-brand-600 inline-block text-xs hover:underline"
-      >
-        Blend protocol
-      </Link>
+      {protocol && (
+        <Link
+          href={hrefFor.protocol(protocol.slug)}
+          className="text-brand-600 inline-block text-xs hover:underline"
+        >
+          {protocol.name} protocol
+        </Link>
+      )}
       {pool && <PoolReserves pool={pool} />}
     </div>
   );

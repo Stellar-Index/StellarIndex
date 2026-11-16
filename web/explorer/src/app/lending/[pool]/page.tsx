@@ -19,6 +19,8 @@ import type { paths } from '@/api/types';
 import { LendingPoolPathView } from './LendingPoolPathView';
 import { PoolReserves } from './PoolReserves';
 import { CURRENT_NETWORK } from '@/lib/networks';
+import { LENDING_POOL_META, poolProtocol } from '../poolMeta';
+import { hrefFor } from '@/lib/hrefFor';
 
 type Params = Promise<{ pool: string }>;
 
@@ -28,82 +30,13 @@ type LendingPool = NonNullable<
   paths['/lending/pools']['get']['responses'][200]['content']['application/json']['data']
 >[number];
 
-// Curated annotations for every Blend mainnet contract we track.
-// Mirrors the BLEND_POOL_META map in LendingPoolsTable; kept in
-// sync so the detail route renders identical context whether the
-// user arrived via the listing or a deep link.
-// Sourced from docs/operations/wasm-audits/blend.md (Phase 4 walk).
-const BLEND_POOL_LABELS: Record<
-  string,
-  { name: string; note?: string; deployedAt?: string; initiator?: string }
-> = {
-  CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7: {
-    name: 'Backstop V2',
-    note: 'Holds the protocol-wide BLND-USDC LP shares that backstop pool insolvency. Receives auction proceeds when borrower positions liquidate at a loss.',
-    deployedAt: '2025-04-14',
-    initiator: 'GAX2VVWVHU5YQY5J3NJBXKHI3FFKZN54BE6GRJCWSIKSBZTQWJJNJMPC',
-  },
-  CDSYOAVXFY7SM5S64IZPPPYB4GVGGLMQVFREPSQQEZVIWXX5R23G4QSU: {
-    name: 'Pool Factory V2',
-    note: 'Spawns new isolated lending-pool contracts. Each user-facing pool (with its own reserves and risk parameters) is a child of this factory.',
-    deployedAt: '2025-04-14',
-    initiator: 'GAX2VVWVHU5YQY5J3NJBXKHI3FFKZN54BE6GRJCWSIKSBZTQWJJNJMPC',
-  },
-  CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD: {
-    name: 'Pool #1 (genesis)',
-    note: 'First pool deployed by the Pool Factory V2, ~4 minutes after the factory itself. Initiator overlaps with the protocol team — likely a reference/genesis pool.',
-    deployedAt: '2025-04-14',
-    initiator: 'GAX2VVWVHU5YQY5J3NJBXKHI3FFKZN54BE6GRJCWSIKSBZTQWJJNJMPC',
-  },
-  CBNR7PYFY775UG7W37B4OJG2OBBUKLFW6VIBHFDKKLR2HECPRMRZMDK3: {
-    name: 'Pool #2',
-    deployedAt: '2025-04-15',
-    initiator: 'GBCAS7XIGDRZY4BMABJMGGW7J3YTITRRV5BTEMFQE5ZZSSVWHHX2ZSS4',
-  },
-  CCCCIQSDILITHMM7PBSLVDT5MISSY7R26MNZXCX4H7J5JQ5FPIYOGYFS: {
-    name: 'Pool #3',
-    deployedAt: '2025-04-17',
-    initiator: 'GBCAS7XIGDRZY4BMABJMGGW7J3YTITRRV5BTEMFQE5ZZSSVWHHX2ZSS4',
-  },
-  CB4OFHAY2TAEYUVPOJS36S657C6NYMSIFUNCCA5AHYT46Y5XUID3O2ED: {
-    name: 'Pool #4',
-    deployedAt: '2025-05-01',
-    initiator: 'GBIWJGAOSFC4KUPHXM573TKTWHMI7VW7D4GCHYZYH243Q6HVBV7ORBIT',
-  },
-  CAE7QVOMBLZ53CDRGK3UNRRHG5EZ5NQA7HHTFASEMYBWHG6MDFZTYHXC: {
-    name: 'Pool #5',
-    deployedAt: '2025-05-01',
-    initiator: 'GBIWJGAOSFC4KUPHXM573TKTWHMI7VW7D4GCHYZYH243Q6HVBV7ORBIT',
-  },
-  CBYOBT7ZCCLQCBUYYIABZLSEGDPEUWXCUXQTZYOG3YBDR7U357D5ZIRF: {
-    name: 'Pool #6',
-    deployedAt: '2025-07-13',
-    initiator: 'GCCI7K6QU6FVVIXWSLKRPTBKJCFBLEJKPTZMP27A2KL37N4ZL3OCM3GI',
-  },
-  CALRF5I2OCJCU577R6MZBCY5IIXNMAAG6PNMN7GUKEYIXBJCJN2FJRVI: {
-    name: 'Pool #7',
-    deployedAt: '2025-11-22',
-    initiator: 'GDH3FRHOOWXYXEASH43N2VOVFOPJSVJF3EQFSLBLJYFPHOUAF4N4AETH',
-  },
-  CADR6Q2UOCDJAGXMAB2E6SRT35STLZ2IGLZUCXJQG7TC2LNKCU5RTQVY: {
-    name: 'Pool #8',
-    deployedAt: '2025-11-25',
-    initiator: 'GDH3FRHOOWXYXEASH43N2VOVFOPJSVJF3EQFSLBLJYFPHOUAF4N4AETH',
-  },
-  CDMAVJPFXPADND3YRL4BSM3AKZWCTFMX27GLLXCML3PD62HEQS5FPVAI: {
-    name: 'Pool #9',
-    deployedAt: '2025-11-25',
-    initiator: 'GDH3FRHOOWXYXEASH43N2VOVFOPJSVJF3EQFSLBLJYFPHOUAF4N4AETH',
-  },
-};
-
 export async function generateStaticParams() {
   // Curated well-known factory contracts that don't emit auctions
   // and so don't show up in /v1/lending/pools — but operators and
   // users still deep-link to them. Keep these in the static-params
   // list so the routes pre-render even when the auction-stream
   // listing is empty.
-  const curatedKeys = Object.keys(BLEND_POOL_LABELS).map((pool) => ({ pool }));
+  const curatedKeys = Object.keys(LENDING_POOL_META).map((pool) => ({ pool }));
   // fetchLendingPools throws on persistent transport failure
   // (fail-hard, src/lib/buildFetch.ts); null = CI stub. An empty
   // listing is tolerable here — the curated keys carry the route.
@@ -131,14 +64,16 @@ export async function generateMetadata({
   if (pool.toLowerCase() === 'shell') {
     return shellMetadata(
       'Lending pool',
-      'Blend lending-pool detail, rendered live from the Stellar Index API.',
+      'Lending-pool detail, rendered live from the Stellar Index API.',
     );
   }
   const label =
-    BLEND_POOL_LABELS[pool]?.name ?? `${pool.slice(0, 6)}…${pool.slice(-6)}`;
+    LENDING_POOL_META[pool]?.name ?? `${pool.slice(0, 6)}…${pool.slice(-6)}`;
+  const { row } = await fetchPool(pool);
+  const protocol = poolProtocol(pool, row?.protocol)?.name;
   const canonical = `${CURRENT_NETWORK.explorerUrl}/lending/${pool}`;
-  const title = `${label} — Blend lending pool`;
-  const description = `Auction activity, user count, and contract metadata for the Blend pool at ${pool}.`;
+  const title = `${label} — ${protocol ? `${protocol} lending pool` : 'Lending pool'}`;
+  const description = `Auction activity, user count, and contract metadata for the ${protocol ? `${protocol} pool` : 'lending pool'} at ${pool}.`;
   return {
     title,
     description,
@@ -193,7 +128,7 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
   const { pool } = await params;
   // functions/lending/[[path]].js serves this same built HTML for
   // any /lending/* pool id outside the pre-render set above — a pool
-  // deployed by the Blend factory between builds otherwise hard-404'd on
+  // deployed by a lending factory between builds otherwise hard-404'd on
   // the static host. Case-insensitive to match the sentinel every other
   // long-tail shell accepts (assets/markets emit case variants of every
   // real slug; lending pool ids are uppercase-only, so this only ever
@@ -208,7 +143,8 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
     );
   }
   const { listed, row: data } = await fetchPool(pool);
-  const label = BLEND_POOL_LABELS[pool];
+  const label = LENDING_POOL_META[pool];
+  const protocol = poolProtocol(pool, data?.protocol);
   if (!data && !label) {
     // Real build: a param that is neither curated nor in the listing
     // can only mean generateStaticParams' source data vanished
@@ -237,7 +173,7 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
         }
         meta={
           <span className="flex flex-wrap items-center gap-2">
-            <Badge>Blend</Badge>
+            {protocol && <Badge>{protocol.name}</Badge>}
             {label && <Badge tone="brand">{label.name}</Badge>}
             {label?.deployedAt && <span>deployed {label.deployedAt}</span>}
           </span>
@@ -258,27 +194,31 @@ export default async function LendingPoolPage({ params }: { params: Params }) {
           </p>
         )}
         <div className="flex flex-wrap gap-3">
-          <Link
-            href="/protocols/blend"
-            className="text-brand-600 hover:underline"
-          >
-            Blend protocol
-          </Link>
+          {protocol && (
+            <Link
+              href={hrefFor.protocol(protocol.slug)}
+              className="text-brand-600 hover:underline"
+            >
+              {protocol.name} protocol
+            </Link>
+          )}
           <Link
             href={`/contracts/${encodeURIComponent(pool)}/`}
             className="text-brand-600 hover:underline"
           >
             Contract events
           </Link>
-          <a
-            href="https://blend.capital"
-            target="_blank"
-            rel="noreferrer noopener"
-            className="inline-flex items-center gap-1 hover:underline"
-          >
-            blend.capital
-            <ExternalLink className="h-3 w-3" aria-hidden="true" />
-          </a>
+          {protocol?.website && (
+            <a
+              href={protocol.website}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="inline-flex items-center gap-1 hover:underline"
+            >
+              {new URL(protocol.website).host.replace(/^www\./, '')}
+              <ExternalLink className="h-3 w-3" aria-hidden="true" />
+            </a>
+          )}
         </div>
       </div>
       {label?.note && (

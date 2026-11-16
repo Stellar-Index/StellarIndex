@@ -38,6 +38,8 @@ afterEach(() => {
 
 const POOL = 'CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD';
 
+const BLNT_POOL = 'CACSQWCMKG45TUHCQ3LXHOB7YEEJH4W376ZHQPXH2IZ3TE4NJHFZMCY7';
+
 describe('LendingPoolsTable', () => {
   it('renders an explicit unavailable state on API failure — never the fabricated "no pools" empty state', async () => {
     vi.mocked(apiGet).mockRejectedValue(new Error('boom'));
@@ -48,7 +50,7 @@ describe('LendingPoolsTable', () => {
       ).toBeInTheDocument(),
     );
     expect(
-      screen.queryByText(/No Blend pools have emitted auction events yet/),
+      screen.queryByText(/No lending pools have emitted auction events yet/),
     ).toBeNull();
   });
 
@@ -57,7 +59,7 @@ describe('LendingPoolsTable', () => {
     renderIt();
     await waitFor(() =>
       expect(
-        screen.getByText(/No Blend pools have emitted auction events yet/),
+        screen.getByText(/No lending pools have emitted auction events yet/),
       ).toBeInTheDocument(),
     );
   });
@@ -220,5 +222,34 @@ describe('LendingPoolsTable', () => {
     await waitFor(() => expect(listCalls).toBe(1));
     await vi.advanceTimersByTimeAsync(PENDING_POLL_MS * (PENDING_POLL_MAX + 5));
     expect(listCalls).toBe(PENDING_POLL_MAX);
+  });
+
+  it('labels a BLNT pool from the curated map, badges its protocol and links to its pool page', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: [{ pool: BLNT_POOL, protocol: 'blnt', auctions_total: 0 }],
+    });
+    renderIt();
+    await waitFor(() =>
+      expect(screen.getByText('BLNT Fixed pool')).toBeInTheDocument(),
+    );
+    expect(screen.getByText('BLNT V3')).toBeInTheDocument();
+    expect(screen.queryByText(/Blend/)).toBeNull();
+    const link = screen.getAllByRole('link').find((a) => a.title === BLNT_POOL);
+    expect(link).toHaveAttribute('href', `/lending/${BLNT_POOL}`);
+  });
+
+  it('never calls an uncurated non-Blend row a Blend pool', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: [
+        row({ pool: 'CUNCURATED000', protocol: 'blnt' }),
+        row({ pool: 'CUNKNOWN000', protocol: 'mystery' }),
+      ],
+    });
+    renderIt();
+    await waitFor(() =>
+      expect(screen.getByText('BLNT V3 pool')).toBeInTheDocument(),
+    );
+    expect(screen.getByText('Lending pool')).toBeInTheDocument();
+    expect(screen.queryByText(/Blend/)).toBeNull();
   });
 });
