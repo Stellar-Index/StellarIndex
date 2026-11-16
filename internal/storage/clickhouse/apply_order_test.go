@@ -122,14 +122,14 @@ func TestApplyOrderer_UnresolvedTxFailsStream(t *testing.T) {
 	}
 }
 
-// Every ledger is looked up and every event carries its 1-based apply index, a single-transaction ledger included; a two-transaction
-// ledger whose hash order is the reverse of its apply order comes out in apply order.
-func TestApplyOrderer_StampsTransactionIndex(t *testing.T) {
-	idx := map[ledgerTx]uint32{{7, "only"}: 4, {9, "b"}: 0, {9, "a"}: 1, {11, "solo"}: 0}
+// A ledger whose events all come from one transaction has no apply order to resolve: it must not cost a stellar.transactions read,
+// while a multi-tx ledger in the same batch is still looked up and reordered.
+func TestApplyOrderer_SkipsLookupForSingleTxLedgers(t *testing.T) {
+	idx := map[ledgerTx]uint32{{9, "b"}: 0, {9, "a"}: 1}
 	var calls [][]uint32
-	var got []events.Event
+	var got []string
 	o := newApplyOrderer(context.Background(), fakeLookup(idx, &calls), func(ev events.Event) error {
-		got = append(got, ev)
+		got = append(got, ev.TxHash)
 		return nil
 	})
 	collect(t, o, []events.Event{
@@ -139,13 +139,53 @@ func TestApplyOrderer_StampsTransactionIndex(t *testing.T) {
 		{Ledger: 9, TxHash: "b"},
 		{Ledger: 11, TxHash: "solo"},
 	})
+	if strings.Join(got, ",") != "only,only,b,a,solo" {
+		t.Fatalf("delivery order = %v", got)
+	}
+	if len(calls) != 1 || len(calls[0]) != 1 || calls[0][0] != 9 {
+		t.Fatalf("lookups = %v, want one call for ledger 9 only", calls)
+	}
+	calls = nil
+	collect(t, o, []events.Event{{Ledger: 12, TxHash: "x"}, {Ledger: 13, TxHash: "y"}})
+	if len(calls) != 0 {
+		t.Fatalf("all-single-tx batch made lookups %v", calls)
+	}
+}
+
+// With stampTxIndex every ledger is looked up and every event carries its 1-based apply index, single-transaction ledgers included; a
+// single-transaction ledger missing from stellar.transactions fails only then, and with it off nothing is stamped.
+func TestApplyOrderer_StampTxIndex(t *testing.T) {
+	in := []events.Event{
+		{Ledger: 7, TxHash: "only", EventIndex: 0},
+		{Ledger: 7, TxHash: "only", EventIndex: 1},
+		{Ledger: 9, TxHash: "a"},
+		{Ledger: 9, TxHash: "b"},
+		{Ledger: 11, TxHash: "solo"},
+	}
+	run := func(stamp bool, idx map[ledgerTx]uint32) ([]events.Event, [][]uint32, error) {
+		var calls [][]uint32
+		var got []events.Event
+		o := newApplyOrderer(context.Background(), fakeLookup(idx, &calls), func(ev events.Event) error {
+			got = append(got, ev)
+			return nil
+		})
+		o.stampTxIndex = stamp
+		for _, ev := range in {
+			if err := o.add(ev); err != nil {
+				return nil, calls, err
+			}
+		}
+		return got, calls, o.flush()
+	}
+
+	got, calls, err := run(true, map[ledgerTx]uint32{{7, "only"}: 4, {9, "b"}: 0, {9, "a"}: 1, {11, "solo"}: 0})
+	if err != nil {
+		t.Fatalf("flush: %v", err)
+	}
 	want := []struct {
 		h  string
 		ti int
 	}{{"only", 5}, {"only", 5}, {"b", 1}, {"a", 2}, {"solo", 1}}
-	if len(got) != len(want) {
-		t.Fatalf("delivered %d events, want %d", len(got), len(want))
-	}
 	for i, w := range want {
 		if got[i].TxHash != w.h || got[i].TransactionIndex != w.ti {
 			t.Errorf("event %d = (%s, %d), want (%s, %d)", i, got[i].TxHash, got[i].TransactionIndex, w.h, w.ti)
@@ -153,6 +193,20 @@ func TestApplyOrderer_StampsTransactionIndex(t *testing.T) {
 	}
 	if len(calls) != 1 || len(calls[0]) != 3 || calls[0][0] != 7 || calls[0][1] != 9 || calls[0][2] != 11 {
 		t.Fatalf("lookups = %v, want one call for ledgers 7, 9 and 11", calls)
+	}
+
+	partial := map[ledgerTx]uint32{{9, "b"}: 0, {9, "a"}: 1}
+	if _, _, err := run(true, partial); err == nil || !strings.Contains(err.Error(), "apply order unresolved") {
+		t.Fatalf("stamping with a missing single-tx row: err = %v, want apply-order-unresolved", err)
+	}
+	got, _, err = run(false, partial)
+	if err != nil {
+		t.Fatalf("unstamped flush with a missing single-tx row: %v", err)
+	}
+	for i, ev := range got {
+		if ev.TransactionIndex != 0 {
+			t.Errorf("unstamped event %d has TransactionIndex %d", i, ev.TransactionIndex)
+		}
 	}
 }
 
