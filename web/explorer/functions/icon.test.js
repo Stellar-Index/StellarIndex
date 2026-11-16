@@ -140,6 +140,34 @@ describe('/icon', () => {
     expect(match.mock.calls[0][0].method).toBe('GET');
   });
 
+  it('keys the edge cache on the icon, not on the request URL', async () => {
+    const match = vi.fn(async () => undefined);
+    vi.stubGlobal('caches', { default: { match, put: vi.fn(async () => {}) } });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(new Uint8Array([1]), {
+            headers: { 'content-type': 'image/png' },
+          }),
+      ),
+    );
+    const u = encodeURIComponent('https://centre.io/a.png');
+    for (const query of [
+      `u=${u}`,
+      `u=${u}&z=1`,
+      `z=2&u=${u}`,
+      `u=${encodeURIComponent('https://CENTRE.io:443/a.png')}`,
+    ]) {
+      await onRequest({
+        request: new Request(`https://stellarindex.io/icon?${query}`),
+        waitUntil: () => {},
+      });
+    }
+    const keys = new Set(match.mock.calls.map(([key]) => key.url));
+    expect([...keys]).toEqual([`https://stellarindex.io/icon?u=${u}`]);
+  });
+
   it('stores a fetched image in the edge cache, and never an error', async () => {
     vi.stubGlobal(
       'fetch',
