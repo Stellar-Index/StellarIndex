@@ -83,6 +83,13 @@ func parseExplorerLimit(w http.ResponseWriter, r *http.Request, def, maxN int) (
 	return n, true
 }
 
+// explorerTokenDecimals is the explorer's strict decimals seam: ok only for a scale actually read, so an uncaptured or
+// ambiguous token leaves decimals absent rather than taking resolveTokenDecimals's default 7.
+func (s *Server) explorerTokenDecimals(ctx context.Context, contractID string) (int, bool) {
+	d, known, err := s.lakeTokenDecimals(ctx, contractID)
+	return d, known && err == nil
+}
+
 // explorerHandlerFor builds the explorer *Handler from the Server and Options, injecting cross-cutting seams (logger, USD
 // pricing, SAC detection, lake watermark cache, response helpers) as funcs: package explorer must not import v1 (import cycle).
 func explorerHandlerFor(s *Server, opts Options, logger *slog.Logger) *explorerpkg.Handler {
@@ -100,7 +107,7 @@ func explorerHandlerFor(s *Server, opts Options, logger *slog.Logger) *explorerp
 		PoolTokens:         s.protocolPoolTokens,
 		Directory:          opts.Directory,
 		ContractProtocol:   s.contractProtocol,
-		TokenDecimals:      s.resolveTokenDecimals,
+		TokenDecimals:      s.explorerTokenDecimals,
 		LookupUSDPrice:     s.lookupUSDPrice,
 		IsKnownSAC:         s.isKnownSAC,
 		LakeWatermark:      s.lakeWatermark,
