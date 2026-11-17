@@ -127,7 +127,9 @@ func TestHypertableChunkIntervals_LedgerReadsKnownWidths(t *testing.T) {
 		"fx_quotes":       30 * 24 * time.Hour, // 0028
 		"fx_fixings":      30 * 24 * time.Hour, // 0193
 		"rozo_events":     chunkIntervalFloor,  // 0039
-		"prices_1m":       0,                   // a CAGG, never a create_hypertable call
+		"prices_1m":       chunkIntervalFloor,  // a CAGG, set through its view name by 0228
+		"trade_sums_1m":   chunkIntervalFloor,  // 0228
+		"prices_1mo":      chunkIntervalFloor,  // 0228
 		"sep41_transfers": chunkIntervalFloor,  // 1 day in 0047, widened by 0171
 	} {
 		if got := ledger[rel]; got != want {
