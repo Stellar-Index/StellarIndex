@@ -76,12 +76,31 @@ use:
   reading, nothing is.
 - **Storage level above the event net:** the storage level is a floor, so a
   level above the net proves the log missed issuance (it starts partway
-  through the token's life). The storage level is served
-  (`source`/`supply_basis: contract_storage_balances`), flagged
-  `circulating_supply_lower_bound`, and any market cap built on it carries
-  `market_cap_lower_bound`. The asset detail builds no cap on it.
-- **Storage level at or below the event net, or no storage reading:** the
-  event net is served (`source: mint_burn_flows`), unflagged.
+  through the token's life). The storage level is served as a floor, unless it
+  disagrees with the contract's own declared total or holder count
+  (`supply_consistent: false`); then it proves nothing and the event net
+  stands. How each route marks the floor:
+  - `/v1/assets/{id}/supply`: `source: contract_storage_balances` with
+    `circulating_supply_lower_bound: true`.
+  - RWA rows: `supply_basis: contract_storage_balances` with
+    `circulating_supply_lower_bound: true`; a market cap built on it carries
+    `market_cap_lower_bound: true`.
+  - `/v1/assets/{id}`: `supply_basis: contract_storage_balances`, and no
+    `market_cap_usd` or `fdv_usd` is built on it, since the detail has no
+    lower-bound flag for either.
+- **Storage level at or below the event net, or storage declines by design:**
+  the event net is served (`source: mint_burn_flows`), unflagged. The reader
+  declines a Stellar Asset Contract, a contract with no captured instance entry
+  (the SAC check cannot run), a contract with no balances, and a holder set
+  above its 25,000-entry cap; for those the event net is not checked against
+  storage at all.
+- **Storage read failed** (any other error, or the request budget ran out) on a
+  token with flows: the event net is withheld, not served as a total.
+  `/v1/assets/{id}/supply` returns a `supply-error` problem (502, or the 503
+  timeout problem), and the asset detail and RWA listing mark the supply
+  unread so the gap is not cached. A flowless token whose storage read fails
+  keeps its no-reading outcome (404 on `/supply`, no figure elsewhere), except
+  that a spent budget is unread on every route.
 
 The figure is always one reading or the other. A log that is partial but still
 nets above the storage level is not detected, because `events_start_from` is

@@ -193,6 +193,26 @@ func TestContractArmWithNoStorageReaderWiredPublishesNoZero(t *testing.T) {
 	}
 }
 
+// A failed storage read could have proved the event net partial, so the member is unread, not valued on the net.
+func TestContractArmCountsAFailedStorageReadAsACutWhenTheLogHasFlows(t *testing.T) {
+	const contractID = "CB53TITR65ZKTREWEWEEKMFAQZAE6IPJONH32JWOFOWJPHZL6ODP6R4F"
+	net := big.NewInt(10_000_0000000)
+	s := &Server{
+		Options: Options{TokenSupply: &lakeSupplyStub{byContract: map[string]clickhouse.TokenSupply{
+			contractID: {ContractID: contractID, Total: net, Mint: net, Burn: big.NewInt(0), FlowCount: 12},
+		}}, ContractStorageSupply: &storageSupplyStub{err: errors.New("clickhouse down")}},
+		logger: discardLogger(),
+	}
+	rows := []AssetDetail{{AssetID: contractID, Kind: "soroban_token", Decimals: 7}}
+
+	if cut := s.fillContractMarketCaps(context.Background(), rows, nil, map[string]struct{}{contractID: {}}); !cut {
+		t.Error("cut = false after the storage read failed")
+	}
+	if rows[0].CirculatingSupply != nil {
+		t.Errorf("supply = %v, want none: the net is unproven", *rows[0].CirculatingSupply)
+	}
+}
+
 // TestContractArmCountsAStorageDeadlineAsACut: a storage read that ran out of time is unread, so the walk reports a cut and
 // the view degrades instead of caching the member as absent.
 func TestContractArmCountsAStorageDeadlineAsACut(t *testing.T) {

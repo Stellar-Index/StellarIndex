@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"math/big"
 	"testing"
@@ -272,6 +273,62 @@ func TestApplyF2Fields_NoMarketCapOnHeldBalances(t *testing.T) {
 	measured := run(50_000_000, nil)
 	if measured.MarketCapUSD == nil {
 		t.Errorf("flow sum: market_cap_usd is nil, want a cap (the control)")
+	}
+}
+
+// A storage level above the event net proves the log partial: the detail serves the floor under its basis, with no cap and no
+// FDV on it, while a storage level below the net leaves both (the control).
+func TestApplyF2Fields_StorageAboveEventNetServesTheFloorWithoutCapOrFDV(t *testing.T) {
+	asset, err := canonical.NewSorobanAsset(supplyContractID)
+	if err != nil {
+		t.Fatalf("build soroban asset: %v", err)
+	}
+	price, maxNumber := "2", "100"
+	run := func(held int64) *AssetDetail {
+		s := &Server{Options: Options{
+			TokenSupply: &fakeTokenSupply{supply: clickhouse.TokenSupply{
+				ContractID: supplyContractID,
+				Total:      big.NewInt(50_000_000), Mint: big.NewInt(50_000_000), Burn: big.NewInt(0), Clawback: big.NewInt(0),
+				FlowCount: 12,
+			}},
+			ContractStorageSupply: &fakeStorageSupply{out: clickhouse.ContractStorageSupply{Total: big.NewInt(held), BalanceEntries: 3}},
+		}, logger: slog.Default()}
+		detail := &AssetDetail{Decimals: 7, PriceUSD: &price, MaxNumber: &maxNumber}
+		s.applyF2Fields(context.Background(), detail, asset)
+		return detail
+	}
+	floor := run(80_000_000)
+	if floor.TotalSupply == nil || *floor.TotalSupply != "80000000" ||
+		floor.SupplyBasis == nil || *floor.SupplyBasis != "contract_storage_balances" {
+		t.Errorf("total = %v basis = %v, want 80000000 on contract_storage_balances", floor.TotalSupply, floor.SupplyBasis)
+	}
+	if floor.MarketCapUSD != nil || floor.FDVUSD != nil {
+		t.Errorf("market_cap = %v fdv = %v, want neither on a floor", floor.MarketCapUSD, floor.FDVUSD)
+	}
+	measured := run(40_000_000)
+	if measured.MarketCapUSD == nil || measured.FDVUSD == nil {
+		t.Errorf("event net: market_cap = %v fdv = %v, want both (the control)", measured.MarketCapUSD, measured.FDVUSD)
+	}
+}
+
+// A failed storage read for a token with flows leaves the net unproven: no supply, and the detail is a failed read.
+func TestApplyF2Fields_FailedStorageReadWithFlowsIsUnread(t *testing.T) {
+	asset, err := canonical.NewSorobanAsset(supplyContractID)
+	if err != nil {
+		t.Fatalf("build soroban asset: %v", err)
+	}
+	s := &Server{Options: Options{
+		TokenSupply: &fakeTokenSupply{supply: clickhouse.TokenSupply{
+			ContractID: supplyContractID,
+			Total:      big.NewInt(50_000_000), Mint: big.NewInt(50_000_000), Burn: big.NewInt(0), Clawback: big.NewInt(0),
+			FlowCount: 12,
+		}},
+		ContractStorageSupply: &fakeStorageSupply{err: errors.New("clickhouse down")},
+	}, logger: slog.Default()}
+	detail := &AssetDetail{Decimals: 7}
+	s.applyF2Fields(context.Background(), detail, asset)
+	if detail.TotalSupply != nil || !detail.f2ReadFailed {
+		t.Errorf("failed storage read: total=%v f2ReadFailed=%v, want nil and true", detail.TotalSupply, detail.f2ReadFailed)
 	}
 }
 
