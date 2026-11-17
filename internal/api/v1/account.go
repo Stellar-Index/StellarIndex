@@ -638,9 +638,9 @@ func (s *Server) mintAccountKey(w http.ResponseWriter, r *http.Request, req auth
 			"API key quota reached", http.StatusConflict,
 			fmt.Sprintf("this account already holds %d active API keys (max %d) — revoke one via DELETE /v1/account/keys/{keyID} first",
 				over.Active, over.Max))
-	case errors.Is(err, auth.ErrMintExceedsCaller):
-		s.logger.Warn("account key mint refused: request exceeds the minting credential", "err", err, "identifier", req.Identifier)
-		writeMintExceedsCaller(w, r, err)
+	case errors.Is(err, auth.ErrMintExceedsCaller), errors.Is(err, auth.ErrMinterNotLive):
+		s.logger.Warn("account key mint refused by the minting credential", "err", err, "identifier", req.Identifier)
+		writeMintRefused(w, r, err)
 	case errors.Is(err, auth.ErrKeyQuotaUnavailable):
 		s.logger.Error("account key quota check failed", "err", err, "identifier", req.Identifier)
 		writeProblem(w, r,

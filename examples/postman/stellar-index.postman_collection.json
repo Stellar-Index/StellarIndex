@@ -31298,7 +31298,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Caller is not an account tier (`apikey` or `operator`):\na SEP-10 wallet token gets `key-mint-not-available`, any\nother non-account credential `account-tier-required`.\nA key that would exceed the caller's own scopes, rate\nlimit, expiry or monthly quota gets `scope-exceeds-caller`.",
+                  "name": "Caller is not an account tier (`apikey` or `operator`):\na SEP-10 wallet token gets `key-mint-not-available`, any\nother non-account credential `account-tier-required`.\nA key that would exceed the caller's own scopes, rate\nlimit, expiry or monthly quota gets `scope-exceeds-caller`;\none whose minting key (or an ancestor of it) has no live\nrecord or is being revoked gets `minting-key-not-live`.",
                   "originalRequest": {
                     "url": {
                       "path": [
@@ -32753,7 +32753,7 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
-                  "name": "Caller is not operator-tier, or the key would exceed the\ncaller's own scopes, rate limit, expiry or monthly quota\n(`scope-exceeds-caller`).",
+                  "name": "Caller is not operator-tier, or the key would exceed the\ncaller's own scopes, rate limit, expiry or monthly quota\n(`scope-exceeds-caller`), or the minting key (or an\nancestor of it) has no live record or is being revoked\n(`minting-key-not-live`).",
                   "originalRequest": {
                     "url": {
                       "path": [

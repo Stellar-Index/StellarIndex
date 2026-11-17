@@ -136,8 +136,8 @@ func TestCreate_LegacyMinterWithAMissingAncestorIsRefused(t *testing.T) {
 	_, rootPlain, rootSub := f.mint(t, CreateAPIKeyRequest{Identifier: "acct-x"})
 	_, _, midSub := f.legacyChild(t, rootSub)
 	f.mr.Del(cachekeys.APIKey(hashAPIKey(rootPlain)).String())
-	if _, _, err := f.store.Create(ctx, ChildKeyRequest(midSub, "leaf", nil)); !errors.Is(err, ErrMintExceedsCaller) {
-		t.Fatalf("Create under a legacy key whose root is gone = %v, want ErrMintExceedsCaller", err)
+	if _, _, err := f.store.Create(ctx, ChildKeyRequest(midSub, "leaf", nil)); !errors.Is(err, ErrMinterNotLive) {
+		t.Fatalf("Create under a legacy key whose root is gone = %v, want ErrMinterNotLive", err)
 	}
 }
 
@@ -262,11 +262,11 @@ func TestCreate_DelegatedMintAfterItsMinterIsRevokedIsRefused(t *testing.T) {
 	if err := f.store.RevokeKeyByID(ctx, "acct-x", root.KeyID); err != nil {
 		t.Fatalf("RevokeKeyByID: %v", err)
 	}
-	if _, _, err := f.store.Create(ctx, ChildKeyRequest(rootSub, "late", nil)); !errors.Is(err, ErrMintExceedsCaller) {
-		t.Fatalf("Create from a revoked minter = %v, want ErrMintExceedsCaller", err)
+	if _, _, err := f.store.Create(ctx, ChildKeyRequest(rootSub, "late", nil)); !errors.Is(err, ErrMinterNotLive) {
+		t.Fatalf("Create from a revoked minter = %v, want ErrMinterNotLive", err)
 	}
-	if _, _, err := f.store.CreateCapped(ctx, ChildKeyRequest(rootSub, "late", nil), 25); !errors.Is(err, ErrMintExceedsCaller) {
-		t.Fatalf("CreateCapped from a revoked minter = %v, want ErrMintExceedsCaller", err)
+	if _, _, err := f.store.CreateCapped(ctx, ChildKeyRequest(rootSub, "late", nil), 25); !errors.Is(err, ErrMinterNotLive) {
+		t.Fatalf("CreateCapped from a revoked minter = %v, want ErrMinterNotLive", err)
 	}
 	if recs, err := f.store.ListKeysForIdentifier(ctx, "acct-x"); err != nil || len(recs) != 0 {
 		t.Fatalf("keys after refused mints = %d (err %v), want none", len(recs), err)
@@ -338,8 +338,8 @@ func TestCreate_DelegatedWriteAfterTheRevokeIsRefused(t *testing.T) {
 		match: func(args []any) bool { return isScript(args, writeDelegatedRecordScript) },
 		run:   func() { revokeErr = f.store.RevokeKeyByID(ctx, "acct-x", root.KeyID) },
 	})
-	if _, _, err := f.store.Create(ctx, ChildKeyRequest(rootSub, "late", nil)); !errors.Is(err, ErrMintExceedsCaller) {
-		t.Fatalf("Create whose write follows its minter's revoke = %v, want ErrMintExceedsCaller", err)
+	if _, _, err := f.store.Create(ctx, ChildKeyRequest(rootSub, "late", nil)); !errors.Is(err, ErrMinterNotLive) {
+		t.Fatalf("Create whose write follows its minter's revoke = %v, want ErrMinterNotLive", err)
 	}
 	if revokeErr != nil {
 		t.Fatalf("RevokeKeyByID: %v", revokeErr)
@@ -364,8 +364,8 @@ func TestCreate_DelegatedWriteDuringTheSweepIsRefused(t *testing.T) {
 	if err := f.store.RevokeKeyByID(ctx, "acct-x", root.KeyID); err != nil {
 		t.Fatalf("RevokeKeyByID: %v", err)
 	}
-	if !errors.Is(mintErr, ErrMintExceedsCaller) {
-		t.Fatalf("mint under a key the sweep listed = %v, want ErrMintExceedsCaller", mintErr)
+	if !errors.Is(mintErr, ErrMinterNotLive) {
+		t.Fatalf("mint under a key the sweep listed = %v, want ErrMinterNotLive", mintErr)
 	}
 	if recs, err := f.store.ListKeysForIdentifier(ctx, "acct-x"); err != nil || len(recs) != 0 {
 		t.Fatalf("keys after the revoke = %d (err %v), want none", len(recs), err)

@@ -125,10 +125,10 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 		if clientAborted(r, err) {
 			return
 		}
-		if errors.Is(err, auth.ErrMintExceedsCaller) {
-			s.logger.Warn("admin key mint refused: request exceeds the minting credential", "err", err,
+		if errors.Is(err, auth.ErrMintExceedsCaller) || errors.Is(err, auth.ErrMinterNotLive) {
+			s.logger.Warn("admin key mint refused by the minting credential", "err", err,
 				"actor_key_id", subject.KeyID, "target_identifier", req.Identifier)
-			writeMintExceedsCaller(w, r, err)
+			writeMintRefused(w, r, err)
 			return
 		}
 		s.logger.Error("admin key create failed", "err", err,
@@ -193,6 +193,22 @@ func writeMintExceedsCaller(w http.ResponseWriter, r *http.Request, err error) {
 	writeProblem(w, r,
 		"https://api.stellarindex.io/errors/scope-exceeds-caller",
 		"Scope exceeds caller", http.StatusForbidden, detail)
+}
+
+// writeMintRefused answers a mint the store refused for its minting credential with 403: [auth.ErrMinterNotLive] under its
+// own problem, anything else as [auth.ErrMintExceedsCaller].
+func writeMintRefused(w http.ResponseWriter, r *http.Request, err error) {
+	if !errors.Is(err, auth.ErrMinterNotLive) {
+		writeMintExceedsCaller(w, r, err)
+		return
+	}
+	detail := err.Error()
+	if _, after, ok := strings.Cut(detail, auth.ErrMinterNotLive.Error()+": "); ok {
+		detail = after
+	}
+	writeProblem(w, r,
+		"https://api.stellarindex.io/errors/minting-key-not-live",
+		"Minting key is not live", http.StatusForbidden, detail)
 }
 
 // revokeKeyEverywhere revokes in every store that may hold the key (Redis and the Postgres api_keys row, else revoked_at stays

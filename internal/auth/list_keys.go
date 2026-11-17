@@ -186,7 +186,7 @@ func (s *RedisAPIKeyStore) writeDelegatedRecord(ctx context.Context, hash, paren
 		return err
 	}
 	if wrote == 0 {
-		return fmt.Errorf("%w: the minting key %s was revoked before the new key was written", ErrMintExceedsCaller, rec.ParentKeyID)
+		return fmt.Errorf("%w: the minting key %s was revoked before the new key was written", ErrMinterNotLive, rec.ParentKeyID)
 	}
 	return nil
 }

@@ -853,6 +853,27 @@ func TestAdminKeysCreate_MintExceedsCallerIs403(t *testing.T) {
 	}
 }
 
+// A mint refused because the minting key is not live stays a 403, titled for what happened rather than as a scope excess.
+func TestKeysCreate_MinterNotLiveIs403WithItsOwnTitle(t *testing.T) {
+	refusal := fmt.Errorf("auth: Create: %w: the minting key kid_gone has no live record on this identifier", auth.ErrMinterNotLive)
+	admin := newAdminTestServer(t, operatorSubject(), &fakeAccountStore{err: refusal}, &recordingAuditSink{})
+	account := newAccountTestServer(t, auth.Subject{Identifier: "owner-42", Tier: auth.TierAPIKey}, &fakeAccountStore{err: refusal})
+	for name, resp := range map[string]*http.Response{
+		"admin":   postJSON(t, admin.URL+"/v1/admin/keys", `{"identifier":"acct:ok","account":"ok","label":"x"}`),
+		"account": accountDo(t, account, http.MethodPost, "/v1/account/keys", `{"label":"x"}`),
+	} {
+		raw, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("%s: status = %d, want 403; body = %s", name, resp.StatusCode, raw)
+		}
+		if !strings.Contains(string(raw), `"title":"Minting key is not live"`) ||
+			!strings.Contains(string(raw), "errors/minting-key-not-live") ||
+			!strings.Contains(string(raw), "kid_gone has no live record") {
+			t.Errorf("%s: body = %s, want the minting-key-not-live problem naming the refusal", name, raw)
+		}
+	}
+}
+
 // A key inherits its minter's expiry silently in the store, so the response and the audit row must say what was issued.
 func TestAdminKeysCreate_ReportsInheritedExpiry(t *testing.T) {
 	expires := time.Date(2027, 1, 2, 3, 4, 5, 0, time.UTC)

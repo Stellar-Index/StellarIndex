@@ -76,6 +76,9 @@ type CreateAPIKeyRequest struct {
 // ErrMintExceedsCaller is [ClampToMinter]'s refusal: the request asked for more authority than the minting credential holds.
 var ErrMintExceedsCaller = errors.New("auth: mint exceeds the minting credential's own authority")
 
+// ErrMinterNotLive refuses a delegated mint whose minting key, or an ancestor of it, has no live record or is being revoked.
+var ErrMinterNotLive = errors.New("auth: the minting key is not live")
+
 // ClampToMinter ensures a credential mints no child more privileged than itself (scopes must be a HasScope subset and are refused, not dropped; a scoped minter cannot exceed its own rate limit), returning the scopes to persist or an error wrapping ErrMintExceedsCaller.
 func ClampToMinter(minter Subject, scopes []string, rateLimitPerMin int) ([]string, error) {
 	if rateLimitPerMin > 0 {
@@ -366,7 +369,7 @@ func (s *RedisAPIKeyStore) rebaseOnParent(ctx context.Context, req CreateAPIKeyR
 	live := found && parent.Identifier == req.Identifier && parent.RevokedAt.IsZero() &&
 		(parent.ExpiresAt.IsZero() || s.now().Before(parent.ExpiresAt))
 	if !live {
-		return req, ownedRecord{}, fmt.Errorf("%w: the minting key %s has no live record on this identifier", ErrMintExceedsCaller, req.ParentKeyID)
+		return req, ownedRecord{}, fmt.Errorf("%w: the minting key %s has no live record on this identifier", ErrMinterNotLive, req.ParentKeyID)
 	}
 	ancestors, err := s.storedAncestors(ctx, parent)
 	if err != nil {
@@ -408,7 +411,7 @@ func (s *RedisAPIKeyStore) storedAncestors(ctx context.Context, rec APIKeyRecord
 			return nil, fmt.Errorf("read ancestor %s: %w", cur.ParentKeyID, err)
 		}
 		if !found || next.Identifier != rec.Identifier {
-			return nil, fmt.Errorf("%w: ancestor %s of the minting key has no record, so its chain is unknown", ErrMintExceedsCaller, cur.ParentKeyID)
+			return nil, fmt.Errorf("%w: ancestor %s of the minting key has no record, so its chain is unknown", ErrMinterNotLive, cur.ParentKeyID)
 		}
 		walked = append(walked, cur.ParentKeyID)
 		cur = next
