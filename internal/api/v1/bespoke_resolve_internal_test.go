@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 
@@ -14,10 +15,14 @@ import (
 // tokenDisplaysOnly serves TokenDisplays from a map; every other ExplorerReader method panics via the nil embed.
 type tokenDisplaysOnly struct {
 	ExplorerReader
-	m map[string]clickhouse.TokenDisplayMeta
+	m   map[string]clickhouse.TokenDisplayMeta
+	err error
 }
 
 func (f tokenDisplaysOnly) TokenDisplays(_ context.Context, tokens []string) (map[string]clickhouse.TokenDisplayMeta, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
 	out := map[string]clickhouse.TokenDisplayMeta{}
 	for _, t := range tokens {
 		if m, ok := f.m[t]; ok {
@@ -29,7 +34,10 @@ func (f tokenDisplaysOnly) TokenDisplays(_ context.Context, tokens []string) (ma
 
 const (
 	usdcID = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
-	poolC  = "CPOOL000000000000000000000000000000000000000000000000001"
+	// The same code under an issuer the catalogue does not verify.
+	fakeUSDCID = "USDC-GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC"
+	poolC      = "CPOOL000000000000000000000000000000000000000000000000001"
+	halfPoolC  = "CPOOL000000000000000000000000000000000000000000000000002"
 )
 
 // Valid contract ids that are no catalogued SAC: the SACs of uncatalogued classic assets.
@@ -47,7 +55,7 @@ func newBespokeTestServer(t *testing.T) (*Server, string, string) {
 	unknownC, vaultC, sixDecimalC = classicSAC(t, "ZZA-"+issuer), classicSAC(t, "ZZB-"+issuer), classicSAC(t, "ZZC-"+issuer)
 	s := New(Options{
 		VerifiedCurrencies: cat,
-		ProtocolPoolTokens: &scriptedPoolTokens{resp: map[string][]string{poolC: {usdcSAC, xlmSAC}}},
+		ProtocolPoolTokens: &scriptedPoolTokens{resp: map[string][]string{poolC: {usdcSAC, xlmSAC}, halfPoolC: {usdcSAC, unknownC}}},
 		Explorer: tokenDisplaysOnly{m: map[string]clickhouse.TokenDisplayMeta{
 			vaultC:      {Name: "DeFindex-Vault-Greep Vault", Symbol: "GRPVLT", Decimals: 7, HasMeta: true},
 			sixDecimalC: {Symbol: "USDC", Decimals: 6, HasMeta: true},
@@ -69,16 +77,21 @@ func TestBespokeResolver_Labels(t *testing.T) {
 		{ID: "USDC", Kind: timescale.BespokeKindAsset},
 		{ID: poolC, Kind: timescale.BespokeKindPool},
 		{ID: unknownC, Kind: timescale.BespokeKindPool},
+		{ID: halfPoolC, Kind: timescale.BespokeKindPool},
 		{ID: vaultC, Kind: timescale.BespokeKindVault},
 		{ID: unknownC, Kind: timescale.BespokeKindVault},
 		{ID: usdcSAC, Kind: timescale.BespokeKindContract},
 	}}
-	s.resolveBespoke(context.Background(), "comet", b)
+	if !s.resolveBespoke(context.Background(), "comet", b) {
+		t.Fatal("resolveBespoke reported a failed read with healthy readers")
+	}
 	want := []string{
 		"XLM", "XLM", "XLM", "USDC", "USDC", "",
 		"", // a contract's self-declared symbol is not trusted as a ticker
 		"", // a bare code is not an asset identity
-		"USDC / XLM", "", "Greep Vault (GRPVLT)", "", "",
+		"USDC / XLM", "",
+		"", // one unknown token leaves the pool unnamed, never a half pair
+		"Greep Vault (GRPVLT)", "", "",
 	}
 	for i, e := range b.Series {
 		if e.Display != want[i] {
@@ -164,5 +177,66 @@ func TestBespokeFromStore_TypedTableKeepsRowsAndAddsDisplay(t *testing.T) {
 	}
 	if view.Tables[2].Display != nil || view.Tables[2].ColumnKinds != nil {
 		t.Errorf("untyped table grew typed fields: %+v", view.Tables[2])
+	}
+}
+
+// An unverified issuer's "USDC" gets no ticker in any form: classic id or its SAC.
+func TestBespokeResolver_UnverifiedClassicStaysUnresolved(t *testing.T) {
+	s, _, _ := newBespokeTestServer(t)
+	b := &ProtocolBespoke{Series: []BespokeSeries{
+		{ID: usdcID, Kind: timescale.BespokeKindAsset},
+		{ID: fakeUSDCID, Kind: timescale.BespokeKindAsset},
+		{ID: classicSAC(t, fakeUSDCID), Kind: timescale.BespokeKindAsset},
+	}}
+	s.resolveBespoke(context.Background(), "comet", b)
+	for i, want := range []string{"USDC", "", ""} {
+		if got := b.Series[i].Display; got != want {
+			t.Errorf("series %d (%s) display = %q, want %q", i, b.Series[i].ID, got, want)
+		}
+	}
+}
+
+// A failed metadata or pool-token read must surface, so the detail page is degraded instead of cached as healthy.
+func TestResolveBespoke_ReportsFailedReads(t *testing.T) {
+	s, _, _ := newBespokeTestServer(t)
+	vault := &ProtocolBespoke{Series: []BespokeSeries{{ID: vaultC, Kind: timescale.BespokeKindVault}}}
+	pool := &ProtocolBespoke{Series: []BespokeSeries{{ID: poolC, Kind: timescale.BespokeKindPool}}}
+
+	s.Explorer = tokenDisplaysOnly{err: errors.New("token metadata read failed")}
+	if s.resolveBespoke(context.Background(), "defindex", vault) {
+		t.Error("metadata read error reported ok")
+	}
+	if vault.Series[0].Display != "" {
+		t.Errorf("vault named without metadata: %q", vault.Series[0].Display)
+	}
+
+	s.protocolPoolTokens = &scriptedPoolTokens{err: errors.New("pool tokens read failed")}
+	if s.resolveBespoke(context.Background(), "comet", pool) {
+		t.Error("pool-token read error reported ok")
+	}
+	if !s.resolveBespoke(context.Background(), "comet", nil) {
+		t.Error("an absent block reported a failure")
+	}
+}
+
+// Soroswap's registry has no per-pool token list: the pair is named from the row's own token columns, and only when both resolve.
+func TestBespokeResolver_SoroswapPairFromRowTokens(t *testing.T) {
+	s, xlmSAC, usdcSAC := newBespokeTestServer(t)
+	pair, other := "CPAIR000000000000000000000000000000000000000000000000001", "CPAIR000000000000000000000000000000000000000000000000002"
+	blk := &timescale.BespokeBlock{Category: "dex", Tables: []timescale.BespokeTable{{
+		Title:   "Skims by pair",
+		Columns: []string{"Pair", "Token0", "Token1"},
+		Rows:    [][]string{{pair, usdcSAC, xlmSAC}, {other, usdcSAC, unknownC}},
+		ColumnKinds: []timescale.BespokeColumnKind{
+			timescale.BespokePoolOf(1, 2), timescale.BespokeCol(timescale.BespokeKindAsset), timescale.BespokeCol(timescale.BespokeKindAsset),
+		},
+	}}}
+	view := bespokeFromStore(blk)
+	if !s.resolveBespoke(context.Background(), "soroswap", view) {
+		t.Fatal("resolveBespoke reported a failed read")
+	}
+	want := [][]string{{"USDC / XLM", "USDC", "XLM"}, {"", "USDC", ""}}
+	if got := view.Tables[0].Display; !reflect.DeepEqual(got, want) {
+		t.Fatalf("display = %q, want %q", got, want)
 	}
 }

@@ -92,10 +92,17 @@ type BespokeColumnKind struct {
 	Kind        string
 	AssetColumn *int
 	Decimals    *int
+	// PoolTokenColumns names a pool cell from these same-row asset columns, for a pool the registry has no token list for.
+	PoolTokenColumns []int
 }
 
 // BespokeCol is a BespokeColumnKind of kind with no amount scale.
 func BespokeCol(kind string) BespokeColumnKind { return BespokeColumnKind{Kind: kind} }
+
+// BespokePoolOf is a pool column named from the same row's token columns, in order.
+func BespokePoolOf(tokenCols ...int) BespokeColumnKind {
+	return BespokeColumnKind{Kind: BespokeKindPool, PoolTokenColumns: tokenCols}
+}
 
 // BespokeAmountOf is an amount column scaled by the asset in column assetCol of the same row.
 func BespokeAmountOf(assetCol int) BespokeColumnKind {
@@ -670,7 +677,7 @@ func soroswapSkimPairTable(pairs []SoroswapSkimPairTotal) BespokeTable {
 	tbl := BespokeTable{
 		Title:       "Skims by pair",
 		Columns:     []string{"Pair", "Skims", "Token0", "Token0 skimmed", "Token1", "Token1 skimmed"},
-		ColumnKinds: []BespokeColumnKind{BespokeCol(BespokeKindPool), BespokeCol(BespokeKindCount), BespokeCol(BespokeKindAsset), BespokeAmountOf(2), BespokeCol(BespokeKindAsset), BespokeAmountOf(4)},
+		ColumnKinds: []BespokeColumnKind{BespokePoolOf(2, 4), BespokeCol(BespokeKindCount), BespokeCol(BespokeKindAsset), BespokeAmountOf(2), BespokeCol(BespokeKindAsset), BespokeAmountOf(4)},
 	}
 	orDash := func(v string) string {
 		if v == "" {

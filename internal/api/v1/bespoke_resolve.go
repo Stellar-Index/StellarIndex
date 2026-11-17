@@ -14,17 +14,17 @@ import (
 // bespokeResolver names the ids in one bespoke block and finds amount scales; an id it cannot resolve stays an id, never a guess.
 type bespokeResolver struct {
 	s          *Server
-	syms       *tokenSymbolResolver
 	poolTokens map[string][]string
 	metas      map[string]clickhouse.TokenDisplayMeta
 }
 
 // resolveBespoke fills the Display fields of b's typed series, breakdown rows and table cells; untyped entries are left as they are.
-func (s *Server) resolveBespoke(ctx context.Context, source string, b *ProtocolBespoke) {
+// ok=false when the pool-token or token-metadata read failed: names and scales were dropped, so the page must not be cached as healthy.
+func (s *Server) resolveBespoke(ctx context.Context, source string, b *ProtocolBespoke) (ok bool) {
 	if b == nil {
-		return
+		return true
 	}
-	r := s.newBespokeResolver(ctx, source, b)
+	r, ok := s.newBespokeResolver(ctx, source, b)
 	for i := range b.Series {
 		b.Series[i].Display = r.label(b.Series[i].Kind, b.Series[i].ID)
 	}
@@ -37,13 +37,26 @@ func (s *Server) resolveBespoke(ctx context.Context, source string, b *ProtocolB
 	for i := range b.Tables {
 		r.resolveTable(&b.Tables[i])
 	}
+	return ok
 }
 
 // newBespokeResolver batch-loads what b's typed ids need: pool token lists and the lake's token metadata for vaults and non-SAC tokens.
-func (s *Server) newBespokeResolver(ctx context.Context, source string, b *ProtocolBespoke) *bespokeResolver {
-	r := &bespokeResolver{s: s, syms: s.newTokenSymbolResolver()}
-	ids := map[string]bool{}
-	needPools := false
+// ok=false when either read failed.
+func (s *Server) newBespokeResolver(ctx context.Context, source string, b *ProtocolBespoke) (*bespokeResolver, bool) {
+	r := &bespokeResolver{s: s}
+	needPools, ids := bespokeLookups(b)
+	poolsOK := true
+	if needPools {
+		r.poolTokens, poolsOK = s.poolTokenMap(ctx, source)
+	}
+	metas, metasOK := s.bespokeTokenMetas(ctx, ids)
+	r.metas = metas
+	return r, poolsOK && metasOK
+}
+
+// bespokeLookups lists what b's typed ids need loaded: whether any pool is named, and the contract ids that need token metadata.
+func bespokeLookups(b *ProtocolBespoke) (needPools bool, ids map[string]bool) {
+	ids = map[string]bool{}
 	note := func(kind, id string) {
 		switch kind {
 		case timescale.BespokeKindPool:
@@ -71,17 +84,14 @@ func (s *Server) newBespokeResolver(ctx context.Context, source string, b *Proto
 			}
 		}
 	}
-	if needPools {
-		r.poolTokens, _ = s.poolTokenMap(ctx, source)
-	}
-	r.metas = s.bespokeTokenMetas(ctx, ids)
-	return r
+	return needPools, ids
 }
 
-// bespokeTokenMetas reads token metadata for ids in one lake query; a nil reader or failed read yields nil, so those ids stay unresolved.
-func (s *Server) bespokeTokenMetas(ctx context.Context, ids map[string]bool) map[string]clickhouse.TokenDisplayMeta {
+// bespokeTokenMetas reads token metadata for ids in one lake query; a nil reader yields (nil, true) and a failed or timed-out read
+// (nil, false), so those ids stay unresolved either way.
+func (s *Server) bespokeTokenMetas(ctx context.Context, ids map[string]bool) (map[string]clickhouse.TokenDisplayMeta, bool) {
 	if s.Explorer == nil || len(ids) == 0 {
-		return nil
+		return nil, true
 	}
 	list := make([]string, 0, len(ids))
 	for id := range ids {
@@ -92,9 +102,9 @@ func (s *Server) bespokeTokenMetas(ctx context.Context, ids map[string]bool) map
 	metas, err := s.Explorer.TokenDisplays(mctx, list)
 	if err != nil {
 		s.logger.Warn("bespoke token metadata read failed; ids served unresolved", "err", err)
-		return nil
+		return nil, false
 	}
-	return metas
+	return metas, true
 }
 
 // label is the display name for a typed id, "" when kind carries no name or the id did not resolve.
@@ -107,7 +117,7 @@ func (r *bespokeResolver) label(kind, id string) string {
 		sym, _ := r.assetLabel(id)
 		return sym
 	case timescale.BespokeKindPool:
-		return r.poolLabel(id)
+		return r.pairLabel(r.poolTokens[id])
 	case timescale.BespokeKindVault:
 		if m, ok := r.metas[id]; ok && m.HasMeta {
 			return explorerpkg.VaultLabel(m.Name, m.Symbol)
@@ -117,10 +127,14 @@ func (r *bespokeResolver) label(kind, id string) string {
 }
 
 // assetLabel tickers an asset id in any of its forms: a token contract, "native", "crypto:XLM" or "CODE-ISSUER".
-// Contract-authored token symbols are not used: any contract may call itself USDC.
+// Only XLM and catalogued assets get a ticker: any issuer can mint a "USDC" code, and any contract may call itself USDC.
 func (r *bespokeResolver) assetLabel(id string) (string, bool) {
 	if canonical.IsContractID(id) {
-		return r.syms.lookup(id)
+		sac, ok := r.s.resolveSACAsset(id)
+		if !ok {
+			return "", false
+		}
+		return r.s.verifiedTicker(sac)
 	}
 	if strings.EqualFold(id, "crypto:XLM") {
 		return "XLM", true
@@ -129,18 +143,21 @@ func (r *bespokeResolver) assetLabel(id string) (string, bool) {
 	if err != nil || (a.Type != canonical.AssetNative && a.Type != canonical.AssetClassic) {
 		return "", false
 	}
-	return r.s.assetIDTicker(a.String())
+	return r.s.verifiedTicker(a.String())
 }
 
-// poolLabel joins a pool's token tickers ("USDC / XLM"); "" when the pool's tokens are unknown.
-func (r *bespokeResolver) poolLabel(id string) string {
-	tokens := r.poolTokens[id]
+// pairLabel joins token tickers ("USDC / XLM"); "" when there are no tokens or any one is unknown, never a half pair.
+func (r *bespokeResolver) pairLabel(tokens []string) string {
 	if len(tokens) == 0 {
 		return ""
 	}
 	syms := make([]string, len(tokens))
 	for i, t := range tokens {
-		syms[i] = r.syms.symbol(t)
+		sym, ok := r.assetLabel(t)
+		if !ok {
+			return ""
+		}
+		syms[i] = sym
 	}
 	return strings.Join(syms, " / ")
 }
@@ -194,9 +211,27 @@ func (r *bespokeResolver) resolveTable(t *BespokeTable) {
 
 // cell is one typed cell's display text: an entity's name or an amount in human units, "" when neither resolved.
 func (r *bespokeResolver) cell(k BespokeColumnKind, row []string, ci int) string {
-	if k.Kind != timescale.BespokeKindAmount {
-		return r.label(k.Kind, row[ci])
+	switch k.Kind {
+	case timescale.BespokeKindAmount:
+		return r.amountCell(k, row, ci)
+	case timescale.BespokeKindPool:
+		if name := r.label(k.Kind, row[ci]); name != "" || len(k.poolTokenColumns) == 0 {
+			return name
+		}
+		tokens := make([]string, 0, len(k.poolTokenColumns))
+		for _, c := range k.poolTokenColumns {
+			if c < 0 || c >= len(row) {
+				return ""
+			}
+			tokens = append(tokens, row[c])
+		}
+		return r.pairLabel(tokens)
 	}
+	return r.label(k.Kind, row[ci])
+}
+
+// amountCell scales one amount cell by its column's fixed decimals or the same row's asset; "" when the scale is unknown.
+func (r *bespokeResolver) amountCell(k BespokeColumnKind, row []string, ci int) string {
 	decimals, ok := 0, false
 	switch {
 	case k.Decimals != nil:

@@ -57,6 +57,18 @@ func (r *tokenSymbolResolver) lookup(contractC string) (string, bool) {
 
 // assetIDTicker labels a canonical asset id ("native", "CODE-ISSUER"): XLM, the catalogue ticker, else the classic code.
 func (s *Server) assetIDTicker(id string) (string, bool) {
+	if sym, ok := s.verifiedTicker(id); ok {
+		return sym, true
+	}
+	// Known but not a catalogued currency: the classic CODE rather than the raw id.
+	if code, _, cut := strings.Cut(id, "-"); cut && code != "" {
+		return code, true
+	}
+	return "", false
+}
+
+// verifiedTicker is XLM for "native" or the verified catalogue's ticker; ok=false for any other asset, whose bare code proves nothing.
+func (s *Server) verifiedTicker(id string) (string, bool) {
 	if id == "native" {
 		return "XLM", true
 	}
@@ -64,10 +76,6 @@ func (s *Server) assetIDTicker(id string) (string, bool) {
 		if vc, ok := s.VerifiedCurrencies.LookupByStellarAssetID(id); ok && vc.Ticker != "" {
 			return vc.Ticker, true
 		}
-	}
-	// Known but not a catalogued currency: the classic CODE rather than the raw id.
-	if code, _, cut := strings.Cut(id, "-"); cut && code != "" {
-		return code, true
 	}
 	return "", false
 }

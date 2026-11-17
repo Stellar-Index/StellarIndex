@@ -245,7 +245,7 @@ func bespokeFromStore(b *timescale.BespokeBlock) *ProtocolBespoke {
 		}
 		var kinds []BespokeColumnKind
 		for _, k := range t.ColumnKinds {
-			kinds = append(kinds, BespokeColumnKind{Kind: k.Kind, AssetColumn: k.AssetColumn, Decimals: k.Decimals})
+			kinds = append(kinds, BespokeColumnKind{Kind: k.Kind, AssetColumn: k.AssetColumn, Decimals: k.Decimals, poolTokenColumns: k.PoolTokenColumns})
 		}
 		out.Tables = append(out.Tables, BespokeTable{Title: t.Title, Columns: t.Columns, Rows: rows, ColumnKinds: kinds})
 	}
@@ -459,6 +459,8 @@ type BespokeColumnKind struct {
 	Kind        string `json:"kind"`
 	AssetColumn *int   `json:"asset_column,omitempty"`
 	Decimals    *int   `json:"decimals,omitempty"`
+	// poolTokenColumns names a pool cell from these same-row asset columns when the pool registry has no token list for it.
+	poolTokenColumns []int
 }
 
 // ProtocolActivityPointView is one day of a protocol's event-activity series.
@@ -687,9 +689,10 @@ func (s *Server) buildProtocolDetail(ctx context.Context, meta ProtocolMeta, win
 	attachProtocolTVL(&v.ProtocolView, tvls)
 	lakeOK := s.enrichProtocolAnalytics(ctx, meta, &v)
 	bespokeOK, bespokeStale, bespokeAt := s.enrichBespoke(ctx, meta, &v, windowDays)
+	namesOK := s.resolveBespoke(ctx, meta.Name, v.Bespoke)
 	status := protocolAnalyticsOK
 	switch {
-	case !rosterOK || !tokensOK || !lakeOK || !bespokeOK || !contractCountOK || !eventsOK || !verdictsOK || ctx.Err() != nil:
+	case !rosterOK || !tokensOK || !namesOK || !lakeOK || !bespokeOK || !contractCountOK || !eventsOK || !verdictsOK || ctx.Err() != nil:
 		status = protocolAnalyticsUnavailable
 	case bespokeStale:
 		status = protocolAnalyticsStale
@@ -727,7 +730,6 @@ func (s *Server) enrichBespoke(ctx context.Context, meta ProtocolMeta, view *Pro
 		return false, false, time.Time{}
 	}
 	view.Bespoke = bespokeFromStore(blk)
-	s.resolveBespoke(ctx, meta.Name, view.Bespoke)
 	if e, has := s.protocolBespokeCache.get(protocolBespokeCacheKey(meta.Name, meta.Category, windowDays)); has {
 		builtAt = e.at
 	}
