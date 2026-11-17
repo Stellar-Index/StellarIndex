@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -45,7 +46,7 @@ func backfillExternal(args []string) error {
 	toStr := fs.String("to", "", "End time, RFC 3339 (required, e.g. 2024-12-31T00:00:00Z)")
 	granStr := fs.String("granularity", "1h", "Candle granularity as a Go duration (1m / 15m / 1h / 4h / 1d / 1w)")
 	rawTrades := fs.Bool("raw-trades", false, "kraken only: walk the /Trades fills endpoint instead of /OHLC — the deep-history path (OHLC serves only the most recent 720 candles, so an older window returns none). Slower (rate-limited pagination) but reaches the pair's full history with exact per-fill prices.")
-	allowOverlap := fs.Bool("allow-overlap", false, "Write even though the trades table already holds rows for this source+pair inside [-from, -to). Rows from another path (live stream, candles vs fills) carry a different tx_hash and would be counted twice; use only to re-run or resume a window this command itself wrote. A candle run is still refused if the window holds a row it would not overwrite (e.g. one written at another -granularity).")
+	allowOverlap := fs.Bool("allow-overlap", false, "Write even though the trades table already holds rows for this source+pair inside [-from, -to). Rows from another path (live stream, candles vs fills) carry a different tx_hash and would be counted twice; use only to re-run or resume a window this command itself wrote. A candle or -raw-trades run is still refused if the window holds a row it would not overwrite (e.g. one written at another -granularity, or candles under fills).")
 	gate := opsutil.RegisterWriteGate(fs)
 	progressEvery := fs.Int("progress-every", 1000, "Print a progress line every N trades inserted")
 	if err := fs.Parse(args); err != nil {
@@ -100,7 +101,7 @@ func backfillExternal(args []string) error {
 		if !ok {
 			return fmt.Errorf("-raw-trades is kraken-only (venue %q has no fills-pagination path)", *source)
 		}
-		return backfillKrakenRawTrades(kr, pair, from, to, dryRun, *cfgPath, *progressEvery)
+		return backfillKrakenRawTrades(kr, pair, from, to, dryRun, *allowOverlap, *cfgPath, *progressEvery)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
@@ -142,10 +143,8 @@ func backfillExternal(args []string) error {
 	}
 	defer func() { _ = store.Close() }()
 
-	if *allowOverlap {
-		if err := refuseForeignRows(insCtx, store, *source, pair, from, walkedTo(to, resumeFrom, partial), trades); err != nil {
-			return err
-		}
+	if err := refuseCandleRunRows(insCtx, store, *source, *pairSym, pair, from, walkedTo(to, resumeFrom, partial), granularity, trades); err != nil {
+		return err
 	}
 	insErr := insertRefreshingCAGGs(store, os.Stderr, func(w tradeInserter) error {
 		return insertBackfilledTrades(insCtx, w, trades, *progressEvery, os.Stderr, t0)
@@ -330,11 +329,15 @@ func monthFloor(t time.Time) time.Time {
 type preWalkProbe interface {
 	storedTradeProbe
 	sourceSetProbe
+	prices1mRetentionProbe
 }
 
 // refuseStoredRows runs the pre-walk refusals. -allow-overlap waives only the overlap check: a re-run
 // of a vendor window is still a vendor window, so the mixed-bucket check always runs.
 func refuseStoredRows(ctx context.Context, probe preWalkProbe, source string, pair canonical.Pair, from, to time.Time, allowOverlap bool) error {
+	if err := refuseArmedRetention(ctx, probe); err != nil {
+		return err
+	}
 	if !allowOverlap {
 		if err := refuseStoredOverlap(ctx, probe, source, pair, from, to); err != nil {
 			return err
@@ -352,6 +355,25 @@ type foreignTradeProbe interface {
 	TradesInWindowOutside(ctx context.Context, source string, pair canonical.Pair, from, to time.Time, keep []canonical.Trade) (int64, time.Time, error)
 }
 
+// foreignRowsError is an errBackfillForeignRows refusal: endBy is the -to that admits the run with -from unchanged, and nothing
+// before bucketEnd can be written by a run starting at or after endBy's bucket open.
+type foreignRowsError struct {
+	msg              string
+	endBy, bucketEnd time.Time
+}
+
+func (e *foreignRowsError) Error() string { return e.msg }
+func (e *foreignRowsError) Unwrap() error { return errBackfillForeignRows }
+
+// foreignRowsAdvice names the -to that admits a run starting at from, or says that none does.
+func foreignRowsAdvice(from, endBy, bucketEnd time.Time) string {
+	if endBy.After(from) {
+		return "Keep -from and end the run with -to " + endBy.UTC().Format(time.RFC3339Nano)
+	}
+	return "No -to admits this -from: nothing in [" + from.UTC().Format(time.RFC3339Nano) + ", " + bucketEnd.UTC().Format(time.RFC3339Nano) +
+		") can be written beside that row"
+}
+
 // refuseForeignRows bounds -allow-overlap to re-running a window this command wrote at the same granularity.
 // A stored row outside the run's identities would sit beside the new rows and double the window's volume, so the write is refused.
 func refuseForeignRows(ctx context.Context, probe foreignTradeProbe, source string, pair canonical.Pair, from, to time.Time, trades []canonical.Trade) error {
@@ -362,17 +384,107 @@ func refuseForeignRows(ctx context.Context, probe foreignTradeProbe, source stri
 	if n == 0 {
 		return nil
 	}
-	return fmt.Errorf("backfill-external: %w: %s %s has %d stored row(s) from %s inside the walked window that this run's candles would not overwrite "+
-		"(another -granularity, the live stream, or pre-granularity candle identities); writing would count their volume twice. "+
-		"Re-run at the granularity that wrote the window, or end the run with -to %s",
-		errBackfillForeignRows, source, pair.String(), n, first.UTC().Format(time.RFC3339Nano), first.UTC().Format(time.RFC3339Nano))
+	// A kraken row on a candle stamp may be that candle, whose volume starts at its bucket's open, so a -to between the open and
+	// the stamp would be refused again by the straddling-candle probe.
+	endBy, bucketEnd := first.UTC(), first.UTC().Add(time.Microsecond)
+	if open, end, ok := krakenCandleBucket(first); ok && source == externalkraken.SourceName {
+		endBy, bucketEnd = open, end
+	}
+	return &foreignRowsError{endBy: endBy, bucketEnd: bucketEnd, msg: fmt.Sprintf("backfill-external: %v: %s %s has %d stored row(s) from %s inside the walked window that this run would not overwrite "+
+		"(another -granularity, candles under -raw-trades fills, the live stream, or pre-granularity candle identities); writing would count their volume twice. "+
+		"Re-run the path and granularity that wrote the window. %s",
+		errBackfillForeignRows, source, pair.String(), n, first.UTC().Format(time.RFC3339Nano), foreignRowsAdvice(from, endBy, bucketEnd))}
 }
 
-// walkedTo is the exclusive end of the range a walk covered: the requested -to, or just past the high-water trade of an early-ended
-// walk.
+// refuseCandleRunRows refuses a candle write beside stored rows it would not overwrite: inside its walked window (widened to the
+// first candle's open, which the pre-walk probe did not see), or, on kraken, inside a stored candle's bucket that the walk ends in.
+func refuseCandleRunRows(ctx context.Context, probe foreignTradeProbe, source, symbol string, pair canonical.Pair, from, end time.Time, granularity time.Duration, trades []canonical.Trade) error {
+	if err := refuseForeignRows(ctx, probe, source, pair, candleCoverStart(trades, from, granularity), end, trades); err != nil {
+		return err
+	}
+	if source != externalkraken.SourceName {
+		return nil
+	}
+	// A probed stamp on this run's grid may hold this run's own candle from an earlier run reaching further; its bucket starts at or
+	// after end, so it covers nothing written here.
+	keep := slices.Clip(trades)
+	for _, g := range externalkraken.OHLCIntervals() {
+		open, ok := straddlingBucket(end, g)
+		if !ok || open.Add(g).Unix()%int64(granularity/time.Second) != 0 {
+			continue
+		}
+		stamp := open.Add(g - time.Second)
+		hash, err := externalkraken.CandleTxHash(symbol, stamp, granularity)
+		if err != nil {
+			return fmt.Errorf("backfill-external: %w", err)
+		}
+		keep = append(keep, canonical.Trade{TxHash: hash, Timestamp: stamp})
+	}
+	return refuseStraddlingCandles(ctx, probe, source, pair, from, end, keep)
+}
+
+// candleCoverStart is where the volume of the run's candles begins: a candle stamped at or after from may have opened before it.
+// Candles are stamped at their last second or millisecond, so the next whole second is the close.
+func candleCoverStart(trades []canonical.Trade, from time.Time, granularity time.Duration) time.Time {
+	start := from
+	for _, tr := range trades {
+		if open := tr.Timestamp.Add(time.Second).Truncate(time.Second).Add(-granularity); open.Before(start) {
+			start = open
+		}
+	}
+	return start
+}
+
+// krakenCandleBucket is the earliest-opening kraken candle bucket whose stamp is ts, if ts is a candle stamp at all.
+func krakenCandleBucket(ts time.Time) (open, end time.Time, ok bool) {
+	if !ts.Equal(ts.Truncate(time.Second)) {
+		return time.Time{}, time.Time{}, false
+	}
+	end = ts.UTC().Add(time.Second)
+	for _, g := range slices.Backward(externalkraken.OHLCIntervals()) {
+		if end.Unix()%int64(g/time.Second) == 0 {
+			return end.Add(-g), end, true
+		}
+	}
+	return time.Time{}, time.Time{}, false
+}
+
+// refuseStraddlingCandles refuses rows written from from up to at when a stored kraken candle's bucket contains at: the candle is
+// stamped at or after at, so no probe bounded by at sees it, yet its volume covers those rows. Only each grain's one candidate stamp
+// is probed, so stored fills elsewhere past at (the run's own, or the live stream's) are not mistaken for candles.
+func refuseStraddlingCandles(ctx context.Context, probe foreignTradeProbe, source string, pair canonical.Pair, from, at time.Time, keep []canonical.Trade) error {
+	// Coarsest first: the first stored candle found then has the earliest open, so the -to it names is not refused by a coarser one.
+	for _, g := range slices.Backward(externalkraken.OHLCIntervals()) {
+		open, ok := straddlingBucket(at, g)
+		if !ok {
+			continue
+		}
+		stamp := open.Add(g - time.Second)
+		n, _, err := probe.TradesInWindowOutside(ctx, source, pair, stamp, stamp.Add(time.Microsecond), keep)
+		if err != nil {
+			return fmt.Errorf("backfill-external: overlap probe: %w", err)
+		}
+		if n > 0 {
+			return &foreignRowsError{endBy: open, bucketEnd: open.Add(g), msg: fmt.Sprintf("backfill-external: %v: %s %s has a stored row at %s, the stamp of a %v candle opened at %s whose volume covers rows this run would write up to %s; "+
+				"writing would count that volume twice. %s",
+				errBackfillForeignRows, source, pair.String(), stamp.Format(time.RFC3339), g, open.Format(time.RFC3339), at.UTC().Format(time.RFC3339Nano), foreignRowsAdvice(from, open, open.Add(g)))}
+		}
+	}
+	return nil
+}
+
+// straddlingBucket is the open of the epoch-aligned g bucket holding the instant before at, if that bucket ends after at.
+func straddlingBucket(at time.Time, g time.Duration) (time.Time, bool) {
+	secs := int64(g / time.Second)
+	open := time.Unix(at.UTC().Add(-time.Nanosecond).Unix()/secs*secs, 0).UTC()
+	return open, open.Add(g).After(at)
+}
+
+// walkedTo is the exclusive end of the range a walk covered: the requested -to, or the end of the high-water candle of an
+// early-ended walk (stamped at its last second or millisecond).
 func walkedTo(to, resumeFrom time.Time, partial bool) time.Time {
 	if partial && resumeFrom.Before(to) {
-		return resumeFrom.Add(time.Microsecond)
+		return resumeFrom.Truncate(time.Second).Add(time.Second)
 	}
 	return to
 }
@@ -415,7 +527,7 @@ type (
 
 // backfillKrakenRawTrades walks kraken fills one window at a time, writing each before fetching the next, so memory is bounded by a
 // window.
-func backfillKrakenRawTrades(kr *externalkraken.Streamer, pair canonical.Pair, from, to time.Time, dryRun bool, cfgPath string, progressEvery int) error {
+func backfillKrakenRawTrades(kr *externalkraken.Streamer, pair canonical.Pair, from, to time.Time, dryRun, allowOverlap bool, cfgPath string, progressEvery int) error {
 	// Deep pagination is slow by design (venue rate limit), so the walk
 	// gets a day rather than the 30-minute candle budget.
 	ctx, cancel := context.WithTimeout(context.Background(), 24*time.Hour)
@@ -442,14 +554,56 @@ func backfillKrakenRawTrades(kr *externalkraken.Streamer, pair canonical.Pair, f
 	}
 	defer func() { _ = store.Close() }()
 
+	return walkRawTrades(ctx, store, krakenRawWindows, fetch, pair, from, to, allowOverlap, progressEvery, os.Stderr)
+}
+
+// rawTradesStore is the store surface a -raw-trades walk writes through.
+type rawTradesStore interface {
+	backfillTradeStore
+	foreignTradeProbe
+}
+
+// walkRawTrades refuses a -to inside a stored candle's bucket before the walk, then writes the fills window by window.
+func walkRawTrades(ctx context.Context, store rawTradesStore, plan windowPlan, fetch windowFetch, pair canonical.Pair, from, to time.Time, allowOverlap bool, progressEvery int, log io.Writer) error {
+	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	err := refuseStraddlingCandles(probeCtx, store, externalkraken.SourceName, pair, from, to, nil)
+	cancel()
+	if err != nil {
+		return err
+	}
 	t0 := time.Now()
-	return insertRefreshingCAGGs(store, os.Stderr, func(w tradeInserter) error {
-		return walkWindowed(ctx, krakenRawWindows, from, to, fetch, func(trades []canonical.Trade) error {
+	fetch = refusingForeignFetch(fetch, store, externalkraken.SourceName, pair, allowOverlap)
+	return insertRefreshingCAGGs(store, log, func(w tradeInserter) error { //nolint:contextcheck // the refresh must run after the walk's ctx expires; see insertRefreshingCAGGs
+		return walkWindowed(ctx, plan, from, to, fetch, func(trades []canonical.Trade) error {
 			insCtx, insCancel := context.WithTimeout(context.WithoutCancel(ctx), externalInsertBudget)
 			defer insCancel()
-			return insertBackfilledTrades(insCtx, w, trades, progressEvery, os.Stderr, t0)
-		}, os.Stderr)
+			return insertBackfilledTrades(insCtx, w, trades, progressEvery, log, t0)
+		}, log)
 	})
+}
+
+// refusingForeignFetch bounds an -allow-overlap fills walk as refuseForeignRows bounds a candle run: each fetched window is probed
+// against everything the fetch returned (overlap included) before any of it is written, and a refusal stops the walk there.
+func refusingForeignFetch(fetch windowFetch, probe foreignTradeProbe, source string, pair canonical.Pair, allowOverlap bool) windowFetch {
+	if !allowOverlap {
+		return fetch
+	}
+	return func(ctx context.Context, from, to time.Time) ([]canonical.Trade, error) {
+		trades, err := fetch(ctx, from, to)
+		if err != nil {
+			return nil, err
+		}
+		probeCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		defer cancel()
+		if err := refuseForeignRows(probeCtx, probe, source, pair, from, to, trades); err != nil {
+			return nil, err
+		}
+		// The next window's probe would see a candle straddling this window's end only after these fills are written.
+		if err := refuseStraddlingCandles(probeCtx, probe, source, pair, from, to, trades); err != nil {
+			return nil, err
+		}
+		return trades, nil
+	}
 }
 
 // walkWindowed fetches [from, to) window by window, handing each to sink before the next.
@@ -536,9 +690,18 @@ func waitPace(ctx context.Context, d time.Duration) error {
 // windowStopError is the non-zero exit of a windowed walk that did not reach -to; it carries every cause (errors.Is sees each) and the
 // resume point, the window start, before which everything is written.
 func windowStopError(start, end time.Time, written int, causes []error) error {
-	return fmt.Errorf("backfill-external: walk stopped in window %s -> %s with %d trade(s) written — range incomplete, resume with -from %s: %w",
-		start.UTC().Format(time.RFC3339), end.UTC().Format(time.RFC3339), written,
-		start.UTC().Format(time.RFC3339Nano), errors.Join(causes...))
+	cause := errors.Join(causes...)
+	next := "resume with -from " + start.UTC().Format(time.RFC3339Nano)
+	// A foreign-row refusal repeats on the same range, so name the end that admits it, or say that none does.
+	if fe := (*foreignRowsError)(nil); errors.As(cause, &fe) {
+		if fe.endBy.After(start) {
+			next += " -to " + fe.endBy.UTC().Format(time.RFC3339Nano)
+		} else {
+			next = "nothing in [" + start.UTC().Format(time.RFC3339Nano) + ", " + fe.bucketEnd.UTC().Format(time.RFC3339Nano) + ") can be written as fills"
+		}
+	}
+	return fmt.Errorf("backfill-external: walk stopped in window %s -> %s with %d trade(s) written — range incomplete, %s: %w",
+		start.UTC().Format(time.RFC3339), end.UTC().Format(time.RFC3339), written, next, cause)
 }
 
 // tradeInserter is the storage seam for insertBackfilledTrades, so its failure policy (infra-abort vs data-fault-skip, non-zero exit on
@@ -563,17 +726,40 @@ func insertRefreshingCAGGs(store backfillTradeStore, log io.Writer, insert func(
 	if !rec.seen {
 		return insErr
 	}
-	_, _ = fmt.Fprintf(log, "backfill-external: refreshing trades continuous aggregates over [%s, %s]; if it fails or is interrupted, re-run this command (inserts are idempotent)\n",
-		rec.from.UTC().Format(time.RFC3339), rec.to.UTC().Format(time.RFC3339))
+	_, _ = fmt.Fprintf(log, "backfill-external: refreshing trades continuous aggregates over [%s, %s]; if it fails or is interrupted, %s\n",
+		rec.from.UTC().Format(time.RFC3339), rec.to.UTC().Format(time.RFC3339), backfillRefreshRecovery)
 	ctx, cancel := context.WithTimeout(context.Background(), externalInsertBudget)
 	defer cancel()
 	plan := timescale.PlanCAGGRefresh(timescale.TradesCAGGs, func(c timescale.CAGGSpec) (time.Time, time.Time) {
 		return timescale.PadRefreshWindow(rec.from, rec.to, c.MinWindow)
 	})
 	if err := runCAGGRefreshPlan(ctx, slog.New(slog.NewTextHandler(log, nil)), store, plan); err != nil {
-		return errors.Join(insErr, fmt.Errorf("backfill-external: %w", err))
+		return errors.Join(insErr, fmt.Errorf("backfill-external: %w; %s", err, backfillRefreshRecovery))
 	}
 	return insErr
+}
+
+// backfillRefreshRecovery is the retry for a failed post-write refresh. A plain re-run is refused by the overlap check, because
+// the rows this run wrote are now stored; -allow-overlap re-writes the same identities (idempotent) and refreshes again.
+const backfillRefreshRecovery = "re-run this command with -allow-overlap (the rows are already written and re-inserting them is idempotent)"
+
+// prices1mRetentionProbe is the storage seam refuseArmedRetention depends on.
+type prices1mRetentionProbe interface {
+	Prices1mRetentionArmed(ctx context.Context) (bool, error)
+}
+
+// refuseArmedRetention refuses a write before the walk while prices_1m's retention policy is armed: the post-write refresh would
+// then refuse every view built on prices_1m, leaving the written rows' twap rungs unmaterialised after hours of fetching.
+func refuseArmedRetention(ctx context.Context, probe prices1mRetentionProbe) error {
+	armed, err := probe.Prices1mRetentionArmed(ctx)
+	if err != nil {
+		return fmt.Errorf("backfill-external: read prices_1m retention state: %w", err)
+	}
+	if armed {
+		return errors.New("backfill-external: refused: prices_1m's retention policy is armed, so the post-write refresh of the " +
+			"aggregates built on it would be refused; disarm it as migrations/0156_prices_1m_retention.up.sql states, confirm, and re-run")
+	}
+	return nil
 }
 
 // spanRecorder passes writes through and keeps the time hull of every trade offered, written or not: a failed batch may have

@@ -447,6 +447,48 @@ func TestBucketSpan(t *testing.T) {
 type fakePreWalkProbe struct {
 	fakeTradeProbe
 	fakeSourceProbe
+	armed bool
+}
+
+func (f *fakePreWalkProbe) Prices1mRetentionArmed(context.Context) (bool, error) { return f.armed, nil }
+
+// TestRefuseStoredRows_RefusesWhileRetentionArmed: with prices_1m retention armed the post-write refresh is refused for every
+// view on prices_1m, so the write is refused before the walk, -allow-overlap or not.
+func TestRefuseStoredRows_RefusesWhileRetentionArmed(t *testing.T) {
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	usd, _ := canonical.NewFiatAsset("USD")
+	pair, err := canonical.NewPair(xlm, usd)
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	from := time.Date(2021, 2, 1, 0, 0, 0, 0, time.UTC)
+	probe := &fakePreWalkProbe{armed: true}
+	for _, allow := range []bool{false, true} {
+		err := refuseStoredRows(context.Background(), probe, "kraken", pair, from, from.AddDate(0, 2, 0), allow)
+		if err == nil || !strings.Contains(err.Error(), "retention policy is armed") {
+			t.Errorf("allowOverlap=%v: err = %v, want the armed-retention refusal", allow, err)
+		}
+	}
+}
+
+// TestBackfillRefreshRecovery_NamesAnAdmittedRerun: the printed retry must pass the pre-walk refusals once the run's own rows are
+// stored; a plain re-run is refused by the overlap check.
+func TestBackfillRefreshRecovery_NamesAnAdmittedRerun(t *testing.T) {
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	usd, _ := canonical.NewFiatAsset("USD")
+	pair, err := canonical.NewPair(xlm, usd)
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	from := time.Date(2021, 2, 1, 0, 0, 0, 0, time.UTC)
+	probe := &fakePreWalkProbe{
+		fakeTradeProbe:  fakeTradeProbe{first: from, found: true},
+		fakeSourceProbe: fakeSourceProbe{sources: []string{"kraken"}},
+	}
+	allow := strings.Contains(backfillRefreshRecovery, "-allow-overlap")
+	if err := refuseStoredRows(context.Background(), probe, "kraken", pair, from, from.AddDate(0, 2, 0), allow); err != nil {
+		t.Fatalf("the recovery %q is refused against the run's own stored rows: %v", backfillRefreshRecovery, err)
+	}
 }
 
 // TestRefuseStoredRows_AllowOverlapWaivesOnlyTheOverlapCheck: a vendor re-run over Kraken buckets is refused
@@ -536,15 +578,17 @@ func TestRefuseForeignRows_RefusesRowsTheRunWouldNotRewrite(t *testing.T) {
 	}
 }
 
-// TestWalkedTo: a walk that ended early covers only up to its high-water trade; later rows are resume rows, not foreign.
+// TestWalkedTo: a walk that ended early covers up to the end of its high-water candle; later rows are resume rows, not foreign.
 func TestWalkedTo(t *testing.T) {
 	to := time.Date(2025, 5, 1, 0, 0, 0, 0, time.UTC)
-	high := to.Add(-72 * time.Hour)
+	end := to.Add(-72 * time.Hour)
 	if got := walkedTo(to, time.Time{}, false); !got.Equal(to) {
 		t.Errorf("complete walk: %v, want %v", got, to)
 	}
-	if got, want := walkedTo(to, high, true), high.Add(time.Microsecond); !got.Equal(want) {
-		t.Errorf("partial walk: %v, want %v", got, want)
+	for _, res := range []time.Duration{time.Second, time.Millisecond} {
+		if got := walkedTo(to, end.Add(-res), true); !got.Equal(end) {
+			t.Errorf("partial walk, candle stamped at close-%v: %v, want its close %v", res, got, end)
+		}
 	}
 }
 

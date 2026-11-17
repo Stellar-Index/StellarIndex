@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"strings"
@@ -57,7 +58,7 @@ func TestWriteFindDataGapsText_NoGaps(t *testing.T) {
 	if !strings.Contains(out, "ledgers=[0, 62763483]") {
 		t.Errorf("missing scan summary; got %q", out)
 	}
-	if !strings.Contains(out, "no gaps found") {
+	if !strings.Contains(out, "no gap >= 1000 ledgers in [0, 62763483]") {
 		t.Errorf("missing clean-coverage signal; got %q", out)
 	}
 }
@@ -178,6 +179,79 @@ func TestWriteFindDataGapsJSON_Shape(t *testing.T) {
 		if _, ok := first[k]; !ok {
 			t.Errorf("missing gap key %q in %v", k, first)
 		}
+	}
+}
+
+// bracketedGapStore mirrors FindLedgerGapsInRange's SQL over an in-memory ledger set: seeds at from-1 and to+1.
+type bracketedGapStore struct{ ledgers []int64 }
+
+func (s bracketedGapStore) FindLedgerGapsInRange(_ context.Context, _ timescale.GapDetectorTarget, from, to, minGapSize int64) ([]timescale.LedgerGap, error) {
+	prev := from - 1
+	var out []timescale.LedgerGap
+	for _, l := range append(append([]int64(nil), s.ledgers...), to+1) {
+		if l < from || l > to+1 {
+			continue
+		}
+		if size := l - prev - 1; size >= minGapSize {
+			out = append(out, timescale.LedgerGap{Start: prev + 1, End: l - 1, Size: size})
+		}
+		prev = l
+	}
+	return out, nil
+}
+
+// TestScanDataGaps_ReportsEdgeHoles: a hole running to the tip, or a target with no rows at all, is a gap, not "clean".
+func TestScanDataGaps_ReportsEdgeHoles(t *testing.T) {
+	target := timescale.GapDetectorTarget{Source: "sdex", Table: "trades", LedgerColumn: "ledger", Genesis: 2}
+	cases := []struct {
+		name    string
+		ledgers []int64
+		from    int64
+		want    timescale.LedgerGap
+	}{
+		{name: "trailing hole to tip", ledgers: []int64{100, 101, 102}, from: 100, want: timescale.LedgerGap{Start: 103, End: 5000, Size: 4898}},
+		{name: "no rows, from below genesis", ledgers: nil, from: 0, want: timescale.LedgerGap{Start: 2, End: 5000, Size: 4999}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m, err := scanDataGaps(context.Background(), bracketedGapStore{ledgers: tc.ledgers},
+				[]timescale.GapDetectorTarget{target}, tc.from, 5000, 1000, time.Now().UTC())
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := m.Reports[0]
+			if len(r.Gaps) != 1 || r.Gaps[0] != tc.want || r.TotalMissingLedgers != tc.want.Size {
+				t.Fatalf("gaps=%+v total=%d, want exactly %+v", r.Gaps, r.TotalMissingLedgers, tc.want)
+			}
+		})
+	}
+}
+
+// TestScanDataGaps_UnsetMinGapSizeUsesEachTargetsThreshold: without -min-gap-size a quiet source's stretch shorter than its own
+// threshold is not a gap, while an explicit size still applies to every target.
+func TestScanDataGaps_UnsetMinGapSizeUsesEachTargetsThreshold(t *testing.T) {
+	quiet := timescale.GapDetectorTarget{Source: "quiet", Table: "t", LedgerColumn: "ledger", Genesis: 2, MinGapSizeOverride: 10_000}
+	busy := timescale.GapDetectorTarget{Source: "busy", Table: "t", LedgerColumn: "ledger", Genesis: 2}
+	store := bracketedGapStore{ledgers: []int64{2, 5000}}
+	targets := []timescale.GapDetectorTarget{quiet, busy}
+
+	m, err := scanDataGaps(context.Background(), store, targets, 0, 5000, 0, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := m.Reports[0]; len(r.Gaps) != 0 || r.MinGapSize != 10_000 {
+		t.Fatalf("quiet target: gaps=%+v min=%d, want none at its own 10000", r.Gaps, r.MinGapSize)
+	}
+	if r := m.Reports[1]; len(r.Gaps) != 1 || r.MinGapSize != timescale.GapDetectorMinGapSize {
+		t.Fatalf("default target: gaps=%+v min=%d, want the 4997-ledger hole at %d", r.Gaps, r.MinGapSize, timescale.GapDetectorMinGapSize)
+	}
+
+	m, err = scanDataGaps(context.Background(), store, targets, 0, 5000, 1000, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := m.Reports[0]; len(r.Gaps) != 1 || r.MinGapSize != 1000 {
+		t.Fatalf("explicit -min-gap-size: quiet target gaps=%+v min=%d, want the hole at 1000", r.Gaps, r.MinGapSize)
 	}
 }
 
