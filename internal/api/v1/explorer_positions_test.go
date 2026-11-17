@@ -117,7 +117,7 @@ func TestExplorer_AccountPositions_Fold(t *testing.T) {
 			{
 				// Fully unwound supply leg (net zero) — excluded by default.
 				Pool: "CPOOL2", Asset: "CXLM1",
-				HasSupplyLeg: true, SupplyNet: "0", SupplyLastActivity: now, SupplyLastLedger: 90,
+				HasSupplyLeg: true, SupplyNet: "0", SupplyTokens: "0", SupplyLastActivity: now, SupplyLastLedger: 90,
 			},
 		},
 		backstop: []timescale.BlendBackstopFold{
@@ -327,6 +327,56 @@ func TestExplorer_AccountPositions_AuctionSupersededBlendLeg(t *testing.T) {
 	}
 	assertPositions(t, servePositions(t, reader, false), open)
 	open["blend/lending_supply/CPOOLLIQ"] = positionWant{"0", "superseded_by_auction"}
+	assertPositions(t, servePositions(t, reader, true), open)
+}
+
+// A Blend leg is closed by its b/d-token balance, not its underlying net: a full withdrawal returns principal plus interest (net
+// negative) and a socialised loss returns less (net positive), and neither leg holds anything.
+func TestExplorer_AccountPositions_BlendLegClosedByTokenBalance(t *testing.T) {
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	reader := &stubPositionsReader{blend: []timescale.BlendPositionFold{
+		{
+			Pool: "CPOOLEXIT", Asset: "CUSDC1",
+			HasSupplyLeg: true, SupplyNet: "-100000000", SupplyTokens: "0", SupplyLastActivity: now, SupplyLastLedger: 300,
+			HasBorrowLeg: true, BorrowNet: "-100000000", BorrowTokens: "0", BorrowLastActivity: now, BorrowLastLedger: 300,
+		},
+		{
+			Pool: "CPOOLLOSS", Asset: "CUSDC1",
+			HasSupplyLeg: true, SupplyNet: "25", SupplyTokens: "0", SupplyLastActivity: now, SupplyLastLedger: 301,
+		},
+		{
+			Pool: "CPOOLHELD", Asset: "CUSDC1",
+			HasSupplyLeg: true, SupplyNet: "0", SupplyTokens: "5", SupplyLastActivity: now, SupplyLastLedger: 302,
+		},
+	}}
+	open := map[string]positionWant{"blend/lending_supply/CPOOLHELD": {"0", "net_underlying_at_event_time"}}
+	assertPositions(t, servePositions(t, reader, false), open)
+	open["blend/lending_supply/CPOOLEXIT"] = positionWant{"-100000000", "net_underlying_at_event_time"}
+	open["blend/lending_borrow/CPOOLEXIT"] = positionWant{"-100000000", "net_underlying_at_event_time"}
+	open["blend/lending_supply/CPOOLLOSS"] = positionWant{"25", "net_underlying_at_event_time"}
+	assertPositions(t, servePositions(t, reader, true), open)
+}
+
+// A Blend backstop claim mints shares the fold cannot see, so once the account has claimed its net is flows, not a count: a
+// zero net stays open (it may hold the claim's shares) and a negative one is unknown. An account that never claimed keeps the
+// exact count and its zero-net closure.
+func TestExplorer_AccountPositions_BlendBackstopClaimIsNotACount(t *testing.T) {
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	reader := &stubPositionsReader{backstop: []timescale.BlendBackstopFold{
+		{Pool: "CPOOLA", SharesNet: "1000", Claimed: true, LastActivity: now, LastLedger: 400},
+		{Pool: "CPOOLB", SharesNet: "0", Claimed: true, LastActivity: now, LastLedger: 401},
+		{Pool: "CPOOLC", SharesNet: "-50", Claimed: true, LastActivity: now, LastLedger: 402},
+		{Pool: "CPOOLD", SharesNet: "0", LastActivity: now, LastLedger: 403},
+		{Pool: "CPOOLE", SharesNet: "700", LastActivity: now, LastLedger: 404},
+	}}
+	open := map[string]positionWant{
+		"blend/backstop_shares/CPOOLA": {"1000", "net_share_flows"},
+		"blend/backstop_shares/CPOOLB": {"0", "net_share_flows"},
+		"blend/backstop_shares/CPOOLC": {"", "net_share_flows"},
+		"blend/backstop_shares/CPOOLE": {"700", "shares"},
+	}
+	assertPositions(t, servePositions(t, reader, false), open)
+	open["blend/backstop_shares/CPOOLD"] = positionWant{"0", "shares"}
 	assertPositions(t, servePositions(t, reader, true), open)
 }
 

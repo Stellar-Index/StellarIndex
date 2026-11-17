@@ -6,7 +6,6 @@ package v1_test
 import (
 	"context"
 	"errors"
-	"math/big"
 	"strings"
 	"testing"
 	"time"
@@ -343,17 +342,10 @@ func TestRWACurated_PublishedTotalsWhenNoRowIsReadable(t *testing.T) {
 		p.Series[2].MonthEnd != "2025-08-31" || p.Series[2].ValueUSD != "4004795860.00" {
 		t.Errorf("series = %+v, want three points oldest first at 2dp", p.Series)
 	}
-	// The gap is published − verified, signed: the verified reference
-	// total here is the EUTBL listing row alone.
-	verified := ratFromStr(t, derefStr(v.Summary.ReferenceValuation.ValueUSD))
-	wantGap := new(big.Rat).Sub(ratFromStr(t, "4004795860"), verified).FloatString(2)
-	if derefStr(p.GapVsVerifiedUSD) != wantGap {
-		t.Errorf("gap_vs_verified_usd = %s, want %s (published %s − verified %s)",
-			derefStr(p.GapVsVerifiedUSD), wantGap, p.TotalUSD, verified.FloatString(2))
-	}
-	if strings.HasPrefix(derefStr(p.GapVsVerifiedUSD), "-") || verified.Sign() <= 0 {
-		t.Errorf("gap %s should be positive here (the curator counts far more than the %s this index verifies)",
-			derefStr(p.GapVsVerifiedUSD), verified.FloatString(2))
+	// No history holds the verified total on the month-end, so there is no same-day figure to subtract: today's total would turn
+	// the set's growth since then into coverage. The same-day gap is pinned in TestRWACuratedGapIsSameDay.
+	if p.GapVsVerifiedUSD != nil {
+		t.Errorf("gap_vs_verified_usd = %s against today's verified total, want absent with no 2025-08-31 history point", *p.GapVsVerifiedUSD)
 	}
 	if derefStr(v.Curated.VerifiedValueUSD) != derefStr(v.Summary.ReferenceValuation.ValueUSD) {
 		t.Errorf("verified_value_usd repeats the wrong figure")
@@ -430,15 +422,6 @@ func TestRWACurated_PublishedSplitCarriesItsOwnExecution(t *testing.T) {
 	if len(p.BySubclass) != 0 || p.BySubclassExecutedAt != nil {
 		t.Errorf("8-day-old split served: %+v at %v, want it withheld", p.BySubclass, p.BySubclassExecutedAt)
 	}
-}
-
-func ratFromStr(t *testing.T, s string) *big.Rat {
-	t.Helper()
-	r, ok := new(big.Rat).SetString(s)
-	if !ok {
-		t.Fatalf("not a decimal: %q", s)
-	}
-	return r
 }
 
 func derefStr(p *string) string {

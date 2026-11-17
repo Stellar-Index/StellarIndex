@@ -27,7 +27,7 @@ func TestRWACuratedClassicRowsMakeTheAdditionalFiguresALowerBound(t *testing.T) 
 
 	value, verified := "100.00", "50.00"
 	rows := []RWAAsset{{ContractID: contract, ReferenceValuation: RWAReferenceValuation{ValueUSD: &value}}}
-	out := rwaCuratedSummarise(snap, rows, classicSkipped, false, &verified, false, time.Now())
+	out := rwaCuratedSummarise(snap, rows, classicSkipped, false, &verified, false, nil, time.Now())
 
 	if out.AdditionalValueUSD == nil || out.CombinedValueUSD == nil {
 		t.Fatalf("additional = %v, combined = %v; want both served", out.AdditionalValueUSD, out.CombinedValueUSD)
@@ -44,7 +44,7 @@ func TestRWACuratedClassicRowsMakeTheAdditionalFiguresALowerBound(t *testing.T) 
 	}
 
 	// No additional figure is published, so no lower-bound sentence describes one.
-	none := rwaCuratedSummarise(snap, nil, classicSkipped, false, &verified, false, time.Now())
+	none := rwaCuratedSummarise(snap, nil, classicSkipped, false, &verified, false, nil, time.Now())
 	if none.AdditionalValueUSD != nil || strings.Contains(none.Basis, "LOWER BOUND") {
 		t.Errorf("additional = %v, basis = %q; want no figure and no lower-bound sentence", none.AdditionalValueUSD, none.Basis)
 	}

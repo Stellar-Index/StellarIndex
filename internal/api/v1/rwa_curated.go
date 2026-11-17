@@ -182,9 +182,9 @@ type RWACuratedPublished struct {
 	// Source names the curator's public queries the figures were read
 	// from, e.g. "dune query 6961845 / 6961847".
 	Source string `json:"source"`
-	// GapVsVerifiedUSD is TotalUSD minus this index's verified reference total, signed, 2dp: what
-	// the curator counts that this index does not verify (negative: the reverse). Absent when the
-	// verified set publishes no reference total.
+	// GapVsVerifiedUSD is TotalUSD minus this index's verified total on AsOf, signed, 2dp: what the
+	// curator counts that this index does not verify (negative: the reverse). Absent when the value
+	// history holds no total for AsOf or that day's total is a lower bound.
 	GapVsVerifiedUSD *string `json:"gap_vs_verified_usd,omitempty"`
 }
 
@@ -230,7 +230,8 @@ const rwaCuratedBasisProse = "What a named third-party curator counts as tokeniz
 	"every outside account, so this index cannot read them and admits no row on them; only the totals the curator PUBLISHES " +
 	"from them are read. `published` carries the curator's latest monthly RWA market-cap total, that month's split by the " +
 	"curator's own subclass labels and the full monthly series, exactly as the curator's public dashboard queries last " +
-	"computed them, and `gap_vs_verified_usd` is that total minus this index's verified reference total, signed. Nothing here " +
+	"computed them, and `gap_vs_verified_usd` is that total minus this index's verified total on the same month-end, signed, " +
+	"served only when that day's verified total is exact. Nothing here " +
 	"is verified by this index: no issuer declaration, no directory attestation, no oracle, no market, and no per-asset " +
 	"breakdown reaches it. Should a curator's per-asset list become readable, its rows are served in `curated_assets` at that " +
 	"curator's own price times the supply this index reads from the lake, with the curator's labels verbatim and never mapped " +
@@ -383,9 +384,10 @@ func rwaApplyCuratorReference(a *RWAAsset, e timescale.CuratedRWAEntry, now time
 // ─── summary ────────────────────────────────────────────────────────
 
 // rwaCuratedSummarise builds the curated block; excludedClassic counts the classic curator rows no served row carries.
+// verifiedAt is the verified set's exact total on a past UTC day, nil when there is none (see [rwaVerifiedTotalOn]).
 func rwaCuratedSummarise(
 	snap rwaCurated, rows []RWAAsset, excludedClassic int, degraded bool, verifiedRef *string, verifiedLowerBound bool,
-	now time.Time,
+	verifiedAt func(day time.Time) *big.Rat, now time.Time,
 ) *RWACuratedSummary {
 	out := &RWACuratedSummary{
 		Curator:       rwaCuratorDune,
@@ -402,7 +404,7 @@ func rwaCuratedSummarise(
 		out.Census.ObservedAt = &t
 	}
 	if snap.wired {
-		out.Published = rwaCuratedPublishedBlock(snap.published, verifiedRef, now)
+		out.Published = rwaCuratedPublishedBlock(snap.published, verifiedAt, now)
 	}
 	switch {
 	case !snap.wired:
@@ -468,12 +470,12 @@ func rwaCuratedTally(rows []RWAAsset, out *RWACuratedSummary) (additional *big.R
 	return additional, anyAdditional, partial
 }
 
-// rwaCuratedPublishedBlock renders what the curator last published with the signed gap to the verified reference total; figures are
-// stored decimals re-rendered at 2dp through big.Rat, never a float.
+// rwaCuratedPublishedBlock renders what the curator last published with the signed gap to the verified total ON THE CURATOR'S
+// MONTH-END; figures are stored decimals re-rendered at 2dp through big.Rat, never a float.
 // Past [rwaCuratedPublishedMaxAge] the curator's own clock is stale and the total is not served; between that and
 // [rwaCuratedPublishedStaleAfter] it is `stale: true`.
 // The split is a separate execution held to the same cutoff on its own clock ([rwaCuratedPublishedSplit]).
-func rwaCuratedPublishedBlock(p *timescale.CuratedRWAPublished, verifiedRef *string, now time.Time) *RWACuratedPublished {
+func rwaCuratedPublishedBlock(p *timescale.CuratedRWAPublished, verifiedAt func(day time.Time) *big.Rat, now time.Time) *RWACuratedPublished {
 	if p == nil {
 		return nil
 	}
@@ -501,11 +503,37 @@ func rwaCuratedPublishedBlock(p *timescale.CuratedRWAPublished, verifiedRef *str
 			out.Series = append(out.Series, RWACuratedPublishedPoint{MonthEnd: pt.MonthEnd.UTC().Format("2006-01-02"), ValueUSD: v.FloatString(2)})
 		}
 	}
-	if vr := ratFromOptionalString(verifiedRef); vr != nil {
-		gap := new(big.Rat).Sub(total, vr).FloatString(2)
-		out.GapVsVerifiedUSD = &gap
+	// Today's verified total against a weeks-old month-end would report the set's growth since then as coverage.
+	if verifiedAt != nil {
+		if vr := verifiedAt(p.MonthEnd.UTC().Truncate(24 * time.Hour)); vr != nil {
+			gap := new(big.Rat).Sub(total, vr).FloatString(2)
+			out.GapVsVerifiedUSD = &gap
+		}
 	}
 	return out
+}
+
+// rwaVerifiedTotalOn is the history's whole-set total for one UTC day, or nil when the history has no such day or that day's
+// total is a lower bound: subtracting a floor would count this index's own undercount as curator-only value.
+func rwaVerifiedTotalOn(h rwaValueHistory, day time.Time) *big.Rat {
+	if !h.available {
+		return nil
+	}
+	pts, _ := h.totalPoints(day)
+	for _, pt := range pts {
+		if !time.Time(pt.T).Equal(day) {
+			continue
+		}
+		if pt.LowerBound {
+			return nil
+		}
+		v, ok := new(big.Rat).SetString(pt.ValueUSD)
+		if !ok {
+			return nil
+		}
+		return v
+	}
+	return nil
 }
 
 // rwaCuratedPublishedSplit renders the split with its own execution time; a split not run inside [rwaCuratedPublishedMaxAge] is withheld
@@ -540,6 +568,9 @@ func (s *Server) attachRWACurated(
 	rows, degraded, unanswered := s.rwaCuratedRows(valuationCtx, members, now)
 	view.CuratedAssets = rows
 	ref := view.Summary.ReferenceValuation
-	view.Curated = rwaCuratedSummarise(snap, rows, classicSkipped, degraded, ref.ValueUSD, ref.LowerBound, now)
+	// The cached history only: the gap is withheld rather than holding this route on a history scan.
+	hist := s.lastRWAValueHistory()
+	verifiedAt := func(day time.Time) *big.Rat { return rwaVerifiedTotalOn(hist, day) }
+	view.Curated = rwaCuratedSummarise(snap, rows, classicSkipped, degraded, ref.ValueUSD, ref.LowerBound, verifiedAt, now)
 	return degraded || unanswered
 }

@@ -1954,6 +1954,7 @@ type RWAAsset struct {
 	// when a contract's scale could not be read.
 	Decimals         *int    `json:"decimals"`
 	Volume24hUSD     *string `json:"volume_24h_usd,omitempty"`
+	VolumeLowerBound bool    `json:"volume_lower_bound,omitempty"` // Volume24hUSD excludes unpriced trades
 	FirstSeenLedger  uint32  `json:"first_seen_ledger,omitempty"`
 	ObservationCount int64   `json:"observation_count"`
 	// Curator is set only on rows of CuratedAssets: whose word placed the

@@ -84,7 +84,17 @@ func chCensusRollup(args []string) error {
 			return fmt.Errorf("%w — resume with -from-day %s", err, day.Format("2006-01-02"))
 		}
 	}
-	return nil
+	return censusWalkStalled(last, today)
+}
+
+// censusWalkStalled fails a run whose walk ended before yesterday: a lake hole that outlives a day would otherwise exit 0 on
+// every timer tick and leave the served census silently stale. The non-zero exit is what the failed-unit alert sees.
+func censusWalkStalled(last, today time.Time) error {
+	if !last.Before(today.Add(-24 * time.Hour)) {
+		return nil
+	}
+	return fmt.Errorf("census stalled: the contiguous lake ends before %s, so no day after %s was recomputed; "+
+		"heal the hole with ch-live-catchup and the next run catches up", today.Add(-24*time.Hour).Format("2006-01-02"), last.Format("2006-01-02"))
 }
 
 // censusWalkEnd is the last day the -write walk may recompute: today, or the day holding the contiguous lake tip when
