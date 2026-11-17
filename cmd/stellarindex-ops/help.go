@@ -1588,7 +1588,23 @@ Subcommands:
                             stellarindex-ops change-summary-reset \
                               -config /etc/stellarindex.toml \
                               -entity-type coin -entity-id crypto:XLM -write
-  version                 Print version + build date.
+  source-exclude -config PATH [-list] [-source S [-base A -quote Q] -from T [-until T] -reason "..." [-actor NAME]] [-lift -id N -reason "..."] [-write]
+                          Record an operator exclusion of a price
+                          source (a name in the source registry),
+                          optionally scoped to one pair, over
+                          [-from, -until) in source_exclusions.
+                          Never writes trades. -lift stamps the row
+                          lifted and keeps it. A "source.exclude" /
+                          "source.exclude.lift" audit_log row is
+                          written before the table changes.
+                          Dry-run unless -write. Served prices do
+                          not read the table yet.
+                          Example:
+                            stellarindex-ops source-exclude \
+                              -config /etc/stellarindex.toml \
+                              -source binance -from 2026-11-17T09:00:00Z \
+                              -reason "venue halted withdrawals" -write
+  version                Print version + build date.
   help                    This help.
 `
 

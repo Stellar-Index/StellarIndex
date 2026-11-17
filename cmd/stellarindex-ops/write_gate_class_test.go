@@ -44,6 +44,7 @@ var subcommandClasses = map[string]subcommandClass{
 	"freeze-unfreeze":       gate(),
 	"account-erase":         gate(),
 	"change-summary-reset":  gate(),
+	"source-exclude":        gate(),
 
 	"rpc-probe":             ro(),
 	"verify-decoders":       ro(),
