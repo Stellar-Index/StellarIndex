@@ -5,6 +5,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -210,5 +211,144 @@ func TestWalkWindowed_WriteFaults(t *testing.T) {
 	}
 	if len(data.got) != 12 {
 		t.Fatalf("data fault: %d insert(s) attempted, want all 12 across three windows", len(data.got))
+	}
+}
+
+// storedRowsProbe is TradesInWindowOutside over an in-memory trades table: rows in [from, to) whose (tx_hash, ts) is not in keep.
+type storedRowsProbe struct{ rows []canonical.Trade }
+
+func (p *storedRowsProbe) TradesInWindowOutside(_ context.Context, _ string, _ canonical.Pair, from, to time.Time, keep []canonical.Trade) (int64, time.Time, error) {
+	id := func(tr canonical.Trade) string { return tr.TxHash + "@" + tr.Timestamp.UTC().Format(time.RFC3339Nano) }
+	kept := make(map[string]bool, len(keep))
+	for _, k := range keep {
+		kept[id(k)] = true
+	}
+	var (
+		n     int64
+		first time.Time
+	)
+	for _, r := range p.rows {
+		if r.Timestamp.Before(from) || !r.Timestamp.Before(to) || kept[id(r)] {
+			continue
+		}
+		if n == 0 || r.Timestamp.Before(first) {
+			first = r.Timestamp
+		}
+		n++
+	}
+	return n, first, nil
+}
+
+// rawWalkStore is a trades store already holding rows, for walking fills through walkRawTrades.
+type rawWalkStore struct {
+	fakeBackfillTradeStore
+	storedRowsProbe
+}
+
+func fillsIn(fills []canonical.Trade) windowFetch {
+	return func(_ context.Context, f, to time.Time) ([]canonical.Trade, error) {
+		var out []canonical.Trade
+		for _, tr := range fills {
+			if !tr.Timestamp.Before(f) && tr.Timestamp.Before(to) {
+				out = append(out, tr)
+			}
+		}
+		return out, nil
+	}
+}
+
+var testRawPlan = windowPlan{size: 24 * time.Hour, overlap: time.Second}
+
+// TestWalkRawTrades_RefusesFillsInsideAStoredCandle: a candle is stamped at its bucket's last second, so a fills run ending inside the
+// bucket never sees it in [-from, -to), yet its fills would sit beside the candle's whole-bucket volume.
+func TestWalkRawTrades_RefusesFillsInsideAStoredCandle(t *testing.T) {
+	cases := []struct {
+		name     string
+		candle   time.Time
+		from, to time.Time
+		modes    []bool
+		resume   string
+	}{
+		{
+			name: "1d candle, half-day fills", candle: windowDay1.Add(24*time.Hour - time.Second),
+			from: windowDay1, to: windowDay1.Add(12 * time.Hour), modes: []bool{false, true},
+		},
+		{
+			name: "1h candle, half-hour fills", candle: windowDay1.Add(11*time.Hour - time.Second),
+			from: windowDay1.Add(10 * time.Hour), to: windowDay1.Add(10*time.Hour + 30*time.Minute), modes: []bool{false, true},
+		},
+		// Without -allow-overlap the pre-walk [-from, -to) probe refuses this candle; with it, only the window-end probe can.
+		{
+			name: "1d candle straddling a window end", candle: windowDay1.Add(48*time.Hour - time.Second),
+			from: windowDay1.Add(12 * time.Hour), to: windowDay1.Add(60 * time.Hour), modes: []bool{true},
+			resume: "resume with -from 2021-03-01T12:00:00Z -to 2021-03-02T00:00:00Z",
+		},
+	}
+	for _, tc := range cases {
+		for _, allowOverlap := range tc.modes {
+			t.Run(fmt.Sprintf("%s/allow-overlap=%v", tc.name, allowOverlap), func(t *testing.T) {
+				store := &rawWalkStore{storedRowsProbe: storedRowsProbe{rows: []canonical.Trade{tradeAt("candle", tc.candle)}}}
+				err := walkRawTrades(context.Background(), store, testRawPlan, fillsIn(windowTrades(tc.from, tc.to)), xlmUSD(t),
+					tc.from, tc.to, allowOverlap, 0, io.Discard)
+				if !errors.Is(err, errBackfillForeignRows) || !strings.Contains(err.Error(), tc.resume) {
+					t.Fatalf("err = %v, want errBackfillForeignRows naming %q", err, tc.resume)
+				}
+				if len(store.got) != 0 {
+					t.Fatalf("wrote %d fill(s) inside the stored candle's bucket, want none", len(store.got))
+				}
+			})
+		}
+	}
+}
+
+// TestWalkRawTrades_AllowOverlapProbesEachWindow: the per-window probe is wired into the real walk, and its refusal names the
+// run that is admitted — the same -from, ending at the first foreign row — rather than a -from that is refused again.
+func TestWalkRawTrades_AllowOverlapProbesEachWindow(t *testing.T) {
+	day2 := windowDay1.Add(24 * time.Hour)
+	candle := day2.Add(time.Hour - time.Second)
+	store := &rawWalkStore{storedRowsProbe: storedRowsProbe{rows: []canonical.Trade{tradeAt("candle", candle)}}}
+	to := windowDay1.Add(72 * time.Hour)
+
+	err := walkRawTrades(context.Background(), store, testRawPlan, fillsIn(windowTrades(windowDay1, to)), xlmUSD(t), windowDay1, to, true, 0, io.Discard)
+	if !errors.Is(err, errBackfillForeignRows) {
+		t.Fatalf("err = %v, want errBackfillForeignRows", err)
+	}
+	if want := "resume with -from 2021-03-02T00:00:00Z -to 2021-03-02T00:59:59Z"; !strings.Contains(err.Error(), want) {
+		t.Fatalf("err = %v, want it to name %q", err, want)
+	}
+	if !strings.Contains(err.Error(), "keep -from and end the run with -to 2021-03-02T00:59:59Z") {
+		t.Fatalf("inner refusal does not keep -from at the window start: %v", err)
+	}
+	if len(store.got) != 4 {
+		t.Fatalf("wrote %d fill(s), want only day 1's 4", len(store.got))
+	}
+}
+
+// TestWalkRawTrades_ReRunOfOwnFillsAdmitted: re-running a range whose fills this command already wrote — one inside the 1 s overlap
+// the next window re-reads — writes every fill once and refuses nothing.
+func TestWalkRawTrades_ReRunOfOwnFillsAdmitted(t *testing.T) {
+	to := windowDay1.Add(72 * time.Hour)
+	fills := append(windowTrades(windowDay1, to), tradeAt("overlap", windowDay1.Add(24*time.Hour-500*time.Millisecond)))
+	store := &rawWalkStore{storedRowsProbe: storedRowsProbe{rows: fills}}
+
+	if err := walkRawTrades(context.Background(), store, testRawPlan, fillsIn(fills), xlmUSD(t), windowDay1, to, true, 0, io.Discard); err != nil {
+		t.Fatalf("re-run of own fills refused: %v", err)
+	}
+	if len(store.got) != len(fills) {
+		t.Fatalf("wrote %d fill(s), want each of the %d exactly once", len(store.got), len(fills))
+	}
+}
+
+// TestCandleCoverStart: a candle stamped after -from whose bucket opened before it widens the probe to that open.
+func TestCandleCoverStart(t *testing.T) {
+	from := windowDay1.Add(10*time.Hour + 30*time.Minute)
+	for _, res := range []time.Duration{time.Second, time.Millisecond} {
+		trades := []canonical.Trade{tradeAt("a", windowDay1.Add(11*time.Hour-res)), tradeAt("b", windowDay1.Add(12*time.Hour-res))}
+		if got, want := candleCoverStart(trades, from, time.Hour), windowDay1.Add(10*time.Hour); !got.Equal(want) {
+			t.Errorf("stamp at close-%v: %v, want the first bucket's open %v", res, got, want)
+		}
+	}
+	if got := candleCoverStart([]canonical.Trade{tradeAt("a", windowDay1.Add(11*time.Hour-time.Second))}, windowDay1.Add(10*time.Hour), time.Hour); !got.Equal(windowDay1.Add(10 * time.Hour)) {
+		t.Errorf("aligned -from widened to %v", got)
 	}
 }
