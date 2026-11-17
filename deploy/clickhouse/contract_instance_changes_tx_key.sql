@@ -127,7 +127,15 @@ WHERE entry_type = 'contract_data'
 
 -- ── Step 4: cut over. Drop BOTH MVs first — a renamed table does not carry
 -- its MV's stored target along, and an MV aimed at a vanished name fails the
--- source INSERT (i.e. blocks ingest). Note the tip, then:
+-- source INSERT (i.e. blocks ingest). Stop the healer first: ch-live-catchup
+-- writes ledgers BELOW the tip into ledger_entry_changes, and one landing
+-- while no instance MV exists reaches neither table and lies below the
+-- gap-close's T - 1000 start. Wait until no run is in flight:
+--
+--   systemctl stop ch-live-catchup.timer
+--   systemctl is-active ch-live-catchup.service           -- repeat until "inactive"
+--
+-- Note the tip, then:
 --
 --   SELECT max(ledger_seq) FROM stellar.ledgers;           -- call it T
 --   -- The canonical genesis watermark describes the OLD table and its MV; the
@@ -159,6 +167,8 @@ WHERE entry_type = 'contract_data'
 --     FROM stellar.entry_history_watermark
 --     WHERE name = 'contract_instance_changes_v2' HAVING max(thru_ledger) > 0;
 --
+-- Then restart the healer: systemctl start ch-live-catchup.timer
+--
 -- Restart stellarindex-api: its key-shape probe latches the old-shape verdict
 -- for the process lifetime, so until restarted it keeps reading in the
 -- change_index order.
@@ -178,10 +188,13 @@ WHERE entry_type = 'contract_data'
 --     WHERE name IN ('contract_instance_changes', 'contract_instance_changes_v2')
 --     SETTINGS mutations_sync = 2;
 --
--- Then drop the canonical MV, reverse the RENAME, recreate the MV from the
+-- Then, with ch-live-catchup.timer stopped and no run in flight (as in
+-- Step 4), drop the canonical MV, reverse the RENAME, recreate the MV from the
 -- previous release's contract_instance_changes.sql, and close the gap since
 -- Step 4's T with the PREVIOUS release's binary (it writes the old columns;
 -- -from above genesis records no mark):
 --
 --   /usr/local/bin/stellarindex-ops ch-instance-backfill \
 --     -ch-addr 127.0.0.1:9300 -from <T - 1000> -write
+--
+-- Then restart the healer: systemctl start ch-live-catchup.timer

@@ -188,5 +188,37 @@ else
   pass=$((pass + 1))
 fi
 
+# expect_fail <desc> <needle>: run the lint at base2 against HEAD and demand a finding.
+expect_fail() {
+  out="$(cd "$TMP" && BASE_SHA="$base2_sha" ./scripts/ci/lint-migrations.sh 2>&1)"
+  got=$?
+  if [ "$got" -ne 0 ] && [[ "$out" == *"$2"* ]]; then
+    echo "  ok   $1"; pass=$((pass + 1))
+  else
+    echo "  FAIL $1 (exit $got, want non-zero naming: $2)"; indent "$out"; fail=$((fail + 1))
+  fi
+}
+commit() { git -C "$TMP" add -A; git -C "$TMP" -c user.email=t@example.com -c user.name=t commit -q -m "$1"; }
+
+# ─── case 5: renumbered forward past the head — FATAL ───
+git -C "$TMP" reset -q --hard "$base2_sha"
+git -C "$TMP" mv migrations/0006_late.up.sql migrations/0007_late.up.sql
+git -C "$TMP" mv migrations/0006_late.down.sql migrations/0007_late.down.sql
+commit "renumbered forward"
+expect_fail "a shipped migration renumbered forward is fatal" "0007_late.up.sql: renumbered from 6"
+
+# ─── case 6: renamed with an edited body — FATAL ───
+git -C "$TMP" reset -q --hard "$base2_sha"
+git -C "$TMP" mv migrations/0006_late.up.sql migrations/0006_later.up.sql
+printf -- '-- fixture\nSELECT 2;\n' >"$TMP/migrations/0006_later.up.sql"
+commit "renamed with an edit"
+expect_fail "a rename that edits the body is fatal" "0006_late.up.sql: a migration present at the comparison base is deleted"
+
+# ─── case 7: deleted — FATAL ───
+git -C "$TMP" reset -q --hard "$base2_sha"
+git -C "$TMP" rm -q migrations/0006_late.up.sql migrations/0006_late.down.sql
+commit "deleted"
+expect_fail "a deleted migration is fatal" "0006_late.down.sql: a migration present at the comparison base is deleted"
+
 echo "lint-migrations-backnumber-test: ${pass} passed, ${fail} failed"
 [ "$fail" -eq 0 ]
