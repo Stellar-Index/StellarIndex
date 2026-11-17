@@ -85,6 +85,10 @@ WorkingDirectory=/var/lib/stellarindex
 # TestOpsBatchIdentityNeverReachesLiveDaemons
 # (internal/storage/clickhouse/ops_auth_systemd_test.go).
 EnvironmentFile=-/etc/default/stellarindex-ops
+# Optional, read after the ops file so it wins: put the least-privilege
+# stellarindex_api role's DSN (migration 0213) here as STELLARINDEX_POSTGRES_DSN.
+# Without it the internet-facing API connects with the owner DSN from the ops file.
+EnvironmentFile=-/etc/default/stellarindex-api
 UnsetEnvironment=STELLARINDEX_CLICKHOUSE_OPS_USER STELLARINDEX_CLICKHOUSE_OPS_PASSWORD
 
 ExecStart=/usr/local/bin/stellarindex-api -config /etc/stellarindex.toml
