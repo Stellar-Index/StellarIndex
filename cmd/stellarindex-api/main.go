@@ -124,6 +124,12 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	if err != nil {
 		return fmt.Errorf("alias registry: %w", err)
 	}
+	// Before -dry-run returns, so a preflight refuses the same holds file the real start would.
+	if cfg.API.HoldsFile != "" {
+		if err := holds.Check(cfg.API.HoldsFile); err != nil {
+			return fmt.Errorf("api.holds_file: %w", err)
+		}
+	}
 	canonical.InstallAliasRegistry(aliasRegistry)
 
 	// The movements boundary is network-specific, so /movements reads must not use the pubnet const.
@@ -1056,9 +1062,6 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	})
 
 	if cfg.API.HoldsFile != "" {
-		if err := holds.Check(cfg.API.HoldsFile); err != nil {
-			return fmt.Errorf("api.holds_file: %w", err)
-		}
 		bgWG.Add(1)
 		go func() {
 			defer bgWG.Done()

@@ -774,7 +774,7 @@ type APIConfig struct {
 	RegisterDisabled   bool `toml:"register_disabled" doc:"Switch off POST /v1/register (anonymous account and API-key issuance): every call answers 503 registration-unavailable. The lever for an abuse wave; read at start, so restart the API after changing it." default:"false"`
 	RegisterMaxPerHour int  `toml:"register_max_per_hour" doc:"Cap on registrations POST /v1/register accepts per hour across ALL callers. The per-IP throttle cannot bound a registrant that rotates addresses, and every account gets its own full free-tier budget. Past the cap the route answers 503 registration-unavailable until the hour rolls over. 0 removes the cap." default:"60"`
 
-	HoldsFile string `toml:"holds_file" doc:"Path to a TOML file of [[hold]] entries (asset, contract_id, ledger_from, ledger_to, reason) that mark matching supply, balance and holder responses as under review. Polled every 15s; a missing file means no holds; an invalid or zero-byte file keeps the previous list, so delete the file to lift every hold. Empty disables the feature." default:""`
+	HoldsFile string `toml:"holds_file" doc:"Path to a TOML file of [[hold]] entries (asset, contract_id, ledger_from, ledger_to, reason) that mark matching supply, balance and holder responses as under review. Polled every 15s; a missing file means no holds. An invalid file at startup stops the API (and fails -dry-run); once running, an invalid or zero-byte file keeps the previous list, so delete the file to lift every hold. Empty disables the feature." default:""`
 
 	// SingleInstance asserts exactly ONE API instance, unlocking per-process fallbacks for the auth throttles
 	// and passkey replay guard when Redis is absent. Across instances those are unsafe (a replayed passkey

@@ -227,6 +227,26 @@ func TestMainWiringRules(t *testing.T) {
 		{name: "v1_vwap_cache_seams_are_gated", check: ruleV1VWAPCacheSeamsAreGated},
 		{name: "thin_admission_is_read_only_at_the_chokepoint", check: ruleThinAdmissionIsReadOnlyAtTheChokepoint},
 		{name: "thin_admission_guard_catches_planted_sites", check: ruleThinAdmissionGuardCatchesPlantedSites},
+		{name: "holds_file_checked_before_dry_run_exits", check: func(t *testing.T) {
+			checks := m.callsTo("Check")
+			var holdsCheck token.Pos
+			for _, c := range checks {
+				if exprText(c.Fun) == "holds.Check" {
+					holdsCheck = c.Pos()
+				}
+			}
+			var dryRunExit token.Pos
+			ast.Inspect(file, func(n ast.Node) bool {
+				if lit, ok := n.(*ast.BasicLit); ok && lit.Value == `"dry-run complete — exiting"` {
+					dryRunExit = lit.Pos()
+				}
+				return true
+			})
+			if !holdsCheck.IsValid() || !dryRunExit.IsValid() || holdsCheck > dryRunExit {
+				t.Errorf("holds.Check at %s must run before the -dry-run exit at %s, or a preflight passes a holds file the real start refuses",
+					fset.Position(holdsCheck), fset.Position(dryRunExit))
+			}
+		}},
 	}
 	for _, r := range rules {
 		t.Run(r.name, r.check)
